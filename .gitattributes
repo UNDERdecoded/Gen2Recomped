@@ -1,2 +1,13 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts must stay LF even on a Windows checkout: build_android.ps1
+# runs them through WSL/Git Bash, and bash fails on CRLF with $'\r'.
+scripts/*.sh text eol=lf
+build-rg34xxsp.sh text eol=lf
+install-rg34xxsp.sh text eol=lf
+mobile/android/gradlew text eol=lf
+*.command text eol=lf
+
+*.bat text eol=crlf
+*.cmd text eol=crlf

@@ -76,6 +76,20 @@ $PyExe = $Python[0]
 $PyArgs = @($Python | Select-Object -Skip 1)
 
 $VenvPython = Join-Path $Venv 'Scripts\python.exe'
+# A venv keeps its python.exe after the base interpreter it was built against
+# is uninstalled or moved, but every call then dies with "No Python at ...",
+# so probe it rather than trusting that the file is there.
+if (Test-Path $VenvPython) {
+    $venvOk = $false
+    try {
+        & $VenvPython -c 'import sys' 2>$null | Out-Null
+        $venvOk = ($LASTEXITCODE -eq 0)
+    } catch { $venvOk = $false }
+    if (-not $venvOk) {
+        Say 'existing Python environment is broken, rebuilding it'
+        Remove-Item -Recurse -Force $Venv -ErrorAction SilentlyContinue
+    }
+}
 if (-not (Test-Path $VenvPython)) {
     Say 'creating Python environment'
     & $PyExe @PyArgs -m venv $Venv

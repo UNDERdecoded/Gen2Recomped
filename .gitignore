@@ -34,6 +34,13 @@ tools/vendor/
 # LÖVE packages
 *.love
 
+# Hand-made release archives. Zipping the project folder sweeps in .venv (which
+# hard-codes the packager's Python path and breaks setup for everyone else),
+# saves and generated ROM data. Build releases with scripts/build.sh instead.
+/*.zip
+/*.7z
+/*.tar.gz
+
 # Local saves (LÖVE writes to its save dir, but keep the repo clean anyway)
 save/
 

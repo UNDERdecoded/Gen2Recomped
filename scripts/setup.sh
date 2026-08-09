@@ -71,6 +71,12 @@ case "$ROM_SHA1" in
 esac
 say "detected ROM version: $ROM_VERSION ($ROM_SHA1)"
 
+# A venv survives its base interpreter being uninstalled or moved, but every
+# call through it then fails, so probe it rather than trusting it exists.
+if [ -x "$VENV/bin/python3" ] && ! "$VENV/bin/python3" -c 'import sys' >/dev/null 2>&1; then
+  say "existing Python environment is broken, rebuilding it"
+  rm -rf "$VENV"
+fi
 if [ ! -x "$VENV/bin/python3" ]; then
   say "creating Python environment"
   python3 -m venv "$VENV"
