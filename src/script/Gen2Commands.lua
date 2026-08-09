@@ -908,6 +908,32 @@ function Commands.g2_special(ctx, id)
   ctx.lastCheck = false
 end
 
+-- `special HealMachineAnim` ($3D).  PokecenterNurseScript runs the machine
+-- itself and HealParty ($1B) only touches party data, so with this special
+-- dropped the Gen2 nurse healed in silence with no balls and no jingle.
+--
+-- The nurse stops the map theme with `playmusic MUSIC_NONE` one command
+-- earlier, so stopping again is a no-op that only keeps this correct for a
+-- caller that does not.  The jingle restores the map theme when it ends,
+-- which is why the RestartMapMusic ($3C) that follows is a VM no-op --
+-- honouring it would cut the jingle off after the nurse's `pause 30`.
+function Commands.g2_heal_machine_anim(ctx)
+  local ow = ctx.overworld
+  local runner = ctx.runner
+  if not (ow and runner and ow.player) then return end
+  require("src.core.Music").stop()
+  ow.healAnim = {
+    balls = #ctx.save.party,
+    lit = 0,
+    timer = 0,
+    visible = true,
+    px = ow.player.cellX * 16,
+    py = ow.player.cellY * 16,
+    onDone = function() runner:resume() end,
+  }
+  runner:yield()
+end
+
 -- UnownPuzzle (SpecialsPointers row 41).  The chamber scripts run
 -- `setval <picture>` first, so the picture rides in on wScriptVar, and the
 -- caller branches on `iftrue` -- i.e. on ctx.lastCheck -- to open the wall.

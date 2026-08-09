@@ -339,6 +339,7 @@ local SPECIALS = {
   [0x29] = "g2_unown_puzzle", -- UnownPuzzle, the Ruins of Alph wall patterns
   [0x2A] = "g2_slots",       -- SlotMachine, wScriptVar picks the lucky one
   [0x2B] = "g2_card_flip",   -- CardFlip
+  [0x3D] = "g2_heal_machine_anim", -- HealMachineAnim, the Pokecenter machine
   [0x44] = "g2_daycare_mon1", -- DayCareMon1, the left mon in the yard
   [0x45] = "g2_daycare_mon2", -- DayCareMon2, the right mon in the yard
   -- Mania's SHUCKIE.  ManiaScript is `special GiveShuckle` + `iffalse
@@ -352,8 +353,10 @@ local SPECIALS = {
 }
 
 -- Specials the port has no state for but that are genuine no-ops here, so
--- they must not warn: WaitSFX just spins until the sound channel is quiet.
-local SPECIALS_NOOP = { [0x3A] = true } -- WaitSFX
+-- they must not warn: WaitSFX just spins until the sound channel is quiet,
+-- and the heal jingle already restores the map theme when it ends, so
+-- RestartMapMusic would only cut it short.
+local SPECIALS_NOOP = { [0x3A] = true, [0x3C] = true } -- WaitSFX, RestartMapMusic
 
 L.special = function(ir, s)
   if SPECIALS_NOOP[ir[2]] then return end
