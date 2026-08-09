@@ -1,0 +1,74 @@
+# Generated from a user-provided Pokemon Red ROM.
+# Regenerate with: python3 tools/build_data.py --rom /path/to/pokemon-red.gb --clean
+data/generated/
+assets/generated/
+
+# User-supplied cartridge dumps. Never commit these.
+*.gb
+*.gbc
+*.gba
+*.sav
+
+# Inverted Mew sprites the example mod ships: tools/generate_example_mod_sprite.py
+# derives them from an imported cache, so they are ROM content. mod.card already
+# documents assets/ as empty until that script runs locally.
+mods/example_mew_starter/assets/
+
+# In-game screenshots render ROM-derived tiles and sprites. Extensionless, so
+# none of the image rules above catch them.
+/ruins_kabuto
+
+# Third-party checkouts scripts/setup_gen2_symbols.ps1 fetches on demand: a
+# pret/pokegold clone (including compiled .o objects) and the RGBDS toolchain.
+# Only their .sym output matters, and make_gen2_manifest.py has already baked
+# that into the committed tools/rom_manifest_*.json.
+tools/vendor/
+
+# NOTE: data/generated_gen2_{gold,silver}/ are deliberately COMMITTED. They
+# are cart-free scaffolds -- ids, ordering and pret labels only, with text as
+# {GEN2_TEXT:bank:addr:label} refs -- and RomExtractorGen2 decodes the actual
+# names, stats, map blocks, warps and dialogue off the ROM at import. 7 of
+# their 8 files are byte-identical between gold and silver; that equality is
+# the check that no ROM content has leaked back in.
+
+# LÖVE packages
+*.love
+
+# Local saves (LÖVE writes to its save dir, but keep the repo clean anyway)
+save/
+
+__pycache__/
+*.pyc
+.venv
+.*/
+.*
+!.github/
+!.gitignore
+!.gitattributes
+!.luacheckrc
+
+# Android build outputs / local SDK path / packaged payload (keep love-android sources)
+mobile/android/app/build/
+mobile/android/love/build/
+mobile/android/.gradle/
+mobile/android/local.properties
+mobile/android/app/src/embed/assets/game.love
+mobile/android/**/build/
+
+# iOS love-src (downloaded love-*-ios-source; see mobile/ios/README.md)
+mobile/ios/love-src/
+mobile/ios/cache/
+mobile/ios/build/
+
+# Final packaged build artifacts (mac/win/web/android/ios) — see scripts/build.sh
+/dist/
+
+# Legacy manual convenience-copy location (superseded by /dist/android/)
+mobile/dist/
+
+# Tiled map-editing workspace (tools/tiled_export.py). Derived from the imported
+# ROM cache exactly like data/generated/, so it is never committable.
+/build/tiled/
+
+# per-machine iOS bundle-id pin (see scripts/build_ios.sh)
+mobile/ios/bundle_id.local

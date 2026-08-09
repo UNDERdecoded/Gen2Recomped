@@ -1,0 +1,294 @@
+-- Trainer/wild move selection with the per-class "move choice
+-- modification" layers from data/trainers/move_choices.asm
+-- (engine/battle/trainer_ai.asm):
+--   mod 1: heavily discourage zero-power status-ailment moves when the
+--          player already has a status condition (they would fail)
+--   mod 2: encourage stat-modifying (and neighbouring) move effects,
+--          but only on the second move selection per enemy mon
+--          (wAILayer2Encouragement == 1)
+--   mod 3: encourage moves whose type is super effective against the
+--          player (even non-damaging ones), discourage not-very-
+--          effective/no-effect types when a "better move" is known
+-- Faithful port of AIEnemyTrainerChooseMoves
+-- (engine/battle/trainer_ai.asm:3-257): every candidate move starts at a
+-- base score of 10; mod 1 adds 5, mod 2 subtracts 1, mod 3 subtracts 1
+-- (super-effective) or adds 1 (not-effective when a better move exists);
+-- the MINIMUM-scored move is chosen, ties broken uniformly among the
+-- tied minima (core.asm:2971-3002).  A non-minimal move is never
+-- selectable.  Respects Disable (and PP only when the ruleset depletes
+-- enemy PP -- Gen 1 AI never reads wEnemyMonPP).
+
+local TypeChart = require("src.battle.TypeChart")
+local Strings = require("src.core.Strings")
+
+local TrainerAI = {}
+
+local HEAL_AMOUNT = { POTION = 20, SUPER_POTION = 50, HYPER_POTION = 200 }
+local X_STAT = { X_ATTACK = "attack", X_DEFEND = "defense", X_SPEED = "speed" }
+
+-- The trainer's ai_classes record from the merged registry; the direct
+-- require covers battles built without a loader.  A trainer record's
+-- aiClass field picks a record other than its own id.
+function TrainerAI.classFor(battle)
+  local trainer = battle and battle.trainer
+  if not trainer then return nil end
+  local id = trainer.aiClass or trainer.id
+  local classes = battle.data and battle.data.ai_classes
+  if classes then return classes[id] end
+  return require("data.scripts.ai_classes")[id]
+end
+
+-- Item use / switching per trainer class (engine/battle/trainer_ai.asm
+-- via the ai_classes registry).  Runs before move choice each enemy
+-- turn; returns an action { special = "aiItem"/"aiSwitch", ... } or nil.
+-- battle.aiUses is initialized per enemy Pokémon (wAICount).
+function TrainerAI.classAction(battle)
+  if battle.kind ~= "trainer" or not battle.trainer then return nil end
+  local class = TrainerAI.classFor(battle)
+  if not class then return nil end
+  if (battle.aiUses or 0) <= 0 then return nil end
+  local rng = battle.rng
+  local enemy = battle.enemy
+  local roll = rng(0, 255)
+
+  -- Agatha's dedicated switch roll comes before her item roll
+  if class.switchChance and roll < class.switchChance then
+    return TrainerAI.switchAction(battle)
+  end
+
+  if class.onStatus then
+    if enemy.mon.status then
+      return { special = "aiItem", item = class.item }
+    end
+    return nil
+  end
+
+  if class.chance and roll >= class.chance then return nil end
+
+  if class.switch then
+    return TrainerAI.switchAction(battle)
+  end
+  if class.hpBelow
+     and enemy.mon.hp >= math.floor(enemy.mon.stats.hp / class.hpBelow) then
+    if class.switchBelow
+       and enemy.mon.hp < math.floor(enemy.mon.stats.hp / class.switchBelow) then
+      return TrainerAI.switchAction(battle)
+    end
+    return nil
+  end
+  return { special = "aiItem", item = class.item }
+end
+
+-- AISwitchIfEnoughMons (engine/battle/trainer_ai.asm:554-582): counts ALL
+-- unfainted party mons including the active one and switches when that
+-- total is >= 2 (cp 2 / jp nc) -- i.e. whenever at least ONE non-active
+-- mon can still fight.  Switch to the first (lowest-index) such backup,
+-- matching EnemySendOutFirstMon (core.asm:1292-1341).
+function TrainerAI.switchAction(battle)
+  local alive = {}
+  for i, mon in ipairs(battle.enemyParty or {}) do
+    if mon.hp > 0 and i ~= battle.enemyIndex then
+      table.insert(alive, i)
+    end
+  end
+  if #alive < 1 then return nil end
+  return { special = "aiSwitch", index = alive[1] }
+end
+
+-- Apply an aiItem action to the enemy battler; returns messages.
+function TrainerAI.useItem(battle, item)
+  local enemy = battle.enemy
+  local trainerName = battle.trainer.name
+  local itemName = battle.data.items[item] and battle.data.items[item].name or item
+  local msgs = { Strings("%s\nused %s!", trainerName, itemName) }
+  if item == "FULL_HEAL" then
+    enemy.mon.status = nil
+    enemy.toxicCounter = nil
+  elseif item == "FULL_RESTORE" then
+    enemy.mon.hp = enemy.mon.stats.hp
+    enemy.mon.status = nil
+    enemy.toxicCounter = nil
+  elseif HEAL_AMOUNT[item] then
+    enemy.mon.hp = math.min(enemy.mon.stats.hp, enemy.mon.hp + HEAL_AMOUNT[item])
+  elseif X_STAT[item] then
+    local stat = X_STAT[item]
+    enemy.stages[stat] = math.min(6, (enemy.stages[stat] or 0) + 1)
+    table.insert(msgs, Strings("%s's\n%s rose!", enemy.name, stat:upper()))
+  elseif item == "GUARD_SPEC" then
+    enemy.mist = true
+    table.insert(msgs, Strings("%s's\nprotected against\nstat changes!", enemy.name))
+  end
+  return msgs
+end
+
+-- AIMoveChoiceModification1's StatusAilmentMoveEffects table: the two
+-- sleep effects (EFFECT_01 is the unused one), poison and paralysis.
+local STATUS_EFFECTS = {
+  EFFECT_01 = true, SLEEP_EFFECT = true, POISON_EFFECT = true,
+  PARALYZE_EFFECT = true,
+}
+
+-- AIMoveChoiceModification2 encourages the two effect ranges
+-- ATTACK_UP1_EFFECT..BIDE_EFFECT and ATTACK_UP2_EFFECT..POISON_EFFECT
+-- (both exclusive of the upper bound): every stat modifier plus the
+-- effects laid out between them in the constant list.
+local ENCOURAGE_EFFECTS = {
+  -- $0A ATTACK_UP1_EFFECT .. $19 HAZE_EFFECT
+  ATTACK_UP1_EFFECT = true, DEFENSE_UP1_EFFECT = true, SPEED_UP1_EFFECT = true,
+  SPECIAL_UP1_EFFECT = true, ACCURACY_UP1_EFFECT = true, EVASION_UP1_EFFECT = true,
+  PAY_DAY_EFFECT = true, SWIFT_EFFECT = true,
+  ATTACK_DOWN1_EFFECT = true, DEFENSE_DOWN1_EFFECT = true, SPEED_DOWN1_EFFECT = true,
+  SPECIAL_DOWN1_EFFECT = true, ACCURACY_DOWN1_EFFECT = true, EVASION_DOWN1_EFFECT = true,
+  CONVERSION_EFFECT = true, HAZE_EFFECT = true,
+  -- Gen 2 splits $0D/$0E and $15/$16 into the two Special halves
+  SP_ATK_UP1_EFFECT = true, SP_DEF_UP1_EFFECT = true,
+  SP_ATK_DOWN1_EFFECT = true, SP_DEF_DOWN1_EFFECT = true,
+  -- $32 ATTACK_UP2_EFFECT .. $41 REFLECT_EFFECT
+  ATTACK_UP2_EFFECT = true, DEFENSE_UP2_EFFECT = true, SPEED_UP2_EFFECT = true,
+  SPECIAL_UP2_EFFECT = true, ACCURACY_UP2_EFFECT = true, EVASION_UP2_EFFECT = true,
+  HEAL_EFFECT = true, TRANSFORM_EFFECT = true,
+  ATTACK_DOWN2_EFFECT = true, DEFENSE_DOWN2_EFFECT = true, SPEED_DOWN2_EFFECT = true,
+  SPECIAL_DOWN2_EFFECT = true, ACCURACY_DOWN2_EFFECT = true, EVASION_DOWN2_EFFECT = true,
+  LIGHT_SCREEN_EFFECT = true, REFLECT_EFFECT = true,
+  SP_ATK_UP2_EFFECT = true, SP_DEF_UP2_EFFECT = true,
+  SP_ATK_DOWN2_EFFECT = true, SP_DEF_DOWN2_EFFECT = true,
+}
+
+-- AIMoveChoiceModification3 .betterMoveFound: a "better move" is any
+-- known move (PP and Disable ignored) with the Super Fang, fixed-damage
+-- or Fly effect, or any damaging move of a different type than the move
+-- being judged.
+local BETTER_EFFECTS = {
+  SUPER_FANG_EFFECT = true, SPECIAL_DAMAGE_EFFECT = true, FLY_EFFECT = true,
+}
+
+local function hasBetterMove(battler, judged, battle)
+  for _, mv in ipairs(battler.curMoves) do
+    local d = battle.data.moves[mv.id]
+    if d then
+      if BETTER_EFFECTS[d.effect] then return true end
+      if d.type ~= judged.type and d.power > 0 then return true end
+    end
+  end
+  return false
+end
+
+-- The three vanilla passes as ai_classes layer records: vanilla is just the
+-- first registrant, so a mod patches one instead of reimplementing trainer
+-- AI.  src/mods/Builtins.lua registers them; chooseMove dispatches through
+-- whatever the registry holds and falls back here when a battle was built
+-- without a loader.  view.encourageTurn is wAILayer2Encouragement == 1.
+TrainerAI.LAYERS = {
+  LAYER_1 = { kind = "layer", score = function(view, def, score)
+    -- `add $5`: heavily discourage a zero-power status move that would
+    -- fail because the player is already statused
+    if def and view.target.mon.status and def.power == 0
+       and STATUS_EFFECTS[def.effect] then
+      return score + 5
+    end
+    return score
+  end },
+  LAYER_2 = { kind = "layer", score = function(view, def, score)
+    if def and view.encourageTurn and ENCOURAGE_EFFECTS[def.effect] then
+      return score - 1 -- `dec [hl]`: slightly encourage
+    end
+    return score
+  end },
+  -- AIGetTypeEffectiveness only reads the FIRST matching TypeEffects row for
+  -- (move type vs either defender type) -- no dual-type product -- and runs
+  -- for non-damaging moves too.  The table holds no value-10 rows, so
+  -- >10 / <10 reproduces the oracle's compare against $10.
+  LAYER_3 = { kind = "layer", score = function(view, def, score)
+    if not def then return score end
+    local row = TypeChart.rows(def.type, view.target.curTypes)[1]
+    if row and row > 10 then
+      return score - 1 -- `dec [hl]`: encourage a super-effective move
+    elseif row and row < 10 and hasBetterMove(view.user, def, view.battle) then
+      return score + 1 -- `inc [hl]`: discourage when a better move is known
+    end
+    return score
+  end },
+}
+
+-- vanilla registrations, kept beside the other Builtins delegations
+function TrainerAI.registerInto(registry, _, owner)
+  for id, record in pairs(TrainerAI.LAYERS) do
+    registry:register(id, record, owner)
+  end
+end
+
+function TrainerAI.chooseMove(battler, rng, battle)
+  rng = rng or love.math.random
+  -- Gen 1: SelectEnemyMove never consults wEnemyMonPP; Struggle only when
+  -- every move slot is missing/disabled (core.asm:2957-2999). modern_clean
+  -- depletes enemy PP and falls back to Struggle when none remain.
+  local unlimited = battle and battle.ruleset and battle.ruleset.enemyUnlimitedPP
+  local usable = {}
+  for i, mv in ipairs(battler.curMoves) do
+    if battler.disabledSlot ~= i and (unlimited or mv.pp > 0) then
+      table.insert(usable, mv)
+    end
+  end
+  if #usable == 0 then
+    return { id = "STRUGGLE", pp = 1, struggle = true }
+  end
+
+  -- wAILayer2Encouragement starts at 0 on each enemy send-out and gains
+  -- 1 per executed enemy move, so layer 2 (which needs it == 1) only
+  -- fires on the second move selection of each enemy mon.  The port
+  -- counts selections instead of executions; they only diverge across
+  -- turns locked into a multi-turn move, which skip selection entirely.
+  local encourageTurn = (battler.aiLayer2 or 0) == 1
+  battler.aiLayer2 = (battler.aiLayer2 or 0) + 1
+
+  local mods = battle and battle.enemyAIMods or nil
+  if not mods or #mods == 0 or not battle then
+    return usable[rng(1, #usable)]
+  end
+
+  -- aiMods entries may name registered ai_classes layer records; a number n
+  -- resolves through "LAYER_<n>", which is how the vanilla three are keyed.
+  -- A battle built without a loader has no merged registry, so the built-in
+  -- records answer directly.
+  local classes = battle.data and battle.data.ai_classes
+  local layers, view = {}, nil
+  for _, mod in ipairs(mods) do
+    local id = type(mod) == "string" and mod or ("LAYER_" .. tostring(mod))
+    local record = classes and classes[id]
+    if not (record and record.score) then record = TrainerAI.LAYERS[id] end
+    if record and record.score then
+      layers[#layers + 1] = record.score
+      view = view or { battle = battle, user = battler, target = battle.player,
+                       data = battle.data, rng = rng,
+                       encourageTurn = encourageTurn }
+    end
+  end
+
+  -- AIEnemyTrainerChooseMoves (engine/battle/trainer_ai.asm:3-257): every
+  -- usable move starts at a base score of 10; the class's modification
+  -- functions adjust it additively, then the MINIMUM-scored move is chosen
+  -- with ties broken uniformly among the minima (core.asm:2971-3002 rolls a
+  -- fresh byte among the value-1 slots).  A non-minimal move is never
+  -- selectable.
+  local scores = {}
+  for i, mv in ipairs(usable) do
+    local def = battle.data.moves[mv.id]
+    local s = 10
+    for _, score in ipairs(layers) do
+      s = score(view, def, s) or s
+    end
+    scores[i] = s
+  end
+  local best = math.huge
+  for _, s in ipairs(scores) do
+    if s < best then best = s end
+  end
+  local minima = {}
+  for i, s in ipairs(scores) do
+    if s == best then minima[#minima + 1] = usable[i] end
+  end
+  if #minima == 1 then return minima[1] end
+  return minima[rng(1, #minima)]
+end
+
+return TrainerAI
