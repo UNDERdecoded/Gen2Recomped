@@ -154,8 +154,50 @@ scripts/setup.sh --rom "/path/to/Poke Gold.gbc"   # or Silver.gbc / Red.gb / ...
 scripts/run.sh
 ```
 
-On Windows, `scripts/setup.ps1` and `scripts/run.ps1` do the same thing. After
-the first import, `love .` is enough.
+On Windows, `scripts\setup.ps1` and `scripts\run.ps1` do the same thing — see
+below. After the first import, `love .` is enough.
+
+### Windows
+
+The easiest path is to double-click **`Play-Windows.bat`**. It runs
+`scripts\bootstrap.ps1`, which checks for the two things the port needs,
+offers to install whichever is missing through `winget`, imports your ROM, and
+starts the game. Later runs skip straight to launching.
+
+To install the prerequisites yourself:
+
+```powershell
+winget install --exact --id Python.Python.3.12
+winget install --exact --id Love2d.Love2d
+```
+
+LÖVE can equally come from [love2d.org](https://love2d.org) — the scripts look
+for it on `PATH` and in the usual `Program Files\LOVE` locations. Python 3 must
+be on `PATH`; the setup script builds its own `.venv` for the importer's
+dependencies, so nothing is installed system-wide.
+
+Then, from the project folder:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\setup.ps1 -Rom C:\path\to\Gold.gbc
+powershell -ExecutionPolicy Bypass -File scripts\run.ps1
+```
+
+`scripts\play.ps1` does both steps in one go. Drop the `-Rom` argument and
+setup picks up the first `.gb` / `.gbc` in the project folder. After the first
+import, `love .` is enough.
+
+`-ExecutionPolicy Bypass` is what keeps PowerShell from refusing to run the
+scripts under its default policy; it applies only to that one invocation and
+changes nothing system-wide. `run.ps1` prefers `lovec.exe` over `love.exe`
+when it can find it, because `love.exe` is a GUI-subsystem binary that
+swallows `print` output — worth knowing if you are debugging.
+
+Saves, options, and the generated data cache live in
+`%APPDATA%\LOVE\pokemon-love2d\` (Gold and Silver keep theirs in the `gold\`
+and `silver\` subfolders) unless you enable [Portable Mode](#portable-mode).
+Controllers work through SDL2 and need no driver setup. If Defender objects to
+a packaged build, see [the note above](#a-note-on-windows-defender-warnings).
 
 ### Linux
 
@@ -298,4 +340,3 @@ the pret band of decompiling maniacs — and their
 [pokegold](https://github.com/pret/pokegold), and
 [pokecrystal](https://github.com/pret/pokecrystal) disassemblies.
 
-<p align="center"><a href="https://boisclub.games"><img src="./assets/logo/bcg.png"></a></p>

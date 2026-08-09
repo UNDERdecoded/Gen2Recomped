@@ -166,13 +166,18 @@ L.jumptextfaceplayer = function(ir, s)
   emit(s, { "g2_return" })
 end
 -- yesorno reuses the box its writetext just opened, and ask() prints the
--- prompt itself, so drop that row rather than showing the line twice
+-- prompt itself, so drop that row rather than showing the line twice.  Only
+-- the row immediately before is ours: a yesorno confirming an unported
+-- special's prompt would otherwise re-ask whatever was written last, which is
+-- what made mom's daylight saving question repeat.
 L.yesorno = function(_, s)
+  local text
   if s.lastTextRow == #s.out then
     table.remove(s.out)
     s.lastTextRow = nil
+    text = s.lastText
   end
-  emit(s, { "g2_yesno", s.lastText })
+  emit(s, { "g2_yesno", text or "" }) -- show_text indexes the id, never nil
 end
 L.faceplayer = function(_, s) emit(s, { "face_player" }) end
 
@@ -336,9 +341,12 @@ local SPECIALS = {
   [0x1E] = "g2_daycare_man",     -- DayCareMan, wBreedMon1
   [0x1F] = "g2_daycare_lady",    -- DayCareLady, wBreedMon2
   [0x20] = "g2_daycare_outside", -- DayCareManOutside, the EGG handover
+  [0x25] = "g2_set_day_of_week", -- SetDayOfWeek, mom's clock talk
   [0x29] = "g2_unown_puzzle", -- UnownPuzzle, the Ruins of Alph wall patterns
   [0x2A] = "g2_slots",       -- SlotMachine, wScriptVar picks the lucky one
   [0x2B] = "g2_card_flip",   -- CardFlip
+  [0x3C] = "g2_restart_map_music", -- RestartMapMusic, ends the Pokecenter
+                                   -- heal and MeetMomScript
   [0x3D] = "g2_heal_machine_anim", -- HealMachineAnim, the Pokecenter machine
   [0x44] = "g2_daycare_mon1", -- DayCareMon1, the left mon in the yard
   [0x45] = "g2_daycare_mon2", -- DayCareMon2, the right mon in the yard
@@ -352,14 +360,28 @@ local SPECIALS = {
   [0x56] = "g2_name_rater",  -- NameRater, whose whole script IS the special
 }
 
--- Specials the port has no state for but that are genuine no-ops here, so
--- they must not warn: WaitSFX just spins until the sound channel is quiet,
--- and the heal jingle already restores the map theme when it ends, so
--- RestartMapMusic would only cut it short.
-local SPECIALS_NOOP = { [0x3A] = true, [0x3C] = true } -- WaitSFX, RestartMapMusic
+-- WaitSFX just spins until the sound channel is quiet, which the port has no
+-- state for.
+local SPECIALS_NOOP = { [0x3A] = true } -- WaitSFX
+
+-- Specials that print their own prompt and are immediately followed by a
+-- `yesorno` confirming it.  Emitting the last box as a show_text row lets
+-- L.yesorno fold it exactly as it folds a real writetext.
+local SPECIALS_PROMPT = {
+  [0x6C] = { "g2_set_dst", "InitialSetDSTFlag.DSTIsThatOKText" },
+  [0x6D] = { "g2_clear_dst", "InitialClearDSTFlag.TimeAskOkayText" },
+}
 
 L.special = function(ir, s)
   if SPECIALS_NOOP[ir[2]] then return end
+  local prompt = SPECIALS_PROMPT[ir[2]]
+  if prompt then
+    emit(s, { prompt[1] })
+    s.lastText = prompt[2]
+    emit(s, { "show_text", prompt[2] })
+    s.lastTextRow = #s.out
+    return
+  end
   local name = SPECIALS[ir[2]]
   if name then emit(s, { name }) else emit(s, { "g2_special", ir[2] }) end
 end

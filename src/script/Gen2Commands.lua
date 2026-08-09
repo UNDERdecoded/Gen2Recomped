@@ -788,7 +788,10 @@ function Commands.g2_readvar(ctx, var)
   elseif var == 10 then
     ctx.g2Var = tonumber(os.date("%H")) or 0
   elseif var == 11 then
-    ctx.g2Var = tonumber(os.date("%w")) or 0
+    -- g2DayOffset is what mom's SetDayOfWeek picker answered, as a shift off
+    -- the host day, so Arthur still shows up on a real Thursday.
+    ctx.g2Var = ((tonumber(os.date("%w")) or 0)
+      + (ctx.save.g2DayOffset or 0)) % 7
   elseif var == 16 then
     -- BoxFreeSpace: the port never fills a box, so every script that
     -- branches on "is the box full" must take the not-full path
@@ -934,6 +937,61 @@ function Commands.g2_heal_machine_anim(ctx)
   runner:yield()
 end
 
+-- `special InitialSetDSTFlag` ($6C) / `InitialClearDSTFlag` ($6D): mom's clock
+-- talk.  Each records wDST and prints its own first box, and Gen2ScriptVM
+-- emits the second one so the script's following `yesorno` confirms THAT --
+-- stubbed, the yesorno re-asked "Is it DAYLIGHT SAVING TIME?" instead.
+-- Nothing reads save.g2DST yet; DSTChecks is not ported.
+function Commands.g2_set_dst(ctx)
+  ctx.save.g2DST = true
+  Commands.show_text(ctx, "InitialSetDSTFlag.Text")
+end
+
+function Commands.g2_clear_dst(ctx)
+  ctx.save.g2DST = nil
+  Commands.show_text(ctx, "InitialClearDSTFlag.Text")
+end
+
+-- The ROM spins these with the d-pad on a graphical clock-set background;
+-- a list menu is the port's equivalent and needs no ROM tiles.  The names
+-- are engine text, not ROM strings: SetDayOfWeek.WeekdayStrings is raw
+-- charmap data, and the extractor only harvests symbols matching "Text".
+local WEEKDAYS = {
+  "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY",
+}
+
+-- `special SetDayOfWeek` ($25), the day picker in mom's clock talk.  The GB
+-- has to ask because its RTC has no idea what day it started on; here
+-- readvar 11 reads the host clock, which already knows.  So the answer is
+-- kept as an OFFSET from the host day rather than as the day itself: the
+-- cursor opens on today, a truthful answer stores 0 and changes nothing, and
+-- either way the day still rolls over at real midnight instead of freezing.
+function Commands.g2_set_day_of_week(ctx)
+  local game, runner = ctx.game, ctx.runner
+  local host = tonumber(os.date("%w")) or 0
+  local picked
+  repeat
+    Commands.show_text(ctx, "SetDayOfWeek.OakTimeWhatDayIsItText")
+    local items = {}
+    for index, day in ipairs(WEEKDAYS) do
+      items[index] = {
+        label = Strings(day),
+        onSelect = function() picked = index - 1 runner:resume() end,
+      }
+    end
+    -- no cancel: the ROM's loop watches A only, and onCancel is the only
+    -- other path back to runner:resume()
+    local menu = require("src.ui.Menu").new(game, items, { cancelable = false })
+    menu.index = host + 1
+    menu:clampScroll()
+    game.stack:push(menu)
+    runner:yield()
+    Commands.ask(ctx, Strings(WEEKDAYS[picked + 1])
+      .. resolvedText(ctx, "SetDayOfWeek.OakTimeIsItText"))
+  until ctx.lastCheck
+  ctx.save.g2DayOffset = (picked - host) % 7
+end
+
 -- UnownPuzzle (SpecialsPointers row 41).  The chamber scripts run
 -- `setval <picture>` first, so the picture rides in on wScriptVar, and the
 -- caller branches on `iftrue` -- i.e. on ctx.lastCheck -- to open the wall.
@@ -1062,6 +1120,15 @@ function Commands.g2_mapmusic(ctx)
     ow and ow.player and ow.player.surfing)
 end
 
+-- `special RestartMapMusic` ($3C).  A one-shot jingle restores the map theme
+-- itself when it ends, so restarting under the Pokecenter heal fanfare would
+-- cut it off; MeetMomScript's trailing call follows a plain `playmusic` and
+-- does need it.
+function Commands.g2_restart_map_music(ctx)
+  if require("src.core.Music").oneShotPlaying() then return end
+  Commands.g2_mapmusic(ctx)
+end
+
 -- `musicfadeout MUSIC, frames`: the ROM fades the current song out over
 -- `frames` and queues the new one; the port fades and starts it, since
 -- Music.fadeOut stops the source when it reaches silence.
@@ -1125,6 +1192,7 @@ end
 function Commands.g2_refreshmap(ctx)
   local ow = ctx.overworld
   if ow and ow.map and ow.map.renderer then ow.map.renderer:rebuild() end
+  Commands.reload_map_objects(ctx)
 end
 
 -- warpcheck re-tests the tile the player is standing on, so a floor a script

@@ -176,22 +176,22 @@ function Commands.face_player(ctx)
   end
 end
 
--- Gen2 object_events carry an event flag and the ROM drops the object the
--- moment that flag flips (the starter POKe BALLs, Elm's officer, ...).
--- objectVisible() already reads obj.eventFlag, but it only runs when a map
--- spawns its objects, so a flag set mid-script left the sprite standing
--- there until the player walked out and back in.  Re-sync the live map here.
+-- Gen2 object_events carry an event flag, but pokecrystal's setevent/clearevent
+-- only decide what the NEXT LoadMapObjects spawns -- only appear/disappear drop
+-- a live sprite.  Syncing on the flag write instead deleted actors mid-scene:
+-- MeetMomScript runs `setevent 1735` (mom's own flag) before the daylight
+-- saving talk and still walks her back with `applymovement 2` at the end.
+-- objectVisible() applies the flag on spawn, and g2_refreshmap re-applies it
+-- for the reanchormap/reloadmap/newloadmap that stand in for LoadMapObjects.
 -- Defined below, next to toggleObject.
 local syncEventFlagObjects
 
 function Commands.set_flag(ctx, name)
   Flags.set(ctx.save, name)
-  syncEventFlagObjects(ctx, name)
 end
 
 function Commands.clear_flag(ctx, name)
   Flags.clear(ctx.save, name)
-  syncEventFlagObjects(ctx, name)
 end
 
 function Commands.check_flag(ctx, name)
@@ -579,12 +579,18 @@ function syncEventFlagObjects(ctx, name)
   if type(objects) ~= "table" then return end
   local OverworldState = require("src.world.OverworldController")
   for _, obj in ipairs(objects) do
-    if obj.eventFlag == name and obj.name then
+    if obj.eventFlag and (name == nil or obj.eventFlag == name) and obj.name then
       toggleObject(ctx, mapId, obj.name,
                    OverworldState.objectVisible(ctx.save, mapId, obj) and true or false,
                    true)
     end
   end
+end
+
+-- What LoadMapObjects does for the flags: re-spawn/despawn every event-flag
+-- object on the live map.  Driven by refreshmap/reloadmap, never by setevent.
+function Commands.reload_map_objects(ctx)
+  syncEventFlagObjects(ctx, nil)
 end
 
 function Commands.show_object(ctx, mapId, objName)
