@@ -192,7 +192,8 @@ executable (`chmod +x love-11.5-x86_64.AppImage`) and either put it on `PATH`
 as `love` or run `./love-11.5-x86_64.AppImage .` directly.
 
 Saves, options, and the generated data cache live in
-`~/.local/share/love/gen2recomp/` unless you enable
+`~/.local/share/love/pokemon-love2d/` (Gold and Silver keep theirs in the
+`gold/` and `silver/` subfolders) unless you enable
 [Portable Mode](#portable-mode). Controllers work through SDL2; if yours is not
 detected, check that your user is in the `input` group or that `udev` rules for
 the pad are installed. On Wayland with older LÖVE builds, launching with

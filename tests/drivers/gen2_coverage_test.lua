@@ -10,9 +10,10 @@ local U = require("tests.drivers.util")
 local DROPPED = {
   closetext = true, waitbutton = true, opentext = true, promptbutton = true,
   itemnotify = true, closewindow = true, closepokepic = true,
-  -- string buffers: Gen2 text still carries the placeholders as raw bytes
-  gettrainername = true, getstring = true, getitemname = true,
-  getmonname = true, getnum = true, getcurlandmarkname = true,
+  -- string buffers: getitemname/getmonname are lowered (they feed the
+  -- "{RAM:...}" splices); the rest still carry the placeholder as raw bytes
+  gettrainername = true, getstring = true,
+  getnum = true, getcurlandmarkname = true,
   getmoney = true, describedecoration = true,
   -- raw RAM / asm
   readmem = true, writemem = true, loadvar = true, memcall = true,

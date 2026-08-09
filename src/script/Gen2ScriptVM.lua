@@ -194,8 +194,15 @@ L.checkmapscene = function(ir, s) emit(s, { "g2_check_scene", ir[2] }) end
 
 -- items --------------------------------------------------------------------
 
-L.giveitem = function(ir, s) emit(s, { "give_item", itemId(ir[2]), ir[3] }) end
-L.verbosegiveitem = L.giveitem
+-- plain `giveitem` is silent; only `verbosegiveitem` prints and plays
+L.giveitem = function(ir, s) emit(s, { "g2_giveitem", itemId(ir[2]), ir[3] }) end
+L.verbosegiveitem = function(ir, s)
+  emit(s, { "give_item", itemId(ir[2]), ir[3] })
+end
+L.getitemname = function(ir, s) emit(s, { "g2_getitemname", itemId(ir[2]) }) end
+L.getmonname = function(ir, s)
+  emit(s, { "g2_getmonname", string.format("SPECIES_%03d", ir[2] or 0) })
+end
 L.takeitem = function(ir, s) emit(s, { "take_item", itemId(ir[2]), ir[3] }) end
 L.checkitem = function(ir, s) emit(s, { "check_item", itemId(ir[2]) }) end
 L.givemoney = function(ir, s) emit(s, { "give_money", ir[3] }) end

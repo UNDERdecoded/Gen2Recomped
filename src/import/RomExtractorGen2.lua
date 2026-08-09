@@ -718,10 +718,21 @@ end
 -- dialogue body, where $50 only ends the current literal run -- stopping
 -- there truncated every line with a name spliced into the middle of it (the
 -- NAME RATER, the Bug Contest results, "Obtained <item>!").
+--
+-- The byte budget is a runaway guard, not a real limit: a long multi-page
+-- speech (OAK's POKeDEX explanation at MrPokemonsHouse) runs past 512 bytes
+-- and used to come out cut mid-word -- "It automatically\nr".  The genuine
+-- end is the bank window, so stop there and leave the budget generous.
+local GEN2_TEXT_MAX_BYTES = 4096
+
 function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth)
   local out = {}
   local offset = 0
-  while offset < 512 do
+  -- keep the three-byte lookaheads ($50 peek, TX_FAR pointer) inside the
+  -- window too, so running off the end returns what was read instead of
+  -- asserting in Rom.offset
+  local limit = (bank == 0 and 0x4000 or 0x8000) - address - 3
+  while offset < GEN2_TEXT_MAX_BYTES and offset < limit do
     local value = self.rom:byte(bank, address + offset)
     local splice = script and RomExtractorGen2.GEN2_TEXT_SPLICE[value]
     if value == 0x50 then
@@ -780,7 +791,7 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
     end
     offset = offset + 1
   end
-  return table.concat(out), 512
+  return table.concat(out), offset
 end
 
 

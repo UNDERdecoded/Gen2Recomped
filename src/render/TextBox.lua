@@ -82,9 +82,12 @@ TextBox.TOKENS = {
   RIVAL = function(game) return game.save.player.rival or "BLUE" end,
   RAM = function(game, arg)
     if arg == "wStringBuffer" then return game.stringBuffer end
-    -- Gen2's text_ram splices wStringBuffer1/2 (the mon nick, the item name,
-    -- the trainer name) into the middle of a line
-    if arg == "wStringBuffer1" or arg == "wStringBuffer2" then
+    -- Gen2's text_ram splices wStringBuffer1..5 (the mon nick, the item
+    -- name, the trainer name) into the middle of a line.  The port keeps a
+    -- single stringBuffer, so every index resolves to it -- wStringBuffer3
+    -- is the one the berry-tree texts use, and leaving it out printed the
+    -- raw token.
+    if arg and arg:match("^wStringBuffer%d$") then
       return game.stringBuffer
     end
     if arg == "wBoxNumString" then return game.boxNumString end

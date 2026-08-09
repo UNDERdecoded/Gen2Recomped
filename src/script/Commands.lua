@@ -290,6 +290,9 @@ function Commands.start_battle(ctx, kind, a, b, opts)
     battle = BattleState.newWild(ctx.game, a, b, opts)
   else
     battle = BattleState.newTrainer(ctx.game, a, b)
+    -- the beaten trainer's own line, printed on the battle screen before
+    -- MoneyForWinningText rather than by the script afterwards
+    battle.endBattleText = opts and opts.endBattleText or nil
   end
   battle.onFinish = function(result)
     ctx.lastBattleResult = result

@@ -22,6 +22,19 @@ local function scriptVar(ctx)
   return ctx.g2Var or 0
 end
 
+-- A text const resolved to finished text, the way show_text would print it.
+-- BattleState:say takes text that is already expanded, not a label.
+local function resolvedText(ctx, textId)
+  local data = ctx.game.data
+  local text = data.text[textId]
+  if not text and ctx.overworld then
+    text = data:resolveText(ctx.overworld.map.def.label, textId)
+  end
+  text = text or textId
+  if type(text) ~= "string" then return nil end
+  return require("src.render.TextBox").substitute(ctx.game, text)
+end
+
 -- ---------------------------------------------------------------------------
 -- control flow
 -- ---------------------------------------------------------------------------
@@ -478,7 +491,15 @@ function Commands.g2_start_battle(ctx)
     Commands.start_battle(ctx, "wild", wild.species, wild.level,
       { shiny = battleType == Commands.G2_BATTLETYPE_SHINY })
   elseif trainer then
-    Commands.start_battle(ctx, "trainer", trainer.group, trainer.id)
+    -- winlosstext's first pointer is the beaten trainer's own line, and
+    -- TrainerBattleVictory prints it ON the battle screen just before
+    -- MoneyForWinningText.  Leaving it to the trailing reloadmapafterbattle
+    -- put the rival's "…Humph!" after the prize money and after the battle
+    -- had already torn down.
+    local won = ctx.g2WinText
+    ctx.g2WinText = nil
+    Commands.start_battle(ctx, "trainer", trainer.group, trainer.id,
+      { endBattleText = won and resolvedText(ctx, won) or nil })
   else
     return
   end
@@ -596,6 +617,34 @@ function Commands.g2_pocket_full(ctx)
             or Bag.pocketSlots(save, "KEY_ITEM", data) >= 20
   ctx.g2Var = full and 1 or 0
   ctx.lastCheck = full
+end
+
+-- `giveitem item, qty` (ReceiveItem) is SILENT: it fills the bag and sets the
+-- carry, nothing else.  The jingle and the "received" line belong to whoever
+-- called it -- `jumpstd receiveitemstd` before it, or `verbosegiveitem`
+-- instead of it.  Routing this to Gen1's give_item played a second fanfare
+-- over the script's own `playsound` and opened a box the ROM never shows
+-- (MrPokemon's MYSTERY EGG, Elm's aide and her POKe BALLs).
+function Commands.g2_giveitem(ctx, itemId, count)
+  local game = ctx.game
+  local ok = require("src.inventory.Bag").add(
+    ctx.save, itemId, count or 1, game.data)
+  if ok then Commands.g2_getitemname(ctx, itemId) end
+  ctx.lastCheck = ok and true or false
+end
+
+-- GetItemName / GetPokemonName copy a name into a string buffer that a later
+-- writetext splices back out ("{RAM:wStringBuffer1}").  The port keeps one
+-- buffer, so the buffer index operand is dropped.  Left unlowered these lines
+-- printed whatever was named last, several scenes ago.
+function Commands.g2_getitemname(ctx, itemId)
+  local def = ctx.game.data.items[itemId]
+  ctx.game.stringBuffer = def and def.name or itemId
+end
+
+function Commands.g2_getmonname(ctx, species)
+  local def = ctx.game.data.pokemon[species]
+  ctx.game.stringBuffer = def and def.name or species
 end
 
 function Commands.g2_check_poke(ctx, species)
@@ -1027,20 +1076,23 @@ function Commands.g2_fruittree(ctx, tree)
   end
   local def = game.data.items[itemId]
   local name = def and def.name or itemId
-  Commands.show_text(ctx, (t._HeyItsFruitText or "Hey! It's\n") .. name .. "!")
+  -- GetFruitTreeItem -> CopyToStringBuffer runs BEFORE the first box, and
+  -- both ROM texts splice the name in themselves ("{RAM:wStringBuffer3}").
+  -- Appending it again printed the previous gift's name plus this one.
+  game.stringBuffer = name
+  Commands.show_text(ctx, t._HeyItsFruitText or ("Hey! It's\n" .. name .. "!"))
   if not require("src.inventory.Bag").add(save, itemId, 1, game.data) then
     -- .packisfull: the fruit stays on the tree, so the flag is NOT set
     return Commands.show_text(ctx,
       t._FruitPackIsFullText or "But the PACK is\nfull…")
   end
   save.g2FruitTrees[tree] = true
-  game.stringBuffer = name
   ctx.textOpts = ctx.textOpts or {}
   ctx.textOpts.auto = {
     sound = function() return require("src.core.Sound").play(game.data, "Get_Item1") end,
     wait = true,
   }
-  Commands.show_text(ctx, (t._ObtainedFruitText or "Obtained\n") .. name .. "!")
+  Commands.show_text(ctx, t._ObtainedFruitText or ("Obtained\n" .. name .. "!"))
 end
 
 -- refreshmap / reloadmap / newloadmap / reanchormap: redraw the loaded map.

@@ -34,7 +34,7 @@ end
 --      equality, which missed on Android and left the pics DMG grey).
 -- v36: warps are decoded from the cart's MapEvents instead of the scaffold,
 --      which now ships empty so no map geometry is committed.
-local CACHE_FORMAT = "rom-cache-v36:"
+local CACHE_FORMAT = "rom-cache-v37:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"

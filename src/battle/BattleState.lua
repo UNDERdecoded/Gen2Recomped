@@ -3931,6 +3931,7 @@ function BattleState:enemyMonFainted()
       -- TrainerNamePointers aims those entries at wTrainerName).  The tag
       -- prints once, so a `para` page carries no second copy (#566).
       local tag = self.trainer and self.trainer.name
+      if require("src.core.GameVersion").isGen2() then tag = nil end -- GSC prints the line plainly
       for page in (self.endBattleText .. "\f"):gmatch("(.-)\f") do
         if page ~= "" then
           self:sayNext(tag and (tag .. ": " .. page) or page)
