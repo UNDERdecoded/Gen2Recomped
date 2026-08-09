@@ -53,6 +53,26 @@ local function pairBlocked(map, mover, sx, sy, tx, ty)
   return false
 end
 
+-- One-way (directional) walls: Gen2 collision classes $b0-$b7 / $c0-$c7.
+-- They are LAND/WATER in CollisionPermissionTable, so the passability test
+-- above waves them through; what actually fences them is
+-- GetMovementPermissions (home/map.asm), which reads the class of the cell
+-- the mover is on plus the four around it and clears the direction bit for
+-- whichever side is walled.  Skipping that is why the player could walk off
+-- the north ledge of an Ice Path cliff instead of being stopped at its lip.
+--
+-- Two halves, matching the ROM: the standing tile blocks stepping OUT over
+-- its walled side, and the destination tile blocks stepping IN through it.
+local OPPOSITE = { up = "down", down = "up", left = "right", right = "left" }
+
+local function sideWallBlocked(map, mover, dir, tx, ty)
+  if not map.sideWallAt then return false end
+  local out = map:sideWallAt(mover.cellX, mover.cellY)
+  if out and out[dir] then return true end
+  local into = map:sideWallAt(tx, ty)
+  return (into and into[OPPOSITE[dir]]) == true
+end
+
 local function verdict(map, entities, mover, dir, tx, ty)
   if not map:inBounds(tx, ty) then
     return false, "bounds"
@@ -61,6 +81,9 @@ local function verdict(map, entities, mover, dir, tx, ty)
     if not (mover.surfing and map:isWaterCell(tx, ty)) then
       return false, "tile"
     end
+  end
+  if sideWallBlocked(map, mover, dir, tx, ty) then
+    return false, "tile"
   end
   if pairBlocked(map, mover, mover.cellX, mover.cellY, tx, ty) then
     return false, "tile"

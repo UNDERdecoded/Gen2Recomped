@@ -1,7 +1,7 @@
 {
   "id": "DRAMATIC_SHAPE",
   "name": "Dramatic Shape Voxel Mod",
-  "version": "1.5.5",
+  "version": "1.6.0",
   "api": 2,
   "entry": "main.lua",
   "profile": "content",
@@ -16,5 +16,6 @@
   ],
   "affects_link": false,
   "description": "A full 3D diorama overworld: extruded terrain, depth-buffered occlusion, voxel characters and a tilt-shift miniature pass -- and battles fought on the map itself, shot over the shoulder at the nearest clear ground with a slow parallax drift and a depth-of-field pass. Water reflects the sky, the sun, the moon and -- through a screen-space ray march -- the shoreline standing behind it. Registers two render pipelines and claims hotkeys 3, 5, 6, 7, 8 and 9 -- 3 and 5 displace the engine's TILT and GBC FX keys, both still reachable on the OPTIONS menu. Presentational only: it changes what a battle is drawn over, never where anybody stands.",
-  "github": "DramaticShape/DramaticShapeVoxelMod"
+  "github": "DramaticShape/DramaticShapeVoxelMod",
+  "update_check": false
 }

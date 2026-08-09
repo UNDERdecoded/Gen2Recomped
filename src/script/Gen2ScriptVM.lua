@@ -18,43 +18,16 @@
 
 local Logger = require("src.core.Logger")
 local MapScripts = require("src.script.MapScripts")
+local Gen2Flags = require("src.script.Gen2Flags")
 require("src.script.Gen2Commands")
 
 local Gen2ScriptVM = {}
 
 local compiled = setmetatable({}, { __mode = "k" })
 
-local function eventFlag(n) return string.format("EVENT_G2_%04d", n) end
+local eventFlag = Gen2Flags.eventFlag
+local engineFlag = Gen2Flags.engineFlag
 local function itemId(n) return string.format("ITEM_%03d", n) end
-
--- EngineFlags ($03:$404D, `dw address, db mask` rows) is what `setflag`/
--- `checkflag` index.  Rows $00-$04 all address wPokegearFlags and row $0B is
--- wStatusFlags bit 0, the POKeDEX bit -- all START-menu features rather than
--- bag items, so they have to land on the names the menus already gate on
--- instead of an opaque FLAG_G2_ id.
-local ENGINE_FLAG_NAMES = {
-  [0] = "EVENT_GOT_RADIO_CARD",
-  [1] = "EVENT_GOT_MAP_CARD",
-  [4] = "EVENT_GOT_POKEGEAR",
-  [11] = "EVENT_GOT_POKEDEX",
-  -- rows $1A-$29 are wJohtoBadges then wKantoBadges, bit 0 first.  The bit
-  -- order is not the card's display order: FlyFunction checks $1F for
-  -- STORMBADGE and StrengthFunction $1C for PLAINBADGE, putting Mineral on
-  -- bit 4 and Storm on bit 5.  Gen2 has no badge ITEM, so these have to carry
-  -- the badge id itself -- Badges.has reads them straight out of save.flags.
-  [26] = "ZEPHYRBADGE", [27] = "HIVEBADGE",
-  [28] = "PLAINBADGE",  [29] = "FOGBADGE",
-  [30] = "MINERALBADGE", [31] = "STORMBADGE",
-  [32] = "GLACIERBADGE", [33] = "RISINGBADGE",
-  [34] = "BOULDERBADGE", [35] = "CASCADEBADGE",
-  [36] = "THUNDERBADGE", [37] = "RAINBOWBADGE",
-  [38] = "SOULBADGE",    [39] = "MARSHBADGE",
-  [40] = "VOLCANOBADGE", [41] = "EARTHBADGE",
-}
-
-local function engineFlag(n)
-  return ENGINE_FLAG_NAMES[n] or string.format("FLAG_G2_%04d", n)
-end
 
 -- ---------------------------------------------------------------------------
 -- lowering table: ir row -> zero or more ScriptRunner rows
@@ -305,6 +278,14 @@ L.pokemart = function(ir, s) emit(s, { "g2_mart", ir[3] }) end
 -- script var, which is what the prize counters branch on.
 L.elevator = function(ir, s) emit(s, { "g2_elevator", ir[2] }) end
 L.loadmenu = function(ir, s) emit(s, { "g2_loadmenu", ir[2] }) end
+-- `writecmdqueue <ptr>`: the extractor has already followed the queue entry
+-- and, when it is a CMDQUEUE_STONETABLE, turned it into the table's rows.
+-- Registering them is all the map callback has to do -- the overworld fires
+-- the matching row when a boulder settles on a hole.  A queue entry of any
+-- other type still resolves to a bare pointer, which stays inert.
+L.writecmdqueue = function(ir, s)
+  if type(ir[2]) == "table" then emit(s, { "g2_stonetable", ir[2] }) end
+end
 L.verticalmenu = function(_, s) emit(s, { "g2_verticalmenu" }) end
 L.checktime = function(ir, s) emit(s, { "g2_checktime", ir[2] }) end
 -- No phone model yet, but the answer still has to be written: the nurse's
@@ -341,6 +322,7 @@ local SPECIALS = {
   [0x1E] = "g2_daycare_man",     -- DayCareMan, wBreedMon1
   [0x1F] = "g2_daycare_lady",    -- DayCareLady, wBreedMon2
   [0x20] = "g2_daycare_outside", -- DayCareManOutside, the EGG handover
+  [0x24] = "g2_name_rival",  -- NameRival, the Elm's Lab officer scene
   [0x25] = "g2_set_day_of_week", -- SetDayOfWeek, mom's clock talk
   [0x29] = "g2_unown_puzzle", -- UnownPuzzle, the Ruins of Alph wall patterns
   [0x2A] = "g2_slots",       -- SlotMachine, wScriptVar picks the lucky one

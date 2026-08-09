@@ -51,7 +51,7 @@ local osName    = (love.system and love.system.getOS and love.system.getOS()) or
 local isWindows = osName == "Windows"
 local saveDir   = love.filesystem.getSaveDirectory()
 
-local API_URL = "https://api.github.com/repos/bryanthaboi/gen1recomp/releases/latest"
+local API_URL = "https://api.github.com/repos/UNDERdecoded/Gen2Recomped/releases/latest"
 
 -- the release picked by the last "check"; kept between commands so "download"
 -- knows the payload url/size/name without re-fetching

@@ -1,9 +1,17 @@
 -- SaveConvert -- the runtime-facing entry point the launcher UI calls to
--- turn a vanilla Gen1 (Red/Blue, international) battery save into this
--- project's in-memory save table, and back out to a raw .sav image.
+-- turn a vanilla battery save into this project's in-memory save table, and
+-- back out to a raw .sav image.
+--
+-- Two codecs sit behind it, picked by the generation of the game the save
+-- belongs to: GenSave for Gen1 (Red/Blue/Yellow) and Gen2Save for Gen2
+-- (Gold/Silver).  Both battery images are 32768 bytes, so nothing upstream
+-- can tell them apart -- routing has to be by version, and before this
+-- split a Gold save was decoded with Gen1 offsets, which lost the day-care
+-- pens and all sixteen badges outright (they live nowhere Gen1 has a field
+-- for).  See src/save_convert/Gen2Save.lua's header.
 --
 -- This is the ONE place the engine, the tests and the CLI
--- (tools/save_convert/convert.lua) share: the GenSave codec, the crosswalk
+-- (tools/save_convert/convert.lua) share: the codecs, the crosswalk
 -- data loading, the merge over new-game defaults, and the version tag all
 -- live here so every consumer behaves identically.
 --
@@ -21,6 +29,7 @@
 -- require alone cannot see them there (#420).
 
 local GenSave = require("src.save_convert.GenSave")
+local Gen2Save = require("src.save_convert.Gen2Save")
 
 local SaveConvert = {}
 
@@ -44,6 +53,17 @@ local DATA_MODULES = {
   charmap    = { "src.save_convert.data.charmap",   "src/save_convert/data/charmap.lua" },
   eventFlags = { "src.save_convert.data.event_flags", "src/save_convert/data/event_flags.lua" },
 }
+
+-- Gen2's text table is not Gen1's: it comes out of the ROM cache the same
+-- way the other generated tables do (byte -> glyph, keyed by the byte's
+-- decimal value as a string -- Gen2Save.setCharmap takes that shape).
+local GEN2_CHARMAP = { "data.generated.charmap", "data/generated/charmap.lua" }
+
+-- field.lua carries the two Gen2-only tables the codec needs to import a
+-- cartridge save's flags: EngineFlags' row -> (WRAM address, bit) rows, and
+-- the wVisitedSpawns bit -> map pairing behind the FLY list.  It is optional:
+-- a cache built before the extractor emitted them just decodes fewer flags.
+local GEN2_FIELD = { "data.generated.field", "data/generated/field.lua" }
 
 local function loadTable(requirePath, filePath)
   local ok, mod = pcall(require, requirePath)
@@ -104,6 +124,20 @@ end
 -- never be handed the previous import's data (#420).
 local crosswalks = {}   -- [key] = { pokemon=, moves=, items=, maps=, eventFlags= }
 local charmapReady
+local gen2CharmapKey
+
+-- Which codec a save belongs to.  GameVersion is the single source of truth
+-- for a version's generation; a caller that names no version at all falls
+-- back to whatever version is currently selected, and Gen1 if even that is
+-- unavailable (the headless CLI and the pure-Lua tests).
+local function codecFor(gameVersion)
+  local ok, GameVersion = pcall(require, "src.core.GameVersion")
+  if not ok or type(GameVersion) ~= "table" then return GenSave end
+  local id = gameVersion or GameVersion.get()
+  if GameVersion.generation(id) == 2 then return Gen2Save end
+  return GenSave
+end
+SaveConvert.codecFor = codecFor
 
 local function ensureData(gameVersion)
   local key = gameVersion or "*"
@@ -121,6 +155,25 @@ local function ensureData(gameVersion)
       end
     end
     crosswalks[key] = data
+  end
+  if codecFor(gameVersion) == Gen2Save then
+    -- one game's charmap is not another's, and Gen2Save keeps a single
+    -- module-level one, so re-arm it whenever the game changes
+    if gen2CharmapKey ~= key then
+      local cm = loadCacheTable(gameVersion, GEN2_CHARMAP[2])
+      if not cm then
+        local e
+        cm, e = loadTable(GEN2_CHARMAP[1], GEN2_CHARMAP[2])
+        if not cm then return nil, e end
+      end
+      Gen2Save.setCharmap(cm)
+      gen2CharmapKey = key
+    end
+    if crosswalks[key].field == nil then
+      crosswalks[key].field = loadCacheTable(gameVersion, GEN2_FIELD[2])
+        or loadTable(GEN2_FIELD[1], GEN2_FIELD[2]) or false
+    end
+    return crosswalks[key]
   end
   if not charmapReady then
     local cm, err = loadTable(DATA_MODULES.charmap[1], DATA_MODULES.charmap[2])
@@ -161,15 +214,29 @@ local function defaultsSave()
   }
 end
 
+-- Where an import lands a player whose saved map could not be resolved (a
+-- ROM cache built before the extractor started stamping Gen2 map group /
+-- number onto every map).  Mirrors src/core/Data.lua's BOOT_DEFAULTS and its
+-- Gen2 override, so the save is at least bootable until the ROM is
+-- re-imported.
+local FALLBACK_SPAWN = {
+  [1] = { map = "REDS_HOUSE_2F", x = 3, y = 6 },
+  [2] = { map = "PLAYERS_HOUSE2_F", x = 3, y = 3 },
+}
+
 -- Merge a GenSave.decode() result over the new-game defaults, exactly the
 -- way convert.lua did, then stamp the requested version.  Keep the imported
 -- SRAM image with the slot: Pokémon Red restores its saved current-map cache
 -- before Continue, and an export needs that unmodeled data to remain bootable.
 -- Decode warnings are only import diagnostics and do not belong in the slot.
-local function mergeDefaults(decoded, version)
+local function mergeDefaults(decoded, version, generation)
   decoded.warnings = nil
   local save = defaultsSave()
   for k, v in pairs(decoded) do save[k] = v end
+  if not save.player.map then
+    local spawn = FALLBACK_SPAWN[generation or 1] or FALLBACK_SPAWN[1]
+    save.player.map, save.player.x, save.player.y = spawn.map, spawn.x, spawn.y
+  end
   save.lastHeal = { map = save.player.map, x = save.player.x, y = save.player.y }
   save.lastOutdoor = save.lastOutdoor or { id = save.player.map }
   if version ~= nil then
@@ -186,51 +253,53 @@ SaveConvert.mergeDefaults = mergeDefaults
 
 -- importSav(bytes, version, gameVersion) -> saveTable, err
 -- bytes: the raw 32768-byte SRAM string. Validates size and the main-data
--- checksum, decodes through GenSave, and returns a save table fully merged
--- over the new-game defaults and tagged with `version`, ready to hand to
--- SaveSerializer.encode for a slot file. gameVersion ("red"/"blue"/"yellow")
--- names the game the save is being imported for, which is what selects the
--- crosswalk tables; omit it to take whatever `require` resolves. On any
--- failure returns nil + a message (never raises).
+-- checksum, decodes through the codec for that game's generation, and returns
+-- a save table fully merged over the new-game defaults and tagged with
+-- `version`. gameVersion ("red"/"blue"/"yellow"/"gold"/"silver") names the game
+-- the save is being imported for, which selects both the crosswalk tables and
+-- the codec; omit it to take the currently selected version. On any failure
+-- returns nil + a message (never raises).
 function SaveConvert.importSav(bytes, version, gameVersion)
   if type(bytes) ~= "string" then
     return nil, "expected raw save bytes as a string"
   end
-  if #bytes ~= GenSave.SAVE_SIZE then
-    return nil, ("save must be %d bytes, got %d"):format(GenSave.SAVE_SIZE, #bytes)
+  if #bytes ~= SaveConvert.SAVE_SIZE then
+    return nil, ("save must be %d bytes, got %d"):format(SaveConvert.SAVE_SIZE, #bytes)
   end
   local data, derr = ensureData(gameVersion)
   if not data then return nil, derr end
 
-  local ok, decoded = pcall(GenSave.decode, bytes, data)
+  local codec = codecFor(gameVersion)
+  local ok, decoded = pcall(codec.decode, bytes, data)
   if not ok then return nil, "decode failed: " .. tostring(decoded) end
 
-  -- checksum validation: GenSave.decode records a warning rather than
-  -- throwing (so it can still read a foreign/corrupt save), but for the
-  -- runtime import path a bad main-data checksum means the file is not a
-  -- trustworthy save, so reject it.
+  -- checksum validation: decode records a warning rather than throwing (so it
+  -- can still read a foreign/corrupt save), but for the runtime import path a
+  -- bad checksum means the file is not a trustworthy save, so reject it.  A
+  -- Gen1 image fed to the Gen2 codec (or the reverse) fails here, which is
+  -- exactly the "you picked the wrong game's save" answer the launcher wants.
   for _, w in ipairs(decoded.warnings or {}) do
     if tostring(w):find("checksum") then
       return nil, "save data checksum invalid (" .. tostring(w) .. ")"
     end
   end
 
-  return mergeDefaults(decoded, version)
+  return mergeDefaults(decoded, version, codec == Gen2Save and 2 or 1)
 end
 
 -- exportSav(saveTable, gameVersion) -> bytes, err
 -- Encodes a save table back to a raw 32768-byte SRAM image. Template-aware:
 -- if the table still carries the stashed import template (saveTable.rawImport)
--- GenSave reproduces every unmodeled region from it; otherwise those regions
--- are zero-filled. gameVersion selects the crosswalk tables exactly as in
--- importSav. On failure returns nil + a message (never raises).
+-- the codec reproduces every unmodeled region from it; otherwise those regions
+-- are zero-filled. gameVersion selects the codec and crosswalk tables exactly
+-- as in importSav. On failure returns nil + a message (never raises).
 function SaveConvert.exportSav(saveTable, gameVersion)
   if type(saveTable) ~= "table" then
     return nil, "expected a save table"
   end
   local data, derr = ensureData(gameVersion)
   if not data then return nil, derr end
-  local ok, bytes = pcall(GenSave.encode, saveTable, data, nil)
+  local ok, bytes = pcall(codecFor(gameVersion).encode, saveTable, data, nil)
   if not ok then return nil, "encode failed: " .. tostring(bytes) end
   return bytes
 end

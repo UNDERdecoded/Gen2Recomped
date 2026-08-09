@@ -36,7 +36,25 @@ function PokedexMenu:sgbPalettes(game)
   return out
 end
 
--- The listing, as one array of species ids indexed by dex number.
+-- wCurrentDexMode (Pokedex_OrderMonsByMode's jumptable).  A new game starts
+-- in NEW; the option screen is the only thing that changes it, and the
+-- choice is saved.
+PokedexMenu.MODE_NEW = 0
+PokedexMenu.MODE_OLD = 1
+PokedexMenu.MODE_ABC = 2
+
+local function nationalOrder(game)
+  local constants = game.data.constants or {}
+  local byDex = {}
+  for _, def in pairs(game.data.pokemon) do
+    if def.dex then byDex[def.dex] = def.id end
+  end
+  local out = {}
+  for n = 1, constants.dexSize or 151 do out[n] = byDex[n] end
+  return out
+end
+
+-- The listing, as one array of species ids indexed by listing position.
 --
 -- Generation 1 has exactly one order and def.dex is it.  Generation 2 has
 -- three (Pokedex_OrderMonsByMode's jumptable) and starts a new game in mode
@@ -45,17 +63,67 @@ end
 -- which is .OldMode -- the listing you switch to, not the one you are
 -- handed -- so following it put BULBASAUR at #001 before the player had any
 -- business seeing a Kanto number at all.
-local function listing(game)
+--
+-- .ABCMode walks AlphabeticalPokedexOrder and keeps only the mons the player
+-- has seen, so that listing is short and has no gaps.
+local function listing(game, mode)
   local constants = game.data.constants or {}
-  local regional = constants.regionalOrder
-  if type(regional) == "table" and #regional > 0 then return regional end
-  local byDex = {}
-  for _, def in pairs(game.data.pokemon) do
-    if def.dex then byDex[def.dex] = def.id end
+  if mode == PokedexMenu.MODE_ABC then
+    local dex = game.save.pokedex or { seen = {}, owned = {} }
+    local out = {}
+    for _, def in pairs(game.data.pokemon) do
+      if def.dex and (dex.owned[def.id] or dex.seen[def.id]) then
+        out[#out + 1] = def.id
+      end
+    end
+    table.sort(out, function(a, b)
+      local na, nb = game.data.pokemon[a].name, game.data.pokemon[b].name
+      if na == nb then return tostring(a) < tostring(b) end
+      return na < nb
+    end)
+    -- an empty list has nothing to put a cursor on; fall through to NEW
+    if #out > 0 then return out end
+    mode = PokedexMenu.MODE_NEW
   end
-  local out = {}
-  for n = 1, constants.dexSize or 151 do out[n] = byDex[n] end
-  return out
+  if mode ~= PokedexMenu.MODE_OLD then
+    local regional = constants.regionalOrder
+    if type(regional) == "table" and #regional > 0 then return regional end
+  end
+  return nationalOrder(game)
+end
+
+-- Pokedex_CheckUnlockedUnownMode: UNOWN MODE only exists once the Ruins of
+-- Alph scientist has upgraded the dex (`setflag ENGINE_UNOWN_DEX`).
+local function unownModeUnlocked(game)
+  local flags = game.save and game.save.flags
+  return (flags and flags.EVENT_GOT_UNOWN_DEX) and true or false
+end
+
+-- The SELECT screen (Pokedex_InitOptionScreen).  Picking an order closes the
+-- listing and rebuilds it, which is what wCurrentDexMode does on the way back
+-- out of the option screen.
+local function openOptionScreen(game, dexList, opts)
+  local Menu = require("src.ui.Menu")
+  local function switchTo(mode)
+    game.save.dexMode = mode
+    dexList:close()
+    require("src.ui.Screens").push(game, "PokedexMenu", opts)
+  end
+  local entries = {
+    { label = Strings("NEW MODE"),
+      onSelect = function() switchTo(PokedexMenu.MODE_NEW) end },
+    { label = Strings("OLD MODE"),
+      onSelect = function() switchTo(PokedexMenu.MODE_OLD) end },
+    { label = Strings("A to Z"),
+      onSelect = function() switchTo(PokedexMenu.MODE_ABC) end },
+  }
+  if unownModeUnlocked(game) then
+    entries[#entries + 1] = { label = Strings("UNOWN"), onSelect = function()
+      require("src.ui.Screens").push(game, "PokedexUnownMode")
+    end }
+  end
+  game.stack:push(Menu.new(game, entries,
+    { tx = 5, ty = 4, tw = 10, th = #entries * 2 + 2 }))
 end
 
 function PokedexMenu.new(game, opts)
@@ -67,23 +135,33 @@ function PokedexMenu.new(game, opts)
   -- before that key existed on the Kanto numbering
   local constants = game.data.constants or {}
   local numFmt = ("%%0%dd"):format(constants.dexDigits or 3)
-  local order = listing(game)
   -- Gen2's listing carries no dex number: Pokedex_PrintNumberIfOldMode only
   -- prints one in mode 1, and a new game starts in mode 0
   local gen2 = require("src.core.GameVersion").isGen2()
+  local mode = gen2 and (game.save.dexMode or PokedexMenu.MODE_NEW)
+    or PokedexMenu.MODE_NEW
+  local order = listing(game, mode)
   for n = 1, #order do
     local def = game.data.pokemon[order[n]]
     if def then
+      -- OLD #DEX MODE numbers with the national number, which is what
+      -- def.dex already is
+      local prefix = ""
+      if not gen2 then
+        prefix = (numFmt .. " "):format(n)
+      elseif mode == PokedexMenu.MODE_OLD then
+        prefix = (numFmt .. " "):format(def.dex or n)
+      end
       local label
       if dex.owned[def.id] then
-        label = gen2 and def.name or (numFmt .. " %s"):format(n, def.name)
+        label = prefix .. def.name
         owned = owned + 1
         seen = seen + 1
       elseif dex.seen[def.id] then
-        label = gen2 and def.name or (numFmt .. " %s"):format(n, def.name)
+        label = prefix .. def.name
         seen = seen + 1
       else
-        label = gen2 and "-----" or (numFmt .. " -----"):format(n)
+        label = prefix .. "-----"
       end
       table.insert(items, {
         label = label,
@@ -99,6 +177,11 @@ function PokedexMenu.new(game, opts)
     gen2Dex = gen2 and { seen = seen, owned = owned } or nil,
     pageJump = true, -- Left/Right page jumps like the original
     onCancel = opts.onCancel, -- B returns to the start menu when opened from it
+    -- Pokedex_UpdateMainScreen: SELECT opens the option screen (Gen2 only --
+    -- Gen1's dex has no modes)
+    onSelectKey = gen2 and function(_, dexList)
+      openOptionScreen(game, dexList, opts)
+    end or nil,
     onChoose = function(item, dexList)
       if not item.value then return end
       local Screens = require("src.ui.Screens")

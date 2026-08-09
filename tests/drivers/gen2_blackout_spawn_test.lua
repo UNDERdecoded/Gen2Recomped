@@ -41,6 +41,9 @@ return function(game)
 
   U.newGame(game)
   U.wait(30)
+  -- U.newGame lands on CONTINUE when a save already exists, and lastHeal below
+  -- must be the untouched new-game fallback, not an earlier run's centre
+  U.freshSave(game)
 
   -- the ROM's own fallback, before any centre has been visited
   local start = game.save.lastHeal

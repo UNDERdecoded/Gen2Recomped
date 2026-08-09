@@ -18,7 +18,7 @@
 
 local Check = {}
 
-Check.REPO = "bryanthaboi/gen1recomp"
+Check.REPO = "UNDERdecoded/Gen2Recomped"
 
 local CMD = "update_check_cmd"
 local STATE = "update_check_state"

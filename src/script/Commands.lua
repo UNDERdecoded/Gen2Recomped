@@ -245,10 +245,19 @@ function Commands.give_item(ctx, itemId, count, gotText)
   -- skips the received text entirely when AddItemToInventory refuses)
   if not require("src.inventory.Bag").add(
       ctx.save, itemId, count or 1, ctx.game.data) then
+    ctx.lastCheck = false
     Commands.show_text(ctx, ctx.game.data.text
       and ctx.game.data.text._BagFullText or Strings("You can't carry\nany more items!"))
     return math.huge
   end
+  -- Gen2's `verbosegiveitem` lowers here and reports through wScriptVar, and
+  -- every gift script reads it back with `iffalse .BagFull` on the very next
+  -- line.  Leaving lastCheck alone left the *preceding* `checkevent
+  -- EVENT_GOT_TM..` result standing -- false, since the player has not got it
+  -- yet -- so the branch always fired and skipped the `setevent` behind it.
+  -- The TM was handed over and never marked, so the Ilex Forest HEADBUTT guy
+  -- and every other TM giver paid out again on each talk.
+  ctx.lastCheck = true
   local def = ctx.game.data.items[itemId]
   -- GiveItem -> GetItemName + CopyToStringBuffer: the received texts
   -- read the name back out of wStringBuffer

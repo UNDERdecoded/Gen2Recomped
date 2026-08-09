@@ -2797,6 +2797,15 @@ function RomExtractorGen2:extractMapsFromRom()
       def.tileset = (header and tilesetNames[header.tileset])
         or inferTilesetId(mapId, def.label)
       def.landmark = header and header.landmark or def.landmark
+      -- The map's (group, number) pair from MapGroupPointers.  Warps already
+      -- carry it, but a save does too -- wMapGroup/wMapNumber is the ONLY
+      -- record a Gold/Silver battery save keeps of where the player was
+      -- standing, so src/save_convert/Gen2Save.lua needs the reverse lookup
+      -- to put an imported save back on the right map.
+      if header then
+        def.group = header.group
+        def.number = header.number
+      end
       -- map header byte 2 (constants/map_data_constants.asm ENVIRONMENT_*):
       -- 1 TOWN, 2 ROUTE, 3 INDOOR, 4 CAVE, 5 ENVIRONMENT_5, 6 GATE,
       -- 7 DUNGEON.  Escape Rope / Dig gate on CAVE and DUNGEON.
@@ -3260,6 +3269,44 @@ function RomExtractorGen2:gen2MenuItems(bank, address)
   return ok and items and #items > 0 and items or nil
 end
 
+-- `writecmdqueue <ptr>` copies one `cmdqueue TYPE, <ptr>` row -- db type, dw
+-- address, dw filler -- into wCmdQueue, and the only type any map uses is
+-- CMDQUEUE_STONETABLE (2).  That address holds `stonetable <warp id>,
+-- <object event id>, <script>` rows (db, db, dw) terminated by -1, which
+-- CmdQueue_StoneTable/HandleStoneQueue walk every frame looking for a
+-- strength boulder that has come to rest on a pit tile: when the boulder's
+-- own object id and the warp under it both match a row, that row's script
+-- runs.  It is what drops the four Ice Path B1F boulders through to B2F and
+-- what clears Blackthorn Gym's floor.  Without it the boulders just sat on
+-- the holes, so the puzzle could not be solved.
+--
+-- Resolved at import time for the same reason as elevator/loadmenu: the row
+-- only carries a word, and the bank is the enclosing script's.
+function RomExtractorGen2:gen2StoneTable(bank, address, pool)
+  local CMDQUEUE_STONETABLE, MAX_ROWS = 2, 8
+  if type(address) ~= "number" or address < 0x4000 then return nil end
+  local ok, rows = pcall(function()
+    if self.rom:byte(bank, address) ~= CMDQUEUE_STONETABLE then return nil end
+    local at = self.rom:word(bank, address + 1)
+    if at < 0x4000 then return nil end
+    local out = {}
+    for _ = 1, MAX_ROWS do
+      local warp = self.rom:byte(bank, at)
+      if warp == 0xFF then break end
+      local script = self:gen2QueueScript(bank, self.rom:word(bank, at + 2), pool)
+      if not script then return nil end
+      out[#out + 1] = {
+        warp = warp,
+        object = self.rom:byte(bank, at + 1),
+        script = script,
+      }
+      at = at + 4
+    end
+    return out
+  end)
+  return ok and rows and #rows > 0 and rows or nil
+end
+
 function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
   local rows = {}
   local limit = bank == 0 and 0x4000 or 0x8000
@@ -3320,6 +3367,8 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
       row[2] = self:gen2ElevatorFloors(bank, row[2]) or row[2]
     elseif name == "loadmenu" then
       row[2] = self:gen2MenuItems(bank, row[2]) or row[2]
+    elseif name == "writecmdqueue" then
+      row[2] = self:gen2StoneTable(bank, row[2], pool) or row[2]
     end
     rows[#rows + 1] = row
     pool.instructions = pool.instructions + 1
@@ -3453,13 +3502,19 @@ function RomExtractorGen2:gen2SpawnPoints(maps, keys)
   end
 
   local points = {}
+  -- the row number is the SPAWN_* constant, which is also the bit
+  -- wVisitedSpawns records the Fly destination under (gen2SpawnFlags)
+  local order = {}
   for index = 0, GEN2_SPAWN_MAX - 1 do
     local ok, row = pcall(self.rom.bytes, self.rom, sym.bank,
       sym.address + index * GEN2_SPAWN_ROW_BYTES, GEN2_SPAWN_ROW_BYTES)
     if not ok or row[1] == 0xFF then break end
     local entry = mapIndex[row[1] * 256 + row[2]]
     local key = entry and keyByLabel[entry.label]
-    if key then points[key] = { x = row[3], y = row[4] } end
+    if key then
+      points[key] = { x = row[3], y = row[4] }
+      order[#order + 1] = { index = index, map = key }
+    end
   end
   if not next(points) then return nil end
 
@@ -3471,7 +3526,7 @@ function RomExtractorGen2:gen2SpawnPoints(maps, keys)
     end
   end
 
-  return { points = points, centers = centers }
+  return { points = points, centers = centers, order = order }
 end
 
 -- R/B keeps a Fly-warp table; GSC does not.  Picking a landmark off the town
@@ -3519,7 +3574,57 @@ function RomExtractorGen2:gen2FlyOrder(warps)
   return out
 end
 
--- `PhoneContacts` ([36,$443A], data/phone/phone_contacts.asm) is the table the
+-- `EngineFlags` ([3,$404D], data/engine_flags.asm) is the `dw address, db mask`
+-- table `setflag`/`checkflag`/`checkevent`'s ENGINE_* rows index.  The rows
+-- point all over the save's WRAM block -- badges, Pokegear cards, day-care,
+-- the Fly points, the daily flags -- and src/script/Gen2ScriptVM.lua only ever
+-- sees the ROW NUMBER, which it spells FLAG_G2_nnnn.
+--
+-- Handing the addresses to src/save_convert/Gen2Save.lua is what lets an
+-- imported cartridge save carry every one of those bits under the same id the
+-- scripts check, instead of only the handful that had been special-cased.
+--
+-- The table has no terminator: it simply ends, so a row whose address leaves
+-- WRAM or whose mask is not a single bit is the first byte past it.
+local GEN2_ENGINE_FLAG_ROW_BYTES = 3
+local GEN2_ENGINE_FLAG_MAX = 128
+local SINGLE_BIT = {
+  [0x01] = 0, [0x02] = 1, [0x04] = 2, [0x08] = 3,
+  [0x10] = 4, [0x20] = 5, [0x40] = 6, [0x80] = 7,
+}
+
+function RomExtractorGen2:gen2EngineFlags()
+  local sym = self:symbol("EngineFlags")
+  if not (sym and self.rom) then return nil end
+  local out = {}
+  for row = 0, GEN2_ENGINE_FLAG_MAX - 1 do
+    local ok, bytes = pcall(self.rom.bytes, self.rom, sym.bank,
+      sym.address + row * GEN2_ENGINE_FLAG_ROW_BYTES, GEN2_ENGINE_FLAG_ROW_BYTES)
+    if not ok then break end
+    local address = bytes[1] + bytes[2] * 256
+    local bitIndex = SINGLE_BIT[bytes[3]]
+    if not bitIndex or address < 0xC000 or address > 0xDFFF then break end
+    out[#out + 1] = { row = row, address = address, bit = bitIndex }
+  end
+  return #out > 0 and out or nil
+end
+
+-- wVisitedSpawns ($D9EE, `flag_array NUM_SPAWNS`) is the Fly-destination set:
+-- HasVisitedSpawn tests bit [spawn id], and a spawn id IS a SpawnPoints row
+-- number.  This project spells the same set save.visited[mapId] (see
+-- src/ui/TownMap.lua), so pair each bit with the map its row names.
+function RomExtractorGen2:gen2SpawnFlags()
+  local spawns = self._gen2Spawns
+  local order = spawns and spawns.order
+  if not order then return nil end
+  local out = {}
+  for _, entry in ipairs(order) do
+    out[#out + 1] = { bit = entry.index, map = entry.map }
+  end
+  return #out > 0 and out or nil
+end
+
+
 -- PHONE_* constants index -- the same numbers `addcellnum`,
 -- `askforphonenumber` and `checkcellnum` carry.  Each row is twelve bytes:
 --
@@ -5102,6 +5207,9 @@ function RomExtractorGen2:extractField()
       or src.gen2Whirlpools
     src.flyWarps = self:gen2FlyWarps() or src.flyWarps
     src.flyOrder = self:gen2FlyOrder(src.flyWarps) or src.flyOrder
+    -- what the save codec needs to carry a cartridge save's flags and Fly set
+    src.engineFlags = self:gen2EngineFlags() or src.engineFlags
+    src.spawnFlags = self:gen2SpawnFlags() or src.spawnFlags
     src.gen2FruitTrees = self:gen2FruitTrees() or src.gen2FruitTrees
     src.gen2DarkMaps = self:gen2DarkMaps() or src.gen2DarkMaps
     src.gen2TreeMons = self:gen2TreeMons() or src.gen2TreeMons
@@ -5286,6 +5394,61 @@ function RomExtractorGen2:extractUnownPuzzle()
   return true
 end
 
+-- The Pokédex's UNOWN MODE (engine/pokedex/pokedex.asm).
+-- Pokedex_LoadUnownFont requests UnownFont at FIRST_UNOWN_CHAR, so tiles
+-- 1-26 are the printed letters A-Z.  Its Pokedex_InvertTiles pass is not
+-- reproduced: the ROM prints these on the dex's inverted $60-$7f field,
+-- while the port draws them on a plain page, so the rip is kept the way it
+-- is stored -- strokes on shade 3, field on shade 0, which drops out.
+--
+-- PrintUnownWord (engine/pokedex/unown_dex.asm) walks UnownWords, whose
+-- entry 0 is an unused duplicate of A's.  The strings are not charmap text:
+-- the `unownword` macro stores each character as its UnownFont tile id and
+-- terminates with -1, so decoding them as dialogue produced {BYTE:nn} runs.
+function RomExtractorGen2:extractUnownDex()
+  local font = self:symbol("UnownFont")
+  if not (self.rom and font) then return false end
+  local ok, result = pcall(function()
+    local NUM_UNOWN = 26
+    local raw = self.rom:bytes(font.bank, font.address, NUM_UNOWN * 16)
+    local relPath = "ui/unown_font.png"
+    self:saveImage(
+      ImageWriter.decode2bpp(raw, NUM_UNOWN * 8, 8, true), relPath)
+    local words
+    local table_ = self:symbol("UnownWords")
+    if table_ then
+      words = {}
+      local base
+      for i = 1, NUM_UNOWN do
+        local at = self.rom:word(table_.bank, table_.address + i * 2)
+        local letters = {}
+        for n = 0, 15 do
+          local b = self.rom:byte(table_.bank, at + n)
+          if b == 0xFF then break end
+          -- word 1 is "ANGRY", so its first tile id is FIRST_UNOWN_CHAR
+          base = base or b
+          letters[#letters + 1] = string.char(65 + (b - base) % NUM_UNOWN)
+        end
+        words[i] = table.concat(letters)
+      end
+    end
+    return {
+      font = "assets/generated/" .. relPath,
+      letters = NUM_UNOWN,
+      tile = 8,
+      words = words,
+    }
+  end)
+  if not ok then
+    Logger.warn("Gen2 Unown dex: %s", tostring(result))
+    return false
+  end
+  self:write("unown_dex", result)
+  Logger.info("Gen2 Unown dex: %d letters, %d words",
+    result.letters, result.words and #result.words or 0)
+  return true
+end
+
 local GEN2_FONT_TILES = 128
 local GEN2_FONT_EXTRA_TILES = 32
 local GEN2_FRAME_TILES = 6
@@ -5308,7 +5471,7 @@ GEN2_ANIM.CMD_BASE = 0xD0
 GEN2_ANIM.OPS = {
   [0xD0] = { "obj", 4 },          [0xD6] = { "incobj", 1 },
   [0xD7] = { "setobj", 2 },       [0xD8] = { "incbgeffect", 1 },
-  [0xD9] = { "battlergfx_1row" }, [0xDA] = { "battlergfx_2row" },
+  [0xD9] = { "battlergfx_2row" }, [0xDA] = { "battlergfx_1row" },
   [0xDB] = { "checkpokeball" },   [0xDC] = { "transform" },
   [0xDD] = { "raisesub" },        [0xDE] = { "dropsub" },
   [0xDF] = { "resetobp0" },       [0xE0] = { "sound", 2 },
@@ -5324,8 +5487,9 @@ GEN2_ANIM.OPS = {
   [0xFD] = { "loop", 3 },         [0xFE] = { "call", 2 },
   [0xFF] = { "ret" },
 }
+-- which argument byte starts the `dw address` operand
 GEN2_ANIM.JUMPS = {
-  jump = 1, call = 1, jumpuntil = 1,
+  jump = 1, call = 1, jumpuntil = 1, loop = 2,
   ifparamand = 2, ifparamequal = 2, ifvarequal = 2,
 }
 GEN2_ANIM.OBJECT_BYTES = 6
@@ -6084,6 +6248,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   self:extractBattleHudSheets()
   self:extractTrainerCardBadges()
   self:extractUnownPuzzle()
+  self:extractUnownDex()
   if not fontFromRom then
     -- keep the placeholders so RomImporter's readiness check still passes
     self:copyAsset("assets/logo/pokemon_logo.png",

@@ -136,6 +136,10 @@ FieldDefaults.FIELD = {
   cutTreeSwaps = {},
   flyOrder = {},
   flyWarps = {},
+  -- Gen2 only: EngineFlags rows ({ row, address, bit }) and the
+  -- wVisitedSpawns bit -> map pairing, both read by the Gen2 save codec.
+  engineFlags = {},
+  spawnFlags = {},
   playerSprites = PLAYER_SPRITES,
   playerPics = PLAYER_PICS,
   lastMapRewrites = LAST_MAP_REWRITES,

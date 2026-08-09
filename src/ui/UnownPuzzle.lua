@@ -124,10 +124,11 @@ function UnownPuzzle:update()
 end
 
 -- The four DMG shades of the extracted picture, mapped to the palette the
--- hardware loads for this screen; nil in DMG modes, where the shade-remap
--- shader owns the colour instead.
+-- hardware loads for this screen.  This is a Gen 2 screen, so the ROM's own
+-- CGB palette applies in every COLORS mode (PaletteFX's gen2Native): gating it
+-- on ADVANCED left the puzzle in flat greys under SGB, which paints no zone
+-- here.
 function UnownPuzzle:palette()
-  if not PaletteFX.usesGbcPack() then return nil end
   local pal = self.def.palette
   if type(pal) ~= "table" or #pal < 4 then return nil end
   return pal

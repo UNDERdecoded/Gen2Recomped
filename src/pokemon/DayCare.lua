@@ -84,6 +84,50 @@ function DayCare.syncFlags(save)
   end
 end
 
+-- Route34EggCheckCallback and DayCareEggCheckCallback (both MAPCALLBACK_OBJECTS)
+-- are the other half of the wiring: they mirror the three engine flags above
+-- onto four sprite-visibility events.  A SET event HIDES its object
+-- (constants/event_flags.asm), so "show" means clear:
+--   EGG        -> MAN OUTSIDE shown on ROUTE_34, MAN INSIDE hidden in DAY_CARE
+--   no EGG     -> the reverse
+--   MAN's pen  -> SPRITE_MON_BREED_1 in the yard
+--   LADY's pen -> SPRITE_MON_BREED_2 in the yard
+-- The event ids are read off the map objects themselves rather than hardcoded,
+-- so they follow whatever the extractor numbered them.
+local OBJECT_EVENT_SLOTS = {
+  { map = "ROUTE_34", index = 7, want = "eggOutside" },
+  { map = "DAY_CARE", index = 1, want = "eggInside" },
+  { map = "ROUTE_34", index = 8, want = "manMon" },
+  { map = "ROUTE_34", index = 9, want = "ladyMon" },
+}
+
+local function objectEventFlag(data, mapId, index)
+  local def = data and data.maps and data.maps[mapId]
+  for _, obj in ipairs(def and def.objects or {}) do
+    if obj.index == index then return obj.eventFlag end
+  end
+  return nil
+end
+
+function DayCare.syncObjects(data, save)
+  if not (data and save and save.flags) then return end
+  local Flags = require("src.script.Flags")
+  local breed = DayCare.store(save, false)
+  local egg = (breed and breed.egg) ~= nil
+  local show = {
+    eggOutside = egg,
+    eggInside = not egg,
+    manMon = DayCare.mon(save, DayCare.MAN) ~= nil,
+    ladyMon = DayCare.mon(save, DayCare.LADY) ~= nil,
+  }
+  for _, slot in ipairs(OBJECT_EVENT_SLOTS) do
+    local flag = objectEventFlag(data, slot.map, slot.index)
+    if flag then
+      if show[slot.want] then Flags.clear(save, flag) else Flags.set(save, flag) end
+    end
+  end
+end
+
 function DayCare.deposit(save, which, mon)
   local breed = DayCare.store(save, true)
   breed[which] = { mon = mon, steps = 0, depositLevel = mon.level }

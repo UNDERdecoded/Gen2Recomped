@@ -132,9 +132,14 @@ return function(game)
   ow.backupWarp = { id = "GOLDENROD_DEPT_STORE1_F", x = 0, y = 0 }
   game.save.backupWarp = ow.backupWarp
   ow:queueScript(VM.compile(game.data, "S57_6728"))
-  U.wait(30)
-  U.tap(game, "a")   -- dismiss "Which floor?"
-  U.wait(30)
+  -- "Which floor?" runs to more than one page, so tap through until the floor
+  -- menu is the top screen rather than counting boxes
+  for _ = 1, 8 do
+    U.wait(20)
+    local top = game.stack:top()
+    if top and top.items then break end
+    U.tap(game, "a")
+  end
   -- the floor menu is up: 1F is filtered out, so row 1 is B1F
   U.tap(game, "a")
   U.wait(30)

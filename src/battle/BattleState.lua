@@ -920,12 +920,14 @@ end
 -- POOF/ball-toss animations past the move table); `shakes` marks the
 -- ball-shake row with its wNumShakes repeat count, `ball` marks a toss
 -- row with the thrown ball item (wCurItem -- a Master/Ultra toss
--- flickers the OBJ palette, DoBallTossSpecialEffects)
-function BattleState:animNext(name, isPlayer, shakes, ball)
+-- flickers the OBJ palette, DoBallTossSpecialEffects), and `caught` is the
+-- roll's verdict, which Gen 2's toss script needs because it wobbles and
+-- then clicks or breaks free from inside the animation itself
+function BattleState:animNext(name, isPlayer, shakes, ball, caught)
   self.nextInsert = (self.nextInsert or 0) + 1
   table.insert(self.queue, self.nextInsert,
                { anim = name, attackerIsPlayer = isPlayer, shakes = shakes,
-                 ball = ball })
+                 ball = ball, caught = caught })
 end
 
 -- insert an act right after the current queue item
@@ -1233,6 +1235,12 @@ function BattleState:updateQueue()
                            item.anim, item.attackerIsPlayer,
                            (item.shakes or item.ball)
                              and { shakes = item.shakes, ball = item.ball,
+                                   caught = item.caught,
+                                   -- Gen 2's toss script branches on the
+                                   -- ball's item index (wBattleAnimParam)
+                                   ballIndex = item.ball
+                                     and (self:itemDef(item.ball) or {}).index
+                                     or nil,
                                    ballFlicker = item.ball
                                      and self:ballFlicker(item.ball) or nil }
                              or nil)
@@ -4358,7 +4366,15 @@ function BattleState:storeCaughtMon()
     game.data.pokemon[species], self.enemy.mon)
   if dex and form then
     dex.unownForms = dex.unownForms or {}
-    dex.unownForms[form] = true
+    if not dex.unownForms[form] then
+      dex.unownForms[form] = true
+      -- UpdateUnownDex (engine/pokedex/unown_dex.asm) appends the letter to
+      -- wUnownDex the first time it is caught and never reorders it, so the
+      -- dex's UNOWN MODE lists the letters in catch order, not alphabetically
+      -- ("It records them in the sequence that they were caught.")
+      dex.unownDex = dex.unownDex or {}
+      dex.unownDex[#dex.unownDex + 1] = form
+    end
   end
   stampOT(game.save, self.enemy.mon)
   if isNew then
@@ -4407,6 +4423,20 @@ end
 -- reappearing POOF+SHOWPIC) for a breakout ($6x); a clean miss ($20)
 -- stops after the poof, so the mon never hides
 function BattleState:ballChain(tossAnim, caught, shakes, ball)
+  -- Gen 2 has no chain: BattleAnim_ThrowPokeBall runs the arc, the
+  -- RETURN_MON bgeffect that draws the mon in, the wobble loop
+  -- (anim_checkpokeball -> GetPokeBallWobble) and finally the click or the
+  -- break-out, all from one script.  Replaying Gen 1's POOF/HIDEPIC/SHAKE
+  -- rows on top of it would only double up pieces of what it just did.
+  if self.data and self.data.battle_anims and self.data.battle_anims.gen2 then
+    self:animNext(tossAnim, true, shakes, ball, caught)
+    if caught then
+      self:actNext(function()
+        self.lockedBall = self.animPlayer and self.animPlayer:finalSprites() or nil
+      end)
+    end
+    return
+  end
   self:animNext(tossAnim, true, nil, ball)
   self:animNext("POOF_ANIM", true)
   if not caught and shakes == 0 then return end

@@ -123,6 +123,7 @@ function LauncherMods.deriveList(manifests, options)
       status = status,
       statusDetail = detail,
       github = m.github,
+      updateCheck = m.updateCheck ~= false,
       experimental = m.experimental == true,
     }
   end

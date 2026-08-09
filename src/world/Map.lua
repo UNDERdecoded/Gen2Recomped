@@ -173,11 +173,57 @@ function Map.gen2IsDoorway(coll)
   return coll == 0x71 or coll == 0x7B
 end
 
+-- CheckPitTile (00:$1745): `cp COLL_PIT / ret z / cp COLL_PIT_68 / ret`.
+-- The two hole classes -- what a Strength boulder has to be standing on for
+-- the stone table to drop it to the floor below (CmdQueue_StoneTable).
+function Map.gen2IsPit(coll)
+  return coll == 0x60 or coll == 0x68
+end
+
 -- CheckCutTreeTile (00:$1731) is `cp COLL_CUT_TREE / ret z / cp
 -- COLL_CUT_TREE_1 / ret`.  Facing either class is what arms TryCutOW, which
 -- is Gen2's overworld A-press on a tree -- Gen1 had no such hook at all.
 function Map.gen2IsCutTree(coll)
   return coll == 0x12 or coll == 0x1A
+end
+
+-- Side walls and side buoys ($b0-$b7 and $c0-$c7).  CollisionPermissionTable
+-- gives the whole $bx range LAND and the whole $cx range WATER, so both read
+-- as ordinary passable ground here -- and that is exactly how a cliff top in
+-- the Ice Path became something the player could walk straight off.  What
+-- fences them is GetMovementPermissions (home/map.asm), which walks the four
+-- tiles around the player and, for these two hi-nybbles only, turns the low
+-- three bits into wTilePermissions bits: the class names which SIDE of its
+-- own cell is walled.  Standing on the tile blocks stepping out that way;
+-- standing beside one blocks stepping in through the walled side.
+--
+-- The order below is the COLL_* constants' own ($b0 RIGHT_WALL, $b1
+-- LEFT_WALL, $b2 UP_WALL, $b3 DOWN_WALL, then the four corners), which is
+-- what .MovementPermissionsData is indexed by.
+local GEN2_SIDE_WALLS = {
+  [0] = { right = true },
+  [1] = { left = true },
+  [2] = { up = true },
+  [3] = { down = true },
+  [4] = { down = true, right = true },
+  [5] = { down = true, left = true },
+  [6] = { up = true, right = true },
+  [7] = { up = true, left = true },
+}
+
+function Map.gen2SideWall(coll)
+  if type(coll) ~= "number" then return nil end
+  local hi = coll - coll % 0x10
+  if hi ~= 0xB0 and hi ~= 0xC0 then return nil end
+  return GEN2_SIDE_WALLS[coll % 8]
+end
+
+-- The walled sides of a cell, or nil.  Only maps whose tileset ships a Gen2
+-- collision table answer: a Gen1 tileset's passable ids are raw tile numbers
+-- and $b2 there is just a tile.
+function Map:sideWallAt(cx, cy)
+  if not self.tileset.collision then return nil end
+  return Map.gen2SideWall(self:cellTile(cx, cy))
 end
 
 function Map.new(def, tilesetDef)

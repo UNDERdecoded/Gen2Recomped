@@ -52,9 +52,11 @@ return function(game)
 
   local tod = game.overworld and game.overworld:timeOfDay()
   -- a mod may rename the period through the world.tod hook, so accept the
-  -- vanilla spellings and their NIGHT/MORN aliases
+  -- vanilla spellings, their NIGHT/MORN aliases, and the extra dusk/dawn
+  -- periods the shipped Dramatic Shapes cycle adds (EVENING, DAWN, DUSK)
   check(tod == "MORNING" or tod == "MORN" or tod == "DAY"
-    or tod == "NITE" or tod == "NIGHT",
+    or tod == "NITE" or tod == "NIGHT"
+    or tod == "EVENING" or tod == "DAWN" or tod == "DUSK",
     "the overworld reports a Gen2 clock period (" .. tostring(tod) .. ")")
 
   -- ------------------------------------------------------- Unown letters

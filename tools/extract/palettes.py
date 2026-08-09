@@ -542,7 +542,14 @@ def extract_gbc(pokered_gbc, out_path):
                "colors per palette (color 0 first), including per-species\n"
                "pals and the GEN_2 MonsterPalettes assignment, plus `world`\n"
                "(true overworld tile/roof/sprite GBC coloring -- see this\n"
-               "file's module docstring for its shape).")
+               "file's module docstring for its shape).\n"
+               "\n"
+               "Colour choices here are the original work of the pokered-gbc\n"
+               "authors -- FroggestSpirit, Drenn (Stewmath) and Danny-E\n"
+               "(dannye) -- from https://github.com/Stewmath/pokered-gbc, a\n"
+               "fork of pret/pokered.  That repository ships no LICENSE, so\n"
+               "this data is NOT covered by gen2recomp's MIT grant; it is\n"
+               "reproduced with attribution and is removable on request.")
     return palettes, mon_pals
 
 
@@ -625,7 +632,11 @@ def extract_yellow(pokeyellow, out_path):
          "pokemon": mon_pals},
         header="Pokemon Yellow palettes (COLORS=OG YELLOW): SuperPalettes +\n"
                "CGBBasePalettes (authentic GBC look) as 4 8-bit RGB colors\n"
-               "per palette (color 0 first), plus MonsterPalettes.")
+               "per palette (color 0 first), plus MonsterPalettes.\n"
+               "\n"
+               "Transcribed from the pret/pokeyellow disassembly\n"
+               "(https://github.com/pret/pokeyellow), which ships no LICENSE.\n"
+               "Reproduced with attribution, outside gen2recomp's MIT grant.")
     return palettes, cgb_base, mon_pals
 
 

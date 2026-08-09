@@ -1558,6 +1558,44 @@ local mover = { cellX = 0, cellY = 0, surfing = false }
 local ok2 = Collision.canMove(fakeForest, { mover }, mover, "down")
 check(ok2 == false, "tile-pair blocks crossing a forest elevation edge")
 
+-- ------------------------------------------------ Gen2 one-way (side) walls
+-- GetMovementPermissions (home/map.asm): collision classes $b0-$b7 (side
+-- walls) and $c0-$c7 (side buoys) read as plain LAND/WATER in
+-- CollisionPermissionTable, so passability alone waves them through.  The low
+-- three bits name the walled side of the cell; ignoring that let the player
+-- walk straight off the north ledge of an Ice Path cliff.
+do
+  local function fakeCliff(colls)
+    return {
+      def = { tileset = "ICE_PATH_1" },
+      inBounds = function() return true end,
+      isWalkableCell = function() return true end,
+      isWaterCell = function() return false end,
+      cellTile = function(_, cx, cy) return colls[cy .. "," .. cx] or 0x00 end,
+      sideWallAt = function(self, cx, cy)
+        return Map.gen2SideWall(self:cellTile(cx, cy))
+      end,
+    }
+  end
+  -- $b2 COLL_UP_WALL under the player's feet: north is fenced, the rest open
+  local cliff = fakeCliff({ ["0,1"] = 0xB2 })
+  local walker = { cellX = 1, cellY = 0, surfing = false }
+  check(Collision.canMove(cliff, { walker }, walker, "up") == false,
+        "COLL_UP_WALL blocks stepping north off a cliff")
+  check(Collision.canMove(cliff, { walker }, walker, "down") == true,
+        "COLL_UP_WALL leaves the other directions open")
+  -- the same wall seen from the far side: stepping *into* it is blocked too
+  local below = fakeCliff({ ["0,1"] = 0xB3 })
+  local climber = { cellX = 1, cellY = 1, surfing = false }
+  check(Collision.canMove(below, { climber }, climber, "up") == false,
+        "COLL_DOWN_WALL blocks stepping up into it")
+  check(Collision.canMove(below, { climber }, climber, "left") == true,
+        "a neighbouring side wall only blocks its own side")
+  -- $c0-$c7 are the surf-side equivalents, and $a0-$af ledges are not walls
+  check(Map.gen2SideWall(0xC1) ~= nil and Map.gen2SideWall(0xA3) == nil,
+        "side buoys count as one-way walls, hop ledges do not")
+end
+
 -- ---------------------------------------------------------------- START menu gating
 local StartMenu = require("src.ui.StartMenu")
 local blankSave = require("src.core.SaveData").newGame()
@@ -2903,6 +2941,9 @@ do
                      stack = { push = function(_, s) table.insert(pushed, s) end } }
   local stubRunner = { yield = function() end, resume = function() end }
   local ctx = { game = fakeGame, save = giftSave, runner = stubRunner }
+  -- the TM givers open with `checkevent EVENT_GOT_TM..`, so a FALSE from the
+  -- flag test is still standing when verbosegiveitem runs
+  ctx.lastCheck = false
   local ret = ScriptCommands.give_item(ctx, "POTION", 1)
   eq(ret, nil, "give_item success returns nil (script continues)")
   eq(giftSave.inventory.POTION, 1, "give_item adds to the bag")
@@ -2913,6 +2954,13 @@ do
   check(boxText:find(Data.items.POTION.name, 1, true) ~= nil, "got-item box names the item")
   eq(fakeGame.stringBuffer, Data.items.POTION.name,
      "give_item fills the wStringBuffer analog")
+  -- Gen2's `verbosegiveitem` lowers here and every gift script reads the
+  -- result back with `iffalse .BagFull` on the very next row.  Leaving the
+  -- checkevent's FALSE standing sent the Ilex Forest HEADBUTT guy down the
+  -- bag-full arm, past his `setevent`, so the TM could be collected forever.
+  eq(ctx.lastCheck, true, "give_item reports success to iffalse")
+  eq(ScriptCommands.jump_if_false(ctx, 99), nil,
+     "the bag-full branch does not fire after a successful gift")
   -- gotText = false: the script prints its own received row; no box
   ScriptCommands.give_item(ctx, "S_S_TICKET", 1, false)
   eq(giftSave.inventory.S_S_TICKET, 1, "suppressed give still adds to the bag")

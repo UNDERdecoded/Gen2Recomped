@@ -174,6 +174,12 @@ function Manifest.validate(raw, path)
 
   local github = Manifest.parseGithub(raw.github)
 
+  -- A fork keeps `github` for credit but must not chase upstream's releases:
+  -- its version line is its own, and "update" there would overwrite the fork.
+  assert(raw.update_check == nil or type(raw.update_check) == "boolean",
+    "update_check must be a boolean")
+  local updateCheck = raw.update_check ~= false
+
   assert(raw.experimental == nil or type(raw.experimental) == "boolean",
     "experimental must be a boolean")
   local experimental = raw.experimental == true
@@ -221,6 +227,7 @@ function Manifest.validate(raw, path)
     game_version = raw.game_version,
     description = raw.description or "",
     github = github,
+    updateCheck = updateCheck,
     experimental = experimental,
     profile = profile,
     language = language,

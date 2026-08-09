@@ -17,7 +17,7 @@ local DROPPED = {
   getmoney = true, describedecoration = true,
   -- raw RAM / asm
   readmem = true, writemem = true, loadvar = true, memcall = true,
-  callasm = true, writecmdqueue = true, unknown = true,
+  callasm = true, unknown = true,
   -- menus and set pieces with no port equivalent yet
   _2dmenu = true, pokepic = true,
   trade = true, halloffame = true, credits = true,

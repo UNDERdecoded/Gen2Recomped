@@ -81,6 +81,14 @@ function U.newGame(game)
   U.wait(10)
 end
 
+-- U.newGame taps the first main-menu row, which is CONTINUE as soon as any
+-- earlier driver left a save behind -- so a driver that reads new-game state
+-- must ask for it explicitly rather than trust whatever loaded.
+function U.freshSave(game)
+  game.save = require("src.core.SaveData").newGame(game.data.field.boot)
+  return game.save
+end
+
 -- jump straight into the overworld at a position, bypassing the intro
 function U.teleport(game, mapId, x, y, facing)
   while game.stack:top() do game.stack:pop() end

@@ -187,6 +187,17 @@ function Commands.g2_object(ctx, index, visible)
   end
 end
 
+-- WriteCmdQueue with a CMDQUEUE_STONETABLE entry: the map's cmdqueue
+-- callback hands over the `stonetable <warp>, <object>, <script>` rows the
+-- extractor resolved.  The ROM then polls them every frame from
+-- CmdQueue_StoneTable; here the overworld checks them when a pushed boulder
+-- comes to rest, so all this has to do is record them for the current map.
+function Commands.g2_stonetable(ctx, rows)
+  local ow = ctx.overworld
+  if not (ow and ow.map) or type(rows) ~= "table" then return end
+  ow.stoneTable = { mapId = ow.map.id, rows = rows }
+end
+
 -- CheckPartyMove (engine/overworld/overworld.asm): scan the party for the
 -- move, leaving carry set when nobody has it.  HasRockSmash and friends
 -- report that through wScriptVar as 1 = lacks, 0 = has, which the std script
@@ -1202,11 +1213,18 @@ function Commands.g2_warpcheck(ctx)
   if not (ow and ow.map and ow.player and ow.refreshStandingOnWarp) then return end
   ow:refreshStandingOnWarp()
   local warp = ow.map:warpAtCell(ow.player.cellX, ow.player.cellY)
-  -- only a stair/ladder/hole tile swallows the player where they stand; a
-  -- door warp still waits for the step that walks into it
-  if warp and ow.map:isWarpTileCell(ow.player.cellX, ow.player.cellY)
-     and not ow.map:isDoorTileCell(ow.player.cellX, ow.player.cellY) then
-    ow:takeWarp(warp)
+  -- Script_warpcheck is `call WarpCheck / ret nc / farcall EnableEvents`:
+  -- WarpCheck tests the standing tile and makes no exception for doorways.
+  -- Excluding doors here is why the scientist's escort walked you onto the
+  -- lab's door tile and stopped -- you had to step off and back on for the
+  -- ordinary walk-into-a-door path to fire.
+  if warp and ow.map:isWarpTileCell(ow.player.cellX, ow.player.cellY) then
+    -- warpAtCell hands back the { index, def } record, not the warp itself.
+    -- Passing the record straight to takeWarp left warpDef.destMap nil, and
+    -- Warp.resolve's unknown-map fallback dropped the player on warp 1 of the
+    -- last outdoor map -- which is why solving a Ruins of Alph puzzle spat you
+    -- out at the ruins entrance instead of dropping you into the inner chamber.
+    ow:takeWarp(warp.def)
   end
 end
 
@@ -1259,6 +1277,33 @@ end
 -- triggered one keeps reporting it rather than silently losing it.
 function Commands.g2_swarm(ctx, kind, mapId)
   ctx.save.g2Swarm = { kind = kind, map = mapId }
+end
+
+-- `special NameRival` (SpecialsPointers row $24).  ResetWRAM's
+-- InitializeNPCNames seeds wRivalName with "???" -- the name the Cherrygrove
+-- rival's own line spells out -- and the Elm's Lab officer scene
+-- (opentext / writetext / promptbutton / special NameRival) is where the
+-- player finally types it.  Left a stub, the prompt never appeared, so the
+-- name stayed whatever the save started with.
+function Commands.g2_name_rival(ctx)
+  local game, runner = ctx.game, ctx.runner
+  local boot = game.data.field and game.data.field.boot
+  local presets = boot and boot.namePresets and boot.namePresets.rival
+  game.stack:push(require("src.ui.NamingScreen").new(game, {
+    title = Strings("RIVAL'S NAME?"),
+    maxLen = 7, -- PLAYER_NAME_LENGTH - 1
+    -- NamingScreen_InitNameEntry opens the grid blank and confirming nothing
+    -- would leave the name empty, so fall back to the canonical one
+    default = (presets and presets[1]) or "SILVER",
+    onDone = function(name)
+      if name and name ~= "" then
+        game.save.player = game.save.player or {}
+        game.save.player.rival = name
+      end
+      runner:resume()
+    end,
+  }))
+  runner:yield()
 end
 
 -- `special NameRater` (_NameRater, 3E:$77F7).  The whole conversation lives

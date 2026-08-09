@@ -183,7 +183,7 @@ end
 local function changeBox(game)
   local boxes = Boxes.ensure(game.save)
   local items = {}
-  for i = 1, Boxes.COUNT do
+  for i = 1, Boxes.count() do
     local mark = i == game.save.currentBox and "*" or " "
     table.insert(items, {
       label = Strings("%sBOX %2d", mark, i),

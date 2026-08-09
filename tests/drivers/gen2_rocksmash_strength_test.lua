@@ -24,6 +24,11 @@ return function(game)
 
   U.newGame(game)
   U.wait(2)
+  -- U.newGame lands on CONTINUE when a save already exists, so the party below
+  -- would otherwise be whatever an earlier run left behind -- and on a genuine
+  -- new game it is empty, because the starter comes later.  The move checks
+  -- need one mon whose moveset the driver owns outright.
+  game.save.party = { require("src.pokemon.Pokemon").new(game.data, "SPECIES_155", 10) }
 
   local Map = require("src.world.Map")
 

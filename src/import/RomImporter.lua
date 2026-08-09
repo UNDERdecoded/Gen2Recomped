@@ -34,7 +34,20 @@ end
 --      equality, which missed on Android and left the pics DMG grey).
 -- v36: warps are decoded from the cart's MapEvents instead of the scaffold,
 --      which now ships empty so no map geometry is committed.
-local CACHE_FORMAT = "rom-cache-v37:"
+-- v38: `writecmdqueue` resolves its CMDQUEUE_STONETABLE rows, so a Strength
+--      boulder pushed onto a hole knows which script to run (Ice Path,
+--      Blackthorn Gym).
+-- v39: UnownFont + UnownWords for the Pokédex's UNOWN MODE.
+-- v40: UnownWords are tile ids, not charmap text, and the font rip keeps the
+--      ROM's stored polarity.
+-- v41: battle animation `anim_loop` rows carry their jump target.
+-- v42: Gen2 map defs carry their MapGroupPointers (group, number) pair, which
+--      is what a Gold/Silver battery save stores as the player's location
+--      (src/save_convert/Gen2Save.lua).
+-- v43: field.engineFlags (the EngineFlags address/bit rows) and
+--      field.spawnFlags (wVisitedSpawns bit -> map), so an imported battery
+--      save carries every ENGINE_* flag and its FLY destinations.
+local CACHE_FORMAT = "rom-cache-v43:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
@@ -4144,13 +4157,14 @@ function RomImporter:_ensureMods()
 end
 
 -- Resolve cached (or freshly fetched) GitHub status for every mod that
--- declares a github field. force=true bypasses the 6h cache on every repo.
+-- declares a github field and has not opted out with `update_check: false`.
+-- force=true bypasses the 6h cache on every repo.
 -- Results live on self.modUpdateInfo[id] = { status, latest, best, releases }.
 function RomImporter:_syncModUpdateInfo(force)
   local ModUpdate = require("src.mods.ModUpdate")
   self.modUpdateInfo = self.modUpdateInfo or {}
   for _, m in ipairs(self.mods or {}) do
-    if m.github and m.github ~= "" then
+    if m.github and m.github ~= "" and m.updateCheck ~= false then
       local ok, packed = pcall(function()
         local releases, err, meta = ModUpdate.fetchReleases(m.github, m.id, {
           force = force == true,
@@ -4283,6 +4297,11 @@ function RomImporter:_modGithubAction(id, action)
     end
     if not row or not row.github then
       self.modNotice = { ok = false, text = "This mod has no github field" }
+      return
+    end
+    if row.updateCheck == false then
+      self.modNotice = { ok = false,
+        text = row.name .. " is a fork; it does not track " .. row.github }
       return
     end
 
@@ -4540,7 +4559,7 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
     local chipW = self.hintFont:getWidth(chipText) + 20 * s
     local delW = self.hintFont:getWidth("Delete") + 24 * s
     local verW = self.hintFont:getWidth("Versions") + 24 * s
-    local hasGh = m.github and m.github ~= ""
+    local hasGh = m.github and m.github ~= "" and m.updateCheck ~= false
     local info = hasGh and self:_modUpdateInfo(m.id) or nil
     local updLabel = "Check for updates"
     local updateKind = "neutral"

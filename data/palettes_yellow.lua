@@ -2,6 +2,10 @@
 -- Pokemon Yellow palettes (COLORS=OG YELLOW): SuperPalettes +
 -- CGBBasePalettes (authentic GBC look) as 4 8-bit RGB colors
 -- per palette (color 0 first), plus MonsterPalettes.
+--
+-- Transcribed from the pret/pokeyellow disassembly
+-- (https://github.com/pret/pokeyellow), which ships no LICENSE.
+-- Reproduced with attribution, outside gen2recomp's MIT grant.
 return {
   cgbBase = {
     ["0F"] = {

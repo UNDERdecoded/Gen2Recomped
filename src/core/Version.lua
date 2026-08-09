@@ -4,9 +4,9 @@
 -- tests.
 
 local Version = {
-  engine = "0.0.0-dev",   -- game/engine release (semver).  Repo default is the
-                          -- "-dev" placeholder; CI stamps the real X.Y.Z into
-                          -- the packed game.love only, never the working tree.
+  engine = "0.5.1",       -- game/engine release (semver).  CI restamps this in
+                          -- the packed game.love; the working tree carries the
+                          -- release it is building towards.
   shell = 1,              -- native-shell contract this build implements
   minShell = 1,           -- lowest shell contract that can RUN this payload.
                           -- Bump only when a payload needs a newer native
@@ -19,7 +19,7 @@ local Version = {
   cache = "rom-cache-v5", -- ROM import cache generation (RomImporter marker)
 }
 
--- "gen2recomp v0.0.0-dev" (or the stamped release version in shipped builds)
+-- "gen2recomp v0.5.1" (or the stamped release version in shipped builds)
 function Version.title(base)
   return (base or "gen2recomp")
     .. " v" .. Version.engine

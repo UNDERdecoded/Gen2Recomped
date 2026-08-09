@@ -238,9 +238,12 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
           echo "Notarized + stapled ✓"
 
+      # Runs in every repo: the updater points at whichever fork shipped the
+      # build, so a fork that never gets a release can never hand out an update.
       - name: Stage release assets
-        if: github.repository == 'bryanthaboi/gen1recomp'
         id: assets
+        env:
+          CANONICAL_REPOSITORY: ${{ github.repository == 'bryanthaboi/gen1recomp' }}
         run: |
           set -euo pipefail
           v="${{ steps.ver.outputs.version }}"
@@ -254,9 +257,17 @@ jobs:
           [ -n "$apk" ] || { echo "::error::no Android APK found under dist/android/debug"; exit 1; }
           cp "$apk" "$outdir/gen1recomp-${v}-android.apk"
 
+          # Only the signing repo builds --device, and only that build produces
+          # an installable IPA; elsewhere the iOS slot is simply absent.
           ipa="dist/ios/gen1recomp.ipa"
-          [ -f "$ipa" ] || { echo "::error::$ipa not found (expected from scripts/build_ios.sh --device)"; exit 1; }
-          cp "$ipa" "$outdir/gen1recomp-${v}-ios.ipa"
+          if [ -f "$ipa" ]; then
+            cp "$ipa" "$outdir/gen1recomp-${v}-ios.ipa"
+          elif [ "$CANONICAL_REPOSITORY" = true ]; then
+            echo "::error::$ipa not found (expected from scripts/build_ios.sh --device)"
+            exit 1
+          else
+            echo "::notice::no IPA to publish (unsigned repo builds for the simulator)"
+          fi
 
           # Anbernic handheld port (suffix names the CFW it targets, so a
           # future RG35XX/other-CFW pack can ship alongside it).
@@ -279,7 +290,6 @@ jobs:
           cat "$outdir/sha256sums.txt"
 
       - name: Publish GitHub Release
-        if: github.repository == 'bryanthaboi/gen1recomp'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -369,18 +379,12 @@ jobs:
           fi
           printf 'Release notes:\n%s\n' "$notes"
 
+          # whatever the staging step managed to produce, IPA included or not
           gh release create "$tag" \
             --target "$GITHUB_SHA" \
             --title "$v" \
             --notes "$notes" \
-            "dist/release/gen1recomp-${v}-macos.zip" \
-            "dist/release/gen1recomp-${v}-windows.zip" \
-            "dist/release/gen1recomp-${v}-linux.zip" \
-            "dist/release/gen1recomp-${v}-android.apk" \
-            "dist/release/gen1recomp-${v}-ios.ipa" \
-            "dist/release/gen1recomp-${v}-rg34xxsp-stockos64-mod.zip" \
-            "dist/release/gen1recomp-${v}.love" \
-            "dist/release/sha256sums.txt"
+            dist/release/*
 
           echo "Published release $tag"
 

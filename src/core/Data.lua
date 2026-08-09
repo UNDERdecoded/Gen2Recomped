@@ -12,7 +12,8 @@ local MODULES = {
 }
 
 -- Optional for compatibility with developer and stale caches.
-local OPTIONAL = { "audio", "palettes", "icons", "map_scripts", "unown_puzzle" }
+local OPTIONAL = { "audio", "palettes", "icons", "map_scripts", "unown_puzzle",
+                   "unown_dex" }
 
 -- Vanilla defaults for rules exposed through the constants registry.  A
 -- value has to exist before a mod can patch it; each one matches the
@@ -548,7 +549,10 @@ function Data:seedDefaults()
       boot.playerName = "GOLD"
     end
     if boot.rivalName == BOOT_DEFAULTS.rivalName then
-      boot.rivalName = "SILVER"
+      -- ResetWRAM's InitializeNPCNames seeds wRivalName with "???" -- which
+      -- is why the Cherrygrove rival's own line reads "My name's ???." The
+      -- Elm's Lab officer's `special NameRival` is where it becomes SILVER.
+      boot.rivalName = "???"
     end
     if boot.screens and (boot.screens.newGame == false
         or boot.screens.newGame == nil

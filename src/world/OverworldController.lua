@@ -139,19 +139,15 @@ end
 local function objectVisible(save, mapId, obj)
   local toggles = save.objectToggles and save.objectToggles[mapId] or {}
   local toggleKey = objectToggleKey(obj)
+  -- constants/event_flags.asm, "Sprite visibility flags": when the event is
+  -- cleared the sprite is visible, when set it is hidden.  obj.hidden already
+  -- carries InitializeEventsScript's opening state, so it is the whole answer
+  -- until a script toggles the flag.  (A Gen2-only override used to force every
+  -- in-bounds hidden object visible, to paper over an extractor that stopped
+  -- reading `setevent`s at the `variablesprite` block; that read is fixed, and
+  -- the override was what kept the DAY-CARE MAN OUTSIDE standing at the fence
+  -- with no EGG to hand over.)
   local visible = not obj.hidden
-  if GameVersion.isGen2() and obj.hidden
-      and obj.name == nil and obj.item == nil and obj.pokemon == nil then
-    -- Show objects within this map's bounds; works for both canonical IDs and aliases.
-    local mapDef = Game and Game.data and Game.data.maps and Game.data.maps[mapId]
-    local wc = mapDef and mapDef.width  and mapDef.width  * 2 or 0
-    local hc = mapDef and mapDef.height and mapDef.height * 2 or 0
-    if wc > 0 and hc > 0
-        and obj.x >= 0 and obj.y >= 0
-        and obj.x < wc and obj.y < hc then
-      visible = true
-    end
-  end
   if toggleKey and toggles[toggleKey] ~= nil then
     visible = toggles[toggleKey]
   end
@@ -440,6 +436,11 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     self.npcPool = {}
   end
   self.npcs = {}
+  -- MAPCALLBACK_OBJECTS: ROUTE_34 and DAY_CARE both re-derive their day-care
+  -- sprite events from the engine flags every time the map is set up
+  if GameVersion.isGen2() and (mapId == "ROUTE_34" or mapId == "DAY_CARE") then
+    require("src.pokemon.DayCare").syncObjects(Game.data, Game.save)
+  end
   for _, obj in ipairs(self.map.def.objects or {}) do
     if objectVisible(Game.save, mapId, obj) then
       local npc = pooledNPC(self.npcPool, Game.data, mapId, obj)
@@ -1517,6 +1518,7 @@ function OverworldState:checkBoulderPush(dir)
     self:startDustAnim(fx, fy, function()
       require("src.core.Sound").play(Game.data, "Cut")
     end)
+    if self:gen2BoulderIntoPit(npc) then return end
     if self:boulderIntoHole(npc) then return end
     Runtime.emit("world.boulder_moved", { mapId = self.map.id, npcId = npc.id,
                                           x = npc.cellX, y = npc.cellY })
@@ -1526,6 +1528,42 @@ function OverworldState:checkBoulderPush(dir)
     end
   end)
   return true
+end
+
+-- Gen2's boulder-into-hole, the stone table (CmdQueue_StoneTable /
+-- HandleStoneQueue).  A map that has holes registers a
+-- `stonetable <warp id>, <object event id>, <script>` row per boulder from
+-- its MAPCALLBACK_CMDQUEUE callback (see Commands.g2_stonetable); the ROM
+-- polls every object struct each frame for a strength boulder that is
+-- standing still on a pit tile and runs the row whose warp and object both
+-- match.  That script is what makes the boulder vanish, clears the event
+-- hiding its twin on the floor below, shakes the screen and prints "The
+-- boulder fell through."  Without it the Ice Path boulders simply parked on
+-- the holes and the puzzle could not be finished.
+--
+-- Ice Path B1F pairs boulders 1-4 with warps 3-6, so matching on both is
+-- what keeps a boulder shoved down the wrong hole from opening the wrong
+-- floor; the ROM leaves such a boulder sitting there until the player exits
+-- and the map's objects respawn where they started.
+function OverworldState:gen2BoulderIntoPit(npc)
+  if not GameVersion.isGen2() then return false end
+  local stones = self.stoneTable
+  if not (stones and self.map and stones.mapId == self.map.id) then return false end
+  if not Map.gen2IsPit(self.map:cellTile(npc.cellX, npc.cellY)) then return false end
+  local warp = self.map:warpAtCell(npc.cellX, npc.cellY)
+  if not warp then return false end
+  -- object_const_def counts from 2 (0 is the player), while the extractor
+  -- numbers object_events from 1 -- the same +1 Gen2Commands.objectSlot undoes.
+  local objectId = (npc.def and npc.def.index or 0) + 1
+  for _, row in ipairs(stones.rows) do
+    if row.warp == warp.index and row.object == objectId then
+      local rows = require("src.script.Gen2ScriptVM").compile(Game.data, row.script)
+      if not rows then return false end
+      self:queueScript(rows, { mapId = self.map.id })
+      return true
+    end
+  end
+  return false
 end
 
 -- The dust puff (engine/overworld/dust_smoke.asm AnimateBoulderDust):

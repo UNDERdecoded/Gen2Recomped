@@ -337,6 +337,16 @@ the full copyright split.
 This project would not be possible without [pret](https://github.com/pret) —
 the pret band of decompiling maniacs — and their
 [pokered](https://github.com/pret/pokered),
-[pokegold](https://github.com/pret/pokegold), and
+[pokegold](https://github.com/pret/pokegold),
+[pokeyellow](https://github.com/pret/pokeyellow), and
 [pokecrystal](https://github.com/pret/pokecrystal) disassemblies.
+
+The ADVANCED / "RED++" colour mode uses the SuperPalettes, per-species
+palette map, and true overworld GBC colouring from
+[pokered-gbc](https://github.com/Stewmath/pokered-gbc) by **FroggestSpirit**,
+**Drenn**, and **Danny-E**, baked into
+[data/palettes_gbc.lua](data/palettes_gbc.lua). Neither pokered-gbc nor the
+pret disassemblies ship a licence file, so the palette tables in
+[data/](data) are reproduced with attribution rather than under this
+project's MIT grant, and will be removed on request from their authors.
 

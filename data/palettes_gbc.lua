@@ -5,6 +5,13 @@
 -- pals and the GEN_2 MonsterPalettes assignment, plus `world`
 -- (true overworld tile/roof/sprite GBC coloring -- see this
 -- file's module docstring for its shape).
+--
+-- Colour choices here are the original work of the pokered-gbc
+-- authors -- FroggestSpirit, Drenn (Stewmath) and Danny-E
+-- (dannye) -- from https://github.com/Stewmath/pokered-gbc, a
+-- fork of pret/pokered.  That repository ships no LICENSE, so
+-- this data is NOT covered by gen2recomp's MIT grant; it is
+-- reproduced with attribution and is removable on request.
 return {
   order = {
     "TOWNMAP2",

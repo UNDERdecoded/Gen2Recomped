@@ -22,6 +22,9 @@ local PUZZLE_EVENT = "EVENT_G2_0673"
 return function(game)
   U.newGame(game)
   U.wait(20)
+  -- U.newGame lands on CONTINUE when a save already exists, and a playthrough
+  -- that solved this puzzle would start with the wall already open
+  U.freshSave(game)
 
   U.teleport(game, "RUINS_OF_ALPH_KABUTO_CHAMBER", 4, 6)
   U.wait(30)
