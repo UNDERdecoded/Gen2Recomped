@@ -92,6 +92,25 @@ function Commands.g2_random(ctx, bound)
   ctx.g2Var = math.random(0, math.max((bound or 1) - 1, 0))
 end
 
+
+-- Tiny persistent WRAM mirror. Keyed by the address the ROM used.
+-- Only a handful of scripts need this (underground switches is the big one).
+local function wram(ctx)
+  local save = ctx.save
+  if not save then return nil end
+  save.g2Wram = save.g2Wram or {}
+  return save.g2Wram
+end
+
+function Commands.g2_readmem(ctx, addr)
+  local mem = wram(ctx)
+  ctx.g2Var = (mem and mem[addr]) or 0
+end
+
+function Commands.g2_writemem(ctx, addr)
+  local mem = wram(ctx)
+  if mem then mem[addr] = scriptVar(ctx) end
+end
 -- ---------------------------------------------------------------------------
 -- map scenes
 --

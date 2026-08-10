@@ -421,7 +421,20 @@ local READ_VARS = {
 L.readvar = function(ir, s)
   if READ_VARS[ir[2]] then emit(s, { "g2_readvar", ir[2] }) end
 end
+-- Persistent WRAM byte used by scripts (wUndergroundSwitchPositions, etc.).
+-- ir[2] is the 16-bit address the disassembler emitted.
+L.readmem = function(ir, s)
+  emit(s, { "g2_readmem", ir[2] })
+end
 
+L.writemem = function(ir, s)
+  emit(s, { "g2_writemem", ir[2] })
+end
+
+-- Older Gold listings used these names for the same thing:
+L.copybytetovar = L.readmem
+L.copyvartobyte = L.writemem
+L.addvar = L.addval   -- if your extractor still emits addvar
 -- `loadvar var, value` writes through the SAME VarActionTable.  Only var 3
 -- (wBattleType, $D119) has a model here: RedGyarados (49:$4F6F) is
 -- `loadvar 3, 7` -- BATTLETYPE_SHINY -- between its loadwildmon and its

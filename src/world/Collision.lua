@@ -65,15 +65,24 @@ end
 -- its walled side, and the destination tile blocks stepping IN through it.
 local OPPOSITE = { up = "down", down = "up", left = "right", right = "left" }
 
+-- Collision.lua
 local function sideWallBlocked(map, mover, dir, tx, ty)
   if not map.sideWallAt then return false end
   local out = map:sideWallAt(mover.cellX, mover.cellY)
   if out and out[dir] then return true end
+  -- only examine the destination cell when it actually exists
+  if not map:inBounds(tx, ty) then return false end
   local into = map:sideWallAt(tx, ty)
   return (into and into[OPPOSITE[dir]]) == true
 end
 
 local function verdict(map, entities, mover, dir, tx, ty)
+  -- directional walls must be tested before the bounds short-circuit;
+  -- otherwise an Ice Path cliff that faces the map edge is treated as a
+  -- pure “bounds” case and the connection/edge-warp logic can fire.
+  if sideWallBlocked(map, mover, dir, tx, ty) then
+    return false, "tile"
+  end
   if not map:inBounds(tx, ty) then
     return false, "bounds"
   end
@@ -81,9 +90,6 @@ local function verdict(map, entities, mover, dir, tx, ty)
     if not (mover.surfing and map:isWaterCell(tx, ty)) then
       return false, "tile"
     end
-  end
-  if sideWallBlocked(map, mover, dir, tx, ty) then
-    return false, "tile"
   end
   if pairBlocked(map, mover, mover.cellX, mover.cellY, tx, ty) then
     return false, "tile"

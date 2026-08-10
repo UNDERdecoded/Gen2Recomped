@@ -2882,9 +2882,11 @@ function OverworldState:checkGen2Ice()
     return false
   end
   local dir = self.iceSlide or p.facing
-  local tx, ty = Collision.target(p.cellX, p.cellY, dir)
-  if not self.map:isWalkableCell(tx, ty)
-     or Collision.occupied(self.entities, tx, ty, p) then
+  -- Full permission check (bounds, walkable, side walls, pairs, entities).
+  -- Ice Path cliffs are LAND with a directional wall; isWalkableCell alone
+  -- lets the slide walk straight off them and off the map edge.
+  local allowed = Collision.canMove(self.map, self.entities, p, dir)
+  if not allowed then
     self.iceSlide = nil
     return false
   end
