@@ -1148,6 +1148,13 @@ function BattleState:updateQueue()
     end
     if self.animPlayer:isDone() then
       self.animPlaying = false
+      -- BattleAnim_Clean ends every effect the script left running and the
+      -- battle screen redraws with rBGP back at $e4, so a fade the script
+      -- never closed itself (Growl's FADE_MON_TO_BLACK_REPEATING) cannot
+      -- outlive its animation -- it used to tint the mon for the rest of
+      -- the battle.  A running flash sequence is self-terminating and is
+      -- left to ride out its own frames.
+      if self.fx then self.fx.bgp = nil end
       -- the target's hit blink + damage sound follow the animation
       -- (pokered plays them after PlayMoveAnimation returns)
       if self.pendingHit then
@@ -2566,6 +2573,7 @@ function BattleState:resetPicFx()
                                  and self.player or self.enemy) or nil
   for battler, pf in pairs(self.picFx) do
     pf.kind, pf.t = nil, nil
+    pf.endHidden = nil
     pf.ox, pf.oy = 0, 0
     local keepHide = battler.invulnerable or battler == digFlyUser
     if not keepHide then
@@ -2575,10 +2583,20 @@ function BattleState:resetPicFx()
 end
 
 -- the battler an SE row's routine acts on: "the mon" is the attacker's
--- side; the SE_*_ENEMY_* variants run through CallWithTurnFlipped
+-- side; the SE_*_ENEMY_* variants run through CallWithTurnFlipped.
+-- A Gen 2 anim_bgeffect names its own side instead (BGEffect_CheckBattleTurn
+-- resolves BG_EFFECT_STRUCT_BATTLE_TURN against hBattleTurn), and that wins:
+-- ANIM_THROW_POKE_BALL aims its RETURN_MON at the target, so routing it to
+-- the attacker drew the player's own mon into the ball and left the wild one
+-- standing there for the whole capture.
 function BattleState:animFxBattler(flipped)
   local isPlayer = self.animAttackerIsPlayer
-  if flipped then isPlayer = not isPlayer end
+  local side = self.animFxSide
+  if side then
+    if side == "target" then isPlayer = not isPlayer end
+  elseif flipped then
+    isPlayer = not isPlayer
+  end
   return isPlayer and self.player or self.enemy
 end
 
@@ -2607,10 +2625,18 @@ function BattleState:playAnimSound(soundMove)
   end
 end
 
-local function startPicKind(pf, kind)
+-- Gen 1's pic routines end on a cleared tilemap and let the caller redraw
+-- (AnimationShakeBackAndForth's last act is ClearMonPicFromTileMap), so the
+-- kinds below finish hidden.  Gen 2's counterparts are LY-override
+-- deformations whose last state is BattleAnim_ResetLCDStatCustom -- the pic
+-- never left the screen -- so a Gen 2 row finishes shown.  Ending them
+-- hidden left a Tail Whip user invisible until the next animation's
+-- resetPicFx put it back.
+local function startPicKind(self, pf, kind)
   if not pf then return end
   pf.kind, pf.t = kind, 0
   pf.hidden = nil
+  pf.endHidden = (not self.animFxGen2) or nil
 end
 
 -- PredefShakeScreenHorizontally (engine/gfx/screen_effects.asm): the window
@@ -2649,6 +2675,9 @@ function BattleState:applyAnimEffect(ev)
   end
   local e = ev.effect
   if not e then return end
+  -- a Gen 2 bgeffect carries the side it was queued with; the SE handlers
+  -- below read it back through animFxBattler / startPicKind
+  self.animFxSide, self.animFxGen2 = ev.side, ev.gen2
 
   if e == "SFX_TINK" then
     -- each ball shake opens with a tink (DoBallShakeSpecialEffects)
@@ -2701,27 +2730,27 @@ function BattleState:applyAnimEffect(ev)
 
   -- ---------------------------------------------- mon pic effects
   elseif e == "SE_SLIDE_MON_OFF" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "slideOff")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "slideOff")
   elseif e == "SE_SLIDE_ENEMY_MON_OFF" then
-    startPicKind(self:picFxFor(self:animFxBattler(true)), "slideOff")
+    startPicKind(self, self:picFxFor(self:animFxBattler(true)), "slideOff")
   elseif e == "SE_SLIDE_MON_HALF_OFF" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "slideHalf")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "slideHalf")
   elseif e == "SE_SLIDE_MON_UP" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "slideUp")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "slideUp")
   elseif e == "SE_SLIDE_MON_DOWN" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "slideDown")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "slideDown")
   elseif e == "SE_SLIDE_MON_DOWN_AND_HIDE" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "slideDownHide")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "slideDownHide")
   elseif e == "SE_SHAKE_BACK_AND_FORTH" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "shakeBF")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "shakeBF")
   elseif e == "SE_BOUNCE_UP_AND_DOWN" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "bounce")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "bounce")
   elseif e == "SE_SQUISH_MON_PIC" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "squish")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "squish")
   elseif e == "SE_BLINK_MON" then
-    startPicKind(self:picFxFor(self:animFxBattler(false)), "blink")
+    startPicKind(self, self:picFxFor(self:animFxBattler(false)), "blink")
   elseif e == "SE_BLINK_ENEMY_MON" then
-    startPicKind(self:picFxFor(self:animFxBattler(true)), "blink")
+    startPicKind(self, self:picFxFor(self:animFxBattler(true)), "blink")
   elseif e == "SE_MOVE_MON_HORIZONTALLY" then
     -- redraw one tile inward: player pic at hlcoord 2,5 (from 1,5),
     -- enemy pic at 11,0 (from 12,0)
@@ -2731,6 +2760,11 @@ function BattleState:applyAnimEffect(ev)
       pf.kind, pf.hidden = nil, nil
       pf.ox = b.isPlayer and 8 or -8
       pf.oy = 0
+      -- Gen 2's BattleBGEffect_Tackle is a two-state jumptable --
+      -- Tackle_MoveForward then Tackle_ReturnMove -- so the lunge walks
+      -- back to the mon's own slot instead of parking there until the
+      -- next animation reset it.
+      if self.animFxGen2 then pf.kind, pf.t = "lunge", 0 end
     end
   elseif e == "SE_RESET_MON_POSITION" then
     local pf = self:picFxFor(self:animFxBattler(false))
@@ -2774,6 +2808,7 @@ function BattleState:applyAnimEffect(ev)
   end
   -- SE_SUBSTITUTE_MON needs no visual here: the doll is drawn while
   -- battler.substituteHP is set (MoveEffects raises it with the move)
+  self.animFxSide, self.animFxGen2 = nil, nil
 end
 
 -- The post-animation applying-attack feedback (PlayApplyingAttackAnimation
@@ -3011,24 +3046,26 @@ function BattleState:updateFx()
         pf.t = (pf.t or 0) + 1
         local k, t = pf.kind, pf.t
         if k == "slideOff" and t >= 24 then
-          pf.kind, pf.hidden = nil, true
+          pf.kind, pf.hidden = nil, pf.endHidden
         elseif k == "slideHalf" and t >= 19 then
           pf.kind = nil
           pf.ox = b.isPlayer and -32 or 32 -- the pic stays half off
         elseif k == "slideUp" and t >= 14 then
           pf.kind = nil -- a full cyclic wrap lands back on the pic
         elseif k == "slideDown" and t >= 21 then
-          pf.kind, pf.hidden = nil, true
+          pf.kind, pf.hidden = nil, pf.endHidden
         elseif k == "slideDownHide" and t >= 19 then
-          pf.kind, pf.hidden = nil, true
+          pf.kind, pf.hidden = nil, pf.endHidden
         elseif k == "shakeBF" and t >= 96 then
-          pf.kind, pf.hidden = nil, true -- the loop ends on a cleared pic
+          pf.kind, pf.hidden = nil, pf.endHidden -- Gen 1's loop ends cleared
         elseif k == "bounce" and t >= 105 then
           pf.kind = nil -- AnimationShowMonPic after the last bounce
         elseif k == "squish" and t >= 24 then
-          pf.kind, pf.hidden = nil, true
+          pf.kind, pf.hidden = nil, pf.endHidden
         elseif k == "blink" and t >= 60 then
           pf.kind = nil -- ends shown
+        elseif k == "lunge" and t >= 16 then
+          pf.kind, pf.ox = nil, 0 -- Tackle_ReturnMove lands back on 0
         end
       end
     end

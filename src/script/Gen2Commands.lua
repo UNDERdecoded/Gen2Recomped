@@ -1027,6 +1027,47 @@ function Commands.g2_std(ctx, id)
 end
 
 -- ---------------------------------------------------------------------------
+-- Kurt's apricorns (SelectApricornForKurt)
+--
+-- The special opens the ITEM pocket filtered to apricorns, removes the one
+-- you pick from the bag itself, and leaves its item id in wScriptVar for the
+-- run of `ifequal` rows that decide which ball Kurt starts on.
+-- ---------------------------------------------------------------------------
+
+-- RED, BLU, BLK, WHT, PNK, GRN, YLW -- the same ids Kurt1 `checkitem`s before
+-- it bothers to ask
+local APRICORNS = { 85, 89, 92, 93, 97, 99, 101 }
+
+function Commands.g2_select_apricorn(ctx)
+  local game, runner, save = ctx.game, ctx.runner, ctx.save
+  local Bag = require("src.inventory.Bag")
+  local picked, items = 0, {}
+  for _, id in ipairs(APRICORNS) do
+    local key = string.format("ITEM_%03d", id)
+    local qty = save.inventory and save.inventory[key] or 0
+    if qty > 0 then
+      local def = game.data.items and game.data.items[key]
+      items[#items + 1] = {
+        label = string.format("%s x%d", (def and def.name) or key, qty),
+        onSelect = function() picked = id runner:resume() end,
+      }
+    end
+  end
+  if #items == 0 then
+    ctx.g2Var, ctx.lastCheck = 0, false
+    return
+  end
+  game.stack:push(require("src.ui.Menu").new(game, items, {
+    onCancel = function() runner:resume() end,
+  }))
+  runner:yield()
+  if picked ~= 0 then
+    Bag.remove(save, string.format("ITEM_%03d", picked), 1)
+  end
+  ctx.g2Var, ctx.lastCheck = picked, picked ~= 0
+end
+
+-- ---------------------------------------------------------------------------
 -- Mania's SHUCKIE (GiveShuckle 01:$73E1, ReturnShuckie 01:$7452)
 --
 -- Not a `givepoke`: the special stamps a fixed OT ("MANIA", ID $0206),

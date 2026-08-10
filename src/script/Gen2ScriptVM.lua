@@ -339,6 +339,10 @@ local SPECIALS = {
   [0x4B] = "g2_return_shuckie", -- ReturnShuckie (01:$7452)
   [0x4E] = "g2_show_coins",  -- DisplayCoinCaseBalance
   [0x4F] = "g2_show_coins",  -- DisplayMoneyAndCoinBalance
+  -- Kurt's apricorn pick.  Kurt1.AskApricorn is `special SelectApricornForKurt`
+  -- followed by `ifequal 0 -> .Cancel`, so the warn-once stub's var of 0 read
+  -- back as "you backed out" and every apricorn got the letdown line.
+  [0x55] = "g2_select_apricorn", -- SelectApricornForKurt (01:$7581)
   [0x56] = "g2_name_rater",  -- NameRater, whose whole script IS the special
 }
 

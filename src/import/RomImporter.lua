@@ -47,7 +47,9 @@ end
 -- v43: field.engineFlags (the EngineFlags address/bit rows) and
 --      field.spawnFlags (wVisitedSpawns bit -> map), so an imported battery
 --      save carries every ENGINE_* flag and its FLY destinations.
-local CACHE_FORMAT = "rom-cache-v43:"
+-- v44: battle animation framesets stop at `oamdelete` ($FC) and carry
+--      `oamwait` ($FD) rows as blanks instead of reading both as OAM ids.
+local CACHE_FORMAT = "rom-cache-v44:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"

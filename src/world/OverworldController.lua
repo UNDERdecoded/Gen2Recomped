@@ -434,6 +434,10 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- .loadSpriteData).
   if not (opts and opts.seamless and self.npcPool) then
     self.npcPool = {}
+    -- LoadMapObjects re-reads every object_event from ROM, so a `moveobject`
+    -- from the last visit does not survive the reload
+    self.npcPlacement = nil
+    self.npcResumeCell = nil
   end
   self.npcs = {}
   -- MAPCALLBACK_OBJECTS: ROUTE_34 and DAY_CARE both re-derive their day-care

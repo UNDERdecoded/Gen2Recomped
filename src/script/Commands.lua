@@ -448,9 +448,20 @@ end
 
 -- Instantly relocate an NPC (OaksLabCalcRivalMovementScript / SetSpritePosition1).
 -- facing is optional.  Headless-safe no-op without an overworld.
+-- GSC's `moveobject` writes the loaded map's object_event coordinates, so the
+-- disappear/moveobject/appear idiom (Kurt arriving in Slowpoke Well, most
+-- cutscene walk-ons) relocates an object that has no live NPC at all.  Record
+-- the cell so toggleObject respawns it there instead of at its map-def tile.
 function Commands.place_npc(ctx, objIndex, x, y, facing)
   local ow = ctx.overworld
   if not ow then return end
+  local obj = ow.map and ow.map.def and ow.map.def.objects
+                and ow.map.def.objects[objIndex]
+  local key = obj and require("src.world.OverworldController").objectToggleKey(obj)
+  if key then
+    ow.npcPlacement = ow.npcPlacement or {}
+    ow.npcPlacement[key] = { x = x, y = y, facing = facing }
+  end
   local npc = ow:npcByIndex(objIndex)
   if not npc then return end
   npc.cellX, npc.cellY = x, y
@@ -552,9 +563,11 @@ local function toggleObject(ctx, mapId, objName, visible, skipFlag)
       if obj.name == objName then
         local NPC = require("src.world.NPC")
         local npc = NPC.new(ctx.game.data, mapId, obj)
-        local at = skipFlag and ow.npcResumeCell[objName]
+        local at = (ow.npcPlacement and ow.npcPlacement[objName])
+                   or (skipFlag and ow.npcResumeCell[objName])
         if at then
-          npc.cellX, npc.cellY, npc.facing = at.x, at.y, at.facing
+          npc.cellX, npc.cellY = at.x, at.y
+          npc.facing = at.facing or npc.facing
           npc.px, npc.py = at.x * 16, at.y * 16
         end
         table.insert(ow.npcs, npc)

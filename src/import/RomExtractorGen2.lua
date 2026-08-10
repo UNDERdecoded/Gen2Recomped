@@ -5592,8 +5592,17 @@ function RomExtractorGen2:gen2AnimObjects()
 end
 
 -- BattleAnimFrameData is a dw pointer table; GetBattleAnimFrame walks
--- 2-byte frames `db oamID, (flags << 6) | duration` until $FF (hold the last
--- frame) or $FE (restart), so the framesets end where the first one starts.
+-- 2-byte frames `db oamID, (flags << 6) | duration` until a terminator, so
+-- the framesets end where the first one starts.  Four bytes are commands
+-- rather than OAM ids (data/battle_anims/framesets.asm):
+--   $FF oamend     -- hold the last frame
+--   $FE oamrestart -- loop back to the first frame
+--   $FD oamwait n  -- draw nothing for n ticks (two bytes)
+--   $FC oamdelete  -- retire the object (one byte)
+-- Reading $FC/$FD as OAM ids drew whatever row happened to sit at index
+-- 252/253 -- the stray foot that showed up in Tackle and half the other
+-- moves -- and then walked off two bytes misaligned, so every frame after
+-- the terminator was the *next* frameset's bytes read as garbage.
 function RomExtractorGen2:gen2AnimFramesets()
   local sym = self:symbol("BattleAnimFrameData")
   if not sym then return {} end
@@ -5609,15 +5618,21 @@ function RomExtractorGen2:gen2AnimFramesets()
         local oam = self.rom:byte(sym.bank, address)
         if oam == 0xFF then loop = "hold"; break end
         if oam == 0xFE then loop = "restart"; break end
+        if oam == 0xFC then loop = "delete"; break end
         local packed = self.rom:byte(sym.bank, address + 1)
-        -- GetBattleAnimFrame (33:$6716): duration = packed & $3F,
-        -- flags = (packed & $C0) >> 1, i.e. bit 7 = Y flip, bit 6 = X flip
-        frames[#frames + 1] = {
-          oam = oam,
-          duration = packed % 64,
-          xflip = math.floor(packed / 64) % 2 == 1,
-          yflip = math.floor(packed / 128) % 2 == 1,
-        }
+        if oam == 0xFD then
+          -- oamwait: no sprite for `packed` ticks
+          frames[#frames + 1] = { wait = true, duration = packed }
+        else
+          -- GetBattleAnimFrame (33:$6716): duration = packed & $3F,
+          -- flags = (packed & $C0) >> 1, i.e. bit 7 = Y flip, bit 6 = X flip
+          frames[#frames + 1] = {
+            oam = oam,
+            duration = packed % 64,
+            xflip = math.floor(packed / 64) % 2 == 1,
+            yflip = math.floor(packed / 128) % 2 == 1,
+          }
+        end
         address = address + 2
       end
       if #frames > 0 then out[id] = { frames = frames, loop = loop } end

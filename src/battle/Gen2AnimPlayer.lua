@@ -232,10 +232,18 @@ function Gen2AnimPlayer:start(moveId, attackerIsPlayer, opts)
   self.wobbles = 0
   self.keepSprites = false
   self.keptSprites = nil
+  -- Gen 1 queues its send-out poof with attackerIsPlayer = false, because
+  -- TossBallAnimation's flag names the animation's ATTACKER and the poof has
+  -- to land on the player's own pic (the toss row passes true, for the ball
+  -- reaching the foe).  Gen 2's BattleAnim_SendOutMon is already authored on
+  -- the sender's side, so reading that flag straight through mirrored the
+  -- player's own release onto the wild mon.
+  if moveId == "POOF_ANIM" then attackerIsPlayer = not attackerIsPlayer end
   self.enemySide = not attackerIsPlayer
   self.opts = opts
   self.moveId = moveId
   self.loops = {}
+  self.bgSides = {}
   self.script = self:scriptFor(moveId)
   if not self.script then
     if GEN1_BALL_ANIMS[moveId] == nil then
@@ -278,6 +286,12 @@ end
 -- showed the sprites and none of the impact.  BattleState already implements
 -- Gen 1's SE_* vocabulary for exactly these effects, so each id routes onto
 -- its closest counterpart rather than a second fx layer.
+--
+-- The side each one acts on is NOT baked into the id: every routine resolves
+-- it through BGEffect_CheckBattleTurn, which is `hBattleTurn XOR
+-- BG_EFFECT_STRUCT_BATTLE_TURN` -- the third `anim_bgeffect` argument, 1 for
+-- the user and 0 for the target.  So the names below are all the unflipped
+-- SE_* row and `side` on the queued event picks the battler.
 local BG_EFFECTS = {
   [0x01] = "SE_DARK_SCREEN_FLASH",   -- FLASH_INVERTED
   [0x02] = "SE_DARK_SCREEN_FLASH",   -- FLASH_WHITE
@@ -285,8 +299,8 @@ local BG_EFFECTS = {
   [0x04] = "SE_DARK_SCREEN_PALETTE", -- BLACK_HUES
   [0x05] = "SE_FLASH_SCREEN_LONG",   -- ALTERNATE_HUES
   [0x08] = "SE_FLASH_SCREEN_LONG",   -- CYCLE_BGPALS_INVERTED
-  [0x09] = "SE_HIDE_ENEMY_MON_PIC",  -- HIDE_MON
-  [0x0A] = "SE_SHOW_ENEMY_MON_PIC",  -- SHOW_MON
+  [0x09] = "SE_HIDE_MON_PIC",        -- HIDE_MON
+  [0x0A] = "SE_SHOW_MON_PIC",        -- SHOW_MON
   [0x0B] = "SE_SHOW_MON_PIC",        -- ENTER_MON
   [0x0C] = "SE_HIDE_MON_PIC",        -- RETURN_MON
   [0x0F] = "SE_SLIDE_MON_UP",        -- TELEPORT
@@ -298,7 +312,7 @@ local BG_EFFECTS = {
   [0x18] = "SE_LIGHT_SCREEN_PALETTE",-- FADE_MON_TO_LIGHT_REPEATING
   [0x19] = "SE_DARKEN_MON_PALETTE",  -- FADE_MON_TO_BLACK_REPEATING
   [0x1A] = "SE_FLASH_SCREEN_LONG",   -- CYCLE_MON_LIGHT_DARK_REPEATING
-  [0x1B] = "SE_BLINK_ENEMY_MON",     -- FLASH_MON_REPEATING
+  [0x1B] = "SE_BLINK_MON",           -- FLASH_MON_REPEATING
   [0x1C] = "SE_DARKEN_MON_PALETTE",  -- FADE_MONS_TO_BLACK_REPEATING
   [0x1D] = "SE_LIGHT_SCREEN_PALETTE",-- FADE_MON_TO_WHITE_WAIT_FADE_BACK
   [0x1E] = "SE_RESET_SCREEN_PALETTE",-- FADE_MON_FROM_WHITE
@@ -309,7 +323,7 @@ local BG_EFFECTS = {
   [0x23] = "SE_SLIDE_MON_DOWN_AND_HIDE", -- DIG
   [0x24] = "SE_MOVE_MON_HORIZONTALLY",   -- TACKLE
   [0x25] = "SE_SHAKE_BACK_AND_FORTH",-- WOBBLE_MON
-  [0x26] = "SE_HIDE_ENEMY_MON_PIC",  -- REMOVE_MON
+  [0x26] = "SE_HIDE_MON_PIC",        -- REMOVE_MON
   [0x27] = "SE_WAVY_SCREEN",         -- WAVE_DEFORM_MON
   [0x28] = "SE_WAVY_SCREEN",         -- PSYCHIC
   [0x2B] = "SE_SHAKE_BACK_AND_FORTH",-- FLAIL
@@ -319,6 +333,47 @@ local BG_EFFECTS = {
   [0x33] = "SE_SHAKE_BACK_AND_FORTH",-- WOBBLE_PLAYER
   [0x34] = "SE_WAVY_SCREEN",         -- WOBBLE_SCREEN
 }
+
+-- `anim_incbgeffect id` bumps that effect's BG_EFFECT_STRUCT_JT_INDEX, and
+-- for every routine a script ends this way the state it lands on is the one
+-- that puts back what the effect changed and calls EndBattleBGEffect:
+-- BGEffect_RapidCyclePals' .two_dmg reloads rBGP with $e4, the deformations'
+-- last state is BattleAnim_ResetLCDStatCustom.  The port ran none of it, so
+-- Growl's FADE_MON_TO_BLACK_REPEATING left its darkened palette up for the
+-- rest of the battle and Tail Whip's WOBBLE_MON never put the mon back.
+local BG_EFFECTS_END = {
+  [0x03] = "SE_RESET_SCREEN_PALETTE", -- WHITE_HUES
+  [0x04] = "SE_RESET_SCREEN_PALETTE", -- BLACK_HUES
+  [0x05] = "SE_RESET_SCREEN_PALETTE", -- ALTERNATE_HUES
+  [0x08] = "SE_RESET_SCREEN_PALETTE", -- CYCLE_BGPALS_INVERTED
+  [0x15] = "SE_RESET_SCREEN_PALETTE", -- RAPID_FLASH
+  [0x16] = "SE_RESET_SCREEN_PALETTE", -- FADE_MON_TO_LIGHT
+  [0x17] = "SE_RESET_SCREEN_PALETTE", -- FADE_MON_TO_BLACK
+  [0x18] = "SE_RESET_SCREEN_PALETTE", -- FADE_MON_TO_LIGHT_REPEATING
+  [0x19] = "SE_RESET_SCREEN_PALETTE", -- FADE_MON_TO_BLACK_REPEATING
+  [0x1A] = "SE_RESET_SCREEN_PALETTE", -- CYCLE_MON_LIGHT_DARK_REPEATING
+  [0x1C] = "SE_RESET_SCREEN_PALETTE", -- FADE_MONS_TO_BLACK_REPEATING
+  [0x1D] = "SE_RESET_SCREEN_PALETTE", -- FADE_MON_TO_WHITE_WAIT_FADE_BACK
+  [0x1E] = "SE_RESET_SCREEN_PALETTE", -- FADE_MON_FROM_WHITE
+  [0x1B] = "SE_RESET_MON_POSITION",   -- FLASH_MON_REPEATING
+  [0x21] = "SE_RESET_MON_POSITION",   -- WITHDRAW
+  [0x22] = "SE_RESET_MON_POSITION",   -- BOUNCE_DOWN
+  [0x24] = "SE_RESET_MON_POSITION",   -- TACKLE
+  [0x25] = "SE_RESET_MON_POSITION",   -- WOBBLE_MON
+  [0x27] = "SE_RESET_MON_POSITION",   -- WAVE_DEFORM_MON
+  [0x2B] = "SE_RESET_MON_POSITION",   -- FLAIL
+  [0x32] = "SE_RESET_MON_POSITION",   -- VIBRATE_MON
+  [0x33] = "SE_RESET_MON_POSITION",   -- WOBBLE_PLAYER
+}
+Gen2AnimPlayer.BG_EFFECTS_END = BG_EFFECTS_END
+
+-- BGEffect_CheckBattleTurn: BG_EFFECT_STRUCT_BATTLE_TURN is 1 for the move's
+-- user and 0 for its target.  Anything else (the flash routines reuse the
+-- field as a repeat count) only ever drives screen-wide effects, which
+-- ignore the side.
+local function bgSide(turn)
+  return turn == 1 and "user" or "target"
+end
 
 -- The effects that are deliberately dropped rather than unhandled, so the
 -- coverage test can tell the two apart.
@@ -379,6 +434,8 @@ function Gen2AnimPlayer:spawn(id, x, y, param)
     fn = self.anims.functions and self.anims.functions[def.fn or 0],
     param = param, frame = 1, left = first.duration + 1, cycles = 0, age = 0,
     index = index, frameset = def.frameset,
+    -- BATTLEANIMSTRUCT_JUMPTABLE_INDEX / VAR1 / VAR2
+    state = 0, var1 = 0, var2 = 0,
     persistent = self.scriptObjs and self.scriptObjs[index] or nil,
   }
 end
@@ -405,7 +462,79 @@ local function reframe(self, obj, framesetId)
   obj.left = first.duration + 1
 end
 
+-- BattleAnim_Sine: a = d * sin(a * pi/32), with `a` a wrapping byte angle
+local function animSine(a, d)
+  return math.floor(d * math.sin((a % 64) * math.pi / 32))
+end
+
+-- BATTLE_ANIM_FRAMESET_POKE_BALL_1..5
+local BALL_FRAMESET_1 = 9
+local BALL_FRAMESET_2 = 10
+local BALL_FRAMESET_3 = 11
+local BALL_FRAMESET_4 = 12
+local BALL_FRAMESET_5 = 13
+
+-- BattleAnimFunc_PokeBall's twelve-state jumptable.  anim_setobj/anim_incobj
+-- only write BATTLEANIMSTRUCT_JUMPTABLE_INDEX; it is each state that picks
+-- the next frameset, so the port has to run the machine.  Treating
+-- anim_incobj as "next frameset" instead re-ran ReinitBattleAnimFrameset on
+-- the thrown ball, which reset its travel and made it look like a fresh ball
+-- was hurled at the mon once per wobble, and left the resting ball stuck on
+-- POKE_BALL_2 -- the squat 16x8 tile that reads as half a ball.
+local function pokeBallStep(self, obj)
+  local s = obj.state or 0
+  if s == 0 then -- init (GetBallAnimPal)
+    obj.state = 1
+  elseif s == 1 then -- BattleAnimFunc_ThrowFromUserToTarget
+    if obj.x >= 0x88 then
+      obj.y = obj.y + obj.yOffset
+      obj.yOffset = 0
+      reframe(self, obj, BALL_FRAMESET_3)
+      obj.state = 2
+      return
+    end
+    obj.x = obj.x + 2
+    obj.y = obj.y - 1
+    obj.yOffset = animSine(obj.var1, obj.param or 0)
+    obj.var1 = (obj.var1 - 1) % 256
+  elseif s == 3 then
+    obj.state = 4
+    reframe(self, obj, BALL_FRAMESET_1)
+    obj.var1, obj.var2 = 0, 0x10
+  elseif s == 4 then
+    obj.yOffset = animSine(obj.var1, obj.var2)
+    obj.var1 = (obj.var1 - 1) % 256
+    if obj.var1 % 32 == 0 then
+      obj.var1 = 0
+      obj.var2 = obj.var2 - 4
+      if obj.var2 <= 0 then
+        reframe(self, obj, BALL_FRAMESET_4)
+        obj.state = 5
+      end
+    end
+  elseif s == 6 then
+    reframe(self, obj, BALL_FRAMESET_5)
+    obj.state = 5 -- .six falls through to .five after decrementing the index
+  elseif s == 7 then
+    reframe(self, obj, BALL_FRAMESET_2)
+    obj.state = 8
+    obj.var2 = 0x20
+  elseif s == 8 or s == 10 then
+    obj.yOffset = animSine(obj.var1, obj.var2)
+    obj.var1 = (obj.var1 - 1) % 256
+    if obj.var1 % 32 == 0 then
+      obj.state = 11
+    elseif obj.var1 % 16 == 0 then
+      obj.state = s + 1
+    end
+  elseif s == 11 then
+    obj.dead = true
+  end
+  -- .two/.five/.nine simply hold the object where it is
+end
+
 function Gen2AnimPlayer:moveObject(obj)
+  if obj.fn == "PokeBall" then return pokeBallStep(self, obj) end
   local kind = MOTION[obj.fn or "Null"]
   if not kind or kind == "static" then return end
   local t = math.min(1, obj.age / TRAVEL_FRAMES)
@@ -510,15 +639,38 @@ function Gen2AnimPlayer:step(inst)
     -- The port has no asm to run, so it advances the frameset directly --
     -- without it the thrown ball never rocked.
     local obj = objectByIndex(self, inst.args[1])
-    if obj then reframe(self, obj, (obj.frameset or obj.def.frameset) + 1) end
+    if obj and obj.fn == "PokeBall" then
+      obj.state = (obj.state or 0) + 1
+    elseif obj then
+      reframe(self, obj, (obj.frameset or obj.def.frameset) + 1)
+    end
   elseif op == "setobj" then
-    -- the same field, written outright.  The port cannot index an asm
-    -- jumptable, so it just restarts the object's own frameset.
+    -- the same field, written outright.  Only the Poké Ball's jumptable is
+    -- modelled, so everything else still just restarts its own frameset.
     local obj = objectByIndex(self, inst.args[1])
-    if obj then reframe(self, obj, obj.def.frameset) end
+    if obj and obj.fn == "PokeBall" then
+      obj.state = inst.args[2] or 0
+    elseif obj then
+      reframe(self, obj, obj.def.frameset)
+    end
   elseif op == "bgeffect" then
-    local se = BG_EFFECTS[inst.args[1]]
-    if se then self.effects[#self.effects + 1] = { effect = se } end
+    local id = inst.args[1]
+    local side = bgSide(inst.args[3])
+    -- anim_incbgeffect addresses a running effect by id alone, so keep the
+    -- side the queue entry was made with
+    self.bgSides = self.bgSides or {}
+    self.bgSides[id] = side
+    local se = BG_EFFECTS[id]
+    if se then
+      self.effects[#self.effects + 1] = { effect = se, side = side, gen2 = true }
+    end
+  elseif op == "incbgeffect" then
+    local id = inst.args[1]
+    local se = BG_EFFECTS_END[id]
+    if se then
+      local side = self.bgSides and self.bgSides[id] or "target"
+      self.effects[#self.effects + 1] = { effect = se, side = side, gen2 = true }
+    end
   elseif op == "checkpokeball" then
     -- BattleAnimCmd_CheckPokeball calls GetPokeBallWobble and stores its `c`
     -- into wBattleAnimVar, which the toss script then compares against 1 and
@@ -752,7 +904,9 @@ function Gen2AnimPlayer:drawSprites(objects)
   for _, obj in ipairs(objects) do
     local set = frameset(self, obj)
     local frame = set and set.frames[obj.frame]
-    local row = frame and self.anims.oam and self.anims.oam[frame.oam]
+    -- an oamwait row holds the object in place with nothing drawn
+    local row = frame and frame.oam and self.anims.oam
+                and self.anims.oam[frame.oam]
     if row then
       local img = self:sheetImage(obj.def.gfx)
       local pal = self:paletteFor(obj.def.palette or 0)
