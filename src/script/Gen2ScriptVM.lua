@@ -252,6 +252,20 @@ L.warpfacing = function(ir, s) emit(s, { "g2_warp", ir[3], ir[5], ir[6], ir[2] }
 -- bedroom in New Bark Town, however far the story had got.  The extractor
 -- has already folded the (group, map) pair into one registry key.
 L.blackoutmod = function(ir, s) emit(s, { "g2_blackout_point", ir[2] }) end
+-- movement, warps, presentation -------------------------------------------
+
+L.warp = function(ir, s) emit(s, { "g2_warp", ir[2], ir[4], ir[5] }) end
+L.warpfacing = function(ir, s) emit(s, { "g2_warp", ir[3], ir[5], ir[6], ir[2] }) end
+L.blackoutmod = function(ir, s) emit(s, { "g2_blackout_point", ir[2] }) end
+
+-- Script_halloffame (pokegold scripting.asm): induction + credits.
+-- HallOfFameEnterScript ends with: HealParty → (optional SS Ticket call) → halloffame.
+-- Without this lowering the opcode is skipped and the player can walk around
+-- the Hall of Fame after the heal.
+L.halloffame = function(_, s)
+  emit(s, { "record_hall_of_fame" })
+end
+
 L.pause = function(ir, s) emit(s, { "wait", ir[2] }) end
 -- MUSIC_* and SFX_* are row indices into the ROM's Music and SFX pointer
 -- tables, which is exactly how the importer keyed audio.musicIndex/sfxIndex.
