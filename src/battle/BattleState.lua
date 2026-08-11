@@ -2199,9 +2199,14 @@ end
 
 -- the merged move_effects record for an effect id; the module records
 -- cover battles built without a loader
-function BattleState:effectRecord(effect)
+function BattleState:effectRecord(effect, moveId)
+  if moveId == "BELLY_DRUM" then
+    return MoveEffects.RECORDS.BELLY_DRUM_EFFECT
+  elseif moveId == "CURSE" then
+    return MoveEffects.RECORDS.CURSE_EFFECT
+  end
   local effects = self.data.move_effects
-  if effects then return effects[effect] end
+  if effects and effects[effect] then return effects[effect] end
   return MoveEffects.RECORDS[effect]
 end
 
@@ -3396,7 +3401,7 @@ function BattleState:performMove(user, target, moveInst, isCalled)
     Logger.warn("unknown move instance %s", tostring(moveInst.id))
     return
   end
-  local record = self:effectRecord(move.effect)
+  local record = self:effectRecord(move.effect, move.id)
 
   -- charge release?
   local releasing = user.charging == moveInst and user.chargeReady
