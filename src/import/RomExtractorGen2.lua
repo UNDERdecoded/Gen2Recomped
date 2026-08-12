@@ -4869,95 +4869,47 @@ end
 -- Used when the linker symbols ClockTilemapRLE etc. are not in the symbol
 -- table; byte-identical to gfx/pokegear/*.tilemap.rle in pret/pokegold.
 -- Gold/Silver pokegear RLE tilemaps (tile_id, count)* terminated by $FF.
-local GEN2_POKEGEAR_RLE = {
-  CLOCK = {
-     79,   8,  79,   4,  48,   1, 127,   6,  49,   1,  79,   8,  79,   4, 127,   8,
-     79,  12,  50,   1, 127,   6,  51,   1,  79,  20,  79,   2,   6,   1,   7,  14,
-     23,   1,  79,   2,  79,   2,  22,   1, 127,  14,  22,   1,  79,   2,  79,   2,
-     22,   1, 127,  14,  22,   1,  79,   2,  79,   2,  22,   1, 127,  14,  22,   1,
-     79,   2,  79,   2,  22,   1, 127,  14,  22,   1,  79,   2,  79,   2,  22,   1,
-    127,  14,  22,   1,  79,   2,  79,   2,  38,   1,   7,  14,  39,   1,  79,   2,
-     79,  20, 255,
-  },
-  PHONE = {
-     79,   8,   6,   1,   7,  10,  23,   1,  79,   8,  22,   1,  79,  10,  22,   1,
-      6,   1,   7,   7,  39,   1,  79,  10,  22,   1,  22,   1, 127,  18,  22,   1,
-     22,   1, 127,  18,  22,   1,  22,   1, 127,  18,  22,   1,  22,   1, 127,  18,
-     22,   1,  22,   1, 127,  18,  22,   1,  22,   1, 127,  18,  22,   1,  22,   1,
-    127,  18,  22,   1,  22,   1, 127,  18,  22,   1,  22,   1, 127,  18,  22,   1,
-    255,
-  },
-  RADIO = {
-     79,   8,   6,   1,   7,  10,  23,   1,  79,   8,  22,   1,  79,   2,  55,   1,
-     79,   1,  56,   1,  57,   1,  79,   1,  58,   1,  79,   2,  22,   1,  72,   1,
-     74,   7,  22,   1,  59,  10,  22,   1,  76,   1,  78,   7,  22,   1,  79,  10,
-     22,   1,  76,   1,  78,   7,  22,   1,  54,   1, 127,   1,  88,   1,  89,   1,
-     90,   1,  91,   1,  92,   1,  93,   1, 127,   1,  53,   1,  22,   1,  76,   1,
-     78,   7,  38,   1,   7,  10,  39,   1,  76,   1,  78,  18,  77,   1,  76,   1,
-     78,  18,  77,   1,  76,   1, 127,  18,  77,   1,  76,   1, 127,  18,  77,   1,
-     76,   1, 127,  18,  77,   1,  76,   1,  78,  18,  77,   1, 255,
-  },
-}
-
--- Border palette from gfx/pokegear/pokegear.pal (0-31 RGB → 0-1)
-local GEN2_POKEGEAR_BORDER_PAL = {
-  [0] = { 28/31, 31/31, 20/31 },
-  [1] = { 21/31, 21/31, 21/31 },
-  [2] = { 13/31, 13/31, 13/31 },
-  [3] = { 0, 0, 0 },
-}
-
--- Authentic POKéGEAR cards: decompress TownMapGFX ($00+) + PokegearGFX ($30+),
--- apply RLE tilemaps, paint with PokegearPals / border palette.
+-- Combined TownMapGFX ($00-$2F) + PokegearGFX ($30-$5F) sheet + RLE cells.
+-- Runtime draws tile-by-tile (gen1-recomp approach): $4F black, $7F cream.
 function RomExtractorGen2:gen2Pokegear()
-  local pals = self:gen2TownMapPalettes()
-  local out = { palettes = {}, cards = {} }
-  for index, colors in pairs(pals) do
-    local entry = {}
-    for c = 0, 3 do
-      local rgb = colors[c] or { 0, 0, 0 }
-      entry[c + 1] = {
-        math.floor(rgb[1] * 255 + 0.5),
-        math.floor(rgb[2] * 255 + 0.5),
-        math.floor(rgb[3] * 255 + 0.5),
-      }
-    end
-    out.palettes[index] = entry
-  end
+  local out = { palettes = {}, cards = {}, tilesWide = 16 }
 
-  local function loadTiles(symbolName, baseId)
-    local bank = {}
+  local function loadLzOrRaw(symbolName, maxTiles)
     local pixels = self:gen2Lz(symbolName)
-    if not pixels or #pixels < 16 then
-      local sym = self:symbol(symbolName)
-      if sym and self.rom then
-        local ok, raw = pcall(function()
-          return self.rom:bytes(sym.bank, sym.address, 128 * 16)
-        end)
-        if ok and type(raw) == "table" and #raw >= 16 then
-          pixels = raw
-        end
-      end
-    end
-    if not pixels then return bank, 0 end
-    local n = math.floor(#pixels / 16)
-    for t = 0, n - 1 do
-      local tile = {}
-      for i = 1, 16 do tile[i] = pixels[t * 16 + i] or 0 end
-      bank[baseId + t] = tile
-    end
-    return bank, n
+    if pixels and #pixels >= 16 then return pixels end
+    local sym = self:symbol(symbolName)
+    if not (sym and self.rom) then return nil end
+    local ok, raw = pcall(function()
+      return self.rom:bytes(sym.bank, sym.address, (maxTiles or 48) * 16)
+    end)
+    return (ok and type(raw) == "table" and #raw >= 16) and raw or nil
   end
 
-  local tileBank = {}
-  local tmBank, tmCount = loadTiles("TownMapGFX", 0)
-  for id, tile in pairs(tmBank) do tileBank[id] = tile end
-  local pgBank, pgCount = loadTiles("PokegearGFX", 0x30)
-  for id, tile in pairs(pgBank) do tileBank[id] = tile end
-  out.tileCount = (tmCount or 0) + (pgCount or 0)
+  local townMap = loadLzOrRaw("TownMapGFX", 48) or {}
+  local gearTiles = loadLzOrRaw("PokegearGFX", 48) or {}
+  local sheet = {}
+  for i = 1, 0x30 * 16 do sheet[i] = townMap[i] or 0 end
+  for i = 1, 0x30 * 16 do sheet[0x30 * 16 + i] = gearTiles[i] or 0 end
+  while #sheet < 96 * 16 do sheet[#sheet + 1] = 0 end
+
+  local borderPal = {
+    [0] = { 28/31, 31/31, 20/31 },
+    [1] = { 21/31, 21/31, 21/31 },
+    [2] = { 13/31, 13/31, 13/31 },
+    [3] = { 0, 0, 0 },
+  }
+  local image
+  if ImageWriter.decode2bppColor then
+    image = ImageWriter.decode2bppColor(sheet, 128, 48, borderPal, false)
+  else
+    image = ImageWriter.decode2bpp(sheet, 128, 48, false)
+  end
+  self:saveImage(image, "ui/pokegear_gear.png")
+  out.tiles = "assets/generated/ui/pokegear_gear.png"
+  out.tilesWide = 16
 
   local function cellsFromBytes(bytes)
-    if type(bytes) ~= "table" or #bytes < 2 then return nil end
+    if type(bytes) ~= "table" then return nil end
     local cells = {}
     local i = 1
     while i + 1 <= #bytes and #cells < 20 * 18 do
@@ -4975,110 +4927,125 @@ function RomExtractorGen2:gen2Pokegear()
     return cells
   end
 
-  local function decodeRleSymbol(symbolName)
-    local sym = self:symbol(symbolName)
+  local function decodeRleSymbol(name)
+    local sym = self:symbol(name)
     if not (sym and self.rom) then return nil end
     local bytes = {}
     local ok = pcall(function()
-      local addr, i = sym.address, 0
+      local i = 0
       while i < 400 do
-        local tile = self.rom:byte(sym.bank, addr + i)
+        local tile = self.rom:byte(sym.bank, sym.address + i)
         bytes[#bytes + 1] = tile
         if tile == 0xFF then break end
-        bytes[#bytes + 1] = self.rom:byte(sym.bank, addr + i + 1)
+        bytes[#bytes + 1] = self.rom:byte(sym.bank, sym.address + i + 1)
         i = i + 2
       end
     end)
     return ok and cellsFromBytes(bytes) or nil
   end
 
-  local function paintTile(image, tile, colors, px, py)
-    if not tile then
-      for y = 0, 7 do
-        for x = 0, 7 do
-          image:setPixel(px + x, py + y, 0.82, 0.85, 0.70, 1)
-        end
-      end
-      return
-    end
-    for y = 0, 7 do
-      local low = tile[y * 2 + 1] or 0
-      local high = tile[y * 2 + 2] or 0
-      for x = 0, 7 do
-        local div = 2 ^ (7 - x)
-        local shade = math.floor(high / div) % 2 * 2 + math.floor(low / div) % 2
-        local c = colors[shade] or colors[0] or { 0.8, 0.8, 0.7 }
-        image:setPixel(px + x, py + y, c[1], c[2], c[3], 1)
-      end
-    end
-  end
+  local FALLBACK = {
+    clock = {
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  48, 127, 127, 127, 127, 127, 127,  49,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79, 127, 127, 127, 127, 127, 127, 127, 127,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  50, 127, 127, 127, 127, 127, 127,  51,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,   6,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,  23,  79,  79,
+       79,  79,  22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,  79,  79,
+       79,  79,  22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,  79,  79,
+       79,  79,  22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,  79,  79,
+       79,  79,  22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,  79,  79,
+       79,  79,  22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,  79,  79,
+       79,  79,  38,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,  39,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+    },
+    phone = {
+       79,  79,  79,  79,  79,  79,  79,  79,   6,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,  23,
+       79,  79,  79,  79,  79,  79,  79,  79,  22,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  22,
+        6,   7,   7,   7,   7,   7,   7,   7,  39,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       22, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  22,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+    },
+    radio = {
+       79,  79,  79,  79,  79,  79,  79,  79,   6,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,  23,
+       79,  79,  79,  79,  79,  79,  79,  79,  22,  79,  79,  55,  79,  56,  57,  79,  58,  79,  79,  22,
+       72,  74,  74,  74,  74,  74,  74,  74,  22,  59,  59,  59,  59,  59,  59,  59,  59,  59,  59,  22,
+       76,  78,  78,  78,  78,  78,  78,  78,  22,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  22,
+       76,  78,  78,  78,  78,  78,  78,  78,  22,  54, 127,  88,  89,  90,  91,  92,  93, 127,  53,  22,
+       76,  78,  78,  78,  78,  78,  78,  78,  38,   7,   7,   7,   7,   7,   7,   7,   7,   7,   7,  39,
+       76,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  77,
+       76,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  77,
+       76, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  77,
+       76, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  77,
+       76, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127,  77,
+       76,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  78,  77,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+       79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,  79,
+    },
+  }
 
-  local function renderCard(cells, relative)
-    if not cells then return nil end
-    local colors = (pals and pals[0]) or GEN2_POKEGEAR_BORDER_PAL
-    if not colors[0] and colors[1] then
-      -- out.palettes is 1-based 0-255 triples; convert
-      colors = {
-        [0] = { colors[1][1]/255, colors[1][2]/255, colors[1][3]/255 },
-        [1] = { (colors[2] or colors[1])[1]/255, (colors[2] or colors[1])[2]/255, (colors[2] or colors[1])[3]/255 },
-        [2] = { (colors[3] or colors[1])[1]/255, (colors[3] or colors[1])[2]/255, (colors[3] or colors[1])[3]/255 },
-        [3] = { (colors[4] or {0,0,0})[1]/255, (colors[4] or {0,0,0})[2]/255, (colors[4] or {0,0,0})[3]/255 },
+  out.cards = {
+    clock = decodeRleSymbol("ClockTilemapRLE") or FALLBACK.clock,
+    phone = decodeRleSymbol("PhoneTilemapRLE") or FALLBACK.phone,
+    radio = decodeRleSymbol("RadioTilemapRLE") or FALLBACK.radio,
+  }
+
+  local pals = self:gen2TownMapPalettes()
+  for index, colors in pairs(pals) do
+    local entry = {}
+    for c = 0, 3 do
+      local rgb = colors[c] or { 0, 0, 0 }
+      entry[c + 1] = {
+        math.floor(rgb[1] * 255 + 0.5),
+        math.floor(rgb[2] * 255 + 0.5),
+        math.floor(rgb[3] * 255 + 0.5),
       }
     end
-    local image = love.image.newImageData(160, 144)
-    for row = 0, 17 do
-      for col = 0, 19 do
-        local tileId = cells[row * 20 + col + 1] or 0x4F
-        paintTile(image, tileBank[tileId], colors, col * 8, row * 8)
-      end
-    end
-    self:saveImage(image, relative)
-    return "assets/generated/" .. relative
-  end
-
-  for _, pair in ipairs({
-    { "CLOCK", "ClockTilemapRLE" },
-    { "PHONE", "PhoneTilemapRLE" },
-    { "RADIO", "RadioTilemapRLE" },
-  }) do
-    local name, sym = pair[1], pair[2]
-    local cells = decodeRleSymbol(sym) or cellsFromBytes(GEN2_POKEGEAR_RLE[name])
-    if cells then
-      out.cards[name] = renderCard(cells, "ui/pokegear_" .. name:lower() .. ".png")
+    if type(index) == "number" then
+      out.palettes[index + 1] = entry
     end
   end
+  if not out.palettes[1] then
+    out.palettes[1] = {
+      { 230, 255, 164 }, { 172, 172, 172 }, { 107, 107, 107 }, { 0, 0, 0 },
+    }
+  end
 
-  pcall(function()
-    local pixels = self:gen2Lz("PokegearGFX")
-    if not pixels or #pixels < 16 then return end
-    local tiles = math.floor(#pixels / 16)
-    local rows = math.max(1, math.ceil(tiles / 16))
-    while #pixels < rows * 16 * 16 do pixels[#pixels + 1] = 0 end
-    local image
-    if ImageWriter.decode2bppColor then
-      image = ImageWriter.decode2bppColor(pixels, 128, rows * 8, GEN2_POKEGEAR_BORDER_PAL, false)
-    else
-      image = ImageWriter.decode2bpp(pixels, 128, rows * 8, false)
-    end
-    self:saveImage(image, "ui/pokegear_tiles.png")
-    out.tiles = "assets/generated/ui/pokegear_tiles.png"
-  end)
   pcall(function()
     local pixels = self:gen2Lz("PokegearSpritesGFX")
     if not pixels or #pixels < 16 then return end
-    local tiles = math.floor(#pixels / 16)
-    local rows = math.max(1, math.ceil(tiles / 2))
-    while #pixels < rows * 2 * 16 do pixels[#pixels + 1] = 0 end
-    local rawImg
-    if ImageWriter.decode2bppColor then
-      rawImg = ImageWriter.decode2bppColor(pixels, 16, rows * 8, GEN2_POKEGEAR_BORDER_PAL, true)
-    else
-      rawImg = ImageWriter.decode2bpp(pixels, 16, rows * 8, true)
-    end
-    local image = ImageWriter.matteColor0(rawImg)
-    self:saveImage(image, "ui/pokegear_sprites.png")
+    while #pixels < 10 * 16 do pixels[#pixels + 1] = 0 end
+    local img = ImageWriter.matteColor0(
+      ImageWriter.decode2bppColor
+        and ImageWriter.decode2bppColor(pixels, 16, 40, borderPal, true)
+        or ImageWriter.decode2bpp(pixels, 16, 40, true))
+    self:saveImage(img, "ui/pokegear_sprites.png")
     out.sprites = "assets/generated/ui/pokegear_sprites.png"
   end)
+
   pcall(function()
     local sym = self:symbol("ChrisSpriteGFX")
     if not (sym and self.rom) then return end
@@ -5086,32 +5053,21 @@ function RomExtractorGen2:gen2Pokegear()
     local redPal = {
       [0] = { 28/31, 31/31, 16/31 },
       [1] = { 31/31, 19/31, 10/31 },
-      [2] = { 31/31,  7/31,  1/31 },
+      [2] = { 31/31, 7/31, 1/31 },
       [3] = { 0, 0, 0 },
     }
-    local image
+    local img
     if ImageWriter.decode2bppColor then
-      image = ImageWriter.matteColor0(ImageWriter.decode2bppColor(raw, 16, 16, redPal, true))
+      img = ImageWriter.matteColor0(ImageWriter.decode2bppColor(raw, 16, 16, redPal, true))
     else
-      image = ImageWriter.matteColor0(ImageWriter.decode2bpp(raw, 16, 16, true))
-      if ImageWriter.recolorShades then image = ImageWriter.recolorShades(image, redPal) end
+      img = ImageWriter.matteColor0(ImageWriter.decode2bpp(raw, 16, 16, true))
     end
-    self:saveImage(image, "ui/pokegear_player.png")
+    self:saveImage(img, "ui/pokegear_player.png")
     out.playerIcon = "assets/generated/ui/pokegear_player.png"
   end)
 
-  if not next(out.palettes) and not out.tiles and not out.playerIcon and not next(out.cards) then
-    return nil
-  end
   return out
 end
-
--- ChrisPicAndTrainerCardGFX is raw (uncompressed) 2bpp copied straight to
--- vTiles2 by TrainerCard.InitRAM: $290 bytes = 41 tiles, of which the first
--- 5x7 = 35 are the standing portrait row-major and the last 6 are the card's
--- own "ID No" label.
-local GEN2_PLAYER_PIC_COLS = 5
-local GEN2_PLAYER_PIC_ROWS = 7
 
 function RomExtractorGen2:gen2PlayerFrontPic()
   local sym = self:symbol("ChrisPicAndTrainerCardGFX")

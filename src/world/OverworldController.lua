@@ -2020,8 +2020,17 @@ end
 
 function OverworldState:npcAtCell(cx, cy)
   for _, npc in ipairs(self.npcs) do
-    if (npc.cellX == cx and npc.cellY == cy) or
-       (npc.targetX == cx and npc.targetY == cy) then
+    local big = npc.big or (npc.sprite and npc.sprite.big)
+      or (npc.def and (npc.def.sprite == "SPRITE_BIG_SNORLAX"
+                      or npc.def.sprite == "SPRITE_BIG_LAPRAS"
+                      or npc.def.big))
+    if big then
+      local x, y = npc.cellX, npc.cellY
+      if x and y and cx >= x and cx <= x + 1 and cy >= y and cy <= y + 1 then
+        return npc
+      end
+    elseif (npc.cellX == cx and npc.cellY == cy) or
+           (npc.targetX == cx and npc.targetY == cy) then
       return npc
     end
   end

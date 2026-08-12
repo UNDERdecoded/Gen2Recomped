@@ -17,11 +17,27 @@ end
 -- while mid-step, so nobody walks into a cell being entered).
 -- e.passable entities never block (Yellow's companion Pikachu: the player
 -- walks straight through and it re-trails, pikachu_follow.asm).
+-- Big objects (Snorlax, Lapras doll) occupy a 2x2 footprint on the grid.
+local function entityBlocks(e, cx, cy)
+  local x, y = e.cellX, e.cellY
+  if not (x and y) then return false end
+  local big = e.big or (e.sprite and e.sprite.big)
+    or (e.def and e.def.big)
+    or (e.def and (e.def.sprite == "SPRITE_BIG_SNORLAX"
+                   or e.def.sprite == "SPRITE_BIG_LAPRAS"))
+  if big then
+    -- Origin cell is the top-left of the 2x2 (pret big object_event)
+    return cx >= x and cx <= x + 1 and cy >= y and cy <= y + 1
+  end
+  if x == cx and y == cy then return true end
+  if e.targetX == cx and e.targetY == cy then return true end
+  return false
+end
+
 function Collision.occupied(entities, cx, cy, ignore)
   for _, e in ipairs(entities) do
     if e ~= ignore and not e.passable then
-      if (e.cellX == cx and e.cellY == cy) or
-         (e.targetX == cx and e.targetY == cy) then
+      if entityBlocks(e, cx, cy) then
         return e
       end
     end

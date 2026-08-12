@@ -59,13 +59,82 @@ end
 -- Script_variablesprite: wVariableSprites[slot] = sprite.  Object events whose
 -- sprite byte is $F0 or more read the slot back, so any object already built
 -- from that slot has to pick the new sheet up.
+-- Named slots from SPRITE_VARS ($F0+); Copycat is $FB = slot 11
+local VAR_SLOT_NAMES = {
+  SPRITE_COPYCAT = 11,
+  SPRITE_CONSOLE = 0,
+  SPRITE_DOLL_1 = 1,
+  SPRITE_DOLL_2 = 2,
+  SPRITE_BIG_DOLL = 3,
+  SPRITE_WEIRD_TREE = 4,
+  SPRITE_OLIVINE_RIVAL = 5,
+  SPRITE_AZALEA_ROCKET = 6,
+  SPRITE_FUCHSIA_GYM_1 = 7,
+  SPRITE_FUCHSIA_GYM_2 = 8,
+  SPRITE_FUCHSIA_GYM_3 = 9,
+  SPRITE_FUCHSIA_GYM_4 = 10,
+  SPRITE_JANINE_IMPERSONATOR = 12,
+}
+
+-- Common target sprites by name → OverworldSprites index
+local SPRITE_NAME_INDEX = {
+  SPRITE_CHRIS = 1,
+  SPRITE_CHRIS_BIKE = 2,
+  SPRITE_GAMEBOY_KID = 3,
+  SPRITE_SILVER = 4,
+  SPRITE_LASS = 0x28,
+  SPRITE_TWIN = 0x27,
+  SPRITE_TEACHER = 0x26,
+  SPRITE_BUENA = 0x25,
+  SPRITE_BEAUTY = 0x24,
+  SPRITE_FRUIT_TREE = 0x5D,
+  SPRITE_SUDOWOODO = 0x6D,
+}
+
+local function resolveVarSlot(slot)
+  if type(slot) == "number" then
+    if slot >= 0xF0 then return slot - 0xF0 end
+    return slot
+  end
+  if type(slot) == "string" then
+    if VAR_SLOT_NAMES[slot] then return VAR_SLOT_NAMES[slot] end
+    local n = tonumber(slot)
+    if n then
+      if n >= 0xF0 then return n - 0xF0 end
+      return n
+    end
+    local hex = tonumber(slot:match("^SPRITE_(%x+)$"), 16)
+    if hex and hex >= 0xF0 then return hex - 0xF0 end
+  end
+  return nil
+end
+
+local function resolveSpriteArg(sprite)
+  if type(sprite) == "number" then return sprite end
+  if type(sprite) == "string" then
+    if SPRITE_NAME_INDEX[sprite] then return SPRITE_NAME_INDEX[sprite] end
+    local n = tonumber(sprite)
+    if n then return n end
+    local hex = tonumber(sprite:match("^SPRITE_(%x+)$"), 16)
+    if hex then return hex end
+  end
+  return sprite -- keep string name for NPC lookup
+end
+
 function Commands.g2_variablesprite(ctx, slot, sprite)
-  slot, sprite = tonumber(slot), tonumber(sprite)
-  if not (ctx.save and slot and sprite) then return end
+  slot = resolveVarSlot(slot)
+  sprite = resolveSpriteArg(sprite)
+  if not (ctx.save and slot ~= nil and sprite ~= nil) then return end
   ctx.save.gen2VarSprites = ctx.save.gen2VarSprites or {}
   ctx.save.gen2VarSprites[slot] = sprite
   local ow = ctx.overworld
   if ow and ow.refreshVariableSprite then ow:refreshVariableSprite(slot) end
+  -- Also refresh all NPCs that use this variable sprite name
+  if ow and ow.map and ow.map.npcs then
+    for _, npc in pairs(ow.map.npcs) do
+      if npc.refreshSprite then npc:refreshSprite(ctx.game and ctx.game.data) end
+    end
+  end
 end
 
 local COMPARE = {

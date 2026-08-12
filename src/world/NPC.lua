@@ -46,14 +46,55 @@ local function spriteByIndex(sprites, index)
   return byIndexCache.map[index]
 end
 
+-- Named variable-sprite slots (SPRITE_VARS $F0+).  Copycat is $FB = slot 11.
+local VAR_SPRITE_SLOTS = {
+  SPRITE_COPYCAT = 11,   -- $FB - $F0
+  SPRITE_CONSOLE = 0,
+  SPRITE_DOLL_1 = 1,
+  SPRITE_DOLL_2 = 2,
+  SPRITE_BIG_DOLL = 3,
+  SPRITE_WEIRD_TREE = 4, -- Sudowoodo
+  SPRITE_OLIVINE_RIVAL = 5,
+  SPRITE_AZALEA_ROCKET = 6,
+  SPRITE_FUCHSIA_GYM_1 = 7,
+  SPRITE_FUCHSIA_GYM_2 = 8,
+  SPRITE_FUCHSIA_GYM_3 = 9,
+  SPRITE_FUCHSIA_GYM_4 = 10,
+  SPRITE_JANINE_IMPERSONATOR = 12,
+}
+
+-- Default sheet when the slot has never been assigned (Copycat = LASS)
+local VAR_SPRITE_DEFAULTS = {
+  [11] = 0x28, -- SPRITE_LASS
+  [4] = 0x5D,  -- SPRITE_FRUIT_TREE (Sudowoodo until script)
+}
+
 local function resolveVariableSprite(data, sprites, spriteId)
   local slot = tonumber(spriteId:match("^SPRITE_VAR_(%d+)$"))
+  if not slot then
+    slot = VAR_SPRITE_SLOTS[spriteId]
+  end
+  -- Also accept raw $F0-$FF as SPRITE_%02X style
+  if not slot then
+    local hex = tonumber(spriteId:match("^SPRITE_(%x+)$"), 16)
+    if hex and hex >= 0xF0 then slot = hex - 0xF0 end
+  end
   if not slot then return nil end
   local save = require("src.core.Game").save
   local assigned = save and save.gen2VarSprites and save.gen2VarSprites[slot]
   if not assigned then
     local defaults = data and data.map_scripts and data.map_scripts.varSprites
     assigned = defaults and defaults[slot]
+  end
+  if not assigned then
+    assigned = VAR_SPRITE_DEFAULTS[slot]
+  end
+  -- assigned may be a numeric OverworldSprites index OR a SPRITE_* name
+  if type(assigned) == "string" then
+    if sprites[assigned] and sprites[assigned].image then return sprites[assigned] end
+    -- SPRITE_LASS etc. — fall through to index lookup via aliases below
+    local byName = sprites[assigned]
+    if byName then return byName end
   end
   return spriteByIndex(sprites, assigned or 1)
 end
@@ -82,6 +123,7 @@ local SPRITE_ALIASES = {
   SPRITE_RED_BIKE = { "SPRITE_CHRIS_BIKE" },
   SPRITE_CHRIS = { "SPRITE_RED" },
   SPRITE_CHRIS_BIKE = { "SPRITE_RED_BIKE" },
+  SPRITE_COPYCAT = { "SPRITE_LASS", "SPRITE_TWIN" },
 }
 
 -- OverworldSprites row index (= object_event sprite byte) for story NPCs
@@ -93,7 +135,7 @@ local SPRITE_INDEX_FALLBACK = {
   SPRITE_BLUE = 7,
   SPRITE_RED_KANTO = 6,
   SPRITE_ROCKET = 0x35,
-  SPRITE_COPYCAT = 0xFB,
+  SPRITE_COPYCAT = 0x28, -- default LASS; variablesprite may swap to CHRIS
   SPRITE_SUPER_NERD = 0x2B,
   SPRITE_COOLTRAINER_M = 0x23,
   SPRITE_GRAMPS = 0x2F,
@@ -111,6 +153,8 @@ local SPRITE_INDEX_FALLBACK = {
   SPRITE_ERIKA = 0x1C,
   SPRITE_SABRINA = 0x1F,
   SPRITE_BROCK = 0x1A,
+  SPRITE_LASS = 0x28,
+  SPRITE_TWIN = 0x27,
 }
 
 local function resolveSpriteDef(data, spriteId)
@@ -175,6 +219,11 @@ function NPC.new(data, mapId, objDef)
   self.def = objDef
   self.id = string.format("%s_obj_%d", mapId, objDef.index)
   self.sprite = SpriteRenderer.new(withBigFlag(resolveSpriteDef(data, objDef.sprite), objDef.sprite, objDef), self.id)
+  -- 2x2 footprint for Snorlax / Lapras dolls (Collision.occupied reads this)
+  self.big = (self.sprite and self.sprite.big) or objDef.big
+    or objDef.sprite == "SPRITE_BIG_SNORLAX"
+    or objDef.sprite == "SPRITE_BIG_LAPRAS"
+    or false
   -- object_event coordinates are already walk-grid cells
   self.cellX, self.cellY = objDef.x, objDef.y
   self.px, self.py = self.cellX * 16, self.cellY * 16
