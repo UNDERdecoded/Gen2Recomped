@@ -4806,21 +4806,112 @@ end
 function RomExtractorGen2:gen2TownMap()
   local johto = self:gen2TownMapImage("JohtoMap", "ui/town_map_johto.png")
   if not johto then return nil end
-  return {
+  local out = {
     johto = johto,
     kanto = self:gen2TownMapImage("KantoMap", "ui/town_map_kanto.png"),
     landmarks = self:gen2Landmarks(),
   }
+  -- Player "you are here" icon: ChrisSpriteGFX facing-down (4 tiles = 16x16)
+  -- tinted with PAL_OW_RED so it is not a greyscale silhouette on the map.
+  pcall(function()
+    local sym = self:symbol("ChrisSpriteGFX")
+    if not (sym and self.rom) then return end
+    local raw = self.rom:bytes(sym.bank, sym.address, 4 * 16)
+    -- MapObjectPals red (0-31 RGB → 0-1): light, skin, red, black
+    local redPal = {
+      { 28/31, 31/31, 16/31 },
+      { 31/31, 19/31, 10/31 },
+      { 31/31,  7/31,  1/31 },
+      { 0, 0, 0 },
+    }
+    local image
+    if ImageWriter.decode2bppColor then
+      image = ImageWriter.matteColor0(
+        ImageWriter.decode2bppColor(raw, 16, 16, redPal, true))
+    else
+      image = ImageWriter.matteColor0(ImageWriter.decode2bpp(raw, 16, 16, true))
+      if ImageWriter.recolorShades then
+        image = ImageWriter.recolorShades(image, redPal)
+      end
+    end
+    self:saveImage(image, "ui/town_map_player.png")
+    out.playerIcon = "assets/generated/ui/town_map_player.png"
+  end)
+  -- Nest / fly cursor from PokegearSpritesGFX when present (LZ3).
+  pcall(function()
+    local pixels = self:gen2Lz("PokegearSpritesGFX")
+    if not pixels or #pixels < 16 then return end
+    -- First 4 tiles often form the blinking map cursor frame (16x16).
+    local n = math.min(#pixels, 4 * 16)
+    local slice = {}
+    for i = 1, n do slice[i] = pixels[i] end
+    while #slice < 4 * 16 do slice[#slice + 1] = 0 end
+    local image = ImageWriter.matteColor0(ImageWriter.decode2bpp(slice, 16, 16, true))
+    self:saveImage(image, "ui/town_map_cursor.png")
+    out.cursor = "assets/generated/ui/town_map_cursor.png"
+  end)
+  -- Nest icon (dex AREA) if a dedicated symbol exists
+  pcall(function()
+    local pixels = self:gen2Lz("TownMapCursorGFX") or self:gen2Lz("PokegearSpritesGFX")
+    if pixels and #pixels >= 16 then
+      local slice = {}
+      for i = 1, math.min(#pixels, 2 * 16) do slice[i] = pixels[i] end
+      while #slice < 16 do slice[#slice + 1] = 0 end
+      local image = ImageWriter.matteColor0(ImageWriter.decode2bpp(slice, 8, 8, true))
+      self:saveImage(image, "ui/town_map_nest.png")
+      out.nest = { path = "assets/generated/ui/town_map_nest.png" }
+    end
+  end)
+  return out
 end
 
--- PokegearPals (02:7B6E) is the six-palette CGB pack PalPacket_Pokegear
--- loads: the town map uses it through TownMapPals, and the POKéGEAR's own
--- shell is palette 0.  Handed to the UI as 0-255 triples so PokegearMenu can
--- zone with the device's real colours instead of drawing a Gen1 white box.
+-- Gold/Silver pokegear RLE tilemaps (tile, count)* terminated by $FF.
+-- Used when the linker symbols ClockTilemapRLE etc. are not in the symbol
+-- table; byte-identical to gfx/pokegear/*.tilemap.rle in pret/pokegold.
+-- Gold/Silver pokegear RLE tilemaps (tile_id, count)* terminated by $FF.
+local GEN2_POKEGEAR_RLE = {
+  CLOCK = {
+     79,   8,  79,   4,  48,   1, 127,   6,  49,   1,  79,   8,  79,   4, 127,   8,
+     79,  12,  50,   1, 127,   6,  51,   1,  79,  20,  79,   2,   6,   1,   7,  14,
+     23,   1,  79,   2,  79,   2,  22,   1, 127,  14,  22,   1,  79,   2,  79,   2,
+     22,   1, 127,  14,  22,   1,  79,   2,  79,   2,  22,   1, 127,  14,  22,   1,
+     79,   2,  79,   2,  22,   1, 127,  14,  22,   1,  79,   2,  79,   2,  22,   1,
+    127,  14,  22,   1,  79,   2,  79,   2,  38,   1,   7,  14,  39,   1,  79,   2,
+     79,  20, 255,
+  },
+  PHONE = {
+     79,   8,   6,   1,   7,  10,  23,   1,  79,   8,  22,   1,  79,  10,  22,   1,
+      6,   1,   7,   7,  39,   1,  79,  10,  22,   1,  22,   1, 127,  18,  22,   1,
+     22,   1, 127,  18,  22,   1,  22,   1, 127,  18,  22,   1,  22,   1, 127,  18,
+     22,   1,  22,   1, 127,  18,  22,   1,  22,   1, 127,  18,  22,   1,  22,   1,
+    127,  18,  22,   1,  22,   1, 127,  18,  22,   1,  22,   1, 127,  18,  22,   1,
+    255,
+  },
+  RADIO = {
+     79,   8,   6,   1,   7,  10,  23,   1,  79,   8,  22,   1,  79,   2,  55,   1,
+     79,   1,  56,   1,  57,   1,  79,   1,  58,   1,  79,   2,  22,   1,  72,   1,
+     74,   7,  22,   1,  59,  10,  22,   1,  76,   1,  78,   7,  22,   1,  79,  10,
+     22,   1,  76,   1,  78,   7,  22,   1,  54,   1, 127,   1,  88,   1,  89,   1,
+     90,   1,  91,   1,  92,   1,  93,   1, 127,   1,  53,   1,  22,   1,  76,   1,
+     78,   7,  38,   1,   7,  10,  39,   1,  76,   1,  78,  18,  77,   1,  76,   1,
+     78,  18,  77,   1,  76,   1, 127,  18,  77,   1,  76,   1, 127,  18,  77,   1,
+     76,   1, 127,  18,  77,   1,  76,   1,  78,  18,  77,   1, 255,
+  },
+}
+
+-- Border palette from gfx/pokegear/pokegear.pal (0-31 RGB → 0-1)
+local GEN2_POKEGEAR_BORDER_PAL = {
+  [0] = { 28/31, 31/31, 20/31 },
+  [1] = { 21/31, 21/31, 21/31 },
+  [2] = { 13/31, 13/31, 13/31 },
+  [3] = { 0, 0, 0 },
+}
+
+-- Authentic POKéGEAR cards: decompress TownMapGFX ($00+) + PokegearGFX ($30+),
+-- apply RLE tilemaps, paint with PokegearPals / border palette.
 function RomExtractorGen2:gen2Pokegear()
   local pals = self:gen2TownMapPalettes()
-  if not next(pals) then return nil end
-  local out = {}
+  local out = { palettes = {}, cards = {} }
   for index, colors in pairs(pals) do
     local entry = {}
     for c = 0, 3 do
@@ -4831,9 +4922,188 @@ function RomExtractorGen2:gen2Pokegear()
         math.floor(rgb[3] * 255 + 0.5),
       }
     end
-    out[index] = entry
+    out.palettes[index] = entry
   end
-  return { palettes = out }
+
+  local function loadTiles(symbolName, baseId)
+    local bank = {}
+    local pixels = self:gen2Lz(symbolName)
+    if not pixels or #pixels < 16 then
+      local sym = self:symbol(symbolName)
+      if sym and self.rom then
+        local ok, raw = pcall(function()
+          return self.rom:bytes(sym.bank, sym.address, 128 * 16)
+        end)
+        if ok and type(raw) == "table" and #raw >= 16 then
+          pixels = raw
+        end
+      end
+    end
+    if not pixels then return bank, 0 end
+    local n = math.floor(#pixels / 16)
+    for t = 0, n - 1 do
+      local tile = {}
+      for i = 1, 16 do tile[i] = pixels[t * 16 + i] or 0 end
+      bank[baseId + t] = tile
+    end
+    return bank, n
+  end
+
+  local tileBank = {}
+  local tmBank, tmCount = loadTiles("TownMapGFX", 0)
+  for id, tile in pairs(tmBank) do tileBank[id] = tile end
+  local pgBank, pgCount = loadTiles("PokegearGFX", 0x30)
+  for id, tile in pairs(pgBank) do tileBank[id] = tile end
+  out.tileCount = (tmCount or 0) + (pgCount or 0)
+
+  local function cellsFromBytes(bytes)
+    if type(bytes) ~= "table" or #bytes < 2 then return nil end
+    local cells = {}
+    local i = 1
+    while i + 1 <= #bytes and #cells < 20 * 18 do
+      local tile = bytes[i]
+      if tile == 0xFF then break end
+      local count = bytes[i + 1]
+      i = i + 2
+      if count == 0 then count = 256 end
+      for _ = 1, count do
+        if #cells >= 20 * 18 then break end
+        cells[#cells + 1] = tile
+      end
+    end
+    while #cells < 20 * 18 do cells[#cells + 1] = 0x4F end
+    return cells
+  end
+
+  local function decodeRleSymbol(symbolName)
+    local sym = self:symbol(symbolName)
+    if not (sym and self.rom) then return nil end
+    local bytes = {}
+    local ok = pcall(function()
+      local addr, i = sym.address, 0
+      while i < 400 do
+        local tile = self.rom:byte(sym.bank, addr + i)
+        bytes[#bytes + 1] = tile
+        if tile == 0xFF then break end
+        bytes[#bytes + 1] = self.rom:byte(sym.bank, addr + i + 1)
+        i = i + 2
+      end
+    end)
+    return ok and cellsFromBytes(bytes) or nil
+  end
+
+  local function paintTile(image, tile, colors, px, py)
+    if not tile then
+      for y = 0, 7 do
+        for x = 0, 7 do
+          image:setPixel(px + x, py + y, 0.82, 0.85, 0.70, 1)
+        end
+      end
+      return
+    end
+    for y = 0, 7 do
+      local low = tile[y * 2 + 1] or 0
+      local high = tile[y * 2 + 2] or 0
+      for x = 0, 7 do
+        local div = 2 ^ (7 - x)
+        local shade = math.floor(high / div) % 2 * 2 + math.floor(low / div) % 2
+        local c = colors[shade] or colors[0] or { 0.8, 0.8, 0.7 }
+        image:setPixel(px + x, py + y, c[1], c[2], c[3], 1)
+      end
+    end
+  end
+
+  local function renderCard(cells, relative)
+    if not cells then return nil end
+    local colors = (pals and pals[0]) or GEN2_POKEGEAR_BORDER_PAL
+    if not colors[0] and colors[1] then
+      -- out.palettes is 1-based 0-255 triples; convert
+      colors = {
+        [0] = { colors[1][1]/255, colors[1][2]/255, colors[1][3]/255 },
+        [1] = { (colors[2] or colors[1])[1]/255, (colors[2] or colors[1])[2]/255, (colors[2] or colors[1])[3]/255 },
+        [2] = { (colors[3] or colors[1])[1]/255, (colors[3] or colors[1])[2]/255, (colors[3] or colors[1])[3]/255 },
+        [3] = { (colors[4] or {0,0,0})[1]/255, (colors[4] or {0,0,0})[2]/255, (colors[4] or {0,0,0})[3]/255 },
+      }
+    end
+    local image = love.image.newImageData(160, 144)
+    for row = 0, 17 do
+      for col = 0, 19 do
+        local tileId = cells[row * 20 + col + 1] or 0x4F
+        paintTile(image, tileBank[tileId], colors, col * 8, row * 8)
+      end
+    end
+    self:saveImage(image, relative)
+    return "assets/generated/" .. relative
+  end
+
+  for _, pair in ipairs({
+    { "CLOCK", "ClockTilemapRLE" },
+    { "PHONE", "PhoneTilemapRLE" },
+    { "RADIO", "RadioTilemapRLE" },
+  }) do
+    local name, sym = pair[1], pair[2]
+    local cells = decodeRleSymbol(sym) or cellsFromBytes(GEN2_POKEGEAR_RLE[name])
+    if cells then
+      out.cards[name] = renderCard(cells, "ui/pokegear_" .. name:lower() .. ".png")
+    end
+  end
+
+  pcall(function()
+    local pixels = self:gen2Lz("PokegearGFX")
+    if not pixels or #pixels < 16 then return end
+    local tiles = math.floor(#pixels / 16)
+    local rows = math.max(1, math.ceil(tiles / 16))
+    while #pixels < rows * 16 * 16 do pixels[#pixels + 1] = 0 end
+    local image
+    if ImageWriter.decode2bppColor then
+      image = ImageWriter.decode2bppColor(pixels, 128, rows * 8, GEN2_POKEGEAR_BORDER_PAL, false)
+    else
+      image = ImageWriter.decode2bpp(pixels, 128, rows * 8, false)
+    end
+    self:saveImage(image, "ui/pokegear_tiles.png")
+    out.tiles = "assets/generated/ui/pokegear_tiles.png"
+  end)
+  pcall(function()
+    local pixels = self:gen2Lz("PokegearSpritesGFX")
+    if not pixels or #pixels < 16 then return end
+    local tiles = math.floor(#pixels / 16)
+    local rows = math.max(1, math.ceil(tiles / 2))
+    while #pixels < rows * 2 * 16 do pixels[#pixels + 1] = 0 end
+    local rawImg
+    if ImageWriter.decode2bppColor then
+      rawImg = ImageWriter.decode2bppColor(pixels, 16, rows * 8, GEN2_POKEGEAR_BORDER_PAL, true)
+    else
+      rawImg = ImageWriter.decode2bpp(pixels, 16, rows * 8, true)
+    end
+    local image = ImageWriter.matteColor0(rawImg)
+    self:saveImage(image, "ui/pokegear_sprites.png")
+    out.sprites = "assets/generated/ui/pokegear_sprites.png"
+  end)
+  pcall(function()
+    local sym = self:symbol("ChrisSpriteGFX")
+    if not (sym and self.rom) then return end
+    local raw = self.rom:bytes(sym.bank, sym.address, 4 * 16)
+    local redPal = {
+      [0] = { 28/31, 31/31, 16/31 },
+      [1] = { 31/31, 19/31, 10/31 },
+      [2] = { 31/31,  7/31,  1/31 },
+      [3] = { 0, 0, 0 },
+    }
+    local image
+    if ImageWriter.decode2bppColor then
+      image = ImageWriter.matteColor0(ImageWriter.decode2bppColor(raw, 16, 16, redPal, true))
+    else
+      image = ImageWriter.matteColor0(ImageWriter.decode2bpp(raw, 16, 16, true))
+      if ImageWriter.recolorShades then image = ImageWriter.recolorShades(image, redPal) end
+    end
+    self:saveImage(image, "ui/pokegear_player.png")
+    out.playerIcon = "assets/generated/ui/pokegear_player.png"
+  end)
+
+  if not next(out.palettes) and not out.tiles and not out.playerIcon and not next(out.cards) then
+    return nil
+  end
+  return out
 end
 
 -- ChrisPicAndTrainerCardGFX is raw (uncompressed) 2bpp copied straight to
@@ -5388,6 +5658,10 @@ function RomExtractorGen2:extractField()
     src.gen2CardFlip = self:gen2CardFlip() or src.gen2CardFlip
     src.egg = self:gen2Egg() or src.egg
     src.pokegear = self:gen2Pokegear() or src.pokegear
+    -- Prefer the pokegear Chris icon (PAL_OW_RED) on the town map too
+    if src.pokegear and src.pokegear.playerIcon and src.townMap then
+      src.townMap.playerIcon = src.pokegear.playerIcon
+    end
     -- Derive water-capable tilesets from AnimateWaterTile presence so that
     -- OverworldState:tilesetHasWater() returns true for outdoor Gen2 maps.
     -- gen2TilesetAnimation reads the ROM's tileset animation script and

@@ -1912,6 +1912,8 @@ end
 -- `special MoveDeletion` ($21).  Pick mon, pick move slot, clear it.
 function Commands.g2_move_deleter(ctx)
   local game = ctx.game
+  -- Gold/Silver Move Deleter opens with a prompt before the party menu.
+  Commands.show_text(ctx, "Which POKéMON should\nforget a move?")
   local picked = pickPartyMon(ctx)
   if not picked then
     ctx.g2Var = 0
@@ -1949,8 +1951,10 @@ function Commands.g2_move_deleter(ctx)
     ctx.lastCheck = false
     return
   end
+  local forgotten = labels[slot] or "a move"
   table.remove(moves, slot)
   picked.moves = moves
+  Commands.show_text(ctx, (picked.nickname or "POKéMON") .. " forgot\n" .. tostring(forgotten) .. "!")
   ctx.g2Var = 1
   ctx.lastCheck = true
 end
@@ -2196,8 +2200,149 @@ function Commands.g2_photo_studio(ctx)
   ctx.lastCheck = true
 end
 
+-- RoamMaps adjacency from pret data/wild/roammon_maps.asm.
+local ROAM_MAPS = {
+  ROUTE_29 = { "ROUTE_30", "ROUTE_46" },
+  ROUTE_30 = { "ROUTE_29", "ROUTE_31" },
+  ROUTE_31 = { "ROUTE_30", "ROUTE_32", "ROUTE_36" },
+  ROUTE_32 = { "ROUTE_36", "ROUTE_31", "ROUTE_33" },
+  ROUTE_33 = { "ROUTE_32", "ROUTE_34" },
+  ROUTE_34 = { "ROUTE_33", "ROUTE_35" },
+  ROUTE_35 = { "ROUTE_34", "ROUTE_36" },
+  ROUTE_36 = { "ROUTE_35", "ROUTE_31", "ROUTE_32", "ROUTE_37" },
+  ROUTE_37 = { "ROUTE_36", "ROUTE_38", "ROUTE_42" },
+  ROUTE_38 = { "ROUTE_37", "ROUTE_39", "ROUTE_42" },
+  ROUTE_39 = { "ROUTE_38" },
+  ROUTE_42 = { "ROUTE_43", "ROUTE_44", "ROUTE_37", "ROUTE_38" },
+  ROUTE_43 = { "ROUTE_42", "ROUTE_44" },
+  ROUTE_44 = { "ROUTE_42", "ROUTE_43", "ROUTE_45" },
+  ROUTE_45 = { "ROUTE_44", "ROUTE_46" },
+  ROUTE_46 = { "ROUTE_45", "ROUTE_29" },
+}
+
+-- pret InitRoamMons starting maps
+local ROAM_START = {
+  RAIKOU  = "ROUTE_42",
+  ENTEI   = "ROUTE_37",
+  SUICUNE = "ROUTE_38",
+}
+
+local ROAM_SPECIES_ID = {
+  RAIKOU  = "SPECIES_243",
+  ENTEI   = "SPECIES_244",
+  SUICUNE = "SPECIES_245",
+}
+
+local LANDMARK_BY_MAP = {
+  ROUTE_29 = 0x02, ROUTE_30 = 0x04, ROUTE_31 = 0x05,
+  ROUTE_32 = 0x08, ROUTE_33 = 0x0b, ROUTE_34 = 0x0f,
+  ROUTE_35 = 0x12, ROUTE_36 = 0x14, ROUTE_37 = 0x15,
+  ROUTE_38 = 0x19, ROUTE_39 = 0x1a, ROUTE_42 = 0x21,
+  ROUTE_43 = 0x24, ROUTE_44 = 0x26, ROUTE_45 = 0x2a,
+  ROUTE_46 = 0x2c,
+}
+
+local function normalizeMapId(mapId)
+  if not mapId then return nil end
+  local s = tostring(mapId)
+  if ROAM_MAPS[s] then return s end
+  -- ROUTE37 / Route37 -> ROUTE_37
+  local u = s:upper():gsub("%s+", "_")
+  if ROAM_MAPS[u] then return u end
+  local with = u:gsub("^(ROUTE)(%d+)$", "%1_%2")
+  if ROAM_MAPS[with] then return with end
+  return s
+end
+
+local function mapToLandmark(game, mapId)
+  mapId = normalizeMapId(mapId)
+  if not mapId then return nil end
+  if LANDMARK_BY_MAP[mapId] then return LANDMARK_BY_MAP[mapId] end
+  if not game then return nil end
+  local maps = (game.data and game.data.maps) or {}
+  local def = maps[mapId] or maps[mapId:gsub("_", "")]
+  if def and tonumber(def.landmark) then return tonumber(def.landmark) end
+  return nil
+end
+
+-- ONLY called by special $68 (Burned Tower release).  Sets g2RoamReleased so
+-- the pokegear map shows the dogs.  Do NOT call this from daily/menu open.
 function Commands.g2_init_roam_mons(ctx)
-  ctx.save.g2Roam = ctx.save.g2Roam or { RAIKOU = true, ENTEI = true, SUICUNE = true }
+  ctx.save.g2RoamReleased = true
+  ctx.save.g2Roam = {}
+  for name, startMap in pairs(ROAM_START) do
+    ctx.save.g2Roam[name] = {
+      mapId = startMap,
+      speciesId = ROAM_SPECIES_ID[name],
+      landmark = mapToLandmark(ctx.game, startMap) or LANDMARK_BY_MAP[startMap],
+      active = true,
+    }
+  end
+end
+
+-- Refresh landmarks for already-released beasts (menu open / map load).
+-- Never spawns dogs before Burned Tower.
+function Commands.g2_ensure_roam_landmarks(ctx)
+  -- Migrate saves that already had dogs from the old auto-spawn path
+  if not ctx.save.g2RoamReleased then
+    if type(ctx.save.g2Roam) == "table" and next(ctx.save.g2Roam) then
+      ctx.save.g2RoamReleased = true
+    else
+      return
+    end
+  end
+  local roam = ctx.save.g2Roam
+  if type(roam) ~= "table" then return end
+  for name, info in pairs(roam) do
+    if type(info) == "table" and info.mapId then
+      info.speciesId = info.speciesId or ROAM_SPECIES_ID[name]
+      info.landmark = mapToLandmark(ctx.game, info.mapId)
+        or LANDMARK_BY_MAP[normalizeMapId(info.mapId)]
+        or info.landmark
+    end
+  end
+end
+
+-- pret UpdateRoamMons: hop each active beast to a connected route.
+-- Called on every overworld map enter AFTER the beasts have been released.
+function Commands.g2_update_roam_positions(ctx)
+  if not ctx.save.g2RoamReleased then return end
+  local roam = ctx.save.g2Roam
+  if type(roam) ~= "table" then return end
+
+  local r = (love and love.math and love.math.random) or math.random
+  local curMap = ctx.game and ctx.game.overworld and ctx.game.overworld.map
+    and ctx.game.overworld.map.id
+  local lastMap = ctx.save.g2RoamLastMap
+
+  -- Always refresh landmarks
+  Commands.g2_ensure_roam_landmarks(ctx)
+
+  -- Only hop when the player moved to a different map
+  if curMap and curMap == lastMap then return end
+  ctx.save.g2RoamLastMap = curMap
+
+  for name, info in pairs(roam) do
+    if type(info) == "table" and info.active ~= false then
+      local cur = normalizeMapId(info.mapId) or ROAM_START[name]
+      local neighbors = ROAM_MAPS[cur]
+      local dest
+      if neighbors and #neighbors > 0 then
+        -- pret: 1/32 chance fully random, else pick a neighbor
+        if r(0, 31) == 0 then
+          local keys = {}
+          for k in pairs(ROAM_MAPS) do keys[#keys + 1] = k end
+          dest = keys[r(1, #keys)]
+        else
+          dest = neighbors[r(1, #neighbors)]
+        end
+      end
+      if dest then
+        info.mapId = dest
+        info.landmark = LANDMARK_BY_MAP[dest] or mapToLandmark(ctx.game, dest)
+      end
+    end
+  end
 end
 
 function Commands.g2_diploma(ctx)

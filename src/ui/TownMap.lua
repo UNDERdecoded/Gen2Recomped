@@ -233,6 +233,9 @@ end
 -- blink a nest icon on every map whose wild slots hold the species
 function TownMap.new(game, opts)
   opts = opts or {}
+  pcall(function()
+    require("src.script.Gen2Commands").g2_ensure_roam_landmarks({ save = game.save, game = game })
+  end)
   local self = setmetatable({}, TownMap)
   self.game = game
   self.bg = loadBackground(game)
@@ -437,21 +440,33 @@ end
 function TownMap:drawGen2()
   local game = self.game
   local img = self.images and self.images[self.region]
+  local town = (game.data.field or {}).townMap or {}
+  local gear = (game.data.field or {}).pokegear or {}
   love.graphics.setColor(1, 1, 1, 1)
   if img then
     love.graphics.draw(img, 0, 0)
-    -- the rip already carries PokegearPals' real GBC colours, so keep the
-    -- shade-remap pass off it (14 §trueColor propagation)
     require("src.render.PaletteFX").markTrueColor(0, 0, 160, 144)
   else
     love.graphics.rectangle("fill", 0, 0, 160, 144)
   end
 
-  local function marker(loc, filled)
-    love.graphics.setColor(0, 0, 0, 1)
-    love.graphics.rectangle(filled and "fill" or "line",
-                            loc.px - 3.5, loc.py - 3.5, 7, 7)
-    love.graphics.setColor(1, 1, 1, 1)
+  if self._playerIcon == nil then
+    -- Prefer the pokegear Chris extract over the town-map one
+    local path = gear.playerIcon or town.playerIcon
+    if path then
+      local ok, i = pcall(love.graphics.newImage, path)
+      self._playerIcon = ok and i or false
+    else
+      self._playerIcon = false
+    end
+  end
+
+  -- Landmark -> pixel helper for roam entries that only store landmark ids
+  local function landmarkXY(lm)
+    local e = town.landmarks and (town.landmarks[lm] or town.landmarks[tostring(lm)])
+    if not e then return nil end
+    -- Same OAM origin correction as gen2Locations
+    return (e.x or 0) - 4, (e.y or 0) - 12
   end
 
   if self.nestSpecies then
@@ -461,7 +476,9 @@ function TownMap:drawGen2()
           if self.nestIcon then
             love.graphics.draw(self.nestIcon, loc.px - 4, loc.py - 4)
           else
-            marker(loc, true)
+            love.graphics.setColor(0.15, 0.15, 0.15, 1)
+            love.graphics.rectangle("fill", loc.px - 3.5, loc.py - 3.5, 7, 7)
+            love.graphics.setColor(1, 1, 1, 1)
           end
         end
       end
@@ -480,13 +497,76 @@ function TownMap:drawGen2()
     return
   end
 
-  if self.playerLoc and self.playerLoc.region == self.region and self.blink < 20 then
-    marker(self.playerLoc, true)
+  -- Roaming legendaries as mon icons in a green box (Gold/Silver pokegear).
+  local roam = game.save.g2RoamReleased and game.save.g2Roam
+  if type(roam) == "table" then
+    for species, info in pairs(roam) do
+      if info and info ~= false then
+        local lm = type(info) == "table" and tonumber(info.landmark) or nil
+        local px, py = landmarkXY(lm)
+        if not px and type(info) == "table" then
+          px, py = tonumber(info.px), tonumber(info.py)
+        end
+        if px and py then
+          local region = (lm and lm >= 0x2F) and "kanto" or "johto"
+          if region == self.region then
+            local speciesId = (type(info) == "table" and (info.speciesId or info.species))
+              or ({ RAIKOU = "SPECIES_243", ENTEI = "SPECIES_244", SUICUNE = "SPECIES_245" })[tostring(species):upper()]
+              or tostring(species)
+            if not tostring(speciesId):match("^SPECIES_") and tonumber(speciesId) then
+              speciesId = string.format("SPECIES_%03d", tonumber(speciesId))
+            end
+            local monPath = "assets/generated/icons/" .. tostring(speciesId):lower() .. ".png"
+            local icons = (game.data.icons or {}).bySpecies or {}
+            local entry = icons[speciesId] or icons[tostring(speciesId):upper()]
+            if type(entry) == "table" and entry.image then monPath = entry.image
+            elseif type(entry) == "string" then monPath = entry end
+            local poke = game.data.pokemon or {}
+            local def = poke[speciesId]
+            if type(def) == "table" and def.icon then monPath = def.icon end
+            local ok, monImg = pcall(love.graphics.newImage, monPath)
+            love.graphics.setColor(0.2, 0.9, 0.3, 1)
+            love.graphics.rectangle("line", px - 9, py - 9, 18, 18)
+            love.graphics.rectangle("line", px - 8, py - 8, 16, 16)
+            if ok and monImg then
+              love.graphics.setColor(1, 1, 1, 1)
+              local iw, ih = monImg:getDimensions()
+              local scale = math.min(16 / iw, 16 / ih)
+              love.graphics.draw(monImg, px - 8, py - 8, 0, scale, scale)
+            else
+              love.graphics.setColor(1, 0.85, 0.1, 1)
+              love.graphics.rectangle("fill", px - 6, py - 6, 12, 12)
+            end
+            love.graphics.setColor(1, 1, 1, 1)
+          end
+        end
+      end
+    end
   end
+
+  -- Player icon: solid (does NOT blink). Gold/Silver keeps it steady while
+  -- the red selection cursor is the blinking element.
+  if self.playerLoc and self.playerLoc.region == self.region then
+    if self._playerIcon then
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(self._playerIcon, self.playerLoc.px - 8, self.playerLoc.py - 8)
+    else
+      love.graphics.setColor(0.9, 0.25, 0.2, 1)
+      love.graphics.rectangle("fill", self.playerLoc.px - 3, self.playerLoc.py - 3, 6, 6)
+      love.graphics.setColor(1, 1, 1, 1)
+    end
+  end
+
+  -- Selection cursor: RED BOX around the selected city (blinks).
   local selected = self.locs[self.sel]
   if selected and selected.region == self.region and self.blink % 16 < 10 then
-    marker(selected, false)
+    love.graphics.setColor(1, 0.15, 0.15, 1)
+    love.graphics.setLineWidth(2)
+    love.graphics.rectangle("line", selected.px - 6, selected.py - 6, 12, 12)
+    love.graphics.setLineWidth(1)
+    love.graphics.setColor(1, 1, 1, 1)
   end
+
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.rectangle("fill", 0, 0, 160, 8)
   love.graphics.setColor(0, 0, 0, 1)

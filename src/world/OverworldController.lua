@@ -548,6 +548,16 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
           or (fromMapId and "warp" or "boot"),
   })
 
+  -- UpdateRoamMons: hop Raikou/Entei/Suicune when the player changes maps
+  -- (only after Burned Tower release sets g2RoamReleased).
+  if GameVersion.isGen2() and Game and Game.save then
+    pcall(function()
+      require("src.script.Gen2Commands").g2_update_roam_positions({
+        save = Game.save, game = Game,
+      })
+    end)
+  end
+
   -- map-enter hooks (hand-ported map scripts, e.g. Victory Road barriers).
   -- fromMapId lets elevators seed a valid walk-out floor when the ROM
   -- car warps still point at a missing map (Silph's UNUSED_MAP_ED) and

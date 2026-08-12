@@ -87,14 +87,27 @@ function SpriteRenderer.new(spriteDef, seed)
   self.seed = seed
   self.image = getImage(spriteDef.image)
   local iw, ih = self.image:getDimensions()
-  -- Big dolls (Snorlax, Lapras) are a single 32x32 sheet covering 2x2 cells.
-  self.tileW = (spriteDef.big and (spriteDef.width or 32)) or 16
-  self.tileH = (spriteDef.big and (spriteDef.height or 32)) or 16
-  if spriteDef.big or (iw >= 32 and (spriteDef.width or 0) >= 32) then
+  -- Big dolls (Snorlax / Lapras): FacingBigDollSymmetric uses a 16x32 left
+  -- half mirrored to 32x32 over a 2x2 footprint.  Detect by id even when the
+  -- extracted sheet is still a 16-wide strip (common before reimport).
+  local bigById = spriteDef.id == "SPRITE_BIG_SNORLAX"
+    or spriteDef.id == "SPRITE_BIG_LAPRAS"
+  self.tileW = 16
+  self.tileH = 16
+  self.mirrorHalf = false
+  if spriteDef.big or bigById or (iw >= 32 and (spriteDef.width or 0) >= 32) then
     self.big = true
-    self.tileW, self.tileH = iw >= 32 and 32 or iw, ih >= 32 and 32 or ih
-    self.frames = { [0] = love.graphics.newQuad(0, 0, self.tileW, self.tileH, iw, ih) }
     spriteDef.frames = 1
+    if iw >= 32 and ih >= 32 then
+      self.tileW, self.tileH = 32, 32
+      self.frames = { [0] = love.graphics.newQuad(0, 0, 32, 32, iw, ih) }
+      self.mirrorHalf = false
+    else
+      -- 16xN strip: take the first 32px of height as the left body half
+      self.tileW, self.tileH = 16, math.min(32, ih)
+      self.frames = { [0] = love.graphics.newQuad(0, 0, 16, self.tileH, iw, ih) }
+      self.mirrorHalf = true
+    end
   else
     self.frames = {}
     for f = 0, math.max(0, (spriteDef.frames or 1) - 1) do

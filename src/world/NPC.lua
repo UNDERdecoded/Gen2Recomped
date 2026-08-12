@@ -101,7 +101,7 @@ local SPRITE_INDEX_FALLBACK = {
   SPRITE_SURF = 0x53,
   SPRITE_SURFING_PIKACHU = 0x34,
   -- Kanto post-game overworld actors
-  SPRITE_BIG_SNORLAX = 0x6C,
+  SPRITE_BIG_SNORLAX = 0x33,  -- pret SPRITE_BIG_SNORLAX; not mon-icon $6C
   SPRITE_SNORLAX = 0x6C,
   SPRITE_MACHOP = 0x6E,
   SPRITE_GYM_GUIDE = 0x29,
@@ -150,11 +150,31 @@ local function resolveSpriteDef(data, spriteId)
   return sprites.SPRITE_FALLBACK
 end
 
+
+-- Force big-doll ids through to SpriteRenderer even if the sheet was looked
+-- up by index (id string may otherwise be SPRITE_33 / a mon icon).
+local function withBigFlag(spriteDef, spriteId, objDef)
+  if not spriteDef then return spriteDef end
+  local big = (objDef and objDef.big)
+    or spriteId == "SPRITE_BIG_SNORLAX"
+    or spriteId == "SPRITE_BIG_LAPRAS"
+    or (spriteDef.id == "SPRITE_BIG_SNORLAX")
+    or (spriteDef.id == "SPRITE_BIG_LAPRAS")
+  if not big then return spriteDef end
+  return setmetatable({
+    big = true,
+    id = (spriteId == "SPRITE_BIG_LAPRAS" or spriteDef.id == "SPRITE_BIG_LAPRAS")
+      and "SPRITE_BIG_LAPRAS" or "SPRITE_BIG_SNORLAX",
+    frames = 1,
+    walker = false,
+  }, { __index = spriteDef })
+end
+
 function NPC.new(data, mapId, objDef)
   local self = setmetatable({}, NPC)
   self.def = objDef
   self.id = string.format("%s_obj_%d", mapId, objDef.index)
-  self.sprite = SpriteRenderer.new(resolveSpriteDef(data, objDef.sprite), self.id)
+  self.sprite = SpriteRenderer.new(withBigFlag(resolveSpriteDef(data, objDef.sprite), objDef.sprite, objDef), self.id)
   -- object_event coordinates are already walk-grid cells
   self.cellX, self.cellY = objDef.x, objDef.y
   self.px, self.py = self.cellX * 16, self.cellY * 16
@@ -172,7 +192,7 @@ end
 -- Re-resolve the sheet after a `variablesprite` assignment: a map's callback
 -- can fill the slot in after its objects have already been built.
 function NPC:refreshSprite(data)
-  self.sprite = SpriteRenderer.new(resolveSpriteDef(data, self.def.sprite), self.id)
+  self.sprite = SpriteRenderer.new(withBigFlag(resolveSpriteDef(data, self.def.sprite), self.def.sprite, self.def), self.id)
 end
 
 function NPC:facePlayer(player)  local dx = player.cellX - self.cellX

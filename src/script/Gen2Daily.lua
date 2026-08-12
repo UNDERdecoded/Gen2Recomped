@@ -50,6 +50,14 @@ function Gen2Daily.seedInitialObjectFlags(save)
   end
 end
 
+function Gen2Daily.ensureRoam(save, game)
+  if not save then return end
+  -- Refresh landmarks only; never spawn before Burned Tower release
+  pcall(function()
+    require("src.script.Gen2Commands").g2_ensure_roam_landmarks({ save = save, game = game })
+  end)
+end
+
 function Gen2Daily.onNewDay(save)
   if not save then return end
   save.flags = save.flags or {}
@@ -65,6 +73,7 @@ function Gen2Daily.onNewDay(save)
 end
 
 function Gen2Daily.poll(save)
+  Gen2Daily.ensureRoam(save, nil)
   if not save then return end
   Gen2Daily.seedInitialObjectFlags(save)
   local today = todayKey()
