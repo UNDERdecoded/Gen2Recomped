@@ -2097,7 +2097,40 @@ function OverworldState:interact()
 
   local sign = self.map:signAtCell(fx, fy)
   if sign then
-    self:showMapText(sign.text, nil)
+    -- Gen2 BGEVENT_ITEM rows are stored as signs with .item set.  Giving the
+    -- item here prevents the Cerulean Gym machine part from falling through
+    -- to neighboring statue dialogue ("CERULEAN POKeMON GYM / LEADER: MISTY").
+    if sign.item then
+      local save = Game.save
+      local flagKey = sign.eventFlag
+      local takenKey = self.map.id .. "_sign_" .. tostring(sign.x) .. "_" .. tostring(sign.y)
+      save.hiddenTaken = save.hiddenTaken or {}
+      local already = (flagKey and save.flags and save.flags[flagKey] == true)
+        or save.hiddenTaken[takenKey]
+      if already then
+        interacted(self, fx, fy, "sign", sign)
+        return
+      end
+      if not require("src.inventory.Bag").add(save, sign.item, 1, Game.data) then
+        Game.stack:push(TextBox.new(Game, Strings("You can't carry\nany more items!")))
+        interacted(self, fx, fy, "sign", sign)
+        return
+      end
+      save.hiddenTaken[takenKey] = true
+      if flagKey then
+        save.flags = save.flags or {}
+        save.flags[flagKey] = true
+      end
+      local name = Game.data.items[sign.item] and Game.data.items[sign.item].name or sign.item
+      require("src.core.Sound").play(Game.data, "Get_Item2")
+      Game.stack:push(TextBox.new(Game,
+        Strings("%s found\n%s!", save.player.name, name)))
+      interacted(self, fx, fy, "sign", sign)
+      return
+    end
+    if sign.text then
+      self:showMapText(sign.text, nil)
+    end
     interacted(self, fx, fy, "sign", sign)
     return
   end

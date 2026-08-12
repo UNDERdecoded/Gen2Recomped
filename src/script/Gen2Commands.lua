@@ -2040,11 +2040,88 @@ function Commands.g2_snorlax_awake(ctx)
   ctx.g2Var = ok and 1 or 0
 end
 
-function Commands.g2_lucky_winners(ctx)
-  ctx.g2Var = 0
-  ctx.lastCheck = false
+-- ---------------------------------------------------------------------------
+-- Radio lucky-number show (specials $51-$54)
+--
+-- wLuckyIDNumber is a 16-bit value printed as five decimal digits with leading
+-- zeros (00000-65535).  ResetLuckyNumberShowFlag regenerates it for the day;
+-- CheckForLuckyNumberWinners scores party OT IDs by trailing-digit matches.
+-- ---------------------------------------------------------------------------
+
+local function luckyDigits(n)
+  n = math.floor(tonumber(n) or 0) % 65536
+  return string.format("%05d", n)
 end
 
+local function ensureLuckyNumber(save)
+  if type(save.g2LuckyNumber) == "number" then return save.g2LuckyNumber end
+  if type(save.g2LuckyNumber) == "string" and save.g2LuckyNumber:match("^%d+$") then
+    save.g2LuckyNumber = tonumber(save.g2LuckyNumber) % 65536
+    return save.g2LuckyNumber
+  end
+  -- Prefer LOVE's random if present; otherwise math.random.
+  local r = (love and love.math and love.math.random) or math.random
+  save.g2LuckyNumber = r(0, 65535)
+  return save.g2LuckyNumber
+end
+
+local function monOtId(mon)
+  if not mon then return nil end
+  local id = mon.otId or mon.otID or mon.trainerId or mon.id
+  if type(id) == "string" then
+    id = tonumber(id:match("(%d+)"))
+  end
+  if type(id) ~= "number" then return nil end
+  return math.floor(id) % 65536
+end
+
+-- Trailing digit matches between lucky ID and mon OT ID → prize tier.
+-- ROM: 5 match → 1, 3-4 → 2, 2 → 3, else 0 (lower number = better).
+local function luckyMatchTier(lucky, otId)
+  local a, b = luckyDigits(lucky), luckyDigits(otId)
+  local matches = 0
+  for i = 5, 1, -1 do
+    if a:sub(i, i) == b:sub(i, i) then
+      matches = matches + 1
+    else
+      break
+    end
+  end
+  if matches == 5 then return 1 end
+  if matches >= 3 then return 2 end
+  if matches == 2 then return 3 end
+  return 0
+end
+
+-- CheckForLuckyNumberWinners ($51): scan party for best matching OT ID.
+function Commands.g2_lucky_winners(ctx)
+  local save = ctx.save
+  local lucky = ensureLuckyNumber(save)
+  local best = 0
+  local bestName
+  for _, mon in ipairs(save.party or {}) do
+    local species = mon.species
+    if species and tostring(species):upper() ~= "EGG" then
+      local ot = monOtId(mon)
+      if ot then
+        local tier = luckyMatchTier(lucky, ot)
+        if tier > 0 and (best == 0 or tier < best) then
+          best = tier
+          local def = ctx.game.data.pokemon and ctx.game.data.pokemon[species]
+          bestName = (mon.nickname and mon.nickname ~= "" and mon.nickname)
+            or (def and def.name) or tostring(species)
+        end
+      end
+    end
+  end
+  if best > 0 then
+    ctx.game.stringBuffer = bestName or "POKéMON"
+  end
+  ctx.g2Var = best
+  ctx.lastCheck = best > 0
+end
+
+-- CheckLuckyNumberShowFlag ($52): has the player already heard today's show?
 function Commands.g2_lucky_check_flag(ctx)
   local Gen2Flags = require("src.script.Gen2Flags")
   local flags = ctx.save.flags or {}
@@ -2054,17 +2131,25 @@ function Commands.g2_lucky_check_flag(ctx)
   ctx.g2Var = set and 1 or 0
 end
 
+-- ResetLuckyNumberShowFlag ($53): clear "already heard" and roll a new ID.
 function Commands.g2_lucky_reset(ctx)
   local Gen2Flags = require("src.script.Gen2Flags")
   ctx.save.flags = ctx.save.flags or {}
   ctx.save.flags[Gen2Flags.engineFlag(77)] = nil
   ctx.save.flags.ENGINE_LUCKY_NUMBER_SHOW = nil
+  local r = (love and love.math and love.math.random) or math.random
+  ctx.save.g2LuckyNumber = r(0, 65535)
   ctx.g2Var = 0
 end
 
+-- PrintTodaysLuckyNumber ($54): five digits, leading zeros (e.g. 00421).
 function Commands.g2_lucky_print(ctx)
-  local n = ctx.save.g2LuckyNumber or "1337"
-  Commands.show_text(ctx, "Today's lucky number\nis " .. tostring(n) .. "!")
+  local n = ensureLuckyNumber(ctx.save)
+  local digits = luckyDigits(n)
+  ctx.game.stringBuffer = digits
+  -- Scripts usually print via text that reads the string buffer; also show a
+  -- direct line so a bare special still displays the number.
+  Commands.show_text(ctx, "Today's lucky number is\n" .. digits .. "!")
 end
 
 function Commands.g2_heal_party(ctx)

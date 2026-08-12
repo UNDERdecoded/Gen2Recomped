@@ -57,6 +57,9 @@ function Gen2Daily.onNewDay(save)
   save.flags[Gen2Flags.engineFlag(ENGINE_LUCKY_NUMBER_SHOW)] = nil
   save.g2FruitTrees = {}
   save.flags[Gen2Flags.engineFlag(ENGINE_ALL_FRUIT_TREES)] = nil
+  -- New 5-digit lucky ID each day (0-65535, printed as 00000-65535).
+  local r = (love and love.math and love.math.random) or math.random
+  save.g2LuckyNumber = r(0, 65535)
   -- Clefairy show is weekly in the ROM; re-hide so the event can fire again.
   save.flags[Gen2Flags.eventFlag(1913)] = true
 end

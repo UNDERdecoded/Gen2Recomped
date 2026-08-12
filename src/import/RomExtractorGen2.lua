@@ -193,6 +193,7 @@ local GEN2_SPRITE_ID_OVERRIDES = {
   [0x0D] = "SPRITE_BLAINE",
   [0x1A] = "SPRITE_BROCK",
   [0x1D] = "SPRITE_MISTY",         -- Cerulean Gym + Route 25 date
+  [0x53] = "SPRITE_SURF",          -- player surfing sheet (not POKE_BALL $54)
   [0x1F] = "SPRITE_SURGE",
   [0x20] = "SPRITE_ERIKA",
   [0x21] = "SPRITE_KOGA",
@@ -3188,6 +3189,8 @@ function RomExtractorGen2:extractMapsFromRom()
           local signs = {}
           for i, row in ipairs(events.bgs) do
             local textConst = string.format("TEXT_%s_BG_%03d", mapId, i)
+            local kind = row[3]
+            local ptr = row[4] + row[5] * 256
             signs[i] = {
               id = string.format("%s_BG_%03d", mapId, i),
               -- the bg_event macro stores raw coordinates; only object_event
@@ -3197,10 +3200,25 @@ function RomExtractorGen2:extractMapsFromRom()
               text = textConst,
               source = string.format("ROM_BG_EVENT:%02X", bank),
             }
-            -- BGEVENT_ITEM stores `db item, db flag` here, not a script pointer
-            if row[3] ~= GEN2_BG_EVENT_ITEM then
+            -- BGEVENT_ITEM: pointer targets `db item / dw event_flag` (HiddenItem
+            -- data).  Without reading that, the cell becomes a normal sign and
+            -- the Cerulean Gym machine part printed Misty's statue line.
+            if kind == GEN2_BG_EVENT_ITEM then
+              local ok, itemId, eventFlag = pcall(function()
+                return self.rom:byte(bank, ptr), self.rom:word(bank, ptr + 1)
+              end)
+              if ok and itemId and itemId > 0 then
+                signs[i].item = string.format("ITEM_%03d", itemId)
+                if eventFlag and eventFlag ~= 0 and eventFlag ~= 0xFFFF then
+                  signs[i].eventFlag = string.format("EVENT_G2_%04d", eventFlag)
+                end
+                signs[i].hiddenItem = true
+                -- do not attach dialogue text; runtime gives the item instead
+                signs[i].text = nil
+              end
+            elseif kind ~= 8 then
               local ok, textBank, textAddr = pcall(
-                self.gen2ScriptTextAddress, self, bank, row[4] + row[5] * 256)
+                self.gen2ScriptTextAddress, self, bank, ptr)
               if ok and textBank then
                 self._gen2ScriptTexts[textConst] = { bank = textBank, address = textAddr }
                 textPointers[mapId] = textPointers[mapId] or {}
@@ -5324,7 +5342,10 @@ function RomExtractorGen2:extractField()
   end
   src.playerSprites = src.playerSprites or {}
   if type(src.playerSprites.walk) ~= "string" then src.playerSprites.walk = "SPRITE_RED" end
-  if type(src.playerSprites.surf) ~= "string" then src.playerSprites.surf = "SPRITE_SEEL" end
+  -- Gen2 OverworldSprites row for SurfSpriteGFX is $54; Gen1 used SEEL.
+  if type(src.playerSprites.surf) ~= "string" then
+    src.playerSprites.surf = (self.rom and "SPRITE_SURF") or "SPRITE_SEEL"
+  end
   if type(src.playerSprites.bike) ~= "string" then src.playerSprites.bike = "SPRITE_RED_BIKE" end
   if type(src.playerSprites.fly) ~= "string" then src.playerSprites.fly = "SPRITE_BIRD" end
   src.forcedMovement = src.forcedMovement or {}
