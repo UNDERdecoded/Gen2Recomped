@@ -2105,8 +2105,11 @@ function OverworldState:interact()
       local flagKey = sign.eventFlag
       local takenKey = self.map.id .. "_sign_" .. tostring(sign.x) .. "_" .. tostring(sign.y)
       save.hiddenTaken = save.hiddenTaken or {}
-      local already = (flagKey and save.flags and save.flags[flagKey] == true)
-        or save.hiddenTaken[takenKey]
+      -- ROM: event SET = already taken / not present.  InitializeEventsScript
+      -- pre-sets EVENT_FOUND_MACHINE_PART so the gym water is empty until the
+      -- Power Plant manager clears the flag.  clearevent stores false.
+      local flagSet = flagKey and save.flags and save.flags[flagKey] == true
+      local already = flagSet or save.hiddenTaken[takenKey]
       if already then
         interacted(self, fx, fy, "sign", sign)
         return

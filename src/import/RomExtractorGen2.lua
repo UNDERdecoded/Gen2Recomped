@@ -3200,12 +3200,15 @@ function RomExtractorGen2:extractMapsFromRom()
               text = textConst,
               source = string.format("ROM_BG_EVENT:%02X", bank),
             }
-            -- BGEVENT_ITEM: pointer targets `db item / dw event_flag` (HiddenItem
-            -- data).  Without reading that, the cell becomes a normal sign and
-            -- the Cerulean Gym machine part printed Misty's statue line.
+            -- BGEVENT_ITEM: pointer targets HiddenItem data laid out by the
+            -- `hiddenitem` macro as `dwb event_flag, item` — event word FIRST,
+            -- then the item byte (wHiddenItemEvent / wHiddenItemID).  Reading
+            -- item-then-flag gave the low byte of EVENT_FOUND_MACHINE_PART
+            -- (251) as the item and a garbage flag, so the gym water tile
+            -- handed out the wrong item and ignored the Power Plant gate.
             if kind == GEN2_BG_EVENT_ITEM then
-              local ok, itemId, eventFlag = pcall(function()
-                return self.rom:byte(bank, ptr), self.rom:word(bank, ptr + 1)
+              local ok, eventFlag, itemId = pcall(function()
+                return self.rom:word(bank, ptr), self.rom:byte(bank, ptr + 2)
               end)
               if ok and itemId and itemId > 0 then
                 signs[i].item = string.format("ITEM_%03d", itemId)
@@ -4044,7 +4047,7 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
           -- usually opens with `jumptext`, but the interesting ones (the
           -- Ruins of Alph wall patterns, the elevator panels, the Pokemon
           -- Center PCs) do real work.  Extracting only the text pointer left
-          -- those signs inert.  BGEVENT_ITEM (7) stores `db item, db flag`
+          -- those signs inert.  BGEVENT_ITEM (7) points at `dwb event_flag, item` (flag word, then item byte)
           -- in the pointer slot and BGEVENT_COPY (8) a RAM address, so both
           -- stay out.
           local signs, signConds = {}, {}
