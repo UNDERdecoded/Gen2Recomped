@@ -3018,6 +3018,9 @@ function RomExtractorGen2:extractMapsFromRom()
             local eventFlag = row[12] + row[13] * 256
             local textConst = string.format("TEXT_%s_OBJ_%03d", mapId, i)
             local behavior = movementTable[row[4]]
+            local movementName = behavior and behavior.movement or "STAY"
+            local isBigDoll = type(movementName) == "string"
+              and movementName:find("BIG") ~= nil
             local object = {
               id = string.format("%s_OBJ_%03d", mapId, i),
               name = string.format("%s_OBJ_%03d", mapId, i),
@@ -3027,6 +3030,7 @@ function RomExtractorGen2:extractMapsFromRom()
               x = row[3] - GEN2_EVENT_COORD_BIAS,
               movement = behavior and behavior.movement or "STAY",
               range = behavior and behavior.range or "ANY_DIR",
+              big = isBigDoll or nil,
               source = string.format("ROM_OBJECT_EVENT:%02X", bank),
             }
             -- Visibility rule (engine/overworld/map_objects.asm):
@@ -6343,17 +6347,55 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   local gen2SpriteFrames = {}
   local gen2SpritePalIdx = {}
   local gen2SpriteIndex = {}
+  -- Big Snorlax / Lapras use FacingBigDollSymmetric: 8 unique 8x8 tiles in a
+  -- 16x32 strip, mirrored horizontally to form a 32x32 body covering 2x2 cells.
+  local BIG_SPRITE_IDS = {
+    SPRITE_BIG_SNORLAX = true,
+    SPRITE_BIG_LAPRAS = true,
+  }
   for _, row in pairs(self:gen2OverworldSprites()) do
     local ok, raw = pcall(function()
       return self.rom:bytes(row.bank, row.address, row.bytes)
     end)
     if ok and type(raw) == "table" and #raw >= row.bytes then
-      self:saveImage(ImageWriter.decode2bpp(raw, row.width, row.height), row.file)
+      local width, height = row.width, row.height
+      local frames = row.frames
+      local img = ImageWriter.decode2bpp(raw, width, height)
+      -- Expand symmetric big dolls to a real 32x32 sheet so the renderer can
+      -- draw the full body (not just the top-left 16x16 face tile).
+      if BIG_SPRITE_IDS[row.id] and width == 16 and height >= 32 then
+        local left = ImageWriter.decode2bpp(raw, 16, 32)
+        -- composite left | mirror(left) into 32x32
+        if ImageWriter.mirrorComposite32 then
+          img = ImageWriter.mirrorComposite32(left)
+        else
+          -- Inline: left is 16x32 ImageData; build 32x32 by copy + mirror.
+          local ok2, big = pcall(function()
+            local out = love.image.newImageData(32, 32)
+            for y = 0, 31 do
+              for x = 0, 15 do
+                local r, g, b, a = left:getPixel(x, y)
+                out:setPixel(x, y, r, g, b, a)
+                out:setPixel(31 - x, y, r, g, b, a)
+              end
+            end
+            return out
+          end)
+          if ok2 and big then img = big end
+        end
+        width, height, frames = 32, 32, 1
+        row.big = true
+      end
+      self:saveImage(img, row.file)
       spriteIds[row.id] = true
       gen2SpriteImageMap[row.id] = "assets/generated/" .. row.file
-      gen2SpriteFrames[row.id] = row.frames
+      gen2SpriteFrames[row.id] = frames
       gen2SpritePalIdx[row.id] = row.palette
       gen2SpriteIndex[row.id] = row.index
+      if row.big then
+        -- remembered below when writing sprites[]
+        gen2SpriteImageMap[row.id .. "__big"] = true
+      end
     end
   end
   orderedSprites = {}
@@ -6415,6 +6457,13 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       frames = gen2SpriteFrames[id] or 6,
       walker = (gen2SpriteFrames[id] or 6) >= 6,
     }
+    if gen2SpriteImageMap[id .. "__big"] then
+      spriteDef.big = true
+      spriteDef.width = 32
+      spriteDef.height = 32
+      spriteDef.frames = 1
+      spriteDef.walker = false
+    end
     if monIconDefs[id] then
       spriteDef.frames, spriteDef.walker = 2, false
       spriteDef.monIcon, spriteDef.trueColor = true, true

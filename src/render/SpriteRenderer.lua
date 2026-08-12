@@ -87,9 +87,19 @@ function SpriteRenderer.new(spriteDef, seed)
   self.seed = seed
   self.image = getImage(spriteDef.image)
   local iw, ih = self.image:getDimensions()
-  self.frames = {}
-  for f = 0, spriteDef.frames - 1 do
-    self.frames[f] = love.graphics.newQuad(0, f * 16, 16, 16, iw, ih)
+  -- Big dolls (Snorlax, Lapras) are a single 32x32 sheet covering 2x2 cells.
+  self.tileW = (spriteDef.big and (spriteDef.width or 32)) or 16
+  self.tileH = (spriteDef.big and (spriteDef.height or 32)) or 16
+  if spriteDef.big or (iw >= 32 and (spriteDef.width or 0) >= 32) then
+    self.big = true
+    self.tileW, self.tileH = iw >= 32 and 32 or iw, ih >= 32 and 32 or ih
+    self.frames = { [0] = love.graphics.newQuad(0, 0, self.tileW, self.tileH, iw, ih) }
+    spriteDef.frames = 1
+  else
+    self.frames = {}
+    for f = 0, math.max(0, (spriteDef.frames or 1) - 1) do
+      self.frames[f] = love.graphics.newQuad(0, f * 16, 16, 16, iw, ih)
+    end
   end
   return self
 end
@@ -182,7 +192,13 @@ function SpriteRenderer:draw(px, py, camX, camY, facing, walkPhase, stepFlip, to
   -- still 3-frame sprites turn to face (the nurse at her machine,
   -- facePlayer on STAY NPCs) but never show walk frames
   if self.def.frames <= 1 then
-    blitFrame(image, self.frames[0], x, y, false, redraw)
+    if self.mirrorHalf and self.frames[0] then
+      -- FacingBigDollSymmetric: left 16x32 + X-flipped copy = 32x32 body
+      blitFrame(image, self.frames[0], x, y, false, redraw)
+      blitFrame(image, self.frames[0], x + 16, y, true, redraw)
+    else
+      blitFrame(image, self.frames[0], x, y, false, redraw)
+    end
     return
   end
   -- SPRITE_POKEMON objects wear the party menu icon (GetMonSprite.Mon ->

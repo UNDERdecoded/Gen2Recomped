@@ -2021,23 +2021,20 @@ function Commands.g2_magnet_train(ctx)
   ctx.lastCheck = true
 end
 
--- `special SnorlaxAwake` ($5F).  ROM checks wMapMusic == POKE_FLUTE_CHANNEL.
--- Port: EXPN Card (Lavender Radio) unlocks that channel; treat the engine
--- flag / item as sufficient to wake Vermilion / Route 12 Snorlax.
+-- `special SnorlaxAwake` ($5F).  ROM checks wMapMusic == MUSIC_POKE_FLUTE_CHANNEL.
+-- That channel is only unlocked with the EXPN Card from Lavender Radio Tower
+-- (ENGINE_EXPN_CARD / event flag row $03).  Gen2 has no usable Poké Flute item
+-- in normal play; matching ITEM_056 as "flute" was a false positive.
 function Commands.g2_snorlax_awake(ctx)
-  local save, data = ctx.save, ctx.game and ctx.game.data
+  local save = ctx.save
   local flags = save.flags or {}
   local Gen2Flags = require("src.script.Gen2Flags")
-  -- engine flag row $03 is EXPN in Gold/Silver ENGINE_FLAG_NAMES
-  local hasExpn = flags.EVENT_GOT_EXPN_CARD == true
+  local expnKey = Gen2Flags.engineFlag(3) -- EVENT_GOT_EXPN_CARD
+  local hasExpn = flags[expnKey] == true
+    or flags.EVENT_GOT_EXPN_CARD == true
     or flags.ENGINE_EXPN_CARD == true
-    or flags[Gen2Flags.engineFlag(3)] == true
-  local hasFlute = inventoryHas(save, data, {
-    "POKE_FLUTE", "ITEM_POKE_FLUTE", "ITEM_056", "ITEM_038", "POKé FLUTE",
-  })
-  local ok = hasExpn or hasFlute
-  ctx.lastCheck = ok and true or false
-  ctx.g2Var = ok and 1 or 0
+  ctx.lastCheck = hasExpn and true or false
+  ctx.g2Var = hasExpn and 1 or 0
 end
 
 -- ---------------------------------------------------------------------------
