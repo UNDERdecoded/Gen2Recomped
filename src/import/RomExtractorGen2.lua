@@ -114,9 +114,28 @@ end
 local GEN2_SCRIPT_TEXT_OPS = { [0x4C] = true, [0x51] = true, [0x52] = true }
 local GEN2_SCRIPT_OP_FAR_TEXT = 0x4B   -- dw address, db bank
 local GEN2_SCRIPT_OP_JUMPSTD = 0x0C    -- db index into StdScripts
+local GEN2_SCRIPT_OP_SPECIAL = 0x0F    -- dw SpecialsPointers index
 local GEN2_SCRIPT_OP_FRUITTREE = 0x9A  -- db tree id, indexes FruitTreeItems
 local GEN2_SCRIPT_OP_SETEVENT = 0x33   -- dw event number
 local GEN2_SCRIPT_OP_POKEMART = 0x93   -- db dialog type, dw index into Marts
+
+-- SpecialsPointers indices the Kanto post-game chain and related Johto
+-- specials rely on.  Detecting these in an object script lets the extractor
+-- mark the NPC so runtime / debugging can see Move Deleter, Magnet Train,
+-- Bill's grandfather, the radio lottery, and Snorlax without reading bytecode.
+-- Indices match pret/pokegold data/events/special_pointers.asm (Gold/Silver).
+local GEN2_KANTO_SPECIAL_MARKERS = {
+  [0x21] = "move_deleter",       -- MoveDeletion
+  [0x23] = "magnet_train",       -- MagnetTrain
+  [0x4C] = "bills_grandfather",  -- BillsGrandfather (Route 25 stone gifts)
+  [0x51] = "lucky_number",       -- CheckForLuckyNumberWinners
+  [0x52] = "lucky_number",       -- CheckLuckyNumberShowFlag
+  [0x53] = "lucky_number",       -- ResetLuckyNumberShowFlag
+  [0x54] = "lucky_number",       -- PrintTodaysLuckyNumber
+  [0x55] = "select_apricorn",    -- SelectApricornForKurt (already handled via special)
+  [0x56] = "name_rater",         -- NameRater
+  [0x5F] = "snorlax_awake",      -- SnorlaxAwake (Route 12 / 16)
+}
 local GEN2_STD_POKECENTER_NURSE = 0x00 -- StdScripts[0] = PokecenterNurseScript
 local GEN2_MART_TYPE_MAX = 3           -- MARTTYPE_STANDARD..MARTTYPE_PHARMACY
 local GEN2_SCRIPT_SCAN_BYTES = 32
@@ -155,11 +174,53 @@ local GEN2_COUNTER_CLASSES = { 0x90, 0x98 }
 
 -- The Johto player is "Chris" in the ROM but SPRITE_RED throughout this
 -- codebase, and the Kanto Red row would collide with it.
+--
+-- Additional explicit ids pin the critical Kanto post-game / story NPCs so
+-- they never fall back to SPRITE_GRAMPS (or a still-tree sheet) if a
+-- *SpriteGFX symbol is missing or renamed.  Indices match pret/pokegold
+-- constants/sprite_constants.asm.  Gen2Recomped assets use SPRITE_SILVER
+-- for the rival (pret renamed the constant SPRITE_RIVAL; same index $04).
 local GEN2_SPRITE_ID_OVERRIDES = {
-  [1] = "SPRITE_RED",
-  [2] = "SPRITE_RED_BIKE",
-  [6] = "SPRITE_RED_KANTO",
-  [83] = "SPRITE_SEEL",
+  -- Player / rival / legendaries-as-NPCs
+  [0x01] = "SPRITE_RED",
+  [0x02] = "SPRITE_RED_BIKE",
+  [0x04] = "SPRITE_SILVER",        -- RivalSpriteGFX; engine expects SILVER
+  [0x06] = "SPRITE_RED_KANTO",     -- Kanto Red (Mt. Silver)
+  [0x07] = "SPRITE_BLUE",          -- Viridian Gym post-game
+  [0x08] = "SPRITE_BILL",
+  -- Kanto gym leaders (post-game re-matches + Misty date/gym)
+  [0x0A] = "SPRITE_JANINE",
+  [0x0D] = "SPRITE_BLAINE",
+  [0x1A] = "SPRITE_BROCK",
+  [0x1D] = "SPRITE_MISTY",         -- Cerulean Gym + Route 25 date
+  [0x1F] = "SPRITE_SURGE",
+  [0x20] = "SPRITE_ERIKA",
+  [0x21] = "SPRITE_KOGA",
+  [0x22] = "SPRITE_SABRINA",
+  -- Common Kanto story NPCs
+  [0x23] = "SPRITE_COOLTRAINER_M", -- Misty's date on Route 25
+  [0x24] = "SPRITE_COOLTRAINER_F",
+  [0x2B] = "SPRITE_SUPER_NERD",    -- Power Plant / Machine Part
+  [0x2F] = "SPRITE_GRAMPS",        -- Bill's grandfather (Route 25)
+  [0x31] = "SPRITE_SWIMMER_GUY",
+  [0x32] = "SPRITE_SWIMMER_GIRL",
+  [0x33] = "SPRITE_BIG_SNORLAX",   -- Route 12 / 16
+  [0x35] = "SPRITE_ROCKET",        -- Cerulean Gym grunt + residual Rockets
+  [0x36] = "SPRITE_ROCKET_GIRL",
+  [0x48] = "SPRITE_GYM_GUIDE",
+  -- Still / scenery (must NOT be reused for walking NPCs)
+  [0x54] = "SPRITE_POKE_BALL",
+  [0x59] = "SPRITE_ROCK",
+  [0x5A] = "SPRITE_BOULDER",
+  [0x5D] = "SPRITE_FRUIT_TREE",
+  -- Mon / special sheets
+  [0x9F] = "SPRITE_SNORLAX",
+  -- Variable-sprite constants used as direct ids on some maps
+  [0xF4] = "SPRITE_WEIRD_TREE",    -- Sudowoodo pre-reveal
+  [0xF5] = "SPRITE_SILVER",        -- SPRITE_OLIVINE_RIVAL slot
+  [0xF6] = "SPRITE_ROCKET",        -- SPRITE_AZALEA_ROCKET slot
+  [0xFB] = "SPRITE_COPYCAT",
+  [0xFC] = "SPRITE_JANINE",        -- Janine impersonator
 }
 
 -- GetMonSprite (05:$42CB) splits an object_event sprite byte four ways: below
@@ -180,10 +241,24 @@ local function gen2MonSpriteId(species)
 end
 
 -- "CooltrainerM" -> "SPRITE_COOLTRAINER_M"
+-- pret renamed SilverSpriteGFX -> RivalSpriteGFX; Gen2Recomped assets and
+-- object rows still key off SPRITE_SILVER, so force that alias here.
 local function gen2SpriteConstant(base)
+  if type(base) == "string" then
+    local lower = base:lower()
+    if lower == "rival" or lower == "silver" then
+      return "SPRITE_SILVER"
+    end
+    if lower == "chris" then
+      return "SPRITE_RED"
+    end
+    if lower == "chrisbike" or lower == "chris_bike" then
+      return "SPRITE_RED_BIKE"
+    end
+  end
   local parts = {}
   for word in base:gmatch("%u%l*%d*") do parts[#parts + 1] = word:upper() end
-  if #parts == 0 then parts[1] = base:upper() end
+  if #parts == 0 then parts[1] = tostring(base):upper() end
   return "SPRITE_" .. table.concat(parts, "_")
 end
 
@@ -2484,23 +2559,38 @@ function RomExtractorGen2:gen2OverworldSprites()
 
   local rows = {}
   pcall(function()
+    -- OverworldSprites is indexed by SPRITE_* - 1 (SPRITE_NONE has no row).
+    -- Do NOT stop at the first missing *SpriteGFX symbol: a gap used to drop
+    -- every later id (Misty, fruit trees, trophies) out of byIndex, so object
+    -- rows fell through to the wrong sheet.  Skip unknown rows and keep going
+    -- until we hit a run of empty pointers past the known end of the table.
+    local misses = 0
     for slot = 0, 127 do
       local entry = table_.address + slot * GEN2_OVERWORLD_SPRITE_BYTES
       if entry + 5 >= 0x8000 then break end
       local address = self.rom:word(table_.bank, entry)
       local bank = self.rom:byte(table_.bank, entry + 3)
-      local base = gfxLabel[bank * 0x10000 + address]
-      -- the table is dense; the first row that does not point at a known
-      -- *SpriteGFX symbol is past the end
-      if not base then break end
-      rows[#rows + 1] = {
-        index = slot + 1,
-        base = base,
-        bank = bank,
-        address = address,
-        kind = self.rom:byte(table_.bank, entry + 4),
-        palette = self.rom:byte(table_.bank, entry + 5) % 8,
-      }
+      if address == 0 or bank == 0 then
+        misses = misses + 1
+        if misses >= 3 then break end
+      else
+        local base = gfxLabel[bank * 0x10000 + address]
+        if not base then
+          misses = misses + 1
+          if misses >= 8 then break end
+        else
+          misses = 0
+          rows[#rows + 1] = {
+            -- sprite constant id = slot + 1 (SPRITE_CHRIS = 1 at slot 0)
+            index = slot + 1,
+            base = base,
+            bank = bank,
+            address = address,
+            kind = self.rom:byte(table_.bank, entry + 4),
+            palette = self.rom:byte(table_.bank, entry + 5) % 8,
+          }
+        end
+      end
     end
   end)
 
@@ -2861,6 +2951,17 @@ function RomExtractorGen2:extractMapsFromRom()
         -- Object and sign events come straight from the ROM: the checked-in
         -- scaffold labels every NPC SPRITE_RED, so without this every
         -- character on every map looked like the player.
+        --
+        -- Phase 2B + Kanto post-game enrichment (geometry stays 1x1 scaffold):
+        --   * sprite id from OverworldSprites + GEN2_SPRITE_ID_OVERRIDES
+        --     (Misty, Rocket, Silver/Chris, Copycat, Super Nerd, Gramps,
+        --     Cooltrainer, Snorlax, Bill, …)
+        --   * eventFlag as EVENT_G2_%04d; set => hidden, $FFFF => always on
+        --   * text/script linkage for talk dispatch
+        --   * special markers for Move Deleter, Magnet Train, Bill's
+        --     grandfather, radio lottery, Name Rater, SnorlaxAwake so the
+        --     Machine Part → EXPN → Copycat → Magnet Pass chain and the
+        --     Misty Route 25 date → Cerulean gym unlock have named objects
         pcall(function()
           local events = self:gen2ReadMapEvents(sym.bank, sym.address)
           if not events then return end
@@ -2891,7 +2992,11 @@ function RomExtractorGen2:extractMapsFromRom()
             -- objects walk around as the species' party menu icon.
             local spriteId
             if row[1] >= GEN2_SPRITE_VARS then
-              spriteId = string.format("SPRITE_VAR_%02d", row[1] - GEN2_SPRITE_VARS)
+              -- $F0+ indexes wVariableSprites.  Copycat and some gym
+              -- impersonators are driven this way; still honour an override
+              -- if the constant was pinned (e.g. SPRITE_COPYCAT at $FB).
+              spriteId = GEN2_SPRITE_ID_OVERRIDES[row[1]]
+                or string.format("SPRITE_VAR_%02d", row[1] - GEN2_SPRITE_VARS)
             elseif row[1] == GEN2_SPRITE_BREED_1 then
               spriteId = "SPRITE_MON_BREED_1"
             elseif row[1] == GEN2_SPRITE_BREED_2 then
@@ -2900,7 +3005,12 @@ function RomExtractorGen2:extractMapsFromRom()
               local species = spriteMons[row[1] - GEN2_SPRITE_POKEMON]
               spriteId = species and gen2MonSpriteId(species) or "SPRITE_RED"
             else
-              spriteId = sprite and sprite.id or "SPRITE_GRAMPS"
+              -- Prefer explicit Kanto/story overrides, then the OverworldSprites
+              -- table id, then GRAMPS only as a last resort so Misty / Rocket /
+              -- Super Nerd / etc. never silently become an old man.
+              spriteId = GEN2_SPRITE_ID_OVERRIDES[row[1]]
+                or (sprite and sprite.id)
+                or "SPRITE_GRAMPS"
             end
             local kind = row[8] % 16
             local scriptAddress = row[10] + row[11] * 256
@@ -2918,9 +3028,13 @@ function RomExtractorGen2:extractMapsFromRom()
               range = behavior and behavior.range or "ANY_DIR",
               source = string.format("ROM_OBJECT_EVENT:%02X", bank),
             }
+            -- Visibility rule (engine/overworld/map_objects.asm):
+            --   eventFlag == $FFFF  -> always visible (no flag gate)
+            --   eventFlag set      -> object is hidden / absent
+            --   eventFlag clear    -> object is present
+            -- InitializeEventsScript pre-sets a subset so those start hidden.
             if eventFlag ~= GEN2_EVENT_FLAG_NONE and eventFlag ~= 0 then
               object.eventFlag = string.format("EVENT_G2_%04d", eventFlag)
-              -- flag set == object absent, and the new game script sets these
               object.hidden = initialEvents[eventFlag] or nil
             end
             -- MAPOBJECT_TIMEOFDAY: a MORN/DAY/NITE bitmask, $FF for always.
@@ -2994,9 +3108,13 @@ function RomExtractorGen2:extractMapsFromRom()
                 end)
               end
             elseif script then
+              -- Service / post-game special markers.
               -- Pokecenter nurses are `jumpstd pokecenternurse`; mart clerks
-              -- run `pokemart` a few opcodes in.  Both are engine screens in
-              -- the port, so mark the text entry the overworld dispatches on.
+              -- run `pokemart` a few opcodes in.  Kanto post-game NPCs (Move
+              -- Deleter, Magnet Train, Bill's grandfather, radio lottery,
+              -- Snorlax wake check, Name Rater) open with or quickly reach a
+              -- `special <index>` — scan a short window and tag the object so
+              -- the scaffold surfaces those roles without hand-porting maps.
               pcall(function()
                 local marker
                 if self.rom:byte(bank, scriptAddress) == GEN2_SCRIPT_OP_JUMPSTD
@@ -3006,11 +3124,36 @@ function RomExtractorGen2:extractMapsFromRom()
                   local stock = self:gen2MartStock(bank, scriptAddress)
                   if stock then marker = { mart = stock } end
                 end
+
+                -- Scan opening bytecode for `special <id>` (op $0F, dw index).
+                -- Scripts often do opentext / writetext / special, so look
+                -- through a modest window rather than only the first byte.
+                if not marker then
+                  for off = 0, 24 do
+                    local addr = scriptAddress + off
+                    if addr + 2 >= 0x8000 then break end
+                    if self.rom:byte(bank, addr) == GEN2_SCRIPT_OP_SPECIAL then
+                      local specialId = self.rom:word(bank, addr + 1)
+                      local role = GEN2_KANTO_SPECIAL_MARKERS[specialId]
+                      if role then
+                        marker = { special = role, specialId = specialId }
+                        object.special = role
+                        object.specialId = specialId
+                        break
+                      end
+                    end
+                  end
+                end
+
                 if not marker then return end
                 textPointers[mapId] = textPointers[mapId] or {}
                 local entry = textPointers[mapId][textConst] or { text = textConst }
                 entry.nurse = marker.nurse
                 entry.mart = marker.mart
+                if marker.special then
+                  entry.special = marker.special
+                  entry.specialId = marker.specialId
+                end
                 textPointers[mapId][textConst] = entry
                 serviceObjects = serviceObjects + 1
               end)

@@ -283,6 +283,12 @@ function OverworldState:enter(mapId, x, y, facing)
   -- boot/load: derive the flag from the tile the save left us standing on,
   -- like MapEntryAfterBattle's IsPlayerStandingOnWarp, so a game saved on a
   -- door mat can still walk straight back out (issue #378)
+  -- Gen2 daily resets also run here so a continued save whose calendar day
+  -- already advanced while the game was closed still clears Kurt / trees /
+  -- lottery on the first frame in the overworld.
+  if GameVersion.isGen2() and Game.save then
+    require("src.script.Gen2Daily").poll(Game.save)
+  end
   self:refreshStandingOnWarp()
 end
 
@@ -1081,6 +1087,12 @@ function OverworldState:update(dt)
     self:syncObjectVisibility()
   end
   self:checkSpecialPhoneCall()
+  -- Gen2 daily resets (Kurt balls, fruit trees, radio lottery). Lazy require
+  -- keeps Gen2Daily out of the module-load graph so a missing/broken daily
+  -- file cannot produce "loop or previous error loading module".
+  if GameVersion.isGen2() and Game and Game.save then
+    require("src.script.Gen2Daily").poll(Game.save)
+  end
   self:updateParallel()
   -- keep the player sprite in sync with the bike state (the drawer
   -- picks the red_bike sheet while riding)
