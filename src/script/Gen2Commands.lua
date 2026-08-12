@@ -1955,33 +1955,87 @@ function Commands.g2_move_deleter(ctx)
   ctx.lastCheck = true
 end
 
--- `special MagnetTrain` ($23).  Requires PASS.
+-- Gen2 bag keys are ITEM_%03d after extract; scripts also check named ids.
+-- pret item_constants: PASS $86, POKE_FLUTE $38, MACHINE_PART $80, LOST_ITEM $82.
+local function inventoryHas(save, data, candidates)
+  local inv = save and save.inventory or {}
+  for _, id in ipairs(candidates) do
+    local qty = inv[id]
+    if type(qty) == "number" and qty > 0 then return true end
+    if qty == true then return true end
+  end
+  if data and data.items then
+    for _, id in ipairs(candidates) do
+      local entry = data.items[id]
+      if entry and entry.key then
+        local qty = inv[entry.key]
+        if type(qty) == "number" and qty > 0 then return true end
+      end
+      -- match by ROM name / key field pointing back at ITEM_nnn
+      for key, qty in pairs(inv) do
+        if type(qty) == "number" and qty > 0 and type(key) == "string" then
+          local e = data.items[key]
+          if e and (e.key == id or e.name == id or key == id) then return true end
+        end
+      end
+    end
+  end
+  return false
+end
+
+-- `special MagnetTrain` ($23).  Officer scripts already checkitem PASS and
+-- EVENT_RESTORED_POWER_TO_KANTO; this special only runs the ride.
 function Commands.g2_magnet_train(ctx)
-  local inv = ctx.save.inventory or {}
-  local hasPass = inv.PASS or inv.ITEM_PASS or inv["PASS"]
+  local save, data = ctx.save, ctx.game and ctx.game.data
+  -- PASS = item constant $86 → ITEM_134
+  local hasPass = inventoryHas(save, data, {
+    "PASS", "ITEM_PASS", "ITEM_134", "ITEM_086",
+  })
   if not hasPass then
     ctx.g2Var = 0
     ctx.lastCheck = false
     return
   end
   local ow = ctx.overworld
-  local mapId = ow and ow.map and ow.map.id or ""
+  local mapId = tostring(ow and ow.map and ow.map.id or "")
+  -- Prefer exact station map keys from the Gen2 scaffold registry.
   local dest
-  if tostring(mapId):find("GOLDENROD") then
-    dest = { map = "SAFFRON_TRAIN_STATION", x = 6, y = 5 }
+  if mapId:find("GOLDENROD") then
+    dest = {
+      map = data and data.maps and data.maps.SAFFRON_MAGNET_TRAIN_STATION
+        and "SAFFRON_MAGNET_TRAIN_STATION"
+        or (data and data.maps and data.maps.SAFFRON_TRAIN_STATION
+          and "SAFFRON_TRAIN_STATION" or "SAFFRON_MAGNET_TRAIN_STATION"),
+      x = 6, y = 5,
+    }
   else
-    dest = { map = "GOLDENROD_MAGNET_TRAIN_STATION", x = 6, y = 5 }
+    dest = {
+      map = data and data.maps and data.maps.GOLDENROD_MAGNET_TRAIN_STATION
+        and "GOLDENROD_MAGNET_TRAIN_STATION"
+        or "GOLDENROD_MAGNET_TRAIN_STATION",
+      x = 6, y = 5,
+    }
   end
   Commands.g2_warp(ctx, dest.map, dest.x, dest.y, "down")
   ctx.g2Var = 1
   ctx.lastCheck = true
 end
 
--- `special SnorlaxAwake` ($5F).
+-- `special SnorlaxAwake` ($5F).  ROM checks wMapMusic == POKE_FLUTE_CHANNEL.
+-- Port: EXPN Card (Lavender Radio) unlocks that channel; treat the engine
+-- flag / item as sufficient to wake Vermilion / Route 12 Snorlax.
 function Commands.g2_snorlax_awake(ctx)
-  local inv = ctx.save.inventory or {}
-  local ok = inv.POKE_FLUTE or inv.ITEM_POKE_FLUTE or inv.EXPN_CARD
-    or inv.ITEM_EXPN_CARD or inv["POKé FLUTE"]
+  local save, data = ctx.save, ctx.game and ctx.game.data
+  local flags = save.flags or {}
+  local Gen2Flags = require("src.script.Gen2Flags")
+  -- engine flag row $03 is EXPN in Gold/Silver ENGINE_FLAG_NAMES
+  local hasExpn = flags.EVENT_GOT_EXPN_CARD == true
+    or flags.ENGINE_EXPN_CARD == true
+    or flags[Gen2Flags.engineFlag(3)] == true
+  local hasFlute = inventoryHas(save, data, {
+    "POKE_FLUTE", "ITEM_POKE_FLUTE", "ITEM_056", "ITEM_038", "POKé FLUTE",
+  })
+  local ok = hasExpn or hasFlute
   ctx.lastCheck = ok and true or false
   ctx.g2Var = ok and 1 or 0
 end
@@ -1992,14 +2046,18 @@ function Commands.g2_lucky_winners(ctx)
 end
 
 function Commands.g2_lucky_check_flag(ctx)
+  local Gen2Flags = require("src.script.Gen2Flags")
   local flags = ctx.save.flags or {}
-  local set = flags.ENGINE_LUCKY_NUMBER_SHOW or flags[77]
+  local key = Gen2Flags.engineFlag(77) -- ENGINE_LUCKY_NUMBER_SHOW
+  local set = flags[key] == true or flags.ENGINE_LUCKY_NUMBER_SHOW == true
   ctx.lastCheck = set and true or false
   ctx.g2Var = set and 1 or 0
 end
 
 function Commands.g2_lucky_reset(ctx)
+  local Gen2Flags = require("src.script.Gen2Flags")
   ctx.save.flags = ctx.save.flags or {}
+  ctx.save.flags[Gen2Flags.engineFlag(77)] = nil
   ctx.save.flags.ENGINE_LUCKY_NUMBER_SHOW = nil
   ctx.g2Var = 0
 end

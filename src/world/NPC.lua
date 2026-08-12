@@ -98,31 +98,52 @@ local SPRITE_INDEX_FALLBACK = {
   SPRITE_COOLTRAINER_M = 0x23,
   SPRITE_GRAMPS = 0x2F,
   SPRITE_FRUIT_TREE = 0x5D,
+  -- Kanto post-game overworld actors
+  SPRITE_BIG_SNORLAX = 0x6C,
+  SPRITE_SNORLAX = 0x6C,
+  SPRITE_MACHOP = 0x6E,
+  SPRITE_GYM_GUIDE = 0x29,
+  SPRITE_OFFICER = 0x3A,
+  SPRITE_JANINE = 0x1E,
+  SPRITE_SURGE = 0x1B,
+  SPRITE_ERIKA = 0x1C,
+  SPRITE_SABRINA = 0x1F,
+  SPRITE_BROCK = 0x1A,
 }
 
 local function resolveSpriteDef(data, spriteId)
   local sprites = (data and data.sprites) or {}
   local spriteDef = type(spriteId) == "string" and sprites[spriteId] or nil
-  if spriteDef then return spriteDef end
+  if spriteDef and spriteDef.image then return spriteDef end
   if type(spriteId) == "string" then
     spriteDef = resolveVariableSprite(data, sprites, spriteId)
       or resolveBreedSprite(sprites, spriteId)
-    if spriteDef then return spriteDef end
+    if spriteDef and spriteDef.image then return spriteDef end
     local aliases = SPRITE_ALIASES[spriteId]
     if aliases then
       for _, alt in ipairs(aliases) do
-        if sprites[alt] then return sprites[alt] end
+        if sprites[alt] and sprites[alt].image then return sprites[alt] end
       end
     end
     local index = SPRITE_INDEX_FALLBACK[spriteId]
     if index then
       spriteDef = spriteByIndex(sprites, index)
-      if spriteDef then return spriteDef end
+      if spriteDef and spriteDef.image then return spriteDef end
+      -- Some extracts only key sheets as SPRITE_%02X / SPRITE_%d
+      local hex = sprites[string.format("SPRITE_%02X", index)]
+        or sprites[string.format("SPRITE_%d", index)]
+        or sprites[index]
+      if hex and type(hex) == "table" and hex.image then return hex end
+    end
+    -- Never accept the fruit-tree sheet for a named story NPC: that is how
+    -- Misty / Rocket became the green "boundary bush" on Route 25.
+    if spriteId == "SPRITE_FRUIT_TREE" or spriteId == "SPRITE_BUSH" then
+      if sprites.SPRITE_RED then return sprites.SPRITE_RED end
     end
   end
   -- Never pick a random sheet (pairs iteration used to hand Misty the tree).
-  if sprites.SPRITE_RED then return sprites.SPRITE_RED end
-  if sprites.SPRITE_CHRIS then return sprites.SPRITE_CHRIS end
+  if sprites.SPRITE_RED and sprites.SPRITE_RED.image then return sprites.SPRITE_RED end
+  if sprites.SPRITE_CHRIS and sprites.SPRITE_CHRIS.image then return sprites.SPRITE_CHRIS end
   sprites.SPRITE_FALLBACK = sprites.SPRITE_FALLBACK or FALLBACK_SPRITE
   return sprites.SPRITE_FALLBACK
 end

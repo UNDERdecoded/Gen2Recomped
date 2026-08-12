@@ -693,9 +693,19 @@ local function contributionFor(data, mapId, entry, mapDef)
     local rows = Gen2ScriptVM.compile(data, callback.script)
     if rows then callbacks[#callbacks + 1] = rows end
   end
-  if #scenes > 0 or #callbacks > 0 then
+  -- Always install onEnter for Gen2 maps so temporary event bits clear on
+  -- reload.  Kurt sets EVENT_TEMPORARY_UNTIL_MAP_RELOAD_2 after delivering a
+  -- ball; without a clear, every later talk only prints "That turned out
+  -- great!" and never accepts another apricorn.
+  do
     local Gen2Commands = require("src.script.Gen2Commands")
     contribution.onEnter = function(game, overworld)
+      local flags = game.save.flags
+      if flags then
+        for i = 0, 7 do
+          flags[eventFlag(i)] = nil
+        end
+      end
       local scene = Gen2Commands.getScene(game.save, mapId)
       local rows = scenes[scene + 1]
       if rows then queue(overworld, rows, { mapId = mapId }) end

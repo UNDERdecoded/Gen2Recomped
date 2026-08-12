@@ -1283,21 +1283,26 @@ end
 -- wStatusFlags bit 0, the POKeDEX bit -- all START-menu features rather than
 -- bag items, so they have to land on the names the menus already gate on
 -- instead of an opaque FLAG_G2_ id.
+-- pret/pokegold constants/engine_flags.asm (Gold/Silver order; Crystal differs).
 Gen2Flags.ENGINE_FLAG_NAMES = {
-
-  [0] = "EVENT_GOT_RADIO_CARD",
-  [1] = "EVENT_GOT_MAP_CARD",
-  [4] = "EVENT_GOT_POKEGEAR",
+  [0]  = "EVENT_GOT_RADIO_CARD",
+  [1]  = "EVENT_GOT_MAP_CARD",
+  [2]  = "EVENT_GOT_PHONE_CARD",
+  [3]  = "EVENT_GOT_EXPN_CARD",
+  [4]  = "EVENT_GOT_POKEGEAR",
+  [5]  = "ENGINE_DAY_CARE_MAN_HAS_EGG",
+  [6]  = "ENGINE_DAY_CARE_MAN_HAS_MON",
+  [7]  = "ENGINE_DAY_CARE_LADY_HAS_MON",
+  [8]  = "ENGINE_MOM_SAVING_MONEY",
+  [9]  = "ENGINE_MOM_ACTIVE",
   [11] = "EVENT_GOT_POKEDEX",
-  -- row $0C is wStatusFlags bit 1, the UNOWN DEX bit the Ruins of Alph
-  -- scientist sets (`setflag ENGINE_UNOWN_DEX`); Pokedex_CheckUnlockedUnownMode
-  -- is what puts UNOWN MODE on the dex option screen
   [12] = "EVENT_GOT_UNOWN_DEX",
-  -- rows $1A-$29 are wJohtoBadges then wKantoBadges, bit 0 first.  The bit
-  -- order is not the card's display order: FlyFunction checks $1F for
-  -- STORMBADGE and StrengthFunction $1C for PLAINBADGE, putting Mineral on
-  -- bit 4 and Storm on bit 5.  Gen2 has no badge ITEM, so these have to carry
-  -- the badge id itself -- Badges.has reads them straight out of save.flags.
+  [13] = "ENGINE_CAUGHT_POKERUS",
+  [15] = "ENGINE_CREDITS_SKIP",
+  [18] = "ENGINE_ROCKETS_IN_RADIO_TOWER",
+  [19] = "ENGINE_BIKE_SHOP_CALL_ENABLED",
+  [23] = "ENGINE_STRENGTH_ACTIVE",
+  -- Johto then Kanto badges (bit 0 first). Fly=STORMBADGE Strength=PLAINBADGE.
   [26] = "ZEPHYRBADGE", [27] = "HIVEBADGE",
   [28] = "PLAINBADGE",  [29] = "FOGBADGE",
   [30] = "MINERALBADGE", [31] = "STORMBADGE",
@@ -1306,7 +1311,7 @@ Gen2Flags.ENGINE_FLAG_NAMES = {
   [36] = "THUNDERBADGE", [37] = "RAINBOWBADGE",
   [38] = "SOULBADGE",    [39] = "MARSHBADGE",
   [40] = "VOLCANOBADGE", [41] = "EARTHBADGE",
-  [3]  = "EVENT_GOT_EXPN_CARD",          -- or ENGINE_EXPN_CARD
+  [75] = "ENGINE_FLYPOINT_SILVER_CAVE",
   [77] = "ENGINE_LUCKY_NUMBER_SHOW",
   [79] = "ENGINE_KURT_MAKING_BALLS",
   [80] = "ENGINE_DAILY_BUG_CONTEST",

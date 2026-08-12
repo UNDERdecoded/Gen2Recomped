@@ -1,35 +1,73 @@
-local Flags = require("src.script.Flags")
+-- Daily resets for Gen2 engine flags the ROM clears at midnight
+-- (Kurt's ball making, fruit trees, lucky-number show).
+--
+-- Also seeds Kanto object-visibility flags that InitializeEventsScript sets
+-- on a new game.  Without those bits, Route 25 Misty, the Cerulean Gym
+-- Rocket, Viridian Blue, Saffron station crowds, etc. appear out of order.
+--
+-- Place at: src/script/Gen2Daily.lua
+-- Polled from OverworldController:enter and :update (lazy require).
+
 local Gen2Flags = require("src.script.Gen2Flags")
 
-local M = {}
+local Gen2Daily = {}
 
-local DAILY_ENGINE = {
-  47, -- ENGINE_KURT_MAKING_BALLS  (clear → Kurt delivers)
-  48, -- ENGINE_DAILY_BUG_CONTEST
-  51, -- ENGINE_ALL_FRUIT_TREES
-  52, -- ENGINE_GOT_SHUCKIE_TODAY
+local ENGINE_LUCKY_NUMBER_SHOW = 77
+local ENGINE_KURT_MAKING_BALLS = 79
+local ENGINE_ALL_FRUIT_TREES   = 83
+
+-- pret InitializeEventsScript Kanto / late-game visibility bits (EVENT_G2_%04d).
+local INITIAL_HIDDEN_EVENTS = {
+  251,  -- EVENT_FOUND_MACHINE_PART_IN_CERULEAN_GYM
+  1865, -- EVENT_GOLDENROD_TRAIN_STATION_GENTLEMAN
+  1890, -- EVENT_RED_IN_MT_SILVER
+  1900, -- EVENT_ROUTE_24_ROCKET
+  1901, -- EVENT_CERULEAN_GYM_ROCKET
+  1902, -- EVENT_ROUTE_25_MISTY_BOYFRIEND
+  1903, -- EVENT_TRAINERS_IN_CERULEAN_GYM
+  1906, -- EVENT_SAFFRON_TRAIN_STATION_POPULATION
+  1907, -- EVENT_COPYCATS_HOUSE_2F_DOLL
+  1910, -- EVENT_VIRIDIAN_GYM_BLUE
+  1911, -- EVENT_SEAFOAM_GYM_GYM_GUIDE
+  1913, -- EVENT_MT_MOON_SQUARE_CLEFAIRY
+  1915, -- EVENT_INDIGO_PLATEAU_POKECENTER_RIVAL
 }
 
-function M.dayKey()
+local function todayKey()
   return os.date("%Y-%m-%d")
 end
 
-function M.onNewDay(save)
+function Gen2Daily.seedInitialObjectFlags(save)
   if not save then return end
-  for _, idx in ipairs(DAILY_ENGINE) do
-    Flags.clear(save, Gen2Flags.engineFlag(idx))
+  save.flags = save.flags or {}
+  if save.g2InitialObjectFlagsSeeded then return end
+  save.g2InitialObjectFlagsSeeded = true
+  for _, index in ipairs(INITIAL_HIDDEN_EVENTS) do
+    local key = Gen2Flags.eventFlag(index)
+    if save.flags[key] == nil then
+      save.flags[key] = true
+    end
   end
-  -- Fruit trees: clear pick memory (g2_fruittree)
+end
+
+function Gen2Daily.onNewDay(save)
+  if not save then return end
+  save.flags = save.flags or {}
+  save.flags[Gen2Flags.engineFlag(ENGINE_KURT_MAKING_BALLS)] = nil
+  save.flags[Gen2Flags.engineFlag(ENGINE_LUCKY_NUMBER_SHOW)] = nil
   save.g2FruitTrees = {}
-  save.g2LastDailyDay = M.dayKey()
+  save.flags[Gen2Flags.engineFlag(ENGINE_ALL_FRUIT_TREES)] = nil
+  -- Clefairy show is weekly in the ROM; re-hide so the event can fire again.
+  save.flags[Gen2Flags.eventFlag(1913)] = true
 end
 
-function M.poll(save)
+function Gen2Daily.poll(save)
   if not save then return end
-  local today = M.dayKey()
-  if save.g2LastDailyDay ~= today then
-    M.onNewDay(save)
-  end
+  Gen2Daily.seedInitialObjectFlags(save)
+  local today = todayKey()
+  if save.g2DailyDay == today then return end
+  save.g2DailyDay = today
+  Gen2Daily.onNewDay(save)
 end
 
-return M
+return Gen2Daily

@@ -24,19 +24,48 @@ local gen2Data = require("src.core.Data")
 local gen2VM = gen2Data.map_scripts and require("src.script.Gen2ScriptVM") or nil
 if gen2VM then gen2VM.register(gen2Data, "talk") end
 
--- OaksLab is a full Yellow rewrite (one Eevee ball + forced Pikachu);
--- Red/Blue keep the three-starter choose flow.
-local oaksLab = GameVersion.isYellow()
-  and "data.scripts.oaks_lab_yellow"
-  or "data.scripts.oaks_lab"
+-- Maps that Gen2 map_scripts already owns.  Gen1 story hand-ports for the
+-- same map ids (CERULEAN_CITY, ROUTE24→ROUTE_24, etc.) must not attach:
+-- they override Gen2 talk with pokered rival/Nugget Bridge scripts and
+-- leave players fighting CeruleanCityRival with Gen1 text on a Gold/Silver
+-- save.
+local gen2OwnedMaps = {}
+if gen2VM and gen2Data.map_scripts and gen2Data.map_scripts.maps then
+  for mapId in pairs(gen2Data.map_scripts.maps) do
+    gen2OwnedMaps[mapId] = true
+    -- MapScripts.normalizeMapId inserts _ before trailing digits (ROUTE24
+    -- → ROUTE_24).  Mark both spellings so story modules keyed either way
+    -- are skipped.
+    local normalized = mapId:gsub("([A-Z])(%d)", "%1_%2")
+    gen2OwnedMaps[normalized] = true
+    local compact = mapId:gsub("_(%d+)$", "%1")
+    gen2OwnedMaps[compact] = true
+  end
+end
 
-for _, mapEntry in ipairs({
-  { "PALLET_TOWN", "data.scripts.pallet_town" },
-  { "OAKS_LAB", oaksLab },
-  { "REDS_HOUSE_1F", "data.scripts.reds_house" },
-  { "CELADON_MANSION_ROOF_HOUSE", "data.scripts.celadon_eevee" },
-}) do
-  MapScripts.attachBase(mapEntry[1], require(mapEntry[2]))
+local function attachBaseUnlessGen2(mapId, mod)
+  if gen2OwnedMaps[mapId] then return end
+  local compact = type(mapId) == "string" and mapId:gsub("_(%d+)$", "%1") or mapId
+  local normalized = type(mapId) == "string" and mapId:gsub("([A-Z])(%d)", "%1_%2") or mapId
+  if gen2OwnedMaps[compact] or gen2OwnedMaps[normalized] then return end
+  MapScripts.attachBase(mapId, mod)
+end
+
+-- OaksLab is a full Yellow rewrite (one Eevee ball + forced Pikachu);
+-- Red/Blue keep the three-starter choose flow.  Skip on Gen2.
+if not gen2VM then
+  local oaksLab = GameVersion.isYellow()
+    and "data.scripts.oaks_lab_yellow"
+    or "data.scripts.oaks_lab"
+
+  for _, mapEntry in ipairs({
+    { "PALLET_TOWN", "data.scripts.pallet_town" },
+    { "OAKS_LAB", oaksLab },
+    { "REDS_HOUSE_1F", "data.scripts.reds_house" },
+    { "CELADON_MANSION_ROOF_HOUSE", "data.scripts.celadon_eevee" },
+  }) do
+    MapScripts.attachBase(mapEntry[1], require(mapEntry[2]))
+  end
 end
 
 -- The Gen2 errand chain (player's house, Elm's lab, Mr Pokemon's house) was
@@ -60,7 +89,8 @@ if not gen2VM then
 end
 
 -- story-critical scripts, one table per map, in the order the old merge
--- loop required them
+-- loop required them.  On Gen2, skip any map the ROM bytecode already owns
+-- (Kanto post-game Cerulean/Route24/25, Kurt, gyms, …).
 for _, file in ipairs({ "data.scripts.story", "data.scripts.story2",
                         "data.scripts.story3", "data.scripts.story4",
                         "data.scripts.story5", "data.scripts.story6",
@@ -69,13 +99,13 @@ for _, file in ipairs({ "data.scripts.story", "data.scripts.story2",
                         "data.scripts.safari", "data.scripts.seafoam",
                         "data.scripts.gyms" }) do
   for mapId, mod in pairs(require(file)) do
-    MapScripts.attachBase(mapId, mod)
+    attachBaseUnlessGen2(mapId, mod)
   end
 end
 
 -- Yellow-only content on top of the shared tables (talk keys merge per
 -- TEXT constant): the Kanto-starter gift quests and Jessie & James.
-if GameVersion.isYellow() then
+if GameVersion.isYellow() and not gen2VM then
   for _, file in ipairs({ "data.scripts.yellow_gifts",
                           "data.scripts.yellow_jessie_james",
                           "data.scripts.yellow_beach_house",
