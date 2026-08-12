@@ -77,16 +77,21 @@ local VAR_SLOT_NAMES = {
 }
 
 -- Common target sprites by name → OverworldSprites index
+-- (pret/pokegold constants/sprite_constants.asm)
 local SPRITE_NAME_INDEX = {
   SPRITE_CHRIS = 1,
   SPRITE_CHRIS_BIKE = 2,
   SPRITE_GAMEBOY_KID = 3,
   SPRITE_SILVER = 4,
+  SPRITE_COOLTRAINER_M = 0x23,
+  SPRITE_COOLTRAINER_F = 0x24,
+  SPRITE_BUG_CATCHER = 0x25,
+  SPRITE_TWIN = 0x26,
+  SPRITE_YOUNGSTER = 0x27,
   SPRITE_LASS = 0x28,
-  SPRITE_TWIN = 0x27,
-  SPRITE_TEACHER = 0x26,
-  SPRITE_BUENA = 0x25,
-  SPRITE_BEAUTY = 0x24,
+  SPRITE_TEACHER = 0x29,
+  SPRITE_BEAUTY = 0x2A,
+  SPRITE_BUENA = 0x4A,          -- not $25; $25 is BUG_CATCHER
   SPRITE_FRUIT_TREE = 0x5D,
   SPRITE_SUDOWOODO = 0x6D,
 }
@@ -1155,7 +1160,53 @@ function Commands.g2_unown_puzzle(ctx)
   runner:yield()
 end
 
+-- StdScripts fallback when the extracted body was not linked into the IR
+-- pool.  Index 0 is PokecenterNurseScript — without this, every Center nurse
+-- that still lowers to g2_std is a silent no-op.
+local STD_POKECENTER_NURSE = 0
+
 function Commands.g2_std(ctx, id)
+  local index = tonumber(id) or id
+  if index == STD_POKECENTER_NURSE or index == "pokecenternurse"
+      or index == "POKECENTER_NURSE" then
+    -- Inline PokecenterNurseScript: welcome → yes/no → heal + machine → bye.
+    local t = ctx.game.data and ctx.game.data.text or {}
+    local bye = t._PokemonCenterFarewellText
+      or "We hope to see\nyou again!"
+    local hello = t._PokemonCenterWelcomeText
+      or "Welcome to our\nPOKéMON CENTER!"
+    if not ctx.save.usedPokecenter then
+      ctx.save.usedPokecenter = true
+      hello = hello .. "\f"
+        .. (t._ShallWeHealYourPokemonText or "Shall we heal your\nPOKéMON?")
+    end
+    Commands.ask(ctx, hello)
+    if not ctx.lastCheck then
+      Commands.show_text(ctx, bye)
+      return
+    end
+    local need = t._NeedYourPokemonText or "OK. We'll need\nyour POKéMON."
+    Commands.show_text(ctx, need)
+    Commands.g2_heal_party(ctx)
+    -- Record the blackout/heal point so Escape Rope / white-out work.
+    local ow = ctx.overworld
+    if ow and ow.map and ow.player then
+      ctx.save.lastHeal = {
+        map = ow.map.id,
+        x = ow.player.cellX,
+        y = ow.player.cellY,
+        outdoor = ow.lastOutdoor and {
+          id = ow.lastOutdoor.id, x = ow.lastOutdoor.x, y = ow.lastOutdoor.y,
+        } or nil,
+      }
+    end
+    Commands.g2_heal_machine_anim(ctx)
+    local fit = t._PokemonFightingFitText
+      or "Your POKéMON are\nfighting fit!"
+    Commands.show_text(ctx, fit)
+    Commands.show_text(ctx, bye)
+    return
+  end
   warnOnce("std script", id)
 end
 
@@ -2223,9 +2274,32 @@ function Commands.g2_lucky_print(ctx)
 end
 
 function Commands.g2_heal_party(ctx)
+  local Pokemon = require("src.pokemon.Pokemon")
   for _, mon in ipairs(ctx.save.party or {}) do
-    mon.hp = mon.maxHp or mon.hp
-    mon.status = nil
+    if Pokemon.heal then
+      Pokemon.heal(mon)
+    else
+      mon.hp = mon.maxHp or mon.hp
+      mon.status = nil
+      if mon.moves then
+        for _, mv in ipairs(mon.moves) do
+          if mv and mv.maxPp then mv.pp = mv.maxPp end
+        end
+      end
+    end
+  end
+  -- Always refresh the blackout/heal point when the nurse heals so Escape
+  -- Rope / white-out work even if the script's blackoutmod row was skipped.
+  local ow = ctx.overworld
+  if ow and ow.map and ow.player then
+    ctx.save.lastHeal = {
+      map = ow.map.id,
+      x = ow.player.cellX,
+      y = ow.player.cellY,
+      outdoor = ow.lastOutdoor and {
+        id = ow.lastOutdoor.id, x = ow.lastOutdoor.x, y = ow.lastOutdoor.y,
+      } or nil,
+    }
   end
   ctx.lastCheck = true
 end

@@ -167,6 +167,12 @@ local GEN2_GROWTH_RATES = {
   [3] = "MEDIUM_SLOW", [4] = "FAST", [5] = "SLOW",
 }
 local GEN2_BASE_PIC_DIMS = 18       -- 1-based: dn frontpic width, height
+-- ChrisPicAndTrainerCardGFX is a raw 2bpp sheet (not LZ3).  Trainer card
+-- draws a 5x7 tile (40x56) box; the ROM sheet is 7x7 tiles and the card
+-- crops the usable region.  These must be defined or gen2PlayerFrontPic
+-- always pcall-fails and front silently becomes the battle BACK pic.
+local GEN2_PLAYER_PIC_COLS = 7
+local GEN2_PLAYER_PIC_ROWS = 7
 local GEN2_BASE_GROWTH_RATE = 23
 local GEN2_COLL_TALL_GRASS = 0x14
 -- CheckCounterTile (00:173D): only $90 and $98 are talked across
@@ -198,11 +204,20 @@ local GEN2_SPRITE_ID_OVERRIDES = {
   [0x20] = "SPRITE_ERIKA",
   [0x21] = "SPRITE_KOGA",
   [0x22] = "SPRITE_SABRINA",
-  -- Common Kanto story NPCs
+  -- Common Kanto / Johto story NPCs (pret sprite_constants.asm indices)
   [0x23] = "SPRITE_COOLTRAINER_M", -- Misty's date on Route 25
   [0x24] = "SPRITE_COOLTRAINER_F",
+  [0x25] = "SPRITE_BUG_CATCHER",
+  [0x26] = "SPRITE_TWIN",          -- Route 37 twins
+  [0x27] = "SPRITE_YOUNGSTER",
+  [0x28] = "SPRITE_LASS",
+  [0x29] = "SPRITE_TEACHER",
+  [0x2A] = "SPRITE_BEAUTY",        -- Route 37 / common trainers
   [0x2B] = "SPRITE_SUPER_NERD",    -- Power Plant / Machine Part
+  [0x2C] = "SPRITE_POKEFAN_M",
+  [0x2D] = "SPRITE_POKEFAN_F",
   [0x2F] = "SPRITE_GRAMPS",        -- Bill's grandfather (Route 25)
+  [0x30] = "SPRITE_GRANNY",
   [0x31] = "SPRITE_SWIMMER_GUY",
   [0x32] = "SPRITE_SWIMMER_GIRL",
   [0x33] = "SPRITE_BIG_SNORLAX",   -- Route 12 / 16
@@ -215,6 +230,7 @@ local GEN2_SPRITE_ID_OVERRIDES = {
   [0x5A] = "SPRITE_BOULDER",
   [0x5D] = "SPRITE_FRUIT_TREE",
   -- Mon / special sheets
+  [0x6D] = "SPRITE_SUDOWOODO",     -- post-reveal Sudowoodo
   [0x9F] = "SPRITE_SNORLAX",
   -- Variable-sprite constants used as direct ids on some maps
   [0xF4] = "SPRITE_WEIRD_TREE",    -- Sudowoodo pre-reveal
@@ -5070,15 +5086,38 @@ function RomExtractorGen2:gen2Pokegear()
 end
 
 function RomExtractorGen2:gen2PlayerFrontPic()
+  -- Prefer the dedicated trainer-card/front sheet; fall through alternate
+  -- pret labels so a symbols file rename does not leave the card on the
+  -- battle back pic.
   local sym = self:symbol("ChrisPicAndTrainerCardGFX")
+    or self:symbol("ChrisPicFront")
+    or self:symbol("PlayerPic")
+    or self:symbol("ChrisCardPic")
   if not (sym and self.rom) then return nil end
   local relative = "battle/chrisf.png"
   local cols, rows = GEN2_PLAYER_PIC_COLS, GEN2_PLAYER_PIC_ROWS
   local ok = pcall(function()
     local raw = self.rom:bytes(sym.bank, sym.address, cols * rows * 16)
+    assert(raw and #raw >= cols * rows * 16, "short Chris front pic")
     self:saveImage(ImageWriter.matteColor0(
       ImageWriter.decode2bpp(raw, cols * 8, rows * 8)), relative)
   end)
+  if not ok then
+    -- One more try: some builds store the front as an LZ3 blob like other
+    -- trainer pics (ChrisPic).  Decompress and re-save if the raw read failed.
+    local alt = self:symbol("ChrisPic")
+    if alt and self.rom then
+      ok = pcall(function()
+        local raw = self.rom:bytes(alt.bank, alt.address, 0x8000 - alt.address)
+        local pixels = decompressLz3(raw)
+        local tiles = math.floor(math.sqrt(math.floor(#pixels / 16)) + 0.5)
+        assert(tiles >= 1, "short ChrisPic LZ3")
+        self:saveImage(ImageWriter.matteColor0(ImageWriter.decode2bpp(
+          colMajorToRowMajor(pixels, tiles, tiles), tiles * 8, tiles * 8)),
+          relative)
+      end)
+    end
+  end
   if not ok then return nil end
   return "assets/generated/" .. relative
 end

@@ -103,13 +103,31 @@ L.endall = function(_, s) emit(s, { "jump", "end" }) end
 -- jumpstd/callstd is an ordinary jump/call.  The Pokecenter nurse is
 -- `jumpstd pokecenternurse` and nothing else; leaving it as a warn-once stub
 -- was why talking to a nurse did nothing at all.
+-- ir[2] is the StdScripts table index (0 = PokecenterNurseScript).  The
+-- extractor stores pool.stds keyed by that numeric index; also accept a
+-- stringified index from older IR dumps.
+local function stdLabel(s, id)
+  if not s.stds then return nil end
+  local label = s.stds[id]
+  if label then return label end
+  local n = tonumber(id)
+  if n ~= nil then return s.stds[n] end
+  return nil
+end
+
 L.jumpstd = function(ir, s)
-  local to = branch(s, s.stds and s.stds[ir[2]])
-  if to then emit(s, { "jump", to }) else emit(s, { "g2_std", ir[2] }) end
+  local to = branch(s, stdLabel(s, ir[2]))
+  if to then
+    emit(s, { "jump", to })
+    -- jumpstd is a terminal jump in the ROM; do not emit g2_return after a
+    -- successful resolve (dead row is harmless but confuses traces).
+    return
+  end
+  emit(s, { "g2_std", ir[2] })
   emit(s, { "g2_return" })
 end
 L.callstd = function(ir, s)
-  local to = branch(s, s.stds and s.stds[ir[2]])
+  local to = branch(s, stdLabel(s, ir[2]))
   if not to then emit(s, { "g2_std", ir[2] }); return end
   local ret = s.newLabel()
   emit(s, { "g2_call", ret })

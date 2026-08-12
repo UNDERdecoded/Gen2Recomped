@@ -178,6 +178,7 @@ local SPRITE_ALIASES = {
 
 -- OverworldSprites row index (= object_event sprite byte) for story NPCs
 -- when the named sheet is missing after a partial extract.
+-- Indices match pret/pokegold constants/sprite_constants.asm.
 local SPRITE_INDEX_FALLBACK = {
   SPRITE_SILVER = 4,
   SPRITE_RIVAL = 4,
@@ -188,24 +189,60 @@ local SPRITE_INDEX_FALLBACK = {
   SPRITE_COPYCAT = 0x28, -- default LASS; variablesprite may swap to CHRIS
   SPRITE_SUPER_NERD = 0x2B,
   SPRITE_COOLTRAINER_M = 0x23,
+  SPRITE_COOLTRAINER_F = 0x24,
+  SPRITE_BUG_CATCHER = 0x25,
+  SPRITE_TWIN = 0x26,           -- Route 37 twins, etc.
+  SPRITE_YOUNGSTER = 0x27,
+  SPRITE_LASS = 0x28,
+  SPRITE_TEACHER = 0x29,
+  SPRITE_BEAUTY = 0x2A,         -- Route 37 / common trainers
   SPRITE_GRAMPS = 0x2F,
+  SPRITE_GRANNY = 0x30,
   SPRITE_FRUIT_TREE = 0x5D,
   SPRITE_SURF = 0x53,
   SPRITE_SURFING_PIKACHU = 0x34,
-  -- Kanto post-game overworld actors
+  -- Kanto post-game / special overworld actors
   SPRITE_BIG_SNORLAX = 0x33,  -- pret SPRITE_BIG_SNORLAX; not mon-icon $6C
   SPRITE_SNORLAX = 0x6C,
+  SPRITE_SUDOWOODO = 0x6D,
+  SPRITE_WEIRD_TREE = 0x5D,   -- pre-reveal default = fruit tree sheet
   SPRITE_MACHOP = 0x6E,
-  SPRITE_GYM_GUIDE = 0x29,
+  SPRITE_GYM_GUIDE = 0x48,
   SPRITE_OFFICER = 0x3A,
-  SPRITE_JANINE = 0x1E,
-  SPRITE_SURGE = 0x1B,
-  SPRITE_ERIKA = 0x1C,
-  SPRITE_SABRINA = 0x1F,
+  SPRITE_JANINE = 0x0A,
+  SPRITE_SURGE = 0x1F,
+  SPRITE_ERIKA = 0x20,
+  SPRITE_SABRINA = 0x22,
   SPRITE_BROCK = 0x1A,
-  SPRITE_LASS = 0x28,
-  SPRITE_TWIN = 0x27,
+  SPRITE_POKEFAN_M = 0x2C,
+  SPRITE_POKEFAN_F = 0x2D,
 }
+
+-- Fabricate a sheet pointing at an extracted file so common NPCs are never
+-- grey placeholders when the png exists on disk but the registry key missed.
+local DISK_SHEET_FALLBACK = {
+  SPRITE_LASS = { file = "lass.png", index = 0x28 },
+  SPRITE_TWIN = { file = "twin.png", index = 0x26 },
+  SPRITE_BEAUTY = { file = "beauty.png", index = 0x2A },
+  SPRITE_TEACHER = { file = "teacher.png", index = 0x29 },
+  SPRITE_YOUNGSTER = { file = "youngster.png", index = 0x27 },
+  SPRITE_COOLTRAINER_F = { file = "cooltrainerf.png", index = 0x24 },
+  SPRITE_COOLTRAINER_M = { file = "cooltrainerm.png", index = 0x23 },
+  SPRITE_SUDOWOODO = { file = "sudowoodo.png", index = 0x6D },
+  SPRITE_FRUIT_TREE = { file = "fruittree.png", index = 0x5D },
+}
+
+local function diskSheet(spriteId)
+  local tip = DISK_SHEET_FALLBACK[spriteId]
+  if not tip then return nil end
+  return {
+    id = spriteId,
+    image = "assets/generated/sprites/" .. tip.file,
+    frames = 6,
+    walker = true,
+    index = tip.index,
+  }
+end
 
 local function resolveSpriteDef(data, spriteId)
   local sprites = (data and data.sprites) or {}
@@ -221,6 +258,15 @@ local function resolveSpriteDef(data, spriteId)
       image = "assets/generated/sprites/lass.png",
       frames = 6, walker = true, index = 0x28,
     }
+  end
+  -- Sudowoodo post-reveal sheet by direct id
+  if spriteId == "SPRITE_SUDOWOODO" or spriteId == 0x6D then
+    local s = findSheet(sprites, {
+      "SPRITE_SUDOWOODO", "sudowoodo", "Sudowoodo",
+    }, 0x6D)
+    if s and s.image then return s end
+    local fabricated = diskSheet("SPRITE_SUDOWOODO")
+    if fabricated then return fabricated end
   end
   local spriteDef = type(spriteId) == "string" and sprites[spriteId] or nil
   if spriteDef and spriteDef.image then return spriteDef end
@@ -244,6 +290,9 @@ local function resolveSpriteDef(data, spriteId)
         or sprites[index]
       if hex and type(hex) == "table" and hex.image then return hex end
     end
+    -- Disk path last-resort for common overworld sheets (Route 37 girls, etc.)
+    local fabricated = diskSheet(spriteId)
+    if fabricated then return fabricated end
     -- Never accept the fruit-tree sheet for a named story NPC: that is how
     -- Misty / Rocket became the green "boundary bush" on Route 25.
     if spriteId == "SPRITE_FRUIT_TREE" or spriteId == "SPRITE_BUSH" then
