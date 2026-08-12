@@ -69,6 +69,29 @@ local VAR_SPRITE_DEFAULTS = {
   [4] = 0x5D,  -- SPRITE_FRUIT_TREE (Sudowoodo until script)
 }
 
+-- Find a standing overworld sheet by several keying conventions the
+-- extractor has used across imports (SPRITE_LASS, lass, index 0x28, …).
+local function findSheet(sprites, names, index)
+  if type(sprites) ~= "table" then return nil end
+  for _, n in ipairs(names or {}) do
+    local def = sprites[n]
+    if type(def) == "table" and def.image then return def end
+    -- lowercase path-style keys some imports still carry
+    local low = type(n) == "string" and n:lower():gsub("^sprite_", "") or n
+    def = sprites[low] or sprites[tostring(low)]
+    if type(def) == "table" and def.image then return def end
+  end
+  if index then
+    local def = spriteByIndex(sprites, index)
+    if def and def.image then return def end
+    def = sprites[string.format("SPRITE_%02X", index)]
+      or sprites[string.format("SPRITE_%d", index)]
+      or sprites[index]
+    if type(def) == "table" and def.image then return def end
+  end
+  return nil
+end
+
 local function resolveVariableSprite(data, sprites, spriteId)
   local slot = tonumber(spriteId:match("^SPRITE_VAR_(%d+)$"))
   if not slot then
@@ -80,7 +103,12 @@ local function resolveVariableSprite(data, sprites, spriteId)
     if hex and hex >= 0xF0 then slot = hex - 0xF0 end
   end
   if not slot then return nil end
-  local save = require("src.core.Game").save
+
+  local save = nil
+  pcall(function()
+    local Game = require("src.core.Game")
+    save = Game.save or (Game.getSave and Game.getSave())
+  end)
   local assigned = save and save.gen2VarSprites and save.gen2VarSprites[slot]
   if not assigned then
     local defaults = data and data.map_scripts and data.map_scripts.varSprites
@@ -89,14 +117,36 @@ local function resolveVariableSprite(data, sprites, spriteId)
   if not assigned then
     assigned = VAR_SPRITE_DEFAULTS[slot]
   end
+
   -- assigned may be a numeric OverworldSprites index OR a SPRITE_* name
   if type(assigned) == "string" then
-    if sprites[assigned] and sprites[assigned].image then return sprites[assigned] end
-    -- SPRITE_LASS etc. — fall through to index lookup via aliases below
-    local byName = sprites[assigned]
+    local byName = findSheet(sprites, { assigned, assigned:upper(), assigned:lower() })
     if byName then return byName end
   end
-  return spriteByIndex(sprites, assigned or 1)
+  if type(assigned) == "number" then
+    local byIdx = findSheet(sprites, nil, assigned)
+    if byIdx then return byIdx end
+  end
+
+  -- Copycat ($FB / slot 11) always defaults to the LASS sheet — there is no
+  -- separate copycat.png in the ROM (Copycat uses SPRITE_LASS via variablesprite).
+  if slot == 11 or spriteId == "SPRITE_COPYCAT" then
+    local lass = findSheet(sprites, {
+      "SPRITE_LASS", "SPRITE_TWIN", "lass", "twin",
+    }, 0x28)
+    if lass then return lass end
+    -- Fabricate a sheet pointing at the extracted file so she is never a
+    -- grey placeholder when lass.png exists on disk.
+    return {
+      id = "SPRITE_LASS",
+      image = "assets/generated/sprites/lass.png",
+      frames = 6,
+      walker = true,
+      index = 0x28,
+    }
+  end
+
+  return spriteByIndex(sprites, (type(assigned) == "number" and assigned) or 1)
 end
 
 -- Sprite bytes $E0/$E1 read the day-care mons' species live
@@ -159,6 +209,19 @@ local SPRITE_INDEX_FALLBACK = {
 
 local function resolveSpriteDef(data, spriteId)
   local sprites = (data and data.sprites) or {}
+  -- Copycat is never a real sheet in the ROM: object events use $FB and the
+  -- map callback (or our default) remaps the slot to SPRITE_LASS (lass.png).
+  if spriteId == "SPRITE_COPYCAT" or spriteId == 0xFB then
+    local lass = findSheet(sprites, {
+      "SPRITE_LASS", "SPRITE_TWIN", "lass", "twin",
+    }, 0x28)
+    if lass and lass.image then return lass end
+    return {
+      id = "SPRITE_LASS",
+      image = "assets/generated/sprites/lass.png",
+      frames = 6, walker = true, index = 0x28,
+    }
+  end
   local spriteDef = type(spriteId) == "string" and sprites[spriteId] or nil
   if spriteDef and spriteDef.image then return spriteDef end
   if type(spriteId) == "string" then

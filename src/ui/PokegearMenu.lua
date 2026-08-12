@@ -15,13 +15,66 @@ local SPACE_TILE = 0x7F
 local DAYS = { "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY",
                "FRIDAY", "SATURDAY" }
 
+-- knob = wRadioTuningKnob (0..80); marker x-offset on the dial
 local STATIONS = {
-  { name = "OAK'S POKéMON TALK", lines = { "PROF.OAK: Today's", "sighting is..." } },
-  { name = "POKéDEX SHOW", lines = { "DJ MARY: Today's", "featured #MON!" } },
-  { name = "POKéMON MUSIC", lines = { "Now playing the", "#MON MARCH..." } },
-  { name = "LUCKY CHANNEL", lines = { "REED: Check your", "LOTTO number!" } },
-  { name = "BUENA'S PASSWORD", lines = { "BUENA: Tonight's", "password is..." } },
-  { name = "PLACES & PEOPLE", lines = { "A trainer was", "spotted training." } },
+  {
+    name = "OAK'S POKéMON TALK", knob = 16,
+    lines = {
+      "PROF.OAK: Hello!",
+      "Today's topic is...",
+      "Wild #MON habits.",
+      "Observe carefully!",
+      "That's all for now.",
+      "This is PROF.OAK.",
+    },
+  },
+  {
+    name = "POKéDEX SHOW", knob = 22,
+    lines = {
+      "DJ MARY: Hi!",
+      "Today's featured",
+      "#MON is amazing!",
+      "Look it up in your",
+      "POKéDEX later!",
+    },
+  },
+  {
+    name = "POKéMON MUSIC", knob = 28,
+    lines = {
+      "Now playing...",
+      "the #MON MARCH!",
+      "Sing along with us!",
+      "Next up: LULLABY.",
+    },
+  },
+  {
+    name = "LUCKY CHANNEL", knob = 32,
+    lines = {
+      "REED: Hello!",
+      "Check your ID No.",
+      "against today's",
+      "lucky number!",
+      "Match for a prize!",
+    },
+  },
+  {
+    name = "BUENA'S PASSWORD", knob = 40,
+    lines = {
+      "BUENA: Hi, cutie!",
+      "Tonight's password",
+      "is something fun!",
+      "Tune in tomorrow!",
+    },
+  },
+  {
+    name = "PLACES & PEOPLE", knob = 64,
+    lines = {
+      "A trainer was seen",
+      "training hard on",
+      "a nearby route.",
+      "Keep exploring!",
+    },
+  },
 }
 
 -- Card strip icons (Pokegear_FinishTilemap): 2x2 from tile id
@@ -112,6 +165,7 @@ function PokegearMenu.new(game, opts)
     cards = visibleCards(game.save),
     index = 1,
     station = 1,
+    radioLine = 1,
     contact = 1,
     phoneSubmenu = nil,
     callText = nil,
@@ -327,7 +381,8 @@ function PokegearMenu:stationList()
   if hasExpn(self.game.save) then
     list[#list + 1] = {
       name = "POKé FLUTE",
-      lines = { "Playing the", "POKé FLUTE..." },
+      knob = 78,
+      lines = { "Playing the", "POKé FLUTE...", "A soothing melody.", "..." },
       flute = true,
     }
   end
@@ -355,15 +410,32 @@ function PokegearMenu:update(dt)
   local card = self:current()
   if not card then return end
   if card.id == "RADIO" then
-    local n = #self:stationList()
-    if input:wasPressed("down") then
-      self.station = self.station < n and self.station + 1 or 1
-      Sound.play(self.game.data, "Tink")
-    elseif input:wasPressed("up") then
-      self.station = self.station > 1 and self.station - 1 or n
-      Sound.play(self.game.data, "Tink")
+    local stations = self:stationList()
+    local n = #stations
+    if input:wasPressed("up") then
+      -- pret: up winds knob toward higher frequencies (clamp, no wrap)
+      if self.station < n then
+        self.station = self.station + 1
+        self.radioLine = 1
+        Sound.play(self.game.data, "Tink")
+      end
+    elseif input:wasPressed("down") then
+      if self.station > 1 then
+        self.station = self.station - 1
+        self.radioLine = 1
+        Sound.play(self.game.data, "Tink")
+      end
+    elseif input:wasPressed("a") then
+      -- Advance show text two lines at a time (radio box holds 2 rows)
+      local st = stations[self.station]
+      local lines = st and st.lines or {}
+      if #lines > 0 then
+        self.radioLine = self.radioLine + 2
+        if self.radioLine > #lines then self.radioLine = 1 end
+        Sound.play(self.game.data, "Tink")
+      end
     end
-    local st = self:stationList()[self.station]
+    local st = stations[self.station]
     if st and st.flute then
       self.game.save.g2RadioChannel = "POKE_FLUTE"
       self.game.save.g2MapMusic = "MUSIC_POKE_FLUTE_CHANNEL"
@@ -500,11 +572,40 @@ function PokegearMenu:drawRadio()
     love.graphics.rectangle("fill", 0, 0, 160, 144)
   end
   self:drawStrip()
+
   local stations = self:stationList()
   local st = stations[self.station] or stations[1]
+
+  -- Station name at (2,9) — UpdateRadioStation
+  if st and st.name then
+    self:text(st.name, 2, 9)
+  end
+
+  -- Tuning knob marker (SPRITE_ANIM_OBJ_RADIO_TUNING_KNOB)
+  -- Base ~tile (10,4); XOFFSET = knob 0..80. Marker slides with station.
+  local knob = (st and st.knob) or 16
+  if not (st and st.knob) and #stations > 1 then
+    knob = math.floor(((self.station - 1) / (#stations - 1)) * 80)
+  end
+  local mx = 10 * 8 + 4 + knob
+  if mx > 150 then mx = 150 end
+  local my = 4 * 8 + 2
+  love.graphics.setColor(0, 0, 0, 1)
+  love.graphics.polygon("fill",
+    mx - 3, my,
+    mx + 3, my,
+    mx, my + 6)
+  love.graphics.setColor(1, 1, 1, 1)
+
+  -- Bottom text box: two lines of the current show
   self:textbox(0, 12, 18, 4)
-  if st then
-    self:printBoxText(st.name, st.lines and st.lines[1] or "")
+  local lines = st and st.lines or {}
+  local i = self.radioLine or 1
+  if i < 1 then i = 1 end
+  if #lines == 0 then
+    self:printBoxText("", "")
+  else
+    self:printBoxText(lines[i] or "", lines[i + 1] or "")
   end
   self:drawModeArrow()
 end
