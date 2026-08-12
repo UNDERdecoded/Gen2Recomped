@@ -124,18 +124,63 @@ local function sceneStore(ctx)
   return ctx.save.g2Scenes
 end
 
+-- Map registry keys are SNAKE_CASE from CamelCase labels (Route25 → ROUTE25).
+-- ASM map constants keep an underscore before trailing digits (ROUTE_25).
+-- setmapscene must write the same key onStep/getScene will read, or the
+-- Cerulean Gym rocket arms a scene that Route 25 never sees.
+local function mapKeyAliases(mapId)
+  if type(mapId) ~= "string" or mapId == "" then return {} end
+  local aliases = { mapId }
+  local compact = mapId:gsub("_(%d+)$", "%1")
+  if compact ~= mapId then aliases[#aliases + 1] = compact end
+  local withUnderscore = mapId:match("^(.-)(%d+)$")
+  if withUnderscore and not mapId:match("_%d+$") then
+    aliases[#aliases + 1] = mapId:gsub("(%d+)$", "_%1")
+  end
+  return aliases
+end
+
+local function resolveMapKey(ctx, mapId)
+  if type(mapId) == "number" then
+    -- Extract failed to fold (group, number) → registry key.  Never fall back
+    -- to the *current* map (that is how CeruleanGym's setmapscene ROUTE25 was
+    -- written onto CERULEAN_GYM instead).
+    return nil
+  end
+  if type(mapId) ~= "string" or mapId == "" then
+    return ctx.overworld and ctx.overworld.map and ctx.overworld.map.id
+  end
+  local data = ctx.game and ctx.game.data
+  local maps = data and data.maps
+  for _, key in ipairs(mapKeyAliases(mapId)) do
+    if maps and maps[key] then return key end
+  end
+  -- Prefer the compact form (ROUTE25) which matches scaffold registry keys.
+  return mapKeyAliases(mapId)[1] and (mapId:gsub("_(%d+)$", "%1")) or mapId
+end
+
 local function sceneMapId(ctx, mapId)
-  if type(mapId) == "string" and mapId ~= "" then return mapId end
-  return ctx.overworld and ctx.overworld.map and ctx.overworld.map.id
+  return resolveMapKey(ctx, mapId)
 end
 
 function Gen2Commands.getScene(save, mapId)
-  return (save.g2Scenes or {})[mapId] or 0
+  local scenes = save.g2Scenes or {}
+  if type(mapId) ~= "string" then return scenes[mapId] or 0 end
+  for _, key in ipairs(mapKeyAliases(mapId)) do
+    if scenes[key] ~= nil then return scenes[key] end
+  end
+  return 0
 end
 
 function Commands.g2_set_scene(ctx, mapId, scene)
   local id = sceneMapId(ctx, mapId)
-  if id then sceneStore(ctx)[id] = scene or 0 end
+  if not id then return end
+  local store = sceneStore(ctx)
+  local value = scene or 0
+  -- Write every alias so older saves / mismatched keys still read correctly.
+  for _, key in ipairs(mapKeyAliases(id)) do
+    store[key] = value
+  end
 end
 
 function Commands.g2_check_scene(ctx, mapId)
@@ -1822,6 +1867,215 @@ end
 -- in the script but closetext/end, so it does not have to yield.
 function Commands.g2_card_flip(ctx)
   require("src.ui.Screens").push(ctx.game, "Gen2CardFlip")
+end
+
+-- ---------------------------------------------------------------------------
+-- Kanto post-game specials
+--
+-- Gen2ScriptVM maps these SPECIALSPointers indices to g2_* names. Without
+-- implementations ScriptRunner hits "unknown command" and aborts mid-script
+-- (Bill's grandpa, Move Deleter, Magnet Train, lottery, Snorlax, Copycat).
+-- ---------------------------------------------------------------------------
+
+local function pickPartyMon(ctx)
+  local game, runner = ctx.game, ctx.runner
+  if not (game and runner) then return nil end
+  local picked
+  require("src.ui.Screens").push(game, "PartyMenu", {
+    pickOnly = true,
+    onCancel = function() runner:resume() end,
+    onSwitch = function(mon) picked = mon runner:resume() end,
+  })
+  runner:yield()
+  return picked
+end
+
+local function speciesNumber(mon)
+  if not mon then return 0 end
+  if type(mon.species) == "number" then return mon.species end
+  local n = tostring(mon.species or ""):match("(%d+)$")
+  return tonumber(n) or 0
+end
+
+-- `special BillsGrandfather` ($4C).  Party menu; wScriptVar = species id.
+function Commands.g2_bills_grandfather(ctx)
+  local picked = pickPartyMon(ctx)
+  if not picked then
+    ctx.g2Var = 0
+    ctx.lastCheck = false
+    return
+  end
+  ctx.g2Var = speciesNumber(picked)
+  ctx.lastCheck = ctx.g2Var ~= 0
+end
+
+-- `special MoveDeletion` ($21).  Pick mon, pick move slot, clear it.
+function Commands.g2_move_deleter(ctx)
+  local game = ctx.game
+  local picked = pickPartyMon(ctx)
+  if not picked then
+    ctx.g2Var = 0
+    ctx.lastCheck = false
+    return
+  end
+  local moves = picked.moves or {}
+  if #moves <= 1 then
+    Commands.show_text(ctx, "This POKéMON knows\nonly one move.")
+    ctx.g2Var = 0
+    ctx.lastCheck = false
+    return
+  end
+  local labels = {}
+  for i, m in ipairs(moves) do
+    local name = (type(m) == "table" and (m.name or m.id)) or tostring(m)
+    local def = game.data.moves and game.data.moves[name]
+    labels[i] = (def and def.name) or name
+  end
+  local runner = ctx.runner
+  local slot = 0
+  local items = {}
+  for i, label in ipairs(labels) do
+    items[i] = {
+      label = label,
+      onSelect = function() slot = i runner:resume() end,
+    }
+  end
+  game.stack:push(require("src.ui.Menu").new(game, items, {
+    onCancel = function() runner:resume() end,
+  }))
+  runner:yield()
+  if slot < 1 or slot > #moves then
+    ctx.g2Var = 0
+    ctx.lastCheck = false
+    return
+  end
+  table.remove(moves, slot)
+  picked.moves = moves
+  ctx.g2Var = 1
+  ctx.lastCheck = true
+end
+
+-- `special MagnetTrain` ($23).  Requires PASS.
+function Commands.g2_magnet_train(ctx)
+  local inv = ctx.save.inventory or {}
+  local hasPass = inv.PASS or inv.ITEM_PASS or inv["PASS"]
+  if not hasPass then
+    ctx.g2Var = 0
+    ctx.lastCheck = false
+    return
+  end
+  local ow = ctx.overworld
+  local mapId = ow and ow.map and ow.map.id or ""
+  local dest
+  if tostring(mapId):find("GOLDENROD") then
+    dest = { map = "SAFFRON_TRAIN_STATION", x = 6, y = 5 }
+  else
+    dest = { map = "GOLDENROD_MAGNET_TRAIN_STATION", x = 6, y = 5 }
+  end
+  Commands.g2_warp(ctx, dest.map, dest.x, dest.y, "down")
+  ctx.g2Var = 1
+  ctx.lastCheck = true
+end
+
+-- `special SnorlaxAwake` ($5F).
+function Commands.g2_snorlax_awake(ctx)
+  local inv = ctx.save.inventory or {}
+  local ok = inv.POKE_FLUTE or inv.ITEM_POKE_FLUTE or inv.EXPN_CARD
+    or inv.ITEM_EXPN_CARD or inv["POKé FLUTE"]
+  ctx.lastCheck = ok and true or false
+  ctx.g2Var = ok and 1 or 0
+end
+
+function Commands.g2_lucky_winners(ctx)
+  ctx.g2Var = 0
+  ctx.lastCheck = false
+end
+
+function Commands.g2_lucky_check_flag(ctx)
+  local flags = ctx.save.flags or {}
+  local set = flags.ENGINE_LUCKY_NUMBER_SHOW or flags[77]
+  ctx.lastCheck = set and true or false
+  ctx.g2Var = set and 1 or 0
+end
+
+function Commands.g2_lucky_reset(ctx)
+  ctx.save.flags = ctx.save.flags or {}
+  ctx.save.flags.ENGINE_LUCKY_NUMBER_SHOW = nil
+  ctx.g2Var = 0
+end
+
+function Commands.g2_lucky_print(ctx)
+  local n = ctx.save.g2LuckyNumber or "1337"
+  Commands.show_text(ctx, "Today's lucky number\nis " .. tostring(n) .. "!")
+end
+
+function Commands.g2_heal_party(ctx)
+  for _, mon in ipairs(ctx.save.party or {}) do
+    mon.hp = mon.maxHp or mon.hp
+    mon.status = nil
+  end
+  ctx.lastCheck = true
+end
+
+function Commands.g2_bank_of_mom(ctx)
+  ctx.lastCheck = true
+  ctx.g2Var = 0
+end
+
+function Commands.g2_town_map(ctx)
+  require("src.ui.Screens").push(ctx.game, "TownMap")
+end
+
+function Commands.g2_map_radio(ctx)
+  ctx.lastCheck = true
+end
+
+function Commands.g2_check_pokerus(ctx)
+  ctx.g2Var = 0
+  ctx.lastCheck = false
+end
+
+function Commands.g2_place_money_top_right(ctx) end
+
+function Commands.g2_haircut_older(ctx)
+  ctx.g2Var = 0
+  ctx.lastCheck = true
+end
+Commands.g2_haircut_younger = Commands.g2_haircut_older
+Commands.g2_daisys_grooming = Commands.g2_haircut_older
+
+function Commands.g2_oaks_pc(ctx)
+  Commands.show_text(ctx, "PROF.OAK's PC\naccessed.")
+end
+
+function Commands.g2_trainer_house(ctx)
+  ctx.lastCheck = true
+end
+
+function Commands.g2_photo_studio(ctx)
+  ctx.lastCheck = true
+end
+
+function Commands.g2_init_roam_mons(ctx)
+  ctx.save.g2Roam = ctx.save.g2Roam or { RAIKOU = true, ENTEI = true, SUICUNE = true }
+end
+
+function Commands.g2_diploma(ctx)
+  require("src.ui.Screens").push(ctx.game, "Diploma")
+end
+Commands.g2_print_diploma = Commands.g2_diploma
+
+function Commands.g2_unown_printer(ctx)
+  ctx.lastCheck = true
+end
+
+-- Copycat `special LoadUsedSpritesGFX` ($5D)
+function Commands.g2_load_used_sprites(ctx)
+  local ow = ctx.overworld
+  if not (ow and ow.map and ow.map.npcs) then return end
+  for _, npc in pairs(ow.map.npcs) do
+    if npc.refreshSprite then npc:refreshSprite(ctx.game.data) end
+  end
 end
 
 return Gen2Commands

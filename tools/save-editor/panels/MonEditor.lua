@@ -10,6 +10,7 @@
 
 local Theme = require("Theme")
 local Ops = require("Ops")
+local Catalog = require("Catalog")
 local PAL = Theme.PAL
 
 local MonEditor = {}
@@ -96,8 +97,9 @@ function MonEditor.draw(S, Kit, x, y, w, h)
   local hx = cx + sprite + 18 * s
   local hw = inner - sprite - 18 * s
 
-  Kit.text("title", mon.species, hx, cy, PAL.heading)
-  local nameW = Kit.textWidth("title", mon.species)
+  local speciesName = Catalog.speciesLabel(S.data, mon.species)
+  Kit.text("title", speciesName, hx, cy, PAL.heading)
+  local nameW = Kit.textWidth("title", speciesName)
   Kit.text("tiny", ("#%03d"):format(def and def.dex or 0), hx + nameW + 12 * s,
     cy + Kit.textHeight("title") - Kit.textHeight("tiny") - 2 * s, PAL.caption)
 

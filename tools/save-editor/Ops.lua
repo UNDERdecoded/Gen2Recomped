@@ -185,12 +185,18 @@ end
 -- exactly as it was and speak in the status bar, not take the editor with it.
 function Ops.setSpecies(S, mon, id)
   if not mon then return false end
+  local function speciesName(sid)
+    local def = S.data.pokemon and S.data.pokemon[sid]
+    local name = def and def.name
+    if type(name) == "string" and name ~= "" and name ~= sid then return name end
+    return tostring(sid)
+  end
   if id == mon.species then
-    return Ops.say(S, ("Already a %s"):format(tostring(id)))
+    return Ops.say(S, ("Already a %s"):format(speciesName(id)))
   end
   if not Ops.speciesUsable(S, id) then
     return Ops.say(S, ("%s has no usable base stats,  cannot assign it")
-      :format(tostring(id)))
+      :format(speciesName(id)))
   end
   -- MonOps.recalc replaces mon.stats with a fresh table rather than editing
   -- it in place, so holding the old reference is a real rollback.
@@ -200,9 +206,9 @@ function Ops.setSpecies(S, mon, id)
   if not ok then
     mon.species, mon.level, mon.exp = wasSpecies, wasLevel, wasExp
     mon.stats, mon.hp = wasStats, wasHp
-    return Ops.say(S, ("Could not set %s: %s"):format(tostring(id), tostring(err)))
+    return Ops.say(S, ("Could not set %s: %s"):format(speciesName(id), tostring(err)))
   end
-  return Ops.mark(S, ("Species set to %s"):format(id))
+  return Ops.mark(S, ("Species set to %s"):format(speciesName(id)))
 end
 
 -- Kept for the keyboard and test path; the inspector opens the searchable

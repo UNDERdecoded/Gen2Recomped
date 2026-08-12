@@ -11,6 +11,7 @@ local BoxesMod = require("src.pokemon.Boxes")
 local PartyMod = require("src.pokemon.Party")
 local Theme = require("Theme")
 local Ops = require("Ops")
+local Catalog = require("Catalog")
 local PAL = Theme.PAL
 
 local M = {}
@@ -101,7 +102,7 @@ function M.draw(S, Kit, x, y, w, h)
       Kit.textRight("micro", ("Lv%d"):format(mon.level), bx + cellW - 10 * s,
         by + 8 * s, PAL.caption)
       Kit.textCenter("mono",
-        Kit.ellipsize("mono", mon.species, cellW - 12 * s), bx,
+        Kit.ellipsize("mono", Catalog.speciesLabel(S.data, mon.species), cellW - 12 * s), bx,
         by + cellH / 2 - Kit.textHeight("mono") / 2, cellW, PAL.text)
     else
       -- empty slots are dashed and clickable: clicking one adds a mon there
@@ -153,7 +154,7 @@ function M.draw(S, Kit, x, y, w, h)
     local lvW = Kit.textWidth("tiny", lv)
     Kit.textRight("tiny", lv, dx + pad + dInner - 10 * s,
       ry + (dRowH - Kit.textHeight("tiny")) / 2, PAL.caption)
-    Kit.text("mono", Kit.ellipsize("mono", mon.species, dInner - 30 * s - lvW),
+    Kit.text("mono", Kit.ellipsize("mono", Catalog.speciesLabel(S.data, mon.species), dInner - 30 * s - lvW),
       dx + pad + 10 * s, ry + (dRowH - Kit.textHeight("mono")) / 2, PAL.text)
   end
   if #S.save.party == 0 then

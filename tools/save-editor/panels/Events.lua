@@ -9,6 +9,7 @@
 
 local Theme = require("Theme")
 local Ops = require("Ops")
+local Catalog = require("Catalog")
 local PAL = Theme.PAL
 
 local M = {}
@@ -21,7 +22,7 @@ local SUB_TABS = {
 }
 
 local HINTS = {
-  flags    = "Story flags scraped from data/scripts and the trainer headers, plus any MOD_ flags a loaded mod defines.",
+  flags    = "Story flags: Gen1 EVENT_* from scripts, Gen2 pret names (EVENT_GOT_HM01_CUT) mapped from EVENT_G2_#### storage ids, plus MOD_ flags.",
   trainers = "Keys look like MAP_obj_N (save.defeatedTrainers): checked means that trainer stays beaten.",
   items    = "Keys look like MAP_obj_N (save.itemsTaken): checked means that ground item is gone.",
   toggles  = "Per-map object visibility overrides (save.objectToggles), grouped by map.",
@@ -46,12 +47,48 @@ local function buildRows(S)
   local filter = S.eventFilter or ""
   local rows = {}
   if tab == "flags" then
+    -- Union catalog names with whatever is already in the save so orphan
+    -- EVENT_G2_#### bits from an older extract still show up.
+    local seen = {}
+    local names = {}
     for _, name in ipairs(S.events or {}) do
-      if contains(name, filter) then
+      if not seen[name] then
+        seen[name] = true
+        names[#names + 1] = name
+      end
+    end
+    for name in pairs(S.save.flags or {}) do
+      if type(name) == "string" and not seen[name] then
+        seen[name] = true
+        names[#names + 1] = name
+      end
+    end
+    table.sort(names)
+    for _, name in ipairs(names) do
+      local label = Catalog.flagLabel(name)
+      -- Prefer pret name as the storage key when the save still uses EVENT_G2_
+      -- but Catalog also listed the pret form; toggle the key that is actually
+      -- present (or the catalog name if neither is set yet).
+      local storage = name
+      if S.save.flags[name] == nil then
+        local idx = name:match("^EVENT_G2_(%d+)$")
+        if idx then
+          local pretty = Catalog.flagLabel(name)
+          if S.save.flags[pretty] ~= nil then storage = pretty end
+        else
+          local ok, Gen2Flags = pcall(require, "src.script.Gen2Flags")
+          local index = ok and Gen2Flags.EVENT_FLAG_INDEX and Gen2Flags.EVENT_FLAG_INDEX[name]
+          if index then
+            local g2 = string.format("EVENT_G2_%04d", index)
+            if S.save.flags[g2] ~= nil then storage = g2 end
+          end
+        end
+      end
+      if contains(label, filter) or contains(storage, filter) or contains(name, filter) then
         rows[#rows + 1] = {
-          label = name,
-          checked = S.save.flags[name] == true,
-          set = function(on) Ops.setFlag(S, name, on) end,
+          label = label,
+          checked = S.save.flags[storage] == true,
+          set = function(on) Ops.setFlag(S, storage, on) end,
         }
       end
     end

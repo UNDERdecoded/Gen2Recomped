@@ -333,18 +333,18 @@ L.specialphonecall = function(ir, s) emit(s, { "g2_special_call", ir[2] }) end
 -- Everything else stays a warn-once stub.
 local SPECIALS = {
   -- existing entries unchanged ...
-  [0x1B] = "heal_party",
+  [0x1B] = "g2_heal_party",
   [0x1E] = "g2_daycare_man",
   [0x1F] = "g2_daycare_lady",
   [0x20] = "g2_daycare_outside",
-  [0x21] = "g2_move_deleter",          -- NEW MoveDeletion
-  [0x22] = "g2_bank_of_mom",           -- NEW BankOfMom (optional)
-  [0x23] = "g2_magnet_train",          -- NEW MagnetTrain
+  [0x21] = "g2_move_deleter",          -- MoveDeletion
+  [0x22] = "g2_bank_of_mom",           -- BankOfMom
+  [0x23] = "g2_magnet_train",          -- MagnetTrain
   [0x24] = "g2_name_rival",
   [0x25] = "g2_set_day_of_week",
-  [0x26] = "g2_town_map",              -- NEW OverworldTownMap
-  [0x27] = "g2_unown_printer",         -- NEW (can noop UI later)
-  [0x28] = "g2_map_radio",             -- NEW MapRadio
+  [0x26] = "g2_town_map",              -- OverworldTownMap
+  [0x27] = "g2_unown_printer",
+  [0x28] = "g2_map_radio",             -- MapRadio
   [0x29] = "g2_unown_puzzle",
   [0x2A] = "g2_slots",
   [0x2B] = "g2_card_flip",
@@ -354,19 +354,20 @@ local SPECIALS = {
   [0x45] = "g2_daycare_mon2",
   [0x4A] = "g2_give_shuckle",
   [0x4B] = "g2_return_shuckie",
-  [0x4C] = "g2_bills_grandfather",     -- NEW BillsGrandfather
-  [0x4D] = "g2_check_pokerus",         -- NEW optional
+  [0x4C] = "g2_bills_grandfather",     -- BillsGrandfather (stones)
+  [0x4D] = "g2_check_pokerus",
   [0x4E] = "g2_show_coins",
   [0x4F] = "g2_show_coins",
-  [0x50] = "g2_place_money_top_right", -- NEW
-  [0x51] = "g2_lucky_winners",         -- NEW lottery
+  [0x50] = "g2_place_money_top_right",
+  [0x51] = "g2_lucky_winners",         -- radio lottery
   [0x52] = "g2_lucky_check_flag",
   [0x53] = "g2_lucky_reset",
   [0x54] = "g2_lucky_print",
   [0x55] = "g2_select_apricorn",
   [0x56] = "g2_name_rater",
-  [0x5F] = "g2_snorlax_awake",         -- NEW
-  [0x60] = "g2_haircut_older",         -- NEW
+  [0x5D] = "g2_load_used_sprites",     -- Copycat variablesprite refresh
+  [0x5F] = "g2_snorlax_awake",
+  [0x60] = "g2_haircut_older",
   [0x61] = "g2_haircut_younger",
   [0x62] = "g2_daisys_grooming",
   [0x64] = "g2_oaks_pc",
@@ -377,7 +378,8 @@ local SPECIALS = {
   [0x6B] = "g2_print_diploma",
 }
 
--- Expand noops for fades / pure presentation
+-- Fades / presentation (Route 24 Rocket uses FadeOutMusic + FadeOutToBlack +
+-- ReloadSpritesNoPalettes + FadeInFromBlack after the battle)
 local SPECIALS_NOOP = {
   [0x2E] = true, -- FadeOutToWhite
   [0x2F] = true, -- FadeOutToBlack
@@ -390,7 +392,7 @@ local SPECIALS_NOOP = {
   [0x36] = true, -- UpdateSprites
   [0x37] = true, -- UpdatePlayerSprite
   [0x3A] = true, -- WaitSFX
-  [0x3B] = true, -- PlayMapMusic 
+  [0x3B] = true, -- PlayMapMusic
   [0x69] = true, -- FadeOutMusic
 }
 

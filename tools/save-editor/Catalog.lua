@@ -107,7 +107,72 @@ function Catalog.scrapeEvents(scriptDir, headerPath, listFiles, extraDirs)
     if body then eat(body) end
   end
 
+  -- Gen2 stores story bits as EVENT_G2_%04d (see Gen2Flags.eventFlag).  The
+  -- hand-ported data/scripts tree only has Gen1 EVENT_* strings, so without
+  -- this pass the Events tab is empty / shows raw EVENT_G2_ ids with no
+  -- pret names.  Include both the storage id and the pret constant so the
+  -- filter can match either spelling.
+  local ok, Gen2Flags = pcall(require, "src.script.Gen2Flags")
+  if ok and Gen2Flags and Gen2Flags.EVENT_FLAG_NAMES then
+    for index, name in pairs(Gen2Flags.EVENT_FLAG_NAMES) do
+      found[name] = true
+      found[string.format("EVENT_G2_%04d", index)] = true
+    end
+  end
+  if ok and Gen2Flags and Gen2Flags.ENGINE_FLAG_NAMES then
+    for _, name in pairs(Gen2Flags.ENGINE_FLAG_NAMES) do
+      found[name] = true
+    end
+  end
+
   return sortedKeys(found)
+end
+
+-- Friendly item label for the save editor.  Gen2 keeps inventory keys as
+-- ITEM_nnn (RomExtractorGen2); after a real ROM extract, data.items[id].name
+-- is the ROM ItemNames string and .key is POTION / TM_01 / etc.
+function Catalog.itemLabel(data, id)
+  if type(id) ~= "string" then return tostring(id) end
+  local entry = data and data.items and data.items[id]
+  if type(entry) == "table" then
+    local name = entry.name
+    if type(name) == "string" and name ~= "" and not name:match("^Item %d+$") then
+      return name
+    end
+    if type(entry.key) == "string" and entry.key ~= "" then
+      return entry.key
+    end
+  end
+  return id
+end
+
+-- Friendly event flag label.  Storage stays EVENT_G2_%04d; pret names are
+-- display-only so existing saves / extracted scripts keep matching.
+function Catalog.flagLabel(id)
+  local ok, Gen2Flags = pcall(require, "src.script.Gen2Flags")
+  if ok and Gen2Flags and Gen2Flags.eventFlagDisplay then
+    local pretty = Gen2Flags.eventFlagDisplay(id)
+    if pretty and pretty ~= id then
+      return pretty
+    end
+  end
+  return id
+end
+
+-- Friendly species label.  Gen2 keys are SPECIES_nnn; after a ROM extract
+-- data.pokemon[id].name is the PokemonNames string (BULBASAUR, …).
+function Catalog.speciesLabel(data, id)
+  if type(id) ~= "string" then return tostring(id or "?") end
+  local entry = data and data.pokemon and data.pokemon[id]
+  if type(entry) == "table" then
+    local name = entry.name
+    if type(name) == "string" and name ~= ""
+      and not name:match("^[Ss]pecies%s*%d+$")
+      and name ~= id then
+      return name
+    end
+  end
+  return id
 end
 
 return Catalog

@@ -72,6 +72,34 @@ local function resolveBreedSprite(sprites, spriteId)
     or spriteByIndex(sprites, 1)
 end
 
+-- pret renamed Silver→Rival; some extracts still emit one name or the other.
+-- Prefer a real sheet over falling through to whatever pairs() returns first
+-- (that was how Misty could paint as the green fruit-tree sheet).
+local SPRITE_ALIASES = {
+  SPRITE_SILVER = { "SPRITE_RIVAL" },
+  SPRITE_RIVAL = { "SPRITE_SILVER" },
+  SPRITE_RED = { "SPRITE_CHRIS" },
+  SPRITE_RED_BIKE = { "SPRITE_CHRIS_BIKE" },
+  SPRITE_CHRIS = { "SPRITE_RED" },
+  SPRITE_CHRIS_BIKE = { "SPRITE_RED_BIKE" },
+}
+
+-- OverworldSprites row index (= object_event sprite byte) for story NPCs
+-- when the named sheet is missing after a partial extract.
+local SPRITE_INDEX_FALLBACK = {
+  SPRITE_SILVER = 4,
+  SPRITE_RIVAL = 4,
+  SPRITE_MISTY = 0x1D,
+  SPRITE_BLUE = 7,
+  SPRITE_RED_KANTO = 6,
+  SPRITE_ROCKET = 0x35,
+  SPRITE_COPYCAT = 0xFB,
+  SPRITE_SUPER_NERD = 0x2B,
+  SPRITE_COOLTRAINER_M = 0x23,
+  SPRITE_GRAMPS = 0x2F,
+  SPRITE_FRUIT_TREE = 0x5D,
+}
+
 local function resolveSpriteDef(data, spriteId)
   local sprites = (data and data.sprites) or {}
   local spriteDef = type(spriteId) == "string" and sprites[spriteId] or nil
@@ -80,11 +108,21 @@ local function resolveSpriteDef(data, spriteId)
     spriteDef = resolveVariableSprite(data, sprites, spriteId)
       or resolveBreedSprite(sprites, spriteId)
     if spriteDef then return spriteDef end
+    local aliases = SPRITE_ALIASES[spriteId]
+    if aliases then
+      for _, alt in ipairs(aliases) do
+        if sprites[alt] then return sprites[alt] end
+      end
+    end
+    local index = SPRITE_INDEX_FALLBACK[spriteId]
+    if index then
+      spriteDef = spriteByIndex(sprites, index)
+      if spriteDef then return spriteDef end
+    end
   end
+  -- Never pick a random sheet (pairs iteration used to hand Misty the tree).
   if sprites.SPRITE_RED then return sprites.SPRITE_RED end
-  for _, def in pairs(sprites) do
-    if type(def) == "table" then return def end
-  end
+  if sprites.SPRITE_CHRIS then return sprites.SPRITE_CHRIS end
   sprites.SPRITE_FALLBACK = sprites.SPRITE_FALLBACK or FALLBACK_SPRITE
   return sprites.SPRITE_FALLBACK
 end
