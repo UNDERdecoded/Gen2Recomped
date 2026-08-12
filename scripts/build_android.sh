@@ -36,17 +36,30 @@ GEN2_SOURCE_TABLES="constants charmap items maps moves text text_pointers traine
 
 VERSION=""
 PACKAGE_ONLY=false
+PYTHON_BIN=""
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
 
+run_python() {
+  $PYTHON_BIN "$@"
+}
+
 require_packaging_tools() {
-  if ! command -v python3 >/dev/null 2>&1; then
-    fail "missing required tool: python3. Install it and rerun scripts/build_android.sh."
+  if [ -n "${PYTHON:-}" ] && "$PYTHON" -c 'import sys' >/dev/null 2>&1; then
+    PYTHON_BIN="$PYTHON"
+  elif command -v python3 >/dev/null 2>&1 && python3 -c 'import sys' >/dev/null 2>&1; then
+    PYTHON_BIN="python3"
+  elif command -v python >/dev/null 2>&1 && python -c 'import sys' >/dev/null 2>&1; then
+    PYTHON_BIN="python"
+  elif command -v py >/dev/null 2>&1 && py -3 -c 'import sys' >/dev/null 2>&1; then
+    PYTHON_BIN="py -3"
+  else
+    fail "missing required tool: python3 (or python). Install it and rerun scripts/build_android.sh."
   fi
   if ! command -v zip >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
-    warn "zip/unzip not found; using python3 zipfile fallback"
+    warn "zip/unzip not found; using python zipfile fallback"
   fi
 }
 
@@ -94,9 +107,9 @@ fi
 # list a version but cannot import it. Resolve the manifest list from
 # src/core/GameVersion.lua so newly added versions are included automatically.
 manifest_paths() {
-  python3 - "$ROOT/src/core/GameVersion.lua" <<'PY'
+  run_python - "$ROOT/src/core/GameVersion.lua" <<'PY'
 import re, sys
-src = open(sys.argv[1]).read()
+src = open(sys.argv[1], encoding="utf-8").read()
 print(" ".join(dict.fromkeys(re.findall(r'manifest\s*=\s*"([^"]+)"', src))))
 PY
 }
@@ -104,9 +117,9 @@ PY
 # Gen2 versions declared in GameVersion.lua, so a newly added cart is covered
 # without touching this script.
 gen2_version_ids() {
-  python3 - "$ROOT/src/core/GameVersion.lua" <<'PY'
+  run_python - "$ROOT/src/core/GameVersion.lua" <<'PY'
 import re, sys
-src = open(sys.argv[1]).read()
+src = open(sys.argv[1], encoding="utf-8").read()
 ids = [i for i, gen in re.findall(r'id\s*=\s*"([^"]+)"[^}]*?generation\s*=\s*(\d+)', src, re.S)
        if gen == "2"]
 print(" ".join(dict.fromkeys(ids)))
@@ -133,11 +146,11 @@ ensure_gen2_sources() {
 
 manifest_is_valid() {
   local path="$1"
-  python3 - "$path" <<'PY'
+  run_python - "$path" <<'PY'
 import json, pathlib, sys
 
 try:
-    manifest = json.loads(pathlib.Path(sys.argv[1]).read_text())
+    manifest = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))
 except (OSError, ValueError):
     raise SystemExit(1)
 
@@ -185,7 +198,7 @@ archive_list() {
     unzip -Z1 "$archive"
     return
   fi
-  python3 - "$archive" <<'PY'
+  run_python - "$archive" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "r") as zf:
     for name in zf.namelist():
@@ -200,7 +213,7 @@ archive_read_entry() {
     unzip -p "$archive" "$entry"
     return
   fi
-  python3 - "$archive" "$entry" <<'PY'
+  run_python - "$archive" "$entry" <<'PY'
 import sys, zipfile
 with zipfile.ZipFile(sys.argv[1], "r") as zf:
     sys.stdout.buffer.write(zf.read(sys.argv[2]))
@@ -220,7 +233,7 @@ archive_update_entry_from_file() {
     rm -rf "$stage"
     return
   fi
-  python3 - "$archive" "$entry" "$src_file" <<'PY'
+  run_python - "$archive" "$entry" "$src_file" <<'PY'
 import pathlib, sys, tempfile, zipfile
 archive, entry, src = sys.argv[1], sys.argv[2], sys.argv[3]
 data = pathlib.Path(src).read_bytes()
@@ -255,7 +268,7 @@ pack_love_archive() {
     return
   fi
 
-  python3 - "$root" "$archive" "$manifests" <<'PY'
+  run_python - "$root" "$archive" "$manifests" <<'PY'
 import fnmatch
 import os
 import pathlib
@@ -310,11 +323,11 @@ apply_android_branding() {
 
   say "applying Android branding (gradle.properties + permission trim)"
 
-  python3 - "$props" "$APPLICATION_ID" "$APP_NAME" "$VERSION" "$VERSION_CODE" <<'PY'
+  run_python - "$props" "$APPLICATION_ID" "$APP_NAME" "$VERSION" "$VERSION_CODE" <<'PY'
 import pathlib, re, sys
 path = pathlib.Path(sys.argv[1])
 app_id, name, version, version_code = sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5]
-text = path.read_text()
+text = path.read_text(encoding="utf-8")
 
 def set_prop(text, key, value):
     pat = re.compile(rf"(?m)^{re.escape(key)}=.*$")
@@ -331,13 +344,13 @@ text = set_prop(text, "app.orientation", "fullUser")
 if version:
     text = set_prop(text, "app.version_name", version)
     text = set_prop(text, "app.version_code", version_code)
-path.write_text(text)
+path.write_text(text, encoding="utf-8")
 PY
 
-  python3 - "$manifest" <<'PY'
+  run_python - "$manifest" <<'PY'
 import pathlib, re, sys
 path = pathlib.Path(sys.argv[1])
-text = path.read_text()
+text = path.read_text(encoding="utf-8")
 
 # Drop mic / legacy storage, not needed by this game.
 # Keep VIBRATE (love.system.vibrate), BLUETOOTH (optional gamepads) and
@@ -354,7 +367,7 @@ for perm in (
         text,
     )
 text = re.sub(r'\s*android:usesCleartextTraffic="true"', "", text)
-path.write_text(text)
+path.write_text(text, encoding="utf-8")
 PY
 }
 

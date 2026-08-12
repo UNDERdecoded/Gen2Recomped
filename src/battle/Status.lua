@@ -243,6 +243,12 @@ function Status.residual(battler, opponent, battle)
     opponent.mon.hp = math.min(opponent.mon.stats.hp, opponent.mon.hp + dmg)
     table.insert(msgs, Strings("LEECH SEED saps\n%s!", name(battler)))
   end
+  if battler.cursed and mon.hp > 0 then
+    local dmg = math.max(1, math.floor(mon.stats.hp / 4))
+    dmg = math.min(dmg, mon.hp)
+    mon.hp = mon.hp - dmg
+    table.insert(msgs, Strings("%s's\nafflicted by\nCURSE!", name(battler)))
+  end
   return msgs
 end
 

@@ -252,11 +252,55 @@ MoveEffects.primary = {
     return { Strings("%s's\ngetting pumped!", displayName(user)) }
   end,
 
+  BELLY_DRUM_EFFECT = function(battle, user)
+    local maxHp = user.mon.stats.hp
+    local cost = math.floor(maxHp / 2)
+    local curStage = user.stages.attack or 0
+    if user.mon.hp <= cost or curStage >= 6 then
+      return { Strings("But, it failed!") }
+    end
+    user.mon.hp = user.mon.hp - cost
+    user.stages.attack = 6
+    user.hazeStatReset = nil
+    return { Strings("%s\ncut its own HP and\nmaximized ATTACK!", displayName(user)) }
+  end,
+
+  CURSE_EFFECT = function(battle, user, target)
+    local isGhost = false
+    for _, t in ipairs(user.curTypes or {}) do
+      if t == "GHOST" then isGhost = true; break end
+    end
+
+    if isGhost then
+      local maxHp = user.mon.stats.hp
+      local cost = math.floor(maxHp / 2)
+      if user.mon.hp <= cost or target.cursed then
+        return { Strings("But, it failed!") }
+      end
+      user.mon.hp = user.mon.hp - cost
+      target.cursed = true
+      return { Strings("%s\ncut its own HP and\nput a CURSE on\n%s!", displayName(user), displayName(target)) }
+    else
+      local msgs = {}
+      local speedMsg = changeStage(battle, user, "speed", -1, false)
+      local atkMsg = changeStage(battle, user, "attack", 1, false)
+      local defMsg = changeStage(battle, user, "defense", 1, false)
+      for _, m in ipairs(speedMsg or {}) do table.insert(msgs, m) end
+      for _, m in ipairs(atkMsg or {}) do table.insert(msgs, m) end
+      for _, m in ipairs(defMsg or {}) do table.insert(msgs, m) end
+      if #msgs == 0 then
+        return { Strings("But, it failed!") }
+      end
+      return msgs
+    end
+  end,
+
   HAZE_EFFECT = function(battle, user, target)
     for _, b in ipairs({ user, target }) do
       b.stages = {}
       b.confusedTurns = nil
       b.leechSeeded = nil
+      b.cursed = nil
       b.toxicCounter = nil
       b.reflect, b.lightScreen, b.mist, b.focusEnergy = nil, nil, nil, nil
       -- haze.asm also zeroes both disabled-move slots and clears
