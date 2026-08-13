@@ -40,12 +40,17 @@ function StartMenu.new(game)
     end })
   end
 
-  -- POKéMON is always listed (draw_start_menu.asm prints it even with
-  -- an empty party; selecting it then just no-ops)
-  table.insert(items, { label = Strings("POKéMON"), onSelect = function()
-    if #game.save.party == 0 then return end
-    Screens.push(game, "PartyMenu", { onCancel = reopen })
-  end })
+  -- R/B's draw_start_menu.asm prints POKéMON even with an empty party and
+  -- no-ops on select.  GSC does not: StartMenu builds its item list from
+  -- flags and leaves POKéMON out entirely until the player owns one, which
+  -- is why it looked wrong sitting there before Elm hands the starter over.
+  if #game.save.party > 0
+     or not require("src.core.GameVersion").isGen2() then
+    table.insert(items, { label = Strings("POKéMON"), onSelect = function()
+      if #game.save.party == 0 then return end
+      Screens.push(game, "PartyMenu", { onCancel = reopen })
+    end })
+  end
 
   table.insert(items, { label = Strings("ITEM"), onSelect = function()
     Screens.push(game, "BagMenu", { onCancel = reopen })

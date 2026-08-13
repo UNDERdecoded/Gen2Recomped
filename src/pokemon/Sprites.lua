@@ -74,6 +74,25 @@ end
 --            PROF.OAK fights in the player's place behind his own back pic
 -- opts.battle: the live battle, for kind == "battle"
 -- Returns path, trueColor.
+-- Crystal's chosen player character.  field.playerForms carries one record
+-- per gender (see RomExtractorGen2:extractGen2PlayerForms) and is absent
+-- entirely on Gold and Silver, so this answers nil there and every caller
+-- keeps its existing path.
+--
+-- The gender lives on the save, written by the Oak speech's ask_gender step.
+-- Reading it through Game rather than threading a save argument through every
+-- caller keeps the change to this one function.
+function Sprites.playerForm(data, save)
+  local forms = data and data.field and data.field.playerForms
+  if type(forms) ~= "table" then return nil end
+  if save == nil then
+    local ok, Game = pcall(require, "src.core.Game")
+    save = ok and Game and Game.save or nil
+  end
+  local gender = save and save.player and save.player.gender
+  return forms[gender] or forms.boy
+end
+
 function Sprites.playerPath(data, side, opts)
   opts = opts or {}
   side = side == "back" and "back" or "front"
@@ -91,13 +110,29 @@ function Sprites.playerPath(data, side, opts)
      and not require("src.render.Assets").exists(path) then
     path = FieldDefaults.fieldValue(data, "playerPics", "demoBack")
   end
+  -- Crystal: KRIS has her own card portrait and back pic.  Swapped in before
+  -- the player.sprite hook so a mod still gets the last word.
+  local form = Sprites.playerForm(data, opts.save)
+  local formPath
+  if form then
+    if side == "front" then
+      -- the Oak speech wants the bigger 7x7 pic; everything else (trainer
+      -- card, menus) wants the 5x7 portrait
+      formPath = (opts.kind == "intro" and form.intro) or form.card
+    elseif side == "back" and key == "back" then
+      formPath = form.back
+    end
+    if formPath then path = formPath end
+  end
   local ctx = {
     side = side,
     kind = opts.kind or "battle",
     demo = opts.demo and true or false,
     oakDemo = opts.oakDemo and true or false,
     battle = opts.battle,
-    trueColor = false,
+    -- a baked form pic already carries its own colours, so the zone shader
+    -- has to leave it alone or KRIS comes out in CHRIS's browns
+    trueColor = (formPath ~= nil and form.trueColor) and true or false,
     data = data,
   }
   if path and Runtime.wantsHook("player.sprite") then

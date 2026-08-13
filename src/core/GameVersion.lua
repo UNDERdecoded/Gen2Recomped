@@ -73,10 +73,29 @@ GameVersion.VERSIONS = {
     cachePrefix = "silver/",
     saveSuffix = "_silver",
   },
+  -- Crystal is the Rev 1 (v1.1) build, which is what pokecrystal11.sym
+  -- describes.  Rev 0 exists but moves three symbols, none of which the
+  -- extractor reads -- the hash gate below still pins it to Rev 1 so an
+  -- imported ROM can never disagree with the embedded symbol table.
+  crystal = {
+    id = "crystal",
+    generation = 2,
+    label = "Crystal",
+    displayName = "Pokemon Crystal",
+    launcherName = "Crystal (alpha)",
+    sha1 = "f2f52230b536214ef7c9924f483392993e226cfb",
+    -- Rev 0.  Only three symbols move between the revisions and the extractor
+    -- reads none of them, so one manifest and one symbol table serve both --
+    -- but the hash still has to be accepted explicitly.
+    sha1Alt = { "f4cd194bdee0d04ca4eac29e09b8e4e9d818c133" },
+    manifest = "tools/rom_manifest_crystal.json",
+    cachePrefix = "crystal/",
+    saveSuffix = "_crystal",
+  },
 }
 
 -- Launcher column order.
-GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver" }
+GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal" }
 
 GameVersion.current = "red"
 
@@ -118,6 +137,12 @@ function GameVersion.isSilver()
   return GameVersion.current == "silver"
 end
 
+-- Crystal shares the Gen2 engine with Gold/Silver but not its script opcode
+-- table, so anything that decodes ROM bytecode has to branch on this.
+function GameVersion.isCrystal(id)
+  return (id or GameVersion.current) == "crystal"
+end
+
 -- Metadata for a version id, defaulting to the active one.
 function GameVersion.info(id)
   return GameVersion.VERSIONS[id or GameVersion.current]
@@ -131,10 +156,22 @@ function GameVersion.cachePrefix(id)
   return GameVersion.info(id).cachePrefix
 end
 
+-- Does this version accept that ROM hash?  Most versions have exactly one
+-- canonical dump; Crystal has two revisions that decode identically here.
+function GameVersion.acceptsSha1(id, sha1)
+  local info = GameVersion.info(id)
+  if not info then return false end
+  if info.sha1 == sha1 then return true end
+  for _, alt in ipairs(info.sha1Alt or {}) do
+    if alt == sha1 then return true end
+  end
+  return false
+end
+
 -- The version a ROM belongs to, by its SHA-1, or nil for an unknown ROM.
 function GameVersion.forSha1(sha1)
-  for id, info in pairs(GameVersion.VERSIONS) do
-    if info.sha1 == sha1 then return id end
+  for id in pairs(GameVersion.VERSIONS) do
+    if GameVersion.acceptsSha1(id, sha1) then return id end
   end
   return nil
 end

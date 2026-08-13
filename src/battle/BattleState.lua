@@ -203,14 +203,25 @@ local imageMeta = setmetatable({}, WEAK_KEYS)
 -- pal = { name, colors } recolors the 4 GB shades like the Super Game Boy.
 -- trueColor art (14 §the 4-shade contract) opts out of the quantize
 -- entirely, so its palette variant collapses back onto the plain path.
-local function getImage(path, pal, trueColor)
+-- `crop = { index =, width = }` slices the nth cell out of a horizontal
+-- strip BEFORE the palette map, so a Crystal pic-animation frame goes
+-- through exactly the same recolor, ground-padding measurement and cache
+-- path as the still pic it stands in for (see src/pokemon/PicAnim.lua).
+local function getImage(path, pal, trueColor, crop)
   if not path then return nil end
   if trueColor then pal = nil end
   local key = pal and (path .. "#" .. pal.name) or path
+  if crop then key = key .. "@" .. crop.index end
   if not imageCache[key] then
     local img, pad, padL = nil, 0, 0
     if love.image and love.image.newImageData then
       local id = Assets.imageData(path)
+      if crop then
+        local strip = id
+        id = love.image.newImageData(crop.width, strip:getHeight())
+        id:paste(strip, 0, 0, (crop.index - 1) * crop.width, 0,
+                 crop.width, strip:getHeight())
+      end
       if pal then
         local c = pal.colors
         id:mapPixel(function(_, _, r, g, b, a)
@@ -250,7 +261,10 @@ local function getImage(path, pal, trueColor)
     imageCache[key] = img
     imagePadBottom[img] = pad
     imagePadLeft[img] = padL
-    imageMeta[img] = { path = path, pal = pal, trueColor = trueColor or nil }
+    -- crop rides along so fadeImage / grayImage / blackImage re-bake the
+    -- SAME cell of the strip, not the whole strip
+    imageMeta[img] = { path = path, pal = pal, trueColor = trueColor or nil,
+                       crop = crop }
   end
   return imageCache[key]
 end
@@ -338,7 +352,8 @@ local function fadeImage(img, bgp)
   local name = (meta.pal and meta.pal.name or "GB")
                .. "&" .. bgp[0] .. bgp[1] .. bgp[2] .. bgp[3]
   return getImage(meta.path,
-                  { name = name, colors = PaletteFX.permute(base, bgp) })
+                  { name = name, colors = PaletteFX.permute(base, bgp) },
+                  nil, meta.crop)
 end
 
 -- the raw DMG-gray build of a colored pic (SE_WAVY_SCREEN bakes the
@@ -347,7 +362,7 @@ end
 local function grayImage(img)
   local meta = imageMeta[img]
   if not meta or not meta.pal then return img end
-  return getImage(meta.path) or img
+  return getImage(meta.path, nil, nil, meta.crop) or img
 end
 
 -- The blacked-out battle screen.  HandlePlayerBlackOut (core.asm:1151) runs
@@ -366,7 +381,8 @@ local function blackImage(data, img)
   local colors = pack and pack.palettes and pack.palettes.BLACK
   if not colors then return img end
   local name = PaletteFX.usesGbcPack() and "redpp:BLACK" or "BLACK"
-  return getImage(meta.path, { name = name, colors = colors }) or img
+  return getImage(meta.path, { name = name, colors = colors }, nil, meta.crop)
+    or img
 end
 
 -- the asset path a loaded battle image came from (nil for the headless
@@ -536,6 +552,11 @@ local function makeBattler(data, mon, isPlayer, save)
       return getImage(path, monPalette(data, mon.species,
         require("src.pokemon.Stats").isShiny(mon.dvs)), tc)
     end)(),
+    -- Crystal's front-pic frame animation.  Only the FRONT pic carries
+    -- animation tiles, so the player's back pic has none -- and Gold and
+    -- Silver have none at all, where this stays nil and the pic holds still.
+    picAnim = (not isPlayer)
+      and require("src.pokemon.PicAnim").new(data, mon.species) or nil,
   }
 end
 
@@ -800,8 +821,13 @@ end
 -- species, so the SGB palette stays the disguised mon's.  ghostReal keeps
 -- what LoadEnemyMonData puts back when the scope unveils.
 local function disguiseAsGhost(self)
-  self.ghostReal = { name = self.enemy.name, sprite = self.enemy.sprite }
+  -- picAnim rides along with the pic it belongs to: the GHOST sheet has no
+  -- animation of its own, and playing the real species' frames over it would
+  -- give the disguise away.
+  self.ghostReal = { name = self.enemy.name, sprite = self.enemy.sprite,
+                     picAnim = self.enemy.picAnim }
   self.enemy.name = "GHOST"
+  self.enemy.picAnim = nil
   self.enemy.sprite = getImage("assets/generated/battle/front/ghost.png",
                                monPalette(self.data, self.enemy.mon.species))
   self.introText = Strings("The GHOST\nappeared!")
@@ -1155,6 +1181,14 @@ function BattleState:updateQueue()
       -- the battle.  A running flash sequence is self-terminating and is
       -- left to ride out its own frames.
       if self.fx then self.fx.bgp = nil end
+      -- ...and it redraws the mon PICS as well, so a hide the script never
+      -- undid cannot outlive its animation either.  Moves like TAIL_WHIP
+      -- queue a hide with no matching show; that used to sit there until the
+      -- NEXT animation's resetPicFx happened to clear it, which from the
+      -- player's side looks like the mon vanishing until something hits it
+      -- again.  Dig/Fly's charge hide and a genuinely invulnerable battler
+      -- are the two that must survive, same as in resetPicFx.
+      self:restoreHiddenPics()
       -- the target's hit blink + damage sound follow the animation
       -- (pokered plays them after PlayMoveAnimation returns)
       if self.pendingHit then
@@ -1412,7 +1446,50 @@ end
 -- audio/play_battle_music.asm: gym leaders (wGymLeaderNo) get the
 -- gym-leader theme, Lance does too, and the Champion (OPP_RIVAL3)
 -- gets the final-battle theme
+-- PlayBattleMusic (11:$458D) picks the trainer theme off the trainer CLASS,
+-- not off any badge table: CHAMPION ($10) and $3F take the champion theme,
+-- then IsKantoGymLeader / IsGymLeader test the class against GymLeaders
+-- (0F:$5089) for the gym themes.  These are that list, read out of the ROM.
+--
+-- Every Gen2 leader shares the class NAME "LEADER", so there is nothing to
+-- match on by name -- it has to be the class id.
+local GEN2_BADGE_LEADER_CLASSES = {
+  -- Johto, then Kanto (IsKantoGymLeader, 0F:$5097)
+  [1] = true, [2] = true, [3] = true, [4] = true,
+  [5] = true, [6] = true, [7] = true, [8] = true,
+  [17] = true, [18] = true, [19] = true, [21] = true,
+  [26] = true, [35] = true, [46] = true, [64] = true,
+}
+-- Also in GymLeaders, so they take the gym theme, but they hand out no badge
+-- and must not count as a gym leader for the companion happiness bump.
+local GEN2_ELITE_FOUR_CLASSES = {
+  [11] = true, [13] = true, [14] = true, [15] = true,
+}
+local GEN2_CHAMPION_CLASSES = { [16] = true, [63] = true }
+
 function BattleState:computeMusicKind()
+  -- Gen2 first: data/scripts/victories is the hand-authored Gen1 badge table
+  -- and no Gen2 trainer id is in it, which is why Bugsy opened on the plain
+  -- trainer theme instead of the gym theme.
+  if self.kind == "trainer" and self.trainer
+     and require("src.core.GameVersion").isGen2() then
+    local class = tonumber(self.trainer.index)
+    if class then
+      if GEN2_CHAMPION_CLASSES[class] then
+        self.isGymLeader = false
+        return "final"
+      end
+      if GEN2_BADGE_LEADER_CLASSES[class] then
+        self.isGymLeader = true
+        return "gym"
+      end
+      if GEN2_ELITE_FOUR_CLASSES[class] then
+        self.isGymLeader = false
+        return "gym"
+      end
+    end
+  end
+
   local isBoss = false
   if self.kind == "trainer" and self.trainer then
     local victories = require("data.scripts.victories")
@@ -1802,8 +1879,35 @@ function BattleState:tickFx()
   self:updateFx()
 end
 
+-- The pic to actually draw for `battler` this frame: its Crystal animation
+-- frame if one is up, otherwise the still.  Placement is always measured off
+-- the still (same dimensions, same ground padding), so only the texture
+-- changes -- see drawBattlerPic and the enemy branch of drawPics.
+function BattleState:battlerPic(battler)
+  local still = self:picImage(battler.sprite)
+  local anim = battler and battler.picAnim
+  -- the pic only reaches here once it is really on screen -- the silhouette
+  -- slide and the "wants to fight!" box come first -- and that is where the
+  -- animation belongs, so the first draw is what starts the clock.
+  if anim then anim:start() end
+  local frame = anim and anim:frame() or 0
+  if frame <= 0 then return still end
+  local meta = imageMeta[battler.sprite]
+  local record = anim.anim
+  local swapped = getImage(record.sheet, meta and meta.pal,
+                           meta and meta.trueColor,
+                           { index = frame, width = record.width })
+  if not swapped then return still end
+  return self:picImage(swapped)
+end
+
 function BattleState:update(dt)
   self:tickFx()
+  -- Crystal pic animations run off the wall clock like every other battle
+  -- pic effect; a Gold/Silver battler has no picAnim and this is a no-op.
+  for _, b in ipairs({ self.player, self.enemy }) do
+    if b and b.picAnim then b.picAnim:update(dt) end
+  end
   local input = self.game.input
 
   -- safety net: HP/status changed outside a queued drain (level-up heals,
@@ -2568,15 +2672,31 @@ end
 -- Other hides (Acid Armor, etc.) still clear so the next anim restores.
 function BattleState:resetPicFx()
   if not self.picFx then return end
-  local digFly = self.animName == "DIG" or self.animName == "FLY"
-  local digFlyUser = digFly and (self.animAttackerIsPlayer
-                                 and self.player or self.enemy) or nil
+  local digFlyUser = self:hiddenPicKeeper()
   for battler, pf in pairs(self.picFx) do
     pf.kind, pf.t = nil, nil
     pf.endHidden = nil
     pf.ox, pf.oy = 0, 0
     local keepHide = battler.invulnerable or battler == digFlyUser
     if not keepHide then
+      pf.hidden = nil
+    end
+  end
+end
+
+-- Which battlers are allowed to stay hidden past the end of an animation:
+-- the Dig/Fly user mid-charge, and anything already flagged invulnerable.
+function BattleState:hiddenPicKeeper()
+  local digFly = self.animName == "DIG" or self.animName == "FLY"
+  if not digFly then return nil end
+  return self.animAttackerIsPlayer and self.player or self.enemy
+end
+
+function BattleState:restoreHiddenPics()
+  if not self.picFx then return end
+  local keeper = self:hiddenPicKeeper()
+  for battler, pf in pairs(self.picFx) do
+    if pf.hidden and not (battler.invulnerable or battler == keeper) then
       pf.hidden = nil
     end
   end
@@ -2672,6 +2792,16 @@ function BattleState:applyAnimEffect(ev)
   local fx = self.fx
   if ev.sound then
     self:playAnimSound(ev.sound)
+  end
+  -- anim_cry from Gen2AnimPlayer: the attacker's cry, with the move's own
+  -- tempo shift layered on where the data carries one (GetMoveSound).
+  if ev.cry then
+    local attacker = self:animFxBattler(false)
+    if attacker then
+      local mdef = self.data.moves[self.animName]
+      require("src.core.Sound").playMoveCry(self.data, attacker.mon.species,
+        mdef and mdef.anim and mdef.anim.tempo)
+    end
   end
   local e = ev.effect
   if not e then return end
@@ -2802,6 +2932,12 @@ function BattleState:applyAnimEffect(ev)
     if user and target and self.speciesSprite then
       user.sprite = self:speciesSprite(target.mon.species, user.isPlayer)
                     or user.sprite
+      -- a Transformed mon wears the copied species' pic, animation included
+      -- (still gray: speciesSprite forces PAL_GRAYMON, and the frames go
+      -- through the same palette because battlerPic reuses the pic's meta)
+      user.picAnim = (not user.isPlayer)
+        and require("src.pokemon.PicAnim").new(self.data, target.mon.species)
+        or nil
       local pf = self:picFxFor(user)
       if pf then pf.minimized = nil end
     end
@@ -3091,6 +3227,7 @@ function BattleState:updateFx()
         if real then
           self.enemy.name = real.name or self.enemy.name
           self.enemy.sprite = real.sprite or self.enemy.sprite
+          self.enemy.picAnim = real.picAnim
         end
       end
       pf.fade = math.min(1, math.ceil((gr.t - outEnd) / 10) / 4)
@@ -4862,7 +4999,7 @@ end
 -- offset, clip or replace the pic, and an active BGP fade swaps in a
 -- shade-remapped recolor of it.
 function BattleState:drawBattlerPic(battler, x, y, scale)
-  local img = self:picImage(battler.sprite)
+  local img = self:battlerPic(battler)
   if battler.substituteHP and not self:fxFaintActive(battler)
      and not battler.fainted then
     self:drawSubstituteDoll(battler)

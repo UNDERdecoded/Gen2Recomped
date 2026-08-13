@@ -60,6 +60,15 @@ local function getObpImage(path, colors, group)
   return obpCache[key]
 end
 
+-- The OBP bake, for overlays that are not sprites but still wear a Gen2 OBJ
+-- palette -- the Pokemon Center heal machine is one (its OAM rows carry CGB
+-- palette 6).  Same cache, so the bake happens once.
+function SpriteRenderer.obpImage(path, colors, group)
+  if not (path and colors) then return nil end
+  local ok, img = pcall(getObpImage, path, colors, group or "fx")
+  return ok and img or nil
+end
+
 -- hot reload drops the sheets; live instances hold their own image, so
 -- the world rebuilds them (MapLoader.invalidateAll) rather than this
 function SpriteRenderer.invalidate()
@@ -132,10 +141,11 @@ end
 function SpriteRenderer:resolveImage()
   if self.def.trueColor then return self.image end
   -- Gen2 carries the hardware's own OBJ palette per sheet (MapObjectPals,
-  -- picked by the OverworldSprites palette field), so it outranks every
-  -- Gen1 colour mode -- RED++/OG RED resolve nothing for a Gen2 def and
-  -- would drop the sheet back to DMG greys.
-  if self.def.gen2ObjPal then
+  -- picked by the OverworldSprites palette field).  Applying it in the two
+  -- hardware-colour modes is what makes a Gen2 overworld look like a GBC
+  -- game; applying it in EVERY mode is what made COLORS do nothing out in the
+  -- world while battle still responded to it.
+  if self.def.gen2ObjPal and PaletteFX.usesGen2ObjPal() then
     return getObpImage(self.def.image, self.def.gen2ObjPal, "gen2:" .. self.def.id)
   end
   if PaletteFX.usesGbcPack() then
@@ -171,7 +181,7 @@ function SpriteRenderer:draw(px, py, camX, camY, facing, walkPhase, stepFlip, to
   -- full-color art claims its 16x16 cell out of the shade-remap pass
   if self.def.trueColor then
     PaletteFX.markTrueColor(x, y, 16, 16)
-  elseif self.def.gen2ObjPal then
+  elseif self.def.gen2ObjPal and PaletteFX.usesGen2ObjPal() then
     -- Gen2 GBC mode: the ROM's own OBJ palette for this sheet, baked in.
     -- It is full colour, so it claims its cell out of the shade-remap pass
     -- exactly like a trueColor sprite does.

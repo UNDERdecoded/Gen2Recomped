@@ -17,18 +17,32 @@ function love.conf(t)
   _G.POKEPORT_EDITOR_MODE = editor
   _G.POKEPORT_DEV_MODE = developer
 
+  -- Save-directory identity.  Desktop gen1recomp and Gen2Recomped both used
+  -- "pokemon-love2d" and fought over one %APPDATA%/LOVE folder, so the
+  -- desktop build owns "Gen2Recomp" and src/core/SaveIdentity.lua carries
+  -- existing players across on first boot.
+  --
+  -- Mobile deliberately keeps the old name.  Android's save directory is
+  -- getExternalFilesDir()-based and therefore package-scoped (see
+  -- mobile/ANDROID.md), so the two games cannot collide there in the first
+  -- place -- renaming would only orphan every installed player's saves and
+  -- ROM cache inside their own package folder.
+  local mobileOs = love._os == "Android" or love._os == "iOS"
+  local identity = os.getenv("POKEPORT_IDENTITY")
+    or (mobileOs and "pokemon-love2d" or "Gen2Recomp")
+
   if editor then
     -- Same identity as the game, deliberately: the editor edits the game's
     -- saves and reads the game's ROM cache, both of which live under this
     -- folder.  A private editor identity would point love.filesystem at an
     -- empty directory in a packaged build, so `--editor` could not find
     -- data/generated at all (SaveIO.defaultPath already assumed this name).
-    t.identity = os.getenv("POKEPORT_IDENTITY") or "pokemon-love2d"
+    t.identity = identity
     t.window.title = "Pokemon Save Editor"
     t.window.width = 1280
     t.window.height = 800
   else
-    t.identity = os.getenv("POKEPORT_IDENTITY") or "pokemon-love2d"
+    t.identity = identity
     -- Version.lua has zero requires, so it is loadable this early; fall
     -- back to the plain title if the source is not mounted yet
     local ok, Version = pcall(require, "src.core.Version")

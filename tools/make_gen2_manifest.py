@@ -16,7 +16,13 @@ import json
 import os
 import re
 
-from rom_data import CANONICAL_GOLD_SHA1, CANONICAL_SILVER_SHA1, SymbolTable
+from rom_data import (
+    CANONICAL_CRYSTAL10_SHA1,
+    CANONICAL_CRYSTAL_SHA1,
+    CANONICAL_GOLD_SHA1,
+    CANONICAL_SILVER_SHA1,
+    SymbolTable,
+)
 
 
 ROM_HEADER_BASE = 0x100
@@ -40,6 +46,7 @@ GEN2_TRAINER_CLASS_COUNT = 80
 EXPECTED_SHA1 = {
     "gold": CANONICAL_GOLD_SHA1,
     "silver": CANONICAL_SILVER_SHA1,
+    "crystal": CANONICAL_CRYSTAL_SHA1,
 }
 
 
@@ -275,12 +282,19 @@ def placeholder_pokemon_assets(species_order):
     return out
 
 
+# Extra dumps a version accepts.  Crystal's two revisions differ in three
+# symbols, none of which the extractor reads.
+ACCEPTED_SHA1_ALT = {"crystal": (CANONICAL_CRYSTAL10_SHA1,)}
+
+
 def build_manifest(version, rom_path, symbols_path=None):
     expected = EXPECTED_SHA1[version]
+    accepted = (expected,) + tuple(ACCEPTED_SHA1_ALT.get(version, ()))
     actual = sha1_file(rom_path)
-    if actual != expected:
+    if actual not in accepted:
         raise SystemExit(
-            f"{version} ROM hash mismatch: got {actual}, expected {expected}")
+            f"{version} ROM hash mismatch: got {actual}, "
+            f"expected {' or '.join(accepted)}")
 
     rom = read_rom(rom_path)
     if len(rom) < 1024 * 1024:
@@ -335,17 +349,18 @@ def build_manifest(version, rom_path, symbols_path=None):
         "TilesetChampionsRoom",
     ]
 
-    tilesets = {}
-    for name in tileset_order:
-        family = name.removeprefix("Tileset")
-        tilesets[name] = {
-            "id": name,
-            "source": "Phase 2B synthetic scaffold",
-            "imageBase": family.lower(),
-            "imageWidth": 128,
-            "imageHeight": 128,
-            "blockCount": 0x80,
-        }
+    # Deliberately NOT emitted as a synthetic list.
+    #
+    # build_rom_data.extract_tilesets only infers the real tileset families
+    # from the ROM (_gen2_tileset_rows) when tilesetOrder is EMPTY.  Handing it
+    # a synthetic list instead suppresses that and pins extraction to whatever
+    # this scaffold guessed -- which for Crystal silently dropped
+    # TilesetEliteFourRoom and TilesetTraditionalHouse, and for Gold would have
+    # cut 29 real tilesets down to 26 the moment its manifest was regenerated.
+    # The shipped Gold manifest has an empty tilesetOrder for exactly this
+    # reason; match it.
+    tileset_order = []
+    tilesets = {"source": f"Phase 2B placeholder ({version})"}
 
     return {
         "format": 3,
@@ -405,45 +420,51 @@ def write_manifest(path, data):
         f.write("\n")
 
 
+# Manifest file name per version; Gold keeps the name it has always had.
+MANIFEST_NAME = {
+    "gold": "rom_manifest_gold.json",
+    "silver": "rom_manifest_silver.json",
+    "crystal": "rom_manifest_crystal.json",
+}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--gold-rom", required=True)
-    parser.add_argument("--silver-rom", required=True)
-    parser.add_argument(
-        "--gold-symbols",
-        default=None,
-        help="optional RGBDS .sym file for Gold; embeds symbols into manifest")
-    parser.add_argument(
-        "--silver-symbols",
-        default=None,
-        help="optional RGBDS .sym file for Silver; embeds symbols into manifest")
+    # Every version is optional so a single ROM can be (re)built on its own --
+    # requiring all three meant you could not add Crystal without also having
+    # Gold and Silver to hand.
+    for version in ("gold", "silver", "crystal"):
+        parser.add_argument(f"--{version}-rom", default=None)
+        parser.add_argument(
+            f"--{version}-symbols",
+            default=None,
+            help=f"optional RGBDS .sym file for {version.title()}; "
+                 "embeds symbols into the manifest")
     parser.add_argument("--out-dir", default=os.path.dirname(__file__))
     args = parser.parse_args()
 
     out_dir = os.path.abspath(args.out_dir)
+    requested = []
+    for version in ("gold", "silver", "crystal"):
+        rom = getattr(args, f"{version}_rom")
+        if not rom:
+            continue
+        symbols = getattr(args, f"{version}_symbols")
+        symbols = os.path.abspath(symbols) if symbols else None
+        if symbols and not os.path.isfile(symbols):
+            raise SystemExit(f"{version} symbols file not found: {symbols}")
+        requested.append((version, os.path.abspath(rom), symbols))
 
-    gold_symbols = os.path.abspath(args.gold_symbols) if args.gold_symbols else None
-    silver_symbols = (
-        os.path.abspath(args.silver_symbols) if args.silver_symbols else None)
+    if not requested:
+        raise SystemExit(
+            "nothing to do: pass at least one of --gold-rom / --silver-rom / "
+            "--crystal-rom")
 
-    if gold_symbols and not os.path.isfile(gold_symbols):
-        raise SystemExit(f"gold symbols file not found: {gold_symbols}")
-    if silver_symbols and not os.path.isfile(silver_symbols):
-        raise SystemExit(f"silver symbols file not found: {silver_symbols}")
-
-    gold = build_manifest(
-        "gold", os.path.abspath(args.gold_rom), gold_symbols)
-    silver = build_manifest(
-        "silver", os.path.abspath(args.silver_rom), silver_symbols)
-
-    gold_path = os.path.join(out_dir, "rom_manifest_gold.json")
-    silver_path = os.path.join(out_dir, "rom_manifest_silver.json")
-
-    write_manifest(gold_path, gold)
-    write_manifest(silver_path, silver)
-
-    print(f"wrote {gold_path}")
-    print(f"wrote {silver_path}")
+    for version, rom, symbols in requested:
+        manifest = build_manifest(version, rom, symbols)
+        path = os.path.join(out_dir, MANIFEST_NAME[version])
+        write_manifest(path, manifest)
+        print(f"wrote {path}")
 
 
 if __name__ == "__main__":

@@ -45,6 +45,9 @@ end
 --   IntroScene9     scroll down and fade, nine palette steps of 8 frames
 --   IntroScene11-16 the starters flash in, then Charizard's fireball
 --   IntroScene17    64 frame hold into the title screen
+-- The first two scenes are the port's own branding and studio cards; they
+-- need none of the ripped attract-movie art that follows them.
+local GEN2_INTRO_CARD_SCENES = 2
 local SCENES = {
   { "brand", 150 },
   { "studio", 180 },
@@ -147,6 +150,37 @@ function Gen2Intro.new(game, onDone)
   self.stars = tryImage(intro.stars)
   self.water = tryImage(intro.water)
   self.grass = tryImage(intro.grass)
+  -- Scenes 1-2 are the branding and studio cards, which the port draws itself
+  -- and which need no ripped art.  Everything after them in SCENES is the
+  -- Gold/Silver attract movie, built from Intro_WaterGFX1 / Intro_GrassGFX1.
+  -- With neither backdrop present those scenes drew whatever was left in the
+  -- tile cache, so the list stops after the cards instead.
+  --
+  -- Crystal ships a different movie entirely (CrystalIntro's 28-scene Unown
+  -- and Suicune sequence), so the importer hands over its own scene list:
+  -- one composed screen per beat, with the frame budget the ROM holds it for.
+  -- The two branding cards still come first -- they are the port's own.
+  self.scenes = SCENES
+  if intro.layout == "crystal" and type(intro.scenes) == "table"
+      and intro.scenes[1] then
+    local list = { SCENES[1], SCENES[2] }
+    self.crystal = {}
+    for _, entry in ipairs(intro.scenes) do
+      list[#list + 1] = { "crystal", entry.frames or 64 }
+      self.crystal[#list] = {
+        image = tryImage(entry.image),
+        mode = entry.mode,
+        scroll = entry.scroll,
+        actors = entry.actors,
+      }
+    end
+    self.scenes = list
+    self.ramps = intro.ramps or {}
+  end
+  self.lastScene = #self.scenes
+  if self.scenes == SCENES and not (self.water or self.grass) then
+    self.lastScene = GEN2_INTRO_CARD_SCENES
+  end
   -- Intro_WaterTilemap is 32 metatile rows and IntroScene1 starts the
   -- camera 15 of them down, so the rise has somewhere to rise FROM.
   self.waterStartY = intro.waterStartY or 0
@@ -204,19 +238,19 @@ function Gen2Intro:update(dt)
   end
   self.timer = self.timer + 1
   self:advanceCamera()
-  local scene = SCENES[self.scene]
+  local scene = self.scenes[self.scene]
   if not scene or self.timer >= scene[2] then
     self.scene = self.scene + 1
     self.timer = 0
     self:enterScene()
-    if self.scene > #SCENES then self:finish() end
+    if self.scene > (self.lastScene or #self.scenes) then self:finish() end
   end
 end
 
 -- hSCX / hSCY as each scene's setup leaves them (IntroScene1 and
 -- IntroScene6 both DisableLCD and reseed the camera).
 function Gen2Intro:enterScene()
-  local scene = SCENES[self.scene]
+  local scene = self.scenes[self.scene]
   local name = scene and scene[1]
   if name == "underwater" then
     self.scx, self.scy = 0x58, self.waterStartY
@@ -229,7 +263,7 @@ function Gen2Intro:enterScene()
 end
 
 function Gen2Intro:advanceCamera()
-  local scene = SCENES[self.scene]
+  local scene = self.scenes[self.scene]
   local name = scene and scene[1]
   if name == "rise" then
     -- IntroScene3_ScrollToSurface: hSCX every 4 frames, hSCY every 2, and
@@ -440,12 +474,126 @@ function Gen2Intro:drawStarters()
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- One composed screen per beat.  A "pulse" screen is the Unown eyes: the ROM
+-- blacks every BG palette and relights ONE, walking colours 1-3 up the
+-- BWFade / BlackLBlueFade / BlackBlueFade ramps against a triangle counter
+-- (CrystalIntro_UnownFade, 39:$5223).  The screen is stored as a
+-- white-on-black mask, so multiplying it by the ramp colour reproduces that:
+-- black stays black, and the eyes rise out of it and fall back.
+--
+-- [$CF65] & $3F mirrored about $1F is the triangle -- two full pulses across
+-- a 128 frame hold.
+local CRYSTAL_PULSE_PERIOD = 0x40
+local CRYSTAL_PULSE_HALF = 0x1F
+
+function Gen2Intro:drawCrystalScene()
+  local scene = self.crystal and self.crystal[self.scene]
+  love.graphics.setColor(0, 0, 0, 1)
+  love.graphics.rectangle("fill", 0, 0, 160, 144)
+  if not (scene and scene.image) then return end
+  local r, g, b = 1, 1, 1
+  if scene.mode == "pulse" then
+    local ramp = self.ramps and self.ramps.bw
+    local step = self.timer % CRYSTAL_PULSE_PERIOD
+    if step > CRYSTAL_PULSE_HALF then
+      step = (CRYSTAL_PULSE_PERIOD - 1) - step
+    end
+    local color = ramp and ramp[step + 1]
+    if color then
+      r, g, b = color[1], color[2], color[3]
+    else
+      local level = step / CRYSTAL_PULSE_HALF
+      r, g, b = level, level, level
+    end
+  end
+  love.graphics.setColor(r, g, b, 1)
+  -- The screen is the whole 256px BG map row; hSCX picks the 160px window and
+  -- wraps, exactly as the PPU reads it.  IntroScene14 subtracts 10 from hSCX
+  -- every frame (the forest tearing past) and IntroScene18 adds 8 until it
+  -- reaches $60 and then holds (the camera settling on Suicune's face).
+  local width = scene.image:getWidth()
+  local scrollX = 0
+  local scroll = scene.scroll
+  if scroll then
+    scrollX = (scroll.from or 0) + (scroll.step or 0) * self.timer
+    if scroll.to then
+      if (scroll.step or 0) >= 0 then scrollX = math.min(scrollX, scroll.to)
+      else scrollX = math.max(scrollX, scroll.to) end
+    end
+    scrollX = math.floor(scrollX) % width
+  end
+  local quad = love.graphics.newQuad(scrollX, 0, 160, 144, width, 144)
+  love.graphics.draw(scene.image, quad, 0, 0)
+  if scrollX + 160 > width then
+    -- the window straddles the wrap, so the leading edge comes from the start
+    local shown = width - scrollX
+    love.graphics.draw(scene.image,
+      love.graphics.newQuad(0, 0, 160 - shown, 144, width, 144), shown, 0)
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+  for _, motion in ipairs(scene.actors or {}) do
+    self:drawCrystalActor(motion)
+  end
+end
+
+-- Suicune crossing the forest.  The scene handler holds its x still for
+-- `hold` frames, then walks it down by `step` a frame; IntroScene14 switches
+-- to a faster `step2` once the jump sound fires at `step2At`, and takes the
+-- sprite off screen entirely below `hideBelow`.  x and y are the pixel
+-- coordinates InitSpriteAnimStruct was handed, so they need no OAM fudge.
+--
+-- SpriteAnimFunc_IntroPichuWooper steps a phase field by 2 up to $14 and puts
+-- AnimSeqs_Sine of the NEGATED phase, amplitude $20, into the sprite's y
+-- offset -- so Wooper and Pichu rise about 30px out of the grass over ten
+-- frames and then stay put, which is why the ROM spawns them at y 176 and
+-- 169, both below the screen.
+local HOP_STEP = 2
+local HOP_LIMIT = 0x14
+local HOP_AMPLITUDE = 0x20
+
+local function hopOffset(age)
+  local phase = math.min(HOP_LIMIT, math.max(0, age) * HOP_STEP)
+  -- Sprites_Sine is d * sin(a * pi / 32); the phase is negated, so the offset
+  -- is upward
+  return -math.floor(HOP_AMPLITUDE * math.sin(phase * math.pi / 32) + 0.5)
+end
+
+function Gen2Intro:drawCrystalActor(motion)
+  if not motion then return end
+  local actor = self.actors and self.actors[motion.name]
+  if not actor then return end
+  local spawn = motion.spawn or 0
+  if self.timer < spawn then return end
+  local age = self.timer - spawn
+  local x, y = motion.x or 0, motion.y or 0
+  if motion.hop then
+    y = y + hopOffset(age)
+  else
+    local elapsed = self.timer - (motion.hold or 0)
+    if elapsed > 0 then
+      if motion.step2At and self.timer >= motion.step2At then
+        local first = motion.step2At - (motion.hold or 0)
+        x = x + (motion.step or 0) * first
+          + (motion.step2 or 0) * (self.timer - motion.step2At)
+      else
+        x = x + (motion.step or 0) * elapsed
+      end
+    end
+    if motion.hideBelow and x < motion.hideBelow then return end
+  end
+  drawActor(actor, x, y, age)
+end
+
 function Gen2Intro:draw()
   -- the scenes are ripped in CGB color; keep the SGB palette pass off them
   pcall(function() require("src.render.PaletteFX").markTrueColor(0, 0, 160, 144) end)
-  local scene = SCENES[self.scene]
+  local scene = self.scenes[self.scene]
   local name = scene and scene[1] or "fade"
   local length = scene and scene[2] or 64
+  if name == "crystal" then
+    self:drawCrystalScene()
+    return
+  end
   if name == "brand" then
     self:drawBrand(false)
   elseif name == "studio" then

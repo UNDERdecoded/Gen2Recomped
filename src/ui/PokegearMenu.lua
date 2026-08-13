@@ -1,6 +1,7 @@
 
 
 local Font = require("src.render.Font")
+local Screens = require("src.ui.Screens")
 local Sound = require("src.core.Sound")
 local Strings = require("src.core.Strings")
 
@@ -366,13 +367,48 @@ function PokegearMenu:current()
   return self.cards[self.index]
 end
 
+-- The registered phone numbers, newest id last.
+--
+-- Gen2 keeps two halves of this and the card used to read neither: which ids
+-- the player has registered live in save.g2Phone (written by `addcellnum` /
+-- `askforphonenumber` -- that is how BILL is handed over by his younger
+-- sister, PHONE_BILL is id 3), and the contact records themselves live in
+-- data.map_scripts.phone, keyed by the same id.  This function looked in
+-- data.field.phone.contacts, which no importer writes in EITHER generation,
+-- so the list was always empty and the hardcoded MOM / PROF.ELM placeholder
+-- below was the only thing the POKeGEAR ever showed.
+--
+-- Gen2Commands.phoneName resolves a record to its display name exactly the
+-- way GetCallerName does (a trainer contact prints the trainer's own name; a
+-- non-trainer indexes NonTrainerCallerNames), so the card and the call script
+-- can never disagree about who is on the list.
 function PokegearMenu:contacts()
-  local phone = (self.game.data.field or {}).phone or {}
-  local list = phone.contacts or {}
-  if #list == 0 then
-    list = { { name = "MOM" }, { name = "PROF.ELM" } }
+  local data = self.game.data
+  local save = self.game.save
+
+  local list = {}
+  local registered = save and save.g2Phone
+  if type(registered) == "table" then
+    local ids = {}
+    for id in pairs(registered) do
+      if registered[id] and type(id) == "number" then ids[#ids + 1] = id end
+    end
+    table.sort(ids)
+    local Gen2Commands = require("src.script.Gen2Commands")
+    for _, id in ipairs(ids) do
+      local name = Gen2Commands.phoneName(data, id)
+      if name then list[#list + 1] = { id = id, name = name } end
+    end
   end
-  return list
+  if #list > 0 then return list end
+
+  -- Gen1 / hand-authored data keeps a flat list on the field record.
+  local phone = (data.field or {}).phone or {}
+  local authored = phone.contacts or {}
+  if #authored > 0 then return authored end
+
+  -- Nothing registered yet: the two numbers every playthrough starts with.
+  return { { name = "MOM" }, { name = "PROF.ELM" } }
 end
 
 function PokegearMenu:stationList()
@@ -409,6 +445,21 @@ function PokegearMenu:update(dt)
   end
   local card = self:current()
   if not card then return end
+  -- The MAP card had no update branch at all, so up/down/A did nothing and
+  -- the crosshair could never leave the player's own town.  src/ui/TownMap
+  -- is the real region map and already implements the cursor (moveGrid /
+  -- moveList / followRegion), so hand off to it rather than growing a second
+  -- half-built one here.
+  if card.id == "MAP" then
+    if input:wasPressed("a") or input:wasPressed("up")
+       or input:wasPressed("down") then
+      Sound.play(self.game.data, "Press_AB")
+      local reopen = self.onCancel
+      self.game.stack:pop()
+      Screens.push(self.game, "TownMap", { onCancel = reopen })
+      return
+    end
+  end
   if card.id == "RADIO" then
     local stations = self:stationList()
     local n = #stations

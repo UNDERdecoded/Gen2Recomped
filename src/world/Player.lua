@@ -63,17 +63,14 @@ function Player.new(data, cx, cy, facing)
   -- field.playerSprites: which sprite ids the player wears on foot, on the
   -- water and on the bicycle (LoadPlayerSpriteGraphics /
   -- LoadSurfingPlayerSpriteGraphics, home/overworld.asm)
-  local walkId = FieldDefaults.fieldValue(data, "playerSprites", "walk")
   local surfId = FieldDefaults.fieldValue(data, "playerSprites", "surf")
   local surfPikaId = FieldDefaults.fieldValue(data, "playerSprites", "surfPikachu")
-  local bikeId = FieldDefaults.fieldValue(data, "playerSprites", "bike")
-  self.sprite = SpriteRenderer.new(pickSpriteDef(data, walkId), "player")
+  self:refreshForm(data)
   self.surfSprite = SpriteRenderer.new(pickSpriteDef(data, surfId), "player")
   -- Yellow's surfing-Pikachu ride (Yellow LoadSurfingPlayerSpriteGraphics2,
   -- paired with field.playerSprites.surfPikachu). rotated in at pose()
   -- when the SURF-mon is a Pikachu.
   self.surfPikachuSprite = SpriteRenderer.new(pickSpriteDef(data, surfPikaId), "player")
-  self.bikeSprite = SpriteRenderer.new(pickSpriteDef(data, bikeId), "player")
   -- the ledge-hop shadow quarter-tile (gfx/overworld/shadow.png,
   -- LedgeHoppingShadow, engine/overworld/ledges.asm)
   local fx = data.field and data.field.overworldFx
@@ -109,6 +106,33 @@ function Player.new(data, cx, cy, facing)
   self.turnArmed = true
   self.inputLocked = false
   return self
+end
+
+-- Pick the on-foot and bicycle sheets for the character the save says we are.
+--
+-- Crystal: KRIS walks and rides on her own sheets (SPRITE_KRIS /
+-- SPRITE_KRIS_BIKE, OverworldSprites rows $60/$61).  field.playerForms only
+-- exists there, and only the ids it actually registered are taken, so a rip
+-- that failed to write one of Kris's sheets keeps Chris's rather than naming
+-- a sprite that does not exist.
+--
+-- Separate from Player.new because the Oak speech asks the question AFTER the
+-- overworld state -- and therefore this Player -- has already been built:
+-- Game:makeTitleState pushes OverworldState first and the new-game screen
+-- second.  OakSpeech calls this back once the answer is in.
+function Player:refreshForm(data)
+  local walkId = FieldDefaults.fieldValue(data, "playerSprites", "walk")
+  local bikeId = FieldDefaults.fieldValue(data, "playerSprites", "bike")
+  local form = require("src.pokemon.Sprites").playerForm(data)
+  if form then
+    local sprites = data.sprites or {}
+    if form.walk and sprites[form.walk] then walkId = form.walk end
+    if form.bike and sprites[form.bike] then bikeId = form.bike end
+  end
+  if walkId == self.walkId and bikeId == self.bikeId then return end
+  self.walkId, self.bikeId = walkId, bikeId
+  self.sprite = SpriteRenderer.new(pickSpriteDef(data, walkId), "player")
+  self.bikeSprite = SpriteRenderer.new(pickSpriteDef(data, bikeId), "player")
 end
 
 function Player:position()

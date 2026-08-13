@@ -332,8 +332,14 @@ end
 -- cry already sounds like. The generated cry source already includes the
 -- species' pitch/tempo, so layer the move's extra shift on with
 -- Source:setPitch (pitch mod is left unmodeled: both moves set it $00).
+-- tempoMod 0 means "no data", not "shift by -128": the Gen2 importer fills
+-- move.anim with a { sound = SFX_00, pitch = 0, tempo = 0 } placeholder
+-- because it does not read MoveSoundTable, and treating that as a real byte
+-- doubled the pitch of every Gen2 cry.  Only a genuine, non-default byte
+-- shifts anything.
 function Sound.playMoveCry(data, species, tempoMod)
   local src = Sound.playCry(data, species)
+  if tempoMod == 0 then tempoMod = nil end
   if src and tempoMod and tempoMod ~= 0x80 then
     pcall(src.setPitch, src, 256 / (128 + tempoMod))
   end

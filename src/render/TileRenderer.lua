@@ -423,10 +423,32 @@ function TileRenderer.gen2TileColors(palMap, palColors, tile)
   return palColors[math.min(raw, #palColors - 1) + 1]
 end
 
+-- Which of the tileset's four time-of-day palette rows is live.  The ROM picks
+-- these per map (LoadMapPals: EnvironmentColorsPointers[environment] then the
+-- GetTimeOfDay row), and a PALETTE_DARK map takes the DARKNESS row outright --
+-- which is the same flag the RED++ bake already keys on.
+--
+-- palColorsByTod is what the Gen2 importer now writes; palColors alone is the
+-- older single-row shape, kept working so a dataset extracted before this
+-- change still renders instead of falling back to grey.
+local function gen2PalColors(tileset)
+  local byTod = tileset.palColorsByTod
+  if type(byTod) ~= "table" then return tileset.palColors end
+  if PaletteFX.darkWorld() then return byTod.DARK or tileset.palColors end
+  return byTod[PaletteFX.gen2Tod()] or byTod.DAY or tileset.palColors
+end
+
+-- One atlas per (tileset image, COLORS mode, time of day).  Leaving the mode
+-- out of this key is why switching COLORS did nothing out in the Gen2
+-- overworld: the first bake won and every later mode kept being handed it.
+local function gen2AtlasKey(imagePath)
+  return imagePath .. "#gen2pal:" .. tostring(PaletteFX.mode) .. ":"
+    .. (PaletteFX.darkWorld() and "DARK" or tostring(PaletteFX.gen2Tod()))
+end
+
 local gen2AtlasCache = {}
-local function getGen2Atlas(imagePath, perRow, palMap, palColors)
+local function getGen2Atlas(key, imagePath, perRow, palMap, palColors)
   if not (love.image and love.image.newImageData) then return nil end
-  local key = imagePath .. "#gen2pal"
   if gen2AtlasCache[key] ~= nil then return gen2AtlasCache[key] or nil end
   local img = false
   local ok, src = pcall(Assets.imageData, imagePath)
@@ -547,19 +569,30 @@ function TileRenderer.new(map, data)
 
   -- Gen2: if the tileset has palMap/palColors from ROM extraction, bake a
   -- pre-colored atlas so tiles render with correct GBC palette colors.
+  --
+  -- Gated on the COLORS setting for the same reason SpriteRenderer's OBJ bake
+  -- is: this IS the hardware colour, so it belongs to the modes that mean
+  -- "show me the hardware", and the DMG/SGB-flavoured modes have to fall
+  -- through to the raw sheet and their own shade treatment.  Unconditional, it
+  -- made COLORS a no-op for every Gen2 tile on screen.
+  local gen2Colors = PaletteFX.usesGen2BgPal() and gen2PalColors(map.tileset)
   if not self.gbcAtlas and map.tileset.palMap and #map.tileset.palMap > 0
-      and map.tileset.palColors and #map.tileset.palColors > 0 then
-    local gen2img = getGen2Atlas(map.tileset.image, map.tileset.tilesPerRow,
-                                 map.tileset.palMap, map.tileset.palColors)
+      and gen2Colors and #gen2Colors > 0 then
+    local key = gen2AtlasKey(map.tileset.image)
+    local gen2img = getGen2Atlas(key, map.tileset.image, map.tileset.tilesPerRow,
+                                 map.tileset.palMap, gen2Colors)
     if gen2img then
       self.image = gen2img
       self.trueColor = true
       -- ...and hand the same tile->palette lookup to buildAnim, so the
       -- animated water/flower tiles that overdraw this atlas are baked with
       -- the palette their static neighbours got (see buildAnim's colorsFor)
-      local palMap, palColors = map.tileset.palMap, map.tileset.palColors
+      local palMap, palColors = map.tileset.palMap, gen2Colors
       gbcCtx = {
-        key = "#gen2pal:" .. tostring(map.tileset.id),
+        -- the variant key, not just the tileset id: the derived shimmer
+        -- textures cache alongside the atlas and must not survive a mode or
+        -- time-of-day change either
+        key = key,
         colorsFor = function(tile)
           return TileRenderer.gen2TileColors(palMap, palColors, tile)
         end,

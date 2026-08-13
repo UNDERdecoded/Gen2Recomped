@@ -167,11 +167,16 @@ local GEN2_GROWTH_RATES = {
   [3] = "MEDIUM_SLOW", [4] = "FAST", [5] = "SLOW",
 }
 local GEN2_BASE_PIC_DIMS = 18       -- 1-based: dn frontpic width, height
--- ChrisPicAndTrainerCardGFX is a raw 2bpp sheet (not LZ3).  Trainer card
--- draws a 5x7 tile (40x56) box; the ROM sheet is 7x7 tiles and the card
--- crops the usable region.  These must be defined or gen2PlayerFrontPic
--- always pcall-fails and front silently becomes the battle BACK pic.
-local GEN2_PLAYER_PIC_COLS = 7
+-- ChrisPicAndTrainerCardGFX (09:$547F) is a raw 2bpp sheet, not an LZ3 pic.
+-- The label is literal: Chris's 5x7 tile (40x56) trainer-card portrait comes
+-- first, ROW-major, then 6 tiles of card furniture.  The whole blob is only
+-- 656 bytes / 41 tiles, bounded by CardStatusGFX at 09:$570F.
+--
+-- 7x7 was wrong twice over: it asks for 784 bytes, reading 128 bytes past the
+-- end into CardStatusGFX, AND it lays 35 tiles of portrait out five-wide data
+-- into a seven-wide image, which shears every row.  That is the scrambled
+-- trainer card.  Verified by decoding the ROM directly.
+local GEN2_PLAYER_PIC_COLS = 5
 local GEN2_PLAYER_PIC_ROWS = 7
 local GEN2_BASE_GROWTH_RATE = 23
 local GEN2_COLL_TALL_GRASS = 0x14
@@ -214,8 +219,13 @@ local GEN2_SPRITE_ID_OVERRIDES = {
   [0x29] = "SPRITE_TEACHER",
   [0x2A] = "SPRITE_BEAUTY",        -- Route 37 / common trainers
   [0x2B] = "SPRITE_SUPER_NERD",    -- Power Plant / Machine Part
-  [0x2C] = "SPRITE_POKEFAN_M",
-  [0x2D] = "SPRITE_POKEFAN_F",
+  -- $2C is ROCKER, not POKEFAN_M.  Naming $2C/$2D POKEFAN_M/POKEFAN_F made
+  -- this table collide with the row $2E derives natively (PokefanFSpriteGFX ->
+  -- SPRITE_POKEFAN_F): two rows claimed one id, whichever pairs() reached
+  -- last won, and SPRITE_ROCKER stopped being produced at all.
+  [0x2C] = "SPRITE_ROCKER",
+  [0x2D] = "SPRITE_POKEFAN_M",
+  [0x2E] = "SPRITE_POKEFAN_F",
   [0x2F] = "SPRITE_GRAMPS",        -- Bill's grandfather (Route 25)
   [0x30] = "SPRITE_GRANNY",
   [0x31] = "SPRITE_SWIMMER_GUY",
@@ -223,14 +233,16 @@ local GEN2_SPRITE_ID_OVERRIDES = {
   [0x33] = "SPRITE_BIG_SNORLAX",   -- Route 12 / 16
   [0x35] = "SPRITE_ROCKET",        -- Cerulean Gym grunt + residual Rockets
   [0x36] = "SPRITE_ROCKET_GIRL",
+  [0x43] = "SPRITE_OFFICER",
+  [0x45] = "SPRITE_SLOWPOKE",      -- Azalea Town, after the well
   [0x48] = "SPRITE_GYM_GUIDE",
+  [0x52] = "SPRITE_SUDOWOODO",     -- post-reveal Sudowoodo (NOT $6D)
   -- Still / scenery (must NOT be reused for walking NPCs)
   [0x54] = "SPRITE_POKE_BALL",
   [0x59] = "SPRITE_ROCK",
   [0x5A] = "SPRITE_BOULDER",
   [0x5D] = "SPRITE_FRUIT_TREE",
   -- Mon / special sheets
-  [0x6D] = "SPRITE_SUDOWOODO",     -- post-reveal Sudowoodo
   [0x9F] = "SPRITE_SNORLAX",
   -- Variable-sprite constants used as direct ids on some maps
   [0xF4] = "SPRITE_WEIRD_TREE",    -- Sudowoodo pre-reveal
@@ -358,15 +370,69 @@ local function gen2ReadFixedNames(rom, sym, count, entrySize)
   end
   return names
 end
-local GEN2_BG_PALETTE_BANK = 2
-local GEN2_BG_PALETTE_ADDR = 0x775e
-local GEN2_PALETTE_OUTDOOR = { "JOHTO", "KANTO", "JOHTOMODERN", "PLATEAU", "PARK" }
-local GEN2_PALETTE_CAVE    = { "CAVERN", "RUIN", "DUNGEON", "WHIRLPOOL", "ICEROOM", "FACILITY" }
+-- BG palettes are NOT "6 environment sets of 7 palettes" -- that model was a
+-- guess and it is wrong in three separate ways.  What the ROM actually has
+-- (LoadMapPals, 02:$766?/$71??) is:
+--
+--   TilesetBGPalette          flat list of 4-colour palettes, 42 of them,
+--                             running to MapObjectPals
+--   EnvironmentColorsPointers 8 words, one per ENVIRONMENT_* (1-based: 1 TOWN,
+--                             2 ROUTE, 3 INDOOR, 4 CAVE, 5 ENV_5, 6 GATE,
+--                             7 DUNGEON), each -> a 4x8 byte table of INDICES
+--                             into TilesetBGPalette: one row per time of day
+--                             (MORN/DAY/NITE/DARKNESS), eight BG palettes per
+--                             row (index 7 being the white text palette).
+--
+-- So the stride is 8 palettes, not 7, and which palettes a map gets is decided
+-- by its ENVIRONMENT byte and the clock -- not by pattern-matching the tileset
+-- name.  Reading it the old way put caves 14 palettes into the table and
+-- indoor maps 28 in (nearly black).
+--
+-- And the base address was hardcoded to Gold's 02:$775E.  Crystal's
+-- TilesetBGPalette is at 02:$7319, so every Crystal tile came out of unrelated
+-- bytes -- that is the garish red/green/pink overworld.  Everything below
+-- resolves through the symbol table instead.
+-- Kept as ONE table rather than eight `local`s on purpose: this chunk sits
+-- right on Lua's 200-locals-per-function ceiling, and the file stops loading
+-- outright the moment it is crossed.
+local GEN2_PAL = {
+  bank = 2,
+  bgAddrFallback = 0x775e,     -- Gold/Silver, used only if symbols are absent
+  objAddrFallback = 0x78ae,    -- ditto, MapObjectPals
+  bgCountFallback = 42,
+  perRow = 8,
+  todRows = { "MORN", "DAY", "NITE", "DARK" },
+  -- ENVIRONMENT_* is 1-based; index 0 is unused by any real map header but the
+  -- ROM's pointer table still has a slot for it, so the array stays 0-based.
+  defaultEnvironment = 1,      -- TOWN, for a tileset no map declares
+}
 
-local function gen2PaletteSetIndex(tilesetId)
-  local family = (tilesetId:match("^Tileset(.+)$") or tilesetId):upper()
-  for _, f in ipairs(GEN2_PALETTE_CAVE) do if f == family then return 2 end end
-  return 0
+-- BGR555 word -> {r, g, b} 0..255.
+function GEN2_PAL.bgr555(lo, hi)
+  local val = lo + hi * 256
+  return {
+    math.floor(val % 32 * 255 / 31),
+    math.floor(math.floor(val / 32) % 32 * 255 / 31),
+    math.floor(math.floor(val / 1024) % 32 * 255 / 31),
+  }
+end
+
+-- `count` consecutive 4-colour palettes starting at bank:address.
+function GEN2_PAL.read(rom, bank, address, count)
+  local ok, raw = pcall(function()
+    return rom:bytes(bank, address, count * 8)
+  end)
+  if not (ok and type(raw) == "table") then return nil end
+  local out = {}
+  for p = 0, count - 1 do
+    local pal = {}
+    for c = 0, 3 do
+      pal[#pal + 1] = GEN2_PAL.bgr555(raw[p * 8 + c * 2 + 1],
+                                      raw[p * 8 + c * 2 + 2])
+    end
+    out[p + 1] = pal
+  end
+  return out
 end
 
 function RomExtractorGen2.new(romData, version, manifest, progress)
@@ -1228,9 +1294,9 @@ local GEN2_MOVE_EFFECTS = {
   [0x56] = "DISABLE_EFFECT",
   [0x57] = "SPECIAL_DAMAGE_EFFECT",
   [0x58] = "SPECIAL_DAMAGE_EFFECT",
-  [0x5C] = "FLINCH_SIDE_EFFECT2",
+  [0x5C] = "SNORE_EFFECT",           -- flinch hit, but only while asleep
   [0x6C] = "BURN_SIDE_EFFECT1",
-  [0x76] = "CONFUSION_EFFECT",
+  [0x76] = "SWAGGER_EFFECT",         -- confuse AND raise the target's Attack 2
   [0x7D] = "BURN_SIDE_EFFECT2",
   [0x84] = "HEAL_EFFECT",
   [0x85] = "HEAL_EFFECT",
@@ -1243,6 +1309,68 @@ local GEN2_MOVE_EFFECTS = {
   [0x99] = "SWITCH_AND_TELEPORT_EFFECT",
   [0x9B] = "FLY_EFFECT",
   [0x9C] = "DEFENSE_UP1_EFFECT",
+
+  -- ------------------------------------------------------------------
+  -- Gen 2's own effects.  Everything above maps a Gen2 effect byte onto a
+  -- Gen1 effect name the engine already implements; these 47 bytes had no
+  -- mapping at all and silently became NO_ADDITIONAL_EFFECT, so 51 of the
+  -- 251 moves lost their effect entirely.  Ten of them were worse than
+  -- inert: Counter, Mirror Coat, Flail, Reversal, Return, Frustration,
+  -- Present, Magnitude and Hidden Power carry base power 1 in the ROM
+  -- because the handler is supposed to compute the real power.
+  --
+  -- Names follow pret/pokegold constants/move_effect_constants.asm.  An
+  -- effect with no handler yet still lands here rather than vanishing:
+  -- MoveEffects.warnUnknown logs it once and the move falls back to plain
+  -- damage, which is both correct-ish and visible in the log.
+  -- ------------------------------------------------------------------
+  [0x24] = "TRI_ATTACK_EFFECT",
+  [0x59] = "COUNTER_EFFECT",
+  [0x5A] = "ENCORE_EFFECT",
+  [0x5B] = "PAIN_SPLIT_EFFECT",
+  [0x5D] = "CONVERSION2_EFFECT",
+  [0x5E] = "LOCK_ON_EFFECT",
+  [0x5F] = "SKETCH_EFFECT",
+  [0x61] = "SLEEP_TALK_EFFECT",
+  [0x62] = "DESTINY_BOND_EFFECT",
+  [0x63] = "REVERSAL_EFFECT",
+  [0x64] = "SPITE_EFFECT",
+  [0x65] = "FALSE_SWIPE_EFFECT",
+  [0x66] = "HEAL_BELL_EFFECT",
+  [0x69] = "THIEF_EFFECT",
+  [0x6A] = "MEAN_LOOK_EFFECT",
+  [0x6B] = "NIGHTMARE_EFFECT",
+  [0x6D] = "CURSE_EFFECT",
+  [0x6F] = "PROTECT_EFFECT",
+  [0x70] = "SPIKES_EFFECT",
+  [0x71] = "FORESIGHT_EFFECT",
+  [0x72] = "PERISH_SONG_EFFECT",
+  [0x73] = "SANDSTORM_EFFECT",
+  [0x74] = "ENDURE_EFFECT",
+  [0x75] = "ROLLOUT_EFFECT",
+  [0x77] = "FURY_CUTTER_EFFECT",
+  [0x78] = "ATTRACT_EFFECT",
+  [0x79] = "RETURN_EFFECT",
+  [0x7A] = "PRESENT_EFFECT",
+  [0x7B] = "FRUSTRATION_EFFECT",
+  [0x7C] = "SAFEGUARD_EFFECT",
+  [0x7E] = "MAGNITUDE_EFFECT",
+  [0x7F] = "BATON_PASS_EFFECT",
+  [0x80] = "PURSUIT_EFFECT",
+  [0x81] = "RAPID_SPIN_EFFECT",
+  [0x87] = "HIDDEN_POWER_EFFECT",
+  [0x88] = "RAIN_DANCE_EFFECT",
+  [0x89] = "SUNNY_DAY_EFFECT",
+  [0x8A] = "DEFENSE_UP_HIT_EFFECT",
+  [0x8B] = "ATTACK_UP_HIT_EFFECT",
+  [0x8C] = "ALL_UP_HIT_EFFECT",
+  [0x8E] = "BELLY_DRUM_EFFECT",
+  [0x8F] = "PSYCH_UP_EFFECT",
+  [0x90] = "MIRROR_COAT_EFFECT",
+  [0x93] = "EARTHQUAKE_EFFECT",
+  [0x94] = "FUTURE_SIGHT_EFFECT",
+  [0x95] = "GUST_EFFECT",
+  [0x9A] = "BEAT_UP_EFFECT",
 }
 -- effect_chance at or above this picks the high-odds variant of a paired
 -- effect (the engine's *_SIDE_EFFECT2 records sit around 30%)
@@ -1659,28 +1787,75 @@ end
 
 -- Trainer class pics are LZ3 blobs behind a dba table indexed by class - 1,
 -- stored column major like the mon pics and always 7x7 tiles.
+local GEN2_SPECIAL_TABLE_MAX = 255     -- Gold has 129 entries, Crystal 207
 local GEN2_TRAINER_PIC_TILES = 7
+-- Every Gen2 back pic is 6x6, in both cartridges, whatever the species' front
+-- pic_dims say -- so a back pic must never inherit them.
+local GEN2_BACK_PIC_TILES = 6
 
--- FixPicBank (14:5863) rewrites the bank byte of a pic pointer through a
--- from/to table terminated by $FF.  Without it the entries that live past the
--- remap -- Rival2, Champion, Bruno, ... -- decompress from the wrong bank and
--- come out as vertical noise.
+-- FixPicBank rewrites the bank byte of a pic pointer.  Both Gen2 games have
+-- the routine but they do it two completely different ways, and running
+-- Gold's reading over Crystal leaves every pointer on its raw bank:
+--
+--   Gold/Silver (14:$5863)  FixPicBank.FixPicBankTable, from/to pairs
+--                           terminated by $FF.  Only a handful of banks move
+--                           (Rival2, Champion, Bruno, ...); without it those
+--                           decompress from the wrong bank as vertical noise.
+--
+--   Crystal (14:$51C5)      `sub n` then FixPicBank.PicsBanks[stored - n` --
+--                           a flat list of the 24 pic banks ($48..$5F).  EVERY
+--                           pointer needs it: the table stores $19 where the
+--                           pic really lives in bank $4F.  Unfixed, all 67
+--                           trainer pics decompress from garbage.
+--
+-- The `sub` bias is read back out of the routine's own code rather than
+-- assumed, so a revision that renumbers the pic banks still resolves.
 function RomExtractorGen2:gen2PicBankFix()
   if self._picBankFix then return self._picBankFix end
   local fix = {}
-  local sym = self:symbol("FixPicBank.FixPicBankTable")
-  if sym and self.rom then
+  self._picBankFix = fix
+  if not self.rom then return fix end
+
+  local pairsSym = self:symbol("FixPicBank.FixPicBankTable")
+  if pairsSym then
     pcall(function()
-      local address = sym.address
+      local address = pairsSym.address
       while address < 0x8000 do
-        local from = self.rom:byte(sym.bank, address)
+        local from = self.rom:byte(pairsSym.bank, address)
         if from == 0xFF then break end
-        fix[from] = self.rom:byte(sym.bank, address + 1)
+        fix[from] = self.rom:byte(pairsSym.bank, address + 1)
         address = address + 2
       end
     end)
+    return fix
   end
-  self._picBankFix = fix
+
+  local banks = self:symbol("FixPicBank.PicsBanks")
+  local routine = self:symbol("FixPicBank")
+  if not banks then return fix end
+  pcall(function()
+    -- `d6 nn` = SUB n, the only subtract in this eight-byte routine
+    local bias = 0x12
+    if routine then
+      local code = self.rom:bytes(routine.bank, routine.address, 8)
+      for i = 1, #code - 1 do
+        if code[i] == 0xD6 then bias = code[i + 1]; break end
+      end
+    end
+    -- the table runs to whatever symbol follows it in the same bank
+    local limit = 0x8000
+    for _, location in pairs(self.symbols or {}) do
+      local bank, address = tonumber(location[1]), tonumber(location[2])
+      if bank == banks.bank and address and address > banks.address
+          and address < limit then
+        limit = address
+      end
+    end
+    local count = math.min(limit - banks.address, 64)
+    if count <= 0 then return end
+    local raw = self.rom:bytes(banks.bank, banks.address, count)
+    for index, bank in ipairs(raw) do fix[bias + index - 1] = bank end
+  end)
   return fix
 end
 
@@ -1871,6 +2046,189 @@ RomExtractorGen2.GEN2_EGG_GROUPS = {
   [12] = "WATER_2", [13] = "DITTO", [14] = "DRAGON", [15] = "NONE",
 }
 
+-- Crystal pic animations ----------------------------------------------------
+--
+-- Crystal appends animation tiles to the same compressed front pic -- that is
+-- why CYNDAQUIL decompresses to 49 tiles for a 5x5 body -- and drives them
+-- from four tables that exist ONLY in Crystal (Gold and Silver have no
+-- AnimationPointers symbol at all):
+--
+--   AnimationPointers      34:$4695   dw per species -> <Mon>Animation
+--   AnimationIdlePointers  34:$56A3   dw per species -> <Mon>AnimationIdle
+--   BitmasksPointers       34:$64EF   dw per species -> <Mon>Bitmasks
+--   FramesPointers         35:$4000   dw per species -> <Mon>Frames
+--
+-- Everything is bank $34 except the frames, which live in bank $35 below
+-- CHIKORITA and $36 from CHIKORITA up: GetMonFramesPointer (34:$45CE) picks
+-- the bank with a literal `cp $98 / ld c, $35 / jr c / ld c, $36`.
+RomExtractorGen2.GEN2_ANIM_BANK = 0x34
+RomExtractorGen2.GEN2_ANIM_FRAMES_SPLIT = 152    -- CHIKORITA
+-- ceil(w*h/8), the literal table at 34:$4368 indexed by (width - 5)
+RomExtractorGen2.GEN2_ANIM_BITMASK_BYTES = { [5] = 4, [6] = 5, [7] = 7 }
+-- a bounded unroll for setrepeat/dorepeat; the longest real script is well
+-- under this, and the cap keeps a corrupt table from hanging the import
+RomExtractorGen2.GEN2_ANIM_MAX_STEPS = 96
+
+-- One animation script -> a flat list of { frame, duration } steps.
+--
+-- PokeAnim_DoAnimScript (34:$4250) reads 2-byte commands:
+--   $FF ..   end
+--   $FE n    setrepeat n
+--   $FD i    dorepeat -- jump back to command index i, ZERO-based
+--   f  d     hold frame f for d frames ($d173, the speed scaler
+--            PokeAnim_GetDuration folds in, is 0 for every PokeAnims entry,
+--            so d is plain 60Hz frames)
+-- Flattening here rather than at run time keeps the player a cursor over a
+-- list; the repeats are small and never nested in the ROM's own scripts.
+--
+-- NAME: the gen2Pic* prefix is load-bearing.  This file already has a
+-- gen2AnimScript far below for BATTLE MOVE animations, and two `function
+-- RomExtractorGen2:<same name>` definitions do not collide loudly -- the
+-- later one simply wins, so every call here silently reached the move
+-- decoder with a symbol name where it wanted a bank, returned nothing, and
+-- no species got a picAnim record.
+function RomExtractorGen2:gen2PicAnimScript(symbolName, species)
+  local table_ = self:symbol(symbolName)
+  if not (table_ and self.rom) then return nil end
+  local bank = RomExtractorGen2.GEN2_ANIM_BANK
+  local commands = {}
+  local ok = pcall(function()
+    local address = self.rom:word(table_.bank, table_.address + (species - 1) * 2)
+    for _ = 1, RomExtractorGen2.GEN2_ANIM_MAX_STEPS do
+      local op = self.rom:byte(bank, address)
+      local arg = self.rom:byte(bank, address + 1)
+      address = address + 2
+      if op == 0xFF then break end
+      commands[#commands + 1] = { op, arg }
+    end
+  end)
+  if not ok or #commands == 0 then return nil end
+
+  local steps, pc, repeats, guard = {}, 1, 0, 0
+  while commands[pc] and guard < RomExtractorGen2.GEN2_ANIM_MAX_STEPS * 4 do
+    guard = guard + 1
+    local op, arg = commands[pc][1], commands[pc][2]
+    if op == 0xFE then
+      repeats = arg
+      pc = pc + 1
+    elseif op == 0xFD then
+      if repeats > 0 then
+        repeats = repeats - 1
+        -- zero-based command index, hence the +1 into this 1-based list
+        pc = (repeats > 0) and (arg + 1) or (pc + 1)
+        if repeats > 0 and not commands[pc] then break end
+      else
+        pc = pc + 1
+      end
+    else
+      steps[#steps + 1] = { frame = op, dur = math.max(1, arg) }
+      pc = pc + 1
+    end
+  end
+  return steps[1] and steps or nil
+end
+
+-- Rebuild one animation frame's tile layout.
+--
+-- A frame is NOT stored whole.  <Mon>Frames is a dw table; each frame is
+-- `db bitmask_index` followed by one tile byte per SET bit of that bitmask.
+-- The bitmask is walked LSB first across the pic's cells in COLUMN-major
+-- order (the order the pic itself is stored in), and a set bit means
+-- "replace this cell with tile <next byte>" -- an index into the WHOLE
+-- decompressed blob, animation tiles included.  Cells whose bit is clear
+-- keep the base pic's own tile.
+function RomExtractorGen2:gen2PicAnimCells(species, cols, rows, count)
+  if not (self.rom and count > 0) then return nil end
+  local framesTable = self:symbol("FramesPointers")
+  local bitmasks = self:symbol("BitmasksPointers")
+  if not (framesTable and bitmasks) then return nil end
+  local maskBytes = RomExtractorGen2.GEN2_ANIM_BITMASK_BYTES[cols]
+  if not maskBytes then return nil end
+  local animBank = RomExtractorGen2.GEN2_ANIM_BANK
+  local frameBank = (species < RomExtractorGen2.GEN2_ANIM_FRAMES_SPLIT)
+    and 0x35 or 0x36
+  local out = {}
+  local ok = pcall(function()
+    local framesAt =
+      self.rom:word(framesTable.bank, framesTable.address + (species - 1) * 2)
+    local masksAt =
+      self.rom:word(bitmasks.bank, bitmasks.address + (species - 1) * 2)
+    local cells = cols * rows
+    for index = 1, count do
+      local at = self.rom:word(frameBank, framesAt + (index - 1) * 2)
+      local maskIndex = self.rom:byte(frameBank, at)
+      at = at + 1
+      local mask = self.rom:bytes(animBank, masksAt + maskIndex * maskBytes,
+                                  maskBytes)
+      local tiles = {}
+      for cell = 0, cells - 1 do
+        local byte = mask[math.floor(cell / 8) + 1] or 0
+        if math.floor(byte / 2 ^ (cell % 8)) % 2 == 1 then
+          tiles[cell + 1] = self.rom:byte(frameBank, at)
+          at = at + 1
+        else
+          tiles[cell + 1] = cell
+        end
+      end
+      out[index] = tiles
+    end
+  end)
+  return ok and out or nil
+end
+
+-- The whole record for one species, written next to spriteFront.  `sheet` is
+-- a horizontal strip of frames 1..N; frame 0 is the untouched front pic the
+-- caller already saved, so the runtime falls back to that image for it.
+function RomExtractorGen2:gen2PicAnimation(species, cleanName, pixels,
+                                           cols, rows)
+  if not self:symbol("AnimationPointers") then return nil end   -- Gold/Silver
+  local play = self:gen2PicAnimScript("AnimationPointers", species)
+  local idle = self:gen2PicAnimScript("AnimationIdlePointers", species)
+  if not (play or idle) then return nil end
+  local count = 0
+  for _, list in ipairs({ play or {}, idle or {} }) do
+    for _, step in ipairs(list) do
+      if step.frame > count then count = step.frame end
+    end
+  end
+  if count == 0 then return nil end
+  local frames = self:gen2PicAnimCells(species, cols, rows, count)
+  if not frames then return nil end
+
+  -- One frame at a time, each through the SAME decode-then-matte the still
+  -- pic went through -- matteColor0 flood fills from the image border, so
+  -- matting a whole strip at once would let one frame's enclosed white
+  -- pocket escape through its neighbour and come out transparent.  Each
+  -- frame is assembled column-major (the order the pic is stored in) into
+  -- row-major bytes, then pasted into the strip.
+  local relative = "battle/anim/" .. cleanName .. ".png"
+  local ok = pcall(function()
+    local sheet = love.image.newImageData(count * cols * 8, rows * 8)
+    for index, tiles in ipairs(frames) do
+      local raw = {}
+      for byte = 1, cols * rows * 16 do raw[byte] = 0 end
+      for cell = 0, cols * rows - 1 do
+        local dest = ((cell % rows) * cols + math.floor(cell / rows)) * 16
+        local source = (tiles[cell + 1] or cell) * 16
+        for byte = 1, 16 do raw[dest + byte] = pixels[source + byte] or 0 end
+      end
+      local frame = ImageWriter.matteColor0(
+        ImageWriter.decode2bpp(raw, cols * 8, rows * 8))
+      sheet:paste(frame, (index - 1) * cols * 8, 0, 0, 0, cols * 8, rows * 8)
+    end
+    self:saveImage(sheet, relative)
+  end)
+  if not ok then return nil end
+  return {
+    sheet = "assets/generated/" .. relative,
+    count = count,
+    width = cols * 8,
+    height = rows * 8,
+    play = play,
+    idle = idle,
+  }
+end
+
 function RomExtractorGen2:extractPokemon()
   self:beginStage("Gen2 Pokemon")
   local constants = self:constants()
@@ -1945,10 +2303,14 @@ function RomExtractorGen2:extractPokemon()
     local spriteFront = "assets/generated/battle/front/placeholder.png"
     local spriteBack  = "assets/generated/battle/back/placeholder.png"
     local forms
+    -- Crystal only; stays nil on Gold and Silver (no AnimationPointers)
+    local picAnim
 
     if self.rom and cleanName ~= "" then
-      -- one LZ3 pic -> one PNG; returns the asset path or nil
-      local function writePic(symbolName, dir, fileBase)
+      -- one LZ3 pic -> one PNG; returns the asset path or nil.
+      -- tw/th are the DECLARED geometry: base stats pic_dims for a front pic,
+      -- the fixed 6x6 for a back pic.
+      local function writePic(symbolName, dir, fileBase, tw, th)
         local sym = self:symbol(symbolName)
         if not sym then return nil end
         local ok1, raw = pcall(function()
@@ -1957,12 +2319,22 @@ function RomExtractorGen2:extractPokemon()
         if not ok1 or type(raw) ~= "table" then return nil end
         local ok2, pixels = pcall(decompressLz3, raw)
         if not ok2 or type(pixels) ~= "table" or #pixels < 16 then return nil end
-        -- Trust the decompressed size over pic_dims; pics are square
         local tiles = math.floor(#pixels / 16)
-        local side = math.floor(math.sqrt(tiles) + 0.5)
-        local tw, th = picTilesW, picTilesH
-        if side * side == tiles then tw, th = side, side end
-        if tw * th * 16 > #pixels then return nil end
+        -- Geometry comes from the declared size, NOT from the blob length.
+        -- This used to read "the decompressed size is a perfect square, trust
+        -- it over pic_dims", which holds in Gold -- every front pic there
+        -- decompresses to exactly w*h tiles -- but not in Crystal, where the
+        -- frame-animation tiles are appended to the same compressed pic.
+        -- Cyndaquil is 25 pic tiles + 24 animation tiles = 49, so the square
+        -- rule laid its 5x5 pic out 7 wide and scattered it; same for
+        -- Chikorita, Abra, Victreebel, Kingler, Electrode and Shuckle.  The
+        -- base pic is the first w*h tiles, still column-major.
+        if not (tw and th and tw > 0 and th > 0 and tw * th <= tiles) then
+          -- No usable declared size: fall back to the square guess.
+          local side = math.floor(math.sqrt(tiles) + 0.5)
+          if side * side ~= tiles then return nil end
+          tw, th = side, side
+        end
         -- Gen2 pics store tiles column-major; decode2bpp wants row-major
         local reordered = colMajorToRowMajor(pixels, tw, th)
         local relPath = "battle/" .. dir .. "/" .. fileBase .. ".png"
@@ -1974,10 +2346,16 @@ function RomExtractorGen2:extractPokemon()
         end)
         if not ok3 then return nil end
         spritesWritten = spritesWritten + 1
+        -- The tiles past the base pic are Crystal's animation frames, and
+        -- `pixels` is the only place they exist in decompressed form -- build
+        -- the strip here rather than decompressing the pic a second time.
+        if dir == "front" and fileBase == cleanName then
+          picAnim = self:gen2PicAnimation(i, cleanName, pixels, tw, th)
+        end
         return "assets/generated/" .. relPath
       end
 
-      local function trySprite(symSuffix, dir, dest)
+      local function trySprite(symSuffix, dir, dest, tw, th)
         local candidates = { capKey .. symSuffix }
         if cleanName == "nidoran" then
           candidates = { "NidoranM"..symSuffix, "NidoranF"..symSuffix, "Nidoran"..symSuffix }
@@ -1985,13 +2363,18 @@ function RomExtractorGen2:extractPokemon()
           candidates = { "UnownA"..symSuffix, "Unown"..symSuffix }
         end
         for _, candidate in ipairs(candidates) do
-          local path = writePic(candidate, dir, cleanName)
+          local path = writePic(candidate, dir, cleanName, tw, th)
           if path then return path end
         end
         return dest
       end
-      spriteFront = trySprite("Frontpic", "front", spriteFront)
-      spriteBack  = trySprite("Backpic",  "back",  spriteBack)
+      -- Front pics wear the species' own pic_dims; every Gen2 BACK pic is
+      -- 6x6 regardless (verified: all 278 in both cartridges decompress to
+      -- exactly 36 tiles), so they must not inherit a 5x5 species' dims.
+      spriteFront = trySprite("Frontpic", "front", spriteFront,
+                              picTilesW, picTilesH)
+      spriteBack  = trySprite("Backpic",  "back",  spriteBack,
+                              GEN2_BACK_PIC_TILES, GEN2_BACK_PIC_TILES)
 
       -- UNOWN has 26 pics, one per letter, chosen from the DVs
       -- (GetUnownLetter 20:$5749); without them every UNOWN was an "A".
@@ -2002,9 +2385,10 @@ function RomExtractorGen2:extractPokemon()
           local base = "unown_" .. letter:lower()
           forms[index] = {
             letter = letter,
-            spriteFront = writePic("Unown" .. letter .. "Frontpic", "front", base)
-              or spriteFront,
-            spriteBack = writePic("Unown" .. letter .. "Backpic", "back", base)
+            spriteFront = writePic("Unown" .. letter .. "Frontpic", "front", base,
+                                   picTilesW, picTilesH) or spriteFront,
+            spriteBack = writePic("Unown" .. letter .. "Backpic", "back", base,
+                                  GEN2_BACK_PIC_TILES, GEN2_BACK_PIC_TILES)
               or spriteBack,
           }
         end
@@ -2034,6 +2418,9 @@ function RomExtractorGen2:extractPokemon()
       level1Moves = level1Moves, learnset = learn.learnset or {},
       evolutions = learn.evolutions or {},
       spriteFront = spriteFront, spriteBack = spriteBack,
+      -- Crystal's frame animation for the front pic (see gen2PicAnimation);
+      -- absent on Gold and Silver, and the renderer simply holds the still
+      picAnim = picAnim,
       forms = forms,
       -- the species' real CGB colour pair (see extractPalettes);
       -- PaletteFX.monPal honours this ahead of its species->name map, so
@@ -2044,6 +2431,14 @@ function RomExtractorGen2:extractPokemon()
     }
   end
   Logger.info("Gen2 Pokemon: %d sprites extracted", spritesWritten)
+  do
+    -- Crystal only; a Gold or Silver import prints 0 here and that is right.
+    local animated = 0
+    for _, def in pairs(out) do
+      if def.picAnim then animated = animated + 1 end
+    end
+    Logger.info("Gen2 Pokemon: %d pic animations", animated)
+  end
   self:gen2DexEntries(out)
   self:write("pokemon", out)
   self:tick("Gen2 Pokemon", 1, 1)
@@ -2637,6 +3032,9 @@ function RomExtractorGen2:gen2OverworldSprites()
       byIndex[row.index] = {
         id = GEN2_SPRITE_ID_OVERRIDES[row.index] or gen2SpriteConstant(row.base),
         index = row.index,
+        -- the *SpriteGFX label this row came from, so a caller can find a
+        -- row by its pret name rather than by the engine id it maps onto
+        base = row.base,
         file = "sprites/" .. row.base:lower() .. ".png",
         bank = row.bank,
         address = row.address,
@@ -3492,13 +3890,17 @@ function RomExtractorGen2:gen2StoneTable(bank, address, pool)
 end
 
 function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
+  -- Crystal inserts farjumptext at $52 and shifts 88 commands after it, so
+  -- the table has to be chosen per version -- decoding Crystal with Gold's
+  -- table desyncs on the first shifted opcode and never recovers.
+  local commands = Gen2ScriptOps.commandsFor(self.version)
   local rows = {}
   local limit = bank == 0 and 0x4000 or 0x8000
   local pc = address
   for _ = 1, GEN2_SCRIPT_MAX_STEPS do
     if pc >= limit then break end
     local op = self.rom:byte(bank, pc)
-    local command = Gen2ScriptOps.COMMANDS[op + 1]
+    local command = commands[op + 1]
     if not command then
       -- a handful of object "script pointers" in the ROM address text or data;
       -- record the stall instead of walking off into noise
@@ -3553,6 +3955,14 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
       row[2] = self:gen2MenuItems(bank, row[2]) or row[2]
     elseif name == "writecmdqueue" then
       row[2] = self:gen2StoneTable(bank, row[2], pool) or row[2]
+    elseif name == "special" then
+      -- Carry the special's pret NAME alongside its index.  The index alone
+      -- is not portable: Crystal inserts BattleTowerFade at $2F, so 59 of
+      -- Gold's specials sit one slot higher there.  Lowered against Gold's
+      -- numbering, a Crystal script asking for $3D got HealMachineAnim (Poke
+      -- Balls floating over whoever you were talking to) and one asking for
+      -- $4A got GiveShuckle -- which is where the two SHUCKIE came from.
+      row[3] = self:gen2SpecialNames()[row[2]]
     end
     rows[#rows + 1] = row
     pool.instructions = pool.instructions + 1
@@ -4222,6 +4632,36 @@ function RomExtractorGen2:gen2TrainerPalettes(count)
   return out
 end
 
+-- A single TWO-colour palette entry (the trainer / player format): the ROM
+-- stores only the middle pair and LoadPalette_White_Col1_Col2_Black supplies
+-- the white and the black around them.  KrisPalette is literally
+-- TrainerPalettes + 4, so reading it as a four-colour CGB palette (which is
+-- what gen2Palettes does) walks into the NEXT trainer's colours and hands
+-- back {skin, blue, orange, dark orange} -- shade 3, the outline, comes out
+-- orange and the pic speckles.
+--
+-- Returned ZERO-based, because that is what ImageWriter.recolorShades keys
+-- on (`colors[shade]`, shade 0..3).  gen2Palettes' one-based table silently
+-- shifts every shade by one through that lookup.
+function RomExtractorGen2:gen2TwoColorPalette(symbolName)
+  local sym = self:symbol(symbolName)
+  if not (sym and self.rom) then return nil end
+  local ok, raw = pcall(function()
+    return self.rom:bytes(sym.bank, sym.address, 4)
+  end)
+  if not ok or type(raw) ~= "table" then return nil end
+  local pal = { [0] = { 1, 1, 1 }, [3] = { 0, 0, 0 } }
+  for color = 0, 1 do
+    local value = (raw[color * 2 + 1] or 0) + (raw[color * 2 + 2] or 0) * 256
+    pal[color + 1] = {
+      (value % 32) / 31,
+      (math.floor(value / 32) % 32) / 31,
+      (math.floor(value / 1024) % 32) / 31,
+    }
+  end
+  return pal
+end
+
 -- The Gold/Silver title screen (engine/movie/title.asm TitleScreen).
 -- TitleScreenGFX1 decompresses to vTiles2 ($9000 -> BG ids $00-$6F) and
 -- GFX2 to vTiles1 ($8800 -> ids $80-$BB); TitleScreenTilemap is a raw
@@ -4248,7 +4688,146 @@ local GEN2_MASCOT = {
   },
 }
 
+-- Crystal's title screen (engine/movie/title.asm _TitleScreen, 43:$6D67),
+-- read straight off the cartridge.  Nothing about it is shaped like Gold's:
+-- there is no TitleScreenTilemap to copy -- the map is DRAWN by
+-- DrawTitleGraphic as runs of consecutive tile ids -- and Suicune is BG tiles
+-- out of VRAM BANK 1, not an OBJ.
+--
+--   TitleLogoGFX     -> $8800.  LCDC bit 4 is clear, so BG tile ids are
+--                       SIGNED: $80+n is blob[n] and $00+n is blob[128+n].
+--                       One 156-tile blob therefore serves both id ranges --
+--                       the logo AND the copyright line live in it.
+--   TitleSuicuneGFX  -> $8800 in VRAM bank 1, 256 tiles, same signed rule.
+--   TitleCrystalGFX  -> $8000, which only OBJ can reach: it is the sparkle,
+--                       not part of the background.
+--
+--   logo     DrawTitleGraphic at (0,3), b=7 rows, c=20 cols, d=$80, e=$14
+--            -> tile $80 + row*20 + col, wrapping through $FF back into $00
+--   Suicune  LoadSuicuneFrame: 6 rows x 8 cols at (6,12), tile
+--            base + row*16 + col.  SuicuneFrameIterator holds the four bases
+--            and steps one every 8 frames.
+--
+-- The attrmap ByteFills are what give the logo its vertical gradient: rows
+-- 3-4 palette 2, row 5 palette 3, row 6 palette 4, row 7 palette 5, rows 8-9
+-- palette 6, and row 9 columns 5-15 palette 1 for the CRYSTAL VERSION ribbon.
+-- Rows 12-17 are filled with attribute $08 -- bank 1, palette 0 -- which is
+-- what puts Suicune on screen at all.
+local GEN2_CRYSTAL_TITLE = {
+  logoRow = 3, logoRows = 7, logoCols = 20, logoTile = 0x80, logoStride = 0x14,
+  rowPal = { [3] = 2, [4] = 2, [5] = 3, [6] = 4, [7] = 5, [8] = 6, [9] = 6 },
+  ribbonRow = 9, ribbonCol = 5, ribbonCols = 11, ribbonPal = 1,
+  suicuneCol = 6, suicuneRow = 12, suicuneCols = 8, suicuneRows = 6,
+  suicuneStride = 16, suicuneBases = { 0x80, 0x88, 0x00, 0x08 },
+  suicunePal = 0, framesPerStep = 8,
+}
+
+-- Full four-colour CGB palettes (TitleScreenPalettes and friends), as the
+-- 0..1 floats gen2DrawTile wants.  gen2Palettes above is a different format
+-- -- the two-colour trainer/mon tables, where shades 0 and 3 are implied.
+function RomExtractorGen2:gen2CgbPalettes(symbolName, count)
+  local sym = self:symbol(symbolName)
+  if not (sym and self.rom) then return nil end
+  local raw = GEN2_PAL.read(self.rom, sym.bank, sym.address, count)
+  if not raw then return nil end
+  local out = {}
+  for index, pal in ipairs(raw) do
+    local converted = {}
+    for slot, color in ipairs(pal) do
+      converted[slot] = { color[1] / 255, color[2] / 255, color[3] / 255 }
+    end
+    out[index] = converted
+  end
+  return out
+end
+
+function RomExtractorGen2:extractCrystalTitleArt()
+  local logo = self:gen2Lz("TitleLogoGFX")
+  local suicune = self:gen2Lz("TitleSuicuneGFX")
+  local pals = self:gen2CgbPalettes("TitleScreenPalettes", 8)
+  if not (logo and suicune and pals) then return nil end
+
+  local T = GEN2_CRYSTAL_TITLE
+  local logoTiles = gen2SplitTiles(logo)
+  local suicuneTiles = gen2SplitTiles(suicune)
+  -- signed tile id -> index into a blob decompressed contiguously from $8800
+  local function pick(tiles, id)
+    return tiles[id >= 0x80 and (id - 0x80) or (id + 0x80)]
+  end
+
+  -- Background: the logo band over the black the cleared tilemap leaves.
+  local image = ImageWriter.blank(160, 144, 0, 0, 0, 1)
+  local id = T.logoTile
+  for row = 0, T.logoRows - 1 do
+    local rowStart = id
+    local screenRow = T.logoRow + row
+    for col = 0, T.logoCols - 1 do
+      local pal = pals[(T.rowPal[screenRow] or 0) + 1]
+      if screenRow == T.ribbonRow and col >= T.ribbonCol
+          and col < T.ribbonCol + T.ribbonCols then
+        pal = pals[T.ribbonPal + 1] or pal
+      end
+      gen2DrawTile(image, pick(logoTiles, id), col * 8, screenRow * 8, pal)
+      id = (id + 1) % 256
+    end
+    id = (rowStart + T.logoStride) % 256
+  end
+  self:saveImage(image, "title/crystal_title.png")
+
+  -- Suicune: four frames, drawn over the background rather than baked into
+  -- it, so colour 0 has to stay clear the way an OBJ's would.
+  local frames = {}
+  local pal = pals[T.suicunePal + 1]
+  for index, base in ipairs(T.suicuneBases) do
+    local frame = ImageWriter.blank(T.suicuneCols * 8, T.suicuneRows * 8,
+                                    0, 0, 0, 0)
+    for row = 0, T.suicuneRows - 1 do
+      for col = 0, T.suicuneCols - 1 do
+        local tile = pick(suicuneTiles,
+                          (base + row * T.suicuneStride + col) % 256)
+        if tile then
+          for y = 0, 7 do
+            for x = 0, 7 do
+              local shade = tile[y * 8 + x + 1]
+              if shade ~= 0 then
+                local color = pal[shade + 1]
+                frame:setPixel(col * 8 + x, row * 8 + y,
+                               color[1], color[2], color[3], 1)
+              end
+            end
+          end
+        end
+      end
+    end
+    local file = "title/crystal_suicune_" .. index .. ".png"
+    self:saveImage(frame, file)
+    frames[index] = "assets/generated/" .. file
+  end
+
+  local sequence = {}
+  for index = 1, #frames do sequence[index] = { index, T.framesPerStep } end
+
+  return {
+    layout = "gen2",
+    background = {
+      path = "assets/generated/title/crystal_title.png",
+      width = 160, height = 144,
+    },
+    -- no clouds: Crystal's screen is static apart from Suicune
+    mascot = {
+      frames = frames, sequence = sequence,
+      x = T.suicuneCol * 8, y = T.suicuneRow * 8,
+    },
+    music = "Music_TitleScreen",
+  }
+end
+
 function RomExtractorGen2:extractGen2TitleArt()
+  -- Crystal ships none of Gold's title data, so tell them apart by the
+  -- tilemap Gold has and Crystal builds in code.
+  if self:symbol("TitleLogoGFX") and not self:symbol("TitleScreenTilemap") then
+    return self:extractCrystalTitleArt()
+  end
   local mapSym = self:symbol("TitleScreenTilemap")
   local pals = self:gen2Palettes("GSTitleBGPals", 8)
   local gfx1 = self:gen2Lz("TitleScreenGFX1")
@@ -4652,10 +5231,314 @@ local function gen2Rebase(row, base)
   return out
 end
 
+-- Crystal's attract movie (CrystalIntro, 39:$48AC).  Nothing is shared with
+-- Gold's: IntroSceneJumper walks IntroScenes (39:$491E), 28 `dw` that
+-- alternate SETUP scenes -- which load a screen and hand straight on -- with
+-- HOLD scenes that animate for a frame budget.  The budget is the `cp $NN`
+-- guarding NextIntroScene against the counter at $CF64; every number below was
+-- read off the cartridge, not guessed.  docs/CRYSTAL-INTRO.md has the workings.
+--
+-- Each setup scene decompresses a tilemap, an attrmap, a palette and one or
+-- two GFX blobs.  BG tile ids are signed, so the VRAM destination decides
+-- which id range a blob answers for: $9000 covers $00-$7F and $8800 covers
+-- $80-$FF.
+--
+-- `mode` is how the scene is drawn back:
+--   still  the composed screen, held
+--   pulse  the Unown scenes.  CrystalIntro_UnownFade blacks every BG palette
+--          and relights ONE of them, running colours 1-3 up the BWFade /
+--          BlackLBlueFade / BlackBlueFade ramps against a triangle counter --
+--          which is the eyes opening in the dark.  Those screens are stored as
+--          a white-on-black mask and tinted at draw time.
+-- Hung off the module table rather than declared `local`: this chunk sits on
+-- Lua's 200-locals ceiling and stops loading outright if it is crossed.
+RomExtractorGen2.CRYSTAL_INTRO = {
+  -- { key, tilemap, attrmap, palette, { {gfx, vramDest}, ... }, holdFrames,
+  --   mode, scroll }
+  --
+  -- `scroll` is the hSCX motion the hold scene applies, straight out of its
+  -- handler.  Screens are composed at the full 256px BG-map width so the
+  -- window can actually travel.
+  { "unown_a", "IntroUnownATilemap", "IntroUnownAAttrmap", "IntroUnownsPalette",
+    { { "IntroUnownsGFX", 0x9000 } }, 128, "pulse" },
+  { "forest", "IntroBackgroundTilemap", "IntroBackgroundAttrmap",
+    "IntroBackgroundPalette", { { "IntroBackgroundGFX", 0x9000 } }, 128, "still" },
+  { "unown_hi", "IntroUnownHITilemap", "IntroUnownHIAttrmap", "IntroUnownsPalette",
+    { { "IntroUnownsGFX", 0x9000 } }, 128, "pulse" },
+  -- IntroScene8: 64 frames of Intro_PerspectiveScrollBG, then Suicune runs in
+  -- over 30 more ($C3C0 counts $F0 down by 8) -- 94, not the 64 the first `cp`
+  -- suggests.  The perspective scroll is an LY-override warp and is not
+  -- reproduced; the screen holds instead.
+  { "forest", false, false, false, false, 94, "still", nil,
+    -- IntroScene7 spawns Suicune at pixel (216, 108) and parks its x at $F0;
+    -- IntroScene8 holds until frame $40 then walks x down by 8 a frame until
+    -- it hits 0, which is the run across and also what ends the scene.
+    { { name = "suicune", y = 108, x = 0xF0, hold = 0x40, step = -8 } } },
+  -- IntroScene10 rustles the grass, then WOOPER pops out at frame $20 and
+  -- PICHU at $40 (InitSpriteAnimStruct at pixel (48,176) and (128,169) --
+  -- both below the screen, so they rise into view on the hop).
+  { "forest", false, false, false, false, 192, "still", nil, {
+      { name = "wooper", x = 48, y = 176, spawn = 0x20, hop = true },
+      { name = "pichu", x = 128, y = 169, spawn = 0x40, hop = true },
+    } },
+  { "unowns", "IntroUnownsTilemap", "IntroUnownsAttrmap", "IntroUnownsPalette",
+    { { "IntroUnownsGFX", 0x9000 } }, 192, "pulse" },
+  -- IntroScene14 subtracts $0A from hSCX every frame for the whole hold:
+  -- the forest tears past while Suicune runs through it.
+  { "forest", false, false, false, false, 128, "still", { step = -10 },
+    -- IntroScene14: nothing until $40, then x -= 2 a frame; at $60 the jump
+    -- sound plays and x -= 8 instead, until it drops under $88 and
+    -- DeinitializeAllSprites takes Suicune off screen.
+    { { name = "suicune", y = 108, x = 0xF0, hold = 0x40, step = -2,
+        step2At = 0x60, step2 = -8, hideBelow = 0x88 } } },
+  { "suicune_jump", "IntroSuicuneJumpTilemap", "IntroSuicuneJumpAttrmap",
+    "IntroSuicunePalette", { { "IntroSuicuneJumpGFX", 0x9000 } }, 128, "still" },
+  -- IntroScene18 walks hSCX up by 8 a frame until it reaches $60, then holds
+  -- there for the rest of the scene -- the camera settling on Suicune's face.
+  { "suicune_close", "IntroSuicuneCloseTilemap", "IntroSuicuneCloseAttrmap",
+    "IntroSuicuneClosePalette", { { "IntroSuicuneCloseGFX", 0x8800 } }, 96,
+    "still", { from = 0, to = 0x60, step = 8 } },
+  { "suicune_back", "IntroSuicuneBackTilemap", "IntroSuicuneBackAttrmap",
+    "IntroSuicunePalette",
+    { { "IntroSuicuneBackGFX", 0x9000 }, { "IntroUnownsGFX", 0x8800 } }, 152, "still" },
+  { "suicune_back", false, false, false, false, 8, "still" },
+  { "suicune_back", false, false, false, false, 32, "still" },
+  { "crystal_unowns", "IntroCrystalUnownsTilemap", "IntroCrystalUnownsAttrmap",
+    "IntroCrystalUnownsPalette", { { "IntroCrystalUnownsGFX", 0x9000 } }, 128, "pulse" },
+  { "crystal_unowns", false, false, false, false, 24, "pulse" },
+}
+-- The ramps CrystalIntro_UnownFade walks, in the order it writes them into
+-- colours 1, 2 and 3 of the one lit palette.
+RomExtractorGen2.CRYSTAL_INTRO_RAMPS = {
+  { "bw", "CrystalIntro_UnownFade.BWFade" },
+  { "lblue", "CrystalIntro_UnownFade.BlackLBlueFade" },
+  { "blue", "CrystalIntro_UnownFade.BlackBlueFade" },
+}
+RomExtractorGen2.CRYSTAL_RAMP_STEPS = 32
+
+-- The intro's OBJ cast.  SpriteAnimOAMData is a 140-entry table of
+-- `db tileOffset, dw oamData` -- the lead byte is a TILE OFFSET, not a bank,
+-- which is what made Wooper come out as scrambled fragments when it was
+-- ignored.  Each oamData is a count byte then `db dy, dx, tile, attr` rows
+-- drawn as 8x16 objects; attr bit 3 picks the VRAM bank, so Suicune comes out
+-- of IntroSuicuneRunGFX (bank 0) and Pichu/Wooper out of IntroPichuWooperGFX
+-- (bank 1).  OBJ palettes are the back half of the scene's 128-byte palette
+-- block, the part the ROM copies over wOBPals1.
+--
+-- Frameset_IntroSuicune is `6E 03 6F 03 70 03 71 03` then a repeat, i.e. the
+-- four run frames at three ticks each on a loop.
+-- The cast, as { name, oam ids, ticks per frame }.  Framesets read off the
+-- ROM: Frameset_IntroSuicune is `6E 03 6F 03 70 03 71 03` then a repeat --
+-- four run frames at three ticks on a loop.  Frameset_IntroPichu is
+-- `72 20 73 07 74 07 FF`, three frames of the SAME OAM layout at tile offsets
+-- $00/$05/$0A.  Frameset_IntroWooper is a single frame, `75 03 FF`.
+RomExtractorGen2.CRYSTAL_INTRO_ACTORS = {
+  { name = "suicune", oam = { 0x6E, 0x6F, 0x70, 0x71 }, ticks = { 3, 3, 3, 3 } },
+  { name = "pichu",   oam = { 0x72, 0x73, 0x74 },       ticks = { 32, 7, 7 } },
+  { name = "wooper",  oam = { 0x75 },                   ticks = { 3 } },
+}
+RomExtractorGen2.CRYSTAL_INTRO_SHEETS = {
+  [0] = "IntroSuicuneRunGFX",     -- attr bit 3 clear
+  [1] = "IntroPichuWooperGFX",    -- attr bit 3 set
+  palette = "IntroBackgroundPalette",
+}
+
+-- SpriteAnimOAMData entry -> { tileOffset, rows = { {dy, dx, tile, attr} } }
+function RomExtractorGen2:gen2SpriteOam(oamId)
+  local table_ = self:symbol("SpriteAnimOAMData")
+  if not (table_ and self.rom) then return nil end
+  local out
+  pcall(function()
+    local entry = table_.address + oamId * 3
+    local offset = self.rom:byte(table_.bank, entry)
+    local address = self.rom:word(table_.bank, entry + 1)
+    local count = self.rom:byte(table_.bank, address)
+    local rows = {}
+    for index = 0, count - 1 do
+      local raw = self.rom:bytes(table_.bank, address + 1 + index * 4, 4)
+      rows[#rows + 1] = {
+        signedByte(raw[1]), signedByte(raw[2]),
+        (raw[3] + offset) % 256, raw[4],
+      }
+    end
+    out = rows
+  end)
+  return out
+end
+
+function RomExtractorGen2:extractCrystalIntroActors()
+  local cfg = RomExtractorGen2.CRYSTAL_INTRO_SHEETS
+  local sheets = { [0] = self:gen2Lz(cfg[0]), [1] = self:gen2Lz(cfg[1]) }
+  local pals = self:gen2CgbPalettes(cfg.palette, 16)
+  if not (sheets[0] and pals) then return nil end
+  local tiles = {
+    [0] = gen2SplitTiles(sheets[0]),
+    [1] = sheets[1] and gen2SplitTiles(sheets[1]) or {},
+  }
+
+  local out = {}
+  for _, spec in ipairs(RomExtractorGen2.CRYSTAL_INTRO_ACTORS) do
+    local sets = {}
+    local minX, minY, maxX, maxY
+    for index, oamId in ipairs(spec.oam) do
+      local rows = self:gen2SpriteOam(oamId)
+      if not rows then rows = {} end
+      sets[index] = rows
+      for _, row in ipairs(rows) do
+        -- 8x16 objects, so a row covers dy .. dy+15
+        local x0, y0, x1, y1 = row[2], row[1], row[2] + 7, row[1] + 15
+        minX = math.min(minX or x0, x0); minY = math.min(minY or y0, y0)
+        maxX = math.max(maxX or x1, x1); maxY = math.max(maxY or y1, y1)
+      end
+    end
+    if minX then
+      -- one canvas for every frame of this actor so they cannot jitter
+      local width, height = maxX - minX + 1, maxY - minY + 1
+      local originX, originY = -minX, -minY
+      local frames, sequence = {}, {}
+      for index, rows in ipairs(sets) do
+        local image = ImageWriter.blank(width, height, 0, 0, 0, 0)
+        for _, row in ipairs(rows) do
+          local dy, dx, tile, attr = row[1], row[2], row[3], row[4]
+          local bank = math.floor(attr / 8) % 2
+          -- OBJ palettes are the second eight of the block, the half the ROM
+          -- copies over wOBPals1
+          local pal = pals[8 + (attr % 8) + 1]
+          local xFlip = math.floor(attr / 32) % 2 == 1
+          local yFlip = math.floor(attr / 64) % 2 == 1
+          local sheet = tiles[bank] or tiles[0]
+          local top = tile - tile % 2
+          for half = 0, 1 do
+            local pixels = sheet[top + half]
+            if pixels and pal then
+              for y = 0, 7 do
+                for x = 0, 7 do
+                  local shade = pixels[y * 8 + x + 1]
+                  if shade ~= 0 then     -- OBJ colour 0 is transparent
+                    local sx = xFlip and (7 - x) or x
+                    local sy = half * 8 + y
+                    if yFlip then sy = 15 - sy end
+                    local color = pal[shade + 1]
+                    local px, py = originX + dx + sx, originY + dy + sy
+                    if px >= 0 and px < width and py >= 0 and py < height then
+                      image:setPixel(px, py, color[1], color[2], color[3], 1)
+                    end
+                  end
+                end
+              end
+            end
+          end
+        end
+        local file = "intro/crystal_" .. spec.name .. "_" .. index .. ".png"
+        self:saveImage(image, file)
+        frames[index] = "assets/generated/" .. file
+        sequence[index] = { index, spec.ticks[index] or 4 }
+      end
+      out[spec.name] = {
+        frames = frames, sequence = sequence,
+        originX = originX, originY = originY,
+      }
+    end
+  end
+  return next(out) and out or nil
+end
+
+function RomExtractorGen2:gen2CrystalIntroScene(spec)
+  local tilemap = self:gen2Lz(spec[2])
+  local attrmap = self:gen2Lz(spec[3])
+  local pals = self:gen2CgbPalettes(spec[4], 8)
+  if not (tilemap and attrmap and pals) then return nil end
+
+  -- tile id -> pixels, assembled from each blob at the id range its VRAM
+  -- destination covers
+  local tiles = {}
+  for _, load in ipairs(spec[5]) do
+    local blob = self:gen2Lz(load[1])
+    local base = (load[2] == 0x9000 and 0x00)
+      or (load[2] == 0x8800 and 0x80) or nil
+    if blob and base then
+      for index, tile in pairs(gen2SplitTiles(blob)) do
+        local id = (base + index) % 256
+        if tiles[id] == nil then tiles[id] = tile end
+      end
+    end
+  end
+
+  local pulse = spec[7] == "pulse"
+  -- the whole 32-tile BG map row, not just the visible 20, so a scrolling
+  -- scene can window across it and wrap
+  local image = ImageWriter.blank(256, 144, 0, 0, 0, 1)
+  -- a mask keeps the shade so the tint keeps the eye's own shading
+  local maskShades = { [0] = 0, 0.34, 0.67, 1 }
+  for row = 0, 17 do
+    for col = 0, 31 do
+      local index = row * 32 + col + 1
+      local tile = tiles[tilemap[index] or 0]
+      if tile then
+        if pulse then
+          for y = 0, 7 do
+            for x = 0, 7 do
+              local level = maskShades[tile[y * 8 + x + 1]] or 0
+              image:setPixel(col * 8 + x, row * 8 + y, level, level, level, 1)
+            end
+          end
+        else
+          local attr = (attrmap[index] or 0) % 8
+          gen2DrawTile(image, tile, col * 8, row * 8, pals[attr + 1])
+        end
+      end
+    end
+  end
+  local file = "intro/crystal_" .. spec[1] .. ".png"
+  self:saveImage(image, file)
+  return "assets/generated/" .. file
+end
+
+function RomExtractorGen2:extractCrystalIntroArt()
+  if not self:symbol("IntroBackgroundTilemap") then return nil end
+  local scenes, byKey = {}, {}
+  for _, spec in ipairs(RomExtractorGen2.CRYSTAL_INTRO) do
+    local path = byKey[spec[1]]
+    if not path and spec[2] then
+      local ok, result = pcall(self.gen2CrystalIntroScene, self, spec)
+      path = ok and result or nil
+      byKey[spec[1]] = path
+    end
+    if path then
+      scenes[#scenes + 1] =
+        { image = path, frames = spec[6], mode = spec[7], scroll = spec[8],
+          actors = spec[9] }
+    end
+  end
+  if #scenes == 0 then return nil end
+
+  local ramps = {}
+  for _, entry in ipairs(RomExtractorGen2.CRYSTAL_INTRO_RAMPS) do
+    local pals = self:gen2CgbPalettes(entry[2], RomExtractorGen2.CRYSTAL_RAMP_STEPS / 4)
+    -- gen2CgbPalettes groups colours in fours; the ramp is a flat list
+    local flat = {}
+    for _, group in ipairs(pals or {}) do
+      for _, color in ipairs(group) do flat[#flat + 1] = color end
+    end
+    if #flat > 0 then ramps[entry[1]] = flat end
+  end
+
+  local okActors, actors = pcall(self.extractCrystalIntroActors, self)
+  return {
+    layout = "crystal",
+    scenes = scenes,
+    ramps = ramps,
+    actors = (okActors and actors) or nil,
+    music = "Music_CrystalOpening",
+  }
+end
+
 -- GoldSilverIntro's attract movie (bank $39): the Nintendo copyright, the
 -- GAME FREAK presents splash, then the ocean and grass scenes the starters
 -- appear over.
 function RomExtractorGen2:extractGen2IntroArt()
+  local crystal = self:extractCrystalIntroArt()
+  if crystal then return crystal end
   local intro = { layout = "gen2" }
 
   local copySym = self:symbol("CopyrightGFX")
@@ -4733,8 +5616,20 @@ local GEN2_TOWN_MAP_PALETTES = 6
 local GEN2_LANDMARK_BYTES = 4
 local GEN2_LANDMARK_COUNT = 95
 
-function RomExtractorGen2:gen2TownMapPalettes()
-  local sym = self:symbol("PokegearPals")
+-- The six BG palettes the town map and Pokegear casing are drawn with.
+--
+-- Gold calls the table PokegearPals; Crystal has no such symbol -- it splits
+-- them into MalePokegearPals and FemalePokegearPals, which differ only in
+-- palette 3, the colour of the gear's shell.  With neither name resolving,
+-- this returned an EMPTY table and both the Pokegear map and the Fly map drew
+-- every tile on palette nil, i.e. black.
+--
+-- `which` picks the Crystal variant ("female"); anything else takes the male
+-- table, which is byte-identical to Gold's.
+function RomExtractorGen2:gen2TownMapPalettes(which)
+  local sym
+  if which == "female" then sym = self:symbol("FemalePokegearPals") end
+  sym = sym or self:symbol("PokegearPals") or self:symbol("MalePokegearPals")
   local pals = {}
   if not (sym and self.rom) then return pals end
   pcall(function()
@@ -5029,20 +5924,27 @@ function RomExtractorGen2:gen2Pokegear()
     radio = decodeRleSymbol("RadioTilemapRLE") or FALLBACK.radio,
   }
 
-  local pals = self:gen2TownMapPalettes()
-  for index, colors in pairs(pals) do
-    local entry = {}
-    for c = 0, 3 do
-      local rgb = colors[c] or { 0, 0, 0 }
-      entry[c + 1] = {
-        math.floor(rgb[1] * 255 + 0.5),
-        math.floor(rgb[2] * 255 + 0.5),
-        math.floor(rgb[3] * 255 + 0.5),
-      }
+  -- Crystal recolours the gear's shell for KRIS, so ship both tables and let
+  -- the runtime pick; Gold has only the one and `female` resolves to it.
+  local function collect(which)
+    local built = {}
+    for index, colors in pairs(self:gen2TownMapPalettes(which)) do
+      local entry = {}
+      for c = 0, 3 do
+        local rgb = colors[c] or { 0, 0, 0 }
+        entry[c + 1] = {
+          math.floor(rgb[1] * 255 + 0.5),
+          math.floor(rgb[2] * 255 + 0.5),
+          math.floor(rgb[3] * 255 + 0.5),
+        }
+      end
+      if type(index) == "number" then built[index + 1] = entry end
     end
-    if type(index) == "number" then
-      out.palettes[index + 1] = entry
-    end
+    return built
+  end
+  out.palettes = collect(nil)
+  if self:symbol("FemalePokegearPals") then
+    out.palettesFemale = collect("female")
   end
   if not out.palettes[1] then
     out.palettes[1] = {
@@ -5085,39 +5987,199 @@ function RomExtractorGen2:gen2Pokegear()
   return out
 end
 
+-- Crystal lets you play as KRIS, and ships a complete parallel asset set for
+-- her.  The formats are NOT uniform with Chris's, which is the trap here:
+--
+--   KrisPic / KrisCardPic   raw, COLUMN-major (like a mon pic), same as
+--                           Chris's Crystal card pic
+--   KrisBackpic             raw 6x6 -- where ChrisBackpic is LZ3 compressed
+--   KrisSpriteGFX           an ordinary overworld sheet, same geometry as
+--                           ChrisSpriteGFX
+--   KrisNameMenuHeader.FemaleNames  the default-name list the naming screen
+--                           offers a girl
+--
+-- Everything is emitted under `playerForms`, one record per gender, so the
+-- runtime picks a whole consistent set from save.player.gender rather than
+-- second-guessing per asset.
+RomExtractorGen2.PLAYER_FORM_GEOMETRY = {
+  card = { cols = 5, rows = 7 },   -- trainer card portrait
+  back = { cols = 6, rows = 6 },   -- battle back pic
+  intro = { cols = 7, rows = 7 },  -- the bigger pic the Oak speech shows
+}
+
+-- A raw (uncompressed) column-major pic -> PNG.  With `pal` the four shades
+-- are baked in, which is how KRIS keeps her blue hair: the trainer card and
+-- the Oak intro colour the player pic through the SGB zone shader, and that
+-- shader only knows CHRIS's browns.
+function RomExtractorGen2:gen2RawColumnPic(symbolName, cols, rows, relative, pal)
+  local sym = self:symbol(symbolName)
+  if not (sym and self.rom) then return nil end
+  local ok = pcall(function()
+    local raw = self.rom:bytes(sym.bank, sym.address, cols * rows * 16)
+    assert(raw and #raw >= cols * rows * 16, "short pic: " .. symbolName)
+    local pixels = colMajorToRowMajor(raw, cols, rows)
+    local image
+    if pal and ImageWriter.decode2bppColor then
+      image = ImageWriter.decode2bppColor(pixels, cols * 8, rows * 8, pal, false)
+    else
+      image = ImageWriter.decode2bpp(pixels, cols * 8, rows * 8)
+    end
+    self:saveImage(ImageWriter.matteColor0(image), relative)
+  end)
+  return ok and ("assets/generated/" .. relative) or nil
+end
+
+-- The default names Crystal offers for each gender.  NameMenuHeader's list is
+-- a run of VARIABLE-length $50-terminated strings, not fixed-width records --
+-- reading it on an 8-byte stride splices them into each other ("MECHRIS").
+-- The first entry is the menu's own NEW NAME row and the last is its trailing
+-- label, so the real names are the ones in between.
+function RomExtractorGen2:gen2NamePresets(symbolName, wanted)
+  local sym = self:symbol(symbolName)
+  if not (sym and self.rom) then return nil end
+  local all = {}
+  pcall(function()
+    local current, address = {}, sym.address
+    for _ = 1, 96 do
+      local byte = self.rom:byte(sym.bank, address)
+      address = address + 1
+      if byte == 0x50 then
+        if #current > 0 then
+          all[#all + 1] = gen2DecodeString(current, #current)
+          current = {}
+        end
+        if #all >= (wanted or 5) + 1 then break end
+      elseif byte == 0xFF or byte == 0x00 then
+        break
+      else
+        current[#current + 1] = byte
+      end
+    end
+  end)
+  local names = {}
+  for index = 2, #all do
+    local text = all[index]
+    -- drop the menu's own trailing label and anything that decoded oddly
+    if type(text) == "string" and text ~= "" and not text:find("NAME") then
+      names[#names + 1] = text
+    end
+  end
+  return names[1] and names or nil
+end
+
+-- The two records themselves.  Deliberately independent of the sprite pass --
+-- extractField runs BEFORE extractRuntimeScaffolds, so this can only name
+-- Kris's sprite ids as strings; registerGen2KrisSprites below creates them.
+function RomExtractorGen2:extractGen2PlayerForms()
+  -- Gold and Silver have no second player character; nothing to choose.
+  if not self:symbol("KrisPic") then return nil end
+  local G = RomExtractorGen2.PLAYER_FORM_GEOMETRY
+  local krisPal = self:gen2TwoColorPalette("KrisPalette")
+  return {
+    boy = {
+      label = "BOY",
+      card = "assets/generated/battle/chrisf.png",
+      -- ChrisPic is the 7x7 the Oak speech shows, the counterpart of KrisPic;
+      -- it is NOT baked, because Chris is what the SGB zone shader already
+      -- knows how to colour (see trueColor on the girl record).
+      intro = self:gen2RawColumnPic("ChrisPic", G.intro.cols, G.intro.rows,
+                                    "battle/chrisintro.png", nil),
+      -- gen2SpriteConstant maps ChrisSpriteGFX / ChrisBikeSpriteGFX onto the
+      -- engine's SPRITE_RED / SPRITE_RED_BIKE ids (GEN2_SPRITE_ID_OVERRIDES
+      -- $01/$02), so naming SPRITE_CHRIS here matched nothing and the boy
+      -- record silently fell through to field.playerSprites.
+      back = "assets/generated/battle/chrisb.png",
+      walk = "SPRITE_RED", bike = "SPRITE_RED_BIKE",
+      names = self:gen2NamePresets("ChrisNameMenuHeader.MaleNames", 5),
+    },
+    girl = {
+      label = "GIRL",
+      -- KrisPalette is the ordinary two-colour trainer format (white and
+      -- black implied), and its first entry is her skin and that blue hair.
+      trueColor = true,
+      card = self:gen2RawColumnPic("KrisCardPic", G.card.cols, G.card.rows,
+                                   "battle/krisf.png", krisPal),
+      -- the Oak intro shows the bigger 7x7 pic, not the card portrait
+      intro = self:gen2RawColumnPic("KrisPic", G.intro.cols, G.intro.rows,
+                                    "battle/krisintro.png", krisPal),
+      -- KrisBackpic is the odd one out: ChrisBackpic is LZ3 and hers is a
+      -- raw INCBIN, still column-major, still 6x6 = 36 tiles (the gap to the
+      -- next label in bank $22 is exactly $240 bytes).  GetKrisBackpic's
+      -- `ld bc, $2231` is NOT the size -- $31 = 49 is the 7x7 VRAM box
+      -- Get2bpp fills, so it copies 13 tiles of whatever follows and the
+      -- battle never draws them.  Reading 49 tiles here is what shredded
+      -- her: at 49 tiles the column stride is 7, not 6.
+      back = self:gen2RawColumnPic("KrisBackpic", G.back.cols, G.back.rows,
+                                   "battle/krisb.png", krisPal),
+      walk = "SPRITE_KRIS", bike = "SPRITE_KRIS_BIKE",
+      names = self:gen2NamePresets("KrisNameMenuHeader.FemaleNames", 5),
+    },
+  }
+end
+
+-- Kris's overworld sheets ride on Chris's row geometry -- same width, height
+-- and frame count, different pixels -- and are registered as their own sprite
+-- ids so playerSprites.walk can simply name one.
+--
+-- Crystal's own OverworldSprites table already carries her: KrisSpriteGFX is
+-- slot 95 (SPRITE_KRIS, $60) and KrisBikeSpriteGFX slot 96, both on OBJ
+-- palette 1 rather than Chris's 0.  So the normal sprite pass writes both
+-- sheets correctly and this is only a backstop for a rip where that row is
+-- missing -- it must NOT overwrite the real row, whose palette is right.
+function RomExtractorGen2:registerGen2KrisSprites(sprites, spriteDefFor)
+  if not (sprites and spriteDefFor and self:symbol("KrisSpriteGFX")) then return end
+  for _, pair in ipairs({
+    { "KrisSpriteGFX", "Chris", "SPRITE_KRIS", "sprites/kris.png" },
+    { "KrisBikeSpriteGFX", "ChrisBike", "SPRITE_KRIS_BIKE", "sprites/kris_bike.png" },
+  }) do
+    local sym = self:symbol(pair[1])
+    local def = sprites[pair[3]] and nil or spriteDefFor(pair[2])
+    if sym and def and self.rom then
+      pcall(function()
+        local raw = self.rom:bytes(sym.bank, sym.address, def.bytes)
+        assert(#raw >= def.bytes, "short Kris sheet")
+        self:saveImage(ImageWriter.decode2bpp(raw, def.width, def.height),
+                       pair[4])
+        local built = {}
+        for key, value in pairs(sprites[def.id] or {}) do built[key] = value end
+        built.id = pair[3]
+        built.image = "assets/generated/" .. pair[4]
+        sprites[pair[3]] = built
+      end)
+    end
+  end
+end
+
 function RomExtractorGen2:gen2PlayerFrontPic()
   -- Prefer the dedicated trainer-card/front sheet; fall through alternate
   -- pret labels so a symbols file rename does not leave the card on the
   -- battle back pic.
+  -- Gold packs the card portrait and the card's own tiles into one sheet and
+  -- stores it ROW-major.  Crystal splits them -- ChrisCardPic / KrisCardPic
+  -- for the portrait, TrainerCardGFX for the furniture -- and stores the
+  -- portrait COLUMN-major, the way it stores mon pics.  Reading Crystal's with
+  -- Gold's row order is what shredded the block over ID No./MONEY.
   local sym = self:symbol("ChrisPicAndTrainerCardGFX")
     or self:symbol("ChrisPicFront")
     or self:symbol("PlayerPic")
-    or self:symbol("ChrisCardPic")
+  local columnMajor = false
+  if not sym then
+    sym = self:symbol("ChrisCardPic")
+    columnMajor = sym and true or false
+  end
   if not (sym and self.rom) then return nil end
   local relative = "battle/chrisf.png"
   local cols, rows = GEN2_PLAYER_PIC_COLS, GEN2_PLAYER_PIC_ROWS
   local ok = pcall(function()
     local raw = self.rom:bytes(sym.bank, sym.address, cols * rows * 16)
     assert(raw and #raw >= cols * rows * 16, "short Chris front pic")
+    if columnMajor then raw = colMajorToRowMajor(raw, cols, rows) end
     self:saveImage(ImageWriter.matteColor0(
       ImageWriter.decode2bpp(raw, cols * 8, rows * 8)), relative)
   end)
-  if not ok then
-    -- One more try: some builds store the front as an LZ3 blob like other
-    -- trainer pics (ChrisPic).  Decompress and re-save if the raw read failed.
-    local alt = self:symbol("ChrisPic")
-    if alt and self.rom then
-      ok = pcall(function()
-        local raw = self.rom:bytes(alt.bank, alt.address, 0x8000 - alt.address)
-        local pixels = decompressLz3(raw)
-        local tiles = math.floor(math.sqrt(math.floor(#pixels / 16)) + 0.5)
-        assert(tiles >= 1, "short ChrisPic LZ3")
-        self:saveImage(ImageWriter.matteColor0(ImageWriter.decode2bpp(
-          colMajorToRowMajor(pixels, tiles, tiles), tiles * 8, tiles * 8)),
-          relative)
-      end)
-    end
-  end
+  -- No LZ3 fallback: unlike the back pic, the trainer-card front is NOT a
+  -- compressed trainer pic.  There is no `ChrisPic` label in pokegold, so a
+  -- decompress attempt here could only ever produce garbage.
   if not ok then return nil end
   return "assets/generated/" .. relative
 end
@@ -5245,23 +6307,41 @@ function RomExtractorGen2:gen2TreeMons()
       if entry and set >= 1 and set <= 3 then out.maps[entry.label] = set end
       address = address + 3
     end
+    -- A tree set is TWO $FF-terminated tables back to back, common then rare,
+    -- and a row is `db chance, species, level` -- exactly the shape the rock
+    -- table below already uses.  There is NO leading total-chance byte.
+    --
+    -- Reading it as a rate byte plus six `species, level, chance` rows shifted
+    -- every field by one and ran a row past the terminator, so headbutt spawned
+    -- nonsense: the Forest set's real first row is `50, CATERPIE, 10`, which
+    -- came out as species 10 / level 10 / chance 15.  Verified by decoding
+    -- TreeMonSet_Forest (2E:$649C) against pret's source.
+    local function readTable(at)
+      local rows = {}
+      for _ = 1, 16 do
+        local chance = self.rom:byte(setsSym.bank, at)
+        if chance == 0xFF then
+          at = at + 1
+          break
+        end
+        rows[#rows + 1] = {
+          chance = chance,
+          species = string.format("SPECIES_%03d",
+            self.rom:byte(setsSym.bank, at + 1)),
+          level = self.rom:byte(setsSym.bank, at + 2),
+        }
+        at = at + 3
+      end
+      return rows, at
+    end
+    -- Sets 1 and 2 are the only tree sets any map is tagged with; 3 is the
+    -- rock-smash list read below, and GetTreeMons (2E:$645A) rejects 0 and
+    -- anything >= 4, so the rows tagged 5 really are "no trees here".
     for set = 1, 2 do
       local at = self.rom:word(setsSym.bank, setsSym.address + set * 2)
-      local halves = {}
-      for half = 1, 2 do
-        local rows = { rate = self.rom:byte(setsSym.bank, at) }
-        at = at + 1
-        for _ = 1, 6 do
-          rows[#rows + 1] = {
-            species = string.format("SPECIES_%03d", self.rom:byte(setsSym.bank, at)),
-            level = self.rom:byte(setsSym.bank, at + 1),
-            chance = self.rom:byte(setsSym.bank, at + 2),
-          }
-          at = at + 3
-        end
-        halves[half] = rows
-      end
-      out.sets[set] = { common = halves[1], rare = halves[2] }
+      local common, afterCommon = readTable(at)
+      local rare = readTable(afterCommon)
+      out.sets[set] = { common = common, rare = rare }
     end
     local at = self.rom:word(setsSym.bank, setsSym.address + 3 * 2)
     for _ = 1, 8 do
@@ -5603,6 +6683,207 @@ function RomExtractorGen2:gen2Egg()
   return out
 end
 
+-- MapObjectPals (02:$78AE): eight OBJ palettes, four BGR555 colours each.
+-- Memoised and shared -- the overworld sprite sheets bake one of these in,
+-- and so does the heal machine overlay, which runs in an earlier stage.
+-- MapObjectPals: the CGB OBJ palettes overworld sprites wear.  Symbol-resolved
+-- for the same reason TilesetBGPalette is -- it sits at 02:$78AE in Gold and
+-- 02:$7469 in Crystal, and the hardcoded Gold address is why Crystal's people
+-- came out miscoloured.
+function RomExtractorGen2:gen2ObjPalettes()
+  if self._gen2ObjPals then return self._gen2ObjPals end
+  local out = {}   -- 0-based: out[i] = 4-colour palette
+  self._gen2ObjPals = out
+  if not self.rom then return out end
+  local sym = self:symbol("MapObjectPals")
+  local bank = sym and sym.bank or GEN2_PAL.bank
+  local addr = sym and sym.address or GEN2_PAL.objAddrFallback
+  local pals = GEN2_PAL.read(self.rom, bank, addr, 8)
+  if not pals then return out end
+  for p = 0, 7 do out[p] = pals[p + 1] end
+  return out
+end
+
+-- The flat TilesetBGPalette list (1-based here; index 1 is the ROM's palette
+-- 0).  Its length is the gap to MapObjectPals, which is exactly 336 bytes /
+-- 42 palettes in both Gold and Crystal -- measured rather than assumed, so a
+-- ROM that sizes it differently still reads whole palettes.
+function RomExtractorGen2:gen2BgPalettes()
+  if self._gen2BgPals ~= nil then return self._gen2BgPals or nil end
+  self._gen2BgPals = false
+  if not self.rom then return nil end
+  local sym = self:symbol("TilesetBGPalette")
+  local bank = sym and sym.bank or GEN2_PAL.bank
+  local addr = sym and sym.address or GEN2_PAL.bgAddrFallback
+  local count = GEN2_PAL.bgCountFallback
+  local nextSym = self:symbol("MapObjectPals")
+  if sym and nextSym and nextSym.bank == bank and nextSym.address > addr then
+    count = math.floor((nextSym.address - addr) / 8)
+  end
+  local pals = GEN2_PAL.read(self.rom, bank, addr, count)
+  if not pals then return nil end
+  self._gen2BgPals = pals
+  return pals
+end
+
+-- EnvironmentColorsPointers -> env (0..7) -> { MORN = {8 palettes}, DAY = ...,
+-- NITE = ..., DARK = ... }, each palette already resolved to RGB.
+function RomExtractorGen2:gen2EnvPalettes()
+  if self._gen2EnvPals ~= nil then return self._gen2EnvPals or nil end
+  self._gen2EnvPals = false
+  local bgPals = self:gen2BgPalettes()
+  local ptrSym = self:symbol("EnvironmentColorsPointers")
+  if not (bgPals and ptrSym and self.rom) then return nil end
+  local out = {}
+  local rowCache = {}
+  local ok = pcall(function()
+    for env = 0, 7 do
+      local tableAddr = self.rom:word(ptrSym.bank, ptrSym.address + env * 2)
+      local rows = rowCache[tableAddr]
+      if not rows then
+        -- 4 times of day x 8 palettes, one index byte each
+        local raw = self.rom:bytes(ptrSym.bank, tableAddr,
+                                   #GEN2_PAL.todRows * GEN2_PAL.perRow)
+        rows = {}
+        for t, name in ipairs(GEN2_PAL.todRows) do
+          local row = {}
+          for p = 1, GEN2_PAL.perRow do
+            local index = raw[(t - 1) * GEN2_PAL.perRow + p]
+            row[p] = bgPals[(index or 0) + 1] or bgPals[1]
+          end
+          rows[name] = row
+        end
+        rowCache[tableAddr] = rows
+      end
+      out[env] = rows
+    end
+  end)
+  if not ok then return nil end
+  self._gen2EnvPals = out
+  return out
+end
+
+-- MapScenes (25:$4000 in Gold, 13:$501E in Crystal) is `db group, db number,
+-- dw sceneVar` per map that has scene scripts -- 59 entries in Gold, 79 in
+-- Crystal -- and each sceneVar is one SRAM byte holding that map's current
+-- scene id.
+--
+-- Nothing was reading it.  A battery save carries these bytes, but the
+-- importer had no offsets for them, so every imported game came up with every
+-- scene at 0 and the one-time cutscenes re-armed: Elm's errand fires again and
+-- New Bark Town will not let you leave, and the same shape of thing happens in
+-- Violet City.  Event flags alone do not cover it -- scenes are a separate
+-- store, and the port keeps them in save.g2Scenes keyed by map registry id.
+function RomExtractorGen2:gen2MapSceneVars()
+  if self._gen2SceneVars then return self._gen2SceneVars end
+  local out = {}
+  self._gen2SceneVars = out
+  local sym = self:symbol("MapScenes")
+  local index = self:gen2MapIndex()
+  if not (sym and index and self.rom) then return out end
+  pcall(function()
+    for entry = 0, 127 do
+      local offset = sym.address + entry * 4
+      if offset + 3 >= 0x8000 then break end
+      local group = self.rom:byte(sym.bank, offset)
+      if group == 0xFF then break end
+      local number = self.rom:byte(sym.bank, offset + 1)
+      local address = self.rom:word(sym.bank, offset + 2)
+      local header = index[group * 256 + number]
+      if header and header.label then
+        out[header.label] = address
+      end
+    end
+  end)
+  return out
+end
+
+-- SpecialsPointers index -> the pret label of the routine it points at, so a
+-- `special` can be lowered by NAME instead of by a number that means different
+-- things in the two games.  Gold has 129 entries and Crystal 207, and they
+-- agree only up to $2E: Crystal inserts BattleTowerFade at $2F and everything
+-- after it shifts by one.
+function RomExtractorGen2:gen2SpecialNames()
+  if self._gen2SpecialNames then return self._gen2SpecialNames end
+  local out = {}
+  self._gen2SpecialNames = out
+  local sym = self:symbol("SpecialsPointers")
+  if not (sym and self.rom and self.symbols) then return out end
+  -- (bank, address) -> label, so a pointer can be named without scanning
+  local byLocation = {}
+  for name, location in pairs(self.symbols) do
+    if type(name) == "string" and type(location) == "table" then
+      local key = tonumber(location[1]) * 0x10000 + tonumber(location[2])
+      local prev = byLocation[key]
+      -- several labels can share an address; prefer the shortest real name
+      if not prev or #name < #prev then byLocation[key] = name end
+    end
+  end
+  pcall(function()
+    for index = 0, GEN2_SPECIAL_TABLE_MAX do
+      local offset = sym.address + index * 3
+      if offset + 2 >= 0x8000 then break end
+      local bank = self.rom:byte(sym.bank, offset)
+      local address = self.rom:word(sym.bank, offset + 1)
+      local name = byLocation[bank * 0x10000 + address]
+      if name then out[index] = name end
+    end
+  end)
+  return out
+end
+
+-- Which ENVIRONMENT_* a tileset is actually used under, taken from the map
+-- headers rather than from the tileset's NAME.  A tileset used by maps of
+-- several environments takes the commonest; ties break toward the lower env so
+-- the answer does not depend on table iteration order.
+function RomExtractorGen2:gen2TilesetEnvironments()
+  if self._gen2TilesetEnv then return self._gen2TilesetEnv end
+  local out = {}
+  self._gen2TilesetEnv = out
+  local index = self:gen2MapIndex()
+  if not index then return out end
+  -- id -> "TilesetJohto" the same way every other caller resolves it; the
+  -- scaffold's tilesetOrder is deliberately empty (it suppressed ROM
+  -- inference), so indexing that would have found nothing.
+  local names = self:gen2TilesetNames()
+  local tally = {}
+  for _, entry in pairs(index) do
+    local name = names[entry.tileset or -1]
+    local env = entry.environment
+    if name and type(env) == "number" and env >= 0 and env <= 7 then
+      tally[name] = tally[name] or {}
+      tally[name][env] = (tally[name][env] or 0) + 1
+    end
+  end
+  for name, counts in pairs(tally) do
+    local best, bestCount = nil, -1
+    for env = 0, 7 do
+      local n = counts[env] or 0
+      if n > bestCount then best, bestCount = env, n end
+    end
+    out[name] = best
+  end
+  return out
+end
+
+-- HealMachineAnim.PC_ElmsLab_OAM (04:$67B5), read straight out of the ROM:
+-- two $7C monitor tiles then three rows of two $7D balls, the right column
+-- x-flipped.  Raw shadow-OAM bytes, so screen = x - 8 / y - 16.
+--
+-- Gen1's PokeCenterOAMData puts the balls at x 40/48; Gen2 puts them at
+-- 24/32, which is why they sat a full 16px right of the machine.  Every row
+-- carries attribute $16/$36 -- CGB OBJ palette 6 -- so the overlay is
+-- colourable rather than the DMG greys it was drawing.
+local GEN2_HEAL_OAM_PALETTE = 6
+local GEN2_HEAL_MACHINE_LAYOUT = {
+  monitor = { { 26, 16 }, { 30, 16 } },
+  balls = {
+    { 24, 22 }, { 32, 22, true },
+    { 24, 27 }, { 32, 27, true },
+    { 24, 32 }, { 32, 32, true },
+  },
+}
+
 function RomExtractorGen2:extractField()
   self:beginStage("Gen2 field")
   local src = copy(self.manifest.field or {})
@@ -5653,6 +6934,53 @@ function RomExtractorGen2:extractField()
     src.gen2CardFlip = self:gen2CardFlip() or src.gen2CardFlip
     src.egg = self:gen2Egg() or src.egg
     src.pokegear = self:gen2Pokegear() or src.pokegear
+    -- Crystal's boy/girl asset sets; nil on Gold and Silver, which have only
+    -- Chris.  Kris's overworld sheets are registered later, by the sprite
+    -- pass, but the record only names their ids so order does not matter.
+    src.playerForms = self:extractGen2PlayerForms() or src.playerForms
+    -- MapScenes -> the per-map scene byte each one lives in.  Keyed by the
+    -- map registry id the script VM keys save.g2Scenes with, so the battery
+    -- save converter can read them straight across.  Without this every
+    -- imported save came up with every scene at 0 and the one-time cutscenes
+    -- re-armed -- Elm's errand fires again and New Bark Town will not let you
+    -- leave.
+    do
+      local sceneVars = self:gen2MapSceneVars()
+      if next(sceneVars) then
+        local byLabel = {}
+        for mapId, def in pairs(self:readSourceTable("maps") or {}) do
+          if type(def) == "table" and type(def.label) == "string" then
+            byLabel[def.label] = mapId
+          end
+        end
+        local scenes = {}
+        for label, address in pairs(sceneVars) do
+          if byLabel[label] then scenes[byLabel[label]] = address end
+        end
+        if next(scenes) then src.mapSceneVars = scenes end
+      end
+    end
+    -- The Pokemon Center heal machine overlay (the monitor tile and the ball
+    -- tile OverworldController's fxHeal blits).  `special HealMachineAnim`
+    -- always ran and the jingle always played, but src.overworldFx came in
+    -- from the Gen1 manifest pointing at assets/generated/fx/heal_machine.png
+    -- -- a file only RomExtractor (Gen1) ever writes.  The load pcall-failed,
+    -- healMachineImg latched to false, and the nurse healed with no visible
+    -- animation at all.  HealMachineAnim.HealMachineGFX is 2 raw 2bpp tiles
+    -- stacked vertically, which is exactly the 8x16 sheet fxHeal quads up.
+    src.overworldFx = src.overworldFx or {}
+    local healLayout = copy(GEN2_HEAL_MACHINE_LAYOUT)
+    healLayout.gen2ObjPal = self:gen2ObjPalettes()[GEN2_HEAL_OAM_PALETTE]
+    src.overworldFx.healMachine =
+      self:gen2RawSheet("HealMachineAnim.HealMachineGFX", 1, 2,
+        "fx/heal_machine.png")
+      or self:gen2RawSheet("HealMachineGFX", 1, 2, "fx/heal_machine.png")
+      -- Never leave the inherited Gen1 path in place: it names a png this
+      -- importer does not write, and a dangling entry is worse than none.
+      or nil
+    if src.overworldFx.healMachine then
+      for k, v in pairs(healLayout) do src.overworldFx.healMachine[k] = v end
+    end
     -- Prefer the pokegear Chris icon (PAL_OW_RED) on the town map too
     if src.pokegear and src.pokegear.playerIcon and src.townMap then
       src.townMap.playerIcon = src.pokegear.playerIcon
@@ -6435,6 +7763,10 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   local orderedTilesets = {}
   for id in pairs(tilesetIds) do orderedTilesets[#orderedTilesets + 1] = id end
   table.sort(orderedTilesets)
+  -- Resolved once for the whole loop: both walk the ROM and both are the same
+  -- answer for every tileset.
+  local envPalettes = self:gen2EnvPalettes()
+  local tilesetEnvironments = self:gen2TilesetEnvironments()
   for _, id in ipairs(orderedTilesets) do
     local spec = tilesetManifest[id] or tilesetManifest[id:lower()] or {}
     local gfxId = id
@@ -6554,29 +7886,22 @@ function RomExtractorGen2:extractRuntimeScaffolds()
             palMap[#palMap + 1] = byte % 16
             palMap[#palMap + 1] = math.floor(byte / 16)
           end
-          local setIdx = gen2PaletteSetIndex(id)
-          local colOk, colRaw = pcall(function()
-            return self.rom:bytes(GEN2_BG_PALETTE_BANK,
-                                  GEN2_BG_PALETTE_ADDR + setIdx * 56, 56)
-          end)
-          if colOk and type(colRaw) == "table" then
-            local palColors = {}
-            for p = 0, 6 do
-              local pal = {}
-              for c = 0, 3 do
-                local lo = colRaw[p * 8 + c * 2 + 1]
-                local hi = colRaw[p * 8 + c * 2 + 2]
-                local val = lo + hi * 256
-                pal[#pal + 1] = {
-                  math.floor(val % 32 * 255 / 31),
-                  math.floor(math.floor(val / 32) % 32 * 255 / 31),
-                  math.floor(math.floor(val / 1024) % 32 * 255 / 31),
-                }
-              end
-              palColors[#palColors + 1] = pal
-            end
+          -- `id` may be the HOUSE alias, whose maps are recorded under the
+          -- real graphics family, so try both before falling back.
+          local env = tilesetEnvironments[id] or tilesetEnvironments[gfxId]
+          if env == nil then env = GEN2_PAL.defaultEnvironment end
+          local rows = envPalettes and envPalettes[env]
+          if rows then
             tilesets[id].palMap = palMap
-            tilesets[id].palColors = palColors
+            -- palColors stays the DAY row so every existing reader keeps
+            -- working unchanged; palColorsByTod carries the other three so the
+            -- renderer can follow the clock (GetTimeOfDay) the way the ROM does.
+            tilesets[id].palColors = rows.DAY
+            tilesets[id].palColorsByTod = {
+              MORN = rows.MORN, DAY = rows.DAY,
+              NITE = rows.NITE, DARK = rows.DARK,
+            }
+            tilesets[id].palEnvironment = env
           end
         end
       end
@@ -6690,28 +8015,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   table.sort(orderedSprites)
 
   -- Read Gen2 OBJ palettes (MapObjectPals at 02:78ae)
-  local gen2ObjPals = {}   -- 0-based: gen2ObjPals[i] = 4-color palette
-  if self.rom then
-    local ok1, palData = pcall(function()
-      return self.rom:bytes(2, 0x78ae, 128)  -- 8 palettes x 4 colors x 2 bytes
-    end)
-    if ok1 and type(palData) == "table" then
-      for p = 0, 7 do
-        local pal = {}
-        for c = 0, 3 do
-          local lo = palData[p * 8 + c * 2 + 1]
-          local hi = palData[p * 8 + c * 2 + 2]
-          local val = lo + hi * 256
-          pal[#pal + 1] = {
-            math.floor(val % 32 * 255 / 31),
-            math.floor(math.floor(val / 32) % 32 * 255 / 31),
-            math.floor(math.floor(val / 1024) % 32 * 255 / 31),
-          }
-        end
-        gen2ObjPals[p] = pal
-      end
-    end
-  end
+  local gen2ObjPals = self:gen2ObjPalettes()
 
   for _, id in ipairs(orderedSprites) do
     local img = monIconDefs[id] or gen2SpriteImageMap[id]
@@ -6742,6 +8046,15 @@ function RomExtractorGen2:extractRuntimeScaffolds()
     if pal and not monIconDefs[id] then spriteDef.gen2ObjPal = pal end
     sprites[id] = spriteDef
   end
+
+  -- gen2OverworldSprites keys its rows by the GFX label minus the SpriteGFX
+  -- suffix, so Chris's row is base "Chris" and his bike is "ChrisBike".
+  self:registerGen2KrisSprites(sprites, function(base)
+    for _, row in pairs(self:gen2OverworldSprites()) do
+      if row.base == base then return row end
+    end
+    return nil
+  end)
   self:write("sprites", sprites)
 
   local fontFromRom = self:extractFontSheets()
@@ -6996,7 +8309,11 @@ RomExtractorGen2.GEN2_SFX_ALIASES = {
   -- which of the two names the extracted table ends up carrying depends on
   -- `pairs` order; chain them together so the alias resolves either way.
   Press_AB = "Sfx_ReadText2", Sfx_ReadText2 = "Sfx_ReadText",
-  Menu = "Sfx_Menu", Tink = "Sfx_Wrong",
+  Menu = "Sfx_Menu",
+  -- Gen1's SFX_TINK is the menu CURSOR blip.  Aliasing it to Sfx_Wrong made
+  -- every cursor move in the port -- party menu, POKeGEAR, bag -- play the
+  -- error buzz.  Sfx_Wrong keeps its own alias just below.
+  Tink = "Sfx_Menu",
   Wrong = "Sfx_Wrong", Collision = "Sfx_Bump", Ledge_Jump = "Sfx_JumpOverLedge",
   Go_Inside = "Sfx_EnterDoor", Go_Outside = "Sfx_ExitBuilding",
   Enter_Door = "Sfx_EnterDoor", Save = "Sfx_Save", Run = "Sfx_Run",

@@ -23,7 +23,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from extract import util  # noqa: E402
 from rom_data import (  # noqa: E402
-    CANONICAL_BLUE_SHA1, CANONICAL_GOLD_SHA1, CANONICAL_RED_SHA1,
+    CANONICAL_BLUE_SHA1, CANONICAL_CRYSTAL10_SHA1, CANONICAL_CRYSTAL_SHA1,
+    CANONICAL_GOLD_SHA1,
+    CANONICAL_RED_SHA1,
     CANONICAL_SILVER_SHA1, CANONICAL_YELLOW_SHA1,
     RomImage, SymbolTable, bcd, decode_text, decompress_pic, load_manifest,
     read_string,
@@ -43,6 +45,7 @@ VERSION_MANIFESTS = {
     "yellow": os.path.join(_TOOLS_DIR, "rom_manifest_yellow.json"),
     "gold": os.path.join(_TOOLS_DIR, "rom_manifest_gold.json"),
     "silver": os.path.join(_TOOLS_DIR, "rom_manifest_silver.json"),
+    "crystal": os.path.join(_TOOLS_DIR, "rom_manifest_crystal.json"),
 }
 VERSION_SHA1 = {
     "red": CANONICAL_RED_SHA1,
@@ -51,6 +54,9 @@ VERSION_SHA1 = {
 }
 VERSION_SHA1["gold"] = CANONICAL_GOLD_SHA1
 VERSION_SHA1["silver"] = CANONICAL_SILVER_SHA1
+VERSION_SHA1["crystal"] = CANONICAL_CRYSTAL_SHA1
+# Hashes a version will accept beyond its canonical one.
+VERSION_SHA1_ALT = {"crystal": (CANONICAL_CRYSTAL10_SHA1,)}
 SHA1_TO_VERSION = {sha1: version for version, sha1 in VERSION_SHA1.items()}
 
 GB_SHADES = (
@@ -369,6 +375,22 @@ def extract_tilesets(rom, symbols, manifest, out_dir, assets_dir):
             raise ValueError("Gen2 tileset scaffold has no inferred tileset families")
     elif len(metadata) != len(order):
         raise ValueError("tileset metadata count does not match constants")
+
+    # manifest["tilesets"] is keyed by tileset id, not a list.  zip()ing a dict
+    # walks its KEYS, so the loop below was handed a string and every version
+    # whose manifest carries a populated tilesetOrder died on "metadata for
+    # TilesetJohto is malformed".  Gold only escaped it because its shipped
+    # manifest has an empty tilesetOrder and takes the scaffold path above.
+    if isinstance(metadata, dict):
+        specs = [metadata.get(name) for name in order]
+    else:
+        specs = list(metadata)
+    # Resolved once: both walk the ROM and both answer the same for every
+    # tileset in the loop below.
+    env_palettes = _gen2_env_palettes(rom, symbols) if stub_mode else None
+    tileset_environments = (
+        _gen2_tileset_environments(rom, symbols) if stub_mode else {})
+
     warp_pointers = symbols.by_name.get("WarpTileIDPointers")
     door_pointers = symbols.by_name.get("DoorTileIDPointers")
 
@@ -392,9 +414,7 @@ def extract_tilesets(rom, symbols, manifest, out_dir, assets_dir):
 
     out = {}
     written_images = set()
-    for index, (const_name, spec) in enumerate(zip(order, metadata)):
-        if isinstance(spec, str):
-            spec = metadata[index] if isinstance(metadata, list) else None
+    for index, (const_name, spec) in enumerate(zip(order, specs)):
         if not isinstance(spec, dict):
             raise ValueError(f"tileset metadata for {const_name} is malformed")
         if spec["id"] != const_name:
@@ -514,10 +534,14 @@ def extract_tilesets(rom, symbols, manifest, out_dir, assets_dir):
         if stub_mode and rom is not None:
             pal_map = _gen2_read_palmap(rom, symbols, const_name)
             if pal_map:
-                pal_set_idx = _gen2_palette_set_index(const_name)
-                pal_colors = _gen2_read_palette_set(rom, pal_set_idx)
-                out[const_name]["palMap"] = pal_map
-                out[const_name]["palColors"] = pal_colors
+                env = tileset_environments.get(
+                    const_name, _GEN2_DEFAULT_ENVIRONMENT)
+                rows = env_palettes.get(env) if env_palettes else None
+                if rows:
+                    out[const_name]["palMap"] = pal_map
+                    out[const_name]["palColors"] = rows["DAY"]
+                    out[const_name]["palColorsByTod"] = rows
+                    out[const_name]["palEnvironment"] = env
 
     if not stub_mode:
         for number in (1, 2, 3):
@@ -1019,46 +1043,170 @@ _GEN2_SPRITE_INDEX_TO_NAME = {
 # Gen2 GBC palette extraction
 # -------------------------------------------------------------------------
 
-# TilesetBGPalette at ROM bank 02, address 0x775e.
-# Layout: 6 environment sets × 7 palettes × 4 BGR555 colors × 2 bytes = 56 bytes/set.
+# BG palettes are NOT "6 environment sets of 7 palettes" -- that model was a
+# guess and it is wrong three ways.  What LoadMapPals actually reads is:
+#
+#   TilesetBGPalette           a flat list of 4-colour palettes (42 of them,
+#                              running up to MapObjectPals)
+#   EnvironmentColorsPointers  8 words, one per ENVIRONMENT_* (1-based: 1 TOWN,
+#                              2 ROUTE, 3 INDOOR, 4 CAVE, 5 ENV_5, 6 GATE,
+#                              7 DUNGEON), each -> a 4x8 table of INDICES into
+#                              TilesetBGPalette: one row per time of day, eight
+#                              BG palettes per row (index 7 = the text palette).
+#
+# So the stride is 8 palettes, not 7, and which palettes a map gets comes from
+# its ENVIRONMENT byte and the clock -- not from pattern-matching the tileset
+# NAME.  The old reading landed caves 14 palettes into the table and indoor maps
+# 28 in (nearly black).
+#
+# And the base address was hardcoded to Gold's 02:$775E.  Crystal's
+# TilesetBGPalette is at 02:$7319, so every Crystal tile was coloured out of
+# unrelated bytes -- the garish red/green/pink overworld.  Symbol-resolved now.
 _GEN2_BG_PALETTE_BANK = 2
-_GEN2_BG_PALETTE_ADDR = 0x775e
-_GEN2_PALETTES_PER_SET = 7
+_GEN2_BG_PALETTE_ADDR_FALLBACK = 0x775e     # Gold/Silver, if symbols are absent
+_GEN2_OBJ_PALETTE_ADDR_FALLBACK = 0x78ae    # ditto, MapObjectPals
+_GEN2_BG_PALETTE_COUNT_FALLBACK = 42
 _GEN2_COLORS_PER_PALETTE = 4
-_GEN2_BYTES_PER_PALETTE_SET = _GEN2_PALETTES_PER_SET * _GEN2_COLORS_PER_PALETTE * 2  # 56
-
-# Which of the 6 environment palette sets each tileset family uses.
-_GEN2_OUTDOOR_FAMILIES = {"JOHTO", "KANTO", "JOHTOMODERN", "PLATEAU", "PARK"}
-_GEN2_CAVE_FAMILIES = {"CAVERN", "RUIN", "DUNGEON", "WHIRLPOOL", "ICEROOM", "FACILITY"}
-
-
-def _gen2_palette_set_index(tileset_id):
-    family = tileset_id.removeprefix("Tileset").upper()
-    if family in _GEN2_OUTDOOR_FAMILIES:
-        return 0   # outdoor day (grass=green, water=blue, path=tan)
-    if family in _GEN2_CAVE_FAMILIES:
-        return 2   # cave/dark (purple tones)
-    return 4       # indoor (warm beige tones)
+_GEN2_PALS_PER_ROW = 8
+_GEN2_TOD_ROWS = ("MORN", "DAY", "NITE", "DARK")
+_GEN2_TILESET_ENTRY_BYTES = 15
+_GEN2_MAP_HEADER_BYTES = 9
+_GEN2_MAP_GROUP_COUNT = 26
+_GEN2_DEFAULT_ENVIRONMENT = 1               # TOWN, for a tileset with no map
 
 
-def _gen2_read_palette_set(rom, set_idx):
-    """Returns list of _GEN2_PALETTES_PER_SET palettes, each a list of 4 [r,g,b]."""
-    bank = _GEN2_BG_PALETTE_BANK
-    addr = _GEN2_BG_PALETTE_ADDR + set_idx * _GEN2_BYTES_PER_PALETTE_SET
-    raw = list(rom.bytes(bank, addr, _GEN2_BYTES_PER_PALETTE_SET))
-    palettes = []
-    for p in range(_GEN2_PALETTES_PER_SET):
+def _gen2_read_palettes(rom, bank, address, count):
+    """`count` consecutive BGR555 4-colour palettes as [[r,g,b] * 4] lists."""
+    raw = list(rom.bytes(bank, address, count * 8))
+    out = []
+    for p in range(count):
         colors = []
         for c in range(_GEN2_COLORS_PER_PALETTE):
-            lo = raw[p * _GEN2_COLORS_PER_PALETTE * 2 + c * 2]
-            hi = raw[p * _GEN2_COLORS_PER_PALETTE * 2 + c * 2 + 1]
-            val = lo | (hi << 8)
-            r = ((val & 0x1F) * 255) // 31
-            g = (((val >> 5) & 0x1F) * 255) // 31
-            b = (((val >> 10) & 0x1F) * 255) // 31
-            colors.append([r, g, b])
-        palettes.append(colors)
-    return palettes
+            val = raw[p * 8 + c * 2] | (raw[p * 8 + c * 2 + 1] << 8)
+            colors.append([
+                ((val & 0x1F) * 255) // 31,
+                (((val >> 5) & 0x1F) * 255) // 31,
+                (((val >> 10) & 0x1F) * 255) // 31,
+            ])
+        out.append(colors)
+    return out
+
+
+def _gen2_bg_palettes(rom, symbols):
+    """The flat TilesetBGPalette list, sized by the gap to MapObjectPals."""
+    sym = symbols.by_name.get("TilesetBGPalette")
+    bank = sym.bank if sym else _GEN2_BG_PALETTE_BANK
+    addr = sym.address if sym else _GEN2_BG_PALETTE_ADDR_FALLBACK
+    count = _GEN2_BG_PALETTE_COUNT_FALLBACK
+    nxt = symbols.by_name.get("MapObjectPals")
+    if sym and nxt and nxt.bank == bank and nxt.address > addr:
+        count = (nxt.address - addr) // 8
+    try:
+        return _gen2_read_palettes(rom, bank, addr, count)
+    except Exception:
+        return None
+
+
+def _gen2_env_palettes(rom, symbols):
+    """env (0..7) -> {"MORN"/"DAY"/"NITE"/"DARK": [8 resolved palettes]}."""
+    bg = _gen2_bg_palettes(rom, symbols)
+    ptr = symbols.by_name.get("EnvironmentColorsPointers")
+    if not bg or ptr is None:
+        return None
+    out = {}
+    cache = {}
+    try:
+        for env in range(8):
+            table_addr = rom.word(ptr.bank, ptr.address + env * 2)
+            rows = cache.get(table_addr)
+            if rows is None:
+                raw = list(rom.bytes(
+                    ptr.bank, table_addr,
+                    len(_GEN2_TOD_ROWS) * _GEN2_PALS_PER_ROW))
+                rows = {}
+                for t, name in enumerate(_GEN2_TOD_ROWS):
+                    rows[name] = [
+                        bg[raw[t * _GEN2_PALS_PER_ROW + p]]
+                        if raw[t * _GEN2_PALS_PER_ROW + p] < len(bg) else bg[0]
+                        for p in range(_GEN2_PALS_PER_ROW)
+                    ]
+                cache[table_addr] = rows
+            out[env] = rows
+    except Exception:
+        return None
+    return out
+
+
+def _gen2_tileset_names(rom, symbols):
+    """Tilesets table index -> "TilesetJohto", via each entry's GFX pointer."""
+    table = symbols.by_name.get("Tilesets")
+    if table is None:
+        return {}
+    by_pointer = {}
+    for name, sym in symbols.by_name.items():
+        if not (name.startswith("Tileset") and name.endswith("GFX")):
+            continue
+        family = name[:-len("GFX")]
+        key = (sym.bank, sym.address)
+        # Several families share one GFX pointer (Tileset0 and TilesetJohto
+        # both point at 06:$4A00); prefer the descriptive label over the
+        # numbered placeholder, then the longer name, then alphabetical.
+        rank = (0 if family[len("Tileset"):].isdigit() else 1,
+                len(family), family)
+        prev = by_pointer.get(key)
+        if prev is None or rank > prev[0]:
+            by_pointer[key] = (rank, family)
+    out = {}
+    for index in range(48):
+        entry = table.address + index * _GEN2_TILESET_ENTRY_BYTES
+        if entry + 2 >= 0x8000:
+            break
+        try:
+            key = (rom.byte(table.bank, entry), rom.word(table.bank, entry + 1))
+        except Exception:
+            break
+        if key in by_pointer:
+            out[index] = by_pointer[key][1]
+    return out
+
+
+def _gen2_tileset_environments(rom, symbols):
+    """Tileset id -> the ENVIRONMENT_* its maps are actually declared with.
+
+    Taken from the map headers rather than from the tileset's name.  A tileset
+    used across several environments takes the commonest; ties break toward the
+    lower environment so the answer does not depend on dict ordering.
+    """
+    names = _gen2_tileset_names(rom, symbols)
+    groups = symbols.by_name.get("MapGroupPointers")
+    if not names or groups is None:
+        return {}
+    tally = {}
+    try:
+        bases = [rom.word(groups.bank, groups.address + g * 2)
+                 for g in range(_GEN2_MAP_GROUP_COUNT)]
+        for base in bases:
+            # A group's header block runs up to whichever group starts next;
+            # the tables are laid out back to back.  Without this bound the
+            # walk reads past the last map of a group into the following
+            # group's headers and double-counts them.
+            later = [b for b in bases if b > base]
+            end = min(later) if later else min(base + 60 * _GEN2_MAP_HEADER_BYTES,
+                                               0x8000)
+            header = base
+            while header + _GEN2_MAP_HEADER_BYTES <= end:
+                name = names.get(rom.byte(groups.bank, header + 1))
+                env = rom.byte(groups.bank, header + 2)
+                if name and 1 <= env <= 7:
+                    tally.setdefault(name, {})
+                    tally[name][env] = tally[name].get(env, 0) + 1
+                header += _GEN2_MAP_HEADER_BYTES
+    except Exception:
+        pass
+    out = {}
+    for name, counts in tally.items():
+        out[name] = max(range(8), key=lambda e: (counts.get(e, 0), -e))
+    return out
 
 
 def _gen2_read_palmap(rom, symbols, tileset_id):
@@ -3134,7 +3282,10 @@ def main():
             manifest, args.version, manifest_explicit=manifest_explicit)
         ensure_supported_manifest(manifest, version, manifest_path, datasets)
         expected_sha1 = manifest.get("romSha1") or VERSION_SHA1[version]
-        rom = RomImage(args.rom, expected_sha1)
+        # Crystal Rev 0 decodes the same as Rev 1 and shares its manifest, so
+        # the manifest's own romSha1 is only one of the dumps we accept.
+        accepted = (expected_sha1,) + tuple(VERSION_SHA1_ALT.get(version, ()))
+        rom = RomImage(args.rom, accepted)
         symbols = SymbolTable(manifest["symbols"])
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)

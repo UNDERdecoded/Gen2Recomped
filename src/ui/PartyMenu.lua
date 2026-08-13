@@ -654,9 +654,13 @@ function PartyMenu:update(dt)
         self:close()
         if not ow:gen2FieldMoveAt(entry.move, mon, fx, fy) then
           local TextBox = require("src.render.TextBox")
+          -- _CantSurfText is "You can't SURF here", so using it for every
+          -- field move told a player holding HEADBUTT that the game thought
+          -- they had picked SURF.  Only SURF gets the surf line.
+          local text = (entry.move == "SURF")
+            and self.game.data.text._CantSurfText or nil
           self.game.stack:push(TextBox.new(self.game,
-            self.game.data.text._CantSurfText
-              or Strings("You can't use that\nhere.")))
+            text or Strings("You can't use that\nhere.")))
         end
         return
       elseif action == "softboiled" then

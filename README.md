@@ -332,6 +332,17 @@ platform, renderer, and tooling are theirs; the Generation II import, script
 VM, world, and battle work are this fork's. See [LICENSE.MD](LICENSE.MD) for
 the full copyright split.
 
+## Licence in one paragraph
+
+Two parts. **Everything inherited from Gen1Recomp, and every shared engine
+file since, stays MIT** under its original authors' copyright — that is the
+default, and it is most of the repository. **The Generation II components
+written for this fork are source-available rather than open source**
+(© 2026 UNDERdecodedHD): read them, run them, change your own copy, and write
+and even sell mods against them — but don't redistribute or fork them. A file
+is only in that second group if it is named in the list in
+[LICENSE](LICENSE); everything else is MIT.
+
 ## Special Thanks
 
 This project would not be possible without [pret](https://github.com/pret) —

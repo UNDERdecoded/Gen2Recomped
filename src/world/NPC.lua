@@ -2,6 +2,7 @@
 -- STAY objects keep their facing; WALK objects wander randomly within the
 -- roam constraint (ANY_DIR / UP_DOWN / LEFT_RIGHT), like the original.
 
+local Assets = require("src.render.Assets")
 local Collision = require("src.world.Collision")
 local SpriteRenderer = require("src.render.SpriteRenderer")
 
@@ -97,9 +98,16 @@ local function resolveVariableSprite(data, sprites, spriteId)
   if not slot then
     slot = VAR_SPRITE_SLOTS[spriteId]
   end
-  -- Also accept raw $F0-$FF as SPRITE_%02X style
+  -- Also accept raw $F0-$FF as SPRITE_%02X style.
+  -- tonumber(nil, 16) THROWS ("string expected, got nil") where tonumber(nil)
+  -- merely returns nil, so the match has to be tested before it is converted.
+  -- Any ordinary name whose tail is not all hex digits (SPRITE_ROCKET,
+  -- SPRITE_GRAMPS, ...) reaches here whenever its sheet is missing from
+  -- data.sprites, and used to take the whole map load down with it -- that is
+  -- the Goldenrod-during-the-takeover crash.
   if not slot then
-    local hex = tonumber(spriteId:match("^SPRITE_(%x+)$"), 16)
+    local tail = spriteId:match("^SPRITE_(%x+)$")
+    local hex = tail and tonumber(tail, 16) or nil
     if hex and hex >= 0xF0 then slot = hex - 0xF0 end
   end
   if not slot then return nil end
@@ -201,25 +209,36 @@ local SPRITE_INDEX_FALLBACK = {
   SPRITE_FRUIT_TREE = 0x5D,
   SPRITE_SURF = 0x53,
   SPRITE_SURFING_PIKACHU = 0x34,
+  SPRITE_ROCKER = 0x2C,
+  SPRITE_POKEFAN_M = 0x2D,
+  SPRITE_POKEFAN_F = 0x2E,
   -- Kanto post-game / special overworld actors
   SPRITE_BIG_SNORLAX = 0x33,  -- pret SPRITE_BIG_SNORLAX; not mon-icon $6C
-  SPRITE_SNORLAX = 0x6C,
-  SPRITE_SUDOWOODO = 0x6D,
+  SPRITE_SLOWPOKE = 0x45,     -- Azalea Town, after the well
+  SPRITE_SUDOWOODO = 0x52,
   SPRITE_WEIRD_TREE = 0x5D,   -- pre-reveal default = fruit tree sheet
-  SPRITE_MACHOP = 0x6E,
   SPRITE_GYM_GUIDE = 0x48,
-  SPRITE_OFFICER = 0x3A,
+  SPRITE_OFFICER = 0x43,
   SPRITE_JANINE = 0x0A,
   SPRITE_SURGE = 0x1F,
   SPRITE_ERIKA = 0x20,
   SPRITE_SABRINA = 0x22,
   SPRITE_BROCK = 0x1A,
-  SPRITE_POKEFAN_M = 0x2C,
-  SPRITE_POKEFAN_F = 0x2D,
+  -- Mon-icon sheets ($80+, SpriteMons order), not OverworldSprites rows
+  SPRITE_SNORLAX = 0x9F,
+  SPRITE_MACHOP = 0x9A,
 }
 
 -- Fabricate a sheet pointing at an extracted file so common NPCs are never
 -- grey placeholders when the png exists on disk but the registry key missed.
+--
+-- The file name is the extractor's own convention: RomExtractorGen2 writes
+-- each OverworldSprites row to "sprites/" .. <GfxLabel>:lower() .. ".png".
+-- `frames` follows what the extractor actually writes: frames = height / 16,
+-- where height comes from the gap to the next sheet capped by the sprite
+-- kind.  Sudowoodo is a STANDING_SPRITE that spans 128 bytes -> 32px -> 2
+-- frames, and Slowpoke / fruit trees are STILL_SPRITEs at 1.  Claiming the
+-- walking default of 6 would build quads off the bottom of the sheet.
 local DISK_SHEET_FALLBACK = {
   SPRITE_LASS = { file = "lass.png", index = 0x28 },
   SPRITE_TWIN = { file = "twin.png", index = 0x26 },
@@ -228,18 +247,27 @@ local DISK_SHEET_FALLBACK = {
   SPRITE_YOUNGSTER = { file = "youngster.png", index = 0x27 },
   SPRITE_COOLTRAINER_F = { file = "cooltrainerf.png", index = 0x24 },
   SPRITE_COOLTRAINER_M = { file = "cooltrainerm.png", index = 0x23 },
-  SPRITE_SUDOWOODO = { file = "sudowoodo.png", index = 0x6D },
-  SPRITE_FRUIT_TREE = { file = "fruittree.png", index = 0x5D },
+  SPRITE_SLOWPOKE = { file = "slowpoke.png", index = 0x45, frames = 1 },
+  SPRITE_SUDOWOODO = { file = "sudowoodo.png", index = 0x52, frames = 2 },
+  SPRITE_FRUIT_TREE = { file = "fruittree.png", index = 0x5D, frames = 1 },
 }
 
+-- Only ever hand back a fabricated sheet whose png is actually there.  This
+-- fallback is reached precisely when the sheet was NOT extracted, which is
+-- also when the file is most likely absent -- and SpriteRenderer.new ->
+-- Assets.image -> love.graphics.newImage raises on a missing path, so an
+-- unchecked guess turns a cosmetic miss into a hard crash on map load.
 local function diskSheet(spriteId)
   local tip = DISK_SHEET_FALLBACK[spriteId]
   if not tip then return nil end
+  local path = "assets/generated/sprites/" .. tip.file
+  if not Assets.exists(path) then return nil end
+  local frames = tip.frames or 6
   return {
     id = spriteId,
-    image = "assets/generated/sprites/" .. tip.file,
-    frames = 6,
-    walker = true,
+    image = path,
+    frames = frames,
+    walker = frames >= 6,
     index = tip.index,
   }
 end
@@ -259,11 +287,13 @@ local function resolveSpriteDef(data, spriteId)
       frames = 6, walker = true, index = 0x28,
     }
   end
-  -- Sudowoodo post-reveal sheet by direct id
-  if spriteId == "SPRITE_SUDOWOODO" or spriteId == 0x6D then
+  -- Sudowoodo post-reveal sheet by direct id.  The OverworldSprites row is
+  -- $52 (pret SPRITE_SUDOWOODO) -- $6D is not a sprite constant at all, and
+  -- looking it up is why the revealed tree came back as a placeholder.
+  if spriteId == "SPRITE_SUDOWOODO" or spriteId == 0x52 then
     local s = findSheet(sprites, {
       "SPRITE_SUDOWOODO", "sudowoodo", "Sudowoodo",
-    }, 0x6D)
+    }, 0x52)
     if s and s.image then return s end
     local fabricated = diskSheet("SPRITE_SUDOWOODO")
     if fabricated then return fabricated end

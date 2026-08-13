@@ -56,6 +56,8 @@ function Resolve-RomVersion([string]$sha1) {
         'cc7d03262ebfaf2f06772c1a480c7d9d5f4a38e1' { return 'yellow' }
         'd8b8a3600a465308c9953dfa04f0081c05bdcb94' { return 'gold' }
         '49b163f7e57702bc939d642a18f591de55d92dae' { return 'silver' }
+        'f2f52230b536214ef7c9924f483392993e226cfb' { return 'crystal' }
+        'f4cd194bdee0d04ca4eac29e09b8e4e9d818c133' { return 'crystal' }
         default { return $null }
     }
 }
@@ -84,7 +86,14 @@ $ForceSetup = -not [string]::IsNullOrWhiteSpace($env:ROM_PATH)
 $RomCtx = Get-RomContext
 
 # ---------------------------------------------------------------- fast path
-if ((Test-Path (Join-Path $Root 'data\generated\maps.lua')) -and (Find-Love) -and -not $ForceSetup) {
+# A Gen1 import lands in data\generated; a Gen2/Crystal one lands in the LOVE
+# save folder instead, so testing for data\generated\maps.lua reported "not set
+# up" forever on a Gen2-only install and re-ran setup at every launch.  The
+# stamp setup.ps1 writes covers both.
+$SetupStamp = Join-Path $Root '.setup-complete'
+$AlreadySetUp = (Test-Path $SetupStamp) -or
+                (Test-Path (Join-Path $Root 'data\generated\maps.lua'))
+if ($AlreadySetUp -and (Find-Love) -and -not $ForceSetup) {
     Say 'already set up - launching the game'
     & powershell -NoProfile -ExecutionPolicy Bypass -File (Join-Path $Root 'scripts\run.ps1')
     if ($LASTEXITCODE -ne 0) { Err 'the game failed to start'; Pause-Exit 1 }

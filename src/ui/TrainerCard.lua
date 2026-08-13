@@ -117,8 +117,12 @@ function TrainerCard.new(game, opts)
     end
   end
   self.circle = tryImage("assets/generated/trainer_card/circle_tile.png")
-  self.pic = tryImage(require("src.pokemon.Sprites").playerPath(
-    game.data, "front", { kind = "trainer_card" }))
+  local picPath, picTrueColor = require("src.pokemon.Sprites").playerPath(
+    game.data, "front", { kind = "trainer_card" })
+  self.pic = tryImage(picPath)
+  -- KRIS's portrait is baked in her own palette (blue hair); the card's SGB
+  -- zone would otherwise repaint it in CHRIS's browns
+  self.picTrueColor = self.pic and picTrueColor or false
   return self
 end
 
@@ -195,7 +199,13 @@ function TrainerCard:drawGen2()
   love.graphics.rectangle("fill", 152, 8, 8, 128)
 
   love.graphics.setColor(1, 1, 1, 1)
-  if self.pic then love.graphics.draw(self.pic, 112, 8) end
+  if self.pic then
+    if self.picTrueColor then
+      require("src.render.PaletteFX").markTrueColor(112, 8, self.pic:getWidth(),
+                                                    self.pic:getHeight())
+    end
+    love.graphics.draw(self.pic, 112, 8)
+  end
   love.graphics.setColor(0, 0, 0, 1)
   Font.draw(Strings("NAME/"), 16, 16)
   Font.draw(save.player.name or "GOLD", 56, 16)
@@ -251,6 +261,10 @@ function TrainerCard:draw()
   -- top card (rows 0-7): NAME / MONEY / TIME, pic upper-right
   self:frameBox(0, 0, 20, 8)
   if self.pic then
+    if self.picTrueColor then
+      require("src.render.PaletteFX").markTrueColor(104, 4, self.pic:getWidth(),
+                                                    self.pic:getHeight())
+    end
     love.graphics.draw(self.pic, 104, 4)
   end
   love.graphics.setColor(0, 0, 0, 1)

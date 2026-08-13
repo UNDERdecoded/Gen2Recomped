@@ -56,6 +56,14 @@ function Commands.g2_endifjustbattled(ctx)
   if ctx.justBattled then return "end" end
 end
 
+-- Script_checkjustbattled: the same re-entered-from-a-won-battle flag
+-- g2_endifjustbattled reads, but as a branchable condition rather than an
+-- early return.
+function Commands.g2_check_just_battled(ctx)
+  ctx.lastCheck = ctx.justBattled and true or false
+  ctx.g2Var = ctx.lastCheck and 1 or 0
+end
+
 -- Script_variablesprite: wVariableSprites[slot] = sprite.  Object events whose
 -- sprite byte is $F0 or more read the slot back, so any object already built
 -- from that slot has to pick the new sheet up.
@@ -91,9 +99,23 @@ local SPRITE_NAME_INDEX = {
   SPRITE_LASS = 0x28,
   SPRITE_TEACHER = 0x29,
   SPRITE_BEAUTY = 0x2A,
-  SPRITE_BUENA = 0x4A,          -- not $25; $25 is BUG_CATCHER
+  SPRITE_ROCKER = 0x2C,
+  SPRITE_POKEFAN_M = 0x2D,
+  SPRITE_POKEFAN_F = 0x2E,
+  SPRITE_GRAMPS = 0x2F,
+  SPRITE_GRANNY = 0x30,
+  SPRITE_ROCKET = 0x35,
+  SPRITE_ROCKET_GIRL = 0x36,
+  SPRITE_OFFICER = 0x43,
+  SPRITE_SLOWPOKE = 0x45,
+  SPRITE_GYM_GUIDE = 0x48,
+  -- pokegold has no SPRITE_BUENA (she is Crystal-only), and $4A is BIKER.
+  -- The Gold/Silver radio host wears the generic LASS sheet.
+  SPRITE_BUENA = 0x28,
+  -- $52, not $6D.  $6D is not a sprite constant at all; storing it in
+  -- wVariableSprites is what left the revealed Sudowoodo as a placeholder.
+  SPRITE_SUDOWOODO = 0x52,
   SPRITE_FRUIT_TREE = 0x5D,
-  SPRITE_SUDOWOODO = 0x6D,
 }
 
 local function resolveVarSlot(slot)
@@ -108,7 +130,9 @@ local function resolveVarSlot(slot)
       if n >= 0xF0 then return n - 0xF0 end
       return n
     end
-    local hex = tonumber(slot:match("^SPRITE_(%x+)$"), 16)
+    -- tonumber(nil, 16) raises; tonumber(nil) does not.  Test the match first.
+    local tail = slot:match("^SPRITE_(%x+)$")
+    local hex = tail and tonumber(tail, 16) or nil
     if hex and hex >= 0xF0 then return hex - 0xF0 end
   end
   return nil
@@ -120,7 +144,9 @@ local function resolveSpriteArg(sprite)
     if SPRITE_NAME_INDEX[sprite] then return SPRITE_NAME_INDEX[sprite] end
     local n = tonumber(sprite)
     if n then return n end
-    local hex = tonumber(sprite:match("^SPRITE_(%x+)$"), 16)
+    -- tonumber(nil, 16) raises; tonumber(nil) does not.  Test the match first.
+    local tail = sprite:match("^SPRITE_(%x+)$")
+    local hex = tail and tonumber(tail, 16) or nil
     if hex then return hex end
   end
   return sprite -- keep string name for NPC lookup
@@ -185,6 +211,57 @@ function Commands.g2_writemem(ctx, addr)
   local mem = wram(ctx)
   if mem then mem[addr] = scriptVar(ctx) end
 end
+
+-- ---------------------------------------------------------------------------
+-- String-buffer writers.
+--
+-- The ROM has several wStringBuffers and PrintNum/CopyBytes them separately;
+-- this port keeps ONE (game.stringBuffer), which is what TextBox's text_ram
+-- token reads, so every buffer write lands there.
+-- ---------------------------------------------------------------------------
+
+-- Script_getmoney (25:$7583): the player's money, printed for the box that
+-- follows.
+function Commands.g2_buffer_money(ctx)
+  ctx.game.stringBuffer = tostring(math.floor(tonumber(ctx.save.money) or 0))
+end
+
+-- Script_getcoins (25:$7598).
+function Commands.g2_buffer_coins(ctx)
+  ctx.game.stringBuffer = tostring(math.floor(tonumber(ctx.save.coins) or 0))
+end
+
+-- Script_getnum (25:$75AD): wScriptVar as a decimal.
+function Commands.g2_buffer_num(ctx)
+  ctx.game.stringBuffer = tostring(math.floor(scriptVar(ctx)))
+end
+
+-- Script_getcurlandmarkname (25:$755B): the landmark the player is standing
+-- in, by name.  The town map record is where the port keeps landmark names.
+function Commands.g2_buffer_landmark(ctx)
+  local ow = ctx.overworld
+  local def = ow and ow.map and ow.map.def
+  local landmark = def and def.landmark
+  local town = ctx.game.data.field and ctx.game.data.field.townMap
+  local entry = landmark and town and town.landmarks
+    and (town.landmarks[landmark] or town.landmarks[tostring(landmark)])
+  local name = entry and entry.name
+  if type(name) == "string" then
+    ctx.game.stringBuffer = (name:gsub("[\n\f\v]", " "))
+  end
+end
+
+-- Script_loadmem (25:$7495): write an immediate byte to a WRAM address.  The
+-- same address-keyed mirror readmem/writemem use -- keyed by the raw
+-- address number exactly as they key it, so a script that pokes a byte here
+-- and reads it back later still agrees with itself.
+function Commands.g2_loadmem(ctx, address, value)
+  local mem = wram(ctx)
+  if not mem or type(address) ~= "number" then return end
+  mem[address] = tonumber(value) or 0
+end
+
+
 -- ---------------------------------------------------------------------------
 -- map scenes
 --
@@ -257,9 +334,39 @@ function Commands.g2_set_scene(ctx, mapId, scene)
   end
 end
 
+-- Script_checkscene (25:$75C2) calls GetCurrentMapSceneID and, when the map
+-- has NO scene entry at all, writes $FF to wScriptVar -- not 0.  That matters
+-- because `iftrue` reads wScriptVar directly, so "no scene" is TRUE in the ROM
+-- and the guarded branch is taken.  Answering 0 here inverted every one of
+-- those guards: a MAPCALLBACK that the ROM skips on a scene-less map ran
+-- instead, which is how an NPC gets nudged one step every single time you
+-- walk in and eventually ends up standing on the furniture.
+--
+-- field.mapSceneVars is the ROM's own MapScenes list, so "is this map in it"
+-- is exactly GetCurrentMapSceneID's z flag.
+local SCENE_NONE = 0xFF
+
+local function mapHasScene(ctx, id)
+  local data = ctx.game and ctx.game.data
+  local vars = data and data.field and data.field.mapSceneVars
+  -- no table (dataset predates it) -> assume the map does have a scene, which
+  -- is the behaviour this port had before and is right for the maps that
+  -- actually carry callbacks
+  if type(vars) ~= "table" then return true end
+  if id == nil then return false end
+  for _, key in ipairs(mapKeyAliases(id)) do
+    if vars[key] ~= nil then return true end
+  end
+  return false
+end
+
 function Commands.g2_check_scene(ctx, mapId)
   local id = sceneMapId(ctx, mapId)
-  ctx.g2Var = id and Gen2Commands.getScene(ctx.save, id) or 0
+  if not mapHasScene(ctx, id) then
+    ctx.g2Var = SCENE_NONE
+  else
+    ctx.g2Var = id and Gen2Commands.getScene(ctx.save, id) or 0
+  end
   ctx.lastCheck = ctx.g2Var ~= 0
 end
 
@@ -708,6 +815,61 @@ end
 -- must not arm the next text box (see Gen2ScriptVM's L.cry).
 function Commands.g2_cry(ctx, species)
   require("src.core.Sound").playCry(ctx.game.data, species)
+end
+
+-- `pokepic <species>` / `closepokepic` (Script_pokepic -> Pokepic, 09:$44E3).
+-- The framed front pic Elm's starter balls show before the yes/no prompt.
+--
+-- pokepic does NOT block: the ROM keeps executing under the open box, and
+-- the very next command is the mon's cry.  The box therefore ticks the
+-- runner from its own update (src/ui/PicBox.lua) and the wait happens at
+-- closepokepic instead -- which is exactly where the ROM's `waitbutton`
+-- sits, and which this port lowers away because show_text normally owns
+-- that wait.
+function Commands.g2_pokepic(ctx, species)
+  local ow = ctx.overworld
+  if not (ow and ctx.game) then return end
+  -- `pokepic 0` reads wScriptVar instead of a literal
+  if species == nil and type(ctx.g2Var) == "number" and ctx.g2Var > 0 then
+    species = string.format("SPECIES_%03d", ctx.g2Var)
+  end
+  if not species then return end
+  local path, trueColor =
+    require("src.pokemon.Sprites").path(ctx.game.data, species, "front",
+                                        { kind = "pokepic" })
+  if not path then return end
+  -- a script that opens two in a row (none in the ROM, but a mod may)
+  if ow.pokepicBox then ow.pokepicBox:remove() end
+  -- _CGB_Pokepic (02:$5499) gives the pic the mon's OWN palette instead of
+  -- the map's, so the colours are baked here rather than left to the
+  -- overworld zone pass -- which is what made the starters come out green.
+  -- The forced-mono COLORS modes have no palette to bake (BattleState:
+  -- picImage takes the same branch), so those keep the plain grays.
+  local PaletteFX = require("src.render.PaletteFX")
+  local mono = PaletteFX.mode == "og" or PaletteFX.mode == "og_inv"
+               or PaletteFX.mode == "classic"
+  local colors = (not (trueColor or mono))
+    and PaletteFX.monPal(ctx.game.data, species) or nil
+  local box = require("src.ui.PicBox").new(ctx.game, {
+    path = path, colors = colors, trueColor = trueColor,
+    passive = true, overworld = ow,
+  })
+  ow.pokepicBox = box
+  ctx.game.stack:push(box)
+end
+
+function Commands.g2_close_pokepic(ctx)
+  local ow = ctx.overworld
+  local box = ow and ow.pokepicBox
+  if not box then return end
+  ow.pokepicBox = nil
+  local runner = ctx.runner
+  if not runner then
+    box:remove()
+    return
+  end
+  box:arm(function() runner:resume() end)
+  runner:yield()
 end
 
 -- `pokemart MARTTYPE_*, MART_*`: the item list lives in map_scripts.marts,
@@ -2421,6 +2583,37 @@ function Commands.g2_init_roam_mons(ctx)
       active = true,
     }
   end
+end
+
+-- ---------------------------------------------------------------------------
+-- Crystal: the GS BALL
+--
+-- On a real cartridge EVENT_GOT_GS_BALL_FROM_GOLDENROD_POKEMON_CENTER was set
+-- by the mobile / Mystery Gift distribution, which no longer exists -- so the
+-- whole Celebi chain (Kurt examines the ball, the Ilex Forest shrine grows
+-- restless, Celebi appears) was unreachable in ordinary play.  Beating the
+-- Elite Four unlocks it here instead.
+--
+-- Only the FIRST flag is granted.  Everything after it -- Kurt, the shrine,
+-- the encounter -- runs off Crystal's own extracted scripts, exactly like
+-- every other Gen2 event, so this stays a one-line unlock rather than a
+-- reimplementation of the chain.
+local GS_BALL_FLAGS = {
+  beatEliteFour = "EVENT_G2_0068",  -- EVENT_BEAT_ELITE_FOUR
+  gotGsBall     = "EVENT_G2_0487",  -- ..._FROM_GOLDENROD_POKEMON_CENTER
+}
+
+function Gen2Commands.ensureGsBall(save)
+  if not require("src.core.GameVersion").isCrystal() then return false end
+  if type(save) ~= "table" then return false end
+  local flags = save.flags
+  if type(flags) ~= "table" then return false end
+  if not flags[GS_BALL_FLAGS.beatEliteFour] then return false end
+  if flags[GS_BALL_FLAGS.gotGsBall] then return false end
+  flags[GS_BALL_FLAGS.gotGsBall] = true
+  require("src.core.Logger").info(
+    "crystal: GS BALL unlocked (Elite Four cleared)")
+  return true
 end
 
 -- Refresh landmarks for already-released beasts (menu open / map load).

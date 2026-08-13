@@ -753,6 +753,252 @@ MoveEffects.special = {
   TWINEEDLE_EFFECT = true, MIMIC_EFFECT = true,
 }
 
+-- ---------------------------------------------------------------------
+-- Gen 2 effects
+--
+-- The importer used to leave 51 of the 251 moves on NO_ADDITIONAL_EFFECT
+-- because their effect bytes had no name; they are named now (see
+-- GEN2_MOVE_EFFECTS in RomExtractorGen2), and these are the first
+-- handlers for them.
+--
+-- Two dispatch paths, and the move's ROM power decides which:
+--   * power 0  -> a "primary" record, run by BattleState's pure-status
+--                 branch.  Signature is (battle, user, target, move,
+--                 moveInst) because MoveEffects.primary entries are shimmed,
+--                 and it returns a list of message strings.
+--   * power > 0 -> a "full" record whose chooseDamage feeds the damaging
+--                 pipeline.
+-- Putting a power-0 move in the full table makes it fall through to the
+-- damaging pipeline and do nothing, which is exactly the bug being fixed.
+--
+-- The variable-power moves matter most.  Flail, Reversal, Return,
+-- Frustration, Present, Magnitude and Hidden Power all carry base power 1
+-- in the ROM because the effect is supposed to supply the real power, so
+-- with no handler they hit for essentially nothing.  Each reuses the normal
+-- damage pipeline through a power-substituted view of the move rather than
+-- reimplementing the formula.
+-- ---------------------------------------------------------------------
+
+-- A move that reads exactly like `move` except for its power, so
+-- Damage.compute still applies types, stages, crits, badges and the random
+-- factor.  __index keeps every other field live.
+local function withPower(move, power)
+  return setmetatable({ power = math.max(1, math.floor(power)) },
+                      { __index = move })
+end
+
+local function variablePower(powerOf)
+  return function(ctx)
+    local power = powerOf(ctx)
+    if not power then return nil, Strings("But, it failed!") end
+    return ctx.battle:computeDamage(ctx.user, ctx.target,
+      withPower(ctx.move, power), { rng = ctx.battle.rng })
+  end
+end
+
+-- GetHappinessPower: happiness * 2 / 5, floored, minimum 1.
+local function happinessPower(mon)
+  return math.max(1, math.floor(((mon and mon.happiness) or 0) * 2 / 5))
+end
+
+-- Flail / Reversal: the power band comes from 48 * curHP / maxHP.
+local REVERSAL_BANDS = {
+  { 1, 200 }, { 4, 150 }, { 9, 100 }, { 16, 80 }, { 32, 40 },
+}
+local function reversalPower(mon)
+  local maxHp = math.max(1, mon.maxHp or 1)
+  local scaled = math.floor(48 * math.max(0, mon.hp or 0) / maxHp)
+  for _, band in ipairs(REVERSAL_BANDS) do
+    if scaled <= band[1] then return band[2] end
+  end
+  return 20
+end
+
+-- Magnitude: one roll picks both the number that is announced and the
+-- power it carries.
+local MAGNITUDE_TABLE = {
+  { 4, 10, 4 }, { 12, 30, 5 }, { 28, 50, 6 }, { 56, 70, 7 },
+  { 84, 90, 8 }, { 96, 110, 9 }, { 100, 150, 10 },
+}
+
+-- Hidden Power: power comes out of the DVs.  Only the power is modelled --
+-- the port has no per-move type override hook, so the move keeps the type
+-- its table row carries.
+local function hiddenPowerPower(mon)
+  local dv = mon and mon.dvs
+  if not dv then return 40 end
+  local atk, def = dv.attack or 0, dv.defense or 0
+  local spd, spc = dv.speed or 0, dv.special or 0
+  local hi = (math.floor(atk / 8) % 2) * 8 + (math.floor(def / 8) % 2) * 4
+    + (math.floor(spd / 8) % 2) * 2 + (math.floor(spc / 8) % 2)
+  return math.floor((5 * hi + (spc % 4)) / 2) + 31
+end
+
+local function typesOf(battler)
+  local mon = battler.mon or {}
+  local t1 = mon.type1 or (battler.types and battler.types[1])
+  local t2 = mon.type2 or (battler.types and battler.types[2])
+  return t1, t2
+end
+
+-- ------------------------------------------------------ damaging moves
+MoveEffects.full.REVERSAL_EFFECT = {
+  chooseDamage = variablePower(function(ctx)
+    return reversalPower(ctx.user.mon)
+  end),
+}
+MoveEffects.full.RETURN_EFFECT = {
+  chooseDamage = variablePower(function(ctx)
+    return happinessPower(ctx.user.mon)
+  end),
+}
+MoveEffects.full.FRUSTRATION_EFFECT = {
+  chooseDamage = variablePower(function(ctx)
+    local happy = (ctx.user.mon and ctx.user.mon.happiness) or 0
+    return math.max(1, math.floor((255 - happy) * 2 / 5))
+  end),
+}
+MoveEffects.full.HIDDEN_POWER_EFFECT = {
+  chooseDamage = variablePower(function(ctx)
+    return hiddenPowerPower(ctx.user.mon)
+  end),
+}
+MoveEffects.full.MAGNITUDE_EFFECT = {
+  chooseDamage = function(ctx)
+    local roll = ctx.battle.rng(100)
+    local power, magnitude = 150, 10
+    for _, row in ipairs(MAGNITUDE_TABLE) do
+      if roll <= row[1] then
+        power, magnitude = row[2], row[3]
+        break
+      end
+    end
+    ctx.say(Strings("Magnitude %d!", magnitude))
+    return ctx.battle:computeDamage(ctx.user, ctx.target,
+      withPower(ctx.move, power), { rng = ctx.battle.rng })
+  end,
+}
+-- Present is a damaging move four times in five and a heal otherwise,
+-- which is why its table power is 1 and why it can fail outright.
+MoveEffects.full.PRESENT_EFFECT = {
+  chooseDamage = function(ctx)
+    local roll = ctx.battle.rng(256) - 1
+    local power
+    if roll < 102 then
+      power = 40
+    elseif roll < 178 then
+      power = 80
+    elseif roll < 204 then
+      power = 120
+    else
+      local target = ctx.target
+      local maxHp = target.mon.maxHp or 1
+      if (target.mon.hp or 0) >= maxHp then
+        return nil, Strings("But, it failed!")
+      end
+      local healed = math.max(1, math.floor(maxHp / 4))
+      target.mon.hp = math.min(maxHp, (target.mon.hp or 0) + healed)
+      return nil, Strings("%s\nregained health!", displayName(target))
+    end
+    return ctx.battle:computeDamage(ctx.user, ctx.target,
+      withPower(ctx.move, power), { rng = ctx.battle.rng })
+  end,
+}
+-- False Swipe always leaves the target on at least 1 HP.
+MoveEffects.full.FALSE_SWIPE_EFFECT = {
+  chooseDamage = function(ctx)
+    local dmg, info = ctx.battle:computeDamage(ctx.user, ctx.target,
+      ctx.move, { rng = ctx.battle.rng })
+    local hp = ctx.target.mon.hp or 0
+    if dmg >= hp then dmg = math.max(0, hp - 1) end
+    return dmg, info
+  end,
+}
+
+-- -------------------------------------------------------- status moves
+-- Mean Look pins the target in; stored on the target so the user switching
+-- out is what releases it.
+MoveEffects.primary.MEAN_LOOK_EFFECT = function(battle, user, target)
+  if target.substituteHP or target.trapped then
+    return { Strings("But, it failed!") }
+  end
+  target.trapped = true
+  return { Strings("%s can't\nrun away!", displayName(target)) }
+end
+
+-- Spite docks 2-5 PP from whatever the target used last.
+MoveEffects.primary.SPITE_EFFECT = function(battle, user, target)
+  local lastId = target.lastMove
+  local slot
+  for _, mv in ipairs(target.mon.moves or {}) do
+    if mv.id == lastId and (mv.pp or 0) > 0 then
+      slot = mv
+      break
+    end
+  end
+  if not slot then return { Strings("But, it failed!") } end
+  local docked = math.min(slot.pp, 1 + battle.rng(4))
+  slot.pp = slot.pp - docked
+  return { Strings("%s's\n%s was reduced by %d!",
+    displayName(target), tostring(lastId), docked) }
+end
+
+-- Curse is two moves in one: a Ghost pays half its max HP to lay a curse,
+-- anything else trades Speed for Attack and Defense.
+MoveEffects.primary.CURSE_EFFECT = function(battle, user, target)
+  local t1, t2 = typesOf(user)
+  if t1 == "GHOST" or t2 == "GHOST" then
+    if target.cursed then return { Strings("But, it failed!") } end
+    local cost = math.max(1, math.floor((user.mon.maxHp or 2) / 2))
+    target.cursed = true
+    battle:applyDamage(user, cost)
+    local out = { Strings("%s cut its own HP\nand laid a CURSE!",
+      displayName(user)) }
+    if (user.mon.hp or 0) <= 0 then battle:onFaint(user) end
+    return out
+  end
+  local msgs = {}
+  for _, step in ipairs({ { "speed", -1 }, { "attack", 1 },
+                          { "defense", 1 } }) do
+    for _, line in ipairs(changeStage(battle, user, step[1], step[2], false)
+                          or {}) do
+      msgs[#msgs + 1] = line
+    end
+  end
+  return msgs
+end
+
+-- Nightmare only bites a sleeping target.  The per-turn drain is not
+-- modelled yet; the flag is set so it can be later.
+MoveEffects.primary.NIGHTMARE_EFFECT = function(battle, user, target)
+  if target.mon.status ~= "SLP" or target.nightmare then
+    return { Strings("But, it failed!") }
+  end
+  target.nightmare = true
+  return { Strings("%s fell into\na NIGHTMARE!", displayName(target)) }
+end
+
+-- Belly Drum halves max HP to max out Attack.
+MoveEffects.primary.BELLY_DRUM_EFFECT = function(battle, user)
+  local cost = math.floor((user.mon.maxHp or 2) / 2)
+  if (user.mon.hp or 0) <= cost or (user.stages.attack or 0) >= 6 then
+    return { Strings("But, it failed!") }
+  end
+  battle:applyDamage(user, cost)
+  user.stages.attack = 6
+  return { Strings("%s cut its HP and\nmaximized ATTACK!",
+    displayName(user)) }
+end
+
+-- Psych Up copies the target's stat stages onto the user.
+MoveEffects.primary.PSYCH_UP_EFFECT = function(battle, user, target)
+  for stat, value in pairs(target.stages or {}) do
+    user.stages[stat] = value
+  end
+  return { Strings("%s copied\n%s's stat changes!",
+    displayName(user), displayName(target)) }
+end
+
 -- the (battle, user, target, move, moveInst) handlers adapted to the ctx
 -- facade the registry records expose
 local function shim(fn)

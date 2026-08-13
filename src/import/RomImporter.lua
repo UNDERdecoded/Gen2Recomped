@@ -49,7 +49,19 @@ end
 --      save carries every ENGINE_* flag and its FLY destinations.
 -- v44: battle animation framesets stop at `oamdelete` ($FC) and carry
 --      `oamwait` ($FD) rows as blanks instead of reading both as OAM ids.
-local CACHE_FORMAT = "rom-cache-v44:"
+-- v45: two Crystal-only additions.  field.playerForms carries KRIS's whole
+--      asset set (card portrait, intro pic, back pic, default names) so the
+--      Oak speech can ask boy/girl, and pokemon[*].picAnim plus
+--      assets/generated/battle/anim/*.png carry the front-pic frame
+--      animations.  Neither exists in a v44 cache, and without this bump
+--      isReady() calls that cache current and the import never re-runs.
+-- v46: picAnim for real.  A v45 cache has the playerForms half but NO
+--      pokemon[*].picAnim and no assets/generated/battle/anim: the
+--      extractor's animation-script reader was named gen2AnimScript, which
+--      this file already used for battle MOVE animations, and the later
+--      definition silently won -- so every species came back empty.  A v45
+--      marker has to be treated as stale or that empty result sticks.
+local CACHE_FORMAT = "rom-cache-v46:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
@@ -200,6 +212,8 @@ local PAL = {
   chipGoldBot = { 191, 128, 0 },    -- #bf8000
   chipSilverTop = { 191, 206, 226 }, -- #bfcee2
   chipSilverBot = { 96, 116, 145 },  -- #607491
+  chipCrystalTop = { 138, 226, 240 }, -- #8ae2f0
+  chipCrystalBot = { 38, 122, 150 },  -- #267a96
   chipModTop  = { 61, 74, 109 },   -- #3d4a6d
   chipModBot  = { 32, 42, 69 },    -- #202a45
   chipInkGold = { 58, 44, 0 },     -- #3a2c00
@@ -331,7 +345,9 @@ local function decodeManifest(version)
   local Json = require("src.link.Json")
   local manifest, decodeError = Json.decode(raw)
   if not manifest then error("ROM import metadata is invalid: " .. tostring(decodeError)) end
-  assert(manifest.romSha1 == GameVersion.info(version).sha1,
+  -- acceptsSha1, not equality: Crystal's two revisions share one manifest, so
+  -- the manifest's own romSha1 is only ever one of the accepted dumps.
+  assert(GameVersion.acceptsSha1(version, manifest.romSha1),
     "ROM import metadata version mismatch")
   return manifest
 end
@@ -736,6 +752,7 @@ function RomImporter.new(onComplete, opts)
     -- banner and footer -- used only while that column is taller than the window
     -- (see draw()).  Clamped against content in draw, reset on a tab change.
     pageScroll = 0,
+    tabScroll = 0,
     -- Android SAF: which game tab should receive the next picked_save.sav when
     -- focus consumes it (set by chooseSaveImport before opening the picker).
     androidPendingVersion = nil,
@@ -952,7 +969,7 @@ function RomImporter:startData(data, displayName)
   local version = GameVersion.forSha1(actualHash)
   if not version then
     self:setError(("Unsupported ROM (SHA-1 %s). This needs a clean US Pokemon "
-      .. "Red, Blue, Yellow, Gold, or Silver dump; patched, trimmed or "
+      .. "Red, Blue, Yellow, Gold, Silver or Crystal dump; patched, trimmed or "
       .. "\"fixed\" dumps "
       .. "(tagged [b] or [BF]) never verify."):format(actualHash))
     return
@@ -2790,6 +2807,10 @@ local function inside(r, x, y)
   if pageBand and not r.pinned and (y < pageBand[1] or y > pageBand[2]) then
     return false
   end
+  -- Horizontally scrolled strips (the tab bar) carry their own viewport.
+  if r.clipX and (x < r.clipX[1] or x > r.clipX[2]) then
+    return false
+  end
   return true
 end
 
@@ -3177,6 +3198,10 @@ function RomImporter:_ptIn(r)
   if pageBand and not r.pinned and (my < pageBand[1] or my > pageBand[2]) then
     return false
   end
+  -- Horizontally scrolled strips (the tab bar) carry their own viewport.
+  if r.clipX and (mx < r.clipX[1] or mx > r.clipX[2]) then
+    return false
+  end
   return true
 end
 
@@ -3316,6 +3341,9 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
       under = PAL.gold,   label = Strings("GOLD"),   ink = PAL.chipInkGold },
     { id = "silver", letter = "S", top = PAL.chipSilverTop, bot = PAL.chipSilverBot,
       under = PAL.detail, label = Strings("SILVER"), ink = PAL.chipInkSilver },
+    { id = "crystal", letter = "C", top = PAL.chipCrystalTop, bot = PAL.chipCrystalBot,
+      under = PAL.chipCrystalTop, label = Strings("CRYSTAL"),
+      ink = PAL.chipInkSilver },
     { id = "mods",   mods = true,  top = PAL.chipModTop,  bot = PAL.chipModBot,
       under = PAL.modDot, label = Strings("MODS") },
     -- Browsing a community index sits beside the installed list rather than
@@ -3328,7 +3356,34 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
   local r = 12 * s
   local chipY = y + (h - chip) / 2 - 2 * s
   local underY = y + h - 3 * s
-  local cursorX = x
+
+  -- The bar grew past the window once GOLD/SILVER joined R/B/Y and MODS
+  -- picked up FIND MODS, and the rightmost chips simply fell off the edge.
+  -- Scroll it horizontally instead: clip to the bar, slide the whole run by
+  -- tabScroll, and keep the active chip in view.  The chip rects are stored
+  -- in absolute coordinates AFTER the slide, so the hit tests need no idea
+  -- any of this is happening -- but they do have to be clipped to the band,
+  -- or a chip scrolled off the edge stays clickable.
+  self._tabBand = { x, x + w, y, y + h }
+  local contentW = self._tabContentW or 0
+  local maxTab = math.max(0, contentW - w)
+  self.tabScroll = math.max(0, math.min(self.tabScroll or 0, maxTab))
+  self._tabMax = maxTab
+  local activeRect = self._tabActiveRect
+  if activeRect and maxTab > 0 then
+    -- keep the selected chip (and its label) fully inside the viewport
+    if activeRect[1] - self.tabScroll < 0 then
+      self.tabScroll = activeRect[1]
+    elseif activeRect[2] - self.tabScroll > w then
+      self.tabScroll = activeRect[2] - w
+    end
+    self.tabScroll = math.max(0, math.min(self.tabScroll, maxTab))
+  end
+
+  love.graphics.setScissor(math.floor(x), math.floor(y),
+    math.ceil(w), math.ceil(h))
+  local originX = x - self.tabScroll
+  local cursorX = originX
   for _, t in ipairs(tabs) do
     if t.mods then
       -- divider between the game chips and MODS
@@ -3372,9 +3427,14 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
       col(PAL.bgBot, 0.62)
       love.graphics.rectangle("fill", cursorX, chipY, chip, chip, r, r)
     end
-    -- pinned: the tab bar never scrolls, so it stays live above the viewport
-    self.tabRects[#self.tabRects + 1] =
-      { x = cursorX, y = chipY, width = chip, height = chip, id = t.id, pinned = true }
+    -- pinned: the bar sits above the page viewport, so it stays live there --
+    -- but it has its own horizontal viewport now, and a chip scrolled out of
+    -- it must stop taking clicks.
+    if cursorX + chip > x and cursorX < x + w then
+      self.tabRects[#self.tabRects + 1] =
+        { x = cursorX, y = chipY, width = chip, height = chip, id = t.id,
+          pinned = true, clipX = { x, x + w } }
+    end
     local segEnd = cursorX + chip
     if active then
       love.graphics.setFont(self.tabLabelFont)
@@ -3387,13 +3447,19 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
       col(t.under)
       love.graphics.rectangle("fill", cursorX, underY, segEnd - cursorX, 3 * s)
     end
+    if active then
+      self._tabActiveRect = { cursorX - originX, segEnd - originX }
+    end
     cursorX = segEnd + gap
   end
+  self._tabContentW = cursorX - gap - originX
+  love.graphics.setScissor()
   -- "N of X ready" from GameVersion.ORDER.
   local ready = 0
   for _, v in ipairs(GameVersion.ORDER) do if self.ready[v] then ready = ready + 1 end end
   love.graphics.setFont(self.readyFont)
-  local label = Strings("%d of 3 ready", ready)
+  -- was hardcoded to 3 while ORDER already held five versions
+  local label = Strings("%d of %d ready", ready, #GameVersion.ORDER)
   local lw = self.readyFont:getWidth(label)
   if x + w - lw > cursorX + 8 * s then
     col(PAL.labelGray)
@@ -3880,6 +3946,16 @@ function RomImporter:wheelmoved(_, dy)
   if self._findDetails then
     self._findDetails.scroll = clamp(
       (self._findDetails.scroll or 0) - dy * step, 0, self._findDetails.max or 0)
+    return
+  end
+  -- The tab bar is its own horizontal strip and sits above the page viewport,
+  -- so it claims the wheel while the pointer is inside it.  Checked before the
+  -- page scroll or the bar would be unreachable on an overflowing page.
+  local band = self._tabBand
+  if band and (self._tabMax or 0) > 0 and self._mx and self._my
+     and self._mx >= band[1] and self._mx <= band[2]
+     and self._my >= band[3] and self._my <= band[4] then
+    self.tabScroll = clamp((self.tabScroll or 0) - dy * step, 0, self._tabMax)
     return
   end
   -- An overflowing page scrolls as a whole; the panels' own lists are flattened

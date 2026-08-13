@@ -490,20 +490,28 @@ function TitleState:drawGen2()
   local image = self.gen2Background
   local w, h = image:getDimensions()
   markVisibleTrueColor(0, 0, 160, 144)
-  local band = self.gen2Clouds or {}
-  local top = band.y or 96
-  local height = band.height or 40
+  local band = self.gen2Clouds
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.draw(image,
-    love.graphics.newQuad(0, 0, 160, top, w, h), 0, 0)
-  local offset = math.floor(self.timer / (band.framesPerPixel or 8)) % w
-  local quad = love.graphics.newQuad(0, top, w, height, w, h)
-  love.graphics.draw(image, quad, -offset, top)
-  love.graphics.draw(image, quad, w - offset, top)
-  local below = top + height
-  if below < h then
+  if not band then
+    -- Crystal declares no cloud band: its title screen is static apart from
+    -- Suicune, and the ripped background is 160 wide rather than Gold's full
+    -- 32-tile row.  Running the scroll over it would drag the middle of the
+    -- screen sideways and wrap the logo into itself.
+    love.graphics.draw(image, love.graphics.newQuad(0, 0, 160, 144, w, h), 0, 0)
+  else
+    local top = band.y or 96
+    local height = band.height or 40
     love.graphics.draw(image,
-      love.graphics.newQuad(0, below, 160, h - below, w, h), 0, below)
+      love.graphics.newQuad(0, 0, 160, top, w, h), 0, 0)
+    local offset = math.floor(self.timer / (band.framesPerPixel or 8)) % w
+    local quad = love.graphics.newQuad(0, top, w, height, w, h)
+    love.graphics.draw(image, quad, -offset, top)
+    love.graphics.draw(image, quad, w - offset, top)
+    local below = top + height
+    if below < h then
+      love.graphics.draw(image,
+        love.graphics.newQuad(0, below, 160, h - below, w, h), 0, below)
+    end
   end
   if self.gen2Mascot then
     local at = self.gen2MascotAt or {}
@@ -601,7 +609,7 @@ function TitleState:draw()
     end
   end
   love.graphics.setColor(0, 0, 0, 1)
-  Font.draw(self.title.copyrightText or Strings("2026 bois club games"),
+  Font.draw(self.title.copyrightText or Strings("2026 UNDERdecodedHD"),
     1, 136 + scrollY)
   love.graphics.setColor(1, 1, 1, 1)
 end

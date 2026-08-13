@@ -189,6 +189,12 @@ function love.load(args)
   -- of each flashing their own cmd.exe window (#606).  No-op elsewhere.
   require("src.core.HostShell").hideHostConsole()
 
+  -- Gen2Recomped used to share the LÖVE identity "pokemon-love2d" with
+  -- gen1recomp, so both games wrote one save folder.  We own "Gen2Recomp"
+  -- now; copy an existing player's saves across the first time.  Must run
+  -- before Boot.run or anything else reads the save directory.
+  pcall(function() require("src.core.SaveIdentity").migrateLegacy() end)
+
   -- Self-updater boot shell: a fused build may mount and chainload a newer
   -- downloaded payload here.  True means it took over, so we must stop.  A
   -- dev / source checkout no-ops (see src/update/Boot.lua).

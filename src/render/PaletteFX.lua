@@ -332,6 +332,65 @@ end
 -- reported.  SpriteRenderer bakes that OBP0 ramp (PaletteFX.dmgObj) and lets
 -- the zone shader color the result.  RED++ colors sprites through the
 -- usesGbcPack() path in SpriteRenderer instead.
+-- Does COLORS currently mean "show me the real hardware colour"?
+--
+-- Gen2 sheets carry their own CGB OBJ palette (MapObjectPals), and the
+-- overworld used to apply it unconditionally -- which made COLORS a no-op out
+-- in the world while battle still honoured it.  Gating it here lets the
+-- setting mean the same thing everywhere: the two hardware-colour modes wear
+-- the ROM's palettes, and the DMG/SGB-flavoured modes fall through to the
+-- shade treatment they describe.
+-- The four DMG/SGB novelty modes below are shade treatments; everything else
+-- means "show me the real colour".  Listing the novelties rather than the
+-- hardware modes matters: `gbc` (labelled SGB) is the DEFAULT, and gating it
+-- out sent a freshly imported Gen2 game down the shade-remap path -- garish
+-- green and cyan terrain with every NPC a black silhouette, because a Gen2
+-- tileset has no SGB zone data to colour it with.  Gen2 is a CGB-native game;
+-- its own palettes are the sane answer for every mode that is not explicitly
+-- asking for a DMG look.
+local GEN2_SHADE_MODES = {
+  og = true, og_inv = true, gbc_inv = true, classic = true,
+}
+
+function PaletteFX.usesGen2ObjPal(mode)
+  mode = mode or PaletteFX.mode
+  return not GEN2_SHADE_MODES[mode]
+end
+
+-- The BG half of the same question.  Gen2 tilesets carry palMap/palColors
+-- (LoadTilesetPalette) and TileRenderer bakes them into the atlas; that bake
+-- IS the hardware colour, so it lives or dies with the same modes the OBJ bake
+-- does.  Split out from usesGen2ObjPal only so the two can diverge later
+-- without hunting call sites -- today they answer the same thing.
+function PaletteFX.usesGen2BgPal(mode)
+  return PaletteFX.usesGen2ObjPal(mode)
+end
+
+-- ------- Gen2 time of day (GetTimeOfDay, 5:$4032)
+--
+-- EnvironmentColorsPointers gives each map environment four rows of BG
+-- palettes -- MORN / DAY / NITE / DARKNESS -- and the clock picks the row.
+-- Held here rather than threaded through because TileRenderer BAKES the row
+-- into an atlas and so needs it in the cache key, exactly like darkWorld above.
+local gen2Tod = "DAY"
+-- OverworldState:timeOfDay answers "MORNING"/"NITE"; a mod's world.tod hook may
+-- answer "NIGHT".  Normalise to the four row names the importer writes.
+local GEN2_TOD_ALIAS = {
+  MORN = "MORN", MORNING = "MORN", DAY = "DAY", DAYTIME = "DAY",
+  NITE = "NITE", NIGHT = "NITE", EVE = "NITE", EVENING = "NITE",
+  DARK = "DARK", DARKNESS = "DARK",
+}
+
+-- returns true when the row actually changed, so the caller can rebuild
+function PaletteFX.setGen2Tod(tod)
+  local key = GEN2_TOD_ALIAS[tostring(tod or ""):upper()] or "DAY"
+  if gen2Tod == key then return false end
+  gen2Tod = key
+  return true
+end
+
+function PaletteFX.gen2Tod() return gen2Tod end
+
 function PaletteFX.usesSpriteObp(mode)
   mode = mode or PaletteFX.mode
   return mode == "ogred" and not GameVersion.isYellow()

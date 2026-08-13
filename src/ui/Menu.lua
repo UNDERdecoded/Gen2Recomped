@@ -57,7 +57,13 @@ function Menu.new(game, items, opts)
   -- BIT_NO_MENU_BUTTON_SOUND (wMiscFlags): the PC session runs its
   -- menus silent (home/window.asm HandleMenuInput_)
   self.noSound = opts.noSound or false
+  -- opts.onHighlight(index, item): fired once on open and again every time
+  -- the cursor lands on a different row.  Crystal's boy/girl question uses
+  -- it to swap the pic above the box to whichever character is under the
+  -- cursor; menus that do not pass it behave exactly as before.
+  self.onHighlight = opts.onHighlight
   self:clampScroll()
+  if self.onHighlight then self.onHighlight(self.index, self.items[self.index]) end
   return self
 end
 
@@ -78,6 +84,7 @@ end
 
 function Menu:update(dt)
   local input = self.game.input
+  local wasIndex = self.index
   if input:wasPressed("up") then
     self.index = self.index > 1 and self.index - 1 or #self.items
   elseif input:wasPressed("down") then
@@ -104,6 +111,9 @@ function Menu:update(dt)
     if self.onCancel then self.onCancel() end
   end
   self:clampScroll()
+  if self.onHighlight and self.index ~= wasIndex then
+    self.onHighlight(self.index, self.items[self.index])
+  end
 end
 
 function Menu:draw()

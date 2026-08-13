@@ -696,6 +696,21 @@ end
 -- world.tod default: the Gen 2 clock, or always DAY on Gen 1.  A mod returns
 -- "NIGHT", "MORNING", etc.; the result is cached on the overworld and handed
 -- to map.palette as ctx.tod so palette swaps can key off the period.
+-- Gen2 BG palettes are picked per time of day (EnvironmentColorsPointers), and
+-- TileRenderer bakes the chosen row into the tileset atlas -- so the clock
+-- rolling from DAY into NITE has to drop those atlases and rebuild the visible
+-- map, the same way a COLORS change does.  No-op on Gen 1, and in the COLORS
+-- modes that do not use the ROM's palettes at all.
+function OverworldState:syncGen2Tod(tod)
+  local PaletteFX = require("src.render.PaletteFX")
+  if not PaletteFX.setGen2Tod(tod) then return end
+  if not (GameVersion.isGen2() and PaletteFX.usesGen2BgPal()) then return end
+  pcall(function()
+    MapLoader.invalidateAll()
+    if self.map and self.reloadMap then self:reloadMap(self.map.id, "tod") end
+  end)
+end
+
 function OverworldState:timeOfDay()
   local tod = GameVersion.isGen2() and clockTimeOfDay() or (self.tod or "DAY")
   if not Runtime.wantsHook("world.tod") then
@@ -707,6 +722,7 @@ function OverworldState:timeOfDay()
           { tod = tod, previous = previous, mapId = self.map and self.map.id })
       end
     end
+    self:syncGen2Tod(tod)
     return tod
   end
   local map = self.map
@@ -728,6 +744,7 @@ function OverworldState:timeOfDay()
   else
     self.tod = nextTod
   end
+  self:syncGen2Tod(self.tod)
   return self.tod
 end
 

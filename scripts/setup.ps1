@@ -42,16 +42,25 @@ function Resolve-RomVersion([string]$sha1) {
         'cc7d03262ebfaf2f06772c1a480c7d9d5f4a38e1' { return 'yellow' }
         'd8b8a3600a465308c9953dfa04f0081c05bdcb94' { return 'gold' }
         '49b163f7e57702bc939d642a18f591de55d92dae' { return 'silver' }
+        # Crystal ships in two revisions.  Only three symbols move between
+        # them and none are ones the extractor reads, so one manifest and
+        # one symbol table serve both.
+        'f2f52230b536214ef7c9924f483392993e226cfb' { return 'crystal' }
+        'f4cd194bdee0d04ca4eac29e09b8e4e9d818c133' { return 'crystal' }
         default { return $null }
     }
 }
 
 if (-not $Rom) {
-    $candidate = Get-ChildItem -Path $Root -File |
-        Where-Object { $_.Extension -in '.gb', '.gbc' } |
-        Sort-Object Name |
-        Select-Object -First 1
-    if ($candidate) { $Rom = $candidate.FullName }
+    # Take the first ROM whose hash we RECOGNISE rather than the first file on
+    # disk.  With Gold and both Crystals in the folder the alphabetically-first
+    # file is arbitrary, and an unrecognised pick aborted setup outright.
+    foreach ($candidate in (Get-ChildItem -Path $Root -File |
+            Where-Object { $_.Extension -in '.gb', '.gbc' } | Sort-Object Name)) {
+        if (-not $Rom) { $Rom = $candidate.FullName }   # keep one for the error text
+        $sha = (Get-FileHash -LiteralPath $candidate.FullName -Algorithm SHA1).Hash.ToLowerInvariant()
+        if (Resolve-RomVersion $sha) { $Rom = $candidate.FullName; break }
+    }
 }
 if (-not $Rom -or -not (Test-Path -LiteralPath $Rom -PathType Leaf)) {
     Fail "Pokemon ROM not found. Put a .gb/.gbc in $Root or pass -Rom C:\path\file.gb[c]"
@@ -103,9 +112,12 @@ if ($LASTEXITCODE -ne 0) { Fail 'Pillow installation failed' }
 Say "decoding game data from $(Split-Path -Leaf $Rom)"
 Push-Location $Root
 try {
-    if ($romVersion -in @('gold', 'silver')) {
+    if ($romVersion -in @('gold', 'silver', 'crystal')) {
         Say 'Gen2 ROM detected: extracting supported datasets with the original ROM pipeline.'
-        $loveSave = Join-Path $env:APPDATA 'LOVE\pokemon-love2d'
+        # Desktop owns the identity 'Gen2Recomp' (conf.lua); it used to be
+        # 'pokemon-love2d', shared with gen1recomp.  Writing to the old folder
+        # would put the extracted data where the game never looks.
+        $loveSave = Join-Path $env:APPDATA 'LOVE\Gen2Recomp'
         $outDir = Join-Path $loveSave (Join-Path $romVersion 'data\generated')
         $assetsDir = Join-Path $loveSave (Join-Path $romVersion 'assets\generated')
         & $VenvPython 'tools\build_data.py' --rom $Rom --version $romVersion --out $outDir --assets $assetsDir --clean --only constants --only charmap --only moves --only items --only text --only maps --only tilesets
@@ -143,6 +155,13 @@ if (Find-Love) {
 } else {
     Fail 'LÖVE 11.x is not installed; install it from https://love2d.org'
 }
+
+# Record what was set up, and for which cartridge.  A Gen2 import writes its
+# data into the LOVE save folder, not into the repo, so the old
+# "does data\generated\maps.lua exist" test never went true for a Gen2-only
+# install and first-time setup ran on every single launch.
+$stamp = Join-Path $Root '.setup-complete'
+Set-Content -LiteralPath $stamp -Value "$romVersion $romSha1" -Encoding ASCII
 
 Say 'setup complete. Start the game with: scripts\run.ps1'
 exit 0

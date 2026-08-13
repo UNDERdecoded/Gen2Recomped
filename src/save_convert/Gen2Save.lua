@@ -97,6 +97,11 @@ O.gameTimeHours = sram(0xD1EB)   -- wGameTimeHours (2B big-endian)
 O.gameTimeMins  = sram(0xD1ED)
 O.gameTimeSecs  = sram(0xD1EE)
 O.gameTimeFrames = sram(0xD1EF)
+-- wPlayerGender, bit 0 -- Crystal only (NamePlayer.Kris at 01:$60DE reads
+-- `ld a, [$D472] / bit 0, a`).  Gold and Silver never write the byte and have
+-- no KRIS to be, so a stray 1 there is inert: field.playerForms is absent on
+-- those rips, and Sprites.playerForm answers nil whatever this says.
+O.gender        = sram(0xD472)
 O.statusFlags   = sram(0xD571)   -- wStatusFlags (bit 0 POKEDEX, 1 UNOWN DEX)
 O.money         = sram(0xD573)   -- wMoney (3B big-endian BINARY, not BCD)
 O.coins         = sram(0xD57A)   -- wCoins (2B big-endian)
@@ -779,6 +784,7 @@ function Gen2Save.decode(bytes, data)
       rival = decodeName(bytes, O.rivalName, NAME_LENGTH),
       mom = decodeName(bytes, O.momName, NAME_LENGTH),
       id = u16be(bytes, O.playerId),
+      gender = (u8(bytes, O.gender) % 2 == 1) and "girl" or "boy",
     },
     money = u24be(bytes, O.money),
     coins = u16be(bytes, O.coins),
@@ -813,6 +819,22 @@ function Gen2Save.decode(bytes, data)
   -- event flags -> the exact ids every extracted Gen2 script uses
   for n = 0, NUM_EVENT_FLAGS - 1 do
     if bitGet(bytes, O.eventFlags, n) then save.flags[eventFlagName(n)] = true end
+  end
+
+  -- Per-map scene ids (MapScenes).  These are a SEPARATE store from the event
+  -- flags and nothing used to read them, so an imported save came up with
+  -- every scene at 0: the one-time cutscenes re-armed and the player was
+  -- walled into New Bark Town (and Violet City, and anywhere else with a
+  -- scene).  field.mapSceneVars is mapId -> the WRAM address the ROM keeps
+  -- that map's scene byte at, emitted by the importer off the MapScenes table.
+  local sceneVars = data and data.field and data.field.mapSceneVars
+  if type(sceneVars) == "table" then
+    save.g2Scenes = save.g2Scenes or {}
+    for mapId, address in pairs(sceneVars) do
+      if type(address) == "number" then
+        save.g2Scenes[mapId] = u8(bytes, sram(address))
+      end
+    end
   end
 
   -- every EngineFlags row, under the id the script VM checks.  The badge
@@ -957,6 +979,15 @@ function Gen2Save.encode(save, data, template)
   setU16be(buf, O.playerId, player.id or 0)
   setU24be(buf, O.money, math.min(math.floor(save.money or 0), 999999))
   setU16be(buf, O.coins, math.min(math.floor(save.coins or 0), 9999))
+  -- wPlayerGender: only bit 0 is the gender, so keep whatever else the
+  -- template byte carried rather than zeroing the rest of it.  buf is a table
+  -- of one-character strings at this point, not a byte string, so read it the
+  -- way bitSet does rather than through u8.
+  do
+    local cur = buf[O.gender + 1]
+    setByte(buf, O.gender,
+      withBit(cur and cur:byte() or 0, 0, player.gender == "girl"))
+  end
 
   -- badges
   local johto, kanto = 0, 0
@@ -972,6 +1003,17 @@ function Gen2Save.encode(save, data, template)
   if save.flags then
     for n = 0, NUM_EVENT_FLAGS - 1 do
       bitSet(buf, O.eventFlags, n, save.flags[eventFlagName(n)] and true or false)
+    end
+    -- ...and the scene bytes alongside them, or exporting and re-importing
+    -- would drop the player back at scene 0 on every map that has one.
+    local sceneVars = data and data.field and data.field.mapSceneVars
+    if type(sceneVars) == "table" then
+      for mapId, address in pairs(sceneVars) do
+        local scene = save.g2Scenes and save.g2Scenes[mapId]
+        if type(address) == "number" and type(scene) == "number" then
+          setByte(buf, sram(address), scene)
+        end
+      end
     end
     for _, row in ipairs(engineFlagRows(data) or {}) do
       local off, bitIndex = engineFlagSlot(row)

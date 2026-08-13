@@ -79,3 +79,8 @@ mobile/dist/
 
 # per-machine iOS bundle-id pin (see scripts/build_ios.sh)
 mobile/ios/bundle_id.local
+
+# Written by scripts/setup.{sh,ps1} so the launcher can tell a finished
+# install from a fresh one -- a Gen2 import writes its data into the LOVE
+# save folder, not into data/generated, so there is nothing else to test for.
+.setup-complete

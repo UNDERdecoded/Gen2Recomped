@@ -40,8 +40,22 @@ local function emit(s, row) s.out[#s.out + 1] = row end
 -- A pointer that fell outside the ROM, or a far script that failed to
 -- disassemble, is stored as "" by the extractor.  Branches to one lower to
 -- nothing at all rather than to a jump ScriptRunner cannot resolve.
+-- A branch whose target is not in the script pool is DROPPED, not errored:
+-- the conditional simply vanishes and the script falls through as though the
+-- flag were false.  That is deliberate (a half-extracted pool should still
+-- play), but it used to be completely silent, which makes "this NPC does
+-- nothing" impossible to diagnose from a log.  Say it once per label.
+local droppedBranch = {}
+
 local function branch(s, label)
-  if type(label) ~= "string" or not s.has(label) then return nil end
+  if type(label) ~= "string" then return nil end
+  if not s.has(label) then
+    if label ~= "" and not droppedBranch[label] then
+      droppedBranch[label] = true
+      Logger.warn("gen2 script vm: branch to '%s' dropped (not in pool)", label)
+    end
+    return nil
+  end
   s.want(label)
   return label
 end
@@ -87,6 +101,97 @@ L.ifequal = compare("eq")
 L.ifnotequal = compare("ne")
 L.ifgreater = compare("gt")
 L.ifless = compare("lt")
+
+-- Commands with no runtime model that genuinely need none.  Declaring them
+-- keeps them out of the "unhandled opcode" audit and documents WHY each one
+-- is a no-op, rather than leaving a reader to wonder whether it was missed.
+--
+--   opentext/closetext      the port's show_text owns its own box
+--   waitbutton/promptbutton show_text already waits for A
+--   wildon/wildoff          encounters are gated by the map, not a script flag
+--   loademote               showemote carries the emote id itself
+--   encountermusic          the battle intro picks its own track
+--   deactivatefacing        facing locks are not modelled
+--   writeunusedbyte         writes a byte nothing reads, in the ROM too
+--   delcmdqueue             the cmd queue only ever holds the stone table
+local function noop() end
+for _, name in ipairs({
+  "opentext", "closetext", "waitbutton", "promptbutton", "wildon", "wildoff",
+  "loademote", "encountermusic", "deactivatefacing", "writeunusedbyte",
+  "delcmdqueue",
+}) do
+  L[name] = noop
+end
+
+-- Script_checkjustbattled: true when the script was re-entered straight out
+-- of a won battle, which is the same flag g2_endifjustbattled reads.
+L.checkjustbattled = function(_, s) emit(s, { "g2_check_just_battled" }) end
+
+-- ---------------------------------------------------------------------------
+-- The remaining ScriptCommandTable entries.
+--
+-- Semantics below were read out of the ROM handlers (ScriptCommandTable
+-- 25:$6BE4), not guessed, because a wrong guess here is worse than no
+-- handler: an unhandled opcode is skipped and logged, a wrong one silently
+-- corrupts the script.
+-- ---------------------------------------------------------------------------
+
+-- Script_getmoney (25:$7583) / Script_getcoins (25:$7598) / Script_getnum
+-- (25:$75AD) all end in PrintNum into a string buffer.  The port collapses
+-- every wStringBuffer onto game.stringBuffer (see TextBox's text_ram
+-- handling), so each of these is "put this number where {RAM:...} reads".
+L.getmoney = function(_, s) emit(s, { "g2_buffer_money" }) end
+L.getcoins = function(_, s) emit(s, { "g2_buffer_coins" }) end
+L.getnum = function(_, s) emit(s, { "g2_buffer_num" }) end
+
+-- Script_getcurlandmarkname (25:$755B) reads wMapGroup/wMapNumber, resolves
+-- the landmark and copies its name into the buffer.
+L.getcurlandmarkname = function(_, s) emit(s, { "g2_buffer_landmark" }) end
+
+-- Script_loadmem (25:$7495): three GetScriptByte reads -- a WRAM address low
+-- then high, then a value -- and `ld [hl], a`.  The port keeps the same tiny
+-- address-keyed mirror readmem/writemem already use.
+L.loadmem = function(ir, s) emit(s, { "g2_loadmem", ir[2], ir[3] }) end
+
+-- `phonecall <text>` carries a FAR TEXT pointer, which the extractor has
+-- already registered as dialogue, so the call can simply be printed.  Left
+-- unlowered it was a silent no-op and the caller said nothing at all.
+L.phonecall = function(ir, s) emit(s, { "show_text", ir[2] }) end
+-- Script_hangup (25:$6F7A) just tears the call window down; the port's text
+-- box closes itself.
+L.hangup = function() end
+
+-- Script_checkpokemail (25:$7608): does the party hold this mail?  The port
+-- has no mail model, so answer "no" rather than leaving the branch to fall
+-- through on a stale flag.
+L.checkpokemail = function(_, s) emit(s, { "g2_false" }) end
+L.givepokemail = function() end
+
+-- ------------------------------------------------------------------ no-ops
+-- Each of these was verified to touch only state the port does not model.
+--
+--   xycompare      (25:$7852) stores a pointer in wXYComparePointer and
+--                  returns; the comparison itself belongs to a coord-event
+--                  path this port resolves from its own map data.
+--   writeobjectxy  (25:$71D9) copies an object's coords into WRAM for a
+--                  later applymovement -- the port's movements read the live
+--                  NPC instead.
+--   loadtemptrainer/randomwildmon/loadpikachudata build a battle out of WRAM
+--                  scratch the port fills from its own encounter tables.
+--   _2dmenu/describedecoration are presentation the port has no
+--                  equivalent for; the surrounding dialogue still runs.
+--   autoinput      replays a canned joypad script over a cutscene.
+--   catchtutorial  is the Gen2 catching demo, which the port does not ship.
+local function vmNoop() end
+for _, name in ipairs({
+  "xycompare", "writeobjectxy", "loadtemptrainer", "randomwildmon",
+  "loadpikachudata", "_2dmenu", "describedecoration",
+  "autoinput", "catchtutorial",
+}) do
+  L[name] = vmNoop
+end
+
+
 
 L["end"] = function(_, s) emit(s, { "g2_return" }) end
 L.endcallback = L["end"]
@@ -228,6 +333,18 @@ L.cry = function(ir, s)
   emit(s, { "g2_cry", string.format("SPECIES_%03d", ir[2] or 0) })
 end
 
+-- `pokepic <species>` opens the framed front pic and keeps running;
+-- `closepokepic` is where the ROM's waitbutton lands, so that is where the
+-- port waits.  A species of 0 means "whatever wScriptVar holds", which the
+-- command resolves at run time.
+L.pokepic = function(ir, s)
+  local species = ir[2]
+  emit(s, { "g2_pokepic",
+            (species and species > 0)
+              and string.format("SPECIES_%03d", species) or nil })
+end
+L.closepokepic = function(_, s) emit(s, { "g2_close_pokepic" }) end
+
 -- objects ------------------------------------------------------------------
 
 L.appear = function(ir, s) emit(s, { "g2_object", ir[2], true }) end
@@ -285,6 +402,23 @@ L.halloffame = function(_, s)
 end
 
 L.pause = function(ir, s) emit(s, { "wait", ir[2] }) end
+
+-- Crystal-only.  Script_wait (25:$7C05) reads one byte and then loops that
+-- many times over DelayFrames(6), so `wait n` is n * 6 frames -- six times
+-- longer than `pause n`, which is a plain frame count.  Unhandled it lowered
+-- to nothing at all, so every Crystal cutscene that paces itself with `wait`
+-- ran its next step immediately.
+local WAIT_FRAMES_PER_UNIT = 6
+L.wait = function(ir, s)
+  local units = tonumber(ir[2]) or 0
+  if units > 0 then emit(s, { "wait", units * WAIT_FRAMES_PER_UNIT }) end
+end
+
+-- checksave is deliberately NOT handled.  Script_checksave (25:$7C15) farcalls
+-- the save check and drops its result in wScriptVar for a following ifequal,
+-- and I have not read what each returned value means -- inventing one would
+-- send the script down a branch on a guess, which is exactly the failure the
+-- specials rework above was fixing.  Left to warn once.
 -- MUSIC_* and SFX_* are row indices into the ROM's Music and SFX pointer
 -- tables, which is exactly how the importer keyed audio.musicIndex/sfxIndex.
 L.playmusic = function(ir, s) emit(s, { "g2_music", ir[2] }) end
@@ -350,81 +484,185 @@ L.specialphonecall = function(ir, s) emit(s, { "g2_special_call", ir[2] }) end
 -- SpecialsPointers rows the port already implements, all of them nullary.
 -- Everything else stays a warn-once stub.
 local SPECIALS = {
-  -- existing entries unchanged ...
-  [0x1B] = "g2_heal_party",
-  [0x1E] = "g2_daycare_man",
-  [0x1F] = "g2_daycare_lady",
-  [0x20] = "g2_daycare_outside",
-  [0x21] = "g2_move_deleter",          -- MoveDeletion
-  [0x22] = "g2_bank_of_mom",           -- BankOfMom
-  [0x23] = "g2_magnet_train",          -- MagnetTrain
-  [0x24] = "g2_name_rival",
-  [0x25] = "g2_set_day_of_week",
-  [0x26] = "g2_town_map",              -- OverworldTownMap
-  [0x27] = "g2_unown_printer",
-  [0x28] = "g2_map_radio",             -- MapRadio
-  [0x29] = "g2_unown_puzzle",
-  [0x2A] = "g2_slots",
-  [0x2B] = "g2_card_flip",
-  [0x3C] = "g2_restart_map_music",
-  [0x3D] = "g2_heal_machine_anim",
-  [0x44] = "g2_daycare_mon1",
-  [0x45] = "g2_daycare_mon2",
-  [0x4A] = "g2_give_shuckle",
-  [0x4B] = "g2_return_shuckie",
-  [0x4C] = "g2_bills_grandfather",     -- BillsGrandfather (stones)
-  [0x4D] = "g2_check_pokerus",
-  [0x4E] = "g2_show_coins",
-  [0x4F] = "g2_show_coins",
-  [0x50] = "g2_place_money_top_right",
-  [0x51] = "g2_lucky_winners",         -- radio lottery
-  [0x52] = "g2_lucky_check_flag",
-  [0x53] = "g2_lucky_reset",
-  [0x54] = "g2_lucky_print",
-  [0x55] = "g2_select_apricorn",
-  [0x56] = "g2_name_rater",
-  [0x5D] = "g2_load_used_sprites",     -- Copycat variablesprite refresh
-  [0x5F] = "g2_snorlax_awake",
-  [0x60] = "g2_haircut_older",
-  [0x61] = "g2_haircut_younger",
-  [0x62] = "g2_daisys_grooming",
-  [0x64] = "g2_oaks_pc",
-  [0x66] = "g2_trainer_house",
-  [0x67] = "g2_photo_studio",
-  [0x68] = "g2_init_roam_mons",
-  [0x6A] = "g2_diploma",
-  [0x6B] = "g2_print_diploma",
+  HealParty = "g2_heal_party",
+  DayCareMan = "g2_daycare_man",
+  DayCareLady = "g2_daycare_lady",
+  DayCareManOutside = "g2_daycare_outside",
+  MoveDeletion = "g2_move_deleter",
+  BankOfMom = "g2_bank_of_mom",
+  MagnetTrain = "g2_magnet_train",
+  NameRival = "g2_name_rival",
+  SetDayOfWeek = "g2_set_day_of_week",
+  OverworldTownMap = "g2_town_map",
+  UnownPrinter = "g2_unown_printer",
+  MapRadio = "g2_map_radio",
+  UnownPuzzle = "g2_unown_puzzle",
+  SlotMachine = "g2_slots",
+  CardFlip = "g2_card_flip",
+  RestartMapMusic = "g2_restart_map_music",
+  HealMachineAnim = "g2_heal_machine_anim",
+  DayCareMon1 = "g2_daycare_mon1",
+  DayCareMon2 = "g2_daycare_mon2",
+  GiveShuckle = "g2_give_shuckle",
+  ReturnShuckie = "g2_return_shuckie",
+  BillsGrandfather = "g2_bills_grandfather",  -- (stones)
+  CheckPokerus = "g2_check_pokerus",
+  DisplayCoinCaseBalance = "g2_show_coins",
+  DisplayMoneyAndCoinBalance = "g2_show_coins",
+  PlaceMoneyTopRight = "g2_place_money_top_right",
+  CheckForLuckyNumberWinners = "g2_lucky_winners",  -- lottery
+  CheckLuckyNumberShowFlag = "g2_lucky_check_flag",
+  ResetLuckyNumberShowFlag = "g2_lucky_reset",
+  PrintTodaysLuckyNumber = "g2_lucky_print",
+  SelectApricornForKurt = "g2_select_apricorn",
+  NameRater = "g2_name_rater",
+  LoadUsedSpritesGFX = "g2_load_used_sprites",  -- variablesprite refresh
+  SnorlaxAwake = "g2_snorlax_awake",
+  OlderHaircutBrother = "g2_haircut_older",
+  YoungerHaircutBrother = "g2_haircut_younger",
+  DaisysGrooming = "g2_daisys_grooming",
+  ProfOaksPCBoot = "g2_oaks_pc",
+  TrainerHouse = "g2_trainer_house",
+  PhotoStudio = "g2_photo_studio",
+  InitRoamMons = "g2_init_roam_mons",
+  Diploma = "g2_diploma",
+  PrintDiploma = "g2_print_diploma",
 }
 
 -- Fades / presentation (Route 24 Rocket uses FadeOutMusic + FadeOutToBlack +
 -- ReloadSpritesNoPalettes + FadeInFromBlack after the battle)
 local SPECIALS_NOOP = {
-  [0x2E] = true, -- FadeOutToWhite
-  [0x2F] = true, -- FadeOutToBlack
-  [0x30] = true, -- FadeInFromWhite
-  [0x31] = true, -- FadeInFromBlack
-  [0x32] = true, -- ReloadSpritesNoPalettes
-  [0x33] = true, -- ClearBGPalettes
-  [0x34] = true, -- UpdateTimePals
-  [0x35] = true, -- ClearTilemap
-  [0x36] = true, -- UpdateSprites
-  [0x37] = true, -- UpdatePlayerSprite
-  [0x3A] = true, -- WaitSFX
-  [0x3B] = true, -- PlayMapMusic
-  [0x69] = true, -- FadeOutMusic
+  FadeOutToWhite = true,
+  FadeOutToBlack = true,
+  FadeInFromWhite = true,
+  FadeInFromBlack = true,
+  ReloadSpritesNoPalettes = true,
+  ClearBGPalettes = true,
+  UpdateTimePals = true,
+  ClearTilemap = true,
+  UpdateSprites = true,
+  UpdatePlayerSprite = true,
+  WaitSFX = true,
+  PlayMapMusic = true,
+  FadeOutMusic = true,
+  -- Presentation and dummy specials, most of them Crystal-only.  These MUST
+  -- lower to nothing rather than fall through to g2_special, because that
+  -- handler used to answer `lastCheck = false` -- so a palette reload or a cry
+  -- sitting between a checkevent and its iftrue silently flipped the branch.
+  -- Crystal has 112 unhandled specials to Gold's 55, which is why it bites
+  -- there first.
+  ClearBGPalettesBufferScreen = true,
+  LoadMapPalettes = true,
+  RefreshSprites = true,
+  SetPlayerPalette = true,
+  BattleTowerFade = true,
+  StubbedTrainerRankings_Healings = true,
+  PlayCurMonCry = true,
+  PlaySlowCry = true,
+  SurfStartStep = true,
+  -- decorations are not modelled, so toggling their visibility does nothing
+  ToggleDecorationsVisibility = true,
+  ToggleMaptileDecorations = true,
+  UnusedDummySpecial = true,
+  UnusedBattleTowerDummySpecial1 = true,
+  UnusedBattleTowerDummySpecial2 = true,
 }
 
 -- Specials that print their own prompt and are immediately followed by a
 -- `yesorno` confirming it.  Emitting the last box as a show_text row lets
 -- L.yesorno fold it exactly as it folds a real writetext.
 local SPECIALS_PROMPT = {
-  [0x6C] = { "g2_set_dst", "InitialSetDSTFlag.DSTIsThatOKText" },
-  [0x6D] = { "g2_clear_dst", "InitialClearDSTFlag.TimeAskOkayText" },
+  InitialSetDSTFlag = { "g2_set_dst", "InitialSetDSTFlag.DSTIsThatOKText" },
+  InitialClearDSTFlag = { "g2_clear_dst", "InitialClearDSTFlag.TimeAskOkayText" },
+}
+
+-- The three tables above are keyed by the special's pret LABEL rather than by
+-- its SpecialsPointers index, because the index is not portable between the
+-- two games.  Gold has 129 specials and Crystal 207, and they agree only up to
+-- $2E: Crystal inserts BattleTowerFade at $2F, which pushes 59 of Gold's the
+-- rest of the way up by one.  Lowered against Gold's numbering, a Crystal
+-- script asking for $3D landed on HealMachineAnim -- Poke Balls drifting over
+-- whoever you happened to be talking to -- and one asking for $4A landed on
+-- GiveShuckle, which is where the two SHUCKIE in a new Crystal party came
+-- from.
+--
+-- ir[3] is the label the extractor resolved off SpecialsPointers.  A dataset
+-- extracted before that existed carries only the index, so fall back to
+-- reading it as a Gold index: correct for Gold and Silver, and no worse than
+-- before for Crystal until the cartridge is re-imported.
+-- Gold/Silver SpecialsPointers indices for the labels above, so a dataset
+-- extracted before the importer started emitting labels still lowers.
+-- Read off the cartridge, not typed out.
+local GOLD_SPECIAL_LABELS = {
+  [0x1B] = "HealParty",
+  [0x1E] = "DayCareMan",
+  [0x1F] = "DayCareLady",
+  [0x20] = "DayCareManOutside",
+  [0x21] = "MoveDeletion",
+  [0x22] = "BankOfMom",
+  [0x23] = "MagnetTrain",
+  [0x24] = "NameRival",
+  [0x25] = "SetDayOfWeek",
+  [0x26] = "OverworldTownMap",
+  [0x27] = "UnownPrinter",
+  [0x28] = "MapRadio",
+  [0x29] = "UnownPuzzle",
+  [0x2A] = "SlotMachine",
+  [0x2B] = "CardFlip",
+  [0x2E] = "FadeOutToWhite",
+  [0x2F] = "FadeOutToBlack",
+  [0x30] = "FadeInFromWhite",
+  [0x31] = "FadeInFromBlack",
+  [0x32] = "ReloadSpritesNoPalettes",
+  [0x33] = "ClearBGPalettes",
+  [0x34] = "UpdateTimePals",
+  [0x35] = "ClearTilemap",
+  [0x36] = "UpdateSprites",
+  [0x37] = "UpdatePlayerSprite",
+  [0x3A] = "WaitSFX",
+  [0x3B] = "PlayMapMusic",
+  [0x3C] = "RestartMapMusic",
+  [0x3D] = "HealMachineAnim",
+  [0x44] = "DayCareMon1",
+  [0x45] = "DayCareMon2",
+  [0x4A] = "GiveShuckle",
+  [0x4B] = "ReturnShuckie",
+  [0x4C] = "BillsGrandfather",
+  [0x4D] = "CheckPokerus",
+  [0x4E] = "DisplayCoinCaseBalance",
+  [0x4F] = "DisplayMoneyAndCoinBalance",
+  [0x50] = "PlaceMoneyTopRight",
+  [0x51] = "CheckForLuckyNumberWinners",
+  [0x52] = "CheckLuckyNumberShowFlag",
+  [0x53] = "ResetLuckyNumberShowFlag",
+  [0x54] = "PrintTodaysLuckyNumber",
+  [0x55] = "SelectApricornForKurt",
+  [0x56] = "NameRater",
+  [0x5D] = "LoadUsedSpritesGFX",
+  [0x5F] = "SnorlaxAwake",
+  [0x60] = "OlderHaircutBrother",
+  [0x61] = "YoungerHaircutBrother",
+  [0x62] = "DaisysGrooming",
+  [0x64] = "ProfOaksPCBoot",
+  [0x66] = "TrainerHouse",
+  [0x67] = "PhotoStudio",
+  [0x68] = "InitRoamMons",
+  [0x69] = "FadeOutMusic",
+  [0x6A] = "Diploma",
+  [0x6B] = "PrintDiploma",
+  [0x6C] = "InitialSetDSTFlag",
+  [0x6D] = "InitialClearDSTFlag",
 }
 
 L.special = function(ir, s)
-  if SPECIALS_NOOP[ir[2]] then return end
-  local prompt = SPECIALS_PROMPT[ir[2]]
+  local key = ir[3]
+  if type(key) ~= "string" then key = GOLD_SPECIAL_LABELS[ir[2]] end
+  if key == nil then
+    emit(s, { "g2_special", ir[2] })
+    return
+  end
+  if SPECIALS_NOOP[key] then return end
+  local prompt = SPECIALS_PROMPT[key]
   if prompt then
     emit(s, { prompt[1] })
     s.lastText = prompt[2]
@@ -432,7 +670,7 @@ L.special = function(ir, s)
     s.lastTextRow = #s.out
     return
   end
-  local name = SPECIALS[ir[2]]
+  local name = SPECIALS[key]
   if name then emit(s, { name }) else emit(s, { "g2_special", ir[2] }) end
 end
 
@@ -570,7 +808,6 @@ L.swarm = function(ir, s) emit(s, { "g2_swarm", ir[2], ir[3] }) end
 -- (closewindow, closepokepic) and give_item already prints the line
 -- itemnotify exists to print.
 L.closewindow = function() end
-L.closepokepic = function() end
 L.itemnotify = function() end
 
 -- ---------------------------------------------------------------------------
@@ -633,6 +870,13 @@ function Gen2ScriptVM.compile(data, entry)
     emit(state, { "g2_return" })
   end
 
+  -- A script that lowers to nothing is why an NPC can be walked up to,
+  -- talked to, and say absolutely nothing: ScriptRunner gets nil and there is
+  -- no dialogue to show.  It means every opcode in the script was unhandled,
+  -- or the pool entry was empty to begin with.  Name it.
+  if #out == 0 then
+    Logger.warn("gen2 script vm: '%s' compiled to zero rows (silent NPC)", key)
+  end
   compiled[scripts][key] = #out > 0 and out or false
   return #out > 0 and out or nil
 end
@@ -700,9 +944,31 @@ local function contributionFor(data, mapId, entry, mapDef)
   end
   if next(talk) then contribution.talk = talk end
 
-  -- The ROM runs exactly one scene -- the one wMapScenes names for this map --
-  -- and then every callback.  Running all of them would fire every cutscene
-  -- state the map has ever had the moment the player walks in.
+  -- The ROM runs exactly one scene -- the one wMapScenes names for this map.
+  -- Running all of them would fire every cutscene state the map has ever had
+  -- the moment the player walks in.
+  --
+  -- Callbacks come FIRST.  In the engine they are not "the rest of the map
+  -- script": RunMapCallback fires them from LoadMapAttributes while the map is
+  -- still being set up, and the scene script only starts once the map is live
+  -- (via the scene's own priorityjump).  So a callback that stages the cast is
+  -- guaranteed to have run before the scene that walks the player up to it.
+  --
+  -- Crystal's ElmsLab is the case that proves it, and it is a Crystal-only
+  -- shape -- Gold's ElmsLab_MapScripts declares ZERO callbacks:
+  --
+  --   ElmsLabMoveElmCallback:  checkscene / iftrue .Skip
+  --                            moveobject ELMSLAB_ELM, 3, 4 / endcallback
+  --
+  -- ELM's object_event sits at (5,2), which is where he ends up AFTER the
+  -- meeting (ElmsLab_ElmToDefaultPositionMovement1/2 walk him up-right-right-up
+  -- from 3,4 to exactly 5,2).  The callback is what puts him at (3,4) for the
+  -- meeting itself, and Crystal's ElmsLab_WalkUpToElmMovement is built for that
+  -- spot: 7 steps up then turn_head_LEFT, where Gold's is 9 steps up then
+  -- turn_head_RIGHT.  Queueing the scene first left ELM parked at (5,2): the
+  -- player walked up and faced an empty tile, then ELM's "walk back to my
+  -- desk" movements ran from the wrong origin and carried him off the walkable
+  -- area.
   local scenes, callbacks = {}, {}
   for i, label in ipairs(entry.scenes or {}) do
     scenes[i] = Gen2ScriptVM.compile(data, label) or false
@@ -724,12 +990,12 @@ local function contributionFor(data, mapId, entry, mapDef)
           flags[eventFlag(i)] = nil
         end
       end
-      local scene = Gen2Commands.getScene(game.save, mapId)
-      local rows = scenes[scene + 1]
-      if rows then queue(overworld, rows, { mapId = mapId }) end
       for _, cb in ipairs(callbacks) do
         queue(overworld, cb, { mapId = mapId })
       end
+      local scene = Gen2Commands.getScene(game.save, mapId)
+      local rows = scenes[scene + 1]
+      if rows then queue(overworld, rows, { mapId = mapId }) end
     end
   end
 

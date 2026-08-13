@@ -784,8 +784,16 @@ function Gen2AnimPlayer:playSound(inst)
 end
 
 function Gen2AnimPlayer:playCry()
-  -- anim_cry plays the attacker's cry; BattleState owns the battlers, so
-  -- leave it to the fallback path rather than guess a species here.
+  -- anim_cry plays the ATTACKER's cry -- GROWL and ROAR are the two moves
+  -- that use it (Gen 1 spelled the same rule IsCryMove).
+  --
+  -- This player does not own the battlers, so it cannot name the species
+  -- itself; queue the request on the very same effect channel every other op
+  -- reports through and let BattleState, which does know who is attacking,
+  -- resolve it.  Leaving this an empty stub is why Growl fell silent in Gen 2:
+  -- the "no subanimation player" fallback in BattleState only runs when there
+  -- is no player at all, and for a Gen 2 move there always is one.
+  self.effects[#self.effects + 1] = { cry = true }
 end
 
 function Gen2AnimPlayer:update()

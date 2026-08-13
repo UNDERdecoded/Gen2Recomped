@@ -181,7 +181,7 @@ function M.draw(S, Kit, x, y, w, h)
     -- #515: truthy check, not `== true` -- the in-game grant path stores a
     -- number (see OverworldController.lua checkVictoryRewards), matching
     -- src/inventory/Badges.lua's own truthy read.
-    if S.save.inventory[id] then earned = earned + 1 end
+    if Ops.hasBadge(S, id) then earned = earned + 1 end
   end
   Kit.caption(x + pad, badgeY + pad, "BADGES")
   Kit.textRight("mono", ("%d/%d"):format(earned, #badgeIds), x + leftW - pad,
@@ -191,7 +191,7 @@ function M.draw(S, Kit, x, y, w, h)
   for i, id in ipairs(badgeIds) do
     local bc = (i - 1) % badgeCols
     local br = math.floor((i - 1) / badgeCols)
-    local on = S.save.inventory[id]
+    local on = Ops.hasBadge(S, id)
     local short = id:gsub("BADGE$", "")
     if Kit.chip(x + pad + bc * (bW + 7 * s), bTop + br * (28 * s + 7 * s),
         bW, 28 * s, Kit.ellipsize("micro", short, bW - 8 * s), on,

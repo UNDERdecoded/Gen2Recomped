@@ -74,6 +74,96 @@ Gen2ScriptOps.COMMANDS = {
   { "credits", "" }, { "warpfacing", "bbbbb" },
 }
 
+-- Crystal's ScriptCommandTable is NOT Gold's with entries appended.  It
+-- inserts `farjumptext` at $52, which shifts all 88 commands after it down by
+-- one, and it changes the operand width of seven commands that kept their
+-- names.  Disassembling a Crystal ROM with the Gold table desyncs on the
+-- first shifted command and never recovers, so Crystal gets its own table.
+--
+-- Generated from pret/pokecrystal macros/scripts/events.asm: the `const
+-- <name>_command` run gives the order, and each MACRO body gives the operand
+-- widths.  Where a command kept both its name and its total width, Gold's
+-- spec letters are reused verbatim so the semantic distinctions (p vs t vs d)
+-- carry over; the seven that changed width are listed below.
+--
+--   $10 memcallasm    dba -> dw   (D -> d)
+--   $2F givepokemail  dba -> dw   (T -> d)
+--   $30 checkpokemail dba -> dw   (T -> d)
+--   $3F getnum        2 args -> 1 (bb -> b)
+--   $92 reloadend     0 args -> 1 ("" -> b)
+--   $98 phonecall     dba -> dw   (T -> w)
+--   $A0 swarm         +map_id     (bb -> bbb)
+--
+-- `d` rather than `p` for the mail and asm pointers on purpose: `p` makes the
+-- extractor queue the target and disassemble it as code, and mail data is not
+-- code.
+Gen2ScriptOps.COMMANDS_CRYSTAL = {
+  { "scall", "p" }, { "farscall", "f" }, { "memcall", "p" },
+  { "sjump", "p" }, { "farsjump", "f" }, { "memjump", "p" },
+  { "ifequal", "bp" }, { "ifnotequal", "bp" }, { "iffalse", "p" },
+  { "iftrue", "p" }, { "ifgreater", "bp" }, { "ifless", "bp" },
+  { "jumpstd", "w" }, { "callstd", "w" }, { "callasm", "D" },
+  { "special", "w" }, { "memcallasm", "d" }, { "checkmapscene", "bb" },
+  { "setmapscene", "bbb" }, { "checkscene", "" }, { "setscene", "b" },
+  { "setval", "b" }, { "addval", "b" }, { "random", "b" },
+  { "checkver", "" }, { "readmem", "w" }, { "writemem", "w" },
+  { "loadmem", "wb" }, { "readvar", "b" }, { "writevar", "b" },
+  { "loadvar", "bb" }, { "giveitem", "bb" }, { "takeitem", "bb" },
+  { "checkitem", "b" }, { "givemoney", "bm" }, { "takemoney", "bm" },
+  { "checkmoney", "bm" }, { "givecoins", "w" }, { "takecoins", "w" },
+  { "checkcoins", "w" }, { "addcellnum", "b" }, { "delcellnum", "b" },
+  { "checkcellnum", "b" }, { "checktime", "b" }, { "checkpoke", "b" },
+  { "givepoke", "bbbbbD" }, { "giveegg", "bb" }, { "givepokemail", "d" },
+  { "checkpokemail", "d" }, { "checkevent", "w" }, { "clearevent", "w" },
+  { "setevent", "w" }, { "checkflag", "w" }, { "clearflag", "w" },
+  { "setflag", "w" }, { "wildon", "" }, { "wildoff", "" },
+  { "xycompare", "d" }, { "warpmod", "bbb" }, { "blackoutmod", "bb" },
+  { "warp", "bbbb" }, { "getmoney", "bb" }, { "getcoins", "b" },
+  { "getnum", "b" }, { "getmonname", "bb" }, { "getitemname", "bb" },
+  { "getcurlandmarkname", "b" }, { "gettrainername", "bbb" }, { "getstring", "bd" },
+  { "itemnotify", "" }, { "pocketisfull", "" }, { "opentext", "" },
+  { "reanchormap", "b" }, { "closetext", "" }, { "writeunusedbyte", "b" },
+  { "farwritetext", "T" }, { "writetext", "t" }, { "repeattext", "bb" },
+  { "yesorno", "" }, { "loadmenu", "d" }, { "closewindow", "" },
+  { "jumptextfaceplayer", "t" }, { "farjumptext", "f" }, { "jumptext", "t" },
+  { "waitbutton", "" }, { "promptbutton", "" }, { "pokepic", "b" },
+  { "closepokepic", "" }, { "_2dmenu", "" }, { "verticalmenu", "" },
+  { "loadpikachudata", "" }, { "randomwildmon", "" }, { "loadtemptrainer", "" },
+  { "loadwildmon", "bb" }, { "loadtrainer", "bb" }, { "startbattle", "" },
+  { "reloadmapafterbattle", "" }, { "catchtutorial", "b" }, { "trainertext", "b" },
+  { "trainerflagaction", "b" }, { "winlosstext", "tt" }, { "scripttalkafter", "" },
+  { "endifjustbattled", "" }, { "checkjustbattled", "" }, { "setlasttalked", "b" },
+  { "applymovement", "bM" }, { "applymovementlasttalked", "M" }, { "faceplayer", "" },
+  { "faceobject", "bb" }, { "variablesprite", "bb" }, { "disappear", "b" },
+  { "appear", "b" }, { "follow", "bb" }, { "stopfollow", "" },
+  { "moveobject", "bbb" }, { "writeobjectxy", "b" }, { "loademote", "b" },
+  { "showemote", "bbb" }, { "turnobject", "bb" }, { "follownotexact", "bb" },
+  { "earthquake", "b" }, { "changemapblocks", "bbb" }, { "changeblock", "bbb" },
+  { "reloadmap", "" }, { "refreshmap", "" }, { "writecmdqueue", "d" },
+  { "delcmdqueue", "b" }, { "playmusic", "w" }, { "encountermusic", "" },
+  { "musicfadeout", "wb" }, { "playmapmusic", "" }, { "dontrestartmapmusic", "" },
+  { "cry", "w" }, { "playsound", "w" }, { "waitsfx", "" },
+  { "warpsound", "" }, { "specialsound", "" }, { "autoinput", "D" },
+  { "newloadmap", "b" }, { "pause", "b" }, { "deactivatefacing", "b" },
+  { "sdefer", "p" }, { "warpcheck", "" }, { "stopandsjump", "p" },
+  { "endcallback", "" }, { "end", "" }, { "reloadend", "b" },
+  { "endall", "" }, { "pokemart", "bw" }, { "elevator", "d" },
+  { "trade", "b" }, { "askforphonenumber", "b" }, { "phonecall", "w" },
+  { "hangup", "" }, { "describedecoration", "b" }, { "fruittree", "b" },
+  { "specialphonecall", "w" }, { "checkphonecall", "" }, { "verbosegiveitem", "bb" },
+  { "verbosegiveitemvar", "bb" }, { "swarm", "bbb" }, { "halloffame", "" },
+  { "credits", "" }, { "warpfacing", "bbbbb" }, { "battletowertext", "b" },
+  { "getlandmarkname", "bb" }, { "gettrainerclassname", "bb" }, { "getname", "bbb" },
+  { "wait", "b" }, { "checksave", "" },
+}
+
+-- Which table a ROM speaks.  Gold/Silver share COMMANDS; Crystal has its own.
+-- Defaults to Gold, so nothing changes until a caller asks for crystal.
+function Gen2ScriptOps.commandsFor(version)
+  if version == "crystal" then return Gen2ScriptOps.COMMANDS_CRYSTAL end
+  return Gen2ScriptOps.COMMANDS
+end
+
 Gen2ScriptOps.ARG_BYTES = {
   b = 1, w = 2, p = 2, t = 2, d = 2, M = 2, f = 3, T = 3, D = 3, m = 3,
 }
@@ -81,7 +171,10 @@ Gen2ScriptOps.ARG_BYTES = {
 -- commands after which the interpreter never falls through to the next byte
 Gen2ScriptOps.TERMINATORS = {
   sjump = true, farsjump = true, memjump = true, jumpstd = true,
-  jumptext = true, jumptextfaceplayer = true, stopandsjump = true,
+  -- farjumptext is Crystal's far-pointer jumptext and ends the script the
+  -- same way; missing it would walk the disassembler into the next script.
+  jumptext = true, jumptextfaceplayer = true, farjumptext = true,
+  stopandsjump = true,
   endcallback = true, ["end"] = true, reloadend = true, endall = true,
   halloffame = true, credits = true, fruittree = true,
 }

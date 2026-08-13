@@ -16,8 +16,21 @@ end
 -- (01:$728B) refuses to send one out, and every "usable mon" test in Gen2
 -- goes through it.  Modelling that here keeps eggs out of battle leads,
 -- switch-ins and the blackout check in one place.
+-- Deliberately truthy rather than `== true`, and it accepts a live hatch
+-- counter as proof on its own.
+--
+-- This one predicate is what hides everything an EGG must not give away --
+-- the species icon and name in the party list, the stats screen, the battle
+-- switch guards, the blackout check.  Testing `mon.isEgg == true` meant a
+-- single lost or differently-typed flag (a 1 rather than a true, a field
+-- dropped by an older save or an importer) leaked the whole lot at once, and
+-- a leak here is a spoiler the player can never un-see.  eggSteps is only
+-- ever set alongside isEgg and cleared by HatchEggs, so it is a safe second
+-- witness.
 function Party.isEgg(mon)
-  return mon ~= nil and mon.isEgg == true
+  if mon == nil then return false end
+  if mon.isEgg then return true end
+  return (tonumber(mon.eggSteps) or 0) > 0
 end
 
 function Party.firstHealthy(party)
