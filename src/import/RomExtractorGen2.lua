@@ -2558,9 +2558,45 @@ end
 -- of a pound, which is exactly what DexEntryMenu prints.
 local GEN2_DEX_POINTER_BANK = 0x68
 
+-- The four banks the dex entries live in, one per 64 species.
+--
+-- Gold really does compute this: GetDexEntryPointer (11:$4326) ends
+-- `and 3 / add a, $68`, so bank = $68 + group.  Crystal replaced that
+-- arithmetic with a four-byte LOOKUP -- $60, $6E, $73, $74 -- because its
+-- entries no longer sit in consecutive banks.  Applying Gold's formula to
+-- Crystal put all 251 entries in the wrong bank: VENONAT's dex text came out
+-- as Brock's BOULDERBADGE speech, which is what happens to live at the same
+-- address in bank $68.
+--
+-- Three routines carry the same table (the dex screen, the HEAVY BALL weight
+-- check and Pokedex Show); any of them will do, and all three agree.
+function RomExtractorGen2:gen2DexEntryBanks()
+  if self._gen2DexBanks ~= nil then return self._gen2DexBanks or nil end
+  self._gen2DexBanks = false
+  for _, name in ipairs({
+    "GetDexEntryPointer.PokedexEntryBanks",
+    "PokedexShow_GetDexEntryBank.PokedexEntryBanks",
+    "HeavyBall_GetDexEntryBank.PokedexEntryBanks",
+  }) do
+    local sym = self:symbol(name)
+    if sym then
+      local ok, raw = pcall(self.rom.bytes, self.rom, sym.bank, sym.address, 4)
+      -- four real, non-descending ROM banks; anything else is not the table
+      if ok and type(raw) == "table" and #raw == 4
+         and raw[1] > 0 and raw[4] < self:gen2BankCount()
+         and raw[2] >= raw[1] and raw[3] >= raw[2] and raw[4] >= raw[3] then
+        self._gen2DexBanks = raw
+        break
+      end
+    end
+  end
+  return self._gen2DexBanks or nil
+end
+
 function RomExtractorGen2:gen2DexEntries(pokemon)
   local table_ = self:symbol("PokedexDataPointerTable")
   if not (self.rom and table_) then return end
+  local banks = self:gen2DexEntryBanks()
   local charmap = self:readSourceTable("charmap")
   local texts = self._gen2Texts
   local written = 0
@@ -2570,7 +2606,11 @@ function RomExtractorGen2:gen2DexEntries(pokemon)
       local ok = pcall(function()
         local row = table_.address + (dex - 1) * 2
         local address = self.rom:word(table_.bank, row)
-        local bank = GEN2_DEX_POINTER_BANK + math.floor((dex - 1) / 64)
+        local group = math.floor((dex - 1) / 64)
+        -- the cartridge's own table where it has one, Gold's arithmetic where
+        -- it does not (see gen2DexEntryBanks)
+        local bank = (banks and banks[group + 1])
+          or (GEN2_DEX_POINTER_BANK + group)
         local kind, offset = {}, 0
         while offset < 16 do
           local value = self.rom:byte(bank, address + offset)
@@ -4507,6 +4547,12 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
     elseif trainer ~= 0 and names[trainer] then
       entry = { name = names[trainer] }
     end
+    -- The contact's OWN map, bytes 3 and 4.  GetAvailableCallers (36:$40DE)
+    -- compares it against wMapGroup/wMapNumber and drops the contact from the
+    -- sample when they match, so a trainer never phones you from the route you
+    -- are standing on; RandomPhoneWildMon looks up the same map's grass table
+    -- for the species its line names.  Both were unreachable without this.
+    if entry then entry.group, entry.number = row[3], row[4] end
     if entry and pool then
       entry.receive = self:gen2QueueScript(row[GEN2_PHONE_RECEIVE_BANK],
         row[GEN2_PHONE_RECEIVE_BANK + 1] + row[GEN2_PHONE_RECEIVE_BANK + 2] * 256,
@@ -6575,9 +6621,11 @@ function RomExtractorGen2:gen2TreeMons()
       if group == 0xFF or group == 0 then break end
       local set = self.rom:byte(mapsSym.bank, address + 2)
       local entry = byGroupNumber[group * 256 + self.rom:byte(mapsSym.bank, address + 1)]
-      -- GetTreeMons quits on 0 and on anything >= 4, so the rows tagged 5 are
-      -- "no trees here" just as much as the rows tagged 0
-      if entry and set >= 1 and set <= 3 then out.maps[entry.label] = set end
+      -- GetTreeMons (2E:$42D2) is `cp $08 / jr nc, .quit` then `and a / jr z,
+      -- .quit`: the valid set indices are 1 through SEVEN.  Only 0 means "no
+      -- trees here".  Capping this at 3 threw away every map tagged Kanto,
+      -- Lake or Forest.
+      if entry and set >= 1 and set <= 7 then out.maps[entry.label] = set end
       address = address + 3
     end
     -- A tree set is TWO $FF-terminated tables back to back, common then rare,
@@ -6607,26 +6655,40 @@ function RomExtractorGen2:gen2TreeMons()
       end
       return rows, at
     end
-    -- Sets 1 and 2 are the only tree sets any map is tagged with; 3 is the
-    -- rock-smash list read below, and GetTreeMons (2E:$645A) rejects 0 and
-    -- anything >= 4, so the rows tagged 5 really are "no trees here".
-    for set = 1, 2 do
+    -- TreeMons (2E:$42E8) is seven sets, and every one of them is reachable:
+    --   1 Canyon  2 Town  3 Route  4 Kanto  5 Lake  6 Forest  7 Rock
+    -- TreeMonMaps tags maps with 1 through 6, and NINE of them -- Routes 29,
+    -- 30, 31, 34, 35, 36, 37, 38, 39, i.e. most of the early game -- carry
+    -- set 3, Route.
+    --
+    -- Reading only sets 1 and 2 left all of those maps pointing at a set that
+    -- was never extracted, so `sets` came up nil and headbutt on any of them
+    -- could only ever answer "Nope. Nothing…" -- no mon ever appeared.  Set 3
+    -- was ALSO being read as the rock-smash list, which is Route's table, not
+    -- Rock's; rock is set 7, and its own symbol pins it.
+    local rockSym = self:symbol("TreeMonSet_Rock")
+    local rockIndex = 7
+    for set = 1, 7 do
+      if rockSym
+         and self.rom:word(setsSym.bank, setsSym.address + set * 2)
+             == rockSym.address then
+        rockIndex = set
+      end
+    end
+    for set = 1, 7 do
       local at = self.rom:word(setsSym.bank, setsSym.address + set * 2)
       local common, afterCommon = readTable(at)
-      local rare = readTable(afterCommon)
+      -- Rock's set is the last one in the bank and has no rare half; reading
+      -- one anyway walks into GetTreeMon's code, and if a future rip ever put
+      -- it at the very end of the bank that read would assert and take the
+      -- whole table down with it.
+      local rare = (set ~= rockIndex) and (readTable(afterCommon)) or {}
       out.sets[set] = { common = common, rare = rare }
     end
-    local at = self.rom:word(setsSym.bank, setsSym.address + 3 * 2)
-    for _ = 1, 8 do
-      local chance = self.rom:byte(setsSym.bank, at)
-      if chance == 0xFF then break end
-      out.rock[#out.rock + 1] = {
-        chance = chance,
-        species = string.format("SPECIES_%03d", self.rom:byte(setsSym.bank, at + 1)),
-        level = self.rom:byte(setsSym.bank, at + 2),
-      }
-      at = at + 3
-    end
+    -- RockMonEncounter rolls the same structure, so the rock list is just
+    -- that set's common table.
+    out.rock = (readTable((rockSym and rockSym.address)
+      or self.rom:word(setsSym.bank, setsSym.address + rockIndex * 2)))
   end)
   if not ok or not next(out.maps) then return nil end
   return out
@@ -9024,9 +9086,23 @@ RomExtractorGen2.GEN2_SFX_ALIASES = {
 -- Scene themes the engine asks for by role, and the battle set.  Anything
 -- missing from the ROM tables is dropped rather than left dangling.
 RomExtractorGen2.GEN2_SONG_ROLES = {
+  -- PlayBattleMusic (crystal 11:$6E6C, gold 17:$4556) picks ELEVEN themes,
+  -- not four.  Four of them were missing entirely, so the rival, Team Rocket
+  -- and every Kanto trainer all opened on the plain Johto trainer theme, and
+  -- night-time wild battles used the day song.  The keys here are the branch
+  -- names in that routine; BattleState:computeMusicKind resolves them.
   battle = {
-    wild = "Music_JohtoWildBattle", trainer = "Music_JohtoTrainerBattle",
-    gym = "Music_JohtoGymBattle", final = "Music_ChampionBattle",
+    wild = "Music_JohtoWildBattle",
+    wildNight = "Music_JohtoWildBattleNight",   -- wTimeOfDay == NITE
+    kantoWild = "Music_KantoWildBattle",        -- RegionCheck says Kanto
+    suicune = "Music_SuicuneBattle",            -- Crystal only; roamer/Suicune
+    trainer = "Music_JohtoTrainerBattle",
+    kantoTrainer = "Music_KantoTrainerBattle",
+    gym = "Music_JohtoGymBattle",
+    kantoGym = "Music_KantoGymBattle",          -- IsKantoGymLeader
+    rival = "Music_RivalBattle",                -- classes $09 and $2A
+    rocket = "Music_RocketBattle",              -- classes $1F and $42
+    final = "Music_ChampionBattle",
     wildWin = "Music_WildPokemonVictory",
     trainerWin = "Music_TrainerVictory",
     gymWin = "Music_GymLeaderVictory", finalWin = "Music_GymLeaderVictory",

@@ -382,6 +382,15 @@ end
 -- way GetCallerName does (a trainer contact prints the trainer's own name; a
 -- non-trainer indexes NonTrainerCallerNames), so the card and the call script
 -- can never disagree about who is on the list.
+-- CheckCanDeletePhoneNumber (36:$4380) walks PermanentNumbers (36:$4066,
+-- `db PHONE_MOM, PHONE_ELM, -1`): those two can never be deleted.
+local GEN2_PERMANENT_NUMBERS = { [1] = true, [4] = true }
+
+function PokegearMenu.canDeleteContact(entry)
+  local id = tonumber(entry and entry.id)
+  return id ~= nil and not GEN2_PERMANENT_NUMBERS[id]
+end
+
 function PokegearMenu:contacts()
   local data = self.game.data
   local save = self.game.save
@@ -408,7 +417,10 @@ function PokegearMenu:contacts()
   if #authored > 0 then return authored end
 
   -- Nothing registered yet: the two numbers every playthrough starts with.
-  return { { name = "MOM" }, { name = "PROF.ELM" } }
+  -- Carry their real PHONE_* ids (PHONE_MOM = 1, PHONE_ELM = 4) so the row is
+  -- callable -- startPhoneCall needs the id to find the contact's script, and
+  -- without one this placeholder could only ever ring a stub.
+  return { { id = 1, name = "MOM" }, { id = 4, name = "PROF.ELM" } }
 end
 
 function PokegearMenu:stationList()
@@ -427,6 +439,19 @@ end
 
 function PokegearMenu:update(dt)
   self.blink = (self.blink + dt) % 1
+  -- A call in progress owns the card: PokegearPhone_MakePhoneCall does not
+  -- return to the joypad loop until Phone_CallEnd.  The runner is normally
+  -- parked inside a TextBox (which is the top state, so this never runs) --
+  -- this tick is for the frames between two boxes and for pause/waitsfx.
+  if self.callRunner then
+    self.callRunner:update()
+    -- a script that errored out never reaches onDone, so drop the call here
+    if not self.callRunner:isRunning() then
+      self.callRunner = nil
+      self.game.save.g2CurCaller = nil
+    end
+    return
+  end
   local input = self.game.input
   if input:wasPressed("b") then
     Sound.play(self.game.data, "Press_AB")
@@ -494,17 +519,32 @@ function PokegearMenu:update(dt)
   elseif card.id == "PHONE" then
     local list = self:contacts()
     if self.phoneSubmenu then
-      if input:wasPressed("a") then
-        local entry = list[self.contact]
+      -- CALL / DELETE, the two live rows of PokegearPhoneContactSubmenu.  The
+      -- phone book holds ten numbers and Phone_FindOpenSlot fails once they
+      -- are all taken, so without a way to delete one the list could fill and
+      -- stay filled -- and the ROM's DELETE refuses only for the two
+      -- PermanentNumbers, MOM and PROF.ELM.
+      local entry = list[self.contact]
+      local canDelete = entry and PokegearMenu.canDeleteContact(entry)
+      if canDelete and (input:wasPressed("down") or input:wasPressed("up")) then
+        self.phoneAction = self.phoneAction == "delete" and "call" or "delete"
+        Sound.play(self.game.data, "Tink")
+      elseif input:wasPressed("a") then
+        local deleting = canDelete and self.phoneAction == "delete"
         Sound.play(self.game.data, "Press_AB")
         self.phoneSubmenu = nil
+        self.phoneAction = nil
         self.callText = nil
-        if entry then
+        if entry and deleting then
+          require("src.script.Gen2Commands").phoneList(self.game.save)[entry.id] = nil
+          if self.contact > 1 then self.contact = self.contact - 1 end
+        elseif entry then
           self:startPhoneCall(entry)
         end
       elseif input:wasPressed("b") then
         Sound.play(self.game.data, "Press_AB")
         self.phoneSubmenu = nil
+        self.phoneAction = nil
         self.callText = nil
       end
     else
@@ -517,6 +557,7 @@ function PokegearMenu:update(dt)
       elseif input:wasPressed("a") then
         if #list > 0 then
           self.phoneSubmenu = true
+          self.phoneAction = "call"
           Sound.play(self.game.data, "Press_AB")
         end
       end
@@ -524,8 +565,23 @@ function PokegearMenu:update(dt)
   end
 end
 
--- Outgoing phone dialogue (simplified MakePhoneCallFromPokegear).
--- Pushes a TextBox with contact-specific lines so the call is not just a status string.
+-- Outgoing phone calls.
+--
+-- MakePhoneCallFromPokegear (36:$4199) does not invent anything: it copies the
+-- contact's PhoneContacts row into wPhoneCaller and runs the row's FIRST dba,
+-- the callee script.  Those scripts are real, branchy scripts -- Elm's alone
+-- (ElmPhoneCalleeScript, 2F:$500D) tests nine events before it settles on a
+-- line, and the egg one is `checkevent $2D / iffalse .next / checkevent $54 /
+-- iftrue .egghatched`.  The extractor already walks both dbas into
+-- map_scripts, and Gen2Commands.phoneCallScript compiles them.
+--
+-- What used to be here was the table below: three invented lines per contact,
+-- keyed by display name, with a "Hello? This is X. Thanks for calling!" catch
+-- all for everyone else.  So Elm said the same thing whether or not the egg
+-- had hatched, whether or not the POKeMON had been stolen and whether or not
+-- he had asked you to see Mr. POKeMON -- and the thirty-odd trainer contacts
+-- said nothing of their own at all.  It survives only as the fallback for a
+-- contact with no id or no extracted script (Gen1 saves, hand-authored data).
 local PHONE_DIALOG = {
   MOM = {
     "Hello?",
@@ -548,7 +604,43 @@ local PHONE_DIALOG = {
   },
 }
 
+-- PhoneCall (36:$429A) rings twice, then runs the script with the POKeGEAR
+-- still on screen.  A local runner keeps that: show_text pushes its TextBox
+-- ON TOP of this menu, so the call reads over the phone card exactly like the
+-- cartridge, and the box's own callback resumes the script.  update() ticks
+-- the runner for the frame-waiting commands (pause, waitsfx) and swallows
+-- input while a call is live so the player cannot scroll the contact list out
+-- from under it.
+function PokegearMenu:runCallScript(id)
+  local game = self.game
+  local Gen2Commands = require("src.script.Gen2Commands")
+  local ok, script = pcall(Gen2Commands.phoneCallScript, game.data, id)
+  if not (ok and type(script) == "table" and #script > 0) then return false end
+  -- wCurCaller: `readvar 23` is how a shared phone script tells its callers
+  -- apart -- the trainer phone scripts are one body with an `ifequal <PHONE_*>`
+  -- ladder -- and GetCallerName reads it for the ringing header.
+  game.save.g2CurCaller = id
+  local runner = require("src.script.ScriptRunner").new(game, game.overworld)
+  self.callRunner = runner
+  local function finish()
+    self.callRunner = nil
+    game.save.g2CurCaller = nil
+    pcall(function() Sound.play(game.data, "Hang_Up") end)
+  end
+  pcall(function() Sound.play(game.data, "Call") end)
+  local started = pcall(function()
+    runner:run(script, { phoneCall = id, onDone = finish })
+  end)
+  if not started then
+    finish()
+    return false
+  end
+  return true
+end
+
 function PokegearMenu:startPhoneCall(entry)
+  local id = tonumber(entry and entry.id)
+  if id and self:runCallScript(id) then return end
   local name = tostring(entry.name or entry or "?"):upper()
   local save = self.game.save or {}
   local player = (save.player and save.player.name)
@@ -706,7 +798,14 @@ function PokegearMenu:drawPhone()
   -- pret _PokegearAskWhoCallText: "Whom do you want" / "to call?"
   self:textbox(0, 12, 18, 4)
   if self.phoneSubmenu and selectedName then
-    self:printBoxText("Call " .. selectedName .. "?", "A=Yes  B=No")
+    -- PokegearPhoneContactSubmenu (36:$5342) offers CALL / DELETE / CANCEL,
+    -- and CheckCanDeletePhoneNumber (36:$4380) refuses for the two
+    -- PermanentNumbers (36:$4066 is `db PHONE_MOM, PHONE_ELM, -1`).
+    if self.phoneAction == "delete" then
+      self:printBoxText("Delete " .. selectedName .. "?", "A=Yes  B=No")
+    else
+      self:printBoxText("Call " .. selectedName .. "?", "A=Yes  B=No")
+    end
   else
     self:printBoxText("Whom do you want", "to call?")
   end

@@ -522,6 +522,15 @@ L.specialphonecall = function(ir, s) emit(s, { "g2_special_call", ir[2] }) end
 -- SpecialsPointers rows the port already implements, all of them nullary.
 -- Everything else stays a warn-once stub.
 local SPECIALS = {
+  -- The two phone specials.  Every trainer phone script opens with one of
+  -- them: they pick the species the line is about -- one out of the CALLER'S
+  -- own party, one out of the grass on the caller's route -- and leave its
+  -- name in the string buffer the line splices back in.  Left unlowered, the
+  -- "I caught a {mon}!" calls printed whatever the buffer last held.
+  RandomPhoneMon = "g2_random_phone_mon",
+  RandomPhoneMonSpecial = "g2_random_phone_mon",
+  RandomPhoneWildMon = "g2_random_phone_wild_mon",
+  RandomPhoneWildMonSpecial = "g2_random_phone_wild_mon",
   -- Bug Catching Contest.  Both spellings are listed because a
   -- SpecialsPointers row can resolve under either the wrapper label or the
   -- routine it tail-calls, depending which symbol the manifest reached first;

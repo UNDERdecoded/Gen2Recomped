@@ -1099,7 +1099,44 @@ function OverworldState:checkSpecialPhoneCall()
   if not script then return end
   Game.save.g2SpecialCallActive = Game.save.g2SpecialCall
   Game.save.g2SpecialCall = nil
-  self:queueScript(script, { phoneCaller = caller })
+  -- wCurCaller, which the caller script's `readvar 23` reads back
+  Game.save.g2CurCaller = caller
+  self:queueScript(script, { phoneCaller = caller,
+    onDone = function() Game.save.g2CurCaller = nil end })
+end
+
+-- CheckPhoneCall (36:$4074): the random incoming call, rolled on every step
+-- the player finishes off a warp tile.  Gen2Commands.rollIncomingCall carries
+-- the ROM's own gating -- the receive-call delay, the one-in-two coin flip, the
+-- map's phone-service nibble, and the sample of registered contacts whose
+-- time-of-day mask covers now and who are not on this map.
+--
+-- The play clock stands in for the ROM's day/hour/minute countdown: both are
+-- "in-game minutes since the last call", and the port has no separate RTC to
+-- keep them apart.
+function OverworldState:checkIncomingPhoneCall()
+  if not GameVersion.isGen2() then return end
+  if self.transitioning or self.runner:isRunning() or #self.scriptMoves > 0 then
+    return
+  end
+  if Game.save.g2SpecialCall ~= nil then return end
+  if self.pendingScripts and self.pendingScripts[1] then return end
+  local p = self.player
+  if not (p and self.map) then return end
+  -- CheckStandingOnEntrance: no call while the player is on a door or warp
+  if self.map:warpAtCell(p.cellX, p.cellY) then return end
+  local Gen2Commands = require("src.script.Gen2Commands")
+  local minutes = math.floor((tonumber(Game.save.playTime) or 0) / 60)
+  local id, script = Gen2Commands.rollIncomingCall(
+    Game.data, Game.save, self.map.def, self:timeOfDay(), minutes, false)
+  if not script then return end
+  Game.save.g2CurCaller = id
+  -- Phone_StartRinging (36:$4337) before the script, Phone_CallEnd after it
+  pcall(function() require("src.core.Sound").play(Game.data, "Call") end)
+  self:queueScript(script, { phoneCaller = id, onDone = function()
+    Game.save.g2CurCaller = nil
+    pcall(function() require("src.core.Sound").play(Game.data, "Hang_Up") end)
+  end })
 end
 
 function OverworldState:update(dt)
@@ -4223,6 +4260,9 @@ function OverworldState:onStepComplete()
     self:syncSurfingPikachu()
     require("src.core.Music").setSurfing(Game.data, false)
   end
+
+  -- CheckPhoneCall rides this same step, right after the warp checks
+  self:checkIncomingPhoneCall()
 
   -- Route 22 Gate rewrites LAST_MAP by Y before warps/guards fire
   self:syncLastMapRewrite()

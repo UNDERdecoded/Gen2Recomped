@@ -1012,23 +1012,33 @@ end
 -- contact id -- MOM, BIKE SHOP, BILL, PROF.ELM.  The extractor stores the
 -- class/id pair rather than a baked string, so resolve it against the trainer
 -- roster here and the two can never drift apart.
-function Gen2Commands.phoneName(data, id)
+local function phoneContact(data, id)
   local pool = data and data.map_scripts
   local entry = pool and pool.phone and pool.phone[id]
-  if type(entry) ~= "table" then return nil end
-  if entry.name then return entry.name end
-  -- the roster carries a scaffold placeholder for every unused class index,
-  -- so prefer the one that actually has a roster of named trainers
+  return type(entry) == "table" and entry or nil
+end
+Gen2Commands.phoneContact = phoneContact
+
+-- The trainer roster row a trainer contact names.  The roster carries a
+-- scaffold placeholder for every unused class index, so prefer the one that
+-- actually has a roster of named trainers.
+local function phoneTrainerDef(data, entry)
+  if not (entry and entry.class) then return nil end
   local best
   for _, def in pairs(data.trainers or {}) do
     if type(def) == "table" and def.index == entry.class then
-      if def.partyNames and def.partyNames[entry.trainer] then
-        best = def
-        break
-      end
+      if def.partyNames and def.partyNames[entry.trainer] then return def end
       best = best or def
     end
   end
+  return best
+end
+
+function Gen2Commands.phoneName(data, id)
+  local entry = phoneContact(data, id)
+  if not entry then return nil end
+  if entry.name then return entry.name end
+  local best = phoneTrainerDef(data, entry)
   if not best then return nil end
   local names = best.partyNames
   return (names and names[entry.trainer]) or best.name, best.name
@@ -1057,6 +1067,150 @@ end
 
 function Gen2Commands.phoneReceiveScript(data, id)
   return phoneScript(data, id, "receive")
+end
+
+-- ---------------------------------------------------------------------------
+-- Incoming calls (CheckPhoneCall, 36:$4074)
+--
+-- The overworld step loop rolls for one every step the player is NOT standing
+-- on a warp tile.  In order:
+--
+--   CheckReceiveCallTimer (04:$5401)  -- enough in-game minutes since the last
+--       call.  The wait is 20 minutes for the first one and then 10, 5 and 3
+--       (NextCallReceiveDelay.ReceiveCallDelays, 04:$53FD), stepping down each
+--       time a call lands and never going below 3.
+--   Random / and $7F / cp b        -- exactly a one in two coin flip
+--   GetMapPhoneService (00:$2D05)  -- the high nibble of the map header's
+--       palette byte; nonzero means no signal (caves, most interiors)
+--   GetAvailableCallers (36:$40DE) -- every registered contact whose OWN
+--       time-of-day mask covers now and who is not on the player's map
+--   ChooseRandomCaller (36:$40BF)  -- uniform over that sample
+--
+-- None of this existed: phoneReceiveScript had no caller at all, so the
+-- thirty-odd trainers who take your number never rang once.
+-- ---------------------------------------------------------------------------
+
+-- MORN/DAY/NITE, the bits GetPhoneServiceTimeOfDayByte ANDs against the
+-- contact's mask.  Contacts with mask 0 -- MOM, ELM, BILL, the BIKE SHOP --
+-- can never be sampled, which is the ROM's way of saying they only ever ring
+-- through specialphonecall.
+local GEN2_TOD_BIT = { MORNING = 1, MORN = 1, DAY = 2, NITE = 4, NIGHT = 4 }
+
+-- ReceiveCallDelays, in in-game minutes, indexed by how many calls have
+-- landed already (capped at the last row).
+local GEN2_CALL_DELAYS = { 20, 10, 5, 3 }
+
+function Gen2Commands.phoneCallDelay(save)
+  local cycles = tonumber(save and save.g2CallCycles) or 0
+  return GEN2_CALL_DELAYS[math.min(cycles, #GEN2_CALL_DELAYS - 1) + 1]
+end
+
+-- The sample GetAvailableCallers builds, in PHONE_* order.
+function Gen2Commands.availableCallers(data, save, mapDef, tod)
+  local bit = GEN2_TOD_BIT[tod] or 2
+  local out = {}
+  local group = mapDef and tonumber(mapDef.group)
+  local number = mapDef and tonumber(mapDef.number)
+  for id, registered in pairs(phoneList(save)) do
+    if registered and type(id) == "number" then
+      local entry = phoneContact(data, id)
+      local mask = entry and tonumber(entry.receiveTime) or 0
+      -- `and [hl]` on the mask, then the map compare
+      if entry and entry.receive and mask % (bit * 2) >= bit
+         and not (group and entry.group == group and entry.number == number) then
+        out[#out + 1] = id
+      end
+    end
+  end
+  table.sort(out)
+  return out
+end
+
+-- Returns the caller id and its compiled receive script, or nil.  `minutes` is
+-- the play clock in minutes, which stands in for the ROM's day/hour/minute
+-- countdown; `entrance` is CheckStandingOnEntrance.
+function Gen2Commands.rollIncomingCall(data, save, mapDef, tod, minutes, entrance)
+  if entrance then return nil end
+  local last = tonumber(save.g2LastCallMinute)
+  if last == nil then
+    -- InitCallReceiveDelay at the start of the file: the first call is a full
+    -- delay away, not immediate
+    save.g2LastCallMinute = minutes
+    return nil
+  end
+  local waited = minutes - last
+  -- the clock can wrap or be edited backwards; treat that as "wait again"
+  if waited < 0 then
+    save.g2LastCallMinute = minutes
+    return nil
+  end
+  if waited < Gen2Commands.phoneCallDelay(save) then return nil end
+  -- `Random / ld b, a / and $7f / cp b` is true only when bit 7 is clear
+  if math.random(0, 255) >= 128 then return nil end
+  -- GetMapPhoneService: the palette byte's high nibble, nonzero = no service
+  local palette = mapDef and tonumber(mapDef.mapPalette) or 0
+  if math.floor(palette / 16) % 16 ~= 0 then return nil end
+  local callers = Gen2Commands.availableCallers(data, save, mapDef, tod)
+  if #callers == 0 then return nil end
+  local id = callers[math.random(#callers)]
+  local script = Gen2Commands.phoneReceiveScript(data, id)
+  if not script then return nil end
+  -- CheckReceiveCallTimer bumps wTimeCyclesSinceLastCall then restarts the
+  -- delay, so the gap shortens with each call that lands
+  save.g2CallCycles = math.min((tonumber(save.g2CallCycles) or 0) + 1,
+                               #GEN2_CALL_DELAYS - 1)
+  save.g2LastCallMinute = minutes
+  return id, script
+end
+
+-- RandomPhoneMon (0A:$6567) and RandomPhoneWildMon (0A:$651F) are the two
+-- specials every trainer phone script opens with: the first names a mon out of
+-- the CALLER'S OWN party ("my {mon} is doing great"), the second one out of
+-- the grass table of the caller's map at the current time of day ("I saw a
+-- {mon} on {route}").  Both leave the name in a string buffer that the line
+-- then splices back in as {RAM:wStringBuffer4}.  Unimplemented, every one of
+-- those lines printed the raw token or whatever the buffer last held.
+local function callerMapDef(data, entry)
+  if not (entry and entry.group and entry.number) then return nil end
+  for _, def in pairs(data.maps or {}) do
+    if type(def) == "table" and def.group == entry.group
+       and def.number == entry.number then
+      return def
+    end
+  end
+  return nil
+end
+
+local function speciesName(data, species)
+  local def = species and (data.pokemon or {})[species]
+  return (def and def.name) or (species and tostring(species)) or "POKéMON"
+end
+
+function Commands.g2_random_phone_mon(ctx)
+  local data = ctx.game.data
+  local entry = phoneContact(data, tonumber(ctx.save.g2CurCaller))
+  local def = entry and phoneTrainerDef(data, entry)
+  local party = def and def.parties and def.parties[entry.trainer or 1]
+  if party and #party > 0 then
+    ctx.game.stringBuffer = speciesName(data, party[math.random(#party)].species)
+  end
+end
+
+function Commands.g2_random_phone_wild_mon(ctx)
+  local data = ctx.game.data
+  local entry = phoneContact(data, tonumber(ctx.save.g2CurCaller))
+  local mapDef = entry and callerMapDef(data, entry)
+  local enc = mapDef and (data.encounters or {})[mapDef.id]
+  local ow = ctx.overworld
+  local band = enc and enc.grass
+    and require("src.world.Encounter").atTime(enc.grass,
+          (ow and ow.timeOfDay and ow:timeOfDay()) or "DAY")
+  local slots = band and band.slots
+  -- `Random / and 3`: only the first FOUR rows of the time band are sampled
+  if slots and #slots > 0 then
+    local row = slots[math.random(math.min(4, #slots))]
+    if row then ctx.game.stringBuffer = speciesName(data, row.species) end
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -1092,11 +1246,45 @@ local function countKeys(t)
   return n
 end
 
+-- _GetVarAction.VarActionTable (01:$4671), the twenty-seven rows `readvar`
+-- indexes.  Rows 12/13/15/18/19 are plain wram reads and 23 is wCurCaller --
+-- all of them phone-script territory, and all of them answered 0 before, which
+-- is why MomPhoneLandmark (2F:$4EB7) took its `readvar 15 / ifequal 1` route
+-- branch inside a building and every shared trainer phone script fell out the
+-- bottom of its `readvar 23 / ifequal <PHONE_*>` ladder onto the wrong line.
+local GEN2_TOD_VALUE = { MORNING = 0, MORN = 0, DAY = 1, NITE = 2, NIGHT = 2 }
+
 function Commands.g2_readvar(ctx, var)
   if var == 1 then
     ctx.g2Var = #(ctx.save.party or {})
   elseif var == 20 then
     ctx.g2Var = ctx.save.g2SpecialCallActive or ctx.save.g2SpecialCall or 0
+  elseif var == 23 then
+    -- wCurCaller: the PHONE_* id of whoever is on the line.  Both directions
+    -- set it (the POKeGEAR when the player rings out, checkPhoneCall when a
+    -- contact rings in), and it is nil off a call, which reads as 0 -- the
+    -- same "no caller" the ROM's cleared byte gives.
+    ctx.g2Var = tonumber(ctx.save.g2CurCaller) or 0
+  elseif var == 4 then
+    -- wTimeOfDay: MORN 0, DAY 1, NITE 2
+    local ow = ctx.overworld
+    local tod = ow and ow.timeOfDay and ow:timeOfDay()
+    ctx.g2Var = GEN2_TOD_VALUE[tod] or 1
+  elseif var == 12 or var == 13 then
+    -- wMapGroup / wMapNumber, which MomPhoneInTown branches on by town
+    local def = ctx.overworld and ctx.overworld.map and ctx.overworld.map.def
+    ctx.g2Var = tonumber(def and (var == 12 and def.group or def.number)) or 0
+  elseif var == 15 then
+    -- wEnvironment (the map header's environment byte: 1 TOWN, 2 ROUTE,
+    -- 3 INDOOR, 4 CAVE, 5 ENVIRONMENT_5, 6 GATE, 7 DUNGEON)
+    local def = ctx.overworld and ctx.overworld.map and ctx.overworld.map.def
+    ctx.g2Var = tonumber(def and def.environment) or 0
+  elseif var == 18 or var == 19 then
+    -- wXCoord / wYCoord: the player's cell within the map, 0-based, the same
+    -- frame the warp_event and object_event tables are stored in.
+    local player = ctx.overworld and ctx.overworld.player
+    local cell = player and (var == 18 and player.cellX or player.cellY)
+    ctx.g2Var = tonumber(cell) or 0
   elseif var == 9 then
     local player = ctx.overworld and ctx.overworld.player
     ctx.g2Var = GEN2_FACING[player and player.facing] or 0
@@ -1165,10 +1353,39 @@ function Gen2Commands.pendingSpecialCall(data, save, outside)
   return row.caller, script
 end
 
+-- wPhoneList is TEN bytes (_CheckCellNum walks `ld b, $0A`), and
+-- Phone_FindOpenSlot (36:$402D) fails when none of them is free.  That cap is
+-- the whole point of the ".PhoneFull" branch every phone trainer carries -- an
+-- uncapped list can never reach it.
+local GEN2_PHONE_SLOTS = 10
+
+local function phoneListCount(save)
+  local n = 0
+  for _, registered in pairs(phoneList(save)) do
+    if registered then n = n + 1 end
+  end
+  return n
+end
+
+-- AddPhoneNumber (36:$4000): carry means "not added" -- either the id is
+-- already in the list or there is no free slot.
+local function addPhoneNumber(save, id)
+  local list = phoneList(save)
+  if list[id] then return false end
+  if phoneListCount(save) >= GEN2_PHONE_SLOTS then return false end
+  list[id] = true
+  return true
+end
+
 function Commands.g2_cellnum(ctx, id, add)
   if type(id) ~= "number" then return end
-  phoneList(ctx.save)[id] = add and true or nil
-  ctx.lastCheck = add and true or false
+  if add then
+    ctx.lastCheck = addPhoneNumber(ctx.save, id)
+  else
+    local list = phoneList(ctx.save)
+    ctx.lastCheck = list[id] == true
+    list[id] = nil
+  end
 end
 
 function Commands.g2_check_cellnum(ctx, id)
@@ -1176,7 +1393,21 @@ function Commands.g2_check_cellnum(ctx, id)
   ctx.g2Var = ctx.lastCheck and 1 or 0
 end
 
--- AskForPhoneNumber writes wScriptVar: 0 saved, 1 declined, 2 list full.
+-- Script_askforphonenumber (25:$70BE), read straight off the cartridge:
+--
+--   YesNoBox / jr c, .refused        ; NO
+--   GetScriptByte / farcall AddPhoneNumber
+--   jr c, .phonefull                 ; already listed, or no free slot
+--   xor a / jr .done                 ; 0 = number saved
+--   .phonefull: ld a, 1
+--   .refused:   ld a, 2
+--   .done: ld [wScriptVar], a
+--
+-- So it is **1 = list full, 2 = declined** -- the opposite way round from what
+-- this used to write.  Every phone trainer branches `ifequal 1 .PhoneFull /
+-- ifequal 2 .Declined`, so turning a trainer down ran the "your POKeGEAR is
+-- full" line instead of the polite one, and the number was never saved.
+--
 -- The prompt rides the box the preceding writetext already opened, exactly
 -- like yesorno.
 function Commands.g2_ask_cellnum(ctx, id, textId)
@@ -1184,15 +1415,12 @@ function Commands.g2_ask_cellnum(ctx, id, textId)
     ctx.g2Var = 1
     return
   end
-  local list = phoneList(ctx.save)
-  if list[id] then
-    ctx.g2Var = 0
-    ctx.lastCheck = true
+  Commands.ask(ctx, textId)
+  if not ctx.lastCheck then
+    ctx.g2Var = 2
     return
   end
-  Commands.ask(ctx, textId)
-  if ctx.lastCheck then
-    list[id] = true
+  if addPhoneNumber(ctx.save, id) then
     ctx.g2Var = 0
   else
     ctx.g2Var = 1

@@ -679,6 +679,9 @@ function BattleState.newWild(game, species, level, opts)
   -- rolled DVs with the fixed shiny pair; the Lake of Rage Gyarados is the
   -- only encounter in Gold that uses it.
   if opts and opts.shiny then Pokemon.forceShiny(game.data, wild) end
+  -- wBattleType, for the two rows PlayBattleMusic reads: BATTLETYPE_ROAMING
+  -- and BATTLETYPE_SUICUNE both open on Music_SuicuneBattle.
+  self.battleType = opts and opts.battleType or nil
   self.enemy = makeBattler(game.data, wild, false)
   markSeen(game, species)
   if opts and opts.hooked then
@@ -747,6 +750,9 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
   local self = newBattle(game)
   self.kind = "trainer"
   self.oppClass = oppClass
+  -- wOtherTrainerID: which trainer inside the class.  PlayBattleMusic reads
+  -- it to tell the two RIVAL2 fights apart, so keep it on the battle.
+  self.partyIndex = tonumber(partyIndex) or 1
   self.trainer = game.data.trainers[oppClass]
   assert(self.trainer, "unknown trainer class " .. tostring(oppClass))
   -- pret GetTrainerName_: RIVAL1/2/3 copy wRivalName into wTrainerName
@@ -1573,27 +1579,99 @@ local GEN2_ELITE_FOUR_CLASSES = {
   [11] = true, [13] = true, [14] = true, [15] = true,
 }
 local GEN2_CHAMPION_CLASSES = { [16] = true, [63] = true }
+-- Only these two Kanto lists exist; GymLeaders (0F:$5137) runs straight on
+-- into KantoGymLeaders (0F:$5145) and the $FF that ends it, so IsGymLeader
+-- matches the whole run while IsKantoGymLeader matches only the tail.
+local GEN2_KANTO_LEADER_CLASSES = {
+  [0x11] = true, [0x12] = true, [0x13] = true, [0x15] = true,
+  [0x1A] = true, [0x23] = true, [0x2E] = true, [0x40] = true,
+}
+-- `ld de, MUSIC_RIVAL_BATTLE / cp RIVAL1 / jr z / cp RIVAL2`.  Both classes
+-- are named "RIVAL"; RIVAL2 keeps the rival theme only while wOtherTrainerID
+-- is below 4 -- the Indigo Plateau fight is party 4 and takes the champion
+-- theme instead.
+local GEN2_RIVAL_CLASSES = { [0x09] = true, [0x2A] = true }
+-- `ld de, MUSIC_ROCKET_BATTLE / cp $1F / jr z / cp $42`.  Both are named
+-- "ROCKET"; the other Rocket classes (the executives, the scientists) are
+-- deliberately not in this test and take the ordinary trainer theme.
+local GEN2_ROCKET_CLASSES = { [0x1F] = true, [0x42] = true }
 
+-- RegionCheck (crystal 72:$6EA1): the current map's landmark decides the
+-- region, and PlayBattleMusic swaps the wild AND the plain-trainer theme on
+-- it.  $5F is SPECIAL_MAP and counts as Johto; landmark 0 means the map has
+-- none of its own, and the backup map is consulted instead; below $2F is
+-- Johto and everything else is not.
+local GEN2_LANDMARK_KANTO_FIRST = 0x2F
+local GEN2_LANDMARK_SPECIAL_MAP = 0x5F
+local function gen2InKanto(game)
+  local ow = game and game.overworld
+  local landmark = ow and ow.map and ow.map.def and tonumber(ow.map.def.landmark)
+  if not landmark or landmark == GEN2_LANDMARK_SPECIAL_MAP then return false end
+  return landmark >= GEN2_LANDMARK_KANTO_FIRST
+end
+
+-- Which of the three victory jingles each battle theme resolves to; see
+-- playVictoryMusic.  Anything not listed keeps its own name.
+local GEN2_VICTORY_KIND = {
+  wild = "wild", wildNight = "wild", kantoWild = "wild", suicune = "wild",
+  trainer = "trainer", kantoTrainer = "trainer",
+  rival = "trainer", rocket = "trainer",
+  gym = "gym", kantoGym = "gym", final = "gym",
+}
+
+-- PlayBattleMusic in full (crystal 11:$6E6C, gold 17:$4556).  The branches
+-- are tested in this order and the FIRST match wins, which is why the
+-- champion test comes before the gym-leader lists -- CHAMPION ($10) is in
+-- GymLeaders too and would otherwise take the gym theme.
 function BattleState:computeMusicKind()
   -- Gen2 first: data/scripts/victories is the hand-authored Gen1 badge table
   -- and no Gen2 trainer id is in it, which is why Bugsy opened on the plain
   -- trainer theme instead of the gym theme.
-  if self.kind == "trainer" and self.trainer
-     and require("src.core.GameVersion").isGen2() then
-    local class = tonumber(self.trainer.index)
-    if class then
-      if GEN2_CHAMPION_CLASSES[class] then
-        self.isGymLeader = false
-        return "final"
+  if require("src.core.GameVersion").isGen2() then
+    if self.kind == "trainer" and self.trainer then
+      local class = tonumber(self.trainer.index)
+      if class then
+        -- wGymLeaderNo, the happiness bump: the badge fights only.
+        self.isGymLeader = GEN2_BADGE_LEADER_CLASSES[class] == true
+        if GEN2_CHAMPION_CLASSES[class] then return "final" end
+        if GEN2_ROCKET_CLASSES[class] then return "rocket" end
+        if GEN2_KANTO_LEADER_CLASSES[class] then return "kantoGym" end
+        if GEN2_BADGE_LEADER_CLASSES[class] or GEN2_ELITE_FOUR_CLASSES[class] then
+          return "gym"
+        end
+        if GEN2_RIVAL_CLASSES[class] then
+          -- `cp RIVAL2 / jr nz, .othertrainer / ld a, [wOtherTrainerID] /
+          -- cp 4 / jr c, .done` -- RIVAL2's fourth party is the Indigo
+          -- Plateau rematch and drops through to the champion theme.
+          if class == 0x2A and (tonumber(self.partyIndex) or 1) >= 4 then
+            return "final"
+          end
+          return "rival"
+        end
       end
-      if GEN2_BADGE_LEADER_CLASSES[class] then
-        self.isGymLeader = true
-        return "gym"
+    end
+    if self.kind == "trainer" or self.kind == "link" then
+      self.isGymLeader = self.isGymLeader or false
+      -- .othertrainer: a link battle is always the Johto theme; otherwise
+      -- the region picks.
+      if self.kind == "link" then return "trainer" end
+      return gen2InKanto(self.game) and "kantoTrainer" or "trainer"
+    end
+    if self.kind == "wild" then
+      self.isGymLeader = false
+      -- BATTLETYPE_ROAMING ($05) and BATTLETYPE_SUICUNE ($0C) both open on
+      -- Music_SuicuneBattle, which Gold does not have at all -- extractAudio
+      -- drops the key there and playBattle falls back to the wild theme.
+      if self.battleType == "roaming" or self.battleType == "suicune" then
+        return "suicune"
       end
-      if GEN2_ELITE_FOUR_CLASSES[class] then
-        self.isGymLeader = false
-        return "gym"
-      end
+      if gen2InKanto(self.game) then return "kantoWild" end
+      local ow = self.game and self.game.overworld
+      local tod = ow and ow.timeOfDay and ow:timeOfDay()
+      -- `ld a, [wTimeOfDay] / cp NITE` -- only NITE has its own song; MORN
+      -- and DAY share Music_JohtoWildBattle.
+      if tod == "NITE" or tod == "NIGHT" then return "wildNight" end
+      return "wild"
     end
   end
 
@@ -4882,7 +4960,13 @@ function BattleState:playVictoryMusic()
   self.lowHealthAlarmDisabled = true
   if self.victoryMusicPlayed then return end
   self.victoryMusicPlayed = true
-  local kind = self.musicKind == "final" and "gym" or (self.musicKind or "wild")
+  -- PlayVictoryMusic (0F:$50EA) has only three songs: the wild jingle, then
+  -- MUSIC_DEFEATED_GYM_LEADER when IsGymLeader matches the class -- which
+  -- covers the Kanto leaders, the Elite Four and the Champion -- and
+  -- MUSIC_DEFEATED_TRAINER for everyone else, the rival and Team Rocket
+  -- included.  Map the eleven battle themes back onto those three.
+  local kind = GEN2_VICTORY_KIND[self.musicKind or "wild"]
+    or (self.musicKind or "wild")
   require("src.core.Music").playVictory(self.data, kind)
 end
 

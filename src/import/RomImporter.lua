@@ -161,7 +161,38 @@ end
 --        but HealMachineAnim.LoadPalettes copies its OWN four colours over
 --        palette 6 first -- so the Poke Balls were reading the green tree
 --        palette instead of ball red.
-local CACHE_FORMAT = "rom-cache-v59:"
+-- v60: every Crystal Pokedex entry.  Gold computes the entry's bank as
+--      `$68 + group` and really does end GetDexEntryPointer with `add a, $68`;
+--      Crystal replaced that with a four-byte lookup ($60, $6E, $73, $74)
+--      because its entries are no longer in consecutive banks.  Reading
+--      Crystal with Gold's arithmetic put all 251 entries in the wrong bank --
+--      VENONAT's came out as Brock's BOULDERBADGE speech.
+-- v61: headbutt never dropped a Pokemon.  GetTreeMons (2E:$42D2) is `cp $08 /
+--      jr nc, .quit` then `and a / jr z, .quit` -- SEVEN sets are reachable
+--      (1 Canyon, 2 Town, 3 Route, 4 Kanto, 5 Lake, 6 Forest, 7 Rock) -- but
+--      the extractor kept only sets 1-3 and read index 3 as the rock-smash
+--      list.  Index 3 is Route, which TreeMonMaps assigns to NINE maps
+--      (Routes 29/30/31/34/35/36/37/38/39, i.e. most of the early game), and
+--      Kanto, Lake and Forest were dropped outright -- so Routes 26/27/32,
+--      Route 33, Route 42/43, Lake of Rage and Ilex Forest had no table
+--      either.  Every one of those maps rolled against a nil set and could
+--      only ever answer "Nope. Nothing…".  Rock is set 7 and TreeMonSet_Rock
+--      now pins it; it is also the last table in the bank and has no rare
+--      half, so the rare read is skipped for it rather than walking on into
+--      GetTreeMon's own code.
+-- v62: audio.battle carried four themes; PlayBattleMusic (11:$6E6C) picks
+--      eleven.  Missing were the rival theme (classes RIVAL $09 and $2A),
+--      the Rocket theme (classes $1F and $42), the two Kanto themes and the
+--      night-time wild theme -- so Silver, Team Rocket and every Kanto
+--      trainer all fought to Music_JohtoTrainerBattle, Kanto gym leaders
+--      to the Johto gym theme, and night battles to the day song.
+-- v63: map_scripts.phone rows now carry the contact's own map (bytes 3 and 4
+--      of the PhoneContacts row).  GetAvailableCallers (36:$40DE) compares it
+--      against wMapGroup/wMapNumber to drop a contact who is standing on the
+--      map you are on, and RandomPhoneWildMon (0A:$651F) reads that map's
+--      grass table for the species its line names.  A v62 cache has neither,
+--      so no trainer can ring in and the wild-mon lines have no species.
+local CACHE_FORMAT = "rom-cache-v63:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
