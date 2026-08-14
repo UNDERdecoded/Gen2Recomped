@@ -365,7 +365,14 @@ local KANTO_BADGE_BY_BIT = {
 -- wPokegearFlags, rows $0B/$0C are wStatusFlags.  All of it lives in
 -- src/script/Gen2Flags.lua so the VM and this codec cannot drift apart.
 local Gen2Flags = require("src.script.Gen2Flags")
-local engineFlagName = Gen2Flags.engineFlag
+-- scriptFlag, not engineFlag: field.engineFlags rows are numbered by the
+-- CARTRIDGE'S OWN EngineFlags table, and Crystal's has one row more than
+-- Gold's from index 16 up (see Gen2Flags.scriptFlag).  Naming a Crystal row
+-- with Gold's numbering is what put an imported save's ZEPHYRBADGE under
+-- HIVEBADGE, exactly as it did for a `setflag` lowered in the VM -- and this
+-- codec has to produce the SAME spellings the VM does or an imported game
+-- resumes with none of its progress.
+local engineFlagName = Gen2Flags.scriptFlag
 Gen2Save.engineFlagName = engineFlagName
 
 -- The EngineFlags rows themselves come out of the ROM (field.engineFlags,

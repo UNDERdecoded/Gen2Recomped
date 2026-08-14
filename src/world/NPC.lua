@@ -93,6 +93,19 @@ local function findSheet(sprites, names, index)
   return nil
 end
 
+-- Does this id name a wVariableSprites SLOT rather than an OverworldSprites
+-- row?  It has to be asked BEFORE data.sprites is consulted by name: the
+-- extractor emits an entry for every id a map object mentions, and one with no
+-- sheet of its own is handed placeholder_sprite.png -- which then won the
+-- direct lookup in resolveSpriteDef and left Route 36's Sudowoodo and Route
+-- 37's Twins Ann & Anne (both SPRITE_WEIRD_TREE = slot 4) as blue placeholder
+-- people whatever the slot actually held.
+local function isVariableSpriteId(spriteId)
+  if type(spriteId) ~= "string" then return false end
+  if VAR_SPRITE_SLOTS[spriteId] then return true end
+  return spriteId:match("^SPRITE_VAR_%d+$") ~= nil
+end
+
 local function resolveVariableSprite(data, sprites, spriteId)
   local slot = tonumber(spriteId:match("^SPRITE_VAR_(%d+)$"))
   if not slot then
@@ -297,6 +310,11 @@ local function resolveSpriteDef(data, spriteId)
     if s and s.image then return s end
     local fabricated = diskSheet("SPRITE_SUDOWOODO")
     if fabricated then return fabricated end
+  end
+  -- Variable-sprite ids resolve through their SLOT first; see isVariableSpriteId.
+  if isVariableSpriteId(spriteId) then
+    local fromSlot = resolveVariableSprite(data, sprites, spriteId)
+    if fromSlot and fromSlot.image then return fromSlot end
   end
   local spriteDef = type(spriteId) == "string" and sprites[spriteId] or nil
   if spriteDef and spriteDef.image then return spriteDef end

@@ -521,18 +521,33 @@ function TownMap:drawGen2()
             local entry = icons[speciesId] or icons[tostring(speciesId):upper()]
             if type(entry) == "table" and entry.image then monPath = entry.image
             elseif type(entry) == "string" then monPath = entry end
+            -- pokemon[*].icon is a LAST resort, and never a placeholder: the
+            -- Gen2 import leaves it pointing at icons/placeholder.png for the
+            -- beasts even though icons.bySpecies has the real sheet, and
+            -- letting it win put a full-size placeholder graphic across the
+            -- Pokegear and Fly maps.
             local poke = game.data.pokemon or {}
             local def = poke[speciesId]
-            if type(def) == "table" and def.icon then monPath = def.icon end
+            if type(entry) ~= "table" and type(entry) ~= "string"
+               and type(def) == "table" and type(def.icon) == "string"
+               and not def.icon:find("placeholder", 1, true) then
+              monPath = def.icon
+            end
             local ok, monImg = pcall(love.graphics.newImage, monPath)
             love.graphics.setColor(0.2, 0.9, 0.3, 1)
             love.graphics.rectangle("line", px - 9, py - 9, 18, 18)
             love.graphics.rectangle("line", px - 8, py - 8, 16, 16)
             if ok and monImg then
               love.graphics.setColor(1, 1, 1, 1)
+              -- A party icon sheet is 16x32 -- TWO stacked 16x16 animation
+              -- frames.  Scaling the whole sheet down to fit a 16x16 box
+              -- squeezed both frames into an 8x16 smear, which is the garbled
+              -- blob the beasts showed as.  Draw frame 0 at 1:1 instead.
               local iw, ih = monImg:getDimensions()
-              local scale = math.min(16 / iw, 16 / ih)
-              love.graphics.draw(monImg, px - 8, py - 8, 0, scale, scale)
+              local frame = math.min(iw, ih)
+              love.graphics.draw(monImg,
+                love.graphics.newQuad(0, 0, frame, frame, iw, ih),
+                px - frame / 2, py - frame / 2)
             else
               love.graphics.setColor(1, 0.85, 0.1, 1)
               love.graphics.rectangle("fill", px - 6, py - 6, 12, 12)

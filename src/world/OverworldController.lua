@@ -368,6 +368,17 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
      and PaletteFX.usesGbcPack() then
     MapLoader.invalidateAll()
   end
+  -- The map's own PALETTE_* override (map header byte 7, low nibble).  It has
+  -- to be armed here for the same reason darkWorld does -- the time-of-day row
+  -- is baked into the tileset atlas -- and it is what stops every indoor map
+  -- and the Ruins of Alph chambers taking the NITE row after 6pm.
+  if GameVersion.isGen2() then
+    local paletteDef = Game.data.maps[mapId]
+    if PaletteFX.setGen2MapPalette(paletteDef and paletteDef.mapPalette or 0)
+       and PaletteFX.usesGen2BgPal() then
+      MapLoader.invalidateAll()
+    end
+  end
   self.map = MapLoader.load(Game.data, mapId)
   -- Every block change is re-derived from the map's callbacks on each load
   -- (GSC rebuilds wOverworldMap from the ROM blockdata), so the previous
@@ -1987,6 +1998,19 @@ function OverworldState:goFishing(rod)
 end
 
 -- Fly to a visited town (called from the party menu).
+-- BugCatchingContestReturnToGateScript (04:$760B): leaving the contest -- by
+-- the START menu's QUIT, by running out of Park Balls or by the clock -- puts
+-- the player back at the gate and hands over to judging.  The placing is
+-- already stamped on the save by BugContest.finish, which is what the
+-- extracted BugContestResults_* scripts branch on for the prize.
+function OverworldState:bugContestReturnToGate()
+  local BugContest = require("src.world.BugContest")
+  BugContest.finish(Game)
+  local gate = "ROUTE36_NATIONAL_PARK_GATE"
+  if not (Game.data.maps and Game.data.maps[gate]) then return end
+  self:setMap(gate, { via = "warp" })
+end
+
 function OverworldState:flyTo(mapId)
   local flyWarps = Game.data.field.flyWarps or {}
   local spot = flyWarps[mapId]
@@ -3151,24 +3175,56 @@ function OverworldState:gen2UseFieldMove(move, mon, fx, fy)
   end))
 end
 
+-- GetTreeScore (2E:$4443).  A tree's quality is FIXED for a given save: the
+-- coordinate score `((x*y + x + y) / 5) % 10` is compared against the player's
+-- own `OT ID % 10`, and the difference picks the tree.  Lua's % is already
+-- floored, so this matches the ROM's `sub` plus `add 10` on borrow.
+--
+-- The port's cell coordinates are not the ROM's wram coordinates, so a GIVEN
+-- tree will not be the same quality it is on a cartridge -- but the spread
+-- across trees, and the fact that a tree never changes, both hold.
+local function gen2TreeScore(fx, fy, otId)
+  local coord = math.floor(((fx * fy) + fx + fy) / 5) % 10
+  return (coord - ((tonumber(otId) or 0) % 10)) % 10
+end
+
+-- SelectTreeMon (2E:$441F): roll 0-99, then walk the table subtracting each
+-- row's chance until it goes negative.
+local function gen2SelectTreeMon(rows)
+  local roll = math.random(0, 99)
+  for _, row in ipairs(rows or {}) do
+    roll = roll - (tonumber(row.chance) or 0)
+    if roll < 0 then return row end
+  end
+  return nil
+end
+
 -- HeadbuttScript: the struck tree rattles (ShakeHeadbuttTree 23:$4A8E) and
--- then either a TreeMon drops out or nothing does.  GetTreeMon rolls the
--- rare table only when the tree's coordinate score says so; the port rolls
--- it at the same 1-in-32 the score works out to on an average tree.
+-- then either a TreeMon drops out or nothing does.  GetTreeMon (2E:$43E5)
+-- turns the tree score into both the odds AND which table is rolled:
+--   score 5-9 (bad)  -- 1 in 10, common table
+--   score 1-4 (good) -- 5 in 10, common table
+--   score 0   (rare) -- 8 in 10, RARE table
+--
+-- The old code rolled 1-100, gated on `roll <= 50`, then compared that SAME
+-- roll against a running total that started at the first row's 50 -- so row
+-- one won every time a mon appeared at all (Gold's Forest set opens with
+-- CATERPIE), and the rare table was a made-up 1-in-32.
 function OverworldState:gen2Headbutt(fx, fy)
   self:startDustAnim(fx, fy, function()
     local trees = Game.data.field.gen2TreeMons
     local set = trees and trees.maps and trees.maps[self.map.def.label]
-    local rows = set and trees.sets and trees.sets[set]
-    rows = rows and (math.random(32) == 1 and rows.rare or rows.common)
-    -- the leading byte is the table's total chance out of 100
-    local roll = rows and math.random(100)
+    local sets = set and trees.sets and trees.sets[set]
     local pick
-    if roll and roll <= (rows.rate or 50) then
-      local acc = 0
-      for _, row in ipairs(rows) do
-        acc = acc + row.chance
-        if row.chance == 255 or roll <= acc then pick = row break end
+    if sets then
+      local score = gen2TreeScore(fx, fy,
+        Game.save and Game.save.player and Game.save.player.id)
+      local rows, odds
+      if score == 0 then rows, odds = sets.rare, 8
+      elseif score < 5 then rows, odds = sets.common, 5
+      else rows, odds = sets.common, 1 end
+      if rows and math.random(0, 9) < odds then
+        pick = gen2SelectTreeMon(rows)
       end
     end
     if not pick then
@@ -4263,6 +4319,25 @@ function OverworldState:onStepComplete()
     end
   end
 
+  -- TryWildEncounter_BugContest (25:$7D64): while the contest is running the
+  -- park rolls its OWN table (ContestMons) and ignores the map's wildmons
+  -- entirely.  Guarded on the run being live, so visiting the park outside the
+  -- contest still rolls the ordinary National Park slots.
+  local BugContest = require("src.world.BugContest")
+  if BugContest.active(Game.save)
+     and self.map.id == BugContest.contestMap()
+     and self.map:isGrassCell(p.cellX, p.cellY) then
+    local wild = BugContest.rollEncounter(Game)
+    if wild then
+      local BattleState = require("src.battle.BattleState")
+      local battle = BattleState.newWild(Game, wild.species, wild.level)
+      battle.bugContest = true
+      battle.onFinish = function(result) self:afterBattle(result, battle) end
+      self:pushBattle(battle)
+    end
+    return
+  end
+
   -- wild encounters in grass, on water while surfing, or -- on indoor
   -- maps whose tileset is not FOREST -- on EVERY tile
   -- (wild_encounters.asm: caves, towers, the Mansion, Power Plant)
@@ -5233,16 +5308,25 @@ function OverworldState:drawWorld()
           love.graphics.newQuad(0, 8, 8, 8, w, h), -- ball ($7d)
         }
       end
+      -- The machine carries its OWN four colours.  HealMachineAnim.LoadPalettes
+      -- (04:$6434) copies them over OBJ palette 6 before the animation runs --
+      -- which is why every row of its OAM table names palette 6 -- and they are
+      -- white / light orange / red / black: a Poke Ball.  Nothing was applying
+      -- any palette at all, so the sheet drew in the DMG greys it is decoded
+      -- in and a Pokemon Center healed with grey balls.
+      local def = fxDef and fxDef.healMachine
+      local objPal = def and def.gen2ObjPal
+      local basePal = (objPal and objPal[1] and objPal) or PaletteFX.GRAYS
       -- the jingle flash recolors the machine sprites in place
       -- (FlashSprite8Times XORs rOBP1; the sprites never disappear):
       -- ha.visible == false is the flashed half of each beat, drawn with
       -- the light/dark shades swapped instead of skipped
       local shader
-      if not ha.visible then
+      if (not ha.visible) or basePal ~= PaletteFX.GRAYS then
         shader = PaletteFX.shader()
         if shader then
-          PaletteFX.sendColors(shader,
-            PaletteFX.permute(PaletteFX.GRAYS, HEAL_FLASH_MAP))
+          PaletteFX.sendColors(shader, ha.visible and basePal
+            or PaletteFX.permute(basePal, HEAL_FLASH_MAP))
           love.graphics.setShader(shader)
         end
       end
@@ -5251,10 +5335,21 @@ function OverworldState:drawWorld()
       -- the balls a pixel off the machine tiles
       local ox = ha.px - 64 - math.floor(cam.x)
       local oy = ha.py - 64 - math.floor(cam.y)
+      -- Gen2 puts these sprites somewhere else entirely.  Its
+      -- HealMachineAnim.PC_ElmsLab_OAM (04:$63BC) has the monitor at x 26/30
+      -- and the balls at x 24/32; Gen1's PokeCenterOAMData has the balls at
+      -- 40/48.  The extractor reads that OAM table straight off the cartridge
+      -- into field.overworldFx.healMachine, so use it where it exists and keep
+      -- the Gen1 constants as the fallback -- drawn at Gen1's offsets the
+      -- whole overlay sat a full 16px right of the Gen2 machine.
+      local monitor = (def and def.monitor) or { { 44, 20 } }
+      local balls = (def and def.balls) or HEAL_BALL_XY
       love.graphics.setColor(1, 1, 1, 1)
-      love.graphics.draw(img, self.healMachineQuads[1], ox + 44, oy + 20)
-      for i = 1, math.min(ha.lit, #HEAL_BALL_XY) do
-        local b = HEAL_BALL_XY[i]
+      for _, m in ipairs(monitor) do
+        love.graphics.draw(img, self.healMachineQuads[1], ox + m[1], oy + m[2])
+      end
+      for i = 1, math.min(ha.lit, #balls) do
+        local b = balls[i]
         if b[3] then -- right column: OAM_XFLIP
           love.graphics.draw(img, self.healMachineQuads[2],
                              ox + b[1] + 8, oy + b[2], 0, -1, 1)

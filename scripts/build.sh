@@ -253,7 +253,11 @@ build_linux() {
   # (the hook ships commented-out in LÖVE's official AppImage), and glue
   # runtime + repacked squashfs back together.
   command -v unsquashfs >/dev/null && command -v mksquashfs >/dev/null \
-    || fail "squashfs tools not found; install with: brew install squashfs"
+    || fail "squashfs tools not found; install with:
+    macOS         brew install squashfs
+    Debian/Ubuntu sudo apt install squashfs-tools
+    Fedora        sudo dnf install squashfs-tools
+    Arch          sudo pacman -S squashfs-tools"
 
   # The squashfs starts right where the ELF ends:
   # e_shoff + e_shnum * e_shentsize (all little-endian in the ELF64 header).
@@ -270,7 +274,16 @@ build_linux() {
   unsquashfs -q -no-xattrs -o "$sfs_offset" -d "$appdir" "$love_appimage" >/dev/null
 
   cp "$LOVE_FILE" "$appdir/game.love"
-  sed -i '' 's|^#FUSE_PATH="$APPDIR/my_game.love"$|FUSE_PATH="$APPDIR/game.love"|' "$appdir/AppRun"
+  # `sed -i` takes a MANDATORY backup suffix on BSD and forbids one on GNU, so
+  # no single spelling works on both -- and `sed -i ''` on Linux silently ate
+  # the next argument as the script, which is why this step could only ever run
+  # on macOS.  Write the patched copy out and move it back instead; `cat >`
+  # rather than `mv` so AppRun keeps its executable bit.
+  local patched="$WORK/AppRun.patched"
+  sed 's|^#FUSE_PATH="$APPDIR/my_game.love"$|FUSE_PATH="$APPDIR/game.love"|' \
+    "$appdir/AppRun" > "$patched"
+  cat "$patched" > "$appdir/AppRun"
+  rm -f "$patched"
   grep -q '^FUSE_PATH="\$APPDIR/game.love"$' "$appdir/AppRun" \
     || fail "failed to enable FUSE_PATH in AppRun (upstream AppRun changed?)"
 
@@ -287,9 +300,19 @@ build_linux() {
   cat "$sfs_out" >> "$out_bin"
   chmod +x "$out_bin"
 
+  # Ship the raw .AppImage as well as the zip.  An AppImage is already a
+  # single self-contained double-clickable file, so burying the only copy
+  # inside a zip just adds a step for anyone who wanted the AppImage itself;
+  # the zip stays because the release pipeline names it.
+  local app_out="$DIST/linux/$(basename "$out_bin")"
+  rm -f "$app_out"
+  cp "$out_bin" "$app_out"
+  chmod +x "$app_out"
+
   local zip_out="$DIST/linux/$APP_NAME-linux.zip"
   rm -f "$zip_out"
   (cd "$WORK" && zip -q -9 -j "$zip_out" "$(basename "$out_bin")")
+  say "Linux build: $app_out"
   say "Linux build: $zip_out"
 }
 

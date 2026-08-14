@@ -958,6 +958,14 @@ function Commands.g2_getmonname(ctx, species)
   ctx.game.stringBuffer = def and def.name or species
 end
 
+-- GetString is the same idea for a name that is neither an item nor a species
+-- -- "EXPN CARD", "RADIO CARD", "GEAR", "EGG", "COIN".  The extractor resolves
+-- the pointer to the literal, so there is nothing to look up here.
+function Commands.g2_getstring(ctx, text)
+  if type(text) ~= "string" or text == "" then return end
+  ctx.game.stringBuffer = text
+end
+
 function Commands.g2_check_poke(ctx, species)
   for _, mon in ipairs(ctx.save.party or {}) do
     if mon.species == species then
@@ -2525,12 +2533,24 @@ local ROAM_MAPS = {
   ROUTE_46 = { "ROUTE_45", "ROUTE_29" },
 }
 
--- pret InitRoamMons starting maps
+-- InitRoamMons, read off both cartridges (crystal 0A:$62A0, gold 0A:$67D7).
+-- Every roamer is level $28 = 40 and starts with 0 HP recorded.
+--
+-- SUICUNE ONLY ROAMS IN GOLD AND SILVER.  Crystal's InitRoamMons writes two
+-- slots and stops -- its Suicune is the scripted Kimono/Tin Tower chain, not a
+-- roamer -- and Crystal's FindNest correspondingly has RoamMon1 and RoamMon2
+-- where Gold's has three.  Spawning it here put a third beast on the Pokegear
+-- map that the cartridge never has.
 local ROAM_START = {
-  RAIKOU  = "ROUTE_42",
-  ENTEI   = "ROUTE_37",
-  SUICUNE = "ROUTE_38",
+  RAIKOU  = "ROUTE_42",   -- group 2, map 5
+  ENTEI   = "ROUTE_37",   -- group 10, map 4
+  SUICUNE = "ROUTE_38",   -- group 1, map 12 -- Gold/Silver only
 }
+
+local function roamsInThisVersion(name)
+  if name ~= "SUICUNE" then return true end
+  return not require("src.core.GameVersion").isCrystal()
+end
 
 local ROAM_SPECIES_ID = {
   RAIKOU  = "SPECIES_243",
@@ -2576,12 +2596,14 @@ function Commands.g2_init_roam_mons(ctx)
   ctx.save.g2RoamReleased = true
   ctx.save.g2Roam = {}
   for name, startMap in pairs(ROAM_START) do
-    ctx.save.g2Roam[name] = {
-      mapId = startMap,
-      speciesId = ROAM_SPECIES_ID[name],
-      landmark = mapToLandmark(ctx.game, startMap) or LANDMARK_BY_MAP[startMap],
-      active = true,
-    }
+    if roamsInThisVersion(name) then
+      ctx.save.g2Roam[name] = {
+        mapId = startMap,
+        speciesId = ROAM_SPECIES_ID[name],
+        landmark = mapToLandmark(ctx.game, startMap) or LANDMARK_BY_MAP[startMap],
+        active = true,
+      }
+    end
   end
 end
 
@@ -2630,7 +2652,12 @@ function Commands.g2_ensure_roam_landmarks(ctx)
   local roam = ctx.save.g2Roam
   if type(roam) ~= "table" then return end
   for name, info in pairs(roam) do
-    if type(info) == "table" and info.mapId then
+    -- Retire a beast this version does not roam.  A Crystal save released
+    -- before the version check existed has a Suicune slot in it, and it would
+    -- otherwise keep drawing on the Pokegear and Fly maps forever.
+    if not roamsInThisVersion(name) then
+      roam[name] = nil
+    elseif type(info) == "table" and info.mapId then
       info.speciesId = info.speciesId or ROAM_SPECIES_ID[name]
       info.landmark = mapToLandmark(ctx.game, info.mapId)
         or LANDMARK_BY_MAP[normalizeMapId(info.mapId)]
@@ -2673,12 +2700,83 @@ function Commands.g2_update_roam_positions(ctx)
           dest = neighbors[r(1, #neighbors)]
         end
       end
+      -- UpdateRoamMons.Update rejects the map the PLAYER just came from and
+      -- rerolls, so a beast never hops onto the route behind you.
+      if dest and dest == normalizeMapId(lastMap) then dest = nil end
       if dest then
         info.mapId = dest
         info.landmark = LANDMARK_BY_MAP[dest] or mapToLandmark(ctx.game, dest)
       end
     end
   end
+end
+
+-- Both roamer helpers are called from OUTSIDE the script VM -- setMap and
+-- TownMap.new -- via `require("src.script.Gen2Commands")`, and that returns
+-- THIS table, not the shared `Commands` registry the script handlers above are
+-- defined on.  Without these two lines both lookups are nil, the pcall wrapped
+-- around each call site swallows the "attempt to call a nil value" that
+-- follows, and the beasts never move at all: a released save keeps Raikou,
+-- Entei and Suicune on their InitRoamMons start maps forever, and
+-- save.g2RoamLastMap is never even written.  That was true on all three
+-- versions.
+Gen2Commands.g2_update_roam_positions = Commands.g2_update_roam_positions
+Gen2Commands.g2_ensure_roam_landmarks = Commands.g2_ensure_roam_landmarks
+
+-- ---------------------------------------------------------------------------
+-- Bug Catching Contest
+--
+-- The gate's own extracted scripts drive all of this; these are the
+-- SpecialsPointers rows they call.  Everything they need is in
+-- field.gen2BugContest, read off the cartridge by
+-- RomExtractorGen2:gen2BugContest.
+
+-- GiveParkBalls (04:$75DB) clears the caught mon, sets 20 Park Balls and falls
+-- into StartBugContestTimer, so this is where a run actually begins.
+function Commands.g2_bug_contest_start(ctx)
+  require("src.world.BugContest").start(ctx.game)
+end
+
+-- ContestDropOffMons (04:$7A12): only the lead competes; the rest of the party
+-- waits at the gate until ContestReturnMons hands it back.
+function Commands.g2_bug_contest_drop_off(ctx)
+  local BugContest = require("src.world.BugContest")
+  local save = ctx.save
+  local state = BugContest.state(save)
+  if not (state and save.party) then return end
+  if #save.party <= 1 then return end
+  state.party = {}
+  for index = 2, #save.party do
+    state.party[#state.party + 1] = save.party[index]
+    save.party[index] = nil
+  end
+end
+
+function Commands.g2_bug_contest_return(ctx)
+  local BugContest = require("src.world.BugContest")
+  local save = ctx.save
+  local state = BugContest.state(save)
+  BugContest.finish(ctx.game)
+  if not (state and state.party) then return end
+  for _, mon in ipairs(state.party) do save.party[#save.party + 1] = mon end
+  state.party = nil
+end
+
+-- SelectRandomBugContestContestants (04:$79A8) re-rolls the AI field.
+function Commands.g2_bug_contest_select(ctx)
+  local BugContest = require("src.world.BugContest")
+  local state = BugContest.state(ctx.save)
+  if state then state.scores = BugContest.rollContestants(ctx.game) end
+end
+
+-- BugContestJudging (03:$434A) ranks the player against the field and leaves
+-- the placing where the BugContestResults_* scripts can branch on it.  It also
+-- sets the script variable, which is what `ifequal` in those scripts tests:
+-- 1/2/3 for a placing and 0 for nothing.
+function Commands.g2_bug_contest_judging(ctx)
+  local placing = require("src.world.BugContest").judge(ctx.game)
+  ctx.g2Var = placing or 0
+  ctx.lastCheck = placing ~= nil
 end
 
 function Commands.g2_diploma(ctx)
@@ -2697,6 +2795,313 @@ function Commands.g2_load_used_sprites(ctx)
   for _, npc in pairs(ow.map.npcs) do
     if npc.refreshSprite then npc:refreshSprite(ctx.game.data) end
   end
+end
+
+-- ---------------------------------------------------------------------------
+-- Battle Tower  (Crystal only)
+--
+-- BattleTower1F, BattleTowerHallway, BattleTowerElevator and
+-- BattleTowerBattleRoom already carry their extracted ROM bytecode, so this is
+-- only the SpecialsPointers rows that bytecode calls.  The order of events --
+-- the receptionist's menu, the quick save, the level pick, the lift, the seven
+-- battles, the prize -- is the cartridge script's, not this file's.
+--
+-- Everything read off the cartridge is in field.gen2BattleTower
+-- (RomExtractorGen2:gen2BattleTower); the run state and the rules are
+-- src/world/BattleTower.lua.  On Gold and Silver the record is nil, and every
+-- handler here answers 0 and stops, which is what those carts do too: they
+-- have no tower and no scripts that call any of this.
+-- ---------------------------------------------------------------------------
+
+local function towerAnswer(ctx, value)
+  ctx.g2Var = value or 0
+  ctx.lastCheck = (value or 0) ~= 0
+end
+
+-- A blocking menu that answers a row number (0 on B), for the two the tower
+-- puts up.  g2_verticalmenu covers the three-row one, but the level picker can
+-- be eleven rows and needs the box options, so both go through this.
+local function towerMenu(ctx, rows, opts)
+  local game, runner = ctx.game, ctx.runner
+  local picked = 0
+  local items = {}
+  for index, label in ipairs(rows) do
+    items[index] = {
+      label = label,
+      onSelect = function() picked = index runner:resume() end,
+    }
+  end
+  local options = { onCancel = function() runner:resume() end }
+  for key, value in pairs(opts or {}) do options[key] = value end
+  game.stack:push(require("src.ui.Menu").new(game, items, options))
+  runner:yield()
+  return picked
+end
+
+-- BattleTower_GiveReward (5C:$46EE): the bag can take the prize when the item
+-- pocket has room for a new stack, or already holds fewer than 95 of it.
+local function towerRewardFits(ctx, itemId)
+  local save = ctx.save
+  local have = save.inventory and save.inventory[itemId]
+  if have then return have < 95 end
+  return require("src.inventory.Bag").pocketSlots(save, "ITEM", ctx.game.data) < 20
+end
+
+-- BattleTowerAction (5C:$4687) is one special with a jumptable on wScriptVar,
+-- so `setval N / special BattleTowerAction` is really N different calls.  The
+-- numbers are the cartridge's; the eighteen the tower's scripts actually use
+-- are the ones implemented here, and the mobile-only rows answer 0 the way an
+-- unlinked cartridge does.
+local BATTLE_TOWER_ACTIONS = {
+  -- CheckExplanationRead: (sBattleTowerSaveFileFlags & 2), so 2 or 0
+  [0x00] = function(ctx, s) towerAnswer(ctx, s.explained and 2 or 0) end,
+  [0x01] = function(_, s) s.explained = true end,
+  [0x02] = function(ctx, s) towerAnswer(ctx, s.challenge or 0) end,
+  -- SetBattleTowerChallengeState: 1 quick saved mid-challenge, 0 cancelled,
+  -- 3 challenge won and the prize is owed, 4 prize collected
+  [0x03] = function(_, s) s.challenge = 1 end,
+  [0x04] = function(_, s) s.challenge = 0 end,
+  -- BattleTowerAction_06 zeroes the beaten count and the two day counters the
+  -- week-long challenge expiry uses
+  [0x06] = function(ctx, s)
+    s.beaten, s.opponent = 0, nil
+    require("src.world.BattleTower").syncBeaten(ctx.save)
+  end,
+  -- Save/LoadBattleTowerLevelGroup move the group between SRAM and WRAM; the
+  -- port keeps one copy, so both are already done
+  [0x07] = function() end,
+  [0x08] = function() end,
+  -- CheckSaveFileExistsAndIsYours: the port only ever loads the player's own
+  -- save, so this is the "yes" branch
+  [0x09] = function(ctx) towerAnswer(ctx, 1) end,
+  [0x0A] = function() end,           -- restores music volume
+  [0x0B] = function(ctx) towerAnswer(ctx, 0) end,  -- the mobile GS BALL flag
+  [0x11] = function() end,           -- mobile bookkeeping byte
+  [0x1A] = function(ctx)
+    require("src.world.BattleTower").resetTrainers(ctx.game)
+  end,
+  -- BattleTower_GiveReward leaves the item id in wScriptVar for the
+  -- `getitemname` and `giveitem` that follow, or $12 when the bag is full.
+  -- The item is NOT handed over here -- the script's own giveitem does that.
+  [0x1B] = function(ctx, s)
+    local BattleTower = require("src.world.BattleTower")
+    local def = BattleTower.data(ctx.game)
+    local item = s.reward or BattleTower.rollReward(ctx.game)
+    if not item then return towerAnswer(ctx, def and def.rewardBagFull or 18) end
+    if not towerRewardFits(ctx, item) then
+      return towerAnswer(ctx, def and def.rewardBagFull or 18)
+    end
+    towerAnswer(ctx, tonumber(tostring(item):match("(%d+)$")) or 0)
+  end,
+  [0x1C] = function(_, s) s.challenge = 3 end,
+  [0x1D] = function(_, s) s.challenge = 4 end,
+  [0x1E] = function(ctx)
+    require("src.world.BattleTower").rollReward(ctx.game)
+  end,
+  [0x1F] = function() end,           -- SaveOptions
+}
+
+function Commands.g2_battle_tower_action(ctx)
+  local BattleTower = require("src.world.BattleTower")
+  if not BattleTower.available(ctx.game) then return towerAnswer(ctx, 0) end
+  local state = BattleTower.state(ctx.save)
+  if not state then return towerAnswer(ctx, 0) end
+  local action = BATTLE_TOWER_ACTIONS[scriptVar(ctx)]
+  if not action then
+    -- a mobile-only row: the cartridge's own answer with no link cable is 0
+    return towerAnswer(ctx, 0)
+  end
+  action(ctx, state)
+end
+
+-- `special TryQuickSave`: the box the script already printed asked; this is
+-- the write.  wScriptVar is 1 when the save happened.
+function Commands.g2_try_quick_save(ctx)
+  local ok = pcall(function() ctx.game:writeSave() end)
+  if ok then require("src.core.Sound").play(ctx.game.data, "Save") end
+  towerAnswer(ctx, ok and 1 or 0)
+end
+
+-- `special Reset`: the tower's "save and come back later" exit power-cycles
+-- the cartridge.  Returning "end" stops the script the way the reset does.
+function Commands.g2_soft_reset(ctx)
+  -- the challenge state the two actions just before this set has to survive
+  -- the trip back to the title, the same way the cartridge's SRAM does
+  pcall(function() ctx.game:writeSave() end)
+  ctx.game:returnToTitle()
+  return "end"
+end
+
+-- Menu_ChallengeExplanationCancel (5F:$5224): CHALLENGE / EXPLANATION /
+-- CANCEL.  wScriptVar is the row, and the routine presets 4 so backing out
+-- with B lands past every `ifequal`.
+function Commands.g2_battle_tower_challenge_menu(ctx)
+  local BattleTower = require("src.world.BattleTower")
+  local def = BattleTower.data(ctx.game)
+  local rows = (def and def.menu) or { "CHALLENGE", "EXPLANATION", "CANCEL" }
+  Commands.g2_loadmenu(ctx, rows)
+  Commands.g2_verticalmenu(ctx)
+  if (ctx.g2Var or 0) == 0 then towerAnswer(ctx, 4) end
+end
+
+-- `special CheckForBattleTowerRules` (5C:$4BD3 -> 22:$7201).  Four party
+-- checks; every failing one prints its own line, then "Please return when
+-- you're ready."  wScriptVar is 1 when anything failed, which is what the
+-- receptionist's `ifnotequal 0` sends back to the menu.
+function Commands.g2_battle_tower_check_rules(ctx)
+  local BattleTower = require("src.world.BattleTower")
+  local def = BattleTower.data(ctx.game)
+  local failed = BattleTower.checkRules(ctx.game)
+  if #failed == 0 then return towerAnswer(ctx, 0) end
+  local texts = (def and def.ruleTexts) or {}
+  -- the routine fills wStringBuffer1 with "3" before it starts, which is the
+  -- "3" in "The 3 #MON must all be different kinds."
+  ctx.game.stringBuffer = "3"
+  if texts[1] and texts[1] ~= "" then Commands.show_text(ctx, texts[1]) end
+  for _, rule in ipairs(failed) do
+    local line = texts[rule + 1]
+    if line and line ~= "" then
+      ctx.game.stringBuffer = "3"
+      Commands.show_text(ctx, line)
+    end
+  end
+  if def and def.notReadyText and def.notReadyText ~= "" then
+    Commands.show_text(ctx, def.notReadyText)
+  end
+  towerAnswer(ctx, 1)
+end
+
+-- `special BattleTowerRoomMenu` (5C:$4190 -> 46:$4021).  Pick a level, then
+-- BattleTower_LevelCheck and BattleTower_UbersCheck before it is accepted.
+-- wScriptVar answers 0 to proceed and 10 to go back to the receptionist; the
+-- ROM's other answers are mobile errors this port cannot reach.
+function Commands.g2_battle_tower_room_menu(ctx)
+  local BattleTower = require("src.world.BattleTower")
+  local def = BattleTower.data(ctx.game)
+  local state = BattleTower.state(ctx.save)
+  if not (def and state) then return towerAnswer(ctx, 10) end
+  local count = BattleTower.levelChoices(ctx.game)
+  while true do
+    local rows = {}
+    for index = 1, count do
+      rows[index] = (def.levelLabels and def.levelLabels[index])
+        or ("L." .. tostring(index * 10))
+    end
+    rows[#rows + 1] = def.cancelLabel or "CANCEL"
+    -- eleven rows after the Hall of Fame, which is why this one is built here
+    -- rather than through g2_verticalmenu: that helper's double-spaced box
+    -- would be 24 tiles tall on an 18 tile screen.  The ROM's own pick-level
+    -- box is single spaced too (MenuHeader_119cf7).
+    local picked = towerMenu(ctx, rows, { rowStep = 1, tw = 8, maxVisible = 11 })
+    if picked == 0 or picked > count then return towerAnswer(ctx, 10) end
+    local over = BattleTower.levelCheck(ctx.game, picked)
+    local uber = not over and BattleTower.uberCheck(ctx.game, picked)
+    if not (over or uber) then
+      state.group = picked
+      return towerAnswer(ctx, 0)
+    end
+    -- BattleTowerRoomMenu_PartyMonTopsThisLevelMessage /
+    -- _UberRestrictionMessage: the offending mon is named, then the level
+    -- menu comes straight back up.
+    local mon = over or uber
+    local monDef = mon and ctx.game.data.pokemon[mon.species]
+    local name = (monDef and monDef.name) or tostring(mon and mon.species or "")
+    ctx.game.stringBuffer = name
+    Commands.show_text(ctx, over
+      and Strings("%s is above the\nlevel limit.", name)
+      or Strings("%s may not enter\nbelow L.70.", name))
+  end
+end
+
+-- `special LoadOpponentTrainerAndPokemonWithOTSprite` (5C:$4B44): rolls the
+-- next trainer and their three mons, and puts that trainer class's overworld
+-- sheet on the battle room object the preceding `setval` names.
+function Commands.g2_battle_tower_load_opponent(ctx)
+  local BattleTower = require("src.world.BattleTower")
+  local opponent = BattleTower.rollOpponent(ctx.game)
+  if not opponent then return towerAnswer(ctx, 0) end
+  local obj, _, slot = objectByIndex(ctx, scriptVar(ctx))
+  if obj and opponent.sprite then
+    obj.sprite = opponent.sprite
+    local ow = ctx.overworld
+    local npc = slot and ow and ow.npcByIndex and ow:npcByIndex(slot) or nil
+    if npc and npc.refreshSprite then npc:refreshSprite(ctx.game.data) end
+  end
+  towerAnswer(ctx, 0)
+end
+
+-- `battletowertext <slot>`: the opponent's own line.
+function Commands.g2_battle_tower_text(ctx, slot)
+  local line = require("src.world.BattleTower").line(ctx.game, slot or 1)
+  if line and line ~= "" then Commands.show_text(ctx, line) end
+end
+
+-- `special BattleTowerBattle` (5C:$4249 -> RunBattleTowerTrainer).  One
+-- battle against the generated opponent.  wScriptVar is wBattleResult the same
+-- way a scripted `startbattle` leaves it -- 0 won, nonzero did not -- and the
+-- beaten count the battle room reads back with `readmem` moves here.
+function Commands.g2_battle_tower_battle(ctx)
+  local BattleTower = require("src.world.BattleTower")
+  local state = BattleTower.state(ctx.save)
+  local opponent = state and state.opponent
+  if not opponent then return towerAnswer(ctx, 1) end
+  local BattleState = require("src.battle.BattleState")
+  local runner = ctx.runner
+  local battle = BattleState.newBattleTowerTrainer(ctx.game, opponent)
+  battle.onFinish = function(result)
+    ctx.lastBattleResult = result
+    if result == "win" then
+      BattleTower.recordWin(ctx.game)
+    else
+      BattleTower.recordLoss(ctx.game)
+      -- the challenge is over; the script's own `ifnotequal 0` walks the
+      -- player back to the lobby and cancels it
+      state.challenge = 0
+    end
+    if ctx.overworld then
+      -- same split Commands.start_battle makes: a win keeps the evolution
+      -- screen behind the rest of the script (here, the whole run of seven),
+      -- a loss runs straight away because the script is about to end
+      if result == "win" then
+        ctx.afterScript = ctx.afterScript or {}
+        table.insert(ctx.afterScript, function()
+          ctx.overworld:afterBattle(result, battle)
+        end)
+      else
+        ctx.overworld:afterBattle(result, battle)
+      end
+    end
+    runner:resume()
+  end
+  if ctx.overworld and ctx.overworld.pushBattle then
+    ctx.overworld:pushBattle(battle)
+  else
+    ctx.game.stack:push(battle)
+  end
+  runner:yield()
+  towerAnswer(ctx, ctx.lastBattleResult == "win" and 0 or 1)
+end
+
+-- BattleTowerHallwayChooseBattleRoomScript.asm_load_battle_room (27:$75CB):
+-- the chosen level group, which the ifequal chain after it turns into which
+-- door the receptionist walks the player to.
+function Commands.g2_battle_tower_room_index(ctx)
+  local state = require("src.world.BattleTower").state(ctx.save)
+  towerAnswer(ctx, state and state.group or 1)
+end
+
+-- ITEM_FROM_MEM forms of giveitem / getitemname (Gen2ScriptVM lowers the $FF
+-- and $00 operands to these).  The Battle Tower's prize is the only user.
+local function itemFromVar(ctx)
+  return string.format("ITEM_%03d", math.floor(scriptVar(ctx)) % 256)
+end
+
+function Commands.g2_giveitem_var(ctx, count)
+  Commands.g2_giveitem(ctx, itemFromVar(ctx), count)
+end
+
+function Commands.g2_getitemname_var(ctx)
+  Commands.g2_getitemname(ctx, itemFromVar(ctx))
 end
 
 return Gen2Commands

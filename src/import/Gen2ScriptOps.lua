@@ -38,7 +38,16 @@ Gen2ScriptOps.COMMANDS = {
   { "blackoutmod", "bb" }, { "warp", "bbbb" }, { "getmoney", "bb" },
   { "getcoins", "b" }, { "getnum", "bb" }, { "getmonname", "bb" },
   { "getitemname", "bb" }, { "getcurlandmarkname", "b" },
-  { "gettrainername", "bbb" }, { "getstring", "bd" }, { "itemnotify", "" },
+  -- getstring is `dw string, db buffer`, NOT `db buffer, dw string`.  Both
+  -- orderings total four bytes so the script never desynced, but the pointer
+  -- came out byte-swapped: the Lavender radio director's
+  -- `getstring "EXPN CARD", STRING_BUFFER_1` read $016E instead of $6E98, so
+  -- the `jumpstd receiveitem` after it printed whatever the string buffer
+  -- still held -- the player's last TM.  Checked against every getstring
+  -- reachable from a *Script symbol in both ROMs: COIN, SUNDAY.., GEAR,
+  -- RADIO CARD, EGG and EXPN CARD all decode under this order, none under
+  -- the other.
+  { "gettrainername", "bbb" }, { "getstring", "db" }, { "itemnotify", "" },
   -- Script_reanchormap ends with a GetScriptByte call: the operand is unused
   -- but skipping it swallowed the following pokepic.
   { "pocketisfull", "" }, { "opentext", "" }, { "reanchormap", "b" },
@@ -120,7 +129,8 @@ Gen2ScriptOps.COMMANDS_CRYSTAL = {
   { "xycompare", "d" }, { "warpmod", "bbb" }, { "blackoutmod", "bb" },
   { "warp", "bbbb" }, { "getmoney", "bb" }, { "getcoins", "b" },
   { "getnum", "b" }, { "getmonname", "bb" }, { "getitemname", "bb" },
-  { "getcurlandmarkname", "b" }, { "gettrainername", "bbb" }, { "getstring", "bd" },
+  -- `db` not `bd` -- see the note on the Gold entry above.
+  { "getcurlandmarkname", "b" }, { "gettrainername", "bbb" }, { "getstring", "db" },
   { "itemnotify", "" }, { "pocketisfull", "" }, { "opentext", "" },
   { "reanchormap", "b" }, { "closetext", "" }, { "writeunusedbyte", "b" },
   { "farwritetext", "T" }, { "writetext", "t" }, { "repeattext", "bb" },

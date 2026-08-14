@@ -26,7 +26,11 @@ local Gen2ScriptVM = {}
 local compiled = setmetatable({}, { __mode = "k" })
 
 local eventFlag = Gen2Flags.eventFlag
-local engineFlag = Gen2Flags.engineFlag
+-- scriptFlag, not engineFlag: a `setflag` operand is a ROW NUMBER in the
+-- cartridge's own EngineFlags table, and Crystal's table has one extra row
+-- from index 16 up.  engineFlag stays the raw Gold-numbered lookup for the
+-- handful of call sites that pass a constant they already know the name of.
+local engineFlag = Gen2Flags.scriptFlag
 local function itemId(n) return string.format("ITEM_%03d", n) end
 
 -- ---------------------------------------------------------------------------
@@ -295,12 +299,46 @@ L.checkmapscene = function(ir, s) emit(s, { "g2_check_scene", ir[2] }) end
 
 -- items --------------------------------------------------------------------
 
+-- ITEM_FROM_MEM: Script_giveitem (25:$77CA) reads the item operand and, on
+-- $FF, takes wScriptVar instead; Script_getitemname (25:$76D5) does the same
+-- on $00.  The Battle Tower's prize is the only place in Crystal that uses
+-- either -- BattleTower_GiveReward leaves the rolled vitamin in wScriptVar and
+-- the script then names and hands over five of it -- so lowering the operand
+-- literally handed out ITEM_255 and named ITEM_000.  A separate row keeps the
+-- operand list free of holes.
+
 -- plain `giveitem` is silent; only `verbosegiveitem` prints and plays
-L.giveitem = function(ir, s) emit(s, { "g2_giveitem", itemId(ir[2]), ir[3] }) end
+L.giveitem = function(ir, s)
+  if ir[2] == 0xFF then
+    emit(s, { "g2_giveitem_var", ir[3] })
+  else
+    emit(s, { "g2_giveitem", itemId(ir[2]), ir[3] })
+  end
+end
 L.verbosegiveitem = function(ir, s)
   emit(s, { "give_item", itemId(ir[2]), ir[3] })
 end
-L.getitemname = function(ir, s) emit(s, { "g2_getitemname", itemId(ir[2]) }) end
+L.getitemname = function(ir, s)
+  if ir[2] == 0 then
+    emit(s, { "g2_getitemname_var" })
+  else
+    emit(s, { "g2_getitemname", itemId(ir[2]) })
+  end
+end
+-- `getstring "TEXT", buffer` (GetString) copies a fixed name into a string
+-- buffer for a later writetext to splice back out.  The extractor already
+-- resolved the pointer to the literal, and the port keeps ONE buffer, so the
+-- buffer index is dropped the same way getitemname's is.  Left unlowered, the
+-- Lavender radio director's "<PLAYER> received the EXPN CARD!" printed
+-- whatever was in the buffer from several scenes ago -- usually a TM.
+L.getstring = function(ir, s) emit(s, { "g2_getstring", ir[2] }) end
+-- `battletowertext <slot>` (Script_battletowertext, 25:$6F52 -> BattleTowerText
+-- 47:$4000): the generated opponent's own line -- 1 before the battle, 2 when
+-- they win, 3 when they lose.  The line is picked from the male or female pool
+-- by the trainer's class, once per opponent.
+L.battletowertext = function(ir, s)
+  emit(s, { "g2_battle_tower_text", ir[2] or 1 })
+end
 L.getmonname = function(ir, s)
   emit(s, { "g2_getmonname", string.format("SPECIES_%03d", ir[2] or 0) })
 end
@@ -484,6 +522,42 @@ L.specialphonecall = function(ir, s) emit(s, { "g2_special_call", ir[2] }) end
 -- SpecialsPointers rows the port already implements, all of them nullary.
 -- Everything else stays a warn-once stub.
 local SPECIALS = {
+  -- Bug Catching Contest.  Both spellings are listed because a
+  -- SpecialsPointers row can resolve under either the wrapper label or the
+  -- routine it tail-calls, depending which symbol the manifest reached first;
+  -- an entry that never matches simply never fires.
+  GiveParkBalls = "g2_bug_contest_start",
+  GiveParkBallsSpecial = "g2_bug_contest_start",
+  ContestDropOffMons = "g2_bug_contest_drop_off",
+  ContestDropOffMonsSpecial = "g2_bug_contest_drop_off",
+  ContestReturnMons = "g2_bug_contest_return",
+  ContestReturnMonsSpecial = "g2_bug_contest_return",
+  BugContestJudging = "g2_bug_contest_judging",
+  BugContestJudgingSpecial = "g2_bug_contest_judging",
+  SelectRandomBugContestContestants = "g2_bug_contest_select",
+  SelectRandomBugContestContestantsSpecial = "g2_bug_contest_select",
+  -- Battle Tower.  Crystal only -- Gold and Silver have none of these rows --
+  -- and the tower's own extracted scripts call every one of them, so this is
+  -- the whole interface: the lobby, the level menu, the party rules, the
+  -- opponent roll and the seven battles all live behind these five names.
+  -- Both spellings again, for the same reason the contest rows carry both.
+  BattleTowerAction = "g2_battle_tower_action",
+  BattleTowerActionSpecial = "g2_battle_tower_action",
+  BattleTowerBattle = "g2_battle_tower_battle",
+  BattleTowerBattleSpecial = "g2_battle_tower_battle",
+  BattleTowerRoomMenu = "g2_battle_tower_room_menu",
+  BattleTowerRoomMenuSpecial = "g2_battle_tower_room_menu",
+  CheckForBattleTowerRules = "g2_battle_tower_check_rules",
+  CheckForBattleTowerRulesSpecial = "g2_battle_tower_check_rules",
+  LoadOpponentTrainerAndPokemonWithOTSprite = "g2_battle_tower_load_opponent",
+  LoadOpponentTrainerAndPokemonWithOTSpriteSpecial = "g2_battle_tower_load_opponent",
+  Menu_ChallengeExplanationCancel = "g2_battle_tower_challenge_menu",
+  -- BattleTower1F's "start a challenge" branch is `special TryQuickSave` +
+  -- `iffalse` back to the menu, so leaving this to g2_special -- which answers
+  -- false -- made the receptionist refuse to ever start one.
+  TryQuickSave = "g2_try_quick_save",
+  -- the "save and continue this challenge later" exit power-cycles the game
+  Reset = "g2_soft_reset",
   HealParty = "g2_heal_party",
   DayCareMan = "g2_daycare_man",
   DayCareLady = "g2_daycare_lady",
@@ -566,6 +640,9 @@ local SPECIALS_NOOP = {
   UnusedDummySpecial = true,
   UnusedBattleTowerDummySpecial1 = true,
   UnusedBattleTowerDummySpecial2 = true,
+  -- the mobile-only failure box the room menu can raise; the port's menu
+  -- never answers anything but 0 or CANCEL, so this branch is unreachable
+  BattleTowerMobileError = true,
 }
 
 -- Specials that print their own prompt and are immediately followed by a
@@ -687,6 +764,15 @@ local ASM = {
   -- RockMonEncounter rolls the rock-smash wild table, which the port has no
   -- data for; report "nothing appeared" so the script ends after the rock.
   RockMonEncounter = { "g2_setvar", 0 },
+  -- BattleTowerHallwayChooseBattleRoomScript.asm_load_battle_room (27:$75CB)
+  -- puts the chosen level group in wScriptVar; the ifequal chain right after
+  -- it is what walks the player to the L10-20 / L30-40 / ... door.  The
+  -- extractor only resolves top-level labels, so a dotted one arrives as its
+  -- raw bank:address -- both spellings are listed, and the wrong one simply
+  -- never matches.
+  ["BattleTowerHallwayChooseBattleRoomScript.asm_load_battle_room"] =
+    { "g2_battle_tower_room_index" },
+  ["27:75CB"] = { "g2_battle_tower_room_index" },
 }
 
 L.callasm = function(ir, s)

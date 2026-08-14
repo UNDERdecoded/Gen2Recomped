@@ -774,10 +774,27 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
   self.enemyParty = {}
   for _, slot in ipairs(partyDef) do
     local mon = Pokemon.new(game.data, slot.species, slot.level)
-    -- fixed trainer DVs, recomputed stats
-    mon.dvs = trainerDvs
-    mon.stats = require("src.pokemon.Stats").calc(game.data.pokemon[slot.species],
-                                                  slot.level, trainerDvs)
+    -- fixed trainer DVs, recomputed stats.  A party slot that carries its OWN
+    -- DVs and stat exp is a stored mon rather than a generated one -- the
+    -- Battle Tower's opponents come out of BattleTowerMons with both -- so its
+    -- numbers win, and Stats.calc reproduces the cartridge's own stat block
+    -- from them.  No ordinary TrainerGroups slot has either field, so every
+    -- other trainer in the game is unchanged.
+    local dvs = slot.dvs or trainerDvs
+    mon.dvs = dvs
+    if slot.statExp then mon.statExp = slot.statExp end
+    if slot.happiness then mon.happiness = slot.happiness end
+    if slot.stats then
+      -- a stored stat block wins outright: the Battle Tower's opponents carry
+      -- the party_struct the cartridge ships, and recomputing it would move
+      -- some of them by a point
+      local stats = {}
+      for key, value in pairs(slot.stats) do stats[key] = value end
+      mon.stats = stats
+    else
+      mon.stats = require("src.pokemon.Stats").calc(
+        game.data.pokemon[slot.species], slot.level, dvs, slot.statExp)
+    end
     mon.hp = mon.stats.hp
     table.insert(self.enemyParty, mon)
   end
@@ -814,6 +831,47 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
     self.trainer and self.trainer.trueColor)
   self.introText = Strings("%s wants\nto fight!", self.trainer.name)
   return self
+end
+
+-- The Battle Tower's opponents are generated, not table-driven: its 70
+-- trainers each supply only a name and a class, and the three mons are drawn
+-- out of BattleTowerMons at battle time (src/world/BattleTower.lua).  Rather
+-- than fork newTrainer, the generated opponent is installed under one reserved
+-- class key and fought through the ordinary path, so the pic, the palette, the
+-- AI and every battle rule are the same code the rest of the game uses.
+--
+-- The row is overwritten each time and is never reachable from a script, a
+-- sight range or a save, so nothing else can ever battle it.
+BattleState.BATTLE_TOWER_CLASS = "OPP_BATTLE_TOWER"
+
+function BattleState.newBattleTowerTrainer(game, opponent)
+  local trainers = game.data.trainers
+  local base = opponent.classKey and trainers[opponent.classKey] or nil
+  if not base and opponent.class then
+    for _, row in pairs(trainers) do
+      if row.index == opponent.class then base = row break end
+    end
+  end
+  local def = {
+    -- the palette is keyed off the real class, so keep its id
+    id = (base and base.id) or BattleState.BATTLE_TOWER_CLASS,
+    index = opponent.class or 0,
+    name = opponent.name,
+    source = "ROM:BattleTowerTrainers",
+    parties = { opponent.party },
+    partyNames = { opponent.name },
+    -- RunBattleTowerTrainer sets wInBattleTowerBattle, which is what
+    -- suppresses the prize money; no base money does the same here
+    baseMoney = 0,
+  }
+  if base then
+    def.pic, def.basePic, def.trueColor = base.pic, base.basePic, base.trueColor
+    def.paletteSource, def.aiMods = base.paletteSource, base.aiMods
+  end
+  trainers[BattleState.BATTLE_TOWER_CLASS] = def
+  local battle = BattleState.newTrainer(game, BattleState.BATTLE_TOWER_CLASS, 1)
+  battle.battleTower = true
+  return battle
 end
 
 -- The disguise itself.  InitWildBattle .isGhost (engine/battle/core.asm)
@@ -1015,6 +1073,17 @@ function BattleState:drainNext(battler, stopAt)
                { drain = true, battler = battler, stopAt = stopAt })
 end
 
+-- Queue AnimateExpBar at the current insert point.  `from` is the pixel length
+-- the bar had BEFORE the exp was applied, and it is pinned immediately rather
+-- than when the row runs, so the bar holds the old length through the "gained
+-- EXP. Points!" box instead of flashing the new one first.
+function BattleState:expBarNext(from)
+  self.expShown = from
+  self.expHold = 0
+  self.nextInsert = (self.nextInsert or 0) + 1
+  table.insert(self.queue, self.nextInsert, { expBar = true })
+end
+
 -- Queue a pure frame hold at the current insert point, the way the original
 -- spends DelayFrames between the beats of a turn.  Mirrors sayNext/drainNext
 -- so a caller can interleave holds with messages in source order.
@@ -1077,6 +1146,35 @@ function BattleState:stepHPDrain()
     end
   end
   return busy
+end
+
+-- AnimateExpBar (engine/battle/experience.asm) creeps the bar to its new
+-- length a pixel at a time with a tick of sound behind it, instead of
+-- redrawing it at the new length; the bar drawing itself off the live exp is
+-- why it snapped.  self.expShown is the pixel count the HUD draws while a
+-- fill is running, and nil the rest of the time so the bar follows the mon.
+BattleState.EXP_BAR_STEP_FRAMES = 2
+
+-- Returns true while still filling.
+function BattleState:stepExpBar()
+  if not (self.player and self.expShown) then return false end
+  local HudTiles = require("src.render.HudTiles")
+  local target = HudTiles.expBarPixels(self.data, self.player.mon)
+  if self.expShown == target then
+    self.expShown = nil
+    return false
+  end
+  if (self.expHold or 0) > 0 then
+    self.expHold = self.expHold - 1
+    return true
+  end
+  local shown = self.expShown + 1
+  -- a level-up moved the goal BACKWARDS: the ROM runs the bar off the right
+  -- end, wraps it to empty and keeps going, which is what a level looks like
+  if shown > 64 then shown = 0 end
+  self.expShown = shown
+  self.expHold = BattleState.EXP_BAR_STEP_FRAMES - 1
+  return true
 end
 
 -- the integer HP the HUD shows for a battler (whole HP ticks, like
@@ -1162,6 +1260,11 @@ function BattleState:updateQueue()
     if self.player then self.player.drainFloor = nil end
     if self.enemy then self.enemy.drainFloor = nil end
   end
+  -- ...and the exp bar's own fill holds it the same way
+  if self.expFilling then
+    if self:stepExpBar() then return true end
+    self.expFilling = nil
+  end
   -- a move animation holds the queue until it finishes; its screen
   -- effects (SE_*) and per-row sounds route into the fx layer as they
   -- fire (applyAnimEffect implements each AnimationXXX routine)
@@ -1215,6 +1318,10 @@ function BattleState:updateQueue()
     if item.drain then
       self.draining = true
       if item.battler then item.battler.drainFloor = item.stopAt end
+      return true
+    end
+    if item.expBar then
+      self.expFilling = true
       return true
     end
     if item.wait then
@@ -3826,7 +3933,12 @@ function BattleState:awardExp()
   if participants == 0 and self.player.mon.hp > 0 then
     participants, alive = 1, { self.player.mon }
   end
+  local HudTiles = require("src.render.HudTiles")
   local function applyShare(mon, split, announce)
+    -- how full the bar is before any of this is applied; AnimateExpBar starts
+    -- from here and creeps to the new length
+    local expBefore = self.player and mon == self.player.mon
+      and HudTiles.expBarPixels(self.data, mon) or nil
     local levels, gained = Experience.apply(self.data, mon, self.enemy.def,
                                             self.enemy.mon.level, self.kind == "trainer",
                                             split, mon.traded)
@@ -3857,6 +3969,11 @@ function BattleState:awardExp()
         text = Strings.source("%s gained\na boosted\v%d EXP. Points!")
       end
       self:sayNext(Strings(text, name, gained))
+    end
+    -- AnimateExpBar runs after the gained-EXP box and before the first
+    -- GrewLevelText, so a level-up is the bar reaching the end and wrapping.
+    if expBefore and expBefore ~= HudTiles.expBarPixels(self.data, mon) then
+      self:expBarNext(expBefore)
     end
     -- per level: GrewLevelText -> the stats window (PrintStatsBox) ->
     -- the move-learn checks (experience.asm:245-256)
@@ -5214,7 +5331,13 @@ function BattleState:sgbBattlePals()
     [1] = bar(self.enemy),
     [2] = mon(self.player, self.showPlayerBack or self.safari or self.demo),
     [3] = mon(self.enemy, self.showEnemyTrainer),
-    [4] = pals.EXPBAR,
+    -- ...through PaletteFX.pal, not off `pals` directly: under RED++ the
+    -- active pack is pokered's GBC table, which has no EXPBAR, and a nil here
+    -- dropped GEN2_EXP_ZONE out of drawZonePass entirely -- so the exp bar row
+    -- fell through to zone 0 and wore the player's HP-bar colour, turning
+    -- green, yellow and red with the HP instead of staying blue.  pal() falls
+    -- back to the ROM pack for exactly this case.
+    [4] = pals.EXPBAR or PaletteFX.pal(self.data, "EXPBAR"),
   }
   -- OG RED: the Game Boy Color drew the whole battle from one BG palette --
   -- white paper, black ink -- so every zone shares the same background and
@@ -5676,7 +5799,8 @@ function BattleState:drawHUDs(slide)
     -- hlcoord 10,11 with eight tiles of fill (core.asm DrawPlayerHUD).
     if require("src.core.GameVersion").isGen2() then
       HudTiles.drawExpBar(barData, 10, 11,
-                          HudTiles.expBarPixels(barData, self.player.mon),
+                          self.expShown
+                            or HudTiles.expBarPixels(barData, self.player.mon),
                           grayFill)
     else
       for i = 10, 17 do hudTile(0x76, i * 8, 88) end

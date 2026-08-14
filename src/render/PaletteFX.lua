@@ -372,7 +372,9 @@ end
 -- palettes -- MORN / DAY / NITE / DARKNESS -- and the clock picks the row.
 -- Held here rather than threaded through because TileRenderer BAKES the row
 -- into an atlas and so needs it in the cache key, exactly like darkWorld above.
-local gen2Tod = "DAY"
+local gen2Tod = "DAY"        -- effective row: what everything downstream reads
+local gen2ClockTod = "DAY"   -- what the clock alone says
+local gen2MapPalette = 0     -- PALETTE_* from the current map's header
 -- OverworldState:timeOfDay answers "MORNING"/"NITE"; a mod's world.tod hook may
 -- answer "NIGHT".  Normalise to the four row names the importer writes.
 local GEN2_TOD_ALIAS = {
@@ -381,13 +383,47 @@ local GEN2_TOD_ALIAS = {
   DARK = "DARK", DARKNESS = "DARK",
 }
 
--- returns true when the row actually changed, so the caller can rebuild
-function PaletteFX.setGen2Tod(tod)
-  local key = GEN2_TOD_ALIAS[tostring(tod or ""):upper()] or "DAY"
+-- The clock is NOT the last word on which row a map gets.  Map header byte 7's
+-- low nibble is a PALETTE_* override, and ReplaceTimeOfDayPals turns it into
+-- wTimeOfDayPalset: $E4 for AUTO (the four rows in clock order), $55 / $AA /
+-- $00 / $FF for DAY / NITE / MORN / DARK -- packed constants, so the clock
+-- stops mattering entirely.  Every INDOOR map in both ROMs carries PALETTE_DAY
+-- and so do the Ruins of Alph chambers, which is why a house or a gym does not
+-- go dark at nightfall on hardware.  PALETTE_DARK resolves to NITE here because
+-- the unlit case is already handled one layer up by PaletteFX.darkWorld, which
+-- forces the DARKNESS row until FLASH -- exactly what .NeedsFlash does.
+local GEN2_MAP_PALETTE_ROW = {
+  [1] = "DAY", [2] = "NITE", [3] = "MORN", [4] = "NITE",
+}
+
+local function gen2RecomputeTod()
+  local key = GEN2_MAP_PALETTE_ROW[gen2MapPalette] or gen2ClockTod
   if gen2Tod == key then return false end
   gen2Tod = key
   return true
 end
+
+-- returns true when the effective row actually changed, so the caller can
+-- drop the baked atlases and rebuild
+function PaletteFX.setGen2Tod(tod)
+  gen2ClockTod = GEN2_TOD_ALIAS[tostring(tod or ""):upper()] or "DAY"
+  return gen2RecomputeTod()
+end
+
+-- Called on every map change with the map's PALETTE_* byte (0 = AUTO).
+-- Same contract as setGen2Tod: true means the atlases are stale.
+function PaletteFX.setGen2MapPalette(palette)
+  local value = tonumber(palette) or 0
+  if value < 0 or value > 7 then value = 0 end
+  -- PALETTE_5..7 are unused slots that ReplaceTimeOfDayPals maps to $E4, the
+  -- same palset as AUTO.
+  if value > 4 then value = 0 end
+  if gen2MapPalette == value then return false end
+  gen2MapPalette = value
+  return gen2RecomputeTod()
+end
+
+function PaletteFX.gen2MapPalette() return gen2MapPalette end
 
 function PaletteFX.gen2Tod() return gen2Tod end
 

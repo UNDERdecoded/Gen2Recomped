@@ -116,6 +116,9 @@ local GEN2_SCRIPT_OP_FAR_TEXT = 0x4B   -- dw address, db bank
 local GEN2_SCRIPT_OP_JUMPSTD = 0x0C    -- db index into StdScripts
 local GEN2_SCRIPT_OP_SPECIAL = 0x0F    -- dw SpecialsPointers index
 local GEN2_SCRIPT_OP_FRUITTREE = 0x9A  -- db tree id, indexes FruitTreeItems
+-- Safe to hardcode: Crystal's insertion point is $52, so every command below
+-- it keeps Gold's number.  Anything above $52 must come from
+-- Gen2ScriptOps.commandsFor(version) instead.
 local GEN2_SCRIPT_OP_SETEVENT = 0x33   -- dw event number
 local GEN2_SCRIPT_OP_POKEMART = 0x93   -- db dialog type, dw index into Marts
 
@@ -245,11 +248,23 @@ local GEN2_SPRITE_ID_OVERRIDES = {
   -- Mon / special sheets
   [0x9F] = "SPRITE_SNORLAX",
   -- Variable-sprite constants used as direct ids on some maps
-  [0xF4] = "SPRITE_WEIRD_TREE",    -- Sudowoodo pre-reveal
-  [0xF5] = "SPRITE_SILVER",        -- SPRITE_OLIVINE_RIVAL slot
-  [0xF6] = "SPRITE_ROCKET",        -- SPRITE_AZALEA_ROCKET slot
-  [0xFB] = "SPRITE_COPYCAT",
-  [0xFC] = "SPRITE_JANINE",        -- Janine impersonator
+  -- $F0 and up are wVariableSprites SLOTS, not sheets.  Name them after the
+  -- slot -- the names NPC.lua's VAR_SPRITE_SLOTS already knows -- so the
+  -- object resolves through the slot every time it is drawn: the map_scripts
+  -- default first, then whatever a `variablesprite` has since written into
+  -- save.gen2VarSprites.
+  --
+  -- Naming them after a SHEET pinned the object to one sprite for the whole
+  -- game and threw the slot away.  $F6 is the clearest case: it defaults to
+  -- the Rocket (sprite 53) and a script sets it to SILVER (sprite 4) for the
+  -- rival in Azalea Town, so pinning it to SPRITE_ROCKET meant the rival
+  -- turned up as a Team Rocket grunt.  $F5 had the same fault in the other
+  -- direction -- pinned to SILVER, while its slot is reassigned too.
+  [0xF4] = "SPRITE_WEIRD_TREE",         -- Sudowoodo pre-reveal, slot 4
+  [0xF5] = "SPRITE_OLIVINE_RIVAL",      -- slot 5
+  [0xF6] = "SPRITE_AZALEA_ROCKET",      -- slot 6
+  [0xFB] = "SPRITE_COPYCAT",            -- slot 11
+  [0xFC] = "SPRITE_JANINE_IMPERSONATOR",-- slot 12
 }
 
 -- GetMonSprite (05:$42CB) splits an object_event sprite byte four ways: below
@@ -303,6 +318,10 @@ do
   for i = 0, 9 do GEN2_CHARMAP[0xF6 + i] = tostring(i) end
   local specials = {
     [0x00] = "",             -- the `text` opener
+    -- CheckDict (00:$1087) inside a PlaceString run reads $14 as
+    -- PlaceGenderedPlayerName and $52 as PrintPlayerName; both are the
+    -- player's name, and $14 is the one nearly every line actually uses.
+    [0x14] = "<PLAYER>",
     [0x4A] = "<PKMN>",  [0x52] = "<PLAYER>", [0x53] = "<RIVAL>",
     [0x54] = "POK\xc3\xa9",  -- combined POKé glyph
     [0x56] = "\xe2\x80\xa6\xe2\x80\xa6", [0x59] = "<TARGET>",
@@ -405,7 +424,63 @@ local GEN2_PAL = {
   -- ENVIRONMENT_* is 1-based; index 0 is unused by any real map header but the
   -- ROM's pointer table still has a slot for it, so the array stays 0-based.
   defaultEnvironment = 1,      -- TOWN, for a tileset no map declares
+
+  -- The VRAM-bank half of the same question, parked here for the same reason
+  -- everything above is: five more chunk-level `local`s is exactly what pushed
+  -- this file over the 200 ceiling once already.
+  --
+  -- A Crystal tileset is 192 tiles, not 96.  LoadTilesetGFX (00:$2821)
+  -- decompresses the whole blob and copies it in TWO halves: $600 bytes (96
+  -- tiles) to vTiles2 in VRAM bank 0, and the next $600 to the SAME address in
+  -- VRAM bank 1.  A metatile byte carries only the low tile number; the bank is
+  -- bit 3 of that tile's nibble in <Tileset>PalMap -- which is why these
+  -- constants belong next to the palette ones.  The encoded pair is one byte:
+  -- $00-$5F is bank 0, $80-$DF is bank 1, so the second half sits at
+  -- `byte - $80 + 96`.
+  --
+  -- Reading those literally left Ecruteak's building fronts and the Burned
+  -- Tower's roof blank and turned Elm's desk into a white smear: TilesetLab
+  -- alone puts 481 of its 1024 references in the second bank, and 25 of
+  -- Crystal's 37 tilesets use it.  $60-$7F is a hole (the palette map marks it
+  -- unused and no metatile in either ROM touches it) and $E0-$FF only appears
+  -- inside padding blocks no map uses, so both resolve to tile 0.
+  --
+  -- Gold and Silver do NOT split: their LoadTilesetGFX (00:$2944) decompresses
+  -- straight to vTiles2, their sheets come out 96 tiles, and their palette maps
+  -- are 48 bytes with no bank bit anywhere.
+  tilesPerVramBank = 96,
+  palMapBytes = 112,           -- Crystal: 224 nibbles, $00-$DF
+  palMapBytesOneBank = 48,     -- Gold/Silver: 96 nibbles, $00-$5F
 }
+
+-- How many tiles a decoded sheet holds, from the def the extractor wrote.
+function GEN2_PAL.sheetTiles(def)
+  if type(def) ~= "table" then return 0 end
+  local width = tonumber(def.imageWidth) or 0
+  local height = tonumber(def.imageHeight) or 0
+  return (width / 8) * (height / 8)
+end
+
+-- Exactly two banks' worth, not merely "more than one": the placeholder sheet a
+-- failed decompress falls back on is 128x128 = 256 tiles, and that must not be
+-- mistaken for a split tileset.  Detecting the split from the DECODED SHEET
+-- rather than from the version also keeps the eight Crystal tilesets that are
+-- genuinely 96 tiles (Cave, DarkCave, EliteFourRoom, Facility, Kanto,
+-- PlayersHouse, PlayersRoom, Port) on the old path, where they belong.
+function GEN2_PAL.twoVramBanks(tileCount)
+  return tileCount == GEN2_PAL.tilesPerVramBank * 2
+end
+
+-- Metatile byte -> index into the flattened 0..191 sheet.
+function GEN2_PAL.tileIndex(byte, tileCount)
+  if not GEN2_PAL.twoVramBanks(tileCount) then return byte end
+  if byte < GEN2_PAL.tilesPerVramBank then return byte end
+  if byte >= 0x80 then
+    local index = byte - 0x80 + GEN2_PAL.tilesPerVramBank
+    if index < tileCount then return index end
+  end
+  return 0
+end
 
 -- BGR555 word -> {r, g, b} 0..255.
 function GEN2_PAL.bgr555(lo, hi)
@@ -890,6 +965,29 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
   -- window too, so running off the end returns what was read instead of
   -- asserting in Rom.offset
   local limit = (bank == 0 and 0x4000 or 0x8000) - address - 3
+  -- A Gen2 text is TWO interleaved encodings, and the same byte means
+  -- different things in each.  At command level DoTextUntilTerminator (00:$13F6)
+  -- indexes TextCommands, so $14 is TX_STRINGBUFFER with an index operand and
+  -- $16 is TX_FAR.  TX_START ($00) then hands everything up to the next $50 to
+  -- PlaceString, whose own dictionary (CheckDict, 00:$1087) reads $14 as
+  -- PlaceGenderedPlayerName -- the PLAYER'S NAME, one byte, no operand -- and
+  -- $16 as a carriage return.  TextCommand_START's trailing `inc hl` steps
+  -- past that $50 and command level resumes.
+  --
+  -- Decoding every byte at command level is why "ELM: <PLAYER>!" came out as
+  -- "ELM: {RAM:wStringBuffer1}" with the "!" eaten as the operand: the player's
+  -- name printed as whatever was last in the string buffer, which is the item
+  -- the player most recently picked up.  691 texts carried the wrong token.
+  --
+  -- A caller can also hand over an address that is already INSIDE a run, so
+  -- the mode is seeded from the first byte rather than assumed: TextCommands
+  -- has 23 rows, so every command byte is $00-$16 and anything from $17 up can
+  -- only be a character, which means the run is already open.
+  local inString = false
+  do
+    local okLead, lead = pcall(self.rom.byte, self.rom, bank, address)
+    if okLead and type(lead) == "number" and lead > 0x16 then inString = true end
+  end
   while offset < GEN2_TEXT_MAX_BYTES and offset < limit do
     local value = self.rom:byte(bank, address + offset)
     local splice = script and RomExtractorGen2.GEN2_TEXT_SPLICE[value]
@@ -898,6 +996,11 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
                 self.rom:byte(bank, address + offset + 1)]) then
         return table.concat(out), offset + 1
       end
+      inString = false
+    elseif inString and (value == 0x14 or value == 0x16) then
+      -- PlaceString's reading of the two: the player's name, and a carriage
+      -- return.  textGlyph turns $14 into {PLAYER} through GEN2_CHARMAP.
+      out[#out + 1] = value == 0x14 and self:textGlyph(charmap, value) or "\n"
     elseif value == 0x16 then
       -- TX_FAR (`db TX_FAR, dw target, db bank`).  The block holding it is
       -- usually nothing BUT this and a $50, with the dialogue itself in
@@ -935,7 +1038,10 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
                                   or string.format("%04X", at)) .. "}"
       offset = offset + splice
     elseif value == 0x00 then
-      -- TX_START: opens another literal run, prints nothing itself
+      -- TX_START: opens another literal run, prints nothing itself.  From here
+      -- to the next $50 the bytes are PlaceString's dictionary, not the
+      -- command table.
+      inString = true
     elseif value == 0x4E or value == 0x4F then
       out[#out + 1] = "\n"
     elseif value == 0x51 then
@@ -2895,8 +3001,22 @@ function RomExtractorGen2:gen2MapIndex()
   return byGroupNumber, byLabel
 end
 
--- Numeric tileset id -> "Tileset<Family>", read from the Tilesets table by
--- matching each entry's GFX pointer against the Tileset*GFX symbols.
+-- Numeric tileset id -> "Tileset<Family>", read from the Tilesets table.
+--
+-- Each 15 byte entry opens with THREE far pointers -- GFX at +0, Meta (the
+-- 16 byte metatile/block definitions) at +3 and Coll (four collision classes
+-- per block) at +6 -- and only the three TOGETHER identify a family.  The GFX
+-- pointer alone does not: in Crystal SIX families share
+-- TilesetRuinsOfAlphGFX (77:$45A1) and TilesetJohtoModern shares 2D:$5EE0
+-- with TilesetBattleTowerOutside.  A GFX-only lookup therefore collapsed
+--   * tileset 26 and 32-36 (all of Ruins of Alph) onto TilesetAerodactylWordRoom
+--   * tileset 2 (JOHTO_MODERN: Azalea Town, Goldenrod City, Routes 33/34)
+--     onto TilesetBattleTowerOutside
+-- and the loser got the winner's blocks AND the winner's collision.  Wrong
+-- Meta is the garbled overworld; wrong Coll is why the Ruins of Alph inner
+-- chamber and item rooms have no walkable exit tile -- the hardlock.
+-- Gold and Silver have no ambiguous GFX pointer beyond Tileset0/TilesetJohto,
+-- which are the same three pointers anyway, so this is a no-op there.
 function RomExtractorGen2:gen2TilesetNames()
   if self._tilesetNames then return self._tilesetNames end
   local byId = {}
@@ -2905,31 +3025,61 @@ function RomExtractorGen2:gen2TilesetNames()
   local table_ = self:symbol("Tilesets")
   if not (table_ and self.rom) then return byId end
 
-  local gfxLabel = {}
+  local PARTS = { "GFX", "Meta", "Coll" }
+  local PTR_AT = { GFX = 0, Meta = 3, Coll = 6 }
+
+  -- Tileset0 and TilesetJohto are byte for byte the same tileset in every
+  -- Gen2 ROM, so even a full three-pointer match still has to break that
+  -- tie: prefer the descriptive label over the numbered placeholder, then
+  -- the longer name, then alphabetical, so the answer cannot flip between
+  -- extractions with `pairs` order.
+  local function better(candidate, held)
+    if not held then return true end
+    local function rank(n) return n:match("^Tileset%d+$") and 0 or 1, #n, n end
+    local a1, a2, a3 = rank(candidate)
+    local b1, b2, b3 = rank(held)
+    if a1 ~= b1 then return a1 > b1 end
+    if a2 ~= b2 then return a2 > b2 end
+    return a3 > b3
+  end
+
+  local function keyOf(location)
+    if type(location) ~= "table" then return nil end
+    local bank, address = tonumber(location[1]), tonumber(location[2])
+    if not (bank and address) then return nil end
+    return math.floor(bank) * 0x10000 + math.floor(address)
+  end
+
+  -- string.format rather than `..`: on a 5.3+ host a float-typed key would
+  -- concatenate as "393638.0" and never match the integer read out of the
+  -- ROM, so the triple is normalised to integers here.
+  local function tripleKey(gfx, meta, coll)
+    return string.format("%d|%d|%d", gfx, meta, coll)
+  end
+
+  -- family -> { GFX = key, Meta = key, Coll = key }, from the symbol table.
+  local families = {}
   for name, location in pairs(self.symbols or {}) do
-    local family = type(name) == "string" and name:match("^(Tileset.+)GFX$")
-    if family and type(location) == "table" then
-      local bank, address = tonumber(location[1]), tonumber(location[2])
-      if bank and address then
-        -- Several families share one GFX pointer (Tileset0 and TilesetJohto
-        -- both point at 06:$4A00), so a plain `pairs` write let the winner
-        -- flip between extractions -- and with it every Johto map's tileset
-        -- name.  Prefer the descriptive label over the numbered placeholder,
-        -- then the longer name, then alphabetical.
-        local key = bank * 0x10000 + address
-        local prev = gfxLabel[key]
-        local function rank(n)
-          return n:match("^Tileset%d+$") and 0 or 1, #n, n
+    if type(name) == "string" then
+      for _, part in ipairs(PARTS) do
+        local family = name:match("^(Tileset.+)" .. part .. "$")
+        local key = family and keyOf(location)
+        if key then
+          local slot = families[family]
+          if not slot then slot = {}; families[family] = slot end
+          slot[part] = key
         end
-        if not prev then
-          gfxLabel[key] = family
-        else
-          local a1, a2, a3 = rank(family)
-          local b1, b2, b3 = rank(prev)
-          if a1 > b1 or (a1 == b1 and (a2 > b2 or (a2 == b2 and a3 > b3))) then
-            gfxLabel[key] = family
-          end
-        end
+      end
+    end
+  end
+
+  local byTriple, byGfx = {}, {}
+  for family, slot in pairs(families) do
+    if slot.GFX then
+      if better(family, byGfx[slot.GFX]) then byGfx[slot.GFX] = family end
+      if slot.Meta and slot.Coll then
+        local triple = tripleKey(slot.GFX, slot.Meta, slot.Coll)
+        if better(family, byTriple[triple]) then byTriple[triple] = family end
       end
     end
   end
@@ -2938,10 +3088,18 @@ function RomExtractorGen2:gen2TilesetNames()
     for id = 0, 47 do
       -- the table is indexed directly by tileset id, starting at 0
       local entry = table_.address + id * GEN2_TILESET_ENTRY_BYTES
-      if entry + 2 >= 0x8000 then break end
-      local bank = self.rom:byte(table_.bank, entry)
-      local address = self.rom:word(table_.bank, entry + 1)
-      local family = gfxLabel[bank * 0x10000 + address]
+      if entry + 8 >= 0x8000 then break end
+      local keys = {}
+      for _, part in ipairs(PARTS) do
+        local at = entry + PTR_AT[part]
+        keys[part] = self.rom:byte(table_.bank, at) * 0x10000
+          + self.rom:word(table_.bank, at + 1)
+      end
+      local family = byTriple[tripleKey(keys.GFX, keys.Meta, keys.Coll)]
+        -- A ROM hack, or a .sym missing a Meta/Coll label, can leave a family
+        -- without the full triple.  Fall back to the old GFX-only lookup
+        -- rather than dropping the map onto inferTilesetId's name guess.
+        or byGfx[keys.GFX]
       if family then byId[id] = family end
     end
   end)
@@ -3124,6 +3282,15 @@ end
 -- The run is interrupted by a block of `variablesprite` assignments (the
 -- wVariableSprites defaults, which is where Route 36's Sudowoodo comes from).
 -- Stopping there dropped every `setevent` after it, so both are read here.
+--
+-- The opcodes are taken from the version's own command table.  setevent and
+-- the flag commands sit below Crystal's $52 insertion point and so share
+-- Gold's numbers, but `variablesprite` does NOT: $6C in Gold, $6D in Crystal
+-- (where $6C is faceobject).  Hardcoding $6C meant a Crystal import fell out
+-- of this loop's `else break` at the very first variablesprite -- so
+-- map_scripts.varSprites came back EMPTY (Route 36's Sudowoodo and Route 37's
+-- Twins Ann & Anne both read wVariableSprites slot 4 and drew as
+-- placeholders) and every setevent past that point was lost with it.
 function RomExtractorGen2:gen2InitialEvents()
   if self._initialEvents then return self._initialEvents end
   local events = {}
@@ -3131,15 +3298,29 @@ function RomExtractorGen2:gen2InitialEvents()
   local sym = self:symbol("InitializeEventsScript")
   if sym then
     pcall(function()
+      local commands = Gen2ScriptOps.commandsFor(self.version)
+      -- name -> opcode for this version
+      local opOf = {}
+      for index, command in ipairs(commands) do opOf[command[1]] = index - 1 end
+      -- every command the run is made of; all three operand bytes wide
+      local SKIP = { clearevent = true, clearflag = true, setflag = true }
+      local setevent = opOf.setevent
+      local variablesprite = opOf.variablesprite
+      local skip = {}
+      for name in pairs(SKIP) do
+        if opOf[name] then skip[opOf[name]] = true end
+      end
       local address = sym.address
       while address < 0x8000 do
         local op = self.rom:byte(sym.bank, address)
-        if op == GEN2_SCRIPT_OP_SETEVENT then
+        if op == setevent then
           events[self.rom:word(sym.bank, address + 1)] = true
           address = address + 3
-        elseif op == 0x32 or op == 0x35 or op == 0x36 then
-          address = address + 3   -- clearevent / clearflag / setflag
-        elseif op == 0x6C then    -- variablesprite <slot>, <sprite>
+        elseif skip[op] then
+          address = address + 3
+        elseif op == variablesprite then
+          -- the ROM operand is the raw slot: the `variablesprite` macro
+          -- subtracts SPRITE_VARS ($F0) at assembly time
           varSprites[self.rom:byte(sym.bank, address + 1)] =
             self.rom:byte(sym.bank, address + 2)
           address = address + 3
@@ -3193,7 +3374,10 @@ function RomExtractorGen2:gen2TextBlockAt(bank, address)
       letters = letters + 1
     end
   end
-  if printable >= 6 and letters >= printable * 0.85 then return bank, start end
+  -- the ORIGINAL address, not `start`: the $00 is only skipped for the prose
+  -- sample above.  decodeGen2TextAt needs to see it, because that is what puts
+  -- it into PlaceString's dictionary, where $14 is the player's name.
+  if printable >= 6 and letters >= printable * 0.85 then return bank, address end
   return nil
 end
 
@@ -3315,6 +3499,13 @@ function RomExtractorGen2:extractMapsFromRom()
       -- 1 TOWN, 2 ROUTE, 3 INDOOR, 4 CAVE, 5 ENVIRONMENT_5, 6 GATE,
       -- 7 DUNGEON.  Escape Rope / Dig gate on CAVE and DUNGEON.
       def.environment = header and header.environment or def.environment
+      -- Low nibble of map header byte 7: the PALETTE_* this map forces.
+      -- ReplaceTimeOfDayPals (23:$40E5 Crystal / 23:$4400 Gold) turns it into
+      -- wTimeOfDayPalset, so 0 AUTO follows the clock and 1 DAY / 2 NITE /
+      -- 3 MORN / 4 DARK pin the row.  Every INDOOR map carries DAY -- which
+      -- is why a Pokemon Center does not go dark at night on hardware -- and
+      -- the Ruins of Alph chambers carry it too.
+      def.mapPalette = header and header.palette or def.mapPalette
 
       local sym = symbolName and self:symbol(symbolName) or nil
       if sym then
@@ -3742,6 +3933,20 @@ function RomExtractorGen2:gen2InRom(bank, address)
   return address >= 0x4000 and address < 0x8000
 end
 
+-- A bare $50-terminated name sitting in a script's own bank -- what
+-- `getstring` points at.  Unlike a writetext operand this is NOT a text
+-- script (no opener byte, no line breaks, never reused), so it is decoded
+-- straight to a Lua string rather than registered in the text table.
+function RomExtractorGen2:gen2ReadInlineString(bank, address, maxLen)
+  if not self:gen2InRom(bank, address) then return nil end
+  bank = self:gen2Home(bank, address)
+  local ok, bytes = pcall(function()
+    return self.rom:bytes(bank, address, maxLen or 16)
+  end)
+  if not (ok and type(bytes) == "table") then return nil end
+  return gen2DecodeString(bytes, maxLen or 16)
+end
+
 -- writetext/jumptext operands are text scripts, not code.  Register them under
 -- a stable const so extractTextFromRom decodes them with everything else.
 function RomExtractorGen2:gen2RegisterScriptText(bank, address)
@@ -3754,10 +3959,14 @@ function RomExtractorGen2:gen2RegisterScriptText(bank, address)
     -- gen2TextBlockAt's "looks like prose" test is for scanning unknown script
     -- bytes and rejected 213 real lines here -- Elm's greeting among them --
     -- which then printed as their own constant name.
-    local start = address
-    local ok, lead = pcall(self.rom.byte, self.rom, bank, address)
-    if ok and lead == 0x00 then start = address + 1 end
-    known[const] = { bank = bank, address = start }
+    --
+    -- The leading $00 is kept, NOT skipped.  It prints nothing, which is why
+    -- skipping it looked free, but it is also TX_START -- the byte that hands
+    -- the rest of the run to PlaceString, where $14 is the player's name
+    -- rather than TX_STRINGBUFFER.  Starting one byte late is why every line a
+    -- map script writes still printed the player's name as the last item
+    -- picked up, long after the named symbol texts were fixed.
+    known[const] = { bank = bank, address = address }
   end
   return const
 end
@@ -3951,6 +4160,13 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
     end
     if name == "elevator" then
       row[2] = self:gen2ElevatorFloors(bank, row[2]) or row[2]
+    elseif name == "getstring" then
+      -- row[2] is the STRING pointer (the operand order is `dw string, db
+      -- buffer`), and the bytes it points at are a plain $50-terminated
+      -- name, not a text script.  Resolve it here so the VM never has to
+      -- reach back into the ROM: `getstring "EXPN CARD", 1` becomes a
+      -- literal the `jumpstd receiveitem` after it can print.
+      row[2] = self:gen2ReadInlineString(bank, row[2]) or row[2]
     elseif name == "loadmenu" then
       row[2] = self:gen2MenuItems(bank, row[2]) or row[2]
     elseif name == "writecmdqueue" then
@@ -6029,6 +6245,32 @@ function RomExtractorGen2:gen2RawColumnPic(symbolName, cols, rows, relative, pal
   return ok and ("assets/generated/" .. relative) or nil
 end
 
+-- The same, for a pic stored LZ3-compressed rather than raw -- which is what
+-- every Gen2 back sprite is, ChrisBackpic included (KrisBackpic is the odd
+-- raw one out).  The tile count comes from the decompressed size, because a
+-- back pic is always square.
+function RomExtractorGen2:gen2Lz3ColumnPic(symbolName, relative, pal)
+  local sym = self:symbol(symbolName)
+  if not (sym and self.rom) then return nil end
+  local ok = pcall(function()
+    local raw = self.rom:bytes(sym.bank, sym.address, 0x8000 - sym.address)
+    local pixels = decompressLz3(raw)
+    local tiles = math.floor(math.sqrt(math.floor(#pixels / 16)) + 0.5)
+    assert(tiles >= 1 and tiles * tiles * 16 <= #pixels,
+           "short pic: " .. symbolName)
+    local rowMajor = colMajorToRowMajor(pixels, tiles, tiles)
+    local image
+    if pal and ImageWriter.decode2bppColor then
+      image = ImageWriter.decode2bppColor(rowMajor, tiles * 8, tiles * 8,
+                                          pal, false)
+    else
+      image = ImageWriter.decode2bpp(rowMajor, tiles * 8, tiles * 8)
+    end
+    self:saveImage(ImageWriter.matteColor0(image), relative)
+  end)
+  return ok and ("assets/generated/" .. relative) or nil
+end
+
 -- The default names Crystal offers for each gender.  NameMenuHeader's list is
 -- a run of VARIABLE-length $50-terminated strings, not fixed-width records --
 -- reading it on an 8-byte stride splices them into each other ("MECHRIS").
@@ -6075,20 +6317,44 @@ function RomExtractorGen2:extractGen2PlayerForms()
   if not self:symbol("KrisPic") then return nil end
   local G = RomExtractorGen2.PLAYER_FORM_GEOMETRY
   local krisPal = self:gen2TwoColorPalette("KrisPalette")
+  -- GetPlayerOrMonPalettePointer (02:$574B) picks between exactly these two:
+  -- PlayerPalette (02:$70CE) for Chris and KrisPalette (02:$70D2) for Kris.
+  -- They are FOUR bytes apart because each is the two-colour trainer format,
+  -- so Chris's pair is his skin and that red-brown jacket.
+  local chrisPal = self:gen2TwoColorPalette("PlayerPalette")
+  -- Chris's three pics, baked in PlayerPalette exactly as Kris's are baked in
+  -- hers.  trueColor is a property of the FORM, not of one pic, so it can only
+  -- be set once all three are baked: the boy record used to claim trueColor
+  -- while pointing `card` and `back` at the plain four-shade chrisf.png and
+  -- chrisb.png rips, which told the renderer those were already coloured and
+  -- left the trainer card portrait and the battle back sprite in black and
+  -- white.  They are written under their own names so the uncoloured
+  -- playerPics defaults, which the zone shader still owns, stay untouched.
+  local chrisCard = self:gen2RawColumnPic("ChrisCardPic", G.card.cols,
+                                          G.card.rows,
+                                          "battle/chriscard.png", chrisPal)
+  local chrisBack = self:gen2Lz3ColumnPic("ChrisBackpic",
+                                          "battle/chrisback.png", chrisPal)
+  local chrisIntro = self:gen2RawColumnPic("ChrisPic", G.intro.cols,
+                                           G.intro.rows,
+                                           "battle/chrisintro.png", chrisPal)
+  local chrisBaked = (chrisCard and chrisBack and chrisIntro) and true or nil
   return {
     boy = {
       label = "BOY",
-      card = "assets/generated/battle/chrisf.png",
-      -- ChrisPic is the 7x7 the Oak speech shows, the counterpart of KrisPic;
-      -- it is NOT baked, because Chris is what the SGB zone shader already
-      -- knows how to colour (see trueColor on the girl record).
-      intro = self:gen2RawColumnPic("ChrisPic", G.intro.cols, G.intro.rows,
-                                    "battle/chrisintro.png", nil),
+      card = chrisCard or "assets/generated/battle/chrisf.png",
+      -- Bake Chris the same way Kris is baked.  Leaving him to the SGB zone
+      -- shader is what put him on the gender-select screen in purple and
+      -- white: the shader has no idea this pic is the player and coloured him
+      -- off whatever zone palette was live, so the two choices never matched
+      -- each other or the cartridge.
+      trueColor = chrisBaked,
+      intro = chrisIntro,
       -- gen2SpriteConstant maps ChrisSpriteGFX / ChrisBikeSpriteGFX onto the
       -- engine's SPRITE_RED / SPRITE_RED_BIKE ids (GEN2_SPRITE_ID_OVERRIDES
       -- $01/$02), so naming SPRITE_CHRIS here matched nothing and the boy
       -- record silently fell through to field.playerSprites.
-      back = "assets/generated/battle/chrisb.png",
+      back = chrisBack or "assets/generated/battle/chrisb.png",
       walk = "SPRITE_RED", bike = "SPRITE_RED_BIKE",
       names = self:gen2NamePresets("ChrisNameMenuHeader.MaleNames", 5),
     },
@@ -6133,7 +6399,14 @@ function RomExtractorGen2:registerGen2KrisSprites(sprites, spriteDefFor)
     { "KrisBikeSpriteGFX", "ChrisBike", "SPRITE_KRIS_BIKE", "sprites/kris_bike.png" },
   }) do
     local sym = self:symbol(pair[1])
-    local def = sprites[pair[3]] and nil or spriteDefFor(pair[2])
+    -- `sprites[id] and nil or spriteDefFor(...)` ALWAYS took the right branch:
+    -- in Lua `x and nil or y` reduces to plain `y`, because `x and nil` is
+    -- falsy whatever x was and `or` then hands back y.  So this backstop fired
+    -- on every Crystal import and clobbered the REAL rows -- SPRITE_KRIS came
+    -- out cloned from Chris's row 1, carrying his OBJ palette 0 (the red one)
+    -- and his index, and Kris walked the overworld in his colours.  Rows 96
+    -- and 97, the ones with palette 1, never reached the data at all.
+    local def = (not sprites[pair[3]]) and spriteDefFor(pair[2]) or nil
     if sym and def and self.rom then
       pcall(function()
         local raw = self.rom:bytes(sym.bank, sym.address, def.bytes)
@@ -6356,6 +6629,305 @@ function RomExtractorGen2:gen2TreeMons()
     end
   end)
   if not ok or not next(out.maps) then return nil end
+  return out
+end
+
+-- The Bug Catching Contest, read off the cartridge rather than transcribed.
+--
+-- ContestMons (crystal 25:$7D87) is the contest's own encounter table, and
+-- ChooseWildEncounter_BugContest (25:$7D31) fixes its shape: `Random` is
+-- rejected at >= 200 then halved to 0-99, so the FIRST byte of each 4-byte row
+-- is a percentage rate, followed by species, min level and max level.  The ten
+-- rates total exactly 100.  A level is `min + Random % (max - min + 1)`, or
+-- just `min` when the two are equal.
+--
+-- BugContestantPointers (04:$7783) is indexed by `contestantID - 1`, so slot 0
+-- is unused and the nine AI contestants are IDs 2-10 (the player is 1):
+-- ComputeAIContestantScores (04:$78B0) builds the ID with `ld a, e / inc a /
+-- inc a` and indexes with `dec a`.  Each record is `db trainerClass, db
+-- trainerID` followed by THREE `db species, dw score` picks, one of which that
+-- contestant rolls on the day (`Random & 3`, re-rolled on 3).
+--
+-- Balls and clock come from GiveParkBalls (04:$75DB) and StartBugContestTimer
+-- (04:$5490); both are `ld a, $14` -- 20 Park Balls, 20 minutes.
+--
+-- Prizes are deliberately NOT read here.  BugContestResults_FirstPlace and its
+-- siblings are ordinary extracted scripts, so the VM hands out the Sun Stone /
+-- Everstone / Gold Berry / Berry itself once the placings are set.
+--
+-- Gold and Crystal carry byte-identical tables; only the addresses differ, and
+-- both are resolved through symbols.
+function RomExtractorGen2:gen2BugContest()
+  local monsSym = self:symbol("ContestMons")
+  local listSym = self:symbol("BugContestantPointers")
+  if not (monsSym and listSym and self.rom) then return nil end
+  local out = { parkBalls = 20, minutes = 20, mons = {}, contestants = {} }
+  local ok = pcall(function()
+    local at = monsSym.address
+    local total = 0
+    for _ = 1, 16 do
+      local rate = self.rom:byte(monsSym.bank, at)
+      if rate == 0 or rate == 0xFF then break end
+      out.mons[#out.mons + 1] = {
+        rate = rate,
+        species = string.format("SPECIES_%03d", self.rom:byte(monsSym.bank, at + 1)),
+        minLevel = self.rom:byte(monsSym.bank, at + 2),
+        maxLevel = self.rom:byte(monsSym.bank, at + 3),
+      }
+      at = at + 4
+      total = total + rate
+      if total >= 100 then break end
+    end
+    for id = 2, 10 do
+      local address = self.rom:word(listSym.bank, listSym.address + (id - 1) * 2)
+      local picks = {}
+      for pick = 0, 2 do
+        local base = address + 2 + pick * 3
+        picks[#picks + 1] = {
+          species = string.format("SPECIES_%03d", self.rom:byte(listSym.bank, base)),
+          score = self.rom:word(listSym.bank, base + 1),
+        }
+      end
+      out.contestants[#out.contestants + 1] = {
+        id = id,
+        trainerClass = self.rom:byte(listSym.bank, address),
+        trainerId = self.rom:byte(listSym.bank, address + 1),
+        picks = picks,
+      }
+    end
+  end)
+  if not ok or not out.mons[1] then return nil end
+  return out
+end
+
+-- The Battle Tower.
+--
+-- Crystal only: Gold and Silver have no BattleTower* symbols at all, so every
+-- lookup below misses and this returns nil, which leaves the runtime module
+-- and the script specials inert on those two carts exactly as the cartridge
+-- leaves them.
+--
+-- What is read, and from where:
+--   BattleTowerTrainers (7E:$414E)  70 records of 11 bytes -- a 10 byte name
+--     padded with $50, then the trainer class.  70 is not a guess: the roll in
+--     LoadOpponentTrainerAndPokemon is `Random & $7F` rejected at >= $46, and
+--     $414E + 70 * 11 lands exactly on BattleTowerMons.
+--   BattleTowerMons (7E:$4450)  level groups of 21 battle_tower_mon.  Each
+--     record is 59 bytes: a 48 byte party_struct followed by an 11 byte
+--     nickname, which is dropped here because ReadBTTrainerParty (5C:$42B7)
+--     overwrites it with the species name before the battle starts.  21 is the
+--     `Random & $1F` rejected at >= $15 in LoadRandomBattleTowerMon, and 1239
+--     (= 21 * 59) is the stride that routine adds per level group.
+--   BTTrainerClassGenders (47:$72F0)  one byte per trainer class - 1; nonzero
+--     picks the female line pool in BattleTowerText (47:$4000).
+--   BTMaleTrainerTexts / BTFemaleTrainerTexts  three slots -- before the
+--     battle, on the opponent winning, on the opponent losing -- each a table
+--     of 25 (male) or 15 (female) lines.  BattleTowerText rolls the line ONCE,
+--     for slot 1, and reuses that index for the other two, so an opponent's
+--     three lines belong to one personality.
+--
+-- Stats are not stored: the DVs and stat exp are, and Stats.calc reproduces
+-- the ROM's own stat block from them exactly (checked against the precomputed
+-- stats sitting at offsets 34..47 of each record).
+function RomExtractorGen2:gen2BattleTower()
+  local trainersSym = self:symbol("BattleTowerTrainers")
+  local monsSym = self:symbol("BattleTowerMons")
+  if not (trainersSym and monsSym and self.rom) then return nil end
+  local moveOrder = (self:constants() or {}).moveOrder or {}
+  local byGroup = (self:gen2Trainers() or {}).byGroup or {}
+  local out = {
+    -- LoadOpponentTrainerAndPokemon keeps 7 beaten-trainer slots in SRAM, and
+    -- BattleTowerBattleRoom's script ends the challenge on
+    -- wNrOfBeatenBattleTowerTrainers == 7.
+    battles = 7,
+    monsPerGroup = 21,
+    -- BattleTowerRoomMenu_PlacePickLevelMenu offers Strings_Ll0ToL40 (4 rows
+    -- plus CANCEL) until wStatusFlags bit 6 -- the Hall of Fame bit -- is set,
+    -- and Strings_L10ToL100 (10 rows plus CANCEL) after it.
+    levelGroupsBeforeHallOfFame = 4,
+    -- BattleTower_UbersCheck returns early once the chosen group is >= 7, so
+    -- MEWTWO, MEW, LUGIA, HO-OH and CELEBI are legal only from L70 up.
+    ubers = { "SPECIES_150", "SPECIES_151",
+              "SPECIES_249", "SPECIES_250", "SPECIES_251" },
+    uberMinLevel = 70,
+    -- BattleTower_RandomlyChooseReward: `Random & 7`, 6 and 7 folded back to
+    -- 0 and 1, + $1A, rerolled when it lands on $1E.  Five vitamins, five at
+    -- a time (`giveitem ITEM_FROM_MEM, 5`).
+    rewards = {}, rewardReject = "ITEM_030", rewardCount = 5,
+    -- BattleTower_GiveReward answers $12 when the bag cannot take them.
+    rewardBagFull = 18,
+    trainers = {}, groups = {}, texts = {},
+  }
+  local ok = pcall(function()
+    for index = 0, 5 do
+      out.rewards[index + 1] = string.format("ITEM_%03d", 0x1A + index)
+    end
+    local gendersSym = self:symbol("BTTrainerClassGenders")
+    -- BTTrainerClassSprites (5C:$4B90), also indexed by class - 1: the
+    -- overworld sheet LoadOpponentTrainerAndPokemonWithOTSprite puts on the
+    -- battle room's opponent object before it walks in.
+    local spritesSym = self:symbol("BTTrainerClassSprites")
+    local overworld = self:gen2OverworldSprites() or {}
+    for index = 0, 69 do
+      local at = trainersSym.address + index * 11
+      local raw = self.rom:bytes(trainersSym.bank, at, 10)
+      local class = self.rom:byte(trainersSym.bank, at + 10)
+      local female, sprite = false, nil
+      if class > 0 then
+        if gendersSym then
+          female = self.rom:byte(gendersSym.bank,
+                                 gendersSym.address + class - 1) ~= 0
+        end
+        if spritesSym then
+          local id = self.rom:byte(spritesSym.bank,
+                                   spritesSym.address + class - 1)
+          sprite = (overworld[id] or {}).id
+        end
+      end
+      out.trainers[index + 1] = {
+        name = gen2DecodeString(raw, 10) or string.format("TRAINER_%02d", index),
+        class = class,
+        classKey = byGroup[class],
+        sprite = sprite,
+        female = female or nil,
+      }
+    end
+    -- Level groups run until a record stops looking like one.  Crystal has
+    -- ten, L10 through L100, and the tenth ends exactly where _GiveOddEgg
+    -- begins.
+    for group = 1, 16 do
+      local base = monsSym.address + (group - 1) * 1239
+      if base + 1239 > 0x8000 then break end
+      local party, level, sane = {}, nil, true
+      for slot = 0, 20 do
+        local record = self.rom:bytes(monsSym.bank, base + slot * 59, 48)
+        local function word(at) return record[at] * 256 + record[at + 1] end
+        local species, item, monLevel = record[1], record[2], record[32]
+        if species < 1 or species > 251 or monLevel < 1 or monLevel > 100
+           or (level and monLevel ~= level) then
+          sane = false
+          break
+        end
+        level = monLevel
+        local moves = {}
+        for i = 0, 3 do
+          local move = record[3 + i]
+          if move > 0 then
+            moves[#moves + 1] = moveOrder[move] or string.format("MOVE_%03d", move)
+          end
+        end
+        party[slot + 1] = {
+          species = string.format("SPECIES_%03d", species),
+          level = monLevel,
+          item = item > 0 and string.format("ITEM_%03d", item) or nil,
+          -- the raw held-item byte, because LoadRandomBattleTowerMon rejects a
+          -- candidate whose item byte matches one already drawn -- including
+          -- two mons that both hold nothing
+          itemByte = item,
+          moves = #moves > 0 and moves or nil,
+          dvs = {
+            attack = math.floor(record[22] / 16),
+            defense = record[22] % 16,
+            speed = math.floor(record[23] / 16),
+            special = record[23] % 16,
+          },
+          statExp = {
+            hp = word(12), attack = word(14), defense = word(16),
+            speed = word(18), special = word(20),
+          },
+          -- The party_struct's own stat block, at offsets 34..47.  These are
+          -- used verbatim rather than recomputed: CalcMonStats floors the
+          -- stat-exp square root and Stats.calc ceilings it, which disagrees
+          -- by one point on 117 of the 210 records, and an opponent that is
+          -- one point off is not the opponent the cartridge sends out.
+          stats = {
+            hp = word(36), attack = word(38), defense = word(40),
+            speed = word(42), spatk = word(44), spdef = word(46),
+            special = word(44),
+          },
+          happiness = record[28],
+        }
+      end
+      if not (sane and party[21]) then break end
+      -- the HP DV is the low bits of the other four, the same derivation
+      -- Stats.randomDVs uses
+      for _, slot in ipairs(party) do
+        local dvs = slot.dvs
+        dvs.hp = (dvs.attack % 2) * 8 + (dvs.defense % 2) * 4
+               + (dvs.speed % 2) * 2 + (dvs.special % 2)
+      end
+      out.groups[group] = { level = level, mons = party }
+    end
+    -- Menu_ChallengeExplanationCancel (5F:$5224) is the receptionist's three
+    -- rows; MenuData is a flags byte, a row count, then that many $50
+    -- terminated labels.
+    local menuSym = self:symbol("MenuData_ChallengeExplanationCancel")
+    if menuSym then
+      out.menu = {}
+      local at = menuSym.address + 2
+      for index = 1, self.rom:byte(menuSym.bank, menuSym.address + 1) do
+        out.menu[index] =
+          gen2DecodeString(self.rom:bytes(menuSym.bank, at, 16), 16) or ""
+        while at < 0x7FFF and self.rom:byte(menuSym.bank, at) ~= 0x50 do
+          at = at + 1
+        end
+        at = at + 1
+      end
+    end
+    -- Strings_L10ToL100: eleven 8-byte rows, L.10 through L.100 and then
+    -- CANCEL.  Only the labels come from here; how many of them are offered is
+    -- the Hall of Fame test above.
+    local levelSym = self:symbol("Strings_L10ToL100")
+    if levelSym then
+      out.levelLabels = {}
+      for index = 1, 10 do
+        out.levelLabels[index] = gen2DecodeString(
+          self.rom:bytes(levelSym.bank,
+                         levelSym.address + (index - 1) * 8, 8), 8) or ""
+      end
+      out.cancelLabel = gen2DecodeString(
+        self.rom:bytes(levelSym.bank, levelSym.address + 80, 8), 8)
+    end
+    local charmap = self:readSourceTable("charmap")
+    -- _CheckForBattleTowerRules (22:$7201) runs four party checks in order and
+    -- prints the header first, then a line per failing rule, then
+    -- BattleTower_PleaseReturnWhenReady.  The three middle lines splice
+    -- wStringBuffer1, which the routine fills with "3" before it starts.
+    local rulesSym = self:symbol("_CheckForBattleTowerRules.TextPointers")
+    if rulesSym then
+      out.ruleTexts = {}
+      for index = 0, 4 do
+        local at = self.rom:word(rulesSym.bank, rulesSym.address + index * 2)
+        local text = self:decodeGen2TextAt(rulesSym.bank, at, charmap, true)
+        out.ruleTexts[index + 1] = type(text) == "string" and text or ""
+      end
+    end
+    local readySym = self:symbol(
+      "BattleTower_PleaseReturnWhenReady.BattleTowerReturnWhenReadyText")
+    if readySym then
+      out.notReadyText = self:decodeGen2TextAt(
+        readySym.bank, readySym.address, charmap, true)
+    end
+    for _, row in ipairs({ { "male", "BTMaleTrainerTexts", 25 },
+                           { "female", "BTFemaleTrainerTexts", 15 } }) do
+      local sym = self:symbol(row[2])
+      if sym then
+        local slots = {}
+        for slot = 0, 2 do
+          local pointers = self.rom:word(sym.bank, sym.address + slot * 2)
+          local lines = {}
+          for line = 0, row[3] - 1 do
+            local at = self.rom:word(sym.bank, pointers + line * 2)
+            local text = self:decodeGen2TextAt(sym.bank, at, charmap, true)
+            lines[line + 1] = type(text) == "string" and text or ""
+          end
+          slots[slot + 1] = lines
+        end
+        out.texts[row[1]] = slots
+      end
+    end
+  end)
+  if not ok or not (out.trainers[1] and out.groups[1]) then return nil end
   return out
 end
 
@@ -6653,10 +7225,29 @@ function RomExtractorGen2:gen2Egg()
       local raw = self.rom:bytes(picSym.bank, picSym.address,
                                  0x8000 - picSym.address)
       local pixels = decompressLz3(raw)
-      local side = math.floor(math.sqrt(math.floor(#pixels / 16)) + 0.5)
-      if side < 1 or side * side * 16 > #pixels then error("bad egg pic") end
-      self:saveImage(ImageWriter.matteColor0(ImageWriter.decode2bpp(
-        colMajorToRowMajor(pixels, side, side), side * 8, side * 8)),
+      -- 5x5, DECLARED, not guessed from the blob length.  Crystal appends a
+      -- pic's animation frames to the same compressed stream, so EggPic
+      -- decompresses to 47 tiles -- 25 of pic and 22 of animation -- and the
+      -- "the tile count must be a perfect square" rule that the species pics
+      -- already abandoned for exactly this reason threw here too.  That threw
+      -- inside this pcall, field.egg came out with no `pic` key at all, and an
+      -- EGG's stats page drew nothing where the egg belongs.  UnusedEggPic is
+      -- the same art without the frames and is exactly 25 tiles, which is what
+      -- pins the geometry down.
+      local side = 5
+      if side * side * 16 > #pixels then error("short egg pic") end
+      local base = {}
+      for i = 1, side * side * 16 do base[i] = pixels[i] end
+      -- ...and baked in the egg's own palette (PokemonPalettes row 252, read
+      -- above), because every screen that shows this pic marks it trueColor --
+      -- "already coloured, renderer keep out".
+      local pal = {}
+      for shade = 0, 3 do
+        local c = colors[shade + 1]
+        pal[shade] = { c[1] / 255, c[2] / 255, c[3] / 255 }
+      end
+      self:saveImage(ImageWriter.matteColor0(ImageWriter.decode2bppColor(
+        colMajorToRowMajor(base, side, side), side * 8, side * 8, pal, false)),
         "battle/front/egg.png")
     end)
     if ok then out.pic = "assets/generated/battle/front/egg.png" end
@@ -6930,6 +7521,9 @@ function RomExtractorGen2:extractField()
     src.gen2FruitTrees = self:gen2FruitTrees() or src.gen2FruitTrees
     src.gen2DarkMaps = self:gen2DarkMaps() or src.gen2DarkMaps
     src.gen2TreeMons = self:gen2TreeMons() or src.gen2TreeMons
+    src.gen2BugContest = self:gen2BugContest() or src.gen2BugContest
+    -- Crystal only; nil on Gold and Silver, which have no Battle Tower
+    src.gen2BattleTower = self:gen2BattleTower() or src.gen2BattleTower
     src.gen2Slots = self:gen2Slots() or src.gen2Slots
     src.gen2CardFlip = self:gen2CardFlip() or src.gen2CardFlip
     src.egg = self:gen2Egg() or src.egg
@@ -6970,7 +7564,19 @@ function RomExtractorGen2:extractField()
     -- stacked vertically, which is exactly the 8x16 sheet fxHeal quads up.
     src.overworldFx = src.overworldFx or {}
     local healLayout = copy(GEN2_HEAL_MACHINE_LAYOUT)
-    healLayout.gen2ObjPal = self:gen2ObjPalettes()[GEN2_HEAL_OAM_PALETTE]
+    -- The machine does NOT wear a MapObjectPals entry.  HealMachineAnim.
+    -- LoadPalettes (04:$6434) copies its own four colours over OBJ palette 6
+    -- on a CGB before the animation runs, which is why its OAM rows all name
+    -- palette 6 -- so reading MapObjectPals[6] handed back PAL_OW_TREE and the
+    -- Poke Balls came out green (and, unapplied, grey).  Its own row is white,
+    -- light orange, red, black.
+    local healPal = self:symbol("HealMachineAnim.palettes")
+    if healPal then
+      local pals = GEN2_PAL.read(self.rom, healPal.bank, healPal.address, 1)
+      healLayout.gen2ObjPal = pals and pals[1] or nil
+    end
+    healLayout.gen2ObjPal = healLayout.gen2ObjPal
+      or self:gen2ObjPalettes()[GEN2_HEAL_OAM_PALETTE]
     src.overworldFx.healMachine =
       self:gen2RawSheet("HealMachineAnim.HealMachineGFX", 1, 2,
         "fx/heal_machine.png")
@@ -7262,8 +7868,8 @@ GEN2_ANIM.JUMPS = {
 }
 GEN2_ANIM.OBJECT_BYTES = 6
 GEN2_ANIM.OBJECT_COUNT = 188   -- BattleAnimObjects $4AA5..$4F0D
-GEN2_ANIM.FN_TABLE = 0x4F1D    -- DoBattleAnimFrame's jumptable
-GEN2_ANIM.FN_END = 0x4FBD      -- BattleAnimFunction_Null
+-- (DoBattleAnimFrame's jumptable is resolved from the symbol; it used to be
+-- hardcoded to Gold's $4F1D..$4FBD, which is not where Crystal's is.)
 GEN2_ANIM.OAM_BYTES = 4
 GEN2_ANIM.GFX_BYTES = 4
 GEN2_ANIM.GFX_COUNT = 42       -- AnimObjGFX $7C3B..$7CE3
@@ -7273,6 +7879,41 @@ GEN2_ANIM.GFX_COUNT = 42       -- AnimObjGFX $7C3B..$7CE3
 GEN2_ANIM.OBJ_PALETTES = 6
 GEN2_ANIM.SHEET_COLS = 16
 GEN2_ANIM.MAX_STEPS = 512
+-- DoBattleAnimFrame's jumptable, in table order.
+--
+-- Only pokegold's symbols file names these routines; Crystal's has no
+-- BattleAnimFunction_* symbol at all, so on Crystal there was nothing to name
+-- them WITH -- and the table was being read at Gold's hardcoded $4F1D anyway,
+-- while Crystal's jumptable is at $4FCE.  The result was an empty function
+-- map, every animation object fell through Gen2AnimPlayer's MOTION lookup to
+-- "Null", and not one of them moved: objects appeared where the script spawned
+-- them and stayed there for the whole animation.
+--
+-- The order is the same in both games, which is what makes listing them here
+-- safe: 80 entries either way, every pointer relocated by one of two
+-- constants ($B1 and $BB), and 75 of the 80 routines byte-identical once those
+-- relocations are undone.  Gold still prefers its own symbols; this is the
+-- fallback that gives Crystal the same names.
+GEN2_ANIM.FN_NAMES = {
+  "Null", "MoveFromUserToTarget", "MoveFromUserToTargetAndDisappear",
+  "MoveInCircle", "MoveWaveToTarget", "ThrowFromUserToTarget",
+  "ThrowFromUserToTargetAndDisappear", "Drop",
+  "MoveFromUserToTargetSpinAround", "Shake", "FireBlast", "RazorLeaf",
+  "Bubble", "Surf", "Sing", "WaterGun", "Ember", "Powder", "PokeBall",
+  "PokeBallBlocked", "Recover", "ThunderWave", "Clamp_Encore", "Bite",
+  "SolarBeam", "Gust", "RazorWind", "Kick", "Absorb", "Egg", "MoveUp",
+  "Wrap", "LeechSeed", "Sound", "ConfuseRay", "Dizzy", "Amnesia",
+  "FloatUp", "Dig", "String", "Paralyzed", "SpiralDescent", "PoisonGas",
+  "Horn", "Needle", "PetalDance", "ThiefPayday", "AbsorbCircle",
+  "Bonemerang", "Shiny", "SkyAttack", "GrowthSwordsDance",
+  "SmokeFlameWheel", "PresentSmokescreen", "StrengthSeismicToss",
+  "SpeedLine", "Sludge", "MetronomeHand", "MetronomeSparkleSketch",
+  "Agility", "SacredFire", "SafeguardProtect", "LockOnMindReader",
+  "Spikes", "HealBellNotes", "BatonPass", "Conversion", "EncoreBellyDrum",
+  "SwaggerMorningSun", "HiddenPower", "Curse", "PerishSong", "RapidSpin",
+  "BetaPursuit", "RainSandstorm", "AnimObjB0", "PsychUp", "AncientPower",
+  "RockSmash", "Cotton",
+}
 
 -- Decode one script into a flat instruction list plus an address -> index map
 -- so the player can follow jump/call/loop targets without re-walking bytes.
@@ -7494,16 +8135,28 @@ end
 -- the names tell the player which motion to approximate.
 function RomExtractorGen2:gen2AnimFunctions()
   local out = {}
+  -- Resolved from the routine that dispatches through it, never hardcoded:
+  -- the table sits sixteen bytes past DoBattleAnimFrame's own label (the
+  -- `ld hl, .Jumptable` is its sixth instruction), which is $4F1D in Gold and
+  -- $4FCE in Crystal.  Reading Crystal at Gold's address produced nothing.
+  local sym = self:symbol("DoBattleAnimFrame")
+  if not (sym and self.rom) then return out end
+  local jump = self:symbol("DoBattleAnimFrame.Jumptable")
+  local address = (jump and jump.address) or (sym.address + 0x10)
   local byAddress = {}
   for name, entry in pairs(self.manifest.symbols or {}) do
     local prefix = name:match("^BattleAnimFunction_([%w_]+)$")
-    if prefix and entry[1] == 51 then byAddress[entry[2]] = prefix end
+    if prefix and entry[1] == sym.bank then byAddress[entry[2]] = prefix end
   end
-  local count = math.floor((GEN2_ANIM.FN_END - GEN2_ANIM.FN_TABLE) / 2)
+  -- the first pointer bounds the table, the way every other dw table here is
+  -- bounded; the baked list's length is the fallback
+  local ok, first = pcall(self.rom.word, self.rom, sym.bank, address)
+  local count = ok and math.floor((first - address) / 2) or 0
+  if count < 1 or count > 256 then count = #GEN2_ANIM.FN_NAMES end
   for id = 0, count - 1 do
     pcall(function()
-      local address = self.rom:word(51, GEN2_ANIM.FN_TABLE + id * 2)
-      out[id] = byAddress[address]
+      local target = self.rom:word(sym.bank, address + id * 2)
+      out[id] = byAddress[target] or GEN2_ANIM.FN_NAMES[id + 1]
     end)
   end
   return out
@@ -7815,10 +8468,17 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       end
       blockCount = blockCount or 0x80
       local blocksRaw = self.rom:bytes(meta.bank, meta.address, blockCount * 16)
+      -- Flatten the two VRAM banks into one 0..191 range here, so every reader
+      -- downstream -- the atlas bake, the animated-tile overdraw, mods -- can
+      -- treat a metatile byte as a plain index into the extracted sheet.
+      -- See GEN2_PAL.tileIndex.
+      local tileCount = (width / 8) * (height / 8)
       local blocks = {}
       for offset = 1, #blocksRaw, 16 do
         local block = {}
-        for pos = offset, offset + 15 do block[#block + 1] = blocksRaw[pos] end
+        for pos = offset, offset + 15 do
+          block[#block + 1] = GEN2_PAL.tileIndex(blocksRaw[pos], tileCount)
+        end
         blocks[#blocks + 1] = block
       end
 
@@ -7877,14 +8537,36 @@ function RomExtractorGen2:extractRuntimeScaffolds()
     if self.rom then
       local palSym = self:symbol(gfxId .. "PalMap")
       if palSym then
+        -- How many tiles the sheet actually came out as decides both the
+        -- palette map's length and whether it carries a VRAM-bank bit.
+        local twoBanks = GEN2_PAL.twoVramBanks(GEN2_PAL.sheetTiles(tilesets[id]))
         local palOk, palRaw = pcall(function()
-          return self.rom:bytes(palSym.bank, palSym.address, 48)
+          return self.rom:bytes(palSym.bank, palSym.address,
+            twoBanks and GEN2_PAL.palMapBytes or GEN2_PAL.palMapBytesOneBank)
         end)
         if palOk and type(palRaw) == "table" then
-          local palMap = {}
+          -- Crystal's palette map is 224 nibbles -- one per metatile byte
+          -- $00-$DF, each `vramBank << 3 | palette` -- not 96.  Reading only
+          -- the first 96 stopped at the bank-0 half, so every second-bank tile
+          -- took a clamped, wrong palette.  Re-key it by the same flattened
+          -- 0..191 index GEN2_PAL.tileIndex produces and drop the bank bit, which
+          -- the block bytes now carry themselves.  Reading PAST the map would
+          -- run into the next tileset's, which is why the length is version-
+          -- derived rather than fixed.
+          local nibbles = {}
           for _, byte in ipairs(palRaw) do
-            palMap[#palMap + 1] = byte % 16
-            palMap[#palMap + 1] = math.floor(byte / 16)
+            nibbles[#nibbles + 1] = byte % 16
+            nibbles[#nibbles + 1] = math.floor(byte / 16)
+          end
+          local palMap = {}
+          if twoBanks then
+            for tile = 0, GEN2_PAL.tilesPerVramBank * 2 - 1 do
+              local raw = tile < GEN2_PAL.tilesPerVramBank and tile
+                or (tile - GEN2_PAL.tilesPerVramBank + 0x80)
+              palMap[tile + 1] = (nibbles[raw + 1] or 0) % 8
+            end
+          else
+            for index, nibble in ipairs(nibbles) do palMap[index] = nibble end
           end
           -- `id` may be the HOUSE alias, whose maps are recorded under the
           -- real graphics family, so try both before falling back.

@@ -126,13 +126,27 @@ function TrainerCard.new(game, opts)
   return self
 end
 
+-- TrainerCard_Page2_Joypad.KantoBadgeCheck (09:$523B), and the matching check
+-- on page 1: pressing d-right off a badge page reads wKantoBadges and RETURNS
+-- when it is zero, so the Kanto page does not exist at all until the player
+-- owns at least one Kanto badge.  The port offered it from a new game.
+local function hasKantoBadge(game)
+  local list = Badges.list(game.data)
+  for i = PER_PAGE + 1, #list do
+    if Badges.has(game.save, list[i]) then return true end
+  end
+  return false
+end
+
 function TrainerCard:update(dt)
   local input = self.game.input
   -- Gen2 pages the whole card, not just the badge grid: page 1 is the dex
   -- and play-time half (TrainerCard_Page1_PrintDexCaught_GameTime), pages 2
   -- and 3 the Johto and Kanto badges
-  local pages = self.gen2 and 3
+  local pages = self.gen2 and (hasKantoBadge(self.game) and 3 or 2)
     or math.ceil(#Badges.list(self.game.data) / PER_PAGE)
+  -- never strand the view on a page that is no longer reachable
+  if self.page >= pages then self.page = pages - 1 end
   -- TrainerCard_Page2_Joypad: d-left/d-right walk the badge pages
   if pages > 1 and input:wasPressed("right") then
     self.page = (self.page + 1) % pages

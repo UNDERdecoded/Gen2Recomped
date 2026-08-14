@@ -25,6 +25,27 @@ function StartMenu.new(game)
   -- submenu gets an onCancel that re-opens it
   local function reopen() Screens.push(game, "StartMenu") end
 
+  -- StartMenu.DrawBugContestStatus (04:$68DE) tests wStatusFlags2 bit 2 and,
+  -- while the contest is running, draws the caught mon and the Park Balls left
+  -- above the menu.  This is that box as a non-selectable first row.
+  local BugContest = require("src.world.BugContest")
+  local inContest = BugContest.active(game.save)
+  if inContest then
+    local caught = BugContest.caught(game.save)
+    local caughtText = Strings("NONE")
+    if caught then
+      local def = game.data.pokemon[caught.species]
+      caughtText = ((def and def.name) or tostring(caught.species))
+        .. " Lv" .. tostring(caught.level or 0)
+    end
+    local left = BugContest.secondsLeft(game.save)
+    table.insert(items, {
+      label = string.format("%s  %dBALL %d:%02d", caughtText,
+        BugContest.ballsLeft(game.save), math.floor(left / 60), left % 60),
+      onSelect = reopen,
+    })
+  end
+
   -- POKéDEX: only after Oak hands it over
   if flags.EVENT_GOT_POKEDEX then
     table.insert(items, { label = Strings("POKéDEX"), onSelect = function()
@@ -115,15 +136,33 @@ function StartMenu.new(game)
   -- the original's EXIT just closed the menu (CloseStartMenu); with a
   -- window close button covering that, QUIT instead power-cycles back
   -- to the title after a confirm (defaultNo guards accidental quits)
-  table.insert(items, { label = Strings("QUIT"), onSelect = function()
-    local TextBox = require("src.render.TextBox")
-    game.stack:push(TextBox.new(game, Strings("RETURN TO MAIN\nMENU?"), nil, {
-      defaultNo = true,
-      choice = function(yes)
-        if yes then game:returnToTitle() end
-      end,
-    }))
-  end })
+  -- StartMenu_Quit: during the contest QUIT does NOT leave the game, it offers
+  -- to end the Contest (_StartMenuContestEndText).  That is the "how do I get
+  -- out of here" exit a cartridge gives you.
+  if inContest then
+    table.insert(items, { label = Strings("QUIT"), onSelect = function()
+      local TextBox = require("src.render.TextBox")
+      game.stack:push(TextBox.new(game,
+        Strings("Would you like to\nend the Contest?"), nil, {
+        defaultNo = true,
+        choice = function(yes)
+          if not yes then return reopen() end
+          BugContest.leave(game)
+          game.overworld:bugContestReturnToGate()
+        end,
+      }))
+    end })
+  else
+    table.insert(items, { label = Strings("QUIT"), onSelect = function()
+      local TextBox = require("src.render.TextBox")
+      game.stack:push(TextBox.new(game, Strings("RETURN TO MAIN\nMENU?"), nil, {
+        defaultNo = true,
+        choice = function(yes)
+          if yes then game:returnToTitle() end
+        end,
+      }))
+    end })
+  end
 
   local hooked = Runtime.call("ui.start_menu.items", sameItems, game, items)
   if type(hooked) == "table" then

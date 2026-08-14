@@ -61,7 +61,107 @@ end
 --      this file already used for battle MOVE animations, and the later
 --      definition silently won -- so every species came back empty.  A v45
 --      marker has to be treated as stale or that empty result sticks.
-local CACHE_FORMAT = "rom-cache-v46:"
+-- v47: Crystal tileset identity.  gen2TilesetNames matched Tilesets entries
+--      on the GFX pointer alone, and in Crystal six families share
+--      TilesetRuinsOfAlphGFX while TilesetJohtoModern shares its GFX with
+--      TilesetBattleTowerOutside -- so every Ruins of Alph map was imported
+--      with TilesetAerodactylWordRoom's blocks AND collision (glitched art,
+--      and no walkable exit in the inner chamber / item rooms) and every
+--      JOHTO_MODERN map (Azalea Town, Goldenrod, Routes 33/34) with
+--      TilesetBattleTowerOutside's.  A v46 cache has the wrong blocks baked
+--      into data/generated/tilesets.lua and the wrong tileset name baked into
+--      data/generated/maps.lua, so it has to be treated as stale.
+-- v48: three more things baked into a v47 cache are wrong.
+--      * maps[*].mapPalette did not exist, so every indoor map and the Ruins
+--        of Alph chambers followed the clock into the NITE palette row
+--        instead of the PALETTE_DAY their header forces.
+--      * map_scripts.varSprites came back EMPTY on Crystal (the
+--        InitializeEventsScript scan looked for Gold's variablesprite opcode
+--        $6C and bailed at Crystal's $6D), which is why Route 36's Sudowoodo
+--        and Route 37's Twins Ann & Anne -- both wVariableSprites slot 4 --
+--        drew as placeholders.  Crystal's initial-event set was truncated at
+--        the same byte.
+--      * every decoded `getstring` has a byte-swapped string pointer, so the
+--        EXPN CARD / RADIO CARD / GEAR / EGG / COIN lines printed a stale
+--        buffer.  The literal is resolved at extract time now.
+-- v49: a Gen2 tileset is 192 tiles in TWO VRAM banks, and the metatile bytes
+--      that reach the second one ($80-$DF) were being read as literal tile
+--      numbers.  Both data/generated/tilesets.lua's blocks and its palMap are
+--      re-keyed to a flat 0..191 index now, so a v48 cache draws Ecruteak's
+--      building fronts, the Burned Tower roof and Elm's desk as blank or
+--      garbage until it is rebuilt.  25 of Crystal's 37 tilesets are affected.
+-- v50: field.gen2TreeMons was read with Gold's TreeMons pointer-table shape on
+--      both ROMs.  A v49 Crystal cache has no sets 3-7 at all -- so the nine
+--      set-3 routes (29/30/31/34-39), Routes 26/27/32, Route 43, Lake of Rage
+--      and Ilex Forest have no headbutt table to roll against -- and files
+--      TreeMonSet_Route as the rock-smash list.
+-- v51: the two player characters wore each other's colours.
+--      * registerGen2KrisSprites' skip guard was `sprites[id] and nil or
+--        spriteDefFor(...)`, which in Lua is just `spriteDefFor(...)` -- so it
+--        overwrote Crystal's real SPRITE_KRIS / SPRITE_KRIS_BIKE (rows 96/97,
+--        OBJ palette 1, blue) with a clone of Chris's row 1 on palette 0.  A
+--        v50 cache has no sprite at index 96 at all.
+--      * the boy's gender-select pic was left for the SGB zone shader to
+--        colour instead of being baked from PlayerPalette, so Chris showed up
+--        purple and white.
+-- v52: field.gen2BugContest -- the Bug Catching Contest's own encounter table
+--      (ContestMons), the nine AI contestants with their score picks, and the
+--      20 Park Balls / 20 minutes the ROM hands out.  A v51 cache has none of
+--      it, so the contest has nothing to roll against.
+-- v53: field.gen2BattleTower -- Crystal's Battle Tower.  The 70 trainers with
+--      their classes, genders and overworld sheets; the ten level groups of 21
+--      opponents each, with the DVs and stat exp that make their stat blocks
+--      the cartridge's own; the male and female line pools; the party rule
+--      texts and the two menus.  A v52 cache has none of it, so the tower's
+--      scripts have nothing to roll an opponent from.  Gold and Silver have no
+--      Battle Tower at all, but they share the marker, so they re-import once
+--      too.
+-- v54: the player's name in Gen2 dialogue.  Inside a TX_START run the byte
+--      $14 is PlaceGenderedPlayerName -- the player's name -- not the
+--      TX_STRINGBUFFER command it is at the outer level, so 691 lines carried
+--      "{RAM:wStringBuffer1}" where the name belonged and printed whatever the
+--      player last picked up ("ELM: POKeGEAR / There you are!").  The operand
+--      byte it wrongly ate was usually the "!" after the name.  A v53 cache
+--      has the broken text baked into data/generated/text.lua.
+-- v55: CHRIS's trainer card portrait and battle back pic, baked in
+--      PlayerPalette as battle/chriscard.png and battle/chrisback.png.  The
+--      boy form declared trueColor while pointing at the plain four-shade
+--      chrisf.png / chrisb.png rips, so the renderer left them alone and both
+--      drew in black and white.
+-- v56: field.egg.pic.  EggPic decompresses to 47 tiles in Crystal -- 25 of pic
+--      and 22 of appended animation frames -- so the "the tile count must be a
+--      perfect square" rule threw, field.egg came out with no pic key, and an
+--      EGG's stats page drew nothing.  Now read as a declared 5x5 and baked in
+--      the egg's own palette.
+-- v57: the rest of the v54 player-name fix.  v54 corrected the texts reached
+--      through a manifest symbol, but gen2RegisterScriptText -- the path every
+--      writetext/jumptext operand takes, and so every line an NPC actually
+--      speaks -- skipped the leading $00 before storing the address.  That is
+--      TX_START, the byte that opens the PlaceString run where $14 is the
+--      player's name, so 152 script texts kept printing the last item picked
+--      up where the name belongs.  decodeGen2TextAt now also seeds its mode
+--      from the first byte, so a mid-run address decodes correctly whoever
+--      hands it over.
+-- v58: battle_anims.functions.  DoBattleAnimFrame's 80-entry jumptable was
+--      read at Gold's hardcoded $4F1D; Crystal's is at $4FCE, and Crystal's
+--      symbols name none of those routines, so the table came out EMPTY.  With
+--      no name to look up, every animation object fell through
+--      Gen2AnimPlayer's MOTION table to "Null" and stayed exactly where the
+--      script spawned it -- no move animation travelled anywhere on Crystal.
+--      The address now comes from the symbol and the names from a baked
+--      table-order list.
+-- v59: two more Gold-shaped assumptions.
+--      * object_event sprite bytes $F0 and up are wVariableSprites SLOTS, and
+--        naming them after a sheet (SPRITE_ROCKET for $F6) pinned the object to
+--        that sheet for the whole game.  $F6 defaults to the Rocket and a
+--        script reassigns it to SILVER, so the rival in Azalea Town turned up
+--        as a Team Rocket grunt.  They now carry the slot's own constant name,
+--        which NPC.lua resolves through save.gen2VarSprites.
+--      * field.overworldFx.healMachine.gen2ObjPal came from MapObjectPals[6],
+--        but HealMachineAnim.LoadPalettes copies its OWN four colours over
+--        palette 6 first -- so the Poke Balls were reading the green tree
+--        palette instead of ball red.
+local CACHE_FORMAT = "rom-cache-v59:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
@@ -111,9 +211,13 @@ local REQUIRED_FILES_GEN2 = {
   "data/generated/audio.lua",
   "assets/generated/tilesets/playershouse.png",
   "assets/generated/fonts/font.png",
-  "assets/generated/title/gen2_title.png",
   "assets/generated/battle/chrisb.png",
   "assets/generated/ui/town_map_johto.png",
+  -- NOT the title screen: the extractor writes title/gen2_title.png for
+  -- Gold/Silver and title/crystal_title.png for Crystal, so a shared entry can
+  -- only ever be satisfied by one of them.  It lives in VERSION_REQUIRED_FILES
+  -- below instead -- see the warning on the Yellow block about listing files a
+  -- version cannot produce.
 }
 
 -- Files only one version's cache carries.  A version that predates one of
@@ -135,8 +239,21 @@ local VERSION_REQUIRED_FILES = {
   -- the missing-pic fallback used to be named battle/front/pikachu.png, and
   -- extractAssets stamped the logo over it after extractPokemon had written
   -- the real one; a cache from before the rename still has a logo for PIKACHU
-  gold = { "assets/generated/battle/front/placeholder.png" },
-  silver = { "assets/generated/battle/front/placeholder.png" },
+  gold = {
+    "assets/generated/battle/front/placeholder.png",
+    "assets/generated/title/gen2_title.png",
+  },
+  silver = {
+    "assets/generated/battle/front/placeholder.png",
+    "assets/generated/title/gen2_title.png",
+  },
+  -- Crystal's title screen is its own asset (extractGen2CrystalTitle writes
+  -- title/crystal_title.png; there is no gen2_title.png in a Crystal cache).
+  -- While gen2_title.png sat in the SHARED Gen2 list, allRequiredFilesExist
+  -- could never be satisfied on Crystal: isReady returned false on every
+  -- launch, the launcher re-imported the ROM every single time, and no amount
+  -- of re-importing could clear it because nothing ever writes that file.
+  crystal = { "assets/generated/title/crystal_title.png" },
 }
 
 local function requiredFiles(version)
@@ -2108,7 +2225,12 @@ function RomImporter:draw()
   local warningWidth = math.min(appW - 32 * s, 640 * s)
   local _, warningLines = self.warningFont:getWrap(TRUST_WARNING, warningWidth)
   local warningH = #warningLines * self.warningFont:getHeight()
-  local gen2Tab = self.tab == "gold" or self.tab == "silver"
+  -- Every Gen2 tab, not just Gold and Silver: Crystal was missing from this
+  -- test, so its tab wore the Gen1 wordmark and the Boi's Club footer instead
+  -- of the Gen2Recomp logo and the UD credit.  Asking GameVersion means the
+  -- next version added is right by default; non-version tabs like "mods" have
+  -- no entry and answer generation 1, so they keep the Gen1 art.
+  local gen2Tab = GameVersion.generation(self.tab) == 2
   local bcgImage = gen2Tab and self.gen2Bcg or self.bcg
   local logoImage = gen2Tab and self.gen2Logo or self.logo
   local bcgW, bcgH = bcgImage:getDimensions()
@@ -2939,19 +3061,32 @@ function RomImporter:mousepressed(x, y, button)
   end
   -- Tab chips switch panels even mid-import so the player can look around
   -- while a ROM extracts.
+  --
+  -- The bar is wider than the window once GOLD/SILVER/CRYSTAL and FIND MODS
+  -- are in it, and until now the only way to reach the chips past the edge was
+  -- the mouse wheel -- which a touch screen does not have.  So where the
+  -- pointer can be polled AND the bar actually overflows, a press only ARMS:
+  -- _updateSlotDrag pans the bar if the finger moves and switches tabs if it
+  -- does not.  Everywhere else the tab still switches on press, unchanged.
+  local tabOverflows = (self._tabMax or 0) > 0
   for _, t in ipairs(self.tabRects or {}) do
     if inside(t, x, y) then
-      self.tab = t.id
-      self._slotPress = nil   -- drop any half-started slot drag on tab change
-      self._modPress = nil    -- and any half-started mod toggle press
-      self._pagePress = nil   -- and any half-started page pan
-      self._findSearchFocus = false  -- and the search caret, now off screen
-      self:_disarmTextInput()
-      -- Each tab is its own column of a different length; carrying one tab's
-      -- offset into another lands somewhere arbitrary.
-      self.pageScroll = 0
+      if armDrag and tabOverflows then
+        self._tabPress = { id = t.id, x0 = x, scroll0 = self.tabScroll or 0 }
+      else
+        self:_selectTab(t.id)
+      end
       return
     end
+  end
+  -- ...and a press on the bar BESIDE the chips (the gaps, the active chip's
+  -- label, the "N of X ready" tail) pans it too, the way a press on empty
+  -- background pans the page.
+  local band = self._tabBand
+  if armDrag and tabOverflows and band
+     and x >= band[1] and x <= band[2] and y >= band[3] and y <= band[4] then
+    self._tabPress = { x0 = x, scroll0 = self.tabScroll or 0 }
+    return
   end
   if self.workState == "working" then return end
   -- Active game panel's controls (only the shown version has live hit rects).
@@ -3370,14 +3505,28 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
   self.tabScroll = math.max(0, math.min(self.tabScroll or 0, maxTab))
   self._tabMax = maxTab
   local activeRect = self._tabActiveRect
-  if activeRect and maxTab > 0 then
-    -- keep the selected chip (and its label) fully inside the viewport
+  -- Bring the selected chip into view ONCE, when the selection changes -- not
+  -- every frame.  Every frame meant the bar snapped straight back the moment
+  -- the player scrolled the active chip off the edge, which made the wheel
+  -- useless there and would have made a drag impossible.
+  --
+  -- Armed by noticing self.tab changed rather than by the code that changed
+  -- it: a tab switch also arrives from a dropped ROM, an installed mod, an
+  -- imported save and the gamepad, and each of those would otherwise have to
+  -- remember.  The rect is measured during the draw, so the flag can outlive a
+  -- frame waiting for one.
+  if self._tabFollowFor ~= self.tab then
+    self._tabFollowFor = self.tab
+    self._tabFollow = true
+  end
+  if activeRect and maxTab > 0 and self._tabFollow then
     if activeRect[1] - self.tabScroll < 0 then
       self.tabScroll = activeRect[1]
     elseif activeRect[2] - self.tabScroll > w then
       self.tabScroll = activeRect[2] - w
     end
     self.tabScroll = math.max(0, math.min(self.tabScroll, maxTab))
+    self._tabFollow = nil
   end
 
   love.graphics.setScissor(math.floor(x), math.floor(y),
@@ -3866,21 +4015,58 @@ end
 -- because no move event ever reaches the launcher: the mouse on desktop, the
 -- first active touch on Android.  A nil y means "nothing to read" -- the
 -- release branches below do not need one.
+-- x comes back as a THIRD value, after y, so every existing `local down, py =`
+-- call site keeps reading the same thing.  Only the tab bar wants x: it is the
+-- one strip on the page that scrolls sideways.
 function RomImporter:_pointerHold()
-  if not self.android then return love.mouse.isDown(1), self._my end
-  if not self.touchPollable then return false, nil end
+  if not self.android then return love.mouse.isDown(1), self._my, self._mx end
+  if not self.touchPollable then return false, nil, nil end
   local ok, list = pcall(love.touch.getTouches)
-  if not ok or type(list) ~= "table" or list[1] == nil then return false, nil end
-  local ok2, _, ty = pcall(love.touch.getPosition, list[1])
-  if not ok2 or type(ty) ~= "number" then return false, nil end
-  return true, ty
+  if not ok or type(list) ~= "table" or list[1] == nil then return false, nil, nil end
+  local ok2, tx, ty = pcall(love.touch.getPosition, list[1])
+  if not ok2 or type(ty) ~= "number" then return false, nil, nil end
+  return true, ty, tx
+end
+
+-- Switch tabs and reset everything that belonged to the old one.
+function RomImporter:_selectTab(id)
+  self.tab = id
+  self._slotPress = nil   -- drop any half-started slot drag on tab change
+  self._modPress = nil    -- and any half-started mod toggle press
+  self._pagePress = nil   -- and any half-started page pan
+  self._tabPress = nil    -- and any half-started tab-bar pan
+  self._findSearchFocus = false  -- and the search caret, now off screen
+  self:_disarmTextInput()
+  -- Each tab is its own column of a different length; carrying one tab's
+  -- offset into another lands somewhere arbitrary.
+  self.pageScroll = 0
+  -- (_drawTabBar notices self.tab moved and scrolls the new chip into view.)
 end
 
 function RomImporter:_updateSlotDrag()
   if self.android and not self.touchPollable then return end
-  local down, py = self:_pointerHold()
+  local down, py, px = self:_pointerHold()
   py = py or self._my
+  px = px or self._mx
   local maxPage = self._pageMax or 0
+
+  -- The tab bar is the one strip here that scrolls SIDEWAYS, so its drag is
+  -- resolved on x: past the threshold it pans the bar, and a press that never
+  -- moved falls through to the chip it landed on when the finger comes up.
+  local tp = self._tabPress
+  if tp then
+    if down then
+      local d = (px or tp.x0) - tp.x0
+      if math.abs(d) > 4 * (self._s or 1) then tp.moved = true end
+      if tp.moved then
+        self.tabScroll = clamp(tp.scroll0 - d, 0, self._tabMax or 0)
+      end
+    else
+      local id = (not tp.moved) and tp.id or nil
+      self._tabPress = nil
+      if id then self:_selectTab(id) end
+    end
+  end
 
   -- A press on empty background pans the page while it overflows.  Nothing is
   -- armed by it, so there is no release action to resolve.

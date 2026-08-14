@@ -1333,4 +1333,35 @@ function Gen2Flags.engineFlag(n)
   return Gen2Flags.ENGINE_FLAG_NAMES[n] or string.format("FLAG_G2_%04d", n)
 end
 
+-- Crystal's EngineFlags table is Gold's with ONE row inserted, and every row
+-- from there up is therefore off by one.
+--
+-- Read off both cartridges and diffed on the (address, bit) pair each row
+-- carries -- Gold's table is at 03:$404D and Crystal's at 20:$4462.  They
+-- agree exactly through row 15; Crystal then inserts wStatusFlags bit 7 at
+-- row 16, and from 16 to the end of Gold's 93 rows every Crystal row is
+-- Gold's plus one.  Crystal's badges sit at 27-42, Gold's at 26-41.
+--
+-- Lowered against Gold's numbering, a Crystal gym's `setflag ENGINE_ZEPHYRBADGE`
+-- (row 27) landed on HIVEBADGE: beating Falkner in Violet City lit BUGSY's
+-- badge on the trainer card.  The same one-row slip moved Fly (STORMBADGE),
+-- Strength (PLAINBADGE), Flash (ZEPHYRBADGE), the Bug Contest day flag, the
+-- swarm and the lottery.
+--
+-- The unnamed rows deliberately keep their ORIGINAL number in the
+-- FLAG_G2_nnnn fallback: those spellings are already sitting in saved games,
+-- and renaming them would read as "that never happened" on a game in
+-- progress.  Only the rows this table actually names are corrected.
+Gen2Flags.CRYSTAL_ENGINE_FLAG_INSERT = 16
+
+function Gen2Flags.scriptFlag(n)
+  local index = n
+  if type(index) == "number"
+     and index >= Gen2Flags.CRYSTAL_ENGINE_FLAG_INSERT
+     and require("src.core.GameVersion").isCrystal() then
+    index = index - 1
+  end
+  return Gen2Flags.ENGINE_FLAG_NAMES[index] or string.format("FLAG_G2_%04d", n)
+end
+
 return Gen2Flags

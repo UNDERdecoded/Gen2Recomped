@@ -27,16 +27,42 @@ local STAT_KEYS = {
 -- Front sprites are read straight off the generated cache.  One image per
 -- species, cached for the process: the old panel called newImage every frame,
 -- which re-decoded a PNG sixty times a second.
+--
+-- A Gen2 front pic on disk is BARE 2bpp: four grey shades (255/170/85/0) that
+-- the game colours at draw time from the species' own palette, which the
+-- import files as data.palettes.palettes["MON_<species>"].  Drawing the file
+-- as it comes off disk is why every mon in this editor was grey.  Bake the
+-- palette in once per species instead, and drop shade 0 -- the background the
+-- battle screen paints over -- to transparent, so the sprite sits on the card
+-- rather than in a white box.  Species the import already coloured carry
+-- `trueColor` and are left exactly as they are.
 local spriteCache = {}
 function MonEditor.sprite(S, species)
   if spriteCache[species] ~= nil then return spriteCache[species] or nil end
   local def = S.data.pokemon[species]
   local path = def and def.spriteFront
-  if not path or not love.graphics.newImage then
+  if not path or not (love.graphics and love.graphics.newImage) then
     spriteCache[species] = false
     return nil
   end
-  local ok, img = pcall(love.graphics.newImage, path)
+  local pals = S.data.palettes and S.data.palettes.palettes
+  local pal = (not def.trueColor) and pals and type(def.palette) == "string"
+    and pals[def.palette] or nil
+  local ok, img = pcall(function()
+    if not (pal and love.image and love.image.newImageData) then
+      return love.graphics.newImage(path)
+    end
+    local raw = love.image.newImageData(path)
+    raw:mapPixel(function(_, _, r, g, b, a)
+      -- 1.0 -> shade 0, 0.0 -> shade 3; the four greys land exactly on these
+      local shade = math.floor((1 - r) * 3 + 0.5)
+      if shade <= 0 then return 1, 1, 1, 0 end
+      local c = pal[shade + 1]
+      if type(c) ~= "table" then return r, g, b, a end
+      return (c[1] or 0) / 255, (c[2] or 0) / 255, (c[3] or 0) / 255, a
+    end)
+    return love.graphics.newImage(raw)
+  end)
   spriteCache[species] = ok and img or false
   return ok and img or nil
 end
