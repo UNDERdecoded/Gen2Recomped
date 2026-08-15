@@ -14,7 +14,7 @@ RomImporter.__index = RomImporter
 -- copy-it-into-the-save-folder flow that every caller below already has --
 -- calling the nil field instead took the whole app down the moment the player
 -- pressed Import ROM:
---
+-- force build
 --   src/import/RomImporter.lua: attempt to call field 'pickFile' (a nil value)
 --
 -- love.system.createFile was already guarded this way at its one call site;
