@@ -1119,13 +1119,13 @@ function RomImporter.new(onComplete, opts)
   -- async release check as it comes up; draw() polls Check.state() to render an
   -- unobtrusive banner beneath the columns.  Held behind pcall so a broken or
   -- absent updater can never take the launcher down with it.
-  if self.launcher and updaterAllowed() then
-    local ok, Check = pcall(require, "src.update.Check")
-    if ok and Check then
-      self.Check = Check
-      pcall(Check.start)
-    end
-  end
+  --if self.launcher and updaterAllowed() then
+    --local ok, Check = pcall(require, "src.update.Check")
+    --if ok and Check then
+      --self.Check = Check
+      --pcall(Check.start)
+    --end
+  --end
 
   -- On Linux handhelds a gamepad is usually already connected at boot; arm
   -- the virtual cursor immediately so the player does not have to press a
