@@ -389,7 +389,17 @@ jobs:
           set -euo pipefail
           ndk="$(grep -E '^NDK_VERSION=' scripts/build_android.sh | head -1 | cut -d'"' -f2)"
           echo "NDK: $ndk"
-          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" >/dev/null
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+
+          # `yes |` is the standard way to feed sdkmanager's licence prompts,
+          # but sdkmanager closes the pipe the moment it stops reading, `yes`
+          # dies of SIGPIPE (141), and `pipefail` turns that into a failed
+          # step even though the install SUCCEEDED -- which is exactly the
+          #   yes: standard output: Broken pipe
+          # that failed this job.  pipefail is off for the pipeline only; the
+          # `ls -d` below is the real gate and is still under `set -e`.
+          ( set +o pipefail; yes 2>/dev/null | "$sdkmanager" --install "ndk;$ndk" >/dev/null )
+
           ls -d "$ANDROID_HOME/ndk/$ndk"
 
       - name: Build APK
@@ -481,12 +491,19 @@ jobs:
           Expand-Archive -Path dist/win/Gen2Recomped-win64.zip -DestinationPath dist/win -Force
           Get-ChildItem dist/win
 
+      # -OutFile is passed explicitly because build_msix.ps1's DEFAULT name is
+      # "$DisplayName-$Version.msix" AFTER it normalises the version to MSIX's
+      # mandatory four parts: -Version 0.1.0 produced Gen2Recomped-0.1.0.0.msix
+      # while this workflow staged Gen2Recomped-0.1.0.msix.  Naming the file
+      # here keeps the manifest's four-part version and the asset's three-part
+      # release name independent, which is what both formats want.
       - name: Build MSIX
         shell: pwsh
         run: |
           ./scripts/build_msix.ps1 `
             -Source dist/win/Gen2Recomped-win64 `
             -Version ${{ needs.version.outputs.version }} `
+            -OutFile "dist/msix/Gen2Recomped-${{ needs.version.outputs.version }}.msix" `
             -MakeCert
 
       - name: Stage MSIX

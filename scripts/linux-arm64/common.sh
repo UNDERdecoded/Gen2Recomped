@@ -105,8 +105,15 @@ APPIMAGE_RUNTIME_SHA256="00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78
 # the aarch64 handheld distros. Building on a newer base would silently
 # restrict the artifact to that base and newer.
 BUILDER_BASE_IMAGE="debian:bullseye"
-BUILDER_IMAGE="${GEN2_LINUX_ARM64_IMAGE:-Gen2Recomped-linux-arm64-builder}"
+# Lowercase, and deliberately NOT derived from APP_NAME: a Docker/OCI
+# repository name may only contain lowercase letters, digits and separators,
+# so "Gen2Recomped-linux-arm64-builder" is rejected outright with
+# `invalid tag ...: repository name must be lowercase`.  APP_NAME below is the
+# artifact's display name and keeps its capitals.
+BUILDER_IMAGE="${GEN2_LINUX_ARM64_IMAGE:-gen2recomped-linux-arm64-builder}"
 
+# Drives the AppImage filename, which .github/workflows/release.yml stages as
+# dist/linux-arm64/$APP_NAME-<ver>-linux-arm64.AppImage.
 APP_NAME="Gen2Recomped"
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }

@@ -142,8 +142,21 @@ all: sync-romfs $(BUILD)
 CACERT_URL	:=	https://curl.se/ca/cacert.pem
 CACERT_ROMFS	:=	$(CURDIR)/$(ROMFS)/cacert.pem
 
+# NROFLAGS= is not decoration.  This Makefile does
+#   export NROFLAGS += --romfsdir=$(CURDIR)/romfs
+# above, so the flag is in the ENVIRONMENT of every recursive make.  The
+# bootstrap Makefile then does its own `export NROFLAGS += --nacp=...`, which
+# appends to the inherited value -- so elf2nro was told to bake THIS
+# launcher's romfs into ota-bootstrap.nro.  At that point the directory does
+# not exist yet (it is created two lines below), which is the
+#   Failed to open directory .../ota-launcher/romfs!
+# that killed the Switch job.  Even once it exists it is the wrong answer:
+# the launcher's romfs contains ota-bootstrap.nro, so the bootstrap would
+# embed a copy of itself.  Clearing it in the child's environment -- NOT as a
+# `make NROFLAGS=` argument, which would override the bootstrap's own += and
+# lose its --icon/--nacp -- gives the bootstrap a clean slate.
 bootstrap-romfs:
-	@$(MAKE) --no-print-directory -C $(BOOTSTRAP_DIR) all
+	@NROFLAGS= $(MAKE) --no-print-directory -C $(BOOTSTRAP_DIR) all
 	@mkdir -p $(CURDIR)/$(ROMFS)
 	@cp -f $(BOOTSTRAP_DIR)/ota-bootstrap.nro $(BOOTSTRAP_ROMFS)
 
