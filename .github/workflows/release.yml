@@ -6,7 +6,11 @@ name: Release
 #   payload   the shared game.love (scripts/pack_love.sh) -- built ONCE and
 #             handed to the console/handheld jobs, so a Switch build and an
 #             Xbox build can never contain different bytes
-#   desktop   macOS + Windows + Linux + Android + RG34XXSP (+ iOS when signed)
+#   desktop   macOS + Windows + Linux (+ iOS when signed)
+#   android   the APK, on Linux -- GitHub's macOS runners no longer ship
+#             the Android SDK, and it never needed a Mac in the first place
+#   rg34xxsp  the Anbernic PortMaster pack, on Linux -- it is curl + zip
+#             around an aarch64 runtime and never needed a Mac either
 #   msix      Windows Store package, from the desktop job's win64 build
 #   xbox      Xbox Dev Mode UWP package
 #   arm64     ARM64 AppImage for ARM handhelds/SBCs
@@ -17,7 +21,7 @@ name: Release
 # The executable bit does not survive every checkout or editing path, and a
 # lost mode bit is otherwise a "Permission denied" that kills the whole run.
 #
-# The four platform jobs added after the desktop one are continue-on-error:
+# Every platform job after the desktop one is continue-on-error:
 # a toolchain hiccup on the Switch container or the UWP SDK must not stop a
 # release that has perfectly good desktop and Android builds in it. Whatever
 # is missing is simply absent from the release; publish globs what arrived.
@@ -184,7 +188,7 @@ jobs:
 
   # ---------------------------------------------------------------- desktop
   desktop:
-    name: macOS + Windows + Linux + Android + RG34XXSP
+    name: macOS + Windows + Linux
     needs: version
     runs-on: ${{ fromJSON(vars.MACOS_SELF_HOSTED == 'true' && '["self-hosted", "macOS"]' || '"macos-latest"') }}
     steps:
@@ -269,11 +273,6 @@ jobs:
           # which needs no signing/notarization.
           bash scripts/build.sh all --version "${{ needs.version.outputs.version }}" --no-notarize
 
-      - name: Build Android
-        run: |
-          set -euo pipefail
-          bash scripts/build_android.sh --version "${{ needs.version.outputs.version }}"
-
       - name: Install xcbeautify
         if: vars.APPLE_SIGNING == 'true'
         run: |
@@ -286,13 +285,6 @@ jobs:
           set -euo pipefail
           bash scripts/build_ios.sh --fetch --device --release \
             --version "${{ needs.version.outputs.version }}"
-
-      - name: Build Anbernic RG34XXSP port
-        run: |
-          set -euo pipefail
-          # Self-contained aarch64 PortMaster-style pack; pulls the LÖVE 11.5
-          # runtime from PortMaster-GUI, so it needs no signing/notarization.
-          bash ./build-rg34xxsp.sh --version "${{ needs.version.outputs.version }}"
 
       - name: Notarize & staple macOS app
         if: vars.APPLE_SIGNING == 'true'
@@ -339,14 +331,6 @@ jobs:
           cp "dist/win/Gen2Recomped-win64.zip"   "$out/Gen2Recomped-${v}-windows.zip"
           cp "dist/linux/Gen2Recomped-linux.zip" "$out/Gen2Recomped-${v}-linux.zip"
 
-          apk="$(find dist/android/debug -name '*.apk' | head -1)"
-          [ -n "$apk" ] || { echo "::error::no Android APK found under dist/android/debug"; exit 1; }
-          cp "$apk" "$out/Gen2Recomped-${v}-android.apk"
-
-          rg34="dist/rg34xxsp/gen2recomp-rg34xxsp-stockos64-mod.zip"
-          [ -f "$rg34" ] || { echo "::error::$rg34 not found (expected from ./build-rg34xxsp.sh)"; exit 1; }
-          cp "$rg34" "$out/Gen2Recomped-${v}-rg34xxsp-stockos64-mod.zip"
-
           # Only a signed --device build produces an installable IPA.
           ipa="dist/ios/gen2recomp.ipa"
           if [ -f "$ipa" ]; then
@@ -377,6 +361,103 @@ jobs:
         if: ${{ always() && vars.APPLE_SIGNING == 'true' }}
         run: |
           security delete-keychain "$RUNNER_TEMP/pokemon-signing.keychain-db" 2>/dev/null || true
+
+  # ---------------------------------------------------------------- android
+  # Its own Linux job.  scripts/build_android.sh's require_android_sdk needs
+  # ANDROID_SDK_ROOT/ANDROID_HOME, and the hosted macOS images stopped
+  # shipping the Android SDK -- so the step died two seconds after packing
+  # game.love and took the whole desktop job (mac, Windows, Linux, RG34XXSP)
+  # down with it.  ubuntu-latest has the SDK preinstalled, builds faster, and
+  # an Android failure can no longer cost you four other platforms.
+  android:
+    name: Android APK
+    needs: version
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # love-android expects exactly this NDK (NDK_VERSION in the script);
+      # the runner ships a different default, so pin it explicitly.
+      - name: Install the pinned NDK
+        run: |
+          set -euo pipefail
+          ndk="$(grep -E '^NDK_VERSION=' scripts/build_android.sh | head -1 | cut -d'"' -f2)"
+          echo "NDK: $ndk"
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;$ndk" >/dev/null
+          ls -d "$ANDROID_HOME/ndk/$ndk"
+
+      - name: Build APK
+        run: |
+          set -euo pipefail
+          bash scripts/build_android.sh --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage APK
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          apk="$(find dist/android -name '*.apk' | head -1)"
+          [ -n "$apk" ] || { echo "::error::no APK produced under dist/android"; exit 1; }
+          cp "$apk" "staged/Gen2Recomped-${v}-android.apk"
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-android
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # --------------------------------------------------------------- rg34xxsp
+  # Anbernic RG34XXSP / Stock OS 64-bit MOD PortMaster pack.  It used to run
+  # inside the desktop job on macOS for no reason: the whole build is curl +
+  # zip around a prebuilt aarch64 LÖVE runtime, nothing in it is Apple's.
+  # Worse, it ran BEFORE that job collected the mac/Windows/Linux archives, so
+  # one bad download here threw away three good desktop builds.  Its own job
+  # on Linux is both faster and independently failable.
+  rg34xxsp:
+    name: Anbernic RG34XXSP (PortMaster)
+    needs: version
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install packaging tools
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y zip unzip curl file
+
+      - name: Build the port
+        run: |
+          set -euo pipefail
+          # Payload comes from scripts/pack_love.sh, same as every other
+          # platform, so this pack cannot drift from the desktop build.
+          bash ./build-rg34xxsp.sh --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage the pack
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          rg34="dist/rg34xxsp/gen2recomp-rg34xxsp-stockos64-mod.zip"
+          [ -f "$rg34" ] || { echo "::error::$rg34 not found (expected from ./build-rg34xxsp.sh)"; exit 1; }
+          cp "$rg34" "staged/Gen2Recomped-${v}-rg34xxsp-stockos64-mod.zip"
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-rg34xxsp
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
 
   # ------------------------------------------------------------------- msix
   msix:
@@ -618,7 +699,7 @@ jobs:
   # ---------------------------------------------------------------- publish
   publish:
     name: Publish GitHub Release
-    needs: [version, payload, desktop, msix, xbox, arm64, switch]
+    needs: [version, payload, desktop, android, rg34xxsp, msix, xbox, arm64, switch]
     # Desktop is the floor: without it there is no release worth cutting.
     # The four optional platforms are continue-on-error, so `always()` here
     # publishes whatever did arrive rather than losing the whole run to one

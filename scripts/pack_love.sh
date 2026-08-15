@@ -84,6 +84,16 @@ trap 'rm -rf "$STAGE"' EXIT
 # Only what the game loads at runtime.  Everything else in the repo -- the
 # build scripts, the tools, the tests, the docs, the port projects -- is
 # development material and has no business inside a shipped payload.
+#
+# tools/ is development material EXCEPT two things the game itself loads:
+#   * tools/save-editor -- main.lua's own header calls it "part of the
+#     shipped app, not a dev-only script"; it puts
+#     tools/save-editor/?.lua and tools/save-editor/panels/?.lua on
+#     love.filesystem's require path, so a payload without it boots fine and
+#     then errors the moment the player presses Edit on a save row.
+#     scripts/build.sh has always shipped it; leaving it out of the shared
+#     packer silently regressed Switch, Xbox and ARM64.
+#   * tools/rom_manifest*.json -- see MANIFEST_GLOB below.
 CONTENT=(
   main.lua
   conf.lua
@@ -91,10 +101,10 @@ CONTENT=(
   data
   assets
   mods
+  tools/save-editor
 )
 
-# tools/ is development material EXCEPT the ROM symbol manifests, which the
-# game reads at runtime: src/core/GameVersion.lua names one per cartridge
+# The ROM symbol manifests: src/core/GameVersion.lua names one per cartridge
 # (tools/rom_manifest.json, _blue, _yellow, _gold, _silver, _crystal) and the
 # importer resolves every symbol through them.  Leaving them out produces a
 # payload that boots and then cannot import a ROM at all -- which is what
@@ -105,7 +115,11 @@ MANIFEST_GLOB="tools/rom_manifest*.json"
 say "staging payload from $ROOT"
 for entry in "${CONTENT[@]}"; do
   if [ -e "$ROOT/$entry" ]; then
-    cp -R "$ROOT/$entry" "$STAGE/"
+    # Nested entries (tools/save-editor) keep their prefix: the require path
+    # the game builds is the archive path, so a flattened copy is invisible.
+    mkdir -p "$STAGE/$(dirname "$entry")"
+    rm -rf "${STAGE:?}/$entry"
+    cp -R "$ROOT/$entry" "$STAGE/$entry"
   else
     say "skipping absent $entry"
   fi
@@ -141,6 +155,15 @@ find "$STAGE" -type f \( \
   -o -iname '*.love' -o -iname '*.exe' -o -iname '*.zip' \
   -o -name 'rom-cache.complete' -o -name '.DS_Store' \
   \) -delete
+
+# ------------------------------------------------------------- contract
+# The same required-entry gate scripts/build.sh applies to its game.love, so
+# the shared packer cannot ship a payload the desktop packer would reject.
+for required in main.lua conf.lua src/core/Version.lua \
+                tools/save-editor/App.lua tools/save-editor/Kit.lua \
+                tools/save-editor/panels/Party.lua; do
+  [ -e "$STAGE/$required" ] || fail "payload is missing $required"
+done
 
 # ------------------------------------------------------------ version stamp
 # The archive's copy only.  A build stamps the release it is producing; a

@@ -31,7 +31,7 @@ say "checking the host-architecture guard"
 # The guard is what stops someone from kicking off a qemu-emulated build that
 # takes hours and has miscompiled LuaJIT before. Prove it fires by shadowing
 # uname, rather than trusting the branch is reachable.
-fake_bin="$(mktemp -d "${TMPDIR:-/tmp}/gen1recomp-fake-uname.XXXXXX")"
+fake_bin="$(mktemp -d "${TMPDIR:-/tmp}/Gen2Recomped-fake-uname.XXXXXX")"
 printf '#!/bin/sh\necho x86_64\n' > "$fake_bin/uname"
 chmod +x "$fake_bin/uname"
 guard_out="$(PATH="$fake_bin:$PATH" \
@@ -157,7 +157,7 @@ for soname in libc.so.6 libstdc++.so.6 libfreetype.so.6 libz.so.1; do
 done
 
 say "checking the shared game.love payload"
-temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/gen1recomp-linux-arm64-selftest.XXXXXX")"
+temp_dir="$(mktemp -d "${TMPDIR:-/tmp}/Gen2Recomped-linux-arm64-selftest.XXXXXX")"
 trap 'rm -rf "$temp_dir"' EXIT
 "$ROOT/scripts/pack_love.sh" \
   --output "$temp_dir/game.love" \

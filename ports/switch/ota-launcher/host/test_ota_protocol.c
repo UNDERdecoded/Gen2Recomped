@@ -19,15 +19,15 @@ int main(void) {
   expect(ota_compare_semver("1.2.0", "1.1.0") == 1, "semver newer");
   expect(ota_compare_semver("1.1.0", "1.1.0") == 0, "semver equal");
   expect(ota_compare_semver("1.0.0", "1.1.0") == -1, "semver older");
-  expect(ota_is_ota_asset_name("gen1recomp-1.5.0-switch.zip"), "ota asset name");
-  expect(!ota_is_ota_asset_name("gen1recomp-1.5.0-switch-ota.zip"), "reject legacy ota zip name");
-  expect(!ota_is_ota_asset_name("gen1recomp-1.5.0.love"), "reject love payload");
+  expect(ota_is_ota_asset_name("Gen2Recomped-1.5.0-switch.zip"), "ota asset name");
+  expect(!ota_is_ota_asset_name("Gen2Recomped-1.5.0-switch-ota.zip"), "reject legacy ota zip name");
+  expect(!ota_is_ota_asset_name("Gen2Recomped-1.5.0.love"), "reject love payload");
 
   const char *json =
       "{"
       "\"tag_name\":\"v1.5.0\","
       "\"assets\":["
-      "{\"name\":\"gen1recomp-1.5.0-switch.zip\","
+      "{\"name\":\"Gen2Recomped-1.5.0-switch.zip\","
       "\"browser_download_url\":\"https://example/switch.zip\"},"
       "{\"name\":\"sha256sums.txt\",\"browser_download_url\":\"https://example/sums\"}"
       "]"
@@ -35,7 +35,7 @@ int main(void) {
   ota_release_t rel;
   expect(ota_parse_release(json, &rel) == 1, "parse release");
   expect(strcmp(rel.version, "1.5.0") == 0, "release version");
-  expect(strcmp(rel.asset_name, "gen1recomp-1.5.0-switch.zip") == 0, "release asset");
+  expect(strcmp(rel.asset_name, "Gen2Recomped-1.5.0-switch.zip") == 0, "release asset");
 
   ota_decision_t d;
   ota_decide_update("1.4.0", &rel, &d);
@@ -55,9 +55,9 @@ int main(void) {
       "\"name\":\"0.1.70\","
       "\"assets\":["
       "{"
-      "\"url\":\"https://api.github.com/repos/bryanthaboi/gen1recomp/releases/assets/502823880\","
+      "\"url\":\"https://api.github.com/repos/UNDERdecodedHD/Gen2Recomped/releases/assets/502823880\","
       "\"id\":502823880,"
-      "\"name\":\"gen1recomp-0.1.70-switch.zip\","
+      "\"name\":\"Gen2Recomped-0.1.70-switch.zip\","
       "\"label\":\"\","
       "\"uploader\":{"
       "\"login\":\"github-actions[bot]\","
@@ -83,32 +83,32 @@ int main(void) {
       "\"content_type\":\"application/zip\","
       "\"state\":\"uploaded\","
       "\"size\":9000573,"
-      "\"browser_download_url\":\"https://github.com/bryanthaboi/gen1recomp/releases/download/v0.1.70/gen1recomp-0.1.70-switch.zip\""
+      "\"browser_download_url\":\"https://github.com/UNDERdecodedHD/Gen2Recomped/releases/download/v0.1.70/Gen2Recomped-0.1.70-switch.zip\""
       "}"
       "]"
       "}";
   ota_release_t gh;
   expect(ota_parse_release(github_json, &gh) == 1, "parse github-shaped release");
   expect(strcmp(gh.version, "0.1.70") == 0, "github release version");
-  expect(strcmp(gh.asset_name, "gen1recomp-0.1.70-switch.zip") == 0, "github release asset");
+  expect(strcmp(gh.asset_name, "Gen2Recomped-0.1.70-switch.zip") == 0, "github release asset");
   expect(strcmp(gh.download_url,
-                 "https://github.com/bryanthaboi/gen1recomp/releases/download/v0.1.70/gen1recomp-0.1.70-switch.zip") ==
+                 "https://github.com/UNDERdecodedHD/Gen2Recomped/releases/download/v0.1.70/Gen2Recomped-0.1.70-switch.zip") ==
              0,
          "github release download url");
   ota_decide_update("0.1.69", &gh, &d);
   expect(strcmp(d.status, "available") == 0, "github release decide 0.1.69->0.1.70");
 
-  const char *sums = "abc123  gen1recomp-1.5.0-switch.zip\n";
+  const char *sums = "abc123  Gen2Recomped-1.5.0-switch.zip\n";
   ota_verify_t v;
-  ota_verify_sha256("gen1recomp-1.5.0-switch.zip", "abc123", sums, &v);
+  ota_verify_sha256("Gen2Recomped-1.5.0-switch.zip", "abc123", sums, &v);
   expect(v.ok == 1, "sha ok");
-  ota_verify_sha256("gen1recomp-1.5.0-switch.zip", "deadbeef", sums, &v);
+  ota_verify_sha256("Gen2Recomped-1.5.0-switch.zip", "deadbeef", sums, &v);
   expect(v.ok == 0 && strcmp(v.reason, "hash_mismatch") == 0, "sha mismatch");
-  ota_verify_sha256("gen1recomp-1.5.0-switch.zip", "abc123", "", &v);
+  ota_verify_sha256("Gen2Recomped-1.5.0-switch.zip", "abc123", "", &v);
   expect(v.ok == 0 && strcmp(v.reason, "sum_not_found") == 0, "sha missing sum rejected");
 
   ota_apply_plan_t plan;
-  ota_plan_atomic_apply("switch/gen1recomp", "/tmp/x", &plan);
+  ota_plan_atomic_apply("switch/gen2recomp", "/tmp/x", &plan);
   expect(strstr(plan.steps[0], "copy_to_part:") != NULL, "plan copy");
   expect(strstr(plan.steps[1], "rename:") != NULL, "plan rename");
   expect(strstr(plan.steps[2], "copy_to_part:launcher") != NULL, "plan launcher copy");

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a PortMaster-style aarch64 port of gen2recomp for Anbernic RG34XXSP
+# Build a PortMaster-style aarch64 port of Gen2Recomped for Anbernic RG34XXSP
 # on Stock OS 64-bit MOD (H700; cbepx-me StockOS MOD / official V1.0.6 base
 # + PortMaster).
 #
@@ -12,14 +12,15 @@
 #   ./build-rg34xxsp.sh [--version X.Y.Z]
 #
 # Output:
-#   dist/rg34xxsp/Gen2Recomped-rg34xxsp-stockos64-mod.zip
+#   dist/rg34xxsp/gen2recomp-rg34xxsp-stockos64-mod.zip
 #
 # Install on device:
 #   1. Flash / run Stock OS 64-bit MOD with PortMaster installed.
 #   2. Unzip into the SD card's roms/PORTS/ folder so you have:
-#        roms/PORTS/Gen2Recomped.sh
+#        roms/PORTS/Gen2recomp.sh
 #        roms/PORTS/gen2recomp/...
-#   3. Copy a legal US Red or Blue .gb into roms/PORTS/gen2recomp/lovegame/
+#   3. Copy a legal .gb / .gbc cartridge dump into
+#      roms/PORTS/gen2recomp/lovegame/
 #   4. Launch "Gen2Recomped" from the Ports list; press Choose ROM (scans that
 #      folder when zenity is missing).
 
@@ -31,13 +32,18 @@ CACHE="$HERE/cache/rg34xxsp"
 WORK="$HERE/work/rg34xxsp"
 DIST="$ROOT/dist/rg34xxsp"
 
+# APP_NAME feeds the artifact filename and .github/workflows/release.yml
+# copies exactly dist/rg34xxsp/gen2recomp-rg34xxsp-stockos64-mod.zip, so the
+# two have to agree.  PORT_DIR_NAME and LAUNCHER_NAME are what the player
+# ends up with under roms/PORTS/, and the launcher heredoc below hardcodes
+# the same folder name in GAMEDIR -- change all three together.
 APP_NAME="gen2recomp"
 # Artifact suffix matches the CFW this port targets (Anbernic H700 Stock OS
 # 64-bit MOD for RG34XXSP). Release uploads stage it as
 # Gen2Recomped-<ver>-rg34xxsp-stockos64-mod.zip.
 ARTIFACT_SUFFIX="rg34xxsp-stockos64-mod"
 PORT_DIR_NAME="gen2recomp"
-LAUNCHER_NAME="Gen2Recomped.sh"
+LAUNCHER_NAME="Gen2recomp.sh"
 LOVE_VERSION="11.5"
 VERSION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)"
 
@@ -85,32 +91,41 @@ GAME_SRC="$WORK/lovegame"
 rm -rf "$GAME_SRC"
 mkdir -p "$GAME_SRC"
 
-# Same payload as scripts/build.sh's game.love — never ship ROM-derived cache.
-# tools/save-editor is part of that payload: the launcher's Edit button on a
-# save row opens it in-process (main.lua).
-(cd "$ROOT" && zip -q -9 -r "$WORK/game-payload.zip" \
-  main.lua conf.lua src data assets tools/save-editor \
-  tools/rom_manifest.json tools/rom_manifest_blue.json \
-  -x '*.DS_Store' 'data/generated/*' 'assets/generated/*')
-if unzip -Z1 "$WORK/game-payload.zip" \
-    | grep -Eq '^(data|assets)/generated/[^/]+|^(data|assets)/generated/.+/'; then
-  fail "payload unexpectedly contains generated ROM data"
-fi
-unzip -q "$WORK/game-payload.zip" -d "$GAME_SRC"
-rm -f "$WORK/game-payload.zip"
-
-# Stamp release version into the staged tree only (never the working tree).
+# The payload comes from the SHARED packer, not from a second file list kept
+# in step with the first by hand: this script used to name
+# `tools/rom_manifest.json tools/rom_manifest_blue.json` explicitly and so
+# shipped a Gen 1 only port -- no Gold/Silver/Crystal manifests, and no mods/
+# at all, meaning DramaticShapes was absent on this device and nothing else.
+# scripts/pack_love.sh stages every runtime path (including mods/,
+# tools/save-editor and every tools/rom_manifest*.json), applies the same
+# exclude set verify_payload.sh enforces, and stamps the version.
+PAYLOAD="$WORK/game-payload.love"
+rm -f "$PAYLOAD"
+pack_args=(--output "$PAYLOAD")
+# pack_love.sh only accepts a semver stamp; VERSION defaults to a git short
+# hash for local builds, which must not be written into Version.lua.
 if printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-  say "stamping engine version $VERSION"
-  sed -E "s/(engine[[:space:]]*=[[:space:]]*\")[^\"]*(\")/\1$VERSION\2/" \
-    "$ROOT/src/core/Version.lua" > "$GAME_SRC/src/core/Version.lua"
-  version_re="$(printf '%s' "$VERSION" | sed 's/\./\\./g')"
-  grep -Eq "engine[[:space:]]*=[[:space:]]*\"$version_re\"" \
-    "$GAME_SRC/src/core/Version.lua" \
-    || fail "version stamp failed"
+  pack_args+=(--version "$VERSION")
 else
   say "version '$VERSION' is not X.Y.Z — shipping default engine (no stamp)"
 fi
+# Invoked through `bash` rather than executed: a Windows checkout (or a
+# commit that lost the exec bit) still works, which is the failure that took
+# the whole release workflow down once already.
+bash "$ROOT/scripts/pack_love.sh" "${pack_args[@]}"
+bash "$ROOT/scripts/switch/verify_payload.sh" "$PAYLOAD"
+
+# Unpacked, not a .love: the player drops a cartridge dump next to main.lua
+# and RomImporter scans it without zenity/kdialog.
+unzip -q "$PAYLOAD" -d "$GAME_SRC"
+rm -f "$PAYLOAD"
+
+# The port is useless without the Gen 2 manifests; the old hand-written list
+# is exactly how they went missing, so assert rather than trust.
+for required in tools/rom_manifest_gold.json tools/rom_manifest_crystal.json \
+                tools/save-editor/Kit.lua main.lua; do
+  [ -e "$GAME_SRC/$required" ] || fail "staged lovegame/ is missing $required"
+done
 
 # Portable marker: saves + ROM cache live next to the game on the SD card.
 : > "$GAME_SRC/portable.txt"
@@ -161,7 +176,7 @@ EOF
 # casing and mount points (mmc / sdcard / TF1 / TF2).
 cat > "$PORT_ROOT/$LAUNCHER_NAME" <<'EOF'
 #!/bin/bash
-# gen2recomp — Anbernic RG34XXSP stock OS / PortMaster launcher
+# Gen2Recomped — Anbernic RG34XXSP stock OS / PortMaster launcher
 # Uses SHDIR-relative paths so stock firmware finds the game folder.
 
 export HOME="${HOME:-/root}"
@@ -243,11 +258,11 @@ cat > "$PORT_ROOT/port.json" <<EOF
   ],
   "items_opt": null,
   "attr": {
-    "title": "gen2recomp",
-    "desc": "Native LÖVE2D recreation of Pokemon Red and Blue. Supply your own legal US Red or Blue ROM.",
-    "inst": "Requires Anbernic RG34XXSP Stock OS 64-bit MOD with PortMaster. Copy a canonical US Red or Blue .gb into gen2recomp/lovegame/, then launch and press Choose ROM.",
+    "title": "Gen2Recomped",
+    "desc": "Native LÖVE2D recreation of Pokemon Gold, Silver and Crystal (Red/Blue/Yellow also supported). Supply your own legal cartridge dump.",
+    "inst": "Requires Anbernic RG34XXSP Stock OS 64-bit MOD with PortMaster. Copy a canonical US .gb / .gbc cartridge dump into gen2recomp/lovegame/, then launch and press Choose ROM.",
     "genres": ["adventure", "rpg"],
-    "porter": ["gen2recomp"],
+    "porter": ["UNDERdecodedHD"],
     "image": {},
     "rtr": true,
     "runtime": null,
@@ -262,8 +277,8 @@ cat > "$PORT_ROOT/gameinfo.xml" <<EOF
 <gameList>
   <game>
     <path>./$LAUNCHER_NAME</path>
-    <name>gen2recomp</name>
-    <desc>Native LÖVE2D recreation of Pokemon Red and Blue. Requires your own legal US Red or Blue ROM.</desc>
+    <name>Gen2Recomped</name>
+    <desc>Native LÖVE2D recreation of Pokemon Gold, Silver and Crystal. Requires your own legal cartridge dump.</desc>
     <releasedate>20250101T000000</releasedate>
     <developer>UNDERdecodedHD</developer>
     <publisher>UNDERdecodedHD</publisher>
@@ -273,16 +288,16 @@ cat > "$PORT_ROOT/gameinfo.xml" <<EOF
 EOF
 
 cat > "$PORT_ROOT/README.md" <<'EOF'
-## gen2recomp (RG34XXSP / Stock OS 64-bit MOD)
+## Gen2Recomped (RG34XXSP / Stock OS 64-bit MOD)
 
-Native LÖVE 11.5 port of gen2recomp for Anbernic RG34XXSP on
+Native LÖVE 11.5 port of Gen2Recomped for Anbernic RG34XXSP on
 **Stock OS 64-bit MOD** (H700, PortMaster).
 
 ### Install
 
 1. Use **Stock OS 64-bit MOD** with PortMaster installed (TF1).
-2. Unzip so `Gen2Recomped.sh` and the `gen2recomp/` folder sit in `roms/PORTS/`.
-3. Copy a legal US Pokemon Red or Blue `.gb` into `gen2recomp/lovegame/`.
+2. Unzip so `Gen2recomp.sh` and the `gen2recomp/` folder sit in `roms/PORTS/`.
+3. Copy a legal cartridge dump (`.gb` / `.gbc`) into `gen2recomp/lovegame/`.
 4. Refresh Ports / restart EmulationStation and launch **Gen2Recomped**.
 
 ### Controls (launcher)
@@ -306,14 +321,20 @@ TILT, ZOOM, VOID FILL and MAX FPS all work. To try it anyway, launch with
 
 ### First run
 
-Stock OS has no zenity file picker. Put the `.gb` in `lovegame/`, then press
+Stock OS has no zenity file picker. Put the cartridge dump in `lovegame/`, then press
 **Choose ROM** — the game scans that folder. After import, the ROM-derived
 cache and saves stay beside the game (`portable.txt`).
 
-Canonical SHA-1 (1 MiB US carts only):
+Accepted SHA-1s (the same gate `src/core/GameVersion.lua` applies, so this
+list and the game can never disagree — anything else is refused at import):
 
+- Gold: `d8b8a3600a465308c9953dfa04f0081c05bdcb94`
+- Silver: `49b163f7e57702bc939d642a18f591de55d92dae`
+- Crystal (Rev 1): `f2f52230b536214ef7c9924f483392993e226cfb`
+- Crystal (Rev 0): `f4cd194bdee0d04ca4eac29e09b8e4e9d818c133`
 - Red: `ea9bcae617fdf159b045185467ae58b2e4a48b9a`
 - Blue: `d7037c83e1ae5b39bde3c30787637ba1d4c48ce2`
+- Yellow: `cc7d03262ebfaf2f06772c1a480c7d9d5f4a38e1`
 
 ### Thanks
 
@@ -330,4 +351,4 @@ say "packing $ZIP_OUT"
 
 say "done."
 say "artifact: $ZIP_OUT ($(du -h "$ZIP_OUT" | cut -f1))"
-say "copy onto the RG34XXSP SD card under roms/PORTS/ (Stock OS 64-bit MOD), then drop your .gb into gen2recomp/lovegame/"
+say "copy onto the RG34XXSP SD card under roms/PORTS/ (Stock OS 64-bit MOD), then drop your .gb/.gbc into gen2recomp/lovegame/"

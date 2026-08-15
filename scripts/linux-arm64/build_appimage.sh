@@ -368,7 +368,7 @@ cp "$IN/icon.png" "$APPDIR/.DirIcon"
 cat > "$APPDIR/$APP_NAME.desktop" <<EOF
 [Desktop Entry]
 Type=Application
-Name=gen1recomp
+Name=gen2recomp
 Comment=Pokémon Gen 1 recompilation
 Exec=$APP_NAME
 Icon=$APP_NAME
@@ -382,7 +382,7 @@ EOF
 # through to LÖVE's "no game" screen.
 cat > "$APPDIR/AppRun" <<EOF
 #!/bin/sh
-# gen1recomp aarch64 AppImage launcher.
+# gen2recomp aarch64 AppImage launcher.
 
 if [ -z "\$APPDIR" ]; then
     APPDIR="\$(dirname "\$(readlink -f "\$0")")"

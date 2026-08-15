@@ -105,9 +105,9 @@ APPIMAGE_RUNTIME_SHA256="00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78
 # the aarch64 handheld distros. Building on a newer base would silently
 # restrict the artifact to that base and newer.
 BUILDER_BASE_IMAGE="debian:bullseye"
-BUILDER_IMAGE="${GEN1_LINUX_ARM64_IMAGE:-gen1recomp-linux-arm64-builder}"
+BUILDER_IMAGE="${GEN2_LINUX_ARM64_IMAGE:-Gen2Recomped-linux-arm64-builder}"
 
-APP_NAME="gen1recomp"
+APP_NAME="Gen2Recomped"
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
@@ -154,8 +154,8 @@ download_pinned() {
 
 # Echo the container runtime to use: docker, else podman.
 container_runtime() {
-  if [ -n "${GEN1_CONTAINER_RUNTIME:-}" ]; then
-    printf '%s' "$GEN1_CONTAINER_RUNTIME"
+  if [ -n "${GEN2_CONTAINER_RUNTIME:-}" ]; then
+    printf '%s' "$GEN2_CONTAINER_RUNTIME"
     return 0
   fi
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
@@ -176,7 +176,7 @@ docker or podman on an aarch64 host.
   Fedora / Asahi:                     sudo dnf install podman
   macOS (Apple Silicon):              brew install --cask docker
 
-Override the runtime with GEN1_CONTAINER_RUNTIME=podman.
+Override the runtime with GEN2_CONTAINER_RUNTIME=podman.
 See docs/linux-arm64-build.md.
 EOF
 )"
