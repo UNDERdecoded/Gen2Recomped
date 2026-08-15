@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a PortMaster-style aarch64 port of gen1recomp for Anbernic RG34XXSP
+# Build a PortMaster-style aarch64 port of gen2recomp for Anbernic RG34XXSP
 # on Stock OS 64-bit MOD (H700; cbepx-me StockOS MOD / official V1.0.6 base
 # + PortMaster).
 #
@@ -12,15 +12,15 @@
 #   ./build-rg34xxsp.sh [--version X.Y.Z]
 #
 # Output:
-#   dist/rg34xxsp/gen1recomp-rg34xxsp-stockos64-mod.zip
+#   dist/rg34xxsp/Gen2Recomped-rg34xxsp-stockos64-mod.zip
 #
 # Install on device:
 #   1. Flash / run Stock OS 64-bit MOD with PortMaster installed.
 #   2. Unzip into the SD card's roms/PORTS/ folder so you have:
-#        roms/PORTS/Gen1recomp.sh
-#        roms/PORTS/gen1recomp/...
-#   3. Copy a legal US Red or Blue .gb into roms/PORTS/gen1recomp/lovegame/
-#   4. Launch "Gen1recomp" from the Ports list; press Choose ROM (scans that
+#        roms/PORTS/Gen2Recomped.sh
+#        roms/PORTS/gen2recomp/...
+#   3. Copy a legal US Red or Blue .gb into roms/PORTS/gen2recomp/lovegame/
+#   4. Launch "Gen2Recomped" from the Ports list; press Choose ROM (scans that
 #      folder when zenity is missing).
 
 set -euo pipefail
@@ -31,13 +31,13 @@ CACHE="$HERE/cache/rg34xxsp"
 WORK="$HERE/work/rg34xxsp"
 DIST="$ROOT/dist/rg34xxsp"
 
-APP_NAME="gen1recomp"
+APP_NAME="gen2recomp"
 # Artifact suffix matches the CFW this port targets (Anbernic H700 Stock OS
 # 64-bit MOD for RG34XXSP). Release uploads stage it as
-# gen1recomp-<ver>-rg34xxsp-stockos64-mod.zip.
+# Gen2Recomped-<ver>-rg34xxsp-stockos64-mod.zip.
 ARTIFACT_SUFFIX="rg34xxsp-stockos64-mod"
-PORT_DIR_NAME="gen1recomp"
-LAUNCHER_NAME="Gen1recomp.sh"
+PORT_DIR_NAME="gen2recomp"
+LAUNCHER_NAME="Gen2Recomped.sh"
 LOVE_VERSION="11.5"
 VERSION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)"
 
@@ -161,7 +161,7 @@ EOF
 # casing and mount points (mmc / sdcard / TF1 / TF2).
 cat > "$PORT_ROOT/$LAUNCHER_NAME" <<'EOF'
 #!/bin/bash
-# gen1recomp — Anbernic RG34XXSP stock OS / PortMaster launcher
+# gen2recomp — Anbernic RG34XXSP stock OS / PortMaster launcher
 # Uses SHDIR-relative paths so stock firmware finds the game folder.
 
 export HOME="${HOME:-/root}"
@@ -189,7 +189,7 @@ source "$controlfolder/control.txt"
 get_controls
 [ -f "${controlfolder}/mod_${CFW_NAME}.txt" ] && source "${controlfolder}/mod_${CFW_NAME}.txt"
 
-GAMEDIR="$SHDIR/gen1recomp"
+GAMEDIR="$SHDIR/gen2recomp"
 CONFDIR="$GAMEDIR/conf"
 mkdir -p "$CONFDIR"
 
@@ -236,18 +236,18 @@ chmod +x "$PORT_ROOT/$LAUNCHER_NAME"
 cat > "$PORT_ROOT/port.json" <<EOF
 {
   "version": 2,
-  "name": "gen1recomp.zip",
+  "name": "gen2recomp.zip",
   "items": [
     "$LAUNCHER_NAME",
     "$PORT_DIR_NAME"
   ],
   "items_opt": null,
   "attr": {
-    "title": "gen1recomp",
+    "title": "gen2recomp",
     "desc": "Native LÖVE2D recreation of Pokemon Red and Blue. Supply your own legal US Red or Blue ROM.",
-    "inst": "Requires Anbernic RG34XXSP Stock OS 64-bit MOD with PortMaster. Copy a canonical US Red or Blue .gb into gen1recomp/lovegame/, then launch and press Choose ROM.",
+    "inst": "Requires Anbernic RG34XXSP Stock OS 64-bit MOD with PortMaster. Copy a canonical US Red or Blue .gb into gen2recomp/lovegame/, then launch and press Choose ROM.",
     "genres": ["adventure", "rpg"],
-    "porter": ["gen1recomp"],
+    "porter": ["gen2recomp"],
     "image": {},
     "rtr": true,
     "runtime": null,
@@ -262,28 +262,28 @@ cat > "$PORT_ROOT/gameinfo.xml" <<EOF
 <gameList>
   <game>
     <path>./$LAUNCHER_NAME</path>
-    <name>gen1recomp</name>
+    <name>gen2recomp</name>
     <desc>Native LÖVE2D recreation of Pokemon Red and Blue. Requires your own legal US Red or Blue ROM.</desc>
     <releasedate>20250101T000000</releasedate>
-    <developer>the bois club</developer>
-    <publisher>the bois club</publisher>
+    <developer>UNDERdecodedHD</developer>
+    <publisher>UNDERdecodedHD</publisher>
     <genre>RPG</genre>
   </game>
 </gameList>
 EOF
 
 cat > "$PORT_ROOT/README.md" <<'EOF'
-## gen1recomp (RG34XXSP / Stock OS 64-bit MOD)
+## gen2recomp (RG34XXSP / Stock OS 64-bit MOD)
 
-Native LÖVE 11.5 port of gen1recomp for Anbernic RG34XXSP on
+Native LÖVE 11.5 port of gen2recomp for Anbernic RG34XXSP on
 **Stock OS 64-bit MOD** (H700, PortMaster).
 
 ### Install
 
 1. Use **Stock OS 64-bit MOD** with PortMaster installed (TF1).
-2. Unzip so `Gen1recomp.sh` and the `gen1recomp/` folder sit in `roms/PORTS/`.
-3. Copy a legal US Pokemon Red or Blue `.gb` into `gen1recomp/lovegame/`.
-4. Refresh Ports / restart EmulationStation and launch **Gen1recomp**.
+2. Unzip so `Gen2Recomped.sh` and the `gen2recomp/` folder sit in `roms/PORTS/`.
+3. Copy a legal US Pokemon Red or Blue `.gb` into `gen2recomp/lovegame/`.
+4. Refresh Ports / restart EmulationStation and launch **Gen2Recomped**.
 
 ### Controls (launcher)
 
@@ -330,4 +330,4 @@ say "packing $ZIP_OUT"
 
 say "done."
 say "artifact: $ZIP_OUT ($(du -h "$ZIP_OUT" | cut -f1))"
-say "copy onto the RG34XXSP SD card under roms/PORTS/ (Stock OS 64-bit MOD), then drop your .gb into gen1recomp/lovegame/"
+say "copy onto the RG34XXSP SD card under roms/PORTS/ (Stock OS 64-bit MOD), then drop your .gb into gen2recomp/lovegame/"

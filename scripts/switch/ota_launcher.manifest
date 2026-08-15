@@ -1,0 +1,16 @@
+# Switch OTA launcher packaging manifest
+#
+# Release / SD tree MUST include the native OTA launcher NRO as the hbmenu
+# entrypoint. The LÖVE fused game NRO is loaded via envSetNextLoad after the
+# update check. Self-update of the launcher itself is out of scope for v1.
+#
+# OTA downloads the install zip.
+#
+# Paths relative to microSD root:
+
+ENTRY_NRO=switch/gen2recomp/gen2recomp.nro
+GAME_NRO=switch/gen2recomp/Gen2Recomped-game.nro
+SAVE_DIR=switch/gen2recomp/pokemon-love2d
+OTA_ASSET_GLOB=Gen2Recomped-*-switch.zip
+REQUIRE_SHA256SUMS=1
+OTA_ENABLED=1

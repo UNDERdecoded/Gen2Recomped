@@ -131,7 +131,7 @@ function SaveData.gameFolders()
   local src = love.filesystem.getSource and love.filesystem.getSource()
   local sbd = love.filesystem.getSourceBaseDirectory
     and love.filesystem.getSourceBaseDirectory()
-  -- A packaged macOS build nests the game inside gen1recomp.app/Contents/
+  -- A packaged macOS build nests the game inside Gen2Recomped.app/Contents/
   -- Resources, so getSource()/getSourceBaseDirectory() point INSIDE the
   -- bundle -- not where the player drops portable.txt (next to the .app).
   -- Recover the folder containing the .app so a packaged app finds its

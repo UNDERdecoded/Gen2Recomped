@@ -82,7 +82,24 @@ L.scall = function(ir, s)
   emit(s, { "label", ret })
 end
 L.farscall = L.scall
-L.sdefer = L.scall
+-- `sdefer` is NOT a call.  Script_sdefer parks the pointer and returns; the
+-- target runs once the current script has ended and the map is up, which is
+-- why every Battle Tower scene uses it -- `sdefer RideElevator / setscene 1 /
+-- end`.  Lowering it as an inline scall ran the cutscene from inside the
+-- map's onEnter, while the warp transition was still in flight and the
+-- objects it moves had not been placed, so the elevator's ride script queued
+-- movements on entities that were not there yet and the runner never
+-- finished: the player was left frozen in the elevator with no way out.
+--
+-- The overworld's own pending-script FIFO already has exactly these
+-- semantics -- it holds a script until the transition ends, the current
+-- runner is dead and no scripted walk is mid-step -- so hand it over rather
+-- than splicing the rows in here.
+L.sdefer = function(ir, s)
+  if type(ir[2]) == "string" and ir[2] ~= "" then
+    emit(s, { "g2_sdefer", ir[2] })
+  end
+end
 
 L.iftrue = function(ir, s)
   local to = branch(s, ir[2])
@@ -265,6 +282,10 @@ L.jumptextfaceplayer = function(ir, s)
   emit(s, { "show_text", ir[2] })
   emit(s, { "g2_return" })
 end
+-- Crystal's far-pointer jumptext: prints the line and ends the script, exactly
+-- like jumptext.  Unlowered, the eleven std scripts that use it -- the
+-- bookshelves, the signs, the trash can, the window -- printed nothing at all.
+L.farjumptext = L.jumptext
 -- yesorno reuses the box its writetext just opened, and ask() prints the
 -- prompt itself, so drop that row rather than showing the line twice.  Only
 -- the row immediately before is ours: a yesorno confirming an unported
@@ -481,6 +502,11 @@ L.pokemart = function(ir, s) emit(s, { "g2_mart", ir[3] }) end
 -- runs the armed menu and drops the 1-based choice (0 = cancelled) into the
 -- script var, which is what the prize counters branch on.
 L.elevator = function(ir, s) emit(s, { "g2_elevator", ir[2] }) end
+-- `trade <NPCTRADE_*>` -> Script_trade -> NPCTrade (3F:$4BA8).  This was never
+-- lowered, so every in-game trade NPC in Gen2 -- the ABRA man in Violet, the
+-- BELLSPROUT girl on Route 34, all seven of them -- ran a script whose only
+-- real command was skipped: no offer, no party menu, nothing said.
+L.trade = function(ir, s) emit(s, { "g2_trade", ir[2] }) end
 L.loadmenu = function(ir, s) emit(s, { "g2_loadmenu", ir[2] }) end
 -- `writecmdqueue <ptr>`: the extractor has already followed the queue entry
 -- and, when it is a CMDQUEUE_STONETABLE, turned it into the table's rows.
@@ -527,6 +553,22 @@ local SPECIALS = {
   -- own party, one out of the grass on the caller's route -- and leave its
   -- name in the string buffer the line splices back in.  Left unlowered, the
   -- "I caught a {mon}!" calls printed whatever the buffer last held.
+  -- The Ruins of Alph chamber walls.  `writetext <patterns appear> / setval n
+  -- / special DisplayUnownWords` -- with the special missing, the line printed
+  -- and the ancient writing it announces never appeared.
+  DisplayUnownWords = "g2_unown_wall",
+  DisplayUnownWordsSpecial = "g2_unown_wall",
+  -- The Day-Care man's Odd Egg.  His script prints the whole speech and then
+  -- runs this to actually hand it over; with no handler the player got the
+  -- text and an empty party slot.
+  GiveOddEgg = "g2_give_odd_egg",
+  GiveOddEggSpecial = "g2_give_odd_egg",
+  -- "are you carrying one of these that you raised yourself?" -- the whole of
+  -- ElmEggHatchedScript, and how he knows the EGG hatched.
+  FindPartyMonThatSpeciesYourTrainerID = "g2_find_party_species_own",
+  -- Mom's whole banking conversation lives in this one special; the script
+  -- branch around it has no writetext at all.
+  BankOfMom = "g2_bank_of_mom",
   RandomPhoneMon = "g2_random_phone_mon",
   RandomPhoneMonSpecial = "g2_random_phone_mon",
   RandomPhoneWildMon = "g2_random_phone_wild_mon",

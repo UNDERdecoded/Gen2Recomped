@@ -50,6 +50,15 @@ function TileRenderer.cycleVoidFill()
   return TileRenderer.voidFill
 end
 
+-- field.gen2TileAnim, handed over when a map's renderer is built (MapLoader
+-- has the dataset; this module does not).  Nil on Gen 1 and on any cache
+-- older than the one that started extracting TilesetTowerAnim.
+function TileRenderer.setTileAnim(spec)
+  if type(spec) == "table" and spec.tiles and spec.image then
+    TileRenderer.TILE_ANIM = spec
+  end
+end
+
 function TileRenderer.applyOptions(opts)
   TileRenderer.setVoidFill(opts and opts.voidFill or "trees")
 end
@@ -286,6 +295,64 @@ local function getToggleImage(spec, tilesetImagePath, perRow)
   return img
 end
 
+-- One atlas-SIZED texture per animation FRAME, transparent everywhere except
+-- the animated tiles, which are pasted in from a strip at their atlas cells.
+-- This is the toggle builder's trick applied to a sequence instead of a gate:
+-- because every frame keeps the atlas layout, the batch's existing per-tile
+-- quads stay valid and the draw path only has to swap the texture -- which is
+-- exactly what it already does for water.  Leaving the rest transparent (as
+-- opposed to cloning the atlas) means the overdraw can never repaint a
+-- neighboring tile, and it stays correct under the GBC atlas bake, where the
+-- static window is drawn from a recolored atlas this builder cannot see.
+--
+-- SPROUT TOWER's pillar needs this and the single-tile `frames` kind cannot
+-- give it: AnimateTowerPillarTile rewrites TEN different tiles in step, so a
+-- frame is ten tiles, not one.
+local atlasFrames = {}
+
+local function getAtlasFrames(spec, tilesetImagePath, perRow, colors, gbcKey,
+                              colorsFor)
+  local key = tilesetImagePath .. "#af#" .. tostring(spec.image) .. (gbcKey or "")
+  if atlasFrames[key] ~= nil then return atlasFrames[key] or nil end
+  local tiles, count = spec.tiles, spec.frames or 0
+  if not (love.image and love.image.newImageData) or not tiles or count < 1 then
+    atlasFrames[key] = false
+    return nil
+  end
+  local okStrip, strip = pcall(Assets.imageData, spec.image)
+  local okAtlas, atlas = pcall(Assets.imageData, tilesetImagePath)
+  if not (okStrip and strip and okAtlas and atlas) then
+    atlasFrames[key] = false
+    return nil
+  end
+  local aw, ah = atlas:getWidth(), atlas:getHeight()
+  local out = {}
+  for frame = 0, count - 1 do
+    local page = love.image.newImageData(aw, ah)
+    for column, id in ipairs(tiles) do
+      local sx, sy = (column - 1) * 8, frame * 8
+      local dx, dy = (id % perRow) * 8, math.floor(id / perRow) * 8
+      -- Gen2's palette byte is per TILE, and the pillar's ten tiles need not
+      -- share one, so ask per tile and only fall back to the entry's palette
+      local tint = colors
+      if colorsFor then tint = colorsFor(id) or colors end
+      if sx + 8 <= strip:getWidth() and sy + 8 <= strip:getHeight()
+         and dx + 8 <= aw and dy + 8 <= ah then
+        for y = 0, 7 do
+          for x = 0, 7 do
+            local r, g, b, a = strip:getPixel(sx + x, sy + y)
+            r, g, b, a = recolorSample(r, g, b, a, tint)
+            page:setPixel(dx + x, dy + y, r, g, b, a)
+          end
+        end
+      end
+    end
+    out[frame + 1] = love.graphics.newImage(page)
+  end
+  atlasFrames[key] = out
+  return out
+end
+
 -- a toggle entry names the predicate that decides whether its patch shows
 -- this frame; an unknown name (or none) is always on
 TileRenderer.GATES = {
@@ -317,6 +384,16 @@ function TileRenderer.defaultAnimatedTiles(tileset)
     out[#out + 1] = { tile = FLOWER_TILE, kind = "frames",
                       period = ANIM_PERIOD, images = FLOWER_IMAGES,
                       sequence = FLOWER_FRAMES }
+  end
+  -- field.gen2TileAnim: the Sprout / Tin Tower pillar, read off
+  -- TilesetTowerAnim.  Named by tileset so it only claims the tower set.
+  local pillar = TileRenderer.TILE_ANIM
+  if pillar and pillar.tileset and pillar.tiles
+     and (tileset.id == pillar.tileset or tileset.name == pillar.tileset) then
+    out[#out + 1] = { tiles = pillar.tiles, kind = "atlasframes",
+                      period = pillar.period or ANIM_PERIOD,
+                      image = pillar.image, frames = pillar.frames,
+                      sequence = pillar.sequence }
   end
   local spinners = TileRenderer.SPINNER_ARROW_TILES[tileset.id]
   if spinners then
@@ -377,6 +454,18 @@ local function buildAnim(spec, tilesetImagePath, perRow, quads, gbc)
     if not textures then return nil end
     return { tiles = tiles, textures = textures, sequence = sequence,
              period = period }
+  elseif spec.kind == "atlasframes" then
+    local sequence = spec.sequence
+    if not (sequence and #sequence > 0) then return nil end
+    local textures = getAtlasFrames(spec, tilesetImagePath, perRow, colors,
+                                    gbc and gbc.key, gbc and gbc.colorsFor)
+    if not textures then return nil end
+    -- each frame texture is atlas-sized, so a cell needs the quad of the tile
+    -- it stands in rather than a single-tile image (same as `toggle`); unlike
+    -- `toggle` it steps through a sequence rather than being gated
+    return { tiles = tiles, textures = textures, sequence = sequence,
+             period = period,
+             quadFor = function(tile) return quads[tile] end }
   elseif spec.kind == "toggle" then
     if gbc and gbc.groupColors then return nil end
     local image = getToggleImage(spec, tilesetImagePath, perRow)

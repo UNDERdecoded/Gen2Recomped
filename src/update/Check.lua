@@ -18,7 +18,7 @@
 
 local Check = {}
 
-Check.REPO = "UNDERdecoded/Gen2Recomped"
+Check.REPO = "UNDERdecodedHD/Gen2Recomped"
 
 local CMD = "update_check_cmd"
 local STATE = "update_check_state"
@@ -59,7 +59,7 @@ function Check.parseRelease(jsonText, Json)
   if not version:match("^%d+%.%d+%.%d+$") then
     return nil, "release tag is not X.Y.Z: " .. tostring(doc.tag_name)
   end
-  local payloadName = "gen1recomp-" .. version .. ".love"
+  local payloadName = "Gen2Recomped-" .. version .. ".love"
   return {
     version = version,
     payloadName = payloadName,
@@ -89,6 +89,27 @@ end
 
 function Check.releaseUrl()
   return "https://github.com/" .. Check.REPO .. "/releases/latest"
+end
+
+-- Can this build replace its own payload?
+--
+-- The download path writes the new .love next to the save directory and
+-- Boot.run chainloads it on the next launch (src/update/Boot.lua).  That only
+-- works where the shell is free to mount an arbitrary file at startup.  On the
+-- Switch the payload is fused into the NRO, and an Xbox UWP package is a
+-- signed, read-only app container -- neither can pick up a downloaded archive,
+-- so those builds CHECK and REPORT but never download.  The UI still has
+-- Check.state().latest and Check.releaseUrl() to point the player at.
+--
+-- love._os cannot tell a UWP package apart from a desktop Windows build (both
+-- report "Windows"), so the console packagers set the global below from their
+-- own bootstrap; the Switch is recognised outright.
+local NOTIFY_ONLY_OS = { Horizon = true, NX = true, Switch = true }
+
+function Check.canSelfUpdate()
+  if _G.POKEPORT_NOTIFY_ONLY_UPDATES then return false end
+  local host = (love and love._os) or ""
+  return not NOTIFY_ONLY_OS[host]
 end
 
 local worker           -- the love.thread, once started
@@ -169,6 +190,9 @@ end
 function Check.download()
   drain()
   if not cmdCh then return end
+  -- Notify-only platforms never start a transfer; the check result stands as
+  -- the whole feature there (see Check.canSelfUpdate).
+  if not Check.canSelfUpdate() then return end
   if cache.status ~= "available" then return end
   cache = { status = "downloading", latest = cache.latest, progress = 0 }
   cmdCh:push({ cmd = "download" })

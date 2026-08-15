@@ -129,10 +129,34 @@ OverworldState.objectToggleKey = objectToggleKey
 -- MAPOBJECT_TIMEOFDAY bits, matching the ROM's MORN/DAY/NITE order.
 local TOD_BITS = { MORNING = 1, MORN = 1, DAY = 2, NIGHT = 4, NITE = 4 }
 
+-- The period the CURRENTLY LOADED map's objects were filtered against.
+--
+-- LoadObjectMasks (09:$454F) walks wMapObjects once, calling GetObjectTimeMask
+-- on each, and it has exactly ONE caller in the whole ROM: LoadMapObjects
+-- (05:$54DD).  So the time-of-day mask is evaluated at MAP LOAD and never
+-- again -- an NPC you can see does not vanish because the clock rolled over
+-- while you were standing there; the set changes the next time you walk in.
+--
+-- Reading the live clock (or self.tod, which the draw pass refreshes) here
+-- broke that.  setMap spawns against the period at load; the clock then moves
+-- on its own; and the next thing to re-run this filter -- syncObjectVisibility,
+-- which fires whenever a Gen2 script finishes, i.e. the after-battle script of
+-- the trainer you just beat -- culled every NPC whose MAPOBJECT_TIMEOFDAY byte
+-- had gone out of period.  That is the "NPCs are sometimes invisible after I
+-- defeat a trainer" report: the trainer is a coincidence, the clock is the
+-- cause, and the NPCs that went were the time-gated ones.
+--
+-- self.tod is also nil for the whole boot/continue spawn pass (it is only ever
+-- assigned inside timeOfDay(), which enter() reaches after setMap), so a save
+-- continued at night used to come up with the DAY set on its first map.
+local function objectTimeOfDay()
+  local ow = Game and Game.overworld
+  return (ow and (ow.objectTod or ow.tod)) or "DAY"
+end
+
 local function objectInTimeOfDay(obj)
   if not obj.timeOfDay then return true end
-  local tod = Game and Game.overworld and Game.overworld.tod or "DAY"
-  local bit = TOD_BITS[tod] or TOD_BITS.DAY
+  local bit = TOD_BITS[objectTimeOfDay()] or TOD_BITS.DAY
   return math.floor(obj.timeOfDay / bit) % 2 == 1
 end
 
@@ -150,6 +174,23 @@ local function objectVisible(save, mapId, obj)
   local visible = not obj.hidden
   if toggleKey and toggles[toggleKey] ~= nil then
     visible = toggles[toggleKey]
+  end
+  -- Gen2's `disappear`/`appear` last only as long as the map is loaded.  They
+  -- write the object struct, and every map load rebuilds those structs from
+  -- the map's own object_events -- so an object with no event flag is back the
+  -- next time you walk in.  A script that means "gone for good" pairs the
+  -- disappear with a `setevent` on the object's OWN flag, which is the branch
+  -- below.
+  --
+  -- Recording them in save.objectToggles instead made every one permanent.
+  -- Script_WalkToBattleTowerElevator is `follow 2, 0 / applymovement 2 /
+  -- disappear 2` -- the Battle Tower receptionist walking you into the lift --
+  -- and she has no event flag, so once she had shown you in she was gone from
+  -- the lobby desk for the rest of the save.
+  local session = save.g2ObjectToggles
+  if toggleKey and type(session) == "table" and session.mapId == mapId
+     and session[toggleKey] ~= nil then
+    visible = session[toggleKey]
   end
   -- Gen2 object_events carry an event flag; the ROM hides the object while
   -- that flag is set (the Elm's Lab officer, the Cherrygrove rival, ...).
@@ -457,6 +498,26 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     self.npcResumeCell = nil
   end
   self.npcs = {}
+  -- LoadMapObjects is where the ROM evaluates the time-of-day mask, and the
+  -- only place it does (LoadObjectMasks has one caller) -- so pin the period
+  -- here and let every later filter run answer to THIS value rather than to
+  -- the clock, which keeps moving.  See objectInTimeOfDay.
+  --
+  -- Read from the clock rather than self.tod: on the boot/continue path
+  -- timeOfDay() has not run yet and self.tod is still nil.
+  local clock = GameVersion.isGen2() and OverworldState.clockTimeOfDay or nil
+  self.objectTod = (clock and clock()) or self.tod or "DAY"
+  -- Gen2's `disappear`/`appear` write the object struct, and LoadMapObjects
+  -- rebuilds every struct from the map's own object_events -- so a `disappear`
+  -- that was not paired with a `setevent` is undone by walking back in.  The
+  -- scratch table is keyed by the map it was written on, which made it inert
+  -- while you were away and live again the moment you returned: an NPC a
+  -- script had walked off stayed gone for the rest of the save.  An internal
+  -- reload (a palette/tod atlas rebuild, a `refreshmap`) is not a map load and
+  -- must not undo one.
+  if not (opts and opts.via == "reload") then
+    Game.save.g2ObjectToggles = nil
+  end
   -- MAPCALLBACK_OBJECTS: ROUTE_34 and DAY_CARE both re-derive their day-care
   -- sprite events from the engine flags every time the map is set up
   if GameVersion.isGen2() and (mapId == "ROUTE_34" or mapId == "DAY_CARE") then
@@ -703,6 +764,10 @@ local function clockTimeOfDay()
   if hour < 18 then return "DAY" end
   return "NITE"
 end
+-- Exposed on the module: the object filter is defined ABOVE this local and so
+-- cannot see it, and both it and setMap need the raw clock rather than the
+-- cached self.tod (see objectInTimeOfDay / the objectTod freeze in setMap).
+OverworldState.clockTimeOfDay = clockTimeOfDay
 
 -- world.tod default: the Gen 2 clock, or always DAY on Gen 1.  A mod returns
 -- "NIGHT", "MORNING", etc.; the result is cached on the overworld and handed
@@ -4218,6 +4283,15 @@ function OverworldState:stepEggs()
   hatched.nickname = nil
   hatched.happiness = 120  -- BaseHappiness after HatchEggs
   Pokemon.heal(hatched)
+  -- HatchEggs (5:$6FB0) is `ld a, [wCurPartySpecies] / cp TOGEPI / jr nz,
+  -- .nottogepi / ld de, $0054 / ld b, 1 / EventFlagAction` -- hatching a
+  -- TOGEPI, and only a TOGEPI, sets EVENT_TOGEPI_HATCHED.  That is the flag
+  -- ElmPhoneCalleeScript tests (`checkevent $2D / iffalse .next / checkevent
+  -- $54 / iftrue .egghatched`), so without it ringing Elm after the EGG
+  -- hatched could never reach ElmPhoneEggHatchedText.
+  if hatched.species == "SPECIES_175" and Game.save.flags then
+    Game.save.flags[require("src.script.Gen2Flags").eventFlag(0x54)] = true
+  end
   local name = def and def.name or hatched.species
   Game.stack:push(TextBox.new(Game,
     Strings("Huh?\f%s hatched\nfrom the EGG!", name),
@@ -4267,9 +4341,30 @@ function OverworldState:onStepComplete()
   -- Route 22 Gate rewrites LAST_MAP by Y before warps/guards fire
   self:syncLastMapRewrite()
 
+  -- A warp square outranks a step trigger standing on it.  CheckTileEvent
+  -- (25:$6874) is `CheckWarpTile / jr c, .warp_tile` FIRST and only then
+  -- `CheckCoordEventsEnabled / CheckCurrentMapCoordEvents`, so a coord_event
+  -- sharing a cell with a warp never gets to eat the exit.
+  --
+  -- Goldenrod Pokecenter 1F is where that bites: its two coord_events sit on
+  -- (3,7) and (4,7), which ARE the two exit carpets (collision $70).  Running
+  -- the trigger first and returning meant the door never fired, so the player
+  -- walked in and could not walk back out.  The trigger itself is the mobile
+  -- Battle Tower one -- `setval 11 / special BattleTowerAction / ifequal 11 /
+  -- end` -- which does nothing at all without a link cable.
+  local warpFirst = nil
+  do
+    local entryCell = self.warpEntryCell
+    local onEntryCell = entryCell
+      and entryCell.x == p.cellX and entryCell.y == p.cellY
+    if not onEntryCell then
+      warpFirst = Warp.onArrive(self.map, p.cellX, p.cellY)
+    end
+  end
+
   -- hand-ported step triggers (Pallet intro, Saffron gate guards, ...)
   local hooks = mapScripts.get(self.map.id)
-  if hooks and hooks.onStep then
+  if not warpFirst and hooks and hooks.onStep then
     if hooks.onStep(Game, self, p.cellX, p.cellY) then
       return
     end
@@ -4780,6 +4875,12 @@ function OverworldState:afterBattle(result, battle)
       and self.map and self.map.id == "OAKS_LAB"
     if oaksLabRival then
       -- stay in the lab; OaksLabRivalEndBattleScript heals and continues
+      evolutions()
+      return
+    end
+    -- BATTLETYPE_CANLOSE: the Battle Tower ends the challenge and warps the
+    -- player back to its own lobby, with no blackout and no money lost.
+    if battle and battle.canLose then
       evolutions()
       return
     end

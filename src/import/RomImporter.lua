@@ -192,7 +192,61 @@ end
 --      map you are on, and RandomPhoneWildMon (0A:$651F) reads that map's
 --      grass table for the species its line names.  A v62 cache has neither,
 --      so no trainer can ring in and the wild-mon lines have no species.
-local CACHE_FORMAT = "rom-cache-v63:"
+-- v64: field.gen2Trades -- the seven in-game trades.  NPCTrades (3F:$4E58) is
+--      seven 32-byte rows (dialog set, the species wanted, the species given,
+--      the nickname, the DVs, the OT id and name, the gender required), and
+--      TradeTexts (3F:$4F53) is the five kinds of line times four dialog sets
+--      that PrintTradeText indexes.  A v63 cache has none of it, so the
+--      `trade` script command -- which was not lowered either -- had nothing
+--      to work from and every trade NPC in the game stood silent.
+-- v65: three more Gold-shaped or byte-order faults, all in the extractor.
+--      * StdScripts was walked as 46 rows, which is GOLD's count.  Crystal has
+--        FIFTY-TWO, and the six it adds -- GymStatue2Script, ReceiveItemScript,
+--        ReceiveTogepiEggScript, PCScript, GameCornerCoinVendorScript and
+--        HappinessCheckScript -- were dropped, so a `jumpstd` to any of them
+--        ran nothing.  The count now comes off the table's own first pointer.
+--      * `farjumptext`'s operand was typed as a far SCRIPT pointer, so the
+--        extractor disassembled the text as bytecode and the operand came out
+--        as a script label.  Every bookshelf, sign, window and trash can in
+--        Crystal reaches its line through one of those eleven std scripts.
+--      * Battle Tower opponents' stat blocks were read one 16-bit field early
+--        AND little-endian, so the first L10 opponent had 10496 HP and 6400
+--        defense instead of 41 and 24 -- nothing the player did could dent it.
+-- v66: field.gen2UnownWalls -- the four words carved into the Ruins of Alph
+--      chamber walls.  UnownWalls (22:$6EBC) is four $FF-terminated runs of
+--      tile ids and MenuHeaders_UnownWalls (22:$6ED5) is the window each one
+--      opens in; DisplayUnownWords, the special the wall scripts run right
+--      after "Patterns appear on the wall!", had neither, so the line printed
+--      and the writing it announces never appeared.
+-- v67: field.gen2OddEggs -- Crystal's fourteen Odd Eggs.  OddEggs (7E:$756E)
+--      is fourteen 59-byte records in the battle_tower_mon shape (a 48 byte
+--      party_struct then an 11 byte "EGG"), seven species listed twice with
+--      the second of each pair carrying the shiny DV pair, and
+--      OddEggProbabilities (7E:$7552) is the fourteen cumulative thresholds
+--      _GiveOddEgg rolls a 16-bit Random against.  Neither was extracted and
+--      `special GiveOddEgg` had no handler, so the DAY-CARE MAN gave his whole
+--      speech and the egg never arrived.
+-- v68: two corrections and one addition.
+--      * MenuHeaders_UnownWalls is Y FIRST.  Word 0's row is $40 $04 $03 $09
+--        $10, and only y1 4 / x1 3 / y2 9 / x2 16 gives a window wide enough
+--        for six two-tile glyphs -- which is what _CopyWord wants, since its
+--        loop ends each glyph with `inc hl / inc hl`, two COLUMNS.  Read the
+--        other way round the wall writing came out as a totem pole.
+--      * field.gen2MomBank -- Mom's thirteen banking lines.  MomScript's
+--        `checkevent $40` branch is `setevent $40 / special BankOfMom /
+--        waitbutton / closetext / end` with no writetext in it at all, so
+--        without the special AND its text she simply said nothing.
+-- v69: field.gen2TileAnim -- SPROUT TOWER's swaying pillar.  TilesetTowerAnim
+--      (3F:$427F) is ten `dw <ptr>, AnimateTowerPillarTile` rows and each ptr
+--      is `dw <VRAM dest>, dw <frames>`, so one animation step rewrites TEN
+--      tiles at once ($5D $5F $4D $4F $3C $2C $3D $3F $2D $2F).  The routine
+--      (3F:$4645) takes `wTileAnimationTimer & 7` through the offset table
+--      0, 16, 32, 48, 64, 48, 32, 16 -- five 16-byte frames played
+--      1 2 3 4 5 4 3 2, the sway going out and coming back again.  Extracted
+--      as one 80x40 strip (ten columns, five rows) to
+--      assets/generated/tilesets/towerpillar.png.  Nothing read that table
+--      before, so the tower's central support stood perfectly still.
+local CACHE_FORMAT = "rom-cache-v69:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
@@ -204,8 +258,8 @@ local function markerFor(version)
 end
 local COMMUNITY_URL = "https://bois.icu"
 local UD_URL = "https://discord.gg/4VXnEnePT"
-local TRUST_WARNING = "if you did not get this from bryanthaboi's github " ..
-  "or a link from the discord that bryanthaboi himself posted, just know " ..
+local TRUST_WARNING = "if you did not get this from UNDERdecodedHD's github " ..
+  "or a link from the discord that UNDERdecodedHD himself posted, just know " ..
   "it might have been tampered with. go to the discord to verify " ..
   COMMUNITY_URL .. " (or click the logo above)"
 local REQUIRED_FILES_GEN1 = {

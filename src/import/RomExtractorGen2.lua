@@ -4304,13 +4304,26 @@ end
 -- Pokecenter nurse, bookshelves, the PC, radio, ...  Nothing else queues them
 -- because they hang off no map header, so `jumpstd pokecenternurse` used to
 -- lower to a dropped stub and talking to a nurse did nothing.
-local GEN2_STD_SCRIPT_COUNT = 46   -- 0..45; row 46 points outside the ROM
+-- The table's own first pointer closes it -- StdScripts is at 47:$4000 and its
+-- row 0 points at 47:$409C, so the rows fill exactly $9C bytes.  This used to
+-- be a hardcoded 46, which is GOLD's count: Crystal has FIFTY-TWO, and the six
+-- it adds are GymStatue2Script, ReceiveItemScript, ReceiveTogepiEggScript,
+-- PCScript, GameCornerCoinVendorScript and HappinessCheckScript.  All six were
+-- dropped, so `jumpstd` to any of them ran nothing at all -- the Goldenrod
+-- Game Corner coin vendor stood silent, and so did every in-house PC.
+local GEN2_STD_SCRIPT_MAX = 64
 
 function RomExtractorGen2:gen2QueueStdScripts(pool)
   local sym = self:symbol("StdScripts")
   if not sym or not self.rom then return nil end
+  local count = GEN2_STD_SCRIPT_MAX
+  pcall(function()
+    local first = self.rom:word(sym.bank, sym.address + 1)
+    local rows = math.floor((first - sym.address) / 3)
+    if rows > 0 and rows <= GEN2_STD_SCRIPT_MAX then count = rows end
+  end)
   local out = {}
-  for index = 0, GEN2_STD_SCRIPT_COUNT - 1 do
+  for index = 0, count - 1 do
     pcall(function()
       local row = sym.address + index * 3
       local bank = self.rom:byte(sym.bank, row)
@@ -6719,6 +6732,276 @@ end
 --
 -- Gold and Crystal carry byte-identical tables; only the addresses differ, and
 -- both are resolved through symbols.
+-- The seven in-game trades (NPCTrades, crystal 3F:$4E58).
+--
+-- GetTradeAttr (3F:$4DC2) is `a = index & $0F / swap a / hl = NPCTrades +
+-- 2*a + e`, so the stride is THIRTY-TWO bytes and every field is named by the
+-- offset the engine asks for.  The offsets below are the ones NPCTrade,
+-- DoNPCTrade and GetTradeMonNames actually pass in `e`, not a guess at the
+-- macro:
+--
+--   0   dialog set        (Trade_GetDialog, 3F:$4C59)
+--   1   the species the player must hand over  (NPCTrade compares it against
+--       wCurPartySpecies)
+--   2   the species the NPC gives back
+--   3   nickname, 11 bytes                     (`ld e, $03`)
+--   14  the two DV bytes                       (`ld e, $0E`)
+--   17  the OT ID, two bytes                   (`ld e, $11`, copied with
+--       Trade_CopyTwoBytesReverseEndian into the mon's big-endian ID field,
+--       so the table itself holds it low byte first)
+--   19  OT name, 11 bytes                      (`ld e, $13`)
+--   30  the gender the offered mon must be     (`ld e, $1E`; 0 either,
+--       1 male, 2 female -- only DORIS the DODRIO asks)
+--
+-- PrintTradeText (3F:$4F38) indexes TradeTexts (3F:$4F53) as `kind * 8 +
+-- dialogSet * 2`: five kinds of line -- offer, declined, wrong mon, thanks,
+-- already traded -- times four dialog sets, which is exactly the 40 bytes
+-- between it and NPCTradeCableText.
+-- The four Unown words carved into the Ruins of Alph chamber walls.
+--
+-- Each wall script is `writetext <patterns appear> / setval <n> / special
+-- DisplayUnownWords`, and that special (22:$6E68) is the whole picture: it
+-- opens the window MenuHeaders_UnownWalls (22:$6ED5) names for word n -- five
+-- bytes, `db flags` then `menu_coords x1, y1, x2, y2` -- and copies the word
+-- out of UnownWalls (22:$6EBC), four $FF-terminated runs of tile ids.
+--
+-- A glyph is a 2x2 block of the CHAMBER'S OWN tileset, and _CopyWord's
+-- ConvertChar builds it from the run's byte `a` as `a, a+1` over `a+$10,
+-- a+$10+1`.  Three ids are not glyph bases at all and are spelled out
+-- literally: $60 is Y ($5B $5C over $4D $5D), $62 is Z ($4E $4F over $5E $5F)
+-- and $64 is the dash ($02 $03 over $03 $02).
+function RomExtractorGen2:gen2UnownWalls()
+  local sym = self:symbol("UnownWalls")
+  local boxSym = self:symbol("MenuHeaders_UnownWalls")
+  if not (sym and boxSym and self.rom) then return nil end
+  local out = { words = {}, boxes = {} }
+  local ok = pcall(function()
+    local at = sym.address
+    for word = 1, 4 do
+      local ids = {}
+      for _ = 1, 16 do
+        local id = self.rom:byte(sym.bank, at)
+        at = at + 1
+        if id == 0xFF then break end
+        ids[#ids + 1] = id
+      end
+      out.words[word] = ids
+      -- `db flags` then the four coords, and they are Y FIRST: word 0's row is
+      -- $40 $04 $03 $09 $10, which as (y1 3, x1 4... ) would be a 6x14 slot --
+      -- far too narrow for six two-tile glyphs.  Read as y1 4, x1 3, y2 9,
+      -- x2 16 it is a 14x6 window, which is exactly six glyphs wide and one
+      -- glyph tall, and that matches _CopyWord advancing hl by two COLUMNS per
+      -- glyph.
+      local row = boxSym.address + (word - 1) * 5
+      out.boxes[word] = {
+        y1 = self.rom:byte(boxSym.bank, row + 1),
+        x1 = self.rom:byte(boxSym.bank, row + 2),
+        y2 = self.rom:byte(boxSym.bank, row + 3),
+        x2 = self.rom:byte(boxSym.bank, row + 4),
+      }
+    end
+  end)
+  if not ok or not (out.words[1] and out.words[1][1]) then return nil end
+  return out
+end
+
+-- Crystal's fourteen Odd Eggs (OddEggs 7E:$756E, OddEggProbabilities
+-- 7E:$7552).  _GiveOddEgg (7E:$74B6) rolls a 16-bit Random and walks the
+-- probability list until one is not below it, then copies that record over.
+--
+-- A record is 59 bytes, the same battle_tower_mon shape: a 48 byte
+-- party_struct then an 11 byte nickname ("EGG").  Seven species, each listed
+-- twice -- the second of every pair carries the shiny DV pair $2A/$AA, which
+-- is the whole point of the Odd Egg.
+function RomExtractorGen2:gen2OddEggs()
+  local sym = self:symbol("OddEggs")
+  local probSym = self:symbol("OddEggProbabilities")
+  if not (sym and probSym and self.rom) then return nil end
+  local COUNT, ROW = 14, 59
+  local out = { probabilities = {}, eggs = {} }
+  local moveOrder = (self:constants() or {}).moveOrder or {}
+  local ok = pcall(function()
+    for i = 0, COUNT - 1 do
+      out.probabilities[i + 1] =
+        self.rom:word(probSym.bank, probSym.address + i * 2)
+      local row = self.rom:bytes(sym.bank, sym.address + i * ROW, ROW)
+      local moves = {}
+      for m = 0, 3 do
+        local id = row[3 + m]
+        if id > 0 then
+          moves[#moves + 1] = moveOrder[id] or string.format("MOVE_%03d", id)
+        end
+      end
+      out.eggs[i + 1] = {
+        species = string.format("SPECIES_%03d", row[1]),
+        item = row[2] > 0 and string.format("ITEM_%03d", row[2]) or nil,
+        moves = #moves > 0 and moves or nil,
+        dvs = { row[22], row[23] },
+        happiness = row[28],
+        level = row[32],
+      }
+    end
+  end)
+  if not ok or not out.eggs[1] then return nil end
+  return out
+end
+
+-- The Bank of Mom.  MomScript's `checkevent $40 / iftrue .BankOfMom` branch is
+-- `setevent $40 / special BankOfMom / waitbutton / closetext / end` -- there is
+-- no writetext anywhere in it, because the entire conversation lives inside
+-- that special (5:$6218), a jumptable over IsThisAboutYourMoney,
+-- StopOrStartSavingMoney, StoreMoney, TakeMoney and their refusals.  With no
+-- handler the branch ran and printed nothing, which is why Mom went silent the
+-- moment the banking talk unlocked.
+--
+-- Only her lines are read here; the flow itself is in Gen2Commands.
+-- SPROUT TOWER's swaying pillar.
+--
+-- TilesetTowerAnim (3F:$4297) is ten rows of `dw <dest>, AnimateTowerPillarTile`
+-- and each dest is a `dw <VRAM address>, dw <frame block>` pair, so ten of the
+-- tileset's tiles are re-written every animation step.  The routine (3F:$4645)
+-- reads `wTileAnimationTimer & 7`, indexes TowerPillarTileFrameOffsets --
+-- 0, 16, 32, 48, 64, 48, 32, 16 -- and copies the 16 bytes at that offset into
+-- VRAM: five distinct frames played 0 1 2 3 4 3 2 1, which is the sway going
+-- out and coming back.
+--
+-- Written out as one strip, ten columns (one per animated tile, in the order
+-- the runtime lists them) by five rows (one per frame), because the renderer
+-- patches whole-atlas clones from it.
+function RomExtractorGen2:gen2TowerPillarAnim()
+  local sym = self:symbol("TilesetTowerAnim")
+  if not (sym and self.rom) then return nil end
+  local FRAMES, COUNT = 5, 10
+  local tiles, raw = {}, {}
+  local ok = pcall(function()
+    for row = 0, COUNT - 1 do
+      local entry = self.rom:word(sym.bank, sym.address + row * 4)
+      -- `dw dest, dw src`: dest is the VRAM address, and vTiles2 is $9000, so
+      -- the tile id is the offset from there in 16-byte units
+      local dest = self.rom:word(sym.bank, entry)
+      local src = self.rom:word(sym.bank, entry + 2)
+      tiles[row + 1] = math.floor((dest - 0x9000) / 16)
+      for frame = 0, FRAMES - 1 do
+        raw[frame + 1] = raw[frame + 1] or {}
+        local at = src + frame * 16
+        for byte = 0, 15 do
+          raw[frame + 1][row * 16 + byte + 1] = self.rom:byte(sym.bank, at + byte)
+        end
+      end
+    end
+  end)
+  if not ok or not tiles[COUNT] then return nil end
+  -- one 80x40 sheet: the frames stack, so row f column i is tile i at frame f
+  local flat = {}
+  for frame = 1, FRAMES do
+    for i = 1, COUNT * 16 do flat[#flat + 1] = raw[frame][i] end
+  end
+  -- no matte: these are background tiles, written exactly like the tileset
+  -- atlas itself, so the overdraw fully replaces the static tile underneath
+  local okImage = pcall(function()
+    self:saveImage(ImageWriter.decode2bpp(flat, COUNT * 8, FRAMES * 8),
+                   "tilesets/towerpillar.png")
+  end)
+  if not okImage then return nil end
+  return {
+    tileset = "TilesetTower",
+    image = "assets/generated/tilesets/towerpillar.png",
+    tiles = tiles,
+    frames = FRAMES,
+    -- TowerPillarTileFrameOffsets, as 1-based frame numbers
+    sequence = { 1, 2, 3, 4, 5, 4, 3, 2 },
+  }
+end
+
+function RomExtractorGen2:gen2MomBank()
+  local charmap = self:readSourceTable("charmap")
+  local wanted = {
+    isThisAboutYourMoney = "_MomIsThisAboutYourMoneyText",
+    whatDoYouWantToDo = "_MomBankWhatDoYouWantToDoText",
+    saveMoney = "_MomSaveMoneyText",
+    startSavingMoney = "_MomStartSavingMoneyText",
+    storeMoney = "_MomStoreMoneyText",
+    takeMoney = "_MomTakeMoneyText",
+    storedMoney = "_MomStoredMoneyText",
+    takenMoney = "_MomTakenMoneyText",
+    insufficientFundsInWallet = "_MomInsufficientFundsInWalletText",
+    notEnoughRoomInBank = "_MomNotEnoughRoomInBankText",
+    haventSavedThatMuch = "_MomHaventSavedThatMuchText",
+    notEnoughRoomInWallet = "_MomNotEnoughRoomInWalletText",
+    justDoWhatYouCan = "_MomJustDoWhatYouCanText",
+  }
+  local out = {}
+  for key, symbolName in pairs(wanted) do
+    local sym = self:symbol(symbolName)
+    if sym then
+      local ok, text = pcall(self.decodeGen2TextAt, self,
+                             sym.bank, sym.address, charmap, true)
+      if ok and type(text) == "string" and text ~= "" then out[key] = text end
+    end
+  end
+  if not out.isThisAboutYourMoney then return nil end
+  return out
+end
+
+function RomExtractorGen2:gen2NpcTrades()
+  local sym = self:symbol("NPCTrades")
+  if not (sym and self.rom) then return nil end
+  -- kept function-local: RomExtractorGen2.lua sits one slot under Lua's
+  -- 200-locals-per-chunk ceiling, so nothing new may go at file scope
+  local ROW_BYTES, COUNT, DIALOG_SETS = 32, 7, 4
+  local TEXT_KINDS = { "offer", "declined", "wrongMon", "thanks", "afterTrade" }
+  -- TradeTexts closes the table, and the two ROMs do not agree on its length:
+  -- Crystal has seven trades, Gold six (it has no HAUNTER/XATU row and swaps
+  -- ABRA for DROWZEE), so size it off the symbol rather than a constant.
+  local textSym = self:symbol("TradeTexts")
+  if textSym and textSym.bank == sym.bank and textSym.address > sym.address then
+    COUNT = math.min(COUNT,
+      math.floor((textSym.address - sym.address) / ROW_BYTES))
+  end
+  local charmap = self:readSourceTable("charmap")
+  local out = { trades = {}, texts = {} }
+  local ok = pcall(function()
+    for index = 0, COUNT - 1 do
+      local at = sym.address + index * ROW_BYTES
+      local row = self.rom:bytes(sym.bank, at, ROW_BYTES)
+      -- 1-based, as self.rom:bytes hands the row back
+      out.trades[index + 1] = {
+        dialog = row[1],
+        give = string.format("SPECIES_%03d", row[2]),
+        get = string.format("SPECIES_%03d", row[3]),
+        nickname = gen2DecodeString(self.rom:bytes(sym.bank, at + 3, 11), 11),
+        dvs = { row[15], row[16] },
+        otId = row[18] + row[19] * 256,
+        ot = gen2DecodeString(self.rom:bytes(sym.bank, at + 19, 11), 11),
+        gender = row[31],
+      }
+    end
+    if textSym then
+      for kind, name in ipairs(TEXT_KINDS) do
+        local lines = {}
+        for set = 0, DIALOG_SETS - 1 do
+          local pointer = self.rom:word(textSym.bank,
+            textSym.address + (kind - 1) * DIALOG_SETS * 2 + set * 2)
+          local text = self:decodeGen2TextAt(textSym.bank, pointer, charmap, true)
+          lines[set + 1] = type(text) == "string" and text or ""
+        end
+        out.texts[name] = lines
+      end
+    end
+    -- The two lines that are the same whoever you are trading with.
+    for key, symbolName in pairs({ cable = "NPCTradeCableText",
+                                   tradedFor = "TradedForText" }) do
+      local one = self:symbol(symbolName)
+      if one then
+        local text = self:decodeGen2TextAt(one.bank, one.address, charmap, true)
+        if type(text) == "string" then out.texts[key] = text end
+      end
+    end
+  end)
+  if not ok or not out.trades[1] then return nil end
+  return out
+end
+
 function RomExtractorGen2:gen2BugContest()
   local monsSym = self:symbol("ContestMons")
   local listSym = self:symbol("BugContestantPointers")
@@ -6897,15 +7180,24 @@ function RomExtractorGen2:gen2BattleTower()
             hp = word(12), attack = word(14), defense = word(16),
             speed = word(18), special = word(20),
           },
-          -- The party_struct's own stat block, at offsets 34..47.  These are
-          -- used verbatim rather than recomputed: CalcMonStats floors the
-          -- stat-exp square root and Stats.calc ceilings it, which disagrees
-          -- by one point on 117 of the 210 records, and an opponent that is
-          -- one point off is not the opponent the cartridge sends out.
+          -- The party_struct's own stat block.  These are used verbatim rather
+          -- than recomputed: CalcMonStats floors the stat-exp square root and
+          -- Stats.calc ceilings it, which disagrees by one point on 117 of the
+          -- 210 records, and an opponent that is one point off is not the
+          -- opponent the cartridge sends out.
+          --
+          -- The block runs `status, unused, curHP, maxHP, atk, def, spd, satk,
+          -- sdef` from byte 32 of the party_struct, so maxHP is 0-based offset
+          -- 36 -- record[37] here, because self.rom:bytes hands the record back
+          -- ONE-BASED.  Reading it as record[36] took the low half of curHP and
+          -- the high half of maxHP, and every stat after it was skewed the same
+          -- way: the first L10 opponent came out with 10496 HP and 6400
+          -- defense instead of 41 and 24, so nothing the player did to a
+          -- Battle Tower opponent could dent it.
           stats = {
-            hp = word(36), attack = word(38), defense = word(40),
-            speed = word(42), spatk = word(44), spdef = word(46),
-            special = word(44),
+            hp = word(37), attack = word(39), defense = word(41),
+            speed = word(43), spatk = word(45), spdef = word(47),
+            special = word(45),
           },
           happiness = record[28],
         }
@@ -7584,6 +7876,12 @@ function RomExtractorGen2:extractField()
     src.gen2DarkMaps = self:gen2DarkMaps() or src.gen2DarkMaps
     src.gen2TreeMons = self:gen2TreeMons() or src.gen2TreeMons
     src.gen2BugContest = self:gen2BugContest() or src.gen2BugContest
+    src.gen2Trades = self:gen2NpcTrades() or src.gen2Trades
+    src.gen2UnownWalls = self:gen2UnownWalls() or src.gen2UnownWalls
+    -- Crystal only; Gold and Silver have no OddEggs symbol at all
+    src.gen2OddEggs = self:gen2OddEggs() or src.gen2OddEggs
+    src.gen2MomBank = self:gen2MomBank() or src.gen2MomBank
+    src.gen2TileAnim = self:gen2TowerPillarAnim() or src.gen2TileAnim
     -- Crystal only; nil on Gold and Silver, which have no Battle Tower
     src.gen2BattleTower = self:gen2BattleTower() or src.gen2BattleTower
     src.gen2Slots = self:gen2Slots() or src.gen2Slots

@@ -23,11 +23,12 @@ EMBED_ASSETS="$ANDROID_DIR/app/src/embed/assets"
 LOVE_FILE="$EMBED_ASSETS/game.love"
 DIST="$ROOT/dist/android"
 APP_NAME="gen2recomp"
-# Must not be gen1recomp's com.theboisclub.pokemonred; see mobile/ANDROID.md.
+# Distinct from the Gen 1 port's application id so the two can sit side by
+# side on one device; see mobile/ANDROID.md.
 APPLICATION_ID="com.underdecodedhd.gen2recomp"
 LOVE_ANDROID_VERSION="11.5a"
 NDK_VERSION="25.2.9519653"
-MANIFEST_BASE_URL="${MANIFEST_BASE_URL:-https://raw.githubusercontent.com/bryanthaboi/gen1recomp/main}"
+MANIFEST_BASE_URL="${MANIFEST_BASE_URL:-https://raw.githubusercontent.com/UNDERdecodedHD/Gen2Recomped/main}"
 MANIFESTS=""
 GEN2_SOURCES=""
 # RomExtractorGen2:readSourceTable falls back to data/generated_gen2_<version>/
@@ -539,7 +540,7 @@ run_gradle() {
   # shadow persists across runs so gradle/ndk builds stay incremental.
   case "$ANDROID_DIR" in
     *" "*)
-      build_dir="${TMPDIR:-/tmp}/gen1recomp-android-shadow"
+      build_dir="${TMPDIR:-/tmp}/Gen2Recomped-android-shadow"
       say "path contains spaces (ndk-build cannot handle them);"
       say "shadow-building in: $build_dir"
       mkdir -p "$build_dir"

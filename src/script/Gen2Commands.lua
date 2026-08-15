@@ -425,11 +425,21 @@ function Commands.g2_object(ctx, index, visible)
   local OverworldState = require("src.world.OverworldController")
   local name = OverworldState.objectToggleKey(obj)
   if not name then return end
-  if visible then
-    Commands.show_object(ctx, mapId, name)
-  else
-    Commands.hide_object(ctx, mapId, name)
+  -- Gen2 `disappear`/`appear` are map-session state, not save state: the ROM
+  -- writes the object struct and every map load rebuilds those from the map's
+  -- own object_events.  Keep them in a scratch table keyed by the map that is
+  -- current when the script runs, so walking back in brings the object back --
+  -- which is how the Battle Tower receptionist returns to her desk after
+  -- showing you into the lift.  Permanence is the object's event flag, and a
+  -- script that wants it runs its own `setevent`.
+  local session = ctx.save.g2ObjectToggles
+  if type(session) ~= "table" or session.mapId ~= mapId then
+    session = { mapId = mapId }
+    ctx.save.g2ObjectToggles = session
   end
+  session[name] = visible and true or false
+  local ow = ctx.overworld
+  if ow and ow.syncObjectVisibility then pcall(function() ow:syncObjectVisibility() end) end
 end
 
 -- WriteCmdQueue with a CMDQUEUE_STONETABLE entry: the map's cmdqueue
@@ -1186,6 +1196,227 @@ local function speciesName(data, species)
   return (def and def.name) or (species and tostring(species)) or "POKéMON"
 end
 
+-- `sdefer <script>`: park it and carry on.  The overworld runs it on a later
+-- frame, once the transition has finished and this script is done -- the same
+-- FIFO a warp cutscene uses.  Compiled here rather than at lowering time so
+-- the deferred script stays a script of its own instead of being spliced into
+-- the caller's row list.
+function Commands.g2_sdefer(ctx, label)
+  local ow = ctx.overworld
+  if not (ow and ow.queueScript and type(label) == "string") then return end
+  local ok, rows = pcall(require("src.script.Gen2ScriptVM").compile,
+                         ctx.game.data, label)
+  if not (ok and type(rows) == "table" and rows[1]) then return end
+  ow:queueScript(rows, { mapId = ow.map and ow.map.id })
+end
+
+-- ---------------------------------------------------------------------------
+-- `special BankOfMom` (5:$6218)
+--
+-- MomScript's banking branch is `setevent $40 / special BankOfMom /
+-- waitbutton / closetext / end`.  There is no writetext in it: the whole
+-- conversation is that special, a jumptable over CheckIfBankInitialized,
+-- IsThisAboutYourMoney, StopOrStartSavingMoney, StoreMoney, TakeMoney and
+-- their four refusals.  With no handler the branch ran silently, which is why
+-- Mom said nothing at all once the talk unlocked after the first badge.
+--
+-- wMomSavingMoney bit 7 is "the bank exists"; bit 0 is "she is putting money
+-- aside for you".  Both live on the save here.
+-- ---------------------------------------------------------------------------
+
+local GEN2_MONEY_MAX = 999999
+
+local function momLine(ctx, key, fallback)
+  local bank = (ctx.game.data.field or {}).gen2MomBank or {}
+  return bank[key] or fallback
+end
+
+local function momSay(ctx, key, fallback, subs)
+  local text = momLine(ctx, key, fallback)
+  if text then Commands.show_text(ctx, text, subs) end
+end
+
+local function momAmount(ctx, max, onPicked)
+  local runner = ctx.runner
+  local picked
+  require("src.ui.Screens").push(ctx.game, "MoneyEntry", {
+    max = max,
+    onDone = function(value) picked = value runner:resume() end,
+  })
+  runner:yield()
+  onPicked(picked)
+end
+
+function Commands.g2_bank_of_mom(ctx)
+  local save = ctx.save
+  -- CheckIfBankInitialized: the first visit opens the account and asks
+  if save.g2MomBankOpen == nil then
+    save.g2MomBankOpen = true
+    Commands.ask(ctx, momLine(ctx, "saveMoney",
+      "Should I save money for you?"))
+    if ctx.lastCheck then
+      save.g2MomSaving = true
+      return momSay(ctx, "startSavingMoney", "OK, I'll save your money.")
+    end
+    save.g2MomSaving = false
+    return momSay(ctx, "justDoWhatYouCan", "Just do what you can.")
+  end
+
+  Commands.ask(ctx, momLine(ctx, "isThisAboutYourMoney",
+    "Is this about your money?"))
+  if not ctx.lastCheck then return end
+
+  save.g2MomMoney = math.max(0, math.floor(tonumber(save.g2MomMoney) or 0))
+  momSay(ctx, "whatDoYouWantToDo", "What do you want to do?")
+
+  local game, runner = ctx.game, ctx.runner
+  local choice = 0
+  local rows = {
+    "SAVE MONEY", "TAKE MONEY",
+    save.g2MomSaving and "STOP SAVING" or "START SAVING",
+    "CANCEL",
+  }
+  local items = {}
+  for index, label in ipairs(rows) do
+    items[index] = {
+      label = label,
+      onSelect = function() choice = index runner:resume() end,
+    }
+  end
+  game.stack:push(require("src.ui.Menu").new(game, items, {
+    onCancel = function() runner:resume() end,
+  }))
+  runner:yield()
+
+  if choice == 1 then
+    local wallet = math.floor(tonumber(save.money) or 0)
+    local room = GEN2_MONEY_MAX - save.g2MomMoney
+    if wallet <= 0 then
+      return momSay(ctx, "insufficientFundsInWallet", "You have no money.")
+    end
+    if room <= 0 then
+      return momSay(ctx, "notEnoughRoomInBank", "I can't hold any more.")
+    end
+    momSay(ctx, "storeMoney", "How much do you want to store?")
+    momAmount(ctx, math.min(wallet, room), function(amount)
+      if not amount or amount <= 0 then return end
+      save.money = wallet - amount
+      save.g2MomMoney = save.g2MomMoney + amount
+      ctx.game.stringBuffer = tostring(amount)
+      momSay(ctx, "storedMoney", "Stored ¥" .. amount .. ".")
+    end)
+  elseif choice == 2 then
+    local bank = save.g2MomMoney
+    local room = GEN2_MONEY_MAX - math.floor(tonumber(save.money) or 0)
+    if bank <= 0 then
+      return momSay(ctx, "haventSavedThatMuch", "I haven't saved that much.")
+    end
+    if room <= 0 then
+      return momSay(ctx, "notEnoughRoomInWallet", "You can't carry any more.")
+    end
+    momSay(ctx, "takeMoney", "How much do you want to take?")
+    momAmount(ctx, math.min(bank, room), function(amount)
+      if not amount or amount <= 0 then return end
+      save.g2MomMoney = bank - amount
+      save.money = math.floor(tonumber(save.money) or 0) + amount
+      ctx.game.stringBuffer = tostring(amount)
+      momSay(ctx, "takenMoney", "Took ¥" .. amount .. ".")
+    end)
+  elseif choice == 3 then
+    save.g2MomSaving = not save.g2MomSaving
+    if save.g2MomSaving then
+      momSay(ctx, "startSavingMoney", "OK, I'll save your money.")
+    else
+      momSay(ctx, "justDoWhatYouCan", "Just do what you can.")
+    end
+  end
+end
+
+-- `special FindPartyMonThatSpeciesYourTrainerID`: is the party carrying a mon
+-- of wScriptVar's species that the player raised themselves -- their own OT
+-- name and ID -- rather than one that was traded in?
+--
+-- ElmEggHatchedScript is nothing but this, twice: `setval TOGEPI / special /
+-- iftrue ShowElmTogepiScript / setval TOGETIC / special / iftrue ...`.  With
+-- no handler it always answered no, so walking into the lab with the hatched
+-- TOGEPI got Elm's old "how is the EGG doing" line for the rest of the game.
+function Commands.g2_find_party_species_own(ctx)
+  local want = string.format("SPECIES_%03d", math.floor(scriptVar(ctx)) % 256)
+  local player = ctx.save.player or {}
+  local found = false
+  for _, mon in ipairs(ctx.save.party or {}) do
+    -- an EGG does not count: the ROM reads the species out of the party slot
+    -- and an egg's slot species is the hatchling's, so the check has to skip it
+    if mon.species == want and not mon.isEgg then
+      local ownName = mon.ot == nil or mon.ot == player.name
+      local ownId = mon.otId == nil or mon.otId == player.id
+      if ownName and ownId then found = true break end
+    end
+  end
+  ctx.g2Var = found and 1 or 0
+  ctx.lastCheck = found
+end
+
+-- `special GiveOddEgg` (7E:$74B6): roll a 16-bit Random against
+-- OddEggProbabilities -- fourteen cumulative thresholds out of $FFFF -- and
+-- hand over that record as an EGG.  Seven species, each listed twice, and the
+-- second of every pair carries the shiny DV pair, which is why the Odd Egg is
+-- worth collecting at all.
+function Commands.g2_give_odd_egg(ctx)
+  local data = ctx.game.data
+  local def = (data.field or {}).gen2OddEggs
+  local eggs = def and def.eggs
+  if not (eggs and eggs[1]) then return end
+  local roll = math.random(0, 0xFFFF)
+  local pick = #eggs
+  for i, threshold in ipairs(def.probabilities or {}) do
+    if roll <= (tonumber(threshold) or 0xFFFF) then pick = i break end
+  end
+  local row = eggs[pick] or eggs[1]
+  local Pokemon = require("src.pokemon.Pokemon")
+  local mon = Pokemon.new(data, row.species, row.level or 5)
+  if type(row.dvs) == "table" and row.dvs[1] and row.dvs[2] then
+    local one, two = row.dvs[1], row.dvs[2]
+    local atk, dfn = math.floor(one / 16) % 16, one % 16
+    local spd, spc = math.floor(two / 16) % 16, two % 16
+    mon.dvs = {
+      attack = atk, defense = dfn, speed = spd, special = spc,
+      hp = (atk % 2) * 8 + (dfn % 2) * 4 + (spd % 2) * 2 + (spc % 2),
+    }
+    pcall(function()
+      mon.stats = require("src.pokemon.Stats")
+        .calc(data.pokemon[row.species], mon.level, mon.dvs, mon.statExp)
+      mon.hp = mon.stats.hp
+    end)
+  end
+  if row.moves then
+    mon.moves = {}
+    for _, id in ipairs(row.moves) do
+      local md = data.moves[id]
+      mon.moves[#mon.moves + 1] = { id = id, pp = md and md.pp or 0 }
+    end
+  end
+  if row.item then mon.heldItem = row.item end
+  mon.happiness = row.happiness or 20
+  mon.isEgg = true
+  mon.nickname = "EGG"
+  mon.eggSteps = require("src.pokemon.DayCare").eggSteps(data, row.species)
+  local Party = require("src.pokemon.Party")
+  ctx.lastCheck = Party.add(ctx.save.party, mon) and true or false
+  ctx.g2Var = ctx.lastCheck and 0 or 1
+end
+
+-- `special DisplayUnownWords` (22:$6E68): the word the wall's `setval` chose,
+-- drawn as 2x2 blocks of the chamber's own tileset, held until A or B.
+function Commands.g2_unown_wall(ctx)
+  local runner = ctx.runner
+  require("src.ui.Screens").push(ctx.game, "UnownWall", {
+    word = scriptVar(ctx),
+    onDone = function() runner:resume() end,
+  })
+  runner:yield()
+end
+
 function Commands.g2_random_phone_mon(ctx)
   local data = ctx.game.data
   local entry = phoneContact(data, tonumber(ctx.save.g2CurCaller))
@@ -1677,6 +1908,181 @@ function Commands.g2_give_shuckle(ctx)
   ctx.g2Var, ctx.lastCheck = 1, true
 end
 
+-- ---------------------------------------------------------------------------
+-- `trade <NPCTRADE_*>` -- the seven in-game trades (NPCTrade, 3F:$4BA8)
+--
+-- The routine in order, which is the order below:
+--
+--   Trade_GetDialog                     -- which of the four dialog sets
+--   TradeFlagAction b=2 (FLAG_TEST)     -- already traded -> the "after" line
+--   PrintTradeText 0 + YesNoBox         -- the offer; NO -> the "declined" line
+--   ChooseMonToTrade                    -- backing out is also "declined"
+--   cp wCurPartySpecies                 -- wrong species -> the "wrong" line
+--   CheckTradeGender                    -- wrong gender  -> the "wrong" line
+--   TradeFlagAction b=1 (FLAG_SET)      -- once only, before the swap
+--   NPCTradeCableText / DoNPCTrade / the trade animation / TradedForText
+--   PrintTradeText 3                    -- the thanks
+--
+-- GetTradeMonNames (3F:$4E1B) fills the buffers the lines splice: the mon the
+-- NPC hands over goes in wStringBuffer2 and the one the player gives goes in
+-- wMonOrItemNameBuffer, with a gender symbol appended to wStringBuffer1.
+-- ---------------------------------------------------------------------------
+
+local GEN2_TRADE_GENDER = { [1] = "male", [2] = "female" }
+
+function Commands.g2_trade(ctx, index)
+  local game, runner = ctx.game, ctx.runner
+  local data = game.data
+  local def = (data.field or {}).gen2Trades
+  local trade = def and def.trades and def.trades[(tonumber(index) or 0) + 1]
+  if not trade then
+    Logger.warn("g2_trade: no trade %s", tostring(index))
+    return
+  end
+  local texts = def.texts or {}
+  local set = (tonumber(trade.dialog) or 0) + 1
+
+  local function nameOf(species)
+    local mon = species and (data.pokemon or {})[species]
+    return (mon and mon.name) or tostring(species)
+  end
+  local giveName, getName = nameOf(trade.give), nameOf(trade.get)
+  -- the gender symbol GetTradeMonNames appends to wStringBuffer1
+  local mark = ({ male = "♂", female = "♀" })[GEN2_TRADE_GENDER[trade.gender]]
+  -- The three buffers GetTradeMonNames fills, by the token the extractor
+  -- actually emits.  gen2RamName has no symbol for any of these addresses, so
+  -- decodeGen2TextAt falls back to the bare hex -- "{RAM:D073}", not
+  -- "{RAM:wStringBuffer1}" -- which is why every one of these lines came out
+  -- with a blank where the species name belongs ("Want to trade it for my ?").
+  -- Both spellings are listed so the substitution survives the day a symbol
+  -- for them turns up in the manifest.
+  --
+  --   D073 wStringBuffer1        the mon the player hands over, + gender mark
+  --   D050 wMonOrItemNameBuffer  the same mon, without the mark
+  --   D086 wStringBuffer2        the mon the NPC hands back
+  local subs = {
+    ["RAM:D073"] = giveName .. (mark or ""),
+    ["RAM:wStringBuffer1"] = giveName .. (mark or ""),
+    ["RAM:D050"] = giveName,
+    ["RAM:wMonOrItemNameBuffer"] = giveName,
+    ["RAM:D086"] = getName,
+    ["RAM:wStringBuffer2"] = getName,
+  }
+  local function line(kind)
+    local rows = texts[kind]
+    return type(rows) == "table" and rows[set] or nil
+  end
+  local function say(kind, fallback)
+    local text = line(kind) or fallback
+    if text then Commands.show_text(ctx, text, subs) end
+  end
+
+  -- wTradeFlags, one bit per trade: each of the seven happens exactly once
+  ctx.save.g2Trades = ctx.save.g2Trades or {}
+  local done = ctx.save.g2Trades
+  if done[tonumber(index) or -1] then
+    return say("afterTrade", Strings("How is my old %s?", giveName))
+  end
+
+  local offer = line("offer")
+  if offer then
+    Commands.ask(ctx, offer, subs)
+  else
+    Commands.ask(ctx, Strings("I'll trade my %s\nfor your %s. OK?", getName, giveName), subs)
+  end
+  if not ctx.lastCheck then
+    return say("declined", Strings("You don't want to\ntrade? Aww…"))
+  end
+
+  local picked
+  require("src.ui.Screens").push(game, "PartyMenu", {
+    pickOnly = true,
+    onCancel = function() runner:resume() end,
+    onSwitch = function(mon) picked = mon runner:resume() end,
+  })
+  runner:yield()
+  if not picked then
+    return say("declined", Strings("You don't want to\ntrade? Aww…"))
+  end
+  if picked.species ~= trade.give then
+    return say("wrongMon", Strings("Huh? That's not\n%s.", giveName))
+  end
+  -- CheckTradeGender (3F:$4C23): only DORIS the DODRIO asks, and she asks for
+  -- a female DRAGONAIR.  Gender is read off the mon the same way the summary
+  -- screen reads it, from the attack DV against the species' gender ratio.
+  local want = GEN2_TRADE_GENDER[trade.gender]
+  if want then
+    local have = require("src.pokemon.DayCare").gender(data, picked)
+    if have ~= want then
+      return say("wrongMon", Strings("Huh? That's not\n%s.", giveName))
+    end
+  end
+
+  local party = ctx.save.party
+  local slot
+  for i, mon in ipairs(party) do
+    if mon == picked then slot = i break end
+  end
+  if not slot then return end
+
+  done[tonumber(index)] = true
+  if texts.cable then Commands.show_text(ctx, texts.cable, subs) end
+
+  -- DoNPCTrade: the received mon is built from the table's own nickname, DVs,
+  -- OT name and OT ID, and keeps the sent mon's level (ComputeNPCTrademonStats
+  -- recalculates its stats from those DVs at that level).
+  local Pokemon = require("src.pokemon.Pokemon")
+  local sent = party[slot]
+  local newMon = Pokemon.new(data, trade.get, sent.level)
+  if trade.nickname and trade.nickname ~= "" then
+    newMon.nickname = trade.nickname
+  end
+  -- The table's two DV bytes are the usual packed nibble pairs -- attack and
+  -- defense in the first, speed and special in the second -- and the HP DV is
+  -- the four low bits, exactly as Stats.randomDVs derives it.
+  if type(trade.dvs) == "table" and trade.dvs[1] and trade.dvs[2] then
+    local one, two = trade.dvs[1], trade.dvs[2]
+    local atk, dfn = math.floor(one / 16) % 16, one % 16
+    local spd, spc = math.floor(two / 16) % 16, two % 16
+    local dvs = {
+      attack = atk, defense = dfn, speed = spd, special = spc,
+      hp = (atk % 2) * 8 + (dfn % 2) * 4 + (spd % 2) * 2 + (spc % 2),
+    }
+    newMon.dvs = dvs
+    pcall(function()
+      local speciesDef = data.pokemon[trade.get]
+      newMon.stats = require("src.pokemon.Stats")
+        .calc(speciesDef, newMon.level, dvs, newMon.statExp)
+      newMon.hp = newMon.stats.hp
+    end)
+  end
+  newMon.traded = true      -- boosted exp, and the Name Rater refuses it
+  newMon.ot = (trade.ot ~= "" and trade.ot) or "TRAINER"
+  newMon.otId = tonumber(trade.otId) or 0
+  table.remove(party, slot)
+  table.insert(party, newMon)
+  local dex = ctx.save.pokedex
+  if dex then
+    dex.seen[trade.get] = true
+    dex.owned[trade.get] = true
+  end
+
+  require("src.ui.Screens").push(game, "TradeAnim", {
+    sent = sent, received = newMon,
+    enemyName = newMon.ot,
+    playerOt = ctx.save.player.name,
+    playerOtId = sent.otId or ctx.save.player.id,
+    enemyOtId = newMon.otId,
+    onDone = function() runner:resume() end,
+  })
+  runner:yield()
+
+  require("src.core.Sound").play(data, "Get_Key_Item")
+  if texts.tradedFor then Commands.show_text(ctx, texts.tradedFor, subs) end
+  require("src.core.Music").restoreMap(data)   -- RestartMapMusic
+  say("thanks", Strings("Yay! I got myself\n%s!", getName))
+end
+
 -- wScriptVar: 0 that isn't my mon, 1 you backed out, 2 handed back,
 -- 3 it likes you too much to leave (happiness >= 150), 4 it is the only
 -- thing you have left to battle with (CheckCurPartyMonFainted).
@@ -1876,11 +2282,18 @@ local function coins(save)
   return save.coins or 0
 end
 
+-- `checkcoins` runs the SAME comparison as `checkmoney`: Script_checkcoins
+-- (25:$7895) falls straight through into CompareMoneyAction (25:$784F), which
+-- writes wScriptVar 0 when the player has more, 1 on exactly equal and **2**
+-- when they are short.  This wrote 0 or 1, so `ifequal 2` -- the only branch
+-- either Game Corner prize counter takes when you cannot afford the prize --
+-- never matched, and the TM and POKeMON vendors handed the prize over for
+-- free however few coins you had.
 function Commands.g2_check_coins(ctx, amount)
-  ctx.lastCheck = coins(ctx.save) >= (amount or 0)
-  -- CheckCoins also reports the comparison through the script var, which is
-  -- what the prize vendors branch on
-  ctx.g2Var = coins(ctx.save) >= (amount or 0) and 0 or 1
+  local have = coins(ctx.save)
+  amount = amount or 0
+  ctx.g2Var = have > amount and 0 or (have == amount and 1 or 2)
+  ctx.lastCheck = have >= amount
 end
 
 function Commands.g2_give_coins(ctx, amount)
@@ -2702,10 +3115,10 @@ function Commands.g2_heal_party(ctx)
   ctx.lastCheck = true
 end
 
-function Commands.g2_bank_of_mom(ctx)
-  ctx.lastCheck = true
-  ctx.g2Var = 0
-end
+-- (The old do-nothing g2_bank_of_mom stub used to sit here.  It was defined
+-- AFTER the real handler further up this file, so it silently overwrote it on
+-- the Commands table and Mom went on saying nothing even once the banking
+-- conversation was implemented.)
 
 function Commands.g2_town_map(ctx)
   require("src.ui.Screens").push(ctx.game, "TownMap")
@@ -3276,6 +3689,13 @@ function Commands.g2_battle_tower_battle(ctx)
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
   local battle = BattleState.newBattleTowerTrainer(ctx.game, opponent)
+  -- BATTLETYPE_CANLOSE.  Losing here is not a blackout: the ROM hands control
+  -- straight back to Script_BattleRoom, whose `ifnotequal 0
+  -- Script_FailedBattleTowerChallenge` runs `warpfacing 1, BATTLE_TOWER_1F,
+  -- 7, 7` and prints "Thanks for visiting!".  Blacking out first sent the
+  -- player to the last POKeCENTER, and then the script's own warpfacing
+  -- yanked them back to the tower a second later.
+  battle.canLose = true
   battle.onFinish = function(result)
     ctx.lastBattleResult = result
     if result == "win" then

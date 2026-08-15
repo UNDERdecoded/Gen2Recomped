@@ -51,8 +51,8 @@ param(
   [string]$Version,
   [string]$Publisher = "CN=Gen2Recomped",
   [string]$DisplayName = "Gen2Recomped",
-  [string]$PublisherDisplayName = "the bois club",
-  [string]$PackageName = "TheBoisClub.Gen2Recomped",
+  [string]$PublisherDisplayName = "UNDERdecodedHD",
+  [string]$PackageName = "UNDERdecodedHD.Gen2Recomped",
   [string]$CertPath,
   [System.Security.SecureString]$CertPassword,
   [switch]$MakeCert

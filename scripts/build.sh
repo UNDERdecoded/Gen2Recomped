@@ -8,12 +8,12 @@
 #                          [--notary-profile NAME] [--no-notarize]
 #                          [--release]   # ios only: release config instead of debug
 #
-# Output: dist/mac/gen1recomp-macos.zip
-#         dist/win/gen1recomp-win64.zip
-#         dist/linux/gen1recomp-linux.zip (fused x86_64 AppImage)
+# Output: dist/mac/Gen2Recomped-macos.zip
+#         dist/win/Gen2Recomped-win64.zip
+#         dist/linux/Gen2Recomped-linux.zip (fused x86_64 AppImage)
 #         dist/android/debug/*.apk (full gradle output stays under
 #           mobile/android/app/build/outputs/apk/embedNoRecord/)
-#         dist/ios/<Config>-<sdk>/gen1recomp.app (full xcodebuild output stays
+#         dist/ios/<Config>-<sdk>/Gen2Recomped.app (full xcodebuild output stays
 #           under mobile/ios/build/Build/Products/)
 
 set -euo pipefail
@@ -25,8 +25,8 @@ WORK="$HERE/work"
 DIST="$ROOT/dist"
 ENTITLEMENTS="$ROOT/scripts/macos-entitlements.plist"
 
-APP_NAME="gen1recomp"
-BUNDLE_ID="com.theboisclub.pokemonred"
+APP_NAME="Gen2Recomped"
+BUNDLE_ID="com.underdecodedhd.gen2recomped"
 LOVE_VERSION="11.5"
 VERSION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)"
 VERSION_EXPLICIT=false

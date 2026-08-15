@@ -20,9 +20,9 @@
 #   - macOS + Xcode (xcodebuild)
 #   - mobile/ios/love-src/ (see --fetch / mobile/ios/README.md)
 #
-# Output: dist/ios/<Config>-<sdk>/gen1recomp.app (convenience copy)
-#         dist/ios/gen1recomp.ipa                 (device builds only)
-#         mobile/ios/build/Build/Products/<Config>-<sdk>/gen1recomp.app
+# Output: dist/ios/<Config>-<sdk>/Gen2Recomped.app (convenience copy)
+#         dist/ios/gen2recomp.ipa                 (device builds only)
+#         mobile/ios/build/Build/Products/<Config>-<sdk>/Gen2Recomped.app
 
 set -euo pipefail
 
@@ -39,18 +39,18 @@ RESOURCES_DIR="$XCODE_DIR/ios/resources"
 LOVE_FILE="$RESOURCES_DIR/game.love"
 LIBS_DIR="$XCODE_DIR/ios/libraries"
 
-APP_NAME="gen1recomp"
-DISPLAY_NAME="gen1recomp"
+APP_NAME="gen2recomp"
+DISPLAY_NAME="gen2recomp"
 # Bundle ID resolution, most specific wins:
-#   1. GEN1_BUNDLE_ID env var
+#   1. GEN2_BUNDLE_ID env var
 #   2. mobile/ios/bundle_id.local (one line, gitignored — pins YOUR install
 #      so rebuilds keep updating the same app on your phone)
-#   3. device builds: com.gen1recomp.t<your team id> — explicit App IDs are
+#   3. device builds: com.gen2recomp.t<your team id> — explicit App IDs are
 #      globally unique across ALL Apple accounts (and required once
 #      capabilities like HealthKit are involved), so a per-team default
 #      lets anyone build without colliding with someone else's app
 #   4. simulator: the project default (no App ID registration involved)
-BUNDLE_ID="${GEN1_BUNDLE_ID:-com.theboisclub.gen1recomp}"
+BUNDLE_ID="${GEN2_BUNDLE_ID:-com.underdecodedhd.gen2recomped}"
 if [ -z "$BUNDLE_ID" ] && [ -f "$IOS_DIR/bundle_id.local" ]; then
   BUNDLE_ID="$(tr -d '[:space:]' < "$IOS_DIR/bundle_id.local")"
 fi
@@ -67,7 +67,7 @@ PACKAGE_ONLY=false
 INSTALL=false
 CREATE_IPA=false
 # Last resort for an incomplete source export, mirroring build_android.sh.
-MANIFEST_BASE_URL="${MANIFEST_BASE_URL:-https://raw.githubusercontent.com/bryanthaboi/gen1recomp/main}"
+MANIFEST_BASE_URL="${MANIFEST_BASE_URL:-https://raw.githubusercontent.com/UNDERdecodedHD/Gen2Recomped/main}"
 MANIFESTS=""
 
 VERSION=""
@@ -139,9 +139,9 @@ if $DEVICE && [ -z "${DEVELOPMENT_TEAM:-}" ]; then
 fi
 if [ -z "$BUNDLE_ID" ]; then
   if $DEVICE; then
-    BUNDLE_ID="com.gen1recomp.t$(printf '%s' "$DEVELOPMENT_TEAM" | tr '[:upper:]' '[:lower:]')"
+    BUNDLE_ID="com.gen2recomp.t$(printf '%s' "$DEVELOPMENT_TEAM" | tr '[:upper:]' '[:lower:]')"
   else
-    BUNDLE_ID="com.theboisclub.pokemonred"
+    BUNDLE_ID="com.underdecodedhd.gen2recomped"
   fi
 fi
 
@@ -720,7 +720,7 @@ run_xcodebuild() {
   fi
 }
 
-# Pack Payload/<app>.app into dist/ios/gen1recomp.ipa for release / sideload tools.
+# Pack Payload/<app>.app into dist/ios/gen2recomp.ipa for release / sideload tools.
 package_ipa() {
   local app="$1"
   local ipa="$DIST/$APP_NAME.ipa"

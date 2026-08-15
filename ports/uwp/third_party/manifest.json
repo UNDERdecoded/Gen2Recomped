@@ -1,0 +1,497 @@
+{
+  "schemaVersion": 1,
+  "platform": "uwp",
+  "architecture": "x64",
+  "configuration": "Release",
+  "sources": {
+    "love": {
+      "version": "11.5",
+      "repository": "https://github.com/caorthann-celt/love-xbox-uwp.git",
+      "commit": "cdf85f28ed794c95d6f5f7e3a8f23ca9ee1fbdcb"
+    },
+    "luajit": {
+      "repository": "https://github.com/LuaJIT/LuaJIT.git",
+      "commit": "4886b676a698acc4bbdf54adfabb3e33a8c020e8"
+    },
+    "sdl2": {
+      "version": "2.32.10",
+      "repository": "https://github.com/libsdl-org/SDL.git",
+      "ref": "release-2.32.10",
+      "commit": "5d249570393f7a37e037abf22cd6012a4cc56a71",
+      "revision": "release-2.32.10-xbox-uwp",
+      "patch": "sdl2/patches/xbox-wgi-controller.patch"
+    },
+    "angle": {
+      "repository": "https://github.com/SternXD/angle.git",
+      "commit": "45b0b1e03400b7a10aaa9a077e196d1abcddafce",
+      "gnArgs": [
+        "target_os = \"winuwp\"",
+        "target_cpu = \"x64\"",
+        "is_debug = false",
+        "is_component_build = false",
+        "is_clang = false",
+        "use_custom_libcxx = false",
+        "use_custom_libcxx_for_host = false",
+        "angle_enable_vulkan = false",
+        "angle_enable_gl = false",
+        "angle_enable_d3d9 = false",
+        "angle_enable_d3d11 = true",
+        "angle_build_tests = false",
+        "treat_warnings_as_errors = false"
+      ]
+    },
+    "depotTools": {
+      "repository": "https://chromium.googlesource.com/chromium/tools/depot_tools.git",
+      "commit": "edcece7fb3d5e266a0f60ceb77fb37e94bfff3ca"
+    },
+    "vcpkg": {
+      "repository": "https://github.com/microsoft/vcpkg.git",
+      "commit": "80f9bcfa455e875d9c1bf7a7c6692d7e1e481061",
+      "packages": [
+        "freetype[brotli,bzip2,png,zlib]",
+        "libogg",
+        "libtheora",
+        "libvorbis",
+        "openal-soft",
+        "zlib"
+      ],
+      "runtimeFiles": [
+        "brotlicommon.dll",
+        "brotlidec.dll",
+        "bz2.dll",
+        "fmt.dll",
+        "freetype.dll",
+        "libpng16.dll",
+        "ogg.dll",
+        "OpenAL32.dll",
+        "theora.dll",
+        "theoradec.dll",
+        "vorbis.dll",
+        "vorbisfile.dll",
+        "z.dll"
+      ],
+      "licenses": {
+        "brotli": "brotli.txt",
+        "bzip2": "bzip2.txt",
+        "fmt": "fmt.txt",
+        "freetype": "freetype.txt",
+        "libogg": "ogg.txt",
+        "libpng": "libpng.txt",
+        "libtheora": "theora.txt",
+        "libvorbis": "vorbis.txt",
+        "openal-soft": "openal-soft.txt",
+        "zlib": "zlib.txt"
+      }
+    }
+  },
+  "files": [
+    {
+      "path": "angle/bin/d3dcompiler_47.dll",
+      "sha256": "A05F99734F7C4822FEFC12B367AF21FD0976ED6608752FB1E1E80B6ECE7ECBBB"
+    },
+    {
+      "path": "angle/bin/libEGL.dll",
+      "sha256": "B0E0C6BAC9D9F0F084DC8F56083A2EEFFB866C0629A64D52B5E33616B4F90CBE"
+    },
+    {
+      "path": "angle/bin/libGLESv2.dll",
+      "sha256": "6DE6940EDB728396CBA6F3C0D79172A8EFD33E37671A13B1721C652EECEBF4C4"
+    },
+    {
+      "path": "love/bin/love.dll",
+      "sha256": "A3622828014F03DDB502D2A7807DC8F94432172595BE03508099BD66937FD45F"
+    },
+    {
+      "path": "love/bin/lua51.dll",
+      "sha256": "08380FB9A7C8A8A85D3425C1FD6F1CB826D980FF31925453E353227E9A23BC70"
+    },
+    {
+      "path": "love/lib/liblove.lib",
+      "sha256": "C93A358D5EAE8BE3D74DDFDFA767657E96E95E0151F843FEB4E587CF2D89320A"
+    },
+    {
+      "path": "love/lib/lovestatic.lib",
+      "sha256": "15FB3A9CB3C3CDAB8B33DE5B1D1F8D8FF6CE9719E9AA7BC2CF3D7B51CDCE0C98"
+    },
+    {
+      "path": "love/lib/lua51.lib",
+      "sha256": "A4F4F0942A432B88A3541A185B3D3D5B4D58413B3CEEE10A2E48CAF9D8439759"
+    },
+    {
+      "path": "runtime/bin/brotlicommon.dll",
+      "sha256": "6A1D267564FE5BE6D601C1F5301F45DD0D0CCBDA2AE8975CACA4424A9FD452AF"
+    },
+    {
+      "path": "runtime/bin/brotlidec.dll",
+      "sha256": "C12C983AEE4E7EF966982AD11D71B32456CB445B18B8E11D9A35E781619085E2"
+    },
+    {
+      "path": "runtime/bin/bz2.dll",
+      "sha256": "28ADC0239EAF51D13F8C7075B8514420CAE92EFF14471EC6F5B56A11D9345F00"
+    },
+    {
+      "path": "runtime/bin/fmt.dll",
+      "sha256": "B4ED319D0733EA619D11770558957AFBDF99021D86A4ED068628AE34426C6090"
+    },
+    {
+      "path": "runtime/bin/freetype.dll",
+      "sha256": "3727B17849902FE12DED3C76BD71D2907C523CF67D1A7CB516025522E260F9D4"
+    },
+    {
+      "path": "runtime/bin/libpng16.dll",
+      "sha256": "9B3B823A59ABCB4BA43D1E6DB4C35855AE66384106E32FD5F9D486A7DECB81AF"
+    },
+    {
+      "path": "runtime/bin/ogg.dll",
+      "sha256": "283B0890599450AE4BE486C07241ECCC7B14B480465AF7F8D9F2A84528064A65"
+    },
+    {
+      "path": "runtime/bin/OpenAL32.dll",
+      "sha256": "D37D04CDD1EEE2005ACF64B558DFB16F0A0D83991F3B2A75E5C69FF314054F8B"
+    },
+    {
+      "path": "runtime/bin/theora.dll",
+      "sha256": "C90101C9C169B68F4FA155E63C71F28B271BBB68649085C8ACEFB26816663857"
+    },
+    {
+      "path": "runtime/bin/theoradec.dll",
+      "sha256": "53A5A3A0B24F72B7D8812DE4B78FD3BB222399B9293B577A8FCF80009B72F004"
+    },
+    {
+      "path": "runtime/bin/vorbis.dll",
+      "sha256": "A4B2D0A4C032A7E60AA297ADAE134E8A2C1BE61D7EC639CAA93AF85BF7EAC2C7"
+    },
+    {
+      "path": "runtime/bin/vorbisfile.dll",
+      "sha256": "0BFFA35539F0A8233A8EFF4C6680F8A7CF3B9DBE3B437A3F94D5301B66A2F134"
+    },
+    {
+      "path": "runtime/bin/z.dll",
+      "sha256": "8B86502ADC15A13C0E136FB9D63AA6583C59AD93EC608A9A7C901757354744C3"
+    },
+    {
+      "path": "sdl2/bin/SDL2.dll",
+      "sha256": "B02D13F77221A335AB9F21304F2B4E003FE59C6DF10F21BA6D49023016D35CA8"
+    },
+    {
+      "path": "sdl2/include/SDL2/begin_code.h",
+      "sha256": "9803DAB29FB4522CE3500AB789260E9622DF6307CE90F92AD20C1808E19C4E7B"
+    },
+    {
+      "path": "sdl2/include/SDL2/close_code.h",
+      "sha256": "4599E9CEDBA7451FF07A6306F0B7531BEED05B1C5A65B1A2613D1B771BE43FDA"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_assert.h",
+      "sha256": "32FC342E0A5F3A55EA1CE2A5D9195E77215EDCB6F4595C0DC3674DCCA1CC81D8"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_atomic.h",
+      "sha256": "C561CE8F94DE18CCB4F708BDA45880BA6D3C9F052E166BEB5DADC5544F35221E"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_audio.h",
+      "sha256": "047AFC29591AC43A90F06169F67EE7D99A6256C6BBE5EFE5DE79A52565BB6853"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_bits.h",
+      "sha256": "63D22D1C8FE0D83BBA5A49ABA9BB700592F14462F7F7BF87E5838064047E3FA9"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_blendmode.h",
+      "sha256": "1985F81B886D9BC681821AF4F23D28E6E51BF51F21E5EF28CCC13BC8C7CDFBAE"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_clipboard.h",
+      "sha256": "3E8C73FB9B3CA5A544B70B66B683B78DB53E1A187E066912A068C0ED7BB3E8CE"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_config.h",
+      "sha256": "108A953419E1638AE2FF09148E2927C3AC4FF3E15B72A56FF41B542F356021BA"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_copying.h",
+      "sha256": "3F90BE470C18F99F4AEF39444E9374EDBA166CFEB1B90F99F35286CC33924642"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_cpuinfo.h",
+      "sha256": "FEE0C489ED4364C21FE0B726A47F72DF167FBCBF42CF569807B2BBF77DC30C54"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_egl.h",
+      "sha256": "72C119F4F7EC30F13B03D3E33D2266CB012EE103F0AD1973786D84D538A0B53D"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_endian.h",
+      "sha256": "7907CB3AB7B8D7BC99274F5AEF5294BEF215B01EA49D97226CBE6E911DE557D5"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_error.h",
+      "sha256": "0931656A5825E5F1F319F2CD3F573FC527393BB02FA7A1ED3F7FAE6C790328BE"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_events.h",
+      "sha256": "CEB7BC717342E652E2C432FD1DD08A5508575CEA6BD8615FB4DDEA63C071DDC4"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_filesystem.h",
+      "sha256": "DCFAA010C73150E7B0D56F50F5ADB3FC2E35621091A55BC5436B2FB85FE71675"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_gamecontroller.h",
+      "sha256": "C77C1D8287EE441843B9D8BE87B71252BDB1CE76B7BFC4FCFF46889AD8E9CFEC"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_gesture.h",
+      "sha256": "A5A8F8BB8EFB26860FAA9694189AAF76DF1CDB7755CCD30A8599B46B237A5D82"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_guid.h",
+      "sha256": "DA8FEF1D047B31E55D1B167DE301A806481B6948E7C2497779FD71934C45D5DB"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_haptic.h",
+      "sha256": "4267B6F039BEA7AD0F5CB37C37D63D0704AF84F73A36D2680684FF302F49F153"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_hidapi.h",
+      "sha256": "489A83D1073E528F82E821C23C515AF8B5A59357EC5AB132C854BB588648F59F"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_hints.h",
+      "sha256": "96C1056E0734F019B1DAFED5129D4A9D36253559ED8C7577A23C188BB75A48C1"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_joystick.h",
+      "sha256": "A39FC5DA97EDC94EABFF8616A413CF850EFB35D1DAF437A8CC16CAA837766482"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_keyboard.h",
+      "sha256": "F68DFA4F784F0B22949A8DF94F3C3653EA01A03AE02297D17579EB9E7EA94054"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_keycode.h",
+      "sha256": "291C769A05BC3E1EAD011DB3E07CB52415E1AA306F484904D203E94CBB3186CD"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_loadso.h",
+      "sha256": "8D3653B7B774B406A289519C74AE695EB5B52D71060712A88FCE4C72D82B1BD3"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_locale.h",
+      "sha256": "C4A663CE8EA4CA22F961796CAE644A04FC521FA2D0681333F7DA8A581909560C"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_log.h",
+      "sha256": "3342CB31280C2DBF0E5809B03E5499F0CF5EDF193EFA5E3C5B17814526A92033"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_main.h",
+      "sha256": "622FFCD0E7FE0C755A987C5EB9DAD6B3672774026B8250B66AD3C40D3A4DDA9A"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_messagebox.h",
+      "sha256": "65DF549CAB0A515145AE55325C447159AE1D60171331A7508EAC06034D25C972"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_metal.h",
+      "sha256": "1F3D0251522B735B0E37677EB1A0594440599FBBB2AF86BBB508606CCA001A06"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_misc.h",
+      "sha256": "5D5E4B42481A5EF44EC9D66159E88426BE5632262731A3C3B223277771D30006"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_mouse.h",
+      "sha256": "66B5353387D011A54B232931E86121CB5551E251B9491B9ED15AFE293D5856FF"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_mutex.h",
+      "sha256": "C5EF9A8AEB056422EF878672770E1F60AE965933693DF6D8EBD53D0E514A1794"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_name.h",
+      "sha256": "FDC6C648734220285056AD8B8273511C75D5BE00D17FC1EA3EB4C06526B13FA3"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengl_glext.h",
+      "sha256": "1ABB28891C9B0661B6FF3749DE2671DA5FE12BEB5BCB1833B2D6BDF5C89ECDF8"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengl.h",
+      "sha256": "C4D2857E757B2B2A83D7531CBEDA19C383AD6D16648AB9B7544FC0A74EB2FF13"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengles.h",
+      "sha256": "0542791816FCDD84B74D98347AC1B00A97BC6C2CDF31334CD9083789FFB6594A"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengles2_gl2.h",
+      "sha256": "D6EC44B1D73F3AFCE3A20AC6976DB7FB3DAC656C5190F0B563E4CE90D79A15AA"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengles2_gl2ext.h",
+      "sha256": "4FC5B0034DCDE9C125922E3E70D01489A6B335076856EE660294E1A6305A3719"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengles2_gl2platform.h",
+      "sha256": "4779BE999ACD1904458238F09C86983B7960AC40E612E05DB2DB97DB615F1E0F"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengles2_khrplatform.h",
+      "sha256": "7B1E01AAA7AD8F6FC34B5C7BDF79EBF5189BB09E2C4D2E79FC5D350623D11E83"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_opengles2.h",
+      "sha256": "73A3B042F7B3D296904BFF91268730D5180638F4EC1836D57258FE53EE60DF8B"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_pixels.h",
+      "sha256": "FEE61AEE337A3823E832F5C26B3000315D6EB95DA91BA20D4FB0B5BAC9D4967A"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_platform.h",
+      "sha256": "9CE62823791D7A16B9AD17AD11F4DE8DCBCDE7918F67BF6D1DD4FC625B69E50C"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_power.h",
+      "sha256": "FBBDF3FF13B21095623EDFC5659C1B76C6DBB1364A4DD14D8F9E5CF329048784"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_quit.h",
+      "sha256": "9C902ABAEA7560F98FC546BD35A04629A205D047DF5433FC30B0C1D81AF58B21"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_rect.h",
+      "sha256": "01DB368D4B7736E2358CD29EEC0D187D964CFD6182CFFAB57A938ADF73B6A418"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_render.h",
+      "sha256": "A0CF0DB1A13D0DD0D8BFDC01FFB371E2B19BE36326F85058200AC9481876C7F0"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_revision.h",
+      "sha256": "EF28EADA36B000C710B033317A37677B5484A4DE224547CB7293A77FA0C97195"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_rwops.h",
+      "sha256": "10DA91C08E96E5FCA452E06E11029908A6F237356E4DB11AF1AD13FFA2E57A47"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_scancode.h",
+      "sha256": "EB14F3CEDDE58358F6456D185F473D7551E8234DE260151AD0319861FF1444C2"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_sensor.h",
+      "sha256": "F4DABF5BAE217FA6370D8AF73ABDCBBA99AEA626F35E17A381B636AFE01BB81B"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_shape.h",
+      "sha256": "CBDCDD8EAD6D61A7BFA09BC4C538CC598919D1C060D70524C0828D3AF7418667"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_stdinc.h",
+      "sha256": "33EDC0B35512B86162D1AFFE9DF95165B4BC514A90B17238420EFE85D24CA8A1"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_surface.h",
+      "sha256": "92299233370D645F78D9C655CE7F102C16F9D4DDDE28A59BD82A962C49B51D94"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_system.h",
+      "sha256": "FFC5F3662A85F795C0B2E2B87B9FBF493BCEEDA4AACF7721A68225C5E318CA67"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_syswm.h",
+      "sha256": "34FEC1A5F1089BD395EE11C3A25AD0FC10E7ABC56D4A77CC6F17EB9E4E8A9607"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_assert.h",
+      "sha256": "FE826FEB054929284764718C67AE95B920729AE1336FFEEC88A23D611E6498F0"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_common.h",
+      "sha256": "B619CC3020FFDC8F8A12F5D9D4AF8B83E9B7C6C3BFC05C6502933C4B3F0103DE"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_compare.h",
+      "sha256": "713AF284D8520E910D94090396BFD2DB2B2292096EDD93E4D60AA69163B9C510"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_crc32.h",
+      "sha256": "74CB4C2F7F7130D6048A2C716260D6403620F0E358FA928136ED3560BF71A378"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_font.h",
+      "sha256": "B0B7E6AC8BCF7B9E5BF28695B05D3A084CD530C90322CBC9A0B198114B174231"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_fuzzer.h",
+      "sha256": "494E0E49882A9C2745D07DA7B04761D8D992DD90A7A29DD34B605051ED8DCEE5"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_harness.h",
+      "sha256": "30B9CCB36E07FF0442429A27540F6A796AEE073355B538BD50EF0B98CC47982E"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_images.h",
+      "sha256": "35E7AD856A201FBAAFE7EC3FC48DB47FB5D9452C292267F8936AEC5E5C77B81D"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_log.h",
+      "sha256": "3A8736E6D757666420616F83E7929493FCBE816A0CDDF10347F3446818870BE8"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_md5.h",
+      "sha256": "BE73865B584B5EB207CAB3D8DCFF6AD057286B75053B547B0238DF275E282491"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_memory.h",
+      "sha256": "556F676637FBB1A85F1998545C59ADDCA358B8B95C71812337B370184F27483F"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test_random.h",
+      "sha256": "1D8C7987AE39B74D83F40FB54394FD32C61037716C77EBCAF7CE87788934C035"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_test.h",
+      "sha256": "55E453735FB6A14CF350F663E8C7BC9AA273DB95BB31BCF3ABBFB5B3A91A414E"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_thread.h",
+      "sha256": "0E546047DD407CA0E1D2D686CF2650AC77A987047184E3645F6BA2EC958DDC5C"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_timer.h",
+      "sha256": "D0497AD3D75701613A227134D63FDCBC62ED72F645153D52753E386EE4B498C7"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_touch.h",
+      "sha256": "4E5D7A083BBF5237DAF5CCF06FAED3FAE81B1CAA693E27841EBF4EC9BF8FF769"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_types.h",
+      "sha256": "ED0C92BED5EEC2648F744E8451F3AC5140C1EF11510175FA1B726273DBDED9ED"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_version.h",
+      "sha256": "EE97570D0D6507B4687076336C07FD4A7FA1F5E7986C9B61893A279950FEBCE8"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_video.h",
+      "sha256": "82AB63FF37834CD4BFCEE490B8E37FB892BBB0B31A1A7913EC13C329271CA5FF"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL_vulkan.h",
+      "sha256": "98ED6B3D354191019AE208FC861799237BA8FFB11FA6BD41B3569E6CE05555B8"
+    },
+    {
+      "path": "sdl2/include/SDL2/SDL.h",
+      "sha256": "952E89E1DC4E0DD1A7BEA6A153DF632B8CDB6E433A9B3B0702C5FFE15B9B9360"
+    },
+    {
+      "path": "sdl2/lib/SDL2.lib",
+      "sha256": "37B330EE42407B405BD2432E79CB9B9036245309B3ACC445AD70CB8E555B7288"
+    }
+  ]
+}

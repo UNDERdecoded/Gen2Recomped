@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # After first boot of the freshly flashed Stock OS Mod, reinsert the SD card
-# and run this to install gen1recomp + Red/Blue ROMs into roms/PORTS.
+# and run this to install gen2recomp + Red/Blue ROMs into roms/PORTS.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
 STAGE="$ROOT/.bazinga/work/rg34xxsp-install"
 DECPREP="$(cd "$ROOT/../decprep" && pwd)"
-ZIP="$ROOT/dist/rg34xxsp/gen1recomp-rg34xxsp.zip"
+ZIP="$ROOT/dist/rg34xxsp/Gen2Recomped-rg34xxsp.zip"
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 fail() { printf '\033[1;31merror:\033[0m %s\n' "$*" >&2; exit 1; }
@@ -54,7 +54,7 @@ say "PORTS: $PORTS"
 # Refresh staged payload
 mkdir -p "$STAGE/PORTS"
 if [ -f "$ZIP" ]; then
-  rm -rf "$STAGE/PORTS/Gen1recomp.sh" "$STAGE/PORTS/gen1recomp" "$STAGE/PORTS/port.json" \
+  rm -rf "$STAGE/PORTS/Gen2Recomped.sh" "$STAGE/PORTS/gen2recomp" "$STAGE/PORTS/port.json" \
     "$STAGE/PORTS/gameinfo.xml" "$STAGE/PORTS/README.md"
   unzip -q -o "$ZIP" -d "$STAGE/PORTS"
 else
@@ -64,16 +64,16 @@ fi
 # Ensure ROMs are in lovegame (Choose ROM scans this folder on stock OS)
 [ -f "$DECPREP/Pokemon - Red Version.gb" ] || fail "missing Red ROM in $DECPREP"
 [ -f "$DECPREP/Pokemon - Blue Version.gb" ] || fail "missing Blue ROM in $DECPREP"
-cp -f "$DECPREP/Pokemon - Red Version.gb" "$STAGE/PORTS/gen1recomp/lovegame/"
-cp -f "$DECPREP/Pokemon - Blue Version.gb" "$STAGE/PORTS/gen1recomp/lovegame/"
+cp -f "$DECPREP/Pokemon - Red Version.gb" "$STAGE/PORTS/gen2recomp/lovegame/"
+cp -f "$DECPREP/Pokemon - Blue Version.gb" "$STAGE/PORTS/gen2recomp/lovegame/"
 
-say "copying gen1recomp port"
-rm -rf "$PORTS/gen1recomp" "$PORTS/Gen1recomp.sh"
-cp -R "$STAGE/PORTS/gen1recomp" "$PORTS/"
-cp -f "$STAGE/PORTS/Gen1recomp.sh" "$PORTS/"
-cp -f "$STAGE/PORTS/port.json" "$PORTS/gen1recomp/" 2>/dev/null || true
-cp -f "$STAGE/PORTS/README.md" "$PORTS/gen1recomp/" 2>/dev/null || true
-chmod +x "$PORTS/Gen1recomp.sh" "$PORTS/gen1recomp/bin/love.aarch64"
+say "copying gen2recomp port"
+rm -rf "$PORTS/gen2recomp" "$PORTS/Gen2Recomped.sh"
+cp -R "$STAGE/PORTS/gen2recomp" "$PORTS/"
+cp -f "$STAGE/PORTS/Gen2Recomped.sh" "$PORTS/"
+cp -f "$STAGE/PORTS/port.json" "$PORTS/gen2recomp/" 2>/dev/null || true
+cp -f "$STAGE/PORTS/README.md" "$PORTS/gen2recomp/" 2>/dev/null || true
+chmod +x "$PORTS/Gen2Recomped.sh" "$PORTS/gen2recomp/bin/love.aarch64"
 
 # Also drop carts in the stock GB folder for the emulator library
 GB_DIR=""
@@ -88,6 +88,6 @@ fi
 
 sync
 say "installed:"
-ls -lh "$PORTS/Gen1recomp.sh"
-ls -lh "$PORTS/gen1recomp/lovegame/"*.gb
-say "eject the SD, insert TF1 in the RG34XXSP, open Ports → Gen1recomp, Choose ROM."
+ls -lh "$PORTS/Gen2Recomped.sh"
+ls -lh "$PORTS/gen2recomp/lovegame/"*.gb
+say "eject the SD, insert TF1 in the RG34XXSP, open Ports → Gen2Recomped, Choose ROM."

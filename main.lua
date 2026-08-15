@@ -189,8 +189,8 @@ function love.load(args)
   -- of each flashing their own cmd.exe window (#606).  No-op elsewhere.
   require("src.core.HostShell").hideHostConsole()
 
-  -- Gen2Recomped used to share the LÖVE identity "pokemon-love2d" with
-  -- gen1recomp, so both games wrote one save folder.  We own "Gen2Recomp"
+  -- Gen2Recomped used to share the LÖVE identity "pokemon-love2d" with the
+  -- Gen 1 port, so both games wrote one save folder.  We own "Gen2Recomp"
   -- now; copy an existing player's saves across the first time.  Must run
   -- before Boot.run or anything else reads the save directory.
   pcall(function() require("src.core.SaveIdentity").migrateLegacy() end)

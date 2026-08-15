@@ -1,0 +1,41 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "uwp-common",
+      "hidden": true,
+      "generator": "Visual Studio 17 2022",
+      "architecture": "x64",
+      "cacheVariables": {
+        "CMAKE_SYSTEM_NAME": "WindowsStore",
+        "CMAKE_SYSTEM_VERSION": "10.0"
+      }
+    },
+    {
+      "name": "uwp-relwithdebinfo",
+      "inherits": "uwp-common",
+      "displayName": "Gen2Recomped Xbox UWP (RelWithDebInfo)",
+      "binaryDir": "${sourceDir}/build/relwithdebinfo"
+    },
+    {
+      "name": "uwp-release",
+      "inherits": "uwp-common",
+      "displayName": "Gen2Recomped Xbox UWP (Release)",
+      "binaryDir": "${sourceDir}/build/release"
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "uwp-relwithdebinfo",
+      "configurePreset": "uwp-relwithdebinfo",
+      "configuration": "RelWithDebInfo",
+      "jobs": 8
+    },
+    {
+      "name": "uwp-release",
+      "configurePreset": "uwp-release",
+      "configuration": "Release",
+      "jobs": 8
+    }
+  ]
+}

@@ -135,7 +135,15 @@ Gen2ScriptOps.COMMANDS_CRYSTAL = {
   { "reanchormap", "b" }, { "closetext", "" }, { "writeunusedbyte", "b" },
   { "farwritetext", "T" }, { "writetext", "t" }, { "repeattext", "bb" },
   { "yesorno", "" }, { "loadmenu", "d" }, { "closewindow", "" },
-  { "jumptextfaceplayer", "t" }, { "farjumptext", "f" }, { "jumptext", "t" },
+  -- farjumptext's operand is a far TEXT pointer, not a far SCRIPT pointer.
+  -- Both are three bytes so the stream never desynced, but `f` made the
+  -- extractor queue the target and disassemble the text as bytecode, and the
+  -- operand came out as a script label with nothing to print behind it.  All
+  -- eleven of Crystal's uses are std scripts -- the three bookshelves, the
+  -- Team Rocket oath, the incense burner, the merchandise shelf, the window,
+  -- the homepage, the trash can and the POKeCENTER and MART signs -- so every
+  -- one of those was silent.
+  { "jumptextfaceplayer", "t" }, { "farjumptext", "T" }, { "jumptext", "t" },
   { "waitbutton", "" }, { "promptbutton", "" }, { "pokepic", "b" },
   { "closepokepic", "" }, { "_2dmenu", "" }, { "verticalmenu", "" },
   { "loadpikachudata", "" }, { "randomwildmon", "" }, { "loadtemptrainer", "" },

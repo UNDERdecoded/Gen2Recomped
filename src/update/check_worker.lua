@@ -51,7 +51,7 @@ local osName    = (love.system and love.system.getOS and love.system.getOS()) or
 local isWindows = osName == "Windows"
 local saveDir   = love.filesystem.getSaveDirectory()
 
-local API_URL = "https://api.github.com/repos/UNDERdecoded/Gen2Recomped/releases/latest"
+local API_URL = "https://api.github.com/repos/UNDERdecodedHD/Gen2Recomped/releases/latest"
 
 -- the release picked by the last "check"; kept between commands so "download"
 -- knows the payload url/size/name without re-fetching
@@ -74,7 +74,7 @@ end
 -- non-zero and emit nothing on an HTTP error, so an empty read is a failure.
 local function curlCapture(url)
   local cmd = "curl -fsSL --connect-timeout 10 --max-time 40 "
-    .. "-H " .. shq("User-Agent: gen1recomp-updater") .. " "
+    .. "-H " .. shq("User-Agent: Gen2Recomped-updater") .. " "
     .. "-H " .. shq("Accept: application/vnd.github+json") .. " "
     .. shq(url)
   local pipe = HostShell.popen(cmd)

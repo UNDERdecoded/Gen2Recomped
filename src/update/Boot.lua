@@ -1,6 +1,6 @@
 -- The boot shell: the heart of the self-updater.  A fused build, before it
 -- runs the game bundled inside it, looks in its save directory for a newer
--- payload (a downloaded gen1recomp-X.Y.Z.love), and if one is present and
+-- payload (a downloaded Gen2Recomped-X.Y.Z.love), and if one is present and
 -- runnable, mounts it over the bundled source and chainloads it -- so the
 -- binary shipped once can keep updating the Lua it runs without a reinstall.
 --
@@ -35,9 +35,9 @@ local PENDING = "updates/pending.txt"
 -- copy never collides with the running source's copy at "/".
 local PROBE_MOUNT = "__pokeport_probe"
 
--- Downloaded payloads are named gen1recomp-<X.Y.Z>.love.
+-- Downloaded payloads are named Gen2Recomped-<X.Y.Z>.love.
 local function isPayloadName(name)
-  return name:match("^gen1recomp%-.+%.love$") ~= nil
+  return name:match("^Gen2Recomped%-.+%.love$") ~= nil
 end
 
 -- The love callbacks the payload's main.lua chunk may redefine when it runs.

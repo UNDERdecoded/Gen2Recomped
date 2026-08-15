@@ -17,8 +17,9 @@ function love.conf(t)
   _G.POKEPORT_EDITOR_MODE = editor
   _G.POKEPORT_DEV_MODE = developer
 
-  -- Save-directory identity.  Desktop gen1recomp and Gen2Recomped both used
-  -- "pokemon-love2d" and fought over one %APPDATA%/LOVE folder, so the
+  -- Save-directory identity.  This game and the Gen 1 port it grew out of
+  -- both shipped as "pokemon-love2d" and fought over one %APPDATA%/LOVE
+  -- folder, so the
   -- desktop build owns "Gen2Recomp" and src/core/SaveIdentity.lua carries
   -- existing players across on first boot.
   --
@@ -47,7 +48,7 @@ function love.conf(t)
     -- back to the plain title if the source is not mounted yet
     local ok, Version = pcall(require, "src.core.Version")
     t.window.title = ok and Version.title()
-      or "gen1recomp"
+      or "gen2recomp"
     -- Open at the launcher's design size (the split-screen ROM selector is
     -- laid out for 1024x768). The window is resizable and the 160x144 game
     -- canvas letterboxes into whatever size it ends up, so this only sets the

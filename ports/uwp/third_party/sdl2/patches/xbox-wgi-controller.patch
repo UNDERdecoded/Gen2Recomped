@@ -1,0 +1,112 @@
+diff --git a/src/joystick/SDL_gamecontroller.c b/src/joystick/SDL_gamecontroller.c
+index 36e521e..4d1f171 100644
+--- a/src/joystick/SDL_gamecontroller.c
++++ b/src/joystick/SDL_gamecontroller.c
+@@ -682,0 +683,4 @@ static ControllerMapping_t *SDL_CreateMappingForWGIController(SDL_JoystickGUID g
++#ifdef __WINRT__
++    /* Xbox WGI exposes the canonical SDL axis and hat layout. */
++    SDL_strlcat(mapping_string, "a:b0,b:b1,x:b2,y:b3,back:b6,start:b7,leftstick:b8,rightstick:b9,leftshoulder:b4,rightshoulder:b5,dpup:h0.1,dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,lefttrigger:a2,rightx:a3,righty:a4,righttrigger:a5,", sizeof(mapping_string));
++#else
+@@ -683,0 +688 @@ static ControllerMapping_t *SDL_CreateMappingForWGIController(SDL_JoystickGUID g
++#endif
+diff --git a/src/joystick/windows/SDL_windows_gaming_input.c b/src/joystick/windows/SDL_windows_gaming_input.c
+index 9299ac5..9fce0a5 100644
+--- a/src/joystick/windows/SDL_windows_gaming_input.c
++++ b/src/joystick/windows/SDL_windows_gaming_input.c
+@@ -793,4 +793,13 @@ static int WGI_JoystickOpen(SDL_Joystick *joystick, int device_index)
+-    /* Initialize the joystick capabilities */
+-    joystick->nbuttons = state->nbuttons;
+-    joystick->naxes = state->naxes;
+-    joystick->nhats = state->nhats;
++#ifdef __WINRT__
++    if (hwdata->gamepad) {
++        joystick->nbuttons = 10;
++        joystick->naxes = 6;
++        joystick->nhats = 1;
++    } else
++#endif
++    {
++        /* Initialize the joystick capabilities */
++        joystick->nbuttons = state->nbuttons;
++        joystick->naxes = state->naxes;
++        joystick->nhats = state->nhats;
++    }
+@@ -933,0 +943,45 @@ static void WGI_JoystickUpdate(SDL_Joystick *joystick)
++
++#ifdef __WINRT__
++    if (hwdata->gamepad) {
++        struct __x_ABI_CWindows_CGaming_CInput_CGamepadReading reading;
++        static const __x_ABI_CWindows_CGaming_CInput_CGamepadButtons button_masks[] = {
++            GamepadButtons_A, GamepadButtons_B, GamepadButtons_X, GamepadButtons_Y,
++            GamepadButtons_LeftShoulder, GamepadButtons_RightShoulder,
++            GamepadButtons_View, GamepadButtons_Menu,
++            GamepadButtons_LeftThumbstick, GamepadButtons_RightThumbstick
++        };
++        Uint8 hat = SDL_HAT_CENTERED;
++        Uint8 i;
++
++        hr = __x_ABI_CWindows_CGaming_CInput_CIGamepad_GetCurrentReading(hwdata->gamepad, &reading);
++        if (SUCCEEDED(hr) && (!reading.Timestamp || reading.Timestamp != hwdata->timestamp)) {
++            const DOUBLE left_x = SDL_max(-1.0, SDL_min(1.0, reading.LeftThumbstickX));
++            const DOUBLE left_y = SDL_max(-1.0, SDL_min(1.0, reading.LeftThumbstickY));
++            const DOUBLE right_x = SDL_max(-1.0, SDL_min(1.0, reading.RightThumbstickX));
++            const DOUBLE right_y = SDL_max(-1.0, SDL_min(1.0, reading.RightThumbstickY));
++            const DOUBLE left_trigger = SDL_max(0.0, SDL_min(1.0, reading.LeftTrigger));
++            const DOUBLE right_trigger = SDL_max(0.0, SDL_min(1.0, reading.RightTrigger));
++
++            SDL_PrivateJoystickAxis(joystick, 0, (Sint16)(left_x * 32767.0));
++            SDL_PrivateJoystickAxis(joystick, 1, (Sint16)(-left_y * 32767.0));
++            SDL_PrivateJoystickAxis(joystick, 2, (Sint16)(left_trigger * 65535.0 - 32768.0));
++            SDL_PrivateJoystickAxis(joystick, 3, (Sint16)(right_x * 32767.0));
++            SDL_PrivateJoystickAxis(joystick, 4, (Sint16)(-right_y * 32767.0));
++            SDL_PrivateJoystickAxis(joystick, 5, (Sint16)(right_trigger * 65535.0 - 32768.0));
++
++            for (i = 0; i < (Uint8)SDL_arraysize(button_masks); ++i) {
++                SDL_PrivateJoystickButton(joystick, i,
++                    (reading.Buttons & button_masks[i]) ? SDL_PRESSED : SDL_RELEASED);
++            }
++
++            if (reading.Buttons & GamepadButtons_DPadUp) hat |= SDL_HAT_UP;
++            if (reading.Buttons & GamepadButtons_DPadDown) hat |= SDL_HAT_DOWN;
++            if (reading.Buttons & GamepadButtons_DPadLeft) hat |= SDL_HAT_LEFT;
++            if (reading.Buttons & GamepadButtons_DPadRight) hat |= SDL_HAT_RIGHT;
++            SDL_PrivateJoystickHat(joystick, 0, hat);
++            hwdata->timestamp = reading.Timestamp;
++        }
++        return;
++    }
++#endif
++
+@@ -1055,0 +1110,30 @@ static SDL_bool WGI_JoystickGetGamepadMapping(int device_index, SDL_GamepadMappi
++#ifdef __WINRT__
++    WindowsGamingInputControllerState *state = &wgi.controllers[device_index];
++
++    if (state->type != SDL_JOYSTICK_TYPE_GAMECONTROLLER) {
++        return SDL_FALSE;
++    }
++
++    SDL_zero(*out);
++    out->a = (SDL_InputMapping){ EMappingKind_Button, 0 };
++    out->b = (SDL_InputMapping){ EMappingKind_Button, 1 };
++    out->x = (SDL_InputMapping){ EMappingKind_Button, 2 };
++    out->y = (SDL_InputMapping){ EMappingKind_Button, 3 };
++    out->leftshoulder = (SDL_InputMapping){ EMappingKind_Button, 4 };
++    out->rightshoulder = (SDL_InputMapping){ EMappingKind_Button, 5 };
++    out->back = (SDL_InputMapping){ EMappingKind_Button, 6 };
++    out->start = (SDL_InputMapping){ EMappingKind_Button, 7 };
++    out->leftstick = (SDL_InputMapping){ EMappingKind_Button, 8 };
++    out->rightstick = (SDL_InputMapping){ EMappingKind_Button, 9 };
++    out->dpup = (SDL_InputMapping){ EMappingKind_Hat, SDL_HAT_UP };
++    out->dpdown = (SDL_InputMapping){ EMappingKind_Hat, SDL_HAT_DOWN };
++    out->dpleft = (SDL_InputMapping){ EMappingKind_Hat, SDL_HAT_LEFT };
++    out->dpright = (SDL_InputMapping){ EMappingKind_Hat, SDL_HAT_RIGHT };
++    out->leftx = (SDL_InputMapping){ EMappingKind_Axis, 0 };
++    out->lefty = (SDL_InputMapping){ EMappingKind_Axis, 1 };
++    out->lefttrigger = (SDL_InputMapping){ EMappingKind_Axis, 2 };
++    out->rightx = (SDL_InputMapping){ EMappingKind_Axis, 3 };
++    out->righty = (SDL_InputMapping){ EMappingKind_Axis, 4 };
++    out->righttrigger = (SDL_InputMapping){ EMappingKind_Axis, 5 };
++    return SDL_TRUE;
++#else
+@@ -1056,0 +1141 @@ static SDL_bool WGI_JoystickGetGamepadMapping(int device_index, SDL_GamepadMappi
++#endif

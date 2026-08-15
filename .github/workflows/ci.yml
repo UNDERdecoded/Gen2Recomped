@@ -54,15 +54,15 @@ jobs:
     name: iOS build
     needs: ios-changes
     if: needs.ios-changes.outputs.changed == 'true'
-    runs-on: ${{ fromJSON(github.repository == 'bryanthaboi/gen1recomp' && '["self-hosted", "macOS"]' || '"macos-latest"') }}
+    runs-on: ${{ fromJSON(vars.MACOS_SELF_HOSTED == 'true' && '["self-hosted", "macOS"]' || '"macos-latest"') }}
     outputs:
       ipa_url: ${{ steps.upload-ipa.outputs.artifact-url }}
     steps:
       - uses: actions/checkout@v7
       - name: import signing certificate
-        if: github.repository == 'bryanthaboi/gen1recomp'
+        if: vars.APPLE_SIGNING == 'true'
         run: |
-          keychain_path="$RUNNER_TEMP/gen1recomp-ci-signing.keychain-db"
+          keychain_path="$RUNNER_TEMP/Gen2Recomped-ci-signing.keychain-db"
           ci_dir="${POKEMON_CI_DIR:-$HOME/.config/pokemon-ci}"
           p12="$ci_dir/signing.p12"
           passfile="$ci_dir/signing.pass"
@@ -82,7 +82,7 @@ jobs:
         run: brew list xcbeautify >/dev/null 2>&1 || brew install xcbeautify
       - name: build iOS release
         env:
-          CANONICAL_REPOSITORY: ${{ github.repository == 'bryanthaboi/gen1recomp' }}
+          CANONICAL_REPOSITORY: ${{ vars.APPLE_SIGNING == 'true' }}
         run: |
           if [ "$CANONICAL_REPOSITORY" = true ]; then
             scripts/build_ios.sh --fetch --device --release
@@ -91,16 +91,16 @@ jobs:
           fi
       - name: upload iOS release artifact
         id: upload-ipa
-        if: github.repository == 'bryanthaboi/gen1recomp'
+        if: vars.APPLE_SIGNING == 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: gen1recomp-ios-ipa
-          path: dist/ios/gen1recomp.ipa
+          name: Gen2Recomped-ios-ipa
+          path: dist/ios/gen2recomp.ipa
           if-no-files-found: error
           retention-days: 7
       - name: clean up signing keychain
-        if: ${{ always() && github.repository == 'bryanthaboi/gen1recomp' }}
-        run: security delete-keychain "$RUNNER_TEMP/gen1recomp-ci-signing.keychain-db" 2>/dev/null || true
+        if: ${{ always() && vars.APPLE_SIGNING == 'true' }}
+        run: security delete-keychain "$RUNNER_TEMP/Gen2Recomped-ci-signing.keychain-db" 2>/dev/null || true
 
   headless:
     name: headless suites (no ROM)

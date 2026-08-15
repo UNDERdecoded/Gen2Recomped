@@ -55,6 +55,10 @@ local function build(data, mapId)
 
   -- warp tiles are stored per tileset macro name; the generated tilesets
   -- module carries them in the tileset entry itself
+  -- the Sprout Tower pillar frames are read out of the ROM with the field
+  -- data, and only MapLoader sees the dataset, so hand them over here
+  TileRenderer.setTileAnim(data.field and data.field.gen2TileAnim)
+
   local map = Map.new(def, tilesetDef)
   map.renderer = TileRenderer.new(map, data)
   cache[mapId] = map
