@@ -233,6 +233,22 @@ jobs:
           echo "Identities available to codesign:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
+      # scripts/build.sh copies /Applications/love.app to make the macOS
+      # bundle (LOVE_APP overrides the path).  A hosted runner has no LÖVE
+      # installed, which is the "LÖVE.app not found" that killed the step
+      # before it ever reached the Windows and Linux builds.  The win64 and
+      # AppImage halves download their own LÖVE binaries, so this is only
+      # needed for the .app.
+      - name: Install LÖVE for the macOS bundle
+        run: |
+          set -euo pipefail
+          if [ -d /Applications/love.app ]; then
+            echo "LÖVE already present"
+          else
+            brew install --cask love
+          fi
+          ls -d /Applications/love.app
+
       - name: Build macOS + Windows + Linux
         run: |
           set -euo pipefail
@@ -416,6 +432,34 @@ jobs:
           name: game-love
           path: .bazinga/work
 
+      # "could not find any instance of Visual Studio" is CMake saying no
+      # installed VS can target WindowsStore -- the hosted image ships VS2022
+      # but NOT the UWP C++ workload, and a UWP generator needs it.  This adds
+      # the two components and takes several minutes; it is why this job is
+      # the slowest of the set.
+      - name: Add the UWP C++ workload to Visual Studio
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere not found; no Visual Studio on this runner" }
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          if (-not $vsPath) { throw "vswhere reported no Visual Studio installation" }
+          Write-Host "Visual Studio: $vsPath"
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $args = @(
+            'modify', '--installPath', "`"$vsPath`"",
+            '--add', 'Microsoft.VisualStudio.ComponentGroup.UWP.VC',
+            '--add', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+            '--quiet', '--norestart', '--nocache'
+          )
+          $p = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+          Write-Host "installer exit: $($p.ExitCode)"
+          # 3010 is "success, reboot pending", which is fine for a build agent
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+            throw "VS installer failed with $($p.ExitCode)"
+          }
+          & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+
       # scripts/build_xbox_uwp.sh refuses to run anywhere but Git Bash, which
       # is exactly what `shell: bash` is on a Windows runner (uname reports
       # MINGW64_NT, and cygpath / powershell.exe / unzip are all on PATH).
@@ -499,13 +543,19 @@ jobs:
       # No devkitPro on the runner: both build scripts fall back to Docker,
       # which ubuntu-latest already has. The image is pinned in
       # scripts/switch/dkp-docker.image.
+      # dkp-docker.image is a PINNED IMAGE WITH COMMENTS, so it has to be read
+      # the way scripts/switch/build_fused.sh reads it (resolve_dkp_image):
+      # drop comment and blank lines, take the first real one.  Stripping
+      # whitespace instead glued the comment text onto the image name and
+      # docker rejected the reference.
       - name: Pull the devkitPro image
         run: |
           set -euo pipefail
-          image="$(tr -d ' \n' < scripts/switch/dkp-docker.image)"
+          image="$(grep -v '^[[:space:]]*#' scripts/switch/dkp-docker.image \
+                   | grep -v '^[[:space:]]*$' | head -1)"
+          [ -n "$image" ] || { echo "::error::empty image pin"; exit 1; }
           echo "devkitPro image: $image"
           docker pull "$image"
-          echo "GEN2_DKP_IMAGE=$image" >> "$GITHUB_ENV"
 
       - name: Fetch the LÖVE NX runtime
         run: bash scripts/switch/fetch_love_nx.sh
