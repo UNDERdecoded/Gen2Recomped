@@ -95,7 +95,7 @@ Inboxes (drop files here via MTP / SD / FTP):
 Supported dumps, matched by SHA-1 (the filename does not matter):
   Gold, Silver, Crystal (Rev 0 and Rev 1), Red, Blue, Yellow
 
-Full guide: https://github.com/UNDERdecodedHD/Gen2Recomped/blob/main/docs/switch-install.md
+Full guide: https://github.com/UNDERdecoded/Gen2Recomped/blob/main/docs/switch-install.md
 EOF
 
 write_readme() {

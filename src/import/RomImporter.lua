@@ -1404,12 +1404,18 @@ end
 -- result on the mods panel (switching to it so the notice is visible).  The
 -- source is whatever LauncherMods.installZip accepts: an absolute path string
 -- or a love DroppedFile.
-function RomImporter:_installMod(source)
+-- opts.replace: reinstall over a same-id mod instead of refusing.  The inbox
+-- path sets it, because an inbox zip is not consumed -- it stays in
+-- imports/mods/ for MTP recovery, so the NEXT press finds the same file and
+-- the plain install refuses it as "a mod named 'x' is already installed".
+-- On a console that is the only way to install anything, so pressing Import
+-- twice reported an error for a mod that was sitting there working.
+function RomImporter:_installMod(source, opts)
   if self.workState == "working" then return end
   self.tab = "mods"
   local ok, installed, res = pcall(function()
     local LauncherMods = require("src.mods.LauncherMods")
-    return LauncherMods.installZip(source)
+    return LauncherMods.installZip(source, opts)
   end)
   if not ok then
     self.modNotice = { ok = false,
@@ -1484,7 +1490,8 @@ function RomImporter:chooseMod()
   -- Import on the MODS tab did nothing at all and said nothing about why.
   local found = findPendingMod(true, self.pickSkip)
   if found then
-    self:_installMod(found)
+    -- Reinstall rather than refuse: see _installMod's note on the inbox.
+    self:_installMod(found, { replace = true })
     return
   end
   if self.isNX or Platform.romImportMode() == "save-directory"

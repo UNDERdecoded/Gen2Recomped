@@ -8,12 +8,12 @@
 #                          [--notary-profile NAME] [--no-notarize]
 #                          [--release]   # ios only: release config instead of debug
 #
-# Output: dist/mac/Gen2Recomped-macos.zip
-#         dist/win/Gen2Recomped-win64.zip
-#         dist/linux/Gen2Recomped-linux.zip (fused x86_64 AppImage)
+# Output: dist/mac/gen1recomp-macos.zip
+#         dist/win/gen1recomp-win64.zip
+#         dist/linux/gen1recomp-linux.zip (fused x86_64 AppImage)
 #         dist/android/debug/*.apk (full gradle output stays under
 #           mobile/android/app/build/outputs/apk/embedNoRecord/)
-#         dist/ios/<Config>-<sdk>/Gen2Recomped.app (full xcodebuild output stays
+#         dist/ios/<Config>-<sdk>/gen1recomp.app (full xcodebuild output stays
 #           under mobile/ios/build/Build/Products/)
 
 set -euo pipefail
@@ -25,8 +25,8 @@ WORK="$HERE/work"
 DIST="$ROOT/dist"
 ENTITLEMENTS="$ROOT/scripts/macos-entitlements.plist"
 
-APP_NAME="Gen2Recomped"
-BUNDLE_ID="com.underdecodedhd.gen2recomped"
+APP_NAME="gen1recomp"
+BUNDLE_ID="com.theboisclub.pokemonred"
 LOVE_VERSION="11.5"
 VERSION="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo dev)"
 VERSION_EXPLICIT=false
@@ -65,10 +65,27 @@ mkdir -p "$CACHE" "$WORK" "$DIST/mac" "$DIST/win" "$DIST/linux"
 say "packing game.love"
 LOVE_FILE="$WORK/game.love"
 rm -f "$LOVE_FILE"
+# The manifest list is a GLOB, not three names.  Naming them by hand shipped
+# exactly the Gen 1 set -- red, blue, yellow -- so a packaged build could not
+# import Gold, Silver or Crystal at all and failed with
+#   ROM import metadata is missing: Could not open file
+#   tools/rom_manifest_crystal.json. Does not exist.
+# while the same import worked from source, where the files are simply there.
+# src/core/GameVersion.lua names one manifest per cartridge; adding a
+# cartridge must not require editing a packing script as well.
+MANIFESTS=""
+for manifest in "$ROOT"/tools/rom_manifest*.json; do
+  [ -f "$manifest" ] || continue
+  MANIFESTS="$MANIFESTS tools/$(basename "$manifest")"
+done
+[ -n "$MANIFESTS" ] || fail "no tools/rom_manifest*.json found; no ROM could be imported"
+say "manifests:$MANIFESTS"
+
+# mods/ ships too: the launcher's MODS tab lists what is installed, and the
+# bundled example mods (DramaticShapes among them) live there.
 (cd "$ROOT" && zip -q -9 -r "$LOVE_FILE" \
-  main.lua conf.lua src data assets tools/save-editor \
-  tools/rom_manifest.json tools/rom_manifest_blue.json \
-  tools/rom_manifest_yellow.json \
+  main.lua conf.lua src data assets mods tools/save-editor \
+  $MANIFESTS \
   -x '*.DS_Store' 'data/generated/*' 'assets/generated/*')
 if unzip -Z1 "$LOVE_FILE" \
     | grep -Eq '^(data|assets)/generated/[^/]+|^(data|assets)/generated/.+/'; then
@@ -80,11 +97,16 @@ fi
 # the miss only ever shows up in a build -- the Yellow manifest shipped this
 # way once).
 for required in tools/save-editor/App.lua tools/save-editor/Kit.lua \
-                tools/save-editor/panels/Party.lua \
-                tools/rom_manifest.json tools/rom_manifest_blue.json \
-                tools/rom_manifest_yellow.json; do
+                tools/save-editor/panels/Party.lua; do
   unzip -Z1 "$LOVE_FILE" | grep -qx "$required" \
     || fail "game.love is missing $required"
+done
+# Every manifest that exists in the tree must be in the archive -- the check
+# follows the glob rather than a second hand-written list, so the two can
+# never disagree the way they just did.
+for manifest in $MANIFESTS; do
+  unzip -Z1 "$LOVE_FILE" | grep -qx "$manifest" \
+    || fail "game.love is missing $manifest"
 done
 say "game.love: $(du -h "$LOVE_FILE" | cut -f1)"
 

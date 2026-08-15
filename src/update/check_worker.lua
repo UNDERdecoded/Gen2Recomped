@@ -51,7 +51,7 @@ local osName    = (love.system and love.system.getOS and love.system.getOS()) or
 local isWindows = osName == "Windows"
 local saveDir   = love.filesystem.getSaveDirectory()
 
-local API_URL = "https://api.github.com/repos/UNDERdecodedHD/Gen2Recomped/releases/latest"
+local API_URL = "https://api.github.com/repos/UNDERdecoded/Gen2Recomped/releases/latest"
 
 -- the release picked by the last "check"; kept between commands so "download"
 -- knows the payload url/size/name without re-fetching
@@ -72,7 +72,17 @@ end
 -- run curl and return its response body (text), or nil on any failure.  Used
 -- for the small text resources (release JSON, sums file); -f makes curl exit
 -- non-zero and emit nothing on an HTTP error, so an empty read is a failure.
+-- Forward declaration: curlCapture calls this, and it is defined below so it
+-- can sit next to canFetch.  Without the declaration the call would resolve
+-- to a global, i.e. nil, and every fetch would silently fall back to curl.
+local nativeFetch
+
 local function curlCapture(url)
+  -- Native bridge first where one exists (Android, and any console port that
+  -- compiled it); curl otherwise.  Named for its original transport because
+  -- every call site treats it as "give me this small text resource or nil".
+  local native = nativeFetch(url)
+  if native then return native end
   local cmd = "curl -fsSL --connect-timeout 10 --max-time 40 "
     .. "-H " .. shq("User-Agent: Gen2Recomped-updater") .. " "
     .. "-H " .. shq("Accept: application/vnd.github+json") .. " "
@@ -85,12 +95,40 @@ local function curlCapture(url)
   return out
 end
 
+-- love.system.httpDownload is a NATIVE BRIDGE, not part of LÖVE: the mobile
+-- and console ports compile one because they have no shell to run curl in.
+-- Android is the case that matters here -- io.popen either does not exist or
+-- cannot reach a curl binary, so haveCurl() was false and every check ended
+-- as "curl not available".  That is why the in-app updater never appeared on
+-- Android no matter what was published.
+function nativeFetch(url)
+  local sys = love.system
+  if not (sys and type(sys.httpDownload) == "function") then return nil end
+  local dest = ("update_fetch_%d.tmp"):format(os.time())
+  local ok, err = pcall(sys.httpDownload, url, dest)
+  if not ok or err == false then
+    love.filesystem.remove(dest)
+    return nil
+  end
+  local body = love.filesystem.read(dest)
+  love.filesystem.remove(dest)
+  if type(body) ~= "string" or body == "" then return nil end
+  return body
+end
+
 local function haveCurl()
   local pipe = HostShell.popen("curl --version")
   if not pipe then return false end
   local out = pipe:read("*a")
   pipe:close()
   return out ~= nil and out:find("curl", 1, true) ~= nil
+end
+
+-- Either transport will do; the check only needs two small GETs.
+local function canFetch()
+  local sys = love.system
+  if sys and type(sys.httpDownload) == "function" then return true end
+  return haveCurl()
 end
 
 -- ---------------------------------------------------------------------------
@@ -161,8 +199,8 @@ end
 local function doCheck()
   post({ status = "checking" })
 
-  if not haveCurl() then
-    post({ status = "error", error = "curl not available" })
+  if not canFetch() then
+    post({ status = "error", error = "no network transport (curl or httpDownload)" })
     return
   end
 

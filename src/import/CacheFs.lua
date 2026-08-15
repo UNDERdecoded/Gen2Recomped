@@ -446,7 +446,99 @@ function CacheFs.mountVersion(version)
   mountGeneratedTrees(prefix)
 
   if overlayVisible() then return true end
+
+  -- Last resort: stop needing a mount at all.
+  --
+  -- love-nx's PhysFS will not overlay a save-directory folder by any route
+  -- tried above, so on the Switch every non-Red game was unplayable -- the
+  -- files sat in crystal/data/generated and nothing could see them.  Rather
+  -- than keep guessing at mount flags, redirect the only two things that
+  -- ever read those paths: the module loader behind
+  -- require("data.generated.*"), and the image loaders behind
+  -- love.graphics.newImage("assets/generated/*").  Both go through
+  -- love.filesystem.read, which reaches the save directory with no mounting
+  -- whatsoever.
+  if CacheFs.installPrefixShim(prefix) and overlayVisible() then return true end
+
   return false, "could not overlay " .. sub .. "/ onto the read path"
+end
+
+-- True once a shim is installed, so a second mountVersion cannot stack them.
+local shimPrefix = nil
+
+-- Redirect data/generated + assets/generated reads to <prefix>... .  Returns
+-- true when the shim is in place and the probe should be re-run.
+function CacheFs.installPrefixShim(prefix)
+  if prefix == "" then return false end
+  if shimPrefix == prefix then return true end
+  shimPrefix = prefix
+
+  local fs = love.filesystem
+  local realRead, realGetInfo = fs.read, fs.getInfo
+
+  -- Does `path` exist un-prefixed?  If not, does it exist under the version
+  -- prefix?  Only the second case is rewritten, so a file the game genuinely
+  -- ships (assets/logo/...) is never touched.
+  local function redirect(path)
+    if type(path) ~= "string" then return path end
+    if not (path:sub(1, 15) == "data/generated/"
+            or path:sub(1, 17) == "assets/generated/") then
+      return path
+    end
+    if realGetInfo(path, "file") then return path end
+    local alt = prefix .. path
+    if realGetInfo(alt, "file") then return alt end
+    return path
+  end
+  CacheFs._redirect = redirect
+
+  -- 1. require("data.generated.constants").  LÖVE's own module searcher asks
+  --    PhysFS directly, so it cannot be reached by wrapping love.filesystem;
+  --    this searcher goes in front of it and reads the bytes itself.
+  local searchers = package.searchers or package.loaders
+  if searchers then
+    table.insert(searchers, 1, function(name)
+      local leaf = name:match("^data%.generated%.(.+)$")
+      if not leaf then return nil end
+      local path = prefix .. "data/generated/" .. leaf:gsub("%.", "/") .. ".lua"
+      local data = realRead(path)
+      if type(data) ~= "string" then
+        return "\n\tno file '" .. path .. "' (version cache shim)"
+      end
+      local chunk, err = loadstring and loadstring(data, "@" .. path)
+        or load(data, "@" .. path)
+      if not chunk then return "\n\t" .. tostring(err) end
+      return chunk
+    end)
+  end
+
+  -- 2. Everything that loads a generated asset by path.  Wrapped rather than
+  --    fixed at the call sites because there are dozens of those, spread
+  --    across the UI, the battle screen and the overworld.
+  fs.read = function(path, ...) return realRead(redirect(path), ...) end
+  fs.getInfo = function(path, ...) return realGetInfo(redirect(path), ...) end
+
+  local g = love.graphics
+  if g then
+    for _, name in ipairs({ "newImage", "newFont", "newImageFont" }) do
+      local real = g[name]
+      if type(real) == "function" then
+        g[name] = function(a, ...)
+          if type(a) == "string" then a = redirect(a) end
+          return real(a, ...)
+        end
+      end
+    end
+  end
+  if love.image and type(love.image.newImageData) == "function" then
+    local real = love.image.newImageData
+    love.image.newImageData = function(a, ...)
+      if type(a) == "string" then a = redirect(a) end
+      return real(a, ...)
+    end
+  end
+
+  return true
 end
 
 -- Undo mountVersion.  A process normally mounts exactly one version and then

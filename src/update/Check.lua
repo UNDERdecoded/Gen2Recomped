@@ -18,7 +18,13 @@
 
 local Check = {}
 
-Check.REPO = "UNDERdecodedHD/Gen2Recomped"
+-- MUST match `git remote get-url origin`.  This read UNDERdecodedHD/... for
+-- a while, which is not a repository that exists: GitHub answered 404, curl
+-- exited non-zero with an empty body, and the check reported "release check
+-- failed" on every platform.  An updater that points at the wrong repo fails
+-- exactly like an updater with no network, so verify this against the remote
+-- rather than against how the account name is written down anywhere else.
+Check.REPO = "UNDERdecoded/Gen2Recomped"
 
 local CMD = "update_check_cmd"
 local STATE = "update_check_state"

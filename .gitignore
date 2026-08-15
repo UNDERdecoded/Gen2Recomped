@@ -91,3 +91,12 @@ mobile/ios/bundle_id.local
 *.pfx
 *.p12
 *.snk
+
+# Android signing material.  A *release* keystore must never be committed.
+# mobile/android/debug.keystore is the deliberate exception and is negated
+# below: it carries no secret (the passwords are the standard "android"), and
+# committing it is the whole point -- CI must sign every release with the SAME
+# key or no release can upgrade another.  See docs/android-signing.md.
+*.jks
+*.keystore
+!mobile/android/debug.keystore
