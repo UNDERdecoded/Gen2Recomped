@@ -22,7 +22,12 @@ DKP_IMAGE_FILE="$ROOT/scripts/switch/dkp-docker.image"
 [ -d "$LAUNCHER_DIR" ] || fail "missing $LAUNCHER_DIR"
 [ -f "$LAUNCHER_DIR/Makefile" ] || fail "missing Makefile"
 
-if ! devkitpro_ready; then
+# The header advertises "DEVKITPRO or Docker" and the Docker branch is right
+# there further down -- but this precondition bailed before anything could
+# reach it, so the Docker path was dead code and a runner without a native
+# devkitPro install could never build the launcher (only the FUSED NRO, which
+# build_fused.sh containerises properly).  Fail only when NEITHER is available.
+if ! devkitpro_ready && ! command -v docker >/dev/null 2>&1; then
   fail_missing_devkitpro
 fi
 

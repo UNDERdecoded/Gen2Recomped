@@ -93,6 +93,15 @@ CONTENT=(
   mods
 )
 
+# tools/ is development material EXCEPT the ROM symbol manifests, which the
+# game reads at runtime: src/core/GameVersion.lua names one per cartridge
+# (tools/rom_manifest.json, _blue, _yellow, _gold, _silver, _crystal) and the
+# importer resolves every symbol through them.  Leaving them out produces a
+# payload that boots and then cannot import a ROM at all -- which is what
+# scripts/build_linux_arm64.sh's contract check caught as
+# "game.love is missing tools/rom_manifest_gold.json".
+MANIFEST_GLOB="tools/rom_manifest*.json"
+
 say "staging payload from $ROOT"
 for entry in "${CONTENT[@]}"; do
   if [ -e "$ROOT/$entry" ]; then
@@ -101,6 +110,18 @@ for entry in "${CONTENT[@]}"; do
     say "skipping absent $entry"
   fi
 done
+
+# The ROM manifests, keeping their tools/ prefix so the runtime paths resolve.
+manifests=0
+for manifest in $ROOT/$MANIFEST_GLOB; do
+  if [ -f "$manifest" ]; then
+    mkdir -p "$STAGE/tools"
+    cp "$manifest" "$STAGE/tools/"
+    manifests=$((manifests + 1))
+  fi
+done
+[ "$manifests" -gt 0 ] || fail "no $MANIFEST_GLOB found; the payload could not import any ROM"
+say "staged $manifests ROM manifest(s)"
 
 # LICENSE ships with the payload; the loader does not read it, but a
 # redistributable archive that carries no licence is not redistributable.

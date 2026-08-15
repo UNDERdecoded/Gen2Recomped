@@ -249,6 +249,17 @@ jobs:
           fi
           ls -d /Applications/love.app
 
+      # The x86_64 AppImage (the Steam Deck build) is assembled with
+      # mksquashfs, which a hosted macOS runner does not have. The macOS and
+      # Windows halves finish before this bites, so the failure looked like a
+      # Linux-only problem two steps into a step that had already succeeded
+      # twice.
+      - name: Install squashfs for the Linux AppImage
+        run: |
+          set -euo pipefail
+          command -v mksquashfs >/dev/null 2>&1 || brew install squashfs
+          mksquashfs -version | head -1
+
       - name: Build macOS + Windows + Linux
         run: |
           set -euo pipefail
@@ -422,7 +433,11 @@ jobs:
   xbox:
     name: Xbox Dev Mode UWP
     needs: [version, payload]
-    runs-on: windows-latest
+    # PINNED, not windows-latest.  ports/uwp/CMakePresets.json asks for the
+    # "Visual Studio 17 2022" generator, and windows-latest has rolled past
+    # VS 17 -- so CMake found no matching instance even after the UWP workload
+    # installed cleanly. windows-2022 is the image that actually ships VS 17.
+    runs-on: windows-2022
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
