@@ -70,7 +70,7 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # ---------------------------------------------------------------- version
+  # --------------------------------------------------------------- version
   version:
     name: resolve version
     runs-on: ubuntu-latest
