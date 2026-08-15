@@ -395,11 +395,11 @@ jobs:
   # game.love and took the whole desktop job (mac, Windows, Linux, RG34XXSP)
   # down with it.  ubuntu-latest has the SDK preinstalled, builds faster, and
   # an Android failure can no longer cost you four other platforms.
-  android:
+   android:
     name: Android APK
     needs: version
     runs-on: ubuntu-latest
-    continue-on-error: true
+    continue-on-error: true   # consider removing once packaging is stable
     steps:
       - uses: actions/checkout@v7
 
@@ -408,25 +408,23 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # love-android expects exactly this NDK (NDK_VERSION in the script);
-      # the runner ships a different default, so pin it explicitly.
       - name: Install the pinned NDK
         run: |
           set -euo pipefail
           ndk="$(grep -E '^NDK_VERSION=' scripts/build_android.sh | head -1 | cut -d'"' -f2)"
           echo "NDK: $ndk"
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-
-          # `yes |` is the standard way to feed sdkmanager's licence prompts,
-          # but sdkmanager closes the pipe the moment it stops reading, `yes`
-          # dies of SIGPIPE (141), and `pipefail` turns that into a failed
-          # step even though the install SUCCEEDED -- which is exactly the
-          #   yes: standard output: Broken pipe
-          # that failed this job.  pipefail is off for the pipeline only; the
-          # `ls -d` below is the real gate and is still under `set -e`.
           ( set +o pipefail; yes 2>/dev/null | "$sdkmanager" --install "ndk;$ndk" >/dev/null )
-
           ls -d "$ANDROID_HOME/ndk/$ndk"
+
+      - name: Install stable debug keystore
+        run: |
+          set -euo pipefail
+          ks="mobile/android/debug.keystore"
+          [ -f "$ks" ] || { echo "::error::missing $ks"; exit 1; }
+          mkdir -p "$HOME/.android"
+          cp "$ks" "$HOME/.android/debug.keystore"
+          echo "debug keystore: $(sha256sum "$HOME/.android/debug.keystore" | awk '{print $1}')"
 
       - name: Build APK
         run: |
@@ -439,8 +437,12 @@ jobs:
           v="${{ needs.version.outputs.version }}"
           mkdir -p staged
           apk="$(find dist/android -name '*.apk' | head -1)"
-          [ -n "$apk" ] || { echo "::error::no APK produced under dist/android"; exit 1; }
+          [ -n "$apk" ] || { echo "::error::no APK under dist/android"; exit 1; }
           cp "$apk" "staged/Gen2Recomped-${v}-android.apk"
+          # Optional: print cert so release notes / CI log prove stability
+          if command -v apksigner >/dev/null 2>&1; then
+            apksigner verify --print-certs "staged/Gen2Recomped-${v}-android.apk" || true
+          fi
           ls -lh staged
 
       - uses: actions/upload-artifact@v7
@@ -449,7 +451,6 @@ jobs:
           path: staged/
           if-no-files-found: error
           retention-days: 1
-
   # --------------------------------------------------------------- rg34xxsp
   # Anbernic RG34XXSP / Stock OS 64-bit MOD PortMaster pack.  It used to run
   # inside the desktop job on macOS for no reason: the whole build is curl +
