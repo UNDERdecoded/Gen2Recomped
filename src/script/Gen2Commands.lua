@@ -373,9 +373,12 @@ end
 -- ---------------------------------------------------------------------------
 -- objects
 --
--- appear/disappear are the transient half of Gen2 visibility: the persistent
--- half is a plain setevent/clearevent that the same script almost always runs
--- alongside them, and set_flag already re-syncs the live map.
+-- appear/disappear carry BOTH halves of Gen2 visibility themselves: the live
+-- object struct is deleted or restored now, and the object's own event flag
+-- is set or cleared in the saved flag array (25:$72DD / 25:$72EE ->
+-- ApplyEventActionAppearDisappear -> EventFlagAction).  Scripts therefore do
+-- NOT pair them with a setevent, and anything that treats them as transient
+-- loses the change the moment the player walks back in.
 -- ---------------------------------------------------------------------------
 
 -- Gen2 script object ids are not list positions.  Every map's object constants
@@ -424,14 +427,43 @@ function Commands.g2_object(ctx, index, visible)
   if not obj or not mapId then return end
   local OverworldState = require("src.world.OverworldController")
   local name = OverworldState.objectToggleKey(obj)
-  if not name then return end
-  -- Gen2 `disappear`/`appear` are map-session state, not save state: the ROM
-  -- writes the object struct and every map load rebuilds those from the map's
-  -- own object_events.  Keep them in a scratch table keyed by the map that is
-  -- current when the script runs, so walking back in brings the object back --
-  -- which is how the Battle Tower receptionist returns to her desk after
-  -- showing you into the lift.  Permanence is the object's event flag, and a
-  -- script that wants it runs its own `setevent`.
+  -- The PERSISTENT half, which this used to leave to a `setevent` the ROM
+  -- does not require.  Script_disappear (25:$72EE) reads the object's event
+  -- flag word out of its struct at offset $0C/$0D and, unless it is $FFFF,
+  -- calls EventFlagAction with b=$01 -- a SET, against wEventFlags, which is
+  -- saved.  Script_appear (25:$72DD) is the same call with b=$00, a CLEAR.
+  -- So an object that carries a flag disappears for good, and CopScript
+  -- (1E:$4F1A) ends `applymovement / disappear / setscene / end` with no
+  -- setevent anywhere precisely because `disappear` already wrote it.
+  --
+  -- Treating both as session-only is what left the Elm's Lab officer walking
+  -- down the room and standing there for ever, asking for the rival's name
+  -- again on every re-entry, and what left the rival himself invisible after
+  -- a script `appear`ed him: the flag the extractor recorded stayed set, and
+  -- OverworldController's visibility check reads exactly that flag.
+  --
+  -- $FFFF means "no flag" and the ROM writes nothing -- those objects really
+  -- are session-only (it deletes the live struct and the next map load
+  -- rebuilds it), which is how the Battle Tower receptionist comes back to
+  -- her desk.  The extractor drops the field entirely in that case, so the
+  -- presence of obj.eventFlag IS the ROM's own test.
+  if obj.eventFlag then
+    ctx.save.flags = ctx.save.flags or {}
+    ctx.save.flags[obj.eventFlag] = (not visible) and true or false
+  end
+
+  -- The transient half: the ROM's DeleteObjectStruct / UnmaskCopyMapObjectStruct
+  -- takes effect on the spot, before any map reload.  Deliberately BELOW the
+  -- flag write: the flag is what survives, and an object with no usable
+  -- toggle key must not lose it just because the session half has nowhere to
+  -- record itself.
+  if not name then
+    local ow0 = ctx.overworld
+    if ow0 and ow0.syncObjectVisibility then
+      pcall(function() ow0:syncObjectVisibility() end)
+    end
+    return
+  end
   local session = ctx.save.g2ObjectToggles
   if type(session) ~= "table" or session.mapId ~= mapId then
     session = { mapId = mapId }

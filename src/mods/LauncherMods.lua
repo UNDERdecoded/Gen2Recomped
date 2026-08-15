@@ -512,20 +512,53 @@ function LauncherMods._installZipInner(source, opts)
   local data, readErr = readArchive(source)
   if not data then return nil, readErr end
 
-  -- stage into a save-dir temp so mount can reach it
-  local tmp = ("mod_import_%d_%d.zip"):format(os.time(), math.random(0, 999999))
-  local ok, writeErr = fs.write(tmp, data)
-  if not ok then
-    return nil, "could not stage the .zip: " .. tostring(writeErr)
+  -- Cheap magic-byte check before anything is staged.  Every real zip starts
+  -- "PK"; a Mac MTP copy leaves "._name.zip" resource forks that do not, and
+  -- without this they reach the mount and fail as "could not be opened",
+  -- which reads like a corrupt mod rather than a file to ignore.
+  if not (type(data) == "string" and #data >= 4 and data:sub(1, 2) == "PK") then
+    local label = type(source) == "string" and (source:match("[^/\\]+$") or source)
+      or "archive"
+    return nil, "not a zip file: " .. tostring(label)
+      .. " (need a real .zip; skip Mac ._ files from MTP)"
   end
+
   local mount = "mod_import_mount"
-  if not fs.mount(tmp, mount) then
-    fs.remove(tmp)
-    return nil, "that .zip could not be opened"
+  local tmp, mountKey = nil, nil
+  local mounted = false
+
+  -- In-memory mount first (PHYSFS_mountMemory, via FileData).  The staged
+  -- write-then-mount path below reopens a file it has just written, which
+  -- Horizon refuses -- the Switch answers "file already open" and the whole
+  -- import failed as "that .zip could not be opened".  Mounting the bytes
+  -- never touches the filesystem twice, so it works there and everywhere.
+  if fs.newFileData then
+    local archiveName = ("mod_import_%d_%d.zip"):format(
+      os.time(), math.random(0, 999999))
+    local okFd, fd = pcall(fs.newFileData, data, archiveName)
+    if okFd and fd and fs.mount(fd, mount) then
+      mounted = true
+      mountKey = fd
+    end
   end
+
+  if not mounted then
+    -- Fallback: stage into a save-dir temp so a path mount can reach it.
+    tmp = ("mod_import_%d_%d.zip"):format(os.time(), math.random(0, 999999))
+    local okw, writeErr = fs.write(tmp, data)
+    if not okw then
+      return nil, "could not stage the .zip: " .. tostring(writeErr)
+    end
+    if not fs.mount(tmp, mount) then
+      fs.remove(tmp)
+      return nil, "that .zip could not be opened"
+    end
+    mountKey = tmp
+  end
+
   local function cleanup()
-    pcall(fs.unmount, tmp)
-    fs.remove(tmp)
+    pcall(fs.unmount, mountKey)
+    if tmp then fs.remove(tmp) end
   end
 
   local prefix, rootErr = LauncherMods.locateRoot(topLevelPaths(mount))

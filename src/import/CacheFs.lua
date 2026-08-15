@@ -374,6 +374,36 @@ local function overlayVisible()
   return love.filesystem.getInfo(PROBE, "file") ~= nil
 end
 
+-- Mount the version's two generated trees at their UN-PREFIXED paths, in
+-- addition to mounting the version folder at "".
+--
+-- Ported from gen1recomp, whose Switch build works and which does both.  Its
+-- note on this reads "PhysFS directory non-merge (archive data/ vs save
+-- generated)": mounting gold/ at "" is not sufficient there, while a mount
+-- whose mount point IS data/generated is.  I could not reproduce the exact
+-- PhysFS rule that makes the difference, so treat the mechanism as unproven
+-- and the behaviour as measured: on love-nx, mounting only the version folder
+-- left the files unreachable and Play died with
+-- "could not overlay gold/ onto the read path" while gold/data/generated was
+-- sitting there populated.  Doing both is cheap and is what the working
+-- implementation does.
+local function mountGeneratedTrees(prefix)
+  if not (love.filesystem and love.filesystem.mount) then return false end
+  local mounted = false
+  local trees = {
+    { prefix .. "data/generated",   "data/generated" },
+    { prefix .. "assets/generated", "assets/generated" },
+  }
+  for _, item in ipairs(trees) do
+    local src, dest = item[1], item[2]
+    if love.filesystem.getInfo(src, "directory")
+        and love.filesystem.mount(src, dest, false) then
+      mounted = true
+    end
+  end
+  return mounted
+end
+
 function CacheFs.mountVersion(version)
   local prefix = require("src.core.GameVersion").cachePrefix(version)
   if prefix == "" then return true end            -- Red: already at the root
@@ -393,28 +423,29 @@ function CacheFs.mountVersion(version)
   end
   if not base then return false, "no cache root" end
 
-  -- Each mechanism is VERIFIED, not trusted.  The FFI path resolves
-  -- PHYSFS_mount out of the host binary and reports success from the return
-  -- value alone -- which is worthless on a platform where the symbol does
-  -- not really resolve: on the Switch (love-nx, statically linked, no
-  -- dlopen) the call can hand back a non-zero value having mounted nothing,
-  -- and because the old code returned on that answer, the LÖVE fallback
-  -- underneath it was never even tried.  The game then booted with
-  -- data/generated unreachable and died in Data:load with
-  -- "missing generated data module 'data/generated/constants.lua'".
-  -- Asking the read path whether the file is now visible cannot be faked.
-  if mountReadable(base .. SEP .. sub, false) and overlayVisible() then
-    return true
+  -- Three mechanisms, applied in order and then VERIFIED.  Verification
+  -- matters because the FFI path reports success from the C return value
+  -- alone, which is worthless where the symbol does not really resolve: on
+  -- the Switch (love-nx, statically linked, no dlopen) it can hand back a
+  -- non-zero value having mounted nothing.  Asking the read path whether the
+  -- file is now visible cannot be faked.
+
+  -- 1. Whole version folder at "", by save-dir-relative name.  No FFI, and
+  --    it is enough wherever PhysFS has no colliding data/ to shadow it.
+  if love.filesystem.mount and love.filesystem.getInfo(sub, "directory") then
+    love.filesystem.mount(sub, "", false)
   end
 
-  -- LÖVE can mount a folder that lives in the save directory by name
-  -- (prepended: appendToPath=false).  No FFI, so this is the one that works
-  -- on console builds.
-  if love.filesystem.mount and love.filesystem.mount(sub, "", false)
-      and overlayVisible() then
-    return true
-  end
+  -- 2. The same folder by absolute path, for a portable desktop install
+  --    whose cache root is not the save directory at all.
+  mountReadable(base .. SEP .. sub, false)
 
+  -- 3. The generated trees onto their un-prefixed paths.  This is the one
+  --    that works on console, and it is deliberately unconditional: 1 and 2
+  --    can each "succeed" and still leave the files shadowed.
+  mountGeneratedTrees(prefix)
+
+  if overlayVisible() then return true end
   return false, "could not overlay " .. sub .. "/ onto the read path"
 end
 
@@ -445,6 +476,12 @@ function CacheFs.unmountVersion(version)
   -- under its bare name rather than its absolute path
   if love.filesystem.unmount then
     done = love.filesystem.unmount(sub) or done
+    -- ...and the two generated trees mountVersion overlays onto the
+    -- un-prefixed paths.  Leaving these mounted is worse than leaving the
+    -- folder mount: they sit directly on data/generated and assets/generated,
+    -- so the next version to boot would silently read this one's files.
+    done = love.filesystem.unmount(prefix .. "data/generated") or done
+    done = love.filesystem.unmount(prefix .. "assets/generated") or done
   end
   return done
 end
