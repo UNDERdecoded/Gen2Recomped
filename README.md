@@ -9,7 +9,7 @@ a fork of <a href="https://github.com/bryanthaboi/gen1recomp">Gen1Recomp</a> by
 <a href="https://github.com/bryanthaboi">bryanthaboi</a> and
 <a href="https://boisclub.games">BOIS CLUB GAMES</a></p>
 
-A native LÖVE2D recreation of Poke Gold and Silver, built on Gen1Recomp's
+A native LÖVE2D recreation of Poke Gold, Silver and Crystal, built on Gen1Recomp's
 Red/Blue/Yellow engine. The engine, script VM, and map behavior are
 hand-written Lua; game data and graphics are decoded from a ROM supplied by the
 player.
