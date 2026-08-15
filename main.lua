@@ -161,7 +161,23 @@ local function bootGame(version)
   -- data, so data/generated + assets/generated resolve to that version's files.
   local GameVersion = require("src.core.GameVersion")
   GameVersion.set(version or os.getenv("POKEPORT_VERSION") or "red")
-  require("src.import.CacheFs").mountVersion(GameVersion.get())
+  -- A failed overlay is fatal a few lines later, inside Data:load, as
+  -- "missing generated data module 'data/generated/constants.lua'" -- an
+  -- error that names the symptom and hides the cause.  Report the cause
+  -- here, where mountVersion can still say which mechanism failed and what
+  -- the player can do about it.
+  local mounted, mountErr =
+    require("src.import.CacheFs").mountVersion(GameVersion.get())
+  if not mounted then
+    error(("could not load %s's imported data (%s).\n\n" ..
+           "The import wrote it to:\n  %s%s\n\n" ..
+           "If that folder is missing or empty, import the ROM again."):format(
+      GameVersion.info().displayName,
+      tostring(mountErr or "unknown reason"),
+      love.filesystem.getSaveDirectory and
+        (love.filesystem.getSaveDirectory() .. "/") or "",
+      GameVersion.cachePrefix(GameVersion.get())), 0)
+  end
   if love.window and love.window.setTitle then
     local Version = require("src.core.Version")
     love.window.setTitle(Version.title(

@@ -115,19 +115,45 @@ jobs:
             version="$override"
             echo "Using override version: $version"
           else
-            # 3) Auto-increment from the highest existing vX.Y.Z tag.
+            # 3) Auto-increment, with src/core/Version.lua as the FLOOR.
+            #
+            # Version.lua's own comment calls itself "the release it is
+            # building towards", and the game decides whether an update
+            # exists by comparing the published release against
+            # Version.engine (src/update/check_worker.lua:
+            # `release <= current -> uptodate`).  Deriving the version from
+            # git tags ALONE ignored that file: the tree declared 0.5.1 while
+            # this job kept cutting 0.1.x, so every build reported itself as
+            # newer than anything published and no player was ever offered an
+            # update.  Taking the higher of the two makes the declared engine
+            # line authoritative without giving up per-push auto-increment.
             latest="$(git tag -l 'v*' \
               | sed -E 's/^v//' \
               | grep -E "$semver_re" \
               | sort -t. -k1,1n -k2,2n -k3,3n \
               | tail -1 || true)"
 
-            if [ -z "$latest" ]; then
-              version="0.1.0"
-              echo "No existing release tag; starting at $version"
+            declared="$(sed -n -E 's/.*engine[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' \
+              src/core/Version.lua | head -1 || true)"
+            echo "Version.lua declares: ${declared:-<none>}"
+            echo "Highest release tag:  ${latest:-<none>}"
+
+            # Higher of the two, ordered as versions rather than as strings.
+            base="$(printf '%s\n%s\n' "${declared:-0.0.0}" "${latest:-0.0.0}" \
+              | grep -E "$semver_re" \
+              | sort -t. -k1,1n -k2,2n -k3,3n \
+              | tail -1)"
+            [ -n "$base" ] || base="0.1.0"
+
+            if [ "$base" = "$declared" ] \
+                && ! git rev-parse -q --verify "refs/tags/v${base}" >/dev/null; then
+              # The tree asked for a version that has never shipped: ship
+              # exactly that, so Version.lua means what it says.
+              version="$base"
+              echo "Releasing the declared version $version"
             else
-              major="${latest%%.*}"
-              rest="${latest#*.}"
+              major="${base%%.*}"
+              rest="${base#*.}"
               minor="${rest%%.*}"
               patch="${rest##*.}"
               patch=$((patch + 1))
@@ -136,7 +162,7 @@ jobs:
                 patch=0
               fi
               version="${major}.${minor}.${patch}"
-              echo "Latest was $latest; next is $version"
+              echo "Base was $base; next is $version"
             fi
           fi
 
@@ -491,20 +517,54 @@ jobs:
           Expand-Archive -Path dist/win/Gen2Recomped-win64.zip -DestinationPath dist/win -Force
           Get-ChildItem dist/win
 
-      # -OutFile is passed explicitly because build_msix.ps1's DEFAULT name is
-      # "$DisplayName-$Version.msix" AFTER it normalises the version to MSIX's
-      # mandatory four parts: -Version 0.1.0 produced Gen2Recomped-0.1.0.0.msix
-      # while this workflow staged Gen2Recomped-0.1.0.msix.  Naming the file
-      # here keeps the manifest's four-part version and the asset's three-part
-      # release name independent, which is what both formats want.
+      # Signing identity, in order of preference:
+      #
+      #   MSIX_PFX_BASE64 + MSIX_PFX_PASSWORD (repo secrets) -- ONE long-lived
+      #   certificate reused by every release.  A player imports the .cer once
+      #   and every future release installs.  This is the path you want.
+      #
+      #   -MakeCert (fallback) -- a brand-new self-signed certificate per run.
+      #   The package installs, but only after trusting a DIFFERENT certificate
+      #   for every single release, which is not something to ask of players.
+      #
+      # -OutFile is passed explicitly either way, because build_msix.ps1's
+      # DEFAULT name is "$DisplayName-$Version.msix" AFTER it normalises the
+      # version to MSIX's mandatory four parts: -Version 0.1.0 produced
+      # Gen2Recomped-0.1.0.0.msix while this workflow staged
+      # Gen2Recomped-0.1.0.msix.  Naming it here keeps the manifest's four-part
+      # version and the release asset's three-part name independent.
       - name: Build MSIX
         shell: pwsh
+        env:
+          MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
+          MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
         run: |
-          ./scripts/build_msix.ps1 `
-            -Source dist/win/Gen2Recomped-win64 `
-            -Version ${{ needs.version.outputs.version }} `
-            -OutFile "dist/msix/Gen2Recomped-${{ needs.version.outputs.version }}.msix" `
-            -MakeCert
+          $ErrorActionPreference = 'Stop'
+          $v   = '${{ needs.version.outputs.version }}'
+          $out = "dist/msix/Gen2Recomped-$v.msix"
+          $src = 'dist/win/Gen2Recomped-win64'
+
+          if ($env:MSIX_PFX_BASE64) {
+            # RUNNER_TEMP, not the workspace: the .pfx must never be reachable
+            # by a later step that globs the tree into an artifact.
+            $pfx = Join-Path $env:RUNNER_TEMP 'msix-signing.pfx'
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
+            $pw = if ([string]::IsNullOrEmpty($env:MSIX_PFX_PASSWORD)) {
+              New-Object System.Security.SecureString
+            } else {
+              ConvertTo-SecureString -String $env:MSIX_PFX_PASSWORD -Force -AsPlainText
+            }
+            try {
+              ./scripts/build_msix.ps1 -Source $src -Version $v -OutFile $out `
+                -CertPath $pfx -CertPassword $pw
+            } finally {
+              # Always, including on a failed build.
+              Remove-Item -Force -ErrorAction SilentlyContinue $pfx
+            }
+          } else {
+            Write-Host '::warning::MSIX_PFX_BASE64 secret is not set - signing with a throwaway certificate. Every release will require players to trust a NEW certificate. See docs/msix-signing.md.'
+            ./scripts/build_msix.ps1 -Source $src -Version $v -OutFile $out -MakeCert
+          }
 
       - name: Stage MSIX
         shell: bash
@@ -513,11 +573,13 @@ jobs:
           v="${{ needs.version.outputs.version }}"
           mkdir -p staged
           cp "dist/msix/Gen2Recomped-${v}.msix" "staged/Gen2Recomped-${v}-windows.msix"
-          # -MakeCert writes the .cer beside the package; sideloading needs it
-          # trusted first, so it has to ship with the package.
-          if [ -f "dist/msix/Gen2Recomped-${v}.cer" ]; then
-            cp "dist/msix/Gen2Recomped-${v}.cer" "staged/Gen2Recomped-${v}-windows.cer"
-          fi
+          # The .cer is NOT optional.  A sideloaded MSIX installs only once its
+          # certificate is in the machine's Trusted People store, so shipping
+          # the package without it is shipping something nobody can install --
+          # it must fail the job, not warn.
+          cer="dist/msix/Gen2Recomped-${v}.cer"
+          [ -f "$cer" ] || { echo "::error::$cer missing; the package would be uninstallable"; exit 1; }
+          cp "$cer" "staged/Gen2Recomped-${v}-windows.cer"
           ls -lh staged
 
       - uses: actions/upload-artifact@v7

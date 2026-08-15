@@ -42,6 +42,10 @@ Open the desktop app. On first boot, choose your legally obtained `.gb` /
 `.gbc` file or drop it onto the window. Import takes a few seconds for Gen 1
 and a couple of minutes for Gen 2, then the game starts automatically.
 
+On a console or handheld there is no file picker to open: you copy the dump
+into a folder the launcher scans instead. See
+[Downloads](#downloads--which-file-do-i-want) for the exact path per device.
+
 Only the canonical US ROMs are accepted. The importer verifies SHA-1 before
 creating any game data:
 
@@ -49,6 +53,8 @@ creating any game data:
 | ------- | ----- | ------------------------------------------ |
 | Gold    | 2 MiB | `d8b8a3600a465308c9953dfa04f0081c05bdcb94` |
 | Silver  | 2 MiB | `49b163f7e57702bc939d642a18f591de55d92dae` |
+| Crystal (Rev 1) | 2 MiB | `f2f52230b536214ef7c9924f483392993e226cfb` |
+| Crystal (Rev 0) | 2 MiB | `f4cd194bdee0d04ca4eac29e09b8e4e9d818c133` |
 | Red     | 1 MiB | `ea9bcae617fdf159b045185467ae58b2e4a48b9a` |
 | Blue    | 1 MiB | `d7037c83e1ae5b39bde3c30787637ba1d4c48ce2` |
 | Yellow  | 1 MiB | `cc7d03262ebfaf2f06772c1a480c7d9d5f4a38e1` |
@@ -67,6 +73,126 @@ executables with appended data. Releases publish SHA-256 checksums
 (`sha256sums.txt`) so you can verify your download, and you can confirm a
 flagged file yourself on [VirusTotal](https://www.virustotal.com), where these
 builds come back clean on every engine except Defender's heuristic.
+
+## Downloads — which file do I want?
+
+Every release publishes one archive per platform, all built from the same
+payload in the same run. Grab the row that matches your device.
+
+| Device | File | Then |
+| --- | --- | --- |
+| Windows | `Gen2Recomped-<ver>-windows.zip` | Unzip, run the `.exe` |
+| Windows (Store-style install) | `Gen2Recomped-<ver>-windows.msix` **+ the `.cer`** | See [MSIX](#windows-msix) below — the `.cer` is required |
+| macOS | `Gen2Recomped-<ver>-macos.zip` | Unzip, drag to Applications |
+| Linux (x86-64) | `Gen2Recomped-<ver>-linux.zip` | Unzip, run the AppImage inside |
+| Linux (ARM64 / Raspberry Pi / SBC) | `Gen2Recomped-<ver>-linux-arm64.AppImage` | `chmod +x`, run it |
+| Steam Deck | `Gen2Recomped-<ver>-linux.zip` | The x86-64 one — the Deck is x86 |
+| Android | `Gen2Recomped-<ver>-android.apk` | Allow unknown sources, install |
+| Nintendo Switch | `Gen2Recomped-<ver>-switch.zip` | See [Switch](#nintendo-switch) below |
+| Xbox (Dev Mode) | `Gen2Recomped-<ver>-xbox-uwp.zip` | See [Xbox](#xbox-dev-mode) below |
+| Anbernic RG34XXSP | `Gen2Recomped-<ver>-rg34xxsp-stockos64-mod.zip` | See [Handhelds](#handhelds) below |
+| iOS | `Gen2Recomped-<ver>-ios.ipa` | Sideload — see [iOS](#ios) below |
+| Already have LÖVE 11.5 | `Gen2Recomped-<ver>.love` | `love Gen2Recomped-<ver>.love` |
+
+`sha256sums.txt` covers every asset in the release. The `.love` is also what
+the in-app updater downloads, so it is the smallest file if you are updating
+by hand.
+
+**No download contains a ROM or any game data.** Every platform asks for your
+own cartridge dump on first launch.
+
+Some assets are missing from a release only when that platform's build job
+failed; the release notes say so explicitly rather than silently omitting it.
+
+### Windows (MSIX)
+
+Download **both** the `.msix` and the `.cer`. Windows refuses to install a
+package it cannot verify, and the certificate is what makes it verifiable.
+Once per machine, in an **elevated** PowerShell:
+
+```powershell
+Import-Certificate -FilePath .\Gen2Recomped-<ver>-windows.cer `
+  -CertStoreLocation Cert:\LocalMachine\TrustedPeople
+
+Add-AppxPackage .\Gen2Recomped-<ver>-windows.msix
+```
+
+`LocalMachine`, not `CurrentUser` — App Installer only reads the machine
+store, and a certificate in the user store produces error `0x800B010A`, which
+looks exactly like having imported nothing. Later releases then install with
+just `Add-AppxPackage`. Details and the signing setup are in
+[docs/msix-signing.md](docs/msix-signing.md).
+
+If you would rather not deal with certificates at all, take the plain
+`-windows.zip` instead — it is the same game.
+
+### Nintendo Switch
+
+Needs a homebrew-capable console (Atmosphère + hbmenu). Extract
+`Gen2Recomped-<ver>-switch.zip` at the **root** of your microSD, merging
+folders when asked. You get:
+
+```
+switch/gen2recomp/gen2recomp.nro          the launcher
+switch/gen2recomp/Gen2Recomp/imports/     put your cartridge dump here
+switch/gen2recomp/Gen2Recomp/exports/     battery saves come back out here
+```
+
+Then:
+
+1. Copy a legal `.gb` / `.gbc` into `switch/gen2recomp/Gen2Recomp/imports/`.
+   Dumps are matched by SHA-1, so the filename does not matter.
+2. Launch through hbmenu with a title override (hold **R** on HOME and open
+   any installed game).
+3. Press **Import** in the launcher — it scans that folder.
+
+Launcher controls: left stick or D-pad moves the pointer, **A** clicks,
+**L**/**R** change tabs, **+**/**−** play or import on the current tab.
+
+Updating: re-extract the zip and keep the `Gen2Recomp/` folder — that is where
+your saves, imported ROMs, mods and options live. The bundled OTA launcher can
+also fetch new releases from the console itself.
+
+### Xbox (Dev Mode)
+
+Needs Developer Mode on the console — a retail Xbox cannot install this.
+`Gen2Recomped-<ver>-xbox-uwp.zip` is a UWP app package; upload it through the
+Xbox Device Portal in your browser, or `Add-AppxPackage` it from a paired PC.
+Build notes are in [ports/uwp/BUILD.md](ports/uwp/BUILD.md).
+
+### Handhelds
+
+`Gen2Recomped-<ver>-rg34xxsp-stockos64-mod.zip` targets the **Anbernic
+RG34XXSP** on Stock OS 64-bit MOD with PortMaster, and bundles its own LÖVE
+runtime, so no separate runtime download is needed. Unzip into the card's
+`roms/PORTS/` folder so `Gen2recomp.sh` and `gen2recomp/` sit side by side,
+drop your dump into `gen2recomp/lovegame/`, then launch it from Ports. Install
+steps, controls and troubleshooting are in
+[docs/anbernic-rg34xxsp.md](docs/anbernic-rg34xxsp.md).
+
+Other ARM64 handhelds and single-board computers can use the generic
+`-linux-arm64.AppImage` instead.
+
+### Android
+
+Install the APK and pick your dump with the system file picker on first
+launch. If your device has no document picker, copy the `.gb` / `.gbc` into
+the app's own folder — the launcher shows the exact path. Build steps and the
+packaging layout are in [mobile/ANDROID.md](mobile/ANDROID.md).
+
+### iOS
+
+There is no App Store build; sideload the `.ipa` with AltStore from Windows or
+a Mac — see [docs/ios-sideload.md](docs/ios-sideload.md). To build and install
+from source on a Mac, see [docs/ios-install.md](docs/ios-install.md).
+
+### Updating
+
+Desktop and mobile builds check GitHub Releases and can update themselves.
+Console builds tell you a release exists but will not replace themselves — a
+packaged console app cannot rewrite its own files — so update those the same
+way you installed them. The Switch is the exception: its OTA launcher replaces
+both NROs in place. See [docs/updater.md](docs/updater.md).
 
 ## Controls
 
@@ -268,24 +394,6 @@ even on a different computer, as long as the same folder comes along.
 - Deleting `portable.txt` switches back to the normal OS save directory; nothing
 already written to either location is touched automatically, so copy files
 over yourself if you want to carry existing progress across the switch.
-
-## iOS
-
-Sideload the `.ipa` with AltStore (Windows or Mac) — see
-[docs/ios-sideload.md](docs/ios-sideload.md). To build and install from source
-on a Mac instead, see [docs/ios-install.md](docs/ios-install.md).
-
-## Android
-
-The build steps and packaging layout live in
-[mobile/ANDROID.md](mobile/ANDROID.md); `scripts/build_android.ps1` and
-`scripts/build_android.sh` drive the build.
-
-## Handhelds
-
-A PortMaster-style port for the **Anbernic RG34XXSP** on Stock OS 64-bit MOD
-builds from `build-rg34xxsp.sh`. Install steps, controls, and troubleshooting
-live in [docs/anbernic-rg34xxsp.md](docs/anbernic-rg34xxsp.md).
 
 ## Modding
 

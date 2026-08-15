@@ -668,12 +668,27 @@ end
 -- ships the folder pre-made with a README in it.
 local IMPORTS_DIR = "imports"
 
+local MODS_INBOX_DIR = "imports/mods"
+
 function RomImporter:ensureImportsDir()
   local info = love.filesystem.getInfo(IMPORTS_DIR)
   if info and info.type == "directory" then return true end
   if info then return false end   -- a FILE named imports/ -- do not clobber it
   if love.filesystem.createDirectory then
     return love.filesystem.createDirectory(IMPORTS_DIR)
+  end
+  return false
+end
+
+-- Mods get their own inbox so a .zip cannot be mistaken for a cartridge and
+-- vice versa.  createDirectory does NOT create parents, so imports/ first.
+function RomImporter:ensureModsInboxDir()
+  self:ensureImportsDir()
+  local info = love.filesystem.getInfo(MODS_INBOX_DIR)
+  if info and info.type == "directory" then return true end
+  if info then return false end
+  if love.filesystem.createDirectory then
+    return love.filesystem.createDirectory(MODS_INBOX_DIR)
   end
   return false
 end
@@ -758,17 +773,35 @@ end
 -- .zip basename at the save-dir root.  preferAny=true also accepts those USB
 -- copies (Choose / Import); focus only consumes the SAF basename so a random
 -- leftover archive is never auto-installed on every refocus.
+-- Every .zip under `dir`, skipping AppleDouble junk: "._mod.zip" ends in
+-- .zip but is a resource fork, and PhysFS fails to mount it as an archive.
+local function listZipPaths(dir)
+  local paths = {}
+  for _, name in ipairs(love.filesystem.getDirectoryItems(dir) or {}) do
+    if name:sub(1, 1) ~= "." then
+      local path = (dir == "" or dir == "/") and name or (dir .. "/" .. name)
+      if name:lower():match("%.zip$") and love.filesystem.getInfo(path, "file") then
+        paths[#paths + 1] = path
+      end
+    end
+  end
+  return paths
+end
+
 local function findPendingMod(preferAny, skip)
   local preferred = "picked_mod.zip"
   if love.filesystem.getInfo(preferred, "file") then
     return preferred
   end
   if not preferAny then return nil end
-  for _, name in ipairs(love.filesystem.getDirectoryItems("")) do
-    if name:lower():match("%.zip$") and not (skip and skip[name])
-        and love.filesystem.getInfo(name, "file") then
-      return name
-    end
+  -- imports/mods/ first, then the save-dir root.  Consoles have no picker,
+  -- so the named inbox is the only way to hand the game a mod; the root scan
+  -- stays for every platform that already relied on it.
+  for _, path in ipairs(listZipPaths(MODS_INBOX_DIR)) do
+    if not (skip and skip[path]) then return path end
+  end
+  for _, path in ipairs(listZipPaths("")) do
+    if not (skip and skip[path]) then return path end
   end
   return nil
 end
@@ -1443,7 +1476,31 @@ function RomImporter:chooseMod()
     return
   end
   local path = chooseZip()
-  if path then self:_installMod(path) end
+  if path then self:_installMod(path) return end
+
+  -- No picker (console, or a Linux handheld with neither zenity nor kdialog):
+  -- scan the inbox the same way the ROM path does.  Before this, chooseMod
+  -- reached here, got nil from chooseZip and returned in silence -- pressing
+  -- Import on the MODS tab did nothing at all and said nothing about why.
+  local found = findPendingMod(true, self.pickSkip)
+  if found then
+    self:_installMod(found)
+    return
+  end
+  if self.isNX or Platform.romImportMode() == "save-directory"
+      or love.system.getOS() == "Linux" then
+    self:ensureModsInboxDir()
+    local saveDir = love.filesystem.getSaveDirectory()
+    local rel = RomImporter.mtpHintPath(saveDir)
+    if rel ~= "" and rel:sub(-1) ~= "/" then rel = rel .. "/" end
+    self.modNotice = { ok = true, text =
+      "Copy your mod .zip into:\n" .. saveDir .. "/imports/mods/\n"
+      .. "DBI MTP -> 1: SD Card/" .. rel .. "imports/mods/" }
+    return
+  end
+  self.modNotice = { ok = false,
+    text = "No file picker here. Copy a mod .zip into:\n"
+      .. love.filesystem.getSaveDirectory() }
 end
 
 -- Which game a dropped .sav imports into: a .sav has no version signature of

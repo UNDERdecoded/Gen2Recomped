@@ -4,7 +4,7 @@
 -- tests.
 
 local Version = {
-  engine = "0.5.1",       -- game/engine release (semver).  CI restamps this in
+  engine = "0.7.6",       -- game/engine release (semver).  CI restamps this in
                           -- the packed game.love; the working tree carries the
                           -- release it is building towards.
   shell = 1,              -- native-shell contract this build implements

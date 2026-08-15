@@ -9,7 +9,7 @@
 #   switch/gen2recomp/Gen2Recomped-game.nro       (only when LAUNCHER_NRO set)
 #   switch/gen2recomp/version.txt
 #   switch/gen2recomp/INSTALL.txt
-#   switch/gen2recomp/Gen2Recomp/imports/.../README.txt
+#   switch/gen2recomp/Gen2Recomp/imports/{,mods/}README.txt
 #   switch/gen2recomp/Gen2Recomp/exports/.../README.txt
 #
 # Does not ship ROMs, saves, or mods. Re-extracting merges over an existing
@@ -89,6 +89,7 @@ Controls in the launcher:
 
 Inboxes (drop files here via MTP / SD / FTP):
   imports/             — cartridge dumps (.gb / .gbc)
+  imports/mods/        — community mod .zip files
   exports/<game>/      — pull a .sav out after Export save
 
 Supported dumps, matched by SHA-1 (the filename does not matter):
@@ -106,8 +107,13 @@ write_readme() {
 
 write_readme "$SAVE_ROOT/imports/README.txt" \
   "Put a legal Gold / Silver / Crystal / Red / Blue / Yellow .gb or .gbc here,
-then press Choose ROM in the launcher. Dumps are matched by SHA-1, so the
+then press Import in the launcher. Dumps are matched by SHA-1, so the
 filename does not matter. Files stay here after import."
+
+# Mods get their own inbox: a .zip in imports/ next to the cartridges is
+# ambiguous, and the launcher scans the two folders for different things.
+write_readme "$SAVE_ROOT/imports/mods/README.txt" \
+  "Put community mod .zip files here, then MODS tab -> Import in the launcher."
 
 # One exports/ folder per game the launcher can export a battery save from.
 # GameVersion.VERSIONS is the source of truth for that list; keep them in step.
@@ -139,6 +145,7 @@ REQUIRED=(
   "switch/gen2recomp/INSTALL.txt"
   "switch/gen2recomp/version.txt"
   "switch/gen2recomp/$SAVE_IDENTITY/imports/README.txt"
+  "switch/gen2recomp/$SAVE_IDENTITY/imports/mods/README.txt"
   "switch/gen2recomp/$SAVE_IDENTITY/exports/gold/README.txt"
   "switch/gen2recomp/$SAVE_IDENTITY/exports/silver/README.txt"
   "switch/gen2recomp/$SAVE_IDENTITY/exports/crystal/README.txt"

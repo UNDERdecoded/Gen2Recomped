@@ -366,24 +366,56 @@ end
 -- *prepended* so they win over any Red copy at the root and over the game
 -- source.  Called once at boot, before Game:load (main.lua).  Returns true
 -- when nothing was needed or the mount succeeded.
+-- A file every import writes, used to ask the read path a yes/no question:
+-- "is the active version's cache actually reachable un-prefixed right now?"
+local PROBE = "data/generated/constants.lua"
+
+local function overlayVisible()
+  return love.filesystem.getInfo(PROBE, "file") ~= nil
+end
+
 function CacheFs.mountVersion(version)
   local prefix = require("src.core.GameVersion").cachePrefix(version)
   if prefix == "" then return true end            -- Red: already at the root
   local sub = prefix:gsub("/+$", "")              -- "blue/" / "yellow/" -> bare dir
+
+  -- Nothing to overlay: this version was never imported.  Say so plainly
+  -- rather than reporting a mount failure for a cache that does not exist.
+  if not love.filesystem.getInfo(sub .. "/" .. PROBE, "file") then
+    return false, "no imported cache at " .. sub .. "/"
+  end
+
   -- The cache root is the portable game folder when active, else LÖVE's OS
   -- save directory (where love.filesystem wrote blue/... or yellow/...).
   local base = CacheFs.root()
   if not base and love.filesystem.getSaveDirectory then
     base = love.filesystem.getSaveDirectory()
   end
-  if not base then return false end
-  if mountReadable(base .. SEP .. sub, false) then return true end
-  -- Fallback when FFI/PHYSFS_mount is unavailable: LÖVE can mount a folder
-  -- that lives in the save directory by name (prepended: appendToPath=false).
-  if love.filesystem.mount then
-    return love.filesystem.mount(sub, "", false)
+  if not base then return false, "no cache root" end
+
+  -- Each mechanism is VERIFIED, not trusted.  The FFI path resolves
+  -- PHYSFS_mount out of the host binary and reports success from the return
+  -- value alone -- which is worthless on a platform where the symbol does
+  -- not really resolve: on the Switch (love-nx, statically linked, no
+  -- dlopen) the call can hand back a non-zero value having mounted nothing,
+  -- and because the old code returned on that answer, the LÖVE fallback
+  -- underneath it was never even tried.  The game then booted with
+  -- data/generated unreachable and died in Data:load with
+  -- "missing generated data module 'data/generated/constants.lua'".
+  -- Asking the read path whether the file is now visible cannot be faked.
+  if mountReadable(base .. SEP .. sub, false) and overlayVisible() then
+    return true
   end
-  return false
+
+  -- LÖVE can mount a folder that lives in the save directory by name
+  -- (prepended: appendToPath=false).  No FFI, so this is the one that works
+  -- on console builds.
+  if love.filesystem.mount and love.filesystem.mount(sub, "", false)
+      and overlayVisible() then
+    return true
+  end
+
+  return false, "could not overlay " .. sub .. "/ onto the read path"
 end
 
 -- Undo mountVersion.  A process normally mounts exactly one version and then
