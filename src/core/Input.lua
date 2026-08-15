@@ -1,6 +1,13 @@
 -- Input abstraction: maps keyboard to Game Boy buttons.
 -- `down` = held this frame; `pressed` = edge, consumed per fixed step.
 
+-- Pad tables live in src/core/GamepadMap.lua rather than here, because the
+-- Switch needs different ones: SDL names face buttons by POSITION, and
+-- Nintendo's A and B are swapped relative to the Xbox layout SDL is named
+-- after, so SDL "a" is the button physically labelled B.  Selecting the
+-- table at call time keeps that entirely inside GamepadMap.
+local GamepadMap = require("src.core.GamepadMap")
+
 local Input = {}
 
 local DEFAULT_BINDINGS = {
@@ -27,11 +34,8 @@ local DEFAULT_BINDINGS = {
 -- third-party pads report their own SDL mapping for a given physical
 -- button (e.g. Select/Back/View on off-brand XInput pads), which is what
 -- src/ui/BindingsMenu.lua's rebinding is for -- see applyBindings below.
-local DEFAULT_GAMEPAD_BINDINGS = {
-  dpup = "up", dpdown = "down", dpleft = "left", dpright = "right",
-  a = "a", b = "b",
-  start = "start", back = "select",
-}
+-- (moved to src/core/GamepadMap.DEFAULT_GAMEPAD_BINDINGS /
+-- NX_GAMEPAD_BINDINGS -- see applyBindings below)
 
 -- left-stick deadzones: press past STICK_ON, release once back under
 -- STICK_OFF. The gap (hysteresis) stops the direction from flickering
@@ -49,10 +53,8 @@ local STICK_OFF = 0.3
 -- "joyN" pad bindings over them (#632), and only a stick SDL does NOT
 -- recognize as a gamepad is ever served out of this table -- see
 -- joystickpressed below.
-local RAW_BUTTON_BINDINGS = {
-  [1] = "a", [2] = "b",
-  [7] = "select", [8] = "start", [9] = "select", [10] = "start",
-}
+-- (moved to src/core/GamepadMap.RAW_BUTTON_BINDINGS /
+-- NX_RAW_BUTTON_BINDINGS)
 
 local HAT_DIRECTIONS = {
   u = { "up" }, d = { "down" }, l = { "left" }, r = { "right" },
@@ -75,8 +77,10 @@ end
 function Input:applyBindings(overlay)
   local keys, pads, joys = {}, {}, {}
   for key, action in pairs(DEFAULT_BINDINGS) do keys[key] = action end
-  for button, action in pairs(DEFAULT_GAMEPAD_BINDINGS) do pads[button] = action end
-  for index, action in pairs(RAW_BUTTON_BINDINGS) do joys[index] = action end
+  -- Resolved per call, not cached at load: GamepadMap picks the NX tables
+  -- when love reports that OS, and applyBindings runs after love is up.
+  for button, action in pairs(GamepadMap.gamepadBindings()) do pads[button] = action end
+  for index, action in pairs(GamepadMap.rawBindings()) do joys[index] = action end
   for actionId, binding in pairs(overlay or {}) do
     if type(binding) == "table" then
       if binding.key then keys[binding.key] = actionId end
@@ -226,7 +230,10 @@ end
 -- entry.  A nil joystick is a raw stick: that is how
 -- tests/input_hold_test.lua and the drivers drive this path.
 local function isRawStick(joystick)
-  return not (joystick and joystick.isGamepad and joystick:isGamepad())
+  -- pcall-safe via GamepadMap: love-nx's joystick objects answer isGamepad
+  -- but a stubbed one in tests may not, and an error here would swallow
+  -- every button press on the platform it was meant to protect.
+  return not GamepadMap.ignoreRawForJoystick(joystick)
 end
 
 function Input:joystickpressed(joystick, button)

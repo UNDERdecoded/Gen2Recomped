@@ -2,6 +2,8 @@ local GameVersion = require("src.core.GameVersion")
 local Strings = require("src.core.Strings")
 local HostShell = require("src.core.HostShell")
 local SafeArea = require("src.core.SafeArea")
+local Platform = require("src.core.Platform")
+local GamepadMap = require("src.core.GamepadMap")
 
 local RomImporter = {}
 RomImporter.__index = RomImporter
@@ -246,7 +248,7 @@ end
 --      as one 80x40 strip (ten columns, five rows) to
 --      assets/generated/tilesets/towerpillar.png.  Nothing read that table
 --      before, so the tower's central support stood perfectly still.
-local CACHE_FORMAT = "rom-cache-v69:"
+local CACHE_FORMAT = "rom-cache-v70:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
@@ -256,7 +258,7 @@ local MARKER_PATH = "rom-cache.complete"
 local function markerFor(version)
   return CACHE_FORMAT .. GameVersion.info(version).sha1
 end
-local COMMUNITY_URL = "https://bois.icu"
+local COMMUNITY_URL = "https://discord.gg/4VXnEnePT"
 local UD_URL = "https://discord.gg/4VXnEnePT"
 local TRUST_WARNING = "if you did not get this from UNDERdecodedHD's github " ..
   "or a link from the discord that UNDERdecodedHD himself posted, just know " ..
@@ -657,15 +659,68 @@ end
 -- pending.  GameActivity always writes the SAF pick to picked_rom.gb, so a
 -- naive "first ROM wins" scan would re-import Red when the player tries to
 -- add Blue (issue #167). Yellow and Gen2 carts are typically .gbc.
+-- The Switch has no file picker and no drag-and-drop, so the ROM arrives as
+-- a file the player copied onto the SD card (MTP, DBI, or the card in a PC).
+-- It goes in an `imports/` folder inside the save directory: a plain named
+-- inbox is something a player can be told to use, where "the save directory
+-- root" is a folder full of the game's own state.  Ported from gen1recomp,
+-- whose Switch build has always worked this way; scripts/switch/pack_sd_zip.sh
+-- ships the folder pre-made with a README in it.
+local IMPORTS_DIR = "imports"
+
+function RomImporter:ensureImportsDir()
+  local info = love.filesystem.getInfo(IMPORTS_DIR)
+  if info and info.type == "directory" then return true end
+  if info then return false end   -- a FILE named imports/ -- do not clobber it
+  if love.filesystem.createDirectory then
+    return love.filesystem.createDirectory(IMPORTS_DIR)
+  end
+  return false
+end
+
+-- love.filesystem paths on the Switch read "sdmc:/switch/...", but MTP tools
+-- (DBI, OpenMTP) show the card root as "1: SD Card", so the sdmc: prefix is
+-- noise there.  Strip it ONLY when it is actually present.
+function RomImporter.mtpHintPath(saveDir)
+  if type(saveDir) ~= "string" then return "" end
+  if saveDir:sub(1, 6) == "sdmc:/" then return saveDir:sub(7) end
+  return saveDir
+end
+
+-- Every .gb/.gbc under `dir`, skipping AppleDouble junk: a Mac writes
+-- "._cart.gb" beside "cart.gb" on a FAT card, and it ends in .gb but is a
+-- 4 KB resource fork, so an unfiltered scan tries it first and reports the
+-- real dump as missing.
+local function listRomPaths(dir)
+  local paths = {}
+  for _, name in ipairs(love.filesystem.getDirectoryItems(dir) or {}) do
+    if name:sub(1, 1) ~= "." then
+      local path = (dir == "" or dir == "/") and name or (dir .. "/" .. name)
+      if name:lower():match("%.gbc?$") and love.filesystem.getInfo(path, "file") then
+        paths[#paths + 1] = path
+      end
+    end
+  end
+  return paths
+end
+
+-- imports/ first, then the save-dir root, so a player who dropped the cart
+-- in either place is served -- and so the platforms that have always scanned
+-- the root keep behaving exactly as before.
+local function pendingRomPaths()
+  local paths = {}
+  for _, path in ipairs(listRomPaths(IMPORTS_DIR)) do paths[#paths + 1] = path end
+  for _, path in ipairs(listRomPaths("")) do paths[#paths + 1] = path end
+  return paths
+end
+
 local function findPendingRom(ready)
-  for _, name in ipairs(love.filesystem.getDirectoryItems("")) do
-    if name:lower():match("%.gbc?$") and love.filesystem.getInfo(name, "file") then
-      local data = love.filesystem.read(name)
-      if type(data) == "string" and isSupportedRomSize(#data) then
-        local version = GameVersion.forSha1(sha1(data))
-        if version and not ready[version] then
-          return name, data
-        end
+  for _, name in ipairs(pendingRomPaths()) do
+    local data = love.filesystem.read(name)
+    if type(data) == "string" and isSupportedRomSize(#data) then
+      local version = GameVersion.forSha1(sha1(data))
+      if version and not ready[version] then
+        return name, data
       end
     end
   end
@@ -894,6 +949,10 @@ function RomImporter.new(onComplete, opts)
     onEditTouchControls = opts.onEditTouchControls,
     android = android,
     ios = mobileOS == "iOS",
+    -- love-nx reports "NX".  Nothing in this tree knew that string, so the
+    -- Switch fell through every platform branch to the desktop one and was
+    -- told to use a file picker it does not have.
+    isNX = Platform.isNX(),
     -- One startup poll pass on both mobiles.  iOS: files dropped through the
     -- Files app are swept into the save dir before Lua boots (GRBootstrap) with
     -- no love.focus event necessarily following.  Android: the SAF picker is a
@@ -914,7 +973,7 @@ function RomImporter.new(onComplete, opts)
       and love.touch.getTouches ~= nil and love.touch.getPosition ~= nil,
     tab = "red",          -- active launcher tab: "red"/"blue"/"yellow"/"mods"
     logo = love.graphics.newImage("assets/logo/logo.png"),
-    bcg = love.graphics.newImage("assets/logo/bcg.png"),
+    bcg = love.graphics.newImage("assets/logo/UD.png"),
     -- Gold/Silver get their own branding: the Gen2 wordmark over the strip and
     -- the UD credit in the footer, swapped in whenever one of those tabs is up.
     gen2Logo = love.graphics.newImage("assets/logo/gen2logo.png"),
@@ -1038,7 +1097,11 @@ function RomImporter.new(onComplete, opts)
   -- On Linux handhelds a gamepad is usually already connected at boot; arm
   -- the virtual cursor immediately so the player does not have to press a
   -- button before seeing something move.
-  if self.launcher and love.system.getOS() == "Linux"
+  -- Any connected pad arms the virtual cursor, not just on Linux.  The OS
+  -- literal here was written for PortMaster handhelds and left a Switch
+  -- player looking at a launcher with no visible pointer until they happened
+  -- to nudge a stick.
+  if self.launcher
       and love.joystick and love.joystick.getJoystickCount
       and love.joystick.getJoystickCount() > 0 then
     self:_activatePadCursor()
@@ -1580,6 +1643,23 @@ function RomImporter:choose(version)
     }
     return
   end
+  -- Console: no picker, no drag-and-drop, no shell to spawn one.  The scan
+  -- above already looked; reaching here means the inbox is empty, so say
+  -- where the inbox IS.  The old text sent the player to "drop the file onto
+  -- the window", which on a Switch is not an instruction anyone can follow --
+  -- it is the message that made a correct install look broken.
+  if self.isNX or Platform.romImportMode() == "save-directory" then
+    self:ensureImportsDir()
+    local saveDir = love.filesystem.getSaveDirectory()
+    local rel = RomImporter.mtpHintPath(saveDir)
+    if rel ~= "" and rel:sub(-1) ~= "/" then rel = rel .. "/" end
+    self.notice = {
+      version = self.chooseVersion,
+      status = "Copy your .gb/.gbc into:",
+      detail = saveDir .. "/imports/\nDBI MTP -> 1: SD Card/" .. rel .. "imports/",
+    }
+    return
+  end
   if love.system.getOS() ~= "OS X" and love.system.getOS() ~= "Windows" then
     self:setError("File selection is unavailable here. Drop the .gb/.gbc file onto the window.")
   end
@@ -1800,7 +1880,14 @@ end
 
 function RomImporter:gamepadpressed(_, button)
   self:_activatePadCursor()
-  if button == "a" then
+  -- Through GamepadMap, so the Switch's face buttons resolve to the Nintendo
+  -- labels: SDL names them by POSITION, and Nintendo's A and B sit opposite
+  -- to the Xbox layout SDL is named after, so SDL "b" is the button
+  -- physically labelled A.  Testing the raw SDL name here accepted only the
+  -- button labelled B -- which is why a Switch player saw the cursor move
+  -- (sticks and dpad are position-independent) and click on nothing.
+  local action = GamepadMap.mapGamepadButton(button)
+  if action == "a" then
     -- Instant click at the virtual pointer (same path as a mouse/touch tap).
     self:mousepressed(self._padCursor.x, self._padCursor.y, 1)
   elseif button == "leftshoulder" then
@@ -1834,21 +1921,26 @@ function RomImporter:gamepadaxis(_, axis, value)
   end
 end
 
--- Same gate as src/core/Input.lua's isMappedPad: a pad SDL can map already
+-- Same gate as src/core/Input.lua's isRawStick: a pad SDL can map already
 -- reached gamepadpressed this frame, so re-entering it from the raw event
 -- would fire the virtual cursor's click twice off one A press (#620).
 local function isMappedPad(joystick)
-  return joystick ~= nil and joystick.isGamepad ~= nil and joystick:isGamepad()
+  return GamepadMap.ignoreRawForJoystick(joystick)
 end
 
 function RomImporter:joystickpressed(joystick, button)
   if isMappedPad(joystick) then return end
-  if button == 1 then self:gamepadpressed(joystick, "a") end
+  -- Raw index -> SDL button name, which gamepadpressed then resolves through
+  -- the same face-swap table.  Hardcoding "a" here served only button 1 and
+  -- meant an unmapped pad could reach exactly one action.
+  local name = GamepadMap.mapRawToGamepadButton(button)
+  if name then self:gamepadpressed(joystick, name) end
 end
 
 function RomImporter:joystickreleased(joystick, button)
   if isMappedPad(joystick) then return end
-  if button == 1 then self:gamepadreleased(joystick, "a") end
+  local name = GamepadMap.mapRawToGamepadButton(button)
+  if name then self:gamepadreleased(joystick, name) end
 end
 
 function RomImporter:joystickaxis(joystick, axis, value)

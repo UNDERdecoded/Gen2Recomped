@@ -84,3 +84,10 @@ mobile/ios/bundle_id.local
 # install from a fresh one -- a Gen2 import writes its data into the LOVE
 # save folder, not into data/generated, so there is nothing else to test for.
 .setup-complete
+
+# Code-signing material.  The MSIX release certificate's private key lives in
+# a repository secret (docs/msix-signing.md), never in the tree: committing a
+# .pfx hands anyone who clones the repo the ability to sign packages as us.
+*.pfx
+*.p12
+*.snk

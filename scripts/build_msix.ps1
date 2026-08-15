@@ -33,12 +33,25 @@
 
 .PARAMETER CertPath / CertPassword
   A .pfx to sign with.  Omit both and the package is left unsigned -- useful
-  for inspection, but Windows will not install it.
+  for inspection, but Windows will not install it.  Either way the public
+  half is exported next to the .msix as a .cer, because that file is what a
+  player must import before Windows will install a sideloaded package.
+
+  This is the path CI uses: ONE long-lived certificate held as a repository
+  secret, so every release carries the same signature and a player trusts it
+  once, not once per release.
 
 .PARAMETER MakeCert
   Create a self-signed certificate matching -Publisher, sign with it, and
-  export the .cer next to the .msix so the machine can trust it.  This is the
-  sideloading path; see the notes printed at the end.
+  export the .cer next to the .msix so the machine can trust it.  Fine for a
+  one-off local package, but the certificate is BRAND NEW on every run, so
+  anyone installing has to trust every build separately.  Use -CertPath for
+  anything handed to someone else.
+
+.PARAMETER TimestampUrl
+  RFC3161 timestamp server.  A timestamped signature stays valid after the
+  signing certificate expires; without one, the day the certificate lapses is
+  the day every release ever published stops installing.  Pass "" to skip.
 
 .EXAMPLE
   scripts\build_msix.ps1 -MakeCert
@@ -55,6 +68,7 @@ param(
   [string]$PackageName = "UNDERdecodedHD.Gen2Recomped",
   [string]$CertPath,
   [System.Security.SecureString]$CertPassword,
+  [string]$TimestampUrl = "http://timestamp.digicert.com",
   [switch]$MakeCert
 )
 
@@ -147,7 +161,7 @@ Copy-Item -Path (Join-Path $Source "*") -Destination $Work -Recurse -Force
 # what ships with Windows.
 $assetsDir = Join-Path $Work "Assets"
 New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
-$logo = Join-Path $Root "assets\logo\gen2logo.png"
+$logo = Join-Path $Root "assets\logo\logo.png"
 $tiles = @{ "Square44x44Logo.png" = 44; "Square150x150Logo.png" = 150; "StoreLogo.png" = 50 }
 if (Test-Path $logo) {
   Add-Type -AssemblyName System.Drawing
@@ -166,9 +180,9 @@ if (Test-Path $logo) {
     $bmp.Dispose()
   }
   $src.Dispose()
-  Say "tiles generated from assets/logo/gen2logo.png"
+  Say "tiles generated from assets/logo/logo.png"
 } else {
-  Warn "assets/logo/gen2logo.png missing; writing blank tiles"
+  Warn "assets/logo/logo.png missing; writing blank tiles"
   Add-Type -AssemblyName System.Drawing
   foreach ($name in $tiles.Keys) {
     $bmp = New-Object System.Drawing.Bitmap($tiles[$name], $tiles[$name])
@@ -255,15 +269,75 @@ if ($MakeCert) {
 
 if ($CertPath) {
   if (-not $SignTool) { Fail "SignTool.exe not found (install the Windows SDK signing tools)" }
-  Say "signing"
   $plain = ""
   if ($CertPassword) {
     $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($CertPassword)
     try { $plain = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr) }
     finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
   }
-  & $SignTool sign /fd SHA256 /a /f $CertPath /p $plain $OutFile
-  if ($LASTEXITCODE -ne 0) { Fail "SignTool failed (does the cert Subject match Publisher='$Publisher'?)" }
+
+  # Read the .pfx BEFORE signing, for two reasons that both cost a whole
+  # release if skipped.
+  if (-not $MakeCert) {
+    $signingCert = $null
+    try {
+      $signingCert = (Get-PfxData -FilePath $CertPath -Password $CertPassword).EndEntityCertificates[0]
+    } catch {
+      try {
+        $signingCert = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new($CertPath, $plain)
+      } catch {
+        Fail "could not open $CertPath -- wrong password, or not a .pfx"
+      }
+    }
+
+    # 1. A Subject that does not match Identity/@Publisher character for
+    #    character produces a package that signs cleanly and then refuses to
+    #    install.  Catch it here, where the message can name both values,
+    #    instead of on a player's machine as a hex code.
+    $norm = { param($s) ($s -replace '\s*,\s*', ',').Trim().ToLowerInvariant() }
+    if ((& $norm $signingCert.Subject) -ne (& $norm $Publisher)) {
+      Fail @"
+certificate Subject does not match the manifest Publisher.
+  certificate: $($signingCert.Subject)
+  manifest   : $Publisher
+Re-run with -Publisher '$($signingCert.Subject)', or sign with a certificate
+whose Subject is exactly '$Publisher'.
+"@
+    }
+
+    # 2. An expired certificate signs without complaint and installs nowhere.
+    if ($signingCert.NotAfter -lt (Get-Date)) {
+      Fail "signing certificate expired on $($signingCert.NotAfter) -- issue a new one and replace the secret"
+    }
+    $daysLeft = [int]($signingCert.NotAfter - (Get-Date)).TotalDays
+    if ($daysLeft -lt 90) {
+      Warn "signing certificate expires in $daysLeft days ($($signingCert.NotAfter))"
+    }
+    Say "signing as $($signingCert.Subject), valid to $($signingCert.NotAfter.ToString('yyyy-MM-dd'))"
+
+    # The public half ships beside the package: a sideloaded MSIX installs
+    # only once this file is in the machine's Trusted People store, so a
+    # release without it is a release nobody can install.
+    [System.IO.File]::WriteAllBytes($cerOut, $signingCert.Export('Cert'))
+  } else {
+    Say "signing"
+  }
+
+  # A timestamp is what keeps already-published releases installable after
+  # the certificate expires; without it they all die on the same day.  It
+  # needs the network, so a timestamp-server outage must not fail the build --
+  # fall back to an untimestamped signature and say so loudly.
+  $signed = $false
+  if ($TimestampUrl) {
+    & $SignTool sign /fd SHA256 /a /f $CertPath /p $plain /tr $TimestampUrl /td SHA256 $OutFile
+    if ($LASTEXITCODE -eq 0) { $signed = $true }
+    else { Warn "timestamping via $TimestampUrl failed; signing without a timestamp" }
+  }
+  if (-not $signed) {
+    & $SignTool sign /fd SHA256 /a /f $CertPath /p $plain $OutFile
+    if ($LASTEXITCODE -ne 0) { Fail "SignTool failed (does the cert Subject match Publisher='$Publisher'?)" }
+    if ($TimestampUrl) { Warn "this package's signature will stop validating when the certificate expires" }
+  }
 } else {
   Warn "package is UNSIGNED; Windows will refuse to install it. Re-run with -MakeCert, or pass -CertPath."
 }
@@ -271,8 +345,13 @@ if ($CertPath) {
 Say "done: $OutFile"
 Write-Host ""
 Write-Host "To install on this machine:" -ForegroundColor Cyan
-if ($MakeCert) {
-  Write-Host "  1. Trust the certificate once (needs an elevated shell):"
+if (Test-Path $cerOut) {
+  # LocalMachine, not CurrentUser: App Installer only consults the machine
+  # store, and a certificate imported into the user store yields
+  # 0x800B010A -- "the publisher certificate could not be verified".
+  # TrustedPeople, not Root: this is an end-entity certificate, not a CA,
+  # and trusting it as a root authority weakens the whole machine.
+  Write-Host "  1. Trust the certificate once (needs an ELEVATED shell):"
   Write-Host "     Import-Certificate -FilePath `"$cerOut`" -CertStoreLocation Cert:\LocalMachine\TrustedPeople"
   Write-Host "  2. Add-AppxPackage `"$OutFile`""
 } else {
