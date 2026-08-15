@@ -218,7 +218,7 @@ apply_ios_branding() {
 }
 
 apply_ios_icon() {
-  local source="$ROOT/assets/logo/logo.png"
+  local source="$ROOT/assets/logo/gen2logo.png"
   local target="$XCODE_DIR/Images.xcassets/iOS AppIcon.appiconset"
   [ -f "$source" ] || fail "missing iOS icon source: $source"
   [ -d "$target" ] || fail "missing iOS app icon set: $target"

@@ -147,7 +147,7 @@ Copy-Item -Path (Join-Path $Source "*") -Destination $Work -Recurse -Force
 # what ships with Windows.
 $assetsDir = Join-Path $Work "Assets"
 New-Item -ItemType Directory -Force -Path $assetsDir | Out-Null
-$logo = Join-Path $Root "assets\logo\logo.png"
+$logo = Join-Path $Root "assets\logo\gen2logo.png"
 $tiles = @{ "Square44x44Logo.png" = 44; "Square150x150Logo.png" = 150; "StoreLogo.png" = 50 }
 if (Test-Path $logo) {
   Add-Type -AssemblyName System.Drawing
@@ -166,9 +166,9 @@ if (Test-Path $logo) {
     $bmp.Dispose()
   }
   $src.Dispose()
-  Say "tiles generated from assets/logo/logo.png"
+  Say "tiles generated from assets/logo/gen2logo.png"
 } else {
-  Warn "assets/logo/logo.png missing; writing blank tiles"
+  Warn "assets/logo/gen2logo.png missing; writing blank tiles"
   Add-Type -AssemblyName System.Drawing
   foreach ($name in $tiles.Keys) {
     $bmp = New-Object System.Drawing.Bitmap($tiles[$name], $tiles[$name])

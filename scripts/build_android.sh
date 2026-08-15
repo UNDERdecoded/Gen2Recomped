@@ -559,10 +559,20 @@ run_gradle() {
     # Windows checkouts can carry CRLF into gradlew and break under bash
     # with '/bin/sh^M: bad interpreter'. Normalize just before execution.
     sed -i 's/\r$//' "$build_dir/gradlew"
+    # ...and they record no exec bit either, which a Linux CI runner turns
+    # into './gradlew: Permission denied'.  chmod for anyone who runs the
+    # wrapper by hand later; the invocation below does not rely on it.
+    chmod +x "$build_dir/gradlew" 2>/dev/null || true
   fi
   if ! (
     cd "$build_dir"
-    ./gradlew --no-daemon "$task"
+    # `sh ./gradlew`, not `./gradlew`: the wrapper is a POSIX sh script (that
+    # is its own shebang), so this is the identical execution and it cannot be
+    # defeated by a missing mode bit at all.  The chmod above is best-effort
+    # -- it is silenced because it legitimately fails on mounts that carry no
+    # permission bits (Windows shares, some WSL setups) -- so the build must
+    # not depend on it having worked.
+    sh ./gradlew --no-daemon "$task"
   ); then
     fail "gradle $task failed.
   Packaging already wrote: $LOVE_FILE
