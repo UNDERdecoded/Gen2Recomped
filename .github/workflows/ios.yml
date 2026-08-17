@@ -1,45 +1,34 @@
 name: Build Unsigned IPA
 
 on:
-  workflow_dispatch:          # Manual trigger
-  # push:
-  #   branches: [main]
+  workflow_dispatch:
 
 jobs:
   build:
-    runs-on: macos-15         # or macos-latest / macos-14
-    timeout-minutes: 60
+    runs-on: macos-15
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Select Xcode (optional but recommended)
-        run: sudo xcode-select -s /Applications/Xcode.app
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
 
-      - name: Build unsigned archive
+      - name: Build unsigned iOS (via project script)
         run: |
-          xcodebuild archive \
-            -project YourApp.xcodeproj \
-            -scheme YourScheme \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath $PWD/build/YourApp.xcarchive \
+          # Fetch LÖVE sources + dependencies, then build without signing
+          scripts/build_ios.sh --fetch --release --device --ipa \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            ONLY_ACTIVE_ARCH=NO
-
-      - name: Package unsigned IPA
-        run: |
-          mkdir -p Payload
-          cp -R build/YourApp.xcarchive/Products/Applications/*.app Payload/
-          zip -r YourApp-unsigned.ipa Payload
-          rm -rf Payload
+            CODE_SIGN_IDENTITY=""
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
-          name: unsigned-ipa
-          path: YourApp-unsigned.ipa
+          name: gen2recomp-unsigned-ipa
+          path: dist/ios/*.ipa
+          if-no-files-found: error
           retention-days: 14
