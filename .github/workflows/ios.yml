@@ -1,0 +1,45 @@
+name: Build Unsigned IPA
+
+on:
+  workflow_dispatch:          # Manual trigger
+  # push:
+  #   branches: [main]
+
+jobs:
+  build:
+    runs-on: macos-15         # or macos-latest / macos-14
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode (optional but recommended)
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build unsigned archive
+        run: |
+          xcodebuild archive \
+            -project YourApp.xcodeproj \
+            -scheme YourScheme \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath $PWD/build/YourApp.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Package unsigned IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/YourApp.xcarchive/Products/Applications/*.app Payload/
+          zip -r YourApp-unsigned.ipa Payload
+          rm -rf Payload
+
+      - name: Upload IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: unsigned-ipa
+          path: YourApp-unsigned.ipa
+          retention-days: 14
