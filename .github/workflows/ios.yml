@@ -17,18 +17,43 @@ jobs:
         with:
           xcode-version: latest-stable
 
-      - name: Build unsigned iOS (via project script)
+      - name: Fetch LÖVE sources + package game.love
         run: |
-          # Fetch LÖVE sources + dependencies, then build without signing
-          scripts/build_ios.sh --fetch --release --device --ipa \
+          scripts/build_ios.sh --fetch --package-only
+
+      - name: Build unsigned archive
+        run: |
+          set -euo pipefail
+
+          cd mobile/ios/love-src/platform/xcode
+
+          xcodebuild archive \
+            -project love.xcodeproj \
+            -scheme love-ios \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$GITHUB_WORKSPACE/build/Gen2Recomped.xcarchive" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY=""
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO
+
+      - name: Package unsigned IPA
+        run: |
+          set -euo pipefail
+
+          mkdir -p Payload
+          cp -R build/Gen2Recomped.xcarchive/Products/Applications/*.app Payload/
+          zip -r gen2recomp-unsigned.ipa Payload
+          rm -rf Payload
+
+          echo "Created: gen2recomp-unsigned.ipa"
+          ls -lh gen2recomp-unsigned.ipa
 
       - name: Upload IPA
         uses: actions/upload-artifact@v4
         with:
           name: gen2recomp-unsigned-ipa
-          path: dist/ios/*.ipa
+          path: gen2recomp-unsigned.ipa
           if-no-files-found: error
           retention-days: 14
