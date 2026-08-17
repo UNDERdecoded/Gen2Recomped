@@ -21,33 +21,55 @@ jobs:
         run: |
           scripts/build_ios.sh --fetch --package-only
 
-      - name: Build unsigned archive
+      - name: Build unsigned (device) without signing
         run: |
           set -euo pipefail
 
+          # Use the same approach as scripts/build_ios.sh
           cd mobile/ios/love-src/platform/xcode
 
-          xcodebuild archive \
+          xcodebuild \
             -project love.xcodeproj \
-            -scheme love-ios \
+            -target love-ios \
             -configuration Release \
+            -sdk iphoneos \
             -destination "generic/platform=iOS" \
-            -archivePath "$GITHUB_WORKSPACE/build/Gen2Recomped.xcarchive" \
+            SYMROOT="$GITHUB_WORKSPACE/build/Products" \
+            OBJROOT="$GITHUB_WORKSPACE/build/Intermediates" \
             CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            ONLY_ACTIVE_ARCH=NO
+            ONLY_ACTIVE_ARCH=NO \
+            PRODUCT_BUNDLE_IDENTIFIER="com.underdecodedhd.gen2recomped"
 
       - name: Package unsigned IPA
         run: |
           set -euo pipefail
 
+          # Find the .app
+          APP_PATH=$(find build/Products -name "*.app" -type d | head -1)
+
+          if [ -z "$APP_PATH" ]; then
+            echo "ERROR: No .app found"
+            find build -name "*.app" || true
+            ls -laR build/Products || true
+            exit 1
+          fi
+
+          echo "Found app at: $APP_PATH"
+
+          # Fuse game.love if the script didn't already
+          if [ ! -f "$APP_PATH/game.love" ]; then
+            echo "Copying game.love into the app..."
+            cp mobile/ios/love-src/platform/xcode/ios/resources/game.love "$APP_PATH/"
+          fi
+
+          # Create IPA
           mkdir -p Payload
-          cp -R build/Gen2Recomped.xcarchive/Products/Applications/*.app Payload/
+          cp -R "$APP_PATH" Payload/
           zip -r gen2recomp-unsigned.ipa Payload
           rm -rf Payload
 
-          echo "Created: gen2recomp-unsigned.ipa"
           ls -lh gen2recomp-unsigned.ipa
 
       - name: Upload IPA
