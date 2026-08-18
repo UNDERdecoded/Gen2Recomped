@@ -297,7 +297,21 @@ end
 --        LoadFishingGFX picks between FishingGFX and KrisFishingGFX off
 --        wPlayerGender, and Kris was fishing on Chris's sprite because the
 --        pose lived in overworldFx, which has one slot.
-local CACHE_FORMAT = "rom-cache-v74:"
+-- v75: five Gen2 move effects stopped being aliased onto Gen1 names that threw
+--      their weather rules away, and the sandstorm upkeep animation got an id.
+--      * $97 EFFECT_SOLARBEAM was CHARGE_EFFECT -- so Solar Beam never skipped
+--        its charge turn in sun and was never halved in rain.
+--      * $98 EFFECT_THUNDER was PARALYZE_SIDE_EFFECT2 -- the 30% paralysis was
+--        right, but Thunder never always-hit in rain nor dropped to 50% in sun.
+--      * $84/$85/$86 EFFECT_MORNING_SUN / SYNTHESIS / MOONLIGHT were all
+--        HEAL_EFFECT, a flat half of max HP, so the clock and the weather (the
+--        whole point of those three moves) did nothing.
+--      * battle_anims.misc gains inSandstorm = 267 (ANIM_IN_SANDSTORM, $10b),
+--        the animation the end-of-turn sandstorm hit plays.
+--      Rain Dance, Sunny Day and Sandstorm themselves needed no cache change:
+--      their effect names were already correct, there was simply no handler --
+--      which is why they printed "But, it failed!" every time.
+local CACHE_FORMAT = "rom-cache-v75:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"

@@ -1801,14 +1801,25 @@ local GEN2_MOVE_EFFECTS = {
   [0x6C] = "BURN_SIDE_EFFECT1",
   [0x76] = "SWAGGER_EFFECT",         -- confuse AND raise the target's Attack 2
   [0x7D] = "BURN_SIDE_EFFECT2",
-  [0x84] = "HEAL_EFFECT",
-  [0x85] = "HEAL_EFFECT",
-  [0x86] = "HEAL_EFFECT",
+  -- EFFECT_MORNING_SUN / SYNTHESIS / MOONLIGHT are NOT plain heals: they
+  -- restore an eighth, a quarter, half or all of max HP depending on the time
+  -- of day AND the weather (BattleCommand_TimeBasedHealContinue,
+  -- effect_commands.asm:6419).  Folded onto HEAL_EFFECT they always healed
+  -- half, so neither the clock nor Sunny Day did anything.
+  [0x84] = "MORNING_SUN_EFFECT",
+  [0x85] = "SYNTHESIS_EFFECT",
+  [0x86] = "MOONLIGHT_EFFECT",
   [0x91] = "CHARGE_EFFECT",
   [0x92] = "FLINCH_SIDE_EFFECT1",
   [0x96] = "FLINCH_SIDE_EFFECT2",
-  [0x97] = "CHARGE_EFFECT",
-  [0x98] = "PARALYZE_SIDE_EFFECT2",
+  -- EFFECT_SOLARBEAM is a charge move PLUS two weather rules: it skips the
+  -- charge turn in sun (BattleCommand_SkipSunCharge) and is halved in rain
+  -- (the one WeatherMoveModifiers row).  Plain CHARGE_EFFECT lost both.
+  [0x97] = "SOLARBEAM_EFFECT",
+  -- EFFECT_THUNDER is a 30%-paralysis hit -- the PARALYZE_SIDE_EFFECT2 roll
+  -- this used to import as -- that also always hits in rain and drops to 50%
+  -- accuracy in sun (BattleCommand_ThunderAccuracy, CheckHit .ThunderRain).
+  [0x98] = "THUNDER_EFFECT",
   [0x99] = "SWITCH_AND_TELEPORT_EFFECT",
   [0x9B] = "FLY_EFFECT",
   [0x9C] = "DEFENSE_UP1_EFFECT",
@@ -10894,7 +10905,9 @@ function RomExtractorGen2:gen2BattleAnims()
     gfx = self:gen2AnimGfx(),
     palettes = self:gen2AnimPalettes(),
     -- the ids BattleAnimations keeps past the last move
-    misc = { throwPokeBall = 256, sendOutMon = 257 },
+    -- (constants/move_constants.asm: ANIM_THROW_POKE_BALL $100,
+    -- ANIM_SEND_OUT_MON $101, ANIM_IN_SANDSTORM $10b)
+    misc = { throwPokeBall = 256, sendOutMon = 257, inSandstorm = 267 },
     move = {}, effects = {},
   }
 end

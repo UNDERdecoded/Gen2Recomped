@@ -28,6 +28,7 @@ local TrainerAI = require("src.battle.TrainerAI")
 local TurnOrder = require("src.battle.TurnOrder")
 local TypeChart = require("src.battle.TypeChart")
 local Strings = require("src.core.Strings")
+local Weather = require("src.battle.Weather")
 local WideBattle = require("src.battle.WideBattle")
 
 local BattleState = {}
@@ -2640,20 +2641,34 @@ function BattleState:statusLabel(mon)
   return mon.status
 end
 
--- the one accuracy roll (MoveHitTest), hooked as battle.accuracy
-function BattleState:accuracyRoll(move, user, target)
+-- The one accuracy roll (MoveHitTest), hooked as battle.accuracy.
+-- accuracyRaw is a 0-255 threshold that stands in for the move's accuracy byte
+-- this turn -- Gen 2's BattleCommand_ThunderAccuracy overwrites that byte in
+-- sun and rain, and `50 percent + 1` is 128 rather than the 127 a percentage
+-- would round to.
+function BattleState:accuracyRoll(move, user, target, accuracyRaw)
   if Runtime.wantsHook("battle.accuracy") then
     return Runtime.call("battle.accuracy", function(c)
-      return Damage.accuracyRoll(c.ruleset, c.move, c.user, c.target, c.rng)
+      return Damage.accuracyRoll(c.ruleset, c.move, c.user, c.target, c.rng,
+                                 c.accuracyRaw)
     end, { battle = self, ruleset = self.ruleset, move = move,
-           user = user, target = target, rng = self.rng })
+           user = user, target = target, rng = self.rng,
+           accuracyRaw = accuracyRaw })
   end
-  return Damage.accuracyRoll(self.ruleset, move, user, target, self.rng)
+  return Damage.accuracyRoll(self.ruleset, move, user, target, self.rng,
+                             accuracyRaw)
 end
 
 -- Damage.compute, hooked as battle.damage; the ctx table is only built
 -- when a chain is installed, so the no-mod path allocates nothing
 function BattleState:computeDamage(user, target, move, opts)
+  -- DoWeatherModifiers reads wBattleWeather inside the damage calc; the port
+  -- keeps it on the field, so it rides in on opts rather than widening
+  -- Damage.compute's signature.  nil on Gen 1 and whenever no weather is up.
+  if self.field and self.field.weather then
+    opts = opts or {}
+    if opts.weather == nil then opts.weather = self.field.weather end
+  end
   if Runtime.wantsHook("battle.damage") then
     return Runtime.call("battle.damage", function(c)
       return Damage.compute(c.ruleset, c.user, c.target, c.move, c.opts)
@@ -2843,6 +2858,12 @@ function BattleState:endOfTurn()
       b.trappingTurns = nil
     end
   end
+  -- HandleWeather (core.asm:1685), called once per turn from
+  -- HandleBetweenTurnEffects: the count ticks down, the "continues" or "ended"
+  -- line prints, and a live sandstorm bites both sides for an eighth of max HP
+  -- (player first, then enemy -- that order is the serial-connection one, not
+  -- a speed check).
+  Weather.upkeep(self)
   self:tickTokens()
   Runtime.emit("battle.turn_ended", { battle = self, turn = self.turnCount or 0 })
 end
@@ -3825,6 +3846,10 @@ local function primaryEffectFailed(msgs)
   if m:find("is unaffected", 1, true) then return true end
   if m:find("protected by MIST", 1, true) then return true end
   if m:find("Already", 1, true) then return true end
+  -- BattleCommand_TimeBasedHealContinue's .Full branch calls AnimateFailedMove
+  -- before HPIsFullText, so Morning Sun / Synthesis / Moonlight at full HP show
+  -- no animation either
+  if m:find("HP is full", 1, true) then return true end
   return false
 end
 
@@ -3903,7 +3928,11 @@ function BattleState:performMove(user, target, moveInst, isCalled)
   -- record (chargeText) and the invulnerability from semiInvulnerable,
   -- falling back to the id tables (Fly AND Dig go semi-invulnerable:
   -- ChargeEffect sets INVULNERABLE for both)
-  if record and record.charge and not releasing then
+  -- BattleCommand_SkipSunCharge (effect_commands.asm:6535): Solar Beam jumps
+  -- straight past `charge` while the sun is up and fires on the turn it was
+  -- selected.  Every other charge move ignores the weather.
+  if record and record.charge and not releasing
+     and not Weather.skipsCharge(self, record) then
     self:cancelMoveAnim()
     user.charging = moveInst
     user.chargeReady = true
@@ -5271,8 +5300,47 @@ end
 
 -- Party pokeball row (SetupPokeballs tiles: ball / status ball /
 -- fainted ball / empty), 6 slots stepping dx from (x,y).
+--
+-- GEN 2 COLOUR.  These are not BG tiles on a Game Boy Color: LoadTrainerHudOAM
+-- writes all twelve of them into wShadowOAMSprite00 as OBJECT sprites and
+-- stamps every one with `ld a, PAL_BATTLE_OB_YELLOW` as its attribute byte
+-- (engine/battle/trainer_huds.asm:201-213).  So their colour is fixed --
+-- BattleObjectPals' yellow row, white / bright yellow / orange / black -- and
+-- has nothing to do with the HP-bar palette the BG zone under them carries.
+-- Baked into the grey BG canvas they instead wore whatever the zone pass gave
+-- that region, which is why they came out looking flat and grey.
+--
+-- PAL_BATTLE_OB_GRAY is 2 and BattleObjectPals starts there, so the
+-- extractor's row 1 is PAL_BATTLE_OB_YELLOW (3).  The literal below is the
+-- ROM's own gfx/battle_anims/battle_anims.pal, byte-identical in Gold and
+-- Crystal, through the same round(v * 255 / 31) the extractor uses -- kept as
+-- the fallback for a cache written before battle_anims carried the table.
+local GEN2_BALL_PAL_INDEX = 1
+local GEN2_BALL_PAL = {
+  { 255, 255, 255 }, { 255, 255, 58 }, { 255, 132, 8 }, { 0, 0, 0 },
+}
+
+-- the ball sprites' OBJ palette, or nil on Gen 1 (where pokered's own
+-- SetupPokeballs has no CGB attribute of its own and the SGB zone is right)
+function BattleState:gen2BallColors()
+  if not require("src.core.GameVersion").isGen2() then return nil end
+  local anims = self.data and self.data.battle_anims
+  local pals = anims and anims.palettes
+  local pal = pals and pals[GEN2_BALL_PAL_INDEX]
+  if type(pal) == "table" and #pal >= 4 then return pal end
+  return GEN2_BALL_PAL
+end
+
 local ballQuads
 function BattleState:drawBallRow(party, x, y, dx)
+  -- self.deferBalls is set (Gen 2 only) while the colorized classic pipeline
+  -- is filling the grey BG canvas: an OBJ sprite belongs OVER the zone pass,
+  -- not inside the canvas the zone pass recolors.  drawClassic flushes the
+  -- list immediately afterwards, back through this same function.
+  if self.deferBalls then
+    self.deferBalls[#self.deferBalls + 1] = { party, x, y, dx }
+    return
+  end
   if ballQuads == nil then
     local ok, img = pcall(love.graphics.newImage, "assets/generated/battle/balls.png")
     if ok then
@@ -5285,11 +5353,26 @@ function BattleState:drawBallRow(party, x, y, dx)
     end
   end
   if not ballQuads then return end
+  -- the sheet is DMG shades; the shade-remap shader paints the OBJ palette on
+  -- (a no-op on Gen 1, which has no fixed attribute for these)
+  local shader
+  local colors = self:gen2BallColors()
+  if colors then
+    local PaletteFX = require("src.render.PaletteFX")
+    shader = PaletteFX.shader()
+    if shader then
+      love.graphics.setShader(shader)
+      PaletteFX.sendColors(shader, colors)
+    else
+      shader = nil
+    end
+  end
   for i = 1, 6 do
     local mon = party[i]
     local tile = not mon and 3 or mon.hp <= 0 and 2 or mon.status and 1 or 0
     love.graphics.draw(ballQuads.img, ballQuads[tile], x + (i - 1) * dx, y)
   end
+  if shader then love.graphics.setShader() end
 end
 
 -- the grow-in scale for a battler's pic this frame: nil when not
@@ -6297,7 +6380,12 @@ function BattleState:drawClassic()
     g.setCanvas(self.bgCanvas)
     g.setColor(1, 1, 1, 1)
     g.rectangle("fill", 0, 0, 160, 144)
+    -- the party ball rows are OBJ sprites on hardware (see drawBallRow):
+    -- collect them here and draw them over the finished zone pass instead
+    local balls = self:gen2BallColors() and {} or nil
+    self.deferBalls = balls
     self:drawHUDs(slide)
+    self.deferBalls = nil
     self:drawTextArea()
     if wavy then
       -- the mon pics are BG tiles on the GB, so SE_WAVY_SCREEN bends
@@ -6311,6 +6399,16 @@ function BattleState:drawClassic()
     end
     g.setCanvas(prev)
     self:drawZonePass(self:applyWavy(self.bgCanvas), sx, sy)
+    if balls and balls[1] then
+      -- they ride the window shake with the HUD chrome they sit in
+      local shifted = sx ~= 0 or sy ~= 0
+      if shifted then g.push() g.translate(sx, sy) end
+      g.setColor(1, 1, 1, 1)
+      for _, row in ipairs(balls) do
+        self:drawBallRow(row[1], row[2], row[3], row[4])
+      end
+      if shifted then g.pop() end
+    end
     if not wavy then
       -- the pics are BG tiles in rows 0-11 on the GB: they can never
       -- cover the text box, whatever the SE offsets do (a vertical

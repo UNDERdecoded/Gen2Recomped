@@ -402,11 +402,13 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     self.tileAnimOverride.tileset.animation = self.tileAnimOverride.animation
     self.tileAnimOverride = nil
   end
-  -- ADVANCED bakes colour into the tileset atlas, so the dark-cave shift has
-  -- to be armed before that atlas is built for this map (#383); self.dark is
-  -- settled below, once the map record is in hand.
+  -- Every mode that shows hardware colour bakes it into the tileset atlas --
+  -- ADVANCED on Gen 1, and ALL of them on Gen 2, which picks the tileset's
+  -- DARKNESS palette row off darkWorld -- so the dark-cave shift has to be
+  -- armed before that atlas is built for this map (#383); self.dark is settled
+  -- below, once the map record is in hand.
   if PaletteFX.setDarkWorld(isDarkMap(mapId) and not Game.save.flashLit)
-     and PaletteFX.usesGbcPack() then
+     and PaletteFX.bakesDarkness() then
     MapLoader.invalidateAll()
   end
   -- The map's own PALETTE_* override (map header byte 7, low nibble).  It has
@@ -923,14 +925,20 @@ end
 
 -- wMapPalOffset, the one piece of state both halves of the darkness read:
 -- drawWorld arms PaletteFX.DARK_BGP off self.dark for the shade-remapped
--- modes, and PaletteFX.setDarkWorld feeds the bakes ADVANCED does instead of
--- shading (tileset atlas, sprite sheets) plus their cache keys.  A bake cannot
--- be re-shaded in place, so a change there rebuilds every resident map --
--- every dark floor, not just this one, since FLASH lights them all (#383).
+-- modes, and PaletteFX.setDarkWorld feeds the bakes the hardware-colour modes
+-- do instead of shading (tileset atlas, sprite sheets) plus their cache keys.
+-- A bake cannot be re-shaded in place, so a change there rebuilds every
+-- resident map -- every dark floor, not just this one, since FLASH lights them
+-- all (#383).
+--
+-- PaletteFX.bakesDarkness, not usesGbcPack: a Gen 2 game bakes the DARKNESS
+-- palette row into its atlas in EVERY hardware-colour mode, so asking only
+-- about ADVANCED left FLASH doing nothing whatsoever under SGB -- the default
+-- -- because the atlas on screen still had the darkness baked into it.
 function OverworldState:setDark(on)
   on = on and true or false
   self.dark = on
-  if PaletteFX.setDarkWorld(on) and PaletteFX.usesGbcPack() and self.map then
+  if PaletteFX.setDarkWorld(on) and PaletteFX.bakesDarkness() and self.map then
     MapLoader.invalidateAll()
     self:reloadMap(self.map.id, "dark")
   end
@@ -2218,7 +2226,23 @@ end
 -- the Old Rod always hooked a level 5 MAGIKARP and the Super Rod -- whose
 -- Gen1 form is a per-map list this cart does not have -- returned nil, so
 -- every Super Rod cast anywhere printed "Not even a nibble!".
-local GEN2_ROD_KEY = { OLD_ROD = "old", GOOD_ROD = "good", SUPER_ROD = "super" }
+-- Keyed by BOTH spellings, because the caller hands over whatever the bag row
+-- was and a Gen2 import names its items by NUMBER.  BagMenu does
+-- `ow:goFishing(id)` with the item id straight off the row, and on Gold /
+-- Silver / Crystal that is ITEM_058 / ITEM_059 / ITEM_061 (OLD_ROD $3a,
+-- GOOD_ROD $3b, SUPER_ROD $3d in constants/item_constants.asm) -- never the
+-- pokered-style name.
+--
+-- So this table missed on every cast: `key` came back nil, `entry` with it, and
+-- gen2FishingRoll returned "no bite, handled" for EVERY ROD ON EVERY MAP.  That
+-- is the "... Not even a nibble!" that survived the FishGroups indexing fix --
+-- the roll never reached the group table at all, which is also why fixing that
+-- table appeared to change nothing.  The rod animation still played, because
+-- goFishing sets self.fishing after the roll regardless of the verdict.
+local GEN2_ROD_KEY = {
+  OLD_ROD = "old", GOOD_ROD = "good", SUPER_ROD = "super",
+  ITEM_058 = "old", ITEM_059 = "good", ITEM_061 = "super",
+}
 
 local function gen2FishingRoll(data, rod, mapDef, tod)
   local field = data.field

@@ -28,6 +28,43 @@ local function state(save)
   return type(save) == "table" and save.g2BugContest or nil
 end
 
+-- ENGINE_BUG_CONTEST_TIMER is the flag the CARTRIDGE uses for "a run is in
+-- progress", and it is not decoration: Route36NationalParkGate's
+-- MAPCALLBACK_NEWMAP callback branches on it to pick the map's scene --
+--
+--     checkflag ENGINE_BUG_CONTEST_TIMER
+--     iftrue .BugContestIsRunning        -> setscene LEAVE_CONTEST_EARLY
+--     setscene SCENE_ROUTE36NATIONALPARKGATE_NOOP
+--
+-- and the LEAVE_CONTEST_EARLY scene is the officer asking "Do you want to
+-- finish?", which on YES runs judging and `jumpstd BugContestResultsScript`
+-- for the prize.
+--
+-- The extracted gate scripts SET it (Route36NationalParkGate:160/171,
+-- Route35NationalParkGate:99) and BugContestResultsScript CLEARS it
+-- (std_scripts.asm:318) -- but this module's own state was a second, separate
+-- source of truth, and finish() only ever touched that one.  So the flag stayed
+-- set after a run ended: arriving at the gate re-armed LEAVE_CONTEST_EARLY, the
+-- officer asked again, and the player was handed another prize, over and over.
+--
+-- Keep the two in lockstep and that cannot happen.  Index 16 in this port's
+-- Gold-numbered table; see Gen2Flags.ENGINE_FLAG_NAMES for why that number is
+-- worth being careful about.
+local ENGINE_BUG_CONTEST_TIMER = 16
+
+-- Pre-naming, the extracted `setflag` wrote the generic FLAG_G2_0016 key, so a
+-- save made before this clears both.  That is what un-sticks anyone currently
+-- stuck in the officer loop.
+local function setTimerFlag(save, on)
+  if type(save) ~= "table" then return end
+  local ok, Gen2Flags = pcall(require, "src.script.Gen2Flags")
+  if not (ok and Gen2Flags and Gen2Flags.engineFlag) then return end
+  save.flags = save.flags or {}
+  local named = Gen2Flags.engineFlag(ENGINE_BUG_CONTEST_TIMER)
+  save.flags[named] = on or nil
+  save.flags[string.format("FLAG_G2_%04d", ENGINE_BUG_CONTEST_TIMER)] = on or nil
+end
+
 function BugContest.state(save) return state(save) end
 
 -- Whether the run is live.  Every caller guards on this, so a save that has
@@ -59,6 +96,7 @@ function BugContest.start(game)
   -- A fresh run REPLACES whatever was there, including a finished one whose
   -- prize was already handed over.  Starting from a clean table is what stops
   -- a previous run's clock, ball count or placing leaking into this one.
+  setTimerFlag(save, true)
   save.g2BugContest = {
     active = true,
     balls = def.parkBalls or 20,
@@ -215,6 +253,10 @@ function BugContest.finish(game)
   s.active = false
   s.balls = 0
   s.endsAt = nil
+  -- BugContestResultsScript's own `clearflag ENGINE_BUG_CONTEST_TIMER`, done
+  -- here as well so the gate cannot re-arm its LEAVE_CONTEST_EARLY scene even
+  -- if the extracted results script never reaches that line.
+  setTimerFlag(save, false)
   -- placing, board, caught and scores deliberately SURVIVE: the extracted
   -- BugContestResults_* scripts branch on the placing for the prize, and
   -- judging has already run by the time we get here.  BugContest.clear is
@@ -227,6 +269,7 @@ end
 -- placing before the officer has handed anything over.
 function BugContest.clear(save)
   if type(save) == "table" then save.g2BugContest = nil end
+  setTimerFlag(save, false)
 end
 
 -- Leaving early -- the START menu's QUIT (StartMenu_Quit, "Would you like to

@@ -366,6 +366,28 @@ function PaletteFX.usesGen2BgPal(mode)
   return PaletteFX.usesGen2ObjPal(mode)
 end
 
+-- Does the active mode carry the dark-cave shift in a BAKE rather than in a
+-- per-frame shader?  A bake cannot be re-shaded in place, so whoever flips
+-- darkWorld has to drop every resident map and rebuild -- and if they DON'T,
+-- the cave simply stays dark after FLASH, because the atlas already on screen
+-- was baked with the darkness in it.
+--
+-- ADVANCED bakes it on Gen 1 (worldGroupColors folds FadePal2 into the RED++
+-- atlas, #383).  A GEN 2 game bakes it in EVERY hardware-colour mode, not just
+-- ADVANCED: TileRenderer picks the tileset's DARKNESS palette row off
+-- PaletteFX.darkWorld() and bakes THAT into the atlas, with darkWorld in the
+-- cache key.  Gating the rebuild on usesGbcPack alone -- which is what the
+-- Gen1-era code did -- is why FLASH lit the cave under ADVANCED and did
+-- nothing at all under SGB, the default.
+--
+-- The DMG/SGB shade modes are the exception and need no rebuild: there the
+-- atlas is the raw sheet and darkness is PaletteFX.setShadeMap, a per-frame
+-- register write.
+function PaletteFX.bakesDarkness()
+  if PaletteFX.usesGbcPack() then return true end
+  return GameVersion.isGen2() and PaletteFX.usesGen2BgPal()
+end
+
 -- ------- Gen2 time of day (GetTimeOfDay, 5:$4032)
 --
 -- EnvironmentColorsPointers gives each map environment four rows of BG

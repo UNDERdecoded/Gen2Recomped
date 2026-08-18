@@ -11,6 +11,7 @@ local Runtime = require("src.mods.Runtime")
 local Stats = require("src.pokemon.Stats")
 local Status = require("src.battle.Status")
 local TypeChart = require("src.battle.TypeChart")
+local Weather = require("src.battle.Weather")
 
 local Damage = {}
 
@@ -104,19 +105,24 @@ end
 -- Accuracy test: rand(0..255) < floor(accuracy * 255 / 100) adjusted by
 -- accuracy/evasion stages.  With oneIn256Miss a max-accuracy move still
 -- misses on 255.
-function Damage.accuracyRoll(ruleset, move, attacker, defender, rng)
+-- accuracyRaw (0-255) replaces the move's own accuracy byte for the turn.
+-- Gen 2's BattleCommand_ThunderAccuracy writes that byte directly
+-- (`ld [hl], 50 percent + 1` = 128), so the caller passes the raw threshold
+-- rather than a percentage: floor(50 * 255 / 100) would be 127, one short.
+function Damage.accuracyRoll(ruleset, move, attacker, defender, rng, accuracyRaw)
   rng = rng or love.math.random
   -- X ACCURACY sets USING_X_ACCURACY: the move simply never misses
   -- (MoveHitTest returns before any accuracy math, 1/256 included)
   if attacker.xAccuracy then return true end
-  local acc = math.floor(move.accuracy * 255 / 100)
+  local acc = accuracyRaw or math.floor(move.accuracy * 255 / 100)
+  local basePct = accuracyRaw and (accuracyRaw * 100 / 255) or move.accuracy
   -- CalcHitChance scales by the accuracy stage and the evasion stage as
   -- two separate ratio multiplications, clamping each result
   acc = math.min(255, Stats.applyStage(acc,
           attacker.stages and attacker.stages.accuracy or 0))
   acc = math.min(255, Stats.applyStage(acc,
           -(defender.stages and defender.stages.evasion or 0)))
-  if not ruleset.oneIn256Miss and move.accuracy >= 100
+  if not ruleset.oneIn256Miss and basePct >= 100
      and (attacker.stages.accuracy or 0) >= (defender.stages.evasion or 0) then
     return true
   end
@@ -239,6 +245,15 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   local d = math.floor(math.floor(2 * level / 5) + 2)
   d = math.floor(math.floor(d * move.power * atk / math.max(1, dfn)) / 50)
   d = math.min(d, 997) + 2
+
+  -- DoWeatherModifiers (engine/battle/misc.asm:52) runs at the head of
+  -- AdjustDamageForMoveType -- BEFORE STAB and before type effectiveness --
+  -- as damage * modifier / 10.  The confusion self-hit reaches
+  -- CalculateDamage directly and never runs `stab`, so the typeless path
+  -- skips weather along with STAB and the type chart.
+  if not opts.typeless and opts.weather then
+    d = Weather.applyModifier(d, opts.weather, move.type, move.effect)
+  end
 
   local mult = 10
   if not opts.typeless then

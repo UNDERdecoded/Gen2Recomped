@@ -1306,6 +1306,19 @@ Gen2Flags.ENGINE_FLAG_NAMES = {
   [12] = "EVENT_GOT_UNOWN_DEX",
   [13] = "ENGINE_CAUGHT_POKERUS",
   [15] = "ENGINE_CREDITS_SKIP",
+  -- The Bug Contest's "a run is in progress" flag, and the one row the
+  -- Gold-vs-Crystal insertion lands on: Crystal's raw index is 17, Gold's 16,
+  -- and scriptFlag's correction maps both onto 16 here.  Cross-checked five
+  -- ways against this table (CREDITS_SKIP 15, ROCKETS_IN_RADIO_TOWER 18,
+  -- ZEPHYRBADGE 26, KURT_MAKING_BALLS 79, DAILY_BUG_CONTEST 80 all land
+  -- exactly), because a fencepost error AT the inserted row is the easiest
+  -- possible mistake to make here.
+  --
+  -- Named rather than left as FLAG_G2_0016 because BugContest now reads and
+  -- writes it from Lua: the gate's MAPCALLBACK_NEWMAP branches on it to choose
+  -- between the NOOP scene and LEAVE_CONTEST_EARLY, so it is the single source
+  -- of truth for "is a contest running", not save.g2BugContest.
+  [16] = "ENGINE_BUG_CONTEST_TIMER",
   [18] = "ENGINE_ROCKETS_IN_RADIO_TOWER",
   [19] = "ENGINE_BIKE_SHOP_CALL_ENABLED",
   [23] = "ENGINE_STRENGTH_ACTIVE",

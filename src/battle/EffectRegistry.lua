@@ -1,7 +1,8 @@
 -- The move-effect execution surface: the ctx facade handed to every
 -- move_effects record callback, and the staged damaging pipeline that
 -- performMove drives through the record's stage fields
--- (gate/neverMiss/hitCount/beforeAccuracy/chooseDamage/onMiss/afterDamage
+-- (gate/neverMiss/alwaysHits/accuracyRaw/hitCount/beforeAccuracy/chooseDamage/
+-- onMiss/afterDamage
 -- plus the post-damage secondary run).  The ctx is the only supported
 -- surface handlers receive; everything else is engine-internal.
 
@@ -99,6 +100,17 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   local user, target = ctx.user, ctx.target
   local move, moveInst = ctx.move, ctx.moveInst
   local neverMiss = record and record.neverMiss
+  -- alwaysHits is neverMiss's weaker sibling and the distinction is CheckHit's
+  -- own ordering: .FlyDigMoves is tested BEFORE .ThunderRain
+  -- (effect_commands.asm:1559-1563), so Thunder in rain skips the accuracy
+  -- roll yet still misses a target part-way through Fly or Dig -- where Swift
+  -- (neverMiss), tested ahead of the invulnerability check, hits it.  It is a
+  -- predicate because the answer changes with the weather, turn by turn.
+  local alwaysHits = record and record.alwaysHits
+  if type(alwaysHits) == "function" then alwaysHits = alwaysHits(ctx) end
+  -- accuracyRaw replaces the move's accuracy BYTE for this turn
+  -- (BattleCommand_ThunderAccuracy), so it is a 0-255 threshold, not a percent
+  local accuracyRaw = record and record.accuracyRaw and record.accuracyRaw(ctx)
 
   -- Swift ignores semi-invulnerability (MoveHitTest returns hit for
   -- SWIFT_EFFECT before the INVULNERABLE check)
@@ -130,8 +142,8 @@ function EffectRegistry.runDamaging(battle, ctx, record)
 
   if record and record.beforeAccuracy then record.beforeAccuracy(ctx) end
 
-  if not neverMiss then
-    if not battle:accuracyRoll(move, user, target) then
+  if not neverMiss and not alwaysHits then
+    if not battle:accuracyRoll(move, user, target, accuracyRaw) then
       -- Explosion/Selfdestruct still animate on a miss (HandleIfPlayerMoveMissed)
       if not (record and record.explode) then battle:cancelMoveAnim() end
       missBeat(battle, record)

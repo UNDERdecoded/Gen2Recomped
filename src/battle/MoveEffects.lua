@@ -16,6 +16,7 @@ local StatusRegistry = require("src.battle.StatusRegistry")
 local TurnOrder = require("src.battle.TurnOrder")
 local TypeChart = require("src.battle.TypeChart")
 local Strings = require("src.core.Strings")
+local Weather = require("src.battle.Weather")
 
 local MoveEffects = {}
 
@@ -998,6 +999,94 @@ MoveEffects.primary.PSYCH_UP_EFFECT = function(battle, user, target)
   return { Strings("%s copied\n%s's stat changes!",
     displayName(user), displayName(target)) }
 end
+
+-- ---------------------------------------------------------------------
+-- Gen 2 weather
+-- ---------------------------------------------------------------------
+--
+-- All three are power-0 moves, so they belong in MoveEffects.primary: a
+-- power-0 move whose record is `full` falls through the damaging pipeline and
+-- does nothing, and a power-0 move with NO record at all is what produced the
+-- "But, it failed!" every one of these printed before (performMove's
+-- warnUnknown fallback).
+--
+-- Rain Dance and Sunny Day CANNOT fail on hardware: rain_dance.asm and
+-- sunny_day.asm overwrite wBattleWeather unconditionally, so re-using Rain
+-- Dance in rain simply refreshes the 5-turn count.  Only Sandstorm has a
+-- failure branch, and only against a sandstorm that is already up.
+
+MoveEffects.primary.RAIN_DANCE_EFFECT = function(battle)
+  Weather.start(battle, Weather.RAIN)
+  return { Strings(Weather.STARTED_TEXT.RAIN) }
+end
+
+MoveEffects.primary.SUNNY_DAY_EFFECT = function(battle)
+  Weather.start(battle, Weather.SUN)
+  return { Strings(Weather.STARTED_TEXT.SUN) }
+end
+
+-- BattleCommand_StartSandstorm: `cp WEATHER_SANDSTORM / jr z, .failed`
+MoveEffects.primary.SANDSTORM_EFFECT = function(battle)
+  if Weather.current(battle) == Weather.SANDSTORM then
+    return { Strings("But, it failed!") }
+  end
+  Weather.start(battle, Weather.SANDSTORM)
+  return { Strings(Weather.STARTED_TEXT.SANDSTORM) }
+end
+
+-- Morning Sun / Synthesis / Moonlight: one handler, three time-of-day rows.
+-- The Gen 2 extractor used to fold all three onto HEAL_EFFECT, which always
+-- restored half -- so they never varied with the clock OR the weather.
+-- BattleCommand_TimeBasedHealContinue picks eighth / quarter / half / max;
+-- Weather.healDivisor resolves the index.
+local function weatherHeal(effect)
+  return function(battle, user)
+    local mon = user.mon
+    local maxHp = (mon.stats and mon.stats.hp) or mon.maxHp or 1
+    -- `call CompareBytes / jr z, .Full` -- the full-HP check comes first and
+    -- prints HPIsFullText with AnimateFailedMove (no animation)
+    if mon.hp >= maxHp then
+      return { Strings("%s's\nHP is full!", displayName(user)) }
+    end
+    local divisor = Weather.healDivisor(battle, effect)
+    -- GetMaxHP / GetHalfMaxHP / GetQuarterMaxHP / GetEighthMaxHP: each shift
+    -- floors and the result is bumped to at least 1
+    local heal = divisor == 1 and maxHp
+                 or math.max(1, math.floor(maxHp / divisor))
+    mon.hp = math.min(maxHp, mon.hp + heal)
+    return { Strings("%s\nregained health!", displayName(user)) }
+  end
+end
+
+MoveEffects.primary.MORNING_SUN_EFFECT = weatherHeal("MORNING_SUN_EFFECT")
+MoveEffects.primary.SYNTHESIS_EFFECT = weatherHeal("SYNTHESIS_EFFECT")
+MoveEffects.primary.MOONLIGHT_EFFECT = weatherHeal("MOONLIGHT_EFFECT")
+
+-- Solar Beam: a charge move that skips its charge turn in sun
+-- (BattleCommand_SkipSunCharge) and is halved in rain (WeatherMoveModifiers,
+-- applied in Damage.compute).  It used to import as a plain CHARGE_EFFECT,
+-- which lost both halves of that.
+MoveEffects.full.SOLARBEAM_EFFECT = {
+  charge = { anim = "XSTATITEM_ANIM", enemyAnim = "XSTATITEM_DUPLICATE_ANIM",
+             skipInSun = true },
+}
+
+-- Thunder keeps its 30 percent paralysis (`30 percent + 1` = 77/256, the
+-- same roll PARALYZE_SIDE_EFFECT2 uses, which is what it imported as before)
+-- and gains its weather accuracy: 100% in rain -- where CheckHit's
+-- .ThunderRain guarantees the hit outright -- and 50% in sun.
+MoveEffects.secondary.THUNDER_EFFECT = statusSide("PAR", 77)
+MoveEffects.full.THUNDER_EFFECT = {
+  -- alwaysHits, not neverMiss: CheckHit runs .FlyDigMoves before
+  -- .ThunderRain, so rain skips the accuracy roll but a mid-Fly target is
+  -- still out of reach
+  alwaysHits = function(ctx)
+    return Weather.alwaysHits(ctx.battle, "THUNDER_EFFECT")
+  end,
+  accuracyRaw = function(ctx)
+    return Weather.thunderAccuracyRaw(ctx.battle)
+  end,
+}
 
 -- the (battle, user, target, move, moveInst) handlers adapted to the ctx
 -- facade the registry records expose
