@@ -242,11 +242,12 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
   end
 
   if result == "escape_rope" then
-    -- ItemUseEscapeRope: only inside the dungeon tilesets
+    -- GEN 1 (ItemUseEscapeRope): only inside the dungeon tilesets
     -- (escape_rope_tilesets.asm), never in Agatha's room, and it sets
     -- BIT_ESCAPE_WARP so special_warps.asm warps to wLastBlackoutMap
     -- -- the last Pokémon Center town, same as Dig/Teleport (NOT the
-    -- spot you entered the dungeon from)
+    -- spot you entered the dungeon from).
+    -- GEN 2 is a different item: see the escapePoint branch below.
     local ESCAPE_ROPE_TILESETS = { FOREST = true, CEMETERY = true,
                                    CAVERN = true, FACILITY = true,
                                    INTERIOR = true }
@@ -256,13 +257,30 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     local ow = game.overworld
     local allowed = ow and (ESCAPE_ROPE_TILESETS[ow.map.def.tileset]
       or GEN2_ESCAPE_ROPE_ENVIRONMENTS[ow.map.def.environment])
+    -- Gen 2 does NOT share Gen 1's destination.  .DoDig copies wDigWarpNumber
+    -- into wNextWarp, so the rope puts you back out through the entrance you
+    -- came in by -- the cave mouth or the door -- not the last Pokemon Center.
+    -- .CheckCanDig refuses when no entrance has been recorded, so an unreached
+    -- dig warp is a "can't use that here", not a silent teleport somewhere
+    -- else.
+    local gen2 = require("src.core.GameVersion").generation() == 2
+    local escapePoint = gen2 and ow and ow.escapePoint and ow:escapePoint()
+    if gen2 and allowed and not escapePoint then allowed = false end
+
     if allowed and ow.map.id ~= "AGATHAS_ROOM" then
       list:close()
       consume(game, id)
-      -- LeaveMapAnim spin-up + SFX_TELEPORT_EXIT_1, a fade, then land OUTSIDE
-      -- the last Pokémon Center town door like Fly (#196), via the shared
-      -- departure helper -- the same path Dig/Teleport take from the party menu
-      ow:beginTeleportOut()
+      -- ESCAPE, carved on the Kabuto chamber wall, is an instruction.  The
+      -- cartridge farcalls SpecialKabutoChamber on exactly this branch, before
+      -- queueing the used-the-rope script (engine/events/overworld.asm:809);
+      -- the chamber's own scene script plays the wall opening the next time
+      -- the map loads.
+      require("src.script.RuinsOfAlph").kabutoChamber(game)
+      -- LeaveMapAnim spin-up + SFX_TELEPORT_EXIT_1, then a fade -- the shared
+      -- departure helper Dig/Teleport also use.  Where it lands is the
+      -- generation's business: Gen 1 the last Pokémon Center town door like
+      -- Fly (#196), Gen 2 the recorded entrance.
+      ow:beginTeleportOut(nil, { escape = escapePoint and true or nil })
     else
       showMessages(game, { Strings(
         "OAK: %s!\nThis isn't the\ntime to use that!",

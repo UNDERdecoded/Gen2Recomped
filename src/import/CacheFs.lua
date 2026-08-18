@@ -463,34 +463,59 @@ function CacheFs.mountVersion(version)
   return false, "could not overlay " .. sub .. "/ onto the read path"
 end
 
--- True once a shim is installed, so a second mountVersion cannot stack them.
+-- Which version prefix the shim currently redirects to; nil = shim inert.
+--
+-- This is a MUTABLE cell that the installed closures read at call time, not a
+-- value baked into them, and that distinction is the whole point.  The first
+-- version of this shim captured `prefix` as an upvalue and re-ran the whole
+-- installation whenever a different prefix arrived, which stacked a second set
+-- of love.filesystem wrappers over the first and pushed a second searcher in
+-- front of it -- each layer still pointing at the version before it.  Nothing
+-- ever removed a layer either, so opening the save editor on Gold, closing it
+-- and then pressing Play on Crystal left Gold's redirect in the chain: the
+-- probe found Gold's files, mountVersion reported success, and Crystal ran on
+-- Gold's species and map tables.
 local shimPrefix = nil
+-- Separate from shimPrefix so re-pointing never re-wraps: love.filesystem.read
+-- can only be wrapped once safely (a second wrap makes the first one's
+-- "unwrapped" reference a wrapper, and there is then no way back out).
+local shimInstalled = false
+
+-- Does `path` exist un-prefixed?  If not, does it exist under the active
+-- version prefix?  Only the second case is rewritten, so a file the game
+-- genuinely ships (assets/logo/...) is never touched.  Reads shimPrefix live,
+-- so clearing it makes every wrapper below a pass-through.
+local shimRealRead, shimRealGetInfo
+
+local function shimRedirect(path)
+  local prefix = shimPrefix
+  if not prefix or prefix == "" then return path end
+  if type(path) ~= "string" then return path end
+  if not (path:sub(1, 15) == "data/generated/"
+          or path:sub(1, 17) == "assets/generated/") then
+    return path
+  end
+  if shimRealGetInfo(path, "file") then return path end
+  local alt = prefix .. path
+  if shimRealGetInfo(alt, "file") then return alt end
+  return path
+end
 
 -- Redirect data/generated + assets/generated reads to <prefix>... .  Returns
 -- true when the shim is in place and the probe should be re-run.
 function CacheFs.installPrefixShim(prefix)
   if prefix == "" then return false end
-  if shimPrefix == prefix then return true end
+  if shimInstalled then
+    -- Already wrapped: just re-point it.  Cheap, and it cannot stack.
+    shimPrefix = prefix
+    return true
+  end
   shimPrefix = prefix
+  shimInstalled = true
 
   local fs = love.filesystem
-  local realRead, realGetInfo = fs.read, fs.getInfo
-
-  -- Does `path` exist un-prefixed?  If not, does it exist under the version
-  -- prefix?  Only the second case is rewritten, so a file the game genuinely
-  -- ships (assets/logo/...) is never touched.
-  local function redirect(path)
-    if type(path) ~= "string" then return path end
-    if not (path:sub(1, 15) == "data/generated/"
-            or path:sub(1, 17) == "assets/generated/") then
-      return path
-    end
-    if realGetInfo(path, "file") then return path end
-    local alt = prefix .. path
-    if realGetInfo(alt, "file") then return alt end
-    return path
-  end
-  CacheFs._redirect = redirect
+  shimRealRead, shimRealGetInfo = fs.read, fs.getInfo
+  CacheFs._redirect = shimRedirect
 
   -- 1. require("data.generated.constants").  LÖVE's own module searcher asks
   --    PhysFS directly, so it cannot be reached by wrapping love.filesystem;
@@ -498,10 +523,14 @@ function CacheFs.installPrefixShim(prefix)
   local searchers = package.searchers or package.loaders
   if searchers then
     table.insert(searchers, 1, function(name)
+      -- Inert while no prefix is active, so an uninstalled shim cannot answer
+      -- for a version whose cache is mounted normally.
+      local prefix_ = shimPrefix
+      if not prefix_ or prefix_ == "" then return nil end
       local leaf = name:match("^data%.generated%.(.+)$")
       if not leaf then return nil end
-      local path = prefix .. "data/generated/" .. leaf:gsub("%.", "/") .. ".lua"
-      local data = realRead(path)
+      local path = prefix_ .. "data/generated/" .. leaf:gsub("%.", "/") .. ".lua"
+      local data = shimRealRead(path)
       if type(data) ~= "string" then
         return "\n\tno file '" .. path .. "' (version cache shim)"
       end
@@ -515,8 +544,8 @@ function CacheFs.installPrefixShim(prefix)
   -- 2. Everything that loads a generated asset by path.  Wrapped rather than
   --    fixed at the call sites because there are dozens of those, spread
   --    across the UI, the battle screen and the overworld.
-  fs.read = function(path, ...) return realRead(redirect(path), ...) end
-  fs.getInfo = function(path, ...) return realGetInfo(redirect(path), ...) end
+  fs.read = function(path, ...) return shimRealRead(shimRedirect(path), ...) end
+  fs.getInfo = function(path, ...) return shimRealGetInfo(shimRedirect(path), ...) end
 
   local g = love.graphics
   if g then
@@ -524,7 +553,7 @@ function CacheFs.installPrefixShim(prefix)
       local real = g[name]
       if type(real) == "function" then
         g[name] = function(a, ...)
-          if type(a) == "string" then a = redirect(a) end
+          if type(a) == "string" then a = shimRedirect(a) end
           return real(a, ...)
         end
       end
@@ -533,12 +562,26 @@ function CacheFs.installPrefixShim(prefix)
   if love.image and type(love.image.newImageData) == "function" then
     local real = love.image.newImageData
     love.image.newImageData = function(a, ...)
-      if type(a) == "string" then a = redirect(a) end
+      if type(a) == "string" then a = shimRedirect(a) end
       return real(a, ...)
     end
   end
 
   return true
+end
+
+-- Make the shim inert.  The wrappers stay in place (unwrapping
+-- love.filesystem.read safely is not possible once anything else may have
+-- wrapped it in turn), but with no prefix they are pass-throughs, which is
+-- exactly what an unmounted version needs.
+function CacheFs.clearPrefixShim()
+  shimPrefix = nil
+end
+
+-- Which prefix the shim is currently serving, or nil.  Tests and callers that
+-- need to reason about read-path state use this instead of poking the local.
+function CacheFs.activePrefixShim()
+  return shimPrefix
 end
 
 -- Undo mountVersion.  A process normally mounts exactly one version and then
@@ -560,6 +603,14 @@ function CacheFs.unmountVersion(version)
     base = love.filesystem.getSaveDirectory()
   end
   local done = false
+  -- The read-path redirect is part of "this version is mounted" and has to
+  -- come down with the mounts.  Leaving it up is the same silent-wrong-data
+  -- failure the mount unwinding below exists to prevent, except it survives
+  -- every unmount call because it is not a mount at all.
+  if shimPrefix == prefix then
+    CacheFs.clearPrefixShim()
+    done = true
+  end
   local fn = resolveUnmount()
   if fn and base then
     done = fn(base .. SEP .. sub) or done

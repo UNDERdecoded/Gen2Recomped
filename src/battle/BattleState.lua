@@ -181,6 +181,9 @@ local BALL_ANIMS = {
   TOSS_ANIM = true, GREATTOSS_ANIM = true, ULTRATOSS_ANIM = true,
   BLOCKBALL_ANIM = true, POOF_ANIM = true, HIDEPIC_ANIM = true,
   SHAKE_ANIM = true, SHOWPIC_ANIM = true,
+  -- Gen 2's shiny sparkle rides the same send-out script (see
+  -- BattleState:shinyAnim), so it plays on the same terms the poof does.
+  SHINY_ANIM = true,
 }
 
 local imageCache = {}
@@ -973,6 +976,37 @@ function BattleState:makeOldManDemo(name)
   end
 end
 
+-- Gen2's catching tutorial (engine/events/catch_tutorial.asm CatchTutorial,
+-- reached from `catchtutorial BATTLETYPE_TUTORIAL` on Route 29 in Gold,
+-- Silver and Crystal alike).  It is the same shape as the old man's demo and
+-- reuses all of it -- a scripted cursor, a one-entry bag, a throw that always
+-- catches, nothing kept -- with three differences the ROM makes explicit:
+--
+--   * the thrower's name is DUDE, because CatchTutorial copies "DUDE" over
+--     wPlayerName for the duration and puts the real name back afterwards;
+--   * the player's OWN lead Pokemon is on the field.  Gen1's old man has no
+--     mon at all, but core.asm's `.tutorial_debug` only SKIPS the
+--     find-a-healthy-mon loop -- wCurBattleMon stays 0 -- so the back pic and
+--     the player HUD are drawn normally;
+--   * the bag holds one POKe BALL, not fifty (.LoadDudeData writes
+--     wDudeNumBalls = 1).
+--
+-- The capture cannot fail: ItemUseBall reads wBattleType and jumps straight
+-- to .catch_without_fail (item_effects.asm:243-246), and .FinishTutorial
+-- returns before any of the caught-mon bookkeeping (:501-503).
+function BattleState:makeDudeDemo()
+  self:makeOldManDemo("DUDE")
+  self.dudeDemo = true
+  self.demoBallCount = "x1"
+end
+
+-- Gen1's demo hides the player's side entirely; Gen2's does not (see
+-- makeDudeDemo).  Every "is this a demo?" test that is really asking "is the
+-- player's half of the screen empty?" goes through here.
+function BattleState:demoHidesPlayer()
+  return self.demo and not self.dudeDemo
+end
+
 -- Safari Zone battles (engine/battle/core.asm safari sections +
 -- engine/battle/safari_zone.asm): no player mon acts; the menu is
 -- BALL / BAIT / ROCK / RUN.  state is save.safari ({balls, steps}).
@@ -1018,6 +1052,49 @@ function BattleState:animNext(name, isPlayer, shakes, ball, caught)
   table.insert(self.queue, self.nextInsert,
                { anim = name, attackerIsPlayer = isPlayer, shakes = shakes,
                  ball = ball, caught = caught })
+end
+
+-- ---------------------------------------------------------------------------
+-- The Gen 2 shiny sparkle
+--
+-- GSC does not have a shiny animation of its own.  BattleAnim_SendOutMon
+-- opens with `anim_if_param_equal $1, .Shiny`, and core.asm simply plays that
+-- animation A SECOND TIME with wBattleAnimParam = 1 whenever CheckShininess
+-- says the mon is shiny:
+--
+--   :3566  the enemy trainer's send-out -- normal pass, then the sparkle
+--   :4057  the player's send-out        -- normal pass, then the sparkle
+--   :9091  a WILD encounter             -- the sparkle ONLY; a wild mon is
+--                                          already on screen and never gets
+--                                          the poof
+--
+-- so this is queued after each send-out rather than being a row in the
+-- animation table.  Gen 1 has no such thing, so it is gated on the Gen 2
+-- player being the one running -- a Red/Blue battle queues nothing.
+--
+-- `isPlayer` follows the poof's convention (Gen2AnimPlayer flips it): false
+-- for the player's own mon, true for the foe's.
+function BattleState:shinyAnim(battler, isPlayer)
+  if not (self.data and self.data.battle_anims and self.data.battle_anims.gen2) then
+    return false
+  end
+  local mon = battler and battler.mon
+  if not (mon and require("src.pokemon.Stats").isShiny(mon.dvs)) then return false end
+  self:animNext("SHINY_ANIM", isPlayer)
+  return true
+end
+
+-- The same, appended rather than inserted: the battle intro is built linearly
+-- before the queue starts running, where animNext's insert point does not
+-- apply.
+function BattleState:shinyAnimAppend(battler, isPlayer)
+  if not (self.data and self.data.battle_anims and self.data.battle_anims.gen2) then
+    return false
+  end
+  local mon = battler and battler.mon
+  if not (mon and require("src.pokemon.Stats").isShiny(mon.dvs)) then return false end
+  table.insert(self.queue, { anim = "SHINY_ANIM", attackerIsPlayer = isPlayer })
+  return true
 end
 
 -- insert an act right after the current queue item
@@ -1716,7 +1793,9 @@ end
 function BattleState:battleKind()
   if self.ghost then return "ghost" end
   if self.safari then return "safari" end
-  if self.demo then return "oldman" end
+  -- the Dude fights with the player's own mon, so the back pic is the
+  -- ordinary wild-battle one
+  if self.demo and not self.dudeDemo then return "oldman" end
   return self.kind
 end
 
@@ -1812,6 +1891,12 @@ function BattleState:enter()
   -- unveiled MAROWAK: .isMarowak never reaches PlayCry (#492).
   if self.kind ~= "trainer" and self.kind ~= "link"
      and not self.ghost and not self.scopeReveal then
+    -- PrintBeginningBattleText .wild (core.asm:9091-9103) checks the WILD
+    -- mon's shininess and plays the sparkle BEFORE the cry -- and only the
+    -- sparkle: a wild mon is already standing there, so it never gets the
+    -- send-out poof the sparkle normally follows.  This is the one players
+    -- actually notice, and it was missing entirely.
+    self:shinyAnimAppend(self.enemy, true)
     queueEnemyCry()
   end
   -- PrintBeginningBattleText .trainerBattle (common_text.asm): a trainer
@@ -1869,6 +1954,7 @@ function BattleState:enter()
       self.enemySendingOut = false
       self:startGrowIn(self.enemy)
     end)
+    self:shinyAnimAppend(self.enemy, true)
     queueEnemyCry()
   elseif self.kind == "link" then
     -- Colosseum has no foe trainer pic, but the enemy mon still grows
@@ -1881,6 +1967,7 @@ function BattleState:enter()
       self.enemySendingOut = false
       self:startGrowIn(self.enemy)
     end)
+    self:shinyAnimAppend(self.enemy, true)
     queueEnemyCry()
   end
   -- StartBattle .foundFirstAliveEnemyMon (core.asm:152-156): the `call nz`
@@ -1907,6 +1994,7 @@ function BattleState:enter()
     -- then the POOF plays and the mon appears with its cry
     -- (SendOutMon: message -> AnimateSendingOutMon -> PlayCry)
     table.insert(self.queue, { anim = "POOF_ANIM", attackerIsPlayer = false })
+    self:shinyAnimAppend(self.player, false)
     self:act(function()
       self.sendingOut = false
       -- SendOutMon (core.asm:1757-1762): after the poof the mon grows
@@ -2434,7 +2522,9 @@ function BattleState:openOldManBag()
   self:ui(function()
     local list
     list = ListMenu.new(game, "ITEMS", {
-      { value = "POKE_BALL", label = Strings("POKé BALL"), right = "x50" },
+      -- .LoadDudeData gives the Gen2 tutorial exactly one ball
+      { value = "POKE_BALL", label = Strings("POKé BALL"),
+        right = self.demoBallCount or "x50" },
     }, {
       script = function(l)
         l.scriptTimer = (l.scriptTimer or 0) + 1
@@ -2669,6 +2759,7 @@ function BattleState:resolveSwitch(newMon)
     self.sendingOut = true
     self:sayNext(self:sendOutText(self.player.name))
     self:animNext("POOF_ANIM", false)
+    self:shinyAnim(self.player, false)
     self:actNext(function()
       self.sendingOut = false
       -- SendOutMon (core.asm:1757-1762): poof, then the grow-in
@@ -4209,6 +4300,7 @@ function BattleState:enemyMonFainted()
         self:actNext(function()
           self.enemySendingOut = false
           self:startGrowIn(self.enemy)
+          self:shinyAnim(self.enemy, true)
           self:actNext(function()
             require("src.core.Sound").playCry(self.data, self.enemy.mon.species)
           end)
@@ -4245,6 +4337,7 @@ function BattleState:enemyMonFainted()
         self.sendingOut = true
         self:sayNext(self:sendOutText(self.player.name))
         self:animNext("POOF_ANIM", false)
+        self:shinyAnim(self.player, false)
         self:actNext(function()
           self.sendingOut = false
           self:startGrowIn(self.player)
@@ -4272,6 +4365,18 @@ function BattleState:enemyMonFainted()
       prize = prize * 4
     end
     self.game.save.money = self.game.save.money + prize
+    -- Prism's Spurge Bank ATM (event/bank.asm) offers DIRECT DEPOSIT: with it
+    -- enabled, a quarter of what you win in battle is routed to the account
+    -- instead of the wallet.  The switch lives in the ATM special
+    -- (g2_spurge_bank); this is the only place the money it skims comes from,
+    -- so a save that turned it on and never saw a deduction was the switch
+    -- doing nothing at all.
+    local bank = self.game.save.g2Bank
+    if bank and bank.direct then
+      local cut = math.floor(prize / 4)
+      self.game.save.money = self.game.save.money - cut
+      bank.balance = (bank.balance or 0) + cut
+    end
     -- TrainerBattleVictory (core.asm:915-949) in order: EndLowHealthAlarm
     -- and the victory theme, TrainerDefeatedText, ScrollTrainerPicAfterBattle
     -- (the beaten trainer scrolls back in from the right, one column every 4
@@ -4459,6 +4564,7 @@ function BattleState:openReplacementMenu()
         self.sendingOut = true
         self:sayNext(self:sendOutText(self.player.name))
         self:animNext("POOF_ANIM", false)
+        self:shinyAnim(self.player, false)
         self:actNext(function()
           self.sendingOut = false
           -- SendOutMon (core.asm:1757-1762): poof, then the grow-in
@@ -4729,6 +4835,11 @@ function BattleState:storeCaughtMon()
   local isNew = dex ~= nil and not dex.owned[species]
   local destination = "party"
   markOwned(game, species)
+  -- BATTLERESULT_CAUGHT_CELEBI (wBattleResult bit 6).  The Ilex shrine script
+  -- reads it back through `special CheckCaughtCelebi` to decide whether Kurt's
+  -- GS Ball chain is finished, so it has to be recorded at the catch itself --
+  -- the battle result is gone by the time the script runs.
+  if species == "SPECIES_251" then game.save.g2CaughtCelebi = true end
   -- UnownCaught (readvar 14) counts distinct letters, which is what the
   -- Ruins of Alph researcher and the dex's UNOWN mode gate on
   local form = require("src.pokemon.Sprites").formIndex(
@@ -5413,7 +5524,8 @@ function BattleState:sgbBattlePals()
   local out = {
     [0] = bar(self.player),
     [1] = bar(self.enemy),
-    [2] = mon(self.player, self.showPlayerBack or self.safari or self.demo),
+    [2] = mon(self.player,
+              self.showPlayerBack or self.safari or self:demoHidesPlayer()),
     [3] = mon(self.enemy, self.showEnemyTrainer),
     -- ...through PaletteFX.pal, not off `pals` directly: under RED++ the
     -- active pack is pokered's GBC table, which has no EXPBAR, and a nil here
@@ -5497,7 +5609,7 @@ function BattleState:drawZonePass(src, sx, sy)
   love.graphics.setShader(shader)
   local shaking = sx ~= 0 or sy ~= 0
   local zones = BATTLE_ZONES
-  if pals[4] and self.player and not (self.safari or self.demo)
+  if pals[4] and self.player and not (self.safari or self:demoHidesPlayer())
      and require("src.core.GameVersion").isGen2() then
     zones = {}
     for i, z in ipairs(BATTLE_ZONES) do zones[i] = z end
@@ -5698,7 +5810,7 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
   -- Player: back sprite at hlcoord 1,5 (x=8), 2x like the GB, feet at y=96.
   -- Left transparent columns (matted white) are pulled back so opaque
   -- pixels land where hardware's white-on-white columns left them.
-  local hidePlayer = self.safari or self.demo
+  local hidePlayer = self.safari or self:demoHidesPlayer()
   if onlySide ~= "enemy" and self.showPlayerBack and self.playerBackPic then
     -- Red's (or the old man's) back pic until "Go!"; it stays up for
     -- the whole safari / catch-demo battle like the original
@@ -5858,7 +5970,7 @@ function BattleState:drawHUDs(slide)
     love.graphics.setColor(1, 1, 1, 1)
     self:drawBallRow(self.playerParty or self.game.save.party, 88, 80, 8)
   end
-  local hidePlayer = self.safari or self.demo
+  local hidePlayer = self.safari or self:demoHidesPlayer()
   if self.player and not hidePlayer and not self.showPlayerBack
      and slide == 0 then
     -- player HUD (DrawPlayerHUDAndHPBar): name (10,7), <LV>+level

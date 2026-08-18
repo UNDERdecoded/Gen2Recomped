@@ -79,13 +79,23 @@ end
 -- to the A/B path once the cry is over -- see TextBox's opts.auto.wait
 -- (#247, #251).
 function Commands.show_text(ctx, textId, subs, extraOpts)
-  local text = ctx.game.data.text[textId]
+  -- The ROM has no "text id" at the point a YES/NO or phone prompt opens: the
+  -- menu simply rides the box that is already on screen.  Recording the last
+  -- id shown lets those prompts reproduce it when the writetext that printed
+  -- it lived inside a `scall` and so could not be folded at compile time.
+  if textId ~= nil then ctx.g2LastText = textId end
+  local text = textId ~= nil and ctx.game.data.text[textId] or nil
   if not text and ctx.overworld then
     text = ctx.game.data:resolveText(ctx.overworld.map.def.label, textId)
   end
   if not text then
     text = textId -- literal string fallback for hand-ported scripts
   end
+  -- Belt and braces: a row that reaches here with no usable id at all used to
+  -- throw on the first gsub below, and a throw inside the runner leaves the
+  -- open text box on screen with nothing driving it -- a hard freeze, not a
+  -- missing line.  Degrade to an empty box instead.
+  if type(text) ~= "string" then text = "" end
   if subs then
     for token, value in pairs(subs) do
       -- A mod may transform a gift after the script row was authored.  Keep
@@ -186,12 +196,26 @@ end
 -- Defined below, next to toggleObject.
 local syncEventFlagObjects
 
+-- Prism's ENGINE_POKEMON_MODE changes WHO THE PLAYER IS -- GetPlayerSprite
+-- reads it before it reaches the character table -- so the sheet has to be
+-- re-picked the moment a script writes it, not at the next map load.  Every
+-- other flag leaves the player alone.
+local function refreshPlayerForm(ctx, name)
+  if name ~= "ENGINE_POKEMON_MODE" then return end
+  local player = ctx.overworld and ctx.overworld.player
+  if player and player.refreshForm and ctx.game then
+    player:refreshForm(ctx.game.data)
+  end
+end
+
 function Commands.set_flag(ctx, name)
   Flags.set(ctx.save, name)
+  refreshPlayerForm(ctx, name)
 end
 
 function Commands.clear_flag(ctx, name)
   Flags.clear(ctx.save, name)
+  refreshPlayerForm(ctx, name)
 end
 
 function Commands.check_flag(ctx, name)
@@ -305,6 +329,10 @@ function Commands.start_battle(ctx, kind, a, b, opts)
   end
   battle.onFinish = function(result)
     ctx.lastBattleResult = result
+    -- BATTLETYPE_CANLOSE: the script is allowed to carry on after a loss and
+    -- branches on the result itself (the Cherrygrove rival).  Recorded so
+    -- `reloadmapafterbattle` can tell that case from a real whiteout.
+    ctx.lastBattleCanLose = battle.canLose and true or false
     ctx.lastCheck = result == "win"
     if ctx.overworld then
       -- A map script often follows a trainer battle with its own text.

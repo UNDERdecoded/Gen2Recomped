@@ -96,6 +96,17 @@ local function ensureWorker()
   return true
 end
 
+-- Music has three possible paths and picking the wrong one is SILENT, which
+-- makes "no audio on <platform>" impossible to triage from a bug report.  Say
+-- which one this host took, once.
+local announced
+local function announcePath(path, why)
+  if announced then return end
+  announced = true
+  require("src.core.Logger").info("chip audio: music path = %s%s",
+                                  path, why and (" (" .. why .. ")") or "")
+end
+
 -- only the tables ChipSynth.newEngine reads for ROM songs; sent with every
 -- play so a hot-reloaded dataset (or a mod's audio) always reaches the worker
 local function slimAudio(data)
@@ -171,8 +182,12 @@ local musicGen = 0
 
 function ChipAudio.playMusic(data, header, allowLoops)
   if not ensureWorker() then
+    announcePath("synchronous",
+                 (love.thread and love.thread.newThread)
+                   and "worker would not start" or "no love.thread")
     return playMusicSync(data, header, allowLoops)
   end
+  announcePath("threaded worker")
   -- validate the def on this thread (cheap: engine construction, no synthesis)
   -- so a broken def costs nothing but a log line and keeps the old song
   local ok, engine = pcall(ChipSynth.newEngine, data, header,
@@ -190,7 +205,11 @@ function ChipAudio.playMusic(data, header, allowLoops)
                channelVolumes = ChipSynth.getChannelVolumes(),
                channelPitches = ChipSynth.getChannelPitches() })
   currentMusic = { source = source, gen = gen, threaded = true,
-                   started = false, finished = false }
+                   started = false, finished = false,
+                   -- kept so a worker that dies before delivering its first
+                   -- buffer can be recovered onto the sync path below
+                   def = { data = data, header = header,
+                           allowLoops = allowLoops } }
   -- playback starts in update() once the first buffer arrives (~1 frame)
   return source
 end
@@ -209,7 +228,20 @@ local function updateThreaded()
   local m = currentMusic
   if not m then return end
   if not workerAlive() then
-    -- worker gone: nothing more will arrive; leave whatever is queued playing
+    -- The worker is gone.  If it already delivered buffers, let what is queued
+    -- finish -- but if it died BEFORE the first one, this song has never made
+    -- a sound and never will: nothing re-queues it, `started` stays false, and
+    -- the result is indistinguishable from "this build has no music".  That is
+    -- the shape of a silent port.  Re-drive it on the synchronous path, which
+    -- is the same path a host without love.thread uses all the time.
+    if not m.started and not m.finished and m.def then
+      local def = m.def
+      currentMusic = nil
+      require("src.core.Logger").warn(
+        "chip audio: worker died before first buffer, replaying on the "
+        .. "synchronous path")
+      playMusicSync(def.data, def.header, def.allowLoops)
+    end
     return
   end
   while true do

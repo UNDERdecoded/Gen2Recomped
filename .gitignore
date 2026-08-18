@@ -8,6 +8,7 @@ assets/generated/
 *.gbc
 *.gba
 *.sav
+*.z64
 
 # Inverted Mew sprites the example mod ships: tools/generate_example_mod_sprite.py
 # derives them from an imported cache, so they are ROM content. mod.card already
@@ -100,3 +101,9 @@ mobile/ios/bundle_id.local
 *.jks
 *.keystore
 !mobile/android/debug.keystore
+
+
+#exclude mods folder 
+\mods
+\tests
+\tools

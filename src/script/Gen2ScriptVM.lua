@@ -20,10 +20,40 @@ local Logger = require("src.core.Logger")
 local MapScripts = require("src.script.MapScripts")
 local Gen2Flags = require("src.script.Gen2Flags")
 require("src.script.Gen2Commands")
+require("src.script.Gen2Specials")
 
 local Gen2ScriptVM = {}
 
 local compiled = setmetatable({}, { __mode = "k" })
+
+-- Prism's `sif` opcodes, and the `then` marker that turns one into a block.
+-- Named here rather than reached through Gen2ScriptOps so the lowering does
+-- not depend on which command table a given ROM selected.
+-- ScriptCheckCondition (engine/script_conditionals.asm) sets carry when the
+-- guarded body should RUN, and the six are six genuinely different tests:
+--
+--   .false        ld a, c / cp 1     -- runs when the variable is ZERO
+--   .true         xor a  / cp c      -- runs when it is NOT zero
+--   .less_than    ld a, c / cp b     -- variable <  operand
+--   .greater_than ld a, b / cp c     -- variable >  operand
+--   .equal        ld a, b / sub c    -- variable == operand
+--   .not_equal                       -- and the inverse
+--
+-- Lowering all six as `jump_if_false` made `sif false` the exact opposite of
+-- itself and threw the operand of the four comparing forms away.  The
+-- Larvitar on Prism's first outdoor map is `yesorno / sif false / jumptext
+-- .declined_text`: answering YES took the DECLINED branch, so it printed the
+-- refusal, ended, never reached its givepoke, and was still standing there
+-- blocking the path with the same lines on the next talk.
+local SIF_OPS = {
+  siftrue = true, siffalse = true,
+  sifeq = true, sifne = true, sifgt = true, siflt = true,
+}
+-- the four that carry a value byte, and the comparison each one makes
+local SIF_COMPARE = {
+  sifeq = "eq", sifne = "ne", sifgt = "gt", siflt = "lt",
+}
+local THEN_OP = "scriptstartasm"
 
 local eventFlag = Gen2Flags.eventFlag
 -- scriptFlag, not engineFlag: a `setflag` operand is a ROW NUMBER in the
@@ -140,6 +170,10 @@ for _, name in ipairs({
   "opentext", "closetext", "waitbutton", "promptbutton", "wildon", "wildoff",
   "loademote", "encountermusic", "deactivatefacing", "writeunusedbyte",
   "delcmdqueue",
+  -- Prism's own, same reasoning: Script_buttonsound is ApplyTilemapInVBlank /
+  -- ButtonSound, and show_text already waits for A; refreshscreen is the
+  -- window teardown the port's text box does for itself.
+  "buttonsound", "refreshscreen",
 }) do
   L[name] = noop
 end
@@ -202,12 +236,12 @@ L.givepokemail = function() end
 --   _2dmenu/describedecoration are presentation the port has no
 --                  equivalent for; the surrounding dialogue still runs.
 --   autoinput      replays a canned joypad script over a cutscene.
---   catchtutorial  is the Gen2 catching demo, which the port does not ship.
+--   (catchtutorial used to live here too; it is implemented now, below.)
 local function vmNoop() end
 for _, name in ipairs({
   "xycompare", "writeobjectxy", "loadtemptrainer", "randomwildmon",
   "loadpikachudata", "_2dmenu", "describedecoration",
-  "autoinput", "catchtutorial",
+  "autoinput",
 }) do
   L[name] = vmNoop
 end
@@ -217,6 +251,13 @@ end
 L["end"] = function(_, s) emit(s, { "g2_return" }) end
 L.endcallback = L["end"]
 L.reloadend = L["end"]
+-- Prism's own name for the same thing (engine/scripting.asm Script_return).
+-- Without it a `return` lowered to NOTHING, which matters most inside a `sif`
+-- guard: IntroOutside's `.init_events` is "if the events are already set up,
+-- return" -- and a guard around zero rows is no guard at all, so the events
+-- were re-initialised on every single entry to the map.
+L["return"] = L["end"]
+L.return_if_callback_else_end = L["end"]
 
 -- A trainer's script is re-entered both right after the battle and when the
 -- player talks to the beaten trainer.  Most open with `endifjustbattled` so
@@ -263,23 +304,38 @@ end
 
 -- text ---------------------------------------------------------------------
 
+-- Prism's GetScriptHalfwordOrVar treats an operand of $ffff as "the halfword
+-- variable holds it", so `jumptext -1` prints whichever line the preceding
+-- readarrayhalfword pulled out of a table.  The extractor cannot name that
+-- text at decode time -- it is one of many -- so it marks the operand and the
+-- choice is made at run time.
+local TEXT_FROM_HALFWORD = "<halfwordvar>"
+
+local function showText(s, id)
+  if id == TEXT_FROM_HALFWORD then
+    emit(s, { "g2_show_halfword_text" })
+  else
+    emit(s, { "show_text", id })
+  end
+end
+
 L.writetext = function(ir, s)
   s.lastText = ir[2]
-  emit(s, { "show_text", ir[2] })
+  showText(s, ir[2])
   s.lastTextRow = #s.out
 end
 L.farwritetext = L.writetext
 L.repeattext = function(_, s)
-  if s.lastText then emit(s, { "show_text", s.lastText }) end
+  if s.lastText then showText(s, s.lastText) end
 end
 
 L.jumptext = function(ir, s)
-  emit(s, { "show_text", ir[2] })
+  showText(s, ir[2])
   emit(s, { "g2_return" })
 end
 L.jumptextfaceplayer = function(ir, s)
   emit(s, { "face_player" })
-  emit(s, { "show_text", ir[2] })
+  showText(s, ir[2])
   emit(s, { "g2_return" })
 end
 -- Crystal's far-pointer jumptext: prints the line and ends the script, exactly
@@ -298,8 +354,17 @@ L.yesorno = function(_, s)
     s.lastTextRow = nil
     text = s.lastText
   end
-  emit(s, { "g2_yesno", text or "" }) -- show_text indexes the id, never nil
+  -- No coercion to "": a yesorno whose prompt was printed from inside a
+  -- `scall` has no compile-time text to fold, and an empty id drew an EMPTY
+  -- box over the question.  nil means "ride whatever text was last shown",
+  -- which is what Script_yesorno does -- the menu opens over the box that is
+  -- already on screen.
+  emit(s, { "g2_yesno", text })
 end
+-- `catchtutorial <battletype>`: the Dude's demo battle on Route 29.  The
+-- operand picks a row of CatchTutorial's jump table and all three rows are
+-- .DudeTutorial, so it carries no information the port needs.
+L.catchtutorial = function(_, s) emit(s, { "g2_catch_tutorial" }) end
 L.faceplayer = function(_, s) emit(s, { "face_player" }) end
 
 -- flags and events ---------------------------------------------------------
@@ -446,6 +511,20 @@ L.warpfacing = function(ir, s) emit(s, { "g2_warp", ir[3], ir[5], ir[6], ir[2] }
 -- bedroom in New Bark Town, however far the story had got.  The extractor
 -- has already folded the (group, map) pair into one registry key.
 L.blackoutmod = function(ir, s) emit(s, { "g2_blackout_point", ir[2] }) end
+
+-- Prism's Pokemon-mode sections.  Both are `Script_blackoutmod` (the new
+-- respawn point) plus an engine-flag write and a party backup, and both answer
+-- 1 in the script variable when they did their work -- LaurelForestMain and
+-- MagikarpCavernsMain branch on that answer straight afterwards, so a silent
+-- opcode left them on the failure arm.  The respawn point and the answer are
+-- what the port can honour; the party swap is not modelled, so the mon the
+-- player walks as is their lead, which is exactly what GetPlayerSprite falls
+-- back to when wPokeonlyMainSpecies is clear.
+L.startpokeonly = function(ir, s)
+  emit(s, { "g2_blackout_point", ir[2] })
+  emit(s, { "g2_setvar", 1 })
+end
+L.endpokeonly = L.startpokeonly
 -- movement, warps, presentation -------------------------------------------
 
 L.warp = function(ir, s) emit(s, { "g2_warp", ir[2], ir[4], ir[5] }) end
@@ -536,6 +615,13 @@ L.askforphonenumber = function(ir, s)
     table.remove(s.out)
     s.lastTextRow = nil
   end
+  -- Same rule as yesorno, and here it was fatal rather than ugly.  Every
+  -- trainer phone script is `scall <jumpstd AskNumber_M/F> /
+  -- askforphonenumber`, so s.lastText is nil for ~50 of the ~59 sites -- and
+  -- a nil id reached Commands.show_text, which indexes it and then calls
+  -- gsub on the nil result.  That threw inside the script runner with the
+  -- text box still on screen and no YES/NO menu: the frozen "Would you tell
+  -- me your number?" box.  nil now means "re-use the last text shown".
   emit(s, { "g2_ask_cellnum", ir[2], s.lastText })
 end
 
@@ -558,6 +644,14 @@ local SPECIALS = {
   -- and the ancient writing it announces never appeared.
   DisplayUnownWords = "g2_unown_wall",
   DisplayUnownWordsSpecial = "g2_unown_wall",
+  -- The wall words are instructions, not decoration: each chamber opens on a
+  -- different act.  These two are the ones a scene script can decide by
+  -- itself; ESCAPE (Kabuto) and LIGHT (Aerodactyl) are triggered by using the
+  -- item, so they hang off the item code -- see src/script/RuinsOfAlph.lua.
+  HoOhChamber = "g2_hooh_chamber",
+  HoOhChamberSpecial = "g2_hooh_chamber",
+  OmanyteChamber = "g2_omanyte_chamber",
+  OmanyteChamberSpecial = "g2_omanyte_chamber",
   -- The Day-Care man's Odd Egg.  His script prints the whole speech and then
   -- runs this to actually hand it over; with no handler the player got the
   -- text and an empty party slot.
@@ -617,6 +711,27 @@ local SPECIALS = {
   BankOfMom = "g2_bank_of_mom",
   MagnetTrain = "g2_magnet_train",
   NameRival = "g2_name_rival",
+  -- PRISM SPELLS TWO OF THESE DIFFERENTLY, and the lookup is by the pret
+  -- LABEL the ROM's own table points at, so a renamed routine misses a
+  -- handler the port already has.  `SpecialNameRival` is the one that shows:
+  -- IlkBrothersTalkToRival runs it the moment the rival teleports out of the
+  -- brother's house, so with it unlowered the rival went unnamed for the rest
+  -- of the game and every "{RIVAL}" in Prism's script printed the default.
+  SpecialNameRival = "g2_name_rival",
+  SpecialCheckPokerus = "g2_check_pokerus",
+  -- `Special_TownMap` is FadeToMenu / _TownMap / ExitAllMenus -- the same
+  -- three calls, in the same order, that Crystal reaches through
+  -- OverworldTownMap, which the port already lowers.
+  Special_TownMap = "g2_town_map",
+  -- Prism's lent mon, structurally Crystal's Shuckie (see Gen2Commands).
+  SpecialGiveNobusAggron = "g2_give_nobus_aggron",
+  SpecialReturnNobusAggron = "g2_return_nobus_aggron",
+  -- marks a dex entry seen from the script variable
+  SpecialSeenMon = "g2_seen_mon",
+  -- answers the first non-EGG party mon's happiness; scripts branch on it
+  GetFirstPokemonHappiness = "g2_first_happiness",
+  -- opens the party menu and answers 0 / $FF / the species number
+  Special_SelectMonFromParty = "g2_select_mon_from_party",
   SetDayOfWeek = "g2_set_day_of_week",
   OverworldTownMap = "g2_town_map",
   UnownPrinter = "g2_unown_printer",
@@ -652,6 +767,147 @@ local SPECIALS = {
   InitRoamMons = "g2_init_roam_mons",
   Diploma = "g2_diploma",
   PrintDiploma = "g2_print_diploma",
+
+  -- -------------------------------------------------------------------------
+  -- THE REST OF THE TABLE (src/script/Gen2Specials.lua)
+  --
+  -- Everything below was still falling through to `g2_special` on at least
+  -- one of the three cartridges.  That handler answers `lastCheck = false`
+  -- and leaves `g2Var` STALE, so an unhandled row standing between a check
+  -- and its branch decided the branch -- see the SPECIALS_NOOP note above,
+  -- which exists for exactly this reason.
+  --
+  -- Rows carrying a `Special_` prefix are Prism's spelling of a routine the
+  -- base games reach under the bare label.  The lookup is by the label the
+  -- ROM's own SpecialsPointers row points at, so a renamed routine misses a
+  -- handler the port already has; every one of these is an alias onto the
+  -- existing implementation, not a second one.
+  -- -------------------------------------------------------------------------
+
+  Special_DisplayCoinCaseBalance = "g2_show_coins",
+  Special_DisplayMoneyAndCoinBalance = "g2_show_coins",
+  Special_DayCareMan = "g2_daycare_man",
+  Special_DayCareLady = "g2_daycare_lady",
+  Special_DayCareManOutside = "g2_daycare_outside",
+  Special_DayCareMon1 = "g2_daycare_mon1",
+  Special_DayCareMon2 = "g2_daycare_mon2",
+  Special_CardFlip = "g2_card_flip",
+  Special_SlotMachine = "g2_slots",
+  Special_YoungerHaircutBrother = "g2_haircut_younger",
+  Special_OlderHaircutBrother = "g2_haircut_older",
+  Special_DaisysGrooming = "g2_daisys_grooming",
+  Special_NameRater = "g2_name_rater",
+  Special_MagnetTrain = "g2_magnet_train",
+  Special_HealParty = "g2_heal_party",
+  Special_MoveDeletion = "g2_move_deleter",
+  Special_BankOfMom = "g2_bank_of_mom",
+  Special_SelectApricornForKurt = "g2_select_apricorn",
+  Special_HealMachineAnim = "g2_heal_machine_anim",
+  Special_UnownPuzzle = "g2_unown_puzzle",
+  Special_UnownPrinter = "g2_unown_printer",
+  Special_MapRadio = "g2_map_radio",
+  Special_SetDayOfWeek = "g2_set_day_of_week",
+  Special_PhotoStudio = "g2_photo_studio",
+  Special_TrainerHouse = "g2_trainer_house",
+  Special_Diploma = "g2_diploma",
+  Special_PrintDiploma = "g2_print_diploma",
+  Special_GiveShuckle = "g2_give_shuckle",
+  Special_ReturnShuckie = "g2_return_shuckie",
+  Special_CheckPokerus = "g2_check_pokerus",
+  Special_PlaceMoneyTopRight = "g2_place_money_top_right",
+
+  -- Party / box / dex checks.
+  CheckFirstMonIsEgg = "g2_check_first_mon_egg",
+  Special_CheckFirstMonIsEgg = "g2_check_first_mon_egg",
+  MonCheck = "g2_mon_check",
+  Special_MonCheck = "g2_mon_check",
+  BeastsCheck = "g2_beasts_check",
+  Special_BeastsCheck = "g2_beasts_check",
+  FindPartyMonThatSpecies = "g2_find_party_species",
+  Special_FindPartyMonThatSpecies = "g2_find_party_species",
+  Special_FindPartyMonThatSpeciesYourTrainerID = "g2_find_party_species_own",
+  FindPartyMonAboveLevel = "g2_find_party_above_level",
+  Special_FindPartyMonAboveLevel = "g2_find_party_above_level",
+  FindPartyMonAtLeastThatHappy = "g2_find_party_happy",
+  Special_FindPartyMonAtLeastThatHappy = "g2_find_party_happy",
+  GameCornerPrizeMonCheckDex = "g2_prize_mon_dex",
+  Special_GameCornerPrizeMonCheckDex = "g2_prize_mon_dex",
+  UnusedSetSeenMon = "g2_seen_mon",
+  RandomUnseenWildMon = "g2_random_unseen_wild_mon",
+  Special_RandomUnseenWildMon = "g2_random_unseen_wild_mon",
+  Special_GetFirstPokemonHappiness = "g2_first_happiness",
+
+  -- Small state pokes.
+  GameboyCheck = "g2_gameboy_check",
+  Special_GameboyCheck = "g2_gameboy_check",
+  ActivateFishingSwarm = "g2_activate_fishing_swarm",
+  Special_ActivateFishingSwarm = "g2_activate_fishing_swarm",
+  SampleKenjiBreakCountdown = "g2_kenji_countdown",
+  CheckCaughtCelebi = "g2_check_caught_celebi",
+  GiveDratini = "g2_give_dratini",
+  CheckPartyFullAfterContest = "g2_contest_party_full",
+  Special_CheckPartyFullAfterContest = "g2_contest_party_full",
+
+  -- The Magikarp guru, Buena's Blue Card, the Poke Seer.
+  CheckMagikarpLength = "g2_magikarp_length",
+  Special_CheckMagikarpLength = "g2_magikarp_length",
+  MagikarpHouseSign = "g2_magikarp_sign",
+  Special_MagikarpHouseSign = "g2_magikarp_sign",
+  BuenasPassword = "g2_buenas_password",
+  BuenaPrize = "g2_buena_prize",
+  AskRememberPassword = "g2_ask_remember_password",
+  PokeSeer = "g2_poke_seer",
+  Special_PokeSeer = "g2_poke_seer",
+
+  -- The PCs and the three move teachers.
+  PokemonCenterPC = "g2_pokemon_center_pc",
+  Special_PokemonCenterPC = "g2_pokemon_center_pc",
+  PlayersHousePC = "g2_players_house_pc",
+  Special_PlayersHousePC = "g2_players_house_pc",
+  Special_KrissHousePC = "g2_players_house_pc",
+  MoveTutor = "g2_move_tutor",
+  Special_MoveTutor = "g2_move_tutor",
+  MoveRelearner = "g2_move_relearner",
+  Special_MoveRelearner = "g2_move_relearner",
+  Special_GoldenrodHappinessMoveTutor = "g2_happiness_tutor",
+
+  -- Prism's three remaining features.
+  Special_FossilPuzzle = "g2_fossil_puzzle",
+  Special_MemoryGame = "g2_memory_game",
+  Special_SpurgeMartBank = "g2_spurge_bank",
+
+  -- -------------------------------------------------------------------------
+  -- The cable club, the mobile adapter and Mystery Gift.
+  --
+  -- 110-odd call sites, and the single biggest group in the table.  Two Game
+  -- Boys is the one thing a single-player recompilation cannot fake, so every
+  -- row answers a definite 0/false -- which is also what the cartridge answers
+  -- with nothing plugged in: CheckLinkTimeout_Receptionist, AskMobileOrCable,
+  -- CheckBothSelectedSameRoom and CheckMobileAdapterStatusSpecial all write 0
+  -- to wScriptVar on failure and the receptionist scripts branch straight back
+  -- to "please come again".  The Function10xxxx rows are the mobile adapter's
+  -- unnamed routines, which pret leaves unlabelled; every one of them that
+  -- touches wScriptVar writes 0 on the no-adapter path.
+  -- -------------------------------------------------------------------------
+  CheckLinkTimeout_Receptionist = "g2_unavailable",
+  CheckBothSelectedSameRoom = "g2_unavailable",
+  CheckMobileAdapterStatusSpecial = "g2_unavailable",
+  CableClubCheckWhichChris = "g2_unavailable",
+  Special_CableClubCheckWhichChris = "g2_unavailable",
+  AskMobileOrCable = "g2_unavailable",
+  Mobile_SelectThreeMons = "g2_unavailable",
+  CheckMysteryGift = "g2_unavailable",
+  UnlockMysteryGift = "g2_unavailable",
+  GetMysteryGiftItem = "g2_unavailable",
+  Function101225 = "g2_unavailable",
+  Function101231 = "g2_unavailable",
+  Function1011f1 = "g2_unavailable",
+  Function101220 = "g2_unavailable",
+  Function1037c2 = "g2_unavailable",
+  Function1037eb = "g2_unavailable",
+  Function10383c = "g2_unavailable",
+  Function10387b = "g2_unavailable",
+  Function103780 = "g2_unavailable",
 }
 
 -- Fades / presentation (Route 24 Rocket uses FadeOutMusic + FadeOutToBlack +
@@ -694,6 +950,59 @@ local SPECIALS_NOOP = {
   -- the mobile-only failure box the room menu can raise; the port's menu
   -- never answers anything but 0 or CANCEL, so this branch is unreachable
   BattleTowerMobileError = true,
+  -- PRISM'S FADES.  Its SpecialsPointers table is its own, and these four
+  -- rows carry labels the base games do not print: `FadeOutPalettes` and
+  -- `FadeInPalettes` unprefixed (Crystal reaches the same routines under
+  -- Special_ names, which is why only Prism trips on them), plus
+  -- Special_FadeInQuickly and RunSpritesCallback.  Counted over Prism's
+  -- lowered scripts they are 38, 11, 2 and 5 call sites -- 56 in all, and
+  -- every one of them was falling through to `g2_special`.
+  --
+  -- That matters for more than the warning.  g2_special answers
+  -- `lastCheck = false`, so a fade standing between a checkevent and its
+  -- iftrue silently flipped the branch -- the same failure the Crystal block
+  -- above exists to prevent.  A palette fade decides nothing, so it lowers
+  -- to nothing.  Both spellings are listed because the label the extractor
+  -- reads back is whichever symbol the ROM's own table points at.
+  FadeOutPalettes = true,
+  Special_FadeOutPalettes = true,
+  FadeInPalettes = true,
+  Special_FadeInPalettes = true,
+  FadeInQuickly = true,
+  Special_FadeInQuickly = true,
+  RunSpritesCallback = true,
+  Special_RunSpritesCallback = true,
+  Special_ClearBGPalettesBufferScreen = true,
+  Special_ReloadSpritesNoPalettes = true,
+  Special_BattleTowerFade = true,
+
+  -- The link routines that do NOT write wScriptVar.  These have to lower to
+  -- nothing rather than to g2_unavailable: zeroing the variable on their
+  -- behalf would clobber a value the surrounding script set itself, which is
+  -- the mirror image of the stale-value bug the rest of this work fixes.
+  -- Checked one at a time against pret; the ones that DO write it are in
+  -- SPECIALS above.
+  WaitForOtherPlayerToExit = true,
+  CloseLink = true,
+  WaitForLinkedFriend = true,
+  FailedLinkToPast = true,
+  SetBitsForLinkTradeRequest = true,
+  SetBitsForBattleRequest = true,
+  SetBitsForTimeCapsuleRequest = true,
+  CheckTimeCapsuleCompatibility = true,
+  EnterTimeCapsule = true,
+  TradeCenter = true,
+  Special_TradeCenter = true,
+  Colosseum = true,
+  Special_Colosseum = true,
+  TimeCapsule = true,
+  Special_TimeCapsule = true,
+  DisplayLinkRecord = true,
+  Special_DisplayLinkRecord = true,
+  -- presentation only: the Celebi sprite animation over the Ilex shrine, and
+  -- Prism's own fade wrappers that turned up alongside it
+  CelebiShrineEvent = true,
+  Special_CelebiShrineEvent = true,
 }
 
 -- Specials that print their own prompt and are immediately followed by a
@@ -852,9 +1161,16 @@ L.random = function(ir, s) emit(s, { "g2_random", ir[2] }) end
 -- g2Var at 0, so every approach took the same DOWN branch and the bird
 -- shuttled back and forth.
 local READ_VARS = {
-  [1] = true,
+  [1] = true, [4] = true,
   [5] = true, [6] = true, [7] = true, [9] = true,
-  [10] = true, [11] = true, [14] = true, [16] = true, [20] = true,
+  [10] = true, [11] = true, [12] = true, [13] = true, [14] = true,
+  [15] = true, [16] = true, [18] = true, [19] = true, [20] = true,
+  [23] = true,
+  -- VAR_BLUECARDBALANCE ($18) and VAR_KENJI_BREAK ($1A).  RadioTower2F reads
+  -- the first one three times in one script -- to cap the card, to award the
+  -- point, and to check the cap again afterwards -- so leaving it unreadable
+  -- meant Buena's whole Blue Card game ran on a variable that never changed.
+  [24] = true, [26] = true,
 }
 
 L.readvar = function(ir, s)
@@ -881,8 +1197,205 @@ L.addvar = L.addval   -- if your extractor still emits addvar
 -- Leaving it unlowered is what made the Lake of Rage Gyarados blue.
 local WRITE_VARS = { [3] = true }
 
+-- The name `loadvar` means two different things in the two dialects, and the
+-- operand tells them apart without a version flag: Crystal's is `db var, db
+-- value` through the VarActionTable, whose twenty-seven indices are all under
+-- $20, while Prism's Script_loadvar is `call GetScriptHalfword /
+-- WriteScriptByteToHL` -- `dw address, db value`, which is Crystal's loadmem
+-- and always names a WRAM address at $C000 or above.
 L.loadvar = function(ir, s)
-  if WRITE_VARS[ir[2]] then emit(s, { "g2_loadvar", ir[2], ir[3] }) end
+  local v = tonumber(ir[2]) or 0
+  if v > 0xFF then
+    emit(s, { "g2_loadmem", ir[2], ir[3] })
+  elseif WRITE_VARS[v] then
+    emit(s, { "g2_loadvar", v, ir[3] })
+  end
+end
+
+-- --------------------------------------------------------- Prism's variables
+-- Prism keeps Crystal's VAR_* numbering up to VAR_MAPNUMBER ($0d) and then
+-- goes its own way (constants/script_constants.asm):
+--
+--   $0e  Crystal UNOWNCOUNT      Prism ROOFPALETTE
+--   $0f          ENVIRONMENT           BOXSPACE
+--   $10          BOXSPACE              XCOORD
+--   $11          CONTESTMINUTES        YCOORD
+--   $12          XCOORD                EVENTMONRESPAWN
+--   $13          YCOORD                --  (NUM_VARS is $13)
+--
+-- g2_readvar is indexed by CRYSTAL's list, so every Prism read above $0d
+-- landed on the wrong variable: `checkcode VAR_XCOORD` answered BoxFreeSpace's
+-- constant 20, and VAR_BOXSPACE answered the map's environment byte.  Two of
+-- Prism's have no port model at all and are dropped rather than aliased --
+-- an unlowered read leaves the branch to fall through, a WRONG read takes a
+-- branch the ROM never takes.
+local PRISM_VAR_TO_PORT = {
+  [0x0f] = 0x10,   -- BOXSPACE
+  [0x10] = 0x12,   -- XCOORD
+  [0x11] = 0x13,   -- YCOORD
+}
+local PRISM_VAR_UNMODELLED = {
+  [0x0e] = true,   -- ROOFPALETTE
+  [0x12] = true,   -- EVENTMONRESPAWN
+}
+local function prismVar(n)
+  n = tonumber(n)
+  if not n or PRISM_VAR_UNMODELLED[n] then return nil end
+  if n <= 0x0d then return n end
+  return PRISM_VAR_TO_PORT[n]
+end
+
+-- `checkcode <var>` IS Crystal's readvar: GetScriptByte / GetVarAction /
+-- ld a, [de] / ldh [hScriptVar].  Prism has no command spelled readvar at
+-- all, so all 67 of its variable reads were silent and every branch off one
+-- ran on whatever the previous check had left in the script variable.
+L.checkcode = function(ir, s)
+  local v = prismVar(ir[2])
+  if v and READ_VARS[v] then emit(s, { "g2_readvar", v }) end
+end
+
+-- `writecode <var>, <value>` is Crystal's loadvar (GetScriptByte /
+-- GetVarAction / GetScriptByte / ld [de], a) -- the literal form.
+L.writecode = function(ir, s)
+  local v = prismVar(ir[2])
+  if v and WRITE_VARS[v] then emit(s, { "g2_loadvar", v, ir[3] }) end
+end
+
+-- `writevar <var>` / `writevarcode <var>` (Prism's spelling) write the script
+-- variable back THROUGH the same table.  Most of what the table exposes is
+-- derived and cannot be written -- a party count, a badge count, the clock --
+-- so only the handful of real stored bytes are lowered, and the rest stay a
+-- deliberate no-op rather than a guess.
+--
+-- VAR_BLUECARDBALANCE is the one that matters: RadioTower2F awards Buena's
+-- point with `readvar / addval 1 / writevar`, so with the write dropped the
+-- balance was pinned at zero no matter how many nights the player turned up.
+local WRITEBACK_VARS = { [24] = true, [26] = true }
+
+L.writevar = function(ir, s)
+  if WRITEBACK_VARS[ir[2]] then emit(s, { "g2_writevar", ir[2] }) end
+end
+
+L.writevarcode = function(ir, s)
+  local v = prismVar(ir[2])
+  if v and WRITEBACK_VARS[v] then emit(s, { "g2_writevar", v }) end
+end
+
+-- ------------------------------------------------------- the variable stack
+-- Prism keeps a byte stack in WRAM that scripts push the script variable onto
+-- and pop back off (ScriptVarStackOperation), which is how it holds a value
+-- across a `scall` or across the arms of a conditional.  Ninety-three
+-- instructions lowered to nothing, so every pop read a stale variable.
+L.pushvar = function(_, s) emit(s, { "g2_pushvar" }) end
+L.popvar  = function(_, s) emit(s, { "g2_popvar" }) end
+-- Script_pullvar reads the top WITHOUT decrementing the stack pointer.
+L.pullvar = function(_, s) emit(s, { "g2_peekvar" }) end
+-- Script_swapvar exchanges the top of the stack with the script variable.
+L.swapvar = function(_, s) emit(s, { "g2_swapvar" }) end
+-- Script_swapbyte is `call Script_writebyte` falling into Script_swapvar.
+L.swapbyte = function(ir, s)
+  emit(s, { "g2_setvar", ir[2] })
+  emit(s, { "g2_swapvar" })
+end
+
+-- ------------------------------------------------------ the halfword variable
+-- hScriptHalfwordVar is a second, sixteen-bit script variable.  Prism uses it
+-- two ways and both matter: as a value (a text pointer read out of an array,
+-- handed to `jumptext -1`) and as an ADDRESS -- GetHalfwordVar returns it in
+-- hl, so copyhalfwordvartovar is an indirect read of the WRAM byte it names.
+L.writehalfword = function(ir, s) emit(s, { "g2_sethalfword", ir[2] }) end
+L.pushhalfword = function(ir, s)
+  emit(s, { "g2_sethalfword", ir[2] })
+  emit(s, { "g2_pushhalfword" })
+end
+L.pushhalfwordvar = function(_, s) emit(s, { "g2_pushhalfword" }) end
+L.pophalfwordvar  = function(_, s) emit(s, { "g2_pophalfword" }) end
+L.pullhalfwordvar = function(_, s) emit(s, { "g2_peekhalfword" }) end
+L.copyhalfwordvartovar = function(_, s) emit(s, { "g2_readmem" }) end
+L.copyvartohalfwordvar = function(_, s) emit(s, { "g2_writemem" }) end
+-- Script_addhalfwordtovar: halfword = <literal> + var.
+-- Script_addhalfwordvartovar: halfword = halfword + var.
+L.addhalfwordtovar = function(ir, s) emit(s, { "g2_addhalfword", ir[2] }) end
+L.addhalfwordvartovar = function(_, s) emit(s, { "g2_addhalfword" }) end
+L.addhalfwordtohalfwordvar = function(ir, s)
+  emit(s, { "g2_addhalfwordvalue", ir[2] })
+end
+L.copybytetohalfwordvar = function(ir, s) emit(s, { "g2_readmem16", ir[2] }) end
+
+-- Script_addbytetovar adds the WRAM BYTE at an address to the variable.
+L.addbytetovar = function(ir, s) emit(s, { "g2_addmem", ir[2] }) end
+-- Script_multiplyvar: `inc a / jr nz` -- an operand of $ff negates instead.
+L.multiplyvar = function(ir, s) emit(s, { "g2_mulvar", ir[2] }) end
+
+-- Script_getweekday is UpdateTime / GetWeekday into the script variable,
+-- which is exactly what VAR_WEEKDAY ($0b) already answers.
+L.getweekday = function(_, s) emit(s, { "g2_readvar", 11 }) end
+
+-- Script_toggleevent reads an event flag and writes back the other way.
+L.toggleevent = function(ir, s) emit(s, { "g2_toggle_flag", eventFlag(ir[2]) }) end
+L.toggle = L.toggleevent
+
+-- Script_paragraphdelay is ClearSpeechBox / UnloadBlinkingCursor / eighteen
+-- frames -- presentation only, and the port's text box paginates itself.
+L.paragraphdelay = noop
+
+-- ------------------------------------------------------------- jump tables
+-- `jumptable <ptr>` CALLS the case the script variable selects and comes back
+-- (`ld b, 1` into ScriptJumptable, whose LocalScriptJump arm is anonjumptable's
+-- b=0).  The extractor has already followed the table and queued each case, so
+-- ir[2] is a list of labels; what is left is the dispatch, which the port's IR
+-- has no single row for.  Built as a compare-and-call chain, so an index the
+-- table does not cover falls straight through exactly as the ROM's would.
+L.jumptable = function(ir, s)
+  local cases = ir[2]
+  if type(cases) ~= "table" or #cases == 0 then return end
+  local done = s.newLabel()
+  for i = 1, #cases do
+    local to = branch(s, cases[i])
+    if to then
+      local skip = s.newLabel()
+      emit(s, { "g2_compare", "eq", i - 1 })
+      emit(s, { "jump_if_false", skip })
+      emit(s, { "g2_call", done })
+      emit(s, { "jump", to })
+      emit(s, { "label", skip })
+    end
+  end
+  emit(s, { "label", done })
+end
+
+-- ----------------------------------------------------------------- arrays
+-- Script_loadarray parks a far pointer, an entry size and a current-entry
+-- index taken from the script variable; readarray / readarrayhalfword then
+-- read base + size * entry + index.  The blob and, where the entries are text
+-- pointers, the labels for them come from the extractor -- the runtime has no
+-- ROM to reach into.
+L.loadarray = function(ir, s)
+  local array = ir[2]
+  if type(array) ~= "table" then return end
+  emit(s, { "g2_loadarray", array })
+end
+L.readarray = function(ir, s) emit(s, { "g2_readarray", ir[2] }) end
+L.readarrayhalfword = function(ir, s)
+  emit(s, { "g2_readarrayhalfword", ir[2] })
+end
+
+-- Script_comparevartobyte compares the script variable against the WRAM byte
+-- at an address and answers a THREE-way result in the variable itself:
+-- 0 greater, 1 less, 2 equal.  The scripts that use it then branch on that
+-- value, so leaving it unlowered left the previous check's result in place.
+L.comparevartobyte = function(ir, s) emit(s, { "g2_comparemem", ir[2] }) end
+
+-- `ptcall` / `ptjump` name a three-byte FAR pointer (`ld b, [hl] / ld e, [hl]
+-- / ld d, [hl]`) rather than a script.  Where that pointer sits in ROM the
+-- extractor has already dereferenced and queued it, so ir[2] arrives as an
+-- ordinary label; where it sits in WRAM there is nothing to resolve and the
+-- row is dropped, exactly as Crystal's memcall is.
+L.ptcall = function(ir, s)
+  if type(ir[2]) == "string" and ir[2] ~= "" then L.scall(ir, s) end
+end
+L.ptjump = function(ir, s)
+  if type(ir[2]) == "string" and ir[2] ~= "" then L.sjump(ir, s) end
 end
 
 -- `changeblock x, y, block` (ChangeBlock, engine/overworld/scripting.asm)
@@ -999,10 +1512,91 @@ function Gen2ScriptVM.compile(data, entry)
     emit(state, { "label", label })
     state.lastText = nil
     state.lastTextRow = nil
-    for _, ir in ipairs(scripts[label] or {}) do
-      local lower = L[ir[1]]
-      if lower then lower(ir, state) end
+    -- Prism's structured conditionals (macros/event.asm `sif` / `sendif`).
+    -- These are not jumps in the stream -- there is no pointer to lower --
+    -- so the branch has to be BUILT here, from the shape:
+    --
+    --     sif true, then     ->  jump_if_false <after sendif>
+    --       <commands>
+    --     sendif             ->  label <after sendif>
+    --
+    --     sif true           ->  jump_if_false <after the next command>
+    --       <one command>    ->  label <after the next command>
+    --
+    -- The `then` marker is opcode $CF, which Prism aliases onto
+    -- scriptstartasm (`then_command EQU scriptstartasm_command`).  Without
+    -- this the guarded commands lowered UNCONDITIONALLY: IntroOutside's
+    -- `.init_events` is `checkevent / sif true / return / jumpstd
+    -- initializeevents`, so an unconditional `return` meant the game's events
+    -- were never initialised at all -- which is most of "the events are not
+    -- set up".
+    local sifStack, guardLabel = {}, nil
+    local rows = scripts[label] or {}
+    for irIndex, ir in ipairs(rows) do
+      local op = ir[1]
+      if SIF_OPS[op] then
+        local after = state.newLabel()
+        local cmp = SIF_COMPARE[op]
+        if cmp then
+          -- the comparing forms test the script variable against their own
+          -- operand byte, exactly as ifequal / ifless / ifgreater do
+          emit(state, { "g2_compare", cmp, ir[2] })
+          emit(state, { "jump_if_false", after })
+        elseif op == "siffalse" then
+          -- runs its body when the variable is ZERO, so skip it when it is not
+          emit(state, { "jump_if_true", after })
+        else
+          emit(state, { "jump_if_false", after })
+        end
+        if rows[irIndex + 1] and rows[irIndex + 1][1] == THEN_OP then
+          sifStack[#sifStack + 1] = after      -- block form, closed by sendif
+        else
+          guardLabel = after                   -- guards exactly the next row
+        end
+      elseif op == THEN_OP then
+        -- the marker itself emits nothing
+      elseif op == "sendif" then
+        local after = table.remove(sifStack)
+        if after then emit(state, { "label", after }) end
+      elseif op == "switch" then
+        -- Script_switch is literally `call Script_writebyte` falling through
+        -- into Script_selse ("writebyte + selse combined into one ... abusing
+        -- how selse and sendif work").  So it sets the script variable and
+        -- then closes the arm it is in, which is how Prism writes a jump
+        -- table's cases -- 410 instructions, the single largest unlowered
+        -- command left.
+        local setval = L.setval
+        if setval then setval(ir, state) end
+        local after = sifStack[#sifStack]
+        if after then
+          local done = state.newLabel()
+          emit(state, { "jump", done })
+          emit(state, { "label", after })
+          sifStack[#sifStack] = done
+        end
+      elseif op == "selse" then
+        -- `selse` closes the true arm and opens the false one; without a
+        -- second label the false arm would fall into the true arm's code
+        local after = sifStack[#sifStack]
+        if after then
+          local done = state.newLabel()
+          emit(state, { "jump", done })
+          emit(state, { "label", after })
+          sifStack[#sifStack] = done
+        end
+      else
+        local lower = L[op]
+        if lower then lower(ir, state) end
+        if guardLabel then
+          emit(state, { "label", guardLabel })
+          guardLabel = nil
+        end
+      end
     end
+    -- an unbalanced `sif` (the decoder stopped inside the block) still has to
+    -- close, or the jump target does not exist and the runner falls through
+    for i = #sifStack, 1, -1 do emit(state, { "label", sifStack[i] }) end
+    if guardLabel then emit(state, { "label", guardLabel }) end
     -- a script that ran off the end of its own bytecode still has to unwind
     emit(state, { "g2_return" })
   end
@@ -1016,6 +1610,80 @@ function Gen2ScriptVM.compile(data, entry)
   end
   compiled[scripts][key] = #out > 0 and out or false
   return #out > 0 and out or nil
+end
+
+-- Prism renamed a good deal of Crystal's script vocabulary without changing
+-- what the commands DO -- `jump` for `sjump`, `if_equal` for `ifequal`,
+-- `end_all` for `endall`.  An unlowered command is not an error, it just
+-- lowers to nothing, so the whole class was silent: 1479 instructions, and
+-- `jump` alone was 676 of them.  A script whose jumps vanish runs its first
+-- straight-line stretch and then stops, which is most of what "the events do
+-- not fire" looks like from the outside.
+--
+-- Deliberately NOT here: siftrue / siffalse.  They share a name-shape with
+-- Crystal's iftrue / iffalse but take no pointer -- they are the structured
+-- conditionals, and the lowering loop above builds their branches itself.
+-- Aliasing them onto the pointer forms would read an operand that is not
+-- there.
+local PRISM_ALIASES = {
+  jump = "sjump",
+  farjump = "farsjump",
+  -- priorityjump is `sjump` plus "run me before the map's own scripts", and
+  -- the port has no priority queue -- the scene it names IS the next thing to
+  -- run.  Prism's opening cutscene is a scene script whose entire body is
+  -- `priorityjump .play_music`, so with no lowering the intro did nothing at
+  -- all: no music, nobody turning to face the player, no dialogue.
+  priorityjump = "sjump",
+  ptpriorityjump = "sjump",
+  if_equal = "ifequal",
+  if_not_equal = "ifnotequal",
+  if_greater_than = "ifgreater",
+  if_less_than = "ifless",
+  check_just_battled = "checkjustbattled",
+  end_all = "endall",
+  end_if_just_battled = "endifjustbattled",
+  -- Prism renamed the scene machinery too.  A "trigger" is Crystal's
+  -- "scene": dotrigger sets the current map's, domaptrigger sets another
+  -- map's, and the check* pair read them back.  These are what decide WHICH
+  -- cutscene a map is in, so with them silent a map could not advance past
+  -- its opening scene at all.
+  dotrigger = "setscene",
+  checktriggers = "checkscene",
+  domaptrigger = "setmapscene",
+  checkmaptriggers = "checkmapscene",
+  -- and `spriteface <person>, <facing>` is `turnobject` under another name --
+  -- the command the intro uses to have the player and mom look at each other.
+  spriteface = "turnobject",
+  spritefacelasttalked = "turnobject",
+  -- `faceperson p1, p2` makes p1 look at p2 -- Crystal's faceobject.
+  faceperson = "faceobject",
+  -- Prism's writebyte IS Crystal's setval: `call GetScriptByte / ldh
+  -- [hScriptVar], a`.  It is what every one of its `switch` blocks tests, so
+  -- with it silent the whole dispatch fell to the default arm.
+  writebyte = "setval",
+  -- text: showtext is writetext with a pointer, endtext ends the box, and
+  -- closetextend is closetext + end -- and this port's show_text owns its own
+  -- box (opentext/closetext are already no-ops here), so it is just `end`.
+  showtext = "writetext",
+  endtext = "end",
+  closetextend = "end",
+  -- audio
+  playwaitsfx = "playsound",
+  fadetomapmusic = "playmapmusic",
+  -- Same handler, same operand widths, different name.  Prism's table sits
+  -- one slot below Crystal's from $3F on, which is why these read as new
+  -- commands; checked spec-by-spec against Crystal's before aliasing.
+  moveperson = "moveobject",
+  writepersonxy = "writeobjectxy",
+  applymovement2 = "applymovementlasttalked",
+  reloadmappart = "refreshmap",
+  itemtotext = "getitemname",
+  pokenamemem = "getmonname",
+  mapnametotext = "getcurlandmarkname",
+  name = "gettrainername",
+}
+for prismName, existing in pairs(PRISM_ALIASES) do
+  if L[prismName] == nil and L[existing] then L[prismName] = L[existing] end
 end
 
 -- ---------------------------------------------------------------------------

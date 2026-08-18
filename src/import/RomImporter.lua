@@ -4,6 +4,11 @@ local HostShell = require("src.core.HostShell")
 local SafeArea = require("src.core.SafeArea")
 local Platform = require("src.core.Platform")
 local GamepadMap = require("src.core.GamepadMap")
+-- Breadcrumbs through the constructor (src/core/BootTrace.lua).  This is the
+-- largest thing that runs before the first frame on a phone, and when the
+-- process dies inside it there is nothing on screen and nothing in any log to
+-- say how far it got.
+local BootTrace = require("src.core.BootTrace")
 
 local RomImporter = {}
 RomImporter.__index = RomImporter
@@ -341,6 +346,13 @@ local VERSION_REQUIRED_FILES = {
   -- launch, the launcher re-imported the ROM every single time, and no amount
   -- of re-importing could clear it because nothing ever writes that file.
   crystal = { "assets/generated/title/crystal_title.png" },
+  -- ...and Prism's is its own again: extractPrismTitleArt writes
+  -- title/prism_title.png.  Prism answers the Crystal test
+  -- (TitleLogoGFX present, TitleScreenTilemap absent) but has no
+  -- TitleSuicuneGFX, so it used to fall into the Crystal reader and
+  -- come back with nothing at all -- no title art, and no marker here
+  -- to notice it was missing.
+  prism = { "assets/generated/title/prism_title.png" },
 }
 
 local function requiredFiles(version)
@@ -418,6 +430,8 @@ local PAL = {
   chipSilverBot = { 96, 116, 145 },  -- #607491
   chipCrystalTop = { 138, 226, 240 }, -- #8ae2f0
   chipCrystalBot = { 38, 122, 150 },  -- #267a96
+  chipPrismTop = { 106, 240, 150 },   -- #6af096  Prism
+  chipPrismBot = { 22, 138, 82 },     -- #168a52
   chipModTop  = { 61, 74, 109 },   -- #3d4a6d
   chipModBot  = { 32, 42, 69 },    -- #202a45
   chipInkGold = { 58, 44, 0 },     -- #3a2c00
@@ -556,7 +570,41 @@ local function decodeManifest(version)
   return manifest
 end
 
+-- The last gate before an import actually runs.  The panel already disables
+-- the button for a version with `importable = false`, but that is only the UI:
+-- a drag-and-drop, a CLI path or a future entry point could still reach here.
+-- A version the build has deliberately withheld must be refused wherever the
+-- import is started, not just where it is drawn.
+--
+-- POKEPORT_UNLOCK is the one way past it, and it exists so that WORKING on a
+-- withheld version does not mean shipping it.  The gate is what a player
+-- meets; the extractor still has to be exercised against the ROM to be fixed
+-- at all, and with no escape hatch the only way to re-import Prism after an
+-- extractor change was to edit GameVersion and remember to put it back.  Set
+-- it to a version id, or to a comma-separated list, or to `1`/`all` for every
+-- withheld version:
+--
+--   POKEPORT_UNLOCK=prism ./Play-Windows.bat
+--
+-- Deliberately an environment variable rather than a setting: it does not
+-- persist, it does not appear in any menu, and a normal launch never has it.
+local function unlockedByEnv(version)
+  local value = os.getenv("POKEPORT_UNLOCK")
+  if not value or value == "" then return false end
+  value = value:lower()
+  if value == "1" or value == "all" then return true end
+  for id in value:gmatch("[^,%s]+") do
+    if id == tostring(version):lower() then return true end
+  end
+  return false
+end
+
 local function blockedImportReason(version, manifest)
+  local info = GameVersion.info(version)
+  if info and info.importable == false and not unlockedByEnv(version) then
+    return (info.launcherName or info.displayName or version)
+      .. " is not ready to play yet"
+  end
   return nil
 end
 
@@ -669,6 +717,10 @@ end
 local IMPORTS_DIR = "imports"
 
 local MODS_INBOX_DIR = "imports/mods"
+-- Battery saves get their own inbox for the same reason mods do: a .sav in the
+-- save-dir root is ambiguous, and on a console the named folder is the ONLY
+-- way to hand the game a file at all.
+local SAVES_INBOX_DIR = "imports/saves"
 
 function RomImporter:ensureImportsDir()
   local info = love.filesystem.getInfo(IMPORTS_DIR)
@@ -676,6 +728,17 @@ function RomImporter:ensureImportsDir()
   if info then return false end   -- a FILE named imports/ -- do not clobber it
   if love.filesystem.createDirectory then
     return love.filesystem.createDirectory(IMPORTS_DIR)
+  end
+  return false
+end
+
+function RomImporter:ensureSavesInboxDir()
+  self:ensureImportsDir()
+  local info = love.filesystem.getInfo(SAVES_INBOX_DIR)
+  if info and info.type == "directory" then return true end
+  if info then return false end
+  if love.filesystem.createDirectory then
+    return love.filesystem.createDirectory(SAVES_INBOX_DIR)
   end
   return false
 end
@@ -806,18 +869,32 @@ local function findPendingMod(preferAny, skip)
   return nil
 end
 
--- Same pattern as findPendingMod for battery saves (picked_save.sav / *.sav).
+-- Same pattern as findPendingMod for battery saves (picked_save.sav / *.sav):
+-- the picker's own drop first, then imports/saves/, then the save-dir root.
+local function listSavPaths(dir)
+  local paths = {}
+  for _, name in ipairs(love.filesystem.getDirectoryItems(dir) or {}) do
+    if name:sub(1, 1) ~= "." then
+      local path = (dir == "" or dir == "/") and name or (dir .. "/" .. name)
+      if name:lower():match("%.sav$") and love.filesystem.getInfo(path, "file") then
+        paths[#paths + 1] = path
+      end
+    end
+  end
+  return paths
+end
+
 local function findPendingSav(preferAny, skip)
   local preferred = "picked_save.sav"
   if love.filesystem.getInfo(preferred, "file") then
     return preferred
   end
   if not preferAny then return nil end
-  for _, name in ipairs(love.filesystem.getDirectoryItems("")) do
-    if name:lower():match("%.sav$") and not (skip and skip[name])
-        and love.filesystem.getInfo(name, "file") then
-      return name
-    end
+  for _, path in ipairs(listSavPaths(SAVES_INBOX_DIR)) do
+    if not (skip and skip[path]) then return path end
+  end
+  for _, path in ipairs(listSavPaths("")) do
+    if not (skip and skip[path]) then return path end
   end
   return nil
 end
@@ -909,6 +986,55 @@ local function chooseZip()
   return nil
 end
 
+-- Open a native picker for a mod's declared base file (`required_imports`).
+-- The extension list comes from the manifest rather than being fixed, because
+-- what a mod needs is its own business: STADIUM2_IMPORTER wants a Nintendo 64
+-- cartridge in any of its three byte orders (.z64/.n64/.v64).
+local function chooseFileByExt(exts, promptName)
+  if type(exts) ~= "table" or #exts == 0 then return nil end
+  local prompt = Strings("Choose your %s", promptName or "file")
+  local platform = love.system.getOS()
+  local quoted, globs, semis = {}, {}, {}
+  for index, ext in ipairs(exts) do
+    quoted[index] = '"' .. ext .. '"'
+    globs[index] = "*." .. ext
+    semis[index] = "*." .. ext
+  end
+  if platform == "OS X" then
+    return commandOutput(
+      ([[osascript -e 'POSIX path of (choose file with prompt "%s" of type {%s})' 2>/dev/null]])
+        :format(prompt, table.concat(quoted, ", ")))
+  elseif platform == "Windows" then
+    local script = table.concat({
+      "Add-Type -AssemblyName System.Windows.Forms;",
+      "$d=New-Object System.Windows.Forms.OpenFileDialog;",
+      "$d.Title='" .. prompt .. "';",
+      "$d.Filter='Base file (" .. table.concat(semis, ";") .. ")|"
+        .. table.concat(semis, ";") .. "|All files (*.*)|*.*';",
+      -- the same ASCII-temp-name dance chooseZip does, and for the same
+      -- reason: io.open on Windows needs ANSI bytes (#325).  A cartridge is
+      -- tens of megabytes, so this copy is the one slow step -- worth it
+      -- against a path the reader cannot open at all.
+      "if($d.ShowDialog() -eq 'OK'){",
+      "$t=Join-Path $env:TEMP 'pokeport_base_pick.bin';",
+      "Copy-Item -LiteralPath $d.FileName -Destination $t -Force;",
+      "[Console]::OutputEncoding=[Text.Encoding]::UTF8;",
+      "[Console]::Write($t)}",
+    })
+    return commandOutput(
+      'powershell -NoProfile -STA -Command "' .. script .. '"')
+  elseif platform == "Linux" then
+    local path = commandOutput(
+      ([[zenity --file-selection --title="%s" --file-filter="Base file | %s" 2>/dev/null]])
+        :format(prompt, table.concat(globs, " ")))
+    if path then return path end
+    return commandOutput(
+      ([[kdialog --getopenfilename "$HOME" "%s|Base file" 2>/dev/null]])
+        :format(table.concat(globs, " ")))
+  end
+  return nil
+end
+
 -- Open a native picker for a raw .sav battery save (mirrors chooseZip's per-OS
 -- dialogs).  Returns the chosen absolute path or nil.  Android uses
 -- love.system.pickFile("sav") instead -- see RomImporter:chooseSaveImport.
@@ -973,6 +1099,7 @@ function RomImporter.new(onComplete, opts)
   -- keeps its historical name so every Android call site stays untouched.
   local mobileOS = love.system.getOS()
   local android = mobileOS == "Android" or mobileOS == "iOS"
+  BootTrace.mark("launcher: platform " .. tostring(mobileOS))
   local CacheFs = require("src.import.CacheFs")
   local self = setmetatable({
     onComplete = onComplete,
@@ -981,6 +1108,10 @@ function RomImporter.new(onComplete, opts)
     onEditSave = opts.onEditSave,
     onEditTouchControls = opts.onEditTouchControls,
     android = android,
+    -- Read by the three console-inbox branches below.  It was never assigned,
+    -- so every one of them leaned entirely on the romImportMode fallback
+    -- beside it; naming the platform once makes those reads mean something.
+    isNX = require("src.core.Platform").isNX(),
     ios = mobileOS == "iOS",
     -- love-nx reports "NX".  Nothing in this tree knew that string, so the
     -- Switch fell through every platform branch to the desktop one and was
@@ -1050,6 +1181,8 @@ function RomImporter.new(onComplete, opts)
     -- Android SAF: which game tab should receive the next picked_save.sav when
     -- focus consumes it (set by chooseSaveImport before opening the picker).
     androidPendingVersion = nil,
+    -- the mod whose `required_imports` file the native picker is fetching
+    modImportPending = nil,
     -- Android SAF create-document: which game's SAVE FILES card should show
     -- "Save exported." when export_done.flag appears on focus.
     androidPendingExportVersion = nil,
@@ -1065,6 +1198,11 @@ function RomImporter.new(onComplete, opts)
     _rawHatDirs = {},
     _padInited = false,
   }, RomImporter)
+  -- Everything the table constructor above did, including the four
+  -- love.graphics.newImage calls -- the first GPU work of the whole launch,
+  -- and the most likely place for a driver or memory failure that no Lua
+  -- handler can catch.
+  BootTrace.mark("launcher: state + images")
 
   for _, version in ipairs(GameVersion.ORDER) do
     local info = GameVersion.info(version)
@@ -1081,6 +1219,8 @@ function RomImporter.new(onComplete, opts)
     self.romName[version] = "pokemon_" .. info.id
       .. ((info.id == "yellow" or info.generation == 2) and ".gbc" or ".gb")
   end
+
+  BootTrace.mark("launcher: versions scanned")
 
   -- Android: import a save-dir .gb/.gbc that is not yet ready (USB drop or a
   -- leftover SAF pick), routed by SHA-1.  Already-imported carts are skipped
@@ -1119,13 +1259,13 @@ function RomImporter.new(onComplete, opts)
   -- async release check as it comes up; draw() polls Check.state() to render an
   -- unobtrusive banner beneath the columns.  Held behind pcall so a broken or
   -- absent updater can never take the launcher down with it.
-  --if self.launcher and updaterAllowed() then
-    --local ok, Check = pcall(require, "src.update.Check")
-    --if ok and Check then
-      --self.Check = Check
-      --pcall(Check.start)
-    --end
-  --end
+  if self.launcher and updaterAllowed() then
+    local ok, Check = pcall(require, "src.update.Check")
+    if ok and Check then
+      self.Check = Check
+      pcall(Check.start)
+    end
+  end
 
   -- On Linux handhelds a gamepad is usually already connected at boot; arm
   -- the virtual cursor immediately so the player does not have to press a
@@ -1189,6 +1329,21 @@ function RomImporter:focus(f)
       self:setError(text)
     end
     return
+  end
+  -- a base file picked for a mod (`required_imports`); the native bridge
+  -- writes it under one of these basenames
+  if self.modImportPending then
+    for _, name in ipairs({ "picked_base.bin", "picked_rom.bin", "picked_rom.z64",
+                            "picked_rom.n64", "picked_rom.v64" }) do
+      if love.filesystem.getInfo(name, "file") then
+        local modId = self.modImportPending
+        self.modImportPending = nil
+        self.pickPending = nil
+        self:_installModImport(modId, name)
+        love.filesystem.remove(name)
+        return
+      end
+    end
   end
   local modName = findPendingMod(false, self.pickSkip)
   if modName then
@@ -1510,6 +1665,122 @@ function RomImporter:chooseMod()
       .. love.filesystem.getSaveDirectory() }
 end
 
+-- ---------------------------------------------------------------------------
+-- "Import <base file>" on a mod card.
+--
+-- A mod may declare `required_imports` -- a file it needs but cannot ship.
+-- STADIUM2_IMPORTER declares a Pokemon Stadium 2 cartridge, and until this
+-- existed the ONLY way to give it one was to unzip the release, drop a 64 MB
+-- ROM inside it, re-zip and reinstall; the mod's own discovery says as much
+-- ("the engine sandbox has no scoped external ROM picker").  That is the
+-- "players can't import the Stadium 2 ROM" report.
+--
+-- The file is written into the mod's own folder at the path the manifest
+-- names, which is where the mod already looks, so no mod needs changing.
+-- ---------------------------------------------------------------------------
+function RomImporter:_modImportEntry(modId)
+  for _, m in ipairs(self.mods or {}) do
+    if m.id == modId then
+      local needs = m.missingImports and m.missingImports[1]
+      return needs and needs.entry or nil, m
+    end
+  end
+  return nil
+end
+
+function RomImporter:_installModImport(modId, source, bytes)
+  local ModImports = require("src.mods.ModImports")
+  local entry, row = self:_modImportEntry(modId)
+  if not (entry and row) then return end
+  if not bytes and source then
+    -- a picker hands back an absolute path; the inbox hands back a save-dir
+    -- relative one
+    local file = io.open(source, "rb")
+    if file then
+      bytes = file:read("*a")
+      file:close()
+    else
+      bytes = love.filesystem.read(source)
+    end
+  end
+  if not bytes then
+    self.modNotice = { ok = false, text = "Could not read that file." }
+    return
+  end
+  local manifest = { path = row.manifestPath or ("mods/" .. modId) }
+  local ok, why = ModImports.install(manifest, entry, bytes)
+  if ok then
+    self.modNotice = { ok = true,
+      text = "Imported " .. tostring(entry.name) .. " for " .. tostring(row.name) }
+    self:_refreshMods()
+  else
+    self.modNotice = { ok = false, text = tostring(why) }
+  end
+end
+
+function RomImporter:chooseModImport(modId)
+  if self.workState == "working" then return end
+  local ModImports = require("src.mods.ModImports")
+  local entry = self:_modImportEntry(modId)
+  if not entry then return end
+  local exts = ModImports.extensions(entry)
+
+  -- Already banked?  A cartridge the player gave another mod satisfies this
+  -- one with no picker at all (ModImports' shared store).
+  do
+    local bytes = ModImports.shared(entry)
+    if bytes then return self:_installModImport(modId, nil, bytes) end
+  end
+
+  -- then the inbox, on every platform: a file already waiting is the answer
+  -- whether or not a picker exists
+  self:ensureSavesInboxDir()
+  for _, dir in ipairs({ "imports/base", "imports", "imports/mods", "" }) do
+    for _, name in ipairs(love.filesystem.getDirectoryItems(dir) or {}) do
+      local path = (dir == "" ) and name or (dir .. "/" .. name)
+      if ModImports.accepts(entry, name)
+         and love.filesystem.getInfo(path, "file") then
+        return self:_installModImport(modId, path)
+      end
+    end
+  end
+
+  -- ANDROID AND iOS: the same native document picker the ROM, save and mod
+  -- buttons use (love.system.pickFile -> GameActivity / GRPickerBridge).  It
+  -- drops the pick into the save directory under a fixed basename and returns
+  -- immediately; _pollPickedFiles picks it up on a later frame, which is why
+  -- the pending id is recorded rather than the path being awaited here.
+  if self.android or self.ios then
+    self.modImportPending = modId
+    if pickFile("base") or pickFile("rom") then
+      self.pickPending = true
+      self.pickTimer = 0
+      self.modNotice = { ok = true,
+        text = "Choose your " .. tostring(entry.name) .. " in the file picker." }
+      return
+    end
+    self.modImportPending = nil
+    self.modNotice = { ok = false,
+      text = "Could not open the file picker. Copy the file into:\n"
+        .. love.filesystem.getSaveDirectory() .. "/imports/" }
+    return
+  end
+
+  do
+    local path = chooseFileByExt(exts, entry.name)
+    if path then return self:_installModImport(modId, path) end
+  end
+
+  local saveDir = love.filesystem.getSaveDirectory()
+  local rel = RomImporter.mtpHintPath(saveDir)
+  if rel ~= "" and rel:sub(-1) ~= "/" then rel = rel .. "/" end
+  local want = table.concat(exts, "/")
+  self.modNotice = { ok = true, text =
+    ("Copy your %s (.%s) into:"):format(tostring(entry.name), want)
+    .. "\n" .. saveDir .. "/imports/\n"
+    .. "DBI MTP -> 1: SD Card/" .. rel .. "imports/" }
+end
+
 -- Which game a dropped .sav imports into: a .sav has no version signature of
 -- its own, so it lands on the active game tab.  When a non-game tab (mods) is
 -- showing, default to red -- the always-present first game -- rather than
@@ -1581,7 +1852,38 @@ function RomImporter:chooseSaveImport(version)
     return
   end
   local path = chooseSav()
-  if path then self:_importSave(version, path) end
+  if path then self:_importSave(version, path) return end
+
+  -- No picker (a console, or a Linux handheld with neither zenity nor
+  -- kdialog): scan the inbox the way the ROM and mod buttons already do.
+  -- Before this, IMPORT SAVE reached chooseSav, got nil and returned in
+  -- SILENCE -- on the Switch the button did nothing and said nothing, which
+  -- is the whole reason a correctly-copied .sav looked like a broken build.
+  local found = findPendingSav(true, self.pickSkip)
+  if found then
+    self:_importSave(version, found)
+    consumePick(self, found, "picked_save.sav",
+                self.saveNotice[version] and self.saveNotice[version].ok)
+    return
+  end
+  -- Every platform with no picker gets the inbox, not just the Switch:
+  -- Platform.detect().console covers Xbox (UWP), whose romImportMode is still
+  -- "desktop" because it has no native picker to name.
+  if self.isNX or Platform.detect().console
+      or Platform.romImportMode() == "save-directory"
+      or love.system.getOS() == "Linux" then
+    self:ensureSavesInboxDir()
+    local saveDir = love.filesystem.getSaveDirectory()
+    local rel = RomImporter.mtpHintPath(saveDir)
+    if rel ~= "" and rel:sub(-1) ~= "/" then rel = rel .. "/" end
+    self.saveNotice[version] = { ok = true, text =
+      "Copy your .sav into:\n" .. saveDir .. "/imports/saves/\n"
+      .. "DBI MTP -> 1: SD Card/" .. rel .. "imports/saves/" }
+    return
+  end
+  self.saveNotice[version] = { ok = false,
+    text = "No file picker here. Copy a .sav into:\n"
+      .. love.filesystem.getSaveDirectory() }
 end
 
 -- "Export save" button: write the active slot back out to a raw .sav in the save
@@ -2283,6 +2585,7 @@ function RomImporter:_resetFrameRects()
   self.modRects = nil
   self.modDeleteRects = nil
   self.modImportRect = nil
+  self.modImportFileRects = nil
   -- Enable all / Disable all share that header and the same rule (#647): they
   -- are only drawn when the row is wide enough, so a stale rect would otherwise
   -- stay clickable over whatever the next tab (or the next window size) draws.
@@ -3421,6 +3724,12 @@ function RomImporter:mousepressed(x, y, button)
       return
     end
   end
+  for _, r in ipairs(self.modImportFileRects or {}) do
+    if inside(r, x, y) then
+      self:chooseModImport(r.id)
+      return
+    end
+  end
   for _, r in ipairs(self.modUpdateRects or {}) do
     if inside(r, x, y) then
       self:_modGithubAction(r.id, "update")
@@ -3720,6 +4029,11 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     { id = "crystal", letter = "C", top = PAL.chipCrystalTop, bot = PAL.chipCrystalBot,
       under = PAL.chipCrystalTop, label = Strings("CRYSTAL"),
       ink = PAL.chipInkSilver },
+    -- Prism sits after Crystal: it is a Crystal romhack, so it belongs at the
+    -- end of the Gen 2 run rather than beside the official carts.
+    { id = "prism", letter = "P", top = PAL.chipPrismTop, bot = PAL.chipPrismBot,
+      under = PAL.chipPrismTop, label = Strings("PRISM"),
+      ink = PAL.chipInkSilver },
     { id = "mods",   mods = true,  top = PAL.chipModTop,  bot = PAL.chipModBot,
       under = PAL.modDot, label = Strings("MODS") },
     -- Browsing a community index sits beside the installed list rather than
@@ -3873,7 +4187,15 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- Defensive: only lock when the version is absent from GameVersion (never
   -- solely because id == "yellow").
   local info = GameVersion.info(version)
-  local locked = info == nil
+  -- "locked" covers two cases: a version the build does not know at all, and
+  -- one that is registered but whose extraction data is not ready (Prism).
+  -- POKEPORT_UNLOCK (see blockedImportReason) has to reach the panel too, or
+  -- the import it permits is one the UI never offers: the button stays
+  -- disabled and the pill still reads COMING SOON.
+  local withheld = info ~= nil and info.importable == false
+                   and not unlockedByEnv(version)
+  local locked = info == nil or withheld
+  local partial = withheld
   local gameName = info and (info.launcherName or info.displayName)
                    or tostring(version)
   local ready = (not locked) and self.ready[version] or false
@@ -3919,10 +4241,22 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   elseif version == "yellow" then accent = PAL.gold
   elseif version == "gold" then accent = PAL.chipGoldTop
   elseif version == "silver" then accent = PAL.chipSilverTop
+  elseif version == "crystal" then accent = PAL.chipCrystalTop
+  elseif version == "prism" then accent = PAL.chipPrismTop
   end
   local romState, romDetail, romBtnLabel, romBtnEnabled, romProgress
   if locked then
-    romState, romDetail = "Not supported yet", "Support for this game is on the way."
+    if partial then
+      -- Say what is actually true, and keep it accurate as the work moves.
+      -- The ROM is recognised and its data extracts correctly; what is not
+      -- ready is the scripting.  "Support is on the way" would imply the
+      -- cartridge is the problem and send the player hunting a different dump.
+      romState = "Recognised, not playable yet"
+      romDetail = "Prism imports its data, but its scripts still misbehave; "
+        .. "it is not ready to play."
+    else
+      romState, romDetail = "Not supported yet", "Support for this game is on the way."
+    end
     romBtnLabel, romBtnEnabled = "Import unavailable", false
   else
     local importing = self.importing == version
@@ -5040,6 +5374,7 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
     self.modDeleteRects = {}
     self.modUpdateRects = {}
     self.modVersionsRects = {}
+    self.modImportFileRects = {}
     self._modMax = 0
     return (top - y) + boxH
   end
@@ -5089,8 +5424,28 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
       checkLineColor = PAL.warning
     end
     local updW = self.hintFont:getWidth(updLabel) + 24 * s
+    -- `required_imports`: a base file the mod cannot ship (a Stadium 2
+    -- cartridge, another game's ROM).  Until it arrives the mod is installed,
+    -- enabled and completely inert, so the card says which file is missing and
+    -- offers the button that supplies it -- see src/mods/ModImports.lua.
+    local needs = m.missingImports and m.missingImports[1] or nil
+    local impLabel = needs and ("Import " .. tostring(needs.entry.name)) or nil
+    if impLabel and #impLabel > 34 then impLabel = "Import base file" end
+    local impW = impLabel and (self.hintFont:getWidth(impLabel) + 24 * s) or 0
+    local needLine = needs and (needs.reason
+      or ("Needs " .. tostring(needs.entry.name))) or nil
+    -- ...and the other half of that state.  A mod whose base file HAS arrived
+    -- just loses the red line and the button, which reads the same as a mod
+    -- that never wanted one -- so a player who imported the cartridge for a
+    -- second mod (or had it adopted from the shared store without being asked)
+    -- had nothing on screen telling them it worked.  Say so.
+    local readyLine = nil
+    if not needs and m.requiredImports and m.requiredImports[1] then
+      readyLine = tostring(m.requiredImports[1].name) .. ": ready"
+    end
     local btnRowW = delW
     if hasGh then btnRowW = updW + btnGap + verW + btnGap + delW end
+    if impLabel then btnRowW = impW + btnGap + btnRowW end
     local clusterW = math.max(chipW, tw)
     local leftW = math.max(40 * s, innerW - clusterW - 14 * s)
     local descH = 0
@@ -5104,6 +5459,9 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
     if checkLine then
       metaH = metaH + self.hintFont:getHeight() + 2 * s
     end
+    if needLine or readyLine then
+      metaH = metaH + self.hintFont:getHeight() + 2 * s
+    end
     if descH > 0 then
       metaH = metaH + self.hintFont:getHeight() + 2 * s + descH
     end
@@ -5114,7 +5472,9 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
       updW = updW, verW = verW, hasGh = hasGh, clusterH = clusterH,
       btnRowW = btnRowW, bodyH = bodyH, updLabel = updLabel,
       updateKind = updateKind, checkLine = checkLine,
-      checkLineColor = checkLineColor }
+      checkLineColor = checkLineColor,
+      needs = needs, impLabel = impLabel, impW = impW, needLine = needLine,
+      readyLine = readyLine }
     total = total + cardH
   end
   total = total + (#mods - 1) * cardGap
@@ -5130,6 +5490,7 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
   self.modDeleteRects = {}
   self.modUpdateRects = {}
   self.modVersionsRects = {}
+  self.modImportFileRects = {}
 
   if not paged then
     love.graphics.setScissor(math.floor(x), math.floor(top),
@@ -5173,6 +5534,17 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
         col(L.checkLineColor or PAL.detail)
         love.graphics.print(
           ellipsize(self.hintFont, L.checkLine, L.leftW), nx, metaY)
+        metaY = metaY + self.hintFont:getHeight() + 2 * s
+      end
+      if L.needLine then
+        col(PAL.chooseTop)
+        love.graphics.print(
+          ellipsize(self.hintFont, L.needLine, L.leftW), nx, metaY)
+        metaY = metaY + self.hintFont:getHeight() + 2 * s
+      elseif L.readyLine then
+        col(PAL.detail)
+        love.graphics.print(
+          ellipsize(self.hintFont, L.readyLine, L.leftW), nx, metaY)
         metaY = metaY + self.hintFont:getHeight() + 2 * s
       end
       if m.description ~= "" then
@@ -5228,6 +5600,13 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
             id = rect.id,
           }
         end
+      end
+      if L.impLabel then
+        local irect = self:_chipButton(btnX, btnY, L.impLabel, {
+          w = L.impW, h = btnH, id = m.id, kind = "accent",
+        })
+        clipHit(irect, self.modImportFileRects)
+        btnX = btnX + L.impW + btnGap
       end
       if L.hasGh then
         local urect = self:_chipButton(btnX, btnY, L.updLabel, {

@@ -20,6 +20,9 @@ CANONICAL_CRYSTAL_SHA1 = "f2f52230b536214ef7c9924f483392993e226cfb"
 # Crystal Rev 0.  Decodes identically for our purposes, so it shares the
 # Rev 1 manifest and symbol table; accepted wherever Rev 1 is.
 CANONICAL_CRYSTAL10_SHA1 = "f4cd194bdee0d04ca4eac29e09b8e4e9d818c133"
+# Pokemon Prism, a Gold ROM hack. Recognised, but no manifest exists yet:
+# neither Gold's nor Crystal's symbol table applies to it (see prism-support).
+CANONICAL_PRISM_SHA1 = "752076692ae3387cf426ce5f51a98c6b60e8df6a"
 ROM_BANK_SIZE = 0x4000
 
 KNOWN_ROM_SHA1 = {
@@ -30,6 +33,7 @@ KNOWN_ROM_SHA1 = {
     CANONICAL_SILVER_SHA1: "silver",
     CANONICAL_CRYSTAL_SHA1: "crystal",
     CANONICAL_CRYSTAL10_SHA1: "crystal",
+    CANONICAL_PRISM_SHA1: "prism",
 }
 
 

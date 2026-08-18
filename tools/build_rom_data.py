@@ -22,9 +22,9 @@ from PIL import Image
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from extract import util  # noqa: E402
-from rom_data import (  # noqa: E402
+from rom_data import (
     CANONICAL_BLUE_SHA1, CANONICAL_CRYSTAL10_SHA1, CANONICAL_CRYSTAL_SHA1,
-    CANONICAL_GOLD_SHA1,
+    CANONICAL_GOLD_SHA1, CANONICAL_PRISM_SHA1,
     CANONICAL_RED_SHA1,
     CANONICAL_SILVER_SHA1, CANONICAL_YELLOW_SHA1,
     RomImage, SymbolTable, bcd, decode_text, decompress_pic, load_manifest,
@@ -46,6 +46,7 @@ VERSION_MANIFESTS = {
     "gold": os.path.join(_TOOLS_DIR, "rom_manifest_gold.json"),
     "silver": os.path.join(_TOOLS_DIR, "rom_manifest_silver.json"),
     "crystal": os.path.join(_TOOLS_DIR, "rom_manifest_crystal.json"),
+    "prism": os.path.join(_TOOLS_DIR, "rom_manifest_prism.json"),
 }
 VERSION_SHA1 = {
     "red": CANONICAL_RED_SHA1,
@@ -55,6 +56,7 @@ VERSION_SHA1 = {
 VERSION_SHA1["gold"] = CANONICAL_GOLD_SHA1
 VERSION_SHA1["silver"] = CANONICAL_SILVER_SHA1
 VERSION_SHA1["crystal"] = CANONICAL_CRYSTAL_SHA1
+VERSION_SHA1["prism"] = CANONICAL_PRISM_SHA1
 # Hashes a version will accept beyond its canonical one.
 VERSION_SHA1_ALT = {"crystal": (CANONICAL_CRYSTAL10_SHA1,)}
 SHA1_TO_VERSION = {sha1: version for version, sha1 in VERSION_SHA1.items()}
@@ -389,7 +391,7 @@ def extract_tilesets(rom, symbols, manifest, out_dir, assets_dir):
     # tileset in the loop below.
     env_palettes = _gen2_env_palettes(rom, symbols) if stub_mode else None
     tileset_environments = (
-        _gen2_tileset_environments(rom, symbols) if stub_mode else {})
+        _gen2_tileset_environments(rom, symbols, manifest) if stub_mode else {})
 
     warp_pointers = symbols.by_name.get("WarpTileIDPointers")
     door_pointers = symbols.by_name.get("DoorTileIDPointers")
@@ -1069,9 +1071,35 @@ _GEN2_BG_PALETTE_COUNT_FALLBACK = 42
 _GEN2_COLORS_PER_PALETTE = 4
 _GEN2_PALS_PER_ROW = 8
 _GEN2_TOD_ROWS = ("MORN", "DAY", "NITE", "DARK")
+# Gold/Crystal shapes.  A hack may change either, and both are silent when
+# wrong -- a stride that is off by one still reads pointers, they just land in
+# the wrong place.  Prism uses 14-byte tileset entries (it drops Crystal's
+# `dw 0` padding and promotes the trailing palette word to a full dba) and has
+# 95 map groups, not 26.  Prefer the DERIVED values below over these defaults.
 _GEN2_TILESET_ENTRY_BYTES = 15
 _GEN2_MAP_HEADER_BYTES = 9
 _GEN2_MAP_GROUP_COUNT = 26
+
+
+def _gen2_tileset_entry_bytes(manifest):
+    layout = (manifest or {}).get("layout") or {}
+    return int(layout.get("tilesetEntry") or _GEN2_TILESET_ENTRY_BYTES)
+
+
+def _gen2_map_group_count(rom, symbols):
+    """MapGroupPointers is immediately followed by the group tables it points
+    at, so the FIRST pointer marks the end of the pointer list -- the count is
+    a property of the ROM and never has to be guessed.  Crystal derives 26 this
+    way and Prism 95."""
+    groups = symbols.by_name.get("MapGroupPointers") if symbols else None
+    if groups is None:
+        return _GEN2_MAP_GROUP_COUNT
+    try:
+        first = rom.word(groups.bank, groups.address)
+    except Exception:
+        return _GEN2_MAP_GROUP_COUNT
+    count = (first - groups.address) // 2
+    return count if 1 <= count <= 512 else _GEN2_MAP_GROUP_COUNT
 _GEN2_DEFAULT_ENVIRONMENT = 1               # TOWN, for a tileset with no map
 
 
@@ -1137,11 +1165,12 @@ def _gen2_env_palettes(rom, symbols):
     return out
 
 
-def _gen2_tileset_names(rom, symbols):
+def _gen2_tileset_names(rom, symbols, manifest=None):
     """Tilesets table index -> "TilesetJohto", via each entry's GFX pointer."""
     table = symbols.by_name.get("Tilesets")
     if table is None:
         return {}
+    entry_bytes = _gen2_tileset_entry_bytes(manifest)
     by_pointer = {}
     for name, sym in symbols.by_name.items():
         if not (name.startswith("Tileset") and name.endswith("GFX")):
@@ -1157,8 +1186,8 @@ def _gen2_tileset_names(rom, symbols):
         if prev is None or rank > prev[0]:
             by_pointer[key] = (rank, family)
     out = {}
-    for index in range(48):
-        entry = table.address + index * _GEN2_TILESET_ENTRY_BYTES
+    for index in range(96):
+        entry = table.address + index * entry_bytes
         if entry + 2 >= 0x8000:
             break
         try:
@@ -1170,21 +1199,21 @@ def _gen2_tileset_names(rom, symbols):
     return out
 
 
-def _gen2_tileset_environments(rom, symbols):
+def _gen2_tileset_environments(rom, symbols, manifest=None):
     """Tileset id -> the ENVIRONMENT_* its maps are actually declared with.
 
     Taken from the map headers rather than from the tileset's name.  A tileset
     used across several environments takes the commonest; ties break toward the
     lower environment so the answer does not depend on dict ordering.
     """
-    names = _gen2_tileset_names(rom, symbols)
+    names = _gen2_tileset_names(rom, symbols, manifest)
     groups = symbols.by_name.get("MapGroupPointers")
     if not names or groups is None:
         return {}
     tally = {}
     try:
         bases = [rom.word(groups.bank, groups.address + g * 2)
-                 for g in range(_GEN2_MAP_GROUP_COUNT)]
+                 for g in range(_gen2_map_group_count(rom, symbols))]
         for base in bases:
             # A group's header block runs up to whichever group starts next;
             # the tables are laid out back to back.  Without this bound the

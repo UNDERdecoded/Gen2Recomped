@@ -322,6 +322,13 @@ Gen2Flags.EVENT_FLAG_NAMES = {
   [673] = "EVENT_SOLVED_KABUTO_PUZZLE",
   [674] = "EVENT_SOLVED_OMANYTE_PUZZLE",
   [675] = "EVENT_SOLVED_AERODACTYL_PUZZLE",
+  -- The four Ruins of Alph chamber walls (constants/event_flags.asm 486-489).
+  -- Display names only -- eventFlag() keys purely on the number -- but a save
+  -- inspector showing EVENT_G2_0807 tells nobody which wall that is.
+  [806] = "EVENT_WALL_OPENED_IN_HO_OH_CHAMBER",
+  [807] = "EVENT_WALL_OPENED_IN_KABUTO_CHAMBER",
+  [808] = "EVENT_WALL_OPENED_IN_OMANYTE_CHAMBER",
+  [809] = "EVENT_WALL_OPENED_IN_AERODACTYL_CHAMBER",
   [676] = "EVENT_DECO_BED_1",
   [677] = "EVENT_DECO_BED_2",
   [678] = "EVENT_DECO_BED_3",
@@ -1354,14 +1361,168 @@ end
 -- progress.  Only the rows this table actually names are corrected.
 Gen2Flags.CRYSTAL_ENGINE_FLAG_INSERT = 16
 
+-- Prism's EngineFlags table is its OWN list, not Gold's with insertions:
+-- 98 rows in a different order, starting ENGINE_HAS_MAP / DAYCARE_MAN_HAS_EGG
+-- / DAYCARE_MAN_HAS_MON where Gold starts HAS_MAP / PLACEHOLDER /
+-- DAY_CARE_MAN_HAS_EGG.  Read through Gold's names every Prism `setflag`
+-- landed on the wrong label -- ENGINE_POKEMON_MODE (row 7) came out as
+-- ENGINE_DAY_CARE_LADY_HAS_MON -- which is self-consistent between a setflag
+-- and the checkflag that reads it back, and therefore invisible in scripts,
+-- but wrong for every piece of ENGINE code that asks for a flag BY NAME.
+-- Generated from Prism's constants/engine_flags.asm.
+Gen2Flags.ENGINE_FLAG_NAMES_PRISM = {
+  [0] = "ENGINE_HAS_MAP",
+  [1] = "ENGINE_DAYCARE_MAN_HAS_EGG",
+  [2] = "ENGINE_DAYCARE_MAN_HAS_MON",
+  [3] = "ENGINE_DAYCARE_LADY_HAS_MON",
+  [4] = "ENGINE_MOM_SAVING_MONEY",
+  [5] = "ENGINE_DST",
+  [6] = "ENGINE_POKEDEX",
+  [7] = "ENGINE_POKEMON_MODE",
+  [8] = "ENGINE_CUSTOM_PLAYER_SPRITE",
+  [9] = "ENGINE_POKERUS",
+  [10] = "ENGINE_USE_TREASURE_BAG",
+  [11] = "ENGINE_CREDITS_SKIP",
+  [12] = "ENGINE_BUG_CONTEST_ON",
+  [13] = "ENGINE_FLASH",
+  [14] = "ENGINE_RTC_TIMERS_ENABLED",
+  [15] = "ENGINE_PARK_MINIGAME",
+  [16] = "ENGINE_TIME_ENABLED",
+  [17] = "ENGINE_HYPER_SHARE_ENABLED",
+  [18] = "ENGINE_GIVE_POKERUS",
+  [19] = "ENGINE_FLORIA",
+  [20] = "ENGINE_ROCKETS_IN_MAHOGANY",
+  [21] = "ENGINE_STRENGTH_ACTIVE",
+  [22] = "ENGINE_ALWAYS_ON_BIKE",
+  [23] = "ENGINE_DOWNHILL",
+  [24] = "ENGINE_PYREBADGE",
+  [25] = "ENGINE_NATUREBADGE",
+  [26] = "ENGINE_CHARMBADGE",
+  [27] = "ENGINE_MIDNIGHTBADGE",
+  [28] = "ENGINE_MUSCLEBADGE",
+  [29] = "ENGINE_HAZEBADGE",
+  [30] = "ENGINE_RAUCOUSBADGE",
+  [31] = "ENGINE_NALJOBADGE",
+  [32] = "ENGINE_MARINEBADGE",
+  [33] = "ENGINE_HAILBADGE",
+  [34] = "ENGINE_SPROUTBADGE",
+  [35] = "ENGINE_SPARKYBADGE",
+  [36] = "ENGINE_FISTBADGE",
+  [37] = "ENGINE_PSIBADGE",
+  [38] = "ENGINE_WHITEBADGE",
+  [39] = "ENGINE_STARBADGE",
+  [40] = "ENGINE_HIVEBADGE",
+  [41] = "ENGINE_PLAINBADGE",
+  [42] = "ENGINE_MARSHBADGE",
+  [43] = "ENGINE_BLAZEBADGE",
+  [44] = "ENGINE_WILDS_DISABLED",
+  [45] = "ENGINE_UNUSED_4",
+  [46] = "ENGINE_FLYPOINT_START",
+  [47] = "ENGINE_FLYPOINT_CAPER_RIDGE",
+  [48] = "ENGINE_FLYPOINT_OXALIS_CITY",
+  [49] = "ENGINE_FLYPOINT_SPURGE_CITY",
+  [50] = "ENGINE_FLYPOINT_HEATH_VILLAGE",
+  [51] = "ENGINE_FLYPOINT_LAUREL_CITY",
+  [52] = "ENGINE_FLYPOINT_TORENIA_CITY",
+  [53] = "ENGINE_FLYPOINT_PHACELIA_TOWN",
+  [54] = "ENGINE_FLYPOINT_ACANIA_DOCKS",
+  [55] = "ENGINE_FLYPOINT_SAXIFRAGE_ISLAND",
+  [56] = "ENGINE_FLYPOINT_PHLOX_TOWN",
+  [57] = "ENGINE_FLYPOINT_BATTLE_ARCADE",
+  [58] = "ENGINE_FLYPOINT_SEASHORE_CITY",
+  [59] = "ENGINE_FLYPOINT_GRAVEL_TOWN",
+  [60] = "ENGINE_FLYPOINT_MERSON_CITY",
+  [61] = "ENGINE_FLYPOINT_HAYWARD_CITY",
+  [62] = "ENGINE_FLYPOINT_OWSAURI_CITY",
+  [63] = "ENGINE_FLYPOINT_MORAGA_TOWN",
+  [64] = "ENGINE_FLYPOINT_JAERU_CITY",
+  [65] = "ENGINE_FLYPOINT_BOTAN_CITY",
+  [66] = "ENGINE_FLYPOINT_CASTRO_VALLEY",
+  [67] = "ENGINE_FLYPOINT_EAGULOU_CITY",
+  [68] = "ENGINE_FLYPOINT_RIJON_LEAGUE",
+  [69] = "ENGINE_FLYPOINT_SENECA_CAVERNS",
+  [70] = "ENGINE_FLYPOINT_AZALEA_TOWN",
+  [71] = "ENGINE_FLYPOINT_GOLDENROD_CITY",
+  [72] = "ENGINE_FLYPOINT_SOUTHERLY_CITY",
+  [73] = "ENGINE_FLYPOINT_ROUTE_81",
+  [74] = "ENGINE_FLYPOINT_BATTLE_TOWER",
+  [75] = "ENGINE_FLYPOINT_OLCAN_ISLE",
+  [76] = "ENGINE_GOLDENROD_UNDERGROUND_GOT_HAIRCUT",
+  [77] = "ENGINE_DAILY_BUG_CONTEST",
+  [78] = "ENGINE_SPECIAL_WILDDATA",
+  [79] = "ENGINE_TIME_CAPSULE",
+  [80] = "ENGINE_ALL_FRUIT_TREES",
+  [81] = "ENGINE_SHUCKLE_GIVEN",
+  [82] = "ENGINE_GOLDENROD_UNDERGROUND_MERCHANT_CLOSED",
+  [83] = "ENGINE_FOUGHT_IN_TRAINER_HALL_TODAY",
+  [84] = "ENGINE_MT_MOON_SQUARE_CLEFAIRY",
+  [85] = "ENGINE_UNION_CAVE_LAPRAS",
+  [86] = "ENGINE_GOLDENROD_MALL_5F_HAPPINESS_EVENT",
+  [87] = "ENGINE_TEA_IN_BLUES_HOUSE",
+  [88] = "ENGINE_INDIGO_PLATEAU_RIVAL_FIGHT",
+  [89] = "ENGINE_DAILY_MOVE_TUTOR",
+  [90] = "ENGINE_BUENAS_PASSWORD",
+  [91] = "ENGINE_BUENAS_PASSWORD_2",
+  [92] = "ENGINE_GOLDENROD_DEPT_STORE_SALE_IS_ON",
+  [93] = "ENGINE_62",
+  [94] = "ENGINE_PLAYER_IS_FEMALE",
+  [95] = "ENGINE_KRIS_IN_CABLE_CLUB",
+  [96] = "ENGINE_DUNSPARCE_SWARM",
+  [97] = "ENGINE_YANMA_SWARM",
+}
+
+function Gen2Flags.engineFlagNames()
+  local GameVersion = require("src.core.GameVersion")
+  if GameVersion.get() == "prism" then
+    return Gen2Flags.ENGINE_FLAG_NAMES_PRISM
+  end
+  return Gen2Flags.ENGINE_FLAG_NAMES
+end
+
 function Gen2Flags.scriptFlag(n)
+  local names = Gen2Flags.engineFlagNames()
+  if names == Gen2Flags.ENGINE_FLAG_NAMES_PRISM then
+    -- Prism's own numbering, straight through: the Crystal insertion below
+    -- is a Gold-vs-Crystal correction and has nothing to say here
+    return names[n] or string.format("FLAG_G2_%04d", n)
+  end
   local index = n
   if type(index) == "number"
      and index >= Gen2Flags.CRYSTAL_ENGINE_FLAG_INSERT
      and require("src.core.GameVersion").isCrystal() then
     index = index - 1
   end
-  return Gen2Flags.ENGINE_FLAG_NAMES[index] or string.format("FLAG_G2_%04d", n)
+  return names[index] or string.format("FLAG_G2_%04d", n)
+end
+
+-- wBikeFlags bits 1 and 2: ENGINE_ALWAYS_ON_BIKE and ENGINE_DOWNHILL, the two
+-- the Cycling Road maps arm from their MAPCALLBACK_NEWMAP.
+--
+-- Their INDEX differs between the two games: Crystal has ENGINE_MOBILE_SYSTEM
+-- at 16 and Gold does not, so every engine flag from 17 up sits one higher in
+-- Crystal.  Route 17's callback really is `setflag 25 / setflag 26` on Crystal
+-- and `setflag 24 / setflag 25` on Gold, and both were verified by reading the
+-- extracted callback out of each ROM.
+--
+-- Resolved through scriptFlag() -- the SAME resolver `setflag` goes through,
+-- insertion correction and FLAG_G2_nnnn fallback included -- rather than
+-- written as a literal name.  These two rows are unnamed in the table, so the
+-- key they actually land on is FLAG_G2_0025/0026 on Crystal and
+-- FLAG_G2_0024/0025 on Gold; asking for them by name would never have
+-- matched, whichever name was chosen.
+local BIKE_FLAG_BASE_CRYSTAL = 25
+local BIKE_FLAG_BASE_GOLD = 24
+
+function Gen2Flags.bikeFlag(which)
+  local ok, GameVersion = pcall(require, "src.core.GameVersion")
+  -- Prism renumbers the whole EngineFlags table and has no Cycling Road, so
+  -- neither index means anything there; hand back a key nothing ever sets.
+  if ok and GameVersion.get and GameVersion.get() == "prism" then
+    return "ENGINE_DOWNHILL_UNSUPPORTED"
+  end
+  local base = (ok and GameVersion.isCrystal and GameVersion.isCrystal())
+    and BIKE_FLAG_BASE_CRYSTAL or BIKE_FLAG_BASE_GOLD
+  return Gen2Flags.scriptFlag(which == "downhill" and base + 1 or base)
 end
 
 return Gen2Flags

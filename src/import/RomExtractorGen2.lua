@@ -60,9 +60,19 @@ local function gen2TilesetRows(symbols)
 end
 
 -- Gen2 world-structure layout, verified against the pokegold ROM.
+-- Gold/Crystal have 26 map groups; Prism has 95.  Never trust this constant
+-- directly -- :gen2MapGroupCount derives the real number from the ROM.  Read
+-- as 26 against Prism, 69 of its 95 groups simply never get walked, so most of
+-- the world is missing from an import that otherwise looks fine.
 local GEN2_MAP_GROUP_COUNT = 26
 local GEN2_MAP_HEADER_BYTES = 9      -- attrBank, tileset, environment, attrPtr, location, music, flags, fishGroup
 local GEN2_CONNECTION_BYTES = 12
+-- Gold/Crystal pack a Tilesets entry into 15 bytes; Prism uses 14 (it drops
+-- the `dw 0` padding and promotes the trailing palette word to a full dba).
+-- One byte of drift multiplies by the tileset id, so by the back of the table
+-- every pointer is nonsense -- and since the reader only KEEPS ids whose
+-- pointers match a known family, the symptom is not an error but a tileset
+-- list that quietly comes up almost empty.  `layout.tilesetEntry` overrides.
 local GEN2_TILESET_ENTRY_BYTES = 15
 -- map_attributes: border, height, width, dba blocks, dba scripts, dw events, connection flags
 local GEN2_ATTR_CONNECTION_FLAGS = 11
@@ -77,8 +87,35 @@ local GEN2_EVENT_COORD_BIAS = 4
 -- object_event byte 7 packs a palette override in the high nybble and the
 -- object's kind in the low one; an ITEMBALL's "script" is really `db item, qty`
 local GEN2_OBJECT_KIND_MASK = 0x0F
+local GEN2_OBJECT_KIND_SCRIPT = 0
 local GEN2_OBJECT_KIND_ITEMBALL = 1
 local GEN2_OBJECT_KIND_TRAINER = 2
+-- Prism only: PERSONTYPE_FRUITTREE, whose parameter field IS the tree id.
+-- A class field, not a chunk local -- this file is on Lua's 200-local ceiling.
+-- Prism only: PERSONTYPE_GENERICTRAINER, a trainer whose whole object is
+-- the `trainer` macro's data block with no script attached.
+RomExtractorGen2.GEN2_OBJECT_KIND_GENERICTRAINER = 4
+RomExtractorGen2.GEN2_OBJECT_KIND_FRUITTREE = 9
+-- Prism's PERSONTYPE_* list runs SCRIPT 0, ITEMBALL 1, TRAINER 2, TMHMBALL 3,
+-- GENERICTRAINER 4, TEXT 5, TEXTFP 6, JUMPSTD 7, MART 8, FRUITTREE 9.  The
+-- first three match Crystal's OBJECTTYPE_*, which is why the base games need
+-- none of this -- but 5 and 6 hold a TEXT pointer where Crystal only ever has
+-- a script, and 7/8/9 hold an index rather than a pointer at all.  Gated on
+-- `layout.objectTextKinds` so the base games keep reading every non-itemball,
+-- non-trainer object as a script.
+RomExtractorGen2.GEN2_OBJECT_KIND_TEXT = {
+  -- PERSONTYPE_TMHMBALL takes the same slot an ITEMBALL's `db item, db qty`
+  -- does, but holds a MACHINE number -- AcquaStart's is `TM_BODY_SLAM, 0`.
+  -- Two bytes of item id read as bytecode is the campfire's GLACEON all over
+  -- again, so it is named here to keep it out of the script queue; it is not
+  -- text either, so it registers none (see the kind test at the call site).
+  [3] = true,   -- PERSONTYPE_TMHMBALL
+  [5] = true,   -- PERSONTYPE_TEXT
+  [6] = true,   -- PERSONTYPE_TEXTFP (text, then face the player)
+  [7] = true,   -- PERSONTYPE_JUMPSTD  -- a std INDEX, not a pointer
+  [8] = true,   -- PERSONTYPE_MART     -- mart type and id
+  [9] = true,   -- PERSONTYPE_FRUITTREE
+}
 local GEN2_EVENT_FLAG_NONE = 0xFFFF
 local GEN2_TIME_OF_DAY_ANY = 0xFF
 -- ItemAttributes row: dw price, then effect/param/property/pocket/menu bytes
@@ -89,7 +126,23 @@ local GEN2_ITEM_ATTR_BYTES = 7
 -- item into the move it teaches.  Which species may learn machine number n
 -- lives in the 8-byte bitfield closing every 32-byte BaseData row (bit
 -- (n-1)%8 of byte (n-1)/8), which is what CanLearnTMHMMove tests.
+-- Gold/Crystal ship 50 TMs and 7 HMs.  Prism ships 96 and 5 (its HMs are Cut,
+-- Fly, Surf, Strength and Rock Smash -- no Flash, Whirlpool or Waterfall), so
+-- these are DEFAULTS that `layout.tmCount`/`layout.hmCount` override.  Read as
+-- 50/7 against Prism, gen2Machines walks only the first 57 of its 101 machines
+-- and then labels TMs 51..96 as HMs, so half the TM list goes missing and the
+-- rest teach the wrong move.
 local GEN2_TM_COUNT, GEN2_HM_COUNT = 50, 7
+-- ...and then THREE MOVE-TUTOR SLOTS.  TMHMMoves does not stop at the HMs:
+-- data/moves/tmhm_moves.asm appends MT01..MT03 (Flamethrower, Thunderbolt,
+-- Ice Beam) so the table is NUM_TM_HM_TUTOR long, and CanLearnTMHMMove reads
+-- bits 58..60 of the same base-stats bitfield for them.  Reading only the
+-- first 57 dropped those three bits, so every species came back unable to
+-- learn any tutor move -- which is what made the Goldenrod move tutor refuse
+-- the whole party.
+-- A class field rather than a chunk local: this file sits on Lua's
+-- 200-local-per-chunk ceiling (see GEN2_BASE_GENDER below).
+RomExtractorGen2.GEN2_TUTOR_COUNT = 3
 local GEN2_BASE_TMHM_FIRST = 25  -- 1-based index of the first flag byte
 -- item_data_constants.asm pockets are `const_def 1`: ITEM 1, KEY_ITEM 2,
 -- BALL 3, TM_HM 4.  Reading KEY_ITEM as 1 flagged all 162 ordinary items
@@ -115,12 +168,33 @@ local GEN2_SCRIPT_TEXT_OPS = { [0x4C] = true, [0x51] = true, [0x52] = true }
 local GEN2_SCRIPT_OP_FAR_TEXT = 0x4B   -- dw address, db bank
 local GEN2_SCRIPT_OP_JUMPSTD = 0x0C    -- db index into StdScripts
 local GEN2_SCRIPT_OP_SPECIAL = 0x0F    -- dw SpecialsPointers index
-local GEN2_SCRIPT_OP_FRUITTREE = 0x9A  -- db tree id, indexes FruitTreeItems
 -- Safe to hardcode: Crystal's insertion point is $52, so every command below
 -- it keeps Gold's number.  Anything above $52 must come from
--- Gen2ScriptOps.commandsFor(version) instead.
+-- Gen2ScriptOps.commandsFor(version) instead -- see RomExtractorGen2:opcode.
 local GEN2_SCRIPT_OP_SETEVENT = 0x33   -- dw event number
-local GEN2_SCRIPT_OP_POKEMART = 0x93   -- db dialog type, dw index into Marts
+
+-- The opcode a named command has ON THIS CARTRIDGE.
+--
+-- `fruittree` and `pokemart` both sit above Crystal's $52 insertion point and
+-- were hardcoded at Gold's numbers anyway, which is a real bug in both
+-- directions.  `fruittree` is $9A in Gold, $9B in Crystal and $99 in Prism, so
+-- against Crystal the test matched `describedecoration` instead: every one of
+-- Crystal's berry trees stopped being a berry tree (6 objects survived where
+-- Gold has 32) and four of the player's bedroom decorations became trees.
+-- `pokemart` is $93/$94/$92 the same way, so mart stock resolved off the
+-- wrong byte on two of the three carts.
+function RomExtractorGen2:opcode(name)
+  self._opcodes = self._opcodes or {}
+  local hit = self._opcodes[name]
+  if hit ~= nil then return hit ~= false and hit or nil end
+  local commands = require("src.import.Gen2ScriptOps").commandsFor(self.version)
+  local found = false
+  for index, row in ipairs(commands or {}) do
+    if type(row) == "table" and row[1] == name then found = index - 1 break end
+  end
+  self._opcodes[name] = found
+  return found ~= false and found or nil
+end
 
 -- SpecialsPointers indices the Kanto post-game chain and related Johto
 -- specials rely on.  Detecting these in an object script lets the extractor
@@ -274,6 +348,14 @@ local GEN2_SPRITE_ID_OVERRIDES = {
 -- wVariableSprites.  Everything from $80 up used to miss the sprite table and
 -- fall back to SPRITE_GRAMPS, so the Lake of Rage Gyarados, the Burned Tower
 -- beasts, Ho-Oh and Lugia all stood there as an old man.
+--
+-- Prism moves every one of those boundaries, because its sprite list is 550
+-- entries where Gold's is about a hundred: SPRITE_POKEMON is $bb, the day-care
+-- pair sit at $ec/$ed, and only SPRITE_VARS stays at $f0.  Read with Gold's
+-- numbers, SPRITE_LARVITAR ($e3) landed 99 slots into a 35-entry SpriteMons
+-- table, missed, and fell back to SPRITE_RED -- so the Larvitar blocking
+-- Acqua Start's path was standing there wearing the player's own sprite.
+-- Manifest-driven so Gold and Crystal keep their own numbers untouched.
 local GEN2_SPRITE_POKEMON = 0x80
 local GEN2_SPRITE_BREED_1 = 0xE0
 local GEN2_SPRITE_BREED_2 = 0xE1
@@ -356,19 +438,66 @@ local function gen2DecodeString(bytes, maxLen)
   return s
 end
 
-local function gen2ReadVarNames(rom, sym, count)
+-- Gen 2 stores ItemNames/MoveNames/TrainerClassNames as $50-terminated
+-- strings.  Prism does NOT: every record is LENGTH-PREFIXED and carries no
+-- terminator at all -- the byte in front of "Master Ball" is $0C, the whole
+-- record's width including the prefix.  The two encodings share no framing,
+-- so reading Prism the Crystal way walks off the first record and decodes the
+-- rest of the bank as one run of garbage.  Nothing errors; the import just
+-- finishes with every item, move and trainer class misnamed, which then
+-- breaks every id derived from a name.  `layout.namesLengthPrefixed` picks it.
+--
+-- NOTE: this file sits ON Lua 5.1's 200-local ceiling for a main chunk, so a
+-- new file-scope `local` no longer fits -- hang constants off the class table
+-- instead (see RomExtractorGen2.MOVE_CATEGORIES below).  The overflow is a
+-- LOAD error, not a runtime one, so nothing in the game reaches a breakpoint
+-- to show it; tools/syntax_check.lua is what catches it.
+
+-- Type ids as Gold/Crystal number them.  A hack may fill Crystal's unused
+-- $0A-$12 gap with its own types (Prism does: Fairy, Gas, Sound and two
+-- signature types), so this is the FALLBACK -- :gen2TypeName prefers the
+-- ROM's own TypeNames table.  Declared up here because :gen2TypeName closes
+-- over it; a `local` declared further down would leave the method reading a
+-- nil global instead, and silently name every type NORMAL.
+local GEN2_TYPES = {
+  [0]="NORMAL",[1]="FIGHTING",[2]="FLYING",[3]="POISON",
+  [4]="GROUND",[5]="ROCK",[6]="BIRD",[7]="BUG",[8]="GHOST",[9]="STEEL",
+  [0x13]="CURSE_TYPE",
+  [0x14]="FIRE",[0x15]="WATER",[0x16]="GRASS",[0x17]="ELECTRIC",
+  [0x18]="PSYCHIC",[0x19]="ICE",[0x1A]="DRAGON",[0x1B]="DARK",
+}
+-- everything below SPECIAL ($14) is a physical type (Gen2 keeps Gen1's split)
+local GEN2_SPECIAL_TYPE = 0x14
+
+local function gen2ReadVarNames(rom, sym, count, prefixed)
   if not (rom and sym) then return {} end
   local names = {}; local bank = sym.bank; local addr = sym.address
   for i = 1, count do
-    local ok, chunk = pcall(function() return rom:bytes(bank, addr, 16) end)
+    local ok, chunk = pcall(function()
+      return rom:bytes(bank, addr, 16)
+    end)
     if not ok or type(chunk) ~= "table" then break end
-    local endIdx = 1
-    while endIdx <= #chunk and chunk[endIdx] ~= 0x50 do endIdx = endIdx + 1 end
-    endIdx = endIdx - 1
-    local raw = {}; for j = 1, endIdx do raw[j] = chunk[j] end
-    local name = gen2DecodeString(raw, endIdx)
-    if name then names[i] = name end
-    addr = addr + endIdx + 1
+    local step
+    if prefixed then
+      -- record = [width][width - 1 text bytes]; a width outside the window is
+      -- not a name, it is the table's end (or the wrong address), so stop
+      -- rather than resync at random and emit plausible-looking rubbish.
+      local width = chunk[1]
+      if not width or width < 2 or width > 16 then break end
+      local raw = {}; for j = 2, width do raw[#raw + 1] = chunk[j] end
+      local name = gen2DecodeString(raw, #raw)
+      if name then names[i] = name end
+      step = width
+    else
+      local endIdx = 1
+      while endIdx <= #chunk and chunk[endIdx] ~= 0x50 do endIdx = endIdx + 1 end
+      endIdx = endIdx - 1
+      local raw = {}; for j = 1, endIdx do raw[j] = chunk[j] end
+      local name = gen2DecodeString(raw, endIdx)
+      if name then names[i] = name end
+      step = endIdx + 1
+    end
+    addr = addr + step
     if addr >= 0x8000 then bank = bank + 1; addr = addr - 0x4000 end
   end
   return names
@@ -520,6 +649,61 @@ function RomExtractorGen2.new(romData, version, manifest, progress)
     stage = 0,
     sourceDir = "data/generated_gen2_" .. version,
   }, RomExtractorGen2)
+end
+
+-- Prism's move `type` byte is `category << 6 | type` (the Gen 4 split), so its
+-- high bits name the damage class rather than another type.  A table field
+-- rather than a `local`: the main chunk is at Lua 5.1's 200-local ceiling.
+RomExtractorGen2.MOVE_CATEGORIES =
+  { [0] = "physical", [1] = "special", [2] = "status" }
+
+-- A ROM's own record LAYOUT, from the manifest, with the base game's value as
+-- the default.
+--
+-- A hack can move a table AND reshape it, and the two are independent problems:
+-- Prism's BaseData sits at 14:5A0E with **24 bytes per entry** where Crystal
+-- uses 32 (verified by decoding -- entry 1 reads 45/49/49/45/65/65, Bulbasaur's
+-- exact base stats).  A symbol alone is not enough to read a table; feeding a
+-- 24-byte table through a hardcoded 32-byte stride yields garbage that still
+-- "imports".  So strides live in `manifest.layout` and every reader asks here.
+function RomExtractorGen2:layout(key, default)
+  local table_ = self.manifest and self.manifest.layout
+  local value = type(table_) == "table" and tonumber(table_[key]) or nil
+  return value or default
+end
+
+-- Every variable-length name table in one ROM shares an encoding, so the
+-- flag is consulted here rather than at each of the five call sites.
+function RomExtractorGen2:varNames(name, count)
+  return gen2ReadVarNames(self.rom, self:symbol(name), count,
+                          self:layout("namesLengthPrefixed", 0) ~= 0)
+end
+
+-- Prism drops Fairy, Gas and Sound (plus two signature types) into the
+-- $0A-$12 hole Crystal leaves unused, so a hardcoded id -> name table can
+-- only ever be right for the base games.  TypeNames is a 28-entry pointer
+-- list in type-id order in every Gen 2 ROM, so prefer the names the ROM
+-- itself prints and keep the static table as the fallback.
+function RomExtractorGen2:gen2TypeName(id)
+  if not self._typeNames then
+    local names = {}
+    local sym = self:symbol("TypeNames")
+    if sym and self.rom then
+      for i = 0, 27 do
+        pcall(function()
+          local address = self.rom:word(sym.bank, sym.address + i * 2)
+          local text = gen2DecodeString(self.rom:bytes(sym.bank, address, 14), 14)
+          if text then
+            local label = text:upper():gsub("[^%u%d]+", "_")
+            label = label:gsub("^_+", ""):gsub("_+$", "")
+            if label ~= "" then names[i] = label end
+          end
+        end)
+      end
+    end
+    self._typeNames = names
+  end
+  return self._typeNames[id] or GEN2_TYPES[id]
 end
 
 function RomExtractorGen2:symbol(name)
@@ -694,6 +878,13 @@ function RomExtractorGen2:writeAsset(dst, data)
 end
 
 function RomExtractorGen2:textGlyph(charmap, value)
+  -- Prism's control block and a dozen of its printable codes are its own; the
+  -- table is consulted first so both decoders -- the compressed one and the
+  -- byte-at-a-time one -- agree, and it is empty for every other ROM.
+  if self:layout("prismCharmap", 0) ~= 0 then
+    local prism = RomExtractorGen2.PRISM_GLYPHS[value]
+    if prism then return prism end
+  end
   local glyph = charmap and charmap[tostring(value)] or nil
   -- the scaffold charmap spells unknown codes back as their own "{BYTE:xx}"
   -- placeholder; fall back to the real Gen2 encoding for those
@@ -858,6 +1049,39 @@ local function gen2TilePixels(raw, offset)
 end
 
 -- 0-indexed tile table, so a VRAM tile id indexes it directly
+-- A party icon as PartyMenu wants it: two 16x16 frames stacked into 16x32,
+-- each frame four tiles in reading order.  OBJ colour 0 is transparent, so the
+-- sheet keeps alpha 0 there and a plain (non-#obp) load draws it as authored.
+-- Shared by the two icon table layouts -- Crystal's `dw` + MonMenuIcons
+-- indirection and Prism's `dba` indexed by species.
+local function gen2IconImage(tiles, colors)
+  local pal = {}
+  for n = 1, 4 do
+    pal[n] = { colors[n][1] / 255, colors[n][2] / 255, colors[n][3] / 255 }
+  end
+  local image = ImageWriter.blank(16, 32, 0, 0, 0, 0)
+  for frame = 0, 1 do
+    for col = 0, 1 do
+      for row = 0, 1 do
+        local tile = tiles[frame * 4 + row * 2 + col]
+        if tile then
+          for y = 0, 7 do
+            for x = 0, 7 do
+              local shade = tile[y * 8 + x + 1]
+              if shade ~= 0 then
+                local c = pal[shade + 1]
+                image:setPixel(col * 8 + x, frame * 16 + row * 8 + y,
+                               c[1], c[2], c[3], 1)
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return image
+end
+
 local function gen2SplitTiles(raw)
   local tiles = {}
   for index = 0, math.floor(#raw / 16) - 1 do
@@ -958,6 +1182,97 @@ end
 -- end is the bank window, so stop there and leave the budget generous.
 local GEN2_TEXT_MAX_BYTES = 4096
 
+-- Turn already-decoded character bytes into the port's text string.  Shared by
+-- the Prism compressed path, which has no byte stream left to walk by the time
+-- it gets here -- the line/paragraph control codes are characters in the
+-- Huffman alphabet, not stream commands.
+-- These are TextBox's markers, not plain whitespace (see TextBox's header):
+-- \n is the second line, \v scrolls one line up, and \f is a PAGE BREAK --
+-- the box waits for A and clears.  The byte-at-a-time decoder below has always
+-- emitted them; this table is the compressed decoder's copy of the same
+-- mapping, and while it spelled <PARA> as a blank line and <CONT> as a newline
+-- every Prism box ran start to finish in one uninterrupted scroll, because
+-- nothing in it ever asked for a button.
+RomExtractorGen2.GEN2_TEXT_BREAKS = {
+  [0x4E] = "\n",   -- <NEXT>, a line down
+  [0x4F] = "\n",   -- <LINE>, the bottom line
+  [0x51] = "\f",   -- <PARA>, a new paragraph: wait for A, then clear
+  [0x55] = "\v",   -- <CONT>, scroll on
+  -- <SCROLL> is <CONT> without the button press; the port has no marker for
+  -- that, and one press is a far smaller error than a page that never stops
+  [0x4C] = "\v",
+  [0x5F] = "\n",   -- <LNBRK>, Prism's own: a line break outside scripting
+}
+RomExtractorGen2.GEN2_TEXT_ENDS = {
+  [0x50] = true,  -- "@"
+  [0x56] = true,  -- <SDONE>
+  [0x57] = true,  -- <DONE>
+  [0x58] = true,  -- <PROMPT>
+}
+
+-- Prism's control block ($44-$5f, macros/charmap.asm) is NOT Crystal's.  Five
+-- of the codes mean something else entirely and two more are Prism's alone,
+-- so read through Crystal's table they came out as "{BYTE:4B}" and friends in
+-- the middle of a sentence:
+--
+--   $4a  Crystal <PKMN>   Prism <BMON>   (the player's mon)
+--   $4b  --               Prism <PKMN>
+--   $4d  --               Prism <POKE>
+--   $5b  Crystal <PC>     Prism <MINB>   (the minimised box marker)
+--   $5c  Crystal TM       Prism <......>
+--
+-- The buffer codes all resolve to the one stringBuffer the port keeps, the
+-- same way TX_STRINGBUFFER does in the byte-at-a-time decoder.
+RomExtractorGen2.PRISM_GLYPHS = {
+  [0x44] = "{RAM:wStringBuffer1}",   -- <EMON>, the enemy's mon
+  [0x45] = "{RAM:wStringBuffer1}",   -- <STRBF1>
+  [0x46] = "{RAM:wStringBuffer2}",   -- <STRBF2>
+  [0x47] = "{RAM:wStringBuffer3}",   -- <STRBF3>
+  [0x48] = "{RAM:wStringBuffer4}",   -- <STRBF4>
+  [0x49] = "{RAM:wStringBuffer1}",   -- <ENEMY>, the enemy trainer
+  [0x4A] = "{RAM:wStringBuffer1}",   -- <BMON>, the player's mon
+  [0x4B] = "PK\xc3\xa9MN",           -- <PKMN>
+  [0x4D] = "POK\xc3\xa9",            -- <POKE>
+  [0x5B] = "BOX",                    -- <MINB>
+  [0x5C] = "\xe2\x80\xa6\xe2\x80\xa6", -- <......>
+  [0x5D] = "{RAM:wStringBuffer1}",   -- <TRNER>
+  [0x5E] = "ROCKET",                 -- <ROCKET>
+  -- and the printable half.  `<...>` is $ba in Prism -- a code Gold and
+  -- Crystal do not use at all -- and it is the single most common character
+  -- in Prism's dialogue: every trailing pause in the game printed as
+  -- "{BYTE:BA}".
+  [0xBA] = "\xe2\x80\xa6",           -- "…" / <...>
+  [0xBB] = "@", [0xBC] = "\xe2\x99\xa5", [0xBD] = "\xe2\x99\xa6",
+  [0xBE] = "\xe2\x99\xa0", [0xBF] = "\xe2\x99\xa3",
+  [0xC1] = "\xe2\x80\x9c", [0xC2] = "\xe2\x80\x9d",
+  [0xC5] = " ",                      -- < >, the VWF's narrow space
+  [0xCC] = ".",                      -- <DOT>
+  [0xD7] = "9",                      -- <9> (trainer names: "9" itself is $ff)
+  [0xD8] = " ",                      -- <BLANK>
+  [0xD9] = "\xe2\x96\xb2", [0xDA] = "%", [0xDB] = "+", [0xDC] = "-",
+  [0xDD] = "\xe2\x96\xbc", [0xDE] = "\xe2\x96\xb2", [0xDF] = "\xe2\x97\x80",
+  [0xE4] = "PO", [0xE5] = "KE",      -- the two halves of the POKe glyph
+  [0xEB] = "\xe2\x96\xb6", [0xEC] = "\xe2\x96\xb7", [0xED] = "\xe2\x96\xb6",
+  [0xEE] = "\xe2\x96\xbc",
+  [0xF2] = "*",                      -- <SHINY>, where Crystal has "."
+}
+
+function RomExtractorGen2:gen2GlyphBytes(bytes, charmap)
+  local out = {}
+  for _, b in ipairs(bytes) do
+    if RomExtractorGen2.GEN2_TEXT_ENDS[b] then break end
+    local brk = RomExtractorGen2.GEN2_TEXT_BREAKS[b]
+    if brk then
+      out[#out + 1] = brk
+    else
+      local glyph = RomExtractorGen2.PRISM_GLYPHS[b] or self:textGlyph(charmap, b)
+      if glyph then out[#out + 1] = glyph end
+    end
+  end
+  -- trailing \n / \f / \v carry no text and would open an empty final page
+  return (table.concat(out):gsub("%s+$", ""))
+end
+
 function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth)
   local out = {}
   local offset = 0
@@ -983,10 +1298,48 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
   -- the mode is seeded from the first byte rather than assumed: TextCommands
   -- has 23 rows, so every command byte is $00-$16 and anything from $17 up can
   -- only be a character, which means the run is already open.
+  -- Prism opens a compressed run with TX_COMPRESSED ($03) and everything after
+  -- it is a Huffman BIT stream, not bytes -- so the byte-at-a-time loop below
+  -- cannot read it at all.  Decode the run first and glyph the result.
+  do
+    local okLead, lead = pcall(self.rom.byte, self.rom, bank, address)
+    if okLead and lead == RomExtractorGen2.PRISM_TX_COMPRESSED
+       and self:gen2PrismTextTables() then
+      local chars, endPc = self:gen2PrismDecompressText(bank, address)
+      if chars and #chars > 0 then
+        return self:gen2GlyphBytes(chars, charmap), (endPc or address) - address
+      end
+    end
+  end
+  local sdoneEnds = self:layout("prismCharmap", 0) ~= 0
+  -- PRISM'S FAR-TEXT FORM.
+  --
+  -- Gold and Crystal mark a far pointer with TX_FAR ($16) and follow it with
+  -- `dw target, db bank`.  Prism does not: its `text_far` / `text_jump`
+  -- macros (macros/text.asm:105-115) write the target's HIGH BYTE BIASED
+  -- DOWN by $3C as the lead byte, then the low byte, then the bank -- with
+  -- bit 7 of the bank set for the `text_jump` form.  A ROM address is
+  -- $4000-$7FFF, so the biased lead lands in $04-$43, which is exactly the
+  -- range below LEAST_CONTROL_CHAR ($44) that Prism's charmap keeps free for
+  -- this.  There is no opcode byte at all.
+  --
+  -- Read as ordinary bytes those three came out as two glyphs and a stray
+  -- {RAM:....}, and the decoder then ran on into whatever followed -- which
+  -- is why every one of Prism's in-game trade lines was a wall of {BYTE:39}
+  -- and {RAM:40E1} instead of dialogue: TradeTexts points at five pairs of
+  -- three-byte `text_jump` stubs and nothing else.
+  local prismFarBias = sdoneEnds and 0x3C or nil
   local inString = false
   do
     local okLead, lead = pcall(self.rom.byte, self.rom, bank, address)
-    if okLead and type(lead) == "number" and lead > 0x16 then inString = true end
+    -- On Gold and Crystal, TextCommands has 23 rows, so anything above $16 can
+    -- only be a character and the run is already open.  ON PRISM THAT TEST IS
+    -- WRONG: its command range reaches all the way up to LEAST_CONTROL_CHAR
+    -- ($44), because $04-$43 are the biased high bytes of the far-text form
+    -- above.  Seeding inString on a $39 lead is what kept the far-pointer
+    -- branch from ever firing.
+    local floor = prismFarBias and 0x43 or 0x16
+    if okLead and type(lead) == "number" and lead > floor then inString = true end
   end
   while offset < GEN2_TEXT_MAX_BYTES and offset < limit do
     local value = self.rom:byte(bank, address + offset)
@@ -1024,6 +1377,27 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
     elseif value == 0x0C then
       out[#out + 1] = ("."):rep(self.rom:byte(bank, address + offset + 1))
       offset = offset + 1
+    elseif prismFarBias and not inString and offset == 0
+           and value >= 0x04 and value <= 0x43 then
+      local target = (value + prismFarBias) * 256
+                     + self.rom:byte(bank, address + offset + 1)
+      -- bit 7 of the bank byte is text_jump rather than text_far; both point
+      -- at the same thing, so mask it off
+      local far = self.rom:byte(bank, address + offset + 2) % 0x80
+      -- Two guards, both narrowing:
+      --   offset == 0 -- text_far / text_jump are the WHOLE body of the block
+      --     they head, never a byte in the middle of one.  Without this the
+      --     branch also fired on the $04 inside TextCompressionHuffmanTree,
+      --     a data table that happens to sit in the text symbol list, and
+      --     followed its bytes off into unrelated dialogue.
+      --   a banked target -- the macro writes BANK(label), so the address is
+      --     always $4000-$7FFF.
+      if (depth or 0) < 3 and target >= 0x4000 and target < 0x8000
+         and self:gen2InRom(far, target) then
+        out[#out + 1] = (self:decodeGen2TextAt(far, target, charmap, script,
+                                               (depth or 0) + 1))
+      end
+      return table.concat(out), offset + 3
     elseif value == 0x04 then
       offset = offset + 4  -- TX_BOX: dw, db, db
     elseif value == 0x08 then
@@ -1048,7 +1422,13 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
       out[#out + 1] = "\f"
     elseif value == 0x55 then
       out[#out + 1] = "\v"
-    elseif value == 0x57 or value == 0x58 then
+    elseif value == 0x57 or value == 0x58
+           or (value == 0x56 and sdoneEnds) then
+      -- $56 is "……" in Gold and Crystal but <SDONE> in Prism -- "like done,
+      -- but with a cursorless prompt".  Read as an ellipsis the decoder ran
+      -- straight out the end of the string: `text "<PLAYER>!" / sdone` came
+      -- out as the player's name followed by whatever bytes followed it,
+      -- which is most of the scrambled dialogue that was left.
       return table.concat(out), offset + 1
     else
       out[#out + 1] = self:textGlyph(charmap, value)
@@ -1059,14 +1439,31 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
 end
 
 
+-- Does this cartridge HAVE the professor's introduction?
+--
+-- Gold, Silver and Crystal ship OakText1..7 and OakSpeech replays them.  A
+-- TOTAL CONVERSION MAY NOT: Prism writes its own introduction in
+-- engine/intro_menu.asm and carries no OakText* symbol at all.  Seeding the
+-- English fallbacks regardless put an _OakSpeechText1 in Prism's text table,
+-- which is exactly the key Data.lua tests to decide `boot.screens.newGame` --
+-- so Prism was handed an Oak speech it does not have, and the New Game branch
+-- that opens PRISM'S CHARACTER CUSTOMISATION (Game:makeTitleState) was never
+-- taken.  That is the "the customization menu still isn't appearing" report:
+-- the screen was right, the speech in front of it should not have existed.
+function RomExtractorGen2:gen2HasOakSpeech()
+  return (self:symbol("OakText1") or self:symbol("_OakText1")) ~= nil
+end
+
 function RomExtractorGen2:extractTextFromRom()
   self:beginStage("Gen2 text (ROM)")
   local texts = self:readSourceTable("text")
   if not self.rom then
-    for key, fallback in pairs(INTRO_TEXT_FALLBACKS) do
-      local raw = texts[key]
-      if type(raw) ~= "string" or raw == "" or raw:match("^%{GEN2_TEXT:") then
-        texts[key] = fallback
+    if self:gen2HasOakSpeech() then
+      for key, fallback in pairs(INTRO_TEXT_FALLBACKS) do
+        local raw = texts[key]
+        if type(raw) ~= "string" or raw == "" or raw:match("^%{GEN2_TEXT:") then
+          texts[key] = fallback
+        end
       end
     end
     self:write("text", texts)
@@ -1099,10 +1496,20 @@ function RomExtractorGen2:extractTextFromRom()
     self:tick("Gen2 text (ROM)", index, #keys)
   end
 
-  for key, fallback in pairs(INTRO_TEXT_FALLBACKS) do
-    local raw = texts[key]
-    if type(raw) ~= "string" or raw == "" or raw:match("^%{GEN2_TEXT:") then
-      texts[key] = fallback
+  if self:gen2HasOakSpeech() then
+    for key, fallback in pairs(INTRO_TEXT_FALLBACKS) do
+      local raw = texts[key]
+      if type(raw) ~= "string" or raw == "" or raw:match("^%{GEN2_TEXT:") then
+        texts[key] = fallback
+      end
+    end
+  else
+    -- and drop any half-resolved placeholder so the gate reads false
+    for key in pairs(INTRO_TEXT_FALLBACKS) do
+      local raw = texts[key]
+      if type(raw) ~= "string" or raw == "" or raw:match("^%{GEN2_TEXT") then
+        texts[key] = nil
+      end
     end
   end
 
@@ -1221,7 +1628,7 @@ function RomExtractorGen2:extractScaffoldCore()
     -- Augment items and moves with real names from ROM
     if name == "items" and self.rom then
       local sym = self:symbol("ItemNames")
-      local romNames = gen2ReadVarNames(self.rom, sym, 300)
+      local romNames = self:varNames("ItemNames", 300)
       -- ItemAttributes rows are 7 bytes and open with a little-endian price
       -- (engine/items/item_effects.asm GetItemPrice).  Without it every mart
       -- shelf priced at 0 and BUY handed the stock out for free.
@@ -1261,14 +1668,13 @@ function RomExtractorGen2:extractScaffoldCore()
           local kind, number = tostring(entry.key):match("^([TH]M)_(%d+)$")
           if kind then
             local slot = tonumber(number)
-              + (kind == "HM" and GEN2_TM_COUNT or 0)
+              + (kind == "HM" and self:layout("tmCount", GEN2_TM_COUNT) or 0)
             entry.machine = self:gen2Machines()[slot]
           end
         end
       end
     elseif name == "moves" and self.rom then
-      local sym = self:symbol("MoveNames")
-      local romNames = gen2ReadVarNames(self.rom, sym, 300)
+      local romNames = self:varNames("MoveNames", 300)
       for id, entry in pairs(data) do
         if type(entry) == "table" and type(entry.index) == "number" then
           local n = romNames[entry.index]
@@ -1294,15 +1700,6 @@ local function colMajorToRowMajor(pixels, tilesWide, tilesHigh)
   end
   return out
 end
-local GEN2_TYPES = {
-  [0]="NORMAL",[1]="FIGHTING",[2]="FLYING",[3]="POISON",
-  [4]="GROUND",[5]="ROCK",[6]="BIRD",[7]="BUG",[8]="GHOST",[9]="STEEL",
-  [0x13]="CURSE_TYPE",
-  [0x14]="FIRE",[0x15]="WATER",[0x16]="GRASS",[0x17]="ELECTRIC",
-  [0x18]="PSYCHIC",[0x19]="ICE",[0x1A]="DRAGON",[0x1B]="DARK",
-}
--- everything below SPECIAL ($14) is a physical type (Gen2 keeps Gen1's split)
-local GEN2_SPECIAL_TYPE = 0x14
 
 -- Gen2 move effect id -> the effect record the battle engine dispatches on
 -- (src/battle/MoveEffects.lua).  The ids were read back off the ROM by
@@ -1524,7 +1921,7 @@ function RomExtractorGen2:extractMoves()
     return
   end
 
-  local names = gen2ReadVarNames(self.rom, self:symbol("MoveNames"), #order)
+  local names = self:varNames("MoveNames", #order)
   local out, ids = {}, {}
   for index = 1, #order do
     local ok, row = pcall(function()
@@ -1540,14 +1937,37 @@ function RomExtractorGen2:extractMoves()
     if type(effect) == "table" then
       effect = row[7] >= GEN2_EFFECT_CHANCE_SPLIT and effect[2] or effect[1]
     end
+    -- Crystal stores one type id per move and derives physical/special from
+    -- the id alone ($14 and up is special).  Prism implements the Gen 4 split
+    -- in the SAME byte: `category << 6 | type`, 0 physical / 1 special / 2
+    -- status -- confirmed against Fire Punch (physical), Flamethrower
+    -- (special) and Swords Dance (status), and by the fact that masking off
+    -- the top two bits leaves every one of its 254 moves inside the valid
+    -- type range.  Read Crystal's way the byte reads as type 64..155, so
+    -- GEN2_TYPES misses and EVERY move in the game imports as NORMAL.
+    -- `layout.moveCategoryDivisor` is the radix of that packing.
+    local categoryDivisor = self:layout("moveCategoryDivisor", 0)
+    local typeId, category = row[4], nil
+    if categoryDivisor > 0 then
+      typeId = row[4] % categoryDivisor
+      category = RomExtractorGen2.MOVE_CATEGORIES[math.floor(row[4] / categoryDivisor)]
+    end
     local move = {
       id = id, index = index, name = name,
       source = string.format("ROM:Moves[%d]", index),
       effect = effect or "NO_ADDITIONAL_EFFECT",
       power = row[3],
-      type = GEN2_TYPES[row[4]] or "NORMAL",
-      -- Gen2 stores accuracy as a 0-255 fraction like Gen1
-      accuracy = math.floor(row[5] * 100 / 255 + 0.5),
+      type = self:gen2TypeName(typeId) or "NORMAL",
+      -- Damage.lua already prefers move.category over the type's own class,
+      -- so a split ROM needs nothing from the battle engine.
+      category = category,
+      -- Gen2 stores accuracy as a 0-255 fraction like Gen1 -- but a hack can
+      -- re-encode it.  Prism stores PLAIN PERCENT: both ROMs carry exactly 11
+      -- distinct accuracy values, Crystal's running 76..255 and Prism's the
+      -- corresponding 0..100.  Dividing Prism's by 255 would make every move in
+      -- the game ~39% accurate, silently.  `layout.moveAccuracyMax` is what the
+      -- byte means by "100%".
+      accuracy = math.floor(row[5] * 100 / self:layout("moveAccuracyMax", 255) + 0.5),
       pp = row[6],
       effectChance = row[7],
       anim = { sound = "SFX_00", pitch = 0, tempo = 0 },
@@ -1635,7 +2055,19 @@ end
 function RomExtractorGen2:gen2CollisionClasses()
   if self._collisionClasses then return self._collisionClasses end
   local land, water = {}, {}
+  -- pokecrystal calls it CollisionPermissionTable; Prism (and pokegold's own
+  -- tilesets/collision.asm) call the same 256-byte table TileCollisionTable.
+  -- Finding neither is not a cosmetic loss: `walkable` comes out EMPTY, and an
+  -- empty permission set reads downstream as "nothing is known to block", so
+  -- the player walks through walls, water and scenery alike -- which is
+  -- exactly what Prism did.  LANDTILE 0 / WATERTILE 1 / WALLTILE $f / TALK $10
+  -- are the same values in both, so only the name had to be found.
   local sym = self:symbol("CollisionPermissionTable")
+    or self:symbol("TileCollisionTable")
+  if not sym then
+    Logger.warn("gen2 collision: no permission table (CollisionPermissionTable "
+      .. "/ TileCollisionTable); every tile will read as passable")
+  end
   if sym and self.rom then
     pcall(function()
       local raw = self.rom:bytes(sym.bank, sym.address, 256)
@@ -1739,9 +2171,22 @@ local GEN2_MOVE_FN_ROAM = {
   [2] = "LEFT_RIGHT",  -- MovementFunction_RandomWalkX
   [3] = "ANY_DIR",     -- MovementFunction_RandomWalkXY
 }
+-- The spinners (engine/overworld/map_objects.asm MovementFunction_*).  Only
+-- the two walk functions and "everything else stands still" were read before,
+-- so every SPRITEMOVEDATA_SPINRANDOM_* / _SPIN_CLOCKWISE object -- the Rocket
+-- grunts in the Mahogany base and the Goldenrod underground, the gym guards,
+-- the Radio Tower sentries -- was extracted as a plain STAY and stood
+-- motionless facing one way for the whole game.
 local GEN2_MOVE_FACING = { [0] = "DOWN", [1] = "UP", [2] = "LEFT", [3] = "RIGHT" }
 local GEN2_MOVEMENT_ENTRY_BYTES = 6
 local GEN2_MOVEMENT_MAX = 0x25
+
+RomExtractorGen2.GEN2_MOVE_FN_SPIN = {
+  [0x04] = "SPIN_SLOW",   -- MovementFunction_RandomSpinSlow
+  [0x05] = "SPIN_FAST",   -- MovementFunction_RandomSpinFast
+  [0x18] = "SPIN_CW",     -- MovementFunction_SpinClockwise
+  [0x19] = "SPIN_CCW",    -- MovementFunction_SpinCounterclockwise
+}
 
 function RomExtractorGen2:gen2MovementTable()
   if self._movementTable then return self._movementTable end
@@ -1754,7 +2199,13 @@ function RomExtractorGen2:gen2MovementTable()
       for index = 0, GEN2_MOVEMENT_MAX do
         local base = index * GEN2_MOVEMENT_ENTRY_BYTES
         local roam = GEN2_MOVE_FN_ROAM[raw[base + 1]]
-        if roam then
+        local spin = RomExtractorGen2.GEN2_MOVE_FN_SPIN[raw[base + 1]]
+        if spin then
+          -- `range` carries which spin it is; NPC.lua reads it back.  The
+          -- facing byte for every spin entry is DOWN, which is also what
+          -- FACING_FROM_RANGE falls back to for an unknown range.
+          out[index] = { movement = "SPIN", range = spin }
+        elseif roam then
           out[index] = { movement = "WALK", range = roam }
         else
           out[index] = {
@@ -1804,7 +2255,7 @@ function RomExtractorGen2:gen2MartStock(bank, address)
   for offset = 0, GEN2_SCRIPT_SCAN_BYTES - 1 do
     local ok, op = pcall(self.rom.byte, self.rom, bank, address + offset)
     if not ok then return nil end
-    if op == GEN2_SCRIPT_OP_POKEMART then
+    if op == self:opcode("pokemart") then
       local dialog = self.rom:byte(bank, address + offset + 1)
       local index = self.rom:word(bank, address + offset + 2)
       if dialog <= GEN2_MART_TYPE_MAX and marts[index] and #marts[index] > 0 then
@@ -2016,7 +2467,15 @@ end
 
 -- Two groups share the RIVAL class name; the port's battle code keys the
 -- player-named rival off these ids.
-local GEN2_RIVAL_GROUPS = { [9] = "RIVAL1", [42] = "RIVAL2" }
+-- The rival's class is the one the ROM NAMES "RIVAL", and BattleState wants
+-- it under OPP_RIVAL1/2/3 because those are the ids it swaps the player's own
+-- rival name into.  This used to be a hardcoded { [9] = RIVAL1, [42] = RIVAL2 }
+-- -- Gold's and Crystal's layout and nobody else's.  Prism's group 42 is the
+-- BIKER class, so every biker in the game fought under the rival's name and
+-- Prism had no biker class at all.  Numbered off the class name the ROM
+-- prints instead, the base games land on 9 and 42 exactly as before and Prism
+-- gets the one rival it actually has.
+local GEN2_RIVAL_CLASS_NAME = "RIVAL"
 -- TrainerPicPointers rows for the two faces the new game intro shows
 local GEN2_CLASS_RIVAL1 = 9
 local GEN2_CLASS_POKEMON_PROF = 10
@@ -2046,23 +2505,65 @@ function RomExtractorGen2:gen2Trainers()
   if sym and self.rom then
     local moveOrder = (self:constants() or {}).moveOrder or {}
     pcall(function()
-      local first = self.rom:word(sym.bank, sym.address)
-      local count = math.floor((first - sym.address) / 2)
-      local classNames = gen2ReadVarNames(
-        self.rom, self:symbol("TrainerClassNames"), count)
+      -- HOW LONG THE TABLE IS, AND WHERE EACH GROUP ENDS.
+      --
+      -- Both used to assume TrainerGroups is stored in ADDRESS ORDER: the
+      -- count came from the first pointer ("the table ends where the data
+      -- starts"), and a group's end came from the NEXT ROW of the table.
+      -- That holds in Gold and Crystal and it does NOT hold in Prism, which
+      -- assembles its 67 groups in a different order from the pointer list.
+      --
+      -- What it cost: where the next row points LOWER than the group itself,
+      -- the parse window is empty and the class comes out with no parties at
+      -- all.  Measured against the cartridges that is 35 of Prism's 67
+      -- classes -- the RIVAL among them, which is why the battle in the Ilk
+      -- brother's house on Route 69 ran its text and never started -- and one
+      -- class each in Gold and Crystal.  The count was worse still: Prism's
+      -- first pointer is not its lowest, so `count` came out 1370 and the loop
+      -- ran off the end of the bank into the caught error below, keeping only
+      -- whatever it had managed to build before it.
+      --
+      -- Neither fact needs the order.  A dw table ends at the LOWEST address
+      -- it points to, and a group ends at the next pointer ABOVE its own --
+      -- read off the whole set rather than off the row after it.
+      local ptrs, lowest = {}, 0x8000
+      for i = 0, 511 do
+        local at = sym.address + i * 2
+        if at >= lowest then break end
+        local p = self.rom:word(sym.bank, at)
+        if p < 0x4000 or p >= 0x8000 then break end
+        ptrs[#ptrs + 1] = p
+        if p < lowest then lowest = p end
+      end
+      local count = #ptrs
+      local sorted = {}
+      for _, p in ipairs(ptrs) do sorted[#sorted + 1] = p end
+      table.sort(sorted)
+      local function groupEnd(start)
+        for _, p in ipairs(sorted) do
+          if p > start then return p end
+        end
+        return 0x8000
+      end
+      local classNames = self:varNames("TrainerClassNames", count)
       local used = {}
+      local rivalSeen = 0
       local function sanitize(text)
         local label = tostring(text or ""):upper():gsub("[^%u%d]+", "_")
         return (label:gsub("^_+", ""):gsub("_+$", ""))
       end
       for group = 1, count do
-        local startAddress = self.rom:word(sym.bank, sym.address + (group - 1) * 2)
-        local endAddress = group < count
-          and self.rom:word(sym.bank, sym.address + group * 2) or 0x8000
+        local startAddress = ptrs[group]
+        local endAddress = groupEnd(startAddress)
         local parties, names = self:gen2TrainerParties(
           sym.bank, startAddress, endAddress, moveOrder)
         local className = classNames[group]
-        local label = GEN2_RIVAL_GROUPS[group] or sanitize(className)
+        local plain = sanitize(className)
+        local label = plain
+        if plain == GEN2_RIVAL_CLASS_NAME then
+          rivalSeen = rivalSeen + 1
+          label = GEN2_RIVAL_CLASS_NAME .. tostring(rivalSeen)
+        end
         if label == "" then label = string.format("GROUP_%02d", group) end
         if used[label] then
           local alt = sanitize(names[1])
@@ -2096,7 +2597,7 @@ function RomExtractorGen2:gen2MoveIdsByIndex()
   local byIndex = {}
   local order = (self:constants() or {}).moveOrder or {}
   if self.rom and #order > 0 then
-    local names = gen2ReadVarNames(self.rom, self:symbol("MoveNames"), #order)
+    local names = self:varNames("MoveNames", #order)
     local seen = {}
     for index = 1, #order do
       local name = names[index] or order[index]
@@ -2117,7 +2618,10 @@ function RomExtractorGen2:gen2Machines()
   local sym = self.rom and self:symbol("TMHMMoves")
   if sym then
     local byIndex = self:gen2MoveIdsByIndex()
-    local total = GEN2_TM_COUNT + GEN2_HM_COUNT
+    local tmCount = self:layout("tmCount", GEN2_TM_COUNT)
+    local hmCount = self:layout("hmCount", GEN2_HM_COUNT)
+    local total = tmCount + hmCount
+      + self:layout("tutorCount", RomExtractorGen2.GEN2_TUTOR_COUNT)
     local ok, bytes = pcall(function()
       return self.rom:bytes(sym.bank, sym.address, total)
     end)
@@ -2125,12 +2629,13 @@ function RomExtractorGen2:gen2Machines()
       for n = 1, total do
         local move = byIndex[bytes[n] or 0]
         if move then
-          local hm = n > GEN2_TM_COUNT
-          out[n] = {
-            kind = hm and "HM" or "TM",
-            number = hm and (n - GEN2_TM_COUNT) or n,
-            move = move,
-          }
+          local kind, number = "TM", n
+          if n > tmCount + hmCount then
+            kind, number = "TUTOR", n - tmCount - hmCount
+          elseif n > tmCount then
+            kind, number = "HM", n - tmCount
+          end
+          out[n] = { kind = kind, number = number, move = move }
         end
       end
     end
@@ -2344,9 +2849,11 @@ function RomExtractorGen2:extractPokemon()
   local pokeNames = gen2ReadFixedNames(self.rom, self:symbol("PokemonNames"), #speciesOrder, 10)
   local learnsets = self:gen2Learnsets(#speciesOrder)
 
-  -- Base stats from BaseData (14:5b0b, 32 bytes/entry, dex order)
+  -- Base stats from BaseData (Crystal 14:5424 / Gold 14:5b0b, dex order).
+  -- The stride is the BASE game's 32 unless the manifest overrides it: Prism
+  -- packs the same fields into 24.
   local baseSym = self:symbol("BaseData")
-  local ENTRY = 32
+  local ENTRY = self:layout("baseDataEntry", 32)
   local machines = self:gen2Machines()
 
   local out = {}
@@ -2368,8 +2875,10 @@ function RomExtractorGen2:extractPokemon()
       end)
       if ok and type(entry) == "table" and #entry >= 11 then
         hp=entry[2]; atk=entry[3]; def=entry[4]; spd=entry[5]; satk=entry[6]; sdef=entry[7]
-        type1 = GEN2_TYPES[entry[8]]  or "NORMAL"
-        type2 = GEN2_TYPES[entry[9]]  or type1
+        -- species types are plain ids in every ROM checked (Prism's top
+        -- value is $1B), so no category bits to mask off here
+        type1 = self:gen2TypeName(entry[8]) or "NORMAL"
+        type2 = self:gen2TypeName(entry[9]) or type1
         catchRate = entry[10]; baseExp = entry[11]
         growthRate = GEN2_GROWTH_RATES[entry[GEN2_BASE_GROWTH_RATE]] or growthRate
       end
@@ -2812,7 +3321,40 @@ function RomExtractorGen2:extractIcons()
   local ptrSym = self:symbol("IconPointers")
   local bySpecies = {}
 
-  if menuSym and ptrSym and self.rom then
+  -- Crystal: MonMenuIcons maps species -> icon id, then IconPointers is a
+  -- `dw` into IconPointers' own bank.  Prism has no MonMenuIcons at all --
+  -- its MonIconPointers is a `dba` (bank, lo, hi) indexed by species directly,
+  -- and its icons are literally MonIcon1..MonIcon254.  Read Crystal's way the
+  -- indirection table is missing, so `if menuSym` was false and the whole
+  -- stage produced zero icons with no error: the party menu then drew nothing.
+  local iconStride = self:layout("iconEntryBytes", 2)
+  if iconStride >= 3 and ptrSym and self.rom then
+    for i, id in ipairs(speciesOrder) do
+      local colors = monPalettes[id]
+      if colors then
+        local relPath = "icons/" .. id:lower() .. ".png"
+        local ok = pcall(function()
+          local entry = ptrSym.address + (i - 1) * iconStride
+          local bank = self.rom:byte(ptrSym.bank, entry)
+          local address = self.rom:word(ptrSym.bank, entry + 1)
+          -- Prism ships every minipic LZ-compressed (gfx/icon/N.2bpp.lz, 78
+          -- bytes for the 128 the game unpacks).  Read raw, the compressed
+          -- stream was decoded as 2bpp -- the green-and-pink noise, in the
+          -- party menu AND on any overworld object whose sprite byte is a mon
+          -- (Prism's Larvitar is one).
+          local raw = (self:layout("iconsCompressed", 0) ~= 0
+                       and self:gen2LzAt(bank, address, GEN2_ICON_BYTES))
+            or self.rom:bytes(bank, address, GEN2_ICON_BYTES)
+          local tiles = gen2SplitTiles(raw)
+          self:saveImage(gen2IconImage(tiles, colors), relPath)
+        end)
+        -- a table entry (rather than a built-in icon NAME) is what tells
+        -- PartyMenu this is authored art
+        if ok then bySpecies[id] = { image = "assets/generated/" .. relPath } end
+      end
+      self:tick("Gen2 party icons", i, #speciesOrder)
+    end
+  elseif menuSym and ptrSym and self.rom then
     local okIndices, indices = pcall(function()
       return self.rom:bytes(menuSym.bank, menuSym.address, #speciesOrder)
     end)
@@ -2827,32 +3369,7 @@ function RomExtractorGen2:extractIcons()
                                           ptrSym.address + iconIndex * 2)
             local raw = self.rom:bytes(ptrSym.bank, address, GEN2_ICON_BYTES)
             local tiles = gen2SplitTiles(raw)
-            -- OBJ colour 0 is transparent, so the sheet keeps alpha 0 there
-            -- and PartyMenu's plain (non-#obp) load draws it as authored.
-            local pal = {}
-            for n = 1, 4 do
-              pal[n] = { colors[n][1] / 255, colors[n][2] / 255, colors[n][3] / 255 }
-            end
-            local image = ImageWriter.blank(16, 32, 0, 0, 0, 0)
-            for frame = 0, 1 do
-              for col = 0, 1 do
-                for row = 0, 1 do
-                  local tile = tiles[frame * 4 + row * 2 + col]
-                  if tile then
-                    for y = 0, 7 do
-                      for x = 0, 7 do
-                        local shade = tile[y * 8 + x + 1]
-                        if shade ~= 0 then
-                          local c = pal[shade + 1]
-                          image:setPixel(col * 8 + x, frame * 16 + row * 8 + y,
-                                         c[1], c[2], c[3], 1)
-                        end
-                      end
-                    end
-                  end
-                end
-              end
-            end
+            local image = gen2IconImage(tiles, colors)
             self:saveImage(image, relPath)
           end)
           if ok then
@@ -2896,6 +3413,76 @@ function RomExtractorGen2:gen2WildSlots(bank, address, count)
     }
   end
   return slots
+end
+
+-- Gen2 fishing (engine/events/fish.asm `Fish`).  Nothing here existed before:
+-- the port ran Gen1's rod rules on a Gen2 cart, so the Old Rod always hooked
+-- a level 5 MAGIKARP and the Super Rod -- whose Gen1 table is per-map and has
+-- no Gen2 counterpart -- answered "Not even a nibble!" on every cast, on every
+-- map, for the whole game.
+--
+-- The ROM's shape:
+--   FishGroups      13 x { db chance; dw old, good, super }   (7 bytes each)
+--   <rod table>     rows of { db chance, species, level }, walked until the
+--                   rolled byte is <= chance; the last row is `100 percent`
+--                   ($FF), so the walk always terminates.
+--   species 0       means "read TimeFishGroups instead", and the level byte
+--                   is the index into it: { db daySpecies, dayLevel,
+--                   niteSpecies, niteLevel }.
+-- `chance` on the group itself is the bite roll: Random >= it is no bite.
+function RomExtractorGen2:gen2FishRows(bank, address)
+  local rows = {}
+  for _ = 1, 12 do
+    local raw = self.rom:bytes(bank, address, 3)
+    local row = { chance = raw[1] }
+    if raw[2] == 0 then
+      -- the time-of-day indirection; keep the index, resolve at roll time
+      row.timeGroup = raw[3]
+    else
+      row.species = string.format("SPECIES_%03d", raw[2])
+      row.level = raw[3]
+    end
+    rows[#rows + 1] = row
+    address = address + 3
+    if raw[1] >= 0xFF then break end
+  end
+  return rows
+end
+
+function RomExtractorGen2:gen2Fishing()
+  local groupsSym = self:symbol("FishGroups")
+  local timeSym = self:symbol("TimeFishGroups")
+  if not (groupsSym and self.rom) then return nil, nil end
+  local groups = {}
+  -- NUM_FISHGROUPS is 13 in Crystal and Gold alike; stop early if the table
+  -- runs into TimeFishGroups, which sits right behind the rod rows.
+  for i = 0, 12 do
+    local base = groupsSym.address + i * 7
+    local chance = self.rom:byte(groupsSym.bank, base)
+    local entry = { chance = chance, rods = {} }
+    for r, rod in ipairs({ "old", "good", "super" }) do
+      local ptr = self.rom:word(groupsSym.bank, base + 1 + (r - 1) * 2)
+      if ptr >= 0x4000 and ptr < 0x8000 then
+        entry.rods[rod] = self:gen2FishRows(groupsSym.bank, ptr)
+      end
+    end
+    groups[i] = entry
+  end
+  local times = nil
+  if timeSym then
+    times = {}
+    -- TimeFishGroups has 22 entries in Crystal; read to the end of the block
+    -- and let a short table simply not resolve.
+    for i = 0, 31 do
+      local raw = self.rom:bytes(timeSym.bank, timeSym.address + i * 4, 4)
+      if raw[1] == 0 or raw[1] > 251 then break end
+      times[i] = {
+        day = { species = string.format("SPECIES_%03d", raw[1]), level = raw[2] },
+        nite = { species = string.format("SPECIES_%03d", raw[3]), level = raw[4] },
+      }
+    end
+  end
+  return groups, times
 end
 
 function RomExtractorGen2:extractEncounters()
@@ -2966,10 +3553,33 @@ function RomExtractorGen2:extractEncounters()
     end
   end
 
-  pcall(walk, "JohtoGrassWildMons", "grass", GEN2_GRASS_RECORD, GEN2_GRASS_SLOTS, GEN2_GRASS_BUCKETS)
-  pcall(walk, "KantoGrassWildMons", "grass", GEN2_GRASS_RECORD, GEN2_GRASS_SLOTS, GEN2_GRASS_BUCKETS)
-  pcall(walk, "JohtoWaterWildMons", "water", GEN2_WATER_RECORD, GEN2_WATER_SLOTS, GEN2_WATER_BUCKETS)
-  pcall(walk, "KantoWaterWildMons", "water", GEN2_WATER_RECORD, GEN2_WATER_SLOTS, GEN2_WATER_BUCKETS)
+  -- Gold/Crystal split their wild data into exactly four $ff-terminated
+  -- tables, so those four names were hardcoded.  A hack is free to use a
+  -- different number: Prism has SIX grass tables and two water ones (the four
+  -- small grass tables are swarm/special sets), and walking only the first two
+  -- silently drops 16 maps' worth of encounters -- the import still succeeds
+  -- and those routes just come up empty.  `manifest.wildTables` lists what a
+  -- ROM actually has; absent, the Gen 2 four are the default.
+  local wildTables = self.manifest and self.manifest.wildTables
+  if type(wildTables) ~= "table" or #wildTables == 0 then
+    wildTables = {
+      { symbol = "JohtoGrassWildMons", terrain = "grass" },
+      { symbol = "KantoGrassWildMons", terrain = "grass" },
+      { symbol = "JohtoWaterWildMons", terrain = "water" },
+      { symbol = "KantoWaterWildMons", terrain = "water" },
+    }
+  end
+  for _, spec in ipairs(wildTables) do
+    if type(spec) == "table" and type(spec.symbol) == "string" then
+      if spec.terrain == "water" then
+        pcall(walk, spec.symbol, "water",
+              GEN2_WATER_RECORD, GEN2_WATER_SLOTS, GEN2_WATER_BUCKETS)
+      else
+        pcall(walk, spec.symbol, "grass",
+              GEN2_GRASS_RECORD, GEN2_GRASS_SLOTS, GEN2_GRASS_BUCKETS)
+      end
+    end
+  end
 
   Logger.info("Gen2 encounters: %d tables from ROM", filled)
   self:write("encounters", out)
@@ -2979,6 +3589,25 @@ end
 -- Walks MapGroupPointers and its 9-byte map headers so ROM (group, number)
 -- references -- which is how warps and connections name their targets -- can be
 -- resolved back to a map label.
+-- MapGroupPointers is followed immediately by the group header tables it
+-- points into, so its FIRST entry marks the end of the pointer list and the
+-- group count is a property of the ROM rather than something to hardcode.
+-- Derives 26 for Gold/Crystal and 95 for Prism.
+function RomExtractorGen2:gen2MapGroupCount()
+  if self._mapGroupCount then return self._mapGroupCount end
+  local count = GEN2_MAP_GROUP_COUNT
+  local ptr = self:symbol("MapGroupPointers")
+  if ptr and self.rom then
+    pcall(function()
+      local first = self.rom:word(ptr.bank, ptr.address)
+      local derived = math.floor((first - ptr.address) / 2)
+      if derived >= 1 and derived <= 512 then count = derived end
+    end)
+  end
+  self._mapGroupCount = count
+  return count
+end
+
 function RomExtractorGen2:gen2MapIndex()
   if self._mapIndex then return self._mapIndex, self._mapHeaderByLabel end
   local byGroupNumber, byLabel = {}, {}
@@ -2998,7 +3627,7 @@ function RomExtractorGen2:gen2MapIndex()
 
   pcall(function()
     local starts = {}
-    for group = 1, GEN2_MAP_GROUP_COUNT do
+    for group = 1, self:gen2MapGroupCount() do
       starts[group] = self.rom:word(ptr.bank, ptr.address + (group - 1) * 2)
     end
     -- a group's header list runs until the next group's list begins
@@ -3008,7 +3637,7 @@ function RomExtractorGen2:gen2MapIndex()
     local following = {}
     for i, address in ipairs(sorted) do following[address] = sorted[i + 1] end
 
-    for group = 1, GEN2_MAP_GROUP_COUNT do
+    for group = 1, self:gen2MapGroupCount() do
       local base = starts[group]
       local stop = following[base]
       local count = stop and math.floor((stop - base) / GEN2_MAP_HEADER_BYTES) or 32
@@ -3025,6 +3654,12 @@ function RomExtractorGen2:gen2MapIndex()
             tileset = self.rom:byte(ptr.bank, header + 1),
             environment = self.rom:byte(ptr.bank, header + 2),
             landmark = self.rom:byte(ptr.bank, header + 5),
+            -- byte 8 is the map's FISHGROUP_* (map_header's `fish_group`).
+            -- Never read before, which is why Gen2 fishing fell through to
+            -- the Gen1 rod tables in FieldDefaults -- Old Rod always a L5
+            -- MAGIKARP, Super Rod "Not even a nibble!" everywhere, because
+            -- its per-map table (field.superRod) is Gen1-only data.
+            fishGroup = self.rom:byte(ptr.bank, header + 8),
             -- byte 6 indexes the Music table (map_header's `music` field)
             music = self.rom:byte(ptr.bank, header + 6),
             -- low nibble of byte 7 is the PALETTE_* the map forces; 4 is
@@ -3125,9 +3760,13 @@ function RomExtractorGen2:gen2TilesetNames()
   end
 
   pcall(function()
-    for id = 0, 47 do
+    -- 48 was Crystal's roster; Prism has 57, and a fixed ceiling silently
+    -- drops every tileset past it along with the maps that use them.
+    local stride = self:layout("tilesetEntry", GEN2_TILESET_ENTRY_BYTES)
+    local ceiling = self:layout("tilesetCount", 48)
+    for id = 0, ceiling - 1 do
       -- the table is indexed directly by tileset id, starting at 0
-      local entry = table_.address + id * GEN2_TILESET_ENTRY_BYTES
+      local entry = table_.address + id * stride
       if entry + 8 >= 0x8000 then break end
       local keys = {}
       for _, part in ipairs(PARTS) do
@@ -3174,8 +3813,16 @@ function RomExtractorGen2:gen2OverworldSprites()
     -- every later id (Misty, fruit trees, trophies) out of byIndex, so object
     -- rows fell through to the wrong sheet.  Skip unknown rows and keep going
     -- until we hit a run of empty pointers past the known end of the table.
+    -- Gold and Crystal stop at 102 sprites, so 127 slots was headroom.  Prism
+    -- has 200 sprite_header rows: SPRITE_P0 is slot 0, but SPRITE_P1 is $60,
+    -- SPRITE_P0_SURF is $69 and the run of player variants continues past
+    -- SPRITE_P12_SURF at $B8 -- so a 128-slot scan cut the table in half and
+    -- took every one of the 14 selectable player characters with it.  The
+    -- miss-run below is what actually ends the walk; this bound only has to be
+    -- big enough not to end it early.  $FF is where the variable-sprite slots
+    -- begin, so nothing real lives above it.
     local misses = 0
-    for slot = 0, 127 do
+    for slot = 0, 0xEF do
       local entry = table_.address + slot * GEN2_OVERWORLD_SPRITE_BYTES
       if entry + 5 >= 0x8000 then break end
       local address = self.rom:word(table_.bank, entry)
@@ -3196,6 +3843,13 @@ function RomExtractorGen2:gen2OverworldSprites()
             base = base,
             bank = bank,
             address = address,
+            -- The row carries its own sheet LENGTH at offset 2 (the
+            -- sprite_header macro's `db \2 * 4 tiles`).  Reading it beats
+            -- inferring the span from the next sheet's address, which is only
+            -- a guess -- and against Prism that guess produced a sheet 61
+            -- pixels tall, which is not tile-aligned, so decode2bpp asserted
+            -- and took the whole import down at the very last stage.
+            length = self.rom:byte(table_.bank, entry + 2),
             kind = self.rom:byte(table_.bank, entry + 4),
             palette = self.rom:byte(table_.bank, entry + 5) % 8,
           }
@@ -3220,15 +3874,41 @@ function RomExtractorGen2:gen2OverworldSprites()
     end
   end
 
+  local compressed = self:layout("spritesCompressed", 0) ~= 0
   for _, row in ipairs(rows) do
     local cap = GEN2_SPRITE_KIND_BYTES[row.kind] or GEN2_SPRITE_WALK_BYTES
     local span = spanOf[row.bank * 0x10000 + row.address] or cap
-    local bytes = math.min(span, cap)
-    -- 2bpp, 16px wide: one row of pixels is 4 bytes
-    local height = math.floor(bytes / 4)
+    -- prefer the row's own length; fall back to the span heuristic
+    local bytes = row.length and row.length > 0
+      and math.min(row.length, cap) or math.min(span, cap)
+    -- Prism stores every overworld sheet LZ3-compressed
+    -- (`INCBIN "gfx/overworld/p0.2bpp.lz"`), and its walking sprites are 24
+    -- tiles rather than Crystal's 12 -- six poses, not three.  Both facts
+    -- have to come from the DECOMPRESSED blob: the header's length byte says
+    -- 192, which is what Prism copies to VRAM at a time and not how big the
+    -- sheet is, so trusting it halves every sheet; and reading the compressed
+    -- stream as 2bpp is what made the player character unreadable on screen.
+    --
+    -- Kept only when the result is a whole number of 16-byte tiles and at
+    -- least one 2x2 frame, so a sheet that really is stored raw -- 27 of
+    -- Prism's own, and every sheet in Gold and Crystal -- falls through to
+    -- the header/span answer above untouched.
+    if compressed then
+      local out = self:gen2LzAt(row.bank, row.address)
+      if out and #out >= 64 and #out % 64 == 0 then
+        bytes = #out
+        row.compressed = true
+      end
+    end
+    -- 2bpp, 16px wide: one row of pixels is 4 bytes.  Round DOWN to whole
+    -- tiles -- decode2bpp requires tile-aligned dimensions and asserts
+    -- otherwise, which is a hard crash rather than a skipped sprite.
+    local height = math.floor(bytes / 4 / 8) * 8
     if height >= 16 then
       byIndex[row.index] = {
-        id = GEN2_SPRITE_ID_OVERRIDES[row.index] or gen2SpriteConstant(row.base),
+        id = (self:layout("spriteOverrides", 1) ~= 0
+              and GEN2_SPRITE_ID_OVERRIDES[row.index] or nil)
+             or gen2SpriteConstant(row.base),
         index = row.index,
         -- the *SpriteGFX label this row came from, so a caller can find a
         -- row by its pret name rather than by the engine id it maps onto
@@ -3237,6 +3917,7 @@ function RomExtractorGen2:gen2OverworldSprites()
         bank = row.bank,
         address = row.address,
         bytes = height * 4,
+        compressed = row.compressed,
         width = 16,
         height = height,
         frames = math.floor(height / 16),
@@ -3293,7 +3974,15 @@ function RomExtractorGen2:gen2ReadMapEvents(attrBank, attrAddress)
   end
 
   local warps = section(GEN2_WARP_EVENT_BYTES)
-  local coords = section(GEN2_COORD_EVENT_BYTES)
+  -- Prism's coord events are SEVEN bytes, Crystal's are eight.  Its
+  -- `xy_trigger` is `db number, y, x / dw event / dw script` (macros/map.asm,
+  -- XY_TRIGGER_SIZE EQU 7); Crystal's `coord_event` is `db scene, y, x / db 0
+  -- / dw script / dw 0`.  One byte per event, and every section AFTER the
+  -- coord events is read from the wrong offset -- IntroOutside has six of
+  -- them, so its object list came out six bytes adrift: 69 objects on a
+  -- campsite that has two, at coordinates like (202, 152) on a 22x36 map.
+  -- That is why the player's mother was not standing there.
+  local coords = section(self:layout("coordEventBytes", GEN2_COORD_EVENT_BYTES))
   local bgs = section(GEN2_BG_EVENT_BYTES)
   local objects = section(GEN2_OBJECT_EVENT_BYTES)
   return { bank = bank, warps = warps, coords = coords, bgs = bgs, objects = objects }
@@ -3397,6 +4086,41 @@ function RomExtractorGen2:gen2TextBlockAt(bank, address)
   if not (bank and address) then return nil end
   if bank < 1 or bank >= self:gen2BankCount() then return nil end
   if address < 0x4000 or address >= 0x8000 then return nil end
+  -- PRISM'S TEXT IS HUFFMAN-COMPRESSED, and a bit stream is not prose.
+  -- `ctxt` (macros/text.asm) opens a run with TX_COMPRESSED ($03) and packs
+  -- everything after it into Huffman BITS, so the letter-frequency sample
+  -- below reads it as noise and threw every one of these blocks away -- which
+  -- is why Prism's generic trainers had a battle and no dialogue and its
+  -- signs had no words.  That lead byte IS the "this is text" marker, exactly
+  -- as $00 is for the uncompressed kind, so it answers on its own; the
+  -- decoder downstream already knows how to unpack what follows.
+  do
+    local ok, lead = pcall(self.rom.byte, self.rom, bank, address)
+    if ok and lead == RomExtractorGen2.PRISM_TX_COMPRESSED
+       and self:layout("prismCharmap", 0) ~= 0 then
+      return bank, address
+    end
+    -- ...and Prism's OTHER text shape: `text_far` / `text_jump`, three bytes
+    -- with no opcode at all -- the target's high byte biased down by $3C, the
+    -- low byte, the bank (see decodeGen2TextAt).  A block that is nothing but
+    -- one of those is text as surely as a $03 run is, and the letter sample
+    -- below cannot see it: three pointer bytes are not prose.
+    --
+    -- This is what Prism's SIGNPOSTS mostly are.
+    if ok and self:layout("prismCharmap", 0) ~= 0
+       and lead >= 0x04 and lead <= 0x43 then
+      local okLow, low = pcall(self.rom.byte, self.rom, bank, address + 1)
+      local okBank, far = pcall(self.rom.byte, self.rom, bank, address + 2)
+      if okLow and okBank then
+        local target = (lead + 0x3C) * 256 + low
+        if target >= 0x4000 and target < 0x8000
+           and self:gen2InRom(far % 0x80, target) then
+          return bank, address
+        end
+      end
+    end
+  end
+
   -- text scripts open with `text` ($00); skip it before sampling
   local start = address
   if self.rom:byte(bank, start) == 0x00 then start = start + 1 end
@@ -3423,12 +4147,40 @@ end
 
 function RomExtractorGen2:gen2ScriptTextAddress(bank, address, depth)
   if not (bank and address) then return nil end
+  -- The scan below reads GOLD's opcode numbers out of the raw bytes -- $51 is
+  -- farwritetext, $4C is jumpstd -- and Prism renumbered every one of them, so
+  -- against a Prism script it matches whatever bytes happen to sit there and
+  -- hands back an address that is not text at all.  Acqua Tutorial's two cave
+  -- signs came out as "9{RAM:007F}C]{BYTE:26}..." that way.
+  --
+  -- Nothing is lost by refusing: this exists to FLATTEN a script into the one
+  -- line it prints, for objects the port could not otherwise run, and every
+  -- Prism object and signpost now carries its decoded script instead.  A
+  -- script that fails to decode goes silent, which beats printing noise.
   if bank < 1 or bank >= self:gen2BankCount() then return nil end
   if address < 0x4000 or address >= 0x8000 then return nil end
 
   -- signs in particular often point straight at the text block
   local directBank, directAddr = self:gen2TextBlockAt(bank, address)
   if directBank then return directBank, directAddr end
+
+  -- PAST HERE THE SCAN READS OPCODES, AND PRISM RENUMBERED THEM ALL.
+  -- What follows walks raw bytes looking for GOLD's numbers -- $51 is
+  -- farwritetext, $4C is jumpstd -- so against a Prism script it matches
+  -- whatever happens to sit there and hands back an address that is not text.
+  -- Acqua Tutorial's two cave signs came out as "9{RAM:007F}C]{BYTE:26}..."
+  -- that way, and refusing costs Prism nothing: this exists to FLATTEN a
+  -- script into the one line it prints, and every Prism object and signpost
+  -- carries its decoded script instead.
+  --
+  -- THE DIRECT CHECK ABOVE IS A DIFFERENT QUESTION and the refusal used to
+  -- sit in front of it, which was the bug.  A `dw seen_text` in a trainer's
+  -- data block, or a signpost's text pointer, is already an address -- there
+  -- is no bytecode to misread and no version to get wrong.  Refusing those
+  -- left all 287 of Prism's generic trainers with a battle and no dialogue,
+  -- and its signs with no words at all.
+  if self:layout("objectTextKinds", 0) ~= 0 then return nil end
+
 
   local std = self:symbol("StdScripts")
   -- A short line like "{PLAYER}'s House" fails the prose test, so remember the
@@ -3546,6 +4298,10 @@ function RomExtractorGen2:extractMapsFromRom()
       -- is why a Pokemon Center does not go dark at night on hardware -- and
       -- the Ruins of Alph chambers carry it too.
       def.mapPalette = header and header.palette or def.mapPalette
+      -- 0 is FISHGROUP_SHORE in Crystal's table but the header value is only
+      -- meaningful on maps you can actually fish from; the runtime treats a
+      -- missing entry as "no bite", the same as the ROM's own guard.
+      def.fishGroup = header and header.fishGroup or def.fishGroup
 
       local sym = symbolName and self:symbol(symbolName) or nil
       if sym then
@@ -3560,7 +4316,17 @@ function RomExtractorGen2:extractMapsFromRom()
             def.width = width
             def.height = height
             def.borderBlock = border
-            def.blocks = self.rom:bytes(bank, blocksPtr, width * height)
+            -- Prism ships every map's block table LZ3-compressed
+            -- (`INCBIN "maps/blk/IntroOutside.ablk.lz"`) and decompresses it
+            -- at map load; Gold and Crystal store it raw.  Read raw, a Prism
+            -- map's blocks ARE the compressed stream -- ids scattered over
+            -- the whole 0..255 range against a tileset that has 177 blocks --
+            -- so the very first map of a new game indexes past the metatile
+            -- table.  gen2LzAt keeps the result only if it is exactly
+            -- width*height bytes, which is the header's own answer for how
+            -- big the table is, so this cannot misfire on a raw cartridge.
+            def.blocks = self:gen2LzAt(bank, blocksPtr, width * height)
+              or self.rom:bytes(bank, blocksPtr, width * height)
             loaded = loaded + 1
           end
         end)
@@ -3637,24 +4403,35 @@ function RomExtractorGen2:extractMapsFromRom()
             -- and $80..$DF are SPRITE_POKEMON plus a SpriteMons index -- those
             -- objects walk around as the species' party menu icon.
             local spriteId
+            local monBase = self:layout("spritePokemonBase", GEN2_SPRITE_POKEMON)
+            local breed1 = self:layout("spriteBreedFirst", GEN2_SPRITE_BREED_1)
+            local breed2 = self:layout("spriteBreedSecond", GEN2_SPRITE_BREED_2)
             if row[1] >= GEN2_SPRITE_VARS then
               -- $F0+ indexes wVariableSprites.  Copycat and some gym
               -- impersonators are driven this way; still honour an override
               -- if the constant was pinned (e.g. SPRITE_COPYCAT at $FB).
               spriteId = GEN2_SPRITE_ID_OVERRIDES[row[1]]
                 or string.format("SPRITE_VAR_%02d", row[1] - GEN2_SPRITE_VARS)
-            elseif row[1] == GEN2_SPRITE_BREED_1 then
+            elseif row[1] == breed1 then
               spriteId = "SPRITE_MON_BREED_1"
-            elseif row[1] == GEN2_SPRITE_BREED_2 then
+            elseif row[1] == breed2 then
               spriteId = "SPRITE_MON_BREED_2"
-            elseif row[1] >= GEN2_SPRITE_POKEMON then
-              local species = spriteMons[row[1] - GEN2_SPRITE_POKEMON]
-              spriteId = species and gen2MonSpriteId(species) or "SPRITE_RED"
+            elseif row[1] >= monBase then
+              local species = spriteMons[row[1] - monBase]
+              -- falling back to the OverworldSprites row before SPRITE_RED:
+              -- a mon slot with no species is still likelier to be the sheet
+              -- at that index than the player
+              spriteId = species and gen2MonSpriteId(species)
+                or (sprite and sprite.id) or "SPRITE_RED"
             else
               -- Prefer explicit Kanto/story overrides, then the OverworldSprites
               -- table id, then GRAMPS only as a last resort so Misty / Rocket /
-              -- Super Nerd / etc. never silently become an old man.
-              spriteId = GEN2_SPRITE_ID_OVERRIDES[row[1]]
+              -- Super Nerd / etc. never silently become an old man.  The
+              -- overrides are Gold's INDICES, so a ROM that renumbered the
+              -- sprite list must opt out of them -- Prism's $01 is its first
+              -- player sheet, not SPRITE_RED, and its $54 is not a POKe BALL.
+              spriteId = (self:layout("spriteOverrides", 1) ~= 0
+                          and GEN2_SPRITE_ID_OVERRIDES[row[1]] or nil)
                 or (sprite and sprite.id)
                 or "SPRITE_GRAMPS"
             end
@@ -3711,18 +4488,58 @@ function RomExtractorGen2:extractMapsFromRom()
             -- SPRITE_RED placeholders behind (Cherrygrove, Route 30, ...).
             local script = scriptAddress >= 0x4000 and scriptAddress < 0x7FFF
             local item, quantity, fruitTree
-            if script and kind == GEN2_OBJECT_KIND_ITEMBALL then
+            -- Crystal's itemball field is a POINTER to `itemball ITEM` --
+            -- `db item, db qty` sitting in the script bank.  Prism's is the
+            -- item ITSELF: Events' `.itemball` reads MAPOBJECT_PARAMETER for
+            -- the quantity and PARAMETER+1 (the low byte of the same field the
+            -- other kinds use as a pointer) for the item.  Read Crystal's way
+            -- the "pointer" was a small number, failed the in-bank test, and
+            -- the ball fell through to the text branch -- which then registered
+            -- the item id as a text address, so every Prism item ball printed
+            -- a line decoded out of whatever bytes lived at $0028.
+            if kind == GEN2_OBJECT_KIND_ITEMBALL
+               and self:layout("objectItemInline", 0) ~= 0 then
+              item = row[10]
+              quantity = row[9]
+            elseif kind == 3
+               and self:layout("objectItemInline", 0) ~= 0 then
+              -- PERSONTYPE_TMHMBALL.  `.tmhm` reads the machine number out
+              -- of PARAMETER; the port has
+              -- no machine-number-to-item map, so record it and leave the ball
+              -- inert rather than handing out the wrong item
+              object.machine = row[9]
+            elseif script and kind == GEN2_OBJECT_KIND_ITEMBALL then
               item = self.rom:byte(bank, scriptAddress)
               quantity = self.rom:byte(bank, scriptAddress + 1)
-            elseif script
-                and self.rom:byte(bank, scriptAddress) == GEN2_SCRIPT_OP_FRUITTREE then
-              -- a berry tree is scenery that happens to hand out an item; it
+            elseif kind == RomExtractorGen2.GEN2_OBJECT_KIND_FRUITTREE
+               and self:layout("objectTextKinds", 0) ~= 0 then
+              -- Prism gives berry trees a PERSONTYPE of their own and puts the
+              -- tree id straight in the parameter field, so there is no script
+              -- to sniff at all.
+              fruitTree = row[9]
+              item = fruitTreeItems[fruitTree]
+              quantity = 1
+            elseif script and kind == GEN2_OBJECT_KIND_SCRIPT
+                and self.rom:byte(bank, scriptAddress) == self:opcode("fruittree") then
+              -- A berry tree is scenery that happens to hand out an item; it
               -- must stay on the map once picked, unlike an item ball, and
-              -- FruitTreeScript keys its once-a-day flag off the tree id
+              -- FruitTreeScript keys its once-a-day flag off the tree id.
+              --
+              -- GATED ON THE OBJECT KIND, and deliberately.  This branch used
+              -- to sniff the first byte behind EVERY object's pointer field,
+              -- but only a SCRIPT object's pointer is a script: a TRAINER's is
+              -- a 12-byte header opening `dw EVENT_BEAT_*`, so a trainer whose
+              -- beat-event low byte happened to equal the opcode was read as a
+              -- berry tree -- Gentleman Preston on Olivine Lighthouse 3F, in
+              -- both Gold and Crystal, whose EVENT_BEAT_GENTLEMAN_PRESTON ends
+              -- $9A.  He stood there as scenery handing out a BERRY instead of
+              -- battling.  Route 41's Olivine rival object went the same way.
               fruitTree = self.rom:byte(bank, scriptAddress + 1)
               item = fruitTreeItems[fruitTree]
               quantity = 1
-            elseif kind == GEN2_OBJECT_KIND_TRAINER then
+            elseif kind == GEN2_OBJECT_KIND_TRAINER
+                or (kind == RomExtractorGen2.GEN2_OBJECT_KIND_GENERICTRAINER
+                    and self:layout("objectTextKinds", 0) ~= 0) then
               object.trainerObject = true
               -- The script pointer of a trainer object is a 12 byte header:
               -- dw EVENT_BEAT_*, db class, db id, dw seen, dw beaten,
@@ -3751,7 +4568,16 @@ function RomExtractorGen2:extractMapsFromRom()
                   end
                   header.battle = registerText("SEEN", self.rom:word(bank, scriptAddress + 4))
                   header.won = registerText("BEATEN", self.rom:word(bank, scriptAddress + 6))
-                  header.after = registerText("AFTER", self.rom:word(bank, scriptAddress + 10))
+                  -- A GENERICTRAINER's block is `dw flag / db group, id /
+                  -- dw seen, win` and the two extra words are OPTIONAL
+                  -- (macros/trainer.asm, `IF _NARG > 5`).  With only five
+                  -- arguments the bytes at +10 are the trainer's own TEXT,
+                  -- and reading them as a pointer registers a line decoded
+                  -- out of the middle of a sentence, so the after-battle
+                  -- line is taken only from the fixed 12-byte layout.
+                  if kind == GEN2_OBJECT_KIND_TRAINER then
+                    header.after = registerText("AFTER", self.rom:word(bank, scriptAddress + 10))
+                  end
                   trainerHeaders[mapId] = trainerHeaders[mapId] or {}
                   trainerHeaders[mapId][i] = header
                   trainerObjects = trainerObjects + 1
@@ -3816,8 +4642,21 @@ function RomExtractorGen2:extractMapsFromRom()
               itemObjects = itemObjects + 1
             else
               object.text = textConst
-              local ok, textBank, textAddr = pcall(
-                self.gen2ScriptTextAddress, self, bank, scriptAddress)
+              local ok, textBank, textAddr
+              if RomExtractorGen2.GEN2_OBJECT_KIND_TEXT[kind]
+                 and self:layout("objectTextKinds", 0) ~= 0
+                 and (kind == 5 or kind == 6) and script then
+                -- PERSONTYPE_TEXT / _TEXTFP: the pointer IS the dialogue.
+                -- gen2ScriptTextAddress exists to WALK a script looking for
+                -- the text it writes, and walking dialogue as a script is
+                -- what handed out that GLACEON -- so take the pointer as
+                -- given, the same way a writetext operand is taken as given.
+                ok, textBank, textAddr = true, self:gen2Home(bank, scriptAddress),
+                  scriptAddress
+              else
+                ok, textBank, textAddr = pcall(
+                  self.gen2ScriptTextAddress, self, bank, scriptAddress)
+              end
               if ok and textBank then
                 self._gen2ScriptTexts[textConst] = { bank = textBank, address = textAddr }
                 textPointers[mapId] = textPointers[mapId] or {}
@@ -3868,7 +4707,43 @@ function RomExtractorGen2:extractMapsFromRom()
                 -- do not attach dialogue text; runtime gives the item instead
                 signs[i].text = nil
               end
+            elseif self:layout("objectTextKinds", 0) ~= 0 then
+              -- Prism: every signpost that is not a hidden item carries a
+              -- SCRIPT, and the map-scripts pass links it (including the two
+              -- std kinds).  The scaffold's own guess for this const came from
+              -- a `<Map><Thing>_Text` symbol-name heuristic that assigns one
+              -- label to every sign on the map and, on Prism, usually names
+              -- something that is not text at all -- Acqua Tutorial's four
+              -- cave signs all resolved to AcquaTutorialFirstSoil_Text and
+              -- printed "{BYTE:41}...{RAM:BC87}...".  Drop it: the script is
+              -- the behaviour, and a silent sign beats a noisy one.
+              --
+              -- Dropping the guess used to be the whole branch, on the grounds
+              -- that the map-scripts pass links a SCRIPT for every Prism
+              -- signpost.  IT DOES NOT: only 250 of 591 get one, and the other
+              -- 341 were left showing a generated "You read the sign. <Map>."
+              -- stub or nothing at all, where Gold and Crystal print the
+              -- cartridge's words on every sign they have.
+              --
+              -- gen2TextBlockAt answers the narrow question -- "are these
+              -- bytes text?" -- and now knows both of Prism's text shapes, so
+              -- ask it.  This is the DIRECT check, not the opcode scan that
+              -- had to be refused: a signpost's pointer is already an address,
+              -- and there is no bytecode to misread.  A sign that also has a
+              -- script still runs it; talk rows win over flat text.
+              if textPointers[mapId] then textPointers[mapId][textConst] = nil end
+              local okText, textBank, textAddr =
+                pcall(self.gen2TextBlockAt, self, bank, ptr)
+              if okText and textBank then
+                self._gen2ScriptTexts[textConst] =
+                  { bank = textBank, address = textAddr }
+                textPointers[mapId] = textPointers[mapId] or {}
+                textPointers[mapId][textConst] = { text = textConst }
+              end
             elseif kind ~= 8 then
+              -- 9 is Prism's SIGNPOST_JUMPSTDNOSFX: a std INDEX in the
+              -- pointer slot, and walking it for text is what scrambled the
+              -- Rock Smash sign
               local ok, textBank, textAddr = pcall(
                 self.gen2ScriptTextAddress, self, bank, ptr)
               if ok and textBank then
@@ -4041,6 +4916,13 @@ end
 -- a script reached twice is only walked once.
 function RomExtractorGen2:gen2QueueScript(bank, address, pool)
   if not self:gen2InRom(bank, address) then return nil end
+  -- Script BYTECODE never sits in the home bank.  Everything below $4000 in
+  -- both disassemblies is engine code -- CallScript, QueueScript, the RST
+  -- vectors, the Nintendo logo -- so a pointer that lands there is a pointer
+  -- that was never a script pointer, and walking it produces a script-shaped
+  -- run of nonsense that then queues more of the same.  Prism was decoding 229
+  -- of these (Crystal 13), starting at $0100, the cartridge entry point.
+  if address < 0x4000 then return nil end
   bank = self:gen2Home(bank, address)
   local label = gen2ScriptLabel(bank, address)
   if pool.scripts[label] == nil then
@@ -4048,6 +4930,105 @@ function RomExtractorGen2:gen2QueueScript(bank, address, pool)
     pool.queue[#pool.queue + 1] = { bank, address, label }
   end
   return label
+end
+
+-- `jumptable <ptr>` (Script_scriptjumptable, engine/scripting.asm) indexes a
+-- table of `dw` script pointers by the script variable and CALLS the entry
+-- (`ld b, 1` then ScriptJumptable, whose `jp z, LocalScriptJump` is only taken
+-- for anonjumptable's b=0).  Nothing in the stream says how long the table is,
+-- so the walk is bounded by the table's own targets: Prism writes the cases
+-- directly after the table, so the first entry that points into the bytes the
+-- table has already claimed -- or out of the bank -- is the end of it.
+--
+--     .MiningModes:                     <- the pointer
+--         dw .onlyCheckIronPick         <- and the table stops here, because
+--         dw .smartCheckBothPicks          .onlyCheckIronPick is the first
+--         dw .onlyCheckNormalPicks         byte after the third dw
+--     .onlyCheckIronPick:
+--
+-- Over-reading is the failure that matters: an extra entry queues whatever
+-- follows as a script, and Prism's script bytes decode into something.
+-- `ptcall <ptr>` / `ptjump <ptr>` do not name a script: they name a
+-- THREE-BYTE far pointer -- `ld b, [hl] / ld e, [hl] / ld d, [hl]`, bank then
+-- address -- and jump through it.  Prism uses the shape for the tables that
+-- pick which version of a scene to run.  Where the pointer sits in ROM it can
+-- be followed here; where it sits in WRAM ($c000 and up) it is filled in at
+-- run time and there is nothing to resolve, so the row is dropped rather than
+-- pointed at whatever happens to be at that address in the ROM image.
+function RomExtractorGen2:gen2FarPointerScript(bank, address, pool)
+  if type(address) ~= "number" or address < 0x4000 or address >= 0x8000 then
+    return nil
+  end
+  local far = self.rom:byte(bank, address)
+  local target = self.rom:word(bank, address + 1)
+  return self:gen2QueueScript(far, target, pool)
+end
+
+RomExtractorGen2.GEN2_TEXT_FROM_HALFWORD = "<halfwordvar>"
+RomExtractorGen2.GEN2_JUMPTABLE_MAX = 24
+
+function RomExtractorGen2:gen2JumpTable(bank, address, pool)
+  if type(address) ~= "number" then return nil end
+  local low = bank == 0 and 0x0000 or 0x4000
+  local high = bank == 0 and 0x4000 or 0x8000
+  if address < low or address >= high then return nil end
+  local out, stop = {}, high
+  for i = 0, RomExtractorGen2.GEN2_JUMPTABLE_MAX - 1 do
+    local at = address + i * 2
+    if at + 2 > stop then break end
+    local target = self.rom:word(bank, at)
+    if target < low or target >= high then break end
+    -- a case that starts inside the table is the table's own end
+    if target > address and target < stop then stop = target end
+    if at + 2 > stop then break end
+    local label = self:gen2QueueScript(bank, target, pool)
+    if not label then break end
+    out[#out + 1] = label
+  end
+  if #out == 0 then return nil end
+  return out
+end
+
+-- `loadarray <ptr>, <entry size>` (Script_loadarray) parks a far pointer, an
+-- entry size and a current-entry index; `readarray <i>` / `readarrayhalfword
+-- <i>` then read base + size * entry + i.  The runtime has no ROM to reach
+-- back into, so the bytes come out here.
+--
+-- Length is not in the stream either.  A window is read and clamped to the
+-- bank; the halfword view is what carries dialogue -- MiningScript's
+-- `loadarray .MiningFailureTextsArray / readarrayhalfword 0 / jumptext -1` is
+-- a table of TEXT pointers, and a pointer alone is useless to the port -- so
+-- each plausible in-bank halfword is registered as text and the resulting
+-- label kept alongside the raw value.
+RomExtractorGen2.GEN2_ARRAY_WINDOW = 64
+
+function RomExtractorGen2:gen2ScriptArray(bank, address, size, wantTexts)
+  if type(address) ~= "number" then return nil end
+  local low = bank == 0 and 0x0000 or 0x4000
+  local high = bank == 0 and 0x4000 or 0x8000
+  if address < low or address >= high then return nil end
+  local count = math.min(RomExtractorGen2.GEN2_ARRAY_WINDOW, high - address)
+  local bytes, words = {}, {}
+  for i = 0, count - 1 do bytes[i + 1] = self.rom:byte(bank, address + i) end
+  for i = 0, math.floor(count / 2) - 1 do
+    words[i + 1] = bytes[i * 2 + 1] + bytes[i * 2 + 2] * 256
+  end
+  local texts
+  if wantTexts then
+    -- Only the scripts that actually READ halfwords get their entries decoded,
+    -- and the run stops at the first value that is not a pointer into this
+    -- bank: a byte array read as words is nothing but junk pointers, and
+    -- registering those would fill the text pool with decoded noise.
+    texts = {}
+    for i = 1, #words do
+      local w = words[i]
+      if w < low or w >= high then break end
+      texts[i] = self:gen2RegisterScriptText(bank, w) or false
+    end
+    if #texts == 0 then texts = nil end
+  end
+  return { bytes = bytes, words = words, texts = texts,
+           size = tonumber(size) or 0 }
 end
 
 -- `elevator <ptr>`: db count, then `db floor, db warp, db group, db number`
@@ -4144,6 +5125,13 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
   -- table desyncs on the first shifted opcode and never recovers.
   local commands = Gen2ScriptOps.commandsFor(self.version)
   local rows = {}
+  -- set when the PREVIOUS command was a `sif` with no `then`: the command now
+  -- being read is that conditional's whole body (see the break test below)
+  local conditionalGuard = false
+  -- How many `sif ... then` blocks are open at this point in the byte
+  -- stream.  See the terminator rule at the bottom of the loop.
+  local sifDepth = 0
+  local arrays = nil
   local limit = bank == 0 and 0x4000 or 0x8000
   local pc = address
   for _ = 1, GEN2_SCRIPT_MAX_STEPS do
@@ -4155,8 +5143,14 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
       -- record the stall instead of walking off into noise
       rows[#rows + 1] = { "unknown", op }
       pool.desyncs = pool.desyncs + 1
-      Logger.warn("gen2 script desync: %s (%02X:%04X) opcode %02X",
-                  tostring(label), bank, pc, op)
+      -- Naming what came BEFORE is what makes a desync actionable: a run of
+      -- them all following the same command is a missing terminator or a bad
+      -- width for that one command, where "<start>" means the pointer was
+      -- never a script to begin with (an object whose "script" addresses text
+      -- or data, which the ROM itself never executes).
+      Logger.warn("gen2 script desync: %s (%02X:%04X) opcode %02X after %s",
+                  tostring(label), bank, pc, op,
+                  tostring(rows[#rows - 1] and rows[#rows - 1][1] or "<start>"))
       break
     end
     local name, spec = command[1], command[2]
@@ -4183,7 +5177,13 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
         value = self:gen2QueueScript(
           self.rom:byte(bank, pc), self.rom:word(bank, pc + 1), pool)
       elseif kind == "t" then
-        value = self:gen2RegisterScriptText(bank, self.rom:word(bank, pc))
+        local raw = self.rom:word(bank, pc)
+        -- Prism's GetScriptHalfwordOrVar reads $ffff as "use the halfword
+        -- variable", which is how `loadarray / readarrayhalfword / jumptext -1`
+        -- prints a line chosen out of a table.  $ffff is not an address, so
+        -- registering it yielded nothing and the box came up empty.
+        value = raw == 0xFFFF and RomExtractorGen2.GEN2_TEXT_FROM_HALFWORD
+          or self:gen2RegisterScriptText(bank, raw)
       elseif kind == "T" then
         value = self:gen2RegisterScriptText(
           self.rom:byte(bank, pc), self.rom:word(bank, pc + 1))
@@ -4207,6 +5207,15 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
       -- reach back into the ROM: `getstring "EXPN CARD", 1` becomes a
       -- literal the `jumpstd receiveitem` after it can print.
       row[2] = self:gen2ReadInlineString(bank, row[2]) or row[2]
+    elseif name == "jumptable" then
+      row[2] = self:gen2JumpTable(bank, row[2], pool) or row[2]
+    elseif name == "ptcall" or name == "ptjump" then
+      row[2] = self:gen2FarPointerScript(bank, row[2], pool) or ""
+    elseif name == "loadarray" then
+      -- resolved after the walk: whether the entries are TEXT pointers is not
+      -- knowable here, only from whether a readarrayhalfword follows
+      arrays = arrays or {}
+      arrays[#arrays + 1] = { row, row[2] }
     elseif name == "loadmenu" then
       row[2] = self:gen2MenuItems(bank, row[2]) or row[2]
     elseif name == "writecmdqueue" then
@@ -4222,7 +5231,74 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
     end
     rows[#rows + 1] = row
     pool.instructions = pool.instructions + 1
-    if Gen2ScriptOps.TERMINATORS[name] then break end
+    -- Prism writes its map events with BLOCK-STRUCTURED conditionals
+    -- (macros/event.asm `sif`), and the two shapes guard different amounts:
+    --
+    --     sif true, then     sif true
+    --       <many commands>    <ONE command>
+    --     sendif
+    --
+    -- With no `then` marker the conditional covers exactly the command that
+    -- follows it, so a terminator sitting there ends the BRANCH, not the
+    -- script -- IntroOutside's `.init_events` is `checkevent / sif true /
+    -- return / jumpstd initializeevents`, and stopping at that `return` threw
+    -- away the jumpstd that actually initialises the game's events.
+    --
+    -- `sif ... then` needs no such rule: its body runs to `sendif`, and any
+    -- terminator inside it really does leave the script.
+    local guardsNext = conditionalGuard
+    local wasSif = conditionalGuard and true or false
+    conditionalGuard = Gen2ScriptOps.SIF_COMMANDS_PRISM
+      and Gen2ScriptOps.SIF_COMMANDS_PRISM[name] or false
+    -- `scriptstartasm` IS Prism's `then` marker -- the macro says so outright
+    -- (`then_command EQU scriptstartasm_command`) -- so one opcode means two
+    -- different things depending on what precedes it.  After a `sif` it opens
+    -- a block; anywhere else the bytes that follow are Z80 machine code, and
+    -- walking into those is what "opcode F0 after scriptstartasm" was.
+    if name == "scriptstartasm" then
+      if wasSif then
+        sifDepth = sifDepth + 1
+      else
+        break
+      end
+    elseif name == "sendif" and sifDepth > 0 then
+      sifDepth = sifDepth - 1
+    end
+    -- A TERMINATOR INSIDE A `sif ... then` BLOCK ENDS THE BRANCH, NOT THE
+    -- SCRIPT.  ScriptConditional skips a false block by walking commands to
+    -- its `sendif` and carrying on past it, so everything after the block is
+    -- still live code -- and this walker used to stop dead at the first
+    -- terminator inside one.  IlksLabProfIlk is the case that shows it:
+    --
+    --     checkevent EVENT_MET_ILK_PRE / sif false, then
+    --       ... / jumptextfaceplayer .first_encounter_text
+    --     sendif
+    --     faceplayer / opentext / checkevent EVENT_RIVAL_ROUTE_69 / ...
+    --
+    -- The decode stopped on that `jumptextfaceplayer`, so the professor's
+    -- entire script after the first meeting -- the Pokedex hand-off and every
+    -- later line -- was never decoded at all, and talking to him again did
+    -- nothing.  Only a terminator at depth 0 leaves the script.
+    if Gen2ScriptOps.terminatorsFor(self.version)[name] and not guardsNext
+       and sifDepth == 0 then
+      break
+    end
+  end
+  -- `loadarray` names a blob whose entries are bytes or halfwords depending
+  -- on which read command indexes it, and that command comes LATER in the
+  -- stream.  MiningScript's `.MiningFailureTextsArray` is a table of text
+  -- pointers, read with `readarrayhalfword 0` and printed by `jumptext -1`;
+  -- the same script's other arrays are plain bytes.  Decide once, here, where
+  -- the whole script is visible.
+  if arrays then
+    local wantTexts = false
+    for _, r in ipairs(rows) do
+      if r[1] == "readarrayhalfword" then wantTexts = true break end
+    end
+    for _, entry in ipairs(arrays) do
+      local row, address = entry[1], entry[2]
+      row[2] = self:gen2ScriptArray(bank, address, row[3], wantTexts) or address
+    end
   end
   pool.scripts[label] = rows
 end
@@ -4705,17 +5781,50 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
             local pointer = row[GEN2_OBJECT_ROW_SCRIPT]
               + row[GEN2_OBJECT_ROW_SCRIPT + 1] * 256
             local label
-            if not self:gen2InRom(bank, pointer) then
+            -- PERSONTYPE_JUMPSTD (7) carries a STD INDEX where every other kind
+            -- carries a pointer: Prism's smashable rocks are `person_event
+            -- SPRITE_ROCK, ..., PERSONTYPE_JUMPSTD, 0, smashrock, -1`, and so
+            -- are its signs and its PC/mart counters.  With nothing linked the
+            -- object had no script at all and printed the placeholder name of
+            -- a text entry that was never registered.
+            if kind == 7 and self:layout("objectTextKinds", 0) ~= 0 then
+              self._gen2Stds = self._gen2Stds or self:gen2QueueStdScripts(pool)
+              label = self._gen2Stds
+                and self._gen2Stds[row[GEN2_OBJECT_ROW_SCRIPT]] or nil
+            elseif not self:gen2InRom(bank, pointer) then
               label = nil
             else
               -- a pointer below $4000 lives in the always-mapped home bank
               local pbank = self:gen2Home(bank, pointer)
-              if kind == GEN2_OBJECT_KIND_TRAINER then
+              if kind == RomExtractorGen2.GEN2_OBJECT_KIND_GENERICTRAINER
+                 and self:layout("objectTextKinds", 0) ~= 0 then
+                -- PRISM'S GENERIC TRAINER POINTS AT DATA, NOT AT A SCRIPT.
+                -- macros/trainer.asm is `dw flag / db group, id / dw seen,
+                -- win` and optionally two more words -- eight or twelve bytes
+                -- with no bytecode anywhere in them, the trainer's dialogue
+                -- following inline.  Queued as a script the walker decoded the
+                -- event flag's low byte as an opcode, which is every one of
+                -- the "opcode $EC..$FF after <start>" desyncs: 40 of them, and
+                -- one per generic trainer on the map.  The header branch above
+                -- already reads the block properly; there is nothing here to
+                -- walk.
+                label = nil
+              elseif kind == GEN2_OBJECT_KIND_TRAINER then
                 label = self:gen2QueueScript(
                   pbank, pointer + GEN2_TRAINER_HEADER_BYTES, pool)
                 local after = self.rom:word(
                   pbank, pointer + GEN2_TRAINER_HEADER_AFTER)
                 afters[i] = self:gen2QueueScript(pbank, after, pool)
+              elseif RomExtractorGen2.GEN2_OBJECT_KIND_TEXT[kind]
+                     and self:layout("objectTextKinds", 0) ~= 0 then
+                -- Prism's PERSONTYPE_TEXT (5) and PERSONTYPE_TEXTFP (6) point
+                -- at TEXT, not at a script.  Queueing them as scripts walks
+                -- dialogue through the script decoder, and a text byte is a
+                -- perfectly valid opcode -- the campfire on the opening map is
+                -- PERSONTYPE_TEXT, and its first line decoded into a `givepoke`
+                -- that handed out a level 17 GLACEON every time it was talked
+                -- to.  Anything the ROM stores as text has to be READ as text.
+                label = nil
               elseif kind ~= GEN2_OBJECT_KIND_ITEMBALL then
                 label = self:gen2QueueScript(pbank, pointer, pool)
               end
@@ -4729,9 +5838,19 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
           if next(afters) then entry.objectAfter = afters end
 
           local coords = {}
+          -- The script sits at a different offset in the two layouts.
+          -- Crystal: `db scene, y, x / db 0 / dw script / dw 0` -- offset 4.
+          -- Prism:   `db number, y, x / dw event / dw script`   -- offset 5,
+          -- because it carries an event word the base game does not have.
+          -- Reading Prism at offset 4 splices the event's high byte onto the
+          -- script's low byte, so most triggers resolved to nothing: of
+          -- IntroOutside's six, only the two whose bytes happened to survive
+          -- came through -- the pair that starts the earthquake, and neither
+          -- of the pairs around it.
+          local scriptAt = self:layout("coordEventScript", GEN2_COORD_ROW_SCRIPT)
           for _, row in ipairs(events.coords) do
-            local pointer = row[GEN2_COORD_ROW_SCRIPT]
-              + row[GEN2_COORD_ROW_SCRIPT + 1] * 256
+            local pointer = row[scriptAt]
+              + row[scriptAt + 1] * 256
             local label = self:gen2QueueScript(bank, pointer, pool)
             if label then
               -- CheckCurrentMapCoordEvents subtracts 4 from the player's
@@ -4769,7 +5888,23 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
               signConds[i] = { event = event, ifSet = kind == 5 }
             end
             -- BGEVENT_COPY (8) stores a RAM address in the pointer slot
-            if kind ~= GEN2_BG_EVENT_ITEM and kind ~= 8 then
+            --
+            -- Prism reuses 8 and adds 9 for something else entirely:
+            -- SIGNPOST_JUMPSTD and SIGNPOST_JUMPSTDNOSFX, whose `signpost`
+            -- macro writes `db <std>, db 0` where every other kind writes a
+            -- pointer.  Read as one, 9 walked a std INDEX looking for text and
+            -- printed whatever bytes lived down there -- the scrambled sign --
+            -- and 8, already excluded, simply said nothing at all.
+            local std = self:layout("objectTextKinds", 0) ~= 0
+              and (kind == 8 or kind == 9) and row[4] or nil
+            if std then
+              self._gen2Stds = self._gen2Stds or self:gen2QueueStdScripts(pool)
+              local label = self._gen2Stds and self._gen2Stds[std]
+              if label then
+                signs[i] = label
+                signCount = signCount + 1
+              end
+            elseif kind ~= GEN2_BG_EVENT_ITEM and kind ~= 8 then
               local label = self:gen2QueueScript(bank, ptr, pool)
               if label then
                 signs[i] = label
@@ -4843,6 +5978,131 @@ end
 
 -- LZ3 blob at a symbol.  The stream is $FF-terminated, so reading to the
 -- end of the bank and letting decompressLz3 stop on its own is safe.
+-- ---------------------------------------------------------------------------
+-- Prism's compressed text
+--
+-- Crystal stores dialogue as one charmap byte per character.  Prism stores it
+-- HUFFMAN-CODED, as a bit stream introduced by TX_COMPRESSED ($03), and
+-- decodes it a character at a time in PrintCompressedString
+-- (engine/compressed_text.asm).  Read as plain charmap bytes, what comes out
+-- is the bit stream itself -- which on screen is the scrambled dialogue.
+--
+-- TextCompressionHuffmanTree is two bytes per non-leaf node, root first: at
+-- node n, bit b selects tree[n * 2 + b].  A value below $70 is the next node;
+-- $70 and up is a leaf.  The leaf then needs unpacking, because the tree packs
+-- three different things into one byte range (GenerateCompressedTextBuffer):
+--
+--   $BC-$CF  ->  value - $78   the control characters $44-$57
+--   $78-$7B  ->  value - $20   the control characters $58-$5B
+--   $7C      ->  read 6 more bits, index TextCompressionSpecialValues64
+--   $7D      ->  read 4 more bits, index TextCompressionSpecialValues16
+--   anything else prints as itself
+--
+-- Bits are MSB-first within each byte (the ROM shifts with `sla e`).
+RomExtractorGen2.PRISM_TX_COMPRESSED = 0x03
+RomExtractorGen2.PRISM_HUFFMAN_LEAF = 0x70
+
+function RomExtractorGen2:gen2PrismTextTables()
+  if self._prismText ~= nil then return self._prismText or nil end
+  self._prismText = false
+  local tree = self:symbol("TextCompressionHuffmanTree")
+  if not (tree and self.rom) then return nil end
+  local ok, tables = pcall(function()
+    -- The tree is at most $70 non-leaf nodes, so 224 bytes covers it.
+    local nodes = self.rom:bytes(tree.bank, tree.address, 0x70 * 2)
+    local out = { tree = nodes, bank = tree.bank }
+    local s16 = self:symbol("TextCompressionSpecialValues16")
+    if s16 then out.special16 = self.rom:bytes(s16.bank, s16.address, 16) end
+    local s64 = self:symbol("TextCompressionSpecialValues64")
+    -- (count, initial + count) pairs, walked until the running subtraction
+    -- borrows; four pairs cover the whole 64
+    if s64 then out.special64 = self.rom:bytes(s64.bank, s64.address, 8) end
+    return out
+  end)
+  if not ok or type(tables) ~= "table" then return nil end
+  self._prismText = tables
+  return tables
+end
+
+-- Decode one TX_COMPRESSED run starting at `address` (which must point AT the
+-- TX_COMPRESSED byte).  Returns the decoded character bytes, ready for the
+-- ordinary charmap, and the address just past the run.
+function RomExtractorGen2:gen2PrismDecompressText(bank, address)
+  local t = self:gen2PrismTextTables()
+  if not t then return nil end
+  local out = {}
+  local pc = address + 1          -- past TX_COMPRESSED
+  local limit = bank == 0 and 0x4000 or 0x8000
+  local cur, bitsLeft = 0, 0
+  local function bit()
+    if bitsLeft == 0 then
+      if pc >= limit then return nil end
+      cur = self.rom:byte(bank, pc)
+      pc = pc + 1
+      bitsLeft = 8
+    end
+    local b = math.floor(cur / 128) % 2
+    cur = (cur * 2) % 256
+    bitsLeft = bitsLeft - 1
+    return b
+  end
+  local function bits(n)
+    local v = 0
+    for _ = 1, n do
+      local b = bit()
+      if b == nil then return nil end
+      v = v * 2 + b
+    end
+    return v
+  end
+
+  for _ = 1, GEN2_TEXT_MAX_BYTES or 4096 do
+    local node = 0
+    local value
+    for _ = 1, 24 do              -- a code longer than the tree is deep is noise
+      local b = bit()
+      if b == nil then return out, pc end
+      value = t.tree[node * 2 + b + 1]
+      if value == nil then return out, pc end
+      if value >= RomExtractorGen2.PRISM_HUFFMAN_LEAF then break end
+      node = value
+    end
+    if value == nil or value < RomExtractorGen2.PRISM_HUFFMAN_LEAF then
+      return out, pc
+    end
+    local char
+    if value >= 0xBC and value < 0xD0 then
+      char = value - 0x78
+    elseif value >= 0x78 and value < 0x7C then
+      char = value - 0x20
+    elseif value == 0x7C then
+      local n = bits(6)
+      if n == nil then return out, pc end
+      -- (count, initial + count) pairs: subtract each count until it borrows,
+      -- then add that pair's base back
+      local list = t.special64 or {}
+      for i = 1, #list - 1, 2 do
+        local count, base = list[i], list[i + 1]
+        if n < count then char = (n + base) % 256; break end
+        n = n - count
+      end
+      char = char or 0x50
+    elseif value == 0x7D then
+      local n = bits(4)
+      if n == nil then return out, pc end
+      char = (t.special16 or {})[n + 1] or 0x50
+    else
+      char = value
+    end
+    out[#out + 1] = char
+    -- PrintCompressedString stops on "@", and PlaceString stops the box on a
+    -- finish character (<DONE> / <PROMPT> / <SDONE>).  Without those three the
+    -- walk ran on into the next string and only stopped on the step cap.
+    if RomExtractorGen2.GEN2_TEXT_ENDS[char] then return out, pc end
+  end
+  return out, pc
+end
+
 function RomExtractorGen2:gen2Lz(symbolName)
   local sym = self:symbol(symbolName)
   if not sym or not self.rom then return nil end
@@ -4852,6 +6112,26 @@ function RomExtractorGen2:gen2Lz(symbolName)
   if not ok or type(raw) ~= "table" then return nil end
   local out = decompressLz3(raw)
   return #out > 0 and out or nil
+end
+
+-- The same read against a bare (bank, address) rather than a symbol, for
+-- blobs the ROM only reaches through a far pointer -- a map's block table
+-- above all.  `expected`, when given, is the ONLY thing that decides whether
+-- the answer is kept: an LZ3 decoder handed raw data does not fail, it
+-- returns plausible-looking rubbish, so "it decompressed" proves nothing and
+-- "it decompressed to exactly the size the header says" proves everything.
+-- That makes this safe to attempt on a cartridge that stores the blob raw --
+-- Gold and Crystal do -- because the length check simply will not match.
+function RomExtractorGen2:gen2LzAt(bank, address, expected)
+  if not self.rom then return nil end
+  local ok, raw = pcall(function()
+    return self.rom:bytes(bank, address, 0x8000 - address)
+  end)
+  if not ok or type(raw) ~= "table" then return nil end
+  local okOut, out = pcall(decompressLz3, raw)
+  if not okOut or type(out) ~= "table" or #out == 0 then return nil end
+  if expected and #out ~= expected then return nil end
+  return out
 end
 
 -- `count` CGB palettes of 4 bgr555 colors, as {r,g,b} in 0..1.  `offset` is
@@ -5097,9 +6377,237 @@ function RomExtractorGen2:extractCrystalTitleArt()
   }
 end
 
+-- PRISM'S TITLE SCREEN (engine/title.asm _TitleScreen).  It answers the same
+-- two questions Crystal's does -- it has TitleLogoGFX and no
+-- TitleScreenTilemap -- so it was falling into the Crystal reader, which then
+-- looked for TitleSuicuneGFX, found nothing, and returned nil.  Prism has no
+-- title art at all as a result.
+--
+-- What it actually draws, read off the routine:
+--
+--   TitleLogoGFX      -> vFontTiles ($8800, VRAM bank 0).  LCDC bit 4 is
+--                        clear so BG ids are SIGNED, the same rule Crystal
+--                        uses: $80+n is blob[n] and $00+n is blob[128+n].
+--                        gfx/title/logo.xbpp is 194 tiles -- `.xbpp` is
+--                        Prism's name for a 2bpp sheet its .cfg trims six
+--                        tiles off the end of, not a different depth.
+--   TitleTyranitarGFX -> vWalkingFrameTiles ($8800, VRAM BANK 1), 119 tiles,
+--                        which is exactly the 17x7 of gfx/title/tyranitar.png.
+--
+--   logo      DrawTitleGraphic at (0,3), b=9 rows, c=20 cols, d=$80, e=$14
+--   "Pokemon" at (0,12),  b=7, c=9,  d=$80, e=$11 -> tyranitar cols 0-8
+--   "Trainers" at (11,12), b=7, c=8, d=$89, e=$11 -> tyranitar cols 9-16
+--   3D prism  at (7,12), five tiles of 0 -- the rotating prism is drawn per
+--             frame from cleared VRAM, so it is a GAP in the static art, and
+--             the two halves above are one picture split around it.
+--
+-- The attrmap ByteFills give the logo its gradient (rows 3-4 palette 2, row 5
+-- palette 3, row 6 palette 4, row 7 palette 5, rows 8-11 palette 6) with the
+-- PRISM VERSION ribbon at row 9 column 5 for NAME_LENGTH (11) on palette 1.
+-- The band below is attribute 8 and 15 -- bank 1, palettes 0 and 7 -- so the
+-- two halves of the one Tyranitar drawing are deliberately coloured apart.
+function RomExtractorGen2:extractPrismTitleArt()
+  local logo = self:gen2Lz("TitleLogoGFX")
+  local mon = self:gen2Lz("TitleTyranitarGFX")
+  local pals = self:gen2CgbPalettes("TitleScreenPalettes", 8)
+  if not (logo and mon and pals) then return nil end
+
+  local logoTiles = gen2SplitTiles(logo)
+  local monTiles = gen2SplitTiles(mon)
+  -- signed BG id -> index into a blob decompressed contiguously from $8800
+  local function pick(tiles, id)
+    return tiles[id >= 0x80 and (id - 0x80) or (id + 0x80)]
+  end
+
+  local rowPal = { [3] = 2, [4] = 2, [5] = 3, [6] = 4, [7] = 5,
+                   [8] = 6, [9] = 6, [10] = 6, [11] = 6 }
+  -- THE BACKDROP IS NOT BLACK.  _TitleScreen clears the whole tilemap to the
+  -- space character on attribute 0, so every cell no DrawTitleGraphic call
+  -- claims shows a blank tile in palette 0 -- and palette 0's colour 0 is
+  -- WHITE.  Starting the canvas at black left the two columns between
+  -- Tyranitar and the trainers, the column past them, and the rows above the
+  -- logo as black holes that are not on the real screen.
+  local blank = pals[1][1]
+  -- SHADE 0 IS A HOLE, because that is the hardware rule the prism depends
+  -- on.  Its 29 OAM entries all carry attribute $80/$81 -- bit 7 set, "behind
+  -- BG" -- and an OBJ with that bit shows only where the BG pixel is colour 0
+  -- of its palette.  So the gem is seen through the sky, through the white
+  -- surround, and through the gaps in the band, but never through the logo's
+  -- letters.  Punching shade 0 to alpha 0 here lets the renderer reproduce
+  -- that exactly: backdrop, then prism, then this image over the top.
+  -- TWO copies, because a colour-0 BG pixel is not "transparent" -- the
+  -- hardware still draws it, it is just the one an OBJ behind the BG is
+  -- allowed to replace.  So the renderer needs the screen twice: the plain
+  -- one underneath, and the same screen with its colour-0 pixels punched out
+  -- laid back over the gem.  Anywhere the gem is not, the plain copy shows
+  -- through the hole and the sky keeps its gradient.
+  local image = ImageWriter.blank(160, 144, blank[1], blank[2], blank[3], 1)
+  local over = ImageWriter.blank(160, 144, blank[1], blank[2], blank[3], 0)
+  local function drawTile(tile, px, py, pal)
+    if not tile then return end
+    for y = 0, 7 do
+      for x = 0, 7 do
+        local shade = tile[y * 8 + x + 1]
+        local color = pal[shade + 1]
+        image:setPixel(px + x, py + y, color[1], color[2], color[3], 1)
+        over:setPixel(px + x, py + y, color[1], color[2], color[3],
+                      shade == 0 and 0 or 1)
+      end
+    end
+  end
+
+  -- THE SCREEN IS SCROLLED.  _TitleScreen ends with `ld a, 16 / ldh [hSCY]`,
+  -- so the viewport starts two tile rows down the BG map: BG row 2 is screen
+  -- row 0.  Every coordinate in the routine is a BG-map row and has to lose
+  -- those two rows to land on the 144px screen -- the logo at BG rows 3-11 is
+  -- screen rows 1-9, and the Tyranitar band at BG rows 12-18 is screen rows
+  -- 10-16.  Ignoring it ran the band off the bottom of the image: LOVE
+  -- refuses an out-of-range setPixel, the whole rip threw, and the launcher
+  -- fell back to the shipped logo.
+  local SCY = 2
+  local id = 0x80
+  for row = 0, 8 do
+    local rowStart = id
+    local bgRow = 3 + row
+    for col = 0, 19 do
+      local pal = pals[(rowPal[bgRow] or 0) + 1]
+      -- the PRISM VERSION ribbon, BG row 9 columns 5..15
+      if bgRow == 9 and col >= 5 and col < 5 + 11 then
+        pal = pals[2] or pal
+      end
+      drawTile(pick(logoTiles, id), col * 8, (bgRow - SCY) * 8, pal)
+      id = (id + 1) % 256
+    end
+    id = (rowStart + 0x14) % 256
+  end
+
+  -- The Tyranitar band.  Both halves come out of one 17-wide sheet; the five
+  -- columns between them are the prism's, and stay black.
+  local function band(startCol, cols, base, palIndex)
+    local pal = pals[palIndex + 1]
+    local tile = base
+    for row = 0, 6 do
+      local rowStart = tile
+      for col = 0, cols - 1 do
+        drawTile(pick(monTiles, tile),
+                 (startCol + col) * 8, (12 + row - SCY) * 8, pal)
+        tile = (tile + 1) % 256
+      end
+      tile = (rowStart + 0x11) % 256
+    end
+  end
+  band(0, 9, 0x80, 0)     -- "Pokemon" half, attribute 8  -> bank 1 palette 0
+  band(11, 8, 0x89, 7)    -- "Trainers" half, attribute 15 -> bank 1 palette 7
+  -- ...and the cover, drawn AFTER both in the routine, blanks five tiles --
+  -- `hlbgcoord 7, 12 / ld bc, 5`, so ONE ROW of five, not five columns of
+  -- seven.  The prism is animated over the rest of that block at run time
+  -- from VRAM the routine cleared; only this row is reserved in the map.
+  -- ...on attribute 9 -- bank 1, palette 1 -- over a tile the routine zeroed,
+  -- so the reserved strip is palette 1's colour 0, not black either.
+  local cover = pals[2][1]
+  for col = 7, 11 do
+    for y = 0, 7 do
+      for xx = 0, 7 do
+        image:setPixel(col * 8 + xx, (12 - SCY) * 8 + y,
+                       cover[1], cover[2], cover[3], 1)
+        over:setPixel(col * 8 + xx, (12 - SCY) * 8 + y,
+                      cover[1], cover[2], cover[3], 0)
+      end
+    end
+  end
+
+  -- The copyright line, drawn into the WINDOW map rather than the BG:
+  -- `hlbgcoord 3, 0, vWindowMap / lb bc, 1, 14 / ld d, $34`, with the window
+  -- parked at hWY $88 -- screen row 17.  $34 is signed, so it is blob[180],
+  -- and fourteen tiles from there is exactly the tail of the 194-tile logo
+  -- sheet: the copyright shares the logo's blob, the way Crystal's does.
+  for col = 0, 13 do
+    drawTile(pick(logoTiles, (0x34 + col) % 256),
+             (3 + col) * 8, 17 * 8, pals[1])
+  end
+
+  self:saveImage(image, "title/prism_title.png")
+  self:saveImage(over, "title/prism_title_over.png")
+
+  -- THE ROTATING PRISM IS NOT ART, so there is nothing here to rip.  Prism
+  -- rasterises it in software every frame -- Update3DPrism / Draw3DPrism /
+  -- Get3DPrismShade write OBJ tiles, Toggle3DPrismPage double-buffers them
+  -- across two VRAM pages, and InitializeBackground places the 29 OAM entries
+  -- that show them.  The cartridge stores no frames of it: _TitleScreen
+  -- explicitly zeroes 70 tiles of BOTH object planes at startup.
+  --
+  -- What CAN be carried across is where it lives and what it is coloured
+  -- with, so the renderer can draw the same solid in the same place out of
+  -- the same palette.  The block is the five tiles the cover reserves on row
+  -- 12 (`hlbgcoord 7, 12 / ld bc, 5`) by the seven rows the band spans, and
+  -- the OAM attributes InitializeBackground writes are palettes 1, 2 and 3 --
+  -- one per visible face, which is what makes the rotation read as a solid.
+  -- WHERE IT SITS AND WHAT SHAPE IT IS, both read off InitializeBackground
+  -- rather than guessed.  It writes 29 OAM entries as SEVEN columns of 8x16
+  -- sprites -- x steps 8 at a time from $3c, and each column stacks
+  -- 3, 4, 5, 5, 5, 4, 3 of them from y -$c, -$1c, -$2c, -$2c, -$2c, -$1c,
+  -- -$c.  Every column therefore ENDS at the same y, so the silhouette is
+  -- flat-bottomed with a stepped top rising to the middle: a cut gem, which
+  -- is what AnimateTitleCrystal calls it.
+  --
+  -- That routine then slides all 29 down 2px a frame until the first entry
+  -- reaches $2c, which is +56 from where it starts.  Screen coordinates are
+  -- OAM minus (8, 16), so the gem comes to rest spanning x 52..108 and
+  -- y -4..76 -- ACROSS the logo, not under the band.  Behind it, per the
+  -- priority bit, which is why the letters stay in front of it.
+  local columns = { 3, 4, 5, 5, 5, 4, 3 }
+  -- and the colours it refracts through: TitleScreenSpectrumPalettes is a
+  -- 57-entry ramp the routine feeds to the palette registers a line at a
+  -- time (FillEveryByteWithDEOffset over wTitleScreenBGPIList...), which is
+  -- what makes a grey solid read as a prism splitting light.
+  local spectrum = {}
+  local ssym = self:symbol("TitleScreenSpectrumPalettes")
+  if ssym and self.rom then
+    pcall(function()
+      for index = 0, 56 do
+        local word = self.rom:word(ssym.bank, ssym.address + index * 2)
+        spectrum[index + 1] = {
+          (word % 32) / 31,
+          (math.floor(word / 32) % 32) / 31,
+          (math.floor(word / 1024) % 32) / 31,
+        }
+      end
+    end)
+  end
+  if not spectrum[1] then spectrum = nil end
+  return {
+    layout = "gen2",
+    background = {
+      path = "assets/generated/title/prism_title.png",
+      width = 160, height = 144,
+    },
+    -- the same screen with its colour-0 pixels punched out; drawn back over
+    -- the gem so only the pixels the hardware would let it replace show it
+    overlay = {
+      path = "assets/generated/title/prism_title_over.png",
+      width = 160, height = 144,
+    },
+    -- no mascot frames: Tyranitar is static BG art and is already in the
+    -- background above (TyranitarFrameIterator, despite its name, drives the
+    -- clouds and the prism -- not the mon)
+    prism = {
+      x = 52, bottom = 76, cellWidth = 8, cellHeight = 16,
+      columns = columns, spectrum = spectrum,
+      backdrop = { blank[1], blank[2], blank[3] },
+      framesPerTurn = 96,
+    },
+    music = "Music_TitleScreen",
+  }
+end
+
 function RomExtractorGen2:extractGen2TitleArt()
   -- Crystal ships none of Gold's title data, so tell them apart by the
   -- tilemap Gold has and Crystal builds in code.
+  -- Prism answers the Crystal test too (TitleLogoGFX, no tilemap), so it has
+  -- to be asked FIRST -- by the one symbol only it has.
+  if self:symbol("TitleTyranitarGFX") then
+    return self:extractPrismTitleArt()
+  end
   if self:symbol("TitleLogoGFX") and not self:symbol("TitleScreenTilemap") then
     return self:extractCrystalTitleArt()
   end
@@ -5178,51 +6686,152 @@ function RomExtractorGen2:extractGen2TitleArt()
     local okMascot, mascot = pcall(self.gen2TitleMascot, self, mon, obPals)
     if okMascot and mascot then title.mascot = mascot end
   end
+  if obPals then
+    local okTrail, trail = pcall(self.gen2TitleTrail, self, obPals)
+    if okTrail and trail then title.trail = trail end
+  end
   return title
 end
 
--- Mascot geometry: OAM y/x are screen + 16 / + 8, and the anim object sits
--- at depixel 12, 11 = (96, 88), so the object's origin is screen (80, 80).
--- The five frames span dy -24..+24 and dx -32..+24, so a 64x64 canvas with
--- the origin at (32, 24) holds every one of them.
--- .Frameset_GSIntroHoOhLugia (data/sprite_anims/framesets.asm), as
--- { oam set, frames } pairs; both versions loop.
-function RomExtractorGen2:gen2TitleMascot(mon, obPals)
-  local tiles = gen2SplitTiles(mon)
+-- ---------------------------------------------------------------------------
+-- The sparkle trail (SPRITE_ANIM_OBJ_GS_TITLE_TRAIL)
+--
+-- The stream of sparkles that pours off Ho-Oh / Lugia.  None of it was
+-- ripped, so the bird flew over an empty sky.  Read straight off Gold:
+--
+--   TitleScreen+$67   ld hl, TitleScreenGFX3 / ld de, $8F80 / ld bc, $0080
+--                     -- FOUR TILES, COPIED RAW.  Not LZ like GFX1/2/4, which
+--                     is why decompressing it gave 1522 bytes of nonsense.
+--                     $8F80 is tile $F8, which is exactly where the OAM sets
+--                     below point.
+--   OAMData_GSTitleTrail  `db 1 / dbsprite -1, -1, 4, 4, $00, 1 | OAM_PAL1`
+--                     -- one 8x16 object at (-4, -4), OB palette 1.
+--   oam.asm           spriteanimoam $f8 -> _1, $fa -> _2: the set's TILE
+--                     OFFSET, so the two frames are tiles $F8/$F9 and $FA/$FB.
+--   Frameset_GSTitleTrail   oamframe _1, 1 / oamframe _2, 1 / oamrestart --
+--                     the sparkle twinkles every single frame.
+--   RunTitleScreen    calls UpdateTitleTrailSprite once a frame.
+--   UpdateTitleTrailSprite (01:$64B1)
+--                     `and $3 / ret nz` -- a new sparkle every FOURTH frame --
+--                     then indexes a six-record table of TWO (x, y) spawn
+--                     points each, picking one by bit 2 of the same counter.
+--                     A (0, 0) pair means "no sparkle this tick".
+--   SpriteAnimFunc_GSTitleTrail (23:$582D)
+--                     x += 4 and y += 1 every frame, plus a 2-pixel sine
+--                     wobble on a phase that advances 3 a frame, and the
+--                     sparkle deletes itself once x reaches $A4.
+--
+-- The record INDEX is read from [$C5B6] -- ten bytes past the block
+-- TitleScreen copies to $C5AC, so nothing on the title screen ever writes it.
+-- Rather than reproduce a read of uninitialised WRAM, the port walks the six
+-- records in order, one per spawn tick; every spawn height in the table gets
+-- used, which is what the screen looks like when the byte is not zero.
+-- ---------------------------------------------------------------------------
+function RomExtractorGen2:gen2TitleTrail(obPals)
+  local gfx = self:symbol("TitleScreenGFX3")
+  local spawn = self:symbol("UpdateTitleTrailSprite")
+  local sets = self:symbol("SpriteAnimOAMData")
+  local frameset = self:symbol("SpriteAnimFrameData.Frameset_GSTitleTrail")
+  if not (gfx and sets and frameset and self.rom) then return nil end
+
+  -- The copy length is bc = $80 on Gold; Silver ships fewer bytes and puts
+  -- TitleScreenGFX4 right behind it, so measure rather than assume.
+  local following = self:symbol("TitleScreenGFX4")
+  local bytes = 4 * 16
+  if following and following.bank == gfx.bank and following.address > gfx.address then
+    bytes = math.max(bytes, math.min(0x80, following.address - gfx.address))
+  end
+  local raw = self.rom:bytes(gfx.bank, gfx.address, bytes)
+  if type(raw) ~= "table" then return nil end
+  local tiles = gen2SplitTiles(raw)
+
+  -- THE FRAMESET SAYS HOW MANY FRAMES THERE ARE, and the two cartridges do
+  -- not agree.  `oamframe <set>, <duration>` pairs, closed by $FE (restart)
+  -- or $FF (end).  GOLD'S IS TWO FRAMES OF ONE TICK that swap the sparkle's
+  -- two halves -- the twinkle -- AND SILVER'S IS ONE FRAME HELD FOR $20.
+  -- Hardcoding Gold's pair gave Silver a flicker it does not have.
   local frames = {}
-  for index = 1, 5 do
-    local sym = self:symbol("SpriteAnimOAMData.OAMData_GSIntroHoOh" .. index)
-    if not sym then return nil end
-    local count = self.rom:byte(sym.bank, sym.address)
-    if not count or count == 0 then return nil end
-    local raw = self.rom:bytes(sym.bank, sym.address + 1, count * 4)
-    local image = ImageWriter.blank(GEN2_MASCOT.w, GEN2_MASCOT.h, 0, 0, 0, 0)
-    for obj = 0, count - 1 do
-      local dy = raw[obj * 4 + 1] or 0
-      local dx = raw[obj * 4 + 2] or 0
-      local tile = raw[obj * 4 + 3] or 0
-      local attr = raw[obj * 4 + 4] or 0
+  do
+    local ok = pcall(function()
+      for index = 0, 15 do
+        local set = self.rom:byte(frameset.bank, frameset.address + index * 2)
+        if set == 0xFF or set == 0xFE or set == 0xFD then break end
+        local duration = self.rom:byte(frameset.bank,
+                                       frameset.address + index * 2 + 1)
+        frames[#frames + 1] = { set = set, duration = math.max(1, duration or 1) }
+      end
+    end)
+    if not ok then return nil end
+  end
+  if not frames[1] then return nil end
+
+  -- SpriteAnimOAMData is `db <tile offset>, dw <block>` per OAM SET, and a
+  -- block is `db <count>` then `db dy, dx, tile, attr` rows.  Both of the
+  -- trail's sets point at the SAME block and differ only in the offset ($F8
+  -- and $FA), which is how one drawing twinkles -- and SILVER'S BLOCK HOLDS
+  -- TWO SPRITES, not one, so reading only the first row lost half of it.
+  local blocks = {}
+  local function blockFor(set)
+    if blocks[set] ~= nil then return blocks[set] end
+    blocks[set] = false
+    local row = sets.address + set * 3
+    local okRow, offset, pointer = pcall(function()
+      return self.rom:byte(sets.bank, row), self.rom:word(sets.bank, row + 1)
+    end)
+    if not (okRow and pointer and pointer >= 0x4000 and pointer < 0x8000) then
+      return false
+    end
+    local count = self.rom:byte(sets.bank, pointer)
+    if not count or count < 1 or count > 16 then return false end
+    local rows = {}
+    for index = 0, count - 1 do
+      local at = pointer + 1 + index * 4
+      local dy = self.rom:byte(sets.bank, at)
+      local dx = self.rom:byte(sets.bank, at + 1)
       if dy > 127 then dy = dy - 256 end
       if dx > 127 then dx = dx - 256 end
-      local pal = obPals[(attr % 8) + 1] or obPals[1]
-      local xFlip = math.floor(attr / 0x20) % 2 == 1
-      local yFlip = math.floor(attr / 0x40) % 2 == 1
-      -- 8x16 mode ignores tile bit 0: the pair is (t & $FE, t | $01)
-      local top = tiles[tile - tile % 2]
-      local bottom = tiles[tile - tile % 2 + 1]
+      rows[#rows + 1] = { dy = dy, dx = dx,
+        tile = self.rom:byte(sets.bank, at + 2),
+        attr = self.rom:byte(sets.bank, at + 3) }
+    end
+    blocks[set] = { offset = offset, rows = rows }
+    return blocks[set]
+  end
+
+  -- one canvas big enough for every sprite of every frame, so the frames stay
+  -- registered against each other
+  local minX, minY, maxX, maxY
+  for _, frame in ipairs(frames) do
+    local block = blockFor(frame.set)
+    for _, row in ipairs(block and block.rows or {}) do
+      minX = math.min(minX or row.dx, row.dx)
+      minY = math.min(minY or row.dy, row.dy)
+      maxX = math.max(maxX or (row.dx + 8), row.dx + 8)
+      maxY = math.max(maxY or (row.dy + 16), row.dy + 16)
+    end
+  end
+  if not minX then return nil end
+  local width, height = maxX - minX, maxY - minY
+
+  local paths = {}
+  for index, frame in ipairs(frames) do
+    local block = blockFor(frame.set)
+    local image = ImageWriter.blank(width, height, 0, 0, 0, 0)
+    for _, row in ipairs(block and block.rows or {}) do
+      local pal = obPals[(row.attr % 8) + 1] or obPals[1]
+      -- 8x16 objects: the pair is (t & $FE, t | $01), and TitleScreenGFX3 is
+      -- copied to VRAM tile $F8, so tile $F8 is tiles[0]
+      local base = (row.tile + block.offset) % 256
+      local top = base - base % 2 - 0xF8
       for half = 0, 1 do
-        local pixels = half == 0 and top or bottom
+        local pixels = tiles[top + half]
         if pixels then
           for y = 0, 7 do
             for x = 0, 7 do
               local shade = pixels[y * 8 + x + 1]
-              -- OBJ colour 0 is transparent on hardware
               if shade ~= 0 then
-                local sx = xFlip and (7 - x) or x
-                local sy = yFlip and (15 - (half * 8 + y)) or (half * 8 + y)
                 local color = pal[shade + 1]
-                image:setPixel(GEN2_MASCOT.ox + dx + sx,
-                               GEN2_MASCOT.oy + dy + sy,
+                image:setPixel(row.dx - minX + x, row.dy - minY + half * 8 + y,
                                color[1], color[2], color[3], 1)
               end
             end
@@ -5230,18 +6839,237 @@ function RomExtractorGen2:gen2TitleMascot(mon, obPals)
         end
       end
     end
-    local file = "title/gen2_mascot_" .. index .. ".png"
+    local file = "title/gen2_trail_" .. index .. ".png"
     self:saveImage(image, file)
-    frames[index] = "assets/generated/" .. file
+    paths[index] = "assets/generated/" .. file
   end
+
+  -- WHERE THE SPARKLES COME FROM, and the two cartridges do not agree here
+  -- either.
+  --
+  -- Gold walks a table: `ld bc, $C5AC / ... / ld de, <table> / add hl, de`,
+  -- six records of two (x, y) OAM points each, one picked by bit 2 of the
+  -- frame counter and (0, 0) meaning "none this tick".
+  --
+  -- SILVER HAS NO TABLE AT ALL.  Its whole routine is
+  --
+  --     ld a, [$CE65] / and $03 / ret nz
+  --     ld de, $7C58                 ; d = y = $7C, e = x = $58
+  --     ld a, $0F / call InitSpriteAnimStruct / ret
+  --
+  -- -- every sparkle from one fixed point.  Read Gold's way, that immediate
+  -- was taken for a table address and the six records came back all zero, so
+  -- Silver's trail spawned nothing at all.  The two are told apart by what
+  -- FOLLOWS the `ld de`: an immediately-following `ld a, n / call` is the
+  -- spawn itself, not a pointer to a list.
+  local spawns
+  if spawn then
+    local ok, rows = pcall(function()
+      local at, direct
+      for offset = 0, 0x40 do
+        if self.rom:byte(spawn.bank, spawn.address + offset) == 0x11 then
+          at = self.rom:word(spawn.bank, spawn.address + offset + 1)
+          direct = self.rom:byte(spawn.bank, spawn.address + offset + 3) == 0x3E
+            and self.rom:byte(spawn.bank, spawn.address + offset + 5) == 0xCD
+          break
+        end
+      end
+      if not at then return nil end
+      -- OAM -> screen, plus the composition's own top-left offset
+      local function point(x, y)
+        if x == 0 and y == 0 then return false end
+        return { x = x - 8 + minX, y = y - 16 + minY }
+      end
+      if direct then
+        local one = point(at % 256, math.floor(at / 256))
+        return one and { { one, one } } or nil
+      end
+      if at < 0x4000 or at >= 0x8000 then return nil end
+      -- EACH RECORD IS `dbpixel y, x`, SO THE Y BYTE COMES FIRST.  Feeding
+      -- them to point() in table order put Gold's sparkles in a vertical
+      -- column at one x instead of along the bird at one height: the real
+      -- table is y = $5C throughout with x running $50..$88.
+      local out = {}
+      for record = 0, 5 do
+        local pair = {}
+        for half = 0, 1 do
+          local y = self.rom:byte(spawn.bank, at + record * 4 + half * 2)
+          local x = self.rom:byte(spawn.bank, at + record * 4 + half * 2 + 1)
+          pair[half + 1] = point(x, y)
+        end
+        out[record + 1] = pair
+      end
+      return out
+    end)
+    if ok then spawns = rows end
+  end
+  if not spawns then return nil end
+
+  local sequence = {}
+  for index, frame in ipairs(frames) do
+    sequence[index] = { index, frame.duration }
+  end
+
+  return {
+    frames = paths,
+    sequence = sequence,   -- { frame, ticks } pairs, looping
+    width = width, height = height,
+    spawns = spawns,
+    everyFrames = 4,      -- `and $3 / ret nz`
+    dx = 4, dy = 1,       -- x += 4, y += 1 a frame
+    sineAmplitude = 2,    -- `ld d, 2` into AnimSeqs_Sine
+    sineStep = 3,         -- VAR1 += 3 a frame
+    deleteX = 0xA4 - 8,   -- `cp $a4` on the OAM x
+  }
+end
+
+-- Mascot geometry: OAM y/x are screen + 16 / + 8, and the anim object sits
+-- at depixel 12, 11 = (96, 88), so the object's origin is screen (80, 80).
+--
+-- NOTHING ABOUT THIS IS SHARED BETWEEN THE TWO CARTRIDGES, which is why the
+-- old symbol-name version drew Ho-Oh and silently produced nothing at all for
+-- Silver.  Read it the way the hardware does instead, off two tables:
+--
+--   SpriteAnimFrameData.Frameset_GSIntroHoOhLugia
+--                    `oamframe <oam set>, <duration>` pairs closed by $FE.
+--                    GOLD is six frames of sets 1,2,3,4,3,5; SILVER IS NINE
+--                    frames of sets 2,1,2,3,3,4,4,3,2 -- a different length,
+--                    a different order and different durations.
+--   SpriteAnimOAMData  `db <tile offset>, dw <block>` per OAM SET.  Gold's
+--                    five sets point at five distinct Ho-Oh blocks with a
+--                    $00 offset each.  SILVER'S FIVE SETS POINT AT ONLY TWO
+--                    LUGIA BLOCKS AND CARRY OFFSETS $00/$20/$40/$60 -- the
+--                    wing flap IS the tile offset, so resolving the blocks
+--                    by name gave four identical frames even when it worked.
+--                    (OAMData_GSIntroLugia3..5 exist in the ROM and are
+--                    unreferenced; reading 1..5 by name read dead data.)
+--
+-- The canvas is sized from the union of every sprite of every frame rather
+-- than hardcoded: HO-OH SPANS dx -32..+31 AND LUGIA SPANS dx -40..+39, so
+-- the old fixed 64x64 canvas with its origin at (32, 24) sent Lugia's left
+-- wing to x = -8, ImageWriter refused the pixel, and the pcall around this
+-- function turned the error into "Silver has no mascot".
+function RomExtractorGen2:gen2TitleMascot(mon, obPals)
+  local sets = self:symbol("SpriteAnimOAMData")
+  local frameset = self:symbol("SpriteAnimFrameData.Frameset_GSIntroHoOhLugia")
+  if not (sets and frameset and self.rom and mon) then return nil end
+  local tiles = gen2SplitTiles(mon)
+
+  local frames = {}
+  do
+    local ok = pcall(function()
+      for index = 0, 31 do
+        local set = self.rom:byte(frameset.bank, frameset.address + index * 2)
+        if set == nil or set == 0xFF or set == 0xFE or set == 0xFD then break end
+        local duration = self.rom:byte(frameset.bank,
+                                       frameset.address + index * 2 + 1)
+        frames[#frames + 1] = { set = set, duration = math.max(1, duration or 1) }
+      end
+    end)
+    if not ok then return nil end
+  end
+  if not frames[1] then return nil end
+
+  local blocks = {}
+  local function blockFor(set)
+    if blocks[set] ~= nil then return blocks[set] end
+    blocks[set] = false
+    local row = sets.address + set * 3
+    local okRow, offset, pointer = pcall(function()
+      return self.rom:byte(sets.bank, row), self.rom:word(sets.bank, row + 1)
+    end)
+    if not (okRow and pointer and pointer >= 0x4000 and pointer < 0x8000) then
+      return false
+    end
+    local count = self.rom:byte(sets.bank, pointer)
+    if not count or count < 1 or count > 40 then return false end
+    local rows = {}
+    for index = 0, count - 1 do
+      local at = pointer + 1 + index * 4
+      local dy = self.rom:byte(sets.bank, at)
+      local dx = self.rom:byte(sets.bank, at + 1)
+      if dy == nil or dx == nil then return false end
+      if dy > 127 then dy = dy - 256 end
+      if dx > 127 then dx = dx - 256 end
+      rows[#rows + 1] = { dy = dy, dx = dx,
+        tile = self.rom:byte(sets.bank, at + 2) or 0,
+        attr = self.rom:byte(sets.bank, at + 3) or 0 }
+    end
+    blocks[set] = { offset = offset or 0, rows = rows }
+    return blocks[set]
+  end
+
+  -- one canvas for every frame so they stay registered against each other
+  local minX, minY, maxX, maxY
+  for _, frame in ipairs(frames) do
+    local block = blockFor(frame.set)
+    for _, row in ipairs(block and block.rows or {}) do
+      minX = math.min(minX or row.dx, row.dx)
+      minY = math.min(minY or row.dy, row.dy)
+      maxX = math.max(maxX or (row.dx + 8), row.dx + 8)
+      maxY = math.max(maxY or (row.dy + 16), row.dy + 16)
+    end
+  end
+  if not minX then return nil end
+  local width, height = maxX - minX, maxY - minY
+  if width < 1 or height < 1 or width > 256 or height > 256 then return nil end
+
+  -- One PNG per DISTINCT oam set, in order of first use: Gold's six frames
+  -- are five images and Silver's nine frames are four.
+  local paths, imageOf = {}, {}
+  local sequence = {}
+  for index, frame in ipairs(frames) do
+    local slot = imageOf[frame.set]
+    if not slot then
+      local block = blockFor(frame.set)
+      if not block then return nil end
+      local image = ImageWriter.blank(width, height, 0, 0, 0, 0)
+      for _, row in ipairs(block.rows) do
+        local pal = obPals[(row.attr % 8) + 1] or obPals[1]
+        local xFlip = math.floor(row.attr / 0x20) % 2 == 1
+        local yFlip = math.floor(row.attr / 0x40) % 2 == 1
+        -- 8x16 mode ignores tile bit 0: the pair is (t & $FE, t | $01), and
+        -- the set's tile offset is added first
+        local base = (row.tile + block.offset) % 256
+        base = base - base % 2
+        for half = 0, 1 do
+          local pixels = tiles[base + half]
+          if pixels then
+            for y = 0, 7 do
+              for x = 0, 7 do
+                local shade = pixels[y * 8 + x + 1]
+                -- OBJ colour 0 is transparent on hardware
+                if shade ~= 0 then
+                  local sx = xFlip and (7 - x) or x
+                  local sy = yFlip and (15 - (half * 8 + y)) or (half * 8 + y)
+                  local color = pal[shade + 1]
+                  if color then
+                    image:setPixel(row.dx - minX + sx, row.dy - minY + sy,
+                                   color[1], color[2], color[3], 1)
+                  end
+                end
+              end
+            end
+          end
+        end
+      end
+      slot = #paths + 1
+      local file = "title/gen2_mascot_" .. slot .. ".png"
+      self:saveImage(image, file)
+      paths[slot] = "assets/generated/" .. file
+      imageOf[frame.set] = slot
+    end
+    sequence[index] = { slot, frame.duration }
+  end
+
   -- frame 1 stays the plain `mascot.path` so an older UI still finds art
   return {
-    path = frames[1],
-    frames = frames,
-    width = GEN2_MASCOT.w, height = GEN2_MASCOT.h,
-    x = GEN2_MASCOT.originX - GEN2_MASCOT.ox,
-    y = GEN2_MASCOT.originY - GEN2_MASCOT.oy,
-    sequence = GEN2_MASCOT.sets[self.version] or GEN2_MASCOT.sets.gold,
+    path = paths[1],
+    frames = paths,
+    width = width, height = height,
+    x = GEN2_MASCOT.originX + minX,
+    y = GEN2_MASCOT.originY + minY,
+    sequence = sequence,
   }
 end
 
@@ -5967,8 +7795,47 @@ function RomExtractorGen2:gen2TownMapImage(mapSymbol, relative)
   return ok and ("assets/generated/" .. relative) or nil
 end
 
+-- PRISM SPLITS THE LANDMARK TABLE IN TWO, and that is why its map-name sign
+-- never appeared.  Gold and Crystal keep one flat `Landmarks` array of four
+-- byte rows -- town-map x, town-map y, then a pointer to the name -- and the
+-- reader above walks it.  Prism has no symbol by that name at all: it keeps
+-- the COORDINATES in six per-region compressed blobs (RegionLandmarks ->
+-- Naljo/Rijon/Johto/Kanto/Sevii/TunodLandmarks, each an LZ blob the town map
+-- decompresses into WRAM) and the NAMES in a separate flat `dw` table,
+-- LandmarkNames, indexed by landmark id.  GetLandmarkName is the whole
+-- routine: shift the id left once, add the table base, follow the word.
+--
+-- The sign only ever wants the name, so that second table is all this reads.
+-- Coordinates stay absent, which the town map already copes with -- and
+-- unpicking six LZ blobs to place cursors is a separate job from putting the
+-- route's name on the screen.
+function RomExtractorGen2:gen2LandmarkNames()
+  local sym = self:symbol("LandmarkNames")
+  if not (sym and self.rom) then return nil end
+  local charmap = self:readSourceTable("charmap")
+  local out = {}
+  -- 255, inlined rather than named: this chunk is one `local` under
+  -- Lua 5.1's 200-local ceiling for a main chunk, and a new top-level
+  -- constant here stops the whole module LOADING.
+  for id = 0, 255 do
+    local ok = pcall(function()
+      local ptr = self.rom:word(sym.bank, sym.address + id * 2)
+      -- a pointer outside the ROM half of the address space is past the end
+      -- of the table, not a name: stop rather than decode noise
+      if ptr < 0x4000 or ptr >= 0x8000 then error("end") end
+      local name = self:decodeGen2TextAt(sym.bank, ptr, charmap)
+      name = name:gsub("{BYTE:1F}", "\n")
+      if name == "" then error("end") end
+      out[id] = { name = name }
+    end)
+    if not ok then break end
+  end
+  return next(out) and out or nil
+end
+
 function RomExtractorGen2:gen2Landmarks()
   local sym = self:symbol("Landmarks")
+  if not sym then return self:gen2LandmarkNames() end
   if not (sym and self.rom) then return nil end
   local charmap = self:readSourceTable("charmap")
   local out = {}
@@ -6286,6 +8153,23 @@ RomExtractorGen2.PLAYER_FORM_GEOMETRY = {
 -- are baked in, which is how KRIS keeps her blue hair: the trainer card and
 -- the Oak intro colour the player pic through the SGB zone shader, and that
 -- shader only knows CHRIS's browns.
+function RomExtractorGen2:gen2RawColumnPicAt(bank, address, cols, rows, relative, pal)
+  if not self.rom then return nil end
+  local ok = pcall(function()
+    local raw = self.rom:bytes(bank, address, cols * rows * 16)
+    assert(raw and #raw >= cols * rows * 16, "short pic")
+    local pixels = colMajorToRowMajor(raw, cols, rows)
+    local image
+    if pal and ImageWriter.decode2bppColor then
+      image = ImageWriter.decode2bppColor(pixels, cols * 8, rows * 8, pal, false)
+    else
+      image = ImageWriter.decode2bpp(pixels, cols * 8, rows * 8)
+    end
+    self:saveImage(ImageWriter.matteColor0(image), relative)
+  end)
+  return ok and ("assets/generated/" .. relative) or nil
+end
+
 function RomExtractorGen2:gen2RawColumnPic(symbolName, cols, rows, relative, pal)
   local sym = self:symbol(symbolName)
   if not (sym and self.rom) then return nil end
@@ -6371,7 +8255,235 @@ end
 -- The two records themselves.  Deliberately independent of the sprite pass --
 -- extractField runs BEFORE extractRuntimeScaffolds, so this can only name
 -- Kris's sprite ids as strings; registerGen2KrisSprites below creates them.
+-- Prism does not have two player characters, it has FOURTEEN, and the choice
+-- is real character customisation rather than a boy/girl question.
+--
+-- GetPlayerSprite (engine/overworld.asm) reads `wPlayerCharacteristics & $f`,
+-- indexes .Male0/.Female0/.Male1/... at a 9-byte stride, and walks that set as
+-- `db state, sprite` pairs terminated by $ff:
+--
+--     .Male0
+--       db PLAYER_NORMAL,    SPRITE_P0
+--       db PLAYER_BIKE,      SPRITE_P0_BIKE
+--       db PLAYER_SURF,      SPRITE_P0_SURF
+--       db PLAYER_SURF_PIKA, SPRITE_SURFING_PIKACHU
+--       db $ff
+--
+-- Keyed by form id ("p0".."p13") with `boy` and `girl` kept as aliases for the
+-- first male and female set, because every consumer -- Sprites.playerForm,
+-- Player:refreshForm, the Oak speech's ask_gender step -- looks the record up
+-- by `save.player.gender` and does not care what the key is called.  So a
+-- selection screen only has to write "p7" there for the rest to follow.
+RomExtractorGen2.PRISM_PLAYER_SET_BYTES = 9
+-- GetPlayerFrontpic / GetPlayerBackpic both branch at `cp 12`: the first
+-- twelve characters index a flat array, the last two have their own symbols.
+RomExtractorGen2.PRISM_PLAYER_FLAT_SETS = 12
+RomExtractorGen2.PRISM_PLAYER_SETS = 14
+-- constants/wram_constants.asm: PLAYER_NORMAL 0, PLAYER_BIKE 1, PLAYER_SURF 4,
+-- PLAYER_SURF_PIKA 8.  SURF is FOUR, not two -- these are bit positions, not a
+-- dense enum, and reading it as 2 silently dropped every surf sheet.
+RomExtractorGen2.PRISM_PLAYER_STATES = { [0] = "walk", [1] = "bike", [4] = "surf" }
+
+-- Prism gives every species its own OVERWORLD sheet, and it is NOT the party
+-- minipic.  GetMonSprite.NPCPokemon indexes PokemonOWSpritePointers -- a `dba`
+-- per species -- and loads twelve tiles with `lb hl, PAL_OW_PLAYER,
+-- WALKING_SPRITE`, i.e. a walking sprite on the player's OBJ palette.  The
+-- files are gfx/overworld/pokemon/<name>.2bpp.lz: 384 bytes decompressed, the
+-- same 24-tile six-pose sheet Prism's player characters use.
+--
+-- Drawing the minipic instead is what put a two-frame party icon on the map
+-- where the Larvitar's walking sprite belongs, and it came out purple because
+-- an icon is baked in the MON's palette rather than the overworld one.
+RomExtractorGen2.PRISM_MON_OW_FRAME_BYTES = 64   -- one 2x2 frame of 2bpp
+
+function RomExtractorGen2:extractPrismMonOverworldSprites(speciesOrder)
+  local sym = self:symbol("PokemonOWSpritePointers")
+  if not (sym and self.rom and speciesOrder) then return nil end
+  local out = {}
+  for species = 1, #speciesOrder do
+    pcall(function()
+      local entry = sym.address + (species - 1) * 3
+      local bank = self.rom:byte(sym.bank, entry)
+      local address = self.rom:word(sym.bank, entry + 1)
+      if bank < 1 or address < 0x4000 or address >= 0x8000 then return end
+      local raw = self:gen2LzAt(bank, address)
+      local frameBytes = RomExtractorGen2.PRISM_MON_OW_FRAME_BYTES
+      -- accepted only as a whole number of 2x2 frames, so a pointer that is
+      -- not really a sheet falls through and the species keeps its icon
+      if not (raw and #raw >= frameBytes and #raw % frameBytes == 0) then return end
+      local frames = #raw / frameBytes
+      local image = ImageWriter.decode2bpp(raw, 16, frames * 16)
+      local file = string.format("sprites/mon_ow_%03d.png", species)
+      self:saveImage(image, file)
+      out[gen2MonSpriteId(species)] = {
+        image = "assets/generated/" .. file,
+        frames = frames,
+      }
+    end)
+  end
+  return next(out) and out or nil
+end
+
+function RomExtractorGen2:extractPrismPlayerForms()
+  local sym = self:symbol("PlayerSpriteSets")
+  if not (sym and self.rom) then return nil end
+  local sprites = self:gen2OverworldSprites()
+  local byIndex = {}
+  for _, row in pairs(sprites) do byIndex[row.index] = row end
+
+  local forms = {}
+  local backSym = self:symbol("PlayerBackpics") or self:symbol("ChrisBackpic")
+  local picsSym = self:symbol("PlayerPics") or self:symbol("ChrisPic")
+  local patrolSym = self:symbol("PlayerPalettePatroller")
+  local patrolBackSym = self:symbol("PlayerPalettePatrollerBack")
+  local G = RomExtractorGen2.PLAYER_FORM_GEOMETRY
+  local PRISM_BACKPIC_BYTES = G.back.cols * G.back.rows * 16
+  local PRISM_INTRO_BYTES = G.intro.cols * G.intro.rows * 16
+  local ok = pcall(function()
+    for set = 0, RomExtractorGen2.PRISM_PLAYER_SETS - 1 do
+      local at = sym.address + set * RomExtractorGen2.PRISM_PLAYER_SET_BYTES
+      local record = { label = string.format("%d", set + 1) }
+      for pair = 0, 3 do
+        local state = self.rom:byte(sym.bank, at + pair * 2)
+        if state == 0xFF then break end
+        local spriteId = self.rom:byte(sym.bank, at + pair * 2 + 1)
+        local key = RomExtractorGen2.PRISM_PLAYER_STATES[state]
+        local row = byIndex[spriteId]
+        -- only ids whose sheet actually came out of the ROM: naming one that
+        -- was never extracted leaves the player invisible, where leaving the
+        -- key unset falls back to field.playerSprites
+        if key and row then record[key] = row.id end
+      end
+      -- The pic the character-select screen shows.  Prism keeps twelve of
+      -- them in one PlayerPics block as RAW 7x7 2bpp -- ChrisPic, KrisPic,
+      -- ChrisPic2, KrisPic2, ... -- exactly the shape Crystal's ChrisPic has,
+      -- so gen2RawColumnPic reads them unchanged.
+      --
+      -- Without this the select screen fell through to field.playerPics.front,
+      -- which points at the BACK pic, and Prism's back pics are `.xbpp` (a
+      -- custom bit depth) stored uncompressed where the reader expects LZ3 --
+      -- so what it drew was a decompressor's output on raw data.  That is the
+      -- scrambled trainer sprite on the boy/girl screen.
+      -- GetPlayerFrontpic is `and $f / cp 12 / jr nc, .palettePatroller /
+      -- ld hl, PlayerPics / ld bc, 7 * 7 tiles / rst AddNTimes`: a flat array
+      -- indexed by character, with the last two characters served by their own
+      -- symbol.  ChrisPic and PlayerPics are the same address, so the first
+      -- twelve fall out of one stride.
+      local picBank, picAt = nil, nil
+      if set < RomExtractorGen2.PRISM_PLAYER_FLAT_SETS and picsSym then
+        picBank, picAt = picsSym.bank, picsSym.address + set * PRISM_INTRO_BYTES
+      elseif patrolSym then
+        picBank, picAt = patrolSym.bank, patrolSym.address
+      end
+      if picBank then
+        record.intro = self:gen2RawColumnPicAt(
+          picBank, picAt, G.intro.cols, G.intro.rows,
+          "battle/prism_player" .. set .. ".png", nil)
+        record.card = record.intro
+      end
+      -- The battle BACK pic.  `.xbpp` is a red herring -- GetPlayerBackpic is
+      -- `ld bc, 6 * 6 tiles / ld hl, PlayerBackpics / rst AddNTimes` then a
+      -- plain Get2bpp, and p0.xbpp is exactly 576 bytes, so it is ordinary
+      -- raw column-major 2bpp indexed by character.  Read through
+      -- ChrisBackpic as an LZ3 pic (which is what it is in Crystal), the
+      -- decompressor ran on raw pixels: that is the scrambled back sprite in
+      -- battle, and it was the same for all fourteen characters because only
+      -- one symbol was ever consulted.
+      -- and GetPlayerBackpic is the same shape, with the same cut-off -- the
+      -- last two characters' back pic is 7x7 rather than 6x6.
+      if set < RomExtractorGen2.PRISM_PLAYER_FLAT_SETS and backSym then
+        record.back = self:gen2RawColumnPicAt(
+          backSym.bank, backSym.address + set * PRISM_BACKPIC_BYTES,
+          G.back.cols, G.back.rows,
+          "battle/prism_playerback" .. set .. ".png", nil)
+      elseif patrolBackSym then
+        record.back = self:gen2RawColumnPicAt(
+          patrolBackSym.bank, patrolBackSym.address,
+          G.intro.cols, G.intro.rows,
+          "battle/prism_playerback" .. set .. ".png", nil)
+      end
+      if record.walk then
+        forms["p" .. set] = record
+        -- the sets alternate male, female, male, female...
+        if set == 0 then forms.boy = record end
+        if set == 1 then forms.girl = record end
+      end
+    end
+  end)
+  if not ok or not next(forms) then return nil end
+  return forms
+end
+
+-- ---------------------------------------------------------------------------
+-- Prism's character customisation  (event/customization.asm PlayerCustomization)
+--
+-- Prism does not ask "boy or girl?".  The intro runs PlayerCustomization, which
+-- asks three questions and packs the answers into wPlayerCharacteristics:
+--
+--   byte 0  bit 0    gender          } together `& $f`, the index
+--           bits 1-3 character model } GetPlayerSprite reads
+--           bits 4-6 skin tone
+--   bytes 1-2        the outfit colour, a 15-bit RGB the player mixes on
+--                    three 0-31 sliders
+--
+-- src/ui/PrismCustomization.lua has drawn all of that since it was written, and
+-- src/ui/OakSpeech.lua already runs it as a `customize_player` step -- but both
+-- gate on `field.playerCustomization`, WHICH NOTHING EVER EMITTED.  So the step
+-- was dropped from the intro on every boot and Prism silently kept Crystal's
+-- boy/girl question.  This is the missing table.
+--
+--   SkinTonePalettes   seven RGB15 words (SkinToneBox sits 14 bytes behind it,
+--                      which is what sizes the list)
+--   models             PlayerSpriteSets is fourteen sets and the model menu is
+--                      a two-column grid -- `wMenuCursorY-1` doubled, or'd with
+--                      `wMenuCursorX-1` -- so seven rows of boy/girl
+--   default            PlayerCust_InitRAM zeroes the characteristics byte and
+--                      calls PlayerCust_InitBluePal, which writes $00 $7C:
+--                      RGB15 $7C00, i.e. pure blue
+-- ---------------------------------------------------------------------------
+function RomExtractorGen2:gen2PlayerCustomization()
+  local sym = self:symbol("SkinTonePalettes")
+  if not (sym and self.rom) then return nil end
+  -- size the palette list off whatever the linker put behind it
+  local bytes = 7 * 2
+  for _, name in ipairs({ "SkinToneBox", "PlayerCust_SetPalettes" }) do
+    local next_ = self:symbol(name)
+    if next_ and next_.bank == sym.bank and next_.address > sym.address then
+      bytes = math.min(bytes, next_.address - sym.address)
+      break
+    end
+  end
+  local tones = {}
+  local ok = pcall(function()
+    for index = 0, math.floor(bytes / 2) - 1 do
+      local word = self.rom:word(sym.bank, sym.address + index * 2)
+      tones[index + 1] = {
+        r = word % 32,
+        g = math.floor(word / 32) % 32,
+        b = math.floor(word / 1024) % 32,
+      }
+    end
+  end)
+  if not ok or not tones[1] then return nil end
+
+  -- one model row per PAIR of sprite sets; the odd one out (a set with no
+  -- partner) still gets a row rather than being unreachable
+  local sets = RomExtractorGen2.PRISM_PLAYER_SETS or 2
+  local models = math.max(1, math.ceil(sets / 2))
+
+  return {
+    models = models,
+    skinTones = tones,
+    -- the three outfit sliders, 0-31 each, drawn at x = 14, 16 and 18
+    channels = { "r", "g", "b" },
+    maxLevel = 31,
+    default = { form = "p0", skinTone = 1, clothes = { r = 0, g = 0, b = 31 } },
+  }
+end
+
 function RomExtractorGen2:extractGen2PlayerForms()
+  local prism = self:extractPrismPlayerForms()
+  if prism then return prism end
   -- Gold and Silver have no second player character; nothing to choose.
   if not self:symbol("KrisPic") then return nil end
   local G = RomExtractorGen2.PLAYER_FORM_GEOMETRY
@@ -6971,11 +9083,35 @@ function RomExtractorGen2:gen2NpcTrades()
         get = string.format("SPECIES_%03d", row[3]),
         nickname = gen2DecodeString(self.rom:bytes(sym.bank, at + 3, 11), 11),
         dvs = { row[15], row[16] },
+        -- the npctrade macro's `\6`: the mon arrives HOLDING this (GOLD BERRY,
+        -- METAL COAT, ...), which is half of why some of these trades are
+        -- worth doing at all
+        item = row[17] ~= 0 and string.format("ITEM_%03d", row[17]) or nil,
         otId = row[18] + row[19] * 256,
         ot = gen2DecodeString(self.rom:bytes(sym.bank, at + 19, 11), 11),
         gender = row[31],
       }
     end
+    -- HOW MANY DIALOG SETS THE TABLE HAS IS NOT FIXED.
+    --
+    -- TradeTexts is `kind-major`: five kinds (offer, declined, wrongMon,
+    -- thanks, afterTrade) each followed by one pointer per dialog set.  The
+    -- SET COUNT differs between the cartridges -- Crystal has four
+    -- (COLLECTOR, HAPPY, GIRL, NEWBIE) and Gold only three -- so a hardcoded
+    -- four walked Gold's table with a stride of 8 bytes where it is 6, read
+    -- the fifth kind past the end of the table, and threw `bank 3F address
+    -- out of range`.  That throw was inside this function's pcall, so
+    -- gen2NpcTrades returned NIL and Gold shipped with NO in-game trade
+    -- dialogue at all: every one of its six trade NPCs fell through to the
+    -- engine's placeholder wording instead of the cartridge's lines.
+    --
+    -- The rows themselves say how many sets there are: the dialog byte is an
+    -- index into exactly this table.
+    local sets = 0
+    for _, trade in ipairs(out.trades) do
+      sets = math.max(sets, (tonumber(trade.dialog) or 0) + 1)
+    end
+    DIALOG_SETS = math.max(1, math.min(DIALOG_SETS, sets))
     if textSym then
       for kind, name in ipairs(TEXT_KINDS) do
         local lines = {}
@@ -6989,9 +9125,14 @@ function RomExtractorGen2:gen2NpcTrades()
       end
     end
     -- The two lines that are the same whoever you are trading with.
-    for key, symbolName in pairs({ cable = "NPCTradeCableText",
-                                   tradedFor = "TradedForText" }) do
-      local one = self:symbol(symbolName)
+    -- Prism renames the cable line (ConnectLinkCableText, engine/npctrade.asm)
+    -- and the base games call it NPCTradeCableText; try both.
+    for key, names in pairs({ cable = { "NPCTradeCableText", "ConnectLinkCableText" },
+                              tradedFor = { "TradedForText" } }) do
+      local one
+      for _, symbolName in ipairs(names) do
+        one = one or self:symbol(symbolName)
+      end
       if one then
         local text = self:decodeGen2TextAt(one.bank, one.address, charmap, true)
         if type(text) == "string" then out.texts[key] = text end
@@ -7838,6 +9979,43 @@ function RomExtractorGen2:extractField()
       rival = { "SILVER", "RIVAL", "???" },
     }
   end
+  -- Where NEW GAME drops the player.  Gold/Crystal both start in the player's
+  -- bedroom, so that was a constant in Data.lua -- but it is cart content, and
+  -- Prism starts somewhere else entirely (INTRO_OUTSIDE).  With the constant
+  -- the overworld asks the map registry for PLAYERS_HOUSE2_F, which a Prism
+  -- import has never heard of, and NEW GAME dies before the first frame.
+  --
+  -- SpawnPoints is `db group, number, x, y` per entry and SPAWN_HOME is entry
+  -- 0 (engine/intro_menu.asm sets wDefaultSpawnpoint to it), so the real start
+  -- is a four-byte read.  Written only when it resolves to a map this import
+  -- actually has, so a ROM without the symbol keeps the old behaviour.
+  src.boot = src.boot or {}
+  local spawn = self:symbol("SpawnPoints")
+  if spawn and self.rom and not src.boot.startMap then
+    pcall(function()
+      local row = self.rom:bytes(spawn.bank, spawn.address, 4)
+      local index = self:gen2MapIndex()
+      local entry = index[row[1] * 256 + row[2]]
+      local maps = self:readSourceTable("maps")
+      local mapId
+      for id, def in pairs(maps) do
+        if type(def) == "table" and entry then
+          local label = (type(def.label) == "string" and def.label)
+            or (type(def.source) == "string"
+                and def.source:match("^SYMBOL:(.+)_MapAttributes$"))
+          if label == entry.label then mapId = id; break end
+        end
+      end
+      if mapId then
+        src.boot.startMap = mapId
+        src.boot.startX, src.boot.startY = row[3], row[4]
+        src.boot.startFacing = src.boot.startFacing or "down"
+        Logger.info("gen2 field: new game spawns at %s (%d,%d)",
+                    tostring(mapId), row[3], row[4])
+      end
+    end)
+  end
+
   src.playerSprites = src.playerSprites or {}
   if type(src.playerSprites.walk) ~= "string" then src.playerSprites.walk = "SPRITE_RED" end
   -- Gen2 OverworldSprites row for SurfSpriteGFX is $54; Gen1 used SEEL.
@@ -7857,8 +10035,21 @@ function RomExtractorGen2:extractField()
   -- Title screen and attract movie: TitleState and Gen2Intro read these,
   -- and both degrade to their text fallbacks when the rip comes up empty.
   if self.rom then
+    -- A SILENT pcall here cost a whole afternoon: Prism's title came
+    -- back nil, field.title was simply absent, and the launcher fell
+    -- back to the shipped logo with nothing anywhere saying why.  The
+    -- fallback is still the right behaviour -- a title screen is not
+    -- worth failing an import over -- but it should say so out loud.
     local okTitle, title = pcall(self.extractGen2TitleArt, self)
-    if okTitle and title then src.title = title end
+    if okTitle and title then
+      src.title = title
+    elseif not okTitle then
+      Logger.warn("title screen: %s (falling back to the shipped logo)",
+                  tostring(title))
+    else
+      Logger.warn("title screen: no art ripped for this ROM"
+                  .. " (falling back to the shipped logo)")
+    end
     local okIntro, intro = pcall(self.extractGen2IntroArt, self)
     if okIntro and intro then src.intro = intro end
     src.ledgeHops = self:gen2LedgeHops() or src.ledgeHops
@@ -7892,6 +10083,8 @@ function RomExtractorGen2:extractField()
     -- Chris.  Kris's overworld sheets are registered later, by the sprite
     -- pass, but the record only names their ids so order does not matter.
     src.playerForms = self:extractGen2PlayerForms() or src.playerForms
+    src.playerCustomization = self:gen2PlayerCustomization()
+      or src.playerCustomization
     -- MapScenes -> the per-map scene byte each one lives in.  Keyed by the
     -- map registry id the script VM keys save.g2Scenes with, so the battery
     -- save converter can read them straight across.  Without this every
@@ -7968,6 +10161,17 @@ function RomExtractorGen2:extractField()
     end
     if next(waterTs) then src.waterTilesets = waterTs end
   end
+  -- The Gen2 rod tables (see gen2Fishing above).  Written under their own
+  -- keys so FieldDefaults' Gen1 `fishing` table stays exactly as it is for a
+  -- Red/Blue/Yellow import; OverworldState:goFishing prefers these when the
+  -- import produced them.
+  pcall(function()
+    local groups, times = self:gen2Fishing()
+    if groups then
+      src.fishGroups = groups
+      src.timeFishGroups = times
+    end
+  end)
   self:write("field", src)
   self:tick("Gen2 field", 1, 1)
 end
@@ -8564,7 +10768,13 @@ local GEN2_FONT_ALIASES = { ["\xc3\x97"] = 0xF1 }
 
 function RomExtractorGen2:extractFontSheets()
   local fontSym = self:symbol("Font")
-  local extraSym = self:symbol("FontExtra")
+  -- Prism has no FontExtra at all: its gfx/font.asm is Font (font.1bpp),
+  -- FontBattleExtra (battle_extra.2bpp) and Frames, and _LoadFontsBattleExtra
+  -- copies FontBattleExtra straight to `vBGTiles tile $60` -- the same slots
+  -- Crystal fills from FontExtra.  Bailing out on the missing symbol wrote
+  -- NEITHER sheet, so Prism had no font.png either and every letter on screen
+  -- came from the placeholder.
+  local extraSym = self:symbol("FontExtra") or self:symbol("FontBattleExtra")
   if not (self.rom and fontSym and extraSym) then return false end
   return (pcall(function()
     local raw = self.rom:bytes(fontSym.bank, fontSym.address, GEN2_FONT_TILES * 8)
@@ -8823,23 +11033,111 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       -- them is the real block count; the old fixed 0x80 over-read every
       -- 64 block indoor tileset by a kilobyte of collision data.
       local blockCount = tonumber(spec.blockCount)
+      -- Prism stores the metatile and collision tables COMPRESSED --
+      -- `Tileset03Meta:: INCBIN "tilesets/03_metatiles.bin.lz"` -- and
+      -- decompresses them into wDecompressedMetatiles at map load.  Gold and
+      -- Crystal store both raw.  Read raw, the LZ3 stream itself becomes the
+      -- block table: every block of every map gets nonsense tile ids, the
+      -- collision table is nonsense too, and the Coll-minus-Meta gap measures
+      -- the COMPRESSED span, so the block count comes out short as well
+      -- (Tileset03: 110 blocks read, 177 real).  Prism's first map indexes
+      -- blocks past that short table, which is where a new game died.
+      --
+      -- The METATILE blob alone decides the block count.  Collision does not
+      -- get a vote: Prism's own tilesets/NN_collision.bin files disagree with
+      -- their metatile files on nineteen of the fifty-seven tilesets -- some
+      -- are padded up to a round 64 or 256 entries (09, 11, 13, 22, 40), one
+      -- is three entries SHORT of its metatile table (37) -- so requiring the
+      -- two to agree threw away nineteen correct decompressions and left
+      -- those tilesets on the raw path.  That is what still left 99 maps
+      -- indexing past their tileset after the first pass at this.
+      --
+      -- Guarded instead by: the manifest flag (so Gold and Crystal, which
+      -- store both blobs raw, never enter this branch at all), the 16-byte
+      -- granularity a metatile table must have, and the result being LONGER
+      -- than the span it was read from -- which is what "compressed" means.
+      local blocksRaw, preCollRaw, preAttrRaw
+      if self:layout("tilesetCompressed", 0) ~= 0 then
+        local rawSpan = (coll.bank == meta.bank and coll.address > meta.address)
+          and (coll.address - meta.address) or nil
+        local okMeta, metaOut = pcall(function() return self:gen2Lz(gfxId .. "Meta") end)
+        if okMeta and type(metaOut) == "table" and #metaOut > 0 and #metaOut % 16 == 0
+           and (not rawSpan or #metaOut > rawSpan) then
+          blocksRaw = metaOut
+          blockCount = math.floor(#metaOut / 16)
+          local okColl, collOut = pcall(function() return self:gen2Lz(gfxId .. "Coll") end)
+          if okColl and type(collOut) == "table" and #collOut >= 4 then
+            preCollRaw = collOut
+          end
+          -- <Tileset>Attr is Prism's answer to Crystal's <Tileset>PalMap, and
+          -- a better one: one CGB attribute byte per metatile CELL rather than
+          -- one nibble per tile id, so it carries the palette (bits 0-2) and
+          -- the VRAM bank (bit 3) for each of a block's 16 positions.  Prism
+          -- ships no PalMap at all, which is why every one of its 71 tilesets
+          -- came out with no palette data whatsoever.
+          local okAttr, attrOut = pcall(function() return self:gen2Lz(gfxId .. "Attr") end)
+          if okAttr and type(attrOut) == "table" and #attrOut == #metaOut then
+            preAttrRaw = attrOut
+          end
+        else
+          Logger.warn("gen2 tileset %s: metatiles did not decompress "
+            .. "(%s bytes over a %s byte span), falling back to a raw read",
+            tostring(id), tostring(type(metaOut) == "table" and #metaOut),
+            tostring(rawSpan))
+        end
+      end
       if not blockCount and coll.bank == meta.bank and coll.address > meta.address then
         blockCount = math.floor((coll.address - meta.address) / 16)
       end
       blockCount = blockCount or 0x80
-      local blocksRaw = self.rom:bytes(meta.bank, meta.address, blockCount * 16)
+      blocksRaw = blocksRaw or self.rom:bytes(meta.bank, meta.address, blockCount * 16)
       -- Flatten the two VRAM banks into one 0..191 range here, so every reader
       -- downstream -- the atlas bake, the animated-tile overdraw, mods -- can
       -- treat a metatile byte as a plain index into the extracted sheet.
       -- See GEN2_PAL.tileIndex.
       local tileCount = (width / 8) * (height / 8)
       local blocks = {}
+      -- Prism splits its sheet the same way, at a different offset and by a
+      -- different route.  LoadTileset (home/map.asm) zero-fills scratch to
+      -- `2 * $80` tiles, decompresses, copies `$7f tiles` to vBGTiles in VRAM
+      -- bank 0, then copies from `scratch + $80 tiles` to the SAME vBGTiles in
+      -- bank 1.  So the split is at 128, not Crystal's 96, and a metatile byte
+      -- is the plain tile number with the bank living in the ATTRIBUTE byte --
+      -- where Crystal packs both into the metatile byte itself ($80+ = bank 1).
+      --
+      -- Without this, every bank-1 tile drew as its bank-0 twin: Tileset45 has
+      -- 113 of its 128 tile numbers used in both banks, so more than half that
+      -- tileset was rendering the wrong art AND the wrong palette.
+      local attrSplit = preAttrRaw and 128 or nil
+      local palMapFromAttr = preAttrRaw and {} or nil
       for offset = 1, #blocksRaw, 16 do
         local block = {}
         for pos = offset, offset + 15 do
-          block[#block + 1] = GEN2_PAL.tileIndex(blocksRaw[pos], tileCount)
+          local index
+          if attrSplit then
+            local attr = preAttrRaw[pos] or 0
+            local bank = math.floor(attr / 8) % 2
+            index = bank * attrSplit + (blocksRaw[pos] or 0)
+            -- a sheet shorter than the split still has to land somewhere real
+            if index >= tileCount then index = blocksRaw[pos] or 0 end
+            if index >= tileCount then index = 0 end
+            palMapFromAttr[index + 1] = attr % 8
+          else
+            index = GEN2_PAL.tileIndex(blocksRaw[pos], tileCount)
+          end
+          block[#block + 1] = index
         end
         blocks[#blocks + 1] = block
+      end
+      -- Dense, not sparse.  Only tiles a block actually references pick up an
+      -- attribute, so the table above has holes -- and `#` on a table with
+      -- holes is undefined in Lua, which matters because TileRenderer gates
+      -- the whole GBC atlas on `#tileset.palMap > 0`.  A hole is palette 0,
+      -- the same answer gen2TileColors' own `or 0` gives.
+      if palMapFromAttr then
+        for index = 1, tileCount do
+          palMapFromAttr[index] = palMapFromAttr[index] or 0
+        end
       end
 
       -- Gen2 collision is per 16x16 cell, not per 8x8 tile: <Tileset>Coll
@@ -8849,6 +11147,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       local classes = self:gen2CollisionClasses()
       local collision = {}
       local ok, collRaw = pcall(function()
+        if preCollRaw then return preCollRaw end
         return self.rom:bytes(coll.bank, coll.address, blockCount * 4)
       end)
       if ok and type(collRaw) == "table" then collision = collRaw end
@@ -8861,6 +11160,10 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         imageHeight = height,
         tilesPerRow = width / 8,
         blocks = blocks,
+        -- Set only where <Tileset>Attr supplied it (Prism).  The PalMap
+        -- reader below sees this and leaves it alone rather than looking for
+        -- a symbol that does not exist on this cartridge.
+        palMap = palMapFromAttr,
         collision = collision,
         walkable = classes.land,
         waterTiles = classes.water,
@@ -8893,10 +11196,14 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         animation = {},
       }
     end
-    -- Augment with Gen2 GBC palette data (palMap + palColors) from ROM
+    -- Augment with Gen2 GBC palette data (palMap + palColors) from ROM.
+    -- The MAP may already be in place: Prism carries its palettes in
+    -- <Tileset>Attr, decoded above, and ships no PalMap symbol at all.  Only
+    -- the COLOURS are shared work, so the reader below fills in whichever half
+    -- is still missing rather than owning both.
     if self.rom then
       local palSym = self:symbol(gfxId .. "PalMap")
-      if palSym then
+      if palSym and not tilesets[id].palMap then
         -- How many tiles the sheet actually came out as decides both the
         -- palette map's length and whether it carries a VRAM-bank bit.
         local twoBanks = GEN2_PAL.twoVramBanks(GEN2_PAL.sheetTiles(tilesets[id]))
@@ -8928,23 +11235,32 @@ function RomExtractorGen2:extractRuntimeScaffolds()
           else
             for index, nibble in ipairs(nibbles) do palMap[index] = nibble end
           end
-          -- `id` may be the HOUSE alias, whose maps are recorded under the
-          -- real graphics family, so try both before falling back.
-          local env = tilesetEnvironments[id] or tilesetEnvironments[gfxId]
-          if env == nil then env = GEN2_PAL.defaultEnvironment end
-          local rows = envPalettes and envPalettes[env]
-          if rows then
-            tilesets[id].palMap = palMap
-            -- palColors stays the DAY row so every existing reader keeps
-            -- working unchanged; palColorsByTod carries the other three so the
-            -- renderer can follow the clock (GetTimeOfDay) the way the ROM does.
-            tilesets[id].palColors = rows.DAY
-            tilesets[id].palColorsByTod = {
-              MORN = rows.MORN, DAY = rows.DAY,
-              NITE = rows.NITE, DARK = rows.DARK,
-            }
-            tilesets[id].palEnvironment = env
-          end
+          tilesets[id].palMap = palMap
+        end
+      end
+      -- The colours, for either source of the map.  `id` may be the HOUSE
+      -- alias, whose maps are recorded under the real graphics family, so try
+      -- both before falling back.
+      if tilesets[id].palMap then
+        local env = tilesetEnvironments[id] or tilesetEnvironments[gfxId]
+        if env == nil then env = GEN2_PAL.defaultEnvironment end
+        local rows = envPalettes and envPalettes[env]
+        if rows then
+          -- palColors stays the DAY row so every existing reader keeps
+          -- working unchanged; palColorsByTod carries the other three so the
+          -- renderer can follow the clock (GetTimeOfDay) the way the ROM does.
+          tilesets[id].palColors = rows.DAY
+          tilesets[id].palColorsByTod = {
+            MORN = rows.MORN, DAY = rows.DAY,
+            NITE = rows.NITE, DARK = rows.DARK,
+          }
+          tilesets[id].palEnvironment = env
+        else
+          -- A map with no colours renders grey, which reads as "the import
+          -- half worked".  Say which half.
+          Logger.warn("gen2 tileset %s: palette map but no colours for "
+            .. "environment %s (EnvironmentColorsPointers missing?)",
+            tostring(id), tostring(env))
         end
       end
     end
@@ -8991,20 +11307,56 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   }
   for _, row in pairs(self:gen2OverworldSprites()) do
     local ok, raw = pcall(function()
+      -- Prism stores every overworld sprite sheet LZ3-compressed --
+      -- `Player0SpriteGFX:: INCBIN "gfx/overworld/p0.2bpp.lz"`, 207 of the 234
+      -- of them -- where Gold and Crystal store them raw.  Read raw, the
+      -- compressed stream is decoded as 2bpp tiles, which is exactly the
+      -- "scrambled player sprite" that made Prism's own character unreadable.
+      --
+      -- row.bytes is the sprite_header's own declared VRAM size, so it is the
+      -- length gen2LzAt checks against -- and a sheet that really is raw (the
+      -- other 27, and every sheet in Gold and Crystal) simply fails that check
+      -- and falls through to the read below.
+      if row.compressed then
+        local out = self:gen2LzAt(row.bank, row.address)
+        if out and #out >= row.bytes then
+          -- the sheet may decode longer than the frames we keep; take the head
+          local head = {}
+          for n = 1, row.bytes do head[n] = out[n] end
+          return head
+        end
+      end
       return self.rom:bytes(row.bank, row.address, row.bytes)
     end)
     if ok and type(raw) == "table" and #raw >= row.bytes then
       local width, height = row.width, row.height
       local frames = row.frames
-      local img = ImageWriter.decode2bpp(raw, width, height)
+      -- One malformed sheet must not take the import down.  decode2bpp
+      -- ASSERTS on a non-tile-aligned size, and this stage runs last, so a
+      -- single bad row used to throw away a complete extraction -- every
+      -- table already read, at the final step.  Skip the sprite instead.
+      local okImg, img = pcall(ImageWriter.decode2bpp, raw, width, height)
+      if not okImg then
+        Logger.warn("gen2 sprite %s skipped (%dx%d): %s",
+                    tostring(row.id), width, height, tostring(img))
+        img = nil
+      end
+      if img then
       -- Expand symmetric big dolls to a real 32x32 sheet so the renderer can
       -- draw the full body (not just the top-left 16x16 face tile).
       if BIG_SPRITE_IDS[row.id] and width == 16 and height >= 32 then
-        local left = ImageWriter.decode2bpp(raw, 16, 32)
+        -- decode2bpp validates the payload length against the dimensions, so
+        -- it must be handed EXACTLY the 128 bytes of a 16x32 body.  `raw` is
+        -- the whole sheet, and a taller one (Prism ships 48-row sheets) made
+        -- this assert "192 bytes, expected 128" and abort the entire import.
+        local head = {}
+        for n = 1, 128 do head[n] = raw[n] end
+        local okLeft, left = pcall(ImageWriter.decode2bpp, head, 16, 32)
+        if not okLeft then left = nil end
         -- composite left | mirror(left) into 32x32
-        if ImageWriter.mirrorComposite32 then
+        if left and ImageWriter.mirrorComposite32 then
           img = ImageWriter.mirrorComposite32(left)
-        else
+        elseif left then
           -- Inline: left is 16x32 ImageData; build 32x32 by copy + mirror.
           local ok2, big = pcall(function()
             local out = love.image.newImageData(32, 32)
@@ -9032,6 +11384,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         -- remembered below when writing sprites[]
         gen2SpriteImageMap[row.id .. "__big"] = true
       end
+      end
     end
   end
   orderedSprites = {}
@@ -9043,14 +11396,19 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   -- party menu icon extractIcons already wrote.  Those icons are baked in the
   -- mon's own palette with a transparent colour 0, hence trueColor.
   local speciesOrder = constants.speciesOrder or {}
+  -- Prism has REAL sheets for these; where it does, they win over the icon.
+  local monOwSheets = self:extractPrismMonOverworldSprites(speciesOrder) or {}
   local monIconDefs = {}
   -- Every species, not just the SpriteMons rows a map object happens to name:
   -- the day-care yard picks its two sheets from whatever is boarded, so any of
   -- the 251 can be asked for and a missing def falls back to the player sheet.
   for species = 1, #speciesOrder do
-    monIconDefs[gen2MonSpriteId(species)] =
-      "assets/generated/icons/" .. speciesOrder[species]:lower() .. ".png"
-    spriteIds[gen2MonSpriteId(species)] = true
+    local id = gen2MonSpriteId(species)
+    if not monOwSheets[id] then
+      monIconDefs[id] =
+        "assets/generated/icons/" .. speciesOrder[species]:lower() .. ".png"
+    end
+    spriteIds[id] = true
   end
   orderedSprites = {}
   for id in pairs(spriteIds) do orderedSprites[#orderedSprites + 1] = id end
@@ -9060,7 +11418,9 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   local gen2ObjPals = self:gen2ObjPalettes()
 
   for _, id in ipairs(orderedSprites) do
-    local img = monIconDefs[id] or gen2SpriteImageMap[id]
+    local sheet = monOwSheets[id]
+    local img = (sheet and sheet.image) or monIconDefs[id]
+       or gen2SpriteImageMap[id]
        or "assets/generated/sprites/placeholder_sprite.png"
     local spriteDef = {
       id = id,
@@ -9079,12 +11439,17 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       spriteDef.frames = 1
       spriteDef.walker = false
     end
-    if monIconDefs[id] then
+    if sheet then
+      -- a walking sheet like any other NPC's, on PAL_OW_PLAYER
+      spriteDef.frames = sheet.frames
+      spriteDef.walker = sheet.frames >= 3
+      spriteDef.monIcon, spriteDef.trueColor = nil, nil
+    elseif monIconDefs[id] then
       spriteDef.frames, spriteDef.walker = 2, false
       spriteDef.monIcon, spriteDef.trueColor = true, true
     end
     -- Attach the correct Gen2 OBJ palette so the sprite renders in proper GBC colors
-    local pal = gen2ObjPals[gen2SpritePalIdx[id] or 0]
+    local pal = gen2ObjPals[sheet and 0 or (gen2SpritePalIdx[id] or 0)]
     if pal and not monIconDefs[id] then spriteDef.gen2ObjPal = pal end
     sprites[id] = spriteDef
   end
@@ -9126,14 +11491,58 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   -- TypeMatchups: db attacker, defender, multiplier(x10); $fe splits off the
   -- rows Foresight cancels, $ff ends the table.
   local typeChart = { source = "ROM:TypeMatchups", matchups = {}, types = {} }
-  for value, typeName in pairs(GEN2_TYPES) do
-    typeChart.types[typeName] = {
-      name = typeName,
-      category = value >= GEN2_SPECIAL_TYPE and "special" or "physical",
-    }
+  -- walk ids rather than GEN2_TYPES so a hack's own types (Prism's Fairy,
+  -- Gas and Sound) end up in the roster too
+  for value = 0, 27 do
+    local typeName = self:gen2TypeName(value)
+    if typeName and not typeChart.types[typeName] then
+      typeChart.types[typeName] = {
+        name = typeName,
+        category = value >= GEN2_SPECIAL_TYPE and "special" or "physical",
+      }
+    end
   end
+  -- Prism replaces that sparse list with a PACKED BIT ARRAY: one row per
+  -- attacking type, `layout.matchupTableWidth` bytes wide, each defending type
+  -- taking two bits (0 immune, 1 not-very, 2 neutral, 3 super).  Nothing about
+  -- it looks like the Crystal table -- which is why no scan for triples, pairs
+  -- or a byte matrix ever found it, and why type effectiveness silently fell
+  -- back to the engine defaults.  Verified against the game's own
+  -- battle/type_matchup.asm: every row decodes identically.
+  local packedSym = self:symbol("TypeMatchup")
+  local packedWidth = self:layout("matchupTableWidth", 0)
+  if packedSym and packedWidth > 0 and self.rom then
+    typeChart.source = "ROM:TypeMatchup (2-bit packed)"
+    local MULTIPLIER = { [0] = 0, 5, 10, 20 }   -- x10, as the sparse rows use
+    for attack = 0, 27 do
+      local attacker = self:gen2TypeName(attack)
+      local ok, row = pcall(function()
+        return self.rom:bytes(packedSym.bank,
+                              packedSym.address + attack * packedWidth,
+                              packedWidth)
+      end)
+      if attacker and ok and type(row) == "table" then
+        for defend = 0, 27 do
+          local defender = self:gen2TypeName(defend)
+          local byte = row[math.floor(defend / 4) + 1]
+          if defender and byte then
+            local code = math.floor(byte / (4 ^ (defend % 4))) % 4
+            -- only the non-neutral cells are worth carrying; neutral is the
+            -- engine's default and listing 784 rows would bloat the file
+            if code ~= 2 then
+              typeChart.matchups[#typeChart.matchups + 1] = {
+                attacker = attacker, defender = defender,
+                multiplier = MULTIPLIER[code],
+              }
+            end
+          end
+        end
+      end
+    end
+  end
+
   local matchupSym = self:symbol("TypeMatchups")
-  if matchupSym and self.rom then
+  if matchupSym and self.rom and #typeChart.matchups == 0 then
     local address = matchupSym.address
     for _ = 1, 256 do
       local first = self.rom:byte(matchupSym.bank, address)
@@ -9142,7 +11551,8 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         address = address + 1
       else
         local row = self.rom:bytes(matchupSym.bank, address, 3)
-        local attacker, defender = GEN2_TYPES[row[1]], GEN2_TYPES[row[2]]
+        local attacker = self:gen2TypeName(row[1])
+        local defender = self:gen2TypeName(row[2])
         if attacker and defender then
           typeChart.matchups[#typeChart.matchups + 1] = {
             attacker = attacker, defender = defender, multiplier = row[3],
@@ -9685,21 +12095,49 @@ function RomExtractorGen2:extractAssets()
   end
 end
 
+-- The stages split into two kinds, and they must fail differently.
+--
+-- The DATA stages produce what the game cannot run without; if one of those
+-- throws, the import is genuinely broken and should say so.  The ASSET stages
+-- decode graphics, and every one of them runs AFTER all the data is already
+-- written.  A single bad sheet in one of those used to abort the whole import
+-- -- three separate times against Prism, each a different decode2bpp assert
+-- (a 61px sheet, a 192-byte payload for a 128-byte frame) -- throwing away a
+-- complete, correct extraction at the very last step over one cosmetic tile.
+--
+-- So asset stages are allowed to fail: log which one, keep the placeholder art
+-- that stage would have replaced, and finish.  A game with one wrong sprite is
+-- worth far more than no game at all.
+--
+-- Table fields, not `local`s: this chunk is at Lua 5.1's 200-local ceiling.
+RomExtractorGen2.DATA_STAGES = {
+  "extractScaffoldCore", "extractMoves", "extractMapsFromRom",
+  "extractMapScripts", "extractTextFromRom", "extractPokemon",
+  "extractPalettes", "extractIcons", "extractEncounters", "extractField",
+}
+RomExtractorGen2.ASSET_STAGES = {
+  "extractRuntimeScaffolds", "extractIntroAssetsFromRom", "extractAudio",
+  "extractAssets",
+}
+
 function RomExtractorGen2:run()
-  self:extractScaffoldCore()
-  self:extractMoves()
-  self:extractMapsFromRom()
-  self:extractMapScripts()
-  self:extractTextFromRom()
-  self:extractPokemon()
-  self:extractPalettes()
-  self:extractIcons()
-  self:extractEncounters()
-  self:extractField()
-  self:extractRuntimeScaffolds()
-  self:extractIntroAssetsFromRom()
-  self:extractAudio()
-  self:extractAssets()
+  for _, stage in ipairs(RomExtractorGen2.DATA_STAGES) do
+    self[stage](self)
+  end
+  local failed = 0
+  for _, stage in ipairs(RomExtractorGen2.ASSET_STAGES) do
+    local ok, err = pcall(self[stage], self)
+    if not ok then
+      failed = failed + 1
+      Logger.warn("gen2 asset stage %s failed, continuing: %s",
+                  stage, tostring(err):gsub("%s+", " "))
+    end
+  end
+  if failed > 0 then
+    Logger.warn("gen2 import finished with %d asset stage(s) incomplete; "
+                .. "data is complete, some art falls back to placeholders",
+                failed)
+  end
   if self.progress then
     self.progress(STAGE_COUNT, STAGE_COUNT, "Ready", 1, 1)
   end

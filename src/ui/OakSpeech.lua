@@ -61,6 +61,31 @@ local FALLBACKS = {
   _HisNameIsText = Strings.source("That's right! I\nremember now! His\vname is {RIVAL}!"),
 }
 
+-- FALLBACKS is keyed by the GEN1 symbol names, but gen2Steps asks for the
+-- GEN2 ones -- _OakText1, _OakText2, _OakText4, _OakText6, _OakText7 -- and
+-- `alt` below only maps Gen1 -> Gen2, never back.  So on a Gen2 dataset that
+-- does not carry those symbols, textOr("_OakText4") found no value, looked up
+-- FALLBACKS["_OakText4"], which does not exist, and answered NIL.  stepText
+-- passed that straight to TextBox, which concatenated it: the crash Prism hit
+-- on the very first line of a new game.  Crystal and Gold have the symbols, so
+-- the hole only opened on a romhack whose intro is written its own way.
+--
+-- _OakText5 (the "I study POKéMON as a profession" half) deliberately has no
+-- entry: _OakText4 already answers with the combined 2B fallback, and pointing
+-- both at it would print the same paragraph twice.  A step with no text at all
+-- is skipped rather than shown empty -- see runStep.
+local FALLBACK_ALIAS = {
+  _OakText1 = "_OakSpeechText1",  OakText1 = "_OakSpeechText1",
+  _OakText2 = "_OakSpeechText2A", OakText2 = "_OakSpeechText2A",
+  _OakText4 = "_OakSpeechText2B", OakText4 = "_OakSpeechText2B",
+  _OakText6 = "_IntroducePlayerText", OakText6 = "_IntroducePlayerText",
+  _OakText7 = "_OakSpeechText3",  OakText7 = "_OakSpeechText3",
+}
+
+local function fallbackFor(key)
+  return FALLBACKS[key] or FALLBACKS[FALLBACK_ALIAS[key] or ""]
+end
+
 local function textOr(game, key)
   local t = game.data.text
   local Version = require("src.core.GameVersion")
@@ -81,12 +106,22 @@ local function textOr(game, key)
         break
       end
     end
+    -- and the other direction: a Gen2 key whose own symbol is absent falls
+    -- back through the Gen1 name the scaffold DOES carry
+    if type(value) ~= "string" or value == "" then
+      local canon = FALLBACK_ALIAS[key]
+      local candidate = canon and t and t[canon]
+      if type(candidate) == "string" and candidate ~= ""
+          and not candidate:match("^%{GEN2_TEXT") then
+        value = candidate
+      end
+    end
   end
   if type(value) ~= "string" then
-    return FALLBACKS[key]
+    return fallbackFor(key)
   end
   if value == "" or value:match("^%{GEN2_TEXT") then
-    return FALLBACKS[key]
+    return fallbackFor(key)
   end
   return value
 end
@@ -277,6 +312,7 @@ function OakSpeech.gen2Steps()
       id = "ask_gender",
       kind = "choice",
       onlyIf = "playerForms",
+      notIf = "playerCustomization",
       textKey = "AreYouABoyOrAreYouAGirlText",
       textFallback = Strings("Are you a boy?\nOr are you a girl?"),
       pic = "oak",
@@ -291,6 +327,30 @@ function OakSpeech.gen2Steps()
       -- tx 13 (not 12) keeps the 7-tile box clear of the pic area, which
       -- runs to x = 104 = tile 13 for a full 7x7 portrait
       tx = 13, ty = 0, tw = 7,
+    },
+    -- Prism's replacement for the boy/girl question: PlayerCustomization
+    -- (event/customization.asm), run from the intro at exactly this point --
+    -- after the "introduce yourself" line and before the name prompt
+    -- (engine/intro_menu.asm `callba PlayerCustomization`).  It writes
+    -- save.player.gender as a p0..p13 form id, which is the same key the
+    -- BOY/GIRL answer writes, so the name presets and every sprite lookup
+    -- downstream carry on unchanged.
+    {
+      id = "customize_player",
+      kind = "fn",
+      onlyIf = "playerCustomization",
+      run = function(speech, done)
+        -- guarded for the same reason as Game:makeTitleState's copy: a build
+        -- without the screen must skip the step, not take the intro down
+        local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
+        if not (okCust and type(Cust) == "table") then
+          Logger.error("player customisation screen unavailable: %s",
+                       tostring(Cust))
+          return done()
+        end
+        if not Cust.available(speech.game) then return done() end
+        speech.game.stack:push(Cust.new(speech.game, function() done() end))
+      end,
     },
     {
       id = "ask_player_name",
@@ -391,9 +451,17 @@ end
 -- because field.playerForms exists on Crystal (which has KRIS) and nowhere
 -- else -- Gold and Silver must not be asked a question with one answer.
 function OakSpeech:stepApplies(step)
+  local field = self.game.data and self.game.data.field
+  -- `notIf` is the mirror: the step drops out when the dataset DOES carry the
+  -- field.  Prism needs it -- it has playerForms like Crystal, so the boy/girl
+  -- question survives its gate, but Prism does not ask that question at all.
+  -- It runs a whole customisation screen instead, and asking both would set
+  -- the character twice.
+  if step.notIf ~= nil and (field and field[step.notIf]) ~= nil then
+    return false
+  end
   local key = step.onlyIf
   if key == nil then return true end
-  local field = self.game.data and self.game.data.field
   return (field and field[key]) ~= nil
 end
 
@@ -430,7 +498,17 @@ function OakSpeech:say(key, next)
   self.game.stack:push(TextBox.new(self.game, textOr(self.game, key), next))
 end
 
+-- A step with nothing to say is SKIPPED, not shown as an empty box.  Some
+-- Gen2 datasets carry only part of the intro (Prism writes its own, so it has
+-- none of Crystal's _OakText symbols), and a speech that pushes a box with no
+-- pages leaves the player looking at a frame with no text and no way to know
+-- whether A does anything.  Running `next` straight away keeps the sequence
+-- moving through to the parts that do exist -- the name entry above all.
 function OakSpeech:sayText(text, next, opts)
+  if type(text) ~= "string" or text == "" then
+    if next then next() end
+    return
+  end
   self.game.stack:push(TextBox.new(self.game, text, next, opts))
 end
 

@@ -143,6 +143,24 @@ function SaveIdentity.migrateLegacy()
   local f = fs()
   if not (f and f.setIdentity and f.getIdentity) then return 0 end
 
+  -- DESKTOP ONLY, and now actually enforced.
+  --
+  -- The whole point of this module is that two LOVE games shared one
+  -- %APPDATA%/LOVE folder.  That collision only exists where the save
+  -- directory is keyed by t.identity -- Windows, Linux and macOS.  On the
+  -- Switch (love-nx) the save directory is the title's own save-data
+  -- archive: there is no "pokemon-love2d" folder to migrate FROM, and
+  -- setIdentity means REMOUNTING that archive, twice, on the boot path
+  -- before the first save is ever read.  Console save mounts are not
+  -- something to remount speculatively for a folder that cannot exist.
+  -- Android and iOS are package-scoped for the same reason (see conf.lua,
+  -- which deliberately keeps the old identity there).
+  local ok, Platform = pcall(require, "src.core.Platform")
+  if ok and Platform and Platform.detect then
+    local p = Platform.detect()
+    if p.console or p.mobile then return 0 end
+  end
+
   local current = f.getIdentity()
   if not current or current == SaveIdentity.LEGACY_IDENTITY then return 0 end
   -- Already attempted: nothing to do, and no identity juggling on a warm boot.

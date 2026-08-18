@@ -12,23 +12,67 @@ local function trim(value)
   return value and value:gsub("^%s+", ""):gsub("%s+$", "") or ""
 end
 
+-- io.popen RAISES rather than returning nil on a platform with no fork/exec
+-- (Switch / love-nx, UWP): the function is defined on every target and the
+-- error comes from inside the call, so an `io.popen and ...` guard is not a
+-- guard.  Everything here goes through the same pcall wrapper
+-- src/core/HostShell uses, and the read is protected too.  Loaded defensively
+-- because the editor's test harnesses run this file under plain Lua with no
+-- src.* on the require path.
+local safePopen
+do
+  local ok, HostShell = pcall(require, "src.core.HostShell")
+  if ok and type(HostShell) == "table" and HostShell.popen then
+    safePopen = HostShell.popen
+  else
+    safePopen = function(command, mode)
+      local okp, pipe = pcall(io.popen, command, mode or "r")
+      if not okp or not pipe then return nil end
+      return pipe
+    end
+  end
+end
+
 local function commandOutput(command)
-  local pipe = io.popen(command, "r")
+  local pipe = safePopen(command, "r")
   if not pipe then return nil end
-  local result = pipe:read("*a")
-  pipe:close()
+  local okr, result = pcall(function() return pipe:read("*a") end)
+  pcall(function() pipe:close() end)
+  if not okr then return nil end
   result = trim(result)
   return result ~= "" and result or nil
 end
 
 function SaveIO.defaultPath()
+  -- Ask LÖVE where its own save directory is before reconstructing it from
+  -- environment variables.  The reconstruction below is a headless fallback
+  -- (tests, plain lua) and it is only right for the three desktop OSes: on
+  -- the Switch there is no HOME, no APPDATA and no uname, so every branch
+  -- missed and it returned the bare relative "pokemon-love2d/save.lua",
+  -- which resolves against the working directory and finds nothing.  When
+  -- love is up, getSaveDirectory is the authoritative answer on every
+  -- platform and needs no shell at all.
+  if love and love.filesystem and love.filesystem.getSaveDirectory then
+    local dir = love.filesystem.getSaveDirectory()
+    if type(dir) == "string" and dir ~= "" then
+      return join(dir, "save.lua")
+    end
+  end
   -- same override conf.lua honors, so a mod-dev profile edits the save it
   -- actually plays
   local identity = os.getenv("POKEPORT_IDENTITY") or "pokemon-love2d"
   local home = os.getenv("HOME") or os.getenv("USERPROFILE") or ""
-  local uname = io.popen and io.popen("uname -s 2>/dev/null")
-  local sys = uname and uname:read("*l") or ""
-  if uname then uname:close() end
+  -- `io.popen and io.popen(...)` read like a guard and was not one: the field
+  -- is always non-nil, and the CALL is what raises on Horizon.  This is the
+  -- standalone-editor path (`--editor` with no --save), so on the Switch it
+  -- took the app down before the window had drawn anything.
+  local uname = safePopen("uname -s 2>/dev/null")
+  local sys = ""
+  if uname then
+    local okr, line = pcall(function() return uname:read("*l") end)
+    if okr and line then sys = line end
+    pcall(function() uname:close() end)
+  end
   if sys == "Darwin" then
     -- LÖVE identity folder lives under Application Support/LOVE/
     return join(join(join(join(home, "Library"), "Application Support"), "LOVE"),

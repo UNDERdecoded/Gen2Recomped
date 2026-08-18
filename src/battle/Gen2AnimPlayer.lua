@@ -167,6 +167,15 @@ local GEN1_BALL_ANIMS = {
   ULTRATOSS_ANIM = "throwPokeBall",
   BLOCKBALL_ANIM = "throwPokeBall",
   POOF_ANIM = "sendOutMon",
+  -- The shiny sparkle is not an animation of its own: BattleAnim_SendOutMon
+  -- opens `anim_if_param_equal $1, .Shiny`, and core.asm plays the SAME
+  -- animation a SECOND time with wBattleAnimParam = 1 whenever
+  -- CheckShininess returns carry (:3566 the enemy's send-out, :4057 the
+  -- player's, :9091 a wild encounter, which plays only this pass).  That
+  -- branch is eight SFX_SHINE stars over an inverted flash and a
+  -- gray/yellow OBJ-palette cycle.  Both Gold and Crystal carry it; Prism's
+  -- script is shorter but has the same param-1 arm.
+  SHINY_ANIM = "sendOutMon",
   SHAKE_ANIM = false,
   HIDEPIC_ANIM = false,
   SHOWPIC_ANIM = false,
@@ -238,7 +247,11 @@ function Gen2AnimPlayer:start(moveId, attackerIsPlayer, opts)
   -- reaching the foe).  Gen 2's BattleAnim_SendOutMon is already authored on
   -- the sender's side, so reading that flag straight through mirrored the
   -- player's own release onto the wild mon.
-  if moveId == "POOF_ANIM" then attackerIsPlayer = not attackerIsPlayer end
+  -- SHINY_ANIM is the same script on the same side as the send-out it
+  -- follows, so it takes the same flag flip.
+  if moveId == "POOF_ANIM" or moveId == "SHINY_ANIM" then
+    attackerIsPlayer = not attackerIsPlayer
+  end
   self.enemySide = not attackerIsPlayer
   self.opts = opts
   self.moveId = moveId
@@ -256,6 +269,8 @@ function Gen2AnimPlayer:start(moveId, attackerIsPlayer, opts)
   end
   if GEN1_BALL_ANIMS[moveId] == "throwPokeBall" then
     self.vars.param = ballParam(self, opts)
+  elseif moveId == "SHINY_ANIM" then
+    self.vars.param = 1   -- wBattleAnimParam = 1 -> .Shiny
   end
   -- objects the script addresses by index outlive the port's usual object
   -- bound: on hardware they only retire when their asm function says so,

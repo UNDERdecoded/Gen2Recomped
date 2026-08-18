@@ -57,6 +57,8 @@ known_version() {
     # and none are ones the extractor reads, so one manifest serves both.
     f2f52230b536214ef7c9924f483392993e226cfb) echo crystal ;;
     f4cd194bdee0d04ca4eac29e09b8e4e9d818c133) echo crystal ;;
+    # Pokemon Prism (Gold hack); recognised, but has no manifest yet.
+    752076692ae3387cf426ce5f51a98c6b60e8df6a) echo prism ;;
     *) echo "" ;;
   esac
 }
@@ -103,7 +105,7 @@ say "installing Pillow"
 say "decoding game data from $(basename "$ROM")"
 cd "$ROOT"
 case "$ROM_VERSION" in
-  gold|silver|crystal)
+  gold|silver|crystal|prism)
     # Gen2 is imported by the engine at runtime, so its datasets go straight
     # into LÖVE's save folder rather than the repo's data/generated.
     if [ "$(uname -s)" = "Darwin" ]; then

@@ -18,6 +18,9 @@
 
 local Data = require("src.core.Data")
 local TileRenderer = require("src.render.TileRenderer")
+-- Face-button labels resolve through here so the Switch's physical A/B match
+-- Nintendo's layout rather than SDL's positional naming (see GamepadMap).
+local GamepadMap = require("src.core.GamepadMap")
 local SaveIO = require("SaveIO")
 local Catalog = require("Catalog")
 local State = require("State")
@@ -45,6 +48,20 @@ local mouseClicked = false
 -- there like mouseClicked is: LOVE delivers events before love.draw, so a
 -- notch is always spent by the frame that follows it (#595).
 local wheelY = 0
+
+-- Gamepad virtual cursor state.  Declared up here with the other frame-input
+-- locals rather than beside its own functions further down, because App.unload
+-- (above them) has to reset it -- a local declared later is not in scope there
+-- and would silently resolve to a nil global.
+local pad = {
+  x = 0, y = 0,
+  active = false,
+  inited = false,
+  axis = { leftx = 0, lefty = 0, righty = 0 },
+  dirs = {},
+  scroll = 0,
+}
+local lastMouseX, lastMouseY
 
 -- Which game's cache Data was loaded from.  main.lua checks this before
 -- opening the editor on a save from the other version, because the two
@@ -233,6 +250,14 @@ function App.unload()
   -- deaf to every click (#541).
   Kit.blur()
   Kit.blockClicks = false
+  -- Same reasoning for the pad cursor: a direction held at the moment Close
+  -- was taken never sees its release event (main.lua stops forwarding to the
+  -- editor the instant editorMode drops), so the next session would open with
+  -- the cursor already sliding. Position is deliberately kept -- reopening
+  -- where you left the pointer is the friendlier behaviour.
+  pad.dirs = {}
+  pad.axis = { leftx = 0, lefty = 0, righty = 0 }
+  pad.scroll = 0
 end
 
 function App.save()
@@ -296,11 +321,180 @@ local function finishClose()
   end
 end
 
+-- ------------------------------------------------------- gamepad virtual cursor
+-- This editor is an immediate-mode UI driven entirely by one (x, y, clicked)
+-- triple, and until now that triple could only come from love.mouse.  That was
+-- fine while `love . --editor` was the only way in; it stopped being fine when
+-- the launcher's Edit button made the editor reachable on the Switch, which has
+-- no pointer of any kind.  The editor opened there and then accepted no input
+-- at all -- not a stick, not the D-pad, not a face button -- so the only exit
+-- was killing the app, and the tool read as "crashed".
+--
+-- Rather than teach Kit about a second input model, feed the same triple from a
+-- virtual cursor, exactly as the launcher does (RomImporter:_activatePadCursor).
+-- Everything downstream -- every panel, every button, the species picker --
+-- keeps working with no changes.
+local PAD_DEAD = 0.28
+local PAD_SPEED = 560       -- px/s at full stick deflection
+local PAD_DPAD_SPEED = 420
+-- Right-stick scroll accumulates into whole wheel notches, because that is the
+-- only scroll currency Kit has.
+local PAD_SCROLL_RATE = 8   -- notches/s at full deflection
+-- `pad` and lastMouse* are declared with the other frame-input locals near the
+-- top of this file; see the note there.
+
+local function padActivate()
+  if not pad.inited then
+    local w, h = love.graphics.getDimensions()
+    pad.x, pad.y = w * 0.5, h * 0.5
+    pad.inited = true
+  end
+  pad.active = true
+end
+
+local function padCycleTab(delta)
+  if not S then return end
+  local idx = 1
+  for i, t in ipairs(TABS) do
+    if t.id == S.tab then idx = i break end
+  end
+  S.tab = TABS[((idx - 1 + delta) % #TABS) + 1].id
+  -- Same bookkeeping the tab rail does on a click: a focused field must not
+  -- keep eating keys for a tab that is no longer showing, and an armed
+  -- destructive action must not survive the switch.
+  Kit.blur()
+  Ops.disarm(S)
+end
+
+local function padUpdate(dt)
+  if not pad.active or not S then return end
+  local w, h = love.graphics.getDimensions()
+  local vx, vy = 0, 0
+  local ax, ay = pad.axis.leftx or 0, pad.axis.lefty or 0
+  if math.abs(ax) > PAD_DEAD then vx = vx + ax * PAD_SPEED end
+  if math.abs(ay) > PAD_DEAD then vy = vy + ay * PAD_SPEED end
+  if pad.dirs.left  then vx = vx - PAD_DPAD_SPEED end
+  if pad.dirs.right then vx = vx + PAD_DPAD_SPEED end
+  if pad.dirs.up    then vy = vy - PAD_DPAD_SPEED end
+  if pad.dirs.down  then vy = vy + PAD_DPAD_SPEED end
+  pad.x = math.max(0, math.min(w, pad.x + vx * dt))
+  pad.y = math.max(0, math.min(h, pad.y + vy * dt))
+
+  -- Right stick scrolls whatever list the cursor is over, via the same path a
+  -- wheel notch takes.  Fractional travel is carried between frames so a
+  -- half-deflected stick still scrolls smoothly instead of not at all.
+  local ry = pad.axis.righty or 0
+  if math.abs(ry) > PAD_DEAD then
+    pad.scroll = pad.scroll - ry * PAD_SCROLL_RATE * dt
+    while pad.scroll >= 1 do pad.scroll = pad.scroll - 1; App.wheelmoved(0, 1) end
+    while pad.scroll <= -1 do pad.scroll = pad.scroll + 1; App.wheelmoved(0, -1) end
+  else
+    pad.scroll = 0
+  end
+end
+
+-- Drawn last, above everything including the species picker, so it is never
+-- hidden by the layer it is about to click.
+local function padDraw()
+  if not pad.active then return end
+  local x, y = pad.x, pad.y
+  love.graphics.push("all")
+  love.graphics.origin()
+  love.graphics.setColor(0, 0, 0, 0.45)
+  love.graphics.polygon("fill", x + 2, y + 2, x + 2, y + 22,
+    x + 8, y + 16, x + 14, y + 26)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.polygon("fill", x, y, x, y + 20, x + 6, y + 14, x + 12, y + 24)
+  love.graphics.setColor(0, 0, 0, 0.85)
+  love.graphics.setLineWidth(1)
+  love.graphics.polygon("line", x, y, x, y + 20, x + 6, y + 14, x + 12, y + 24)
+  love.graphics.pop()
+end
+
+function App.gamepadpressed(button)
+  if not S then return end
+  padActivate()
+  -- Through GamepadMap: SDL names face buttons by POSITION, and Nintendo's A
+  -- and B sit opposite the Xbox layout SDL is named after, so on a Switch the
+  -- button physically labelled A arrives as SDL "b".  Testing the raw name
+  -- would confirm on the button labelled B.
+  local action = GamepadMap.mapGamepadButton(button)
+  if action == "a" then
+    -- Click at the cursor; Kit consumes it on the next draw, which is the same
+    -- path a real tap takes.
+    mouseClicked = true
+  elseif action == "b" then
+    App.keypressed("escape")
+  elseif action == "start" then
+    App.save()
+  elseif action == "select" then
+    App.close()
+  elseif button == "leftshoulder" then
+    padCycleTab(-1)
+  elseif button == "rightshoulder" then
+    padCycleTab(1)
+  elseif button == "dpup" then pad.dirs.up = true
+  elseif button == "dpdown" then pad.dirs.down = true
+  elseif button == "dpleft" then pad.dirs.left = true
+  elseif button == "dpright" then pad.dirs.right = true
+  end
+end
+
+function App.gamepadreleased(button)
+  if button == "dpup" then pad.dirs.up = nil
+  elseif button == "dpdown" then pad.dirs.down = nil
+  elseif button == "dpleft" then pad.dirs.left = nil
+  elseif button == "dpright" then pad.dirs.right = nil
+  end
+end
+
+-- Only the three axes the cursor actually uses; triggers and the unused right
+-- X would otherwise arm the cursor from a resting pad's noise.
+local PAD_AXES = { leftx = true, lefty = true, righty = true }
+
+function App.gamepadaxis(axis, value)
+  if not PAD_AXES[axis] then return end
+  pad.axis[axis] = value
+  if math.abs(value or 0) > PAD_DEAD then padActivate() end
+end
+
+-- Raw-stick fallback, for a pad SDL has no game-controller mapping for (the
+-- Linux handhelds this editor also ships to).  Skipped when SDL DOES map the
+-- pad, or one press would arrive twice and click twice.
+function App.joystickpressed(joystick, button)
+  if GamepadMap.ignoreRawForJoystick(joystick) then return end
+  local name = GamepadMap.mapRawToGamepadButton(button)
+  if name then return App.gamepadpressed(name) end
+end
+
+function App.joystickaxis(joystick, axis, value)
+  if GamepadMap.ignoreRawForJoystick(joystick) then return end
+  local names = { [1] = "leftx", [2] = "lefty", [4] = "righty" }
+  local name = names[axis]
+  if name then return App.gamepadaxis(name, value) end
+end
+
+function App.joystickhat(joystick, hat, direction)
+  if GamepadMap.ignoreRawForJoystick(joystick) then return end
+  pad.dirs.up    = direction:find("u") ~= nil or nil
+  pad.dirs.down  = direction:find("d") ~= nil or nil
+  pad.dirs.left  = direction:find("l") ~= nil or nil
+  pad.dirs.right = direction:find("r") ~= nil or nil
+  if direction ~= "c" then padActivate() end
+end
+
+-- Test/host hook: where the editor thinks the pointer is right now.
+function App._pointer()
+  if pad.active then return pad.x, pad.y, true end
+  return nil, nil, false
+end
+
 function App.update(dt)
   -- Immediate-mode UI: nothing to simulate per-frame; input is sampled
   -- directly in App.draw() via Kit.beginFrame. Tile animation (water,
   -- flowers) still needs ticking so the Map tab isn't static.
   TileRenderer.tick()
+  padUpdate(dt or 0)
 end
 
 function App.mousepressed(x, y, button)
@@ -318,9 +512,9 @@ end
 local function drawFileChip(x, y, w, h)
   local s = Kit.scale
   Theme.row(x, y, w, h, 10 * s, 0.6)
-  local pad = 14 * s
+  local inset = 14 * s
   local dot = 8 * s
-  local cx = x + pad
+  local cx = x + inset
   if S.dirty then
     Theme.col(PAL.yellow, 1)
     if love.graphics.circle then
@@ -332,20 +526,20 @@ local function drawFileChip(x, y, w, h)
   end
   local label = S.dirty and "UNSAVED" or "SAVED"
   local labelW = Kit.textWidth("tiny", label)
-  Kit.textRight("tiny", label, x + w - pad, y + (h - Kit.textHeight("tiny")) / 2,
+  Kit.textRight("tiny", label, x + w - inset, y + (h - Kit.textHeight("tiny")) / 2,
     S.dirty and PAL.yellow or PAL.caption)
-  local avail = (x + w - pad - labelW - 10 * s) - cx
+  local avail = (x + w - inset - labelW - 10 * s) - cx
   local shown = Theme.ellipsizeLeft(Kit.fonts.mono, S.path or "(no file)", avail)
   Kit.text("mono", shown, cx, y + (h - Kit.textHeight("mono")) / 2, PAL.detail)
 end
 
 local function drawTitleBar(x, y, w, h)
   local s = Kit.scale
-  local pad = 22 * s
+  local inset = 22 * s
   Theme.col(PAL.cardBorder, 0.22)
   love.graphics.rectangle("fill", x, y + h - 1, w, 1)
 
-  local cx = x + pad
+  local cx = x + inset
   -- SE badge, the same rounded-square chip shape the launcher's tabs use
   local badge = 34 * s
   local by = y + (h - badge) / 2
@@ -361,7 +555,7 @@ local function drawTitleBar(x, y, w, h)
   -- is why they used to paint straight through the buttons (#497).
   local btnH = 38 * s
   local btnY = y + (h - btnH) / 2
-  local rightEdge = x + w - pad
+  local rightEdge = x + w - inset
   local gap = 8 * s
   local closeW = 22 * s + Kit.textWidth("button", "Close")
   local openW = 22 * s + Kit.textWidth("button", "Open...")
@@ -510,14 +704,14 @@ end
 
 local function drawTabRail(x, y, w, h)
   local s = Kit.scale
-  local pad = 22 * s
+  local inset = 22 * s
   Theme.col(PAL.cardBorder, 0.22)
   love.graphics.rectangle("fill", x, y + h - 1, w, 1)
 
   local label, pillColor, target, clean = validationPill()
   local ph = 26 * s
   local pw = Kit.textWidth("small", label) + 28 * s
-  local px = x + w - pad - pw
+  local px = x + w - inset - pw
   local detail, widths = railDetail(x, px)
   -- Last stop before the tiles and the pill collide: at phone widths even the
   -- 2-letter glyph tiles need the room the pill is sitting in, and the pill
@@ -525,11 +719,11 @@ local function drawTabRail(x, y, w, h)
   -- what goes (#497).  With it gone the tiles get the full bar back.
   local showPill = widths.glyph <= px - 14 * s - (x + 22 * s)
   if not showPill then
-    detail = railDetail(x, x + w - pad)
+    detail = railDetail(x, x + w - inset)
   end
 
   local tile = 40 * s
-  local cx = x + pad
+  local cx = x + inset
   local tileY = y + h - 12 * s - tile
   for _, t in ipairs(TABS) do
     local active = (S.tab == t.id)
@@ -594,7 +788,10 @@ end
 
 local function drawStatusBar(x, y, w, h)
   local s = Kit.scale
-  local pad = 22 * s
+  -- `inset`, not `pad`: the gamepad state is a file-level local called `pad`,
+  -- and a padding local of the same name shadowed it -- so `pad.active` below
+  -- indexed a number and the editor crashed the moment the status bar drew.
+  local inset = 22 * s
   Theme.col(PAL.bgBot, 0.6)
   love.graphics.rectangle("fill", x, y, w, h)
   Theme.col(PAL.cardBorder, 0.22)
@@ -602,15 +799,25 @@ local function drawStatusBar(x, y, w, h)
 
   local ctrl = (love.system and love.system.getOS
     and love.system.getOS() == "OS X") and "Cmd" or "Ctrl"
-  local hint = S.embedded
-    and (ctrl .. "+S save . " .. ctrl ..
-         "+R reload . Esc clear selection . Close returns to the launcher")
-    or (ctrl .. "+S save . " .. ctrl ..
-        "+R reload . Esc clear selection . arrows pan map . wheel scrolls lists")
+  -- On a pad the keyboard hint is not just unhelpful, it is the only thing on
+  -- screen telling you how to drive the editor -- and every shortcut in it
+  -- needs a key the console does not have.  Swap it for the pad's own map
+  -- whenever the virtual cursor is what is moving.
+  local hint
+  if pad.active then
+    hint = "stick/dpad move . A click . B back . L/R switch tabs . "
+      .. "Start save . Select close"
+  else
+    hint = S.embedded
+      and (ctrl .. "+S save . " .. ctrl ..
+           "+R reload . Esc clear selection . Close returns to the launcher")
+      or (ctrl .. "+S save . " .. ctrl ..
+          "+R reload . Esc clear selection . arrows pan map . wheel scrolls lists")
+  end
   local hintW = Kit.textWidth("tiny", hint)
-  Kit.textRight("tiny", hint, x + w - pad, y + (h - Kit.textHeight("tiny")) / 2, PAL.faint)
-  local avail = w - 2 * pad - hintW - 14 * s
-  Kit.text("mono", Kit.ellipsize("mono", S.status or "", avail), x + pad,
+  Kit.textRight("tiny", hint, x + w - inset, y + (h - Kit.textHeight("tiny")) / 2, PAL.faint)
+  local avail = w - 2 * inset - hintW - 14 * s
+  Kit.text("mono", Kit.ellipsize("mono", S.status or "", avail), x + inset,
     y + (h - Kit.textHeight("mono")) / 2, PAL.detail)
 end
 
@@ -623,7 +830,28 @@ function App.draw()
   Kit.layout(width, height)
   local s = Kit.scale
 
-  local mx, my = love.mouse.getPosition()
+  -- Where the pointer is.  love.mouse is read unconditionally on desktop, but
+  -- it is not the only source any more: the virtual cursor above serves the
+  -- Switch, and the nil-guard covers a build with the mouse module absent
+  -- entirely (this line used to be an unguarded love.mouse.getPosition(), i.e.
+  -- an error on the first frame there rather than a degraded editor).
+  local mx, my
+  local haveMouse = love.mouse and love.mouse.getPosition
+  if haveMouse then
+    local rx, ry = love.mouse.getPosition()
+    -- Real mouse motion yields the pad cursor, so a desktop user who bumped a
+    -- stick once gets their pointer straight back.
+    if pad.active and lastMouseX
+        and (math.abs(rx - lastMouseX) > 3 or math.abs(ry - lastMouseY) > 3) then
+      pad.active = false
+    end
+    lastMouseX, lastMouseY = rx, ry
+    mx, my = rx, ry
+  end
+  if pad.active or not haveMouse then
+    padActivate()
+    mx, my = pad.x, pad.y
+  end
   Kit.beginFrame(mx, my, mouseClicked, wheelY)
   mouseClicked = false
   wheelY = 0
@@ -656,6 +884,7 @@ function App.draw()
   Kit.blockClicks = false
   SpeciesPicker.draw(S, Kit, width, height)
   Kit.endFrame()
+  padDraw()
 
   -- Only now, with the whole frame painted, is it safe to drop the editor.
   if S._closeRequested then finishClose() end

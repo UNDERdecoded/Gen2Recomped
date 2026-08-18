@@ -221,6 +221,15 @@ FieldDefaults.CONSTANTS = {
     neighborHops = 2,         -- connection hops drawn around the current map
     stepFrames = 16,          -- 1px per frame, 16 frames per tile
     bikeStepFrames = 8,       -- the bicycle doubles walking speed
+    -- Prism adds RUNNING, which Gold and Crystal have no notion of: hold
+    -- B and DoPlayerMovement takes its .run branch instead of .walk
+    -- (engine/player_movement.asm).  There is no running-shoes ITEM to
+    -- find -- the branch is unconditional apart from Pokemon mode -- so
+    -- nothing gates this but the game being Prism.  8 frames is the
+    -- speed the ROM itself uses: its step-vector table's running-shoes
+    -- row is `db 0, 2, 8, 2`, two pixels a frame over eight frames,
+    -- which is the bicycle's rate on foot.
+    runStepFrames = 8,
     turnFrames = 4,           -- tap window before a turn commits to a step
   },
   -- cumulative slot thresholds out of 256 (engine/battle/wild_encounters.asm)

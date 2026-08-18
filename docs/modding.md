@@ -18,6 +18,58 @@ Regenerate the reference straight into a wiki checkout:
 luajit tools/gen_registry_docs.lua ../gen1recomp.wiki
 ```
 
+## Bulk storage (`mod.storage`)
+
+`mod.save` is the right home for a handful of per-playthrough values: it lives
+inside `save.modData`, rides every save and load, and a shape change there
+needs a `mod.migrations:add` entry. It is the wrong home for payloads a mod
+*derives* rather than authors — an extracted model cache, a decoded asset pack,
+anything measured in megabytes. Those belong in `mod.storage`.
+
+Each mod gets one namespace under the save directory
+(`modstorage/<mod id>/`) and can see nothing outside it. The namespace is per
+**mod**, not per playthrough or per game version: re-deriving hundreds of
+megabytes for every save slot would be the wrong default. A mod that does want
+finer scoping puts the scope in its own key, and `context()` hands it the
+version and slot to build one from.
+
+Every method takes the live game as its first argument, so a future revision
+can scope by it without a signature break:
+
+```lua
+local store, game = mod.storage, mod.game
+
+store:writeBytes(game, "cache/models/001", packBytes)   -- opaque bytes
+local bytes = store:readBytes(game, "cache/models/001")
+
+store:write(game, "cache/marker", { count = 251 })      -- data-only record
+local marker = store:read(game, "cache/marker")
+
+for _, key in ipairs(store:list(game, "cache") or {}) do
+  store:delete(game, key)
+end
+```
+
+A key may name segments (`cache/models/001`); it may not traverse upward,
+start or end with `/`, or use anything outside `%w - _ . /`.
+
+Records go through `SaveSerializer`, so a stored record can only ever be data —
+an imported file can never execute code. Bytes are stored verbatim. A key holds
+one or the other: writing the other representation replaces it.
+
+Errors come back as `nil`/`false`, a short code, and a message. `"not_found"`
+is a normal answer rather than a failure, and telling it apart from
+`"storage_unavailable"` matters — a mod that treats a failed *lookup* as
+"nothing is cached" rebuilds its cache on every launch. The other codes are
+`"type_mismatch"` (the key holds the other representation), `"invalid_key"`,
+`"decode_failed"`, `"encode_failed"`, `"read_failed"`, `"write_failed"`,
+`"delete_failed"` and `"invalid_value"`.
+
+`list()` is backed by a memo that every write and delete drops, because
+"is my payload still complete?" is the kind of question a menu row asks once
+per frame, and a directory walk over several hundred blobs per frame is not
+something a menu can afford.
+
 ## Editing maps in Tiled
 
 Maps are data, not assets, so they can be authored in a real map editor and

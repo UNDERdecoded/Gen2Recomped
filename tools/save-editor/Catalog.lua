@@ -1,5 +1,45 @@
 local Catalog = {}
 
+-- io.popen is NOT a "returns nil when unsupported" API.  LuaJIT and PUC Lua
+-- both DEFINE the function on every target and RAISE "'popen' not supported"
+-- from inside it when the platform has no fork/exec -- which is the Switch
+-- (love-nx / Horizon) and the UWP build.  So an `io.popen and io.popen(...)`
+-- guard guards nothing: the call still throws.  Here it threw out of
+-- Catalog.scrapeEvents -> App.load -> the launcher's Edit button, so the save
+-- editor died on open on the one platform that cannot shell out.
+--
+-- src/core/HostShell.popen already wraps this in a pcall for exactly this
+-- reason (see its comment); the editor was simply not using it.  Loaded
+-- defensively because the editor's test harnesses run these modules under
+-- plain Lua with no src.* on the require path.
+local safePopen
+do
+  local ok, HostShell = pcall(require, "src.core.HostShell")
+  if ok and type(HostShell) == "table" and HostShell.popen then
+    safePopen = HostShell.popen
+  else
+    safePopen = function(command, mode)
+      local okp, pipe = pcall(io.popen, command, mode or "r")
+      if not okp or not pipe then return nil end
+      return pipe
+    end
+  end
+end
+
+-- Whether shelling out is meaningful at all.  A console has no shell, so skip
+-- the attempt instead of paying a pcall for a guaranteed failure.  Only a
+-- positive love answer is trusted: headless test runs have no love.system, and
+-- Platform then reports the OS as "Unknown" -> false, which would silently
+-- disable the shell listing those runs depend on.
+local function canShell()
+  if not (love and love.system) then return true end
+  local okp, Platform = pcall(require, "src.core.Platform")
+  if okp and type(Platform) == "table" and Platform.canSpawnProcess then
+    return Platform.canSpawnProcess()
+  end
+  return true
+end
+
 local function sortedKeys(t)
   local keys = {}
   for k in pairs(t) do
@@ -40,23 +80,31 @@ end
 
 local function shellListLua(dir)
   local out = {}
+  if not canShell() then return out end
   if package.config:sub(1, 1) == "\\" then
     -- cmd has no ls; dir /b prints bare names, so re-attach the directory
-    local p = io.popen(string.format('dir /b "%s\\*.lua" 2>nul', dir))
+    local p = safePopen(string.format('dir /b "%s\\*.lua" 2>nul', dir))
     if p then
-      for line in p:lines() do
-        if line ~= "" then table.insert(out, dir .. "/" .. line) end
-      end
-      p:close()
+      -- p:lines() itself can raise on a pipe the platform half-supports, so
+      -- the drain is protected too: an unreadable listing is "no files here",
+      -- never a crash out of the editor's load path.
+      pcall(function()
+        for line in p:lines() do
+          if line ~= "" then table.insert(out, dir .. "/" .. line) end
+        end
+      end)
+      pcall(function() p:close() end)
     end
     return out
   end
-  local p = io.popen(string.format('ls "%s"/*.lua 2>/dev/null', dir))
+  local p = safePopen(string.format('ls "%s"/*.lua 2>/dev/null', dir))
   if p then
-    for line in p:lines() do
-      table.insert(out, line)
-    end
-    p:close()
+    pcall(function()
+      for line in p:lines() do
+        table.insert(out, line)
+      end
+    end)
+    pcall(function() p:close() end)
   end
   return out
 end

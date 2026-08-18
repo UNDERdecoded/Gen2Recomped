@@ -47,6 +47,9 @@ function Resolve-RomVersion([string]$sha1) {
         # one symbol table serve both.
         'f2f52230b536214ef7c9924f483392993e226cfb' { return 'crystal' }
         'f4cd194bdee0d04ca4eac29e09b8e4e9d818c133' { return 'crystal' }
+        # Pokemon Prism (Gold hack). Recognised so setup stops calling the
+        # cartridge unknown; it has no manifest yet.
+        '752076692ae3387cf426ce5f51a98c6b60e8df6a' { return 'prism' }
         default { return $null }
     }
 }
@@ -112,7 +115,7 @@ if ($LASTEXITCODE -ne 0) { Fail 'Pillow installation failed' }
 Say "decoding game data from $(Split-Path -Leaf $Rom)"
 Push-Location $Root
 try {
-    if ($romVersion -in @('gold', 'silver', 'crystal')) {
+    if ($romVersion -in @('gold', 'silver', 'crystal', 'prism')) {
         Say 'Gen2 ROM detected: extracting supported datasets with the original ROM pipeline.'
         # Desktop owns the identity 'Gen2Recomp' (conf.lua); it used to be
         # 'pokemon-love2d', shared with gen1recomp.  Writing to the old folder

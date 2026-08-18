@@ -1,5 +1,10 @@
 local Json = require("src.link.Json")
 local Logger = require("src.core.Logger")
+-- Hoisted deliberately: the dev-mode require shim attributes every src.* require
+-- made while Runtime.currentMod is set to THAT MOD, and both uses below sit
+-- inside that window.  Requiring it here resolves it once, at load, with no
+-- mod in scope, so a mod is never blamed for an engine require it did not make.
+local ModImports = require("src.mods.ModImports")
 local SaveData = require("src.core.SaveData")
 local Data = require("src.core.Data")
 local Version = require("src.core.Version")
@@ -13,7 +18,13 @@ local Schemas = require("src.mods.Schemas")
 local Semver = require("src.mods.Semver")
 local Events = require("src.mods.Events")
 local Hooks = require("src.mods.Hooks")
+local ModStorage = require("src.mods.Storage")
 local Runtime = require("src.mods.Runtime")
+-- Module-name aliases for mods written against the Gold port's per-generation
+-- layout (src.world.gen2.Player and friends).  Installed here because this is
+-- the module that loads mods: the searcher has to be in place before the
+-- first mod's main.lua runs, and nothing else needs it at all.
+require("src.core.ModCompat").install()
 
 local Loader = {}
 Loader.__index = Loader
@@ -662,11 +673,25 @@ function Loader:_api(mod)
     local path = self.path .. "/" .. relative
     return loader.fs.read(path)
   end
-  -- mod.world materializes on first touch, like the image helper above: a
-  -- headless load must not drag the world stack in, and the Game the facade
-  -- acts on is still being wired when the entry chunk runs
-  local world
+  -- `required_imports`: base files the player supplies (see
+  -- src/mods/ModImports.lua).  They are written into the mod's own folder, so
+  -- mod:read already reaches them -- this is the polite way to ask whether one
+  -- has arrived before starting a long extract.
+  api.imports = ModImports.api(mod.manifest, function(rel)
+    return loader.fs.read(mod.path .. "/" .. rel)
+  end)
+  -- mod.world / mod.game / mod.storage all materialize on first touch, for
+  -- the same reason: a headless load must not drag the world stack in, and
+  -- the Game the facade acts on is still being wired when the entry chunk
+  -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
+  -- namespace per mod for payloads too large to belong in a save file.
+  local world, storage
   setmetatable(api, { __index = function(_, key)
+    if key == "game" then return loader:_game() end
+    if key == "storage" then
+      if not storage then storage = ModStorage.new(modId, loader.fs) end
+      return storage
+    end
     if key ~= "world" then return nil end
     if world then return world end
     local game = loader:_game()
@@ -689,6 +714,15 @@ function Loader:_loadMod(mod)
   local path = mod.path .. "/" .. mod.manifest.entry
   local chunk, err = self.fs.load(path)
   if not chunk then error(err or ("unable to load " .. path)) end
+  -- A mod whose declared base file never arrived loads fine and then does
+  -- nothing, which from the log looks identical to a mod that is simply
+  -- quiet.  Say which file is missing (src/mods/ModImports.lua).
+  do
+    for _, row in ipairs(ModImports.missing(mod.manifest) or {}) do
+      Logger.warn("[%s] needs %s at %s; import it from the mods panel",
+        mod.manifest.id, tostring(row.entry.name), tostring(row.entry.file))
+    end
+  end
   local api = self:_api(mod)
   local result = chunk(api)
   if type(result) == "function" then result(api) end

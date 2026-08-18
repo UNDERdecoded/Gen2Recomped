@@ -55,13 +55,14 @@ local function frontSprite(game, species, mon)
   return ok and img or nil, ok and trueColor or false
 end
 
-function EvolutionState.new(game, mon, newSpecies, onDone, via)
+function EvolutionState.new(game, mon, newSpecies, onDone, via, evo)
   local self = setmetatable({}, EvolutionState)
   self.game = game
   self.mon = mon
   self.newSpecies = newSpecies
   self.onDone = onDone
   self.via = via
+  self.evo = evo
   -- evolution.asm Evolution_CheckForCancel: a B press is discarded when
   -- wForceEvolution is set, and ItemUseEvoStone sets it before calling
   -- TryEvolvingMon, so a stone evolution (via == "ITEM") cannot be
@@ -102,7 +103,7 @@ function EvolutionState:update(dt)
   if self.t >= FLASH_FRAMES then
     self.done = true
     local Evolution = require("src.pokemon.Evolution")
-    Evolution.apply(game, self.mon, self.newSpecies, self.via)
+    Evolution.apply(game, self.mon, self.newSpecies, self.via, self.evo)
     require("src.core.Sound").playCry(game.data, self.newSpecies)
     local TextBox = require("src.render.TextBox")
     local newName = game.data.pokemon[self.newSpecies].name

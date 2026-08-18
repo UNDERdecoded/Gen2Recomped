@@ -6,6 +6,7 @@
 -- substituted before display.  Pushed on the state stack; pops itself when
 -- the text is exhausted and A is pressed, then calls onDone.
 
+local Logger = require("src.core.Logger")
 local Font = require("src.render.Font")
 local Theme = require("src.ui.Theme")
 local Timing = require("src.core.Timing")
@@ -114,6 +115,12 @@ end
 -- pages.contBefore[p][i] is true when line i was preceded by \v (cont):
 -- pokered ContText waits for A/B + ▼ before scrolling that line in.
 function TextBox.paginate(text, maxCols)
+  -- A missing line is a content bug, not a reason to take the whole game
+  -- down.  It arrives as nil whenever a dataset lacks a symbol some caller
+  -- assumed -- Prism's new game died here, at `text .. "\f"` below, on the
+  -- intro's very first line -- and an empty page list just closes the box,
+  -- which is recoverable where a hard error is not.
+  if type(text) ~= "string" then text = text ~= nil and tostring(text) or "" end
   maxCols = maxCols or (Theme.textBox and Theme.textBox.maxCols) or MAX_COLS
   -- maxCols is a column count, so the budget is that many vanilla 8px
   -- cells.  Measuring in pixels rather than columns is what lets a mod's
@@ -227,7 +234,21 @@ function TextBox:update(dt)
       -- #249).
       if self.auto.tick then self.auto.tick() end
       if self.autoSrc and self.autoSrc.isPlaying and self.autoSrc:isPlaying() then
-        return -- the cry is still sounding (WaitForSoundToFinish)
+        -- WaitForSoundToFinish, but bounded.  This gate swallows input, so a
+        -- source that never reports itself finished -- a looping def, a
+        -- driver that leaves isPlaying() true, an OpenAL device that stalls
+        -- -- is not a slow box, it is a hard freeze with no way out: the
+        -- report was the game locking on the Clear Bell hand-over in the
+        -- Radio Tower, which is a keyItem verbosegiveitem and so the one
+        -- box in that scene with a fanfare gate on it.  No fanfare in either
+        -- generation runs longer than about six seconds, so give up at ten
+        -- and hand the box to the ordinary A/B path.
+        self.autoWaited = (self.autoWaited or 0) + 1
+        if self.autoWaited < 600 then
+          return -- the cry is still sounding (WaitForSoundToFinish)
+        end
+        Logger.warn("text box: fanfare never finished, releasing the box")
+        self.autoSrc = nil
       end
       -- auto.wait: the pet-NPC cries (PewterNidoranHouseNidoranText,
       -- ViridianNicknameHouseSpearowText) have nothing queued behind the

@@ -22,6 +22,11 @@ end
 function Tokens.expand(game, text, handlers)
   handlers = handlers or (game.data and game.data.tokens)
   if not handlers then return text end
+  -- A missing text id reaches here as nil.  Expanding it used to crash on
+  -- `text:gsub`, turning "this ROM has no string for X" into a hard error
+  -- with a stack trace pointing at the token expander rather than at the
+  -- missing string -- so callers could not tell what was actually absent.
+  if type(text) ~= "string" then return text end
   -- the span classes mirror the old {[%w_:]+} catch-all: extractor spans
   -- with spaces or pipes ({NUM:hCoins, 2 | LEADING_ZEROES ...}) were never
   -- dropped before and must stay in the text byte-for-byte

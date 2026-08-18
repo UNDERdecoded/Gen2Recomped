@@ -173,6 +173,16 @@ function Map.gen2IsDoorway(coll)
   return coll == 0x71 or coll == 0x7B
 end
 
+-- CheckDirectionalWarp (engine/overworld/tile_events.asm): the four carpet
+-- classes are NOT immediate warps.  Stepping onto one leaves the player
+-- standing on it; the warp fires only when they then walk further in the
+-- carpet's own direction (DoPlayerMovement .EdgeWarps -> WarpCheck, which
+-- skips the directional test).  Everything else in the $70-$7F range -- the
+-- doors, the stairs, the warp panel -- swallows the player on arrival.
+function Map.gen2IsDirectionalCarpet(coll)
+  return coll == 0x70 or coll == 0x76 or coll == 0x78 or coll == 0x7E
+end
+
 -- CheckPitTile (00:$1745): `cp COLL_PIT / ret z / cp COLL_PIT_68 / ret`.
 -- The two hole classes -- what a Strength boulder has to be standing on for
 -- the stone table to drop it to the floor below (CmdQueue_StoneTable).

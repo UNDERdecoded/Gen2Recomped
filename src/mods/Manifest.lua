@@ -235,6 +235,10 @@ function Manifest.validate(raw, path)
     permissions = permissions,
     permissionSet = permissionSet,
     options_schema = optionalFile(raw.options_schema, "options_schema"),
+    -- Base files the mod needs but cannot ship -- a Stadium 2 cartridge, a
+    -- second game's ROM.  Declared here, satisfied by the launcher, read by
+    -- the mod out of its own folder (src/mods/ModImports.lua).
+    requiredImports = require("src.mods.ModImports").parse(raw),
     assets_transforms = optionalFile(raw.assets_transforms, "assets_transforms"),
     path = path,
     raw = raw,

@@ -3423,6 +3423,22 @@ runSuites({ "tests/rom_importer_android_mod_pick_test.lua" })
 -- ---------------------------------------------- import with no picker (#482)
 runSuites({ "tests/rom_importer_no_picker_test.lua" })
 runSuites({ "tests/rom_importer_double_pick_test.lua" })
+-- ---------------------------------------------- standalone *_test.lua suites
+-- These are self-contained regression files (one bug, one file).  They used
+-- to need a hand-written runSuites line each, and three of them -- the chip
+-- audio silence, save editor `pad` shadowing and Prism table finder suites --
+-- shipped without one and never ran here.  Globbed now, minus the handful
+-- above that already have their own registration, so dropping a new
+-- tests/<name>_test.lua in is enough.
+runSuites(orderedGlob("tests/*_test.lua", {}, {
+  ["tests/input_hold_test.lua"] = true,
+  ["tests/rom_importer_cursor_test.lua"] = true,
+  ["tests/rom_importer_android_pick_test.lua"] = true,
+  ["tests/rom_importer_android_mod_pick_test.lua"] = true,
+  ["tests/rom_importer_no_picker_test.lua"] = true,
+  ["tests/rom_importer_double_pick_test.lua"] = true,
+}))
+
 -- ---------------------------------------------- parity workstream tests
 -- Each tests/parity_*.lua is a self-contained file (own bootstrap + check,
 -- error()s if any assertion fails).  Globbed, so dropping a new parity

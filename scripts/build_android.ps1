@@ -11,7 +11,7 @@
 
 .EXAMPLE
   powershell -ExecutionPolicy Bypass -File scripts/build_android.ps1
-  powershell -ExecutionPolicy Bypass -File scripts/build_android.ps1 -Version 0.2.11
+  powershell -ExecutionPolicy Bypass -File scripts/build_android.ps1 -Version 0.0.0
   powershell -ExecutionPolicy Bypass -File scripts/build_android.ps1 -PackageOnly
 #>
 [CmdletBinding()]

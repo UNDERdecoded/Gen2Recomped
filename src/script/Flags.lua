@@ -28,6 +28,23 @@ function Flags.clear(save, name)
   end
 end
 
+-- "Does the player have the Pokedex yet?"
+--
+-- Not one flag, because the cartridges do not agree on which one they set.
+-- Gold and Crystal's Elm's-aide script lowers to `setevent EVENT_GOT_POKEDEX`;
+-- PRISM'S PROF ILK LOWERS TO `setflag ENGINE_POKEDEX` and its own event number
+-- instead, and ENGINE_POKEDEX is what the ROM's own CheckReceivedDex reads on
+-- every Gen 2 cartridge.  Gating the START menu on the event alone meant the
+-- Prism player watched Ilk hand the dex over -- text, jingle and all -- and
+-- never got a POKeDEX entry in the menu.
+function Flags.hasPokedex(save)
+  -- tolerant of a save with no flag table: this is asked while menus are
+  -- being built, including from headless callers
+  local flags = type(save) == "table" and save.flags or nil
+  if type(flags) ~= "table" then return false end
+  return flags.EVENT_GOT_POKEDEX == true or flags.ENGINE_POKEDEX == true
+end
+
 function Flags.get(save, name)
   return save.flags[name] == true
 end

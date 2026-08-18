@@ -59,6 +59,10 @@ function Player.new(data, cx, cy, facing)
   local self = setmetatable({}, Player)
   self.stepFrames = FieldDefaults.world(data, "stepFrames") or STEP_FRAMES
   self.bikeStepFrames = FieldDefaults.world(data, "bikeStepFrames")
+  -- absent for every game but Prism, which is the gate: see beginStep
+  local GV = require("src.core.GameVersion")
+  self.runStepFrames = (GV.get and GV.get() == "prism")
+    and FieldDefaults.world(data, "runStepFrames") or nil
   self.turnFrames = FieldDefaults.world(data, "turnFrames") or TURN_FRAMES
   -- field.playerSprites: which sprite ids the player wears on foot, on the
   -- water and on the bicycle (LoadPlayerSpriteGraphics /
@@ -120,6 +124,49 @@ end
 -- overworld state -- and therefore this Player -- has already been built:
 -- Game:makeTitleState pushes OverworldState first and the new-game screen
 -- second.  OakSpeech calls this back once the answer is in.
+-- Prism's "Pokemon mode": the player IS a Pokemon.
+--
+-- GetPlayerSprite (engine/overworld.asm) tests ENGINE_POKEMON_MODE BEFORE it
+-- reaches the character table and answers SPRITE_POKEONLY_PLAYER, which
+-- GetMonSprite then resolves through PokemonOWSpritePointers into that
+-- species' own walking sheet.  The species is wPokeonlyMainSpecies, and when
+-- that byte is clear the routine walks the party for the first member that is
+-- neither an egg nor fainted and latches it there -- which is why the sections
+-- that set the flag without naming a species still work.
+--
+-- Answers nil for every other game and whenever the sheet is missing, so the
+-- caller keeps the character it already had.
+local function pokemonModeSprite(data)
+  local ok, Game = pcall(require, "src.core.Game")
+  local save = ok and Game and Game.save or nil
+  if not save then return nil end
+  if not require("src.script.Flags").get(save, "ENGINE_POKEMON_MODE") then
+    return nil
+  end
+  local species = save.g2PokeonlySpecies
+  if not species then
+    for _, mon in ipairs(save.party or {}) do
+      if mon and not mon.isEgg and (mon.hp or 0) > 0 then
+        species = mon.species
+        break
+      end
+    end
+  end
+  if type(species) ~= "string" then return nil end
+  -- the extractor names these sheets by the species NUMBER
+  -- (gen2MonSpriteId), which is what a Gen 2 species id already carries
+  local n = tonumber(species:match("^SPECIES_(%d+)$"))
+  if not n then
+    local order = data and data.constants and data.constants.speciesOrder
+    for i, id in ipairs(order or {}) do
+      if id == species then n = i break end
+    end
+  end
+  if not n then return nil end
+  local id = string.format("SPRITE_MON_%03d", n)
+  return (data.sprites or {})[id] and id or nil
+end
+
 function Player:refreshForm(data)
   local walkId = FieldDefaults.fieldValue(data, "playerSprites", "walk")
   local bikeId = FieldDefaults.fieldValue(data, "playerSprites", "bike")
@@ -129,6 +176,10 @@ function Player:refreshForm(data)
     if form.walk and sprites[form.walk] then walkId = form.walk end
     if form.bike and sprites[form.bike] then bikeId = form.bike end
   end
+  -- after the character, because it REPLACES the character: in Pokemon mode
+  -- there is no bicycle either, so both sheets become the mon's
+  local monId = pokemonModeSprite(data)
+  if monId then walkId, bikeId = monId, monId end
   if walkId == self.walkId and bikeId == self.bikeId then return end
   self.walkId, self.bikeId = walkId, bikeId
   self.sprite = SpriteRenderer.new(pickSpriteDef(data, walkId), "player")
@@ -193,6 +244,33 @@ function Player:tryMove(dir, map, entities)
   local save = Game.save
   local frames = (save and save.onBike) and self.bikeStepFrames
                  or self.stepFrames or STEP_FRAMES
+  -- "Downhill riding is slower when not moving down" (DoPlayerMovement .DoStep:
+  -- on a bike with BIKEFLAGS_DOWNHILL_F set, only a DOWN step gets STEP_BIKE;
+  -- every other direction drops to STEP_WALK).  Cycling Road is the only place
+  -- it applies, and it is what makes climbing back up the slope feel heavy.
+  if save and save.onBike and dir ~= "down" then
+    local G2F = require("src.script.Gen2Flags")
+    local key = G2F.bikeFlag and G2F.bikeFlag("downhill")
+    if key and require("src.script.Flags").get(save, key) then
+      frames = self.stepFrames or STEP_FRAMES
+    end
+  end
+  -- RUNNING, which only Prism has -- and it has no running SHOES
+  -- either.  DoPlayerMovement's .walk branch falls straight through to
+  -- .run whenever B is held (engine/player_movement.asm .maybe_run),
+  -- gated on nothing but ENGINE_POKEMON_MODE: there is no item to find
+  -- and no flag to earn, so nothing here waits on one.  8 frames is the
+  -- ROM's own figure: its step-vector table's running-shoes row is
+  -- `db 0, 2, 8, 2`, two pixels a frame over eight -- the bicycle's rate
+  -- on foot.  Riding wins (the branch above), surfing and Pokemon mode
+  -- refuse, exactly as the original refuses them.
+  local run = self.runStepFrames
+  if run and not (save and save.onBike) and not self.surfing
+     and Game.input and Game.input:isDown("b")
+     and not require("src.script.Flags").get(save, "ENGINE_POKEMON_MODE")
+  then
+    frames = run
+  end
   if Runtime.wantsHook("movement.speed") then
     frames = Runtime.call("movement.speed", function(f) return f end, frames, {
       onBike = save and save.onBike or false,

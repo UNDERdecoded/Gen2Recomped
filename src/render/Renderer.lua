@@ -751,7 +751,22 @@ function Renderer:endFrame(zones, worldZones)
       -- one seam across the window) that a single scalar dpiscale cannot
       -- express.
       self.presentCanvas = love.graphics.newCanvas(ww, wh)
-      self.presentCanvas:setFilter("linear", "linear")
+      -- NEAREST, like every other surface in this pipeline.
+      --
+      -- This canvas only exists when GBC FX is on or a mod registers a
+      -- `present` pass, and it is blitted back at unit scale 1 -- so linear
+      -- bought nothing on an exact blit and, the moment the window's DPI
+      -- scale was not exactly 1, resampled THE ENTIRE FINISHED FRAME half a
+      -- texel off.  Every glyph in the game picked up a ghost of itself.
+      -- It showed up as "the mod menu is unreadable and pixelated" because
+      -- installing almost any mod is what turns this canvas on: the base
+      -- game never allocates it and stayed crisp.
+      --
+      -- The dpi truncation gap the comment above describes is a sub-1% seam
+      -- across one axis.  Nearest renders that as a single hard column,
+      -- which is what a pixel-art frame should do; linear paid for it by
+      -- softening all of it.
+      self.presentCanvas:setFilter("nearest", "nearest")
     end
     present = self.presentCanvas
     love.graphics.setCanvas(present)

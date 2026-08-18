@@ -21,6 +21,20 @@ local ROAM_DIRS = {
   LEFT_RIGHT = { "left", "right" },
 }
 
+-- Gen2 spinners.  `_MovementSpinNextFacing` walks a fixed four-entry table
+-- (engine/overworld/map_objects.asm .facings_clockwise /
+-- .facings_counterclockwise), indexed by the CURRENT facing, and holds each
+-- one for $10 frames.  The two random spinners just roll a facing and hold it
+-- for `Random and $7f` (slow) or `and $1f` (fast) frames; the fast one
+-- additionally refuses to roll the facing it is already showing, flipping
+-- both direction bits instead -- which is the XOR below.
+local SPIN_NEXT = {
+  SPIN_CW  = { down = "left", left = "right", right = "up", up = "down" },
+  SPIN_CCW = { down = "right", right = "left", left = "up", up = "down" },
+}
+local SPIN_FLIP = { down = "right", up = "left", left = "up", right = "down" }
+local SPIN_DIRS = { "down", "up", "left", "right" }
+
 local FALLBACK_SPRITE = {
   id = "SPRITE_FALLBACK",
   source = "runtime fallback",
@@ -104,6 +118,27 @@ local function isVariableSpriteId(spriteId)
   if type(spriteId) ~= "string" then return false end
   if VAR_SPRITE_SLOTS[spriteId] then return true end
   return spriteId:match("^SPRITE_VAR_%d+$") ~= nil
+end
+
+-- Which wVariableSprites slot does this object_event sprite id name, if any?
+-- One answer to that question, so OverworldState:refreshVariableSprite cannot
+-- disagree with resolveVariableSprite below about which objects a
+-- `variablesprite` assignment repaints.  Only five of the thirteen slots ever
+-- reach the runtime spelled SPRITE_VAR_nn -- the extractor names the rest
+-- after what they hold (SPRITE_WEIRD_TREE, SPRITE_OLIVINE_RIVAL,
+-- SPRITE_AZALEA_ROCKET, SPRITE_COPYCAT, SPRITE_JANINE_IMPERSONATOR) -- and
+-- those five ARE the ones scripts reassign mid-scene.  nil = not a slot.
+function NPC.variableSpriteSlot(spriteId)
+  if type(spriteId) ~= "string" then return nil end
+  local slot = tonumber(spriteId:match("^SPRITE_VAR_(%d+)$"))
+  if slot then return slot end
+  slot = VAR_SPRITE_SLOTS[spriteId]
+  if slot then return slot end
+  -- raw $F0-$FF spellings, the same last resort resolveVariableSprite takes
+  local tail = spriteId:match("^SPRITE_(%x+)$")
+  local hex = tail and tonumber(tail, 16) or nil
+  if hex and hex >= 0xF0 then return hex - 0xF0 end
+  return nil
 end
 
 local function resolveVariableSprite(data, sprites, spriteId)
@@ -393,6 +428,8 @@ function NPC.new(data, mapId, objDef)
   self.stepFlip = false
   self.frozen = false -- scripts freeze NPCs while talking
   self.wanders = objDef.movement == "WALK"
+  -- SPRITEMOVEDATA_SPINRANDOM_* / _SPIN_CLOCKWISE / _SPIN_COUNTERCLOCKWISE
+  self.spins = objDef.movement == "SPIN" and (objDef.range or "SPIN_SLOW") or nil
   self.roamDirs = ROAM_DIRS[objDef.range] or ROAM_DIRS.ANY_DIR
   self.timer = love.math.random(30, 120)
   return self
@@ -476,7 +513,30 @@ function NPC:update(map, entities)
     end
     return
   end
-  if self.frozen or not self.wanders then return end
+  if self.frozen then return end
+  if self.spins then
+    -- Spinners never leave their cell, so this is the whole behaviour: turn
+    -- on a timer.  A script that freezes the object (talking to it, a
+    -- cutscene) stops the spin, exactly as SPRITEMOVEFN is suspended while
+    -- STEP_TYPE_SCRIPT owns the object.
+    self.timer = self.timer - 1
+    if self.timer > 0 then return end
+    local kind = self.spins
+    if kind == "SPIN_CW" or kind == "SPIN_CCW" then
+      self.facing = SPIN_NEXT[kind][self.facing] or "down"
+      self.timer = 16
+    elseif kind == "SPIN_FAST" then
+      local pick = SPIN_DIRS[love.math.random(4)]
+      if pick == self.facing then pick = SPIN_FLIP[pick] or pick end
+      self.facing = pick
+      self.timer = love.math.random(1, 32)
+    else
+      self.facing = SPIN_DIRS[love.math.random(4)]
+      self.timer = love.math.random(1, 128)
+    end
+    return
+  end
+  if not self.wanders then return end
   self.timer = self.timer - 1
   if self.timer > 0 then return end
   self.timer = love.math.random(30, 180)

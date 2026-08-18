@@ -177,7 +177,126 @@ Gen2ScriptOps.COMMANDS_CRYSTAL = {
 
 -- Which table a ROM speaks.  Gold/Silver share COMMANDS; Crystal has its own.
 -- Defaults to Gold, so nothing changes until a caller asks for crystal.
+-- Prism's ScriptCommandTable (engine/scripting.asm): 232 commands where
+-- Gold/Crystal have ~120, and the two diverge from index 13 onward -- so a
+-- Prism script read with Crystal's table desyncs on the first shifted opcode
+-- and never recovers.  Widths are DERIVED from the handlers' own stream reads
+-- (tools/derive_args.py walks each handler's control flow to `ret`, taking the
+-- max over branches because both arms of an `if_*` consume the same bytes).
+Gen2ScriptOps.COMMANDS_PRISM = {
+  { "scall", "p" }, { "farscall", "f" }, { "ptcall", "d" }, -- 00
+  { "jump", "p" }, { "farjump", "f" }, { "ptjump", "d" }, -- 03
+  { "if_equal", "bp" }, { "if_not_equal", "bp" }, { "iffalse", "p" }, -- 06
+  { "iftrue", "p" }, { "if_greater_than", "bp" }, { "if_less_than", "bp" }, -- 09
+  { "jumpstd", "b" }, { "fieldmovepokepic", "" }, { "callasm", "D" }, -- 0C
+  { "special", "b" }, { "ptcallasm", "w" }, { "checkmaptriggers", "bb" }, -- 0F
+  { "domaptrigger", "bbb" }, { "checktriggers", "" }, { "dotrigger", "b" }, -- 12
+  { "writebyte", "b" }, { "addvar", "b" }, { "random", "b" }, -- 15
+  { "readarrayhalfword", "b" }, { "copybytetovar", "w" }, { "copyvartobyte", "w" }, -- 18
+  { "loadvar", "wb" }, { "checkcode", "b" }, { "writevarcode", "b" }, -- 1B
+  { "writecode", "bb" }, { "giveitem", "bb" }, { "takeitem", "bb" }, -- 1E
+  { "checkitem", "b" }, { "givemoney", "bm" }, { "takemoney", "bm" }, -- 21
+  { "checkmoney", "bm" }, { "givecoins", "w" }, { "takecoins", "w" }, -- 24
+  { "checkcoins", "w" }, { "writehalfword", "w" }, { "pushhalfword", "w" }, -- 27
+  { "pushhalfwordvar", "" }, { "checktime", "b" }, { "checkpoke", "b" }, -- 2A
+  { "givepoke", "bbbbww" }, { "giveegg", "bb" }, { "copyhalfwordvartovar", "" }, -- 2D
+  { "copyvartohalfwordvar", "" }, { "checkevent", "w" }, { "clearevent", "w" }, -- 30
+  { "setevent", "w" }, { "checkflag", "w" }, { "clearflag", "w" }, -- 33
+  { "setflag", "w" }, { "wildon", "" }, { "wildoff", "" }, -- 36
+  { "warpmod", "bbb" }, { "blackoutmod", "bb" }, { "warp", "bbbb" }, -- 39
+  { "readmoney", "bb" }, { "readcoins", "b" }, { "variablestablerandom", "bb" }, -- 3C
+  { "pokenamemem", "bb" }, { "itemtotext", "bb" }, { "mapnametotext", "b" }, -- 3F
+  { "trainertotext", "bbb" }, { "stringtotext", "wb" }, { "itemnotify", "" }, -- 42
+  { "pocketisfull", "" }, { "opentext", "" }, { "refreshscreen", "" }, -- 45
+  { "closetext", "" }, { "cmdwitharrayargs", "b" }, { "farwritetext", "T" }, -- 48
+  { "writetext", "t" }, { "repeattext", "" }, { "yesorno", "" }, -- 4B
+  { "loadmenudata", "w" }, { "closewindow", "" }, { "jumptextfaceplayer", "t" }, -- 4E
+  { "farjumptext", "T" }, { "jumptext", "t" }, { "waitbutton", "" }, -- 51
+  { "buttonsound", "" }, { "pokepic", "b" }, { "closepokepic", "" }, -- 54
+  { "eventvarop", "" }, { "verticalmenu", "" }, { "scrollingmenu", "b" }, -- 57
+  { "randomwildmon", "" }, { "loadmemtrainer", "" }, { "loadwildmon", "bbbbb" }, -- 5A
+  { "loadtrainer", "bb" }, { "startbattle", "" }, { "reloadmapafterbattle", "" }, -- 5D
+  { "addhalfwordtovar", "w" }, { "trainertext", "b" }, { "trainerflagaction", "b" }, -- 60
+  { "winlosstext", "tt" }, { "scripttalkafter", "" }, { "end_if_just_battled", "" }, -- 63
+  { "check_just_battled", "" }, { "setlasttalked", "b" }, { "applymovement", "bM" }, -- 66
+  { "applymovement2", "M" }, { "faceplayer", "" }, { "faceperson", "bb" }, -- 69
+  { "variablesprite", "bb" }, { "disappear", "b" }, { "appear", "b" }, -- 6C
+  { "follow", "bb" }, { "stopfollow", "" }, { "moveperson", "bbb" }, -- 6F
+  { "writepersonxy", "b" }, { "loademote", "b" }, { "showemote", "bbbb" }, -- 72
+  { "spriteface", "bb" }, { "follownotexact", "bb" }, { "earthquake", "b" }, -- 75
+  { "changemap", "bw" }, { "changeblock", "bbb" }, { "reloadmap", "" }, -- 78
+  { "reloadmappart", "" }, { "writecmdqueue", "w" }, { "delcmdqueue", "b" }, -- 7B
+  { "playmusic", "w" }, { "encountermusic", "" }, { "musicfadeout", "wb" }, -- 7E
+  { "playmapmusic", "" }, { "dontrestartmapmusic", "" }, { "cry", "b" }, -- 81
+  { "playsound", "w" }, { "waitsfx", "" }, { "warpsound", "" }, -- 84
+  { "copyvarbytetovar", "" }, { "newloadmap", "b" }, { "pause", "b" }, -- 87
+  { "deactivatefacing", "b" }, { "priorityjump", "p" }, { "warpcheck", "" }, -- 8A
+  { "ptpriorityjump", "p" }, { "return", "" }, { "end", "" }, -- 8D
+  { "reloadandreturn", "b" }, { "end_all", "" }, { "pokemart", "bb" }, -- 90
+  { "elevator", "w" }, { "scriptstartasmf", "" }, { "pophalfwordvar", "" }, -- 93
+  { "unused_96", "" }, { "unused_97", "" }, { "pushbyte", "b" }, -- 96
+  { "fruittree", "b" }, { "swapbyte", "b" }, { "loadarray", "wb" }, -- 99
+  { "verbosegiveitem", "bb" }, { "verbosegiveitem2", "bb" }, { "swarm", "bbb" }, -- 9C
+  { "killsfx", "" }, { "checkiteminbox", "b" }, { "warpfacing", "bbbbb" }, -- 9F
+  { "battletowertext", "b" }, { "landmarktotext", "bb" }, { "trainerclassname", "bb" }, -- A2
+  { "name", "bbb" }, { "wait", "b" }, { "loadscrollingmenudata", "w" }, -- A5
+  { "backupcustchar", "" }, { "restorecustchar", "" }, { "addhalfwordvartovar", "" }, -- A8
+  { "addhalfwordtohalfwordvar", "w" }, { "givecraftingEXP", "b" }, { "copybytetohalfwordvar", "w" }, -- AB
+  { "givetm", "b" }, { "unused_AF", "" }, { "itemplural", "b" }, -- AE
+  { "pullvar", "" }, { "setplayersprite", "b" }, { "setplayercolor", "bb" }, -- B1
+  { "loadsignpost", "w" }, { "checkpokemontype", "b" }, { "isinarray", "wwbb" }, -- B4
+  { "pusharray", "" }, { "poparray", "" }, { "startmirrorbattle", "" }, -- B7
+  { "comparevartobyte", "w" }, { "backupsecondpokemon", "" }, { "restoresecondpokemon", "" }, -- BA
+  { "loadhalfwordvar", "b" }, { "pullhalfwordvar", "" }, { "divideby", "b" }, -- BD
+  { "isinsingulararray", "w" }, { "getnthstring", "wb" }, { "readpersonxy", "bw" }, -- C0
+  { "return_if_callback_else_end", "" }, { "copy", "wb" }, { "switch", "b" }, -- C3
+  { "multiplyvar", "b" }, { "seteventvar", "b" }, { "callasmf", "D" }, -- C6
+  { "jumptable", "d" }, { "anonjumptable", "" }, { "varblocks", "w" }, -- C9
+  { "addbytetovar", "w" }, { "paragraphdelay", "" }, { "playwaitsfx", "w" }, -- CC
+  { "scriptstartasm", "" }, { "copystring", "b" }, { "endtext", "" }, -- CF
+  { "pushvar", "" }, { "popvar", "" }, { "swapvar", "" }, -- D2
+  { "getweekday", "" }, { "toggle", "www" }, { "unused_D7", "" }, -- D5
+  { "selse", "" }, { "sendif", "" }, { "siffalse", "" }, -- D8
+  { "siftrue", "" }, { "sifgt", "b" }, { "siflt", "b" }, -- DB
+  { "sifeq", "b" }, { "sifne", "b" }, { "readarray", "b" }, -- DE
+  { "givetmnomessage", "b" }, { "findpokemontype", "b" }, { "startpokeonly", "bbb" }, -- E1
+  { "endpokeonly", "bbb" }, { "fadetomapmusic", "b" }, { "menuanonjumptable", "w" }, -- E4
+  { "modifyeventvar", "" }, { "showtext", "t" }, { "closetextend", "" }, -- E7
+  { "toggleevent", "w" }, { "getpartymonname", "b" }, -- EA
+}
+
+-- Commands after which the interpreter never reads the next byte.  Derived
+-- from the handlers (those reaching StopScript or an UNCONDITIONAL ScriptJump)
+-- and unioned with the ones that are certain by definition.  A terminator the
+-- walker does not know is what runs it off the end of a script into the data
+-- that follows, which is where "opcode FF" desyncs come from -- FF is past the
+-- end of a 232-entry table, so it was never a command at all.
+Gen2ScriptOps.TERMINATORS_PRISM = {
+  anonjumptable = true, closetextend = true, ["end"] = true, end_all = true,
+  endtext = true, farjump = true, farjumptext = true, fruittree = true,
+  jump = true, jumpstd = true, jumptext = true, jumptextfaceplayer = true,
+  loadsignpost = true, menuanonjumptable = true, pokemart = true, ptjump = true,
+  ptpriorityjump = true, reloadandreturn = true, ["return"] = true, return_if_callback_else_end = true,
+  scriptstartasmf = true, scripttalkafter = true,
+}
+
+-- Prism's `sif` family.  `sif true` with no `then` guards exactly ONE
+-- following command, so a terminator in that position ends the branch rather
+-- than the script -- see gen2DecodeScript.  A `then` marker after the sif
+-- (opcode $CF, which Prism aliases onto scriptstartasm) opens a block that
+-- runs to `sendif` instead, and needs no special handling.
+Gen2ScriptOps.SIF_COMMANDS_PRISM = {
+  siftrue = true, siffalse = true,
+  sifeq = true, sifne = true, sifgt = true, siflt = true,
+}
+
+function Gen2ScriptOps.terminatorsFor(version)
+  if version == "prism" then return Gen2ScriptOps.TERMINATORS_PRISM end
+  return Gen2ScriptOps.TERMINATORS
+end
+
 function Gen2ScriptOps.commandsFor(version)
+  if version == "prism" then return Gen2ScriptOps.COMMANDS_PRISM end
   if version == "crystal" then return Gen2ScriptOps.COMMANDS_CRYSTAL end
   return Gen2ScriptOps.COMMANDS
 end

@@ -544,7 +544,7 @@ function LinkState:updateTrade(input)
   end
   if t.stage == "done" then
     local sent = t.party[t.myPick]
-    local received, evoTo = t:apply(self.game)
+    local received, evoTo, evoRow = t:apply(self.game)
     -- Autosave the instant the swap commits into game.save.party, matching the
     -- Cable Club: pokered engine/link/cable_club.asm calls SaveSAVtoSRAM
     -- (engine/menus/save.asm) right after every trade so the trade is on the
@@ -576,8 +576,11 @@ function LinkState:updateTrade(input)
               -- Re-save once the evolution movie finishes so the evolved
               -- species (not the pre-evo landed by t:apply) is what persists,
               -- keeping disk in step with the autosave above (#222).
+              -- evoRow rides along so an item-gated evolution consumes the
+              -- METAL COAT / KING'S ROCK / DRAGON SCALE / UP-GRADE it needed
               require("src.pokemon.Evolution").evolve(game, received, evoTo,
-                function() if game.writeSave then game:writeSave() end end, "TRADE")
+                function() if game.writeSave then game:writeSave() end end,
+                "TRADE", evoRow)
             end
           end))
       end,

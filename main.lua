@@ -100,7 +100,25 @@ local function openEditor(version, slotId)
   end
   local GameVersion = require("src.core.GameVersion")
   GameVersion.set(version)
-  require("src.import.CacheFs").mountVersion(version)
+  -- Not optional, and the return value is not decoration.  A failed overlay
+  -- surfaces several frames later inside the editor's Data:load as "missing
+  -- generated data module 'data/generated/constants.lua'" -- an uncaught error
+  -- raised out of a mouse handler, which on the Switch and on Android means
+  -- the app is simply gone.  bootGame already checks this; the editor path was
+  -- the one that did not, so pressing Edit was a crash rather than a message.
+  local mounted, mountErr =
+    require("src.import.CacheFs").mountVersion(version)
+  if not mounted then
+    if Importer then
+      Importer.saveNotice = Importer.saveNotice or {}
+      Importer.saveNotice[version] = { ok = false, text =
+        ("Cannot edit %s saves: its imported data is not loadable (%s). " ..
+         "Import the ROM again."):format(
+          GameVersion.info(version).displayName,
+          tostring(mountErr or "unknown reason")) }
+    end
+    return
+  end
   editorVersion = version
   editorHost = Importer
   Importer = nil
@@ -154,6 +172,19 @@ function closeTouchControlsEditor()
   touchEditorHost = nil
 end
 
+-- Boot breadcrumbs (src/core/BootTrace.lua).  On Android and the Switch a
+-- failed launch is a window that exists for a second and then does not, with
+-- nothing to read afterwards: crash.txt below only ever catches a LUA error,
+-- and a native abort -- an OOM kill, a JNI check, a driver fault -- reaches no
+-- Lua handler and leaves it empty, which is indistinguishable from a clean
+-- run.  So record progress instead of failure: the last line in boot_trace.txt
+-- is the stage the process did not survive.
+local BootTrace = require("src.core.BootTrace")
+-- Declared HERE rather than further down beside its first mark: bootGame below
+-- calls BootTrace.booted(), and a `local` declared after a function's body is
+-- not in scope inside it -- the name resolved to the nil GLOBAL instead and
+-- killed the boot the moment an import finished (onComplete -> bootGame).
+
 local function bootGame(version)
   -- The launcher hands us the chosen game (Red / Blue / Yellow); scripted and
   -- headless runs fall back to POKEPORT_VERSION, then Red.  Set the active
@@ -185,6 +216,7 @@ local function bootGame(version)
   end
   Game = require("src.core.Game")
   Game:load()
+  BootTrace.booted()
   if os.getenv("POKEPORT_AUTOPILOT") then
     autopilot = require("tests.autopilot")
   end
@@ -199,23 +231,95 @@ local function bootGame(version)
   Game.speedOverride = (autopilot or driverCo) and 1 or speedOverride
 end
 
+-- Chunk level, not inside love.load: this is the earliest point Lua code of
+-- ours runs with a writable save directory (conf.lua has already applied
+-- t.identity by now).  So NO boot_trace.txt at all is itself a result -- it
+-- means the failure was in conf.lua or below it in the engine, before any of
+-- this file ran.
+BootTrace.mark("main.lua chunk")
+
+-- ------------------------------------------------------- boot failure report
+-- What the player sees after a launch that died, INSTEAD of booting.
+--
+-- The trace and crash.txt only help if someone can read them, and on Android
+-- nobody can: t.externalstorage puts the save directory under
+-- Android/data/<package>/files/, and Android 11 closed that path to every
+-- third-party file manager.  The app writes there fine and the player gets
+-- "permission denied".  adb is the only other way out, and asking a player for
+-- adb is asking them to give up.
+--
+-- So the report comes back through the screen.  Launch N dies; launch N+1
+-- notices the trace has no "clean exit", shows it, and -- critically -- does
+-- NOT run the boot path that just failed, so the report cannot be taken down
+-- by the same crash.  A tap dismisses it and boots normally, so a one-off is
+-- not a lock-out.
+local bootReport = nil        -- { text = string, args = table }
+local realLoad                -- forward declaration: the actual boot
+
+local function drawBootReport()
+  local w, h = love.graphics.getDimensions()
+  love.graphics.clear(0.08, 0.09, 0.13)
+  love.graphics.setColor(1, 0.55, 0.35)
+  local pad = math.max(12, math.floor(w * 0.03))
+  if not bootReport.font then
+    -- Small, because a traceback on a phone is long and legibility here means
+    -- "fits", not "looks nice".
+    bootReport.font = love.graphics.newFont(math.max(9, math.floor(h / 62)))
+  end
+  love.graphics.setFont(bootReport.font)
+  love.graphics.printf(bootReport.text, pad, pad, w - pad * 2, "left")
+  love.graphics.setColor(0.6, 0.7, 0.9)
+  love.graphics.printf("tap / press any key to continue booting",
+    pad, h - pad - bootReport.font:getHeight() * 2, w - pad * 2, "left")
+end
+
+local function dismissBootReport()
+  local args = bootReport.args
+  bootReport = nil
+  BootTrace.mark("boot report dismissed")
+  realLoad(args)
+end
+
 function love.load(args)
+  BootTrace.mark("love.load enter")
+
+  -- Before anything else, and before anything that could fail: did the last
+  -- launch finish?  POKEPORT_NO_BOOT_REPORT=1 skips this for CI and scripted
+  -- runs, which have no one to show it to and must not stop on it.
+  if os.getenv("POKEPORT_NO_BOOT_REPORT") ~= "1" then
+    local report = BootTrace.previousFailureReport()
+    if report then
+      BootTrace.mark("showing previous failure report")
+      bootReport = { text = report, args = args }
+      return
+    end
+  end
+  return realLoad(args)
+end
+
+function realLoad(args)
   -- Before anything can shell out (update check, mod index, ROM picker),
   -- claim one hidden console on Windows so those children inherit it instead
   -- of each flashing their own cmd.exe window (#606).  No-op elsewhere.
   require("src.core.HostShell").hideHostConsole()
+  BootTrace.mark("host console")
 
   -- Gen2Recomped used to share the LÖVE identity "pokemon-love2d" with the
   -- Gen 1 port, so both games wrote one save folder.  We own "Gen2Recomp"
   -- now; copy an existing player's saves across the first time.  Must run
   -- before Boot.run or anything else reads the save directory.
   pcall(function() require("src.core.SaveIdentity").migrateLegacy() end)
+  BootTrace.mark("save identity")
 
   -- Self-updater boot shell: a fused build may mount and chainload a newer
   -- downloaded payload here.  True means it took over, so we must stop.  A
   -- dev / source checkout no-ops (see src/update/Boot.lua).
   local Boot = require("src.update.Boot")
-  if Boot.run(args) then return end
+  if Boot.run(args) then
+    BootTrace.mark("payload chainloaded")
+    return
+  end
+  BootTrace.mark("boot shell")
 
   local savePath
   for i, a in ipairs(args or {}) do
@@ -246,6 +350,7 @@ function love.load(args)
   end
 
   local RomImporter = require("src.import.RomImporter")
+  BootTrace.mark("RomImporter required")
   local forceImport = os.getenv("POKEPORT_FORCE_IMPORT") == "1"
   local importPath = os.getenv("POKEPORT_IMPORT_ROM")
   -- Scripted / headless runs pick their game from POKEPORT_VERSION (default
@@ -283,6 +388,7 @@ function love.load(args)
   -- Choose ROM / drag-drop when it is not.  Any dropped .gb is routed by its
   -- SHA-1 (GameVersion.forSha1); pressing Play boots that game.  Edit on a
   -- save row opens the bundled editor on that slot (openEditor).
+  BootTrace.mark("launcher: constructing")
   Importer = RomImporter.new(function(version)
     Importer = nil
     bootGame(version)
@@ -292,9 +398,14 @@ function love.load(args)
     onEditSave = openEditor,
     onEditTouchControls = openTouchControlsEditor,
   })
+  BootTrace.mark("launcher: ready")
+  BootTrace.booted()
 end
 
 function love.update(dt)
+  -- The report deliberately runs nothing else: the boot path it is reporting on
+  -- is the code that just died.
+  if bootReport then return end
   if editorMode then return EditorApp.update(dt) end
   if TouchEditor then return TouchEditor.update(dt) end
   if Importer then return Importer:update(dt) end
@@ -331,14 +442,24 @@ function love.update(dt)
     end
     return
   end
+  -- Game is nil until a ROM has been imported and Play pressed, and it is nil
+  -- again for any window in which neither the launcher nor the game owns the
+  -- frame: while the boot report is up, after Boot.run chainloads a payload,
+  -- and between the launcher clearing Importer and bootGame assigning Game.
+  -- Android delivers focus/visible events during all of those, so an
+  -- unguarded dereference here is not a theoretical race -- it is
+  -- "attempt to index upvalue 'Game' (a nil value)" a second after launch.
+  if not Game then return end
   Game:update(dt)
 end
 
 function love.draw()
+  if bootReport then return drawBootReport() end
   if editorMode then return EditorApp.draw() end
   if TouchEditor then return TouchEditor.draw() end
   if Importer then return Importer:draw() end
 
+  if not Game then return end
   Game:draw()
   -- frame capture requested by a driver
   if Game.capturePath then
@@ -356,63 +477,117 @@ function love.draw()
 end
 
 function love.keypressed(key, scancode, isrepeat)
+  if bootReport then return dismissBootReport() end
   if editorMode then return EditorApp.keypressed(key) end
   if TouchEditor then return TouchEditor.keypressed(key) end
   if Importer then return Importer:keypressed(key) end
+  if not Game then return end
   Game:keypressed(key)
 end
 
 function love.keyreleased(key)
   if editorMode or TouchEditor then return end
   if Importer then return end
+  if not Game then return end
   Game:keyreleased(key)
 end
 
+-- The editor gets the pad events too.
+--
+-- These handlers all began with `if editorMode ... then return end`, which was
+-- written when the editor was a desktop-only tool reached by `love . --editor`
+-- and a mouse was a given.  It is now reachable from the launcher on every
+-- platform, including two with no pointer at all: on the Switch the editor
+-- opened, drew, and then ignored every button, stick and D-pad input the
+-- console can produce -- the only way out was to kill the app.  The launcher
+-- already solves this with a virtual cursor (RomImporter:_activatePadCursor);
+-- the editor now has the same one, and these forwards are what feed it.
 function love.gamepadpressed(joystick, button)
-  if editorMode or TouchEditor then return end
+  -- and the dismissal that matters on the Switch.
+  if bootReport then return dismissBootReport() end
+  if TouchEditor then return end
+  if editorMode then
+    if EditorApp.gamepadpressed then return EditorApp.gamepadpressed(button) end
+    return
+  end
   if Importer then return Importer:gamepadpressed(joystick, button) end
+  if not Game then return end
   Game:gamepadpressed(joystick, button)
 end
 
 function love.gamepadreleased(joystick, button)
-  if editorMode or TouchEditor then return end
+  if TouchEditor then return end
+  if editorMode then
+    if EditorApp.gamepadreleased then return EditorApp.gamepadreleased(button) end
+    return
+  end
   if Importer then return Importer:gamepadreleased(joystick, button) end
+  if not Game then return end
   Game:gamepadreleased(joystick, button)
 end
 
 function love.gamepadaxis(joystick, axis, value)
-  if editorMode or TouchEditor then return end
+  if TouchEditor then return end
+  if editorMode then
+    if EditorApp.gamepadaxis then return EditorApp.gamepadaxis(axis, value) end
+    return
+  end
   if Importer then return Importer:gamepadaxis(joystick, axis, value) end
+  if not Game then return end
   Game:gamepadaxis(joystick, axis, value)
 end
 
 function love.joystickpressed(joystick, button)
-  if editorMode or TouchEditor then return end
+  if bootReport then return dismissBootReport() end
+  if TouchEditor then return end
+  if editorMode then
+    if EditorApp.joystickpressed then
+      return EditorApp.joystickpressed(joystick, button)
+    end
+    return
+  end
   if Importer then return Importer:joystickpressed(joystick, button) end
+  if not Game then return end
   Game:joystickpressed(joystick, button)
 end
 
 function love.joystickreleased(joystick, button)
   if editorMode or TouchEditor then return end
   if Importer then return Importer:joystickreleased(joystick, button) end
+  if not Game then return end
   Game:joystickreleased(joystick, button)
 end
 
 function love.joystickaxis(joystick, axis, value)
-  if editorMode or TouchEditor then return end
+  if TouchEditor then return end
+  if editorMode then
+    if EditorApp.joystickaxis then
+      return EditorApp.joystickaxis(joystick, axis, value)
+    end
+    return
+  end
   if Importer then return Importer:joystickaxis(joystick, axis, value) end
+  if not Game then return end
   Game:joystickaxis(joystick, axis, value)
 end
 
 function love.joystickhat(joystick, hat, direction)
-  if editorMode or TouchEditor then return end
+  if TouchEditor then return end
+  if editorMode then
+    if EditorApp.joystickhat then
+      return EditorApp.joystickhat(joystick, hat, direction)
+    end
+    return
+  end
   if Importer then return Importer:joystickhat(joystick, hat, direction) end
+  if not Game then return end
   Game:joystickhat(joystick, hat, direction)
 end
 
 function love.joystickremoved(joystick)
   if editorMode or TouchEditor then return end
   if Importer then return end
+  if not Game then return end
   Game:joystickremoved(joystick)
 end
 
@@ -420,22 +595,28 @@ end
 -- direction's key-up can be delivered to the OS instead of the game while
 -- unfocused, so reset input on either transition rather than trust it.
 function love.focus(f)
+  if bootReport then return end
   if editorMode or TouchEditor then return end
   if Importer then
     if Importer.focus then Importer:focus(f) end
     return
   end
+  if not Game then return end
   Game:focus(f)
 end
 
 -- v is true when the window becomes visible again, false on minimize.
 function love.visible(v)
+  if bootReport then return end
   if editorMode or TouchEditor then return end
   if Importer then return end
+  if not Game then return end
   Game:visible(v)
 end
 
 function love.touchpressed(id, x, y, dx, dy, pressure)
+  -- The dismissal that matters on a phone: there is no keyboard behind this.
+  if bootReport then return dismissBootReport() end
   if editorMode then return end
   if TouchEditor then
     -- iOS synthesizes mousepressed for the primary touch (same as the
@@ -455,6 +636,7 @@ function love.touchpressed(id, x, y, dx, dy, pressure)
     if love.system.getOS() == "iOS" then return end
     return Importer:mousepressed(x, y, 1)
   end
+  if not Game then return end
   Game:touchpressed(id, x, y)
 end
 
@@ -465,6 +647,7 @@ function love.touchmoved(id, x, y, dx, dy, pressure)
     return TouchEditor.touchmoved(id, x, y)
   end
   if Importer then return end
+  if not Game then return end
   Game:touchmoved(id, x, y)
 end
 
@@ -475,6 +658,7 @@ function love.touchreleased(id, x, y, dx, dy, pressure)
     return TouchEditor.touchreleased(id, x, y)
   end
   if Importer then return end
+  if not Game then return end
   Game:touchreleased(id, x, y)
 end
 
@@ -485,10 +669,12 @@ function love.wheelmoved(x, y)
   end
   if TouchEditor then return end
   if Importer then return end
+  if not Game then return end
   Game:wheelmoved(x, y)
 end
 
 function love.mousepressed(x, y, button, istouch)
+  if bootReport then return dismissBootReport() end
   if TouchEditor then
     -- Android primary touch already arrived via love.touchpressed; a second
     -- mouse path would double-fire Done / begin a second drag.
@@ -554,10 +740,140 @@ function love.textinput(text)
   end
 end
 
+-- Write every Lua error to a file before showing it.
+--
+-- On desktop the blue error screen IS the bug report -- you read it and you
+-- know.  On Android and the Switch you cannot: the app closes, and the
+-- traceback only ever existed in logcat or on a screen that was up for a
+-- second.  Appending it to the save directory puts it somewhere a player can
+-- actually reach: on Android that folder is the app's external-files
+-- directory, browsable in any file manager under
+-- Android/data/<package>/files/crash.txt, no USB and no adb.
+--
+-- Deliberately additive: the default handler still runs afterwards, so
+-- desktop behaviour is unchanged.
+--
+-- AND the app must never disappear without saying why.  "It shows for a second
+-- and closes, with no error" is not evidence of a native crash -- it is what an
+-- ORDINARY Lua error looks like here, because of how LOVE's own boot code is
+-- written.  From the engine vendored in this repo:
+--
+--   boot.lua        func = handler(...)   ...   while func do ... end   return 1
+--   callbacks.lua   function love.errhand(msg)
+--                     if not love.window or not love.graphics or not love.event
+--                       then return end                      -- returns NIL
+--                     if not love.graphics.isCreated() ... then
+--                       local success, status = pcall(love.window.setMode, 800, 600)
+--                       if not success or not status then return end   -- NIL
+--
+-- The error handler is expected to RETURN THE ERROR SCREEN'S main loop.  Every
+-- one of those bare `return`s hands back nil, and boot.lua's `while func do`
+-- then falls straight through to `return 1`: the process ends, having drawn
+-- nothing.  Worse, boot.lua's deferErrhand sets `inerror = true` before calling
+-- the handler, so if drawing the error screen ITSELF errors -- one nil index in
+-- setMode, isCursorSupported, setNewFont -- the second error is routed to
+-- error_printer, which prints to stdout (logcat, invisible on a phone) and also
+-- returns nil.  Same silent exit.
+--
+-- So: write the traceback to a file the player can reach, and then guarantee a
+-- visible screen even when the stock handler bails.  A crash that leaves NO
+-- crash.txt AND no screen is then genuinely below Lua.
+local defaultErrorHandler = love.errorhandler or love.errhand
+
+-- Last-resort error screen: no fonts we did not just create, no modules beyond
+-- graphics/event, no reliance on anything the failed frame left behind.  Draws
+-- the traceback and waits, so the message can be read (and photographed) on a
+-- device with no console and no file manager to hand.
+local function minimalErrorScreen(text)
+  if not (love.graphics and love.event) then return nil end
+  local ok = pcall(function()
+    love.graphics.reset()
+    love.graphics.setNewFont(14)
+    love.graphics.setBackgroundColor(0.35, 0.06, 0.06)
+  end)
+  if not ok then return nil end
+  return function()
+    if love.event then
+      love.event.pump()
+      for name, a in love.event.poll() do
+        if name == "quit" then return 1 end
+        if name == "keypressed" and (a == "escape" or a == "q") then return 1 end
+      end
+    end
+    if love.graphics and love.graphics.isActive() then
+      love.graphics.origin()
+      love.graphics.clear(0.35, 0.06, 0.06)
+      love.graphics.setColor(1, 1, 1)
+      local w = love.graphics.getWidth()
+      love.graphics.printf(text, 20, 20, math.max(120, w - 40), "left")
+      love.graphics.present()
+    end
+    if love.timer then love.timer.sleep(0.02) end
+  end
+end
+
+function love.errorhandler(msg)
+  local trace = "gen2recomp error\n\n" .. tostring(msg)
+  pcall(function()
+    local parts = {
+      "---- " .. tostring(os.date and os.date("%Y-%m-%d %H:%M:%S") or "?") .. " ----",
+      "os: " .. tostring(love.system and love.system.getOS and love.system.getOS() or "?"),
+      "fused: " .. tostring(love.filesystem.isFused and love.filesystem.isFused()),
+    }
+    local okv, Version = pcall(require, "src.core.Version")
+    if okv and Version then parts[#parts + 1] = "engine: " .. tostring(Version.engine) end
+    parts[#parts + 1] = ""
+    parts[#parts + 1] = debug.traceback(tostring(msg), 2)
+    parts[#parts + 1] = ""
+    trace = table.concat(parts, "\n")
+    love.filesystem.append("crash.txt", trace .. "\n")
+  end)
+  -- Also into the boot trace, so the breadcrumb file ends with the reason and
+  -- not merely with the last stage that succeeded.
+  pcall(function() BootTrace.mark("ERROR " .. tostring(msg)) end)
+
+  -- The stock handler first, so desktop keeps the screen everyone knows.  It is
+  -- pcall'd because it is exactly the thing that can fail here, and a raise
+  -- inside it would otherwise be the second error that ends the process.
+  if defaultErrorHandler then
+    local ok, stepper = pcall(defaultErrorHandler, msg)
+    if ok and stepper then return stepper end
+  end
+  return minimalErrorScreen(trace)
+end
+
+-- A thread that dies must not take the game with it.
+--
+-- LÖVE's DEFAULT love.threaderror re-raises on the main thread, so an error
+-- inside any worker is a hard crash of the whole app a frame or two later.
+-- RomImporter starts the update check behind a pcall with the comment "a
+-- broken or absent updater can never take the launcher down with it" -- but
+-- pcall only guards Check.start(), not what the thread does afterwards, so
+-- that intent was not actually being met.  The same applies to the audio
+-- chip worker.
+--
+-- Nothing here is load-bearing enough to be worth a crash: the updater just
+-- stops offering updates, and the launcher keeps running.  Log it and carry
+-- on.
+function love.threaderror(thread, errorstring)
+  local Logger = package.loaded["src.core.Logger"]
+  local msg = "thread error: " .. tostring(errorstring)
+  if Logger and Logger.warn then Logger.warn("%s", msg) else print(msg) end
+  pcall(function()
+    love.filesystem.append("crash.txt",
+      "---- thread error ----\n" .. tostring(errorstring) .. "\n\n")
+  end)
+end
+
 function love.quit()
   if editorMode and EditorApp.quit then
     return EditorApp.quit() -- return true to abort quit
   end
+  -- Marks the trace as an orderly shutdown.  A trace that ends mid-boot with
+  -- no "clean exit" and no crash.txt beside it is the signature of a native
+  -- abort rather than a Lua error -- which is exactly the distinction that is
+  -- otherwise invisible on a phone.
+  BootTrace.finish()
   pcall(function()
     require("src.core.DiscordPresence").shutdown()
   end)
@@ -588,7 +904,9 @@ local function pacingEnabled()
 end
 
 function love.run()
+  BootTrace.mark("love.run enter")
   if love.load then love.load(love.arg.parseGameArguments(arg), arg) end
+  BootTrace.mark("love.load returned")
 
   -- don't let love.load's cost land in the first frame's dt
   if love.timer then love.timer.step() end
@@ -634,6 +952,11 @@ function love.run()
       if love.draw then love.draw() end
       love.graphics.present()
     end
+    -- Counted after present, so a frame in the trace means a frame that was
+    -- actually put on screen.  Thins out fast (see BootTrace.frame): the
+    -- interesting range for a launch that dies "about a second in" is frames
+    -- 1..60, and past that the trace only needs to prove it kept running.
+    BootTrace.frame()
 
     if love.timer then
       if paced then

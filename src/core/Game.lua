@@ -156,6 +156,30 @@ function Game:makeTitleState()
       end
       if newGameScreen then
         Screens.push(self, newGameScreen, function() end)
+      else
+        -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
+        -- never appeared.  Data.lua sets boot.screens.newGame = false for any
+        -- dataset with no OakText* -- Prism writes its own introduction in
+        -- engine/intro_menu.asm rather than replaying the professor's -- so
+        -- OakSpeech does not run, and the `customize_player` step lives INSIDE
+        -- OakSpeech.  The step was correct and simply unreachable.
+        --
+        -- IntroductionSpeech calls PlayerCustomization before it asks the
+        -- player's name, and the name prompt on this path comes from the
+        -- intro map's own script, so pushing it here puts it in the same
+        -- place: after New Game, before the map runs.
+        -- pcall, not a bare require: a dataset can want this screen without
+        -- the build shipping it (that is exactly how NEW GAME on Prism went
+        -- from "no customisation menu" to "module not found" the moment the
+        -- branch became reachable).  A missing screen must cost the player
+        -- the customisation, not the save file they were starting.
+        local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
+        if okCust and type(Cust) == "table" and Cust.available(self) then
+          Screens.push(self, "PrismCustomization", function() end)
+        elseif not okCust then
+          require("src.core.Logger").error(
+            "player customisation screen unavailable: %s", tostring(Cust))
+        end
       end
     end,
     onContinue = function()

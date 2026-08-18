@@ -21,6 +21,7 @@ local Evolution = {}
 Evolution.METHODS = {
   LEVEL = {
     check = function(game, mon, evo, trigger)
+      if Evolution.holdsEverstone(game, mon) then return false end
       return trigger.kind == "levelup" and mon.level >= (evo.level or 0)
     end,
     describe = function(evo)
@@ -36,11 +37,37 @@ Evolution.METHODS = {
     end,
     consumesItem = true,
   },
+  -- EVOLVE_TRADE (engine/pokemon/evolve.asm:143-166).  In order, which is
+  -- the order below:
+  --
+  --   wLinkMode must be non-zero      -- a real cable trade, not an NPC one
+  --   IsMonHoldingEverstone           -- blocks it outright
+  --   the evo's item byte, `b`        -- $FF means "no item needed", proceed
+  --   wLinkMode /= LINK_TIMECAPSULE   -- a Gen 1 link cannot carry held items
+  --   wTempMonItem == b               -- the mon must be HOLDING that item
+  --   wTempMonItem = 0                -- and the item is CONSUMED
+  --
+  -- Only the first of those was implemented, so every item-gated trade
+  -- evolution fired on any trade: an ONIX with nothing in its hands came back
+  -- a STEELIX, and the METAL COAT stayed in the bag.  Ten species on the base
+  -- carts and fourteen on Prism take this path.
   TRADE = {
     check = function(game, mon, evo, trigger)
-      return trigger.kind == "trade"
+      if trigger.kind ~= "trade" then return false end
+      if Evolution.holdsEverstone(game, mon) then return false end
+      if not evo.heldItem then return true end
+      -- LINK_TIMECAPSULE: Gen 1 has no held items, so the ROM refuses these
+      -- rather than evolving on an empty hand
+      if trigger.timeCapsule then return false end
+      return Evolution.itemMatches(game, mon.item, evo.heldItem)
     end,
-    describe = function() return "Trade" end,
+    describe = function(evo, data)
+      if not evo.heldItem then return Strings("Trade") end
+      local item = (data and data.items and data.items[evo.heldItem] or {}).name
+      return Strings("Trade holding %s", item or evo.heldItem)
+    end,
+    -- the held item is taken by the evolution, not by the bag
+    consumesHeldItem = true,
   },
   -- Gen2 EVOLVE_HAPPINESS (engine/pokemon/evolve.asm): the mon's happiness
   -- byte must have reached HAPPINESS_TO_EVOLVE, and TR_MORNDAY / TR_NITE
@@ -48,6 +75,7 @@ Evolution.METHODS = {
   HAPPINESS = {
     check = function(game, mon, evo, trigger)
       if trigger.kind ~= "levelup" then return false end
+      if Evolution.holdsEverstone(game, mon) then return false end
       if (mon.happiness or 0) < Evolution.HAPPINESS_TO_EVOLVE then
         return false
       end
@@ -67,6 +95,7 @@ Evolution.METHODS = {
   STAT = {
     check = function(game, mon, evo, trigger)
       if trigger.kind ~= "levelup" then return false end
+      if Evolution.holdsEverstone(game, mon) then return false end
       if mon.level < (evo.level or 0) then return false end
       local atk = mon.stats and mon.stats.attack or 0
       local def = mon.stats and mon.stats.defense or 0
@@ -80,6 +109,30 @@ Evolution.METHODS = {
     end,
   },
 }
+
+-- An item id the way the mon carries it (ITEM_112) or the way a script names
+-- it (EVERSTONE); the two spellings both occur, so match on either.
+function Evolution.itemMatches(game, held, wanted)
+  if not (held and wanted) then return false end
+  if held == wanted then return true end
+  local items = game and game.data and game.data.items
+  local a = items and items[held]
+  local b = items and items[wanted]
+  if a and b then return a.index ~= nil and a.index == b.index end
+  if a and a.key == wanted then return true end
+  if b and b.key == held then return true end
+  return false
+end
+
+-- IsMonHoldingEverstone (engine/pokemon/evolve.asm).  The stone blocks EVERY
+-- evolution except the item-triggered ones -- .item never calls it -- which
+-- is why this is consulted per method rather than once up front.
+Evolution.EVERSTONE = "EVERSTONE"
+
+function Evolution.holdsEverstone(game, mon)
+  if not (mon and mon.item) then return false end
+  return Evolution.itemMatches(game, mon.item, Evolution.EVERSTONE)
+end
 
 -- HAPPINESS_TO_EVOLVE / BASE_HAPPINESS (constants/pokemon_data_constants.asm)
 Evolution.HAPPINESS_TO_EVOLVE = 220
@@ -159,9 +212,15 @@ end
 
 -- Mutate the mon into the new species (stats, HP delta, dex flags).
 -- via is the evolution method id when the caller knows it.
-function Evolution.apply(game, mon, newSpecies, via)
+function Evolution.apply(game, mon, newSpecies, via, evo)
   local newDef = game.data.pokemon[newSpecies]
   assert(newDef, "evolve into unknown species " .. tostring(newSpecies))
+  -- `xor a / ld [wTempMonItem], a` (evolve.asm:164): an item-gated TRADE
+  -- evolution eats the item it needed.  A KING'S ROCK is not returned to the
+  -- bag and is not still on the POLITOED afterwards.
+  if evo and evo.heldItem and Evolution.itemMatches(game, mon.item, evo.heldItem) then
+    mon.item = nil
+  end
   local fromSpecies = mon.species
   local hpLost = mon.stats.hp - mon.hp
   mon.species = newSpecies
@@ -220,16 +279,18 @@ end
 
 -- Play the evolution movie (flashing forms), then apply + text.
 -- Headless (no real graphics) falls back to the plain text flow.
-function Evolution.evolve(game, mon, newSpecies, onDone, via)
+-- `evo` is the evolutions[] row that fired, when the caller knows it; it is
+-- what tells apply() to eat an item-gated trade evolution's held item.
+function Evolution.evolve(game, mon, newSpecies, onDone, via, evo)
   if love.image and love.image.newImageData then
     -- forward `via` so EvolutionState can keep trade evolutions
     -- non-cancelable (LINK_STATE_TRADING) while others accept B (#213)
-    Screens.push(game, "EvolutionState", mon, newSpecies, onDone, via)
+    Screens.push(game, "EvolutionState", mon, newSpecies, onDone, via, evo)
     return
   end
   Music.play(game.data, Music.special(game.data, "evolution"))
   local oldName = mon.nickname or game.data.pokemon[mon.species].name
-  Evolution.apply(game, mon, newSpecies, via)
+  Evolution.apply(game, mon, newSpecies, via, evo)
   local msg = Strings("What?\n%s is\nevolving!\fCongratulations!\nYour %s\nevolved into\n%s!",
                       oldName, oldName, game.data.pokemon[newSpecies].name)
   game.stack:push(TextBox.new(game, msg, function()

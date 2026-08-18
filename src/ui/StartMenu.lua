@@ -46,8 +46,10 @@ function StartMenu.new(game)
     })
   end
 
-  -- POKéDEX: only after Oak hands it over
-  if flags.EVENT_GOT_POKEDEX then
+  -- POKéDEX: only after the professor hands it over -- and WHICH FLAG that is
+  -- differs per cartridge, so it goes through Flags.hasPokedex (Prism sets
+  -- ENGINE_POKEDEX where Gold and Crystal set EVENT_GOT_POKEDEX).
+  if require("src.script.Flags").hasPokedex(game.save) then
     table.insert(items, { label = Strings("POKéDEX"), onSelect = function()
       Screens.push(game, "PokedexMenu", { onCancel = reopen })
     end })

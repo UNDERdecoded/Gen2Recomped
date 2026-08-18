@@ -389,17 +389,25 @@ function TradeSession:apply(game)
     game.save.pokedex.seen[received.species] = true
     game.save.pokedex.owned[received.species] = true
   end
-  local def = self.data.pokemon[received.species]
-  local evolveTo
-  for _, evo in ipairs(def.evolutions or {}) do
-    if evo.method == "TRADE" then
-      evolveTo = evo.species
-      break
-    end
-  end
+  -- The trade evolution, through Evolution.pendingFor rather than a bare
+  -- scan for method == "TRADE".
+  --
+  -- Ten of the base carts' TRADE rows (fourteen of Prism's) carry a
+  -- `heldItem`, and EVOLVE_TRADE only fires when the mon is actually HOLDING
+  -- it -- see evolve.asm:143-166 and Evolution.METHODS.TRADE.  Scanning for
+  -- the method alone ignored that, so an ONIX with empty hands came back a
+  -- STEELIX and a POLIWHIRL a POLITOED.  An EVERSTONE also blocks the whole
+  -- thing, and a Time Capsule link cannot satisfy an item gate at all,
+  -- because Gen 1 has no held items to send.
+  local Evolution = require("src.pokemon.Evolution")
+  local evolveTo, evolveRow = Evolution.pendingFor(
+    game or { data = self.data, save = { pokedex = false } },
+    received,
+    { kind = "trade", timeCapsule = self.timeCapsule or false })
   Runtime.emit("trade.completed",
-               { sent = sent, received = received, evolveTo = evolveTo })
-  return received, evolveTo
+               { sent = sent, received = received, evolveTo = evolveTo,
+                 evolution = evolveRow })
+  return received, evolveTo, evolveRow
 end
 
 return Protocol

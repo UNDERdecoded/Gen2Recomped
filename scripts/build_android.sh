@@ -248,6 +248,13 @@ pack_love_archive() {
 
   if command -v zip >/dev/null 2>&1; then
     # shellcheck disable=SC2086  # manifests is a deliberate word list
+    # NO mods/ here, deliberately.  Adding it shipped eleven bundled mods to
+    # Android for the first time -- the launcher enables a bundled mod by
+    # default, so the app booted, loaded a mod set that had never run on that
+    # platform, and died about a second in with no Lua error reaching the
+    # handler.  0.7.5 shipped no mods and boots; this restores that exactly.
+    # Re-add only after the bundled mods are known to load on device, one at
+    # a time (see mobile/ANDROID.md).
     (cd "$root" && zip -q -9 -r "$archive" \
       main.lua conf.lua src data assets tools/save-editor \
       $manifests \
@@ -266,7 +273,9 @@ import zipfile
 root = pathlib.Path(sys.argv[1]).resolve()
 archive = pathlib.Path(sys.argv[2])
 manifest_words = [w for w in sys.argv[3].split() if w]
-includes = ["main.lua", "conf.lua", "src", "data", "assets", "tools/save-editor", *manifest_words]
+# mods/ intentionally absent -- see the note on the zip path above.
+includes = ["main.lua", "conf.lua", "src", "data", "assets",
+            "tools/save-editor", *manifest_words]
 excludes = ["*.DS_Store", "*/.DS_Store", "*/.git/*", "data/generated/*", "assets/generated/*"]
 
 def excluded(rel: str) -> bool:

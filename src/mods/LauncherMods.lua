@@ -113,9 +113,21 @@ function LauncherMods.deriveList(manifests, options)
     local raw = m.raw or {}
     local badge = tostring(raw.category or m.profile or "MOD"):upper()
     if m.experimental then badge = "EXPERIMENTAL" end
+    -- A mod whose declared base file is missing is installed and enabled but
+    -- cannot do anything; the row carries that so the panel can offer IMPORT
+    -- instead of leaving the player to guess (see src/mods/ModImports.lua).
+    local ModImports = require("src.mods.ModImports")
+    -- A base file the player already gave another mod satisfies this one too
+    -- (see ModImports' shared store); do that before asking what is missing,
+    -- so a second Stadium 2 mod is simply ready.
+    ModImports.adoptShared(m)
+    local needs = ModImports.missing(m)
     out[#out + 1] = {
       id = m.id,
       name = m.name or m.id,
+      requiredImports = ModImports.of(m),
+      missingImports = needs,
+      manifestPath = m.path,
       version = m.version,
       badge = badge,
       description = m.description or "",

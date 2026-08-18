@@ -159,13 +159,13 @@ function Commands.g2_variablesprite(ctx, slot, sprite)
   ctx.save.gen2VarSprites = ctx.save.gen2VarSprites or {}
   ctx.save.gen2VarSprites[slot] = sprite
   local ow = ctx.overworld
+  -- refreshVariableSprite is the whole job: it walks the NPC pool AND the live
+  -- list and re-resolves every object bound to this slot.  A second loop used
+  -- to sit here "to catch the rest", over `ow.map.npcs` -- a field that does
+  -- not exist (NPCs live on the overworld as ow.npcs, never on the map), so it
+  -- was dead from the day it was written and hid the fact that the real
+  -- refresh only matched the SPRITE_VAR_nn spelling.
   if ow and ow.refreshVariableSprite then ow:refreshVariableSprite(slot) end
-  -- Also refresh all NPCs that use this variable sprite name
-  if ow and ow.map and ow.map.npcs then
-    for _, npc in pairs(ow.map.npcs) do
-      if npc.refreshSprite then npc:refreshSprite(ctx.game and ctx.game.data) end
-    end
-  end
 end
 
 local COMPARE = {
@@ -180,16 +180,32 @@ function Commands.g2_compare(ctx, op, value)
   ctx.lastCheck = fn and fn(scriptVar(ctx), value or 0) or false
 end
 
+-- `iftrue` / `iffalse` do not read a comparison result in the ROM: they read
+-- hScriptVar itself (`ldh a, [hScriptVar] / and a`).  The port models that
+-- byte as ctx.g2Var and the branch as ctx.lastCheck, so every command that
+-- WRITES the variable has to move the flag with it -- otherwise the branch
+-- tests whatever the last checkevent left behind.  Prism's minecart NPC is
+-- `writebyte 8 / .loop: playwaitsfx / addvar -1 / iftrue .loop`, a countdown
+-- with nothing else in it to set a flag.
+local function setScriptVar(ctx, value)
+  value = value or 0
+  ctx.g2Var = value
+  ctx.lastCheck = value ~= 0
+  return value
+end
+Gen2Commands.setScriptVar = setScriptVar
+
 function Commands.g2_setvar(ctx, value)
-  ctx.g2Var = value or 0
+  setScriptVar(ctx, value)
 end
 
 function Commands.g2_addvar(ctx, value)
-  ctx.g2Var = scriptVar(ctx) + (value or 0)
+  -- the ROM's `add [hl]` wraps in a byte
+  setScriptVar(ctx, (scriptVar(ctx) + (value or 0)) % 256)
 end
 
 function Commands.g2_random(ctx, bound)
-  ctx.g2Var = math.random(0, math.max((bound or 1) - 1, 0))
+  setScriptVar(ctx, math.random(0, math.max((bound or 1) - 1, 0)))
 end
 
 
@@ -202,14 +218,214 @@ local function wram(ctx)
   return save.g2Wram
 end
 
+-- With no address, the halfword variable IS the address: Prism's
+-- GetHalfwordVar returns hScriptHalfwordVar in hl, so `copyhalfwordvartovar`
+-- is an indirect read of the byte it names (`writehalfword wFossilCaseCount /
+-- copyhalfwordvartovar / sif >, FOSSIL_CASE_SIZE - 1`).
 function Commands.g2_readmem(ctx, addr)
   local mem = wram(ctx)
-  ctx.g2Var = (mem and mem[addr]) or 0
+  addr = addr or ctx.g2HalfwordVar
+  setScriptVar(ctx, (mem and addr and mem[addr]) or 0)
 end
 
 function Commands.g2_writemem(ctx, addr)
   local mem = wram(ctx)
-  if mem then mem[addr] = scriptVar(ctx) end
+  addr = addr or ctx.g2HalfwordVar
+  if mem and addr then mem[addr] = scriptVar(ctx) end
+end
+
+-- Script_comparevartobyte answers in the script variable itself, and the
+-- values are NOT a sign: 0 is greater, 1 is less, 2 is equal (`cp [hl] /
+-- ld a, 2 / jr z / sbc a`).
+function Commands.g2_comparemem(ctx, addr)
+  local mem = wram(ctx)
+  local other = (mem and mem[addr]) or 0
+  local v = scriptVar(ctx)
+  -- and `sif true` after one tests the byte, not equality: 2 and 1 are both
+  -- true, 0 (greater) is false
+  setScriptVar(ctx, v == other and 2 or (v > other and 0 or 1))
+end
+
+-- Script_addbytetovar: the script variable plus the WRAM byte at an address.
+function Commands.g2_addmem(ctx, addr)
+  local mem = wram(ctx)
+  setScriptVar(ctx, (scriptVar(ctx) + ((mem and mem[addr]) or 0)) % 256)
+end
+
+-- Script_multiplyvar: SimpleMultiply, except that `inc a / jr nz` makes an
+-- operand of $ff two's-complement negate instead (`multiplyvar -1`, which is
+-- how the mining script counts a step budget DOWN).
+function Commands.g2_mulvar(ctx, by)
+  by = tonumber(by) or 1
+  if by == 0xFF or by == -1 then
+    setScriptVar(ctx, (256 - scriptVar(ctx)) % 256)
+  else
+    setScriptVar(ctx, (scriptVar(ctx) * by) % 256)
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- Prism's script variable stack (ScriptVarStackOperation) and its second,
+-- sixteen-bit variable (hScriptHalfwordVar).
+--
+-- The stack is how a Prism script holds a value across a `scall` or across
+-- the arms of a conditional; the halfword is how it carries a pointer -- most
+-- often a text pointer read out of a loaded array and handed to `jumptext -1`.
+-- Both live for the length of one script run, exactly as the ROM's do: the
+-- bytes are in WRAM the save never keeps.
+-- ---------------------------------------------------------------------------
+local function varStack(ctx)
+  ctx.g2VarStack = ctx.g2VarStack or {}
+  return ctx.g2VarStack
+end
+
+function Commands.g2_pushvar(ctx)
+  local st = varStack(ctx)
+  st[#st + 1] = scriptVar(ctx)
+end
+
+function Commands.g2_popvar(ctx)
+  local st = varStack(ctx)
+  local n = #st
+  -- The ROM decrements its stack pointer and reads what is there; an empty
+  -- stack reads whatever WRAM held, which is 0 on a fresh boot.
+  setScriptVar(ctx, n > 0 and table.remove(st) or 0)
+end
+
+function Commands.g2_peekvar(ctx)
+  local st = varStack(ctx)
+  setScriptVar(ctx, st[#st] or 0)
+end
+
+function Commands.g2_swapvar(ctx)
+  local st = varStack(ctx)
+  local n = #st
+  local top = n > 0 and st[n] or 0
+  if n > 0 then st[n] = scriptVar(ctx) end
+  setScriptVar(ctx, top)
+end
+
+local function halfword(ctx)
+  ctx.g2HalfwordStack = ctx.g2HalfwordStack or {}
+  return ctx.g2HalfwordStack
+end
+
+function Commands.g2_sethalfword(ctx, value)
+  ctx.g2HalfwordVar = tonumber(value) or 0
+  ctx.g2HalfwordText = nil
+end
+
+function Commands.g2_pushhalfword(ctx)
+  local st = halfword(ctx)
+  st[#st + 1] = { ctx.g2HalfwordVar or 0, ctx.g2HalfwordText }
+end
+
+function Commands.g2_pophalfword(ctx)
+  local st = halfword(ctx)
+  local top = #st > 0 and table.remove(st) or nil
+  ctx.g2HalfwordVar = top and top[1] or 0
+  ctx.g2HalfwordText = top and top[2] or nil
+end
+
+function Commands.g2_peekhalfword(ctx)
+  local st = halfword(ctx)
+  local top = st[#st]
+  ctx.g2HalfwordVar = top and top[1] or 0
+  ctx.g2HalfwordText = top and top[2] or nil
+end
+
+-- Script_addhalfwordtovar / Script_addhalfwordvartovar: halfword = base +
+-- the script variable, where base is the literal operand or the halfword
+-- itself.  Both write the HALFWORD, not the variable.
+function Commands.g2_addhalfword(ctx, base)
+  base = tonumber(base) or ctx.g2HalfwordVar or 0
+  ctx.g2HalfwordVar = (base + scriptVar(ctx)) % 65536
+  ctx.g2HalfwordText = nil
+end
+
+-- Script_addhalfwordtohalfwordvar adds a literal to the halfword.
+function Commands.g2_addhalfwordvalue(ctx, value)
+  ctx.g2HalfwordVar = ((ctx.g2HalfwordVar or 0) + (tonumber(value) or 0)) % 65536
+  ctx.g2HalfwordText = nil
+end
+
+-- Script_copybytetohalfwordvar reads a WRAM byte into the halfword.
+function Commands.g2_readmem16(ctx, addr)
+  local mem = wram(ctx)
+  ctx.g2HalfwordVar = (mem and mem[addr]) or 0
+  ctx.g2HalfwordText = nil
+end
+
+-- ---------------------------------------------------------------------------
+-- Prism's script arrays (Script_loadarray / GetScriptArrayPointer).
+--
+--   loadarray <ptr>, <entry size>   base, entry size, current entry
+--   readarray <i>                   var      = [base + size * entry + i]
+--   readarrayhalfword <i>           halfword = word at the same place
+--
+-- The current entry comes from the script variable at loadarray time (`and a /
+-- jr z, .singularArray / ldh a, [hScriptVar]` -- a size of zero pins it to 0),
+-- which is what makes one array serve a whole family of cases.  The bytes
+-- themselves were read out of the ROM during extraction; where the entries are
+-- text pointers, the extractor also carries the label for each, so
+-- `readarrayhalfword 0 / jumptext -1` prints a real line.
+-- ---------------------------------------------------------------------------
+function Commands.g2_loadarray(ctx, array)
+  if type(array) ~= "table" then ctx.g2Array = nil return end
+  local size = tonumber(array.size) or 0
+  ctx.g2Array = array
+  ctx.g2ArraySize = size
+  -- a singular array (entry size 0) always reads from entry 0
+  ctx.g2ArrayEntry = size > 0 and scriptVar(ctx) or 0
+end
+
+local function arrayIndex(ctx, index)
+  local array = ctx.g2Array
+  if type(array) ~= "table" then return nil end
+  return array, (ctx.g2ArraySize or 0) * (ctx.g2ArrayEntry or 0)
+    + (tonumber(index) or 0)
+end
+
+function Commands.g2_readarray(ctx, index)
+  local array, at = arrayIndex(ctx, index)
+  setScriptVar(ctx, array and array.bytes and array.bytes[at + 1] or 0)
+end
+
+function Commands.g2_readarrayhalfword(ctx, index)
+  local array, at = arrayIndex(ctx, index)
+  if not array then
+    ctx.g2HalfwordVar, ctx.g2HalfwordText = 0, nil
+    return
+  end
+  -- the ROM reads a halfword at a BYTE offset; every real use indexes on an
+  -- even boundary, and an odd one still has to answer something
+  local bytes = array.bytes or {}
+  local lo, hi = bytes[at + 1] or 0, bytes[at + 2] or 0
+  ctx.g2HalfwordVar = lo + hi * 256
+  local texts = array.texts
+  local slot = at % 2 == 0 and (at / 2) + 1 or nil
+  ctx.g2HalfwordText = slot and texts and texts[slot] or nil
+  if ctx.g2HalfwordText == false then ctx.g2HalfwordText = nil end
+end
+
+-- `jumptext -1` / `writetext -1`: the line is whichever one the halfword
+-- variable names.  With no label resolved the box would come up empty, so say
+-- nothing rather than opening one.
+function Commands.g2_show_halfword_text(ctx)
+  local id = ctx.g2HalfwordText
+  if not id then return end
+  return Commands.show_text(ctx, id)
+end
+
+-- Script_toggleevent: CHECK_FLAG, then SET or RESET the other way.
+function Commands.g2_toggle_flag(ctx, name)
+  if not name then return end
+  local Flags = require("src.script.Flags")
+  if Flags.get(ctx.save, name) then
+    Flags.clear(ctx.save, name)
+  else
+    Flags.set(ctx.save, name)
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -460,7 +676,13 @@ function Commands.g2_object(ctx, index, visible)
   if not name then
     local ow0 = ctx.overworld
     if ow0 and ow0.syncObjectVisibility then
-      pcall(function() ow0:syncObjectVisibility() end)
+      -- Targeted: Script_appear / Script_disappear act on the ONE object they
+      -- name.  A whole-map re-sync here re-derives every other object from its
+      -- event flag, which silently deletes any live actor whose own flag a
+      -- script has already set -- and nothing re-spawns it, because
+      -- setevent/clearevent never touch live objects.  See
+      -- OverworldState:syncObjectVisibility.
+      pcall(function() ow0:syncObjectVisibility(obj) end)
     end
     return
   end
@@ -471,7 +693,9 @@ function Commands.g2_object(ctx, index, visible)
   end
   session[name] = visible and true or false
   local ow = ctx.overworld
-  if ow and ow.syncObjectVisibility then pcall(function() ow:syncObjectVisibility() end) end
+  if ow and ow.syncObjectVisibility then
+    pcall(function() ow:syncObjectVisibility(obj) end)
+  end
 end
 
 -- WriteCmdQueue with a CMDQUEUE_STONETABLE entry: the map's cmdqueue
@@ -753,6 +977,50 @@ function Commands.g2_emote(ctx, index, emote, frames)
   Commands.emote(ctx, target, bubble, frames or 15)
 end
 
+-- `catchtutorial <battletype>` (Script_catchtutorial -> CatchTutorial,
+-- engine/events/catch_tutorial.asm).  The Dude's demo on Route 29, in Gold,
+-- Silver and Crystal alike -- and until now a documented no-op, so the scene
+-- ran his dialogue with the battle itself simply missing.
+--
+-- The ROM: back up wPlayerName, write "DUDE" over it, load his one-ball bag,
+-- start the battle the preceding `loadwildmon` set up (RATTATA, level 5), let
+-- a canned joypad stream drive the menus, then put the real name back.  The
+-- port already has all of this for Gen1's Viridian old man -- BattleState's
+-- demo mode IS the simulated cursor, the one-entry bag and the throw that
+-- cannot fail -- so this hands the same machinery the Gen2 trimmings.
+function Commands.g2_catch_tutorial(ctx)
+  local wild = ctx.g2Wild
+  -- `loadwildmon` always precedes it; without one there is nothing to catch
+  -- and the ROM would fight whatever wEnemyMon happened to hold, so skip.
+  if not wild then
+    Logger.warn("gen2 script: catchtutorial with no loadwildmon")
+    return
+  end
+  ctx.g2Wild = nil
+  local BattleState = require("src.battle.BattleState")
+  local runner = ctx.runner
+  local battle = BattleState.newWild(ctx.game, wild.species, wild.level)
+  battle:makeDudeDemo()
+  -- CatchTutorial swaps wPlayerName for the duration (the "DUDE used POKe
+  -- BALL!" line reads it) and copies the real one back on the way out.  The
+  -- demo prints its own name, so this only has to survive anything else that
+  -- reads the player name mid-battle -- and it must be restored even if the
+  -- battle ends by a path this function does not control.
+  local player = ctx.game.save.player
+  local realName = player and player.name
+  if player then player.name = "DUDE" end
+  battle.onFinish = function()
+    if player then player.name = realName end
+    runner:resume()
+  end
+  if ctx.overworld and ctx.overworld.pushBattle then
+    ctx.overworld:pushBattle(battle)
+  else
+    ctx.game.stack:push(battle)
+  end
+  runner:yield()
+end
+
 -- ---------------------------------------------------------------------------
 -- battles
 -- ---------------------------------------------------------------------------
@@ -817,7 +1085,33 @@ function Commands.g2_start_battle(ctx)
   if ctx.lastBattleResult == "lose" then return "end" end
 end
 
+-- `reloadmapafterbattle` (Script_reloadmapafterbattle, 25:$70CE).  Its FIRST
+-- act is to read wBattleResult, and on LOSE it does not come back to the
+-- script at all: `ScriptJump Script_BattleWhiteout`, which whites the player
+-- out and ends with `endall`.  Everything the script had queued behind the
+-- battle is abandoned.
+--
+-- The port only ever printed the win text here, so a lost trainer battle fell
+-- straight through into the victory half of its own script.  The Elite Four is
+-- where that shows: losing to Will ran `setevent EVENT_BEAT_ELITE_4_WILL`,
+-- printed his defeat speech and opened the exit door, all while the blackout
+-- warp was still in flight -- so the player ended up back in the room they had
+-- just lost in, with the E4 member marked beaten.  That is the "blacking out
+-- in the Elite Four respawns you there" report.
+--
+-- OverworldState:afterBattle has already done the whiteout itself (heal, halve
+-- the money, warp to the spawn) by the time this runs, so the only thing
+-- missing was stopping the script.  Returning a program counter past the end
+-- is how the port spells `endall`.
+--
+-- Scripts that are ALLOWED to lose never reach here: BATTLETYPE_CANLOSE
+-- battles (the Cherrygrove rival) are followed by `reloadmap`, not
+-- `reloadmapafterbattle`, and branch on the result themselves.  The canLose
+-- guard is belt and braces for a mod that pairs them anyway.
 function Commands.g2_after_battle(ctx)
+  if ctx.lastBattleResult == "lose" and not ctx.lastBattleCanLose then
+    return math.huge
+  end
   if ctx.g2WinText then Commands.show_text(ctx, ctx.g2WinText) end
 end
 
@@ -848,9 +1142,12 @@ end
 
 -- yesorno reuses the box the preceding writetext opened; the compiler hands
 -- us that text const so the prompt reads the same as the ROM's
+-- textId is nil when the prompt was printed from inside a `scall`, which the
+-- lowering cannot fold.  Script_yesorno opens the menu over whatever box is
+-- already up, so fall back to the last text this script actually showed.
 function Commands.g2_yesno(ctx, textId)
   -- ask() parks the runner and writes the answer to ctx.lastCheck itself
-  Commands.ask(ctx, textId)
+  Commands.ask(ctx, textId or ctx.g2LastText)
 end
 
 -- `cry <species>`: PlayMonCry, standalone.  Unlike Gen1's play_cry this
@@ -1438,6 +1735,19 @@ function Commands.g2_give_odd_egg(ctx)
   ctx.g2Var = ctx.lastCheck and 0 or 1
 end
 
+-- The Ruins of Alph chamber walls that a SCRIPT opens.  Both are run by the
+-- chamber's own scene script on entry; the wall word is the instruction and
+-- these are what notice it has been followed.  See src/script/RuinsOfAlph.lua
+-- for the other two, whose trigger is an item and so is called from the item
+-- code instead.
+function Commands.g2_hooh_chamber(ctx)
+  require("src.script.RuinsOfAlph").hoOhChamber(ctx.game)
+end
+
+function Commands.g2_omanyte_chamber(ctx)
+  require("src.script.RuinsOfAlph").omanyteChamber(ctx.game)
+end
+
 -- `special DisplayUnownWords` (22:$6E68): the word the wall's `setval` chose,
 -- drawn as 2x2 blocks of the chamber's own tileset, held until A or B.
 function Commands.g2_unown_wall(ctx)
@@ -1474,6 +1784,49 @@ function Commands.g2_random_phone_wild_mon(ctx)
     local row = slots[math.random(math.min(4, #slots))]
     if row then ctx.game.stringBuffer = speciesName(data, row.species) end
   end
+end
+
+-- RandomUnseenWildMon (0A:$65A0): the third phone-caller special, and the one
+-- that was still missing.  It picks one of the three RAREST grass slots on the
+-- caller's own route and, if the player has never SEEN that species, has the
+-- caller tell them about it -- which is how the phone points you at Yanma,
+-- Dunsparce and the rest.
+--
+-- The answer is inverted from the usual sense: 0 means "I just told you about
+-- one" and 1 means "nothing rare to mention", and the caller's script picks
+-- which line to close on from that.  Falling through to g2_special answered
+-- false, which is 0, so every caller claimed to have described a mon and then
+-- printed an empty name.
+--
+-- Faithful to the cartridge's own quirk: the rare pick is compared against
+-- only the FOUR commonest slots, so a species that also appears in slot 5 or 6
+-- still counts as rare.
+function Commands.g2_random_unseen_wild_mon(ctx)
+  local data = ctx.game.data
+  local function nothing()
+    ctx.g2Var, ctx.lastCheck = 1, true
+  end
+  local entry = phoneContact(data, tonumber(ctx.save.g2CurCaller))
+  local mapDef = entry and callerMapDef(data, entry)
+  local enc = mapDef and (data.encounters or {})[mapDef.id]
+  local ow = ctx.overworld
+  local band = enc and enc.grass
+    and require("src.world.Encounter").atTime(enc.grass,
+          (ow and ow.timeOfDay and ow:timeOfDay()) or "DAY")
+  local slots = band and band.slots
+  if not (slots and #slots >= 5) then return nothing() end
+  -- `ld bc, 5 + 4 * 2` walks to the fifth row, then `Random / and 3` (re-rolled
+  -- on 0) picks one of the three behind it
+  local row = slots[#slots - math.random(0, 2)]
+  local species = row and row.species
+  if not species then return nothing() end
+  for index = 1, math.min(4, #slots) do
+    if slots[index] and slots[index].species == species then return nothing() end
+  end
+  local dex = ctx.save.pokedex
+  if dex and dex.seen and dex.seen[species] then return nothing() end
+  ctx.game.stringBuffer = speciesName(data, species)
+  ctx.g2Var, ctx.lastCheck = 0, false
 end
 
 -- ---------------------------------------------------------------------------
@@ -1577,6 +1930,13 @@ function Commands.g2_readvar(ctx, var)
     -- ENGINE_ROCKETS_IN_RADIO_TOWER -- the Goldenrod Rocket event never began.
     ctx.g2Var = require("src.inventory.Badges")
                   .count(ctx.game and ctx.game.data, ctx.save)
+  elseif var == 24 then
+    -- wBlueCardBalance: Buena's Blue Card, one point a night, capped at 30
+    ctx.g2Var = ctx.save.g2BlueCard or 0
+  elseif var == 26 then
+    -- wKenjiBreakTimer: days until the Route 39 trainer takes his break,
+    -- sampled by `special SampleKenjiBreakCountdown`
+    ctx.g2Var = ctx.save.g2KenjiBreak or 0
   elseif var == 14 then
     -- UnownCaught (engine/events/unown_walls.asm): how many distinct UNOWN
     -- letters are in the dex.  The port has no per-letter model, so a caught
@@ -1589,6 +1949,18 @@ function Commands.g2_readvar(ctx, var)
     ctx.g2Var = n
   else
     ctx.g2Var = 0
+  end
+  ctx.lastCheck = (ctx.g2Var or 0) ~= 0
+end
+
+-- `writevar <var>`: the script variable back into the stored byte.  Only the
+-- vars Gen2ScriptVM's WRITEBACK_VARS lists reach here.
+function Commands.g2_writevar(ctx, var)
+  local value = math.floor(scriptVar(ctx)) % 256
+  if var == 24 then
+    ctx.save.g2BlueCard = value
+  elseif var == 26 then
+    ctx.save.g2KenjiBreak = value
   end
 end
 
@@ -1678,7 +2050,7 @@ function Commands.g2_ask_cellnum(ctx, id, textId)
     ctx.g2Var = 1
     return
   end
-  Commands.ask(ctx, textId)
+  Commands.ask(ctx, textId or ctx.g2LastText)
   if not ctx.lastCheck then
     ctx.g2Var = 2
     return
@@ -1923,6 +2295,125 @@ end
 
 local SHUCKIE_OT, SHUCKIE_OT_ID = "MANIA", 0x0206
 
+-- ---------------------------------------------------------------------------
+-- PRISM'S NOBU'S AGGRON -- SpecialGiveNobusAggron / SpecialReturnNobusAggron
+-- (engine/specials2.asm).  Structurally Crystal's Shuckie: a trainer lends the
+-- player a mon and later asks for it back, and the return refuses unless the
+-- one handed over is the very mon they gave.  The numbers are Prism's own,
+-- read off the routine: AGGRON at level 40 holding a Metal Coat, OT "Nobu"
+-- (female), OT ID 518, nicknamed "Aggron".
+local NOBU_OT, NOBU_OT_ID = "Nobu", 518
+
+function Commands.g2_give_nobus_aggron(ctx)
+  local Party = require("src.pokemon.Party")
+  if #ctx.save.party >= Party.MAX then
+    ctx.g2Var, ctx.lastCheck = 0, false
+    return
+  end
+  local mon = require("src.pokemon.Pokemon").new(ctx.game.data, "SPECIES_045", 40)
+  mon.nickname = "Aggron"
+  mon.ot, mon.otId, mon.traded = NOBU_OT, NOBU_OT_ID, true
+  mon.item = "ITEM_143"  -- METAL_COAT
+  -- CheckForSpecialGiftMon (engine/billspc.asm) tests for an "F" byte written
+  -- past the OT name's terminator -- the marker SpecialGiveNobusAggron sets on
+  -- the mon it lends.  It is what stops the player depositing or handing over
+  -- a borrowed mon, so it has to be recorded, not just implied by the OT.
+  mon.giftMon = true
+  Party.add(ctx.save.party, mon)
+  ctx.g2Var, ctx.lastCheck = 1, true
+end
+
+-- The return's answers are Prism's, and they are NOT Shuckie's: 1 backed out
+-- of the party menu, 0 handed over the wrong mon, 3 it is the only one still
+-- standing, 2 gave it back.  Crystal's version adds a happiness test at 3 --
+-- Prism has none, so borrowing Shuckie's codes here would have had Nobu
+-- refuse his own Aggron whenever the player had raised it.
+function Commands.g2_return_nobus_aggron(ctx)
+  local game, runner = ctx.game, ctx.runner
+  local picked
+  require("src.ui.Screens").push(game, "PartyMenu", {
+    pickOnly = true,
+    onCancel = function() runner:resume() end,
+    onSwitch = function(mon) picked = mon runner:resume() end,
+  })
+  runner:yield()
+  local function result(n) ctx.g2Var, ctx.lastCheck = n, n ~= 0 end
+  if not picked then return result(1) end
+  if picked.species ~= "SPECIES_045" or picked.otId ~= NOBU_OT_ID
+     or picked.ot ~= NOBU_OT then
+    return result(0)
+  end
+  local Party = require("src.pokemon.Party")
+  local othersHealthy = false
+  for _, mon in ipairs(ctx.save.party) do
+    if mon ~= picked and not Party.isEgg(mon) and (mon.hp or 0) > 0 then
+      othersHealthy = true
+    end
+  end
+  if not othersHealthy then return result(3) end
+  for i, mon in ipairs(ctx.save.party) do
+    if mon == picked then table.remove(ctx.save.party, i) break end
+  end
+  result(2)
+end
+
+-- `SpecialSeenMon` (engine/specials.asm): `hScriptVar - 1` into SetSeenMon.
+-- The variable holds a 1-based species number, so a script can mark a mon
+-- seen without the player having met it -- which is how Prism's dex-hint NPCs
+-- work.  Unlowered they marked nothing and the entry stayed blank.
+-- `Special_SelectMonFromParty` (engine/specials.asm): opens the party menu and
+-- answers with the chosen mon.  Three outcomes, and the script branches on all
+-- three -- 0 backed out, $FF picked a mon the game will not let go of (the
+-- CheckForSpecialGiftMon test above), otherwise the species number itself,
+-- with its name left in the string buffer for the line that follows.
+function Commands.g2_select_mon_from_party(ctx)
+  local game, runner = ctx.game, ctx.runner
+  local picked
+  require("src.ui.Screens").push(game, "PartyMenu", {
+    pickOnly = true,
+    onCancel = function() runner:resume() end,
+    onSwitch = function(mon) picked = mon runner:resume() end,
+  })
+  runner:yield()
+  if not picked then
+    ctx.g2Var, ctx.lastCheck = 0, false
+    return
+  end
+  if picked.giftMon then
+    ctx.g2Var, ctx.lastCheck = 0xFF, true
+    return
+  end
+  local index = tonumber(tostring(picked.species or ""):match("(%d+)$")) or 0
+  ctx.g2Var, ctx.lastCheck = index, index ~= 0
+  -- the name the following text splices in
+  ctx.g2MonName = picked.nickname or picked.species
+end
+
+
+function Commands.g2_seen_mon(ctx)
+  local n = ctx.g2Var or 0
+  if n < 1 then return end
+  local dex = ctx.save.pokedex
+  if dex and dex.seen then dex.seen[string.format("SPECIES_%03d", n)] = true end
+end
+
+-- `GetFirstPokemonHappiness` (engine/happiness.asm): walks past EGGs to the
+-- first real party mon and answers its happiness byte.  Scripts branch on the
+-- value, so leaving it to g2_special -- which answers a flat false -- took the
+-- unhappy arm every time.
+function Commands.g2_first_happiness(ctx)
+  local Party = require("src.pokemon.Party")
+  for _, mon in ipairs(ctx.save.party or {}) do
+    if not Party.isEgg(mon) then
+      ctx.g2Var = mon.happiness or 0
+      ctx.lastCheck = ctx.g2Var ~= 0
+      return
+    end
+  end
+  ctx.g2Var, ctx.lastCheck = 0, false
+end
+
+
 function Commands.g2_give_shuckle(ctx)
   local Party = require("src.pokemon.Party")
   if #ctx.save.party >= Party.MAX then
@@ -2091,6 +2582,10 @@ function Commands.g2_trade(ctx, index)
   newMon.traded = true      -- boosted exp, and the Name Rater refuses it
   newMon.ot = (trade.ot ~= "" and trade.ot) or "TRAINER"
   newMon.otId = tonumber(trade.otId) or 0
+  -- The npctrade row's item byte: every one of these mons arrives HOLDING
+  -- something (a GOLD BERRY, a METAL COAT, ...), which the extractor was not
+  -- reading at all -- so they all came over empty-handed.
+  if trade.item then newMon.item = trade.item end
   table.remove(party, slot)
   table.insert(party, newMon)
   local dex = ctx.save.pokedex
@@ -3289,25 +3784,44 @@ end
 -- restless, Celebi appears) was unreachable in ordinary play.  Beating the
 -- Elite Four unlocks it here instead.
 --
--- Only the FIRST flag is granted.  Everything after it -- Kurt, the shrine,
--- the encounter -- runs off Crystal's own extracted scripts, exactly like
--- every other Gen2 event, so this stays a one-line unlock rather than a
--- reimplementation of the chain.
+-- Nothing is granted directly.  The whole chain -- the receptionist walking
+-- over, Kurt taking the ball, the shrine going restless, Celebi -- is in
+-- Crystal's own extracted scripts and runs itself as soon as the ONE thing
+-- the cartridge got from the outside world says yes.
+--
+-- That one thing is `setval BATTLETOWERACTION_GSBALL / special
+-- BattleTowerAction / ifequal GS_BALL_AVAILABLE` at the top of
+-- GoldenrodPokecenter1F_GSBallScene{Left,Right}.  So the unlock belongs
+-- there, in the special's answer -- see BATTLE_TOWER_ACTIONS[0x0B].
+--
+-- What was here before set EVENT_GOT_GS_BALL_FROM_GOLDENROD_POKEMON_CENTER
+-- outright, which is precisely backwards: that flag means "the receptionist
+-- has ALREADY handed it over", and the scene's second line is
+-- `checkevent <it> / iftrue .cancel`.  Pre-setting it made the scene abort on
+-- its first branch every time -- the attendant never appeared, the item was
+-- never given, and EVENT_CAN_GIVE_GS_BALL_TO_KURT (which only that scene
+-- sets) stayed clear, so Kurt had nothing to react to either.  It also named
+-- the wrong event: EVENT_G2_0487 is a hole in Crystal's table, not the GS
+-- BALL flag, which is 832.  And nothing ever called it.
 local GS_BALL_FLAGS = {
   beatEliteFour = "EVENT_G2_0068",  -- EVENT_BEAT_ELITE_FOUR
-  gotGsBall     = "EVENT_G2_0487",  -- ..._FROM_GOLDENROD_POKEMON_CENTER
+  gotGsBall     = "EVENT_G2_0832",  -- ..._FROM_GOLDENROD_POKEMON_CENTER
+  canGiveToKurt = "EVENT_G2_0190",  -- EVENT_CAN_GIVE_GS_BALL_TO_KURT
 }
+Gen2Commands.GS_BALL_FLAGS = GS_BALL_FLAGS
 
-function Gen2Commands.ensureGsBall(save)
+-- Is the GS BALL on offer right now?  On a cartridge this was the mobile /
+-- Mystery Gift distribution answering GS_BALL_AVAILABLE; here it is beating
+-- the Elite Four.  Once the receptionist has handed it over her scene must
+-- stop offering, which is the same test the ROM makes one line later -- doing
+-- it here as well keeps the answer honest for anything else that asks.
+function Gen2Commands.gsBallAvailable(save)
   if not require("src.core.GameVersion").isCrystal() then return false end
   if type(save) ~= "table" then return false end
   local flags = save.flags
   if type(flags) ~= "table" then return false end
   if not flags[GS_BALL_FLAGS.beatEliteFour] then return false end
   if flags[GS_BALL_FLAGS.gotGsBall] then return false end
-  flags[GS_BALL_FLAGS.gotGsBall] = true
-  require("src.core.Logger").info(
-    "crystal: GS BALL unlocked (Elite Four cleared)")
   return true
 end
 
@@ -3520,6 +4034,11 @@ local function towerRewardFits(ctx, itemId)
   return require("src.inventory.Bag").pocketSlots(save, "ITEM", ctx.game.data) < 20
 end
 
+-- constants/battle_tower_constants.asm: the answer CheckGSBall gives when the
+-- ball is on offer.  Named rather than inlined because the receptionist's
+-- script compares against it literally (`ifequal GS_BALL_AVAILABLE`).
+local GS_BALL_AVAILABLE = 0x0B
+
 -- BattleTowerAction (5C:$4687) is one special with a jumptable on wScriptVar,
 -- so `setval N / special BattleTowerAction` is really N different calls.  The
 -- numbers are the cartridge's; the eighteen the tower's scripts actually use
@@ -3548,7 +4067,15 @@ local BATTLE_TOWER_ACTIONS = {
   -- save, so this is the "yes" branch
   [0x09] = function(ctx) towerAnswer(ctx, 1) end,
   [0x0A] = function() end,           -- restores music volume
-  [0x0B] = function(ctx) towerAnswer(ctx, 0) end,  -- the mobile GS BALL flag
+  -- CheckGSBall: the cartridge asked the mobile adapter and answered
+  -- GS_BALL_AVAILABLE ($0b) once the distribution had run.  There is no
+  -- adapter here, so beating the Elite Four is the trigger instead.  Saying
+  -- $0b is the whole unlock: GoldenrodPokecenter1F_GSBallScene{Left,Right}
+  -- take it from there, and so do Kurt and the Ilex Forest shrine.
+  [0x0B] = function(ctx)
+    towerAnswer(ctx, Gen2Commands.gsBallAvailable(ctx.save)
+      and GS_BALL_AVAILABLE or 0)
+  end,
   [0x11] = function() end,           -- mobile bookkeeping byte
   [0x1A] = function(ctx)
     require("src.world.BattleTower").resetTrainers(ctx.game)
@@ -3576,6 +4103,14 @@ local BATTLE_TOWER_ACTIONS = {
 
 function Commands.g2_battle_tower_action(ctx)
   local BattleTower = require("src.world.BattleTower")
+  -- BATTLETOWERACTION_GSBALL is the one row that is not about the tower at
+  -- all -- it is the Goldenrod receptionist asking whether the distribution
+  -- has run -- so it must answer on a save that has never been near the
+  -- tower, which is every save that has just cleared the Elite Four.
+  if scriptVar(ctx) == 0x0B then
+    return towerAnswer(ctx, Gen2Commands.gsBallAvailable(ctx.save)
+      and GS_BALL_AVAILABLE or 0)
+  end
   if not BattleTower.available(ctx.game) then return towerAnswer(ctx, 0) end
   local state = BattleTower.state(ctx.save)
   if not state then return towerAnswer(ctx, 0) end

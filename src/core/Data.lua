@@ -557,7 +557,14 @@ function Data:seedDefaults()
     if boot.screens and (boot.screens.newGame == false
         or boot.screens.newGame == nil
         or boot.screens.newGame == BOOT_DEFAULTS.screens.newGame) then
-      boot.screens.newGame = "OakSpeech"
+      -- OakSpeech replays the professor's intro out of the ROM's own text, so
+      -- it is only right for a ROM that HAS that text.  Prism writes its own
+      -- introduction (engine/intro_menu.asm IntroductionSpeech) and carries no
+      -- OakText* at all, so forcing the screen there hands TextBox a nil and
+      -- NEW GAME dies partway through the intro.  Gate on the text existing.
+      local text = self.text or {}
+      local hasOakText = text._OakSpeechText1 or text._OakText1 or text.OakText1
+      boot.screens.newGame = hasOakText and "OakSpeech" or false
     end
     if self.tilesets and self.tilesets.HOUSE == nil then
       self.tilesets.HOUSE = self.tilesets.TilesetTraditionalHouse
@@ -781,6 +788,12 @@ end
 
 -- The raw text-pointer entry (carries mart/nurse/pc markers and the label).
 function Data:textEntry(mapLabel, textConst)
+  -- A text id is a CONSTANT NAME.  A lowering that hands over a raw number
+  -- instead is a bug in that lowering, but it must not take the script runner
+  -- down with it -- the gsub below throws on a number, which killed every
+  -- script on the map rather than just the one line.  Answer "no such text"
+  -- and let show_text fall through to its literal-string path.
+  if type(textConst) ~= "string" then return nil end
   local perMap = self.text_pointers[mapLabel]
   if not perMap then return nil end
   local entry = perMap[textConst]

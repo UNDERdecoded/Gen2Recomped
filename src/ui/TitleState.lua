@@ -161,6 +161,12 @@ function TitleState.new(game, opts)
   self.gen2 = title.layout == "gen2"
   self.gen2Background = self.gen2 and tryImage(imagePath(title.background)) or nil
   self.gen2Clouds = self.gen2 and title.clouds or nil
+  -- Prism's rotating prism.  See the note in RomExtractorGen2's
+  -- extractPrismTitleArt: the cartridge stores no frames of it, so this is a
+  -- REIMPLEMENTATION of the solid, drawn in the block the ROM reserves for it
+  -- and out of the palettes its OAM entries name -- not ripped art.
+  self.gen2Prism = self.gen2 and title.prism or nil
+  self.gen2Overlay = self.gen2 and tryImage(imagePath(title.overlay)) or nil
   -- HO-OH (Gold) / LUGIA (Silver) ride over the sky band as OBJ, so they
   -- are not in the ripped BG map; the importer composes the five OAM sets
   -- of .Frameset_GSIntroHoOhLugia into title.mascot.frames and ships the
@@ -181,6 +187,30 @@ function TitleState.new(game, opts)
     end
   end
   self.gen2Mascot = self.gen2MascotFrames and self.gen2MascotFrames[1] or nil
+  -- The sparkle trail that pours off the bird (SPRITE_ANIM_OBJ_GS_TITLE_TRAIL).
+  -- UpdateTitleTrailSprite spawns one every fourth frame and each lives until
+  -- it drifts off the right-hand side, so this is a small particle list rather
+  -- than another frame sequence.  Absent on Crystal and Prism, which have no
+  -- such object.
+  self.gen2Trail = self.gen2 and title.trail or nil
+  self.gen2TrailFrames = nil
+  self.trail = {}
+  -- A CLOCK OF ITS OWN, and deliberately.  self.timer is the title-mon cycle
+  -- and RESETS TO ZERO every CYCLE_FRAMES (240, so four seconds); reading it
+  -- made the sparkle stepper see time run backwards on the first wrap, take a
+  -- negative number of steps, and stop for good -- the trail froze a few
+  -- seconds in and never came back.
+  self.trailClock = 0
+  self.trailTick = 0
+  self.trailRecord = 0
+  if self.gen2Trail then
+    local frames = {}
+    for index, path in ipairs(self.gen2Trail.frames or {}) do
+      frames[index] = tryImage(imagePath(path))
+    end
+    self.gen2TrailFrames = frames[1] and frames or nil
+    if not self.gen2TrailFrames then self.gen2Trail = nil end
+  end
   self.yellow = GameVersion.isYellow()
     or title.layout == "yellow_pikachu"
   -- Yellow title is a fixed Pikachu composition (title_yellow.asm), not
@@ -447,6 +477,9 @@ function TitleState:update(dt)
     return
   end
   self.timer = self.timer + 1
+  -- ticks once per update and never wraps: the sparkle trail reads this, not
+  -- self.timer (see the note where trailClock is initialised)
+  self.trailClock = (self.trailClock or 0) + 1
   self.blink = (self.blink + 1) % 60
   if not self.yellowLayout and self.timer >= CYCLE_FRAMES then
     self.timer = 0
@@ -513,10 +546,138 @@ function TitleState:drawGen2()
         love.graphics.newQuad(0, below, 160, h - below, w, h), 0, below)
     end
   end
+  -- The gem, then the screen's own non-zero pixels back over it.  Its
+  -- sprites carry the behind-BG priority bit, so it may only ever replace
+  -- colour-0 pixels -- which is exactly what the punched overlay restores.
+  if self.gen2Prism then
+    self:drawGen2Prism()
+    if self.gen2Overlay then
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(self.gen2Overlay,
+        love.graphics.newQuad(0, 0, 160, 144,
+          self.gen2Overlay:getDimensions()), 0, 0)
+    end
+  end
   if self.gen2Mascot then
     local at = self.gen2MascotAt or {}
     love.graphics.draw(self:gen2MascotFrame(), at.x or 48, at.y or 56)
   end
+  -- after the bird, so a sparkle that overlaps a wing reads as being in front
+  -- of it the way an OBJ with a lower OAM index does
+  self:drawGen2Trail()
+end
+
+-- SpriteAnimFunc_GSTitleTrail (23:$582D), one entry per live sparkle:
+-- x += dx and y += dy every frame, with a small sine wobble on the y offset,
+-- and the sparkle retires once it passes deleteX.  Advanced from draw rather
+-- than update so it stays in step with self.timer, which is what every other
+-- animation on this screen reads.
+function TitleState:updateGen2Trail()
+  local spec = self.gen2Trail
+  if not spec then return end
+  local tick = math.floor(self.trailClock or 0)
+  if tick <= self.trailTick then return end
+  local steps = math.min(tick - self.trailTick, 8)   -- never catch up forever
+  for _ = 1, steps do
+    self.trailTick = self.trailTick + 1
+    -- move what is already out there
+    local live = {}
+    for _, p in ipairs(self.trail) do
+      p.x = p.x + (spec.dx or 4)
+      p.y = p.y + (spec.dy or 1)
+      p.phase = (p.phase + (spec.sineStep or 3)) % 256
+      if p.x < (spec.deleteX or 156) then live[#live + 1] = p end
+    end
+    self.trail = live
+    -- `and $3 / ret nz`: a new one every fourth frame
+    local every = spec.everyFrames or 4
+    if self.trailTick % every == 0 then
+      local records = spec.spawns or {}
+      if #records > 0 then
+        self.trailRecord = (self.trailRecord % #records) + 1
+        local pair = records[self.trailRecord]
+        -- bit 2 of the same counter picks which of the record's two points
+        local at = pair and pair[(math.floor(self.trailTick / every) % 2) + 1]
+        if at then
+          self.trail[#self.trail + 1] =
+            { x = at.x, y = at.y, phase = 0, born = self.trailTick }
+        end
+      end
+    end
+  end
+end
+
+function TitleState:drawGen2Trail()
+  local spec = self.gen2Trail
+  local frames = self.gen2TrailFrames
+  if not (spec and frames) then return end
+  self:updateGen2Trail()
+  local amp = spec.sineAmplitude or 2
+  -- The frameset, as ripped: { frame, ticks } pairs on a loop.  Gold's is two
+  -- frames of one tick -- the twinkle -- and Silver's is a single frame held
+  -- for 32, so this cannot be a fixed flip rate.
+  local seq = spec.sequence
+  local total = 0
+  for _, step in ipairs(seq or {}) do total = total + (step[2] or 1) end
+  love.graphics.setColor(1, 1, 1, 1)
+  for _, p in ipairs(self.trail) do
+    -- AnimSeqs_Sine: d * sin(phase), phase being a 256-step circle
+    local wobble = amp * math.sin(p.phase / 256 * 2 * math.pi)
+    local frame = frames[1]
+    if seq and total > 0 then
+      local at = (self.trailTick - p.born) % total
+      for _, step in ipairs(seq) do
+        at = at - (step[2] or 1)
+        if at < 0 then frame = frames[step[1]] or frames[1] break end
+      end
+    end
+    if frame then
+      love.graphics.draw(frame, math.floor(p.x), math.floor(p.y + wobble))
+    end
+  end
+end
+
+-- The rotating prism, rebuilt rather than ripped.
+--
+-- The cartridge stores no frames of it -- Draw3DPrism rasterises it into OBJ
+-- tiles every frame -- but it does state exactly where it is and what shape:
+-- InitializeBackground lays 29 8x16 sprites out as seven columns of
+-- 3, 4, 5, 5, 5, 4, 3, all ending on the same line.  That is a flat-bottomed
+-- cut gem with a stepped top rising to the middle, and AnimateTitleCrystal
+-- slides it to rest across the logo, not below it.
+--
+-- So the silhouette here is the ROM's, and only the shading is invention:
+-- the faces are lit from the spectrum ramp the hardware cycles through the
+-- palette registers, turning with the animation so the gem reads as
+-- splitting light rather than as a grey block.
+function TitleState:drawGen2Prism()
+  local P = self.gen2Prism
+  local cols = P.columns
+  if not (cols and cols[1]) then return end
+  local cw = P.cellWidth or 8
+  local ch = P.cellHeight or 16
+  local bottom = P.bottom or 76
+  local ramp = P.spectrum
+  local turn = P.framesPerTurn or 96
+
+  -- One band per column, its height the column's own stack.  The turn
+  -- shifts which part of the ramp each column shows, which is the rotation
+  -- reading as a moving highlight across the facets.
+  local phase = (self.timer or 0) / turn
+  for index, count in ipairs(cols) do
+    local x = (P.x or 52) + (index - 1) * cw
+    local top = bottom - count * ch
+    local r, g, b = 0.6, 0.6, 0.7
+    if ramp then
+      local at = (index - 1) / #cols + phase
+      local slot = math.floor(at * #ramp) % #ramp + 1
+      local color = ramp[slot]
+      r, g, b = color[1], color[2], color[3]
+    end
+    love.graphics.setColor(r, g, b, 1)
+    love.graphics.rectangle("fill", x, top, cw, bottom - top)
+  end
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- The wing flap runs off the ROM frameset: { oam set, frames } pairs on a
