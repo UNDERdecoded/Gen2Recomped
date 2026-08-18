@@ -58,8 +58,40 @@ local API_URL = "https://api.github.com/repos/UNDERdecoded/Gen2Recomped/releases
 local pending = nil
 
 -- ---------------------------------------------------------------------------
--- shell / curl
+-- transport
 -- ---------------------------------------------------------------------------
+--
+-- There are two, and the difference between them is why this file used to kill
+-- the app on Android:
+--
+--   curl        desktop only -- macOS, Windows 10+, desktop Linux.  Shelled
+--               out from this thread, which is exactly what this thread is
+--               for.  Harmless anywhere it exists.
+--   the bridge  love.system.httpDownload.  NOT part of LOVE: it is a JNI call
+--               into GameActivity.httpDownload that our vendored liblove
+--               exports (#597), and it is Android's only transport.
+--
+-- This worker used to call the bridge itself, as
+-- `love.system.httpDownload(url, "update_fetch_1786.tmp")`.  Three things
+-- were wrong with that, and all three are Android-only:
+--
+--   1. a SAVE-DIRECTORY-RELATIVE path where the bridge documents an ABSOLUTE
+--      host path (see HostShell.httpDownload);
+--   2. userAgent and accept left nil, where every other caller in the tree
+--      passes a defaulted User-Agent -- a JNI wrapper that hands a null
+--      straight to NewStringUTF aborts the process rather than raising;
+--   3. from a love.thread, which no other bridge call in the tree does.
+--
+-- The app closed the instant the launcher came up, with no Lua error and no
+-- error screen.  That is the signature of a native abort: it is below Lua, so
+-- neither the pcall around Check.start nor love.threaderror can see it.
+--
+-- So this worker no longer touches JNI at all.  It asks the MAIN thread to run
+-- the bridge and waits for the answer; Check.lua services those requests in
+-- drain() through HostShell.httpDownload -- the same absolute-path,
+-- defaulted-agent call the mod index has been making on Android since #597.
+-- Desktop never sends one: curl resolves first, and this thread behaves
+-- exactly as it always did.
 
 local function shq(s)
   s = tostring(s)
@@ -69,66 +101,92 @@ local function shq(s)
   return "'" .. s:gsub("'", "'\\''") .. "'"
 end
 
--- run curl and return its response body (text), or nil on any failure.  Used
--- for the small text resources (release JSON, sums file); -f makes curl exit
--- non-zero and emit nothing on an HTTP error, so an empty read is a failure.
--- Forward declaration: curlCapture calls this, and it is defined below so it
--- can sit next to canFetch.  Without the declaration the call would resolve
--- to a global, i.e. nil, and every fetch would silently fall back to curl.
-local nativeFetch
+local BRIDGE_REQ = "update_bridge_req"
+local BRIDGE_RES = "update_bridge_res"
+local bridgeReqCh = love.thread.getChannel(BRIDGE_REQ)
+local bridgeResCh = love.thread.getChannel(BRIDGE_RES)
 
+local function haveCurl()
+  if not (HostShell and HostShell.popen) then return false end
+  local pipe = HostShell.popen("curl --version")
+  if not pipe then return false end
+  local readOk, out = pcall(function() return pipe:read("*a") end)
+  pcall(function() pipe:close() end)
+  return readOk and out ~= nil and out:find("curl", 1, true) ~= nil
+end
+
+-- Reading the field is safe on every platform; only CALLING it off the main
+-- thread is what we are avoiding.
+local function haveBridge()
+  local sys = love.system
+  return sys ~= nil
+    and type(sys.httpDownload) == "function"
+    and sys.getOS ~= nil
+    and sys.getOS() == "Android"
+end
+
+-- Resolved once.  "curl" | "bridge" | false.  curl wins where both exist so
+-- desktop behaviour is bit-for-bit what it was.
+local transport
+local function resolveTransport()
+  if transport == nil then
+    if haveCurl() then
+      transport = "curl"
+    elseif haveBridge() then
+      transport = "bridge"
+    else
+      transport = false
+    end
+  end
+  return transport
+end
+
+local function canFetch()
+  return resolveTransport() ~= false
+end
+
+-- Hand one fetch to the main thread and block until it answers.  destRel is
+-- save-directory relative; the servicer makes it absolute.
+--
+-- The wait is bounded because the main thread only services these while the
+-- launcher is polling Check.state() -- once the player boots a game nobody is
+-- listening, and an unbounded demand() here would hold the process open at
+-- quit (#339).  A timeout degrades to "no update offered", which is the
+-- failure mode this whole file is designed around.
+local bridgeSeq = 0
+local function bridgeFetch(url, destRel, accept, timeout)
+  bridgeSeq = bridgeSeq + 1
+  local seq = bridgeSeq
+  bridgeResCh:clear() -- strictly synchronous: never more than one in flight
+  bridgeReqCh:push({ seq = seq, url = url, dest = destRel, accept = accept })
+  local res = bridgeResCh:demand(timeout or 45)
+  return type(res) == "table" and res.seq == seq and res.ok == true
+end
+
+-- Give me this small text resource, or nil.  Every call site treats it that
+-- way; the name is kept so the diff stays readable.
 local function curlCapture(url)
-  -- Native bridge first where one exists (Android, and any console port that
-  -- compiled it); curl otherwise.  Named for its original transport because
-  -- every call site treats it as "give me this small text resource or nil".
-  local native = nativeFetch(url)
-  if native then return native end
+  local how = resolveTransport()
+  if how == "bridge" then
+    local dest = ("update_fetch_%d.tmp"):format(bridgeSeq + 1)
+    love.filesystem.remove(dest)
+    local ok = bridgeFetch(url, dest, "application/vnd.github+json")
+    local body = ok and love.filesystem.read(dest) or nil
+    love.filesystem.remove(dest)
+    if type(body) ~= "string" or body == "" then return nil end
+    return body
+  end
+  if how ~= "curl" then return nil end
   local cmd = "curl -fsSL --connect-timeout 10 --max-time 40 "
     .. "-H " .. shq("User-Agent: Gen2Recomped-updater") .. " "
     .. "-H " .. shq("Accept: application/vnd.github+json") .. " "
     .. shq(url)
   local pipe = HostShell.popen(cmd)
   if not pipe then return nil end
-  local out = pipe:read("*a")
-  pipe:close()
-  if not out or out == "" then return nil end
+  local readOk, out = pcall(function() return pipe:read("*a") end)
+  pcall(function() pipe:close() end)
+  if not readOk or not out or out == "" then return nil end
   return out
-end
-
--- love.system.httpDownload is a NATIVE BRIDGE, not part of LÖVE: the mobile
--- and console ports compile one because they have no shell to run curl in.
--- Android is the case that matters here -- io.popen either does not exist or
--- cannot reach a curl binary, so haveCurl() was false and every check ended
--- as "curl not available".  That is why the in-app updater never appeared on
--- Android no matter what was published.
-function nativeFetch(url)
-  local sys = love.system
-  if not (sys and type(sys.httpDownload) == "function") then return nil end
-  local dest = ("update_fetch_%d.tmp"):format(os.time())
-  local ok, err = pcall(sys.httpDownload, url, dest)
-  if not ok or err == false then
-    love.filesystem.remove(dest)
-    return nil
-  end
-  local body = love.filesystem.read(dest)
-  love.filesystem.remove(dest)
-  if type(body) ~= "string" or body == "" then return nil end
-  return body
-end
-
-local function haveCurl()
-  local pipe = HostShell.popen("curl --version")
-  if not pipe then return false end
-  local out = pipe:read("*a")
-  pipe:close()
-  return out ~= nil and out:find("curl", 1, true) ~= nil
-end
-
--- Either transport will do; the check only needs two small GETs.
-local function canFetch()
-  local sys = love.system
-  if sys and type(sys.httpDownload) == "function" then return true end
-  return haveCurl()
 end
 
 -- ---------------------------------------------------------------------------
@@ -255,6 +313,23 @@ local function doCheck()
     love.filesystem.remove(finalRel)
   end
 
+  -- Bridge-only platforms (Android) can CHECK but cannot yet fetch a payload:
+  -- launchDownload below is curl-only, and pushing a ~6 MB transfer through
+  -- the blocking main-thread bridge would freeze the launcher for its whole
+  -- duration.  "needs_full" is the state that already exists for exactly this
+  -- case -- the banner offers "Open releases" instead of an Update button that
+  -- stalls at 0% and fails, which is what an Android tap has always done.
+  --
+  -- Note this sits AFTER the already-downloaded branch on purpose: chainloading
+  -- a payload works fine on Android, so one that is already present and
+  -- verifies is still offered as "ready".  Only acquiring it is the gap.
+  -- Closing it needs a bridge that transfers in the background and reports
+  -- progress; until then this is the honest answer.
+  if resolveTransport() == "bridge" then
+    post({ status = "needs_full", latest = rel.version })
+    return
+  end
+
   post({ status = "available", latest = rel.version })
 end
 
@@ -287,6 +362,13 @@ end
 local function doDownload()
   if not (pending and pending.payload and pending.payload.url) then
     post({ status = "error", error = "nothing to download" })
+    return
+  end
+  -- Belt and braces: doCheck never posts "available" on a bridge-only platform
+  -- so Check.download cannot reach here, but launchDownload has no bridge
+  -- branch and a silent no-op would present as a progress bar frozen at 0%.
+  if resolveTransport() ~= "curl" then
+    post({ status = "needs_full", latest = pending.version })
     return
   end
   local rel = pending

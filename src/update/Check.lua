@@ -146,9 +146,58 @@ local function ensureWorker()
   return true
 end
 
+-- ---------------------------------------------------------------------------
+-- Main-thread transport service (Android)
+-- ---------------------------------------------------------------------------
+--
+-- love.system.httpDownload is a JNI bridge into GameActivity, not part of
+-- LOVE.  The worker used to call it directly and the app died the instant the
+-- launcher came up, with no Lua error -- a native abort, which is beneath
+-- anything pcall or love.threaderror can catch.  See the long note at the top
+-- of check_worker.lua's transport section for the three separate things that
+-- call got wrong.
+--
+-- The bridge now only ever runs HERE, on the main thread, through the exact
+-- HostShell path the mod index has used on Android since #597.  The worker
+-- pushes a request and blocks on the reply channel; we answer from drain(),
+-- which the launcher already calls every frame through Check.state().
+--
+-- Desktop never sees any of this: the worker resolves curl first and never
+-- pushes a request, so this finds an empty channel and returns.
+local BRIDGE_REQ = "update_bridge_req"
+local BRIDGE_RES = "update_bridge_res"
+
+local function serviceBridgeRequests()
+  local reqCh = love.thread.getChannel(BRIDGE_REQ)
+  local resCh = love.thread.getChannel(BRIDGE_RES)
+  local req = reqCh:pop()
+  while req do
+    local ok = false
+    if type(req) == "table" and type(req.url) == "string"
+        and type(req.dest) == "string" and req.dest ~= "" then
+      ok = pcall(function()
+        local HostShell = require("src.core.HostShell")
+        local saveDir = love.filesystem.getSaveDirectory()
+        if not saveDir or saveDir == "" then error("no save directory", 0) end
+        -- Absolute path and a real User-Agent: the two things the worker's own
+        -- call was missing.  HostShell decides curl vs bridge internally.
+        local got = HostShell.httpDownload(req.url, saveDir .. "/" .. req.dest,
+          "Gen2Recomped-updater", req.accept)
+        if not got then error("download failed", 0) end
+      end)
+    end
+    resCh:push({ seq = (type(req) == "table") and req.seq or nil, ok = ok })
+    req = reqCh:pop()
+  end
+end
+
 -- Pull every pending snapshot off the state channel (keeping the newest) and
 -- surface a worker crash as a soft error the UI can hide on.
 local function drain()
+  -- Service first: a worker blocked waiting on us has not posted its result
+  -- yet, so answering before we read state makes it visible this frame rather
+  -- than the next one.
+  if worker then pcall(serviceBridgeRequests) end
   if stateCh then
     local msg = stateCh:pop()
     while msg do
@@ -209,6 +258,15 @@ end
 -- the process exits (#339).
 function Check.shutdown()
   if cmdCh then cmdCh:push({ cmd = "quit" }) end
+  -- A worker parked on the bridge reply channel is not watching cmdCh, so
+  -- worker:wait() below would hold the process open for that whole demand()
+  -- timeout -- the exact shape of #339.  Answer it first (as a failure, so the
+  -- fetch gives up) and it comes straight back round to the quit command.
+  if worker then
+    pcall(function()
+      love.thread.getChannel(BRIDGE_RES):push({ ok = false, shutdown = true })
+    end)
+  end
   if worker then pcall(function() worker:wait() end) end
   worker, cmdCh, stateCh = nil, nil, nil
   workerReady = false
