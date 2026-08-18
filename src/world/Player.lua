@@ -83,19 +83,11 @@ function Player.new(data, cx, cy, facing)
     self.shadowImg = ok and img or nil
   end
   -- FishingAnim (engine/overworld/player_animations.asm) patches tiles
-  -- $02/$06/$0a -- the bottom tile row of each standing frame -- with
-  -- RedFishingTiles before it parks the rod OAM, so the rod stroke meets a
-  -- pair of hands instead of ending in mid air (#384)
-  if fx then
-    local function posePath(name)
-      local def = fx[name]
-      return def and def.path or nil
-    end
-    local pose = { down = posePath("redFishFront"), up = posePath("redFishBack") }
-    pose.left = posePath("redFishSide")
-    pose.right = pose.left -- the side pose mirrors like the sprite (OAM_XFLIP)
-    if pose.down or pose.up or pose.left then self.fishTiles = pose end
-  end
+  -- $02/$06/$0a -- the bottom tile row of each standing frame -- with the
+  -- fishing pose before it parks the rod OAM, so the rod stroke meets a pair
+  -- of hands instead of ending in mid air (#384).  refreshForm above already
+  -- built those strips: the pose belongs to the CHARACTER, so it is rebuilt
+  -- wherever the character can change (Player:refreshFishTiles).
   self.cellX, self.cellY = cx, cy
   self.px, self.py = cx * 16, cy * 16
   self.facing = facing or "down"
@@ -167,6 +159,47 @@ local function pokemonModeSprite(data)
   return (data.sprites or {})[id] and id or nil
 end
 
+-- The fishing pose strips for whoever we are right now.
+--
+-- Gen2 picks the sheet off wPlayerGender (LoadFishingGFX: `bit
+-- PLAYERGENDER_FEMALE_F, a / jr z, .got_gender / ld de, KrisFishingGFX`), so
+-- Kris fishes on her own art.  The extractor puts those three strips on the
+-- player FORM record, beside her card / back / intro pics, which is the only
+-- place a per-character asset belongs -- overworldFx has one slot and cannot
+-- hold two characters.
+--
+-- Falls back to overworldFx.redFish* so Gen1 is untouched, and so a Gen2 rip
+-- that produced the shared strips but no form records still shows a pose.
+-- Gold and Silver have no KrisFishingGFX at all; the extractor gives the girl
+-- record Chris's strips there rather than naming files it never wrote.
+function Player:refreshFishTiles(data)
+  local function pathOf(v)
+    if type(v) == "string" then return v end
+    return type(v) == "table" and v.path or nil
+  end
+  local pose
+  local form = require("src.pokemon.Sprites").playerForm(data)
+  local fish = form and form.fish
+  if fish then
+    pose = { down = pathOf(fish.down), up = pathOf(fish.up),
+             left = pathOf(fish.side) }
+  end
+  if not (pose and (pose.down or pose.up or pose.left)) then
+    local fx = data.field and data.field.overworldFx
+    if fx then
+      pose = { down = pathOf(fx.redFishFront), up = pathOf(fx.redFishBack),
+               left = pathOf(fx.redFishSide) }
+    end
+  end
+  if pose and (pose.down or pose.up or pose.left) then
+    -- the side pose mirrors like the sprite does (OAM_XFLIP)
+    pose.right = pose.left
+    self.fishTiles = pose
+  else
+    self.fishTiles = nil
+  end
+end
+
 function Player:refreshForm(data)
   local walkId = FieldDefaults.fieldValue(data, "playerSprites", "walk")
   local bikeId = FieldDefaults.fieldValue(data, "playerSprites", "bike")
@@ -180,6 +213,9 @@ function Player:refreshForm(data)
   -- there is no bicycle either, so both sheets become the mon's
   local monId = pokemonModeSprite(data)
   if monId then walkId, bikeId = monId, monId end
+  -- The pose follows the character, so it is refreshed even when the walking
+  -- sheets did not change (a rip that only produced Kris's fish art).
+  self:refreshFishTiles(data)
   if walkId == self.walkId and bikeId == self.bikeId then return end
   self.walkId, self.bikeId = walkId, bikeId
   self.sprite = SpriteRenderer.new(pickSpriteDef(data, walkId), "player")

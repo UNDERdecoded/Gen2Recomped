@@ -31,6 +31,26 @@ local PATH = "boot_trace.txt"
 local started = false
 local t0 = nil
 
+-- Handed across a self-update handoff.  src/update/Boot.lua's chainload purges
+-- every `src.*` module so the payload can re-resolve its own, which means the
+-- payload gets a FRESH copy of this file with `started` false -- and the first
+-- mark it writes would otherwise call begin(), read the bundled half of THIS
+-- launch out of the file, and truncate it.
+--
+-- That read is what put "PREVIOUS LAUNCH DID NOT FINISH" on screen at every
+-- launch of an updated build: the bundled prefix legitimately has no "booted"
+-- line yet -- booting is what it was in the middle of -- so the payload
+-- diagnosed the launch it was itself part of as a failed one.  The trace shown
+-- was always the same handful of lines ending at "save identity", because that
+-- is the last mark before Boot.run hands over.
+--
+-- Globals survive the purge (they live in _G, not package.loaded), so the state
+-- rides across in one: the previous run's verdict is inherited rather than
+-- re-derived, and the trace is APPENDED to, so the bundled breadcrumbs and the
+-- payload's land in one file -- which is exactly what you want when the thing
+-- being diagnosed is the handoff.
+local HANDOFF = "POKEPORT_BOOT_TRACE"
+
 -- The PREVIOUS launch's trace, captured before this launch truncates the file,
 -- and whether it ended with "clean exit".
 --
@@ -70,6 +90,17 @@ end
 local function begin()
   started = true
   t0 = now()
+
+  -- Continuing a launch that has already begun tracing -- i.e. we are the
+  -- payload after a chainload.  Inherit, do not re-derive, and do not truncate.
+  local prior = rawget(_G, HANDOFF)
+  if type(prior) == "table" and prior.begun then
+    previousText, previousClean = prior.previousText, prior.previousClean
+    t0 = tonumber(prior.t0) or t0
+    write("---- payload chainload ----", true)
+    return
+  end
+
   -- Read the last run out before the header below overwrites it.  A run that
   -- ended without "clean exit" is one that died, and that is what the caller
   -- puts on screen.
@@ -102,6 +133,13 @@ local function begin()
     parts[#parts + 1] = "date " .. tostring(os.date("%Y-%m-%d %H:%M:%S"))
   end)
   write("---- boot " .. table.concat(parts, "  ") .. " ----", false)
+  -- Publish the verdict for whatever instance of this file comes after a
+  -- handoff.  `begun` is what tells that instance the launch is already under
+  -- way, so its own begin() inherits instead of reading the file back.
+  rawset(_G, HANDOFF, {
+    begun = true, previousText = previousText, previousClean = previousClean,
+    t0 = t0,
+  })
 end
 
 -- BootTrace.mark(stage) -- record that execution reached `stage`.

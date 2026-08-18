@@ -7304,11 +7304,16 @@ function RomExtractorGen2:gen2IntroActors(scene)
 end
 
 -- Raw (uncompressed) 2bpp sheet at a symbol, sized in tiles.
-function RomExtractorGen2:gen2RawSheet(symbolName, tilesWide, tilesHigh, file, columnMajor)
+-- tileOffset skips whole tiles into the symbol, for sheets that are really
+-- several small strips laid end to end (the fishing poses are three).
+function RomExtractorGen2:gen2RawSheet(symbolName, tilesWide, tilesHigh, file,
+                                       columnMajor, tileOffset)
   local sym = self:symbol(symbolName)
   if not sym or not self.rom then return nil end
+  local skip = (tonumber(tileOffset) or 0) * 16
   local ok, raw = pcall(function()
-    return self.rom:bytes(sym.bank, sym.address, tilesWide * tilesHigh * 16)
+    return self.rom:bytes(sym.bank, sym.address + skip,
+                          tilesWide * tilesHigh * 16)
   end)
   if not ok or type(raw) ~= "table" then return nil end
   if columnMajor then
@@ -8195,6 +8200,33 @@ RomExtractorGen2.PLAYER_FORM_GEOMETRY = {
   intro = { cols = 7, rows = 7 },  -- the bigger pic the Oak speech shows
 }
 
+-- The three fishing-pose strips for one character's sheet, or nil when the
+-- symbol does not exist (KrisFishingGFX in Gold and Silver).  Facing order is
+-- LoadFishingGFX's own: the four Get2bpp calls land on VRAM $02, $06, $0a and
+-- $fc, i.e. down, up, left, rod-slot.  Right mirrors left, exactly as the
+-- walking sprite does.
+--
+-- Row-major, NOT column-major: the Makefile builds chris_fish.2bpp and
+-- kris_fish.2bpp without --columns, so each pair of tiles is one 16x8 row of
+-- the source PNG.  Decoded that way off the cartridge the three strips are a
+-- clean front, back and side view; read column-major they are scrambled, which
+-- is the thing to re-check if the pose ever looks wrong.
+RomExtractorGen2.FISH_POSE_TILES = { down = 0, up = 2, side = 4 }
+
+function RomExtractorGen2:gen2FishingPoses(symbolName, slug)
+  if not self:symbol(symbolName) then return nil end
+  local out, any = {}, false
+  for facing, tile in pairs(RomExtractorGen2.FISH_POSE_TILES) do
+    local sheet = self:gen2RawSheet(symbolName, 2, 1,
+      ("fx/%s_fish_%s.png"):format(slug, facing), false, tile)
+    if sheet then
+      out[facing] = sheet.path
+      any = true
+    end
+  end
+  return any and out or nil
+end
+
 -- A raw (uncompressed) column-major pic -> PNG.  With `pal` the four shades
 -- are baked in, which is how KRIS keeps her blue hair: the trainer card and
 -- the Oak intro colour the player pic through the SGB zone shader, and that
@@ -8556,6 +8588,14 @@ function RomExtractorGen2:extractGen2PlayerForms()
                                            G.intro.rows,
                                            "battle/chrisintro.png", chrisPal)
   local chrisBaked = (chrisCard and chrisBack and chrisIntro) and true or nil
+  -- The fishing pose, per CHARACTER.  LoadFishingGFX picks the sheet off
+  -- wPlayerGender -- `bit PLAYERGENDER_FEMALE_F, a / jr z, .got_gender / ld de,
+  -- KrisFishingGFX` -- so Kris has her own, and Gold and Silver have no
+  -- KrisFishingGFX at all (the symbol is Crystal-only).  Three 16x8 strips per
+  -- character, tiles 0-1 / 2-3 / 4-5, in facing order down, up, left; the
+  -- fourth pair is the $fc emote slot and the rod comes from FishingRodGFX.
+  local chrisFish = self:gen2FishingPoses("FishingGFX", "chris")
+  local krisFish = self:gen2FishingPoses("KrisFishingGFX", "kris") or chrisFish
   return {
     boy = {
       label = "BOY",
@@ -8573,6 +8613,7 @@ function RomExtractorGen2:extractGen2PlayerForms()
       -- record silently fell through to field.playerSprites.
       back = chrisBack or "assets/generated/battle/chrisb.png",
       walk = "SPRITE_RED", bike = "SPRITE_RED_BIKE",
+      fish = chrisFish,
       names = self:gen2NamePresets("ChrisNameMenuHeader.MaleNames", 5),
     },
     girl = {
@@ -8595,6 +8636,7 @@ function RomExtractorGen2:extractGen2PlayerForms()
       back = self:gen2RawColumnPic("KrisBackpic", G.back.cols, G.back.rows,
                                    "battle/krisb.png", krisPal),
       walk = "SPRITE_KRIS", bike = "SPRITE_KRIS_BIKE",
+      fish = krisFish,
       names = self:gen2NamePresets("KrisNameMenuHeader.FemaleNames", 5),
     },
   }
@@ -10186,6 +10228,42 @@ function RomExtractorGen2:extractField()
     if src.overworldFx.healMachine then
       for k, v in pairs(healLayout) do src.overworldFx.healMachine[k] = v end
     end
+    -- The fishing pose and the rod.  Both were MISSING on Gen2: Player.lua and
+    -- OverworldController's fxRod read overworldFx.redFish* / .fishingRod,
+    -- which only RomExtractor (Gen1) ever wrote, so on Gold/Silver/Crystal the
+    -- player just stood in the walking sprite with no rod at all.
+    --
+    -- LoadFishingGFX (engine/events/fishing_gfx.asm) is four `Get2bpp` calls of
+    -- TWO TILES each, walking forward through FishingGFX and landing on VRAM
+    -- tiles $02, $06, $0a and $fc -- i.e. one strip per standing frame, in
+    -- facing order DOWN, UP, LEFT (the right-facing pose is the left one
+    -- mirrored, exactly as the sprite is).  chris_fish.png is 16x40 = 10 tiles
+    -- and is built WITHOUT --columns, so the strips are the PNG's own rows:
+    -- pair 0 = rows 0-7, pair 1 = 8-15, pair 2 = 16-23.  The fourth pair is
+    -- the $fc emote slot and the rod comes from FishingRodGFX instead, so it
+    -- is not extracted here.
+    --
+    -- FishingGFX is the male/Gold player's sheet and exists in Gold, Silver
+    -- and Crystal; KrisFishingGFX is Crystal-only, and picking between them
+    -- per player form is still to do -- Player.lua has one pose set.
+    local FISH_POSES = {
+      { key = "redFishFront", tile = 0, file = "fx/gen2_fish_down.png" },
+      { key = "redFishBack",  tile = 2, file = "fx/gen2_fish_up.png" },
+      { key = "redFishSide",  tile = 4, file = "fx/gen2_fish_side.png" },
+    }
+    for _, pose in ipairs(FISH_POSES) do
+      -- two tiles side by side: the 16x8 strip drawTile blits over the
+      -- standing frame's bottom row
+      local sheet = self:gen2RawSheet("FishingGFX", 2, 1, pose.file, false,
+                                      pose.tile)
+      if sheet then src.overworldFx[pose.key] = sheet end
+    end
+    -- `emote FishingRodGFX, 2, $fc` (data/sprites/emotes.asm): two tiles, and
+    -- fishing_rod.png is 8x16 -- one tile wide, two tall, the same shape
+    -- fxRod's ROD_OAM already quads up for Gen1.
+    src.overworldFx.fishingRod =
+      self:gen2RawSheet("FishingRodGFX", 1, 2, "fx/gen2_fishing_rod.png")
+      or src.overworldFx.fishingRod
     -- Prefer the pokegear Chris icon (PAL_OW_RED) on the town map too
     if src.pokegear and src.pokegear.playerIcon and src.townMap then
       src.townMap.playerIcon = src.pokegear.playerIcon
@@ -10211,13 +10289,25 @@ function RomExtractorGen2:extractField()
   -- keys so FieldDefaults' Gen1 `fishing` table stays exactly as it is for a
   -- Red/Blue/Yellow import; OverworldState:goFishing prefers these when the
   -- import produced them.
-  pcall(function()
+  -- NOT a bare pcall any more.  When this failed -- or when the FishGroups
+  -- symbol was simply missing -- field.fishGroups was absent, and the runtime
+  -- then fell through to the Gen1 `fishing` table, which a Gen2 manifest does
+  -- not carry at all: every rod on every map answered "Not even a nibble!"
+  -- with nothing anywhere saying why.  A broken fishing extract has to be
+  -- loud.
+  local fishOk, fishErr = pcall(function()
     local groups, times = self:gen2Fishing()
     if groups then
       src.fishGroups = groups
       src.timeFishGroups = times
     end
   end)
+  if not fishOk then
+    Logger.warn("gen2 fishing tables failed to extract: %s", tostring(fishErr))
+  elseif not src.fishGroups then
+    Logger.warn("gen2 fishing tables absent (FishGroups symbol missing?) -- "
+                .. "every rod will report no bite")
+  end
   self:write("field", src)
   self:tick("Gen2 field", 1, 1)
 end
@@ -10947,6 +11037,20 @@ function RomExtractorGen2:extractBattleHudSheets()
       ImageWriter.blit(hud1, enemyBorderArt, i * 8, 0, (i + 1) * 8, 0, 8, 8)
     end
     self:saveImage(hud1, "battle/battle_hud_1.png")
+
+    -- The party ball row's four icons: healthy, statused, fainted, empty
+    -- slot.  LoadBallIconGFX (engine/battle/trainer_huds.asm:225) copies four
+    -- tiles from its own local .gfx label into vTiles0 $31, and
+    -- StageBallTilesData picks $31/$32/$33/$34 per slot.
+    --
+    -- BattleState:drawBallRow has always wanted assets/generated/battle/
+    -- balls.png as a 32x8 strip of four 8x8 tiles -- but only RomExtractor
+    -- (Gen1) ever wrote it, so on Gold/Silver/Crystal the image load failed,
+    -- ballQuads latched false and the rows drew NOTHING.  The coordinates were
+    -- already right: Gen2 stages OAM at (9*8, 4*8) stepping -8 for the foe and
+    -- (12*8, 12*8) stepping +8 for the player, and OAM is offset (+8, +16) from
+    -- the screen, which is exactly the (64,16) and (88,80) the port draws at.
+    self:gen2RawSheet("LoadBallIconGFX.gfx", 4, 1, "battle/balls.png")
 
     -- HPExpBarBorderGFX is 1bpp: six tiles, 8 bytes each.  $73-$75 is the
     -- HUD's left edge and elbow, $76-$78 the underline and its tail.

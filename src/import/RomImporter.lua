@@ -273,7 +273,31 @@ end
 --      DRAGONAIR, Corsola and Dratini were uncatchable, and Routes 12 and 13
 --      indexed past the end and never got a bite at all.  A v71 cache holds
 --      the old keys, so this bump is what makes the fix reach a save.
-local CACHE_FORMAT = "rom-cache-v72:"
+-- v73: field.overworldFx gains the Gen2 fishing pose and rod (redFishFront /
+--      redFishBack / redFishSide / fishingRod from FishingGFX and
+--      FishingRodGFX).  Those keys only ever had Gen1 values, so on
+--      Gold/Silver/Crystal the player fished in the plain walking sprite with
+--      no rod on screen.
+--
+--      This bump is ALSO the fishing-table safety net.  A cache written before
+--      gen2Fishing existed has no field.fishGroups at all, and the runtime then
+--      falls through to the Gen1 `fishing` table -- which a Gen2 manifest does
+--      not carry -- so every rod on every map answers "Not even a nibble!".
+--      That is indistinguishable from the off-by-one v72 fixed, and it is what
+--      a stale cache still does.  Re-extracting is the only cure, and the
+--      extractor now warns instead of failing silently.
+-- v74: two sheets that only the Gen1 extractor ever wrote.
+--      * assets/generated/battle/balls.png -- the party ball row's four icons
+--        (healthy / statused / fainted / empty), from LoadBallIconGFX.gfx.
+--        BattleState:drawBallRow has always wanted it and the coordinates were
+--        always right; without the file the image load failed, ballQuads
+--        latched false, and BOTH ball rows drew nothing -- so a trainer battle
+--        never showed how many Pokemon the foe had left.
+--      * playerForms[*].fish -- the three fishing-pose strips per CHARACTER.
+--        LoadFishingGFX picks between FishingGFX and KrisFishingGFX off
+--        wPlayerGender, and Kris was fishing on Chris's sprite because the
+--        pose lived in overworldFx, which has one slot.
+local CACHE_FORMAT = "rom-cache-v74:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"

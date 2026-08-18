@@ -286,7 +286,19 @@ function love.load(args)
   -- Before anything else, and before anything that could fail: did the last
   -- launch finish?  POKEPORT_NO_BOOT_REPORT=1 skips this for CI and scripted
   -- runs, which have no one to show it to and must not stop on it.
-  if os.getenv("POKEPORT_NO_BOOT_REPORT") ~= "1" then
+  --
+  -- POKEPORT_PAYLOAD_MOUNTED skips it too, and that one is not an opt-out: it
+  -- means we ARE the chainloaded payload and this love.load is the second one
+  -- of a single launch (src/update/Boot.lua's chainload runs the payload's
+  -- main.lua and then calls its love.load).  The bundled half already asked
+  -- this question a few milliseconds ago, with the real previous trace in
+  -- front of it.  Asking again diagnosed the launch in progress as a failed
+  -- one -- an updated Android build opened with "PREVIOUS LAUNCH DID NOT
+  -- FINISH" every single time, showing its own bundled prefix ending at
+  -- "save identity".  BootTrace inherits the verdict across the handoff too,
+  -- so this is belt and braces rather than the fix.
+  if os.getenv("POKEPORT_NO_BOOT_REPORT") ~= "1"
+     and not _G.POKEPORT_PAYLOAD_MOUNTED then
     local report = BootTrace.previousFailureReport()
     if report then
       BootTrace.mark("showing previous failure report")

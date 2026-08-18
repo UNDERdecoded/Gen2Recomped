@@ -4098,17 +4098,46 @@ end
 
 -- ContestDropOffMons (04:$7A12): only the lead competes; the rest of the party
 -- waits at the gate until ContestReturnMons hands it back.
+--
+-- IT ANSWERS.  The routine opens with
+--
+--     ld hl, wPartyMon1HP / ld a, [hli] / or [hl] / jr z, .fainted
+--     ...
+--     xor a / ld [wScriptVar], a / ret
+--   .fainted
+--     ld a, $1 / ld [wScriptVar], a / ret
+--
+-- and Route36NationalParkGate does `special ContestDropOffMons / iftrue
+-- .FirstMonIsFainted` on the very next line.  Answering nothing left the
+-- `iftrue` reading the result of the `yesorno` immediately before it -- which
+-- is TRUE whenever the player agrees to enter -- so the officer said "The
+-- first #MON in your party can't battle." to everyone, healthy lead or not,
+-- and the contest could never be joined.
+--
+-- 1 means fainted, and in that case NOTHING is dropped off: the ROM returns
+-- before it masks the party.
 function Commands.g2_bug_contest_drop_off(ctx)
   local BugContest = require("src.world.BugContest")
   local save = ctx.save
-  local state = BugContest.state(save)
-  if not (state and save.party) then return end
-  if #save.party <= 1 then return end
-  state.party = {}
-  for index = 2, #save.party do
-    state.party[#state.party + 1] = save.party[index]
-    save.party[index] = nil
+  local lead = save.party and save.party[1]
+  if not lead or (tonumber(lead.hp) or 0) <= 0 then
+    -- .fainted: the officer refuses, and the party is left alone
+    ctx.g2Var, ctx.lastCheck = 1, true
+    return
   end
+  ctx.g2Var, ctx.lastCheck = 0, false
+  local state = BugContest.state(save)
+  if not state then return end
+  if #save.party <= 1 then return end
+  -- The ROM "masks" the rest of the party by writing 1 to wPartyCount and a
+  -- terminator over the second species; the mons themselves never move.  The
+  -- port holds them aside instead -- same effect -- but rebuild the array
+  -- rather than nilling entries in place, which leaves `#` undefined mid-loop.
+  local held, keep = {}, { lead }
+  for index = 2, #save.party do held[#held + 1] = save.party[index] end
+  for index = #save.party, 2, -1 do save.party[index] = nil end
+  save.party[1] = keep[1]
+  state.party = held
 end
 
 -- ContestReturnMons (04:$7A31).  BugContestResults_FinishUp runs this AFTER
