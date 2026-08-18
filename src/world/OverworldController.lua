@@ -377,6 +377,17 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   if fromMapId then
     Runtime.emit("map.exited", { mapId = fromMapId, toMapId = mapId })
   end
+  -- StartMap (engine/overworld/events.asm:106) farcalls InitCallReceiveDelay,
+  -- so every map load puts the incoming-call timer back to a full 20 minutes.
+  -- Without it the wait only ever shortened, and a player moving between maps
+  -- -- which is most players -- accumulated call windows they should never
+  -- have had.  This and the edge-triggered timer in rollIncomingCall are the
+  -- two halves of "they ring constantly".
+  -- `Game` is bound on enter, so this can be nil on the very first setMap.
+  if Game and Game.save and GameVersion.isGen2() then
+    require("src.script.Gen2Commands").resetCallDelay(
+      Game.save, math.floor((tonumber(Game.save.playTime) or 0) / 60))
+  end
   -- ambient choreography is per-map: parallel runners die here, and the
   -- departing map's queued scripts go with them unless the enqueuer
   -- asked to persist across the warp
@@ -2304,18 +2315,83 @@ function OverworldState:goFishing(rod)
   end))
 end
 
+-- CheckBugContestTimer (04:$54A4) runs from the overworld loop, and when the
+-- 20 minutes are up BugCatchingContestOverScript plays SFX_ELEVATOR_END,
+-- prints "TIME'S UP!" and falls into the return-to-gate script.  Nothing
+-- checked it before, so the clock ran out and the contest simply carried on.
+function OverworldState:checkBugContestClock()
+  if not GameVersion.isGen2() then return end
+  if self.transitioning or self.runner:isRunning() or #self.scriptMoves > 0 then
+    return
+  end
+  local BugContest = require("src.world.BugContest")
+  if not BugContest.timedOut(Game.save) then return end
+  self:bugContestOver("_BugCatchingContestTimeUpText",
+                      "TIME'S UP!\nThe Contest is over!")
+end
+
+-- The shared tail of BugCatchingContestOverScript (the clock) and
+-- BugCatchingContestOutOfBallsScript (the balls): SFX_ELEVATOR_END, one line,
+-- and the warp back to the gate.
+--
+-- The re-entry guard matters: `timedOut` stays true until finish() clears the
+-- deadline, and that only happens once the player dismisses this box, so a
+-- second step in between would stack another one.
+function OverworldState:bugContestOver(textLabel, fallback)
+  if self.bugContestEnding then return end
+  self.bugContestEnding = true
+  local TextBox = require("src.render.TextBox")
+  pcall(function()
+    require("src.core.Sound").play(Game.data, "Elevator_End")
+  end)
+  local text = (Game.data.text and Game.data.text[textLabel]) or Strings(fallback)
+  Game.stack:push(TextBox.new(Game, text, function()
+    self.bugContestEnding = nil
+    self:bugContestReturnToGate()
+  end))
+end
+
 -- Fly to a visited town (called from the party menu).
 -- BugCatchingContestReturnToGateScript (04:$760B): leaving the contest -- by
 -- the START menu's QUIT, by running out of Park Balls or by the clock -- puts
 -- the player back at the gate and hands over to judging.  The placing is
 -- already stamped on the save by BugContest.finish, which is what the
 -- extracted BugContestResults_* scripts branch on for the prize.
+--
+-- The warp itself is BugContestResultsWarpScript (engine/events/std_scripts.asm:
+-- `warp ROUTE_36_NATIONAL_PARK_GATE, 0, 4` followed by
+-- Movement_ContestResults_WalkAfterWarp: `step RIGHT / step DOWN /
+-- turn_head UP`).  (0, 4) is the gate's own west door tile -- the one whose
+-- warp_event leads straight back into NATIONAL_PARK -- so the player is placed
+-- where that movement LEAVES them, (1, 5) facing up, rather than on the door
+-- they would immediately fall back through.
+local BUG_CONTEST_GATE = "ROUTE36_NATIONAL_PARK_GATE"
+local BUG_CONTEST_GATE_X, BUG_CONTEST_GATE_Y = 1, 5
+
 function OverworldState:bugContestReturnToGate()
   local BugContest = require("src.world.BugContest")
   BugContest.finish(Game)
-  local gate = "ROUTE36_NATIONAL_PARK_GATE"
-  if not (Game.data.maps and Game.data.maps[gate]) then return end
-  self:setMap(gate, { via = "warp" })
+  local gate = BUG_CONTEST_GATE
+  if not (Game.data.maps and Game.data.maps[gate]) then
+    -- Silently returning here strands the player inside the park with the
+    -- contest already finished and no way out, which is worse than the
+    -- missing map.  Say so, and still let the contest end.
+    Logger.warn("bug contest: no map %s to return to; contest ended in place",
+                gate)
+    return
+  end
+  -- setMap's signature is (mapId, x, y, facing, opts).  This passed the opts
+  -- table as `x`, so the first thing setMap did with it was `x * 16` --
+  -- "attempt to perform arithmetic on local 'x' (a table value)", a hard crash
+  -- on EVERY exit from the contest: the START menu's QUIT, running out of
+  -- balls, and the clock.  Which is also why the contest never actually ended
+  -- for anyone -- the crash came before the save could record it, so the next
+  -- launch still had a contest running, with its 20 balls and its timer.
+  --
+  -- startWarpTo, not setMap: the fade, the music change and the standing-on-
+  -- warp refresh all hang off it, and it is what Commands.warp uses for the
+  -- `warp` script command this is standing in for.
+  self:startWarpTo(gate, BUG_CONTEST_GATE_X, BUG_CONTEST_GATE_Y, "up")
 end
 
 function OverworldState:flyTo(mapId)
@@ -4547,6 +4623,7 @@ function OverworldState:onStepComplete()
 
   -- CheckPhoneCall rides this same step, right after the warp checks
   self:checkIncomingPhoneCall()
+  self:checkBugContestClock()
 
   -- Route 22 Gate rewrites LAST_MAP by Y before warps/guards fire
   self:syncLastMapRewrite()
@@ -4690,7 +4767,9 @@ function OverworldState:onStepComplete()
     if wild then
       local BattleState = require("src.battle.BattleState")
       local battle = BattleState.newWild(Game, wild.species, wild.level)
-      battle.bugContest = true
+      -- BATTLETYPE_CONTEST: the third battle-menu slot becomes PARKBALL x NN
+      -- and throws straight from the menu (BattleState:makeBugContest).
+      battle:makeBugContest()
       battle.onFinish = function(result) self:afterBattle(result, battle) end
       self:pushBattle(battle)
     end
@@ -5084,6 +5163,23 @@ end
 -- battle is optional; when given, Oak's Lab OPP_RIVAL1 losses skip the
 -- blackout (pret HandlePlayerBlackOut) so the map script can HealParty.
 function OverworldState:afterBattle(result, battle)
+  -- BugCatchingContestBattleScript's tail (engine/events/bug_contest/
+  -- contest.asm:9):
+  --
+  --     reloadmapafterbattle
+  --     readmem wParkBallsRemaining
+  --     iffalse BugCatchingContestOutOfBallsScript
+  --
+  -- i.e. the out-of-balls exit is checked AFTER the battle, in the overworld,
+  -- not inside it.  Nothing consumed a ball before, so this could never fire.
+  if battle and battle.bugContest then
+    local BugContest = require("src.world.BugContest")
+    if BugContest.active(Game.save) and BugContest.ballsLeft(Game.save) <= 0 then
+      self:bugContestOver("_BugCatchingContestIsOverText",
+                          "The Contest is over!")
+      return
+    end
+  end
   local lead = Game.save.party[1]
   Logger.info("battle over: %s (lead %s %d/%d)", tostring(result),
               lead and lead.species or "-", lead and lead.hp or 0,

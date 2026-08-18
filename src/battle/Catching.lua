@@ -20,6 +20,15 @@ local BALLS = {
                   tossAnim = "ULTRATOSS_ANIM", flicker = true },
   SAFARI_BALL = { randMax = 150, hpFactor = 12, wobbleFactor = 150,
                   tossAnim = "ULTRATOSS_ANIM" },
+  -- The Bug Catching Contest's ball.  Gen 2 gives it a catch-rate multiplier
+  -- rather than its own roll -- ParkBallMultiplier (item_effects.asm:746) is
+  -- `a = b >> 1 / add b`, i.e. rate x 1.5 capped at 255 -- and BattleState
+  -- applies that as a rate override, so the numbers below are only the roll
+  -- this port already uses for every other ball.  Structurally it is the
+  -- Safari Ball: same tier, same toss arc, and above ULTRA_BALL so
+  -- DoBallTossSpecialEffects gives it no flicker.
+  PARK_BALL   = { randMax = 150, hpFactor = 12, wobbleFactor = 150,
+                  tossAnim = "ULTRATOSS_ANIM" },
 }
 Catching.BALLS = BALLS
 

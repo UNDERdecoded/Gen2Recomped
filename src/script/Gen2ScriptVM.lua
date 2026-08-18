@@ -404,6 +404,22 @@ end
 L.verbosegiveitem = function(ir, s)
   emit(s, { "give_item", itemId(ir[2]), ir[3] })
 end
+-- `verbosegiveitemvar item, var` ($9F -- Crystal only; Gold's command list has
+-- no such row).  The same gift box as verbosegiveitem, except the QUANTITY
+-- comes out of a script variable instead of the operand
+-- (Script_verbosegiveitemvar, engine/overworld/scripting.asm:486:
+-- `GetVarAction / ld a, [de] / ld [wItemQuantityChange], a`).
+--
+-- Kurt is its ONLY user in the entire game -- all seven of KurtsHouse's
+-- `verbosegiveitemvar <BALL>, VAR_KURT_APRICORNS` rows.  With no lowering the
+-- command was silently dropped, so "Ah, I just finished your BALL. Here."
+-- was followed by the `iffalse .NoRoomForBall` on the very next line reading a
+-- STALE lastCheck -- which sent the script straight to closetext.  Kurt
+-- announced the ball and then nothing happened, every time, and the apricorn
+-- was already gone.
+L.verbosegiveitemvar = function(ir, s)
+  emit(s, { "g2_verbose_give_item_var", itemId(ir[2]), ir[3] })
+end
 L.getitemname = function(ir, s)
   if ir[2] == 0 then
     emit(s, { "g2_getitemname_var" })
@@ -418,6 +434,25 @@ end
 -- Lavender radio director's "<PLAYER> received the EXPN CARD!" printed
 -- whatever was in the buffer from several scenes ago -- usually a TM.
 L.getstring = function(ir, s) emit(s, { "g2_getstring", ir[2] }) end
+-- `gettrainername buffer, group, id` ($43) and `getlandmarkname buffer,
+-- landmark` ($A5).  Both macros write the BUFFER OPERAND LAST
+-- (macros/scripts/events.asm:450 and :1036), and GetStringBuffer
+-- (scripting.asm:1583) maps it 0 -> wStringBuffer3, 1 -> wStringBuffer4,
+-- 2 -> wStringBuffer5, clamping anything else to 0.
+--
+-- Neither had a lowering, and between them they fill the two buffers the
+-- phone scripts splice: the caller's own name and the route they are ringing
+-- about.  With nothing writing them, every one of the ~70
+-- `{RAM:wStringBuffer5}` landmark lines printed whatever RandomPhoneWildMon
+-- had just left in the port's single shared buffer -- a SPECIES NAME.  "Come
+-- pick it up on MAGIKARP."  Lines with no RandomPhone* special ahead of them
+-- printed a species left over from an earlier call entirely.
+L.gettrainername = function(ir, s)
+  emit(s, { "g2_buffer_trainer_name", ir[2], ir[3], ir[4] })
+end
+L.getlandmarkname = function(ir, s)
+  emit(s, { "g2_buffer_landmark_name", ir[2], ir[3] })
+end
 -- `battletowertext <slot>` (Script_battletowertext, 25:$6F52 -> BattleTowerText
 -- 47:$4000): the generated opponent's own line -- 1 before the battle, 2 when
 -- they win, 3 when they lose.  The line is picked from the male or female pool

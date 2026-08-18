@@ -113,8 +113,20 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
   -- text_ram reads wStringBuffer1, which the ROM filled well before the box
   -- opened (GetPartyNickname, GetItemName).  Scripts lowered straight from
   -- the ROM never carry `subs`, so without this they printed the raw token.
-  if ctx.game.stringBuffer and text:find("{RAM:", 1, true) then
-    text = text:gsub("{RAM:[%w_]*}", tostring(ctx.game.stringBuffer))
+  -- Same per-slot rule TextBox.TOKENS.RAM uses: a named wStringBufferN wins
+  -- if something wrote that slot, otherwise the single legacy buffer stands
+  -- in.  A blanket gsub onto one value is what put a species name into the
+  -- phone's landmark lines.  Returning nil from the replacer leaves the token
+  -- untouched, which is what the old `and` guard did when nothing was set.
+  if text:find("{RAM:", 1, true) then
+    text = text:gsub("{RAM:([%w_]*)}", function(name)
+      local slot = tonumber(name:match("^wStringBuffer(%d)$") or "")
+      local slots = ctx.game.stringBuffers
+      local value = slot and slots and slots[slot]
+      if value == nil then value = ctx.game.stringBuffer end
+      if value == nil then return nil end
+      return tostring(value)
+    end)
   end
   local runner = ctx.runner
   local opts

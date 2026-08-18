@@ -1017,6 +1017,24 @@ function BattleState:makeSafari(state)
   self.escapeFactor = 0
 end
 
+-- Bug Catching Contest battles (BATTLETYPE_CONTEST).  Unlike the Safari Zone
+-- this is a NORMAL battle -- your lead is out, it can attack, and weakening
+-- the wild mon first is the whole strategy.  Only the third menu slot
+-- changes: BattleMenu_Pack's `.contest` arm (engine/battle/core.asm:4990)
+-- skips the pack entirely and throws a PARK_BALL straight from the menu, so
+-- the slot reads "PARKBALL x NN" instead of ITEM.
+--
+-- The ball count is NOT held here: wParkBallsRemaining lives on the save, so
+-- the menu reads it live and a mid-battle save/quit cannot desync it.
+function BattleState:makeBugContest()
+  self.bugContest = true
+end
+
+-- wParkBallsRemaining, for the menu row and the out-of-balls exit.
+function BattleState:bugContestBalls()
+  return require("src.world.BugContest").ballsLeft(self.game.save)
+end
+
 -- ---------------------------------------------------------------------
 -- message/action queue
 -- ---------------------------------------------------------------------
@@ -2290,6 +2308,13 @@ function BattleState:update(dt)
     self.menuIndex = row * 2 + col + 1
     if input:wasPressed("a") then
       local choice = ({ "fight", "pkmn", "item", "run" })[self.menuIndex]
+      -- BattleMenu_Pack `.contest` (core.asm:4990): `ld a, PARK_BALL /
+      -- ld [wCurItem], a / call DoItemEffect`.  No pack, no submenu -- the
+      -- third slot IS the ball, so the item action becomes the throw.
+      if choice == "item" and self.bugContest then
+        self:bugContestBall()
+        return
+      end
       if choice == "fight" and self.ghost then
         self:say(Strings("%s is too\nscared to move!", self.player.name))
         self.phase = "messages"
@@ -5038,6 +5063,94 @@ function BattleState:throwBall(ball)
   end)
 end
 
+-- Throwing a Park Ball.  Modelled on the Safari Ball path above, with the
+-- three things that make the contest different:
+--
+--   * the count is on the SAVE (wParkBallsRemaining), and `.used_park_ball`
+--     (item_effects.asm:718) decrements it on EVERY throw, caught or not --
+--     it never goes through TossItem because there is no bag item;
+--   * ParkBallMultiplier gives the species catch rate x 1.5;
+--   * a catch does NOT join the party.  BugContest_SetCaughtContestMon puts
+--     it in wContestMon, which is the one mon that gets scored.
+function BattleState:bugContestBall()
+  local BugContest = require("src.world.BugContest")
+  local save = self.game.save
+  self.phase = "messages"
+  self.afterQueue = "menu"
+  BugContest.useBall(save)
+  self:say(self:romText("_ItemUseText001", "%s used\n%s!",
+                        save.player.name, Strings("PARK BALL")))
+  self:act(function()
+    require("src.core.Sound").play(self.data, "Ball_Toss")
+    self.lastBall = "PARK_BALL"
+    local rate = BugContest.parkBallRate(self.enemy.def.catchRate)
+    local caught, shakes = self:catchAttempt("PARK_BALL", rate)
+    Runtime.emit("battle.ball_thrown", {
+      battle = self, ball = "PARK_BALL", caught = caught, shakes = shakes,
+    })
+    self:ballChain(self:tossAnimFor("PARK_BALL"), caught, shakes, "PARK_BALL")
+    if caught then
+      self:actNext(function()
+        require("src.core.Sound").play(self.data, "Caught_Mon")
+      end)
+      self:act(function() self:storeContestMon() end)
+    else
+      self:sayNext(self:ballMissMessage(shakes))
+      -- the ball is the player's turn, so the foe still moves
+      self:act(function()
+        self:executeAction(self.enemy, self.player, self:enemyAction())
+      end)
+      self:act(function() self:endOfTurn() end)
+    end
+  end)
+end
+
+-- BugContest_SetCaughtContestMon (engine/events/bug_contest/caught_mon.asm).
+-- Nothing is held yet -> keep it and print _ContestCaughtMonText.  Something
+-- IS held -> the already-caught line, the new one's stats, and a yes/no; NO
+-- (`ret c`) keeps the mon you already had, and the battle ends either way.
+function BattleState:storeContestMon()
+  local BugContest = require("src.world.BugContest")
+  local save = self.game.save
+  local caught = self.enemy.mon
+  local name = self.enemy.name
+  local held = BugContest.caught(save)
+
+  local function keepNew()
+    -- .generatestats rebuilds the mon from base data before storing it, the
+    -- same reload a normal catch does (storeCaughtMon's restoreMimicked).
+    self:restoreMimicked(self.enemy)
+    BugContest.setCaught(save, caught)
+    self:sayNext(Strings("%s was\ncaught!", name))
+  end
+
+  markOwned(self.game, caught.species)
+  if not held then
+    keepNew()
+  else
+    local heldDef = self.game.data.pokemon[held.species]
+    local heldName = (heldDef and heldDef.name) or tostring(held.species)
+    self:sayNext(Strings("You already caught\na %s.", heldName))
+    self:sayNext(Strings("Release the older\n%s?", heldName))
+    self:uiNext(function()
+      local ChoiceBox = require("src.ui.ChoiceBox")
+      return ChoiceBox.new(self.game, function(yes)
+        if yes then
+          keepNew()
+        else
+          self:sayNext(Strings("%s was\nreleased.", name))
+        end
+      end)
+    end)
+  end
+  -- A capture ends a wild battle, contest or not -- same result value
+  -- storeCaughtMon uses, so afterBattle treats it identically.
+  self:actNext(function()
+    self.result = "caught"
+    self.afterQueue = "finish"
+  end)
+end
+
 function BattleState:openParty()
   self.phase = "messages"
   self.afterQueue = "menu"
@@ -6059,6 +6172,29 @@ function BattleState:drawTextArea()
       -- 2..6 (engine/battle/core.asm:2074-2079, 2107-2112) (#540)
       Font.draw(("%2d"):format(self.safari.balls), 56, 112)
       Font.drawCode(0xED, (col == 0 and 8 or 104), 112 + row * 16)
+    elseif self.bugContest then
+      -- ContestBattleMenuHeader (engine/battle/menu.asm:76): the same 2x2
+      -- menu as always, but wider and shifted left to fit the ball row --
+      -- menu_coords 2, 12, 19, 17 with a spacing of 12, against the normal
+      -- menu's 8, 12, 19, 17 and spacing 6.  Its text is
+      --
+      --     FIGHT        <PK><MN>
+      --     PARKBALLx NN  RUN
+      --
+      -- so FIGHT and POKeMON are exactly where they are in a normal battle;
+      -- only PACK is replaced.  Item text sits at column x1+2 and the cursor
+      -- at x1+1, which is the same relationship the normal and Safari menus
+      -- have, so: text at columns 4 and 16, cursor at 3 and 15.
+      Font.drawBox(2, 12, 18, 6)
+      Font.draw(Strings("FIGHT"), 32, 112)
+      Font.drawCode(0xE1, 128, 112); Font.drawCode(0xE2, 136, 112)
+      Font.draw(Strings("PARKBALLx"), 32, 128)
+      Font.draw(Strings("RUN"), 128, 128)
+      -- .PrintParkBallsRemaining writes at hlcoord 13, 16 -- two digits,
+      -- leading-zeros flag clear, i.e. space padded -- which lands in the two
+      -- cells right after the 'x' of the label.
+      Font.draw(("%2d"):format(self:bugContestBalls()), 104, 128)
+      Font.drawCode(0xED, (col == 0 and 24 or 120), 112 + row * 16)
     else
       -- BATTLE_MENU_TEMPLATE: box (8,12)-(19,17), "FIGHT <PK><MN> /
       -- ITEM  RUN" from (10,14); cursor columns 9 / 15

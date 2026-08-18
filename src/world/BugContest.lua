@@ -37,6 +37,14 @@ function BugContest.active(save)
   return (s and s.active) == true
 end
 
+-- Whether the save is carrying a finished run whose prize has not been
+-- collected -- the window BugContestResults_* runs in.  A contest cannot be
+-- re-entered in this state; the gate has to pay out first.
+function BugContest.awaitingResults(save)
+  local s = state(save)
+  return s ~= nil and s.active ~= true and s.placing ~= nil
+end
+
 function BugContest.contestMap() return CONTEST_MAP end
 
 -- GiveParkBalls (04:$75DB) clears the caught mon, sets wParkBallsRemaining to
@@ -48,6 +56,9 @@ function BugContest.contestMap() return CONTEST_MAP end
 function BugContest.start(game)
   local save, def = game.save, data(game)
   if not (save and def) then return false end
+  -- A fresh run REPLACES whatever was there, including a finished one whose
+  -- prize was already handed over.  Starting from a clean table is what stops
+  -- a previous run's clock, ball count or placing leaking into this one.
   save.g2BugContest = {
     active = true,
     balls = def.parkBalls or 20,
@@ -193,8 +204,29 @@ function BugContest.finish(game)
   if not s then return nil end
   local placing = s.placing
   if placing == nil then placing = (BugContest.judge(game)) end
+  -- Tear the LIVE surfaces down, not just the flag.  BugContestResultsScript
+  -- does `clearflag ENGINE_BUG_CONTEST_TIMER` and GiveParkBalls' counter is
+  -- gone with the run, so nothing should be able to read a ball count or a
+  -- clock afterwards -- the START menu's contest panel and every timer check
+  -- go quiet even if a caller forgets to ask `active` first.  Leaving these
+  -- set is what showed 20 Park Balls and a counting-down timer in the menu
+  -- after the contest was over, and what let a second entry believe there was
+  -- still time on the clock.
   s.active = false
+  s.balls = 0
+  s.endsAt = nil
+  -- placing, board, caught and scores deliberately SURVIVE: the extracted
+  -- BugContestResults_* scripts branch on the placing for the prize, and
+  -- judging has already run by the time we get here.  BugContest.clear is
+  -- what drops them, once the gate has paid out.
   return placing
+end
+
+-- BugContestResultsScript's tail: the run is fully done with, prize and all.
+-- Separate from finish so a crash or a reload between the two cannot lose the
+-- placing before the officer has handed anything over.
+function BugContest.clear(save)
+  if type(save) == "table" then save.g2BugContest = nil end
 end
 
 -- Leaving early -- the START menu's QUIT (StartMenu_Quit, "Would you like to
@@ -203,6 +235,17 @@ function BugContest.leave(game)
   local s = state(game.save)
   if not s then return nil end
   return BugContest.finish(game)
+end
+
+-- ParkBallMultiplier (engine/items/item_effects.asm:746):
+--
+--     ld a, b / srl a / add b / ld b, a / ret nc / ld b, $ff
+--
+-- the species catch rate x 1.5, saturating at 255.  It is the only thing
+-- that makes a Park Ball better than a Poke Ball.
+function BugContest.parkBallRate(catchRate)
+  local rate = math.floor(tonumber(catchRate) or 0)
+  return math.min(255, rate + math.floor(rate / 2))
 end
 
 -- One Park Ball per throw; at zero the run is over

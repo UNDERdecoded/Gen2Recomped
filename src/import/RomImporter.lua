@@ -253,7 +253,27 @@ end
 --      as one 80x40 strip (ten columns, five rows) to
 --      assets/generated/tilesets/towerpillar.png.  Nothing read that table
 --      before, so the tower's central support stood perfectly still.
-local CACHE_FORMAT = "rom-cache-v70:"
+-- v71: overworld sprite sheets were being sized from the sprite_header's
+--      length byte, which is the VRAM ALLOCATION and not the sheet.  Every
+--      walking sheet is declared at half its real size (pokecrystal:
+--      `overworld_sprite ChrisSpriteGFX, 12, WALKING_SPRITE` = 192 bytes,
+--      gfx/sprites/chris.png = 16x96 = 384), so every one of them extracted
+--      as 3 frames instead of 6, `walker` went false, and the player and
+--      every NPC in Gold, Silver and Crystal SLID instead of walking.
+--      A v70 cache holds those half-height PNGs, so the extractor fix alone
+--      changes nothing until the sheets are re-extracted -- which is what
+--      this bump is for.  See src/import/RomExtractorGen2.lua's
+--      gen2OverworldSprites.
+-- v72: field.fishGroups is keyed by the FISHGROUP_* CONSTANT now, not by the
+--      row number.  `Fish` runs GetFishGroupIndex (`dec d`) before indexing
+--      FishGroups, so row 0 is FISHGROUP_SHORE = 1 -- and the map header byte
+--      the runtime looks a group up with is the constant.  Off by one, every
+--      map in the game fished the NEXT group's table: Olivine served OCEAN,
+--      the Lake of Rage served DRATINI_2, Ilex Forest's Super Rod could land a
+--      DRAGONAIR, Corsola and Dratini were uncatchable, and Routes 12 and 13
+--      indexed past the end and never got a bite at all.  A v71 cache holds
+--      the old keys, so this bump is what makes the fix reach a save.
+local CACHE_FORMAT = "rom-cache-v72:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"

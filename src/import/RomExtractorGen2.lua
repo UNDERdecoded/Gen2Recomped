@@ -3466,7 +3466,22 @@ function RomExtractorGen2:gen2Fishing()
         entry.rods[rod] = self:gen2FishRows(groupsSym.bank, ptr)
       end
     end
-    groups[i] = entry
+    -- Keyed by the FISHGROUP_* CONSTANT, not by the row number.  `Fish`
+    -- (24:$64C1) runs GetFishGroupIndex first, which ends in `dec d`, so
+    -- ROW 0 IS FISHGROUP_SHORE = 1 and row 12 is FISHGROUP_QWILFISH_NO_SWARM
+    -- = 13.  The map header byte the runtime looks this up with is that
+    -- constant, so keying by the row number shifted every map one group over:
+    -- Olivine served OCEAN, the Lake of Rage served DRATINI_2, Ilex Forest's
+    -- Super Rod could land a DRAGONAIR, and Corsola and Dratini became
+    -- uncatchable.  Routes 12 and 13 (QWILFISH_NO_SWARM = 13) indexed past
+    -- the end of the table and never got a bite at all.
+    --
+    -- It also makes FISHGROUP_NONE fall out for free: `groups[0]` is now nil,
+    -- so the runtime's missing-entry path answers "Not even a nibble!" --
+    -- which is exactly GetFishingGroup's `and a / jr nz` guard
+    -- (engine/events/overworld.asm).  Keyed from 0, Cerulean City (NONE)
+    -- borrowed SHORE and handed out Krabby the cart never offers.
+    groups[i + 1] = entry
   end
   local times = nil
   if timeSym then
@@ -3843,12 +3858,11 @@ function RomExtractorGen2:gen2OverworldSprites()
             base = base,
             bank = bank,
             address = address,
-            -- The row carries its own sheet LENGTH at offset 2 (the
-            -- sprite_header macro's `db \2 * 4 tiles`).  Reading it beats
-            -- inferring the span from the next sheet's address, which is only
-            -- a guess -- and against Prism that guess produced a sheet 61
-            -- pixels tall, which is not tile-aligned, so decode2bpp asserted
-            -- and took the whole import down at the very last stage.
+            -- Offset 2 is the macro's `db \2 tiles`.  It is the VRAM
+            -- ALLOCATION, not the sheet size -- see the long note by
+            -- `bytes` below before trusting it for anything.  Kept because
+            -- it is still the right figure for how much of a sheet is
+            -- resident at once.
             length = self.rom:byte(table_.bank, entry + 2),
             kind = self.rom:byte(table_.bank, entry + 4),
             palette = self.rom:byte(table_.bank, entry + 5) % 8,
@@ -3858,8 +3872,8 @@ function RomExtractorGen2:gen2OverworldSprites()
     end
   end)
 
-  -- sheet length = distance to the next sheet in the same bank, capped by the
-  -- most this sprite kind can possibly use
+  -- sheet length = distance to the next sheet in the same bank; the sheets are
+  -- laid out back to back, so that distance IS the sheet (see `bytes` below)
   local sorted = {}
   for _, row in ipairs(rows) do sorted[#sorted + 1] = row end
   table.sort(sorted, function(a, b)
@@ -3877,10 +3891,40 @@ function RomExtractorGen2:gen2OverworldSprites()
   local compressed = self:layout("spritesCompressed", 0) ~= 0
   for _, row in ipairs(rows) do
     local cap = GEN2_SPRITE_KIND_BYTES[row.kind] or GEN2_SPRITE_WALK_BYTES
-    local span = spanOf[row.bank * 0x10000 + row.address] or cap
-    -- prefer the row's own length; fall back to the span heuristic
-    local bytes = row.length and row.length > 0
-      and math.min(row.length, cap) or math.min(span, cap)
+    local span = spanOf[row.bank * 0x10000 + row.address]
+    -- The header's length byte is NOT the size of the sheet.  It is the VRAM
+    -- allocation: how many tiles the engine keeps resident for one object.
+    -- pokecrystal declares
+    --     overworld_sprite ChrisSpriteGFX, 12, WALKING_SPRITE, PAL_OW_RED
+    -- i.e. `db 12 tiles` = 192 bytes, while gfx/sprites/chris.png is 16x96 =
+    -- 24 tiles = 384.  EVERY walking sheet is declared at exactly half its
+    -- real size, and STANDING rows all declare 12 as well whether the sheet
+    -- is 16x16, 16x32, 16x48 or 16x96.
+    --
+    -- Preferring that byte therefore halved every walking sheet: 384 -> 192
+    -- bytes -> 48px -> 3 frames, and `walker = frames >= 6` (below) went
+    -- false, so the walk poses were never drawn and the player and every NPC
+    -- SLID across the ground instead of stepping.  Measured against the
+    -- cartridges: it sized 19 of Crystal's 102 sheets correctly and 0 of the
+    -- 74 walkers; Gold, 0 of 72.
+    --
+    -- The distance to the next sheet in the same bank is the figure that
+    -- actually tracks the sheet, because they are stored back to back.  It
+    -- reproduces 101 of Crystal's 102 real sizes -- including the three
+    -- STILL rows that are secretly 16x96 (PokeBall, Pokedex, Paper) and the
+    -- 16x32 / 16x16 STANDING ones a kind cap used to round UP.  The kind cap
+    -- is the fallback for the last sheet in a bank, which has no next sheet
+    -- to measure against.  (The one miss is BigOnix, 32x32: last in its bank,
+    -- so it falls back to 192 rather than 256.)
+    --
+    -- 384 is the ceiling either way -- no Gen2 overworld sheet is bigger than
+    -- 24 tiles -- so a large gap can never inflate a sheet into its
+    -- neighbours, and `height` below floors to whole tiles regardless, which
+    -- is what keeps a ragged span from reaching decode2bpp's assert.
+    local bytes = cap
+    if span and span >= 64 then
+      bytes = math.min(span, GEN2_SPRITE_WALK_BYTES)
+    end
     -- Prism stores every overworld sheet LZ3-compressed
     -- (`INCBIN "gfx/overworld/p0.2bpp.lz"`), and its walking sprites are 24
     -- tiles rather than Crystal's 12 -- six poses, not three.  Both facts
@@ -4298,9 +4342,11 @@ function RomExtractorGen2:extractMapsFromRom()
       -- is why a Pokemon Center does not go dark at night on hardware -- and
       -- the Ruins of Alph chambers carry it too.
       def.mapPalette = header and header.palette or def.mapPalette
-      -- 0 is FISHGROUP_SHORE in Crystal's table but the header value is only
-      -- meaningful on maps you can actually fish from; the runtime treats a
-      -- missing entry as "no bite", the same as the ROM's own guard.
+      -- Byte 8 is the FISHGROUP_* constant, and 0 is FISHGROUP_NONE -- NOT
+      -- FISHGROUP_SHORE, which is 1 (constants/map_data_constants.asm).
+      -- gen2Fishing keys its table by that same constant, so 0 finds nothing
+      -- and the runtime answers "Not even a nibble!", matching the ROM's own
+      -- `GetFishingGroup / and a / jr nz` guard.
       def.fishGroup = header and header.fishGroup or def.fishGroup
 
       local sym = symbolName and self:symbol(symbolName) or nil

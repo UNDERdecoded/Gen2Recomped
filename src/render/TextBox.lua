@@ -83,12 +83,21 @@ TextBox.TOKENS = {
   RIVAL = function(game) return game.save.player.rival or "BLUE" end,
   RAM = function(game, arg)
     if arg == "wStringBuffer" then return game.stringBuffer end
-    -- Gen2's text_ram splices wStringBuffer1..5 (the mon nick, the item
-    -- name, the trainer name) into the middle of a line.  The port keeps a
-    -- single stringBuffer, so every index resolves to it -- wStringBuffer3
-    -- is the one the berry-tree texts use, and leaving it out printed the
-    -- raw token.
+    -- Gen2's text_ram splices wStringBuffer1..5 into the middle of a line,
+    -- and the three script-addressable ones carry DIFFERENT things at the
+    -- same time: 3 the trainer name, 4 a species, 5 a landmark.  Collapsing
+    -- them onto one buffer meant whichever was written last won -- on the
+    -- phone that is always the species, so every landmark line read "Come
+    -- pick it up on MAGIKARP."
+    --
+    -- Slots the writers name explicitly win; a slot nobody has written falls
+    -- back to the single legacy buffer, which is what every non-phone caller
+    -- (the berry trees, the item gifts) still writes.
     if arg and arg:match("^wStringBuffer%d$") then
+      local slot = tonumber(arg:sub(-1))
+      local slots = game.stringBuffers
+      local value = slot and slots and slots[slot]
+      if value ~= nil then return value end
       return game.stringBuffer
     end
     if arg == "wBoxNumString" then return game.boxNumString end

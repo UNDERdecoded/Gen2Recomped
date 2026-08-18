@@ -431,10 +431,42 @@ end
 -- ---------------------------------------------------------------------------
 -- String-buffer writers.
 --
--- The ROM has several wStringBuffers and PrintNum/CopyBytes them separately;
--- this port keeps ONE (game.stringBuffer), which is what TextBox's text_ram
--- token reads, so every buffer write lands there.
+-- The ROM has three script-addressable buffers -- wStringBuffer3, 4 and 5
+-- (constants/script_constants.asm: STRING_BUFFER_3/4/5, NUM_STRING_BUFFERS 3)
+-- -- and GetStringBuffer picks between them from the buffer operand every
+-- `get*name` command carries: 0 -> 3, 1 -> 4, 2 -> 5, anything else clamped
+-- to 0 (engine/overworld/scripting.asm:1583).
+--
+-- This port kept ONE, which is fine right up until a single scene writes two
+-- of them.  The phone does exactly that: the caller's name goes in 3, the
+-- species RandomPhoneWildMon picks goes in 4, and the route goes in 5 -- and
+-- collapsed onto one buffer the species won, so every landmark line in every
+-- call read "Come pick it up on MAGIKARP."
+--
+-- So the slots exist now, and the commands that know which one they mean say
+-- so.  Everything else still writes `game.stringBuffer`, which IS slot 3, and
+-- a slot that was never written falls back to it -- so nothing that worked
+-- before changes.
 -- ---------------------------------------------------------------------------
+
+-- The buffer operand as it appears in the script byte, per GetStringBuffer.
+local function bufferSlot(operand)
+  local n = tonumber(operand)
+  if n == 1 then return 4 end
+  if n == 2 then return 5 end
+  return 3 -- STRING_BUFFER_3, and the clamp for anything out of range
+end
+
+-- Write one slot.  Slot 3 also updates the legacy single buffer, because that
+-- is the one every other writer in the tree still uses.
+local function setBuffer(game, slot, value)
+  if value == nil then return end
+  game.stringBuffers = game.stringBuffers or {}
+  game.stringBuffers[slot] = value
+  if slot == 3 then game.stringBuffer = value end
+end
+Gen2Commands.setStringBuffer = setBuffer
+Gen2Commands.bufferSlot = bufferSlot
 
 -- Script_getmoney (25:$7583): the player's money, printed for the box that
 -- follows.
@@ -465,6 +497,73 @@ function Commands.g2_buffer_landmark(ctx)
   if type(name) == "string" then
     ctx.game.stringBuffer = (name:gsub("[\n\f\v]", " "))
   end
+end
+
+-- `getlandmarkname buffer, landmark` ($A5, Script_getlandmarkname).  The
+-- named landmark, not the one the player is standing in -- which is the whole
+-- point on the phone, where the caller is ringing about somewhere else.
+-- Same town-map record getcurlandmarkname reads.
+function Commands.g2_buffer_landmark_name(ctx, landmark, buffer)
+  local town = ctx.game.data.field and ctx.game.data.field.townMap
+  local entry = landmark and town and town.landmarks
+    and (town.landmarks[landmark] or town.landmarks[tostring(landmark)])
+  local name = entry and entry.name
+  if type(name) == "string" then
+    setBuffer(ctx.game, bufferSlot(buffer), (name:gsub("[\n\f\v]", " ")))
+  end
+end
+
+-- The roster row for one (trainer class, trainer id) pair.  The extractor
+-- writes a scaffold placeholder for every unused class index, so prefer a row
+-- that actually names the trainer asked for before falling back to the class.
+local function trainerNameFor(data, group, id)
+  local fallback
+  for _, def in pairs(data and data.trainers or {}) do
+    if type(def) == "table" and def.index == group then
+      local named = def.partyNames and def.partyNames[id]
+      if named then return named end
+      fallback = fallback or def.name
+    end
+  end
+  return fallback
+end
+Gen2Commands.trainerNameFor = trainerNameFor
+
+-- `gettrainername buffer, group, id` ($43, Script_gettrainername -> the byte
+-- order is group, id, buffer).  Every outgoing Pokegear call opens with one:
+-- "Hello? It's <TRAINER>."  Unlowered, that name came out as whatever was
+-- last left in the shared buffer -- usually a species from the previous call.
+function Commands.g2_buffer_trainer_name(ctx, group, id, buffer)
+  local name = trainerNameFor(ctx.game.data, group, id)
+  if type(name) == "string" then
+    setBuffer(ctx.game, bufferSlot(buffer), name)
+  end
+end
+
+-- `verbosegiveitemvar item, var` ($9F): verbosegiveitem with the quantity
+-- read out of a script variable.  Kurt is its only user in the game -- he
+-- makes one ball per apricorn you handed over, and VAR_KURT_APRICORNS ($16)
+-- is where SelectApricornForKurt left that count.
+--
+-- ITEM_FROM_MEM (item byte 0) takes the item id from wScriptVar instead, the
+-- same escape `giveitem` uses.
+function Commands.g2_verbose_give_item_var(ctx, item, var)
+  if item == "ITEM_000" then
+    item = string.format("ITEM_%03d", math.floor(scriptVar(ctx)) % 256)
+  end
+  local qty = Gen2Commands.scriptVarValue(ctx, var)
+  return Commands.give_item(ctx, item, math.max(1, math.floor(qty or 1)))
+end
+
+-- The value of a script variable, for the handful of commands that read one
+-- as data rather than branching on it.  Only the vars that can actually turn
+-- up as a quantity are modelled; anything else answers 1, which is what the
+-- operand would have been on a plain verbosegiveitem.
+function Gen2Commands.scriptVarValue(ctx, var)
+  if var == 0x16 then -- VAR_KURT_APRICORNS
+    return tonumber(ctx.save.g2KurtApricorns) or 1
+  end
+  return 1
 end
 
 -- Script_loadmem (25:$7495): write an immediate byte to a WRAM address.  The
@@ -1484,6 +1583,27 @@ function Gen2Commands.rollIncomingCall(data, save, mapDef, tod, minutes, entranc
     return nil
   end
   if waited < Gen2Commands.phoneCallDelay(save) then return nil end
+
+  -- CheckReceiveCallTimer (04:$5401) consumes the expiry HERE, before any
+  -- other gate:
+  --
+  --     call CheckReceiveCallDelay
+  --     ret nc                       ; not expired yet -- nothing changes
+  --     ld hl, wTimeCyclesSinceLastCall
+  --     ld a, [hl] / cp 3 / jr nc, .ok / inc [hl]
+  -- .ok call NextCallReceiveDelay    ; RESTART the timer, call or no call
+  --     scf
+  --
+  -- The delay is an EDGE, not a level.  Only recording the time when a call
+  -- actually landed left `waited >= delay` true forever after the first
+  -- expiry, so the 50% flip below was re-rolled on EVERY STEP -- a call
+  -- within a step or two of the timer coming due, which is the "they ring
+  -- constantly" report.  Consume it up front and a failed flip costs a whole
+  -- further delay, exactly as on hardware.
+  save.g2CallCycles = math.min((tonumber(save.g2CallCycles) or 0) + 1,
+                               #GEN2_CALL_DELAYS - 1)
+  save.g2LastCallMinute = minutes
+
   -- `Random / ld b, a / and $7f / cp b` is true only when bit 7 is clear
   if math.random(0, 255) >= 128 then return nil end
   -- GetMapPhoneService: the palette byte's high nibble, nonzero = no service
@@ -1494,12 +1614,25 @@ function Gen2Commands.rollIncomingCall(data, save, mapDef, tod, minutes, entranc
   local id = callers[math.random(#callers)]
   local script = Gen2Commands.phoneReceiveScript(data, id)
   if not script then return nil end
-  -- CheckReceiveCallTimer bumps wTimeCyclesSinceLastCall then restarts the
-  -- delay, so the gap shortens with each call that lands
-  save.g2CallCycles = math.min((tonumber(save.g2CallCycles) or 0) + 1,
-                               #GEN2_CALL_DELAYS - 1)
-  save.g2LastCallMinute = minutes
+  -- InitCallReceiveDelay at the tail of Script_ReceivePhoneCall (36:$42B7):
+  -- a call that actually lands puts the cycle counter back to ZERO, i.e. the
+  -- next wait is the full 20 minutes again.  The port had this inverted --
+  -- it incremented here and never reset -- so after three calls the delay was
+  -- pinned at its 3-minute floor for the rest of the save.  The 10/5/3 rows
+  -- are for a player who stands in one place long enough to miss several
+  -- windows in a row, not a reward for answering the phone.
+  Gen2Commands.resetCallDelay(save, minutes)
   return id, script
+end
+
+-- InitCallReceiveDelay (04:$53F9).  Also called from StartMap
+-- (engine/overworld/events.asm:106), so walking through any door resets the
+-- wait to a full 20 minutes -- which is most of why calls are rare in normal
+-- play and why the port felt relentless without it.
+function Gen2Commands.resetCallDelay(save, minutes)
+  if not save then return end
+  save.g2CallCycles = 0
+  if minutes then save.g2LastCallMinute = minutes end
 end
 
 -- RandomPhoneMon (0A:$6567) and RandomPhoneWildMon (0A:$651F) are the two
@@ -1765,7 +1898,10 @@ function Commands.g2_random_phone_mon(ctx)
   local def = entry and phoneTrainerDef(data, entry)
   local party = def and def.parties and def.parties[entry.trainer or 1]
   if party and #party > 0 then
-    ctx.game.stringBuffer = speciesName(data, party[math.random(#party)].species)
+    -- RandomPhoneMon (0A:$6567) copies into wStringBuffer4 explicitly
+    -- (`ld de, wStringBuffer4 / CopyBytes`, engine/overworld/wildmons.asm),
+    -- which is the buffer the "my <mon> is doing great" lines splice.
+    setBuffer(ctx.game, 4, speciesName(data, party[math.random(#party)].species))
   end
 end
 
@@ -1782,7 +1918,8 @@ function Commands.g2_random_phone_wild_mon(ctx)
   -- `Random / and 3`: only the first FOUR rows of the time band are sampled
   if slots and #slots > 0 then
     local row = slots[math.random(math.min(4, #slots))]
-    if row then ctx.game.stringBuffer = speciesName(data, row.species) end
+    -- wStringBuffer4, same as RandomPhoneMon above
+    if row then setBuffer(ctx.game, 4, speciesName(data, row.species)) end
   end
 end
 
@@ -1825,7 +1962,7 @@ function Commands.g2_random_unseen_wild_mon(ctx)
   end
   local dex = ctx.save.pokedex
   if dex and dex.seen and dex.seen[species] then return nothing() end
-  ctx.game.stringBuffer = speciesName(data, species)
+  setBuffer(ctx.game, 4, speciesName(data, species))
   ctx.g2Var, ctx.lastCheck = 0, false
 end
 
@@ -2258,7 +2395,11 @@ local APRICORNS = { 85, 89, 92, 93, 97, 99, 101 }
 function Commands.g2_select_apricorn(ctx)
   local game, runner, save = ctx.game, ctx.runner, ctx.save
   local Bag = require("src.inventory.Bag")
-  local picked, items = 0, {}
+  local Menu = require("src.ui.Menu")
+  local picked, held, items = 0, 0, {}
+  -- SelectApricornForKurt zeroes wKurtApricornQuantity on entry, so a
+  -- cancelled pick cannot leave the previous count standing.
+  save.g2KurtApricorns = 0
   for _, id in ipairs(APRICORNS) do
     local key = string.format("ITEM_%03d", id)
     local qty = save.inventory and save.inventory[key] or 0
@@ -2266,7 +2407,7 @@ function Commands.g2_select_apricorn(ctx)
       local def = game.data.items and game.data.items[key]
       items[#items + 1] = {
         label = string.format("%s x%d", (def and def.name) or key, qty),
-        onSelect = function() picked = id runner:resume() end,
+        onSelect = function() picked, held = id, qty runner:resume() end,
       }
     end
   end
@@ -2274,14 +2415,45 @@ function Commands.g2_select_apricorn(ctx)
     ctx.g2Var, ctx.lastCheck = 0, false
     return
   end
-  game.stack:push(require("src.ui.Menu").new(game, items, {
+  game.stack:push(Menu.new(game, items, {
     onCancel = function() runner:resume() end,
   }))
   runner:yield()
-  if picked ~= 0 then
-    Bag.remove(save, string.format("ITEM_%03d", picked), 1)
+  if picked == 0 then
+    ctx.g2Var, ctx.lastCheck = 0, false
+    return
   end
-  ctx.g2Var, ctx.lastCheck = picked, picked ~= 0
+
+  -- "How many should I make?" -- Kurt_SelectQuantity (engine/events/kurt.asm)
+  -- loads wItemQuantity with how many of that apricorn you HAVE and lets you
+  -- scroll 1..that, then Kurt_GiveUpSelectedQuantityOfSelectedApricorn takes
+  -- exactly that many and the count goes into wKurtApricornQuantity --
+  -- VAR_KURT_APRICORNS, which the `verbosegiveitemvar` on the collection
+  -- branch reads back to decide how many balls to hand over.
+  --
+  -- Taking one apricorn and never writing that var is what left the var at 0
+  -- and, with verbosegiveitemvar unlowered as well, Kurt holding a ball he
+  -- could never give.
+  local count = 1
+  if held > 1 then
+    local rows = {}
+    for n = 1, held do
+      rows[#rows + 1] = {
+        label = string.format("x%d", n),
+        onSelect = function() count = n runner:resume() end,
+      }
+    end
+    game.stack:push(Menu.new(game, rows, {
+      -- backing out of the quantity box returns to the apricorn list on
+      -- hardware; one apricorn is the closest single-step equivalent here
+      onCancel = function() count = 1 runner:resume() end,
+    }))
+    runner:yield()
+  end
+  count = math.max(1, math.min(count, held))
+  Bag.remove(save, string.format("ITEM_%03d", picked), count)
+  save.g2KurtApricorns = count
+  ctx.g2Var, ctx.lastCheck = picked, true
 end
 
 -- ---------------------------------------------------------------------------
@@ -3939,14 +4111,22 @@ function Commands.g2_bug_contest_drop_off(ctx)
   end
 end
 
+-- ContestReturnMons (04:$7A31).  BugContestResults_FinishUp runs this AFTER
+-- the prize has been handed over (engine/events/std_scripts.asm:352), so this
+-- is the safe point to drop the whole run: the placing the BugContestResults_*
+-- branches needed has already been read.
 function Commands.g2_bug_contest_return(ctx)
   local BugContest = require("src.world.BugContest")
   local save = ctx.save
   local state = BugContest.state(save)
   BugContest.finish(ctx.game)
-  if not (state and state.party) then return end
-  for _, mon in ipairs(state.party) do save.party[#save.party + 1] = mon end
-  state.party = nil
+  if state and state.party then
+    for _, mon in ipairs(state.party) do save.party[#save.party + 1] = mon end
+    state.party = nil
+  end
+  -- Nothing left to read.  A run that lingers here is one the next entry
+  -- inherits -- its clock, its ball count and its placing.
+  BugContest.clear(save)
 end
 
 -- SelectRandomBugContestContestants (04:$79A8) re-rolls the AI field.
