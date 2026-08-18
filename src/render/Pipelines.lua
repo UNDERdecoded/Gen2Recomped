@@ -227,13 +227,32 @@ end
 -- Restore levels from a loaded options table.  A pipeline whose mod is gone
 -- keeps its stored level untouched in the bucket (so re-enabling the mod
 -- restores the mode) but contributes nothing while absent.
+--
+-- NO STORED PREFERENCE IS NOT "OFF".
+--
+-- This wiped `levels` and read every id out of the bucket with `or 0`, so a
+-- pipeline the player has never touched was forced off -- including one a mod
+-- had just switched ON for itself at registration, which is the only way a
+-- mod can ship a pipeline that is enabled by default.  The first applyOptions
+-- after load silently undid it.
+--
+-- That is not a display nicety: a mod may put real per-frame work in a
+-- pipeline callback (STADIUM2_OVERWORLD_MODELS drives its entire wild-Pokemon
+-- AI from one), and `present` only runs while the level is above zero.  So
+-- the Pokemon spawned, never ticked, never moved, never made contact and
+-- never started a battle -- "the wild Pokemon do nothing" -- with nothing in
+-- any log to say why, because nothing had failed.
+--
+-- A stored value still wins outright; absence now means "leave it as it is".
 function Pipelines.applyOptions(opts)
   local bucket = type(opts) == "table" and opts.pipelines or nil
+  local live = levels
   levels = {}
   broken = {}
   local world = nil
   for _, entry in ipairs(Pipelines.list()) do
-    local stored = type(bucket) == "table" and bucket[entry.id] or 0
+    local stored = type(bucket) == "table" and bucket[entry.id] or nil
+    if stored == nil then stored = live[entry.id] end
     local level = math.floor(tonumber(stored) or 0)
     if level < 0 then level = 0 end
     local max = Pipelines.maxLevel(entry.id)

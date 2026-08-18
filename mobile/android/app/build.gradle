@@ -38,10 +38,42 @@ android {
             ORIENTATION:project.properties["app.orientation"],
         ]
     }
+    // Android identifies an installed app by package name AND signing
+    // certificate.  With no signingConfigs block, Gradle signs debug builds
+    // with whatever sits at ~/.android/debug.keystore -- and an ephemeral CI
+    // runner has no such file, so Gradle GENERATED A NEW KEY ON EVERY RUN.
+    // No release could upgrade any other, which is the "App not installed as
+    // package conflicts with an existing package" players hit on update.
+    //
+    // release.yml copying the committed keystore into ~/.android fixes that,
+    // but it leaves the signature depending on $HOME and on AGP's keystore
+    // lookup order (ANDROID_SDK_HOME / ANDROID_PREFS_ROOT / ANDROID_USER_HOME
+    // all win over user.home when the environment sets them).  Naming the file
+    // here takes the environment out of it: the same key signs the APK on CI,
+    // on a dev machine, and inside the space-free shadow tree that
+    // build_android.sh rsyncs to when the checkout path contains spaces.
+    //
+    // These are the standard, public Android debug credentials -- nothing here
+    // is a secret.  See docs/android-signing.md.
+    signingConfigs {
+        stable {
+            storeFile rootProject.file("debug.keystore")
+            storePassword "android"
+            keyAlias "androiddebugkey"
+            keyPassword "android"
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig signingConfigs.stable
+        }
         release {
             minifyEnabled true
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            // The shipping task is assembleEmbedNoRecordDebug, but pin this
+            // too so a future switch to the release variant cannot silently
+            // produce an unsigned -- or differently signed -- APK.
+            signingConfig signingConfigs.stable
         }
     }
     flavorDimensions = ['mode', 'recording']
