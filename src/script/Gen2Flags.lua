@@ -1349,8 +1349,19 @@ Gen2Flags.ENGINE_FLAG_NAMES = {
   [92] = "ENGINE_INDIGO_PLATEAU_RIVAL_FIGHT",
 }
 
+-- The name for an engine flag ALREADY in this port's (Gold) numbering -- what
+-- engine code asks for when it knows the row, as opposed to scriptFlag below,
+-- which is handed a raw cartridge index and has to correct Crystal's inserted
+-- row first.
+--
+-- It goes through engineFlagNames() rather than reading the Gold table
+-- directly so that Prism, whose EngineFlags list is its own and not Gold's
+-- with insertions, answers with the same string its scripts write.  Reading
+-- the Gold table here meant engine code and script code kept two different
+-- keys for the same flag on Prism.
 function Gen2Flags.engineFlag(n)
-  return Gen2Flags.ENGINE_FLAG_NAMES[n] or string.format("FLAG_G2_%04d", n)
+  local names = Gen2Flags.engineFlagNames()
+  return names[n] or string.format("FLAG_G2_%04d", n)
 end
 
 -- Crystal's EngineFlags table is Gold's with ONE row inserted, and every row

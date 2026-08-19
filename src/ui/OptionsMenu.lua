@@ -225,6 +225,32 @@ local function buildRows(game)
         require("src.ui.PartyMenu").forgetIconCache()
         return true
       end },
+    -- PKMN ART / BATTLE PKMN: swap the four-shade cartridge pic for a live
+    -- Stadium 2 model, in the menus and in battle respectively.  Two rows
+    -- rather than one because they cost very differently -- a menu shows one
+    -- model on an otherwise still screen, a battle shows two while everything
+    -- else is moving -- and wanting Stadium portraits does not mean wanting
+    -- the battle redrawn.  Both default to GAME BOY.
+    { id = "menuArt", label = Strings("PKMN ART"),
+      value = function(g)
+        return require("src.render.StadiumArt").menuMode(g) == "stadium"
+               and Strings("STADIUM") or Strings("GAME BOY")
+      end,
+      step = function(g)
+        local o = g.save.options
+        o.menuArt = (o.menuArt == "stadium") and "gb" or "stadium"
+        return true
+      end },
+    { id = "battleArt", label = Strings("BATTLE PKMN"),
+      value = function(g)
+        return require("src.render.StadiumArt").battleMode(g) == "stadium"
+               and Strings("STADIUM") or Strings("GAME BOY")
+      end,
+      step = function(g)
+        local o = g.save.options
+        o.battleArt = (o.battleArt == "stadium") and "gb" or "stadium"
+        return true
+      end },
     { id = "ruleset", label = Strings("RULESET"),
       value = function(g) return rulesetName(g) end,
       step = function(g, dir)
@@ -481,6 +507,20 @@ local function buildRows(game)
     local filtered = {}
     for _, row in ipairs(rows) do
       if row.id ~= "pikaVol" then filtered[#filtered + 1] = row end
+    end
+    rows = filtered
+  end
+  -- PKMN ART / BATTLE PKMN only where something can actually serve a render:
+  -- the Stadium mod loaded, with a cartridge imported and its packs built.
+  -- An option that visibly does nothing is worse than an absent one -- the
+  -- player flips it, sees no change, and reasonably concludes the feature is
+  -- broken, which is a support thread rather than a setting.
+  if not require("src.render.StadiumArt").available(game) then
+    local filtered = {}
+    for _, row in ipairs(rows) do
+      if row.id ~= "menuArt" and row.id ~= "battleArt" then
+        filtered[#filtered + 1] = row
+      end
     end
     rows = filtered
   end

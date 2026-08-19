@@ -181,6 +181,91 @@ local function syntheticGen2Tileset(id)
   }
 end
 
+-- ------- Gen 2 BG palettes, published where a renderer can find them
+--
+-- The ROM colours the overworld in two halves: the tileset's PalMap says
+-- which of eight palettes each 8x8 tile wears, and EnvironmentColorsPointers
+-- says what those eight palettes ARE for this map's environment at this time
+-- of day (LoadMapPals).  The importer writes both onto the tileset record --
+-- `palMap` and `palColorsByTod` -- and TileRenderer bakes them into the atlas
+-- it draws with.  So the data was always here; it was only ever reachable by
+-- knowing those two field names.
+--
+-- That is fine for the 2D renderer, which lives in this repo.  It is not fine
+-- for anything ELSE that has to reproduce the same colouring -- a voxel or 3D
+-- pipeline meshes the map once and samples the atlas directly, so it cannot
+-- use the per-quad bake and must do the substitution itself, landing on
+-- exactly the colours the 2D tiles would have.  Handing it the raw generated
+-- sheet instead gives a correct world in four shades of grey, which is what
+-- STADIUM2_OVERWORLD_MODELS rendered: geometry, lighting and shadows all
+-- right, every surface monochrome.
+--
+-- Two names make that reachable:
+--
+--   Data.gen2Palettes[tilesetId][tod] -> { pal1 .. pal8 }, pal = {r,g,b} x4
+--     the palette SET, addressed the way the ROM addresses it.  A live view
+--     over self.tilesets rather than a copy, so a mod that replaces a
+--     tileset's colours is seen by the next lookup.
+--
+--   tileset.tilePalettes                tileset.palMap, one-based
+--     the tile -> palette-slot map under the name the other engines in this
+--     lineage use.  NOT an alias: palMap holds the raw ROM nibble, 0-7, and
+--     gen2TileColors adds the one when it indexes palColors.  A reader given
+--     the raw table has no way to know that, and one that assumes a direct
+--     index silently draws every tile in its neighbour's colours -- grass in
+--     the tree palette, water in the sand palette -- which looks like a
+--     plausible palette rather than a bug.  So this table holds 1-8 and is
+--     indexable as-is.  It costs one array per tileset, once.
+local GEN2_TOD_ROWS = { "MORN", "DAY", "NITE", "DARK" }
+
+local function gen2PaletteRows(tileset)
+  if type(tileset) ~= "table" then return nil end
+  local byTod = tileset.palColorsByTod
+  if type(byTod) == "table" then return byTod end
+  -- A cache extracted before palColorsByTod existed carries one row, and that
+  -- row is the ROM's DAY row.  Answer every time of day with it rather than
+  -- nothing: a slightly-too-bright cave beats a grey world.
+  local single = tileset.palColors
+  if type(single) ~= "table" then return nil end
+  local rows = {}
+  for _, tod in ipairs(GEN2_TOD_ROWS) do rows[tod] = single end
+  return rows
+end
+
+function Data:publishGen2Palettes()
+  local tilesets = self.tilesets
+  if type(tilesets) ~= "table" then return false end
+
+  local any = false
+  for _, tileset in pairs(tilesets) do
+    if type(tileset) == "table" then
+      if tileset.tilePalettes == nil and type(tileset.palMap) == "table" then
+        local slots = {}
+        for index = 1, #tileset.palMap do
+          slots[index] = (tonumber(tileset.palMap[index]) or 0) + 1
+        end
+        tileset.tilePalettes = slots
+      end
+      if gen2PaletteRows(tileset) then any = true end
+    end
+  end
+
+  -- Publishing an EMPTY table would be worse than publishing nothing: a
+  -- reader that checks `data.gen2Palettes` for "does this game have ROM
+  -- colours at all" would be told yes and then fail per map, which is the
+  -- harder failure to diagnose.  Gen 1 and a colourless Gen 2 cache both
+  -- leave the name absent.
+  if not any then
+    self.gen2Palettes = nil
+    return false
+  end
+
+  self.gen2Palettes = setmetatable({}, {
+    __index = function(_, id) return gen2PaletteRows(tilesets[id]) end,
+  })
+  return true
+end
+
 local function seedMissingGen2Tilesets(self)
   local tilesets = self.tilesets or {}
   local needed = {}
@@ -572,6 +657,7 @@ function Data:seedDefaults()
         or self.tilesets.TilesetPlayersHouse
     end
     seedMissingGen2Tilesets(self)
+    self:publishGen2Palettes()
     ensureGen2WarpFallbacks(self)
     ensureGen2HomeTextFallbacks(self)
   end

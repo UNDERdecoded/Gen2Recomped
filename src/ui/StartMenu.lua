@@ -146,7 +146,13 @@ function StartMenu.new(game)
         defaultNo = true,
         choice = function(yes)
           if not yes then return reopen() end
-          BugContest.leave(game)
+          -- StartMenu_Quit (engine/menus/start_menu.asm:411) does exactly one
+          -- thing on YES: FarQueueScript BugCatchingContestReturnToGateScript.
+          -- It does NOT judge, score or tear the run down first -- all of that
+          -- is inside the script it queues, and it has to happen AT THE GATE,
+          -- in the cartridge's order.  Ending the run here as well meant
+          -- judging later scored a run that had already been zeroed, so the
+          -- prize was always the consolation BERRY.
           game.overworld:bugContestReturnToGate()
         end,
       }))

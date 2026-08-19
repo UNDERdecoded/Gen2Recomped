@@ -684,6 +684,57 @@ end
 -- only ever be right for the base games.  TypeNames is a 28-entry pointer
 -- list in type-id order in every Gen 2 ROM, so prefer the names the ROM
 -- itself prints and keep the static table as the fallback.
+-- The PACK's bottom box: two lines of description per item.
+--
+-- `ItemDescriptions` is a table of 2-byte pointers in item order, each into
+-- the same bank, each pointing at a $50-terminated string -- the same shape
+-- TypeNames uses above. What differs is that a description is TWO LINES: $4E
+-- ends the first and the decoder must keep that break, because the box it
+-- lands in is two rows tall and a run-together string overflows the row and
+-- gets clipped rather than wrapped.
+--
+-- Read one index at a time rather than sweeping the table. The table has
+-- exactly NUM_ITEMS entries and nothing marks its end, so a sweep sized to
+-- "about 300" reads whatever data follows it as pointers and decodes it as
+-- text; asking only for indices that have an item means never stepping off
+-- the end. Memoised because the caller walks every item.
+--
+-- A method rather than a file-scope local ON PURPOSE: this chunk sits on Lua
+-- 5.1's 200-local ceiling (see the note above GEN2_TYPES) and one more would
+-- be a LOAD error, not a runtime one.
+function RomExtractorGen2:gen2ItemDescription(index)
+  if type(index) ~= "number" or index < 1 then return nil end
+  self._itemDescriptions = self._itemDescriptions or {}
+  local memo = self._itemDescriptions
+  if memo[index] ~= nil then return memo[index] or nil end
+
+  local text = false
+  local sym = self:symbol("ItemDescriptions")
+  if sym and self.rom then
+    pcall(function()
+      local address = self.rom:word(sym.bank, sym.address + (index - 1) * 2)
+      local raw = self.rom:bytes(sym.bank, address, 160)
+      local lines, line = {}, {}
+      for n = 1, #raw do
+        local b = raw[n]
+        if b == 0x50 then break end
+        if b == 0x4E then
+          lines[#lines + 1] = table.concat(line)
+          line = {}
+        else
+          local c = GEN2_CHARMAP[b]
+          if c then line[#line + 1] = c end
+        end
+      end
+      lines[#lines + 1] = table.concat(line)
+      local out = table.concat(lines, "\n")
+      if not out:match("^%s*$") then text = out end
+    end)
+  end
+  memo[index] = text
+  return text or nil
+end
+
 function RomExtractorGen2:gen2TypeName(id)
   if not self._typeNames then
     local names = {}
@@ -1637,6 +1688,10 @@ function RomExtractorGen2:extractScaffoldCore()
         if type(entry) == "table" and type(entry.index) == "number" then
           local n = romNames[entry.index]
           if n then entry.name = n; entry.source = "ROM:ItemNames[" .. entry.index .. "]" end
+          -- what the PACK prints in its bottom box while the cursor is on
+          -- this row (engine/items/pack.asm); absent on a ROM whose
+          -- ItemDescriptions symbol is missing, and the pack falls back
+          entry.description = self:gen2ItemDescription(entry.index)
           if attrs then
             local row = attrs.address + (entry.index - 1) * GEN2_ITEM_ATTR_BYTES
             local ok, price = pcall(function() return self.rom:word(attrs.bank, row) end)

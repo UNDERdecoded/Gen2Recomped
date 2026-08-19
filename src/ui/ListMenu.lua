@@ -440,15 +440,25 @@ function ListMenu:draw()
     local money = ("¥%d"):format(self.money and self.money() or 0)
     Font.draw(money, 152 - Font.width(money), 8)
   end
+  -- The footer may be a FUNCTION of the highlighted row, not just a string.
+  -- Gen 2's pack prints the item's own description here and repaints it on
+  -- every cursor move (UpdateItemDescription), so the content depends on the
+  -- SELECTION rather than on the screen -- and a value captured once at
+  -- construction can only ever be the row the list opened on.
+  local footer = self.footer
+  if type(footer) == "function" then
+    local okFooter, text = pcall(footer, self, self.items and self.items[self.index])
+    footer = okFooter and text or nil
+  end
   -- the pack's description box (UpdateItemDescription) is always up
-  if self.dialogue or self.gen2Bag or (self.messageBox and self.footer) then
+  if self.dialogue or self.gen2Bag or (self.messageBox and footer) then
     -- standard bottom text box (PrintText); long prompts wrap and keep
     -- their last two lines, like the GB's scrolled box (#115/#174)
     Font.drawBox(0, 12, 20, 6)
     love.graphics.setColor(0, 0, 0, 1)
-    if self.footer then
+    if footer then
       local flat = {}
-      for _, page in ipairs(require("src.render.TextBox").paginate(self.footer)) do
+      for _, page in ipairs(require("src.render.TextBox").paginate(footer)) do
         for _, line in ipairs(page) do flat[#flat + 1] = line end
       end
       local y = 112
@@ -457,10 +467,10 @@ function ListMenu:draw()
         y = y + 16
       end
     end
-  elseif self.footer then
+  elseif footer then
     -- bare footer (bag money line, etc.)
     local flat = {}
-    for _, page in ipairs(require("src.render.TextBox").paginate(self.footer)) do
+    for _, page in ipairs(require("src.render.TextBox").paginate(footer)) do
       for _, line in ipairs(page) do flat[#flat + 1] = line end
     end
     local y = (#flat >= 2) and 120 or 136

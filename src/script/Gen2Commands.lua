@@ -469,24 +469,28 @@ Gen2Commands.setStringBuffer = setBuffer
 Gen2Commands.bufferSlot = bufferSlot
 
 -- Script_getmoney (25:$7583): the player's money, printed for the box that
--- follows.
-function Commands.g2_buffer_money(ctx)
-  ctx.game.stringBuffer = tostring(math.floor(tonumber(ctx.save.money) or 0))
+-- follows.  Like every other get*, it ends in GetStringBuffer, so it names a
+-- slot -- see the note by L.getnum in Gen2ScriptVM for what collapsing them
+-- onto one buffer cost.
+function Commands.g2_buffer_money(ctx, buffer)
+  setBuffer(ctx.game, bufferSlot(buffer),
+            tostring(math.floor(tonumber(ctx.save.money) or 0)))
 end
 
 -- Script_getcoins (25:$7598).
-function Commands.g2_buffer_coins(ctx)
-  ctx.game.stringBuffer = tostring(math.floor(tonumber(ctx.save.coins) or 0))
+function Commands.g2_buffer_coins(ctx, buffer)
+  setBuffer(ctx.game, bufferSlot(buffer),
+            tostring(math.floor(tonumber(ctx.save.coins) or 0)))
 end
 
 -- Script_getnum (25:$75AD): wScriptVar as a decimal.
-function Commands.g2_buffer_num(ctx)
-  ctx.game.stringBuffer = tostring(math.floor(scriptVar(ctx)))
+function Commands.g2_buffer_num(ctx, buffer)
+  setBuffer(ctx.game, bufferSlot(buffer), tostring(math.floor(scriptVar(ctx))))
 end
 
 -- Script_getcurlandmarkname (25:$755B): the landmark the player is standing
 -- in, by name.  The town map record is where the port keeps landmark names.
-function Commands.g2_buffer_landmark(ctx)
+function Commands.g2_buffer_landmark(ctx, buffer)
   local ow = ctx.overworld
   local def = ow and ow.map and ow.map.def
   local landmark = def and def.landmark
@@ -495,7 +499,7 @@ function Commands.g2_buffer_landmark(ctx)
     and (town.landmarks[landmark] or town.landmarks[tostring(landmark)])
   local name = entry and entry.name
   if type(name) == "string" then
-    ctx.game.stringBuffer = (name:gsub("[\n\f\v]", " "))
+    setBuffer(ctx.game, bufferSlot(buffer), (name:gsub("[\n\f\v]", " ")))
   end
 end
 
@@ -1386,22 +1390,22 @@ end
 -- writetext splices back out ("{RAM:wStringBuffer1}").  The port keeps one
 -- buffer, so the buffer index operand is dropped.  Left unlowered these lines
 -- printed whatever was named last, several scenes ago.
-function Commands.g2_getitemname(ctx, itemId)
+function Commands.g2_getitemname(ctx, itemId, buffer)
   local def = ctx.game.data.items[itemId]
-  ctx.game.stringBuffer = def and def.name or itemId
+  setBuffer(ctx.game, bufferSlot(buffer), def and def.name or itemId)
 end
 
-function Commands.g2_getmonname(ctx, species)
+function Commands.g2_getmonname(ctx, species, buffer)
   local def = ctx.game.data.pokemon[species]
-  ctx.game.stringBuffer = def and def.name or species
+  setBuffer(ctx.game, bufferSlot(buffer), def and def.name or species)
 end
 
 -- GetString is the same idea for a name that is neither an item nor a species
 -- -- "EXPN CARD", "RADIO CARD", "GEAR", "EGG", "COIN".  The extractor resolves
 -- the pointer to the literal, so there is nothing to look up here.
-function Commands.g2_getstring(ctx, text)
+function Commands.g2_getstring(ctx, text, buffer)
   if type(text) ~= "string" or text == "" then return end
-  ctx.game.stringBuffer = text
+  setBuffer(ctx.game, bufferSlot(buffer), text)
 end
 
 function Commands.g2_check_poke(ctx, species)
@@ -2056,6 +2060,15 @@ function Commands.g2_readvar(ctx, var)
     -- BoxFreeSpace: the port never fills a box, so every script that
     -- branches on "is the box full" must take the not-full path
     ctx.g2Var = 20
+  elseif var == 17 then
+    -- wBugContestMinsRemaining.  StartBugContestTimer writes 20 minutes / 0
+    -- seconds and the timer counts down, so this is the WHOLE minutes left --
+    -- which is why the gate officer's line is `readvar VAR_CONTESTMINUTES /
+    -- addval 1`, rounding 19:37 up to "20 minutes".  Unhandled it fell through
+    -- to 0 and he told everyone they had one minute left, however long they
+    -- had just walked in.
+    local BugContest = require("src.world.BugContest")
+    ctx.g2Var = math.floor(BugContest.secondsLeft(ctx.save) / 60)
   elseif var == 7 then
     -- CountBadges (03:$41BE) is `ld hl, wBadges / ld b, 2 / CountSetBits`,
     -- i.e. both badge bytes.  This used to walk a `save.badges` table that
@@ -4117,52 +4130,148 @@ end
 -- 1 means fainted, and in that case NOTHING is dropped off: the ROM returns
 -- before it masks the party.
 function Commands.g2_bug_contest_drop_off(ctx)
+  local fainted = require("src.world.BugContest").holdParty(ctx.save)
+  setScriptVar(ctx, fainted and 1 or 0)
+end
+
+-- ContestReturnMons (contest_2.asm:99) hands the held party back AND NOTHING
+-- ELSE.  It is not the end of the run: two lines later
+-- BugContestResults_DidNotLeaveMons runs `special CheckPartyFullAfterContest`,
+-- which is what actually consumes the caught mon.
+--
+-- This used to call finish() AND clear() as well, which wiped `caught` and
+-- `scores` before that point.  Three of the reported symptoms came out of
+-- those two extra lines: the caught mon vanished instead of joining the party,
+-- judging scored an empty catch so the prize was ALWAYS the consolation BERRY,
+-- and -- because the results script only reaches this special when the player
+-- left mons behind -- a player who entered with a single Pokemon never cleared
+-- the run at all.
+--
+-- It is also the wrong place to end a run for a plainer reason: the script
+-- BRANCHES around it.  `checkevent EVENT_LEFT_MONS_WITH_CONTEST_OFFICER /
+-- iffalse BugContestResults_DidNotLeaveMons` skips it entirely for a one-mon
+-- party, which is what "it takes my Pokemon and doesn't give them back, or
+-- doesn't take them at all, it seems back and forth" was.
+function Commands.g2_bug_contest_return(ctx)
+  require("src.world.BugContest").returnParty(ctx.save)
+end
+
+-- CheckPartyFullAfterContest (engine/pokemon/caught_data.asm:1).  THE LAST
+-- special the results script runs, and the one that was missing entirely --
+-- Gen2ScriptVM maps it to this name, no handler answered to it, and
+-- ScriptRunner logs "unknown command" and skips the row.  That is why the
+-- Pokemon you spent the whole contest catching was never yours: nothing ever
+-- put it in the party.
+--
+-- The ROM's three answers, which the very next `ifequal` pair tests:
+--     BUGCONTEST_CAUGHT_MON 0  -- it joined the party
+--     BUGCONTEST_BOXED_MON  1  -- the party was full, so it went to a box
+--                                 (the ROM reports this even when the box is
+--                                 full too and the mon is lost -- .BoxFull
+--                                 falls through into the same tail)
+--     BUGCONTEST_NO_CATCH   2  -- nothing was caught
+-- Only 1 prints "your party is full" text, so a skipped special left that
+-- `ifequal` reading a stale answer and the script could miss its
+-- `setscene NOOP` -- which is what let the officer ask "are you finished?"
+-- again, and hand over another prize, on every single map load.
+--
+-- The caught mon is stamped with the player as OT and National Park as the
+-- catch location, like SetCaughtData does.  The ROM also offers a nickname
+-- here (GiveANickname_YesNo); the port does not yet, and the mon arrives under
+-- its species name.
+function Commands.g2_contest_party_full(ctx)
   local BugContest = require("src.world.BugContest")
   local save = ctx.save
-  local lead = save.party and save.party[1]
-  if not lead or (tonumber(lead.hp) or 0) <= 0 then
-    -- .fainted: the officer refuses, and the party is left alone
-    ctx.g2Var, ctx.lastCheck = 1, true
+  local mon = BugContest.takeCaught(save)
+  -- End the run HERE, not in ContestReturnMons: this row runs on every path
+  -- through the results script, so it is the one place a one-mon party and a
+  -- full one agree on.  clear() hands back anything still held.
+  BugContest.clear(save)
+  if not mon then
+    setScriptVar(ctx, 2)                    -- BUGCONTEST_NO_CATCH
     return
   end
-  ctx.g2Var, ctx.lastCheck = 0, false
-  local state = BugContest.state(save)
-  if not state then return end
-  if #save.party <= 1 then return end
-  -- The ROM "masks" the rest of the party by writing 1 to wPartyCount and a
-  -- terminator over the second species; the mons themselves never move.  The
-  -- port holds them aside instead -- same effect -- but rebuild the array
-  -- rather than nilling entries in place, which leaves `#` undefined mid-loop.
-  local held, keep = {}, { lead }
-  for index = 2, #save.party do held[#held + 1] = save.party[index] end
-  for index = #save.party, 2, -1 do save.party[index] = nil end
-  save.party[1] = keep[1]
-  state.party = held
-end
-
--- ContestReturnMons (04:$7A31).  BugContestResults_FinishUp runs this AFTER
--- the prize has been handed over (engine/events/std_scripts.asm:352), so this
--- is the safe point to drop the whole run: the placing the BugContestResults_*
--- branches needed has already been read.
-function Commands.g2_bug_contest_return(ctx)
-  local BugContest = require("src.world.BugContest")
-  local save = ctx.save
-  local state = BugContest.state(save)
-  BugContest.finish(ctx.game)
-  if state and state.party then
-    for _, mon in ipairs(state.party) do save.party[#save.party + 1] = mon end
-    state.party = nil
+  local player = save.player or {}
+  mon.ot = mon.ot or player.name
+  mon.otId = mon.otId or player.id
+  mon.caughtLocation = mon.caughtLocation or "NATIONAL_PARK"
+  save.party = save.party or {}
+  if require("src.pokemon.Party").add(save.party, mon) then
+    setScriptVar(ctx, 0)                    -- BUGCONTEST_CAUGHT_MON
+    return
   end
-  -- Nothing left to read.  A run that lingers here is one the next entry
-  -- inherits -- its clock, its ball count and its placing.
-  BugContest.clear(save)
+  pcall(function() require("src.pokemon.Boxes").deposit(save, mon) end)
+  setScriptVar(ctx, 1)                      -- BUGCONTEST_BOXED_MON
 end
 
--- SelectRandomBugContestContestants (04:$79A8) re-rolls the AI field.
+-- SelectRandomBugContestContestants (engine/events/bug_contest/contest_2.asm:1)
+-- picks WHO YOU ARE COMPETING AGAINST, and it does it with event flags:
+--
+--     ld c, NUM_BUG_CONTESTANTS      ; clear all ten first
+--     .loop1  EventFlagAction RESET_FLAG
+--     ld c, 5                        ; then set five at random
+--     .loop2  Random, rejected at >= 250, / 25 -> 0..9
+--             already set? roll again.  otherwise SET_FLAG.
+--
+-- "Set the flag. This will cause that sprite to not be visible in the contest"
+-- is the ROM's own comment, so the FIVE IT LEAVES CLEAR are your rivals -- in
+-- the park, and again at the gate afterwards, where
+-- BugContestResults_CopyContestantsToResults and the officer's .CopyContestants
+-- `appear` exactly the ones whose A flag is clear.
+--
+-- The port only re-rolled the AI SCORES and never touched the flags. Meanwhile
+-- BugContestResults_CleanUp ends every run by SETTING all twenty of them, so
+-- after the first contest every contestant was permanently hidden: nobody in
+-- the park, and nobody standing around at the results.
+--
+-- The flag ids come off the cartridge (field.gen2BugContest.contestantFlags,
+-- from BugCatchingContestantEventFlagTable).  They must: pokecrystal numbers
+-- EVENT_BUG_CATCHING_CONTESTANT_1A at 1146 and pokegold at 1121, and the port
+-- keys event flags by that raw number.
+local BUG_CONTESTANTS_IN_PARK = 5
+
 function Commands.g2_bug_contest_select(ctx)
   local BugContest = require("src.world.BugContest")
   local state = BugContest.state(ctx.save)
   if state then state.scores = BugContest.rollContestants(ctx.game) end
+
+  local field = ctx.game.data and ctx.game.data.field
+  local def = field and field.gen2BugContest
+  local ids = def and def.contestantFlags
+  if type(ids) ~= "table" or #ids == 0 then
+    Logger.warn("bug contest: no contestant flag table; the entrants cannot "
+                .. "be picked (re-import to pick them up)")
+    return
+  end
+  local Gen2Flags = require("src.script.Gen2Flags")
+  local flags = ctx.save.flags or {}
+  ctx.save.flags = flags
+  -- .loop1: every one of them starts visible
+  for _, id in ipairs(ids) do
+    flags[Gen2Flags.eventFlag(id)] = nil
+  end
+  -- .loop2: hide five, re-rolling a duplicate exactly as the ROM does
+  local hidden, guard = 0, 0
+  while hidden < math.min(BUG_CONTESTANTS_IN_PARK, #ids) and guard < 500 do
+    guard = guard + 1
+    local pick = math.random(1, #ids)
+    local key = Gen2Flags.eventFlag(ids[pick])
+    if not flags[key] then
+      flags[key] = true
+      hidden = hidden + 1
+    end
+  end
+end
+
+-- The deferred half of a Gen2 map's onEnter: run the scene script wMapScenes
+-- names for this map, NOW -- after the map's MAPCALLBACK_NEWMAP callbacks have
+-- had their turn in the pending-script queue and had their chance to
+-- `setscene`.  See the note in Gen2ScriptVM's contributionFor for why the
+-- lookup cannot happen at onEnter time.
+function Commands.g2_run_map_scene(ctx, mapId)
+  local ow = ctx.overworld
+  if not (ow and type(mapId) == "string") then return end
+  require("src.script.Gen2ScriptVM").runMapScene(ctx.game, ow, mapId)
 end
 
 -- BugContestJudging (03:$434A) ranks the player against the field and leaves
@@ -4170,9 +4279,17 @@ end
 -- sets the script variable, which is what `ifequal` in those scripts tests:
 -- 1/2/3 for a placing and 0 for nothing.
 function Commands.g2_bug_contest_judging(ctx)
-  local placing = require("src.world.BugContest").judge(ctx.game)
-  ctx.g2Var = placing or 0
-  ctx.lastCheck = placing ~= nil
+  local BugContest = require("src.world.BugContest")
+  local placing = BugContest.judge(ctx.game)
+  -- BugContestResultsScript opens with `clearflag ENGINE_BUG_CONTEST_TIMER`,
+  -- one line above the text that leads into this special, so by the time the
+  -- judge speaks the RUN is over even though the results are not: no clock, no
+  -- Park Balls, no contest encounter table and no contest panel in the START
+  -- menu.  finish() is exactly those surfaces and nothing else -- the placing,
+  -- the caught mon and the held party all survive it, because the prize branch
+  -- and CheckPartyFullAfterContest still have to read them.
+  BugContest.finish(ctx.game)
+  setScriptVar(ctx, placing or 0)
 end
 
 function Commands.g2_diploma(ctx)
@@ -4524,8 +4641,8 @@ function Commands.g2_giveitem_var(ctx, count)
   Commands.g2_giveitem(ctx, itemFromVar(ctx), count)
 end
 
-function Commands.g2_getitemname_var(ctx)
-  Commands.g2_getitemname(ctx, itemFromVar(ctx))
+function Commands.g2_getitemname_var(ctx, buffer)
+  Commands.g2_getitemname(ctx, itemFromVar(ctx), buffer)
 end
 
 return Gen2Commands

@@ -449,6 +449,91 @@ function PaletteFX.gen2MapPalette() return gen2MapPalette end
 
 function PaletteFX.gen2Tod() return gen2Tod end
 
+-- ------- the same answer, asked about a map that is not the current one
+--
+-- Everything above is about the LIVE map: setGen2MapPalette and setGen2Tod are
+-- pushed in on map load and clock tick, and gen2Tod is the one row the baked
+-- atlases were built with.  That is all the 2D renderer needs, because the 2D
+-- renderer only ever draws the map the player is standing on.
+--
+-- A 3D or voxel pipeline does not have that luxury.  It meshes the neighbours
+-- too, so it has to ask "which palette row does THIS map def take" about a map
+-- that has not been entered, and it has to arrive at the same answer this
+-- module would -- otherwise the seam between the current map and the one north
+-- of it is a visible colour step.
+--
+-- The two functions below are that question, split the way the ROM splits it:
+-- daytimeFor picks the row (GetTimeOfDay + ReplaceTimeOfDayPals + .NeedsFlash),
+-- bgSet fetches it (LoadMapPals).  Neither reads or writes the live state, so
+-- calling them cannot disturb what the 2D atlas was baked with.
+
+-- Which of MORN / DAY / NITE / DARK a map takes.
+--
+--   mapDef     a record out of data.maps; its `mapPalette` is map header
+--              byte 7's low nibble (0 = AUTO)
+--   hour       0-23, or nil for the host clock -- a caller with its own
+--              in-game clock passes it rather than being overruled by the
+--              wall clock
+--   flashUsed  true when FLASH is lit.  nil/false does NOT mean "not dark":
+--              a caller that has no flash flag to offer gets the engine's own
+--              darkWorld state, which already folds in save.flashLit.
+function PaletteFX.daytimeFor(mapDef, hour, flashUsed)
+  -- Darkness wins outright and the clock stops mattering, which is what
+  -- .NeedsFlash does: an unlit cave is the DARKNESS row at noon.
+  if flashUsed ~= true and darkWorld then return "DARK" end
+
+  -- The map's own PALETTE_* override next -- this is why a house does not go
+  -- dark at nightfall, and it beats the clock for the same reason
+  -- ReplaceTimeOfDayPals' packed palset does.
+  local palette = tonumber(mapDef and mapDef.mapPalette) or 0
+  if palette < 0 or palette > 4 then palette = 0 end
+  local override = GEN2_MAP_PALETTE_ROW[palette]
+  if override then return override end
+
+  -- AUTO: GetTimeOfDay's own table (5:$4032 .TimeOfDayTable).
+  hour = tonumber(hour)
+  if not hour then hour = tonumber(os.date("%H")) end
+  hour = math.floor(hour or 12) % 24
+  if hour < 4 then return "NITE" end
+  if hour < 10 then return "MORN" end
+  if hour < 18 then return "DAY" end
+  return "NITE"
+end
+
+-- The eight BG palettes a map wears on a given row.
+--
+--   data      Data.gen2Palettes, or the whole Data table -- both are common
+--             at a call site that only has `game.data` in hand
+--   mapDef    a record out of data.maps
+--   daytime   a row name; anything daytimeFor returns, or a looser spelling
+--             ("NIGHT", "MORNING"), or nil for the live row
+--
+-- Returns nil rather than a guess in three cases, all of which mean "do not
+-- colour": no Gen 2 palette data (a Gen 1 game, or a cache imported before
+-- the palettes were extracted), no palettes for this map's tileset, and --
+-- the one that is a decision rather than a gap -- a COLORS mode that is
+-- asking for a DMG shade treatment instead of hardware colour.  That last
+-- one is what keeps an outside renderer honest: it colours when and only
+-- when the tiles beside it would.
+function PaletteFX.bgSet(data, mapDef, daytime)
+  if type(data) ~= "table" or type(mapDef) ~= "table" then return nil end
+  if not PaletteFX.usesGen2BgPal() then return nil end
+
+  local tilesetId = mapDef.tileset
+  if type(tilesetId) ~= "string" then return nil end
+
+  local rows = data[tilesetId]
+  if type(rows) ~= "table" and type(data.gen2Palettes) == "table" then
+    rows = data.gen2Palettes[tilesetId]
+  end
+  if type(rows) ~= "table" then return nil end
+
+  local row = GEN2_TOD_ALIAS[tostring(daytime or ""):upper()] or gen2Tod
+  local set = rows[row] or rows.DAY
+  if type(set) ~= "table" or set[1] == nil then return nil end
+  return set, row
+end
+
 function PaletteFX.usesSpriteObp(mode)
   mode = mode or PaletteFX.mode
   return mode == "ogred" and not GameVersion.isYellow()

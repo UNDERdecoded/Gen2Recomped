@@ -894,6 +894,25 @@ R.render_pipelines = {
     present = f.opt(f.fn),
     -- drop GPU objects (window resize, hot reload, mode switch)
     invalidate = f.opt(f.fn),
+    -- true = this is a DRIVER, not a display mode.
+    --
+    -- Some mods register a pipeline purely to get a per-frame callback with
+    -- the frame's context, because that is the only public seam that has one.
+    -- STADIUM2_OVERWORLD_MODELS runs its entire wild-Pokemon AI out of a
+    -- present-only pipeline for exactly that reason.  Such a pipeline is not
+    -- something the player should see in Options, and -- much more
+    -- importantly -- its level must NOT be persisted: the moment a 0 for it
+    -- lands in save.options.pipelines it wins over the level the mod set for
+    -- itself at registration, the driver stops running, and the feature dies
+    -- silently and permanently, with nothing in any log because nothing
+    -- failed.  That is how the wild Pokemon ended up standing around
+    -- unbattleable.
+    --
+    -- An internal pipeline therefore gets no options row, is never written to
+    -- or read from the save, and runs whenever `available` says yes.  Prefer
+    -- the world.tick event over this if the host emits it (it does since
+    -- 0.7.x); this exists so a driver cannot be switched off by accident.
+    internal = f.opt(f.bool),
   },
   -- a pipeline that does neither half is dead weight and would silently
   -- occupy an options row and a hotkey

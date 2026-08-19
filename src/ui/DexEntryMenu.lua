@@ -55,6 +55,11 @@ function DexEntryMenu.new(game, speciesOrOpts)
   return self
 end
 
+-- StateStack:pop calls this; the Stadium rig holds GPU buffers.
+function DexEntryMenu:exit()
+  require("src.render.StadiumArt").release(self.game, self)
+end
+
 function DexEntryMenu:update(dt)
   local input = self.game.input
   if not require("src.core.GameVersion").isGen2() then
@@ -94,7 +99,15 @@ end
 function DexEntryMenu:draw()
   DexEntryMenu.render(self.game, self.def, self.sprite, self.forceOwned,
                       self.spriteTrueColor,
-                      { page = self.page or 1, cursor = self.cursor or 1 })
+                      -- `screen` is the LIVE menu, and it is the render key
+                      -- the Stadium rig is cached under.  The rest of this
+                      -- table is rebuilt every frame, so keying on the table
+                      -- itself meant a brand-new key per frame: the model was
+                      -- thrown away and rebuilt before it could finish, every
+                      -- frame, forever, and the page just kept drawing the
+                      -- cartridge pic.
+                      { page = self.page or 1, cursor = self.cursor or 1,
+                        screen = self })
 end
 
 -- engine/pokedex/pokedex.asm Pokedex_DrawDexEntryScreenBG + pokedex_2.asm
@@ -128,7 +141,19 @@ local function renderGen2(game, def, sprite, forceOwned, trueColor, state)
   love.graphics.rectangle("fill", 5, 5, 1, 126)
   love.graphics.rectangle("fill", 153, 5, 1, 126)
 
-  if sprite then
+  -- PKMN ART = STADIUM: the player's own Stadium 2 model in the pic well,
+  -- live and slowly turning.  Only on the LIVE page (`state` is the open
+  -- menu): the two callers that pass no state are the Game Boy Printer, and
+  -- a printout of a rotating model is not a printout of a dex entry.
+  local stadium = false
+  if state and state.screen then
+    local StadiumArt = require("src.render.StadiumArt")
+    if StadiumArt.menuMode(game) == "stadium" then
+      stadium = StadiumArt.drawInto(game, state.screen, { species = def.id },
+                                    8, 8, 56, 56)
+    end
+  end
+  if sprite and not stadium then
     local w, h = sprite:getDimensions()
     local x, y = 8 + (56 - w) / 2, 8 + (56 - h) / 2
     love.graphics.setColor(1, 1, 1, 1)

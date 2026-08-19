@@ -149,6 +149,31 @@ done
 # mismatch here ships a player's ROM.
 say "pruning generated content, ROMs and backups"
 rm -rf "$STAGE/data/generated" "$STAGE/assets/generated"
+# ...and a MOD's generated content, for exactly the same reason.  The two
+# paths above are the engine's ROM import; a mod that extracts from a
+# cartridge writes its own, under its own folder, and those two rm's do not
+# reach it -- STADIUM2_OVERWORLD_MODELS/assets/generated holds 500-odd sprite
+# sheets pulled out of a Stadium 2 dump.  A payload is redistributable and
+# that art is not, so the rule has to follow the content rather than the
+# path it happens to sit at.
+#
+# This is a RELEASE GATE, not just hygiene. scripts/switch/verify_payload.sh
+# rejects the pattern `/(data|assets)/generated/` anywhere in the archive, and
+# the payload job that runs it is not continue-on-error -- so a mod folder
+# carrying its own extracted art fails the whole release, and every console
+# job with it. Pruning here is what keeps that from happening.
+#
+# No maxdepth: the rule follows the CONTENT, and a mod is free to nest its
+# assets however it likes.
+#
+# Named rather than silent: if a mod ever ships hand-authored art under a
+# folder called `generated`, this line is why it vanished, and the build log
+# is where that has to be visible.
+while IFS= read -r generated; do
+  say "pruning mod-generated content: ${generated#$STAGE/}"
+  rm -rf "$generated"
+done < <(find "$STAGE/mods" -mindepth 2 -type d \
+              \( -name generated -o -name baseroms \) 2>/dev/null)
 find "$STAGE" -type d -name '.git' -prune -exec rm -rf {} + 2>/dev/null || true
 find "$STAGE" -type f \( \
      -iname '*.gb' -o -iname '*.gbc' -o -iname '*.sav' -o -iname '*.bak' \

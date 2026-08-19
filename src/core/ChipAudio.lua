@@ -75,6 +75,13 @@ local workerReady -- nil = untried, true = running, false = unavailable
 
 local function ensureWorker()
   if workerReady ~= nil then return workerReady end
+  -- ...including the one thing music cannot do without.  Without this the
+  -- module announced "threaded worker", started a thread, and only then
+  -- discovered it had nowhere to put the buffers.
+  if not (love.audio and love.audio.newQueueableSource) then
+    workerReady = false
+    return false
+  end
   if not (love.thread and love.thread.newThread and love.audio) then
     workerReady = false
     return false
@@ -105,6 +112,29 @@ local function announcePath(path, why)
   announced = true
   require("src.core.Logger").info("chip audio: music path = %s%s",
                                   path, why and (" (" .. why .. ")") or "")
+end
+
+-- Both music paths -- threaded and synchronous -- stand on ONE call the sound
+-- effects never make: love.audio.newQueueableSource.  Effects are static
+-- Sources built from a finished SoundData; music is a queue fed a buffer at a
+-- time.  So "effects play, music does not" is not a vague symptom, it is a
+-- fingerprint, and this is the only line in the module that can print it.
+--
+-- It was being thrown away.  Source creation is wrapped in pcall and the
+-- failure returned to a caller that does not read the second value, so a host
+-- without queueable sources went silent with nothing said anywhere -- on the
+-- Switch, where there is no console, that is indistinguishable from the audio
+-- simply not being wired up.
+local queueWarned
+local function warnNoQueue(err)
+  if queueWarned then return end
+  queueWarned = true
+  require("src.core.Logger").warn(
+    "chip audio: no music source -- love.audio.newQueueableSource %s. "
+      .. "Sound effects are static Sources and are unaffected; music has no "
+      .. "other path. (%s)",
+    (love.audio and love.audio.newQueueableSource) and "failed" or "is missing",
+    tostring(err))
 end
 
 -- only the tables ChipSynth.newEngine reads for ROM songs; sent with every
@@ -165,7 +195,7 @@ local function playMusicSync(data, header, allowLoops)
   if not ok then return nil, engine end
   local ok2, source = pcall(
     love.audio.newQueueableSource, SAMPLE_RATE, 16, 2, MUSIC_BUFFER_COUNT)
-  if not ok2 then return nil, source end
+  if not ok2 or not source then warnNoQueue(source) return nil, source end
   ChipAudio.stopMusic()
   currentMusic = { source = source, engine = engine, threaded = false,
                    started = true, finished = false }
@@ -196,7 +226,7 @@ function ChipAudio.playMusic(data, header, allowLoops)
   -- build the new source before tearing the old song down
   local ok2, source = pcall(
     love.audio.newQueueableSource, SAMPLE_RATE, 16, 2, MUSIC_BUFFER_COUNT)
-  if not ok2 then return nil, source end
+  if not ok2 or not source then warnNoQueue(source) return nil, source end
   ChipAudio.stopMusic()
   musicGen = musicGen + 1
   local gen = musicGen

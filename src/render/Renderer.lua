@@ -239,6 +239,14 @@ end
 
 -- transparent: the world pass shows through (UI pass draws overlays only)
 function Renderer:beginFrame(transparent)
+  -- a frame that ends early -- a state that returns before endFrame, an error
+  -- caught upstream -- must not leak a queued native-resolution draw into the
+  -- next frame's composite
+  require("src.render.NativeOverlay").clear()
+  -- and for the same reason: a draw that raised inside a styled region left
+  -- the window style pushed, which would put the next frame's every box and
+  -- glyph in a look nothing on screen asked for
+  require("src.render.Font").clearStyles()
   self.worldActive = false
   self.uprightActive = false
   self.worldOverride = nil
@@ -713,6 +721,18 @@ function Renderer:endFrame(zones, worldZones)
     local ctx = {
       renderer = self,
       worldCanvas = self.worldCanvas, uiCanvas = self.canvas,
+      -- `sceneCanvas` is the 160x144 screen canvas under the name the hook's
+      -- first consumers were written against, and it is not decoration: a mod
+      -- laying the frame out itself needs the finished screen to put back on
+      -- top of whatever it drew underneath.  STADIUM2_OVERWORLD_MODELS' in-world
+      -- 3D battle reads exactly this, and with the field absent its very first
+      -- check -- `if not (canvas and ui) then return false end` -- failed every
+      -- frame, so the whole battle silently fell back to the flat scene while
+      -- every part of the mod reported itself installed and enabled.
+      sceneCanvas = self.canvas,
+      -- and which game this frame belongs to, which is how a mod that supports
+      -- both generations picks its layout without guessing from the metrics
+      generation = require("src.core.GameVersion").isGen2() and 2 or 1,
       worldOverride = self.worldOverride,
       worldActive = self.worldActive and true or false,
       zones = zones, worldZones = worldZones,
@@ -978,6 +998,13 @@ function Renderer:endFrame(zones, worldZones)
            p.dx - p.a.x * Ux, p.dy - p.a.y * Uy, p.dx, p.dy, p.dw, p.dh)
     end
   end
+
+  -- Native-resolution draws: geometry that was measured in 160x144 space but
+  -- must not be rasterised there.  Over the finished UI blit, using the same
+  -- origin and scale it used, so a queued rect covers exactly the pixels it
+  -- replaces -- and UNDER the wipe and veil below, which are screen-wide
+  -- effects that on hardware nothing escapes.
+  require("src.render.NativeOverlay").flush(uox, uoy, Ux, Uy)
 
   -- The battle wipe covers the whole surface, letterbox included, so it goes
   -- over the finished composite rather than under the UI blit.  On hardware

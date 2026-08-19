@@ -37,6 +37,13 @@ function Game:load()
   self.mods = ModLoader.new()
   self.mods:load(Data)
   self.modStatus = self.mods:status()
+  -- Re-derive the Gen 2 palette view over the MERGED tileset table.  A
+  -- mod that adds or replaces a tileset adds or replaces its colours with
+  -- it, and the view is only useful to a 3D pipeline if it covers those
+  -- too: an uncovered tileset renders that ONE map grey while its
+  -- neighbours are in colour, which is harder to diagnose than a whole
+  -- grey world because it reads as a bug in that map.
+  Data:publishGen2Palettes()
   -- render pipelines dispatch off the merged dataset; point them at the
   -- one the mods just merged into before anything can draw a frame
   require("src.render.Pipelines").install(Data)
@@ -78,9 +85,23 @@ function Game:load()
   -- Soft-fail: missing Discord / IPC errors must never block boot.
   pcall(function() require("src.core.DiscordPresence").init(self) end)
 
-  -- every service is up but nothing is on the stack yet; this payload is
-  -- the sanctioned way for a mod to obtain the Game object
-  ModRuntime.emit("game.ready", { game = self })
+  -- Every service is up but nothing is on the stack yet; this payload is the
+  -- sanctioned way for a mod to obtain the Game object.
+  --
+  -- It reads through to the Game as well as carrying it under `.game`.  Half
+  -- the mods written against this event treat the payload AS the game --
+  --
+  --     mod.events:on("game.ready", function(game) ... game.input ... end)
+  --
+  -- which is a fair reading of an event called "game ready", and against a
+  -- bare `{ game = self }` it silently yields nil for every field they want.
+  -- STADIUM2_OVERWORLD_MODELS' battle-controller shortcuts refused to install
+  -- with "live Game2 host has no input object" for exactly this reason, and
+  -- its party-follower bridge reads `game.world` the same way.  The metatable
+  -- costs nothing, keeps `payload.game` working for everyone who reads it the
+  -- documented way, and adds no keys -- `pairs(payload)` is unchanged.
+  ModRuntime.emit("game.ready",
+    setmetatable({ game = self }, { __index = self }))
 
   -- boot into the title screen (engine/movie/title.asm); NEW GAME runs
   -- the Oak speech + naming, CONTINUE restores the save.  The headless

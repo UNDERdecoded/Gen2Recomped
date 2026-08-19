@@ -566,7 +566,27 @@ function BagMenu.new(game, opts)
       refresh(l)
       require("src.core.Sound").play(game.data, "Press_AB")
     end or nil,
-    footer = ("¥%d"):format(game.save.money),
+    -- WHAT THE BOTTOM BOX SAYS.
+    --
+    -- Gen 1's bag has no description box; the money line is what it shows
+    -- there.  Gen 2's PACK does, and it is the item's own description,
+    -- repainted on every cursor move (UpdateItemDescription) -- so a money
+    -- string here was not just the wrong content, it was the wrong KIND of
+    -- content, and it never changed as the player scrolled.
+    --
+    -- A function of the highlighted row rather than a value, because what it
+    -- says depends on where the cursor is (see ListMenu's footer resolve).
+    --
+    -- Falls back to the money line when the description is missing.  That is
+    -- not defensive padding: `ItemDescriptions` was not extracted at all
+    -- until now, so every cache imported before this carries none and would
+    -- otherwise show an empty box on every row.  Re-importing fills them in.
+    footer = gen2 and function(_, row)
+      local def = row and row.value and game.data.items[row.value]
+      local text = def and def.description
+      if type(text) == "string" and text ~= "" then return text end
+      return ("¥%d"):format(game.save.money)
+    end or ("¥%d"):format(game.save.money),
     -- B returns to the start menu when the bag was opened from it
     onCancel = opts.onCancel,
     -- SELECT reorders items like the original bag (swap_items.asm).  A

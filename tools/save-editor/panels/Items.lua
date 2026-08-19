@@ -111,8 +111,21 @@ function M.draw(S, Kit, x, y, w, h)
   Kit.caption(x + pad, pickY + pad, "ADD ITEM")
   local qy = pickY + pad + Kit.textHeight("caption") + 8 * s
   local prevQuery = S.itemQuery or ""
-  S.itemQuery = Kit.textfield("item-query", x + pad, qy, leftW - 2 * pad, 32 * s,
+  -- A visible CLEAR beside the box, because on a device with no keyboard
+  -- nothing can reach backspace (see Kit.clearField): the pad maps A/B/start/
+  -- select/shoulders/dpad and B is already "back", so without this the search
+  -- box can only ever grow and the only way to empty it is to close the
+  -- editor.  Sized to the field's own height so it reads as part of it.
+  local clearW = 32 * s
+  local fieldW = leftW - 2 * pad - clearW - 6 * s
+  S.itemQuery = Kit.textfield("item-query", x + pad, qy, fieldW, 32 * s,
     S.itemQuery or "", "search items...")
+  if Kit.button(x + pad + fieldW + 6 * s, qy, clearW, 32 * s, "X",
+                { font = "small", radius = 8 * s }) then
+    S.itemQuery = ""
+    Kit.focus = "item-query"
+    Kit.clearField()
+  end
   -- a new query is a new list: keep the first hit on screen rather than
   -- leaving the view parked wherever the old result set had scrolled to
   if S.itemQuery ~= prevQuery then S.itemPickOffset = 0 end

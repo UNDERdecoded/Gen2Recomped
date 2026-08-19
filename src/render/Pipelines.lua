@@ -36,6 +36,22 @@ local levels = {}
 -- frame reports once instead of filling the log at 60Hz
 local broken = {}
 
+-- id -> consecutive failures.  A pipeline is not retired on its FIRST throw
+-- any more.  A 3D renderer misses a frame for reasons that have nothing to do
+-- with the mod being wrong -- a canvas that is not resident yet on the frame a
+-- map loads, a model still streaming in, a device that lost its context on a
+-- resize -- and retiring for the whole session on one of those took the
+-- feature away until the player restarted.  Worse, when the retired pipeline
+-- was an UPDATE tick the world quietly half-worked: the Stadium mod's wild
+-- Pokemon kept their sprites but never finished spawning, so they stood there
+-- unbattleable, because the tick that sets `canTriggerBattle` had been
+-- switched off two hundred frames earlier.
+--
+-- Ten in a row is a mod that is actually broken; one is a hiccup.  A run of
+-- good frames clears the count.
+local failures = {}
+local MAX_FAILURES = 10
+
 Pipelines.DEFAULT_LEVELS = { "OFF", "ON" }
 
 -- The merged dataset the records live in.  The boot singleton is the
@@ -89,6 +105,14 @@ function Pipelines.get(id)
   return type(def) == "table" and def or nil
 end
 
+-- A DRIVER, not a display mode: registered only to get a per-frame callback,
+-- with no options row and no persisted level.  See Schemas.render_pipelines
+-- for why the persistence half matters more than the row.
+function Pipelines.isInternal(id)
+  local def = Pipelines.get(id)
+  return (def and def.internal) == true
+end
+
 -- the mod that registered a pipeline, so a runtime failure lands in the
 -- feed the mod manager shows instead of only in the console
 local function ownerOf(id)
@@ -101,14 +125,33 @@ end
 -- frame must not take the frame with it: the pipeline is marked broken,
 -- attributed once, and treated as absent from then on -- which degrades to
 -- the vanilla 2D path rather than a black screen.
+-- Retire a pipeline for the rest of the session, once, with a reason.
+local function retire(id, reason)
+  if broken[id] then return end
+  broken[id] = true
+  Logger.error("render pipeline %s: %s -- disabled for this session",
+               id, tostring(reason))
+  Runtime.reportError(ownerOf(id), "render pipeline disabled: " .. tostring(reason))
+end
+Pipelines.retire = retire
+
 local function guard(id, fn, ...)
   if broken[id] then return nil end
   local ok, result = pcall(fn, ...)
-  if ok then return result end
-  broken[id] = true
-  Logger.error("render pipeline %s failed: %s -- disabled for this session",
-               id, tostring(result))
-  Runtime.reportError(ownerOf(id), "render pipeline failed: " .. tostring(result))
+  if ok then
+    failures[id] = nil
+    return result
+  end
+  local n = (failures[id] or 0) + 1
+  failures[id] = n
+  if n == 1 then
+    -- the first one is worth seeing even when the pipeline recovers, because
+    -- it is the line that names the file and the line number
+    Logger.warn("render pipeline %s failed: %s", id, tostring(result))
+  end
+  if n >= MAX_FAILURES then
+    retire(id, ("failed %d frames running (last: %s)"):format(n, tostring(result)))
+  end
   return nil
 end
 
@@ -134,11 +177,64 @@ end
 -- the engine composite that follows.  guard() catches a callback that throws;
 -- this catches one that dirties state.  A pipeline already retired skips the
 -- push/pop entirely, so the stack stays balanced.
+--
+-- IT ALSO HAS TO SURVIVE A CALLBACK THAT LEAKS PUSHES, which is a different
+-- failure and a nastier one.  LOVE's graphics stack is a small fixed depth, so
+-- a callback that pushes without popping does not fail on the frame it leaks:
+-- it leaves the stack one deeper, and sixty-odd frames later the ENGINE's own
+-- `push("all")` on the line below throws "Maximum stack depth reached (more
+-- pushes than pops?)".  That throw is OUTSIDE any pcall, so it ends the frame,
+-- the handler, and the process:
+--
+--     Error: src/render/Pipelines.lua:139: Maximum stack depth reached
+--     ...
+--     error: the game failed to start
+--
+-- and the traceback names this file rather than whoever leaked, which is a
+-- miserable thing to debug.  Two guards, both of them cheap:
+--
+--   * our own push is pcall'd, so a stack that is ALREADY full retires this
+--     pipeline instead of taking the frame down;
+--   * the callback's own pushes are COUNTED for the duration of the call, and
+--     anything it forgot to pop is popped here -- so one leaky frame cannot
+--     compound into a crash a second later, and the log names the pipeline
+--     that did it.
+--
+-- The counter shims love.graphics.push/pop for exactly the length of the call.
+-- A callback that cached those two functions in locals beforehand slips past
+-- it; the pcall on our own push is the backstop for that case.
 local function guardRender(id, fn, ...)
   if broken[id] then return nil end
-  love.graphics.push("all")
+  local g = love.graphics
+  if not pcall(g.push, "all") then
+    retire(id, "the graphics stack was already full when this pipeline ran "
+             .. "(some callback is pushing without popping)")
+    return nil
+  end
+
+  local depth = 0
+  local realPush, realPop = g.push, g.pop
+  g.push = function(...) depth = depth + 1 return realPush(...) end
+  g.pop = function(...) depth = depth - 1 return realPop(...) end
   local out = guard(id, fn, ...)
-  love.graphics.pop()
+  g.push, g.pop = realPush, realPop
+
+  if depth > 0 then
+    -- unbalanced in our favour: unwind the callback's surplus back down to the
+    -- snapshot we took above, then pop that snapshot as usual
+    for _ = 1, depth do
+      if not pcall(realPop) then break end
+    end
+    retire(id, ("left %d graphics push(es) unpopped"):format(depth))
+  elseif depth < 0 then
+    -- it popped past its own pushes and ate OURS, so the engine's state is
+    -- already whatever the callback left behind and there is no snapshot of
+    -- ours left to pop -- doing it anyway would eat the CALLER's.  Stop here
+    -- rather than making it worse.
+    retire(id, ("popped %d more graphics state(s) than it pushed"):format(-depth))
+    return out
+  end
+  realPop()
   return out
 end
 
@@ -177,16 +273,34 @@ local function excludeTilt(id, level)
   if not (def and def.drawWorld) or level <= 0 then return end
   local Tilt = require("src.render.Tilt")
   if Tilt.level > 0 then Tilt.setLevel(0) end
-  -- one world pipeline at a time, for the same reason
+  -- ONE WORLD PIPELINE AT A TIME, for the same reason.
+  --
+  -- And SAY SO.  Two mods that each render the world -- DRAMATIC_SHAPE's
+  -- `voxel` and STADIUM2_OVERWORLD_MODELS' `stadium2_gold_voxel` -- both ask
+  -- for this slot, and the loser is switched off here with nothing on screen
+  -- and nothing in the log to say it happened.  What the player sees is the
+  -- WINNER's world with the loser's features missing: 3D terrain drawn by one
+  -- mod, and the other mod's Stadium models simply absent, while both mods'
+  -- own options still read ON because neither of them turned anything off.
+  -- That is unfalsifiable from inside the game, so it is logged.
   for _, entry in ipairs(Pipelines.list()) do
     if entry.id ~= id and entry.def.drawWorld and Pipelines.level(entry.id) > 0 then
       levels[entry.id] = 0
+      Logger.warn("render pipeline %s took the world pass; %s switched off "
+        .. "(only one may draw the world). Anything %s draws INTO the world "
+        .. "-- models, entities, terrain -- will not appear.",
+        id, entry.id, entry.id)
     end
   end
 end
 
 function Pipelines.setLevel(id, level)
   if not Pipelines.get(id) then return 0 end
+  -- a driver has no ladder: it runs whenever `available` says yes
+  if Pipelines.isInternal(id) then
+    levels[id] = 1
+    return 1
+  end
   level = math.floor(tonumber(level) or 0)
   if level < 0 then level = 0 end
   local max = Pipelines.maxLevel(id)
@@ -217,9 +331,17 @@ function Pipelines.syncOptions(opts)
     opts.pipelines = bucket
   end
   for _, entry in ipairs(Pipelines.list()) do
-    bucket[entry.id] = Pipelines.level(entry.id)
-    if entry.def.drawWorld and Pipelines.level(entry.id) > 0 then
-      opts.tilt = 0
+    -- A driver is never written to the save.  Persisting one is a trap with a
+    -- long fuse: a single stored 0 outranks the level the mod sets for itself
+    -- at registration for the rest of that save's life, and the player has no
+    -- row to turn it back on with.
+    if entry.def.internal then
+      bucket[entry.id] = nil
+    else
+      bucket[entry.id] = Pipelines.level(entry.id)
+      if entry.def.drawWorld and Pipelines.level(entry.id) > 0 then
+        opts.tilt = 0
+      end
     end
   end
 end
@@ -251,19 +373,26 @@ function Pipelines.applyOptions(opts)
   broken = {}
   local world = nil
   for _, entry in ipairs(Pipelines.list()) do
-    local stored = type(bucket) == "table" and bucket[entry.id] or nil
-    if stored == nil then stored = live[entry.id] end
-    local level = math.floor(tonumber(stored) or 0)
-    if level < 0 then level = 0 end
-    local max = Pipelines.maxLevel(entry.id)
-    if level > max then level = max end
-    -- list() is priority order, so the first world pipeline with a stored
-    -- level is the one that wins; the rest restore to OFF rather than
-    -- sitting on a level that can never render
-    if entry.def.drawWorld and level > 0 then
-      if world then level = 0 else world = entry.id end
+    if entry.def.internal then
+      -- a driver is on, always: it has no ladder, and a stale 0 left in an old
+      -- save must not be able to switch it off for the life of that save
+      levels[entry.id] = 1
+      if type(bucket) == "table" then bucket[entry.id] = nil end
+    else
+      local stored = type(bucket) == "table" and bucket[entry.id] or nil
+      if stored == nil then stored = live[entry.id] end
+      local level = math.floor(tonumber(stored) or 0)
+      if level < 0 then level = 0 end
+      local max = Pipelines.maxLevel(entry.id)
+      if level > max then level = max end
+      -- list() is priority order, so the first world pipeline with a stored
+      -- level is the one that wins; the rest restore to OFF rather than
+      -- sitting on a level that can never render
+      if entry.def.drawWorld and level > 0 then
+        if world then level = 0 else world = entry.id end
+      end
+      levels[entry.id] = level
     end
-    levels[entry.id] = level
   end
   -- a restored world pipeline and tilt are two answers to the same
   -- question; the pipeline wins, as it does at every place that sets one
@@ -273,6 +402,7 @@ end
 function Pipelines.reset()
   levels = {}
   broken = {}
+  failures = {}
 end
 
 -- ------- per-frame
@@ -319,13 +449,54 @@ end
 -- The pipeline that owns the world pass right now, or nil for the vanilla
 -- flat/tilt draw.  Highest priority wins; the exclusion rules above mean
 -- there is normally only one candidate anyway.
-function Pipelines.worldPipeline()
+-- WHO OWNS THE WORLD, AND WHY NOT THE OTHERS.
+--
+-- A world pipeline that does not run leaves NOTHING on screen or in the log to
+-- say so: the frame simply falls back to the flat draw, which is a perfectly
+-- good frame.  Three separate things silence it -- level 0, an `available`
+-- gate answering no, and retirement after repeated throws -- and from inside a
+-- running game they are indistinguishable from each other and from a mod that
+-- chose to be off.  Every one of them has cost a real debugging session.
+--
+-- So the decision is reported whenever it CHANGES, with each candidate's level,
+-- retirement and `available` answer.  Only on a change: the report calls
+-- `available` a second time, and this runs every frame.
+local lastWorldReport = nil
+
+local function reportWorldPass(chosen)
+  local parts = {}
   for _, entry in ipairs(Pipelines.list()) do
-    if entry.def.drawWorld and Pipelines.eligible(entry.id) then
-      return entry.id, entry.def
+    if entry.def.drawWorld then
+      local id = entry.id
+      local avail = "n/a"
+      if entry.def.available then
+        avail = tostring(guard(id, entry.def.available) == true)
+      end
+      parts[#parts + 1] = ("%s(level=%d available=%s%s)"):format(
+        id, Pipelines.level(id), avail, broken[id] and " RETIRED" or "")
     end
   end
-  return nil
+  if not parts[1] then return end
+  Logger.warn("world pass: %s -- candidates: %s",
+    chosen or "NOBODY (flat/tilt draw)", table.concat(parts, " "))
+end
+
+function Pipelines.worldPipeline()
+  local chosen, chosenDef
+  for _, entry in ipairs(Pipelines.list()) do
+    if entry.def.drawWorld and Pipelines.eligible(entry.id) then
+      chosen, chosenDef = entry.id, entry.def
+      break
+    end
+  end
+  -- keyed on the OUTCOME, so a steady state reports once and a flap reports
+  -- each way exactly once per swing
+  local key = chosen or "\0none"
+  if key ~= lastWorldReport then
+    lastWorldReport = key
+    reportWorldPass(chosen)
+  end
+  return chosen, chosenDef
 end
 
 -- Render the world through `id`.  Returns the canvas to composite, or nil
@@ -392,7 +563,7 @@ end
 -- display hotkeys, so a mod can never shadow one.
 function Pipelines.hotkey(key, top, overworld)
   for _, entry in ipairs(Pipelines.list()) do
-    if entry.def.hotkey == key then
+    if entry.def.hotkey == key and not entry.def.internal then
       -- the gate belongs here and nowhere else: it stops the player
       -- flipping modes mid-warp or mid-cutscene, and has no say over
       -- whether an already-on mode draws
@@ -411,23 +582,27 @@ end
 function Pipelines.rows(game)
   local rows = {}
   for _, entry in ipairs(Pipelines.list()) do
-    local id = entry.id
-    rows[#rows + 1] = {
-      id = "pipeline:" .. id,
-      label = entry.def.label or id:upper(),
-      value = function() return Pipelines.levelLabel(id) end,
-      step = function(g, dir)
-        Pipelines.cycle(id, dir)
-        local opts = g and g.save and g.save.options
-        if opts then
-          Pipelines.syncOptions(opts)
-          -- the exclusion above may have switched tilt off; keep the live
-          -- module in step with the option it just wrote
-          require("src.render.Tilt").setLevel(opts.tilt or 0)
-        end
-        return true
-      end,
-    }
+    -- a driver has no ladder to show; the mod that registered it owns the
+    -- toggle, wherever it chose to put it
+    if not entry.def.internal then
+      local id = entry.id
+      rows[#rows + 1] = {
+        id = "pipeline:" .. id,
+        label = entry.def.label or id:upper(),
+        value = function() return Pipelines.levelLabel(id) end,
+        step = function(g, dir)
+          Pipelines.cycle(id, dir)
+          local opts = g and g.save and g.save.options
+          if opts then
+            Pipelines.syncOptions(opts)
+            -- the exclusion above may have switched tilt off; keep the live
+            -- module in step with the option it just wrote
+            require("src.render.Tilt").setLevel(opts.tilt or 0)
+          end
+          return true
+        end,
+      }
+    end
   end
   return rows
 end

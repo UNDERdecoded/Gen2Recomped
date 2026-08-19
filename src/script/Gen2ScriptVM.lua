@@ -192,16 +192,27 @@ L.checkjustbattled = function(_, s) emit(s, { "g2_check_just_battled" }) end
 -- ---------------------------------------------------------------------------
 
 -- Script_getmoney (25:$7583) / Script_getcoins (25:$7598) / Script_getnum
--- (25:$75AD) all end in PrintNum into a string buffer.  The port collapses
--- every wStringBuffer onto game.stringBuffer (see TextBox's text_ram
--- handling), so each of these is "put this number where {RAM:...} reads".
-L.getmoney = function(_, s) emit(s, { "g2_buffer_money" }) end
-L.getcoins = function(_, s) emit(s, { "g2_buffer_coins" }) end
-L.getnum = function(_, s) emit(s, { "g2_buffer_num" }) end
+-- (25:$75AD) all end in PrintNum and then `jp GetStringBuffer`, which reads
+-- ONE MORE script byte and indexes from wStringBuffer3 -- 0 -> 3, 1 -> 4,
+-- 2 -> 5, anything else clamped to 0 (scripting.asm:1583).  Every macro puts
+-- that buffer operand LAST.
+--
+-- Dropping it and writing the port's single legacy buffer is not harmless.
+-- BugContestResultsScript is `getnum STRING_BUFFER_3` (the placing) and then
+-- `getitemname STRING_BUFFER_4, SUN_STONE` (the prize), and
+-- ContestResults_PlayerWonAPrizeText splices BOTH:
+--
+--     "<PLAYER>, the No.@" wStringBuffer3 " finisher, wins @" wStringBuffer4 "!"
+--
+-- With one shared buffer the second write won and the line came out as
+-- "CHRIS, the No.EVERSTONE finisher, wins EVERSTONE!".
+L.getmoney = function(ir, s) emit(s, { "g2_buffer_money", ir[3] }) end
+L.getcoins = function(ir, s) emit(s, { "g2_buffer_coins", ir[2] }) end
+L.getnum = function(ir, s) emit(s, { "g2_buffer_num", ir[2] }) end
 
 -- Script_getcurlandmarkname (25:$755B) reads wMapGroup/wMapNumber, resolves
 -- the landmark and copies its name into the buffer.
-L.getcurlandmarkname = function(_, s) emit(s, { "g2_buffer_landmark" }) end
+L.getcurlandmarkname = function(ir, s) emit(s, { "g2_buffer_landmark", ir[2] }) end
 
 -- Script_loadmem (25:$7495): three GetScriptByte reads -- a WRAM address low
 -- then high, then a value -- and `ld [hl], a`.  The port keeps the same tiny
@@ -420,11 +431,14 @@ end
 L.verbosegiveitemvar = function(ir, s)
   emit(s, { "g2_verbose_give_item_var", itemId(ir[2]), ir[3] })
 end
+-- `getitemname buffer, item` -- the macro emits the ITEM first and the buffer
+-- second (`db \2 ; item` then `db \1 ; string_buffer`), so ir[2] is the item
+-- and ir[3] the buffer.  Item 0 is USE_SCRIPT_VAR.
 L.getitemname = function(ir, s)
   if ir[2] == 0 then
-    emit(s, { "g2_getitemname_var" })
+    emit(s, { "g2_getitemname_var", ir[3] })
   else
-    emit(s, { "g2_getitemname", itemId(ir[2]) })
+    emit(s, { "g2_getitemname", itemId(ir[2]), ir[3] })
   end
 end
 -- `getstring "TEXT", buffer` (GetString) copies a fixed name into a string
@@ -433,7 +447,7 @@ end
 -- buffer index is dropped the same way getitemname's is.  Left unlowered, the
 -- Lavender radio director's "<PLAYER> received the EXPN CARD!" printed
 -- whatever was in the buffer from several scenes ago -- usually a TM.
-L.getstring = function(ir, s) emit(s, { "g2_getstring", ir[2] }) end
+L.getstring = function(ir, s) emit(s, { "g2_getstring", ir[2], ir[3] }) end
 -- `gettrainername buffer, group, id` ($43) and `getlandmarkname buffer,
 -- landmark` ($A5).  Both macros write the BUFFER OPERAND LAST
 -- (macros/scripts/events.asm:450 and :1036), and GetStringBuffer
@@ -461,7 +475,7 @@ L.battletowertext = function(ir, s)
   emit(s, { "g2_battle_tower_text", ir[2] or 1 })
 end
 L.getmonname = function(ir, s)
-  emit(s, { "g2_getmonname", string.format("SPECIES_%03d", ir[2] or 0) })
+  emit(s, { "g2_getmonname", string.format("SPECIES_%03d", ir[2] or 0), ir[3] })
 end
 L.takeitem = function(ir, s) emit(s, { "take_item", itemId(ir[2]), ir[3] }) end
 L.checkitem = function(ir, s) emit(s, { "check_item", itemId(ir[2]) }) end
@@ -1481,9 +1495,30 @@ L.checkcoins = function(ir, s) emit(s, { "g2_check_coins", ir[2] }) end
 L.givecoins = function(ir, s) emit(s, { "g2_give_coins", ir[2] }) end
 L.takecoins = function(ir, s) emit(s, { "g2_give_coins", -(ir[2] or 0) }) end
 
--- checkver reports the running game: 0 = Gold/Silver, 1 = Crystal.  Left
--- unlowered the comparison read a stale var and took the Crystal branch.
-L.checkver = function(_, s) emit(s, { "g2_setvar", 0 }) end
+-- checkver reports which CARTRIDGE is running, and the answer is not the one
+-- the first cut assumed.  Script_checkver is three instructions -- it loads a
+-- single byte that sits immediately after it and writes it to wScriptVar --
+-- and that byte reads 00 in Gold, 00 in Crystal and **01 in Silver**.  So the
+-- axis is Silver vs everything else, not Crystal vs everything else.
+--
+-- Hard-coding 0 meant every `checkver; iftrue` in the game took the Gold arm
+-- while playing Silver.  Five scripts carry that branch, and all five were
+-- wrong:
+--
+--   RadioTower5FRocketBossScript   RAINBOW WING instead of SILVER WING (and
+--                                  EVENT_GOT_RAINBOW_WING instead of 121)
+--   PewterCityGrampsScript         the mirror of the same swap
+--   Lugia (Whirl Islands)          Lv70 instead of Lv40
+--   TinTowerHoOh                   Lv40 instead of Lv70
+--   GoldenrodGameCornerPrizeMon    Gold's prize list
+--
+-- The bytecode already carries both arms -- this is purely which one the
+-- comparison takes -- so no re-import is needed to pick up the fix.  A save
+-- that already took the wrong arm keeps what it was given.
+L.checkver = function(_, s)
+  emit(s, { "g2_setvar",
+            require("src.core.GameVersion").isSilver() and 1 or 0 })
+end
 
 -- swarm <type>, <mapgroup+map>: the roaming/swarm species relocation.  The
 -- port has no swarm table, so record the request rather than drop it.
@@ -1748,6 +1783,24 @@ end
 -- Build the MapScripts contribution for one map: object talk scripts keyed by
 -- the same TEXT constant the overworld dispatches on, plus onEnter for the
 -- map's scene/callback entries and onStep for its coord events.
+-- mapId -> the map's compiled scene scripts, indexed scene + 1.  Held on the
+-- module so the deferred `g2_run_map_scene` row can find them after the map's
+-- callbacks have had their turn (see the note in contributionFor).
+Gen2ScriptVM.mapScenes = Gen2ScriptVM.mapScenes or {}
+
+-- Queue the scene script wMapScenes names for `mapId` RIGHT NOW -- i.e. after
+-- the callbacks that may have just rewritten it.  Returns true when one was
+-- queued.
+function Gen2ScriptVM.runMapScene(game, overworld, mapId)
+  local scenes = Gen2ScriptVM.mapScenes[mapId]
+  if not (scenes and game and overworld) then return false end
+  local Gen2Commands = require("src.script.Gen2Commands")
+  local scene = Gen2Commands.getScene(game.save, mapId)
+  local rows = scenes[(tonumber(scene) or 0) + 1]
+  if not rows then return false end
+  return queue(overworld, rows, { mapId = mapId })
+end
+
 local function contributionFor(data, mapId, entry, mapDef)
   local contribution = {}
 
@@ -1822,7 +1875,25 @@ local function contributionFor(data, mapId, entry, mapDef)
   -- ball; without a clear, every later talk only prints "That turned out
   -- great!" and never accepts another apricorn.
   do
-    local Gen2Commands = require("src.script.Gen2Commands")
+    -- THE SCENE IS LOOKED UP AFTER THE CALLBACKS HAVE RUN, not while they are
+    -- still sitting in the queue.  A MAPCALLBACK_NEWMAP is very often a
+    -- `setscene` and nothing else -- Route36NationalParkGate's is exactly
+    --
+    --     checkflag ENGINE_BUG_CONTEST_TIMER
+    --     iftrue .BugContestIsRunning        -> setscene LEAVE_CONTEST_EARLY
+    --     setscene SCENE_ROUTE36NATIONALPARKGATE_NOOP
+    --
+    -- and RunSceneScript reads wMapScenes only after LoadMapAttributes has
+    -- fired those callbacks.  Resolving `scenes[scene + 1]` here instead read
+    -- the value the callback was ABOUT to overwrite, so every such map ran one
+    -- map-load behind: the Bug Contest officer asked "do you want to finish?"
+    -- on the load AFTER the contest ended, handed over another prize, and did
+    -- it again every time the player walked back in.
+    --
+    -- The callbacks are queued, and the pending-script FIFO runs one entry per
+    -- frame, so the lookup has to be queued too -- as a row that performs it
+    -- when its turn comes.
+    Gen2ScriptVM.mapScenes[mapId] = scenes
     contribution.onEnter = function(game, overworld)
       local flags = game.save.flags
       if flags then
@@ -1833,9 +1904,9 @@ local function contributionFor(data, mapId, entry, mapDef)
       for _, cb in ipairs(callbacks) do
         queue(overworld, cb, { mapId = mapId })
       end
-      local scene = Gen2Commands.getScene(game.save, mapId)
-      local rows = scenes[scene + 1]
-      if rows then queue(overworld, rows, { mapId = mapId }) end
+      if #scenes > 0 then
+        queue(overworld, { { "g2_run_map_scene", mapId } }, { mapId = mapId })
+      end
     end
   end
 

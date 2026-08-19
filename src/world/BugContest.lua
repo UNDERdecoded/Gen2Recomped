@@ -14,6 +14,22 @@
 --   caught     -- the one mon being scored, or nil
 --   scores     -- this run's rolled AI scores, {id -> {score, species}}
 --   party      -- the party held at the gate while only the lead competes
+--
+-- THE ORDER THE RUN IS TORN DOWN IN MATTERS, and getting it wrong is what made
+-- the contest unwinnable.  On a cartridge the sequence is fixed by
+-- BugContestResultsScript (engine/events/std_scripts.asm:317):
+--
+--     special BugContestJudging          <- needs `caught` and `scores`
+--     ifequal 1/2/3 -> the real prize    <- needs the placing
+--     special ContestReturnMons          <- hands the held party back
+--     special CheckPartyFullAfterContest <- CONSUMES `caught` into the party
+--     setscene NOOP                      <- stops the officer asking again
+--
+-- So nothing may drop `caught` before the LAST of those.  The port used to
+-- clear the whole run inside ContestReturnMons, two lines early: judging then
+-- scored an empty catch, the player placed last and got the consolation BERRY
+-- every single time, and the mon they had caught was gone before anything
+-- could add it to the party.
 
 local BugContest = {}
 
@@ -96,12 +112,21 @@ function BugContest.start(game)
   -- A fresh run REPLACES whatever was there, including a finished one whose
   -- prize was already handed over.  Starting from a clean table is what stops
   -- a previous run's clock, ball count or placing leaking into this one.
+  --
+  -- ...EXCEPT the party the officer is holding.  The gate script's order is
+  -- `special ContestDropOffMons` FIRST and `special GiveParkBalls` several
+  -- lines later (maps/Route36NationalParkGate.asm:192 then :172), so by the
+  -- time this runs the rest of the player's team is already parked on the save
+  -- -- and overwriting the table wholesale would delete four or five Pokemon.
+  local held = state(save)
+  held = held and held.party or nil
   setTimerFlag(save, true)
   save.g2BugContest = {
     active = true,
     balls = def.parkBalls or 20,
     endsAt = os.time() + (def.minutes or 20) * 60,
     caught = nil,
+    party = held,
     scores = BugContest.rollContestants(game),
   }
   return true
@@ -233,9 +258,16 @@ function BugContest.judge(game)
   return placing, board
 end
 
--- ContestReturnMons (04:$7A31): the held party comes back and the run ends.
--- Judging has already stamped the placing, which is what the extracted
--- BugContestResults_* scripts branch on for the prize.
+-- `clearflag ENGINE_BUG_CONTEST_TIMER`, the first line of
+-- BugContestResultsScript (std_scripts.asm:317).  Called from the judging
+-- special, one line later in the same script.
+--
+-- It ends the RUN, not the results: the clock, the Park Balls, the contest
+-- encounter table and the START menu's contest panel all go quiet, while the
+-- placing, the caught mon, the rolled scores and the held party stay exactly
+-- where they are -- the prize branch, ContestReturnMons and
+-- CheckPartyFullAfterContest have not read them yet.  BugContest.clear is what
+-- finally drops the lot.
 function BugContest.finish(game)
   local save = game.save
   local s = state(save)
@@ -267,17 +299,37 @@ end
 -- BugContestResultsScript's tail: the run is fully done with, prize and all.
 -- Separate from finish so a crash or a reload between the two cannot lose the
 -- placing before the officer has handed anything over.
+--
+-- HAND THE PARTY BACK FIRST, unconditionally.  save.g2BugContest is the only
+-- thing holding the four or five mons the officer took, so dropping the table
+-- with `party` still on it DELETES THEM -- and the results script only reaches
+-- ContestReturnMons when EVENT_LEFT_MONS_WITH_CONTEST_OFFICER is set, which is
+-- exactly the kind of condition that can go wrong.  returnParty is idempotent,
+-- so paying for it here costs nothing and cannot lose a save's party.
 function BugContest.clear(save)
-  if type(save) == "table" then save.g2BugContest = nil end
+  if type(save) == "table" then
+    BugContest.returnParty(save)
+    save.g2BugContest = nil
+  end
   setTimerFlag(save, false)
 end
 
 -- Leaving early -- the START menu's QUIT (StartMenu_Quit, "Would you like to
 -- end the Contest?") and the out-of-balls / time-up exits all land here.
+--
+-- It does NOT judge and it does NOT tear anything down.  StartMenu_Quit
+-- (engine/menus/start_menu.asm:411) is three instructions -- it queues
+-- BugCatchingContestReturnToGateScript and returns -- and every one of the
+-- three exits goes through that same script, which warps to the gate and only
+-- THEN runs BugContestResultsScript.  Finishing the run here instead meant
+-- judging ran against a run that had already been zeroed.
+--
+-- The run stays live (balls, clock, caught mon, ENGINE_BUG_CONTEST_TIMER) so
+-- that the gate's own bytecode can end it in the cartridge's order.
 function BugContest.leave(game)
-  local s = state(game.save)
-  if not s then return nil end
-  return BugContest.finish(game)
+  local ow = game and game.overworld
+  if not (ow and ow.bugContestReturnToGate) then return false end
+  return ow:bugContestReturnToGate()
 end
 
 -- ParkBallMultiplier (engine/items/item_effects.asm:746):
@@ -316,6 +368,73 @@ end
 function BugContest.caught(save)
   local s = state(save)
   return s and s.caught or nil
+end
+
+-- Take the caught mon OUT of the run: CheckPartyFullAfterContest ends with
+-- `xor a / ld [wContestMonSpecies], a`, so the mon belongs to the party (or the
+-- box) from then on and can never be scored or handed over twice.
+function BugContest.takeCaught(save)
+  local s = state(save)
+  if not s then return nil end
+  local mon = s.caught
+  s.caught = nil
+  return mon
+end
+
+-- ---------------------------------------------------------------------
+-- the party the officer holds
+-- ---------------------------------------------------------------------
+
+-- ContestDropOffMons (engine/events/bug_contest/contest_2.asm:75).  Only the
+-- lead competes.  The ROM does not MOVE anything: it writes 1 to wPartyCount
+-- and a -1 terminator over the second species, so the rest of the party is
+-- simply masked out of view until ContestReturnMons recomputes the count.
+--
+-- It ANSWERS, and the gate reads that answer on the very next line
+-- (`special ContestDropOffMons / iftrue .FirstMonIsFainted`): 1 when the lead
+-- has fainted, 0 otherwise.  A fainted lead is refused and NOTHING is dropped
+-- off -- the routine returns before it masks anything.
+--
+-- Returns `fainted`.
+function BugContest.holdParty(save)
+  if type(save) ~= "table" then return false end
+  local party = save.party or {}
+  local lead = party[1]
+  if not lead or (tonumber(lead.hp) or 0) <= 0 then return true end
+  if #party <= 1 then
+    -- nothing to hold: the ROM still masks, but with one mon there is nothing
+    -- behind the terminator.  Leave `party` nil so returnParty is a no-op.
+    return false
+  end
+  -- The gate calls this BEFORE GiveParkBalls, so there is usually no run on
+  -- the save yet -- make somewhere to put them rather than dropping them.
+  -- BugContest.start carries `party` across when it builds the real run.
+  local s = state(save)
+  if not s then
+    s = {}
+    save.g2BugContest = s
+  end
+  local held = {}
+  for index = 2, #party do held[#held + 1] = party[index] end
+  for index = #party, 2, -1 do party[index] = nil end
+  s.party = held
+  return false
+end
+
+-- ContestReturnMons (contest_2.asm:99): the species byte goes back and the
+-- count is recomputed.  Idempotent -- a second call finds nothing held -- which
+-- matters because the results script only reaches it when the player actually
+-- left mons behind (EVENT_LEFT_MONS_WITH_CONTEST_OFFICER), while the teardown
+-- below calls it unconditionally as a safety net.
+function BugContest.returnParty(save)
+  local s = state(save)
+  if not (s and s.party) then return false end
+  save.party = save.party or {}
+  for _, mon in ipairs(s.party) do
+    save.party[#save.party + 1] = mon
+  end
+  s.party = nil
+  return true
 end
 
 return BugContest

@@ -145,9 +145,14 @@ FieldDefaults.FIELD = {
   lastMapRewrites = LAST_MAP_REWRITES,
   -- CheckIfInOutsideMap: what counts as "outside" for the wLastMap memory
   outsideTilesets = { "OVERWORLD", "PLATEAU" },
-  -- the Route 16/18 gate scripts `res BIT_ALWAYS_ON_BIKE` every frame
+  -- The maps whose own scripts put the Cycling Road bike away
+  -- (`res BIT_ALWAYS_ON_BIKE`), i.e. the WALKING exit from the forced
+  -- stretch.  Both generations' ids are listed together: they name
+  -- different maps, so a game only ever matches its own, and one list is
+  -- cheaper than a version branch at the single call site.
   forcedMovement = {
-    clearMaps = { "ROUTE_16_GATE_1F", "ROUTE_18_GATE_1F" },
+    clearMaps = { "ROUTE_16_GATE_1F", "ROUTE_18_GATE_1F",
+                  "ROUTE_16_GATE", "ROUTE_17_ROUTE_18_GATE" },
     tiles = {},
     slopeMaps = {},
   },

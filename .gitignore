@@ -104,6 +104,5 @@ mobile/ios/bundle_id.local
 
 
 #exclude mods folder 
-\mods
+
 \tests
-\tools

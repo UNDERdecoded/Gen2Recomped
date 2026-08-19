@@ -37,10 +37,28 @@ local kbField = nil       -- id of the field the OS soft keyboard is raised for
 -- follow the same rule since #578: arm on open, lower only on mobile -- so
 -- neither side ever turns desktop text input off, since setTextInput is
 -- global SDL state, not per-widget (#529).
-local function mobile()
+-- Does this platform raise a keyboard of its OWN when text input is armed,
+-- rather than having a physical one always available?
+--
+-- The name was `mobile` and the test was Android-or-iOS, which quietly
+-- meant "the Switch is a desktop". It is not: love-nx has no physical
+-- keyboard and arms the system keyboard APPLET, so it belongs on this side
+-- of the line and nothing here ever lowered text input for it. That left
+-- SDL text input started forever after the first field, and since
+-- setTextInput(true) into an already-started state is a no-op, the applet
+-- could never be raised a second time -- one search per session.
+--
+-- Asked as a capability rather than by listing devices, so the next console
+-- port is not a fourth name to remember.
+local function softKeyboardPlatform()
+  local ok, Platform = pcall(require, "src.core.Platform")
+  if ok and type(Platform) == "table" and type(Platform.isNX) == "function" then
+    local okNX, isNX = pcall(Platform.isNX)
+    if okNX and isNX then return true end
+  end
   local osName = love and love.system and love.system.getOS
     and love.system.getOS()
-  return osName == "Android" or osName == "iOS"
+  return osName == "Android" or osName == "iOS" or osName == "NX"
 end
 
 local function syncSoftKeyboard(id, x, y, w, h)
@@ -53,7 +71,7 @@ local function syncSoftKeyboard(id, x, y, w, h)
     end
   elseif kbField then
     kbField = nil
-    if mobile() then love.keyboard.setTextInput(false) end
+    if softKeyboardPlatform() then love.keyboard.setTextInput(false) end
   end
 end
 
@@ -109,6 +127,21 @@ end
 
 -- Returns true when the key was consumed by the focused field, so App can
 -- leave its own shortcuts alone while the user is typing.
+-- Empty the focused field.
+--
+-- Backspace cannot be reached on a device with no keyboard: the editor's
+-- only pad path is App.gamepadpressed, which maps A/B/start/select/
+-- shoulders/dpad and has no delete verb, and B is already "back". So the
+-- field could only ever GROW, and the only way out was to close the
+-- editor -- which is exactly what was reported. A queued sentinel rather
+-- than a direct write because the value lives with the caller and is only
+-- handed to Kit for the frame it is drawn in.
+function Kit.clearField()
+  if not Kit.focus then return false end
+  edits[#edits + 1] = "\f"
+  return true
+end
+
 function Kit.keypressed(key)
   if not Kit.focus then return false end
   if key == "backspace" then
@@ -368,7 +401,14 @@ end
 -- Kit.keypressed.  Returns the (possibly edited) value; the caller stores it.
 function Kit.textfield(id, x, y, w, h, value, placeholder)
   value = tostring(value or "")
-  if Kit.press(x, y, w, h) then Kit.focus = id end
+  if Kit.press(x, y, w, h) then
+    Kit.focus = id
+    -- Drop the latch so a tap on the ALREADY-focused field raises the
+    -- keyboard again. On a platform with a real keyboard that is invisible;
+    -- on one whose keyboard is a modal applet it is the only way to get a
+    -- second go at the same box.
+    kbField = nil
+  end
   local focused = (Kit.focus == id)
   if focused then
     -- raise (or hand off) the soft keyboard while this field owns focus (#529)
@@ -376,6 +416,8 @@ function Kit.textfield(id, x, y, w, h, value, placeholder)
     for _, e in ipairs(edits) do
       if e == "\b" then
         value = value:sub(1, -2)
+      elseif e == "\f" then
+        value = ""
       elseif e == "\r" then
         Kit.blur()  -- commit/cancel also lowers the soft keyboard (#529)
         focused = false

@@ -136,12 +136,43 @@ function ModImports.sharedPath(entry)
   return key and (SHARED_DIR .. "/" .. key .. ".bin") or nil
 end
 
--- Read a shared copy back, or nil.
+-- THE BANK DOES NOT HAVE TO HOLD THE BYTES.
+--
+-- A `root = "save"` entry already puts the file at the PhysFS root under a
+-- stable name that no mod owns and no uninstall removes -- `baseroms/`, for a
+-- cartridge.  Banking a SECOND 64 MB copy of it under imports/base/ buys
+-- nothing and is a third of a gigabyte for three mods.  So once such a copy
+-- exists the bank is downgraded to a one-line pointer at it.
+--
+-- A `root = "mod"` entry still banks real bytes: that file lives inside a mod
+-- folder and goes away with the mod, so the copy is the only thing that keeps
+-- the next mod from asking for the cartridge again.
+--
+-- A pointer whose target has since been deleted simply reads as "nothing
+-- banked" and the ordinary import flow asks for the file -- the store is a
+-- convenience, never the only copy of anything the player cannot replace.
+function ModImports.sharedPointerPath(entry)
+  local key = ModImports.sharedKey(entry)
+  return key and (SHARED_DIR .. "/" .. key .. ".path") or nil
+end
+
+-- Read a shared copy back, or nil.  Follows a pointer bank.
 function ModImports.shared(entry)
   local f = fs()
+  if not f then return nil end
   local path = ModImports.sharedPath(entry)
-  if not (f and path and f.getInfo(path, "file")) then return nil end
-  return f.read(path)
+  if path and f.getInfo(path, "file") then return f.read(path) end
+
+  local ptr = ModImports.sharedPointerPath(entry)
+  if not (ptr and f.getInfo(ptr, "file")) then return nil end
+  local target = tostring(f.read(ptr) or ""):gsub("%s+$", "")
+  if target == "" then return nil end
+  local info = f.getInfo(target, "file")
+  if not info then return nil end
+  -- cheap guard before 64 MB is read: the pointer is only as good as the file
+  -- still sitting at the other end of it
+  if entry.size and info.size and info.size ~= entry.size then return nil end
+  return f.read(target)
 end
 
 local function keepShared(entry, bytes)
@@ -154,6 +185,29 @@ local function keepShared(entry, bytes)
     f.createDirectory(SHARED_DIR)
   end
   pcall(f.write, path, bytes)
+end
+
+-- Point the bank at a copy that already exists at a stable path, and drop the
+-- byte bank if one was taken earlier (that is the 64 MB this reclaims).
+local function bankPointer(entry, path)
+  local f = fs()
+  local ptr = ModImports.sharedPointerPath(entry)
+  if not (f and ptr and path) then return end
+  local bytes = ModImports.sharedPath(entry)
+  local banked = bytes and f.getInfo(bytes, "file")
+  if f.getInfo(ptr, "file") and not banked then return end
+  if f.createDirectory then
+    f.createDirectory("imports")
+    f.createDirectory(SHARED_DIR)
+  end
+  if not pcall(f.write, ptr, path) then return end
+  if banked and f.remove then
+    -- only after the pointer is on disk, so a crash between the two leaves
+    -- the store with a copy too many rather than none at all
+    pcall(f.remove, bytes)
+    Logger.info("mod import: shared store now points at %s (freed %d bytes)",
+      path, tonumber(banked.size) or 0)
+  end
 end
 
 -- Satisfy every entry a mod declares from the shared store, silently.  Called
@@ -173,11 +227,43 @@ end
 -- Where the file lands.  A mod folder under the save directory is writable; a
 -- mod baked into a read-only source tree is not, and there the write simply
 -- fails and says so rather than pretending.
+--
+-- `root = "save"` puts it at the top of the LOVE save directory instead of
+-- inside the mod, which is what a mod declares when the file is big and shared
+-- (a 64 MB cartridge two mods both extract from).  Worth knowing when the
+-- panel says "ready" and the mod folder looks empty: for those entries the
+-- file was never meant to be in the mod folder at all.  ModImports.describe
+-- below is what the card prints so that is not a guess.
 function ModImports.pathFor(manifest, entry)
   if not entry then return nil end
   if entry.root == "save" then return entry.file end
   if not (manifest and manifest.path) then return nil end
   return manifest.path .. "/" .. entry.file
+end
+
+-- A one-line "where is it" for the launcher.  "<name>: ready" on its own was
+-- true and useless -- it says a file exists without saying which file or
+-- where, so a player looking in the mod folder for a `root = "save"` entry
+-- reasonably concludes the panel is lying.
+function ModImports.describe(manifest, entry)
+  local path = ModImports.pathFor(manifest, entry)
+  if not path then return tostring(entry and entry.name or "file") end
+  -- a mod-folder path already names the mod folder; only the save-dir case
+  -- needs the prefix, and that is exactly the case that confused people
+  local where = (entry.root == "save") and ("save dir/" .. path) or path
+  -- ...and if it is in the shared store, SAY SO.  adoptShared installs a file
+  -- the player gave a DIFFERENT mod, silently, when the launcher builds its
+  -- list -- correct, declared by the manifest, and completely invisible: the
+  -- report this answers is "it is auto-installing the ROM and I don't know
+  -- where it is getting this from".
+  local f = fs()
+  local bank = ModImports.sharedPath(entry)
+  local ptr = ModImports.sharedPointerPath(entry)
+  local shared = f ~= nil
+    and ((bank ~= nil and f.getInfo(bank, "file") ~= nil)
+      or (ptr ~= nil and f.getInfo(ptr, "file") ~= nil))
+  return ("%s: ready (%s)%s"):format(tostring(entry.name), where,
+    shared and " -- shared with your other mods that want this file" or "")
 end
 
 -- Is one entry already satisfied?  Presence is the test the mod itself makes,
@@ -290,7 +376,10 @@ function ModImports.install(manifest, entry, bytes, fromShared)
     return false, ("could not write %s (%s)"):format(entry.file, tostring(err))
   end
   if not fromShared then keepShared(entry, bytes) end
-  Logger.info("mod import: %s -> %s (%d bytes)", entry.id, path, #bytes)
+  -- the file now sits at a stable root path, so the bank need not hold bytes
+  if entry.root == "save" then bankPointer(entry, path) end
+  Logger.info("mod import: %s -> %s (%d bytes)%s", entry.id, path, #bytes,
+    fromShared and " [adopted from the shared store, not imported]" or "")
   return true
 end
 
@@ -319,7 +408,11 @@ function ModImports.fromInbox(entry)
   for _, dir in ipairs(ModImports.INBOX_DIRS) do
     for _, name in ipairs(f.getDirectoryItems(dir) or {}) do
       local path = (dir == "") and name or (dir .. "/" .. name)
-      if ModImports.accepts(entry, name) and f.getInfo(path, "file") then
+      local info = ModImports.accepts(entry, name) and f.getInfo(path, "file")
+      -- size off getInfo first: a save dir with several cartridges in it must
+      -- not read every one of them into memory to reject them by hash
+      if info and (not entry.size or info.size == nil
+                   or info.size == entry.size) then
         local bytes = f.read(path)
         if bytes and ModImports.check(entry, bytes) then return bytes, path end
       end

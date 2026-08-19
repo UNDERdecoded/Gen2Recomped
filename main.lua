@@ -180,6 +180,14 @@ end
 -- run.  So record progress instead of failure: the last line in boot_trace.txt
 -- is the stage the process did not survive.
 local BootTrace = require("src.core.BootTrace")
+-- Counts love.graphics.push/pop for the life of the process and unwinds
+-- anything a frame forgot, at the top of the next update and draw.  Installed
+-- here, before anything can draw, because the failure it guards against is not
+-- local: ONE unmatched push anywhere -- engine, mod, a menu preview that bailed
+-- early -- leaves the shared stack a notch deeper every frame until some
+-- unrelated push overflows it and ends the process with a traceback pointing at
+-- innocent code.  See src/render/GraphicsStack.lua.
+local GraphicsStack = require("src.render.GraphicsStack")
 -- Declared HERE rather than further down beside its first mark: bootGame below
 -- calls BootTrace.booted(), and a `local` declared after a function's body is
 -- not in scope inside it -- the name resolved to the nil GLOBAL instead and
@@ -282,6 +290,7 @@ end
 
 function love.load(args)
   BootTrace.mark("love.load enter")
+  GraphicsStack.install()
 
   -- Before anything else, and before anything that could fail: did the last
   -- launch finish?  POKEPORT_NO_BOOT_REPORT=1 skips this for CI and scripted
@@ -415,6 +424,9 @@ function realLoad(args)
 end
 
 function love.update(dt)
+  -- Unwind anything the previous frame left on the graphics stack before this
+  -- one starts building on top of it.
+  GraphicsStack.drain()
   -- The report deliberately runs nothing else: the boot path it is reporting on
   -- is the code that just died.
   if bootReport then return end
@@ -466,6 +478,7 @@ function love.update(dt)
 end
 
 function love.draw()
+  GraphicsStack.drain()
   if bootReport then return drawBootReport() end
   if editorMode then return EditorApp.draw() end
   if TouchEditor then return TouchEditor.draw() end

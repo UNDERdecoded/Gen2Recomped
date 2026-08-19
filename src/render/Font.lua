@@ -278,7 +278,79 @@ function Font.endTint()
   end
 end
 
-function Font.drawCode(code, x, y)
+-- ------- window style
+--
+-- A Game Boy window is white paper with black text on it, and for a screen
+-- that IS the Game Boy that is the end of the matter.  It stops being the end
+-- of the matter the moment something is drawn BEHIND the window: a battle
+-- fought on the live 3D map has a world where the flat white field used to
+-- be, and an opaque box sitting on top of it is a hole in the picture.
+--
+-- So a caller can push a style for a region of drawing:
+--
+--     Font.pushStyle({ fill = { 1, 1, 1, 0.4 }, text = { 1, 1, 1, 1 } })
+--     Font.drawBox(0, 12, 20, 6)
+--     Font.draw("...", 8, 112)
+--     Font.popStyle()
+--
+-- `fill` replaces the box's paper colour and `text` repaints the glyphs --
+-- repaints, not tints: the atlas is black pixels on a transparent field, so
+-- setColor alone can only ever darken it.  That is what Font.beginTint is
+-- for, and drawCode reaches for it itself here rather than making every
+-- caller remember, because the callers are `Font.draw` loops scattered
+-- through the battle screen and half of them set black explicitly on the way
+-- past.  `border` styles the frame glyphs separately when it is given, and
+-- falls back to `text` when it is not.
+--
+-- A STACK rather than a single value: one screen draws several windows and
+-- only some of them want this (the move list keeps its solid paper while the
+-- dialogue underneath goes to glass), so a region has to be able to turn the
+-- style OFF and get it back.  `pushStyle(nil)` is that -- it pushes "no
+-- style", which is exactly what an unstyled region wants and is why the
+-- argument is allowed to be nil rather than rejected.
+--
+-- Nothing is styled until something pushes one, so the vanilla game never
+-- sees this: with an empty stack every draw takes the path it always took.
+local styleStack, activeStyle = {}, nil
+-- set for the six frame glyphs alone (see drawBox), so `border` can differ
+-- from `text` without either one having to be pushed as its own style
+local borderPaint = nil
+-- boxes already filled in this styled region.  A translucent fill drawn on
+-- top of another one is DARKER than either -- the battle menu sits inside
+-- the text area, so at 40% the right half of the bottom strip would come out
+-- at 64% and the strip would have a seam down the middle that is not in the
+-- design.  Opaque paper never had this problem, which is why the rule only
+-- exists here: a styled box drawn wholly inside one already filled keeps its
+-- FRAME (that is the divider the layout wants) and skips the paper.
+local filledRects = {}
+
+function Font.pushStyle(style)
+  styleStack[#styleStack + 1] = style or false
+  activeStyle = style or nil
+  filledRects = {}
+end
+
+function Font.popStyle()
+  local n = #styleStack
+  if n == 0 then return end
+  styleStack[n] = nil
+  activeStyle = styleStack[n - 1] or nil
+  filledRects = {}
+end
+
+-- The style in force, or nil.  For a caller that has to make its own
+-- decision from it -- a box that draws its interior itself, say.
+function Font.style() return activeStyle end
+
+-- Test/frame hygiene: a draw that raised part-way through a styled region
+-- would otherwise leave the stack loaded and style the whole next frame.
+function Font.clearStyles()
+  styleStack, activeStyle, borderPaint = {}, nil, nil
+  filledRects = {}
+end
+
+-- the unstyled blit; Font.drawCode below is this plus the active style
+local function blitCode(code, x, y)
   if FALLBACK.enabled then
     love.graphics.setFont(FALLBACK.font)
     local ch
@@ -298,6 +370,22 @@ function Font.drawCode(code, x, y)
   if not page then return end
   local quad = page.quads[code - page.base]
   if quad then love.graphics.draw(page.image, quad, x, y) end
+end
+
+function Font.drawCode(code, x, y)
+  local style = activeStyle
+  local paint = borderPaint or (style and style.text)
+  if not paint then return blitCode(code, x, y) end
+  -- The caller's alpha still counts: it is how a fading box fades its text
+  -- with it, and dropping it here would leave the letters hanging in the air
+  -- through a fade-out.
+  local pr, pg, pb, pa = love.graphics.getColor()
+  Font.beginTint()
+  love.graphics.setColor(paint[1] or 1, paint[2] or 1, paint[3] or 1,
+                         (paint[4] or 1) * (pa or 1))
+  blitCode(code, x, y)
+  Font.endTint()
+  love.graphics.setColor(pr, pg, pb, pa)
 end
 
 -- how far the pen moves past a glyph; 8 unless its page says otherwise
@@ -348,15 +436,49 @@ for key, code in pairs(Font.DEFAULT_BORDER) do Font.BORDER[key] = code end
 function Font.drawBox(tx, ty, tw, th)
   if FALLBACK.enabled then
     love.graphics.setFont(FALLBACK.font)
-    love.graphics.setColor(1, 1, 1, 1)
+    local f = activeStyle and activeStyle.fill
+    love.graphics.setColor(f and f[1] or 1, f and f[2] or 1,
+                           f and f[3] or 1, f and f[4] or 1)
     love.graphics.rectangle("fill", tx * 8, ty * 8, tw * 8, th * 8)
-    love.graphics.setColor(0, 0, 0, 1)
+    local e = activeStyle and (activeStyle.border or activeStyle.text)
+    love.graphics.setColor(e and e[1] or 0, e and e[2] or 0,
+                           e and e[3] or 0, e and e[4] or 1)
     love.graphics.rectangle("line", tx * 8, ty * 8, tw * 8, th * 8)
+    love.graphics.setColor(1, 1, 1, 1)
     return
   end
+  local style = activeStyle
+  local fill = style and style.fill
+  local covered = false
+  if fill then
+    for _, r in ipairs(filledRects) do
+      if tx >= r[1] and ty >= r[2]
+         and tx + tw <= r[1] + r[3] and ty + th <= r[2] + r[4] then
+        covered = true
+        break
+      end
+    end
+  end
+  if not covered then
+    if fill then
+      love.graphics.setColor(fill[1] or 1, fill[2] or 1, fill[3] or 1,
+                             fill[4] or 1)
+      filledRects[#filledRects + 1] = { tx, ty, tw, th }
+    else
+      love.graphics.setColor(1, 1, 1, 1)
+    end
+    love.graphics.rectangle("fill", tx * 8, ty * 8, tw * 8, th * 8)
+  end
+  -- back to full white before the frame: the fill's alpha belongs to the
+  -- paper, not to the border glyphs drawn on it, and leaving it set would
+  -- fade the frame to match the hole it is supposed to outline
   love.graphics.setColor(1, 1, 1, 1)
-  love.graphics.rectangle("fill", tx * 8, ty * 8, tw * 8, th * 8)
   local B = Font.BORDER
+  -- `border` is a separate colour from `text` because a frame and the words
+  -- inside it are separate decisions.  Held in a local rather than passed
+  -- down so drawCode keeps one signature for every caller in the engine;
+  -- nil here means the frame simply wears the text colour.
+  borderPaint = style and style.border or nil
   Font.drawCode(B.tl, tx * 8, ty * 8)
   Font.drawCode(B.tr, (tx + tw - 1) * 8, ty * 8)
   Font.drawCode(B.bl, tx * 8, (ty + th - 1) * 8)
@@ -369,6 +491,7 @@ function Font.drawBox(tx, ty, tw, th)
     Font.drawCode(B.v, tx * 8, (ty + j) * 8)
     Font.drawCode(B.v, (tx + tw - 1) * 8, (ty + j) * 8)
   end
+  borderPaint = nil
 end
 
 return Font

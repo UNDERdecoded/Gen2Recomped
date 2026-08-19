@@ -311,7 +311,17 @@ end
 --      Rain Dance, Sunny Day and Sandstorm themselves needed no cache change:
 --      their effect names were already correct, there was simply no handler --
 --      which is why they printed "But, it failed!" every time.
-local CACHE_FORMAT = "rom-cache-v75:"
+-- v76: two script-decoding fixes and one new table.
+--      * GOLD ONLY, and it is the serious one: `getnum` was declared as TWO
+--        operand bytes.  pokegold's macro is `db \1 ; string_buffer` and
+--        nothing else, exactly like Crystal's, so the decoder over-read by one
+--        byte and every Gold script DESYNCED from its first getnum onward.
+--      * src.gen2BugContest gains contestantFlags -- the ten event-flag ids
+--        from BugCatchingContestantEventFlagTable, which
+--        SelectRandomBugContestContestants needs to pick the five entrants.
+--        They differ between Gold (1121+) and Crystal (1146+), so they have to
+--        be read off the cartridge rather than hardcoded.
+local CACHE_FORMAT = "rom-cache-v76:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
@@ -5497,9 +5507,19 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
     -- that never wanted one -- so a player who imported the cartridge for a
     -- second mod (or had it adopted from the shared store without being asked)
     -- had nothing on screen telling them it worked.  Say so.
+    -- ...and say WHERE, not just "ready".  A `root = "save"` entry (a shared
+    -- 64 MB cartridge) never lands in the mod folder, so a bare "ready" sent
+    -- players looking for a file that was never going to be there and reading
+    -- the panel as broken.
     local readyLine = nil
     if not needs and m.requiredImports and m.requiredImports[1] then
-      readyLine = tostring(m.requiredImports[1].name) .. ": ready"
+      local okDesc, line = pcall(function()
+        return require("src.mods.ModImports").describe(
+          { path = m.manifestPath or ("mods/" .. tostring(m.id)) },
+          m.requiredImports[1])
+      end)
+      readyLine = (okDesc and line)
+        or (tostring(m.requiredImports[1].name) .. ": ready")
     end
     local btnRowW = delW
     if hasGh then btnRowW = updW + btnGap + verW + btnGap + delW end

@@ -156,6 +156,86 @@ end
 -- lit map behind it.
 BattleState.BG_WORLD_DIM = 0.55
 
+-- ------- windows over a world
+--
+-- `bgMode` above is about the LETTERBOX -- the voids around the 160x144 -- and
+-- the battle still paints its own opaque field inside them.  This is the other
+-- case: something has replaced the field itself, so the boxes are sitting on a
+-- picture rather than on paper.
+--
+-- STADIUM2_OVERWORLD_MODELS' in-world 3D battle is that something.  It fights
+-- on the live map, and against a lit voxel world a solid white text box is not
+-- a window, it is a hole -- and the black text that was legible on paper is the
+-- one thing in the frame that still looks like a Game Boy.  So over a world
+-- backdrop the dialogue and the FIGHT/PKMN/PACK/RUN box go to glass and their
+-- text goes white.
+--
+-- The move list and the TYPE/PP panel deliberately do NOT: they are dense,
+-- they are read rather than glanced at, and a translucent one over moving
+-- geometry is genuinely hard to use.  One decision per window, not one for the
+-- screen.
+BattleState.WORLD_WINDOW_STYLE = {
+  fill = { 1, 1, 1, 0.4 },
+  text = { 1, 1, 1, 1 },
+}
+
+-- How often to re-ask whether the backdrop is live.  The answer changes at
+-- most twice a battle (once when the staged fight produces its first frame,
+-- once if it gives up), so this is a poll rather than a per-frame call --
+-- and it is a poll rather than a latch because a renderer that falls back
+-- mid-fight has to get the readable boxes back.
+BattleState.BACKDROP_POLL_FRAMES = 10
+
+-- Is something drawing a WORLD where this battle's flat field would be?
+--
+-- Asked of the mods rather than inferred: `render.compose` taking the frame
+-- would be a proxy (a mod laying two Game Boy screens out side by side takes
+-- it too, and its battle field is still opaque paper), and guessing wrong here
+-- means white text on white. A mod that stages a battle over a world publishes
+-- `inWorld3DBattleStatus()`, which is the same status the exit log reads --
+-- `active` for "a staged fight exists" and `frames` for "it has actually put
+-- something on screen". Both, because a renderer that never produced a frame
+-- has left the flat field exactly where it was.
+--
+-- No mods, or no mod that answers: false, and every box is the one the Game
+-- Boy drew.
+function BattleState:worldBackdrop()
+  local frame = self.frame or 0
+  local last = self._backdropPolled
+  if last ~= nil and (frame - last) < BattleState.BACKDROP_POLL_FRAMES then
+    return self._backdropLive == true
+  end
+  self._backdropPolled = frame
+
+  local live = false
+  pcall(function()
+    local mods = self.game and self.game.mods
+    local exports = mods and mods.exports
+    if type(exports) ~= "table" then return end
+    for _, mod in pairs(exports) do
+      local statusFn = type(mod) == "table" and mod.inWorld3DBattleStatus
+      if type(statusFn) == "function" then
+        local ok, st = pcall(statusFn)
+        if ok and type(st) == "table" and st.active
+           and (tonumber(st.frames) or 0) > 0 then
+          live = true
+          return
+        end
+      end
+    end
+  end)
+  self._backdropLive = live
+  return live
+end
+
+-- The style this battle's windows wear, or nil for the Game Boy's solid
+-- white paper.  Separate from worldBackdrop so a caller can override the
+-- look without re-deciding when it applies.
+function BattleState:windowStyle()
+  if not self:worldBackdrop() then return nil end
+  return BattleState.WORLD_WINDOW_STYLE
+end
+
 -- Renderer:setUISize asks the top state for its surface before anything draws
 function BattleState:uiSize()
   if self:wideLayout() then return WideBattle.WIDTH, WideBattle.HEIGHT end
@@ -533,6 +613,14 @@ local function makeBattler(data, mon, isPlayer, save)
     mon = mon,
     def = def,
     name = mon.nickname or def.name,
+    -- The species this battler is SHOWING, which is not always `mon.species`:
+    -- a Transformed mon wears the copied species' pic and a Tower ghost wears
+    -- none at all.  Both of those move this field where they move `sprite`,
+    -- so anything drawing the battler -- the flat pic here, or a renderer
+    -- standing a model in its place -- reads one answer and agrees with the
+    -- other.  `mon.species` stays the truth about the Pokemon itself; this is
+    -- the truth about the picture.
+    species = mon.species,
     isPlayer = isPlayer,
     badges = badges,
     -- merged registry views consumed by the pure battle modules
@@ -621,6 +709,12 @@ local function newBattle(game)
   local self = setmetatable({}, BattleState)
   self.game = game
   self.data = game.data
+  -- On this engine the battle screen IS the battle logic object: there is no
+  -- separate model that a screen points at. Publishing the self-reference makes
+  -- that explicit so anything holding "a thing with a .battle" (the party menu
+  -- during a switch, mods walking the state stack) can treat the battle screen
+  -- and the party menu uniformly instead of special-casing this one screen.
+  self.battle = self
   -- ruleset from the merged registry (the requires above are the same
   -- records on a mod-free boot); an unknown save value falls back to the
   -- default with a notice instead of silently switching behavior
@@ -893,8 +987,13 @@ local function disguiseAsGhost(self)
   -- animation of its own, and playing the real species' frames over it would
   -- give the disguise away.
   self.ghostReal = { name = self.enemy.name, sprite = self.enemy.sprite,
-                     picAnim = self.enemy.picAnim }
+                     picAnim = self.enemy.picAnim,
+                     species = self.enemy.species }
   self.enemy.name = "GHOST"
+  -- and no species, so a renderer standing a MODEL where the pic goes stands
+  -- nothing: the GHOST sheet IS the disguise, and a Marowak in full 3D over
+  -- it would give the whole scene away before the Silph Scope does.
+  self.enemy.species = nil
   self.enemy.picAnim = nil
   self.enemy.sprite = getImage("assets/generated/battle/front/ghost.png",
                                monPalette(self.data, self.enemy.mon.species))
@@ -2045,6 +2144,14 @@ function BattleState:exit()
   -- reused by the next battle, so they are deliberately left alone -- only
   -- the per-instance objects, which are dead once this battle is popped,
   -- are released here.
+  -- the Stadium rigs are per-battler 3D actors with their own GPU buffers,
+  -- and belong to this battle exactly like the canvases below
+  require("src.render.StadiumArt").releaseAll(self.game, self)
+  -- What the in-world 3D battle actually did, once per battle.  The mod
+  -- composites it through render.compose and answers a status; without asking,
+  -- "the models did not appear" is indistinguishable from "the 3D battle never
+  -- rendered a frame", and those have completely different causes.
+  self:reportStadiumBattle("end")
   local function rel(o) if o and o.release then pcall(o.release, o) end end
   rel(self.bgCanvas); self.bgCanvas = nil
   rel(self.waveCanvas); self.waveCanvas = nil
@@ -2193,8 +2300,78 @@ function BattleState:battlerPic(battler)
   return self:picImage(swapped)
 end
 
+-- What the mod's in-world 3D battle is doing, as a line.  Sampled from
+-- update rather than only at exit, because the interesting moment is while the
+-- battle is ON SCREEN -- an exit-only report says nothing at all until the
+-- fight is over, which is exactly when it stops being useful.
+function BattleState:reportStadiumBattle(when)
+  pcall(function()
+    local mods = self.game and self.game.mods
+    local exports = mods and mods.exports
+    local mine = exports and exports["STADIUM2_OVERWORLD_MODELS"]
+    local statusFn = mine and mine.inWorld3DBattleStatus
+    local Logger = require("src.core.Logger")
+    if type(statusFn) ~= "function" then
+      Logger.info("in-world 3D battle (%s): no status to read -- mods=%s "
+        .. "exports=%s mod=%s statusFn=%s", tostring(when),
+        tostring(mods ~= nil), tostring(exports ~= nil), tostring(mine ~= nil),
+        type(statusFn))
+      return
+    end
+    local okStatus, st = pcall(statusFn)
+    if not (okStatus and type(st) == "table") then
+      Logger.info("in-world 3D battle (%s): status call failed: %s",
+        tostring(when), tostring(st))
+      return
+    end
+    -- ...and ask Stadium itself whether it HAS a model for each side.  This is
+    -- the question the frame counters cannot answer: a stage that renders 400
+    -- frames with no rigs loaded looks identical, from the engine, to one that
+    -- renders 400 frames of models.  `mod.exports.overworld` IS the Stadium
+    -- module (main.lua), so this is a direct read, not an inference.
+    local sides = ""
+    -- `mod.exports.overworld` is OverworldStadium -- the OVERWORLD renderer,
+    -- which has no battle model state and answered "?" to both questions.
+    -- The battle one is a different module reached through the mod's own
+    -- loader: mod.exports.lib.require("Stadium").
+    local Stadium = nil
+    local lib = mine.lib
+    if type(lib) == "table" and type(lib.require) == "function" then
+      local okLib, got = pcall(lib.require, "Stadium")
+      if okLib and type(got) == "table" then Stadium = got end
+    end
+    if type(Stadium) == "table" then
+      for _, side in ipairs({ "player", "enemy" }) do
+        local has, vis = "?", "?"
+        if type(Stadium.hasModel) == "function" then
+          local okHas, v = pcall(Stadium.hasModel, side)
+          has = okHas and tostring(v) or "err"
+        end
+        if type(Stadium.visible) == "function" then
+          local okVis, v = pcall(Stadium.visible, side)
+          vis = okVis and tostring(v) or "err"
+        end
+        sides = sides .. (" %s(model=%s visible=%s)"):format(side, has, vis)
+      end
+      if type(Stadium.active) == "function" then
+        local okActive, v = pcall(Stadium.active)
+        sides = sides .. (" active=%s"):format(okActive and tostring(v) or "err")
+      end
+    else
+      sides = " <lib.require(\"Stadium\") unavailable>"
+    end
+    Logger.info("in-world 3D battle (%s): installed=%s active=%s frames=%s "
+      .. "fallbacks=%s err=%s --%s", tostring(when),
+      tostring(st.installed), tostring(st.active), tostring(st.frames),
+      tostring(st.fallbacks), tostring(st.error), sides)
+  end)
+end
+
 function BattleState:update(dt)
   self:tickFx()
+  -- one sample a second into the fight, while it is still on screen
+  self._stadiumReportTicks = (self._stadiumReportTicks or 0) + 1
+  if self._stadiumReportTicks == 60 then self:reportStadiumBattle("mid") end
   -- Crystal pic animations run off the wall clock like every other battle
   -- pic effect; a Gold/Silver battler has no picAnim and this is a no-op.
   for _, b in ipairs({ self.player, self.enemy }) do
@@ -3254,6 +3431,8 @@ function BattleState:applyAnimEffect(ev)
     if user and target and self.speciesSprite then
       user.sprite = self:speciesSprite(target.mon.species, user.isPlayer)
                     or user.sprite
+      -- the shown species moves with the shown pic, so a model swaps too
+      user.species = target.mon.species
       -- a Transformed mon wears the copied species' pic, animation included
       -- (still gray: speciesSprite forces PAL_GRAYMON, and the frames go
       -- through the same palette because battlerPic reuses the pic's meta)
@@ -3549,6 +3728,7 @@ function BattleState:updateFx()
         if real then
           self.enemy.name = real.name or self.enemy.name
           self.enemy.sprite = real.sprite or self.enemy.sprite
+          self.enemy.species = real.species or self.enemy.species
           self.enemy.picAnim = real.picAnim
         end
       end
@@ -5104,6 +5284,18 @@ end
 function BattleState:bugContestBall()
   local BugContest = require("src.world.BugContest")
   local save = self.game.save
+  -- `.used_park_ball` (item_effects.asm:718) is a bare `dec [hl]` with no
+  -- floor, because on a cartridge you can never reach the menu again with the
+  -- count at zero: BugCatchingContestBattleScript ends the run the moment the
+  -- battle it was spent in is over.  When THAT check went missing the player
+  -- kept throwing past twenty, so refuse here as well -- one guard for the
+  -- last ball of a battle, one for the run.
+  if BugContest.ballsLeft(save) <= 0 then
+    self.phase = "messages"
+    self.afterQueue = "menu"
+    self:say(Strings("You have no\nPARK BALLs left!"))
+    return
+  end
   self.phase = "messages"
   self.afterQueue = "menu"
   BugContest.useBall(save)
@@ -5157,10 +5349,27 @@ function BattleState:storeContestMon()
   if not held then
     keepNew()
   else
-    local heldDef = self.game.data.pokemon[held.species]
-    local heldName = (heldDef and heldDef.name) or tostring(held.species)
+    -- _ContestAlreadyCaughtText names the mon you are ALREADY holding, not the
+    -- one you just caught: DisplayAlreadyCaughtText is called with
+    -- wNamedObjectIndex = [wContestMon] (caught_mon.asm:6-8).  Resolve that
+    -- through the nickname, then the species record, then the raw id -- a nil
+    -- here used to reach string.format and come back as the untouched source
+    -- string, which is why the line arrived with no name in it at all.
+    local heldName = held.nickname
+    if not heldName then
+      local heldDef = held.species and self.game.data.pokemon
+                      and self.game.data.pokemon[held.species]
+      heldName = heldDef and heldDef.name
+    end
+    heldName = heldName or tostring(held.species or "?")
     self:sayNext(Strings("You already caught\na %s.", heldName))
-    self:sayNext(Strings("Release the older\n%s?", heldName))
+    -- _ContestAskSwitchText is exactly "Switch #MON?", asked over the
+    -- STOCK/THIS comparison box; YES keeps the new one (PlaceYesNoBox's
+    -- `ret c` on NO leaves the stock mon alone).
+    self:sayNext(Strings("%s\nLv%d  vs  %s\nLv%d", heldName,
+                         tonumber(held.level) or 0, name,
+                         tonumber(caught.level) or 0))
+    self:sayNext(Strings("Switch POKéMON?"))
     self:uiNext(function()
       local ChoiceBox = require("src.ui.ChoiceBox")
       return ChoiceBox.new(self.game, function(yes)
@@ -5506,6 +5715,38 @@ end
 -- pic effects (slides/squish/blink/minimize; see applyAnimEffect)
 -- offset, clip or replace the pic, and an active BGP fade swaps in a
 -- shade-remapped recolor of it.
+-- BATTLE PKMN = STADIUM: the player's own Stadium 2 model standing in for the
+-- cartridge pic, in the pic's own footprint so every placement, scale and HUD
+-- clip around it is unchanged.
+--
+-- Deliberately only on the UNDISTURBED frame.  Its caller has already handled
+-- the substitute doll, the faint slide and the palette fade, and every pic
+-- effect below it -- slideOff, bounce, minimize, the SE displacements -- is
+-- authored against a flat pic in tile space.  A model has no frames for any of
+-- those, so anything mid-effect keeps the cartridge pic and the two never
+-- disagree about where the Pokemon is.  In practice that means the model is
+-- what you look at between animations, which is when you are looking.
+--
+-- One resident rig per battler, so a switch retires the old model with the
+-- battler it belonged to.
+--
+-- KNOWN GAP: the mod's preview renderer only offers a front, camera-facing
+-- view, so the player's side shows its model's face rather than its back.
+-- There is no yaw control on that API to pass; when there is, it goes in the
+-- frameOpts below and the back view costs one argument.
+function BattleState:drawStadiumBattlerPic(battler, img, x, y, scale)
+  if not (battler and img) then return false end
+  local StadiumArt = require("src.render.StadiumArt")
+  if StadiumArt.battleMode(self.game) ~= "stadium" then return false end
+  local mon = battler.mon
+  if not (mon and mon.species) then return false end
+  local key = StadiumArt.keyFor(self.game, self, battler)
+  if not key then return false end
+  local w = img:getWidth() * (scale or 1)
+  local h = img:getHeight() * (scale or 1)
+  return StadiumArt.drawInto(self.game, key, mon, x, y, w, h)
+end
+
 function BattleState:drawBattlerPic(battler, x, y, scale)
   local img = self:battlerPic(battler)
   if battler.substituteHP and not self:fxFaintActive(battler)
@@ -5540,6 +5781,7 @@ function BattleState:drawBattlerPic(battler, x, y, scale)
   local pf = self.picFx and self.picFx[battler]
   if not pf or (not pf.kind and not pf.hidden and not pf.minimized
                 and (pf.ox or 0) == 0 and (pf.oy or 0) == 0) then
+    if self:drawStadiumBattlerPic(battler, img, x, y, scale) then return end
     love.graphics.draw(img, x, y, 0, scale, scale)
     return
   end
@@ -6202,6 +6444,16 @@ function BattleState:drawHUDs(slide)
 end
 
 function BattleState:drawTextArea()
+  -- The move list and Mimic's copy menu keep the solid paper (see
+  -- WORLD_WINDOW_STYLE); everything else in here is the dialogue box and the
+  -- battle menu, which are what goes to glass over a world backdrop.
+  local dense = self.phase == "moveSelect" or self.phase == "mimicSelect"
+  Font.pushStyle(not dense and self:windowStyle() or nil)
+  self:drawTextAreaInner()
+  Font.popStyle()
+end
+
+function BattleState:drawTextAreaInner()
   Font.drawBox(0, 12, 20, 6)
   love.graphics.setColor(0, 0, 0, 1)
   if self.phase == "messages" and (self.current or self.animPlaying) then
@@ -6378,8 +6630,20 @@ function BattleState:drawClassic()
     local prev = g.getCanvas()
     local wavy = fx and fx.wavy
     g.setCanvas(self.bgCanvas)
+    -- The white paper the whole battle is drawn on -- unless something has
+    -- put a WORLD where the paper goes, in which case painting it is what
+    -- hides the world.  Clearing to transparent instead leaves only what is
+    -- actually drawn (HUDs, boxes, pics) and lets the 3D frame underneath
+    -- show between them.  The zone shader passes alpha through unchanged
+    -- (PaletteFX.shader: `vec4(mapped, p.a)`), so transparency survives the
+    -- colour pass rather than being remapped to a palette shade.
+    if self:worldBackdrop() then
+      g.clear(0, 0, 0, 0)
+    else
+      g.setColor(1, 1, 1, 1)
+      g.rectangle("fill", 0, 0, 160, 144)
+    end
     g.setColor(1, 1, 1, 1)
-    g.rectangle("fill", 0, 0, 160, 144)
     -- the party ball rows are OBJ sprites on hardware (see drawBallRow):
     -- collect them here and draw them over the finished zone pass instead
     local balls = self:gen2BallColors() and {} or nil
@@ -6420,9 +6684,12 @@ function BattleState:drawClassic()
     self:drawAnimLayer(true)
   else
     -- flat fallback (headless / no shader support): pre-colorized pics
-    -- on white, no palette fades
+    -- on white, no palette fades -- and the same exception as above, so the
+    -- two paths agree about when there is paper to paint
     love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.rectangle("fill", 0, 0, 160, 144)
+    if not self:worldBackdrop() then
+      love.graphics.rectangle("fill", 0, 0, 160, 144)
+    end
     local shaking = sx ~= 0 or sy ~= 0
     if shaking then
       love.graphics.push()

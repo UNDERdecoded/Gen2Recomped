@@ -36,7 +36,11 @@ Gen2ScriptOps.COMMANDS = {
   { "clearflag", "w" }, { "setflag", "w" }, { "wildon", "" },
   { "wildoff", "" }, { "xycompare", "d" }, { "warpmod", "bbb" },
   { "blackoutmod", "bb" }, { "warp", "bbbb" }, { "getmoney", "bb" },
-  { "getcoins", "b" }, { "getnum", "bb" }, { "getmonname", "bb" },
+  -- getnum is ONE byte in BOTH trees.  pokegold's macro is `db \1 ;
+  -- string_buffer` and nothing else (macros/scripts/events.asm:424), exactly
+  -- like Crystal's -- reading two bytes here over-ran the operand by one and
+  -- DESYNCED the rest of every Gold script that used it.
+  { "getcoins", "b" }, { "getnum", "b" }, { "getmonname", "bb" },
   { "getitemname", "bb" }, { "getcurlandmarkname", "b" },
   -- getstring is `dw string, db buffer`, NOT `db buffer, dw string`.  Both
   -- orderings total four bytes so the script never desynced, but the pointer
@@ -98,7 +102,6 @@ Gen2ScriptOps.COMMANDS = {
 --   $10 memcallasm    dba -> dw   (D -> d)
 --   $2F givepokemail  dba -> dw   (T -> d)
 --   $30 checkpokemail dba -> dw   (T -> d)
---   $3F getnum        2 args -> 1 (bb -> b)
 --   $92 reloadend     0 args -> 1 ("" -> b)
 --   $98 phonecall     dba -> dw   (T -> w)
 --   $A0 swarm         +map_id     (bb -> bbb)
