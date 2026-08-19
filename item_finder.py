@@ -1,0 +1,204 @@
+#!/usr/bin/env python3
+"""
+Item Lookup Helper for Gen 2 Recomped (Silver / Gold / Crystal).
+
+Allows searching for items by Recomp ID (ITEM_nnn), Hex byte, or item name.
+Supports verified in-game overrides to track your exact game version mappings.
+"""
+
+import sys
+
+# In-Game Verified Item Overrides (Confirmed from playing Gen2Recomped)
+VERIFIED_IN_GAME = {
+    20: "Repel",
+    22: "Fire Stone",
+    29: "Carbos",
+    40: "Max Revive",
+    41: "Guard Spec.",
+    44: "Dire Hit",
+    60: "Silver Leaf",
+    62: "PP Up",
+    107: "NeverMeltIce",
+}
+
+# General Base Reference List for Gen 2 Items
+BASE_GEN2_ITEMS = [
+    (1, 0x01, "MASTER_BALL", "Master Ball"),
+    (2, 0x02, "ULTRA_BALL", "Ultra Ball"),
+    (3, 0x03, "BRIGHTPOWDER", "BrightPowder"),
+    (4, 0x04, "GREAT_BALL", "Great Ball"),
+    (5, 0x05, "POKE_BALL", "Poké Ball"),
+    (6, 0x06, "TOWN_MAP", "Town Map"),
+    (7, 0x07, "BICYCLE", "Bicycle"),
+    (8, 0x08, "MOON_STONE", "Moon Stone"),
+    (9, 0x09, "ANTIDOTE", "Antidote"),
+    (10, 0x0A, "BURN_HEAL", "Burn Heal"),
+    (11, 0x0B, "ICE_HEAL", "Ice Heal"),
+    (12, 0x0C, "AWAKENING", "Awakening"),
+    (13, 0x0D, "PARLYZ_HEAL", "Parlyz Heal"),
+    (14, 0x0E, "FULL_RESTORE", "Full Restore"),
+    (15, 0x0F, "MAX_POTION", "Max Potion"),
+    (16, 0x10, "HYPER_POTION", "Hyper Potion"),
+    (17, 0x11, "SUPER_POTION", "Super Potion"),
+    (18, 0x12, "POTION", "Potion"),
+    (19, 0x13, "ESCAPE_ROPE", "Escape Rope"),
+    (20, 0x14, "REPEL", "Repel"),
+    (21, 0x15, "MAX_ELIXER", "Max Elixir"),
+    (22, 0x16, "FIRE_STONE", "Fire Stone"),
+    (23, 0x17, "THUNDERSTONE", "Thunderstone"),
+    (24, 0x18, "WATER_STONE", "Water Stone"),
+    (25, 0x19, "ITEM_19", "Unused Item 19"),
+    (26, 0x1A, "HP_UP", "HP Up"),
+    (27, 0x1B, "PROTEIN", "Protein"),
+    (28, 0x1C, "IRON", "Iron"),
+    (29, 0x1D, "CARBOS", "Carbos"),
+    (30, 0x1E, "LUCKY_PUNCH", "Lucky Punch"),
+    (31, 0x1F, "CALCIUM", "Calcium"),
+    (32, 0x20, "RARE_CANDY", "Rare Candy"),
+    (33, 0x21, "X_ACCURACY", "X Accuracy"),
+    (34, 0x22, "LEAF_STONE", "Leaf Stone"),
+    (35, 0x23, "METAL_POWDER", "Metal Powder"),
+    (36, 0x24, "NUGGET", "Nugget"),
+    (37, 0x25, "PP_UP_GEN1", "PP Up (Gen 1 constant)"),
+    (38, 0x26, "POKEDOLL", "Poké Doll"),
+    (39, 0x27, "FULL_HEAL", "Full Heal"),
+    (40, 0x28, "MAX_REVIVE", "Max Revive"),
+    (41, 0x2A, "GUARD_SPEC", "Guard Spec."),
+    (42, 0x2B, "SUPER_REPEL", "Super Repel"),
+    (43, 0x2C, "MAX_REPEL", "Max Repel"),
+    (44, 0x2D, "DIRE_HIT", "Dire Hit"),
+    (45, 0x2F, "FRESH_WATER", "Fresh Water"),
+    (46, 0x30, "SODA_POP", "Soda Pop"),
+    (47, 0x31, "LEMONADE", "Lemonade"),
+    (48, 0x32, "X_ATTACK", "X Attack"),
+    (49, 0x34, "X_DEFEND", "X Defend"),
+    (50, 0x35, "X_SPEED", "X Speed"),
+    (51, 0x36, "X_SPECIAL", "X Special"),
+    (52, 0x37, "COIN_CASE", "Coin Case"),
+    (53, 0x38, "ITEMFINDER", "Itemfinder"),
+    (54, 0x39, "POKEFLUTE", "Poké Flute"),
+    (55, 0x3A, "EXP_SHARE", "Exp. Share"),
+    (56, 0x3B, "OLD_ROD", "Old Rod"),
+    (57, 0x3C, "GOOD_ROD", "Good Rod"),
+    (58, 0x3D, "SUPER_ROD", "Super Rod"),
+    (59, 0x3E, "ITEM_59", "Unused Item 59"),
+    (60, 0x3C, "SILVER_LEAF", "Silver Leaf"),
+    (61, 0x3D, "SUPER_ROD_2", "Super Rod (Alt)"),
+    (62, 0x3E, "PP_UP", "PP Up"),
+    (63, 0x3F, "ETHER", "Ether"),
+    (64, 0x40, "MAX_ETHER", "Max Ether"),
+    (65, 0x41, "ELIXER", "Elixir"),
+    (66, 0x42, "RED_SCALE", "Red Scale"),
+    (67, 0x43, "SECRETPOTION", "SecretPotion"),
+    (68, 0x44, "S_S_TICKET", "S.S. Ticket"),
+    (69, 0x45, "MYSTERY_EGG", "Mystery Egg"),
+    (70, 0x46, "CLEAR_BELL", "Clear Bell"),
+    (71, 0x47, "SILVER_WING", "Silver Wing"),
+    (72, 0x48, "MOOMOO_MILK", "Moomoo Milk"),
+    (73, 0x49, "QUICK_CLAW", "Quick Claw"),
+    (74, 0x4A, "PSNCUREBERRY", "Psncureberry"),
+    (75, 0x4B, "SOFT_SAND", "Soft Sand"),
+    (76, 0x4C, "SHARP_BEAK", "Sharp Beak"),
+    (77, 0x4D, "PRZCUREBERRY", "Przcureberry"),
+    (78, 0x4E, "BURNT_BERRY", "Burnt Berry"),
+    (79, 0x4F, "ICE_BERRY", "Ice Berry"),
+    (80, 0x50, "POISON_BARB", "Poison Barb"),
+    (81, 0x51, "KING_ROCK", "King's Rock"),
+    (82, 0x52, "BITTER_BERRY", "Bitter Berry"),
+    (83, 0x53, "MINT_BERRY", "Mint Berry"),
+    (84, 0x54, "RED_APRICORN", "Red Apricorn"),
+    (85, 0x55, "TINYMUSHROOM", "TinyMushroom"),
+    (86, 0x56, "BIG_MUSHROOM", "Big Mushroom"),
+    (87, 0x57, "SILVERPOWDER", "SilverPowder"),
+    (88, 0x58, "BLU_APRICORN", "Blu Apricorn"),
+    (89, 0x59, "AMULET_COIN", "Amulet Coin"),
+    (90, 0x5A, "YLW_APRICORN", "Ylw Apricorn"),
+    (91, 0x5B, "GRN_APRICORN", "Grn Apricorn"),
+    (92, 0x5C, "CLEANSE_TAG", "Cleanse Tag"),
+    (93, 0x5D, "MYSTIC_WATER", "Mystic Water"),
+    (94, 0x5E, "TWISTEDSPOON", "TwistedSpoon"),
+    (95, 0x5F, "WHT_APRICORN", "Wht Apricorn"),
+    (96, 0x60, "BLACKBELT_I", "Black Belt"),
+    (97, 0x61, "BLK_APRICORN", "Blk Apricorn"),
+    (98, 0x62, "PNK_APRICORN", "Pnk Apricorn"),
+    (99, 0x63, "BLACK_GLASSES", "Black Glasses"),
+    (100, 0x64, "SLOWPOKETAIL", "SlowpokeTail"),
+    (101, 0x65, "PINK_BOW", "Pink Bow"),
+    (102, 0x66, "STICK", "Stick"),
+    (103, 0x67, "SMOKE_BALL", "Smoke Ball"),
+    (104, 0x68, "PEARL", "Pearl"),
+    (105, 0x69, "BIG_PEARL", "Big Pearl"),
+    (106, 0x6A, "EVERSTONE", "Everstone"),
+    (107, 0x6B, "NEVERMELTICE", "NeverMeltIce"),
+]
+
+def search_item(query):
+    query = query.strip()
+    if not query:
+        return
+
+    cleaned = query.upper().replace("ITEM_", "")
+    matches = []
+    val = None
+    if query.startswith("0x") or query.startswith("0X"):
+        try:
+            val = int(query, 16)
+        except ValueError:
+            pass
+    elif cleaned.isdigit():
+        try:
+            val = int(cleaned, 10)
+        except ValueError:
+            pass
+
+    hex_val_direct = None
+    if len(query.strip()) == 2:
+        try:
+            hex_val_direct = int(query.strip(), 16)
+        except ValueError:
+            pass
+
+    for dec, hex_val, key, name in BASE_GEN2_ITEMS:
+        display_name = VERIFIED_IN_GAME.get(dec, name)
+        is_verified = dec in VERIFIED_IN_GAME
+        
+        if (val is not None and (dec == val or hex_val == val)) or \
+           (hex_val_direct is not None and hex_val == hex_val_direct):
+            matches.append((dec, hex_val, key, display_name, is_verified))
+            continue
+            
+        if query.lower() in display_name.lower() or query.upper() in key.upper():
+            matches.append((dec, hex_val, key, display_name, is_verified))
+
+    if not matches:
+        print(f"No matching item found for query: '{query}'")
+        return
+
+    print(f"\nFound {len(matches)} matching item(s):\n")
+    print(f"{'Recomp ID':<12} | {'Hex Byte':<10} | {'Item Name':<25} | {'Status'}")
+    print("-" * 65)
+    for dec, hex_val, key, display_name, is_verified in matches:
+        status = "Verified In-Game" if is_verified else "Base Mapping"
+        print(f"ITEM_{dec:03d}     | 0x{hex_val:02X} (Hex) | {display_name:<25} | [{status}]")
+    print()
+
+def main():
+    if len(sys.argv) > 1:
+        query = " ".join(sys.argv[1:])
+        search_item(query)
+    else:
+        print("=== Gen 2 Recomp Item Finder ===")
+        print("Type an item name (e.g. 'max revive'), Hex byte (e.g. '0x28'), or Recomp ID (e.g. '40').")
+        print("Type 'exit' or 'q' to quit.\n")
+        while True:
+            try:
+                user_input = input("Search item > ")
+                if user_input.strip().lower() in ("exit", "quit", "q"):
+                    break
+                search_item(user_input)
+            except (KeyboardInterrupt, EOFError):
+                print("\nGoodbye!")
+                break
+
+if __name__ == "__main__":
+    main()
