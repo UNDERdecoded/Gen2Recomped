@@ -854,13 +854,33 @@ function Renderer:endFrame(zones, worldZones)
     -- so it composites with a straight 1:1 blit and the world canvas is
     -- skipped entirely (nothing drew into it).  The UI blit below still
     -- runs, so dialogs, menus and the HUD sit on top as usual.
+    --
+    -- MEASURE THE CANVAS; DO NOT ASSUME ITS RESOLUTION.  This used to blit at
+    -- a fixed 1/dpi, which covers the window only when the pipeline sized its
+    -- canvas in FRAMEBUFFER PIXELS.  A pipeline that sized it in LOVE units
+    -- instead -- the natural reading of the old ctx.width/height, which were
+    -- love.graphics.getDimensions() -- paid the DPI scale twice and landed the
+    -- entire 3D world in the TOP-LEFT CORNER at 1/dpi of the screen, black all
+    -- around it.  Desktop never saw it (units and pixels are the same thing at
+    -- dpi 1); Android, where the DPI scale is the display density, showed a
+    -- world a third the size in each direction.
+    --
+    -- OverworldController now hands over pixels, but deriving the scale from
+    -- the canvas ALSO fixes every already-shipped and third-party pipeline
+    -- without their authors having to know any of this, and is bit-identical
+    -- for a correctly-sized one: ow == pw, so ww / ow == 1 / dpiX exactly.
+    -- A supersampled or deliberately low-res canvas is simply fitted, which is
+    -- what "one window-resolution image" was always supposed to mean.
     love.graphics.setColor(1, 1, 1, 1)
     love.graphics.setScissor(0, 0, ww, wh)
+    local ow, oh = self.worldOverride:getDimensions()
+    local osx = (ow and ow > 0) and (ww / ow) or (1 / dpiX)
+    local osy = (oh and oh > 0) and (wh / oh) or (1 / dpiY)
     local loveMajor = love.getVersion()
     if love.system and love.system.getOS and love.system.getOS() == "iOS" and loveMajor >= 12 then
-      love.graphics.draw(self.worldOverride, 0, wh, 0, 1 / dpiX, -1 / dpiY)
+      love.graphics.draw(self.worldOverride, 0, wh, 0, osx, -osy)
     else
-      love.graphics.draw(self.worldOverride, 0, 0, 0, 1 / dpiX, 1 / dpiY)
+      love.graphics.draw(self.worldOverride, 0, 0, 0, osx, osy)
     end
     love.graphics.setScissor()
     -- the screen-space overlays the flat path draws over its composite

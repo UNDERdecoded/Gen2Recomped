@@ -6369,11 +6369,40 @@ function OverworldState:drawWorld()
     -- point projects under the pipeline's own camera.  That is the direct
     -- analogue of what :billboard does for tilt, and it keeps exactly one
     -- copy of every effect: the closures above are the ones that run.
-    local pw, ph = love.graphics.getDimensions()
+    -- ctx.width/height are FRAMEBUFFER PIXELS, not LOVE units.
+    --
+    -- They have to be, because everything else in this contract already is:
+    -- `scale` is Zoom.scale over Renderer:fitScale, which measures the
+    -- drawable, and Renderer:endFrame composites the returned canvas so that
+    -- one canvas pixel is one display pixel.  This line used to read
+    -- love.graphics.getDimensions() -- LOVE UNITS -- while calling the result
+    -- `pw, ph`, so a pipeline that sized its render target from it paid the DPI
+    -- scale TWICE: the canvas came out that much smaller and was then drawn
+    -- that much smaller again, landing the whole 3D world in the TOP-LEFT
+    -- CORNER at 1/dpi of the screen with black around it.  Invisible on
+    -- desktop, where units and pixels are the same thing.  On Android the DPI
+    -- scale is the display density, so the world came out roughly a third of
+    -- the size in each direction.
+    --
+    -- DRAMATIC_SHAPE worked around this by asking the GPU itself (its
+    -- `sceneSize` helper) rather than trusting the ctx, which is why that mod
+    -- looked right on a phone while forks of it made before that fix did not.
+    -- Both agree now, so neither double-corrects.
+    --
+    -- unitWidth/unitHeight are the same window in LOVE units for a pipeline
+    -- that genuinely wants them.  On desktop all four numbers are equal.
+    local uw, uh = love.graphics.getDimensions()
+    local pw, ph = uw, uh
+    if love.graphics.getPixelDimensions then
+      local gw, gh = love.graphics.getPixelDimensions()
+      if gw and gh and gw > 0 and gh > 0 then pw, ph = gw, gh end
+    end
     local pscale = Zoom.scale(Game.renderer:fitScale())
     local ctx = {
       state = self, cam = cam, vw = vw, vh = vh, bgY = bgY,
       width = pw, height = ph, scale = pscale,
+      pixelWidth = pw, pixelHeight = ph,
+      unitWidth = uw, unitHeight = uh,
       level = Pipelines.level(pipelineId),
       -- the SGB world palette a map draws under; nil in the true-colour
       -- modes, whose art is already baked (and must not be re-mapped)
