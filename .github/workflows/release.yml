@@ -614,11 +614,27 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install packaging tools
+      # zip, unzip, curl and file are ALL preinstalled on the ubuntu-latest
+      # runner image, so this step only has to cover a future image that
+      # drops one of them.  Never run `apt-get update` unconditionally here:
+      # GitHub's azure.archive.ubuntu.com mirror stalls for anywhere between
+      # 10 and 60 minutes at random (actions/runner-images#12949), and this
+      # was the ONLY apt user in the whole workflow -- which is exactly why
+      # RG34XXSP was the only job that ever looked broken.
+      - name: Verify packaging tools
         run: |
           set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y zip unzip curl file
+          missing=()
+          for tool in zip unzip curl file; do
+            command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "packaging tools already present: zip unzip curl file"
+            exit 0
+          fi
+          echo "::warning::runner image is missing ${missing[*]} -- installing"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends "${missing[@]}"
 
       - name: Build the port
         run: |
