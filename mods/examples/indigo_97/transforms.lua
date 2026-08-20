@@ -1,13 +1,15 @@
 -- INDIGO//97 asset transform
 --
 -- Runs once inside Gen2Recomped's restricted transform sandbox. It reads the
--- boy player's sheets from the player's private ROM cache and writes only the
+-- player sheets from the player's private ROM cache and writes only the
 -- recoloured result to save/mod-derived/indigo_97. No cartridge pixels ship in
 -- this repository or its release ZIP.
 
 local SHEETS = {
-  { path = "sprites/chris.png", bike = false },
-  { path = "sprites/chrisbike.png", bike = true },
+  { path = "sprites/chris.png", bike = false, style = "indigo" },
+  { path = "sprites/chrisbike.png", bike = true, style = "indigo" },
+  { path = "sprites/kris.png", bike = false, style = "cerulean" },
+  { path = "sprites/kris_bike.png", bike = true, style = "cerulean" },
 }
 
 local C = {
@@ -15,6 +17,9 @@ local C = {
   hair = { 38, 34, 42 },
   hair_hi = { 78, 65, 68 },
   hair_dark = { 25, 24, 31 },
+  auburn = { 126, 51, 31 },
+  orange = { 230, 96, 35 },
+  orange_hi = { 255, 151, 55 },
   red = { 211, 43, 47 },
   red_hi = { 246, 78, 65 },
   red_dark = { 131, 30, 39 },
@@ -29,6 +34,12 @@ local C = {
   denim = { 118, 172, 202 },
   denim_hi = { 165, 207, 222 },
   denim_dark = { 61, 105, 137 },
+  yellow = { 239, 185, 40 },
+  yellow_hi = { 255, 224, 92 },
+  yellow_dark = { 157, 105, 27 },
+  teal = { 34, 139, 129 },
+  teal_hi = { 77, 184, 168 },
+  teal_dark = { 18, 76, 75 },
   green = { 52, 132, 65 },
   green_hi = { 88, 171, 83 },
   green_dark = { 28, 79, 45 },
@@ -90,7 +101,9 @@ local function capColour(direction, x, localY, shade, boundary)
   return region(shade, boundary, C.red_hi, C.red, C.red_dark)
 end
 
-local function colourSheet(ctx, source, bike)
+-- This is the 1.0.0 boy transform. Keep its logic unchanged: existing users
+-- must get exactly the same generated pixels after upgrading.
+local function colourBoySheet(ctx, source, bike)
   local width, height = source:getDimensions()
   if width ~= 16 or height < 96 then return nil end
   local out = ctx.blank(width, height)
@@ -175,10 +188,120 @@ local function colourSheet(ctx, source, bike)
   return out
 end
 
+local function accent(shade, highlight, base, dark)
+  if shade == 1 then return highlight end
+  if shade == 2 then return base end
+  return dark
+end
+
+local function girlHairColour(shade, boundary)
+  if boundary or shade == 3 then return C.auburn end
+  return shade == 1 and C.orange_hi or C.orange
+end
+
+local function girlHeadColour(direction, x, localY, shade, boundary)
+  if direction == "up" then
+    return girlHairColour(shade, boundary)
+  end
+
+  local face = direction == "down"
+      and localY >= 3 and localY <= 6 and x >= 5 and x <= 10
+    or direction == "side"
+      and localY >= 3 and localY <= 8 and x >= 5 and x <= 8
+
+  if face then return toned(shade, C.skin, C.skin_shadow) end
+  return girlHairColour(shade, boundary)
+end
+
+local function girlBodyColour(direction, x, localY, shade, boundary)
+  if direction == "up" then
+    if localY <= 9 and (x <= 3 or x >= 12) then
+      return toned(shade, C.skin, C.skin_shadow)
+    end
+    return region(shade, boundary, C.teal_hi, C.teal, C.teal_dark)
+  end
+
+  if direction == "side" then
+    if localY <= 10 and x <= 5 then
+      return toned(shade, C.skin, C.skin_shadow)
+    end
+    if x >= 10 then
+      return region(shade, boundary, C.teal_hi, C.teal, C.teal_dark)
+    end
+    if x == 7 then
+      return accent(shade, C.red_hi, C.red, C.red_dark)
+    end
+    return region(shade, boundary, C.yellow_hi, C.yellow, C.yellow_dark)
+  end
+
+  if localY <= 9 and (x <= 3 or x >= 12) then
+    return toned(shade, C.skin, C.skin_shadow)
+  end
+  if (x == 5 or x == 10) and localY <= 12 then
+    return accent(shade, C.red_hi, C.red, C.red_dark)
+  end
+  return region(shade, boundary, C.yellow_hi, C.yellow, C.yellow_dark)
+end
+
+local function girlBikeColour(direction, x, localY, shade, boundary)
+  if localY <= 11 then
+    return girlBodyColour(direction, x, localY, shade, boundary)
+  end
+
+  local sideWheel = direction == "side" and (x <= 4 or x >= 11)
+  if shade == 3 then return C.ink end
+  if sideWheel then return shade == 1 and C.steel_hi or C.steel end
+  if shade == 1 then return C.steel_hi end
+  return C.red
+end
+
+local function colourGirlSheet(ctx, source, bike)
+  local width, height = source:getDimensions()
+  if width ~= 16 or height < 96 then return nil end
+  local out = ctx.blank(width, height)
+
+  for y = 0, 95 do
+    local frame = math.floor(y / 16)
+    local frameY = frame * 16
+    local top = (not bike and frame >= 3) and 1 or 0
+    local direction = DIRECTIONS[frame + 1]
+    local localY = (y - frameY) - top
+    local headEnd = direction == "side" and 9 or 6
+
+    for x = 0, 15 do
+      local r, _, _, a = source:getPixel(x, y)
+      local shade = shadeIndex(r, a)
+      if shade ~= 0 then
+        local boundary = isBoundary(source, x, y, frameY)
+        local colour
+
+        if localY <= headEnd then
+          colour = girlHeadColour(direction, x, localY, shade, boundary)
+        elseif bike then
+          colour = girlBikeColour(direction, x, localY, shade, boundary)
+        elseif localY >= 14 then
+          colour = accent(shade, C.red_hi, C.red, C.red_dark)
+        elseif localY >= 12 then
+          colour = region(shade, boundary,
+            C.denim_hi, C.denim, C.denim_dark)
+        else
+          colour = girlBodyColour(direction, x, localY, shade, boundary)
+        end
+
+        put(out, x, y, colour)
+      end
+    end
+  end
+
+  return out
+end
+
 return function(ctx)
   for _, sheet in ipairs(SHEETS) do
     if ctx.exists(sheet.path) then
-      local result = colourSheet(ctx, ctx.readImage(sheet.path), sheet.bike)
+      local colour = sheet.style == "cerulean"
+        and colourGirlSheet or colourBoySheet
+      local result = colour(ctx, ctx.readImage(sheet.path), sheet.bike)
       if result then ctx.writeImage(result, sheet.path) end
     end
   end

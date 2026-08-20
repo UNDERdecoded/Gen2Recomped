@@ -1,7 +1,7 @@
 {
   "id": "indigo_97",
   "name": "INDIGO//97",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "api": 2,
   "games": ["gen2"],
   "entry": "main.lua",
@@ -16,6 +16,6 @@
   "incompatible": [],
   "experimental": false,
   "github": "n47h4ni3l/gen2recomp-indigo97",
-  "description": "A late-1990s anime-inspired true-colour boy trainer for Gen2Recomped. Pair with Voxel Characters for block-built depth."
+  "description": "Late-1990s anime-inspired true-colour boy and Crystal heroine designs for Gen2Recomped. Pair with Voxel Characters for depth."
 }
 

@@ -10,6 +10,12 @@ Data.sprites.SPRITE_RED = {
 Data.sprites.SPRITE_RED_BIKE = {
   id = "SPRITE_RED_BIKE", image = "sprites/chrisbike.png", frames = 6,
 }
+Data.sprites.SPRITE_KRIS = {
+  id = "SPRITE_KRIS", image = "sprites/kris.png", frames = 6, walker = true,
+}
+Data.sprites.SPRITE_KRIS_BIKE = {
+  id = "SPRITE_KRIS_BIKE", image = "sprites/kris_bike.png", frames = 6,
+}
 
 local MOD = "mods/examples/indigo_97"
 
@@ -53,7 +59,9 @@ T.eq(#run.errors, 0,
 T.eq(run.mod and run.mod.manifest.assets_transforms, "transforms.lua",
   "declares the ROM-safe asset transform")
 
-for _, id in ipairs({ "SPRITE_RED", "SPRITE_RED_BIKE" }) do
+for _, id in ipairs({
+    "SPRITE_RED", "SPRITE_RED_BIKE", "SPRITE_KRIS", "SPRITE_KRIS_BIKE",
+  }) do
   local sprite = Data.sprites[id]
   T.check(sprite ~= nil, id .. " remains registered")
   T.eq(sprite.trueColor, true, id .. " opts out of the world shade remap")
@@ -106,6 +114,9 @@ local ok, err = pcall(transform, {
 T.check(ok, "the transform runs in its restricted context (" .. tostring(err) .. ")")
 T.check(written["sprites/chris.png"] ~= nil, "writes the walking sheet")
 T.check(written["sprites/chrisbike.png"] ~= nil, "writes the bicycle sheet")
+T.check(written["sprites/kris.png"] ~= nil, "writes the Crystal walking sheet")
+T.check(written["sprites/kris_bike.png"] ~= nil,
+  "writes the Crystal bicycle sheet")
 
 local walk = written["sprites/chris.png"]
 local _, _, _, transparent = walk:getPixel(0, 0)
@@ -116,6 +127,46 @@ local wr, wg, wb = walk:getPixel(7, 2)
 T.check(wr > 0.6 and wg > 0.6 and wb > 0.6, "cap front receives its pale panel")
 local sr, sg, sb = walk:getPixel(7, 7)
 T.check(sr > sg and sg > sb, "face region receives a warm skin tone")
+
+local function fingerprint(image)
+  local count, sum = 0, 0
+  for y = 0, 95 do
+    for x = 0, 15 do
+      local r, g, b, a = image:getPixel(x, y)
+      if a > 0 then
+        count = count + 1
+        local value = math.floor(r * 255 + 0.5) * 65536
+          + math.floor(g * 255 + 0.5) * 256
+          + math.floor(b * 255 + 0.5)
+        sum = (sum + value * (x + 1) * (y + 1)) % 9007199254740881
+      end
+    end
+  end
+  return count, sum
+end
+
+local walkCount, walkSum = fingerprint(written["sprites/chris.png"])
+local bikeCount, bikeSum = fingerprint(written["sprites/chrisbike.png"])
+T.eq(walkCount, 576, "boy walking transform keeps the 1.0.0 opaque mask")
+T.eq(walkSum, 1391291369803,
+  "boy walking transform is pixel-identical to 1.0.0")
+T.eq(bikeCount, 576, "boy bicycle transform keeps the 1.0.0 opaque mask")
+T.eq(bikeSum, 1498433350348,
+  "boy bicycle transform is pixel-identical to 1.0.0")
+
+local girl = written["sprites/kris.png"]
+local hr, hg, hb = girl:getPixel(7, 2)
+T.check(hr > hg and hg > hb, "Crystal heroine receives orange hair")
+local fr, fg, fb = girl:getPixel(7, 5)
+T.check(fr > fg and fg > fb, "Crystal heroine receives warm skin")
+local yr, yg, yb = girl:getPixel(7, 10)
+T.check(yr > yg and yg > yb, "Crystal heroine receives a yellow top")
+local dr, dg, db = girl:getPixel(7, 13)
+T.check(db > dr and dg > dr, "Crystal heroine receives denim-blue shorts")
+local er, eg, eb = girl:getPixel(7, 14)
+T.check(er > eg and er > eb, "Crystal heroine receives red shoes")
+local tr, tg, tb = girl:getPixel(7, 16 + 10)
+T.check(tg > tb and tb > tr, "Crystal heroine receives a teal backpack")
 
 run.release()
 T.finish("indigo_97")

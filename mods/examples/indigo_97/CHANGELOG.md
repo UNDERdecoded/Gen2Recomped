@@ -2,6 +2,19 @@
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 1.1.0 - 2026-08-20
+
+### Added
+
+- Cerulean-era anime-inspired true-colour treatment for the Crystal heroine.
+- Crystal heroine walking and bicycle support, including orange hair, a yellow
+  top, red accents, denim-blue shorts and a teal backpack.
+
+### Preserved
+
+- The 1.0.0 boy-player transform is pixel-identical in 1.1.0.
+- Fishing poses, trainer-card portraits and battle portraits remain unchanged.
+
 ## 1.0.0 - 2026-08-20
 
 ### Added
