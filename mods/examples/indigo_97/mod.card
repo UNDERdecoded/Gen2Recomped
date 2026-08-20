@@ -1,0 +1,26 @@
+return {
+  summary = "Late-90s anime colour for the Gen 2 boy player, generated from your own ROM cache.",
+  author = "n47h4ni3l",
+  contact = "https://github.com/n47h4ni3l/gen2recomp-indigo97",
+  tags = { "cosmetic", "graphics", "gen2" },
+  differences = {
+    changed = {
+      "SPRITE_RED and SPRITE_RED_BIKE render as true-colour art",
+      "boy-player walking and bicycle sheets receive the INDIGO//97 colour design",
+    },
+    added = {
+      "a first-load asset transform that writes only to save/mod-derived/indigo_97",
+    },
+    known = {
+      "the Crystal girl, fishing poses, trainer-card portrait and battle portrait are unchanged",
+      "Voxel Characters is optional and required only for block-built depth",
+    },
+  },
+  credits = {
+    { who = "n47h4ni3l", for_ = "concept, art direction and Steam Deck field testing" },
+    { who = "OpenAI Codex", for_ = "implementation and packaging assistance" },
+    { who = "Gen2Recomped contributors", for_ = "mod API, asset-transform system and tooling" },
+  },
+  compat = { engine = ">=0.7.6 <1.0.0", modApi = 2 },
+}
+
