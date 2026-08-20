@@ -2,6 +2,19 @@
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 1.2.0 - 2026-08-21
+
+### Added
+
+- Matching true-colour fishing poses for the boy player in Gold, Silver and
+  Crystal.
+- Matching true-colour fishing poses for the Crystal heroine.
+
+### Preserved
+
+- Boy and Crystal heroine walking and bicycle output from earlier releases.
+- Trainer-card portraits and battle portraits remain unchanged.
+
 ## 1.1.0 - 2026-08-20
 
 ### Added
@@ -24,4 +37,3 @@ Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - ROM-safe first-load transform; no extracted game artwork is distributed.
 - Optional Voxel Characters integration and recommended visual settings.
 - GitHub update metadata and automated installable release packaging.
-

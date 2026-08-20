@@ -9,12 +9,13 @@ return {
       "boy-player walking and bicycle sheets receive the INDIGO//97 colour design",
       "SPRITE_KRIS and SPRITE_KRIS_BIKE render as true-colour art",
       "Crystal heroine walking and bicycle sheets receive a Cerulean-era colour design",
+      "boy and Crystal heroine fishing poses match their INDIGO//97 designs",
     },
     added = {
       "a first-load asset transform that writes only to save/mod-derived/indigo_97",
     },
     known = {
-      "fishing poses, trainer-card portraits and battle portraits are unchanged",
+      "trainer-card portraits and battle portraits are unchanged",
       "Voxel Characters is optional and required only for block-built depth",
     },
   },
@@ -25,4 +26,3 @@ return {
   },
   compat = { engine = ">=0.7.6 <1.0.0", modApi = 2 },
 }
-

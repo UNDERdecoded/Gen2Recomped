@@ -101,13 +101,29 @@ local function sourceSheet()
   return image
 end
 
+local function sourceFishingPose()
+  local image = fakeImage(16, 8, { 1, 1, 1, 1 })
+  -- A compact lower-body/rod pose: opaque shades exercise face, outfit,
+  -- glove, trouser and shoe regions without embedding cartridge artwork.
+  for y = 0, 7 do
+    for x = 3, 12 do
+      local edge = x == 3 or x == 12 or y == 7
+      local shade = edge and 0 or (y % 2 == 0 and 1 / 3 or 2 / 3)
+      image:setPixel(x, y, shade, shade, shade, 1)
+    end
+  end
+  return image
+end
+
 local transform = assert(loadfile(MOD .. "/transforms.lua"))()
 T.check(type(transform) == "function", "transforms.lua returns function(ctx)")
 
 local written = {}
 local ok, err = pcall(transform, {
   exists = function() return true end,
-  readImage = function() return sourceSheet() end,
+  readImage = function(rel)
+    return rel:sub(1, 3) == "fx/" and sourceFishingPose() or sourceSheet()
+  end,
   blank = function(w, h) return fakeImage(w, h) end,
   writeImage = function(image, rel) written[rel] = image end,
 })
@@ -117,6 +133,13 @@ T.check(written["sprites/chrisbike.png"] ~= nil, "writes the bicycle sheet")
 T.check(written["sprites/kris.png"] ~= nil, "writes the Crystal walking sheet")
 T.check(written["sprites/kris_bike.png"] ~= nil,
   "writes the Crystal bicycle sheet")
+for _, rel in ipairs({
+    "fx/chris_fish_down.png", "fx/chris_fish_up.png",
+    "fx/chris_fish_side.png", "fx/kris_fish_down.png",
+    "fx/kris_fish_up.png", "fx/kris_fish_side.png",
+  }) do
+  T.check(written[rel] ~= nil, "writes " .. rel)
+end
 
 local walk = written["sprites/chris.png"]
 local _, _, _, transparent = walk:getPixel(0, 0)
@@ -168,6 +191,35 @@ T.check(er > eg and er > eb, "Crystal heroine receives red shoes")
 local tr, tg, tb = girl:getPixel(7, 16 + 10)
 T.check(tg > tb and tb > tr, "Crystal heroine receives a teal backpack")
 
+local boyFish = written["fx/chris_fish_down.png"]
+local bfr, bfg, bfb = boyFish:getPixel(6, 3)
+T.check(bfb > bfg and bfg > bfr,
+  "boy fishing pose receives the blue jacket treatment")
+local bsr, bsg, bsb = boyFish:getPixel(6, 5)
+T.check(bsb > bsg and bsg > bsr,
+  "boy fishing pose receives pale trouser shading")
+local girlFish = written["fx/kris_fish_down.png"]
+local gyr, gyg, gyb = girlFish:getPixel(6, 3)
+T.check(gyr > gyg and gyg > gyb,
+  "Crystal heroine fishing pose receives the yellow top treatment")
+local gdr, gdg, gdb = girlFish:getPixel(6, 5)
+T.check(gdb > gdr and gdg > gdr,
+  "Crystal heroine fishing pose receives denim-blue shorts")
+
+local missingGirlFish = {}
+local missingOk, missingErr = pcall(transform, {
+  exists = function(rel) return not rel:match("^fx/kris_fish_") end,
+  readImage = function(rel)
+    return rel:sub(1, 3) == "fx/" and sourceFishingPose() or sourceSheet()
+  end,
+  blank = function(w, h) return fakeImage(w, h) end,
+  writeImage = function(_, rel) missingGirlFish[rel] = true end,
+})
+T.check(missingOk,
+  "Gold/Silver run cleanly without Crystal fishing assets ("
+    .. tostring(missingErr) .. ")")
+T.eq(missingGirlFish["fx/kris_fish_down.png"], nil,
+  "missing Crystal fishing poses are skipped")
+
 run.release()
 T.finish("indigo_97")
-

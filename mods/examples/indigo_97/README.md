@@ -54,10 +54,11 @@ Suggested Voxel Characters settings:
 - Boy-player bicycle frames in Gold, Silver and Crystal.
 - Crystal heroine walking frames.
 - Crystal heroine bicycle frames.
+- Boy-player fishing poses in Gold, Silver and Crystal.
+- Crystal heroine fishing poses.
 - Colour only: movement, collision, saves and game data are untouched.
 
-Fishing poses, trainer-card portraits and battle portraits are not changed in
-1.1.0.
+Trainer-card portraits and battle portraits are not changed in 1.2.0.
 
 ## ROM-safe by design
 
@@ -86,4 +87,3 @@ run again.
 INDIGO//97 is an unofficial fan-made mod. Pokémon and the underlying game
 artwork belong to their respective owners. A legally obtained compatible ROM
 and Gen2Recomped are required; neither is distributed here.
-

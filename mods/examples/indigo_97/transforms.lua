@@ -12,6 +12,15 @@ local SHEETS = {
   { path = "sprites/kris_bike.png", bike = true, style = "cerulean" },
 }
 
+local FISHING_POSES = {
+  { path = "fx/chris_fish_down.png", direction = "down", style = "indigo" },
+  { path = "fx/chris_fish_up.png", direction = "up", style = "indigo" },
+  { path = "fx/chris_fish_side.png", direction = "side", style = "indigo" },
+  { path = "fx/kris_fish_down.png", direction = "down", style = "cerulean" },
+  { path = "fx/kris_fish_up.png", direction = "up", style = "cerulean" },
+  { path = "fx/kris_fish_side.png", direction = "side", style = "cerulean" },
+}
+
 local C = {
   ink = { 20, 23, 31 },
   hair = { 38, 34, 42 },
@@ -77,6 +86,22 @@ local function sourceShade(source, x, y, frameY)
   if x < 0 or x >= 16 or y < frameY or y >= frameY + 16 then return 0 end
   local r, _, _, a = source:getPixel(x, y)
   return shadeIndex(r, a)
+end
+
+local function poseShade(source, x, y)
+  if x < 0 or x >= 16 or y < 0 or y >= 8 then return 0 end
+  local r, _, _, a = source:getPixel(x, y)
+  return shadeIndex(r, a)
+end
+
+-- The pose is only the lower eight pixels of the 16x16 standing frame. Its
+-- top edge meets the ordinary walking sheet, so absence above row zero is not
+-- an outline; all other exposed edges are.
+local function isPoseBoundary(source, x, y)
+  return poseShade(source, x - 1, y) == 0
+    or poseShade(source, x + 1, y) == 0
+    or (y > 0 and poseShade(source, x, y - 1) == 0)
+    or poseShade(source, x, y + 1) == 0
 end
 
 local function isBoundary(source, x, y, frameY)
@@ -296,6 +321,80 @@ local function colourGirlSheet(ctx, source, bike)
   return out
 end
 
+local function boyFishingColour(direction, x, localY, shade, boundary)
+  local colour
+
+  if localY <= 9 then
+    if direction == "up" then
+      colour = region(shade, boundary, C.hair_hi, C.hair, C.hair_dark)
+    else
+      colour = toned(shade, C.skin, C.skin_shadow)
+      if direction == "side" and x >= 9 then
+        colour = region(shade, boundary, C.hair_hi, C.hair, C.hair_dark)
+      end
+    end
+  else
+    if direction == "up" then
+      colour = region(shade, boundary, C.green_hi, C.green, C.green_dark)
+    else
+      colour = region(shade, boundary, C.blue_hi, C.blue, C.navy)
+    end
+    if localY <= 12 and (x <= 3 or x >= 12) then
+      colour = region(shade, boundary, C.green_hi, C.green, C.green_dark)
+    end
+    if localY >= 13 then
+      colour = region(shade, boundary, C.denim_hi, C.denim, C.denim_dark)
+    end
+    if localY >= 14 then
+      colour = region(shade, boundary, C.white, C.red, C.red_dark)
+    end
+  end
+
+  if direction == "down" and (localY == 10 or localY == 11)
+      and x >= 7 and x <= 8 then
+    colour = shade == 3 and C.ink or C.navy
+  end
+
+  return colour
+end
+
+local function girlFishingColour(direction, x, localY, shade, boundary)
+  local headEnd = direction == "side" and 9 or 6
+  if localY <= headEnd then
+    return girlHeadColour(direction, x, localY, shade, boundary)
+  end
+  if localY >= 14 then
+    return accent(shade, C.red_hi, C.red, C.red_dark)
+  end
+  if localY >= 12 then
+    return region(shade, boundary, C.denim_hi, C.denim, C.denim_dark)
+  end
+  return girlBodyColour(direction, x, localY, shade, boundary)
+end
+
+local function colourFishingPose(ctx, source, style, direction)
+  local width, height = source:getDimensions()
+  if width ~= 16 or height ~= 8 then return nil end
+  local out = ctx.blank(width, height)
+
+  for y = 0, 7 do
+    local localY = y + 8
+    for x = 0, 15 do
+      local r, _, _, a = source:getPixel(x, y)
+      local shade = shadeIndex(r, a)
+      if shade ~= 0 then
+        local boundary = isPoseBoundary(source, x, y)
+        local colour = style == "cerulean"
+          and girlFishingColour(direction, x, localY, shade, boundary)
+          or boyFishingColour(direction, x, localY, shade, boundary)
+        put(out, x, y, colour)
+      end
+    end
+  end
+
+  return out
+end
+
 return function(ctx)
   for _, sheet in ipairs(SHEETS) do
     if ctx.exists(sheet.path) then
@@ -305,5 +404,12 @@ return function(ctx)
       if result then ctx.writeImage(result, sheet.path) end
     end
   end
-end
 
+  for _, pose in ipairs(FISHING_POSES) do
+    if ctx.exists(pose.path) then
+      local result = colourFishingPose(ctx, ctx.readImage(pose.path),
+        pose.style, pose.direction)
+      if result then ctx.writeImage(result, pose.path) end
+    end
+  end
+end
