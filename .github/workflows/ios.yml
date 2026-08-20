@@ -73,7 +73,7 @@ jobs:
           ls -lh gen2recomp-unsigned.ipa
 
       - name: Upload IPA
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: gen2recomp-unsigned-ipa
           path: gen2recomp-unsigned.ipa
