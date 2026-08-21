@@ -14,7 +14,7 @@ Data.sprites.SPRITE_KRIS = {
   id = "SPRITE_KRIS", image = "sprites/kris.png", frames = 6, walker = true,
 }
 Data.sprites.SPRITE_KRIS_BIKE = {
-  id = "SPRITE_KRIS_BIKE", image = "sprites/kris_bike.png", frames = 6,
+  id = "SPRITE_KRIS_BIKE", image = "sprites/krisbike.png", frames = 6,
 }
 
 local MOD = "mods/examples/indigo_97"
@@ -131,9 +131,11 @@ T.check(ok, "the transform runs in its restricted context (" .. tostring(err) ..
 T.check(written["sprites/chris.png"] ~= nil, "writes the walking sheet")
 T.check(written["sprites/chrisbike.png"] ~= nil, "writes the bicycle sheet")
 T.check(written["sprites/kris.png"] ~= nil, "writes the Crystal walking sheet")
-T.check(written["sprites/kris_bike.png"] ~= nil,
+T.check(written["sprites/krisbike.png"] ~= nil,
   "writes the Crystal bicycle sheet")
 for _, rel in ipairs({
+    "fx/gen2_fish_down.png", "fx/gen2_fish_up.png",
+    "fx/gen2_fish_side.png",
     "fx/chris_fish_down.png", "fx/chris_fish_up.png",
     "fx/chris_fish_side.png", "fx/kris_fish_down.png",
     "fx/kris_fish_up.png", "fx/kris_fish_side.png",
@@ -184,6 +186,12 @@ local fr, fg, fb = girl:getPixel(7, 5)
 T.check(fr > fg and fg > fb, "Crystal heroine receives warm skin")
 local yr, yg, yb = girl:getPixel(7, 10)
 T.check(yr > yg and yg > yb, "Crystal heroine receives a yellow top")
+local tearR, tearG, tearB = girl:getPixel(5, 7)
+T.check(not (tearR > tearG and tearR > tearB),
+  "front suspenders do not touch the heroine's face like red tears")
+local suspenderR, suspenderG, suspenderB = girl:getPixel(5, 9)
+T.check(suspenderR > suspenderG and suspenderR > suspenderB,
+  "front suspenders begin lower on the torso")
 local dr, dg, db = girl:getPixel(7, 13)
 T.check(db > dr and dg > dr, "Crystal heroine receives denim-blue shorts")
 local er, eg, eb = girl:getPixel(7, 14)
@@ -198,6 +206,10 @@ T.check(bfb > bfg and bfg > bfr,
 local bsr, bsg, bsb = boyFish:getPixel(6, 5)
 T.check(bsb > bsg and bsg > bsr,
   "boy fishing pose receives pale trouser shading")
+local goldFish = written["fx/gen2_fish_down.png"]
+local gfr, gfg, gfb = goldFish:getPixel(6, 3)
+T.check(gfb > gfg and gfg > gfr,
+  "Gold/Silver shared fishing pose receives the blue jacket treatment")
 local girlFish = written["fx/kris_fish_down.png"]
 local gyr, gyg, gyb = girlFish:getPixel(6, 3)
 T.check(gyr > gyg and gyg > gyb,
@@ -220,6 +232,56 @@ T.check(missingOk,
     .. tostring(missingErr) .. ")")
 T.eq(missingGirlFish["fx/kris_fish_down.png"], nil,
   "missing Crystal fishing poses are skipped")
+
+local goldOnly = {}
+local goldOk, goldErr = pcall(transform, {
+  exists = function(rel)
+    return rel == "sprites/chris.png"
+      or rel == "sprites/chrisbike.png"
+      or rel:match("^fx/gen2_fish_") ~= nil
+  end,
+  readImage = function(rel)
+    return rel:sub(1, 3) == "fx/" and sourceFishingPose() or sourceSheet()
+  end,
+  blank = function(w, h) return fakeImage(w, h) end,
+  writeImage = function(_, rel) goldOnly[rel] = true end,
+})
+T.check(goldOk,
+  "Gold's actual imported asset set transforms cleanly ("
+    .. tostring(goldErr) .. ")")
+for _, rel in ipairs({
+    "fx/gen2_fish_down.png", "fx/gen2_fish_up.png",
+    "fx/gen2_fish_side.png",
+  }) do
+  T.eq(goldOnly[rel], true, "Gold writes its imported pose " .. rel)
+end
+T.eq(goldOnly["fx/chris_fish_down.png"], nil,
+  "Gold does not require Crystal's per-character pose paths")
+
+local crystalOnly = {}
+local crystalOk, crystalErr = pcall(transform, {
+  exists = function(rel)
+    return rel == "sprites/chris.png"
+      or rel == "sprites/chrisbike.png"
+      or rel == "sprites/kris.png"
+      or rel == "sprites/krisbike.png"
+      or rel:match("^fx/chris_fish_") ~= nil
+      or rel:match("^fx/kris_fish_") ~= nil
+      or rel:match("^fx/gen2_fish_") ~= nil
+  end,
+  readImage = function(rel)
+    return rel:sub(1, 3) == "fx/" and sourceFishingPose() or sourceSheet()
+  end,
+  blank = function(w, h) return fakeImage(w, h) end,
+  writeImage = function(_, rel) crystalOnly[rel] = true end,
+})
+T.check(crystalOk,
+  "Crystal's actual imported asset set transforms cleanly ("
+    .. tostring(crystalErr) .. ")")
+T.eq(crystalOnly["sprites/krisbike.png"], true,
+  "Crystal writes the importer's real krisbike.png path")
+T.eq(crystalOnly["sprites/kris_bike.png"], nil,
+  "Crystal does not depend on the obsolete underscored bike path")
 
 run.release()
 T.finish("indigo_97")

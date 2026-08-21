@@ -2,6 +2,24 @@
 
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## 1.2.1 - 2026-08-21
+
+### Fixed
+
+- Gold and Silver now recolour the shared `gen2_fish_*` pose strips emitted by
+  their ROM importer. Crystal keeps using its per-character Chris and Kris
+  pose strips.
+- Crystal now recolours the actual `krisbike.png` bicycle sheet emitted by its
+  ROM importer.
+- Kris's front-facing red suspenders begin on her torso instead of touching
+  her cheeks like red tears in the enlarged voxel view.
+
+### Verified
+
+- Full imports of canonical personal Pokemon Gold, Silver and Crystal ROMs
+  through Gen2Recomped's in-app importer, followed by mod-transform and live
+  renderer checks for each game's real asset paths.
+
 ## 1.2.0 - 2026-08-21
 
 ### Added

@@ -9,10 +9,16 @@ local SHEETS = {
   { path = "sprites/chris.png", bike = false, style = "indigo" },
   { path = "sprites/chrisbike.png", bike = true, style = "indigo" },
   { path = "sprites/kris.png", bike = false, style = "cerulean" },
-  { path = "sprites/kris_bike.png", bike = true, style = "cerulean" },
+  { path = "sprites/krisbike.png", bike = true, style = "cerulean" },
 }
 
 local FISHING_POSES = {
+  -- Gold and Silver expose the shared Chris strips through the original
+  -- field-effect paths. Crystal additionally exposes the per-character paths
+  -- below so its boy/girl selection can swap fishing art with the player form.
+  { path = "fx/gen2_fish_down.png", direction = "down", style = "indigo" },
+  { path = "fx/gen2_fish_up.png", direction = "up", style = "indigo" },
+  { path = "fx/gen2_fish_side.png", direction = "side", style = "indigo" },
   { path = "fx/chris_fish_down.png", direction = "down", style = "indigo" },
   { path = "fx/chris_fish_up.png", direction = "up", style = "indigo" },
   { path = "fx/chris_fish_side.png", direction = "side", style = "indigo" },
@@ -262,7 +268,10 @@ local function girlBodyColour(direction, x, localY, shade, boundary)
   if localY <= 9 and (x <= 3 or x >= 12) then
     return toned(shade, C.skin, C.skin_shadow)
   end
-  if (x == 5 or x == 10) and localY <= 12 then
+  -- The red suspenders start on the torso.  Beginning them at localY 7 put
+  -- two red pixels directly against the bottom of Kris's face, which read as
+  -- tears in the enlarged voxel view.
+  if (x == 5 or x == 10) and localY >= 9 and localY <= 12 then
     return accent(shade, C.red_hi, C.red, C.red_dark)
   end
   return region(shade, boundary, C.yellow_hi, C.yellow, C.yellow_dark)

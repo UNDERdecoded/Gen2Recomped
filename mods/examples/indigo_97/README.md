@@ -4,9 +4,6 @@ INDIGO//97 gives both Gen 2 player characters late-1990s anime-inspired
 true-colour overworld designs while preserving the cartridge's original
 animation timing.
 
-**Persona: the broadcast colourist.** It treats the compact cartridge sprite
-like a character cel from a late-1990s Saturday-morning adventure.
-
 Red-and-white cap. Dark hair. Blue jacket. Green gloves and backpack. Pale
 jeans. Red trainers. It is deliberately vivid enough to belong in Dramatic
 Shape's diorama world without losing the chunky 16-pixel character language.
@@ -15,14 +12,6 @@ Crystal's heroine gets a complementary Cerulean-era design: orange hair with
 auburn shading, a yellow top with red accents, denim-blue shorts, red shoes and
 a teal backpack. Her original silhouette and all six animation frames remain
 intact.
-
-## Try it
-
-```sh
-python3 tools/modkit.py validate mods/examples/indigo_97 --base imported
-python3 tools/modkit.py lint mods/examples/indigo_97
-luajit mods/examples/indigo_97/tests/indigo_97_test.lua
-```
 
 ## Install
 
@@ -36,8 +25,8 @@ versions from the mod manager.
 ## Recommended pairing
 
 INDIGO//97 works as a flat true-colour sprite by itself. Install **Voxel
-Characters 1.8.1 or newer** for the block-built depth shown in the release
-screenshots. Dramatic Shape is optional and changes the world rather than this
+Characters 1.8.1 or newer** for the block-built depth used during Steam Deck
+testing. Dramatic Shape is optional and changes the world rather than this
 mod's colours.
 
 Suggested Voxel Characters settings:
@@ -58,7 +47,7 @@ Suggested Voxel Characters settings:
 - Crystal heroine fishing poses.
 - Colour only: movement, collision, saves and game data are untouched.
 
-Trainer-card portraits and battle portraits are not changed in 1.2.0.
+Trainer-card portraits and battle portraits are not changed in 1.2.1.
 
 ## ROM-safe by design
 

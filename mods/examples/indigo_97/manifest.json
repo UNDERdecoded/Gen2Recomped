@@ -1,7 +1,7 @@
 {
   "id": "indigo_97",
   "name": "INDIGO//97",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "api": 2,
   "games": ["gen2"],
   "entry": "main.lua",
