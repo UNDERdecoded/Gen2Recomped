@@ -117,6 +117,15 @@ function MapPacks.list(S)
     -- disabled rather than claiming an enabled state we did not read.
     row.enabled = m and (m.enabled == true) or false
     row.installed = m ~= nil
+    -- WHY IT IS NOT PATCHING, when it is installed and switched on.
+    --
+    -- A pack that declares a cartridge the reader has not imported LOADS and
+    -- then declines, so it claims nothing -- which is indistinguishable, from
+    -- claims alone, from a pack that has not loaded yet. The panel said
+    -- "restart the game to load it" to somebody who had restarted a dozen
+    -- times, because the advice was inferred from silence rather than read
+    -- from the row that knew.
+    row.missingGames = m and m.missingGames or nil
     table.sort(row.maps)
     out[#out + 1] = row
   end

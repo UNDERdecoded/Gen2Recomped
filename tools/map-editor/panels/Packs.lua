@@ -198,6 +198,16 @@ function Packs.draw(S, Kit)
         if pack.active then
           state = string.format("%d map%s", count, plural)
           col = PAL.muted
+        elseif pack.missingGames and pack.missingGames[1] then
+          -- The row knows. Naming the cartridge is the difference between an
+          -- instruction that can be followed and one that cannot: no number
+          -- of restarts imports Pokemon Red.
+          local names = {}
+          for _, g in ipairs(pack.missingGames) do
+            names[#names + 1] = tostring(g.name or g.version)
+          end
+          state = "needs " .. table.concat(names, " + ") .. " imported here"
+          col = PAL.red
         elseif not pack.enabled then
           state = "switched off in the launcher"
           col = PAL.red
