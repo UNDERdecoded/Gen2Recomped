@@ -34,6 +34,12 @@ local MapEdits = require("tools.map-editor.MapEdits")
 
 local Tiles = {}
 
+-- THIS PANEL FILLS THE RECTANGLE IT IS GIVEN; it does not flow down a page.
+-- The palette below sizes its rows, its page and its own scroll rail from the
+-- height handed in, so a drawer must hand it the height that is actually
+-- visible -- see the note on `fillsBody` in Sidebar.lua.
+Tiles.fillsBody = true
+
 local BLOCK = 32          -- world pixels per block, and per palette swatch
 
 local function store(S)

@@ -119,6 +119,55 @@ local function isEntrance(cls)
   return cls == 0x60 or cls == 0x68 or (cls >= 0x70 and cls <= 0x7F)
 end
 
+
+-- THE SOUTH-WEST TILE OF A CELL, which is what a map with no collision table
+-- answers with instead of a class byte (Map:cellTile's second branch).
+local function cellTileId(S, d, cx, cy)
+  local ts = S.data and S.data.tilesets and S.data.tilesets[d and d.tileset]
+  if not (ts and type(ts.blocks) == "table"
+          and d.blocks and d.width and d.height) then return nil end
+  local bx, by = math.floor(cx / 2), math.floor(cy / 2)
+  local blockId
+  if bx < 0 or by < 0 or bx >= d.width or by >= d.height then
+    blockId = d.borderBlock or 0
+  else
+    blockId = d.blocks[by * d.width + bx + 1] or 0
+  end
+  local block = ts.blocks[blockId + 1]
+  if type(block) ~= "table" then return nil end
+  return block[((cy % 2) * 2 + 1) * 4 + (cx % 2) * 2 + 1]
+end
+
+local function inList(list, v)
+  for _, x in ipairs(list or {}) do if x == v then return true end end
+  return false
+end
+
+-- WILL THE ENGINE FIRE A WARP ON THIS CELL? true / false / nil for "cannot
+-- tell", plus a phrase for the panel.
+--
+-- Two alphabets, because Map:cellTile speaks two. A tileset with a collision
+-- table answers in Gen 2 CLASSES and the entrance range decides it. An
+-- ADOPTED one -- a Gen 1 set the importer brought across whole -- has no
+-- collision table and answers in TILE IDS, and there the decision is its own
+-- doorTiles/warpTiles lists, which came across with it.
+--
+-- Reading only the first of those is why every imported map's doors reported
+-- "tileset not loaded - cannot check the cell". The tileset was loaded. It
+-- simply had nothing called `collision` in it, and never will.
+local function cellEntrance(S, d, cx, cy)
+  local cls = cellClass(S, d, cx, cy)
+  if cls ~= nil then
+    return isEntrance(cls) == true, string.format("$%02X", cls)
+  end
+  local ts = S.data and S.data.tilesets and S.data.tilesets[d and d.tileset]
+  if not ts then return nil, nil end
+  local t = cellTileId(S, d, cx, cy)
+  if t == nil then return nil, nil end
+  return (inList(ts.doorTiles, t) or inList(ts.warpTiles, t)),
+         string.format("tile $%02X", t)
+end
+
 -- A short verdict for one warp: nil when it is fine, otherwise the reason.
 local function problemWith(S, d, warp, i)
   if warp.removed then return "blank" end
@@ -153,8 +202,8 @@ local function problemWith(S, d, warp, i)
     end
   end
   if isGen2(S) then
-    local cls = cellClass(S, d, warp.x, warp.y)
-    if cls ~= nil and not isEntrance(cls) then
+    local fires = cellEntrance(S, d, warp.x, warp.y)
+    if fires == false then
       return string.format("inert - cell is $%02X, not a door", cls)
     end
   end
@@ -168,7 +217,7 @@ local function doorBlockFor(S, d, cx, cy)
   for _, w in ipairs(d.warps or {}) do
     if w.x and w.y and not w.removed
        and (w.x % 2) + (w.y % 2) * 2 == q
-       and isEntrance(cellClass(S, d, w.x, w.y)) then
+       and cellEntrance(S, d, w.x, w.y) == true then
       local bx, by = math.floor(w.x / 2), math.floor(w.y / 2)
       if bx >= 0 and by >= 0 and bx < d.width and by < d.height then
         local id = d.blocks[by * d.width + bx + 1]
@@ -177,11 +226,27 @@ local function doorBlockFor(S, d, cx, cy)
     end
   end
   local ts = S.data and S.data.tilesets and S.data.tilesets[d.tileset]
-  local coll = ts and ts.collision
-  if not coll then return nil end
-  local blocks = math.floor(#coll / 4)
-  for id = 0, blocks - 1 do
-    if isEntrance(coll[id * 4 + q + 1]) then
+  if not ts then return nil end
+  local coll = ts.collision
+  if coll then
+    local blocks = math.floor(#coll / 4)
+    for id = 0, blocks - 1 do
+      if isEntrance(coll[id * 4 + q + 1]) then
+        return id, "first door block in " .. tostring(d.tileset)
+      end
+    end
+    return nil
+  end
+  -- No class table: the adopted-tileset case. A block is a door here when the
+  -- tile in this cell's SOUTH-WEST corner is one the set itself names as a
+  -- door or a warp -- the same test the engine will make on it.
+  if type(ts.blocks) ~= "table" then return nil end
+  local slot = ((q >= 2) and 1 or 0)
+  slot = (slot * 2 + 1) * 4 + (q % 2) * 2 + 1
+  for id = 0, #ts.blocks - 1 do
+    local block = ts.blocks[id + 1]
+    local t = type(block) == "table" and block[slot] or nil
+    if t ~= nil and (inList(ts.doorTiles, t) or inList(ts.warpTiles, t)) then
       return id, "first door block in " .. tostring(d.tileset)
     end
   end
@@ -218,13 +283,13 @@ local function freeCell(S, d)
      and sel.cx >= 0 and sel.cy >= 0
      and sel.cx < d.width * 2 and sel.cy < d.height * 2
      and not taken[sel.cy * d.width * 2 + sel.cx] then
-    return sel.cx, sel.cy, isEntrance(cellClass(S, d, sel.cx, sel.cy))
+    return sel.cx, sel.cy, cellEntrance(S, d, sel.cx, sel.cy) == true
   end
   local firstFree
   for cy = 0, d.height * 2 - 1 do
     for cx = 0, d.width * 2 - 1 do
       if not taken[cy * d.width * 2 + cx] then
-        if isEntrance(cellClass(S, d, cx, cy)) then return cx, cy, true end
+        if cellEntrance(S, d, cx, cy) == true then return cx, cy, true end
         if not firstFree then firstFree = { cx, cy } end
       end
     end
@@ -370,6 +435,41 @@ local function defaultTileset(S)
     return d.tileset
   end
   return tilesetNames(S)[1]
+end
+
+-- THE BLOCK A NEW MAP IS FLOORED WITH.
+--
+-- It used to be the border block, which is block 0 unless the maker says
+-- otherwise. The border block is the thing drawn OUTSIDE the map, so in the
+-- sets people actually start from it is solid -- and a map floored with a
+-- solid block reads as collision class `wall` in every cell, which the voxel
+-- view then stands up at 16px. That is the reported "a new map's floor sits
+-- at 16px instead of 0": nothing was wrong with the height, the fill was
+-- never a floor. Being solid is the border block's job; using it as the
+-- interior fill was the mistake.
+--
+-- So: the lowest block whose four collision quadrants are all walkable, which
+-- is a floor by the only definition the data carries. $00 is COLL_FLOOR and
+-- is preferred outright; $01 is accepted on a second pass for the tilesets
+-- that floor themselves with it. If a tileset offers neither -- an all-solid
+-- set, or one whose collision table did not import -- the old behaviour is
+-- what is left, and that is correct: there is no floor to pick.
+local function floorBlock(S, tilesetId)
+  local ts = S.data and S.data.tilesets and S.data.tilesets[tilesetId]
+  local coll = ts and ts.collision
+  if type(coll) ~= "table" then return nil end
+  local count = (ts.blocks and #ts.blocks) or math.floor(#coll / 4)
+  for _, walkable in ipairs({ { [0x00] = true },
+                              { [0x00] = true, [0x01] = true } }) do
+    for id = 0, count - 1 do
+      local all = true
+      for q = 1, 4 do
+        if not walkable[coll[id * 4 + q] or -1] then all = false; break end
+      end
+      if all then return id end
+    end
+  end
+  return nil
 end
 
 -- Injected through applyAll rather than built here, so a map created in this
@@ -725,7 +825,7 @@ local function drawNewMap(S, Kit, x, y, w, h)
   -- player asked for.
   Kit.text("small", "size is in 32px blocks - a Gen 2 route is 20 x 18", x + pad, fy)
   fy = fy + 18 * s
-  Kit.text("small", "the map starts filled with its border block; lay doors", x + pad, fy)
+  Kit.text("small", "the map starts filled with this tileset's floor; lay doors", x + pad, fy)
   fy = fy + 15 * s
   Kit.text("small", "with MAKE DOOR once a warp is on it", x + pad, fy)
   fy = fy + 22 * s
@@ -739,11 +839,20 @@ local function drawNewMap(S, Kit, x, y, w, h)
              x + pad, fy - 6 * s)
   end
   if Kit.button(x + pad, fy, halfW, btnH, "CREATE") and tsOk then
+    local wB = math.max(1, math.floor(tonumber(S.newMap.width) or 10))
+    local hB = math.max(1, math.floor(tonumber(S.newMap.height) or 9))
+    local floor = floorBlock(S, S.newMap.tileset)
+    local blocks = nil
+    if floor then
+      blocks = {}
+      for i = 1, wB * hB do blocks[i] = floor end
+    end
     local id, err = createMap(S, {
       name = (S.newMap.name ~= "" and S.newMap.name) or "New map",
-      width = tonumber(S.newMap.width) or 10,
-      height = tonumber(S.newMap.height) or 9,
+      width = wB,
+      height = hB,
       tileset = S.newMap.tileset,
+      blocks = blocks,
     })
     if id then
       S.mapId = id
@@ -947,15 +1056,15 @@ function Warps.draw(S, Kit, x, y, w, h)
 
   -- The class actually under the warp, named. "$3C" is the whole diagnosis:
   -- it is not in the entrance range, so the engine will not fire this warp.
-  local cls = cellClass(S, d, warp.x or 0, warp.y or 0)
-  if cls == nil then
-    Kit.text("small", "tileset not loaded - cannot check the cell",
+  local fires, what = cellEntrance(S, d, warp.x or 0, warp.y or 0)
+  if fires == nil then
+    Kit.text("small", "tileset has no block or collision data - cannot check",
              sideX + pad, ey)
-  elseif isEntrance(cls) then
-    Kit.text("small", string.format("cell is $%02X - a door, this warp fires", cls),
+  elseif fires then
+    Kit.text("small", string.format("cell is %s - a door, this warp fires", what),
              sideX + pad, ey)
   else
-    Kit.text("small", string.format("cell is $%02X - NOT a door, this warp is inert", cls),
+    Kit.text("small", string.format("cell is %s - NOT a door, this warp is inert", what),
              sideX + pad, ey)
   end
   ey = ey + 20 * s

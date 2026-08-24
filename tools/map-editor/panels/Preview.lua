@@ -118,6 +118,75 @@ local function profile(S)
   return S.pvProfile or nil
 end
 
+-- RULE 1, THE TILE PINS -- the half of the profile's resolution order this
+-- view never read.
+--
+-- `voxel_heights.lua` states its order at the top of the file: a group listed
+-- under `tilesets[<id>]` FIRST, then water, then a walkable cell, then the
+-- tile-level fallback. Only rules 2 and 3 were implemented here, and rule 1
+-- is the one that carries every hand-authored shape: a fence rail, a ledge
+-- lip, a signpost board, a tree canopy and a potted plant are each drawn
+-- across PART of a cell, so the cell's single collision class cannot describe
+-- them and the profile pins their tiles instead. Without this every pinned
+-- tile fell through to the coarse cell reading below and came back `ground`
+-- or `wall` -- which is exactly "objects placed from the tileset do not carry
+-- their voxel rules".
+--
+-- Only keys that name a real class are taken, and only where the value is a
+-- plain array of tile ids. The same tileset table also carries `when_above`,
+-- `when_below`, `when_cell`, `figures`, `prop_ground`, `prop_bg` and a
+-- per-tileset `heights`, none of which are pin lists; reading them as one
+-- would pin tile 1 of every conditional group to whatever the group is named.
+local function tilePins(S, def)
+  local key = tostring(def and def.tileset or "-") .. "|"
+    .. tostring(S.voxelSource or "-")
+  if S.pvPinsFor == key then return S.pvPins end
+  local pins = {}
+  local p = profile(S)
+  local _, info = classInfo(S)
+  local group = p and p.tilesets and def and p.tilesets[def.tileset]
+  if type(group) == "table" then
+    for class, list in pairs(group) do
+      if info[class] and type(list) == "table" then
+        for _, tile in ipairs(list) do
+          if type(tile) == "number" then pins[tile] = class end
+        end
+      end
+    end
+  end
+  S.pvPins, S.pvPinsFor = pins, key
+  return pins
+end
+
+-- The four 8px tiles a 16px CELL is drawn from.
+--
+-- A block is a 4x4 grid of tiles indexed `(ty % 4) * 4 + (tx % 4) + 1` (that
+-- is Map:tileAt), and a cell is one 2x2 quadrant of it -- the same arithmetic
+-- `cellSlots` further down uses to repaint one, kept separate only because
+-- that one is declared after this and needs the block table it already holds.
+local function cellTiles(S, def, cx, cy)
+  local ts = S.data and S.data.tilesets and S.data.tilesets[def and def.tileset]
+  if not (ts and type(ts.blocks) == "table"
+          and def.blocks and def.width and def.height) then return nil end
+  local bx, by = math.floor(cx / 2), math.floor(cy / 2)
+  local id
+  if bx < 0 or by < 0 or bx >= def.width or by >= def.height then
+    id = def.borderBlock or 0
+  else
+    id = def.blocks[by * def.width + bx + 1] or 0
+  end
+  local block = ts.blocks[id + 1]
+  if type(block) ~= "table" then return nil end
+  local qx, qy = cx % 2, cy % 2
+  local out = {}
+  for r = 0, 1 do
+    for c = 0, 1 do
+      out[#out + 1] = block[(qy * 2 + r) * 4 + (qx * 2 + c) + 1]
+    end
+  end
+  return out
+end
+
 -- The class and height this cell would take, and where that answer came from.
 --
 -- THIS IS THE PROFILE'S RULES, NOT THE MESHER'S. voxel_heights.lua documents
@@ -141,6 +210,38 @@ local function voxelAt(S, def, cx, cy, cls)
   end
   local p = profile(S)
   if not p then return "ground", 0, "no profile" end
+
+  -- rule 1, before anything the cell can say
+  local pins = tilePins(S, def)
+  local tiles = cellTiles(S, def, cx, cy)
+  if tiles then
+    local _, pinInfo = classInfo(S)
+    local function pinH(c)
+      local spec = pinInfo[c]
+      return (spec and spec.h) or (p.heights and p.heights[c]) or 0
+    end
+    local standing, stH, flat = nil, nil, nil
+    for _, t in ipairs(tiles) do
+      local c = t and pins[t]
+      if c then
+        local h = pinH(c)
+        if h > 0 then
+          -- Something standing wins the cell. A cell is ONE answer here and
+          -- the thing you can see is the thing worth previewing; the tallest
+          -- of two pins is the one that would hide the other anyway.
+          if stH == nil or h > stH then standing, stH = c, h end
+        elseif flat == nil then
+          -- and a cell whose pins are all flat takes the flat one, which is
+          -- the case the ground/water pins exist for: the scrap of turf that
+          -- shares a blocked cell with a ledge lip and must stay turf
+          flat = c
+        end
+      end
+    end
+    local hit = standing or flat
+    if hit then return hit, pinH(hit), "tile pin" end
+  end
+
   local class = p.collision and cls and p.collision[cls]
   if not class then
     -- rule 3 then rule 4: an entrance or a walkable-looking class is ground,
@@ -1692,6 +1793,25 @@ local function blockCount(S, def)
   return n
 end
 
+-- HOW MANY DOORS ELSEWHERE POINT AT THIS MAP.
+--
+-- Shown before a delete is confirmed, because it is the one consequence that
+-- is not visible from the map being deleted. `Warp.resolve` survives a
+-- destination that is gone -- it logs and lands the player back where they
+-- were -- so this is not a crash, it is a set of doors that quietly stop
+-- going anywhere, on maps the reader is not looking at.
+local function inboundWarps(S, mapId)
+  local n = 0
+  for id, d in pairs((S.data and S.data.maps) or {}) do
+    if id ~= mapId then
+      for _, w in ipairs(d.warps or {}) do
+        if w.destMap == mapId then n = n + 1 end
+      end
+    end
+  end
+  return n
+end
+
 function Preview.drawCellCard(S, Kit, x, y, w)
   local s = Kit.scale
   local fieldH = 28 * s
@@ -2785,6 +2905,64 @@ function Preview.draw(S, Kit, x, y, w, h)
     end
     for _, line in ipairs(lines) do
       Kit.text("small", line, toolX + pad, ty)
+      ty = ty + 16 * s
+    end
+
+    -- DELETING A MAP, where the map already is.
+    --
+    -- This existed only inside the WARPS tab's NEW MAP drawer -- so removing a
+    -- map meant opening the panel for making one -- which is indistinguishable
+    -- from the feature not existing. It belongs on the card that already says
+    -- what this map is.
+    --
+    -- ONLY A MAP THE EDITOR MADE. A cartridge map is rebuilt from the ROM on
+    -- every boot; `MapEdits.deleteMap` refuses one, and a button that silently
+    -- does nothing is worse than a sentence saying why.
+    --
+    -- ARMED, then confirmed. A map is dozens of edits and there is no undo for
+    -- losing one, so the first press only turns the button into a question --
+    -- and the question is asked with the count of what else breaks.
+    ty = ty + 6 * s
+    if def.editorCreated then
+      local armed = (S.pvDeleteArm == S.mapId)
+      local delH = 30 * s
+      if armed then
+        local inbound = inboundWarps(S, S.mapId)
+        Kit.text("small", inbound > 0
+          and string.format("%d warp(s) elsewhere point here and will go dead",
+                            inbound)
+          or "nothing else points at this map", toolX + pad, ty, PAL.muted)
+        ty = ty + 16 * s
+      end
+      if Kit.button(toolX + pad, ty, inner, delH,
+                    armed and "CONFIRM - DELETE FOR GOOD" or "DELETE THIS MAP") then
+        if armed then
+          local gone = S.mapId
+          MapEdits.deleteMap(store(S), game(S), gone)
+          S.data.maps[gone] = nil
+          S.mapId, S.pvCell, S.pvDeleteArm = nil, nil, nil
+          -- every list keyed on the map SET has to be re-sorted, and the one
+          -- on the WARPS tab is keyed on nothing else at all
+          S.warpMapIds, S.warpSelected = nil, nil
+          markEdited(S)
+          S.pvNotice = gone .. " deleted"
+        else
+          S.pvDeleteArm = S.mapId
+        end
+      end
+      ty = ty + delH + 6 * s
+      if armed then
+        if Kit.button(toolX + pad, ty, inner, delH, "KEEP IT") then
+          S.pvDeleteArm = nil
+        end
+        ty = ty + delH + 6 * s
+      end
+    else
+      Kit.text("small", "a cartridge map cannot be deleted", toolX + pad, ty,
+               PAL.muted)
+      ty = ty + 16 * s
+      Kit.text("small", "RESET MAP in the title bar undoes its edits",
+               toolX + pad, ty, PAL.muted)
       ty = ty + 16 * s
     end
   else

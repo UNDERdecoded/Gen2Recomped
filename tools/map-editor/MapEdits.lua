@@ -2133,6 +2133,24 @@ function MapEdits.applyAdoptedTilesets(store, game, tilesets)
     else
       local copy = { id = id, adopted = true }
       for k, v in pairs(spec) do copy[k] = v end
+      -- BACK-FILL WHAT AN OLDER ADOPTION DID NOT CARRY.
+      --
+      -- `tilePairs` is the case: a Gen 1 set's elevation edges -- the pairs of
+      -- individually-walkable tiles that may not be crossed, which is the only
+      -- thing making a Cerulean Cave ledge a ledge. Sets adopted before those
+      -- travelled have none, and the alternative to topping them up here is
+      -- re-importing the map, which throws away every edit made since.
+      --
+      -- Read, not stored: this runs on the GAME's boot as well as the
+      -- editor's, and the game has no business rewriting the editor's file.
+      if copy.tilePairs == nil and copy.adoptedFrom and copy.adoptedName then
+        local okA, AT = pcall(require, "src.import.AdoptedTileset")
+        if okA and type(AT) == "table" and type(AT.tilePairs) == "function" then
+          local okP, pairs_ = pcall(AT.tilePairs, copy.adoptedFrom,
+                                    copy.adoptedName)
+          if okP and type(pairs_) == "table" then copy.tilePairs = pairs_ end
+        end
+      end
       tilesets[id] = copy
       n = n + 1
     end

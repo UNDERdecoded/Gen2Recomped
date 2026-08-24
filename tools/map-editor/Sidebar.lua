@@ -1,8 +1,8 @@
 -- Copyright (c) 2026 Cedric. All rights reserved.
--- Source-available under the Gen2Recomped Map Editor License: you may read,
--- build and privately modify this file; you may not redistribute it or use it
--- commercially. See LICENSE at the repository root. Cartridge-derived data is
--- not covered and is not the copyright holder's to license.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
 
 -- The map editor's tools, as a drawer over the map instead of tabs beside it.
 --
@@ -214,7 +214,23 @@ function Sidebar.draw(S, Kit, panels, x, y, width, height)
   -- ONE FRAME BEHIND, and that is fine: a panel lays itself out from the
   -- rectangle it is handed, so it cannot know its height until it has drawn
   -- one.  The page grows on the next frame and the rail appears with it.
-  local VIRTUAL = math.max(780 * s, sb.measuredH or 0)
+  --
+  -- UNLESS THE PANEL FILLS THE BODY ITSELF.
+  --
+  -- The virtual page assumes a panel FLOWS -- fields down a column, and a page
+  -- as tall as the flow. TILES does not: it draws a header and then hands the
+  -- whole remaining rectangle to a palette that scrolls INTERNALLY, sizing its
+  -- rows and its own rail from the height it was given. Give that a page 780
+  -- tall inside a body 600 tall and it lays out 780 worth of swatches, clips
+  -- them to the drawer, and believes every row it drew is on screen -- so the
+  -- bottom rows are visible-but-cut, its own rail thinks it is at the end, and
+  -- there is no way to reach them from either scrollbar. That is the palette
+  -- "going past the bottom of the screen".
+  --
+  -- Such a panel says so, and gets the body exactly: no virtual page, no outer
+  -- scroll, no outer rail. Its own scrolling was always the right one.
+  local fillsBody = panel and panel.fillsBody == true
+  local VIRTUAL = fillsBody and bodyH or math.max(780 * s, sb.measuredH or 0)
   local vh = math.max(bodyH, VIRTUAL)
   local maxScroll = math.max(0, vh - bodyH)
   sb.scroll = math.max(0, math.min(sb.scroll or 0, maxScroll))
