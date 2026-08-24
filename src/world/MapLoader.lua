@@ -36,20 +36,36 @@ local function touch(mapId)
   lru[mapId] = accessSeq
 end
 
+-- The tileset a map def actually resolves to, fallback chain included, plus
+-- the id it landed on.
+--
+-- This chain used to live only inside `build`, which meant anything else that
+-- had to pair a def with a tileset -- a tool, an offline pass that meshes a
+-- map without loading it -- either duplicated the table or quietly disagreed
+-- with what the game would load. Disagreeing is the expensive kind of wrong:
+-- work keyed on the tileset (a cached mesh, a baked atlas) is then filed
+-- under a tileset the running game never asks for.
+--
+-- Returns nil when nothing in the chain exists, so a caller that wants to
+-- skip such a map can, and `build` can keep raising.
+function MapLoader.tilesetFor(data, def)
+  local wanted = def and def.tileset
+  local tilesets = data and data.tilesets
+  if not tilesets then return nil end
+  local ts = wanted and tilesets[wanted]
+  if ts then return ts, wanted end
+  for _, fallbackId in ipairs(TILESET_FALLBACKS[wanted] or {}) do
+    ts = tilesets[fallbackId]
+    if ts then return ts, fallbackId end
+  end
+  return nil
+end
+
 local function build(data, mapId)
   local def = data.maps[mapId]
   assert(def, "unknown map: " .. tostring(mapId) ..
          " (not in the maps registry)")
-  local tilesetDef = data.tilesets[def.tileset]
-  if not tilesetDef then
-    local fallbacks = TILESET_FALLBACKS[def.tileset]
-    if fallbacks then
-      for _, fallbackId in ipairs(fallbacks) do
-        tilesetDef = data.tilesets[fallbackId]
-        if tilesetDef then break end
-      end
-    end
-  end
+  local tilesetDef = MapLoader.tilesetFor(data, def)
   assert(tilesetDef, ("map %s wants unknown tileset: %s (not in the " ..
          "tilesets registry)"):format(tostring(mapId), tostring(def.tileset)))
 
