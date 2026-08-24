@@ -662,7 +662,7 @@ jobs:
 
   # ------------------------------------------------------------------- msix
   msix:
-       - name: Build MSIX
+        name: Build MSIX
         shell: pwsh
         env:
           MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
