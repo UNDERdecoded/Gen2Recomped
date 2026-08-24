@@ -662,7 +662,6 @@ jobs:
 
   # ------------------------------------------------------------------- msix
   msix:
-         msix:
     name: Windows MSIX
     needs: [version, desktop]
     runs-on: windows-latest
