@@ -300,6 +300,70 @@ ModExport.NEW_MAP_FIELDS = {
   "connections", "signs",
 }
 
+-- WARPS, CUT DOWN TO WHAT THE SCHEMA WILL ACTUALLY ACCEPT.
+--
+-- THIS IS THE ONE THAT SILENTLY ATE WHOLE MAPS, and the mechanism is worth
+-- writing down because nothing about it is visible from here.
+--
+-- `R.maps.warps` is `f.opt(f.list(f.rec{ x, y, destMap, destWarp }))`, and
+-- `checkValue`'s list branch recurses with `patchMode = false`:
+--
+--     checkValue(t.inner, element, path .. "[" .. i .. "]", false, errors)
+--
+-- So inside a warp, required fields are enforced EVEN IN A PATCH -- and
+-- nested records are strict about unknown keys as well (`if hint or not top`,
+-- and `top` is never passed down). An editor warp carries `added`,
+-- `editorSlot`, `sourceWarp`, `destSourceMap` and `destSourceWarp`, which are
+-- bookkeeping this side of the export and unknown fields on the other; and a
+-- warp the author has not pointed anywhere yet has no `destMap` at all.
+--
+-- Either one fails validation. The pack declares `api = 2`, so a failure
+-- RAISES, and the generated loader wraps each patch in `pcall` -- so the
+-- error is swallowed and the ENTIRE MAP is dropped without a word. A map
+-- whose only sin was one unfinished door vanished; a map with no warps at all
+-- came through fine. That is exactly "the trees in New Bark Town are there
+-- and Route 29 is not".
+--
+-- So: the four fields the schema names, nothing else, and a warp with no
+-- destination is left out rather than shipped as a record that will take its
+-- map down with it. It goes nowhere in game either way.
+local WARP_FIELDS = { "x", "y", "destMap", "destWarp" }
+
+function ModExport.sanitiseWarps(list)
+  if type(list) ~= "table" then return nil, 0 end
+  local out, dropped = {}, 0
+  for _, w in ipairs(list) do
+    if type(w) == "table" and not w.removed
+       and type(w.destMap) == "string" and w.destMap ~= "" then
+      local clean = {}
+      for _, key in ipairs(WARP_FIELDS) do clean[key] = w[key] end
+      clean.x = math.max(0, math.floor(tonumber(clean.x) or 0))
+      clean.y = math.max(0, math.floor(tonumber(clean.y) or 0))
+      -- Warp ids are 1-based and the schema takes any non-negative integer;
+      -- a missing one means "the first warp over there", which is what the
+      -- editor defaults a new door to.
+      clean.destWarp = math.max(0, math.floor(tonumber(clean.destWarp) or 1))
+      out[#out + 1] = clean
+    else
+      dropped = dropped + 1
+    end
+  end
+  return out, dropped
+end
+
+-- Connections are keyed by an enum of four directions; anything else in that
+-- table is a field the schema will refuse, and refusing takes the map with it.
+local CONNECTION_SIDES = { north = true, south = true, east = true, west = true }
+
+local function sanitiseConnections(conn)
+  if type(conn) ~= "table" then return nil end
+  local out, any = {}, false
+  for side, value in pairs(conn) do
+    if CONNECTION_SIDES[side] then out[side] = value; any = true end
+  end
+  return any and out or nil
+end
+
 function ModExport.mapPatch(def, invented)
   local out = {}
   for _, key in ipairs(ModExport.MAP_FIELDS) do
@@ -309,7 +373,31 @@ function ModExport.mapPatch(def, invented)
     for _, key in ipairs(ModExport.NEW_MAP_FIELDS) do
       if def[key] ~= nil then out[key] = def[key] end
     end
+    out.connections = sanitiseConnections(out.connections)
   end
+  local warps, dropped = ModExport.sanitiseWarps(out.warps)
+  out.warps = warps
+  return out, dropped
+end
+
+-- THE TILE PINS FOR ONE MAP, READ FROM THE STORE RATHER THAN FROM THE DEF.
+--
+-- `voxelClassPins` is a TILESET-level fact -- "this drawing is a tree" -- and
+-- it reaches a map def by being published onto it: `applyToMap` at load, and
+-- `publishVoxels` per frame for the map the editor is LOOKING AT. Neither
+-- covers "a pin added this session, on a map that is not open".
+--
+-- Reading the def meant an export carried the pins for whichever maps happened
+-- to have them and silently omitted the rest -- New Bark Town went out with
+-- its per-cell overrides and no pins at all, so every borrowed tree that was
+-- not individually overridden came out as a wall on the other machine. The
+-- store is the truth; ask it once per map.
+function ModExport.tilePinsFor(ME, store, game, mapId, tileset)
+  if not (ME and ME.effectiveTilePins and tileset) then return nil end
+  local ok, pins = pcall(ME.effectiveTilePins, store, game, mapId, tileset)
+  if not (ok and type(pins) == "table" and next(pins) ~= nil) then return nil end
+  local out = {}
+  for tile, cls in pairs(pins) do out[tile] = cls end
   return out
 end
 
@@ -435,9 +523,33 @@ function ModExport.main(spec, maps, encounters, sprites, tilesets, requires,
     "    if mod then mod.unmetRequirement = text end",
     "    return { unmetRequirement = text }",
     "  end",
-    "  local _, why = BorrowedTiles.apply(GAME, TILE_EDITS, Data.tilesets)",
+    "  local _, why, pins = BorrowedTiles.apply(GAME, TILE_EDITS,",
+    "                                           Data.tilesets)",
     "  for _, msg in ipairs(why or {}) do",
     "    Logger.warn(\"%s: %s\", tostring(mod and mod.id), tostring(msg))",
+    "  end",
+    "  -- THE CLASS PINS, ONTO EVERY MAP THAT USES THE TILESET.",
+    "  --",
+    "  -- A pin says what a DRAWING is -- \"these six tiles are a tree\" -- so it",
+    "  -- belongs to the tileset. TileShape reads it off the map, though, so it",
+    "  -- has to be laid on each one; a pack that only carried the pins for the",
+    "  -- maps it exported left every borrowed tree elsewhere resolving through",
+    "  -- the collision class, which on a solid cell is a wall.",
+    "  --",
+    "  -- The map\'s own pins win: those are the reader\'s decisions.",
+    "  if pins then",
+    "    for id, patch in pairs(MAPS) do",
+    "      local ts = patch.tileset or (Data.maps[id] and Data.maps[id].tileset)",
+    "      local add = ts and pins[ts]",
+    "      if add then",
+    "        local merged = {}",
+    "        for tile, cls in pairs(add) do merged[tile] = cls end",
+    "        for tile, cls in pairs(patch.voxelClassPins or {}) do",
+    "          merged[tile] = cls",
+    "        end",
+    "        patch.voxelClassPins = merged",
+    "      end",
+    "    end",
     "  end",
     "end",
     "",
@@ -490,10 +602,18 @@ function ModExport.build(S, spec)
   local gNew = store.games and store.games[tostring(game)]
   local invented = (gNew and gNew.newMaps) or {}
   local maps, n = {}, 0
+  -- Doors with nowhere to go, counted so the export can mention them rather
+  -- than leaving the author to notice on the other machine.
+  local unfinished = 0
   for _, id in ipairs(edited or {}) do
     local def = S.data and S.data.maps and S.data.maps[id]
     if def then
-      maps[id] = ModExport.mapPatch(def, invented[id] ~= nil)
+      local patch, lost = ModExport.mapPatch(def, invented[id] ~= nil)
+      maps[id] = patch
+      patch.voxelClassPins =
+        ModExport.tilePinsFor(ME, store, tostring(game), id, def.tileset)
+        or patch.voxelClassPins
+      unfinished = unfinished + (lost or 0)
       n = n + 1
     end
   end
@@ -504,7 +624,12 @@ function ModExport.build(S, spec)
   for id in pairs((g and g.newMaps) or {}) do
     local def = S.data and S.data.maps and S.data.maps[id]
     if def and not maps[id] then
-      maps[id] = ModExport.mapPatch(def, true)
+      local patch, lost = ModExport.mapPatch(def, true)
+      maps[id] = patch
+      patch.voxelClassPins =
+        ModExport.tilePinsFor(ME, store, tostring(game), id, def.tileset)
+        or patch.voxelClassPins
+      unfinished = unfinished + (lost or 0)
       n = n + 1
     end
   end
@@ -663,12 +788,12 @@ function ModExport.build(S, spec)
         maps, encounters, sprites, tilesets, requires, tileEdits) },
   }
   for _, a in ipairs(assets) do files[#files + 1] = a end
-  return files, n, requires
+  return files, n, requires, unfinished
 end
 
 -- Build and write. Returns the path, or nil and a reason.
 function ModExport.write(S, spec)
-  local files, nOrWhy, requires = ModExport.build(S, spec)
+  local files, nOrWhy, requires, unfinished = ModExport.build(S, spec)
   if not files then return nil, nOrWhy end
   local data = ModExport.zip(files)
   local name = ((spec and spec.id) or "MAP_EDITS"):gsub("[^%w_%-]", "_")
@@ -686,7 +811,7 @@ function ModExport.write(S, spec)
   -- it. Whoever exported this map pack is the only one who can put the
   -- sentence in their release notes, and the only one who currently cannot see
   -- it -- everything works on the machine the maps were imported on.
-  return dir .. path, nOrWhy, requires
+  return dir .. path, nOrWhy, requires, unfinished
 end
 
 return ModExport

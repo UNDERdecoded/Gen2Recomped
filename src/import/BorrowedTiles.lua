@@ -413,6 +413,21 @@ local function extendAtlas(game, tilesetId, ts, borrowed, tilesets)
   return base
 end
 
+-- THE BASE A BORROWED SLOT RESOLVES AGAINST, asked outside an apply.
+--
+-- `extendAtlas` stamps the ORIGINAL atlas and its height on the live tileset
+-- the first time it runs, so the base stays put however many times art is
+-- borrowed afterwards. Anything keyed by resolved tile id -- a class pin on a
+-- borrowed tree, say -- has to use that same number or it moves the moment
+-- anything else is copied in. Before the first extension there is nothing
+-- stamped and the current capacity IS the original.
+function BorrowedTiles.baseFor(ts)
+  if type(ts) ~= "table" then return 0 end
+  local w = math.floor((ts.imageWidth or 128) / 8)
+  local h = math.floor((ts._borrowSrcH or ts.imageHeight or 128) / 8)
+  return math.max(0, w * h)
+end
+
 -- ---------------------------------------------------------------- applying
 --
 -- `spec` is one tileset's edits: { borrowed = { {from, tile}, ... },
@@ -496,6 +511,25 @@ function BorrowedTiles.applyOne(game, tilesetId, ts, spec, tilesets)
   return ids, stale
 end
 
+-- The class pins one tileset's recipe carries, as { [tileId] = class }.
+--
+-- Separate from applyOne because they do not go onto the TILESET -- nothing
+-- reads them there. TileShape is handed a map and resolves against
+-- `def.voxelClassPins`, so the pins have to be laid on every map drawn with
+-- this tileset, which only the caller knows.
+function BorrowedTiles.pinsOf(spec)
+  if type(spec) ~= "table" or type(spec.pins) ~= "table" then return nil end
+  local out, any = {}, false
+  for tile, cls in pairs(spec.pins) do
+    local id = tonumber(tile)
+    if id and type(cls) == "string" and cls ~= "" then
+      out[id] = cls
+      any = true
+    end
+  end
+  return any and out or nil
+end
+
 -- Every tileset in `spec`, against the live `tilesets` table. Returns
 -- key -> block id and a list of reasons, exactly as the editor's own applier
 -- always has.
@@ -504,6 +538,7 @@ function BorrowedTiles.apply(game, spec, tilesets)
   if not (type(spec) == "table" and type(tilesets) == "table") then
     return ids, stale
   end
+  local pins = nil
   for tilesetId, one in pairs(spec) do
     if type(one) == "table" then
       local got, why = BorrowedTiles.applyOne(game, tilesetId,
@@ -513,9 +548,14 @@ function BorrowedTiles.apply(game, spec, tilesets)
         stale = stale or {}
         for _, m in ipairs(why) do stale[#stale + 1] = m end
       end
+      local p = BorrowedTiles.pinsOf(one)
+      if p then
+        pins = pins or {}
+        pins[tilesetId] = p
+      end
     end
   end
-  return ids, stale
+  return ids, stale, pins
 end
 
 return BorrowedTiles

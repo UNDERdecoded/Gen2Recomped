@@ -1046,7 +1046,7 @@ local function drawTitleBar(x, y, w, h)
     else
       if Kit.button(exportX, btnY, exportW, btnH, "EXPORT", { kind = "ghost" }) then
         local id = "MAP_EDITS_" .. tostring(S.version or "gen2"):upper()
-        local path, why, requires = ModExport.write(S, {
+        local path, why, requires, unfinished = ModExport.write(S, {
           id = id,
           name = "Map edits (" .. tostring(S.version or "gen2") .. ")",
         })
@@ -1058,9 +1058,21 @@ local function drawTitleBar(x, y, w, h)
         -- is the only one who can say so in their release notes and the only
         -- one who never sees the problem, so the export tells them.
         local note = nil
+        -- DOORS THAT GO NOWHERE, said to the person who can still fix them.
+        -- A warp with no destination cannot travel -- see
+        -- ModExport.sanitiseWarps -- and the author is the only one who will
+        -- ever know which door they meant.
+        if path and (unfinished or 0) > 0 then
+          note = string.format("%d warp%s had no destination and were left "
+                               .. "out", unfinished,
+                               unfinished == 1 and "" or "s")
+        end
         if path and requires and requires[1] then
           local okA, AT = pcall(require, "src.import.AdoptedTileset")
-          if okA then note = AT.requirementText(requires, "This map pack") end
+          if okA then
+            local req = AT.requirementText(requires, "This map pack")
+            note = note and (note .. "  -- " .. req) or req
+          end
         end
         S.pvNotice = path and ("exported to " .. tostring(path)
                                .. (note and ("  -- " .. note) or ""))

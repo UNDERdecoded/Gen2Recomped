@@ -188,8 +188,12 @@ function Tiles.usePick(S, srcTsId, blockId, q)
   local ck = tostring(srcTsId) .. "/" .. tostring(blockId)
   local live = S._tileBorrowLive[ck]
   if live == nil then
+    -- S.voxelSource: the borrowed tile inherits its class from the SOURCE
+    -- tileset's profile, and that has to be read from the mod the reader is
+    -- editing against (see MapEdits.borrowBlock).
     local got, why = MapEdits.borrowLive(store(S), game(S), ownId, srcTsId,
-                                         blockId, S.data and S.data.tilesets)
+                                         blockId, S.data and S.data.tilesets,
+                                         S.voxelSource)
     if not got then return nil, why end
     S._tileBorrowLive[ck] = got
     live = got

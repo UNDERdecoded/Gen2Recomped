@@ -258,8 +258,11 @@ function MapAssets.place(S, asset, cx, cy)
     remap = {}
     local keys = {}
     for _, block in ipairs(MapAssets.blocksUsed(asset)) do
+      -- S.voxelSource so the class the pin picks up comes from the profile
+      -- the reader is editing against, not whichever mod happens to be first.
       local key, why = MapEdits.borrowBlock(store, game, destTs, asset.tileset,
-                                            block, S.data.tilesets)
+                                            block, S.data.tilesets,
+                                            S.voxelSource)
       if not key then return nil, tostring(why) end
       keys[block] = key
     end

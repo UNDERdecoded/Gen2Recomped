@@ -1072,7 +1072,7 @@ end
 -- Copy one block's art from another tileset, and mint a block that uses it.
 -- Returns the mint key, or nil and a reason.
 function MapEdits.borrowBlock(store, game, destTileset, srcTileset, srcBlockId,
-                              tilesets)
+                              tilesets, sourceId)
   if destTileset == srcTileset then
     return nil, "that is this map's own tileset - paint it directly"
   end
@@ -1093,9 +1093,46 @@ function MapEdits.borrowBlock(store, game, destTileset, srcTileset, srcBlockId,
   if not list then return nil, "could not open the tileset's edit bucket" end
 
   local tiles, coll = {}, {}
+  local heldBySlot = {}
   for i = 1, 16 do
-    tiles[i] = -borrowSlot(list, srcTileset, block[i] or 0)
+    local srcTile = block[i] or 0
+    local slot = borrowSlot(list, srcTileset, srcTile)
+    tiles[i] = -slot
+    heldBySlot[slot] = srcTile
   end
+  -- THE CLASS COMES ACROSS WITH THE PIXELS.
+  --
+  -- A borrowed tile lands at an id the destination tileset's profile has never
+  -- heard of, so TileShape falls through the pin step to the collision class --
+  -- and a tree drawn on a solid cell is a WALL. Every borrowed tree came out
+  -- as a box, and the only fix was to pin all of them by hand, one map at a
+  -- time, for a fact the source tileset already states: TilesetForest says
+  -- tile 12 is a canopy.
+  --
+  -- So the pin travels with the art. Keyed against the ORIGINAL atlas capacity
+  -- rather than the current one, because the current one has already moved by
+  -- the time a second block is borrowed -- the same base the slots themselves
+  -- resolve against.
+  --
+  -- Never overwrites a pin that is already there: a class the reader set by
+  -- hand is a decision, and this is a default.
+  pcall(function()
+    local VC = require("tools.map-editor.VoxelClasses")
+    local BT = require("src.import.BorrowedTiles")
+    local srcPins = VC.tilePins(srcTileset, sourceId)
+    if not (srcPins and next(srcPins) ~= nil) then return end
+    local base = BT.baseFor(dst)
+    for slot, srcTile in pairs(heldBySlot) do
+      local cls = srcPins[srcTile]
+      if cls then
+        local id = base + slot - 1
+        local have = MapEdits.tilePins(store, game, destTileset)[id]
+        if have == nil then
+          MapEdits.setTilePin(store, game, destTileset, id, cls)
+        end
+      end
+    end
+  end)
   -- The collision comes across too. A drawing borrowed without it is a wall
   -- you can walk through or a floor you cannot -- and the class is part of
   -- what the block IS, not decoration on top of it.
@@ -1157,15 +1194,24 @@ function MapEdits.tilesetRecipes(store, game, tilesets)
     for i, e in ipairs(t.borrowed or {}) do
       borrowed[i] = { from = e.from, tile = e.tile }
     end
-    if blocks[1] or borrowed[1] then
+    local pins = nil
+    for tile, cls in pairs(t.pins or {}) do
+      pins = pins or {}
+      pins[tile] = cls
+    end
+    if blocks[1] or borrowed[1] or pins then
       local ts = tilesets and tilesets[tilesetId]
       local base = nil
       if ts and type(ts.blocks) == "table" then
         base = #ts.blocks
         for _ in pairs(ts._mintedAt or {}) do base = base - 1 end
       end
+      -- The class pins ride along too. They are a fact about the TILESET --
+      -- "this drawing is a tree" -- and carrying them per map meant a pack
+      -- described the trees on the maps it happened to export and left every
+      -- other map drawn with that tileset resolving them as walls.
       out[tilesetId] = { blocks = blocks, borrowed = borrowed,
-                         baseBlocks = base }
+                         baseBlocks = base, pins = pins }
       any = true
     end
   end
@@ -1631,9 +1677,9 @@ end
 -- number the renderer can index a block array with, which is the only form
 -- `paintCell` and `paint` accept.
 function MapEdits.borrowLive(store, game, destTileset, srcTileset, srcBlockId,
-                             tilesets)
+                             tilesets, sourceId)
   local key, why = MapEdits.borrowBlock(store, game, destTileset, srcTileset,
-                                        srcBlockId, tilesets)
+                                        srcBlockId, tilesets, sourceId)
   if not key then return nil, why end
   local ids, stale = MapEdits.applyTilesets(store, game, tilesets)
   local live = ids and ids[key]
