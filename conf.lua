@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 function love.conf(t)
   -- PhysFS ignores symlinks unless told otherwise, so a mod dev-linked into
   -- mods/ (ln -s, matching the mklink /J workflow on Windows) is invisible

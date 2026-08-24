@@ -59,9 +59,15 @@ function Player.new(data, cx, cy, facing)
   local self = setmetatable({}, Player)
   self.stepFrames = FieldDefaults.world(data, "stepFrames") or STEP_FRAMES
   self.bikeStepFrames = FieldDefaults.world(data, "bikeStepFrames")
-  -- absent for every game but Prism, which is the gate: see beginStep
+  -- HOLD-B RUNNING is a per-version feature, not Prism's alone: Polished
+  -- Crystal has running shoes too (its DoPlayerMovement takes the .run
+  -- branch on B like Prism's).  The gate is the version record's
+  -- `hasRunning` flag rather than a hardcoded id, so a new build opts in by
+  -- declaring it -- Gold and Crystal, which have no running at all, leave it
+  -- unset and keep nil here.
   local GV = require("src.core.GameVersion")
-  self.runStepFrames = (GV.get and GV.get() == "prism")
+  local info = GV.get and GV.info and GV.info(GV.get())
+  self.runStepFrames = (info and info.hasRunning)
     and FieldDefaults.world(data, "runStepFrames") or nil
   self.turnFrames = FieldDefaults.world(data, "turnFrames") or TURN_FRAMES
   -- field.playerSprites: which sprite ids the player wears on foot, on the

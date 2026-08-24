@@ -32,7 +32,6 @@ StadiumArt.MOD_ID = "STADIUM2_OVERWORLD_MODELS"
 -- into the mod's own memoising loader, so the repeated cost is a table lookup.
 local preview = nil
 local warned = false
-local reported = false
 
 local function modExports(game)
   local mods = game and game.mods
@@ -76,57 +75,7 @@ function StadiumArt.battleMode(game) return mode(game, "battleArt") end
 -- The OPTIONS rows use this to stay honest: offering STADIUM with no mod and
 -- no cartridge behind it is a switch that visibly does nothing.
 function StadiumArt.available(game)
-  if previewModule(game) then return true end
-  -- ...and SAY WHY, once.  A false here removes the OPTIONS rows entirely, so
-  -- without this the failure mode is a setting that is simply not in the menu,
-  -- which is indistinguishable from "this build does not have that feature".
-  -- Each stage is named because they fail for different reasons: no mod
-  -- installed, mod installed but disabled, mod loaded but its entry chunk died
-  -- before publishing exports.
-  if not reported then
-    reported = true
-    local mods = game and game.mods
-    local exports = mods and mods.exports
-    local mine = exports and exports[StadiumArt.MOD_ID]
-    Logger.info("StadiumArt: no Stadium renders available -- mods=%s "
-      .. "exports=%s %s=%s lib=%s. Game Boy pics will be used and the "
-      .. "PKMN ART / BATTLE PKMN rows are hidden.",
-      tostring(mods ~= nil), tostring(exports ~= nil),
-      StadiumArt.MOD_ID, tostring(mine ~= nil),
-      tostring(mine and mine.lib ~= nil))
-  end
-  return false
-end
-
--- A stable render key for a caller that is not itself a screen table.
---
--- The mod caches one rig per key and reads `key.game`, so the key has to be a
--- table it can hold onto and it has to carry the game.  A battle has two
--- battlers and wants a resident model for each, so `owner` is the state to
--- hang the keys off and `slot` is whatever identifies the side.  Weak keys: a
--- battler swapped out mid-battle takes its proxy with it.
-function StadiumArt.keyFor(game, owner, slot)
-  if not (type(owner) == "table" and slot ~= nil) then return nil end
-  local keys = rawget(owner, "_stadiumArtKeys")
-  if not keys then
-    keys = setmetatable({}, { __mode = "k" })
-    rawset(owner, "_stadiumArtKeys", keys)
-  end
-  local key = keys[slot]
-  if not key then
-    key = { game = game }
-    keys[slot] = key
-  end
-  return key
-end
-
--- Hand back every rig an owner minted through keyFor.  Called from a state's
--- exit, so it must tolerate an owner that never minted one.
-function StadiumArt.releaseAll(game, owner)
-  local keys = type(owner) == "table" and rawget(owner, "_stadiumArtKeys")
-  if not keys then return end
-  for _, key in pairs(keys) do StadiumArt.release(game, key) end
-  rawset(owner, "_stadiumArtKeys", nil)
+  return previewModule(game) ~= nil
 end
 
 -- Render `mon` for `screen` at up to `w` x `h`, or nil.
@@ -178,9 +127,16 @@ function StadiumArt.drawInto(game, screen, mon, x, y, w, h, opts)
     -- the mod overscans deliberately (animated wings and tails need room
     -- before projection), so this is a fit, not a blit
     local scale = math.min(dw / cw, dh / ch)
+    -- PUT THE FILTER BACK.  This canvas is cached and re-blitted by other
+    -- passes, so leaving it bilinear made every later 1:1 draw of the same
+    -- target soft -- the "blurry, menus unreadable" half of the Stadium
+    -- report: pixel-art UI reaching the screen through a filter chosen for
+    -- one scaled 3D pic.  The mod's own AntiAlias pass restores "nearest"
+    -- for exactly this reason; this path never did.
     pcall(canvas.setFilter, canvas, "linear", "linear")
     pcall(love.graphics.draw, canvas,
       dx + (dw - cw * scale) / 2, dy + (dh - ch * scale) / 2, 0, scale, scale)
+    pcall(canvas.setFilter, canvas, "nearest", "nearest")
   end, x, y, w, h)
   if queued then return true end
 
@@ -205,6 +161,55 @@ function StadiumArt.drawInto(game, screen, mon, x, y, w, h, opts)
 end
 
 
+-- THE PER-BATTLER SCREEN IDENTITY, which BattleState asks for and this module
+-- never defined -- so turning Stadium battle art on called a nil value and
+-- took the battle down on the first pic drawn.
+--
+-- `screen` is a cache identity, nothing more: the mod keeps one rig resident
+-- per screen, so a battle needs one key per SIDE rather than one for the whole
+-- state (the player's mon and the enemy's are two different models on screen
+-- at once, and sharing a key would make them evict each other every frame).
+-- The battler itself is that identity, and it is already per-side and stable
+-- for the life of the battle -- so it is returned directly, and release()
+-- takes the same value back.
+-- The keys handed out per battle, so releaseAll can give every one of them
+-- back. Both tables are WEAK: a battle that is collected without exiting -- a
+-- crash, a test, a headless run -- must not be kept alive by this bookkeeping,
+-- and neither must a battler the fight has already replaced.
+local keysByBattle = setmetatable({}, { __mode = "k" })
+
+function StadiumArt.keyFor(game, battle, battler)
+  if not (game and battle and battler) then return nil end
+  local seen = keysByBattle[battle]
+  if not seen then
+    seen = setmetatable({}, { __mode = "k" })
+    keysByBattle[battle] = seen
+  end
+  seen[battler] = true
+  return battler
+end
+
+-- Drop every rig this battle was holding. BattleState:exit calls this and the
+-- function did not exist, so ending a battle by switching or running raised
+-- `attempt to call field 'releaseAll' (a nil value)` from inside the pop --
+-- after the battle had already been taken off the stack.
+--
+-- It cannot simply release `battle.player` and `battle.enemy`: a fight
+-- REPLACES its battler on every switch, every faint and every enemy send-out
+-- (`self.player = makeBattler(...)` in eight places), so by the time exit runs,
+-- the battlers still referenced by the state are the last pair only, and every
+-- earlier one is gone from the state while its rig is still resident. Hence the
+-- set above -- keyFor is the one door every key comes through.
+function StadiumArt.releaseAll(game, battle)
+  if not battle then return end
+  local seen = keysByBattle[battle]
+  keysByBattle[battle] = nil
+  if not seen then return end
+  for key in pairs(seen) do
+    StadiumArt.release(game, key)
+  end
+end
+
 -- Drop the rig a screen was holding.  Safe to call for a screen that never
 -- had one, and safe to call twice.
 function StadiumArt.release(game, screen)
@@ -215,7 +220,8 @@ end
 
 -- Test/reload hygiene: forget the resolved module so the next call re-probes.
 function StadiumArt.forget()
-  preview, warned, reported = nil, false, false
+  preview, warned = nil, false
+  keysByBattle = setmetatable({}, { __mode = "k" })
 end
 
 return StadiumArt

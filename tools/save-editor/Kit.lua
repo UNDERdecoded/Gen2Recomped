@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- Immediate-mode widget kit for the save editor, drawn in the launcher's
 -- visual language (see Theme.lua and SaveEditor.dc.html).
 --
@@ -27,6 +33,10 @@ Kit.scale = 1
 
 local G = love and love.graphics or nil
 local edits = {}          -- queued textinput / backspace since the last frame
+-- Per-field caret / selection / scroll for Kit.textarea. Declared up here
+-- because Kit.blur drops a field's state when it loses focus, and blur is
+-- defined long before the widget is.
+local areaState = {}
 local kbField = nil       -- id of the field the OS soft keyboard is raised for
 
 -- Mobile LOVE only delivers love.textinput while setTextInput(true) is
@@ -83,6 +93,11 @@ function Kit.beginFrame(mx, my, clicked, wheel)
   Kit.mouseX, Kit.mouseY = mx, my
   Kit.mouseClicked = clicked
   Kit.wheelY = wheel or 0
+  -- Counted so a modal can tell "the frame I went up" from "a frame later".
+  -- See Kit.tapAway.
+  Kit.frame = (Kit.frame or 0) + 1
+  -- Nothing has claimed this frame's click for typing yet. See endFrame.
+  Kit._fieldTookClick = false
   if love and love.timer and love.timer.getTime then
     Kit.time = love.timer.getTime()
   end
@@ -92,6 +107,24 @@ end
 -- dropped here rather than replayed into the next field that gets clicked.
 -- A wheel notch no list claimed retires with them, for the same reason.
 function Kit.endFrame()
+  -- A CLICK THAT NO FIELD TOOK ENDS TYPING.
+  --
+  -- Focus was only ever dropped by pressing Return, Escape, or another field.
+  -- So after typing a map name into the search box, clicking the viewport left
+  -- the caret exactly where it was -- and every key after that went into the
+  -- box. W, A, S and D moved nothing and typed "wasd" into the search
+  -- instead, which reads as the map not responding to the keyboard at all.
+  --
+  -- Decided HERE rather than in the viewport, because the viewport is not
+  -- special: pressing a button, a list row, a swatch, or empty card space all
+  -- mean the reader has moved on. The one thing that should keep focus is
+  -- another text field, and a field says so by claiming the click.
+  --
+  -- After the frame, because the claim can only be known once every widget
+  -- that could make it has been drawn.
+  if Kit.mouseClicked and Kit.focus and not Kit._fieldTookClick then
+    Kit.blur()
+  end
   for i = #edits, 1, -1 do edits[i] = nil end
   Kit.wheelY = 0
 end
@@ -142,20 +175,62 @@ function Kit.clearField()
   return true
 end
 
+-- The keys a MULTI-LINE field claims that a single-line one does not.
+--
+-- Queued as tables beside the plain-string edits rather than instead of them:
+-- `Kit.textfield` walks this list and only understands strings, and rewriting
+-- every field in the editor to teach it a second shape would be a large change
+-- to fix a small one. A string is a character or one of the three sentinels; a
+-- table is a named key with its modifiers, and a reader that does not know what
+-- that means skips it.
+local NAV_KEYS = {
+  left = true, right = true, up = true, down = true,
+  home = true, ["end"] = true, pageup = true, pagedown = true,
+  delete = true, backspace = true, tab = true,
+}
+
 function Kit.keypressed(key)
   if not Kit.focus then return false end
+  local ctrl = false
+  if love and love.keyboard and love.keyboard.isDown then
+    ctrl = love.keyboard.isDown("lctrl") or love.keyboard.isDown("rctrl")
+      or love.keyboard.isDown("lgui") or love.keyboard.isDown("rgui")
+  end
+  local shift = false
+  if love and love.keyboard and love.keyboard.isDown then
+    shift = love.keyboard.isDown("lshift") or love.keyboard.isDown("rshift")
+  end
+
+  -- The structured form first, for whoever wants it.
+  if NAV_KEYS[key] or ctrl then
+    edits[#edits + 1] = { key = key, ctrl = ctrl, shift = shift }
+  end
+
   if key == "backspace" then
     edits[#edits + 1] = "\b"
     return true
-  elseif key == "return" or key == "kpenter" or key == "escape" then
+  elseif key == "return" or key == "kpenter" then
+    -- A MULTI-LINE FIELD KEEPS RETURN. Enter in a one-line box means "done";
+    -- in a paragraph of dialogue it means a new line, and blurring the field
+    -- every time the author pressed it made writing anything longer than a
+    -- sentence impossible.
+    edits[#edits + 1] = { key = "return", ctrl = ctrl, shift = shift }
+    edits[#edits + 1] = "\r"
+    return true
+  elseif key == "escape" then
     edits[#edits + 1] = "\r"
     return true
   end
-  -- other keys (arrows, shortcuts) fall through to App while a field is hot
+  if NAV_KEYS[key] or ctrl then return true end
+  -- other keys fall through to App while a field is hot
   return false
 end
 
 function Kit.blur()
+  -- A textarea's caret, selection and scroll go with its focus. Kept, they
+  -- would be restored the next time that id is drawn -- with a caret pointing
+  -- into a string that may since have been replaced by another object's.
+  if Kit.focus then areaState[Kit.focus] = nil end
   Kit.focus = nil
   syncSoftKeyboard(nil)  -- the soft keyboard follows focus down too (#529)
 end
@@ -177,9 +252,97 @@ end
 -- layer (#541).
 Kit.blockClicks = false
 
+-- ...and a shield over ONE RECTANGLE, for an overlay that covers part of the
+-- screen rather than all of it.
+--
+-- The map editor's tool drawer is the case. It covers the right-hand side, and
+-- the panel underneath drew its own controls there before the drawer painted
+-- over them -- so those need shielding. But the MAP is still visible on the
+-- left, and the whole point of a drawer rather than a tab is that you can go
+-- on working on it: the tile painter's clicks land on the map, not in the
+-- drawer. The global shield made that impossible -- with a drawer open, every
+-- click on the panel was refused, so the one tool whose clicks belong to the
+-- map could never receive one.
+--
+-- Tested against the POINTER rather than against the widget: what is being
+-- intercepted is the click, and a widget straddling the edge should still
+-- answer for the half of it that is in the open.
+Kit.blockRect = nil
+
+local function pointerBlocked()
+  local r = Kit.blockRect
+  if not r then return false end
+  return Kit.mouseX >= r[1] and Kit.mouseX <= r[1] + r[3]
+     and Kit.mouseY >= r[2] and Kit.mouseY <= r[2] + r[4]
+end
+
+Kit.pointerBlocked = pointerBlocked
+
 function Kit.press(x, y, w, h)
-  if Kit.blockClicks then return false end
+  if Kit.blockClicks or pointerBlocked() then return false end
   return Kit.mouseClicked and Kit.hit(x, y, w, h)
+end
+
+-- ------------------------------------------------- tapping away from a modal
+--
+-- A CLICK IS NOT CONSUMED BY THE WIDGET THAT ANSWERS IT. `Kit.mouseClicked`
+-- stays true for the whole frame, on purpose -- it is what lets several
+-- widgets read the same pointer without an event queue. The consequence is
+-- that a modal opened by a button is opened DURING the frame whose click is
+-- still in the buffer, and every modal is drawn after the thing that opened
+-- it: the button is outside the modal's rectangle, so the modal's own
+-- tap-outside-to-close test reads the opening click as a tap-away and shuts
+-- in the frame it went up. On screen it is a flash.
+--
+-- Every modal in the editor had to solve this and most of them did not. Two
+-- carried hand-rolled `_justOpened` flags; four had no guard at all -- the
+-- voxel class picker, the profile picker, the wild-encounter picker and the
+-- add-a-tileset question -- and every one of them flashed and vanished.
+--
+-- SO THE GUARD LIVES HERE, and it needs nothing from the caller. A modal is
+-- identified by a string; if it did not ask this question on the PREVIOUS
+-- frame then this is the frame it went up, and the click in the buffer is the
+-- one that opened it. A modal that closes and reopens later gets the guard
+-- again for free, because the frames in between are ones it did not ask.
+--
+-- AND THE CLICK IS SWALLOWED FOR THE REST OF THAT FRAME, which is the half
+-- that skipping the outside test does not cover.
+--
+-- A modal is drawn AFTER the button that opened it and most of them are
+-- CENTRED, so the modal lands under a pointer that is still sitting on the
+-- button -- and the same click, still in the buffer, is then read by whichever
+-- of the modal's own rows happens to be beneath the cursor. From outside that
+-- is a popup that "auto-selects what I'm hovering over before I can click
+-- anything": the class picker answered itself, the tileset question answered
+-- itself, and no amount of guarding the tap-outside test helped, because the
+-- click was being taken by a widget INSIDE the modal.
+--
+-- Clearing `Kit.mouseClicked` here is safe precisely because of the drawing
+-- order that caused the problem: everything with a prior claim on this click
+-- has already been drawn and has already had it. What is left is the modal
+-- that just went up, and it should start the next frame with a clean pointer.
+--
+-- Returns true only for a real tap outside, on a frame after the first.
+local modalFrame = {}
+
+function Kit.tapAway(id, x, y, w, h)
+  local now = Kit.frame or 0
+  local last = modalFrame[id]
+  modalFrame[id] = now
+  if last ~= now - 1 then
+    -- the frame it went up
+    Kit.mouseClicked = false
+    return false
+  end
+  if Kit.blockClicks or pointerBlocked() then return false end
+  return (Kit.mouseClicked and not Kit.hit(x, y, w, h)) or false
+end
+
+-- Forget a modal's frame stamp. Not required -- the "was it drawn last frame"
+-- test recovers on its own -- but a modal that closes itself can say so, which
+-- makes the next opening frame's guard exact rather than inferred.
+function Kit.forgetModal(id)
+  modalFrame[id] = nil
 end
 
 -- ------------------------------------------------------------------- text
@@ -187,32 +350,56 @@ local function font(name)
   return Kit.fonts[name] or Kit.fonts.small
 end
 
+-- EVERY STRING THIS FILE DRAWS IS SCRUBBED FIRST, and the scrub belongs here
+-- rather than at the call sites.
+--
+-- `love.graphics.print` and `Font:getWidth` RAISE on bytes that are not valid
+-- UTF-8 -- and the editor draws cartridge text, which is a GB character
+-- encoding that has never been UTF-8. One panel slicing a line into columns by
+-- byte count cut a multi-byte character in half and took the whole application
+-- down with "UTF-8 decoding error: Not enough space", from inside `print`,
+-- three frames into opening the NPC tool.
+--
+-- Fixing the caller fixes one caller. This is the one place every label, every
+-- number and every line of dialogue in the editor passes through, so it is the
+-- only place that can promise a bad byte cannot crash the app. `utf8Safe`
+-- returns the string untouched when it is pure ASCII, which it is for
+-- everything except the dialogue.
+local function safe(str)
+  return Theme.utf8Safe(tostring(str))
+end
+
+Kit.safeText = safe
+
 function Kit.text(name, str, x, y, c, a)
   if not G then return 0 end
   local f = font(name)
   if not f then return 0 end
+  str = safe(str)
   G.setFont(f)
   Theme.col(c or PAL.text, a or 1)
-  G.print(tostring(str), x, y)
-  return f:getWidth(tostring(str))
+  G.print(str, x, y)
+  return f:getWidth(str)
 end
 
 function Kit.textRight(name, str, x2, y, c, a)
   local f = font(name)
   if not f then return end
-  Kit.text(name, str, x2 - f:getWidth(tostring(str)), y, c, a)
+  str = safe(str)
+  Kit.text(name, str, x2 - f:getWidth(str), y, c, a)
 end
 
 function Kit.textCenter(name, str, x, y, w, c, a)
   if not G then return end
   local f = font(name)
   if not f then return end
+  str = safe(str)
   G.setFont(f)
   Theme.col(c or PAL.text, a or 1)
   if canPrintf() then
-    G.printf(tostring(str), x, y, w, "center")
+    G.printf(str, x, y, w, "center")
   else
-    G.print(tostring(str), x + (w - f:getWidth(tostring(str))) / 2, y)
+    G.print(str, x + (w - f:getWidth(str)) / 2, y)
   end
 end
 
@@ -221,9 +408,86 @@ function Kit.textHeight(name)
   return f and f:getHeight() or 12
 end
 
+-- MEASURING RAISES TOO, not only drawing: `Font:getWidth` decodes the string
+-- to walk it, so a layout that measures a cartridge line before deciding where
+-- to put it crashes in exactly the same way `print` does.
 function Kit.textWidth(name, str)
   local f = font(name)
-  return f and f:getWidth(tostring(str)) or 0
+  return f and f:getWidth(safe(str)) or 0
+end
+
+-- ------------------------------------------------------------ wrapping text
+--
+-- WRAPPED BY MEASURING, NOT BY COUNTING CHARACTERS.
+--
+-- The NPC panel divided its column width by `6 * s` -- a guess at how wide one
+-- character is -- and cut each line at that many characters. Kit's scale moves
+-- with the window and none of these fonts is fixed-width, so the guess was
+-- wrong in both directions at once: short lines left a third of the column
+-- empty and long ones ran off the end of it. No window size made it right,
+-- because the width was never measured.
+--
+-- Here rather than in the panel because measuring text is what this file is
+-- for, and because the next panel that needs a paragraph should not write its
+-- own.
+--
+-- BY CHARACTER WHEN A WORD IS TOO LONG FOR THE COLUMN, and characters means
+-- CHARACTERS. The editor draws cartridge text -- a GB encoding decoded into
+-- UTF-8 -- so a glyph can be two or three bytes wide and `sub` counts bytes.
+-- Cutting one in half took the whole application down inside `print` once
+-- already; `Theme.chars` splits on character boundaries.
+--
+-- EXPLICIT LINE BREAKS SURVIVE. A dialogue box's own breaks are meaningful,
+-- and flattening them into one paragraph to re-break somewhere else loses the
+-- shape the line was written in.
+function Kit.wrap(name, str, width)
+  str = safe(tostring(str or ""))
+  width = tonumber(width) or 0
+  local function fits(s2) return Kit.textWidth(name, s2) <= width end
+  local function glyphs(s2)
+    if Theme and type(Theme.chars) == "function" then return Theme.chars(s2) end
+    local out = {}
+    for ch in tostring(s2):gsub("[\128-\255]", "?"):gmatch(".") do
+      out[#out + 1] = ch
+    end
+    return out
+  end
+  local function breakWord(word, into)
+    local g = glyphs(word)
+    local at = 1
+    while at <= #g do
+      local take = 1
+      while at + take <= #g and fits(table.concat(g, "", at, at + take)) do
+        take = take + 1
+      end
+      into[#into + 1] = table.concat(g, "", at, math.min(#g, at + take - 1))
+      at = at + take
+    end
+  end
+
+  local out = {}
+  for para in (str .. "\n"):gmatch("([^\n]*)\n") do
+    if para == "" then
+      out[#out + 1] = ""
+    else
+      local line = nil
+      for word in para:gmatch("%S+") do
+        local try = line and (line .. " " .. word) or word
+        if line == nil then
+          if fits(word) then line = word else breakWord(word, out) end
+        elseif fits(try) then
+          line = try
+        else
+          out[#out + 1] = line
+          if fits(word) then line = word
+          else line = nil; breakWord(word, out) end
+        end
+      end
+      if line then out[#out + 1] = line end
+    end
+  end
+  if #out == 0 then out[1] = "" end
+  return out
 end
 
 function Kit.ellipsize(name, str, maxW)
@@ -331,6 +595,10 @@ function Kit.button(x, y, w, h, label, opts)
     if kind.border then
       Theme.stroke(x, y, w, h, r, kind.border, kind.borderA * (hot and 1.5 or 1), 1)
     end
+    -- Kit.button was the one text path here that did not scrub: text, textRight,
+    -- textCenter, textWidth and wrap all run through safe(), and a label that
+    -- reaches print/printf/getWidth unscrubbed raises on bad UTF-8 mid-draw.
+    label = safe(label)
     local f = font(opts.font or "button")
     if f then
       G.setFont(f)
@@ -403,6 +671,7 @@ function Kit.textfield(id, x, y, w, h, value, placeholder)
   value = tostring(value or "")
   if Kit.press(x, y, w, h) then
     Kit.focus = id
+    Kit._fieldTookClick = true      -- see Kit.endFrame
     -- Drop the latch so a tap on the ALREADY-focused field raises the
     -- keyboard again. On a platform with a real keyboard that is invisible;
     -- on one whose keyboard is a modal applet it is the only way to get a
@@ -414,7 +683,10 @@ function Kit.textfield(id, x, y, w, h, value, placeholder)
     -- raise (or hand off) the soft keyboard while this field owns focus (#529)
     syncSoftKeyboard(id, x, y, w, h)
     for _, e in ipairs(edits) do
-      if e == "\b" then
+      -- Structured key entries belong to Kit.textarea; a single-line field has
+      -- no caret to move and skips them rather than concatenating a table.
+      if type(e) == "table" then                             -- not ours
+      elseif e == "\b" then
         value = value:sub(1, -2)
       elseif e == "\f" then
         value = ""
@@ -444,6 +716,341 @@ function Kit.textfield(id, x, y, w, h, value, placeholder)
         Theme.col(PAL.blue, 1)
         G.rectangle("fill", x + pad + tw + 2, ty, math.max(1, Kit.scale),
           Kit.textHeight("mono"))
+      end
+    end
+  end
+  return value
+end
+
+-- ---------------------------------------------------------------- textarea
+--
+-- A MULTI-LINE FIELD WITH A CARET, A SELECTION, AND KEYS THAT REPEAT.
+--
+-- `Kit.textfield` is a one-line box that appends what you type and drops the
+-- last character on backspace. For a name or a number that is the whole job.
+-- For a line of NPC dialogue it produced three separate complaints, and each
+-- one is a different missing piece rather than three views of one:
+--
+--   * HELD BACKSPACE DID NOTHING. Kit sees a key PRESS; the operating
+--     system's own auto-repeat arrives as repeated keypressed events only if
+--     the host forwards them, and this one does not. So erasing a sentence
+--     meant tapping forty times. Fixed by watching the key's held state
+--     ourselves -- `isDown` plus a delay and a rate -- which also makes the
+--     behaviour the same on every platform instead of inheriting whatever the
+--     OS was set to.
+--
+--   * ONE LINE, SHOWING THE TAIL. `ellipsizeLeft` keeps the end of the string
+--     in view, which is right for a path and wrong for prose: the author could
+--     see "...2recomped" and nothing else, with no way to read what they had
+--     written. Wrapped over as many lines as the box has room for, scrolled to
+--     follow the caret.
+--
+--   * NO SELECTION. Without one there is no select-all, no cut, no replacing a
+--     phrase -- the only edit available was "backspace to it".
+--
+-- STATE LIVES HERE, KEYED BY ID, because the caller owns the string and hands
+-- it over per frame; a caret parked in the caller would have to be threaded
+-- through every panel that draws a field. Weak-keyed by nothing -- ids are
+-- short strings and there are a handful -- but dropped on blur so a field
+-- reopened later starts clean.
+-- `atEnd` seeds the caret the first time a field is seen.
+--
+-- AT THE END, NOT AT ZERO. A field opened on existing text and typed into
+-- should extend it; a caret parked at the front means the first character the
+-- author types lands before everything they wrote, which is not a behaviour
+-- anyone expects from a text box. A click sets the caret from where it landed,
+-- so this only decides the case where focus arrived some other way.
+local function areaFor(id, atEnd)
+  local st = areaState[id]
+  if not st then
+    st = { caret = atEnd or 0, anchor = nil, scroll = 0,
+           repeatAt = nil, repeatKey = nil }
+    areaState[id] = st
+  end
+  return st
+end
+
+-- Character offsets, not byte offsets, everywhere in this widget: a caret
+-- between the two halves of a multi-byte glyph is a caret that draws in the
+-- wrong place and deletes half a character.
+local function glyphsOf(str)
+  if Theme and type(Theme.chars) == "function" then return Theme.chars(str) end
+  local out = {}
+  for ch in tostring(str):gmatch(".") do out[#out + 1] = ch end
+  return out
+end
+
+local function sub(g, from, to)
+  return table.concat(g, "", math.max(1, from), math.min(#g, to))
+end
+
+-- The selection as an ordered pair, or nil when there is none.
+local function selection(st, n)
+  if not st.anchor then return nil end
+  local a, b = st.anchor, st.caret
+  if a == b then return nil end
+  if a > b then a, b = b, a end
+  return math.max(0, a), math.min(n, b)
+end
+
+function Kit.textareaValue(id) return areaState[id] end
+
+-- Wrap `value` and remember, per line, the character offset it starts at, so a
+-- caret can be turned into a row and column and back.
+local function layout(name, value, width)
+  local lines = Kit.wrap(name, value, width)
+  local starts, at = {}, 0
+  local g = glyphsOf(value)
+  local cursor = 1
+  for i, line in ipairs(lines) do
+    -- Find where this line begins in the source. `wrap` drops the space it
+    -- broke on, so skip separators rather than assuming a fixed stride.
+    while cursor <= #g and (g[cursor] == " " or g[cursor] == "\n") do
+      cursor = cursor + 1
+    end
+    starts[i] = cursor - 1
+    cursor = cursor + #glyphsOf(line)
+  end
+  return lines, starts, #g
+end
+
+-- A multi-line editable field. Returns the (possibly changed) value.
+function Kit.textarea(id, x, y, w, h, value, placeholder)
+  value = tostring(value or "")
+  local st = areaFor(id, #glyphsOf(value))
+  local pad = 8 * Kit.scale
+  local lineH = Kit.textHeight("mono") + 2 * Kit.scale
+  local innerW = w - 2 * pad
+  local rows = math.max(1, math.floor((h - 2 * pad) / lineH))
+  local lines, starts, n = layout("mono", value, innerW)
+
+  local function caretAt(px, py)
+    local row = math.floor((py - y - pad) / lineH) + 1 + st.scroll
+    row = math.max(1, math.min(#lines, row))
+    local line = lines[row] or ""
+    local g = glyphsOf(line)
+    local col, best = 0, math.huge
+    for i = 0, #g do
+      local dx = math.abs(x + pad + Kit.textWidth("mono", sub(g, 1, i)) - px)
+      if dx < best then best, col = dx, i end
+    end
+    return math.min(n, (starts[row] or 0) + col)
+  end
+
+  -- ------------------------------------------------------------- pointer
+  if Kit.press(x, y, w, h) then
+    Kit.focus = id
+    Kit._fieldTookClick = true      -- see Kit.endFrame
+    kbField = nil
+    st.caret = caretAt(Kit.mouseX, Kit.mouseY)
+    st.anchor = st.caret
+    st.dragging = true
+  end
+  if st.dragging then
+    local down = love and love.mouse and love.mouse.isDown
+      and love.mouse.isDown(1)
+    if down and Kit.focus == id then
+      st.caret = caretAt(Kit.mouseX, Kit.mouseY)
+    else
+      st.dragging = false
+    end
+  end
+
+  local focused = (Kit.focus == id)
+  local g = glyphsOf(value)
+
+  local function replaceSelection(with)
+    local a, b = selection(st, n)
+    if a then
+      value = sub(g, 1, a) .. with .. sub(g, b + 1, #g)
+      st.caret = a + #glyphsOf(with)
+      st.anchor = nil
+    else
+      value = sub(g, 1, st.caret) .. with .. sub(g, st.caret + 1, #g)
+      st.caret = st.caret + #glyphsOf(with)
+    end
+    g = glyphsOf(value)
+    n = #g
+  end
+
+  local function deleteBack()
+    local a, b = selection(st, n)
+    if a then
+      replaceSelection("")
+      return
+    end
+    if st.caret <= 0 then return end
+    value = sub(g, 1, st.caret - 1) .. sub(g, st.caret + 1, #g)
+    st.caret = st.caret - 1
+    g = glyphsOf(value); n = #g
+  end
+
+  local function deleteForward()
+    local a = selection(st, n)
+    if a then replaceSelection("") return end
+    if st.caret >= n then return end
+    value = sub(g, 1, st.caret) .. sub(g, st.caret + 2, #g)
+    g = glyphsOf(value); n = #g
+  end
+
+  if focused then
+    syncSoftKeyboard(id, x, y, w, h)
+
+    -- ------------------------------------------------ held-key repeat
+    --
+    -- Watched rather than waited for: the host forwards a key PRESS and not
+    -- the OS's auto-repeat, so a held backspace produced exactly one delete.
+    -- 0.45s before the first repeat and ~30/s after is the rate a text field
+    -- is expected to have; slower feels broken, faster overshoots.
+    local held = nil
+    if love and love.keyboard and love.keyboard.isDown then
+      for _, k in ipairs({ "backspace", "delete", "left", "right",
+                           "up", "down" }) do
+        if love.keyboard.isDown(k) then held = k break end
+      end
+    end
+    if held ~= st.repeatKey then
+      st.repeatKey = held
+      st.repeatAt = held and (Kit.time + 0.45) or nil
+    elseif held and st.repeatAt and Kit.time >= st.repeatAt then
+      st.repeatAt = Kit.time + 0.033
+      edits[#edits + 1] = { key = held, repeated = true,
+        shift = love.keyboard.isDown("lshift")
+             or love.keyboard.isDown("rshift") }
+    end
+
+    for _, e in ipairs(edits) do
+      if type(e) == "string" then
+        if e == "\b" then
+          deleteBack()
+        elseif e == "\f" then
+          value, st.caret, st.anchor = "", 0, nil
+          g, n = {}, 0
+        elseif e == "\r" then
+          -- handled by the structured entry (return inserts a newline);
+          -- escape blurs.
+        else
+          replaceSelection(e)
+        end
+      else
+        local k = e.key
+        local function moveTo(pos)
+          if e.shift then
+            st.anchor = st.anchor or st.caret
+          else
+            st.anchor = nil
+          end
+          st.caret = math.max(0, math.min(n, pos))
+        end
+        if k == "backspace" then
+          if e.repeated then deleteBack() end
+        elseif k == "delete" then
+          deleteForward()
+        elseif k == "left" then
+          moveTo(st.caret - 1)
+        elseif k == "right" then
+          moveTo(st.caret + 1)
+        elseif k == "home" then
+          moveTo(0)
+        elseif k == "end" then
+          moveTo(n)
+        elseif k == "up" or k == "down" then
+          -- By ROW, so the caret lands under where it was rather than a
+          -- fixed number of characters away.
+          local row, col = 1, st.caret
+          for i = #lines, 1, -1 do
+            if st.caret >= (starts[i] or 0) then
+              row, col = i, st.caret - (starts[i] or 0)
+              break
+            end
+          end
+          local want = row + (k == "up" and -1 or 1)
+          want = math.max(1, math.min(#lines, want))
+          moveTo((starts[want] or 0)
+                 + math.min(col, #glyphsOf(lines[want] or "")))
+        elseif k == "return" then
+          replaceSelection("\n")
+        elseif e.ctrl and k == "a" then
+          st.anchor, st.caret = 0, n
+        elseif e.ctrl and (k == "c" or k == "x") then
+          local a, b = selection(st, n)
+          if a and love and love.system and love.system.setClipboardText then
+            love.system.setClipboardText(sub(g, a + 1, b))
+            if k == "x" then replaceSelection("") end
+          end
+        elseif e.ctrl and k == "v" then
+          if love and love.system and love.system.getClipboardText then
+            local paste = love.system.getClipboardText()
+            if type(paste) == "string" and paste ~= "" then
+              replaceSelection(paste)
+            end
+          end
+        end
+      end
+    end
+    st.caret = math.max(0, math.min(n, st.caret))
+    lines, starts, n = layout("mono", value, innerW)
+  end
+
+  -- keep the caret on screen
+  do
+    local row = 1
+    for i = #lines, 1, -1 do
+      if st.caret >= (starts[i] or 0) then row = i break end
+    end
+    if row - 1 < st.scroll then st.scroll = row - 1 end
+    if row > st.scroll + rows then st.scroll = row - rows end
+    st.scroll = math.max(0, math.min(math.max(0, #lines - rows), st.scroll))
+  end
+
+  -- ------------------------------------------------------------- drawing
+  if G then
+    local r = 8 * Kit.scale
+    Theme.col(PAL.rowBg, 0.7)
+    G.rectangle("fill", x, y, w, h, r, r)
+    Theme.stroke(x, y, w, h, r, focused and PAL.blue or PAL.cardBorder,
+      focused and 0.8 or 0.3, focused and 1.5 * Kit.scale or 1)
+
+    if value == "" and not focused then
+      Kit.text("mono", placeholder or "", x + pad, y + pad, PAL.faint)
+    else
+      local a, b = selection(st, n)
+      for i = 1, rows do
+        local row = i + st.scroll
+        local line = lines[row]
+        if line then
+          local ly = y + pad + (i - 1) * lineH
+          -- selection band first, so the glyphs sit on top of it
+          if a then
+            local s0, s1 = starts[row] or 0, (starts[row] or 0) + #glyphsOf(line)
+            local from = math.max(a, s0)
+            local to = math.min(b, s1)
+            if to > from then
+              local lg = glyphsOf(line)
+              local px = Kit.textWidth("mono", sub(lg, 1, from - s0))
+              local pw = Kit.textWidth("mono", sub(lg, from - s0 + 1, to - s0))
+              Theme.col(PAL.blue, 0.35)
+              G.rectangle("fill", x + pad + px, ly, math.max(1, pw), lineH)
+            end
+          end
+          Kit.text("mono", line, x + pad, ly, PAL.heading)
+          if focused and (Kit.time % 1) < 0.55 then
+            local s0 = starts[row] or 0
+            local lg = glyphsOf(line)
+            if st.caret >= s0 and st.caret <= s0 + #lg then
+              local cx = x + pad + Kit.textWidth("mono", sub(lg, 1, st.caret - s0))
+              Theme.col(PAL.blue, 1)
+              G.rectangle("fill", cx, ly, math.max(1, Kit.scale), lineH)
+            end
+          end
+        end
+      end
+      -- MORE TEXT THAN FITS, said rather than left to be discovered. The old
+      -- field's whole problem was showing part of the string with nothing to
+      -- indicate the rest.
+      if #lines > rows then
+        Kit.text("small", string.format("%d/%d", st.scroll + rows, #lines),
+                 x + w - 42 * Kit.scale, y + h - 14 * Kit.scale, PAL.faint)
       end
     end
   end
@@ -488,7 +1095,9 @@ local SCROLL_ROWS = 3
 function Kit.scroll(x, y, w, h, offset, total, perPage)
   local maxOffset = math.max(0, (total or 0) - (perPage or 0))
   offset = Theme.clamp(offset or 0, 0, maxOffset)
-  if Kit.blockClicks or (Kit.wheelY or 0) == 0 then return offset end
+  if Kit.blockClicks or pointerBlocked() or (Kit.wheelY or 0) == 0 then
+    return offset
+  end
   if not Kit.hit(x, y, w, h) then return offset end
   -- LOVE reports wheel-up as positive y; up moves the window toward the top
   -- of the list, which is a smaller offset.

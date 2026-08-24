@@ -2974,6 +2974,49 @@ do
 end
 end
 
+-- ===== scripted greetings keep the PLAYER's name, not the buffer =====
+-- Polished's Elm/Lyra greetings run through show_text, whose RAM pass used
+-- to fill EVERY {RAM:...} token from game.stringBuffer -- including
+-- {RAM:wPlayerName} (charmap $4F). That named the player by the last
+-- received item or Pokemon ("Elm: Ultra Ball! There you are!", then
+-- "Chikorita" once Lyra's starter set the buffer). Named WRAM symbols must
+-- be left for TextBox's token registry; only the wStringBuffer family fills
+-- from the buffer here.
+do
+  local ScriptCommands = require("src.script.Commands")
+  local data = { text = {
+    _Greet = "Elm: {RAM:wPlayerName}!\nThere you are!",
+    _Buf = "{RAM:wStringBuffer3} is here.",
+  } }
+  local pushed = {}
+  local save = { player = { name = "GOLD", rival = "SILVER" }, inventory = {} }
+  local game = { data = data, save = save,
+    stringBuffer = "ULTRA BALL", stringBuffers = { [3] = "JOEY" },
+    stack = { push = function(_, s) table.insert(pushed, s) end } }
+  local ctx = { game = game, save = save,
+    runner = { yield = function() end, resume = function() end } }
+
+  ScriptCommands.show_text(ctx, "_Greet")
+  local greet = table.concat(pushed[1].pages[1], " ")
+  check(greet:find("GOLD", 1, true) ~= nil, "scripted greeting names the player")
+  check(greet:find("ULTRA BALL", 1, true) == nil,
+        "and never the last-received item from the buffer")
+
+  -- the buffer changing (Lyra's Chikorita) must not move the player's name
+  game.stringBuffer = "CHIKORITA"
+  pushed = {}
+  ScriptCommands.show_text(ctx, "_Greet")
+  local greet2 = table.concat(pushed[1].pages[1], " ")
+  check(greet2:find("GOLD", 1, true) ~= nil, "still the player after the buffer moves")
+  check(greet2:find("CHIKORITA", 1, true) == nil, "not the new buffer value")
+
+  -- regression guard: wStringBufferN still fills from its slot
+  pushed = {}
+  ScriptCommands.show_text(ctx, "_Buf")
+  local buf = table.concat(pushed[1].pages[1], " ")
+  check(buf:find("JOEY", 1, true) ~= nil, "wStringBuffer3 still resolves to its slot")
+end
+
 -- ================= issue #142: player backsprite X =================
 do
 -- pret/pokered places the player mon pic at hlcoord 1,5 (screen x=8).

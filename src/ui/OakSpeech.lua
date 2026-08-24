@@ -318,6 +318,11 @@ function OakSpeech.gen2Steps()
       pic = "oak",
       choices = { Strings("BOY"), Strings("GIRL") },
       values = { "boy", "girl" },
+      -- A CARTRIDGE MAY OFFER MORE THAN TWO.  Polished Crystal has Chris,
+      -- Kris AND Crys, and its forms table carries `order` naming every
+      -- key; the labels come off each form so the menu reads CHRIS / KRIS /
+      -- CRYS rather than forcing a third character into BOY/GIRL.
+      choicesFromForms = true,
       saveKey = "gender",
       playerKey = "gender",
       -- swap the pic above the box to whichever character the cursor is on,
@@ -692,6 +697,28 @@ function OakSpeech:runStep(step)
     })
   elseif kind == "choice" then
     self:applyPic(step)
+    -- a forms table with an `order` list overrides the static pair: each
+    -- entry's key is the value saved and its label is the menu row, so
+    -- polished's three characters all appear (see ask_gender)
+    if step.choicesFromForms then
+      local forms = self.game.data and self.game.data.field
+        and self.game.data.field.playerForms
+      if type(forms) == "table" and type(forms.order) == "table"
+         and #forms.order > 0 then
+        local choices, values = {}, {}
+        for _, key in ipairs(forms.order) do
+          local form = forms[key]
+          if form then
+            choices[#choices + 1] = form.label or key:upper()
+            values[#values + 1] = key
+          end
+        end
+        if #choices >= 2 then
+          step = setmetatable({ choices = choices, values = values },
+                              { __index = step })
+        end
+      end
+    end
     self:afterReveal(step, function()
       self:runCry(step)
       local function openMenu()

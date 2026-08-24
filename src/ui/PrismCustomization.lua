@@ -87,6 +87,36 @@ function PrismCustomization:tones()
   return (self.spec and self.spec.skinTones) or {}
 end
 
+-- THE CHARACTER YOU ARE PICKING, ACTUALLY DRAWN.
+--
+-- The screen used to show the form's ID ("P0", "P4") and a row of "MODEL 1",
+-- "MODEL 2" labels, so the player chose a character by reading a number and
+-- never saw who it was. `field.playerForms` already carries a pic path per form
+-- -- it is what OakSpeech:formPic uses to swap CHRIS and KRIS above the
+-- boy/girl question -- and Prism keys it under exactly the p0..p13 ids this
+-- screen produces, so nothing new had to be extracted.
+--
+-- Cached per form: this runs every frame while the cursor moves, and decoding a
+-- pic per frame would be felt.
+function PrismCustomization:formPic(id)
+  self._pics = self._pics or {}
+  local hit = self._pics[id]
+  if hit ~= nil then return hit[1], hit[2] end
+  local field = self.game.data and self.game.data.field
+  local forms = field and field.playerForms
+  local form = forms and forms[id]
+  local path = form and (form.intro or form.card or form.front)
+  local img = nil
+  if path then
+    local ok, loaded = pcall(function()
+      return require("src.render.Assets").image(path)
+    end)
+    img = ok and loaded or nil
+  end
+  self._pics[id] = { img, (img and form and form.trueColor) and true or false }
+  return self._pics[id][1], self._pics[id][2]
+end
+
 local function beep(self)
   Sound.play(self.game.data, "Press_AB")
 end
@@ -187,7 +217,24 @@ end
 
 function PrismCustomization:keypressed() end
 
+-- EVERY COLOUR ON THIS SCREEN MUST BE MARKED TRUE-COLOUR.
+--
+-- The whole UI is drawn into the 160x144 Game Boy canvas and then run through
+-- the SGB/DMG zone remap, which snaps what it covers to the four GB shades.
+-- That is right for Game Boy art and completely wrong for a colour picker: the
+-- player mixes an RGB15 value, and the swatch shows them whichever GB shade it
+-- happened to land nearest. Marking the rect exempts it from the remap, which
+-- is the same thing PicBox, SummaryMenu and the Pokegear do for their
+-- full-colour art.
+local function trueColorRect(x, y, w, h)
+  local ok, P = pcall(require, "src.render.PaletteFX")
+  if ok and P and type(P.markTrueColor) == "function" then
+    pcall(P.markTrueColor, x, y, w, h)
+  end
+end
+
 local function swatch(x, y, w, h, r, g, b)
+  trueColorRect(x, y, w, h)
   love.graphics.setColor(r / MAX_LEVEL, g / MAX_LEVEL, b / MAX_LEVEL, 1)
   love.graphics.rectangle("fill", x, y, w, h)
   love.graphics.setColor(0, 0, 0, 1)
@@ -198,6 +245,18 @@ function PrismCustomization:drawPreview()
   -- the chosen character, with the chosen skin and clothes shown beside it
   local tone = self:tones()[self.skin]
   Font.drawBox(11, 0, 9, 8)
+
+  -- the character itself, above its id. Drawn before the labels so the text
+  -- below stays legible if a pic is taller than its slot.
+  local pic, picTrue = self:formPic(self:formId())
+  if pic then
+    local pw, ph = pic:getWidth(), pic:getHeight()
+    local px, py = 12 * 8, 8
+    if picTrue then trueColorRect(px, py, pw, ph) end
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.draw(pic, px, py)
+  end
+
   love.graphics.setColor(0, 0, 0, 1)
   Font.draw(Strings(self:formId():upper()), 12 * 8, 8)
   Font.draw(Strings("SKIN"), 12 * 8, 3 * 8)
@@ -238,8 +297,17 @@ function PrismCustomization:draw()
       Font.draw(Strings(CHANNEL_LABEL[key]), 2 * 8, y)
       if i == self.channel then Font.drawCode(Theme.cursor, 8, y) end
       local level = self.clothes[key]
+      -- THE BAR WAS ALWAYS BLACK. The fill reused the colour set for the
+      -- outline immediately above it and never set its own, so all three
+      -- channels drew solid black at every level -- the player was mixing a
+      -- colour against three black bars. Fill in the CHANNEL'S own colour at
+      -- the level chosen, so R reads as red at the height it is set to.
+      trueColorRect(4 * 8, y, 48, 8)
       love.graphics.setColor(0, 0, 0, 1)
       love.graphics.rectangle("line", 4 * 8, y, 48, 8)
+      love.graphics.setColor(key == "r" and level / MAX_LEVEL or 0,
+                             key == "g" and level / MAX_LEVEL or 0,
+                             key == "b" and level / MAX_LEVEL or 0, 1)
       love.graphics.rectangle("fill", 4 * 8, y, 48 * level / MAX_LEVEL, 8)
       love.graphics.setColor(0, 0, 0, 1)
     end

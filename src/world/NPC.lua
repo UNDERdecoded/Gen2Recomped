@@ -409,6 +409,17 @@ local function withBigFlag(spriteDef, spriteId, objDef)
   }, { __index = spriteDef })
 end
 
+-- Published so the MAP EDITOR draws the same sheet the world does.
+--
+-- The resolution above is not a lookup, it is a pile of hard-won special
+-- cases: Copycat is never a real sheet, Sudowoodo's row is $52 and not $6D,
+-- variable-sprite ids resolve through their SLOT, several imports key sheets
+-- only as SPRITE_%02X, and the fruit-tree sheet must never be accepted for a
+-- named story NPC. An editor that looked sprites up by name would get the
+-- placeholder for every one of those and show a map full of blue boxes that
+-- the game draws people on -- so it asks this instead.
+NPC.resolveSpriteDef = resolveSpriteDef
+
 function NPC.new(data, mapId, objDef)
   local self = setmetatable({}, NPC)
   self.def = objDef
@@ -423,6 +434,11 @@ function NPC.new(data, mapId, objDef)
   self.cellX, self.cellY = objDef.x, objDef.y
   self.px, self.py = self.cellX * 16, self.cellY * 16
   self.facing = FACING_FROM_RANGE[objDef.range] or "down"
+  -- A fixed sheet frame from the extractor (polished's ball/cut/fruit
+  -- sheet: cut trees are frame 1, fruit trees frame 2).  The renderer
+  -- draws exactly this 16x16 row and skips facing entirely -- a tree has
+  -- no directions to turn to.
+  self.fixedFrame = objDef.frame
   self.moving = false
   self.progress = 0
   self.stepFlip = false
@@ -572,6 +588,10 @@ end
 
 function NPC:draw(camX, camY)
   local sprite, px, py, facing, phase, flip = self:pose()
+  if self.fixedFrame then
+    sprite:drawFixedFrame(px, py, camX, camY, self.fixedFrame)
+    return
+  end
   sprite:draw(px, py, camX, camY, facing, phase, flip)
 end
 

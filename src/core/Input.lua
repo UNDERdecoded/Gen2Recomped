@@ -283,11 +283,47 @@ function Input:gamepadaxis(joystick, axis, value)
   end
 end
 
+-- RAW PADS DO NOT AGREE ON WHICH AXES THE LEFT STICK IS.
+--
+-- Axes 1 and 2 are the desktop XInput order, and that is all this accepted.
+-- A pad SDL has no mapping for -- a Switch Pro over Bluetooth, a Joy-Con
+-- pair, most GameSir models -- numbers its axes however its driver likes, so
+-- the stick arrived on 3/4 (or 4/5) and nothing was listening: "the analog
+-- stick isn't working".  GamepadMap.loadMappings fixes the pads that can be
+-- named; this fixes the rest, by watching which axes actually move.
+--
+-- The rule: the first axis to cross the press threshold claims the stick,
+-- and its PARTNER is the other half of the pair (axes arrive x-then-y, so an
+-- odd index pairs with the one after it and an even with the one before).
+-- Triggers are the thing not to adopt -- they rest at -1 and swing to +1 --
+-- so an axis never seen near zero is refused.  Learned per joystick, and the
+-- table is weak-keyed so unplugging a pad forgets it.
+local function rawStickState(self, joystick)
+  self._rawSticks = self._rawSticks or setmetatable({}, { __mode = "k" })
+  local st = self._rawSticks[joystick]
+  if not st then
+    st = { xAxis = 1, yAxis = 2, locked = false, restedNearZero = {} }
+    self._rawSticks[joystick] = st
+  end
+  return st
+end
+
 function Input:joystickaxis(joystick, axis, value)
   if not isRawStick(joystick) then return end
-  if axis == 1 then
+  local st = rawStickState(self, joystick)
+  if math.abs(value) < 0.2 then st.restedNearZero[axis] = true end
+  if not st.locked and math.abs(value) > STICK_ON
+     and st.restedNearZero[axis] then
+    if axis % 2 == 1 then
+      st.xAxis, st.yAxis = axis, axis + 1
+    else
+      st.xAxis, st.yAxis = axis - 1, axis
+    end
+    st.locked = true
+  end
+  if axis == st.xAxis then
     self:gamepadaxis(joystick, "leftx", value)
-  elseif axis == 2 then
+  elseif axis == st.yAxis then
     self:gamepadaxis(joystick, "lefty", value)
   end
 end

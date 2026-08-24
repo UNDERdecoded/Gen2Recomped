@@ -948,6 +948,48 @@ end
 -- sight range or a save, so nothing else can ever battle it.
 BattleState.BATTLE_TOWER_CLASS = "OPP_BATTLE_TOWER"
 
+-- The same trick for a team the MAP EDITOR built.
+--
+-- An NPC the author made a trainer needs a party, and `trainerParty` only ever
+-- selected one the cartridge already shipped -- so "make this NPC a trainer"
+-- meant "borrow somebody else's six Pokemon". A team the author typed has
+-- nowhere to live in `data.trainers`, which is generated from the ROM and
+-- rebuilt by the next import.
+--
+-- So it is installed the way the Battle Tower's generated opponent is: one
+-- reserved class key, overwritten per battle, fought through the ordinary
+-- `newTrainer` path. The pic, the palette, the AI and every battle rule are
+-- then the same code the rest of the game runs -- which is the whole reason
+-- the Battle Tower does it this way rather than forking the battle.
+--
+-- The row is never reachable from a script, a sight range or a save, so
+-- nothing else can ever fight it.
+BattleState.EDITOR_TRAINER_CLASS = "OPP_EDITOR_TRAINER"
+
+-- `party` is an array of slots in newTrainer's own shape; `look` is the class
+-- to borrow a pic, palette and AI from (the NPC's own trainerClass, when it
+-- named one).
+function BattleState.newEditorTrainer(game, party, look, name)
+  local trainers = game.data.trainers
+  if type(party) ~= "table" or #party == 0 then return nil, "that team is empty" end
+  local base = look and trainers[look] or nil
+  local def = {
+    id = (base and base.id) or BattleState.EDITOR_TRAINER_CLASS,
+    index = (base and base.index) or 0,
+    name = name or (base and base.name) or "TRAINER",
+    source = "map editor",
+    parties = { party },
+    partyNames = { name or (base and base.name) or "TRAINER" },
+    baseMoney = base and base.baseMoney or 0,
+  }
+  if base then
+    def.pic, def.basePic, def.trueColor = base.pic, base.basePic, base.trueColor
+    def.paletteSource, def.aiMods = base.paletteSource, base.aiMods
+  end
+  trainers[BattleState.EDITOR_TRAINER_CLASS] = def
+  return BattleState.newTrainer(game, BattleState.EDITOR_TRAINER_CLASS, 1)
+end
+
 function BattleState.newBattleTowerTrainer(game, opponent)
   local trainers = game.data.trainers
   local base = opponent.classKey and trainers[opponent.classKey] or nil
@@ -4414,10 +4456,56 @@ function BattleState:awardExp()
   -- mod can replace it wholesale (e.g. a flat undivided share to every
   -- non-fainted party mon) without re-deriving participants/alive.
   -- ctx.applyShare(mon, split, announce) is the same helper vanilla uses.
+  -- GEN 2'S EXP SHARE IS A HELD ITEM, AND IT WAS NEVER IMPLEMENTED.
+  --
+  -- Gen 1's EXP.ALL is a BAG item, and that is the only exp sharing this
+  -- knew about.  Gen 2 replaced it with EXP_SHARE, held by one mon
+  -- (engine/battle/experience.asm): the exp is halved, the participants
+  -- divide one half, and the HOLDERS divide the other -- paid whether or
+  -- not they fought.  With nothing reading `mon.item` here, a benched
+  -- Kadabra holding the Exp.Share earned exactly nothing and its
+  -- exp-to-next-level never moved.
+  --
+  -- The id is resolved through ItemEffects.alias rather than compared to a
+  -- literal: Gen 2 names every item ITEM_nnn off the cartridge and the
+  -- number differs per cart (ITEM_057 on Crystal, ITEM_121 on Polished),
+  -- while the extractor stamps Gen 1's canonical `key` alongside -- so
+  -- "EXP.SHARE" and "Exp.Share" both normalise to EXP_SHARE.
+  local ItemEffects = require("src.inventory.ItemEffects")
+  local function holdsExpShare(mon)
+    -- `heldItem` is what one script path writes (giveegg); `item` is the
+    -- field the bag and every menu use
+    local id = mon.item or mon.heldItem
+    if not id then return false end
+    local items = self.data.items
+    return ItemEffects.alias(id, items and items[id]) == "EXP_SHARE"
+  end
+
   local function vanillaExpAward(ctx)
     -- with EXP.ALL, participants split half the exp and the other half
     -- is divided among the whole party (engine/battle/experience.asm)
     local expAll = (self.game.save.inventory.EXP_ALL or 0) > 0
+    if not expAll then
+      local holders = {}
+      for _, mon in ipairs(self.game.save.party) do
+        if (mon.hp or 0) > 0 and holdsExpShare(mon) then
+          holders[#holders + 1] = mon
+        end
+      end
+      if #holders > 0 then
+        -- half to the participants, half to the holders.  A mon that both
+        -- fought and holds one is paid from both halves and prints two
+        -- boxes, exactly as the EXP.ALL second pass already does -- GSC
+        -- prints one box per gaining mon and no summary line.
+        for _, mon in ipairs(ctx.alive) do
+          ctx.applyShare(mon, math.max(1, ctx.participants) * 2, true)
+        end
+        for _, mon in ipairs(holders) do
+          ctx.applyShare(mon, #holders * 2, true)
+        end
+        return
+      end
+    end
     for _, mon in ipairs(ctx.alive) do
       ctx.applyShare(mon, ctx.participants * (expAll and 2 or 1), true)
     end
@@ -6041,7 +6129,10 @@ end
 function BattleState:drawZonePass(src, sx, sy)
   local PaletteFX = require("src.render.PaletteFX")
   local shader = PaletteFX.shader()
-  local pals = self:sgbBattlePals()
+  -- sgbBattlePals returns nil outright when the active pack has no palette
+  -- table at all; the zone loop below then indexed nil. Same failure class as
+  -- the per-zone nil, one level up.
+  local pals = self:sgbBattlePals() or {}
   local bgp = self:activeBgp()
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.setShader(shader)
@@ -6054,7 +6145,15 @@ function BattleState:drawZonePass(src, sx, sy)
     zones[#zones + 1] = GEN2_EXP_ZONE
   end
   for _, z in ipairs(zones) do
-    PaletteFX.sendColors(shader, PaletteFX.permute(pals[z.pal], bgp))
+    -- ...and a zone whose palette the pack does not name falls back to the
+    -- four DMG grays rather than to nil. Prism's pack carries neither MEWMON
+    -- nor GREENBAR -- the last fallbacks sgbBattlePals itself reaches for --
+    -- so a zone could resolve to nil and every frame of the battle died in
+    -- permute. Gray is the honest answer for "this pack named no colour
+    -- here": the art is grayscale before colorization, so the zone simply
+    -- draws unshaded instead of taking the game down.
+    PaletteFX.sendColors(shader,
+      PaletteFX.permute(pals[z.pal] or PaletteFX.GRAYS, bgp))
     local zx, zy = z[1] * 8, z[2] * 8
     local zw, zh = (z[3] - z[1] + 1) * 8, (z[4] - z[2] + 1) * 8
     love.graphics.setScissor(zx, zy, zw, zh)

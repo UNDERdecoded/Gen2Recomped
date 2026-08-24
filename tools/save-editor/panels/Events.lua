@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped Map Editor License: you may read,
+-- build and privately modify this file; you may not redistribute it or use it
+-- commercially. See LICENSE at the repository root. Cartridge-derived data is
+-- not covered and is not the copyright holder's to license.
+
 -- Events panel: flags, defeated trainers, taken items, and per-map object
 -- visibility toggles.  All four sections read/write through Ops so a flip is
 -- always dirty + narrated.

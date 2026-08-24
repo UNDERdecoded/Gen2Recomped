@@ -127,7 +127,33 @@ function LauncherMods.deriveList(manifests, options)
       name = m.name or m.id,
       requiredImports = ModImports.of(m),
       missingImports = needs,
+      -- A DIFFERENT KIND OF MISSING. `missingImports` is a FILE the player has
+      -- to hand over; this is a CARTRIDGE THEY HAVE TO HAVE IMPORTED, which
+      -- needs nothing handed over and cannot be satisfied by dropping a file
+      -- into the mod folder.
+      --
+      -- A map pack exported from the map editor is the case: it carries maps
+      -- copied out of another game and references that game's tilesets rather
+      -- than shipping them, so it is inert -- and worse than inert, it asserts
+      -- in MapLoader -- until the player has imported that game themselves.
+      -- The row carries it so the panel can say which game and offer to go
+      -- import it, instead of the player installing a map pack that crashes.
+      requiredGames = m.requiredGames,
+      missingGames = (function()
+        if not (m.requiredGames and m.requiredGames[1]) then return nil end
+        local okA, AT = pcall(require, "src.import.AdoptedTileset")
+        if not okA then return nil end
+        local want = {}
+        for _, row in ipairs(m.requiredGames) do want[#want + 1] = row.version end
+        return AT.missing(want)
+      end)(),
       manifestPath = m.path,
+      -- The FILE the mod declares its options in, carried through so the
+      -- launcher can offer those options without loading the mod. Mods have
+      -- been able to declare options since the loader gained options:define,
+      -- and nothing has ever rendered them -- a mod could ship 40 settings and
+      -- the player had no way to reach one.
+      optionsSchema = m.options_schema,
       version = m.version,
       badge = badge,
       description = m.description or "",
@@ -140,6 +166,100 @@ function LauncherMods.deriveList(manifests, options)
     }
   end
   return out
+end
+
+-- The option rows a mod declares, or nil when it declares none.
+--
+-- The IN-GAME mod manager already renders these (ManagerState:schemaFor and
+-- buildOptionRows) -- this is the same schema read from the launcher, so the
+-- settings can be reached without booting a game first. The two must agree:
+-- the row types accepted here are the ones OPTION_TYPES accepts there, or a
+-- mod's option would exist in one place and not the other.
+--
+-- Read from the DECLARED FILE rather than by running the mod: the launcher
+-- must never execute mod entry code (that is the whole reason discover()
+-- validates manifests and loads no chunks), and the schema file is data --
+-- every shipped one is a bare `return { ... }`. ManagerState can read the
+-- loader's captured schema instead because by then the mod has run; in the
+-- launcher nothing has, and nothing should.
+--
+-- It is still Lua, so it is loaded with an EMPTY environment: a schema file
+-- that tries to do anything other than return a table has nothing to do it
+-- with. A malformed one returns nil and the mod simply shows no options, which
+-- is what it looked like before this existed.
+--
+-- The environment is installed with setfenv rather than load()'s fourth
+-- argument. This runs on LuaJIT, where `load` is the 5.1 two-argument form
+-- unless the build opted into 5.2 compatibility -- passing a mode and an env
+-- there is not an error, it is two ignored arguments, and the schema would
+-- have been compiled against the real globals while this comment claimed
+-- otherwise. setfenv is the 5.1 spelling and is what LuaJIT actually has.
+local function loadSandboxed(src, name)
+  local compile = loadstring or load
+  local chunk, err = compile(src, name)
+  if not chunk then return nil, err end
+  if setfenv then setfenv(chunk, {}) end
+  return chunk
+end
+
+-- The row types a mod may declare. `text` is listed because ManagerState
+-- accepts it and dropping it here would hide the option entirely; the
+-- launcher shows it read-only rather than pretending it is not there (its
+-- editor is a keyboard applet the settings panel does not have).
+LauncherMods.OPTION_TYPES = {
+  toggle = true, choice = true, number = true, text = true,
+}
+
+function LauncherMods.optionRows(row)
+  if not (row and row.optionsSchema and row.manifestPath) then return nil end
+  local fs = love and love.filesystem
+  if not (fs and fs.read) then return nil end
+  local src = fs.read(row.manifestPath .. "/" .. row.optionsSchema)
+  if not src then return nil end
+  local chunk = loadSandboxed(src, "@" .. row.id .. "/options")
+  if not chunk then return nil end
+  local ok, rows = pcall(chunk)
+  if not (ok and type(rows) == "table") then return nil end
+  local out = {}
+  for _, r in ipairs(rows) do
+    -- A row with no key cannot be stored and a row of an unknown type cannot
+    -- be drawn; both are dropped rather than rendered as a control that does
+    -- nothing when pressed. The accepted set mirrors ManagerState's
+    -- OPTION_TYPES exactly -- `number` and `text` were missing here at first,
+    -- which would have hidden two kinds of option from the launcher that the
+    -- in-game manager shows, and left the player to conclude the launcher was
+    -- showing them a partial list without ever saying so.
+    if type(r) == "table" and type(r.key) == "string" and r.key ~= ""
+       and LauncherMods.OPTION_TYPES[r.type] then
+      out[#out + 1] = r
+    end
+  end
+  if #out == 0 then return nil end
+  return out
+end
+
+-- Current value of one mod option: the stored one, else the schema's default.
+-- Same precedence the loader's own options:get and ManagerState:optionValue
+-- use, so what the launcher shows is what the mod will read.
+--
+-- The `~= nil` tests are not decoration. `stored[key] or row.default` reads a
+-- stored `false` as unset and hands back the default forever -- so a toggle
+-- the player turned OFF would come back ON every time they looked at it, and
+-- nothing about that looks like a bug in a boolean read.
+function LauncherMods.optionValue(options, modId, row)
+  local stored = options and options.modOptions and options.modOptions[modId]
+  if stored ~= nil and stored[row.key] ~= nil then return stored[row.key] end
+  return row.default
+end
+
+-- Write one mod option into the options table IN PLACE. The caller saves --
+-- saveOptions rewrites the whole file per call, and a settings panel steps
+-- one row at a time.
+function LauncherMods.setOptionValue(options, modId, key, value)
+  options.modOptions = options.modOptions or {}
+  options.modOptions[modId] = options.modOptions[modId] or {}
+  options.modOptions[modId][key] = value
+  return options
 end
 
 -- locateRoot(paths) -> the mod-root prefix inside a mounted archive, pure.
@@ -217,52 +337,6 @@ local function decodeManifest(raw, path)
   return manifest
 end
 
--- WHERE A MOD ACTUALLY LIVES.
---
--- Nothing makes a mod's folder name match its manifest id.  A release zip is
--- routinely `MOD-1.2.3/`, a hand-unzipped copy keeps whatever the archive
--- called it, and a dev checkout is often a symlink under any name at all --
--- and discover() below reads the ID OUT OF THE MANIFEST, so all of those load
--- perfectly and appear on the panel.
---
--- install and uninstall did not: both hardcoded `mods/<id>`.  So for a mod
--- sitting in `mods/STADIUM2_OVERWORLD_MODELS-0.2.81/` --
---   * "is it installed?" asked about a folder that does not exist, so a
---     reinstall wrote a SECOND copy beside the first, and which one the game
---     then loaded was down to directory order;
---   * "already installed" fired for the wrong reason on the next attempt,
---     because by then the second copy DID exist -- the mod is installed twice
---     and the panel says you cannot install it;
---   * uninstall deleted a folder that was not there and reported success,
---     leaving the mod running.
---
--- Returns the folder path for `id`, or nil.  Same one-level scan discover()
--- makes, so the two can never disagree about which folder is the mod.
-function LauncherMods.folderFor(id)
-  local fs = love and love.filesystem
-  if not (fs and fs.getDirectoryItems and type(id) == "string" and id ~= "") then
-    return nil
-  end
-  if not fs.getInfo("mods") then return nil end
-  for _, name in ipairs(fs.getDirectoryItems("mods")) do
-    -- installZip stages into mods/.staging_<id>, which carries a real
-    -- manifest while the copy runs.  A dot-prefixed folder is never an
-    -- installed mod, here or in discover().
-    if name:sub(1, 1) ~= "." then
-      local path = "mods/" .. name
-      local info = fs.getInfo(path)
-      if info and (info.type == "directory" or info.type == "symlink") then
-        local raw = fs.read(path .. "/manifest.json")
-        if raw then
-          local manifest = decodeManifest(raw, path)
-          if manifest and manifest.id == id then return path end
-        end
-      end
-    end
-  end
-  return nil
-end
-
 -- Scan "mods/" one level deep for valid manifests (mirrors Loader:_discover,
 -- but validates only -- no entry chunk is ever loaded).  First id wins on a
 -- duplicate.  Returns an array of validated manifests.
@@ -281,9 +355,7 @@ local function discover()
   local seen = {}
   for _, name in ipairs(fs.getDirectoryItems("mods")) do
     local path = "mods/" .. name
-    -- skip installZip's staging folder (and any other dot-dir): it holds a
-    -- valid manifest for the length of a copy, and a crash leaves it there
-    local info = name:sub(1, 1) ~= "." and fs.getInfo(path) or nil
+    local info = fs.getInfo(path)
     -- a dev-linked mod dir (ln -s) reports type "symlink" even with
     -- setSymlinksEnabled(true); see the matching note in Loader:_discover.
     if info and (info.type == "directory" or info.type == "symlink") then
@@ -644,24 +716,18 @@ function LauncherMods._installZipInner(source, opts)
       :format(manifest.id, opts.expectId)
   end
 
-  -- The folder this mod is ALREADY in, whatever it is called (see folderFor);
-  -- a fresh install has none and lands on the canonical mods/<id>.
-  local existing = LauncherMods.folderFor(manifest.id)
-  local dest = existing or ("mods/" .. manifest.id)
-
-  -- "Already installed" means a mod is THERE, not that a directory entry
-  -- exists.  An install that was interrupted -- a full disk, a 64 MB file the
-  -- OS still had open, a crash between removeTree and copyTree -- leaves an
-  -- empty or half-copied folder behind, and treating that as an installation
-  -- refused every further attempt with "a mod named 'x' is already installed"
-  -- while the mod was in fact gone.  There is then no way out from inside the
-  -- launcher at all, which is exactly the "importing says it is already
-  -- imported" report.  folderFor only answers for a folder with a readable
-  -- manifest, so debris falls through to the replace path below and is
-  -- overwritten.
-  if existing and not opts.replace then
-    cleanup()
-    return nil, "a mod named '" .. manifest.id .. "' is already installed"
+  local dest = "mods/" .. manifest.id
+  if fs.getInfo(dest) then
+    if not opts.replace then
+      cleanup()
+      return nil, "a mod named '" .. manifest.id .. "' is already installed"
+    end
+    -- drop the old tree before copy; enable-flag is preserved (uninstall
+    -- would clear it, which would surprise an update)
+    local savedPrefix = CacheFs.prefix
+    CacheFs.prefix = ""
+    removeTree(dest)
+    CacheFs.prefix = savedPrefix
   end
 
   -- CacheFs.prefix steers ROM-cache writes into a version subtree (blue/...);
@@ -673,37 +739,13 @@ function LauncherMods._installZipInner(source, opts)
   -- only ever make the directory in the save dir (#330).
   local savedPrefix = CacheFs.prefix
   CacheFs.prefix = ""
-
-  -- STAGE, THEN SWAP.  The old code removed the installed tree and only then
-  -- started copying, so any failure part-way through -- and a mod release is
-  -- tens of megabytes -- destroyed the working install and left nothing.  That
-  -- is the empty mod folder you are left staring at.  Copy into a sibling
-  -- staging folder first; the installed mod is only touched once the new copy
-  -- is complete on disk.
-  local staging = "mods/.staging_" .. manifest.id
-  removeTree(staging)
-  local copied, copyErr = copyTree(root, staging)
+  local copied, copyErr = copyTree(root, dest)
+  if not copied then removeTree(dest) end
+  CacheFs.prefix = savedPrefix
   if not copied then
-    removeTree(staging)
-    CacheFs.prefix = savedPrefix
     cleanup()
     return nil, copyErr or "could not copy the mod files"
   end
-
-  -- The swap itself is a local disk-to-disk copy of files that have already
-  -- been written once, so it is far less likely to fail than the stage above.
-  -- If it does, the staging tree is LEFT IN PLACE rather than removed: it is
-  -- the only complete copy left, the dot prefix keeps discover() and the panel
-  -- from seeing it, and the next attempt's removeTree(staging) clears it.
-  removeTree(dest)
-  local swapped, swapErr = copyTree(staging, dest)
-  CacheFs.prefix = savedPrefix
-  if not swapped then
-    cleanup()
-    return nil, (swapErr or "could not copy the mod files")
-      .. " (a complete copy is in " .. staging .. ")"
-  end
-  removeTree(staging)
   cleanup()
   return true, manifest.id
 end
@@ -774,8 +816,7 @@ function LauncherMods.uninstall(id)
     return nil, "mod uninstall needs LOVE"
   end
   local fs = love.filesystem
-  -- the folder it is really in, not the one its id spells (see folderFor)
-  local dest = LauncherMods.folderFor(id) or ("mods/" .. id)
+  local dest = "mods/" .. id
   if not fs.getInfo(dest) then
     return nil, "mod '" .. id .. "' is not installed"
   end

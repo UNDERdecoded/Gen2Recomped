@@ -410,10 +410,18 @@ end
 -- Presentational tweens run on real frame time, like Tilt's.  Every
 -- pipeline ticks, not just the active ones: a mode easing back OUT still
 -- has an angle to retire.
+-- `guard`, NOT `guardRender`: an update tick draws nothing.
+--
+-- guardRender exists to hand the graphics state back exactly as it found it --
+-- love.graphics.push("all"), two closure shims installed over push/pop to
+-- balance a pipeline that leaks one, then pop. That is the right price for a
+-- DRAW. Paying it for every pipeline's update every frame is pure overhead on
+-- the hot path, and it scales with the number of installed mods -- part of
+-- why battles crawl with several of them enabled.
 function Pipelines.update(dt)
   for _, entry in ipairs(Pipelines.list()) do
     if entry.def.update then
-      guardRender(entry.id, entry.def.update, dt, Pipelines.level(entry.id))
+      guard(entry.id, entry.def.update, dt, Pipelines.level(entry.id))
     end
   end
 end

@@ -89,7 +89,19 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
     text = ctx.game.data:resolveText(ctx.overworld.map.def.label, textId)
   end
   if not text then
-    text = textId -- literal string fallback for hand-ported scripts
+    -- LITERAL STRING FALLBACK for hand-ported scripts -- and for the map
+    -- editor, whose `say` beat lowers to a show_text carrying the line the
+    -- author typed rather than a constant.
+    --
+    -- Laid out on the way through, for the reason TextBox.fromProse gives:
+    -- prose has no page breaks, and a page with ten wrapped lines scrolls
+    -- past the reader instead of waiting for A. Marked-up text is returned
+    -- unchanged, so nothing the extractor produced is re-broken.
+    text = textId
+    if type(text) == "string" then
+      local okTB, TB = pcall(require, "src.render.TextBox")
+      if okTB and TB.fromProse then text = TB.fromProse(text) end
+    end
   end
   -- Belt and braces: a row that reaches here with no usable id at all used to
   -- throw on the first gsub below, and a throw inside the runner leaves the
@@ -118,14 +130,33 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
   -- in.  A blanket gsub onto one value is what put a species name into the
   -- phone's landmark lines.  Returning nil from the replacer leaves the token
   -- untouched, which is what the old `and` guard did when nothing was set.
+  --
+  -- ONLY THE STRING-BUFFER FAMILY IS FILLED HERE.  Named WRAM symbols --
+  -- wPlayerName above all, plus wRivalName and wTrendyPhrase -- are left for
+  -- TextBox's token registry, which knows the PLAYER'S name.  Filling them
+  -- from game.stringBuffer here (the old fallback) is exactly what made
+  -- every SCRIPTED Elm and Lyra greeting call the player by the last
+  -- received Pokemon or item -- "Elm: Ultra Ball! There you are!", and then
+  -- "Chikorita" once Lyra's starter set the buffer.  <PLAYER> is charmap
+  -- $4F -> wPlayerName (n-gram pointer, 00:$3c16 -> $d47b), so it decodes to
+  -- {RAM:wPlayerName}, and this pass must not touch it.
   if text:find("{RAM:", 1, true) then
     text = text:gsub("{RAM:([%w_]*)}", function(name)
       local slot = tonumber(name:match("^wStringBuffer(%d)$") or "")
-      local slots = ctx.game.stringBuffers
-      local value = slot and slots and slots[slot]
-      if value == nil then value = ctx.game.stringBuffer end
-      if value == nil then return nil end
-      return tostring(value)
+      if slot then
+        local slots = ctx.game.stringBuffers
+        local value = slots and slots[slot]
+        if value == nil then value = ctx.game.stringBuffer end
+        return value ~= nil and tostring(value) or nil
+      end
+      -- the bare legacy buffer token still resolves here
+      if name == "wStringBuffer" then
+        local value = ctx.game.stringBuffer
+        return value ~= nil and tostring(value) or nil
+      end
+      -- everything else (wPlayerName, wRivalName, wTrendyPhrase, ...) is
+      -- left untouched for TextBox.substitute to resolve
+      return nil
     end)
   end
   local runner = ctx.runner
@@ -220,14 +251,44 @@ local function refreshPlayerForm(ctx, name)
   end
 end
 
+-- A FLAG WRITE CAN REVEAL OR HIDE AN OBJECT ON THE MAP YOU ARE STANDING ON.
+--
+-- Gen 2 object visibility is "flag set => hidden", and `appear`/`disappear`
+-- (g2_object) already re-sync the live actor they name.  setevent/clearevent
+-- did not -- they wrote the flag and left the world alone -- so an object
+-- revealed by a bare `clearevent` only actually appeared on the NEXT map load.
+--
+-- The Tin Tower sages are the case that showed it: their blocking callback
+-- reveals a monk with a bare `clearevent 1894`, not `appear`, and the ROM runs
+-- that callback during map setup.  Miss the re-sync and the monk is absent for
+-- the whole visit -- the player walks straight past to Suicune -- and is there
+-- the second time, which is exactly "on this run the monks DID block me".
+-- Bill's Goldenrod reveal (`clearevent EVENT_MET_BILL`) is the same shape.
+--
+-- Targeted, like g2_object's: only the objects whose own eventFlag is this
+-- flag, so no other live actor is re-derived out from under a script.
+local function syncFlagObjects(ctx, name)
+  local ow = ctx.overworld
+  if not (ow and ow.syncObjectVisibility and ow.map and ow.map.def) then return end
+  local objects = ow.map.def.objects
+  if type(objects) ~= "table" then return end
+  for _, obj in ipairs(objects) do
+    if obj.eventFlag == name then
+      pcall(function() ow:syncObjectVisibility(obj) end)
+    end
+  end
+end
+
 function Commands.set_flag(ctx, name)
   Flags.set(ctx.save, name)
   refreshPlayerForm(ctx, name)
+  syncFlagObjects(ctx, name)
 end
 
 function Commands.clear_flag(ctx, name)
   Flags.clear(ctx.save, name)
   refreshPlayerForm(ctx, name)
+  syncFlagObjects(ctx, name)
 end
 
 function Commands.check_flag(ctx, name)
@@ -380,6 +441,23 @@ end
 
 function Commands.warp(ctx, mapId, x, y, facing)
   local runner = ctx.runner
+  -- A WARP WITH NO DESTINATION IS SKIPPED, NOT PLAYED.
+  --
+  -- setMap multiplies the coordinates the moment it is called, so a warp
+  -- carrying a nil x is not a wrong warp -- it is `attempt to perform
+  -- arithmetic on local 'x'` and the game is over. That is a hard crash
+  -- caused by ONE mis-sized script command, and the player meets it in the
+  -- middle of a cutscene with no way back.
+  --
+  -- A script instruction the extractor could not read is a fact about the
+  -- import, not a reason to take the game down with it: say so and step over
+  -- it, the same way an unreadable wild slot is dropped rather than shipped.
+  if type(mapId) ~= "string" or type(x) ~= "number" or type(y) ~= "number" then
+    require("src.core.Logger").warn(
+      "script warp skipped: map=%s x=%s y=%s -- the instruction did not decode",
+      tostring(mapId), tostring(x), tostring(y))
+    return
+  end
   ctx.overworld:startWarpTo(mapId, x, y, facing, function()
     runner:resume()
   end)

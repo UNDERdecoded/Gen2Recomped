@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from extract import util  # noqa: E402
 from rom_data import (
     CANONICAL_BLUE_SHA1, CANONICAL_CRYSTAL10_SHA1, CANONICAL_CRYSTAL_SHA1,
-    CANONICAL_GOLD_SHA1, CANONICAL_PRISM_SHA1,
+    CANONICAL_GOLD_SHA1, CANONICAL_POLISHED_SHA1, CANONICAL_PRISM_SHA1,
     CANONICAL_RED_SHA1,
     CANONICAL_SILVER_SHA1, CANONICAL_YELLOW_SHA1,
     RomImage, SymbolTable, bcd, decode_text, decompress_pic, load_manifest,
@@ -47,6 +47,8 @@ VERSION_MANIFESTS = {
     "silver": os.path.join(_TOOLS_DIR, "rom_manifest_silver.json"),
     "crystal": os.path.join(_TOOLS_DIR, "rom_manifest_crystal.json"),
     "prism": os.path.join(_TOOLS_DIR, "rom_manifest_prism.json"),
+    "polishedcrystal": os.path.join(
+        _TOOLS_DIR, "rom_manifest_polishedcrystal.json"),
 }
 VERSION_SHA1 = {
     "red": CANONICAL_RED_SHA1,
@@ -57,6 +59,7 @@ VERSION_SHA1["gold"] = CANONICAL_GOLD_SHA1
 VERSION_SHA1["silver"] = CANONICAL_SILVER_SHA1
 VERSION_SHA1["crystal"] = CANONICAL_CRYSTAL_SHA1
 VERSION_SHA1["prism"] = CANONICAL_PRISM_SHA1
+VERSION_SHA1["polishedcrystal"] = CANONICAL_POLISHED_SHA1
 # Hashes a version will accept beyond its canonical one.
 VERSION_SHA1_ALT = {"crystal": (CANONICAL_CRYSTAL10_SHA1,)}
 SHA1_TO_VERSION = {sha1: version for version, sha1 in VERSION_SHA1.items()}

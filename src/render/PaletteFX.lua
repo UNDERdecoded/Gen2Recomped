@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- SGB-style colorization post-pass.  The Super Game Boy colored the DMG
 -- picture by assigning 4-color palettes to rectangular screen regions
 -- (ATTR_BLK packets, data/sgb/sgb_packets.asm).  States expose
@@ -920,7 +926,17 @@ PaletteFX.GRAYS = { { 255, 255, 255 }, { 170, 170, 170 },
 -- pokered's SetAnimationBGPalette / AnimationFlashScreen* writes to
 -- rBGP composed with the SGB colorization: the SGB colors the remapped
 -- DMG shade, so a screen region shows palette[map[shade]].
+-- NIL-SAFE, BECAUSE A MISSING PALETTE MUST NOT BE A CRASH MID-BATTLE.
+--
+-- The `not map` early return covered one direction; the other (colors == nil)
+-- indexed straight into nil and took the game down inside draw. Prism reached
+-- it: its pack carries neither MEWMON nor GREENBAR, which are the last-resort
+-- fallbacks sgbBattlePals leans on, so a zone could resolve to nil and every
+-- frame of that battle died here (reported on Larvitar vs Venonat; any battle
+-- on that pack would do it). Callers get nil back and skip the zone, which
+-- leaves it unshaded rather than not drawn at all.
 function PaletteFX.permute(colors, map)
+  if not colors then return nil end
   if not map then return colors end
   return { colors[map[0] + 1], colors[map[1] + 1],
            colors[map[2] + 1], colors[map[3] + 1] }

@@ -24,7 +24,7 @@
     "114": "{BYTE:72}",
     "115": "{BYTE:73}",
     "116": "{BYTE:74}",
-    "117": "\u2026",
+    "117": "…",
     "118": "{BYTE:76}",
     "119": "{BYTE:77}",
     "12": "{BYTE:0C}",
@@ -154,19 +154,19 @@
     "231": "!",
     "232": ".",
     "233": "&",
-    "234": "\u00e9",
+    "234": "é",
     "235": "{BYTE:EB}",
     "236": "{BYTE:EC}",
     "237": "{BYTE:ED}",
     "238": "{BYTE:EE}",
     "239": "{BYTE:EF}",
     "24": "{BYTE:18}",
-    "240": "\u00a5",
-    "241": "\u00d7",
+    "240": "¥",
+    "241": "×",
     "242": ".",
     "243": "/",
     "244": ",",
-    "245": "\u2640",
+    "245": "♀",
     "246": "0",
     "247": "1",
     "248": "2",
@@ -1790,20 +1790,21 @@
     "coordEventScript": 6,
     "hmCount": 5,
     "iconEntryBytes": 3,
-  "iconsCompressed": 1,
-  "objectItemInline": 1,
+    "iconsCompressed": 1,
+    "mapBlocksCompressed": 1,
     "matchupTableWidth": 7,
     "moveAccuracyMax": 100,
     "moveCategoryDivisor": 64,
-    "objectTextKinds": 1,
     "namesLengthPrefixed": 1,
-    "spritePokemonBase": 187,
-  "spriteBreedFirst": 236,
-  "spriteBreedSecond": 237,
-  "spriteOverrides": 0,
-  "spritesCompressed": 1,
+    "objectItemInline": 1,
+    "objectTextKinds": 1,
     "prismCharmap": 1,
-  "tilesetCompressed": 1,
+    "spriteBreedFirst": 236,
+    "spriteBreedSecond": 237,
+    "spriteOverrides": 0,
+    "spritePokemonBase": 187,
+    "spritesCompressed": 1,
+    "tilesetCompressed": 1,
     "tilesetCount": 57,
     "tilesetEntry": 14,
     "tmCount": 96
@@ -22115,6 +22116,10 @@
       9,
       24253
     ],
+    "DoPlayerMovement.ledge_table": [
+      9,
+      24804
+    ],
     "DoPlayerTurn": [
       13,
       18381
@@ -24015,10 +24020,6 @@
       4,
       27821
     ],
-    "EnvironmentColorsPointers": [
-      2,
-      23065
-    ],
     "Elevator_GetCurrentFloorString": [
       4,
       27829
@@ -24526,6 +24527,10 @@
     "EnterWestConnection": [
       113,
       23598
+    ],
+    "EnvironmentColorsPointers": [
+      2,
+      23065
     ],
     "EraseBattleTowerStatus": [
       5,
@@ -33131,6 +33136,14 @@
       4,
       23661
     ],
+    "HealMachineAnim.HealMachineGFX": [
+      4,
+      23863
+    ],
+    "HealMachineAnim.palettes": [
+      4,
+      23938
+    ],
     "HealMachineAnimSpecial": [
       30,
       17738
@@ -34934,6 +34947,26 @@
     "IntroductionSpeech": [
       1,
       23261
+    ],
+    "IntroductionSpeech.brief_history": [
+      1,
+      23546
+    ],
+    "IntroductionSpeech.ending": [
+      1,
+      23949
+    ],
+    "IntroductionSpeech.greetings": [
+      1,
+      23436
+    ],
+    "IntroductionSpeech.inhabited_by_pokemon": [
+      1,
+      23492
+    ],
+    "IntroductionSpeech.introduce_self": [
+      1,
+      23859
     ],
     "InvalidChar": [
       0,
@@ -57107,13 +57140,6 @@
       3,
       29961
     ],
-    "HealMachineAnim.HealMachineGFX": [4, 23863],
-    "HealMachineAnim.palettes": [4, 23938],
-    "DoPlayerMovement.ledge_table": [9, 24804],
-    "PlayerSpriteSets": [
-      5,
-      16562
-    ],
     "Player0BikeSprite": [
       5,
       17890
@@ -57697,6 +57723,10 @@
     "PlayerSpawn_ConvertCoords": [
       11,
       27572
+    ],
+    "PlayerSpriteSets": [
+      5,
+      16562
     ],
     "PlayerSprites": [
       0,

@@ -12,7 +12,7 @@ local Runtime = require("src.mods.Runtime")
 local Strings = require("src.core.Strings")
 
 local DiscordPresence = {
-  APP_ID = "1529183141267374262",
+  APP_ID = "1541283827459170324",
 }
 
 local OP_HANDSHAKE, OP_FRAME, OP_CLOSE = 0, 1, 2
@@ -453,7 +453,7 @@ local function buildActivity()
     timestamps = { start = state.startedAt },
     assets = {
       large_image = "logo",
-      large_text = "Pokemon Gen1Recomp",
+      large_text = "Pokemon Gen2Recomped",
     },
   }
   -- a party/join-secret pair is what makes Discord show "Ask to Join" on

@@ -162,16 +162,29 @@ local GEN2_ICON_CELL = 16
 -- through a nearest-neighbour scale throws away five pixels in six, which is
 -- the mush the rows used to show.  A mipmapped linear reduction box-filters
 -- the whole pic down instead, so the silhouette survives.
+-- A SHINY WEARS THE OTHER HALF OF ITS PALETTE ROW, HERE TOO.
+--
+-- GetMonNormalOrShinyPalettePointer (02:$5C66) adds 4 to the species'
+-- PokemonPalettes row when CheckShininess passes, which is why the battle pic
+-- (BattleState.monPalette) and the stats screen (SummaryMenu) both pass a
+-- shiny flag into PaletteFX.  This bake asked for `def.palette` and nothing
+-- else, so a shiny in the PARTY or the BOX was coloured normal even though
+-- the overworld follower beside it was not -- the red Gyarados case.
+--
+-- The palette NAME joins the cache key on purpose: a shiny and a normal
+-- Gyarados share one sprite path, so keying on the path alone would hand
+-- whichever baked first to both.
 local function gen2IconImage(game, mon, path)
-  local key = path .. "#g2icon"
+  local P = require("src.render.PaletteFX")
+  local shiny = require("src.pokemon.Stats").isShiny(mon.dvs)
+  local key = path .. "#g2icon#"
+    .. tostring(P.monPalName(game.data, mon.species, nil, shiny))
   if iconImages[key] ~= nil then return iconImages[key] or nil end
   local ok, img = pcall(function()
     if not (love.image and love.image.newImageData) then
       return love.graphics.newImage(Assets.resolve(path)) -- headless stub
     end
-    local def = game.data.pokemon[mon.species]
-    local pals = game.data.palettes and game.data.palettes.palettes
-    local pal = pals and def and def.palette and pals[def.palette]
+    local pal = P.monPal(game.data, mon.species, nil, shiny)
     local data = Assets.imageData(path)
     if pal and pal[1] and pal[4] then
       data:mapPixel(function(_, _, r, _, _, a)

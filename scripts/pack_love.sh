@@ -94,6 +94,13 @@ trap 'rm -rf "$STAGE"' EXIT
 #     scripts/build.sh has always shipped it; leaving it out of the shared
 #     packer silently regressed Switch, Xbox and ARM64.
 #   * tools/rom_manifest*.json -- see MANIFEST_GLOB below.
+#   * tools/map-editor -- the same argument as save-editor, and it was missed.
+#     App.lua loads in "map" mode (main.lua's openMapEditor) and every panel it
+#     draws, every store it writes and the mod exporter all live under
+#     tools/map-editor. Shipped without it the payload boots, the launcher
+#     offers MAP EDITOR, and the require fails the moment it is pressed --
+#     and the failures are SILENT where they are pcall'd, which is how the
+#     EXPORT button came to be a control that draws and does nothing.
 CONTENT=(
   main.lua
   conf.lua
@@ -102,6 +109,7 @@ CONTENT=(
   assets
   mods
   tools/save-editor
+  tools/map-editor
 )
 
 # The ROM symbol manifests: src/core/GameVersion.lua names one per cartridge
@@ -184,9 +192,17 @@ find "$STAGE" -type f \( \
 # ------------------------------------------------------------- contract
 # The same required-entry gate scripts/build.sh applies to its game.love, so
 # the shared packer cannot ship a payload the desktop packer would reject.
+# tools/map-editor is on this list for the reason it was ADDED to CONTENT:
+# it was missing, nothing caught it, and the way that surfaced was a button in
+# the shipped editor that drew and silently did nothing (its require is
+# pcall'd). A contract entry is what turns that into a failed build instead of
+# a bug report.
 for required in main.lua conf.lua src/core/Version.lua \
                 tools/save-editor/App.lua tools/save-editor/Kit.lua \
-                tools/save-editor/panels/Party.lua; do
+                tools/save-editor/panels/Party.lua \
+                tools/map-editor/MapEdits.lua \
+                tools/map-editor/ModExport.lua \
+                tools/map-editor/panels/Preview.lua; do
   [ -e "$STAGE/$required" ] || fail "payload is missing $required"
 done
 

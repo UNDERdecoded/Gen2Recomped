@@ -20,13 +20,15 @@ local BALLS = {
                   tossAnim = "ULTRATOSS_ANIM", flicker = true },
   SAFARI_BALL = { randMax = 150, hpFactor = 12, wobbleFactor = 150,
                   tossAnim = "ULTRATOSS_ANIM" },
-  -- The Bug Catching Contest's ball.  Gen 2 gives it a catch-rate multiplier
-  -- rather than its own roll -- ParkBallMultiplier (item_effects.asm:746) is
-  -- `a = b >> 1 / add b`, i.e. rate x 1.5 capped at 255 -- and BattleState
-  -- applies that as a rate override, so the numbers below are only the roll
-  -- this port already uses for every other ball.  Structurally it is the
-  -- Safari Ball: same tier, same toss arc, and above ULTRA_BALL so
-  -- DoBallTossSpecialEffects gives it no flicker.
+  -- THE BUG CONTEST'S BALL, which had no record at all and fell through to
+  -- DEFAULT_BALL -- so it rolled POKE_BALL's 255 against the contest's own
+  -- rate and wobbled on a divisor no ball in the game actually uses.
+  --
+  -- Gen 2's Park Ball is Safari-shaped: it takes the same randMax/hpFactor
+  -- path, and the contest's edge comes from ParkBallMultiplier (catch rate
+  -- x1.5, saturating) applied BEFORE the roll -- BugContest.parkBallRate,
+  -- which BattleState already calls. Giving it the Safari record leaves that
+  -- multiplier as the only difference instead of stacking a silent second one.
   PARK_BALL   = { randMax = 150, hpFactor = 12, wobbleFactor = 150,
                   tossAnim = "ULTRATOSS_ANIM" },
 }

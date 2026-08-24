@@ -1,3 +1,8 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
 
 -- Runtime commands for the Gen2 script VM.
 --
@@ -713,13 +718,41 @@ local function isPlayerId(index)
   return index == 0 or index == "player"
 end
 
-local function objectSlot(index)
-  if type(index) ~= "number" or index < GEN2_FIRST_OBJECT_ID then return nil end
-  return index - 1
+-- WHERE SCRIPT OBJECT IDS START IS A CARTRIDGE FACT.
+--
+-- Crystal's object_const_def opens at 2 -- id 0 is the player, id 2 the
+-- first object_event -- and this port hardcoded that (`slot = index - 1`).
+-- Polished Crystal numbers them 1:1 with wMapObjects: GetMapObject
+-- (00:$1556) is `hl = wMapObjects + id * $0E`, wPlayerObject is slot 0 and
+-- wMap1Object slot 1, so ID 1 IS THE FIRST OBJECT.  Read with Crystal's
+-- bias, every applymovement/turnobject/moveobject landed one object EARLY:
+-- New Bark's teacher (object 3) resolved to the still-hidden Lyra, so the
+-- "don't leave town" scene printed its text and moved the player while the
+-- lady never walked over; Elm's per-scene moveobject was rejected outright
+-- (id 1 < first-id 2) and he stood at his object row's coordinates all
+-- game; and Lyra's lab cutscene drove the wrong objects entirely.
+--
+-- field.objectScriptBase carries the importer's answer; absent, Crystal's
+-- 2 stands.
+local objectScriptBase = nil
+local function objectSlot(ctx, index)
+  if type(index) ~= "number" then return nil end
+  if objectScriptBase == nil then
+    local field = ctx and ctx.game and ctx.game.data and ctx.game.data.field
+    objectScriptBase = tonumber(field and field.objectScriptBase)
+      or GEN2_FIRST_OBJECT_ID
+  end
+  if index < objectScriptBase then return nil end
+  return index - (objectScriptBase - 1)
+end
+
+-- the cached base belongs to one loaded game; a reload must re-read it
+function Commands.g2ResetObjectBase()
+  objectScriptBase = nil
 end
 
 local function objectByIndex(ctx, index)
-  local slot = objectSlot(index)
+  local slot = objectSlot(ctx, index)
   if not slot then return nil, nil end
   local ow = ctx.overworld
   if not ow or not ow.map or not ow.map.def then return nil, nil end
@@ -867,6 +900,12 @@ local MOVEMENT_STEP = {
   slow_step = true, step = true, big_step = true, slow_slide_step = true,
   slide_step = true, fast_slide_step = true, slow_jump_step = true,
   jump_step = true, fast_jump_step = true,
+  -- Polished's three extra step families (movement opcodes $5A-$65).  They
+  -- differ only in speed and in the stairs animation, so as far as the walk
+  -- is concerned they are ordinary steps -- but if they are not listed here
+  -- they are not steps at all, and the object stands still through the whole
+  -- movement.
+  run_step = true, fast_step = true, stairs_step = true,
 }
 -- `turn_step` reads like a step but is not one: Movement_turn_step_down
 -- (1:$538F) is byte-for-byte Movement_turn_head_down, and
@@ -960,7 +999,7 @@ function Commands.g2_move(ctx, target, movementLabel)
     if isPlayerId(t) then
       follower = ow.player
     elseif type(t) == "number" then
-      local slot = objectSlot(t)
+      local slot = objectSlot(ctx, t)
       follower = slot and ow:npcByIndex(slot) or nil
     end
     local leader = index and ow:npcByIndex(index) or ow.player
@@ -1862,7 +1901,10 @@ function Commands.g2_give_odd_egg(ctx)
       mon.moves[#mon.moves + 1] = { id = id, pp = md and md.pp or 0 }
     end
   end
-  if row.item then mon.heldItem = row.item end
+  -- `item` is the field the bag, every menu and the exp-share check read;
+  -- `heldItem` was written here and by nothing else, so a scripted gift's
+  -- held item was invisible to the entire game.
+  if row.item then mon.item = row.item end
   mon.happiness = row.happiness or 20
   mon.isEgg = true
   mon.nickname = "EGG"
@@ -2981,7 +3023,7 @@ end
 function Commands.g2_setlasttalked(ctx, index)
   local ow = ctx.overworld
   if not ow then return end
-  local slot = objectSlot(index)
+  local slot = objectSlot(ctx, index)
   local npc = slot and ow:npcByIndex(slot) or nil
   if npc then ctx.npc = npc end
 end

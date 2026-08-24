@@ -37,6 +37,26 @@ function Game:load()
   self.mods = ModLoader.new()
   self.mods:load(Data)
   self.modStatus = self.mods:status()
+  -- AND THE MAP EDITOR'S OVERLAY AGAIN, ON TOP OF THE MERGE.
+  --
+  -- Data:load laid it down before this, and a content mod that patches a map
+  -- has just replaced it. That is not a corner case: `ModExport` writes a map
+  -- pack whose patch carries the whole `objects` array as it stood at export,
+  -- and installing your own pack back into the editor -- which is exactly what
+  -- the IMPORT button is for, and the honest way to check an export works --
+  -- makes every later edit to those maps invisible. Added an NPC, saved,
+  -- launched: the overlay put him there, the pack's snapshot took him away
+  -- again, and all three steps reported success.
+  --
+  -- THE WORKING COPY WINS. A mod is published content; the edit store is what
+  -- the reader is editing right now. Where the two describe the same map, the
+  -- one they can still see and change is the one that should be on screen --
+  -- and the alternative is an editor whose saves silently stop taking effect
+  -- once you have shared your work once.
+  --
+  -- Cheap on a machine with no edits: the store is absent, applyAll finds
+  -- nothing, and this is a file check.
+  Data:applyMapEditorOverlay("after mods")
   -- Re-derive the Gen 2 palette view over the MERGED tileset table.  A
   -- mod that adds or replaces a tileset adds or replaces its colours with
   -- it, and the view is only useful to a 3D pipeline if it covers those
@@ -150,6 +170,39 @@ function Game:bootConfig()
   -- it (SaveData.newGame reads boot.version); this is what routes a Blue
   -- playthrough to save_blue.lua and Blue's version-gated content
   if boot then boot.version = require("src.core.GameVersion").get() end
+  -- ...and the map scenes that do NOT open at zero.  InitializeEvents writes
+  -- three scene bytes directly on this cartridge (Goldenrod City among them),
+  -- and a scene left at 0 arms a cutscene that has already been retired.
+  local field = self.data and self.data.field
+  if boot and field and type(field.initialScenes) == "table" then
+    boot.initialScenes = field.initialScenes
+  end
+  -- THE STARTING PC ITEM, NAMED IN THIS DATASET'S OWN IDS.
+  --
+  -- players_pc.asm seeds one Potion, and SaveData.newGame wrote the literal
+  -- id "POTION" for it. A Gen 2 import names every item off the cartridge as
+  -- ITEM_nnn, so that literal is an id nothing else in the game ever uses --
+  -- and the bag is a map keyed by id, so the PC's potion and the one Elm's
+  -- aide hands over sat in TWO SEPARATE SLOTS, both printing "POTION".
+  -- Resolved here, where the item table is in hand: a real "POTION" id when
+  -- the dataset has one (Gen 1), otherwise the id whose printed name is
+  -- Potion (Gen 2's ITEM_nnn).
+  if boot and boot.pcItems == nil then
+    local items = self.data and self.data.items
+    if type(items) == "table" then
+      local id = items.POTION and "POTION" or nil
+      if not id then
+        for key, def in pairs(items) do
+          if type(def) == "table"
+             and tostring(def.name or ""):upper():gsub("[^%a]", "") == "POTION" then
+            id = key
+            break
+          end
+        end
+      end
+      if id then boot.pcItems = { [id] = 1 } end
+    end
+  end
   return boot
 end
 

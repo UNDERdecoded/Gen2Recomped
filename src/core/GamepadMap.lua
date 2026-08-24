@@ -128,4 +128,86 @@ function GamepadMap.mapRawToGamepadButton(index)
   return GamepadMap.RAW_TO_GAMEPAD_BUTTON[index]
 end
 
+-- ---------------------------------------------------------------------------
+-- SDL game-controller mappings
+--
+-- WHY THE ANALOG STICK DID NOTHING ON THESE PADS.
+--
+-- A joystick SDL recognizes reports `leftx`/`lefty` through love.gamepadaxis,
+-- which Input already handles.  One it does NOT recognize answers isGamepad()
+-- false and only ever emits NUMBERED axes -- and the raw fallback hardcoded
+-- axes 1 and 2.  Switch Pro pads over Bluetooth, the Joy-Con pair and most
+-- GameSir models land in exactly that case on at least one shipped platform:
+-- either missing from LOVE's built-in copy of gamecontrollerdb, or present
+-- under a different GUID than the OS reports.  The stick moved, SDL delivered
+-- axis 3/4/5, and nothing was listening.
+--
+-- Two halves to the fix.  This is the first: hand SDL the mappings so the pad
+-- becomes a real gamepad and the ordinary leftx/lefty path serves it.  (The
+-- second half is Input's adaptive raw fallback, for whatever is still
+-- unrecognized.)  `assets/gamecontrollerdb.txt` loads first when the build
+-- carries one -- that community file is the right place to add a pad -- and
+-- these rows fill in behind it.
+--
+-- Format is SDL's own: GUID,name,mapping...  The platform field has to match
+-- what SDL reports or the row is ignored, so each pad is listed per platform.
+GamepadMap.EXTRA_MAPPINGS = {
+  -- Nintendo Switch Pro Controller
+  "030000007e0500000920000000000000,Nintendo Switch Pro Controller," ..
+    "a:b0,b:b1,x:b2,y:b3,back:b8,guide:b16,start:b9,leftstick:b10," ..
+    "rightstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1," ..
+    "dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a2," ..
+    "righty:a3,lefttrigger:b6,righttrigger:b7,platform:Linux,",
+  "030000007e0500000920000000006800,Nintendo Switch Pro Controller," ..
+    "a:b0,b:b1,x:b2,y:b3,back:b8,guide:b16,start:b9,leftstick:b10," ..
+    "rightstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1," ..
+    "dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a2," ..
+    "righty:a3,lefttrigger:b6,righttrigger:b7,platform:Windows,",
+  "030000007e0500000920000001000000,Nintendo Switch Pro Controller," ..
+    "a:b0,b:b1,x:b2,y:b3,back:b8,guide:b16,start:b9,leftstick:b10," ..
+    "rightstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1," ..
+    "dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a2," ..
+    "righty:a3,lefttrigger:b6,righttrigger:b7,platform:Mac OS X,",
+  "050000007e0500000920000001000000,Nintendo Switch Pro Controller," ..
+    "a:b0,b:b1,x:b2,y:b3,back:b8,guide:b16,start:b9,leftstick:b10," ..
+    "rightstick:b11,leftshoulder:b4,rightshoulder:b5,dpup:h0.1," ..
+    "dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a2," ..
+    "righty:a3,lefttrigger:b6,righttrigger:b7,platform:Android,",
+  -- GameSir pads enumerate as generic XInput/HID; these are the shapes their
+  -- Android and desktop modes report.
+  "050000005e040000e002000030110000,GameSir Controller," ..
+    "a:b0,b:b1,x:b2,y:b3,back:b6,guide:b8,start:b7,leftstick:b9," ..
+    "rightstick:b10,leftshoulder:b4,rightshoulder:b5,dpup:h0.1," ..
+    "dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a2," ..
+    "righty:a3,lefttrigger:a4,righttrigger:a5,platform:Android,",
+  "03000000790000004718000000000000,GameSir Controller," ..
+    "a:b0,b:b1,x:b3,y:b4,back:b10,start:b11,leftstick:b13," ..
+    "rightstick:b14,leftshoulder:b6,rightshoulder:b7,dpup:h0.1," ..
+    "dpdown:h0.4,dpleft:h0.8,dpright:h0.2,leftx:a0,lefty:a1,rightx:a2," ..
+    "righty:a3,lefttrigger:a5,righttrigger:a4,platform:Windows,",
+}
+
+-- Register the mappings above (and any bundled database) with SDL.  Safe to
+-- call more than once, and safe on a build with no joystick module at all:
+-- every step is pcall'd, because one malformed row must not take boot down.
+function GamepadMap.loadMappings()
+  if GamepadMap._mappingsLoaded then return 0 end
+  GamepadMap._mappingsLoaded = true
+  local js = love and love.joystick
+  if not (js and js.loadGamepadMappings) then return 0 end
+  local n = 0
+  -- the community database first when the build ships one: a real file is
+  -- always more current than the handful of rows above
+  if love.filesystem and love.filesystem.getInfo
+     and love.filesystem.getInfo("assets/gamecontrollerdb.txt") then
+    if pcall(js.loadGamepadMappings, "assets/gamecontrollerdb.txt") then
+      n = n + 1
+    end
+  end
+  for _, row in ipairs(GamepadMap.EXTRA_MAPPINGS) do
+    if pcall(js.loadGamepadMappings, row) then n = n + 1 end
+  end
+  return n
+end
+
 return GamepadMap

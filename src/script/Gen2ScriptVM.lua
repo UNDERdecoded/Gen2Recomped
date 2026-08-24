@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- The Gen2 script VM.
 --
 -- data/generated/map_scripts.lua holds the ROM's own bytecode, disassembled by
@@ -152,6 +158,27 @@ L.ifequal = compare("eq")
 L.ifnotequal = compare("ne")
 L.ifgreater = compare("gt")
 L.ifless = compare("lt")
+
+-- THE FORWARD-JUMP FAMILY, which Gold and Crystal do not have.
+--
+-- Polished Crystal's sjumpfwd/iftruefwd/iffalsefwd/ifequalfwd branch by a
+-- byte offset counted from the instruction after the operand. The extractor
+-- resolves that offset into an ordinary script label (see the "j" operand
+-- kind), so by the time it reaches here a forward jump is the same thing as
+-- an sjump or an iftrue and needs no new machinery -- only a name.
+--
+-- Without these four the commands were unhandled: the branch simply did not
+-- happen, so the script ran on into the arm it was meant to skip. Elm's is
+-- `checkevent 121 / iffalsefwd <past the request> / scall / jumptext`, which
+-- is why answering "yes" put you straight back at "Please, I need your help!"
+-- however many times you answered it.
+L.sjumpfwd = function(ir, s)
+  local to = branch(s, ir[2])
+  if to then emit(s, { "jump", to }) end
+end
+L.iftruefwd = L.iftrue
+L.iffalsefwd = L.iffalse
+L.ifequalfwd = compare("eq")
 
 -- Commands with no runtime model that genuinely need none.  Declaring them
 -- keeps them out of the "unhandled opcode" audit and documents WHY each one
@@ -353,6 +380,60 @@ end
 -- like jumptext.  Unlowered, the eleven std scripts that use it -- the
 -- bookshelves, the signs, the trash can, the window -- printed nothing at all.
 L.farjumptext = L.jumptext
+
+-- POLISHED CRYSTAL'S COMPOUND TEXT COMMANDS.
+--
+-- This build collapses the pairs Gold and Crystal spell out -- open a box,
+-- print, end -- into single opcodes, and adds a "this" family that prints the
+-- text the script is already sitting on. None of them needs new machinery:
+-- each is a combination of primitives already here, and the only difference
+-- between the -opened- forms and the plain ones is whether the box was
+-- already open, which the port's show_text owns either way.
+--
+-- Unlowered they are not wrong, they are ABSENT: the opcode lowers to
+-- nothing, so the NPC opens a box, says nothing and closes it. 1,437 of this
+-- cartridge's instructions were in this family.
+L.jumpopenedtext = L.jumptext
+L.jumpthistext = L.jumptext
+L.jumpthisopenedtext = L.jumptext
+L.jumpstashedtext = L.jumptext
+L.jumpthistextfaceplayer = L.jumptextfaceplayer
+-- `writethistext` prints the text the interaction stashed and keeps running;
+-- the extractor resolves "this" to the operand where it can, and writetext
+-- with a nil id falls back to the object's own line downstream, exactly as
+-- the jumpthistext alias above already relies on.
+L.writethistext = L.writetext
+L.showtextfaceplayer = function(ir, s)
+  emit(s, { "face_player" })
+  s.lastText = ir[2]
+  showText(s, ir[2])
+  s.lastTextRow = #s.out
+end
+
+-- ...and the conditional forms, which are `iftrue`/`iffalse` fused to one of
+-- the jumps above. The text operand belongs to the JUMP, so the branch has to
+-- be built here rather than reusing L.iftrue -- there is no label to jump to,
+-- only a line to print and a script to end.
+local function conditionalJumpText(wantTrue, faces)
+  return function(ir, s)
+    local skip = s.newLabel()
+    emit(s, { wantTrue and "jump_if_false" or "jump_if_true", skip })
+    if faces then emit(s, { "face_player" }) end
+    showText(s, ir[2])
+    emit(s, { "g2_return" })
+    emit(s, { "label", skip })
+  end
+end
+L.iftrue_jumptext = conditionalJumpText(true, false)
+L.iffalse_jumptext = conditionalJumpText(false, false)
+L.iftrue_jumpopenedtext = conditionalJumpText(true, false)
+L.iffalse_jumpopenedtext = conditionalJumpText(false, false)
+L.iftrue_jumptextfaceplayer = conditionalJumpText(true, true)
+L.iffalse_jumptextfaceplayer = conditionalJumpText(false, true)
+-- `endtext` variants end the script after printing, which g2_return already is
+L.iftrue_endtext = conditionalJumpText(true, false)
+L.iffalse_endtext = conditionalJumpText(false, false)
+
 -- yesorno reuses the box its writetext just opened, and ask() prints the
 -- prompt itself, so drop that row rather than showing the line twice.  Only
 -- the row immediately before is ours: a yesorno confirming an unported
@@ -1193,6 +1274,8 @@ L.callasm = function(ir, s)
 end
 L.memcallasm = L.callasm
 L.setval = function(ir, s) emit(s, { "g2_setvar", ir[2] }) end
+-- the 16-bit twin: the port's script variable is a Lua number either way
+L.setval16 = function(ir, s) emit(s, { "g2_setvar", ir[2] }) end
 L.addval = function(ir, s) emit(s, { "g2_addvar", ir[2] }) end
 L.random = function(ir, s) emit(s, { "g2_random", ir[2] }) end
 
@@ -1395,6 +1478,59 @@ L.paragraphdelay = noop
 -- ir[2] is a list of labels; what is left is the dispatch, which the port's IR
 -- has no single row for.  Built as a compare-and-call chain, so an index the
 -- table does not cover falls straight through exactly as the ROM's would.
+-- `givebadge <n>` -- polished's own command where Gold and Crystal run
+-- `setflag ENGINE_<X>BADGE`.  Script_givebadge (25:$73f7): an operand of
+-- $10-$17 is a Kanto badge and gets `xor $18` down to bits 8-15, then the
+-- engine flag is badge + $21 -- the same Johto-then-Kanto bit order the
+-- flag table already names.  Unlowered, beating a gym gave NO badge, so no
+-- HM ever became usable.
+local GIVEBADGE_NAMES = {
+  [0] = "ZEPHYRBADGE", "HIVEBADGE", "PLAINBADGE", "FOGBADGE",
+  "MINERALBADGE", "STORMBADGE", "GLACIERBADGE", "RISINGBADGE",
+  "BOULDERBADGE", "CASCADEBADGE", "THUNDERBADGE", "RAINBOWBADGE",
+  "SOULBADGE", "MARSHBADGE", "VOLCANOBADGE", "EARTHBADGE",
+}
+L.givebadge = function(ir, s)
+  local n = ir[2] or 0
+  if n >= 0x10 then n = n - 0x10 + 8 end
+  local name = GIVEBADGE_NAMES[n]
+  if name then emit(s, { "set_flag", name }) end
+end
+
+-- `showcrytext <text>, <species>`: PlayMonCry then the box.  The cry uses
+-- the same g2_cry the standalone command does; a species of 0 leans on the
+-- runtime's current-mon fallback.
+L.showcrytext = function(ir, s)
+  local species = ir[3]
+  emit(s, { "g2_cry", (species and species > 0)
+    and string.format("SPECIES_%03d", species) or nil })
+  s.lastText = ir[2]
+  showText(s, ir[2])
+  s.lastTextRow = #s.out
+end
+
+-- `scalltable <ptr>`: call one script out of a dw table by the script
+-- variable.  The extractor resolves the table to labels, so this is
+-- jumptable's shape with a RETURN to the caller either way -- which
+-- jumptable's g2_call arms already model.
+L.scalltable = function(ir, s)
+  return L.jumptable(ir, s)
+end
+
+-- Cosmetic commands with no port-side effect: object palette overrides and
+-- the Unown-report typeface switch.  Lowered to nothing ON PURPOSE so the
+-- audit stops counting them as missing behaviour -- the palette is per-map
+-- art the renderer already bakes, and the typeface swap is Gen 2 VRAM
+-- mechanics the port's font pipeline replaced.
+L.setmapobjectpal = function() end
+L.unowntypeface = function() end
+L.restoretypeface = function() end
+
+-- `waitendtext`: hold the box until A, then end -- the by-far most common
+-- unlowered command (183 sites).  endtext is already "end", and show_text
+-- rows arm their own button wait, so the remaining meaning is the end.
+L.waitendtext = function(_, s) emit(s, { "g2_return" }) end
+
 L.jumptable = function(ir, s)
   local cases = ir[2]
   if type(cases) ~= "table" or #cases == 0 then return end
@@ -1537,6 +1673,24 @@ L.itemnotify = function() end
 local function store(data)
   return data and data.map_scripts or nil
 end
+
+-- POLISHED CRYSTAL'S ALIASES FOR COMMANDS THIS VM ALREADY MODELS.
+--
+-- Every one of these is the same operation under another name -- a key item
+-- is an item, `nooryes` is `yesorno` with the cursor starting on NO, and
+-- `random16` is `random` over a wider range. They are listed rather than
+-- guessed at: an alias whose semantics differ from the handler it points at
+-- would be silently wrong, which is worse than being absent, so anything with
+-- a real behavioural difference (givetmhm, changemapblocks, trainerflagaction)
+-- is deliberately left out of this list and stays in the audit.
+L.nooryes = L.yesorno
+L.random16 = L.random
+L.checkkeyitem = L.checkitem
+L.givekeyitem = L.giveitem
+L.takekeyitem = L.takeitem
+L.verbosegivekeyitem = L.verbosegiveitem
+L.givespecialitem = L.giveitem
+L.applyonemovement = L.applymovement
 
 -- Lower `entry` and every script reachable from it into one row list.
 -- Coverage hook: an unrecognised opcode lowers to nothing, so the only way to
