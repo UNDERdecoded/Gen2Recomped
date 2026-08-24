@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 local LuaWriter = require("src.import.LuaWriter")
 local Rom = require("src.import.Rom")
 local ImageWriter = require("src.import.ImageWriter")
@@ -425,11 +431,45 @@ do
 end
 
 
+-- WHICH BYTE ENDS A FIXED-WIDTH NAME.
+--
+-- Gold and Crystal pad PokemonNames, MoveNames and the rest with $50 ("@").
+-- Polished Crystal pads with $53, which is FinishString in its own special-
+-- character block -- and $50 there is a DICTIONARY WORD, the rival's name.
+--
+-- With only $50 checked, every species name came back with the pad bytes
+-- decoded as text: "Bulbasaur<RIVAL>", "Metapod<RIVAL><RIVAL><RIVAL>". Nothing
+-- errors -- the name is still recognisably the species -- but every id derived
+-- from it is not, and the front-pic lookup is one of them: `Bulbasaur<RIVAL>`
+-- becomes the symbol `BulbasaurRival`, which does not exist, so 271 of 291
+-- species kept the placeholder sprite.
+--
+-- Set once per import from the version's own end set (see textTables), so
+-- Gold and Crystal keep the single $50 they have always had.
+RomExtractorGen2.NAME_ENDS = nil
+
 local function gen2DecodeString(bytes, maxLen)
+  local ends = RomExtractorGen2.NAME_ENDS
+  -- THE CARTRIDGE'S DECODER FIRST.  Names go through the same charmap as
+  -- dialogue, dictionary band included: FALKNER's record ends in the "er"
+  -- n-gram ($0E), which Gold's constant table has no row for -- so the
+  -- constant-only path silently dropped it and every trainer whose name
+  -- ends in a common bigram came out clipped ("Falkn").
+  local decode = RomExtractorGen2.NAME_DECODER
+  if decode then
+    local cut = {}
+    for i = 1, math.min(#bytes, maxLen or 14) do
+      local b = bytes[i]
+      if b == 0x50 or (ends and ends[b]) then break end
+      cut[#cut + 1] = b
+    end
+    local s = decode(cut)
+    if type(s) == "string" and not s:match("^%s*$") then return s end
+  end
   local out = {}
   for i = 1, math.min(#bytes, maxLen or 14) do
     local b = bytes[i]
-    if b == 0x50 then break end
+    if b == 0x50 or (ends and ends[b]) then break end
     local c = GEN2_CHARMAP[b]
     if c then out[#out + 1] = c end
   end
@@ -489,11 +529,28 @@ local function gen2ReadVarNames(rom, sym, count, prefixed)
       if name then names[i] = name end
       step = width
     else
+      -- WHICH BYTE ENDS THE RECORD. $50 on Gold and Crystal; Polished
+      -- Crystal terminates with $53 -- FindTrainerData walks its own names
+      -- with `cp $53` (07:$423c). Split on the wrong byte and the reader runs
+      -- through every record in the table as one string, so the names come
+      -- back as rubbish AND the ids derived from them do too: 123 trainer
+      -- classes called OPP_4PK484 and OPP_0X_H4.
+      local ends = RomExtractorGen2.NAME_ENDS
       local endIdx = 1
-      while endIdx <= #chunk and chunk[endIdx] ~= 0x50 do endIdx = endIdx + 1 end
+      while endIdx <= #chunk and chunk[endIdx] ~= 0x50
+            and not (ends and ends[chunk[endIdx]]) do
+        endIdx = endIdx + 1
+      end
       endIdx = endIdx - 1
       local raw = {}; for j = 1, endIdx do raw[j] = chunk[j] end
-      local name = gen2DecodeString(raw, endIdx)
+      -- ...and a name on this cartridge is not plain glyphs either: "Leader"
+      -- is stored as `L`, the n-gram for "ea", `d`, the n-gram for "er". The
+      -- hook is the extractor's own text path, so a name decodes exactly the
+      -- way a line of dialogue does; absent, this is the old byte-at-a-time
+      -- decode and Gold and Crystal are untouched.
+      local decode = RomExtractorGen2.NAME_DECODER
+      local name = decode and decode(raw) or gen2DecodeString(raw, endIdx)
+      if name == "" then name = nil end
       if name then names[i] = name end
       step = endIdx + 1
     end
@@ -739,11 +796,29 @@ function RomExtractorGen2:gen2TypeName(id)
   if not self._typeNames then
     local names = {}
     local sym = self:symbol("TypeNames")
+    -- POLISHED CRYSTAL'S TypeNames IS NOT A POINTER TABLE.  GetTypeName
+    -- (14:$499a) does `hl = TypeNames + type; e = [hl]; hl += e` -- one
+    -- OFFSET BYTE per type, relative to its own table slot -- and the
+    -- strings are polished text (n-grams, $53 terminators): Normal,
+    -- Fighting, ..., Fairy, ???, then the egg-group names sharing the same
+    -- table from 19 up.  Read as `dw` pointers it decoded stray prose
+    -- ("US_L_FULLXP...") or missed entirely, so every type fell back to
+    -- Crystal's id table -- where polished's WATER (10) is nothing at all,
+    -- and Totodile surfaced as NORMAL.
+    local offsets = self:layout("typeNamesOffsets", 0) ~= 0
+    local charmap = offsets and self:readSourceTable("charmap") or nil
     if sym and self.rom then
       for i = 0, 27 do
         pcall(function()
-          local address = self.rom:word(sym.bank, sym.address + i * 2)
-          local text = gen2DecodeString(self.rom:bytes(sym.bank, address, 14), 14)
+          local text
+          if offsets then
+            local off = self.rom:byte(sym.bank, sym.address + i)
+            local raw = self.rom:bytes(sym.bank, sym.address + i + off, 14)
+            text = self:gen2GlyphBytes(raw, charmap)
+          else
+            local address = self.rom:word(sym.bank, sym.address + i * 2)
+            text = gen2DecodeString(self.rom:bytes(sym.bank, address, 14), 14)
+          end
           if text then
             local label = text:upper():gsub("[^%u%d]+", "_")
             label = label:gsub("^_+", ""):gsub("_+$", "")
@@ -1023,9 +1098,32 @@ local function lz3Flip(byte)
 end
 
 
-local function decompressLz3(raw)
+-- TWO DECOMPRESSORS WEAR THIS ONE FORMAT.
+--
+-- Gold, Crystal and Prism ship pret's original `_Decompress`: every command's
+-- length is `field + 1` and nothing is written before the copy loop.
+--
+-- Polished Crystal ships a REWRITTEN, unrolled one (00:$08bf) that writes two
+-- bytes per iteration, and to make the loop count come out its LZ_ITERATE
+-- writes the run byte ONCE before entering `fill` (00:$0980 `ld [hl+],a`) and
+-- its LZ_ALTERNATE writes the pair before jumping into the repeat loop
+-- (00:$0911). So the same control byte means `field + 2` bytes there for an
+-- iterate and `field + 3` for an alternate.
+--
+-- Read at the original lengths every stream that uses either command comes up
+-- SHORT -- and short is the dangerous direction, because a map's block table
+-- is then rejected by gen2LzAt's length gate and the caller falls back to
+-- reading the COMPRESSED BYTES AS BLOCKS. Measured on this cartridge: 246 of
+-- 605 maps decompressed to exactly width*height at the original lengths and
+-- 359 fell between 1 and 23 bytes short; with the two pre-writes, 605 of 605
+-- land exactly. Prism is the other way round -- 442 of 450 at the original
+-- lengths, 74 with the pre-writes -- so this cannot be a global switch and
+-- comes from the manifest.
+local function decompressLz3(raw, opts)
   local out = {}
   local index = 1
+  local iterateExtra = (opts and opts.iterateExtra) or 0
+  local alternateExtra = (opts and opts.alternateExtra) or 0
   while index <= #raw do
     local byte = raw[index]
     if not byte or byte == 0xFF then break end
@@ -1050,12 +1148,14 @@ local function decompressLz3(raw)
     elseif cmd == 1 then
       local v = raw[index]; if not v then break end
       index = index + 1
-      for _ = 1, length do out[#out + 1] = v end
+      for _ = 1, length + iterateExtra do out[#out + 1] = v end
     elseif cmd == 2 then
       local a, b = raw[index], raw[index + 1]
       if not a or not b then break end
       index = index + 2
-      for i = 0, length - 1 do out[#out + 1] = (i % 2 == 0) and a or b end
+      for i = 0, length + alternateExtra - 1 do
+        out[#out + 1] = (i % 2 == 0) and a or b
+      end
     elseif cmd == 3 then
       for _ = 1, length do out[#out + 1] = 0 end
     elseif cmd == 4 or cmd == 5 or cmd == 6 then
@@ -1308,18 +1408,121 @@ RomExtractorGen2.PRISM_GLYPHS = {
   [0xF2] = "*",                      -- <SHINY>, where Crystal has "."
 }
 
-function RomExtractorGen2:gen2GlyphBytes(bytes, charmap)
-  local out = {}
-  for _, b in ipairs(bytes) do
-    if RomExtractorGen2.GEN2_TEXT_ENDS[b] then break end
-    local brk = RomExtractorGen2.GEN2_TEXT_BREAKS[b]
-    if brk then
-      out[#out + 1] = brk
-    else
-      local glyph = RomExtractorGen2.PRISM_GLYPHS[b] or self:textGlyph(charmap, b)
-      if glyph then out[#out + 1] = glyph end
+-- WHAT EACH SPECIAL-CHARACTER HANDLER MEANS, by the name the ROM gives it.
+--
+-- The manifest carries `textSpecials`: byte -> the symbol PlaceNextChar's own
+-- dispatch table sends that byte to. Reading the roles off the handler NAMES
+-- rather than off fixed byte values is what makes this survive a hack that
+-- renumbers the block, which is exactly what Polished Crystal did -- its $57
+-- is LineChar where Crystal's is <DONE>.
+RomExtractorGen2.TEXT_HANDLER_ROLES = {
+  DoneText = "end", FinishString = "end", PromptText = "end",
+  LineBreak = "\n", NextLineChar = "\n", LineChar = "\n",
+  ContText = "\v", Paragraph = "\f",
+  PlaceTargetsName = "{TARGET}", PlaceUsersName = "{USER}",
+  PlaceEnemysName = "{ENEMY}", SpaceChar = " ",
+  -- the compressed-run marker is consumed before this point
+  DecompressString = false,
+}
+
+-- ends, breaks -- from the manifest where it has them, Crystal's otherwise.
+function RomExtractorGen2:textTables()
+  if self._textTables then return self._textTables end
+  local ends, breaks = RomExtractorGen2.GEN2_TEXT_ENDS,
+                       RomExtractorGen2.GEN2_TEXT_BREAKS
+  local specials = self.manifest and self.manifest.textSpecials
+  if type(specials) == "table" and next(specials) then
+    ends, breaks = {}, {}
+    for key, handler in pairs(specials) do
+      local byte = tonumber(key)
+      local role = RomExtractorGen2.TEXT_HANDLER_ROLES[handler]
+      if byte and role == "end" then ends[byte] = true
+      elseif byte and role then breaks[byte] = role end
     end
   end
+  self._textTables = { ends = ends, breaks = breaks }
+  -- gen2DecodeString has no `self`, and every fixed-width name table on the
+  -- cartridge is padded with one of these.
+  RomExtractorGen2.NAME_ENDS = ends
+  -- and a name is glyphed the same way a line of dialogue is, n-grams and
+  -- all, on a cartridge that has them
+  if next(self:textNgrams()) ~= nil then
+    -- The charmap is fetched on first USE, not here: a caller that only
+    -- wants the terminator set (a test, a probe) must not be made to have a
+    -- source tree, and readSourceTable raises without one.
+    RomExtractorGen2.NAME_DECODER = function(bytes)
+      if self._nameCharmap == nil then
+        local ok, table_ = pcall(function()
+          return self:readSourceTable("charmap")
+        end)
+        self._nameCharmap = (ok and table_) or false
+      end
+      return self:gen2GlyphBytes(bytes, self._nameCharmap or nil)
+    end
+  else
+    RomExtractorGen2.NAME_DECODER = nil
+  end
+  return self._textTables
+end
+
+-- THE DICTIONARY BAND, which Gold and Crystal do not have.
+--
+-- Polished Crystal's PlaceNextChar sends every byte from $0A to $51 to
+-- _PlaceNgramChar, which expands it to a WHOLE WORD -- 'the ', 'you',
+-- 'Pokemon', 69 of them. Glyphed one byte at a time they came out as raw
+-- control characters in the middle of sentences ("Th\011ability was" for "The
+-- ability was"), so every line of dialogue in the game was holed.
+function RomExtractorGen2:textNgrams()
+  if self._textNgrams ~= nil then return self._textNgrams end
+  local out = {}
+  for key, bytes in pairs((self.manifest and self.manifest.textNgrams) or {}) do
+    local byte = tonumber(key)
+    if byte and type(bytes) == "table" then out[byte] = bytes end
+  end
+  self._textNgrams = out
+  return out
+end
+
+function RomExtractorGen2:gen2GlyphBytes(bytes, charmap)
+  local tables = self:textTables()
+  local ngrams = self:textNgrams()
+  local prismGlyphs = self:layout("prismCharmap", 0) ~= 0
+  local out = {}
+  local function place(list, depth)
+    for _, b in ipairs(list) do
+      -- a decoder may pre-resolve a control code into its finished token
+      -- ("{RAM:wPlayerName}"); those pass straight through untouched
+      if type(b) == "string" then
+        out[#out + 1] = b
+        b = nil
+      end
+      if b == nil then -- placed above
+      elseif tables.ends[b] then return true
+      else
+      local brk = tables.breaks[b]
+      local expansion = (not brk) and ngrams[b] or nil
+      if brk then
+        out[#out + 1] = brk
+      elseif expansion and (depth or 0) < 2 then
+        -- an n-gram is charmap bytes like any other, so it goes through the
+        -- same path; the depth bound is only there because a corrupt table
+        -- could point one at itself
+        if place(expansion, (depth or 0) + 1) then return true end
+      else
+        -- PRISM'S GLYPH BLOCK IS PRISM'S. It was consulted for every version,
+        -- which is harmless on Gold and Crystal -- they have nothing at those
+        -- codes -- and wrong on Polished Crystal, where $44-$51 are DICTIONARY
+        -- WORDS and $52-$5E are the control block. Gated on the same flag
+        -- that already says whose charmap this is.
+        local glyph = (prismGlyphs and RomExtractorGen2.PRISM_GLYPHS[b])
+          or self:textGlyph(charmap, b)
+        if glyph then out[#out + 1] = glyph end
+      end
+      end
+    end
+    return false
+  end
+  place(bytes, 0)
   -- trailing \n / \f / \v carry no text and would open an empty final page
   return (table.concat(out):gsub("%s+$", ""))
 end
@@ -1349,6 +1552,22 @@ function RomExtractorGen2:decodeGen2TextAt(bank, address, charmap, script, depth
   -- the mode is seeded from the first byte rather than assumed: TextCommands
   -- has 23 rows, so every command byte is $00-$16 and anything from $17 up can
   -- only be a character, which means the run is already open.
+  -- POLISHED CRYSTAL IS A DIFFERENT TEXT FORMAT END TO END, not Gen 2's with
+  -- an extra case: its terminator is $53 rather than $50, its line breaks are
+  -- $57 and $59, and any line can switch to a Huffman stream half way through
+  -- at $5D. So it takes the whole reader rather than a branch inside this one
+  -- -- a byte-at-a-time loop written for Gen 2's control set cannot be talked
+  -- into reading it, and every attempt produces bytes rather than an error.
+  --
+  -- Gated on the manifest, not on the version id: `layout.huffmanText` is set
+  -- by the tool that derived the tables, so a future cartridge with the same
+  -- scheme needs no code here at all.
+  if self:layout("huffmanText", 0) ~= 0 then
+    local chars = self:gen2PolishedText(bank, address, 0)
+    if chars and #chars > 0 then
+      return self:gen2GlyphBytes(chars, charmap), 0
+    end
+  end
   -- Prism opens a compressed run with TX_COMPRESSED ($03) and everything after
   -- it is a Huffman BIT stream, not bytes -- so the byte-at-a-time loop below
   -- cannot read it at all.  Decode the run first and glyph the result.
@@ -1505,6 +1724,81 @@ function RomExtractorGen2:gen2HasOakSpeech()
   return (self:symbol("OakText1") or self:symbol("_OakText1")) ~= nil
 end
 
+-- WHERE THIS CARTRIDGE KEEPS ITS INTRODUCTION, from the manifest.
+--
+-- The beat list below was Prism's, hardcoded, because Prism was the only ROM
+-- that had an introduction under another name. Polished Crystal has one too --
+-- the professor is ELM here, not Oak, and the symbols are ElmText1..7 beside
+-- ProfElmSpeech (01:$6291), with AreYouABoyOrAreYouAGirlText and a whole
+-- GenderMenu after them. With nothing matching `OakText1`, gen2HasOakSpeech
+-- returned false, Data.lua set `boot.screens.newGame = false`, and New Game
+-- dropped the player straight into the world: no speech, no gender choice, no
+-- name prompt. Which is exactly what "the beginning of the game intro is
+-- missing" is.
+--
+-- `manifest.introBeats` is a list of { "_OakTextN", "<SymbolInThisRom>" }, so
+-- the next hack with its own professor needs a manifest entry and no code.
+function RomExtractorGen2:introBeats()
+  local fromManifest = self.manifest and self.manifest.introBeats
+  if type(fromManifest) == "table" and #fromManifest > 0 then
+    return fromManifest
+  end
+  return RomExtractorGen2.PRISM_INTRO_BEATS
+end
+
+-- Prism's introduction, under the keys OakSpeech already asks for.
+--
+-- Gating the speech on OakText existing stopped Prism crashing on nil text, and
+-- left it with NO INTRO AT ALL: `Data.lua` sets
+-- `boot.screens.newGame = hasOakText and "OakSpeech" or false`, so New Game
+-- opened straight into the character customiser with none of the story in front
+-- of it. The text was never missing -- it is `IntroductionSpeech`
+-- (engine/intro_menu.asm), already split into exactly the beats the speech
+-- wants, and every run begins with $03 = TX_COMPRESSED, the Prism marker
+-- gen2TextBlockAt and decodeGen2TextAt already handle.
+--
+-- Mapped onto the EXISTING Gen 2 step keys rather than a new Prism step list,
+-- because OakSpeech.gen2Steps already does the right thing around them: the
+-- boy/girl question drops out on `notIf = "playerCustomization"`, and
+-- `customize_player` already sits where the ROM runs it -- after
+-- introduce_self, before the name prompt (`callba PlayerCustomization`).
+--
+-- `.red` and `.gold` are version-flavour lore with no step to hang on, and
+-- `.name` is the prompt the name step writes itself; both are deliberately
+-- left out rather than forced into a beat that means something else.
+--
+-- A TABLE FIELD, not a file-scope local: this module sits ON Lua 5.1's
+-- 200-local ceiling and one more `local` here makes it fail to LOAD, which
+-- presents as "the import silently does nothing".
+RomExtractorGen2.PRISM_INTRO_BEATS = {
+  { "_OakText1", "IntroductionSpeech.greetings" },
+  { "_OakText2", "IntroductionSpeech.inhabited_by_pokemon" },
+  { "_OakText4", "IntroductionSpeech.brief_history" },
+  { "_OakText5", "IntroductionSpeech.introduce_self" },
+  { "_OakText6", "IntroductionSpeech.ending" },
+}
+
+-- Returns how many beats were recovered; 0 means nothing changed and the
+-- caller's existing "drop the placeholders" path still runs, so a cartridge
+-- with neither kind of intro behaves exactly as it did.
+function RomExtractorGen2:gen2PrismIntroText(texts, charmap)
+  if type(texts) ~= "table" then return 0 end
+  local wrote = 0
+  for _, beat in ipairs(self:introBeats()) do
+    local sym = self:symbol(beat[2])
+    if sym then
+      local ok, decoded = pcall(function()
+        return self:decodeGen2TextAt(sym.bank, sym.address, charmap, true)
+      end)
+      if ok and type(decoded) == "string" and decoded ~= "" then
+        texts[beat[1]] = decoded
+        wrote = wrote + 1
+      end
+    end
+  end
+  return wrote
+end
+
 function RomExtractorGen2:extractTextFromRom()
   self:beginStage("Gen2 text (ROM)")
   local texts = self:readSourceTable("text")
@@ -1555,6 +1849,12 @@ function RomExtractorGen2:extractTextFromRom()
       end
     end
   else
+    -- No OakText: this may still be a cartridge with an introduction of its
+    -- own. Prism has one, and writing it under the _OakText* keys is also what
+    -- flips Data.lua's gate back on, so the speech plays instead of being
+    -- skipped. None of these keys is in INTRO_TEXT_FALLBACKS, so the cleanup
+    -- below cannot undo them.
+    self:gen2PrismIntroText(texts, charmap)
     -- and drop any half-resolved placeholder so the gate reads false
     for key in pairs(INTRO_TEXT_FALLBACKS) do
       local raw = texts[key]
@@ -1988,10 +2288,28 @@ function RomExtractorGen2:extractMoves()
   end
 
   local names = self:varNames("MoveNames", #order)
+  -- POLISHED CRYSTAL'S MOVE ROWS ARE EIGHT BYTES: GetMoveAttr (00:$3558)
+  -- indexes with `ld bc,$0008`, and the eighth byte is the physical/
+  -- special/status category (Swords Dance 2, Tackle 0, Flamethrower 1 --
+  -- verified row by row).  Its accuracy is PLAIN PERCENT like Prism's
+  -- ($64 = 100, Thunder $46 = 70; $FF marks a sure-hit).  Through
+  -- Crystal's 7-byte stride every row past the first read one byte
+  -- further askew -- Surf came out power 0, type NORMAL, 39% accurate.
+  local entryBytes = self:layout("moveEntryBytes", 7)
+  local categoryAt = self:layout("moveCategoryAt", -1)
+  -- POLISHED RENUMBERED THE EFFECT TABLE.  When the manifest carries the
+  -- cartridge's own byte->effect map (derived from MoveEffectsPointers, see
+  -- polished_tables.move_effects), it is the authority; the static
+  -- GEN2_MOVE_EFFECTS below is Crystal/Gold numbering and reading a polished
+  -- effect byte through it made Growl ($39) TRANSFORM_EFFECT -- the "used
+  -- Growl, transformed into Cyndaquil" bug -- and misfired most status moves.
+  local effectMap = self:layout("polishedMoveEffects", 0) ~= 0
+    and self.manifest and self.manifest.moveEffects or nil
   local out, ids = {}, {}
   for index = 1, #order do
     local ok, row = pcall(function()
-      return self.rom:bytes(sym.bank, sym.address + (index - 1) * 7, 7)
+      return self.rom:bytes(sym.bank, sym.address + (index - 1) * entryBytes,
+                            entryBytes)
     end)
     if not ok or type(row) ~= "table" then break end
     local name = names[index] or order[index]
@@ -1999,9 +2317,16 @@ function RomExtractorGen2:extractMoves()
     if out[id] then id = order[index] end
     ids[index] = id
 
-    local effect = GEN2_MOVE_EFFECTS[row[2]]
-    if type(effect) == "table" then
-      effect = row[7] >= GEN2_EFFECT_CHANCE_SPLIT and effect[2] or effect[1]
+    local effect
+    if effectMap then
+      -- one effect per byte on this cartridge; the chance byte still drives
+      -- the probability inside the engine's *_SIDE_EFFECT handlers
+      effect = effectMap[tostring(row[2])]
+    else
+      effect = GEN2_MOVE_EFFECTS[row[2]]
+      if type(effect) == "table" then
+        effect = row[7] >= GEN2_EFFECT_CHANCE_SPLIT and effect[2] or effect[1]
+      end
     end
     -- Crystal stores one type id per move and derives physical/special from
     -- the id alone ($14 and up is special).  Prism implements the Gen 4 split
@@ -2017,6 +2342,9 @@ function RomExtractorGen2:extractMoves()
     if categoryDivisor > 0 then
       typeId = row[4] % categoryDivisor
       category = RomExtractorGen2.MOVE_CATEGORIES[math.floor(row[4] / categoryDivisor)]
+    elseif categoryAt > 0 then
+      -- polished: category is its own byte, the type byte is plain
+      category = RomExtractorGen2.MOVE_CATEGORIES[row[categoryAt]]
     end
     local move = {
       id = id, index = index, name = name,
@@ -2033,7 +2361,10 @@ function RomExtractorGen2:extractMoves()
       -- corresponding 0..100.  Dividing Prism's by 255 would make every move in
       -- the game ~39% accurate, silently.  `layout.moveAccuracyMax` is what the
       -- byte means by "100%".
-      accuracy = math.floor(row[5] * 100 / self:layout("moveAccuracyMax", 255) + 0.5),
+      -- capped: polished writes $FF for a sure-hit, which is 255% on the
+      -- plain-percent scale and would otherwise leak past every miss roll
+      accuracy = math.min(100,
+        math.floor(row[5] * 100 / self:layout("moveAccuracyMax", 255) + 0.5)),
       pp = row[6],
       effectChance = row[7],
       anim = { sound = "SFX_00", pitch = 0, tempo = 0 },
@@ -2053,6 +2384,29 @@ function RomExtractorGen2:extractMoves()
   end
 end
 
+-- POLISHED CRYSTAL'S EVOS-AND-ATTACKS IS A DIFFERENT RECORD LANGUAGE.
+--
+-- Verified against the ROM's own walkers: LearnEvolutionMove.skip_evos
+-- (06:$439f) ends the evolution section on $FF -- not Crystal's $00 -- and
+-- CheckHowToEvolve (06:$4083) dispatches TEN methods, each record closing
+-- with `db species, db form` where form bit 5 is the extended-species bit
+-- (+256; ConvertFormToExtendedSpecies 00:$328a).  Holding (4) and stat (6)
+-- carry two parameter bytes; every other method one.  Bulbasaur's record --
+-- `01 10 02 01 FF` -- derails Crystal's reader on byte three, which
+-- discarded every learnset in the game and left each mon with only the
+-- fallback move: ACROBATICS, the first move in this ROM's alphabetical
+-- move order.  Trade's "no held item" marker is $E0 here (the link-cable
+-- check at 06:$40f0), not Crystal's $FF -- $FF can never appear inside a
+-- record, which is exactly what lets skip_evos scan for it.
+local POLISHED_EVO_PARAMS = {
+  [1] = 1, [2] = 1, [3] = 1, [4] = 2, [5] = 1,
+  [6] = 2, [7] = 1, [8] = 1, [9] = 1, [10] = 1,
+}
+local POLISHED_EVO_METHODS = {
+  [4] = "HOLDING", [7] = "LOCATION", [8] = "MOVE",
+  [9] = "CRIT", [10] = "PARTY",
+}
+
 function RomExtractorGen2:gen2Learnsets(count)
   local out = {}
   local sym = self:symbol("EvosAttacksPointers")
@@ -2061,45 +2415,91 @@ function RomExtractorGen2:gen2Learnsets(count)
   local function speciesId(index)
     return species[index] or string.format("SPECIES_%03d", index)
   end
+  local speciesWord = self:layout("evoSpeciesWord", 0) ~= 0
   for i = 1, count do
     pcall(function()
       local address = self.rom:word(sym.bank, sym.address + (i - 1) * 2)
       local evolutions = {}
-      for _ = 1, 16 do
-        local method = self.rom:byte(sym.bank, address)
-        if method == 0 then break end
-        local width = GEN2_EVO_LENGTHS[method] or error("bad evo method")
-        local row = self.rom:bytes(sym.bank, address + 1, width - 1)
-        local evo
-        if method == GEN2_EVOLVE_LEVEL then
-          evo = { method = "LEVEL", level = row[1], species = speciesId(row[2]) }
-        elseif method == GEN2_EVOLVE_ITEM then
-          evo = { method = "ITEM", level = 1,
-                  item = string.format("ITEM_%03d", row[1]),
-                  species = speciesId(row[2]) }
-        elseif method == GEN2_EVOLVE_TRADE then
-          -- a held item is required unless the byte is -1 (Kadabra, Machoke)
-          evo = { method = "TRADE", level = 1, species = speciesId(row[2]) }
-          if row[1] ~= 0xFF then
-            evo.heldItem = string.format("ITEM_%03d", row[1])
+      if speciesWord then
+        -- polished: methods 1..10, species word, $FF terminator
+        for _ = 1, 24 do
+          local method = self.rom:byte(sym.bank, address)
+          if method == 0xFF then break end
+          local params = POLISHED_EVO_PARAMS[method]
+            or error("bad evo method")
+          local row = self.rom:bytes(sym.bank, address + 1, params + 2)
+          local form = row[params + 2]
+          local target =
+            speciesId(row[params + 1] + (form % 0x40 >= 0x20 and 256 or 0))
+          local evo
+          if method == GEN2_EVOLVE_LEVEL then
+            evo = { method = "LEVEL", level = row[1], species = target }
+          elseif method == GEN2_EVOLVE_ITEM then
+            evo = { method = "ITEM", level = 1,
+                    item = string.format("ITEM_%03d", row[1]),
+                    species = target }
+          elseif method == GEN2_EVOLVE_TRADE then
+            evo = { method = "TRADE", level = 1, species = target }
+            if row[1] ~= 0xE0 and row[1] ~= 0 then
+              evo.heldItem = string.format("ITEM_%03d", row[1])
+            end
+          elseif method == 5 then     -- happiness (Crystal's 4 renumbered)
+            evo = { method = "HAPPINESS", species = target,
+                    timeOfDay = GEN2_EVO_TIMES[row[1]] }
+          elseif method == 6 then     -- stat compare (Crystal's 5)
+            evo = { method = "STAT", level = row[1],
+                    compare = GEN2_EVO_STATS[row[2]], species = target }
+          else
+            -- holding / location / move / crit / party: keep the target so
+            -- the dex evolution page stays truthful even where the runtime
+            -- has no trigger for the method yet
+            evo = { method = POLISHED_EVO_METHODS[method], level = 1,
+                    species = target }
           end
-        elseif method == GEN2_EVOLVE_HAPPINESS then
-          evo = { method = "HAPPINESS", species = speciesId(row[2]),
-                  timeOfDay = GEN2_EVO_TIMES[row[1]] }
-        elseif method == GEN2_EVOLVE_STAT then
-          evo = { method = "STAT", level = row[1],
-                  compare = GEN2_EVO_STATS[row[2]], species = speciesId(row[3]) }
+          evolutions[#evolutions + 1] = evo
+          address = address + 1 + params + 2
         end
-        if evo then evolutions[#evolutions + 1] = evo end
-        address = address + width
+        if self.rom:byte(sym.bank, address) ~= 0xFF then return end
+        address = address + 1
+      else
+        for _ = 1, 16 do
+          local method = self.rom:byte(sym.bank, address)
+          if method == 0 then break end
+          local width = GEN2_EVO_LENGTHS[method] or error("bad evo method")
+          local row = self.rom:bytes(sym.bank, address + 1, width - 1)
+          local evo
+          if method == GEN2_EVOLVE_LEVEL then
+            evo = { method = "LEVEL", level = row[1], species = speciesId(row[2]) }
+          elseif method == GEN2_EVOLVE_ITEM then
+            evo = { method = "ITEM", level = 1,
+                    item = string.format("ITEM_%03d", row[1]),
+                    species = speciesId(row[2]) }
+          elseif method == GEN2_EVOLVE_TRADE then
+            -- a held item is required unless the byte is -1 (Kadabra, Machoke)
+            evo = { method = "TRADE", level = 1, species = speciesId(row[2]) }
+            if row[1] ~= 0xFF then
+              evo.heldItem = string.format("ITEM_%03d", row[1])
+            end
+          elseif method == GEN2_EVOLVE_HAPPINESS then
+            evo = { method = "HAPPINESS", species = speciesId(row[2]),
+                    timeOfDay = GEN2_EVO_TIMES[row[1]] }
+          elseif method == GEN2_EVOLVE_STAT then
+            evo = { method = "STAT", level = row[1],
+                    compare = GEN2_EVO_STATS[row[2]], species = speciesId(row[3]) }
+          end
+          if evo then evolutions[#evolutions + 1] = evo end
+          address = address + width
+        end
+        if self.rom:byte(sym.bank, address) ~= 0 then return end
+        address = address + 1
       end
-      if self.rom:byte(sym.bank, address) ~= 0 then return end
-      address = address + 1
       local order = self:constants().moveOrder or {}
       local level1Moves, learnset = {}, {}
       for _ = 1, 64 do
         local level = self.rom:byte(sym.bank, address)
-        if level == 0 then break end
+        -- polished records close their move list on $FF like the evo
+        -- section (FillMoves also stops on $00, so honour both)
+        if level == 0 or level == 0xFF then break end
         local index = self.rom:byte(sym.bank, address + 1)
         local move = order[index] or string.format("MOVE_%03d", index)
         if level <= 1 then
@@ -2258,14 +2658,28 @@ function RomExtractorGen2:gen2MovementTable()
   if self._movementTable then return self._movementTable end
   local out = {}
   local sym = self:symbol("SpriteMovementData")
+  -- Polished extends the table to $30 rows AND renumbers the fixed-spinner
+  -- functions: its StepFunction pointer list puts SpinClockwise at $11 and
+  -- SpinCounterclockwise at $12 where Crystal has them at $18/$19 (which on
+  -- polished are the ROW indices of two SPIN MOVEMENTS -- see the boulder
+  -- keys in the manifest).  Both are layout-driven for the same reason as
+  -- every other stride here.
+  local movementMax = self:layout("movementMax", GEN2_MOVEMENT_MAX)
+  local spinCW = self:layout("movementSpinCW", -1)
+  local spinCCW = self:layout("movementSpinCCW", -1)
   if sym and self.rom then
     pcall(function()
       local raw = self.rom:bytes(sym.bank, sym.address,
-        (GEN2_MOVEMENT_MAX + 1) * GEN2_MOVEMENT_ENTRY_BYTES)
-      for index = 0, GEN2_MOVEMENT_MAX do
+        (movementMax + 1) * GEN2_MOVEMENT_ENTRY_BYTES)
+      for index = 0, movementMax do
         local base = index * GEN2_MOVEMENT_ENTRY_BYTES
-        local roam = GEN2_MOVE_FN_ROAM[raw[base + 1]]
-        local spin = RomExtractorGen2.GEN2_MOVE_FN_SPIN[raw[base + 1]]
+        local fn = raw[base + 1]
+        local roam = GEN2_MOVE_FN_ROAM[fn]
+        local spin = (fn == spinCW and "SPIN_CW")
+          or (fn == spinCCW and "SPIN_CCW")
+          or (spinCW < 0 and RomExtractorGen2.GEN2_MOVE_FN_SPIN[fn])
+          or (fn == 0x04 and "SPIN_SLOW") or (fn == 0x05 and "SPIN_FAST")
+          or nil
         if spin then
           -- `range` carries which spin it is; NPC.lua reads it back.  The
           -- facing byte for every spin entry is DOWN, which is also what
@@ -2279,6 +2693,10 @@ function RomExtractorGen2:gen2MovementTable()
             range = GEN2_MOVE_FACING[raw[base + 2]] or "DOWN",
           }
         end
+        -- the object action (byte 2) picks the Facings family the object
+        -- wears; the map pass maps a few of them onto fixed sheet frames
+        -- (cut trees, fruit trees on the ball/cut/fruit sheet)
+        out[index].action = raw[base + 3]
       end
     end)
   end
@@ -2339,7 +2757,142 @@ end
 local GEN2_TRAINERTYPE_MOVES = 1
 local GEN2_TRAINERTYPE_ITEM = 2
 
+-- POLISHED CRYSTAL'S PARTY FORMAT, READ OUT OF ReadTrainerParty (07:$4000).
+--
+-- Each trainer is `db length / name, $53 / db type / mon records`, the
+-- length counting everything after itself (SkipTrainerParties, 07:$41df,
+-- adds exactly that byte to hl).  A mon is `db level, species, form`, then
+-- fields the TYPE byte switches on -- a full bit field, not Crystal's two
+-- bits:
+--
+--   bit 1  item        one byte
+--   bit 3  DVs         ONE byte: an index into DVSpreads (WriteTrainerDVs,
+--                      58:$5286, `ld bc,3 / rst AddNTimes`), not raw DVs
+--   bit 4  personality one byte
+--   bit 5  nickname    $53-terminated string (a lone $53 = no nickname)
+--   bit 2  EVs         one byte, an EVSpreads index likewise
+--   bit 6  moves       four bytes
+--
+-- in exactly that STREAM order.  Carrie's type is $42 -- item and moves --
+-- which is why her mons are eight bytes, and why reading Crystal's low two
+-- bits here ("moves" at bit 0) misparsed every party on the cartridge.
+-- The port keeps what it can battle with (level, species, form, item,
+-- moves) and skips over the rest by width.
+function RomExtractorGen2:gen2PolishedTrainerParties(bank, startAddress, endAddress, moveOrder)
+  local parties, names = {}, {}
+  local limit = math.min(endAddress or 0x8000, 0x7FFF)
+  local speciesCeiling = #((self:constants() or {}).speciesOrder or {})
+  if speciesCeiling < 251 then speciesCeiling = 251 end
+  local ends = RomExtractorGen2.NAME_ENDS
+  local address = startAddress
+  while address < limit and #parties < 64 do
+    local length = self.rom:byte(bank, address)
+    local recordEnd = address + 1 + length
+    -- a record must hold at least a name byte, its terminator, the type
+    -- byte and one three-byte mon
+    if length < 6 or recordEnd > limit then break end
+    local at = address + 1
+    local nameBytes, named = {}, false
+    while at < recordEnd and #nameBytes <= 16 do
+      local b = self.rom:byte(bank, at)
+      at = at + 1
+      if b == 0x53 or (ends and ends[b]) then named = true break end
+      nameBytes[#nameBytes + 1] = b
+    end
+    if not named or #nameBytes == 0 then break end
+    local kind = self.rom:byte(bank, at)
+    at = at + 1
+    local party, bad = {}, false
+    while at + 2 < recordEnd and #party < 6 and not bad do
+      local level = self.rom:byte(bank, at)
+      local species = self.rom:byte(bank, at + 1)
+      local form = self.rom:byte(bank, at + 2)
+      at = at + 3
+      -- A LEVEL BYTE PAST 100 IS AN OFFSET, NOT A LEVEL.  Every level runs
+      -- through AdjustLevelForBadges (0C:$46cf): below $65 it is taken as
+      -- written; from $65 up the mon's level is (byte - $B2) + a base the
+      -- player's badge count sets, clamped into [2, 99].  Giovanni's ace is
+      -- $CA -- +24 over the badge base -- and rejecting it as "level 202"
+      -- threw away his party and everything after it in the class.
+      local scaled = level >= 0x65
+      local offset = scaled and (level - 0xB2) or nil
+      if species < 1 or species > speciesCeiling
+         or (not scaled and level < 1) then
+        bad = true
+        break
+      end
+      local slot = {
+        -- the port has no badge scaler yet: a scaled mon fights at a
+        -- mid-game stand-in biased by its own offset, and the offset is
+        -- kept for the day the runtime computes the real base
+        level = scaled and math.max(2, math.min(99, 50 + offset)) or level,
+        species = string.format("SPECIES_%03d", species),
+        form = form ~= 0 and form or nil,
+      }
+      if scaled then
+        slot.scaledLevel = true
+        slot.levelOffset = offset
+      end
+      if math.floor(kind / 2) % 2 == 1 then          -- bit 1: item
+        local item = self.rom:byte(bank, at)
+        at = at + 1
+        if item > 0 then slot.item = string.format("ITEM_%03d", item) end
+      end
+      if math.floor(kind / 8) % 2 == 1 then          -- bit 3: DV spread
+        at = at + 1
+      end
+      if math.floor(kind / 16) % 2 == 1 then         -- bit 4: personality
+        at = at + 1
+      end
+      if math.floor(kind / 32) % 2 == 1 then         -- bit 5: nickname
+        local nick = {}
+        while at < recordEnd do
+          local b = self.rom:byte(bank, at)
+          at = at + 1
+          if b == 0x53 then break end
+          nick[#nick + 1] = b
+        end
+        if #nick > 0 then
+          slot.nickname = gen2DecodeString(nick, #nick)
+        end
+      end
+      if math.floor(kind / 4) % 2 == 1 then          -- bit 2: EV spread
+        at = at + 1
+      end
+      if math.floor(kind / 64) % 2 == 1 then         -- bit 6: moves
+        local moves = {}
+        for i = 0, 3 do
+          local move = self.rom:byte(bank, at + i)
+          if move > 0 then
+            moves[#moves + 1] = moveOrder[move]
+              or string.format("MOVE_%03d", move)
+          end
+        end
+        at = at + 4
+        if #moves > 0 then slot.moves = moves end
+      end
+      party[#party + 1] = slot
+    end
+    -- THE LENGTH BYTE IS THE VALIDATOR: a record parsed right consumes
+    -- itself exactly.  Landing short or long means the type bits or a
+    -- field width were misread -- stop the group rather than guess on.
+    if bad or at ~= recordEnd then break end
+    -- ...and an EMPTY party is a REAL record: TrainerGroups opens several
+    -- classes with a name-and-type placeholder (the first GRUNTF row is
+    -- `db 7, "Grunt", $53, 0` -- no mons at all).  Breaking on it threw
+    -- away every party BEHIND it: all the Rocket grunts, the Battle Tower
+    -- nurse's Chansey, Giovanni.
+    parties[#parties + 1] = party
+    names[#names + 1] = gen2DecodeString(nameBytes, #nameBytes) or ""
+    address = recordEnd
+  end
+  return parties, names
+end
+
 function RomExtractorGen2:gen2TrainerParties(bank, startAddress, endAddress, moveOrder)
+  if self:layout("trainerPartyBits", 0) ~= 0 then
+    return self:gen2PolishedTrainerParties(bank, startAddress, endAddress, moveOrder)
+  end
   local parties, names = {}, {}
   -- The last group in TrainerGroups has no successor to bound it, so the
   -- caller passes the end of the bank window.  Reading there asserts, which
@@ -2347,15 +2900,23 @@ function RomExtractorGen2:gen2TrainerParties(bank, startAddress, endAddress, mov
   -- the Slowpoke Well and hideout Rockets then had no party to battle.  Stop
   -- on the first record that cannot be a trainer instead.
   local limit = math.min(endAddress or 0x8000, 0x7FFF)
+  local speciesCeiling = #((self:constants() or {}).speciesOrder or {})
+  if speciesCeiling < 251 then speciesCeiling = 251 end
   local address = startAddress
   local stop = false
   while address < limit and #parties < 64 and not stop do
     local nameBytes = {}
     local named = false
+    -- The trainer's own name ends the same way every other name on this
+    -- cartridge does -- $50 on Gold and Crystal, $53 here (FindTrainerData
+    -- skips one with `cp $53`, 07:$423c). Looking for the wrong byte, the
+    -- name ran to the 12-byte cap, `named` stayed false, and the record was
+    -- rejected: 122 trainer classes with a name, a pic and NO PARTY.
+    local ends = RomExtractorGen2.NAME_ENDS
     while address < limit and #nameBytes <= 12 do
       local b = self.rom:byte(bank, address)
       address = address + 1
-      if b == 0x50 then named = true break end
+      if b == 0x50 or (ends and ends[b]) then named = true break end
       nameBytes[#nameBytes + 1] = b
     end
     local kind = named and address < limit and self.rom:byte(bank, address) or nil
@@ -2373,7 +2934,11 @@ function RomExtractorGen2:gen2TrainerParties(bank, startAddress, endAddress, mov
         end
         local species = address + 1 < limit and self.rom:byte(bank, address + 1) or 0
         address = address + 2
-        if level < 1 or level > 100 or species < 1 or species > 251 then
+        -- 251 IS GOLD'S ROSTER, not every cartridge's. This hack has 291
+        -- species, so every party holding anything past Celebi was rejected
+        -- as "not a trainer" and the walk stopped there -- taking the rest of
+        -- the group's parties with it.
+        if level < 1 or level > 100 or species < 1 or species > speciesCeiling then
           stop = true
         else
           local slot = {
@@ -2520,7 +3085,7 @@ end
 
 function RomExtractorGen2:gen2WritePic(bank, address, relative, palette)
   local raw = self.rom:bytes(bank, address, 0x8000 - address)
-  local pixels = decompressLz3(raw)
+  local pixels = decompressLz3(raw, self:lzOptions())
   local tiles = GEN2_TRAINER_PIC_TILES
   assert(#pixels >= tiles * tiles * 16, "short trainer pic")
   local reordered = colMajorToRowMajor(pixels, tiles, tiles)
@@ -2592,21 +3157,48 @@ function RomExtractorGen2:gen2Trainers()
       -- Neither fact needs the order.  A dw table ends at the LOWEST address
       -- it points to, and a group ends at the next pointer ABOVE its own --
       -- read off the whole set rather than off the row after it.
-      local ptrs, lowest = {}, 0x8000
+      -- TWO BYTES A ROW, OR THREE WITH A BANK IN FRONT.
+      --
+      -- Gold, Crystal and Prism keep TrainerGroups in ONE bank and index it
+      -- with a `dw` per group. Polished Crystal's parties are spread across
+      -- five banks, so its row is a `dba` -- FindTrainerData (07:$4223) does
+      -- `add hl,bc` THREE times and then reads the bank before the pointer.
+      --
+      -- Read as words, the very first row is $d67c: not a ROM address at all,
+      -- so the walk stopped on row 0 and gen2Trainers returned an empty
+      -- byClass. Nothing errored -- there is nothing wrong with a cartridge
+      -- having no trainer classes -- and the run produced two trainer pics,
+      -- the two the intro hardcodes, out of a table that has dozens.
+      local rowBytes = self:layout("trainerGroupBytes", 2)
+      local bankAt = rowBytes >= 3 and 0 or nil
+      local ptrs, banks, lowest = {}, {}, 0x8000
       for i = 0, 511 do
-        local at = sym.address + i * 2
-        if at >= lowest then break end
-        local p = self.rom:word(sym.bank, at)
-        if p < 0x4000 or p >= 0x8000 then break end
+        local at = sym.address + i * rowBytes
+        -- the table ends where its own lowest target begins, and only a
+        -- same-bank target can bound it
+        if bankAt == nil and at >= lowest then break end
+        local bank = bankAt and self.rom:byte(sym.bank, at) or sym.bank
+        local p = self.rom:word(sym.bank, at + (bankAt and 1 or 0))
+        if p < 0x4000 or p >= 0x8000 or bank == 0 then break end
+        if bankAt and bank == sym.bank and at >= lowest then break end
         ptrs[#ptrs + 1] = p
-        if p < lowest then lowest = p end
+        banks[#banks + 1] = bank
+        if bank == sym.bank and p < lowest then lowest = p end
       end
       local count = #ptrs
-      local sorted = {}
-      for _, p in ipairs(ptrs) do sorted[#sorted + 1] = p end
-      table.sort(sorted)
-      local function groupEnd(start)
-        for _, p in ipairs(sorted) do
+      -- A GROUP ENDS AT THE NEXT POINTER ABOVE IT *IN ITS OWN BANK*.
+      -- With one bank that is the whole set; with five, a pointer from
+      -- another bank is not a boundary and using it as one truncates the
+      -- group to nothing.
+      local sortedByBank = {}
+      for i, p in ipairs(ptrs) do
+        local list = sortedByBank[banks[i]]
+        if not list then list = {}; sortedByBank[banks[i]] = list end
+        list[#list + 1] = p
+      end
+      for _, list in pairs(sortedByBank) do table.sort(list) end
+      local function groupEnd(bank, start)
+        for _, p in ipairs(sortedByBank[bank] or {}) do
           if p > start then return p end
         end
         return 0x8000
@@ -2620,9 +3212,10 @@ function RomExtractorGen2:gen2Trainers()
       end
       for group = 1, count do
         local startAddress = ptrs[group]
-        local endAddress = groupEnd(startAddress)
+        local groupBank = banks[group] or sym.bank
+        local endAddress = groupEnd(groupBank, startAddress)
         local parties, names = self:gen2TrainerParties(
-          sym.bank, startAddress, endAddress, moveOrder)
+          groupBank, startAddress, endAddress, moveOrder)
         local className = classNames[group]
         local plain = sanitize(className)
         local label = plain
@@ -2906,20 +3499,82 @@ function RomExtractorGen2:gen2PicAnimation(species, cleanName, pixels,
   }
 end
 
+-- The species' front-pic side, from the table this build keeps it in.
+--
+-- `manifest.monPicSizes` names the symbol; absent, this returns nil and the
+-- caller keeps reading base_stats exactly as Gold and Crystal need it to.
+function RomExtractorGen2:gen2MonPicSize(index)
+  local name = self.manifest and self.manifest.monPicSizes
+  if type(name) ~= "string" or not self.rom then return nil end
+  local sym = self:symbol(name)
+  if not sym then return nil end
+  local slot = index - 1
+  local ok, byte = pcall(function()
+    return self.rom:byte(sym.bank, sym.address + math.floor(slot / 2))
+  end)
+  if not ok then return nil end
+  local side = (slot % 2 == 1) and (byte % 16) or math.floor(byte / 16)
+  -- 0 is "this slot has no pic", and a side past 7 is not a Gen 2 pic at all
+  if side < 1 or side > 7 then return nil end
+  return side
+end
+
 function RomExtractorGen2:extractPokemon()
   self:beginStage("Gen2 Pokemon")
   local constants = self:constants()
   local speciesOrder = constants.speciesOrder or {}
   local fallbackMove = constants.moveOrder and constants.moveOrder[1] or "TACKLE"
 
-  local pokeNames = gen2ReadFixedNames(self.rom, self:symbol("PokemonNames"), #speciesOrder, 10)
+  self:textTables()   -- seeds NAME_ENDS; see gen2DecodeString
+  -- WHERE THE FIRST SPECIES IS IN PokemonNames.
+  --
+  -- Gold and Crystal start the table at Bulbasaur. Polished Crystal puts a
+  -- DUMMY entry in front of it -- which is why the Python side reads 292
+  -- entries and drops the first -- and this read did not, so every species
+  -- took the NEXT one's name: SPECIES_002 was called Bulbasaur, SPECIES_158
+  -- was called Typhlosion when it is Totodile.
+  --
+  -- Nothing errors, and nothing even looks wrong in isolation: every name is
+  -- a real Pokemon. It only shows when a name is compared against an id --
+  -- which is exactly what picking a starter does. Choosing the Totodile ball
+  -- handed over something labelled Typhlosion.
+  local nameBias = self:layout("speciesNameBias", 0)
+  local namesSym = self:symbol("PokemonNames")
+  if namesSym and nameBias > 0 then
+    namesSym = { bank = namesSym.bank, address = namesSym.address + nameBias * 10 }
+  end
+  local pokeNames = gen2ReadFixedNames(self.rom, namesSym, #speciesOrder, 10)
   local learnsets = self:gen2Learnsets(#speciesOrder)
 
   -- Base stats from BaseData (Crystal 14:5424 / Gold 14:5b0b, dex order).
   -- The stride is the BASE game's 32 unless the manifest overrides it: Prism
   -- packs the same fields into 24.
+  --
+  -- THE FIELD OFFSETS MOVE TOO, not just the stride.  Polished Crystal's
+  -- 34-byte record has NO dex-number byte -- stats open the record -- and
+  -- everything after the held items is rearranged (packed gender+hatch
+  -- nibbles, three ability bytes, growth, egg groups, EV yields, then
+  -- FOURTEEN TM/HM bytes).  Reading it through Crystal's offsets shifted
+  -- every stat by one and put growth inside the abilities, which is where
+  -- "attack = 0 / weight = 65472" came from.  Each offset is a 1-based
+  -- manifest layout key with Crystal's value as the default, mirrored from
+  -- the wBase* WRAM symbols the cartridge itself copies the record onto.
   local baseSym = self:symbol("BaseData")
   local ENTRY = self:layout("baseDataEntry", 32)
+  local statsAt = self:layout("baseStatsAt", 2)
+  local typesAt = self:layout("baseTypesAt", 8)
+  local catchAt = self:layout("baseCatchAt", 10)
+  local expAt = self:layout("baseExpAt", 11)
+  local genderAt = self:layout("baseGenderAt", RomExtractorGen2.GEN2_BASE_GENDER)
+  -- polished packs gender (high nibble) and hatch cycles (low nibble) into
+  -- ONE byte; see GetGenderRatio (00:$3214) / the egg-steps math (03:$5d60)
+  local genderPacked = self:layout("baseGenderPacked", 0) ~= 0
+  local growthAt = self:layout("baseGrowthAt", GEN2_BASE_GROWTH_RATE)
+  local eggGroupsAt =
+    self:layout("baseEggGroupsAt", RomExtractorGen2.GEN2_BASE_EGG_GROUPS)
+  local tmhmAt = self:layout("baseTmhmAt", GEN2_BASE_TMHM_FIRST)
+  local tmhmBytes = self:layout("baseTmhmBytes", 8)
+  local picDimsAt = self:layout("basePicDimsAt", GEN2_BASE_PIC_DIMS)
   local machines = self:gen2Machines()
 
   local out = {}
@@ -2939,19 +3594,37 @@ function RomExtractorGen2:extractPokemon()
       local ok, entry = pcall(function()
         return self.rom:bytes(baseSym.bank, baseSym.address + (i - 1) * ENTRY, ENTRY)
       end)
-      if ok and type(entry) == "table" and #entry >= 11 then
-        hp=entry[2]; atk=entry[3]; def=entry[4]; spd=entry[5]; satk=entry[6]; sdef=entry[7]
+      if ok and type(entry) == "table" and #entry >= expAt then
+        hp = entry[statsAt]
+        atk = entry[statsAt + 1]
+        def = entry[statsAt + 2]
+        spd = entry[statsAt + 3]
+        satk = entry[statsAt + 4]
+        sdef = entry[statsAt + 5]
         -- species types are plain ids in every ROM checked (Prism's top
         -- value is $1B), so no category bits to mask off here
-        type1 = self:gen2TypeName(entry[8]) or "NORMAL"
-        type2 = self:gen2TypeName(entry[9]) or type1
-        catchRate = entry[10]; baseExp = entry[11]
-        growthRate = GEN2_GROWTH_RATES[entry[GEN2_BASE_GROWTH_RATE]] or growthRate
+        type1 = self:gen2TypeName(entry[typesAt]) or "NORMAL"
+        type2 = self:gen2TypeName(entry[typesAt + 1]) or type1
+        catchRate = entry[catchAt]; baseExp = entry[expAt]
+        growthRate = GEN2_GROWTH_RATES[entry[growthAt]] or growthRate
       end
       if ok and type(entry) == "table" and #entry >= ENTRY then
-        genderRatio = entry[RomExtractorGen2.GEN2_BASE_GENDER]
-        eggCycles = entry[RomExtractorGen2.GEN2_BASE_EGG_CYCLES]
-        local groups = entry[RomExtractorGen2.GEN2_BASE_EGG_GROUPS] or 0
+        if genderPacked then
+          -- high nibble: $0 all-male, $8 all-female, $F genderless, else
+          -- female-eighths -- mapped onto Crystal's 0..255 threshold scale
+          -- (n*32-1 reproduces GENDER_F12_5 = $1F ... GENDER_F87_5 = $DF)
+          -- so DayCare.compatibility needs no second scheme.  Low nibble:
+          -- (n + 1) * 5 hatch cycles.
+          local packed = entry[genderAt] or 0
+          local hi = math.floor(packed / 16)
+          genderRatio = (hi == 15 and 255) or (hi == 0 and 0)
+            or (hi == 8 and 254) or (hi * 32 - 1)
+          eggCycles = (packed % 16 + 1) * 5
+        else
+          genderRatio = entry[genderAt]
+          eggCycles = entry[RomExtractorGen2.GEN2_BASE_EGG_CYCLES]
+        end
+        local groups = entry[eggGroupsAt] or 0
         local names = RomExtractorGen2.GEN2_EGG_GROUPS
         local g1 = names[math.floor(groups / 16)]
         local g2 = names[groups % 16]
@@ -2959,8 +3632,8 @@ function RomExtractorGen2:extractPokemon()
           eggGroups = { g1 }
           if g2 and g2 ~= g1 then eggGroups[2] = g2 end
         end
-        for byteIndex = 0, 7 do
-          local value = entry[GEN2_BASE_TMHM_FIRST + byteIndex] or 0
+        for byteIndex = 0, tmhmBytes - 1 do
+          local value = entry[tmhmAt + byteIndex] or 0
           for bit = 0, 7 do
             if math.floor(value / 2 ^ bit) % 2 == 1 then
               local slot = machines[byteIndex * 8 + bit + 1]
@@ -2969,11 +3642,30 @@ function RomExtractorGen2:extractPokemon()
           end
         end
       end
-      picDims = (ok and type(entry) == "table" and entry[GEN2_BASE_PIC_DIMS]) or 0x55
+      -- a ROM without the inline byte (polished; basePicDimsAt = -1) keeps
+      -- the fallback and lets gen2MonPicSize answer below
+      picDims = (ok and type(entry) == "table" and picDimsAt > 0
+                 and entry[picDimsAt]) or 0x55
     end
 
     local picTilesW = math.max(1, math.floor(picDims / 16))
     local picTilesH = math.max(1, picDims % 16)
+    -- A SEPARATE TABLE, WHERE THIS CARTRIDGE KEEPS IT.
+    --
+    -- Gold and Crystal put `dn width, height` inside base_stats. Polished
+    -- Crystal has PokemonPicSizes (76:$4ec5): ONE NIBBLE per species -- pics
+    -- are square, so one number is the whole size -- packed two to a byte,
+    -- high nibble for an even index and low for an odd one. GetPicSize
+    -- (00:$3182) is the routine: `srl b / rr c` halves the index and the
+    -- carry picks the nibble.
+    --
+    -- Read from base_stats instead, the byte at Crystal's offset in a
+    -- 34-byte record is not a size at all, so writePic fell through to its
+    -- "is the blob a perfect square" fallback -- and a Gen 2 pic blob is the
+    -- pic FOLLOWED BY its animation frames, so it almost never is. 35 of 291
+    -- species got a sprite; the other 256 silently kept the placeholder.
+    local picSide = self:gen2MonPicSize(i)
+    if picSide then picTilesW, picTilesH = picSide, picSide end
 
     -- Battle sprites from individual *Frontpic / *Backpic symbols
     local cleanName = name:lower():gsub("[^%a%d]", "")
@@ -2998,7 +3690,7 @@ function RomExtractorGen2:extractPokemon()
           return self.rom:bytes(sym.bank, sym.address, 0x8000 - sym.address)
         end)
         if not ok1 or type(raw) ~= "table" then return nil end
-        local ok2, pixels = pcall(decompressLz3, raw)
+        local ok2, pixels = pcall(decompressLz3, raw, self:lzOptions())
         if not ok2 or type(pixels) ~= "table" or #pixels < 16 then return nil end
         local tiles = math.floor(#pixels / 16)
         -- Geometry comes from the declared size, NOT from the blob length.
@@ -3037,7 +3729,12 @@ function RomExtractorGen2:extractPokemon()
       end
 
       local function trySprite(symSuffix, dir, dest, tw, th)
-        local candidates = { capKey .. symSuffix }
+        -- <Name>Plain<Pic> IS THE BASE FORM'S NAME on a cartridge with
+        -- regional forms. Polished Crystal names Arcanine's default pic
+        -- ArcaninePlainFrontpic because ArcanineHisuianFrontpic exists beside
+        -- it; 45 species are named that way and every one of them resolved to
+        -- nothing without this.
+        local candidates = { capKey .. symSuffix, capKey .. "Plain" .. symSuffix }
         if cleanName == "nidoran" then
           candidates = { "NidoranM"..symSuffix, "NidoranF"..symSuffix, "Nidoran"..symSuffix }
         elseif cleanName == "unown" then
@@ -3175,33 +3872,82 @@ function RomExtractorGen2:gen2DexEntries(pokemon)
   local charmap = self:readSourceTable("charmap")
   local texts = self._gen2Texts
   local written = 0
+  -- POLISHED CRYSTAL: `db bank, dw pointer` rows, three bytes each
+  -- (GetDexEntryPointer 00:$3242 does `add hl,bc` THREE times), and the
+  -- entry is `kind@ page1@ page2@` in polished text -- $53 terminators,
+  -- n-grams, no height or weight words at all.  The body measurements live
+  -- in PokemonBodyData (52:$4549, _Pokedex_Description 10:$5284): four
+  -- bytes per species, `db height, dw weight, db shape/color`, METRIC --
+  -- decimeters and hectograms -- converted here to the feet/inches and
+  -- tenths-of-a-pound the dex screen already prints.  Crystal's reader on
+  -- this shape produced garbage kinds and 65472-pound weights.
+  local ptrBytes = self:layout("dexPointerBytes", 2)
+  local bodySym = ptrBytes == 3 and self:symbol("PokemonBodyData") or nil
   for _, def in pairs(pokemon) do
     local dex = tonumber(def.dex)
     if dex and dex >= 1 then
       local ok = pcall(function()
-        local row = table_.address + (dex - 1) * 2
-        local address = self.rom:word(table_.bank, row)
-        local group = math.floor((dex - 1) / 64)
-        -- the cartridge's own table where it has one, Gold's arithmetic where
-        -- it does not (see gen2DexEntryBanks)
-        local bank = (banks and banks[group + 1])
-          or (GEN2_DEX_POINTER_BANK + group)
+        local bank, address
+        if ptrBytes == 3 then
+          local row = table_.address + (dex - 1) * 3
+          bank = self.rom:byte(table_.bank, row)
+          address = self.rom:word(table_.bank, row + 1)
+          -- the table also covers the egg/unused index gap; a row that
+          -- does not point into a switchable bank window is not an entry
+          if bank < 1 or bank >= self:gen2BankCount()
+             or address < 0x4000 or address >= 0x8000 then
+            error("no dex entry")
+          end
+        else
+          local row = table_.address + (dex - 1) * 2
+          address = self.rom:word(table_.bank, row)
+          local group = math.floor((dex - 1) / 64)
+          -- the cartridge's own table where it has one, Gold's arithmetic
+          -- where it does not (see gen2DexEntryBanks)
+          bank = (banks and banks[group + 1])
+            or (GEN2_DEX_POINTER_BANK + group)
+        end
         local kind, offset = {}, 0
+        local kindEnd = ptrBytes == 3
+          and RomExtractorGen2.POLISHED_TEXT_ENDS or { [0x50] = true }
         while offset < 16 do
           local value = self.rom:byte(bank, address + offset)
           offset = offset + 1
-          if value == 0x50 then break end
+          if kindEnd[value] then break end
           kind[#kind + 1] = self:textGlyph(charmap, value)
         end
-        local height = self.rom:word(bank, address + offset)
-        local weight = self.rom:word(bank, address + offset + 2)
-        -- the description is TWO $50-terminated strings: the dex screen
-        -- prints the first page, then the second on a button press.  Reading
-        -- only as far as the first terminator dropped the back half of every
-        -- entry.
-        local body, used = self:decodeGen2TextAt(bank, address + offset + 4, charmap)
-        local page2 = self:decodeGen2TextAt(bank, address + offset + 4 + used, charmap)
-        if page2 ~= "" then body = body .. "\n" .. page2 end
+        local height, weight, body
+        if ptrBytes == 3 then
+          -- both pages, decoded by the polished reader; page two starts one
+          -- past page one's terminator
+          local p1, e1 = self:gen2PolishedText(bank, address + offset, 0)
+          body = self:gen2GlyphBytes(p1 or {}, charmap)
+          if e1 then
+            local p2 = self:gen2PolishedText(bank, e1 + 1, 0)
+            local page2 = self:gen2GlyphBytes(p2 or {}, charmap)
+            if page2 ~= "" then body = body .. "\n" .. page2 end
+          end
+          local hDm, wHg = 0, 0
+          if bodySym then
+            local b = self.rom:bytes(bodySym.bank,
+              bodySym.address + (dex - 1) * 4, 4)
+            hDm, wHg = b[1] or 0, (b[2] or 0) + (b[3] or 0) * 256
+          end
+          local inches = math.floor(hDm * 3.937008 + 0.5)
+          height = math.floor(inches / 12) * 100 + inches % 12
+          weight = math.floor(wHg * 2.204623 + 0.5)
+        else
+          height = self.rom:word(bank, address + offset)
+          weight = self.rom:word(bank, address + offset + 2)
+          -- the description is TWO $50-terminated strings: the dex screen
+          -- prints the first page, then the second on a button press.
+          -- Reading only as far as the first terminator dropped the back
+          -- half of every entry.
+          local used
+          body, used = self:decodeGen2TextAt(bank, address + offset + 4, charmap)
+          local page2 = self:decodeGen2TextAt(bank, address + offset + 4 + used, charmap)
+          if page2 ~= "" then body = body .. "\n" .. page2 end
+        end
         local key = "_Gen2DexEntry_" .. tostring(def.id)
         if texts and body ~= "" then texts[key] = body end
         def.dexEntry = {
@@ -3450,6 +4196,39 @@ function RomExtractorGen2:extractIcons()
     end
   end
 
+  -- ONE SYMBOL PER SPECIES, which is how this cartridge names them.
+  --
+  -- Crystal reaches an icon through two tables -- MonMenuIcons maps species to
+  -- icon id, IconPointers maps icon id to address -- and Prism through a `dba`
+  -- indexed by species. Polished Crystal has NEITHER: it names every icon
+  -- after its species, `AbraIcon` beside `AbraFrontpic`, and 286 of its 291
+  -- species have one. With no MonMenuIcons the stage produced nothing and said
+  -- nothing, so the party menu drew no icons at all.
+  --
+  -- Tried only for species the tables above did not already cover, so a
+  -- cartridge that has both keeps the table answer.
+  if self.rom and next(bySpecies) == nil then
+    local names = self:constants().speciesNames or {}
+    for i, id in ipairs(speciesOrder) do
+      local colors = monPalettes[id]
+      local key = names[i] and pokeNameToSymKey(names[i]) or nil
+      local sym = key and (self:symbol(key .. "Icon")
+                           or self:symbol(key .. "PlainIcon")) or nil
+      if colors and sym then
+        local relPath = "icons/" .. id:lower() .. ".png"
+        local ok = pcall(function()
+          -- 128 bytes, two 16x16 frames, and every one of them an LZ stream
+          -- here -- read raw it is the compressed bytes drawn as pixels.
+          local raw = self:gen2LzAt(sym.bank, sym.address, GEN2_ICON_BYTES)
+            or self.rom:bytes(sym.bank, sym.address, GEN2_ICON_BYTES)
+          self:saveImage(gen2IconImage(gen2SplitTiles(raw), colors), relPath)
+        end)
+        if ok then bySpecies[id] = { image = "assets/generated/" .. relPath } end
+      end
+      if i % 32 == 0 then self:tick("Gen2 party icons", i, #speciesOrder) end
+    end
+  end
+
   local count = 0
   for _ in pairs(bySpecies) do count = count + 1 end
   Logger.info("Gen2 icons: %d species icons written", count)
@@ -3465,19 +4244,61 @@ end
 local GEN2_GRASS_BUCKETS = { 77, 154, 205, 230, 243, 253, 256 }
 local GEN2_WATER_BUCKETS = { 154, 230, 256 }
 local GEN2_GRASS_SLOTS, GEN2_WATER_SLOTS = 7, 3
-local GEN2_GRASS_RECORD = 2 + 3 + GEN2_GRASS_SLOTS * 2 * 3
-local GEN2_WATER_RECORD = 2 + 1 + GEN2_WATER_SLOTS * 2
 
--- One `db level, db species` run out of a wildmons record.
+-- HOW WIDE ONE WILD SLOT IS.
+--
+-- Gold and Crystal write `db level, db species`. Polished Crystal writes a
+-- THIRD byte -- the form, for its regional and cosmetic variants -- and read
+-- at Crystal's stride that table decodes as level/species/level/species...
+-- walking one byte further out of step with every slot. The first two entries
+-- come back plausible and everything after them is noise wearing real species
+-- names, which is the shape of wrongness that gets imported and played rather
+-- than reported.
+--
+-- Manifest-driven, so Gold and Crystal keep their own number untouched.
+local GEN2_WILD_SLOT_BYTES = 2
+
+function RomExtractorGen2:wildSlotBytes()
+  return self:layout("wildSlotBytes", GEN2_WILD_SLOT_BYTES)
+end
+
+-- One `db level, db species[, db form]` run out of a wildmons record.
 function RomExtractorGen2:gen2WildSlots(bank, address, count)
+  local stride = self:wildSlotBytes()
   local slots = {}
-  local raw = self.rom:bytes(bank, address, count * 2)
+  local raw = self.rom:bytes(bank, address, count * stride)
   for i = 1, count do
-    slots[i] = {
-      level = raw[i * 2 - 1],
-      species = string.format("SPECIES_%03d", raw[i * 2]),
-    }
+    local at = (i - 1) * stride
+    -- SPECIES 0 IS NOT A POKEMON on any Gen 2 cartridge, and it is what a
+    -- mis-strided read produces most often. Pokemon.new refuses SPECIES_000
+    -- by raising, so a single bad slot is not a rare wrong encounter -- it is
+    -- a crash the moment the roll lands on it, which is how a stride bug that
+    -- only affected two of three time-of-day blocks reached a player as "the
+    -- game dies if I walk in grass at night".
+    if raw[at + 2] == 0 then
+      Logger.warn("gen2 wild slots at %02X:%04X: slot %d has species 0; "
+        .. "dropping it rather than shipping a crash", bank, address, i)
+    end
+    slots[i] = raw[at + 2] ~= 0 and {
+      level = raw[at + 1],
+      species = string.format("SPECIES_%03d", raw[at + 2]),
+      -- Kept where the cartridge has one, dropped where it does not: a form
+      -- of 0 on a cartridge with no forms is a field that means nothing, and
+      -- a field that means nothing is one somebody will read.
+      form = stride >= 3 and raw[at + 3] or nil,
+    } or nil
   end
+  -- THE SLOT LIST IS INDEXED BY A PROBABILITY BUCKET, so it cannot simply be
+  -- shortened: bucket i belongs to slot i, and packing the list down would
+  -- hand slot 7's odds to slot 6. A dropped slot takes the first surviving
+  -- slot's Pokemon instead, which keeps the table the length the buckets
+  -- expect. If nothing survived there are no encounters here at all, and an
+  -- empty list is what the runtime already treats as "nothing lives on this
+  -- map" -- unlike SPECIES_000, which it treats as a reason to stop.
+  local first
+  for i = 1, count do first = first or slots[i] end
+  if not first then return {} end
+  for i = 1, count do slots[i] = slots[i] or first end
   return slots
 end
 
@@ -3606,11 +4427,25 @@ function RomExtractorGen2:extractEncounters()
         -- `grass` stays the day table (what the Gen1-shaped roll reads) and
         -- the other two ride alongside for GetTimeOfDay to pick.
         local slotBase = grass and 5 or 3
+        -- ONE TIME-OF-DAY BLOCK IS slotCount * slotBytes WIDE.
+        --
+        -- These three offsets were 0, slotCount*2 and slotCount*4 -- the
+        -- right arithmetic with the stride folded in at two bytes a slot,
+        -- which is Gold and Crystal. On a cartridge with a FORM byte the
+        -- record length already followed the stride (the comment further down
+        -- is about exactly that), so morn read correctly and day and nite
+        -- landed seven and fourteen bytes short, inside the morn block.
+        --
+        -- What that produced was not an error: it produced levels of 161 and
+        -- species ids of 0, and SPECIES_000 is what Pokemon.new refuses --
+        -- so walking into grass at the wrong time of day crashed the game
+        -- while morning worked fine.
+        local block = slotCount * self:wildSlotBytes()
         local entry = {
           rate = self.rom:byte(sym.bank, address + (grass and 3 or 2)),
           buckets = buckets,
           slots = self:gen2WildSlots(sym.bank,
-            address + slotBase + (grass and slotCount * 2 or 0), slotCount),
+            address + slotBase + (grass and block or 0), slotCount),
         }
         if grass then
           entry.byTime = {
@@ -3623,7 +4458,7 @@ function RomExtractorGen2:extractEncounters()
               rate = self.rom:byte(sym.bank, address + 4),
               buckets = buckets,
               slots = self:gen2WildSlots(sym.bank,
-                address + slotBase + slotCount * 4, slotCount),
+                address + slotBase + block * 2, slotCount),
             },
           }
         end
@@ -3650,14 +4485,22 @@ function RomExtractorGen2:extractEncounters()
       { symbol = "KantoWaterWildMons", terrain = "water" },
     }
   end
+  -- THE RECORD LENGTH FOLLOWS THE SLOT WIDTH. Both were constants folded at
+  -- load time, so a cartridge with a third byte per slot walked the right
+  -- slots inside the first record and then stepped to the wrong address for
+  -- every record after it -- one map's encounters filed under another map's
+  -- name, all the way down the table.
+  local slotBytes = self:wildSlotBytes()
+  local grassRecord = 2 + 3 + GEN2_GRASS_SLOTS * slotBytes * 3
+  local waterRecord = 2 + 1 + GEN2_WATER_SLOTS * slotBytes
   for _, spec in ipairs(wildTables) do
     if type(spec) == "table" and type(spec.symbol) == "string" then
       if spec.terrain == "water" then
         pcall(walk, spec.symbol, "water",
-              GEN2_WATER_RECORD, GEN2_WATER_SLOTS, GEN2_WATER_BUCKETS)
+              waterRecord, GEN2_WATER_SLOTS, GEN2_WATER_BUCKETS)
       else
         pcall(walk, spec.symbol, "grass",
-              GEN2_GRASS_RECORD, GEN2_GRASS_SLOTS, GEN2_GRASS_BUCKETS)
+              grassRecord, GEN2_GRASS_SLOTS, GEN2_GRASS_BUCKETS)
       end
     end
   end
@@ -3697,6 +4540,26 @@ function RomExtractorGen2:gen2MapIndex()
   local ptr = self:symbol("MapGroupPointers")
   if not (ptr and self.rom) then return byGroupNumber, byLabel end
 
+  -- EVERY OFFSET IN A map_header, FROM THE MANIFEST.
+  --
+  -- Gold, Crystal and Prism share one nine-byte shape. Polished Crystal's is
+  -- SEVEN bytes, opens with the tileset where the others put the attributes
+  -- bank, and has no bank byte at all. Read at the old offsets not one header
+  -- resolves, so the whole map index comes back empty -- and an empty index
+  -- does not fail: warps and connections simply stop naming anything, which
+  -- reads as a cartridge with no doors rather than as a parse that missed.
+  local headerBytes = self:layout("mapHeaderBytes", GEN2_MAP_HEADER_BYTES)
+  local attrAt = self:layout("mapHeaderAttrAt", 3)
+  local tilesetAt = self:layout("mapHeaderTilesetAt", 1)
+  local envAt = self:layout("mapHeaderEnvAt", 2)
+  local landmarkAt = self:layout("mapHeaderLandmarkAt", 5)
+  local musicAt = self:layout("mapHeaderMusicAt", 6)
+  local paletteAt = self:layout("mapHeaderPaletteAt", 7)
+  local fishAt = self:layout("mapHeaderFishAt", 8)
+  -- 0 means "the header carries it", which is Gold and Crystal.
+  local attrBank = self:layout("mapAttributesBank", 0)
+  if attrBank == 0 then attrBank = nil end
+
   local attrLabel = {}
   for name, location in pairs(self.symbols or {}) do
     local label = type(name) == "string" and name:match("^(.+)_MapAttributes$")
@@ -3721,32 +4584,58 @@ function RomExtractorGen2:gen2MapIndex()
     for group = 1, self:gen2MapGroupCount() do
       local base = starts[group]
       local stop = following[base]
-      local count = stop and math.floor((stop - base) / GEN2_MAP_HEADER_BYTES) or 32
+      local count = stop and math.floor((stop - base) / headerBytes) or 32
       for number = 1, count do
-        local header = base + (number - 1) * GEN2_MAP_HEADER_BYTES
-        local bank = self.rom:byte(ptr.bank, header)
-        local address = self.rom:word(ptr.bank, header + 3)
+        local header = base + (number - 1) * headerBytes
+        -- WHERE THE ATTRIBUTES BANK COMES FROM.
+        --
+        -- Gold and Crystal put it at the head of every map_header. Polished
+        -- Crystal has ONE attributes bank for the whole game -- its
+        -- SwitchToMapAttributesBank is `ld a,$26` -- and spends the byte on
+        -- something else, so reading the header's first byte as a bank there
+        -- reads the TILESET id and matches nothing.
+        local bank = attrBank or self.rom:byte(ptr.bank, header)
+        local address = self.rom:word(ptr.bank, header + attrAt)
         local label = (bank > 0 and address >= 0x4000 and address < 0x8000)
           and attrLabel[bank * 0x10000 + address] or nil
         if label then
+          local function field(at, default)
+            if at == nil or at < 0 then return default end
+            return self.rom:byte(ptr.bank, header + at)
+          end
           local entry = {
             group = group, number = number, label = label,
             bank = bank, address = address,
-            tileset = self.rom:byte(ptr.bank, header + 1),
-            environment = self.rom:byte(ptr.bank, header + 2),
-            landmark = self.rom:byte(ptr.bank, header + 5),
+            tileset = field(tilesetAt, 0),
+            -- THE ENVIRONMENT BYTE IS NOT ALL ENVIRONMENT HERE.
+            --
+            -- Gold and Crystal spend the whole byte on ENVIRONMENT_* (1 TOWN
+            -- .. 7 DUNGEON). Polished Crystal packs flags into the top bits
+            -- and masks with `and $07` everywhere it uses one -- LoadMapPals
+            -- does it at 02:$5fb4. Its New Bark reads 1, Cherrygrove 17,
+            -- Route 29 66 and Elm's lab 99, which are TOWN, TOWN, ROUTE and
+            -- INDOOR wearing three different flag sets.
+            --
+            -- Unmasked, every environment-keyed lookup misses: the palette
+            -- row, and Dig and Escape Rope, which only work on CAVE and
+            -- DUNGEON. The raw byte is kept beside it rather than thrown
+            -- away, because the flags are somebody's next question.
+            environment = field(envAt, 0)
+              % (self:layout("environmentMask", 0xFF) + 1),
+            environmentBits = field(envAt, 0),
+            landmark = field(landmarkAt, 0),
             -- byte 8 is the map's FISHGROUP_* (map_header's `fish_group`).
             -- Never read before, which is why Gen2 fishing fell through to
             -- the Gen1 rod tables in FieldDefaults -- Old Rod always a L5
             -- MAGIKARP, Super Rod "Not even a nibble!" everywhere, because
             -- its per-map table (field.superRod) is Gen1-only data.
-            fishGroup = self.rom:byte(ptr.bank, header + 8),
+            fishGroup = field(fishAt, 0),
             -- byte 6 indexes the Music table (map_header's `music` field)
-            music = self.rom:byte(ptr.bank, header + 6),
+            music = field(musicAt, 0),
             -- low nibble of byte 7 is the PALETTE_* the map forces; 4 is
             -- PALETTE_DARK, the only value ReplaceTimeOfDayPals answers with
             -- .NeedsFlash (23:$4400)
-            palette = self.rom:byte(ptr.bank, header + 7) % 16,
+            palette = field(paletteAt, 0) % 16,
           }
           byGroupNumber[group * 256 + number] = entry
           byLabel[label] = byLabel[label] or entry
@@ -3782,7 +4671,23 @@ function RomExtractorGen2:gen2TilesetNames()
   if not (table_ and self.rom) then return byId end
 
   local PARTS = { "GFX", "Meta", "Coll" }
-  local PTR_AT = { GFX = 0, Meta = 3, Coll = 6 }
+  -- WHERE EACH FAR POINTER SITS IN AN ENTRY, from the manifest.
+  --
+  -- Gold and Crystal lay a 15-byte entry out as GFX, Meta, Coll. Polished
+  -- Crystal's is EIGHTEEN bytes and opens with Meta -- and carries no GFX or
+  -- Coll pointer at all: its collision lives elsewhere and there is no
+  -- `Tileset*GFX` symbol in the build. Read at Crystal's offsets, every
+  -- pointer past the first lands in WRAM ($d64a, $d44b) and identifies
+  -- nothing, so the whole roster comes back empty and every map falls to the
+  -- name guess -- which is the quiet, total failure this file keeps warning
+  -- about.
+  --
+  -- A negative offset means "this ROM does not have that pointer".
+  local PTR_AT = {
+    GFX = self:layout("tilesetGfxAt", 0),
+    Meta = self:layout("tilesetMetaAt", 3),
+    Coll = self:layout("tilesetCollAt", 6),
+  }
 
   -- Tileset0 and TilesetJohto are byte for byte the same tileset in every
   -- Gen2 ROM, so even a full three-pointer match still has to break that
@@ -3829,7 +4734,7 @@ function RomExtractorGen2:gen2TilesetNames()
     end
   end
 
-  local byTriple, byGfx = {}, {}
+  local byTriple, byGfx, byMeta = {}, {}, {}
   for family, slot in pairs(families) do
     if slot.GFX then
       if better(family, byGfx[slot.GFX]) then byGfx[slot.GFX] = family end
@@ -3838,6 +4743,17 @@ function RomExtractorGen2:gen2TilesetNames()
         if better(family, byTriple[triple]) then byTriple[triple] = family end
       end
     end
+    -- THE METATILE POINTER ALONE, as the last resort.
+    --
+    -- It is not good enough for Gold or Crystal: six of Crystal's families
+    -- share TilesetRuinsOfAlphGFX, and the whole reason the triple exists is
+    -- that no single pointer separates them. But a ROM that has ONLY the Meta
+    -- pointer is a different situation, not a worse one -- Polished Crystal's
+    -- 45 families have 45 distinct Meta blobs -- and the alternative there is
+    -- not a less certain answer, it is no answer at all.
+    if slot.Meta and better(family, byMeta[slot.Meta]) then
+      byMeta[slot.Meta] = family
+    end
   end
 
   pcall(function()
@@ -3845,21 +4761,42 @@ function RomExtractorGen2:gen2TilesetNames()
     -- drops every tileset past it along with the maps that use them.
     local stride = self:layout("tilesetEntry", GEN2_TILESET_ENTRY_BYTES)
     local ceiling = self:layout("tilesetCount", 48)
-    for id = 0, ceiling - 1 do
-      -- the table is indexed directly by tileset id, starting at 0
-      local entry = table_.address + id * stride
+    -- WHICH TILESET ID IS THE FIRST ENTRY.
+    --
+    -- Gold and Crystal index the table directly: id 0 is entry 0, and the
+    -- first entry is the `Tileset0` placeholder. Polished Crystal's
+    -- LoadMapTileset (00:$25f9) reads wMapTileset and does `dec a` before
+    -- AddNTimes, so its ids start at ONE and entry 0 is tileset 1.
+    --
+    -- Off by one here does not look broken, which is the danger: every map
+    -- still gets a real family, just its NEIGHBOUR's -- wrong blocks, wrong
+    -- collision, and a walkable exit where the art shows a wall. Measured on
+    -- this cartridge, 45 tileset ids are in use; indexed from 0, nineteen of
+    -- them name a family whose metatile table is SHORTER than the highest
+    -- block their own maps use (Ice Path's maps reach block 241 against an
+    -- 82-block family) and one names nothing at all. Indexed from 1, all 45
+    -- resolve and not one map indexes past the end of its own tileset.
+    local firstId = self:layout("tilesetFirstId", 0)
+    for id = firstId, firstId + ceiling - 1 do
+      local entry = table_.address + (id - firstId) * stride
       if entry + 8 >= 0x8000 then break end
       local keys = {}
       for _, part in ipairs(PARTS) do
-        local at = entry + PTR_AT[part]
-        keys[part] = self.rom:byte(table_.bank, at) * 0x10000
-          + self.rom:word(table_.bank, at + 1)
+        local at = PTR_AT[part]
+        if at and at >= 0 then
+          keys[part] = self.rom:byte(table_.bank, entry + at) * 0x10000
+            + self.rom:word(table_.bank, entry + at + 1)
+        end
       end
-      local family = byTriple[tripleKey(keys.GFX, keys.Meta, keys.Coll)]
+      local family = (keys.GFX and keys.Meta and keys.Coll
+                      and byTriple[tripleKey(keys.GFX, keys.Meta, keys.Coll)])
+        or nil
         -- A ROM hack, or a .sym missing a Meta/Coll label, can leave a family
         -- without the full triple.  Fall back to the old GFX-only lookup
         -- rather than dropping the map onto inferTilesetId's name guess.
-        or byGfx[keys.GFX]
+        or (keys.GFX and byGfx[keys.GFX])
+        -- ...and the Meta pointer alone for a ROM that has nothing else.
+        or (keys.Meta and byMeta[keys.Meta])
       if family then byId[id] = family end
     end
   end)
@@ -3875,8 +4812,22 @@ function RomExtractorGen2:gen2OverworldSprites()
   local byIndex = {}
   self._overworldSprites = byIndex
 
-  local table_ = self:symbol("OverworldSprites")
+  -- THE TABLE, UNDER WHICHEVER NAME THIS BUILD GAVE IT.
+  --
+  -- Gold, Crystal and Prism call it `OverworldSprites` and lay it out as six
+  -- bytes -- `dw gfx, db tiles, db bank, ...`. Polished Crystal calls it
+  -- `SpriteHeaders`, gives it FOUR bytes, and puts the bank at +2 where the
+  -- tile count used to be. Read at Crystal's stride and offsets it resolves
+  -- nothing at all and the walk gives up after three misses, so every object
+  -- on every map falls back to the player's own sheet -- which is the failure
+  -- that made Prism's Larvitar stand there wearing the player's sprite.
+  local table_ = self:symbol("OverworldSprites") or self:symbol("SpriteHeaders")
   if not (table_ and self.rom) then return byIndex end
+  local rowBytes = self:layout("spriteHeaderBytes",
+                               GEN2_OVERWORLD_SPRITE_BYTES)
+  local bankAt = self:layout("spriteHeaderBankAt", 3)
+  local kindAt = self:layout("spriteHeaderKindAt", 4)
+  local paletteAt = self:layout("spriteHeaderPaletteAt", 5)
 
   local gfxLabel = {}
   for name, location in pairs(self.symbols or {}) do
@@ -3904,10 +4855,10 @@ function RomExtractorGen2:gen2OverworldSprites()
     -- begin, so nothing real lives above it.
     local misses = 0
     for slot = 0, 0xEF do
-      local entry = table_.address + slot * GEN2_OVERWORLD_SPRITE_BYTES
-      if entry + 5 >= 0x8000 then break end
+      local entry = table_.address + slot * rowBytes
+      if entry + rowBytes - 1 >= 0x8000 then break end
       local address = self.rom:word(table_.bank, entry)
-      local bank = self.rom:byte(table_.bank, entry + 3)
+      local bank = self.rom:byte(table_.bank, entry + bankAt)
       if address == 0 or bank == 0 then
         misses = misses + 1
         if misses >= 3 then break end
@@ -3929,9 +4880,27 @@ function RomExtractorGen2:gen2OverworldSprites()
             -- `bytes` below before trusting it for anything.  Kept because
             -- it is still the right figure for how much of a sheet is
             -- resident at once.
-            length = self.rom:byte(table_.bank, entry + 2),
-            kind = self.rom:byte(table_.bank, entry + 4),
-            palette = self.rom:byte(table_.bank, entry + 5) % 8,
+            -- ...and only where the row is wide enough to HAVE one: at four
+            -- bytes, offset 2 is the bank, and reporting a bank number as a
+            -- VRAM allocation is worse than reporting nothing.
+            length = (bankAt ~= 2) and self.rom:byte(table_.bank, entry + 2)
+              or nil,
+            -- WHERE THE KIND AND THE PALETTE ARE, IF THEY ARE ANYWHERE.
+            --
+            -- Crystal's six-byte row ends `db type, db palette` at +4 and
+            -- +5. Polished Crystal's is FOUR bytes -- `dw gfx, db bank, db
+            -- palette` -- so +4 and +5 are the NEXT row's pointer, read as a
+            -- sprite kind and a palette. That gave every sheet a random size
+            -- cap and every NPC a random palette, which is most of what
+            -- "the sprites are scrambled" was.
+            --
+            -- A negative offset means the row does not carry that field at
+            -- all, which is not the same as carrying a zero: with no kind the
+            -- sheet is sized from the sheet itself.
+            kind = kindAt >= 0
+              and self.rom:byte(table_.bank, entry + kindAt) or nil,
+            palette = paletteAt >= 0
+              and (self.rom:byte(table_.bank, entry + paletteAt) % 8) or nil,
           }
         end
       end
@@ -4067,21 +5036,63 @@ end
 -- Walk a map's MapEvents block.  Layout: 2 filler bytes, then each section is
 -- a count byte followed by fixed size records.
 function RomExtractorGen2:gen2ReadMapEvents(attrBank, attrAddress)
-  local bank = self.rom:byte(attrBank, attrAddress + GEN2_ATTR_EVENTS_BANK)
-  local address = self.rom:word(attrBank, attrAddress + GEN2_ATTR_EVENTS_POINTER)
+  local bank = self.rom:byte(attrBank,
+    attrAddress + self:layout("mapAttrEventsBank", GEN2_ATTR_EVENTS_BANK))
+  -- WHERE THE EVENTS POINTER SITS IN map_attributes.
+  --
+  -- Gold and Crystal carry TWO far pointers there -- `dba <Map>_MapScripts`
+  -- at +6 then `dw <Map>_MapEvents` at +9, sharing the script bank. Polished
+  -- Crystal merged the two structures, so its single pointer is at +7 and the
+  -- connection flags move up with it, from +11 to +9.
+  --
+  -- Read at Crystal's offsets the "pointer" is the events pointer's high byte
+  -- joined to the connection flags: outside $4000..$7fff for practically every
+  -- map, so gen2ReadMapEvents returns nil and the map comes out with no warps,
+  -- no signs and no objects. 599 of 605 maps imported that way -- rooms with
+  -- no doors and towns with nobody in them -- and nothing in the log said so,
+  -- because "this map has no events" is a legitimate answer.
+  local address = self.rom:word(attrBank,
+    attrAddress + self:layout("mapAttrEventsPointer", GEN2_ATTR_EVENTS_POINTER))
   if bank == 0 or address < 0x4000 or address >= 0x8000 then return nil end
 
-  local cursor = address + 2
+  -- WHAT COMES BEFORE THE WARPS.
+  --
+  -- Crystal's map_events opens with two filler bytes and goes straight to the
+  -- warp count. Polished Crystal folded <Map>_MapScripts in ahead of it: a
+  -- counted list of two-byte scene scripts, then a counted list of three-byte
+  -- callbacks (00:$1de6 reads exactly that before it reaches the warps). Skip
+  -- them by a fixed two and the warp count is read out of the middle of a
+  -- scene script -- which does not error, it invents warps.
+  local cursor = address + self:layout("mapEventsFiller", 2)
+  -- A SECTION THAT RUNS OFF THE END OF THE BANK STOPS, IT DOES NOT THROW.
+  --
+  -- Every offset above comes from the manifest, and a wrong one puts the
+  -- count byte somewhere arbitrary -- 255 warps, and the walk marches past
+  -- $7fff. Rom:bytes raises there, which took the whole map's events with it
+  -- (the caller pcalls, so the map came out silently empty) and made a
+  -- mis-typed layout key look like a cartridge with no doors rather than like
+  -- a bad offset. Truncating instead keeps whatever was real and lets the
+  -- counts downstream show that something is wrong.
   local function section(recordBytes)
-    local count = self.rom:byte(bank, cursor)
+    local okCount, count = pcall(function() return self.rom:byte(bank, cursor) end)
+    if not okCount then return {} end
     cursor = cursor + 1
     local rows = {}
     for i = 1, count do
-      rows[i] = self.rom:bytes(bank, cursor, recordBytes)
+      local okRow, row = pcall(function()
+        return self.rom:bytes(bank, cursor, recordBytes)
+      end)
+      if not okRow then break end
+      rows[i] = row
       cursor = cursor + recordBytes
     end
     return rows
   end
+
+  local sceneBytes = self:layout("mapEventsSceneBytes", 0)
+  if sceneBytes > 0 then section(sceneBytes) end
+  local callbackBytes = self:layout("mapEventsCallbackBytes", 0)
+  if callbackBytes > 0 then section(callbackBytes) end
 
   local warps = section(GEN2_WARP_EVENT_BYTES)
   -- Prism's coord events are SEVEN bytes, Crystal's are eight.  Its
@@ -4130,8 +5141,82 @@ end
 -- map_scripts.varSprites came back EMPTY (Route 36's Sudowoodo and Route 37's
 -- Twins Ann & Anne both read wVariableSprites slot 4 and drew as
 -- placeholders) and every setevent past that point was lost with it.
+--
+-- ...AND ON SOME CARTRIDGES THE NEW-GAME STATE IS NOT A SCRIPT AT ALL.
+--
+-- Polished Crystal has no `InitializeEventsScript`. `InitializeEvents`
+-- (2f:$4c55) is a ROUTINE that walks three DATA tables:
+--
+--   InitialEvents                       dw event, ... , -1   (b=1 -> SET)
+--   InitialEngineFlags                  dw flag,  ... , -1
+--   InitialVariableSpritesAndMapScenes  dw addr, db value, -1
+--
+-- Looking for the script symbol and finding nothing is NOT an error here --
+-- it returns an EMPTY set, and an empty set means NO OBJECT IS EVER HIDDEN.
+-- That silence is the whole of the reported flag behaviour: the player's
+-- mother in two places at once, the Elm's Lab officer already at his post
+-- before the egg errand, and the Cherrygrove rival waiting in the trees.
+--
+-- `manifest.initialState` names the tables; absent, the script walk below
+-- runs unchanged.
+function RomExtractorGen2:gen2InitialEventTables()
+  local state = self.manifest and self.manifest.initialState
+  if type(state) ~= "table" then return nil end
+  local events, varSprites, engineFlags = {}, {}, {}
+
+  -- GetDWInDE (2f:$4c83) ends the walk on $FFFF -- `and e / inc a` is zero
+  -- only when BOTH bytes are $ff -- so a table is read until its terminator,
+  -- never by a count.
+  local function walk(spec, onRow)
+    if type(spec) ~= "table" then return end
+    local sym = self:symbol(spec.symbol)
+    if not sym then return end
+    local stride = tonumber(spec.stride) or 2
+    pcall(function()
+      local address = sym.address
+      -- a table that never terminates must stop at the end of the bank
+      -- rather than run into the next one
+      while address + stride <= 0x8000 do
+        local value = self.rom:word(sym.bank, address)
+        if value == 0xFFFF then return end
+        onRow(value, address, sym.bank)
+        address = address + stride
+      end
+    end)
+  end
+
+  walk(state.events, function(id) events[id] = true end)
+  walk(state.engineFlags, function(id) engineFlags[id] = true end)
+  -- The sprite table shares its rows with the MAP SCENES: both are plain
+  -- WRAM writes and only the address tells them apart.  Taking every row as
+  -- a sprite would have put a scene id in a sprite slot.
+  local sprites = state.varSprites
+  local base = tonumber(sprites and sprites.base)
+  local count = tonumber(sprites and sprites.count) or 0
+  local writes = {}
+  walk(sprites, function(target, address, bank)
+    local value = self.rom:byte(bank, address + 2)
+    writes[target] = value
+    if not base then return end
+    local slot = target - base
+    if slot < 0 or slot >= count then return end
+    varSprites[slot] = value
+  end)
+
+  return events, varSprites, engineFlags, writes
+end
+
 function RomExtractorGen2:gen2InitialEvents()
   if self._initialEvents then return self._initialEvents end
+  local tableEvents, tableSprites, tableFlags, tableWrites =
+    self:gen2InitialEventTables()
+  if tableEvents then
+    self._initialEvents = tableEvents
+    self._initialVarSprites = tableSprites
+    self._initialEngineFlags = tableFlags
+    self._initialWramWrites = tableWrites
+    return tableEvents
+  end
   local events = {}
   local varSprites = {}
   local sym = self:symbol("InitializeEventsScript")
@@ -4178,6 +5263,14 @@ end
 function RomExtractorGen2:gen2InitialVarSprites()
   self:gen2InitialEvents()
   return self._initialVarSprites or {}
+end
+
+-- Every WRAM byte the new-game table writes, keyed by address.  The rows
+-- that are not variable sprites are map SCENE ids -- three maps here open at
+-- scene 1 rather than 0 -- and only the address tells the two apart.
+function RomExtractorGen2:gen2InitialWramWrites()
+  self:gen2InitialEvents()
+  return self._initialWramWrites or {}
 end
 
 -- Most Gen2 NPC and sign scripts reach their dialogue within a handful of
@@ -4231,10 +5324,29 @@ function RomExtractorGen2:gen2TextBlockAt(bank, address)
     end
   end
 
+  -- A HUFFMAN CARTRIDGE CANNOT BE LETTER-SAMPLED.  Polished switches any
+  -- line into a bit stream at $5D, and compressed prose reads as noise to
+  -- the byte histogram below -- 549 of 671 trainer seen/won lines failed
+  -- the 85% test and their trainers went silent.  On these cartridges the
+  -- REAL decoder is the test: if the polished reader walks the block to a
+  -- terminator inside dialogue length, it is dialogue.
+  if self:layout("huffmanText", 0) ~= 0 then
+    local ok, chars = pcall(self.gen2PolishedText, self, bank, address, 0)
+    if ok and chars and #chars >= 4 and #chars <= 600 then
+      return bank, address
+    end
+    return nil
+  end
   -- text scripts open with `text` ($00); skip it before sampling
   local start = address
   if self.rom:byte(bank, start) == 0x00 then start = start + 1 end
   local letters, printable = 0, 0
+  -- A DICTIONARY CODE IS A LETTER.  Polished Crystal packs its prose with
+  -- n-grams -- "th", "er", "ou" as single low bytes -- and the sample below
+  -- counted every one as noise, so most REAL dialogue failed the 85%
+  -- letters test: 583 of 699 trainer headers lost their seen/won lines
+  -- that way, silent trainers before and after every battle.
+  local ngrams = self:textNgrams()
   for i = 0, 31 do
     local b = self.rom:byte(bank, start + i)
     if b == 0x50 or b == 0x57 or b == 0x58 then break end
@@ -4244,7 +5356,8 @@ function RomExtractorGen2:gen2TextBlockAt(bank, address)
     -- Without the last two groups "{PLAYER}'s House" reads as noise.
     if (b >= 0x80 and b <= 0xBF) or b >= 0xE0 or b == 0x7F
        or b == 0x4E or b == 0x4F or b == 0x51 or b == 0x55
-       or (b >= 0x52 and b <= 0x5D) then
+       or (b >= 0x52 and b <= 0x5D)
+       or (ngrams and ngrams[b] ~= nil) then
       letters = letters + 1
     end
   end
@@ -4437,15 +5550,48 @@ function RomExtractorGen2:extractMapsFromRom()
             -- table.  gen2LzAt keeps the result only if it is exactly
             -- width*height bytes, which is the header's own answer for how
             -- big the table is, so this cannot misfire on a raw cartridge.
-            def.blocks = self:gen2LzAt(bank, blocksPtr, width * height)
+            -- ONLY a ROM the manifest has already called compressed may
+            -- accept a long decode; on Gold and Crystal the exact length is
+            -- the only thing separating a real decompression from an LZ
+            -- decoder chewing through raw block bytes without complaint.
+            local compressed = self:layout("mapBlocksCompressed", 0) ~= 0
+            def.blocks = self:gen2LzAt(bank, blocksPtr, width * height,
+                                       compressed)
+            if not def.blocks and compressed then
+              -- ON A COMPRESSED ROM THE RAW READ IS NOT A FALLBACK.
+              --
+              -- It is the compressed stream presented as ground: block ids
+              -- spread over the whole 0..255 range against a tileset that has
+              -- fewer, which is a map of noise that loads without complaint.
+              -- So take whatever the decoder did produce and pad the tail
+              -- with the border block instead. Prism's MoundB3FDark is the
+              -- one map in three cartridges that needs this: its blob decodes
+              -- to 660 bytes where its header declares 22x31 = 682, one row
+              -- short, and the cartridge itself reads the next map's bytes
+              -- for that row.
+              local short_ = self:gen2LzAt(bank, blocksPtr)
+              if short_ and #short_ > 0 then
+                Logger.warn("gen2 map %s: block table decoded %d bytes for a "
+                  .. "%dx%d map; padding with border block %d",
+                  tostring(mapId), #short_, width, height, border)
+                for i = #short_ + 1, width * height do short_[i] = border end
+                def.blocks = short_
+              end
+            end
+            def.blocks = def.blocks
               or self.rom:bytes(bank, blocksPtr, width * height)
             loaded = loaded + 1
           end
         end)
 
         pcall(function()
-          local flags = self.rom:byte(sym.bank, sym.address + GEN2_ATTR_CONNECTION_FLAGS)
-          local cursor = sym.address + GEN2_ATTR_CONNECTION_FLAGS + 1
+          -- +11 on Gold and Crystal, +9 here: Polished Crystal's
+          -- map_attributes has one merged events pointer where they have a
+          -- script pointer and an events pointer. See gen2ReadMapEvents.
+          local flagsAt = self:layout("mapAttrConnectionFlags",
+                                      GEN2_ATTR_CONNECTION_FLAGS)
+          local flags = self.rom:byte(sym.bank, sym.address + flagsAt)
+          local cursor = sym.address + flagsAt + 1
           local connections = {}
           for _, spec in ipairs(GEN2_CONNECTION_DIRS) do
             local direction, flag = spec[1], spec[2]
@@ -4586,10 +5732,27 @@ function RomExtractorGen2:extractMapsFromRom()
             -- Strength boulders and Rock Smash rocks share SPRITE_BOULDER and
             -- are told apart only by MAPOBJECT_MOVEMENT:
             -- SPRITEMOVEDATA_SMASHABLE_ROCK ($18) vs _STRENGTH_BOULDER ($19).
-            if row[4] == 0x18 then
+            -- The ids are layout keys because polished renumbered them to
+            -- $12/$13 (TryRockSmashFromMenu 03:$4f69 compares $12) and put
+            -- SPIN MOVEMENTS at $18/$19 -- Crystal's constants there tagged
+            -- 71 spinning trainers as smashable or pushable boulders.
+            if row[4] == self:layout("movementSmashable", 0x18) then
               object.smashable = true
-            elseif row[4] == 0x19 then
+            elseif row[4] == self:layout("movementPushable", 0x19) then
               object.pushable = true
+            end
+            -- SPRITE_BALL_CUT_FRUIT is ONE SHEET -- ball, cut tree, fruit
+            -- tree, one 16x16 frame each -- and the object action from the
+            -- movement row picks which: SetFacingCutTree (01:$46cd) draws
+            -- tiles 4-7, the second frame; fruit uses the third.  Without
+            -- this every cuttable tree stood there as a POKe BALL.
+            local action = behavior and behavior.action or -1
+            if action >= 0 then
+              if action == self:layout("movementCutTreeAction", -1) then
+                object.frame = 1
+              elseif action == self:layout("movementFruitAction", -1) then
+                object.frame = 2
+              end
             end
 
             -- An item ball's script pointer is a two byte `db item, db quantity`
@@ -4600,6 +5763,34 @@ function RomExtractorGen2:extractMapsFromRom()
             -- SPRITE_RED placeholders behind (Cherrygrove, Route 30, ...).
             local script = scriptAddress >= 0x4000 and scriptAddress < 0x7FFF
             local item, quantity, fruitTree
+            -- OBJECTTYPE "COMMAND": the object IS its own four-byte script.
+            -- TryObjectEvent.command (25:$5473) copies the sight byte and the
+            -- pointer/flag fields into wram and RUNS them, so row[9] is an
+            -- opcode and rows 10-12 its operands.  957 objects here: the
+            -- jumptext(faceplayer) NPCs whose dialogue nothing ever read, the
+            -- jumpstd bookshelves, the berry trees, the mart clerks.
+            local inlineText, inlineStd, inlineMart
+            if kind == self:layout("objectPokemonKind", -1) then
+              -- an overworld Pokemon: the engine plays the cry and shows the
+              -- pointer as text (`showcrytext`, built inline at 25:$5448)
+              if script then inlineText = scriptAddress end
+            elseif kind == self:layout("objectCommandKind", -1) then
+              local op, a1, a2 = row[9], row[10], row[11]
+              if op == self:opcode("jumptext")
+                 or op == self:opcode("jumptextfaceplayer") then
+                -- the pointer IS the dialogue; take it as given
+                inlineText = a1 + a2 * 256
+              elseif op == self:opcode("jumpstd") then
+                inlineStd = a1
+              elseif op == self:opcode("fruittree") then
+                fruitTree = a1
+                item = fruitTreeItems[a1]
+                quantity = 1
+              elseif op == self:opcode("pokemart") then
+                local marts = self:gen2Marts()
+                inlineMart = marts[a2] or marts[a2 + row[12] * 256]
+              end
+            end
             -- Crystal's itemball field is a POINTER to `itemball ITEM` --
             -- `db item, db qty` sitting in the script bank.  Prism's is the
             -- item ITSELF: Events' `.itemball` reads MAPOBJECT_PARAMETER for
@@ -4650,6 +5841,7 @@ function RomExtractorGen2:extractMapsFromRom()
               item = fruitTreeItems[fruitTree]
               quantity = 1
             elseif kind == GEN2_OBJECT_KIND_TRAINER
+                or kind == self:layout("objectGenericTrainerKind", -1)
                 or (kind == RomExtractorGen2.GEN2_OBJECT_KIND_GENERICTRAINER
                     and self:layout("objectTextKinds", 0) ~= 0) then
               object.trainerObject = true
@@ -4752,6 +5944,38 @@ function RomExtractorGen2:extractMapsFromRom()
               object.quantity = quantity
               object.fruitTree = fruitTree
               itemObjects = itemObjects + 1
+            elseif inlineText or inlineStd or inlineMart then
+              object.text = textConst
+              textPointers[mapId] = textPointers[mapId] or {}
+              local entry = textPointers[mapId][textConst] or { text = textConst }
+              if inlineText then
+                self._gen2ScriptTexts[textConst] =
+                  { bank = self:gen2Home(bank, inlineText), address = inlineText }
+                spokenObjects = spokenObjects + 1
+              elseif inlineMart then
+                entry.mart = inlineMart
+                serviceObjects = serviceObjects + 1
+              elseif inlineStd == GEN2_STD_POKECENTER_NURSE then
+                entry.nurse = true
+                serviceObjects = serviceObjects + 1
+              end
+              textPointers[mapId][textConst] = entry
+            elseif object.trainerObject then
+              -- A trainer's pointer is its HEADER, and the header's texts are
+              -- already registered (SEEN/BEATEN/AFTER).  Walking the header
+              -- through the text sniffer queued it as a SCRIPT -- one
+              -- "opcode after <start>" desync per trainer, with the decoder
+              -- reading a class byte as callasm -- and could hand the object
+              -- a line decoded out of pointer bytes.
+              object.text = textConst
+              local header = trainerHeaders[mapId] and trainerHeaders[mapId][i]
+              local seen = header and header.battle
+              if seen and self._gen2ScriptTexts[seen] then
+                self._gen2ScriptTexts[textConst] = self._gen2ScriptTexts[seen]
+                textPointers[mapId] = textPointers[mapId] or {}
+                textPointers[mapId][textConst] = { text = textConst }
+                spokenObjects = spokenObjects + 1
+              end
             else
               object.text = textConst
               local ok, textBank, textAddr
@@ -4800,13 +6024,56 @@ function RomExtractorGen2:extractMapsFromRom()
               text = textConst,
               source = string.format("ROM_BG_EVENT:%02X", bank),
             }
+            -- POLISHED CRYSTAL RENUMBERS THE KINDS PAST IFNOTSET
+            -- (BGEventJumptable 25:$549f): 7 is JUMPTEXT -- the pointer IS
+            -- the sign's text -- 8 is JUMPSTD, 9 another ifnotset, and every
+            -- kind from $0A up is a hidden item whose ITEM ID IS THE KIND
+            -- BYTE MINUS $0A, with the pointer slot holding the event flag
+            -- word itself rather than a pointer to it.  Read with Crystal's
+            -- numbering (7 = pointer to `dwb flag, item`), every jumptext
+            -- sign decoded its text address as a flag-and-item -- which is
+            -- exactly "the signs are giving items instead of the sign text".
+            local polishedKinds = self:layout("bgEventKinds", 0) ~= 0
+            if polishedKinds and kind >= 0x0A then
+              signs[i].item = string.format("ITEM_%03d", kind - 0x0A)
+              if ptr ~= 0 and ptr ~= 0xFFFF then
+                signs[i].eventFlag = string.format("EVENT_G2_%04d", ptr)
+              end
+              signs[i].hiddenItem = true
+              signs[i].text = nil
+            elseif polishedKinds and kind == 7 then
+              -- jumptext: the pointer is the words themselves
+              local okText, textBank, textAddr =
+                pcall(self.gen2TextBlockAt, self, bank, ptr)
+              if okText and textBank then
+                self._gen2ScriptTexts[textConst] =
+                  { bank = textBank, address = textAddr }
+                textPointers[mapId] = textPointers[mapId] or {}
+                textPointers[mapId][textConst] = { text = textConst }
+              end
+            elseif polishedKinds and (kind == 8 or kind == 9) then
+              -- jumpstd runs a std script (linked by the map-scripts pass);
+              -- 9's `dw event, dw script` is followed for text below only
+              -- after the same deref the jumptable does
+              if kind == 9 then
+                local okC, scriptPtr = pcall(self.rom.word, self.rom, bank, ptr + 2)
+                if okC then
+                  local okT, textBank, textAddr = pcall(
+                    self.gen2ScriptTextAddress, self, bank, scriptPtr)
+                  if okT and textBank then
+                    self._gen2ScriptTexts[textConst] = { bank = textBank, address = textAddr }
+                    textPointers[mapId] = textPointers[mapId] or {}
+                    textPointers[mapId][textConst] = { text = textConst }
+                  end
+                end
+              end
             -- BGEVENT_ITEM: pointer targets HiddenItem data laid out by the
             -- `hiddenitem` macro as `dwb event_flag, item` — event word FIRST,
             -- then the item byte (wHiddenItemEvent / wHiddenItemID).  Reading
             -- item-then-flag gave the low byte of EVENT_FOUND_MACHINE_PART
             -- (251) as the item and a garbage flag, so the gym water tile
             -- handed out the wrong item and ignored the Power Plant gate.
-            if kind == GEN2_BG_EVENT_ITEM then
+            elseif not polishedKinds and kind == GEN2_BG_EVENT_ITEM then
               local ok, eventFlag, itemId = pcall(function()
                 return self.rom:word(bank, ptr), self.rom:byte(bank, ptr + 2)
               end)
@@ -5010,7 +6277,11 @@ function RomExtractorGen2:gen2ReadMovement(bank, address, pool)
   for _ = 1, GEN2_MOVEMENT_MAX_STEPS do
     if pc >= limit then break end
     local op = self.rom:byte(bank, pc)
-    local name = Gen2ScriptOps.MOVEMENTS[op]
+    -- version-selected: polished's movement language runs to $67 (running,
+    -- fast and stairs steps), and reading it through Gold's table broke the
+    -- loop on the first such opcode -- which for 54 lists is byte one, so
+    -- the whole movement decoded as nothing and applymovement did nothing.
+    local name = Gen2ScriptOps.movementsFor(self.version)[op]
     if not name then break end
     pc = pc + 1
     local row = { name }
@@ -5269,8 +6540,11 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
     local row, argCount = { name }, 0
     pc = pc + 1
     -- Script_givepoke returns before reading the two name pointers when the
-    -- trainer byte is zero, which every in-game gift POKeMON is.
-    if name == "givepoke" and self.rom:byte(bank, pc + 3) == 0 then
+    -- trainer byte is zero, which every in-game gift POKeMON is.  Polished
+    -- carries its own variable tail in the `g` kind, so this Crystal-shaped
+    -- rewrite must not touch it.
+    if name == "givepoke" and not spec:find("g", 1, true)
+       and self.rom:byte(bank, pc + 3) == 0 then
       spec = "bbbb"
     end
     for i = 1, #spec do
@@ -5283,6 +6557,23 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
       elseif kind == "m" then
         value = self.rom:byte(bank, pc) * 65536
           + self.rom:byte(bank, pc + 1) * 256 + self.rom:byte(bank, pc + 2)
+      elseif kind == "j" then
+        -- A RELATIVE FORWARD JUMP, RESOLVED HERE INTO A LABEL.
+        --
+        -- Polished Crystal adds sjumpfwd/iftruefwd/iffalsefwd/ifequalfwd,
+        -- which Gold and Crystal have no equivalent of: the operand is a
+        -- SIGNED-FREE byte counted from the instruction after it.
+        -- Script_sjumpfwd (25:$6c46) is `ld hl,[$ffec] / inc hl /
+        -- GetScriptByte / add hl,bc`, so the target is (operand address) + 1
+        -- + offset.
+        --
+        -- Left as a bare number the port has nothing to jump to: the command
+        -- is a no-op, the script runs straight on into the branch it was
+        -- supposed to skip, and Elm's "Please, I need your help!" asks again
+        -- the moment you answer it. Five yeses and still asking is one
+        -- unresolved `iffalsefwd 32`.
+        local delta = self.rom:byte(bank, pc)
+        value = self:gen2QueueScript(bank, pc + 1 + delta, pool)
       elseif kind == "p" then
         value = self:gen2QueueScript(bank, self.rom:word(bank, pc), pool)
       elseif kind == "f" then
@@ -5299,6 +6590,21 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
       elseif kind == "T" then
         value = self:gen2RegisterScriptText(
           self.rom:byte(bank, pc), self.rom:word(bank, pc + 1))
+      elseif kind == "s" then
+        -- A SPECIES PAIR: species byte, then a FORM byte only when the
+        -- species is nonzero.  GetCurPartyMonSpeciesIfZero (25:$6618) sets Z
+        -- for a zero operand -- "use the current party mon" -- and the
+        -- handler skips the second GetScriptByte entirely, so the macro
+        -- emitted ONE byte there and two everywhere else.  Read as a fixed
+        -- width either way, half the pokepic/cry sites desync.
+        value = self.rom:byte(bank, pc)
+        if value ~= 0 then pc = pc + 1 end
+      elseif kind == "g" then
+        -- givepoke's trainer trigger: six more bytes (two far name
+        -- pointers) follow only when it is nonzero (Script_givepoke
+        -- 25:$6fd2, `jr z, .ok` around six GetScriptByte calls).
+        value = self.rom:byte(bank, pc)
+        if value ~= 0 then pc = pc + 6 end
       elseif kind == "M" then
         value = self:gen2ReadMovement(bank, self.rom:word(bank, pc), pool)
       elseif kind == "D" then
@@ -5330,8 +6636,34 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
       arrays[#arrays + 1] = { row, row[2] }
     elseif name == "loadmenu" then
       row[2] = self:gen2MenuItems(bank, row[2]) or row[2]
-    elseif name == "writecmdqueue" then
+    elseif name == "writecmdqueue" or name == "usestonetable" then
+      -- polished's usestonetable takes the table pointer directly where
+      -- Crystal queues it through writecmdqueue; both point at the same
+      -- `db kind / dw table` stone rows, not at bytecode
       row[2] = self:gen2StoneTable(bank, row[2], pool) or row[2]
+    elseif name == "scalltable" then
+      -- `scalltable <ptr>`: a dw TABLE of scripts indexed by the script
+      -- variable.  Queued as one script, the first pointer's bytes decoded
+      -- as opcodes -- DayCareGrandmaISeeTable and the Battle Tower jump
+      -- tables were this.  gen2JumpTable queues every entry instead.
+      row[2] = self:gen2JumpTable(bank, row[2], pool) or row[2]
+    elseif commands.normalizeOperands and name == "giveegg" then
+      -- polished: `species, form` -- no level operand; the handler writes
+      -- wCurPartyLevel = 1 itself (25:$701d, `xor a / inc a`).  The VM
+      -- speaks Crystal's `species, level`, so hand it that.
+      row[3] = 1
+    elseif commands.normalizeOperands and name == "givepoke" then
+      -- polished: species, form, level, item, ball, c540, trigger.  The VM
+      -- speaks Crystal's species, level, item -- reorder and drop the rest.
+      local level, item = row[4], row[5]
+      for i = #row, 4, -1 do row[i] = nil end
+      row[3], row[4] = level, item
+    elseif commands.normalizeOperands and name == "getmonname" then
+      -- polished reads a species WORD, so the id can pass 255; fold the two
+      -- bytes and put the buffer where Crystal's second operand sits.
+      local buffer = row[4]
+      row[2] = (row[2] or 0) + (row[3] or 0) * 256
+      row[3], row[4] = buffer, nil
     elseif name == "special" then
       -- Carry the special's pret NAME alongside its index.  The index alone
       -- is not portable: Crystal inserts BattleTowerFade at $2F, so 59 of
@@ -5437,6 +6769,9 @@ end
 local GEN2_SCRIPT_MAP_ARG = {
   warp = 2, warpfacing = 3, warpmod = 3, blackoutmod = 2,
   checkmapscene = 2, setmapscene = 2,
+  -- polished's swarm is `index, group, number` (25:$67e6 reads three bytes
+  -- into c, d, e); the pair sits after the index
+  swarm = 3,
 }
 
 function RomExtractorGen2:gen2ResolveScriptMapIds(maps, keys, pool)
@@ -5504,18 +6839,33 @@ local GEN2_STD_SCRIPT_MAX = 64
 function RomExtractorGen2:gen2QueueStdScripts(pool)
   local sym = self:symbol("StdScripts")
   if not sym or not self.rom then return nil end
+  -- TWO BYTES A ROW, OR THREE WITH A BANK IN FRONT.
+  --
+  -- Gold and Crystal keep StdScripts as `dba` -- every std can live anywhere.
+  -- Polished Crystal keeps them all in ONE bank and indexes with a plain
+  -- `dw`: StdScript (25:$6c2b) is `GetScriptByte / add hl,de / add hl,de /
+  -- ld b,$2f`, doubling the index and forcing the bank.
+  --
+  -- Read three bytes to a row, the "bank" is the first pointer's low byte and
+  -- the "address" is its high byte joined to the next pointer's low -- so
+  -- every jumpstd and callstd on the cartridge resolved to a different std
+  -- than the one it asked for. The stds are the bookshelves, the signs, the
+  -- PC, the mart counter AND the fruit trees, which is why NPCs were
+  -- introducing themselves as trees.
+  local rowBytes = self:layout("stdScriptBytes", 3)
+  local pointerAt = rowBytes >= 3 and 1 or 0
   local count = GEN2_STD_SCRIPT_MAX
   pcall(function()
-    local first = self.rom:word(sym.bank, sym.address + 1)
-    local rows = math.floor((first - sym.address) / 3)
+    local first = self.rom:word(sym.bank, sym.address + pointerAt)
+    local rows = math.floor((first - sym.address) / rowBytes)
     if rows > 0 and rows <= GEN2_STD_SCRIPT_MAX then count = rows end
   end)
   local out = {}
   for index = 0, count - 1 do
     pcall(function()
-      local row = sym.address + index * 3
-      local bank = self.rom:byte(sym.bank, row)
-      local address = self.rom:word(sym.bank, row + 1)
+      local row = sym.address + index * rowBytes
+      local bank = rowBytes >= 3 and self.rom:byte(sym.bank, row) or sym.bank
+      local address = self.rom:word(sym.bank, row + pointerAt)
       if not self:gen2InRom(bank, address) then return end
       local label = self:gen2QueueScript(bank, address, pool)
       if label then out[index] = label end
@@ -5852,8 +7202,34 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
       -- A throw anywhere below used to drop the WHOLE map: Burned Tower 1F
       -- lost its rival battle that way.  Log it instead of losing it silently.
       local ok, err = pcall(function()
-        local bank = self.rom:byte(sym.bank, sym.address + GEN2_ATTR_EVENTS_BANK)
-        local scriptsPtr = self.rom:word(sym.bank, sym.address + GEN2_ATTR_SCRIPTS_POINTER)
+        -- WHERE THE SCRIPTS LIST LIVES IS A LAYOUT FACT, NOT A CONSTANT.
+        --
+        -- Crystal keeps a separate `dba <Map>_MapScripts` in map_attributes,
+        -- and its scene entries are FOUR bytes (`scene_script` is dw script,
+        -- dw 0).  Polished Crystal merged the scripts list into the head of
+        -- the events blob -- one pointer at +7 -- and its scenes are TWO
+        -- bytes.  Read with Crystal's offsets, `scriptsPtr` was two garbage
+        -- bytes out of the header: on most maps it still landed somewhere
+        -- with a small first byte, so a plausible-looking run of fake scenes
+        -- and callbacks was decoded and QUEUED -- text blocks walked as
+        -- scripts (WiseTriosRoomSage1Text, VioletPokeCenter1FYoungsterText),
+        -- junk scene ids for the coord-event gate, and callbacks that ran
+        -- nothing.  That is a large slice of both the desync log and of
+        -- "areas where I step and activate an event aren't working".
+        local sceneStride = self:layout("mapEventsSceneBytes", 0)
+        local callbackStride = self:layout("mapEventsCallbackBytes", 3)
+        local bank, scriptsPtr
+        if sceneStride > 0 then
+          -- merged shape: the scripts list opens the events blob
+          bank = self.rom:byte(sym.bank,
+            sym.address + self:layout("mapAttrEventsBank", GEN2_ATTR_EVENTS_BANK))
+          scriptsPtr = self.rom:word(sym.bank,
+            sym.address + self:layout("mapAttrEventsPointer", GEN2_ATTR_SCRIPTS_POINTER))
+        else
+          sceneStride = 4
+          bank = self.rom:byte(sym.bank, sym.address + GEN2_ATTR_EVENTS_BANK)
+          scriptsPtr = self.rom:word(sym.bank, sym.address + GEN2_ATTR_SCRIPTS_POINTER)
+        end
         if not self:gen2InRom(bank, scriptsPtr) then return end
         local entry = { bank = bank }
 
@@ -5865,7 +7241,7 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
           for i = 1, scenes do
             entry.scenes[i] =
               self:gen2QueueScript(bank, self.rom:word(bank, cursor), pool) or ""
-            cursor = cursor + 4
+            cursor = cursor + sceneStride
             sceneCount = sceneCount + 1
           end
         end
@@ -5880,7 +7256,7 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
               script = self:gen2QueueScript(
                 bank, self.rom:word(bank, cursor + 1), pool) or "",
             }
-            cursor = cursor + 3
+            cursor = cursor + callbackStride
             callbackCount = callbackCount + 1
           end
         end
@@ -5908,7 +7284,31 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
             else
               -- a pointer below $4000 lives in the always-mapped home bank
               local pbank = self:gen2Home(bank, pointer)
-              if kind == RomExtractorGen2.GEN2_OBJECT_KIND_GENERICTRAINER
+              if kind == self:layout("objectPokemonKind", -1) then
+                -- an overworld Pokemon's pointer is its dialogue; the
+                -- object pass registered it as text
+                label = nil
+              elseif kind == self:layout("objectCommandKind", -1) then
+                -- the object IS its own four-byte script (see the object
+                -- pass): a jumpstd links the shared script, dialogue is
+                -- registered as text, and there is no pointer to walk --
+                -- queueing it walked 957 TEXT blocks through the decoder
+                if row[GEN2_OBJECT_ROW_SCRIPT - 1] == self:opcode("jumpstd") then
+                  self._gen2Stds = self._gen2Stds or self:gen2QueueStdScripts(pool)
+                  label = self._gen2Stds
+                    and self._gen2Stds[row[GEN2_OBJECT_ROW_SCRIPT]] or nil
+                end
+              elseif kind == self:layout("objectGenericTrainerKind", -1) then
+                -- POLISHED'S KIND 3 IS A GENERIC TRAINER, and its pointer is
+                -- an EIGHT-BYTE DATA BLOCK (`dw event, db class, db id,
+                -- dw seen, dw win` -- LoadTrainer_continue, 00:$2ffb, copies
+                -- exactly that when the kind byte is 3).  There is no
+                -- bytecode in it and no after-battle script after it.
+                -- Queued as a script, the walker read the event flag's low
+                -- byte as an opcode -- one "opcode after <start>" desync per
+                -- gym trainer, S1C_64DF/S1C_653A/S1C_659D being Azalea's.
+                label = nil
+              elseif kind == RomExtractorGen2.GEN2_OBJECT_KIND_GENERICTRAINER
                  and self:layout("objectTextKinds", 0) ~= 0 then
                 -- PRISM'S GENERIC TRAINER POINTS AT DATA, NOT AT A SCRIPT.
                 -- macros/trainer.asm is `dw flag / db group, id / dw seen,
@@ -5959,10 +7359,29 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
           -- IntroOutside's six, only the two whose bytes happened to survive
           -- came through -- the pair that starts the earthquake, and neither
           -- of the pairs around it.
+          -- Polished Crystal's is FIVE: `db scene, y, x / dw script`, so the
+          -- script is at offset 4 and there is no byte 6 at all. Read at
+          -- Crystal's 5 the second half of the pointer is nil, and `nil * 256`
+          -- is an ERROR -- which the caller catches per map, so the whole
+          -- map's scripts were dropped. 64 maps went that way, New Bark Town,
+          -- Elm's Lab, Cherrygrove and Route 29 among them: the entire
+          -- opening of the game had no scripts because of one arithmetic on a
+          -- byte that was never there.
+          --
+          -- Measured across all 277 of this cartridge's coord events: at
+          -- offset 4 every single pointer lands in $4000..$7fff; at Crystal's
+          -- 5, none do.
           local scriptAt = self:layout("coordEventScript", GEN2_COORD_ROW_SCRIPT)
           for _, row in ipairs(events.coords) do
-            local pointer = row[scriptAt]
-              + row[scriptAt + 1] * 256
+            local lo, hi = row[scriptAt], row[scriptAt + 1]
+            if not (lo and hi) then
+              -- Say it rather than raising: one short row must not cost the
+              -- map every script it has.
+              Logger.warn("gen2 coord event on %s: no script bytes at offset "
+                .. "%d of a %d-byte record", tostring(mapId), scriptAt, #row)
+              break
+            end
+            local pointer = lo + hi * 256
             local label = self:gen2QueueScript(bank, pointer, pool)
             if label then
               -- CheckCurrentMapCoordEvents subtracts 4 from the player's
@@ -5987,6 +7406,11 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
           -- in the pointer slot and BGEVENT_COPY (8) a RAM address, so both
           -- stay out.
           local signs, signConds = {}, {}
+          -- Polished renumbers the kinds past ifnotset: 7 jumptext (the
+          -- pointer is TEXT, and disassembling it as a script prints prose
+          -- as opcodes), 8 jumpstd, 9 ifnotset again, >= $0A hidden items
+          -- with the item id in the kind byte.  See the events pass.
+          local polishedBgKinds = self:layout("bgEventKinds", 0) ~= 0
           for i, row in ipairs(events.bgs) do
             local kind = row[3]
             local ptr = row[4] + row[5] * 256
@@ -5994,7 +7418,7 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
             -- rather than at the script, so following the pointer straight
             -- disassembled the flag word as opcodes (the Player's House
             -- poster decoded as $CC and died on the first byte).
-            if kind == 5 or kind == 6 then
+            if kind == 5 or kind == 6 or (polishedBgKinds and kind == 9) then
               local event = self.rom:word(bank, ptr)
               ptr = self.rom:word(bank, ptr + 2)
               signConds[i] = { event = event, ifSet = kind == 5 }
@@ -6007,8 +7431,12 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
             -- pointer.  Read as one, 9 walked a std INDEX looking for text and
             -- printed whatever bytes lived down there -- the scrambled sign --
             -- and 8, already excluded, simply said nothing at all.
-            local std = self:layout("objectTextKinds", 0) ~= 0
-              and (kind == 8 or kind == 9) and row[4] or nil
+            -- Polished's jumpstd (8) builds `setval <hi> / jumpstd <lo>`
+            -- from the dw (25:$552d), so the std index is the LOW byte --
+            -- the same slot Prism's kind-8/9 std index occupies.
+            local std = (self:layout("objectTextKinds", 0) ~= 0
+                         and (kind == 8 or kind == 9) and row[4])
+              or (polishedBgKinds and kind == 8 and row[4]) or nil
             if std then
               self._gen2Stds = self._gen2Stds or self:gen2QueueStdScripts(pool)
               local label = self._gen2Stds and self._gen2Stds[std]
@@ -6016,6 +7444,11 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
                 signs[i] = label
                 signCount = signCount + 1
               end
+            elseif polishedBgKinds and (kind == 7 or kind >= 0x0A) then
+              -- 7: the pointer is the sign's text, already linked by the
+              -- events pass; >= $0A: a hidden item, no script to queue.
+              -- Feeding either to the disassembler decoded prose (or a flag
+              -- word) as opcodes.
             elseif kind ~= GEN2_BG_EVENT_ITEM and kind ~= 8 then
               local label = self:gen2QueueScript(bank, ptr, pool)
               if label then
@@ -6136,6 +7569,261 @@ function RomExtractorGen2:gen2PrismTextTables()
   return tables
 end
 
+-- POLISHED CRYSTAL'S HUFFMAN TEXT, READ OUT OF THE ROM'S OWN ROUTINE.
+--
+-- Polished Crystal replaced Gen 2's charmap+ngram text outright: dialogue is a
+-- bit stream walked through TextCompressionHuffmanTree, and read as plain
+-- charmap bytes it decodes to noise -- which is not a subtle failure but is a
+-- SILENT one, because noise is still bytes and an import full of it finishes
+-- and reports success.
+--
+-- THE RULE IS THE CARTRIDGE'S, NOT A READING OF THE SOURCE. ReadHuffmanChar
+-- (00:$1273) disassembles to fifteen instructions, and every constant below is
+-- one of them:
+--
+--     xor a                 ; the walk starts at node 0
+--   .tree_loop
+--     dec b / jr nz         ; eight bits per stream byte
+--     ld c,[hl] / inc hl
+--     ld b,$08
+--   .no_reload
+--     sla c                 ; MSB first
+--     adc a,a               ; a = a * 2 + bit  -- i.e. tree[node * 2 + bit]
+--     add a,$14 / ld e,a
+--     adc a,$3d / sub e / ld d,a
+--     ld a,[de]
+--     cp $7f / jr c,.tree_loop     ; below $7f: the value is the next node
+--     cp $ec / ret c               ; $7f..$eb: the character IS the value
+--     sub $9f / ret                ; $ec and up: the character is value - $9f
+--
+-- and the run ends on CheckTerminatorChar (00:$1290), which tests THREE bytes
+-- -- $53, $52 and $54. The manifest that shipped before this said two, named
+-- rather than numbered ("@", "<DONE>"), which is not something a decoder can
+-- act on; these came off the cartridge.
+--
+-- Verified by decoding: the first text this was pointed at came back as
+-- "which photo is on\nyour Trainer Card?".
+RomExtractorGen2.POLISHED_HUFFMAN_LEAF = 0x7F
+RomExtractorGen2.POLISHED_HUFFMAN_SHIFT_AT = 0xEC
+RomExtractorGen2.POLISHED_HUFFMAN_SHIFT_BY = 0x9F
+RomExtractorGen2.POLISHED_TEXT_ENDS = { [0x52] = true, [0x53] = true,
+                                        [0x54] = true }
+
+-- The tree, once. Two bytes per node, root first, and the walk never indexes
+-- past $7f * 2 because anything from there up is a leaf.
+function RomExtractorGen2:gen2PolishedTree()
+  if self._polishedTree ~= nil then return self._polishedTree or nil end
+  self._polishedTree = false
+  local sym = self:symbol("TextCompressionHuffmanTree")
+  if not (sym and self.rom) then return nil end
+  local ok, nodes = pcall(function()
+    return self.rom:bytes(sym.bank, sym.address,
+                          RomExtractorGen2.POLISHED_HUFFMAN_LEAF * 2)
+  end)
+  if not (ok and type(nodes) == "table") then return nil end
+  self._polishedTree = nodes
+  return nodes
+end
+
+-- Decode a Polished Crystal text at (bank, address).  Returns the decoded
+-- CHARACTER BYTES -- ready for the ordinary charmap, exactly like the Prism
+-- path -- and the address just past the run.
+--
+-- The stream has no lead byte: unlike Prism's TX_COMPRESSED ($03) marker, a
+-- Polished Crystal text pointer points straight at the first bit.
+function RomExtractorGen2:gen2PolishedDecompressText(bank, address)
+  local tree = self:gen2PolishedTree()
+  if not tree then return nil end
+  local LEAF = RomExtractorGen2.POLISHED_HUFFMAN_LEAF
+  local SHIFT_AT = RomExtractorGen2.POLISHED_HUFFMAN_SHIFT_AT
+  local SHIFT_BY = RomExtractorGen2.POLISHED_HUFFMAN_SHIFT_BY
+  local out = {}
+  local pc = address
+  local limit = bank == 0 and 0x4000 or 0x8000
+  local cur, bitsLeft = 0, 0
+  local function bit()
+    if bitsLeft == 0 then
+      if pc >= limit then return nil end
+      local okB, b = pcall(self.rom.byte, self.rom, bank, pc)
+      if not okB then return nil end
+      cur = b
+      pc = pc + 1
+      bitsLeft = 8
+    end
+    local b = math.floor(cur / 128) % 2
+    cur = (cur * 2) % 256
+    bitsLeft = bitsLeft - 1
+    return b
+  end
+
+  for _ = 1, GEN2_TEXT_MAX_BYTES or 4096 do
+    local node, value = 0, nil
+    -- BOUNDED. A stream that runs into data rather than text can walk for
+    -- ever between two parent nodes that point at each other, and an
+    -- extraction that hangs is worse than one that gives up: 24 is past the
+    -- depth any tree with $7f parents can have.
+    for _ = 1, 24 do
+      local b = bit()
+      if b == nil then return out, pc end
+      value = tree[node * 2 + b + 1]
+      if value == nil then return out, pc end
+      if value >= LEAF then break end
+      node = value
+    end
+    if value == nil or value < LEAF then return out, pc end
+    local char = (value >= SHIFT_AT) and (value - SHIFT_BY) or value
+    if RomExtractorGen2.POLISHED_TEXT_ENDS[char] then return out, pc end
+    out[#out + 1] = char
+  end
+  return out, pc
+end
+
+-- A WHOLE POLISHED CRYSTAL TEXT: literal bytes, then a compressed tail.
+--
+-- The shape, from the cartridge: a text is ordinary charmap bytes until $5D
+-- (`<CTXT>`), and everything after that byte is the Huffman bit stream. So a
+-- line is not one encoding or the other -- it is the beginning of the sentence
+-- in plain bytes and the rest of it compressed:
+--
+--   "Look" $5D <bits...>   ->  "Look! Check out my\nbag!..."
+--   "W"    $5D <bits...>   ->  "Which photo is on\nyour Trainer Card?"
+--
+-- That second one is why reading the stream on its own is not enough: decoding
+-- from the $5D onwards drops the "W" and reads the marker itself as data,
+-- which turns "Which photo" into "o hich photo" -- readable enough to look
+-- like a near miss and wrong at the first character.
+--
+-- $08 (`<FAR>`) is followed by `dw address, db bank` and continues there,
+-- which is how the short entry in a script bank reaches the real line in a
+-- text bank.
+RomExtractorGen2.POLISHED_TX_COMPRESSED = 0x5D
+RomExtractorGen2.POLISHED_TX_FAR = 0x08
+
+-- Lazy reverse map: WRAM address -> symbol name, for TX_RAM targets.
+function RomExtractorGen2:gen2WramName(address)
+  if not self._wramNames then
+    local names = {}
+    for name, sym in pairs(self.symbols or {}) do
+      -- manifest symbols are [bank, address] rows; older tables carry
+      -- { bank = ..., address = ... }
+      local address = type(sym) == "table" and (sym.address or sym[2]) or nil
+      local bank = type(sym) == "table" and (sym.bank or sym[1]) or nil
+      if type(address) == "number"
+         and address >= 0xC000 and address < 0xE000
+         and type(name) == "string" and name:sub(1, 1) == "w"
+         and not name:find("%.")
+         -- text runs with WRAM bank 1 mapped: a banked label from another
+         -- WRAM page (the dex caches live in 4) is not what TX_RAM reads --
+         -- picking by name length alone turned wStringBuffer3 into
+         -- wDexMon80Form
+         and (address < 0xD000 or bank == nil or bank <= 1) then
+        -- shortest name wins: the same address carries both `wFoo` and
+        -- `wFooBar` sub-labels
+        local keep = names[address]
+        if keep == nil or #name < #keep then names[address] = name end
+      end
+    end
+    self._wramNames = names
+  end
+  return self._wramNames[address]
+end
+
+-- The control-operand pass over an already-decoded character list: resolve
+-- TX_RAM's dw into its token, skip TX_DECIMAL/TX_SOUND operands, stop at
+-- TX_ASM.  Used for Huffman output, where the controls arrive as plain
+-- bytes in the decompressed stream.
+function RomExtractorGen2:gen2PolishedControls(list)
+  local out = {}
+  local i = 1
+  while i <= #list do
+    local b = list[i]
+    if type(b) ~= "number" then
+      out[#out + 1] = b
+      i = i + 1
+    elseif b == 0x01 then
+      local target = (list[i + 1] or 0) + (list[i + 2] or 0) * 256
+      local name = self:gen2WramName(target)
+      out[#out + 1] = "{RAM:" .. (name or string.format("%04X", target)) .. "}"
+      i = i + 3
+    elseif b == 0x03 then
+      break
+    elseif b == 0x04 then
+      out[#out + 1] = "{NUM}"
+      i = i + 4
+    elseif b == 0x06 then
+      i = i + 2
+    else
+      out[#out + 1] = b
+      i = i + 1
+    end
+  end
+  return out
+end
+
+-- Returns the decoded characters AND the address of the byte that ended the
+-- run (the $52/$53/$54 terminator itself, or wherever a control arm bailed).
+-- gen2DexEntries needs the second value: a polished dex entry is `kind@
+-- page1@ page2@` back to back, so page two starts one past page one's
+-- terminator and nothing else records where that was.
+function RomExtractorGen2:gen2PolishedText(bank, address, depth)
+  if (depth or 0) > 4 then return {} end
+  local out = {}
+  local limit = (bank == 0 and 0x4000 or 0x8000)
+  local pc = address
+  while pc < limit - 3 do
+    local okB, b = pcall(self.rom.byte, self.rom, bank, pc)
+    if not okB then return out, pc end
+    if RomExtractorGen2.POLISHED_TEXT_ENDS[b] then return out, pc end
+    -- CONTROL CODES CARRY OPERANDS, and reading them as characters is how
+    -- "Yup, it's {RAM}!'d!" happened: TextCommand_RAM (00:$113f) consumes a
+    -- dw and the two address bytes decoded as glyphs behind a bare token.
+    -- Widths from the handlers themselves: RAM dw; DECIMAL dw+db; SOUND db;
+    -- ASM is followed by Z80, which ENDS the text as far as prose goes.
+    if b == 0x01 then                          -- TX_RAM
+      local okW, target = pcall(self.rom.word, self.rom, bank, pc + 1)
+      local name = okW and self:gen2WramName(target)
+      out[#out + 1] = "{RAM:" .. (name or string.format("%04X", target or 0))
+        .. "}"
+      pc = pc + 3
+    elseif b == 0x03 then                      -- TX_ASM: machine code follows
+      return out, pc
+    elseif b == 0x04 then                      -- TX_DECIMAL: dw value, db size
+      out[#out + 1] = "{NUM}"
+      pc = pc + 4
+    elseif b == 0x06 then                      -- TX_SOUND: db sfx id
+      pc = pc + 2
+    elseif b == RomExtractorGen2.POLISHED_TX_COMPRESSED then
+      -- the SAME control codes appear INSIDE a decompressed run -- the
+      -- Huffman stream carries TX_RAM and its operand like any other bytes
+      -- -- so the expansion goes through the operand pass too, or every
+      -- compressed phone line kept a bare {RAM} with its address decoding
+      -- as glyphs behind it
+      local tail = self:gen2PolishedDecompressText(bank, pc + 1)
+      for _, c in ipairs(self:gen2PolishedControls(tail or {})) do
+        out[#out + 1] = c
+      end
+      return out, pc
+    elseif b == RomExtractorGen2.POLISHED_TX_FAR then
+      local okF, far = pcall(function()
+        return { self.rom:byte(bank, pc + 3), self.rom:word(bank, pc + 1) }
+      end)
+      if not okF then return out, pc end
+      local tail = self:gen2PolishedText(far[1], far[2], (depth or 0) + 1)
+      for _, c in ipairs(tail) do out[#out + 1] = c end
+      return out, pc
+    else
+      -- an ordinary character.  The else arm matters: the operand arms above
+      -- do not return, and falling through here APPENDED the control byte a
+      -- second time and re-advanced pc -- which skipped the byte after every
+      -- TX_RAM, usually the $5D compression marker, so the whole compressed
+      -- tail decoded as raw glyphs.
+      out[#out + 1] = b
+      pc = pc + 1
+    end
+  end
+  return out, pc
+end
+
 -- Decode one TX_COMPRESSED run starting at `address` (which must point AT the
 -- TX_COMPRESSED byte).  Returns the decoded character bytes, ready for the
 -- ordinary charmap, and the address just past the run.
@@ -6215,6 +7903,18 @@ function RomExtractorGen2:gen2PrismDecompressText(bank, address)
   return out, pc
 end
 
+-- Which `_Decompress` this cartridge ships, from the manifest. 0/0 is pret's
+-- original, which is Gold, Crystal and Prism; Polished Crystal's unrolled
+-- rewrite is 1/2. See decompressLz3.
+function RomExtractorGen2:lzOptions()
+  if self._lzOptions then return self._lzOptions end
+  self._lzOptions = {
+    iterateExtra = self:layout("lzIterateExtra", 0),
+    alternateExtra = self:layout("lzAlternateExtra", 0),
+  }
+  return self._lzOptions
+end
+
 function RomExtractorGen2:gen2Lz(symbolName)
   local sym = self:symbol(symbolName)
   if not sym or not self.rom then return nil end
@@ -6222,7 +7922,7 @@ function RomExtractorGen2:gen2Lz(symbolName)
     return self.rom:bytes(sym.bank, sym.address, 0x8000 - sym.address)
   end)
   if not ok or type(raw) ~= "table" then return nil end
-  local out = decompressLz3(raw)
+  local out = decompressLz3(raw, self:lzOptions())
   return #out > 0 and out or nil
 end
 
@@ -6234,15 +7934,34 @@ end
 -- "it decompressed to exactly the size the header says" proves everything.
 -- That makes this safe to attempt on a cartridge that stores the blob raw --
 -- Gold and Crystal do -- because the length check simply will not match.
-function RomExtractorGen2:gen2LzAt(bank, address, expected)
+--
+-- `atLeast` relaxes that to "at least the size the header says, truncated to
+-- it", which is what the CARTRIDGE does: FarDecompress writes the whole
+-- stream into $d000 and ChangeMap then copies only width*height out of it, so
+-- a blob that decodes long is not a failure there. It is only safe once the
+-- manifest has already said this ROM stores the blob compressed -- otherwise
+-- it is the exact-length check, the one thing keeping a raw read from being
+-- mistaken for a good decode, thrown away.
+--
+-- Eight of Prism's maps decode long by between 1 and 39 bytes -- Battle Tower
+-- Entrance 37 over 16, Sevii Island 1 1299 over 1260 -- and were being
+-- rejected and re-read RAW, which is precisely the compressed-stream-as-
+-- blocks failure the exact gate exists to prevent, arrived at from the other
+-- direction.
+function RomExtractorGen2:gen2LzAt(bank, address, expected, atLeast)
   if not self.rom then return nil end
   local ok, raw = pcall(function()
     return self.rom:bytes(bank, address, 0x8000 - address)
   end)
   if not ok or type(raw) ~= "table" then return nil end
-  local okOut, out = pcall(decompressLz3, raw)
+  local okOut, out = pcall(decompressLz3, raw, self:lzOptions())
   if not okOut or type(out) ~= "table" or #out == 0 then return nil end
-  if expected and #out ~= expected then return nil end
+  if expected and #out ~= expected then
+    if not (atLeast and #out > expected) then return nil end
+    local cut = {}
+    for i = 1, expected do cut[i] = out[i] end
+    out = cut
+  end
   return out
 end
 
@@ -8297,10 +10016,38 @@ end
 -- are baked in, which is how KRIS keeps her blue hair: the trainer card and
 -- the Oak intro colour the player pic through the SGB zone shader, and that
 -- shader only knows CHRIS's browns.
+-- THE PLAYER AND CARD PICS ARE NOT RAW ON EVERY CARTRIDGE.
+--
+-- Gold and Crystal store ChrisPic, ChrisCardPic, KrisPic and the rest
+-- uncompressed, which is what this whole function is named after. Polished
+-- Crystal compresses them like everything else it draws.
+--
+-- Read raw, what reaches decode2bpp is the LZ STREAM ITSELF drawn as pixels:
+-- the intro's player pic came out as pure noise, and the Pokemon beside it as
+-- coherent 8-pixel bands sliding out of alignment. Neither errors -- a stream
+-- is exactly as many bytes as a pic needs, so the length assert passes.
+--
+-- `pics` is the decompressed blob when the manifest says these are
+-- compressed, and the raw bytes otherwise. The result is truncated to
+-- cols*rows*16 either way, because a compressed pic decodes to the pic
+-- FOLLOWED by whatever the encoder packed after it.
+function RomExtractorGen2:gen2PicBytes(bank, address, wanted)
+  if self:layout("rawPicsCompressed", 0) ~= 0 then
+    local out = self:gen2LzAt(bank, address)
+    if out and #out >= wanted then
+      local cut = {}
+      for i = 1, wanted do cut[i] = out[i] end
+      return cut
+    end
+    -- fall through: a cartridge that stores SOME of them raw still works
+  end
+  return self.rom:bytes(bank, address, wanted)
+end
+
 function RomExtractorGen2:gen2RawColumnPicAt(bank, address, cols, rows, relative, pal)
   if not self.rom then return nil end
   local ok = pcall(function()
-    local raw = self.rom:bytes(bank, address, cols * rows * 16)
+    local raw = self:gen2PicBytes(bank, address, cols * rows * 16)
     assert(raw and #raw >= cols * rows * 16, "short pic")
     local pixels = colMajorToRowMajor(raw, cols, rows)
     local image
@@ -8318,7 +10065,7 @@ function RomExtractorGen2:gen2RawColumnPic(symbolName, cols, rows, relative, pal
   local sym = self:symbol(symbolName)
   if not (sym and self.rom) then return nil end
   local ok = pcall(function()
-    local raw = self.rom:bytes(sym.bank, sym.address, cols * rows * 16)
+    local raw = self:gen2PicBytes(sym.bank, sym.address, cols * rows * 16)
     assert(raw and #raw >= cols * rows * 16, "short pic: " .. symbolName)
     local pixels = colMajorToRowMajor(raw, cols, rows)
     local image
@@ -8341,7 +10088,7 @@ function RomExtractorGen2:gen2Lz3ColumnPic(symbolName, relative, pal)
   if not (sym and self.rom) then return nil end
   local ok = pcall(function()
     local raw = self.rom:bytes(sym.bank, sym.address, 0x8000 - sym.address)
-    local pixels = decompressLz3(raw)
+    local pixels = decompressLz3(raw, self:lzOptions())
     local tiles = math.floor(math.sqrt(math.floor(#pixels / 16)) + 0.5)
     assert(tiles >= 1 and tiles * tiles * 16 <= #pixels,
            "short pic: " .. symbolName)
@@ -8625,9 +10372,71 @@ function RomExtractorGen2:gen2PlayerCustomization()
   }
 end
 
+-- One $53-terminated default name (DefaultMalePlayerName and friends);
+-- polished offers a single suggestion per gender where Crystal has a menu.
+function RomExtractorGen2:gen2DefaultName(symbolName)
+  local sym = self:symbol(symbolName)
+  if not (sym and self.rom) then return nil end
+  local ok, bytes = pcall(self.rom.bytes, self.rom, sym.bank, sym.address, 12)
+  if not ok then return nil end
+  local name = gen2DecodeString(bytes, 12)
+  return name and { name } or nil
+end
+
+-- POLISHED CRYSTAL'S THREE PLAYER CHARACTERS.
+--
+-- Chris, Kris and Crys each have a compressed 5x7 card pic (5E:$775b on),
+-- a compressed back pic (4E:$4000 on), walking and bike sheets, a
+-- two-colour palette (TrainerPalettes rows at 02:$6e92) and one default
+-- name apiece (DefaultMale/Female/EnbyPlayerName).  There is NO KrisPic --
+-- the Crystal-shaped forms builder gated on that symbol and returned nil,
+-- which is why NEW GAME skipped the who-are-you question entirely: the
+-- OakSpeech step is `onlyIf = "playerForms"`.
+function RomExtractorGen2:extractPolishedPlayerForms()
+  if not (self:symbol("CrysCardPic") and self:symbol("KrisCardPic")) then
+    return nil
+  end
+  local G = RomExtractorGen2.PLAYER_FORM_GEOMETRY
+  local function build(who, slug, walk, bike, namesSym)
+    local pal = self:gen2TwoColorPalette(who .. "Palette")
+    local card = self:gen2RawColumnPic(who .. "CardPic", G.card.cols,
+      G.card.rows, "battle/" .. slug .. "card.png", pal)
+    local back = self:gen2Lz3ColumnPic(who .. "Backpic",
+      "battle/" .. slug .. "b.png", pal)
+    if not card then return nil end
+    return {
+      label = who:upper(),
+      trueColor = (card and back) and true or nil,
+      card = card,
+      -- the card portrait doubles as the intro pic; there is no 7x7 here
+      intro = card,
+      back = back,
+      walk = walk,
+      bike = bike,
+      names = self:gen2DefaultName(namesSym),
+    }
+  end
+  local boy = build("Chris", "chris", "SPRITE_RED", "SPRITE_RED_BIKE",
+                    "DefaultMalePlayerName")
+  local girl = build("Kris", "kris", "SPRITE_KRIS", "SPRITE_KRIS_BIKE",
+                     "DefaultFemalePlayerName")
+  local crys = build("Crys", "crys", "SPRITE_CRYS", "SPRITE_CRYS_BIKE",
+                     "DefaultEnbyPlayerName")
+  if not (boy and girl) then return nil end
+  return {
+    boy = boy,
+    girl = girl,
+    crys = crys,
+    -- the who-are-you step reads this to offer more than BOY/GIRL
+    order = crys and { "boy", "girl", "crys" } or { "boy", "girl" },
+  }
+end
+
 function RomExtractorGen2:extractGen2PlayerForms()
   local prism = self:extractPrismPlayerForms()
   if prism then return prism end
+  local polished = self:extractPolishedPlayerForms()
+  if polished then return polished end
   -- Gold and Silver have no second player character; nothing to choose.
   if not self:symbol("KrisPic") then return nil end
   local G = RomExtractorGen2.PLAYER_FORM_GEOMETRY
@@ -8722,6 +10531,9 @@ function RomExtractorGen2:registerGen2KrisSprites(sprites, spriteDefFor)
   for _, pair in ipairs({
     { "KrisSpriteGFX", "Chris", "SPRITE_KRIS", "sprites/kris.png" },
     { "KrisBikeSpriteGFX", "ChrisBike", "SPRITE_KRIS_BIKE", "sprites/kris_bike.png" },
+    -- polished's third character; absent symbols simply skip
+    { "CrysSpriteGFX", "Chris", "SPRITE_CRYS", "sprites/crys.png" },
+    { "CrysBikeSpriteGFX", "ChrisBike", "SPRITE_CRYS_BIKE", "sprites/crys_bike.png" },
   }) do
     local sym = self:symbol(pair[1])
     -- `sprites[id] and nil or spriteDefFor(...)` ALWAYS took the right branch:
@@ -8734,8 +10546,15 @@ function RomExtractorGen2:registerGen2KrisSprites(sprites, spriteDefFor)
     local def = (not sprites[pair[3]]) and spriteDefFor(pair[2]) or nil
     if sym and def and self.rom then
       pcall(function()
-        local raw = self.rom:bytes(sym.bank, sym.address, def.bytes)
-        assert(#raw >= def.bytes, "short Kris sheet")
+        -- polished compresses every overworld sheet; a raw read there hands
+        -- the decoder an LZ stream
+        local raw
+        if self:layout("spritesCompressed", 0) ~= 0 then
+          raw = self:gen2LzAt(sym.bank, sym.address, nil, def.bytes)
+        else
+          raw = self.rom:bytes(sym.bank, sym.address, def.bytes)
+        end
+        assert(raw and #raw >= def.bytes, "short Kris sheet")
         self:saveImage(ImageWriter.decode2bpp(raw, def.width, def.height),
                        pair[4])
         local built = {}
@@ -8769,7 +10588,12 @@ function RomExtractorGen2:gen2PlayerFrontPic()
   local relative = "battle/chrisf.png"
   local cols, rows = GEN2_PLAYER_PIC_COLS, GEN2_PLAYER_PIC_ROWS
   local ok = pcall(function()
-    local raw = self.rom:bytes(sym.bank, sym.address, cols * rows * 16)
+    -- THROUGH gen2PicBytes, NOT a raw read: polished compresses ChrisCardPic
+    -- like every other pic, and a raw read here handed the 2bpp decoder the
+    -- LZ STREAM ITSELF -- the "trainer card sprite for my character is still
+    -- scrambled" report.  The length assert passed, because a stream is
+    -- exactly as many bytes as a pic needs.
+    local raw = self:gen2PicBytes(sym.bank, sym.address, cols * rows * 16)
     assert(raw and #raw >= cols * rows * 16, "short Chris front pic")
     if columnMajor then raw = colMajorToRowMajor(raw, cols, rows) end
     self:saveImage(ImageWriter.matteColor0(
@@ -8790,7 +10614,7 @@ function RomExtractorGen2:gen2PlayerPics()
   local relative = "battle/chrisb.png"
   local ok = pcall(function()
     local raw = self.rom:bytes(sym.bank, sym.address, 0x8000 - sym.address)
-    local pixels = decompressLz3(raw)
+    local pixels = decompressLz3(raw, self:lzOptions())
     local tiles = math.floor(math.sqrt(math.floor(#pixels / 16)) + 0.5)
     assert(tiles >= 1 and tiles * tiles * 16 <= #pixels, "short back pic")
     self:saveImage(ImageWriter.matteColor0(ImageWriter.decode2bpp(
@@ -9337,6 +11161,43 @@ function RomExtractorGen2:gen2BugContest()
     end
   end)
   if not ok or not out.mons[1] then return nil end
+
+  -- WHO YOU COMPETE AGAINST. Ten `dw` event-flag ids.
+  --
+  -- SelectRandomBugContestContestants clears all ten, then SETS five at
+  -- random; the ROM's own comment on that write is "this will cause that
+  -- sprite to not be visible in the contest", so the five it leaves CLEAR are
+  -- your rivals -- in the park and again at the results.
+  --
+  -- `Commands.g2_bug_contest_select` has done exactly that for a while, but it
+  -- reads `field.gen2BugContest.contestantFlags` and NOTHING EVER WROTE IT.
+  -- It logged "no contestant flag table (re-import to pick them up)" and
+  -- returned without picking anyone -- and since BugContestResults_CleanUp
+  -- ends every run by SETTING all twenty, after the first contest every
+  -- contestant was permanently hidden. The advice to re-import could never
+  -- help, because the producer side did not exist. That is the "nobody else in
+  -- the park or at the results" report.
+  --
+  -- The ids MUST come off the cartridge rather than a constant: pokecrystal
+  -- numbers EVENT_BUG_CATCHING_CONTESTANT_1A at 1146 and pokegold at 1121, and
+  -- the port keys event flags by that raw number, so one hardcoded list would
+  -- write the wrong ten flags on whichever game it was not taken from.
+  local flagsSym = self:symbol("BugCatchingContestantEventFlagTable")
+  if flagsSym then
+    local flags = {}
+    local okFlags = pcall(function()
+      for index = 0, 9 do
+        local id = self.rom:word(flagsSym.bank, flagsSym.address + index * 2)
+        if not id or id == 0 then break end
+        flags[#flags + 1] = id
+      end
+    end)
+    -- All ten or none: a short list would hide a subset and leave the rest
+    -- stuck however the last run left them, which reads as "some contestants
+    -- never show up" -- harder to notice than none of them showing up.
+    if okFlags and #flags == 10 then out.contestantFlags = flags end
+  end
+
   return out
 end
 
@@ -9873,7 +11734,7 @@ function RomExtractorGen2:gen2Egg()
     local ok = pcall(function()
       local raw = self.rom:bytes(picSym.bank, picSym.address,
                                  0x8000 - picSym.address)
-      local pixels = decompressLz3(raw)
+      local pixels = decompressLz3(raw, self:lzOptions())
       -- 5x5, DECLARED, not guessed from the blob length.  Crystal appends a
       -- pic's animation frames to the same compressed stream, so EggPic
       -- decompresses to 47 tiles -- 25 of pic and 22 of animation -- and the
@@ -9976,19 +11837,47 @@ function RomExtractorGen2:gen2EnvPalettes()
   if not (bgPals and ptrSym and self.rom) then return nil end
   local out = {}
   local rowCache = {}
+  -- HOW THE ENVIRONMENT REACHES ITS COLOURS.
+  --
+  -- Gold and Crystal: eight `dw` pointers, eight palettes per time-of-day row.
+  -- Polished Crystal: eight ONE-BYTE offsets, each RELATIVE to its own slot --
+  --   ld a,[wEnvironment] / and $07 / ld hl,EnvironmentColorsPointers
+  --   add hl,de / ld e,[hl] / add hl,de        (02:$5fbb)
+  -- and seven palettes per row (`ld b,$07` at 02:$5fd7) laid out eight bytes
+  -- apart (the time of day is multiplied by 8 at 02:$5fc4).
+  --
+  -- Read as words, the eight bytes $08 $07 $06 $25 $44 $03 $22 $41 give
+  -- "pointers" of $0708, $2506, $0344 and $4122 -- three of them outside the
+  -- bank -- so the whole table failed and gen2EnvPalettes returned nil. Every
+  -- one of the 45 tilesets then had a palette map and no colours, and a
+  -- palette map with no colours renders GREY. That is the entire reason the
+  -- overworld came up black and white.
+  --
+  -- Read as relative bytes all eight land exactly on a labelled table:
+  -- 0/1/2/5 on OutdoorColors ($6056), 3 and 6 on IndoorColors ($6076), 4 and
+  -- 7 on DungeonColors ($6096) -- town, route, indoor, cave, gate, dungeon,
+  -- which is what ENVIRONMENT_* means.
+  local relative = self:layout("envColorsRelative", 0) ~= 0
+  local perRow = self:layout("envColorsPerRow", GEN2_PAL.perRow)
+  local rowBytes = self:layout("envColorsRowBytes", perRow)
   local ok = pcall(function()
     for env = 0, 7 do
-      local tableAddr = self.rom:word(ptrSym.bank, ptrSym.address + env * 2)
+      local tableAddr
+      if relative then
+        local at = ptrSym.address + env
+        tableAddr = at + self.rom:byte(ptrSym.bank, at)
+      else
+        tableAddr = self.rom:word(ptrSym.bank, ptrSym.address + env * 2)
+      end
       local rows = rowCache[tableAddr]
       if not rows then
-        -- 4 times of day x 8 palettes, one index byte each
         local raw = self.rom:bytes(ptrSym.bank, tableAddr,
-                                   #GEN2_PAL.todRows * GEN2_PAL.perRow)
+                                   #GEN2_PAL.todRows * rowBytes)
         rows = {}
         for t, name in ipairs(GEN2_PAL.todRows) do
           local row = {}
-          for p = 1, GEN2_PAL.perRow do
-            local index = raw[(t - 1) * GEN2_PAL.perRow + p]
+          for p = 1, perRow do
+            local index = raw[(t - 1) * rowBytes + p]
             row[p] = bgPals[(index or 0) + 1] or bgPals[1]
           end
           rows[name] = row
@@ -10259,6 +12148,24 @@ function RomExtractorGen2:extractField()
           if byLabel[label] then scenes[byLabel[label]] = address end
         end
         if next(scenes) then src.mapSceneVars = scenes end
+
+        -- ...AND THE SCENES THAT DO NOT OPEN AT ZERO.
+        --
+        -- Three maps here start on scene 1: InitializeEvents' third table
+        -- writes their scene bytes directly, mixed in with the variable
+        -- sprites, and only the ADDRESS says which is which -- which is why
+        -- they are matched against the scene vars just derived rather than
+        -- guessed from a symbol name.
+        --
+        -- Starting them at 0 arms a cutscene that has already been retired,
+        -- which on Goldenrod City is a scene the map's own script checks
+        -- before it will let anything else happen.
+        local initial = {}
+        for mapId, address in pairs(scenes) do
+          local value = self:gen2InitialWramWrites()[address]
+          if value and value ~= 0 then initial[mapId] = value end
+        end
+        if next(initial) then src.initialScenes = initial end
       end
     end
     -- The Pokemon Center heal machine overlay (the monitor tile and the ball
@@ -10374,6 +12281,28 @@ function RomExtractorGen2:extractField()
     Logger.warn("gen2 fishing tables absent (FishGroups symbol missing?) -- "
                 .. "every rod will report no bite")
   end
+  -- THE CARTRIDGE'S OWN DAY PERIODS.
+  --
+  -- Gold and Crystal have three (MORN $01, DAY $02, NITE $04) and the engine
+  -- had those three baked in. Polished Crystal has FOUR, and the extra one is
+  -- not on the end: EVE is bit $08 and sits between DAY and NITE on the
+  -- CLOCK, while NITE keeps $04. Assume three and every object whose
+  -- MAPOBJECT_TIMEOFDAY byte is $08 is masked at every hour there is -- the
+  -- player's mother's evening row among them -- while her DAY row stays out
+  -- until 18:00.
+  --
+  -- Each entry is { startHour, bit, name }, in clock order, the last wrapping
+  -- past midnight to the first. Absent, the engine keeps its Gen 2 default.
+  local periods = self.manifest and self.manifest.timeOfDay
+  if type(periods) == "table" and #periods > 0 then
+    src.timeOfDay = periods
+  end
+  -- WHERE SCRIPT OBJECT IDS START.  Crystal's object_const_def opens at 2;
+  -- polished numbers objects 1:1 with wMapObjects (GetMapObject, 00:$1556),
+  -- and Gen2Commands.objectSlot reads this to aim applymovement/turnobject/
+  -- moveobject at the right NPC.  Absent, Crystal's 2 stands.
+  local objectBase = self:layout("objectScriptBase", 0)
+  if objectBase ~= 0 then src.objectScriptBase = objectBase end
   self:write("field", src)
   self:tick("Gen2 field", 1, 1)
 end
@@ -10486,7 +12415,7 @@ function RomExtractorGen2:extractUnownPuzzle()
       local hi = self.rom:byte(ptrs.bank, ptrs.address + (i - 1) * 2 + 1)
       local address = lo + hi * 256
       local raw = self.rom:bytes(ptrs.bank, address, 0x8000 - address)
-      local pixels = decompressLz3(raw)
+      local pixels = decompressLz3(raw, self:lzOptions())
       -- a plain gfx blob (FarDecompress straight into VRAM), not a pic, so
       -- the tiles are already row-major.  6x6 tiles = 48x48; the game
       -- pixel-doubles it to 96x96 and cuts 4x4 pieces of 24x24 out of that.
@@ -10861,7 +12790,7 @@ function RomExtractorGen2:gen2AnimGfx()
       local saved = pcall(function()
         local address = row[3] + row[4] * 256
         local compressed = self.rom:bytes(row[2], address, 0x8000 - address)
-        local raw = decompressLz3(compressed)
+        local raw = decompressLz3(compressed, self:lzOptions())
         local cols = math.min(GEN2_ANIM.SHEET_COLS, tiles)
         local rows = math.ceil(tiles / cols)
         local padded = {}
@@ -10970,7 +12899,109 @@ end
 -- Sequences the ROM never emits but hand-written port text does.
 local GEN2_FONT_ALIASES = { ["\xc3\x97"] = 0xF1 }
 
+-- A FONT SHEET BUILT FROM SEGMENTS, because not every cartridge keeps its
+-- letters in one blob.
+--
+-- Gold and Crystal have `Font` -- 128 1bpp tiles covering codes $80-$FF -- and
+-- `FontExtra` for $60-$7F. Polished Crystal has EIGHT selectable typefaces
+-- (FontPointers, 08:$7535, masked with $07) and assembles the same 128 tiles
+-- out of three pieces, which _LoadStandardFont (08:$7501) spells out:
+--
+--   the chosen face   114 tiles to $8800  -> codes $80-$F1  (`ld bc,$0872`,
+--                                            b = bank, c = tile count)
+--   FontCommon          6 tiles to $8F20  -> codes $F2-$F7
+--   Frames[n]           8 tiles to $8F80  -> codes $F8-$FF  (_LoadFrame)
+--
+-- With no `Font` symbol the whole stage bailed and the launcher copied a
+-- PLACEHOLDER over both sheets, which is why the menus were drawn in
+-- something that is not this game's typeface at all.
+--
+-- `manifest.fontSheets` is a list of { symbol, tiles, code, bpp, stride,
+-- index } per sheet; absent, the Gold and Crystal path below runs unchanged.
+function RomExtractorGen2:gen2FontSegments(which)
+  local sheets = self.manifest and self.manifest.fontSheets
+  local list = type(sheets) == "table" and sheets[which] or nil
+  return type(list) == "table" and #list > 0 and list or nil
+end
+
+-- Draw one segment's 1bpp or 2bpp tiles into `image` at its character code.
+function RomExtractorGen2:gen2DrawFontSegment(image, seg, base)
+  local sym = self:symbol(seg.symbol)
+  if not sym then return false end
+  local tiles = tonumber(seg.tiles) or 0
+  local bpp = tonumber(seg.bpp) or 1
+  local bytes = tiles * (bpp == 2 and 16 or 8)
+  local address = sym.address + (tonumber(seg.index) or 0) * (tonumber(seg.stride) or 0)
+  local raw
+  if seg.compressed then
+    raw = self:gen2LzAt(sym.bank, address)
+  else
+    raw = self.rom:bytes(sym.bank, address, bytes)
+  end
+  if not raw or #raw < bytes then return false end
+  local start = (tonumber(seg.code) or base) - base
+  local stridePerTile = bpp == 2 and 16 or 8
+  for tile = 0, tiles - 1 do
+    local slot = start + tile
+    -- a segment may START below the sheet (polished's battle extras load to
+    -- VRAM $95f0 = tile $5F, one below the text sheet's $60): clip, never
+    -- wrap -- Lua's % would fold slot -1 onto column 15 of a phantom row
+    if slot >= 0 then
+    local tileX, tileY = slot % 16 * 8, math.floor(slot / 16) * 8
+    for y = 0, 7 do
+      local base2 = tile * stridePerTile + (bpp == 2 and y * 2 or y) + 1
+      local lo = raw[base2] or 0
+      -- 2bpp tiles are ink wherever EITHER plane is set: colour index 1, 2
+      -- and 3 all draw, only 0 is the paper.  Taking plane 0 alone dropped
+      -- every shade-2 pixel and left the glyphs full of holes.
+      local hi = bpp == 2 and (raw[base2 + 1] or 0) or 0
+      for x = 0, 7 do
+        local bit = 2 ^ (7 - x)
+        local ink = math.floor(lo / bit) % 2 == 1 or math.floor(hi / bit) % 2 == 1
+        if ink then
+          image:setPixel(tileX + x, tileY + y, 0, 0, 0, 1)
+        end
+      end
+    end
+    end
+  end
+  return true
+end
+
+-- "ROM:<symbol>, <symbol>, ..." naming whichever segments were read, so the
+-- generated font record says which glyph tables it came from.
+function RomExtractorGen2:gen2FontSource()
+  local names = {}
+  for _, which in ipairs({ "main", "extra" }) do
+    for _, seg in ipairs(self:gen2FontSegments(which) or {}) do
+      if seg.symbol and self:symbol(seg.symbol) then
+        names[#names + 1] = seg.symbol
+      end
+    end
+  end
+  if #names == 0 then return "ROM:Font, FontExtra, Frames" end
+  return "ROM:" .. table.concat(names, ", ")
+end
+
 function RomExtractorGen2:extractFontSheets()
+  local mainSegs = self:gen2FontSegments("main")
+  if mainSegs and self.rom then
+    return (pcall(function()
+      local image = ImageWriter.blank(128, 64, 0, 0, 0, 0)
+      local wrote = 0
+      for _, seg in ipairs(mainSegs) do
+        if self:gen2DrawFontSegment(image, seg, 0x80) then wrote = wrote + 1 end
+      end
+      assert(wrote > 0, "no font segment resolved")
+      self:saveImage(image, "fonts/font.png")
+
+      local extra = ImageWriter.blank(128, 16, 0, 0, 0, 0)
+      for _, seg in ipairs(self:gen2FontSegments("extra") or {}) do
+        self:gen2DrawFontSegment(extra, seg, 0x60)
+      end
+      self:saveImage(extra, "fonts/font_extra.png")
+    end))
+  end
   local fontSym = self:symbol("Font")
   -- Prism has no FontExtra at all: its gfx/font.asm is Font (font.1bpp),
   -- FontBattleExtra (battle_extra.2bpp) and Frames, and _LoadFontsBattleExtra
@@ -11064,7 +13095,114 @@ local GEN2_HUD_MAP = {
   [0x76] = 22, [0x77] = 23, [0x78] = 24,
 }
 
+-- Blit one 8x8 tile of a decoded 2bpp block into a sheet, ink where either
+-- plane is set, transparent elsewhere.
+function RomExtractorGen2:gen2BlitBlockTile(sheet, raw, tile, dstX, dstY)
+  for y = 0, 7 do
+    local lo = raw[tile * 16 + y * 2 + 1] or 0
+    local hi = raw[tile * 16 + y * 2 + 2] or 0
+    for x = 0, 7 do
+      local bit = 2 ^ (7 - x)
+      if math.floor(lo / bit) % 2 == 1 or math.floor(hi / bit) % 2 == 1 then
+        sheet:setPixel(dstX + x, dstY + y, 0, 0, 0, 1)
+      end
+    end
+  end
+end
+
+-- THE WHOLE BATTLE HUD OUT OF ONE BLOCK.
+--
+-- Crystal spreads the HUD art over FontBattleExtra, EnemyHPBarBorderGFX,
+-- HPExpBarBorderGFX and ExpBarGFX, and the path below reads exactly those
+-- symbols.  Polished Crystal folds all of it into BattleExtrasGFX (32
+-- compressed 2bpp tiles to VRAM $95f0) and has NONE of them -- so the stage
+-- bailed, and every bar in battle drew from whatever the placeholder held:
+-- the gapped HP segments and the ":L" in the report's screenshot.
+--
+-- manifest.battleExtrasHud carries the port-code -> tile map; the tile
+-- identities are proven by the cartridge's own text charmap (<HP2> $64,
+-- <NOHP> $65, <FULLHP> $6D, the halfarrow $6F...), and `lvGlyph` names the
+-- MAIN-font character PrintLevel (00:$3139) writes for "Lv" -- polished
+-- draws the level label out of the text font, not the extras block.
+function RomExtractorGen2:gen2HudFromBattleExtras(cfg)
+  local sym = self:symbol(cfg.symbol)
+  if not sym then return false end
+  local raw = self:gen2LzAt(sym.bank, sym.address)
+  if not raw or #raw < 32 * 16 then return false end
+
+  local map = {}
+  for key, tile in pairs(cfg.map or {}) do
+    local code = tonumber(key)
+    if code then map[code] = tile end
+  end
+
+  -- font_battle_extra.png: 15x2 tiles from $62, the shape HudTiles.build
+  -- has always read.
+  local sheet = ImageWriter.blank(GEN2_HUD_SHEET_COLS * 8, 16, 0, 0, 0, 0)
+  local function place(code, into, baseCode)
+    local slot = code - baseCode
+    local x, y = slot % GEN2_HUD_SHEET_COLS * 8,
+      math.floor(slot / GEN2_HUD_SHEET_COLS) * 8
+    if into ~= sheet then x, y = slot * 8, 0 end
+    local tile = map[code]
+    if tile then
+      self:gen2BlitBlockTile(into, raw, tile, x, y)
+      return true
+    end
+    -- the "Lv" glyph comes from the MAIN font
+    if code == 0x6E and tonumber(cfg.lvGlyph) then
+      local font = self:symbol("FontNormal")
+      if font then
+        local glyph = tonumber(cfg.lvGlyph) - 0x80
+        local rows = self.rom:bytes(font.bank, font.address + glyph * 8, 8)
+        for yy = 0, 7 do
+          local row = rows[yy + 1] or 0
+          for xx = 0, 7 do
+            if math.floor(row / 2 ^ (7 - xx)) % 2 == 1 then
+              into:setPixel(x + xx, y + yy, 0, 0, 0, 1)
+            end
+          end
+        end
+        return true
+      end
+    end
+    return false
+  end
+  for code = 0x62, 0x78 do place(code, sheet, 0x62) end
+  self:saveImage(sheet, "battle/font_battle_extra.png")
+
+  -- the three overlay strips HudTiles layers on top
+  local hud1 = ImageWriter.blank(24, 8, 0, 0, 0, 0)
+  for i, code in ipairs({ 0x6D, 0x6E, 0x6F }) do place(code, hud1, 0x6D) end
+  self:saveImage(hud1, "battle/battle_hud_1.png")
+  local hud2 = ImageWriter.blank(24, 8, 0, 0, 0, 0)
+  for _, code in ipairs({ 0x73, 0x74, 0x75 }) do place(code, hud2, 0x73) end
+  self:saveImage(hud2, "battle/battle_hud_2.png")
+  local hud3 = ImageWriter.blank(24, 8, 0, 0, 0, 0)
+  for _, code in ipairs({ 0x76, 0x77, 0x78 }) do place(code, hud3, 0x76) end
+  self:saveImage(hud3, "battle/battle_hud_3.png")
+
+  -- the party ball row (LoadBallIconGFX.gfx exists here unchanged)
+  self:gen2RawSheet("LoadBallIconGFX.gfx", 4, 1, "battle/balls.png")
+
+  -- the EXP bar's seven partial widths, thin fills from the same block
+  local expTiles = cfg.expBar
+  if type(expTiles) == "table" and #expTiles > 0 then
+    local exp = ImageWriter.blank(#expTiles * 8, 8, 0, 0, 0, 0)
+    for i, tile in ipairs(expTiles) do
+      self:gen2BlitBlockTile(exp, raw, tile, (i - 1) * 8, 0)
+    end
+    self:saveImage(exp, "battle/exp_bar.png")
+  end
+  return true
+end
+
 function RomExtractorGen2:extractBattleHudSheets()
+  local cfg = self.manifest and self.manifest.battleExtrasHud
+  if cfg and self.rom then
+    local ok, built = pcall(self.gen2HudFromBattleExtras, self, cfg)
+    if ok and built then return true end
+  end
   local fbe = self:symbol("FontBattleExtra")
   local enemyBorder = self:symbol("EnemyHPBarBorderGFX")
   local hpExpBorder = self:symbol("HPExpBarBorderGFX")
@@ -11150,20 +13288,50 @@ end
 -- instead of its expansion.  The scaffold charmap only fills gaps, since it
 -- spells most codes back as their own "{BYTE:xx}" token.
 function RomExtractorGen2:gen2FontCharmap()
-  local entries, seen = {}, {}
-  local function add(seq, code)
+  local entries, seen, claimed = {}, {}, {}
+  -- THE ALPHABET IS NOT UP FOR GRABS.  Every Gen 2 cartridge in this
+  -- registry keeps A-Z at $80 and a-z at $A0 -- every decoded name and
+  -- line in the import depends on it -- but a manifest charmap row is
+  -- allowed to DESCRIBE a code with a letter ("e" for the accented e,
+  -- "M" for the male symbol) and first-wins then hijacks the letter
+  -- itself: every capital M drew the gender symbol and every e the
+  -- accent.  Seed the plain letters first so no later row can take them;
+  -- the manifest rows still claim their CODES for the symbol characters.
+  for i = 0, 25 do
+    local upper, lower = string.char(65 + i), string.char(97 + i)
+    seen[upper] = true
+    entries[#entries + 1] = { seq = upper, code = 0x80 + i }
+    seen[lower] = true
+    entries[#entries + 1] = { seq = lower, code = 0xA0 + i }
+  end
+  local function add(seq, code, fallback)
     if type(seq) ~= "string" or seq == "" or seen[seq] then return end
     if code < 0x60 or code > 0xFF then return end
+    -- A FALLBACK MUST NOT LAND ON A CODE THE CARTRIDGE ALREADY NAMED.
+    -- First-wins per SEQUENCE does not protect the CODE: the ROM says $E1
+    -- is "1", and Crystal's <PK> row also points at $E1 -- so "PK" mapped
+    -- to the digit glyph and the battle menu still spelled "12".  Once the
+    -- cartridge has named a code, no constant may reuse it.
+    if fallback and claimed[code] then return end
     if seq:match("^<.*>$") or seq:match("^{BYTE:") then return end
     seen[seq] = true
+    if not fallback then claimed[code] = true end
     entries[#entries + 1] = { seq = seq, code = code }
   end
-  for code = 0x60, 0xFF do add(GEN2_CHARMAP[code], code) end
-  for seq, code in pairs(GEN2_FONT_ALIASES) do add(seq, code) end
+  -- THE CARTRIDGE'S OWN CHARMAP FIRST.  `add` is first-wins per sequence,
+  -- and this loop used to run LAST -- so on a hack that moved a character,
+  -- the Gold/Crystal constant claimed it and the ROM's real code was
+  -- dropped.  Polished Crystal moved nearly all of them: digits to $E0-$E9
+  -- (Crystal: $F6-$FF), "-" to $BC ($E3), "." to $9C ($E8) -- so every
+  -- hyphen drew the glyph at Crystal's $E3, which is polished's "3"
+  -- ("I do be3lieve"), and the battle menu's PKMN ligature <PK><MN>
+  -- ($E1 $E2) drew polished's "1" and "2": "FIGHT  12".
   for key, seq in pairs(self:readSourceTable("charmap") or {}) do
     local code = tonumber(key)
     if code then add(seq, code) end
   end
+  for code = 0x60, 0xFF do add(GEN2_CHARMAP[code], code, true) end
+  for seq, code in pairs(GEN2_FONT_ALIASES) do add(seq, code, true) end
   -- longest sequence first so the renderer matches 'd / 's / PK greedily
   table.sort(entries, function(a, b)
     if #a.seq == #b.seq then return a.code < b.code end
@@ -11220,15 +13388,48 @@ function RomExtractorGen2:extractRuntimeScaffolds()
     end
     local base = spec.imageBase or (id == "HOUSE" and "traditionalhouse"
                                    or id:gsub("^Tileset", ""):lower())
+    -- ONE GFX BLOB, OR THREE.
+    --
+    -- Gold and Crystal ship a tileset's graphics as a single `<Tileset>GFX`.
+    -- Polished Crystal splits every one of them across `GFX0`, `GFX1` and
+    -- `GFX2` and has no `<Tileset>GFX` symbol at all -- so this gate failed
+    -- for all 45 of its tilesets and every map came out on the placeholder
+    -- sheet. Absent, not wrong: the tileset had no art rather than the wrong
+    -- art, which at least says something is missing, but says it 45 times
+    -- with no clue that the graphics are simply somewhere else.
     local gfx = self:symbol(gfxId .. "GFX")
+    local gfxParts = nil
+    if not gfx then
+      for n = 0, 3 do
+        local part = self:symbol(gfxId .. "GFX" .. n)
+        if not part then break end
+        gfxParts = gfxParts or {}
+        gfxParts[#gfxParts + 1] = part
+      end
+    end
     local meta = self:symbol(gfxId .. "Meta")
     local coll = self:symbol(gfxId .. "Coll")
     local imagePath = "assets/generated/tilesets/" .. base .. ".png"
 
-    if gfx and meta and coll and self.rom then
+    if (gfx or gfxParts) and meta and coll and self.rom then
       local dcOk, pixels = pcall(function()
-        local compressed = self.rom:bytes(gfx.bank, gfx.address, 0x8000 - gfx.address)
-        return decompressLz3(compressed)
+        if gfx then
+          local compressed = self.rom:bytes(gfx.bank, gfx.address,
+                                            0x8000 - gfx.address)
+          return decompressLz3(compressed, self:lzOptions())
+        end
+        -- The parts are laid end to end in the order they are numbered, which
+        -- is the order the game copies them into VRAM.
+        local out = {}
+        for _, part in ipairs(gfxParts) do
+          local compressed = self.rom:bytes(part.bank, part.address,
+                                            0x8000 - part.address)
+          local okPart, chunk = pcall(decompressLz3, compressed, self:lzOptions())
+          if okPart and type(chunk) == "table" then
+            for _, byte in ipairs(chunk) do out[#out + 1] = byte end
+          end
+        end
+        return out
       end)
       if not dcOk or type(pixels) ~= "table" then pixels = {} end
       local width = tonumber(spec.imageWidth) or 128
@@ -11697,13 +13898,18 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   self:write("font", {
     -- Font.load falls back to LOVE's built-in raster font on "Gen2 scaffold",
     -- so this string has to change once the real sheets are on disk
-    source = fontFromRom and "ROM:Font, FontExtra, Frames" or "Gen2 scaffold",
+    -- name the segments this cartridge actually supplied, so a report of
+    -- "the menu text looks wrong" can be traced back to the symbols read
+    source = fontFromRom and self:gen2FontSource() or "Gen2 scaffold",
     image = "assets/generated/fonts/font.png",
     imageExtra = "assets/generated/fonts/font_extra.png",
     mainBase = 0x80,
     extraBase = 0x60,
     glyphsPerRow = 16,
     charmap = self:gen2FontCharmap(),
+    -- the frame characters the cartridge's own TextboxBorder table names;
+    -- absent, Font.DEFAULT_BORDER's Crystal codes stand
+    border = self.manifest and self.manifest.textBorder or nil,
   })
 
   -- TypeMatchups: db attacker, defender, multiplier(x10); $fe splits off the
@@ -11894,7 +14100,7 @@ end
 
 -- Each table runs until whatever symbol follows it in the same bank
 -- (Music_Nothing's own header sits directly after Music, for instance).
-function RomExtractorGen2:gen2AudioRows(sym)
+function RomExtractorGen2:gen2AudioRows(sym, stride)
   local stop = 0x8000
   for _, location in pairs(self.symbols or {}) do
     if type(location) == "table" and tonumber(location[1]) == sym.bank then
@@ -11904,7 +14110,7 @@ function RomExtractorGen2:gen2AudioRows(sym)
       end
     end
   end
-  return math.floor((stop - sym.address) / 3)
+  return math.floor((stop - sym.address) / (stride or 3))
 end
 
 -- (bank, address) -> the `prefix`ed symbol naming it, skipping local labels
@@ -11917,7 +14123,24 @@ function RomExtractorGen2:gen2AudioNames(prefix)
         and not name:find(".", 1, true)
         and not name:find("_Ch%d+$") then
       local bank, address = tonumber(location[1]), tonumber(location[2])
-      if bank and address then byAddress[bank * 0x10000 + address] = name end
+      if bank and address then
+        -- TWO LABELS CAN NAME ONE SOUND. `Sfx_LevelUp` and
+        -- `Sfx_DexFanfare5079` are the same bytes at the same address, and
+        -- with `byAddress[key] = name` the winner was whichever `pairs`
+        -- reached last -- so the SAME ROM produced a different sound table
+        -- between two runs of the same build. Not wrong, but not reproducible
+        -- either, and a cache that differs run to run is one nobody can
+        -- compare against anything.
+        --
+        -- The tie-break is the tileset roster's, for the same reason: shortest
+        -- name first, then alphabetical. A short label is the sound's own name
+        -- and a long one is usually the place that happens to reuse it.
+        local key = bank * 0x10000 + address
+        local held = byAddress[key]
+        if not held or #name < #held or (#name == #held and name < held) then
+          byAddress[key] = name
+        end
+      end
     end
   end
   return byAddress
@@ -11925,15 +14148,53 @@ end
 
 -- `banks` collects every ROM bank the defs reach into, so the caller knows
 -- which 16K slices must ship in programs.bin.
+-- THE BANK A TWO-BYTE AUDIO TABLE MEANS.
+--
+-- Gold and Crystal write `db bank, dw address` for every sound. Polished
+-- Crystal keeps that for Music and drops the bank from SFX and Cries -- those
+-- are bare `dw` pointers into whichever bank the data was assembled in, and
+-- the bank never appears in the table at all.
+--
+-- Taken from the SYMBOLS rather than from a constant: every one of this
+-- build's 221 `Sfx_*` labels is in bank 24 and 296 of its 303 `Cry*` labels
+-- are in bank 60, so the modal bank IS the answer and it stays the answer if a
+-- later build moves the data. A hardcoded 24 would be right today and silently
+-- wrong the next time somebody rebuilds.
+function RomExtractorGen2:gen2AudioBank(prefix)
+  local count = {}
+  local best, bestN = nil, 0
+  for name, location in pairs(self.symbols or {}) do
+    if type(name) == "string" and type(location) == "table"
+       and name:sub(1, #prefix) == prefix and not name:find(".", 1, true) then
+      local bank = tonumber(location[1])
+      if bank then
+        count[bank] = (count[bank] or 0) + 1
+        if count[bank] > bestN then best, bestN = bank, count[bank] end
+      end
+    end
+  end
+  return best
+end
+
 function RomExtractorGen2:gen2AudioTable(tableName, prefix, banks)
   local defs, index = {}, {}
   local sym = self:symbol(tableName)
   if not (sym and self.rom) then return defs, index end
   local names = self:gen2AudioNames(prefix)
+  -- Per table, because one ROM can use both shapes: this build's Music table
+  -- is three bytes a row and its SFX and Cries tables are two.
+  local stride = self:layout("audioRow" .. tableName, 3)
+  local implied = (stride < 3) and self:gen2AudioBank(prefix) or nil
   pcall(function()
-    for row = 0, self:gen2AudioRows(sym) - 1 do
-      local bank = self.rom:byte(sym.bank, sym.address + row * 3)
-      local address = self.rom:word(sym.bank, sym.address + row * 3 + 1)
+    for row = 0, self:gen2AudioRows(sym, stride) - 1 do
+      local bank, address
+      if implied then
+        bank = implied
+        address = self.rom:word(sym.bank, sym.address + row * stride)
+      else
+        bank = self.rom:byte(sym.bank, sym.address + row * stride)
+        address = self.rom:word(sym.bank, sym.address + row * stride + 1)
+      end
       local name = address >= 0x4000 and address < 0x8000
         and names[bank * 0x10000 + address] or nil
       if name then
@@ -12339,6 +14600,15 @@ RomExtractorGen2.ASSET_STAGES = {
 }
 
 function RomExtractorGen2:run()
+  -- BEFORE ANY STAGE READS A NAME.
+  --
+  -- textTables seeds the two things gen2DecodeString and gen2ReadVarNames
+  -- need and cannot ask for themselves -- which byte ends a name on this
+  -- cartridge, and how to glyph one. Seeded from inside a single stage
+  -- instead, every stage that ran EARLIER read its names the Gold way: the
+  -- item table came out as "Park Ball<RIVAL>Pok B", "ll<RIVAL>Great Ball<RIVAL>Ul"
+  -- -- one record's tail joined to the next one's head, all the way down.
+  self:textTables()
   for _, stage in ipairs(RomExtractorGen2.DATA_STAGES) do
     self[stage](self)
   end

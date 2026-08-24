@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- The overworld state: renders the current map (plus connected map
 -- strips), runs the player, NPCs, warps, connections, encounters, ledges,
 -- surfing, Cut trees, trainer sight lines, and dispatches interactions to
@@ -129,6 +135,47 @@ OverworldState.objectToggleKey = objectToggleKey
 -- MAPOBJECT_TIMEOFDAY bits, matching the ROM's MORN/DAY/NITE order.
 local TOD_BITS = { MORNING = 1, MORN = 1, DAY = 2, NIGHT = 4, NITE = 4 }
 
+-- THE PERIODS ARE THE CARTRIDGE'S, NOT GEN 2's.
+--
+-- Gold and Crystal have three, and TOD_BITS above is them. Polished Crystal
+-- has FOUR: MORN $01 from 05:00, DAY $02 from 09:00, EVE $08 from 17:00 and
+-- NITE $04 from 21:00. The extra period is NOT appended past NITE -- it is
+-- bit $08 wedged between DAY and NITE on the clock while NITE keeps $04 --
+-- so neither the bit nor the boundary can be guessed from the count.
+--
+-- With the three baked in, every object whose MAPOBJECT_TIMEOFDAY byte is
+-- $08 was masked at every hour of the day (floor(8/1), floor(8/2) and
+-- floor(8/4) are all even), and the DAY rows stayed up through the evening.
+-- field.timeOfDay is read out of the ROM by the importer; absent -- a Gold,
+-- Crystal or Gen 1 import -- the Gen 2 default below is unchanged.
+local GEN2_DEFAULT_PERIODS = {
+  { startHour = 4,  bit = 1, name = "MORNING" },
+  { startHour = 10, bit = 2, name = "DAY" },
+  { startHour = 18, bit = 4, name = "NITE" },
+}
+
+local function todPeriods()
+  local field = Game and Game.data and Game.data.field
+  local periods = field and field.timeOfDay
+  if type(periods) == "table" and #periods > 0 then return periods end
+  return GEN2_DEFAULT_PERIODS
+end
+
+-- The period covering `hour`, walking the list in clock order. The last entry
+-- wraps past midnight, which is why an hour before the FIRST start belongs to
+-- it and not to the first.
+local function todPeriodAt(hour)
+  local periods = todPeriods()
+  local found = periods[#periods]
+  for _, period in ipairs(periods) do
+    if hour >= (tonumber(period.startHour) or 0) then found = period end
+  end
+  if hour < (tonumber(periods[1].startHour) or 0) then
+    found = periods[#periods]
+  end
+  return found
+end
+
 -- The period the CURRENTLY LOADED map's objects were filtered against.
 --
 -- LoadObjectMasks (09:$454F) walks wMapObjects once, calling GetObjectTimeMask
@@ -154,10 +201,23 @@ local function objectTimeOfDay()
   return (ow and (ow.objectTod or ow.tod)) or "DAY"
 end
 
+-- The MAPOBJECT_TIMEOFDAY bit for the period the map's objects were frozen
+-- against.  This is taken from the HOUR, not from the period NAME: the name
+-- is what the palette and encounter tables key off and they only know Gen 2's
+-- three, so routing the object filter through it would have thrown the fourth
+-- period away again on the way past.
+local function objectTodBit()
+  local ow = Game and Game.overworld
+  local bit = ow and tonumber(ow.objectTodBit)
+  if bit then return bit end
+  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  if period and tonumber(period.bit) then return tonumber(period.bit) end
+  return TOD_BITS[objectTimeOfDay()] or TOD_BITS.DAY
+end
+
 local function objectInTimeOfDay(obj)
   if not obj.timeOfDay then return true end
-  local bit = TOD_BITS[objectTimeOfDay()] or TOD_BITS.DAY
-  return math.floor(obj.timeOfDay / bit) % 2 == 1
+  return math.floor(obj.timeOfDay / objectTodBit()) % 2 == 1
 end
 
 local function objectVisible(save, mapId, obj)
@@ -535,6 +595,10 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- timeOfDay() has not run yet and self.tod is still nil.
   local clock = GameVersion.isGen2() and OverworldState.clockTimeOfDay or nil
   self.objectTod = (clock and clock()) or self.tod or "DAY"
+  -- ...and the BIT beside it, for the same reason the name is frozen here:
+  -- the mask is evaluated once per map load and must not follow the clock
+  -- while you are standing on the map.
+  self.objectTodBit = OverworldState.clockTimeOfDayBit()
   -- Gen2's `disappear`/`appear` write the object struct, and LoadMapObjects
   -- rebuilds every struct from the map's own object_events -- so a `disappear`
   -- that was not paired with a `setevent` is undone by walking back in.  The
@@ -839,6 +903,12 @@ end
 -- cannot see it, and both it and setMap need the raw clock rather than the
 -- cached self.tod (see objectInTimeOfDay / the objectTod freeze in setMap).
 OverworldState.clockTimeOfDay = clockTimeOfDay
+
+-- The cartridge's MAPOBJECT_TIMEOFDAY bit for the hour on the clock right now.
+function OverworldState.clockTimeOfDayBit()
+  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  return (period and tonumber(period.bit)) or TOD_BITS.DAY
+end
 
 -- world.tod default: the Gen 2 clock, or always DAY on Gen 1.  A mod returns
 -- "NIGHT", "MORNING", etc.; the result is cached on the overworld and handed
@@ -4054,8 +4124,24 @@ function OverworldState:talkTo(npc)
   -- legendary birds, Mewtwo, the Vermilion Machop, ...)
   if d.pokemon then
     npc:facePlayer(self.player)
+    -- WHAT IT SAYS BEFORE THE BATTLE, INCLUDING A LINE SOMEBODY TYPED.
+    --
+    -- `resolveText` answers for a text CONSTANT -- the extractor's
+    -- `_TinTowerHoOhText` and the like -- and the map editor writes prose into
+    -- the same field, because asking an author to mint a constant for one line
+    -- would be absurd. So an editor-made wild encounter resolved to nothing
+    -- and roared `Gyaoo!` over whatever it had been given: the author's line
+    -- was not missing from the box, it was replaced in it.
+    --
+    -- Same discriminator and same laid-out prose as the ordinary talk path
+    -- (`showMapText`): anything shaped like a key stays a key and still falls
+    -- back to the roar, so a genuine porting gap is not papered over.
     local text = select(1, Game.data:resolveText(self.map.def.label, d.text))
-                 or Strings("Gyaoo!")
+    if not text and type(d.text) == "string" and d.text ~= ""
+       and not OverworldState.looksLikeTextId(d.text) then
+      text = TextBox.fromProse(d.text)
+    end
+    text = text or Strings("Gyaoo!")
     local BattleState = require("src.battle.BattleState")
     Game.stack:push(TextBox.new(Game, text, function()
       local battle = BattleState.newWild(Game, d.pokemon, d.level)
@@ -4423,7 +4509,20 @@ function OverworldState:engageTrainer(npc, onDone)
 
   local BattleState = require("src.battle.BattleState")
   Game.stack:push(TextBox.new(Game, battleText, function()
-    local battle = BattleState.newTrainer(Game, d.trainerClass, d.trainerParty)
+    -- A TEAM THE AUTHOR BUILT WINS OVER AN INDEX INTO SOMEBODY ELSE'S.
+    --
+    -- `trainerParty` selects one of the parties the cartridge shipped for
+    -- `trainerClass`, which is right for a ported trainer and useless for an
+    -- NPC the editor invented -- there is no party for them, so they borrowed
+    -- one. `trainerTeam` is the party the author actually typed; when it is
+    -- there it is what they meant.
+    local battle
+    if type(d.trainerTeam) == "table" and #d.trainerTeam > 0 then
+      battle = BattleState.newEditorTrainer(Game, d.trainerTeam,
+                                            d.trainerClass, d.trainerName)
+    end
+    battle = battle or BattleState.newTrainer(Game, d.trainerClass,
+                                              d.trainerParty)
     -- PrintEndBattleText (home/trainers.asm:341) is called from
     -- TrainerBattleVictory (engine/battle/core.asm:942), i.e. ON the battle
     -- screen once ScrollTrainerPicAfterBattle has brought the beaten trainer
@@ -4583,7 +4682,19 @@ function OverworldState:checkTrainerSight()
             or not mapScripts.talkScript(self.map.id, d.text))
        and trainerSpriteOnScreen(npc, p) then
       local header = Game.data:trainerHeader(self.map.def.label, d.index)
-      local range = header and header.range or 0
+      -- THE OBJECT'S OWN RANGE WINS OVER THE HEADER'S.
+      --
+      -- The cartridge files sight range in a trainer header keyed by (map,
+      -- object index), so an NPC the map editor invented has no header and
+      -- reads 0 -- "never notices anybody". An authored trainer could only
+      -- ever be fought by walking up and talking to them.
+      --
+      -- `sightRange` is the editor's answer, and ABSENT is not the same as
+      -- ZERO: absent means "whatever the cartridge said", zero means "talk to
+      -- me", which is a real setting the ROM itself uses for gym trainers and
+      -- the Karate Master. Tested with `~= nil` for exactly that reason.
+      local range = d.sightRange
+      if range == nil then range = header and header.range or 0 end
       local vec = DIRVEC[npc.facing]
       if range > 0 and vec then
         local dist, horizontal
@@ -4652,6 +4763,29 @@ function OverworldState:startTrainerApproach(npc, dist)
   }
 end
 
+-- Does this look like a text CONSTANT rather than a line of dialogue?
+--
+-- Matched against the two shapes the extractor actually writes, which
+-- Commands.show_text's own header names: the map's `TEXT_*` pointers, and
+-- labels like `_PalletTownGirlText`. Nothing else is a key.
+--
+-- WHY THE TEST IS THIS NARROW. The obvious version -- "an identifier, so no
+-- spaces" -- calls a one-word line of dialogue a constant, and "Hello" is a
+-- perfectly ordinary thing for an author to type. Getting that wrong means
+-- silence, which is the failure being fixed here.
+--
+-- The bias is deliberate: when in doubt, SHOW IT. Prose that was really a
+-- missing constant appears on screen as `TEXT_FOO`, which explains itself in
+-- one glance; a missing constant treated as prose-that-failed shows nothing at
+-- all, and nothing is what took a day to diagnose.
+function OverworldState.looksLikeTextId(s)
+  if type(s) ~= "string" or s == "" then return false end
+  if s:find("%s") then return false end
+  return s:find("^TEXT_[%u%d_]+$") ~= nil       -- the map's own pointers
+      or s:find("^_%u[%w]*$") ~= nil            -- _PalletTownGirlText
+      or s:find("^[%u][%u%d_]*$") ~= nil        -- SCREAMING_CASE
+end
+
 -- Dispatch a TEXT_* constant: hand-ported script first, then extracted text.
 function OverworldState:showMapText(textConst, npc, onDone)
   local mapLabel = self.map.def.label
@@ -4678,6 +4812,41 @@ function OverworldState:showMapText(textConst, npc, onDone)
     if npc then npc:facePlayer(self.player) end
     Game.stack:push(TextBox.new(Game, text, onDone))
   else
+    -- PROSE IS ITS OWN TEXT.
+    --
+    -- `textConst` is normally a CONSTANT NAME -- TEXT_AZALEA_GRAMPS, or an
+    -- extracted label like _AzaleaTownGrampsText -- looked up in the map's
+    -- text pointers. The map editor writes something else into the same
+    -- field: the line the author typed, verbatim, because "plain dialogue"
+    -- is the common case and asking an author to mint a constant and add it
+    -- to a text table would be absurd.
+    --
+    -- So an editor-authored NPC failed the lookup, warned, and called
+    -- `onDone` -- no box, and no `facePlayer` either, since that only
+    -- happened on the two success branches. The report was "he doesn't say
+    -- anything and doesn't turn to face me", which is one bug, not two.
+    --
+    -- `Commands.show_text` HAS ALWAYS DONE THIS -- "literal string fallback
+    -- for hand-ported scripts", and Data:textEntry's own comment points at
+    -- it -- so a line reached through a script worked while the identical
+    -- line on an NPC did not. This is the asymmetry, not a new policy.
+    --
+    -- THE DISCRIMINATOR IS SHAPE, not a flag, because there is no flag to
+    -- read: a text constant is an IDENTIFIER by construction (the extractor
+    -- writes them), and prose is not. Anything that could be a key is still
+    -- reported as missing, so a genuine porting gap does not quietly print
+    -- its own constant on screen -- which is the failure this branch exists
+    -- to catch.
+    if type(textConst) == "string" and not OverworldState.looksLikeTextId(textConst)
+    then
+      if npc then npc:facePlayer(self.player) end
+      -- LAID OUT LIKE THE CARTRIDGE'S OWN, or it does not wait for the
+      -- player. Prose carries no `\n`/`\f`, so `paginate` wrapped it to the
+      -- box and put every resulting line on ONE page -- and a page does not
+      -- stop, it scrolls. `fromProse` puts the page breaks back.
+      Game.stack:push(TextBox.new(Game, TextBox.fromProse(textConst), onDone))
+      return
+    end
     Logger.warn("no text for %s/%s", mapLabel, textConst)
     if onDone then onDone() end
   end
@@ -4886,11 +5055,69 @@ function OverworldState:onStepComplete()
     end
   end
 
+  -- AN AUTHORED EVENT THAT DECLARES ITSELF A REPLACEMENT, ahead of the hooks.
+  --
+  -- The default below is that the cartridge's own scenes own their squares,
+  -- and that is right: an authored trigger able to eat one would make a map
+  -- the player walks into and cannot walk out of, with nothing to tell the
+  -- author they had done it.
+  --
+  -- But "the editor cannot touch the cartridge's events" is too strong the
+  -- other way. A cartridge script is bytecode behind a label -- there is no
+  -- reading it back into beats -- so the only honest way to change one is to
+  -- stand in front of it, and the author has to be able to say so. `replaces`
+  -- is exactly that sentence, set per event in the events menu (MapEvents.adopt),
+  -- never by default: an event without it keeps the old ordering entirely.
+  --
+  -- STILL AFTER THE WARP. That half of the ordering is not about authorship --
+  -- it is CheckTileEvent testing the warp tile first -- and an authored event
+  -- that swallowed a door would strand the player just as surely.
+  if not warpFirst and not self.runner:isRunning() then
+    local events = self.map and self.map.def and self.map.def.events
+    if type(events) == "table" then
+      for _, ev in ipairs(events) do
+        if ev.replaces and ev.x == p.cellX and ev.y == p.cellY
+           and type(ev.script) == "table" and #ev.script > 0 then
+          self.runner:run(ev.script, { event = ev.id })
+          return
+        end
+      end
+    end
+  end
+
   -- hand-ported step triggers (Pallet intro, Saffron gate guards, ...)
   local hooks = mapScripts.get(self.map.id)
   if not warpFirst and hooks and hooks.onStep then
     if hooks.onStep(Game, self, p.cellX, p.cellY) then
       return
+    end
+  end
+
+  -- EVENT TILES FROM THE MAP DATA, which is where an event the editor made
+  -- lives.
+  --
+  -- AFTER THE HAND-PORTED HOOKS AND AFTER THE WARP, deliberately. The ported
+  -- scripts are the cartridge's own scenes and they own their squares; a warp
+  -- outranks a trigger for the reason spelled out above (CheckTileEvent tests
+  -- the warp tile first). An authored event that could eat either would be a
+  -- map the player walks into and cannot walk out of, and the author would
+  -- have no way of knowing they had done it.
+  --
+  -- The rows are ordinary script rows -- `MapEvents.lower` emits nothing the
+  -- runner does not already walk -- so this is a lookup and a `run`, not a
+  -- second interpreter. Whether the event repeats is the SCRIPT's business:
+  -- it opens with its own `check_flag`/`jump_if_true` when the author asked
+  -- for once-only, which is the same mechanism they use for everything else.
+  if not warpFirst and not self.runner:isRunning() then
+    local events = self.map and self.map.def and self.map.def.events
+    if type(events) == "table" then
+      for _, ev in ipairs(events) do
+        if ev.x == p.cellX and ev.y == p.cellY and type(ev.script) == "table"
+           and #ev.script > 0 then
+          self.runner:run(ev.script, { event = ev.id })
+          return
+        end
+      end
     end
   end
 

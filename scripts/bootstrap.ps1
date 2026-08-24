@@ -58,9 +58,15 @@ function Resolve-RomVersion([string]$sha1) {
         '49b163f7e57702bc939d642a18f591de55d92dae' { return 'silver' }
         'f2f52230b536214ef7c9924f483392993e226cfb' { return 'crystal' }
         'f4cd194bdee0d04ca4eac29e09b8e4e9d818c133' { return 'crystal' }
-        # Pokemon Prism (Gold hack). Recognised so setup stops calling the
-        # cartridge unknown; it has no manifest yet.
+        # Pokemon Prism -- a CRYSTAL hack, not a Gold one. The Gold claim
+        # came from the monhacks/prism README, which describes an older build
+        # with a different md5; measured, this ROM matches Crystal's code 77
+        # times and Gold's 0 times.
         '752076692ae3387cf426ce5f51a98c6b60e8df6a' { return 'prism' }
+        # Pokemon Polished Crystal 3.2.3 (Crystal hack). Recognised so setup
+        # stops calling the cartridge unknown; the extractor is not wired to
+        # it yet.
+        '6930b48af5844d373e3c9130f26d6dd1084cf4ed' { return 'polishedcrystal' }
         default { return $null }
     }
 }
@@ -151,7 +157,7 @@ if ($LASTEXITCODE -ne 0) { Err 'setup failed - see the messages above'; Pause-Ex
 Say 'setup done - launching the game'
 if ($RomCtx) {
     $env:POKEPORT_VERSION = $RomCtx.Version
-    if ($RomCtx.Version -in @('gold', 'silver', 'crystal', 'prism')) {
+    if ($RomCtx.Version -in @('gold', 'silver', 'crystal', 'prism', 'polishedcrystal')) {
         Say "launching $($RomCtx.Version) with extracted datasets (no forced runtime scaffold import)"
         Remove-Item Env:POKEPORT_IMPORT_ROM -ErrorAction SilentlyContinue
         Remove-Item Env:POKEPORT_FORCE_IMPORT -ErrorAction SilentlyContinue

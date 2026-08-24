@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped Map Editor License: you may read,
+-- build and privately modify this file; you may not redistribute it or use it
+-- commercially. See LICENSE at the repository root. Cartridge-derived data is
+-- not covered and is not the copyright holder's to license.
+
 -- The save editor's whole mutable world.  Ops.lua is the only module allowed
 -- to change the `save` sub-tree (and it always sets dirty + status together);
 -- everything else here is view state -- which tab, which row, which page.

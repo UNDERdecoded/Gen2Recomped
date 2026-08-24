@@ -73,6 +73,30 @@ function Manifest.parseGithub(value)
 end
 
 -- conflicts + incompatible (alias) merged, first-wins on duplicate ids
+-- `required_games`: [{ version, name }], the cartridges a mod needs imported.
+--
+-- Tolerant of a bare list of version strings, because that is what a human
+-- hand-editing this file will write, and the display name is recoverable from
+-- the version anyway.
+local function parseRequiredGames(raw)
+  local list = raw and raw.required_games
+  if type(list) ~= "table" then return nil end
+  local out = {}
+  for _, entry in ipairs(list) do
+    local version, name
+    if type(entry) == "string" then
+      version = entry
+    elseif type(entry) == "table" then
+      version = type(entry.version) == "string" and entry.version or nil
+      name = type(entry.name) == "string" and entry.name or nil
+    end
+    if version and version ~= "" then
+      out[#out + 1] = { version = version, name = name or version:upper() }
+    end
+  end
+  return out[1] and out or nil
+end
+
 local function mergeConflictLists(conflicts, incompatible)
   local seen, out = {}, {}
   for _, list in ipairs({ array(conflicts), array(incompatible) }) do
@@ -239,6 +263,17 @@ function Manifest.validate(raw, path)
     -- second game's ROM.  Declared here, satisfied by the launcher, read by
     -- the mod out of its own folder (src/mods/ModImports.lua).
     requiredImports = require("src.mods.ModImports").parse(raw),
+    -- Cartridges that must be IMPORTED for this mod to mean anything -- a
+    -- different thing from requiredImports above, which is a file the player
+    -- hands over and the launcher writes into the mod's folder.
+    --
+    -- A map pack exported from the map editor carries maps copied out of
+    -- another game and tilesets adopted from it BY REFERENCE: it ships no
+    -- cartridge content, so it needs the reader's own extraction to resolve
+    -- against. Nothing to supply, nothing to write -- the requirement is
+    -- satisfied by having imported that game, and this is how the launcher
+    -- knows to ask before the mod is ever run.
+    requiredGames = parseRequiredGames(raw),
     assets_transforms = optionalFile(raw.assets_transforms, "assets_transforms"),
     path = path,
     raw = raw,

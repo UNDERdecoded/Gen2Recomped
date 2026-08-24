@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped Map Editor License: you may read,
+-- build and privately modify this file; you may not redistribute it or use it
+-- commercially. See LICENSE at the repository root. Cartridge-derived data is
+-- not covered and is not the copyright holder's to license.
+
 -- Shared look for the save editor: the launcher's palette and its drawing
 -- primitives, lifted out so the editor and src/import/RomImporter.lua render
 -- the same navy field, the same 16px translucent cards and the same neon
@@ -204,11 +210,19 @@ end
 
 -- Letterspaced text: the UI font has no tracking control, so advance glyph by
 -- glyph.  Section captions are 12px/2px-tracked uppercase throughout.
+-- BY CHARACTER, NOT BY BYTE -- the last two byte-wise walks in this file.
+--
+-- `for i = 1, #text` hands print/getWidth a single BYTE, which for anything
+-- multi-byte is half a character, and LOVE raises "UTF-8 decoding error"
+-- rather than drawing a wrong glyph -- mid-draw, so the editor is gone.
+-- NIDORAN's ♂/♀ (U+2642/U+2640, three bytes each) reaches here from ROM
+-- species names, and unlike every other text path in this file these two
+-- never scrubbed their input either.  Theme.chars scrubs once and splits on
+-- character boundaries, which is what every other trim here already does.
 function Theme.spaced(font, text, x, y, spacing)
   if not G or not font then return 0 end
   local cx = x
-  for i = 1, #text do
-    local ch = text:sub(i, i)
+  for _, ch in ipairs(Theme.chars(text)) do
     G.print(ch, cx, y)
     cx = cx + font:getWidth(ch) + spacing
   end
@@ -218,32 +232,144 @@ end
 function Theme.spacedWidth(font, text, spacing)
   if not font then return 0 end
   local w = 0
-  for i = 1, #text do w = w + font:getWidth(text:sub(i, i)) + spacing end
+  for _, ch in ipairs(Theme.chars(text)) do
+    w = w + font:getWidth(ch) + spacing
+  end
   return math.max(0, w - spacing)
 end
 
 -- Clip text to a pixel width with a trailing ellipsis.  Save paths truncate
 -- from the LEFT instead (see Theme.ellipsizeLeft) so the filename survives.
-function Theme.ellipsize(font, text, maxW)
+-- ---------------------------------------------------------------------------
+-- text that will not crash a font
+-- ---------------------------------------------------------------------------
+
+-- A FONT RAISES ON INVALID UTF-8, AND IT RAISES INSIDE A DRAW.
+--
+-- `Font:getWidth` on a string LOVE cannot decode does not return a bad number,
+-- it throws -- and a throw in the middle of a panel's draw is the whole editor
+-- gone, with a traceback that names the font rather than the text. Two
+-- separate things produced one here:
+--
+--   * ROM TEXT IS NOT UTF-8. Gen 2 strings come out of the cartridge in the
+--     game's own encoding -- the `e` of POKeMON is one byte, and line breaks
+--     and prompts are control bytes -- so the moment an NPC's line reached a
+--     text field, the editor closed. That is the crash this fixes.
+--
+--   * TRIMMING BY BYTE MAKES INVALID UTF-8 OUT OF VALID INPUT. Both trims
+--     below stepped one BYTE at a time, which lands in the middle of any
+--     multi-byte character and hands the next getWidth a broken sequence. A
+--     perfectly good name with an accent in it was one trim away from the
+--     same crash.
+--
+-- So: scrub once, then trim by CHARACTER.
+local function charLen(byte)
+  if byte < 0x80 then return 1 end
+  if byte >= 0xC2 and byte <= 0xDF then return 2 end
+  if byte >= 0xE0 and byte <= 0xEF then return 3 end
+  if byte >= 0xF0 and byte <= 0xF4 then return 4 end
+  return nil                      -- a continuation byte, or plain invalid
+end
+
+-- Replace anything the font cannot decode with a visible stand-in. `?` rather
+-- than dropping it: a line whose odd bytes vanish reads as text somebody could
+-- have typed, and the reader has no way to know the editor changed it.
+function Theme.utf8Safe(text)
   text = tostring(text or "")
+  -- PURE ASCII IS THE COMMON CASE AND COSTS NOTHING.
+  --
+  -- Every label, caption and number this editor draws is ASCII; the awkward
+  -- bytes come from ROM text, which is a handful of strings on one panel. This
+  -- runs on every string Kit draws, several hundred a frame, so the scan that
+  -- finds no high byte must not also allocate a table and rebuild the string.
+  if not text:find("[\128-\255]") then return text end
+  local out, i, n = {}, 1, #text
+  while i <= n do
+    local c = text:byte(i)
+    local len = charLen(c)
+    local okSeq = len ~= nil
+    if okSeq and len > 1 then
+      if i + len - 1 > n then
+        okSeq = false
+      else
+        for k = 1, len - 1 do
+          local cont = text:byte(i + k)
+          if not cont or cont < 0x80 or cont > 0xBF then okSeq = false break end
+        end
+      end
+    end
+    if okSeq then
+      out[#out + 1] = text:sub(i, i + len - 1)
+      i = i + len
+    else
+      out[#out + 1] = "?"
+      i = i + 1
+    end
+  end
+  return table.concat(out)
+end
+
+local utf8Safe = Theme.utf8Safe
+
+-- The text as an array of CHARACTERS, scrubbed first so every entry is a whole
+-- valid sequence.
+--
+-- Published because slicing text by BYTE is the bug this file exists to
+-- prevent, and every panel that wraps a cartridge line into columns wants to
+-- do exactly that: `body:sub(at, at + n - 1)` cuts a three-byte character in
+-- half, and LOVE's print raises "UTF-8 decoding error: Not enough space" on
+-- the fragment -- which crashes the editor rather than drawing a wrong glyph.
+function Theme.chars(text)
+  text = utf8Safe(text)
+  local out, i, n = {}, 1, #text
+  while i <= n do
+    local len = charLen(text:byte(i)) or 1
+    out[#out + 1] = text:sub(i, i + len - 1)
+    i = i + len
+  end
+  return out
+end
+
+-- The character lengths, for a caller that needs to walk a string itself.
+Theme.charLen = charLen
+
+-- Drop the last character, whatever its length.
+local function dropLast(text)
+  local i = #text
+  while i > 1 do
+    local c = text:byte(i)
+    if c < 0x80 or c >= 0xC0 then break end   -- not a continuation byte
+    i = i - 1
+  end
+  return text:sub(1, i - 1)
+end
+
+-- ...and the first.
+local function dropFirst(text)
+  local len = charLen(text:byte(1)) or 1
+  return text:sub(len + 1)
+end
+
+function Theme.ellipsize(font, text, maxW)
+  text = utf8Safe(text)
   if not font then return text end
   if maxW <= 0 or font:getWidth(text) <= maxW then return text end
   local ell = "..."
   local ew = font:getWidth(ell)
   while #text > 0 and font:getWidth(text) + ew > maxW do
-    text = text:sub(1, #text - 1)
+    text = dropLast(text)
   end
   return text .. ell
 end
 
 function Theme.ellipsizeLeft(font, text, maxW)
-  text = tostring(text or "")
+  text = utf8Safe(text)
   if not font then return text end
   if maxW <= 0 or font:getWidth(text) <= maxW then return text end
   local ell = "..."
   local ew = font:getWidth(ell)
   while #text > 0 and font:getWidth(text) + ew > maxW do
-    text = text:sub(2)
+    text = dropFirst(text)
   end
   return ell .. text
 end

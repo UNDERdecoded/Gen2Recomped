@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- Native LÖVE2D port of Pokemon Red. A packaged build creates its private
 -- game-data cache from a user-provided ROM on first boot.
 --
@@ -128,6 +134,42 @@ local function openEditor(version, slotId)
   EditorApp = require("App")
   EditorApp.load(path, { version = version, slotId = slotId, embedded = true,
                          onClose = function() closeEditor() end })
+end
+
+-- Open the MAP EDITOR on a game.  Same shell, same mount discipline, same way
+-- back -- the only differences are that there is no save slot to resolve (the
+-- map editor edits the game's maps, not a playthrough) and that App.load is
+-- told which mode to open in.
+--
+-- The mount is not optional here either, and for a sharper reason than in the
+-- save path: without the version's cache the editor's Data:load finds no
+-- generated map data at all, so the map list would come up EMPTY rather than
+-- failing -- an editor that looks like it works and has nothing in it.
+local function openMapEditor(version)
+  local GameVersion = require("src.core.GameVersion")
+  GameVersion.set(version)
+  local mounted, mountErr =
+    require("src.import.CacheFs").mountVersion(version)
+  if not mounted then
+    if Importer then
+      Importer.saveNotice = Importer.saveNotice or {}
+      Importer.saveNotice[version] = { ok = false, text =
+        ("Cannot edit %s maps: its imported data is not loadable (%s). " ..
+         "Import the ROM again."):format(
+          GameVersion.info(version).displayName,
+          tostring(mountErr or "unknown reason")) }
+    end
+    return
+  end
+  editorVersion = version
+  editorHost = Importer
+  Importer = nil
+  editorMode = true
+  resizeForEditor()
+  addEditorRequirePath()
+  EditorApp = require("App")
+  EditorApp.load(nil, { version = version, mode = "map", embedded = true,
+                        onClose = function() closeEditor() end })
 end
 
 -- Back to the launcher.  Everything the editor mounted or cached has to come
@@ -292,6 +334,12 @@ function love.load(args)
   BootTrace.mark("love.load enter")
   GraphicsStack.install()
 
+  -- Teach SDL about the pads its built-in database misses (Switch Pro over
+  -- Bluetooth, Joy-Cons, GameSir) before any joystick is opened, so they
+  -- arrive as real gamepads with leftx/lefty instead of as raw numbered axes
+  -- nothing was listening to.  See GamepadMap.loadMappings.
+  pcall(function() require("src.core.GamepadMap").loadMappings() end)
+
   -- Before anything else, and before anything that could fail: did the last
   -- launch finish?  POKEPORT_NO_BOOT_REPORT=1 skips this for CI and scripted
   -- runs, which have no one to show it to and must not stop on it.
@@ -417,6 +465,7 @@ function realLoad(args)
     launcher = true,
     forceImport = forceImport,
     onEditSave = openEditor,
+    onEditMaps = openMapEditor,
     onEditTouchControls = openTouchControlsEditor,
   })
   BootTrace.mark("launcher: ready")

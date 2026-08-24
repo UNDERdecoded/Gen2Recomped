@@ -483,13 +483,20 @@ function Font.drawBox(tx, ty, tw, th)
   Font.drawCode(B.tr, (tx + tw - 1) * 8, ty * 8)
   Font.drawCode(B.bl, tx * 8, (ty + th - 1) * 8)
   Font.drawCode(B.br, (tx + tw - 1) * 8, (ty + th - 1) * 8)
+  -- A frame may carve its edges finer than h/v: polished's textbox table
+  -- (00:$0e1a) has distinct top/bottom rules and left/right rails, so the
+  -- optional t/b/l/r keys override the shared pair when the font record
+  -- sets them.  Crystal's six-piece frames never set them and draw as
+  -- they always have.
+  local top, bottom = B.t or B.h, B.b or B.h
+  local left, right = B.l or B.v, B.r or B.v
   for i = 1, tw - 2 do
-    Font.drawCode(B.h, (tx + i) * 8, ty * 8)
-    Font.drawCode(B.h, (tx + i) * 8, (ty + th - 1) * 8)
+    Font.drawCode(top, (tx + i) * 8, ty * 8)
+    Font.drawCode(bottom, (tx + i) * 8, (ty + th - 1) * 8)
   end
   for j = 1, th - 2 do
-    Font.drawCode(B.v, tx * 8, (ty + j) * 8)
-    Font.drawCode(B.v, (tx + tw - 1) * 8, (ty + j) * 8)
+    Font.drawCode(left, tx * 8, (ty + j) * 8)
+    Font.drawCode(right, (tx + tw - 1) * 8, (ty + j) * 8)
   end
   borderPaint = nil
 end

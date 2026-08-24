@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- GBC Effects post-process ("Pixel Transparency" style, see
 -- github.com/mattakins/Pixel_Transparency).  A cumulative 4-level ladder
 -- applied after palette colorization and before the CRT pass:

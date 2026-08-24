@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- Save editor app shell.  Boots the game's generated Data plus a save file
 -- and draws the chrome the design spec fixes (SaveEditor.dc.html): a version
 -- rail, a title bar, a tab rail and a status bar, with one panel filling the
@@ -75,12 +81,129 @@ local TABS = {
   { id = "events", glyph = "EV", label = "EVENTS" },
   { id = "map",    glyph = "MP", label = "MAP" },
   { id = "dex",    glyph = "DX", label = "DEX" },
+  -- The map editor rides in this shell rather than opening a second window:
+  -- the pad cursor, the console keyboard applet, the modal shield and the DPI
+  -- layout are all solved here already, and a parallel tool would have to
+  -- solve them again and get them wrong. MAP picks the map; OBJECTS edits what
+  -- stands on it.
+  { id = "objects", glyph = "OB", label = "OBJECTS" },
+  { id = "voxels",  glyph = "VX", label = "VOXELS" },
+  { id = "scripts", glyph = "SC", label = "SCRIPTS" },
+  -- WARPS is last because it is the tab that can change which map is selected
+  -- -- creating a map here makes it current -- and a tab that moves the ground
+  -- under the others reads better as the end of the row than the middle.
+  { id = "warps",   glyph = "WP", label = "WARPS" },
 }
+
+-- Loaded through pcall: the map editor lives outside tools/save-editor, so a
+-- checkout or a package that does not carry it must lose the OBJECTS tab
+-- rather than fail to open the save editor at all.
+local okObjects, ObjectsPanel = pcall(require, "tools.map-editor.panels.Objects")
+if not okObjects then ObjectsPanel = nil end
+local okVoxels, VoxelsPanel = pcall(require, "tools.map-editor.panels.Voxels")
+if not okVoxels then VoxelsPanel = nil end
+local okScripts, ScriptsPanel = pcall(require, "tools.map-editor.panels.Scripts")
+if not okScripts then ScriptsPanel = nil end
+local okWarps, WarpsPanel = pcall(require, "tools.map-editor.panels.Warps")
+if not okWarps then WarpsPanel = nil end
+local okPreview, PreviewPanel = pcall(require, "tools.map-editor.panels.Preview")
+if not okPreview then PreviewPanel = nil end
+-- The tools as a DRAWER over the map rather than tabs beside it. Loaded the
+-- same guarded way: without it the map editor still opens, with the tools back
+-- on the rail.
+local okWilds, WildsPanel = pcall(require, "tools.map-editor.panels.Wilds")
+if not okWilds then WildsPanel = nil end
+local okTiles, TilesPanel = pcall(require, "tools.map-editor.panels.Tiles")
+if not okTiles then TilesPanel = nil end
+local okColl, CollisionPanel = pcall(require,
+                                     "tools.map-editor.panels.Collision")
+if not okColl then CollisionPanel = nil end
+local okHistory, History = pcall(require, "tools.map-editor.History")
+if not okHistory then History = nil end
+local okSidebar, Sidebar = pcall(require, "tools.map-editor.Sidebar")
+if not okSidebar then Sidebar = nil end
 
 local PANELS = {
   party = Party, boxes = Boxes, items = Items,
   events = Events, map = MapBrowser, dex = Dex,
+  preview = PreviewPanel,
+  objects = ObjectsPanel,
+  voxels = VoxelsPanel,
+  scripts = ScriptsPanel,
+  warps = WarpsPanel,
+  wilds = WildsPanel,
+  tiles = TilesPanel,
+  collision = CollisionPanel,
 }
+
+-- and if it did not load, take its chip back out. A tab that opens an empty
+-- panel is worse than no tab: it reads as the feature being broken rather than
+-- absent, which is a support question instead of a non-event.
+for i = #TABS, 1, -1 do
+  local id = TABS[i].id
+  if (id == "objects" and not ObjectsPanel)
+     or (id == "voxels" and not VoxelsPanel)
+     or (id == "scripts" and not ScriptsPanel)
+     or (id == "warps" and not WarpsPanel) then
+    table.remove(TABS, i)
+  end
+end
+
+-- AND THE SAME FOR THE DRAWER'S TOOLS. A tool button that opens an empty
+-- drawer reads as the feature being broken rather than absent, which is a
+-- support question instead of a non-event -- the same argument as the tab
+-- pruning above, applied to the other list of panels.
+if Sidebar and type(Sidebar.TOOLS) == "table" then
+  for i = #Sidebar.TOOLS, 1, -1 do
+    if PANELS[Sidebar.TOOLS[i].id] == nil then
+      table.remove(Sidebar.TOOLS, i)
+    end
+  end
+end
+
+-- THE MAP EDITOR IS A MODE OF THIS SHELL, NOT A SECOND ONE.
+--
+-- Everything the map editor needs from a window -- the pad cursor, the console
+-- keyboard applet, the modal shield, the DPI layout, the gamepad and joystick
+-- plumbing, the deferred close -- is solved here and nowhere else. A parallel
+-- tool would have to solve all of it again and would get some of it wrong; the
+-- Switch and Android paths in particular are not obvious and are not tested
+-- twice. So the map editor is this shell with a different tab set, a different
+-- title, and a Save that writes the edit store instead of a .sav.
+--
+-- Every branch below is guarded on `S.mode`, and save mode is the default, so
+-- an editor opened on a save behaves exactly as it did before.
+local MAP_TABS = {
+  { id = "preview", glyph = "MA", label = "MAP" },
+  { id = "warps",   glyph = "WP", label = "WARPS" },
+  { id = "objects", glyph = "OB", label = "NPCs" },
+  { id = "scripts", glyph = "SC", label = "SCRIPTS" },
+  { id = "voxels",  glyph = "VX", label = "VOXELS" },
+}
+for i = #MAP_TABS, 1, -1 do
+  if PANELS[MAP_TABS[i].id] == nil then table.remove(MAP_TABS, i) end
+end
+
+-- WITH THE DRAWER, THE MAP IS THE ONLY TAB.
+--
+-- Every one of those four tools works on the map -- the warp editor puts a
+-- door at the selected cell, the NPC editor drops a person next to it, the
+-- voxel editor shapes the ground under it -- and a tab takes the map off the
+-- screen to show you the tool for changing it. So they move into a drawer over
+-- the map and the rail keeps one entry, which is also the whole rail's job in
+-- this mode: there is nothing to switch between any more.
+--
+-- The old rail is kept as the fallback for a build with no Sidebar.lua, so the
+-- tools are never simply unreachable.
+if Sidebar then
+  MAP_TABS = { { id = "preview", glyph = "MA", label = "MAP" } }
+end
+
+-- The tab set for whichever mode is up. Read by the rail, the pad's tab
+-- cycling and the panel dispatch, so there is one answer rather than three.
+local function activeTabs()
+  return (S and S.mode == "map") and MAP_TABS or TABS
+end
 
 local function fileExists(path)
   local f = io.open(path, "rb")
@@ -158,6 +281,9 @@ function App.load(pathOverride, opts)
   opts = opts or {}
   S = State.new()
   S.data = Data
+  -- "save" (the default) or "map". Set before anything else on S, because the
+  -- tab set, the title bar and Save all branch on it.
+  S.mode = opts.mode or "save"
   S.version = opts.version
   S.slotId = opts.slotId
   S.embedded = opts.embedded or false
@@ -176,16 +302,70 @@ function App.load(pathOverride, opts)
     local ModLoader = require("src.mods.Loader")
     mods = ModLoader.new()
     mods:load(Data)
+    -- AND THE EDIT OVERLAY AGAIN, EXACTLY AS Game:load DOES.
+    --
+    -- `Data:load` laid it down; `mods:load` has just patched over it. A map
+    -- pack exported from this editor and installed back into it carries the
+    -- whole `objects` array of every map it touches, as it stood at export --
+    -- so `maps:patch` replaces the def, and every edit made SINCE that export
+    -- disappears from the table the editor is about to draw.
+    --
+    -- THE EDITOR NEEDS THIS MORE THAN THE GAME DOES, not less. In the game a
+    -- missing NPC is a bug you notice; here the editor opens showing the
+    -- pack's snapshot, the reader edits THAT, and their next save is written
+    -- against a picture of the world that is one export out of date. The
+    -- report was "I made edits, they appeared in game, and when I reopened
+    -- the editor they were gone" -- which is this line, missing.
+    --
+    -- Same call, same reason, same order: after the merge, before anything
+    -- reads the tables.
+    if Data.applyMapEditorOverlay then
+      Data:applyMapEditorOverlay("editor, after mods")
+    end
     App.dataVersion = opts.version
   end
   S.mods = mods
   S.cat = Catalog.build(Data)
+  if S.mode == "map" then
+    -- Open on the map picker, and hand the Preview panel the tool list the
+    -- shell actually loaded. It offers a button per entry, so a panel whose
+    -- require failed must not be in it -- a button that opens nothing reads as
+    -- the feature being broken rather than absent.
+    S.tab = MAP_TABS[1] and MAP_TABS[1].id or "preview"
+    S.tools = {}
+    if PreviewPanel then
+      for _, tool in ipairs(PreviewPanel.TOOLS) do
+        if PANELS[tool.tab] then S.tools[#S.tools + 1] = tool end
+      end
+    end
+    S.mapEdits = nil       -- loaded lazily by the first panel that needs it
+  end
   local modRoots = {}
   for _, mod in ipairs(S.mods:status().loaded) do
     modRoots[#modRoots + 1] = mod.path
   end
   S.events = Catalog.scrapeEvents("data/scripts", "data/generated/trainer_headers.lua",
                                   nil, modRoots)
+
+  if S.mode == "map" then
+    -- NO SAVE FILE IS READ. The map editor edits the game's maps, not anyone's
+    -- playthrough, and reaching for the default save path here would produce
+    -- either a "No save at ..." status the user cannot act on, or -- worse --
+    -- a real save loaded and sitting one Ctrl+S away from being written by a
+    -- tool that has no business touching it.
+    --
+    -- A stub still exists because the shell's chrome reads `S.save` (the tab
+    -- rail's counters, the status bar). It is never written: App.save branches
+    -- to the edit store in this mode, and there is no path to write to.
+    S.save = require("src.core.SaveData").newGame()
+    S.path = nil
+    S.allowSave = false
+    S.loadError = false
+    S.mapId = S.save.player and S.save.player.map or nil
+    S.status = "Map editor,  pick an area on the left and choose a tool"
+    return
+  end
+
   applyLoaded(pathOverride or SaveIO.defaultPath(), "Loaded")
 end
 
@@ -195,6 +375,13 @@ end
 function App.openPath(path, force)
   if not path or path == "" then return false end
   if not S then return false end
+  -- Map mode has no save file and no business loading one. Reached from the
+  -- Open button (which map mode does not draw) and from a dropped file, which
+  -- it cannot refuse -- so the refusal lives here, at the one door both use.
+  if S.mode == "map" then
+    S.status = "The map editor does not open save files"
+    return false
+  end
   if S.dirty and not force and not S._openArmed then
     S._openArmed = true
     S.status = "Unsaved changes,  open again to discard and load " .. path
@@ -224,6 +411,25 @@ function App.filedropped(file)
     S.status = "Could not read dropped file path"
     return
   end
+
+  -- A PNG DROPPED ON THE MAP EDITOR IS A CHARACTER SHEET.
+  --
+  -- It is the gesture people already have for "here is my art", and it is the
+  -- one that arrives with no panel open -- so it goes through the same
+  -- function the NPC editor's IMPORT A PNG button calls rather than being a
+  -- second implementation of it. Before `openPath`, because openPath's answer
+  -- to anything in map mode is "the map editor does not open save files",
+  -- which is true and unhelpful when what was dropped is plainly not one.
+  if S.mode == "map" and path:lower():match("%.png$") then
+    local okP, Objects = pcall(require, "tools.map-editor.panels.Objects")
+    if okP and type(Objects) == "table" and Objects.importSheet then
+      local id, why = Objects.importSheet(S, path)
+      S.status = id and ("imported " .. id .. " - pick it on an NPC")
+        or ("could not import that sheet: " .. tostring(why))
+      return
+    end
+  end
+
   App.openPath(path)
 end
 
@@ -261,6 +467,22 @@ function App.unload()
 end
 
 function App.save()
+  if S.mode == "map" then
+    local MapEdits = require("tools.map-editor.MapEdits")
+    if not S.mapEdits then
+      S.status = "Nothing to save yet"
+      return true
+    end
+    local okSave, err = MapEdits.save(S.mapEdits)
+    if okSave then
+      S.mapEditsDirty = nil
+      S._quitArmed = false
+      S.status = "Map edits saved"
+      return true
+    end
+    S.status = "Map edits could not be saved: " .. tostring(err)
+    return false
+  end
   if not S.allowSave then
     return Ops.say(S, "Save disabled,  corrupt save loaded; fix the file and Reload first")
   end
@@ -302,7 +524,11 @@ end
 -- host's onClose runs App.unload, which drops S -- doing that inline left the
 -- rest of the frame drawing against a nil state.
 function App.close()
-  if S.dirty and not S._quitArmed then
+  -- Map mode has its own dirty flag, and the guard is the whole point of the
+  -- flag: closing with unsaved map edits would lose them exactly as silently
+  -- as closing with an unsaved party would.
+  local dirty = (S.mode == "map") and S.mapEditsDirty or S.dirty
+  if dirty and not S._quitArmed then
     S._quitArmed = true
     S.status = "Unsaved changes,  Save first or click Close again to discard"
     return false
@@ -354,11 +580,12 @@ end
 
 local function padCycleTab(delta)
   if not S then return end
+  local tabs = activeTabs()
   local idx = 1
-  for i, t in ipairs(TABS) do
+  for i, t in ipairs(tabs) do
     if t.id == S.tab then idx = i break end
   end
-  S.tab = TABS[((idx - 1 + delta) % #TABS) + 1].id
+  S.tab = tabs[((idx - 1 + delta) % #tabs) + 1].id
   -- Same bookkeeping the tab rail does on a click: a focused field must not
   -- keep eating keys for a tab that is no longer showing, and an armed
   -- destructive action must not survive the switch.
@@ -543,9 +770,10 @@ local function drawTitleBar(x, y, w, h)
   -- SE badge, the same rounded-square chip shape the launcher's tabs use
   local badge = 34 * s
   local by = y + (h - badge) / 2
+  local mapMode = S.mode == "map"
   Theme.gradRounded(cx, by, badge, badge, 9 * s, PAL.chipTop, PAL.chipBot, 1, 1)
-  Kit.textCenter("tab", "SE", cx, by + (badge - Kit.textHeight("tab")) / 2, badge,
-    { 159, 180, 221 })
+  Kit.textCenter("tab", mapMode and "ME" or "SE", cx,
+    by + (badge - Kit.textHeight("tab")) / 2, badge, { 159, 180, 221 })
   cx = cx + badge + 10 * s
 
   -- The right-aligned action cluster is laid out from the right edge inward
@@ -558,11 +786,57 @@ local function drawTitleBar(x, y, w, h)
   local rightEdge = x + w - inset
   local gap = 8 * s
   local closeW = 22 * s + Kit.textWidth("button", "Close")
-  local openW = 22 * s + Kit.textWidth("button", "Open...")
-  local reloadW = 22 * s + Kit.textWidth("button", "Reload")
+  -- THE MANUAL, as a chip in the one strip nothing covers. A square `?` and
+  -- not a word: it sits beside Close on every window width, and a labelled
+  -- "HELP" is the first control to be squeezed off a phone -- which is the
+  -- width where somebody most needs it. Map mode only; the save editor's
+  -- controls are a list of fields and have nothing to explain.
+  local helpW = mapMode and (38 * s) or 0
+  -- Reload and Open... are operations on a SAVE FILE. The map editor has none
+  -- -- its edits live in the edit store, and "Open..." there would mean a file
+  -- picker onto a file the user never chose. Absent rather than disabled: a
+  -- greyed control invites a click and then explains itself, and there is
+  -- nothing here to explain.
+  local openW = mapMode and 0 or (22 * s + Kit.textWidth("button", "Open..."))
+  local reloadW = mapMode and 0 or (22 * s + Kit.textWidth("button", "Reload"))
+
+  -- EXPORT AND THE VOXEL SOURCE LIVE UP HERE, beside Save.
+  --
+  -- They were in the map panel's tools column, which is a column that scrolls,
+  -- can be covered by a drawer, and is gone entirely on a narrow window -- and
+  -- all three of these say the same kind of thing: what happens to the WORK.
+  -- Save keeps it for you, Export keeps it for somebody else, and the source
+  -- says whose world the heights being kept belong to.  The title bar is where
+  -- this editor already puts that, and it is the one strip nothing covers.
+  local voxLabel, voxW, exportW, importW, assetW, resetW = nil, 0, 0, 0, 0, 0
+  if mapMode then
+    exportW = 22 * s + Kit.textWidth("button", "EXPORT")
+    importW = 22 * s + Kit.textWidth("button", "IMPORT")
+    assetW = 22 * s + Kit.textWidth("button", "ASSETS")
+    -- SIZED TO THE ARMED LABEL, ALWAYS. "RESET?" is wider than "RESET", and a
+    -- button measured to whichever word it is showing changes width under the
+    -- pointer between the arming press and the confirming one -- so the second
+    -- press lands somewhere else. Reserve the wider of the two and the control
+    -- stands still.
+    resetW = 22 * s + math.max(Kit.textWidth("button", "RESET MAP"),
+                               Kit.textWidth("button", "RESET?"))
+    local okV, VC = pcall(require, "tools.map-editor.VoxelClasses")
+    if okV and type(VC) == "table" and VC.sourceFor then
+      local okS, cur = pcall(VC.sourceFor, S.voxelSource)
+      voxLabel = (okS and cur and cur.label) or "VOXELS"
+      -- Capped, and ellipsized to the cap: a mod may be called
+      -- STADIUM2_OVERWORLD_MODELS, and a button sized to that name is the
+      -- whole right-hand half of the bar.
+      voxLabel = Kit.ellipsize("button", tostring(voxLabel), 150 * s)
+      voxW = 30 * s + Kit.textWidth("button", voxLabel)
+    end
+  end
 
   local saveLabel, saveKind, saveEnabled = "SAVED", "disabled", false
-  if not S.allowSave then
+  if mapMode then
+    saveLabel = S.mapEditsDirty and "SAVE EDITS" or "SAVED"
+    if S.mapEditsDirty then saveKind, saveEnabled = "primary", true end
+  elseif not S.allowSave then
     saveLabel = "SAVE LOCKED"
   elseif S.dirty then
     saveLabel, saveKind, saveEnabled = "SAVE", "primary", true
@@ -570,20 +844,39 @@ local function drawTitleBar(x, y, w, h)
   local saveW = 30 * s + Kit.textWidth("button", saveLabel)
 
   local closeX = rightEdge - closeW
+  local helpX = mapMode and (closeX - gap - helpW) or closeX
   local openX = closeX - gap - openW
   local reloadX = openX - gap - reloadW
-  local saveX = reloadX - gap - saveW
+  -- In map mode Save sits straight beside Close: reloadX/openX are only laid
+  -- out at all so the save-mode branch below reads unchanged.
+  local saveX = mapMode and (helpX - gap - saveW) or (reloadX - gap - saveW)
+  local resetX = saveX - gap - resetW
+  local exportX = resetX - gap - exportW
+  -- BESIDE EXPORT, because they are the two ends of one thing: this is how a
+  -- pack somebody else made gets in, and without it the only way to check that
+  -- an export worked was to quit to the launcher and install it by hand.
+  local importX = exportX - gap - importW
+  local assetX = importX - gap - assetW
+  local eventsW = 30 * s + Kit.textWidth("button", "EVENTS")
+  local eventsX = assetX - gap - eventsW
+  local voxX = eventsX - gap - voxW
+  -- What the LEFT-hand block has to stay clear of.  It measured against saveX,
+  -- which was the leftmost button before these two joined it -- leaving the
+  -- identity block free to paint straight through them (the same bug #497 was
+  -- about, one cluster later).
+  local leftLimit = mapMode and voxX or saveX
 
   local wordH = Kit.textHeight("wordmark")
   local brandH = Kit.textHeight("brand")
   local blockY = y + (h - (wordH + 2 * s + brandH)) / 2
+  local wordmark = mapMode and "MAP EDITOR" or "SAVE EDITOR"
   local wordW = math.max(
-    Theme.spacedWidth(Kit.fonts.wordmark, "SAVE EDITOR", 2 * s),
+    Theme.spacedWidth(Kit.fonts.wordmark, wordmark, 2 * s),
     Theme.spacedWidth(Kit.fonts.brand, "GEN1RECOMP", 1 * s))
-  if cx + wordW + 12 * s < saveX then
+  if cx + wordW + 12 * s < leftLimit then
     love.graphics.setFont(Kit.fonts.wordmark)
     Theme.col(PAL.heading, 1)
-    Theme.spaced(Kit.fonts.wordmark, "SAVE EDITOR", cx, blockY, 2 * s)
+    Theme.spaced(Kit.fonts.wordmark, wordmark, cx, blockY, 2 * s)
     love.graphics.setFont(Kit.fonts.brand)
     Theme.col(PAL.caption, 1)
     Theme.spaced(Kit.fonts.brand, "GEN1RECOMP", cx,
@@ -599,7 +892,7 @@ local function drawTitleBar(x, y, w, h)
     local cw = Kit.textWidth("chip", name) + 16 * s
     local ch = 22 * s
     local cy = y + (h - ch) / 2
-    if cx + cw + 12 * s < saveX then
+    if cx + cw + 12 * s < leftLimit then
       Theme.col(c, 0.1)
       love.graphics.rectangle("fill", cx, cy, cw, ch, 6 * s, 6 * s)
       Theme.stroke(cx, cy, cw, ch, 6 * s, c, 0.5, 1)
@@ -613,26 +906,236 @@ local function drawTitleBar(x, y, w, h)
   -- renders it steel with the reason parked in the status bar rather than
   -- hiding it (rule 3 of the design spec).
   if Kit.button(saveX, btnY, saveW, btnH, saveLabel,
-      { kind = saveKind, enabled = saveEnabled or not S.allowSave,
-        glow = S.dirty and S.allowSave and 0.6 or nil }) then
+      { kind = saveKind, enabled = saveEnabled or (not mapMode and not S.allowSave),
+        glow = (mapMode and S.mapEditsDirty and 0.6)
+          or (S.dirty and S.allowSave and 0.6) or nil }) then
     App.save()
   end
-  if Kit.button(reloadX, btnY, reloadW, btnH, "Reload") then App.reload() end
-  if Kit.button(openX, btnY, openW, btnH, "Open...") then App.chooseAndOpen() end
+  if mapMode then
+    -- EXPORT AS A CONTENT MOD -- not a copy of the edit store, which is a
+    -- private format that lands in a save directory the other player has to
+    -- find and that their own edits then collide with.
+    local okX, ModExport = pcall(require, "tools.map-editor.ModExport")
+    -- DRAWN EITHER WAY, and disabled with a reason when the exporter is not
+    -- here. A control that vanishes when its module fails to load is
+    -- indistinguishable from one that is working and doing nothing -- which is
+    -- exactly how a payload shipped without tools/map-editor presented (see
+    -- scripts/pack_love.sh, where that is now a contract entry).
+    if not (okX and type(ModExport) == "table" and ModExport.write) then
+      if Kit.button(exportX, btnY, exportW, btnH, "EXPORT",
+                    { kind = "ghost", enabled = false }) then end
+      S._exportWhy = S._exportWhy or ("the exporter could not be loaded: "
+        .. tostring(ModExport))
+    else
+      if Kit.button(exportX, btnY, exportW, btnH, "EXPORT", { kind = "ghost" }) then
+        local id = "MAP_EDITS_" .. tostring(S.version or "gen2"):upper()
+        local path, why, requires = ModExport.write(S, {
+          id = id,
+          name = "Map edits (" .. tostring(S.version or "gen2") .. ")",
+        })
+        -- WHAT THIS EXPORT NEEDS, said to the person who made it.
+        --
+        -- A map pack built from imported maps works perfectly here and
+        -- nowhere else: the maps reference another cartridge's tilesets, and
+        -- the person installing it has to have imported that game. The author
+        -- is the only one who can say so in their release notes and the only
+        -- one who never sees the problem, so the export tells them.
+        local note = nil
+        if path and requires and requires[1] then
+          local okA, AT = pcall(require, "src.import.AdoptedTileset")
+          if okA then note = AT.requirementText(requires, "This map pack") end
+        end
+        S.pvNotice = path and ("exported to " .. tostring(path)
+                               .. (note and ("  -- " .. note) or ""))
+          or ("export failed: " .. tostring(why))
+        S.status = S.pvNotice
+        -- AND IN THE LOG, both ways round. The notice is one line of small
+        -- muted text at the foot of a panel, which is the right weight for a
+        -- success and much too quiet for a failure the reader is going to have
+        -- to describe to somebody.
+        pcall(function()
+          require("src.core.Logger")[path and "info" or "warn"](
+            "%s", tostring(S.pvNotice))
+        end)
+      end
+    end
+
+    -- BRING ONE IN. Same shape as EXPORT and for the same reason: drawn
+    -- disabled with a reason rather than vanishing when the module is absent.
+    local okI, ModImport = pcall(require, "tools.map-editor.ModImport")
+    if not (okI and type(ModImport) == "table" and ModImport.install) then
+      if Kit.button(importX, btnY, importW, btnH, "IMPORT",
+                    { kind = "ghost", enabled = false }) then end
+    elseif Kit.button(importX, btnY, importW, btnH, "IMPORT",
+                      { kind = "ghost" }) then
+      local okR, RomImporter = pcall(require, "src.import.RomImporter")
+      local pick = nil
+      if okR and type(RomImporter) == "table" and RomImporter.chooseFileByExt then
+        local okP, got = pcall(RomImporter.chooseFileByExt, { "zip" },
+                               "map pack")
+        pick = okP and got or nil
+      end
+      if not pick then
+        S.pvNotice = "no file chosen - a map pack is the .zip EXPORT writes"
+      else
+        local result, why = ModImport.install(pick)
+        -- A DIALOG, NOT A STATUS LINE.
+        --
+        -- What a map pack needs is a condition on everything the reader does
+        -- with it afterwards, and it is learned once -- here. Said in the
+        -- footer it shared a row with "8 x 8 cells - drag to pan" and read as
+        -- chrome. The failure still goes to the notice, because a failed
+        -- install has nothing to show a row per cartridge for.
+        if result then
+          local okIP, ImportPrompt =
+            pcall(require, "tools.map-editor.panels.ImportPrompt")
+          if okIP and type(ImportPrompt) == "table" then
+            ImportPrompt.raise(S, result)
+          end
+          S.pvNotice = "installed " .. tostring(result.id)
+        else
+          S.pvNotice = "import failed: " .. tostring(why)
+        end
+      end
+      S.status = S.pvNotice
+      pcall(function()
+        require("src.core.Logger").info("%s", tostring(S.pvNotice))
+      end)
+    end
+    -- PUT THIS MAP BACK, beside SAVE because it is the other end of the same
+    -- thing: one keeps the work, this throws it away.
+    --
+    -- ARMED, THEN CONFIRMED, in the button itself -- the same shape Close uses
+    -- for unsaved changes and the object list uses for delete. A dialog would
+    -- be a second modal to build and dismiss for a question with two answers,
+    -- and the arm has the advantage that the label says exactly WHAT is about
+    -- to happen and to which map, which "Are you sure?" never does.
+    --
+    -- The arm clears on any other press, so it can never sit waiting to fire
+    -- at a map you switched to afterwards.
+    local okR, MapReset = pcall(require, "tools.map-editor.MapReset")
+    if okR and type(MapReset) == "table" and S.mapId then
+      local armed = S._resetArmed == S.mapId
+      local edits = 0
+      pcall(function()
+        edits = MapReset.describe(S.mapEdits, S.version or "", S.mapId) or 0
+      end)
+      local can = edits > 0 or armed
+      if Kit.button(resetX, btnY, resetW, btnH,
+                    armed and "RESET?" or "RESET MAP",
+                    { kind = armed and "danger" or "ghost",
+                      enabled = can, glow = armed and 0.5 or nil }) and can then
+        if armed then
+          local report, why = MapReset.reset(S, S.mapId)
+          S._resetArmed = nil
+          if report then
+            S.status = string.format(
+              "%s put back as the cartridge has it - %d edit%s discarded%s",
+              S.mapId, report.dropped, report.dropped == 1 and "" or "s",
+              report.how == "session"
+                and " (restored to how it looked when you opened it)" or "")
+          else
+            S.status = tostring(why)
+          end
+        else
+          S._resetArmed = S.mapId
+          S.status = string.format(
+            "Press RESET? again to discard %d edit%s on %s - this cannot be undone",
+            edits, edits == 1 and "" or "s", S.mapId)
+        end
+      elseif armed and Kit.mouseClicked then
+        -- any other press disarms
+        S._resetArmed = nil
+      end
+    end
+
+    -- THE ASSET LIBRARY, beside EXPORT and for the same reason: it is a thing
+    -- you do to the WORK. A saved building belongs to the project rather than
+    -- to the map it was cut from, so it cannot live in a tool drawer that is
+    -- scoped to whichever map is open.
+    local okA, MapAssets = pcall(require, "tools.map-editor.MapAssets")
+    if okA and type(MapAssets) == "table" then
+      local armed = S.assetPlacing ~= nil
+      if Kit.button(assetX, btnY, assetW, btnH, "ASSETS",
+                    { kind = armed and "accent" or "ghost" }) then
+        S.assetMenuOpen = not S.assetMenuOpen
+        -- opening the library while holding one puts it down: the list is
+        -- where you choose, and choosing is not placing
+        if S.assetMenuOpen then MapAssets.disarm(S) end
+      end
+      -- EVENTS, beside the asset library, for the same reason it is up here:
+      -- an event belongs to the MAP rather than to whichever tool is open, and
+      -- it is built by looking at a list of beats and a list of flags at once,
+      -- which does not fit in a column beside a map.
+      if Kit.button(eventsX, btnY, eventsW, btnH, "EVENTS",
+                    { kind = S.eventMenuOpen and "accent" or "ghost" }) then
+        S.eventMenuOpen = not S.eventMenuOpen
+      end
+    end
+
+    -- WHICH MOD'S HEIGHTS ARE BEING EDITED.  Two installed mods pin the same
+    -- tile to different classes on purpose, so a height shown without saying
+    -- whose it is might belong to a world the player is not running.
+    if voxLabel then
+      if Kit.button(voxX, btnY, voxW, btnH, voxLabel,
+                    { kind = "ghost", font = "button" }) then
+        S.pvSourceOpen = not S.pvSourceOpen
+      end
+      -- DEFERRED. Kit has no z-order, so a list drawn from here would be
+      -- painted over by the panel, the drawer and everything else in the
+      -- frame. App.draw paints it last (see Preview.drawDeferred).
+      if S.pvSourceOpen then
+        local okV, VC = pcall(require, "tools.map-editor.VoxelClasses")
+        S._pvSourceMenu = okV and {
+          x = voxX, y = y + h + 4 * s,
+          w = math.max(voxW, 240 * s), h = 28 * s,
+          srcs = VC.sources(), cur = VC.sourceFor(S.voxelSource),
+        } or nil
+      else
+        S._pvSourceMenu = nil
+      end
+    end
+  else
+    if Kit.button(reloadX, btnY, reloadW, btnH, "Reload") then App.reload() end
+    if Kit.button(openX, btnY, openW, btnH, "Open...") then App.chooseAndOpen() end
+  end
+  if mapMode then
+    local okH, Help = pcall(require, "tools.map-editor.panels.Help")
+    -- Drawn either way, and disabled with the panel absent rather than
+    -- vanishing: a control that disappears when its module fails to load is
+    -- indistinguishable from one that is working and doing nothing.
+    local live = okH and type(Help) == "table" and Help.toggle
+    if Kit.button(helpX, btnY, helpW, btnH, "?",
+                  { kind = (live and S.helpOpen) and "accent" or "ghost",
+                    enabled = live and true or false }) and live then
+      Help.toggle(S)
+    end
+  end
   if Kit.button(closeX, btnY, closeW, btnH,
       S._quitArmed and "Discard?" or "Close",
       { kind = S._quitArmed and "danger" or "ghost" }) then
     App.close()
   end
 
-  local chipW = (saveX - 14 * s) - cx
-  if chipW > 80 * s then
+  local chipW = (leftLimit - 14 * s) - cx
+  if chipW > 80 * s and not mapMode then
     drawFileChip(cx, y + (h - 38 * s) / 2, chipW, 38 * s)
   end
 end
 
 -- Per-tab counters shown under each tile, so the rail doubles as a summary.
 local function tabCount(id)
+  if S.mode == "map" then
+    local def = S.data and S.data.maps and S.data.maps[S.mapId or ""]
+    if id == "preview" then
+      return Kit.ellipsize("tiny", S.mapId or "", 110 * Kit.scale)
+    elseif id == "warps" then
+      return def and tostring(#(def.warps or {})) or ""
+    elseif id == "objects" then
+      return def and tostring(#(def.objects or {})) or ""
+    end
+    return ""
+  end
   if id == "party" then
     return ("%d/%d"):format(#S.save.party, require("src.pokemon.Party").MAX)
   elseif id == "boxes" then
@@ -661,6 +1164,24 @@ end
 -- something.  Returns what to draw plus the tab that owns the first problem,
 -- so the rail can reserve the pill's width before laying out the tiles.
 local function validationPill()
+  if S.mode == "map" then
+    -- "Save validates clean" is not false here so much as irrelevant, and a
+    -- reassurance about a file this mode never opens is worse than nothing.
+    -- The edit count is the fact that matters: it is the work at risk.
+    local okCount, n = pcall(function()
+      local ME = require("tools.map-editor.MapEdits")
+      if not S.mapEdits then return 0 end
+      local total = 0
+      for mapId in pairs(S.data.maps or {}) do
+        total = total + ME.count(S.mapEdits, tostring(S.version or ""), mapId)
+      end
+      return total
+    end)
+    n = (okCount and n) or 0
+    if n == 0 then return "No map edits yet", PAL.caption, nil, true end
+    return ("%d map edit%s"):format(n, n == 1 and "" or "s"),
+      S.mapEditsDirty and PAL.yellow or PAL.green, nil, not S.mapEditsDirty
+  end
   local SaveData = require("src.core.SaveData")
   local report = S.validation
   if not report or SaveData.emptyReport(report) then
@@ -687,7 +1208,7 @@ local function railDetail(x, pillX)
   local s = Kit.scale
   local tile = 40 * s
   local widths = { full = 0, nocount = 0, glyph = 0 }
-  for _, t in ipairs(TABS) do
+  for _, t in ipairs(activeTabs()) do
     local labelW = Theme.spacedWidth(Kit.fonts.tab, t.label, 1.5 * s)
     local countW = Kit.textWidth("tiny", tabCount(t.id))
     widths.full = widths.full + tile + 9 * s + labelW + 8 * s + countW + 20 * s
@@ -725,7 +1246,7 @@ local function drawTabRail(x, y, w, h)
   local tile = 40 * s
   local cx = x + inset
   local tileY = y + h - 12 * s - tile
-  for _, t in ipairs(TABS) do
+  for _, t in ipairs(activeTabs()) do
     local active = (S.tab == t.id)
     local count = (detail == "full") and tabCount(t.id) or ""
     local labelW = (detail == "glyph") and 0
@@ -859,7 +1380,30 @@ function App.draw()
   -- last: the chrome and the panel underneath would take the same tap.  The
   -- shield goes up before anything dispatches and comes down only for the
   -- picker's own layer at the bottom of this function (#541).
-  Kit.blockClicks = (S.speciesPicker ~= nil)
+  -- BEFORE ANYTHING CAN EDIT. History captures the state at the top of the
+  -- frame and pushes it when the edit stamp says something changed since the
+  -- last one -- so the state on the stack is the one from before this frame's
+  -- edits, without every tool having to remember to say "I am about to".
+  if History and S.mode == "map" then History.tick(S) end
+
+  -- THE PICKER SHIELDS EVERYTHING; THE DRAWER SHIELDS ITS OWN RECTANGLE.
+  --
+  -- A drawer covers the right-hand side and leaves the map visible on the
+  -- left, and the whole point of a drawer rather than a tab is that you can go
+  -- on working on the map -- the tile painter's clicks land there. Raising the
+  -- global shield for it made that impossible: with a drawer open, every click
+  -- on the panel was refused, so the one tool whose clicks belong to the map
+  -- could never receive one, and the painter was unreachable.
+  --
+  -- THE VOXEL PICKERS ARE MODAL TOO, and for the same reason the species
+  -- picker is: they are drawn after the whole frame (Voxels.drawDeferred), and
+  -- Kit hit-tests raw coordinates with no z-order -- so without a shield every
+  -- control under the popup takes the same tap as the row on top of it.
+  local voxModal = (S.mode == "map")
+    and (S.voxClassPick ~= nil or S.voxProfPick ~= nil
+         or S.pvClassOpen == true or S.assetMenuOpen == true) or false
+  Kit.blockClicks = (S.speciesPicker ~= nil) or voxModal
+  Kit.blockRect = nil
 
   Theme.field(width, height)
 
@@ -874,6 +1418,15 @@ function App.draw()
 
   local contentY = railH + titleH + tabH
   local contentH = height - contentY - statusH
+
+  -- Computed BEFORE the panel draws, because the shield has to be up while the
+  -- panel lays out the controls the drawer is about to cover.
+  if Sidebar and S.mode == "map" and Sidebar.isOpen(S) then
+    local pw = width - 44 * s
+    local dw = Sidebar.width(Kit, pw)
+    Kit.blockRect = { 22 * s + pw - dw, contentY + 20 * s, dw, contentH - 38 * s }
+  end
+
   local panel = PANELS[S.tab]
   if panel then
     panel.draw(S, Kit, 22 * s, contentY + 20 * s,
@@ -881,7 +1434,112 @@ function App.draw()
   end
 
   drawStatusBar(0, height - statusH, width, statusH)
+  Kit.blockClicks = voxModal
+  Kit.blockRect = nil
+  -- The drawer, over the panel and under the species picker: it is modal to
+  -- the map and the picker is modal to it.
+  if Sidebar and S.mode == "map" then
+    Kit.blockRect = nil          -- its own layer answers for itself
+    Sidebar.draw(S, Kit, PANELS, 22 * s, contentY + 20 * s,
+      width - 44 * s, contentH - 38 * s)
+    Kit.blockClicks = voxModal
+  end
+
+  -- THE VOXEL TOOL'S POPUPS, over the drawer that opened them.
+  --
+  -- Drawn from inside the panel, they were laid out in the panel's PAGE -- and
+  -- since the drawer, that page is taller than the drawer and scrolls inside
+  -- it. So the class list centred itself in a page whose middle can be below
+  -- the bottom of the screen, and the half of it that fell outside the drawer
+  -- was clipped away. Here they are centred in the WINDOW and painted over
+  -- everything, and the shield comes down only for this layer.
+  if S.mode == "map" and PANELS.voxels and PANELS.voxels.drawDeferred then
+    Kit.blockClicks = false
+    PANELS.voxels.drawDeferred(S, Kit)
+  end
+  -- The voxel-source list, over the whole frame.  Its button is in the title
+  -- bar and the list drops out of it across the tab rail and the panel, so
+  -- "drawn last" is the only way it is on top -- Kit has no z-order.
+  -- THE ASSET LIBRARY, over everything: its button is in the title bar and the
+  -- list drops out of it across the tab rail, the panel and the drawer alike.
+  if S.mode == "map" and S.assetMenuOpen then
+    Kit.blockClicks = false
+    local okA, MapAssetPanel = pcall(require, "tools.map-editor.panels.AssetMenu")
+    if okA and type(MapAssetPanel) == "table" then
+      MapAssetPanel.draw(S, Kit)
+    end
+  end
+
+  -- THE EVENT BUILDER, over the frame like the asset library.
+  if S.mode == "map" and S.eventMenuOpen then
+    Kit.blockClicks = false
+    local okE, EventMenu = pcall(require, "tools.map-editor.panels.EventMenu")
+    if okE and type(EventMenu) == "table" and EventMenu.draw then
+      EventMenu.draw(S, Kit)
+    end
+  end
+
+  -- THE TILESET QUESTION, over even the asset library: it is modal, it was
+  -- raised by a click somewhere underneath, and until it is answered nothing
+  -- under it should be reachable.
+  if S.mode == "map" and S.tilesetAsk then
+    Kit.blockClicks = false
+    local okTP, TilesetPrompt = pcall(require,
+                                      "tools.map-editor.panels.TilesetPrompt")
+    if okTP and type(TilesetPrompt) == "table" and TilesetPrompt.draw then
+      TilesetPrompt.draw(S, Kit)
+    end
+  end
+
+  -- THE TRAINER PARTY, over the panels that raised it.
+  if S.mode == "map" and S.partyAsk then
+    Kit.blockClicks = false
+    local okPE, PartyEditor = pcall(require,
+                                    "tools.map-editor.panels.PartyEditor")
+    local okOB, ObjectsPanel = pcall(require,
+                                     "tools.map-editor.panels.Objects")
+    if okPE and type(PartyEditor) == "table" and PartyEditor.draw then
+      -- Written through the Objects panel's own `writeField`, so an added
+      -- NPC's team lands in the store beside its other fields rather than
+      -- only on the live table.
+      PartyEditor.draw(S, Kit,
+        (okOB and ObjectsPanel and ObjectsPanel.writeField) or function() end)
+    end
+  end
+
+  -- THE IMPORT RESULT, over everything: it is the answer to the last thing the
+  -- reader did, and until they have read it nothing under it should be
+  -- reachable.
+  if S.mode == "map" and S.importAsk then
+    Kit.blockClicks = false
+    local okIP, ImportPrompt = pcall(require,
+                                     "tools.map-editor.panels.ImportPrompt")
+    if okIP and type(ImportPrompt) == "table" and ImportPrompt.draw then
+      ImportPrompt.draw(S, Kit)
+    end
+    -- CLOSE ONLY THROUGH `App.close`, which carries the unsaved-map-edits
+    -- guard. The dialog asks; this is the only place that can answer, because
+    -- it is the only one with App in scope.
+    if S.importLeave then
+      S.importLeave = nil
+      App.close()
+    end
+  end
+
+  -- THE MANUAL, over everything else this mode draws. It is raised from the
+  -- title bar, it explains the things underneath it, and it is the one modal
+  -- that is useful while another is up -- so it is last.
+  if S.mode == "map" and S.helpOpen then
+    Kit.blockClicks = false
+    local okH, Help = pcall(require, "tools.map-editor.panels.Help")
+    if okH and type(Help) == "table" and Help.draw then Help.draw(S, Kit) end
+  end
+
   Kit.blockClicks = false
+  if S.mode == "map" and PANELS.preview and PANELS.preview.drawDeferred then
+    Kit.blockClicks = false
+    PANELS.preview.drawDeferred(S, Kit)
+  end
   SpeciesPicker.draw(S, Kit, width, height)
   Kit.endFrame()
   padDraw()
@@ -907,6 +1565,94 @@ function App.keypressed(key)
   -- A focused text field eats the keys it cares about (typing "s" into the
   -- map filter must not trigger Save).
   if Kit.keypressed(key) then return end
+  -- THE OPEN DRAWER TAKES THE KEY, and takes it whole. Its panel is what the
+  -- reader is looking at; letting the key fall through as well would pan the
+  -- map behind the coordinates being typed into it, which reads as the editor
+  -- being possessed rather than as a dispatch order. Escape closes the drawer
+  -- before it reaches the "clear the selection" branch below, because closing
+  -- what is in front of you is what Escape means.
+  -- The modifier is worked out HERE, above every branch that reads it. It used
+  -- to be computed further down, next to Save -- so the undo chord added above
+  -- it read a nil global, the condition was never true, and Ctrl-Z did nothing
+  -- at all with no error to show for it.
+  local mod = love.keyboard and love.keyboard.isDown
+    and (love.keyboard.isDown("lgui", "rgui")
+      or love.keyboard.isDown("lctrl", "rctrl"))
+
+  -- ESCAPE PUTS DOWN WHAT IS HELD, before the drawer or the selection sees it.
+  -- Closing what is in front of you is what Escape means, and an asset armed
+  -- from the title bar is in front of everything -- a click anywhere on the
+  -- map would otherwise drop a building.
+  if S.mode == "map" then
+    -- THE MANUAL IS ABOVE THE OTHER MODALS, in keys as in paint: it can be
+    -- raised while one of them is up, and escape has to close what is in
+    -- front of you rather than what is behind it.
+    if S.helpOpen then
+      local okH, Help = pcall(require, "tools.map-editor.panels.Help")
+      if okH and type(Help) == "table" and Help.keypressed
+         and Help.keypressed(S, key) then
+        return
+      end
+    end
+    -- The modal takes every key while it is up, escape included, so a stray
+    -- shortcut cannot act on the map behind an unanswered question.
+    if S.eventMenuOpen then
+      local okE, EventMenu = pcall(require,
+                                   "tools.map-editor.panels.EventMenu")
+      if okE and type(EventMenu) == "table" and EventMenu.keypressed
+         and EventMenu.keypressed(S, key) then
+        return
+      end
+    end
+    if S.partyAsk then
+      local okPE, PartyEditor = pcall(require,
+                                      "tools.map-editor.panels.PartyEditor")
+      if okPE and type(PartyEditor) == "table" and PartyEditor.keypressed
+         and PartyEditor.keypressed(S, key) then
+        return
+      end
+    end
+    if S.importAsk then
+      local okIP, ImportPrompt = pcall(require,
+                                       "tools.map-editor.panels.ImportPrompt")
+      if okIP and type(ImportPrompt) == "table" and ImportPrompt.keypressed
+         and ImportPrompt.keypressed(S, key) then
+        return
+      end
+    end
+    if S.tilesetAsk then
+      local okTP, TilesetPrompt = pcall(require,
+                                        "tools.map-editor.panels.TilesetPrompt")
+      if okTP and type(TilesetPrompt) == "table" and TilesetPrompt.keypressed
+         and TilesetPrompt.keypressed(S, key) then
+        return
+      end
+    end
+    local okA, AssetMenu = pcall(require, "tools.map-editor.panels.AssetMenu")
+    if okA and type(AssetMenu) == "table" and AssetMenu.keypressed
+       and AssetMenu.keypressed(S, key) then
+      return
+    end
+  end
+
+  -- UNDO BEFORE THE DRAWER. The drawer consumes every key it is given -- it
+  -- has to, or the arrows pan the map behind the coordinates being typed into
+  -- it -- so Ctrl-Z never reached the branch below while a tool was open,
+  -- which is exactly when somebody wants it. A modifier chord is not a key the
+  -- drawer's panel could have meant.
+  if History and S.mode == "map" and key == "z" and mod then
+    local shift = love.keyboard and love.keyboard.isDown
+      and love.keyboard.isDown("lshift", "rshift")
+    if shift then
+      S.status = History.redo(S) and "Redid" or "Nothing to redo"
+    else
+      S.status = History.undo(S) and "Undid" or "Nothing to undo"
+    end
+    return
+  end
+  if Sidebar and Sidebar.isOpen(S) and Sidebar.keypressed(S, PANELS, key) then
+    return
+  end
   if Kit.focus then
     if key == "escape" then Kit.blur() end
     return
@@ -914,29 +1660,76 @@ function App.keypressed(key)
   -- Save and Reload both touch the file on disk (Reload discards unsaved
   -- edits), so they need a modifier.  A bare letter is one stray keystroke
   -- away from a write, and the editor has no undo.
-  local mod = love.keyboard and love.keyboard.isDown
-    and (love.keyboard.isDown("lgui", "rgui")
-      or love.keyboard.isDown("lctrl", "rctrl"))
   if key == "escape" then
     S.editingMon = nil
     Ops.disarm(S)
     Ops.say(S, "Selection cleared")
   elseif key == "s" and mod then
     App.save()
-  elseif key == "r" and mod then
+  elseif key == "r" and mod and S.mode ~= "map" then
     App.reload()
   end
   if S.tab == "map" and MapBrowser.keypressed then
     MapBrowser.keypressed(S, key)
   end
+  -- and every other panel that wants keys. The map-editor panels each publish
+  -- `keypressed` -- Voxels pans the grid with the arrows, the list panels take
+  -- Delete -- and none of it ran, because this only ever dispatched to the map
+  -- tab. Reached only after Kit.keypressed has returned above, so a panel can
+  -- never steal a keystroke from a text field it is drawing.
+  local panel = PANELS[S.tab]
+  if panel and panel ~= MapBrowser and panel.keypressed then
+    panel.keypressed(S, key)
+  end
 end
 
 function App.wheelmoved(x, y)
   if not S then return end
+  -- The manual scrolls its own body and swallows the notch, so a section
+  -- longer than the card does not scroll the map behind it instead.
+  if S.mode == "map" and S.helpOpen then
+    local okH, Help = pcall(require, "tools.map-editor.panels.Help")
+    if okH and type(Help) == "table" and Help.wheelmoved
+       and Help.wheelmoved(S, y) then
+      return
+    end
+  end
+  -- THE ASSET LIBRARY OWNS THE WHEEL while it is up: it is drawn over the
+  -- whole window, so anything the notch reached underneath would be scrolling
+  -- something the reader cannot see.
+  if S.mode == "map" and S.assetMenuOpen then
+    -- A wheel over a modal scrolls nothing rather than scrolling the palette
+    -- behind it.
+    if S.tilesetAsk then return end
+    if S.eventMenuOpen then
+      local okE, EventMenu = pcall(require,
+                                   "tools.map-editor.panels.EventMenu")
+      if okE and type(EventMenu) == "table" and EventMenu.wheelmoved then
+        if EventMenu.wheelmoved(S, y) then return end
+      end
+    end
+    local okA, AssetMenu = pcall(require, "tools.map-editor.panels.AssetMenu")
+    if okA and type(AssetMenu) == "table" and AssetMenu.wheelmoved then
+      if AssetMenu.wheelmoved(S, y) then return end
+    end
+  end
+  -- and the notch, for the same reason: a list in the drawer must not scroll
+  -- the map underneath it instead of itself.
+  if Sidebar and Sidebar.isOpen(S) and Sidebar.wheelmoved(S, PANELS, y) then
+    return
+  end
   -- The map tab spends the wheel on zoom; every other tab routes it through
   -- Kit so whichever list the pointer is over takes it next draw (#595).
   if S.tab == "map" and MapBrowser.wheelmoved then
     MapBrowser.wheelmoved(S, y)
+    return
+  end
+  -- The map-editor panels scroll their own lists through their own offsets
+  -- rather than Kit's, so the notch has to reach them directly; without this
+  -- their lists simply stopped at whatever fitted on screen.
+  local panel = PANELS[S.tab]
+  if panel and panel.wheelmoved then
+    panel.wheelmoved(S, y)
     return
   end
   wheelY = wheelY + (y or 0)
@@ -944,7 +1737,7 @@ end
 
 function App.quit()
   if not S then return false end
-  if S.dirty then
+  if (S.mode == "map") and S.mapEditsDirty or S.dirty then
     -- simple: block quit once and set status; user saves or force-quits again
     if not S._quitArmed then
       S._quitArmed = true

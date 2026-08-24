@@ -1,178 +1,160 @@
-# Licence
+# Gen2Recomped — Source-Available License
 
-This project is licensed in **two parts**. `LICENSE` is the canonical text;
-this file is the same terms with the reasoning spelled out.
+**Version 1.1**
 
-| | What it covers | Terms |
-|---|---|---|
-| **Part A** | The Generation I engine this project was forked from, and every shared file since | **MIT**, unchanged, under its original authors' copyright |
-| **Part B** | The Generation II (Gold / Silver / Crystal) components written for this project | **Source-available**: read it, and write mods against it |
-
-Part A is the default. A file is Part B **only** if it appears in the
-[Part B file list](#part-b-file-list).
+Copyright © 2026 Cedric. All rights reserved.
 
 ---
 
-## Part A — MIT
+## 0. What this license is for
 
-Copyright 2026 BOIS CLUB GAMES, LLC — Generation I (Red/Blue/Yellow)
-recompilation, creation and code, and the engine this project is forked from
+This is a **source-available** license, not an open-source one. You may read the
+code, build it, and change it for your own use. You may **not** redistribute it
+or use it commercially.
 
-Copyright 2026 UNDERdecodedHD — Generation II additions to Part A files
-
-> Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
->
-> The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
->
-> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-
-**Why the Generation II work inside Part A files is also MIT.** Files like
-`src/battle/BattleState.lua`, `src/world/Player.lua` and `src/ui/OakSpeech.lua`
-came from the Generation I engine and merely gained Generation II branches.
-They are derivative works of MIT-licensed code, and splitting one file between
-two licences would leave the MIT obligations on the rest of it ambiguous. The
-whole file keeps the MIT grant.
+It covers the Gen2Recomped map editor, the editor shell it runs inside, the
+Gen 2 engine work, and every other file in this repository that was written for
+this project. It does **not** cover — and cannot cover — data extracted from a
+Pokémon cartridge. See [section 4](#4-what-this-license-does-not-cover-and-cannot).
 
 ---
 
-## Part B — Generation II components: source-available, mods only
+## 1. Covered files
 
-**Copyright © 2026 UNDERdecodedHD. All rights reserved.**
+**Everything in this repository that was written for this project is covered**,
+except what section 4 excludes. Coverage does not depend on a file carrying a
+notice, and it does not depend on a file appearing in the list below: a new file
+added tomorrow is covered the moment it exists.
 
-The files listed below are **not** covered by Part A. They are published in
-source form so that anyone can read them, understand how the Generation II
-support works, and write mods against it. That is the whole of the permission
-being given.
+That positive definition is deliberate. An enumerated path list is a list that
+goes stale — the map editor alone reaches 133 source files across nearly every
+directory under `src/`, and a licence that named some of them would be a licence
+with holes in exactly the places nobody thought to look.
 
-### You may
+The following are called out because they are the parts most likely to be
+argued about. **This list is illustrative, not exhaustive.**
 
-- **(a)** view, read and study the Part B source;
-- **(b)** run it, unmodified, as part of a distribution obtained from
-  UNDERdecodedHD, for your own use;
-- **(c)** modify your own copy locally — for private use, for debugging, or to
-  develop a mod under (d);
-- **(d)** use what you learn from (a) and (c), and the interfaces, hooks,
-  registries, data formats and file layouts Part B exposes, to **create, use
-  and distribute mods** that load alongside this project — including
-  commercially;
-- **(e)** quote short excerpts in bug reports, issues, pull requests,
-  documentation, reviews and discussion of this project.
+### The map editor
 
-The licence in (d) is **irrevocable for any mod already released**. A mod you
-publish does not stop being licensed if this document later changes.
+| Path | What it is |
+| --- | --- |
+| `tools/map-editor/` | the editor: edit store, panels, exporter, importer, 3D viewport, voxel classes, ROM map import |
+| `tools/save-editor/` | the shell it runs inside — window, widget kit, theme, panel host, save-side panels |
+| `src/import/AdoptedTileset.lua` | cross-cartridge tileset resolver; under `src/` only because a build ships `src/` and not `tools/` |
+| `tests/map_editor_*.lua` | the editor's regression suites |
 
-### You may not
+### The Gen 2 engine work
 
-Except as (d) and (e) allow:
+| Path | What it is |
+| --- | --- |
+| `src/import/RomExtractorGen2.lua` | the Gen 2 extractor |
+| `src/import/Gen2ScriptOps.lua` | Gen 2 script opcode tables |
+| `src/script/Gen2ScriptVM.lua` | the Gen 2 script virtual machine |
+| `src/script/Gen2Commands.lua` | Gen 2 command lowering |
+| `src/script/Gen2Flags.lua` | Gen 2 event-flag naming and display |
+| `src/script/Gen2Specials.lua` | Gen 2 `special` handlers |
+| `src/script/Gen2Daily.lua` | Gen 2 daily/weekly event clock |
+| `src/battle/Gen2AnimPlayer.lua` | Gen 2 battle animation player |
+| `src/render/TileRenderer.lua` | including the Gen 2 palette bakes and the borrowed-art paths |
+| `src/render/PaletteFX.lua`, `src/render/GBCFX.lua` | the colour modes and the SGB/GBC treatments |
+| `src/world/OverworldController.lua` | including the Gen 2 step, talk and event-tile paths |
+| `src/core/Data.lua` | including `publishGen2Palettes` and the map-editor overlay |
 
-1. copy, redistribute, publish, mirror, host or sublicense the Part B source,
-   or any substantial portion of it;
-2. distribute a build, port, fork or modified version of Part B, or any work
-   derived from it, paid or free;
-3. incorporate Part B, or any substantial portion of it, into another project
-   or product;
-4. sell, rent, licence or charge for access to Part B;
-5. remove or alter this notice, the file list, or the copyright notices in the
-   Part B files.
-
-A mod distributed under (d) may contain **only the code you wrote**. It must
-not bundle Part B source or a build of it, and it must not be Part B
-repackaged with changes. Naming Part B functions, hooks and data keys in order
-to work with them is expressly permitted and is not "a substantial portion".
-
-### Interoperability
-
-Nothing here restricts any act you are permitted by applicable law to perform
-regardless of licence terms — including decompilation or analysis for
-interoperability where your jurisdiction grants that right (for example
-Article 6 of EU Directive 2009/24/EC, or 17 U.S.C. § 1201(f) in the US).
-
-### Contributions
-
-Send a change to a Part B file and you licence that change to UNDERdecodedHD
-on the same terms as the rest of Part B, and confirm you have the right to do
-so. You keep the copyright in what you wrote.
-
-### No warranty
-
-Part B is provided "AS IS", without warranty of any kind, express or implied,
-including merchantability, fitness for a particular purpose and
-non-infringement. In no event shall the copyright holder be liable for any
-claim, damages or other liability arising from Part B or its use.
-
-All rights not expressly granted are reserved.
+Every other original file — `main.lua`, `conf.lua`, the rest of `src/`, the rest
+of `tools/`, `scripts/`, and the remaining tests — is covered on the same terms.
 
 ---
 
-## Part B file list
+## 2. What you may do
 
-Everything not listed here is Part A (MIT). A file is Part B only where it is
-wholly original Generation II work, which is why the shared engine files that
-merely gained Generation II branches are absent.
+Subject to sections 3, 4 and 5, you may:
 
-```
-src/battle/Gen2AnimPlayer.lua
-src/import/Gen2ScriptOps.lua
-src/import/RomExtractorGen2.lua
-src/pokemon/PicAnim.lua
-src/save_convert/Gen2Save.lua
-src/script/Gen2Commands.lua
-src/script/Gen2Daily.lua
-src/script/Gen2Flags.lua
-src/script/Gen2ScriptVM.lua
-src/ui/Gen2CardFlip.lua
-src/ui/Gen2Intro.lua
-src/ui/Gen2Slots.lua
+- **read, study and privately discuss** the covered files;
+- **run** them, and build them into a working copy for yourself;
+- **modify** them, and run your modified version, **for your own personal use**;
+- **keep private copies and backups** of the covered files and your changes;
+- **send your changes back** to the copyright holder — in which case you grant
+  them a perpetual, worldwide, royalty-free licence to use those changes in this
+  project.
 
-data/scripts/elms_lab.lua
-data/scripts/mr_pokemons_house.lua
-data/scripts/players_house1f.lua
-
-docs/CRYSTAL-INTRO.md
-```
-
-**Generated content is not licensed by this document at all.** Everything
-under `data/generated/` and `assets/generated/` is produced on the user's own
-machine from the user's own cartridge dump. It is not distributed with this
-software and nobody here claims it.
+> **"Personal use"** means use by you, on machines you control, for purposes that
+> are not commercial. Use inside an organisation, of any size, is not personal
+> use.
 
 ---
 
-## Third-party material — covered by neither part
+## 3. What you may not do
 
-`tools/rom_manifest_gold.json`, `tools/rom_manifest_silver.json` and
-`tools/rom_manifest_crystal.json` are symbol tables derived from the
-[pret](https://github.com/pret) disassemblies (pokegold, pokecrystal). They
-carry no original authorship of this project's and are deliberately **not** in
-Part B; they are reproduced with attribution only, and will be removed on
-request from their authors.
+Without prior written permission from the copyright holder, you may not:
 
-`data/palettes_gbc.lua` is derived from
-[pokered-gbc](https://github.com/Stewmath/pokered-gbc) by FroggestSpirit,
-Drenn, and Danny-E. `data/palettes_yellow.lua` is derived from the
-[pret/pokeyellow](https://github.com/pret/pokeyellow) disassembly. Neither
-upstream project publishes a licence, so those two files are reproduced with
-attribution only and are **not** relicensed by this document; they will be
-removed on request from their authors.
+- **distribute** the covered files, in source or compiled form, modified or not,
+  to anyone else — including by publishing a fork, a mirror, a patch set that
+  contains covered code, a package, or a build;
+- use them, or anything derived from them, for any **commercial purpose**,
+  including in a product or service you charge for, advertise against, or accept
+  donations for;
+- offer them to others as a **hosted or networked service**;
+- **sublicense, sell, rent or lend** them;
+- **remove, obscure or alter** any copyright notice, licence notice or
+  attribution;
+- use the copyright holder's name or the project's name to **endorse or promote**
+  anything derived from the covered files.
 
-`mobile/android/love/` vendors LÖVE for Android, SDL2, oboe, and LuaJIT, each
-under its own licence as shipped in that subtree.
-
-`mods/` holds separately authored mods, each under the licence in its own
-directory.
+Nothing here restricts anything you may do under applicable law regardless of
+this licence — fair dealing, fair use, or a right to decompile for
+interoperability that cannot be waived by contract in your jurisdiction.
 
 ---
 
-## Fan work notice
+## 4. What this license does not cover, and cannot
 
-This project is an unofficial fan work. It is not affiliated with, endorsed
-by, or sponsored by Nintendo, Creatures Inc., or GAME FREAK inc. Pokémon and
-all related names are their trademarks.
+This project reads data extracted from Pokémon game cartridges. That data —
+map layouts, tile art, sprites, text, palettes, music, and everything else
+derived from a ROM — belongs to **Nintendo, Creatures Inc. and GAME FREAK Inc.**
+It is **not the copyright holder's to license**, and nothing in this file grants
+you any right to it.
 
-No game ROM, ROM data, or copyrighted game asset is distributed with this
-software; a legally obtained cartridge dump supplied by the user is the only
-source of game content, and every byte of it stays on the user's machine.
+Excluded from this licence, and from any permission it gives:
 
-Nothing in Part B is a claim over Pokémon Gold, Silver or Crystal, over their
-data, or over any part of them. Part B claims only the original code written
-to read a cartridge the user already owns.
+- anything under `data/generated*/` or `assets/generated*/`, or any other
+  directory produced by importing a ROM;
+- any ROM image, cartridge dump, or save file;
+- any file whose contents were extracted or derived from a cartridge, wherever
+  it sits in the tree — including screenshots that render cartridge art, and a
+  mod's own extracted assets;
+- third-party code vendored into this repository, which keeps its own licence.
+
+To use this software you must supply your own legally obtained cartridge and
+extract your own data from it. The covered files are **tooling**; the cartridge
+content is not part of what is being licensed here.
+
+This project is not affiliated with, endorsed by, or sponsored by Nintendo,
+Creatures Inc. or GAME FREAK Inc. Pokémon and all related names are their
+trademarks.
+
+---
+
+## 5. No warranty, no liability
+
+THE COVERED FILES ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS
+FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE COPYRIGHT
+HOLDER BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
+COVERED FILES OR THE USE OR OTHER DEALINGS IN THEM.
+
+---
+
+## 6. Termination
+
+Your rights under this licence end automatically if you breach it. They are
+reinstated if you cure the breach within 30 days of becoming aware of it, unless
+the copyright holder has already notified you of the breach — in which case
+reinstatement requires their written agreement.
+
+---
+
+## 7. Asking for more
+
+Permission beyond this licence — to redistribute, to fork publicly, to use
+commercially — is available by asking the copyright holder in writing.

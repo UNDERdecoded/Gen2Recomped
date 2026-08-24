@@ -82,6 +82,14 @@ TextBox.TOKENS = {
   PLAYER = function(game) return game.save.player.name or "RED" end,
   RIVAL = function(game) return game.save.player.rival or "BLUE" end,
   RAM = function(game, arg)
+    -- polished addresses the player through TX_RAM rather than a dedicated
+    -- control char, so these two are dialogue-critical: without them the
+    -- name token fell through to the shared string buffer, and every NPC
+    -- who addressed the player used the last buffered item name instead --
+    -- "so, ULTRA BALL!".
+    if arg == "wPlayerName" then return game.save.player.name or "RED" end
+    if arg == "wRivalName" then return game.save.player.rival or "SILVER" end
+    if arg == "wTrendyPhrase" then return game.trendyPhrase or "COOL" end
     if arg == "wStringBuffer" then return game.stringBuffer end
     -- Gen2's text_ram splices wStringBuffer1..5 into the middle of a line,
     -- and the three script-addressable ones carry DIFFERENT things at the
@@ -192,6 +200,83 @@ function TextBox.paginate(text, maxCols)
   end
   pages.contBefore = contBefore
   return pages
+end
+
+-- PLAIN PROSE -> THE MARKED-UP TEXT THE CARTRIDGE WOULD HAVE HAD.
+--
+-- Cartridge text arrives carrying its own layout: `\n` starts the second
+-- line, `\f` ends a page and waits for A. Text an author typed in the map
+-- editor carries none of that -- it is a sentence -- so `paginate` wrapped it
+-- to the box width and put every one of the resulting lines on a SINGLE page.
+-- A page with ten lines does not wait; it scrolls them past and closes. The
+-- report was "the text box just runs to the end without me pressing A", which
+-- is exactly that.
+--
+-- So the layout is put back. The wrapping is `paginate`'s own -- called here
+-- rather than reimplemented, because it measures in PIXELS against the font
+-- actually loaded (a mod's variable-advance font wraps differently) and a
+-- second copy that counted characters would disagree with the box it is
+-- wrapping for.
+--
+-- TWO LINES A PAGE, which is what the window shows. Not three with a scroll:
+-- the ROM's own authored text is written two lines at a time, and a box that
+-- scrolled a line away before the reader pressed anything is the bug being
+-- fixed, not a smaller version of it.
+--
+-- THE AUTHOR'S OWN BREAKS ARE KEPT. A blank line between paragraphs becomes a
+-- page break, and a single newline starts a new line -- so someone who laid
+-- their dialogue out deliberately gets what they laid out, and someone who
+-- typed one long sentence gets it wrapped for them.
+function TextBox.fromProse(text, maxCols)
+  if type(text) ~= "string" or text == "" then return text end
+  -- Already marked up: leave it exactly alone. Cartridge text comes through
+  -- here too by way of the same call sites, and re-paginating it would move
+  -- breaks its author chose.
+  if text:find("[\f\v]") then return text end
+
+  -- THE AUTHOR'S OWN BREAKS ARE UNITS, not suggestions.
+  --
+  -- A single newline is a line break -- the ROM's `\n` means exactly that --
+  -- so each typed line is wrapped on its own and its pieces stay in order. A
+  -- BLANK line ends the page, which is how anyone lays out dialogue without
+  -- being taught a markup.
+  --
+  -- The alternative -- reflowing everything into one paragraph -- was the
+  -- first cut, and it silently discarded a layout the author had chosen. Being
+  -- friendlier to someone who typed one long line is not worth overriding
+  -- someone who typed three short ones deliberately.
+  local blocks, current = {}, {}
+  for line in (text .. "\n"):gmatch("(.-)\n") do
+    if line:match("^%s*$") then
+      if #current > 0 then blocks[#blocks + 1] = current; current = {} end
+    else
+      current[#current + 1] = (line:gsub("^%s+", ""):gsub("%s+$", ""))
+    end
+  end
+  if #current > 0 then blocks[#blocks + 1] = current end
+  if #blocks == 0 then return text end
+
+  local pages = {}
+  for _, block in ipairs(blocks) do
+    local wrapped = {}
+    for _, line in ipairs(block) do
+      -- `paginate` on a break-free string yields one page holding every
+      -- wrapped line, which is precisely the list this wants. Called rather
+      -- than reimplemented: it measures in PIXELS against the font actually
+      -- loaded, and a second copy counting characters would disagree with the
+      -- box it is wrapping for.
+      for _, piece in ipairs(TextBox.paginate(line, maxCols)[1] or { line }) do
+        wrapped[#wrapped + 1] = piece
+      end
+    end
+    local i = 1
+    while i <= #wrapped do
+      local a, b = wrapped[i], wrapped[i + 1]
+      pages[#pages + 1] = b and (a .. "\n" .. b) or a
+      i = i + 2
+    end
+  end
+  return table.concat(pages, "\f")
 end
 
 function TextBox:currentLine()

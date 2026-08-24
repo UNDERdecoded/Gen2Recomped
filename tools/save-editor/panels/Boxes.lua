@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped Map Editor License: you may read,
+-- build and privately modify this file; you may not redistribute it or use it
+-- commercially. See LICENSE at the repository root. Cartridge-derived data is
+-- not covered and is not the copyright holder's to license.
+
 -- Boxes panel: the 12 PC boxes as a real grid rather than the old 20-row
 -- text list.  Three columns:
 --   box strip   which boxes have room, so you can see where a deposit lands

@@ -1,3 +1,9 @@
+-- Copyright (c) 2026 Cedric. All rights reserved.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
+
 -- Loads generated data from either the private first-boot cache or the
 -- optional source-tree developer build.
 
@@ -239,12 +245,32 @@ function Data:publishGen2Palettes()
   local any = false
   for _, tileset in pairs(tilesets) do
     if type(tileset) == "table" then
-      if tileset.tilePalettes == nil and type(tileset.palMap) == "table" then
-        local slots = {}
-        for index = 1, #tileset.palMap do
-          slots[index] = (tonumber(tileset.palMap[index]) or 0) + 1
+      -- REBUILT WHENEVER palMap IS LONGER, not only when this is the first
+      -- ask.  `tilePalettes` is a DERIVED COPY, and a copy taken once is a
+      -- cache with no invalidation: the map editor can now append art to a
+      -- tileset (MapEdits.extendAtlas), which grows palMap by a row per
+      -- borrowed tile -- and this table went on answering with the length it
+      -- had when the game booted.
+      --
+      -- The cost of that is not "no answer".  A tile past the end reads nil,
+      -- and every reader of this table treats a missing slot as slot 1, which
+      -- in a Gen 2 tileset is the TEXT palette -- flat grey.  So a borrowed
+      -- tile came out correct in the 2D view (which reads palMap directly) and
+      -- grey in the voxel one (which reads this), and the two disagreeing was
+      -- the whole of the bug.
+      --
+      -- Length, not identity: the editor rewrites palMap in place on the same
+      -- tileset table, so there is nothing else to compare.
+      local palMap = tileset.palMap
+      if type(palMap) == "table" then
+        local have = tileset.tilePalettes
+        if type(have) ~= "table" or #have < #palMap then
+          local slots = {}
+          for index = 1, #palMap do
+            slots[index] = (tonumber(palMap[index]) or 0) + 1
+          end
+          tileset.tilePalettes = slots
         end
-        tileset.tilePalettes = slots
       end
       if gen2PaletteRows(tileset) then any = true end
     end
@@ -766,6 +792,102 @@ local function loadModule(dir, name)
   return pcall(require, "data.generated." .. name)
 end
 
+-- MAP EDITOR OVERLAY, applied LAST and over the top.
+--
+-- The editor never writes into data/generated_* -- that tree is rebuilt from
+-- the cartridge on every import, so an edit stored there would be destroyed by
+-- the next one, silently. It keeps its patches in the save directory and they
+-- are laid over whatever the load produced, which is what lets a re-import
+-- replace the base and keep the edits.
+--
+-- A METHOD, BECAUSE IT HAS TO RUN TWICE. See Game:load: mods load AFTER this
+-- data does, and a content mod may patch the very maps the editor has edits
+-- for -- which is not hypothetical, it is what a map pack exported from this
+-- editor and installed back into it does by construction. `maps:patch`
+-- replaces the def's `objects` wholesale with the snapshot taken at export, so
+-- an NPC added after that export was applied here, overwritten there, and gone
+-- with every step of the process reporting success.
+--
+-- The working copy wins. A mod is published content and the edit store is what
+-- the reader is editing RIGHT NOW; when the two describe the same map, the one
+-- they can still see and change is the one that should be on screen.
+--
+-- Wrapped whole: a malformed edit file must not be able to stop the game
+-- booting. The worst case is the edits do not apply and the log says so.
+function Data:applyMapEditorOverlay(why)
+  local okEdits, applied, stale = pcall(function()
+    local ME = require("tools.map-editor.MapEdits")
+    local store = ME.load()
+    local game = require("src.core.GameVersion").current
+    game = (type(game) == "function" and game()) or game
+    -- self.tilesets too: a per-cell tile edit mints a block INTO a tileset,
+    -- and a map block patch that names one resolves to a number only after
+    -- that append has run. Passing only the maps left every such edit
+    -- unresolved and silently dropped.
+    -- self.sprites too: a sheet the editor imported has to be on
+    -- `data.sprites` before any map's objects resolve, or every NPC using it
+    -- falls through NPC.resolveSpriteDef to SPRITE_RED and the import looks
+    -- like it never happened.
+    -- THE KEY THIS READS UNDER, AND THE KEYS THE FILE ACTUALLY HAS.
+    --
+    -- These are two different variables set on two different code paths -- the
+    -- editor files edits under the version the launcher handed IT, and this
+    -- reads `GameVersion.current`, which defaults to "red" and only moves when
+    -- something calls `set`. When they disagree the save worked, the load
+    -- worked, `applyAll` found no bucket, and the reader's NPC is simply not
+    -- in the world with nothing anywhere saying why.
+    --
+    -- Logged whenever the store has anything at all, so the comparison is
+    -- there to be made rather than inferred from a zero.
+    pcall(function()
+      local keys = {}
+      for key, g in pairs(store.games or {}) do
+        local maps, added = 0, 0
+        for _, m in pairs(g.maps or {}) do
+          maps = maps + 1
+          added = added + #((m and m.added) or {})
+        end
+        keys[#keys + 1] = string.format("%s(%d map/%d added)", key, maps, added)
+      end
+      -- Once, on the boot pass. The second pass reads the same file under the
+      -- same key and repeating it would just make the log harder to read.
+      if #keys > 0 and (why == nil or why == "boot") then
+        Logger.info("map editor: reading as '%s'; store holds %s",
+                    tostring(game or ""), table.concat(keys, ", "))
+        if (store.games or {})[tostring(game or "")] == nil then
+          Logger.warn("map editor: NOTHING IS FILED UNDER '%s' - the edits in "
+            .. "this store belong to another game, so none of them will apply",
+            tostring(game or ""))
+        end
+      end
+    end)
+    local n, stale = ME.applyAll(store, tostring(game or ""), self.maps,
+                                 self.tilesets, self.sprites)
+    -- WILD ENCOUNTERS ARE THEIR OWN DATASET, keyed by the same map ids but
+    -- not carried on a map def -- so they need their own pass. Folded in here
+    -- rather than into applyAll because applyAll's contract is "these maps and
+    -- these tilesets", and it is handed neither of the things this touches.
+    if type(self.encounters) == "table" and ME.applyWilds then
+      n = (n or 0) + (ME.applyWilds(store, tostring(game or ""),
+                                    self.encounters) or 0)
+    end
+    return n, stale
+  end)
+  if okEdits and (applied or 0) > 0 then
+    Logger.info("map editor: %d edit(s) applied (%s)", applied,
+                tostring(why or "boot"))
+    -- STALE EDITS ARE REPORTED, NEVER SWALLOWED. An edit the player made and
+    -- can no longer see is the one failure this whole overlay exists to avoid,
+    -- and after a re-import an object index really can stop existing.
+    for _, entry in ipairs(stale or {}) do
+      Logger.warn("map editor: stale edit -- %s", tostring(entry))
+    end
+  elseif not okEdits then
+    Logger.warn("map editor: edits not applied (%s)", tostring(applied))
+  end
+  return applied or 0
+end
+
 function Data:load()
   local dir = os.getenv("POKEPORT_DATA_DIR")
   for _, name in ipairs(MODULES) do
@@ -785,7 +907,12 @@ function Data:load()
     local ok, mod = loadModule(dir, name)
     self[name] = ok and mod or nil
     if not ok then
-      Logger.warn("optional data module '%s' missing (feature disabled)", name)
+      -- SAY WHY.  "missing" covered two very different failures: a file that
+      -- was never written, and a file that EXISTS but failed to load -- which
+      -- is how a constant-table overflow in map_scripts.lua read as a
+      -- missing optional feature instead of as the load error it was.
+      Logger.warn("optional data module '%s' unavailable (feature disabled): %s",
+                  name, tostring(mod))
     end
   end
   -- before the mod loader runs: the deep registries fold over these
@@ -797,6 +924,8 @@ function Data:load()
   local pristine = {}
   self._pristineKeys = pristine
   for key in pairs(self) do pristine[key] = true end
+  self:applyMapEditorOverlay("boot")
+
   Logger.info("generated data loaded (%d maps, %d species, %d moves)",
               (function() local n = 0 for _ in pairs(self.maps) do n = n + 1 end return n end)(),
               (function() local n = 0 for _ in pairs(self.pokemon) do n = n + 1 end return n end)(),
@@ -830,6 +959,10 @@ end
 -- mod merge created, then re-require the generated modules so base records
 -- return to their on-disk values even where a mod edited them in place
 function Data:reloadGenerated()
+  -- Gen2Commands caches field.objectScriptBase; a reload can change it
+  pcall(function()
+    require("src.script.Gen2Commands").g2ResetObjectBase()
+  end)
   self:unloadGenerated()
   self:load()
 end

@@ -161,14 +161,51 @@ function ScriptRunner:exec(script, ctx)
         error(("'%s' is a foreground command; illegal in a parallel script")
           :format(name), 0)
       end
+      -- ONE BAD ROW MUST NOT KILL THE WHOLE SCRIPT.
+      --
+      -- An unknown command already degrades to warn-and-skip a few lines
+      -- above; a command that RAISES used to propagate out of the coroutine
+      -- and end the script where it stood. The cartridge has no such
+      -- mechanism -- a row there either does something or does nothing -- so
+      -- aborting is the less faithful of the two, and it is destructive in a
+      -- way that skipping is not: a cutscene that dies half way through
+      -- leaves the world in a state its own remaining rows were going to
+      -- resolve.
+      --
+      -- The S.S. Aqua is the case that showed it. Its granddaughter cutscene
+      -- marks the girl permanently gone near the start and sets the
+      -- "ship has docked" flag thirty-odd rows later; die in between and the
+      -- girl never comes back, the grandpa's fallback hands over the Metal
+      -- Coat without docking, and the sailor at the exit says "still en
+      -- route" forever -- a save with no way off the ship. Bill's Ecruteak
+      -- scene has the same shape: the `clearevent` that reveals him in
+      -- Goldenrod is row 27 of a cutscene that spawns and walks objects
+      -- first.
+      --
+      -- Nothing is hidden -- the failing command and row are logged -- this
+      -- only stops one broken row taking the save with it. `strict` mod
+      -- scripts still fail loudly, which is what their authors asked for.
       local jump
-      if Runtime.wantsHook("script.command") then
-        local args = { select(2, unpack(row)) }
-        jump = Runtime.call("script.command", function(hctx, _, hargs)
-          return fn(hctx, unpack(hargs))
-        end, ctx, name, args)
+      local function invoke()
+        if Runtime.wantsHook("script.command") then
+          local args = { select(2, unpack(row)) }
+          return Runtime.call("script.command", function(hctx, _, hargs)
+            return fn(hctx, unpack(hargs))
+          end, ctx, name, args)
+        end
+        return fn(ctx, select(2, unpack(row)))
+      end
+      if ctx.source and ctx.source.strict then
+        jump = invoke()
       else
-        jump = fn(ctx, select(2, unpack(row)))
+        local ok, result = pcall(invoke)
+        if ok then
+          jump = result
+        else
+          Logger.error("script: command '%s' failed at row %d (skipped): %s",
+                       tostring(name), pc, tostring(result))
+          jump = nil
+        end
       end
       if type(jump) == "string" then
         if jump == "end" then

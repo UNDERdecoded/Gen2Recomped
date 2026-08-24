@@ -23,6 +23,14 @@ CANONICAL_CRYSTAL10_SHA1 = "f4cd194bdee0d04ca4eac29e09b8e4e9d818c133"
 # Pokemon Prism, a Gold ROM hack. Recognised, but no manifest exists yet:
 # neither Gold's nor Crystal's symbol table applies to it (see prism-support).
 CANONICAL_PRISM_SHA1 = "752076692ae3387cf426ce5f51a98c6b60e8df6a"
+
+# Pokemon Polished Crystal 3.2.3, a Crystal hack built from the public
+# Rangi42/polishedcrystal source with rgbds v1.0.0. The build is
+# REPRODUCIBLE -- the Makefile's `@$(shell date '+%Y')` copyright does not
+# reach the image (verified: forcing the stamp to regenerate under a
+# different year changed 0 of 2097152 bytes) -- so this hash is the released
+# cartridge's, not one build's.
+CANONICAL_POLISHED_SHA1 = "6930b48af5844d373e3c9130f26d6dd1084cf4ed"
 ROM_BANK_SIZE = 0x4000
 
 KNOWN_ROM_SHA1 = {
@@ -34,6 +42,7 @@ KNOWN_ROM_SHA1 = {
     CANONICAL_CRYSTAL_SHA1: "crystal",
     CANONICAL_CRYSTAL10_SHA1: "crystal",
     CANONICAL_PRISM_SHA1: "prism",
+    CANONICAL_POLISHED_SHA1: "polishedcrystal",
 }
 
 
