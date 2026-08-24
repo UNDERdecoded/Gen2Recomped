@@ -210,6 +210,13 @@ end
 -- accepts it and dropping it here would hide the option entirely; the
 -- launcher shows it read-only rather than pretending it is not there (its
 -- editor is a keyboard applet the settings panel does not have).
+--
+-- `action` is the ONE deliberate divergence from ManagerState's OPTION_TYPES.
+-- An action row is a button whose press is delivered to the mod as an event,
+-- and out here no mod has run: there is nothing listening and nothing the
+-- press could reach. A row that draws as a button and does nothing when
+-- pressed is worse than a row that is not there, so the launcher omits them
+-- and the in-game manager -- where the mod is live -- is where they appear.
 LauncherMods.OPTION_TYPES = {
   toggle = true, choice = true, number = true, text = true,
 }
@@ -229,10 +236,11 @@ function LauncherMods.optionRows(row)
     -- A row with no key cannot be stored and a row of an unknown type cannot
     -- be drawn; both are dropped rather than rendered as a control that does
     -- nothing when pressed. The accepted set mirrors ManagerState's
-    -- OPTION_TYPES exactly -- `number` and `text` were missing here at first,
-    -- which would have hidden two kinds of option from the launcher that the
-    -- in-game manager shows, and left the player to conclude the launcher was
-    -- showing them a partial list without ever saying so.
+    -- OPTION_TYPES apart from `action` (see above) -- `number` and `text`
+    -- were missing here at first, which would have hidden two kinds of option
+    -- from the launcher that the in-game manager shows, and left the player
+    -- to conclude the launcher was showing them a partial list without ever
+    -- saying so.
     if type(r) == "table" and type(r.key) == "string" and r.key ~= ""
        and LauncherMods.OPTION_TYPES[r.type] then
       out[#out + 1] = r

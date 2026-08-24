@@ -148,7 +148,8 @@ function Loader.new(opts)
     mods = {}, loaded = {}, errors = {}, initialized = false,
     events = Events.new(), hooks = Hooks.new(), content = {}, assets = {},
     exports = {}, migrations = {}, order = {},
-    modSave = {}, modOptions = {}, optionSchemas = {}, imageCache = {},
+    modSave = {}, modOptions = {}, optionSchemas = {},
+    optionStatus = {}, imageCache = {},
     fs = (opts and opts.fs) or (love and love.filesystem),
     dev = dev,
   }, Loader)
@@ -609,6 +610,28 @@ function Loader:_api(mod)
         end
         return nil
       end,
+      -- Publish the live VALUE shown on an `action` row: "47/210", "DONE",
+      -- nil to clear. Display only -- nothing is stored, nothing is saved,
+      -- and a mod can only ever write under its own id -- so a long job
+      -- reports its progress on the very row that started it.
+      -- `text` may also be a FUNCTION returning the text, which is what a
+      -- running job wants: the manager calls it as it redraws, so progress
+      -- moves on screen without the mod polling a clock it may not have.
+      status = function(_, key, text)
+        assert(type(key) == "string" and key ~= "",
+          "options status needs a row key")
+        local bucket = loader.optionStatus[modId]
+        if not bucket then
+          bucket = {}
+          loader.optionStatus[modId] = bucket
+        end
+        if text == nil or type(text) == "function" then
+          bucket[key] = text
+        else
+          bucket[key] = tostring(text)
+        end
+        return bucket[key]
+      end,
     },
     commands = { register = function(_, verb, fn)
       return loader:_registerCommand(modId, verb, fn)
@@ -750,6 +773,7 @@ function Loader:_rollback(modId)
   self.hooks:removeOwner(modId)
   self.exports[modId] = nil
   self.optionSchemas[modId] = nil
+  self.optionStatus[modId] = nil
   self.migrations[modId] = nil
   self.modSave[modId] = nil
 end

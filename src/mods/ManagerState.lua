@@ -44,7 +44,13 @@ local PERMISSION_ROWS = {
   filesystem = { glyph = "!", text = "READS/WRITES FILES" },
 }
 
-local OPTION_TYPES = { toggle = true, choice = true, number = true, text = true }
+-- `action` is the odd one out: it stores nothing. A mod declares it to get a
+-- row the player can press -- REBUILD THE CACHE, PREBAKE, RESCAN -- and the
+-- press arrives back as the `mod.option_action` event. The row's VALUE is
+-- whatever the mod has published for that key in `loader.optionStatus`, which
+-- is how a long job reports "47/210" on the row that started it.
+local OPTION_TYPES = { toggle = true, choice = true, number = true,
+                       text = true, action = true }
 
 local function wrap(text, width)
   local lines = {}
@@ -976,6 +982,31 @@ function ManagerState:buildOptionRows(m, schema)
               if qty then self:setOption(modId, row.key, clamp(qty)) end
             end,
           }))
+        end }
+    elseif row.type == "action" then
+      rows[#rows + 1] = { id = row.key, label = row.label or row.key,
+        value = function()
+          local loader = self.game.mods
+          local published = loader and loader.optionStatus
+            and loader.optionStatus[modId] and loader.optionStatus[modId][row.key]
+          -- A FUNCTION is the useful shape for a running job: the row is
+          -- redrawn every frame the menu is open, so a provider reports live
+          -- progress without the mod needing a tick of its own -- and a mod
+          -- settings screen is exactly where the world is not ticking.
+          if type(published) == "function" then
+            local okText, text = pcall(published)
+            published = okText and text or nil
+          end
+          if published ~= nil then return tostring(published) end
+          return tostring(row.action or "GO")
+        end,
+        activate = function()
+          local loader = self.game.mods
+          if loader and loader.events then
+            loader.events:emit("mod.option_action",
+              { mod = modId, key = row.key })
+          end
+          return true
         end }
     elseif row.type == "text" then
       rows[#rows + 1] = { id = row.key, label = row.label or row.key,
