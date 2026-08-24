@@ -662,43 +662,7 @@ jobs:
 
   # ------------------------------------------------------------------- msix
   msix:
-    name: Windows MSIX
-    needs: [version, desktop]
-    runs-on: windows-latest
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/download-artifact@v7
-        with:
-          name: windows-raw
-          path: dist/win
-
-      # build_msix.ps1 wants the unpacked folder that holds the .exe and its
-      # DLLs, which is what the win64 zip contains.
-      - name: Unpack the Windows build
-        shell: pwsh
-        run: |
-          Expand-Archive -Path dist/win/Gen2Recomped-win64.zip -DestinationPath dist/win -Force
-          Get-ChildItem dist/win
-
-      # Signing identity, in order of preference:
-      #
-      #   MSIX_PFX_BASE64 + MSIX_PFX_PASSWORD (repo secrets) -- ONE long-lived
-      #   certificate reused by every release.  A player imports the .cer once
-      #   and every future release installs.  This is the path you want.
-      #
-      #   -MakeCert (fallback) -- a brand-new self-signed certificate per run.
-      #   The package installs, but only after trusting a DIFFERENT certificate
-      #   for every single release, which is not something to ask of players.
-      #
-      # -OutFile is passed explicitly either way, because build_msix.ps1's
-      # DEFAULT name is "$DisplayName-$Version.msix" AFTER it normalises the
-      # version to MSIX's mandatory four parts: -Version 0.1.0 produced
-      # Gen2Recomped-0.1.0.0.msix while this workflow staged
-      # Gen2Recomped-0.1.0.msix.  Naming it here keeps the manifest's four-part
-      # version and the release asset's three-part name independent.
-      - name: Build MSIX
+       - name: Build MSIX
         shell: pwsh
         env:
           MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
@@ -710,49 +674,52 @@ jobs:
           $src = 'dist/win/Gen2Recomped-win64'
 
           if ($env:MSIX_PFX_BASE64) {
-            # RUNNER_TEMP, not the workspace: the .pfx must never be reachable
-            # by a later step that globs the tree into an artifact.
             $pfx = Join-Path $env:RUNNER_TEMP 'msix-signing.pfx'
-            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:MSIX_PFX_BASE64))
-            $pw = if ([string]::IsNullOrEmpty($env:MSIX_PFX_PASSWORD)) {
+
+            # Strip whitespace/newlines that the GitHub UI or clipboard often insert
+            $b64 = ($env:MSIX_PFX_BASE64 -replace '\s', '')
+            $pwdStr = if ($null -eq $env:MSIX_PFX_PASSWORD) { '' } else { $env:MSIX_PFX_PASSWORD.Trim() }
+
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($b64))
+
+            $bytes = [IO.File]::ReadAllBytes($pfx)
+            Write-Host "PFX size: $($bytes.Length) bytes"
+            Write-Host "PFX header: $([BitConverter]::ToString($bytes[0..([Math]::Min(3, $bytes.Length-1))]))"
+            Write-Host "Password length (after trim): $($pwdStr.Length)"
+
+            $pw = if ([string]::IsNullOrEmpty($pwdStr)) {
               New-Object System.Security.SecureString
             } else {
-              ConvertTo-SecureString -String $env:MSIX_PFX_PASSWORD -Force -AsPlainText
+              ConvertTo-SecureString -String $pwdStr -Force -AsPlainText
             }
+
             try {
+              # Fail early with a clearer error before build_msix.ps1
+              try {
+                $null = Get-PfxData -FilePath $pfx -Password $pw
+                Write-Host "PFX opens with provided password OK"
+              } catch {
+                Write-Host "Get-PfxData failed: $($_.Exception.Message)"
+                try {
+                  $null = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+                    $pfx, $pwdStr,
+                    [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+                  )
+                  Write-Host "X509Certificate2 open OK"
+                } catch {
+                  throw "Cannot open PFX (wrong password or not a PKCS#12 file). Inner: $($_.Exception.Message)"
+                }
+              }
+
               ./scripts/build_msix.ps1 -Source $src -Version $v -OutFile $out `
                 -CertPath $pfx -CertPassword $pw
             } finally {
-              # Always, including on a failed build.
               Remove-Item -Force -ErrorAction SilentlyContinue $pfx
             }
           } else {
             Write-Host '::warning::MSIX_PFX_BASE64 secret is not set - signing with a throwaway certificate. Every release will require players to trust a NEW certificate. See docs/msix-signing.md.'
             ./scripts/build_msix.ps1 -Source $src -Version $v -OutFile $out -MakeCert
           }
-
-      - name: Stage MSIX
-        shell: bash
-        run: |
-          set -euo pipefail
-          v="${{ needs.version.outputs.version }}"
-          mkdir -p staged
-          cp "dist/msix/Gen2Recomped-${v}.msix" "staged/Gen2Recomped-${v}-windows.msix"
-          # The .cer is NOT optional.  A sideloaded MSIX installs only once its
-          # certificate is in the machine's Trusted People store, so shipping
-          # the package without it is shipping something nobody can install --
-          # it must fail the job, not warn.
-          cer="dist/msix/Gen2Recomped-${v}.cer"
-          [ -f "$cer" ] || { echo "::error::$cer missing; the package would be uninstallable"; exit 1; }
-          cp "$cer" "staged/Gen2Recomped-${v}-windows.cer"
-          ls -lh staged
-
-      - uses: actions/upload-artifact@v7
-        with:
-          name: dist-msix
-          path: staged/
-          if-no-files-found: error
-          retention-days: 1
 
   # ------------------------------------------------------------------- xbox
   xbox:
