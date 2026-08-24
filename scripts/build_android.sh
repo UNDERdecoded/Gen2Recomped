@@ -255,8 +255,16 @@ pack_love_archive() {
     # handler.  0.7.5 shipped no mods and boots; this restores that exactly.
     # Re-add only after the bundled mods are known to load on device, one at
     # a time (see mobile/ANDROID.md).
+    # tools/map-editor RIDES WITH tools/save-editor, which is not obvious from
+    # the names: the map editor is the save editor's shell (App.lua) plus a
+    # directory of panels it requires by path. Shipping one without the other
+    # gives Android a map editor whose every tool fails its pcall, so the rail
+    # prunes itself empty and the editor opens with nothing in it. This list
+    # was the only packer that had them apart -- scripts/pack_love.sh carries
+    # both, and its own header records that the map editor was missed there
+    # once already.
     (cd "$root" && zip -q -9 -r "$archive" \
-      main.lua conf.lua src data assets tools/save-editor \
+      main.lua conf.lua src data assets tools/save-editor tools/map-editor \
       $manifests \
       -x '*.DS_Store' -x '*/.git/*' -x '*/.DS_Store' \
       -x 'data/generated/*' -x 'assets/generated/*')
@@ -275,7 +283,7 @@ archive = pathlib.Path(sys.argv[2])
 manifest_words = [w for w in sys.argv[3].split() if w]
 # mods/ intentionally absent -- see the note on the zip path above.
 includes = ["main.lua", "conf.lua", "src", "data", "assets",
-            "tools/save-editor", *manifest_words]
+            "tools/save-editor", "tools/map-editor", *manifest_words]
 excludes = ["*.DS_Store", "*/.DS_Store", "*/.git/*", "data/generated/*", "assets/generated/*"]
 
 def excluded(rel: str) -> bool:

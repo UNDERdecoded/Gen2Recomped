@@ -118,6 +118,8 @@ if not okTiles then TilesPanel = nil end
 local okColl, CollisionPanel = pcall(require,
                                      "tools.map-editor.panels.Collision")
 if not okColl then CollisionPanel = nil end
+local okPacks, PacksPanel = pcall(require, "tools.map-editor.panels.Packs")
+if not okPacks then PacksPanel = nil end
 local okHistory, History = pcall(require, "tools.map-editor.History")
 if not okHistory then History = nil end
 local okSidebar, Sidebar = pcall(require, "tools.map-editor.Sidebar")
@@ -211,6 +213,29 @@ local function fileExists(path)
   return false
 end
 
+-- A NEW-GAME STUB THAT A MOD CANNOT TAKE THE TOOL DOWN WITH.
+--
+-- These two stubs ARE edited and saved, so `save.new_game` still runs over
+-- them: a total conversion reshaping spawn, party and money belongs in a save
+-- the user is about to write. But the handler is third-party code running
+-- inside an editor, and one that assumes a booted game -- reaching for a
+-- global the engine only sets during a real boot, say -- would otherwise stop
+-- the save editor from opening at all.
+local function newGameStub()
+  local SaveData = require("src.core.SaveData")
+  local ok, save = pcall(SaveData.newGame)
+  if ok and type(save) == "table" then return save end
+  print("save editor: a mod's save.new_game handler failed ("
+        .. tostring(save) .. ") -- falling back to the unhooked stub")
+  local ok2, bare = pcall(SaveData.newGame, { noHooks = true })
+  if ok2 and type(bare) == "table" then return bare end
+  return {
+    meta = { mods = {} },
+    player = {}, flags = {}, inventory = {}, party = {}, box = {},
+    pokedex = { seen = {}, owned = {} },
+  }
+end
+
 -- Apply a load attempt for `path` into the current State (S must exist).
 local function applyLoaded(path, statusVerb)
   statusVerb = statusVerb or "Loaded"
@@ -228,14 +253,14 @@ local function applyLoaded(path, statusVerb)
     -- real (corrupt) save, not a missing one. Editing a stub here is fine,
     -- but Save must stay disabled so we never clobber the corrupt file
     -- until the user fixes it and Reload succeeds.
-    S.save = require("src.core.SaveData").newGame()
+    S.save = newGameStub()
     S.status = "Corrupt save at " .. path .. " (" .. tostring(err) ..
       "),  Save disabled, use Reload after fixing the file"
     S.mapId = S.save.player.map
     S.loadError = true
     S.allowSave = false
   else
-    S.save = require("src.core.SaveData").newGame()
+    S.save = newGameStub()
     S.status = "No save at " .. path .. " (" .. tostring(err) ..
       "),  editing new game stub"
     S.mapId = S.save.player.map
@@ -357,7 +382,35 @@ function App.load(pathOverride, opts)
     -- A stub still exists because the shell's chrome reads `S.save` (the tab
     -- rail's counters, the status bar). It is never written: App.save branches
     -- to the edit store in this mode, and there is no path to write to.
-    S.save = require("src.core.SaveData").newGame()
+    --
+    -- AND NO MOD HOOKS. `SaveData.newGame` ends in
+    -- `Runtime.call("save.new_game", ...)`, so building this stub announced a
+    -- new playthrough to every installed mod -- from inside the map editor,
+    -- with no game booted and no world for a handler to reach. That is what
+    -- `mods/gen2online/main.lua:54: attempt to index global 'Gen2Compat'`
+    -- was: a new-game handler running somewhere its author could not have
+    -- expected, and taking the editor down on the way.
+    --
+    -- Safe here in a way it would not be at the two call sites above: that
+    -- stub is EDITED AND SAVED, so a total conversion's reshaping of spawn,
+    -- party and money belongs in it. This one is never written -- see the
+    -- paragraph above -- so it wants the shape and nothing else.
+    --
+    -- pcall as well. `noHooks` only silences OUR dispatch; a mod that has
+    -- replaced SaveData.newGame itself is still in this call, and the map
+    -- editor refusing to open is never the right answer to a third-party bug.
+    local SaveData = require("src.core.SaveData")
+    local okStub, stub = pcall(SaveData.newGame, { noHooks = true })
+    if not okStub then
+      print("map editor: new-game stub failed (" .. tostring(stub)
+            .. ") -- using a bare one")
+      stub = {
+        meta = { mods = {} },
+        player = {}, flags = {}, inventory = {}, party = {}, box = {},
+        pokedex = { seen = {}, owned = {} },
+      }
+    end
+    S.save = stub
     S.path = nil
     S.allowSave = false
     S.loadError = false
@@ -722,10 +775,74 @@ function App.update(dt)
   -- flowers) still needs ticking so the Map tab isn't static.
   TileRenderer.tick()
   padUpdate(dt or 0)
+  -- A mobile pack pick lands in the save dir seconds after the picker closes;
+  -- MapPacks owns both halves of that (see its beginAdd/consumePending).
+  if S then
+    local okMP, MapPacks = pcall(require, "tools.map-editor.MapPacks")
+    if okMP and type(MapPacks) == "table" then
+      pcall(MapPacks.consumePending, S)
+    end
+  end
 end
 
 function App.mousepressed(x, y, button)
   if button == 1 then mouseClicked = true end
+end
+
+-- ------------------------------------------------------------------- pinch
+-- TWO FINGERS, AND ONLY TWO FINGERS.
+--
+-- One finger already works and always has: SDL synthesizes mouse events for
+-- the primary touch, so a tap is a click and a drag is a drag, through the
+-- same (x, y, clicked) triple the rest of this editor runs on. Nothing here
+-- interferes with that -- these handlers record contact points and act on the
+-- SECOND one, which is the gesture a mouse cannot make and the wheel was
+-- standing in for.
+--
+-- Reported as a RATIO, not a distance: the two things it drives -- the flat
+-- view's `pvZoom` and the 3D camera's `pvDist` -- are both multiplicative, and
+-- a ratio is the one currency that means the same thing at every scale.
+local touches = {}
+local pinchPrev = nil
+
+local function pinchSpan()
+  local a, b = nil, nil
+  for _, pt in pairs(touches) do
+    if not a then a = pt elseif not b then b = pt else return nil end
+  end
+  if not (a and b) then return nil end
+  local dx, dy = a.x - b.x, a.y - b.y
+  local d = math.sqrt(dx * dx + dy * dy)
+  return d > 1 and d or nil
+end
+
+function App.touchpressed(id, x, y)
+  touches[id] = { x = x, y = y }
+  -- A new finger restarts the measurement rather than continuing it: the span
+  -- jumps when the pair changes, and feeding that jump in as a ratio is a
+  -- zoom lurch.
+  pinchPrev = pinchSpan()
+end
+
+function App.touchmoved(id, x, y)
+  local pt = touches[id]
+  if not pt then return end
+  pt.x, pt.y = x, y
+  local span = pinchSpan()
+  if not (span and pinchPrev) then pinchPrev = span return end
+  local ratio = span / pinchPrev
+  pinchPrev = span
+  -- Ignore the noise floor; fingers resting on glass jitter by a pixel or two
+  -- and a live ratio would drift the camera while nobody is moving.
+  if ratio > 0.999 and ratio < 1.001 then return end
+  if not S then return end
+  local panel = PANELS[S.tab]
+  if panel and panel.pinch then pcall(panel.pinch, S, ratio) end
+end
+
+function App.touchreleased(id, x, y)
+  touches[id] = nil
+  pinchPrev = pinchSpan()
 end
 
 function App.textinput(text)
@@ -962,46 +1079,19 @@ local function drawTitleBar(x, y, w, h)
 
     -- BRING ONE IN. Same shape as EXPORT and for the same reason: drawn
     -- disabled with a reason rather than vanishing when the module is absent.
-    local okI, ModImport = pcall(require, "tools.map-editor.ModImport")
-    if not (okI and type(ModImport) == "table" and ModImport.install) then
-      if Kit.button(importX, btnY, importW, btnH, "IMPORT",
+    -- ONE DOOR FOR BOTH JOBS. Pressing IMPORT opens the pack dialog rather
+    -- than a file picker: what is already installed and what you are about to
+    -- add are the same question asked twice, and the list nobody could find
+    -- was the one that answers "why does this map look wrong". ADD A PACK
+    -- inside it opens the platform's own picker.
+    if not (PacksPanel and PacksPanel.raise) then
+      if Kit.button(importX, btnY, importW, btnH, "PACKS",
                     { kind = "ghost", enabled = false }) then end
-    elseif Kit.button(importX, btnY, importW, btnH, "IMPORT",
+    elseif Kit.button(importX, btnY, importW, btnH, "PACKS",
                       { kind = "ghost" }) then
-      local okR, RomImporter = pcall(require, "src.import.RomImporter")
-      local pick = nil
-      if okR and type(RomImporter) == "table" and RomImporter.chooseFileByExt then
-        local okP, got = pcall(RomImporter.chooseFileByExt, { "zip" },
-                               "map pack")
-        pick = okP and got or nil
-      end
-      if not pick then
-        S.pvNotice = "no file chosen - a map pack is the .zip EXPORT writes"
-      else
-        local result, why = ModImport.install(pick)
-        -- A DIALOG, NOT A STATUS LINE.
-        --
-        -- What a map pack needs is a condition on everything the reader does
-        -- with it afterwards, and it is learned once -- here. Said in the
-        -- footer it shared a row with "8 x 8 cells - drag to pan" and read as
-        -- chrome. The failure still goes to the notice, because a failed
-        -- install has nothing to show a row per cartridge for.
-        if result then
-          local okIP, ImportPrompt =
-            pcall(require, "tools.map-editor.panels.ImportPrompt")
-          if okIP and type(ImportPrompt) == "table" then
-            ImportPrompt.raise(S, result)
-          end
-          S.pvNotice = "installed " .. tostring(result.id)
-        else
-          S.pvNotice = "import failed: " .. tostring(why)
-        end
-      end
-      S.status = S.pvNotice
-      pcall(function()
-        require("src.core.Logger").info("%s", tostring(S.pvNotice))
-      end)
+      PacksPanel.raise(S)
     end
+
     -- PUT THIS MAP BACK, beside SAVE because it is the other end of the same
     -- thing: one keeps the work, this throws it away.
     --
@@ -1373,6 +1463,20 @@ function App.draw()
     padActivate()
     mx, my = pad.x, pad.y
   end
+  -- WHOSE POINTER THIS IS, published for the one place that cannot use Kit's.
+  --
+  -- The map viewport polls love.mouse.isDown directly -- Kit records button 1
+  -- only, and the orbit and pan drags need the other two. That poll is right
+  -- for a real mouse and wrong for the virtual cursor: the pad's A button sets
+  -- `mouseClicked` for Kit and never touches the OS mouse, so isDown(1) is
+  -- false forever and the viewport's whole drag/select branch sits behind a
+  -- condition that can never be true. On a handheld the map simply did not
+  -- respond to the stick.
+  --
+  -- The viewport already has a select-on-press fallback written for exactly
+  -- this; it was gated on `love.mouse.isDown` merely EXISTING, which on
+  -- Android it does. This is the flag that gate actually wanted.
+  Kit.virtualPointer = (pad.active or not haveMouse) and true or false
   Kit.beginFrame(mx, my, mouseClicked, wheelY)
   mouseClicked = false
   wheelY = 0
@@ -1401,7 +1505,11 @@ function App.draw()
   -- control under the popup takes the same tap as the row on top of it.
   local voxModal = (S.mode == "map")
     and (S.voxClassPick ~= nil or S.voxProfPick ~= nil
-         or S.pvClassOpen == true or S.assetMenuOpen == true) or false
+         or S.pvClassOpen == true or S.assetMenuOpen == true
+         -- the pack dialog shields the same way, and has to: it carries a
+         -- REMOVE button, and a tap that reached the map underneath it would
+         -- be aimed at a control the reader cannot see
+         or S.packsOpen == true) or false
   Kit.blockClicks = (S.speciesPicker ~= nil) or voxModal
   Kit.blockRect = nil
 
@@ -1505,6 +1613,14 @@ function App.draw()
       PartyEditor.draw(S, Kit,
         (okOB and ObjectsPanel and ObjectsPanel.writeField) or function() end)
     end
+  end
+
+  -- THE PACK LIST, over the editor and UNDER the import result: installing
+  -- from inside it raises that dialog, and the answer to what you just did
+  -- belongs on top of the thing you did it in.
+  if S.mode == "map" and S.packsOpen and PacksPanel and PacksPanel.draw then
+    Kit.blockClicks = false
+    PacksPanel.draw(S, Kit)
   end
 
   -- THE IMPORT RESULT, over everything: it is the answer to the last thing the
@@ -1611,6 +1727,10 @@ function App.keypressed(key)
          and PartyEditor.keypressed(S, key) then
         return
       end
+    end
+    if S.packsOpen and PacksPanel and PacksPanel.keypressed
+       and PacksPanel.keypressed(S, key) then
+      return
     end
     if S.importAsk then
       local okIP, ImportPrompt = pcall(require,

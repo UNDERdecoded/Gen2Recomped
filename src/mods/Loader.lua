@@ -997,6 +997,42 @@ function Loader:load(data)
       end
     end
   end
+  -- WHICH MAP PACK WINS, where the player has said.
+  --
+  -- Two packs may patch the same map, and the fold's own answer is "whichever
+  -- loaded last" -- defined, but not a decision anybody made. The map editor
+  -- records a per-map choice in options.lua; this is where it takes effect, so
+  -- the game honours it without the editor having to be involved.
+  --
+  -- AFTER THE MERGE, before the freeze: `preferOwner` only changes how the ops
+  -- are read, so the affected ids have to be folded again and written home.
+  -- (It works after the freeze too -- it appends nothing -- but doing it here
+  -- keeps the merged table and the registry in step at every later reader.)
+  --
+  -- Wholly pcall-guarded and entirely optional: a build with no options file,
+  -- or a choice naming a pack that is no longer installed, must load exactly
+  -- as it did before this existed.
+  if data then
+    pcall(function()
+      local SaveData = require("src.core.SaveData")
+      local opts = SaveData.loadOptions(love and love.filesystem)
+      local wins = opts and opts.mapPackWins
+      if type(wins) ~= "table" then return end
+      local registry = self.content.maps
+      if not (registry and registry.preferOwner) then return end
+      local target = data.maps
+      for mapId, owner in pairs(wins) do
+        if type(mapId) == "string" and type(owner) == "string"
+           and registry.ops[mapId] then
+          registry:preferOwner(mapId, owner)
+          if type(target) == "table" then
+            target[mapId] = registry:get(mapId)
+          end
+        end
+      end
+    end)
+  end
+
   -- content freezes at the merge boundary; the event/hook buses stay open
   -- so mods may subscribe at any point for the life of the process
   for _, registry in pairs(self.content) do

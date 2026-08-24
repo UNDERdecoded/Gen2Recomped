@@ -139,6 +139,10 @@ function LauncherMods.deriveList(manifests, options)
       -- The row carries it so the panel can say which game and offer to go
       -- import it, instead of the player installing a map pack that crashes.
       requiredGames = m.requiredGames,
+      -- Declared map ids, for a panel that has to describe a pack BEFORE it
+      -- has loaded and can be asked. nil on anything exported before the
+      -- field existed.
+      maps = m.maps,
       missingGames = (function()
         if not (m.requiredGames and m.requiredGames[1]) then return nil end
         local okA, AT = pcall(require, "src.import.AdoptedTileset")

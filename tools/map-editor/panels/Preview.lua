@@ -1793,25 +1793,6 @@ local function blockCount(S, def)
   return n
 end
 
--- HOW MANY DOORS ELSEWHERE POINT AT THIS MAP.
---
--- Shown before a delete is confirmed, because it is the one consequence that
--- is not visible from the map being deleted. `Warp.resolve` survives a
--- destination that is gone -- it logs and lands the player back where they
--- were -- so this is not a crash, it is a set of doors that quietly stop
--- going anywhere, on maps the reader is not looking at.
-local function inboundWarps(S, mapId)
-  local n = 0
-  for id, d in pairs((S.data and S.data.maps) or {}) do
-    if id ~= mapId then
-      for _, w in ipairs(d.warps or {}) do
-        if w.destMap == mapId then n = n + 1 end
-      end
-    end
-  end
-  return n
-end
-
 function Preview.drawCellCard(S, Kit, x, y, w)
   local s = Kit.scale
   local fieldH = 28 * s
@@ -2556,7 +2537,13 @@ function Preview.draw(S, Kit, x, y, w, h)
     -- ALL THREE BUTTONS, not just the left one. App.mousepressed only records
     -- button 1, so a middle or right drag never reaches a panel through Kit --
     -- the state has to be polled here.
+    -- `Kit.virtualPointer` is the pad cursor (or a build with no mouse module
+    -- at all). love.mouse.isDown exists there and answers false forever, so
+    -- testing the module's presence let the poll branch swallow every press
+    -- the stick made -- see the note where App publishes this. The
+    -- select-on-press fallback below is what those devices want.
     local canPoll = love.mouse and love.mouse.isDown
+      and not Kit.virtualPointer
     -- THE SHIELD APPLIES HERE TOO, and this is the one place it was missed.
     --
     -- Everything else goes through `Kit.press`, which honours the block rect
@@ -2908,63 +2895,6 @@ function Preview.draw(S, Kit, x, y, w, h)
       ty = ty + 16 * s
     end
 
-    -- DELETING A MAP, where the map already is.
-    --
-    -- This existed only inside the WARPS tab's NEW MAP drawer -- so removing a
-    -- map meant opening the panel for making one -- which is indistinguishable
-    -- from the feature not existing. It belongs on the card that already says
-    -- what this map is.
-    --
-    -- ONLY A MAP THE EDITOR MADE. A cartridge map is rebuilt from the ROM on
-    -- every boot; `MapEdits.deleteMap` refuses one, and a button that silently
-    -- does nothing is worse than a sentence saying why.
-    --
-    -- ARMED, then confirmed. A map is dozens of edits and there is no undo for
-    -- losing one, so the first press only turns the button into a question --
-    -- and the question is asked with the count of what else breaks.
-    ty = ty + 6 * s
-    if def.editorCreated then
-      local armed = (S.pvDeleteArm == S.mapId)
-      local delH = 30 * s
-      if armed then
-        local inbound = inboundWarps(S, S.mapId)
-        Kit.text("small", inbound > 0
-          and string.format("%d warp(s) elsewhere point here and will go dead",
-                            inbound)
-          or "nothing else points at this map", toolX + pad, ty, PAL.muted)
-        ty = ty + 16 * s
-      end
-      if Kit.button(toolX + pad, ty, inner, delH,
-                    armed and "CONFIRM - DELETE FOR GOOD" or "DELETE THIS MAP") then
-        if armed then
-          local gone = S.mapId
-          MapEdits.deleteMap(store(S), game(S), gone)
-          S.data.maps[gone] = nil
-          S.mapId, S.pvCell, S.pvDeleteArm = nil, nil, nil
-          -- every list keyed on the map SET has to be re-sorted, and the one
-          -- on the WARPS tab is keyed on nothing else at all
-          S.warpMapIds, S.warpSelected = nil, nil
-          markEdited(S)
-          S.pvNotice = gone .. " deleted"
-        else
-          S.pvDeleteArm = S.mapId
-        end
-      end
-      ty = ty + delH + 6 * s
-      if armed then
-        if Kit.button(toolX + pad, ty, inner, delH, "KEEP IT") then
-          S.pvDeleteArm = nil
-        end
-        ty = ty + delH + 6 * s
-      end
-    else
-      Kit.text("small", "a cartridge map cannot be deleted", toolX + pad, ty,
-               PAL.muted)
-      ty = ty + 16 * s
-      Kit.text("small", "RESET MAP in the title bar undoes its edits",
-               toolX + pad, ty, PAL.muted)
-      ty = ty + 16 * s
-    end
   else
     Kit.text("small", "no map selected", toolX + pad, ty)
   end
@@ -3519,6 +3449,30 @@ function Preview.wheelmoved(S, dy)
     return
   end
   S.pvScroll = math.max(0, (S.pvScroll or 0) - (dy or 0))
+end
+
+-- PINCH, as a ratio (see App.touchmoved).
+--
+-- Deliberately the same three targets the wheel has, in the same order and
+-- with the same clamps -- a gesture that zoomed something the wheel does not
+-- would be a second, quieter set of rules to learn. Spreading the fingers
+-- (ratio > 1) magnifies, which is the direction every other application on
+-- the device uses.
+function Preview.pinch(S, ratio)
+  if not (type(ratio) == "number" and ratio > 0) then return end
+  if S.pvWorld then
+    local z = S._pvWorldZoom
+    if z then S._pvWorldZoom = math.max(0.4, math.min(24, z * ratio)) end
+    return true
+  end
+  if S.pv3DActive then
+    -- Distance is the INVERSE of magnification: pulling the fingers apart
+    -- brings the camera in.
+    S.pvDist = math.max(24, math.min(20000, (S.pvDist or 400) / ratio))
+    return true
+  end
+  S.pvZoom = math.max(1, math.min(4, (S.pvZoom or 2) * ratio))
+  return true
 end
 
 function Preview.keypressed(S, key)

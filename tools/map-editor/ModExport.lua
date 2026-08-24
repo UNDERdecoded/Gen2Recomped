@@ -1,8 +1,8 @@
 -- Copyright (c) 2026 Cedric. All rights reserved.
--- Source-available under the Gen2Recomped Map Editor License: you may read,
--- build and privately modify this file; you may not redistribute it or use it
--- commercially. See LICENSE at the repository root. Cartridge-derived data is
--- not covered and is not the copyright holder's to license.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
 
 -- Export the map editor's changes as a mod anyone can install.
 --
@@ -191,7 +191,7 @@ local function jsonString(s)
   return '"' .. s .. '"'
 end
 
-function ModExport.manifest(spec, requires)
+function ModExport.manifest(spec, requires, mapIds)
   local id = spec.id or "MY_MAP_EDITS"
   local rows = {
     '  "id": ' .. jsonString(id),
@@ -218,6 +218,27 @@ function ModExport.manifest(spec, requires)
   -- installing and watching it refuse -- which is honest, and still later than
   -- it needed to be. Here it is answerable on the install screen, before the
   -- zip is unpacked.
+  -- WHAT IS IN IT, readable without running it.
+  --
+  -- Same argument as required_games below, applied to the contents: the entry
+  -- file's MAPS table is the truth, and it only becomes readable once the mod
+  -- has loaded -- which is a boot away from installing. Listed here, the pack
+  -- dialog can say what a freshly installed pack contains instead of showing
+  -- the previous version's maps until a restart.
+  --
+  -- Sorted, so re-exporting an unchanged set produces an identical manifest
+  -- and a diff of two packs is about their content rather than table order.
+  if type(mapIds) == "table" and mapIds[1] then
+    local sorted = {}
+    for _, id in ipairs(mapIds) do sorted[#sorted + 1] = tostring(id) end
+    table.sort(sorted)
+    local parts = {}
+    for _, id in ipairs(sorted) do
+      parts[#parts + 1] = "    " .. jsonString(id)
+    end
+    rows[#rows + 1] = '  "maps": [\n' .. table.concat(parts, ",\n") .. "\n  ]"
+  end
+
   if type(requires) == "table" and requires[1] then
     local parts = {}
     for _, row in ipairs(requires) do
@@ -511,8 +532,11 @@ function ModExport.build(S, spec)
       edits, news, tostring(game))
   end
   local id = spec.id or "MAP_EDITS"
+  local mapIds = {}
+  for mapId in pairs(maps) do mapIds[#mapIds + 1] = mapId end
   local files = {
-    { name = "manifest.json", data = ModExport.manifest(spec, requires) },
+    { name = "manifest.json",
+      data = ModExport.manifest(spec, requires, mapIds) },
     { name = "main.lua",
       data = ModExport.main(spec, maps, encounters, sprites, tilesets,
                             requires) },

@@ -994,7 +994,72 @@ function Warps.draw(S, Kit, x, y, w, h)
     S.mapEditsDirty = not ok or nil
     S.warpNotice = ok and "saved" or ("save failed: " .. tostring(err))
   end
-  local listFlowH = (fy + footH + 20 * s) - y
+  fy = fy + footH + 8 * s
+
+  -- DELETING A MAP, BESIDE THE BUTTON THAT MAKES ONE.
+  --
+  -- This lived inside the NEW MAP drawer, which meant removing a map required
+  -- opening the panel for creating one -- and that drawer is not open by
+  -- default, so from outside the feature simply did not exist. It belongs on
+  -- the row it is the opposite of.
+  --
+  -- NOT on the MAP tool's own column: that column is covered by this drawer
+  -- and gone entirely on a narrow window, which is where it was put first and
+  -- why it still could not be found.
+  --
+  -- ONLY A MAP THE EDITOR MADE. A cartridge map is rebuilt from the ROM every
+  -- boot and `MapEdits.deleteMap` refuses one; a button that silently does
+  -- nothing is worse than a line saying why.
+  --
+  -- ARMED, then confirmed, with the count of what else breaks. A map is dozens
+  -- of edits and there is no undo for losing one.
+  if d and d.editorCreated then
+    local armed = (S.warpDeleteArm == S.mapId)
+    if armed then
+      local inbound = 0
+      for id2, other in pairs((S.data and S.data.maps) or {}) do
+        if id2 ~= S.mapId then
+          for _, w in ipairs(other.warps or {}) do
+            if w.destMap == S.mapId then inbound = inbound + 1 end
+          end
+        end
+      end
+      Kit.text("small", inbound > 0
+        and string.format("%d warp(s) elsewhere point here and will go dead",
+                          inbound)
+        or "nothing else points at this map",
+        listX + pad, fy + 4 * s, PAL.muted)
+      fy = fy + 20 * s
+    end
+    local half = (listW - 2 * pad - 8 * s) / 2
+    if Kit.button(listX + pad, fy, armed and half or (listW - 2 * pad), footH,
+                  armed and "CONFIRM - DELETE FOR GOOD" or "DELETE THIS MAP") then
+      if armed then
+        local gone = S.mapId
+        MapEdits.deleteMap(store(S), game(S), gone)
+        S.data.maps[gone] = nil
+        S.mapId, S.warpSelected, S.warpDeleteArm = nil, nil, nil
+        S.warpMapIds, S.newMapOpen = nil, false
+        markDirty(S)
+        S.warpNotice = gone .. " deleted"
+        return
+      end
+      S.warpDeleteArm = S.mapId
+    end
+    if armed then
+      if Kit.button(listX + pad + half + 8 * s, fy, half, footH, "KEEP IT") then
+        S.warpDeleteArm = nil
+      end
+    end
+    fy = fy + footH
+  else
+    Kit.text("small",
+      "a cartridge map cannot be deleted - RESET MAP undoes its edits",
+      listX + pad, fy + 4 * s, PAL.muted)
+    fy = fy + 18 * s
+  end
+
+  local listFlowH = (fy + 20 * s) - y
 
   -- WHERE THE LIST IS, for the wheel.  See Warps.wheelmoved: a notch over the
   -- list scrolls the list, and a notch over the EDITOR has to fall through to

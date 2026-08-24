@@ -78,6 +78,23 @@ function ModImport.install(path)
   local ok, id = LauncherMods.installZip(path, { replace = true })
   if not ok then return nil, tostring(id or "the pack could not be installed") end
 
+  -- SWITCHED ON, BECAUSE NOTHING ELSE HERE CAN.
+  --
+  -- `installZip` puts the tree on disk and stops there -- enabling is the
+  -- launcher's business, and the launcher has a list with a toggle per row.
+  -- The map editor has neither. So a pack imported from in here landed
+  -- disabled, never loaded, patched nothing, and the pack dialog then said --
+  -- correctly, and uselessly -- that no pack was patching any map. The reader
+  -- had installed something, been told it installed, and had no way from
+  -- where they were standing to make it do anything.
+  --
+  -- Explicit rather than relying on a default: `options.mods[id]` absent and
+  -- `= false` are different states to the launcher, and an import is an
+  -- unambiguous statement that this one is wanted.
+  if LauncherMods.setEnabled then
+    pcall(LauncherMods.setEnabled, id, true)
+  end
+
   -- WHAT IT NEEDS, ONE ROW PER CARTRIDGE, each answered independently.
   --
   -- A pack built from two ROMs where the reader has one of them is the case
