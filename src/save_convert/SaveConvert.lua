@@ -157,6 +157,16 @@ local function ensureData(gameVersion)
     crosswalks[key] = data
   end
   if codecFor(gameVersion) == Gen2Save then
+    -- WHERE this game keeps its save, before anything reads a byte of it.
+    -- Gold, Silver and Crystal share one map; a hack need not, and Prism does
+    -- not -- different WRAM anchor, bigger pockets, a bit-array TM shelf,
+    -- twenty badges, its own checksum position and its own check values.
+    -- Cheap and idempotent, so it is re-armed on every call rather than
+    -- cached: the codec is module-level state and the launcher can switch
+    -- games between two imports.
+    Gen2Save.setLayout(gameVersion or
+      (pcall(require, "src.core.GameVersion")
+       and require("src.core.GameVersion").get()) or nil)
     -- one game's charmap is not another's, and Gen2Save keeps a single
     -- module-level one, so re-arm it whenever the game changes
     if gen2CharmapKey ~= key then

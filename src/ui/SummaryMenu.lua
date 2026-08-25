@@ -158,12 +158,6 @@ function SummaryMenu.new(game, mon)
   return self
 end
 
--- StateStack:pop calls this; the Stadium rig is a live 3D actor with GPU
--- buffers, so hand it back rather than waiting for a collection.
-function SummaryMenu:exit()
-  require("src.render.StadiumArt").release(self.game, self)
-end
-
 function SummaryMenu:update(dt)
   local input = self.game.input
   if self.picAnim then self.picAnim:update(dt) end
@@ -228,18 +222,6 @@ end
 -- The pic in its 7x7-tile well, unmirrored: Gen2 dropped the flipped front
 -- pic Gen1's status screen used.
 function SummaryMenu:drawGen2Pic(x0, y0)
-  -- PKMN ART = STADIUM puts the player's own Stadium 2 model in the same well,
-  -- live and slowly turning.  It answers false whenever there is no model to
-  -- show -- mod absent or off, no cartridge imported, species not in the pack,
-  -- an egg -- and the cartridge pic below is drawn exactly as before.
-  if not self.isEgg
-      and require("src.render.StadiumArt").menuMode(self.game) == "stadium" then
-    local sx, sy = (x0 or 8), (y0 or 32)
-    if require("src.render.StadiumArt")
-        .drawInto(self.game, self, self.mon, sx, sy, 56, 56) then
-      return
-    end
-  end
   if not self.sprite then return end
   -- every animation frame is the pic's own size, so the well placement is
   -- measured off the still and only the texture swaps
@@ -381,10 +363,14 @@ function SummaryMenu:drawGen2PinkPage()
   Font.draw(Strings("TO"), 112, 112)
   printLevel(17, 14, math.min(100, (mon.level or 1) + 1))
 
-  -- FillInExpBar at (11,16), between the $40/$41 end caps at columns 10 and 19
+  -- FillInExpBar between the $40/$41 end caps, its RIGHT edge pinned at
+  -- column 18 and the bar growing leftward from there: eight tiles from
+  -- column 11 on Gold and Crystal, nine from column 10 on a cartridge with a
+  -- wider bar (stats_screen.asm's own `hlcoord 10, 16`).
   local zoned = require("src.render.PaletteFX").shader() ~= nil
-  HudTiles.tile(0x62, 80, 128)
-  HudTiles.drawExpBar(data, 11, 16, HudTiles.expBarPixels(data, mon), zoned)
+  local expTx = 19 - HudTiles.geometry().expBarTiles
+  HudTiles.tile(0x62, (expTx - 1) * 8, 128)
+  HudTiles.drawExpBar(data, expTx, 16, HudTiles.expBarPixels(data, mon), zoned)
   HudTiles.tile(HudTiles.capTile(1), 152, 128)
 end
 

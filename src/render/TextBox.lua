@@ -78,6 +78,16 @@ end
 -- RAM keeps pokered's stale-buffer semantics: give_item copies the item
 -- name into stringBuffer, like GiveItem -> CopyToStringBuffer
 -- (home/give.asm), and it stays set afterwards.
+-- The name a party slot answers to: its nickname, or the species' name.
+local function partyMonName(game, slot)
+  local save = game and game.save
+  local mon = save and save.party and save.party[slot]
+  if not mon then return nil end
+  if mon.nickname and mon.nickname ~= "" then return mon.nickname end
+  local species = game.data and game.data.pokemon and game.data.pokemon[mon.species]
+  return species and species.name or nil
+end
+
 TextBox.TOKENS = {
   PLAYER = function(game) return game.save.player.name or "RED" end,
   RIVAL = function(game) return game.save.player.rival or "BLUE" end,
@@ -107,6 +117,19 @@ TextBox.TOKENS = {
       local value = slot and slots and slots[slot]
       if value ~= nil then return value end
       return game.stringBuffer
+    end
+    -- PRISM'S POKEMON MODE addresses the mon the player IS by the party
+    -- nickname block: `AcquaTutorialFirstSoil_Text` is `text_from_ram
+    -- wPartyMonNicknames` followed by " eagerly devoured the soil.", and the
+    -- breeding lines name the two day-care mons the same way.  With no handler
+    -- the token dropped and the Rock Smash box in the Larvitar cave opened on
+    -- a space.
+    if arg == "wPartyMonNicknames" or arg == "wPartyMon1Nick"
+       or arg == "wBreedMon1" or arg == "wBreedMon1Nick" then
+      return partyMonName(game, 1)
+    end
+    if arg == "wBreedMon2" or arg == "wBreedMon2Nick" then
+      return partyMonName(game, 2)
     end
     if arg == "wBoxNumString" then return game.boxNumString end
     -- SendNewMonToBox / _SentToBoxText reads the deposited nick here

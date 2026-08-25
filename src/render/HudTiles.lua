@@ -57,6 +57,41 @@ local STATUS_PAGES = {
 
 local tiles, statusTiles
 
+-- HOW WIDE THE BARS ARE ON THIS CARTRIDGE.  Gold and Crystal are the defaults
+-- here; a hack that widened them says so in the generated font table (see
+-- RomExtractorGen2:gen2HudGeometry), and nothing else changes.
+--
+-- expBarEmptyTile is the tile that draws ZERO pixels of fill, with +n for n
+-- pixels.  Crystal has no such tile in its exp sheet -- it borrows the HP
+-- bar's $63 and $6B for the two ends and keeps only the seven partials, which
+-- is why the default path below special-cases 0 and 8.
+local HUD_DEFAULTS = {
+  hpBarTiles = 6,
+  -- GetHPPal's thresholds in whole pixels of a six-tile bar
+  hpBarGreenPixels = 27,
+  hpBarYellowPixels = 10,
+  expBarTiles = 8,
+}
+
+local function hudGeometry()
+  local font = require("src.core.Data").font
+  local hud = type(font) == "table" and font.hud or nil
+  if type(hud) ~= "table" then return HUD_DEFAULTS end
+  return {
+    hpBarTiles = hud.hpBarTiles or HUD_DEFAULTS.hpBarTiles,
+    hpBarGreenPixels = hud.hpBarGreenPixels or HUD_DEFAULTS.hpBarGreenPixels,
+    hpBarYellowPixels = hud.hpBarYellowPixels or HUD_DEFAULTS.hpBarYellowPixels,
+    expBarTiles = hud.expBarTiles or HUD_DEFAULTS.expBarTiles,
+    expBarEmptyTile = hud.expBarEmptyTile,
+  }
+end
+
+-- Exposed so the battle screen and the status screen place the bars where
+-- this cartridge's own HUD routine places them.
+function HudTiles.geometry()
+  return hudGeometry()
+end
+
 -- Build one code -> {img, quad} map from a page list.  `count` caps a page
 -- at the number of tiles the asm actually copies (the extracted sheets all
 -- carry 3 tiles; the status overlay uses fewer).  A mod's registered page
@@ -149,7 +184,7 @@ end
 -- red-channel-keyed shade shader then maps every pixel to color 3 = black.
 function HudTiles.drawHPBar(data, tx, ty, mon, barType, grayFill, segments)
   local x, y = tx * 8, ty * 8
-  segments = math.max(1, math.floor(segments or 6))
+  segments = math.max(1, math.floor(segments or hudGeometry().hpBarTiles))
   HudTiles.tile(0x71, x, y)
   HudTiles.tile(0x62, x + 8, y)
   local px = 0
@@ -159,8 +194,11 @@ function HudTiles.drawHPBar(data, tx, ty, mon, barType, grayFill, segments)
   local tint
   if not grayFill then
     local PaletteFX = require("src.render.PaletteFX")
-    local green = math.ceil(27 * segments / 6)
-    local yellow = math.ceil(10 * segments / 6)
+    -- the cartridge's own GetHPPal thresholds, scaled if the caller asked for
+    -- a wider bar than the hardware one (the widescreen battle layout does)
+    local geo = hudGeometry()
+    local green = math.ceil(geo.hpBarGreenPixels * segments / geo.hpBarTiles)
+    local yellow = math.ceil(geo.hpBarYellowPixels * segments / geo.hpBarTiles)
     local name = px >= green and "GREENBAR"
                  or px >= yellow and "YELLOWBAR" or "REDBAR"
     local colors = PaletteFX.pal(data, name)
@@ -179,7 +217,9 @@ function HudTiles.drawHPBar(data, tx, ty, mon, barType, grayFill, segments)
   HudTiles.tile(HudTiles.capTile(barType), x + 16 + segments * 8, y)
 end
 
--- How full the Gen2 exp bar is, in pixels out of 64 (GetExpBarPixelLength).
+-- How full the Gen2 exp bar is, in pixels -- out of EXP_BAR_LENGTH * 8, which
+-- is 64 on Gold and Crystal and 72 on a cartridge with a wider bar
+-- (CalcExpBar's `ld a, EXP_BAR_TILES * 8`).
 function HudTiles.expBarPixels(data, mon)
   local def = data.pokemon and data.pokemon[mon.species]
   if not def then return 0 end
@@ -190,7 +230,7 @@ function HudTiles.expBarPixels(data, mon)
   local span = next_ - base
   if span <= 0 then return 0 end
   local into = math.min(span, math.max(0, (mon.exp or 0) - base))
-  return math.floor(into * 64 / span)
+  return math.floor(into * hudGeometry().expBarTiles * 8 / span)
 end
 
 -- Gen2's exp bar (PlaceExpBar, engine/battle/core.asm): eight tiles written
@@ -199,7 +239,9 @@ end
 -- Gen2 sheet is remapped into pokered's slots -- and ExpBarGFX at $55
 -- supplies the seven partial widths (`add $54`).
 function HudTiles.drawExpBar(data, tx, ty, pixels, grayFill)
-  pixels = math.max(0, math.min(64, math.floor(pixels or 0)))
+  local geo = hudGeometry()
+  local tileCount = geo.expBarTiles
+  pixels = math.max(0, math.min(tileCount * 8, math.floor(pixels or 0)))
   local tint
   if not grayFill then
     -- Only the flat path gets a tint, exactly like drawHPBar.  Where a zone
@@ -210,14 +252,28 @@ function HudTiles.drawExpBar(data, tx, ty, pixels, grayFill)
     local colors = PaletteFX.pal(data, "EXPBAR")
     if colors then
       local c = colors[3]
-      tint = { math.min(1, c[1] / 170), math.min(1, c[2] / 170),
-               math.min(1, c[3] / 170), 1 }
+      -- THE EXP BAR'S FILL IS THE 1/3 GRAY, not the HP bar's 2/3.  Measured on
+      -- both cartridges' sheets, ExpBarGFX uses shade 0 (transparent paper),
+      -- shade 2 (85) for the fill and shade 3 for the outline -- it never
+      -- touches 170.  Dividing by the HP bar's 170 landed the blue at a third
+      -- of its brightness, and clamping at 1 then capped every channel at 85,
+      -- so #218CFF came out as a near-black navy.  Multipliers above 1 are
+      -- fine: LOVE does not clamp setColor, and black outline * anything is
+      -- still black.
+      tint = { c[1] / 85, c[2] / 85, c[3] / 85, 1 }
     end
   end
-  for i = 7, 0, -1 do
+  local empty = geo.expBarEmptyTile
+  for i = tileCount - 1, 0, -1 do
     local seg = math.min(8, pixels)
     pixels = pixels - seg
-    local code = seg >= 8 and 0x6B or (seg == 0 and 0x63 or 0x54 + seg)
+    local code
+    if empty then
+      -- the sheet carries its own ends: empty + n pixels, full at empty + 8
+      code = empty + seg
+    else
+      code = seg >= 8 and 0x6B or (seg == 0 and 0x63 or 0x54 + seg)
+    end
     HudTiles.tile(code, (tx + i) * 8, ty * 8, tint)
   end
 end

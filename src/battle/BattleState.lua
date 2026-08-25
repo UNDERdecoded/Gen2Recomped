@@ -1425,8 +1425,11 @@ function BattleState:stepExpBar()
   end
   local shown = self.expShown + 1
   -- a level-up moved the goal BACKWARDS: the ROM runs the bar off the right
-  -- end, wraps it to empty and keeps going, which is what a level looks like
-  if shown > 64 then shown = 0 end
+  -- end, wraps it to empty and keeps going, which is what a level looks like.
+  -- The wrap point is the BAR's length, not a constant: on a cartridge with a
+  -- nine-tile bar every target from 65 to 72 sits past a hardcoded 64, so the
+  -- fill wrapped to empty and set off again, forever.
+  if shown > HudTiles.geometry().expBarTiles * 8 then shown = 0 end
   self.expShown = shown
   self.expHold = BattleState.EXP_BAR_STEP_FRAMES - 1
   return true
@@ -6035,7 +6038,15 @@ local BATTLE_ZONES = {
 -- ExpBarPalette (LoadHPBar loads it beside the HP bar's), which the SGB
 -- packet had no fifth slot for -- so it rides on the end of the list,
 -- where it overdraws the catch-all zone the row would otherwise take.
-local GEN2_EXP_ZONE = { pal = 4, 10, 11, 17, 11 }
+--
+-- The zone is as wide as the bar: Prism's is nine tiles rather than Crystal's
+-- eight (_CGB_BattleColors fills `lb bc, 1, 9` at hlcoord 10,11 with BG
+-- attribute 4), so a fixed right edge left its last tile wearing the player's
+-- HP-bar colour.
+local function gen2ExpZone()
+  local tiles = require("src.render.HudTiles").geometry().expBarTiles
+  return { pal = 4, 10, 11, 9 + tiles, 11 }
+end
 
 -- the colorizer needs canvases + shaders + pixel access (headless
 -- stubs and stripped-down builds fall back to the flat colored path)
@@ -6187,7 +6198,7 @@ function BattleState:drawZonePass(src, sx, sy)
      and require("src.core.GameVersion").isGen2() then
     zones = {}
     for i, z in ipairs(BATTLE_ZONES) do zones[i] = z end
-    zones[#zones + 1] = GEN2_EXP_ZONE
+    zones[#zones + 1] = gen2ExpZone()
   end
   for _, z in ipairs(zones) do
     -- ...and a zone whose palette the pack does not name falls back to the
@@ -6570,17 +6581,27 @@ function BattleState:drawHUDs(slide)
               { hp = shownHP(self.player), stats = self.player.mon.stats },
               1, grayFill) -- wHPBarType 1: the $6D cap
     Font.draw(("%3d/%3d"):format(shownHP(self.player), self.player.mon.stats.hp), 88, 80)
-    hudTile(0x73, 144, 80)
-    hudTile(0x77, 144, 88)
+    -- The block's right edge follows the HP bar: two label tiles from column
+    -- 10, then the segments, then the cap -- column 18 with Crystal's
+    -- six-segment bar and 19 with Prism's seven, which is where Prism's own
+    -- DrawPlayerHUD writes them (core.asm:1110-1116).
+    local geo = HudTiles.geometry()
+    local edge = (12 + geo.hpBarTiles) * 8
+    hudTile(0x73, edge, 80)
     -- Gen2 spends row 11 on the exp bar instead of a plain underline: the
     -- $76 run IS the bar's empty state there, and FillInExpBar overwrites
-    -- hlcoord 10,11 with eight tiles of fill (core.asm DrawPlayerHUD).
+    -- hlcoord 10,11 with the bar's own tiles (core.asm DrawPlayerHUD).
     if require("src.core.GameVersion").isGen2() then
+      -- and where the exp sheet carries its own ends it carries the corner
+      -- the row closes on too -- Prism's $5E, nine tiles past the empty one
+      hudTile(geo.expBarEmptyTile and (geo.expBarEmptyTile + 9) or 0x77,
+              edge, 88)
       HudTiles.drawExpBar(barData, 10, 11,
                           self.expShown
                             or HudTiles.expBarPixels(barData, self.player.mon),
                           grayFill)
     else
+      hudTile(0x77, edge, 88)
       for i = 10, 17 do hudTile(0x76, i * 8, 88) end
     end
     hudTile(0x6F, 72, 88)

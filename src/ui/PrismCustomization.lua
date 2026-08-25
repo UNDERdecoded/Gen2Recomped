@@ -98,23 +98,74 @@ end
 --
 -- Cached per form: this runs every frame while the cursor moves, and decoding a
 -- pic per frame would be felt.
+-- The palette the CURRENTLY SELECTED choices make, as a 4-colour OBJ palette.
+-- Built off a player sheet's own gen2ObjPal so entry 0 and the outline come
+-- from the art rather than being invented here.
+function PrismCustomization:previewPalette()
+  local ok, PlayerPalette = pcall(require, "src.render.PlayerPalette")
+  if not ok then return nil end
+  local sprites = self.game.data and self.game.data.sprites or {}
+  local field = self.game.data and self.game.data.field
+  local form = field and field.playerForms and field.playerForms[self:formId()]
+  local walk = form and form.walk
+  local base = walk and sprites[walk] and sprites[walk].gen2ObjPal
+  if not base then
+    -- any player sheet will do for the two entries we are not choosing
+    local fallback = sprites.SPRITE_PLAYER0
+    base = fallback and fallback.gen2ObjPal
+  end
+  if not base then return nil end
+  -- the LIVE selections, not what is on the save: the whole point of the
+  -- preview is to show a choice before it is committed
+  local tone = self:tones()[self.skin]
+  local pretend = { player = { skinTone = self.skin, clothes = self.clothes } }
+  if not tone then pretend.player.skinTone = nil end
+  return PlayerPalette.of(self.game.data, pretend, base)
+end
+
 function PrismCustomization:formPic(id)
+  -- KEYED ON THE COLOURS AS WELL AS THE MODEL.
+  --
+  -- The cache used to hold one entry per form id, which is right while the
+  -- only thing that changes is which character you picked -- and wrong the
+  -- moment the picture depends on the skin tone and the outfit too. Dragging a
+  -- slider re-entered this, found the id already cached, and handed back the
+  -- picture baked with the previous mix, so the preview sat still while the
+  -- swatch beside it moved.
+  local colors, key = self:previewPalette()
+  local cacheKey = id .. "|" .. tostring(key or "-")
   self._pics = self._pics or {}
-  local hit = self._pics[id]
+  local hit = self._pics[cacheKey]
   if hit ~= nil then return hit[1], hit[2] end
   local field = self.game.data and self.game.data.field
   local forms = field and field.playerForms
   local form = forms and forms[id]
   local path = form and (form.intro or form.card or form.front)
   local img = nil
+  local trueColor = (form and form.trueColor) and true or false
   if path then
-    local ok, loaded = pcall(function()
-      return require("src.render.Assets").image(path)
-    end)
-    img = ok and loaded or nil
+    -- Full-colour art is already the finished picture and cannot be
+    -- re-palettised; four-shade art is exactly what the OBP bake is for, and
+    -- is what Prism's player pics are.
+    if colors and not trueColor then
+      local okBake, baked = pcall(function()
+        return require("src.render.SpriteRenderer").obpImage(path, colors, "prismcust:" .. cacheKey)
+      end)
+      img = okBake and baked or nil
+      -- a baked pic is full colour, so it must claim its cell out of the
+      -- shade-remap pass exactly like trueColor art does
+      if img then trueColor = true end
+    end
+    if not img then
+      local ok, loaded = pcall(function()
+        return require("src.render.Assets").image(path)
+      end)
+      img = ok and loaded or nil
+      trueColor = (form and form.trueColor) and true or false
+    end
   end
-  self._pics[id] = { img, (img and form and form.trueColor) and true or false }
-  return self._pics[id][1], self._pics[id][2]
+  self._pics[cacheKey] = { img, (img and trueColor) and true or false }
+  return self._pics[cacheKey][1], self._pics[cacheKey][2]
 end
 
 local function beep(self)
@@ -241,13 +292,31 @@ local function swatch(x, y, w, h, r, g, b)
   love.graphics.rectangle("line", x, y, w, h)
 end
 
+-- THE PANEL IS AS TALL AS THE SCREEN AND THE LABELS SIT UNDER THE PICTURE.
+--
+-- It used to be an 8-tile-high box with the character drawn at (12,1) and the
+-- three labels drawn at (12,1), (12,3) and (12,5) -- the same column, starting
+-- on the same row as the picture. A Prism player pic is 56x56, seven tiles
+-- square, so it covered all three of them: the panel showed "Po", "SK" and
+-- "SUI" with a trainer standing on top of the rest, which is what the report
+-- called overlapping.
+--
+-- Nothing here can be narrowed to fix that. The picture needs seven interior
+-- tiles and "SKIN TONE" needs nine, and seven plus nine plus a cursor column
+-- plus four box borders does not fit across twenty. So the two panels SHARE
+-- their divider column -- the menu is drawn first and 12 wide, this one starts
+-- on its last column and paints over it -- which buys back the tile that made
+-- the difference, and the labels move underneath the picture where there is
+-- all the room they need.
+--
+--   menu    tiles 0..11, interior 1..10   -- fits SKIN TONE at column 2
+--   divider tile 11, drawn by whichever box paints it last
+--   preview tiles 11..19, interior 12..18 -- exactly 56px for the pic
 function PrismCustomization:drawPreview()
-  -- the chosen character, with the chosen skin and clothes shown beside it
+  -- the chosen character, with the chosen skin and clothes shown below it
   local tone = self:tones()[self.skin]
-  Font.drawBox(11, 0, 9, 8)
+  Font.drawBox(11, 0, 9, 18)
 
-  -- the character itself, above its id. Drawn before the labels so the text
-  -- below stays legible if a pic is taller than its slot.
   local pic, picTrue = self:formPic(self:formId())
   if pic then
     local pw, ph = pic:getWidth(), pic:getHeight()
@@ -258,11 +327,11 @@ function PrismCustomization:drawPreview()
   end
 
   love.graphics.setColor(0, 0, 0, 1)
-  Font.draw(Strings(self:formId():upper()), 12 * 8, 8)
-  Font.draw(Strings("SKIN"), 12 * 8, 3 * 8)
-  Font.draw(Strings("SUIT"), 12 * 8, 5 * 8)
-  if tone then swatch(17 * 8, 3 * 8, 16, 8, tone.r, tone.g, tone.b) end
-  swatch(17 * 8, 5 * 8, 16, 8, self.clothes.r, self.clothes.g, self.clothes.b)
+  Font.draw(Strings(self:formId():upper()), 12 * 8, 9 * 8)
+  Font.draw(Strings("SKIN"), 12 * 8, 11 * 8)
+  Font.draw(Strings("SUIT"), 12 * 8, 13 * 8)
+  if tone then swatch(17 * 8, 11 * 8, 16, 8, tone.r, tone.g, tone.b) end
+  swatch(17 * 8, 13 * 8, 16, 8, self.clothes.r, self.clothes.g, self.clothes.b)
   love.graphics.setColor(1, 1, 1, 1)
 end
 
@@ -271,7 +340,10 @@ function PrismCustomization:draw()
   love.graphics.clear(1, 1, 1, 1)
   self:drawPreview()
 
-  Font.drawBox(0, 0, 11, 12)
+  -- One column wider and full height: at 11 the interior stopped at column 9
+  -- and "SKIN TONE", drawn from column 2, ran onto the frame itself. Full
+  -- height because the MODEL list is up to seven rows and reached row 15.
+  Font.drawBox(0, 0, 12, 18)
   love.graphics.setColor(0, 0, 0, 1)
   if self.mode == "category" then
     for i, id in ipairs(CATEGORIES) do

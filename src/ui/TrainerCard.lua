@@ -85,7 +85,11 @@ function TrainerCard.new(game, opts)
     end
     local marks = tryImage("assets/generated/trainer_card/gen2_badges.png")
     if marks then
-      self.marks = { img = marks, quads = quads16(marks, 16, 16, 0, 0) }
+      -- as many badges as the sheet holds, not a fixed sixteen: Prism's
+      -- carries twenty and the last four had no quad to draw with
+      local _, mh = marks:getDimensions()
+      self.marks = { img = marks,
+                     quads = quads16(marks, math.floor(mh / 16), 16, 0, 0) }
     end
   end
   local img = tryImage("assets/generated/trainer_card/badges.png")
@@ -143,8 +147,18 @@ function TrainerCard:update(dt)
   -- Gen2 pages the whole card, not just the badge grid: page 1 is the dex
   -- and play-time half (TrainerCard_Page1_PrintDexCaught_GameTime), pages 2
   -- and 3 the Johto and Kanto badges
-  local pages = self.gen2 and (hasKantoBadge(self.game) and 3 or 2)
-    or math.ceil(#Badges.list(self.game.data) / PER_PAGE)
+  -- Gold and Crystal have sixteen badges and gate the second badge page on
+  -- owning a Kanto one; a cartridge with its own set just needs as many pages
+  -- as its list fills.  Prism awards TWENTY, so a fixed two-or-three left the
+  -- last four unreachable.
+  local list = Badges.list(self.game.data)
+  local badgePages = math.max(1, math.ceil(#list / PER_PAGE))
+  local pages = badgePages + 1
+  if self.gen2 and #list <= 16 then
+    pages = hasKantoBadge(self.game) and 3 or 2
+  elseif not self.gen2 then
+    pages = badgePages
+  end
   -- never strand the view on a page that is no longer reachable
   if self.page >= pages then self.page = pages - 1 end
   -- TrainerCard_Page2_Joypad: d-left/d-right walk the badge pages

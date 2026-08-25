@@ -81,6 +81,9 @@ function Player.new(data, cx, cy, facing)
   -- paired with field.playerSprites.surfPikachu). rotated in at pose()
   -- when the SURF-mon is a Pikachu.
   self.surfPikachuSprite = SpriteRenderer.new(pickSpriteDef(data, surfPikaId), "player")
+  -- refreshForm above ran before surfSprite existed, so the surf sheet has not
+  -- been through refreshPalette yet; do the set again now they all exist.
+  self:refreshPalette(data)
   -- the ledge-hop shadow quarter-tile (gfx/overworld/shadow.png,
   -- LedgeHoppingShadow, engine/overworld/ledges.asm)
   local fx = data.field and data.field.overworldFx
@@ -222,10 +225,32 @@ function Player:refreshForm(data)
   -- The pose follows the character, so it is refreshed even when the walking
   -- sheets did not change (a rip that only produced Kris's fish art).
   self:refreshFishTiles(data)
-  if walkId == self.walkId and bikeId == self.bikeId then return end
-  self.walkId, self.bikeId = walkId, bikeId
-  self.sprite = SpriteRenderer.new(pickSpriteDef(data, walkId), "player")
-  self.bikeSprite = SpriteRenderer.new(pickSpriteDef(data, bikeId), "player")
+  if walkId ~= self.walkId or bikeId ~= self.bikeId then
+    self.walkId, self.bikeId = walkId, bikeId
+    self.sprite = SpriteRenderer.new(pickSpriteDef(data, walkId), "player")
+    self.bikeSprite = SpriteRenderer.new(pickSpriteDef(data, bikeId), "player")
+  end
+  -- ...and the COLOURS, every time, whether or not the sheets changed.
+  --
+  -- Prism's customiser mixes a skin tone and an outfit colour into the
+  -- player's OBJ palette (PlayerCust_SetPalettes), and changing either one
+  -- leaves the model -- and therefore the sheet ids -- exactly as they were.
+  -- Behind the early return this used to take, re-picking a colour refreshed
+  -- nothing at all: the choice was saved and the player kept walking around in
+  -- the palette they started with.
+  self:refreshPalette(data)
+end
+
+-- The player's mixed palette, pushed onto both sheets. A dataset that does not
+-- customise clears the override instead, so this is safe to call anywhere.
+function Player:refreshPalette(data)
+  local ok, PlayerPalette = pcall(require, "src.render.PlayerPalette")
+  if not ok then return end
+  local Game = require("src.core.Game")
+  local save = Game and Game.save
+  pcall(PlayerPalette.apply, self.sprite, data, save)
+  pcall(PlayerPalette.apply, self.bikeSprite, data, save)
+  pcall(PlayerPalette.apply, self.surfSprite, data, save)
 end
 
 function Player:position()
