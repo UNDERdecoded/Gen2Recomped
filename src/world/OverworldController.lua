@@ -529,23 +529,70 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   if Game.save.onBike and not self:bikeAllowed(mapId) then
     Game.save.onBike = false
   end
-  -- the Route 16/18 gate map scripts clear the Cycling Road's
-  -- BIT_ALWAYS_ON_BIKE every frame (scripts/Route16Gate1F.asm /
-  -- Route18Gate1F.asm `res BIT_ALWAYS_ON_BIKE`); entering the gate is
-  -- the walking exit from the forced-bike stretch
-  -- ...and an EMPTY imported list is not an answer, it is a gap.  The Gen 2
-  -- extractor writes `clearMaps = {}` unconditionally, and fieldValue returns
-  -- any non-nil data value rather than falling back -- so this loop ran zero
-  -- times on every Gen 2 game and the walking exit off the Cycling Road did
-  -- nothing at all.  A table with nothing in it says "nobody wrote this
-  -- down", so read the defaults instead.
-  local clearMaps = FieldDefaults.fieldValue(Game.data, "forcedMovement",
-                                             "clearMaps")
-  if type(clearMaps) ~= "table" or #clearMaps == 0 then
-    clearMaps = FieldDefaults.FIELD.forcedMovement.clearMaps
-  end
-  for _, m in ipairs(clearMaps or {}) do
-    if m == mapId then self:clearBikeFlags() break end
+  -- THE TWO GENERATIONS CLEAR THE CYCLING ROAD IN COMPLETELY DIFFERENT WAYS,
+  -- and treating Gen 2 like Gen 1 is why the bike would not come off.
+  --
+  -- GEN 1 keeps BIT_ALWAYS_ON_BIKE in a bit that SURVIVES a map change; it is
+  -- armed by the forced-bike TILE at the top of the road and cleared by the
+  -- gate maps' own scripts (scripts/Route16Gate1F.asm / Route18Gate1F.asm
+  -- `res BIT_ALWAYS_ON_BIKE`). Naming those maps is the whole mechanism, so
+  -- the list below is still exactly right there.
+  --
+  -- GEN 2 DOES NOT WORK LIKE THAT AT ALL. Both flags live in wBikeFlags, which
+  -- is RAM, and HandleNewMap wipes it on EVERY new map before any of that
+  -- map's callbacks get to speak (engine/overworld/warp_connection.asm):
+  --
+  --     HandleNewMap:
+  --         call ClearUnusedMapBuffer
+  --         call ResetMapBufferEventFlags
+  --         call ResetFlashIfOutOfCave
+  --         call GetCurrentMapSceneID
+  --         call ResetBikeFlags          <-- here
+  --         ld a, MAPCALLBACK_NEWMAP
+  --         call RunMapCallback
+  --
+  -- The Cycling Road is then re-armed from scratch every single load, by the
+  -- only two maps that ask for it:
+  --
+  --     Route17AlwaysOnBikeCallback:     setflag ENGINE_ALWAYS_ON_BIKE
+  --                                      setflag ENGINE_DOWNHILL
+  --     Route16AlwaysOnBikeCallback:     readvar VAR_YCOORD / ifless 5, .CanWalk
+  --                                      readvar VAR_XCOORD / ifgreater 13, .CanWalk
+  --                                      setflag ENGINE_ALWAYS_ON_BIKE
+  --                        .CanWalk:     clearflag ENGINE_ALWAYS_ON_BIKE
+  --
+  -- Nothing else in the game clears either one -- not the gates, not Route 18,
+  -- not Route 16 for DOWNHILL. It does not have to: the reset above already
+  -- did it. THIS PORT HAD NO SUCH RESET. It stores those two flags in
+  -- `save.flags`, which is persistent AND serialised to disk, and the only
+  -- thing that ever cleared them was this list of four gate maps. So the first
+  -- load of Route 17 set them, and from then on every map in the game loaded
+  -- with ALWAYS_ON_BIKE and DOWNHILL still set: the bike was forced back on
+  -- through every door, and the downhill pull dragged the player south on maps
+  -- that have no slope -- exactly as reported, and it survived saving and
+  -- reloading too.
+  --
+  -- An internal reload is NOT a new map, and neither is it on the cartridge:
+  -- a refresh runs HandleContinueMap, which skips ResetBikeFlags entirely.
+  -- Wiping the flags on a palette or time-of-day rebuild would put the player
+  -- on foot in the middle of the Cycling Road.
+  if GameVersion.isGen2() then
+    if not (opts and opts.via == "reload") then
+      self:clearBikeFlags()
+    end
+  else
+    -- ...and an EMPTY imported list is not an answer, it is a gap.  The Gen 2
+    -- extractor writes `clearMaps = {}` unconditionally, and fieldValue returns
+    -- any non-nil data value rather than falling back, so read the defaults
+    -- when the import left nothing behind.
+    local clearMaps = FieldDefaults.fieldValue(Game.data, "forcedMovement",
+                                               "clearMaps")
+    if type(clearMaps) ~= "table" or #clearMaps == 0 then
+      clearMaps = FieldDefaults.FIELD.forcedMovement.clearMaps
+    end
+    for _, m in ipairs(clearMaps or {}) do
+      if m == mapId then self:clearBikeFlags() break end
+    end
   end
   -- leaving the Safari Zone maps ends any running Safari game
   if Game.save.safari and not Map.inRegion(self.map.def, "SAFARI", "SAFARI_ZONE") then
@@ -1486,6 +1533,22 @@ function OverworldState:update(dt)
   if scriptWasRunning and not self.runner:isRunning() and GameVersion.isGen2() then
     self:syncObjectVisibility()
   end
+  -- .CheckForcedBiking again, now that the map's callbacks have actually run.
+  --
+  -- The ROM fires MAPCALLBACK_NEWMAP synchronously inside LoadMapAttributes
+  -- and only reaches CheckUpdatePlayerSprite afterwards, so by the time it
+  -- asks "is ALWAYS_ON_BIKE set?" Route 17's callback has already said yes.
+  -- Here the callbacks are QUEUED and run one per frame off the pending-script
+  -- FIFO, so the setMap call below them was asking the question before the
+  -- answer existed. It only ever looked right because the flag was left over
+  -- from the previous visit -- which is the very bug above. With the flags
+  -- correctly reset on every map, a single call at setMap would mean the
+  -- Cycling Road never forces the bike at all.
+  --
+  -- Re-asking each frame is what the ROM effectively does anyway: the flag is
+  -- a standing instruction ("wPlayerState is PLAYER_BIKE while this is set"),
+  -- not an event, and the check is two flag reads.
+  self:applyForcedBike()
   self:checkSpecialPhoneCall()
   self:checkBugContestClock()
   -- world.tick: the per-frame seam for mods that simulate something in the
@@ -1980,7 +2043,27 @@ function OverworldState:handleInput()
   -- edge-only wasPressed("a") above can never deliver, since a press
   -- stalls the roll for one frame only (issue #255).
   local fm = Game.data.field.forcedMovement
-  local braking = input:isDown("a") or input:isDown("b")
+  -- WHAT COUNTS AS A BRAKE IS NOT THE SAME IN BOTH GENERATIONS.
+  --
+  -- Gen 2's mask is the d-pad and nothing else (player_movement.asm .GetDPad):
+  --
+  --     ld hl, wBikeFlags
+  --     bit BIKEFLAGS_DOWNHILL_F, [hl]
+  --     ret z
+  --     ld c, a
+  --     and PAD_CTRL_PAD        <-- d-pad only; A and B are not in it
+  --     ret nz
+  --     ld a, c
+  --     or PAD_DOWN
+  --
+  -- so on Gold, Silver and Crystal holding A or B does NOT stop the roll --
+  -- you steer out of it, or you coast. Gen 1's mask does include A and B,
+  -- which is what its Route 17 sign promises, so that reading stays.
+  -- The d-pad half of that mask is already answered: this line is only
+  -- reached on the no-direction-held path, so all that is left to decide is
+  -- whether A or B also count -- and on Gen 2 they do not.
+  local braking = (not GameVersion.isGen2())
+    and (input:isDown("a") or input:isDown("b")) or false
   if Game.save.onBike and not braking and not self.player.moving then
     -- Gen2 arms the same pull from ENGINE_DOWNHILL, set by Route 17's
     -- MAPCALLBACK_NEWMAP alongside ALWAYS_ON_BIKE.  Gen1 named the maps in
@@ -5046,12 +5129,12 @@ function OverworldState:onStepComplete()
     local onEntryCell = entryCell
       and entryCell.x == p.cellX and entryCell.y == p.cellY
     if not onEntryCell then
+      -- The carpet filter is inside Warp.onArrive now -- it is the second
+      -- half of CheckWarpTile, so it belongs beside the lookup rather than
+      -- being re-stated at each call site. It was stated here and NOT at the
+      -- call further down that actually takes the warp, which is exactly how
+      -- a doormat became a trapdoor.
       warpFirst = Warp.onArrive(self.map, p.cellX, p.cellY)
-      if warpFirst and GameVersion.isGen2()
-         and Map.gen2IsDirectionalCarpet(self.map:cellTile(p.cellX, p.cellY))
-      then
-        warpFirst = nil
-      end
     end
   end
 
@@ -5185,7 +5268,18 @@ function OverworldState:onStepComplete()
     -- ExtraWarpCheck must pass AND either a d-pad is held or BIT_FORCED_WARP
     -- is set (Seafoam B3F currents -- home/overworld.asm).
     local w = Warp.onArrive(self.map, p.cellX, p.cellY)
-    if not w and (self:dirHeld() or self.forcedWarp) then
+    -- ...and ExtraWarpCheck is a GEN 1 routine with no Gen 2 counterpart.
+    -- Gen 2's CheckTileEvent runs CheckWarpTile and nothing else; the only
+    -- other way a warp fires there is DoPlayerMovement .CheckWarp, which is
+    -- the directional carpet and is handled on the input side.
+    --
+    -- Leaving this on would put the corner mats back: ExtraWarpCheck falls
+    -- back to "is the player facing the map edge", so a LEFT-facing carpet
+    -- sitting on the bottom row would still warp somebody who walked down
+    -- along it -- the same wrong exit, through a different door.
+    local gen2Classes = GameVersion.isGen2()
+      and self.map.speaksGen2Collision and self.map:speaksGen2Collision()
+    if not w and not gen2Classes and (self:dirHeld() or self.forcedWarp) then
       w = Warp.onCollision(self.map, Game.data.field.warpCarpets,
                            p.cellX, p.cellY, p.facing)
     end
@@ -5233,6 +5327,7 @@ function OverworldState:onStepComplete()
   local env = self.map.def.environment
   -- Gen2 keeps a morn/day/nite slot set per map; the clock decides which
   local land = encDef and { grass = Encounter.atTime(encDef.grass, self:timeOfDay()) }
+  local onWater = (p.surfing and self.map:isWaterCell(p.cellX, p.cellY)) or false
   if p.surfing and encDef and encDef.water and self.map:isWaterCell(p.cellX, p.cellY) then
     enc = self:rollEncounter({ grass = encDef.water }, "water")
   elseif self.map:isGrassCell(p.cellX, p.cellY) then
@@ -5243,15 +5338,64 @@ function OverworldState:onStepComplete()
          and self.map.def.tileset ~= indoor.excludedTileset then
     enc = self:rollEncounter(land, "indoor")
   end
+
+  -- ------------------------------------------------------ ROAMING BEASTS
+  --
+  -- ChooseWildEncounter asks CheckEncounterRoamMon BEFORE it rolls a slot,
+  -- and a hit jumps straight to .startwildbattle with the beast already
+  -- staged -- so a beast REPLACES the encounter this step was going to be
+  -- rather than being an extra chance on top of it.
+  --
+  -- Here that is the same statement made one step later: `enc` being non-nil
+  -- is exactly "LoadWildMonDataPointer found a table for this map AND the
+  -- encounter-rate roll passed", which is the state the cartridge is in when
+  -- it makes the call. What differs is only which numbers come off the RNG,
+  -- and nothing in this port is cycle-accurate about that anyway.
+  --
+  -- It has to sit ABOVE the repel test, because that is where the cartridge
+  -- has it -- and a beast is emphatically not exempt from repel (see below).
+  local roamer
+  if enc and not onWater then
+    local RoamMons = require("src.world.RoamMons")
+    local name, info = RoamMons.check(Game.save, self.map.id, onWater,
+                                      love.math.random)
+    if name then
+      local beast = RoamMons.encounterFor(name, info)
+      if beast and beast.species then
+        enc, roamer = beast, name
+      end
+    end
+  end
+
   if enc then
-    -- REPEL blocks wild mons weaker than the lead
-    local lead = Game.save.party[1]
+    -- REPEL blocks wild mons weaker than the lead.
+    --
+    -- "the lead" is CheckRepelEffect's `Get the first Pokemon in your party
+    -- that isn't fainted` -- it walks wPartyMon1HP forward until it finds a
+    -- live one -- NOT party slot 1. With a fainted lead this read the wrong
+    -- level, and it read `nil.level` and crashed outright on a party whose
+    -- first slot is an EGG.
+    --
+    -- AND THIS IS WHY THE BEASTS WOULD NOT SHOW UP FOR ANYONE HUNTING THEM
+    -- WITH MAX REPEL. The comparison is `wCurPartyLevel cp leadLevel /
+    -- jr nc, .encounter`: the encounter happens only when the wild level is
+    -- at least the lead's. Every beast is level 40. So a repel with anything
+    -- above level 40 in front suppresses Raikou, Entei and Suicune along with
+    -- everything else -- on the cartridge as much as here. Repel-hunting a
+    -- roamer needs a level 40-or-lower lead, which is also the only way it
+    -- ever worked on hardware.
+    local Party = require("src.pokemon.Party")
+    local lead = Party.firstHealthy(Game.save.party) or Game.save.party[1]
     if Game.save.repelSteps and Game.save.repelSteps > 0
-       and lead and enc.level < lead.level then
+       and lead and lead.level and enc.level < lead.level then
       return
     end
     local BattleState = require("src.battle.BattleState")
-    local battle = BattleState.newWild(Game, enc.species, enc.level)
+    -- BATTLETYPE_ROAMING: Music_SuicuneBattle, the one-turn flee, and the
+    -- HP that carries between meetings all hang off this.
+    local battle = BattleState.newWild(Game, enc.species, enc.level,
+      roamer and { battleType = "roaming", roamer = roamer,
+                   roamerHP = enc.roamerHP } or nil)
     -- map.ghostBattles: unidentifiable without the named item (the
     -- Pokemon Tower's Silph Scope)
     local ghost = Map.ghostBattles(self.map.def)
@@ -5615,6 +5759,28 @@ function OverworldState:afterBattle(result, battle)
   Logger.info("battle over: %s (lead %s %d/%d)", tostring(result),
               lead and lead.species or "-", lead and lead.hp or 0,
               lead and lead.stats.hp or 0)
+
+  -- ------------------------------------------------------ ROAMING BEASTS
+  --
+  -- The roam slot is the beast's whole existence: the cartridge keeps its
+  -- species, level, map and HP there, and clearing the slot's map group to
+  -- GROUP_N_A is how a caught or beaten beast stops existing. So the outcome
+  -- of the fight has to land back on the slot, or a caught Raikou keeps
+  -- roaming, keeps showing on the Pokegear, and can be caught again.
+  --
+  -- Escaping writes the HP back instead. That is the point of chasing one:
+  -- damage carries between meetings, and a beast on a sliver stays on a
+  -- sliver until you finally land the ball.
+  if battle and battle.roamer then
+    local RoamMons = require("src.world.RoamMons")
+    local enemy = battle.enemy
+    local hp = enemy and enemy.mon and enemy.mon.hp or 0
+    if result == "caught" or result == "win" or hp <= 0 then
+      RoamMons.retire(Game.save, battle.roamer)
+    else
+      RoamMons.remember(Game.save, battle.roamer, hp)
+    end
+  end
   local Evolution = require("src.pokemon.Evolution")
   local function evolutions()
     -- Only mons that gained a level this battle (EXP.ALL included).

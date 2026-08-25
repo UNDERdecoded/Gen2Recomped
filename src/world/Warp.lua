@@ -14,12 +14,58 @@ local Runtime = require("src.mods.Runtime")
 local Warp = {}
 
 -- Returns the warp entry to take when arriving at (cx,cy), or nil.
+--
+-- This is CheckWarpTile (home/map.asm) whole, and the second half is the part
+-- that used to be missing here:
+--
+--     CheckWarpTile::
+--         call GetDestinationWarpNumber   ; is there a warp on this cell?
+--         ret nc
+--         push bc
+--         farcall CheckDirectionalWarp    ; ...and may it fire from a STEP?
+--         pop bc
+--         ret nc
+--         call CopyWarpData
+--         scf
+--         ret
+--
+-- CheckDirectionalWarp (engine/overworld/tile_events.asm) is four comparisons
+-- and a cleared carry:
+--
+--     ; If directional warp, clear carry (requires button press to activate).
+--     ; Otherwise, set carry (warps immediately).
+--         cp COLL_WARP_CARPET_DOWN / cp COLL_WARP_CARPET_LEFT
+--         cp COLL_WARP_CARPET_UP   / cp COLL_WARP_CARPET_RIGHT
+--
+-- So a DOOR, staircase, cave or warp panel takes you the instant you step on
+-- it, and a CARPET never does: it waits until you walk on in the carpet's own
+-- direction, already facing that way (DoPlayerMovement .CheckWarp, which the
+-- overworld's checkGen2CarpetExit implements).
+--
+-- Without it, a mat is a trapdoor. Every doormat in the game is at least two
+-- cells wide, and the arrival cell is only inert until you leave it -- so
+-- taking one step ALONG the mat, from one carpet cell to its neighbour,
+-- landed on a live warp and fired it. That is the reported "walk down and it
+-- warps you without you ever walking into the building", and it is every
+-- Center, Mart, gym and house in both regions.
+--
+-- The test belongs HERE, next to the warp lookup it qualifies, rather than at
+-- the call sites: the step handler was already filtering carpets out of the
+-- copy it uses to outrank coord events, and the copy it actually warps on --
+-- a second Warp.onArrive a hundred lines further down -- was not.
 function Warp.onArrive(map, cx, cy)
   local w = map:warpAtCell(cx, cy)
-  if w and map:isWarpTileCell(cx, cy) then
-    return w
+  if not (w and map:isWarpTileCell(cx, cy)) then return nil end
+  local Map = require("src.world.Map")
+  local GameVersion = require("src.core.GameVersion")
+  -- Only where the cell answers in collision CLASSES. On a tile-id map those
+  -- four numbers mean nothing, and reading them as carpets would silently
+  -- disable real doors -- see Map:speaksGen2Collision.
+  if GameVersion.isGen2() and map.speaksGen2Collision and map:speaksGen2Collision()
+     and Map.gen2IsDirectionalCarpet(map:cellTile(cx, cy)) then
+    return nil
   end
-  return nil
+  return w
 end
 
 local function inList(list, v)

@@ -3997,6 +3997,13 @@ function Commands.g2_init_roam_mons(ctx)
         speciesId = ROAM_SPECIES_ID[name],
         landmark = mapToLandmark(ctx.game, startMap) or LANDMARK_BY_MAP[startMap],
         active = true,
+        -- InitRoamMons: `ld a, 40 / ld [wRoamMon1Level], a` for every beast,
+        -- and `xor a / ld [wRoamMon1HP], a` -- 0 meaning "generate new
+        -- stats", i.e. a beast nobody has wounded yet. Both are read by
+        -- RoamMons when one actually steps out, so a slot without them is a
+        -- marker on the Pokegear and nothing more.
+        level = 40,
+        hp = 0,
       }
     end
   end
@@ -4073,6 +4080,11 @@ function Commands.g2_ensure_roam_landmarks(ctx)
       roam[name] = nil
     elseif type(info) == "table" and info.mapId then
       info.speciesId = info.speciesId or ROAM_SPECIES_ID[name]
+      -- Saves released before the beasts could actually be MET have a slot
+      -- with no level and no HP in it. Fill those in rather than leaving a
+      -- beast that cannot be turned into an encounter.
+      info.level = tonumber(info.level) or 40
+      info.hp = tonumber(info.hp) or 0
       info.landmark = mapToLandmark(ctx.game, info.mapId)
         or LANDMARK_BY_MAP[normalizeMapId(info.mapId)]
         or info.landmark
