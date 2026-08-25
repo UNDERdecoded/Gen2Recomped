@@ -780,7 +780,19 @@ function BattleState.newWild(game, species, level, opts)
   -- wBattleType, for the two rows PlayBattleMusic reads: BATTLETYPE_ROAMING
   -- and BATTLETYPE_SUICUNE both open on Music_SuicuneBattle.
   self.battleType = opts and opts.battleType or nil
+  -- BATTLETYPE_ROAMING. The beast carries its wounds between meetings
+  -- (wRoamMon1HP), so a beast you chipped to a sliver last week is still on
+  -- a sliver -- that, and not a better ball, is what the long hunt buys you.
+  -- InitRoamMons writes 0 for "generate new stats", which is also what a
+  -- beast nobody has met yet has, so 0 means full health rather than dead.
+  self.roamer = opts and opts.roamer or nil
   self.enemy = makeBattler(game.data, wild, false)
+  if self.roamer then
+    local kept = math.floor(tonumber(opts.roamerHP) or 0)
+    if kept > 0 then
+      self.enemy.mon.hp = math.max(1, math.min(kept, self.enemy.mon.stats.hp))
+    end
+  end
   markSeen(game, species)
   if opts and opts.hooked then
     self.introText = self:romText("_HookedMonAttackedText", "The hooked\n%s\nattacked!", self.enemy.name)
@@ -3084,6 +3096,7 @@ function BattleState:endOfTurn()
   -- a speed check).
   Weather.upkeep(self)
   self:tickTokens()
+  self:roamerFlees()
   Runtime.emit("battle.turn_ended", { battle = self, turn = self.turnCount or 0 })
 end
 
@@ -4997,7 +5010,11 @@ function BattleState:safariEnemyTurn()
       self:sayNext(self:romText("_WildRanText", "Wild %s\nran!", self.enemy.name))
       self:actNext(function()
         require("src.core.Sound").play(self.data, "Run")
-        startPicKind(self:picFxFor(self.enemy), "slideOff")
+        -- `self` first: startPicKind is a plain local, not a method, and
+        -- every other call site passes it. Without it `pf` was the STRING
+        -- "slideOff" and the next line wrote a field onto a string, so a
+        -- Safari mon fleeing raised instead of sliding off screen.
+        startPicKind(self, self:picFxFor(self.enemy), "slideOff")
       end)
       self.nextInsert = (self.nextInsert or 0) + 1
       table.insert(self.queue, self.nextInsert, { wait = 24 })
@@ -5005,6 +5022,34 @@ function BattleState:safariEnemyTurn()
       self.afterQueue = "finish"
     end
   end)
+end
+
+-- A roaming beast gives you exactly one turn and then it is gone.
+--
+-- That single turn is the whole shape of the fight: it is why the received
+-- way to hunt one is a fast lead with MEAN LOOK and a sleep move, and why
+-- anything slower than the beast usually never gets to act at all. Trapping
+-- it holds it -- MEAN LOOK sets `trapped`, and a trapped mon cannot flee --
+-- so the escape is checked here rather than announced unconditionally.
+--
+-- Nothing happens once the battle is already decided: a beast that fainted,
+-- was caught, or won does not also run away.
+function BattleState:roamerFlees()
+  if not self.roamer then return end
+  if self.result then return end
+  local enemy = self.enemy
+  if not (enemy and enemy.mon and enemy.mon.hp > 0) then return end
+  if enemy.trapped then return end
+  self:sayNext(self:romText("_WildFledText", "Wild %s\nfled!", enemy.name))
+  self:actNext(function()
+    require("src.core.Sound").play(self.data, "Run")
+    startPicKind(self, self:picFxFor(enemy), "slideOff")
+  end)
+  self.nextInsert = (self.nextInsert or 0) + 1
+  table.insert(self.queue, self.nextInsert, { wait = 24 })
+  self.roamerEscaped = true
+  self.result = "run"
+  self.afterQueue = "finish"
 end
 
 -- ---------------------------------------------------------------------
