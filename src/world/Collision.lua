@@ -53,15 +53,36 @@ function Collision.load(data)
   tilePairs = data.field and data.field.tilePairs or { land = {}, water = {} }
 end
 
+-- WHICH PAIR LIST APPLIES, and whether its rows still need naming.
+--
+-- The global list is the running game's, keyed by the plain tileset name. An
+-- ADOPTED tileset carries its own -- brought across from the cartridge it came
+-- out of, already filtered to itself (see AdoptedTileset) -- and its rows must
+-- NOT be name-matched: the map's tileset is `CAVERN@red` and every row in it
+-- says `CAVERN`, which is the mismatch that made an imported Cerulean Cave's
+-- ledges walkable from every side.
+--
+-- The record's own list wins where it has one. A Gen 2 build has no global
+-- pair list at all -- Crystal's `field.lua` has no `tilePairs` key, because
+-- Gen 2 fences elevation with collision classes instead -- so for these maps
+-- there is nothing to fall back TO.
+local function pairList(map, mover)
+  local key = mover.surfing and "water" or "land"
+  local own = map.tileset and map.tileset.tilePairs
+  local ownList = own and own[key]
+  if ownList and #ownList > 0 then return ownList, true end
+  if not tilePairs then return nil, false end
+  return tilePairs[key], false
+end
+
 local function pairBlocked(map, mover, sx, sy, tx, ty)
-  if not tilePairs then return false end
-  local list = mover.surfing and tilePairs.water or tilePairs.land
+  local list, preFiltered = pairList(map, mover)
   if not list or #list == 0 then return false end
   local tileset = map.def.tileset
   local a = map:cellTile(sx, sy)
   local b = map:cellTile(tx, ty)
   for _, p in ipairs(list) do
-    if p.tileset == tileset
+    if (preFiltered or p.tileset == tileset)
        and ((p.a == a and p.b == b) or (p.a == b and p.b == a)) then
       return true
     end

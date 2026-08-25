@@ -1556,9 +1556,24 @@ function RomImporter:focus(f)
     and love.filesystem.read("pick_error.flag")
   if pickError then
     love.filesystem.remove("pick_error.flag")
-    local text = "Could not read the picked file. Reopen the picker and choose "
-      .. "it with the Files (Documents) app, or copy it into: "
-      .. love.filesystem.getSaveDirectory()
+    -- WHAT THE FLAG CARRIES NOW. Line 1 is the destination basename (which is
+    -- what the branches below match on, so it has to stay first); the rest is
+    -- the native side's account of why nothing could be read -- which app
+    -- served the pick, and the exception it threw.
+    --
+    -- The old advice ended with "or copy it into: <save dir>", and that save
+    -- dir is under Android/data. Android 11+ blocks the stock Files app from
+    -- browsing in there at all, so on the devices where this message actually
+    -- appears the escape hatch it offered could not be taken. What CAN be done
+    -- is pick again through the system documents UI, so that is what it says.
+    local detail = pickError:match("^[^\n]*\n(.+)$")
+    detail = detail and detail:gsub("%s+$", "") or nil
+    local text = "Could not read the picked file. Tap Import again and choose "
+      .. "it with the Files app (the menu's BROWSE), not a third-party file "
+      .. "manager or a cloud app."
+    if detail and detail ~= "" then
+      text = text .. "  [" .. detail:gsub("\n", " / ") .. "]"
+    end
     if pickError:find("picked_mod", 1, true) then
       self.modNotice = { ok = false, text = text }
     elseif pickError:find("picked_save", 1, true) then

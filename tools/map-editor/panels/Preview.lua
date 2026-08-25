@@ -118,6 +118,75 @@ local function profile(S)
   return S.pvProfile or nil
 end
 
+-- RULE 1, THE TILE PINS -- the half of the profile's resolution order this
+-- view never read.
+--
+-- `voxel_heights.lua` states its order at the top of the file: a group listed
+-- under `tilesets[<id>]` FIRST, then water, then a walkable cell, then the
+-- tile-level fallback. Only rules 2 and 3 were implemented here, and rule 1
+-- is the one that carries every hand-authored shape: a fence rail, a ledge
+-- lip, a signpost board, a tree canopy and a potted plant are each drawn
+-- across PART of a cell, so the cell's single collision class cannot describe
+-- them and the profile pins their tiles instead. Without this every pinned
+-- tile fell through to the coarse cell reading below and came back `ground`
+-- or `wall` -- which is exactly "objects placed from the tileset do not carry
+-- their voxel rules".
+--
+-- Only keys that name a real class are taken, and only where the value is a
+-- plain array of tile ids. The same tileset table also carries `when_above`,
+-- `when_below`, `when_cell`, `figures`, `prop_ground`, `prop_bg` and a
+-- per-tileset `heights`, none of which are pin lists; reading them as one
+-- would pin tile 1 of every conditional group to whatever the group is named.
+local function tilePins(S, def)
+  local key = tostring(def and def.tileset or "-") .. "|"
+    .. tostring(S.voxelSource or "-")
+  if S.pvPinsFor == key then return S.pvPins end
+  local pins = {}
+  local p = profile(S)
+  local _, info = classInfo(S)
+  local group = p and p.tilesets and def and p.tilesets[def.tileset]
+  if type(group) == "table" then
+    for class, list in pairs(group) do
+      if info[class] and type(list) == "table" then
+        for _, tile in ipairs(list) do
+          if type(tile) == "number" then pins[tile] = class end
+        end
+      end
+    end
+  end
+  S.pvPins, S.pvPinsFor = pins, key
+  return pins
+end
+
+-- The four 8px tiles a 16px CELL is drawn from.
+--
+-- A block is a 4x4 grid of tiles indexed `(ty % 4) * 4 + (tx % 4) + 1` (that
+-- is Map:tileAt), and a cell is one 2x2 quadrant of it -- the same arithmetic
+-- `cellSlots` further down uses to repaint one, kept separate only because
+-- that one is declared after this and needs the block table it already holds.
+local function cellTiles(S, def, cx, cy)
+  local ts = S.data and S.data.tilesets and S.data.tilesets[def and def.tileset]
+  if not (ts and type(ts.blocks) == "table"
+          and def.blocks and def.width and def.height) then return nil end
+  local bx, by = math.floor(cx / 2), math.floor(cy / 2)
+  local id
+  if bx < 0 or by < 0 or bx >= def.width or by >= def.height then
+    id = def.borderBlock or 0
+  else
+    id = def.blocks[by * def.width + bx + 1] or 0
+  end
+  local block = ts.blocks[id + 1]
+  if type(block) ~= "table" then return nil end
+  local qx, qy = cx % 2, cy % 2
+  local out = {}
+  for r = 0, 1 do
+    for c = 0, 1 do
+      out[#out + 1] = block[(qy * 2 + r) * 4 + (qx * 2 + c) + 1]
+    end
+  end
+  return out
+end
+
 -- The class and height this cell would take, and where that answer came from.
 --
 -- THIS IS THE PROFILE'S RULES, NOT THE MESHER'S. voxel_heights.lua documents
@@ -141,6 +210,38 @@ local function voxelAt(S, def, cx, cy, cls)
   end
   local p = profile(S)
   if not p then return "ground", 0, "no profile" end
+
+  -- rule 1, before anything the cell can say
+  local pins = tilePins(S, def)
+  local tiles = cellTiles(S, def, cx, cy)
+  if tiles then
+    local _, pinInfo = classInfo(S)
+    local function pinH(c)
+      local spec = pinInfo[c]
+      return (spec and spec.h) or (p.heights and p.heights[c]) or 0
+    end
+    local standing, stH, flat = nil, nil, nil
+    for _, t in ipairs(tiles) do
+      local c = t and pins[t]
+      if c then
+        local h = pinH(c)
+        if h > 0 then
+          -- Something standing wins the cell. A cell is ONE answer here and
+          -- the thing you can see is the thing worth previewing; the tallest
+          -- of two pins is the one that would hide the other anyway.
+          if stH == nil or h > stH then standing, stH = c, h end
+        elseif flat == nil then
+          -- and a cell whose pins are all flat takes the flat one, which is
+          -- the case the ground/water pins exist for: the scrap of turf that
+          -- shares a blocked cell with a ledge lip and must stay turf
+          flat = c
+        end
+      end
+    end
+    local hit = standing or flat
+    if hit then return hit, pinH(hit), "tile pin" end
+  end
+
   local class = p.collision and cls and p.collision[cls]
   if not class then
     -- rule 3 then rule 4: an entrance or a walkable-looking class is ground,
@@ -2436,7 +2537,13 @@ function Preview.draw(S, Kit, x, y, w, h)
     -- ALL THREE BUTTONS, not just the left one. App.mousepressed only records
     -- button 1, so a middle or right drag never reaches a panel through Kit --
     -- the state has to be polled here.
+    -- `Kit.virtualPointer` is the pad cursor (or a build with no mouse module
+    -- at all). love.mouse.isDown exists there and answers false forever, so
+    -- testing the module's presence let the poll branch swallow every press
+    -- the stick made -- see the note where App publishes this. The
+    -- select-on-press fallback below is what those devices want.
     local canPoll = love.mouse and love.mouse.isDown
+      and not Kit.virtualPointer
     -- THE SHIELD APPLIES HERE TOO, and this is the one place it was missed.
     --
     -- Everything else goes through `Kit.press`, which honours the block rect
@@ -2787,6 +2894,7 @@ function Preview.draw(S, Kit, x, y, w, h)
       Kit.text("small", line, toolX + pad, ty)
       ty = ty + 16 * s
     end
+
   else
     Kit.text("small", "no map selected", toolX + pad, ty)
   end
@@ -3341,6 +3449,30 @@ function Preview.wheelmoved(S, dy)
     return
   end
   S.pvScroll = math.max(0, (S.pvScroll or 0) - (dy or 0))
+end
+
+-- PINCH, as a ratio (see App.touchmoved).
+--
+-- Deliberately the same three targets the wheel has, in the same order and
+-- with the same clamps -- a gesture that zoomed something the wheel does not
+-- would be a second, quieter set of rules to learn. Spreading the fingers
+-- (ratio > 1) magnifies, which is the direction every other application on
+-- the device uses.
+function Preview.pinch(S, ratio)
+  if not (type(ratio) == "number" and ratio > 0) then return end
+  if S.pvWorld then
+    local z = S._pvWorldZoom
+    if z then S._pvWorldZoom = math.max(0.4, math.min(24, z * ratio)) end
+    return true
+  end
+  if S.pv3DActive then
+    -- Distance is the INVERSE of magnification: pulling the fingers apart
+    -- brings the camera in.
+    S.pvDist = math.max(24, math.min(20000, (S.pvDist or 400) / ratio))
+    return true
+  end
+  S.pvZoom = math.max(1, math.min(4, (S.pvZoom or 2) * ratio))
+  return true
 end
 
 function Preview.keypressed(S, key)

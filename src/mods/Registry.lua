@@ -61,13 +61,30 @@ end
 
 -- effective value = base plus the op list; a tombstone folds to nil and a
 -- later register may resurrect the id
-local function fold(self, value, opList)
+local function fold(self, value, opList, id)
   local deep = self.spec.semantics == "deep"
+  -- ARBITRATION. When two mods claim the same id and the player has said which
+  -- one they want, the others' contributions are stepped over here rather than
+  -- deleted: the op list is registration history, the choice is a preference,
+  -- and a preference the reader can change back has to leave something to
+  -- change back TO. Clearing `prefer` restores the untouched fold.
+  --
+  -- Owner-less ops are the ENGINE's own and are never arbitrated -- a
+  -- preference is about which MOD wins, and the cartridge's value underneath
+  -- them is the base, not an op.
+  local prefer = id and self.prefer and self.prefer[id] or nil
   for _, entry in ipairs(opList or {}) do
     local op = entry.op
+    -- Stepped over WHOLE, before the sentinel test below: a set-aside op that
+    -- happened to carry Merge.DELETE would otherwise still delete, which is
+    -- the losing pack winning by another route.
+    local setAside =
+      prefer ~= nil and entry.owner ~= nil and entry.owner ~= prefer
+    if setAside then -- luacheck: ignore
+      -- not this owner's turn
     -- a payload that IS the sentinel folds as a delete, never a value;
     -- without this the bare DELETE table would leak into Data as a record
-    if entry.value == Merge.DELETE then
+    elseif entry.value == Merge.DELETE then
       value = nil
     elseif op == "override" or (op == "register" and not deep) then
       value = entry.value
@@ -124,13 +141,70 @@ function Registry:get(id)
   end
   local hit = self.cache[id]
   if hit then return hit.value end
-  local value = fold(self, baseValue(self, id), self.ops[id])
+  local value = fold(self, baseValue(self, id), self.ops[id], id)
   self.cache[id] = { value = value }
   return value
 end
 
 function Registry:has(id)
   return self:get(id) ~= nil
+end
+
+-- ------------------------------------------------------------- arbitration
+-- WHO HAS A CLAIM ON THIS ID, in the order they made it and without repeats.
+--
+-- Two map packs that both edit Azalea Town are not an error -- the fold has a
+-- defined answer and always did, which is "whichever loaded last". They are a
+-- QUESTION, and this is what lets something ask it: a caller that finds more
+-- than one owner here has a conflict worth putting in front of the player.
+--
+-- Owner-less ops are left out. They are the engine's own contributions and
+-- nobody is choosing between them and a mod.
+function Registry:claimants(id)
+  local seen, out = {}, {}
+  for _, entry in ipairs(self.ops[id] or {}) do
+    local owner = entry.owner
+    if owner ~= nil and not seen[owner] then
+      seen[owner] = true
+      out[#out + 1] = owner
+    end
+  end
+  return out
+end
+
+-- Every id more than one owner has claimed: { id -> { owner, ... } }.
+function Registry:conflicts()
+  local out = nil
+  for _, id in ipairs(self.order) do
+    local owners = self:claimants(id)
+    if #owners > 1 then
+      out = out or {}
+      out[id] = owners
+    end
+  end
+  return out
+end
+
+-- KEEP ONE OWNER'S VERSION OF `id`. Pass nil to go back to the plain fold,
+-- which is every claim applied in order -- the behaviour with no preference
+-- set, and the thing "undo my choice" has to mean.
+--
+-- Deliberately NOT `rollback`, which deletes an owner's ops outright and does
+-- it across every id at once: a pack that wins one map and loses another has
+-- to keep both contributions on disk, or choosing again means reinstalling.
+--
+-- Works after the loader has frozen content, because it appends nothing -- the
+-- ops are untouched and only the reading of them changes.
+function Registry:preferOwner(id, owner)
+  assert(type(id) == "string" and id ~= "", self.name .. " id is required")
+  self.prefer = self.prefer or {}
+  self.prefer[id] = owner
+  self.cache[id] = nil
+  return owner
+end
+
+function Registry:preferredOwner(id)
+  return self.prefer and self.prefer[id] or nil
 end
 
 -- compose fold: the ordered entry list for an id.  Override is the

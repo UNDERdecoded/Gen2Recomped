@@ -157,6 +157,31 @@ end
 
 -- CheckWarpCollision (05:$4A18): $60, $68 and the whole $70-$7F carpet/door
 -- range are the collision classes that let a Gen2 warp_event fire.
+-- DOES THIS MAP'S TILESET SPEAK IN GEN 2 COLLISION CLASSES?
+--
+-- `cellTile` has two answers and they share no vocabulary. With a collision
+-- table it returns the cell's CLASS byte -- $71 an outdoor door, $7B a cave
+-- mouth -- and the entrance range just below is meaningful. Without one it
+-- returns the cell's south-west TILE ID, which is Gen 1's way of saying the
+-- same thing in a completely different alphabet.
+--
+-- An ADOPTED tileset is that second case, and it is not hypothetical: the map
+-- editor brings a Gen 1 set across whole -- blocks, walkable list, doorTiles,
+-- warpTiles -- and there is no collision table to bring, because Gen 1 has
+-- none. `CAVERN@red` arrives with `warpTiles = { 24, 26, 34 }`, the cave
+-- ladders, and not one of those tile ids lands in $60/$68/$70-$7F.
+--
+-- So `warpAtCell` tested tile ids against a class range, they failed, and it
+-- returned nil for every warp on every imported map. That is the whole of
+-- "the editor says they're linked and in game they do nothing": the link was
+-- always fine, the gate in front of it was answering a question the data
+-- could not be asked. The gate is real -- it is how the Ruins of Alph
+-- chambers and the Ice Path holes stay shut -- so it stays, and it now only
+-- applies where the map can actually answer it.
+function Map:speaksGen2Collision()
+  return self.tileset ~= nil and self.tileset.collision ~= nil
+end
+
 function Map.gen2IsEntrance(coll)
   return coll == 0x60 or coll == 0x68 or (coll >= 0x70 and coll <= 0x7F)
 end
@@ -435,7 +460,9 @@ end
 function Map:isDoorTileCell(cx, cy)
   local t = self:cellTile(cx, cy)
   if self.doorTiles[t] then return true end
-  if GameVersion.isGen2() then return Map.gen2IsDoorway(t) end
+  if GameVersion.isGen2() and self:speaksGen2Collision() then
+    return Map.gen2IsDoorway(t)
+  end
   return false
 end
 
@@ -443,7 +470,9 @@ end
 function Map:isWarpTileCell(cx, cy)
   local t = self:cellTile(cx, cy)
   if self.doorTiles[t] or self.warpTiles[t] then return true end
-  if GameVersion.isGen2() then return Map.gen2IsEntrance(t) end
+  if GameVersion.isGen2() and self:speaksGen2Collision() then
+    return Map.gen2IsEntrance(t)
+  end
   -- Fallback for partial imports: some Gen2 tilesets ship empty warp/door
   -- tile tables even though the map carries explicit warp cells.
   if next(self.doorTiles) == nil and next(self.warpTiles) == nil
@@ -477,7 +506,15 @@ function Map:warpAtCell(cx, cy)
   -- or wall does nothing.  That is how the Ruins of Alph chambers, the
   -- Ecruteak and Blackthorn gym floors and the Ice Path holes stay shut: the
   -- warp is always there, the map callback swaps the block underneath it.
-  if w and GameVersion.isGen2()
+  --
+  -- Only where the tileset HAS that class table, though. Without one the cell
+  -- answers with a tile id and this gate is being asked in the wrong alphabet
+  -- -- see `speaksGen2Collision`. There the door test belongs where it always
+  -- was for tile-id maps: `Warp.onArrive` calls `isWarpTileCell`, which reads
+  -- the tileset's own doorTiles/warpTiles lists. Nothing is let through that
+  -- was not let through before; the gate simply stops eating warps it cannot
+  -- judge.
+  if w and GameVersion.isGen2() and self:speaksGen2Collision()
      and not Map.gen2IsEntrance(self:cellTile(cx, cy)) then
     return nil
   end

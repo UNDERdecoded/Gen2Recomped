@@ -34,6 +34,12 @@ local MapEdits = require("tools.map-editor.MapEdits")
 
 local Tiles = {}
 
+-- THIS PANEL FILLS THE RECTANGLE IT IS GIVEN; it does not flow down a page.
+-- The palette below sizes its rows, its page and its own scroll rail from the
+-- height handed in, so a drawer must hand it the height that is actually
+-- visible -- see the note on `fillsBody` in Sidebar.lua.
+Tiles.fillsBody = true
+
 local BLOCK = 32          -- world pixels per block, and per palette swatch
 
 local function store(S)
@@ -182,8 +188,12 @@ function Tiles.usePick(S, srcTsId, blockId, q)
   local ck = tostring(srcTsId) .. "/" .. tostring(blockId)
   local live = S._tileBorrowLive[ck]
   if live == nil then
+    -- S.voxelSource: the borrowed tile inherits its class from the SOURCE
+    -- tileset's profile, and that has to be read from the mod the reader is
+    -- editing against (see MapEdits.borrowBlock).
     local got, why = MapEdits.borrowLive(store(S), game(S), ownId, srcTsId,
-                                         blockId, S.data and S.data.tilesets)
+                                         blockId, S.data and S.data.tilesets,
+                                         S.voxelSource)
     if not got then return nil, why end
     S._tileBorrowLive[ck] = got
     live = got

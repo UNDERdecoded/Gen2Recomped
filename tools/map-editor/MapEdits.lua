@@ -1072,7 +1072,7 @@ end
 -- Copy one block's art from another tileset, and mint a block that uses it.
 -- Returns the mint key, or nil and a reason.
 function MapEdits.borrowBlock(store, game, destTileset, srcTileset, srcBlockId,
-                              tilesets)
+                              tilesets, sourceId)
   if destTileset == srcTileset then
     return nil, "that is this map's own tileset - paint it directly"
   end
@@ -1093,9 +1093,46 @@ function MapEdits.borrowBlock(store, game, destTileset, srcTileset, srcBlockId,
   if not list then return nil, "could not open the tileset's edit bucket" end
 
   local tiles, coll = {}, {}
+  local heldBySlot = {}
   for i = 1, 16 do
-    tiles[i] = -borrowSlot(list, srcTileset, block[i] or 0)
+    local srcTile = block[i] or 0
+    local slot = borrowSlot(list, srcTileset, srcTile)
+    tiles[i] = -slot
+    heldBySlot[slot] = srcTile
   end
+  -- THE CLASS COMES ACROSS WITH THE PIXELS.
+  --
+  -- A borrowed tile lands at an id the destination tileset's profile has never
+  -- heard of, so TileShape falls through the pin step to the collision class --
+  -- and a tree drawn on a solid cell is a WALL. Every borrowed tree came out
+  -- as a box, and the only fix was to pin all of them by hand, one map at a
+  -- time, for a fact the source tileset already states: TilesetForest says
+  -- tile 12 is a canopy.
+  --
+  -- So the pin travels with the art. Keyed against the ORIGINAL atlas capacity
+  -- rather than the current one, because the current one has already moved by
+  -- the time a second block is borrowed -- the same base the slots themselves
+  -- resolve against.
+  --
+  -- Never overwrites a pin that is already there: a class the reader set by
+  -- hand is a decision, and this is a default.
+  pcall(function()
+    local VC = require("tools.map-editor.VoxelClasses")
+    local BT = require("src.import.BorrowedTiles")
+    local srcPins = VC.tilePins(srcTileset, sourceId)
+    if not (srcPins and next(srcPins) ~= nil) then return end
+    local base = BT.baseFor(dst)
+    for slot, srcTile in pairs(heldBySlot) do
+      local cls = srcPins[srcTile]
+      if cls then
+        local id = base + slot - 1
+        local have = MapEdits.tilePins(store, game, destTileset)[id]
+        if have == nil then
+          MapEdits.setTilePin(store, game, destTileset, id, cls)
+        end
+      end
+    end
+  end)
   -- The collision comes across too. A drawing borrowed without it is a wall
   -- you can walk through or a floor you cannot -- and the class is part of
   -- what the block IS, not decoration on top of it.
@@ -1106,476 +1143,79 @@ function MapEdits.borrowBlock(store, game, destTileset, srcTileset, srcBlockId,
 end
 
 -- How many 8px tiles a tileset's atlas holds right now.
-local function tileCapacity(ts)
-  local w = math.floor((ts.imageWidth or 128) / 8)
-  local h = math.floor((ts.imageHeight or 128) / 8)
-  return math.max(0, w * h), math.max(1, w)
-end
-
-MapEdits.tileCapacity = tileCapacity
-
--- Where the borrowed tiles land, and how much taller the atlas has to be.
+-- ---------------------------------------------- borrowed tiles, applied
 --
--- Pure arithmetic, separated from the image work so it can be tested without a
--- GPU or a filesystem -- which is the half that has been wrong before.
-function MapEdits.borrowLayout(ts, count)
-  local base, perRow = tileCapacity(ts)
-  local rows = math.ceil((count or 0) / perRow)
-  return base, perRow, rows, (ts.imageHeight or 128) + rows * 8
-end
-
--- Resolve a minted block's negative slots against a live tileset.
-function MapEdits.resolveBorrowed(tiles, base)
-  local out = {}
-  for i = 1, 16 do
-    local v = tiles[i] or 0
-    out[i] = (v < 0) and (base + (-v) - 1) or v
-  end
-  return out
-end
-
--- Append every minted block to its tileset and return key -> id.
+-- MOVED TO src/import/BorrowedTiles.lua, whole, and re-exported here so every
+-- existing caller keeps working.
 --
--- Runs before any map is patched, because a map's block patch may name one of
--- these keys and the number it resolves to is only known once the append has
--- happened.
--- THE ATLAS EXTENSION, done once per tileset before anything is minted.
---
--- Builds a taller copy of the tileset's atlas with the borrowed tiles appended
--- and points the tileset at it. Everything about this is guarded: it needs
--- love.image, it reads two files and writes a third, and on a headless run or
--- a read-only install any of that can fail -- in which case the borrow simply
--- does not resolve and is reported, rather than the map load dying.
---
--- WRITTEN TO ITS OWN PATH, never over the extractor's output: that tree is
--- rebuilt from the cartridge on every import, so an atlas written there would
--- be destroyed by the next one -- silently, which is the failure this whole
--- store exists to avoid.
-local function extendAtlas(game, tilesetId, ts, borrowed, tilesets)
-  if not (love and love.image and love.image.newImageData) then
-    return nil, tilesetId .. ": no image support to copy borrowed art with"
-  end
+-- Not tidying: an exported map pack has to rebuild these on the RECEIVING
+-- machine, out of that machine's own cartridge, and `tools/` is not in a
+-- player build (scripts/pack_love.sh ships tools/save-editor and
+-- tools/map-editor for the editor itself, but a mod may not depend on either).
+-- Leaving the applier here meant a pack could carry the recipe and have
+-- nothing able to follow it. Same argument, same destination, as
+-- AdoptedTileset -- read that file's header.
+local BorrowedTiles = require("src.import.BorrowedTiles")
 
-  local Assets = require("src.render.Assets")
+MapEdits.tileCapacity = BorrowedTiles.tileCapacity
+MapEdits.borrowLayout = BorrowedTiles.borrowLayout
+MapEdits.resolveBorrowed = BorrowedTiles.resolveBorrowed
+local tileCapacity = BorrowedTiles.tileCapacity
 
-  -- ALWAYS REBUILT FROM THE ORIGINAL ATLAS, NEVER FROM THE LAST EXTENSION.
-  --
-  -- This read `ts.image` -- which after one borrow is the extended atlas -- and
-  -- appended to THAT, taking its base from the extended height. So every
-  -- borrow copied all the previous borrows forward again and moved the base
-  -- past them, the file grew by the whole set each time, and the rows the
-  -- earlier mints were resolved against were left behind as orphans.
-  --
-  -- The original path and its tile capacity are stamped on the live tileset
-  -- the first time through, so `base` is a fixed number for the life of this
-  -- import and a minted block resolved last week still names the same row.
-  if ts._borrowSrc == nil then
-    ts._borrowSrc = ts.image
-    ts._borrowSrcH = ts.imageHeight
-  end
-  local srcH = ts._borrowSrcH or ts.imageHeight
-  local perRow = math.max(1, math.floor((ts.imageWidth or 128) / 8))
-  local base = math.max(0, math.floor((ts.imageWidth or 128) / 8)
-                            * math.floor((srcH or 128) / 8))
-  local rows = math.ceil(#borrowed / perRow)
-  if rows <= 0 then return base end
-  local newH = (srcH or 128) + rows * 8
-
-  local okSrc, atlas = pcall(Assets.imageData, ts._borrowSrc)
-  if not (okSrc and atlas) then
-    return nil, tilesetId .. ": its own atlas could not be read"
-  end
-  local w = atlas:getWidth()
-
-  -- THE SOURCE HAS TO BE THE SOURCE, and `Assets.imageData` will not tell you
-  -- when it is not.
-  --
-  -- A path it cannot open does not return nil -- it returns the PLACEHOLDER,
-  -- which is 16x16. Every guard below is written against `w`, so a placeholder
-  -- silently produced a 16-pixel-wide atlas: every paste failed its bounds
-  -- check, nothing was copied, and the tileset was left claiming 128. The art
-  -- was simply absent, which on screen is a black square.
-  --
-  -- The record knows how wide its own atlas is. If the decode disagrees, the
-  -- decode is not this tileset and there is nothing to copy into.
-  local claimW = tonumber(ts.imageWidth)
-  if claimW and math.abs(atlas:getWidth() - claimW) > 0 then
-    return nil, string.format(
-      "%s: its atlas read back as %dx%d but the tileset says %dx%s - the "
-      .. "image at %s could not be opened",
-      tilesetId, atlas:getWidth(), atlas:getHeight(), claimW,
-      tostring(ts._borrowSrcH or ts.imageHeight), tostring(ts._borrowSrc))
-  end
-
-  local okNew, out = pcall(love.image.newImageData, w, newH)
-  if not (okNew and out) then
-    return nil, tilesetId .. ": a taller atlas could not be made"
-  end
-  out:paste(atlas, 0, 0, 0, 0, w, atlas:getHeight())
-
-  for i, e in ipairs(borrowed) do
-    local from = tilesets[e.from]
-    if from and from.image then
-      local okF, fd = pcall(Assets.imageData, from.image)
-      if okF and fd then
-        local fw = math.floor(fd:getWidth() / 8)
-        local sx = (e.tile % math.max(1, fw)) * 8
-        local sy = math.floor(e.tile / math.max(1, fw)) * 8
-        local idx = base + i - 1
-        local dx = (idx % perRow) * 8
-        local dy = math.floor(idx / perRow) * 8
-        if sx + 8 <= fd:getWidth() and sy + 8 <= fd:getHeight()
-           and dx + 8 <= w and dy + 8 <= newH then
-          pcall(out.paste, out, fd, dx, dy, sx, sy, 8, 8)
-        end
-      end
-    end
-  end
-
-  -- ------------------------------------------------------ AND THE PALETTE
-  --
-  -- THE PIXELS ARE ONLY HALF OF WHAT A TILE IS, and the missing half is why a
-  -- borrowed block came out a black square with the art plainly in the file.
-  --
-  -- A Gen 2 atlas is 2bpp GREYSCALE. Colour arrives at bake time: `palMap`
-  -- gives a palette row per tile graphic and `palColors` holds the rows, and
-  -- `TileRenderer.gen2TileColors` reads `palMap[tile + 1] or 0`. A tile
-  -- appended past the end of `palMap` therefore takes row **0** -- not no
-  -- colour, row zero -- and row zero of a Gen 2 tileset is the dark grey the
-  -- text box is drawn in. Forest art recoloured through Johto's row zero is a
-  -- black square, exactly as reported, and nothing about it looks like a
-  -- palette problem because the greyscale atlas underneath is perfect.
-  --
-  -- So the row comes across with the pixels. Not the row NUMBER -- palette
-  -- rows are per tileset and Johto's row 3 is not Forest's row 3 -- the actual
-  -- COLOURS, appended to this tileset's own list and pointed at by the new
-  -- `palMap` entry.
-  --
-  -- EVERY TIME-OF-DAY TABLE MOVES IN STEP, because one `palMap` value has to
-  -- name the same row in all of them: append to MORN and not to NITE and the
-  -- tile is right until dusk.
-  if type(ts.palMap) == "table" then
-    -- Rebuilt from the stamp each time for the same reason the image is: a
-    -- second borrow must not append the first borrow's rows again.
-    if ts._borrowPalMap == nil then
-      local copy = {}
-      for k, v in pairs(ts.palMap) do copy[k] = v end
-      ts._borrowPalMap = copy
-      local rows = {}
-      if type(ts.palColors) == "table" then
-        rows.palColors = #ts.palColors
-      end
-      if type(ts.palColorsByTod) == "table" then
-        rows.byTod = {}
-        for tod, list in pairs(ts.palColorsByTod) do
-          if type(list) == "table" then rows.byTod[tod] = #list end
-        end
-      end
-      ts._borrowPalLen = rows
-    end
-    local palMap = {}
-    for k, v in pairs(ts._borrowPalMap) do palMap[k] = v end
-    local lens = ts._borrowPalLen or {}
-
-    -- Truncate the colour lists back to what the tileset had before any
-    -- borrowing, then append this round's rows.
-    local function trim(list, n)
-      if type(list) ~= "table" or n == nil then return list end
-      for i = #list, n + 1, -1 do list[i] = nil end
-      return list
-    end
-    trim(ts.palColors, lens.palColors)
-    for tod, n in pairs(lens.byTod or {}) do
-      trim(ts.palColorsByTod and ts.palColorsByTod[tod], n)
-    end
-
-    local palFailed = nil
-    for i, e in ipairs(borrowed) do
-      local from = tilesets[e.from]
-      -- ROW ZERO IS NOT A NEUTRAL DEFAULT, IT IS THE GREY ONE.
-      --
-      -- Every fallback in this loop lands on row 0 of one tileset or the
-      -- other, and in a Gen 2 tileset row 0 is the grey the text box is drawn
-      -- in -- 222,255,222 / 172,172,172 / 106,106,106. So a source lookup that
-      -- quietly missed did not produce "some wrong colour", it produced a tile
-      -- in black and white, which is exactly the symptom that sent four rounds
-      -- of this looking at the ART.
-      --
-      -- Counted and reported, so a miss says so instead of drawing greys.
-      local srcRow = nil
-      if type(from) == "table" and type(from.palMap) == "table" then
-        srcRow = from.palMap[e.tile + 1]
-      end
-      if srcRow == nil then
-        palFailed = palFailed or {}
-        palFailed[#palFailed + 1] = string.format("%s tile %s",
-          tostring(e.from), tostring(e.tile))
-        srcRow = 0
-      end
-      -- The row index this tile will take here: the same in every list,
-      -- because `palMap` carries one number for all of them.
-      local at = nil
-      if type(ts.palColors) == "table" then
-        local src = type(from) == "table" and from.palColors or nil
-        local row = src and src[math.min(srcRow, #src - 1) + 1] or nil
-        ts.palColors[#ts.palColors + 1] = row or ts.palColors[1]
-        at = #ts.palColors - 1
-      end
-      if type(ts.palColorsByTod) == "table" then
-        for tod, list in pairs(ts.palColorsByTod) do
-          if type(list) == "table" then
-            local srcList = (type(from) == "table"
-                             and type(from.palColorsByTod) == "table"
-                             and from.palColorsByTod[tod])
-              or (type(from) == "table" and from.palColors) or nil
-            local row = srcList
-              and srcList[math.min(srcRow, #srcList - 1) + 1] or nil
-            list[#list + 1] = row or list[1]
-            at = at or (#list - 1)
-          end
-        end
-      end
-      if at then palMap[base + i] = at end
-    end
-
-    -- THE PADDING AT THE END OF THE LAST ROW.
-    --
-    -- The atlas grows by whole 8-pixel ROWS -- 17 borrowed tiles is two rows,
-    -- which is 32 slots -- so the tail of the last row is empty space with no
-    -- palette entry behind it. `gen2TileColors` reads `palMap[tile + 1] or 0`,
-    -- and row 0 of a Gen 2 tileset is the text-box grey, so those slots bake
-    -- as grey squares. Nothing should ever reference them, and "should" is the
-    -- word that has cost this bug five rounds.
-    --
-    -- Filled explicitly, to the full tile count of the image that was just
-    -- written. It costs a handful of integers and it means no tile anywhere in
-    -- this atlas can fall off the end of the map that colours it.
-    local slots = math.max(0, math.floor(w / 8) * math.floor(newH / 8))
-    for t = base + #borrowed, slots - 1 do
-      if palMap[t + 1] == nil then palMap[t + 1] = 0 end
-    end
-
-    ts.palMap = palMap
-    -- AND THE DERIVED COPY OF IT, which is a different table with a different
-    -- reader.  `Data:publishGen2Palettes` builds `tileset.tilePalettes` --
-    -- palMap plus one, so a reader can index it without knowing about the ROM
-    -- nibble -- and it built it ONCE, at boot, guarded on `== nil`.  Growing
-    -- palMap here left that copy at its old length, and the voxel path reads
-    -- only the copy: every borrowed tile fell off the end, and a missing slot
-    -- reads as slot 1, which is the TEXT palette.  Flat grey, in 3D only,
-    -- while the same tile was correct in the flat view two feet away.
-    --
-    -- Dropped rather than extended in place: the publisher owns the shape of
-    -- that table and now rebuilds whenever it is short, so the honest move is
-    -- to say "this is stale" and let it be rebuilt from the one source of
-    -- truth.
-    ts.tilePalettes = nil
-    pcall(function()
-      local Data = require("src.core.Data")
-      if type(Data.publishGen2Palettes) == "function" then
-        Data:publishGen2Palettes()
-      end
-    end)
-    if palFailed then
-      pcall(function()
-        require("src.core.Logger").warn(
-          "borrow: %d of %d tiles had no palette row in their own tileset and "
-          .. "fell back to grey (%s) - the source tileset was not reachable "
-          .. "from this import", #palFailed, #borrowed, tilesetId,
-          table.concat(palFailed, ", ", 1, math.min(4, #palFailed)))
-      end)
-    end
-  end
-
-  -- A NEW FILENAME FOR EVERY VERSION OF THE ATLAS, and this is not tidiness.
-  --
-  -- `Assets.image` caches by path and so does TileRenderer's own `imageCache`,
-  -- and the baked atlases are keyed on the path underneath them. Writing every
-  -- extension to the same filename meant the second borrow wrote taller pixels
-  -- to a path every cache in the renderer had already answered for -- so the
-  -- new block's tiles pointed at rows that existed in the FILE and not in the
-  -- Image anyone was drawing from. Nothing is there to draw, so it comes out
-  -- as a black square.
-  --
-  -- The count of borrowed tiles names the version: it only ever goes up, and
-  -- it is exactly what changed.
-  local path = string.format("editor/atlas/%s_%s_%d.png", tostring(game),
-                             tostring(tilesetId), #borrowed)
-  pcall(function()
-    if love.filesystem and love.filesystem.createDirectory then
-      love.filesystem.createDirectory("editor/atlas")
-    end
-  end)
-  local okEnc, encErr = pcall(function() out:encode("png", path) end)
-  if not okEnc then
-    -- The REASON, not just the fact: "could not be written" is a read-only
-    -- install, a full disk and a missing directory wearing one sentence, and
-    -- only one of them is something the reader can do anything about.
-    return nil, string.format("%s: the extended atlas could not be written to "
-      .. "%s (%s)", tilesetId, path, tostring(encErr))
-  end
-  -- Only NOW is the tileset repointed: a half-written atlas that the renderer
-  -- is already reading from is worse than the original one.
-  ts.image = path
-  ts.imageHeight = newH
-
-  -- AND THE CACHES THAT ANSWERED FOR THIS TILESET A MOMENT AGO. The new path
-  -- misses them by itself, which is the point of the name above -- but the map
-  -- being edited holds a renderer built against the OLD one, and it will go on
-  -- drawing from it until something says otherwise.
-  pcall(function() require("src.render.TileRenderer").invalidate() end)
-
-  -- AND THE VOXEL MOD'S SHAPE TABLE, which is the one that was still stale --
-  -- and is why a borrowed tile was correct in the flat view and a black
-  -- rectangle in the 3D one.
-  --
-  -- `TileShape.forMap` caches its resolved shapes by TILESET ID, and a borrow
-  -- does not change the id: `TilesetJohtoModern` is still
-  -- `TilesetJohtoModern`, sixteen tiles longer. So the mod went on answering
-  -- from a table built when the atlas had 192 tiles, and the tile at 192 had
-  -- no shape at all. `Structures` then floods its drawings from that table, so
-  -- the new tile was in no structure either -- and what the mesher had left to
-  -- draw was a quad with nothing behind it.
-  --
-  -- `invalidateAll` rather than `invalidate(mapId)`: the per-map call drops
-  -- Structures and ChunkMesher, and TileShape's cache is not per map. This is
-  -- exactly the case that function's own comment describes -- a change to the
-  -- mod's data rather than to a map -- and a tileset growing is that.
-  pcall(function()
-    require("tools.map-editor.ModShapes").invalidateAll()
-  end)
-  -- WHAT THIS ACTUALLY WROTE, once, where the reader can see it. Five rounds
-  -- of this bug were spent on "it should work": every link in the chain reads
-  -- correctly in isolation and the picture still came out wrong, which means
-  -- the model of what runs when is wrong somewhere source alone will not show.
-  -- One line of fact from the running game beats another round of reasoning.
-  pcall(function()
-    require("src.core.Logger").info(
-      "borrow: %s now %dx%d (%s), base tile %d, %d borrowed, palMap %d rows, "
-      .. "palColors %d, first borrowed tile %d -> row %s = %s",
-      tostring(tilesetId), w, newH, tostring(path), base,
-      #borrowed, type(ts.palMap) == "table" and #ts.palMap or -1,
-      type(ts.palColors) == "table" and #ts.palColors or -1,
-      base,
-      tostring(type(ts.palMap) == "table" and ts.palMap[base + 1] or "?"),
-      (function()
-        -- THE COLOURS THEMSELVES. "row 8" is not checkable by eye; three RGB
-        -- triples are -- grey reads as grey at a glance, and that is the whole
-        -- question.
-        local pm = type(ts.palMap) == "table" and ts.palMap[base + 1]
-        local pc = type(ts.palColors) == "table" and ts.palColors
-        local row = pm and pc and pc[math.min(pm, #pc - 1) + 1]
-        if type(row) ~= "table" then return "?" end
-        local out = {}
-        for k = 1, math.min(3, #row) do
-          local c2 = row[k]
-          out[#out + 1] = type(c2) == "table"
-            and string.format("%d/%d/%d", c2[1] or 0, c2[2] or 0, c2[3] or 0)
-            or tostring(c2)
-        end
-        return table.concat(out, " ")
-      end)())
-  end)
-  -- The mod's terrain atlas registers itself with Assets, so this reaches it
-  -- too; its key is the image path, which has changed, but a stale entry for
-  -- the OLD path pins the previous texture alive for nothing.
-  pcall(function() require("src.render.Assets").invalidate() end)
-  return base
-end
 
 function MapEdits.applyTilesets(store, game, tilesets)
   local g = store and store.games and store.games[game]
   if not (g and g.tilesets and type(tilesets) == "table") then return {}, nil end
-  local ids, stale = {}, nil
+  return BorrowedTiles.apply(game, g.tilesets, tilesets)
+end
+
+-- WHAT AN EXPORT HAS TO CARRY for the receiving machine to rebuild these.
+--
+-- The store's bucket, minus anything that is only true here. `baseBlocks` is
+-- the tileset's length BEFORE this session's mints, which is what the other
+-- end checks its own against -- see BorrowedTiles.applyOne.
+--
+-- Recipes only: `borrowed` is { from = <tileset>, tile = n }, a reference to
+-- the reader's own cartridge, and a minted block is sixteen tile indices --
+-- the same class of thing a map's `blocks` array already is, and no pixels.
+function MapEdits.tilesetRecipes(store, game, tilesets)
+  local g = store and store.games and store.games[game]
+  if not (g and g.tilesets) then return nil end
+  local out, any = {}, false
   for tilesetId, t in pairs(g.tilesets) do
-    local ts = tilesets[tilesetId]
-    if not ts or type(ts.blocks) ~= "table" then
-      stale = stale or {}
-      stale[#stale + 1] = tilesetId .. ": tileset is not in this import"
-    else
-      -- BEFORE the blocks: a minted block may name a borrowed tile by slot,
-      -- and the index that resolves to does not exist until the atlas has
-      -- actually grown.
-      local base, borrowFailed = nil, nil
-      if t.borrowed and #t.borrowed > 0 then
-        base, borrowFailed = extendAtlas(game, tilesetId, ts, t.borrowed,
-                                         tilesets)
-        if not base then
-          stale = stale or {}
-          stale[#stale + 1] = tostring(borrowFailed)
-        end
+    local blocks, borrowed = {}, {}
+    for i, minted in ipairs(t.blocks or {}) do
+      local tiles = {}
+      for k = 1, 16 do tiles[k] = (minted.tiles or {})[k] or 0 end
+      local coll = {}
+      for q = 1, 4 do coll[q] = (minted.coll or {})[q] or 0 end
+      blocks[i] = { tiles = tiles, coll = coll }
+    end
+    for i, e in ipairs(t.borrowed or {}) do
+      borrowed[i] = { from = e.from, tile = e.tile }
+    end
+    local pins = nil
+    for tile, cls in pairs(t.pins or {}) do
+      pins = pins or {}
+      pins[tile] = cls
+    end
+    if blocks[1] or borrowed[1] or pins then
+      local ts = tilesets and tilesets[tilesetId]
+      local base = nil
+      if ts and type(ts.blocks) == "table" then
+        base = #ts.blocks
+        for _ in pairs(ts._mintedAt or {}) do base = base - 1 end
       end
-      -- ONE APPEND PER MINT, HOWEVER OFTEN THIS RUNS.
-      --
-      -- `Data:load` runs it once and the append was written for that. The
-      -- editor runs it whenever art is borrowed -- which is once per block
-      -- picked out of another tileset -- and each run used to append EVERY
-      -- mint again: pick ten blocks and the tileset grows by fifty-five, all
-      -- but ten of them duplicates nothing points at. A Gen 2 block id is a
-      -- byte, so that is not merely wasteful, it is a ceiling being spent.
-      --
-      -- The stamp lives on the LIVE tileset record, not in the store: it maps
-      -- this session's mint keys to the ids they were given in the table that
-      -- is loaded right now. A re-import replaces the record and the stamp
-      -- goes with it, which is correct -- the ids are rebuilt from scratch.
-      ts._mintedAt = ts._mintedAt or {}
-      for i, minted in ipairs(t.blocks or {}) do
-        -- `base or 0` WAS A SILENT LIE, and it is the shape of bug this
-        -- project keeps paying for.
-        --
-        -- A borrowed tile is stored as a negative SLOT and resolved to
-        -- `base + slot - 1`. When the atlas could not be extended there is no
-        -- base -- and falling back to zero resolved every borrowed tile to
-        -- rows 0..15 of the DESTINATION's own atlas, which in a Gen 2 tileset
-        -- is the blank filler at the top. The block was minted, the paint
-        -- landed, the editor said nothing, and what appeared on the map was a
-        -- black square. Every symptom pointed at the copy having gone wrong
-        -- and none of them pointed at the copy never having happened.
-        --
-        -- So a block that names borrowed art is DROPPED when the borrow
-        -- failed, and the reason is already on `stale` above. A missing block
-        -- is visible and asks a question; wrong art that looks deliberate does
-        -- not.
-        local needsBase = false
-        for k = 1, 16 do
-          if (minted.tiles[k] or 0) < 0 then needsBase = true break end
-        end
-        if needsBase and base == nil then
-          stale = stale or {}
-          stale[#stale + 1] = string.format(
-            "%s: a block using copied art was left out - the atlas could not "
-            .. "be extended", tilesetId)
-          goto continueMint
-        end
-        local copy = MapEdits.resolveBorrowed(minted.tiles, base or 0)
-        local key = mintKey(tilesetId, i)
-        local id = ts._mintedAt[key]
-        if id ~= nil and ts.blocks[id + 1] then
-          -- REWRITTEN RATHER THAN LEFT ALONE: `base` moves when new art is
-          -- borrowed, so a block resolved against the old base is pointing at
-          -- the wrong rows the moment anything else is copied in.
-          ts.blocks[id + 1] = copy
-        else
-          ts.blocks[#ts.blocks + 1] = copy
-          id = #ts.blocks - 1              -- block ids are 0-based
-          ts._mintedAt[key] = id
-        end
-        ids[key] = id
-        -- Collision is a FLAT array of four entries per block, so a minted
-        -- block's four classes have to land at exactly id*4+1..+4. Appending
-        -- to `blocks` and forgetting this leaves the new block reading its
-        -- collision from whatever came after the old end of the array -- which
-        -- is nil, and a nil class is a cell the player walks through.
-        if type(ts.collision) == "table" then
-          for q = 1, 4 do
-            ts.collision[id * 4 + q] = (minted.coll and minted.coll[q]) or 0
-          end
-        end
-        ::continueMint::
-      end
+      -- The class pins ride along too. They are a fact about the TILESET --
+      -- "this drawing is a tree" -- and carrying them per map meant a pack
+      -- described the trees on the maps it happened to export and left every
+      -- other map drawn with that tileset resolving them as walls.
+      out[tilesetId] = { blocks = blocks, borrowed = borrowed,
+                         baseBlocks = base, pins = pins }
+      any = true
     end
   end
-  return ids, stale
+  return any and out or nil
 end
 
 -- A single BLOCK of the map grid, keyed "bx,by" -> block id.
@@ -2037,9 +1677,9 @@ end
 -- number the renderer can index a block array with, which is the only form
 -- `paintCell` and `paint` accept.
 function MapEdits.borrowLive(store, game, destTileset, srcTileset, srcBlockId,
-                             tilesets)
+                             tilesets, sourceId)
   local key, why = MapEdits.borrowBlock(store, game, destTileset, srcTileset,
-                                        srcBlockId, tilesets)
+                                        srcBlockId, tilesets, sourceId)
   if not key then return nil, why end
   local ids, stale = MapEdits.applyTilesets(store, game, tilesets)
   local live = ids and ids[key]
@@ -2133,6 +1773,24 @@ function MapEdits.applyAdoptedTilesets(store, game, tilesets)
     else
       local copy = { id = id, adopted = true }
       for k, v in pairs(spec) do copy[k] = v end
+      -- BACK-FILL WHAT AN OLDER ADOPTION DID NOT CARRY.
+      --
+      -- `tilePairs` is the case: a Gen 1 set's elevation edges -- the pairs of
+      -- individually-walkable tiles that may not be crossed, which is the only
+      -- thing making a Cerulean Cave ledge a ledge. Sets adopted before those
+      -- travelled have none, and the alternative to topping them up here is
+      -- re-importing the map, which throws away every edit made since.
+      --
+      -- Read, not stored: this runs on the GAME's boot as well as the
+      -- editor's, and the game has no business rewriting the editor's file.
+      if copy.tilePairs == nil and copy.adoptedFrom and copy.adoptedName then
+        local okA, AT = pcall(require, "src.import.AdoptedTileset")
+        if okA and type(AT) == "table" and type(AT.tilePairs) == "function" then
+          local okP, pairs_ = pcall(AT.tilePairs, copy.adoptedFrom,
+                                    copy.adoptedName)
+          if okP and type(pairs_) == "table" then copy.tilePairs = pairs_ end
+        end
+      end
       tilesets[id] = copy
       n = n + 1
     end

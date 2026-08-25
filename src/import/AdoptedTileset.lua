@@ -178,6 +178,44 @@ end
 -- tilesets; an exported mod, on someone else's machine, has only a name. Both
 -- need the identical record out the other end -- same art-path rewrite, same
 -- validation -- and having two places build it is how they drift.
+-- THE ELEVATION EDGES, which travel with the tileset and had nowhere else to
+-- ride.
+--
+-- Gen 1 has no collision classes. What stops the player walking off a Cerulean
+-- Cave ledge onto the floor below is `TilePairCollisionsLand` -- a list of
+-- tile PAIRS that may not be crossed in either direction, five of them for
+-- CAVERN alone -- and both tiles in every one of those pairs is individually
+-- walkable. Take the list away and the cliffs are not cliffs; they are a
+-- change of drawing.
+--
+-- It lives in `field.lua`, not in the tileset record, and it is keyed by the
+-- tileset's PLAIN name. So a map adopted into a Gen 2 build lost it twice
+-- over: Crystal's own `field.lua` has no `tilePairs` key at all, and even with
+-- one the rows say "CAVERN" while the adopted set is called "CAVERN@red".
+-- Cerulean Cave imported from Red arrived as a cave whose terraces you could
+-- step straight up onto from any side.
+--
+-- Read from the SOURCE cartridge's cache, filtered to this tileset, and
+-- carried on the record -- which is where `Collision.pairBlocked` now looks
+-- first. Nothing is redistributed by this: the rows come out of whichever
+-- machine is doing the resolving, exactly like the blocks and the art path.
+function AdoptedTileset.tilePairs(version, name)
+  local field = AdoptedTileset.loadDataset(version, "field")
+  local src = type(field) == "table" and field.tilePairs or nil
+  if type(src) ~= "table" then return nil end
+  local out, any = { land = {}, water = {} }, false
+  for _, key in ipairs({ "land", "water" }) do
+    for _, row in ipairs(src[key] or {}) do
+      if type(row) == "table" and row.tileset == name
+         and row.a ~= nil and row.b ~= nil then
+        out[key][#out[key] + 1] = { a = row.a, b = row.b, tileset = name }
+        any = true
+      end
+    end
+  end
+  return any and out or nil
+end
+
 function AdoptedTileset.fromRecord(version, name, src)
   if type(src) ~= "table" or type(src.blocks) ~= "table" then
     return nil, string.format("%s has no tileset called %s",
@@ -189,6 +227,9 @@ function AdoptedTileset.fromRecord(version, name, src)
   copy.adopted = true
   copy.adoptedFrom = version
   copy.adoptedName = name
+  -- already filtered to this tileset, so the consumer needs no name match --
+  -- which is the point: the namespaced id could never have matched one
+  copy.tilePairs = AdoptedTileset.tilePairs(version, name)
 
   -- THE ART PATH IS CHECKED BEFORE THE RECORD IS HANDED BACK. A tileset
   -- registered against a PNG that is not there draws nothing, which is a worse

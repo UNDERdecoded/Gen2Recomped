@@ -1452,6 +1452,18 @@ function SaveData.newGame(boot)
   end
   -- a total conversion reshapes the skeleton (spawn, party, money)
   -- before anything reads it; unhooked this returns save unchanged
+  --
+  -- `boot.noHooks` ASKS FOR THE SHAPE WITHOUT THE EVENT.
+  --
+  -- Not every caller of this is starting a playthrough. The map editor builds
+  -- one purely so its tab rail has counters to draw (tools/save-editor
+  -- App.lua, map mode) -- and firing `save.new_game` there told every
+  -- installed mod that a new game had begun, from inside a tool with no world
+  -- booted and nothing for a handler to reach. One that took the event at
+  -- face value took the editor down with it.
+  --
+  -- Callers that ARE starting a playthrough pass nothing and are unaffected.
+  if boot.noHooks then return save end
   return Runtime.call("save.new_game", function(s) return s end, save)
 end
 

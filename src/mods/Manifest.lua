@@ -97,6 +97,29 @@ local function parseRequiredGames(raw)
   return out[1] and out or nil
 end
 
+-- `maps`: the map ids a content mod patches, declared rather than discovered.
+--
+-- WHY DECLARE SOMETHING THE ENTRY FILE ALREADY SAYS. The entry file only says
+-- it once it has RUN, and the mod set is built once a boot -- so between
+-- installing a map pack and restarting, the only honest answer to "what is in
+-- this?" was silence. Worse than silence in practice: a pack replacing an
+-- earlier version of itself still had the OLD one's claims in the registry, so
+-- the editor showed the previous contents with no sign they were stale.
+--
+-- The manifest is the one part of a mod that is read WITHOUT running it, so a
+-- list here is answerable at install time, on the install screen, before the
+-- zip is even unpacked. Advisory, never authoritative: what a mod actually
+-- patches is what it patches, and the registry remains the truth once loaded.
+local function parseMaps(raw)
+  local list = raw and raw.maps
+  if type(list) ~= "table" then return nil end
+  local out = {}
+  for _, entry in ipairs(list) do
+    if type(entry) == "string" and entry ~= "" then out[#out + 1] = entry end
+  end
+  return out[1] and out or nil
+end
+
 local function mergeConflictLists(conflicts, incompatible)
   local seen, out = {}, {}
   for _, list in ipairs({ array(conflicts), array(incompatible) }) do
@@ -274,6 +297,9 @@ function Manifest.validate(raw, path)
     -- satisfied by having imported that game, and this is how the launcher
     -- knows to ask before the mod is ever run.
     requiredGames = parseRequiredGames(raw),
+    -- Which maps this mod says it touches; see parseMaps. Absent on every mod
+    -- that predates the field, which is why nothing may depend on it.
+    maps = parseMaps(raw),
     assets_transforms = optionalFile(raw.assets_transforms, "assets_transforms"),
     path = path,
     raw = raw,

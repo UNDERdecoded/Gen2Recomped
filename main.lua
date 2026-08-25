@@ -691,7 +691,15 @@ end
 function love.touchpressed(id, x, y, dx, dy, pressure)
   -- The dismissal that matters on a phone: there is no keyboard behind this.
   if bootReport then return dismissBootReport() end
-  if editorMode then return end
+  -- THE EDITOR SEES TOUCHES NOW, and only for the gestures a mouse cannot
+  -- make. It is driven by SDL's synthesized mouse events -- one finger is a
+  -- pointer and always has been -- so these handlers track contact points and
+  -- act on TWO of them (pinch to zoom) and nothing else. Returning without
+  -- consuming keeps every existing single-finger path exactly as it was.
+  if editorMode then
+    if EditorApp.touchpressed then EditorApp.touchpressed(id, x, y) end
+    return
+  end
   if TouchEditor then
     -- iOS synthesizes mousepressed for the primary touch (same as the
     -- launcher); Android drives the editor through love.touch directly.
@@ -715,7 +723,10 @@ function love.touchpressed(id, x, y, dx, dy, pressure)
 end
 
 function love.touchmoved(id, x, y, dx, dy, pressure)
-  if editorMode then return end
+  if editorMode then
+    if EditorApp.touchmoved then EditorApp.touchmoved(id, x, y) end
+    return
+  end
   if TouchEditor then
     if love.system.getOS() == "iOS" then return end
     return TouchEditor.touchmoved(id, x, y)
@@ -726,7 +737,10 @@ function love.touchmoved(id, x, y, dx, dy, pressure)
 end
 
 function love.touchreleased(id, x, y, dx, dy, pressure)
-  if editorMode then return end
+  if editorMode then
+    if EditorApp.touchreleased then EditorApp.touchreleased(id, x, y) end
+    return
+  end
   if TouchEditor then
     if love.system.getOS() == "iOS" then return end
     return TouchEditor.touchreleased(id, x, y)

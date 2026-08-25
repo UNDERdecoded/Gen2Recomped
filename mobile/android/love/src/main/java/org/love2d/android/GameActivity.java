@@ -115,6 +115,23 @@ public class GameActivity extends SDLActivity {
     // field reset and was filed as picked_rom.gb, which Lua then rejected as a
     // bad ROM instead of installing it (#553).
     private String pendingPickFilename = PICKED_ROM_FILENAME;
+    /**
+     * One-shot: has this pick already been retried through ACTION_GET_CONTENT?
+     *
+     * ACTION_OPEN_DOCUMENT can SUCCEED as an activity launch and still hand
+     * back a URI this app cannot read -- an OEM shell offers a third-party
+     * file manager in the chooser, that manager returns its own provider URI
+     * with no grant attached, and the launch-time try/catch in showFilePicker
+     * never fires because nothing threw. The pick simply comes back dead.
+     *
+     * GET_CONTENT is the recovery: a manager serving it is expected to hand
+     * over something readable (most copy the file to a temp of their own), so
+     * an unreadable OPEN_DOCUMENT result is retried through it once before
+     * anything is reported as a failure. Once, because a device where both
+     * routes fail must end in a message rather than a picker that reopens
+     * forever.
+     */
+    private boolean pickRetried = false;
     private static final String STATE_PENDING_PICK = "pendingPickFilename";
     private static final String STATE_PENDING_CREATE = "pendingCreateSuggestedName";
     // Suggested download name for the in-flight SAF create (set by showCreateDocument).
@@ -482,10 +499,23 @@ public class GameActivity extends SDLActivity {
         }
 
         self.pendingPickFilename = destFilename;
+        self.pickRetried = false;
         if (android.os.Build.VERSION.SDK_INT >= 21) {
             Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
             intent.addCategory(Intent.CATEGORY_OPENABLE);
             intent.setType("*/*");
+            // ASK FOR THE READ GRANT OUT LOUD. ACTION_OPEN_DOCUMENT grants it
+            // implicitly when the system documents UI serves the pick, but a
+            // third-party provider answering the same intent decides for
+            // itself, and some only attach a grant when one was requested.
+            // Persistable so the grant survives the activity being recreated
+            // while the picker is up, which is the common case on low-memory
+            // devices -- the pick lands in a new Activity instance that was
+            // never granted anything.
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            if (android.os.Build.VERSION.SDK_INT >= 19) {
+                intent.addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
+            }
             try {
                 self.startActivityForResult(intent, FILE_PICKER_REQUEST_CODE);
                 return true;
@@ -495,11 +525,22 @@ public class GameActivity extends SDLActivity {
                 Log.d("GameActivity", "could not open document picker: " + e.getMessage());
             }
         }
+        return self.launchGetContentPicker();
+    }
+
+    /**
+     * The ACTION_GET_CONTENT half of the picker, as its own method so the
+     * result path can reach it too -- see {@link #pickRetried}.
+     *
+     * @return true when a picker was actually put on screen
+     */
+    private boolean launchGetContentPicker() {
         Intent intent = new Intent(Intent.ACTION_GET_CONTENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
         try {
-            self.startActivityForResult(
+            startActivityForResult(
                 Intent.createChooser(intent, "Choose a file"),
                 FILE_PICKER_REQUEST_CODE);
             return true;
@@ -922,23 +963,75 @@ public class GameActivity extends SDLActivity {
         // chooser, and those hand back either a provider URI this app has no
         // grant for (SecurityException / FileNotFoundException) or a bare
         // file:// path (unreadable without storage permission on targetSdk 34).
-        // Try the resolver, then the path, then tell Lua why nothing imported.
+        //
+        // Four routes, then a retry, then -- only then -- a report. Each route
+        // records WHY it failed, because "could not read the picked file" with
+        // nothing after it is a message no one can act on, least of all from
+        // the other end of a bug report.
+        String why = null;
         InputStream source = null;
+
+        // The grant first. A persistable grant offered but not taken is
+        // dropped when this activity finishes, which is exactly the window a
+        // low-memory recreation lands in.
+        try {
+            int keep = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+            if (keep != 0 && android.os.Build.VERSION.SDK_INT >= 19) {
+                getContentResolver().takePersistableUriPermission(uri, keep);
+            }
+        } catch (Exception e) {
+            // not persistable -- ordinary, and not a failure on its own
+            Log.d("GameActivity", "no persistable grant for " + uri + ": " + e);
+        }
+
         try {
             source = getContentResolver().openInputStream(uri);
         } catch (Exception e) {
-            Log.d("GameActivity", "could not open picked file: " + e.getMessage());
+            why = e.getClass().getSimpleName() + ": " + e.getMessage();
+            Log.d("GameActivity", "could not open picked file: " + e);
         }
+
+        // Some providers refuse openInputStream and still serve a descriptor.
+        if (source == null) {
+            try {
+                android.os.ParcelFileDescriptor pfd =
+                    getContentResolver().openFileDescriptor(uri, "r");
+                if (pfd != null) {
+                    source = new java.io.FileInputStream(pfd.getFileDescriptor());
+                }
+            } catch (Exception e) {
+                if (why == null) why = e.getClass().getSimpleName() + ": " + e.getMessage();
+                Log.d("GameActivity", "could not open picked descriptor: " + e);
+            }
+        }
+
         if (source == null && "file".equals(uri.getScheme()) && uri.getPath() != null) {
             try {
                 source = new FileInputStream(uri.getPath());
-            } catch (FileNotFoundException e) {
-                Log.d("GameActivity", "could not open picked path: " + e.getMessage());
+            } catch (Exception e) {
+                if (why == null) why = e.getClass().getSimpleName() + ": " + e.getMessage();
+                Log.d("GameActivity", "could not open picked path: " + e);
             }
         }
+
         if (source == null) {
+            // THE RETRY, BEFORE THE APOLOGY. A dead OPEN_DOCUMENT result is
+            // the OEM-chooser case, and GET_CONTENT is the route that works
+            // there. Once only -- pickRetried is cleared by showFilePicker.
+            if (!pickRetried) {
+                pickRetried = true;
+                Log.d("GameActivity", "picked file unreadable (" + why
+                    + "); retrying through ACTION_GET_CONTENT");
+                if (launchGetContentPicker()) return;
+            }
             Log.d("GameActivity", "no readable stream for picked file " + uri);
-            writeSaveDirFlag(PICK_ERROR_FILENAME, destName);
+            // The basename stays FIRST and on its own line: Lua matches on it
+            // to decide which notice this belongs to. Everything after it is
+            // detail, and the scheme/authority pair is enough to name the app
+            // that served the pick without carrying the file's own path.
+            writeSaveDirFlag(PICK_ERROR_FILENAME, destName
+                + "\nfrom " + uri.getScheme() + "://" + uri.getAuthority()
+                + "\n" + (why == null ? "no reader accepted it" : why));
             return;
         }
         if (!copyAssetFile(source, destFile.getPath())) {
@@ -946,7 +1039,9 @@ public class GameActivity extends SDLActivity {
             // A truncated pick would only fail verification later, so drop it
             // and report instead.
             destFile.delete();
-            writeSaveDirFlag(PICK_ERROR_FILENAME, destName);
+            writeSaveDirFlag(PICK_ERROR_FILENAME, destName
+                + "\nfrom " + uri.getScheme() + "://" + uri.getAuthority()
+                + "\nthe file opened but the copy did not finish");
         }
     }
 
@@ -956,43 +1051,64 @@ public class GameActivity extends SDLActivity {
      * @return true if successful
      */
     boolean copyAssetFile(InputStream source, String destinationFileName) {
-        boolean success = false;
+        // SUCCESS USED TO MEAN "THE STREAMS CLOSED".
+        //
+        // The old body set `success = true` in the block that closes the two
+        // streams, which runs whether or not the copy before it threw -- so a
+        // read that died halfway through a provider stream logged "Copying
+        // failed", closed cleanly, and returned TRUE. The caller then treated
+        // a truncated ROM or a half-written mod zip as imported, and the only
+        // symptom was a verification failure much later with nothing pointing
+        // back here.
+        //
+        // Two more things were wrong with it. `assert` is disabled on Android,
+        // so a null destination (the FileOutputStream throw above it) reached
+        // `destination.write` as an NPE -- not an IOException, so it escaped
+        // the catch and unwound out of onActivityResult, which is why some
+        // failed picks reported nothing at all. And the do/while wrote before
+        // it tested, so a zero-length pick called write(buf, 0, -1).
+        if (source == null) return false;
 
         BufferedOutputStream destination = null;
+        boolean success = false;
+        long bytesWritten = 0;
         try {
-            destination = new BufferedOutputStream(new FileOutputStream(destinationFileName, false));
-        } catch (IOException e) {
-            Log.d("GameActivity", "Could not open destination file: " + e.getMessage());
-        }
-
-        // perform the copying
-        int chunk_read;
-        int bytes_written = 0;
-
-        assert (source != null && destination != null);
-
-        try {
-            byte[] buf = new byte[1024];
-            chunk_read = source.read(buf);
-            do {
-                destination.write(buf, 0, chunk_read);
-                bytes_written += chunk_read;
-                chunk_read = source.read(buf);
-            } while (chunk_read != -1);
-        } catch (IOException e) {
-            Log.d("GameActivity", "Copying failed:" + e.getMessage());
-        }
-
-        // close streams
-        try {
-            source.close();
-            destination.close();
+            destination = new BufferedOutputStream(
+                new FileOutputStream(destinationFileName, false));
+            byte[] buf = new byte[8192];
+            int n;
+            while ((n = source.read(buf)) != -1) {
+                destination.write(buf, 0, n);
+                bytesWritten += n;
+            }
+            destination.flush();
             success = true;
-        } catch (IOException e) {
-            Log.d("GameActivity", "Copying failed: " + e.getMessage());
+        } catch (Exception e) {
+            // Exception, not IOException: a provider stream can throw
+            // IllegalStateException or SecurityException mid-read, and those
+            // must fail the copy rather than escape it.
+            Log.d("GameActivity", "Copying failed: " + e);
+        } finally {
+            try {
+                source.close();
+            } catch (IOException e) {
+                Log.d("GameActivity", "could not close source: " + e.getMessage());
+            }
+            if (destination != null) {
+                try {
+                    // close() flushes, so this is the last place the write can
+                    // fail -- and a failure here means the file on disk is
+                    // short, whatever happened above.
+                    destination.close();
+                } catch (IOException e) {
+                    success = false;
+                    Log.d("GameActivity", "could not close destination: " + e.getMessage());
+                }
+            }
         }
 
-        Log.d("GameActivity", "Successfully copied stream to " + destinationFileName + " (" + bytes_written + " bytes written).");
+        Log.d("GameActivity", (success ? "Copied stream to " : "FAILED copying stream to ")
+            + destinationFileName + " (" + bytesWritten + " bytes written).");
         return success;
     }
 
