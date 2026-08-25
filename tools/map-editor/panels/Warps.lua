@@ -202,9 +202,19 @@ local function problemWith(S, d, warp, i)
     end
   end
   if isGen2(S) then
-    local fires = cellEntrance(S, d, warp.x, warp.y)
+    -- cellEntrance ALREADY formats what it looked at -- "$60" for a collision
+    -- class, "tile $05" for an adopted tileset with no class table -- and
+    -- hands it back as its second return. The old line threw that away and
+    -- formatted a `cls` that is local to cellEntrance and has never been in
+    -- scope here, so `%02X` got nil and the panel crashed instead of printing
+    -- the reason. Only SOME maps showed it because the line is only reached
+    -- by a warp that is genuinely inert: a map whose doors all sit on real
+    -- entrance cells never gets here, which is why imports from Red -- whose
+    -- door cells carry no Gen-2 entrance class -- were the ones that fell over.
+    local fires, what = cellEntrance(S, d, warp.x, warp.y)
     if fires == false then
-      return string.format("inert - cell is $%02X, not a door", cls)
+      if what then return "inert - cell is " .. what .. ", not a door" end
+      return "inert - cell is not a door"
     end
   end
   return nil
