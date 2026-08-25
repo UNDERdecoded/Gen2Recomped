@@ -126,6 +126,38 @@ function SpriteRenderer.new(spriteDef, seed)
   return self
 end
 
+-- A PALETTE THIS INSTANCE WEARS INSTEAD OF ITS SHEET'S.
+--
+-- Every other sprite in the game is its sheet: one OBJ palette per id, baked
+-- once and shared by every actor wearing it. The player in Prism is not --
+-- the character customiser lets the player mix their own skin tone and outfit
+-- colour, which is two entries of that four-colour palette chosen at runtime.
+--
+-- It cannot be done by editing `def.gen2ObjPal`, which is the tempting fix:
+-- the def is the shared table out of data.sprites, so writing the player's
+-- colours into it repaints every NPC that happens to use the same sheet, and
+-- the bake cache (keyed on the def's id) would hand the stale image back
+-- anyway. So the override lives on the INSTANCE and carries its own cache
+-- key, which is what lets the mixed palette be baked and re-baked as the
+-- player drags a slider without disturbing the shared sheet at all.
+--
+-- `key` must change whenever `colors` does, or the cache returns the previous
+-- mix and the sliders appear to do nothing.
+function SpriteRenderer:setPalette(colors, key)
+  if colors and key then
+    self.palColors, self.palKey = colors, key
+  else
+    self.palColors, self.palKey = nil, nil
+  end
+end
+
+-- The palette actually in force: the instance's, else the sheet's own.
+function SpriteRenderer:objPalette()
+  if self.palColors then return self.palColors, "cust:" .. self.palKey end
+  if self.def.gen2ObjPal then return self.def.gen2ObjPal, "gen2:" .. self.def.id end
+  return nil
+end
+
 -- The image this sprite would draw from right now: the plain sheet, or the
 -- OBP-recolored bake of it.  Exposed so a render pipeline can texture its
 -- own geometry from the very same image -- the geometry carries sheet pixel
@@ -145,8 +177,9 @@ function SpriteRenderer:resolveImage()
   -- hardware-colour modes is what makes a Gen2 overworld look like a GBC
   -- game; applying it in EVERY mode is what made COLORS do nothing out in the
   -- world while battle still responded to it.
-  if self.def.gen2ObjPal and PaletteFX.usesGen2ObjPal() then
-    return getObpImage(self.def.image, self.def.gen2ObjPal, "gen2:" .. self.def.id)
+  local objColors, objGroup = self:objPalette()
+  if objColors and PaletteFX.usesGen2ObjPal() then
+    return getObpImage(self.def.image, objColors, objGroup)
   end
   if PaletteFX.usesGbcPack() then
     local colors, group = PaletteFX.spriteObp(self.def, self.seed)
@@ -183,8 +216,9 @@ function SpriteRenderer:resolveModeImage(x, y)
   -- full-color art claims its 16x16 cell out of the shade-remap pass
   if self.def.trueColor then
     PaletteFX.markTrueColor(x, y, 16, 16)
-  elseif self.def.gen2ObjPal and PaletteFX.usesGen2ObjPal() then
-    image = getObpImage(self.def.image, self.def.gen2ObjPal, "gen2:" .. self.def.id)
+  elseif self:objPalette() and PaletteFX.usesGen2ObjPal() then
+    local objColors, objGroup = self:objPalette()
+    image = getObpImage(self.def.image, objColors, objGroup)
     PaletteFX.markTrueColor(x, y, 16, 16)
   elseif PaletteFX.usesGbcPack() then
     local colors, group = PaletteFX.spriteObp(self.def, self.seed)
@@ -223,11 +257,13 @@ function SpriteRenderer:draw(px, py, camX, camY, facing, walkPhase, stepFlip, to
   -- full-color art claims its 16x16 cell out of the shade-remap pass
   if self.def.trueColor then
     PaletteFX.markTrueColor(x, y, 16, 16)
-  elseif self.def.gen2ObjPal and PaletteFX.usesGen2ObjPal() then
-    -- Gen2 GBC mode: the ROM's own OBJ palette for this sheet, baked in.
-    -- It is full colour, so it claims its cell out of the shade-remap pass
-    -- exactly like a trueColor sprite does.
-    image = getObpImage(self.def.image, self.def.gen2ObjPal, "gen2:" .. self.def.id)
+  elseif self:objPalette() and PaletteFX.usesGen2ObjPal() then
+    -- Gen2 GBC mode: the ROM's own OBJ palette for this sheet, baked in --
+    -- or, for a customised player, the mix they chose. It is full colour, so
+    -- it claims its cell out of the shade-remap pass exactly like a trueColor
+    -- sprite does.
+    local objColors, objGroup = self:objPalette()
+    image = getObpImage(self.def.image, objColors, objGroup)
     PaletteFX.markTrueColor(x, y, 16, 16)
   elseif PaletteFX.usesGbcPack() then
     -- RED++: the world canvas is already true-color (TileRenderer bakes

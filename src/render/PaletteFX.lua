@@ -902,11 +902,16 @@ function PaletteFX.spriteObp(spriteDef, seed)
   return PaletteFX.darkObp(w.spritePalettes[group], group)
 end
 
--- GetHealthBarColor (home/palettes.asm) on the standard 48px bar
+-- GetHPPal (home/hp_pal.asm) on this cartridge's bar.  Crystal's is 48 pixels
+-- wide and turns green at 27 and yellow at 10; a cartridge that widened the
+-- bar moved both, and reading Prism's 56-pixel bar through Crystal's numbers
+-- showed yellow between half and 56% health where the cartridge shows green.
 function PaletteFX.barPalName(hp, maxHp)
-  local px = maxHp > 0 and math.floor(hp * 48 / maxHp) or 0
+  local geo = require("src.render.HudTiles").geometry()
+  local px = maxHp > 0 and math.floor(hp * geo.hpBarTiles * 8 / maxHp) or 0
   if hp > 0 and px < 1 then px = 1 end
-  return px >= 27 and "GREENBAR" or px >= 10 and "YELLOWBAR" or "REDBAR"
+  return px >= geo.hpBarGreenPixels and "GREENBAR"
+    or px >= geo.hpBarYellowPixels and "YELLOWBAR" or "REDBAR"
 end
 
 -- convenience: a single whole-screen zone for a named palette

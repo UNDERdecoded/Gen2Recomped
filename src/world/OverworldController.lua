@@ -715,8 +715,9 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- crossConnection re-arms this after setMap; clear so a warp/reload
   -- cannot leave a stale deferred PlayMapMusic pending
   self.pendingSeamMusic = nil
-  self.entities = { self.player }
-  for _, n in ipairs(self.npcs) do table.insert(self.entities, n) end
+  -- a fresh map owns no leftover extras: start from nothing, then derive
+  self.entities = nil
+  self:rebuildEntities()
   -- Yellow's companion Pikachu trails the player (never in
   -- self.entities: it does not block movement, pikachu_follow.asm)
   require("src.world.PikachuFollower").onMapEntered(Game, self, opts)
@@ -1302,6 +1303,60 @@ end
 -- load wherever the respawn tables happened to put him.  The full sweep is
 -- still correct for what it models -- LoadMapObjects, driven by
 -- refreshmap/reloadmap -- so it stays available with `only` unset.
+-- `entities` IS A DERIVED LIST: the player, then every live NPC.
+--
+-- It is what the draw loops walk; `npcs` is what collision, talking and the
+-- script runner walk. Nothing has ever enforced that the two agree -- setMap
+-- builds `entities` from `npcs` once, and after that six separate places keep
+-- them in step by hand, plus whatever a mod does with `world.entities`, which
+-- both of the voxel mods hold directly.
+--
+-- Lose an NPC from `entities` alone and it does not error, it does not warn,
+-- and it does not go away: it stands there invisible, still solid, still
+-- talking when you press A into it. That is the Elite Four report -- beat
+-- Will, he stops being drawn, and you can still walk up to nothing and get
+-- his post-battle line.
+--
+-- So the invariant gets asserted in one place instead of maintained in seven.
+-- Anything in `entities` that is NEITHER the player NOR a live NPC is kept, in
+-- order, after them: a mod's own spawns live in that list too (the roaming
+-- wild Pokemon are entities nothing here owns), and rebuilding must not
+-- quietly delete somebody else's actor to fix ours.
+function OverworldState:rebuildEntities()
+  if not self.player then return end
+  local mine = {}
+  for _, npc in ipairs(self.npcs) do mine[npc] = true end
+  local extras = {}
+  for _, e in ipairs(self.entities or {}) do
+    if e ~= self.player and not mine[e] then extras[#extras + 1] = e end
+  end
+  local out = { self.player }
+  for _, npc in ipairs(self.npcs) do out[#out + 1] = npc end
+  for _, e in ipairs(extras) do out[#out + 1] = e end
+  self.entities = out
+end
+
+-- The same rebuild, but it says something the first time it has to repair a
+-- live NPC that had fallen out of the draw list. A silent self-heal would fix
+-- the symptom and bury the cause; this names the actor, once per session, so
+-- the next report arrives with the culprit attached.
+function OverworldState:reassertEntities(why)
+  if not self.player then return end
+  local present = {}
+  for _, e in ipairs(self.entities or {}) do present[e] = true end
+  local missing
+  for _, npc in ipairs(self.npcs) do
+    if not present[npc] then missing = missing or npc end
+  end
+  self:rebuildEntities()
+  if missing and not OverworldState._entityDesyncLogged then
+    OverworldState._entityDesyncLogged = true
+    Logger.warn("entity list desync repaired (%s): %s was in npcs but not "
+                .. "entities -- it would have been invisible but still solid",
+                tostring(why or "?"), tostring(missing.id))
+  end
+end
+
 function OverworldState:syncObjectVisibility(only)
   if not (self.map and self.map.def) then return end
   local mapId = self.map.id
@@ -1378,6 +1433,11 @@ function OverworldState:syncObjectVisibility(only)
     self.npcs[#self.npcs + 1] = npc
     self.entities[#self.entities + 1] = npc
   end
+  -- Every spawn and despawn above touched both lists, and so does every other
+  -- site in this file -- and the Elite Four still ended up drawn out of one of
+  -- them. This runs at the one point every visibility change passes through,
+  -- so whatever did it, the actor is back in the draw list before the frame.
+  self:reassertEntities("syncObjectVisibility")
 end
 
 -- Start a background script in one of the bounded parallel slots (09
@@ -5338,6 +5398,13 @@ function OverworldState:onStepComplete()
          and self.map.def.tileset ~= indoor.excludedTileset then
     enc = self:rollEncounter(land, "indoor")
   end
+
+  -- A battle is where the report puts it: the Elite Four member is drawn
+  -- before the fight and not after. Whatever churns the entity list across a
+  -- battle -- a mod's spawns being torn down and rebuilt around it is the
+  -- obvious candidate, since both voxel mods hold this list -- the actors this
+  -- map owns are put back in the draw list here.
+  self:reassertEntities("afterBattle")
 
   -- ------------------------------------------------------ ROAMING BEASTS
   --

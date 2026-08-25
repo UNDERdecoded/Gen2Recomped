@@ -217,13 +217,13 @@ Gen2ScriptOps.COMMANDS_PRISM = {
   { "pokenamemem", "bb" }, { "itemtotext", "bb" }, { "mapnametotext", "b" }, -- 3F
   { "trainertotext", "bbb" }, { "stringtotext", "wb" }, { "itemnotify", "" }, -- 42
   { "pocketisfull", "" }, { "opentext", "" }, { "refreshscreen", "" }, -- 45
-  { "closetext", "" }, { "cmdwitharrayargs", "b" }, { "farwritetext", "T" }, -- 48
+  { "closetext", "" }, { "cmdwitharrayargs", "c" }, { "farwritetext", "T" }, -- 48
   { "writetext", "t" }, { "repeattext", "" }, { "yesorno", "" }, -- 4B
   { "loadmenudata", "w" }, { "closewindow", "" }, { "jumptextfaceplayer", "t" }, -- 4E
   { "farjumptext", "T" }, { "jumptext", "t" }, { "waitbutton", "" }, -- 51
   { "buttonsound", "" }, { "pokepic", "b" }, { "closepokepic", "" }, -- 54
-  { "eventvarop", "" }, { "verticalmenu", "" }, { "scrollingmenu", "b" }, -- 57
-  { "randomwildmon", "" }, { "loadmemtrainer", "" }, { "loadwildmon", "bbbbb" }, -- 5A
+  { "eventvarop", "b" }, { "verticalmenu", "" }, { "scrollingmenu", "b" }, -- 57
+  { "randomwildmon", "" }, { "loadmemtrainer", "" }, { "loadwildmon", "bL" }, -- 5A
   { "loadtrainer", "bb" }, { "startbattle", "" }, { "reloadmapafterbattle", "" }, -- 5D
   { "addhalfwordtovar", "w" }, { "trainertext", "b" }, { "trainerflagaction", "b" }, -- 60
   { "winlosstext", "tt" }, { "scripttalkafter", "" }, { "end_if_just_battled", "" }, -- 63
@@ -258,7 +258,7 @@ Gen2ScriptOps.COMMANDS_PRISM = {
   { "comparevartobyte", "w" }, { "backupsecondpokemon", "" }, { "restoresecondpokemon", "" }, -- BA
   { "loadhalfwordvar", "b" }, { "pullhalfwordvar", "" }, { "divideby", "b" }, -- BD
   { "isinsingulararray", "w" }, { "getnthstring", "wb" }, { "readpersonxy", "bw" }, -- C0
-  { "return_if_callback_else_end", "" }, { "copy", "wbb" }, { "switch", "b" }, -- C3
+  { "return_if_callback_else_end", "" }, { "copy", "wc" }, { "switch", "b" }, -- C3
   { "multiplyvar", "b" }, { "seteventvar", "b" }, { "callasmf", "D" }, -- C6
   { "jumptable", "d" }, { "anonjumptable", "" }, { "varblocks", "w" }, -- C9
   { "addbytetovar", "w" }, { "paragraphdelay", "" }, { "playwaitsfx", "w" }, -- CC
@@ -564,6 +564,30 @@ Gen2ScriptOps.ARG_BYTES = {
   -- givepoke's trigger byte: six more bytes follow when it is nonzero.  Both
   -- list their MINIMUM here; the extractor's own arm advances the rest.
   s = 1, g = 1,
+  -- PRISM'S TWO VARIABLE TAILS, both read straight out of the handlers the
+  -- script jumptable points at (25:$62f2 -> the addresses below).
+  --
+  -- `L` is loadwildmon's SECOND operand (Script_loadwildmon 25:$60F8).  The
+  -- handler reads it with GetScriptByte, tests `bit 7`, and RETURNS when the
+  -- bit is clear -- so the short form is TWO bytes total.  With the bit set it
+  -- clears it, stores the value, and copies FIVE more bytes into $C7FB.  Read
+  -- as a fixed five-operand command (the old "bbbbb") every short loadwildmon
+  -- over-ran its operands by four bytes and the rest of that script decoded
+  -- from the wrong byte -- silently, because the bytes it landed on were
+  -- usually still valid opcodes.
+  --
+  -- `c` is an INLINE BLOB LENGTH: one count byte, then that many raw data
+  -- bytes that are NOT bytecode.  Two commands use it, and the macros say so
+  -- in as many words -- `cmdwitharrayargs_length` and `copycmd_length` both
+  -- emit `db <end label> - <label placed immediately after the db>`, i.e. the
+  -- byte counts everything that follows it up to the matching
+  -- `endcmdwitharrayargs` / `endcopy`.  Script_copy (25:$6DF1) is
+  -- GetScriptHalfwordOrVar_HL (the destination) / GetScriptByteOrVar (the
+  -- count) / `GetScriptByte, ld [hl+], dec c` until the count runs out, and
+  -- the macro pair `copy`/`endcopy` (macros/event.asm) emits exactly that:
+  -- `dw dest, db length` followed by the payload.  The old "wbb" read two
+  -- fixed bytes and then tried to execute the payload.
+  L = 1, c = 1,
 }
 
 -- commands after which the interpreter never falls through to the next byte

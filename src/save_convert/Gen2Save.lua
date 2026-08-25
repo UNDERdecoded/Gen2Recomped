@@ -66,100 +66,321 @@ local BOX_REGION_SIZE = 1 + (MONS_PER_BOX + 1)
                       + MONS_PER_BOX * NAME_LENGTH * 2   -- 1102 = sBox1End
 local BOX_SLOT_STRIDE = 0x450 -- sBox2 - sBox1 (1102 rounded up by 2 pad bytes)
 
-local MAX_ITEMS, MAX_KEY_ITEMS, MAX_BALLS, MAX_PC_ITEMS = 20, 25, 12, 50
-local NUM_TMS, NUM_HMS = 50, 7
-local TM01_ITEM_INDEX, HM01_ITEM_INDEX = 191, 243  -- data/generated/items.lua
-                                                    -- ITEM_191 key "TM_01",
-                                                    -- ITEM_243 key "HM_01"
+-- ------------------------------------------------------------------
+-- LAYOUT: where this cartridge keeps its save, as data.
+--
+-- Gold, Silver and Crystal share one map, and it used to be written here as
+-- literals.  A Gen2 HACK does not.  Pokemon Prism moves the whole mirrored
+-- WRAM block, grows every bag pocket, turns the TM/HM shelf into a bit array,
+-- carries TWENTY badges in three bytes instead of sixteen in two, and puts
+-- its checksum somewhere else entirely.  Read with Gold's numbers a Prism
+-- save decodes as garbage from the very first field -- and, worse, ENCODES as
+-- garbage, which is a file the cartridge itself would reject.
+--
+-- So the numbers live in LAYOUTS and `Gen2Save.setLayout(version)` chooses
+-- one, refilling the same locals every function below already read.  A caller
+-- that never calls setLayout keeps Gold's map exactly as before.
+--
+-- PROVENANCE.  Every Prism number comes from the rgbds symbol table of a
+-- build verified 3-byte-identical to the released cartridge
+-- (tools/pokeprism.sym, the same table tools/prism_symbols.py folds into the
+-- manifest).  The four things a symbol table cannot say were read out of the
+-- handlers it names:
+--
+--   the SRAM<->WRAM run  LoadPlayerData (05:$50DF) copies sGameData $A009 to
+--                        wGameData $D47B for $082A, then $A833 to $DCA5 for
+--                        $32; LoadPokemonData (05:$5105) copies $A865 to
+--                        $DCD7 for $311.  Three calls, one linear run, which
+--                        both endpoints confirm:
+--                          0x2009 + (wPokemonData $DCD7 - $D47B) = 0x2865
+--                                                              = sPokemonData
+--                          0x2009 + (wPokemonDataEnd $DFE8 - $D47B) = 0x2B76
+--                                                              = sGameDataEnd
+--   the checksum         VerifyChecksum (05:$512D) is `ld hl,$A009 /
+--                        ld bc,$0B6D / call Checksum` against sChecksum
+--                        $AD0D, and $A009 + $0B6D = $AB76 = sGameDataEnd.  A
+--                        SECOND checksum covers sExtraData $AB76 for $190
+--                        against sExtraChecksum $AD06.
+--   the check values     CheckPrimarySaveFile (05:$509B) is `cp $63` on
+--                        sValidCheck1 and `cp $7F` on sValidCheck2 -- NOT
+--                        Gold's $99/$27.  A Prism save exported with Gold's
+--                        pair is refused before its checksum is even read.
+--   the TM/HM shelf      wTMsHMs is `flag_array NUM_TMS + NUM_HMS` -- 13
+--                        bytes for 96 + 5 machines, not one quantity byte
+--                        each -- and ReceiveTMHM (12:$44B6) does `dec c`
+--                        before the FlagAction, so machine N is bit N-1.
+-- ------------------------------------------------------------------
+
+-- Gold/Silver/Crystal.  wPlayerData $D1A1 <-> sPlayerData $A009 (file
+-- 0x2009), and the endpoints check the same way Prism's do:
+--   0x2009 + (wPokemonData $DA22 - $D1A1) = 0x288A = sPokemonData
+--   0x2009 + (wPokemonDataEnd $DF01 - $D1A1) = 0x2D69 = sGameDataEnd
+local LAYOUT_GEN2 = {
+  wramAnchor = 0xD1A1, sramAnchor = 0x2009, wramEnd = 0xDF01,
+  options = 0x2000, checkValue1 = 0x2008, gameData = 0x2009,
+  checksum = 0x2D69, checkValue2 = 0x2D6B, curBoxData = 0x2D6C,
+  checksumStart = 0x2009, checksumEnd = 0x2D69,
+  checkValues = { 0x99, 0x27 },
+  maxItems = 20, maxKeyItems = 25, maxBalls = 12, maxPCItems = 50,
+  numTms = 50, numHms = 7,
+  -- TM01/HM01 are ordinary items here, so the shelf is 57 quantity bytes and
+  -- a machine slot resolves through the item crosswalk
+  -- (data/generated/items.lua ITEM_191 = "TM_01", ITEM_243 = "HM_01").
+  tm01ItemIndex = 191, hm01ItemIndex = 243,
+  badgeBytes = { "johtoBadges", "kantoBadges" },
+  w = {
+    playerId = 0xD1A1, playerName = 0xD1A3, momName = 0xD1AE,
+    rivalName = 0xD1B9,
+    gameTimeHours = 0xD1EB, gameTimeMins = 0xD1ED, gameTimeSecs = 0xD1EE,
+    gameTimeFrames = 0xD1EF,
+    gender = 0xD472, statusFlags = 0xD571, money = 0xD573, coins = 0xD57A,
+    johtoBadges = 0xD57C, kantoBadges = 0xD57D,
+    tmsHms = 0xD57E,
+    numItems = 0xD5B7, items = 0xD5B8,
+    numKeyItems = 0xD5E1, keyItems = 0xD5E2,
+    numBalls = 0xD5FC, balls = 0xD5FD,
+    numPCItems = 0xD616, pcItems = 0xD617,
+    pokegearFlags = 0xD67C,
+    eventFlags = 0xD7B7, curBox = 0xD8BC, visitedSpawns = 0xD9EE,
+    mapGroup = 0xDA00, mapNumber = 0xDA01, yCoord = 0xDA02, xCoord = 0xDA03,
+    partyCount = 0xDA22, partySpecies = 0xDA23, partyMons = 0xDA2A,
+    partyMonOT = 0xDB4A, partyMonNicks = 0xDB8C,
+    pokedexCaught = 0xDBE4, pokedexSeen = 0xDC04,
+    dayCareMan = 0xDC40, breedMon1Nick = 0xDC41, breedMon1OT = 0xDC4C,
+    breedMon1 = 0xDC57, dayCareLady = 0xDC77, stepsToEgg = 0xDC78,
+    breedMon2Nick = 0xDC7A, breedMon2OT = 0xDC85, breedMon2 = 0xDC90,
+    eggMonNick = 0xDCB0, eggMonOT = 0xDCBB, eggMon = 0xDCC6,
+  },
+}
+
+local LAYOUT_PRISM = {
+  wramAnchor = 0xD47B, sramAnchor = 0x2009, wramEnd = 0xDFE8,
+  options = 0x2000, checkValue1 = 0x2008, gameData = 0x2009,
+  checksum = 0x2D0D, checkValue2 = 0x2D0F, curBoxData = 0x2D10,
+  checksumStart = 0x2009, checksumEnd = 0x2B76,
+  -- The second checksummed region: sExtraData $AB76 for $190 bytes, against
+  -- sExtraChecksum $AD06.  Nothing in this port models what lives there (it
+  -- mirrors WRAM bank 2 from $D735), so it rides across from the import
+  -- template untouched -- but the sum still has to be rewritten, or a save
+  -- built from a zero template is refused.
+  extraStart = 0x2B76, extraEnd = 0x2D06, extraChecksum = 0x2D06,
+  checkValues = { 0x63, 0x7F },
+  maxItems = 40, maxKeyItems = 50, maxBalls = 25, maxPCItems = 60,
+  numTms = 96, numHms = 5,
+  -- Prism numbers its machines in a space of their own (`const_value = 1`
+  -- ahead of the add_tm block in item_constants.asm), so there is no TM01
+  -- ITEM index to offset from: the shelf is a flag array and slot N is the
+  -- synthesised item whose `machineNumber` is N.
+  machineFlags = true,
+  -- No badgeBytes ON PURPOSE.  All twenty of Prism's badges are EngineFlags
+  -- rows (ENGINE_PYREBADGE .. ENGINE_BLAZEBADGE, rows $18-$2B over
+  -- wNaljoBadges/wRijonBadges/wOtherBadges), so the generic engine-flag pass
+  -- below carries them under exactly the names Badges.itemFor asks for.
+  -- Gold's two badge bytes are still done explicitly only because this codec
+  -- predates that pass.
+  w = {
+    playerId = 0xD47B, playerName = 0xD47D, momName = 0xD488,
+    rivalName = 0xD493,
+    gameTimeHours = 0xD4C4, gameTimeMins = 0xD4C6, gameTimeSecs = 0xD4C7,
+    gameTimeFrames = 0xD4C8,
+    gender = 0xDFD7, statusFlags = 0xD84C, money = 0xD84E, coins = 0xD855,
+    tmsHms = 0xD859,
+    numItems = 0xD866, items = 0xD867,
+    numKeyItems = 0xD8B8, keyItems = 0xD8B9,
+    numBalls = 0xD8EC, balls = 0xD8ED,
+    -- wPCItems is the COUNT byte, not the first pair: InitList (01:$5778) is
+    -- `xor a / ld [hl+],a / ld [hl],$FF`, so $D920 holds the count and $D921
+    -- opens the sixty (id, qty) slots.
+    numPCItems = 0xD920, pcItems = 0xD921,
+    eventFlags = 0xDA72, curBox = 0xDB72, visitedSpawns = 0xDEDC,
+    mapGroup = 0xDCB5, mapNumber = 0xDCB6, yCoord = 0xDCB7, xCoord = 0xDCB8,
+    partyCount = 0xDCD7, partySpecies = 0xDCD8, partyMons = 0xDCDF,
+    partyMonOT = 0xDDFF, partyMonNicks = 0xDE41,
+    pokedexCaught = 0xDE99, pokedexSeen = 0xDEB9,
+    dayCareMan = 0xDEF5, breedMon1Nick = 0xDEF6, breedMon1OT = 0xDF01,
+    breedMon1 = 0xDF0C, dayCareLady = 0xDF2C, stepsToEgg = 0xDF2D,
+    breedMon2Nick = 0xDF2F, breedMon2OT = 0xDF3A, breedMon2 = 0xDF45,
+    eggMonNick = 0xDF65, eggMonOT = 0xDF70, eggMon = 0xDF7B,
+  },
+}
+
+-- CRYSTAL IS NOT GOLD, and it used to be decoded as if it were.
+--
+-- This module opened life as the Gold/Silver codec and Crystal was swept in by
+-- `GameVersion.generation() == 2` alone -- but Crystal moved its entire save.
+-- Not one field above shares an address with Gold's: wPlayerData is $D47B and
+-- not $D1A1, the badges are $D857/$D858 and not $D57C/$D57D, the party is
+-- $DCD7 and not $DA22, the checksum is at file 0x2D0D over a range that ends
+-- at 0x2B83, and the check values are $63/$7F where Gold answers $99/$27.
+--
+-- Nothing about that failed quietly: a Crystal .sav read with Gold's map
+-- checksums wrong, so SaveConvert.importSav rejected it outright with "save
+-- data checksum invalid", and an export produced a file Crystal itself
+-- refuses.  Crystal saves simply did not work.  (Prism is a Crystal HACK,
+-- which is why so much of this table is Prism's: it inherited the skeleton and
+-- then grew the pockets, the badges and a second checksum on top of it.)
+--
+-- PROVENANCE, out of Pokemon Crystal (USA)'s own ROM rather than any wiki:
+--   CheckPrimarySaveFile 05:$4F84  `ld a,[$A008] / cp $63` then
+--                                  `ld a,[$AD0F] / cp $7F`
+--   VerifyChecksum       05:$5028  `ld hl,$A009 / ld bc,$0B7A` against
+--                                  sChecksum $AD0D, and $A009 + $0B7A =
+--                                  $AB83 = sGameDataEnd.  ONE checksum --
+--                                  Prism's second one is Prism's own.
+--   LoadPlayerData       05:$4FD7  $A009 -> $D47B for $082A, then $A833 ->
+--                                  $DCA5 for $32
+--   LoadPokemonData      05:$500C  $A865 -> $DCD7 for $031E
+--   _SaveData            05:$509A  $D472 -> $BE3D for 7 -- the wCrystalData
+--                                  block, which is where the gender byte is
+-- and the endpoints check the same way the other two layouts do:
+--   0x2009 + (wPokemonData $DCD7 - $D47B) = 0x2865 = sPokemonData
+--   0x2009 + (wPokemonDataEnd $DFF5 - $D47B) = 0x2B83 = sGameDataEnd
+local LAYOUT_CRYSTAL = {
+  wramAnchor = 0xD47B, sramAnchor = 0x2009, wramEnd = 0xDFF5,
+  -- sCrystalData $BE3D is bank 1, so file 0x2000 + ($BE3D - $A000) = 0x3E3D.
+  -- It sits OUTSIDE the checksummed range, exactly as the cartridge has it.
+  extraBlocks = { { wram = 0xD472, sram = 0x3E3D, size = 7 } },
+  options = 0x2000, checkValue1 = 0x2008, gameData = 0x2009,
+  checksum = 0x2D0D, checkValue2 = 0x2D0F, curBoxData = 0x2D10,
+  checksumStart = 0x2009, checksumEnd = 0x2B83,
+  checkValues = { 0x63, 0x7F },
+  -- the pockets and the machine shelf are Gold's, and the addresses prove it:
+  -- wTMsHMs $D859 + 57 = $D892 = wNumItems, wItems $D893 + 20*2+1 = $D8BC =
+  -- wNumKeyItems, wKeyItems $D8BD + 25+1 = $D8D7 = wNumBalls, wBalls $D8D8 +
+  -- 12*2+1 = $D8F1 = wNumPCItems.
+  maxItems = 20, maxKeyItems = 25, maxBalls = 12, maxPCItems = 50,
+  numTms = 50, numHms = 7,
+  tm01ItemIndex = 191, hm01ItemIndex = 243,
+  badgeBytes = { "johtoBadges", "kantoBadges" },
+  w = {
+    playerId = 0xD47B, playerName = 0xD47D, momName = 0xD488,
+    rivalName = 0xD493,
+    gameTimeHours = 0xD4C4, gameTimeMins = 0xD4C6, gameTimeSecs = 0xD4C7,
+    gameTimeFrames = 0xD4C8,
+    -- wPlayerGender is wCrystalData's first byte -- below the main block, in
+    -- the seven-byte run _SaveData copies to sCrystalData
+    gender = 0xD472,
+    statusFlags = 0xD84C, money = 0xD84E, coins = 0xD855,
+    johtoBadges = 0xD857, kantoBadges = 0xD858,
+    tmsHms = 0xD859,
+    numItems = 0xD892, items = 0xD893,
+    numKeyItems = 0xD8BC, keyItems = 0xD8BD,
+    numBalls = 0xD8D7, balls = 0xD8D8,
+    numPCItems = 0xD8F1, pcItems = 0xD8F2,
+    pokegearFlags = 0xD957,
+    eventFlags = 0xDA72, curBox = 0xDB72, visitedSpawns = 0xDCA5,
+    mapGroup = 0xDCB5, mapNumber = 0xDCB6, yCoord = 0xDCB7, xCoord = 0xDCB8,
+    partyCount = 0xDCD7, partySpecies = 0xDCD8, partyMons = 0xDCDF,
+    -- wPartyMonOT and the three day-care nicknames are unnamed in the symbol
+    -- table; each is the previous field plus its own length, and the NEXT
+    -- named symbol confirms every one: $DCDF + 6*48 = $DDFF, and $DDFF + 6*11
+    -- = $DE41 = wPartyMonNicknames.
+    partyMonOT = 0xDDFF, partyMonNicks = 0xDE41,
+    pokedexCaught = 0xDE99, pokedexSeen = 0xDEB9,
+    dayCareMan = 0xDEF5, breedMon1Nick = 0xDEF6, breedMon1OT = 0xDF01,
+    breedMon1 = 0xDF0C, dayCareLady = 0xDF2C, stepsToEgg = 0xDF2D,
+    breedMon2Nick = 0xDF2F, breedMon2OT = 0xDF3A, breedMon2 = 0xDF45,
+    eggMonNick = 0xDF65, eggMonOT = 0xDF70, eggMon = 0xDF7B,
+  },
+}
+
+local LAYOUTS = { prism = LAYOUT_PRISM, crystal = LAYOUT_CRYSTAL }
+
+-- The chosen layout's values, in the same locals every function below reads.
+local MAX_ITEMS, MAX_KEY_ITEMS, MAX_BALLS, MAX_PC_ITEMS
+local NUM_TMS, NUM_HMS
+local TM01_ITEM_INDEX, HM01_ITEM_INDEX
+local MACHINE_FLAGS
+local CHECK_VALUE_1, CHECK_VALUE_2
+local WRAM_ANCHOR, SRAM_ANCHOR, WRAM_END
+local EXTRA_BLOCKS
+local BADGE_BYTES
 
 local TERMINATOR = 0x50       -- "@", the text terminator
 local EGG_SPECIES_BYTE = 0xFD -- EGG (constants/pokemon_constants.asm)
 
--- ------------------------------------------------------------------
--- Absolute byte offsets (0-based, matching a raw 32768-byte .sav file)
--- ------------------------------------------------------------------
+-- A WRAM address inside a mirrored block -> its file offset.  One helper for
+-- every field, which is what makes the endpoint checks above cover the whole
+-- table rather than one row of it.
+--
+-- EXTRA_BLOCKS exists for Crystal, whose save is not ONE run.  _SaveData
+-- (05:$509A) copies wCrystalData $D472 to sCrystalData $BE3D for seven bytes
+-- BEFORE the main block, and wPlayerGender lives in it -- nine bytes BELOW
+-- wPlayerData.  Through the main anchor alone that address arithmetics
+-- backwards to 0x2000, which is sOptions: writing the gender there would have
+-- corrupted the player's text speed and battle style instead.
+local function sram(addr)
+  if EXTRA_BLOCKS then
+    for _, blk in ipairs(EXTRA_BLOCKS) do
+      if addr >= blk.wram and addr < blk.wram + blk.size then
+        return blk.sram + (addr - blk.wram)
+      end
+    end
+  end
+  return SRAM_ANCHOR + (addr - WRAM_ANCHOR)
+end
 
-local WRAM_ANCHOR = 0xD1A1    -- wPlayerData
-local SRAM_ANCHOR = 0x2009    -- sPlayerData (bank 1, $A009)
+-- Is this WRAM address saved at all?  An EngineFlags row that points outside
+-- every mirrored block is not in the file and must be refused rather than
+-- folded onto an unrelated byte.
+local function inSaveBlock(addr)
+  if addr >= WRAM_ANCHOR and addr < WRAM_END then return true end
+  for _, blk in ipairs(EXTRA_BLOCKS or {}) do
+    if addr >= blk.wram and addr < blk.wram + blk.size then return true end
+  end
+  return false
+end
 
--- A WRAM address inside wPlayerData..wPokemonDataEnd -> its file offset.
-local function sram(addr) return SRAM_ANCHOR + (addr - WRAM_ANCHOR) end
-
+-- Absolute byte offsets (0-based, matching a raw 32768-byte .sav file).  The
+-- SAME table object is refilled by applyLayout, so every `O.foo` read below
+-- keeps working without a version argument.
 local O = {}
-O.options       = 0x2000
-O.checkValue1   = 0x2008
-O.gameData      = 0x2009
-O.playerId      = sram(0xD1A1)   -- wPlayerID (2B big-endian)
-O.playerName    = sram(0xD1A3)   -- wPlayerName
-O.momName       = sram(0xD1AE)   -- wMomsName
-O.rivalName     = sram(0xD1B9)   -- wRivalName
-O.gameTimeHours = sram(0xD1EB)   -- wGameTimeHours (2B big-endian)
-O.gameTimeMins  = sram(0xD1ED)
-O.gameTimeSecs  = sram(0xD1EE)
-O.gameTimeFrames = sram(0xD1EF)
--- wPlayerGender, bit 0 -- Crystal only (NamePlayer.Kris at 01:$60DE reads
--- `ld a, [$D472] / bit 0, a`).  Gold and Silver never write the byte and have
--- no KRIS to be, so a stray 1 there is inert: field.playerForms is absent on
--- those rips, and Sprites.playerForm answers nil whatever this says.
-O.gender        = sram(0xD472)
-O.statusFlags   = sram(0xD571)   -- wStatusFlags (bit 0 POKEDEX, 1 UNOWN DEX)
-O.money         = sram(0xD573)   -- wMoney (3B big-endian BINARY, not BCD)
-O.coins         = sram(0xD57A)   -- wCoins (2B big-endian)
-O.johtoBadges   = sram(0xD57C)
-O.kantoBadges   = sram(0xD57D)
-O.tmsHms        = sram(0xD57E)   -- 57 quantity bytes: TM01..TM50, HM01..HM07
-O.numItems      = sram(0xD5B7)
-O.items         = sram(0xD5B8)   -- 20 x (id, qty) + $FF
-O.numKeyItems   = sram(0xD5E1)
-O.keyItems      = sram(0xD5E2)   -- 25 x id + $FF (no quantities)
-O.numBalls      = sram(0xD5FC)
-O.balls         = sram(0xD5FD)   -- 12 x (id, qty) + $FF
-O.numPCItems    = sram(0xD616)
-O.pcItems       = sram(0xD617)   -- 50 x (id, qty) + $FF
-O.pokegearFlags = sram(0xD67C)   -- wPokegearFlags
-O.eventFlags    = sram(0xD7B7)   -- wEventFlags, flag_array NUM_EVENTS (256B)
-O.curBox        = sram(0xD8BC)   -- wCurBox (0-based)
-O.visitedSpawns = sram(0xD9EE)   -- wVisitedSpawns, flag_array NUM_SPAWNS (4B)
-O.mapGroup      = sram(0xDA00)
-O.mapNumber     = sram(0xDA01)
-O.yCoord        = sram(0xDA02)
-O.xCoord        = sram(0xDA03)
-O.partyCount    = sram(0xDA22)
-O.partySpecies  = sram(0xDA23)   -- 6 + $FF
-O.partyMons     = sram(0xDA2A)
-O.partyMonOT    = sram(0xDB4A)
-O.partyMonNicks = sram(0xDB8C)
-O.pokedexCaught = sram(0xDBE4)   -- 32B flag_array NUM_POKEMON (251)
-O.pokedexSeen   = sram(0xDC04)
-O.dayCareMan    = sram(0xDC40)
-O.breedMon1Nick = sram(0xDC41)
-O.breedMon1OT   = sram(0xDC4C)
-O.breedMon1     = sram(0xDC57)
-O.dayCareLady   = sram(0xDC77)
-O.stepsToEgg    = sram(0xDC78)
-O.breedMon2Nick = sram(0xDC7A)
-O.breedMon2OT   = sram(0xDC85)
-O.breedMon2     = sram(0xDC90)
-O.eggMonNick    = sram(0xDCB0)
-O.eggMonOT      = sram(0xDCBB)
-O.eggMon        = sram(0xDCC6)
-O.checksum      = 0x2D69         -- sChecksum, 2B LITTLE-endian
-O.checkValue2   = 0x2D6B
-O.curBoxData    = 0x2D6C         -- sBox, the working copy of wCurBox's box
-O.checksumStart = 0x2009         -- sGameData
-O.checksumEnd   = 0x2D69         -- sGameDataEnd (exclusive)
+
+local ABSOLUTE_KEYS = {
+  "options", "checkValue1", "gameData", "checksum", "checkValue2",
+  "curBoxData", "checksumStart", "checksumEnd",
+  "extraStart", "extraEnd", "extraChecksum",
+}
+
+local function applyLayout(spec)
+  WRAM_ANCHOR, SRAM_ANCHOR = spec.wramAnchor, spec.sramAnchor
+  WRAM_END = spec.wramEnd
+  MAX_ITEMS, MAX_KEY_ITEMS = spec.maxItems, spec.maxKeyItems
+  MAX_BALLS, MAX_PC_ITEMS = spec.maxBalls, spec.maxPCItems
+  NUM_TMS, NUM_HMS = spec.numTms, spec.numHms
+  TM01_ITEM_INDEX, HM01_ITEM_INDEX = spec.tm01ItemIndex, spec.hm01ItemIndex
+  MACHINE_FLAGS = spec.machineFlags and true or false
+  CHECK_VALUE_1, CHECK_VALUE_2 = spec.checkValues[1], spec.checkValues[2]
+  BADGE_BYTES = spec.badgeBytes
+  EXTRA_BLOCKS = spec.extraBlocks
+  for k in pairs(O) do O[k] = nil end
+  for _, k in ipairs(ABSOLUTE_KEYS) do O[k] = spec[k] end
+  for k, addr in pairs(spec.w) do O[k] = sram(addr) end
+end
+
+-- setLayout(version) -- pick the save map for the game a save belongs to.
+-- Anything this module has no map for keeps Gold's, which is what every
+-- caller got before layouts existed.  SaveConvert calls this beside
+-- setCharmap whenever the game changes.
+function Gen2Save.setLayout(version)
+  applyLayout((type(version) == "table" and version)
+              or LAYOUTS[tostring(version)] or LAYOUT_GEN2)
+end
+
+applyLayout(LAYOUT_GEN2)
 
 -- sBox1..sBox7 sit in bank 2 ($4000), sBox8..sBox14 in bank 3 ($6000).
+-- Prism's box region is byte-identical to Crystal's -- fourteen boxes, the
+-- same $450 stride, the same twenty 32-byte mons with 11-byte OT and nickname
+-- runs (sBox1 02:$A000 .. sBox1End 02:$A44E) -- so it needs no layout entry.
 local function boxSlotOffset(n)
   if n <= 7 then return 0x4000 + (n - 1) * BOX_SLOT_STRIDE end
   return 0x6000 + (n - 8) * BOX_SLOT_STRIDE
 end
 
--- SAVE_CHECK_VALUE_1 / _2 (constants/misc_constants.asm).  The real game
--- rejects a save whose check values are wrong before it even looks at the
--- checksum, so they double as a cheap "is this a Gen2 image at all?" probe.
-local CHECK_VALUE_1, CHECK_VALUE_2 = 0x99, 0x27
-
+-- The live offset table.  setLayout REFILLS this object rather than replacing
+-- it, because everything in this file reads `O.foo` directly; a caller that
+-- wants to compare two layouts must copy the values out before switching.
 Gen2Save.OFFSETS = O
 Gen2Save.SAVE_SIZE = 32768
 Gen2Save.NUM_BOXES = NUM_BOXES
@@ -385,8 +606,12 @@ Gen2Save.engineFlagName = engineFlagName
 -- Rows $05/$06/$07 are the day-care staging bits; DayCare.syncFlags rewrites
 -- them from the pens on load, so decoding them is harmless and encoding them
 -- is what a cartridge expects.
-local ENGINE_FLAG_WRAM_LO = WRAM_ANCHOR   -- wPlayerData
-local ENGINE_FLAG_WRAM_HI = 0xDF01        -- wPokemonDataEnd (exclusive)
+-- The mirrored block's bounds, which are the layout's -- a row that points
+-- outside it is not in the save at all.  These were literals (Gold's $D1A1
+-- and $DF01) and had to stop being: Prism's block is $D47B..$DFE8, so with
+-- Gold's bounds EVERY Prism engine-flag row was rejected -- all twenty
+-- badges, every Fly point, the Pokedex bit -- and an imported Prism save
+-- resumed with no progress whatsoever.
 
 local function engineFlagRows(data)
   local field = data and data.field
@@ -399,9 +624,7 @@ local function engineFlagSlot(row)
   local address = tonumber(row.address)
   local bitIndex = tonumber(row.bit)
   if not address or not bitIndex then return nil end
-  if address < ENGINE_FLAG_WRAM_LO or address >= ENGINE_FLAG_WRAM_HI then
-    return nil
-  end
+  if not inSaveBlock(address) then return nil end
   return sram(address), bitIndex
 end
 
@@ -444,6 +667,19 @@ function Gen2Save.crosswalks(data)
     end
   end
 
+  -- machine number -> item id, for a cartridge that numbers its machines in
+  -- a space of their own.  Prism's TM52 and its ITEM_052 are two different
+  -- things with the same number, which is exactly why a synthesised machine
+  -- carries `machineNumber` and NOT `index`: sharing `index` put both under
+  -- one key in itemsByIndex above and let `pairs` order decide which of the
+  -- 103 collisions won.
+  local machinesByNumber = {}
+  for id, def in pairs(data.items or {}) do
+    if type(def) == "table" and def.machineNumber then
+      machinesByNumber[def.machineNumber] = id
+    end
+  end
+
   -- (map group, map number) -> map id.  The extractor stamps these onto
   -- every Gen2 map from its 9-byte map header (RomExtractorGen2's
   -- gen2MapIndex); a cache built before that lands simply has no group
@@ -457,6 +693,7 @@ function Gen2Save.crosswalks(data)
   end
 
   return {
+    machinesByNumber = machinesByNumber,
     pokemonByIndex = pokemonByIndex, pokemonIndex = pokemonIndex,
     pokemonByDex = pokemonByDex, pokemonDex = pokemonDex,
     movesByIndex = movesByIndex, movesIndex = movesIndex,
@@ -631,11 +868,30 @@ local function machineItemIndex(slot)
   return HM01_ITEM_INDEX + (slot - NUM_TMS)
 end
 
+-- The item a machine slot stands for, whichever space the cartridge numbers
+-- its machines in.  Gold and Crystal make TM01 an ordinary item, so the slot
+-- is an ITEM index; Prism restarts the count at 1 for machines alone, so the
+-- extractor synthesises TM_01..TM_96 / HM_01..HM_05 and stamps each with the
+-- `machineNumber` this looks up instead.
+local function machineItemId(cw, slot)
+  if MACHINE_FLAGS then return cw.machinesByNumber[slot + 1] end
+  return cw.itemsByIndex[machineItemIndex(slot)]
+end
+
 local function decodeMachines(bytes, off, cw, inventory, order)
   for slot = 0, NUM_TMS + NUM_HMS - 1 do
-    local qty = u8(bytes, off + slot)
+    -- MACHINE_FLAGS: the shelf is a flag_array, one BIT per machine, so a
+    -- machine is owned or not owned rather than stocked N deep.  ReceiveTMHM
+    -- (12:$44B6) does `dec c` before the FlagAction, so machine N -- and the
+    -- slot here is machine N-1 already -- is bit `slot`.
+    local qty
+    if MACHINE_FLAGS then
+      qty = bitGet(bytes, off, slot) and 1 or 0
+    else
+      qty = u8(bytes, off + slot)
+    end
     if qty > 0 then
-      local id = cw.itemsByIndex[machineItemIndex(slot)]
+      local id = machineItemId(cw, slot)
       if id then
         inventory[id] = qty
         order[#order + 1] = id
@@ -816,11 +1072,17 @@ function Gen2Save.decode(bytes, data)
   decodePairList(bytes, O.pcItems, MAX_PC_ITEMS, cw, save.pcItems, pcOrder)
   save.pcOrder = pcOrder
 
-  -- badges: save.flags entries, not inventory (see the table comment above)
-  local johto, kanto = u8(bytes, O.johtoBadges), u8(bytes, O.kantoBadges)
-  for i = 0, 7 do
-    if hasBit(johto, i) then save.flags[JOHTO_BADGE_BY_BIT[i]] = true end
-    if hasBit(kanto, i) then save.flags[KANTO_BADGE_BY_BIT[i]] = true end
+  -- badges: save.flags entries, not inventory (see the table comment above).
+  -- Only for a layout that NAMES its badge bytes -- Prism's twenty badges are
+  -- ordinary EngineFlags rows and come through the generic pass below, and
+  -- reading Gold's two byte addresses on Prism would have read two unrelated
+  -- bytes of its bag.
+  if BADGE_BYTES then
+    local johto, kanto = u8(bytes, O.johtoBadges), u8(bytes, O.kantoBadges)
+    for i = 0, 7 do
+      if hasBit(johto, i) then save.flags[JOHTO_BADGE_BY_BIT[i]] = true end
+      if hasBit(kanto, i) then save.flags[KANTO_BADGE_BY_BIT[i]] = true end
+    end
   end
 
   -- event flags -> the exact ids every extracted Gen2 script uses
@@ -996,14 +1258,16 @@ function Gen2Save.encode(save, data, template)
       withBit(cur and cur:byte() or 0, 0, player.gender == "girl"))
   end
 
-  -- badges
-  local johto, kanto = 0, 0
-  for i = 0, 7 do
-    johto = withBit(johto, i, (save.flags or {})[JOHTO_BADGE_BY_BIT[i]] and true or false)
-    kanto = withBit(kanto, i, (save.flags or {})[KANTO_BADGE_BY_BIT[i]] and true or false)
+  -- badges (only where the layout names badge bytes -- see decode)
+  if BADGE_BYTES then
+    local johto, kanto = 0, 0
+    for i = 0, 7 do
+      johto = withBit(johto, i, (save.flags or {})[JOHTO_BADGE_BY_BIT[i]] and true or false)
+      kanto = withBit(kanto, i, (save.flags or {})[KANTO_BADGE_BY_BIT[i]] and true or false)
+    end
+    setByte(buf, O.johtoBadges, johto)
+    setByte(buf, O.kantoBadges, kanto)
   end
-  setByte(buf, O.johtoBadges, johto)
-  setByte(buf, O.kantoBadges, kanto)
 
   -- event flags: this port's save is the only authority, so a flag it does
   -- not hold clears the template's bit rather than surviving the export
@@ -1068,8 +1332,13 @@ function Gen2Save.encode(save, data, template)
   setByte(buf, O.numKeyItems, encodeIdList(buf, O.keyItems, MAX_KEY_ITEMS, pockets.KEY_ITEM, cw))
   setByte(buf, O.numBalls, encodePairList(buf, O.balls, MAX_BALLS, pockets.BALL, inventory, cw))
   for slot = 0, NUM_TMS + NUM_HMS - 1 do
-    local id = cw.itemsByIndex[machineItemIndex(slot)]
-    setByte(buf, O.tmsHms + slot, math.min(id and inventory[id] or 0, 99))
+    local id = machineItemId(cw, slot)
+    local qty = id and inventory[id] or 0
+    if MACHINE_FLAGS then
+      bitSet(buf, O.tmsHms, slot, qty > 0)
+    else
+      setByte(buf, O.tmsHms + slot, math.min(qty, 99))
+    end
   end
 
   local pcItems = save.pcItems or {}
@@ -1148,6 +1417,14 @@ function Gen2Save.encode(save, data, template)
   setByte(buf, O.checkValue1, CHECK_VALUE_1)
   setByte(buf, O.checkValue2, CHECK_VALUE_2)
   setU16le(buf, O.checksum, checksumBuf(buf, O.checksumStart, O.checksumEnd))
+  -- A layout with a SECOND checksummed region gets it summed too.  Prism's
+  -- VerifyChecksum falls through to `.check_extra` and compares sExtraData
+  -- $AB76..$AD05 against sExtraChecksum $AD06; leaving it stale is the
+  -- difference between a save the cartridge loads and one it calls corrupt.
+  if O.extraChecksum and O.extraStart and O.extraEnd then
+    setU16le(buf, O.extraChecksum,
+             checksumBuf(buf, O.extraStart, O.extraEnd))
+  end
 
   return table.concat(buf)
 end

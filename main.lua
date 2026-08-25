@@ -235,6 +235,10 @@ local GraphicsStack = require("src.render.GraphicsStack")
 -- not in scope inside it -- the name resolved to the nil GLOBAL instead and
 -- killed the boot the moment an import finished (onComplete -> bootGame).
 
+-- The version this process last booted, so the next boot can take its cache
+-- overlay back off the read path and evict what was required through it.
+local bootedVersion = nil
+
 local function bootGame(version)
   -- The launcher hands us the chosen game (Red / Blue / Yellow); scripted and
   -- headless runs fall back to POKEPORT_VERSION, then Red.  Set the active
@@ -242,6 +246,51 @@ local function bootGame(version)
   -- data, so data/generated + assets/generated resolve to that version's files.
   local GameVersion = require("src.core.GameVersion")
   GameVersion.set(version or os.getenv("POKEPORT_VERSION") or "red")
+
+  -- ONE PROCESS CAN BOOT TWO GAMES, AND `require` REMEMBERS THE FIRST.
+  --
+  -- Every version loads its data under the SAME module names -- Data:load
+  -- requires "data.generated.maps" whatever you are playing -- and which
+  -- files those names resolve to is decided by the cache overlay mountVersion
+  -- puts on the read path. So the second boot in a process has two ways to
+  -- get the first game's world, and it was taking both:
+  --
+  --   * the previous version's overlay was never unmounted, and Red's own
+  --     mountVersion returns immediately (`cachePrefix == ""`, Red owns the
+  --     root) without displacing it; and
+  --   * even with the overlay gone, package.loaded still holds the tables the
+  --     first game required under those names, so Data:load never reaches the
+  --     disk at all.
+  --
+  -- The result is a game running on another game's data: Red booted after
+  -- Crystal drew Crystal's maps with Crystal's tilesets, and Oak's Lab had
+  -- Crystal's four objects instead of the three starter POKe BALLs -- so the
+  -- room was wrong AND the starter could not be picked up, because the ball
+  -- the player was walking up to was not in the map they were standing in.
+  --
+  -- closeEditor has done exactly these two calls since the map editor could
+  -- open the other game's cache, and its comment says why: "pressing Play on
+  -- the OTHER game would boot it with this one's data". The Play path itself
+  -- was never given the same treatment.
+  --
+  -- ON DESKTOP THIS HID BEHIND THE PROCESS DYING. Quitting the app and
+  -- relaunching gets a clean Lua state, so "restart and it is fine" looked
+  -- like the whole story. Android does not oblige: backing out of the app
+  -- leaves the process resident, so reopening it resumes the same VM with the
+  -- same package.loaded -- which is why re-importing the ROM and starting a
+  -- new save changed nothing there. Both rewrite files that are never read
+  -- again.
+  --
+  -- Unconditional and idempotent: unmountVersion is a no-op for a version
+  -- that owns the root or was never mounted, and unloadGenerated on a first
+  -- boot evicts nothing because nothing has been required yet.
+  if bootedVersion and bootedVersion ~= GameVersion.get() then
+    pcall(function()
+      require("src.import.CacheFs").unmountVersion(bootedVersion)
+    end)
+  end
+  pcall(function() require("src.core.Data"):unloadGenerated() end)
+  bootedVersion = GameVersion.get()
   -- A failed overlay is fatal a few lines later, inside Data:load, as
   -- "missing generated data module 'data/generated/constants.lua'" -- an
   -- error that names the symptom and hides the cause.  Report the cause
