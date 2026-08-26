@@ -203,6 +203,10 @@ function Map.gen2IsEntrance(coll)
   return coll == 0x60 or coll == 0x68 or (coll >= 0x70 and coll <= 0x7F)
 end
 
+function Map:speaksGen2Collision()
+  return self.tileset ~= nil and self.tileset.collision ~= nil
+end
+
 -- The doorway subset of those classes.  Every Gold/Silver warp_event cell
 -- carries one of $70/$71/$72/$76/$78/$7A/$7B/$7C/$7E: $71 is the outdoor
 -- building door and $7B the cave mouth, and both leave the player standing
