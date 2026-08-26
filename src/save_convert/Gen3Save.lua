@@ -556,6 +556,207 @@ end
 Gen3Save.decodeText = decodeText
 
 -- ---------------------------------------------------------------------------
+-- writing
+--
+-- The rule here is PATCH, never rebuild.  A SaveBlock1 has hundreds of fields
+-- and this project models a few dozen of them; rebuilding one from what it
+-- models would silently blank the Pokedex, the Battle Frontier records, the
+-- decorations, the secret base, the mail -- everything it does not know about.
+-- So a write starts from the save that was read, changes only the bytes whose
+-- field changed, and re-derives the three things that must follow: each
+-- Pokemon's checksum, each sector's checksum, and the slot counter.
+--
+-- And it writes into the OTHER slot.  That is what the cartridge does, and it
+-- is not a detail: writing over the slot that was just read leaves no intact
+-- copy if the write is interrupted, which is the exact failure the two-slot
+-- design exists to prevent.
+-- ---------------------------------------------------------------------------
+local function put(str, off, bytes)
+  return str:sub(1, off) .. bytes .. str:sub(off + #bytes + 1)
+end
+local function b8(v) return string.char(v % 256) end
+local function b16(v) return string.char(v % 256, math.floor(v / 256) % 256) end
+local function b32(v)
+  return string.char(v % 256, math.floor(v / 256) % 256,
+                     math.floor(v / 65536) % 256, math.floor(v / 16777216) % 256)
+end
+
+-- One Pokemon, patched in place: decrypt the 48 secure bytes, change only what
+-- was asked for, re-checksum over the PLAIN bytes and re-encrypt.  The
+-- checksum is over the decrypted form, so encrypting first and checksumming
+-- after produces a Pokemon the game treats as a bad egg.
+function Gen3Save.patchBoxMon(bytes, off, changes)
+  local orders = Gen3Save.substructOrders
+  if not orders then error("Gen3Save: no substructure orders (setLayout first)") end
+  local personality = u32(bytes, off)
+  local otId = u32(bytes, off + 4)
+  local key = xorU32(personality, otId)
+
+  local plain = {}
+  for i = 0, Gen3Save.SECURE_SIZE / 4 - 1 do
+    local w = xorU32(u32(bytes, off + Gen3Save.SECURE_OFFSET + i * 4), key)
+    for k = 0, 3 do
+      plain[i * 4 + k + 1] = math.floor(w / 256 ^ k) % 256
+    end
+  end
+
+  local order = orders[(personality % 24) + 1]
+  local slotOf = {}
+  for k = 1, 4 do slotOf[Gen3Save.SUBSTRUCTS[k]] = order[k] * Gen3Save.SUBSTRUCT_SIZE end
+  local function setU16(which, at, v)
+    local i = slotOf[which] + at
+    plain[i + 1] = v % 256
+    plain[i + 2] = math.floor(v / 256) % 256
+  end
+  local function setU8(which, at, v) plain[slotOf[which] + at + 1] = v % 256 end
+  local function setU32(which, at, v)
+    for k = 0, 3 do plain[slotOf[which] + at + k + 1] = math.floor(v / 256 ^ k) % 256 end
+  end
+
+  if changes.species then setU16("growth", 0, changes.species) end
+  if changes.heldItem then setU16("growth", 2, changes.heldItem) end
+  if changes.experience then setU32("growth", 4, changes.experience) end
+  if changes.friendship then setU8("growth", 9, changes.friendship) end
+  if changes.moves then
+    for i = 1, 4 do
+      if changes.moves[i] then setU16("attacks", (i - 1) * 2, changes.moves[i]) end
+    end
+  end
+  if changes.pp then
+    for i = 1, 4 do
+      if changes.pp[i] then setU8("attacks", 8 + i - 1, changes.pp[i]) end
+    end
+  end
+  if changes.evs then
+    local ORDER = { "hp", "attack", "defense", "speed", "spAttack", "spDefense" }
+    for i, k in ipairs(ORDER) do
+      if changes.evs[k] then setU8("evs", i - 1, changes.evs[k]) end
+    end
+  end
+  if changes.ivWord then setU32("misc", 4, changes.ivWord) end
+
+  local sum = 0
+  for i = 0, Gen3Save.SECURE_SIZE / 2 - 1 do
+    sum = (sum + plain[i * 2 + 1] + plain[i * 2 + 2] * 256) % 65536
+  end
+  local out = bytes
+  out = put(out, off + 28, b16(sum))
+  for i = 0, Gen3Save.SECURE_SIZE / 4 - 1 do
+    local w = plain[i * 4 + 1] + plain[i * 4 + 2] * 256
+              + plain[i * 4 + 3] * 65536 + plain[i * 4 + 4] * 16777216
+    out = put(out, off + Gen3Save.SECURE_OFFSET + i * 4, b32(xorU32(w, key)))
+  end
+  return out
+end
+
+-- Apply a decoded-and-edited save table back onto the blocks it came from.
+-- Only fields this project models are touched; everything else is left exactly
+-- as the cartridge wrote it.
+function Gen3Save.applyBlocks(blocks, save, cw)
+  local f = need("a write")
+  local b1, b2 = blocks.block1, blocks.block2
+  local key = Gen3Save.encryptionKey(b2)
+  local s1, s2 = f.saveBlock1, f.saveBlock2
+
+  if save.money then b1 = put(b1, s1.money, b32(xorU32(save.money, key))) end
+  if save.coins then
+    b1 = put(b1, s1.coins, b16(xorU32(save.coins, key) % 65536))
+  end
+  if save.playTime then
+    local t = math.max(0, save.playTime)
+    local hours = math.floor(t / 3600)
+    local minutes = math.floor(t % 3600 / 60)
+    local seconds = math.floor(t % 60)
+    b2 = put(b2, s2.playTimeHours, b16(math.min(hours, 65535)))
+    b2 = put(b2, s2.playTimeMinutes, b8(minutes) .. b8(seconds))
+  end
+
+  -- Flags are a bit array, so a flag that went FALSE has to be cleared rather
+  -- than merely not set: writing only the true ones leaves every flag the
+  -- player has undone still set, and the scripts would replay as if nothing
+  -- had been reversed.
+  if save.flags then
+    local bytes = {}
+    for i = 0, f.flagBytes - 1 do bytes[i] = u8(b1, s1.flags + i) end
+    for id = 1, f.flagBytes * 8 - 1 do
+      local name = ("FLAG_G3_%04X"):format(id)
+      local want = save.flags[name] and true or false
+      local i, bit = math.floor(id / 8), 2 ^ (id % 8)
+      local has = math.floor(bytes[i] / bit) % 2 == 1
+      if want ~= has then bytes[i] = bytes[i] + (want and bit or -bit) end
+    end
+    local out = {}
+    for i = 0, f.flagBytes - 1 do out[i + 1] = string.char(bytes[i]) end
+    b1 = put(b1, s1.flags, table.concat(out))
+  end
+
+  if save.gen3Vars then
+    local base = f.varsStartId or 0x4000
+    for i = 0, (f.varCount or 0) - 1 do
+      local v = save.gen3Vars[base + i] or 0
+      b1 = put(b1, s1.vars + i * 2, b16(v % 65536))
+    end
+  end
+
+  -- The party.  Each slot is PATCHED rather than rebuilt, so a Pokemon keeps
+  -- its nickname, its original trainer, where it was met and its ribbons --
+  -- none of which this project models and all of which a rebuild would erase.
+  if save.party and f.party then
+    b1 = put(b1, f.party.count, b8(#save.party))
+    for i, mon in ipairs(save.party) do
+      if i <= f.party.size then
+        local at = f.party.start + (i - 1) * f.party.monSize
+        local changes = { friendship = mon.happiness, experience = mon.exp }
+        if cw and mon.species then changes.species = cw.pokemonIndex[mon.species] end
+        if cw and mon.item then changes.heldItem = cw.itemsIndex[mon.item] end
+        if mon.moves then
+          changes.moves, changes.pp = {}, {}
+          for k, mv in ipairs(mon.moves) do
+            changes.moves[k] = cw and cw.movesIndex[mv.id] or nil
+            changes.pp[k] = mv.pp
+          end
+        end
+        if mon.evs then
+          changes.evs = { hp = mon.evs.hp, attack = mon.evs.attack,
+                          defense = mon.evs.defense, speed = mon.evs.speed,
+                          spAttack = mon.evs.spatk, spDefense = mon.evs.spdef }
+        end
+        b1 = Gen3Save.patchBoxMon(b1, at, changes)
+        if mon.level then b1 = put(b1, at + 84, b8(mon.level)) end
+        if mon.hp then b1 = put(b1, at + 86, b16(mon.hp)) end
+        if mon.maxHp then b1 = put(b1, at + 88, b16(mon.maxHp)) end
+      end
+    end
+  end
+
+  return { slot = blocks.slot, counter = blocks.counter,
+           block1 = b1, block2 = b2, storage = blocks.storage }
+end
+
+-- Lay the three structures back across fourteen sectors and sign each one.
+-- The sector a chunk lands in is rotated by the counter exactly as the
+-- cartridge rotates it, so a reader that assumes sector position equals sector
+-- id is caught here rather than by a save that will not load.
+function Gen3Save.writeSlot(image, slot, blocks, counter)
+  local f = Gen3Save.layout
+  local out = image
+  for k = 0, Gen3Save.SECTORS_PER_SLOT - 1 do
+    local id = (k + counter) % Gen3Save.SECTORS_PER_SLOT
+    local row = f.sectors[id + 1]
+    local src = (id == 0) and blocks.block2
+                or (id <= 4 and blocks.block1 or blocks.storage)
+    local data = src:sub(row.offset + 1, row.offset + row.size)
+    local base = (slot * Gen3Save.SECTORS_PER_SLOT + k) * Gen3Save.SECTOR_SIZE
+    local body = data .. string.rep("\0", Gen3Save.SECTOR_SIZE - 12 - #data)
+    local sector = body .. b16(id) .. b16(0) .. b32(Gen3Save.SECURITY) .. b32(counter)
+    local sum = Gen3Save.checksum(sector, 0, row.size)
+    sector = body .. b16(id) .. b16(sum) .. b32(Gen3Save.SECURITY) .. b32(counter)
+    out = put(out, base, sector)
+  end
+  return out
+end
+
+-- ---------------------------------------------------------------------------
 -- The SaveConvert interface.
 --
 -- The container above is finished and proven: sectors, checksums, slot
@@ -727,12 +928,28 @@ function Gen3Save.decode(bytes, data)
   return save
 end
 
--- Writing a Gen 3 save back is a separate job with its own trap: every sector
--- checksum, the slot counter and the money encryption all have to be rebuilt,
--- and a half-correct writer produces a file the game refuses at the title
--- screen rather than one that visibly fails here.
-function Gen3Save.encode(_save, _data, _template)
-  error("Gen 3 saves can be read but not yet written back")
+-- encode: a save table back onto the image it came from.
+--
+-- A template is REQUIRED and this refuses without one, which is the same call
+-- Gen 1 and Gen 2 make for the same reason: a Gen 3 save holds hundreds of
+-- fields, this project models a few dozen, and a save written from nothing
+-- would be missing the Pokedex, the Frontier records, the secret base and the
+-- mail -- and would look fine until the cartridge loaded it.
+function Gen3Save.encode(save, data, template)
+  local image = template or (save and save.rawImport)
+  if type(image) ~= "string" or #image ~= Gen3Save.SAVE_SIZE then
+    error("a Gen 3 save can only be written onto the image it came from; "
+          .. "import one first so there is something to write onto")
+  end
+  local blocks, err = Gen3Save.readBlocks(image)
+  if not blocks then error(err or "the template save is not intact") end
+
+  local patched = Gen3Save.applyBlocks(blocks, save, Gen3Save.crosswalks(data))
+  -- into the OTHER slot, with the next counter: the slot just read stays
+  -- intact as the backup, which is the whole point of there being two
+  local target = 1 - blocks.slot
+  local counter = (blocks.counter + 1) % 4294967296
+  return Gen3Save.writeSlot(image, target, patched, counter)
 end
 
 return Gen3Save

@@ -1,0 +1,1332 @@
+{
+  "charmap": {
+    "0": " ",
+    "161": "0",
+    "162": "1",
+    "163": "2",
+    "164": "3",
+    "165": "4",
+    "166": "5",
+    "167": "6",
+    "168": "7",
+    "169": "8",
+    "170": "9",
+    "171": "!",
+    "172": "?",
+    "173": ".",
+    "174": "-",
+    "175": "\u00b7",
+    "176": "\u2026",
+    "177": "\u201c",
+    "178": "\u201d",
+    "179": "\u2018",
+    "180": "\u2019",
+    "181": "\u2642",
+    "182": "\u2640",
+    "183": "\u20bd",
+    "184": ",",
+    "185": "\u00d7",
+    "186": "/",
+    "187": "A",
+    "188": "B",
+    "189": "C",
+    "190": "D",
+    "191": "E",
+    "192": "F",
+    "193": "G",
+    "194": "H",
+    "195": "I",
+    "196": "J",
+    "197": "K",
+    "198": "L",
+    "199": "M",
+    "200": "N",
+    "201": "O",
+    "202": "P",
+    "203": "Q",
+    "204": "R",
+    "205": "S",
+    "206": "T",
+    "207": "U",
+    "208": "V",
+    "209": "W",
+    "210": "X",
+    "211": "Y",
+    "212": "Z",
+    "213": "a",
+    "214": "b",
+    "215": "c",
+    "216": "d",
+    "217": "e",
+    "218": "f",
+    "219": "g",
+    "220": "h",
+    "221": "i",
+    "222": "j",
+    "223": "k",
+    "224": "l",
+    "225": "m",
+    "226": "n",
+    "227": "o",
+    "228": "p",
+    "229": "q",
+    "230": "r",
+    "231": "s",
+    "232": "t",
+    "233": "u",
+    "234": "v",
+    "235": "w",
+    "236": "x",
+    "237": "y",
+    "238": "z",
+    "240": ":",
+    "241": ";",
+    "242": "(",
+    "243": ")",
+    "244": "\"",
+    "27": "\u00e9",
+    "46": "+",
+    "83": "PK",
+    "84": "MN",
+    "91": "%"
+  },
+  "format": 3,
+  "generation": 3,
+  "layout": {
+    "abilityNameLength": 13,
+    "baseStatsEntry": 28,
+    "battleMoveEntry": 12,
+    "bgEventEntry": 12,
+    "coordEventEntry": 16,
+    "evolutionEntry": 8,
+    "evolutionsPerSpecies": 5,
+    "flagBytes": 300,
+    "growthRateOrder": [
+      "MEDIUM_FAST",
+      "ERRATIC",
+      "FLUCTUATING",
+      "MEDIUM_SLOW",
+      "FAST",
+      "SLOW"
+    ],
+    "itemEntry": 44,
+    "lookAroundMovementType": 1,
+    "mapConnectionEntry": 12,
+    "mapConnectionsHeader": 8,
+    "mapEventsEntry": 20,
+    "mapHeaderEntry": 28,
+    "mapLayoutEntry": 24,
+    "mapScriptEntry": 5,
+    "mapScriptTableEntry": 8,
+    "mapScriptTableTypes": [
+      2,
+      4
+    ],
+    "maxLevel": 100,
+    "metatileLayers": 2,
+    "metatileTileBits": 10,
+    "metatileTiles": 8,
+    "metatileTransparentIndex": 0,
+    "metatilesInPrimary": 512,
+    "monIconHeight": 4,
+    "monIconWidth": 4,
+    "monPaletteTransparentIndex": 0,
+    "monPicHeight": 8,
+    "monPicWidth": 8,
+    "moveNameLength": 13,
+    "movementActionCount": 158,
+    "movementStepEnd": 254,
+    "movementTypeCount": 81,
+    "natureStatOrder": [
+      "attack",
+      "defense",
+      "speed",
+      "spatk",
+      "spdef"
+    ],
+    "numAbilities": 78,
+    "numGrowthRates": 6,
+    "numItems": 377,
+    "numMapGroups": 34,
+    "numMapLayouts": 441,
+    "numMaps": 518,
+    "numMonPics": 440,
+    "numMoves": 355,
+    "numNatures": 25,
+    "numSongs": 610,
+    "numSpecialVars": 22,
+    "numSpecials": 530,
+    "numSpecies": 412,
+    "numTypes": 18,
+    "objectEventEntry": 24,
+    "palettesInPrimary": 6,
+    "sampleCount": 1023,
+    "saveBlock1Size": 15752,
+    "saveBlock2Size": 3884,
+    "savePokemonStorageSize": 33744,
+    "saveSectorSize": 4096,
+    "saveSectorsPerSlot": 14,
+    "saveSecuritySites": 7,
+    "sceneCount": 29,
+    "scriptCmdCount": 228,
+    "shinyPaletteTagBase": 500,
+    "songCommands": 468257,
+    "songCount": 610,
+    "songsWithTracks": 529,
+    "speciesNameLength": 11,
+    "tilesInPrimary": 512,
+    "tilesetEntry": 24,
+    "typeNameLength": 7,
+    "varCount": 256,
+    "voicegroupCount": 176,
+    "wanderMovementTypes": [
+      2,
+      3,
+      4,
+      5,
+      6
+    ],
+    "warpEventEntry": 8
+  },
+  "notes": [
+    "Discovered and verified by tools/gen3_discover.py; re-run it rather than hand-editing an address.",
+    "Species numbering is INTERNAL, not National Dex: 1-251 agree, 252-276 are 25 unused slots, Hoenn runs 277-411.",
+    "The graphics tables are 440 rows (Unown forms); the name table is 412."
+  ],
+  "romBase": 134217728,
+  "romHeader": {
+    "gameCode": "BPEE",
+    "makerCode": "01",
+    "revision": 0,
+    "title": "POKEMON EMER"
+  },
+  "romSha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+  "save": {
+    "chunkStride": 3968,
+    "pokemonStorageSize": 33744,
+    "saveBlock1Size": 15752,
+    "saveBlock2Size": 3884,
+    "sectorSize": 4096,
+    "sectors": [
+      {
+        "offset": 0,
+        "size": 3884
+      },
+      {
+        "offset": 0,
+        "size": 3968
+      },
+      {
+        "offset": 3968,
+        "size": 3968
+      },
+      {
+        "offset": 7936,
+        "size": 3968
+      },
+      {
+        "offset": 11904,
+        "size": 3848
+      },
+      {
+        "offset": 0,
+        "size": 3968
+      },
+      {
+        "offset": 3968,
+        "size": 3968
+      },
+      {
+        "offset": 7936,
+        "size": 3968
+      },
+      {
+        "offset": 11904,
+        "size": 3968
+      },
+      {
+        "offset": 15872,
+        "size": 3968
+      },
+      {
+        "offset": 19840,
+        "size": 3968
+      },
+      {
+        "offset": 23808,
+        "size": 3968
+      },
+      {
+        "offset": 27776,
+        "size": 3968
+      },
+      {
+        "offset": 31744,
+        "size": 2000
+      }
+    ],
+    "sectorsPerSlot": 14,
+    "security": 134291493
+  },
+  "saveFields": {
+    "bag": {
+      "capacities": [
+        30,
+        30,
+        16,
+        64,
+        46
+      ],
+      "itemSlotSize": 4,
+      "pcItemCount": 50,
+      "pcItems": 1176,
+      "pockets": [
+        1376,
+        1496,
+        1616,
+        1680,
+        1936
+      ]
+    },
+    "flagBytes": 300,
+    "party": {
+      "count": 564,
+      "monSize": 100,
+      "size": 6,
+      "start": 568
+    },
+    "saveBlock1": {
+      "coins": 1172,
+      "flags": 4720,
+      "gameStats": 5532,
+      "location": 4,
+      "money": 1168,
+      "pcItems": 1176,
+      "playerParty": 568,
+      "playerPartyCount": 564,
+      "posX": 0,
+      "posY": 2,
+      "vars": 5020
+    },
+    "saveBlock1Pointer": 50355596,
+    "saveBlock2": {
+      "encryptionKey": 172,
+      "playTimeHours": 14,
+      "playTimeMinutes": 16,
+      "playTimeSeconds": 17,
+      "playTimeVBlanks": 18,
+      "playerGender": 8,
+      "playerName": 0,
+      "playerTrainerId": 10
+    },
+    "saveBlock2Pointer": 50355600,
+    "storage": {
+      "boxCapacity": 30,
+      "boxCount": 14,
+      "boxMonSize": 80,
+      "boxNameLength": 9,
+      "boxNames": 33604,
+      "boxWallpapers": 33730,
+      "boxes": 4,
+      "currentBox": 0
+    },
+    "varCount": 256,
+    "varsStartId": 16384
+  },
+  "scenes": [
+    {
+      "fit": 1.0,
+      "function": 198576,
+      "graphics": 3140924,
+      "graphicsDest": 0,
+      "graphicsSize": 1536,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 64,
+          "source": 3140860
+        },
+        {
+          "compressed": false,
+          "offset": 1,
+          "size": 16,
+          "source": 3141672
+        }
+      ],
+      "tilemap": 3141360,
+      "tilemapDest": 14336,
+      "tilemapSize": 1280
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14140480,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14141992,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14138132,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14139732,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14131464,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14133024,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14144912,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14146564,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14140480,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14141992,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14142680,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14144224,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14140480,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14141992,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14142680,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14144224,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14142680,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14144224,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14142680,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14144224,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14142680,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14144224,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14142680,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14144224,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14142680,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14144224,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.384,
+      "function": 218992,
+      "graphics": 14140480,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": true,
+          "offset": 32,
+          "size": 96,
+          "source": 14141932
+        }
+      ],
+      "tilemap": 14141992,
+      "tilemapDest": 53248,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.969,
+      "function": 505388,
+      "graphics": 3374784,
+      "graphicsDest": 16384,
+      "graphicsSize": 6144,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 16,
+          "size": 96,
+          "source": 14512896
+        },
+        {
+          "compressed": false,
+          "offset": 48,
+          "size": 32,
+          "source": 3374752
+        },
+        {
+          "compressed": false,
+          "offset": 16,
+          "size": 96,
+          "source": 14512896
+        }
+      ],
+      "tilemap": 3376464,
+      "tilemapDest": 36864,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 1.0,
+      "function": 698276,
+      "graphics": 5501016,
+      "graphicsDest": 32768,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 480,
+          "source": 14541400
+        }
+      ],
+      "tilemap": 5503036,
+      "tilemapDest": 53248,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 1.0,
+      "function": 698276,
+      "graphics": 5504140,
+      "graphicsDest": 49152,
+      "graphicsSize": 3584,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 480,
+          "source": 14541400
+        }
+      ],
+      "tilemap": 14541912,
+      "tilemapDest": 55296,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 0.903,
+      "function": 1274912,
+      "graphics": 5974672,
+      "graphicsDest": 49152,
+      "graphicsSize": 1024,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 224,
+          "size": 32,
+          "source": 5974096
+        },
+        {
+          "compressed": false,
+          "offset": 224,
+          "size": 16,
+          "source": 5974176
+        }
+      ],
+      "tilemap": 5974192,
+      "tilemapDest": 63488,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 0.903,
+      "function": 1275352,
+      "graphics": 5974672,
+      "graphicsDest": 49152,
+      "graphicsSize": 1024,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 224,
+          "size": 32,
+          "source": 5974096
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 5974128
+        }
+      ],
+      "tilemap": 5974192,
+      "tilemapDest": 63488,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 0.788,
+      "function": 1530084,
+      "graphics": 5967364,
+      "graphicsDest": 0,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 1,
+          "size": 62,
+          "source": 5966338
+        }
+      ],
+      "tilemap": 5966860,
+      "tilemapDest": 14336,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 0.129,
+      "function": 1552484,
+      "graphics": 6227776,
+      "graphicsDest": 16384,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232036
+        }
+      ],
+      "tilemap": 6228928,
+      "tilemapDest": 30720,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 0.369,
+      "function": 1552484,
+      "graphics": 6229436,
+      "graphicsDest": 0,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232036
+        }
+      ],
+      "tilemap": 6230936,
+      "tilemapDest": 12288,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.788,
+      "function": 1552484,
+      "graphics": 6232100,
+      "graphicsDest": 0,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232036
+        }
+      ],
+      "tilemap": 6233772,
+      "tilemapDest": 12288,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.129,
+      "function": 1552840,
+      "graphics": 6227776,
+      "graphicsDest": 16384,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229340
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232068
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227744
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 64,
+          "source": 6234908
+        }
+      ],
+      "tilemap": 6228928,
+      "tilemapDest": 30720,
+      "tilemapSize": 2048
+    },
+    {
+      "fit": 0.369,
+      "function": 1552840,
+      "graphics": 6229436,
+      "graphicsDest": 0,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229340
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232068
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227744
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 64,
+          "source": 6234908
+        }
+      ],
+      "tilemap": 6230936,
+      "tilemapDest": 12288,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.369,
+      "function": 1552840,
+      "graphics": 6229436,
+      "graphicsDest": 0,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229340
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232068
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227744
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 64,
+          "source": 6234908
+        }
+      ],
+      "tilemap": 6230936,
+      "tilemapDest": 12288,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 0.788,
+      "function": 1552840,
+      "graphics": 6232100,
+      "graphicsDest": 0,
+      "graphicsSize": 8192,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229340
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232068
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227744
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 64,
+          "source": 6234908
+        }
+      ],
+      "tilemap": 6233772,
+      "tilemapDest": 12288,
+      "tilemapSize": 4096
+    },
+    {
+      "fit": 1.0,
+      "function": 1552840,
+      "graphics": 6234972,
+      "graphicsDest": 0,
+      "graphicsSize": 1536,
+      "paletteLoads": [
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227680
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229244
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 96,
+          "source": 6229340
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227712
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232068
+        },
+        {
+          "compressed": false,
+          "offset": 240,
+          "size": 32,
+          "source": 6227744
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 64,
+          "source": 6234908
+        }
+      ],
+      "tilemap": 6235496,
+      "tilemapDest": 12288,
+      "tilemapSize": 4096
+    }
+  ],
+  "substructOrders": [
+    [
+      0,
+      1,
+      2,
+      3
+    ],
+    [
+      0,
+      1,
+      3,
+      2
+    ],
+    [
+      0,
+      2,
+      1,
+      3
+    ],
+    [
+      0,
+      3,
+      1,
+      2
+    ],
+    [
+      0,
+      2,
+      3,
+      1
+    ],
+    [
+      0,
+      3,
+      2,
+      1
+    ],
+    [
+      1,
+      0,
+      2,
+      3
+    ],
+    [
+      1,
+      0,
+      3,
+      2
+    ],
+    [
+      2,
+      0,
+      1,
+      3
+    ],
+    [
+      3,
+      0,
+      1,
+      2
+    ],
+    [
+      2,
+      0,
+      3,
+      1
+    ],
+    [
+      3,
+      0,
+      2,
+      1
+    ],
+    [
+      1,
+      2,
+      0,
+      3
+    ],
+    [
+      1,
+      3,
+      0,
+      2
+    ],
+    [
+      2,
+      1,
+      0,
+      3
+    ],
+    [
+      3,
+      1,
+      0,
+      2
+    ],
+    [
+      2,
+      3,
+      0,
+      1
+    ],
+    [
+      3,
+      2,
+      0,
+      1
+    ],
+    [
+      1,
+      2,
+      3,
+      0
+    ],
+    [
+      1,
+      3,
+      2,
+      0
+    ],
+    [
+      2,
+      1,
+      3,
+      0
+    ],
+    [
+      3,
+      1,
+      2,
+      0
+    ],
+    [
+      2,
+      3,
+      1,
+      0
+    ],
+    [
+      3,
+      2,
+      1,
+      0
+    ]
+  ],
+  "symbolSource": "structural discovery against the cartridge itself (tools/gen3_discover.py); a retail GBA ROM ships no symbol table, so every address here is found by shape and verified against a fact the table must satisfy",
+  "symbols": {
+    "CalculateChecksum": 1388902,
+    "GetSubstruct": 434818,
+    "gAbilityNames": 3258075,
+    "gBaseStats": 3277772,
+    "gBattleMoves": 3262616,
+    "gEggMoves": 3321304,
+    "gEvolutionTable": 3298076,
+    "gExperienceTables": 3274540,
+    "gInitialMovementTypeFacingDirections": 5264845,
+    "gItems": 5781920,
+    "gLevelUpLearnsets": 3314556,
+    "gMapGroups": 4744568,
+    "gMapLayouts": 4726228,
+    "gMonBackPicTable": 3156152,
+    "gMonFrontPicCoords": 3154392,
+    "gMonFrontPicTable": 3150872,
+    "gMonFrontPicTableAnimated": 3187084,
+    "gMonIconPaletteIndices": 5751688,
+    "gMonIconTable": 5750040,
+    "gMonPaletteTable": 3159672,
+    "gMonShinyPaletteTable": 3163192,
+    "gMoveNames": 3250044,
+    "gMovementActionFuncs": 5299280,
+    "gNatureNamePointers": 6409040,
+    "gNatureStatTable": 3270680,
+    "gPokedexEntries": 5682608,
+    "gSaveBlock1Ptr": 23948,
+    "gSaveBlock2Ptr": 23952,
+    "gSceneAssetLists": 198576,
+    "gScriptCmdTable": 1947260,
+    "gSongTable": 7031280,
+    "gSpecialVars": 1948172,
+    "gSpecials": 1948260,
+    "gSpeciesNames": 3245512,
+    "gSpeciesToNationalPokedexNum": 3267714,
+    "gStdScripts": 1950368,
+    "gTMHMMoves": 6380436,
+    "gTrainerClassNames": 3210452,
+    "gTrainerFrontPicPaletteTable": 3168572,
+    "gTrainerFrontPicTable": 3167828,
+    "gTrainers": 3211312,
+    "gTutorMoves": 6377484,
+    "gTypeEffectiveness": 3255528,
+    "gTypeNames": 3255864,
+    "gWildMonHeaders": 5582152,
+    "sSaveSlotLayout": 6085632
+  },
+  "version": "emerald"
+}

@@ -40,7 +40,7 @@ RomExtractorGen3.__index = RomExtractorGen3
 -- The progress denominator.  Kept honest with the two stage lists below: a
 -- mismatch does not break anything, it just makes the bar lie, which is the
 -- kind of small wrongness that survives for months.
-local STAGE_COUNT = 25
+local STAGE_COUNT = 26
 
 function RomExtractorGen3.new(romData, version, manifest, progress)
   return setmetatable({
@@ -2513,6 +2513,81 @@ function RomExtractorGen3:extractSaveLayout()
               block2 + block1 + storage, #orders)
 end
 
+-- The music.  Gen 1 and Gen 2 drive four Game Boy channels from a small note
+-- engine; Gen 3 uses M4A, which sequences tracks against voicegroups of
+-- sampled instruments and mixes them in software.  Nothing about the existing
+-- audio path applies.
+--
+-- What this stage writes is the SHAPE of the music, not the music: which songs
+-- exist, how many tracks each has, which voicegroup it plays against and where
+-- its samples live.  The audio itself is megabytes and belongs in the asset
+-- pass; what the engine needs first is to know what it is being asked to play.
+function RomExtractorGen3:extractSongs()
+  self:beginStage("Gen3 music")
+  local at = self.manifest.symbols and self.manifest.symbols.gSongTable
+  if not at then
+    Logger.warn("gen3: no song table in the manifest -- music skipped")
+    return
+  end
+
+  local total = (self.manifest.layout and self.manifest.layout.numSongs) or 0
+  local out, playable, tracks, groups = {}, 0, 0, {}
+  for i = 0, total - 1 do
+    local header = self.rom:pointer(at + i * 8)
+    if header then
+      local trackCount = self.rom:u8(header)
+      local row = {
+        id = ("SONG_%03X"):format(i),
+        index = i,
+        header = header,
+        trackCount = trackCount,
+        blockCount = self.rom:u8(header + 1),
+        priority = self.rom:u8(header + 2),
+        reverb = self.rom:u8(header + 3),
+        player = self.rom:u16(at + i * 8 + 4),
+        source = ("ROM:song %d at %07X"):format(i, header),
+      }
+      if trackCount > 0 then
+        row.voicegroup = self.rom:pointer(header + 4)
+        row.tracks = {}
+        for k = 1, trackCount do
+          row.tracks[k] = self.rom:pointer(header + 4 + k * 4)
+        end
+        playable = playable + 1
+        tracks = tracks + trackCount
+        if row.voicegroup then groups[row.voicegroup] = true end
+      end
+      out[row.id] = row
+    end
+    self:tick("Gen3 music", i + 1, total)
+  end
+
+  local groupCount = 0
+  for _ in pairs(groups) do groupCount = groupCount + 1 end
+
+  -- The same check the manifest made, restated here against what was actually
+  -- written: a song that claims tracks has to have a pointer for every one of
+  -- them, or the table was read at the wrong stride.
+  local missing = 0
+  for id, row in pairs(out) do
+    if row.trackCount and row.trackCount > 0 then
+      for k = 1, row.trackCount do
+        if not row.tracks[k] then missing = missing + 1 end
+      end
+    end
+  end
+  if missing > 0 then
+    error(("gen3 music: %d track pointers are missing"):format(missing))
+  end
+
+  out._romInfo = { source = "RomExtractorGen3", songCount = total,
+                   playable = playable, trackCount = tracks,
+                   voicegroups = groupCount, table = at }
+  self:write("songs", out)
+  Logger.info("Gen3 music: %d song slots, %d playable, %d tracks, %d voicegroups",
+              total, playable, tracks, groupCount)
+end
+
 RomExtractorGen3.DATA_STAGES = {
   "extractConstants", "extractMoves", "extractPokemon", "extractItems",
   "extractTypeChart", "extractTrainers", "extractMachines",
@@ -2523,7 +2598,7 @@ RomExtractorGen3.DATA_STAGES = {
   -- (which collects the script roots), then the scripts those roots reach
   "extractMapLayouts", "extractMaps", "extractMapScripts",
   "extractMovementScripts", "extractScriptText", "extractTilesets",
-  "extractScenes", "extractSaveLayout",
+  "extractScenes", "extractSaveLayout", "extractSongs",
 }
 
 -- Assets are wrapped in pcall the way Gen 2's are: a sprite that fails to
