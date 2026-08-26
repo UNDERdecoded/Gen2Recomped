@@ -73,8 +73,23 @@ Damage.stageOf = stageOf
 -- critUsesBaseSpeed (default true, the Gen 1 rule) reads the species
 -- base speed; a ruleset that sets it false uses the current in-battle
 -- speed with stages applied.
+-- Gen 3 replaced the whole shift chain with a CRITICAL STAGE: a high-crit
+-- move is +1, Focus Energy is +2, and the stage indexes a fixed rate table
+-- (1/16, 1/8, 1/4, 1/3, 1/2).  Speed stops mattering entirely, which is why a
+-- ruleset that sets critStages cannot just tune the Gen 1 numbers.
+local CRIT_STAGE_DEN = { [0] = 16, 8, 4, 3, 2 }
+
 function Damage.critRoll(ruleset, attacker, moveId, rng, highCrit)
   rng = rng or love.math.random
+  if highCrit == nil then highCrit = HIGH_CRIT[moveId] end
+  if ruleset.critStages then
+    local stage = 0
+    if highCrit then stage = stage + 1 end
+    if attacker.focusEnergy then stage = stage + 2 end
+    if attacker.critStage then stage = stage + attacker.critStage end
+    local den = CRIT_STAGE_DEN[math.max(0, math.min(4, stage))] or 16
+    return rng(1, den) == 1
+  end
   local function shl(x) return math.min(255, x * 2) end
   local speed
   if ruleset.critUsesBaseSpeed == false then
@@ -93,7 +108,6 @@ function Damage.critRoll(ruleset, attacker, moveId, rng, highCrit)
   else
     b = shl(b)
   end
-  if highCrit == nil then highCrit = HIGH_CRIT[moveId] end
   if highCrit then
     b = shl(shl(b))
   else
@@ -240,7 +254,11 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   end
 
   local level = attacker.mon.level
-  if crit then level = level * 2 end
+  -- Gen 1 and Gen 2 express a critical hit as DOUBLE LEVEL inside the
+  -- formula; Gen 3 leaves the level alone and doubles the finished damage
+  -- instead.  Those are not the same number -- doubling the level also
+  -- doubles the +2 constant and re-floors -- so the two cannot share a path.
+  if crit and not ruleset.critMultiplier then level = level * 2 end
 
   local d = math.floor(math.floor(2 * level / 5) + 2)
   d = math.floor(math.floor(d * move.power * atk / math.max(1, dfn)) / 50)
@@ -286,9 +304,17 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   -- random factor; the typeless confusion self-hit skips RandomizeDamage
   -- along with AdjustDamageForMoveType (HandleSelfConfusionDamage calls
   -- CalculateDamage directly), so it is fully deterministic
+  -- Gen 3's critical multiplier lands here, after STAB and the type chart
+  -- and before the random factor, which is where pokeemerald applies it.
+  if crit and ruleset.critMultiplier then
+    d = math.floor(d * ruleset.critMultiplier)
+  end
   if d > 1 and not opts.typeless then
     local r = rng(ruleset.randMin, ruleset.randMax)
-    d = math.floor(d * r / 255)
+    -- randDiv defaults to 255 because that is Gen 1 and Gen 2's denominator
+    -- (r runs 217..255).  Gen 3 rolls 85..100 out of 100; dividing that by
+    -- 255 would cut every hit to roughly a third.
+    d = math.floor(d * r / (ruleset.randDiv or 255))
   end
   return math.max(d, 1), { crit = crit, typeMult = mult }
 end

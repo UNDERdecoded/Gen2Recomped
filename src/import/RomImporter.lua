@@ -503,10 +503,19 @@ local VERSION_REQUIRED_FILES = {
   prism = { "assets/generated/title/prism_title.png" },
 }
 
+-- Gen 3's cache-complete gate.  Deliberately SHORT while the extractor is
+-- still being built out: this list is what "the import produced something
+-- usable" means, and padding it with files no stage writes yet would mark
+-- every Emerald import as broken rather than as partial.  It grows as the
+-- stages land.
+local REQUIRED_FILES_GEN3 = {
+  "assets/generated/fonts/font.png",
+}
+
 local function requiredFiles(version)
-  if GameVersion.generation(version) == 2 then
-    return REQUIRED_FILES_GEN2
-  end
+  local generation = GameVersion.generation(version)
+  if generation == 3 then return REQUIRED_FILES_GEN3 end
+  if generation == 2 then return REQUIRED_FILES_GEN2 end
   return REQUIRED_FILES_GEN1
 end
 
@@ -585,6 +594,11 @@ local PAL = {
   -- glance rather than by reading their labels.
   chipPolishedTop = { 186, 148, 252 }, -- #ba94fc  Polished Crystal
   chipPolishedBot = { 92, 56, 168 },   -- #5c38a8
+  -- Emerald opens the Gen 3 run, so its chip has to read as a NEW GENERATION
+  -- rather than as another Gen 2 hack: a saturated emerald green, kept clear
+  -- of Prism's mint (#6af096) by being much deeper and bluer.
+  chipEmeraldTop = { 46, 214, 130 },  -- #2ed682  Emerald
+  chipEmeraldBot = { 10, 110, 74 },   -- #0a6e4a
   chipModTop  = { 61, 74, 109 },   -- #3d4a6d
   chipModBot  = { 32, 42, 69 },    -- #202a45
   chipInkGold = { 58, 44, 0 },     -- #3a2c00
@@ -894,7 +908,15 @@ local function commandOutput(command)
 end
 
 local function isSupportedRomSize(byteLength)
-  return byteLength == 1024 * 1024 or byteLength == 2 * 1024 * 1024
+  local mib = 1024 * 1024
+  -- Game Boy / Game Boy Color: 1 MiB (Red/Blue/Yellow) or 2 MiB (Gen 2 and
+  -- its hacks).  Game Boy ADVANCE: 8, 16 or 32 MiB -- Emerald is 16, and this
+  -- test rejected it out of hand, before the hash was even taken, so a .gba
+  -- could not be offered to the importer at all however far the rest of the
+  -- pipeline had come.
+  return byteLength == mib or byteLength == 2 * mib
+      or byteLength == 8 * mib or byteLength == 16 * mib
+      or byteLength == 32 * mib
 end
 
 -- LOVE 11.5 on Android has no native file picker (love.window.showFileDialog
@@ -976,7 +998,11 @@ local function listRomPaths(dir)
   for _, name in ipairs(love.filesystem.getDirectoryItems(dir) or {}) do
     if name:sub(1, 1) ~= "." then
       local path = (dir == "" or dir == "/") and name or (dir .. "/" .. name)
-      if name:lower():match("%.gbc?$") and love.filesystem.getInfo(path, "file") then
+      -- `%.gbc?$` cannot be stretched to cover .gba: the optional `c` is one
+      -- character, so a GBA dump copied into the save directory was invisible
+      -- to the Android/USB pick path entirely.
+      if (name:lower():match("%.gbc?$") or name:lower():match("%.gba$"))
+         and love.filesystem.getInfo(path, "file") then
         paths[#paths + 1] = path
       end
     end
@@ -1122,14 +1148,14 @@ local function chooseRom(promptName)
   local platform = love.system.getOS()
   if platform == "OS X" then
     return commandOutput(
-      ([[osascript -e 'POSIX path of (choose file with prompt "%s" of type {"gb", "gbc"})' 2>/dev/null]])
+      ([[osascript -e 'POSIX path of (choose file with prompt "%s" of type {"gb", "gbc", "gba"})' 2>/dev/null]])
         :format(prompt))
   elseif platform == "Windows" then
     local script = table.concat({
       "Add-Type -AssemblyName System.Windows.Forms;",
       "$d=New-Object System.Windows.Forms.OpenFileDialog;",
       "$d.Title='" .. prompt .. "';",
-      "$d.Filter='Game Boy ROM (*.gb;*.gbc)|*.gb;*.gbc|All files (*.*)|*.*';",
+      "$d.Filter='Game Boy ROM (*.gb;*.gbc;*.gba)|*.gb;*.gbc;*.gba|All files (*.*)|*.*';",
       -- write the pick as UTF-8: the console's OEM codepage would mangle
       -- non-ASCII names (Pokémon -> Pok\x82mon) and crash any text draw
       -- that shows them (#325)
@@ -1139,11 +1165,11 @@ local function chooseRom(promptName)
       'powershell -NoProfile -STA -Command "' .. script .. '"')
   elseif platform == "Linux" then
     local path = commandOutput(
-      ([[zenity --file-selection --title="%s" --file-filter="Game Boy ROM | *.gb *.gbc" 2>/dev/null]])
+      ([[zenity --file-selection --title="%s" --file-filter="Game Boy ROM | *.gb *.gbc *.gba" 2>/dev/null]])
         :format(prompt))
     if path then return path end
     return commandOutput(
-      [[kdialog --getopenfilename "$HOME" "*.gb *.gbc|Game Boy ROM" 2>/dev/null]])
+      [[kdialog --getopenfilename "$HOME" "*.gb *.gbc *.gba|Game Boy ROM" 2>/dev/null]])
   end
   return nil
 end
@@ -1457,7 +1483,8 @@ function RomImporter.new(onComplete, opts)
     self.returning[version] =
       (not ready) and marker ~= nil and head ~= markerFor(version)
     self.romName[version] = "pokemon_" .. info.id
-      .. ((info.id == "yellow" or info.generation == 2) and ".gbc" or ".gb")
+      .. (info.generation == 3 and ".gba"
+          or ((info.id == "yellow" or info.generation == 2) and ".gbc" or ".gb"))
   end
 
   BootTrace.mark("launcher: versions scanned")
@@ -1720,10 +1747,21 @@ function RomImporter:startData(data, displayName)
     CacheFs.removeTree("assets/generated")
     CacheFs.remove(MARKER_PATH)
 
-    local extractorModule = info.generation == 2
-      and "src.import.RomExtractorGen2" or "src.import.RomExtractor"
+    -- ONE EXTRACTOR PER GENERATION, chosen by table rather than by a
+    -- two-way ternary.  Gen 3 is not a variation on Gen 2 the way Crystal is
+    -- on Gold -- it is a different console, flat-addressed and 4bpp -- so it
+    -- gets its own reader rather than another `layout` key.  An unlisted
+    -- generation still falls to the Gen 1 module, which is what every caller
+    -- got before.
+    local EXTRACTORS = {
+      [2] = "src.import.RomExtractorGen2",
+      [3] = "src.import.RomExtractorGen3",
+    }
+    local extractorModule = EXTRACTORS[info.generation] or "src.import.RomExtractor"
     local RomExtractor = require(extractorModule)
-    local extractor = info.generation == 2
+    -- Gen 1's constructor predates the version argument; Gen 2 and Gen 3
+    -- both take it, because both read more than one cartridge.
+    local extractor = (info.generation == 2 or info.generation == 3)
       and RomExtractor.new(self.romData, version, manifest,
         function(progress, total, stage, current, stageTotal)
           self.status = stage
@@ -2276,7 +2314,7 @@ function RomImporter:choose(version)
       or "the game folder"
     self.notice = {
       version = self.chooseVersion,
-      status = "No file picker. Copy your .gb/.gbc into:",
+      status = "No file picker. Copy your .gb/.gbc/.gba into:",
       detail = where,
     }
     return
@@ -2347,7 +2385,8 @@ function RomImporter:_pollPickedFiles(dt)
   if not found then
     for _, name in ipairs(love.filesystem.getDirectoryItems("")) do
       local n = name:lower()
-      if n:match("%.gbc?$") or n == "picked_mod.zip" or n == "picked_save.sav" then
+      if n:match("%.gbc?$") or n:match("%.gba$")
+         or n == "picked_mod.zip" or n == "picked_save.sav" then
         found = true
         break
       end
@@ -4517,6 +4556,20 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     { id = "polishedcrystal", letter = "PC",
       top = PAL.chipPolishedTop, bot = PAL.chipPolishedBot,
       under = PAL.chipPolishedTop, label = Strings("POLISHED"),
+      ink = PAL.chipInkSilver },
+    -- EMERALD, and the first chip on this row that is not a Game Boy game.
+    --
+    -- Kept at the end of the cartridge run rather than sorted by release date:
+    -- the row reads as "what this engine plays", and the Gen 1 -> Gen 2 ->
+    -- Gen 3 order is the order the support was built in, which is also the
+    -- order of how finished each one is.
+    --
+    -- The comment above Polished Crystal's chip is the whole reason this line
+    -- exists: registering a version in GameVersion.ORDER does NOT create a
+    -- tab, and the tab row is the only navigation into a version's panel.
+    { id = "emerald", letter = "E",
+      top = PAL.chipEmeraldTop, bot = PAL.chipEmeraldBot,
+      under = PAL.chipEmeraldTop, label = Strings("EMERALD"),
       ink = PAL.chipInkSilver },
     { id = "mods",   mods = true,  top = PAL.chipModTop,  bot = PAL.chipModBot,
       under = PAL.modDot, label = Strings("MODS") },

@@ -6983,6 +6983,19 @@ function OverworldState:drawWorld()
         end
       end
     end
+    -- The Gen 3 top layer goes on AFTER the entity pass and before the
+    -- field effects: it is the half of every metatile the player walks
+    -- behind -- treetops, upper storeys, the far rail of a bridge.  On a
+    -- Gen 1 or Gen 2 map this returns false and draws nothing, so there is
+    -- no generation test at the call site.
+    love.graphics.setColor(1, 1, 1, 1)
+    self.map.renderer:drawAbove(cam.x, bgY, vw, vh)
+    for _, nb in ipairs(self.neighbors) do
+      if nb.map.renderer.drawAbove then
+        nb.map.renderer:drawAbove(cam.x - nb.ox, bgY - nb.oy, vw, vh)
+      end
+    end
+
     fxHeal()
     fxDust()
     fxCutTree()

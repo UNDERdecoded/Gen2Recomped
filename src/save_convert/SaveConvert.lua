@@ -30,10 +30,19 @@
 
 local GenSave = require("src.save_convert.GenSave")
 local Gen2Save = require("src.save_convert.Gen2Save")
+local Gen3Save = require("src.save_convert.Gen3Save")
 
 local SaveConvert = {}
 
 SaveConvert.SAVE_SIZE = GenSave.SAVE_SIZE
+
+-- Gen 1 and Gen 2 batteries are both 32768 bytes, which is why routing has to
+-- be by version rather than by size.  A Gen 3 battery is 131072, so for once
+-- the size does distinguish it -- but only if the caller asks the codec rather
+-- than the module-level constant, which is what this is for.
+function SaveConvert.saveSizeFor(gameVersion)
+  return (SaveConvert.codecFor(gameVersion) or GenSave).SAVE_SIZE
+end
 
 -- ------------------------------------------------------------------
 -- Crosswalk data loading (cached).  Mirrors src/core/Data.lua: prefer
@@ -58,6 +67,14 @@ local DATA_MODULES = {
 -- way the other generated tables do (byte -> glyph, keyed by the byte's
 -- decimal value as a string -- Gen2Save.setCharmap takes that shape).
 local GEN2_CHARMAP = { "data.generated.charmap", "data/generated/charmap.lua" }
+
+-- Gen 3 needs two more generated tables that no other codec has: the save
+-- layout (sector shape, substructure orders and where every field sits inside
+-- the blocks, all of it derived from the cartridge) and the same charmap the
+-- text decoder uses.  Both come out of the ROM cache like everything else.
+local GEN3_LAYOUT = { "data.generated.save_layout", "data/generated/save_layout.lua" }
+local GEN3_CHARMAP = { "data.generated.charmap", "data/generated/charmap.lua" }
+local gen3Key
 
 -- field.lua carries the two Gen2-only tables the codec needs to import a
 -- cartridge save's flags: EngineFlags' row -> (WRAM address, bit) rows, and
@@ -134,7 +151,9 @@ local function codecFor(gameVersion)
   local ok, GameVersion = pcall(require, "src.core.GameVersion")
   if not ok or type(GameVersion) ~= "table" then return GenSave end
   local id = gameVersion or GameVersion.get()
-  if GameVersion.generation(id) == 2 then return Gen2Save end
+  local gen = GameVersion.generation(id)
+  if gen == 3 then return Gen3Save end
+  if gen == 2 then return Gen2Save end
   return GenSave
 end
 SaveConvert.codecFor = codecFor
@@ -156,17 +175,27 @@ local function ensureData(gameVersion)
     end
     crosswalks[key] = data
   end
+  if codecFor(gameVersion) == Gen3Save then
+    -- Same reason as Gen 2's charmap below: the codec keeps one module-level
+    -- layout, so it is re-armed whenever the game changes.  A Gen 3 codec
+    -- carrying another game's field offsets would read a save with confident,
+    -- wrong numbers.
+    if gen3Key ~= key then
+      local layout = loadCacheTable(gameVersion, GEN3_LAYOUT[2])
+                     or loadTable(GEN3_LAYOUT[1], GEN3_LAYOUT[2])
+      if not layout then
+        return nil, "this ROM cache has no Gen 3 save layout -- re-import the ROM"
+      end
+      Gen3Save.setLayout(layout, layout.substructOrders, layout.fields)
+      local cm = loadCacheTable(gameVersion, GEN3_CHARMAP[2])
+                 or loadTable(GEN3_CHARMAP[1], GEN3_CHARMAP[2])
+      Gen3Save.setCharmap(cm)
+      gen3Key = key
+    end
+    return crosswalks[key]
+  end
+
   if codecFor(gameVersion) == Gen2Save then
-    -- WHERE this game keeps its save, before anything reads a byte of it.
-    -- Gold, Silver and Crystal share one map; a hack need not, and Prism does
-    -- not -- different WRAM anchor, bigger pockets, a bit-array TM shelf,
-    -- twenty badges, its own checksum position and its own check values.
-    -- Cheap and idempotent, so it is re-armed on every call rather than
-    -- cached: the codec is module-level state and the launcher can switch
-    -- games between two imports.
-    Gen2Save.setLayout(gameVersion or
-      (pcall(require, "src.core.GameVersion")
-       and require("src.core.GameVersion").get()) or nil)
     -- one game's charmap is not another's, and Gen2Save keeps a single
     -- module-level one, so re-arm it whenever the game changes
     if gen2CharmapKey ~= key then
@@ -232,6 +261,13 @@ end
 local FALLBACK_SPAWN = {
   [1] = { map = "REDS_HOUSE_2F", x = 3, y = 6 },
   [2] = { map = "PLAYERS_HOUSE2_F", x = 3, y = 3 },
+  -- Gen 3 imports resolve their own map out of the save whenever the pair of
+  -- bytes after the coordinates names one the extractor found, which is nearly
+  -- always.  This is only where they land when it does not -- and it is an
+  -- arbitrary landing spot, not a claim about where the game begins: the
+  -- cartridge carries no names for individual maps, so they are identified by
+  -- group and number and nothing else.
+  [3] = { map = "MAP_G00_N00", x = 5, y = 5 },
 }
 
 -- Merge a GenSave.decode() result over the new-game defaults, exactly the
@@ -273,8 +309,9 @@ function SaveConvert.importSav(bytes, version, gameVersion)
   if type(bytes) ~= "string" then
     return nil, "expected raw save bytes as a string"
   end
-  if #bytes ~= SaveConvert.SAVE_SIZE then
-    return nil, ("save must be %d bytes, got %d"):format(SaveConvert.SAVE_SIZE, #bytes)
+  local want = SaveConvert.saveSizeFor(gameVersion)
+  if #bytes ~= want then
+    return nil, ("save must be %d bytes, got %d"):format(want, #bytes)
   end
   local data, derr = ensureData(gameVersion)
   if not data then return nil, derr end
@@ -288,13 +325,25 @@ function SaveConvert.importSav(bytes, version, gameVersion)
   -- bad checksum means the file is not a trustworthy save, so reject it.  A
   -- Gen1 image fed to the Gen2 codec (or the reverse) fails here, which is
   -- exactly the "you picked the wrong game's save" answer the launcher wants.
+  -- A codec that knows it has only part of the save says so, and an import
+  -- stops there.  Merging a partial decode over the new-game defaults would
+  -- produce a save table that looks complete and is not -- which is the same
+  -- failure as the Gold save that went through the Gen 1 codec, just quieter.
+  if decoded.incomplete then
+    return nil, ("this save reads, but " .. table.concat(decoded.incomplete, ", ")
+                 .. " are not modelled for this generation yet, so importing "
+                 .. "it would invent them")
+  end
+
   for _, w in ipairs(decoded.warnings or {}) do
     if tostring(w):find("checksum") then
       return nil, "save data checksum invalid (" .. tostring(w) .. ")"
     end
   end
 
-  return mergeDefaults(decoded, version, codec == Gen2Save and 2 or 1)
+  local generation = 1
+  if codec == Gen2Save then generation = 2 elseif codec == Gen3Save then generation = 3 end
+  return mergeDefaults(decoded, version, generation)
 end
 
 -- exportSav(saveTable, gameVersion) -> bytes, err

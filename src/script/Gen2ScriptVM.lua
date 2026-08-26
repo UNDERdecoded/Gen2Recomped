@@ -1670,9 +1670,20 @@ L.itemnotify = function() end
 -- compiler
 -- ---------------------------------------------------------------------------
 
+-- The pool is claimed by PROVENANCE, not by version id.  Both generations
+-- write data/generated/map_scripts.lua and both use the same row shape, so a
+-- Gen 3 cache loaded here would be lowered against Gen 2's opcode names --
+-- every one of which would miss, leaving 518 silent maps and no error.  The
+-- extractor stamps its own name; that is the discriminator.
 local function store(data)
-  return data and data.map_scripts or nil
+  local pool = data and data.map_scripts
+  if pool and pool.source == "RomExtractorGen3" then return nil end
+  return pool or nil
 end
+
+-- exported so data/scripts/init.lua can ask which VM owns the loaded cache
+-- without duplicating the provenance test
+Gen2ScriptVM.store = store
 
 -- POLISHED CRYSTAL'S ALIASES FOR COMMANDS THIS VM ALREADY MODELS.
 --

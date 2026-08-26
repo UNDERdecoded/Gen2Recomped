@@ -8,6 +8,38 @@ local Stats = {}
 local ORDER = { "hp", "attack", "defense", "speed", "special" }
 Stats.ORDER = ORDER
 
+-- Gen 3's six real stats.  Gen 1 and Gen 2 both award stat experience into
+-- five slots because they only ever had five (Gen 2 split the Special BASE
+-- stat but kept one Special DV and one Special stat-exp slot); Gen 3 splits
+-- the investment too, so Sp.Atk and Sp.Def each need their own.
+local ORDER_GEN3 = { "hp", "attack", "defense", "speed", "spatk", "spdef" }
+Stats.ORDER_GEN3 = ORDER_GEN3
+
+-- Nature modifiers, as percentages keyed by stat, set from the cartridge's
+-- gNatureStatTable at load.  nil on a Gen 1/Gen 2 cache, which is what keeps
+-- the classic path below untouched.
+local natures = nil
+
+function Stats.setNatures(byName)
+  natures = type(byName) == "table" and byName or nil
+end
+
+function Stats.natureFor(name)
+  return natures and natures[name] or nil
+end
+
+-- Which stat model a species record implies.  Decided STRUCTURALLY, the same
+-- way the Gen 1/Gen 2 fork already is -- a Gen 3 record is the one whose
+-- base stats carry a separate Sp.Def investment target, which is exactly what
+-- `evYield` marks.  Asking GameVersion here instead would break the map
+-- editor and the save converter, both of which hand this function a species
+-- record with no game selected.
+function Stats.isGen3(speciesDef)
+  return type(speciesDef) == "table" and speciesDef.evYield ~= nil
+     and type(speciesDef.baseStats) == "table"
+     and speciesDef.baseStats.spdef ~= nil
+end
+
 function Stats.randomDVs(rng)
   rng = rng or love.math.random
   local dvs = {
@@ -21,6 +53,14 @@ function Stats.randomDVs(rng)
   return dvs
 end
 
+-- Gen 3 rolls all six independently, 0..31, with no derived HP value
+function Stats.randomIVs(rng)
+  rng = rng or love.math.random
+  local ivs = {}
+  for _, key in ipairs(ORDER_GEN3) do ivs[key] = rng(0, 31) end
+  return ivs
+end
+
 local function calcOne(base, dv, statExp, level, isHP)
   -- CalcStat .statExpLoop finds the smallest b with b*b >= statExp
   -- (a ceiling sqrt), capped at 255, and quarters it
@@ -32,7 +72,51 @@ local function calcOne(base, dv, statExp, level, isHP)
   return v + 5
 end
 
-function Stats.calc(speciesDef, level, dvs, statExp)
+-- Gen 3 (pokeemerald pokemon.c CalcMonStats):
+--
+--   HP    = floor((2*base + IV + floor(EV/4)) * level / 100) + level + 10
+--   other = floor((floor((2*base + IV + floor(EV/4)) * level / 100) + 5)
+--                 * natureMod / 100)
+--
+-- Three differences from the earlier formula that all matter:
+--   * IVs run 0..31, not 0..15, and each stat has its OWN -- including HP,
+--     which Gen 1 derived from the low bits of the other four.
+--   * EVs are a flat 0..255 per stat quartered directly; there is no
+--     ceiling-sqrt, so the stat-exp curve is gone.
+--   * the nature multiplier is applied LAST, to the finished stat, and never
+--     to HP -- which is why no nature raises or lowers HP.
+local function calcGen3(base, iv, ev, level, isHP, natureMod)
+  local core = math.floor((2 * base + (iv or 0) + math.floor((ev or 0) / 4))
+                          * level / 100)
+  if isHP then
+    -- Shedinja is the one species whose HP is not this formula, but the
+    -- cartridge handles that by species id at a level above this one
+    return core + level + 10
+  end
+  return math.floor((core + 5) * (natureMod or 100) / 100)
+end
+
+function Stats.calcGen3(speciesDef, level, ivs, evs, nature)
+  local base = speciesDef.baseStats
+  ivs, evs = ivs or {}, evs or {}
+  local mods = (natures and natures[nature] and natures[nature].modifiers) or {}
+  local out = {}
+  for _, key in ipairs(ORDER_GEN3) do
+    out[key] = calcGen3(base[key] or 0, ivs[key], evs[key], level,
+                        key == "hp", mods[key])
+  end
+  -- `special` stays an alias of Sp.Atk so the Gen 1 code paths and the
+  -- summary screens that predate the split still read something sane
+  out.special = out.spatk
+  return out
+end
+
+function Stats.calc(speciesDef, level, dvs, statExp, evs, nature)
+  if Stats.isGen3(speciesDef) then
+    -- a Gen 3 mon carries ivs/evs; the dvs/statExp parameters are what the
+    -- ~40 existing call sites pass, so accept them in those positions too
+    return Stats.calcGen3(speciesDef, level, dvs, evs or statExp, nature)
+  end
   statExp = statExp or {}
   local base = speciesDef.baseStats
   local out = {}
@@ -74,6 +158,13 @@ function Stats.ensure(speciesDef, mon)
   if type(mon.stats) == "table" then
     -- a party saved before the Sp.Atk/Sp.Def split has only `special`
     local base = speciesDef.baseStats
+    if Stats.isGen3(speciesDef) then
+      if not mon.stats.spdef then
+        mon.stats = Stats.calcGen3(speciesDef, mon.level or 1, mon.ivs,
+                                   mon.evs, mon.nature)
+      end
+      return mon
+    end
     if base.spatk and base.spdef and not mon.stats.spatk then
       local full = Stats.calc(speciesDef, mon.level or 1, mon.dvs or {},
                               mon.statExp)
@@ -81,7 +172,12 @@ function Stats.ensure(speciesDef, mon)
     end
     return mon
   end
-  mon.stats = Stats.calc(speciesDef, mon.level or 1, mon.dvs or {}, mon.statExp)
+  if Stats.isGen3(speciesDef) then
+    mon.stats = Stats.calcGen3(speciesDef, mon.level or 1, mon.ivs, mon.evs,
+                               mon.nature)
+  else
+    mon.stats = Stats.calc(speciesDef, mon.level or 1, mon.dvs or {}, mon.statExp)
+  end
   mon.hp = math.max(0, math.min(tonumber(mon.hp) or mon.stats.hp, mon.stats.hp))
   return mon
 end

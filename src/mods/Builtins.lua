@@ -32,7 +32,8 @@ local REGISTRANTS = {
   { name = "tokens", from = "src.render.TextBox" },
   -- plain data files with no owning module: registered from here
   { name = "rulesets", modules = { "src.battle.rulesets.gen1_faithful",
-                                   "src.battle.rulesets.modern_clean" },
+                                   "src.battle.rulesets.modern_clean",
+                                   "src.battle.rulesets.gen3_emerald" },
     install = function(registry, modules, owner)
       for _, ruleset in ipairs(modules) do
         registry:register(ruleset.name, ruleset, owner)
