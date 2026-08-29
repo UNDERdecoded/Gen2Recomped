@@ -1,0 +1,40 @@
+name: R36S Build
+
+on:
+  push:
+    branches: [ "main", "dev" ]
+    paths-ignore:
+      - '**.md'
+      - 'LICENSE'
+  pull_request:
+    branches: [ "main", "dev" ]
+  workflow_dispatch:
+
+concurrency:
+  group: r36s-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-r36s:
+    name: Build R36S Port
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Ensure Executability
+        run: |
+          chmod +x build-r36s.sh
+          chmod +x scripts/*.sh 2>/dev/null || true
+
+      - name: Execute R36S Build Script
+        run: bash build-r36s.sh
+
+      - name: Upload R36S Zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Gen2Recomped-r36s
+          path: dist/r36s/Gen2Recomped-r36s.zip
+          if-no-files-found: error
+          retention-days: 7
