@@ -40,11 +40,13 @@ eq(rt.name, 'RED"s', "json round trip escaping")
 
 -- ---------------------------------------------------------------- pack/unpack
 local kadabra = Pokemon.new(Data, "KADABRA", 30)
+kadabra.item = "METAL_COAT"
 local packed = Protocol.packMon(kadabra)
 local unpacked = Protocol.unpackMon(Data, packed)
 eq(unpacked.species, "KADABRA", "mon survives the wire")
 eq(unpacked.level, 30, "level survives")
 eq(unpacked.stats.hp, kadabra.stats.hp, "stats recomputed identically")
+eq(unpacked.item, "METAL_COAT", "held item survives the wire")
 -- tampering is clamped
 packed.level = 3000
 packed.dvs.attack = 99
