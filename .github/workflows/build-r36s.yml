@@ -14,6 +14,9 @@ concurrency:
   group: r36s-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: write
+
 jobs:
   build-r36s:
     name: Build R36S Port
