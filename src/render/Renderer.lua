@@ -9,6 +9,7 @@
 local Zoom = require("src.render.Zoom")
 local Tilt = require("src.render.Tilt")
 local PaletteFX = require("src.render.PaletteFX")
+local Performance = require("src.core.Performance")
 local Pipelines = require("src.render.Pipelines")
 local PixelCanvas = require("src.render.PixelCanvas")
 local Runtime = require("src.mods.Runtime")
@@ -600,8 +601,19 @@ function Renderer:blitCanvas(canvas, sx, sy, zoneList, zoneSx, zoneSy,
   -- a colors == false zone is the trueColor opt-out: its rect draws with
   -- no shader at all.  Nothing sets one without a mod, so a vanilla zone
   -- list never toggles and issues exactly the calls it always did.
+  --
+  -- maxZones (Performance.caps) bounds how many zones get their own
+  -- shader draw call: unlike tilt/gbcfx/survey this flat blit path runs
+  -- on every tier, so a map with many SGB palette rects still costs one
+  -- draw call each on weak hardware regardless of tier.  Zones beyond the
+  -- cap simply keep whatever the previous zone (or the base) drew rather
+  -- than getting their own pass -- a correctness/perf tradeoff, not a
+  -- crash risk, and it only engages on low/potato where it's the right
+  -- side to trade.
+  local maxZones = Performance.caps().maxZones
   local bare = false
-  for _, z in ipairs(zoneList) do
+  for i, z in ipairs(zoneList) do
+    if maxZones and i > maxZones then break end
     local plain = z.colors == false
     if plain ~= bare then
       bare = plain
