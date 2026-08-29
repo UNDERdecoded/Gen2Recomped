@@ -22,15 +22,28 @@ local MapScripts = require("src.script.MapScripts")
 -- ROM's own cutscene wiring wins over the hand-ported stand-ins.
 local gen2Data = require("src.core.Data")
 local gen2VM = gen2Data.map_scripts and require("src.script.Gen2ScriptVM") or nil
+if gen2VM and not gen2VM.store(gen2Data) then gen2VM = nil end
 if gen2VM then gen2VM.register(gen2Data, "talk") end
+
+-- Gen3 ships its scripts the same way and lands in the same module, so the
+-- test is which extractor wrote the pool rather than which version is
+-- selected -- the same "is there a pool for me" gate the Gen 2 arm uses, so
+-- neither generation needs to know the other exists.  Emerald's own object
+-- dialogue attaches first for exactly the Gen 2 reason: a hand-ported module
+-- for the same map must still be able to win per TEXT constant.
+local gen3VM = gen2Data.map_scripts and require("src.script.Gen3ScriptVM") or nil
+if gen3VM and not gen3VM.store(gen2Data) then gen3VM = nil end
+if gen3VM then gen3VM.register(gen2Data, "talk") end
 
 -- Maps that Gen2 map_scripts already owns.  Gen1 story hand-ports for the
 -- same map ids (CERULEAN_CITY, ROUTE24→ROUTE_24, etc.) must not attach:
 -- they override Gen2 talk with pokered rival/Nugget Bridge scripts and
 -- leave players fighting CeruleanCityRival with Gen1 text on a Gold/Silver
 -- save.
+-- A Gen 3 cache owns its maps for the same reason a Gen 2 one does: the
+-- pokered hand-ports are Kanto stories and must not attach over Hoenn.
 local gen2OwnedMaps = {}
-if gen2VM and gen2Data.map_scripts and gen2Data.map_scripts.maps then
+if (gen2VM or gen3VM) and gen2Data.map_scripts and gen2Data.map_scripts.maps then
   for mapId in pairs(gen2Data.map_scripts.maps) do
     gen2OwnedMaps[mapId] = true
     -- MapScripts.normalizeMapId inserts _ before trailing digits (ROUTE24
@@ -53,7 +66,7 @@ end
 
 -- OaksLab is a full Yellow rewrite (one Eevee ball + forced Pikachu);
 -- Red/Blue keep the three-starter choose flow.  Skip on Gen2.
-if not gen2VM then
+if not (gen2VM or gen3VM) then
   local oaksLab = GameVersion.isYellow()
     and "data.scripts.oaks_lab_yellow"
     or "data.scripts.oaks_lab"
@@ -73,7 +86,7 @@ end
 -- end, and mixing the two left the player stuck -- the hand-written Elm
 -- dialogue never advanced the scene the ROM's "you can't leave yet" script
 -- checks.  They only load when the disassembly is unavailable.
-if not gen2VM then
+if not (gen2VM or gen3VM) then
   for _, mapEntry in ipairs({
     { "PLAYERS_HOUSE1_F", "data.scripts.players_house1f" },
     { "MAP_G18_N06",     "data.scripts.players_house1f" },
@@ -105,7 +118,7 @@ end
 
 -- Yellow-only content on top of the shared tables (talk keys merge per
 -- TEXT constant): the Kanto-starter gift quests and Jessie & James.
-if GameVersion.isYellow() and not gen2VM then
+if GameVersion.isYellow() and not (gen2VM or gen3VM) then
   for _, file in ipairs({ "data.scripts.yellow_gifts",
                           "data.scripts.yellow_jessie_james",
                           "data.scripts.yellow_beach_house",
@@ -117,6 +130,7 @@ if GameVersion.isYellow() and not gen2VM then
 end
 
 if gen2VM then gen2VM.register(gen2Data, "scenes") end
+if gen3VM then gen3VM.register(gen2Data, "scenes") end
 
 local M = {}
 

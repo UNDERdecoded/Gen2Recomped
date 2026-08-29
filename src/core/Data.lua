@@ -18,8 +18,12 @@ local MODULES = {
 }
 
 -- Optional for compatibility with developer and stale caches.
+-- map_layouts and map_tilesets are the Gen 3 world modules: Gen 1 and Gen 2
+-- fold blockdata into maps.lua and tilesets.lua, but a Gen 3 layout is shared
+-- between maps and its tilesets come in primary/secondary pairs, so both are
+-- their own module and both are absent on a Gen 1/Gen 2 cache.
 local OPTIONAL = { "audio", "palettes", "icons", "map_scripts", "unown_puzzle",
-                   "unown_dex" }
+                   "unown_dex", "map_layouts", "map_tilesets" }
 
 -- Vanilla defaults for rules exposed through the constants registry.  A
 -- value has to exist before a mod can patch it; each one matches the
@@ -915,6 +919,21 @@ function Data:load()
                   name, tostring(mod))
     end
   end
+  -- Hand the cartridge's own battle tables to the two modules that would
+  -- otherwise have to approximate them.  Both are no-ops on a Gen 1/Gen 2
+  -- cache, which has neither key: Growth keeps its six polynomials and Stats
+  -- keeps the DV/stat-exp path untouched.
+  --
+  -- This runs BEFORE seedDefaults so a mod that overrides a growth curve or a
+  -- nature still wins -- the cartridge is the floor, not the ceiling.
+  local constants = self.constants or {}
+  if constants.experienceTables then
+    require("src.pokemon.Growth").setTables(constants.experienceTables)
+  end
+  if constants.natures then
+    require("src.pokemon.Stats").setNatures(constants.natures)
+  end
+
   -- before the mod loader runs: the deep registries fold over these
   self:seedDefaults()
   -- the top-level keys a pristine load leaves behind, so reloadGenerated can

@@ -87,17 +87,34 @@ function Map.defCellTile(def, tilesetDef, cx, cy)
     end
     return def.blocks[by * def.width + bx + 1]
   end
+  -- the same two block dimensions Map.new reads, for a def that was never
+  -- loaded: this function exists so the connection graph can test a neighbour
+  -- map's edge without building it, and it has to speak both models too
+  local cells = tonumber(tilesetDef.blockCells) or 2
+  local tiles = tonumber(tilesetDef.blockTiles) or 4
+  -- the same per-cell collision Map:cellTile prefers, for an unloaded def
+  if def.collisionCells then
+    if cx < 0 or cy < 0 or cx >= def.width * cells
+       or cy >= def.height * cells then
+      return 0xFF
+    end
+    local i = cy * def.width + cx + 1
+    if (def.collisionCells[i] or 0) ~= 0 then return 0xFF end
+    local id = blockAt(cx, cy) or 0
+    return tilesetDef.collision and tilesetDef.collision[id + 1] or 0
+  end
   if tilesetDef.collision then
-    local blockId = blockAt(math.floor(cx / 2), math.floor(cy / 2)) or 0
-    if blockId == 0 then return 0xFF end
-    return tilesetDef.collision[blockId * 4 + (cx % 2) + (cy % 2) * 2 + 1] or 0xFF
+    local blockId = blockAt(math.floor(cx / cells), math.floor(cy / cells)) or 0
+    if cells > 1 and blockId == 0 then return 0xFF end
+    return tilesetDef.collision[blockId * cells * cells
+      + (cx % cells) + (cy % cells) * cells + 1] or 0xFF
   end
   local tx, ty = cx * 2, cy * 2 + 1
-  local bx, by = math.floor(tx / 4), math.floor(ty / 4)
+  local bx, by = math.floor(tx / tiles), math.floor(ty / tiles)
   local id = blockAt(bx, by)
   local block = tilesetDef.blocks[(id or 0) + 1]
   if not block then return nil end
-  return block[(ty % 4) * 4 + (tx % 4) + 1]
+  return block[(ty % tiles) * tiles + (tx % tiles) + 1]
 end
 
 local function defWaterTileSet(def, tilesetDef)
@@ -266,8 +283,21 @@ function Map.new(def, tilesetDef)
   self.def = def
   self.tileset = tilesetDef
   self.id = def.id
-  self.widthCells = def.width * 2
-  self.heightCells = def.height * 2
+
+  -- HOW BIG IS A BLOCK.  Gen 1 and Gen 2 build the world from 4x4-tile blocks
+  -- (32px) holding four 16px collision cells; a Gen 3 metatile is 2x2 tiles
+  -- (16px) and IS one collision cell.  Those two numbers were literals in five
+  -- places across this file and TileRenderer, which is what made a Gen 3 map
+  -- unrepresentable rather than merely unsupported.
+  --
+  -- They come off the TILESET, not off GameVersion: the map editor and the
+  -- save converter both build Map objects with no game selected, and a Gen 3
+  -- tileset is recognisable on its own -- it is the one that says so.
+  self.blockTiles = tonumber(tilesetDef.blockTiles) or 4   -- tiles per block edge
+  self.blockCells = tonumber(tilesetDef.blockCells) or 2   -- cells per block edge
+
+  self.widthCells = def.width * self.blockCells
+  self.heightCells = def.height * self.blockCells
 
   self.walkable = walkableSet(tilesetDef)
   -- For Gen2 maps with no extracted collision, use the border block as the
@@ -374,7 +404,8 @@ end
 
 -- tile id at tile coordinates (8px grid), border-extended
 function Map:tileAt(tx, ty)
-  local bx, by = math.floor(tx / 4), math.floor(ty / 4)
+  local n = self.blockTiles
+  local bx, by = math.floor(tx / n), math.floor(ty / n)
   local blockId = self:blockAt(bx, by)
   local block = self.tileset.blocks[(blockId or 0) + 1]
   if not block then
@@ -382,7 +413,7 @@ function Map:tileAt(tx, ty)
     block = self.tileset.blocks[borderId + 1] or self.tileset.blocks[1]
     if not block then return 0 end
   end
-  local ix = (ty % 4) * 4 + (tx % 4) + 1
+  local ix = (ty % n) * n + (tx % n) + 1
   return block[ix] or block[1] or 0
 end
 
@@ -392,11 +423,33 @@ end
 -- (GetCoordTileCollision) -- so both forms funnel through here and every
 -- downstream tile lookup keeps working unchanged.
 function Map:cellTile(cx, cy)
+  -- A Gen 3 map carries its own per-cell collision, because there the SAME
+  -- metatile is walkable in one place and a wall in another -- a house front
+  -- and its doorway are the same tile.  When a def has it, it decides
+  -- passability and the tileset's behaviour byte only says what KIND of ground
+  -- it is (grass, water, a door), which is what the rest of this file wants.
+  local cells = self.def.collisionCells
+  if cells then
+    if cx < 0 or cy < 0 or cx >= self.widthCells or cy >= self.heightCells then
+      return 0xFF
+    end
+    local i = cy * self.def.width + cx + 1
+    if (cells[i] or 0) ~= 0 then return 0xFF end
+    local behaviour = self.tileset.collision
+    local blockId = self:blockAt(cx, cy) or 0
+    return behaviour and behaviour[blockId + 1] or 0
+  end
+
   local collision = self.tileset.collision
   if collision then
-    local blockId = self:blockAt(math.floor(cx / 2), math.floor(cy / 2)) or 0
-    if blockId == 0 then return 0xFF end
-    return collision[blockId * 4 + (cx % 2) + (cy % 2) * 2 + 1] or 0xFF
+    local n = self.blockCells
+    local blockId = self:blockAt(math.floor(cx / n), math.floor(cy / n)) or 0
+    -- block 0 always reads as wall in Gen 2 (GetCoordTileCollision); a Gen 3
+    -- metatile 0 is an ordinary tile, so only the four-cell form keeps that
+    if n > 1 and blockId == 0 then return 0xFF end
+    -- one collision class per CELL: four per block in Gen 2's NW/NE/SW/SE
+    -- order, exactly one per metatile in Gen 3
+    return collision[blockId * n * n + (cx % n) + (cy % n) * n + 1] or 0xFF
   end
   return self:tileAt(cx * 2, cy * 2 + 1)
 end

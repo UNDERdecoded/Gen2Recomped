@@ -130,7 +130,7 @@ GameVersion.VERSIONS = {
     generation = 2,
     label = "Prism",
     displayName = "Pokemon Prism",
-    launcherName = "Prism (Beta)",
+    launcherName = "Prism (experimental)",
     sha1 = "752076692ae3387cf426ce5f51a98c6b60e8df6a",
     manifest = "tools/rom_manifest_prism.json",
     cachePrefix = "prism/",
@@ -806,11 +806,56 @@ GameVersion.VERSIONS = {
     -- hold B to run (DoPlayerMovement's .run branch); see Player.beginStep
     hasRunning = true,
   },
+-- ---------------------------------------------------------------------------
+-- POKEMON EMERALD -- the first Game Boy ADVANCE cartridge in this registry.
+--
+-- Everything above is a Game Boy or Game Boy Color game: banked ROM, 2 bits
+-- per pixel, four greys, and -- crucially -- a published symbol table to read
+-- the cartridge with.  Emerald is none of those.  It is flat-addressed from
+-- $08000000 across 16 MiB, 4 bits per pixel against sixteen colours of 15-bit
+-- BGR, most assets behind the BIOS LZ77 codec, and it ships NO symbols at
+-- all: every address in its manifest was found structurally against the ROM
+-- and verified there (tools/gen3_discover.py).
+--
+-- So it gets `generation = 3` and its own extractor rather than another
+-- `layout` key on the Gen 2 one -- see src/import/RomExtractorGen3.lua and
+-- src/import/RomGba.lua, neither of which shares a line with the Gen 1/Gen 2
+-- pipeline.
+--
+-- HELD BACK.  `importable = false` is not caution about a few rough edges the
+-- way Polished Crystal's is -- the extractor is still being built out, so an
+-- import cannot produce a playable cache yet.  The version is registered so
+-- the plumbing, the manifest and the reader can be exercised end to end;
+-- POKEPORT_UNLOCK=emerald opens it for that work.  Flip this to true when the
+-- required-file list in RomImporter actually gates something.
+--
+-- sha1 is the canonical (USA, Europe) dump, game code BPEE, revision 0 --
+-- the build pokeemerald targets, which is what makes the discovered
+-- addresses meaningful.
+  emerald = {
+    id = "emerald",
+    generation = 3,
+    label = "Emerald",
+    displayName = "Pokemon Emerald",
+    launcherName = "Emerald",
+    sha1 = "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+    manifest = "tools/rom_manifest_emerald.json",
+    cachePrefix = "emerald/",
+    saveSuffix = "_emerald",
+    importable = false,
+    -- the Running Shoes are a Gen 3 staple and the field code already has a
+    -- hold-B run path; it costs nothing to declare it now
+    hasRunning = true,
+  },
 }
 
--- Launcher column order.
+-- Launcher column order: the CARTRIDGES in generation order, then the ROM
+-- hacks after the games they are built from.  Emerald is a cartridge, so it
+-- sits with Crystal and not after Polished Crystal -- appending it to the end
+-- put a Game Boy Advance game behind two Game Boy Color hacks, and broke the
+-- ordering rule tests/polished_crystal_registration_test.lua asserts.
 GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
-                      "prism", "polishedcrystal" }
+                      "emerald", "prism", "polishedcrystal" }
 
 GameVersion.current = "red"
 
@@ -834,6 +879,15 @@ end
 
 function GameVersion.isGen2(id)
   return GameVersion.generation(id) == 2
+end
+
+-- The third arm.  Worth stating plainly because ~135 call sites across the
+-- engine still ask `isGen2()` and take the Gen 1 branch when it answers false
+-- -- so a Gen 3 game currently renders, walks and battles as Gen 1 wherever
+-- one of those has not been widened.  This predicate is what those sites get
+-- widened WITH; it is not, on its own, support.
+function GameVersion.isGen3(id)
+  return GameVersion.generation(id) == 3
 end
 
 function GameVersion.isBlue()

@@ -768,6 +768,73 @@ end
 
 -- data: Game.data (threaded through explicitly, not required lazily, so
 -- headless tests that build a map from a plain local table still work)
+-- ---------------------------------------------------------------------------
+-- Gen 3 metatile sheets
+--
+-- A Gen 1/Gen 2 tileset bakes to ONE atlas of 8x8 tiles and every block is
+-- four rows of four indices into it.  A Gen 3 metatile cannot be expressed
+-- that way: its eight tile entries each carry their own palette and their own
+-- flips, and they come out of two tilesets at once.  So the pair is composited
+-- once into two 16x16-per-metatile sheets -- bottom layer and top -- and the
+-- window batches blit one quad per cell out of each.
+--
+-- TWO sheets, not one flattened image, because the player walks between them.
+-- Flattening would put a character on top of the treetop they should vanish
+-- behind, which is the single most visible thing this file can get wrong.
+--
+-- Cached by pair id: 441 layouts share 76 pairs, and baking is the expensive
+-- part (about 336,000 pixels for a 656-metatile pair).
+local gen3Sheets = {}
+
+function TileRenderer.gen3SheetsFor(tilesetDef, data, layout)
+  if not (tilesetDef and tilesetDef.blockTiles == 2) then return nil end
+  local key = tilesetDef.id
+  local hit = gen3Sheets[key]
+  if hit ~= nil then return hit or nil end
+  gen3Sheets[key] = false            -- do not retry a failed bake every frame
+
+  local store = data and data.map_tilesets
+  local primary = store and store[tilesetDef.primaryKey]
+  if not primary then
+    Logger.warn("gen3 tiles: %s names primary %s, which is not in "
+                .. "map_tilesets", tostring(key), tostring(tilesetDef.primaryKey))
+    return nil
+  end
+  if not (love.image and love.image.newImageData) then return nil end
+
+  local Gen3Tiles = require("src.render.Gen3Tiles")
+  local tiles = Gen3Tiles.new({
+    primary = primary,
+    secondary = tilesetDef.secondaryKey and store[tilesetDef.secondaryKey] or nil,
+  }, layout)
+
+  local _, _, w, h = tiles:sheetLayout()
+  if w <= 0 or h <= 0 then return nil end
+
+  local built = {}
+  for layer = 1, 2 do
+    local surface = love.image.newImageData(w, h)
+    tiles:bakeLayer(layer, function(x, y, r, g, b)
+      if x >= 0 and y >= 0 and x < w and y < h then
+        surface:setPixel(x, y, r / 255, g / 255, b / 255, 1)
+      end
+    end)
+    built[layer] = love.graphics.newImage(surface)
+  end
+
+  local record = { bottom = built[1], top = built[2], width = w, height = h,
+                   tiles = tiles, metatiles = tiles:metatileCount() }
+  gen3Sheets[key] = record
+  Logger.info("gen3 tiles: baked %s -- %d metatiles into two %dx%d sheets",
+              tostring(key), record.metatiles, w, h)
+  return record
+end
+
+-- a re-import replaces the data the sheets were baked from
+function TileRenderer.releaseGen3Sheets()
+  gen3Sheets = {}
+end
+
 function TileRenderer.new(map, data)
   local self = setmetatable({}, TileRenderer)
   self.map = map
@@ -846,8 +913,30 @@ function TileRenderer.new(map, data)
   -- baked into a whole-map SpriteBatch, so a map becoming visible -- a warp,
   -- a connection seam -- costs nothing to "build": there is no per-map batch
   -- construction that scales with map size, which is what stuttered.
-  self.bodyTilesW = def.width * 4
-  self.bodyTilesH = def.height * 4
+  -- Tiles per block edge: 4 for a Gen 1/Gen 2 block (32px), 2 for a Gen 3
+  -- metatile (16px).  Taken from the map object, which took it from the
+  -- tileset -- the same number Map:tileAt divides by, so the renderer's window
+  -- and the collision lookup cannot drift apart.
+  self.blockTiles = map.blockTiles or 4
+  self.bodyTilesW = def.width * self.blockTiles
+  self.bodyTilesH = def.height * self.blockTiles
+
+  -- Gen 3: one quad per 16x16 metatile out of two composited sheets, instead
+  -- of one quad per 8x8 tile out of a single atlas.  When the bake is not
+  -- available the renderer falls through to the tile path and the map draws
+  -- as whatever its `blocks` table holds, which is blank rather than wrong.
+  self.gen3 = TileRenderer.gen3SheetsFor(map.tileset, data,
+                                         data and data.constants
+                                         and data.constants.gen3Layout)
+  if self.gen3 then
+    local cols = require("src.render.Gen3Tiles").SHEET_COLS
+    self.gen3Quads = {}
+    for id = 0, self.gen3.metatiles - 1 do
+      self.gen3Quads[id] = love.graphics.newQuad(
+        (id % cols) * 16, math.floor(id / cols) * 16, 16, 16,
+        self.gen3.width, self.gen3.height)
+    end
+  end
   -- Animated tiles overdraw the static window each frame.  Only the per-entry
   -- render spec (textures/sequence/gate) is kept here; the animated cells are
   -- gathered per camera window in :ensureWindow, so nothing here scales with
@@ -1117,6 +1206,35 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
   ty0 = math.max(0, ty0 - WINDOW_MARGIN)
   tx1 = math.min(W, tx1 + WINDOW_MARGIN)
   ty1 = math.min(H, ty1 + WINDOW_MARGIN)
+  if self.gen3 then
+    -- one quad per CELL into each of the two layer batches.  The tile-grid
+    -- bounds above are still the right window -- a Gen 3 cell is two tiles
+    -- wide, so dividing by blockTiles gives the cell range directly.
+    if not self.winBatch then
+      self.winBatch = love.graphics.newSpriteBatch(self.gen3.bottom, 1024, "dynamic")
+      self.winBatchTop = love.graphics.newSpriteBatch(self.gen3.top, 1024, "dynamic")
+    end
+    self.winBatch:clear()
+    self.winBatchTop:clear()
+    local map = self.map
+    local n = self.blockTiles
+    local cx0, cy0 = math.floor(tx0 / n), math.floor(ty0 / n)
+    local cx1, cy1 = math.ceil(tx1 / n), math.ceil(ty1 / n)
+    for cy = cy0, cy1 - 1 do
+      for cx = cx0, cx1 - 1 do
+        local id = map:blockAt(cx, cy)
+        local quad = id and self.gen3Quads[id]
+        if quad then
+          local wx, wy = cx * 16, cy * 16
+          self.winBatch:add(quad, wx, wy)
+          self.winBatchTop:add(quad, wx, wy)
+        end
+      end
+    end
+    self.win = { tx0 = tx0, ty0 = ty0, tx1 = tx1, ty1 = ty1 }
+    return
+  end
+
   if not self.winBatch then
     self.winBatch = love.graphics.newSpriteBatch(self.image, 1024, "dynamic")
   end
@@ -1130,14 +1248,15 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
   end
   local map, quads = self.map, self.quads
   local claimedBy, aliasMap = self.claimedBy, self.aliasMap
+  local n = self.blockTiles
   for ty = ty0, ty1 - 1 do
-    local by = math.floor(ty / 4)
-    local ty4 = ty % 4
+    local by = math.floor(ty / n)
+    local tyn = ty % n
     for tx = tx0, tx1 - 1 do
-      local blockId = map:blockAt(math.floor(tx / 4), by)
+      local blockId = map:blockAt(math.floor(tx / n), by)
       local block = map.tileset.blocks[blockId + 1]
       if block then
-        local ci = ty4 * 4 + (tx % 4)
+        local ci = tyn * n + (tx % n)
         local tile = block[ci + 1]
         local remap = aliasMap and aliasMap[blockId]
         if remap and remap[ci] then tile = remap[ci] end
@@ -1206,6 +1325,31 @@ function TileRenderer:draw(camX, camY, vw, vh)
   self:drawWindow(camX, camY, vw, vh)
 end
 
+-- The Gen 3 TOP layer, drawn AFTER the sprites.
+--
+-- This is the half of the metatile the player walks behind: treetops, the
+-- upper storey of a building, the far rail of a bridge.  The overworld calls
+-- it once the entity pass is done; on a Gen 1/Gen 2 map it returns false and
+-- does nothing, so the call site needs no generation test.
+--
+-- Nothing already here can stand in for it.  drawCellBottom redraws ONE
+-- cell's lower tile row to hide a sprite's feet in tall grass -- a per-cell
+-- exception -- where a Gen 3 top layer applies to every cell on the map.
+function TileRenderer:drawAbove(camX, camY, vw, vh)
+  if not self.gen3 then return false end
+  self:ensureWindow(camX, camY, vw, vh)
+  if self.winBatchTop then
+    love.graphics.draw(self.winBatchTop, -math.floor(camX), -math.floor(camY))
+  end
+  return true
+end
+
+-- Does this map draw anything above the sprites?  Lets a caller skip the
+-- state changes around the call on the generations that do not.
+function TileRenderer:hasAboveLayer()
+  return self.gen3 ~= nil
+end
+
 -- body only, for connected-map strips.  Identical to :draw now that the
 -- border ring is served by :drawBorderFill for the current map too -- the
 -- only remaining difference is the trueColor mark extent.
@@ -1227,6 +1371,10 @@ end
 -- :release on eviction.
 function TileRenderer:releaseBatches()
   safeRelease(self.winBatch); self.winBatch = nil
+  -- the Gen 3 top-layer batch lives and dies with the bottom one; the two
+  -- SHEETS behind them are module-cached per tileset pair and are not
+  -- released here, exactly as the animated tile textures are not
+  safeRelease(self.winBatchTop); self.winBatchTop = nil
   safeRelease(self.borderFill); self.borderFill = nil
   safeRelease(self.borderQuad); self.borderQuad = nil
   -- shared shift-variant cache; only drop the reference
