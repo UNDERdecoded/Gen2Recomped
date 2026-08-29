@@ -13650,6 +13650,11 @@ function RomExtractorGen2:gen2BattleAnims()
         local entry = self.rom:word(sym.bank, sym.address + id * 2)
         scripts[id] = self:gen2AnimScript(sym.bank, entry)
       end)
+      -- One decode per battle animation (Crystal ships 200+), previously
+      -- with no yield anywhere in the loop; called from the "Gen2 runtime
+      -- scaffolds" stage, so tick under that stage's name like its other
+      -- two loops.
+      if id % 16 == 0 then self:tick("Gen2 runtime scaffolds", id, count - 1) end
     end
   end
   local order = (self:constants() or {}).moveOrder or {}
@@ -14208,7 +14213,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   -- answer for every tileset.
   local envPalettes = self:gen2EnvPalettes()
   local tilesetEnvironments = self:gen2TilesetEnvironments()
-  for _, id in ipairs(orderedTilesets) do
+  for tilesetIndex, id in ipairs(orderedTilesets) do
     local spec = tilesetManifest[id] or tilesetManifest[id:lower()] or {}
     local gfxId = id
     if id == "HOUSE" then
@@ -14515,6 +14520,14 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         end
       end
     end
+    -- This loop decompresses and rebakes a whole tileset sheet (LZ3 plus a
+    -- per-block flatten) per iteration, and on Prism-sized rosters that is
+    -- ~95 of them with no yield anywhere in between -- previously the whole
+    -- pass ran as one uninterrupted coroutine step regardless of how slow
+    -- the host CPU is.  Ticking here lets RomImporter's per-frame time
+    -- budget (src/import/RomImporter.lua RomImporter:update) actually take
+    -- effect between tilesets instead of only after the entire stage.
+    self:tick("Gen2 runtime scaffolds", tilesetIndex, #orderedTilesets)
   end
   self:write("tilesets", tilesets)
 
@@ -14556,7 +14569,22 @@ function RomExtractorGen2:extractRuntimeScaffolds()
     SPRITE_BIG_SNORLAX = true,
     SPRITE_BIG_LAPRAS = true,
   }
+  -- pairs(), not ipairs(): gen2OverworldSprites() is keyed by slot number
+  -- with gaps, so there is no ipairs()-friendly index to tick against.
+  -- Count manually and sample every 16 sheets -- same cadence "Gen2 party
+  -- icons" already uses for its per-species image decode -- so this
+  -- (up to ~230 sprite sheets, each a decompress + decode2bpp) yields
+  -- periodically instead of running as one block to the stage's single
+  -- closing tick.
+  local spriteTickCount, spriteTickTotal = 0, 0
+  for _ in pairs(self:gen2OverworldSprites()) do
+    spriteTickTotal = spriteTickTotal + 1
+  end
   for _, row in pairs(self:gen2OverworldSprites()) do
+    spriteTickCount = spriteTickCount + 1
+    if spriteTickCount % 16 == 0 then
+      self:tick("Gen2 runtime scaffolds", spriteTickCount, spriteTickTotal)
+    end
     local ok, raw = pcall(function()
       -- Prism stores every overworld sprite sheet LZ3-compressed --
       -- `Player0SpriteGFX:: INCBIN "gfx/overworld/p0.2bpp.lz"`, 207 of the 234

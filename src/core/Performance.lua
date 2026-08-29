@@ -28,22 +28,31 @@
 local Performance = {}
 
 -- Option-row order (auto first, then most to least capable).
-Performance.TIERS = { "auto", "high", "balanced", "low" }
+Performance.TIERS = { "auto", "high", "balanced", "low", "potato" }
 
 Performance.LABELS = {
   auto = "AUTO",
   high = "HIGH",
   balanced = "BALANCED",
   low = "LOW",
+  potato = "POTATO",
 }
 
 -- What each concrete tier permits.  `auto` is resolved to one of these
 -- before caps are read, so it has no row here.  fpsMax = false means no
--- extra ceiling (the player's own MAX FPS still applies).
+-- extra ceiling (the player's own MAX FPS still applies).  maxZones caps
+-- how many SGB palette zones Renderer:blitCanvas will shader-draw in a
+-- single blit (false = unlimited) -- unlike tilt/gbcfx/survey this cost
+-- runs on every tier, including the flat (non-tilted) blit path, so it
+-- needs its own knob rather than riding on the others.
 Performance.CAPS = {
-  high     = { tilt = true,  gbcfx = true,  survey = true,  fpsMax = false },
-  balanced = { tilt = false, gbcfx = false, survey = true,  fpsMax = false },
-  low      = { tilt = false, gbcfx = false, survey = false, fpsMax = 60 },
+  high     = { tilt = true,  gbcfx = true,  survey = true,  fpsMax = false, maxZones = false },
+  balanced = { tilt = false, gbcfx = false, survey = true,  fpsMax = false, maxZones = false },
+  low      = { tilt = false, gbcfx = false, survey = false, fpsMax = 60,    maxZones = 6 },
+  -- Extra-conservative tier for weak RK3326-class clones that can't hold
+  -- LOW's 60fps ceiling: a lower, steadier cap beats a higher, judderier
+  -- one on hardware that's already thermal-limited.
+  potato   = { tilt = false, gbcfx = false, survey = false, fpsMax = 30,    maxZones = 3 },
 }
 
 -- Live resolved tier (never "auto"); Game:applyOptions sets it and the
