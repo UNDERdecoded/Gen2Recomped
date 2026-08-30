@@ -516,7 +516,11 @@ function PartyMenu:update(dt)
       elseif action == "stats" then
         -- battle and field alike return to the party list afterwards
         -- (core.asm .partyMenuWasSelected)
-        Screens.push(self.game, "SummaryMenu", mon)
+        Screens.push(self.game, "SummaryMenu", mon, {
+          mons = party,
+          index = self.index,
+          onMonChange = function(index) self.index = index end,
+        })
       elseif action == "battle_switch" then
         self.game.stack:pop()
         self.onSwitch(mon)
