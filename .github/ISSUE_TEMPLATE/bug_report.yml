@@ -28,6 +28,12 @@ body:
         - Red
         - Blue
         - Yellow
+        - Gold
+        - Silver
+        - Crystal
+        - Prism
+        - Emerald
+        - Polished Crystal
     validations:
       required: true
 
