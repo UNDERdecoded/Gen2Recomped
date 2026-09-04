@@ -115,7 +115,8 @@ function SummaryMenu:sgbPalettes(game)
   return out
 end
 
-function SummaryMenu.new(game, mon)
+function SummaryMenu.new(game, mon, opts)
+  opts = opts or {}
   -- status_screen.asm:66-76: StatusScreen recalculates the stat block before
   -- it draws anything when the mon came from a box or the daycare ("mon is
   -- in a box or daycare" -> CalcStats), because box_struct carries none.
@@ -126,7 +127,14 @@ function SummaryMenu.new(game, mon)
   -- SaveData.validate has run over a loaded save, but this is the site the
   -- original recomputes at, and it also covers a mon handed in by a mod.
   Stats.ensure(game.data.pokemon[mon.species], mon)
-  local self = setmetatable({ game = game, mon = mon, page = 1 }, SummaryMenu)
+  local self = setmetatable({
+    game = game,
+    mon = mon,
+    page = 1,
+    mons = opts.mons,
+    monIndex = opts.index,
+    onMonChange = opts.onMonChange,
+  }, SummaryMenu)
   self.isEgg = require("src.pokemon.Party").isEgg(mon) and true or false
   local Sprites = require("src.pokemon.Sprites")
   if self.isEgg then
@@ -158,11 +166,52 @@ function SummaryMenu.new(game, mon)
   return self
 end
 
+local function sourceIndex(self)
+  local mons = self.mons
+  if type(mons) ~= "table" then return nil end
+  local index = self.monIndex
+  if index and rawequal(mons[index], self.mon) then return index end
+  for i, mon in ipairs(mons) do
+    if rawequal(mon, self.mon) then return i end
+  end
+  return nil
+end
+
+-- Gen II StatsScreen_JoypadAction: UP/DOWN select the previous/next mon
+-- from the list that opened the status screen.  The current page is kept.
+function SummaryMenu:moveMon(delta)
+  local index = sourceIndex(self)
+  if not index then return false end
+  local nextIndex = index + delta
+  if nextIndex < 1 or nextIndex > #self.mons then return false end
+
+  local page, screenId = self.page, self.screenId
+  local fresh = SummaryMenu.new(self.game, self.mons[nextIndex], {
+    mons = self.mons,
+    index = nextIndex,
+    onMonChange = self.onMonChange,
+  })
+  fresh.page = page
+  fresh.screenId = screenId
+
+  for key in pairs(self) do self[key] = nil end
+  for key, value in pairs(fresh) do self[key] = value end
+
+  if self.onMonChange then self.onMonChange(nextIndex, self.mon) end
+  return true
+end
+
 function SummaryMenu:update(dt)
   local input = self.game.input
   if self.picAnim then self.picAnim:update(dt) end
   if self.isEgg then
-    if input:wasPressed("a") or input:wasPressed("b") then self.game.stack:pop() end
+    if input:wasPressed("a") or input:wasPressed("b") then
+      self.game.stack:pop()
+    elseif isGen2() and input:wasPressed("up") then
+      self:moveMon(-1)
+    elseif isGen2() and input:wasPressed("down") then
+      self:moveMon(1)
+    end
     return
   end
   if isGen2() then
@@ -174,6 +223,10 @@ function SummaryMenu:update(dt)
       self.page = self.page % 3 + 1
     elseif input:wasPressed("left") then
       self.page = (self.page + 1) % 3 + 1
+    elseif input:wasPressed("up") then
+      self:moveMon(-1)
+    elseif input:wasPressed("down") then
+      self:moveMon(1)
     end
     return
   end
