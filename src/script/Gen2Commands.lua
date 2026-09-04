@@ -2966,8 +2966,13 @@ function Commands.g2_fruittree(ctx, tree)
   -- GetFruitTreeItem -> CopyToStringBuffer runs BEFORE the first box, and
   -- both ROM texts splice the name in themselves ("{RAM:wStringBuffer3}").
   -- Appending it again printed the previous gift's name plus this one.
-  game.stringBuffer = name
-  Commands.show_text(ctx, t._HeyItsFruitText or ("Hey! It's\n" .. name .. "!"))
+  setBuffer(game, 3, name)
+  Commands.show_text(
+  ctx,
+  t._HeyItsFruitText and "_HeyItsFruitText"
+    or ("Hey! It's\n" .. name .. "!"),
+  { RAM = name }
+  )
   if not require("src.inventory.Bag").add(save, itemId, 1, game.data) then
     -- .packisfull: the fruit stays on the tree, so the flag is NOT set
     return Commands.show_text(ctx,
@@ -2979,7 +2984,12 @@ function Commands.g2_fruittree(ctx, tree)
     sound = function() return require("src.core.Sound").play(game.data, "Get_Item1") end,
     wait = true,
   }
-  Commands.show_text(ctx, t._ObtainedFruitText or ("Obtained\n" .. name .. "!"))
+  Commands.show_text(
+  ctx,
+  t._ObtainedFruitText and "_ObtainedFruitText"
+    or ("Obtained\n" .. name .. "!"),
+  { RAM = name }
+  )
 end
 
 -- refreshmap / reloadmap / newloadmap / reanchormap: redraw the loaded map.

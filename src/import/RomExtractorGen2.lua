@@ -1387,17 +1387,21 @@ function RomExtractorGen2:gen2RamName(address)
       end
     end
     for name, location in pairs(self.symbols or {}) do
-      if type(name) == "string" and type(location) == "table"
-         and tonumber(location[1]) == 0 then
-        local at = tonumber(location[2])
-        -- several symbols share one address; the shortest name is the
-        -- buffer itself rather than a field inside it
-        if at and (not names[at] or #name < #names[at]
-                   or (#name == #names[at] and name < names[at])) then
-          names[at] = name
-        end
-      end
+  if type(name) == "string" and name:sub(1, 1) == "w"
+     and not name:find(".", 1, true)
+     and type(location) == "table" then
+    local bank = tonumber(location[1])
+    local at = tonumber(location[2])
+    -- WRAM symbols live in C000-DFFF.  The banked D000-DFFF region may
+    -- appear as bank 1 in Gen II manifests, so do not require bank zero.
+    if at and at >= 0xC000 and at < 0xE000
+       and (at < 0xD000 or bank == nil or bank <= 1)
+       and (not names[at] or #name < #names[at]
+            or (#name == #names[at] and name < names[at])) then
+      names[at] = name
     end
+  end
+end
     self._ramNames = names
   end
   return names[address]
@@ -2108,6 +2112,18 @@ function RomExtractorGen2.looksLikeText(decoded)
   if bytes < 3 then return true end
   return bytes * 4 <= visible * 0.10
 end
+
+-- Some Gen II labels exported into the text scaffold are tiny wrapper
+-- routines rather than the text body itself.  The ROM commonly pairs
+-- `FooText` with `_FooText`; local/script labels such as `Script_X.FooText`
+-- use the same `_FooText` body symbol.  Decoding the wrapper as text is
+-- correctly refused by looksLikeText(), but the old fallback then printed
+-- the label name (for example, "Heyitsfruittext.") instead of the ROM line.
+--
+-- Resolve only unresolved *Text scaffold entries, require an exact body
+-- symbol, and run the normal text-quality gate again.  This deliberately
+-- does not guess when a body symbol is absent, so custom/legitimate text and
+-- the existing titleized fallback keep their previous behaviour.
 
 function RomExtractorGen2:extractTextFromRom()
   self:beginStage("Gen2 text (ROM)")
