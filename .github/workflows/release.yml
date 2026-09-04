@@ -805,7 +805,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: windows-raw
           path: dist/win
@@ -905,7 +905,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: game-love
           path: .bazinga/work
@@ -975,7 +975,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: game-love
           path: .bazinga/work
@@ -1013,7 +1013,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: game-love
           path: .bazinga/work
@@ -1094,7 +1094,7 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           name: game-love
           path: payload
@@ -1102,7 +1102,7 @@ jobs:
       # Each platform job uploaded its own already-named assets; merge-multiple
       # drops them all into one directory. A job that failed simply contributed
       # nothing, which is why none of these is required.
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@v8
         with:
           pattern: dist-*
           path: dist/release
