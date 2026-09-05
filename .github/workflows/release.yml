@@ -6,7 +6,11 @@ name: Release
 #   payload   the shared game.love (scripts/pack_love.sh) -- built ONCE and
 #             handed to the console/handheld jobs, so a Switch build and an
 #             Xbox build can never contain different bytes
-#   desktop   macOS + Windows + Linux
+#   macos     the .app -- the only desktop build that needs a Mac, and the
+#             only one that is optional (see below)
+#   windows   the win64 zip, on Linux -- build.sh's win target is curl + unzip
+#             + `cat love.exe game.love` + zip, so it never needed a Mac
+#   linux     the x86_64 AppImage, on Linux -- squashfs-tools is native here
 #   ios       an UNSIGNED device IPA, on its own macOS runner. Unsigned is
 #             the useful artifact rather than a compromise: AltStore and
 #             Sideloadly re-sign on install with the user's own account, so
@@ -16,7 +20,7 @@ name: Release
 #             the Android SDK, and it never needed a Mac in the first place
 #   rg34xxsp  the Anbernic PortMaster pack, on Linux -- it is curl + zip
 #             around an aarch64 runtime and never needed a Mac either
-#   msix      Windows Store package, from the desktop job's win64 build
+#   msix      Windows Store package, from the windows job's win64 build
 #   xbox      Xbox Dev Mode UWP package
 #   arm64     ARM64 AppImage for ARM handhelds/SBCs
 #   switch    fused NRO + OTA launcher + SD zip
@@ -26,10 +30,16 @@ name: Release
 # The executable bit does not survive every checkout or editing path, and a
 # lost mode bit is otherwise a "Permission denied" that kills the whole run.
 #
-# Every platform job after the desktop one is continue-on-error:
-# a toolchain hiccup on the Switch container or the UWP SDK must not stop a
-# release that has perfectly good desktop and Android builds in it. Whatever
-# is missing is simply absent from the release; publish globs what arrived.
+# Only `windows` and `linux` can fail a release. Every other platform job --
+# macOS included -- is continue-on-error: a toolchain hiccup on the Switch
+# container, the UWP SDK, or a Homebrew cask that got disabled overnight must
+# not stop a release that has perfectly good Windows, Linux and Android builds
+# in it. Whatever is missing is simply absent from the release; publish globs
+# what arrived and prints a ::warning:: naming every platform that did not.
+#
+# macOS is on that list from experience: while mac, Windows and Linux were one
+# job, `brew install --cask love` being disabled for a Gatekeeper failure threw
+# away two finished archives and published nothing at all.
 #
 # Versioning:
 #   - First ever release is 0.1.0.
@@ -218,11 +228,23 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # ---------------------------------------------------------------- desktop
-  desktop:
-    name: macOS + Windows + Linux
+  # ----------------------------------------------------------------- macOS
+  # The .app, and the only one of the three desktop builds that genuinely
+  # needs a Mac: scripts/build.sh's build_mac copies /Applications/love.app,
+  # rewrites Info.plist with PlistBuddy, codesigns and zips with ditto.
+  #
+  # It is continue-on-error and NOT part of the publish gate, because it is
+  # also the most fragile of the three -- it depends on a hosted Xcode image,
+  # a keychain, Apple's notary service and a third-party LÖVE download, any of
+  # which can break on a morning nobody touched the repo. When macOS and
+  # Windows and Linux were one job, a disabled Homebrew cask took the Windows
+  # and Linux archives down with it and published nothing at all. Now it costs
+  # exactly one asset.
+  macos:
+    name: macOS app
     needs: version
     runs-on: ${{ fromJSON(vars.MACOS_SELF_HOSTED == 'true' && '["self-hosted", "macOS"]' || '"macos-latest"') }}
+    continue-on-error: true
     steps:
       # The self-hosted runner lives under the machine owner's home
       # directory; mask it first so absolute paths in every later step's
@@ -269,41 +291,74 @@ jobs:
           echo "Identities available to codesign:"
           security find-identity -v -p codesigning "$KEYCHAIN_PATH"
 
-      # scripts/build.sh copies /Applications/love.app to make the macOS
-      # bundle (LOVE_APP overrides the path).  A hosted runner has no LÖVE
-      # installed, which is the "LÖVE.app not found" that killed the step
-      # before it ever reached the Windows and Linux builds.  The win64 and
-      # AppImage halves download their own LÖVE binaries, so this is only
-      # needed for the .app.
+      # `brew install --cask love` no longer works.  Homebrew DISABLED the
+      # cask on 2026-09-01 because upstream's love.app does not pass the macOS
+      # Gatekeeper check, and a disabled cask is a hard error rather than a
+      # warning:
+      #     Error: love: Cask 'love' has been disabled because it does not
+      #     pass the macOS Gatekeeper check!
+      # There is no `--force` for a disabled cask and no other tap carries it,
+      # so the fix is to stop going through Homebrew at all and fetch the same
+      # archive Homebrew was fetching, from the LÖVE release itself.
+      #
+      # Gatekeeper is irrelevant to this runner: nothing ever LAUNCHES
+      # love.app here.  build_mac only copies the bundle, fuses game.love into
+      # Contents/Resources and -- when APPLE_SIGNING is on -- re-signs the copy
+      # with our own Developer ID, so the signature players see is ours and
+      # never upstream's.
+      #
+      # LOVE_APP (build.sh honours it) points at the extracted copy instead of
+      # installing into /Applications, which needs no write access to a
+      # directory this job has no business touching, and leaves a self-hosted
+      # runner's own install alone.
+      #
+      # The version is READ OUT OF scripts/build.sh rather than written a
+      # second time here: LOVE_VERSION there already drives the win64 and
+      # AppImage downloads, and a .app built against a different LÖVE than the
+      # other two platforms is exactly the sort of drift that surfaces months
+      # later as one platform behaving differently.
       - name: Install LÖVE for the macOS bundle
         run: |
           set -euo pipefail
           if [ -d /Applications/love.app ]; then
-            echo "LÖVE already present"
-          else
-            brew install --cask love
+            echo "LÖVE already installed on this runner"
+            echo "LOVE_APP=/Applications/love.app" >> "$GITHUB_ENV"
+            exit 0
           fi
-          ls -d /Applications/love.app
 
-      # The x86_64 AppImage (the Steam Deck build) is assembled with
-      # mksquashfs, which a hosted macOS runner does not have. The macOS and
-      # Windows halves finish before this bites, so the failure looked like a
-      # Linux-only problem two steps into a step that had already succeeded
-      # twice.
-      - name: Install squashfs for the Linux AppImage
-        run: |
-          set -euo pipefail
-          command -v mksquashfs >/dev/null 2>&1 || brew install squashfs
-          mksquashfs -version | head -1
+          ver="$(sed -n -E 's/^LOVE_VERSION="([^"]+)".*/\1/p' scripts/build.sh | head -1)"
+          [ -n "$ver" ] || { echo "::error::could not read LOVE_VERSION from scripts/build.sh"; exit 1; }
+          echo "LÖVE version (from scripts/build.sh): $ver"
 
-      - name: Build macOS + Windows + Linux
+          zip="$RUNNER_TEMP/love-macos.zip"
+          curl -fL --retry 3 --retry-delay 5 --progress-bar \
+            "https://github.com/love2d/love/releases/download/${ver}/love-${ver}-macos.zip" \
+            -o "$zip" \
+            || { echo "::error::could not download love-${ver}-macos.zip"; exit 1; }
+          unzip -tqq "$zip" >/dev/null 2>&1 \
+            || { echo "::error::love-${ver}-macos.zip is not a valid zip (truncated download?)"; exit 1; }
+
+          dest="$RUNNER_TEMP/love-macos"
+          rm -rf "$dest"
+          unzip -q "$zip" -d "$dest"
+          app="$(find "$dest" -maxdepth 2 -name 'love.app' -type d | head -1)"
+          [ -n "$app" ] || { echo "::error::no love.app inside love-${ver}-macos.zip"; ls -laR "$dest"; exit 1; }
+
+          # curl does not set com.apple.quarantine, but strip it anyway so a
+          # self-hosted runner that once fetched this through a browser
+          # behaves identically to a hosted one.
+          xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
+
+          echo "LOVE_APP=$app" >> "$GITHUB_ENV"
+          echo "using LÖVE bundle: $app"
+
+      - name: Build macOS app
         run: |
           set -euo pipefail
           # Sign in-build (identity auto-detected from the temp keychain);
           # notarize separately below so it uses secret credentials, not a
-          # login-keychain profile. "all" also builds the Linux AppImage,
-          # which needs no signing/notarization.
-          bash scripts/build.sh all --version "${{ needs.version.outputs.version }}" --no-notarize
+          # login-keychain profile.
+          bash scripts/build.sh mac --version "${{ needs.version.outputs.version }}" --no-notarize
 
       - name: Notarize & staple macOS app
         if: vars.APPLE_SIGNING == 'true'
@@ -340,24 +395,56 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
           echo "Notarized + stapled ✓"
 
-      - name: Collect desktop artifacts
+      - name: Stage the macOS archive
         run: |
           set -euo pipefail
           v="${{ needs.version.outputs.version }}"
-          out="staged"
-          mkdir -p "$out"
-          cp "dist/mac/Gen2Recomped-macos.zip"   "$out/Gen2Recomped-${v}-macos.zip"
-          cp "dist/win/Gen2Recomped-win64.zip"   "$out/Gen2Recomped-${v}-windows.zip"
-          cp "dist/linux/Gen2Recomped-linux.zip" "$out/Gen2Recomped-${v}-linux.zip"
+          mkdir -p staged
+          cp "dist/mac/Gen2Recomped-macos.zip" "staged/Gen2Recomped-${v}-macos.zip"
+          ls -lh staged
 
-          # iOS is its own job (see `ios` below): it needs no certificates,
-          # so tying it to this job's signing keychain only meant that a repo
-          # without Apple credentials shipped no iOS build at all.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-macos
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
 
-          ls -lh "$out"
+      - name: Clean up signing keychain
+        if: ${{ always() && vars.APPLE_SIGNING == 'true' }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/pokemon-signing.keychain-db" 2>/dev/null || true
 
-      # The win64 build the MSIX job repacks, kept apart from the release
-      # staging so that job does not have to unpick a renamed archive.
+  # --------------------------------------------------------------- Windows
+  # ubuntu-latest, not macOS.  scripts/build.sh's build_win is curl + unzip +
+  # `cat love.exe game.love > Gen2Recomped.exe` + zip; there has never been an
+  # Apple tool anywhere in it, and it was only running on the Mac because it
+  # shared a job with the .app.  On Linux it is both faster and free (GitHub
+  # bills macOS minutes at 10x), and -- the point of the split -- a broken
+  # Xcode image or a disabled Homebrew cask can no longer stop the Windows
+  # build from happening.
+  windows:
+    name: Windows (win64)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Windows (win64)
+        run: |
+          set -euo pipefail
+          bash scripts/build.sh win --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage the Windows archive
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/win/Gen2Recomped-win64.zip" "staged/Gen2Recomped-${v}-windows.zip"
+          ls -lh staged
+
+      # The un-renamed win64 build the MSIX job repacks, kept apart from the
+      # release staging so that job does not have to unpick a renamed archive.
       - uses: actions/upload-artifact@v7
         with:
           name: windows-raw
@@ -367,15 +454,64 @@ jobs:
 
       - uses: actions/upload-artifact@v7
         with:
-          name: dist-desktop
+          name: dist-windows
           path: staged/
           if-no-files-found: error
           retention-days: 1
 
-      - name: Clean up signing keychain
-        if: ${{ always() && vars.APPLE_SIGNING == 'true' }}
+  # ----------------------------------------------------------------- Linux
+  # Also ubuntu-latest, and for a better reason than the Windows job: the
+  # x86_64 AppImage is assembled by unpacking LÖVE's official AppImage with
+  # unsquashfs and repacking it with mksquashfs, and squashfs-tools is native
+  # here rather than a `brew install squashfs` on a machine that has no
+  # business needing it.
+  linux:
+    name: Linux (x86_64 AppImage)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Never run `apt-get update` unconditionally: GitHub's
+      # azure.archive.ubuntu.com mirror stalls for 10-60 minutes at random
+      # (actions/runner-images#12949).  Same guarded shape the rg34xxsp job
+      # uses -- check first, install only what is actually missing.
+      - name: Verify squashfs tools
         run: |
-          security delete-keychain "$RUNNER_TEMP/pokemon-signing.keychain-db" 2>/dev/null || true
+          set -euo pipefail
+          missing=()
+          for tool in mksquashfs unsquashfs zip unzip curl; do
+            command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "all packaging tools present"
+            mksquashfs -version | head -1
+            exit 0
+          fi
+          echo "::warning::runner image is missing ${missing[*]} -- installing"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends squashfs-tools zip unzip curl
+          mksquashfs -version | head -1
+
+      - name: Build Linux (x86_64 AppImage)
+        run: |
+          set -euo pipefail
+          bash scripts/build.sh linux --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage the Linux archive
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/linux/Gen2Recomped-linux.zip" "staged/Gen2Recomped-${v}-linux.zip"
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-linux
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
   # -------------------------------------------------------------------- ios
   # An UNSIGNED device IPA, built with no certificates at all.
   #
@@ -663,7 +799,7 @@ jobs:
   # ------------------------------------------------------------------- msix
   msix:
     name: Windows MSIX
-    needs: [version, desktop]
+    needs: [version, windows]
     runs-on: windows-latest
     continue-on-error: true
     steps:
@@ -945,12 +1081,12 @@ jobs:
   # ---------------------------------------------------------------- publish
   publish:
     name: Publish GitHub Release
-    needs: [version, payload, desktop, ios, android, rg34xxsp, msix, xbox, arm64, switch]
-    # Desktop is the floor: without it there is no release worth cutting.
-    # The four optional platforms are continue-on-error, so `always()` here
-    # publishes whatever did arrive rather than losing the whole run to one
-    # missing toolchain.
-    if: ${{ always() && needs.desktop.result == 'success' }}
+    needs: [version, payload, macos, windows, linux, ios, android, rg34xxsp, msix, xbox, arm64, switch]
+    # Windows + Linux are the floor: without those two there is no release
+    # worth cutting. Everything else -- macOS included -- is continue-on-error,
+    # so `always()` here publishes whatever did arrive rather than losing the
+    # whole run to one missing toolchain.
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

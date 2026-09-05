@@ -23,17 +23,34 @@ local function monName(game, mon)
   return mon.nickname or def.name
 end
 
+-- Keep a Bill's PC ListMenu cursor visible when SummaryMenu UP/DOWN changes
+-- the selected Pokemon while the list itself is underneath the status screen.
+local function setListIndex(list, index)
+  list.index = index
+  local rows = list.rows or 7
+  local scroll = list.scroll or 0
+  if index - scroll > rows then scroll = index - rows end
+  if index - scroll < 1 then scroll = index - 1 end
+  list.scroll = math.max(0, scroll)
+end
+
 -- Per-mon submenu (bills_pc.asm DisplayDepositWithdrawMenu): the chosen
 -- action + STATS + CANCEL.  STATS shows the status screen and returns
 -- here; CANCEL/B goes back to the list.
-local function monSubmenu(game, action, mon, onAction)
+local function monSubmenu(game, action, mons, list, onAction)
   game.stack:push(Menu.new(game, {
     { label = action, onSelect = onAction },
     {
       label = Strings("STATS"),
       keepOpen = true,
       onSelect = function()
-        require("src.ui.Screens").push(game, "SummaryMenu", mon)
+        local mon = mons[list.index]
+        if not mon then return end
+        require("src.ui.Screens").push(game, "SummaryMenu", mon, {
+          mons = mons,
+          index = list.index,
+          onMonChange = function(index) setListIndex(list, index) end,
+        })
       end,
     },
     { label = Strings("CANCEL") },
@@ -70,7 +87,11 @@ local function withdraw(game)
     onChoose = function(item, list)
       local mon = box[item.value]
       if not mon then return end
-      monSubmenu(game, "WITHDRAW", mon, function()
+      setListIndex(list, item.value)
+      monSubmenu(game, "WITHDRAW", box, list, function()
+        local index = list.index
+        local mon = box[index]
+        if not mon then return end
         if #game.save.party >= Party.MAX then
           list.footer = "The party is full!"
           return
@@ -83,7 +104,7 @@ local function withdraw(game)
         -- nil-indexes it (#304, same family as #233).  Already-shaped mons
         -- (everything the engine itself put in a box) pass through.
         Stats.ensure(game.data.pokemon[mon.species], mon)
-        table.remove(box, item.value)
+        table.remove(box, index)
         table.insert(game.save.party, mon)
         local name = monName(game, mon)
         game.stringBuffer = name
@@ -117,7 +138,11 @@ local function deposit(game)
     onChoose = function(item, list)
       local mon = game.save.party[item.value]
       if not mon then return end
-      monSubmenu(game, "DEPOSIT", mon, function()
+      setListIndex(list, item.value)
+      monSubmenu(game, "DEPOSIT", game.save.party, list, function()
+        local index = list.index
+        local mon = game.save.party[index]
+        if not mon then return end
         if #game.save.party <= 1 then
           list.footer = Strings("You need at least\none POKéMON!")
           return
@@ -127,7 +152,7 @@ local function deposit(game)
           list.footer = Strings("BOX %d is full!", game.save.currentBox)
           return
         end
-        table.remove(game.save.party, item.value)
+        table.remove(game.save.party, index)
         table.insert(active, mon)
         -- PIKAHAPPY_DEPOSITED (engine/pokemon/bills_pc.asm:247)
         require("src.world.PikachuFollower")
