@@ -2946,6 +2946,17 @@ function Commands.g2_nop() end
 -- world / bookkeeping opcodes
 -- ---------------------------------------------------------------------------
 
+-- None of the four fruit-tree strings are ever actually extracted from the
+-- ROM (they stay unresolved {GEN2_TEXT:bank:addr:label} placeholders on
+-- every version checked -- gold, silver, crystal, polished crystal). True
+-- only when `key` was actually extracted, so a leftover placeholder is
+-- treated the same as a missing string. Same guard OakSpeech already uses
+-- for its own never-extracted strings.
+local function hasFruitText(t, key)
+  local value = t and t[key]
+  return type(value) == "string" and value ~= "" and not value:match("^%{GEN2_TEXT")
+end
+
 -- FruitTreeScript (17:$4000).  GetFruitTreeItem indexes FruitTreeItems by
 -- wCurFruitTree - 1; GetFruitTreeFlag remembers the pick so the tree is bare
 -- until the next daily reset.
@@ -2959,7 +2970,8 @@ function Commands.g2_fruittree(ctx, tree)
   -- scenery until TryResetFruitTrees clears the flags
   if save.g2FruitTrees[tree] or not itemId then
     return Commands.show_text(ctx,
-      t._FruitBearingTreeText or "It's a fruit-\nbearing tree.")
+      hasFruitText(t, "_FruitBearingTreeText") and "_FruitBearingTreeText"
+        or "It's a fruit-\nbearing tree.")
   end
   local def = game.data.items[itemId]
   local name = def and def.name or itemId
@@ -2968,15 +2980,16 @@ function Commands.g2_fruittree(ctx, tree)
   -- Appending it again printed the previous gift's name plus this one.
   setBuffer(game, 3, name)
   Commands.show_text(
-  ctx,
-  t._HeyItsFruitText and "_HeyItsFruitText"
-    or ("Hey! It's\n" .. name .. "!"),
-  { RAM = name }
+    ctx,
+    hasFruitText(t, "_HeyItsFruitText") and "_HeyItsFruitText"
+      or ("Hey! It's\n" .. name .. "!"),
+    { RAM = name }
   )
   if not require("src.inventory.Bag").add(save, itemId, 1, game.data) then
     -- .packisfull: the fruit stays on the tree, so the flag is NOT set
     return Commands.show_text(ctx,
-      t._FruitPackIsFullText or "But the PACK is\nfull…")
+      hasFruitText(t, "_FruitPackIsFullText") and "_FruitPackIsFullText"
+        or "But the PACK is\nfull…")
   end
   save.g2FruitTrees[tree] = true
   ctx.textOpts = ctx.textOpts or {}
@@ -2985,10 +2998,10 @@ function Commands.g2_fruittree(ctx, tree)
     wait = true,
   }
   Commands.show_text(
-  ctx,
-  t._ObtainedFruitText and "_ObtainedFruitText"
-    or ("Obtained\n" .. name .. "!"),
-  { RAM = name }
+    ctx,
+    hasFruitText(t, "_ObtainedFruitText") and "_ObtainedFruitText"
+      or ("Obtained\n" .. name .. "!"),
+    { RAM = name }
   )
 end
 

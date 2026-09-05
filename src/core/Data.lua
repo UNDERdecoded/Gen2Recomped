@@ -521,6 +521,16 @@ local function sanitizeGen2Text(text)
           or key == "_IntroducePlayerText" or key == "_IntroduceRivalText"
           or key == "_YourNameIsText" or key == "_HisNameIsText" then
         -- Let OakSpeech.textOr handle these with its own known-good fallbacks.
+      elseif key == "_HeyItsFruitText" or key == "_ObtainedFruitText"
+          or key == "_FruitBearingTreeText" or key == "_FruitPackIsFullText" then
+        -- Same reason as OakSpeechText above: these four are never actually
+        -- extracted from the ROM (they stay unresolved {GEN2_TEXT:...}
+        -- placeholders on every version checked), and g2_fruittree already
+        -- carries its own correct fallback text that splices the picked
+        -- item's name in. Letting the branch below titleize the key instead
+        -- produced a meaningless run-together placeholder ("Heyitsfruittext.")
+        -- that silently replaced the berry's name -- reported as garbled/
+        -- nonsense text where the fruit's name should be.
       else
         local mapId, stubKey = value:match("^%{GEN2_TEXT_STUB:([^:}]+):([^}]+)%}$")
         if mapId and stubKey then
