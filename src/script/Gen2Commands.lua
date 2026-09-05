@@ -2946,6 +2946,21 @@ function Commands.g2_nop() end
 -- world / bookkeeping opcodes
 -- ---------------------------------------------------------------------------
 
+-- None of the four fruit-tree strings are ever actually extracted from the
+-- ROM (they stay unresolved {GEN2_TEXT:bank:addr:label} placeholders on
+-- every version checked -- gold, silver, crystal, polished crystal). A
+-- plain `t[key] or default` treats that placeholder string as present and
+-- uses it, so the box showed a meaningless run-together fallback
+-- ("Heyitsfruittext.") where the berry's name belongs. Same guard OakSpeech
+-- already uses for its own never-extracted strings.
+local function fruitText(t, key, default)
+  local value = t and t[key]
+  if type(value) ~= "string" or value == "" or value:match("^%{GEN2_TEXT") then
+    return default
+  end
+  return value
+end
+
 -- FruitTreeScript (17:$4000).  GetFruitTreeItem indexes FruitTreeItems by
 -- wCurFruitTree - 1; GetFruitTreeFlag remembers the pick so the tree is bare
 -- until the next daily reset.
@@ -2959,7 +2974,7 @@ function Commands.g2_fruittree(ctx, tree)
   -- scenery until TryResetFruitTrees clears the flags
   if save.g2FruitTrees[tree] or not itemId then
     return Commands.show_text(ctx,
-      t._FruitBearingTreeText or "It's a fruit-\nbearing tree.")
+      fruitText(t, "_FruitBearingTreeText", "It's a fruit-\nbearing tree."))
   end
   local def = game.data.items[itemId]
   local name = def and def.name or itemId
@@ -2967,11 +2982,12 @@ function Commands.g2_fruittree(ctx, tree)
   -- both ROM texts splice the name in themselves ("{RAM:wStringBuffer3}").
   -- Appending it again printed the previous gift's name plus this one.
   game.stringBuffer = name
-  Commands.show_text(ctx, t._HeyItsFruitText or ("Hey! It's\n" .. name .. "!"))
+  Commands.show_text(ctx,
+    fruitText(t, "_HeyItsFruitText", "Hey! It's\n" .. name .. "!"))
   if not require("src.inventory.Bag").add(save, itemId, 1, game.data) then
     -- .packisfull: the fruit stays on the tree, so the flag is NOT set
     return Commands.show_text(ctx,
-      t._FruitPackIsFullText or "But the PACK is\nfull…")
+      fruitText(t, "_FruitPackIsFullText", "But the PACK is\nfull…"))
   end
   save.g2FruitTrees[tree] = true
   ctx.textOpts = ctx.textOpts or {}
@@ -2979,7 +2995,8 @@ function Commands.g2_fruittree(ctx, tree)
     sound = function() return require("src.core.Sound").play(game.data, "Get_Item1") end,
     wait = true,
   }
-  Commands.show_text(ctx, t._ObtainedFruitText or ("Obtained\n" .. name .. "!"))
+  Commands.show_text(ctx,
+    fruitText(t, "_ObtainedFruitText", "Obtained\n" .. name .. "!"))
 end
 
 -- refreshmap / reloadmap / newloadmap / reanchormap: redraw the loaded map.
