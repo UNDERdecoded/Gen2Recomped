@@ -6,6 +6,7 @@
 -- back to the vanilla records, which is bit-identical behavior.
 
 local Strings = require("src.core.Strings")
+local HeldItems = require("src.battle.HeldItems")
 
 local Status = {}
 
@@ -196,8 +197,10 @@ function Status.beforeMove(battler, rng, battle)
   end
   if battler.confusedTurns then
     battler.confusedTurns = battler.confusedTurns - 1
+    HeldItems.setConfusionCounter(battle, battler, battler.confusedTurns)
     if battler.confusedTurns <= 0 then
       battler.confusedTurns = nil
+      HeldItems.setConfusionCounter(battle, battler, 0)
       table.insert(msgs, Strings("%s\nsnapped out of\nconfusion!", name(battler)))
     else
       table.insert(msgs, Strings("%s\nis confused!", name(battler)))

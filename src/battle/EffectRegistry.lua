@@ -11,6 +11,7 @@ local Runtime = require("src.mods.Runtime")
 local StatusRegistry = require("src.battle.StatusRegistry")
 local Strings = require("src.core.Strings")
 local Timing = require("src.core.Timing")
+local HeldItems = require("src.battle.HeldItems")
 
 local EffectRegistry = {}
 
@@ -211,6 +212,9 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     if record and record.onMiss then record.onMiss(ctx, "floored") end
     return
   end
+  -- Focus Band belongs to the direct-damage seam below.  It is evaluated per
+  -- damaging strike so a later hit of a multi-hit move can save a battler once
+  -- that particular strike becomes lethal; Substitute never consumes its RNG.
   battle.lastDamage = dmg -- wDamage (shared by both sides, read by Counter)
 
   -- the hit blink + damage sound ride each animation row, placed BEFORE
@@ -251,7 +255,14 @@ function EffectRegistry.runDamaging(battle, ctx, record)
       table.insert(battle.queue, battle.nextInsert, hitRow)
     end
     local hadSub = target.substituteHP ~= nil
-    local dealt = battle:applyDamage(target, dmg)
+    local hitDamage = dmg
+    if not hadSub then
+      -- This seam is reached only by direct attack damage. Weather, poison,
+      -- Leech Seed and confusion self-hit never roll Focus Band here.
+      hitDamage = HeldItems.limitDirectDamage(battle.data, target, hitDamage, battle.rng)
+    end
+    battle.lastDamage = hitDamage
+    local dealt = battle:applyDamage(target, hitDamage)
     totalDealt = totalDealt + dealt
     landed = h
     if dealt > 0 then hitRow.hit = hitFx end
@@ -316,6 +327,19 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   end
   if record == nil then
     MoveEffects.warnUnknown(move.effect)
+  end
+
+  -- King's Rock is an explicit command in selected Gen II move scripts.  It
+  -- rolls once after the completed attack (not once per hit) and cannot pass a
+  -- Substitute.  Some native-flinch scripts (notably Sky Attack and Snore)
+  -- also execute King's Rock, so HeldItems decides eligibility from the move
+  -- effect rather than suppressing all flinch-capable moves.
+  if totalDealt > 0 and target.mon.hp > 0 then
+    -- BattleCommand_KingsRock checks the target's Substitute at the point the
+    -- command runs.  If an earlier hit broke the Substitute, the held-item
+    -- flinch is therefore allowed.
+    HeldItems.tryKingsRock(battle.data, user, target, move, battle.rng,
+                           target.substituteHP ~= nil)
   end
 
   if target.mon.hp <= 0 then

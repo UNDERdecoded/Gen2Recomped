@@ -7,6 +7,7 @@
 local Growth = require("src.pokemon.Growth")
 local Runtime = require("src.mods.Runtime")
 local Stats = require("src.pokemon.Stats")
+local HeldItems = require("src.battle.HeldItems")
 
 local Experience = {}
 
@@ -71,6 +72,8 @@ function Experience.apply(data, mon, defeatedDef, level, isTrainer,
     gained = Experience.gainFor(defeatedDef, level, isTrainer,
                                 numParticipants, traded, consts)
   end
+  -- Lucky Egg is a per-recipient x1.5 held-item boost in Generation II.
+  gained = HeldItems.modifyExperience(data, mon, gained)
   mon.exp = mon.exp + gained
 
   local cap = consts and consts.levelCap or 100

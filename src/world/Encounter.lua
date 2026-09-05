@@ -19,12 +19,13 @@ function Encounter.load(data)
   buckets = FieldDefaults.constant(data, "encounterBuckets")
 end
 
-function Encounter.roll(encounterDef, rng)
+function Encounter.roll(encounterDef, rng, rateOverride)
   rng = rng or love.math.random
   if not encounterDef then return nil end
   local grass = encounterDef.grass
   if not grass or grass.rate == 0 then return nil end
-  if rng(0, 255) >= grass.rate then return nil end
+  local rate = rateOverride == nil and grass.rate or rateOverride
+  if rate <= 0 or rng(0, 255) >= rate then return nil end
   local pick = rng(0, 255)
   for i, threshold in ipairs(grass.buckets or buckets) do
     if pick < threshold then
