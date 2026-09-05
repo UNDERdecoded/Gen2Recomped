@@ -5065,7 +5065,9 @@ end
 
 -- the two vanilla links the encounter chains wrap, hoisted so an empty
 -- chain allocates no closure
-local function rollVanilla(encDef, ctx) return Encounter.roll(encDef, ctx.rng) end
+local function rollVanilla(encDef, ctx)
+  return Encounter.roll(encDef, ctx.rng, ctx.rateOverride)
+end
 local function sameEncounter(enc) return enc end
 
 -- The wild pick, wrapped in encounter.roll (returns nil to suppress, a
@@ -5073,11 +5075,18 @@ local function sameEncounter(enc) return enc end
 -- transforms a non-nil roll before repel filtering).  With no wrapper on
 -- either name this is the bare Encounter.roll, same RNG draws and all.
 function OverworldState:rollEncounter(encDef, terrain)
+  local rateOverride
+  local grass = encDef and encDef.grass
+  if grass then
+    local HeldItems = require("src.battle.HeldItems")
+    rateOverride = HeldItems.cleanseTagRate(Game.data, Game.save.party, grass.rate)
+  end
   if not (Runtime.wantsHook("encounter.roll")
           or Runtime.wantsHook("encounter.species")) then
-    return Encounter.roll(encDef)
+    return Encounter.roll(encDef, nil, rateOverride)
   end
-  local ctx = { mapId = self.map.id, terrain = terrain, rng = love.math.random }
+  local ctx = { mapId = self.map.id, terrain = terrain, rng = love.math.random,
+                rateOverride = rateOverride }
   local enc = Runtime.call("encounter.roll", rollVanilla, encDef, ctx)
   if enc then
     enc = Runtime.call("encounter.species", sameEncounter, enc, ctx)

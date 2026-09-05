@@ -12,6 +12,7 @@ local Stats = require("src.pokemon.Stats")
 local Status = require("src.battle.Status")
 local TypeChart = require("src.battle.TypeChart")
 local Weather = require("src.battle.Weather")
+local HeldItems = require("src.battle.HeldItems")
 
 local Damage = {}
 
@@ -79,9 +80,25 @@ Damage.stageOf = stageOf
 -- ruleset that sets critStages cannot just tune the Gen 1 numbers.
 local CRIT_STAGE_DEN = { [0] = 16, 8, 4, 3, 2 }
 
-function Damage.critRoll(ruleset, attacker, moveId, rng, highCrit)
+function Damage.critRoll(ruleset, attacker, moveId, rng, highCrit, data)
   rng = rng or love.math.random
   if highCrit == nil then highCrit = HIGH_CRIT[moveId] end
+
+  -- Gen II replaced the speed-derived Gen I test with a fixed 0..255 ladder:
+  -- 17, 32, 64, 85, 128, 255.  High-crit moves add two stages, Focus Energy
+  -- adds one, Scope Lens adds one, and Stick/Lucky Punch add two.  Use explicit
+  -- imported-generation metadata so Gen I and optional Gen III rulesets keep
+  -- their existing behavior.
+  if data and data.constants and data.constants.generation == 2
+     and not ruleset.critMultiplier then
+    local stage = 0
+    if highCrit then stage = stage + 2 end
+    if attacker.focusEnergy then stage = stage + 1 end
+    stage = stage + HeldItems.criticalStageBonus(data, attacker)
+    local chance = ({ [0] = 17, 32, 64, 85, 128, 255 })[math.max(0, math.min(5, stage))]
+    return rng(0, 255) < chance
+  end
+
   if ruleset.critStages then
     local stage = 0
     if highCrit then stage = stage + 1 end
@@ -123,7 +140,7 @@ end
 -- Gen 2's BattleCommand_ThunderAccuracy writes that byte directly
 -- (`ld [hl], 50 percent + 1` = 128), so the caller passes the raw threshold
 -- rather than a percentage: floor(50 * 255 / 100) would be 127, one short.
-function Damage.accuracyRoll(ruleset, move, attacker, defender, rng, accuracyRaw)
+function Damage.accuracyRoll(ruleset, move, attacker, defender, rng, accuracyRaw, data)
   rng = rng or love.math.random
   -- X ACCURACY sets USING_X_ACCURACY: the move simply never misses
   -- (MoveHitTest returns before any accuracy math, 1/256 included)
@@ -136,6 +153,10 @@ function Damage.accuracyRoll(ruleset, move, attacker, defender, rng, accuracyRaw
           attacker.stages and attacker.stages.accuracy or 0))
   acc = math.min(255, Stats.applyStage(acc,
           -(defender.stages and defender.stages.evasion or 0)))
+  -- BrightPowder subtracts its ItemAttributes parameter (20 in retail Gen II)
+  -- from the post-stage threshold.  Zero is a valid result; do not clamp it to
+  -- one, otherwise a 1/256 hit chance is invented.
+  acc = math.max(0, acc - HeldItems.accuracyPenalty(data, defender))
   if not ruleset.oneIn256Miss and basePct >= 100
      and (attacker.stages.accuracy or 0) >= (defender.stages.evasion or 0) then
     return true
@@ -182,11 +203,11 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   if crit == nil then
     if Runtime.wantsHook("battle.crit") then
       crit = Runtime.call("battle.crit", function(c)
-        return Damage.critRoll(c.ruleset, c.attacker, c.moveId, c.rng, c.highCrit)
+        return Damage.critRoll(c.ruleset, c.attacker, c.moveId, c.rng, c.highCrit, c.data)
       end, { ruleset = ruleset, attacker = attacker, moveId = move.id,
-             rng = rng, highCrit = move.highCrit })
+             rng = rng, highCrit = move.highCrit, data = opts.data })
     else
-      crit = Damage.critRoll(ruleset, attacker, move.id, rng, move.highCrit)
+      crit = Damage.critRoll(ruleset, attacker, move.id, rng, move.highCrit, opts.data)
     end
   end
 
@@ -243,6 +264,12 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
       end
     end
   end
+
+  -- Species-specific Gen II stat items are applied to the battle stats before
+  -- GetDamageVars performs its paired quartering step.
+  atk, dfn = HeldItems.modifyBattleStats(opts.data, attacker, defender,
+                                         atkStat, defStat, atk, dfn)
+
   -- GetDamageVars .scaleStats: when either stat no longer fits a byte,
   -- BOTH are quartered (losing low bits), each bumped to at least 1
   if atk > 255 or dfn > 255 then
@@ -263,6 +290,14 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   local d = math.floor(math.floor(2 * level / 5) + 2)
   d = math.floor(math.floor(d * move.power * atk / math.max(1, dfn)) / 50)
   d = math.min(d, 997) + 2
+
+  -- Held type boosters live inside BattleCommand_DamageCalc, before weather,
+  -- STAB and effectiveness.  This placement matters because every stage floors
+  -- independently.  HeldItems applies the recomp's intentional Gen II cleanup
+  -- for the retail Dragon Fang/Dragon Scale held-effect data bug.
+  if not opts.typeless then
+    d = HeldItems.applyTypeBoost(opts.data, attacker, move.type, d)
+  end
 
   -- DoWeatherModifiers (engine/battle/misc.asm:52) runs at the head of
   -- AdjustDamageForMoveType -- BEFORE STAB and before type effectiveness --

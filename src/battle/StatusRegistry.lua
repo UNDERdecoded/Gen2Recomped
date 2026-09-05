@@ -6,6 +6,7 @@
 local Runtime = require("src.mods.Runtime")
 local Status = require("src.battle.Status")
 local Strings = require("src.core.Strings")
+local HeldItems = require("src.battle.HeldItems")
 
 local StatusRegistry = {}
 
@@ -52,6 +53,11 @@ function StatusRegistry.inflict(battle, target, status, opts)
   Runtime.emit("battle.status_inflicted", {
     battle = battle, target = target, status = status, source = opts.source,
   })
+  -- Gen II status berries resolve immediately after the condition lands.
+  -- Keep the infliction text first, then append the held-item cure line.
+  for _, msg in ipairs(HeldItems.onStatus(battle, target)) do
+    msgs[#msgs + 1] = msg
+  end
   return msgs
 end
 

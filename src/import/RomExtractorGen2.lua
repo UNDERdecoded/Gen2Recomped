@@ -946,6 +946,9 @@ local GEN2_BADGES = {
 function RomExtractorGen2:constants()
   if not self._constants then
     self._constants = self:readSourceTable("constants")
+    -- Generation is runtime metadata, not cartridge data.  Battle formulas use
+    -- it to select the Gen II critical-hit ladder without guessing from a ROM id.
+    self._constants.generation = 2
     local badges = {}
     -- A CARTRIDGE MAY HAVE ITS OWN SET.  Prism awards TWENTY badges across
     -- three engine-flag bytes, and its flag keys keep the ENGINE_ prefix that
@@ -2346,6 +2349,19 @@ function RomExtractorGen2:extractScaffoldCore()
             local row = attrs.address + (entry.index - 1) * GEN2_ITEM_ATTR_BYTES
             local ok, price = pcall(function() return self.rom:word(attrs.bank, row) end)
             if ok and type(price) == "number" then entry.price = price end
+            -- constants/item_data_constants.asm: ItemAttributes stores the
+            -- held-effect selector at +2 and its signed parameter at +3.
+            -- Keep both on the item record so battle/field mechanics remain
+            -- data-driven.  The battle held-item layer contains the one
+            -- intentional Gen II cleanup for Dragon Fang/Dragon Scale.
+            local oke, heldEffect = pcall(function()
+              return self.rom:byte(attrs.bank, row + 2)
+            end)
+            if oke then entry.heldEffect = heldEffect end
+            local okh, heldParam = pcall(function()
+              return self.rom:byte(attrs.bank, row + 3)
+            end)
+            if okh then entry.heldParam = signedByte(heldParam) end
             local okp, pocket = pcall(function()
               return self.rom:byte(attrs.bank, row + 5)
             end)

@@ -6,6 +6,7 @@
 local Damage = require("src.battle.Damage")
 local Stats = require("src.pokemon.Stats")
 local Status = require("src.battle.Status")
+local HeldItems = require("src.battle.HeldItems")
 
 local TurnOrder = {}
 
@@ -47,10 +48,27 @@ end
 -- the coin-flip result only: lockstep link battles share one RNG
 -- stream, so the guest inverts the tie roll to agree with the host on
 -- who moves first.
-function TurnOrder.firstMover(a, aMove, b, bMove, rng, invertTie)
+function TurnOrder.firstMover(a, aMove, b, bMove, rng, invertTie, data)
   rng = rng or love.math.random
   local pa, pb = priority(aMove), priority(bMove)
   if pa ~= pb then return pa > pb end
+
+  -- BattleCommand_CheckTurn/Quick Claw: priority classes are resolved first.
+  -- When both holders have Quick Claw, the cartridge checks them serially and
+  -- the first successful roll wins immediately; it does NOT roll both and fall
+  -- back to Speed when both would have succeeded.  invertTie also provides the
+  -- link guest's mirrored ordering so peers consume the shared stream in a
+  -- complementary order.
+  local first, second = a, b
+  local firstIsA = true
+  if invertTie then first, second, firstIsA = b, a, false end
+  if HeldItems.effect(data, first) == HeldItems.EFFECT.QUICK_CLAW then
+    if HeldItems.quickClaw(data, first, rng) then return firstIsA end
+  end
+  if HeldItems.effect(data, second) == HeldItems.EFFECT.QUICK_CLAW then
+    if HeldItems.quickClaw(data, second, rng) then return not firstIsA end
+  end
+
   local sa, sb = effectiveSpeed(a), effectiveSpeed(b)
   if sa ~= sb then return sa > sb end
   local aFirst = rng(0, 1) == 0

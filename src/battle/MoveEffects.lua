@@ -16,6 +16,7 @@ local StatusRegistry = require("src.battle.StatusRegistry")
 local TurnOrder = require("src.battle.TurnOrder")
 local TypeChart = require("src.battle.TypeChart")
 local Strings = require("src.core.Strings")
+local HeldItems = require("src.battle.HeldItems")
 local Weather = require("src.battle.Weather")
 
 local MoveEffects = {}
@@ -150,7 +151,12 @@ local function confuse(battle, target, pierceSub)
     return { Strings("But, it failed!") }
   end
   target.confusedTurns = battle.rng(2, 5)
-  return { Strings("%s\nbecame confused!", displayName(target)) }
+  HeldItems.setConfusionCounter(battle, target, target.confusedTurns)
+  local msgs = { Strings("%s\nbecame confused!", displayName(target)) }
+  for _, msg in ipairs(HeldItems.onConfusion(battle, target)) do
+    msgs[#msgs + 1] = msg
+  end
+  return msgs
 end
 
 -- ---------------------------------------------------------------------
@@ -257,6 +263,7 @@ MoveEffects.primary = {
     for _, b in ipairs({ user, target }) do
       b.stages = {}
       b.confusedTurns = nil
+      HeldItems.setConfusionCounter(battle, b, 0)
       b.leechSeeded = nil
       b.toxicCounter = nil
       b.reflect, b.lightScreen, b.mist, b.focusEnergy = nil, nil, nil, nil
@@ -599,7 +606,11 @@ MoveEffects.full = {
           user.thrashTurns, user.thrashMove, user.thrashAnnounced = nil, nil, nil
           if not user.confusedTurns then
             user.confusedTurns = ctx.rng(2, 5)
+            HeldItems.setConfusionCounter(ctx.battle, user, user.confusedTurns)
             ctx.say(Strings("%s\nbecame confused!", displayName(user)))
+            for _, msg in ipairs(HeldItems.onConfusion(ctx.battle, user)) do
+              ctx.say(msg)
+            end
           end
         end
       end

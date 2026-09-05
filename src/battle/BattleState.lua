@@ -15,6 +15,7 @@ local Catching = require("src.battle.Catching")
 local Damage = require("src.battle.Damage")
 local EffectRegistry = require("src.battle.EffectRegistry")
 local Experience = require("src.battle.Experience")
+local HeldItems = require("src.battle.HeldItems")
 local Font = require("src.render.Font")
 local Logger = require("src.core.Logger")
 local MoveEffects = require("src.battle.MoveEffects")
@@ -2056,6 +2057,7 @@ function BattleState:enter()
   local function queueEnemyCry()
     self:act(function()
       require("src.core.Sound").playCry(self.data, self.enemy.mon.species)
+      HeldItems.onEntry(self, self.enemy)
     end)
   end
   -- PrintBeginningBattleText (engine/battle/common_text.asm:10-19): a wild
@@ -2176,6 +2178,7 @@ function BattleState:enter()
       -- out of the ball (AnimateSendingOutMon at hlcoord 4,11)
       self:startGrowIn(self.player)
       require("src.core.Sound").playCry(self.data, self.player.mon.species)
+      HeldItems.onEntry(self, self.player)
     end)
     self:markParticipant()
   end
@@ -2884,18 +2887,24 @@ function BattleState:accuracyRoll(move, user, target, accuracyRaw)
   if Runtime.wantsHook("battle.accuracy") then
     return Runtime.call("battle.accuracy", function(c)
       return Damage.accuracyRoll(c.ruleset, c.move, c.user, c.target, c.rng,
-                                 c.accuracyRaw)
+                                 c.accuracyRaw, c.data)
     end, { battle = self, ruleset = self.ruleset, move = move,
-           user = user, target = target, rng = self.rng,
+           user = user, target = target, rng = self.rng, data = self.data,
            accuracyRaw = accuracyRaw })
   end
   return Damage.accuracyRoll(self.ruleset, move, user, target, self.rng,
-                             accuracyRaw)
+                             accuracyRaw, self.data)
 end
 
 -- Damage.compute, hooked as battle.damage; the ctx table is only built
 -- when a chain is installed, so the no-mod path allocates nothing
 function BattleState:computeDamage(user, target, move, opts)
+  -- Damage's Gen II held-item path needs the imported item records alongside
+  -- the ordinary formula options. Keep Gen I's no-mod fast path allocation-free.
+  if self.data and self.data.constants and self.data.constants.generation == 2 then
+    opts = opts or {}
+    opts.data = opts.data or self.data
+  end
   -- DoWeatherModifiers reads wBattleWeather inside the damage calc; the port
   -- keeps it on the field, so it rides in on opts rather than widening
   -- Damage.compute's signature.  nil on Gen 1 and whenever no weather is up.
@@ -2941,6 +2950,7 @@ function BattleState:markParticipant()
   self.participants = self.participants or {}
   if self.player and self.player.mon then
     self.participants[self.player.mon] = true
+    HeldItems.observeParticipant(self, self.player)
   end
 end
 
@@ -2988,10 +2998,10 @@ function BattleState:resolveTurn(playerAction)
   local pFirst
   if Runtime.wantsHook("battle.turn_order") then
     pFirst = Runtime.call("battle.turn_order", function(a, aMove, b, bMove, c)
-      return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie)
-    end, self.player, pMove, self.enemy, eMove, { rng = self.rng })
+      return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie, c.data)
+    end, self.player, pMove, self.enemy, eMove, { rng = self.rng, data = self.data })
   else
-    pFirst = TurnOrder.firstMover(self.player, pMove, self.enemy, eMove, self.rng)
+    pFirst = TurnOrder.firstMover(self.player, pMove, self.enemy, eMove, self.rng, nil, self.data)
   end
   local order
   if pFirst then
@@ -3039,6 +3049,7 @@ function BattleState:resolveSwitch(newMon)
       -- SendOutMon (core.asm:1757-1762): poof, then the grow-in
       self:startGrowIn(self.player)
       require("src.core.Sound").playCry(self.data, self.player.mon.species)
+      HeldItems.onEntry(self, self.player)
     end)
   end)
   self:act(function()
@@ -3098,6 +3109,10 @@ function BattleState:endOfTurn()
   -- (player first, then enemy -- that order is the serial-connection one, not
   -- a speed check).
   Weather.upkeep(self)
+  -- Gen II HandleBetweenTurnEffects reaches held items only after weather and
+  -- the associated faint checks.  HeldItems.endTurn keeps Leftovers, PP and
+  -- healing-item phases in cartridge order and never revives a residual KO.
+  HeldItems.endTurn(self)
   self:tickTokens()
   self:roamerFlees()
   Runtime.emit("battle.turn_ended", { battle = self, turn = self.turnCount or 0 })
@@ -3898,6 +3913,7 @@ function BattleState:executeAction(user, target, action)
       -- _AIBattleWithdrawText: "X with-/drew Y!"
       self:sayNext(Strings("%s with-\ndrew %s!", self.trainer.name, oldName))
       self:sayNext(Strings("%s sent\nout %s!", self.trainer.name, self.enemy.name))
+      HeldItems.onEntry(self, self.enemy)
       return
     end
 
@@ -4641,6 +4657,7 @@ function BattleState:enemyMonFainted()
           self:shinyAnim(self.enemy, true)
           self:actNext(function()
             require("src.core.Sound").playCry(self.data, self.enemy.mon.species)
+            HeldItems.onEntry(self, self.enemy)
           end)
         end)
       end)
@@ -4680,6 +4697,7 @@ function BattleState:enemyMonFainted()
           self.sendingOut = false
           self:startGrowIn(self.player)
           require("src.core.Sound").playCry(self.data, self.player.mon.species)
+          HeldItems.onEntry(self, self.player)
         end)
       end)
       return
@@ -4702,6 +4720,7 @@ function BattleState:enemyMonFainted()
     if require("src.core.GameVersion").isGen2() then
       prize = prize * 4
     end
+    prize = HeldItems.modifyPrize(self, prize)
     self.game.save.money = self.game.save.money + prize
     -- Prism's Spurge Bank ATM (event/bank.asm) offers DIRECT DEPOSIT: with it
     -- enabled, a quarter of what you win in battle is routed to the account
@@ -4908,6 +4927,7 @@ function BattleState:openReplacementMenu()
           -- SendOutMon (core.asm:1757-1762): poof, then the grow-in
           self:startGrowIn(self.player)
           require("src.core.Sound").playCry(self.data, self.player.mon.species)
+          HeldItems.onEntry(self, self.player)
         end)
       end,
     })
@@ -5064,6 +5084,11 @@ end
 -- counts a run attempt each call.  Hooked as battle.run.
 function BattleState:runRoll(pSpd, eSpd)
   self.runAttempts = (self.runAttempts or 0) + 1
+  -- Smoke Ball guarantees escape from a wild battle without consuming the
+  -- ordinary speed/RNG formula.  Trainer battles are rejected by tryRun first.
+  if self.kind ~= "trainer" and HeldItems.canEscape(self.data, self.player) then
+    return true
+  end
   if Runtime.wantsHook("battle.run") then
     local battle = self
     return Runtime.call("battle.run", function(c)

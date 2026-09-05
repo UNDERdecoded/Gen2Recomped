@@ -21,6 +21,7 @@ local Logger = require("src.core.Logger")
 local Protocol = require("src.link.Protocol")
 local Runtime = require("src.mods.Runtime")
 local TurnOrder = require("src.battle.TurnOrder")
+local HeldItems = require("src.battle.HeldItems")
 local Strings = require("src.core.Strings")
 
 local LinkBattle = {}
@@ -152,16 +153,16 @@ local function volStr(b)
 end
 
 local function activeStr(b)
-  return ("%s:%d:%s:%s:%s"):format(b.mon.species, b.mon.hp,
-                                   tostring(b.mon.status), stageStr(b),
-                                   ppStr(b.mon))
+  return ("%s:%d:%s:%s:%s:%s"):format(b.mon.species, b.mon.hp,
+                                      tostring(b.mon.status), tostring(b.mon.item),
+                                      stageStr(b), ppStr(b.mon))
 end
 
 local function benchStr(party)
   local out = {}
   for i, mon in ipairs(party or {}) do
-    out[i] = ("%s:%d:%s"):format(tostring(mon.species), mon.hp or 0,
-                                 tostring(mon.status))
+    out[i] = ("%s:%d:%s:%s"):format(tostring(mon.species), mon.hp or 0,
+                                    tostring(mon.status), tostring(mon.item))
   end
   return table.concat(out, "|")
 end
@@ -305,6 +306,7 @@ function LinkBattle.new(game, net, opts)
       s.sendingOut = false
       s:startGrowIn(s.player)
       require("src.core.Sound").playCry(s.data, s.player.mon.species)
+      HeldItems.onEntry(s, s.player)
     end)
   end
 
@@ -323,6 +325,7 @@ function LinkBattle.new(game, net, opts)
       s:startGrowIn(s.enemy)
       s:actNext(function()
         require("src.core.Sound").playCry(s.data, s.enemy.mon.species)
+        HeldItems.onEntry(s, s.enemy)
       end)
     end)
   end
@@ -426,12 +429,12 @@ function LinkBattle.new(game, net, opts)
         local myMove, theirMove = orderMove(myAction), orderMove(theirAction)
         if Runtime.wantsHook("battle.turn_order") then
           first = Runtime.call("battle.turn_order", function(a, aMove, b, bMove, c)
-            return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie)
+            return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie, c.data)
           end, s.player, myMove, s.enemy, theirMove,
-             { rng = s.rng, invertTie = role == "guest" })
+             { rng = s.rng, invertTie = role == "guest", data = s.data })
         else
           first = TurnOrder.firstMover(s.player, myMove, s.enemy, theirMove,
-                                       s.rng, role == "guest")
+                                       s.rng, role == "guest", s.data)
         end
         local order
         if first then
@@ -749,6 +752,7 @@ function LinkBattle.newSpectator(game, net, opts)
       s.sendingOut = false
       s:startGrowIn(s.player)
       require("src.core.Sound").playCry(s.data, s.player.mon.species)
+      HeldItems.onEntry(s, s.player)
     end)
   end
 
@@ -766,6 +770,7 @@ function LinkBattle.newSpectator(game, net, opts)
       s:startGrowIn(s.enemy)
       s:actNext(function()
         require("src.core.Sound").playCry(s.data, s.enemy.mon.species)
+        HeldItems.onEntry(s, s.enemy)
       end)
     end)
   end
@@ -809,10 +814,12 @@ function LinkBattle.newSpectator(game, net, opts)
         local first
         if Runtime.wantsHook("battle.turn_order") then
           first = Runtime.call("battle.turn_order", function(a, aMove, b, bMove, c)
-            return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie)
-          end, s.player, hostMove, s.enemy, guestMove, { rng = s.rng, invertTie = false })
+            return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie, c.data)
+          end, s.player, hostMove, s.enemy, guestMove,
+             { rng = s.rng, invertTie = false, data = s.data })
         else
-          first = TurnOrder.firstMover(s.player, hostMove, s.enemy, guestMove, s.rng, false)
+          first = TurnOrder.firstMover(s.player, hostMove, s.enemy, guestMove,
+                                       s.rng, false, s.data)
         end
         local order
         if first then
