@@ -88,20 +88,26 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
   if not text and ctx.overworld then
     text = ctx.game.data:resolveText(ctx.overworld.map.def.label, textId)
   end
+  local needsProseLayout = false
   if not text then
     -- LITERAL STRING FALLBACK for hand-ported scripts -- and for the map
     -- editor, whose `say` beat lowers to a show_text carrying the line the
     -- author typed rather than a constant.
     --
-    -- Laid out on the way through, for the reason TextBox.fromProse gives:
-    -- prose has no page breaks, and a page with ten wrapped lines scrolls
-    -- past the reader instead of waiting for A. Marked-up text is returned
-    -- unchanged, so nothing the extractor produced is re-broken.
+    -- Laid out AFTER the substitution passes below run, not here: this text
+    -- can still carry an embedded {RAM:...} token (g2_fruittree, among
+    -- others, passes its own already-resolved default text straight through
+    -- this path), and fromProse's word-wrap has no notion of token
+    -- boundaries -- it measures pixel width and cuts wherever the budget
+    -- runs out. A token like "{RAM:wStringBuffer3}!" is 22 characters with
+    -- no space in it anywhere (the box is 18 columns wide), so it got cut
+    -- mid-token -- e.g. between "wStringBuffer" and "3" -- into two pieces.
+    -- Once split, the gsub below can no longer match it as one token (its
+    -- pattern needs the braces intact and unbroken), so it's left alone and
+    -- the raw, now-mangled token name is what reached the screen instead of
+    -- the berry's name.
     text = textId
-    if type(text) == "string" then
-      local okTB, TB = pcall(require, "src.render.TextBox")
-      if okTB and TB.fromProse then text = TB.fromProse(text) end
-    end
+    needsProseLayout = type(text) == "string"
   end
   -- Belt and braces: a row that reaches here with no usable id at all used to
   -- throw on the first gsub below, and a throw inside the runner leaves the
@@ -158,6 +164,12 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
       -- left untouched for TextBox.substitute to resolve
       return nil
     end)
+  end
+  -- Now that any {RAM:wStringBufferN} token has been replaced with its
+  -- actual (short) value, it's safe to lay the line out -- nothing left
+  -- for the word-wrap to slice apart.
+  if needsProseLayout then
+    text = TextBox.fromProse(text)
   end
   local runner = ctx.runner
   local opts
