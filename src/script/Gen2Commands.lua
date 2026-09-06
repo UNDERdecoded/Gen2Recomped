@@ -1196,8 +1196,11 @@ function Commands.g2_start_battle(ctx)
   ctx.g2BattleType = nil
   if wild then
     ctx.g2Wild = nil
-    Commands.start_battle(ctx, "wild", wild.species, wild.level,
-      { shiny = battleType == Commands.G2_BATTLETYPE_SHINY })
+    Commands.start_battle(ctx, "wild", wild.species, wild.level, {
+      shiny = battleType == Commands.G2_BATTLETYPE_SHINY,
+      forceCommonItem = battleType == Commands.G2_BATTLETYPE_FORCEITEM,
+      battleType = battleType,
+    })
   elseif trainer then
     -- winlosstext's first pointer is the beaten trainer's own line, and
     -- TrainerBattleVictory prints it ON the battle screen just before
@@ -2156,10 +2159,12 @@ function Commands.g2_writevar(ctx, var)
   end
 end
 
--- `loadvar 3, n` writes wBattleType ($D119).  BATTLETYPE_SHINY is 7; the
--- byte is consumed by the next startbattle and cleared with the rest of the
--- battle variables afterwards, so it is deliberately NOT saved.
+-- `loadvar 3, n` writes wBattleType ($D119). BATTLETYPE_SHINY is 7 and
+-- BATTLETYPE_FORCEITEM is 10; the byte is consumed by the next startbattle
+-- and cleared with the rest of the battle variables afterwards, so it is
+-- deliberately NOT saved.
 Commands.G2_BATTLETYPE_SHINY = 7
+Commands.G2_BATTLETYPE_FORCEITEM = 10
 
 function Commands.g2_loadvar(ctx, var, value)
   if var == 3 then ctx.g2BattleType = tonumber(value) or 0 end

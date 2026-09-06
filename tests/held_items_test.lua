@@ -45,6 +45,10 @@ local data = {
     BERSERK_GENE = item("BERSERK_GENE", 0, 0),
   },
   moves = { TACKLE = { pp = 35 }, SKETCH = { pp = 1 } },
+  pokemon = {
+    SENTRET = { heldItemCommon = "BERRY", heldItemRare = "GOLD_BERRY" },
+    EEVEE = {},
+  },
 }
 
 local function mon(species, held, hp, maxhp)
@@ -277,4 +281,41 @@ do
   eq(calls, 1, "failed rate check consumes no encounter-slot roll")
 end
 
+-- Wild held-item generation: byte boundaries, RNG consumption and
+-- BATTLETYPE_FORCEITEM match LoadEnemyMon's Gen II item-selection path.
+do
+  local function run(species, rolls, forceCommon)
+    local index = 0
+    local rng = function(lo, hi)
+      eq(lo, 0, "wild item RNG lower byte bound")
+      eq(hi, 255, "wild item RNG upper byte bound")
+      index = index + 1
+      local value = rolls[index]
+      if value == nil then error("unexpected wild-item RNG call " .. tostring(index)) end
+      return value
+    end
+    local got = HeldItems.rollWild(data, species, rng, forceCommon)
+    return got, index
+  end
+
+  local got, calls = run("SENTRET", { 191 }, false)
+  eq(got, nil, "0..191 chooses no held item")
+  eq(calls, 1, "no-item branch consumes one byte roll")
+
+  got, calls = run("SENTRET", { 192, 19 }, false)
+  eq(got, "GOLD_BERRY", "second roll 0..19 chooses rare Item2")
+  eq(calls, 2, "item branch consumes two byte rolls")
+
+  got, calls = run("SENTRET", { 192, 20 }, false)
+  eq(got, "BERRY", "second roll 20..255 chooses common Item1")
+  eq(calls, 2, "common branch consumes two byte rolls")
+
+  got, calls = run("SENTRET", {}, true)
+  eq(got, "BERRY", "BATTLETYPE_FORCEITEM chooses Item1")
+  eq(calls, 0, "BATTLETYPE_FORCEITEM consumes no item RNG")
+
+  got, calls = run("EEVEE", { 192, 0 }, false)
+  eq(got, nil, "a species with empty item slots still yields no item")
+  eq(calls, 2, "empty item slots still follow the normal item RNG path")
+end
 S.finish()
