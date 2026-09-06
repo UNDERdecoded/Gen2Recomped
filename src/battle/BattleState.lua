@@ -774,6 +774,10 @@ function BattleState.newWild(game, species, level, opts)
     self.player = makeBattler(game.data, playerMon, true, game.save)
   end
   local wild = Pokemon.new(game.data, species, level)
+  if game.data and game.data.constants and game.data.constants.generation == 2 then
+    wild.item = HeldItems.rollWild(
+      game.data, species, self.rng, opts and opts.forceCommonItem)
+  end
   -- BATTLETYPE_SHINY (`loadvar 3, 7` before the loadwildmon) overwrites the
   -- rolled DVs with the fixed shiny pair; the Lake of Rage Gyarados is the
   -- only encounter in Gold that uses it.
@@ -891,6 +895,9 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
   self.enemyParty = {}
   for _, slot in ipairs(partyDef) do
     local mon = Pokemon.new(game.data, slot.species, slot.level)
+    -- TrainerGroups item-bearing party formats and BattleTowerMons already
+    -- expose the cartridge item as slot.item; preserve it on the runtime mon.
+    mon.item = slot.item
     -- fixed trainer DVs, recomputed stats.  A party slot that carries its OWN
     -- DVs and stat exp is a stored mon rather than a generated one -- the
     -- Battle Tower's opponents come out of BattleTowerMons with both -- so its

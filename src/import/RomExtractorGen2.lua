@@ -4015,6 +4015,9 @@ function RomExtractorGen2:extractPokemon()
   local typesAt = self:layout("baseTypesAt", 8)
   local catchAt = self:layout("baseCatchAt", 10)
   local expAt = self:layout("baseExpAt", 11)
+  -- Item1/Item2 immediately follow base EXP in Crystal/Gold and in the
+  -- supported compact layouts; keep the offset manifest-overridable.
+  local itemsAt = self:layout("baseItemsAt", expAt + 1)
   local genderAt = self:layout("baseGenderAt", RomExtractorGen2.GEN2_BASE_GENDER)
   -- polished packs gender (high nibble) and hatch cycles (low nibble) into
   -- ONE byte; see GetGenderRatio (00:$3214) / the egg-steps math (03:$5d60)
@@ -4034,6 +4037,7 @@ function RomExtractorGen2:extractPokemon()
     local hp, atk, def, spd, satk, sdef = 45, 49, 49, 45, 65, 65
     local type1, type2 = "NORMAL", "NORMAL"
     local catchRate, baseExp = 45, 64
+    local heldItemCommon, heldItemRare
     local growthRate = "MEDIUM_FAST"
     local picDims = 0x77  -- default 7x7; overwritten from BaseData below
     local tmhm = {}
@@ -4056,6 +4060,12 @@ function RomExtractorGen2:extractPokemon()
         type1 = self:gen2TypeName(entry[typesAt]) or "NORMAL"
         type2 = self:gen2TypeName(entry[typesAt + 1]) or type1
         catchRate = entry[catchAt]; baseExp = entry[expAt]
+        if #entry >= itemsAt + 1 then
+          local common = entry[itemsAt] or 0
+          local rare = entry[itemsAt + 1] or 0
+          heldItemCommon = common > 0 and string.format("ITEM_%03d", common) or nil
+          heldItemRare = rare > 0 and string.format("ITEM_%03d", rare) or nil
+        end
         growthRate = GEN2_GROWTH_RATES[entry[growthAt]] or growthRate
       end
       if ok and type(entry) == "table" and #entry >= ENTRY then
@@ -4238,6 +4248,7 @@ function RomExtractorGen2:extractPokemon()
         special = satk, spatk = satk, spdef = sdef,
       },
       catchRate = catchRate, baseExp = baseExp, growthRate = growthRate,
+      heldItemCommon = heldItemCommon, heldItemRare = heldItemRare,
       tmhm = tmhm,
       -- breeding (base_stats bytes 14/16/24): DayCare.compatibility needs
       -- the real groups and gender split, and Gen2Commands' giveegg needs

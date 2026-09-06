@@ -134,6 +134,21 @@ local function consume(holder)
 end
 HeldItems.consume = consume
 
+-- LoadEnemyMon .WildItem (Gen II): normal wild encounters first have a
+-- 75% no-item branch, then use a second byte to choose Item2 for 8% of the
+-- remaining 25%. BATTLETYPE_FORCEITEM bypasses both rolls and uses Item1.
+function HeldItems.rollWild(data, species, rng, forceCommon)
+  local def = data and data.pokemon and data.pokemon[species]
+  local common = def and def.heldItemCommon or nil
+  local rare = def and def.heldItemRare or nil
+  if forceCommon then return common end
+
+  rng = rng or love.math.random
+  if rng(0, 255) < 192 then return nil end
+  if rng(0, 255) < 20 then return rare end
+  return common
+end
+
 local function isAlive(holder)
   local mon = monOf(holder)
   return mon and (tonumber(mon.hp) or 0) > 0

@@ -345,7 +345,10 @@ end
 -- (09:$72b5) instead of Crystal's static table -- Growl's effect byte $39 was
 -- Crystal's TRANSFORM_EFFECT, so status/stat moves misfired ("used Growl,
 -- transformed into Cyndaquil"); moves.lua changes for every affected move.
-local CACHE_FORMAT = "rom-cache-v81:"
+--
+-- v82: Gen2 BaseData now exports Item1/Item2 on each Pokemon record so wild
+-- encounter generation can reproduce cartridge held items; pokemon.lua changes.
+local CACHE_FORMAT = "rom-cache-v82:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
