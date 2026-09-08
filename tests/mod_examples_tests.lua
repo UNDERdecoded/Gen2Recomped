@@ -2,7 +2,7 @@
 -- entry loads clean through the real loader, produces its stated effect,
 -- and carries the metadata the polish checklist requires.
 --
--- The eight entries load TOGETHER against one dataset, which is the case a
+-- The nine entries load TOGETHER against one dataset, which is the case a
 -- player who enables the whole gallery gets and the only way to catch two
 -- examples fighting over the same id.
 package.path = "./?.lua;./?/init.lua;" .. package.path
@@ -22,6 +22,7 @@ local IDS = {
   "example_balance_tweaks", "example_shiny_palette", "example_jukebox",
   "example_lost_parcel", "example_weather", "example_dexnav",
   "example_mini_conversion", "example_silly_oak",
+  "indigo_97",
 }
 
 -- the closed vocabulary from 25 3.1; GAMEPLAY is the accepted v1 alias
@@ -356,3 +357,4 @@ Runtime.events, Runtime.hooks, Runtime.errors =
 Runtime.currentMod = nil
 
 S.finish()
+
