@@ -232,6 +232,16 @@ function Status.residual(battler, opponent, battle)
       msgs[#msgs + 1] = m
     end
   end
+  -- Nightmare only keeps draining while the target is still asleep; a mon
+  -- that wakes up (or is switched, which already clears status) stops
+  -- taking the hit even though the flag itself is never cleared here --
+  -- matches the "flag is set so it can be later" note on NIGHTMARE_EFFECT.
+  if battler.nightmare and mon.status == "SLP" and mon.hp > 0 then
+    local dmg = math.max(1, math.floor(mon.stats.hp / 4))
+    dmg = math.min(dmg, mon.hp)
+    mon.hp = mon.hp - dmg
+    table.insert(msgs, Strings("%s is locked in\na NIGHTMARE!", name(battler)))
+  end
   if battler.leechSeeded and mon.hp > 0 and opponent.mon.hp > 0 then
     -- the shared Toxic counter multiplies (and advances on) the seed
     -- drain too -- the Gen 1 Leech Seed glitch
