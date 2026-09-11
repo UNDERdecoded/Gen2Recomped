@@ -49,6 +49,10 @@ function TrainerAI.classAction(battle)
   if (battle.aiUses or 0) <= 0 then return nil end
   local rng = battle.rng
   local enemy = battle.enemy
+  -- a double battle lifts a fainted foe off the field at once and only
+  -- replaces it when the turn ends, so this slot can be empty while the
+  -- other one fights on -- and a trainer with nobody there uses no item
+  if not (enemy and enemy.mon) then return nil end
   local roll = rng(0, 255)
 
   -- Agatha's dedicated switch roll comes before her item roll

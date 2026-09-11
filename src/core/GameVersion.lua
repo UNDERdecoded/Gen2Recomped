@@ -822,12 +822,44 @@ GameVersion.VERSIONS = {
 -- src/import/RomGba.lua, neither of which shares a line with the Gen 1/Gen 2
 -- pipeline.
 --
--- HELD BACK.  `importable = false` is not caution about a few rough edges the
--- way Polished Crystal's is -- the extractor is still being built out, so an
--- import cannot produce a playable cache yet.  The version is registered so
--- the plumbing, the manifest and the reader can be exercised end to end;
--- POKEPORT_UNLOCK=emerald opens it for that work.  Flip this to true when the
--- required-file list in RomImporter actually gates something.
+-- OPEN, AS AN ALPHA -- and the reasoning is Polished Crystal's, above, because
+-- the situation is the same one.
+--
+-- ALPHA RATHER THAN BETA, AND THE DISTINCTION IS DELIBERATE.  This opened as a
+-- BETA, on the argument that every table read off the cartridge and the only
+-- unproven thing was whether they assembled into a world somebody could walk
+-- around in.  They do -- that question is answered, and answered by playing
+-- it.  What the play-throughs keep turning up is a different class of thing:
+-- Hoenn is a very large game and whole rooms of it are still being met for
+-- the first time, so what is being found is not rough edges in finished work
+-- but work that has not been reached yet.  BETA says "feature-complete, still
+-- being polished", and that would be the overclaim this project has spent its
+-- time avoiding.  ALPHA says what is true: it plays, it is being played
+-- through, and things are still being built.
+--
+-- What is proven: every table reads off the cartridge and is checked against a
+-- fact it has to satisfy; the import writes all 17 data modules and its
+-- assets; REQUIRED_FILES_GEN3 gates them; the engine's own loader opens the
+-- result -- 1,037 maps, 411 species, 354 moves; and the world loads, walks and
+-- is being played through end to end, which is how the rest of this file's
+-- fixes have been found.
+--
+-- KNOWN GAPS a play-through will meet, none of them silent failures:
+--   * audio is TABLES ONLY -- the song table, voicegroups, samples and wait
+--     timings are all derived, but nothing plays them yet, so the game is
+--     silent;
+--   * the Battle Frontier's seven facilities are MAPPED but not ported: the
+--     lobby, its currency and its doors work, and no facility runs a
+--     challenge yet;
+--   * secret bases, the TV programmes and the wireless minigames are not
+--     modelled, and the specials that belong to them decline cleanly rather
+--     than misfiring;
+--   * there is no link cable and no wireless adapter -- the port has its own
+--     network link instead, and every script that asks about the cartridge's
+--     is answered the way one with nothing plugged in answers.
+--
+-- Flip this back to false if a play-through turns up something that makes the
+-- import worse than no import, and say here what it was.
 --
 -- sha1 is the canonical (USA, Europe) dump, game code BPEE, revision 0 --
 -- the build pokeemerald targets, which is what makes the discovered
@@ -842,7 +874,13 @@ GameVersion.VERSIONS = {
     manifest = "tools/rom_manifest_emerald.json",
     cachePrefix = "emerald/",
     saveSuffix = "_emerald",
-    importable = false,
+    importable = true,
+    -- the stage pill, and the panel copy that goes with it
+    experimental = true,
+    -- ...and WHICH stage.  Unproven has stages, and the launcher does not
+    -- decide which game is at which one -- the version says so itself, so
+    -- moving Emerald on to BETA later is this one line and nothing else.
+    experimentalLabel = "ALPHA",
     -- the Running Shoes are a Gen 3 staple and the field code already has a
     -- hold-B run path; it costs nothing to declare it now
     hasRunning = true,

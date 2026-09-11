@@ -26,6 +26,25 @@ require("love.filesystem")
 -- not necessarily carry the package searcher that resolves "src.core..."):
 local ChipSynth = assert(love.filesystem.load("src/core/ChipSynth.lua"))()
 
+-- ...and the Gen 3 one beside it, loaded only when a song asks for it: a Gen
+-- 1/Gen 2 build never touches it, and a dataset with no music image would
+-- raise on construction rather than on load.
+local SYNTHS = { chip = ChipSynth }
+local SYNTH_FILES = { m4a = "src/core/M4ASynth.lua" }
+
+local function synthFor(name)
+  local hit = SYNTHS[name or "chip"]
+  if hit then return hit end
+  local file = SYNTH_FILES[name]
+  if not file then return ChipSynth end
+  local ok, chunk = pcall(love.filesystem.load, file)
+  if not ok or not chunk then return ChipSynth end
+  local built, synth = pcall(chunk)
+  if not built or type(synth) ~= "table" then return ChipSynth end
+  SYNTHS[name] = synth
+  return synth
+end
+
 local cmdCh = love.thread.getChannel("chipaudio_cmd")
 local outCh = love.thread.getChannel("chipaudio_out")
 
@@ -36,7 +55,8 @@ local BUF = ChipSynth.MUSIC_BUFFER_SAMPLES
 local LOOKAHEAD = 8
 
 local gen = nil        -- active song generation, or nil when stopped
-local engine = nil     -- the ChipSynth engine producing the current song
+local engine = nil     -- the engine producing the current song
+local synth = ChipSynth -- ...and which module built it
 local finished = false -- the current song ran out (non-looping)
 local data = nil       -- { audio = <slim audio tables> } for ROM bank/wave reads
 
@@ -53,7 +73,8 @@ local function handle(cmd)
     if cmd.channelPitches ~= nil then
       ChipSynth.setChannelPitches(cmd.channelPitches)
     end
-    local ok, eng = pcall(ChipSynth.newEngine, data, cmd.header,
+    synth = synthFor(cmd.synth)
+    local ok, eng = pcall(synth.newEngine, data, cmd.header,
                           { allowLoops = cmd.allowLoops })
     if ok then
       engine = eng
@@ -71,6 +92,9 @@ local function handle(cmd)
     if cmd.pitches ~= nil then ChipSynth.setChannelPitches(cmd.pitches) end
   elseif cmd.cmd == "invalidate" then
     ChipSynth.invalidateBanks()
+    for _, s in pairs(SYNTHS) do
+      if s.invalidate then pcall(s.invalidate) end
+    end
   elseif cmd.cmd == "quit" then
     return true
   end
@@ -89,7 +113,7 @@ while true do
 
   if engine and not finished and gen and outCh:getCount() < LOOKAHEAD then
     local activeGen = gen
-    local ok, sd = pcall(ChipSynth.soundData, engine, BUF, 2)
+    local ok, sd = pcall((synth or ChipSynth).soundData, engine, BUF, 2)
     if not ok then
       outCh:push({ gen = activeGen, error = tostring(sd) })
       finished = true

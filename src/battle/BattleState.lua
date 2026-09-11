@@ -13,7 +13,9 @@
 local Assets = require("src.render.Assets")
 local Catching = require("src.battle.Catching")
 local Damage = require("src.battle.Damage")
+local Abilities = require("src.battle.Abilities")
 local EffectRegistry = require("src.battle.EffectRegistry")
+local HoldItems = require("src.battle.HoldItems")
 local Experience = require("src.battle.Experience")
 local HeldItems = require("src.battle.HeldItems")
 local Font = require("src.render.Font")
@@ -24,13 +26,25 @@ local Pokemon = require("src.pokemon.Pokemon")
 local Runtime = require("src.mods.Runtime")
 local Screens = require("src.ui.Screens")
 local Status = require("src.battle.Status")
+local StatusRegistry = require("src.battle.StatusRegistry")
 local Timing = require("src.core.Timing")
 local TrainerAI = require("src.battle.TrainerAI")
 local TurnOrder = require("src.battle.TurnOrder")
+local Targeting = require("src.battle.Targeting")
 local TypeChart = require("src.battle.TypeChart")
 local Strings = require("src.core.Strings")
 local Weather = require("src.battle.Weather")
 local WideBattle = require("src.battle.WideBattle")
+local Gen3Battle = require("src.battle.Gen3Battle")
+local GameVersion = require("src.core.GameVersion")
+
+-- FORWARD-DECLARED, because they are defined next to the other doubles
+-- helpers two thousand lines down but read from `stepHPDrain` up here.  A
+-- `local function` at the definition site would have made a SECOND local
+-- that the earlier callers cannot see, so those callers fell through to a
+-- global and crashed with "attempt to call global 'activeBattlers'" the
+-- first time a HP bar drained.
+local activeBattlers, foesOf
 
 local BattleState = {}
 BattleState.__index = BattleState
@@ -118,8 +132,87 @@ function BattleState:isWideBattleLayout()
   return options and options.battleLayout == "wide" or false
 end
 
+-- The four actions in the order Gen 1's 2x2 reads them.
+BattleState.CLASSIC_ACTIONS = { "fight", "pkmn", "item", "run" }
+
 function BattleState:wideLayout()
   return self:isWideBattleLayout()
+end
+
+-- EMERALD FIGHTS ON ITS OWN SCREEN.
+--
+-- Not an option, unlike the widescreen layout: a Gen 3 cache has a 240x160
+-- overworld, and a battle that answers 160x144 gets letterboxed inside it and
+-- then draws the GAME BOY'S menu -- FIGHT/<PK><MN> over ITEM/RUN -- in a
+-- region a third the area of the screen around it.  The wide option still
+-- wins where the player has asked for it.
+function BattleState:gen3Layout()
+  if self:isWideBattleLayout() then return false end
+  return GameVersion.isGen3() and true or false
+end
+
+-- ---------------------------------------------------------------------------
+-- WHERE EVERYTHING IS, PUBLISHED
+--
+-- A mod that composes something UNDER the battle -- DRAMATIC_SHAPE stages one
+-- on the map -- needs to know where the two Pokemon stand, which rectangles
+-- the HUD blocks occupy, and which rows the text box owns.  It had those as
+-- its own constants, measured against the Game Boy screen, and its answer to
+-- a second layout existing was to switch that layout off.  That works for an
+-- OPTION.  It cannot work for Emerald's screen, which is not a preference --
+-- so the numbers become the engine's to state, and a layout that moves
+-- anything moves it in one place.
+--
+-- The classic figures below mirror drawClassic / drawHUDs / drawTextArea; the
+-- suite pins them to the drawing code so the two cannot drift.  nil means
+-- "this layout has no published geometry", which is the honest answer for the
+-- widescreen option: it has one, but nothing has measured it.
+BattleState.CLASSIC_GEOMETRY = {
+  width = 160, height = 144,
+  anchor = { player = { 26, 96 }, enemy = { 124, 56 } },
+  hudRect = {
+    enemy = { 8, 0, 80, 32 },
+    player = { 72, 56, 88, 40 },
+  },
+  hudBand = {
+    enemy = { 0, 0, 160, 48 },
+    player = { 0, 48, 160, 48 },
+  },
+  textRect = {
+    box = { 0, 96, 160, 48 },
+    -- the move menu's TYPE/PP panel and the copy menu's list, which sit ABOVE
+    -- the box on this layout and nowhere at all on Emerald's
+    moves = { 0, 64, 88, 32 },
+    mimic = { 0, 56, 128, 40 },
+  },
+}
+
+function BattleState:layoutGeometry()
+  if self:isWideBattleLayout() then return nil end
+  if self:gen3Layout() then
+    return Gen3Battle.geometry(BattleState.CLASSIC_GEOMETRY,
+                               self.data and self.data.constants)
+  end
+  return BattleState.CLASSIC_GEOMETRY
+end
+
+-- BOTH WIDE LAYOUTS LAY THE FOUR MOVES OUT AS A 2x2, so both navigate it with
+-- all four directions rather than the classic vertical list.  The maths is
+-- the same grid in either case and lives once; what differs is only which
+-- layouts ask for it.  nil means "no direction was pressed", and the caller
+-- then runs its own list navigation and its A / B / SELECT handling.
+function BattleState:moveGridNavigate(index, count, input)
+  if not (self:isWideBattleLayout() or self:gen3Layout()) then return nil end
+  return WideBattle.navigate(index, count, input)
+end
+
+-- The four actions, in the order this layout's grid reads them.  Gen 1 goes
+-- fight / party / item / run across the 2x2; Emerald goes fight / bag /
+-- party / run -- the same four in the other pair of diagonals, so a player
+-- who reaches for BAG must not open the party.
+function BattleState:menuActions()
+  if self:gen3Layout() then return Gen3Battle.ACTIONS end
+  return BattleState.CLASSIC_ACTIONS
 end
 
 -- BATTLE SIZE: "fixed" keeps the classic integer-scaled letterbox (a GB pixel
@@ -240,6 +333,7 @@ end
 -- Renderer:setUISize asks the top state for its surface before anything draws
 function BattleState:uiSize()
   if self:wideLayout() then return WideBattle.WIDTH, WideBattle.HEIGHT end
+  if self:gen3Layout() then return Gen3Battle.WIDTH, Gen3Battle.HEIGHT end
   return 160, 144
 end
 
@@ -249,6 +343,7 @@ end
 -- extra columns unremapped in the forced-mono modes (WideBattle.zones).
 function BattleState:sgbPalettes()
   if self:wideLayout() then return WideBattle.zones() end
+  if self:gen3Layout() then return Gen3Battle.zones() end
   return nil
 end
 
@@ -627,6 +722,13 @@ local function makeBattler(data, mon, isPlayer, save)
     -- merged registry views consumed by the pure battle modules
     badgeBoosts = badgeBoosts,
     statuses = data.statuses,
+    -- ...and the two HoldItems needs: the item table to look `mon.item` up
+    -- in, and the nature table, because whether a FIGY BERRY confuses the
+    -- Pokemon that ate it depends on which stat its nature lowers.  Views,
+    -- not copies, so a berry eaten mid-battle is seen the next time it is
+    -- asked for.
+    items = data.items,
+    natures = data.constants and data.constants.natures,
     shownHP = mon.hp, -- the HP the bar displays (UpdateHPBar drain)
     -- HUD status label (DrawHUDsAndHPBars); mon.status can land mid-move
     -- while the tilemap still shows the prior condition until the next
@@ -643,13 +745,19 @@ local function makeBattler(data, mon, isPlayer, save)
         isPlayer and "back" or "front",
         { mon = mon, kind = "battle" })
       return getImage(path, monPalette(data, mon.species,
-        require("src.pokemon.Stats").isShiny(mon.dvs)), tc)
+        require("src.pokemon.Pokemon").isShiny(mon)), tc)
     end)(),
     -- Crystal's front-pic frame animation.  Only the FRONT pic carries
     -- animation tiles, so the player's back pic has none -- and Gold and
     -- Silver have none at all, where this stays nil and the pic holds still.
+    -- forMon rather than new: a shiny Gen 3 Pokemon animates from its own
+    -- strip, and only the Pokemon can say whether it is one
     picAnim = (not isPlayer)
-      and require("src.pokemon.PicAnim").new(data, mon.species) or nil,
+      and require("src.pokemon.PicAnim").forMon(data, mon) or nil,
+    -- Emerald's procedural front-pic animation -- the squash/hop/glow the
+    -- sprite itself does when it appears.  Front pic only, same as above.
+    monAnim = (not isPlayer)
+      and require("src.pokemon.MonAnim").new(data, mon.species) or nil,
   }
 end
 
@@ -685,12 +793,62 @@ local function markSeen(game, species)
 end
 
 -- newly obtained mons carry the player's OT name/ID (status screen)
-local function stampOT(save, mon)
+--
+-- ...AND, ON GEN 3, WHERE AND AT WHAT LEVEL IT WAS OBTAINED.  Emerald keeps a
+-- met level and a met region-map section on every Pokemon, and the TRAINER
+-- MEMO at the bottom of the summary screen is built out of them:
+--
+--     BOLD nature,
+--     met at Lv5,
+--     ROUTE 101.
+--
+-- The third argument is what tells the two callers apart, and it has to,
+-- because they mean different things:
+--
+--   * A mon being CAUGHT or GIVEN passes one, and gets stamped.
+--   * The load-time BACKFILL passes none.  It runs over a party that is
+--     already the player's, and it has no idea where any of them came from --
+--     stamping "met at <today's level>, <the map you are standing on>" would
+--     invent a history and print it in the player's face as though the game
+--     knew.  With no met data the memo falls back to the cartridge's own
+--     one-line template, "<nature> nature", which is what Emerald itself
+--     prints for a Pokemon whose history it does not have.
+--
+-- A met level of ZERO is not missing data: it is the cartridge's way of
+-- saying HATCHED, and the memo reads it that way.
+local function stampOT(save, mon, met)
   save.player.id = save.player.id or math.random(0, 65535)
   mon.ot = mon.ot or save.player.name
   mon.otId = mon.otId or save.player.id
+  -- A SHINY THAT WAS PROMISED BEFORE IT HAD AN OT ID gets made true here.
+  --
+  -- Gen 3 shininess is personality xor trainer id, so a Pokemon marked shiny
+  -- before anything stamped an id on it carries only a flag.  This is the
+  -- moment the id exists, so it is the moment the personality can be moved to
+  -- honour it -- otherwise the flag would be a port-only fiction the
+  -- cartridge's own maths disagreed with.
+  local Stats = require("src.pokemon.Stats")
+  if mon.shiny and mon.personality ~= nil
+     and not Stats.isShinyGen3(mon.personality, mon.otId) then
+    mon.personality = Stats.shinyPersonality(mon.personality, mon.otId)
+  end
+  if met then
+    if mon.metLevel == nil then mon.metLevel = met.level end
+    if mon.metLocation == nil then mon.metLocation = met.location end
+  end
 end
 BattleState.stampOT = stampOT
+
+-- The region-map section the player is standing in, which is what the memo
+-- names -- not the map id.  Emerald's memo says "ROUTE 101", and ROUTE 101 is
+-- eleven separate map ids sharing one section; naming the map would print the
+-- internal id of whichever screen the ball happened to land on.
+function BattleState.metHere(game)
+  local save = game and game.save
+  local mapId = save and save.player and save.player.map
+  local def = mapId and game.data and game.data.maps and game.data.maps[mapId]
+  return def and def.regionMapSection or nil
+end
 
 local function markOwned(game, species)
   local dex = game.save.pokedex
@@ -754,6 +912,37 @@ local function newBattle(game)
       end
     end
   end
+  -- EMERALD'S move animations are a third engine again -- a bytecode program
+  -- whose particles the import reads off the cartridge -- and it exists only
+  -- when that import wrote the sheets.
+  do
+    local ok, Gen3MoveAnim = pcall(require, "src.battle.Gen3MoveAnim")
+    if ok and Gen3MoveAnim then
+      self.gen3Anim = Gen3MoveAnim.new(game.data)
+    end
+  end
+  -- THE WEATHER YOU BROUGHT IN WITH YOU.
+  --
+  -- A battle begun in Hoenn's rain starts under rain, and that is not a
+  -- flourish: it doubles every Water move in the fight, halves every Fire
+  -- one, makes THUNDER never miss, and is the difference between SWIFT SWIM
+  -- being an ability and being nothing.  The overworld says which of the
+  -- field's sixteen weathers this is, and only four of them mean anything
+  -- here (the rest -- Mt Chimney's ash, the cave fog, the shade, the
+  -- underwater bubbles -- are things you see).
+  --
+  -- Set PERMANENT, because the sky does not run out after five turns.  It is
+  -- the same "permanent" DROUGHT and DRIZZLE use, so a move that sets its own
+  -- weather still overrides it exactly as the cartridge lets it.
+  do
+    local ow = game.overworld
+    local weather = ow and ow.battleWeather and ow:battleWeather() or nil
+    if weather then
+      local Weather = require("src.battle.Weather")
+      Weather.start(self, weather, true)
+      self.fieldWeatherFromMap = weather
+    end
+  end
   self.queue = {}
   self.phase = "intro"
   self.menuIndex = 1
@@ -763,6 +952,23 @@ local function newBattle(game)
 end
 
 -- opts.hooked: rod encounter, announced with _HookedMonAttackedText
+-- SetWildMonHeldItem (battle_main.c).  Silent on a dataset that names no
+-- held items, which is every Gen 1 and Gen 2 one.
+function BattleState.giveWildHeldItem(data, mon, rng)
+  local def = data.pokemon and data.pokemon[mon.species]
+  local common = def and def.heldItemCommon
+  local rare = def and def.heldItemRare
+  if not (common or rare) then return end
+  if common and common == rare then
+    mon.item = common
+    return
+  end
+  local roll = (rng or love.math.random)(0, 99)
+  if roll < 45 then return end
+  if roll < 95 then mon.item = common or nil
+  else mon.item = rare or nil end
+end
+
 function BattleState.newWild(game, species, level, opts)
   local self = newBattle(game)
   self.kind = "wild"
@@ -774,6 +980,12 @@ function BattleState.newWild(game, species, level, opts)
     self.player = makeBattler(game.data, playerMon, true, game.save)
   end
   local wild = Pokemon.new(game.data, species, level)
+  -- SetWildMonHeldItem: a wild Gen 3 Pokemon may be carrying one of the two
+  -- items its base-stat row names -- the first fifty times in a hundred, the
+  -- second five, and nothing the other forty-five.  A species whose two are
+  -- the SAME item always has it, which is how the cartridge says "always"
+  -- without a third field.  147 species in Hoenn name something.
+  BattleState.giveWildHeldItem(game.data, wild)
   -- BATTLETYPE_SHINY (`loadvar 3, 7` before the loadwildmon) overwrites the
   -- rolled DVs with the fixed shiny pair; the Lake of Rage Gyarados is the
   -- only encounter in Gold that uses it.
@@ -787,12 +999,32 @@ function BattleState.newWild(game, species, level, opts)
   -- InitRoamMons writes 0 for "generate new stats", which is also what a
   -- beast nobody has met yet has, so 0 means full health rather than dead.
   self.roamer = opts and opts.roamer or nil
+  -- BATTLE_TYPE_FIRST_BATTLE, and nothing else in either cartridge sets these
+  -- on a WILD battle: the Poochyena that jumps Birch cannot be run from and
+  -- cannot black the player out.  Both are opt-in flags rather than a battle
+  -- kind of their own, because everything else about the fight -- the music,
+  -- the intro line, the wild-mon held item roll -- is an ordinary wild one.
+  self.noRun = opts and opts.noRun or nil
+  self.canLose = opts and opts.canLose or nil
+  -- ...AND A ROAMER IS THE SAME INDIVIDUAL EVERY TIME.  The cartridge keeps
+  -- its personality and IVs and rebuilds from them, which is what makes a
+  -- hunt a hunt: nature, ability and shininess are settled the day it is
+  -- released, not the day you corner it.  Applied BEFORE the battler is
+  -- made, because the stats come off these.
+  if opts and opts.roamerSeed then
+    Pokemon.applySeed(game.data, wild, opts.roamerSeed)
+  end
   self.enemy = makeBattler(game.data, wild, false)
   if self.roamer then
     local kept = math.floor(tonumber(opts.roamerHP) or 0)
     if kept > 0 then
       self.enemy.mon.hp = math.max(1, math.min(kept, self.enemy.mon.stats.hp))
     end
+    -- ...AND THE STATUS CARRIES TOO, on the cartridge that has one to carry.
+    -- Gen 2's roam slot keeps HP and nothing else; Gen 3's keeps a status
+    -- byte beside it (UpdateRoamerHPStatus writes both), which is what makes
+    -- a roamer you slept once still asleep the next time you corner it.
+    if opts.roamerStatus then self.enemy.mon.status = opts.roamerStatus end
   end
   markSeen(game, species)
   if opts and opts.hooked then
@@ -857,6 +1089,65 @@ local function applySpecialMoves(data, oppClass, partyIndex, party)
   end
 end
 
+-- The label every line in a trainer fight uses for the opponent: Hoenn's
+-- class-and-name pair where there is a class, the bare name everywhere else.
+-- In one place so a new line cannot quietly go back to the bare name.
+-- ONE TRAINER'S SIX POKEMON.
+--
+-- Lifted out of newTrainer unchanged so a DOUBLE battle against two separate
+-- trainers can build the second one's team the same way it builds the first
+-- -- CreateNPCTrainerParty runs once per trainer on the cartridge too.
+-- Nothing about the rules moved; only where the loop lives.
+local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
+  local out = {}
+  local trainerDvs = (game.data.constants and game.data.constants.trainerDvs)
+                     or TRAINER_DVS
+  out = {}
+  for _, slot in ipairs(partyDef) do
+    local mon = Pokemon.new(game.data, slot.species, slot.level)
+    -- fixed trainer DVs, recomputed stats.  A party slot that carries its OWN
+    -- DVs and stat exp is a stored mon rather than a generated one -- the
+    -- Battle Tower's opponents come out of BattleTowerMons with both -- so its
+    -- numbers win, and Stats.calc reproduces the cartridge's own stat block
+    -- from them.  No ordinary TrainerGroups slot has either field, so every
+    -- other trainer in the game is unchanged.
+    local dvs = slot.dvs or trainerDvs
+    mon.dvs = dvs
+    if slot.statExp then mon.statExp = slot.statExp end
+    if slot.happiness then mon.happiness = slot.happiness end
+    if slot.stats then
+      -- a stored stat block wins outright: the Battle Tower's opponents carry
+      -- the party_struct the cartridge ships, and recomputing it would move
+      -- some of them by a point
+      local stats = {}
+      for key, value in pairs(slot.stats) do stats[key] = value end
+      mon.stats = stats
+    else
+      mon.stats = require("src.pokemon.Stats").calc(
+        game.data.pokemon[slot.species], slot.level, dvs, slot.statExp)
+    end
+    mon.hp = mon.stats.hp
+    table.insert(out, mon)
+  end
+  applySpecialMoves(game.data, oppClass, partyIndex, out)
+  -- a party slot's own moves list wins over the legacy boss-move tables
+  for i, slot in ipairs(partyDef) do
+    local mon = out[i]
+    if mon and slot.moves then
+      mon.moves = {}
+      for _, moveId in ipairs(slot.moves) do
+        local mdef = game.data.moves[moveId]
+        table.insert(mon.moves, { id = moveId, pp = mdef and mdef.pp or 0 })
+      end
+    end
+  end
+  return out
+end
+
+function BattleState:trainerLabel_()
+  return self.trainerLabel or (self.trainer and self.trainer.name) or "?"
+end
+
 function BattleState.newTrainer(game, oppClass, partyIndex)
   local self = newBattle(game)
   self.kind = "trainer"
@@ -886,47 +1177,7 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
       return party
     end, oppClass, partyIndex or 1, partyDef) or partyDef
   end
-  local trainerDvs = (game.data.constants and game.data.constants.trainerDvs)
-                     or TRAINER_DVS
-  self.enemyParty = {}
-  for _, slot in ipairs(partyDef) do
-    local mon = Pokemon.new(game.data, slot.species, slot.level)
-    -- fixed trainer DVs, recomputed stats.  A party slot that carries its OWN
-    -- DVs and stat exp is a stored mon rather than a generated one -- the
-    -- Battle Tower's opponents come out of BattleTowerMons with both -- so its
-    -- numbers win, and Stats.calc reproduces the cartridge's own stat block
-    -- from them.  No ordinary TrainerGroups slot has either field, so every
-    -- other trainer in the game is unchanged.
-    local dvs = slot.dvs or trainerDvs
-    mon.dvs = dvs
-    if slot.statExp then mon.statExp = slot.statExp end
-    if slot.happiness then mon.happiness = slot.happiness end
-    if slot.stats then
-      -- a stored stat block wins outright: the Battle Tower's opponents carry
-      -- the party_struct the cartridge ships, and recomputing it would move
-      -- some of them by a point
-      local stats = {}
-      for key, value in pairs(slot.stats) do stats[key] = value end
-      mon.stats = stats
-    else
-      mon.stats = require("src.pokemon.Stats").calc(
-        game.data.pokemon[slot.species], slot.level, dvs, slot.statExp)
-    end
-    mon.hp = mon.stats.hp
-    table.insert(self.enemyParty, mon)
-  end
-  applySpecialMoves(game.data, oppClass, partyIndex or 1, self.enemyParty)
-  -- a party slot's own moves list wins over the legacy boss-move tables
-  for i, slot in ipairs(partyDef) do
-    local mon = self.enemyParty[i]
-    if mon and slot.moves then
-      mon.moves = {}
-      for _, moveId in ipairs(slot.moves) do
-        local mdef = game.data.moves[moveId]
-        table.insert(mon.moves, { id = moveId, pp = mdef and mdef.pp or 0 })
-      end
-    end
-  end
+  self.enemyParty = buildTrainerParty(game, oppClass, partyIndex or 1, partyDef)
   self.enemyIndex = 1
   local playerMon = Party.firstHealthy(game.save.party)
   if not playerMon then
@@ -938,6 +1189,20 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
   self.enemy = makeBattler(game.data, self.enemyParty[1], false)
   self.aiUses = self:aiUsesFor() -- wAICount, reset per enemy mon
   markSeen(game, self.enemyParty[1].species)
+
+  -- AND THE SECOND PAIR, when this is a double battle.
+  --
+  -- `double` is decided before the battle is built -- from the trainer's own
+  -- doubleBattle byte, which is literally BATTLE_TYPE_DOUBLE (0389BC does
+  -- `gBattleTypeFlags |= gTrainers[n].doubleBattle`), or from a
+  -- trainerbattle mode of 4, 6, 7 or 8.  Both sides then lead with TWO, and
+  -- they are the next healthy one on each side -- the same rule the left
+  -- flank used, applied once more.
+  --
+  -- Nothing here is reached in a single battle, and a single battle is what
+  -- every Gen 1 and Gen 2 fight is: those cartridges have no doubles at all.
+  if self.trainer and self.trainer.doubleBattle then self.double = true end
+  self:sendOutSecondPair()
   -- SGB: the enemy-side battle palette while the trainer pic is up is
   -- MonsterPalettes[0] = PAL_MEWMON -- InitBattleCommon zeroes
   -- wEnemyMonSpecies2 before the intro's SET_PAL_BATTLE
@@ -946,8 +1211,140 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
     BattleState.trainerPicPath(game.data, self.trainer, oppClass, partyIndex),
     BattleState.trainerPalette(game.data, self.trainer),
     self.trainer and self.trainer.trueColor)
-  self.introText = Strings("%s wants\nto fight!", self.trainer.name)
+  -- THE CLASS, WHICH HOENN PUTS IN FRONT OF THE NAME.
+  --
+  -- Emerald opens with "COOLTRAINER BRAXTON would like to battle!" -- the
+  -- class from gTrainerClassNames, then the trainer's own name -- and every
+  -- other line in the fight uses the pair as one label.  The extractor names
+  -- the class on all 855 rows (`className`) and nothing read it, so every
+  -- trainer in the region announced themselves by bare name, which reads as
+  -- an NPC rather than a battle.
+  --
+  -- The two cartridges before this one really do use the bare name (Gen 1's
+  -- classes ARE the trainer, "YOUNGSTER" and no more), so the pair is built
+  -- only where there is a class to build it from.
+  local shownName = self.trainer.name
+  if self.trainer.className and self.trainer.className ~= ""
+     and self.trainer.className ~= shownName then
+    shownName = self.trainer.className .. " " .. tostring(shownName)
+    self.trainerLabel = shownName
+  end
+  self.introText = Strings("%s wants\nto fight!", shownName)
   return self
+end
+
+-- ---------------------------------------------------------------------------
+-- THE SECOND PAIR, AND WHY IT IS NOT WRITTEN INSIDE THE CONSTRUCTOR
+-- ---------------------------------------------------------------------------
+--
+-- Reported from play: "Double battles still aren't working properly, the
+-- second person doesn't throw out their pokemon and i don't throw out my
+-- second pokemon."  Two Pokemon on the field, two healthboxes, and a
+-- `double` flag that said there should be four.
+--
+-- THE ORDER WAS THE BUG.  Commands.start_battle builds the battle first and
+-- decides afterwards whether it is a double:
+--
+--     battle = BattleState.newTrainer(game, class, 1)
+--     if opts and opts.double then battle.double = true end
+--     if battle.trainer and battle.trainer.doubleBattle then ... end
+--
+-- and it HAS to be that way round for the second of those two, because
+-- `battle.trainer` is what the constructor produces.  But the code that
+-- actually sends the second pair out lived inside the constructor, behind
+-- `if self.double`, which at that moment was still nil.  So the flag was set
+-- on a battle whose right-hand slots had already been skipped: `isDouble`
+-- answered true, the turn loop sorted four entries, the layout drew four --
+-- and two of the four were never put on the field.
+--
+-- So it moves out here, where either caller can reach it, and it is
+-- IDEMPOTENT -- a slot that is already filled is left alone.  That matters
+-- for the two-trainer battle, where `addOpponentTrainer` has already put the
+-- SECOND trainer's lead in the right-hand opponent slot and this must not
+-- overwrite it with the first trainer's second Pokemon.
+--
+-- Both sides lead with two and they are the next healthy one on each side --
+-- the same rule the left flank used, applied once more.  Nothing here is
+-- reached in a single battle, and a single battle is what every Gen 1 and
+-- Gen 2 fight is: those cartridges have no doubles at all.
+function BattleState:sendOutSecondPair()
+  if self.double ~= true or not BattleState.DOUBLES_READY then return end
+  if self.dead then return end
+  local game = self.game
+  if not (game and game.save) then return end
+
+  if self:battlerAt(BattleState.POS.PLAYER_RIGHT) == nil then
+    -- the next healthy one that is not already standing in the left slot
+    local lead = self.player and self.player.mon
+    local second = Party.firstHealthy(game.save.party, lead)
+    if second then
+      self:placeBattler(BattleState.POS.PLAYER_RIGHT,
+                        makeBattler(game.data, second, true, game.save))
+    else
+      -- one usable mon and a double battle is a state the cartridge refuses
+      -- to enter (special 64 answers non-zero and the approach is called
+      -- off), so if it is somehow reached the battle is a single
+      self.double = nil
+      self:syncSides()
+      return
+    end
+  end
+
+  if self:battlerAt(BattleState.POS.OPPONENT_RIGHT) == nil then
+    local party = self.enemyParty
+    if party and party[2] then
+      self.enemyIndexRight = 2
+      self:placeBattler(BattleState.POS.OPPONENT_RIGHT,
+                        makeBattler(game.data, party[2], false))
+      markSeen(game, party[2].species)
+    else
+      -- a "double" trainer with one Pokemon fights alone on their side,
+      -- which is what a two-on-one looks like on the cartridge too
+      self.enemyIndexRight = nil
+    end
+  end
+  self:syncSides()
+end
+
+-- THE SECOND TRAINER, WHEN TWO OF THEM WALKED UP.
+--
+-- BattleSetup_StartTrainerBattle (0B17E0) sets DOUBLE|TRAINER|TWO_OPPONENTS
+-- -- 0x8009 -- when gNoOfApproachingTrainers is 2, and the battle then runs
+-- with gTrainerBattleOpponent_A and _B and a party built for each.  So this
+-- is not "the first trainer sends out two": it is two trainers, two records,
+-- two teams, and later two payouts and two defeat lines.
+--
+-- The right-hand opponent slot is then filled from the SECOND trainer's
+-- party rather than the first one's, which is the whole difference between
+-- a two-opponent battle and a twin's.
+function BattleState:addOpponentTrainer(oppClass)
+  local def = self.game.data.trainers[oppClass]
+  if not def then
+    Logger.warn("gen3: no trainer %s -- the second opponent is dropped and "
+                  .. "the battle is fought against the first alone",
+                tostring(oppClass))
+    return false
+  end
+  local partyDef = def.parties and def.parties[1]
+  if not partyDef then return false end
+  self.double = true
+  if not BattleState.DOUBLES_READY then
+    -- recorded, so the pairing is visible to anything that asks, but the
+    -- second team is not sent out until the engine can run it
+    self.trainerB = def
+    return true
+  end
+  self.trainerB = def
+  self.enemyPartyB = buildTrainerParty(self.game, oppClass, 1, partyDef)
+  self.enemyIndexB = 1
+  if self.enemyPartyB[1] then
+    -- the right-hand opponent is the SECOND trainer's lead, replacing
+    -- whatever the first trainer's second Pokemon had been put there
+    self:placeBattler(BattleState.POS.OPPONENT_RIGHT,
+                      makeBattler(self.game.data, self.enemyPartyB[1], false))
+    markSeen(self.game, self.enemyPartyB[1].species)
+  end
+  return true
 end
 
 -- The Battle Tower's opponents are generated, not table-driven: its 70
@@ -1149,8 +1546,14 @@ end
 -- The capture cannot fail: ItemUseBall reads wBattleType and jumps straight
 -- to .catch_without_fail (item_effects.asm:243-246), and .FinishTutorial
 -- returns before any of the caught-mon bookkeeping (:501-503).
-function BattleState:makeDudeDemo()
-  self:makeOldManDemo("DUDE")
+--
+-- HOENN'S IS THE SAME BATTLE.  BATTLE_TYPE_WALLY_TUTORIAL is Gen 2's shape
+-- exactly -- a scripted cursor, one ball, a throw that cannot miss, nothing
+-- kept, and the thrower's own Pokemon on the field (Wally is lent a ZIGZAGOON
+-- by the script before it starts) -- so the only thing that differs is the
+-- name over the menu, and that is a parameter.
+function BattleState:makeDudeDemo(name)
+  self:makeOldManDemo(name or "DUDE")
   self.dudeDemo = true
   self.demoBallCount = "x1"
 end
@@ -1252,7 +1655,7 @@ function BattleState:shinyAnim(battler, isPlayer)
     return false
   end
   local mon = battler and battler.mon
-  if not (mon and require("src.pokemon.Stats").isShiny(mon.dvs)) then return false end
+  if not (mon and require("src.pokemon.Pokemon").isShiny(mon)) then return false end
   self:animNext("SHINY_ANIM", isPlayer)
   return true
 end
@@ -1265,7 +1668,7 @@ function BattleState:shinyAnimAppend(battler, isPlayer)
     return false
   end
   local mon = battler and battler.mon
-  if not (mon and require("src.pokemon.Stats").isShiny(mon.dvs)) then return false end
+  if not (mon and require("src.pokemon.Pokemon").isShiny(mon)) then return false end
   table.insert(self.queue, { anim = "SHINY_ANIM", attackerIsPlayer = isPlayer })
   return true
 end
@@ -1293,25 +1696,48 @@ end
 -- ui rows compose screens unpushed (updateQueue pushes them), so
 -- Screens.push's mod-screen degrade can't cover them; mirror it here,
 -- stamping the id the same way
+-- THE GEN 3 ALIAS APPLIES HERE TOO.
+--
+-- Screens.push resolves "PartyMenu" to "Gen3PartyMenu" on a Hoenn cartridge,
+-- but the battle does not push its screens -- it OWNS its UI slot and builds
+-- them -- and this path went straight to Screens.get, which does not resolve.
+-- So the four screens the alias exists for were Emerald's everywhere in the
+-- game EXCEPT inside a battle, which is the one place a player is looking
+-- hardest.  Same rule as the push: only a single options table can be
+-- aliased, because that is the only shape the Gen 3 screens take.
+-- The shortest a coarse reaction may be and still read as one, in frames.
+BattleState.COARSE_ANIM_MIN = 8
+
 function BattleState:buildScreen(id, ...)
   local game = self.game
-  local factory = Screens.get(game, id)
+  local unpack_ = table.unpack or unpack   -- LuaJIT (LOVE) compatibility
+  local args = { n = select("#", ...), ... }
+  local resolvedId = id
+  if args.n <= 1 then
+    local rid, rarg = Screens.resolveId(game, id, args[1])
+    if rid ~= id then resolvedId, args = rid, { n = 1, rarg } end
+  end
+  local factory = Screens.get(game, resolvedId)
+  local function build()
+    return factory.new(game, unpack_(args, 1, args.n))
+  end
   local inst
   if factory.__modOwned then
     -- a broken mod screen degrades to the builtin, never a dead end
-    local ok, result = pcall(factory.new, game, ...)
+    local ok, result = pcall(build)
     if ok and result then
       inst = result
     else
       Logger.error("mod screen '%s' failed: %s -- using builtin",
-                   id, tostring(result))
+                   resolvedId, tostring(result))
       Screens.invalidate()
-      inst = require("src.ui." .. id).new(game, ...)
+      inst = require("src.ui." .. resolvedId)
+               .new(game, unpack_(args, 1, args.n))
     end
   else
-    inst = factory.new(game, ...)
+    inst = build()
   end
-  inst.screenId = inst.screenId or id
+  inst.screenId = inst.screenId or resolvedId
   return inst
 end
 
@@ -1366,7 +1792,7 @@ end
 -- Returns true while animating.
 function BattleState:stepHPDrain()
   local busy = false
-  for _, b in ipairs({ self.player, self.enemy }) do
+  for _, b in activeBattlers(self) do
     if b and b.shownHP then
       -- drainFloor is the stop the running row carries (see drainNext)
       local goal = b.mon.hp
@@ -1379,7 +1805,9 @@ function BattleState:stepHPDrain()
         busy = true
       elseif b.shownHP ~= goal then
         local maxHP = math.max(1, b.mon.stats.hp)
-        local playerSide = (b == self.player)
+        -- by SIDE, not by identity: in a double the right-hand player
+        -- slot is not `self.player` and its bar still drains downward
+        local playerSide = b.isPlayer == true
         local cost = 0
         -- consume whole HP steps until this frame's budget is spent; on the
         -- enemy HUD several free steps can land in the same frame
@@ -1396,7 +1824,7 @@ function BattleState:stepHPDrain()
         -- .animateHPBarDone's final number print, one more pixel step and
         -- Delay3 (hp_bar.asm:132-135); this frame is the first of them
         b.draining = nil
-        b.drainHold = Timing.hpDrainClosingFrames(b == self.player) - 1
+        b.drainHold = Timing.hpDrainClosingFrames(b.isPlayer == true) - 1
         busy = true
       end
     end
@@ -1410,6 +1838,28 @@ end
 -- why it snapped.  self.expShown is the pixel count the HUD draws while a
 -- fill is running, and nil the rest of the time so the bar follows the mon.
 BattleState.EXP_BAR_STEP_FRAMES = 2
+
+-- HOW FULL THE BAR IS, 0 to 1 -- which is what a Hoenn healthbox wants.
+--
+-- Reported from play: "the exp bar doesnt increase at all after defeating a
+-- pokemon".  The Emerald HUD drew its fill off `battle.expFraction`, and
+-- nothing in the engine ever set that field: a reader with no writer, so the
+-- bar sat at zero through every battle in the game while the exp itself went
+-- up perfectly well behind it.
+--
+-- It follows the SAME state the Game Boy bar does: expShown while a fill is
+-- creeping (so the Hoenn bar animates too, rather than snapping), and the
+-- mon's own exp the rest of the time.
+function BattleState:expFraction(mon)
+  mon = mon or (self.player and self.player.mon)
+  if not mon then return 0 end
+  local HudTiles = require("src.render.HudTiles")
+  local length = HudTiles.geometry().expBarTiles * 8
+  if length <= 0 then return 0 end
+  local pixels = (mon == (self.player and self.player.mon) and self.expShown)
+                 or HudTiles.expBarPixels(self.data, mon)
+  return math.max(0, math.min(1, pixels / length))
+end
 
 -- Returns true while still filling.
 function BattleState:stepExpBar()
@@ -1499,6 +1949,46 @@ function BattleState:updateQueue()
     if self.game.stack:top() ~= self then return true end
     self.waitingUI = nil
   end
+  -- HOENN'S PARTICLES TICK BEFORE THE QUEUE'S OWN HOLD, and the whole
+  -- reason the animations looked broken is that they used to tick after it.
+  --
+  -- Reported from play: "many dont show until after damage is done to the
+  -- enemy pokemon".  The Gen 3 player does not hold the queue with
+  -- animPlaying; it sets waitFrames to the animation's length.  The tick sat
+  -- BELOW the waitFrames gate, so for exactly as long as the animation was
+  -- meant to run, updateQueue returned at the gate and never advanced its
+  -- clock -- the particles stood frozen on frame zero, and only once the
+  -- hold expired did the animation begin to play, on top of the damage that
+  -- had been waiting behind it.  It has to be counted where the frames are.
+  if self.gen3AnimPlaying and self.gen3Anim then
+    self.gen3Anim:update()
+    if self.gen3Anim:isDone() then
+      self.gen3AnimPlaying = false
+      self.gen3Anim:release()
+    end
+  end
+  -- ...and the ball's own timeline, ticked in the same place and for the same
+  -- reason: its frames are counted where the hold is counted, or it would
+  -- stand still for exactly as long as it is meant to be moving.
+  if self.gen3BallPlaying and self.gen3Ball then
+    local anim = self.gen3Ball
+    anim:update()
+    if anim.sound then
+      require("src.core.Sound").playId(self.data, anim.sound)
+    end
+    -- the trainer is gone by the time his Pokemon is out of the ball
+    if anim.sendOut == "player" and self.showPlayerBack
+        and anim.phase ~= "throw" then
+      self.showPlayerBack = false
+      self:slidePic("back")
+    end
+    if anim:isDone() then
+      self.gen3BallPlaying = false
+      -- a caught Pokemon leaves the ball resting on screen through the text,
+      -- exactly as the Game Boy chain does
+      if not anim.caught then self.gen3Ball = nil end
+    end
+  end
   -- a queued hold (faint slide, hit blink) counts down before the next row
   if self.waitFrames and self.waitFrames > 0 then
     self.waitFrames = self.waitFrames - 1
@@ -1524,9 +2014,6 @@ function BattleState:updateQueue()
     if self:stepExpBar() then return true end
     self.expFilling = nil
   end
-  -- a move animation holds the queue until it finishes; its screen
-  -- effects (SE_*) and per-row sounds route into the fx layer as they
-  -- fire (applyAnimEffect implements each AnimationXXX routine)
   if self.animPlaying then
     self.animPlayer:update()
     if self.animPlayer.pollEffects and self.applyAnimEffect then
@@ -1637,7 +2124,18 @@ function BattleState:updateQueue()
       -- short-circuits to TossBallAnimation before its wOptions check
       -- (engine/battle/animations.asm:415)
       if item.anim and (self:animationsOn() or BALL_ANIMS[item.anim]) then
-        if self.animPlayer then
+        -- HOENN'S OWN ANIMATION, when the move has one.  It does not take the
+        -- animPlaying path: that one belongs to the Game Boy players, which
+        -- carry their own per-row sounds, and this one does not -- so the
+        -- single-sound fallback below still runs and the move both looks and
+        -- sounds like itself.  The queue is held with waitFrames instead, for
+        -- as long as the script's own delays plus the particles' life.
+        if self.gen3Anim and self.gen3Anim:has(item.anim)
+           and self.gen3Anim:start(item.anim, item.attackerIsPlayer) then
+          self.gen3AnimPlaying = true
+          self.waitFrames = math.max(self.waitFrames or 0,
+                                     self.gen3Anim.total or 0)
+        elseif self.animPlayer then
           local ok, started = pcall(self.animPlayer.start, self.animPlayer,
                            item.anim, item.attackerIsPlayer,
                            (item.shakes or item.ball)
@@ -1656,8 +2154,63 @@ function BattleState:updateQueue()
           self.animPlaying = ok and started ~= false
         end
         self.fx = self.fx or {}
-        if anim and anim.shake and not self.animPlaying then self.fx.shake = 24 end
-        if anim and anim.flash and not self.animPlaying then self.fx.flash = 16 end
+        -- HOW LONG THE COARSE REACTION LASTS.
+        --
+        -- The reaction is a class this port chose; its LENGTH is the move's
+        -- own. Every one of these scripts still walks its delays, and the
+        -- import carries that total across (`anim.duration`), so EARTHQUAKE
+        -- heaves for as long as its script runs and HARDEN's flourish is over
+        -- in its own handful of frames. The old fixed 24 and 16 are what a
+        -- dataset imported before that stamp still gets.
+        local coarse = anim and tonumber(anim.duration) or nil
+        -- A REACTION HAS TO LAST LONG ENOUGH TO BE ONE.  Thirteen of the
+        -- twenty-five carry a length; the shortest of them is a single frame,
+        -- because everything that script does happens inside its task and the
+        -- delays it walks are almost none. One frame of shake is not a
+        -- reaction, it is a glitch, so below one visible beat the port's own
+        -- minimum stands.
+        if coarse and coarse < BattleState.COARSE_ANIM_MIN then coarse = nil end
+        -- THE HEAVE FIRST, because it is the cartridge's own numbers and
+        -- the wobble below is this port's.  EARTHQUAKE swings the field
+        -- thirteen pixels fifty times, every second frame; the coarse
+        -- fallback swung it two, for twenty-four frames.  The program is
+        -- the same one the SE-driven shakes already run.
+        if anim and anim.heave and not self.animPlaying then
+          local h = anim.heave
+          local amplitude = tonumber(h.amplitude) or 0
+          local every = math.max(1, tonumber(h.every) or 2)
+          local swings = math.max(1, tonumber(h.swings) or 1)
+          if amplitude > 0 then
+            local prog = {}
+            for i = 0, swings - 1 do
+              prog[#prog + 1] = { dx = (i % 2 == 0) and amplitude
+                                       or -amplitude, frames = every }
+            end
+            -- ...and back to where it started, as the task's own last act is
+            -- to put the register back
+            prog[#prog + 1] = { dx = 0, frames = every }
+            self.fx.shakeProg = prog
+            self.waitFrames = math.max(self.waitFrames or 0,
+                                       (swings + 1) * every)
+          end
+        end
+        if anim and anim.shake and not self.animPlaying then
+          self.fx.shake = coarse or 24
+        end
+        if anim and anim.flash and not self.animPlaying then
+          self.fx.flash = coarse or 16
+        end
+        -- IN HOENN the coarse reaction is the move's whole animation, not a
+        -- consolation for one that could not play: the moves that get it are
+        -- the ones whose every pixel is drawn by a task -- HARDEN, AGILITY,
+        -- EARTHQUAKE -- and there is nothing else coming.  So the queue waits
+        -- for it, the way it waits for the particles; on a Game Boy dataset
+        -- (no Gen 3 player at all) the timing is untouched.
+        if self.gen3Anim and not self.gen3AnimPlaying and anim
+           and (anim.shake or anim.flash) and not self.animPlaying then
+          self.waitFrames = math.max(self.waitFrames or 0,
+                                     coarse or (anim.shake and 24 or 16))
+        end
       end
       if self.animPlaying then
         -- the animation rows carry their own sounds (PlayAnimation
@@ -1876,6 +2429,67 @@ local GEN2_VICTORY_KIND = {
 -- are tested in this order and the FIRST match wins, which is why the
 -- champion test comes before the gym-leader lists -- CHAMPION ($10) is in
 -- GymLeaders too and would otherwise take the gym theme.
+-- Which theme a Hoenn battle opens on, by the class of who you are fighting.
+-- The Frontier brains share one theme; the two teams share theirs and their
+-- leaders share another.
+local GEN3_CLASS_MUSIC = {
+  ["LEADER"] = "gym",
+  ["ELITE FOUR"] = "elite",
+  ["CHAMPION"] = "final",
+  ["TEAM AQUA"] = "aquaMagma",
+  ["TEAM MAGMA"] = "aquaMagma",
+  ["AQUA ADMIN"] = "aquaMagma",
+  ["MAGMA ADMIN"] = "aquaMagma",
+  ["AQUA LEADER"] = "aquaMagmaLeader",
+  ["MAGMA LEADER"] = "aquaMagmaLeader",
+  ["SALON MAIDEN"] = "frontierBrain",
+  ["DOME ACE"] = "frontierBrain",
+  ["PALACE MAVEN"] = "frontierBrain",
+  ["ARENA TYCOON"] = "frontierBrain",
+  ["FACTORY HEAD"] = "frontierBrain",
+  ["PIKE QUEEN"] = "frontierBrain",
+  ["PYRAMID KING"] = "frontierBrain",
+}
+BattleState.GEN3_CLASS_MUSIC = GEN3_CLASS_MUSIC
+
+-- ...and the legends, which BattleSetup_StartLegendaryBattle picks by SPECIES
+-- rather than by class, because they are wild battles and there is no class
+-- to read.
+local GEN3_LEGEND_MUSIC = {
+  KYOGRE = "weatherTrio", GROUDON = "weatherTrio",
+  RAYQUAZA = "rayquaza",
+  REGIROCK = "regi", REGICE = "regi", REGISTEEL = "regi",
+  MEW = "mew", DEOXYS = "mew",
+}
+BattleState.GEN3_LEGEND_MUSIC = GEN3_LEGEND_MUSIC
+
+function BattleState:gen3MusicKind()
+  local audio = self.data and self.data.audio
+  local themes = audio and audio.battle
+  if not themes then return nil end
+  if self.kind == "trainer" and self.trainer then
+    local classes = self.data.constants and self.data.constants.trainerClasses
+    local name = classes and self.trainer.class
+                 and classes[(tonumber(self.trainer.class) or -1) + 1]
+    local kind = name and GEN3_CLASS_MUSIC[name]
+    if kind and themes[kind] then
+      -- the badge fights are the ones that bump the companion's happiness
+      self.isGymLeader = (kind == "gym")
+      return kind
+    end
+    self.isGymLeader = false
+    return themes.trainer and "trainer" or nil
+  end
+  if self.kind == "wild" then
+    local mon = self.enemy and self.enemy.mon
+    local species = mon and mon.species
+    local def = species and self.data.pokemon and self.data.pokemon[species]
+    local kind = GEN3_LEGEND_MUSIC[(def and def.name) or species]
+    if kind and themes[kind] then return kind end
+  end
+  return nil
+end
+
 function BattleState:computeMusicKind()
   -- Gen2 first: data/scripts/victories is the hand-authored Gen1 badge table
   -- and no Gen2 trainer id is in it, which is why Bugsy opened on the plain
@@ -1928,6 +2542,24 @@ function BattleState:computeMusicKind()
     end
   end
 
+  -- ---------------------------------------------------------------------
+  -- HOENN PICKS ITS BATTLE THEME BY TRAINER CLASS.
+  --
+  -- Reported from play: "music doesnt change upon encountering a wild
+  -- pokemon".  The first half of that was the role table the import never
+  -- wrote; this is the second.  With no Gen 3 branch here every trainer in
+  -- the region opened on the plain trainer theme, because the test below it
+  -- is `data.scripts.victories` -- the hand-authored GEN 1 badge table, which
+  -- names no Hoenn trainer at all.
+  --
+  -- The class is the cartridge's own: gTrainers carries it per trainer and
+  -- the class NAMES come out of the ROM's own table, so LEADER, ELITE FOUR,
+  -- CHAMPION and the two teams are read rather than listed here by id.
+  if require("src.core.GameVersion").isGen3() then
+    local kind = self:gen3MusicKind()
+    if kind then return kind end
+  end
+
   local isBoss = false
   if self.kind == "trainer" and self.trainer then
     local victories = require("data.scripts.victories")
@@ -1955,9 +2587,195 @@ end
 
 -- side tables mirror the singles battlers; called before every
 -- battler-switch notification so sides[i].battlers[1] stays honest
+-- ---------------------------------------------------------------------------
+-- WHERE A BATTLER STANDS
+--
+-- Emerald numbers the four places on the field, and the number is not
+-- arbitrary -- it is two bits with a meaning each:
+--
+--     0  PLAYER_LEFT      1  OPPONENT_LEFT
+--     2  PLAYER_RIGHT     3  OPPONENT_RIGHT
+--
+--     side  = position % 2        0 the player's, 1 the opponent's
+--     flank = floor(position / 2) 0 the left one, 1 the right one
+--     the partner is position ~ 2; the foes are the other side's two
+--
+-- which is why `self.player` and `self.enemy` can stay exactly what they
+-- always were: they ARE positions 0 and 1, the left-hand pair, and a single
+-- battle is a double with the right-hand pair empty.  Nothing that reads
+-- them has to learn about positions to keep being correct; only the code
+-- that must consider BOTH flanks does.
+--
+-- A single battle therefore walks through here unchanged, and `sides` --
+-- which mods already hang screens and hazards on -- keeps the shape it has
+-- had all along.
+-- ---------------------------------------------------------------------------
+BattleState.POS = {
+  PLAYER_LEFT = 0, OPPONENT_LEFT = 1, PLAYER_RIGHT = 2, OPPONENT_RIGHT = 3,
+}
+
+-- THE SWITCH.
+--
+-- A double battle was not one change; it was six, and they had to land in
+-- order: the positions, the four-way turn order, targeting and a second
+-- player choice, the spread and screen numbers, fainting and send-out with
+-- an empty slot beside a full one, and a 2v2 screen with four panels.  This
+-- was false while they were arriving, because two on a side with a turn
+-- loop that takes one action and a screen that draws one Pokemon is worse
+-- than the single battle it replaces, not better.
+--
+-- They are all in.  It is kept as a named flag rather than deleted because
+-- it is the one line to turn over if a double battle misbehaves in play --
+-- everything falls back to a single, which is what the port did before.
+BattleState.DOUBLES_READY = true
+
+function BattleState:isDouble()
+  return self.double == true and BattleState.DOUBLES_READY == true
+end
+
+-- ...and what the battle was ASKED to be, regardless of whether the engine
+-- can field it yet.  Everything that only records the fact reads this.
+function BattleState:wantsDouble() return self.double == true end
+
+-- side index (1 or 2) and flank index (1 or 2) for a position
+local function slotOf(pos)
+  pos = tonumber(pos) or 0
+  return (pos % 2) + 1, math.floor(pos / 2) + 1
+end
+BattleState.slotOf = slotOf
+
+function BattleState:battlerAt(pos)
+  local side, flank = slotOf(pos)
+  return self.sides[side] and self.sides[side].battlers[flank]
+end
+
+-- Put a battler on the field.  The left flanks keep their old names, so
+-- `self.player` and `self.enemy` remain the two battlers every existing
+-- caller already means.
+function BattleState:placeBattler(pos, battler)
+  local side, flank = slotOf(pos)
+  self.sides[side].battlers[flank] = battler
+  if battler then battler.position = pos end
+  if flank == 1 then
+    if side == 1 then self.player = battler else self.enemy = battler end
+  end
+  return battler
+end
+
+function BattleState:partnerOf(battler)
+  if not (battler and self:isDouble()) then return nil end
+  local pos = tonumber(battler.position)
+  if not pos then return nil end
+  -- the partner is the same side, the other flank: position xor 2
+  return self:battlerAt(pos < 2 and pos + 2 or pos - 2)
+end
+
+-- The live battlers on the other side, in position order.
+--
+-- A plain local as well as a method, because parts of this engine are called
+-- standalone -- `abilitySwitchIn` is lifted off the class and run against a
+-- bare table in the tests -- and this reads nothing but `sides`, which every
+-- such table has.
+function foesOf(battle, battler)
+  local out = {}
+  if not (battler and battle and battle.sides) then return out end
+  local theirs = battler.isPlayer and 2 or 1
+  local side = battle.sides[theirs]
+  for flank = 1, 2 do
+    local b = side and side.battlers and side.battlers[flank]
+    if b and b.mon and (b.mon.hp or 0) > 0 then out[#out + 1] = b end
+  end
+  -- a bare table may never have been syncSides'd; fall back to the two
+  -- names every battle in this engine has always had
+  if #out == 0 then
+    local other = battler.isPlayer and battle.enemy or battle.player
+    if other and other.mon and (other.mon.hp or 0) > 0 then out[1] = other end
+  end
+  return out
+end
+
+function BattleState:foesOf(battler) return foesOf(self, battler) end
+
+-- EVERY SLOT THAT IS STANDING, in position order 0,1,2,3.
+--
+-- In a single battle this yields exactly `self.player, self.enemy`, in that
+-- order -- which is precisely the list the dozen `for _, b in ipairs({
+-- self.player, self.enemy })` sweeps in this file already walk.  They can
+-- move onto this one at a time with no change in behaviour.
+-- A plain local as well as a method, for the same reason foesOf is one:
+-- several of this engine's methods are lifted off the class and run against
+-- a bare battle table, and this must keep working there.  With no `sides`
+-- filled in it falls back to the two names every battle has always had,
+-- which is exactly the list the sweeps that call it used to walk.
+function activeBattlers(battle)
+  local out, n = {}, 0
+  for pos = 0, 3 do
+    local side, flank = slotOf(pos)
+    local s = battle.sides and battle.sides[side]
+    local b = s and s.battlers and s.battlers[flank]
+    if b then n = n + 1; out[n] = b end
+  end
+  if n == 0 then
+    if battle.player then n = n + 1; out[n] = battle.player end
+    if battle.enemy then n = n + 1; out[n] = battle.enemy end
+  end
+  local i = 0
+  return function()
+    i = i + 1
+    if out[i] then return i, out[i] end
+  end
+end
+
+function BattleState:activeBattlers() return activeBattlers(self) end
+
 function BattleState:syncSides()
   self.sides[1].battlers[1] = self.player
   self.sides[2].battlers[1] = self.enemy
+  if self.player then self.player.position = BattleState.POS.PLAYER_LEFT end
+  if self.enemy then self.enemy.position = BattleState.POS.OPPONENT_LEFT end
+  if not self:isDouble() then
+    -- a single battle has no right-hand pair, and leaving a stale one there
+    -- would make activeBattlers walk a battler that is not on the field
+    self.sides[1].battlers[2] = nil
+    self.sides[2].battlers[2] = nil
+  else
+    local pr = self.sides[1].battlers[2]
+    local orr = self.sides[2].battlers[2]
+    if pr then pr.position = BattleState.POS.PLAYER_RIGHT end
+    if orr then orr.position = BattleState.POS.OPPONENT_RIGHT end
+  end
+end
+
+-- IS THIS SIDE STILL ARRIVING?
+--
+-- Reported from play: "when the enemy trainer sprites come out their second
+-- pokemon comes out with them already."  It did.  The right-hand pair are
+-- drawn plainly, on the platform offsets sBattlerCoords gives them, and that
+-- pass carries none of the intro state the left flanks carry -- so while the
+-- trainer's own picture was still on screen, before the slide, before the
+-- ball and before the send-out, the Pokemon standing behind them was already
+-- there.
+--
+-- ONE TEST IS ENOUGH BECAUSE A SIDE ARRIVES TOGETHER.  Both of a trainer's
+-- Pokemon come out on the same command; whatever is hiding the left flank
+-- during the intro is hiding its partner for the same reason.  So this asks
+-- about the SIDE rather than about the slot, and the right-hand pair simply
+-- wait for it.
+function BattleState:sideArriving(isPlayer, slide)
+  -- the whole field is still sliding in, or the party balls are still up
+  if (tonumber(slide) or 0) ~= 0 then return true end
+  if self.introBalls then return true end
+  if isPlayer then
+    -- the player's back pic is up until "Go!", and `sendingOut` covers the
+    -- gap between the throw and the Pokemon appearing
+    if self.showPlayerBack or self.sendingOut then return true end
+    return self:growInScale(self.player) ~= nil
+  end
+  if self.showEnemyTrainer or self.enemySendingOut or self.enemyHidden then
+    return true
+  end
+  -- ...and while the foe's own lead is still growing out of its ball
+  return self.enemy ~= nil and self:growInScale(self.enemy) ~= nil
 end
 
 function BattleState:sideOf(battler)
@@ -2073,7 +2891,11 @@ function BattleState:enter()
     -- sparkle: a wild mon is already standing there, so it never gets the
     -- send-out poof the sparkle normally follows.  This is the one players
     -- actually notice, and it was missing entirely.
-    self:shinyAnimAppend(self.enemy, true)
+    if not self:shinyAnimAppend(self.enemy, true) then
+      -- ...and Hoenn's own, which is a different animation entirely
+      self.queue[#self.queue + 1] =
+        { fn = function() self:gen3ShinyBurst(self.enemy) end }
+    end
     queueEnemyCry()
   end
   -- PrintBeginningBattleText .trainerBattle (common_text.asm): a trainer
@@ -2124,7 +2946,7 @@ function BattleState:enter()
       self.enemySendingOut = true
       self:slidePic("foe")
     end)
-    self:say(Strings("%s sent\nout %s!", self.trainer.name, self.enemy.name))
+    self:say(Strings("%s sent\nout %s!", self:trainerLabel_(), self.enemy.name))
     self:act(function()
       -- EnemySendOutFirstMon (core.asm:1421-1434): after the text the
       -- pic grows out of the ball (AnimateSendingOutMon), then the cry
@@ -2160,12 +2982,24 @@ function BattleState:enter()
     -- walks off the LEFT edge (SlideTrainerPicOffScreen, hlcoord 1,5,
     -- a = 9 tiles, one tile every 2 frames) BEFORE SendOutMon prints
     -- "Go! X!" -- Red does not simply vanish under the message (#317)
-    self:act(function() self:slidePic("back", 0, -72, 4) end)
-    table.insert(self.queue, { wait = 18 })
+    --
+    -- ...AND ON HOENN HE STAYS TO THROW.  Reported from play: the ball "is
+    -- supposed to be in the players hand".  Emerald's trainer is still on
+    -- screen for "Go! X!" and leaves WHILE the ball is in the air, so on a
+    -- dataset that has the send-out throw the walk-off is handed to
+    -- gen3SendOut and happens on the throw's own frame instead of eighteen
+    -- frames before the text.
+    local throws = self:gen3ThrowsSendOut()
+    if not throws then
+      self:act(function() self:slidePic("back", 0, -72, 4) end)
+      table.insert(self.queue, { wait = 18 })
+    end
     self:act(function()
-      self.showPlayerBack = false
+      if not throws then
+        self.showPlayerBack = false
+        self:slidePic("back")
+      end
       self.sendingOut = true
-      self:slidePic("back")
     end)
     self:say(self:sendOutText(self.player.name))
     -- then the POOF plays and the mon appears with its cry
@@ -2185,6 +3019,18 @@ function BattleState:enter()
   self.phase = "messages"
   self.afterQueue = "menu"
   self:syncSides()
+  -- THE FIRST SEND-OUT COUNTS TOO.  ABILITYEFFECT_ON_SWITCHIN runs the
+  -- moment a Pokemon is on the field, so a MIGHTYENA leading a trainer
+  -- battle drops the player's attack before either side has moved and a
+  -- GROUDON's sun is up from turn one.  Appended rather than actNext'd:
+  -- the intro is built linearly before the queue starts running.  Enemy
+  -- first, then the player, which is the order they were sent out in.
+  if not (self.safari or self.demo) then
+    table.insert(self.queue, { fn = function()
+      self:abilitySwitchIn(self.enemy)
+      self:abilitySwitchIn(self.player)
+    end })
+  end
   Runtime.emit("battle.started", {
     battle = self, kind = self:battleKind(),
     trainerId = self.trainer and self.trainer.id,
@@ -2251,7 +3097,7 @@ end
 --     land, and from there the replay was watching a different battle.
 --     LinkBattle.newSpectator calls this at the head of every turn.
 function BattleState:clearTurnFlinches()
-  for _, b in ipairs({ self.player, self.enemy }) do
+  for _, b in activeBattlers(self) do
     if b and not (b.mustRecharge or b.rageMove) then b.flinched = false end
   end
 end
@@ -2261,6 +3107,9 @@ end
 -- skip the menu -- the player can still item/switch (and must press
 -- FIGHT to continue a trapping sequence).
 function BattleState:menuLockedAction(battler)
+  -- a slot with nobody in it -- a double battle between a faint and the
+  -- end-of-turn replacement -- is not locked into anything
+  if not battler then return nil end
   if battler.mustRecharge then return { special = "recharge" } end
   if battler.charging then return battler.charging end
   if battler.thrashTurns and battler.thrashTurns > 0 then return battler.thrashMove end
@@ -2271,6 +3120,7 @@ end
 -- After FIGHT: skip MoveSelectionMenu (core.asm:320-329).  Own
 -- trapping/Bide continues; foe trapping forces CANNOT_MOVE ($ff).
 function BattleState:fightLockedAction(battler)
+  if not battler then return nil end
   if battler.trappingTurns and battler.trappingTurns > 0 then
     return { special = "trapping" }
   end
@@ -2289,7 +3139,31 @@ function BattleState:fightLockedAction(battler)
   if bound then
     return { special = "bound" }
   end
+  -- ENCORE: the same move again, whether the Pokemon wants to or not.  Only
+  -- if it still has the move -- an ENCOREd move that ran out of PP frees it.
+  if battler.encoreTurns and battler.encoreMove then
+    for _, m in ipairs(battler.curMoves or battler.mon.moves or {}) do
+      if m.id == battler.encoreMove and (m.pp or 0) > 0 then
+        return { move = m }
+      end
+    end
+    battler.encoreTurns, battler.encoreMove = nil, nil
+  end
   return nil
+end
+
+-- TAUNT: a status move is not selectable while it lasts.  Asked by the move
+-- menu rather than enforced after the fact, so the player is never told to
+-- pick again for a move the game was never going to allow.
+function BattleState:tauntBlocks(battler, move)
+  if not (battler and battler.tauntTurns and move) then return false end
+  return (move.power or 0) == 0
+end
+
+-- TORMENT: not the same move twice in a row.
+function BattleState:tormentBlocks(battler, move)
+  if not (battler and battler.tormented and move) then return false end
+  return battler.lastMove ~= nil and move.id == battler.lastMove
 end
 
 -- Full lock for AI / callers that need any forced action.
@@ -2297,28 +3171,49 @@ function BattleState:lockedAction(battler)
   return self:menuLockedAction(battler) or self:fightLockedAction(battler)
 end
 
-function BattleState:playerHasPP()
-  for i, mv in ipairs(self.player.curMoves) do
-    if mv.pp > 0 and self.player.disabledSlot ~= i then return true end
+-- THE POKEMON THE MENU IS STANDING IN FRONT OF.
+--
+-- Reported from play: "after selecting an attack it doesnt have my select an
+-- attack from my second pokemon to use for the second attack, it asks me to
+-- use one of my first pokemons moves again."  That is exactly what it did.
+-- The turn loop DID ask twice -- the second pass was there -- but every one
+-- of these read `self.player`, so the right-hand slot was shown the LEFT
+-- one's four moves, its PP, and its DISABLE, and the action it produced
+-- carried the left Pokemon's move object.  It looked like being asked the
+-- same question twice because the answer sheet was the same.
+--
+-- `choosingBattler` has known which slot is being asked since doubles
+-- landed; nothing downstream of the menu was reading it.
+function BattleState:menuBattler()
+  return self:choosingBattler() or self.player
+end
+
+function BattleState:playerHasPP(who)
+  who = who or self:menuBattler()
+  if not (who and who.curMoves) then return false end
+  for i, mv in ipairs(who.curMoves) do
+    if mv.pp > 0 and who.disabledSlot ~= i then return true end
   end
   return false
 end
 
-function BattleState:swapMoves(i, j)
+function BattleState:swapMoves(i, j, who)
   if i == j then return end
-  local moves = self.player.curMoves
+  who = who or self:menuBattler()
+  if not who then return end
+  local moves = who.curMoves
   local a, b = moves[i], moves[j]
   if not (a and b) then return end
   moves[i], moves[j] = b, a
-  local stored = self.player.mon and self.player.mon.moves
+  local stored = who.mon and who.mon.moves
   if stored and stored ~= moves and stored[i] and stored[j] then
     stored[i], stored[j] = stored[j], stored[i]
   end
-  local disabled = self.player.disabledSlot
+  local disabled = who.disabledSlot
   if disabled == i then
-    self.player.disabledSlot = j
+    who.disabledSlot = j
   elseif disabled == j then
-    self.player.disabledSlot = i
+    who.disabledSlot = i
   end
   require("src.core.Sound").play(self.data, "Swap")
 end
@@ -2345,15 +3240,32 @@ end
 function BattleState:battlerPic(battler)
   local still = self:picImage(battler.sprite)
   local anim = battler and battler.picAnim
-  -- the pic only reaches here once it is really on screen -- the silhouette
-  -- slide and the "wants to fight!" box come first -- and that is where the
-  -- animation belongs, so the first draw is what starts the clock.
-  if anim then anim:start() end
+  -- THE ANIMATION BELONGS TO THE MOMENT IT LANDS, NOT THE MOMENT IT APPEARS.
+  --
+  -- Reported from play: "pokemon also play their sprite animations before
+  -- ariving on their tile".  The first DRAW was starting the clock, and the
+  -- first draw is 72 frames before the Pokemon is anywhere near its slot:
+  -- SlidePlayerAndEnemySilhouettesOnScreen slides both sides in over
+  -- BATTLE_SLIDE_IN_FRAMES, and the pic is drawn -- offset -- for every one
+  -- of them.  So Emerald's intro squash and Crystal's front-pic frames both
+  -- played out while the sprite was still travelling, and were over by the
+  -- time it arrived.  The cartridge launches the front animation from the
+  -- send-out, after the sprite is in place.
+  local sliding = (self.introSlide or 0) > 0
+  if anim and not sliding then anim:start() end
+  if battler and battler.monAnim and not sliding then
+    battler.monAnim:start()
+  end
   local frame = anim and anim:frame() or 0
   if frame <= 0 then return still end
   local meta = imageMeta[battler.sprite]
   local record = anim.anim
-  local swapped = getImage(record.sheet, meta and meta.pal,
+  -- ...AND A SHINY ANIMATES IN ITS OWN COLOURS.  The still pic and the strip
+  -- are two separate decodes on this side, so a battler whose still is the
+  -- shiny picture has to be handed the shiny STRIP as well or it drops back
+  -- to ordinary colours for exactly the frames it is moving.
+  local sheet = require("src.pokemon.PicAnim").sheetFor(record, battler.mon)
+  local swapped = getImage(sheet, meta and meta.pal,
                            meta and meta.trueColor,
                            { index = frame, width = record.width })
   if not swapped then return still end
@@ -2434,15 +3346,16 @@ function BattleState:update(dt)
   if self._stadiumReportTicks == 60 then self:reportStadiumBattle("mid") end
   -- Crystal pic animations run off the wall clock like every other battle
   -- pic effect; a Gold/Silver battler has no picAnim and this is a no-op.
-  for _, b in ipairs({ self.player, self.enemy }) do
+  for _, b in activeBattlers(self) do
     if b and b.picAnim then b.picAnim:update(dt) end
+    if b and b.monAnim then b.monAnim:update(dt) end
   end
   local input = self.game.input
 
   -- safety net: HP/status changed outside a queued drain (level-up heals,
   -- field effects, bag cures) snaps once the queue is idle
   if self.phase == "menu" then
-    for _, b in ipairs({ self.player, self.enemy }) do
+    for _, b in activeBattlers(self) do
       if b then
         if b.shownHP then b.shownHP = b.mon.hp end
         b.drainFloor = nil
@@ -2545,7 +3458,7 @@ function BattleState:update(dt)
     end
     self.menuIndex = row * 2 + col + 1
     if input:wasPressed("a") then
-      local choice = ({ "fight", "pkmn", "item", "run" })[self.menuIndex]
+      local choice = self:menuActions()[self.menuIndex]
       -- BattleMenu_Pack `.contest` (core.asm:4990): `ld a, PARK_BALL /
       -- ld [wCurItem], a / call DoItemEffect`.  No pack, no submenu -- the
       -- third slot IS the ball, so the item action becomes the throw.
@@ -2569,14 +3482,15 @@ function BattleState:update(dt)
           self:resolveTurn(fightLock)
           return
         end
-        if not self:playerHasPP() then
+        local who = self:menuBattler()
+        if not self:playerHasPP(who) then
           -- _NoMovesLeftText, then Struggle engages
-          self:say(Strings("%s has no\nmoves left!", self.player.name))
-          self:resolveTurn({ id = "STRUGGLE", pp = 1, struggle = true })
+          self:say(Strings("%s has no\nmoves left!", who.name))
+          self:chooseAction({ id = "STRUGGLE", pp = 1, struggle = true })
           return
         end
         self.phase = "moveSelect"
-        self.moveIndex = math.min(self.moveIndex, #self.player.curMoves)
+        self.moveIndex = math.min(self.moveIndex, #who.curMoves)
         self.moveSwapIndex = nil
       elseif choice == "run" then
         self:tryRun()
@@ -2590,12 +3504,12 @@ function BattleState:update(dt)
   end
 
   if self.phase == "moveSelect" then
-    local moves = self.player.curMoves
-    -- The widescreen layout lays the four slots out as a 2x2 grid, so all
-    -- four directions navigate it; nil means no direction was pressed and
-    -- A / B / SELECT below behave the same in either layout.
-    local grid = self:wideLayout()
-                 and WideBattle.navigate(self.moveIndex, #moves, input)
+    local chooser = self:menuBattler()
+    local moves = chooser.curMoves
+    -- The wide layouts lay the four slots out as a 2x2 grid, so all four
+    -- directions navigate it; nil means no direction was pressed and
+    -- A / B / SELECT below behave the same in every layout.
+    local grid = self:moveGridNavigate(self.moveIndex, #moves, input)
     if grid then
       self.moveIndex = grid
     elseif input:wasPressed("up") then
@@ -2619,17 +3533,71 @@ function BattleState:update(dt)
         return
       end
       local mv = moves[self.moveIndex]
-      if self.player.disabledSlot == self.moveIndex then
+      local mvDef = mv and self.data.moves[mv.id]
+      if chooser.disabledSlot == self.moveIndex then
         self:say(self:romText("_MoveDisabledText", "The move is\ndisabled!"))
+        self.phase = "messages"
+        self.afterQueue = "menu"
+      -- TAUNT and TORMENT refuse the move at SELECTION rather than after the
+      -- fact, the way DISABLE already does, so the player is never told to
+      -- pick again for something the game was never going to allow.
+      elseif self:tauntBlocks(chooser, mvDef) then
+        self:say(Strings("%s can't use\n%s after the\ntaunt!",
+                         chooser.name, mvDef and mvDef.name or mv.id))
+        self.phase = "messages"
+        self.afterQueue = "menu"
+      elseif self:tormentBlocks(chooser, mvDef) then
+        self:say(Strings("%s can't use the\nsame move twice in\na row due to the\nTORMENT!",
+                         chooser.name))
         self.phase = "messages"
         self.afterQueue = "menu"
       elseif mv.pp <= 0 then
         self:say(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
         self.phase = "messages"
         self.afterQueue = "menu"
+      elseif Targeting.needsChoice(self, self:choosingBattler(), mvDef) then
+        -- WHICH OF THE TWO, when the move takes one and there are two.
+        --
+        -- Emerald's selector cycles over the legal slots and names the
+        -- candidate; nothing else in the menu changes.  A single battle
+        -- never gets here, because needsChoice answers false whenever there
+        -- is only one thing to aim at -- and on the Game Boy cartridges the
+        -- moves carry no target byte at all, so it answers false for every
+        -- move in the game.
+        self.pendingMove = mv
+        self.targetChoices = Targeting.choices(self, self:menuBattler())
+        self.targetIndex = 1
+        self.phase = "targetSelect"
       else
-        self:resolveTurn(mv)
+        self:chooseAction(mv)
       end
+    end
+    return
+  end
+
+  -- ...and the picker itself.  LEFT and RIGHT walk the candidates, A takes
+  -- one, B goes back to the move list.
+  if self.phase == "targetSelect" then
+    local list = self.targetChoices or {}
+    if #list <= 1 then
+      self.phase = "moveSelect"
+      return
+    end
+    if input:wasPressed("left") or input:wasPressed("up") then
+      self.targetIndex = self.targetIndex > 1 and self.targetIndex - 1 or #list
+    elseif input:wasPressed("right") or input:wasPressed("down") then
+      self.targetIndex = self.targetIndex < #list and self.targetIndex + 1 or 1
+    elseif input:wasPressed("b") then
+      self.pendingMove, self.targetChoices = nil, nil
+      self.phase = "moveSelect"
+    elseif input:wasPressed("a") then
+      local mv = self.pendingMove
+      local pick = list[self.targetIndex]
+      self.pendingMove, self.targetChoices = nil, nil
+      self.chosenTargets = self.chosenTargets or {}
+      local who = self:menuBattler()
+      if who and who.position then self.chosenTargets[who.position] = pick end
+      self:chooseAction(mv)
     end
     return
   end
@@ -2640,10 +3608,9 @@ function BattleState:update(dt)
   -- (core.asm:2553-2557), so there is no backing out with B.
   if self.phase == "mimicSelect" then
     local moves = self.mimicMoves
-    -- the copy menu shares the widescreen move grid, so it navigates the
+    -- the copy menu shares whichever move grid is up, so it navigates the
     -- same way there (the classic layout keeps the vertical list)
-    local grid = self:wideLayout()
-                 and WideBattle.navigate(self.mimicIndex, #moves, input)
+    local grid = self:moveGridNavigate(self.mimicIndex, #moves, input)
     if grid then
       self.mimicIndex = grid
     elseif input:wasPressed("up") then
@@ -2777,7 +3744,49 @@ end
 -- PlaceUnfilledArrowMenuCursor leaves the hollow '▷' on the row for the
 -- handful of frames UseBagItem takes to reach ItemUseBall's screen
 -- restore (item_effects.asm:145) and the throw text.
+-- ...AND ON HOENN IT IS THE GEN 3 BAG.
+--
+-- Reported from play: "the bag he opens in the tutorial is the gen1 bag".  It
+-- was: this pushes the engine's generic ListMenu, which is the Game Boy's
+-- list, and Emerald's tutorial opens the real BAG screen -- pockets, the
+-- picture, the description panel -- with a scripted one-ball list in it.  The
+-- SHAPE is the cartridge's either way and is not changed here: the list is
+-- still fixed, no button is ever read, the cursor still goes hollow on the
+-- eighty-first frame and the throw still follows.  Only the screen it is
+-- drawn on differs, which is the whole of the report.
+function BattleState:gen3TutorialBag()
+  if not require("src.core.GameVersion").isGen3() then return false end
+  local ok, Gen3BagMenu = pcall(require, "src.ui.Gen3BagMenu")
+  if not (ok and type(Gen3BagMenu) == "table"
+          and type(Gen3BagMenu.new) == "function") then
+    return false
+  end
+  local game = self.game
+  self.phase = "messages"
+  self.afterQueue = "menu"
+  self:ui(function()
+    local bag
+    bag = Gen3BagMenu.new(game, {
+      pocket = "BALL",
+      noInput = true,
+      rows = { { id = "POKE_BALL", label = Strings("POKé BALL"),
+                 qty = tonumber((self.demoBallCount or "x1"):match("%d+")) } },
+      script = function(b)
+        b.scriptTimer = (b.scriptTimer or 0) + 1
+        if b.scriptTimer > 88 then
+          b.script = nil
+          game.stack:pop()
+          self:oldManThrow()
+        end
+      end,
+    })
+    return bag
+  end)
+  return true
+end
+
 function BattleState:openOldManBag()
+  if self:gen3TutorialBag() then return end
   local ListMenu = require("src.ui.ListMenu")
   local game = self.game
   self.phase = "messages"
@@ -2884,16 +3893,22 @@ end
 -- sun and rain, and `50 percent + 1` is 128 rather than the 127 a percentage
 -- would round to.
 function BattleState:accuracyRoll(move, user, target, accuracyRaw)
+  -- LOCK-ON / MIND READER: the next move cannot miss, and the aim is spent
+  -- whether it was needed or not.
+  if user.lockedOn == target then
+    user.lockedOn = nil
+    return true
+  end
   if Runtime.wantsHook("battle.accuracy") then
     return Runtime.call("battle.accuracy", function(c)
       return Damage.accuracyRoll(c.ruleset, c.move, c.user, c.target, c.rng,
-                                 c.accuracyRaw, c.data)
+                                 c.accuracyRaw, c.data, c.weather)
     end, { battle = self, ruleset = self.ruleset, move = move,
            user = user, target = target, rng = self.rng, data = self.data,
-           accuracyRaw = accuracyRaw })
+           accuracyRaw = accuracyRaw, weather = Weather.current(self) })
   end
   return Damage.accuracyRoll(self.ruleset, move, user, target, self.rng,
-                             accuracyRaw, self.data)
+                             accuracyRaw, self.data, Weather.current(self))
 end
 
 -- Damage.compute, hooked as battle.damage; the ctx table is only built
@@ -2908,9 +3923,46 @@ function BattleState:computeDamage(user, target, move, opts)
   -- DoWeatherModifiers reads wBattleWeather inside the damage calc; the port
   -- keeps it on the field, so it rides in on opts rather than widening
   -- Damage.compute's signature.  nil on Gen 1 and whenever no weather is up.
-  if self.field and self.field.weather then
+  -- Weather.current rather than field.weather: CLOUD NINE and AIR LOCK do
+  -- not clear the sky, they stop it counting, and the damage calc is the
+  -- biggest thing that counts it
+  local sky = Weather.current(self)
+  if sky then
     opts = opts or {}
-    if opts.weather == nil then opts.weather = self.field.weather end
+    if opts.weather == nil then opts.weather = sky end
+  end
+  -- MUD SPORT and WATER SPORT ride in the same way, and for the same reason:
+  -- they live on the field and Damage.compute is handed battlers.
+  if self.field and (self.field.mudSport or self.field.waterSport) then
+    opts = opts or {}
+    if opts.sports == nil then
+      opts.sports = { self.field.mudSport, self.field.waterSport }
+    end
+  end
+  -- HOW MANY ARE STILL STANDING ON THE OTHER SIDE, which is the condition
+  -- BOTH of the cartridge's doubles damage rules hang on.
+  --
+  -- CountAliveMonsInBattle(BATTLE_ALIVE_DEF_SIDE) == 2 gates the spread
+  -- halving (0806_9BB2) and the weaker screens (0806_9B6C) alike -- with one
+  -- foe left, a spread move does FULL damage and a screen halves normally.
+  -- Both ride in on opts, the way the weather and the sports already do,
+  -- rather than widening Damage.compute's signature.
+  if self:isDouble() and target then
+    opts = opts or {}
+    local alive = 0
+    for flank = 1, 2 do
+      local b = self.sides[target.isPlayer and 1 or 2].battlers[flank]
+      if b and b.mon and (b.mon.hp or 0) > 0 then alive = alive + 1 end
+    end
+    if alive == 2 then
+      if opts.doublesScreens == nil then opts.doublesScreens = true end
+      -- ...and the spread half, but ONLY for MOVE_TARGET_BOTH.  The compare
+      -- at 0806_9BA4 is `cmp #8`, not a mask: EARTHQUAKE and EXPLOSION are
+      -- $20 and are not reduced at all on this cartridge.
+      if opts.spread == nil and tonumber(move and move.target) == 0x08 then
+        opts.spread = true
+      end
+    end
   end
   if Runtime.wantsHook("battle.damage") then
     return Runtime.call("battle.damage", function(c)
@@ -2956,29 +4008,52 @@ end
 
 -- the whole choke point is hooked (battle.enemy_action), so a mod can
 -- rewrite any trainer's choice without registering brains
-function BattleState:enemyAction()
+--
+-- WHICH SLOT IS ASKED.  In a single battle there is one foe and this took no
+-- argument at all; `actionFor` passes the right-hand opponent here in a
+-- double and the argument was being DROPPED, so both enemy slots ran the
+-- action chosen for the left one -- two Pokemon using the same move against
+-- the same target, chosen by a scorer that had only looked at one of them.
+--
+-- And the left slot can be EMPTY: a foe that faints in a double battle is
+-- lifted off the field (doubleFaint) and only replaced at the end of the
+-- turn, so with the bench exhausted `self.enemy` is nil while the other slot
+-- is still fighting.  That is the crash reported from play --
+-- "menuLockedAction: attempt to index local 'battler' (a nil value)" after
+-- killing their first Pokemon.  A slot with nobody in it has no action.
+function BattleState:enemyAction(battler)
+  battler = battler or self.enemy
+  if not battler then return nil end
   if Runtime.wantsHook("battle.enemy_action") then
-    return Runtime.call("battle.enemy_action", function(battle)
-      return battle:vanillaEnemyAction()
-    end, self)
+    return Runtime.call("battle.enemy_action", function(battle, who)
+      return battle:vanillaEnemyAction(who)
+    end, self, battler)
   end
-  return self:vanillaEnemyAction()
+  return self:vanillaEnemyAction(battler)
 end
 
-function BattleState:vanillaEnemyAction()
-  local locked = self:lockedAction(self.enemy)
+function BattleState:vanillaEnemyAction(battler)
+  battler = battler or self.enemy
+  if not battler then return nil end
+  local locked = self:lockedAction(battler)
   if locked then return locked end
   -- an ai_classes brain (or one on the trainer record) supersedes the
   -- class action and move scoring entirely
   if self.kind == "trainer" and self.trainer then
     local class = TrainerAI.classFor(self)
     local brain = self.trainer.brain or (class and class.brain)
-    if brain then return brain(self) end
+    if brain then return brain(self, battler) end
   end
-  -- class AI may spend the turn on an item or a switch
-  local classAct = TrainerAI.classAction(self)
-  if classAct then return classAct end
-  return TrainerAI.chooseMove(self.enemy, self.rng, self)
+  -- CLASS AI MAY SPEND THE TURN ON AN ITEM OR A SWITCH -- but a trainer has
+  -- one bag and one bench, not one per slot, so it is asked once, for the
+  -- slot the whole of TrainerAI already reads (`battle.enemy`).  Letting the
+  -- right-hand slot ask too would have a trainer drink two SUPER POTIONs on
+  -- the same Pokemon in the same turn.
+  if battler == self.enemy then
+    local classAct = TrainerAI.classAction(self)
+    if classAct then return classAct end
+  end
+  return TrainerAI.chooseMove(battler, self.rng, self)
 end
 
 local function orderMove(action, data)
@@ -2986,25 +4061,171 @@ local function orderMove(action, data)
   return nil
 end
 
+-- TWO CHOICES BEFORE THE TURN RUNS.
+--
+-- A single battle asks the player once and resolves.  A double asks twice --
+-- the left slot then the right -- and only then does anybody move, which is
+-- why Emerald lets B on the second choice take you back to the first.
+--
+-- Everything upstream of here is unchanged: the menu still chooses for
+-- `self:choosingBattler()`, and in a single battle that is `self.player` and
+-- this is one call straight through to resolveTurn.
+-- WHICH OF THE PLAYER'S TWO SLOTS THE MENU IS STANDING IN FRONT OF.
+--
+-- Not simply "the left one first": a left slot whose Pokemon has fainted is
+-- EMPTY until the end of the turn fills it, and the menu still has to be
+-- asked -- for the partner.  Answering PLAYER_LEFT there asked the question
+-- for a Pokemon that was not on the field and then, because the answer was
+-- filed under the left slot, asked again for the right one and threw the
+-- first answer away.
+function BattleState:choosingSlotNow()
+  local pos = self.choosingSlot
+  if pos and self:battlerAt(pos) then return pos end
+  for _, p in ipairs({ BattleState.POS.PLAYER_LEFT,
+                       BattleState.POS.PLAYER_RIGHT }) do
+    if self:battlerAt(p) then return p end
+  end
+  return BattleState.POS.PLAYER_LEFT
+end
+
+function BattleState:chooseAction(action)
+  if not self:isDouble() then return self:resolveTurn(action) end
+  local pos = self:choosingSlotNow()
+  self.pendingActions = self.pendingActions or {}
+  self.pendingActions[pos] = action
+  if pos ~= BattleState.POS.PLAYER_RIGHT
+     and self:battlerAt(BattleState.POS.PLAYER_RIGHT) then
+    -- ask the other one before anybody moves
+    self.choosingSlot = BattleState.POS.PLAYER_RIGHT
+    self.phase = "menu"
+    self.moveIndex = 1
+    return
+  end
+  self.choosingSlot = nil
+  local first = self.pendingActions[BattleState.POS.PLAYER_LEFT]
+  self:resolveTurn(first)
+end
+
+-- WHICH SLOT THE MENU IS CHOOSING FOR.  `self.player` in a single battle,
+-- which is every call this had before doubles.
+function BattleState:choosingBattler()
+  if not self:isDouble() then return self.player end
+  return self:battlerAt(self:choosingSlotNow()) or self.player
+end
+
 function BattleState:resolveTurn(playerAction)
-  local enemyAction = self:enemyAction()
+  -- nil in a double battle whose left-hand foe has fainted with nothing on
+  -- the bench to replace it; `actionFor` asks each surviving slot for its own
+  local enemyAction = self:enemyAction(self.enemy)
   self.turnCount = (self.turnCount or 0) + 1
+  -- TURN-SCOPED FLAGS, cleared before anybody moves.  REVENGE reads
+  -- hurtThisTurn, FAKE OUT reads turnsOut, and PROTECT and ENDURE only stand
+  -- for the turn they were used on.
+  for _, b in activeBattlers(self) do
+    if b then
+      b.hurtThisTurn = nil
+      b.specialDamageTaken, b.physicalDamageTaken = nil, nil
+      b.protecting, b.enduring = nil, nil
+      b.turnsOut = (b.turnsOut or 0) + 1
+    end
+  end
   Runtime.emit("battle.turn_started", {
     battle = self, turn = self.turnCount,
     playerAction = playerAction, enemyAction = enemyAction,
   })
   local pMove = orderMove(playerAction, self.data)
   local eMove = orderMove(enemyAction, self.data)
+  -- QUICK CLAW, before the speed comparison and before priority is even
+  -- read: AI_TryToFaint's caller rolls Random() % 100 against the item's own
+  -- parameter for each side and a winner simply goes first.  Both sides
+  -- rolling it is not a draw -- the cartridge checks the player's first, so
+  -- a double claw is the player's turn.
+  local pClaw = self:quickClawWins(self.player)
+  local eClaw = not pClaw and self:quickClawWins(self.enemy)
   local pFirst
-  if Runtime.wantsHook("battle.turn_order") then
+  -- EITHER LEFT SLOT CAN BE EMPTY IN A DOUBLE.  A fainted battler is lifted
+  -- off the field at once and only replaced when the turn ends, so between
+  -- those two moments `self.player` or `self.enemy` is nil while the other
+  -- flank fights on.  The pairwise comparison below is the SINGLE battle's
+  -- ordering and has nothing to compare; the double branch sorts all four
+  -- entries with the same comparator a few lines down and does not read it.
+  if not (self.player and self.enemy) then
+    pFirst = true
+  elseif pClaw or eClaw then
+    pFirst = pClaw == true
+  elseif Runtime.wantsHook("battle.turn_order") then
     pFirst = Runtime.call("battle.turn_order", function(a, aMove, b, bMove, c)
-      return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie, c.data)
-    end, self.player, pMove, self.enemy, eMove, { rng = self.rng, data = self.data })
+      return TurnOrder.firstMover(a, aMove, b, bMove, c.rng, c.invertTie,
+                                  c.battle, c.data)
+    end, self.player, pMove, self.enemy, eMove,
+       { rng = self.rng, battle = self, data = self.data })
   else
-    pFirst = TurnOrder.firstMover(self.player, pMove, self.enemy, eMove, self.rng, nil, self.data)
+    -- the battle goes along so SWIFT SWIM and CHLOROPHYLL can see the weather,
+    -- and the dataset so Gen II's own QUICK CLAW can be looked up
+    pFirst = TurnOrder.firstMover(self.player, pMove, self.enemy, eMove,
+                                  self.rng, nil, self, self.data)
+  end
+  if pClaw or eClaw then
+    local holder = pClaw and self.player or self.enemy
+    self:say(Strings("%s's QUICK CLAW\nactivated!", displayName(holder)))
   end
   local order
-  if pFirst then
+  if self:isDouble() then
+    -- FOUR ENTRIES, SORTED WITH THE SAME COMPARATOR.
+    --
+    -- SetActionsAndBattlersTurnOrder builds the list in position order and
+    -- bubbles it with GetWhoStrikesFirst, which is firstMover -- so this is
+    -- the same rule applied to four rather than a second rule for doubles.
+    -- Built in position order 0,1,2,3 because that is the order the
+    -- cartridge fills its own array in, and a bubble is stable, so
+    -- equal-speed entries fall out the same way it does.
+    local entries = {}
+    for pos = 0, 3 do
+      local b = self:battlerAt(pos)
+      if b and b.mon and (b.mon.hp or 0) > 0 then
+        local action = self:actionFor(b, playerAction, enemyAction)
+        entries[#entries + 1] = { battler = b, move = orderMove(action, self.data),
+                                  action = action }
+      end
+    end
+    TurnOrder.order(entries, self.rng, self)
+    -- and a QUICK CLAW winner is simply hoisted to the front
+    if pClaw or eClaw then
+      local holder = pClaw and self.player or self.enemy
+      for i, e in ipairs(entries) do
+        if e.battler == holder then
+          table.remove(entries, i)
+          table.insert(entries, 1, e)
+          break
+        end
+      end
+    end
+    -- ...AND EVERY SWITCH HAPPENS BEFORE EVERY MOVE.
+    --
+    -- SetActionsAndBattlersTurnOrder runs the switch actions out of the array
+    -- first and only then sorts what is left, so a Pokemon that is being
+    -- withdrawn is gone before anybody swings at it.  A stable partition
+    -- keeps the speed order the sort just produced within each group.
+    local switches, moves = {}, {}
+    for _, e in ipairs(entries) do
+      local sp = e.action and e.action.special
+      if sp == "playerSwitch" or sp == "aiSwitch" then
+        switches[#switches + 1] = e
+      else
+        moves[#moves + 1] = e
+      end
+    end
+    if #switches > 0 then
+      entries = switches
+      for _, e in ipairs(moves) do entries[#entries + 1] = e end
+    end
+    order = {}
+    for _, e in ipairs(entries) do
+      -- the target is resolved as the entry runs, not now: it may have
+      -- fainted in between
+      order[#order + 1] = { e.battler, nil, e.action }
+    end
+  elseif pFirst then
     order = { { self.player, self.enemy, playerAction },
               { self.enemy, self.player, enemyAction } }
   else
@@ -3017,45 +4238,606 @@ function BattleState:resolveTurn(playerAction)
 
   for _, entry in ipairs(order) do
     self:act(function()
-      self:executeAction(entry[1], entry[2], entry[3])
+      -- WHO IT HITS IS DECIDED HERE, not when the turn was sorted.
+      --
+      -- Between the sort and this entry running, the target can faint --
+      -- your partner moved first, or its own ally hit it.  The cartridge
+      -- re-points at whoever is still standing rather than wasting the turn
+      -- (MOVEEND / GetBattlerAtPosition).  In a single battle `entry[2]` is
+      -- already the one foe and this changes nothing.
+      local target = entry[2]
+      if target == nil then
+        -- what the player aimed at, if they were asked; otherwise whoever
+        -- is standing on the other side
+        local chosen = (self.chosenTargets or {})[entry[1].position]
+        target = Targeting.redirect(self, entry[1], nil, chosen)[1]
+                 or self:defaultTargetFor(entry[1])
+      end
+      self:executeAction(entry[1], target, entry[3])
     end)
   end
-  self:act(function() self:endOfTurn() end)
+  self:act(function()
+    -- the collected choices belong to the turn that just ran, not the next
+    self.pendingActions, self.chosenTargets = nil, nil
+    self:endOfTurn()
+  end)
+end
+
+-- WHICH ACTION BELONGS TO WHICH SLOT.
+--
+-- The turn loop collects one action for the player and asks the AI for one
+-- for the enemy, and in a single battle that is the whole field.  In a
+-- double the two right-hand slots need theirs too: the player's from the
+-- second menu pass, the opponent's from the AI, run once per enemy slot.
+function BattleState:actionFor(battler, playerAction, enemyAction)
+  if battler == self.player then return playerAction end
+  if battler == self.enemy then return enemyAction end
+  if battler.isPlayer then
+    return (self.pendingActions or {})[battler.position] or playerAction
+  end
+  return self:enemyAction(battler)
+end
+
+-- The foe a move goes to when nothing has chosen one: the first still
+-- standing on the other side, which in a single battle is the only one.
+function BattleState:defaultTargetFor(battler)
+  local foes = foesOf(self, battler)
+  return foes[1]
 end
 
 -- A switch action: replace the player's mon, enemy gets a free move.
 function BattleState:resolveSwitch(newMon)
+  -- INGRAIN: a Pokemon that has put its roots down does not leave.  Refused
+  -- here rather than at the menu so a forced switch is refused too.
+  if self.player and self.player.ingrained and self.player.mon.hp > 0 then
+    self:say(Strings("%s anchored\nitself with its\nroots!",
+                     displayName(self.player)))
+    self.phase = "messages"
+    self.afterQueue = "menu"
+    return
+  end
   self.phase = "messages"
   self.afterQueue = "menu"
-  self:act(function()
-    self:restoreMimicked(self.player) -- the battle copy leaves with it
-    local previous = self.player
-    self.player = makeBattler(self.data, newMon, true, self.game.save)
-    -- SendOutMon (core.asm:1761-1762): player's send-out clears the
-    -- foe's USING_TRAPPING_MOVE -- Wrap/Bind/etc. ends on any switch
-    clearTrapping(self.enemy)
-    self:syncSides()
-    Runtime.emit("battle.battler_switched", {
-      battle = self, side = self.sides[1], battler = self.player,
-      previous = previous,
-    })
-    self:markParticipant()
-    self.sendingOut = true
-    self:sayNext(self:sendOutText(self.player.name))
-    self:animNext("POOF_ANIM", false)
-    self:shinyAnim(self.player, false)
-    self:actNext(function()
-      self.sendingOut = false
-      -- SendOutMon (core.asm:1757-1762): poof, then the grow-in
-      self:startGrowIn(self.player)
-      require("src.core.Sound").playCry(self.data, self.player.mon.species)
-      HeldItems.onEntry(self, self.player)
-    end)
-  end)
+  self:act(function() self:switchPlayerInto(BattleState.POS.PLAYER_LEFT,
+                                            newMon) end)
   self:act(function()
     self:executeAction(self.enemy, self.player, self:enemyAction())
   end)
   self:act(function() self:endOfTurn() end)
+end
+
+-- ONE SLOT LEAVES AND ANOTHER ARRIVES IN IT.
+--
+-- Lifted out of resolveSwitch unchanged except that it names a POSITION
+-- rather than `self.player`.  A single battle has one slot to switch and
+-- passes PLAYER_LEFT, which is what `self.player` means -- so nothing about
+-- that path moves.  A double has two, and the menu can be standing in front
+-- of either: choosing POKeMON for the right-hand slot used to withdraw the
+-- LEFT one, because there was no way to say which.
+function BattleState:switchPlayerInto(pos, newMon)
+  local previous = self:battlerAt(pos)
+  self:restoreMimicked(previous)      -- the battle copy leaves with it
+  local incoming = makeBattler(self.data, newMon, true, self.game.save)
+  self:placeBattler(pos, incoming)
+  -- BATON PASS: the stat stages and the volatiles go with the switch, which
+  -- is the whole move.  Nothing else survives a switch, so a pass that was
+  -- never set leaves the incoming Pokemon exactly as makeBattler built it.
+  local pass = previous and previous.batonPass
+  if pass then
+    incoming.stages = pass.stages or incoming.stages
+    incoming.confusedTurns = pass.confusedTurns
+    incoming.substituteHP = pass.substituteHP
+    incoming.leechSeeded = pass.leechSeeded
+    incoming.perishTurns = pass.perishTurns
+    previous.batonPass, previous.wantsSwitch = nil, nil
+  end
+  -- SendOutMon (core.asm:1761-1762): player's send-out clears the
+  -- foe's USING_TRAPPING_MOVE -- Wrap/Bind/etc. ends on any switch.  With
+  -- four on the field that is every foe, not "the" foe.
+  if self:isDouble() then
+    for _, foe in ipairs(foesOf(self, incoming)) do clearTrapping(foe) end
+  else
+    clearTrapping(self.enemy)
+  end
+  self:syncSides()
+  Runtime.emit("battle.battler_switched", {
+    battle = self, side = self.sides[1], battler = incoming,
+    previous = previous,
+  })
+  self:abilitySwitchOut(previous)
+  self:markParticipant()
+  self.sendingOut = true
+  self:sayNext(self:sendOutText(incoming.name))
+  self:animNext("POOF_ANIM", false)
+  self:shinyAnim(incoming, false)
+  self:actNext(function()
+    self.sendingOut = false
+    -- SendOutMon (core.asm:1757-1762): poof, then the grow-in
+    self:startGrowIn(incoming)
+    require("src.core.Sound").playCry(self.data, incoming.mon.species)
+    HeldItems.onEntry(self, incoming)
+  end)
+  -- ABILITYEFFECT_ON_SWITCHIN, after the send-out and its cry: an
+  -- INTIMIDATE drops the foe's attack now, before the free move below
+  self:actNext(function() self:abilitySwitchIn(incoming) end)
+  return incoming
+end
+
+-- ---------------------------------------------------------------------
+-- ABILITIES IN THE TURN LOOP
+-- ---------------------------------------------------------------------
+--
+-- src/battle/Abilities.lua decides WHAT happens and this decides what that
+-- costs on screen: which message, whose bar moves, which stage changes.
+-- Every one of these is a nil check away from doing nothing at all, which
+-- is what a Gen 1 or Gen 2 battle gets.
+
+-- "X's ABILITY!" is not a line the cartridge prints on its own -- the
+-- ability's name is folded into the sentence each effect prints.  These
+-- helpers keep that wording in one place.
+local ABILITY_LABEL = {
+  INTIMIDATE = "INTIMIDATE", SPEED_BOOST = "SPEED BOOST",
+  SHED_SKIN = "SHED SKIN", RAIN_DISH = "RAIN DISH",
+  VOLT_ABSORB = "VOLT ABSORB", WATER_ABSORB = "WATER ABSORB",
+  FLASH_FIRE = "FLASH FIRE", STATIC = "STATIC",
+  POISON_POINT = "POISON POINT", FLAME_BODY = "FLAME BODY",
+  ROUGH_SKIN = "ROUGH SKIN", DRIZZLE = "DRIZZLE", DROUGHT = "DROUGHT",
+  SAND_STREAM = "SAND STREAM", ROCK_HEAD = "ROCK HEAD",
+}
+
+local function abilityLabel(name)
+  return ABILITY_LABEL[name] or (tostring(name):gsub("_", " "))
+end
+
+BattleState.abilityLabel = abilityLabel
+
+local function maxHpOf(battler)
+  local mon = battler.mon
+  return (mon.stats and mon.stats.hp) or mon.maxHp or 1
+end
+
+-- Heal a fraction of maximum HP, floored at 1, capped at full.  Returns the
+-- HP actually restored so a caller can stay quiet when nothing moved.
+function BattleState:abilityHeal(battler, numerator, denominator)
+  local max = maxHpOf(battler)
+  local amount = math.max(1, math.floor(max * numerator / denominator))
+  local before = battler.mon.hp
+  battler.mon.hp = math.min(max, before + amount)
+  local gained = battler.mon.hp - before
+  if gained > 0 then self:drainNext(battler, battler.mon.hp) end
+  return gained
+end
+
+-- SWITCH-IN.  Called wherever a Pokemon reaches the field -- the first
+-- send-out of the battle and all four switch paths -- because that is when
+-- ABILITYEFFECT_ON_SWITCHIN runs on the cartridge.  A MIGHTYENA leading a
+-- trainer battle drops the player's attack before either side has moved,
+-- and a GROUDON's sun is up from the first turn.
+function BattleState:abilitySwitchIn(battler)
+  if not (battler and battler.mon and battler.mon.hp > 0) then return end
+  -- SPIKES first: the hazard is paid on arrival, before the ability speaks.
+  -- An eighth of maximum HP, and a FLYING or LEVITATing Pokemon never lands
+  -- on them at all.
+  local side = self.sideOf and self:sideOf(battler)
+  if side and side.spikes then
+    local grounded = Abilities.of(battler) ~= "LEVITATE"
+    for _, t in ipairs(battler.curTypes or {}) do
+      if t == "FLYING" then grounded = false end
+    end
+    if grounded then
+      local max = (battler.mon.stats and battler.mon.stats.hp) or battler.mon.hp
+      self:sayNext(Strings("%s is hurt\nby SPIKES!", displayName(battler)))
+      self:applyDamage(battler, math.max(1, math.floor(max / 8)))
+      self:drainNext()
+      if battler.mon.hp <= 0 then
+        self:onFaint(battler)
+        return
+      end
+    end
+  end
+  -- FORECAST first: a CASTFORM arriving into rain is a WATER type before
+  -- anything else on the field gets to speak.
+  self:abilityForecast(battler)
+  local act = Abilities.onSwitchIn(battler)
+  if not act then return end
+  self:abilitySwitchInEffect(battler, act)
+end
+
+-- The visible half of a switch-in ability, split out so TRACE can run the
+-- effect of whatever it just copied.
+function BattleState:abilitySwitchInEffect(battler, act)
+  local who = displayName(battler)
+  if act.kind == "weather" then
+    -- permanent: DROUGHT's sun does not run out the way SUNNY DAY's does
+    Weather.start(self, act.weather, act.permanent)
+    self:sayNext(Strings("%s's\n%s!", who, abilityLabel(act.ability)))
+    local started = Weather.STARTED_TEXT[act.weather]
+    if started then self:sayNext(Strings(started)) end
+    return
+  end
+  -- TRACE takes the foe's ability the moment it arrives, and keeps it until
+  -- it leaves -- abilityOverride is a BATTLER field, so switching out drops
+  -- it exactly as the cartridge does.  Nothing to copy (a Gen 1 foe, an
+  -- empty slot, or one of the three the cartridge refuses) and TRACE simply
+  -- stays TRACE and says nothing.
+  if act.kind == "trace" then
+    for _, foe in ipairs(foesOf(self, battler)) do
+      local copied = Abilities.traceable(foe)
+      if copied then
+        battler.abilityOverride = copied
+        self:sayNext(Strings("%s TRACED\n%s's\n%s!", who, displayName(foe),
+                             abilityLabel(copied)))
+        -- ...and the copied ability arrives too.  A TRACE onto an
+        -- INTIMIDATE or a DROUGHT fires it, because on the cartridge the
+        -- switch-in effect runs off the ability the Pokemon HAS.
+        local traced = Abilities.onSwitchIn(battler)
+        if traced and traced.kind ~= "trace" then
+          self:abilitySwitchInEffect(battler, traced)
+        end
+        return
+      end
+    end
+    return
+  end
+  if act.kind == "intimidate" then
+    -- INTIMIDATE FACES THE WHOLE OTHER SIDE.  In a single battle foesOf
+    -- answers the one battler this used to name; in a double it answers
+    -- both, which is what the cartridge does -- the ability drops the
+    -- attack of every opposing Pokemon on the field, not just one.
+    local foes = foesOf(self, battler)
+    if #foes == 0 then return end
+    self:sayNext(Strings("%s's\n%s!", who, abilityLabel(act.ability)))
+    -- through changeStage, so CLEAR BODY and HYPER CUTTER get their say and
+    -- a substitute blocks it exactly as it blocks a GROWL
+    for _, foe in ipairs(foes) do
+      for _, m in ipairs(MoveEffects.changeStage(self, foe, act.stat,
+                                                 act.delta, true)) do
+        self:sayNext(m)
+      end
+    end
+  end
+end
+
+-- SWITCH-OUT, which is one ability and one that nobody notices is missing
+-- until they meet a STARMIE.
+--
+-- NATURAL CURE clears the status the moment the Pokemon leaves the field --
+-- not at the end of the battle, not on the next heal.  It is why a
+-- BLISSEY can absorb a TOXIC and walk it off, and it is the only reason the
+-- ability exists.
+--
+-- The status lives on the MON, which stays in the party, so this is the one
+-- ability whose effect outlives the battler it belongs to.
+function BattleState:abilitySwitchOut(previous)
+  if not (previous and previous.mon) then return end
+  if not Abilities.curesOnSwitchOut(previous) then return end
+  if not previous.mon.status then return end
+  previous.mon.status = nil
+  previous.toxicCounter = nil
+  previous.sleepTurns = nil
+end
+
+-- ON CONTACT, after the move has finished resolving.  Only a move whose
+-- extracted flags byte says it touches gets here (Abilities.onContact
+-- refuses the rest), so a FLAMETHROWER never burns its user on a FLAME BODY
+-- while a TACKLE does.
+function BattleState:abilityOnContact(user, target, move)
+  if not (user and target and move) then return end
+  if user.mon.hp <= 0 then return end
+  -- a substitute took the hit, so nothing touched the Pokemon behind it
+  if target.substituteHP then return end
+  local act = Abilities.onContact(target, move)
+  if not act then return end
+  local rng = self.rng or love.math.random
+  if act.kind == "status" then
+    if rng(1, act.oneIn) ~= 1 then return end
+    local msgs = StatusRegistry.inflict(self, user, act.status,
+                                        { secondary = true, user = target,
+                                          source = act.ability })
+    if #msgs == 0 then return end
+    self:sayNext(Strings("%s's\n%s!", displayName(target),
+                         abilityLabel(act.ability)))
+    for _, m in ipairs(msgs) do self:sayNext(m) end
+    return
+  end
+  -- EFFECT SPORE is ONE roll with three outcomes: Random() % 10, and 0, 1
+  -- and 2 are poison, sleep and paralysis.  Not three separate rolls, and
+  -- not a 30% chance of a random one of the three -- 10% each, which is why
+  -- it could not be another row in CONTACT_STATUS.
+  if act.kind == "statusRoll" then
+    local roll = rng(0, act.outOf - 1)
+    local status = act.table[roll]
+    if not status then return end
+    local msgs = StatusRegistry.inflict(self, user, status,
+                                        { secondary = true, user = target,
+                                          source = act.ability })
+    if #msgs == 0 then return end
+    self:sayNext(Strings("%s's\n%s!", displayName(target),
+                         abilityLabel(act.ability)))
+    for _, m in ipairs(msgs) do self:sayNext(m) end
+    return
+  end
+  -- CUTE CHARM, on the same one-in-three, and only between a male and a
+  -- female.  Two of the same gender, or anything genderless, and touching a
+  -- SKITTY is just touching a SKITTY.
+  if act.kind == "infatuate" then
+    if rng(1, act.oneIn) ~= 1 then return end
+    if not require("src.pokemon.Pokemon").oppositeGenders(self.data, user.mon,
+                                                          target.mon) then
+      return
+    end
+    if user.infatuated then return end
+    if Abilities.refusesStatus(user, "INFATUATION") then return end
+    user.infatuated = target
+    self:sayNext(Strings("%s's\n%s!", displayName(target),
+                         abilityLabel(act.ability)))
+    self:sayNext(Strings("%s fell in love!", displayName(user)))
+    return
+  end
+  if act.kind == "recoil" then
+    -- ROUGH SKIN bites for a sixteenth of the ATTACKER's maximum, every
+    -- time, with no roll at all
+    local hurt = math.max(1, math.floor(maxHpOf(user)
+                                        * act.numerator / act.denominator))
+    self:sayNext(Strings("%s's\n%s!", displayName(target),
+                         abilityLabel(act.ability)))
+    self:applyDamage(user, hurt)
+    self:drainNext()
+    if user.mon.hp <= 0 then self:onFaint(user) end
+  end
+end
+
+-- COLOR CHANGE.  KECLEON is the only Pokemon with it, and it is the whole of
+-- what KECLEON is: whatever just hit it, that is now its type -- one type,
+-- replacing both if it had two.
+--
+-- curTypes is the battler's own list, so it goes when the Pokemon does,
+-- which is the cartridge's rule as well.
+function BattleState:abilityColorChange(target, move, damage)
+  local act = Abilities.colorChange(target, move, damage)
+  if not act then return end
+  target.curTypes = { act.type }
+  self:sayNext(Strings("%s's\n%s!", displayName(target),
+                       abilityLabel(act.ability)))
+  self:sayNext(Strings("%s transformed\ninto the %s type!",
+                       displayName(target), tostring(act.type)))
+end
+
+-- FORECAST.  CASTFORM is the sky: sun makes it FIRE, rain WATER, hail ICE,
+-- and anything else -- including a sandstorm, which has no CASTFORM form --
+-- puts it back to NORMAL.
+--
+-- Asked wherever the weather can have changed: a switch-in, a weather move,
+-- and the end of a turn when a weather ran out.  Answers true when it moved,
+-- so the caller can decide whether a line is worth printing.
+function BattleState:abilityForecast(battler)
+  if not (battler and battler.mon and battler.mon.hp > 0) then return false end
+  local want = Abilities.forecastType(battler, Weather.current(self))
+  if not want then return false end
+  local types = battler.curTypes
+  if type(types) == "table" and #types == 1 and types[1] == want then
+    return false
+  end
+  battler.curTypes = { want }
+  self:sayNext(Strings("%s's\n%s!", displayName(battler),
+                       abilityLabel("FORECAST")))
+  self:sayNext(Strings("%s transformed\ninto the %s type!",
+                       displayName(battler), want))
+  return true
+end
+
+-- Both sides, for the callers that only know the weather changed.
+function BattleState:forecastAll()
+  for _, b in ipairs({ self.player, self.enemy }) do
+    if b then self:abilityForecast(b) end
+  end
+end
+
+-- THE ABSORBS.  Abilities.blocks already stopped the damage; this is the
+-- half that was missing -- a quarter of maximum HP for VOLT ABSORB and
+-- WATER ABSORB, and the standing fire boost for FLASH FIRE.  Returns true
+-- when it printed something, so the caller can skip the plain
+-- "It doesn't affect X!" line the type chart would otherwise print.
+function BattleState:abilityAbsorb(target, move)
+  local act = Abilities.absorbs(target, move)
+  if not act then return false end
+  local who = displayName(target)
+  self:sayNext(Strings("%s's\n%s!", who, abilityLabel(act.ability)))
+  if act.kind == "flashFire" then
+    if target.flashFire then
+      self:sayNext(Strings("But, it failed!"))
+    else
+      target.flashFire = true
+      self:sayNext(Strings("%s's FIRE\nmoves were\npowered up!", who))
+    end
+    return true
+  end
+  local max = maxHpOf(target)
+  if target.mon.hp >= max then
+    self:sayNext(Strings("%s's\nHP is full!", who))
+    return true
+  end
+  self:abilityHeal(target, act.numerator, act.denominator)
+  self:sayNext(Strings("%s\nrestored health!", who))
+  return true
+end
+
+-- END OF TURN, one battler at a time, in the order endOfTurn already walks.
+function BattleState:abilityEndOfTurn(battler)
+  if not (battler and battler.mon and battler.mon.hp > 0) then return end
+  local act = Abilities.endOfTurn(battler, Weather.current(self))
+  if not act then return end
+  local who = displayName(battler)
+  local rng = self.rng or love.math.random
+  if act.kind == "heal" then
+    if battler.mon.hp >= maxHpOf(battler) then return end
+    self:sayNext(Strings("%s's\n%s!", who, abilityLabel(act.ability)))
+    self:abilityHeal(battler, act.numerator, act.denominator)
+    self:sayNext(Strings("%s\nrestored health!", who))
+    return
+  end
+  if act.kind == "shedSkin" then
+    -- a one-in-three roll, and only then does the ability announce itself
+    if rng(1, act.oneIn) ~= 1 then return end
+    battler.mon.status = nil
+    battler.toxicCounter = nil
+    self:syncShownStatus()
+    self:sayNext(Strings("%s's\n%s!", who, abilityLabel(act.ability)))
+    self:sayNext(Strings("%s's\nstatus returned to\nnormal!", who))
+    return
+  end
+  if act.kind == "statUp" then
+    -- SPEED BOOST at +6 changes nothing and says nothing, rather than
+    -- printing "Nothing happened!" every turn for the rest of the battle.
+    -- Asked BEFORE the change, or the stage it reads is the new one.
+    if ((battler.stages or {})[act.stat] or 0) >= 6 then return end
+    self:sayNext(Strings("%s's\n%s!", who, abilityLabel(act.ability)))
+    for _, m in ipairs(MoveEffects.changeStage(self, battler, act.stat,
+                                               act.delta, false)) do
+      self:sayNext(m)
+    end
+  end
+end
+
+-- ---------------------------------------------------------------------
+-- HELD ITEMS IN THE TURN LOOP
+-- ---------------------------------------------------------------------
+--
+-- Same division of labour as the abilities above: src/battle/HoldItems.lua
+-- decides WHAT should happen and this decides what it costs on screen.
+
+-- QUICK CLAW: a percentage roll, taken once per battler per turn.
+function BattleState:quickClawWins(battler)
+  if not (battler and battler.mon and battler.mon.hp > 0) then return false end
+  local chance = HoldItems.quickClawChance(battler)
+  if chance <= 0 then return false end
+  return (self.rng or love.math.random)(0, 99) < chance
+end
+
+-- FOCUS BAND, asked the moment a hit would knock the holder out.  Returns
+-- true when the band held and the Pokemon is standing on one HP.
+function BattleState:focusBandHolds(battler, incoming)
+  if not (battler and battler.mon) then return false end
+  -- only a hit that would actually finish it, and only from full-ish health
+  -- is NOT a condition: the cartridge lets a band save a Pokemon on 1 HP too
+  if battler.mon.hp <= 0 or incoming < battler.mon.hp then return false end
+  local chance = HoldItems.focusBandChance(battler)
+  if chance <= 0 then return false end
+  if (self.rng or love.math.random)(0, 99) >= chance then return false end
+  return true
+end
+
+-- SHELL BELL, after a move has landed: the attacker takes back a share of
+-- what it dealt.
+function BattleState:shellBellDrain(attacker, dealt)
+  if not (attacker and attacker.mon and attacker.mon.hp > 0) then return end
+  if (dealt or 0) <= 0 then return end
+  local share = HoldItems.shellBellShare(attacker)
+  if not share then return end
+  local max = (attacker.mon.stats and attacker.mon.stats.hp) or attacker.mon.hp
+  if attacker.mon.hp >= max then return end
+  local heal = math.max(1, math.floor(dealt / share))
+  local before = attacker.mon.hp
+  attacker.mon.hp = math.min(max, before + heal)
+  if attacker.mon.hp == before then return end
+  self:drainNext(attacker, attacker.mon.hp)
+  self:sayNext(Strings("%s restored a\nlittle HP using\nits SHELL BELL!",
+                       displayName(attacker)))
+end
+
+-- Eat what was held, once the effect has been spent.  A berry leaves the
+-- Pokemon for good -- it is not put back in the bag, which is the whole
+-- reason a SITRUS BERRY is a one-shot.
+local function consumeItem(battler)
+  local mon = battler.mon
+  battler.lastConsumedItem = mon.item or mon.heldItem
+  mon.item, mon.heldItem = nil, nil
+end
+
+-- THE ONE PLACE AN ITEM GOES OFF.  `when` is "hit" (a move has just landed
+-- on the holder) or "turn" (end of turn); HoldItems.trigger decides which
+-- effects answer to which, and this spends the answer.
+function BattleState:holdItemTrigger(battler, when)
+  if not (battler and battler.mon and battler.mon.hp > 0) then return false end
+  local act = HoldItems.trigger(battler, when)
+  if not act then return false end
+  local who = displayName(battler)
+  local def = HoldItems.defOf(battler)
+  local label = (def and def.name) or "the item"
+  local rng = self.rng or love.math.random
+
+  if act.kind == "heal" then
+    local max = (battler.mon.stats and battler.mon.stats.hp) or battler.mon.hp
+    battler.mon.hp = math.min(max, battler.mon.hp + act.amount)
+    self:drainNext(battler, battler.mon.hp)
+    if act.effect == "LEFTOVERS" then
+      self:sayNext(Strings("%s restored a little\nHP using its\n%s!",
+                           who, label))
+    else
+      self:sayNext(Strings("%s restored\nhealth using its\n%s!", who, label))
+    end
+    if act.confuse then
+      -- the five flavour berries confuse a Pokemon whose nature dislikes
+      -- them, which is derived from the nature's own lowered stat
+      battler.confusedTurns = battler.confusedTurns
+                              or rng(2, 5)
+      self:sayNext(Strings("%s became\nconfused!", who))
+    end
+
+  elseif act.kind == "cure" then
+    battler.mon.status = nil
+    battler.toxicCounter = nil
+    if act.status == "ALL" then battler.confusedTurns = nil end
+    self:syncShownStatus()
+    self:sayNext(Strings("%s's %s\nrestored its status!", who, label))
+
+  elseif act.kind == "cureConfusion" then
+    battler.confusedTurns = nil
+    self:sayNext(Strings("%s's %s\nsnapped it out of\nconfusion!", who, label))
+
+  elseif act.kind == "cureAttract" then
+    battler.infatuated = nil
+    self:sayNext(Strings("%s's %s\ncured its infatuation!", who, label))
+
+  elseif act.kind == "restorePP" then
+    local moves = battler.curMoves or battler.mon.moves
+    local slot = moves and moves[act.slot]
+    if not slot then return false end
+    local cap = slot.maxPp or slot.pp_max or act.amount
+    slot.pp = math.min(cap, (slot.pp or 0) + act.amount)
+    self:sayNext(Strings("%s's %s\nrestored %s's PP!", who, label,
+                         tostring(slot.id or "its move")))
+
+  elseif act.kind == "restoreStats" then
+    for stat, v in pairs(battler.stages or {}) do
+      if v < 0 then battler.stages[stat] = 0 end
+    end
+    self:sayNext(Strings("%s's %s\nrestored its stats!", who, label))
+
+  elseif act.kind == "statUp" then
+    local stat = act.stat
+    if not stat then
+      -- STARF BERRY picks one of the five at random
+      local list = HoldItems.RANDOM_STATS
+      stat = list[rng(1, #list)]
+    end
+    self:sayNext(Strings("%s used its\n%s!", who, label))
+    for _, m in ipairs(MoveEffects.changeStage(self, battler, stat,
+                                               act.delta, false)) do
+      self:sayNext(m)
+    end
+
+  elseif act.kind == "critUp" then
+    battler.critStage = (battler.critStage or 0) + act.delta
+    self:sayNext(Strings("%s used its\n%s!", who, label))
+    self:sayNext(Strings("%s is getting\npumped!", who))
+
+  else
+    return false
+  end
+
+  if act.consume then consumeItem(battler) end
+  return true
 end
 
 function BattleState:endOfTurn()
@@ -3081,10 +4863,27 @@ function BattleState:endOfTurn()
   -- skips its own residual (HandlePoisonBurnLeechSeed is bypassed when the
   -- move faints the target); snapshot before residual so one side's
   -- residual faint can't suppress the other's
-  local playerAlive = self.player.mon.hp > 0
-  local enemyAlive = self.enemy.mon.hp > 0
-  for _, pair in ipairs({ { self.player, self.enemy, "player", enemyAlive },
-                          { self.enemy, self.player, "enemy", playerAlive } }) do
+  --
+  -- WITH FOUR ON THE FIELD THE TWO NAMES ARE NOT THE FIELD.  A Pokemon that
+  -- faints in a double battle is lifted off at once and only replaced at the
+  -- bottom of this function, so `self.player` or `self.enemy` can be nil here
+  -- while the other flank is still standing -- and the two right-hand slots
+  -- were taking no residual at all.  Built from whoever is actually there.
+  local sweep
+  if self:isDouble() then
+    sweep = {}
+    for _, b in activeBattlers(self) do
+      local foes = foesOf(self, b)
+      sweep[#sweep + 1] = { b, foes[1], b.isPlayer and "player" or "enemy",
+                            foes[1] ~= nil }
+    end
+  else
+    local playerAlive = self.player.mon.hp > 0
+    local enemyAlive = self.enemy.mon.hp > 0
+    sweep = { { self.player, self.enemy, "player", enemyAlive },
+              { self.enemy, self.player, "enemy", playerAlive } }
+  end
+  for _, pair in ipairs(sweep) do
     local b, opp, side, oppAlive = pair[1], pair[2], pair[3], pair[4]
     if b.mon.hp > 0 and oppAlive then
       local msgs = Status.residual(b, opp, self)
@@ -3113,9 +4912,149 @@ function BattleState:endOfTurn()
   -- the associated faint checks.  HeldItems.endTurn keeps Leftovers, PP and
   -- healing-item phases in cartridge order and never revives a residual KO.
   HeldItems.endTurn(self)
+  -- ABILITYEFFECT_ENDTURN, after the weather: RAIN DISH heals, SHED SKIN
+  -- may shrug the status off, SPEED BOOST raises.  Player then enemy, the
+  -- same order the residual sweep above walks.
+  -- ...and again for four rather than two, for the same reason
+  if self:isDouble() then
+    for _, b in activeBattlers(self) do self:abilityEndOfTurn(b) end
+  else
+    self:abilityEndOfTurn(self.player)
+    self:abilityEndOfTurn(self.enemy)
+  end
+  -- ...and then the held items: LEFTOVERS, every berry, WHITE HERB.  After
+  -- the abilities, which is where ItemBattleEffects sits relative to
+  -- AbilityBattleEffects in HandleBetweenTurnEffects.
+  if self:isDouble() then
+    for _, b in activeBattlers(self) do self:holdItemTrigger(b, "turn") end
+  else
+    self:holdItemTrigger(self.player, "turn")
+    self:holdItemTrigger(self.enemy, "turn")
+  end
+  self:gen3CountersTick()
   self:tickTokens()
   self:roamerFlees()
+  -- AND THE EMPTY PLACES ARE FILLED HERE, not when the mon fell.
+  --
+  -- HandleFaintedMonActions runs at the end of the turn and asks slot by
+  -- slot in position order, which is why a double battle can have a Pokemon
+  -- faint on the first action and its partner still take the third.  Does
+  -- nothing at all in a single battle, where the faint path fills the slot
+  -- itself and there is nothing pending.
+  self:fillEmptySlots()
   Runtime.emit("battle.turn_ended", { battle = self, turn = self.turnCount or 0 })
+end
+
+-- THE COUNTERS HOENN'S NEW MOVES SET, ticked once per turn in the order
+-- HandleBetweenTurnEffects walks them.  Each one is a plain countdown; the
+-- interesting part is what happens when it runs out.
+function BattleState:gen3CountersTick()
+  for _, b in activeBattlers(self) do
+    if b and b.mon and b.mon.hp > 0 then
+      -- YAWN: the sleep lands at the END of the turn AFTER the one it was
+      -- used on, which is the whole reason it is worth using at all.
+      if b.drowsyTurns then
+        b.drowsyTurns = b.drowsyTurns - 1
+        if b.drowsyTurns <= 0 then
+          b.drowsyTurns = nil
+          for _, m in ipairs(StatusRegistry.inflict(self, b, "SLP", {})) do
+            self:sayNext(m)
+          end
+        end
+      end
+      if b.tauntTurns then
+        b.tauntTurns = b.tauntTurns - 1
+        if b.tauntTurns <= 0 then
+          b.tauntTurns = nil
+          self:sayNext(Strings("%s's taunt\nwore off!", displayName(b)))
+        end
+      end
+      if b.encoreTurns then
+        b.encoreTurns = b.encoreTurns - 1
+        if b.encoreTurns <= 0 then
+          b.encoreTurns, b.encoreMove = nil, nil
+          self:sayNext(Strings("%s's ENCORE\nended!", displayName(b)))
+        end
+      end
+      if b.safeguardTurns then
+        b.safeguardTurns = b.safeguardTurns - 1
+        if b.safeguardTurns <= 0 then
+          b.safeguardTurns = nil
+          self:sayNext(Strings("%s's party is no\nlonger protected!",
+                               displayName(b)))
+        end
+      end
+      -- WISH: half of maximum HP, arriving at the end of the turn AFTER the
+      -- one it was made on -- which is what makes it a switch-in heal.
+      if b.wishTurns then
+        b.wishTurns = b.wishTurns - 1
+        if b.wishTurns <= 0 then
+          local heal = b.wishHeal or math.max(1, math.floor(maxHpOf(b) / 2))
+          b.wishTurns, b.wishHeal = nil, nil
+          local max = maxHpOf(b)
+          if b.mon.hp < max then
+            b.mon.hp = math.min(max, b.mon.hp + heal)
+            self:drainNext(b, b.mon.hp)
+            self:sayNext(Strings("%s's wish\ncame true!", displayName(b)))
+          end
+        end
+      end
+      -- INGRAIN: a sixteenth back every turn for as long as it stands there
+      if b.ingrained and b.mon.hp < maxHpOf(b) then
+        b.mon.hp = math.min(maxHpOf(b),
+                            b.mon.hp + math.max(1, math.floor(maxHpOf(b) / 16)))
+        self:drainNext(b, b.mon.hp)
+        self:sayNext(Strings("%s absorbed\nnutrients with its\nroots!",
+                             displayName(b)))
+      end
+      -- UPROAR: three turns of noise, and nobody sleeps through it
+      if b.uproarTurns then
+        b.uproarTurns = b.uproarTurns - 1
+        if b.uproarTurns <= 0 then
+          b.uproarTurns = nil
+          self:sayNext(Strings("%s calmed down.", displayName(b)))
+        else
+          self:sayNext(Strings("%s is making\nan UPROAR!", displayName(b)))
+        end
+      end
+    end
+  end
+  -- FUTURE SIGHT and DOOM DESIRE, whose damage was rolled two turns ago and
+  -- lands on whoever is standing there now.
+  for index, side in ipairs(self.sides or {}) do
+    local pending = side.futureSight
+    if pending then
+      pending.turns = pending.turns - 1
+      if pending.turns <= 0 then
+        side.futureSight = nil
+        local victim = (index == 1) and self.player or self.enemy
+        if victim and victim.mon and victim.mon.hp > 0 then
+          self:sayNext(Strings("%s took the\n%s attack!", displayName(victim),
+                               pending.move or "FUTURE SIGHT"))
+          self:applyDamage(victim, pending.damage)
+          self:drainNext()
+          if victim.mon.hp <= 0 then self:onFaint(victim) end
+        end
+      end
+    end
+  end
+  -- PERISH SONG last, and both sides together: the counter reaching zero
+  -- faints the Pokemon whatever its HP is.
+  for _, b in activeBattlers(self) do
+    if b and b.perishTurns and b.mon and b.mon.hp > 0 then
+      b.perishTurns = b.perishTurns - 1
+      if b.perishTurns <= 0 then
+        b.perishTurns = nil
+        self:sayNext(Strings("%s's PERISH count\nfell to 0!", displayName(b)))
+        b.mon.hp = 0
+        self:drainNext(b, 0)
+        self:onFaint(b)
+      else
+        self:sayNext(Strings("%s's PERISH count\nfell to %d!",
+                             displayName(b), b.perishTurns))
+      end
+    end
+  end
 end
 
 -- side/field tokens ({ id, turns?, onResidual?, onExpire? }) tick after
@@ -3601,6 +5540,16 @@ local SLOW_SHAKE_EFFECTS = {
 -- Queues a hold so the text stays up while it grows.  Runs inside a
 -- queued fn (updateQueue resets nextInsert before each one).
 function BattleState:startGrowIn(battler)
+  -- ...and on Hoenn the ball is thrown instead; see gen3SendOut.  This is the
+  -- one place every send-out in the file goes through, which is why the
+  -- switch lives here rather than at each of the seven callers.
+  if self:gen3SendOut(battler) then return end
+  -- ...and if it did NOT take over -- an older cache, or a ball already in
+  -- the air -- the trainer does not stay standing there waiting to throw one.
+  if self.showPlayerBack and battler == self.player then
+    self.showPlayerBack = false
+    self:slidePic("back")
+  end
   self.growIn = { battler = battler, frame = 0 }
   self.nextInsert = (self.nextInsert or 0) + 1
   table.insert(self.queue, self.nextInsert, { wait = 12 })
@@ -3855,7 +5804,7 @@ end
 -- bit before PlayCurrentMoveAnimation2 + PrintText, but the HUD redraw
 -- waits until after Execute*Move returns).
 function BattleState:syncShownStatus()
-  for _, b in ipairs({ self.player, self.enemy }) do
+  for _, b in activeBattlers(self) do
     if b then b.shownStatus = b.mon.status end
   end
 end
@@ -3867,8 +5816,18 @@ function BattleState:executeAction(user, target, action)
   -- is only ever set once the battle is over (run/win/lose/caught), and the
   -- faint cases are already covered by the HP guard below (#441)
   if self.result then return end
-  if user.mon.hp <= 0 or target.mon.hp <= 0 then return end
+  if not (user and user.mon) then return end
+  if user.mon.hp <= 0 then return end
   if not action then return end
+  -- A SWITCH NEEDS NO TARGET.  Everything else does, and with four on the
+  -- field the one it was aimed at can already be off it -- the entry's
+  -- target is resolved as the entry runs, and there may be nobody left to
+  -- resolve it to.
+  local isSwitch = action.special == "playerSwitch"
+                   or action.special == "aiSwitch"
+  if not isSwitch and not (target and target.mon and target.mon.hp > 0) then
+    return
+  end
 
   local function run()
     -- ghost battles: the ghost never attacks; its whole turn is the
@@ -3882,7 +5841,7 @@ function BattleState:executeAction(user, target, action)
     -- lockedAction): the victim is held exactly while the opponent's
     -- trapping bit is set -- including a counter sitting at 0 until the
     -- end-of-turn CheckNumAttacksLeft clear
-    user.boundTurns = target.trappingTurns
+    user.boundTurns = target and target.trappingTurns
                       and math.max(1, target.trappingTurns) or nil
 
     -- trainer class AI actions (engine/battle/trainer_ai.asm)
@@ -3908,12 +5867,27 @@ function BattleState:executeAction(user, target, action)
         battle = self, side = self.sides[2], battler = self.enemy,
         previous = previous,
       })
+      self:abilitySwitchOut(previous)
       self.aiUses = self:aiUsesFor()
       markSeen(self.game, self.enemy.mon.species)
       -- _AIBattleWithdrawText: "X with-/drew Y!"
-      self:sayNext(Strings("%s with-\ndrew %s!", self.trainer.name, oldName))
-      self:sayNext(Strings("%s sent\nout %s!", self.trainer.name, self.enemy.name))
+      self:sayNext(Strings("%s with-\ndrew %s!", self:trainerLabel_(), oldName))
+      self:sayNext(Strings("%s sent\nout %s!", self:trainerLabel_(),
+                           self.enemy.name))
       HeldItems.onEntry(self, self.enemy)
+      self:actNext(function() self:abilitySwitchIn(self.enemy) end)
+      return
+    end
+
+    -- THE PLAYER'S OWN SWITCH, in a double battle where it is one of four
+    -- actions rather than the whole turn.  A single battle never reaches
+    -- here: resolveSwitch does the send-out itself and gives the foe its
+    -- free move, which is the cartridge's single-battle flow.
+    if action.special == "playerSwitch" then
+      if action.mon and action.mon.hp and action.mon.hp > 0 then
+        self:switchPlayerInto(user.position or BattleState.POS.PLAYER_LEFT,
+                              action.mon)
+      end
       return
     end
 
@@ -3951,7 +5925,34 @@ function BattleState:executeAction(user, target, action)
     end
 
     if self:statusInterrupt(user, target) then return end
-    self:performMove(user, target, action, false)
+    -- ONE MOVE, POSSIBLY SEVERAL TARGETS.
+    --
+    -- The cartridge prints "X used SURF!" once and then resolves the move
+    -- against each battler in turn (MOVEEND_NEXT_TARGET).  Which battlers
+    -- those are is the move's own `target` byte, which the extractor has
+    -- always read and nothing consulted: SURF and its twenty-one siblings
+    -- hit both foes, and EARTHQUAKE and its four hit both foes AND your own
+    -- partner.
+    --
+    -- In a single battle -- and for every move on the two cartridges before
+    -- this one, whose records carry no target byte at all -- resolve answers
+    -- exactly the one target that was passed in, and this is the single call
+    -- it has always been.
+    local list = { target }
+    if self:isDouble() then
+      local def = self:moveDef(action)
+      if def then
+        local chosen = (self.chosenTargets or {})[user.position] or target
+        local got = Targeting.resolve(self, user, def, chosen)
+        if #got > 0 then list = got end
+      end
+    end
+    for i, one in ipairs(list) do
+      if one and one.mon and (one.mon.hp or 0) > 0 then
+        -- only the first announces; the rest are the same move landing again
+        self:performMove(user, one, action, i > 1)
+      end
+    end
   end
   run()
   -- after announce/anim/effect text (pokered DrawHUDsAndHPBars)
@@ -4008,7 +6009,10 @@ function BattleState:preRechargeChecks(user, target)
   end
   local mon = user.mon
   if mon.status == "SLP" then
-    user.sleepTurns = (user.sleepTurns or 1) - 1
+    -- EARLY BIRD sleeps HALF as long.  The cartridge does not roll a shorter
+    -- count -- it decrements the counter TWICE -- which is the same thing
+    -- except that a one-turn sleep still costs the turn it is spent on.
+    user.sleepTurns = (user.sleepTurns or 1) - Abilities.sleepStep(user)
     if user.sleepTurns <= 0 then
       mon.status = nil
       self:sayNext(self:romText("_WokeUpText", "%s\nwoke up!", displayName(user)))
@@ -4018,6 +6022,15 @@ function BattleState:preRechargeChecks(user, target)
     return true
   end
   if mon.status == "FRZ" then
+    -- ...and in Hoenn it thaws one turn in five, here as in the ordinary
+    -- gauntlet: this is the same check Status.FRZ makes, spelled again
+    -- because this shorter path does not go through the records
+    local oneIn = Status.rule(self, "freezeThawOneIn")
+    if oneIn and self.rng(1, oneIn) == 1 then
+      mon.status = nil
+      self:sayNext(Strings("%s\nwas defrosted!", displayName(user)))
+      return false
+    end
     self:sayNext(self:romText("_IsFrozenText", "%s\nis frozen solid!", displayName(user)))
     return true
   end
@@ -4039,6 +6052,19 @@ end
 -- Runs Status.beforeMove plus the shared interruption bookkeeping;
 -- returns true when the user's action is interrupted.
 function BattleState:statusInterrupt(user, target)
+  -- TRUANT, before the conditions.  SLAKING and SLAKOTH move every OTHER
+  -- turn: the cartridge sets a flag after a move and reads it before the
+  -- next one, which is why this is a toggle rather than "every second turn
+  -- of the battle".  The flag is the BATTLER's, so switching out clears it,
+  -- exactly as it does on hardware.
+  if Abilities.loafs(user) then
+    if user.truantLoafing then
+      user.truantLoafing = nil
+      self:sayNext(Strings("%s is\nloafing around!", displayName(user)))
+      return true
+    end
+    user.truantLoafing = true
+  end
   local canMove, msgs, selfHit = Status.beforeMove(user, self.rng, self)
   for _, m in ipairs(msgs) do self:sayStatusMsg(user, m) end
   if selfHit then
@@ -4066,6 +6092,27 @@ function BattleState:statusInterrupt(user, target)
       self:clearVolatiles(user, false)
     end
     return true
+  end
+  -- UPROAR wakes everybody and keeps them awake: a Pokemon cannot be asleep
+  -- while one is going on, on either side.
+  if (self.player and self.player.uproarTurns)
+     or (self.enemy and self.enemy.uproarTurns) then
+    if user.mon.status == "SLP" then
+      user.mon.status = nil
+      self:sayNext(Strings("%s woke up in\nthe UPROAR!", displayName(user)))
+    end
+  end
+  -- INFATUATION, after the older statuses and before the move: half the
+  -- time an ATTRACTed Pokemon simply does not attack.  The line prints
+  -- either way, which is what makes it visible that it is in love at all.
+  if user.infatuated and user.infatuated.mon
+     and user.infatuated.mon.hp > 0 then
+    self:sayNext(Strings("%s is in love\nwith %s!", displayName(user),
+                         displayName(user.infatuated)))
+    if self.rng(0, 1) == 0 then
+      self:sayNext(Strings("%s is\nimmobilized by love!", displayName(user)))
+      return true
+    end
   end
   return false
 end
@@ -4113,12 +6160,16 @@ function BattleState:performMove(user, target, moveInst, isCalled)
     Logger.warn("unknown move instance %s", tostring(moveInst.id))
     return
   end
+  -- who is swinging, for GRUDGE and DESTINY BOND to read back if this
+  -- knocks someone out (see killerOf)
+  self.lastAttacker = user
   local record = self:effectRecord(move.effect)
 
   -- charge release?
   local releasing = user.charging == moveInst and user.chargeReady
   if releasing then
     user.charging, user.chargeReady, user.invulnerable = nil, nil, nil
+    user.hiddenAs = nil
   end
 
   -- PP: not for continuations, struggle, called moves, or (under
@@ -4138,7 +6189,11 @@ function BattleState:performMove(user, target, moveInst, isCalled)
       and self.ruleset and self.ruleset.enemyUnlimitedPP
   if not isContinuation and not moveInst.struggle and not isCalled
       and not enemyUnlimited then
-    moveInst.pp = math.max(0, moveInst.pp - 1)
+    -- PRESSURE costs the ATTACKER an extra point for every move aimed at its
+    -- holder.  Two per use, not double the total -- which is why it is
+    -- subtracted here rather than multiplying the cost.
+    local cost = 1 + Abilities.extraPP(target)
+    moveInst.pp = math.max(0, moveInst.pp - cost)
   end
 
   self.moveAnimRow = nil
@@ -4160,6 +6215,15 @@ function BattleState:performMove(user, target, moveInst, isCalled)
     isCalled = isCalled or false,
   })
 
+  -- PROTECT stops a status move too, and it is the only check that has to
+  -- happen before the effect record is consulted at all.
+  if target.protecting and move.power == 0 and move.protectAffected ~= false
+     and record and record.kind == "primary" then
+    self:cancelMoveAnim()
+    self:sayNext(Strings("%s\nprotected itself!", displayName(target)))
+    return
+  end
+
   local ctx = EffectRegistry.makeCtx(self, user, target, move, moveInst, isCalled)
 
   -- Metronome / Mirror Move re-entry; a nil pick means the record
@@ -4175,6 +6239,17 @@ function BattleState:performMove(user, target, moveInst, isCalled)
       self:performMove(user, target, { id = pick, pp = 1 }, true)
     end
     return
+  end
+  -- A DIFFERENT MOVE ENDS THE RUN.  PROTECT and ENDURE halve their odds for
+  -- each consecutive use and reset the moment the user does anything else;
+  -- FURY CUTTER and ROLLOUT double for each consecutive LANDING and reset
+  -- the same way.  Both counters live on the user and are cleared here,
+  -- which is the one place every move passes through.
+  if move.id ~= "PROTECT" and move.id ~= "DETECT" and move.id ~= "ENDURE" then
+    user.protectRun = nil
+  end
+  if user.rampMove and user.rampMove ~= move.id then
+    user.rampRun, user.rampMove = nil, nil
   end
   user.lastMove = move.id
 
@@ -4196,6 +6271,10 @@ function BattleState:performMove(user, target, moveInst, isCalled)
     end
     if invulnerable then
       user.invulnerable = true
+      -- WHERE it went, which is what GUST and EARTHQUAKE need to know: a
+      -- Pokemon in the air is reachable by one and a Pokemon underground by
+      -- the other, each for double damage.
+      user.hiddenAs = (move.id == "DIG") and "underground" or "air"
     end
     local chargeAnim = record.charge.anim
     if move.id == "DIG" then
@@ -4236,6 +6315,17 @@ function BattleState:performMove(user, target, moveInst, isCalled)
       return
     end
     local msgs = record.run(ctx)
+    -- SLEEP TALK names a move rather than doing something itself: the record
+    -- picks one of the user's OTHER moves and this is where it is used.  The
+    -- call is `isCalled`, so it costs no PP and cannot recurse into another
+    -- SLEEP TALK.
+    if user.callsMoveId then
+      local picked = user.callsMoveId
+      user.callsMoveId = nil
+      for _, m in ipairs(msgs) do self:sayNext(m) end
+      self:performMove(user, target, { id = picked, pp = 1 }, true)
+      return
+    end
     -- Gen 1 status/stat effects animate only when they take effect
     -- (AlreadyAsleep / NothingHappened / ButItFailed print with no anim)
     if primaryEffectFailed(msgs) then
@@ -4258,6 +6348,14 @@ function BattleState:performMove(user, target, moveInst, isCalled)
 
   -- damaging pipeline, driven by the record's stage callbacks
   EffectRegistry.runDamaging(self, ctx, record)
+  -- CHARGE is spent by the first Electric move that follows it, landed or
+  -- not -- the cartridge clears the flag when the move resolves, not when
+  -- it connects.
+  if user.charged
+     and require("src.battle.Abilities").normalizeType(move.type)
+         == "ELECTRIC" then
+    user.charged = nil
+  end
 end
 
 function BattleState:continueTrapping(user, target)
@@ -4310,7 +6408,11 @@ end
 
 -- Applies damage honoring Substitute, Bide storage and Rage; returns the
 -- amount that counts as dealt (for recoil/drain).
-function BattleState:applyDamage(target, dmg)
+-- `fromMove` marks damage a MOVE is dealing, which FOCUS BAND is the only
+-- caller that cares about: the band saves a Pokemon from an attack and not
+-- from a sandstorm, its own recoil or a Substitute's upkeep, and applyDamage
+-- is the one door all of those come through.
+function BattleState:applyDamage(target, dmg, fromMove)
   if target.substituteHP then
     target.substituteHP = target.substituteHP - dmg
     if target.substituteHP <= 0 then
@@ -4321,9 +6423,27 @@ function BattleState:applyDamage(target, dmg)
     end
     return dmg
   end
+  -- FOCUS BAND, asked before the HP is taken: a one-in-ten hold leaves the
+  -- Pokemon standing on a single HP instead of fainting.  Asked here rather
+  -- than at the faint check because the cartridge's band changes the DAMAGE,
+  -- and everything downstream -- Bide's tally, Rage, the exp award -- reads
+  -- what was actually dealt.
+  -- ENDURE first: it is a certainty where the band is a roll, so a Pokemon
+  -- that used ENDURE this turn never needs the band at all.
+  local endured = fromMove == true and target.enduring == true
+                  and target.mon.hp > 0 and dmg >= target.mon.hp
+  local band = not endured and fromMove == true
+               and self:focusBandHolds(target, dmg)
+  if endured or band then dmg = math.max(0, target.mon.hp - 1) end
   local dealt = math.min(dmg, target.mon.hp)
+  if fromMove and dealt > 0 then target.hurtThisTurn = true end
   target.mon.hp = target.mon.hp - dealt
   if dealt > 0 then self:drainNext(target, target.mon.hp) end -- animate the bar down
+  if endured then
+    self:sayNext(Strings("%s endured\nthe hit!", displayName(target)))
+  elseif band then
+    self:sayNext(Strings("%s hung on\nusing its FOCUS BAND!", displayName(target)))
+  end
   if target.bideTurns then
     target.bideDamage = (target.bideDamage or 0) + dealt
   end
@@ -4338,9 +6458,59 @@ end
 -- fainting / exp / party
 -- ---------------------------------------------------------------------
 
+-- WHO KNOCKED THIS ONE OUT.
+--
+-- GRUDGE and DESTINY BOND both need the battler that landed the blow, and
+-- in a single battle "the other one" is the same answer, which is how this
+-- was written.  With four on the field it is not: the mon that fainted may
+-- have been hit by either foe, or by its own partner's EARTHQUAKE.  So the
+-- attacker is recorded as the move resolves and read back here, and "the
+-- other one" is only the fallback for a faint with no attacker behind it --
+-- poison, a hazard, recoil at the end of a turn.
+function BattleState:killerOf(battler)
+  local by = self.lastAttacker
+  if by and by ~= battler and by.mon and self:sideOf(by) ~= self:sideOf(battler)
+  then
+    return by
+  end
+  if by and by ~= battler and by.mon then return by end
+  local foes = self:foesOf(battler)
+  return foes[1]
+end
+
 function BattleState:onFaint(battler)
   if battler.faintQueued then return end
   battler.faintQueued = true
+  -- GRUDGE: the move that did it loses every PP it had.  Asked before
+  -- DESTINY BOND, because a Pokemon carrying both spends both.
+  if battler.grudge then
+    battler.grudge = nil
+    local killer = self:killerOf(battler)
+    local lastId = killer and killer.lastMove
+    if lastId then
+      for _, m in ipairs(killer.curMoves or killer.mon.moves or {}) do
+        if m.id == lastId then
+          m.pp = 0
+          self:sayNext(Strings("%s's %s\nlost all its PP!",
+                               displayName(killer), lastId))
+          break
+        end
+      end
+    end
+  end
+  -- DESTINY BOND: whoever knocked it out goes with it.  Asked here, once,
+  -- before the faint is queued for anything else.
+  if battler.destinyBond then
+    battler.destinyBond = nil
+    local killer = self:killerOf(battler)
+    if killer and killer.mon and killer.mon.hp > 0 then
+      self:sayNext(Strings("%s took\n%s with it!", displayName(battler),
+                           displayName(killer)))
+      killer.mon.hp = 0
+      self:drainNext(killer, 0)
+      self:onFaint(killer)
+    end
+  end
   if battler.isPlayer and self.participants then
     self.participants[battler.mon] = nil
   end
@@ -4383,6 +6553,42 @@ function BattleState:onFaint(battler)
   end
   -- _EnemyMonFaintedText "Enemy X fainted!" / _PlayerMonFaintedText
   self:sayNext(Strings("%s\nfainted!", displayName(battler)))
+  -- A FAINT IN A DOUBLE BATTLE ENDS NOTHING.
+  --
+  -- The two functions below are the SINGLE-battle flow, and they are shaped
+  -- like one all the way down: the foe's is "award exp, find the next mon,
+  -- offer SHIFT, otherwise you win", the player's is "open the party menu
+  -- now or lose".  Neither sentence is true with four on the field -- the
+  -- other slot is still fighting, the side is not defeated, and Emerald does
+  -- not offer SHIFT in a double at all.
+  --
+  -- And the cartridge does not replace anybody mid-turn either:
+  -- HandleFaintedMonActions runs at the END of the turn and asks slot by
+  -- slot in position order.  So the empty place is REMEMBERED here and
+  -- filled when the turn is over, and the singles path below is left exactly
+  -- as it was.
+  -- ...AND IT RUNS BEFORE THE END OF THE TURN, WHICH IS ALREADY QUEUED.
+  --
+  -- Reported from play: "after i defeat both of the enemies pokemon it doesnt
+  -- say they were defeated, and it forces me to attack and defeat my ally
+  -- pokemon before it says they were defeated".
+  --
+  -- The turn is built as a queue -- one entry per action, then `endOfTurn` --
+  -- before any of it runs, and a faint happens INSIDE one of those action
+  -- entries.  `act` APPENDS, so `doubleFaint` landed after the endOfTurn that
+  -- was queued before the turn began: the slot was still occupied when
+  -- fillEmptySlots looked, nothing was pending, and the side check was
+  -- skipped.  It only ran at the end of the NEXT turn -- and with both foes
+  -- gone the only thing left to aim a move at is your own partner, which is
+  -- exactly what the report describes.
+  --
+  -- `actNext` puts it right after the faint it belongs to, which is where the
+  -- rest of this sequence already goes (the slide, the hold, the "fainted!"
+  -- line are all inserted, not appended).
+  if self:isDouble() then
+    self:actNext(function() self:doubleFaint(battler) end)
+    return
+  end
   if battler.isPlayer then
     self:act(function() self:playerMonFainted() end)
   else
@@ -4390,10 +6596,146 @@ function BattleState:onFaint(battler)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- FOUR ON THE FIELD, AND ONE OF THEM IS DOWN
+-- ---------------------------------------------------------------------------
+
+-- Everything still standing on a side, and everything on its bench that
+-- could still come out.
+function BattleState:sideCanContinue(isPlayer)
+  local side = self.sides[isPlayer and 1 or 2]
+  for flank = 1, 2 do
+    local b = side.battlers[flank]
+    if b and b.mon and (b.mon.hp or 0) > 0 then return true end
+  end
+  -- BOTH BENCHES, when the far side is two trainers.  benchFor answers per
+  -- POSITION, and asked without one it answers the first trainer's team --
+  -- so a two-opponent battle called itself over while the second trainer
+  -- still had a full party sitting behind them.
+  for _, pos in ipairs(isPlayer and { BattleState.POS.PLAYER_LEFT }
+                       or { BattleState.POS.OPPONENT_LEFT,
+                            BattleState.POS.OPPONENT_RIGHT }) do
+    for _, mon in ipairs(self:benchFor(isPlayer, pos)) do
+      if (mon.hp or 0) > 0 and not Party.isEgg(mon) then return true end
+    end
+  end
+  return false
+end
+
+-- The party a side draws replacements from.  A two-opponent battle has two
+-- benches on the far side, one per trainer, and each slot draws from its own
+-- -- which is the difference between two trainers and one trainer's twins.
+function BattleState:benchFor(isPlayer, position)
+  if isPlayer then return self.game.save.party or {} end
+  if position == BattleState.POS.OPPONENT_RIGHT and self.enemyPartyB then
+    return self.enemyPartyB
+  end
+  return self.enemyParty or {}
+end
+
+function BattleState:doubleFaint(battler)
+  -- the exp is owed whichever slot fell, and only for a foe
+  if not battler.isPlayer then
+    self:awardExp(battler)
+    -- ...AND THE LEVEL THE PRIZE IS COUNTED FROM.  The last foe to fall is
+    -- lifted off the field before the victory sequence runs, so by the time
+    -- the prize is worked out there is no `self.enemy` left to read a level
+    -- off.  Remembered here, which is the last moment it exists.
+    self.lastFoeLevel = battler.mon and battler.mon.level or self.lastFoeLevel
+    -- and the exp for this one is already paid; the victory path must not
+    -- pay it a second time
+    self.expPaidPerSlot = true
+  end
+  local pos = tonumber(battler.position)
+  if pos then
+    self.pendingReplacements = self.pendingReplacements or {}
+    self.pendingReplacements[#self.pendingReplacements + 1] = pos
+  end
+  self:placeBattler(pos, nil)
+  self:syncSides()
+end
+
+-- Called from endOfTurn: fill every empty place, in position order, which is
+-- the order HandleFaintedMonActions walks them in.
+function BattleState:fillEmptySlots()
+  local pending = self.pendingReplacements
+  self.pendingReplacements = nil
+  if not (pending and #pending > 0) then
+    -- NOTHING TO FILL IS NOT NOTHING TO CHECK.
+    --
+    -- The side test below used to sit behind this early return, so a battle
+    -- could reach the end of a turn with a side already wiped out and say
+    -- nothing -- which is what happened when the faint arrived after the
+    -- endOfTurn that was queued before the turn began.  That ordering is
+    -- fixed above; this makes the check unmissable rather than merely
+    -- correctly ordered, because ANY future path that empties a slot without
+    -- queuing a replacement would reopen the same hole.
+    --
+    -- Only in a double: a single battle's faint path calls the victory and
+    -- defeat sequences itself, and running them from here as well would play
+    -- each one twice.
+    if self:isDouble() then self:checkSideBeaten() end
+    return
+  end
+  table.sort(pending)
+  for _, pos in ipairs(pending) do
+    if self:battlerAt(pos) == nil then
+      local isPlayer = (pos % 2) == 0
+      local bench = self:benchFor(isPlayer, pos)
+      local taken = {}
+      for p = 0, 3 do
+        local b = self:battlerAt(p)
+        if b then taken[b.mon] = true end
+      end
+      local pick
+      for _, mon in ipairs(bench) do
+        if (mon.hp or 0) > 0 and not Party.isEgg(mon) and not taken[mon] then
+          pick = mon
+          break
+        end
+      end
+      if pick then
+        self:placeBattler(pos, makeBattler(self.data, pick, isPlayer,
+                                           isPlayer and self.game.save or nil))
+        self:syncSides()
+        if not isPlayer then markSeen(self.game, pick.species) end
+        local who = self:battlerAt(pos)
+        self:sayNext(Strings("%s sent\nout %s!",
+                             isPlayer and (self.game.save.player.name or "")
+                                       or self:trainerLabel_(),
+                             who.name))
+        self:actNext(function() self:abilitySwitchIn(who) end)
+      end
+    end
+  end
+  -- ...and only once nobody can be sent out at all is the side beaten
+  self:checkSideBeaten()
+end
+
+-- IS EITHER SIDE OUT OF POKEMON?  Latched, because the victory and defeat
+-- sequences are queued rather than immediate: a second end-of-turn arriving
+-- before the first one has played would queue the whole thing again.
+function BattleState:checkSideBeaten()
+  if self.sideBeaten then return end
+  if not self:sideCanContinue(false) then
+    self.sideBeaten = "enemy"
+    self:act(function() self:enemyMonFainted() end)
+  elseif not self:sideCanContinue(true) then
+    self.sideBeaten = "player"
+    self:act(function() self:playerMonFainted() end)
+  end
+end
+
 -- Exp for the defeated enemy, shared by the faint path (enemyMonFainted)
 -- and, when a mod's battle.catch_exp hook says so, the catch path
 -- (storeCaughtMon).
-function BattleState:awardExp()
+-- WHICH FOE PAID.  A single battle has one and every caller left it out;
+-- a double battle has two and the one that fell is not always `self.enemy`
+-- -- and after IT fell there is no `self.enemy` to read at all, which is
+-- what the exp lookups below used to walk into.
+function BattleState:awardExp(fallen)
+  local foe = fallen or self.enemy
+  if not (foe and foe.mon) then return end
   -- exp is split among the mons that fought this enemy
   -- (engine/battle/experience.asm); traded mons earn x1.5; each
   -- participant gets the full stat exp
@@ -4407,7 +6749,8 @@ function BattleState:awardExp()
       if mon.hp > 0 then table.insert(alive, mon) end
     end
   end
-  if participants == 0 and self.player.mon.hp > 0 then
+  if participants == 0 and self.player and self.player.mon
+     and self.player.mon.hp > 0 then
     participants, alive = 1, { self.player.mon }
   end
   local HudTiles = require("src.render.HudTiles")
@@ -4416,8 +6759,8 @@ function BattleState:awardExp()
     -- from here and creeps to the new length
     local expBefore = self.player and mon == self.player.mon
       and HudTiles.expBarPixels(self.data, mon) or nil
-    local levels, gained = Experience.apply(self.data, mon, self.enemy.def,
-                                            self.enemy.mon.level, self.kind == "trainer",
+    local levels, gained = Experience.apply(self.data, mon, foe.def,
+                                            foe.mon.level, self.kind == "trainer",
                                             split, mon.traded)
     -- Track level-ups for EvolveAfterBattle (OverworldState:afterBattle ->
     -- Evolution.checkParty).  B-cancel leaves the mon at/above threshold;
@@ -4567,7 +6910,11 @@ function BattleState:awardExp()
 end
 
 function BattleState:enemyMonFainted()
-  self:awardExp()
+  -- IN A DOUBLE THE EXP IS ALREADY PAID.  Each foe's share is awarded as it
+  -- falls (doubleFaint), because by the time the side is beaten there is no
+  -- longer a Pokemon on the field to award it for.  Paying again here would
+  -- double every double battle's exp.
+  if not self.expPaidPerSlot then self:awardExp() end
 
   if self.kind == "trainer" then
     -- EnemySendOutFirstMon / AnyEnemyPokemonAliveCheck (core.asm): scan
@@ -4611,7 +6958,7 @@ function BattleState:enemyMonFainted()
         -- "X is" off so "about to use" stays above the name, instead of the
         -- page ending on a bare nick (#565).  Then para "Will PLAYER" /
         -- "change POKéMON?" with YES/NO.
-        self:say(Strings("%s is\nabout to use\v%s!", self.trainer.name, nextName))
+        self:say(Strings("%s is\nabout to use\v%s!", self:trainerLabel_(), nextName))
         self:sayChoice(
           Strings("Will %s\nchange POKéMON?", self.game.save.player.name),
           function(yes)
@@ -4638,6 +6985,7 @@ function BattleState:enemyMonFainted()
           battle = self, side = self.sides[2], battler = self.enemy,
           previous = previous,
         })
+        self:abilitySwitchOut(previous)
         self.aiUses = self:aiUsesFor()
         markSeen(self.game, self.enemy.mon.species)
         -- EnemySendOutFirstMon .next4 (core.asm:1413-1417): ClearSprites and
@@ -4650,7 +6998,7 @@ function BattleState:enemyMonFainted()
         -- (AnimateSendingOutMon) with the cry; no POOF -- that animation
         -- belongs to the player-side SendOutMon (core.asm:1757-1762)
         self.enemySendingOut = true
-        self:sayNext(Strings("%s sent\nout %s!", self.trainer.name, self.enemy.name))
+        self:sayNext(Strings("%s sent\nout %s!", self:trainerLabel_(), self.enemy.name))
         self:actNext(function()
           self.enemySendingOut = false
           self:startGrowIn(self.enemy)
@@ -4660,6 +7008,7 @@ function BattleState:enemyMonFainted()
             HeldItems.onEntry(self, self.enemy)
           end)
         end)
+        self:actNext(function() self:abilitySwitchIn(self.enemy) end)
       end)
       -- SwitchPlayerMon after the enemy is out (core.asm:1436-1443)
       self:act(function()
@@ -4673,6 +7022,7 @@ function BattleState:enemyMonFainted()
           battle = self, side = self.sides[1],
           battler = self.player, previous = previous,
         })
+        self:abilitySwitchOut(previous)
         -- Taking the SHIFT offer ZEROES wPartyGainExpFlags and
         -- wPartyFoughtCurrentEnemyFlags before jumping to SwitchPlayerMon
         -- (EnemySendOutFirstMon tail, core.asm:1436-1443), and SwitchPlayerMon
@@ -4699,6 +7049,7 @@ function BattleState:enemyMonFainted()
           require("src.core.Sound").playCry(self.data, self.player.mon.species)
           HeldItems.onEntry(self, self.player)
         end)
+        self:actNext(function() self:abilitySwitchIn(self.player) end)
       end)
       return
     end
@@ -4716,7 +7067,33 @@ function BattleState:enemyMonFainted()
     -- Sprout Tower sage 8 * 3 * 4 = 96, instead of the 225 and 24 a single
     -- quarter gives.  Gen1's TrainerBattleVictory has no such split, so the
     -- multiplier stays on the Gen2 side of the fence.
-    local prize = (self.trainer.baseMoney or 0) * self.enemy.mon.level
+    -- THE LEVEL THE PRIZE IS COUNTED FROM.
+    --
+    -- Gen 1 and Gen 2 count from the mon that was out when the battle ended.
+    -- Emerald counts from the trainer's LAST PARTY MEMBER -- which is usually
+    -- the same Pokemon and is not always: a trainer whose last mon never got
+    -- sent out still pays for it.  The multiplier itself is already folded
+    -- into baseMoney by the import (four times the class's own), so the
+    -- generation shows up here only as which level to use.
+    -- THE FIELD CAN BE EMPTY BY NOW.
+    --
+    -- Reported from play, as a crash: "after defeating them both ... then
+    -- crashes -- BattleState.lua:6957: attempt to index field 'enemy' (a nil
+    -- value)".  A foe that faints in a double is lifted off the field at
+    -- once, so beating the LAST one leaves nothing to read a level from.  The
+    -- level of the one that fell is remembered as it goes (doubleFaint), and
+    -- Gen 3 overrides it below with the trainer's last party member anyway.
+    local level = (self.enemy and self.enemy.mon and self.enemy.mon.level)
+                  or self.lastFoeLevel
+                  or (self.enemyParty and self.enemyParty[#self.enemyParty]
+                      and self.enemyParty[#self.enemyParty].level) or 1
+    if require("src.core.GameVersion").isGen3() then
+      local party = self.trainer.party
+                    or (self.trainer.parties and self.trainer.parties[1])
+      local last = party and party[#party]
+      if last and tonumber(last.level) then level = tonumber(last.level) end
+    end
+    local prize = (self.trainer.baseMoney or 0) * level
     if require("src.core.GameVersion").isGen2() then
       prize = prize * 4
     end
@@ -4751,7 +7128,7 @@ function BattleState:enemyMonFainted()
     self:actNext(function() self:playVictoryMusic() end)
     -- _TrainerDefeatedText: "<PLAYER> defeated\nTRAINER!"
     self:sayNext(self:romText("_TrainerDefeatedText", "%s defeated\n%s!", self.game.save.player.name,
-                                             self.trainer.name))
+                                             self:trainerLabel_()))
     self:actNext(function()
       self.showEnemyTrainer = self.trainerPic ~= nil
       if self.showEnemyTrainer then self:slidePic("foe", 64, 16, 2) end
@@ -4916,6 +7293,7 @@ function BattleState:openReplacementMenu()
           battle = self, side = self.sides[1], battler = self.player,
           previous = previous,
         })
+        self:abilitySwitchOut(previous)
         self:markParticipant()
         self.nextInsert = 0
         self.sendingOut = true
@@ -4929,6 +7307,7 @@ function BattleState:openReplacementMenu()
           require("src.core.Sound").playCry(self.data, self.player.mon.species)
           HeldItems.onEntry(self, self.player)
         end)
+        self:actNext(function() self:abilitySwitchIn(self.player) end)
       end,
     })
   end)
@@ -5119,6 +7498,17 @@ end
 function BattleState:tryRun()
   self.phase = "messages"
   self.afterQueue = "menu"
+  -- A wild battle the script says cannot be escaped.  There is exactly one in
+  -- Emerald -- the first -- and the roll is skipped rather than rigged, so a
+  -- lucky roll can never break the scene.
+  if self.noRun then
+    self:say(self:romText("_CantEscapeText", "Can't escape!"))
+    self:act(function()
+      self:executeAction(self.enemy, self.player, self:enemyAction())
+    end)
+    self:act(function() self:endOfTurn() end)
+    return
+  end
   if self.kind == "trainer" then
     -- _NoRunningText is three lines in a two-line box, so the third arrives
     -- on a \v scroll (ContText: ▼ then a button press) rather than a \n.
@@ -5128,10 +7518,27 @@ function BattleState:tryRun()
       or Strings("No! There's no\nrunning from a\vtrainer battle!"))
     return
   end
-  -- modified in-battle speeds (stat stages + paralysis), like the
-  -- wBattleMonSpeed the original hands to TryRunningFromBattle
-  local escaped = self:runRoll(TurnOrder.effectiveSpeed(self.player),
-                               TurnOrder.effectiveSpeed(self.enemy))
+  -- ...AND THREE ABILITIES DECIDE IT BEFORE THE SPEEDS DO.
+  --
+  -- RUN AWAY always gets out of a wild battle, whatever the speeds are and
+  -- whatever is holding it.  SHADOW TAG, ARENA TRAP and MAGNET PULL on the
+  -- other side stop it getting out at all -- which is the same rule that
+  -- stops a switch, asked of the same function, so a WOBBUFFET is as
+  -- inescapable here as it is from the party menu.
+  local escaped
+  local trapper = Abilities.trapsSwitch(self.enemy, self.player)
+  if Abilities.alwaysFlees(self.player) then
+    escaped = true
+  elseif trapper then
+    escaped = false
+    self:say(Strings("%s's\n%s\nprevents escape!", displayName(self.enemy),
+                     abilityLabel(trapper)))
+  else
+    -- modified in-battle speeds (stat stages + paralysis), like the
+    -- wBattleMonSpeed the original hands to TryRunningFromBattle
+    escaped = self:runRoll(TurnOrder.effectiveSpeed(self.player),
+                           TurnOrder.effectiveSpeed(self.enemy))
+  end
   if escaped then
     require("src.core.Sound").play(self.data, "Run")
     self:say(self:romText("_GotAwayText", "Got away safely!"))
@@ -5251,7 +7658,11 @@ function BattleState:storeCaughtMon()
       dex.unownDex[#dex.unownDex + 1] = form
     end
   end
-  stampOT(game.save, self.enemy.mon)
+  -- CAUGHT: the memo's "met at Lv5, ROUTE 101" comes from right here, and the
+  -- level is the one it was caught AT rather than the one it is now, which is
+  -- the whole reason the cartridge stores it separately.
+  stampOT(game.save, self.enemy.mon,
+          { level = self.enemy.mon.level, location = BattleState.metHere(game) })
   if isNew then
     -- _ItemUseBallText06 + ShowPokedexData
     self:sayNext(Strings("New POKéDEX data\nwill be added for\n%s!", self.enemy.name))
@@ -5265,6 +7676,17 @@ function BattleState:storeCaughtMon()
     self:uiNext(function()
       return self:askNicknameUI(caught, enemyName)
     end)
+  end
+  -- ...AND WHAT IT WAS CAUGHT IN, before it goes anywhere.
+  --
+  -- Emerald sends a Pokemon out in the ball it was caught in (the four bits
+  -- in Misc's packed half-word), so this is the moment those bits are
+  -- written.  The ITEM ID rather than a sheet row: the row is a jump table
+  -- the cartridge owns, and an id still means the right ball after a
+  -- re-import renumbers nothing.  Recorded whether it lands in the party or
+  -- a box, because a box Pokemon is sent out in its own ball too.
+  if self.enemy.mon and self.lastBall and self.enemy.mon.ball == nil then
+    self.enemy.mon.ball = self.lastBall
   end
   if Party.add(game.save.party, self.enemy.mon) then
     askCaughtNickname()
@@ -5297,7 +7719,198 @@ end
 -- entries -- POOF+HIDEPIC+SHAKE for a capture ($43), all five (plus a
 -- reappearing POOF+SHOWPIC) for a breakout ($6x); a clean miss ($20)
 -- stops after the poof, so the mon never hides
+-- HOENN THROWS ITS OWN BALL.
+--
+-- Reported from play: "Pokeball throwing animations dont exist in battle
+-- either", "neither do the capturing shaking etc eniamtions".  Both are the
+-- same gap: this chain is written in Gen 1's and Gen 2's animation SCRIPTS --
+-- TOSS_ANIM, POOF_ANIM, SHAKE_ANIM -- and a Gen 3 dataset has none of them,
+-- so every row below was a lookup that found nothing and the whole capture
+-- happened with the ball never drawn.
+--
+-- Emerald's is not a script either: it is a task with a timeline, so this
+-- port's is a timeline too (src/battle/Gen3BallAnim.lua).  The queue holds
+-- for its length and the screen reads its fields.
+function BattleState:gen3BallChain(caught, shakes, ball)
+  local record = (self.data.constants or {}).gen3BallAnim
+  if type(record) ~= "table" then return false end
+  local Gen3BallAnim = require("src.battle.Gen3BallAnim")
+  local Gen3Battle = require("src.battle.Gen3Battle")
+  -- WHERE IT IS THROWN TO, AND WHERE IT LANDS, which are two places.
+  --
+  -- Reported from play: "the ball shakes and catches but its hovering instead
+  -- of being on the ground".  It was: this asked picPlacement for the foe's
+  -- corner and passed it two arguments when it takes five, so the call threw
+  -- inside its own pcall every time and the fallback below -- a fixed point
+  -- level with the middle of the Pokemon -- was where the ball bounced, shook
+  -- and sat.  It never touched the ground because nothing ever told it where
+  -- the ground was.
+  --
+  -- The throw goes to the Pokemon's BODY, because that is what it has to
+  -- absorb; the bounce afterwards happens on the PLATFORM, which is the same
+  -- line the foe's feet stand on and is measured out of the drawn background.
+  local to = { x = 176, y = 40 }
+  local centre = Gen3Battle.battlerCentre
+                 and select(2, pcall(Gen3Battle.battlerCentre, self, self.enemy))
+  local cy = select(3, pcall(Gen3Battle.battlerCentre, self, self.enemy))
+  if type(centre) == "number" and type(cy) == "number" then
+    to = { x = centre, y = cy }
+  end
+  local spots = Gen3Battle.platforms and select(2, pcall(Gen3Battle.platforms, self))
+  local ground = type(spots) == "table" and spots.opponent
+                 and tonumber(spots.opponent.y) or nil
+  local anim = Gen3BallAnim.new(self.data, {
+    ball = Gen3BallAnim.ballIndex(self.data, ball, self.data.items),
+    caught = caught, shakes = shakes,
+    -- a trainer's Pokemon swats the ball away, which is case 5 and its own
+    -- little arc rather than a shake count
+    blocked = self.kind ~= "wild",
+    to = to,
+    ground = ground,
+  })
+  self.gen3Ball = anim
+  self.gen3BallPlaying = true
+  self.nextInsert = (self.nextInsert or 0) + 1
+  table.insert(self.queue, self.nextInsert, { wait = anim:estimate() })
+  return true
+end
+
+-- ...AND HOENN THROWS ITS OWN BALL TO SEND ONE OUT AS WELL.
+--
+-- Reported from play, with a picture: the ball above the text box "is
+-- supposed to be in the players hand unscrambled and its supposed to play the
+-- animation of him throwing it out".  Half of that was the party-ball row
+-- drawing the Game Boy's sheet; this is the other half.  There was no
+-- send-out animation on Hoenn at all -- the queue ran Gen 1's POOF_ANIM,
+-- which a Gen 3 dataset has no script for, and then Gen 2's grow-in, which is
+-- the Game Boy's three-stage tile beat rather than anything Emerald does.
+--
+-- WHAT EMERALD DOES, and all of it comes off the cartridge:
+--
+--   the PLAYER's ball starts in the trainer's hand at (24,68) and arcs 25
+--   frames and thirty pixels to a point twenty-four BELOW the Pokemon's own
+--   centre -- a flatter, shorter throw than the capture's;
+--
+--   the FOE's is not thrown: it is placed on the spot and waits sixteen
+--   frames, which is why an opposing trainer's send-out has no arc;
+--
+--   and both end the same way -- the ball opens, throws its particle ring,
+--   and the Pokemon comes out un-blending from the ball's OWN colour over
+--   fourteen frames.
+--
+-- Returns false on a dataset with no send-out record, and the Game Boy's
+-- grow-in runs instead: a ball thrown to the wrong place would be worse.
+-- Is the ball's timeline talking about THIS Pokemon?  A capture is always
+-- about the foe, but a send-out can be about either side, and without the
+-- question the player's throw shrank the Pokemon standing opposite.
+-- A WILD SHINY, which has no ball to sparkle out of.
+--
+-- PrintBeginningBattleText's wild branch plays the shiny animation and
+-- nothing else, because the Pokemon is already standing there -- Gen 2 does
+-- the same thing at core.asm:9091 and this is Hoenn's half of it.  Every
+-- other send-out in the file goes through startGrowIn -> gen3SendOut, which
+-- carries its own sparkle, so this one path is the only one that needs it and
+-- there is no double sparkle anywhere.
+function BattleState:gen3ShinyBurst(battler)
+  if not battler then return false end
+  if not self:gen3ThrowsSendOut() then return false end
+  if self.data and self.data.battle_anims and self.data.battle_anims.gen2 then
+    return false -- Johto has its own SHINY_ANIM; this is the Gen 3 dataset
+  end
+  local mon = battler.mon
+  if not (mon and require("src.pokemon.Pokemon").isShiny(mon)) then return false end
+  if self.gen3Ball and self.gen3BallPlaying then return false end
+  local Gen3BallAnim = require("src.battle.Gen3BallAnim")
+  local Gen3Battle = require("src.battle.Gen3Battle")
+  local cx = select(2, pcall(Gen3Battle.battlerCentre, self, battler))
+  local cy = select(3, pcall(Gen3Battle.battlerCentre, self, battler))
+  if type(cx) ~= "number" or type(cy) ~= "number" then return false end
+  local anim = Gen3BallAnim.new(self.data, {
+    shinyOnly = true, battler = battler, to = { x = cx, y = cy },
+  })
+  self.gen3Ball = anim
+  self.gen3BallPlaying = true
+  -- called from inside a queue row, so the hold goes right after it rather
+  -- than on the end of the list behind everything else
+  self.nextInsert = (self.nextInsert or 0) + 1
+  table.insert(self.queue, self.nextInsert, { wait = anim:estimate() })
+  return true
+end
+
+function BattleState:gen3BallFor(battler)
+  local anim = self.gen3Ball
+  if not anim then return nil end
+  if anim.battler and anim.battler ~= battler then return nil end
+  if not anim.battler and battler ~= self.enemy then return nil end
+  return anim
+end
+
+function BattleState:gen3ThrowsSendOut()
+  local record = (self.data or {}).constants
+  record = type(record) == "table" and record.gen3BallAnim or nil
+  local timing = type(record) == "table" and record.timing or nil
+  return type(timing) == "table" and type(timing.sendOut) == "table"
+end
+
+-- WHICH OF THE TWELVE SHEETS a Pokemon's ball is drawn from.  Accepts either
+-- the item id a save and a capture now record, or the bare sheet row an older
+-- save may already carry, because ItemIdToBallId is a jump table and not an
+-- order: POKe is row 0, GREAT is 1, SAFARI is 2, ULTRA is 3 and MASTER is 4.
+function BattleState:gen3BallSheet(mon)
+  local ball = mon and mon.ball
+  if type(ball) == "number" then return math.max(0, math.floor(ball)) end
+  if type(ball) ~= "string" then return 0 end
+  local Gen3BallAnim = require("src.battle.Gen3BallAnim")
+  local ok, row = pcall(Gen3BallAnim.ballIndex, self.data, ball, self.data.items)
+  return (ok and tonumber(row)) or 0
+end
+
+function BattleState:gen3SendOut(battler)
+  if not battler then return false end
+  if not self:gen3ThrowsSendOut() then return false end
+  local record = (self.data.constants or {}).gen3BallAnim
+  local timing = record.timing
+  -- one ball at a time: a capture already owns the timeline
+  if self.gen3Ball and self.gen3BallPlaying then return false end
+  local Gen3BallAnim = require("src.battle.Gen3BallAnim")
+  local Gen3Battle = require("src.battle.Gen3Battle")
+  local cx = select(2, pcall(Gen3Battle.battlerCentre, self, battler))
+  local cy = select(3, pcall(Gen3Battle.battlerCentre, self, battler))
+  if type(cx) ~= "number" or type(cy) ~= "number" then return false end
+  local anim = Gen3BallAnim.new(self.data, {
+    -- WHICH BALL IT WAS CAUGHT IN.
+    --
+    -- Emerald sends a Pokemon out in the ball it was caught in, and the four
+    -- bits that say so live in the Misc substruct's packed half-word -- which
+    -- the save codec never read, so every send-out here was a POKe BALL
+    -- whatever it was caught with.  Both ends are fixed now: a save carries
+    -- it in and a capture writes it, and both write the ITEM ID rather than a
+    -- sheet row, because the row is a jump table the cartridge owns
+    -- (MASTER is sheet 4 and POKe is 0) and an id survives a re-import.
+    ball = self:gen3BallSheet(battler.mon),
+    sendOut = (battler == self.player) and "player" or "opponent",
+    battler = battler,
+    to = { x = cx, y = cy },
+    -- ...AND IF IT SPARKLES, IT SPARKLES HERE.  TryShinyAnimation is called
+    -- out of the send-out, once the mon is out of the ball, which is exactly
+    -- what this animation owns -- so the shiny beat rides it rather than
+    -- becoming a second thing the queue has to schedule.
+    shiny = require("src.pokemon.Pokemon").isShiny(battler.mon),
+  })
+  self.gen3Ball = anim
+  self.gen3BallPlaying = true
+  -- the trainer throws and walks off on the same frame; showPlayerBack is
+  -- dropped when the ball opens, by which time the slide has finished
+  if self.showPlayerBack and battler == self.player then
+    self:slidePic("back", 0, -72, 4)
+  end
+  self.nextInsert = (self.nextInsert or 0) + 1
+  table.insert(self.queue, self.nextInsert, { wait = anim:estimate() })
+  return true
+end
+
 function BattleState:ballChain(tossAnim, caught, shakes, ball)
+  if self:gen3BallChain(caught, shakes, ball) then return end
   -- Gen 2 has no chain: BattleAnim_ThrowPokeBall runs the arc, the
   -- RETURN_MON bgeffect that draws the mon in, the wobble loop
   -- (anim_checkpokeball -> GetPokeBallWobble) and finally the click or the
@@ -5557,14 +8170,28 @@ function BattleState:openParty()
     return self:buildScreen("PartyMenu", {
       battle = self,
       onSwitch = function(mon)
-        if mon == self.player.mon then
-          self:say(Strings("%s is\nalready out!", self.player.name))
+        -- "ALREADY OUT" IS BOTH SLOTS IN A DOUBLE.  The partner standing
+        -- beside you cannot be sent out again either, and asking `self.player`
+        -- alone let the right-hand slot pick the Pokemon already fighting
+        -- next to it.
+        local standing
+        for _, b in activeBattlers(self) do
+          if b.isPlayer and b.mon == mon then standing = b end
+        end
+        if standing then
+          self:say(Strings("%s is\nalready out!", standing.name))
         elseif Party.isEgg(mon) then
           -- CheckFirstMonIsEgg (01:$728B): an EGG can never be sent out
           self:say(self:romText("_EggNoWillText",
             "An EGG can't\nbattle!"))
         elseif mon.hp <= 0 then
           self:say(self:romText("_NoWillText", "There's no will\nto fight!"))
+        elseif self:isDouble() then
+          -- A SWITCH IN A DOUBLE IS AN ACTION, NOT AN ANSWER.  The other
+          -- three slots still move this turn, so it goes into the same
+          -- pending list a chosen move does and is resolved in the turn --
+          -- ahead of every move, which is where the cartridge puts it.
+          self:chooseAction({ special = "playerSwitch", mon = mon })
         else
           self:resolveSwitch(mon)
         end
@@ -5908,7 +8535,208 @@ function BattleState:drawStadiumBattlerPic(battler, img, x, y, scale)
   return StadiumArt.drawInto(self.game, key, mon, x, y, w, h)
 end
 
+-- Emerald's procedural animation moves the SPRITE, not its pixels, and it
+-- moves it about the pic's BOTTOM CENTRE -- the point the mon stands on.
+-- That is what makes a squash compress downwards instead of about the middle
+-- of the picture, and a rotation pivot on the feet rather than the navel.
+--
+-- The colour routines (GLOW_*, FLASH_YELLOW) blend the sprite's palette
+-- toward a colour on hardware; the same pic drawn again in that colour, at
+-- the blend's strength, is what that looks like.
+local function drawMonAnimated(battler, img, x, y, scale)
+  local anim = battler and battler.monAnim
+  local tf = anim and anim:transform()
+  if not tf or (tf.dx == 0 and tf.dy == 0 and tf.sx == 1 and tf.sy == 1
+                and tf.rot == 0 and tf.alpha == 1 and not tf.tint) then
+    love.graphics.draw(img, x, y, 0, scale, scale)
+    return
+  end
+  local w, h = img:getWidth(), img:getHeight()
+  local cx = x + w * scale / 2 + (tf.dx or 0) * scale
+  local cy = y + h * scale + (tf.dy or 0) * scale
+  local r, g, b, a = love.graphics.getColor()
+  if tf.alpha ~= 1 then love.graphics.setColor(r, g, b, a * tf.alpha) end
+  love.graphics.draw(img, cx, cy, tf.rot, scale * tf.sx, scale * tf.sy,
+                     w / 2, h)
+  local tint = tf.tint
+  if tint then
+    love.graphics.setColor(tint[1], tint[2], tint[3], a * (tint[4] or 1))
+    love.graphics.draw(img, cx, cy, tf.rot, scale * tf.sx, scale * tf.sy,
+                       w / 2, h)
+  end
+  love.graphics.setColor(r, g, b, a)
+end
+
+BattleState.drawMonAnimated = drawMonAnimated
+
+-- HOW FAR A GEN 3 MOVE HAS SHOVED THIS POKEMON OUT OF ITS PLACE.
+--
+-- AnimTask_ShakeMon writes the battler's OWN sprite offset, so the flinch has
+-- to happen where the mon is drawn rather than as a particle laid over it --
+-- which is why it is here and not in Gen3MoveAnim's own draw.
+function BattleState:gen3AnimShake(battler)
+  if not (self.gen3AnimPlaying and self.gen3Anim and battler) then
+    return 0, 0
+  end
+  local ok, dx, dy = pcall(self.gen3Anim.monOffset, self.gen3Anim,
+                           battler == self.player)
+  if not ok then return 0, 0 end
+  return dx or 0, dy or 0
+end
+
+-- ...AND WHAT COLOUR IT HAS BEEN WASHED.
+--
+-- BlendPalettes lerps the battler's own palette toward a colour, which two
+-- draws reproduce exactly: the sprite dimmed by (1 - c), and the colour added
+-- back at c through the sprite's own alpha.
+function BattleState:gen3AnimTint(battler)
+  if not (self.gen3AnimPlaying and self.gen3Anim and battler) then return nil end
+  if not love.graphics.setBlendMode then return nil end
+  local ok, r, g, b, c = pcall(self.gen3Anim.monTint, self.gen3Anim,
+                               battler == self.player)
+  if not (ok and c and c > 0) then return nil end
+  return r, g, b, c
+end
+
+-- ...AND THE COPIES OF IT.
+--
+-- DOUBLE TEAM makes two ghosts of the attacker and swings them sideways in
+-- opposite phase; the import reads the cartridge's own numbers for that and
+-- Gen3MoveAnim:monGhosts works the arithmetic (see both).  They are the mon's
+-- own picture drawn again at an x offset, which is what the hardware does --
+-- the copies are sprites sharing the attacker's tiles on a palette of their
+-- own.
+function BattleState:gen3AnimGhosts(battler)
+  if not (self.gen3AnimPlaying and self.gen3Anim and battler) then return nil end
+  if not self.gen3Anim.monGhosts then return nil end
+  local ok, list = pcall(self.gen3Anim.monGhosts, self.gen3Anim,
+                         battler == self.player)
+  if not (ok and type(list) == "table" and #list > 0) then return nil end
+  return list
+end
+
+-- ...AND HOW BIG IT IS.
+--
+-- MINIMIZE hands the attacker's sprite to SetSpriteRotScale every frame; the
+-- import reads that task's whole state machine and Gen3MoveAnim:monScale
+-- walks it (see both).  What comes back is a multiplier, 1 being life size.
+function BattleState:gen3AnimScale(battler)
+  if not (self.gen3AnimPlaying and self.gen3Anim and battler) then return nil end
+  if not self.gen3Anim.monScale then return nil end
+  local ok, mul = pcall(self.gen3Anim.monScale, self.gen3Anim,
+                        battler == self.player)
+  if not (ok and type(mul) == "number" and mul > 0 and mul < 1) then
+    return nil
+  end
+  return mul
+end
+
+-- ...AND WHETHER IT IS TIPPED OVER.
+--
+-- WITHDRAW hands the attacker's sprite to the same helper MINIMIZE uses, with
+-- a rotation instead of a scale; the import reads its three states and
+-- Gen3MoveAnim:monRotate walks them (see both).  What comes back is radians
+-- and a rise in pixels.
+function BattleState:gen3AnimRotate(battler)
+  if not (self.gen3AnimPlaying and self.gen3Anim and battler) then return nil end
+  if not self.gen3Anim.monRotate then return nil end
+  local ok, angle, rise = pcall(self.gen3Anim.monRotate, self.gen3Anim,
+                                battler == self.player)
+  if not (ok and type(angle) == "number" and angle ~= 0) then return nil end
+  return angle, tonumber(rise) or 0
+end
+
+-- A WRAPPER, and not a line inside the draw below, because that draw has
+-- eight early returns down its length -- the substitute doll, the faint
+-- wipe, the fade, the stadium path -- and a transform pushed at the top of it
+-- would be left on the stack by any one of them.  The rotation belongs around
+-- the whole thing or nowhere.
+-- ...AND WHETHER IT IS SQUASHED.
+--
+-- SPLASH, MEDITATE and TELEPORT run an affine table the cartridge keeps as
+-- data; Gen3MoveAnim:monAffine walks it (see both).  Two multipliers come
+-- back, not one, because the table moves the axes independently.
+function BattleState:gen3AnimSquash(battler)
+  if not (self.gen3AnimPlaying and self.gen3Anim and battler) then return nil end
+  if not self.gen3Anim.monAffine then return nil end
+  local ok, sx, sy = pcall(self.gen3Anim.monAffine, self.gen3Anim,
+                           battler == self.player)
+  if not (ok and type(sx) == "number" and type(sy) == "number") then
+    return nil
+  end
+  if math.abs(sx - 1) < 1e-6 and math.abs(sy - 1) < 1e-6 then return nil end
+  return sx, sy
+end
+
 function BattleState:drawBattlerPic(battler, x, y, scale)
+  local angle, rise = self:gen3AnimRotate(battler)
+  local sqx, sqy = self:gen3AnimSquash(battler)
+  if not (angle or sqx) then
+    return self:drawBattlerPicAt(battler, x, y, scale)
+  end
+  local pic = self:battlerPic(battler)
+  local w = (pic and pic.getWidth and pic:getWidth() or 0) * scale
+  local h = (pic and pic.getHeight and pic:getHeight() or 0) * scale
+  local g = love.graphics
+  g.push()
+  -- A SQUASH KEEPS ITS FEET ON THE PLATFORM.  The hardware scales an affine
+  -- sprite about its centre and then moves it back down by half of what it
+  -- lost, which comes to the bottom edge staying where it was -- and a
+  -- Pokemon that sinks into the ground when it flattens looks wrong in a way
+  -- centring alone does not fix.  So the pivot for the scale is the middle of
+  -- the foot of the picture.
+  if sqx then
+    g.translate(x + w / 2, y + h)
+    g.scale(sqx, sqy)
+    g.translate(-(x + w / 2), -(y + h))
+  end
+  -- ...and the rotation IS about the centre, because that is the one the
+  -- hardware turns about and a tipping Pokemon pivots on its middle.
+  if angle then
+    local cx, cy = x + w / 2, y + h / 2
+    g.translate(cx, cy - (rise or 0))
+    g.rotate(angle)
+    g.translate(-cx, -cy)
+  end
+  local ok, err = pcall(self.drawBattlerPicAt, self, battler, x, y, scale)
+  g.pop()
+  if not ok then error(err) end
+end
+
+function BattleState:drawBattlerPicAt(battler, x, y, scale)
+  local shakeX, shakeY = self:gen3AnimShake(battler)
+  x, y = x + shakeX, y + shakeY
+  -- ...and how big it is.  The hardware scales an affine sprite about its own
+  -- CENTRE, so shrinking here has to move the picture back in by half of what
+  -- it lost, or the Pokemon shrinks toward its top-left corner and slides off
+  -- its own platform.
+  local shrink = self:gen3AnimScale(battler)
+  if shrink then
+    local pic = self:battlerPic(battler)
+    if pic and pic.getWidth then
+      local w, h = pic:getWidth() * scale, pic:getHeight() * scale
+      x = x + (w - w * shrink) / 2
+      y = y + (h - h * shrink) / 2
+      scale = scale * shrink
+    end
+  end
+  -- the ghosts go down FIRST, so the Pokemon itself stays on top of its own
+  -- copies rather than being hidden behind them
+  local ghosts = self:gen3AnimGhosts(battler)
+  if ghosts and not battler.fainted and not self:fxFaintActive(battler)
+     and not battler.substituteHP then
+    local img = self:battlerPic(battler)
+    if img then
+      local cr, cg, cb, ca = love.graphics.getColor()
+      for _, ghost in ipairs(ghosts) do
+        if (ghost.x or 0) ~= 0 then
+          love.graphics.setColor(cr, cg, cb, ca * (ghost.alpha or 0.5))
+          love.graphics.draw(img, x + (ghost.x or 0), y, 0, scale, scale)
+        end
+      end
+      love.graphics.setColor(cr, cg, cb, ca)
+    end
+  end
   local img = self:battlerPic(battler)
   if battler.substituteHP and not self:fxFaintActive(battler)
      and not battler.fainted then
@@ -5943,7 +8771,20 @@ function BattleState:drawBattlerPic(battler, x, y, scale)
   if not pf or (not pf.kind and not pf.hidden and not pf.minimized
                 and (pf.ox or 0) == 0 and (pf.oy or 0) == 0) then
     if self:drawStadiumBattlerPic(battler, img, x, y, scale) then return end
-    love.graphics.draw(img, x, y, 0, scale, scale)
+    local tr, tg, tb, tc = self:gen3AnimTint(battler)
+    if tc then
+      local cr, cg, cb, ca = love.graphics.getColor()
+      local keep = 1 - tc
+      love.graphics.setColor(cr * keep, cg * keep, cb * keep, ca)
+      drawMonAnimated(battler, img, x, y, scale)
+      love.graphics.setBlendMode("add")
+      love.graphics.setColor(tr * tc, tg * tc, tb * tc, ca)
+      drawMonAnimated(battler, img, x, y, scale)
+      love.graphics.setBlendMode("alpha")
+      love.graphics.setColor(cr, cg, cb, ca)
+      return
+    end
+    drawMonAnimated(battler, img, x, y, scale)
     return
   end
   if pf.hidden then return end
@@ -6126,7 +8967,7 @@ function BattleState:sgbBattlePals()
   local function mon(b, placeholder)
     if placeholder or not b then return pals.MEWMON or pals.GREENBAR end
     return PaletteFX.monPal(self.data, b.mon.species, nil,
-      require("src.pokemon.Stats").isShiny(b.mon.dvs)) or pals.MEWMON
+      require("src.pokemon.Pokemon").isShiny(b.mon)) or pals.MEWMON
   end
   local out = {
     [0] = bar(self.player),
@@ -6275,6 +9116,10 @@ end
 
 -- the OAM anim layer (subanimation sprites / the resting caught ball)
 function BattleState:drawAnimLayer(colorized)
+  -- EMERALD'S OWN, and reached through this method rather than around it.
+  -- Gen3Battle.draw used to call its layer functions directly, which meant a
+  -- mod wrapping this name never saw a Gen 3 battle at all.
+  if self:gen3Layout() then return Gen3Battle.drawAnimationLayer(self) end
   local colorFn
   if colorized then
     colorFn = function(s, px, py) return self:animSpriteColors(s, px, py) end
@@ -6307,6 +9152,10 @@ BattleState.BATTLE_SCALE_DEFAULT = { front = 1, back = 2 }
 -- Gen2 stores back pics at 6x6 tiles and draws them 1:1 at hlcoord 1,6;
 -- only Gen1's 4x4 rips are doubled.
 BattleState.BATTLE_SCALE_GEN2 = { front = 1, back = 1 }
+-- ...and Gen 3's are 64x64, which is bigger again.  Doubled they are 128
+-- pixels tall on a 160-pixel screen: the player's Pokemon filled half the
+-- field and ran off the bottom through the message window.
+BattleState.BATTLE_SCALE_GEN3 = { front = 1, back = 1 }
 
 -- image-level override for an asset path, or nil.  scales is the merged
 -- data.battle_sprite_scales table (record id -> { path, scale }).
@@ -6331,8 +9180,13 @@ function BattleState.resolveBattleScale(data, side, path, species)
   local field = side == "back" and "battleScaleBack" or "battleScaleFront"
   local override = def and def[field]
   if override then return override end
-  local defaults = require("src.core.GameVersion").isGen2()
-    and BattleState.BATTLE_SCALE_GEN2 or BattleState.BATTLE_SCALE_DEFAULT
+  local V = require("src.core.GameVersion")
+  local defaults = BattleState.BATTLE_SCALE_DEFAULT
+  if V.isGen3() then
+    defaults = BattleState.BATTLE_SCALE_GEN3
+  elseif V.isGen2() then
+    defaults = BattleState.BATTLE_SCALE_GEN2
+  end
   return defaults[side] or 1
 end
 
@@ -6401,12 +9255,26 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
     love.graphics.draw(img, ex + self:picOffset("foe"), ey)
   elseif onlySide ~= "player"
      and self.enemy and self.enemy.sprite and not self.enemyHidden
-     and not self.enemySendingOut and not self:fxHidden(self.enemy) then
+     and not self.enemySendingOut and not self:fxHidden(self.enemy)
+     -- SWALLOWED.  While a ball is being thrown the foe's pic belongs to the
+     -- ball's timeline: it shrinks into the ball and comes back out of it,
+     -- and once it is inside there is nothing to draw at all.
+     and not ((self:gen3BallFor(self.enemy) or {}).monHidden) then
     local img = self:picImage(self.enemy.sprite)
     love.graphics.setColor(1, 1, 1, 1)
     local ex, ey = enemyPicXY(img, slide, sx, sy)
     local s = BattleState.resolveBattleScale(self.data, "front",
       imagePathOf(img), self.enemy.mon and self.enemy.mon.species)
+    -- EMERALD PLACES ITS POKEMON ON A PLATFORM, and the 7x7 tile slot above
+    -- is the Game Boy's rule for a 160x144 letterbox that has none.  On the
+    -- Gen 3 field it left the foe up in the corner well clear of the ground
+    -- it is supposed to be standing on.
+    if self:gen3Layout() then
+      ex, ey = Gen3Battle.picPlacement(self, self.enemy, img,
+                                       imagePathOf(img), s)
+      ex = ex - slide + sx
+      ey = ey + sy
+    end
     local gs = self:growInScale(self.enemy)
     if gs then
       -- AnimateSendingOutMon: the downscaled pic keeps its bottom edge
@@ -6414,10 +9282,43 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
       -- the mod scale composes multiplicatively with the grow stage
       local eff = s * gs
       if eff > 0 then
-        local dx, dy = BattleState.frontPlacement(ex, ey,
-          img:getWidth(), img:getHeight(), eff)
+        local dx, dy
+        if self:gen3Layout() then
+          dx, dy = Gen3Battle.picPlacement(self, self.enemy, img,
+                                           imagePathOf(img), eff)
+          dx, dy = dx - slide + sx, dy + sy
+        else
+          dx, dy = BattleState.frontPlacement(ex, ey,
+            img:getWidth(), img:getHeight(), eff)
+        end
         love.graphics.draw(img, dx, dy, 0, eff, eff)
       end
+    elseif self:gen3BallFor(self.enemy)
+        and (self:gen3BallFor(self.enemy).monScale or 1) < 1 then
+      -- THE ABSORB, and it is two things at once: the pic shrinks to about a
+      -- fifth over 28 frames while its whole palette blends to the BALL'S
+      -- OWN colour -- a Net Ball's catch is green and a Dive Ball's is blue.
+      -- Its centre travels to the ball's, which is what makes it look sucked
+      -- in rather than merely small.
+      local anim = self:gen3BallFor(self.enemy)
+      local eff = s * math.max(0.01, anim.monScale or 1)
+      local cx, cy = ex + img:getWidth() * s / 2, ey + img:getHeight() * s / 2
+      -- a Pokemon coming OUT of a ball rises a few pixels as it does
+      -- (SpriteCB_ReleaseMonFromBall walks its pos2.y); one being absorbed
+      -- does not, and its rise is zero
+      cy = cy + (anim.monRise or 0)
+      local t = math.max(0, math.min(1, anim.monBlend or 0))
+      cx = cx + (anim.x - cx) * t
+      cy = cy + (anim.y - cy) * t
+      local colour = require("src.battle.Gen3BallAnim").colour(anim)
+      love.graphics.setColor(1 - t * (1 - colour[1] / 255),
+                             1 - t * (1 - colour[2] / 255),
+                             1 - t * (1 - colour[3] / 255), 1)
+      love.graphics.draw(img, cx, cy, 0, eff, eff,
+                         img:getWidth() / 2, img:getHeight() / 2)
+      love.graphics.setColor(1, 1, 1, 1)
+    elseif self:gen3Layout() then
+      self:drawBattlerPic(self.enemy, ex, ey, s)
     else
       local dx, dy = BattleState.frontPlacement(ex, ey,
         img:getWidth(), img:getHeight(), s)
@@ -6440,14 +9341,33 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
     local s = BattleState.resolveBattleScale(self.data, "back",
       imagePathOf(self.playerBackPic), nil)
     love.graphics.setColor(1, 1, 1, 1)
-    local dx, dy = BattleState.backPlacement(img:getWidth(), img:getHeight(),
-      pad, padL, s)
+    -- THE TRAINER STANDS ON THE PLATFORM TOO.
+    --
+    -- Reported from play: "my characters back sprite in battle sits a little
+    -- too high".  backPlacement below pins the feet at y=96, which is the top
+    -- of the Game Boy's text box on a 144-pixel screen -- the right answer for
+    -- Red and Crystal, and fifteen pixels of air on Emerald, whose player
+    -- platform is lower and whose screen is taller.  The Pokemon on that side
+    -- already stand on the measured platform; the trainer who throws them was
+    -- the one thing still placed by the older rule.
+    local dx, dy
+    if self:gen3Layout() then
+      dx, dy = Gen3Battle.picPlacement(self, { isPlayer = true }, img,
+                                       imagePathOf(self.playerBackPic), s)
+    else
+      dx, dy = BattleState.backPlacement(img:getWidth(), img:getHeight(),
+                                         pad, padL, s)
+    end
     -- picOffset: SlideTrainerPicOffScreen walking the back pic off the left
     love.graphics.draw(img, dx + slide + sx + self:picOffset("back"),
                        dy + sy, 0, s, s)
   elseif onlySide ~= "enemy"
      and self.player and self.player.sprite and not hidePlayer
-     and not self.sendingOut and not self:fxHidden(self.player) then
+     and not self.sendingOut and not self:fxHidden(self.player)
+     -- INSIDE THE BALL.  While the player's send-out ball is still in the
+     -- air there is no Pokemon on that side to draw; without this it stood
+     -- there at full size waiting for its own ball to arrive.
+     and not ((self:gen3BallFor(self.player) or {}).monHidden) then
     local img = self:picImage(self.player.sprite)
     love.graphics.setColor(1, 1, 1, 1)
     -- feet flush on the text box top (y=96), ignoring baked-in padding
@@ -6457,6 +9377,8 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
       imagePathOf(self.player.sprite),
       self.player.mon and self.player.mon.species)
     local gs = self:growInScale(self.player)
+    local ballOut = self:gen3BallFor(self.player)
+    if ballOut and (ballOut.monScale or 1) >= 1 then ballOut = nil end
     if gs then
       -- the player-side AnimateSendingOutMon grow (after the poof,
       -- core.asm:1757-1762): feet pinned at y=96, horizontal centre
@@ -6467,6 +9389,36 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
           8 - padL * s + img:getWidth() * s * (1 - gs) / 2 + sx,
           96 - (img:getHeight() - pad) * eff + sy, 0, eff, eff)
       end
+    elseif ballOut then
+      -- COMING OUT OF THE BALL, which is the absorb run backwards: the pic
+      -- starts at the ball's own place tinted the ball's own colour and
+      -- grows out to full size and full colour over fourteen frames.  Same
+      -- two numbers the foe's side reads, off the same timeline.
+      local dx, dy
+      if self:gen3Layout() then
+        dx, dy = Gen3Battle.picPlacement(self, self.player, img,
+                                         imagePathOf(self.player.sprite), s)
+      else
+        dx, dy = BattleState.backPlacement(img:getWidth(), img:getHeight(),
+                                           pad, padL, s)
+      end
+      local eff = s * math.max(0.01, ballOut.monScale or 1)
+      local cx = dx + sx + img:getWidth() * s / 2
+      local cy = dy + sy + img:getHeight() * s / 2 + (ballOut.monRise or 0)
+      local t = math.max(0, math.min(1, ballOut.monBlend or 0))
+      cx = cx + (ballOut.x - cx) * t
+      cy = cy + (ballOut.y - cy) * t
+      local colour = require("src.battle.Gen3BallAnim").colour(ballOut)
+      love.graphics.setColor(1 - t * (1 - colour[1] / 255),
+                             1 - t * (1 - colour[2] / 255),
+                             1 - t * (1 - colour[3] / 255), 1)
+      love.graphics.draw(img, cx, cy, 0, eff, eff,
+                         img:getWidth() / 2, img:getHeight() / 2)
+      love.graphics.setColor(1, 1, 1, 1)
+    elseif self:gen3Layout() then
+      local dx, dy = Gen3Battle.picPlacement(self, self.player, img,
+                                             imagePathOf(self.player.sprite), s)
+      self:drawBattlerPic(self.player, dx + sx, dy + sy, s)
     else
       local dx, dy = BattleState.backPlacement(img:getWidth(),
         img:getHeight(), pad, padL, s)
@@ -6480,11 +9432,44 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
       g.setScissor()
     end
   end
+
+  -- THE OTHER TWO, when there are four.
+  --
+  -- The two passes above carry the whole intro: the trainer pic that holds
+  -- the foe's slot, the slide, the grow-in, the send-out gap.  All of that
+  -- belongs to a SIDE rather than to a slot -- both of a trainer's Pokemon
+  -- arrive together -- so the right-hand pair are drawn plainly here, on
+  -- the platform offsets sBattlerCoords gives them, rather than by
+  -- duplicating a hundred lines of intro state for a case that has none.
+  if self:gen3Layout() and self:isDouble() then
+    for _, pos in ipairs({ BattleState.POS.PLAYER_RIGHT,
+                           BattleState.POS.OPPONENT_RIGHT }) do
+      local b = self:battlerAt(pos)
+      local side = b and b.isPlayer and "player" or "enemy"
+      if b and b.sprite and onlySide ~= (side == "player" and "enemy" or "player")
+         and not self:fxHidden(b)
+         and not self:sideArriving(b.isPlayer, slide) then
+        local img = self:picImage(b.sprite)
+        if img then
+          love.graphics.setColor(1, 1, 1, 1)
+          local sc = BattleState.resolveBattleScale(
+            self.data, b.isPlayer and "back" or "front",
+            imagePathOf(img), b.mon and b.mon.species)
+          local x, y = Gen3Battle.picPlacement(self, b, img, imagePathOf(img), sc)
+          self:drawBattlerPic(b, x - slide + sx, y + sy, sc)
+        end
+      end
+    end
+  end
 end
 
 -- the BG-tile UI: HUDs, pokeball rows, safari ball count.  Grayscale;
 -- the zone pass colors it in colorized mode.
 function BattleState:drawHUDs(slide)
+  -- EMERALD'S OWN, and reached through this method rather than around it.
+  -- Gen3Battle.draw used to call its layer functions directly, which meant a
+  -- mod wrapping this name never saw a Gen 3 battle at all.
+  if self:gen3Layout() then return Gen3Battle.drawHUDs(self, slide) end
   -- the HUD clears with the send-out text (ClearScreenArea,
   -- core.asm:1414-1417) and DrawEnemyHUDAndHPBar (1435) only redraws
   -- it after the grow-in + cry
@@ -6634,6 +9619,10 @@ function BattleState:drawHUDs(slide)
 end
 
 function BattleState:drawTextArea()
+  -- EMERALD'S OWN, and reached through this method rather than around it.
+  -- Gen3Battle.draw used to call its layer functions directly, which meant a
+  -- mod wrapping this name never saw a Gen 3 battle at all.
+  if self:gen3Layout() then return Gen3Battle.drawTextArea(self) end
   -- The move list and Mimic's copy menu keep the solid paper (see
   -- WORLD_WINDOW_STYLE); everything else in here is the dialogue box and the
   -- battle menu, which are what goes to glass over a world backdrop.
@@ -6752,7 +9741,8 @@ function BattleState:drawTextAreaInner()
     Font.drawCode(Font.BORDER.h, 32, 96)
     Font.drawCode(Font.BORDER.br, 80, 96)
     love.graphics.setColor(0, 0, 0, 1)
-    for i, mv in ipairs(self.player.curMoves) do
+    local chooser = self:menuBattler()
+    for i, mv in ipairs(chooser.curMoves) do
       -- unknown ids (mod-injected moves) print raw instead of crashing
       local def = self.data.moves[mv.id]
       Font.draw(def and def.name or tostring(mv.id), 48, 96 + i * 8)
@@ -6762,10 +9752,10 @@ function BattleState:drawTextAreaInner()
     if self.moveSwapIndex and self.moveSwapIndex ~= self.moveIndex then
       Font.drawCode(0xEC, 40, 96 + self.moveSwapIndex * 8)
     end
-    local sel = self.player.curMoves[self.moveIndex]
+    local sel = chooser.curMoves[self.moveIndex]
     if sel then
       local def = self.data.moves[sel.id]
-      if self.player.disabledSlot == self.moveIndex then
+      if chooser.disabledSlot == self.moveIndex then
         Font.draw(Strings("disabled!"), 8, 80)
       elseif def then
         Font.draw(Strings("TYPE/"), 8, 72)
@@ -6791,7 +9781,22 @@ end
 
 function BattleState:draw()
   if self:wideLayout() then return WideBattle.draw(self) end
+  if self:gen3Layout() then return Gen3Battle.draw(self) end
   return self:drawClassic()
+end
+
+-- THE FIELD -- the paper and the ground standing on it.
+--
+-- Its own method so a mod can take it away.  The classic layout has no
+-- backdrop at all, so nothing here ever needed the seam; Emerald's screen
+-- does have one, and a mod staging its own scene behind the battle
+-- (DRAMATIC_SHAPE's in-world 3D arena) had that scene painted straight over
+-- by a flat terrain picture.  Every other layer of this screen is already a
+-- method for exactly this reason.
+function BattleState:drawBattleField()
+  if self:gen3Layout() then return Gen3Battle.drawField(self) end
+  -- the classic and widescreen layouts paint their field inside their own
+  -- draw, where it has always been
 end
 
 function BattleState:drawClassic()

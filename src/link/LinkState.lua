@@ -24,11 +24,39 @@ local ANY = "ANY" -- sentinel: a leading nil array entry breaks ipairs under
                   -- converted to nil only on the wire (see levelForWire)
 local FORCE_LEVEL_STEPS = { ANY, 50, 100 }
 
+-- A cartridge line squeezed onto one row: its own break becomes a space, and
+-- what will not fit is dropped rather than drawn past the edge.
+local HINT_MAX = 30
+
+local function oneLine(text)
+  if not text or text == "" then return "" end
+  text = tostring(text):gsub("[\n\v\f]+", " "):gsub("%s+$", "")
+  if #text > HINT_MAX then text = text:sub(1, HINT_MAX) end
+  return text
+end
+
 local function indexOf(list, value)
   for i, v in ipairs(list) do
     if v == value then return i end
   end
   return 1
+end
+
+-- THE TRADE SCREEN'S OWN WORDS.
+--
+-- Reported from play: "ensure the trading menus and text are extracted and
+-- presented properly".  Every line on this screen was the engine's English,
+-- including at an Emerald save that has all of them written down in its own
+-- wording -- "The trade has been canceled." rather than "The trade was
+-- cancelled.", "Choose a POKéMON." rather than "Pick one to trade".
+--
+-- `say` takes the cartridge's line when the dataset carries one and the
+-- engine's otherwise, so a Gen 1 or Gen 2 dataset reads exactly as it did.
+local function say(data, role, fallback, ...)
+  local TradeText = require("src.link.TradeText")
+  local text = TradeText.line(data, role)
+  if text then return text end
+  return Strings(fallback, ...)
 end
 
 local function levelForWire(v)
@@ -539,7 +567,8 @@ function LinkState:updateTrade(input)
 
   if t.stage == "cancelled" then
     self:exitWith(t.error and Strings("The trade stopped:\n%s.", t.error)
-                  or Strings("The trade was\ncancelled."))
+                  or say(self.game.data, "cancelled",
+                         "The trade was\ncancelled."))
     return
   end
   if t.stage == "done" then
@@ -598,7 +627,8 @@ function LinkState:updateTrade(input)
     -- the trade) -- B is dead after that, matching the A branch's own
     -- self.confirmed == nil guard
     self.net:send({ type = "bye" })
-    self:exitWith(Strings("The trade was\ncancelled."))
+    self:exitWith(say(self.game.data, "cancelled",
+                      "The trade was\ncancelled."))
   elseif t.stage == "picking" and input:wasPressed("a") then
     if t:canPick(self.index) then
       self.net:send(t:pick(self.index))
@@ -725,7 +755,7 @@ function LinkState:draw()
     Font.draw(self.noticeExits and "A: back" or Strings("A: trade anyway"), 8, 128)
 
   elseif self.stage == "trade" then
-    drawTitle("TRADE")
+    drawTitle(say(self.game.data, "trade", "TRADE"))
     local t = self.trade
     Font.draw(Strings("YOURS"), 8, 20)
     for i, mon in ipairs(self.game.save.party) do
@@ -741,17 +771,26 @@ function LinkState:draw()
       Font.draw((mon.nickname or def.name):sub(1, 8), 92, 20 + i * 12)
       if t.theirPick == i then Font.drawCode(CURSOR, 84, 20 + i * 12) end
     end
+    -- ONE LINE, AND IT HAS TO FIT.  The cartridge's own lines are written
+    -- for a two-row window and carry their own break; this is a single row
+    -- under the two lists, so a break becomes a space and the line is
+    -- trimmed rather than drawn off the edge of the screen.
+    local data = self.game.data
     local hint
     if t.stage == "waitRecords" then hint = "Comparing games..."
-    elseif t.stage == "waitParty" then hint = "Exchanging data..."
+    elseif t.stage == "waitParty" then
+      hint = say(data, "standby", "Exchanging data...")
     elseif t.stage == "picking" then
-      hint = t:canPick(self.index) and "Pick one to trade"
-             or Strings("X: not on theirs")
-    elseif t.stage == "waitPick" then hint = "Waiting for them..."
+      hint = t:canPick(self.index)
+             and say(data, "choose", "Pick one to trade")
+             or say(data, "monRefused", "X: not on theirs")
+    elseif t.stage == "waitPick" then
+      hint = say(data, "waiting", "Waiting for them...")
     elseif t.stage == "confirming" then
-      hint = self.confirmed and "Waiting..." or Strings("A: trade  B: cancel")
+      hint = self.confirmed and say(data, "waiting", "Waiting...")
+             or say(data, "confirmTrade", "A: trade  B: cancel")
     end
-    Font.draw(hint or "", 8, 132)
+    Font.draw(oneLine(hint), 8, 132)
 
   elseif self.stage == "battleWait" or self.stage == "battleRunning" then
     drawTitle("LINK BATTLE")

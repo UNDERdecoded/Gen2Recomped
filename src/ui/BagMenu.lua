@@ -66,6 +66,43 @@ local function showMessages(game, msgs, onDone)
   game.stack:push(TextBox.new(game, table.concat(msgs, "\f"), onDone))
 end
 
+-- HOW MANY ARE LEFT, ON WHATEVER SCREEN ASKED.
+--
+-- Reported from play as a blue screen: "bad argument #1 to 'ipairs' (table
+-- expected, got nil)" the moment a POTION was used from Hoenn's bag.  This
+-- flow is shared -- useItem is published precisely so the Gen 3 bag does not
+-- carry a second copy of what a POTION MEANS -- and its contract said `list`
+-- only has to answer close().  One place broke that contract: the count
+-- refresh reached straight into `list.items`, which is Gen 1/2's ListMenu row
+-- array, and Emerald's bag is a different screen with no such field.
+--
+-- THE PCALL AROUND THE CALL DID NOT CATCH IT, and could not: Gen3BagMenu:act
+-- wraps useItem, but the throw happens later, inside the party picker's
+-- onSwitch, after act has returned.  Wrapping it wider would have hidden the
+-- bug rather than fixed it -- what is wrong is the contract, so the contract
+-- is what this widens: a screen answers close(), and refreshes itself either
+-- by carrying `items` rows or by answering rebuild().
+local function refreshCount(game, list, id)
+  if not list then return end
+  if type(list.items) == "table" then
+    for i, it in ipairs(list.items) do
+      if it.value == id then
+        local left = game.save.inventory[id]
+        if left then it.right = "x" .. left else table.remove(list.items, i) end
+        break
+      end
+    end
+    list.index = math.min(list.index or 1, math.max(1, #list.items))
+    return
+  end
+  if type(list.rebuild) == "function" then pcall(list.rebuild, list) end
+end
+
+-- published so the suite can drive the seam itself: the throw this replaced
+-- happened inside a party picker's callback, which no test can reach by
+-- calling useItem and waiting
+BagMenu.refreshCount = refreshCount
+
 -- run the use-flow for an item on a chosen target.  `picker` is the party
 -- menu when it was opened with keepOpen (HP medicine only): it is still on
 -- the stack, so every exit that prints has to close it afterwards.  For
@@ -137,12 +174,19 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     local function bikeAllowed()
       return ow and ow:bikeAllowed(ow.map.id) or false
     end
+    -- WHICH BIKE.  Hoenn has two and they ride differently: the Mach Bike
+    -- climbs muddy slopes at speed, and the Acro Bike hops and wheelies over
+    -- the five behaviours Collision already knows about but nothing ever
+    -- gave it a rider for.  Kanto's single BICYCLE passes nil and rides as
+    -- neither, which is exactly what it did before.
     if game.save.onBike then
       game.save.onBike = false
+      game.save.bikeKind = nil
       Music.playMap(game.data, ow and ow.map.id, false)
       showMessages(game, { Strings("%s got off\nthe BICYCLE.", save_name(game)) })
     elseif bikeAllowed() then
       game.save.onBike = true
+      game.save.bikeKind = payload
       Music.playMap(game.data, ow.map.id, true)
       showMessages(game, { Strings("%s got on\nthe BICYCLE!", save_name(game)) })
     else
@@ -218,6 +262,18 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     return
   end
 
+  -- THE POKeBLOCK CASE.  Forty slots, and the screen that feeds them is the
+  -- only thing in this port that moves a Pokemon's condition.
+  if result == "pokeblock_case" then
+    local ok = pcall(function()
+      require("src.ui.Screens").push(game, "Gen3PokeblockCase", {})
+    end)
+    if not ok then
+      showMessages(game, { Strings("The CASE won't open.") })
+    end
+    return
+  end
+
   -- ITEMFINDER (engine/items/itemfinder.asm): responds if the current
   -- map still has an unfound hidden item
   if result == "itemfinder" then
@@ -254,9 +310,24 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     -- Gen2 gates on the map header's environment byte instead
     -- (ENVIRONMENT_CAVE / ENVIRONMENT_DUNGEON, scripts/std_scripts.asm)
     local GEN2_ESCAPE_ROPE_ENVIRONMENTS = { [4] = true, [7] = true }
+    -- GEN 3 SAYS IT IN THE MAP HEADER, one bit, and nothing read it.
+    --
+    -- The two tables above are Kanto's tileset names and Johto's environment
+    -- bytes.  Hoenn has neither, so the gate below matched nothing on every
+    -- one of the region's 518 maps and the ESCAPE ROPE could not be used
+    -- anywhere -- in a cave, in Victory Road, in the Aqua Hideout, nowhere.
+    -- The cartridge keeps it in the map header's flag byte
+    -- (`allowEscaping`, alongside allowRunning and allowCycling, which are
+    -- both already read), and it means Escape Rope, Dig and Teleport alike.
     local ow = game.overworld
-    local allowed = ow and (ESCAPE_ROPE_TILESETS[ow.map.def.tileset]
-      or GEN2_ESCAPE_ROPE_ENVIRONMENTS[ow.map.def.environment])
+    local gen3 = require("src.core.GameVersion").isGen3()
+    local allowed
+    if gen3 then
+      allowed = ow and ow.map and ow.map.def and ow.map.def.allowEscaping == true
+    else
+      allowed = ow and (ESCAPE_ROPE_TILESETS[ow.map.def.tileset]
+        or GEN2_ESCAPE_ROPE_ENVIRONMENTS[ow.map.def.environment])
+    end
     -- Gen 2 does NOT share Gen 1's destination.  .DoDig copies wDigWarpNumber
     -- into wNextWarp, so the rope puts you back out through the entrance you
     -- came in by -- the cave mouth or the door -- not the last Pokemon Center.
@@ -340,15 +411,8 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
       end)
       return
     end
-    -- refresh counts in the list
-    for i, it in ipairs(list.items) do
-      if it.value == id then
-        local left = game.save.inventory[id]
-        if left then it.right = "x" .. left else table.remove(list.items, i) end
-        break
-      end
-    end
-    list.index = math.min(list.index, math.max(1, #list.items))
+    -- refresh counts on whichever screen asked
+    refreshCount(game, list, id)
     -- HP medicine: fill the bar in the still-open picker first, then print
     -- and close, the order item_effects.asm .doneHealing runs in
     -- (SFX_HEAL_HP -> UpdateHPBar2 -> RedrawPartyMenu prints the message).
@@ -437,6 +501,32 @@ local function useItem(game, battle, id, list)
     if def and def.machine then
       local moveDef = game.data.moves[def.machine.move]
       local moveName = moveDef and moveDef.name or def.machine.move
+      -- HOENN SAYS IT DIFFERENTLY, and asks.  Emerald's machine flow is
+      -- "Booted up a TM." / "It contained {MOVE}." and then a question --
+      -- "Teach {MOVE} to a POKeMON?" -- which the party picker only follows
+      -- on a yes.  Both lines and the question are the cartridge's own
+      -- (constants.gen3ItemText), so this is Hoenn's wording rather than
+      -- Johto's with the exclamation marks filed off.
+      local cart = (game.data.constants or {}).gen3ItemText
+      if cart and type(cart.contained) == "string" then
+        local asks = cart.contained:gsub("{VAR1}", moveName)
+                                   :gsub("{STR_VAR1}", moveName)
+        local booted = (def.machine.kind == "HM" and cart.bootedHM)
+                       or cart.bootedTM
+        local TextBox2 = require("src.render.TextBox")
+        local function ask()
+          -- `choice` IS THE CALLBACK, not a flag that turns one on.  Handed
+          -- a boolean, TextBox reaches the yes/no answer and calls `true`,
+          -- which is where "Teach {MOVE} to a POKeMON?" died.
+          game.stack:push(TextBox2.new(game, asks, nil, {
+            choice = function(yes)
+              if yes then pickTargetAndUse(game, battle, id, list) end
+            end,
+          }))
+        end
+        if booted then showMessages(game, { booted }, ask) else ask() end
+        return
+      end
       local booted = def.machine.kind == "HM"
         and "Booted up an HM!" or Strings("Booted up a TM!")
       showMessages(game, { booted, Strings("It contained\n%s!", moveName) },
@@ -448,6 +538,18 @@ local function useItem(game, battle, id, list)
     useOn(game, battle, id, nil, list)
   end
 end
+
+-- PUBLISHED, so the Gen 3 bag can use an item without carrying a second
+-- copy of what using one MEANS.  Emerald's bag is a different SCREEN --
+-- five pockets, a description panel, its own art -- but a POTION does the
+-- same thing in Hoenn as in Johto, and the two screens disagreeing about
+-- that is the bug this seam exists to prevent.
+--
+-- WHAT A SCREEN HAS TO ANSWER: close(), and -- if it wants its own row for
+-- the item to show the new count -- either an `items` row array or
+-- rebuild().  A screen that answers neither still works; its list simply
+-- keeps the count it was drawn with until it is rebuilt.
+BagMenu.useItem = useItem
 
 -- GSC's GiveItem: pick a party mon, then hand it the item.  A mon that is
 -- already holding something is offered the swap (TryGiveItemToMon).
@@ -491,6 +593,11 @@ local function handOver(game, mon, id, onChanged)
   end)
 end
 
+-- PUBLISHED for the party screen's own GIVE, which asks the question the
+-- other way round: Emerald's party menu picks the POKeMON first and then
+-- opens the bag, and what happens when the pick lands is the same thing.
+BagMenu.handOver = handOver
+
 -- GSC's GiveItem (pack.asm): pick a party mon, then hand it the item.
 local function giveItem(game, id, onChanged)
   require("src.ui.Screens").push(game, "PartyMenu", {
@@ -498,6 +605,11 @@ local function giveItem(game, id, onChanged)
     onSwitch = function(mon) handOver(game, mon, id, onChanged) end,
   })
 end
+
+-- PUBLISHED for the same reason useItem is: Emerald's bag asks GIVE from its
+-- own context menu, and handing an item to a party member means the same
+-- thing in Hoenn as in Johto.
+BagMenu.giveItem = giveItem
 
 -- swap the two marked rows inside save.bagOrder by their item ids
 local function swapRows(game, list)
@@ -635,8 +747,16 @@ function BagMenu.new(game, opts)
       -- is on the LEFT (menu_coords 0, y, SCREEN_WIDTH - 14, TEXTBOX_Y - 1)
       -- and grows upward from the text box.
       local Menu = require("src.ui.Menu")
-      local tossable = not (gen2 and (not def or def.keyItem
-        or ItemEffects.alias(id, def):find("^HM_")))
+      -- HOENN HIDES IT TOO.  Emerald's bag leaves TOSS off the list for
+      -- anything gItems[].importance calls important, exactly as Gen 2 does
+      -- for a key item -- and the refusal inside onSelect below was already
+      -- generation-agnostic, so the only thing wrong was that Gen 3 still
+      -- OFFERED the option and then refused it.  Gen 1's bag really does
+      -- offer TOSS on everything, so it keeps the old behaviour.
+      local keyish = (not def) or def.keyItem
+                     or ItemEffects.alias(id, def):find("^HM_") ~= nil
+      local hidesToss = gen2 or require("src.core.GameVersion").isGen3()
+      local tossable = not (hidesToss and keyish)
       local options = {
         { label = Strings("USE"), onSelect = function()
             useItem(game, battle, id, list)

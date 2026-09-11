@@ -197,6 +197,13 @@ for _, name in ipairs({
   "opentext", "closetext", "waitbutton", "promptbutton", "wildon", "wildoff",
   "loademote", "encountermusic", "deactivatefacing", "writeunusedbyte",
   "delcmdqueue",
+  -- fieldmovepokepic farcalls FieldMovePokepicScript (2c:$5189), which opens
+  -- the framed pic AND closes it again inside that same script.  The port's
+  -- pokepic box is closed by a separate `closepokepic` row, and the calling
+  -- script never emits one -- so opening a box here would leave it up with
+  -- the runner parked behind it.  Presentation only; the command that
+  -- matters is the callasm two rows later.
+  "fieldmovepokepic",
   -- Prism's own, same reasoning: Script_buttonsound is ApplyTilemapInVBlank /
   -- ButtonSound, and show_text already waits for A; refreshscreen is the
   -- window teardown the port's text box does for itself.
@@ -598,6 +605,33 @@ L.pokepic = function(ir, s)
               and string.format("SPECIES_%03d", species) or nil })
 end
 L.closepokepic = function(_, s) emit(s, { "g2_close_pokepic" }) end
+
+-- PRISM'S PARTY-TYPE SEARCH, and the two commands that read its answer.
+--
+-- Script_findpokemontype (25:$6CC4) walks the party and stops at the FIRST
+-- mon that either IS the given type or KNOWS a move of it, leaving that
+-- mon's ONE-BASED party index in wScriptVar -- 0 when nobody qualifies, which
+-- is what the `siffalse` after it branches on.  The type arrives as the
+-- cartridge's own id byte and is resolved against the ROM's TypeNames at run
+-- time (data.typeChart.ids), because Prism's numbering is its own: ELECTRIC
+-- is $17 there and $0D in Crystal.
+--
+-- Unlowered, the command did nothing and wScriptVar kept whatever the
+-- previous row left in it -- 0 after the `writetext` that precedes it -- so
+-- Mound Cave's light switch always took the "you have no ELECTRIC Pokemon"
+-- arm no matter what the party held.
+L.findpokemontype = function(ir, s)
+  emit(s, { "g2_find_party_type", ir[2] })
+end
+
+-- `getpartymonname <n>` (25:$6E7A): GetScriptByteOrVar, so an operand of 0
+-- means "read wScriptVar" -- and the index it indexes with is ONE-BASED
+-- (the ROM's base pointer is wPartyMonNicknames - NAME_LENGTH, $DE36 against
+-- a $DE41 array, which is how the 1 that findpokemontype returns for the
+-- first party slot lands on the first nickname).
+L.getpartymonname = function(ir, s)
+  emit(s, { "g2_party_mon_name", ir[2] })
+end
 
 -- objects ------------------------------------------------------------------
 
@@ -1263,6 +1297,14 @@ local ASM = {
   ["BattleTowerHallwayChooseBattleRoomScript.asm_load_battle_room"] =
     { "g2_battle_tower_room_index" },
   ["27:75CB"] = { "g2_battle_tower_room_index" },
+  -- BlindingFlash (Prism 50:$77A8) is the routine HM FLASH itself ends in:
+  -- it sets ENGINE_FLASH and repaints the map.  Prism reaches it from a
+  -- SCRIPT as well -- Mound Cave's light switch is `findpokemontype ELECTRIC
+  -- / yesorno / fieldmovepokepic / playwaitsfx / callasm BlindingFlash` --
+  -- and with no row here callasm returned without emitting anything, so the
+  -- player answered YES and the cave stayed dark.
+  BlindingFlash = { "g2_blinding_flash" },
+  ["50:77A8"] = { "g2_blinding_flash" },
 }
 
 L.callasm = function(ir, s)

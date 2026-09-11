@@ -659,6 +659,10 @@ R.map_scripts = {
     talk = f.opt(f.map(f.str, scriptEntry)),
     scripts = f.opt(f.map(f.str, scriptEntry)),
     onEnter = f.opt(f.fn), onStep = f.opt(f.fn), onInteract = f.opt(f.fn),
+    -- onFrame is asked every idle field frame (the Gen 3 ON_FRAME_TABLE
+    -- seam); a truthy return means this mod started something and the
+    -- rest of the chain is not asked.
+    onFrame = f.opt(f.fn),
     onVictory = f.opt(f.fn), onBoulderMoved = f.opt(f.fn),
     -- the flute wake sequence ItemEffects/BagMenu look up by map id; the
     -- other legacy ad-hoc keys stay unknown-but-preserved

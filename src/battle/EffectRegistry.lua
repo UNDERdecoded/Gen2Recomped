@@ -1,11 +1,11 @@
 -- The move-effect execution surface: the ctx facade handed to every
 -- move_effects record callback, and the staged damaging pipeline that
 -- performMove drives through the record's stage fields
--- (gate/neverMiss/alwaysHits/accuracyRaw/hitCount/beforeAccuracy/chooseDamage/
--- onMiss/afterDamage
+-- (gate/neverMiss/hitCount/beforeAccuracy/chooseDamage/onMiss/afterDamage
 -- plus the post-damage secondary run).  The ctx is the only supported
 -- surface handlers receive; everything else is engine-internal.
 
+local HoldItems = require("src.battle.HoldItems")
 local MoveEffects = require("src.battle.MoveEffects")
 local Runtime = require("src.mods.Runtime")
 local StatusRegistry = require("src.battle.StatusRegistry")
@@ -101,21 +101,23 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   local user, target = ctx.user, ctx.target
   local move, moveInst = ctx.move, ctx.moveInst
   local neverMiss = record and record.neverMiss
-  -- alwaysHits is neverMiss's weaker sibling and the distinction is CheckHit's
-  -- own ordering: .FlyDigMoves is tested BEFORE .ThunderRain
-  -- (effect_commands.asm:1559-1563), so Thunder in rain skips the accuracy
-  -- roll yet still misses a target part-way through Fly or Dig -- where Swift
-  -- (neverMiss), tested ahead of the invulnerability check, hits it.  It is a
-  -- predicate because the answer changes with the weather, turn by turn.
-  local alwaysHits = record and record.alwaysHits
-  if type(alwaysHits) == "function" then alwaysHits = alwaysHits(ctx) end
-  -- accuracyRaw replaces the move's accuracy BYTE for this turn
-  -- (BattleCommand_ThunderAccuracy), so it is a 0-255 threshold, not a percent
-  local accuracyRaw = record and record.accuracyRaw and record.accuracyRaw(ctx)
+
+  -- PROTECT and DETECT, before anything else happens.  Only a move the
+  -- cartridge marks PROTECT-affected is stopped, which is the second use the
+  -- extracted flags byte is put to; a move with no flags recorded (every Gen
+  -- 1 and Gen 2 one) is treated as affected, which is that generation's rule.
+  if target.protecting and move.protectAffected ~= false then
+    battle:cancelMoveAnim()
+    battle:sayNext(Strings("%s\nprotected itself!", displayName(target)))
+    return
+  end
 
   -- Swift ignores semi-invulnerability (MoveHitTest returns hit for
-  -- SWIFT_EFFECT before the INVULNERABLE check)
-  if target.invulnerable and not neverMiss then
+  -- SWIFT_EFFECT before the INVULNERABLE check), and so does SKY UPPERCUT,
+  -- which reaches a target in the middle of FLY without being a never-miss
+  -- move in any other respect -- hence the second, narrower field.
+  if target.invulnerable and not neverMiss
+     and not (record and record.neverMissInvulnerable) then
     -- Explosion/Selfdestruct still animate on a miss (HandleIfPlayerMoveMissed)
     if not (record and record.explode) then battle:cancelMoveAnim() end
     missBeat(battle, record)
@@ -143,8 +145,8 @@ function EffectRegistry.runDamaging(battle, ctx, record)
 
   if record and record.beforeAccuracy then record.beforeAccuracy(ctx) end
 
-  if not neverMiss and not alwaysHits then
-    if not battle:accuracyRoll(move, user, target, accuracyRaw) then
+  if not neverMiss then
+    if not battle:accuracyRoll(move, user, target) then
       -- Explosion/Selfdestruct still animate on a miss (HandleIfPlayerMoveMissed)
       if not (record and record.explode) then battle:cancelMoveAnim() end
       missBeat(battle, record)
@@ -193,14 +195,28 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     dmg, info = chosen, extra or { crit = false, typeMult = 10 }
   else
     dmg, info = battle:computeDamage(user, target, move,
-      { rng = battle.rng, explode = (record and record.explode) or nil })
+      { rng = battle.rng, explode = (record and record.explode) or nil,
+        -- a record whose EFFECT decides the power or the crit rate this
+        -- turn rather than the move's own byte
+        powerMultiplier = record and record.powerMultiplier
+                          and record.powerMultiplier(ctx) or nil,
+        highCrit = record and record.highCrit or nil })
   end
 
   if info.typeMult == 0 then
     -- type immunity zeros damage and sets wMoveMissed in Gen 1, so no anim
     if not (record and record.explode) then battle:cancelMoveAnim() end
     missBeat(battle, record)
-    battle:sayNext(Strings("It doesn't affect\n%s!", displayName(target)))
+    -- AN ABILITY, NOT THE TYPE CHART.  info.ability is set only when
+    -- Abilities.blocks stopped the move, and the three ABSORBS do more than
+    -- stop it: a JOLTEON takes a quarter of its maximum HP back off a
+    -- THUNDERBOLT and a VULPIX's fire moves are powered up for good.  When
+    -- the ability speaks for itself the flat "It doesn't affect X!" line is
+    -- not printed -- the cartridge prints one or the other, never both.
+    if not (info.ability and battle.abilityAbsorb
+            and battle:abilityAbsorb(target, move)) then
+      battle:sayNext(Strings("It doesn't affect\n%s!", displayName(target)))
+    end
     if record and record.onMiss then record.onMiss(ctx, "immune") end
     return
   end
@@ -259,11 +275,24 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     if not hadSub then
       -- This seam is reached only by direct attack damage. Weather, poison,
       -- Leech Seed and confusion self-hit never roll Focus Band here.
-      hitDamage = HeldItems.limitDirectDamage(battle.data, target, hitDamage, battle.rng)
+      hitDamage = HeldItems.limitDirectDamage(battle.data, target, hitDamage,
+                                              battle.rng)
     end
     battle.lastDamage = hitDamage
-    local dealt = battle:applyDamage(target, hitDamage)
+    -- ...and the one applyDamage a Gen 3 FOCUS BAND answers: a move landing
+    -- on someone
+    local dealt = battle:applyDamage(target, hitDamage, true)
     totalDealt = totalDealt + dealt
+    -- MIRROR COAT is COUNTER's special twin and needs the SPECIAL half of
+    -- the damage kept separately; battle.lastDamage is shared by both and
+    -- cannot answer for it.  Cleared at the head of every turn.
+    if dealt > 0 then
+      if require("src.battle.Damage").isSpecial(move.type) then
+        target.specialDamageTaken = (target.specialDamageTaken or 0) + dealt
+      else
+        target.physicalDamageTaken = (target.physicalDamageTaken or 0) + dealt
+      end
+    end
     landed = h
     if dealt > 0 then hitRow.hit = hitFx end
     -- PrintCriticalOHKOText + DisplayEffectiveness run inside the
@@ -340,6 +369,39 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     -- flinch is therefore allowed.
     HeldItems.tryKingsRock(battle.data, user, target, move, battle.rng,
                            target.substituteHP ~= nil)
+  end
+
+  -- ON CONTACT.  STATIC, POISON POINT, FLAME BODY and ROUGH SKIN answer the
+  -- attacker after the move has finished, and only for a move that actually
+  -- touches -- which is why the flags byte had to be extracted first.  A
+  -- move that dealt nothing (a miss returned long ago, a substitute ate it)
+  -- never gets here, matching the cartridge's own gate.
+  if totalDealt > 0 and battle.abilityOnContact then
+    battle:abilityOnContact(user, target, move)
+  end
+
+  -- COLOR CHANGE, which runs on the same gate and just after it: a KECLEON
+  -- that took damage becomes the type of the move that dealt it.  Only a
+  -- move that actually did damage, and never when it is already that type --
+  -- so a KECLEON hit by TACKLE stays NORMAL and says nothing.
+  if totalDealt > 0 and target.mon.hp > 0 and not target.substituteHP
+     and battle.abilityColorChange then
+    battle:abilityColorChange(target, move, totalDealt)
+  end
+
+  -- HELD ITEMS, in the order ItemBattleEffects runs them after a hit:
+  -- KING'S ROCK flinches the target, SHELL BELL feeds the attacker, and a
+  -- SITRUS BERRY the hit dropped below half goes off immediately rather
+  -- than waiting for the end of the turn.
+  if totalDealt > 0 and battle.shellBellDrain then
+    local flinch = HoldItems.flinchChance(user, move)
+    if flinch > 0 and target.mon.hp > 0 and not target.substituteHP
+       and (battle.rng or love.math.random)(0, 99) < flinch
+       and not require("src.battle.Abilities").refusesFlinch(target) then
+      target.flinched = true
+    end
+    battle:shellBellDrain(user, totalDealt)
+    if target.mon.hp > 0 then battle:holdItemTrigger(target, "hit") end
   end
 
   if target.mon.hp <= 0 then

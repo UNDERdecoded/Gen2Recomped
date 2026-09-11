@@ -732,7 +732,13 @@ function Renderer:endFrame(zones, worldZones)
       sceneCanvas = self.canvas,
       -- and which game this frame belongs to, which is how a mod that supports
       -- both generations picks its layout without guessing from the metrics
-      generation = require("src.core.GameVersion").isGen2() and 2 or 1,
+      -- The GENERATION the compose hook is drawing for.  This was
+      -- `isGen2() and 2 or 1`, which answers 1 on Emerald -- so a mod
+      -- asking "which game am I on" could not tell Hoenn from Kanto and
+      -- took its Gen 1 branch, with Gen 1's tile geometry, over Gen 3
+      -- data.  GameVersion.generation() is the same answer for Gen 1 and
+      -- Gen 2 and the right one for Gen 3.
+      generation = require("src.core.GameVersion").generation(),
       worldOverride = self.worldOverride,
       worldActive = self.worldActive and true or false,
       zones = zones, worldZones = worldZones,

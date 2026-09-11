@@ -21,6 +21,35 @@ local ChipSynth = require("src.core.ChipSynth")
 
 local ChipAudio = {}
 
+-- ---------------------------------------------------------------------------
+-- WHICH SYNTH.
+--
+-- Everything below -- the queueing, the worker, the per-channel mixer, the
+-- underrun recovery -- is about MOVING PCM, not about making it.  Gen 3's
+-- music is made by a completely different engine (src/core/M4ASynth.lua: a
+-- sequencer over sampled instruments, not four Game Boy channels), and the
+-- only thing this file has to know about it is that it answers the same three
+-- methods: sample, sampleStereo, finished.
+--
+-- So a song def carries the name of the synth that can play it and every path
+-- here goes through this one lookup.  A def with no name is a Game Boy song,
+-- which is every song this module was originally written for.
+-- ---------------------------------------------------------------------------
+local SYNTHS = {
+  chip = "src.core.ChipSynth",
+  m4a = "src.core.M4ASynth",
+}
+
+local function synthFor(name)
+  local module = SYNTHS[name or "chip"]
+  if not module then return ChipSynth end
+  local ok, synth = pcall(require, module)
+  return (ok and synth) or ChipSynth
+end
+
+ChipAudio.SYNTHS = SYNTHS
+ChipAudio.synthFor = synthFor
+
 local SAMPLE_RATE = ChipSynth.SAMPLE_RATE
 local MUSIC_BUFFER_SAMPLES = ChipSynth.MUSIC_BUFFER_SAMPLES
 local MUSIC_BUFFER_COUNT = ChipSynth.MUSIC_BUFFER_COUNT
@@ -146,6 +175,9 @@ local function slimAudio(data)
     bankOrder = audio.bankOrder,
     waveBanks = audio.waveBanks,
     noiseHeaders = audio.noiseHeaders,
+    -- the Gen 3 synth reads its bytecode, voicegroups and sampled
+    -- instruments out of one image beside the cache; this is where it is
+    gen3 = audio.gen3,
   }
 end
 
@@ -181,16 +213,18 @@ local function fillSync(limit)
   limit = limit or MUSIC_FILL_PER_CALL
   local free = music.source:getFreeBufferCount()
   while free > 0 and limit > 0 and not music.engine:finished() do
-    music.source:queue(ChipSynth.soundData(music.engine, MUSIC_BUFFER_SAMPLES, 2))
+    music.source:queue((music.synth or ChipSynth)
+                        .soundData(music.engine, MUSIC_BUFFER_SAMPLES, 2))
     free = free - 1
     limit = limit - 1
   end
 end
 
-local function playMusicSync(data, header, allowLoops)
+local function playMusicSync(data, header, allowLoops, synthName)
+  local synth = synthFor(synthName)
   -- build before tearing down: a def that fails to compile must leave the
   -- outgoing song sounding
-  local ok, engine = pcall(ChipSynth.newEngine, data, header,
+  local ok, engine = pcall(synth.newEngine, data, header,
                            { allowLoops = allowLoops })
   if not ok then return nil, engine end
   local ok2, source = pcall(
@@ -198,6 +232,7 @@ local function playMusicSync(data, header, allowLoops)
   if not ok2 or not source then warnNoQueue(source) return nil, source end
   ChipAudio.stopMusic()
   currentMusic = { source = source, engine = engine, threaded = false,
+                   synth = synth, synthName = synthName,
                    started = true, finished = false }
   fillSync(MUSIC_FILL_INITIAL)
   if not musicHeld then source:play() end
@@ -210,17 +245,18 @@ end
 
 local musicGen = 0
 
-function ChipAudio.playMusic(data, header, allowLoops)
+function ChipAudio.playMusic(data, header, allowLoops, synthName)
+  local synth = synthFor(synthName)
   if not ensureWorker() then
     announcePath("synchronous",
                  (love.thread and love.thread.newThread)
                    and "worker would not start" or "no love.thread")
-    return playMusicSync(data, header, allowLoops)
+    return playMusicSync(data, header, allowLoops, synthName)
   end
   announcePath("threaded worker")
   -- validate the def on this thread (cheap: engine construction, no synthesis)
   -- so a broken def costs nothing but a log line and keeps the old song
-  local ok, engine = pcall(ChipSynth.newEngine, data, header,
+  local ok, engine = pcall(synth.newEngine, data, header,
                            { allowLoops = allowLoops })
   if not ok then return nil, engine end
   -- build the new source before tearing the old song down
@@ -230,16 +266,17 @@ function ChipAudio.playMusic(data, header, allowLoops)
   ChipAudio.stopMusic()
   musicGen = musicGen + 1
   local gen = musicGen
-  cmdCh:push({ cmd = "play", gen = gen, header = header,
+  cmdCh:push({ cmd = "play", gen = gen, header = header, synth = synthName,
                allowLoops = allowLoops, audio = slimAudio(data),
                channelVolumes = ChipSynth.getChannelVolumes(),
                channelPitches = ChipSynth.getChannelPitches() })
   currentMusic = { source = source, gen = gen, threaded = true,
+                   synth = synth, synthName = synthName,
                    started = false, finished = false,
                    -- kept so a worker that dies before delivering its first
                    -- buffer can be recovered onto the sync path below
                    def = { data = data, header = header,
-                           allowLoops = allowLoops } }
+                           allowLoops = allowLoops, synth = synthName } }
   -- playback starts in update() once the first buffer arrives (~1 frame)
   return source
 end
@@ -270,7 +307,7 @@ local function updateThreaded()
       require("src.core.Logger").warn(
         "chip audio: worker died before first buffer, replaying on the "
         .. "synchronous path")
-      playMusicSync(def.data, def.header, def.allowLoops)
+      playMusicSync(def.data, def.header, def.allowLoops, def.synth)
     end
     return
   end
@@ -471,9 +508,29 @@ end
 -- `resolved` is a {header|chip, pitch, length} def the caller already worked
 -- out -- a derived cry borrowing another species' header with its own
 -- modifiers, which no registry lookup under `species` could find
+-- A Gen 3 sound effect: the same sequencer as the music, run once to its end
+-- and handed over as a static Source.
+function ChipAudio.newM4AEffect(data, def)
+  local songs = data.audio and data.audio.songs
+  local song = songs and def and def.m4a ~= nil
+                and songs[("SONG_%03X"):format(def.m4a)]
+  if not song then return nil end
+  local sd = synthFor("m4a").renderEffect(data, song)
+  if not sd then return nil end
+  return love.audio.newSource(sd, "static")
+end
+
 function ChipAudio.newCry(data, species, resolved)
   local cry = resolved or (data.audio.cries and data.audio.cries[species])
   if not cry then return nil end
+  -- A GEN 3 CRY IS A RECORDING, not a chip program with a pitch shift: it
+  -- names an index into the cartridge's cry table and is rendered by the
+  -- sampler next door.  Same seam, same Source, different generation.
+  if cry.m4a then
+    local sd = synthFor("m4a").renderCry(data, cry.m4a)
+    if not sd then return nil end
+    return love.audio.newSource(sd, "static")
+  end
   return renderEffect(data, cry.chip and cry or cry.header, {
     frequencyOffset = cry.pitch,
     cryLength = cry.length,

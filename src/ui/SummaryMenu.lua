@@ -95,7 +95,7 @@ function SummaryMenu:sgbPalettes(game)
       -- GetMonNormalOrShinyPalettePointer, so a shiny wears its alternate
       -- pair here just as it does in battle (and the star sits by the level)
       P.zone(P.monPal(game.data, mon.species, nil,
-                      require("src.pokemon.Stats").isShiny(mon.dvs)),
+                      require("src.pokemon.Pokemon").isShiny(mon)),
              0, 0, 19, 7),
       P.zone(pages[1], 13, 5, 14, 6),
       P.zone(pages[2], 15, 5, 16, 6),
@@ -159,7 +159,9 @@ function SummaryMenu.new(game, mon, opts)
   -- Crystal animates the pic on this screen: AnimateMon_Menu's PokeAnims
   -- sequence (34:$4058) is stereocry / setup / play.  nil on Gold and
   -- Silver, which ship no animation tables at all.
-  self.picAnim = require("src.pokemon.PicAnim").new(game.data, mon.species)
+  -- forMon, not new: a shiny animates from its own strip, and only the
+  -- Pokemon can say whether it is one
+  self.picAnim = require("src.pokemon.PicAnim").forMon(game.data, mon)
   -- this screen is up the moment it is built, so it runs straight away
   if self.picAnim then self.picAnim:start() end
   require("src.core.Sound").playCry(game.data, mon.species)
@@ -345,7 +347,7 @@ function SummaryMenu:drawGen2Header()
   -- wTempMonDVs, `ret nc`, then `ld [$C3B3], $3F` -- the star tile at
   -- coord (19,0), just right of the gender symbol.  The GB font here has no
   -- star glyph, so it is drawn as a five-pointed shape in the same cell.
-  if require("src.pokemon.Stats").isShiny(mon.dvs) then
+  if require("src.pokemon.Pokemon").isShiny(mon) then
     local cx, cy, r = 156, 4, 3.5
     local pts = {}
     for i = 0, 9 do

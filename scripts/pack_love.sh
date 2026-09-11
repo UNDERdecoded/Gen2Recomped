@@ -183,6 +183,26 @@ while IFS= read -r generated; do
 done < <(find "$STAGE/mods" -mindepth 2 -type d \
               \( -name generated -o -name baseroms \) 2>/dev/null)
 find "$STAGE" -type d -name '.git' -prune -exec rm -rf {} + 2>/dev/null || true
+
+# ...AND A MOD'S OWN DEVELOPMENT MATERIAL, which is the same argument one
+# level down.  A prepackaged mod is checked out as its author works on it, so
+# its folder holds a great deal that is not the mod: its tests and tools, its
+# changelog and design notes, and -- in DRAMATIC SHAPES' case -- an unpacked
+# NuGet drop of the OpenXR loader, thirteen megabytes of Windows .dll and .lib
+# that LOVE could not load out of a zip even if it wanted to.
+#
+# Named by SHAPE rather than by mod, so the next prepackaged mod gets the same
+# treatment without this list growing.  .gitignore keeps the same set out of
+# the repo; this keeps it out of a build made from a working folder, where the
+# files are present on disk whatever git thinks of them.
+say "pruning mod development material"
+while IFS= read -r devdir; do
+  say "  ${devdir#$STAGE/}"
+  rm -rf "$devdir"
+done < <(find "$STAGE/mods" -mindepth 2 -maxdepth 2 -type d \
+              \( -name tests -o -name tools -o -name oxr \) 2>/dev/null)
+find "$STAGE/mods" -mindepth 2 -maxdepth 2 -type f \
+     \( -iname 'CHANGELOG.md' -o -iname '*_PLAN.md' \) -delete 2>/dev/null || true
 find "$STAGE" -type f \( \
      -iname '*.gb' -o -iname '*.gbc' -o -iname '*.sav' -o -iname '*.bak' \
   -o -iname '*.love' -o -iname '*.exe' -o -iname '*.zip' \
@@ -197,12 +217,22 @@ find "$STAGE" -type f \( \
 # the shipped editor that drew and silently did nothing (its require is
 # pcall'd). A contract entry is what turns that into a failed build instead of
 # a bug report.
+#
+# THE PREPACKAGED MOD IS ON THIS LIST for the reason map-editor is: it was
+# missing and nothing caught it.  `mods` has been in CONTENT all along, but a
+# CI build starts from a clean checkout and `/mods/*` was in .gitignore -- so
+# every release quietly staged nothing and shipped a launcher with an empty
+# mods panel.  The failure mode of an absent CONTENT entry is one line in a
+# build log ("skipping absent mods") and no other sign at all, which is how
+# that lasted.  A contract entry turns it into a failed build.
 for required in main.lua conf.lua src/core/Version.lua \
                 tools/save-editor/App.lua tools/save-editor/Kit.lua \
                 tools/save-editor/panels/Party.lua \
                 tools/map-editor/MapEdits.lua \
                 tools/map-editor/ModExport.lua \
-                tools/map-editor/panels/Preview.lua; do
+                tools/map-editor/panels/Preview.lua \
+                mods/DRAMATIC_SHAPE/manifest.json \
+                mods/DRAMATIC_SHAPE/main.lua; do
   [ -e "$STAGE/$required" ] || fail "payload is missing $required"
 done
 

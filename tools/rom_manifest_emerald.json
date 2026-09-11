@@ -1,4 +1,16 @@
 {
+  "bagSprite": {
+    "female": 14260736,
+    "frameHeight": 64,
+    "frameWidth": 64,
+    "frames": 6,
+    "male": 14257796,
+    "palette": 14263648,
+    "paletteCompressed": true,
+    "record": 5765940,
+    "size": 12288,
+    "tag": 100
+  },
   "charmap": {
     "0": " ",
     "161": "0",
@@ -85,13 +97,378 @@
     "243": ")",
     "244": "\"",
     "27": "\u00e9",
+    "45": "&",
     "46": "+",
+    "53": "=",
     "83": "PK",
     "84": "MN",
-    "91": "%"
+    "85": "PO",
+    "86": "K\u00e9",
+    "87": "BL",
+    "88": "OC",
+    "89": "K",
+    "91": "%",
+    "92": "(",
+    "93": ")"
+  },
+  "font": {
+    "bits": 2,
+    "cell": 16,
+    "cellHeight": 15,
+    "cellWidth": 8,
+    "count": 512,
+    "faces": [
+      {
+        "bits": 2,
+        "cell": 16,
+        "cellHeight": 11,
+        "cellWidth": 8,
+        "count": 512,
+        "fontId": 0,
+        "glyphBytes": 64,
+        "glyphs": 6503652,
+        "inkBottom": 12,
+        "inkRight": 7,
+        "inkTop": 2,
+        "letterMax": 5,
+        "letterMin": 4,
+        "role": "small",
+        "roles": {
+          "box": 3,
+          "none": 0,
+          "shadow": 2,
+          "text": 1
+        },
+        "spaceWidth": 3,
+        "widths": 6536420
+      },
+      {
+        "bits": 2,
+        "cell": 16,
+        "cellHeight": 15,
+        "cellWidth": 12,
+        "count": 512,
+        "fontId": 7,
+        "glyphBytes": 64,
+        "glyphs": 6536932,
+        "inkBottom": 14,
+        "inkRight": 11,
+        "inkTop": 0,
+        "letterMax": 5,
+        "letterMin": 4,
+        "role": "narrow",
+        "roles": {
+          "box": 3,
+          "none": 0,
+          "shadow": 2,
+          "text": 1
+        },
+        "spaceWidth": 3,
+        "widths": 6569700
+      },
+      {
+        "bits": 2,
+        "cell": 16,
+        "cellHeight": 11,
+        "cellWidth": 8,
+        "count": 512,
+        "fontId": 8,
+        "glyphBytes": 64,
+        "glyphs": 6470372,
+        "inkBottom": 12,
+        "inkRight": 7,
+        "inkTop": 2,
+        "letterMax": 5,
+        "letterMin": 4,
+        "role": "smallNarrow",
+        "roles": {
+          "box": 3,
+          "none": 0,
+          "shadow": 2,
+          "text": 1
+        },
+        "spaceWidth": 3,
+        "widths": 6503140
+      },
+      {
+        "bits": 2,
+        "cell": 16,
+        "cellHeight": 14,
+        "cellWidth": 8,
+        "count": 512,
+        "fontId": 2,
+        "glyphBytes": 64,
+        "glyphs": 6570212,
+        "inkBottom": 13,
+        "inkRight": 7,
+        "inkTop": 0,
+        "letterMax": 6,
+        "letterMin": 4,
+        "role": "short",
+        "roles": {
+          "box": 3,
+          "none": 0,
+          "shadow": 2,
+          "text": 1
+        },
+        "spaceWidth": 3,
+        "widths": 6602980
+      },
+      {
+        "bits": 2,
+        "cell": 16,
+        "cellHeight": 15,
+        "cellWidth": 8,
+        "count": 512,
+        "fontId": 1,
+        "glyphBytes": 64,
+        "glyphs": 6603492,
+        "inkBottom": 14,
+        "inkRight": 7,
+        "inkTop": 0,
+        "letterMax": 6,
+        "letterMin": 4,
+        "role": "normal",
+        "roles": {
+          "box": 3,
+          "none": 0,
+          "shadow": 2,
+          "text": 1
+        },
+        "spaceWidth": 3,
+        "widths": 6636260
+      }
+    ],
+    "fontId": 1,
+    "glyphBytes": 64,
+    "glyphs": 6603492,
+    "inkBottom": 14,
+    "inkRight": 7,
+    "inkTop": 0,
+    "letterMax": 6,
+    "letterMin": 4,
+    "role": "normal",
+    "roles": {
+      "box": 3,
+      "none": 0,
+      "shadow": 2,
+      "text": 1
+    },
+    "spaceWidth": 3,
+    "widths": 6636260
   },
   "format": 3,
   "generation": 3,
+  "introCast": {
+    "bike": {
+      "frameHeight": 32,
+      "frameWidth": 64,
+      "frames": 4,
+      "graphics": 6243096,
+      "palette": 14179504,
+      "paletteBorrowed": true,
+      "runFrames": 4,
+      "size": 4096,
+      "tag": 1001
+    },
+    "manectric": {
+      "frameHeight": 64,
+      "frameWidth": 64,
+      "frames": 4,
+      "graphics": 14181712,
+      "palette": 14180112,
+      "paletteBorrowed": false,
+      "runFrames": 4,
+      "size": 8192,
+      "tag": 1502
+    },
+    "pokemon": {
+      "frameHeight": 64,
+      "frameWidth": 64,
+      "frames": 2,
+      "graphics": 14184492,
+      "palette": 14180144,
+      "paletteBorrowed": false,
+      "runFrames": 2,
+      "size": 4096,
+      "tag": 1005
+    },
+    "riderBoy": {
+      "frameHeight": 64,
+      "frameWidth": 64,
+      "frames": 4,
+      "graphics": 14185832,
+      "palette": 14179504,
+      "paletteBorrowed": false,
+      "runFrames": 4,
+      "size": 8192,
+      "tag": 1002
+    },
+    "riderGirl": {
+      "frameHeight": 64,
+      "frameWidth": 64,
+      "frames": 4,
+      "graphics": 14187684,
+      "palette": 14179504,
+      "paletteBorrowed": false,
+      "runFrames": 4,
+      "size": 8192,
+      "tag": 1003
+    },
+    "torchic": {
+      "frameHeight": 32,
+      "frameWidth": 32,
+      "frames": 6,
+      "graphics": 14180656,
+      "palette": 14180080,
+      "paletteBorrowed": false,
+      "runFrames": 4,
+      "size": 3072,
+      "tag": 1501
+    },
+    "volbeat": {
+      "frameHeight": 32,
+      "frameWidth": 32,
+      "frames": 2,
+      "graphics": 14180176,
+      "palette": 14180048,
+      "paletteBorrowed": false,
+      "runFrames": 2,
+      "size": 1024,
+      "tag": 1500
+    }
+  },
+  "introShots": {
+    "leaves": {
+      "graphics": 6165428,
+      "height": 32,
+      "layers": [
+        {
+          "cells": 1024,
+          "dest": 32768,
+          "inked": 523,
+          "tilemap": 6162372
+        },
+        {
+          "cells": 1024,
+          "dest": 36864,
+          "inked": 935,
+          "tilemap": 6163320
+        },
+        {
+          "cells": 1024,
+          "dest": 40960,
+          "inked": 900,
+          "tilemap": 6164140
+        },
+        {
+          "backdrop": true,
+          "cells": 1024,
+          "dest": 45056,
+          "inked": 960,
+          "tilemap": 6164892
+        }
+      ],
+      "palette": 6161860,
+      "size": 32768,
+      "sprites": [
+        {
+          "drop": 0,
+          "frameHeight": 32,
+          "frameWidth": 32,
+          "frames": 10,
+          "graphics": 6160336,
+          "palette": 6160272,
+          "paletteCompressed": false,
+          "record": 6180828,
+          "ripple": [
+            1,
+            2
+          ],
+          "role": "drops",
+          "size": 5120,
+          "tag": 2000,
+          "tiles": 160
+        },
+        {
+          "frameHeight": 32,
+          "frameWidth": 64,
+          "frames": 1,
+          "graphics": 14209328,
+          "palette": 6179116,
+          "paletteCompressed": false,
+          "record": 6180844,
+          "role": "flygon",
+          "size": 1024,
+          "tag": 2002,
+          "tiles": 32
+        },
+        {
+          "frameHeight": 32,
+          "frameWidth": 32,
+          "frames": 2,
+          "graphics": 14209544,
+          "palette": 14203476,
+          "paletteCompressed": false,
+          "record": 6179444,
+          "role": "sparkle",
+          "size": 1024,
+          "tag": 1505,
+          "tiles": 32
+        }
+      ],
+      "tiles": 1024,
+      "width": 32
+    }
+  },
+  "introSprites": {
+    "birch": {
+      "caller": 203076,
+      "graphics": 5585552,
+      "height": 64,
+      "inkedPixels": 1375,
+      "palette": 5613904,
+      "playerPics": {
+        "boy": 91,
+        "girl": 92
+      },
+      "sheet": 5620264,
+      "site": 745304,
+      "speech": [
+        {
+          "address": 2918779,
+          "text": "Hi! Sorry to keep you waiting!{FB}Welcome to the world of POK\u00e9MON!{FB}My name is BIRCH.{FB}But everyone calls me the POK\u00e9MON\nPROFESSOR.{FB}"
+        },
+        {
+          "address": 2918943,
+          "text": "This world is widely inhabited by\ncreatures known as POK\u00e9MON.{FB}We humans live alongside POK\u00e9MON,\nat times as friendly playmates, and{FA}at times as cooperative workmates.{FB}And sometimes, we band together\nand battle others like us.{FB}But despite our closeness, we don\u2019t\nknow everything about POK\u00e9MON.{FB}In fact, there are many, many\nsecrets surrounding POK\u00e9MON.{FB}To unravel POK\u00e9MON mysteries,\nI\u2019ve been undertaking research.{FA}That\u2019s what I do.{FB}"
+        },
+        {
+          "address": 2919376,
+          "text": "And you are?"
+        },
+        {
+          "address": 2919389,
+          "text": "Are you a boy?\nOr are you a girl?"
+        },
+        {
+          "address": 2919423,
+          "text": "All right.\nWhat\u2019s your name?"
+        },
+        {
+          "address": 2919466,
+          "text": "Ah, okay!{FB}You\u2019re {FD}{01}{FD}{05} who\u2019s moving to my\nhometown of LITTLEROOT.{FA}I get it now!{FB}"
+        },
+        {
+          "address": 2919546,
+          "text": "All right, are you ready?{FB}Your very own adventure is about\nto unfold.{FB}Take courage, and leap into the\nworld of POK\u00e9MON where dreams,{FA}adventure, and friendships await!{FB}Well, I\u2019ll be expecting you later.\nCome see me in my POK\u00e9MON LAB.{FB}"
+        }
+      ],
+      "tag": 4102,
+      "template": 5620292,
+      "width": 64
+    }
+  },
   "layout": {
     "abilityNameLength": 13,
     "baseStatsEntry": 28,
@@ -146,6 +523,7 @@
     ],
     "numAbilities": 78,
     "numGrowthRates": 6,
+    "numHealLocations": 22,
     "numItems": 377,
     "numMapGroups": 34,
     "numMapLayouts": 441,
@@ -159,8 +537,10 @@
     "numSpecies": 412,
     "numTypes": 18,
     "objectEventEntry": 24,
+    "objectEventGfxCount": 246,
+    "objectEventPaletteCount": 35,
     "palettesInPrimary": 6,
-    "sampleCount": 1023,
+    "sampleCount": 139,
     "saveBlock1Size": 15752,
     "saveBlock2Size": 3884,
     "savePokemonStorageSize": 33744,
@@ -179,6 +559,7 @@
     "typeNameLength": 7,
     "varCount": 256,
     "voicegroupCount": 176,
+    "waitSteps": 49,
     "wanderMovementTypes": [
       2,
       3,
@@ -186,13 +567,689 @@
       5,
       6
     ],
-    "warpEventEntry": 8
+    "warpEventEntry": 8,
+    "windowFrameCount": 20
+  },
+  "m4aWidths": {
+    "B1": 0,
+    "B2": 4,
+    "B3": 4,
+    "B4": 0,
+    "B5": 5,
+    "B6": null,
+    "B7": null,
+    "B8": null,
+    "B9": null,
+    "BA": 1,
+    "BB": 1,
+    "BC": 1,
+    "BD": 1,
+    "BE": 1,
+    "BF": 1,
+    "C0": 1,
+    "C1": 1,
+    "C2": 1,
+    "C3": 1,
+    "C4": 1,
+    "C5": 1,
+    "C6": null,
+    "C7": null,
+    "C8": 1,
+    "C9": null,
+    "CA": null,
+    "CB": null,
+    "CC": 1,
+    "CD": null,
+    "CE": "conditional"
+  },
+  "messageWindow": {
+    "agree": 2,
+    "at": 3141744,
+    "baseBlock": 365,
+    "bg": 0,
+    "height": 4,
+    "left": 2,
+    "palette": 15,
+    "refs": 3,
+    "top": 15,
+    "width": 26
+  },
+  "movementActions": {
+    "0": {
+      "dir": "down",
+      "kind": "face"
+    },
+    "1": {
+      "dir": "up",
+      "kind": "face"
+    },
+    "2": {
+      "dir": "left",
+      "kind": "face"
+    },
+    "3": {
+      "dir": "right",
+      "kind": "face"
+    },
+    "4": {
+      "dir": "down",
+      "kind": "walk_slow"
+    },
+    "5": {
+      "dir": "up",
+      "kind": "walk_slow"
+    },
+    "6": {
+      "dir": "left",
+      "kind": "walk_slow"
+    },
+    "7": {
+      "dir": "right",
+      "kind": "walk_slow"
+    },
+    "8": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "9": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "10": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "11": {
+      "dir": "right",
+      "kind": "walk"
+    },
+    "12": {
+      "dir": "down",
+      "kind": "jump2"
+    },
+    "13": {
+      "dir": "up",
+      "kind": "jump2"
+    },
+    "14": {
+      "dir": "left",
+      "kind": "jump2"
+    },
+    "15": {
+      "dir": "right",
+      "kind": "jump2"
+    },
+    "21": {
+      "dir": "down",
+      "kind": "walk_fast"
+    },
+    "22": {
+      "dir": "up",
+      "kind": "walk_fast"
+    },
+    "23": {
+      "dir": "left",
+      "kind": "walk_fast"
+    },
+    "24": {
+      "dir": "right",
+      "kind": "walk_fast"
+    },
+    "25": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "26": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "27": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "28": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "29": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "30": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "31": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "32": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "33": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "34": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "35": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "36": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "37": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "38": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "39": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "40": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "41": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "42": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "43": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "44": {
+      "dir": "right",
+      "kind": "walk"
+    },
+    "45": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "46": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "47": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "48": {
+      "dir": "right",
+      "kind": "walk"
+    },
+    "49": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "50": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "51": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "52": {
+      "dir": "right",
+      "kind": "walk"
+    },
+    "53": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "54": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "55": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "56": {
+      "dir": "right",
+      "kind": "walk"
+    },
+    "58": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "59": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "60": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "61": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "66": {
+      "dir": "down",
+      "kind": "jump"
+    },
+    "67": {
+      "dir": "up",
+      "kind": "jump"
+    },
+    "68": {
+      "dir": "left",
+      "kind": "jump"
+    },
+    "69": {
+      "dir": "right",
+      "kind": "jump"
+    },
+    "70": {
+      "dir": "down",
+      "kind": "jump"
+    },
+    "71": {
+      "dir": "up",
+      "kind": "jump"
+    },
+    "72": {
+      "dir": "left",
+      "kind": "jump"
+    },
+    "73": {
+      "dir": "right",
+      "kind": "jump"
+    },
+    "74": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "75": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "76": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "77": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "100": {
+      "dir": "down",
+      "kind": "face"
+    },
+    "101": {
+      "dir": "up",
+      "kind": "face"
+    },
+    "102": {
+      "dir": "left",
+      "kind": "face"
+    },
+    "103": {
+      "dir": "right",
+      "kind": "face"
+    },
+    "104": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "105": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "106": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "107": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "108": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "109": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "110": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "111": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "112": {
+      "dir": "down",
+      "kind": "jump"
+    },
+    "113": {
+      "dir": "up",
+      "kind": "jump"
+    },
+    "114": {
+      "dir": "left",
+      "kind": "jump"
+    },
+    "115": {
+      "dir": "right",
+      "kind": "jump"
+    },
+    "116": {
+      "dir": "down",
+      "kind": "jump"
+    },
+    "117": {
+      "dir": "up",
+      "kind": "jump"
+    },
+    "118": {
+      "dir": "left",
+      "kind": "jump"
+    },
+    "119": {
+      "dir": "right",
+      "kind": "jump"
+    },
+    "120": {
+      "dir": "down",
+      "kind": "jump"
+    },
+    "121": {
+      "dir": "up",
+      "kind": "jump"
+    },
+    "122": {
+      "dir": "left",
+      "kind": "jump"
+    },
+    "123": {
+      "dir": "right",
+      "kind": "jump"
+    },
+    "124": {
+      "dir": "down",
+      "kind": "in_place"
+    },
+    "125": {
+      "dir": "up",
+      "kind": "in_place"
+    },
+    "126": {
+      "dir": "left",
+      "kind": "in_place"
+    },
+    "127": {
+      "dir": "right",
+      "kind": "in_place"
+    },
+    "128": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "129": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "130": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "131": {
+      "dir": "right",
+      "kind": "walk"
+    },
+    "132": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "133": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "134": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "135": {
+      "dir": "right",
+      "kind": "walk"
+    },
+    "136": {
+      "dir": "down",
+      "kind": "walk"
+    },
+    "137": {
+      "dir": "up",
+      "kind": "walk"
+    },
+    "138": {
+      "dir": "left",
+      "kind": "walk"
+    },
+    "139": {
+      "dir": "right",
+      "kind": "walk"
+    }
+  },
+  "newGame": {
+    "hideFlags": [
+      86,
+      769,
+      770,
+      771,
+      721,
+      889,
+      811,
+      812,
+      838,
+      726,
+      867,
+      731,
+      732,
+      814,
+      844,
+      868,
+      739,
+      881,
+      738,
+      740,
+      741,
+      743,
+      744,
+      906,
+      837,
+      774,
+      895,
+      776,
+      777,
+      778,
+      779,
+      780,
+      781,
+      824,
+      745,
+      746,
+      760,
+      722,
+      734,
+      849,
+      815,
+      789,
+      790,
+      791,
+      792,
+      730,
+      797,
+      798,
+      799,
+      901,
+      902,
+      903,
+      904,
+      803,
+      802,
+      806,
+      808,
+      809,
+      984,
+      766,
+      830,
+      866,
+      869,
+      828,
+      829,
+      831,
+      859,
+      853,
+      841,
+      845,
+      846,
+      860,
+      861,
+      835,
+      840,
+      848,
+      851,
+      786,
+      973,
+      816,
+      870,
+      872,
+      877,
+      994,
+      879,
+      891,
+      880,
+      878,
+      807,
+      983,
+      886,
+      884,
+      885,
+      961,
+      888,
+      752,
+      757,
+      794,
+      795,
+      892,
+      896,
+      897,
+      898,
+      909,
+      748,
+      910,
+      911,
+      915,
+      856,
+      912,
+      765,
+      920,
+      921,
+      922,
+      923,
+      719,
+      925,
+      929,
+      930,
+      934,
+      938,
+      940,
+      928,
+      992,
+      834,
+      944,
+      945,
+      947,
+      948,
+      749,
+      858,
+      751,
+      950,
+      967,
+      968,
+      727,
+      979,
+      991,
+      995,
+      996,
+      997,
+      998,
+      854,
+      826,
+      827,
+      876,
+      875,
+      874,
+      823,
+      756,
+      862,
+      863,
+      832,
+      763,
+      747,
+      767,
+      793,
+      855,
+      80
+    ],
+    "spawn": {
+      "group": 25,
+      "height": 5,
+      "number": 40,
+      "width": 5,
+      "x": 2,
+      "y": 2
+    }
   },
   "notes": [
     "Discovered and verified by tools/gen3_discover.py; re-run it rather than hand-editing an address.",
     "Species numbering is INTERNAL, not National Dex: 1-251 agree, 252-276 are 25 unused slots, Hoenn runs 277-411.",
     "The graphics tables are 440 rows (Unown forms); the name table is 412."
   ],
+  "playerSprites": {
+    "boy": 0,
+    "girl": 89
+  },
+  "playerTitles": {
+    "child": {
+      "boy": {
+        "at": 6206986,
+        "text": "son"
+      },
+      "girl": {
+        "at": 6206990,
+        "text": "daughter"
+      }
+    },
+    "title": {
+      "boy": {
+        "at": 6206969,
+        "text": "Big guy"
+      },
+      "girl": {
+        "at": 6206977,
+        "text": "Big girl"
+      }
+    }
+  },
   "romBase": 134217728,
   "romHeader": {
     "gameCode": "BPEE",
@@ -332,6 +1389,161 @@
     },
     "varCount": 256,
     "varsStartId": 16384
+  },
+  "sceneOverlays": {
+    "intro": {
+      "bitmaps": [],
+      "loader": 1552484,
+      "objPaletteLoads": [
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6231656
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6234544
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6232068
+        },
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 6235464
+        }
+      ],
+      "spriteSheets": [
+        {
+          "bytes": 1024,
+          "depth": 4,
+          "graphics": 6231720,
+          "record": 6246500,
+          "tag": 2000,
+          "tiles": 32,
+          "vramBytes": 1024
+        },
+        {
+          "bytes": 1024,
+          "depth": 4,
+          "graphics": 6234576,
+          "record": 6246636,
+          "tag": 2000,
+          "tiles": 32,
+          "vramBytes": 1024
+        }
+      ]
+    },
+    "title": {
+      "bitmaps": [
+        {
+          "depth": 8,
+          "function": 698276,
+          "graphics": 14542480,
+          "graphicsDest": 0,
+          "graphicsSize": 16384,
+          "height": 8,
+          "map": 14550596,
+          "mapDest": 18432,
+          "paletteLoads": [
+            {
+              "compressed": false,
+              "offset": 0,
+              "size": 480,
+              "source": 14541400
+            }
+          ],
+          "tiles": 256,
+          "width": 32
+        }
+      ],
+      "loader": 698276,
+      "objPaletteLoads": [
+        {
+          "compressed": false,
+          "offset": 0,
+          "size": 32,
+          "source": 14541880
+        }
+      ],
+      "spriteSheets": [
+        {
+          "bytes": 4096,
+          "depth": 8,
+          "graphics": 14548372,
+          "record": 5505096,
+          "tag": 1000,
+          "tiles": 64,
+          "vramBytes": 4096
+        },
+        {
+          "bytes": 1536,
+          "depth": 4,
+          "graphics": 14549992,
+          "record": 5505264,
+          "tag": 1001,
+          "tiles": 48,
+          "vramBytes": 1312
+        },
+        {
+          "bytes": 2048,
+          "depth": 4,
+          "graphics": 5503804,
+          "record": 5505340,
+          "tag": 1002,
+          "tiles": 64,
+          "vramBytes": 2048
+        }
+      ]
+    }
+  },
+  "sceneRoles": {
+    "birchSpeech": {
+      "graphics": [
+        5967364
+      ],
+      "layers": 1,
+      "loader": 1530084,
+      "loaders": [
+        1530084
+      ]
+    },
+    "intro": {
+      "graphics": [
+        6227776,
+        6229436,
+        6232100,
+        6227776,
+        6229436,
+        6229436,
+        6232100,
+        6234972
+      ],
+      "layers": 8,
+      "loader": 1552484,
+      "loaders": [
+        1552484,
+        1552840
+      ]
+    },
+    "title": {
+      "graphics": [
+        5501016,
+        5504140
+      ],
+      "layers": 2,
+      "loader": 698276,
+      "loaders": [
+        698276
+      ]
+    }
   },
   "scenes": [
     {
@@ -1133,6 +2345,158 @@
       "tilemapSize": 4096
     }
   ],
+  "screenText": {
+    "bagActions": {
+      "at": 6196418,
+      "end": 6196471,
+      "items": [
+        "USE",
+        "TOSS",
+        "REGISTER",
+        "GIVE",
+        "CHECK TAG",
+        "CONFIRM",
+        "WALK",
+        "CANCEL"
+      ],
+      "offsets": [
+        6196418,
+        6196422,
+        6196427,
+        6196436,
+        6196441,
+        6196451,
+        6196459,
+        6196464
+      ]
+    },
+    "bagPockets": {
+      "at": 6197710,
+      "end": 6197755,
+      "items": [
+        "ITEMS",
+        "POK\u00e9 BALLS",
+        "TMs & HMs",
+        "BERRIES",
+        "KEY ITEMS"
+      ],
+      "offsets": [
+        6197710,
+        6197716,
+        6197727,
+        6197737,
+        6197745
+      ]
+    },
+    "partyActions": {
+      "at": 6198944,
+      "end": 6199011,
+      "items": [
+        "SHIFT",
+        "SEND OUT",
+        "SWITCH",
+        "SUMMARY",
+        "MOVES",
+        "ENTER",
+        "NO ENTRY",
+        "TAKE",
+        "READ",
+        "TRADE"
+      ],
+      "offsets": [
+        6198944,
+        6198950,
+        6198959,
+        6198966,
+        6198974,
+        6198980,
+        6198986,
+        6198995,
+        6199000,
+        6199005
+      ]
+    },
+    "pcPockets": {
+      "at": 6205756,
+      "end": 6205801,
+      "items": [
+        "ITEMS",
+        "KEY ITEMS",
+        "POK\u00e9 BALLS",
+        "TMs & HMs",
+        "BERRIES"
+      ],
+      "offsets": [
+        6205756,
+        6205762,
+        6205772,
+        6205783,
+        6205793
+      ]
+    },
+    "saveInfo": {
+      "at": 6194367,
+      "end": 6194394,
+      "items": [
+        "PLAYER",
+        "POK\u00e9DEX",
+        "TIME",
+        "BADGES"
+      ],
+      "offsets": [
+        6194367,
+        6194374,
+        6194382,
+        6194387
+      ]
+    },
+    "trainerCard": {
+      "at": 6213489,
+      "end": 6213508,
+      "items": [
+        "NAME: ",
+        "IDNo.",
+        "MONEY",
+        "POK\u00e9DEX",
+        "TIME"
+      ],
+      "offsets": [
+        6213489,
+        6213496,
+        6213502,
+        6213510,
+        6213529
+      ]
+    }
+  },
+  "specials": {
+    "at": 1948260,
+    "count": 530,
+    "distinct": 527,
+    "shared": [
+      [
+        277,
+        348
+      ],
+      [
+        409,
+        410
+      ],
+      [
+        470,
+        508
+      ]
+    ]
+  },
+  "starters": {
+    "at": 5971448,
+    "refs": 1,
+    "species": [
+      277,
+      280,
+      283
+    ]
+  },
   "substructOrders": [
     [
       0,
@@ -1282,16 +2646,25 @@
   "symbolSource": "structural discovery against the cartridge itself (tools/gen3_discover.py); a retail GBA ROM ships no symbol table, so every address here is found by shape and verified against a fact the table must satisfy",
   "symbols": {
     "CalculateChecksum": 1388902,
+    "EventScript_ResetAllMapFlags": 2561502,
     "GetSubstruct": 434818,
+    "IslandCave_EventScript_OpenChamber": 2330287,
+    "SetWarpDestination": 543724,
     "gAbilityNames": 3258075,
     "gBaseStats": 3277772,
     "gBattleMoves": 3262616,
+    "gClockTable": 6773860,
     "gEggMoves": 3321304,
     "gEvolutionTable": 3298076,
     "gExperienceTables": 3274540,
+    "gFontBrailleLatinGlyphs": 6381864,
+    "gFontNormalLatinGlyphWidths": 6636260,
+    "gFontNormalLatinGlyphs": 6603492,
     "gInitialMovementTypeFacingDirections": 5264845,
     "gItems": 5781920,
     "gLevelUpLearnsets": 3314556,
+    "gMPlayJumpTableTemplate": 6773216,
+    "gMPlayTable": 7031232,
     "gMapGroups": 4744568,
     "gMapLayouts": 4726228,
     "gMonBackPicTable": 3156152,
@@ -1306,7 +2679,9 @@
     "gMovementActionFuncs": 5299280,
     "gNatureNamePointers": 6409040,
     "gNatureStatTable": 3270680,
+    "gObjectEventGraphicsInfoPointers": 5264928,
     "gPokedexEntries": 5682608,
+    "gRangedMovementTypes": 5264764,
     "gSaveBlock1Ptr": 23948,
     "gSaveBlock2Ptr": 23952,
     "gSceneAssetLists": 198576,
@@ -1314,10 +2689,14 @@
     "gSongTable": 7031280,
     "gSpecialVars": 1948172,
     "gSpecials": 1948260,
+    "gSpecials table": 1948260,
     "gSpeciesNames": 3245512,
     "gSpeciesToNationalPokedexNum": 3267714,
     "gStdScripts": 1950368,
+    "gTMHMLearnsets": 3270808,
     "gTMHMMoves": 6380436,
+    "gTextStorageWhatWouldYouLike": 6208342,
+    "gText_BigGuy": 6206969,
     "gTrainerClassNames": 3210452,
     "gTrainerFrontPicPaletteTable": 3168572,
     "gTrainerFrontPicTable": 3167828,
@@ -1326,7 +2705,61 @@
     "gTypeEffectiveness": 3255528,
     "gTypeNames": 3255864,
     "gWildMonHeaders": 5582152,
-    "sSaveSlotLayout": 6085632
+    "sBagSpriteSheet": 5765940,
+    "sElevationToPriority": 5301812,
+    "sElevationToSubpriority": 5301796,
+    "sElevationToSubspriteTable": 5301828,
+    "sGabbyAndTyLocalIds": 968184,
+    "sGlyphWidthFuncs": 3054868,
+    "sHealLocations": 5895484,
+    "sIntroCastSpriteSheets": 6243096,
+    "sIntroShot_leaves": 6165428,
+    "sItemMenuActions": 6196418,
+    "sItemStorageActions": 6160092,
+    "sItemStorageDescriptions": 6160036,
+    "sMailboxActions": 6160132,
+    "sMenuTexts": 5749376,
+    "sMoveLearnText": 6199973,
+    "sMovementTypeCallbacks": 5264440,
+    "sObjectEventSpritePalettes": 5290952,
+    "sOptionMenuText": 6219152,
+    "sOverworldBgTemplates": 3382700,
+    "sPCMainMenuActions": 6160052,
+    "sPartyMenuActions": 6198944,
+    "sPocketNames": 6197710,
+    "sPocketNamesPC": 6205756,
+    "sPokemonStorageActions": 5707456,
+    "sRegicePuzzleCoords": 6225524,
+    "sSaveInfoText": 6194367,
+    "sSaveSlotLayout": 6085632,
+    "sSpriteTemplate_NewGameBirch": 5620292,
+    "sStartMenuText": 6219459,
+    "sStarterMon": 5971448,
+    "sTitleScreenOverlays": 698276,
+    "sTrainerCardText": 6213489,
+    "sWaldaWallpapers": 5746500,
+    "sWallClockGfx": 14467164,
+    "sWallpapers": 5731768,
+    "sWeatherCycleRoute119": 5570140,
+    "sWeatherCycleRoute123": 5570144,
+    "sWindowFrames": 5308956,
+    "sWindowTemplate_Message": 3141744
   },
-  "version": "emerald"
+  "version": "emerald",
+  "wallClock": {
+    "callback": 1264116,
+    "graphics": 14467164,
+    "height": 20,
+    "palettes": [
+      14467100,
+      14467132
+    ],
+    "size": 4096,
+    "tilemaps": [
+      14468680,
+      14469384
+    ],
+    "tiles": 128,
+    "width": 32
+  }
 }

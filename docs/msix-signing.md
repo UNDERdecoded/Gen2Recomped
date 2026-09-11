@@ -136,11 +136,17 @@ loudly rather than failing the release.
 
 ## If you outgrow this
 
-A self-signed certificate always costs the player one manual trust step. Two
-ways to remove it entirely:
+A self-signed certificate always costs the player one manual trust step, and
+it does nothing at all for the SmartScreen warning on the plain `.exe` — that
+is a separate problem with separate fixes, written up in
+[windows-signing.md](windows-signing.md).
 
-- **Azure Trusted Signing** — chains to a root Windows already trusts, so
-  packages install with no trust step at all. Needs an Azure subscription.
+Two ways to remove the trust step entirely:
+
+- **Azure Artifact Signing** (formerly Trusted Signing) — chains to a root
+  Windows already trusts, so packages install with no trust step at all, and
+  the same identity signs `Gen2Recomped.exe`. ~$9.99/month plus an identity
+  validation. See [windows-signing.md](windows-signing.md).
 - **Microsoft Store** — do *not* pass `-MakeCert` or `-CertPath`. Reserve the
   name in Partner Center, then rebuild with `-PackageName`, `-Publisher` and
   `-PublisherDisplayName` copied verbatim from the app's identity page; the

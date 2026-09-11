@@ -1,0 +1,12 @@
+-- SUPERSEDED BY ui/Viewport.lua.
+--
+-- This file was the small 3D panel down the right-hand side.  The view is now
+-- the main thing in the window rather than a panel beside it, it meshes map
+-- windows as well as single tiles, and it is edited by dragging -- none of
+-- which is a change to a preview, it is a different object.  Nothing requires
+-- this module any more; it is left as a signpost rather than deleted, because
+-- a file that vanishes from a working tree with no note is a file somebody
+-- goes looking for.
+--
+-- Delete it whenever you like.
+error("ui/Preview.lua was replaced by ui/Viewport.lua", 0)

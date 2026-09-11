@@ -55,13 +55,37 @@ local function spriteOf(game, mon)
   return image, image and trueColor or false
 end
 
+-- ONE OF THE TRADE'S LINES, in whichever cartridge's words the dataset is.
+--
+-- This used to RETURN THE KEY when it missed, and on a Gen 3 dataset it
+-- missed every time -- so an Emerald trade printed `_TradeWentToText` and
+-- `_TradeForText` on the screen instead of saying anything.  It now asks
+-- TradeText for the cartridge's own line first, falls back to the Gen 2 text
+-- table, and answers NOTHING rather than a key when neither has it.  A caller
+-- that gets nothing shows no box at all.
+--
+-- `subs` carries both vocabularies: the Gen 2 RAM-label keys the text table
+-- splices on, and the trainer / sent / received names Emerald's own
+-- placeholders want.
 local function expand(game, key, subs)
+  local TradeText = require("src.link.TradeText")
+  local gen3 = TradeText.forKey(game.data, key, subs)
+  if gen3 then return TextBox.substitute(game, gen3) end
   local raw = game.data.text and game.data.text[key]
-  if not raw then return key end
+  if not raw then return nil end
   for token, value in pairs(subs or {}) do
     raw = raw:gsub("{" .. token .. "}", value)
   end
   return TextBox.substitute(game, raw)
+end
+
+-- A box, or no box.  The trade animation is a fixed sequence of beats and one
+-- of them having nothing to say must not stall it, so a nil line advances
+-- straight past instead of pushing an empty window.
+local function sayOrSkip(self, text, hold, after)
+  if not text then return after() end
+  self.game.stack:push(TextBox.new(self.game, text, after,
+                                   { auto = { delay = hold } }))
 end
 
 -- InternalClockTradeFuncSequence
@@ -275,39 +299,50 @@ function TradeAnim:update(dt)
     local text = expand(self.game, "_TradeWentToText", {
       ["RAM:wStringBuffer"] = speciesName(self.game, self.sent),
       ["RAM:wLinkEnemyTrainerName"] = self.enemyName,
+      sent = nameOf(self.game, self.sent), trainer = self.enemyName,
     })
+    if not text then return self:advance() end
     self:say(text, 200)
 
   elseif p == "for_sends" then
     local a = expand(self.game, "_TradeForText", {
       ["RAM:wStringBuffer"] = speciesName(self.game, self.sent),
+      sent = nameOf(self.game, self.sent),
     })
     local b = expand(self.game, "_TradeSendsText", {
       ["RAM:wLinkEnemyTrainerName"] = self.enemyName,
       ["RAM:wNameBuffer"] = nameOf(self.game, self.received),
+      trainer = self.enemyName, received = nameOf(self.game, self.received),
     })
+    if not (a or b) then return self:advance() end
     self.waitingText = true
-    self.game.stack:push(TextBox.new(self.game, a, function()
-      self.game.stack:push(TextBox.new(self.game, b, function()
+    sayOrSkip(self, a, 80, function()
+      sayOrSkip(self, b, 80, function()
         self.waitingText = false
         self:advance()
-      end, { auto = { delay = 80 } }))
-    end, { auto = { delay = 80 } }))
+      end)
+    end)
 
   elseif p == "farewell" then
     local a = expand(self.game, "_TradeWavesFarewellText", {
       ["RAM:wLinkEnemyTrainerName"] = self.enemyName,
+      trainer = self.enemyName,
     })
     local b = expand(self.game, "_TradeTransferredText", {
       ["RAM:wNameBuffer"] = nameOf(self.game, self.received),
+      received = nameOf(self.game, self.received),
     })
+    -- Emerald plays the trade out in four boxes where Gen 2 uses six, and
+    -- this is one of the two beats it does not have -- so on a Gen 3 dataset
+    -- the sequence steps straight over it.
+    if not (a or b) then return self:advance() end
     self.waitingText = true
-    self.game.stack:push(TextBox.new(self.game, a, function()
-      self.game.stack:push(TextBox.new(self.game, b, function()
+    sayOrSkip(self, a, 80, function()
+      sayOrSkip(self, b, 80, function()
         self.waitingText = false
         self:advance()
-      end, { auto = { delay = 80 } }))
-    end, { auto = { delay = 80 } }))
+      end)
+    end)
 
   elseif p == "show_enemy" then
     if self.t == 1 then
@@ -318,7 +353,9 @@ function TradeAnim:update(dt)
     elseif self.t >= 120 or skip then
       local text = expand(self.game, "_TradeTakeCareText", {
         ["RAM:wNameBuffer"] = nameOf(self.game, self.received),
+        received = nameOf(self.game, self.received),
       })
+      if not text then return self:advance() end
       self:say(text, 80)
     end
   end

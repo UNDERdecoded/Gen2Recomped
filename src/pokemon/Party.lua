@@ -33,9 +33,15 @@ function Party.isEgg(mon)
   return (tonumber(mon.eggSteps) or 0) > 0
 end
 
-function Party.firstHealthy(party)
+-- `except` is the mon already standing in the other slot: a double battle
+-- asks this twice and must not send the same Pokemon out on both sides of
+-- its own field.  Absent in every single battle, which is every call this
+-- had before doubles.
+function Party.firstHealthy(party, except)
   for i, mon in ipairs(party) do
-    if mon.hp > 0 and not Party.isEgg(mon) then return mon, i end
+    if mon.hp > 0 and not Party.isEgg(mon) and mon ~= except then
+      return mon, i
+    end
   end
   return nil
 end

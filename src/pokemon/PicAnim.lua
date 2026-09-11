@@ -48,20 +48,43 @@ function PicAnim.record(data, species)
   return anim
 end
 
+-- WHICH STRIP, which is a question only Gen 3 has.
+--
+-- Reported from play: "shiny pokemon during their emerald battle sprite
+-- animation are turning to their normal non shiny colors and then after their
+-- animation appear as their normal shiny colors".  The still pic had a shiny
+-- picture and the animation STRIP did not, so a shiny lost its colours for
+-- exactly the frames it was moving.
+--
+-- The cartridge has no such seam: it loads ONE palette for the battler and
+-- draws every frame of every sheet through it.  This port decodes each sheet
+-- with its palette baked in, so the shiny half is a second strip -- and this
+-- is the one place that chooses between them.  Crystal has no shiny sheet and
+-- falls through to the only one it has.
+function PicAnim.sheetFor(anim, mon)
+  if not anim then return nil end
+  if anim.shinySheet and mon
+     and require("src.pokemon.Pokemon").isShiny(mon) then
+    return anim.shinySheet
+  end
+  return anim.sheet
+end
+
 -- Frame `index` (1-based) of `anim` as a standalone image, or nil.
 -- Plain: no palette mapping, which is right for every caller that draws the
 -- still pic plainly too (the summary page).  BattleState wants its own
 -- SGB-coloured build and slices the strip itself.
-function PicAnim.frameImage(anim, index)
+function PicAnim.frameImage(anim, index, mon)
   if not (anim and index and index >= 1 and index <= (anim.count or 0)) then
     return nil
   end
-  local key = anim.sheet .. "@" .. index
+  local sheet = PicAnim.sheetFor(anim, mon)
+  local key = sheet .. "@" .. index
   local hit = frames[key]
   if hit then return hit end
   local ok, image = pcall(function()
     local Assets = require("src.render.Assets")
-    local strip = Assets.imageData(anim.sheet)
+    local strip = Assets.imageData(sheet)
     local w, h = anim.width, anim.height
     local cell = love.image.newImageData(w, h)
     cell:paste(strip, 0, 0, (index - 1) * w, 0, w, h)
@@ -85,6 +108,14 @@ function PicAnim.new(data, species)
   if not anim then return nil end
   local self = setmetatable({ anim = anim, paused = true }, PicAnim)
   self:restart("play")
+  return self
+end
+
+-- ...and the same, remembering the Pokemon whose colours the strip should be
+-- drawn in.  `species` alone cannot answer that: two ZIGZAGOON differ.
+function PicAnim.forMon(data, mon)
+  local self = PicAnim.new(data, mon and mon.species)
+  if self then self.mon = mon end
   return self
 end
 
@@ -140,10 +171,20 @@ function PicAnim:frame()
 end
 
 -- The current frame as an image, or nil to keep drawing the still.
-function PicAnim:image()
+-- `mon` is optional and is only about COLOUR: a shiny Gen 3 Pokemon animates
+-- from its own strip.  A caller that has the Pokemon should pass it; one that
+-- does not gets the ordinary sheet, which is what every caller got before.
+function PicAnim:image(mon)
   local index = self:frame()
   if index <= 0 then return nil end
-  return PicAnim.frameImage(self.anim, index)
+  return PicAnim.frameImage(self.anim, index, mon or self.mon)
+end
+
+-- Remember the Pokemon this player belongs to, so a caller that builds it
+-- once and draws it many times does not have to pass it every frame.
+function PicAnim:setMon(mon)
+  self.mon = mon
+  return self
 end
 
 return PicAnim

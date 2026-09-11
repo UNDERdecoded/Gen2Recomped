@@ -136,8 +136,40 @@ end
 -- map; the landing cell is that map's warp entry named by the warp id
 -- (wDestinationWarpID placement -- two-sided route gates land you on
 -- the side you exit, not where you entered).
-local function resolve(data, warpDef, lastMap, backupWarp)
+-- GEN 3'S DYNAMIC WARP.  Map group 127, map 127 is not a map: it is the
+-- placeholder Emerald uses for "wherever setdynamicwarp last pointed", and a
+-- door naming it resolves through the save at the moment it is taken.
+--
+-- The truck a new game starts inside is built out of exactly that pair -- the
+-- coord event under the player sets the destination (Littleroot Town, at a
+-- different doorstep depending on the boy-or-girl answer) and all three of the
+-- truck's warps name the placeholder.  Unresolved, the first door in the game
+-- leads to an id no dataset has, which is the REDS_HOUSE_2F crash again one
+-- room later.
+local GEN3_DYNAMIC_MAP = "MAP_G127_N127"
+
+local function resolve(data, warpDef, lastMap, backupWarp, save)
   local destMap = warpDef.destMap
+  if destMap == GEN3_DYNAMIC_MAP then
+    local dyn = save and save.gen3DynamicWarp
+    if dyn and dyn.map and data.maps[dyn.map] then
+      local destDef = data.maps[dyn.map]
+      -- a warp id of $FF means "use the coordinates"; anything else names a
+      -- warp on the destination and the coordinates are ignored
+      local id = tonumber(dyn.warp)
+      local dw = id and id ~= 0xFF and destDef.warps and destDef.warps[id + 1]
+      if dw then return dyn.map, dw.x, dw.y end
+      if dyn.x and dyn.y then return dyn.map, dyn.x, dyn.y end
+    end
+    -- NOTHING SET, so there is nowhere to go.  Returning a placeholder id
+    -- here would hand MapLoader a map no dataset has, which is a hard error
+    -- on a door the player is standing on; refusing the warp leaves them
+    -- where they are, with the reason in the log.
+    require("src.core.Logger").warn(
+      "gen3 dynamic warp taken with nothing set -- the script that should "
+      .. "have set it has not run")
+    return nil
+  end
   -- Gen2 warp id $FF: land back on the warp tile we last stepped through,
   -- whatever map that was (EnterMapWarp's wBackupWarp).
   if destMap == "LAST_WARP" then
@@ -200,8 +232,9 @@ end
 -- record and the remembered outdoor side the resolution used)
 local function warped(mapId, x, y) return mapId, x, y end
 
-function Warp.destination(data, warpDef, lastMap, backupWarp)
-  local destMap, x, y = resolve(data, warpDef, lastMap, backupWarp)
+function Warp.destination(data, warpDef, lastMap, backupWarp, save)
+  local destMap, x, y = resolve(data, warpDef, lastMap, backupWarp, save)
+  if destMap == nil then return nil end
   if not Runtime.wantsHook("warp.destination") then return destMap, x, y end
   return Runtime.call("warp.destination", warped, destMap, x, y,
                       { warp = warpDef, lastMap = lastMap, data = data })

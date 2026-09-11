@@ -178,4 +178,20 @@ function Logger.info(fmt, ...) emit("info", fmt, ...) end
 function Logger.warn(fmt, ...) emit("warn", fmt, ...) end
 function Logger.error(fmt, ...) emit("error", fmt, ...) end
 
+-- DEBUG: the "recognised, but this port has no answer for it" channel.
+--
+-- This did not exist, and four places called it anyway -- every one of them on
+-- a path whose entire purpose is to carry on gracefully: an unimplemented
+-- special, a multichoice list that is not resolved yet, a callstd with no
+-- lowering, and the once() helper behind every stubbed opcode.  Calling a nil
+-- field RAISES, so each of those paths did the exact opposite of what it was
+-- written to do: the command aborted instead of continuing, and a script that
+-- aborts mid-run never reaches its `release` -- which is a player who cannot
+-- move, with a log line about a nil value that looks unrelated.
+--
+-- It is a real level rather than a silent stub so the gaps stay visible; the
+-- repeat limiter above already keeps one unimplemented special in a loop from
+-- filling the file.
+function Logger.debug(fmt, ...) emit("debug", fmt, ...) end
+
 return Logger

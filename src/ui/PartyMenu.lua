@@ -176,7 +176,7 @@ local GEN2_ICON_CELL = 16
 -- whichever baked first to both.
 local function gen2IconImage(game, mon, path)
   local P = require("src.render.PaletteFX")
-  local shiny = require("src.pokemon.Stats").isShiny(mon.dvs)
+  local shiny = require("src.pokemon.Pokemon").isShiny(mon)
   local key = path .. "#g2icon#"
     .. tostring(P.monPalName(game.data, mon.species, nil, shiny))
   if iconImages[key] ~= nil then return iconImages[key] or nil end

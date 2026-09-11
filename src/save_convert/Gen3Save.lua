@@ -291,8 +291,49 @@ function Gen3Save.decodeBoxMon(bytes, off)
     contest = { cool = e[7], beauty = e[8], cute = e[9], smart = e[10],
                 tough = e[11], sheen = e[12] },
     ivWord = w(m, 4),
-    metLocation = m[3],
+    -- MISC IS FOUR FIELDS AND THIS READ ONE OF THEM, OFF BY A BYTE.
+    --
+    -- The substruct is pokerus(0), metLocation(1), a packed half-word at
+    -- (2..3) and the IV word at (4..7).  `metLocation = m[3]` is Lua's
+    -- one-based third byte, which is OFFSET TWO -- the low half of the
+    -- packed word -- so every met location read out of a real cartridge save
+    -- was a met LEVEL with four bits of the game of origin on top of it.
+    --
+    -- THE LAYOUT CANNOT BE ANYTHING ELSE, and that is the argument rather
+    -- than pret's header: the IV word is read at offset 4 and has to be, or
+    -- the six five-bit IVs and the egg and ability bits do not close on
+    -- thirty-two.  That leaves four bytes in front of it for a byte, a byte
+    -- and a half-word, and a half-word cannot start at offset three without
+    -- running into the IVs.  So metLocation is offset ONE and the packed
+    -- field is offset TWO, whatever it is called.
+    --
+    -- The suite could not catch it: gen3_save_test built its fixture by
+    -- writing the met location at offset two, which is exactly where this
+    -- was reading it.  A fixture that agrees with the decoder proves the two
+    -- agree and nothing else, so the fixture is laid out the cartridge's way
+    -- now and the fields below are what it checks.
+    pokerus = m[1],
+    metLocation = m[2],
+    origins = h(m, 2),
     substructs = subs,
+  }
+end
+
+-- ...AND WHAT THAT HALF-WORD HOLDS.  Seven bits of met level, four of which
+-- game it came from, FOUR OF WHICH BALL IT WAS CAUGHT IN, and one of the
+-- original trainer's gender.
+--
+-- The ball is the reason this is read at all: Emerald sends a Pokemon out in
+-- the ball it was caught in, so a save that drops those four bits sends
+-- everything out in a POKe BALL -- which is what this port did, for every
+-- Pokemon, whatever it was caught with.
+function Gen3Save.unpackOrigins(word)
+  word = math.floor(tonumber(word) or 0)
+  return {
+    metLevel = word % 128,
+    metGame = math.floor(word / 128) % 16,
+    ball = math.floor(word / 2048) % 16,
+    otFemale = math.floor(word / 32768) % 2 == 1,
   }
 end
 
@@ -371,7 +412,47 @@ function Gen3Save.readPlayer(blocks)
     },
     money = xorU32(u32(b1, f.saveBlock1.money), key),
     coins = xorU32(u16(b1, f.saveBlock1.coins), key) % 65536,
+    -- BERRY POWDER lives in the OTHER block and under the same key.  The
+    -- offset is derived by the import rather than carried in the manifest, so
+    -- an older cache simply has not got it -- and a save read without it
+    -- would come back with powder nobody can spend rather than none.
+    berryPowder = f.saveBlock2.berryPowder
+                  and xorU32(u32(b2, f.saveBlock2.berryPowder), key) or nil,
+    -- BATTLE POINTS, which are NOT encrypted -- the three specials that add,
+    -- take and read them all do a bare `ldrh`, and a currency this port
+    -- XOR-ed on the way in would come back as tens of thousands of points.
+    battlePoints = f.saveBlock2.battlePoints
+                   and u16(b2, f.saveBlock2.battlePoints) or nil,
+    -- DEWFORD's trend: two easy-chat words, NOT encrypted, and the hall's
+    -- painting is named after their sum.
+    dewfordTrend = f.saveBlock1.dewfordTrend
+                   and { u16(b1, f.saveBlock1.dewfordTrend),
+                         u16(b1, f.saveBlock1.dewfordTrend + 2) } or nil,
+    -- THE GAME STATISTICS, under the same key as the money.  Sixty-four
+    -- counters of how many times the player has done a thing, and the reason
+    -- they are read at all is Mauville's STORYTELLER: every tale he tells is
+    -- one of these read back, so a save imported without them meets a man
+    -- with nothing to say about a player who has done everything.
+    gameStats = Gen3Save.readGameStats(b1, key),
   }
+end
+
+-- The counters, keyed by their own index so a gap reads as nil rather than as
+-- zero.  Their NUMBER is derived by the import (the run between the variables
+-- and the berry trees); an older cache has no count and keeps none of them.
+function Gen3Save.readGameStats(b1, key)
+  local f = need("the game statistics")
+  local at = tonumber(f.saveBlock1.gameStats)
+  local count = tonumber(f.saveBlock1.gameStatCount)
+  if not (at and count and count > 0) then return nil end
+  -- keyed by the counter's own index, and a counter of zero is left out so
+  -- the table reads the same way the engine's own does
+  local out = {}
+  for i = 0, count - 1 do
+    local value = xorU32(u32(b1, at + i * 4), key)
+    if value ~= 0 then out[i] = value end
+  end
+  return out
 end
 
 -- Flags are a bit array; variables are halfwords indexed from an id base that
@@ -384,6 +465,63 @@ function Gen3Save.flag(block1, id)
   local byte = f.saveBlock1.flags + math.floor(id / 8)
   if byte >= f.saveBlock1.vars then return nil end       -- past the array
   return math.floor(u8(block1, byte) / 2 ^ (id % 8)) % 2 == 1
+end
+
+-- ---------------------------------------------------------------------------
+-- THE BERRY TREES, and every field in the record was read out of the code
+-- that uses it rather than typed from a struct definition.
+--
+-- Eight bytes each, a hundred and twenty-eight of them, at the offset the
+-- import derives (see RomExtractorGen3:berryTreeSaveBlock).  What is in those
+-- eight bytes comes from four routines:
+--
+--   +0        berry            PlantBerryTree 0x00E191C stores it first
+--   +1 bit7   stopGrowth       BerryTreeTimeUpdate 0x00E1894 skips the tree
+--                              when it is set; AllowBerryTreeGrowth
+--                              0x00E1A78 is four instructions that clear it
+--   +1 bit0-6 stage            PlantBerryTree masks the stage with $7F
+--   +2..3     minutes to go    strh at 0x00E194A, quadrupled for a fruiting
+--                              tree at 0x00E196C
+--   +4        yield            strb at 0x00E1966
+--   +5 bit0-3 regrowth count   BerryTreeGrow 0x00E184E increments it and
+--                              masks with $0F, blanking the tree at ten
+--   +5 bit4-7 watered 1-4      GetNumStagesWatered 0x00E1A90 tests $10, $20,
+--                              $40 and $80 of this byte and counts them
+--   +6..7     padding
+--
+-- WHY THIS MATTERS AT ALL: Hoenn opens with eighty trees already fruiting, so
+-- a save that carried no berry block came in with the region uprooted -- and
+-- went back out the same way, taking the player's own plantings with it.
+local BERRY_WATER_BITS = { 0x10, 0x20, 0x40, 0x80 }
+
+function Gen3Save.berryTrees(block1)
+  local f = Gen3Save.fields
+  local block = f and f.berryTrees
+  if not (block and block.offset) then return nil end
+  local out = {}
+  for i = 0, block.count - 1 do
+    local at = block.offset + i * block.stride
+    local berry = u8(block1, at)
+    local packed = u8(block1, at + 1)
+    local stage = packed % 128
+    if berry > 0 and stage > 0 then
+      local flags = u8(block1, at + 5)
+      local watered = {}
+      for w, bit in ipairs(BERRY_WATER_BITS) do
+        watered[w] = (math.floor(flags / bit) % 2 == 1) or nil
+      end
+      out[i] = {
+        berry = berry,
+        stage = stage,
+        minutes = u16(block1, at + 2),
+        yield = u8(block1, at + 4),
+        regrowth = flags % 16,
+        watered = watered,
+        stopGrowth = (packed >= 128) or nil,
+      }
+    end
+  end
+  return out
 end
 
 function Gen3Save.var(block1, id)
@@ -535,10 +673,23 @@ function Gen3Save.crosswalks(data)
       haveGroups = true
     end
   end
+  -- which of the eight arrays a decoration belongs in, so the writer can pack
+  -- each category's slots without needing a catalogue of its own
+  local decorationCategory = {}
+  do
+    local r = data and data.constants and data.constants.gen3Decorations
+    for _, def in ipairs((type(r) == "table" and r.list) or {}) do
+      if type(def) == "table" and tonumber(def.id)
+         and tonumber(def.category) then
+        decorationCategory[math.floor(def.id)] = math.floor(def.category)
+      end
+    end
+  end
   return { pokemonByIndex = pokemonByIndex, pokemonIndex = pokemonIndex,
            movesByIndex = movesByIndex, movesIndex = movesIndex,
            itemsByIndex = itemsByIndex, itemsIndex = itemsIndex,
            mapsByGroupNumber = mapsByGroupNumber, mapsHaveGroups = haveGroups,
+           decorationCategory = decorationCategory,
            speciesDefs = (data and data.pokemon) or {} }
 end
 
@@ -554,6 +705,133 @@ local function decodeText(bytes)
   return table.concat(out)
 end
 Gen3Save.decodeText = decodeText
+
+-- ...and the way back.  Built from the same charmap, restricted to the glyphs
+-- that are ONE character, and taking the lowest byte for a glyph that has
+-- several -- because Emerald's charmap holds ligatures (PK, MN, POKéBLOCK's
+-- five) whose bytes are not letters, and a name written through one of them
+-- comes back as a word the cartridge cannot render.
+local encodeReverse = nil
+local function encodeText(text, length, terminator)
+  if not charmap then return nil end
+  if not encodeReverse then
+    encodeReverse = {}
+    for code, glyph in pairs(charmap) do
+      local n = tonumber(code)
+      -- ONE character, counted in code points rather than bytes: "e" is one
+      -- and so is the accented one, but "PK" and "OC" are two -- and those
+      -- ligatures are exactly what a reverse map has to refuse, or a name
+      -- with "BL" in it comes back one byte short and unreadable
+      local letters = 0
+      if type(glyph) == "string" then
+        for _ in glyph:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+          letters = letters + 1
+        end
+      end
+      if n and letters == 1
+         and (encodeReverse[glyph] == nil or n < encodeReverse[glyph]) then
+        encodeReverse[glyph] = n
+      end
+    end
+  end
+  local out, count = {}, 0
+  for glyph in tostring(text or ""):gmatch("[%z\1-\127\194-\244][\128-\191]*") do
+    if count >= (length or 0) then break end
+    local code = encodeReverse[glyph]
+    if code then
+      out[#out + 1] = string.char(code)
+      count = count + 1
+    end
+  end
+  local pad = terminator or 0xFF
+  while count < (length or 0) do
+    out[#out + 1] = string.char(pad)
+    count = count + 1
+  end
+  return table.concat(out)
+end
+Gen3Save.encodeText = encodeText
+
+-- ---------------------------------------------------------------------------
+-- THE MAUVILLE OLD MAN, and the eight decoration arrays.
+--
+-- The house east of Mauville's gym holds one of five men, chosen once from
+-- the trainer id and then WRITTEN DOWN -- so a save that has been played
+-- knows who lives there, and a reader that recomputes it would disagree with
+-- the cartridge whenever the cartridge's own roll differed.  The block is
+-- one id byte, then four decoration ids, four eleven-byte names, an
+-- already-traded flag and four languages; the extractor derives its offset
+-- off TraderDoDecorationTrade and proves it by the name slots ending exactly
+-- where the flag begins.
+--
+-- The decorations themselves are eight fixed arrays that tile 150 bytes of
+-- SaveBlock1, one id per slot with zero for empty -- which is why owning
+-- three of a thing costs three slots.
+-- ---------------------------------------------------------------------------
+function Gen3Save.mauvilleMan(block1)
+  local f = Gen3Save.fields
+  local block = f and f.mauvilleMan
+  if not (block and block.offset) then return nil end
+  local at = block.offset
+  local out = { man = u8(block1, at), trader = { decorations = {}, names = {} } }
+  for i = 0, block.slots - 1 do
+    out.trader.decorations[i + 1] = u8(block1, at + block.decorations + i)
+    local bytes = {}
+    for j = 0, block.nameBytes - 1 do
+      local b = u8(block1, at + block.names + i * block.nameBytes + j)
+      if b == 0xFF then break end
+      bytes[#bytes + 1] = b
+    end
+    out.trader.names[i + 1] = decodeText(bytes) or ""
+  end
+  out.trader.traded = u8(block1, at + block.alreadyTraded) ~= 0
+  return out
+end
+
+-- ---------------------------------------------------------------------------
+-- THE TRENDY SAYINGS, which are a bitfield and not a list.
+--
+-- Thirty-three easy-chat words that start LOCKED. The HIPSTER in Mauville
+-- opens one per conversation, at random, out of the ones you do not know --
+-- so how many a save has is a record of how many times its player talked to
+-- one man, and it is not recoverable from anything else in the file.
+--
+-- This port keeps them as `save.gen3TrendyPhrases[index] = true`, indexed from
+-- zero the way the cartridge's own picker indexes them, because that is the
+-- shape EasyChat.knowsPhrase already asks for. Bit n of byte floor(n/8), low
+-- bit first, is where the cartridge puts them.
+function Gen3Save.trendyPhrases(block1)
+  local f = Gen3Save.fields
+  local field = f and f.trendyPhrases
+  if not (field and field.offset and field.count) then return nil end
+  local out, any = {}, false
+  for i = 0, field.count - 1 do
+    local byte = u8(block1, field.offset + math.floor(i / 8)) or 0
+    if math.floor(byte / 2 ^ (i % 8)) % 2 == 1 then
+      out[i] = true
+      any = true
+    end
+  end
+  return any and out or nil
+end
+
+-- What the player owns, as the counts this port keeps: one id per slot in the
+-- cartridge, so three of a thing arrive as three slots and leave as a count
+-- of three.
+function Gen3Save.decorations(block1)
+  local f = Gen3Save.fields
+  local caps = f and f.decorations
+  if type(caps) ~= "table" or #caps == 0 then return nil end
+  local out = {}
+  for _, row in ipairs(caps) do
+    for i = 0, row.size - 1 do
+      local id = u8(block1, row.offset + i)
+      if id and id > 0 then out[id] = (out[id] or 0) + 1 end
+    end
+  end
+  return out
+end
+
 
 -- ---------------------------------------------------------------------------
 -- writing
@@ -649,6 +927,28 @@ function Gen3Save.patchBoxMon(bytes, off, changes)
   return out
 end
 
+-- What this project models of a Pokemon, in the shape patchBoxMon takes.  The
+-- party writer and the box writer both need it and must agree: a mon deposited
+-- from the party has to come out of the box the same Pokemon it went in as.
+local function boxChanges(mon, cw)
+  local changes = { friendship = mon.happiness, experience = mon.exp }
+  if cw and mon.species then changes.species = cw.pokemonIndex[mon.species] end
+  if cw and mon.item then changes.heldItem = cw.itemsIndex[mon.item] end
+  if mon.moves then
+    changes.moves, changes.pp = {}, {}
+    for k, mv in ipairs(mon.moves) do
+      changes.moves[k] = cw and cw.movesIndex[mv.id] or nil
+      changes.pp[k] = mv.pp
+    end
+  end
+  if mon.evs then
+    changes.evs = { hp = mon.evs.hp, attack = mon.evs.attack,
+                    defense = mon.evs.defense, speed = mon.evs.speed,
+                    spAttack = mon.evs.spatk, spDefense = mon.evs.spdef }
+  end
+  return changes
+end
+
 -- Apply a decoded-and-edited save table back onto the blocks it came from.
 -- Only fields this project models are touched; everything else is left exactly
 -- as the cartridge wrote it.
@@ -661,6 +961,31 @@ function Gen3Save.applyBlocks(blocks, save, cw)
   if save.money then b1 = put(b1, s1.money, b32(xorU32(save.money, key))) end
   if save.coins then
     b1 = put(b1, s1.coins, b16(xorU32(save.coins, key) % 65536))
+  end
+  if save.berryPowder and s2.berryPowder then
+    b2 = put(b2, s2.berryPowder, b32(xorU32(save.berryPowder, key)))
+  end
+  -- Battle Points go back plain, and CLAMPED to the cartridge's own cap: the
+  -- adder stops at it, so a file carrying more than it could ever have earned
+  -- is one this port wrote and not one the cartridge would.
+  if save.gen3BattlePoints and s2.battlePoints then
+    local cap = tonumber(f.battlePointsCap) or 9999
+    local n = math.floor(tonumber(save.gen3BattlePoints) or 0)
+    b2 = put(b2, s2.battlePoints, b16(math.max(0, math.min(cap, n))))
+  end
+  if type(save.gen3DewfordTrend) == "table" and s1.dewfordTrend then
+    b1 = put(b1, s1.dewfordTrend,
+             b16(math.floor(save.gen3DewfordTrend[1] or 0) % 65536)
+             .. b16(math.floor(save.gen3DewfordTrend[2] or 0) % 65536))
+  end
+  -- The game statistics go back the way flags do: EVERY counter is written,
+  -- not only the ones the run touched, because a counter this engine has no
+  -- name for still has to survive the round trip rather than come back zero.
+  if type(save.gen3Stats) == "table" and s1.gameStats and s1.gameStatCount then
+    for i = 0, math.floor(s1.gameStatCount) - 1 do
+      local value = math.floor(tonumber(save.gen3Stats[i]) or 0)
+      b1 = put(b1, s1.gameStats + i * 4, b32(xorU32(value, key)))
+    end
   end
   if save.playTime then
     local t = math.max(0, save.playTime)
@@ -690,11 +1015,118 @@ function Gen3Save.applyBlocks(blocks, save, cw)
     b1 = put(b1, s1.flags, table.concat(out))
   end
 
+  -- Variables, and ONLY the ones this project has an answer for.
+  --
+  -- This used to write `save.gen3Vars[id] or 0` across all 256, which reads as
+  -- harmless and is not: a var the port has never modelled came back as zero,
+  -- so exporting a save that had not been imported wiped the whole block.  The
+  -- rotating gates are the clearest casualty -- their orientations are one
+  -- byte each in the vars from $4000, so every gate in Fortree's gym and the
+  -- Trick House would spring back to where it started -- but it is every
+  -- unmodelled var, and there is no way to tell afterwards.
+  --
+  -- A var the port DID set to zero still writes: nil and 0 are different
+  -- things here, and only nil means "nothing to say".
   if save.gen3Vars then
     local base = f.varsStartId or 0x4000
     for i = 0, (f.varCount or 0) - 1 do
-      local v = save.gen3Vars[base + i] or 0
-      b1 = put(b1, s1.vars + i * 2, b16(v % 65536))
+      local v = save.gen3Vars[base + i]
+      if v ~= nil then b1 = put(b1, s1.vars + i * 2, b16(v % 65536)) end
+    end
+  end
+
+  -- The berry trees, written back the same eight bytes they were read from.
+  --
+  -- Only the plots the port has an answer for: a tree the engine never touched
+  -- keeps whatever the cartridge put there, the same rule the variables above
+  -- follow.  An EMPTY plot is an answer -- the player picked it and it died --
+  -- so a record present in save.gen3BerryTrees with no berry is written as
+  -- eight zero bytes rather than skipped.
+  if save.gen3BerryTrees and f.berryTrees then
+    local block = f.berryTrees
+    for i = 0, block.count - 1 do
+      local tree = save.gen3BerryTrees[i]
+      if type(tree) == "table" then
+        local at = block.offset + i * block.stride
+        local berry = math.floor(tonumber(tree.berry) or 0) % 256
+        local stage = math.floor(tonumber(tree.stage) or 0) % 128
+        local packed = stage + (tree.stopGrowth and 128 or 0)
+        local flags = math.floor(tonumber(tree.regrowth) or 0) % 16
+        for w, bit in ipairs(BERRY_WATER_BITS) do
+          if tree.watered and tree.watered[w] then flags = flags + bit end
+        end
+        b1 = put(b1, at, string.char(berry, packed))
+        b1 = put(b1, at + 2, b16(math.floor(tonumber(tree.minutes) or 0) % 65536))
+        b1 = put(b1, at + 4,
+                 string.char(math.floor(tonumber(tree.yield) or 0) % 256, flags))
+      end
+    end
+  end
+
+  -- The Mauville old man, and the decoration arrays.
+  --
+  -- The man's ID is written back too, because a save this port started rolled
+  -- it from the trainer id and the cartridge would otherwise read a zero as
+  -- "the Bard".  The names are re-encoded through the charmap and padded with
+  -- $FF, which is the terminator every other name in the file uses.
+  if save.gen3MauvilleMan and f.mauvilleMan then
+    local block = f.mauvilleMan
+    local state = save.gen3MauvilleMan
+    local at = block.offset
+    b1 = put(b1, at, b8(math.floor(tonumber(state.man) or 0) % 256))
+    local trader = type(state.trader) == "table" and state.trader or nil
+    if trader then
+      for i = 0, block.slots - 1 do
+        local id = math.floor(tonumber((trader.decorations or {})[i + 1]) or 0)
+        b1 = put(b1, at + block.decorations + i, b8(id % 256))
+        local name = encodeText((trader.names or {})[i + 1], block.nameBytes)
+        if name then
+          b1 = put(b1, at + block.names + i * block.nameBytes, name)
+        end
+      end
+      b1 = put(b1, at + block.alreadyTraded, b8(trader.traded and 1 or 0))
+    end
+  end
+
+  -- The trendy sayings go back as the bitfield they came from. Written whole
+  -- rather than or-ed into what is there: a saying this port has NOT recorded
+  -- has to come out locked, or a round trip through the editor could only ever
+  -- add to them.
+  if save.gen3TrendyPhrases and f.trendyPhrases then
+    local field = f.trendyPhrases
+    for byte = 0, field.bytes - 1 do
+      local value = 0
+      for bit = 0, 7 do
+        local index = byte * 8 + bit
+        if index < field.count and save.gen3TrendyPhrases[index] then
+          value = value + 2 ^ bit
+        end
+      end
+      b1 = put(b1, field.offset + byte, b8(value))
+    end
+  end
+
+  -- Decorations go back one id per slot, packed to the front of each
+  -- category's array with the rest zeroed -- which is what the cartridge's own
+  -- GetFirstEmptyDecorSlot expects to find.  A count past the cap is dropped
+  -- rather than allowed to run into the next category.
+  if save.gen3 and save.gen3.decorations and f.decorations then
+    local byCategory = {}
+    for id, n in pairs(save.gen3.decorations) do
+      local count = (n == true) and 1 or math.floor(tonumber(n) or 0)
+      local category = (cw.decorationCategory or {})[id] or 0
+      if count > 0 and type(id) == "number" then
+        byCategory[category] = byCategory[category] or {}
+        for _ = 1, count do
+          byCategory[category][#byCategory[category] + 1] = id
+        end
+      end
+    end
+    for _, row in ipairs(f.decorations) do
+      local list = byCategory[row.category] or {}
+      for i = 0, row.size - 1 do
+        b1 = put(b1, row.offset + i, b8(math.floor(list[i + 1] or 0) % 256))
+      end
     end
   end
 
@@ -706,22 +1138,7 @@ function Gen3Save.applyBlocks(blocks, save, cw)
     for i, mon in ipairs(save.party) do
       if i <= f.party.size then
         local at = f.party.start + (i - 1) * f.party.monSize
-        local changes = { friendship = mon.happiness, experience = mon.exp }
-        if cw and mon.species then changes.species = cw.pokemonIndex[mon.species] end
-        if cw and mon.item then changes.heldItem = cw.itemsIndex[mon.item] end
-        if mon.moves then
-          changes.moves, changes.pp = {}, {}
-          for k, mv in ipairs(mon.moves) do
-            changes.moves[k] = cw and cw.movesIndex[mv.id] or nil
-            changes.pp[k] = mv.pp
-          end
-        end
-        if mon.evs then
-          changes.evs = { hp = mon.evs.hp, attack = mon.evs.attack,
-                          defense = mon.evs.defense, speed = mon.evs.speed,
-                          spAttack = mon.evs.spatk, spDefense = mon.evs.spdef }
-        end
-        b1 = Gen3Save.patchBoxMon(b1, at, changes)
+        b1 = Gen3Save.patchBoxMon(b1, at, boxChanges(mon, cw))
         if mon.level then b1 = put(b1, at + 84, b8(mon.level)) end
         if mon.hp then b1 = put(b1, at + 86, b16(mon.hp)) end
         if mon.maxHp then b1 = put(b1, at + 88, b16(mon.maxHp)) end
@@ -729,8 +1146,94 @@ function Gen3Save.applyBlocks(blocks, save, cw)
     end
   end
 
+  -- ---------------------------------------------------------------------
+  -- THE BOXES, which were not written back at all.
+  --
+  -- `decode` reads them; nothing wrote them, so the storage came back out of
+  -- here exactly as the cartridge wrote it and every change the player made in
+  -- the PC was discarded on export.  Deposit a Pokemon and the exported save
+  -- still had it in the party and not in the box.
+  --
+  -- A BOX RECORD CANNOT BE REBUILT, ONLY MOVED.  Eighty bytes hold far more
+  -- than this project models -- the nickname, the original trainer and their
+  -- language, where it was met, its ribbons -- and none of that is on the
+  -- engine's Pokemon.  So a slot is not written from the engine's fields; the
+  -- record the mon ARRIVED in is found again and relocated, and only then
+  -- patched with what changed.  A Pokemon is identified by its personality
+  -- and its trainer id together, which is what makes it that Pokemon on the
+  -- cartridge as well: the pair is what keys its substructure order, its
+  -- shininess and its encryption.
+  --
+  -- The originals are read from the party AND the boxes before anything is
+  -- written, because the commonest edit of all -- depositing -- moves a record
+  -- from one to the other, and a snapshot taken as we go would find a slot
+  -- already overwritten.
+  --
+  -- A Pokemon with no original is one that was CAUGHT IN THE PORT, and this
+  -- cannot write it: patchBoxMon derives its key from a personality and
+  -- trainer id that are already in the bytes, so there is nothing to patch. It
+  -- is named in `unwritable` rather than being invented, and its slot is left
+  -- empty -- an empty slot is a save that loads, and a fabricated record is
+  -- one that may not.
+  local unwritable = nil
+  local storage = blocks.storage
+  local st = f.storage
+  if save.boxes and st and storage then
+    local origins = {}
+    local function remember(source, at)
+      local mon = Gen3Save.decodeBoxMon(source, at)
+      if not mon.empty then
+        local key = ("%d:%d"):format(mon.personality, mon.otId)
+        origins[key] = origins[key]
+          or source:sub(at + 1, at + Gen3Save.BOX_MON_SIZE)
+      end
+    end
+    if f.party then
+      for i = 1, f.party.size do
+        remember(blocks.block1, f.party.start + (i - 1) * f.party.monSize)
+      end
+    end
+    for b = 1, st.boxCount do
+      local base = st.boxes + (b - 1) * st.boxCapacity * st.boxMonSize
+      for slot = 1, st.boxCapacity do
+        remember(storage, base + (slot - 1) * st.boxMonSize)
+      end
+    end
+
+    local empty = string.rep("\0", st.boxMonSize)
+    for b = 1, st.boxCount do
+      local box = save.boxes[b] or {}
+      local base = st.boxes + (b - 1) * st.boxCapacity * st.boxMonSize
+      for slot = 1, st.boxCapacity do
+        local at = base + (slot - 1) * st.boxMonSize
+        local mon = box[slot]
+        local from = mon and mon.personality and mon.otId
+          and origins[("%d:%d"):format(mon.personality,
+                                       (mon.secretId or 0) * 65536 + mon.otId)]
+        if mon == nil then
+          storage = put(storage, at, empty)
+        elseif from then
+          storage = put(storage, at, from)
+          storage = Gen3Save.patchBoxMon(storage, at, boxChanges(mon, cw))
+        else
+          storage = put(storage, at, empty)
+          unwritable = unwritable or {}
+          unwritable[#unwritable + 1] =
+            { species = mon.species, box = b, slot = slot }
+        end
+      end
+      if box.wallpaper then
+        storage = put(storage, st.boxWallpapers + b - 1, b8(box.wallpaper))
+      end
+    end
+    if save.currentBox then
+      storage = put(storage, st.currentBox, b8(save.currentBox - 1))
+    end
+  end
+
   return { slot = blocks.slot, counter = blocks.counter,
-           block1 = b1, block2 = b2, storage = blocks.storage }
+           block1 = b1, block2 = b2, storage = storage,
+           unwritable = unwritable }
 end
 
 -- Lay the three structures back across fourteen sectors and sign each one.
@@ -800,6 +1303,23 @@ local function engineMon(mon, cw, isParty)
     shiny = Gen3Save.isShiny(mon.personality, mon.otId) or nil,
     checksumOk = mon.checksumOk,
   }
+  -- WHERE IT WAS MET, AND WHAT IT WAS CAUGHT IN.  Both live in Misc and
+  -- neither survived the read before: the location was a byte off and the
+  -- packed half-word was never touched at all.  The ball is what Emerald
+  -- sends a Pokemon out in, so a save that drops it sends everything out in
+  -- a POKe BALL.
+  local origins = Gen3Save.unpackOrigins(mon.origins)
+  if mon.metLocation and mon.metLocation ~= 0 then
+    out.metLocation = mon.metLocation
+  end
+  if origins.metLevel and origins.metLevel > 0 then
+    out.metLevel = origins.metLevel
+  end
+  -- ball 0 is "no ball recorded", which is what an egg and a starting
+  -- Pokemon both carry; anything else names one of the twelve
+  if origins.ball and origins.ball > 0 then
+    out.ball = cw.itemsByIndex and cw.itemsByIndex[origins.ball] or origins.ball
+  end
   if mon.heldItem and mon.heldItem ~= 0 then
     out.item = cw.itemsByIndex[mon.heldItem]
   end
@@ -841,6 +1361,10 @@ function Gen3Save.decode(bytes, data)
     },
     money = player.money,
     coins = player.coins,
+    berryPowder = player.berryPowder,
+    gen3BattlePoints = player.battlePoints,
+    gen3DewfordTrend = player.dewfordTrend,
+    gen3Stats = player.gameStats,
     inventory = {},
     pcItems = {},
     flags = {},
@@ -905,6 +1429,28 @@ function Gen3Save.decode(bytes, data)
     if v and v ~= 0 then save.gen3Vars[base + i] = v end
   end
 
+  -- ...AND WHAT IS GROWING IN HOENN'S EIGHTY-EIGHT PLOTS.  A cache from
+  -- before the berry block was derived carries no offset for it; then this
+  -- reads nothing and the save arrives exactly as it used to.
+  local trees = Gen3Save.berryTrees(blocks.block1)
+  if trees and next(trees) then save.gen3BerryTrees = trees end
+
+  -- ...WHO LIVES IN THE HOUSE IN MAUVILLE, and what is in the decoration PC.
+  -- Both come from the cartridge rather than being recomputed: the man was
+  -- rolled once when that save was new, and the decorations are the player's.
+  local man = Gen3Save.mauvilleMan(blocks.block1)
+  if man then save.gen3MauvilleMan = man end
+  local decorations = Gen3Save.decorations(blocks.block1)
+  if decorations and next(decorations) then
+    save.gen3 = save.gen3 or {}
+    save.gen3.decorations = decorations
+  end
+  -- ...and which TRENDY SAYINGS that player has been given. Left absent when
+  -- the save has none, so a fresh import is indistinguishable from what this
+  -- port would have built itself.
+  local trendy = Gen3Save.trendyPhrases(blocks.block1)
+  if trendy then save.gen3TrendyPhrases = trendy end
+
   -- The saved location.  Which of the two bytes after the coordinates is the
   -- map GROUP and which is the map NUMBER was never derived, so it is not
   -- assumed: the pair has to name one of the maps the extractor found, and if
@@ -949,7 +1495,11 @@ function Gen3Save.encode(save, data, template)
   -- intact as the backup, which is the whole point of there being two
   local target = 1 - blocks.slot
   local counter = (blocks.counter + 1) % 4294967296
-  return Gen3Save.writeSlot(image, target, patched, counter)
+  -- ...and a SECOND return: the Pokemon the box writer could not carry, so a
+  -- caller can say so rather than the player finding out from the cartridge.
+  -- See applyBlocks -- these are the ones caught in the port, which have no
+  -- cartridge record to relocate.
+  return Gen3Save.writeSlot(image, target, patched, counter), patched.unwritable
 end
 
 return Gen3Save

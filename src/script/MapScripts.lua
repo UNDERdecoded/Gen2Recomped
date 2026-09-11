@@ -49,7 +49,10 @@ end
 
 local HOOK_RULES = {
   onEnter = "all", onVictory = "all", onBoulderMoved = "all",
-  onStep = "first", onInteract = "first",
+  -- onFrame is the Gen 3 ON_FRAME_TABLE seam: asked every idle field frame,
+  -- first truthy return consumes, so one map's table cannot be shadowed by
+  -- a mod's and both cannot start a script in the same frame.
+  onStep = "first", onInteract = "first", onFrame = "first",
 }
 
 -- the v1 merge, verbatim: later base files override earlier ones

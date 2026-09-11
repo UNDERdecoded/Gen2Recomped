@@ -46,6 +46,15 @@ function Bag.capacity(data)
   return DEFAULT_CAPACITY
 end
 
+-- The five pocket sizes a Gen 3 dataset carries, or nil for one that does
+-- not -- which is every Gen 1 and Gen 2 cache, and an older Gen 3 one.
+function Bag.gen3Pockets(data)
+  data = data or require("src.core.Data")
+  local record = data and data.constants and data.constants.gen3Bag
+  local pockets = record and record.pockets
+  return (type(pockets) == "table" and next(pockets) ~= nil) and pockets or nil
+end
+
 local function isBadge(id)
   return id:find("BADGE", 1, true) ~= nil
 end
@@ -106,10 +115,27 @@ end
 -- is needed and the pocket (Gen2) or bag (Gen1) is full, or when the
 -- stack would pass 99 (AddItemToInventory's per-slot quantity cap).
 function Bag.add(save, id, qty, data)
+  -- resolve the dataset ONCE: pocketOf and the pocket sizes have to agree
+  -- about which dataset they are reading, and pocketOf's own fallback is
+  -- "everything is an ITEM", which would count a Poke Ball against the item
+  -- pocket's thirty
+  data = data or require("src.core.Data")
   local inv = save.inventory
   if not inv[id] and not isBadge(id) then
-    local ok = require("src.core.GameVersion").isGen2()
-    if ok then
+    -- EMERALD'S BAG IS FIVE POCKETS, and the sizes are the cartridge's:
+    -- they fall out of the save layout, where each pocket starts where the
+    -- last one ends (constants.gen3Bag).  Falling through to the Gen 1 arm
+    -- below capped a Hoenn player at twenty DISTINCT items in the whole game
+    -- -- the twenty-first was refused with "you can't carry any more", with
+    -- 186 slots of empty pockets behind it.
+    local gen3 = Bag.gen3Pockets(data)
+    if gen3 then
+      local pocket = pocketOf(id, data)
+      local cap = gen3[pocket]
+      if cap and Bag.pocketSlots(save, pocket, data) >= cap then
+        return false
+      end
+    elseif require("src.core.GameVersion").isGen2() then
       -- Gen2: each pocket has its own limit; TM/HM pocket is unlimited
       local pocket = pocketOf(id, data)
       local cap = GEN2_POCKET_CAP[pocket] or 20

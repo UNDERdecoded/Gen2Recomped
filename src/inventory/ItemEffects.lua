@@ -77,7 +77,26 @@ local function alias(id, itemDef)
 end
 ItemEffects.alias = alias
 
-function ItemEffects.isBall(id) return BALLS[alias(id)] or false end
+-- IS THIS A BALL?  The name list above is Gen 1's and Gen 2's, and Hoenn has
+-- seven balls that are not on it -- DIVE, LUXURY, NEST, NET, PREMIER, REPEAT
+-- and TIMER.  Reported as items that simply did nothing when thrown, which is
+-- what an unrecognised ball does: `use` falls past the ball branch and ends
+-- at the refusal.
+--
+-- The dataset already knows.  Every ball on the cartridge is in the BALL
+-- POCKET and has no field-use function at all -- you cannot use one from the
+-- bag, only throw it -- so the pocket is the cartridge's own answer and a
+-- Gen 4 ball added by a mod gets it for free.  The name list stays as the
+-- answer for Gen 1 and Gen 2, whose items carry no pocket.
+function ItemEffects.isBall(id, itemDef)
+  if BALLS[alias(id, itemDef)] then return true end
+  local def = itemDef
+  if def == nil then
+    local Data = require("src.core.Data")
+    def = Data.items and Data.items[id]
+  end
+  return (type(def) == "table" and def.pocket == "BALL") or false
+end
 function ItemEffects.isStone(id) return STONES[alias(id)] or false end
 
 -- Does using this item take item_effects.asm's .healHP path, the one that
@@ -86,7 +105,24 @@ function ItemEffects.isStone(id) return STONES[alias(id)] or false end
 -- to .playStatusAilmentCuringSound instead and never touch the bar.  BagMenu
 -- keeps the party picker open for these so the fill has something to draw
 -- on (#252).
+-- The Gen 3 record, reachable from the two predicates below -- which run
+-- before `use` and decide whether a party picker opens at all.  Declared here
+-- rather than beside gen3Use because a `local function` is only in scope
+-- below its own declaration, and these two are above it.
+function ItemEffects.gen3RecordFor(id, data)
+  local Data = data
+  if Data == nil then
+    local ok, mod = pcall(require, "src.core.Data")
+    Data = ok and mod or nil
+  end
+  local c = Data and Data.constants
+  local all = c and c.gen3ItemEffects
+  return type(all) == "table" and all[id] or nil
+end
+
 function ItemEffects.healsHP(id)
+  local r = ItemEffects.gen3RecordFor(id)
+  if r then return (r.heal or r.revive) and true or false end
   id = alias(id)
   return HEAL_AMOUNT[id] ~= nil or id == "MAX_POTION" or id == "FULL_RESTORE"
       or id == "REVIVE" or id == "MAX_REVIVE"
@@ -94,6 +130,20 @@ end
 
 -- Does this item need a party-member target?
 function ItemEffects.needsTarget(id, itemDef)
+  -- HOENN ASKS FIRST, and this is what opens the party picker.
+  --
+  -- The list below is Gen 1's and Gen 2's, so an ORAN BERRY answered "no
+  -- target needed" and was then used on nobody -- which is a medicine that
+  -- silently does nothing however correct the effect behind it is.  A SACRED
+  -- ASH is the one that really does not want one: it revives the whole party.
+  local r = ItemEffects.gen3RecordFor(id)
+  if r then
+    if r.sacredAsh then return false end
+    if r.heal or r.revive or r.cures or r.cureAll or r.pp or r.ev
+       or r.ppUp or r.ppMax then
+      return true
+    end
+  end
   id = alias(id, itemDef)
   return HEAL_AMOUNT[id] or STATUS_HEAL[id] or id == "MAX_POTION"
       or id == "FULL_RESTORE" or id == "REVIVE" or id == "MAX_REVIVE"
@@ -158,6 +208,250 @@ end
 -- items).  data = generated data tables; battle = BattleState when used
 -- mid-battle; ow = the overworld (OverworldState), needed only to check
 -- Snorlax adjacency for a field-used POKé FLUTE.
+-- ---------------------------------------------------------------------------
+-- WHAT AN ITEM DOES IN HOENN, off the cartridge rather than off a name
+--
+-- Every table in this file is Gen 1's and Gen 2's, keyed by a name-derived
+-- id.  Emerald's items carry no such key, so they matched by ACCIDENT
+-- wherever the slug happened to agree: POTION worked, and ORAN BERRY, SITRUS
+-- BERRY, the five status berries, ENERGY POWDER, ENERGY ROOT, HEAL POWDER,
+-- REVIVAL HERB, LAVA COOKIE and ZINC did nothing at all.  CALCIUM was worse
+-- than nothing -- the Gen 1 table sends it to "special", a stat a Gen 3
+-- Pokemon does not have.
+--
+-- extractItemEffects reads gItemEffectTable into a record a line of code can
+-- act on: what it heals, what it cures, which EV it moves and by how much,
+-- and what it does to friendship.  This runs that record.
+--
+-- WHAT IT DELIBERATELY DOES NOT TAKE: an item whose record says only `stone`
+-- or only `battle` falls through to the branches below, because the stones
+-- already work by name and the X items belong to the battle side.  A RARE
+-- CANDY falls through too.  The point is to add Hoenn's items, not to take
+-- Johto's away.
+-- ---------------------------------------------------------------------------
+local GEN3_EV_MAX = 255            -- per stat
+local GEN3_EV_TOTAL = 510          -- across the six
+local GEN3_EV_ORDER = { "hp", "attack", "defense", "speed", "spatk", "spdef" }
+
+local function gen3Record(data, itemId)
+  local c = data and data.constants
+  local all = c and c.gen3ItemEffects
+  return type(all) == "table" and all[itemId] or nil
+end
+
+-- The friendship a medicine moves, which is a third of the record the port
+-- had no way to know about.  Three deltas, chosen by how much the Pokemon
+-- already likes you, and the bitter herbs are why they can be negative.
+local function gen3Friendship(target, deltas)
+  if not (target and type(deltas) == "table" and #deltas > 0) then return end
+  local now = math.floor(tonumber(target.happiness) or 0)
+  local band = (now < 100) and 1 or ((now < 200) and 2 or 3)
+  local delta = deltas[math.min(band, #deltas)]
+  if not delta then return end
+  target.happiness = math.max(0, math.min(255, now + delta))
+end
+
+local function gen3EvTotal(evs)
+  local total = 0
+  for _, key in ipairs(GEN3_EV_ORDER) do
+    total = total + math.floor(tonumber(evs[key]) or 0)
+  end
+  return total
+end
+
+local function gen3Use(data, save, itemId, target, battle, moveIndex)
+  local r = gen3Record(data, itemId)
+  if not r then return nil end
+  -- a stone, an X item or a rare candy is somebody else's branch
+  if not (r.heal or r.revive or r.cures or r.cureAll or r.pp or r.ev
+          or r.ppUp or r.ppMax or r.sacredAsh) then
+    return nil
+  end
+  if r.levelUp then return nil end
+  local fail = { Strings("It won't have\nany effect.") }
+
+  -- ---- SACRED ASH: the whole party, not one of them ----------------------
+  if r.sacredAsh then
+    local woke = false
+    for _, mon in ipairs((save and save.party) or {}) do
+      if mon and mon.species and (tonumber(mon.hp) or 0) <= 0 then
+        mon.hp = (mon.stats and mon.stats.hp) or 1
+        mon.status = nil
+        woke = true
+      end
+    end
+    if not woke then return "failed", fail end
+    return "consumed", { Strings("All of your POKeMON\nwere revived!") }
+  end
+
+  if not target then return "failed", fail end
+  local fainted = (tonumber(target.hp) or 0) <= 0
+  local maxHP = (target.stats and tonumber(target.stats.hp)) or 1
+
+  -- ---- reviving, and the rule that keeps a REVIVE off a healthy one ------
+  if r.revive then
+    if not fainted then return "failed", fail end
+    local before = target.hp or 0
+    target.hp = (r.amount == "half") and math.max(1, math.floor(maxHP / 2))
+                or maxHP
+    target.status = nil
+    gen3Friendship(target, r.friendship)
+    require("src.core.Sound").play(data, "Heal_HP")
+    return "consumed",
+           { Strings("%s is\nrevitalized!", monName(data, target)) },
+           { healedFrom = before }
+  end
+
+  -- ---- healing ------------------------------------------------------------
+  if r.heal then
+    -- a cure-all that also heals (FULL RESTORE) still works on a Pokemon at
+    -- full health, as long as it is carrying something
+    local full = target.hp >= maxHP
+    if fainted or (full and not ((r.cureAll or r.cures) and target.status)) then
+      return "failed", fail
+    end
+    local before = target.hp
+    if not full then
+      local by = r.amount
+      if by == "all" then
+        target.hp = maxHP
+      elseif by == "half" then
+        target.hp = math.min(maxHP, target.hp + math.floor(maxHP / 2))
+      else
+        target.hp = math.min(maxHP, target.hp + (tonumber(by) or 0))
+      end
+    end
+    local msgs = { Strings("%s's HP\nwas restored!", monName(data, target)) }
+    if r.cureAll or r.cures then
+      target.status = nil
+      cureActiveToxic(battle, target)
+    end
+    gen3Friendship(target, r.friendship)
+    require("src.core.Sound").play(data, "Heal_HP")
+    return "consumed", msgs, { healedFrom = before }
+  end
+
+  -- ---- curing, and nothing else -------------------------------------------
+  if r.cureAll or r.cures then
+    local status = target.status
+    local confused = nil
+    if battle then
+      for _, b in ipairs({ battle.player, battle.enemy }) do
+        if b and b.mon == target and b.confusedTurns then confused = b end
+      end
+    end
+    local wanted = r.cureAll and status ~= nil
+    if not wanted and status then
+      for _, name in ipairs(r.cures or {}) do
+        if name == status then wanted = true end
+      end
+    end
+    local clearsConfusion = r.cureAll
+    if not clearsConfusion then
+      for _, name in ipairs(r.cures or {}) do
+        if name == "CONFUSION" then clearsConfusion = true end
+      end
+    end
+    if not (wanted or (clearsConfusion and confused)) then
+      return "failed", fail
+    end
+    if wanted then target.status = nil end
+    cureActiveToxic(battle, target)
+    if clearsConfusion and confused then confused.confusedTurns = nil end
+    gen3Friendship(target, r.friendship)
+    require("src.core.Sound").play(data, "Heal_Ailment")
+    return "consumed",
+           { Strings("%s's\nstatus returned\nto normal!",
+                     monName(data, target)) }
+  end
+
+  -- ---- PP, on one move or on all of them ----------------------------------
+  if r.pp then
+    local moves = target.moves or {}
+    local list = {}
+    if r.pp == "one" then
+      list[1] = moves[moveIndex or 1]
+    else
+      for _, mv in ipairs(moves) do list[#list + 1] = mv end
+    end
+    local moved = false
+    for _, mv in ipairs(list) do
+      local def = mv and data.moves and data.moves[mv.id]
+      local max = def and tonumber(def.pp)
+      if max then
+        max = max + math.floor(max / 5) * (tonumber(mv.ppUps) or 0)
+        if (tonumber(mv.pp) or 0) < max then
+          mv.pp = (r.amount == "all") and max
+                  or math.min(max, (tonumber(mv.pp) or 0)
+                                   + (tonumber(r.amount) or 0))
+          moved = true
+        end
+      end
+    end
+    if not moved then return "failed", fail end
+    gen3Friendship(target, r.friendship)
+    return "consumed",
+           { Strings("%s's PP\nwas restored!", monName(data, target)) }
+  end
+
+  -- ---- PP UP and PP MAX ---------------------------------------------------
+  if r.ppUp or r.ppMax then
+    local mv = (target.moves or {})[moveIndex or 1]
+    local def = mv and data.moves and data.moves[mv.id]
+    if not (def and tonumber(def.pp)) then return "failed", fail end
+    local ups = math.floor(tonumber(mv.ppUps) or 0)
+    if ups >= 3 then return "failed", fail end
+    local step = math.floor(tonumber(def.pp) / 5)
+    if r.ppMax then
+      mv.pp = (tonumber(mv.pp) or 0) + step * (3 - ups)
+      mv.ppUps = 3
+    else
+      mv.pp = (tonumber(mv.pp) or 0) + step
+      mv.ppUps = ups + 1
+    end
+    gen3Friendship(target, r.friendship)
+    return "consumed", { Strings("%s's PP\nincreased!", def.name) }
+  end
+
+  -- ---- and the effort values, which is where CALCIUM was going wrong ------
+  if r.ev then
+    target.evs = target.evs or {}
+    local now = math.floor(tonumber(target.evs[r.ev]) or 0)
+    local by = math.floor(tonumber(r.amount) or 0)
+    local want
+    if by >= 0 then
+      -- the two ceilings: 255 in one stat and 510 across the six
+      local room = math.min(GEN3_EV_MAX - now,
+                            GEN3_EV_TOTAL - gen3EvTotal(target.evs))
+      want = now + math.max(0, math.min(by, room))
+    else
+      want = math.max(0, now + by)
+    end
+    if want == now then return "failed", fail end
+    target.evs[r.ev] = want
+    local okStats, Stats = pcall(require, "src.pokemon.Stats")
+    if okStats and data.pokemon and data.pokemon[target.species] then
+      pcall(function()
+        target.stats = Stats.calc(data.pokemon[target.species], target.level,
+                                  target.ivs, target.evs, target.nature)
+        target.hp = math.min(target.hp, target.stats.hp)
+      end)
+    end
+    gen3Friendship(target, r.friendship)
+    local label = (r.ev == "hp" and "HP")
+                  or (r.ev == "spatk" and "SP. ATK")
+                  or (r.ev == "spdef" and "SP. DEF")
+                  or r.ev:upper()
+    return "consumed",
+           { Strings("%s's %s\n%s!", monName(data, target), label,
+                     by >= 0 and "rose" or "fell") }
+  end
+
+  return nil
+end
+
+ItemEffects.gen3Use = gen3Use
+
 function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   local itemDef = data.items[itemId]
   local name = itemDef and itemDef.name or itemId
@@ -173,9 +467,18 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
                                save.player.name) }
   end
 
-  if BALLS[itemId] then
+  if ItemEffects.isBall(itemId, itemDef) or ItemEffects.isBall(rawItemId, itemDef) then
     return "ball"
   end
+
+  -- HOENN'S OWN ANSWER FIRST, when the cartridge gave one.  Everything below
+  -- is Gen 1's and Gen 2's, keyed by a name Emerald's items do not carry.
+  do
+    local kind, msgs, extra = gen3Use(data, save, rawItemId, target, battle,
+                                      moveIndex)
+    if kind then return kind, msgs, extra end
+  end
+
 
   -- The POKé FLUTE wakes every sleeping Pokémon on both sides
   -- (ItemUsePokeFlute, engine/items/item_effects.asm); never consumed.
@@ -494,15 +797,39 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     return "fish", itemId
   end
 
-  if itemId == "BICYCLE" then
+  -- HOENN HAS TWO BIKES, AND THE BAG KNEW NEITHER.
+  --
+  -- Everything the Acro Bike needs was already written -- Collision's five
+  -- obstacle behaviours, acroTrickPasses, the extractor's bikeBehaviours --
+  -- and that rule's own comment said it was "already here and already
+  -- tested, instead of a `return false` nobody remembers to revisit".  What
+  -- was missing was smaller and further out: this line knew only the Game
+  -- Boy's item id, so the two bikes Rydel gives you did nothing when used.
+  --
+  -- With no Acro Bike, Jagged Pass's bumpy-slope cells are a wall, and past
+  -- them are Mt. Chimney and the Magma Hideout.
+  if itemId == "BICYCLE" or itemId == "MACH_BIKE" or itemId == "ACRO_BIKE" then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
     end
-    return "bicycle"
+    -- WHICH one, so the overworld can set the rider's own rules: the Mach
+    -- Bike climbs muddy slopes at speed, and the Acro Bike hops and
+    -- wheelies over what stops everyone else
+    return "bicycle", (itemId == "ACRO_BIKE" and "acro")
+                      or (itemId == "MACH_BIKE" and "mach") or nil
   end
 
   if itemId == "ESCAPE_ROPE" then
     return "escape_rope"
+  end
+  -- THE POKeBLOCK CASE, which is the only way into the condition system from
+  -- the bag.  It is a key item like the bike and the map, and it opens a
+  -- screen rather than doing anything to the world.
+  if itemId == "POKEBLOCK_CASE" then
+    if battle then
+      return "failed", { Strings("This isn't the time to use that!") }
+    end
+    return "pokeblock_case"
   end
   if itemId == "TOWN_MAP" then
     if battle then

@@ -1,6 +1,6 @@
 # Gen2Recomped — Source-Available License
 
-**Version 1.1**
+**Version 1.2**
 
 Copyright © 2026 Cedric. All rights reserved.
 
@@ -12,10 +12,19 @@ This is a **source-available** license, not an open-source one. You may read the
 code, build it, and change it for your own use. You may **not** redistribute it
 or use it commercially.
 
-It covers the Gen2Recomped map editor, the editor shell it runs inside, the
-Gen 2 engine work, and every other file in this repository that was written for
-this project. It does **not** cover — and cannot cover — data extracted from a
-Pokémon cartridge. See [section 4](#4-what-this-license-does-not-cover-and-cannot).
+**It covers everything in this repository that was written for this project.**
+Every generation of engine work, every screen, every extractor, every tool,
+every test, and every file added after this was written: the Gen 2 engine, the
+Gen 3 / Pokémon Emerald engine and its Hoenn screens, the map editor and the
+editor shell it runs inside, and all the rest of it, on the same terms.
+
+Coverage is not a list. A file is covered because it was written for this
+project, not because anybody remembered to name it — and the illustrative
+tables in [section 1](#1-covered-files) are there to settle arguments, never to
+draw a boundary.
+
+It does **not** cover — and cannot cover — data extracted from a Pokémon
+cartridge. See [section 4](#4-what-this-license-does-not-cover-and-cannot).
 
 ---
 
@@ -28,8 +37,12 @@ added tomorrow is covered the moment it exists.
 
 That positive definition is deliberate. An enumerated path list is a list that
 goes stale — the map editor alone reaches 133 source files across nearly every
-directory under `src/`, and a licence that named some of them would be a licence
-with holes in exactly the places nobody thought to look.
+directory under `src/`, the Gen 3 work another 55 with 60 test suites behind
+them, and a licence that named some of them would be a licence with holes in
+exactly the places nobody thought to look. Version 1.1 of this file was such a
+licence in practice: its rule already covered everything, and its examples
+named only two thirds of the project. Version 1.2 changes no term and permits
+nothing new — it makes the examples match the rule.
 
 The following are called out because they are the parts most likely to be
 argued about. **This list is illustrative, not exhaustive.**
@@ -42,6 +55,28 @@ argued about. **This list is illustrative, not exhaustive.**
 | `tools/save-editor/` | the shell it runs inside — window, widget kit, theme, panel host, save-side panels |
 | `src/import/AdoptedTileset.lua` | cross-cartridge tileset resolver; under `src/` only because a build ships `src/` and not `tools/` |
 | `tests/map_editor_*.lua` | the editor's regression suites |
+
+### The Gen 3 / Pokémon Emerald engine work
+
+Hoenn is the largest single body of work in this repository: 55 source files
+and 60 test suites, from the extractor that reads the cartridge to the screens
+that draw it. **This table names a fraction of it and excludes nothing.**
+
+| Path | What it is |
+| --- | --- |
+| `src/import/RomExtractorGen3.lua` | the Gen 3 extractor — every derivation, and the reasoning written beside it |
+| `src/import/Gen3ScriptOps.lua` | Gen 3 script opcode tables |
+| `src/script/Gen3ScriptVM.lua` | the Gen 3 script virtual machine |
+| `src/script/Gen3Commands.lua` | Gen 3 command lowering and the `special` handlers |
+| `src/script/Gen3Specials.lua`, `src/script/MatchCall.lua` | the special table and Match Call |
+| `src/battle/Gen3*.lua` | the Emerald battle engine, catching, move effects and animation |
+| `src/ui/Gen3*.lua` | every Hoenn screen — the POKéDEX and its search, the POKéNAV, the bag, the party, storage, contests, the Berry Blender and the rest |
+| `src/world/Gen3*.lua` | weather, elevation, gates, roamers, secret bases, decorations and the regis |
+| `src/render/Gen3*.lua` | Gen 3 tiles, scenes, badge art and the region map |
+| `src/save_convert/Gen3Save.lua` | the Gen 3 save format, and conversion into and out of it |
+| `src/pokemon/Contest.lua`, `src/contest/` | conditions, Pokéblocks and the contest run |
+| `src/link/` | trading, the link screens and their text |
+| `tests/gen3_*.lua` | the Gen 3 regression suites |
 
 ### The Gen 2 engine work
 
@@ -62,6 +97,8 @@ argued about. **This list is illustrative, not exhaustive.**
 
 Every other original file — `main.lua`, `conf.lua`, the rest of `src/`, the rest
 of `tools/`, `scripts/`, and the remaining tests — is covered on the same terms.
+So is anything written for this project in future, whatever generation,
+cartridge or subsystem it belongs to, from the moment it exists.
 
 ---
 

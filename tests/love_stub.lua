@@ -133,6 +133,14 @@ stub.filesystem = {
     if not files[name] then return nil, "no file" end
     return load(files[name], name)
   end,
+  -- The real LOVE answers an absolute path here, and several code paths PRINT
+  -- it -- the "copy your mod .zip into ..." notice a Linux or console build
+  -- shows when no native picker answered.  Absent, that notice raised instead
+  -- of rendering, and the raise landed in whichever suite happened to drive
+  -- the picker rather than anywhere near the cause.
+  getSaveDirectory = function() return "/tmp/gen2recomped-test-save" end,
+  createDirectory = function() return true end,
+  getIdentity = function() return "gen2recomped" end,
   getDirectoryItems = function(name)
     local seen, items = {}, {}
     name = name or ""

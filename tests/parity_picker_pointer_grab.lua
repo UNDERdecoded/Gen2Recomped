@@ -14,18 +14,65 @@ local check, eq = S.check, S.eq
 local RomImporter = require("src.import.RomImporter")
 
 -- ---------------------------------------------------------------- the funnel
--- The release lives in commandOutput because all three pickers reach popen
--- through it; a fourth picker calling io.popen directly would bring #254 back.
+-- The release lives in commandOutput because all three pickers reach the shell
+-- through it; a fourth picker spawning a process of its own would bring #254
+-- back.
+--
+-- THE POPEN ITSELF HAS MOVED.  It is HostShell.popen now -- one wrapper that
+-- applies the AppImage environment fix and swallows the platforms where
+-- io.popen raises rather than returning nil -- and RomImporter calls no shell
+-- of its own at all.  This check used to count `io.popen(` in RomImporter and
+-- demand exactly one; after the move that count is ZERO, and the check failed
+-- while the invariant it exists to protect was in better shape than ever.  So
+-- it is stated where it now lives: RomImporter opens no process directly,
+-- every picker goes through commandOutput, commandOutput releases the grab
+-- before it blocks, and the whole engine reaches io.popen through the single
+-- call inside HostShell.
+local function readSource(path)
+  local f = io.open(path, "rb")
+  if not f then return nil end
+  local src = f:read("*a")
+  f:close()
+  return src
+end
+
 do
-  local f = io.open("src/import/RomImporter.lua", "rb")
-  check(f ~= nil, "RomImporter source is readable")
-  if f then
-    local src = f:read("*a")
-    f:close()
+  local src = readSource("src/import/RomImporter.lua")
+  check(src ~= nil, "RomImporter source is readable")
+  if src then
+    local direct = 0
+    for _ in src:gmatch("io%.popen%(") do direct = direct + 1 end
+    eq(direct, 0, "RomImporter spawns no process of its own -- a picker with "
+      .. "its own popen would be the one that skips the release (#254)")
+
+    -- ...and the ONE seam it does use is the one that releases the grab
+    local funnel = 0
+    for _ in src:gmatch("HostShell%.popen%(") do funnel = funnel + 1 end
+    eq(funnel, 1, "and reaches the shell through exactly one call, which is "
+      .. "commandOutput's")
+    check(src:find("releasePointerGrab()", 1, true) ~= nil,
+      "which releases the pointer grab before it blocks")
+
+    -- every native picker really does route through commandOutput rather
+    -- than round it -- the ROM, the mod .zip, the .sav and the by-extension
+    -- one the map editor opens
+    local through = 0
+    for _ in src:gmatch("commandOutput%(") do through = through + 1 end
+    check(through >= 4, ("%d picker paths go through it"):format(through))
+  end
+end
+
+do
+  local host = readSource("src/core/HostShell.lua")
+  check(host ~= nil, "HostShell source is readable")
+  if host then
+    -- the punctuation is the point: `io.popen(` or `io.popen,` is a CALL,
+    -- and the prose above it in that file mentions the name twice
     local calls = 0
-    for _ in src:gmatch("io%.popen%(") do calls = calls + 1 end
-    eq(calls, 1, "every desktop picker still funnels through the one io.popen"
-      .. " call, which is where the pointer grab is released (#254)")
+    for _ in host:gmatch("io%.popen[,(]") do calls = calls + 1 end
+    eq(calls, 1, "and the whole engine holds exactly one io.popen, in "
+      .. "HostShell -- which is what makes 'every picker funnels through "
+      .. "commandOutput' a statement about all of them")
   end
 end
 

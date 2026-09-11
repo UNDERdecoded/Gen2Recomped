@@ -33,6 +33,32 @@ return {
   -- reformulation of the same rule.
   critMultiplier = 2,
 
+  -- TWO ON THE FIELD CHANGES TWO NUMBERS, and both of them live in
+  -- CalculateBaseDamage (0806957C) rather than anywhere the port would
+  -- naturally have looked.  They are named here rather than inlined because
+  -- Gen 1 and Gen 2 have no double battles at all, so leaving both nil in
+  -- those rulesets makes the rule unrepresentable there rather than merely
+  -- switched off.
+  --
+  -- SPREAD: a move that hits both foes does HALF.  0806_9B8A (physical) and
+  -- 0806_9CCA (special) -- byte-identical apart from pool offsets -- test
+  -- three things and all three must hold: BATTLE_TYPE_DOUBLE is set; the
+  -- move's target byte is EXACTLY 8 (MOVE_TARGET_BOTH, a straight `cmp #8`,
+  -- not a mask); and CountAliveMonsInBattle(BATTLE_ALIVE_DEF_SIDE) == 2.
+  -- With one foe left there is NO reduction.
+  --
+  -- And it really is only target 8.  EARTHQUAKE, MAGNITUDE, EXPLOSION,
+  -- SELFDESTRUCT and TEETER DANCE are target $20 (FOES_AND_ALLY) and get no
+  -- reduction on this cartridge at all -- they hit three Pokemon for full.
+  spreadNum = 1, spreadDen = 2,
+
+  -- SCREENS: REFLECT and LIGHT SCREEN take damage to 2*(d/3) rather than
+  -- d/2 when two are alive on the defending side (0806_9B70).  Divide first,
+  -- then double -- with truncation those are not the same: 50 goes to 32,
+  -- not 33.  A single battle, or a double with one foe left, takes the
+  -- ordinary halving.
+  screenDoublesNum = 2, screenDoublesDen = 3,
+
   -- Gen 3 crits use the attacker's and defender's real stats, so unlike Gen 1
   -- they do NOT throw stat stages away wholesale.
   critIgnoresStages = false,
@@ -54,4 +80,24 @@ return {
 
   -- Hyper Beam always forces its recharge turn, even on a knockout.
   hyperBeamSkipRechargeOnKO = false,
+
+  -- ---- THE FIVE CONDITIONS, in Hoenn's own numbers ----------------------
+  --
+  -- The mechanics were already right and every constant was Gen 1's, which
+  -- is the kind of wrong that looks fine until you count.  Each of these is
+  -- disassembled; src/battle/Status.lua carries the addresses beside the
+  -- defaults these override.
+  --
+  --   (Random() & 3) + 2, at 08048E28
+  sleepTurnsMin = 2, sleepTurnsMax = 5,
+  --   maxHP >> 3, at 08040B10 and 08040C34
+  statusResidualDiv = 8,
+  --   maxHP >> 4 times the counter, at 08040BB6; the counter is a four-bit
+  --   field (0xF00) and 08040BD8 stops advancing it once it is full
+  toxicResidualDiv = 16,
+  toxicCounterMax = 15,
+  --   Random() % 5 == 0, every turn, at 08041CAA and 080573A8
+  freezeThawOneIn = 5,
+  --   type1/type2 against 3 (POISON) and 8 (STEEL), at 08048A7C
+  poisonImmuneTypes = { "POISON", "STEEL" },
 }

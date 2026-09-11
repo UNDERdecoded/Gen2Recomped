@@ -25,6 +25,21 @@ local function modFieldOwner(ctx)
   return owner
 end
 
+-- ENGINE_FLASH IS NOT AN ORDINARY EVENT FLAG.
+--
+-- It is the overworld's own darkness bit: PartyMenu sets `save.flashLit` when
+-- FLASH is used, OverworldController reads it to decide whether a dark map
+-- draws dark, and ResetFlashIfOutOfCave clears it on a town or route.  Filed
+-- in `save.flags` alongside the event flags it would have been a SECOND,
+-- disagreeing copy -- a script could set ENGINE_FLASH and leave the cave
+-- pitch black, or FLASH could light the cave while `checkflag ENGINE_FLASH`
+-- still answered no.
+--
+-- Prism has both halves of that, which is how it surfaced: Mound Cave's light
+-- switch opens with `checkflag ENGINE_FLASH / siftrue jumptext .already_on`
+-- and closes with `callasm BlindingFlash`.  One name, one bit.
+local FLASH_FLAG = "ENGINE_FLASH"
+
 local function flagValue(ctx, name)
   local rest = type(name) == "string" and name:match("^mod:(.+)$")
   if rest then
@@ -32,6 +47,7 @@ local function flagValue(ctx, name)
     local bucket = modData and modData[modFieldOwner(ctx)]
     return (bucket and bucket[rest]) and true or false
   end
+  if name == FLASH_FLAG then return ctx.save.flashLit == true end
   return Flags.get(ctx.save, name)
 end
 
@@ -280,12 +296,14 @@ local function syncFlagObjects(ctx, name)
 end
 
 function Commands.set_flag(ctx, name)
+  if name == FLASH_FLAG then ctx.save.flashLit = true end
   Flags.set(ctx.save, name)
   refreshPlayerForm(ctx, name)
   syncFlagObjects(ctx, name)
 end
 
 function Commands.clear_flag(ctx, name)
+  if name == FLASH_FLAG then ctx.save.flashLit = nil end
   Flags.clear(ctx.save, name)
   refreshPlayerForm(ctx, name)
   syncFlagObjects(ctx, name)
@@ -392,6 +410,18 @@ function Commands.start_battle(ctx, kind, a, b, opts)
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
   local battle
+
+  -- WHAT THIS BATTLE COSTS, for the one script that asks afterwards.
+  --
+  -- Gabby and Ty's interview remarks on whether your Pokemon was hurt,
+  -- fainted, was healed or whether you threw a Ball; the cartridge counts all
+  -- four in gBattleResults as the battle runs and this port keeps no such
+  -- record, so the party and the bag are noted here and read back below.  Two
+  -- small tables per Hoenn battle, and nothing at all outside Hoenn.
+  local before = nil
+  if require("src.core.GameVersion").isGen3() then
+    before = require("src.script.Gen3Commands").battleSnapshot(ctx.save)
+  end
   if kind == "wild" then
     battle = BattleState.newWild(ctx.game, a, b, opts)
   else
@@ -399,9 +429,68 @@ function Commands.start_battle(ctx, kind, a, b, opts)
     -- the beaten trainer's own line, printed on the battle screen before
     -- MoneyForWinningText rather than by the script afterwards
     battle.endBattleText = opts and opts.endBattleText or nil
+    -- IS THIS A DOUBLE BATTLE.
+    --
+    -- On the cartridge this is a bit in gBattleTypeFlags, and it arrives
+    -- from two places at once: CreateNPCTrainerParty does
+    -- `gBattleTypeFlags |= gTrainers[n].doubleBattle` at 0389BC -- the byte
+    -- IS the flag, BATTLE_TYPE_DOUBLE being 1 -- and
+    -- BattleSetup_StartTrainerBattle (0B17E0) sets DOUBLE|TRAINER|
+    -- TWO_OPPONENTS when two trainers approached together.  Carried onto
+    -- the battle here so there is one place that knows, whichever way it
+    -- was decided.
+    if opts and opts.double then battle.double = true end
+    if battle.trainer and battle.trainer.doubleBattle then battle.double = true end
+    -- AND WHO THE OTHER ONE IS, when two walked up together.  The battle
+    -- fills its second opponent slot from this trainer's own party rather
+    -- than a second one from the first trainer's.
+    if opts and opts.trainerBKey then
+      battle:addOpponentTrainer(opts.trainerBKey)
+    end
+    -- ...AND THEN SEND THE SECOND PAIR OUT.
+    --
+    -- Last, because `double` is only fully decided by the three lines above
+    -- -- the constructor cannot know about `opts` and nothing but the
+    -- constructor knows the trainer's own doubleBattle byte.  The battle
+    -- used to be left flagged as a double with two of its four slots empty
+    -- (see BattleState:sendOutSecondPair), which is a field the turn loop
+    -- and the layout both believed and the player never saw.
+    --
+    -- After addOpponentTrainer, so a two-trainer battle keeps the SECOND
+    -- trainer's lead on the right rather than having it replaced by the
+    -- first trainer's second Pokemon; the call fills only empty slots.
+    if battle.sendOutSecondPair then battle:sendOutSecondPair() end
   end
   battle.onFinish = function(result)
     ctx.lastBattleResult = result
+    if before then
+      local Gen3 = require("src.script.Gen3Commands")
+      ctx.lastBattleFacts = Gen3.battleFacts(ctx.save, before,
+                                             ctx.game and ctx.game.data)
+    end
+
+    -- A GEN 3 TRAINER IS BEATEN WHEN THEIR OWN FLAG IS SET, and on the
+    -- cartridge it is the BATTLE SETUP that sets it -- not the script.
+    --
+    -- 566 scripts in Hoenn run `trainerbattle` and NOT ONE runs
+    -- `settrainerflag`; the four that touch a trainer flag CLEAR one, for a
+    -- rematch.  So nothing in this port ever marked a trainer beaten, and
+    -- trainerDefeated -- which is the whole test for whether they challenge
+    -- you -- answered no forever.  Every trainer in the region fought you
+    -- again the moment the battle ended, over and over.
+    --
+    -- Set here rather than in g3_trainer_battle because the flag depends on
+    -- the RESULT, and this is the only place the result arrives.
+    if result == "win" and kind ~= "wild" and ctx.g3Trainer then
+      require("src.script.Gen3Commands").markTrainerBeaten(ctx, ctx.g3Trainer)
+      -- ...AND PUT THEM IN THE POKeNAV.  RegisterTrainerInMatchCall runs
+      -- off the same win the defeat flag does -- no script asks for it --
+      -- which is how a route trainer ends up on the MATCH CALL list.  It
+      -- refuses until the player has been given Match Call at all.
+      require("src.script.Gen3Commands")
+        .registerTrainerInMatchCall(ctx, ctx.g3Trainer)
+    end
+
     -- BATTLETYPE_CANLOSE: the script is allowed to carry on after a loss and
     -- branches on the result itself (the Cherrygrove rival).  Recorded so
     -- `reloadmapafterbattle` can tell that case from a real whiteout.
@@ -860,7 +949,14 @@ end
 -- skipNickname suppresses the AskName prompt: Yellow's lab Pikachu is
 -- added straight through AddPartyMon (pokeyellow scripts/OaksLab.asm
 -- OaksLabPlayerReceivedMonText) -- the starter Pikachu keeps its name.
-function Commands.give_pokemon(ctx, species, level, skipNickname)
+-- `opts` carries the two things a Gen 3 gift has that a Gen 1 or Gen 2 one
+-- does not: a HELD ITEM (`givemon species, level, item`) and whether the gift
+-- is an EGG (`giveegg species`).  Both were being passed in the wrong slot --
+-- the item went in as `skipNickname`, which quietly suppressed the naming
+-- prompt AND dropped the item, and the egg flag went in as a fifth argument
+-- this function did not take, so every egg in Hoenn hatched into an ordinary
+-- level-5 Pokemon the moment it was handed over.
+function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
   -- Native mods can transform a gift before the Pokémon object is created.
   -- This is intentionally an event rather than a special-case starter hook:
   -- mods can use the same seam for story gifts, fossils, or custom scripts.
@@ -874,9 +970,25 @@ function Commands.give_pokemon(ctx, species, level, skipNickname)
   local Boxes = require("src.pokemon.Boxes")
   local mon = Pokemon.new(ctx.game.data, species, level)
   if gift.nickname then mon.nickname = gift.nickname end
+  if opts and opts.heldItem then mon.item = opts.heldItem end
+  if opts and opts.egg then
+    -- an EGG is not a Pokemon with a flag on it: it does not battle, it is
+    -- not named, and it counts down steps rather than experience
+    mon.isEgg = true
+    mon.eggSteps = require("src.pokemon.DayCare").eggSteps(ctx.game.data, species)
+    skipNickname = true
+  end
   ctx.game.stringBuffer = ctx.game.data.pokemon[species].name or species
   ctx.pendingPokemonName = species
-  require("src.battle.BattleState").stampOT(ctx.save, mon)
+  -- GIVEN: a gift, a starter or an egg.  An EGG has no met level yet -- the
+  -- cartridge writes zero when it HATCHES, and zero is what makes the memo
+  -- say "hatched at" instead of "met at" -- so it is left unstamped here and
+  -- the hatch fills it in.
+  local BattleStateMod = require("src.battle.BattleState")
+  BattleStateMod.stampOT(ctx.save, mon, not mon.isEgg and {
+    level = mon.level,
+    location = BattleStateMod.metHere(ctx.game),
+  } or nil)
   local addedToParty = Party.add(ctx.save.party, mon)
   local boxNum = nil
   if not addedToParty then
@@ -1379,9 +1491,55 @@ function FadeOverlay.new(game, ow, color)
   }, FadeOverlay)
 end
 
-function FadeOverlay:update()
+-- A FADE IS A PALETTE EFFECT, NOT A MODE -- the world keeps running under it.
+--
+-- The state stack only updates the state on TOP, so while this overlay is up
+-- it is the only thing being ticked.  Ticking nothing but the script runner
+-- starves the very thing most scripts do behind a fade: MOVE SOMEBODY.  The
+-- move queue never steps, `waitmovement` never completes, the map's frame
+-- table is never re-asked, and the player is left looking at black with a
+-- script that can no longer finish -- which is exactly what Route 101's
+-- rescue does (fadescreen, removeobject, setobjectxy, applymovement,
+-- waitmovement) three commands after the screen goes dark.
+--
+-- So pump the field itself.  Only while something is actually driving it: with
+-- no script and no queued move there is nothing to advance, and running the
+-- field then would hand the player an input frame behind a black screen.
+function FadeOverlay:update(dt)
   local ow = self.ow
-  if ow and ow.runner then ow.runner:update() end
+  if ow then
+    local runner = ow.runner
+    local busy = (runner and runner.isRunning and runner:isRunning())
+      or (ow.scriptMoves and #ow.scriptMoves > 0)
+      or (ow.pendingScripts and ow.pendingScripts[1] ~= nil)
+    if busy and ow.update then
+      ow:update(dt or 1 / 60)
+    elseif runner then
+      runner:update()
+    end
+    -- THE WATCHDOG, because a screen stuck at black is the one failure a
+    -- player cannot tell from a crash.
+    --
+    -- A fade is always meant to be undone by something: the script's own
+    -- fade back, the `waitstate` that ends the scene, or the runner when the
+    -- script finishes.  If all three miss it, the game is still running --
+    -- input is even accepted -- behind a fully opaque rectangle, and the only
+    -- report anybody can make is "it went black".  Two seconds of full black
+    -- with nothing driving the field is not a beat in either cartridge, so
+    -- bring the picture back and say why once.
+    if not self.ramp and (self.alpha or 0) >= 1 and not busy then
+      self.idleFrames = (self.idleFrames or 0) + 1
+      if self.idleFrames >= 120 then
+        Logger.warn("the screen has been faded out for two seconds with no "
+                      .. "script running -- fading back in; whatever darkened "
+                      .. "it never undid it")
+        self.ramp = { from = self.alpha, to = 0, frames = 12, t = 0 }
+        self.idleFrames = nil
+      end
+    else
+      self.idleFrames = nil
+    end
+  end
   local ramp = self.ramp
   if not ramp then return end
   ramp.t = ramp.t + 1
@@ -1407,7 +1565,11 @@ function FadeOverlay:draw()
   else
     love.graphics.setColor(0, 0, 0, self.alpha)
   end
-  love.graphics.rectangle("fill", 0, 0, 160, 144)
+  -- THE WHOLE SCREEN, not the Game Boy's.  Fixed at 160x144 this covered the
+  -- top-left five eighths of a GBA surface and left an unfaded L down the
+  -- right and along the bottom, which is worse than no fade at all.
+  local w, h = require("src.ui.Theme").uiSize()
+  love.graphics.rectangle("fill", 0, 0, w, h)
   love.graphics.setColor(1, 1, 1, 1)
 end
 

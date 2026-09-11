@@ -128,6 +128,41 @@ local function verdict(map, entities, mover, dir, tx, ty)
       return false, "tile"
     end
   end
+  -- THE OTHER HALF OF A GEN 3 MAP CELL.
+  --
+  -- Collision alone does not keep anyone out of the water in Hoenn: the sea
+  -- is passable ground with an elevation of 1, and dry land is elevation 3.
+  -- The cartridge refuses a step between two different non-zero elevations,
+  -- and that is the whole of "you cannot walk onto water", "you cannot step
+  -- off a cliff" and "the bridge and the river beneath it are different
+  -- places".  Maps that carry no elevation -- every Gen 1 and Gen 2 map --
+  -- answer nil here and nothing changes for them.
+  if map.elevationBlocks and map:elevationBlocks(mover.elevation, tx, ty) then
+    -- ...except getting OFF the water.  The cartridge turns exactly this
+    -- mismatch into COLLISION_STOP_SURFING when the cell ahead is land the
+    -- surfer can stand on, which is how you come ashore anywhere along a
+    -- coast rather than only where the map says so.
+    local landing = mover.surfing and map.isWaterCell
+                    and map:isWalkableCell(tx, ty) and not map:isWaterCell(tx, ty)
+    if not landing then
+      return false, "elevation"
+    end
+  end
+  -- THE ACRO BIKE TILES ARE WALLS TO EVERYONE ELSE.
+  --
+  -- Emerald's CheckAcroBikeCollision runs only where the ordinary collision
+  -- came back NONE -- which is why it sits here, after the walkable and
+  -- elevation tests -- and turns five behaviours into a collision code.  On
+  -- foot, PlayerNotOnBikeMoving bumps on every one of them; the trick that
+  -- passes each is the rider's, and the port has no Acro Bike yet, so today
+  -- this is always a wall.  That IS the cartridge's answer for a player on
+  -- foot, which is every player the port can currently be.
+  if map.acroObstacleAt then
+    local obstacle = map:acroObstacleAt(tx, ty)
+    if obstacle and not Collision.acroTrickPasses(mover, obstacle, dir) then
+      return false, "tile"
+    end
+  end
   if pairBlocked(map, mover, mover.cellX, mover.cellY, tx, ty) then
     return false, "tile"
   end
@@ -135,6 +170,46 @@ local function verdict(map, entities, mover, dir, tx, ty)
     return false, "entity"
   end
   return true
+end
+
+-- Whether the mover is doing the Acro Bike trick that makes one of the five
+-- obstacle behaviours passable.
+--
+-- BOTH MOVING TRICKS PASS A BUMPY SLOPE.  The rule here used to want a hop
+-- for it, but the cartridge's two moving transitions agree:
+-- WheelieHoppingMoving carries on through COLLISION_WHEELIE_HOP, and
+-- WheelieMoving does too.  What neither of them passes is an ISOLATED rail --
+-- the one-cell kind you can only reach with a sideways jump -- so those are a
+-- wall to a rider coming at them, trick or no trick.
+--
+--   a bumpy slope is passable while hopping OR wheelieing
+--   a full rail is ridden ALONG ITS AXIS, either way, and is a wall across it
+--   an isolated rail is not entered by moving into it at all
+--
+-- `mover.acroBike` is what the Acro Bike sets and `mover.acroTrick` is the
+-- trick in progress -- "wheelie" from the moment B goes down, "hop" only once
+-- the wheelie has been held past its own threshold (see
+-- OverworldState:updateAcroBike).
+local ACRO_AXIS_DIRS = {
+  vertical   = { up = true, down = true },
+  horizontal = { left = true, right = true },
+}
+
+local function tricking(mover)
+  return mover.acroTrick == "wheelie" or mover.acroTrick == "hop"
+end
+
+function Collision.acroTrickPasses(mover, obstacle, dir)
+  if not (mover and mover.acroBike) then return false end
+  if not obstacle then return true end
+  if obstacle.isolated then return false end
+  if not obstacle.axis then
+    -- the bumpy slope: no axis to it, and either trick clears it
+    return tricking(mover)
+  end
+  if not tricking(mover) then return false end
+  local along = ACRO_AXIS_DIRS[obstacle.axis]
+  return (along and along[dir]) == true
 end
 
 -- the movement.collision chain sees the boolean; a wrapper that flips it

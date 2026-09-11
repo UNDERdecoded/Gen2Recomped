@@ -203,7 +203,23 @@ end
 -- once this succeeded, so a broken def costs nothing but a log line.
 -- Returns src, loopSrc, isChip -- or nil plus the reason.
 local function startSong(data, def, wantLoop)
-  if def.chip or (def.address and def.bank) then
+  -- A GEN 3 SONG IS NEITHER OF THE TWO SHAPES BELOW, and that is why Hoenn
+  -- was silent.  It carries no chip program and no sound file: it carries
+  -- track pointers and a voicegroup, and it is played by a sequencer over
+  -- sampled instruments (src/core/M4ASynth.lua).  All 611 of them fell
+  -- through to "no chip program and no file", got marked failed, and the
+  -- region never made a sound.
+  --
+  -- The test is the song's own shape rather than the game's version: a mod
+  -- that hands a Gen 1 game an M4A song is asking for the M4A player, and a
+  -- Gen 3 dataset whose music image failed to import still has its chip and
+  -- file defs answered by the branches below.
+  if type(def.tracks) == "table" and #def.tracks > 0 then
+    local ok, src = pcall(
+      require("src.core.ChipAudio").playMusic, data, def, wantLoop, "m4a")
+    if ok and src then return src, nil, true end
+    return nil, nil, nil, ok and "no source" or tostring(src)
+  elseif def.chip or (def.address and def.bank) then
     local ok, src = pcall(
       require("src.core.ChipAudio").playMusic, data, def, wantLoop)
     if ok and src then return src, nil, true end

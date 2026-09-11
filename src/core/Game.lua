@@ -139,9 +139,17 @@ function Game:load()
     local Version = require("src.core.GameVersion")
     local splash = Version.isGen2() and "Gen2Intro"
       or (Version.isYellow() and "YellowIntro" or "IntroMovie")
-    Screens.push(self, bootScreens(self).splash or splash, function()
+    local chosen = bootScreens(self).splash
+    if chosen == nil then chosen = splash end
+    if chosen then
+      Screens.push(self, chosen, function() StateStack:push(titleState) end)
+    else
+      -- `false`, not merely absent: a dataset whose attract movie this engine
+      -- does not have yet (Gen 3's) says so rather than being handed Red's,
+      -- and `or splash` would have handed it Red's -- which is precisely how
+      -- an Emerald boot ended up watching the Kanto intro.
       StateStack:push(titleState)
-    end)
+    end
   end
 
   Logger.info("game loaded")
@@ -415,6 +423,32 @@ function Game.wideBattleInStack(stack)
   return nil
 end
 
+-- THE SURFACE A STATE ASKS FOR, held for the whole stack above it.
+--
+-- Same shape and the same reason as wideBattleInStack: a screen that wants a
+-- surface other than the Game Boy's keeps it while the menus and boxes it
+-- opens are on top, or the canvas snaps back to 160x144 for exactly those
+-- frames and the screen underneath redraws at the wrong size.  A Gen 3 screen
+-- asks for the GBA's 240x160; nothing in Gen 1 or Gen 2 asks for anything.
+-- Does this state want exactly the surface currently in use?  See the
+-- ownsSurface note in Game:draw -- more than one state can want the same
+-- surface, and every one of them draws in it rather than being centred in it.
+function Game.wantsThisSurface(state)
+  if not (state and state.uiSize) then return false end
+  local ok, w, h = pcall(state.uiSize, state)
+  if not ok then return false end
+  local uw, uh = Renderer:uiSize()
+  return w == uw and h == uh
+end
+
+function Game.nativeSurfaceInStack(stack)
+  for i = #(stack and stack.states or {}), 1, -1 do
+    local state = stack.states[i]
+    if state and state.uiSize then return state end
+  end
+  return nil
+end
+
 -- Whether a state on the stack composes its own screen and so wants the
 -- edge anchors held off (BattleState.holdsUIAnchors).  Whole-stack, like
 -- everything else here: the text box and YES/NO a battle puts up are states
@@ -472,12 +506,27 @@ end
 -- sprite and status zones move with the classic UI content.
 local function centerClassicZones(zones, offset)
   if not zones or offset == 0 then return zones end
+  local surfaceW = select(1, Renderer:uiSize())
   local shifted = {}
   for i, zone in ipairs(zones) do
     local copy = {}
     for key, value in pairs(zone) do copy[key] = value end
     if copy.x == 0 and copy.w == Renderer.WIDTH then
       copy.w = copy.w + offset * 2
+    elseif (copy.x or 0) == 0 and (copy.w or 0) >= surfaceW then
+      -- ALREADY IN SURFACE COORDINATES, and nothing needs to be known about
+      -- who drew it to say so: a zone that starts at the left edge and is at
+      -- least as wide as the surface was laid out across the surface.  Moving
+      -- it can only take it OFF the thing it covers.
+      --
+      -- The guard above decides this by asking the owner, and that is the
+      -- right question; this is the same answer read off the zone itself, so
+      -- a caller that gets the owner wrong cannot slide a whole-screen zone
+      -- out from under the screen.  What that cost when it happened: Emerald's
+      -- battle publishes exactly one zone, a full-screen `colors == false`
+      -- true-colour opt-out, and shifted by 40 it stopped covering the frame
+      -- it was exempting -- so the shade-remap shader ran over a full-colour
+      -- GBA battle and every pixel of it came out grey.
     else
       copy.x = (copy.x or 0) + offset
     end
@@ -485,6 +534,19 @@ local function centerClassicZones(zones, offset)
   end
   return shifted
 end
+
+-- Published so the rule can be stated without driving a whole frame: this
+-- decision is invisible in a screenshot -- the symptom is a colour, not an
+-- offset -- so it needs to be checkable on its own.
+function Game.zonesNeedCentering(zoneOwner, classicOffset)
+  if (classicOffset or 0) == 0 or not zoneOwner then return false end
+  if zoneOwner.isWideBattleLayout and zoneOwner:isWideBattleLayout() then
+    return false
+  end
+  return not Game.wantsThisSurface(zoneOwner)
+end
+
+Game.centerClassicZones = centerClassicZones
 
 function Game:draw()
   -- the UI canvas clears transparent when the overworld's world pass
@@ -501,14 +563,20 @@ function Game:draw()
   -- in that surface below, so their classic coordinates and hit testing stay
   -- unchanged. Outside a battle, including the title screen, the option is
   -- intentionally inactive because it is a battle-layout setting.
-  local top = self.stack:top()
   local wideBattle = Game.wideBattleInStack(self.stack)
-  local classicOffset = 0
+  local native = not wideBattle and Game.nativeSurfaceInStack(self.stack) or nil
+  local classicOffset, classicOffsetY = 0, 0
   if wideBattle and wideBattle.uiSize then
     Renderer:setUISize(wideBattle:uiSize())
     classicOffset = math.floor((select(1, Renderer:uiSize()) - Renderer.WIDTH) / 2)
-  elseif top and top.uiSize then
-    Renderer:setUISize(top:uiSize())
+  elseif native then
+    Renderer:setUISize(native:uiSize())
+    -- ...and a state that did NOT ask for the bigger surface is centred in
+    -- it, the way the wide battle centres its menus: its layout is in Game
+    -- Boy coordinates and must land in the middle rather than in a corner.
+    local uw, uh = Renderer:uiSize()
+    classicOffset = math.floor((uw - Renderer.WIDTH) / 2)
+    classicOffsetY = math.floor((uh - Renderer.HEIGHT) / 2)
   else
     Renderer:setUISize(Renderer.WIDTH, Renderer.HEIGHT)
   end
@@ -542,10 +610,26 @@ function Game:draw()
     local state = self.stack.states[i]
     local wideState = state and state.isWideBattleLayout
       and state:isWideBattleLayout()
+    -- A STATE THAT ASKED FOR THIS SURFACE DRAWS IN IT DIRECTLY; everything
+    -- else is Game Boy sized and gets centred.
+    --
+    -- "Asked for it" used to mean "is the one nativeSurfaceInStack picked",
+    -- which is the TOPMOST state with a uiSize.  That was fine while exactly
+    -- one state ever wanted the bigger surface.  It stopped being fine when
+    -- the field started asking for the same one as the dialogue box over it:
+    -- the box was the topmost, so the FIELD -- drawing in the very
+    -- coordinates it had just asked for -- was treated as a Game Boy layout
+    -- and shoved forty pixels sideways the moment anybody spoke.
+    --
+    -- So ask each state instead of trusting the pick: a state owns the
+    -- surface when the size it wants IS the size in use.
+    local ownsSurface = wideState
+      or (native ~= nil and state == native)
+      or Game.wantsThisSurface(state)
     if state and state.draw then
-      if classicOffset ~= 0 and not wideState then
+      if (classicOffset ~= 0 or classicOffsetY ~= 0) and not ownsSurface then
         love.graphics.push()
-        love.graphics.translate(classicOffset, 0)
+        love.graphics.translate(classicOffset, classicOffsetY)
         state:draw()
         love.graphics.pop()
       else
@@ -565,9 +649,30 @@ function Game:draw()
       break
     end
   end
-  if classicOffset ~= 0 and zoneOwner
-      and not (zoneOwner.isWideBattleLayout
-               and zoneOwner:isWideBattleLayout()) then
+  -- Zones are in the coordinates of whatever DREW them, so only a Game Boy
+  -- sized state's zones need re-centring in a wider surface.  A state that
+  -- asked for the surface already laid its zones out across all of it, and
+  -- shifting those by the centring offset moves the exemption off the thing
+  -- it was exempting -- which on the Gen 3 title is the whole screen.
+  --
+  -- ASKED BY SIZE, NOT BY IDENTITY.  This used to test `zoneOwner == native`,
+  -- and `native` is the TOPMOST state carrying a uiSize -- so the moment
+  -- anything sat above the state that owns the zones and answered the same
+  -- 240x160, the two stopped being the same object and every zone slid 40
+  -- pixels right.  On Emerald's battle screen that is the whole bug: its zone
+  -- list is one full-screen `colors == false` rect, the true-colour opt-out,
+  -- and shifted by 40 it no longer covers the screen it was exempting.  The
+  -- shade-remap shader then ran over the lot, and a full-colour GBA battle --
+  -- the extracted terrain, the mon, the panels -- came out in four shades of
+  -- grey.  Nothing about it looked like an offset, because the offset was
+  -- applied to the exemption rather than to the art.
+  --
+  -- The DRAW path a dozen lines up already asks the right question
+  -- (`Game.wantsThisSurface`): does this state lay itself out across the
+  -- surface currently in use?  More than one state can, and every one of them
+  -- draws in it rather than being centred in it.  Zones follow their drawer,
+  -- so they have to be asked the same question, and now they are.
+  if Game.zonesNeedCentering(zoneOwner, classicOffset) then
     zones = centerClassicZones(zones, classicOffset)
   end
   -- 14's render.zones: weather/lighting overlays and custom colorization
@@ -895,6 +1000,12 @@ function Game:applyOptions(opts)
   local Sound = require("src.core.Sound")
   if Music.applyOptions then Music.applyOptions(opts) end
   if Sound.applyOptions then Sound.applyOptions(opts) end
+  -- EMERALD'S BUTTON MODE, which decides what L and R do.  Applied here
+  -- rather than read at the input site so that a mode set on the OPTION
+  -- screen takes effect the moment it is chosen, like every other row.
+  if self.input and self.input.setButtonMode then
+    self.input:setButtonMode(opts.gen3ButtonMode or 1)
+  end
   require("src.render.PaletteFX").applyOptions(opts)
   require("src.render.Tilt").applyOptions(opts)
   -- after Tilt, so a persisted world pipeline can switch the tilt level it
@@ -949,6 +1060,15 @@ function Game:restoreSave(loaded, recovered)
     SaveData.applyPostGameHome(loaded, self:bootConfig())
     local Pokemon = require("src.pokemon.Pokemon")
     for _, mon in ipairs(loaded.party or {}) do Pokemon.heal(mon) end
+  end
+  -- Emerald's CHAMPION_SAVEWARP (special 343): the Hall of Fame saved with
+  -- the player standing in a room that has no exit, and this is the load
+  -- that spends the bit and puts them back in their own bedroom.
+  if SaveData.hasChampionSaveWarp(loaded) then
+    local home = SaveData.applyChampionSaveWarp(loaded, self:bootConfig())
+    Logger.info("champion save warp: resuming at %s",
+                home and tostring(loaded.player and loaded.player.map)
+                     or "the saved spot (this dataset has no start map)")
   end
   local modsDiff = SaveData.modsDiff(loaded, activeMods)
   local report = SaveData.validate(loaded, self.data)

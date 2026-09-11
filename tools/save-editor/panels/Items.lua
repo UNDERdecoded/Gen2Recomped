@@ -1,8 +1,8 @@
 -- Copyright (c) 2026 Cedric. All rights reserved.
--- Source-available under the Gen2Recomped Map Editor License: you may read,
--- build and privately modify this file; you may not redistribute it or use it
--- commercially. See LICENSE at the repository root. Cartridge-derived data is
--- not covered and is not the copyright holder's to license.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
 
 -- Items panel: money, the shared item picker, badges, the configurable bag
 -- (Bag.add/remove, ordered by Bag.order) and PC item storage (a plain
@@ -106,7 +106,7 @@ function M.draw(S, Kit, x, y, w, h)
   end
 
   -- ------------------------------------------------------------ picker
-  local badgeIds = Ops.badgeIds(S)
+  local badgeIds = Ops.badgeEntries(S)
   local badgeCols = 4
   local badgeRows = math.ceil(#badgeIds / badgeCols)
   local badgeH = pad * 2 + Kit.textHeight("caption") + 10 * s
@@ -196,26 +196,28 @@ function M.draw(S, Kit, x, y, w, h)
   local badgeY = y + h - badgeH
   Kit.card(x, badgeY, leftW, badgeH)
   local earned = 0
-  for _, id in ipairs(badgeIds) do
+  for _, badge in ipairs(badgeIds) do
     -- #515: truthy check, not `== true` -- the in-game grant path stores a
     -- number (see OverworldController.lua checkVictoryRewards), matching
     -- src/inventory/Badges.lua's own truthy read.
-    if Ops.hasBadge(S, id) then earned = earned + 1 end
+    if Ops.hasBadge(S, badge.key) then earned = earned + 1 end
   end
   Kit.caption(x + pad, badgeY + pad, "BADGES")
   Kit.textRight("mono", ("%d/%d"):format(earned, #badgeIds), x + leftW - pad,
     badgeY + pad, PAL.caption)
   local bTop = badgeY + pad + Kit.textHeight("caption") + 10 * s
   local bW = (leftW - 2 * pad - (badgeCols - 1) * 7 * s) / badgeCols
-  for i, id in ipairs(badgeIds) do
+  for i, badge in ipairs(badgeIds) do
     local bc = (i - 1) % badgeCols
     local br = math.floor((i - 1) / badgeCols)
-    local on = Ops.hasBadge(S, id)
-    local short = id:gsub("BADGE$", "")
+    local on = Ops.hasBadge(S, badge.key)
+    -- the badge's NAME on the chip, never the key it is stored under: an
+    -- Emerald badge lives at FLAG_G3_0867 and is called STONEBADGE
+    local short = badge.label:gsub("BADGE$", "")
     if Kit.chip(x + pad + bc * (bW + 7 * s), bTop + br * (28 * s + 7 * s),
         bW, 28 * s, Kit.ellipsize("micro", short, bW - 8 * s), on,
         PAL.green, PAL.steel) then
-      Ops.toggleBadge(S, id)
+      Ops.toggleBadge(S, badge.key)
     end
   end
 

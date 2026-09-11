@@ -21,6 +21,13 @@ local ROAM_DIRS = {
   LEFT_RIGHT = { "left", "right" },
 }
 
+-- The compass, for Gen 3's two ROTATE movement types.  Clockwise as the
+-- player sees it: up, right, down, left.
+local ROTATION = {
+  cw = { "up", "right", "down", "left" },
+  ccw = { "up", "left", "down", "right" },
+}
+
 -- Gen2 spinners.  `_MovementSpinNextFacing` walks a fixed four-entry table
 -- (engine/overworld/map_objects.asm .facings_clockwise /
 -- .facings_counterclockwise), indexed by the CURRENT facing, and holds each
@@ -320,8 +327,41 @@ local function diskSheet(spriteId)
   }
 end
 
+-- WHO IS STANDING IN A GEN 3 RUN-TIME SLOT.
+--
+-- Graphics ids 240-255 are OBJ_EVENT_GFX_VAR_0..F: not characters, slots that
+-- a map's own script fills with `setvar VAR_OBJ_GFX_ID_n, <id>`.  The import
+-- has no row for them and puts a stand-in in each, so a direct lookup by name
+-- finds a sheet with an image -- the wrong person's -- and wins.  The
+-- assignment has to be asked FIRST or the placeholder always beats it.
+--
+-- Route 103's rival is the reported case: her id is 240, Route 103's
+-- ON_TRANSITION picks Brendan or May by the player's own gender, and until
+-- that runs OverworldState.objectVisible keeps her off the map entirely.
+local function gen3AssignedSprite(sprites, spriteId)
+  if type(spriteId) ~= "string" then return nil end
+  local id = tonumber(spriteId:match("^SPRITE_G3_(%d+)$"))
+  if not (id and id >= 240 and id <= 255) then return nil end
+  local save
+  pcall(function()
+    local Game = require("src.core.Game")
+    save = Game.save or (Game.getSave and Game.getSave())
+  end)
+  local assigned
+  pcall(function()
+    assigned = require("src.script.Gen3Commands").objectSprite(save, id - 240)
+  end)
+  assigned = tonumber(assigned)
+  if not assigned then return nil end
+  local row = sprites[("SPRITE_G3_%03d"):format(assigned)]
+  if type(row) == "table" and row.image then return row end
+  return nil
+end
+
 local function resolveSpriteDef(data, spriteId)
   local sprites = (data and data.sprites) or {}
+  local assigned = gen3AssignedSprite(sprites, spriteId)
+  if assigned then return assigned end
   -- Copycat is never a real sheet in the ROM: object events use $FB and the
   -- map callback (or our default) remaps the slot to SPRITE_LASS (lass.png).
   if spriteId == "SPRITE_COPYCAT" or spriteId == 0xFB then
@@ -433,7 +473,81 @@ function NPC.new(data, mapId, objDef)
   -- object_event coordinates are already walk-grid cells
   self.cellX, self.cellY = objDef.x, objDef.y
   self.px, self.py = self.cellX * 16, self.cellY * 16
-  self.facing = FACING_FROM_RANGE[objDef.range] or "down"
+  -- A GEN 3 OBJECT SAYS ALL OF THIS WITH ONE BYTE.
+  --
+  -- Gen 2 carries `movement` and `range` as strings and every line below
+  -- reads them; a Gen 3 template carries `movementType`, and what that number
+  -- means lives in three tables on the cartridge that the extractor turns
+  -- into constants.gen3MovementTypes. Read it once here rather than teaching
+  -- each line a second spelling.
+  --
+  -- nil for a Gen 2 object, and for a Gen 3 one whose type is past the end of
+  -- the table -- in which case the Gen 2 reads below apply to fields it does
+  -- not have and it stands still facing south, which is the old behaviour and
+  -- a reasonable thing for an object nothing knows about to do.
+  local g3 = nil
+  if objDef.movementType and data and data.constants
+     and data.constants.gen3MovementTypes then
+    g3 = data.constants.gen3MovementTypes[objDef.movementType]
+  end
+
+  -- INVISIBLE FROM THE MOMENT IT SPAWNS.
+  --
+  -- Reported from play: "all kekleons are visible without using the scope".
+  -- Emerald's invisible KECLEON are ordinary object events wearing the
+  -- ordinary KECLEON sprite; what hides them is their MOVEMENT TYPE, whose
+  -- step-0 callback sets the object's own invisible bit and does nothing
+  -- else.  The importer finds that type by walking the callbacks and looking
+  -- for the instructions that set the bit -- exactly one of the eighty-one
+  -- reaches them.
+  --
+  -- It still BLOCKS, and that is the cartridge's behaviour rather than an
+  -- oversight: DoesObjectCollideWithObjectAt reads the object's active flag,
+  -- its coordinates and its elevation and never looks at whether it can be
+  -- seen.  Talking to it still runs its script too -- which is the whole
+  -- point, because that script is what asks whether you have the DEVON
+  -- SCOPE.
+  --
+  -- Distinct from `buried`: a buried trainer rises when they spot you and
+  -- stays up; one of these only ever becomes visible because its own script
+  -- said so.
+  --
+  -- Asked BOTH ways on purpose.  `gen3HiddenMovement` is the derivation's own
+  -- answer -- the one type of the eighty-one whose step 0 sets the bit -- and
+  -- `hides` is that answer stamped on the type for convenience.  A template
+  -- whose movement type is past the end of the table has no `g3` at all, and
+  -- the number still tells the truth about it.
+  local hiddenType = data and data.constants and data.constants.gen3HiddenMovement
+  if (g3 and g3.hides) or (hiddenType and objDef.movementType == hiddenType) then
+    self.hidden = true
+    self.gen3Hidden = true
+  end
+
+  -- WHICH LEVEL IT IS STANDING ON, seeded from its own template.
+  --
+  -- Reported from play: "some sprites that are on bridges are appearing under
+  -- them like steven on the bridge next to the kekleon".  The engine has had
+  -- the whole rule since the player's own bridge bug was fixed -- an object
+  -- whose elevation is 4 draws OVER the covering layer and one at 3 draws
+  -- under it -- and NPCs simply never got an elevation to look up.
+  --
+  -- It cannot be read off the cell either, and that is the point:
+  -- ObjectEventUpdateElevation refuses to write elevation 15, and a bridge
+  -- SPAN is 15 on the map grid.  So an NPC standing on a bridge would never
+  -- learn anything from the ground under it.  The cartridge seeds BOTH
+  -- elevation nibbles from the template byte at spawn
+  -- (InitObjectEventStateFromTemplate) and the deck's own walkers keep it.
+  -- Every one of Steven's nine appearances in Hoenn is template elevation 3
+  -- except the Route 120 bridge, which is 4 -- the data says outright which
+  -- objects belong on top of something.
+  self.gen3Elevation = tonumber(objDef.elevation)
+  if self.gen3Elevation == 0 or self.gen3Elevation == 15 then
+    -- the two wildcards mean "match anything" and "under a bridge", and
+    -- neither is a level to be drawn at
+    self.gen3Elevation = nil
+  end
+
+  self.facing = (g3 and g3.facing) or FACING_FROM_RANGE[objDef.range] or "down"
   -- A fixed sheet frame from the extractor (polished's ball/cut/fruit
   -- sheet: cut trees are frame 1, fruit trees frame 2).  The renderer
   -- draws exactly this 16x16 row and skips facing entirely -- a tree has
@@ -443,10 +557,43 @@ function NPC.new(data, mapId, objDef)
   self.progress = 0
   self.stepFlip = false
   self.frozen = false -- scripts freeze NPCs while talking
-  self.wanders = objDef.movement == "WALK"
+  self.wanders = (g3 and g3.wanders == true) or objDef.movement == "WALK"
   -- SPRITEMOVEDATA_SPINRANDOM_* / _SPIN_CLOCKWISE / _SPIN_COUNTERCLOCKWISE
   self.spins = objDef.movement == "SPIN" and (objDef.range or "SPIN_SLOW") or nil
-  self.roamDirs = ROAM_DIRS[objDef.range] or ROAM_DIRS.ANY_DIR
+  if g3 then
+    -- Gen 3's wander axis is a property of the movement TYPE (the up/down
+    -- and left/right pairs each share one step callback); the box it wanders
+    -- inside is the template's own, which is why the type is not enough on
+    -- its own to stop an NPC walking out of the room.
+    self.roamDirs = (g3.axis == "vertical" and ROAM_DIRS.UP_DOWN)
+      or (g3.axis == "horizontal" and ROAM_DIRS.LEFT_RIGHT)
+      or ROAM_DIRS.ANY_DIR
+    -- THE BOX IS PER AXIS, AND ZERO MEANS "NO LIMIT ON THIS ONE".
+    --
+    -- IsCoordOutsideObjectEventMovementRange tests the two axes separately
+    -- and skips the test entirely for an axis whose range is 0 -- `if
+    -- (objectEvent->rangeX != 0)`, then the same for Y.  So zero is not "stay
+    -- on your tile", it is "this axis is unbounded".
+    --
+    -- Both halves were wrong here, in opposite directions.  A box was applied
+    -- only when EITHER range was non-zero, and then it applied BOTH -- so an
+    -- object free to walk three cells east and west but given no Y range was
+    -- pinned to its row, and an object given no range at all wandered the
+    -- whole map.  Reading the axes apart is what the cartridge does.
+    self.roamOriginX, self.roamOriginY = objDef.x, objDef.y
+    local rx, ry = objDef.movementRangeX or 0, objDef.movementRangeY or 0
+    self.roamRangeX = rx > 0 and rx or nil
+    self.roamRangeY = ry > 0 and ry or nil
+    -- ...and the ones that do not walk at all but DO turn: 697 objects in
+    -- Hoenn, which is more than wander.  `turns` is the set of directions
+    -- the cartridge's own callback cycles; `look` picks from it at random
+    -- rather than in order, and `rotate` walks the compass one way round.
+    self.turns = g3.turns
+    self.looksAround = g3.look
+    self.rotates = g3.rotate
+  else
+    self.roamDirs = ROAM_DIRS[objDef.range] or ROAM_DIRS.ANY_DIR
+  end
   self.timer = love.math.random(30, 120)
   return self
 end
@@ -552,6 +699,31 @@ function NPC:update(map, entities)
     end
     return
   end
+  -- STANDING STILL IS NOT DOING NOTHING.
+  --
+  -- A LOOK_AROUND guard glances about; a FACE_DOWN_AND_UP trainer watches two
+  -- ways in turn; a ROTATE_CLOCKWISE one walks the compass.  None of them
+  -- takes a step, so all of them fell through the wander gate below and stood
+  -- frozen -- 697 objects in the region, against 311 that wander.
+  if self.turns or self.rotates then
+    self.timer = self.timer - 1
+    if self.timer > 0 then return end
+    self.timer = love.math.random(60, 150)
+    if self.rotates then
+      local ring = ROTATION[self.rotates]
+      local at = 1
+      for i, dir in ipairs(ring) do if dir == self.facing then at = i end end
+      self.facing = ring[(at % #ring) + 1]
+    elseif self.looksAround then
+      self.facing = self.turns[love.math.random(#self.turns)]
+    else
+      -- in order, and round: two-way types alternate, three-way types cycle
+      local at = 1
+      for i, dir in ipairs(self.turns) do if dir == self.facing then at = i end end
+      self.facing = self.turns[(at % #self.turns) + 1]
+    end
+    return
+  end
   if not self.wanders then return end
   self.timer = self.timer - 1
   if self.timer > 0 then return end
@@ -562,6 +734,22 @@ function NPC:update(map, entities)
   -- never wander onto warps, so NPCs don't walk out of the map
   local tx, ty = Collision.target(self.cellX, self.cellY, dir)
   if map:warpAtCell(tx, ty) then return end
+  -- GEN 3 KEEPS THE OBJECT IN ITS BOX.  A Gen 2 object wanders wherever the
+  -- collision lets it; a Gen 3 template states a movement range in cells
+  -- around where it started, and an NPC that ignores it drifts across the
+  -- room over a few minutes and ends up somewhere the scripts do not expect
+  -- it -- worst on the wide routes, where nothing stops it for a long time.
+  -- ...each axis judged on its own, and an axis with no range not judged
+  if self.roamOriginX then
+    if self.roamRangeX
+       and math.abs(tx - self.roamOriginX) > self.roamRangeX then
+      return
+    end
+    if self.roamRangeY
+       and math.abs(ty - self.roamOriginY) > self.roamRangeY then
+      return
+    end
+  end
   if Collision.canMove(map, entities, self, dir) then
     self.targetX, self.targetY = tx, ty
     self.moving = true

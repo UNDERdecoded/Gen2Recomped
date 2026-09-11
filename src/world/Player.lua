@@ -39,18 +39,42 @@ local FALLBACK_SPRITE = {
   walker = true,
 }
 
+-- A SPRITE DEF WITHOUT AN IMAGE IS NOT A SPRITE DEF.
+--
+-- The last resort here walked `sprites` with `pairs` and returned the first
+-- TABLE it saw.  Not every value in that table is a drawable def -- some are
+-- groups and aliases with no `image` -- so on a version whose named sprites
+-- are absent (Emerald has no surfing-Pikachu; `surfPikaId` resolves to
+-- nothing) this returned one of them, `SpriteRenderer.new` asked
+-- `Assets.image(nil)`, and the game died with "table index is nil" at
+-- Assets.lua:80.
+--
+-- `pairs` order is a hash order, so which value came back -- and therefore
+-- whether the game booted at all -- varied between runs of identical code.
+-- That is the whole of this crash's intermittency.
+--
+-- Every branch now requires a def that actually carries an image, and the
+-- built-in fallback is the floor rather than a coin toss.
+local function usable(def)
+  return type(def) == "table" and def.image ~= nil and def
+end
+
 local function pickSpriteDef(data, preferred)
   local sprites = (data and data.sprites) or {}
-  if type(preferred) == "string" and sprites[preferred] then
+  if type(preferred) == "string" and usable(sprites[preferred]) then
     return sprites[preferred]
   end
   local priority = { "SPRITE_RED", "SPRITE_SEEL", "SPRITE_RED_BIKE", "SPRITE_BIRD" }
   for _, id in ipairs(priority) do
-    if sprites[id] then return sprites[id] end
+    if usable(sprites[id]) then return sprites[id] end
   end
-  for _, def in pairs(sprites) do
-    if type(def) == "table" then return def end
+  -- a stable order, so a boot that works keeps working
+  local ids = {}
+  for id in pairs(sprites) do
+    if type(id) == "string" and usable(sprites[id]) then ids[#ids + 1] = id end
   end
+  table.sort(ids)
+  if ids[1] then return sprites[ids[1]] end
   sprites.SPRITE_FALLBACK = sprites.SPRITE_FALLBACK or FALLBACK_SPRITE
   return sprites.SPRITE_FALLBACK
 end
@@ -76,7 +100,11 @@ function Player.new(data, cx, cy, facing)
   local surfId = FieldDefaults.fieldValue(data, "playerSprites", "surf")
   local surfPikaId = FieldDefaults.fieldValue(data, "playerSprites", "surfPikachu")
   self:refreshForm(data)
-  self.surfSprite = SpriteRenderer.new(pickSpriteDef(data, surfId), "player")
+  -- refreshForm resolved the CHARACTER's water sheet into self.surfId (it
+  -- could not build it -- surfSprite does not exist yet -- so it is built
+  -- here, off what it decided rather than off the bare default)
+  self.surfSprite = SpriteRenderer.new(pickSpriteDef(data, self.surfId or surfId),
+                                       "player")
   -- Yellow's surfing-Pikachu ride (Yellow LoadSurfingPlayerSpriteGraphics2,
   -- paired with field.playerSprites.surfPikachu). rotated in at pose()
   -- when the SURF-mon is a Pikachu.
@@ -212,11 +240,28 @@ end
 function Player:refreshForm(data)
   local walkId = FieldDefaults.fieldValue(data, "playerSprites", "walk")
   local bikeId = FieldDefaults.fieldValue(data, "playerSprites", "bike")
+  -- ...and the WATER, which used to be left out of this: surfSprite was built
+  -- once in Player.new off the default (the boy's) sheet and never asked
+  -- again, so a girl who chose to be a girl still paddled Hoenn as Brendan.
+  local surfId = FieldDefaults.fieldValue(data, "playerSprites", "surf")
+  -- ...AND THE DIVING SUIT, which is a sheet of its own.
+  --
+  -- Reported from play: "the surf sprite and character sprite that appears
+  -- when diving isnt appearing as well when underwater".  Underwater the
+  -- cartridge puts the player in a wetsuit and goggles -- a whole separate
+  -- graphics row wearing its own palette, seventy rows past the walking one
+  -- -- and this port had never found it, so the seafloor was walked in
+  -- ordinary clothes.
+  local underId = FieldDefaults.fieldValue(data, "playerSprites", "underwater")
   local form = require("src.pokemon.Sprites").playerForm(data)
   if form then
     local sprites = data.sprites or {}
     if form.walk and sprites[form.walk] then walkId = form.walk end
     if form.bike and sprites[form.bike] then bikeId = form.bike end
+    if form.surf and sprites[form.surf] then surfId = form.surf end
+    if form.underwater and sprites[form.underwater] then
+      underId = form.underwater
+    end
   end
   -- after the character, because it REPLACES the character: in Pokemon mode
   -- there is no bicycle either, so both sheets become the mon's
@@ -229,6 +274,40 @@ function Player:refreshForm(data)
     self.walkId, self.bikeId = walkId, bikeId
     self.sprite = SpriteRenderer.new(pickSpriteDef(data, walkId), "player")
     self.bikeSprite = SpriteRenderer.new(pickSpriteDef(data, bikeId), "player")
+  end
+  -- THE RUN CYCLE, which is a different set of frames rather than the walk
+  -- played faster.
+  --
+  -- Reported from play: "the sprint animation is also not working for my
+  -- player".  The player's sheet has eighteen frames and this port took six:
+  -- 0-8 walk, 9-17 run.  The import now writes the second six as their own
+  -- sheet and names it on the walking one, so the character that changes
+  -- takes its run cycle with it.
+  local sprites = data.sprites or {}
+  local walkDef = sprites[walkId]
+  local runId = type(walkDef) == "table" and walkDef.run or nil
+  if runId ~= self.runId then
+    self.runId = runId
+    self.runSprite = (runId and sprites[runId])
+      and SpriteRenderer.new(sprites[runId], "player") or nil
+  end
+  -- separately, because Player.new calls this BEFORE surfSprite exists and
+  -- then builds it: the id is remembered here either way, so the build below
+  -- only happens when the sheet really changed
+  if surfId ~= self.surfId then
+    self.surfId = surfId
+    if self.surfSprite then
+      self.surfSprite = SpriteRenderer.new(pickSpriteDef(data, surfId), "player")
+    end
+  end
+  -- the diving suit, built only where the dataset has one: a cache from
+  -- before it was found, and both older generations, leave this nil and every
+  -- caller keeps the sheet it always used
+  if underId ~= self.underId then
+    self.underId = underId
+    local sprites = data.sprites or {}
+    self.underwaterSprite = (underId and sprites[underId])
+      and SpriteRenderer.new(sprites[underId], "player") or nil
   end
   -- ...and the COLOURS, every time, whether or not the sheets changed.
   --
@@ -251,6 +330,8 @@ function Player:refreshPalette(data)
   pcall(PlayerPalette.apply, self.sprite, data, save)
   pcall(PlayerPalette.apply, self.bikeSprite, data, save)
   pcall(PlayerPalette.apply, self.surfSprite, data, save)
+  pcall(PlayerPalette.apply, self.underwaterSprite, data, save)
+  pcall(PlayerPalette.apply, self.runSprite, data, save)
 end
 
 function Player:position()
@@ -331,12 +412,32 @@ function Player:tryMove(dir, map, entities)
   -- `db 0, 2, 8, 2`, two pixels a frame over eight -- the bicycle's rate
   -- on foot.  Riding wins (the branch above), surfing and Pokemon mode
   -- refuse, exactly as the original refuses them.
-  local run = self.runStepFrames
-  if run and not (save and save.onBike) and not self.surfing
-     and Game.input and Game.input:isDown("b")
-     and not require("src.script.Flags").get(save, "ENGINE_POKEMON_MODE")
-  then
+  --
+  -- ...AND THE RULES LIVE IN THE OVERWORLD, so this asks rather than decides.
+  --
+  -- Reported from play: "its also letting me sprint before getting the
+  -- running shoes from mom".  It was.  This decided on its own -- the
+  -- version's step table plus the B button -- and never asked
+  -- OverworldState:runFrames, which is where Hoenn's three gates already
+  -- were: the SHOES flag Mom sets, the map header's own may-run bit (228 of
+  -- 519 maps), and the seven ground behaviours the shoes do not work on.  All
+  -- three were written, tested and reachable from nothing.
+  --
+  -- Prism is unaffected: it has no gates, and its runFrames answers the same
+  -- number this did.  Headless, with no overworld to ask, the old rule stands
+  -- so the movement tests keep their subject.
+  local ow = Game.overworld
+  local run
+  if ow and ow.runFrames then
+    run = ow:runFrames()
+  elseif self.runStepFrames and Game.input and Game.input:isDown("b")
+     and not require("src.script.Flags").get(save, "ENGINE_POKEMON_MODE") then
+    run = self.runStepFrames
+  end
+  self.running = false
+  if run and not (save and save.onBike) and not self.surfing then
     frames = run
+    self.running = true
   end
   if Runtime.wantsHook("movement.speed") then
     frames = Runtime.call("movement.speed", function(f) return f end, frames, {
@@ -348,6 +449,19 @@ function Player:tryMove(dir, map, entities)
     })
   end
   self.stepFramesCur = math.max(1, math.floor(tonumber(frames) or STEP_FRAMES))
+  -- ...AND THE RUN CYCLE FOLLOWS THE SPEED, not the branch that set it.
+  --
+  -- Reported from play: "when doing so even with the running shoes i dont
+  -- have the sprint animation playing on my character".  `running` was set
+  -- only by the branch above, so a step made faster any OTHER way -- the
+  -- movement.speed hook a mod installs, most of all -- moved at a run and
+  -- animated at a walk.  A step on foot that takes fewer frames than a walk
+  -- IS a run, whoever decided it, and the sheet the character carries for it
+  -- is what should be on screen.
+  if not (save and save.onBike) and not self.surfing
+     and self.stepFramesCur < (self.stepFrames or STEP_FRAMES) then
+    self.running = true
+  end
   return "moved"
 end
 
@@ -389,12 +503,34 @@ function Player:update()
   -- leg cadence stays constant when the bike halves stepFramesCur (only
   -- translation speed doubles, like UpdatePlayerSprite's frame counters)
   self.animClock = (self.animClock or 0) + 1
+  -- NPC_CHANGE_FACING / the Gen 3 in_place_<dir> quartet: one walk-cycle
+  -- animation with a zero delta (movement.asm ChangeFacingDirection), so
+  -- px/py stay pinned to the current cell.  NPC:update has had this since
+  -- Oak's door mat; the player never marched until Gen 3 movement scripts
+  -- started aiming in_place at the avatar.  Without it the step ran the
+  -- translating path with no targetX, and the landing assigned cellX = nil
+  -- -- the next in_place beat then crashed on `self.cellX * 16`.
+  if self.marching then
+    if self.progress >= stepLen then
+      self.progress = 0
+      self.moving = false
+      self.marching = false
+      self.stepFlip = not self.stepFlip
+      self.stepLanded = true
+      return true
+    end
+    return false
+  end
   local d = Collision.DELTA[self.facing]
   local px = math.floor(self.progress * 16 / stepLen)
   self.px = self.cellX * 16 + d[1] * px
   self.py = self.cellY * 16 + d[2] * px
   if self.progress >= stepLen then
-    self.cellX, self.cellY = self.targetX, self.targetY
+    -- a step with no target cell (a malformed queue entry) keeps the cell
+    -- it started from rather than nilling it out from under every later
+    -- frame's arithmetic
+    self.cellX = self.targetX or self.cellX
+    self.cellY = self.targetY or self.cellY
     self.targetX, self.targetY = nil, nil
     self.px, self.py = self.cellX * 16, self.cellY * 16
     self.moving = false
@@ -439,6 +575,21 @@ local SPIN_ORDER = { "down", "left", "up", "right" }
 -- and draw() may run per frame -- and draw() is written in terms of pose()
 -- to keep that true by construction.  (hopFrames counts down in
 -- Player:update, on the fixed step, so it is safe to read here.)
+
+-- IS THE PLAYER ON THE SEAFLOOR?
+--
+-- Asked of the MAP rather than of a flag.  gen3UseDive sets `diving` at the
+-- moment of the dive, and a flag set at one moment is wrong at every other:
+-- a save loaded underwater, a warp taken between two underwater rooms, a
+-- script that puts the player down there.  The map's own type is true
+-- whenever it is true, which is the same thing the cartridge asks
+-- (`gMapHeader.mapType == MAP_TYPE_UNDERWATER`).
+function Player:isUnderwater()
+  local ow = require("src.core.Game").overworld
+  local def = ow and ow.map and ow.map.def
+  return type(def) == "table" and def.mapType == "UNDERWATER"
+end
+
 function Player:pose()
   local py = self.py
   local hopping = false
@@ -450,6 +601,27 @@ function Player:pose()
     local t = 1 - self.hopFrames / total
     py = py - math.floor(10 * math.sin(t * math.pi) + 0.5)
     hopping = true
+  elseif self.acroBike and self.acroTrick == "hop" then
+    -- THE ACRO BIKE'S BUNNY HOP, WHICH NOTHING DREW.
+    --
+    -- Reported from play: "make sure the bike paths over the water work
+    -- properly for riding on and bunny hopping".  The RULE was already here
+    -- -- holding B on the Acro Bike sets `acroTrick` and that is what carries
+    -- the rider over a bumpy slope and along a rail -- but nothing on the
+    -- screen ever moved, so a hop and a stand looked identical and the bike
+    -- read as broken whether or not it was.
+    --
+    -- AcroBikeTransition_WheelieHoppingStanding cycles the rider through the
+    -- hop over eight frames; the arc here is that period, a whole sine of it,
+    -- so the rider is on the ground at the top and bottom of every cycle and
+    -- at its highest halfway through.  Four pixels rather than the ledge
+    -- hop's ten: a bunny hop clears a rail, not a cliff.
+    --
+    -- `hopping` is deliberately NOT set: that flag is the LEDGE hop's, and
+    -- what reads it draws the little shadow a Pokemon leaves under itself
+    -- clearing a ledge.  A rider bouncing on the spot casts no such thing.
+    self.hopClock = ((self.hopClock or 0) + 1) % 8
+    py = py - math.floor(4 * math.sin(self.hopClock / 8 * math.pi) + 0.5)
   elseif self.surfing then
     self.bobTimer = ((self.bobTimer or 0) + 1) % 32
     py = py + (self.bobTimer < 16 and 0 or 1)
@@ -482,9 +654,18 @@ function Player:pose()
   -- RodResponse (engine/items/item_effects.asm) zeroes wWalkBikeSurfState
   -- across FishingAnim, so casting from the water shows the on-foot sheet
   local sprite = (self.fishing and self.sprite)
+                 -- UNDERWATER BEATS EVERYTHING.  A dive leaves `surfing`
+                 -- false and the seafloor is walked, not ridden, so without
+                 -- this the wetsuit would never be reached; asked FIRST
+                 -- because the map is the fact, not the flag.
+                 or (self:isUnderwater() and self.underwaterSprite)
                  or (self.surfing and self.surfingPikachu and self.surfPikachuSprite)
                  or (self.surfing and self.surfSprite)
-                 or (self.onBike and self.bikeSprite) or self.sprite
+                 or (self.onBike and self.bikeSprite)
+                 -- running is the walk's own sheet only for a character with
+                 -- no run cycle of its own; Hoenn's two both have one
+                 or (self.running and self.runSprite)
+                 or self.sprite
   return sprite, self.px, py, facing, phase, flip, hopping
 end
 
@@ -526,7 +707,91 @@ function Player:draw(camX, camY)
                     math.floor(py - camY) - 4 + 8, facing == "right")
     return
   end
+  -- ...AND THE THING YOU ARE SITTING ON, under everything.
+  --
+  -- Reported from play: "the surf animation is working for my player now but
+  -- the sprite that appears under me for surfing isnt appearing".  It is a
+  -- FIELD EFFECT rather than an object-event graphic -- the same kind of
+  -- thing as a footprint or a shadow -- so it lives in a different table of
+  -- the cartridge entirely and the import had never opened it.  It does now,
+  -- and it comes with three frames: one for each way the blob turns.
+  self:drawSurfBlob(px, py, camX, camY, facing)
   sprite:draw(px, py, camX, camY, facing, phase, flip)
+end
+
+-- Which of the blob's three frames faces this way, and whether it is mirrored.
+-- The frames are the cartridge's own order -- south, north, west -- and east
+-- is west flipped, which is how every sprite in this generation is drawn.
+local BLOB_FRAME = { down = 0, up = 1, left = 2, right = 2 }
+
+-- How far below the player the blob sits, straight out of
+-- SyncSurfblobPositionWithPlayer (0815577C): `blob.y = player.y + 8`.
+local BLOB_BELOW_PLAYER = 8
+
+function Player:drawSurfBlob(px, py, camX, camY, facing)
+  if not self.surfing then return end
+  -- and nothing to sit on down there: the cartridge destroys the surf blob
+  -- when you dive and makes another when you come back up
+  if self:isUnderwater() then return end
+  local Game = require("src.core.Game")
+  local blob = (Game.data and Game.data.constants or {}).gen3SurfBlob
+  if type(blob) ~= "table" then return end
+  local path = blob.image
+  if not path then return end
+  if self.blobImage == nil or self.blobPath ~= path then
+    local ok, img = pcall(require("src.render.Assets").image, path)
+    self.blobImage = (ok and img) or false
+    self.blobPath = path
+    self.blobQuads = nil
+  end
+  local img = self.blobImage
+  if not img or not img.getWidth then return end
+  local fw = blob.frameWidth or 32
+  local fh = blob.frameHeight or 32
+  local frame = BLOB_FRAME[facing] or 0
+  if frame >= (blob.frames or 1) then frame = 0 end
+  self.blobQuads = self.blobQuads or {}
+  local quad = self.blobQuads[frame]
+  if not quad then
+    quad = love.graphics.newQuad(0, frame * fh, fw, fh,
+                                 img:getWidth(), img:getHeight())
+    self.blobQuads[frame] = quad
+  end
+  -- PLACED THE WAY EVERY OTHER SPRITE HERE IS.
+  --
+  -- Reported from play: "my character is floating above the surf sprite".  It
+  -- was: this put the blob at the raw cell position while SpriteRenderer
+  -- draws a sheet at `y - 4 - (height - 16)` -- which lifts a 32-tall sprite
+  -- so its feet land in the cell.  A 32-tall blob placed without that sat a
+  -- whole cell and a half low, and the player hovered over open water.
+  -- The same two offsets go on the blob, and it lands under him.
+  --
+  -- ...AND EIGHT PIXELS LOWER THAN HE IS, which is the last of it.
+  --
+  -- Reported from play: "the sprite the character surfs on ... its showing as
+  -- having a white top and my character isnt sitting in the right spot on
+  -- it".  Both halves are one bug.  The blob is a pale, almost white dome
+  -- with a dark ring around its foot, and the player is meant to sit INSIDE
+  -- it -- his body covering the dome, only the ring showing around him.  Drawn
+  -- at the same height he is, the dome cleared his head: a white cap above the
+  -- player, and a player sitting too deep in his own boat.
+  --
+  -- SyncSurfblobPositionWithPlayer (0815577C) ends
+  --
+  --     ldrh r0,[r5,#32] / strh r0,[r4,#32]   ; blob.x = player.x
+  --     ldrh r0,[r5,#34] / add r0,#8          ; blob.y = player.y + EIGHT
+  --     strh r0,[r4,#34]
+  --
+  -- so the offset is not a guess and it is not a matter of taste.
+  local mirror = facing == "right"
+  local sx = math.floor(px - camX) - math.floor((fw - 16) / 2)
+  local sy = math.floor(py - camY) - 4 - (fh - 16) + BLOB_BELOW_PLAYER
+  love.graphics.setColor(1, 1, 1, 1)
+  if mirror then
+    love.graphics.draw(img, quad, sx + fw, sy, 0, -1, 1)
+  else
+    love.graphics.draw(img, quad, sx, sy)
+  end
 end
 
 return Player

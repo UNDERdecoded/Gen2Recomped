@@ -891,6 +891,131 @@ function Commands.g2_party_nickname(ctx)
   ctx.game.stringBuffer = mon.nickname or (def and def.name) or mon.species
 end
 
+-- PRISM'S PARTY-TYPE SEARCH
+--
+-- Script_findpokemontype (25:$6CC4), read out of the ROM rather than guessed,
+-- because the "or knows a move of that type" half is not something the script
+-- text hints at:
+--
+--   a = GetScriptByte          ; the wanted type id -> hFFAB
+--   d = [wPartyCount]; if 0 -> done with 0
+--   hl = first party struct, bc = PARTYMON_STRUCT_LENGTH, e = 0
+--   loop: inc e                ; e is therefore ONE-BASED
+--     .check_type   [hl] is the species; GetBaseData fills wBaseType1/2 at
+--                   $D23D/$D23E; `cp [hl]` against each -> Z on a match
+--     .check_moves  hl += 2 -> the four move bytes; each nonzero move indexes
+--                   Moves (7 bytes/entry) and its TYPE byte is masked `and
+--                   $3F` -- Prism packs the physical/special split into the
+--                   top two bits, so an unmasked compare never matches
+--   found: a = e               ; the party index
+--   done:  [hFFAB -> wScriptVar] = a
+--
+-- So the answer is a party INDEX, not a boolean, and 0 means "nobody" -- which
+-- is what the `siffalse` that follows every call branches on.  setScriptVar
+-- gives both readings at once (g2Var for the addvar/copyvartobyte that turn it
+-- into wCurPartyMon, lastCheck for the branch).
+--
+-- Mound Cave's light switch is the reason this exists: `checkflag ENGINE_FLASH
+-- / siftrue jumptext .already_on / writetext .description / findpokemontype
+-- ELECTRIC / siffalse closetextend / getpartymonname / writetext .use_mon /
+-- addvar -1 / copyvartobyte wCurPartyMon / yesorno / siffalse end /
+-- fieldmovepokepic / playwaitsfx / callasm BlindingFlash`.
+local function typeNameFor(ctx, id)
+  if type(id) == "string" then return id:upper() end
+  if type(id) ~= "number" then return nil end
+  -- THE TABLE IS `type_chart`, NOT `typeChart`.  Data.lua loads the generated
+  -- modules under their FILE names -- data.type_chart, the same key
+  -- TypeChart.lua reads -- and asking for a camelCased one got nil on every
+  -- cartridge, so this warned and matched nobody however many Mareep were in
+  -- the party.  The camel spelling is still accepted in case a mod supplies
+  -- one.
+  local data = ctx.game and ctx.game.data
+  local chart = data and (data.type_chart or data.typeChart)
+  local name = chart and chart.ids and chart.ids[id]
+  if name then return name end
+  -- A cache extracted before typeChart.ids existed still has the roster, and
+  -- the id is meaningless without the ROM's own table -- so say so once
+  -- rather than matching nothing in silence.
+  Logger.warn("g2_find_party_type: no name for type id %s "
+                .. "(re-import to rebuild type_chart.ids)", tostring(id))
+  return nil
+end
+
+local function monHasType(ctx, mon, want)
+  local def = ctx.game.data.pokemon[mon.species]
+  for _, t in ipairs((def and def.types) or {}) do
+    if type(t) == "string" and t:upper() == want then return true end
+  end
+  return false
+end
+
+local function monKnowsType(ctx, mon, want)
+  local moves = ctx.game.data.moves or {}
+  for _, mv in ipairs(mon.moves or {}) do
+    local id = type(mv) == "table" and mv.id or mv
+    local def = id and moves[id]
+    local t = def and def.type
+    if type(t) == "string" and t:upper() == want then return true end
+  end
+  return false
+end
+
+-- A COMMAND'S RETURN VALUE IS A PROGRAM COUNTER.
+--
+-- ScriptRunner reads whatever a command hands back as the next row to run, and
+-- `setScriptVar` returns the value it stored -- so `return setScriptVar(ctx,
+-- 0)` did not mean "store 0 and stop", it meant "jump to row 0", and row 0 of
+-- a Lua array does not exist.  That is the
+-- "ScriptRunner.lua:161: attempt to index local 'row' (a nil value)" this
+-- printed every time the switch was used.  Nothing here returns a value.
+function Commands.g2_find_party_type(ctx, typeId)
+  local want = typeNameFor(ctx, typeId)
+  ctx.g2FieldMon = nil
+  if not want then
+    setScriptVar(ctx, 0)
+    return
+  end
+  local party = (ctx.save and ctx.save.party) or {}
+  for index, mon in ipairs(party) do
+    if monHasType(ctx, mon, want) or monKnowsType(ctx, mon, want) then
+      ctx.g2FieldMon = mon
+      -- ONE-BASED, exactly as the ROM leaves it: the caller's `addvar $ff`
+      -- is what turns it into the zero-based wCurPartyMon.
+      setScriptVar(ctx, index)
+      return
+    end
+  end
+  setScriptVar(ctx, 0)
+end
+
+-- `getpartymonname <n>` (Script_getpartymonname, 25:$6E7A).  GetScriptByteOrVar
+-- means an operand of 0 reads wScriptVar instead, and the index is one-based
+-- (the ROM's base pointer is wPartyMonNicknames - NAME_LENGTH, $DE36 against a
+-- $DE41 array, which is how the 1 that findpokemontype returns for the first
+-- party slot lands on the first nickname).
+function Commands.g2_party_mon_name(ctx, index)
+  if not index or index == 0 then index = scriptVar(ctx) end
+  local mon = ((ctx.save and ctx.save.party) or {})[index]
+  -- fall back to whatever the last party search found, so a name still
+  -- prints if the index round-tripped through a var this port does not model
+  mon = mon or ctx.g2FieldMon
+  if not mon then return end
+  ctx.g2FieldMon = mon
+  local def = ctx.game.data.pokemon[mon.species]
+  ctx.game.stringBuffer = mon.nickname or (def and def.name) or mon.species
+end
+
+-- BlindingFlash (50:$77A8): sets ENGINE_FLASH and repaints.  The flag and the
+-- port's `save.flashLit` are the same bit -- see Commands.set_flag -- so this
+-- goes through the flag, and then lifts the darkness on the floor the player
+-- is standing on.  Entering the map is otherwise the only thing that
+-- recomputes it, and the switch is used without leaving the room.
+function Commands.g2_blinding_flash(ctx)
+  Commands.set_flag(ctx, "ENGINE_FLASH")
+  local ow = ctx.overworld
+  if ow and ow.setDark then ow:setDark(false) end
+end
+
 -- Movement is Gen2's second bytecode language: applymovement points at a list
 -- of step/turn commands terminated by step_end.  Everything the overworld can
 -- actually animate is a directional step or a head turn, so collapse the list

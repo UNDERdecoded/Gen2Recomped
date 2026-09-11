@@ -90,6 +90,64 @@ Evolution.METHODS = {
       return Strings("Happiness")
     end,
   },
+  -- WURMPLE'S TWO COCOONS.
+  --
+  -- Emerald picks between them from the Pokemon's own PERSONALITY -- the same
+  -- 32-bit value its nature, ability and IVs come out of -- and not from
+  -- anything the player did: `(personality & 0xFFFF) % 10 <= 4` is a SILCOON
+  -- and the rest are CASCOON.  So the answer is fixed the moment the Wurmple
+  -- is generated, which is why two players who catch one in the same patch of
+  -- grass get different cocoons.
+  --
+  -- A mon with no personality -- an older save, or a Gen 1/2 one -- takes the
+  -- first branch, which keeps the pair deterministic instead of random.
+  LEVEL_SILCOON = {
+    check = function(game, mon, evo, trigger)
+      return Evolution.cocoon(game, mon, evo, trigger) == "SILCOON"
+    end,
+    describe = function(evo) return Strings("Level %d", evo.level or 0) end,
+  },
+  LEVEL_CASCOON = {
+    check = function(game, mon, evo, trigger)
+      return Evolution.cocoon(game, mon, evo, trigger) == "CASCOON"
+    end,
+    describe = function(evo) return Strings("Level %d", evo.level or 0) end,
+  },
+  -- NINCADA'S SECOND HALF.  On the cartridge the Nincada becomes a NINJASK
+  -- (an ordinary level evolution, and that row is filed as one) and a
+  -- SHEDINJA APPEARS BESIDE IT in a free party slot, using up a Poke Ball.
+  -- That is a party operation, not an evolution of this mon, and letting it
+  -- through here would turn the Nincada INTO a Shedinja and lose the Ninjask.
+  -- Named so the row is accounted for rather than silently unmatched.
+  LEVEL_SHEDINJA = {
+    check = function() return false end,
+    describe = function(evo) return Strings("Level %d", evo.level or 0) end,
+  },
+  -- FEEBAS, on contest BEAUTY.
+  --
+  -- The row has always been extracted -- method BEAUTY, parameter 170 -- and
+  -- it could not be checked, because a Pokemon in this engine had no contest
+  -- stats to check it against.  With those on the mon it is an ordinary
+  -- level-up gate: the beauty a MILOTIC costs is 170 of a possible 255, which
+  -- is a case of Dry Pokeblocks and a nature that likes them.
+  --
+  -- The RAW STAT, not the pentagon's condition.  The cartridge reads
+  -- MON_DATA_BEAUTY straight; the neighbours-and-sheen sum belongs to the
+  -- contest screen and would let a mon over the line on somebody else's
+  -- numbers.
+  BEAUTY = {
+    check = function(game, mon, evo, trigger)
+      if trigger.kind ~= "levelup" then return false end
+      if Evolution.holdsEverstone(game, mon) then return false end
+      local want = tonumber(evo.beauty)
+      if not want then return false end
+      local Contest = require("src.pokemon.Contest")
+      return Contest.get(mon, "beauty") >= want
+    end,
+    describe = function(evo)
+      return Strings("Beauty %d", tonumber(evo.beauty) or 0)
+    end,
+  },
   -- Gen2 EVOLVE_STAT (TYROGUE): a level gate plus an attack/defense
   -- comparison of the mon's own current stats.
   STAT = {
@@ -109,6 +167,15 @@ Evolution.METHODS = {
     end,
   },
 }
+
+-- Which cocoon this Wurmple is, or nil when the row does not apply yet.
+function Evolution.cocoon(game, mon, evo, trigger)
+  if trigger.kind ~= "levelup" then return nil end
+  if Evolution.holdsEverstone(game, mon) then return nil end
+  if (mon.level or 0) < (evo.level or 0) then return nil end
+  local personality = tonumber(mon.personality) or 0
+  return ((personality % 65536) % 10 <= 4) and "SILCOON" or "CASCOON"
+end
 
 -- An item id the way the mon carries it (ITEM_112) or the way a script names
 -- it (EVERSTONE); the two spellings both occur, so match on either.
@@ -131,7 +198,15 @@ Evolution.EVERSTONE = "EVERSTONE"
 
 function Evolution.holdsEverstone(game, mon)
   if not (mon and mon.item) then return false end
-  return Evolution.itemMatches(game, mon.item, Evolution.EVERSTONE)
+  if Evolution.itemMatches(game, mon.item, Evolution.EVERSTONE) then
+    return true
+  end
+  -- ...and by HOLD EFFECT, which is what a Gen 3 dataset answers with.  The
+  -- id match above still works on Emerald (the item really is keyed
+  -- EVERSTONE), but the effect is the cartridge's own test and covers a mod
+  -- that renames the stone or adds a second one.
+  local items = game and game.data and game.data.items
+  return require("src.battle.HoldItems").preventsEvolution(mon, items)
 end
 
 -- HAPPINESS_TO_EVOLVE / BASE_HAPPINESS (constants/pokemon_data_constants.asm)

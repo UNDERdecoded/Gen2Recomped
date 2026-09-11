@@ -38,10 +38,81 @@ Catching.BALLS = BALLS
 -- divisor, which is what the old per-field `or` defaults resolved to
 local DEFAULT_BALL = { randMax = 255, hpFactor = 12, wobbleFactor = 150 }
 
-function Catching.registerInto(registry, _, owner)
+-- ...AND HOENN'S TWELVE, WHICH ARE A DIFFERENT SUM.
+--
+-- Seven of Emerald's balls are not in the table above at all -- DIVE, LUXURY,
+-- NEST, NET, PREMIER, REPEAT and TIMER -- so throwing one did nothing, and
+-- the five that are ran Gen 1's arithmetic against Hoenn's catch rates.
+-- Cmd_handleballthrow is a different shape (a multiplier, the HP, the status,
+-- then two square roots), and Gen3Catching is that shape; extractBalls reads
+-- every number in it off the cartridge.
+--
+-- Registered as ORDINARY BALL RECORDS carrying their own `attempt`, which is
+-- the seam this file already has for exactly this: the battle code asks
+-- Catching.attempt and never learns there are two formulas.  A mod that
+-- overrides GREAT_BALL still overrides it, in Hoenn as in Johto.
+local function registerGen3(registry, data, owner)
+  local record = data and data.constants and data.constants.gen3Balls
+  if type(record) ~= "table" or type(record.order) ~= "table" then
+    return false
+  end
+  local Gen3Catching = require("src.battle.Gen3Catching")
+  for _, id in ipairs(record.order) do
+    -- REGISTER WHAT IS NEW, OVERRIDE WHAT IS NOT.
+    --
+    -- Reported from play as a boot crash: "balls already registered:
+    -- MASTER_BALL".  A record registry refuses a duplicate outright -- that
+    -- is the whole point of it, so a mod cannot silently shadow another
+    -- pack's entry -- and five of Hoenn's twelve share a name with Gen 1's.
+    -- The comment above always said these OVERRIDE the ones that share a
+    -- name; `register` is simply not the call that does that.
+    local write = registry:get(id) ~= nil and registry.override
+                  or registry.register
+    write(registry, id, {
+      -- kept so a caller that reads a ball's fields rather than throwing it
+      -- (the toss animation picks one, and Gen 1's wobble path is the
+      -- fallback if `attempt` is ever removed) still finds sane numbers
+      randMax = 255, hpFactor = 12, wobbleFactor = 150,
+      autoCatch = (id == record.master) or nil,
+      flicker = (id == record.master or id == record.order[2]) or nil,
+      tossAnim = (id == record.master or id == record.order[2])
+                 and "ULTRATOSS_ANIM" or "TOSS_ANIM",
+      attempt = function(ctx)
+        local mon, def = ctx.targetMon or {}, ctx.targetDef or {}
+        local battle = ctx.battle
+        local save = battle and battle.game and battle.game.save
+        local dex = save and save.pokedex
+        local owned = dex and dex.owned
+        local ow = battle and battle.game and battle.game.overworld
+        return Gen3Catching.attempt(record, id, {
+          catchRate = ctx.rateOverride or def.catchRate,
+          maxHP = (mon.stats and mon.stats.hp) or def.baseHP,
+          hp = mon.hp,
+          status = mon.status,
+          level = mon.level,
+          targetDef = def,
+          turns = battle and battle.turnCount,
+          alreadyCaught = (owned and mon.species
+                           and owned[mon.species]) and true or false,
+          -- the DIVE BALL asks the MAP, not the battle: the cartridge reads
+          -- GetCurrentMapType and compares it against MAP_TYPE_UNDERWATER
+          underwater = (ow and ow.map and ow.map.def
+                        and ow.map.def.mapType == record.underwaterType)
+                       or (ow and ow.diving) or false,
+        }, ctx.rng)
+      end,
+    }, owner)
+  end
+  return true
+end
+
+function Catching.registerInto(registry, data, owner)
   for id, record in pairs(BALLS) do
     registry:register(id, record, owner)
   end
+  -- Hoenn's override the ones that share a name and add the seven that had
+  -- none, so this runs after the table above rather than instead of it
+  registerGen3(registry, data, owner)
 end
 
 -- The stock ItemUseBall math.  On failure the ball wobbles per the

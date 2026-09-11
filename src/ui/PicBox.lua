@@ -26,6 +26,12 @@ local Font = require("src.render.Font")
 local BOX_X, BOX_Y, BOX_W, BOX_H = 6, 4, 9, 10
 local PIC_X, PIC_Y, PIC_TILES = (BOX_X + 1) * 8, (BOX_Y + 1) * 8, 7
 
+-- EMERALD PUTS THE BOX WHERE THE SCRIPT SAYS.  `showmonpic <species> <x> <y>`
+-- carries the window's own tile position, and the window is eight tiles square
+-- rather than seven -- a Gen 3 front pic is 64x64.  The Game Boy's numbers
+-- above stay the default, so nothing about Gen 1 or Gen 2 moves; a caller that
+-- knows better passes its own.
+
 local PicBox = {}
 PicBox.__index = PicBox
 PicBox.isOpaque = false
@@ -72,6 +78,11 @@ function PicBox.new(game, opts, text)
     self.text = opts.text
     self.passive = opts.passive and true or false
     self.overworld = opts.overworld
+    if type(opts.box) == "table" then
+      self.box = { x = opts.box.x, y = opts.box.y,
+                   w = opts.box.w, h = opts.box.h }
+    end
+    self.picTiles = tonumber(opts.picTiles)
   end
   self.image = coloredImage(path, colors)
   -- a baked pic carries its own colours, so the zone pass has to skip it
@@ -103,9 +114,22 @@ end
 
 function PicBox:update(dt)
   -- StateStack only updates the top state, so while this box is up nothing
-  -- else advances the script that opened it.
+  -- else advances the script that opened it -- and ticking the script runner
+  -- alone is not enough: a script that walks somebody while its picture is up
+  -- needs the FIELD pumped too, or the move queue never steps and
+  -- `waitmovement` never returns.  Same reasoning as FadeOverlay's, and only
+  -- while something is actually driving the field.
   local ow = self.overworld
-  if ow and ow.runner then ow.runner:update() end
+  if ow then
+    local runner = ow.runner
+    local busy = (runner and runner.isRunning and runner:isRunning())
+      or (ow.scriptMoves and #ow.scriptMoves > 0)
+    if busy and ow.update then
+      ow:update(dt or 1 / 60)
+    elseif runner then
+      runner:update()
+    end
+  end
   if self.passive then return end
   if self.armedDelay and self.armedDelay > 0 then
     self.armedDelay = self.armedDelay - 1
@@ -125,14 +149,18 @@ function PicBox:update(dt)
 end
 
 function PicBox:draw()
-  Font.drawBox(BOX_X, BOX_Y, BOX_W, BOX_H)
+  local box = self.box
+  local bx = (box and box.x) or BOX_X
+  local by = (box and box.y) or BOX_Y
+  Font.drawBox(bx, by, (box and box.w) or BOX_W, (box and box.h) or BOX_H)
   if not self.image then return end
   love.graphics.setColor(1, 1, 1, 1)
   local w, h = self.image:getDimensions()
+  local tiles = self.picTiles or PIC_TILES
   -- Gen2 pads a short pic into the 7x7 buffer the way the sprite loader
   -- does: centred across, sitting on the bottom row.
-  local x = PIC_X + math.floor((PIC_TILES - w / 8) / 2) * 8
-  local y = PIC_Y + (PIC_TILES - h / 8) * 8
+  local x = (bx + 1) * 8 + math.floor((tiles - w / 8) / 2) * 8
+  local y = (by + 1) * 8 + (tiles - h / 8) * 8
   love.graphics.draw(self.image, x, y)
   if self.trueColor then
     require("src.render.PaletteFX").markTrueColor(x, y, w, h)

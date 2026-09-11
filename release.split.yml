@@ -1,0 +1,1304 @@
+name: Release
+
+# Builds every shipping platform and publishes them as one GitHub Release.
+#
+#   version   resolve X.Y.Z once, so every job stamps the same number
+#   payload   the shared game.love (scripts/pack_love.sh) -- built ONCE and
+#             handed to the console/handheld jobs, so a Switch build and an
+#             Xbox build can never contain different bytes
+#   macos     the .app -- the only desktop build that needs a Mac, and the
+#             only one that is optional (see below)
+#   windows   the win64 zip, on Linux -- build.sh's win target is curl + unzip
+#             + `cat love.exe game.love` + zip, so it never needed a Mac
+#   linux     the x86_64 AppImage, on Linux -- squashfs-tools is native here
+#   ios       an UNSIGNED device IPA, on its own macOS runner. Unsigned is
+#             the useful artifact rather than a compromise: AltStore and
+#             Sideloadly re-sign on install with the user's own account, so
+#             a repo with no Apple certificates still ships something
+#             installable -- which the signed-only path never did
+#   android   the APK, on Linux -- GitHub's macOS runners no longer ship
+#             the Android SDK, and it never needed a Mac in the first place
+#   rg34xxsp  the Anbernic PortMaster pack, on Linux -- it is curl + zip
+#             around an aarch64 runtime and never needed a Mac either
+#   msix      Windows Store package, from the windows job's win64 build
+#   xbox      Xbox Dev Mode UWP package
+#   arm64     ARM64 AppImage for ARM handhelds/SBCs
+#   switch    fused NRO + OTA launcher + SD zip
+#   publish   stages everything that arrived, checksums it, cuts the release
+#
+# Every script is invoked as `bash scripts/...` rather than `scripts/...`.
+# The executable bit does not survive every checkout or editing path, and a
+# lost mode bit is otherwise a "Permission denied" that kills the whole run.
+#
+# Only `windows` and `linux` can fail a release. Every other platform job --
+# macOS included -- is continue-on-error: a toolchain hiccup on the Switch
+# container, the UWP SDK, or a Homebrew cask that got disabled overnight must
+# not stop a release that has perfectly good Windows, Linux and Android builds
+# in it. Whatever is missing is simply absent from the release; publish globs
+# what arrived and prints a ::warning:: naming every platform that did not.
+#
+# macOS is on that list from experience: while mac, Windows and Linux were one
+# job, `brew install --cask love` being disabled for a Gatekeeper failure threw
+# away two finished archives and published nothing at all.
+#
+# Versioning:
+#   - First ever release is 0.1.0.
+#   - Every push to main auto-increments the patch: 0.1.0 -> 0.1.1 -> ... ->
+#     0.1.99, then rolls over to 0.2.0 and keeps going.
+#   - To force a specific version, either:
+#       * run this workflow manually (Actions tab) and type it into "version", or
+#       * put "[release X.Y.Z]" anywhere in the commit message.
+#
+# Apple work is opt-in through two repository variables, because the default
+# is a repo with no Mac and no certificates:
+#   MACOS_SELF_HOSTED=true  use a self-hosted macOS runner instead of hosted
+#   APPLE_SIGNING=true      import certificates, notarize the macOS app, and
+#                           push the AltStore app repo. It no longer gates the
+#                           IPA: the ios job below always builds one.
+#
+# Branch model: day-to-day work merges to `dev`. Releases stay on `main` only
+# so promoting `dev` -> `main` is the ship gate that cuts a build.
+
+on:
+  push:
+    branches: [main]
+    # CI/workflow and docs-only changes don't ship anything to users, so they
+    # don't earn a release. A push touching these *and* real source still
+    # releases; only pushes confined entirely to these paths are skipped.
+    paths-ignore:
+      - '.github/**'
+      - '**.md'
+      - 'mobile/ios/app-repo.json'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Exact version to release (e.g. 0.2.0). Leave blank to auto-increment."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+  issues: read
+  pull-requests: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  # --------------------------------------------------------------- version
+  version:
+    name: resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      tag: ${{ steps.ver.outputs.tag }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Determine version
+        id: ver
+        env:
+          DISPATCH_VERSION: ${{ github.event.inputs.version }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          semver_re='^[0-9]+\.[0-9]+\.[0-9]+$'
+
+          # 1) Explicit override from a manual run.
+          override=""
+          if [ -n "${DISPATCH_VERSION:-}" ]; then
+            override="$DISPATCH_VERSION"
+          else
+            # 2) Override from the commit message: [release X.Y.Z]
+            msg="$(git log -1 --pretty=%B || true)"
+            tag_ver="$(printf '%s' "$msg" | sed -n -E 's/.*\[release[[:space:]]+([0-9]+\.[0-9]+\.[0-9]+)\].*/\1/p' | head -1)"
+            if [ -n "$tag_ver" ]; then
+              override="$tag_ver"
+            fi
+          fi
+
+          if [ -n "$override" ]; then
+            if ! printf '%s' "$override" | grep -Eq "$semver_re"; then
+              echo "::error::Invalid version override '$override' (expected X.Y.Z)"
+              exit 1
+            fi
+            version="$override"
+            echo "Using override version: $version"
+          else
+            # 3) Auto-increment, with src/core/Version.lua as the FLOOR.
+            #
+            # Version.lua's own comment calls itself "the release it is
+            # building towards", and the game decides whether an update
+            # exists by comparing the published release against
+            # Version.engine (src/update/check_worker.lua:
+            # `release <= current -> uptodate`).  Deriving the version from
+            # git tags ALONE ignored that file: the tree declared 0.5.1 while
+            # this job kept cutting 0.1.x, so every build reported itself as
+            # newer than anything published and no player was ever offered an
+            # update.  Taking the higher of the two makes the declared engine
+            # line authoritative without giving up per-push auto-increment.
+            latest="$(git tag -l 'v*' \
+              | sed -E 's/^v//' \
+              | grep -E "$semver_re" \
+              | sort -t. -k1,1n -k2,2n -k3,3n \
+              | tail -1 || true)"
+
+            declared="$(sed -n -E 's/.*engine[[:space:]]*=[[:space:]]*"([0-9]+\.[0-9]+\.[0-9]+)".*/\1/p' \
+              src/core/Version.lua | head -1 || true)"
+            echo "Version.lua declares: ${declared:-<none>}"
+            echo "Highest release tag:  ${latest:-<none>}"
+
+            # Higher of the two, ordered as versions rather than as strings.
+            base="$(printf '%s\n%s\n' "${declared:-0.0.0}" "${latest:-0.0.0}" \
+              | grep -E "$semver_re" \
+              | sort -t. -k1,1n -k2,2n -k3,3n \
+              | tail -1)"
+            [ -n "$base" ] || base="0.1.0"
+
+            if [ "$base" = "$declared" ] \
+                && ! git rev-parse -q --verify "refs/tags/v${base}" >/dev/null; then
+              # The tree asked for a version that has never shipped: ship
+              # exactly that, so Version.lua means what it says.
+              version="$base"
+              echo "Releasing the declared version $version"
+            else
+              major="${base%%.*}"
+              rest="${base#*.}"
+              minor="${rest%%.*}"
+              patch="${rest##*.}"
+              patch=$((patch + 1))
+              if [ "$patch" -gt 99 ]; then
+                minor=$((minor + 1))
+                patch=0
+              fi
+              version="${major}.${minor}.${patch}"
+              echo "Base was $base; next is $version"
+            fi
+          fi
+
+          tag="v${version}"
+          if git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists. Pick a different version."
+            exit 1
+          fi
+          if gh release view "$tag" >/dev/null 2>&1; then
+            echo "::error::Release $tag already exists. Pick a different version."
+            exit 1
+          fi
+
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  # ---------------------------------------------------------------- payload
+  # One game.love for every job that can take a prebuilt one.  scripts/build.sh
+  # packs its own (it has no --game-love), which is fine: the published payload
+  # is this one, and the updater only has to match the checksum published
+  # beside it.
+  payload:
+    name: shared game.love
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Pack payload
+        run: |
+          set -euo pipefail
+          mkdir -p .bazinga/work
+          bash scripts/pack_love.sh \
+            --output .bazinga/work/game.love \
+            --listing .bazinga/work/love-listing.txt \
+            --version "${{ needs.version.outputs.version }}"
+
+      # The same gate every platform build runs before it fuses anything:
+      # no ROM bytes, no save data, no generated cache.
+      - name: Verify payload
+        run: bash scripts/switch/verify_payload.sh .bazinga/work/game.love
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: game-love
+          path: .bazinga/work/game.love
+          if-no-files-found: error
+          retention-days: 1
+
+  # ----------------------------------------------------------------- macOS
+  # The .app, and the only one of the three desktop builds that genuinely
+  # needs a Mac: scripts/build.sh's build_mac copies /Applications/love.app,
+  # rewrites Info.plist with PlistBuddy, codesigns and zips with ditto.
+  #
+  # It is continue-on-error and NOT part of the publish gate, because it is
+  # also the most fragile of the three -- it depends on a hosted Xcode image,
+  # a keychain, Apple's notary service and a third-party LÖVE download, any of
+  # which can break on a morning nobody touched the repo. When macOS and
+  # Windows and Linux were one job, a disabled Homebrew cask took the Windows
+  # and Linux archives down with it and published nothing at all. Now it costs
+  # exactly one asset.
+  macos:
+    name: macOS app
+    needs: version
+    runs-on: ${{ fromJSON(vars.MACOS_SELF_HOSTED == 'true' && '["self-hosted", "macOS"]' || '"macos-latest"') }}
+    continue-on-error: true
+    steps:
+      # The self-hosted runner lives under the machine owner's home
+      # directory; mask it first so absolute paths in every later step's
+      # output show up as *** in the public workflow logs.
+      - name: Mask runner paths
+        run: echo "::add-mask::$HOME"
+
+      - uses: actions/checkout@v7
+
+      - name: Import signing certificate into a temporary keychain
+        if: vars.APPLE_SIGNING == 'true'
+        run: |
+          set -euo pipefail
+          KEYCHAIN_PATH="$RUNNER_TEMP/pokemon-signing.keychain-db"
+          ci_dir="${POKEMON_CI_DIR:-$HOME/.config/pokemon-ci}"
+          p12="$ci_dir/signing.p12"
+          passfile="$ci_dir/signing.pass"
+          if [ ! -f "$p12" ] || [ ! -f "$passfile" ]; then
+            echo "::error::Signing material not found in $ci_dir. Run scripts/ci-setup-signing.sh on the runner."
+            exit 1
+          fi
+          p12pw="$(cat "$passfile")"
+
+          kcpw="$(openssl rand -base64 24)"
+          echo "::add-mask::$kcpw"
+
+          # Fresh, dedicated keychain — no dependence on the login keychain/session.
+          security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+          security create-keychain -p "$kcpw" "$KEYCHAIN_PATH"
+          security set-keychain-settings "$KEYCHAIN_PATH"          # disable auto-lock
+          security unlock-keychain -p "$kcpw" "$KEYCHAIN_PATH"
+
+          security import "$p12" -P "$p12pw" -k "$KEYCHAIN_PATH" \
+            -T /usr/bin/codesign -T /usr/bin/security
+
+          # Let codesign use the key non-interactively.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$kcpw" "$KEYCHAIN_PATH" >/dev/null
+
+          # Make the keychain visible to find-identity/codesign (prepend to search list).
+          existing="$(security list-keychains -d user | sed -e 's/^[[:space:]]*//' -e 's/"//g')"
+          security list-keychains -d user -s "$KEYCHAIN_PATH" $existing
+
+          echo "Identities available to codesign:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+
+      # `brew install --cask love` no longer works.  Homebrew DISABLED the
+      # cask on 2026-09-01 because upstream's love.app does not pass the macOS
+      # Gatekeeper check, and a disabled cask is a hard error rather than a
+      # warning:
+      #     Error: love: Cask 'love' has been disabled because it does not
+      #     pass the macOS Gatekeeper check!
+      # There is no `--force` for a disabled cask and no other tap carries it,
+      # so the fix is to stop going through Homebrew at all and fetch the same
+      # archive Homebrew was fetching, from the LÖVE release itself.
+      #
+      # Gatekeeper is irrelevant to this runner: nothing ever LAUNCHES
+      # love.app here.  build_mac only copies the bundle, fuses game.love into
+      # Contents/Resources and -- when APPLE_SIGNING is on -- re-signs the copy
+      # with our own Developer ID, so the signature players see is ours and
+      # never upstream's.
+      #
+      # LOVE_APP (build.sh honours it) points at the extracted copy instead of
+      # installing into /Applications, which needs no write access to a
+      # directory this job has no business touching, and leaves a self-hosted
+      # runner's own install alone.
+      #
+      # The version is READ OUT OF scripts/build.sh rather than written a
+      # second time here: LOVE_VERSION there already drives the win64 and
+      # AppImage downloads, and a .app built against a different LÖVE than the
+      # other two platforms is exactly the sort of drift that surfaces months
+      # later as one platform behaving differently.
+      - name: Install LÖVE for the macOS bundle
+        run: |
+          set -euo pipefail
+          if [ -d /Applications/love.app ]; then
+            echo "LÖVE already installed on this runner"
+            echo "LOVE_APP=/Applications/love.app" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          ver="$(sed -n -E 's/^LOVE_VERSION="([^"]+)".*/\1/p' scripts/build.sh | head -1)"
+          [ -n "$ver" ] || { echo "::error::could not read LOVE_VERSION from scripts/build.sh"; exit 1; }
+          echo "LÖVE version (from scripts/build.sh): $ver"
+
+          zip="$RUNNER_TEMP/love-macos.zip"
+          curl -fL --retry 3 --retry-delay 5 --progress-bar \
+            "https://github.com/love2d/love/releases/download/${ver}/love-${ver}-macos.zip" \
+            -o "$zip" \
+            || { echo "::error::could not download love-${ver}-macos.zip"; exit 1; }
+          unzip -tqq "$zip" >/dev/null 2>&1 \
+            || { echo "::error::love-${ver}-macos.zip is not a valid zip (truncated download?)"; exit 1; }
+
+          dest="$RUNNER_TEMP/love-macos"
+          rm -rf "$dest"
+          unzip -q "$zip" -d "$dest"
+          app="$(find "$dest" -maxdepth 2 -name 'love.app' -type d | head -1)"
+          [ -n "$app" ] || { echo "::error::no love.app inside love-${ver}-macos.zip"; ls -laR "$dest"; exit 1; }
+
+          # curl does not set com.apple.quarantine, but strip it anyway so a
+          # self-hosted runner that once fetched this through a browser
+          # behaves identically to a hosted one.
+          xattr -dr com.apple.quarantine "$app" 2>/dev/null || true
+
+          echo "LOVE_APP=$app" >> "$GITHUB_ENV"
+          echo "using LÖVE bundle: $app"
+
+      - name: Build macOS app
+        run: |
+          set -euo pipefail
+          # Sign in-build (identity auto-detected from the temp keychain);
+          # notarize separately below so it uses secret credentials, not a
+          # login-keychain profile.
+          bash scripts/build.sh mac --version "${{ needs.version.outputs.version }}" --no-notarize
+
+      - name: Notarize & staple macOS app
+        if: vars.APPLE_SIGNING == 'true'
+        run: |
+          set -euo pipefail
+          ci_dir="${POKEMON_CI_DIR:-$HOME/.config/pokemon-ci}"
+          if [ ! -f "$ci_dir/notary.env" ]; then
+            echo "::error::Missing $ci_dir/notary.env. Run scripts/ci-setup-signing.sh on the runner."
+            exit 1
+          fi
+          set -a; . "$ci_dir/notary.env"; set +a
+          echo "::add-mask::$APPLE_APP_PASSWORD"
+
+          app=".bazinga/work/Gen2Recomped.app"
+          zip="dist/mac/Gen2Recomped-macos.zip"
+          [ -d "$app" ] || { echo "::error::signed app not found at $app"; exit 1; }
+          if [ -z "${APPLE_ID:-}" ] || [ -z "${APPLE_APP_PASSWORD:-}" ] || [ -z "${APPLE_TEAM_ID:-}" ]; then
+            echo "::error::notary.env is missing APPLE_ID / APPLE_APP_PASSWORD / APPLE_TEAM_ID."
+            exit 1
+          fi
+
+          echo "Submitting to Apple notary service (can take a few minutes)..."
+          xcrun notarytool submit "$zip" \
+            --apple-id "$APPLE_ID" \
+            --team-id "$APPLE_TEAM_ID" \
+            --password "$APPLE_APP_PASSWORD" \
+            --wait
+
+          echo "Stapling ticket to the app..."
+          xcrun stapler staple "$app"
+
+          # Re-zip the now-stapled app (same format build.sh uses).
+          rm -f "$zip"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$zip"
+          echo "Notarized + stapled ✓"
+
+      - name: Stage the macOS archive
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/mac/Gen2Recomped-macos.zip" "staged/Gen2Recomped-${v}-macos.zip"
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-macos
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+      - name: Clean up signing keychain
+        if: ${{ always() && vars.APPLE_SIGNING == 'true' }}
+        run: |
+          security delete-keychain "$RUNNER_TEMP/pokemon-signing.keychain-db" 2>/dev/null || true
+
+  # --------------------------------------------------------------- Windows
+  # ubuntu-latest, not macOS.  scripts/build.sh's build_win is curl + unzip +
+  # `cat love.exe game.love > Gen2Recomped.exe` + zip; there has never been an
+  # Apple tool anywhere in it, and it was only running on the Mac because it
+  # shared a job with the .app.  On Linux it is both faster and free (GitHub
+  # bills macOS minutes at 10x), and -- the point of the split -- a broken
+  # Xcode image or a disabled Homebrew cask can no longer stop the Windows
+  # build from happening.
+  windows:
+    name: Windows (win64)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Build Windows (win64)
+        run: |
+          set -euo pipefail
+          bash scripts/build.sh win --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage the Windows archive
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/win/Gen2Recomped-win64.zip" "staged/Gen2Recomped-${v}-windows.zip"
+          ls -lh staged
+
+      # The un-renamed win64 build the MSIX job repacks, kept apart from the
+      # release staging so that job does not have to unpick a renamed archive.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-raw
+          path: dist/win/Gen2Recomped-win64.zip
+          if-no-files-found: error
+          retention-days: 1
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-windows
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ----------------------------------------------------------------- Linux
+  # Also ubuntu-latest, and for a better reason than the Windows job: the
+  # x86_64 AppImage is assembled by unpacking LÖVE's official AppImage with
+  # unsquashfs and repacking it with mksquashfs, and squashfs-tools is native
+  # here rather than a `brew install squashfs` on a machine that has no
+  # business needing it.
+  linux:
+    name: Linux (x86_64 AppImage)
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      # Never run `apt-get update` unconditionally: GitHub's
+      # azure.archive.ubuntu.com mirror stalls for 10-60 minutes at random
+      # (actions/runner-images#12949).  Same guarded shape the rg34xxsp job
+      # uses -- check first, install only what is actually missing.
+      - name: Verify squashfs tools
+        run: |
+          set -euo pipefail
+          missing=()
+          for tool in mksquashfs unsquashfs zip unzip curl; do
+            command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "all packaging tools present"
+            mksquashfs -version | head -1
+            exit 0
+          fi
+          echo "::warning::runner image is missing ${missing[*]} -- installing"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends squashfs-tools zip unzip curl
+          mksquashfs -version | head -1
+
+      - name: Build Linux (x86_64 AppImage)
+        run: |
+          set -euo pipefail
+          bash scripts/build.sh linux --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage the Linux archive
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/linux/Gen2Recomped-linux.zip" "staged/Gen2Recomped-${v}-linux.zip"
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-linux
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+  # -------------------------------------------------------------------- ios
+  # An UNSIGNED device IPA, built with no certificates at all.
+  #
+  # This used to live inside the desktop job behind APPLE_SIGNING, which meant
+  # a repo without Apple credentials published no iOS build whatsoever. It does
+  # not need them: AltStore and Sideloadly re-sign on install with the user's
+  # own free account, so an unsigned IPA is the normal shape for sideloading and
+  # the one that reaches the most people.
+  #
+  # Its own job for the same reason android and rg34xxsp are: a 90-minute
+  # xcodebuild that fetches and compiles the LOVE sources must not be able to
+  # throw away three finished desktop archives, and continue-on-error keeps a
+  # broken Xcode image from failing the release.
+  #
+  # macos-15 is PINNED, not macos-latest: this compiles LOVE from source against
+  # a fetched Apple dependency set, which is exactly the kind of thing a
+  # runner-image roll breaks silently.
+  ios:
+    name: iOS IPA (unsigned)
+    needs: version
+    runs-on: macos-15
+    timeout-minutes: 90
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # --package-only fetches the LOVE sources, zips game.love and applies the
+      # plist overlay, then stops before xcodebuild -- which is what lets the
+      # build below run with signing switched off entirely.
+      - name: Fetch LOVE sources and package game.love
+        run: |
+          set -euo pipefail
+          bash scripts/build_ios.sh --fetch --package-only \
+            --version "${{ needs.version.outputs.version }}"
+
+      - name: Build unsigned device app
+        run: |
+          set -euo pipefail
+          cd mobile/ios/love-src/platform/xcode
+          xcodebuild \
+            -project love.xcodeproj \
+            -target love-ios \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination "generic/platform=iOS" \
+            SYMROOT="$GITHUB_WORKSPACE/build/Products" \
+            OBJROOT="$GITHUB_WORKSPACE/build/Intermediates" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            ONLY_ACTIVE_ARCH=NO \
+            PRODUCT_BUNDLE_IDENTIFIER="com.underdecodedhd.gen2recomped"
+
+      # A .ipa is a zip holding the .app inside a top-level Payload/ directory
+      # and nothing else; every sideloader reads that shape.
+      - name: Package and stage the IPA
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+
+          app="$(find build/Products -name "*.app" -type d | head -1)"
+          if [ -z "$app" ]; then
+            echo "::error::no .app under build/Products"
+            find build -name "*.app" || true
+            ls -laR build/Products || true
+            exit 1
+          fi
+          echo "app: $app"
+
+          # The build normally copies game.love in from the Xcode resources.
+          # Fuse it here if that did not happen, or the IPA installs and then
+          # launches to a LOVE "no game" screen -- which reads as a broken
+          # build rather than a missing file.
+          if [ ! -f "$app/game.love" ]; then
+            echo "fusing game.love into the app bundle"
+            cp mobile/ios/love-src/platform/xcode/ios/resources/game.love "$app/"
+          fi
+          [ -f "$app/game.love" ] || { echo "::error::no game.love in $app"; exit 1; }
+
+          mkdir -p Payload staged
+          cp -R "$app" Payload/
+          # -y stores symlinks rather than following them: a .app is full of
+          # them, and a followed link both bloats the IPA and can break the
+          # re-sign a sideloader performs on install.
+          zip -qry "staged/Gen2Recomped-${v}-ios.ipa" Payload
+          rm -rf Payload
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-ios
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------- android
+  # Its own Linux job. scripts/build_android.sh's require_android_sdk needs
+  # ANDROID_SDK_ROOT/ANDROID_HOME, and the hosted macOS images stopped
+  # shipping the Android SDK -- so the step died two seconds after packing
+  # game.love and took the whole desktop job (mac, Windows, Linux, RG34XXSP)
+  # down with it. ubuntu-latest has the SDK preinstalled, builds faster, and
+  # an Android failure can no longer cost you four other platforms.
+  android:
+    name: Android APK
+    needs: version
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Install the pinned NDK
+        run: |
+          set -euo pipefail
+          ndk="$(grep -E '^NDK_VERSION=' scripts/build_android.sh | head -1 | cut -d'"' -f2)"
+          echo "NDK: $ndk"
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          ( set +o pipefail; yes 2>/dev/null | "$sdkmanager" --install "ndk;$ndk" >/dev/null )
+          ls -d "$ANDROID_HOME/ndk/$ndk"
+
+      # app/build.gradle now names mobile/android/debug.keystore in an explicit
+      # signingConfig, so the APK no longer depends on this copy.  It stays for
+      # anything else in the tree that falls back to the SDK default location,
+      # and because it costs nothing.  The assertion is the part that matters:
+      # if the committed keystore is ever replaced, this fails in seconds
+      # instead of after a twenty-minute NDK build -- and long before an APK
+      # nobody can install over their existing one reaches a release.
+      - name: Install stable debug keystore
+        run: |
+          set -euo pipefail
+          ks="mobile/android/debug.keystore"
+          [ -f "$ks" ] || { echo "::error::missing $ks"; exit 1; }
+          mkdir -p "$HOME/.android"
+          cp "$ks" "$HOME/.android/debug.keystore"
+          echo "debug keystore file: $(sha256sum "$ks" | awk '{print $1}')"
+
+          got="$(keytool -list -v -keystore "$ks" -storepass android \
+                 | sed -n -E 's/^[[:space:]]*SHA256:[[:space:]]*([0-9A-F:]+).*/\1/p' \
+                 | head -1 | tr -d ':' | tr 'A-F' 'a-f')"
+          echo "signing certificate SHA-256: $got"
+          if [ "$got" != "$EXPECTED_CERT" ]; then
+            echo "::error::debug.keystore holds the WRONG KEY."
+            echo "::error::expected $EXPECTED_CERT"
+            echo "::error::got      $got"
+            echo "::error::Changing the signing key means no existing install can update."
+            echo "::error::See docs/android-signing.md before touching this file."
+            exit 1
+          fi
+        env:
+          # Certificate SHA-256 of mobile/android/debug.keystore
+          # (alias androiddebugkey, created 2026-08-02).  Every release from
+          # here must print this digest or it cannot upgrade the last one.
+          EXPECTED_CERT: 91ff1bad5d97a2cafd3da7ecf04a6b084792073dcd28df63db812a787cfb24ea
+
+      - name: Build APK
+        run: |
+          set -euo pipefail
+          bash scripts/build_android.sh --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage APK
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          apk="$(find dist/android -name '*.apk' | head -1)"
+          [ -n "$apk" ] || { echo "::error::no APK under dist/android"; exit 1; }
+          cp "$apk" "staged/Gen2Recomped-${v}-android.apk"
+          ls -lh staged
+
+      # The check that actually protects players, run on the bytes being
+      # published rather than on the inputs that produced them.  Two APKs can
+      # update each other if and only if these digests match, so a mismatch
+      # here means the release would greet everyone with "App not installed as
+      # package conflicts with an existing package".  Failing the job leaves
+      # the release with no APK, which is recoverable; publishing an
+      # unupgradeable one is not.
+      #
+      # apksigner is NOT on PATH on a hosted runner -- the old
+      # `command -v apksigner` was therefore always false and this never ran
+      # at all.  It lives under $ANDROID_HOME/build-tools/<version>/.
+      - name: Verify the APK signing certificate
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          apk="staged/Gen2Recomped-${v}-android.apk"
+
+          apksigner="$(find "${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}/build-tools" \
+                        -maxdepth 2 -name apksigner -type f 2>/dev/null | sort -V | tail -1)"
+          [ -n "$apksigner" ] || { echo "::error::apksigner not found under the Android SDK"; exit 1; }
+          echo "apksigner: $apksigner"
+
+          "$apksigner" verify --print-certs "$apk"
+          got="$("$apksigner" verify --print-certs "$apk" \
+                 | sed -n -E 's/.*certificate SHA-256 digest:[[:space:]]*([0-9a-fA-F]+).*/\1/p' \
+                 | head -1 | tr 'A-F' 'a-f')"
+          [ -n "$got" ] || { echo "::error::could not read a certificate digest from $apk"; exit 1; }
+
+          if [ "$got" != "$EXPECTED_CERT" ]; then
+            echo "::error::$apk is signed by the wrong key; it cannot update any released build."
+            echo "::error::expected $EXPECTED_CERT"
+            echo "::error::got      $got"
+            exit 1
+          fi
+          echo "signing certificate matches the pinned key ✓"
+        env:
+          EXPECTED_CERT: 91ff1bad5d97a2cafd3da7ecf04a6b084792073dcd28df63db812a787cfb24ea
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-android
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # --------------------------------------------------------------- rg34xxsp
+  # Anbernic RG34XXSP / Stock OS 64-bit MOD PortMaster pack.  It used to run
+  # inside the desktop job on macOS for no reason: the whole build is curl +
+  # zip around a prebuilt aarch64 LÖVE runtime, nothing in it is Apple's.
+  # Worse, it ran BEFORE that job collected the mac/Windows/Linux archives, so
+  # one bad download here threw away three good desktop builds.  Its own job
+  # on Linux is both faster and independently failable.
+  rg34xxsp:
+    name: Anbernic RG34XXSP (PortMaster)
+    needs: version
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      # zip, unzip, curl and file are ALL preinstalled on the ubuntu-latest
+      # runner image, so this step only has to cover a future image that
+      # drops one of them.  Never run `apt-get update` unconditionally here:
+      # GitHub's azure.archive.ubuntu.com mirror stalls for anywhere between
+      # 10 and 60 minutes at random (actions/runner-images#12949), and this
+      # was the ONLY apt user in the whole workflow -- which is exactly why
+      # RG34XXSP was the only job that ever looked broken.
+      - name: Verify packaging tools
+        run: |
+          set -euo pipefail
+          missing=()
+          for tool in zip unzip curl file; do
+            command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+          done
+          if [ ${#missing[@]} -eq 0 ]; then
+            echo "packaging tools already present: zip unzip curl file"
+            exit 0
+          fi
+          echo "::warning::runner image is missing ${missing[*]} -- installing"
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get install -y --no-install-recommends "${missing[@]}"
+
+      - name: Build the port
+        run: |
+          set -euo pipefail
+          # Payload comes from scripts/pack_love.sh, same as every other
+          # platform, so this pack cannot drift from the desktop build.
+          bash ./build-rg34xxsp.sh --version "${{ needs.version.outputs.version }}"
+
+      - name: Stage the pack
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          rg34="dist/rg34xxsp/gen2recomp-rg34xxsp-stockos64-mod.zip"
+          [ -f "$rg34" ] || { echo "::error::$rg34 not found (expected from ./build-rg34xxsp.sh)"; exit 1; }
+          cp "$rg34" "staged/Gen2Recomped-${v}-rg34xxsp-stockos64-mod.zip"
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-rg34xxsp
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ------------------------------------------------------------------- msix
+  msix:
+    name: Windows MSIX
+    needs: [version, windows]
+    runs-on: windows-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-raw
+          path: dist/win
+
+      - name: Unpack the Windows build
+        shell: pwsh
+        run: |
+          Expand-Archive -Path dist/win/Gen2Recomped-win64.zip -DestinationPath dist/win -Force
+          Get-ChildItem dist/win
+
+      - name: Build MSIX
+        shell: pwsh
+        env:
+          MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
+          MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v   = '${{ needs.version.outputs.version }}'
+          $out = "dist/msix/Gen2Recomped-$v.msix"
+          $src = 'dist/win/Gen2Recomped-win64'
+
+          if ($env:MSIX_PFX_BASE64) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'msix-signing.pfx'
+
+            # Strip whitespace/newlines that the GitHub UI or clipboard often insert
+            $b64 = ($env:MSIX_PFX_BASE64 -replace '\s', '')
+            $pwdStr = if ($null -eq $env:MSIX_PFX_PASSWORD) { '' } else { $env:MSIX_PFX_PASSWORD.Trim() }
+
+            [IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($b64))
+
+            $bytes = [IO.File]::ReadAllBytes($pfx)
+            Write-Host "PFX size: $($bytes.Length) bytes"
+            Write-Host "PFX header: $([BitConverter]::ToString($bytes[0..([Math]::Min(3, $bytes.Length-1))]))"
+            Write-Host "Password length (after trim): $($pwdStr.Length)"
+
+            $pw = if ([string]::IsNullOrEmpty($pwdStr)) {
+              New-Object System.Security.SecureString
+            } else {
+              ConvertTo-SecureString -String $pwdStr -Force -AsPlainText
+            }
+
+            try {
+              try {
+                $null = Get-PfxData -FilePath $pfx -Password $pw
+                Write-Host "PFX opens with provided password OK"
+              } catch {
+                Write-Host "Get-PfxData failed: $($_.Exception.Message)"
+                try {
+                  $null = [System.Security.Cryptography.X509Certificates.X509Certificate2]::new(
+                    $pfx, $pwdStr,
+                    [System.Security.Cryptography.X509Certificates.X509KeyStorageFlags]::EphemeralKeySet
+                  )
+                  Write-Host "X509Certificate2 open OK"
+                } catch {
+                  throw "Cannot open PFX (wrong password or not a PKCS#12 file). Inner: $($_.Exception.Message)"
+                }
+              }
+
+              ./scripts/build_msix.ps1 -Source $src -Version $v -OutFile $out `
+                -CertPath $pfx -CertPassword $pw
+            } finally {
+              Remove-Item -Force -ErrorAction SilentlyContinue $pfx
+            }
+          } else {
+            Write-Host '::warning::MSIX_PFX_BASE64 secret is not set - signing with a throwaway certificate. Every release will require players to trust a NEW certificate. See docs/msix-signing.md.'
+            ./scripts/build_msix.ps1 -Source $src -Version $v -OutFile $out -MakeCert
+          }
+
+      - name: Stage MSIX
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/msix/Gen2Recomped-${v}.msix" "staged/Gen2Recomped-${v}-windows.msix"
+          cer="dist/msix/Gen2Recomped-${v}.cer"
+          [ -f "$cer" ] || { echo "::error::$cer missing; the package would be uninstallable"; exit 1; }
+          cp "$cer" "staged/Gen2Recomped-${v}-windows.cer"
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-msix
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+  # ------------------------------------------------------------------- xbox
+  xbox:
+    name: Xbox Dev Mode UWP
+    needs: [version, payload]
+    # PINNED, not windows-latest.  ports/uwp/CMakePresets.json asks for the
+    # "Visual Studio 17 2022" generator, and windows-latest has rolled past
+    # VS 17 -- so CMake found no matching instance even after the UWP workload
+    # installed cleanly. windows-2022 is the image that actually ships VS 17.
+    runs-on: windows-2022
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: game-love
+          path: .bazinga/work
+
+      # "could not find any instance of Visual Studio" is CMake saying no
+      # installed VS can target WindowsStore -- the hosted image ships VS2022
+      # but NOT the UWP C++ workload, and a UWP generator needs it.  This adds
+      # the two components and takes several minutes; it is why this job is
+      # the slowest of the set.
+      - name: Add the UWP C++ workload to Visual Studio
+        shell: pwsh
+        run: |
+          $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+          if (-not (Test-Path $vswhere)) { throw "vswhere not found; no Visual Studio on this runner" }
+          $vsPath = & $vswhere -latest -products * -property installationPath
+          if (-not $vsPath) { throw "vswhere reported no Visual Studio installation" }
+          Write-Host "Visual Studio: $vsPath"
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vs_installer.exe"
+          $args = @(
+            'modify', '--installPath', "`"$vsPath`"",
+            '--add', 'Microsoft.VisualStudio.ComponentGroup.UWP.VC',
+            '--add', 'Microsoft.VisualStudio.Component.VC.Tools.x86.x64',
+            '--quiet', '--norestart', '--nocache'
+          )
+          $p = Start-Process -FilePath $installer -ArgumentList $args -Wait -PassThru
+          Write-Host "installer exit: $($p.ExitCode)"
+          # 3010 is "success, reboot pending", which is fine for a build agent
+          if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) {
+            throw "VS installer failed with $($p.ExitCode)"
+          }
+          & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath
+
+      # scripts/build_xbox_uwp.sh refuses to run anywhere but Git Bash, which
+      # is exactly what `shell: bash` is on a Windows runner (uname reports
+      # MINGW64_NT, and cygpath / powershell.exe / unzip are all on PATH).
+      - name: Build UWP package
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/build_xbox_uwp.sh --release \
+            --version "${{ needs.version.outputs.version }}" \
+            --game-love .bazinga/work/game.love \
+            --publisher "${GEN2RECOMPED_UWP_PUBLISHER:-CN=Gen2Recomped}"
+
+      - name: Stage UWP package
+        shell: bash
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/xbox-uwp/Gen2Recomped-${v}-xbox-uwp.zip" staged/
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-xbox
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ------------------------------------------------------------------ arm64
+  arm64:
+    name: Linux ARM64 AppImage
+    needs: [version, payload]
+    runs-on: ubuntu-24.04-arm
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: game-love
+          path: .bazinga/work
+
+      # The script builds inside a container so the host needs no toolchain,
+      # but it must be a real arm64 host -- it refuses to cross-compile.
+      - name: Build AppImage
+        run: |
+          set -euo pipefail
+          bash scripts/build_linux_arm64.sh \
+            --version "${{ needs.version.outputs.version }}" \
+            --game-love .bazinga/work/game.love
+
+      - name: Stage AppImage
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          cp "dist/linux-arm64/Gen2Recomped-${v}-linux-arm64.AppImage" staged/
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-arm64
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ----------------------------------------------------------------- switch
+  switch:
+    name: Nintendo Switch
+    needs: [version, payload]
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: game-love
+          path: .bazinga/work
+
+      # No devkitPro on the runner: both build scripts fall back to Docker,
+      # which ubuntu-latest already has. The image is pinned in
+      # scripts/switch/dkp-docker.image.
+      # dkp-docker.image is a PINNED IMAGE WITH COMMENTS, so it has to be read
+      # the way scripts/switch/build_fused.sh reads it (resolve_dkp_image):
+      # drop comment and blank lines, take the first real one.  Stripping
+      # whitespace instead glued the comment text onto the image name and
+      # docker rejected the reference.
+      - name: Pull the devkitPro image
+        run: |
+          set -euo pipefail
+          image="$(grep -v '^[[:space:]]*#' scripts/switch/dkp-docker.image \
+                   | grep -v '^[[:space:]]*$' | head -1)"
+          [ -n "$image" ] || { echo "::error::empty image pin"; exit 1; }
+          echo "devkitPro image: $image"
+          docker pull "$image"
+
+      - name: Fetch the LÖVE NX runtime
+        run: bash scripts/switch/fetch_love_nx.sh
+
+      - name: Build the fused game NRO
+        run: |
+          set -euo pipefail
+          mkdir -p dist/switch
+          bash scripts/switch/build_fused.sh \
+            .bazinga/work/game.love \
+            "${{ needs.version.outputs.version }}" \
+            dist/switch/Gen2Recomped-game.nro
+
+      # The hbmenu entry: checks GitHub Releases and replaces both NROs in
+      # place. Its protocol unit test runs on the host first (make host-test).
+      - name: Build the OTA launcher NRO
+        run: |
+          set -euo pipefail
+          bash scripts/switch/build_ota_launcher.sh \
+            dist/switch/gen2recomp.nro \
+            "${{ needs.version.outputs.version }}"
+
+      # The zip name is load-bearing: ota_protocol.c only accepts an asset
+      # called Gen2Recomped-X.Y.Z-switch.zip, so in-console updates break the
+      # moment this drifts.
+      - name: Pack the SD zip
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          mkdir -p staged
+          bash scripts/switch/pack_sd_zip.sh \
+            dist/switch/Gen2Recomped-game.nro \
+            "$v" \
+            "staged/Gen2Recomped-${v}-switch.zip" \
+            dist/switch/gen2recomp.nro
+          ls -lh staged
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist-switch
+          path: staged/
+          if-no-files-found: error
+          retention-days: 1
+
+  # ---------------------------------------------------------------- publish
+  publish:
+    name: Publish GitHub Release
+    needs: [version, payload, macos, windows, linux, ios, android, rg34xxsp, msix, xbox, arm64, switch]
+    # Windows + Linux are the floor: without those two there is no release
+    # worth cutting. Everything else -- macOS included -- is continue-on-error,
+    # so `always()` here publishes whatever did arrive rather than losing the
+    # whole run to one missing toolchain.
+    if: ${{ always() && needs.windows.result == 'success' && needs.linux.result == 'success' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - uses: actions/download-artifact@v7
+        with:
+          name: game-love
+          path: payload
+
+      # Each platform job uploaded its own already-named assets; merge-multiple
+      # drops them all into one directory. A job that failed simply contributed
+      # nothing, which is why none of these is required.
+      - uses: actions/download-artifact@v7
+        with:
+          pattern: dist-*
+          path: dist/release
+          merge-multiple: true
+
+      - name: Stage release assets
+        id: assets
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          outdir="dist/release"
+
+          # Platform-independent update payload: the same archive the console
+          # jobs fused, and the file src/update/Check.lua downloads by name.
+          cp "payload/game.love" "$outdir/Gen2Recomped-${v}.love"
+
+          echo "Assets in this release:"
+          ls -lh "$outdir"
+
+          # Checksums for every staged asset. The sums file is written after
+          # this and named outside the Gen2Recomped-* glob, so it never lists
+          # itself. src/update/Check.lua reads it to verify a download, and
+          # the Switch OTA launcher reads it too.
+          (cd "$outdir" && sha256sum Gen2Recomped-* > sha256sums.txt)
+          cat "$outdir/sha256sums.txt"
+
+          # Report anything a job failed to produce, so a green run that
+          # quietly shipped four platforms instead of eight is still obvious.
+          for want in macos windows linux ios.ipa android rg34xxsp switch xbox-uwp linux-arm64 windows.msix; do
+            ls "$outdir" | grep -q -- "$want" \
+              || echo "::warning::no $want asset in this release (its job failed or was skipped)"
+          done
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          tag="${{ needs.version.outputs.tag }}"
+
+          # Issues this release closes. Three sources, deduped by number:
+          #   1. GitHub's own "closing issues" links on every PR whose
+          #      commits are in the range (works for squash, rebase, and
+          #      merge commits alike) -- including PRs that were merged
+          #      into a branch this release PR is itself merging in.
+          #   2. CLOSES/fixes/resolves text in those PRs' titles + bodies
+          #      that GitHub didn't turn into a closing link (a PR into a
+          #      non-default branch never gets one).
+          #   3. The same text in raw commit messages, so a direct push
+          #      with "CLOSES #N #M" still lands in the notes.
+          # Scans every commit since the previous tag so a skipped release
+          # run doesn't drop issues on the floor.
+          prev_tag="$(git tag -l 'v*' --sort=-v:refname | grep -v "^${tag}$" | head -1 || true)"
+          range="${prev_tag:+${prev_tag}..}$GITHUB_SHA"
+
+          # every #N on a line that carries a closing keyword (handles the
+          # multi-issue "CLOSES #1 #2 #3" form the tracker uses)
+          scan_closes() {
+            grep -iE '\b(close[sd]?|fix(es|ed)?|resolve[sd]?)\b' \
+              | grep -oE '#[0-9]+' | tr -d '#' || true
+          }
+
+          nums=""
+          nums+=" $(git log --pretty=%B "$range" | scan_closes | tr '\n' ' ')"
+
+          prs="$(git log --pretty=%H "$range" \
+                   | xargs -I{} gh api "repos/$GITHUB_REPOSITORY/commits/{}/pulls" \
+                         --jq '.[].number' 2>/dev/null \
+                   | sort -un || true)"
+          for pr in $prs; do
+            nums+=" $(gh api graphql \
+              -f owner="${GITHUB_REPOSITORY%/*}" \
+              -f name="${GITHUB_REPOSITORY#*/}" \
+              -F pr="$pr" \
+              -f query='
+                query($owner:String!, $name:String!, $pr:Int!) {
+                  repository(owner:$owner, name:$name) {
+                    pullRequest(number:$pr) {
+                      closingIssuesReferences(first:50) { nodes { number } }
+                    }
+                  }
+                }' \
+              --jq '.data.repository.pullRequest.closingIssuesReferences.nodes[].number' \
+              2>/dev/null | grep -E '^[0-9]+$' | tr '\n' ' ' || true)"
+            nums+=" $(gh api "repos/$GITHUB_REPOSITORY/pulls/$pr" \
+              --jq '.title + " " + (.body // "")' 2>/dev/null \
+              | scan_closes | tr '\n' ' ' || true)"
+          done
+
+          # dedupe, drop anything that is a PR or does not exist, keep
+          # titles (gh api prints the response body to stdout on an HTTP
+          # error, so only a zero exit counts)
+          closed=""
+          for n in $(printf '%s' "$nums" | tr ' ' '\n' | grep -E '^[0-9]+$' | sort -un); do
+            if title="$(gh api "repos/$GITHUB_REPOSITORY/issues/$n" \
+                --jq 'if .pull_request then empty else .title end' \
+                2>/dev/null)"; then
+              [ -n "$title" ] && closed+="- #$n $title"$'\n'
+            fi
+          done
+          closed="$(printf '%s' "$closed" | grep . | sort -t'#' -k2 -n || true)"
+
+          # Everyone whose commits are in the range: GitHub login when the
+          # commit is linked to an account, the raw git author name when not;
+          # CI bots filtered out.
+          base="${prev_tag:-$(git rev-list --max-parents=0 "$GITHUB_SHA" | tail -1)}"
+          contributors="$(gh api --paginate \
+            "repos/$GITHUB_REPOSITORY/compare/${base}...${GITHUB_SHA}" \
+            --jq '.commits[] | if .author and .author.login
+                              then "@" + .author.login
+                              else .commit.author.name end' 2>/dev/null \
+            | grep -viE '\[bot\]$' | sort -uf | sed 's/^/- /' || true)"
+
+          notes="Download the correct version for your computer below."
+          if [ -n "$closed" ]; then
+            notes+=$'\n\n## Issues closed\n\n'"$closed"
+          fi
+          if [ -n "$contributors" ]; then
+            notes+=$'\n\n## Contributors\n\n'"$contributors"
+          fi
+          printf 'Release notes:\n%s\n' "$notes"
+
+          gh release create "$tag" \
+            --target "$GITHUB_SHA" \
+            --title "$v" \
+            --notes "$notes" \
+            dist/release/*
+
+          echo "Published release $tag"
+
+      # STILL gated on APPLE_SIGNING, and deliberately: what this pushes is a
+      # commit to a protected branch with a deploy key, which a repo that has
+      # not opted into Apple work has no reason to be doing. The IPA itself is
+      # published either way -- this only decides whether the AltStore source
+      # is updated to point at it. Turn APPLE_SIGNING on to resume that.
+      - name: Update iOS app repository
+        if: vars.APPLE_SIGNING == 'true'
+        run: |
+          set -euo pipefail
+          v="${{ needs.version.outputs.version }}"
+          ipa="dist/release/Gen2Recomped-${v}-ios.ipa"
+          app_repo="mobile/ios/app-repo.json"
+          [ -f "$ipa" ] || { echo "::error::$ipa not found"; exit 1; }
+          [ -f "$app_repo" ] || { echo "::error::$app_repo not found"; exit 1; }
+
+          date="$(date -u +"%Y-%m-%d")"
+          size="$(wc -c < "$ipa" | tr -d '[:space:]')"
+          download_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/v${v}/Gen2Recomped-${v}-ios.ipa"
+          localized_description="Gen2Recomped - A native Lua / LÖVE2D recreation of Gen 2 Poke"
+          release_notes="$(GH_TOKEN="${{ github.token }}" gh release view "v${v}" --json body --jq '.body // ""' 2>/dev/null || true)"
+          if [ -n "$release_notes" ]; then
+            localized_description="$release_notes"
+          fi
+          entry="$(jq -n \
+            --arg version "$v" \
+            --arg date "$date" \
+            --arg download_url "$download_url" \
+            --arg localized_description "$localized_description" \
+            --argjson size "$size" \
+            '{version: $version, date: $date, size: $size, downloadURL: $download_url, localizedDescription: $localized_description}')"
+
+          if jq -e --arg version "$v" \
+            'any(.apps[] | select(.bundleIdentifier == "com.underdecodedhd.gen2recomped").versions[]?; .version == $version)' \
+            "$app_repo" >/dev/null; then
+            jq --arg version "$v" --argjson entry "$entry" \
+              '(.apps[] | select(.bundleIdentifier == "com.underdecodedhd.gen2recomped").versions) |= map(if .version == $version then $entry else . end)' \
+              "$app_repo" > "$app_repo.tmp"
+          else
+            jq --argjson entry "$entry" \
+              '(.apps[] | select(.bundleIdentifier == "com.underdecodedhd.gen2recomped").versions) |= [$entry] + .' \
+              "$app_repo" > "$app_repo.tmp"
+          fi
+          mv "$app_repo.tmp" "$app_repo"
+
+      # main is PR-only for everyone except deploy keys (the "main protection"
+      # ruleset's bypass actor), so this push must authenticate with the
+      # RELEASE_DEPLOY_KEY deploy key over SSH; the workflow's GITHUB_TOKEN
+      # would be rejected by the branch protection.
+      - name: Commit iOS app repository
+        if: vars.APPLE_SIGNING == 'true'
+        env:
+          DEPLOY_KEY: ${{ secrets.RELEASE_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          git add mobile/ios/app-repo.json
+          if git diff --cached --quiet; then
+            echo "app-repo.json unchanged; nothing to push"
+            exit 0
+          fi
+          key="$RUNNER_TEMP/release-deploy-key"
+          printf '%s\n' "$DEPLOY_KEY" > "$key"
+          chmod 600 "$key"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore(ios): update app-repo.json [skip ci]"
+          git -c core.sshCommand="ssh -i $key -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new" \
+            push "git@github.com:${GITHUB_REPOSITORY}.git" "HEAD:${GITHUB_REF_NAME}"
+          rm -f "$key"

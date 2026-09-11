@@ -298,6 +298,23 @@ function PaletteFX.usesGbcPack(mode)
   return mode == "redpp"
 end
 
+-- THE MODES THAT ASK FOR A GAME BOY ON PURPOSE.
+--
+-- OG, OG INV and CLASSIC are "make this look like the hardware": a player who
+-- picks one has asked for the four-shade remap and should get it whatever the
+-- art underneath is.  The other four are "colour this Game Boy art", which is
+-- a request with no meaning on a cartridge whose art is already in colour.
+--
+-- Published because two callers need exactly this line and had a copy each:
+-- the Gen 3 battle screen, deciding whether its zone list is a true-colour
+-- opt-out or a whole-screen grey, and the overworld, deciding whether to
+-- publish colorization zones for a world that does not want any.
+local MONO_MODES = { og = true, og_inv = true, classic = true }
+
+function PaletteFX.monoMode(mode)
+  return MONO_MODES[mode or PaletteFX.mode] == true
+end
+
 -- Yellow's authentic GBC look is CGBBasePalettes (per-map), not a boot-ROM
 -- auto-palette.  The shared `ogred` save id wears that table on a Yellow
 -- playthrough and labels itself "OG YELLOW".
@@ -632,8 +649,15 @@ end
 -- its own, extracted from the ROM -- so the mode transforms are inert there.
 -- The option is shared across playthroughs, and without this a Gen 1 SGB INV
 -- setting inverted Gold's party menu and trainer card.
+--
+-- The same is true of Gen 3, and more so: a GBA cartridge is fifteen palettes
+-- of real colour and there are no four greys anywhere in it.  The option is
+-- shared, so a Red playthrough left on OG or CLASSIC took ensureZones' whole-
+-- screen grey ramp and put Emerald's title screen -- Rayquaza, the sky, the
+-- clouds -- through it.  It came out black and white, which is exactly what
+-- that setting asks for and nothing about that screen was ever asking.
 local function gen2Native()
-  return GameVersion.isGen2()
+  return GameVersion.isGen2() or GameVersion.isGen3()
 end
 
 function PaletteFX.pal(data, name)

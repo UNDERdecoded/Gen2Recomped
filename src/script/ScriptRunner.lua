@@ -129,6 +129,18 @@ function ScriptRunner:run(script, extra)
     -- done. start_battle uses this for win-path evolutions, which must not
     -- be covered by post-battle trainer text.
     for _, callback in ipairs(ctx.afterScript or {}) do callback() end
+    -- A GEN 3 SCRIPT THAT DARKENED THE SCREEN AND ENDED.  Twenty-four of
+    -- Hoenn's fades to black hand over to a full-screen scene and then end
+    -- outright, leaving the fade for the return to the field to undo.  With
+    -- nothing undoing it the player is left looking at black with the game
+    -- running underneath, which reads as a crash.  No-op unless this script
+    -- is the one that faded out.
+    if ctx.g3FadedOut then
+      local ok, Gen3Commands = pcall(require, "src.script.Gen3Commands")
+      if ok and Gen3Commands and Gen3Commands.restoreFade then
+        Gen3Commands.restoreFade(ctx)
+      end
+    end
     if ctx.onDone then ctx.onDone() end
     if Runtime.wants("script.ended") then
       Runtime.emit("script.ended", { ctx = ctx, completed = true })
@@ -147,6 +159,12 @@ function ScriptRunner:exec(script, ctx)
   while pc <= #script do
     local row = script[pc]
     local name = row[1]
+    -- THE ROW THE RUNNER IS STANDING ON, kept so a script that parks and
+    -- never wakes can be NAMED rather than merely noticed.  See
+    -- OverworldState:watchStuckScript: a stranded coroutine locks the player
+    -- out of their own game, and "a script on MAP_G08_N01 is parked" is a bug
+    -- report; "the game froze" is not.
+    self.lastRow = ("%s (row %d of %d)"):format(tostring(name), pc, #script)
     local fn, meta = Commands.resolve(data, name)
     if not fn then
       -- api 2 owned scripts fail loudly; everything else keeps the v1

@@ -107,3 +107,35 @@ mobile/ios/bundle_id.local
 
 \tests
 /mods/*
+
+# ...EXCEPT THE ONES THAT SHIP WITH THE LAUNCHER.
+#
+# `/mods/*` above keeps a developer's working folder out of the repo -- the
+# Stadium 2 art extracted from a dump, the online mod, the editor fixtures --
+# and it was keeping DRAMATIC SHAPES out too.  That is why the mod is not in
+# any release: scripts/pack_love.sh stages `mods` into every payload, but CI
+# builds from a clean checkout, and a clean checkout of this repo has no
+# `mods/` at all.  The shipped game.love contains zero mod entries.
+#
+# A mod that is meant to be PREPACKAGED has to be committed, so this one is
+# re-included -- and then narrowed again, because most of what sits in its
+# folder is not the mod:
+#
+#   * oxr/ and oxr.zip are an unpacked NuGet drop of the OpenXR loader --
+#     Windows .dll and .lib files for the VR work.  Thirteen megabytes, and
+#     not loadable from inside a .love in any case (it is a zip; LOVE cannot
+#     dlopen out of one).
+#   * tests/ and tools/ are the mod's own development material, the same way
+#     this repo's are.
+#   * CHANGELOG.md and VOXEL_HOENN_PLAN.md are a third of a megabyte of
+#     writing about the work rather than the work.
+#
+# What is left -- main.lua, the manifest, lib/, assets/, data/ and the card --
+# is the mod, and it is what the launcher needs to offer it.
+!/mods/DRAMATIC_SHAPE/
+/mods/DRAMATIC_SHAPE/oxr/
+/mods/DRAMATIC_SHAPE/oxr.zip
+/mods/DRAMATIC_SHAPE/tests/
+/mods/DRAMATIC_SHAPE/tools/
+/mods/DRAMATIC_SHAPE/CHANGELOG.md
+/mods/DRAMATIC_SHAPE/VOXEL_HOENN_PLAN.md

@@ -1,8 +1,8 @@
 -- Copyright (c) 2026 Cedric. All rights reserved.
--- Source-available under the Gen2Recomped Map Editor License: you may read,
--- build and privately modify this file; you may not redistribute it or use it
--- commercially. See LICENSE at the repository root. Cartridge-derived data is
--- not covered and is not the copyright holder's to license.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
 
 -- Every mutation the save editor can make to a loaded save, behind one
 -- funnel: Ops.mark() is the ONLY thing that sets S.dirty, and it always
@@ -545,17 +545,34 @@ end
 -- Badges.list is generation-aware and already falls back to the sixteen
 -- Gold/Silver badges in trainer-card order when no ROM constants exist.
 function Ops.badgeIds(S)
-  local Badges = require("src.inventory.Badges")
   local ids = {}
+  for _, entry in ipairs(Ops.badgeEntries(S)) do ids[#ids + 1] = entry.key end
+  return ids
+end
+
+-- A BADGE'S NAME AND THE KEY IT IS STORED UNDER ARE NOT THE SAME STRING.
+--
+-- In R/B they are: a badge is an inventory item and BOULDERBADGE is both what
+-- it is called and where it lives.  Emerald's are flags, so the record names
+-- the badge STONEBADGE and stores it under FLAG_G3_0867 -- and handing the
+-- panel only the second of those put "FLAG_G3_0867" on the chip where the
+-- badge's name belongs, which is what the player saw.
+--
+-- So both travel together from here on, and the caller picks: `label` for
+-- anything a person reads, `key` for anything the save is indexed by.
+function Ops.badgeEntries(S)
+  local Badges = require("src.inventory.Badges")
+  local out = {}
   for _, entry in ipairs(Badges.list(S.data, S.version)) do
-    ids[#ids + 1] = Badges.itemFor(entry)
+    out[#out + 1] = { key = Badges.itemFor(entry),
+                      label = entry.name or entry.id }
   end
-  if #ids > 0 then return ids end
+  if #out > 0 then return out end
   -- Last resort: the old catalog scrape, for a cache with neither.
   for _, id in ipairs(S.cat.items or {}) do
-    if Ops.isBadgeId(id) then ids[#ids + 1] = id end
+    if Ops.isBadgeId(id) then out[#out + 1] = { key = id, label = id } end
   end
-  return ids
+  return out
 end
 
 -- Truthy in EITHER store: inventory for R/B, save.flags for Gen2.  Mirrors
@@ -577,9 +594,18 @@ end
 -- Gen2Flags.ENGINE_FLAG_NAMES), which Gen2Save.lua reads and writes on .sav
 -- import/export.  Writing it into inventory there would create a badge item
 -- that no Gen2 code path ever reads.
+-- ...AND ONLY ONE GENERATION KEEPS A BADGE IN THE BAG.
+--
+-- R/B hands them over as inventory items.  Gen 2 sets a flag, and so does
+-- Emerald -- a Hoenn badge IS flag $0867 upwards, which is what the gym's win
+-- script writes and what the field-move gate and the trainer card read.  This
+-- asked "is it Gen 2" and sent everything else to the inventory, so editing a
+-- badge into an Emerald save put a bag item called FLAG_G3_0867 in the
+-- player's pocket -- an item no code path reads, and no badge.
 function Ops.toggleBadge(S, id)
   local on = Ops.hasBadge(S, id)
-  local gen2 = require("src.core.GameVersion").isGen2(S.version)
+  local GameVersion = require("src.core.GameVersion")
+  local gen2 = GameVersion.isGen2(S.version) or GameVersion.isGen3(S.version)
   if gen2 then
     S.save.flags = S.save.flags or {}
     S.save.flags[id] = (not on) and true or nil

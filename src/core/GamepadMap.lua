@@ -14,6 +14,9 @@ GamepadMap.DEFAULT_GAMEPAD_BINDINGS = {
   dpup = "up", dpdown = "down", dpleft = "left", dpright = "right",
   a = "a", b = "b",
   start = "start", back = "select",
+  -- ...and the two shoulders, which are L and R on the console this
+  -- generation was made for
+  leftshoulder = "l", rightshoulder = "r",
 }
 
 -- Switch: LÖVE/SDL labels south as "a" and east as "b", but Nintendo UX is
@@ -23,6 +26,7 @@ GamepadMap.NX_GAMEPAD_BINDINGS = {
   a = "b", -- SDL south = Nintendo B → GB B
   b = "a", -- SDL east = Nintendo A → GB A
   start = "start", back = "select",
+  leftshoulder = "l", rightshoulder = "r",
 }
 
 -- Generic SDL joysticks without a game-controller DB entry (Linux handhelds).

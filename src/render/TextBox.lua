@@ -57,8 +57,31 @@ function TextBox.new(game, text, onDone, opts)
   self.boxTh = box.th or BOX_TH
   self.maxCols = box.maxCols or MAX_COLS
   self.textX = (self.boxTx + 1) * 8
-  self.line1Y = (self.boxTy + 2) * 8
-  self.line2Y = (self.boxTy + 4) * 8
+  -- WHERE THE TWO LINES SIT, which stopped being a constant when the font
+  -- stopped being 8 pixels tall.
+  --
+  -- A Game Boy character is one tile, so rows two and four of a six-tile
+  -- window put an 8-pixel line in the middle of each half and leave a tile of
+  -- air under the second.  Emerald's dialogue face is FIFTEEN pixels tall:
+  -- the same two rows put its second line at 128..142 inside a window whose
+  -- interior ends at 135, and it printed straight through its own bottom
+  -- border.
+  --
+  -- The pitch is not the problem -- both games space their lines two tiles
+  -- apart, which is what the cartridge does -- so the pitch is kept and the
+  -- PAIR is lifted by however much it overhangs.  A Game Boy font overhangs by
+  -- nothing and lands exactly where it always did; a taller one rises until
+  -- its descenders clear the frame.
+  local pitch = 16
+  local glyphH = Font.glyphHeight()
+  local interiorBottom = (self.boxTy + self.boxTh - 1) * 8
+  local line1 = (self.boxTy + 2) * 8
+  local overhang = (line1 + pitch + glyphH) - interiorBottom
+  if overhang > 0 then line1 = line1 - overhang end
+  -- never above the frame's own inner edge, however tall the face
+  line1 = math.max(line1, (self.boxTy + 1) * 8)
+  self.line1Y = line1
+  self.line2Y = line1 + pitch
   text = TextBox.substitute(game, text)
   self.pages = TextBox.paginate(text, self.maxCols)
   self.pageIndex = 1
@@ -78,19 +101,46 @@ end
 -- RAM keeps pokered's stale-buffer semantics: give_item copies the item
 -- name into stringBuffer, like GiveItem -> CopyToStringBuffer
 -- (home/give.asm), and it stays set afterwards.
--- The name a party slot answers to: its nickname, or the species' name.
-local function partyMonName(game, slot)
-  local save = game and game.save
-  local mon = save and save.party and save.party[slot]
-  if not mon then return nil end
-  if mon.nickname and mon.nickname ~= "" then return mon.nickname end
-  local species = game.data and game.data.pokemon and game.data.pokemon[mon.species]
-  return species and species.name or nil
+-- The Gen 3 script buffers, as the placeholders below read them.  Slot n on
+-- the cartridge is stringBuffers[n + 1] here, which is where Commands.g3_buffer
+-- puts it.
+local function gen3Buffer(game, n)
+  local slots = game and game.stringBuffers
+  local value = slots and slots[n]
+  return type(value) == "string" and value or ""
 end
 
 TextBox.TOKENS = {
   PLAYER = function(game) return game.save.player.name or "RED" end,
   RIVAL = function(game) return game.save.player.rival or "BLUE" end,
+  -- GEN 3 PLACEHOLDERS.  A GBA cartridge splices its own set in, and an
+  -- unhandled token is left in the line verbatim -- so Birch's very first
+  -- question would have read "You're BRENDAN{KUN} who's moving to my
+  -- hometown of LITTLEROOT."  {KUN} is the Japanese honorific and is EMPTY
+  -- in English, which is exactly what returning "" means here; the two
+  -- version names are the cartridge's own.
+  KUN = function() return "" end,
+  -- ...and the three the SCRIPT fills in.  A Gen 3 line splices a buffered
+  -- string with $FD 02/03/04, and the buffer commands that fill them
+  -- (bufferitemname, bufferspeciesname, bufferstring and the rest) already
+  -- write game.stringBuffers -- there was simply nothing reading it back out,
+  -- so every line that used one printed the token instead.  The braces are
+  -- not in this cartridge's font, so it reached the screen as "Our VAR1 is
+  -- upstairs, I think."
+  --
+  -- An unfilled slot expands to NOTHING rather than to its own name: a line
+  -- whose buffer a script has not written yet is a gap in a sentence, which
+  -- reads as an oversight, where the token reads as a bug.
+  VAR1 = function(game) return gen3Buffer(game, 1) end,
+  VAR2 = function(game) return gen3Buffer(game, 2) end,
+  VAR3 = function(game) return gen3Buffer(game, 3) end,
+  VERSION = function() return "EMERALD" end,
+  AQUA = function() return "AQUA" end,
+  MAGMA = function() return "MAGMA" end,
+  ARCHIE = function() return "ARCHIE" end,
+  MAXIE = function() return "MAXIE" end,
+  KYOGRE = function() return "KYOGRE" end,
+  GROUDON = function() return "GROUDON" end,
   RAM = function(game, arg)
     -- polished addresses the player through TX_RAM rather than a dedicated
     -- control char, so these two are dialogue-critical: without them the
@@ -117,19 +167,6 @@ TextBox.TOKENS = {
       local value = slot and slots and slots[slot]
       if value ~= nil then return value end
       return game.stringBuffer
-    end
-    -- PRISM'S POKEMON MODE addresses the mon the player IS by the party
-    -- nickname block: `AcquaTutorialFirstSoil_Text` is `text_from_ram
-    -- wPartyMonNicknames` followed by " eagerly devoured the soil.", and the
-    -- breeding lines name the two day-care mons the same way.  With no handler
-    -- the token dropped and the Rock Smash box in the Larvitar cave opened on
-    -- a space.
-    if arg == "wPartyMonNicknames" or arg == "wPartyMon1Nick"
-       or arg == "wBreedMon1" or arg == "wBreedMon1Nick" then
-      return partyMonName(game, 1)
-    end
-    if arg == "wBreedMon2" or arg == "wBreedMon2Nick" then
-      return partyMonName(game, 2)
     end
     if arg == "wBoxNumString" then return game.boxNumString end
     -- SendNewMonToBox / _SentToBoxText reads the deposited nick here
@@ -489,6 +526,26 @@ function TextBox:update(dt)
   end
 end
 
+-- THE BOX HAS TO FIT ON THE SURFACE IT IS DRAWN ON.
+--
+-- The UI canvas is the Game Boy's 160x144 unless a state on the stack asks
+-- for more, and the text box never did -- it had no reason to while every
+-- box in the port was Red's twenty tiles.  Emerald's is twenty-eight, and a
+-- 224-pixel box on a 160-pixel canvas is drawn off the right-hand edge and
+-- blitted at the canvas's own scale, which is not the world's: the box came
+-- out larger than the map behind it AND cut off.
+--
+-- Asking is all that is needed -- Game:draw already reallocates the canvas
+-- for whichever state on the stack wants a native surface, and centres the
+-- Game Boy-coordinate layouts inside it.  A box that fits the classic screen
+-- asks for the classic screen, so nothing about Gen 1 or Gen 2 changes.
+-- Theme owns the answer, and the FIELD gives the same one -- see
+-- OverworldState:uiSize.  Asking here alone made the whole screen step down a
+-- scale every time a box opened, because the fit scale follows the surface.
+function TextBox:uiSize()
+  return Theme.uiSize()
+end
+
 function TextBox:draw()
   -- The dialogue box belongs against the bottom of the screen, not floating
   -- in the middle of a zoomed-out letterbox.  Declared per frame; the
@@ -514,10 +571,20 @@ function TextBox:draw()
   -- nothing in the original is ever drawn between two rows.
   local off = self.scrollPx or 0
   local ys = { self.line1Y, self.line2Y }
+  -- THE PEN ADVANCES BY EACH GLYPH'S OWN WIDTH, not by a flat eight.
+  --
+  -- A flat eight is Red's font, which is monospaced -- there the two agree.
+  -- Emerald's runs 3 to 10 pixels, so a fixed pitch makes an 'i' as wide as a
+  -- 'W': the text comes out airy and much wider than the cartridge draws it,
+  -- and a line the wrapper measured as fitting runs off the end of the box.
+  -- The wrapper already measures with Font.advanceOf, so this is what makes
+  -- the drawing agree with the measuring rather than merely look better.
   for i, line in ipairs(self.shown) do
     local y = (ys[i] or self.line2Y) + (i == 1 and off or 0)
-    for j, code in ipairs(line) do
-      Font.drawCode(code, self.textX + (j - 1) * 8, y)
+    local pen = self.textX
+    for _, code in ipairs(line) do
+      Font.drawCode(code, pen, y)
+      pen = pen + Font.advanceOf(code)
     end
   end
   if (self.waiting or (self.done and not self.choice and not self.auto

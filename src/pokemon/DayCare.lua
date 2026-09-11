@@ -72,6 +72,9 @@ DayCare.FLAG_LADY_HAS_MON = "FLAG_G2_0007"
 
 function DayCare.syncFlags(save)
   if not (save and save.flags) then return end
+  -- the three engine flags below are Game Boy ones, and the Hoenn day care
+  -- has no equivalent: its keeper simply asks the state when spoken to
+  if require("src.core.GameVersion").isGen3() then return end
   local Flags = require("src.script.Flags")
   local breed = DayCare.store(save, false)
   local state = {
@@ -195,6 +198,15 @@ function DayCare.gender(data, mon)
   if ratio == 255 then return "none" end         -- GENDER_UNKNOWN
   if ratio == 0 then return "male" end           -- GENDER_F0
   if ratio == 254 then return "female" end       -- GENDER_F100
+  -- ...and on Gen 3 it is not a DV at all.
+  -- GetGenderFromSpeciesAndPersonality compares the ratio against the LOW
+  -- BYTE OF THE PERSONALITY, which is the one number a Gen 3 mon carries and
+  -- a Gen 2 one does not.  Reading `dvs.attack` off a Hoenn Pokemon -- which
+  -- has ivs and no dvs -- makes every one of them male, and a day care that
+  -- can only ever be handed two males never lays an egg.
+  if mon.personality then
+    return (ratio > (mon.personality % 256)) and "female" or "male"
+  end
   local atk = (mon.dvs and mon.dvs.attack) or 0
   return (atk * 16 < ratio) and "female" or "male"
 end
@@ -258,6 +270,56 @@ end
 DayCare.EGG_ODDS = { [0] = 0, [1] = 64 / 256, [2] = 128 / 256,
                      [3] = 191 / 256, [4] = 255 / 256 }
 
+-- ---------------------------------------------------------------------------
+-- HOENN'S OWN ANSWER TO THE SAME QUESTION (GetDaycareCompatibilityScore).
+--
+-- Gen 3 does not grade compatibility in five tiers and roll against a table:
+-- it returns one of four PER CENT figures and rolls straight against it, and
+-- those four are what the day care's own four lines are picking between.  The
+-- ordering differs from Gen 2's in one place worth noticing -- two of the
+-- SAME species from DIFFERENT trainers is the best pair either way, but a
+-- DITTO with a stranger's Pokemon is only middling here.
+--
+-- The egg groups are numbers on this cartridge rather than names, and 15 is
+-- EGG_GROUP_UNDISCOVERED -- the one that cannot breed at all.
+DayCare.GEN3_NO_EGGS = 15
+DayCare.GEN3_SCORES = { NONE = 0, LOW = 20, MED = 50, MAX = 70 }
+
+local function gen3Breeds(groups)
+  if not groups then return true end
+  for _, g in ipairs(groups) do
+    if g == DayCare.GEN3_NO_EGGS then return false end
+  end
+  return true
+end
+
+local function isDitto(data, mon)
+  if not mon then return false end
+  if mon.species == DITTO or mon.species == "DITTO" then return true end
+  local def = data and data.pokemon and data.pokemon[mon.species]
+  return (def and def.name) == "DITTO"
+end
+DayCare.isDitto = isDitto
+
+function DayCare.gen3Score(data, save)
+  local a, b = DayCare.mon(save, DayCare.MAN), DayCare.mon(save, DayCare.LADY)
+  local SC = DayCare.GEN3_SCORES
+  if not (a and b) or a.isEgg or b.isEgg then return SC.NONE end
+  local ga, gb = eggGroupsOf(data, a), eggGroupsOf(data, b)
+  if not (gen3Breeds(ga) and gen3Breeds(gb)) then return SC.NONE end
+  local sameOT = (a.otId or 0) == (b.otId or 0)
+  local da, db = isDitto(data, a), isDitto(data, b)
+  if da and db then return SC.NONE end
+  if da or db then return sameOT and SC.LOW or SC.MED end
+  local sa, sb = DayCare.gender(data, a), DayCare.gender(data, b)
+  if sa and sb and (sa == sb or sa == "none" or sb == "none") then
+    return SC.NONE
+  end
+  if ga and gb and not sharesEggGroup(ga, gb) then return SC.NONE end
+  if a.species == b.species then return sameOT and SC.MED or SC.MAX end
+  return sameOT and SC.LOW or SC.MED
+end
+
 -- Walk the evolution graph backwards to the lowest form; the EGG always
 -- hatches into the base stage (GetEggSpecies, 03:$6117).
 local baseFormCache
@@ -299,6 +361,94 @@ function DayCare.eggSpecies(data, save)
   return baseForm(data, mother.species)
 end
 
+-- ---------------------------------------------------------------------------
+-- WHAT AN EGG KNOWS.
+--
+-- An egg hatched with nothing but its own species' level-five moveset, so
+-- 165 species' worth of egg moves -- extracted, proved and written on every
+-- import -- reached the engine and stopped there.  Breeding inherited
+-- nothing, which is most of what breeding is for.
+--
+-- THE CARTRIDGE'S ORDER, and it matters, because a move added to an egg that
+-- already knows four pushes the FIRST one out:
+--
+--   1. THE FATHER'S EGG MOVES -- any move he knows that appears in the baby
+--      species' egg-move list.
+--   2. THE FATHER'S MACHINE MOVES -- any move he knows that the baby could
+--      have been taught from a TM or an HM.
+--   3. WHAT BOTH PARENTS KNOW -- a move the two of them share that the baby
+--      learns by levelling up at all.
+--
+-- WHICH PARENT IS THE FATHER is a different question from which is the
+-- mother, and here it is the one that matters: the mother decides the
+-- SPECIES and the father decides the MOVES.  A DITTO takes whichever role the
+-- other parent leaves free, which is why a DITTO bred with a male passes egg
+-- moves on and a DITTO bred with a female does not -- the DITTO is the father
+-- then, and all it knows is TRANSFORM.
+-- ---------------------------------------------------------------------------
+function DayCare.parents(data, save)
+  local a, b = DayCare.pair(data, save)
+  if not a then return nil end
+  local function withDitto(other, ditto)
+    if DayCare.gender(data, other) == "female" then return other, ditto end
+    return ditto, other
+  end
+  if a.species == DITTO then return withDitto(b, a) end
+  if b.species == DITTO then return withDitto(a, b) end
+  if DayCare.gender(data, a) == "female" then return a, b end
+  if DayCare.gender(data, b) == "female" then return b, a end
+  -- no gender data at all (a Gen 1 import): the LADY's slot stands in as the
+  -- mother, which is the same fallback eggSpecies makes
+  return b, a
+end
+
+local function knowsMove(mon, id)
+  for _, mv in ipairs((mon and mon.moves) or {}) do
+    if mv.id == id then return true end
+  end
+  return false
+end
+
+-- Teach the egg what its parents have to give it.  Returns how many moves it
+-- picked up, which is what a test can hold on to.
+function DayCare.inheritMoves(data, save, egg)
+  if not (data and save and egg and type(egg.moves) == "table") then return 0 end
+  local baby = data.pokemon and data.pokemon[egg.species]
+  local mother, father = DayCare.parents(data, save)
+  if not (baby and father and mother) then return 0 end
+
+  local given = 0
+  local function give(id)
+    if not id or knowsMove(egg, id) then return end
+    local mdef = data.moves and data.moves[id]
+    if not mdef then return end
+    -- DeleteFirstMoveAndGiveMoveToMon: a full egg loses its oldest slot
+    if #egg.moves >= 4 then table.remove(egg.moves, 1) end
+    egg.moves[#egg.moves + 1] = { id = id, pp = mdef.pp or 0 }
+    given = given + 1
+  end
+
+  local isEggMove = {}
+  for _, id in ipairs(baby.eggMoves or {}) do isEggMove[id] = true end
+  for _, mv in ipairs(father.moves or {}) do
+    if isEggMove[mv.id] then give(mv.id) end
+  end
+
+  local isMachine = {}
+  for _, id in ipairs(baby.tmhm or {}) do isMachine[id] = true end
+  for _, mv in ipairs(father.moves or {}) do
+    if isMachine[mv.id] then give(mv.id) end
+  end
+
+  local byLevel = {}
+  for _, id in ipairs(baby.level1Moves or {}) do byLevel[id] = true end
+  for _, entry in ipairs(baby.learnset or {}) do byLevel[entry.move] = true end
+  for _, mv in ipairs(father.moves or {}) do
+    if byLevel[mv.id] and knowsMove(mother, mv.id) then give(mv.id) end
+  end
+  return given
+end
+
 -- Steps an EGG of this species needs before it hatches: base_stats' egg
 -- cycle count, one cycle per 256 overworld steps.
 function DayCare.eggSteps(data, species)
@@ -317,13 +467,23 @@ function DayCare.step(data, save, expPerStep)
     local slot = breed[which]
     if slot and slot.mon then slot.steps = (slot.steps or 0) + gained end
   end
-  if breed.egg or not DayCare.pair(data, save) then return false end
+  local gen3 = require("src.core.GameVersion").isGen3()
+  if breed.egg then return false end
+  -- Hoenn's pair test IS its compatibility score: _TryProduceOrHatchEgg rolls
+  -- against it directly and a zero never produces anything, so there is no
+  -- separate "do these two breed" question to ask first.
+  if gen3 then
+    if DayCare.gen3Score(data, save) <= 0 then return false end
+  elseif not DayCare.pair(data, save) then
+    return false
+  end
   breed.steps = (breed.steps or 0) + 1
   if breed.steps < DayCare.EGG_STEP_PERIOD then return false end
   breed.steps = 0
   -- .check_egg: the roll is against wBreedingCompatibility, so an
   -- indifferent pair simply keeps walking.
-  local odds = DayCare.EGG_ODDS[DayCare.compatibility(data, save)]
+  local odds = gen3 and (DayCare.gen3Score(data, save) / 100)
+               or DayCare.EGG_ODDS[DayCare.compatibility(data, save)]
   if math.random() >= (odds or 0) then return false end
   local species = DayCare.eggSpecies(data, save)
   if not species then return false end
@@ -332,6 +492,8 @@ function DayCare.step(data, save, expPerStep)
   egg.isEgg = true
   egg.nickname = "EGG"
   egg.eggSteps = DayCare.eggSteps(data, species)
+  -- ...and what its parents give it, which is the whole of breeding
+  DayCare.inheritMoves(data, save, egg)
   breed.egg = egg
   -- DAYCAREMAN_HAS_EGG_F.  The next time the player steps onto Route 34 the
   -- callback moves the MAN out to the fence -- that walk is the ROM's whole

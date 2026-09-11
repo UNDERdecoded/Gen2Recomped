@@ -33,8 +33,19 @@
 -- SetWarpDestination/DoWarp pair), and warpmossdeepgym and warpwhitefade are
 -- the only two warp commands left unaccounted for, so those two are they.
 -- $D3-$D6 call into the rotating-tile-puzzle module at 0x1A89xx and appear
--- exactly nine times each across the corpus -- one init, free, move and turn
--- per Mossdeep Gym puzzle -- which is what a quartet looks like.  $DA sits
+-- exactly nine times each across the corpus -- one init, move, turn and free
+-- per rotating-tile puzzle: five in the Mossdeep Gym and four in the Trick
+-- House.  WHICH of the four each slot is was read off the handlers, and the
+-- guess that stood here before was wrong in a way that hid itself.  $D3 is
+-- moverotatingtileobjects and takes a HALFWORD, not initrotatingtilepuzzle
+-- taking a byte -- and calling it a byte left the operand's high 00 behind
+-- to decode as a $00 nop.  Three bytes either way, so the corpus never
+-- desynced; it just named two commands after each other, swapped the other
+-- two, and printed a nop that is not in the cartridge.  The handlers say it
+-- plainly: gScriptCmdTable[$D3] reads a halfword, VarGets it and calls
+-- 01A89A0 (MoveRotatingTileObjects); [$D4] takes nothing and calls 01A8AF8
+-- (TurnRotatingTileObjects); [$D5] reads a halfword and calls 01A8934
+-- (InitRotatingTilePuzzle); [$D6] takes nothing and calls 01A895C.  $DA sits
 -- immediately after ScrCmd_braillemessage in the binary and takes no operand,
 -- which is closebraillemessage.
 --
@@ -111,9 +122,9 @@ Gen3ScriptOps.COMMANDS = {
   { "loadhelp", "d" }, { "unloadhelp", "" }, { "signmsg", "" }, { "normalmsg", "" },
   { "comparehiddenvar", "bd" }, { "setmonobedient", "w" }, { "checkmonobedience", "w" },
   { "execram", "" }, { "setmonmetlocation", "wb" }, { "warpmossdeepgym", "bbbww" },
-  { "buffertrainerclassname", "bw" }, { "initrotatingtilepuzzle", "b" },
-  { "freerotatingtilepuzzle", "" }, { "moverotatingtileobjects", "w" },
-  { "turnrotatingtileobjects", "" }, { "warpwhitefade", "bbbww" }, { "selectapproachingtrainer", "" },
+  { "buffertrainerclassname", "bw" }, { "moverotatingtileobjects", "w" },
+  { "turnrotatingtileobjects", "" }, { "initrotatingtilepuzzle", "w" },
+  { "freerotatingtilepuzzle", "" }, { "warpwhitefade", "bbbww" }, { "selectapproachingtrainer", "" },
   { "lockfortrainer", "" }, { "closebraillemessage", "" }, { "messageinstant", "d" },
   { "fadescreenswapbuffers", "b" }, { "buffertrainername", "bw" }, { "buffercontesttypestring", "bw" },
   { "pokenavcall", "d" }, { "bufferitemnameplural", "bww" }, { "setmodernfatefulencounter", "w" },
@@ -125,9 +136,58 @@ Gen3ScriptOps.COMMANDS = {
 -- selector byte.  Types 0/5 are the plain single battle, 3 drops the intro
 -- text, 1/2/4/7 add a third text or script pointer, 6/8 add a fourth, and 9
 -- is the Battle Pyramid form, shaped like type 0.
+-- ---------------------------------------------------------------------------
+-- HOW LONG A `trainerbattle` IS, and every one of these was a byte short.
+--
+-- The record is six bytes of header -- the opcode, the battle type, the
+-- trainer as a halfword and a music override as another -- and then a number
+-- of four-byte pointers that depends on the type: the intro line, the defeat
+-- line, and for the types that have one, the script to run after you win.
+--
+-- Reading it one byte short does not fail; it RESUMES ONE BYTE EARLY, and
+-- from there every byte of the rest of the script is read as something it is
+-- not.  ROXANNE's script is the whole story: eighteen bytes of trainerbattle
+-- read as seventeen, so the walk restarted on the record's last byte and the
+-- next two bytes decoded as `gotostd 38` -- a standard script that does not
+-- exist.  Her real continuation, the one that hands over the STONE BADGE,
+-- was never reached.  That is why the region's scripts CHECK the eight badge
+-- flags forty times and SET them not once.
+--
+-- DERIVED, not corrected by inspection: every script root is walked to its
+-- FIRST trainerbattle -- which is decoded with lengths that are not yet in
+-- doubt, because the corruption only starts after one -- and the four-byte
+-- ROM pointers trailing the header are counted there.  565 trustworthy sites,
+-- and every type is unanimous: 366 of 368 type-0 records carry two pointers,
+-- all 89 type-2 carry three, all 55 type-3 carry one, all 22 type-6 carry
+-- four.  Type 5 never appears first in a script, so it takes the same
+-- correction as the other nine.
+-- ---------------------------------------------------------------------------
+Gen3ScriptOps.TRAINER_BATTLE_HEADER = 6
 Gen3ScriptOps.TRAINER_BATTLE_LENGTH = {
-  [0] = 13, [1] = 17, [2] = 17, [3] = 9, [4] = 17,
-  [5] = 13, [6] = 21, [7] = 17, [8] = 21, [9] = 13,
+  [0] = 14, [1] = 18, [2] = 18, [3] = 10, [4] = 18,
+  [5] = 14, [6] = 22, [7] = 18, [8] = 22, [9] = 14,
+}
+-- how many of those trailing words are pointers
+Gen3ScriptOps.TRAINER_BATTLE_POINTERS = {
+  [0] = 2, [1] = 3, [2] = 3, [3] = 1, [4] = 3,
+  [5] = 2, [6] = 4, [7] = 3, [8] = 4, [9] = 2,
+}
+
+-- ...AND WHICH OF THEM IS THE SCRIPT.
+--
+-- Not the last one, and not guessed: every slot of every trainerbattle the
+-- decoder reaches was followed and asked two questions -- does it decode as a
+-- script that terminates, and does it decode as text.  The answers do not
+-- overlap anywhere.  Type 1 slot 3 is a script at 6 sites out of 6, type 2
+-- slot 3 at 89 out of 89, type 6 slot 4 at 22 out of 22, type 8 slot 4 at its
+-- single site; every other slot of every other type decodes as a script at
+-- ZERO sites and as text at most of them.
+--
+-- So 117 of the region's 565 trainer battles hand over to a script when you
+-- win, and the rest simply say their line.  The eight gym leaders are in the
+-- 117: that script is where the badge is.
+Gen3ScriptOps.TRAINER_BATTLE_SCRIPT_SLOT = {
+  [1] = 3, [2] = 3, [6] = 4, [8] = 4,
 }
 
 -- Commands after which control never returns to the next byte.
@@ -168,6 +228,10 @@ Gen3ScriptOps.WARP_YIELD = {
 -- nine-byte inline entries instead walks off the end of the list and into the
 -- next map's data.
 Gen3ScriptOps.MAP_SCRIPT_TABLE_TYPES = { [2] = true, [4] = true }
+-- ...and the two of them by name, because a bare 2 in another file is a
+-- number nobody can check
+Gen3ScriptOps.ON_FRAME_TABLE = 2
+Gen3ScriptOps.ON_WARP_INTO_MAP_TABLE = 4
 
 Gen3ScriptOps.OPCODE_COUNT = 228
 
@@ -223,6 +287,62 @@ Gen3ScriptOps.MOVEMENT_ACTIONS = {
   [0x16] = "walk_fast_up",
   [0x17] = "walk_fast_left",
   [0x18] = "walk_fast_right",
+  [0x19] = "in_place_slow_down",
+  [0x1A] = "in_place_slow_up",
+  [0x1B] = "in_place_slow_left",
+  [0x1C] = "in_place_slow_right",
+  [0x1D] = "in_place_down",
+  [0x1E] = "in_place_up",
+  [0x1F] = "in_place_left",
+  [0x20] = "in_place_right",
+  -- THE ONES THAT ARE NOT A DIRECTION.
+  --
+  -- Everything above is derivable from the cartridge, because a walk or a
+  -- turn shows up in the movement type's own step functions.  These do not:
+  -- they set a flag on the object or play a one-off effect, and there is
+  -- nothing in the data that says which is which.  They are pokeemerald's
+  -- names, and they are here because being unnamed was not free -- an action
+  -- the port cannot name is DROPPED, and two of these change what is on
+  -- screen rather than how it moves.
+  --
+  -- set_invisible is used 81 times across Hoenn, more than any other unnamed
+  -- action.  Dropping it leaves an object standing where the script meant it
+  -- to disappear.
+  -- 0x3E/0x3F and 0x4E are TURNS, and dropping them is visible: an NPC that
+  -- should turn to face you during a scene simply does not.  They were missed
+  -- the first time round by an audit that matched `movement_%d+` while the
+  -- fallback formats `movement_%02X` -- so every id whose hex contains a
+  -- letter went uncounted, and the audit reported none left.
+  [0x3E] = "face_player",
+  [0x3F] = "face_away_player",
+  [0x4E] = "face_original_direction",
+  [0x4F] = "bow_down",
+  [0x5A] = "rock_smash_break",
+  [0x5B] = "cut_tree",
+  [0x5E] = "affine_anim_start",
+  [0x5F] = "affine_anim_clear",
+  [0x40] = "lock_facing",
+  [0x41] = "unlock_facing",
+  [0x50] = "jump_landing_effect_on",
+  [0x51] = "jump_landing_effect_off",
+  [0x52] = "animation_off",
+  [0x54] = "set_invisible",
+  [0x55] = "set_visible",
+  [0x56] = "emote_exclamation",
+  [0x57] = "emote_question",
+  -- 0x58 is the one action left over after everything above, and it is used
+  -- exactly ONCE on the whole cartridge.  It sits immediately after the two
+  -- named emotes, and Emerald's emote set is exclamation, question, heart --
+  -- so this is the heart.  That is an inference from position rather than a
+  -- reading, and it costs nothing to be wrong about: every emote is handled
+  -- the same way, by keeping the pause and not drawing a bubble the port has
+  -- not extracted.
+  [0x58] = "emote_heart",
+  [0x62] = "walk_down_start_affine",
+  [0x63] = "walk_down_affine",
+  [0x91] = "walk_slow_diagonal_up_right",
+  [0x92] = "walk_slow_diagonal_down_left",
+  [0x96] = "walk_left_affine",
 }
 
 function Gen3ScriptOps.movementName(id)

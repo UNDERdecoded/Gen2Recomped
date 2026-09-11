@@ -13,6 +13,8 @@ local Status = require("src.battle.Status")
 local TypeChart = require("src.battle.TypeChart")
 local Weather = require("src.battle.Weather")
 local HeldItems = require("src.battle.HeldItems")
+local HoldItems = require("src.battle.HoldItems")
+local Abilities = require("src.battle.Abilities")
 
 local Damage = {}
 
@@ -104,6 +106,9 @@ function Damage.critRoll(ruleset, attacker, moveId, rng, highCrit, data)
     if highCrit then stage = stage + 1 end
     if attacker.focusEnergy then stage = stage + 2 end
     if attacker.critStage then stage = stage + attacker.critStage end
+    -- SCOPE LENS is +1 for anybody; LUCKY PUNCH and STICK are +2 and are
+    -- dead weight on anything that is not a CHANSEY or a FARFETCH'D
+    stage = stage + HoldItems.critStages(attacker)
     local den = CRIT_STAGE_DEN[math.max(0, math.min(4, stage))] or 16
     return rng(1, den) == 1
   end
@@ -140,7 +145,8 @@ end
 -- Gen 2's BattleCommand_ThunderAccuracy writes that byte directly
 -- (`ld [hl], 50 percent + 1` = 128), so the caller passes the raw threshold
 -- rather than a percentage: floor(50 * 255 / 100) would be 127, one short.
-function Damage.accuracyRoll(ruleset, move, attacker, defender, rng, accuracyRaw, data)
+function Damage.accuracyRoll(ruleset, move, attacker, defender, rng,
+                             accuracyRaw, data, weather)
   rng = rng or love.math.random
   -- X ACCURACY sets USING_X_ACCURACY: the move simply never misses
   -- (MoveHitTest returns before any accuracy math, 1/256 included)
@@ -153,9 +159,23 @@ function Damage.accuracyRoll(ruleset, move, attacker, defender, rng, accuracyRaw
           attacker.stages and attacker.stages.accuracy or 0))
   acc = math.min(255, Stats.applyStage(acc,
           -(defender.stages and defender.stages.evasion or 0)))
-  -- BrightPowder subtracts its ItemAttributes parameter (20 in retail Gen II)
-  -- from the post-stage threshold.  Zero is a valid result; do not clamp it to
-  -- one, otherwise a 1/256 hit chance is invented.
+  -- COMPOUND EYES sharpens the aim and HUSTLE spoils it; both are the
+  -- attacker's own ability and neither exists before Gen 3
+  do
+    local pct = Abilities.accuracyMultiplier(attacker, defender, move,
+                                             Damage.isSpecial(move.type),
+                                             weather)
+    -- BRIGHTPOWDER and LAX INCENSE are the DEFENDER's, and compose with the
+    -- attacker's own ability rather than replacing it
+    pct = math.floor(pct * HoldItems.accuracyMultiplier(attacker, defender)
+                     / 100)
+    if pct ~= 100 then acc = math.min(255, math.floor(acc * pct / 100)) end
+  end
+  -- ...AND GEN II's OWN BRIGHTPOWDER, which is a SUBTRACTION rather than a
+  -- multiplier: it takes its ItemAttributes parameter (20 in retail Gen II)
+  -- off the post-stage threshold.  Zero is a valid result; do not clamp it to
+  -- one, otherwise a 1/256 hit chance is invented.  A Gen 3 dataset has no
+  -- such attribute and this answers zero.
   acc = math.max(0, acc - HeldItems.accuracyPenalty(data, defender))
   if not ruleset.oneIn256Miss and basePct >= 100
      and (attacker.stages.accuracy or 0) >= (defender.stages.evasion or 0) then
@@ -199,15 +219,38 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     return 0, { crit = false, typeMult = 10 }
   end
 
+  -- THE MOVES AN ABILITY SIMPLY DOES NOT FEEL: a BALTOY's LEVITATE and an
+  -- EARTHQUAKE, a LANTURN's VOLT ABSORB and a THUNDERBOLT.  The cartridge
+  -- heals or boosts on three of the four; this stops the damage, which is
+  -- the visible half (see src/battle/Abilities.lua).
+  if not opts.typeless and Abilities.blocks(defender, move) then
+    return 0, { crit = false, typeMult = 0, ability = Abilities.of(defender) }
+  end
+
   local crit = opts.forceCrit
+  -- BATTLE ARMOR AND SHELL ARMOR REFUSE THE ROLL ENTIRELY, and they beat
+  -- even a forced crit: the cartridge does not lower the rate, it skips the
+  -- critical check, so a SLASH from a CRAWDAUNT is an ordinary SLASH and
+  -- LANSAT BERRY or FOCUS ENERGY changes nothing about that.
+  if Abilities.refusesCrit(defender) then
+    crit = false
+  end
   if crit == nil then
     if Runtime.wantsHook("battle.crit") then
       crit = Runtime.call("battle.crit", function(c)
         return Damage.critRoll(c.ruleset, c.attacker, c.moveId, c.rng, c.highCrit, c.data)
       end, { ruleset = ruleset, attacker = attacker, moveId = move.id,
-             rng = rng, highCrit = move.highCrit, data = opts.data })
+             rng = rng,
+             highCrit = opts.highCrit ~= nil and opts.highCrit
+                        or move.highCrit,
+             data = opts.data })
     else
-      crit = Damage.critRoll(ruleset, attacker, move.id, rng, move.highCrit, opts.data)
+      -- the record's highCrit (BLAZE KICK, POISON TAIL, the Hoenn moves whose
+      -- crit rate is part of the EFFECT rather than a move-record field)
+      -- wins over the move's own, which in turn wins over the id table
+      local high = move.highCrit
+      if opts.highCrit ~= nil then high = opts.highCrit end
+      crit = Damage.critRoll(ruleset, attacker, move.id, rng, high, opts.data)
     end
   end
 
@@ -246,7 +289,10 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     -- penalty until the next stat recompute.
     local record = statusRecord(attacker)
     local penalty = record and record.statPenalty
-    if penalty and penalty.stat == atkStat and not attacker.hazeStatReset then
+    -- ...unless the attacker's ability is GUTS, which turns the burn from a
+    -- penalty into a bonus: it ignores the drop AND hits half again as hard
+    if penalty and penalty.stat == atkStat and not attacker.hazeStatReset
+       and not Abilities.ignoresBurnDrop(attacker) then
       atk = math.max(1, math.floor(atk / penalty.div))
     end
     -- screens double the effective defense (crits bypass them).  The
@@ -259,17 +305,60 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
       local screens = opts.screens
       if screens == nil and not opts.typeless then screens = defender end
       if screens then
-        if special and screens.lightScreen then dfn = dfn * 2 end
-        if not special and screens.reflect then dfn = dfn * 2 end
+        local up = (special and screens.lightScreen)
+                   or (not special and screens.reflect)
+        if up then
+          -- A SCREEN IS WEAKER WHEN TWO ARE STANDING BEHIND IT.
+          --
+          -- 0806_9B48 (REFLECT) and 0806_9C88 (LIGHT SCREEN) check
+          -- BATTLE_TYPE_DOUBLE and then CountAliveMonsInBattle == 2, and
+          -- take damage to 2*(d/3) instead of d/2.  This engine models a
+          -- screen as a doubled DEFENCE rather than a halved damage -- the
+          -- two are the same rule read from either end -- so the doubles
+          -- case is 3/2 here, applied the same way.
+          --
+          -- `doublesScreens` is set by the caller only when both of the
+          -- cartridge's conditions hold; a single battle, or a double with
+          -- one foe left, never sets it and takes the doubling it always
+          -- did.  Gen 1 and Gen 2 leave the ruleset fields nil.
+          local num = opts.doublesScreens and ruleset.screenDoublesDen or nil
+          local den = opts.doublesScreens and ruleset.screenDoublesNum or nil
+          if num and den then
+            dfn = math.floor(dfn * num / den)
+          else
+            dfn = dfn * 2
+          end
+        end
       end
     end
   end
-
   -- Species-specific Gen II stat items are applied to the battle stats before
   -- GetDamageVars performs its paired quartering step.
   atk, dfn = HeldItems.modifyBattleStats(opts.data, attacker, defender,
                                          atkStat, defStat, atk, dfn)
 
+  -- ABILITIES, on the two stats.  HUGE POWER and PURE POWER double the
+  -- attack outright, GUTS and HUSTLE add half again, MARVEL SCALE thickens
+  -- the defence and THICK FAT halves what a FIRE or ICE move gets to work
+  -- with.  A Gen 1 or Gen 2 Pokemon has no ability at all and every one of
+  -- these answers 1/1, so nothing below this line changes for them.
+  do
+    local an, ad = Abilities.attackMultiplier(attacker, move, special)
+    if an ~= 1 or ad ~= 1 then atk = math.max(1, math.floor(atk * an / ad)) end
+    local dn, dd = Abilities.defenceMultiplier(defender, move, special)
+    if dn ~= 1 or dd ~= 1 then dfn = math.max(1, math.floor(dfn * dn / dd)) end
+  end
+  -- HELD ITEMS, on the same two stats and applied after the abilities the
+  -- way the cartridge applies them: a CHOICE BAND's half again, and the six
+  -- species-locked doublings -- THICK CLUB, LIGHT BALL, METAL POWDER, the
+  -- two DEEP SEA halves and SOUL DEW.  A battler with no `items` view (every
+  -- Gen 1 and Gen 2 one) answers 1/1 here too.
+  do
+    local an, ad = HoldItems.attackMultiplier(attacker, move, special)
+    if an ~= 1 or ad ~= 1 then atk = math.max(1, math.floor(atk * an / ad)) end
+    local dn, dd = HoldItems.defenceMultiplier(defender, move, special)
+    if dn ~= 1 or dd ~= 1 then dfn = math.max(1, math.floor(dfn * dn / dd)) end
+  end
   -- GetDamageVars .scaleStats: when either stat no longer fits a byte,
   -- BOTH are quartered (losing low bits), each bumped to at least 1
   if atk > 255 or dfn > 255 then
@@ -288,7 +377,31 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   if crit and not ruleset.critMultiplier then level = level * 2 end
 
   local d = math.floor(math.floor(2 * level / 5) + 2)
-  d = math.floor(math.floor(d * move.power * atk / math.max(1, dfn)) / 50)
+  -- THE MOVE'S POWER, AS THIS TURN FINDS IT.  Most moves use the byte off
+  -- gBattleMoves; the ones Hoenn added that do not -- FACADE doubled by a
+  -- burn, REVENGE by having been hit, SMELLING SALT by a paralysis, PURSUIT
+  -- by a target on its way out, ERUPTION scaled by the user's own health,
+  -- FURY CUTTER and ROLLOUT doubling each turn they land -- hand the
+  -- pipeline a multiplier and it arrives here.  Floored at 1 so a scaled
+  -- move never becomes a status move by arithmetic.
+  local power = move.power
+  if opts.powerMultiplier and opts.powerMultiplier ~= 1 then
+    power = math.max(1, math.floor(power * opts.powerMultiplier))
+  end
+  d = math.floor(math.floor(d * power * atk / math.max(1, dfn)) / 50)
+
+  -- A MOVE THAT HITS BOTH OF THEM DOES HALF TO EACH.
+  --
+  -- The cartridge applies this inside CalculateBaseDamage -- after the burn
+  -- halving and after the screens, before the weather modifier, before STAB,
+  -- before the type chart, before the critical multiplier and before the
+  -- random roll -- so it sits here rather than on the finished number.
+  -- `spread` is set by the caller only when the move's target byte is
+  -- exactly MOVE_TARGET_BOTH and two are alive on the defending side.
+  if opts.spread and ruleset.spreadNum and ruleset.spreadDen then
+    d = math.floor(d * ruleset.spreadNum / ruleset.spreadDen)
+  end
+
   d = math.min(d, 997) + 2
 
   -- Held type boosters live inside BattleCommand_DamageCalc, before weather,
@@ -323,16 +436,63 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     -- running damage separately with its own floor (0.5*0.5 lands on
     -- floor(floor(d/2)/2), not d*0.25)
     mult = TypeChart.effectiveness(move.type, defender.curTypes)
+    -- FORESIGHT / ODOR SLEUTH: a GHOST that has been identified stops being
+    -- immune to NORMAL and FIGHTING.  It does not become weak to them --
+    -- the immunity simply becomes neutral -- so this reads the chart's
+    -- answer and lifts a ZERO, rather than replacing the whole lookup.
+    local foresight = defender.identified
+      and (Abilities.normalizeType(move.type) == "NORMAL"
+           or Abilities.normalizeType(move.type) == "FIGHTING")
+    if mult == 0 and foresight then mult = 10 end
     if mult == 0 then
       return 0, { crit = false, typeMult = 0 }
     end
+    -- WONDER GUARD, which is the one immunity that needs the chart's answer
+    -- first: anything that is not super-effective does nothing at all.  It
+    -- is SHEDINJA's whole reason to exist.
+    if Abilities.blocks(defender, move, mult) then
+      return 0, { crit = false, typeMult = 0,
+                  ability = Abilities.of(defender) }
+    end
     for _, m in ipairs(TypeChart.rows(move.type, defender.curTypes)) do
-      d = math.floor(d * m / 10)
+      -- the identified GHOST's zero row is the one skipped; every other
+      -- row a dual-typed Pokemon carries still applies
+      if not (foresight and m == 0) then d = math.floor(d * m / 10) end
     end
     if d == 0 then
       -- a 2-3 damage hit at 0.25x floors to zero: the original flags
       -- the move as missed rather than dealing a minimum 1
       return 0, { crit = false, typeMult = mult, missed = true }
+    end
+    -- OVERGROW, BLAZE, TORRENT and SWARM: at a third of its health or less,
+    -- a Pokemon's own type hits half again as hard.  Applied here because
+    -- the cartridge applies it to the finished damage rather than the stat,
+    -- which is not the same number once the floors are counted.
+    local pn, pd = Abilities.damageMultiplier(attacker, move)
+    if pn ~= 1 or pd ~= 1 then d = math.floor(d * pn / pd) end
+    -- FLASH FIRE, once something has lit it: every FIRE move this Pokemon
+    -- makes is half again as strong for the rest of the battle.  The flag
+    -- rides the battler, so it leaves when the Pokemon does.
+    local fn, fd = Abilities.flashFireBoost(attacker, move)
+    if fn ~= 1 or fd ~= 1 then d = math.floor(d * fn / fd) end
+    -- ...and the sixteen type trinkets, each by its own parameter: 10
+    -- percent for a CHARCOAL or a MAGNET, 5 for the two INCENSEs.  Reading
+    -- the number off the item rather than assuming ten is the difference
+    -- between a SEA INCENSE that works and one that is a MYSTIC WATER.
+    local tn, td = HoldItems.damageMultiplier(attacker, move)
+    if tn ~= 1 or td ~= 1 then d = math.floor(d * tn / td) end
+    -- CHARGE: the user's NEXT Electric move is worth double.  The flag is
+    -- spent here and cleared by the turn loop once the move has resolved,
+    -- so it survives a miss the way the cartridge's does.
+    local moveType = Abilities.normalizeType(move.type)
+    if attacker.charged and moveType == "ELECTRIC" then
+      d = d * 2
+    end
+    -- MUD SPORT and WATER SPORT halve one type for the rest of the battle,
+    -- for BOTH sides -- they are a field effect, not a buff.  opts.sports
+    -- carries them because Damage.compute never sees the field.
+    for _, muted in pairs(opts.sports or {}) do
+      if muted == moveType then d = math.floor(d / 2) end
     end
   end
 

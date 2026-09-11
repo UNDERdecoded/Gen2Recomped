@@ -161,6 +161,14 @@ local function toss(game)
   }))
 end
 
+-- The three item-storage flows, exposed so Emerald's own PC screen can use
+-- them.  The STORE is the same store and the rules are the same rules -- what
+-- differs between the two cartridges is the furniture around them and the
+-- order the rows come in, not what withdrawing an item does.
+PlayerPC.withdraw = withdraw
+PlayerPC.deposit = deposit
+PlayerPC.toss = toss
+
 function PlayerPC.new(game)
   game.save.pcItems = game.save.pcItems or {}
   return Menu.new(game, {

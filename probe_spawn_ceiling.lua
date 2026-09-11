@@ -110,5 +110,59 @@ do
   check("which is nothing like 791", spawned < 100, true)
 end
 
+
+-- ------- counting the WORLD, not the bookkeeping
+--
+-- Twenty Pokemon on screen and the ceiling never engaged, because it counted
+-- self.entities.  ow.entities is the list _attach registers into and the one
+-- the renderer walks every frame; the larger of the two wins so neither view
+-- can undercount.
+do
+  local function logic(mine, world)
+    local self = { entities = {}, mod = { world = { overworld = true } },
+                   targetSpawnCount = 12, targetWaterCount = 6 }
+    for i = 1, mine do self.entities["m" .. i] = {} end
+    local ents = {}
+    for i = 1, world do ents[i] = { __wildsPopulation = true } end
+    -- a few real NPCs that must NOT be counted
+    ents[#ents + 1] = { id = "CERULEAN_CITY_OBJ_003" }
+    ents[#ents + 1] = { id = "CERULEAN_CITY_OBJ_004" }
+    self.mod.world.overworld = function() return { entities = ents } end
+    function self.mod.world:overworld() return { entities = ents } end
+    function self:liveEntityCount()
+      local m = 0
+      for _ in pairs(self.entities or {}) do m = m + 1 end
+      local w = self.mod and self.mod.world
+      local okOw, ow = pcall(function()
+        return w and w.overworld and w:overworld()
+      end)
+      local n = 0
+      if okOw and ow and type(ow.entities) == "table" then
+        for _, e in pairs(ow.entities) do
+          if type(e) == "table" and e.__wildsPopulation then n = n + 1 end
+        end
+      end
+      return (n > m) and n or m, m, n
+    end
+    return self
+  end
+
+  local L = logic(0, 25)
+  local live, mine, world = L:liveEntityCount()
+  check("bookkeeping empty, world full", mine, 0)
+  check("the world count is found", world, 25)
+  check("and it is the one that counts", live, 25)
+
+  local L2 = logic(25, 0)
+  check("the reverse also holds", select(1, L2:liveEntityCount()), 25)
+
+  local L3 = logic(3, 9)
+  check("the larger view wins", select(1, L3:liveEntityCount()), 9)
+
+  -- real map objects are not this spawner's population
+  local L4 = logic(0, 0)
+  check("cartridge NPCs are not counted", select(1, L4:liveEntityCount()), 0)
+end
+
 print(("spawn ceiling: %d passed, %d failed"):format(pass, fail))
 if fail > 0 then os.exit(1) end

@@ -14782,7 +14782,8 @@ function RomExtractorGen2:extractRuntimeScaffolds()
 
   -- TypeMatchups: db attacker, defender, multiplier(x10); $fe splits off the
   -- rows Foresight cancels, $ff ends the table.
-  local typeChart = { source = "ROM:TypeMatchups", matchups = {}, types = {} }
+  local typeChart = { source = "ROM:TypeMatchups", matchups = {},
+                      types = {}, ids = {} }
   -- walk ids rather than GEN2_TYPES so a hack's own types (Prism's Fairy,
   -- Gas and Sound) end up in the roster too
   for value = 0, 27 do
@@ -14793,6 +14794,14 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         category = value >= GEN2_SPECIAL_TYPE and "special" or "physical",
       }
     end
+    -- `ids` is the NUMBER->NAME direction, and it is the one a script needs.
+    -- Everything downstream of extraction speaks type NAMES ("ELECTRIC"),
+    -- but a script operand is the cartridge's own id byte -- Prism's
+    -- `findpokemontype $17` -- and the two only line up through the ROM's
+    -- own TypeNames table, which is exactly what gen2TypeName reads.  Hard
+    -- coding Crystal's numbering here would be wrong on Prism, whose type
+    -- list carries nine extra entries before FIRE.
+    if typeName then typeChart.ids[value] = typeName end
   end
   -- Prism replaces that sparse list with a PACKED BIT ARRAY: one row per
   -- attacking type, `layout.matchupTableWidth` bytes wide, each defending type

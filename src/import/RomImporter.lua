@@ -345,7 +345,534 @@ end
 -- (09:$72b5) instead of Crystal's static table -- Growl's effect byte $39 was
 -- Crystal's TRANSFORM_EFFECT, so status/stat moves misfired ("used Growl,
 -- transformed into Cyndaquil"); moves.lua changes for every affected move.
-local CACHE_FORMAT = "rom-cache-v81:"
+-- v104: Emerald's move rows gained `highCrit` (effect 43/200/209), and the
+-- three effect numbers the Gen 2 join named behaviourally wrong got their
+-- pret names -- 196 EFFECT_LOW_KICK (was FLINCH_SIDE_EFFECT2, and Gen 3's
+-- Low Kick is weight-based with power 1), 43 EFFECT_HIGH_CRITICAL (was
+-- NO_ADDITIONAL_EFFECT) and 104 EFFECT_TRIPLE_KICK.  moves.lua changes.
+-- v105: the bike terrain -- every tileset pair gained muddySlopeBehaviour
+-- ($D0) and acroObstacles ($D1/$D3-$D6), and constants gained gen3Bike.
+-- tilesets.lua and constants.lua change.
+-- v106: MB_MT_PYRE_HOLE joins the fall-through holes (it was warping as a
+-- door), and every tileset pair gained escalatorBehaviours ($6A/$6B).
+-- tilesets.lua and constants.lua change.
+-- v107: constants gained gen3MetatileText (the wall region map, the
+-- television and the running-shoes booklet) and gen3Questionnaire -- the four
+-- lines no script in Hoenn references, because only C code prints them.
+-- v108: the water currents south of Pacifidlog (currentBehaviours,
+-- constants.gen3Currents) and the ground the RUNNING SHOES refuse
+-- (noRunBehaviours, constants.gen3NoRunning).  tilesets.lua and
+-- constants.lua change.
+-- v109: constants gained gen3WeatherNames and gen3BattleWeather -- the map
+-- header's weather byte had no name anywhere in the engine, so the 90 maps
+-- that set one were all clear skies.  constants.lua changes.
+-- v110: every item row gained `keyItem` (gItems[].importance ~= 0).  The bag
+-- and the mart have always asked for that name and Gen 3 wrote only the
+-- number, so every key item in Hoenn could be tossed and sold.  items.lua
+-- changes.
+-- v111: constants gained `badges` -- Hoenn's eight, under the flag names the
+-- save writes them as.  Without it Badges.list fell back to KANTO'S eight and
+-- the trainer card showed no badge ever earned.  constants.lua changes.
+-- v112: the ART FINALLY REACHES THE ENGINE.  Every species row gained
+-- spriteFront/spriteBack/spriteShiny (the pictures were written on every
+-- import and no row named them, so Sprites.path answered nil for all 386 and
+-- there was no mon on the battle screen, the summary, the party or the dex);
+-- every trainer row's `pic` is now the PATH rather than the raw
+-- gTrainerFrontPicTable index, which the image cache could not use; and
+-- constants.gen3Bag is MERGED by its two writers instead of the later one
+-- wiping the earlier one's picture.  pokemon.lua, trainers.lua and
+-- constants.lua all change.
+-- v167: the round of Emerald parity that starts with the box wallpapers.
+-- constants gained gen3BoxWallpapers (all thirty-two, plus the rectangle they
+-- go in and the grid that sits on them) and assets/generated/storage/ gained
+-- their thirty-two pictures; gen3SpritePriority (the elevation-to-priority
+-- tables and the field's background priorities, which is what puts a walker
+-- ON a bridge instead of under it); gen3GabbyAndTy; gen3AbnormalWeather; and
+-- gen3PCMenu gained `orders`, `screen` and `multichoice`.  map_scripts gained
+-- the script the field runs for a PC, which no map header names.  A cache
+-- built before this has none of the art and none of the records, so the box
+-- screen draws a flat rectangle and the storm never appears -- which is why
+-- this is a bump rather than a note.
+-- v168: the "!" bubble, and the two beside it.  An emote is NOT a field
+-- object -- it is a field EFFECT, and its picture is reached only by
+-- disassembling the native the effect script calls -- so the three overworld
+-- emotes (exclamation, question, heart) had no art anywhere in the cache and
+-- every startled trainer, every wondering NPC and every Pokemon in love drew
+-- the Game Boy sheet's bubble instead.  constants gained gen3Emotes and
+-- assets/generated/overworld/ gained the three pictures.  Nothing but a fresh
+-- import can produce them, which is what makes this a bump.
+-- v169: THE DECORATIONS -- all 121 of gDecorations, found by its own shape
+-- (121 records of 32 bytes whose first byte is the record's index) because no
+-- symbol names it.  constants gained gen3Decorations: the name, price, shape,
+-- permission, category and description of every one.  Without it `checkdecor`
+-- answered "you own none" to every script that hands one over,
+-- `bufferdecorationname` printed a hole, and `adddecoration` recorded a number
+-- nothing could read back.  A cache built before this has no catalogue at all,
+-- so this is a bump.
+-- v170: FLASH.  constants gained gen3Flash -- the nine radii, the two levels a
+-- cave uses and the screen centre the circle is drawn on, all read off the
+-- cartridge's own window setter and SetDefaultFlashLevel.  A dark cave in
+-- Hoenn is a black window with a hole in it, not the Game Boy's flat shade,
+-- and without this record the field has no radius to cut and falls back to
+-- leaving the cave lit.
+-- v171: the POKEMON CENTER'S HEALING MACHINE, which is a field effect rather
+-- than the OAM table the Game Boy importers read -- two sprites made by machine
+-- code and placed by four immediates inside it, so nothing on the machine ever
+-- lit up in Hoenn.  constants gained gen3HealMachine and
+-- assets/generated/overworld/ gained the glow and the monitor's two frames.
+-- Where they go is measured from the player's own cell, and that point comes
+-- from the FLASH circle's centre in the record above -- so this needs v170's
+-- data as well as its own.
+-- v172: THE ROTATING GATES, which is the data half of Fortree Gym's puzzle and
+-- the Trick House's sixth room -- nineteen gates the port did not have, so the
+-- sixth Gym was a walk across an empty floor.  constants gained
+-- gen3RotatingGates: where each gate stands, which of the eight shapes it is,
+-- which way it faces, and what each shape's arms reach.  The puzzle itself --
+-- walking into an arm, the turn, the collision -- is the next slice; this is
+-- the part that cannot be guessed.
+-- v173: SLATEPORT'S TRAINER FAN CLUB -- eight members and a counter packed
+-- into one halfword, read off the four specials that use it, plus the six
+-- names behind its two switches.  Sixty-four call sites in one building said
+-- "I'm a big fan of ." before this.  constants gained gen3FanClub, and
+-- gen3StartMenu gained `pokenavFlag` -- the flag the cartridge's row builder
+-- actually tests, since the name the port had could never be true.
+-- v174: WHICH TRAINERS FIGHT TWO AT A TIME.  A map object already carried the
+-- trainer it fights; it now also carries the trainerbattle MODE that starts
+-- the fight (gen3TrainerKind).  Modes 4, 6, 7 and 8 are the double battles,
+-- and CheckTrainer (0B3D6E) reads that same byte off the object's script to
+-- decide that one twin alone is already a double and no partner should be
+-- looked for.  Without it nothing on the sight path could tell a twin from
+-- anybody else.
+-- v175: WHERE EVERYTHING IN A BATTLE STANDS -- and one panel that has been
+-- wrong in every single battle since the HUD stage was written.  There are
+-- FIVE distinct healthbox blobs in the sheet run, not two: the player's
+-- single-battle box is 4096 bytes (two 64x64 sprites, and the only one with
+-- an EXP bar), and the stage filtered on 2048 -- so it threw that one away
+-- and saved the DOUBLES box as `player.png`.  The EXP bar art was never
+-- extracted at all, and the opponent was decided by a table.sort on two
+-- equal tags, which Lua does not define an order for.  All five are now
+-- named by size and tag the way the load site at 05DFFC names them.
+-- constants gained gen3BattlerCoords: sBattlerCoords (0525F58) for where the
+-- four Pokemon stand, and the six healthbox places read back off the
+-- instructions InitBattlerHealthboxCoords (072B18) loads them with.  The
+-- single-battle foe comes out at x=176, which is exactly the platform centre
+-- the placement test scans out of the drawn background -- code and art
+-- agreeing on one number.
+-- v176: THE PARTY MENU'S OWN SCREEN.  Reported from play: "still missing the
+-- background and pokemon tiles for the emerald pokemon party menu".  The
+-- icons were ripped a while back; the screen they sit on never was, and
+-- Gen3PartyMenu.lua said so in its own header -- "RECONSTRUCTED, not
+-- derived: the panels".  Six boxes this port drew itself, at coordinates it
+-- chose itself, on a flat fill.  constants gained gen3PartyMenu: the 62-tile
+-- sheet, its 32x32 tilemap and all ELEVEN palettes; the five panel maps
+-- (wide, narrow, an egg variant of each, and the empty slot) which are
+-- arrays of tile INDICES rather than pictures; the ball that sits behind
+-- each icon and opens on the cursor slot; and the two tables that say where
+-- everything goes -- sPartyMenuWindowTemplates in tiles and
+-- sPartyMenuSpriteCoords in pixels, stepping three and twenty-four
+-- respectively, which is the same pitch read two ways.
+-- v177: FOUR THINGS THE PORT COULD NOT DO, AND ONE IT DID WRONG.
+--
+-- THE SEALED CHAMBER.  Reported: "make sure the sealed chamber event works to
+-- unlock the regi doors, it is a prerequisite".  It is, and this port had no
+-- DIG braille wall at all -- so flag $8AF was never set, the inner room was
+-- unreachable, $E4 was never set, and the ON_LOAD of Routes 105, 111 and 120
+-- kept writing an impassable metatile ONTO THE WARP CELL of each ruin.  All
+-- three Regis were walled off from outside, forever.  gen3RegiChambers gained
+-- `sealedChamber`, decoded from DoBrailleDigEffect -- whose six tiles are the
+-- Regi door's own, which is what proves it is the same door.  gen3FieldMoves
+-- gained DIG, which is a TM and therefore has no badge, which is why the
+-- HM-keyed table never had it.
+--
+-- MAP SEAMS.  Two edges in Hoenn carry TWO connections -- Route 111's west
+-- and Route 124's east -- and only the first was kept, so both were one-way:
+-- the neighbour was drawn across the seam and could not be entered.  Every
+-- connection is now kept in ROM order and selected the way
+-- IsCoordInIncomingConnectingMap does, by which strip covers the player.
+--
+-- THE POKeDEX ROW.  The lab really does set $861; the start menu asked
+-- `Flags.hasPokedex`, which answers for the Game Boy names.  Both gated rows
+-- are now read off BuildStartMenuActions itself.
+--
+-- THE REGION MAP knows what is under the cursor.  GetMapSecIdAt indexes a
+-- flat 28x15 table, one byte per cell; the port hit-tested the section
+-- rectangles, which are anchors and agree with it for only 413 of 420 cells.
+--
+-- ...AND THE BAG SCREEN, which was a flat green rectangle and three boxes
+-- this port chose the size of.  gen3BagScreen carries the 53-tile sheet, both
+-- gendered palettes, and every window rectangle from sDefaultBagWindows.
+-- ...AND THE SUMMARY SCREEN'S PLACES.  "the pokemon stats/ summary page the
+-- text isnt in the right places" -- and that screen's own comment admitted
+-- the method: its numbers were "read off the background this screen now
+-- draws".  By eye is exactly as accurate as it sounds.  The right-hand stat
+-- column was 26 pixels out, the move names 32, the nickname 79, and both row
+-- pitches were wrong (fourteen and thirteen against the cartridge's sixteen),
+-- so the fourth line of each page drifted out of its own box.
+-- constants gained gen3SummaryWindows: all four WindowTemplate arrays.
+-- v179: THE WALL WAS BUILT AND THE KEY WAS NEVER CUT.
+--
+-- Collision's Acro Bike rule handles all five obstacle behaviours and its own
+-- comment said it was written out in full "instead of a `return false` nobody
+-- remembers to revisit".  Nobody revisited what was outside it: the bag knew
+-- only the Game Boy's BICYCLE so Hoenn's two bikes did nothing when used,
+-- `mover.acroBike` was read by the rule and written by nothing, and
+-- `p.bikeSpeed` -- the only thing that beats a muddy slope -- was read in one
+-- place and set in none.  Jagged Pass's bumpy slopes were a wall to everyone,
+-- and behind them are Mt. Chimney and the Magma Hideout.
+--
+-- gen3FieldMoves also gained DIG properly this time: `move` is the cartridge's
+-- move NUMBER, the way every other row holds it, not the name.
+-- v181: HOENN'S OTHER HALF.
+--
+-- "Continue finish the pokenav and the contests next".  Both were absent
+-- entirely, and both are mostly DATA the import had never gone looking for:
+--
+--   * gItemIconTable -- 378 pairs of a 24x24 sheet and a palette, found by
+--     the only shape in the cartridge that decompresses to exactly 288 and 32
+--     bytes 378 times running.  The bag had a hole cut in its background for
+--     these and nothing to put in it.
+--   * the POKeNAV: five menus, thirteen button pictures, fourteen row
+--     descriptions, the 256-byte condition-radius LUT, the seventeen-row
+--     ribbon bit layout with its 25 descriptions, all 21 match call headers
+--     with their 107 phone lines, and gRematchTable's 78 rows.
+--   * contests: 96 opponents in four ranks of 24 (nine of each post-game
+--     only), the 5x5 crowd table, the rank names, the combo starter and
+--     follow ids on every move, and the Contest Lady's five.
+--   * Pokeblocks: the 25x5 nature/flavour table -- proved by deriving it from
+--     each nature's raised and lowered stat and finding all 25 rows agree --
+--     and the fourteen colour words.
+--
+-- ...and the engine side: contest stats on the Pokemon (which is also what
+-- makes FEEBAS able to evolve at last), ribbons, the Pokeblock case and the
+-- Berry Blender's arithmetic, the rematch step counter and its map-load roll,
+-- and the region map's zoom.
+-- v182: THE BOTTOM OF THE BATTLE SCREEN, AND THREE THINGS IN THE BAG.
+--
+-- "the text in battle doesnt seem to be correct its really dark but its not
+-- like that in the real rom, and the text box in battle has a background in
+-- the real game but not in ours" -- one missing picture behind both.  The
+-- strip is 240x48 with its own tiles, tilemap and palette, and the message on
+-- it is WHITE with a dark violet shadow on TEAL; the four actions beside it
+-- are dark grey on white, in the player's own OPTIONS frame.  Two colour
+-- records, not one, and every string printed twice.
+--
+-- The tilemap is 32 by SIXTY-FOUR and only eighteen rows carry art -- three
+-- runs of six, which the cartridge scrolls between.  That shape is the check.
+--
+-- ...and the bag: the item picture's box is 32 by TWENTY-EIGHT, so centring a
+-- 24-pixel icon in a 32x32 put it two rows low and its right column on the
+-- border; the pocket name was drawn four pixels too far down and the pill's
+-- own border ran through it; and the selected pocket's dot is a TILE THE
+-- CARTRIDGE SWAPS IN -- a 4x4 block that is red for the boy and blue for the
+-- girl -- which the importer now finds by asking which unplaced tile differs
+-- from the dot by a solid block.  Exactly one does.
+-- v183: WHO YOU CAN SEE, AND WHO IS STANDING ON WHAT.
+--
+-- "all kekleons are visible without using the scope" -- Emerald's invisible
+-- KECLEON wear the ordinary KECLEON sprite, and what hides them is their
+-- MOVEMENT TYPE, whose step-0 callback sets the object's own invisible bit.
+-- Found by walking all eighty-one callbacks -- wrapper to sub-callback to
+-- step table to step 0 -- and looking for the four instructions that set bit
+-- 5 of byte 1.  Exactly one reaches them.  They still block and still talk,
+-- because the cartridge's collision test never looks at whether an object can
+-- be seen.
+--
+-- "some sprites that are on bridges are appearing under them like steven on
+-- the bridge next to the kekleon" -- the whole rule was already here and NPCs
+-- simply had no elevation to look it up with.  It cannot come off the ground
+-- either: a bridge SPAN is elevation 15, which the cartridge refuses to write,
+-- so an NPC standing on one would never learn anything from the cell beneath
+-- it.  The template's own byte is the answer, and the data says outright who
+-- belongs on top of what: every one of Steven's nine appearances in Hoenn is
+-- elevation 3 except the Route 120 bridge, which is 4.
+--
+-- "After battling may ... her sprite stays there even though she drives away
+-- on her bike" -- trainerbattle mode 3 ends with `gotopostbattlescript`, not
+-- `gotobeatenscript`: it resumes at the byte AFTER its ten-byte record, which
+-- is the rest of the cutscene.
+-- v184: THE BALL.
+--
+-- "Pokeball throwing animations dont exist in battle either" / "neither do
+-- the capturing shaking etc eniamtions".  The catch MATHS has been right for
+-- a long time and none of it was ever shown: the chain is written in Gen 1's
+-- and Gen 2's animation SCRIPTS, and a Gen 3 dataset has none of them.
+--
+-- Twelve sheets of three 16x16 frames, and the third frame is a lie in nine
+-- of them -- all zeroes in the compressed sheet, overwritten at load time
+-- with one shared "open halves" blob for every ball but DIVE, LUXURY and
+-- PREMIER.  Every timing is the cartridge's: a 34-frame throw with a
+-- 40-pixel sine hump, a 28-frame absorb that shrinks the Pokemon to a fifth
+-- while its palette blends to the BALL'S OWN colour, four bounces of 16, 13,
+-- 11 and 10 frames with a sound each, and 59-frame shakes 31 frames apart.
+-- v185: THE SECRET BASE'S DOOR OUT, AND THE PC IN THE ROOM.
+--
+-- "after making a secret base when i try and exit it puts me right back in
+-- the secret base room" / "the pc in the secret base room doesnt work".  Two
+-- faults, and the first hid nothing while the second hid everything.
+--
+-- The exit was an ALIAS: specials 8 and 24 were the same function here, and
+-- 8's first act is to record where you are standing as the way back out.  8
+-- runs outside on the route and 24 runs INSIDE, after 8 has already put you
+-- in the room -- so the alias recorded the base room as the way out of the
+-- base room.  The cartridge's 24 never touches the dynamic warp at all; it
+-- warps to two coordinate bytes on the room's own table row, which 8 never
+-- reads.  gen3SecretBases.rooms gained those, checked against each room's own
+-- size because the twenty-four are not one shape.
+--
+-- The PC is a METATILE.  Not an object, not a bg event -- behaviour $B0 for
+-- your own base and $B1 for someone else's, answered by
+-- GetInteractedMetatileScript with a script address, so no walk over a map's
+-- events was ever going to find one.  gen3SecretBases gained `pc`, read out
+-- of that function's two arms: the predicate each calls, the behaviour that
+-- predicate compares, and the script it answers.
+--
+-- ...and its DECORATION row now has something behind it.  gen3Decorations
+-- gained the ten shapes (1x1 through 3x3, plus a 4x2 and a 2x4, read off the
+-- jump table in ShowDecorationOnMap because they are not a table anywhere),
+-- each record's metatile list -- stored 512 low, because they are offsets
+-- into the secondary tileset -- the object-event graphics id that the
+-- forty-five DOLLs and CUSHIONs carry INSTEAD of metatiles, the permission
+-- that says which ones you may stand on, and the menu's own four rows.
+-- v186: THE ROTATING GATES, FOUR YEARS LATE.
+--
+-- v172 read them and nothing ever looked at the record: nineteen gates, eight
+-- shapes, their arm tables, four rotation grids and two sweep tables, sitting
+-- in the cache unread while Fortree Gym stayed an empty hall.  That is this
+-- port's dominant Gen 3 bug -- not "extracted wrong" but "extracted correctly
+-- and read by nothing" -- and the fix is a reader, plus three things the
+-- record was still missing.
+--
+-- WHERE THE COLOURS COME FROM.  Both sprite templates carry paletteTag $FFFF,
+-- which reads as "it borrows the player's" and is wrong; their OAM names OBJ
+-- palette SLOT 2, and the overworld fills its slots from a fixed tag table
+-- shipped four times over.  All four copies say slot 2 is tag $1103, that tag
+-- is the first NPC palette, and its entries 11, 12, 13 and 15 -- the only
+-- four the eight sheets touch -- are an olive ramp and a black outline.  A
+-- bamboo lattice, which is what a gate is.  The record gained the palette and
+-- one baked 64-square strip.
+--
+-- AND A BLANK IS NOW A BLANK.  The four rotation grids were written with
+-- `(v == NONE) and false or v` -- the oldest trap in Lua, since `true and
+-- false` is false and `false or v` is v -- so all forty-eight blanks came out
+-- as the byte $FF and the intended `false` was never written once.  Nothing
+-- read the record, so it broke nothing; the first reader would have taken
+-- $FF for a rotation of 15 into arm 15.  They are now decoded pairs, and the
+-- two sweep tables are keyed by the rotation NUMBER that selects them rather
+-- than by a name this port made up.
+-- v187: THE ONE THAT WON'T STAND STILL.
+--
+-- Beat the league and the television names a Pokemon seen over Hoenn.  The
+-- special that puts it in the air had no handler, and src/world/RoamMons.lua
+-- is Crystal's three-beast byte roll keyed by names a Hoenn save has none of
+-- -- so the whole system was a legendary the game announces and that is
+-- nowhere in the region.  constants gained gen3Roamers, and two of its
+-- numbers are the kind that look plausible while being wrong: the second
+-- species is written `mov #204 / lsl #1`, so reading the immediate gives a
+-- completely different Pokemon; and both sets of odds are masks over a Random
+-- shifted left sixteen, so reading the immediates gives 240 and 192 rather
+-- than one in sixteen and one in four.  Twenty places with fifty ways between
+-- them, every one checked to be a real map and every way out to lead to
+-- another of the twenty.
+-- v188: THE CABLE CAR, which is the one way up Mt. Chimney.
+--
+-- Both stations run the same three rows -- `setvar $8004, <which> / special
+-- 154 / special 155 / waitstate` -- and neither special had a handler, so
+-- walking into the car incremented a game statistic and left the player
+-- standing on the platform.  Where it goes is five immediates in one
+-- function and no table at all: the special branches on VAR_0x8004 and calls
+-- SetWarpDestination with a group, a map, a warp id of -1 and a cell in each
+-- arm.  constants gained gen3CableCar, refused unless the two arms agree on
+-- everything but the map number -- one group, one cell, one platform at each
+-- end.
+-- v189: THE HEALTHBOX, MEASURED.
+--
+-- "im also not nseeing the symbols for pokemons gender in blue or red in
+-- battle next to their names and their names are looking a little too bold"
+-- / "The exp bar is also overlapping the hp text".  Three faults and all
+-- three were the layout guessing at numbers the panel already carries.
+--
+-- gen3BattleHud gained `geometry`, measured off each panel's own pixels: the
+-- cream interior is the one index that fills a solid rectangle, and the EXP
+-- strip is the row below it whose pixels alternate between two colours for
+-- more than forty across.  The two panels are NOT the same shape -- the
+-- foe's interior is nineteen tall and the player's twenty-seven, because the
+-- player's box has a third row for the current-and-max numbers -- and one
+-- height for both is what put those numbers eight pixels low, on the EXP
+-- strip.  The strip is inside the panel too, not below it.
+--
+-- It also gained `text` and `gender`.  The healthbox renders into a window of
+-- its own and names its three indices; the two gender symbols each override
+-- the letter's colour in the STRING rather than in the call, so the index and
+-- the glyph come out of the same four bytes -- 11 for a male and 10 for a
+-- female, which in the healthbox palette are a light blue and a pink.  And
+-- the two species whose own NAME ends in a symbol get none beside it.
+-- v199: THE BACK OF A SHINY POKEMON.
+--
+-- Reported from play: "make sure shiny pokemon work".  In Hoenn they did not.
+-- The importer had been decoding every species' FRONT sheet through
+-- gMonShinyPaletteTable since v112 and writing it to spriteShiny, and nothing
+-- in the engine ever read it, because every shiny test in the port asked for
+-- `mon.dvs` -- which a Gen 3 Pokemon does not have.  With that fixed the
+-- front pictures light up on their own, but the BACK sheet was still decoded
+-- through the ordinary palette only: gMonShinyPaletteTable is one palette per
+-- species and the cartridge applies it to whichever sheet is on screen, so
+-- the player's own shiny Pokemon -- the one on screen for the whole battle --
+-- came up in its ordinary colours from behind.
+--
+-- Every species row now also carries spriteShinyBack, and
+-- assets/generated/battle/shiny_back/ gains its 386 pictures.  A cache built
+-- before this has neither, so the file falls back to the ordinary back pic
+-- rather than showing nothing -- but the fallback is the bug, which is why
+-- this is a bump.
+-- v200: THE HELD-ITEM ICON.
+--
+-- Reported from play: "in the pokemon party menu the hold item icon shows,
+-- currently when theyre holding items it doesnt show anything like in the
+-- rom".  sPartyMenuSpriteCoords has been read since the panels were, so every
+-- slot's `item` x/y was already in gen3PartyMenu -- there was simply no
+-- picture to put there.
+--
+-- It is not in the compressed party-graphics block with the ball and the
+-- status pills, which is why a sweep of that block never turned it up: it is
+-- sixty-four RAW bytes sitting in the middle of the sprite tables at 615E30,
+-- named by the SpriteSheet at 615EB0 { 615E30, 0x40, tag 55120 } with its own
+-- palette at 615E70.  Sixty-four bytes of 4bpp is two 8x8 tiles, and the
+-- two-entry anim table at 615EA8 says what they are -- and the art proves the
+-- reading on its own: frame 0 is a yellow-topped, red-bottomed parcel and
+-- frame 1 a white envelope.
+--
+-- gen3PartyMenu.images gains `heldItem` (and `heldItemFrames`), and the
+-- record gains `mail` -- the twelve item ids ItemIsMail (0D47BC, `cmp #132 /
+-- bgt` then `cmp #121 / blt`) answers true for, kept as IDS so the screen
+-- never sees a raw item number.
+-- v201: A SHINY THAT STAYS SHINY WHILE IT MOVES.
+--
+-- Reported from play: "shiny pokemon during their emerald battle sprite
+-- animation are turning to their normal non shiny colors and then after their
+-- animation appear as their normal shiny colors".
+--
+-- Exactly that, and the cause is a seam the cartridge does not have.  Emerald
+-- loads ONE palette for a battler and draws every frame of every sheet
+-- through it; this port bakes the palette into each decoded PNG, so a species
+-- needs one picture per palette per sheet.  v199 gave the front and back
+-- STILLS their shiny decode -- and left the two-frame ANIMATION strip with
+-- only the ordinary one, so a shiny lost its colours for precisely the frames
+-- it was moving and got them back the moment it settled.
+--
+-- picAnim gains `shinySheet`, and assets/generated/battle/anim/shiny/ gains
+-- its strips.  PicAnim.sheetFor is the one place that chooses between them.
+-- v202: THE SEAFLOOR -- the diving suit, the blob, and the way back up.
+--
+-- Three reports, one dive.
+--
+-- "the surf sprite and character sprite that appears when diving isnt
+-- appearing as well when underwater".  The underwater player is a whole
+-- separate graphics row wearing its own palette -- 111 for the boy, 112 for
+-- the girl -- seventy rows past the walking sheet, so the block walk that
+-- finds the bicycle and the surfboard by palette could never reach it.  What
+-- names it is sPlayerAvatarGfxIds, one { boy, girl } pair per avatar state;
+-- the stage finds that table by the walking pair the manifest already names
+-- and CHECKS it against the surfing pair the block derivation produced on its
+-- own.  gen3PlayerSprites gains boyUnderwater / girlUnderwater.
+--
+-- "the underwater submarine room I cant use dive to go up here like im
+-- supposed to be able to".  gen3Dive.noSurfacing was a STATISTIC taken over
+-- the seven route/seafloor pairs, and it says nothing about the seven
+-- underwater ROOMS, which have no surface map above them -- their ordinary
+-- floor wears behaviours a route calls sealed, so the submarine room, the
+-- Marine Cave and the Sealed Chamber's approach all refused to surface
+-- anywhere.  MetatileBehavior_IsUnableToEmerge (0895D0) is four instructions
+-- over two constants -- $19 and $2A -- and the stage now reads it, keeping
+-- the statistic as a cross-check in the log.  (The same pass corroborates
+-- the DIVE side: MetatileBehavior_IsDiveable is $11/$12/$14, exactly what the
+-- old statistic had already produced.)
+--
+-- The third, the surf blob sitting eight pixels too high, needed no new data
+-- -- see Player:drawSurfBlob.
+--
+-- v225: THE MAUVILLE OLD MAN.  The house east of the gym holds one of five
+-- men, chosen from the trainer id, and every arm of it hung off a special
+-- with no handler -- so the dispatcher branched on a stale VAR_RESULT and the
+-- man in it said nothing.  extractMauvilleMan derives his block inside
+-- SaveBlock1 off TraderDoDecorationTrade (and proves it: the four
+-- eleven-byte name slots end exactly where the already-traded byte begins),
+-- his four starting decorations and their previous owners off TraderSetup
+-- (two tables that are adjacent in the ROM, so finding one finds the other),
+-- and the sprite variable his map object reads out of gSpecials[107].  The
+-- same stage finally answers a question this port had left open: the eight
+-- decoration arrays in SaveBlock1, off SetDecorationInventoriesPointers --
+-- ten desks, thirty ornaments, forty dolls -- which TILE to 150 slots with
+-- no gap, and which `Gen3Decorations.roomFor` had been saying yes to
+-- everything for want of.  constants gain gen3MauvilleMan and
+-- gen3Decorations.capacity; the save layout gains mauvilleMan and
+-- decorations.
+--
+-- ...and LILYCOVE'S LIFT, off the same tracer.  The department store's panel
+-- asked two questions nothing answered: which row to open the cursor on (433)
+-- and how long the ride is (276).  Zero is a valid answer to the first and it
+-- means the TOP floor, so the lift offered 5F from the ground floor every
+-- time.  extractElevator reads the map group and the run of map numbers off
+-- the panel's own switch, checks the two bytes it reads sit a whole number of
+-- eight-byte warp records past the saved location, traces each arm for the
+-- row it answers -- they run backwards, top floor first -- and reads the
+-- shake table, whose length ENDS ITSELF (the counts climb and the next byte
+-- drops) and is the same number the ride clamps a long trip to.  constants
+-- gain gen3Elevator.
+--
+-- v227: THE BATTLE HUD CARD.  Reported from play: "the EXP icon is not lined
+-- up and the 12/12 HP text sits outside the card".  Two separate faults, both
+-- off-by-a-few-pixels and both now read rather than placed.  The EXP one: the
+-- import measures the dotted GROOVE in the panel art (two rows) and the ramp
+-- FRAME that draws over it is a whole 8x8 tile with three rows of the box's
+-- own edge above the bar, so laying the tile's top on the groove put the bar
+-- three rows under it -- extractBattleHud now reads that offset off the empty
+-- frame and proves it by the frame's bar being exactly as many rows as the
+-- groove.  gen3BattleHud.bars gains expTop and expHeight.  (The other fault
+-- needed no data: Font.glyphHeight was reading the DEFAULT page while the
+-- healthbox had the small face pushed, so a box laid out for eleven-pixel
+-- rows was being measured in fifteens.)
+--
+-- v228: THE SCROLLING MULTICHOICE.  `multichoice` draws a fixed list out of a
+-- table this already read; the OTHER one -- a list too long for the screen --
+-- is a special, and it was unserved, so thirteen counters in Hoenn branched
+-- on whatever the last unrelated script had left in VAR_RESULT.  TWO OF THEM
+-- ARE SHOPS no mart audit could find, because they are not `pokemart` lists:
+-- Lavaridge's herb shop and Fallarbor's glass workshop.  extractScrollMulti-
+-- choice reads the thirteen lists out of one flat run the task indexes as
+-- `base + id * 64 + row * 4`, and what identifies it is that each of the
+-- thirteen ARMS separately writes how many rows its own list has -- two
+-- numbers found by two routes, agreeing thirteen times.  readText also gained
+-- a `spacers` argument, because the cartridge lays a price out with CLEAR_TO
+-- and dropping it reads as "PROTEIN1,000".  constants gain
+-- gen3ScrollMultichoice.
+--
+-- v229: WHICH SLOT LINE PAID.  Reported from play: "when winning the slots it
+-- should show where you lined them up to win" -- the machine could say how
+-- much it had paid and not why, and on a three-coin spin that is five lines
+-- it could have been.  The answer is already in the cartridge's art: the five
+-- paylines are drawn into the machine's own tilemap, in the gaps between the
+-- reel windows and outside the outer two, and the colour of each is its
+-- PRICE -- blue for the coin that buys the middle row, yellow for the one
+-- that buys the top and the bottom, red for the one that buys the diagonals,
+-- the same three colours as the 3 / 2 / 1 / 2 / 3 lamps down either side.
+-- extractSlotMachine now finds the three reel windows (the only holes the
+-- backdrop leaves, because the reels are sprites) and reads a marker at each
+-- row's centre and at each midpoint between two centres, and it CLOSES: five
+-- samples come back as exactly three colours, the outer rows agreeing with
+-- each other, the diagonals with each other, and the middle row with
+-- neither.  gen3Slots gains `screen`.
+--
+-- v230: BEATING THE GAME.  The champion's room ends `setrespawn /
+-- fadescreenspeed / special 275 / waitstate`, and 275 is GameClear -- it was
+-- unserved, so beating the league changed nothing that lasts.  Its first two
+-- acts are what the rest of Hoenn waits on: HealPlayerParty, then FlagSet on
+-- the game-clear flag -- and this port READ that flag in two places and wrote
+-- it in none, so a finished playthrough stayed permanently unfinished.  The
+-- flag is derived as the one script-flag-sized word in gSpecials[275]'s own
+-- literal pool, and it CLOSES: the PC's multichoice had already found the
+-- same number by a completely different route, as the gate on its HALL OF
+-- FAME row.  constants gain gen3GameClear.
+local CACHE_FORMAT = "rom-cache-v251:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"
@@ -460,6 +987,90 @@ local REQUIRED_FILES_GEN2 = {
   -- version cannot produce.
 }
 
+-- Gen 3.  A GBA cartridge produces a different set again, and listing it
+-- properly is what makes a HALF-FINISHED import report itself as half
+-- finished rather than boot into a game with no maps.  Every entry here was
+-- checked against what the extractor actually writes -- the trap being a
+-- required file the importer cannot produce, which turns every import into a
+-- permanent failure (see the Yellow note below, which is that mistake).
+--
+-- save_layout and songs are Gen 3 only: the first carries the sector shape,
+-- the substructure orders and where every field sits inside the save blocks,
+-- and without it a save import refuses rather than guesses; the second carries
+-- the music tables.
+local REQUIRED_FILES_GEN3 = {
+  "data/generated/constants.lua",
+  "data/generated/pokemon.lua",
+  "data/generated/moves.lua",
+  "data/generated/items.lua",
+  "data/generated/type_chart.lua",
+  "data/generated/trainers.lua",
+  "data/generated/encounters.lua",
+  "data/generated/text.lua",
+  "data/generated/text_pointers.lua",
+  "data/generated/maps.lua",
+  "data/generated/map_layouts.lua",
+  "data/generated/map_tilesets.lua",
+  "data/generated/map_scripts.lua",
+  "data/generated/tilesets.lua",
+  "data/generated/scenes.lua",
+  "data/generated/save_layout.lua",
+  -- FLY AND EVERY BLACKOUT IN HOENN.  field.lua is where sHealLocations
+  -- lands: the fly destinations, the order the region map lists them in, and
+  -- the map each `setrespawn` index names.  A cache without it does not
+  -- degrade to a missing Fly menu -- the Gen 1 field table is still there for
+  -- the overlay to inherit, so a blackout sends the player to Pallet Town's
+  -- coordinates on a Hoenn map, which is how the moving van was the whole
+  -- region's respawn point.
+  "data/generated/field.lua",
+  "data/generated/songs.lua",
+  -- and the join between them: every map header carries a song NUMBER and
+  -- the song table is keyed by name, so `audio` is the table that says which
+  -- theme a map plays.  A cache without it is a region that boots and is
+  -- silent, which reads as an audio problem rather than a missing file.
+  "data/generated/audio.lua",
+  -- REQUIRED, not optional.  A Gen 3 cache without its own font does not fall
+  -- back to nothing -- the version overlay is additive, so it falls back to
+  -- RED'S, silently, and the whole game reads in the wrong generation's
+  -- letters.  Data.lua refuses the inheritance now; this is what makes the
+  -- launcher notice a cache that predates the font stage and re-import it.
+  "data/generated/font.lua",
+  -- and the overworld art every object event in Hoenn resolves through.
+  -- Absent, NPC.resolveSpriteDef falls through to SPRITE_RED and the whole
+  -- region is populated by Kanto -- which is what it was.
+  "data/generated/sprites.lua",
+  -- THE PARTY MENU'S OWN ART, and required for the same reason as the font:
+  -- Data no longer blocks `icons` on a Gen 3 cache, so a cache that does not
+  -- carry its own resolves to RED'S and every Hoenn species wears a Kanto
+  -- icon chosen by dex number.  Requiring the file is what turns that into a
+  -- cache the launcher reports as incomplete and re-imports instead.
+  "data/generated/icons.lua",
+  -- one of each kind of asset, so a cache that wrote the tables but no
+  -- graphics is caught: all 411 front pics and all 93 trainer pics decode
+  -- from this cartridge, so neither of these can be a file it cannot make
+  "assets/generated/battle/front/bulbasaur.png",
+  "assets/generated/battle/trainers/000.png",
+  -- ...and one party icon, which is a THIRD kind: raw 4bpp out of a table
+  -- with six shared palettes rather than the compressed per-species art
+  -- above, so a stage that silently produced none is caught here.
+  "assets/generated/icons/bulbasaur.png",
+  -- ...and the ground a battle is fought on.  Without it Hoenn fights on the
+  -- Game Boy's sheet of white paper, which is most of the screen and is what
+  -- makes an otherwise correct battle screen read as being in black and white.
+  "assets/generated/battle/bg/grass.png",
+  -- ...and the summary screen's own background, which is the screen a player
+  -- opens more than any other: without it the page is drawn boxes at
+  -- positions somebody chose, and with it the panels are the cartridge's and
+  -- every row lands inside one.
+  "assets/generated/ui/summary_info.png",
+  -- the font page and Birch: one is every letter in the game, the other is
+  -- the only picture the new game shows before the player reaches a map
+  "assets/generated/fonts/gen3_normal.png",
+  "assets/generated/intro/birch.png",
+  -- row 0 of the graphics table: the player's own walking sheet
+  "assets/generated/overworld/g3_000.png",
+}
+
 -- Files only one version's cache carries.  A version that predates one of
 -- them re-imports on its own, without dragging the other versions through a
 -- CACHE_FORMAT bump.
@@ -503,19 +1114,10 @@ local VERSION_REQUIRED_FILES = {
   prism = { "assets/generated/title/prism_title.png" },
 }
 
--- Gen 3's cache-complete gate.  Deliberately SHORT while the extractor is
--- still being built out: this list is what "the import produced something
--- usable" means, and padding it with files no stage writes yet would mark
--- every Emerald import as broken rather than as partial.  It grows as the
--- stages land.
-local REQUIRED_FILES_GEN3 = {
-  "assets/generated/fonts/font.png",
-}
-
 local function requiredFiles(version)
-  local generation = GameVersion.generation(version)
-  if generation == 3 then return REQUIRED_FILES_GEN3 end
-  if generation == 2 then return REQUIRED_FILES_GEN2 end
+  local gen = GameVersion.generation(version)
+  if gen == 3 then return REQUIRED_FILES_GEN3 end
+  if gen == 2 then return REQUIRED_FILES_GEN2 end
   return REQUIRED_FILES_GEN1
 end
 
@@ -587,6 +1189,12 @@ local PAL = {
   chipSilverBot = { 96, 116, 145 },  -- #607491
   chipCrystalTop = { 138, 226, 240 }, -- #8ae2f0
   chipCrystalBot = { 38, 122, 150 },  -- #267a96
+  -- Emerald: the cartridge's own green, and deliberately deeper than Prism's
+  -- mint so the two greens in the row are tellable apart at a glance rather
+  -- than by reading their labels -- the same rule Polished Crystal's amethyst
+  -- follows.
+  chipEmeraldTop = { 82, 214, 130 },  -- #52d682  Emerald
+  chipEmeraldBot = { 16, 110, 66 },   -- #106e42
   chipPrismTop = { 106, 240, 150 },   -- #6af096  Prism
   chipPrismBot = { 22, 138, 82 },     -- #168a52
   -- Polished Crystal: amethyst, deliberately far from Crystal's cyan and
@@ -594,11 +1202,6 @@ local PAL = {
   -- glance rather than by reading their labels.
   chipPolishedTop = { 186, 148, 252 }, -- #ba94fc  Polished Crystal
   chipPolishedBot = { 92, 56, 168 },   -- #5c38a8
-  -- Emerald opens the Gen 3 run, so its chip has to read as a NEW GENERATION
-  -- rather than as another Gen 2 hack: a saturated emerald green, kept clear
-  -- of Prism's mint (#6af096) by being much deeper and bluer.
-  chipEmeraldTop = { 46, 214, 130 },  -- #2ed682  Emerald
-  chipEmeraldBot = { 10, 110, 74 },   -- #0a6e4a
   chipModTop  = { 61, 74, 109 },   -- #3d4a6d
   chipModBot  = { 32, 42, 69 },    -- #202a45
   chipInkGold = { 58, 44, 0 },     -- #3a2c00
@@ -907,16 +1510,35 @@ local function commandOutput(command)
   return result ~= "" and result or nil
 end
 
+-- A Game Boy cartridge is 1 MiB (Red/Blue/Yellow) or 2 MiB (Gold/Silver and
+-- the Crystal hacks).  A Game Boy ADVANCE cartridge is none of those: Emerald
+-- is 16 MiB, and this predicate rejecting it is why a perfectly good dump came
+-- back as "Expected a 1 MiB ... Game Boy ROM; this file is 16.00 MiB."
+--
+-- The other GBA sizes are listed too.  Only 16 MiB is reachable today, but a
+-- size table that admits exactly one cartridge is the same trap this one was:
+-- it looks like a check and behaves like a hardcoded constant.
+local ROM_SIZES = {
+  [1024 * 1024] = true,        -- Game Boy
+  [2 * 1024 * 1024] = true,    -- Game Boy Color
+  [4 * 1024 * 1024] = true,    -- Game Boy Advance, from here down
+  [8 * 1024 * 1024] = true,
+  [16 * 1024 * 1024] = true,   -- Emerald
+  [32 * 1024 * 1024] = true,
+}
+
 local function isSupportedRomSize(byteLength)
-  local mib = 1024 * 1024
-  -- Game Boy / Game Boy Color: 1 MiB (Red/Blue/Yellow) or 2 MiB (Gen 2 and
-  -- its hacks).  Game Boy ADVANCE: 8, 16 or 32 MiB -- Emerald is 16, and this
-  -- test rejected it out of hand, before the hash was even taken, so a .gba
-  -- could not be offered to the importer at all however far the rest of the
-  -- pipeline had come.
-  return byteLength == mib or byteLength == 2 * mib
-      or byteLength == 8 * mib or byteLength == 16 * mib
-      or byteLength == 32 * mib
+  return ROM_SIZES[byteLength] == true
+end
+
+-- One test, used everywhere a file is judged by its name.  There were five
+-- copies of `%.gbc?$` scattered through this file and every one of them had to
+-- be found and changed to let a .gba through -- which is exactly the kind of
+-- thing that gets four out of five.
+local function isRomFileName(name)
+  local n = (name or ""):lower()
+  return n:match("%.gb$") ~= nil or n:match("%.gbc$") ~= nil
+         or n:match("%.gba$") ~= nil
 end
 
 -- LOVE 11.5 on Android has no native file picker (love.window.showFileDialog
@@ -998,11 +1620,7 @@ local function listRomPaths(dir)
   for _, name in ipairs(love.filesystem.getDirectoryItems(dir) or {}) do
     if name:sub(1, 1) ~= "." then
       local path = (dir == "" or dir == "/") and name or (dir .. "/" .. name)
-      -- `%.gbc?$` cannot be stretched to cover .gba: the optional `c` is one
-      -- character, so a GBA dump copied into the save directory was invisible
-      -- to the Android/USB pick path entirely.
-      if (name:lower():match("%.gbc?$") or name:lower():match("%.gba$"))
-         and love.filesystem.getInfo(path, "file") then
+      if isRomFileName(name) and love.filesystem.getInfo(path, "file") then
         paths[#paths + 1] = path
       end
     end
@@ -1155,7 +1773,7 @@ local function chooseRom(promptName)
       "Add-Type -AssemblyName System.Windows.Forms;",
       "$d=New-Object System.Windows.Forms.OpenFileDialog;",
       "$d.Title='" .. prompt .. "';",
-      "$d.Filter='Game Boy ROM (*.gb;*.gbc;*.gba)|*.gb;*.gbc;*.gba|All files (*.*)|*.*';",
+      "$d.Filter='Pokemon ROM (*.gb;*.gbc;*.gba)|*.gb;*.gbc;*.gba|All files (*.*)|*.*';",
       -- write the pick as UTF-8: the console's OEM codepage would mangle
       -- non-ASCII names (Pokémon -> Pok\x82mon) and crash any text draw
       -- that shows them (#325)
@@ -1165,11 +1783,11 @@ local function chooseRom(promptName)
       'powershell -NoProfile -STA -Command "' .. script .. '"')
   elseif platform == "Linux" then
     local path = commandOutput(
-      ([[zenity --file-selection --title="%s" --file-filter="Game Boy ROM | *.gb *.gbc *.gba" 2>/dev/null]])
+      ([[zenity --file-selection --title="%s" --file-filter="Pokemon ROM | *.gb *.gbc *.gba" 2>/dev/null]])
         :format(prompt))
     if path then return path end
     return commandOutput(
-      [[kdialog --getopenfilename "$HOME" "*.gb *.gbc *.gba|Game Boy ROM" 2>/dev/null]])
+      [[kdialog --getopenfilename "$HOME" "*.gb *.gbc *.gba|Pokemon ROM" 2>/dev/null]])
   end
   return nil
 end
@@ -1695,8 +2313,8 @@ function RomImporter:startData(data, displayName)
     return
   end
   if not isSupportedRomSize(#data) then
-    self:setError(("Expected a 1 MiB (Red/Blue/Yellow) or 2 MiB (Gold/Silver) "
-      .. "Game Boy ROM; this file is %.2f MiB.")
+    self:setError(("Expected a 1 MiB (Red/Blue/Yellow), 2 MiB (Gold/Silver) "
+      .. "or 16 MiB (Emerald) cartridge; this file is %.2f MiB.")
       :format(#data / 1024 / 1024))
     return
   end
@@ -1704,7 +2322,8 @@ function RomImporter:startData(data, displayName)
   local version = GameVersion.forSha1(actualHash)
   if not version then
     self:setError(("Unsupported ROM (SHA-1 %s). This needs a clean US Pokemon "
-      .. "Red, Blue, Yellow, Gold, Silver or Crystal dump; patched, trimmed or "
+      .. "Red, Blue, Yellow, Gold, Silver, Crystal or Emerald dump; patched, "
+      .. "trimmed or "
       .. "\"fixed\" dumps "
       .. "(tagged [b] or [BF]) never verify."):format(actualHash))
     return
@@ -1747,37 +2366,38 @@ function RomImporter:startData(data, displayName)
     CacheFs.removeTree("assets/generated")
     CacheFs.remove(MARKER_PATH)
 
-    -- ONE EXTRACTOR PER GENERATION, chosen by table rather than by a
-    -- two-way ternary.  Gen 3 is not a variation on Gen 2 the way Crystal is
-    -- on Gold -- it is a different console, flat-addressed and 4bpp -- so it
-    -- gets its own reader rather than another `layout` key.  An unlisted
-    -- generation still falls to the Gen 1 module, which is what every caller
-    -- got before.
+    -- WHICH EXTRACTOR, and spelled out rather than inferred.
+    --
+    -- This was a two-way ternary: generation 2 took the Gen 2 extractor and
+    -- EVERYTHING ELSE took the Gen 1 one.  That is fine while there are two
+    -- generations and silently wrong the moment there are three -- a 16 MiB
+    -- Game Boy Advance cartridge went to the Gen 1 extractor and died in
+    -- extractTilesets on a constants table that was never built.  The failure
+    -- was two layers from the cause, which is what an `or` fallback buys you.
+    --
+    -- So: a table keyed by generation, and a refusal if the generation has no
+    -- entry.  Adding a fourth generation should be a line here, not a bug.
     local EXTRACTORS = {
-      [2] = "src.import.RomExtractorGen2",
-      [3] = "src.import.RomExtractorGen3",
+      [1] = { module = "src.import.RomExtractor", takesVersion = false },
+      [2] = { module = "src.import.RomExtractorGen2", takesVersion = true },
+      [3] = { module = "src.import.RomExtractorGen3", takesVersion = true },
     }
-    local extractorModule = EXTRACTORS[info.generation] or "src.import.RomExtractor"
-    local RomExtractor = require(extractorModule)
-    -- Gen 1's constructor predates the version argument; Gen 2 and Gen 3
-    -- both take it, because both read more than one cartridge.
-    local extractor = (info.generation == 2 or info.generation == 3)
-      and RomExtractor.new(self.romData, version, manifest,
-        function(progress, total, stage, current, stageTotal)
-          self.status = stage
-          self.progress = progress / total
-          self.stageCurrent = current
-          self.stageTotal = stageTotal
-          coroutine.yield()
-        end)
-      or RomExtractor.new(self.romData, manifest,
-      function(progress, total, stage, current, stageTotal)
-        self.status = stage
-        self.progress = progress / total
-        self.stageCurrent = current
-        self.stageTotal = stageTotal
-        coroutine.yield()
-      end)
+    local choice = EXTRACTORS[info.generation]
+    if not choice then
+      error(("no extractor for %s (generation %s)")
+            :format(tostring(version), tostring(info.generation)))
+    end
+    local RomExtractor = require(choice.module)
+    local function onProgress(progress, total, stage, current, stageTotal)
+      self.status = stage
+      self.progress = progress / total
+      self.stageCurrent = current
+      self.stageTotal = stageTotal
+      coroutine.yield()
+    end
+    local extractor = choice.takesVersion
+      and RomExtractor.new(self.romData, version, manifest, onProgress)
+      or RomExtractor.new(self.romData, manifest, onProgress)
     extractor:run()
     self.romData = nil
     collectgarbage("collect")
@@ -2314,7 +2934,7 @@ function RomImporter:choose(version)
       or "the game folder"
     self.notice = {
       version = self.chooseVersion,
-      status = "No file picker. Copy your .gb/.gbc/.gba into:",
+      status = "No file picker. Copy your .gb/.gbc into:",
       detail = where,
     }
     return
@@ -2337,7 +2957,7 @@ function RomImporter:choose(version)
     return
   end
   if love.system.getOS() ~= "OS X" and love.system.getOS() ~= "Windows" then
-    self:setError("File selection is unavailable here. Drop the .gb/.gbc file onto the window.")
+    self:setError("File selection is unavailable here. Drop the .gb/.gbc/.gba file onto the window.")
   end
 end
 
@@ -2385,8 +3005,7 @@ function RomImporter:_pollPickedFiles(dt)
   if not found then
     for _, name in ipairs(love.filesystem.getDirectoryItems("")) do
       local n = name:lower()
-      if n:match("%.gbc?$") or n:match("%.gba$")
-         or n == "picked_mod.zip" or n == "picked_save.sav" then
+      if isRomFileName(n) or n == "picked_mod.zip" or n == "picked_save.sav" then
         found = true
         break
       end
@@ -4540,6 +5159,18 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     { id = "crystal", letter = "C", top = PAL.chipCrystalTop, bot = PAL.chipCrystalBot,
       under = PAL.chipCrystalTop, label = Strings("CRYSTAL"),
       ink = PAL.chipInkSilver },
+    -- Emerald sits after Crystal because it is a CARTRIDGE, and the row runs
+    -- cartridges in generation order and then the hacks -- the same rule
+    -- GameVersion.ORDER follows, and the one polished_crystal_registration_test
+    -- asserts.
+    --
+    -- It was registered without this chip, and the comment below said exactly
+    -- what that costs: the game was hashed, recognised by setup, counted in
+    -- "N of X ready" -- and had no way in.  The tab row showed eight tabs
+    -- beside a counter that said nine.
+    { id = "emerald", letter = "E", top = PAL.chipEmeraldTop,
+      bot = PAL.chipEmeraldBot, under = PAL.chipEmeraldTop,
+      label = Strings("EMERALD"), ink = PAL.chipInkSilver },
     -- Prism sits after Crystal: it is a Crystal romhack, so it belongs at the
     -- end of the Gen 2 run rather than beside the official carts.
     { id = "prism", letter = "P", top = PAL.chipPrismTop, bot = PAL.chipPrismBot,
@@ -4556,20 +5187,6 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     { id = "polishedcrystal", letter = "PC",
       top = PAL.chipPolishedTop, bot = PAL.chipPolishedBot,
       under = PAL.chipPolishedTop, label = Strings("POLISHED"),
-      ink = PAL.chipInkSilver },
-    -- EMERALD, and the first chip on this row that is not a Game Boy game.
-    --
-    -- Kept at the end of the cartridge run rather than sorted by release date:
-    -- the row reads as "what this engine plays", and the Gen 1 -> Gen 2 ->
-    -- Gen 3 order is the order the support was built in, which is also the
-    -- order of how finished each one is.
-    --
-    -- The comment above Polished Crystal's chip is the whole reason this line
-    -- exists: registering a version in GameVersion.ORDER does NOT create a
-    -- tab, and the tab row is the only navigation into a version's panel.
-    { id = "emerald", letter = "E",
-      top = PAL.chipEmeraldTop, bot = PAL.chipEmeraldBot,
-      under = PAL.chipEmeraldTop, label = Strings("EMERALD"),
       ink = PAL.chipInkSilver },
     { id = "mods",   mods = true,  top = PAL.chipModTop,  bot = PAL.chipModBot,
       under = PAL.modDot, label = Strings("MODS") },
@@ -4743,6 +5360,12 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- send them somewhere unhelpful.
   local experimental = (not locked) and info ~= nil
                        and info.experimental == true
+  -- WHICH WORD, because unproven has stages.  BETA is the default and is what
+  -- every version that has carried this flag has said; a version earlier than
+  -- that says so in its own registry entry rather than being described here,
+  -- so the launcher never has to know which game is at which stage.
+  local stage = experimental
+                and tostring(info.experimentalLabel or "BETA"):upper() or nil
   local gameName = info and (info.launcherName or info.displayName)
                    or tostring(version)
   local ready = (not locked) and self.ready[version] or false
@@ -4755,7 +5378,7 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   local pill
   -- BETA outranks GOOD TO GO: a finished import does not stop the version
   -- being unproven, and the pill is the one thing read at a glance.
-  if experimental then pill = { text = "BETA", c = PAL.gold }
+  if experimental then pill = { text = stage, c = PAL.gold }
   elseif ready then pill = { text = "GOOD TO GO", c = PAL.green }
   elseif locked then pill = { text = "COMING SOON", c = PAL.disabledInk }
   else pill = { text = "ROM REQUIRED", c = PAL.gold } end
@@ -4784,14 +5407,18 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   local rightX = twoCol and (x + colW + colGap) or x
 
   -- ROM card contents by state (rehomes the existing import flow)
-  local dropHint = self.android and "Copy the .gb/.gbc via USB."
-    or Strings("Or drop the .gb/.gbc file here.")
+  -- The hint names every extension the picker accepts.  Telling a player to
+  -- drop a ".gb/.gbc" while the game also takes a .gba is a small lie that
+  -- costs someone an hour.
+  local dropHint = self.android and "Copy the .gb/.gbc/.gba via USB."
+    or Strings("Or drop the .gb/.gbc/.gba file here.")
   local accent = PAL.blue
   if version == "red" then accent = PAL.red
   elseif version == "yellow" then accent = PAL.gold
   elseif version == "gold" then accent = PAL.chipGoldTop
   elseif version == "silver" then accent = PAL.chipSilverTop
   elseif version == "crystal" then accent = PAL.chipCrystalTop
+  elseif version == "emerald" then accent = PAL.chipEmeraldTop
   elseif version == "prism" then accent = PAL.chipPrismTop
   -- Without a branch here the panel silently falls back to PAL.blue, which
   -- reads as a rendering bug rather than a missing case.
@@ -4827,8 +5454,8 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
       -- verified on a beta version is the WORLD the import built, so say that
       -- rather than letting one word cover both.
       romDetail = experimental
-        and "ROM verified. The world it builds is untested -- expect rough "
-            .. "edges, and report what breaks."
+        and ("ROM verified. The world it builds is " .. stage:lower()
+             .. " -- expect rough edges, and report what breaks.")
         or "Verified."
       romBtnLabel, romBtnEnabled = "Re-import ROM", true
     elseif erroring then
@@ -4847,9 +5474,10 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
     else
       romState = "No ROM imported"
       romDetail = (experimental
-        and "Beta: this cartridge's tables all read, but nobody has walked "
-            .. "around in the result yet. The ROM is verified before any "
-            .. "files are created. "
+        and (stage:sub(1, 1) .. stage:sub(2):lower()
+             .. ": this cartridge's tables all read and the world they build "
+             .. "loads, but it is still being played through and fixed. The "
+             .. "ROM is verified before any files are created. ")
         or "The ROM is verified before any files are created. ") .. dropHint
       romBtnLabel, romBtnEnabled = "Import ROM", true
     end

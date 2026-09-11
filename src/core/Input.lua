@@ -24,6 +24,37 @@ local DEFAULT_BINDINGS = {
   tab = "select",
   rshift = "select",
   lshift = "select",
+  -- L AND R, WHICH THIS ENGINE HAD NO BUTTONS FOR.
+  --
+  -- Reported from play: "in the controls options menu add in support for the
+  -- L and R button for gen3 emerald."  There was nothing to add support for
+  -- -- the abstraction stopped at the Game Boy's eight buttons, and Emerald's
+  -- OPTION screen has drawn a BUTTON MODE row since the day the screen was
+  -- read that could not do anything because two of its three settings are
+  -- about buttons that did not exist.
+  --
+  -- Q and E rather than the shift keys: both shifts are already SELECT, and
+  -- Q/E sit under the same two fingers a shoulder button does.  Both are
+  -- rebindable, which is the half of the report that was actually about the
+  -- controls menu.
+  q = "l",
+  e = "r",
+}
+
+-- EMERALD'S BUTTON MODE, and what its three settings mean.
+--
+--   1 NORMAL   L and R do nothing at all, which is the cartridge's default
+--   2 LR       they page through a list -- the pockets in the BAG, the boxes
+--              in the PC, the pages of a summary.  In this engine that job
+--              belongs to LEFT and RIGHT, so that is what they become.
+--   3 L=A      L is a second A button, and R still does nothing.
+--
+-- Written as "which buttons ALSO count as this one" so the lookup on the hot
+-- path is one table index rather than a scan.
+local BUTTON_MODES = {
+  [1] = nil,
+  [2] = { left = { "l" }, right = { "r" } },
+  [3] = { a = { "l" } },
 }
 
 -- keys that map to "start" but also to "a" would conflict; keep Enter = a,
@@ -298,12 +329,25 @@ end
 -- Triggers are the thing not to adopt -- they rest at -1 and swing to +1 --
 -- so an axis never seen near zero is refused.  Learned per joystick, and the
 -- table is weak-keyed so unplugging a pad forgets it.
+-- THE PAD THAT IS NOT AN OBJECT.  A Linux handheld with no SDL
+-- game-controller mapping sends raw axes and hats with NO joystick at all --
+-- which is the exact case this whole raw path exists to serve -- and `nil` is
+-- not a table key: `self._rawSticks[nil] = st` raises "table index is nil"
+-- and takes the input handler down with it.  Every stick movement on that
+-- hardware, on the one code path written for that hardware.
+--
+-- One shared key stands in for "no joystick object".  It is an upvalue, so
+-- the weak table cannot collect it while the game is running, and a device
+-- that DOES identify itself still gets a row of its own.
+local NO_JOYSTICK = {}
+
 local function rawStickState(self, joystick)
   self._rawSticks = self._rawSticks or setmetatable({}, { __mode = "k" })
-  local st = self._rawSticks[joystick]
+  local key = joystick or NO_JOYSTICK
+  local st = self._rawSticks[key]
   if not st then
     st = { xAxis = 1, yAxis = 2, locked = false, restedNearZero = {} }
-    self._rawSticks[joystick] = st
+    self._rawSticks[key] = st
   end
   return st
 end
@@ -345,8 +389,25 @@ function Input:joystickhat(joystick, hat, direction)
   self.hatDirs[hat] = dirs
 end
 
+-- ...and the one place both readers go through, so a mode that aliases a
+-- button cannot be honoured by one of them and not the other.
+local function alsoHeld(self, map, btn)
+  local extra = self.buttonAlias and self.buttonAlias[btn]
+  if not extra then return false end
+  for _, from in ipairs(extra) do
+    if map[from] then return true end
+  end
+  return false
+end
+
+function Input:setButtonMode(mode)
+  self.buttonMode = tonumber(mode) or 1
+  self.buttonAlias = BUTTON_MODES[self.buttonMode]
+end
+
 function Input:isDown(btn)
-  return self.state[btn] or false
+  if self.state[btn] then return true end
+  return alsoHeld(self, self.state, btn)
 end
 
 -- True when the on-screen overlay is one of the live sources holding this
@@ -359,7 +420,8 @@ function Input:isTouchDown(btn)
 end
 
 function Input:wasPressed(btn)
-  return self.pressed[btn] or false
+  if self.pressed[btn] then return true end
+  return alsoHeld(self, self.pressed, btn)
 end
 
 -- Soft reset (#563).  _Joypad (engine/joypad.asm) tests the RAW joypad read

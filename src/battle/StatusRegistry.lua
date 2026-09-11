@@ -36,9 +36,25 @@ function StatusRegistry.inflict(battle, target, status, opts)
       if opts.moveType == t then return {} end
     end
   end
+  -- AN ABILITY THAT SIMPLY REFUSES IT.  A SLUGMA with MAGMA ARMOR cannot be
+  -- frozen, a MAKUHITA with GUTS can be burned but a WAILMER with WATER VEIL
+  -- cannot -- and no roll and no move gets round any of them.  A Pokemon
+  -- from a generation without abilities answers false and nothing changes.
+  if require("src.battle.Abilities").refusesStatus(target, status) then
+    return {}
+  end
+  -- SAFEGUARD: the veil refuses every status for its five turns.  A status a
+  -- Pokemon inflicts on ITSELF still lands -- REST is the whole reason that
+  -- distinction exists -- which is what opts.selfInflicted marks.
+  if target.safeguardTurns and not opts.selfInflicted then
+    return {}
+  end
   local statuses = battle and battle.data and battle.data.statuses
   local record = Status.recordFor(statuses, status)
-  if record and record.canInflict and not record.canInflict(target, opts) then
+  -- `battle` is passed so a record can ask the RULESET: Hoenn's poison
+  -- immunity covers STEEL as well as POISON, and the records are shared
+  if record and record.canInflict
+     and not record.canInflict(target, opts, battle) then
     return {}
   end
   target.mon.status = status
@@ -53,10 +69,33 @@ function StatusRegistry.inflict(battle, target, status, opts)
   Runtime.emit("battle.status_inflicted", {
     battle = battle, target = target, status = status, source = opts.source,
   })
-  -- Gen II status berries resolve immediately after the condition lands.
-  -- Keep the infliction text first, then append the held-item cure line.
-  for _, msg in ipairs(HeldItems.onStatus(battle, target)) do
-    msgs[#msgs + 1] = msg
+      -- Gen II status berries resolve immediately after the condition lands.
+      -- Keep the infliction text first, then append the held-item cure line.
+      for _, msg in ipairs(HeldItems.onStatus(battle, target)) do
+        msgs[#msgs + 1] = msg
+      end
+
+      -- SYNCHRONIZE HANDS IT STRAIGHT BACK.  A poisoned, burned or paralysed
+      -- Pokemon with it gives the same condition to whoever did it -- and NOT
+      -- sleep or freeze, which is the cartridge's own list rather than a
+      -- simplification.  `opts.user` is the one who inflicted it; a status a
+      -- Pokemon gave itself has none and nothing bounces.
+      --
+      -- Guarded against its own recursion: the returned status is inflicted with
+      -- `synchronized` set, so a SYNCHRONIZE against a SYNCHRONIZE stops after
+      -- one bounce instead of ringing back and forth forever.
+      local Abilities = require("src.battle.Abilities")
+      local back = (not opts.synchronized) and opts.user
+                   and Abilities.synchronizes(target, status) or nil
+      if back and opts.user.mon and opts.user.mon.hp > 0 then
+        local extra = StatusRegistry.inflict(battle, opts.user, back.status,
+                                             { synchronized = true,
+                                               user = target,
+                                               source = "SYNCHRONIZE" })
+        if #extra > 0 then
+          msgs[#msgs + 1] = Strings("%s's\nSYNCHRONIZE!", display)
+          for _, m in ipairs(extra) do msgs[#msgs + 1] = m end
+        end
   end
   return msgs
 end

@@ -30,19 +30,87 @@ local function hasType(battler, wanted)
   return false
 end
 
+-- ---------------------------------------------------------------------
+-- THE NUMBERS HOENN USES, which are not the ones above
+-- ---------------------------------------------------------------------
+--
+-- Reported from play: "make sure all status effect moves work properly ...
+-- in gen3".  The five conditions were running Gen 1's arithmetic on an
+-- Emerald cartridge -- the mechanics were right, the constants were another
+-- game's.  Every number below is disassembled rather than remembered:
+--
+--   SLEEP      08048E28  `mov r1,#3 / and r1,r0 / add r1,#2` after Random()
+--                        -- (Random() & 3) + 2, so TWO to FIVE turns, where
+--                        Gen 1 rolls one to seven.
+--   PSN / BRN  08040B10 and 08040C34  `ldrh r0,[r?,#44] / lsr r0,r0,#3`
+--                        -- maxHP/8 a turn, minimum 1.  Gen 1's is /16, and
+--                        halving Hoenn's residual damage is not a small
+--                        difference over a long battle.
+--   TOXIC      08040BB6  `lsr r0,r0,#4` for the base, then 08040BF0
+--                        `and r0,#0xF00 / lsr #8 / mul` -- maxHP/16 times the
+--                        counter, and the counter STOPS at fifteen (the
+--                        0xF00 mask is four bits and 08040BD8 refuses to
+--                        increment once it is full).
+--   FREEZE     08041CAA and 080573A8  `status1 & 0x20` then Random() % 5,
+--                        thawing on zero -- a one-in-five chance EVERY TURN,
+--                        where a Gen 1 freeze is permanent until a Fire move
+--                        lands.  Two separate sites agree.
+--   POISON     08048A7C  `[battler+33] == 3` or `[battler+34] == 3` or
+--                        `== 8` -- type1/type2 against POISON (3) and STEEL
+--                        (8).  A Gen 3 STEEL type cannot be poisoned at all,
+--                        which the port did not know: every SKARMORY and
+--                        every MAGNETON in Hoenn was poisonable.
+--
+-- They arrive through the RULESET rather than being written into the records,
+-- because the records are shared with Kanto and Johto and a Gen 1 battle must
+-- keep every one of its own numbers.  The defaults below are exactly what
+-- this file did before, so a ruleset that says nothing changes nothing.
+--
+-- (Gen 2's own residual is not 1/16 either, but this cartridge is not the one
+-- in front of me and a number nobody read off the ROM has no business here.)
+local DEFAULTS = {
+  sleepTurnsMin = 1, sleepTurnsMax = 7,
+  statusResidualDiv = 16,
+  toxicResidualDiv = 16,
+  toxicCounterMax = nil,      -- Gen 1 never stops advancing it
+  freezeThawOneIn = nil,      -- and never thaws on its own
+  poisonImmuneTypes = { "POISON" },
+}
+
+Status.DEFAULTS = DEFAULTS
+
+local function rule(battle, key)
+  local ruleset = battle and battle.ruleset
+  local value = ruleset and ruleset[key]
+  if value ~= nil then return value end
+  return DEFAULTS[key]
+end
+
+Status.rule = rule
+
 -- shared PSN/BRN residual: 1/16 max HP, multiplied (and advanced) by the
 -- Toxic counter (HandlePoisonBurnLeechSeed).  The caller passes the whole
 -- sentence rather than the noun: "hurt by poison" and "hurt by the burn"
 -- decline differently once translated, so a shared fragment cannot be the
 -- translatable unit.
 local function damageOverTime(template)
-  return function(battler)
+  return function(battler, _, battle)
     local mon = battler.mon
-    local base = math.max(1, math.floor(mon.stats.hp / 16))
-    local dmg = base
+    local dmg
     if battler.toxicCounter then
+      -- the BAD poison keeps its own divisor: sixteenths, multiplied by the
+      -- counter, which is why it starts smaller than an ordinary poison and
+      -- overtakes it on the third turn
+      local base = math.max(1, math.floor(mon.stats.hp
+                                          / rule(battle, "toxicResidualDiv")))
       dmg = base * battler.toxicCounter
-      battler.toxicCounter = battler.toxicCounter + 1
+      local cap = rule(battle, "toxicCounterMax")
+      if not cap or battler.toxicCounter < cap then
+        battler.toxicCounter = battler.toxicCounter + 1
+      end
+    else
+      dmg = math.max(1, math.floor(mon.stats.hp
+                                   / rule(battle, "statusResidualDiv")))
     end
     mon.hp = math.max(0, mon.hp - dmg)
     return { Strings(template, name(battler)) }
@@ -73,7 +141,8 @@ Status.RECORDS = {
       return false, { Strings("%s\nis fast asleep!", name(battler)) }
     end,
     onInflict = function(battle, target, opts, display)
-      target.sleepTurns = battle.rng(1, 7)
+      target.sleepTurns = battle.rng(rule(battle, "sleepTurnsMin"),
+                                     rule(battle, "sleepTurnsMax"))
       return { Strings("%s\nfell asleep!", display) }
     end,
   },
@@ -81,7 +150,16 @@ Status.RECORDS = {
     id = "FRZ", label = "FRZ", hudLabel = "FRZ",
     catchBonus = 25, shakeBonus = 10,
     beforeMovePriority = 30,
-    beforeMove = function(battler)
+    beforeMove = function(battler, rng, battle)
+      -- ...AND IN HOENN IT THAWS ON ITS OWN.  One turn in five, rolled
+      -- before the move, and the Pokemon then acts normally -- which is the
+      -- whole reason a Gen 3 freeze is a nuisance rather than a loss.  A
+      -- ruleset that names no chance keeps Gen 1's permanent ice.
+      local oneIn = rule(battle, "freezeThawOneIn")
+      if oneIn and rng(1, oneIn) == 1 then
+        battler.mon.status = nil
+        return true, { Strings("%s\nwas defrosted!", name(battler)) }
+      end
       return false, { Strings("%s\nis frozen solid!", name(battler)) }
     end,
     canInflict = function(target) return not hasType(target, "ICE") end,
@@ -93,7 +171,16 @@ Status.RECORDS = {
     id = "PSN", label = "PSN", hudLabel = "PSN",
     catchBonus = 12, shakeBonus = 5,
     residual = damageOverTime(Strings.source("%s's\nhurt by poison!")),
-    canInflict = function(target) return not hasType(target, "POISON") end,
+    canInflict = function(target, opts, battle)
+      -- POISON, and in Hoenn STEEL as well.  The cartridge tests type1 and
+      -- type2 against 3 and 8 in the same four compares (08048A7C), so
+      -- SKARMORY and MAGNETON simply cannot be poisoned -- which is a real
+      -- wall a Gen 1-shaped check walked straight through.
+      for _, t in ipairs(rule(battle, "poisonImmuneTypes")) do
+        if hasType(target, t) then return false end
+      end
+      return true
+    end,
     onInflict = function(_, target, opts, display)
       if opts.toxic then
         target.toxicCounter = 1

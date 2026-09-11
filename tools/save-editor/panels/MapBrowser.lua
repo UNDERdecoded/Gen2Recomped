@@ -130,8 +130,13 @@ local function drawOverlays(S, map)
   local function cellRect(cx, cy)
     return cx * CELL - S.mapCamX, cy * CELL - S.mapCamY, CELL, CELL
   end
+  -- A GEN 3 MAP DEF CARRIES NO WARP LIST.  Emerald's map defs are built from
+  -- the generated layouts -- blocks, collision, elevation -- and its warps
+  -- live in the ROM's own event data, which this tree does not generate. So
+  -- `def.warps` is simply absent there, and iterating it crashed the panel
+  -- the moment anyone clicked a Hoenn map.  No list, no warp boxes.
   love.graphics.setColor(0.27, 0.59, 1, 0.55)
-  for _, wdef in ipairs(map.def.warps) do
+  for _, wdef in ipairs(map.def.warps or {}) do
     love.graphics.rectangle("line", cellRect(wdef.x, wdef.y))
   end
   if S.save.player.map == S.mapId then

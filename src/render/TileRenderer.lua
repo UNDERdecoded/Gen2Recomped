@@ -9,6 +9,7 @@
 -- (the ring plays the role of the GB border blocks around small maps).
 
 local Assets = require("src.render.Assets")
+local Logger = require("src.core.Logger")
 local PaletteFX = require("src.render.PaletteFX")
 
 local TileRenderer = {}
@@ -85,6 +86,20 @@ local function getImage(path)
   return imageCache[path]
 end
 
+-- The 8x8 atlas a tileset draws from, or nil when it HAS none.
+--
+-- A Gen 1 or Gen 2 tileset is a sheet on disk. A Gen 3 one is not, and that is
+-- not a gap: its art is two half-banks of tiles that only become a picture once
+-- the map's primary and secondary tilesets are composited (gen3SheetsFor). The
+-- nil path used to go straight into the image cache as a table key, which is
+-- "table index is nil" on the first Hoenn map anyone walked into -- so the
+-- question is asked here, once, where it can also be tested.
+function TileRenderer.atlasImage(tilesetDef)
+  local path = tilesetDef and tilesetDef.image
+  if type(path) ~= "string" or path == "" then return nil end
+  return getImage(path)
+end
+
 -- ------------------------------------------------------------------
 -- Tile animation (home/vcopy.asm): tilesets with TILEANIM_WATER[_FLOWER]
 -- rotate water tile $14 one pixel every 20 frames (4 steps right, 4
@@ -131,6 +146,16 @@ function TileRenderer.tick(dt)
     animAccum = animAccum - ANIM_STEP
     animFrame = animFrame + 1
   end
+end
+
+-- The animation clock itself, read-only.  It has always been a plain local in
+-- this file, which left everything downstream -- the voxel mod's terrain
+-- atlas, and now the Gen 3 overlay below -- either re-deriving a counter of
+-- its own (which free-runs against this one, so toggling a display mode
+-- restarts the sea) or reaching in through debug.getupvalue.  Same number,
+-- named.
+function TileRenderer.animFrame()
+  return animFrame
 end
 
 -- ------------------------------------------------------------------
@@ -423,7 +448,13 @@ end
 -- gameplay-gated blur -- it is skipped under gbc, same as the buildAnim
 -- caller already does for a texture-build failure (the static, correctly-
 -- colored tile shows through unanimated).
+-- A tileset with no sheet has no stride, and every helper below divides by
+-- one.  Refusing here means "this tileset animates nothing", which is the
+-- truth for a Gen 3 pair (its animation is driven by cartridge callbacks, not
+-- by a declared tile list) and a great deal better than faulting three frames
+-- later inside a cache miss.
 local function buildAnim(spec, tilesetImagePath, perRow, quads, gbc)
+  if not tilesetImagePath or not perRow or perRow < 1 then return nil end
   local tiles = spec.tiles
   if not tiles then
     if spec.tile == nil then return nil end
@@ -827,7 +858,103 @@ function TileRenderer.gen3SheetsFor(tilesetDef, data, layout)
   gen3Sheets[key] = record
   Logger.info("gen3 tiles: baked %s -- %d metatiles into two %dx%d sheets",
               tostring(key), record.metatiles, w, h)
+
+  -- ------------------------------------------------------------------
+  -- THE ANIMATED OVERLAY SHEETS.
+  --
+  -- THE SEA OUTSIDE DEWFORD AND THE FLOWER BEDS ON ROUTE 104.  A Gen 1/Gen 2
+  -- tileset animates one ATLAS CELL, so the existing machinery above swaps a
+  -- single 8x8 texture under the batch's existing quad.  Emerald animates a
+  -- run of TILE GRAPHICS, and one such run reaches 148 of this pair's 862
+  -- metatiles -- there is no single cell to swap.
+  --
+  -- So the same trick the Sprout Tower pillar needed (getAtlasFrames), one
+  -- size up: a separate OVERLAY TEXTURE per step, holding only the metatiles
+  -- that change, drawn over the static window each frame.  Drawing is then a
+  -- texture swap and one extra batch, exactly like the water shimmer.
+  --
+  -- PACKED, not sheet-shaped.  The obvious overlay is another 256x864 with
+  -- holes in it, so the window batch's existing quads stay valid -- and that
+  -- is sixteen textures of 221,000 pixels, 14 MB, for a pair whose static
+  -- sheets cost 1.8.  Nothing evicts these, and a trek across Hoenn touches
+  -- dozens of pairs.  So the animated metatiles are packed sixteen to a row
+  -- (Gen3Tiles:animOrder) into 256x160, and the record carries a SECOND quad
+  -- table for them.  A quad lookup is a quad lookup; the memory is a fifth.
+  --
+  -- Two overlays, bottom and top, and they are drawn on the two sides of the
+  -- sprite pass the static sheets are.  A waterfall's spray is on the layer
+  -- the player walks BEHIND; flattening the pair here would put the player in
+  -- front of it, which is the one thing this file's comments say never to do.
+  --
+  -- Cost is proportional to the animated metatiles, not to the pair, and the
+  -- whole block is skipped -- no allocation, no loop -- for a tileset with no
+  -- `tileAnims`, which is every tileset in the game until an extraction that
+  -- reads them has run.
+  --
+  -- Known and deliberate: a pixel that is opaque in the STATIC sheet and
+  -- transparent in the animation frame shows the static art through, because
+  -- the overlay only paints what the frame paints.  On this cartridge the
+  -- animated runs are ground (sea, shore, sand, flower bed) and are opaque in
+  -- every frame, so the case does not arise; the alternative -- baking eight
+  -- complete pairs of full sheets and swapping those -- costs 3.5 million
+  -- pixels at map load to buy nothing.
+  -- ------------------------------------------------------------------
+  local okAnim, animErr = pcall(function()
+    local steps = tiles.animSteps and tiles:animSteps() or 0
+    if not steps or steps < 2 then return end
+    local cells, cellCount = tiles:animMetatiles()
+    if cellCount < 1 then return end
+    local aw, ah = tiles:animSheetLayout()
+    if aw <= 0 or ah <= 0 then return end
+    local bottom, top = {}, {}
+    for step = 0, steps - 1 do
+      for layer = 1, 2 do
+        local surface = love.image.newImageData(aw, ah)
+        tiles:bakeAnimLayer(layer, function(x, y, r, g, b)
+          if x >= 0 and y >= 0 and x < aw and y < ah then
+            surface:setPixel(x, y, r / 255, g / 255, b / 255, 1)
+          end
+        end, step)
+        local img = love.graphics.newImage(surface)
+        if img.setFilter then pcall(img.setFilter, img, "nearest", "nearest") end
+        if layer == 1 then bottom[step + 1] = img else top[step + 1] = img end
+      end
+    end
+    -- the packed sheet has its own coordinates, so the animated batch needs
+    -- its own quads; `gen3Quads` addresses the full-size static sheet and
+    -- would sample somewhere else entirely
+    local quads = {}
+    for m in pairs(cells) do
+      local ox, oy = tiles:animOrigin(m)
+      if ox then quads[m] = love.graphics.newQuad(ox, oy, 16, 16, aw, ah) end
+    end
+    record.animBottom = bottom
+    record.animTop = top
+    record.animSteps = steps
+    record.animPeriod = tiles:animPeriod() or ANIM_PERIOD
+    record.animCells = cells
+    record.animQuads = quads
+    Logger.info("gen3 tiles: %s animates %d of %d metatiles -- %d step(s) "
+                .. "every %d frame(s), packed into %dx%d", tostring(key),
+                cellCount, record.metatiles, steps, record.animPeriod, aw, ah)
+  end)
+  if not okAnim then
+    -- a half-built overlay is worse than none: drop it and leave the pair
+    -- exactly as static as it is today
+    record.animBottom, record.animTop, record.animSteps = nil, nil, nil
+    record.animCells, record.animQuads = nil, nil
+    Logger.warn("gen3 tiles: %s animation overlay failed (%s) -- static",
+                tostring(key), tostring(animErr))
+  end
   return record
+end
+
+-- Which overlay frame is showing.  Exposed so a test (and the voxel mod) can
+-- ask without reproducing the arithmetic.
+function TileRenderer.gen3AnimStep(record, frame)
+  if not (record and record.animSteps and record.animSteps > 1) then return nil end
+  frame = frame or animFrame
+  return math.floor(frame / (record.animPeriod or ANIM_PERIOD)) % record.animSteps
 end
 
 -- a re-import replaces the data the sheets were baked from
@@ -839,7 +966,12 @@ function TileRenderer.new(map, data)
   local self = setmetatable({}, TileRenderer)
   self.map = map
   self.data = data
-  self.image = getImage(map.tileset.image)
+  -- A GEN 3 TILESET HAS NO SHEET ON DISK, and that is not a gap: its art is
+  -- two half-banks of 8x8 tiles that only become a picture once the primary
+  -- and secondary tilesets are composited together, which happens below in
+  -- gen3SheetsFor.  Asking Assets for a nil path raised on the very first
+  -- Hoenn map anybody actually walked into.
+  self.image = TileRenderer.atlasImage(map.tileset)
   local gbcCtx
   if data and PaletteFX.usesGbcPack() and PaletteFX.hasWorldTileset(map.tileset.id) then
     local gbc = getGbcAtlas(map.tileset.image, map.tileset.id, map.id,
@@ -899,12 +1031,28 @@ function TileRenderer.new(map, data)
     end
   end
 
-  local iw, ih = self.image:getDimensions()
+  -- the 8x8 atlas quads, which only a sheet-backed tileset has
+  --
+  -- `perRow` IS DECLARED HERE, not inside the `if`, because buildAnim below
+  -- takes it as an argument.  Scoped to the block it was invisible down there
+  -- and the call passed the GLOBAL `perRow`, which is nil -- so every animated
+  -- tile in the game was built with a nil stride.
+  --
+  -- It did not crash every time, which is what hid it: getShiftVariants keys
+  -- its cache on (sheet path, tile, gbcKey) and returns before touching the
+  -- stride on a hit, so the water shimmer only reached the arithmetic the
+  -- FIRST time a given sheet/tile pair was ever asked for. Walking out of a
+  -- cave onto a tileset whose water had not been built yet is exactly that
+  -- first time: `attempt to perform arithmetic on local 'perRow' (a nil
+  -- value)` at getShiftVariants, on a map that had been fine all session.
   self.quads = {}
   local perRow = map.tileset.tilesPerRow
-  for t = 0, (iw / 8) * (ih / 8) - 1 do
-    self.quads[t] = love.graphics.newQuad((t % perRow) * 8,
-                                          math.floor(t / perRow) * 8, 8, 8, iw, ih)
+  if self.image and perRow then
+    local iw, ih = self.image:getDimensions()
+    for t = 0, (iw / 8) * (ih / 8) - 1 do
+      self.quads[t] = love.graphics.newQuad((t % perRow) * 8,
+                                            math.floor(t / perRow) * 8, 8, 8, iw, ih)
+    end
   end
 
   local def = map.def
@@ -1003,6 +1151,49 @@ local function bakeBorderFill(self, block)
   self.borderFill = img
 end
 
+-- THE VOID AROUND A GEN 3 MAP.
+--
+-- A Game Boy map fills the space beyond its edge by repeating one BORDER
+-- BLOCK out of the tileset, and `bakeBorderFill` above bakes that block into
+-- a 32x32 tile.  A Gen 3 tileset has no `blocks` array to take one from --
+-- its metatiles only become pictures once the primary and secondary banks are
+-- composited -- so that bake returned immediately and the void was left
+-- unpainted.  White, on every map in Hoenn, indoors and out.
+--
+-- The cartridge does not repeat one block either: each map carries its own
+-- 2x2 BORDER PATCH, which is four metatiles and exactly 32x32 pixels -- the
+-- same tile size the fill wants.  Outdoors it is the treeline around
+-- Littleroot and the routes; indoors it is the black the room sits in.  One
+-- read covers both, which is why there is no indoor special case here.
+local function bakeGen3BorderFill(self)
+  if not (self.gen3 and self.gen3Quads) then return end
+  local border = self.map.def and self.map.def.border
+  if type(border) ~= "string" or #border < 8 then return end
+  local canvas = require("src.render.PixelCanvas").new(32, 32)
+  love.graphics.push("all")
+  love.graphics.setCanvas(canvas)
+  -- black, not white: a patch with a transparent metatile in it is a hole
+  -- onto whatever is behind, and on this cartridge that is black
+  love.graphics.clear(0, 0, 0, 1)
+  love.graphics.setColor(1, 1, 1, 1)
+  for i = 0, 3 do
+    local entry = border:byte(i * 2 + 1) + border:byte(i * 2 + 2) * 256
+    local quad = self.gen3Quads[entry % 1024]
+    if quad then
+      local x, y = (i % 2) * 16, math.floor(i / 2) * 16
+      -- both layers, in the order the map itself draws them
+      love.graphics.draw(self.gen3.bottom, quad, x, y)
+      love.graphics.draw(self.gen3.top, quad, x, y)
+    end
+  end
+  love.graphics.setCanvas()
+  love.graphics.pop()
+  local img = love.graphics.newImage(canvas:newImageData())
+  img:setWrap("repeat", "repeat")
+  img:setFilter("nearest", "nearest")
+  self.borderFill = img
+end
+
 -- WATER void fill: the eight hshift frames of tile $14 (same cycle as map
 -- water), wrap-tiled so the void scrolls in lockstep with on-map water.
 local function ensureWaterBorderFill(self)
@@ -1033,7 +1224,11 @@ end
 -- solid clear; "water" keeps the live hshift textures instead of a bake.
 function TileRenderer:ensureBorderFill()
   local block = borderBlockFor(self.map)
-  local mode = block == false and "black"
+  -- a Gen 3 map paints its void from its OWN border patch, so it is always
+  -- "map" -- the VOID FILL option picks between three Gen 1 tileset blocks
+  -- that a Hoenn tileset does not have
+  local mode = self.gen3 and "map"
+              or (block == false and "black")
               or ((self.map.def.tileset == "OVERWORLD")
                   and (TileRenderer.voidFill or "trees")
                   or "map")
@@ -1048,10 +1243,16 @@ function TileRenderer:ensureBorderFill()
   -- shared shift-variant cache: drop the reference only, never release
   self.borderWaterTextures = nil
   self.borderFillMode = mode
-  if mode == "black" or block == false or block == nil then return end
+  if not self.gen3 and (mode == "black" or block == false or block == nil) then
+    return
+  end
   if mode == "water" then
     if ensureWaterBorderFill(self) then return end
     -- headless / missing pixels: fall back to the static water block bake
+  end
+  if self.gen3 then
+    pcall(bakeGen3BorderFill, self)
+    return
   end
   pcall(bakeBorderFill, self, block)
 end
@@ -1216,6 +1417,28 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
     end
     self.winBatch:clear()
     self.winBatchTop:clear()
+    -- ...and a second pair holding only the cells whose metatile animates
+    -- (the sea, the shore, the flower beds).  Gathered HERE, in the same
+    -- sweep, for the same reason the Gen 1/Gen 2 animated cells are: nothing
+    -- about the animation may scale with the size of the map.
+    local animCells = self.gen3.animCells
+    if animCells and not self.gen3AnimBatch then
+      -- the same 1024 the static pair asks for: a headless draw passes no
+      -- view size, which means the WHOLE map body, and on an ocean route
+      -- almost every cell in it is water
+      self.gen3AnimBatch =
+        love.graphics.newSpriteBatch(self.gen3.animBottom[1], 1024, "dynamic")
+      self.gen3AnimBatchTop =
+        love.graphics.newSpriteBatch(self.gen3.animTop[1], 1024, "dynamic")
+    end
+    if self.gen3AnimBatch then
+      self.gen3AnimBatch:clear()
+      self.gen3AnimBatchTop:clear()
+    end
+    -- counted here rather than asked of the batch: SpriteBatch:getCount is not
+    -- in every LOVE the project runs headless against, and an overlay drawn
+    -- with nothing in it is a wasted state change on every Hoenn frame
+    self.gen3AnimCount = 0
     local map = self.map
     local n = self.blockTiles
     local cx0, cy0 = math.floor(tx0 / n), math.floor(ty0 / n)
@@ -1228,6 +1451,12 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
           local wx, wy = cx * 16, cy * 16
           self.winBatch:add(quad, wx, wy)
           self.winBatchTop:add(quad, wx, wy)
+          local animQuad = animCells and animCells[id] and self.gen3.animQuads[id]
+          if animQuad then
+            self.gen3AnimBatch:add(animQuad, wx, wy)
+            self.gen3AnimBatchTop:add(animQuad, wx, wy)
+            self.gen3AnimCount = self.gen3AnimCount + 1
+          end
         end
       end
     end
@@ -1235,6 +1464,13 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
     return
   end
 
+  -- Reached only when the Gen 3 bake did not happen, and a Gen 3 tileset has
+  -- no sheet to fall back to: draw nothing rather than raise under the
+  -- player, and leave the reason in the log (gen3SheetsFor already logged it).
+  if not self.image then
+    self.win = { tx0 = tx0, ty0 = ty0, tx1 = tx1, ty1 = ty1 }
+    return
+  end
   if not self.winBatch then
     self.winBatch = love.graphics.newSpriteBatch(self.image, 1024, "dynamic")
   end
@@ -1291,8 +1527,22 @@ end
 -- only ever touches on-screen animated tiles.
 function TileRenderer:drawAnimated(camX, camY)
   local anims = self.anims
-  if not anims then return end
   local x, y = -math.floor(camX), -math.floor(camY)
+  -- GEN 3: the animated metatiles of the window, out of the overlay sheet for
+  -- the current step, over the static bottom sheet that has already been
+  -- drawn.  This is the sea moving on Route 104 and the flowers opening in
+  -- Petalburg's verges; `anims` above is empty on this generation and always
+  -- has been, because a Gen 3 pair has no 8x8 atlas for the entries in it to
+  -- name a cell in.
+  if self.gen3AnimBatch and (self.gen3AnimCount or 0) > 0 then
+    local step = TileRenderer.gen3AnimStep(self.gen3)
+    local tex = step and self.gen3.animBottom[step + 1]
+    if tex then
+      self.gen3AnimBatch:setTexture(tex)
+      love.graphics.draw(self.gen3AnimBatch, x, y)
+    end
+  end
+  if not anims then return end
   for _, anim in ipairs(anims) do
     local batch = anim.batch
     if batch then
@@ -1338,8 +1588,21 @@ end
 function TileRenderer:drawAbove(camX, camY, vw, vh)
   if not self.gen3 then return false end
   self:ensureWindow(camX, camY, vw, vh)
+  local x, y = -math.floor(camX), -math.floor(camY)
   if self.winBatchTop then
-    love.graphics.draw(self.winBatchTop, -math.floor(camX), -math.floor(camY))
+    love.graphics.draw(self.winBatchTop, x, y)
+  end
+  -- ...and the animated half of it.  A waterfall's crest and the spray over a
+  -- bridge rail are drawn on the layer the player passes BEHIND, so their
+  -- overlay has to land on this side of the sprite pass and not in
+  -- drawAnimated with the sea.
+  if self.gen3AnimBatchTop and (self.gen3AnimCount or 0) > 0 then
+    local step = TileRenderer.gen3AnimStep(self.gen3)
+    local tex = step and self.gen3.animTop[step + 1]
+    if tex then
+      self.gen3AnimBatchTop:setTexture(tex)
+      love.graphics.draw(self.gen3AnimBatchTop, x, y)
+    end
   end
   return true
 end
@@ -1347,6 +1610,17 @@ end
 -- Does this map draw anything above the sprites?  Lets a caller skip the
 -- state changes around the call on the generations that do not.
 function TileRenderer:hasAboveLayer()
+  return self.gen3 ~= nil
+end
+
+-- IS THIS MAP'S ART ALREADY IN COLOUR?
+--
+-- A Gen 1/Gen 2 map is four shades and gets its colour from a screen-space
+-- palette pass; a Gen 3 map's metatile sheets are composited straight out of
+-- the cartridge in full colour and want no pass at all.  Published because
+-- the caller that has to know is the one deciding what colorization zones to
+-- hand the renderer, and it has no other way to ask.
+function TileRenderer:isTrueColor()
   return self.gen3 ~= nil
 end
 

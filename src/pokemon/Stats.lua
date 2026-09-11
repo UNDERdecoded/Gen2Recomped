@@ -213,4 +213,87 @@ function Stats.isShiny(dvs)
      and SHINY_ATK[dvs.attack or 0] == true
 end
 
+-- ---------------------------------------------------------------------------
+-- ...AND GEN 3 DOES NOT ASK THE DVs AT ALL
+--
+-- A Gen 3 Pokemon has no DVs -- it has six IVs and a 32-bit personality
+-- value -- so `isShiny(mon.dvs)` answered false for every Pokemon in Hoenn.
+-- Every one of them: the battle sprite never used the shiny picture the
+-- importer had already ripped, the party and summary screens never marked
+-- one, and the sparkle never played.  A shiny could be caught and there was
+-- no way to tell, which is the same as not having them.
+--
+-- The rule is a XOR of four half-words (pokemon.c IsShinyOtIdPersonality):
+-- the trainer's id and secret id against the two halves of the personality.
+-- Under eight is shiny -- eight of 65536, which is the 1/8192 everybody
+-- knows.
+--
+-- Kept HERE, beside the Gen 1 and Gen 2 rule, because three places need the
+-- same answer and had been getting three different ones: the save codec, the
+-- battle, and the menus.
+local SHINY_GEN3_UNDER = 8
+
+local function xor16(a, b)
+  if bit then return bit.band(bit.bxor(a, b), 0xFFFF) end
+  local out, p = 0, 1
+  for _ = 1, 16 do
+    local x, y = a % 2, b % 2
+    if x ~= y then out = out + p end
+    a, b, p = math.floor(a / 2), math.floor(b / 2), p * 2
+  end
+  return out
+end
+
+Stats.SHINY_GEN3_UNDER = SHINY_GEN3_UNDER
+Stats.xor16 = xor16
+
+function Stats.shinyValue(personality, otId)
+  personality = math.floor(tonumber(personality) or 0)
+  otId = math.floor(tonumber(otId) or 0)
+  local lo = function(v) return v % 65536 end
+  local hi = function(v) return math.floor(v / 65536) % 65536 end
+  return xor16(xor16(lo(otId), hi(otId)), xor16(lo(personality), hi(personality)))
+end
+
+function Stats.isShinyGen3(personality, otId)
+  if personality == nil or otId == nil then return false end
+  return Stats.shinyValue(personality, otId) < SHINY_GEN3_UNDER
+end
+
+-- The personality that makes THIS trainer's Pokemon shiny while changing as
+-- little else as possible.
+--
+-- Gen 3 shininess is (otIdLo ^ otIdHi ^ pidLo ^ pidHi) < 8, so with the id
+-- fixed there are exactly EIGHT high halves that work -- one per shiny value
+-- 0..7 -- and every one of them leaves the low half exactly where it was.
+-- That matters: the low half is what GetGenderFromSpeciesAndPersonality reads
+-- (the low byte, against the species' gender ratio) and what
+-- GetAbilityBySpecies reads (bit 0), so the Pokemon keeps its gender and its
+-- ability.
+--
+-- The NATURE is NOT in that set.  GetNature is personality % 25 over the whole
+-- 32-bit value, so moving the high half can move it -- which is why this walks
+-- all eight and takes one landing on the nature the Pokemon already had.  Most
+-- of the time none of the eight does (8 candidates, 25 natures), and then one
+-- is picked at random and the caller recomputes the stats behind it.
+--
+-- An exact answer rather than re-rolling personalities until one sparkles:
+-- the Pokemon that was rolled is the Pokemon you get.
+function Stats.shinyPersonality(personality, otId, rng)
+  personality = math.floor(tonumber(personality) or 0)
+  otId = math.floor(tonumber(otId) or 0)
+  rng = rng or math.random
+  local lo = personality % 65536
+  local otFold = xor16(otId % 65536, math.floor(otId / 65536) % 65536)
+  local wantNature = personality % 25
+  local candidates = {}
+  for want = 0, SHINY_GEN3_UNDER - 1 do
+    local hi = xor16(xor16(otFold, lo), want)
+    local pid = hi * 65536 + lo
+    if pid % 25 == wantNature then return pid end
+    candidates[#candidates + 1] = pid
+  end
+  return candidates[rng(1, #candidates)]
+end
+
 return Stats

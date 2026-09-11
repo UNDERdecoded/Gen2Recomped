@@ -49,6 +49,24 @@ function Sprites.path(data, species, side, opts)
     local form = def.forms[formIndex]
     path = (side == "back" and form.spriteBack or form.spriteFront) or path
   end
+  -- A GEN 3 SHINY IS A WHOLE SECOND PICTURE, not a palette swap.
+  --
+  -- gMonShinyPaletteTable is its own table and the importer decodes the front
+  -- sheet through it into `spriteShiny` -- which was written for every one of
+  -- the 386 and read by NOTHING, so a shiny in Hoenn came up in its ordinary
+  -- colours everywhere: the battle, the summary, the dex.
+  --
+  -- Gen 1 and Gen 2 keep theirs as a palette swap and have no such picture,
+  -- so they are untouched by this and go on through PaletteFX as before.
+  --
+  -- BOTH SIDES.  gMonShinyPaletteTable is one palette per species and the
+  -- cartridge applies it to whichever sheet is on screen -- the back pic
+  -- included, which is the one the player looks at for the whole battle.
+  local shinyPath = (side == "back") and def.spriteShinyBack or def.spriteShiny
+  if shinyPath and opts.mon
+     and require("src.pokemon.Pokemon").isShiny(opts.mon) then
+    path = shinyPath
+  end
   local ctx = {
     species = species,
     side = side == "back" and "back" or "front",
@@ -124,6 +142,20 @@ function Sprites.playerPath(data, side, opts)
     end
     if formPath then path = formPath end
   end
+  -- ...AND THE DEMO PIC CAN BE A GEN 3 ONE.
+  --
+  -- Reported from play, with a picture: "Wallys player sprite is also
+  -- missing".  Hoenn's catching tutorial puts WALLY on the player's side and
+  -- this returned Gen 1's OLD MAN, because `demoBack` had no Hoenn value --
+  -- a grey-haired man in a Game Boy palette, which is what the screenshot
+  -- shows.  The import writes Wally's own back pic to that key now, and it is
+  -- Gen 3 art, so it has to be marked true-colour or the zone shader repaints
+  -- it to a four-shade ramp and it comes out grey anyway.
+  local demoTrueColor = false
+  if key == "demoBack" or key == "oakBack" then
+    demoTrueColor = FieldDefaults.fieldValue(data, "playerPics",
+                                             key .. "TrueColor") and true or false
+  end
   local ctx = {
     side = side,
     kind = opts.kind or "battle",
@@ -132,7 +164,8 @@ function Sprites.playerPath(data, side, opts)
     battle = opts.battle,
     -- a baked form pic already carries its own colours, so the zone shader
     -- has to leave it alone or KRIS comes out in CHRIS's browns
-    trueColor = (formPath ~= nil and form.trueColor) and true or false,
+    trueColor = ((formPath ~= nil and form.trueColor) or demoTrueColor)
+                and true or false,
     data = data,
   }
   if path and Runtime.wantsHook("player.sprite") then

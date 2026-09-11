@@ -129,6 +129,17 @@ local function newFileSource(def)
 end
 
 local function newSfxSource(data, key, def, pitch, tempo)
+  -- A GEN 3 SOUND EFFECT IS A SONG, played to its end.  The cartridge's own
+  -- scripts say so: `playse` takes a number out of the same table the map
+  -- themes come from, and the only thing that makes one an effect is that it
+  -- stops instead of looping.  It has no chip program and no file, which is
+  -- what every one of them used to fall through to.
+  if type(def) == "table" and def.m4a then
+    local ok, sd = pcall(require("src.core.ChipAudio").newM4AEffect, data, def)
+    if not ok then return nil, tostring(sd) end
+    if not sd then return nil, "no source" end
+    return sd
+  end
   if isChipDef(def) then
     local ok, s = pcall(require("src.core.ChipAudio").newSfx,
       data, key:match("^([^@]+)") or key, pitch, tempo, def)
@@ -183,6 +194,35 @@ function Sound.play(data, name)
   end
   played("sfx", name)
   return src
+end
+
+-- PLAY A CARTRIDGE SOUND BY ITS NUMBER.
+--
+-- Every other caller here names a ROLE -- "Ball_Toss", "Press_AB" -- because
+-- that is the vocabulary shared across four generations.  The Gen 3 ball
+-- animation does not have roles: the cartridge's own code says `PlaySE(56)`,
+-- and the four bounce sounds are four consecutive numbers with no names
+-- anywhere in the ROM.  So this answers a number, by looking for a role that
+-- already plays it.
+--
+-- A number no role covers plays nothing and says nothing: the animation is
+-- still right, it is just quieter, and inventing a substitute sound would be
+-- worse than silence.
+local byNumber = nil
+function Sound.playId(data, id)
+  id = tonumber(id)
+  local sfx = data and data.audio and data.audio.sfx
+  if not (id and sfx) then return end
+  if byNumber == nil or byNumber.__sfx ~= sfx then
+    byNumber = { __sfx = sfx }
+    for name, def in pairs(sfx) do
+      local n = type(def) == "table" and tonumber(def.m4a)
+      if n and byNumber[n] == nil then byNumber[n] = name end
+    end
+  end
+  local name = byNumber[id]
+  if not name then return end
+  return Sound.play(data, name)
 end
 
 -- Play a move's sound with its MoveSoundTable pitch/tempo modifiers
@@ -243,6 +283,14 @@ local function resolveCry(data, def, depth)
 end
 
 local function newCrySource(data, species, def)
+  -- A GEN 3 CRY names a recording rather than a chip program, so there is no
+  -- base chain to resolve and no header to look up: the index IS the def.
+  if type(def) == "table" and def.m4a then
+    local ok, s = pcall(require("src.core.ChipAudio").newCry, data, species, def)
+    if not ok then return nil, tostring(s) end
+    if not s then return nil, "no source" end
+    return s
+  end
   local resolved, err = resolveCry(data, def, 0)
   if not resolved then return nil, err end
   if type(resolved) == "table" and (resolved.header or resolved.chip) then

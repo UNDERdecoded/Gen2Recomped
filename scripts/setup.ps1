@@ -56,6 +56,12 @@ function Resolve-RomVersion([string]$sha1) {
         # stops calling the cartridge unknown; the extractor is not wired to
         # it yet.
         '6930b48af5844d373e3c9130f26d6dd1084cf4ed' { return 'polishedcrystal' }
+        # Pokemon Emerald (USA, Europe), game code BPEE revision 0 -- a GAME
+        # BOY ADVANCE cartridge, and the first one here.  Recognising it is
+        # what keeps it out of the extraction branch below: that runs
+        # tools/build_data.py, the Gen 1 extractor, and pointing it at 16 MiB
+        # of ARM produces either a crash or a dataset of nonsense.
+        'f3ae088181bf583e55daf962a92bb46f4f1d07b7' { return 'emerald' }
         default { return $null }
     }
 }
@@ -130,6 +136,14 @@ try {
         $outDir = Join-Path $loveSave (Join-Path $romVersion 'data\generated')
         $assetsDir = Join-Path $loveSave (Join-Path $romVersion 'assets\generated')
         & $VenvPython 'tools\build_data.py' --rom $Rom --version $romVersion --out $outDir --assets $assetsDir --clean --only constants --only charmap --only moves --only items --only text --only maps --only tilesets
+    } elseif ($romVersion -eq 'emerald') {
+        # Gen 3 has no step here on purpose.  Its extractor is Lua and lives in
+        # the engine (src/import/RomExtractorGen3.lua), so the whole import
+        # happens inside the launcher -- there is nothing for Python to do, and
+        # running the Gen 1 extractor over a GBA cartridge would only produce a
+        # convincing-looking pile of wrong data.
+        Say 'Emerald detected: a Game Boy Advance cartridge, imported from inside the launcher rather than here.'
+        Say 'Start the game, open the EMERALD tab and use Import ROM.'
     } else {
         & $VenvPython 'tools\build_data.py' --rom $Rom --version $romVersion --clean
     }

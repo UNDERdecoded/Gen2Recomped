@@ -11,19 +11,109 @@ local Logger = require("src.core.Logger")
 
 local Data = {}
 
-local MODULES = {
+-- WHAT A CACHE MUST CARRY, and it is not the same list for every generation.
+--
+-- This was one flat list, and a Gen 3 cache could not boot with it: the load
+-- died on trainer_headers.lua, which is a Gen 2 script structure a GBA
+-- cartridge has no equivalent of.  Four more would have followed.  None of the
+-- per-stage test suites could see that, because each one checks its own table
+-- against the cartridge and never asks whether the set as a whole is what the
+-- engine opens.  That is the whole reason for a boot test.
+local SHARED_MODULES = {
   "constants", "maps", "tilesets", "text", "text_pointers",
-  "trainer_headers", "font", "sprites", "pokemon", "moves", "items",
-  "type_chart", "trainers", "encounters", "field", "battle_anims",
+  "pokemon", "moves", "items", "type_chart", "trainers", "encounters",
 }
 
--- Optional for compatibility with developer and stale caches.
--- map_layouts and map_tilesets are the Gen 3 world modules: Gen 1 and Gen 2
--- fold blockdata into maps.lua and tilesets.lua, but a Gen 3 layout is shared
--- between maps and its tilesets come in primary/secondary pairs, so both are
--- their own module and both are absent on a Gen 1/Gen 2 cache.
-local OPTIONAL = { "audio", "palettes", "icons", "map_scripts", "unown_puzzle",
-                   "unown_dex", "map_layouts", "map_tilesets" }
+-- Gen 1 and Gen 2 only.  trainer_headers is a Gen 2 script structure; font,
+-- sprites and battle_anims index art the Gen 1/Gen 2 extractors lay out as
+-- tables and the Gen 3 one writes straight to PNG; field is the Gen 1/Gen 2
+-- field-move table.
+local CLASSIC_MODULES = {
+  "trainer_headers", "font", "sprites", "field", "battle_anims",
+}
+
+-- Gen 3 only, and REQUIRED rather than optional -- these are not niceties.
+-- A Gen 3 map has no blockdata of its own (map_layouts), its tilesets come in
+-- primary/secondary pairs (map_tilesets), its scripts are a separate table,
+-- and save_layout is what stops a save import guessing where the fields are.
+local GEN3_MODULES = {
+  "map_layouts", "map_tilesets", "map_scripts", "scenes", "save_layout",
+  "songs", "font", "sprites",
+  -- ...and `icons`, the THIRD module to make this move, for the same reason
+  -- and with the same hazard.  The party menu's little bouncing sprites are
+  -- gMonIconTable, six shared palettes and two frames each; blocked, a Hoenn
+  -- party was six panels of text with a blank where the Pokemon should be.
+  -- Unblocked and NOT produced it would be worse -- the overlay is additive,
+  -- so a Gen 3 cache with no icons of its own resolves to RED'S, and every
+  -- Hoenn species would wear a Kanto icon chosen by dex number.  Which is why
+  -- the import gate requires the file: a cache without it is reported
+  -- incomplete rather than booting on somebody else's art.
+  "icons",
+  -- `field` IS NOW EMERALD'S OWN, and this is the second module to make the
+  -- move (see GEN3_BORROWED below, which `sprites` emptied).
+  --
+  -- It was in CLASSIC_ONLY for a real reason: field.lua is where boot.startMap
+  -- and boot.screens live, the overlay is additive, and a Gen 3 cache with no
+  -- field of its own read RED'S -- which is how NEW GAME on Emerald opened
+  -- Red's intro in Red's house.  Blocking it fixed that.
+  --
+  -- But extractHealLocations now WRITES one: sHealLocations, the fly warps and
+  -- the order the region map lists them in.  Blocked, that file was produced,
+  -- required by the import gate, and then thrown away on load -- so FlyMenu
+  -- had no destinations and every blackout in Hoenn fell back.  Emerald's own
+  -- table carries no boot keys at all, so what it inherits now is nothing
+  -- rather than another game's.
+  "field",
+  -- `audio` made the same move, and for a louder reason: the region was
+  -- SILENT.  The Gen 3 extractor writes mapSongs (which of the 611 songs each
+  -- of the 518 maps plays) and Music.playMap reads exactly that -- so blocked,
+  -- `data.audio` was nil, playMap chose no song, and not one map in Hoenn had
+  -- a theme.  The import gate has required audio.lua all along, in as many
+  -- words: "a cache without it is a region that boots and is silent".  It was
+  -- required by one file and refused by another.
+  "audio",
+}
+
+-- WHAT A GEN 3 CACHE MUST NOT INHERIT.
+--
+-- The version overlay is ADDITIVE: CacheFs mounts emerald/data/generated over
+-- data/generated, so any module the Emerald import did not write still
+-- resolves -- to whatever the ROOT cache holds, which is Red's.  That is not
+-- a hypothetical.  It is why NEW GAME on Emerald opened Red's intro, Red's
+-- main menu and Red's REDS_HOUSE_2F: `field` is where boot.startMap and
+-- boot.screens live, and Emerald was reading Red's.
+--
+-- So a Gen 3 cache is not offered them at all.  Each of these is Gen 1/Gen 2
+-- shaped -- keyed by Gen 1 ids, Gen 1 script structures, Gen 1 art -- and a
+-- Gen 3 dataset that appears to have one is reading another game's.
+local CLASSIC_ONLY = {
+  -- `field`, `audio` and `icons` used to be here; all three are Emerald's own
+  -- now (see GEN3_MODULES).  What is left is genuinely Gen 1/Gen 2 shaped.
+  "trainer_headers", "battle_anims", "palettes",
+  "unown_puzzle", "unown_dex",
+}
+
+-- Nothing is borrowed any more.  `sprites` was the last one -- Gen 3 had no
+-- overworld art of its own, so every object event in Hoenn was drawn with
+-- Red's sheets -- and it moved into GEN3_MODULES the moment the extractor
+-- could produce them.  The table stays as the place to put the next one.
+local GEN3_BORROWED = {}
+
+-- requiredModules() lives just below loadModule, which it needs.
+
+-- Optional for compatibility with developer and stale caches.  The Gen 3
+-- world modules moved OUT of here and into GEN3_MODULES above: they were
+-- optional while the extractor was being built, and leaving them optional
+-- after it could produce them meant a cache missing its maps' blockdata would
+-- boot and then draw nothing.
+--
+-- The classic modules appear here too, so a Gen 3 cache that happens to carry
+-- them still picks them up, and one that does not degrades with a line in the
+-- log rather than refusing to start.
+local OPTIONAL = { "audio", "palettes", "icons", "unown_puzzle", "unown_dex",
+                   "trainer_headers", "font", "sprites", "field",
+                   "battle_anims", "map_layouts", "map_tilesets",
+                   "map_scripts", "scenes", "save_layout", "songs" }
 
 -- Vanilla defaults for rules exposed through the constants registry.  A
 -- value has to exist before a mod can patch it; each one matches the
@@ -75,7 +165,10 @@ local BOOT_DEFAULTS = {
   startMap = "REDS_HOUSE_2F", startX = 3, startY = 6, startFacing = "down",
   playerName = "RED", rivalName = "BLUE",
   startMoney = 3000,
-  screens = { splash = "IntroMovie", title = "TitleState", newGame = "OakSpeech" },
+  screens = { splash = "IntroMovie", title = "TitleState",
+              newGame = "OakSpeech", startMenu = "StartMenu",
+              options = "OptionsMenu", bag = "BagMenu",
+              party = "PartyMenu", trainerCard = "TrainerCard" },
 }
 
 -- Gen2 scaffold warps still reference map-group ids (MAP_Gxx_Nyy) while
@@ -632,6 +725,11 @@ function Data:seedDefaults()
     constants.dexDigits = math.max(3, #tostring(constants.dexSize))
   end
   self:applyVersionedFieldData()
+  -- A Gen 3 cache carries no field.lua -- that table is the Gen 1/Gen 2
+  -- field-move layout, and a GBA cartridge lays the same information out
+  -- differently.  Seed an empty one rather than dying here: every default
+  -- below then lands in it, which is what a mod would patch anyway.
+  self.field = self.field or {}
   local boot = self.field.boot
   if boot == nil then
     boot = {}
@@ -650,6 +748,232 @@ function Data:seedDefaults()
       boot.screens.splash = "YellowIntro"
     elseif V.isGen2() then
       boot.screens.splash = "Gen2Intro"
+    elseif self.isGen3Cache or V.isGen3() then
+      -- NOT `false`, which is what this said and what dropped the studio card
+      -- on a Gen 3 boot: that card is this port's own and belongs on every
+      -- version.  IntroMovie is not the answer either -- everything after the
+      -- card in it is Kanto art out of a field.intro manifest a Gen 3 cache
+      -- does not have.  Gen3Intro keeps the card and puts Emerald's own
+      -- attract skies behind it.
+      boot.screens.splash = "Gen3Intro"
+    end
+  end
+  -- ------------------------------------------------------------ GEN 3 ----
+  --
+  -- EVERY ONE OF THESE WAS COMING FROM RED.  A Gen 3 cache carries no
+  -- field.lua, the version overlay does not hide the un-prefixed one, and so
+  -- an Emerald NEW GAME ran Red's boot record: Red's title screen, Red's
+  -- professor speech, and REDS_HOUSE_2F -- a map no Hoenn dataset has, which
+  -- is where it finally fell over.  CLASSIC_ONLY above stops the inheritance;
+  -- this is what Gen 3 gets instead.
+  --
+  -- The spawn is NOT typed from memory.  NewGameInitData's last act is
+  -- WarpToTruck, the only call to SetWarpDestination in 16 MiB whose map is a
+  -- pair of immediates and whose warp id and coordinates are all -1 -- and -1
+  -- is a request for the centre of the map, which SetPlayerCoordsFromWarp
+  -- resolves to width/2, height/2.  tools/gen3_discover.py derives the group,
+  -- the number and the layout's own dimensions and ships the result in the
+  -- manifest; the extractor writes it here.
+  -- Keyed on the CACHE, not on the selected version, and for the reason
+  -- requiredModules already gives: asking GameVersion works only if the
+  -- caller set it first, and a loader that quietly applies Gen 1 defaults
+  -- when it was not is the ordering trap that works in the launcher and
+  -- fails in a test.
+  if self.isGen3Cache or require("src.core.GameVersion").isGen3() then
+    local spawn = (self.constants or {}).gen3NewGameSpawn
+    if boot.startMap == BOOT_DEFAULTS.startMap and type(spawn) == "table"
+       and spawn.map then
+      boot.startMap = spawn.map
+      boot.startX = spawn.x or 0
+      boot.startY = spawn.y or 0
+      boot.startFacing = "down"
+    end
+    if boot.playerName == BOOT_DEFAULTS.playerName then
+      boot.playerName = "BRENDAN"
+    end
+    if boot.rivalName == BOOT_DEFAULTS.rivalName then
+      -- the other one: whichever the player does not choose is the rival,
+      -- and BirchSpeech swaps the pair when the girl is picked
+      boot.rivalName = "MAY"
+    end
+    if boot.screens.title == BOOT_DEFAULTS.screens.title then
+      boot.screens.title = "Gen3Title"
+    end
+    if boot.screens.newGame == BOOT_DEFAULTS.screens.newGame then
+      boot.screens.newGame = "BirchSpeech"
+    end
+    -- THE START MENU IS NOT THE GEN 2 ONE WITH DIFFERENT WORDS.  Its rows
+    -- come off the cartridge (sStartMenuText, whose run IS the order), its
+    -- fourth entry is a device Johto does not have, and it is drawn on a
+    -- 240-wide screen rather than in a 20-tile letterbox.  Same for OPTION,
+    -- whose six rows and every value they cycle through are read from the
+    -- cartridge's own vocabulary.
+    if boot.screens.startMenu == BOOT_DEFAULTS.screens.startMenu then
+      boot.screens.startMenu = "Gen3StartMenu"
+    end
+    if boot.screens.options == BOOT_DEFAULTS.screens.options then
+      boot.screens.options = "Gen3Options"
+    end
+    -- ...and the three the START menu opens.  Each is a GBA screen with a
+    -- shape the Game Boy one does not have -- the bag's five pockets and its
+    -- description panel, the party's six panels with the lead one large, the
+    -- card's fields and its flip side -- and each is set in the cartridge's
+    -- own words, read from the text region the same way the START menu's
+    -- rows were.
+    if boot.screens.bag == BOOT_DEFAULTS.screens.bag then
+      boot.screens.bag = "Gen3BagMenu"
+    end
+    if boot.screens.party == BOOT_DEFAULTS.screens.party then
+      boot.screens.party = "Gen3PartyMenu"
+    end
+    if boot.screens.trainerCard == BOOT_DEFAULTS.screens.trainerCard then
+      boot.screens.trainerCard = "Gen3TrainerCard"
+    end
+    if boot.namePresets == nil then
+      boot.namePresets = {
+        player = { "BRENDAN", "MAY", "TERRY" },
+        rival = { "MAY", "BRENDAN", "TERRY" },
+      }
+    end
+    -- THE FLAGS THE WORLD OPENS WITH SET.
+    --
+    -- A set flag hides its object and every flag starts clear, so without
+    -- this every gated NPC in Hoenn is on screen from the first frame.  The
+    -- cartridge's own new-game script sets 159 of them; SaveData.newGame
+    -- applies them through boot.initialFlags, the same way it applies the
+    -- Gen 2 map scenes that do not start at zero.
+    local opening = (self.constants or {}).gen3NewGameFlags
+    if type(opening) == "table" and type(opening.flags) == "table"
+       and boot.initialFlags == nil then
+      boot.initialFlags = opening.flags
+    end
+
+    -- ...AND THE BERRIES ALREADY IN THE GROUND.
+    --
+    -- Reported from play: "for berries in the north of route 104 theres
+    -- usually berry trees already planted and fully grown in the rom, theyre
+    -- also all throughout hoenn already planted and fully grown in the rom
+    -- but not in our game at the moment."
+    --
+    -- The same new-game script that sets those 159 flags ends with a call
+    -- into a run of eighty `setberrytree` commands -- twenty different
+    -- berries, every one of them at stage 5, fruiting.  The importer reads
+    -- the run (gen3Berries.planted); this turns it into the save shape the
+    -- berry code already uses, once, so SaveData.newGame only has to copy it.
+    --
+    -- The arithmetic is PlantBerryTree's (0x00E191C): the countdown is the
+    -- berry's own stage duration, a tree planted straight into BERRIES has
+    -- that countdown quadrupled and a yield rolled for it -- and with nothing
+    -- watered CalcBerryYield is exactly the minimum, so there is no roll to
+    -- make here -- and `setberrytree` always passes allowGrowth = FALSE, so
+    -- every one of them is frozen until the player walks into view of it.
+    local berries = (self.constants or {}).gen3Berries
+    local planted = type(berries) == "table" and berries.planted
+    if type(planted) == "table" and boot.initialBerryTrees == nil then
+      local FRUITING, WATER_QUARTER = 5, 4
+      local trees, n = {}, 0
+      for _, row in ipairs(planted) do
+        local id, number, stage = tonumber(row.tree), tonumber(row.berry),
+                                  tonumber(row.stage)
+        local info = number and berries[number]
+        if id and id > 0 and info and stage and stage > 0 then
+          local minutes = (tonumber(info.hours) or 0) * 60
+          local yield = 0
+          if stage == FRUITING then
+            minutes = minutes * WATER_QUARTER
+            yield = tonumber(info.minYield) or 1
+          end
+          trees[id] = { berry = number, stage = stage, minutes = minutes,
+                        yield = yield, regrowth = 0, watered = {},
+                        stopGrowth = true }
+          n = n + 1
+        end
+      end
+      if n > 0 then
+        boot.initialBerryTrees = trees
+        Logger.info("Gen3 new game: %d berry trees already in the ground -- %s",
+                    n, tostring(berries.plantedSource))
+      end
+    end
+
+    -- THE LEDGES, which Hoenn had none of.
+    --
+    -- field.ledges is a table of (standing tile, tile in front, direction)
+    -- rows, because that is the only way Gen 1 and Gen 2 can say it.  Nothing
+    -- ever filled it for Gen 3, so checkLedgeHop found no row for any cell in
+    -- the region and every ledge was an ordinary wall -- no way down off any
+    -- terrace in the game.  Gen 3 says it in the metatile itself, so the
+    -- tileset carries the behaviour-to-direction map and the field takes it
+    -- from whichever pair the dataset shipped.
+    if self.field.ledgeBehaviours == nil then
+      for _, ts in pairs(self.tilesets or {}) do
+        if type(ts) == "table" and ts.ledgeBehaviours then
+          self.field.ledgeBehaviours = ts.ledgeBehaviours
+          break
+        end
+      end
+    end
+
+    -- THE TEXT BOX IS THE CARTRIDGE'S, not the Game Boy's.
+    --
+    -- Theme carries one box and it was Red's: 20 tiles wide with an
+    -- 18-column budget.  Emerald's is 26 columns inside a 28-tile frame, and
+    -- laying Emerald's text out in Red's window wrapped every authored line
+    -- in half -- which turned every two-line page into a four-line one, and a
+    -- page with more lines than the window shows scrolls them past instead of
+    -- waiting for A.  That was the auto-scrolling text.
+    --
+    -- The window is the extracted record; the frame is one tile out from it
+    -- on every side, which is how this cartridge draws every window.
+    -- THE TWO CYCLING ROUTES' OWN TABLES.  Routes 119 and 123 pick their
+    -- weather out of a four-byte table with a stage the save advances once a
+    -- day; the module carries the same four steps as a default, so this only
+    -- matters for a cartridge whose tables differ from Emerald's.
+    local cycles = (self.constants or {}).gen3WeatherCycles
+    if type(cycles) == "table" then
+      require("src.world.Gen3Weather").setCycles(cycles)
+    end
+
+    local win = (self.constants or {}).gen3MessageWindow
+    if type(win) == "table" and win.width and win.height then
+      self.field.theme = self.field.theme or {}
+      if self.field.theme.textBox == nil then
+        self.field.theme.textBox = {
+          tx = math.max(0, (win.left or 2) - 1),
+          ty = math.max(0, (win.top or 15) - 1),
+          tw = (win.width or 26) + 2,
+          th = (win.height or 4) + 2,
+          maxCols = win.width or 26,
+        }
+      end
+    end
+    -- THE PLAYER'S OWN SPRITE, which is not an NPC's and does not come from
+    -- the map.  Player:refreshForm reads field.playerSprites for the default
+    -- pair and field.playerForms[gender] to override it, so the boy-or-girl
+    -- answer the Birch speech records is what decides which of the two rows
+    -- of the graphics table the player walks around Hoenn wearing.
+    local avatars = (self.constants or {}).gen3PlayerSprites
+    if type(avatars) == "table" and self.field.playerSprites == nil then
+      self.field.playerSprites = {
+        walk = avatars.boy, bike = avatars.boyBike, surf = avatars.boySurf,
+        -- ...and the diving suit.  It is a different SHEET, not a palette
+        -- swap: sPlayerAvatarGfxIds names rows 111 and 112 for it, seventy
+        -- past the walking sheet and wearing their own palette, which is why
+        -- the block walk that finds the bicycle and the surfboard could never
+        -- reach it.  Absent on a cache imported before it was found, where
+        -- every caller falls back to the sheet it used before.
+        underwater = avatars.boyUnderwater,
+      }
+    end
+    if type(avatars) == "table" and self.field.playerForms == nil then
+      self.field.playerForms = {
+        order = { "boy", "girl" },
+        boy = { label = "BOY", walk = avatars.boy, bike = avatars.boyBike,
+                surf = avatars.boySurf, underwater = avatars.boyUnderwater },
+        girl = { label = "GIRL", walk = avatars.girl, bike = avatars.girlBike,
+                 surf = avatars.girlSurf,
+                 underwater = avatars.girlUnderwater },
+      }
     end
   end
   if require("src.core.GameVersion").isGen2() then
@@ -796,6 +1120,22 @@ local function loadModule(dir, name)
   return pcall(require, "data.generated." .. name)
 end
 
+-- Which set applies is decided by the CACHE, not by whichever version happens
+-- to be selected.  Asking GameVersion works only if the caller set it first,
+-- and a loader that silently demands the wrong modules when it was not is an
+-- ordering trap -- the kind that works in the launcher and fails in a test, or
+-- the other way round.  save_layout is the marker: it is written by the Gen 3
+-- extractor and by nothing else.
+local function requiredModules(dir)
+  local gen3 = loadModule(dir, "save_layout")
+  local out = {}
+  for _, name in ipairs(SHARED_MODULES) do out[#out + 1] = name end
+  for _, name in ipairs(gen3 and GEN3_MODULES or CLASSIC_MODULES) do
+    out[#out + 1] = name
+  end
+  return out, gen3 and true or false
+end
+
 -- MAP EDITOR OVERLAY, applied LAST and over the top.
 --
 -- The editor never writes into data/generated_* -- that tree is rebuilt from
@@ -894,7 +1234,11 @@ end
 
 function Data:load()
   local dir = os.getenv("POKEPORT_DATA_DIR")
-  for _, name in ipairs(MODULES) do
+  local required, isGen3Cache = requiredModules(dir)
+  self.isGen3Cache = isGen3Cache
+  local isRequired = {}
+  for _, name in ipairs(required) do isRequired[name] = true end
+  for _, name in ipairs(required) do
     local ok, mod = loadModule(dir, name)
     if not ok then
       if dir then
@@ -907,8 +1251,28 @@ function Data:load()
     end
     self[name] = mod
   end
+  local blocked = {}
+  if isGen3Cache then
+    for _, name in ipairs(CLASSIC_ONLY) do blocked[name] = true end
+  end
   for _, name in ipairs(OPTIONAL) do
+    if isRequired[name] then goto continue end
+    if blocked[name] then
+      -- Deliberately not even attempted.  It would very likely SUCCEED -- the
+      -- root cache is Red's and the overlay does not hide it -- and the result
+      -- would be another game's data wearing this one's name.
+      self[name] = nil
+      Logger.info("gen3 cache: '%s' is a Gen 1/Gen 2 module and is not read "
+                  .. "on this dataset (the un-prefixed cache would have "
+                  .. "supplied another game's)", name)
+      goto continue
+    end
     local ok, mod = loadModule(dir, name)
+    if ok and isGen3Cache and GEN3_BORROWED[name] then
+      Logger.warn("gen3 cache: '%s' came from the un-prefixed cache -- this "
+                  .. "is Gen 1/Gen 2 art standing in until the Gen 3 stage "
+                  .. "exists, not this cartridge's", name)
+    end
     self[name] = ok and mod or nil
     if not ok then
       -- SAY WHY.  "missing" covered two very different failures: a file that
@@ -918,6 +1282,7 @@ function Data:load()
       Logger.warn("optional data module '%s' unavailable (feature disabled): %s",
                   name, tostring(mod))
     end
+    ::continue::
   end
   -- Hand the cartridge's own battle tables to the two modules that would
   -- otherwise have to approximate them.  Both are no-ops on a Gen 1/Gen 2
@@ -945,6 +1310,28 @@ function Data:load()
   for key in pairs(self) do pristine[key] = true end
   self:applyMapEditorOverlay("boot")
 
+  -- THE THEME HAS TO BE LOADED, and it was not.
+  --
+  -- Theme.load is what folds `field.theme` into the shared geometry -- the
+  -- dialogue box's corner, its width, the cursor codes -- and the ONLY caller
+  -- was the dev hot-reload path.  On a normal boot it never ran, so every
+  -- override a dataset ships was dead on arrival and Theme kept Red's
+  -- twenty-tile box with its eighteen-column budget.
+  --
+  -- On Gen 1 and Gen 2 that is invisible, because Red's box IS the default.
+  -- On Emerald it is not: the message window derived from the cartridge is
+  -- twenty-eight tiles and twenty-six columns, and none of it reached the
+  -- screen.  It is also what decides the UI SURFACE (Theme.uiSize), so the
+  -- box, the field and the Birch speech were negotiating over a size that had
+  -- already been decided by a generation nobody was playing.
+  --
+  -- It runs here, after the version overrides above have written
+  -- field.theme, because loading it before them would merge an empty table.
+  do
+    local ok, Theme = pcall(require, "src.ui.Theme")
+    if ok and Theme and Theme.load then pcall(Theme.load, self) end
+  end
+
   Logger.info("generated data loaded (%d maps, %d species, %d moves)",
               (function() local n = 0 for _ in pairs(self.maps) do n = n + 1 end return n end)(),
               (function() local n = 0 for _ in pairs(self.pokemon) do n = n + 1 end return n end)(),
@@ -966,11 +1353,18 @@ function Data:unloadGenerated()
       if not pristine[key] then self[key] = nil end
     end
   end
-  for _, name in ipairs(MODULES) do
-    package.loaded["data.generated." .. name] = nil
-  end
-  for _, name in ipairs(OPTIONAL) do
-    package.loaded["data.generated." .. name] = nil
+  -- EVERY name, from all four lists.  This used to iterate one flat MODULES
+  -- table; splitting that per generation left this reading a global that no
+  -- longer existed, so `ipairs(nil)` threw the moment anything unloaded --
+  -- which is on the path the launcher takes when it closes the save editor,
+  -- and on every version switch.  A module left in package.loaded is the
+  -- other half of that bug: the next Play would be served the PREVIOUS game's
+  -- tables, which is exactly what this function exists to prevent.
+  for _, list in ipairs({ SHARED_MODULES, CLASSIC_MODULES, GEN3_MODULES,
+                          OPTIONAL }) do
+    for _, name in ipairs(list) do
+      package.loaded["data.generated." .. name] = nil
+    end
   end
 end
 
@@ -1032,7 +1426,11 @@ function Data:textEntry(mapLabel, textConst)
   -- script on the map rather than just the one line.  Answer "no such text"
   -- and let show_text fall through to its literal-string path.
   if type(textConst) ~= "string" then return nil end
-  local perMap = self.text_pointers[mapLabel]
+  -- same guard as trainerHeader below: text_pointers is a SHARED module and
+  -- should always be here, but a bare index is a crash rather than a miss
+  local pointers = self.text_pointers
+  if not pointers then return nil end
+  local perMap = pointers[mapLabel]
   if not perMap then return nil end
   local entry = perMap[textConst]
   if entry then return entry end
@@ -1042,8 +1440,27 @@ function Data:textEntry(mapLabel, textConst)
 end
 
 -- Trainer sight/dialogue header for a map object (or nil).
+--
+-- `trainer_headers` IS A CLASSIC_MODULES TABLE -- Gen 1 and Gen 2 only, and
+-- deliberately absent from a Gen 3 cache, because a GBA cartridge has no
+-- equivalent structure: Hoenn files a trainer's type, sight range and id on
+-- the object event itself (gen3Trainer / sightRange / gen3TrainerId).
+--
+-- So on Emerald this is called with no table to read, and the bare index
+-- raised.  Not on load and not on a script -- on the first frame a trainer
+-- sprite came on screen, because checkTrainerSight asks every frame and the
+-- object's own range is only preferred OVER the header's, which means the
+-- header is still looked up first.  Every other reader in this file already
+-- guards the same table (seedFightingDojoKarateMaster,
+-- seedCinnabarGymTrainerHeaders); this one did not.
+--
+-- Answering nil is the right answer rather than a fallback: a Gen 3 object
+-- carries its own range, and the caller already treats an absent header as
+-- "whatever the cartridge said".
 function Data:trainerHeader(mapLabel, objIndex)
-  local perMap = self.trainer_headers[mapLabel]
+  local headers = self.trainer_headers
+  if not headers then return nil end
+  local perMap = headers[mapLabel]
   return perMap and perMap[objIndex] or nil
 end
 

@@ -11,11 +11,33 @@ MoveLearnMenu.__index = MoveLearnMenu
 
 local CURSOR = 0xED
 
--- data/moves/hm_moves.asm (IsMoveHM); Gen2 adds WHIRLPOOL and WATERFALL
+-- data/moves/hm_moves.asm (IsMoveHM); Gen2 adds WHIRLPOOL and WATERFALL.
+-- The fallback only: WHICH MOVES ARE HMs IS A PROPERTY OF THE DATASET, not
+-- of this screen.  Emerald's eight are CUT, FLY, SURF, STRENGTH, FLASH,
+-- ROCK SMASH, WATERFALL and DIVE -- so with this list alone a Gen 3 player
+-- could delete DIVE to make room for a level-up move and be sealed out of
+-- Sootopolis, while WHIRLPOOL, an ordinary move there, could not be
+-- forgotten at all.  constants.machines carries kind = "HM" straight from
+-- gTMHMMoves, so ask it whenever the loaded game has one.
 local HM_MOVES = {
   CUT = true, FLY = true, SURF = true, STRENGTH = true, FLASH = true,
   WHIRLPOOL = true, WATERFALL = true,
 }
+
+local function hmMoves(game)
+  local machines = game and game.data and game.data.constants
+                   and game.data.constants.machines
+  if type(machines) ~= "table" then return HM_MOVES end
+  local out, any = {}, false
+  for _, entry in pairs(machines) do
+    if type(entry) == "table" and entry.kind == "HM" and entry.move then
+      out[entry.move] = true
+      any = true
+    end
+  end
+  return any and out or HM_MOVES
+end
+MoveLearnMenu.hmMoves = hmMoves
 
 function MoveLearnMenu.new(game, mon, newMoveId, onDone)
   local self = setmetatable({}, MoveLearnMenu)
@@ -74,7 +96,7 @@ function MoveLearnMenu:update(dt)
       self:confirmAbandon()
     else
       local old = self.mon.moves[self.index]
-      if HM_MOVES[old.id] then
+      if hmMoves(self.game)[old.id] then
         -- HMCantDeleteText, then back to the forget list
         local TextBox = require("src.render.TextBox")
         self.game.stack:push(TextBox.new(self.game,

@@ -27,6 +27,11 @@ local BUTTONS = {
   { id = "b", label = "B", key = "x", pad = "b" },
   { id = "start", label = "START", key = "escape", pad = "start" },
   { id = "select", label = "SELECT", key = "tab", pad = "back" },
+  -- L AND R.  Two buttons the Game Boy did not have and every game after it
+  -- did; Emerald's own BUTTON MODE row decides what they do (see
+  -- src/core/Input.lua), and this is where they are bound.
+  { id = "l", label = "L", key = "q", pad = "leftshoulder" },
+  { id = "r", label = "R", key = "e", pad = "rightshoulder" },
 }
 
 -- a binding is a plain key string or { key, pad }; absent = the fixed

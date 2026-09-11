@@ -44,6 +44,7 @@ local function monSubmenu(game, action, mons, list, onAction)
       label = Strings("STATS"),
       keepOpen = true,
       onSelect = function()
+<<<<<<< Updated upstream
         local mon = mons[list.index]
         if not mon then return end
         require("src.ui.Screens").push(game, "SummaryMenu", mon, {
@@ -51,6 +52,19 @@ local function monSubmenu(game, action, mons, list, onAction)
           index = list.index,
           onMonChange = function(index) setListIndex(list, index) end,
         })
+=======
+        -- the same split the party menu makes: Emerald's summary is four
+        -- pages, two of which show things Johto has no concept of, so Gen 3
+        -- opens its own screen from the box as well as from the party
+        -- ...and the two screens take their argument differently:
+        -- SummaryMenu.new(game, mon), Gen3SummaryMenu.new(game, opts)
+        local Screens = require("src.ui.Screens")
+        if require("src.core.GameVersion").isGen3() then
+          Screens.push(game, "Gen3SummaryMenu", { mon = mon })
+        else
+          Screens.push(game, "SummaryMenu", mon)
+        end
+>>>>>>> Stashed changes
       end,
     },
     { label = Strings("CANCEL") },
@@ -124,7 +138,7 @@ local function deposit(game)
     return
   end
   local box = Boxes.active(game.save)
-  if #box >= Boxes.CAPACITY then
+  if #box >= Boxes.capacity() then
     game.stack:push(TextBox.new(game, t._BoxFullText
       or Strings("Oops! This Box is\nfull of POKéMON.")))
     return
@@ -148,7 +162,7 @@ local function deposit(game)
           return
         end
         local active = Boxes.active(game.save)
-        if #active >= Boxes.CAPACITY then
+        if #active >= Boxes.capacity() then
           list.footer = Strings("BOX %d is full!", game.save.currentBox)
           return
         end
@@ -212,7 +226,7 @@ local function changeBox(game)
     local mark = i == game.save.currentBox and "*" or " "
     table.insert(items, {
       label = Strings("%sBOX %2d", mark, i),
-      right = ("%d/%d"):format(#boxes[i], Boxes.CAPACITY),
+      right = ("%d/%d"):format(#boxes[i], Boxes.capacity()),
       value = i,
     })
   end

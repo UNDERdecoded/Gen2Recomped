@@ -140,15 +140,28 @@ function Menu:draw()
   -- USE/TOSS is th = 5 for two choices (#284, matching text_boxes.asm's
   -- USE_TOSS_MENU_TEMPLATE rows 10..14), and a top anchor pushed TOSS onto
   -- the bottom border (#564, #572).
+  -- ...AND LIFTED BY WHATEVER IT OVERHANGS.
+  --
+  -- The anchor above is right for a Game Boy character, which is one tile.
+  -- Emerald's dialogue face is FIFTEEN pixels tall, so the bottom-anchored
+  -- last row runs seven pixels into the border it is anchored against -- and
+  -- with the slack still falling under the top edge, the whole list reads as
+  -- if it started halfway down the box.  The block rises by exactly its
+  -- overhang, which is nothing at all for an 8-pixel font: every Game Boy
+  -- menu in this engine draws where it always did, and a taller face lands
+  -- with its last descender flush on the inner edge.
+  local lastY = (self.ty + self.th - 2) * 8
+  local lift = math.max(0, (lastY + Font.glyphHeight())
+                           - (self.ty + self.th - 1) * 8)
   for row = 1, visible do
     local item = self.items[self.scroll + row]
     if not item then break end
     Font.draw(item.label, (self.tx + 2) * 8,
-      (self.ty + self.th - 2 - (visible - row) * self.rowStep) * 8)
+      (self.ty + self.th - 2 - (visible - row) * self.rowStep) * 8 - lift)
   end
   local cursorRow = self.index - self.scroll
   Font.drawCode(Theme.cursor, (self.tx + 1) * 8,
-    (self.ty + self.th - 2 - (visible - cursorRow) * self.rowStep) * 8)
+    (self.ty + self.th - 2 - (visible - cursorRow) * self.rowStep) * 8 - lift)
   -- moreArrow ($EE): the same "more below" glyph OptionRows/ManagerState
   -- use, sat on the bottom border like TextBox's page-advance cursor.  It
   -- has to be the border row, not ty + th - 2: that is the last interior

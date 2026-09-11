@@ -119,6 +119,41 @@ local function sameRows(_, rows) return rows end
 
 -- the vanilla rows as descriptors; each step body is the old per-index
 -- ladder's, so the save.options mutations are unchanged
+--
+-- EXPORTED as well as local: Emerald's OPTION screen is a different screen
+-- with the cartridge's own six rows on it, and the engine's extras -- volume,
+-- video mode, controls, the mod manager -- have to be reachable from there
+-- too, or a Gen 3 game loses every setting the other versions have for no
+-- better reason than that a GBA had no menu for them.  Gen3Options appends
+-- whatever it does not already cover, so there is one list of these and not
+-- two that drift.
+-- SHINY ODDS: the one option in this menu neither cartridge has.
+--
+-- Both roll their own 1/8192 with no dial at all, so this cannot be "the"
+-- odds -- there is no stored rate to edit.  DEFAULT means exactly that: the
+-- port adds nothing and a shiny is as rare as the ROM makes it.  Every other
+-- setting is an EXTRA roll the port takes afterwards, at one in N, and
+-- ALWAYS (1/1) is the "all the way up to 100%" end of the dial.
+--
+-- One row, shared: it lives in buildRows, which Gen3Options appends to, so
+-- Johto and Hoenn get the same dial without a second copy of it.
+local SHINY_ODDS = require("src.pokemon.Pokemon").SHINY_ODDS
+
+local function shinyOddsIndex(g)
+  local n = tonumber(g.save.options.shinyOdds)
+  if not n then return 0 end -- 0 is DEFAULT, ahead of the list
+  for i, v in ipairs(SHINY_ODDS) do if v == n then return i end end
+  return 0
+end
+
+local function shinyOddsLabel(g)
+  local i = shinyOddsIndex(g)
+  if i == 0 then return Strings("DEFAULT") end
+  local n = SHINY_ODDS[i]
+  if n <= 1 then return Strings("ALWAYS") end
+  return Strings("1/%d", n)
+end
+
 local function buildRows(game)
   local rows = {
     { id = "textSpeed", label = Strings("TEXT SPEED"),
@@ -258,6 +293,17 @@ local function buildRows(game)
         if #ids == 0 then return false end
         local i = rulesetIndex(g, ids)
         g.save.options.ruleset = ids[wrapIndex(i - 1 + dir, #ids) + 1]
+        return true
+      end },
+    -- the port's own extra shiny roll; see SHINY_ODDS above
+    { id = "shinyOdds", label = Strings("SHINY ODDS"),
+      value = function(g) return shinyOddsLabel(g) end,
+      step = function(g, dir)
+        local o = g.save.options
+        -- DEFAULT is index 0 and the list is 1..#SHINY_ODDS, so the wrap is
+        -- over #SHINY_ODDS + 1 values and lands back on DEFAULT past the end
+        local i = (shinyOddsIndex(g) + (dir or 1)) % (#SHINY_ODDS + 1)
+        o.shinyOdds = i == 0 and nil or SHINY_ODDS[i]
         return true
       end },
     { id = "musicVol", label = Strings("MUSIC VOL"),
@@ -609,5 +655,8 @@ function OptionsMenu:draw()
   OptionRows.draw(self.game, self.rows, self.index, self.scroll or 0,
                   "CANCEL", #self.rows + 1)
 end
+
+-- see the note above buildRows: the Gen 3 OPTION screen appends these
+OptionsMenu.buildRows = buildRows
 
 return OptionsMenu

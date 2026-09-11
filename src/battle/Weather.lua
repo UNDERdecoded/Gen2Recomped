@@ -25,6 +25,10 @@ local Weather = {}
 Weather.RAIN = "RAIN"
 Weather.SUN = "SUN"
 Weather.SANDSTORM = "SANDSTORM"
+-- HAIL is the fourth, and the only weather Hoenn added.  It bites everything
+-- that is not an ICE type for an eighth of maximum HP, exactly as the
+-- sandstorm does for everything that is not ROCK, GROUND or STEEL.
+Weather.HAIL = "HAIL"
 
 -- `ld a, 5 / ld [wWeatherCount], a`.  HandleWeather decrements at the end of
 -- the SAME turn the move landed, so five upkeeps run in total and the first
@@ -55,11 +59,13 @@ local CONTINUE_TEXT = {
   RAIN = "Rain continues to\nfall.",
   SUN = "The sunlight is\nstrong.",
   SANDSTORM = "The SANDSTORM\nrages.",
+  HAIL = "Hail continues to\nfall.",
 }
 local ENDED_TEXT = {
   RAIN = "The rain stopped.",
   SUN = "The sunlight\nfaded.",
   SANDSTORM = "The SANDSTORM\nsubsided.",
+  HAIL = "The hail stopped.",
 }
 
 -- the text each move prints when it lands (DownpourText / SunGotBrightText /
@@ -68,6 +74,7 @@ Weather.STARTED_TEXT = {
   RAIN = "A downpour\nstarted!",
   SUN = "The sunlight got\nbright!",
   SANDSTORM = "A SANDSTORM\nbrewed!",
+  HAIL = "It started to hail!",
 }
 
 -- ---------------------------------------------------------------------
@@ -76,9 +83,39 @@ Weather.STARTED_TEXT = {
 
 -- battle.field.weather is the slot newBattle already allocates; weatherTurns
 -- is wWeatherCount alongside it.
-function Weather.current(battle)
+-- CLOUD NINE AND AIR LOCK, and why they live HERE.
+--
+-- Neither clears the weather.  It is still raining -- the counter still runs
+-- down, "Rain continues to fall." still prints, and the moment the holder
+-- leaves the field everything the weather does comes back.  What they stop
+-- is the weather having any EFFECT while they are standing there.
+--
+-- Which makes this function, and not the setters, the whole implementation:
+-- `Weather.current` is the one thing every effect asks -- the sandstorm and
+-- hail damage, SWIFT SWIM and CHLOROPHYLL, SOLARBEAM's charge, THUNDER's
+-- accuracy, SYNTHESIS's fraction, FORECAST, the fire and water modifiers --
+-- so suppressing it once here is the ability, in every place at once.  The
+-- raw field stays readable through `Weather.raw` for the two things that
+-- must not be fooled: the countdown and the message.
+function Weather.raw(battle)
   local field = battle and battle.field
   return field and field.weather or nil
+end
+
+function Weather.suppressor(battle)
+  if not battle then return nil end
+  local Abilities = require("src.battle.Abilities")
+  local ability, who = Abilities.suppressesWeather({ battle.player,
+                                                     battle.enemy })
+  return ability, who
+end
+
+function Weather.current(battle)
+  local field = battle and battle.field
+  local weather = field and field.weather or nil
+  if not weather then return nil end
+  if Weather.suppressor(battle) then return nil end
+  return weather
 end
 
 function Weather.turnsLeft(battle)
@@ -86,18 +123,36 @@ function Weather.turnsLeft(battle)
   return field and field.weatherTurns or 0
 end
 
-function Weather.start(battle, id)
+-- WEATHER THAT DOES NOT RUN OUT.  A move buys five turns; DRIZZLE, DROUGHT
+-- and SAND_STREAM set it PERMANENTLY (SetWeatherPermanent, and the
+-- WEATHER_*_PERMANENT constants that go with it), so a KYOGRE's rain lasts
+-- the whole battle and never prints "The rain stopped."  Passing
+-- permanent = true records that; upkeep still prints the "continues" line
+-- and a permanent sandstorm still bites, it simply never counts down.
+function Weather.start(battle, id, permanent)
   local field = battle and battle.field
   if not field then return false end
   field.weather = id
   field.weatherTurns = Weather.TURNS
+  field.weatherPermanent = permanent == true or nil
+  -- ...AND CASTFORM CHANGES WITH THE SKY.  Every path that sets the weather
+  -- comes through here, so the FORECAST check goes here too rather than
+  -- being remembered at each of them.
+  if battle.forecastAll then battle:forecastAll() end
   return true
+end
+
+function Weather.permanent(battle)
+  local field = battle and battle.field
+  return (field and field.weatherPermanent) == true
 end
 
 function Weather.clear(battle)
   local field = battle and battle.field
   if not field then return end
   field.weather, field.weatherTurns = nil, nil
+  field.weatherPermanent = nil
+  if battle.forecastAll then battle:forecastAll() end
 end
 
 -- ---------------------------------------------------------------------
@@ -210,6 +265,8 @@ end
 -- ---------------------------------------------------------------------
 
 local SANDSTORM_IMMUNE = { ROCK = true, GROUND = true, STEEL = true }
+local HAIL_IMMUNE = { ICE = true }
+local WEATHER_IMMUNE = { SANDSTORM = SANDSTORM_IMMUNE, HAIL = HAIL_IMMUNE }
 
 -- .SandstormDamage checks SUBSTATUS_UNDERGROUND, which only Dig sets -- a mon
 -- part-way through Fly still eats the sandstorm.  performMove parks the
@@ -229,18 +286,28 @@ local function maxHpOf(battler)
   return (mon.stats and mon.stats.hp) or mon.maxHp or 8
 end
 
-local function sandstormDamage(battle, battler)
+local function weatherDamage(battle, battler, weather)
   if not (battler and battler.mon) or battler.mon.hp <= 0 then return end
   if underground(battler) then return end
-  for _, t in ipairs(battler.curTypes or {}) do
-    if SANDSTORM_IMMUNE[t] then return end
+  -- SAND VEIL: a CACNEA stands in its own sandstorm untouched.  Gen 1 and
+  -- Gen 2 answer false here, so nothing about the older sandstorm changes.
+  if require("src.battle.Abilities")
+       .ignoresWeatherDamage(battler, weather) then
+    return
   end
-  battle:animNext("inSandstorm", battler.isPlayer)
+  local immune = WEATHER_IMMUNE[weather] or {}
+  for _, t in ipairs(battler.curTypes or {}) do
+    if immune[t] then return end
+  end
+  battle:animNext(weather == Weather.HAIL and "inHail" or "inSandstorm",
+                  battler.isPlayer)
   -- GetEighthMaxHP is GetQuarterMaxHP followed by one more shift, each step
   -- floored at 1: floor(floor(maxHP / 4) / 2), minimum 1
   local eighth = math.max(1, math.floor(math.floor(maxHpOf(battler) / 4) / 2))
   battle:applyDamage(battler, eighth)
-  battle:sayNext(Strings("The SANDSTORM hits\n%s!", displayName(battler)))
+  battle:sayNext(weather == Weather.HAIL
+                 and Strings("%s is\npelted by HAIL!", displayName(battler))
+                 or Strings("The SANDSTORM hits\n%s!", displayName(battler)))
   battle:drainNext()
   if battler.mon.hp <= 0 then battle:onFaint(battler) end
 end
@@ -253,23 +320,30 @@ function Weather.upkeep(battle)
   local weather = field and field.weather
   if not weather then return end
 
-  local count = (field.weatherTurns or 1) - 1
-  field.weatherTurns = count
-  if count <= 0 then
-    battle:sayNext(Strings(ENDED_TEXT[weather] or "The weather cleared."))
-    field.weather, field.weatherTurns = nil, nil
-    return
+  if not field.weatherPermanent then
+    local count = (field.weatherTurns or 1) - 1
+    field.weatherTurns = count
+    if count <= 0 then
+      battle:sayNext(Strings(ENDED_TEXT[weather] or "The weather cleared."))
+      field.weather, field.weatherTurns = nil, nil
+      if battle.forecastAll then battle:forecastAll() end
+      return
+    end
   end
 
   local line = CONTINUE_TEXT[weather]
   if line then battle:sayNext(Strings(line)) end
-  if weather ~= Weather.SANDSTORM then return end
+  if weather ~= Weather.SANDSTORM and weather ~= Weather.HAIL then return end
+  -- ...and nobody is scoured while a CLOUD NINE or an AIR LOCK is out.  The
+  -- message above still prints -- the storm is still there -- but it does
+  -- nothing, which is the ability.
+  if Weather.suppressor(battle) then return end
 
   -- HandleWeather damages the player's side first and the enemy's second.
   -- That order is the serial-connection one (hSerialConnectionStatus), not a
   -- speed check, so a single-player battle is always player-then-enemy.
-  sandstormDamage(battle, battle.player)
-  sandstormDamage(battle, battle.enemy)
+  weatherDamage(battle, battle.player, weather)
+  weatherDamage(battle, battle.enemy, weather)
 end
 
 return Weather

@@ -47,18 +47,61 @@ function Experience.gainFor(defeatedDef, level, isTrainer, numParticipants,
   return math.max(1, exp)
 end
 
+-- MonGainEVs (pokemon.c): each stat takes what the defeated species yields,
+-- refusing a stat already at 255 and stopping outright at 510 between them.
+-- The order matters at the ceiling -- the last stat to be offered is the one
+-- that goes without -- and it is the order the yield itself is packed in.
+Experience.MAX_EV_PER_STAT = 255
+Experience.MAX_EV_TOTAL = 510
+
+function Experience.awardEVs(mon, yield)
+  if type(yield) ~= "table" then return end
+  mon.evs = mon.evs or {}
+  local total = 0
+  for _, key in ipairs(Stats.ORDER_GEN3) do
+    total = total + (mon.evs[key] or 0)
+  end
+  for _, key in ipairs(Stats.ORDER_GEN3) do
+    local gain = tonumber(yield[key]) or 0
+    if gain > 0 and total < Experience.MAX_EV_TOTAL then
+      local have = mon.evs[key] or 0
+      gain = math.min(gain, Experience.MAX_EV_PER_STAT - have,
+                      Experience.MAX_EV_TOTAL - total)
+      if gain > 0 then
+        mon.evs[key] = have + gain
+        total = total + gain
+      end
+    end
+  end
+end
+
 -- Applies exp/stat exp; returns the list of levels gained plus the raw
 -- exp delta (wExpAmountGained, printed by _ExpPointsText -- captured
 -- before the max-level cap, experience.asm:92-100).
 function Experience.apply(data, mon, defeatedDef, level, isTrainer,
                           numParticipants, traded)
   local speciesDef = data.pokemon[mon.species]
-  -- stat exp is divided among participants too
-  -- (DivideExpDataByNumMonsGainingExp divides wEnemyMonBaseStats)
-  local statShare = math.max(1, numParticipants or 1)
-  for _, key in ipairs(Stats.ORDER) do
-    local gain = math.floor(defeatedDef.baseStats[key] / statShare)
-    mon.statExp[key] = math.min(65535, (mon.statExp[key] or 0) + gain)
+  if Stats.isGen3(speciesDef) then
+    -- GEN 3 DOES NOT AWARD STAT EXPERIENCE, it awards EFFORT VALUES, and the
+    -- two are not the same thing wearing a different name: stat exp is the
+    -- defeated mon's whole base stat, divided among the participants, into a
+    -- 65535-wide slot; an EV is the one to three points its evYield names,
+    -- given in full to everybody who fought, into a slot 255 wide with 510
+    -- to share between the six.
+    --
+    -- Nothing awarded them.  Every Pokemon in Hoenn stayed at zero EVs for
+    -- its whole life -- worth up to 63 points of a stat at level 100, and
+    -- the difference between a raised Pokemon and a wild one at every level
+    -- before that.
+    Experience.awardEVs(mon, defeatedDef.evYield)
+  else
+    -- stat exp is divided among participants too
+    -- (DivideExpDataByNumMonsGainingExp divides wEnemyMonBaseStats)
+    local statShare = math.max(1, numParticipants or 1)
+    for _, key in ipairs(Stats.ORDER) do
+      local gain = math.floor(defeatedDef.baseStats[key] / statShare)
+      mon.statExp[key] = math.min(65535, (mon.statExp[key] or 0) + gain)
+    end
   end
   local consts = data.constants
   local gained

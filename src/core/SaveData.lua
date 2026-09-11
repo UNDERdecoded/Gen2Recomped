@@ -215,6 +215,13 @@ function SaveData.defaultOptions()
     -- in wOptions (engine/menus/main_menu.asm)
     textSpeed = 3,
     animations = true,
+    -- HOW OFTEN A SHINY TURNS UP.  nil is the cartridge's own rate -- the
+    -- 1/8192 both generations roll, arrived at by their own arithmetic --
+    -- and a number here is a DENOMINATOR the port rolls against instead
+    -- (4096, 512, ... 1 for every single Pokemon).  Kept as the denominator
+    -- rather than a percentage because that is how a player says it: "one in
+    -- five hundred".
+    shinyOdds = nil,
     battleStyle = "shift",
     -- battle screen composition: og (the 160x144 original) | wide
     -- (304x144, src/battle/WideBattle.lua)
@@ -1142,17 +1149,26 @@ local function scrubKnownMon(mon, data)
   end
 end
 
-local function scrubMonList(list, where, save, data, report)
+-- `slots` is how many places the list HAS, not how many are filled: a party is
+-- a dense six, but an imported Gen 3 box keeps every mon at the slot the
+-- cartridge put it in and `#` on a table like that answers 0 rather than
+-- "twenty-nine".  Walked by length, every mon past the first hole went
+-- unchecked -- never validated against the dataset, never repaired by
+-- scrubKnownMon -- which is how a box full of Pokemon could arrive with moves
+-- the engine cannot run.  A missing slot is skipped rather than closed up,
+-- because closing it would move somebody.
+local function scrubMonList(list, where, save, data, report, slots)
   if type(list) ~= "table" then return end
-  for i = #list, 1, -1 do
+  for i = math.max(slots or 0, #list), 1, -1 do
     local mon = list[i]
-    if type(mon) ~= "table" or not known(data.pokemon, mon.species) then
-      table.remove(list, i)
+    if mon ~= nil
+       and (type(mon) ~= "table" or not known(data.pokemon, mon.species)) then
+      list[i] = nil
       ensureOrphaned(save)
       save.orphaned.mons[#save.orphaned.mons + 1] = mon
       report.lostMons[#report.lostMons + 1] =
         { species = type(mon) == "table" and mon.species or nil, from = where }
-    else
+    elseif mon ~= nil then
       scrubKnownMon(mon, data)
     end
   end
@@ -1213,7 +1229,7 @@ function SaveData.validate(save, data)
   reclaim(save, data, report)
   scrubMonList(save.party, "party", save, data, report)
   for b, box in ipairs(save.boxes or {}) do
-    scrubMonList(box, "box " .. b, save, data, report)
+    scrubMonList(box, "box " .. b, save, data, report, Boxes.capacity())
   end
   local daycare = save.daycare
   if type(daycare) == "table" and type(daycare.mon) == "table" then
@@ -1358,6 +1374,59 @@ function SaveData.applyPostGameHome(save, boot)
   return heal
 end
 
+-- ---------------------------------------------------------------------------
+-- THE CHAMPION SAVE WARP (Emerald special 343, SetChampionSaveWarp).
+--
+-- The cartridge keeps this as one bit -- saveBlock2 byte 9, bit 7,
+-- CHAMPION_SAVEWARP -- and the Hall of Fame script sets it immediately
+-- before saving.  The save that lands on the cart therefore records a player
+-- standing in the Hall of Fame, which is a room with no exit; the bit is
+-- what stops that from mattering.  On the NEXT continue the cartridge reads
+-- it, clears it, and warps the player to their own bedroom instead of to
+-- where the save says they are.
+--
+-- Two halves, and they are kept apart on purpose: the special sets the bit
+-- and nothing else, and Game:restoreSave spends it.  A save written by a
+-- version that only had the first half still resumes correctly once the
+-- second half exists, because the bit is on the save rather than in the
+-- moment.
+SaveData.CHAMPION_SAVEWARP = 0x80
+
+function SaveData.hasChampionSaveWarp(save)
+  local flags = math.floor(tonumber(
+    type(save) == "table" and save.specialSaveWarpFlags or 0) or 0)
+  return flags % (SaveData.CHAMPION_SAVEWARP * 2)
+         >= SaveData.CHAMPION_SAVEWARP
+end
+
+-- `orr` on a byte, written the way Lua can say it: setting a bit already set
+-- must not add it twice.
+function SaveData.setChampionSaveWarp(save)
+  if type(save) ~= "table" then return end
+  if SaveData.hasChampionSaveWarp(save) then return end
+  save.specialSaveWarpFlags =
+    math.floor(tonumber(save.specialSaveWarpFlags) or 0)
+    + SaveData.CHAMPION_SAVEWARP
+end
+
+-- Spend it: the bedroom the game started in, which is where Emerald's own
+-- warp goes, and the bit clears whether or not there is a start map to go
+-- to so a dataset without one does not re-warp on every load.
+function SaveData.applyChampionSaveWarp(save, boot)
+  if not SaveData.hasChampionSaveWarp(save) then return false end
+  save.specialSaveWarpFlags =
+    math.floor(tonumber(save.specialSaveWarpFlags) or 0)
+    - SaveData.CHAMPION_SAVEWARP
+  boot = type(boot) == "table" and boot or {}
+  if not boot.startMap then return false end
+  save.player = save.player or {}
+  save.player.map = boot.startMap
+  save.player.x = boot.startX or save.player.x
+  save.player.y = boot.startY or save.player.y
+  save.player.facing = boot.startFacing or "down"
+  return true
+end
+
 -- Softlocked 0.1.11 saves: still standing in HALL_OF_FAME after credits,
 -- with lastOutdoor on Indigo.  One-shot rescue on CONTINUE.
 function SaveData.needsPostGameRescue(save)
@@ -1450,6 +1519,40 @@ function SaveData.newGame(boot)
     end
     if next(scenes) then save.g2Scenes = scenes end
   end
+  -- FLAGS A NEW GAME STARTS WITH SET.
+  --
+  -- Gen 1 and Gen 2 open with every flag clear, and for those that is right.
+  -- Gen 3 does not: a set flag HIDES its object there, so the cartridge's own
+  -- new-game script sets a batch of them to keep the NPCs whose stories have
+  -- not started off the map.  Without it every gated character in the region
+  -- is standing there from the first frame.
+  if type(boot.initialFlags) == "table" then
+    for _, name in ipairs(boot.initialFlags) do
+      if type(name) == "string" then save.flags[name] = true end
+    end
+  end
+
+  -- BERRY TREES A NEW GAME STARTS WITH GROWING.
+  --
+  -- Hoenn is not planted by the player: the cartridge's new-game script puts
+  -- eighty trees in the ground, all fruiting, and Route 104's are the first
+  -- ones anybody meets.  Data.lua builds the record from the run of
+  -- setberrytree commands the importer read; this copies it, deeply, so that
+  -- watering one tree in one save cannot reach into another.
+  if type(boot.initialBerryTrees) == "table" then
+    local trees = {}
+    for id, tree in pairs(boot.initialBerryTrees) do
+      if type(id) == "number" and type(tree) == "table" then
+        local copy = {}
+        for k, v in pairs(tree) do
+          copy[k] = (k == "watered") and {} or v
+        end
+        trees[id] = copy
+      end
+    end
+    if next(trees) then save.gen3BerryTrees = trees end
+  end
+
   -- a total conversion reshapes the skeleton (spawn, party, money)
   -- before anything reads it; unhooked this returns save unchanged
   --

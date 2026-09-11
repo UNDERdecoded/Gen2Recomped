@@ -1,8 +1,8 @@
 -- Copyright (c) 2026 Cedric. All rights reserved.
--- Source-available under the Gen2Recomped Map Editor License: you may read,
--- build and privately modify this file; you may not redistribute it or use it
--- commercially. See LICENSE at the repository root. Cartridge-derived data is
--- not covered and is not the copyright holder's to license.
+-- Source-available under the Gen2Recomped License (see LICENSE.md): you may
+-- read, build and privately modify this file; you may not redistribute it or
+-- use it commercially. Cartridge-derived data is excluded and is not the
+-- copyright holder's to license.
 
 -- Living with more than one map pack installed.
 --

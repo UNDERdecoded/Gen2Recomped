@@ -67,6 +67,12 @@ function Resolve-RomVersion([string]$sha1) {
         # stops calling the cartridge unknown; the extractor is not wired to
         # it yet.
         '6930b48af5844d373e3c9130f26d6dd1084cf4ed' { return 'polishedcrystal' }
+        # Pokemon Emerald (USA, Europe), game code BPEE revision 0 -- a GAME
+        # BOY ADVANCE cartridge, and the first one here.  Recognising it is
+        # what keeps it out of the extraction branch below: that runs
+        # tools/build_data.py, the Gen 1 extractor, and pointing it at 16 MiB
+        # of ARM produces either a crash or a dataset of nonsense.
+        'f3ae088181bf583e55daf962a92bb46f4f1d07b7' { return 'emerald' }
         default { return $null }
     }
 }
@@ -162,6 +168,9 @@ if ($RomCtx) {
         Remove-Item Env:POKEPORT_IMPORT_ROM -ErrorAction SilentlyContinue
         Remove-Item Env:POKEPORT_FORCE_IMPORT -ErrorAction SilentlyContinue
     } else {
+        # Gen 3 belongs here, not in the branch above: Emerald's extractor is
+        # the engine's own, so the runtime importer IS its pipeline.  Listing
+        # it with the Gen 2 versions would skip the only import it has.
         Say "launching runtime importer for $($RomCtx.Version) ROM"
         $env:POKEPORT_IMPORT_ROM = $RomCtx.Path
         $env:POKEPORT_FORCE_IMPORT = '1'

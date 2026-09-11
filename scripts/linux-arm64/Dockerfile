@@ -29,8 +29,29 @@ ENV DEBIAN_FRONTEND=noninteractive
 # runtime linkage: SDL detects each backend at compile time and then dlopens
 # it, so these headers decide which backends exist at all while adding no
 # DT_NEEDED entry to the shipped library.
-RUN apt-get update -qq \
- && apt-get install -y --no-install-recommends \
+# Bullseye is past its end-of-life date, so the Release files it serves now
+# carry an expired Valid-Until stamp. apt treats that as fatal rather than as
+# a warning -- `apt-get update` leaves the package lists empty and the install
+# below dies with exit 100 -- which is what broke this image on a date, with
+# no change on our side. Acquire::Check-Valid-Until=false is the standard
+# workaround for a pinned EOL base: it waives only the freshness deadline,
+# and the GPG signature on every Release file is still verified.
+#
+# Bullseye also eventually moves off deb.debian.org onto archive.debian.org,
+# which keeps retired suites indefinitely. Rather than wait for that to break
+# the build a second time, the first `update` failure rewrites sources.list to
+# the archive and retries. bullseye-updates is dropped in that rewrite because
+# the archive does not carry it.
+RUN set -eu; \
+    apt_opts='-o Acquire::Check-Valid-Until=false -o Acquire::Retries=3'; \
+    if ! apt-get $apt_opts update -qq; then \
+      sed -i -e 's|deb.debian.org/debian-security|archive.debian.org/debian-security|g' \
+             -e 's|security.debian.org/debian-security|archive.debian.org/debian-security|g' \
+             -e 's|deb.debian.org|archive.debian.org|g' \
+             -e '/bullseye-updates/d' /etc/apt/sources.list; \
+      apt-get $apt_opts update -qq; \
+    fi; \
+    apt-get $apt_opts install -y --no-install-recommends \
       build-essential pkg-config autoconf automake libtool cmake \
       ca-certificates curl file xz-utils bzip2 zip unzip squashfs-tools \
       libogg-dev libvorbis-dev \
@@ -39,7 +60,7 @@ RUN apt-get update -qq \
       libasound2-dev libpulse-dev libudev-dev libdbus-1-dev \
       libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev \
       libxinerama-dev libxss-dev libxkbcommon-dev \
-      libwayland-dev wayland-protocols libdrm-dev libgbm-dev \
- && rm -rf /var/lib/apt/lists/*
+      libwayland-dev wayland-protocols libdrm-dev libgbm-dev; \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
