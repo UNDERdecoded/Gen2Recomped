@@ -745,8 +745,8 @@ function Loader:_api(mod)
   -- has arrived before starting a long extract.
   local importApi, installCache = ImportAccess.new(mod.manifest, loader.fs)
   api.imports = importApi
-  -- Installation-scoped generated data, independent from Pokémon save slots.
-  -- This is where ROM-derived caches belong; mod.storage remains playthrough-scoped.
+  -- Gen 1-compatible installation-scoped generated data.
+  -- Like mod.storage, it is independent from Pokémon save slots.
   api.cache = installCache
   -- mod.world / mod.game / mod.storage all materialize on first touch, for
   -- the same reason: a headless load must not drag the world stack in, and
