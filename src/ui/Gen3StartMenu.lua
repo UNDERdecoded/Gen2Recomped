@@ -33,6 +33,7 @@ local Logger = require("src.core.Logger")
 local Screens = require("src.ui.Screens")
 local Strings = require("src.core.Strings")
 local Theme = require("src.ui.Theme")
+local Runtime = require("src.mods.Runtime")
 
 local Gen3StartMenu = {}
 Gen3StartMenu.__index = Gen3StartMenu
@@ -210,6 +211,15 @@ function Gen3StartMenu:buildRows(game, labels, playerName)
   if status and #(status.available or {}) > 0 then
     insertBeforeExit({ label = Strings("MODS"), key = "mods",
                        screen = "ManagerState" })
+  end
+
+  -- Call the ui.start_menu.items hook to allow mods to inject their rows
+  local hooked = Runtime.call("ui.start_menu.items", function(g, items) return items end, game, self.rows)
+  if type(hooked) == "table" then
+    self.rows = hooked
+  else
+    Logger.warn("gen3 start menu: ui.start_menu.items hook returned %s; using unhooked rows",
+                type(hooked))
   end
 
   -- QUIT GAME, which is this port's and is NOT the cartridge's.
