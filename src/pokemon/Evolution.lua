@@ -51,20 +51,20 @@ Evolution.METHODS = {
   -- evolution fired on any trade: an ONIX with nothing in its hands came back
   -- a STEELIX, and the METAL COAT stayed in the bag.  Ten species on the base
   -- carts and fourteen on Prism take this path.
-  TRADE = {
+ TRADE = {
     check = function(game, mon, evo, trigger)
-      if trigger.kind ~= "trade" then return false end
+      -- Allow trade evolutions to trigger on both link trades and level-ups (e.g., Rare Candy or battle)
+      if trigger.kind ~= "trade" and trigger.kind ~= "levelup" then return false end
       if Evolution.holdsEverstone(game, mon) then return false end
       if not evo.heldItem then return true end
-      -- LINK_TIMECAPSULE: Gen 1 has no held items, so the ROM refuses these
-      -- rather than evolving on an empty hand
+      -- Gen 1 time capsule trades cannot carry held items
       if trigger.timeCapsule then return false end
       return Evolution.itemMatches(game, mon.item, evo.heldItem)
     end,
     describe = function(evo, data)
-      if not evo.heldItem then return Strings("Trade") end
+      if not evo.heldItem then return Strings("Level up / Trade") end
       local item = (data and data.items and data.items[evo.heldItem] or {}).name
-      return Strings("Trade holding %s", item or evo.heldItem)
+      return Strings("Level up holding %s", item or evo.heldItem)
     end,
     -- the held item is taken by the evolution, not by the bag
     consumesHeldItem = true,
