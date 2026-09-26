@@ -121,16 +121,24 @@ return {
                           deactivate = range("EVENT_BEAT_FIGHTING_DOJO_TRAINER_", 0, 3),
                           dialogue = { "_FightingDojoKarateMasterIWillGiveYouAPokemonText" } },
 
-  -- Elite Four progress flags (their rooms' door logic isn't ported, but
-  -- the flags make the Hall of Fame checkable)
-  ["OPP_LORELEI#1"] = { flag = "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0" },
-  ["OPP_BRUNO#1"] = { flag = "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0" },
-  ["OPP_AGATHA#1"] = { flag = "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0" },
+  -- Elite Four progress flags. FireRed's first three rooms still use the
+  -- shared Kanto battle wrapper, so keep the cartridge FLAG_DEFEATED_* bit in
+  -- step with the legacy EVENT_BEAT_* name the wrapper owns. The native map
+  -- scripts use these bits to keep the exit open across a reload.
+  ["OPP_LORELEI#1"] = { flag = "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
+                         fireredFlag = "FLAG_G3_04B8" },
+  ["OPP_BRUNO#1"] = { flag = "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
+                       fireredFlag = "FLAG_G3_04B9" },
+  ["OPP_AGATHA#1"] = { flag = "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
+                        fireredFlag = "FLAG_G3_04BA" },
   ["OPP_LANCE#1"] = { flag = "EVENT_BEAT_LANCE" },
   -- FireRed's generated trainer table uses the actual trainer names rather
   -- than the Gen 1 OPP_* constants above.
-  ["LORELEI#1"] = { flag = "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0" },
-  ["BRUNO#1"] = { flag = "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0" },
-  ["AGATHA#1"] = { flag = "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0" },
+  ["LORELEI#1"] = { flag = "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0",
+                      fireredFlag = "FLAG_G3_04B8" },
+  ["BRUNO#1"] = { flag = "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0",
+                    fireredFlag = "FLAG_G3_04B9" },
+  ["AGATHA#1"] = { flag = "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0",
+                     fireredFlag = "FLAG_G3_04BA" },
   ["LANCE#1"] = { flag = "EVENT_BEAT_LANCE" },
 }

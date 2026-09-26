@@ -9445,6 +9445,9 @@ function OverworldState:checkVictoryRewards(trainerClass, partyIndex)
   if reward.flag then
     if Game.save.flags[reward.flag] then return self:runVictoryHook() end
     Game.save.flags[reward.flag] = true
+    if GameVersion.get() == "firered" and reward.fireredFlag then
+      Game.save.flags[reward.fireredFlag] = true
+    end
   end
   if reward.deactivate then
     for _, flag in ipairs(reward.deactivate) do

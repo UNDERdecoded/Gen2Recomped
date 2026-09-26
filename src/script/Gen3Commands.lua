@@ -321,6 +321,50 @@ function Commands.g3_compare_var(ctx, a, b)
   setResult(ctx, compare(getVar(ctx.save, a), getVar(ctx.save, b)))
 end
 
+-- FireRed's native League scripts use their own run-scoped FLAG_DEFEATED_*
+-- bits while the older shared Kanto story layer still names the equivalent
+-- progress with EVENT_BEAT_* flags.  Both names have to describe the same win:
+-- otherwise Lance and the Champion work through the ROM script but the
+-- existing Hall-of-Fame/postgame checks believe they were never beaten.
+--
+-- Keep the cartridge bit as the primary flag so FireRed save serialization
+-- remains exact.  The compatibility names are mirrors for the shared story
+-- code.  Champion's persistent EVENT_BEAT_CHAMPION_RIVAL intentionally stays
+-- set when the cartridge clears FLAG_DEFEATED_CHAMP for a new League run;
+-- only the port's THIS_RUN marker is cleared with it.
+function Commands.g3_set_flag(ctx, name)
+  Commands.set_flag(ctx, name)
+  if require("src.core.GameVersion").get() ~= "firered" then return end
+  if name == "FLAG_G3_04B8" then
+    Commands.set_flag(ctx, "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0")
+  elseif name == "FLAG_G3_04B9" then
+    Commands.set_flag(ctx, "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0")
+  elseif name == "FLAG_G3_04BA" then
+    Commands.set_flag(ctx, "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0")
+  elseif name == "FLAG_G3_04BB" then
+    Commands.set_flag(ctx, "EVENT_BEAT_LANCE")
+  elseif name == "FLAG_G3_04BC" then
+    Commands.set_flag(ctx, "EVENT_BEAT_CHAMPION_RIVAL")
+    Commands.set_flag(ctx, "EVENT_BEAT_CHAMPION_RIVAL_THIS_RUN")
+  end
+end
+
+function Commands.g3_clear_flag(ctx, name)
+  Commands.clear_flag(ctx, name)
+  if require("src.core.GameVersion").get() ~= "firered" then return end
+  if name == "FLAG_G3_04B8" then
+    Commands.clear_flag(ctx, "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0")
+  elseif name == "FLAG_G3_04B9" then
+    Commands.clear_flag(ctx, "EVENT_BEAT_BRUNOS_ROOM_TRAINER_0")
+  elseif name == "FLAG_G3_04BA" then
+    Commands.clear_flag(ctx, "EVENT_BEAT_AGATHAS_ROOM_TRAINER_0")
+  elseif name == "FLAG_G3_04BB" then
+    Commands.clear_flag(ctx, "EVENT_BEAT_LANCE")
+  elseif name == "FLAG_G3_04BC" then
+    Commands.clear_flag(ctx, "EVENT_BEAT_CHAMPION_RIVAL_THIS_RUN")
+  end
+end
+
 -- checkflag writes the FLAG'S OWN VALUE into the register, not a comparison:
 -- that is what makes `checkflag / goto_if 1` mean "if set".
 function Commands.g3_check_flag(ctx, name)

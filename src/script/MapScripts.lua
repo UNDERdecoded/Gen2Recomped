@@ -24,6 +24,18 @@ local views = {}  -- mapId -> { chain = chainRef, value = merged view, sources }
 
 local function normalizeMapId(mapId)
   if type(mapId) ~= "string" then return mapId end
+  -- A few FireRed story maps deliberately prefer a readable runtime alias
+  -- over the group/number key stored in the ROM (for example MAP_G01_N75 ->
+  -- LORELEIS_ROOM).  Data keeps both keys pointing at the same preferred map
+  -- definition, whose `id` is the canonical runtime name.  Script
+  -- contributions are still discovered under the raw ROM key, though, so
+  -- without following that map identity here the same room gets split in two:
+  -- its ON_FRAME/ON_WARP scripts live under MAP_G01_N75 while interaction and
+  -- victory hooks ask for LORELEIS_ROOM.  Canonicalize through the loaded map
+  -- definition before applying the ordinary spelling normalization so every
+  -- caller reaches one composed script view.
+  local mapDef = Data.maps and Data.maps[mapId]
+  if mapDef and type(mapDef.id) == "string" then mapId = mapDef.id end
   local id = mapId:gsub("([0-9]+)_([FB])$", "%1%2")
   local out, i, len = {}, 1, #id
   while i <= len do

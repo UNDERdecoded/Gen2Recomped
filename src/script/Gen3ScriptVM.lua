@@ -487,8 +487,8 @@ L.selectapproachingtrainer = L.nop
 
 -- flags, vars and the comparison register ----------------------------------
 
-L.setflag = function(ir, s) emit(s, { "set_flag", flagName(ir[2]) }) end
-L.clearflag = function(ir, s) emit(s, { "clear_flag", flagName(ir[2]) }) end
+L.setflag = function(ir, s) emit(s, { "g3_set_flag", flagName(ir[2]) }) end
+L.clearflag = function(ir, s) emit(s, { "g3_clear_flag", flagName(ir[2]) }) end
 L.checkflag = function(ir, s) emit(s, { "g3_check_flag", flagName(ir[2]) }) end
 
 L.setvar = function(ir, s) emit(s, { "g3_setvar", ir[2], ir[3] }) end

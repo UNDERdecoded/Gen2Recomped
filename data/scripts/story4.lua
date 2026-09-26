@@ -5,6 +5,7 @@
 -- the Name Rater.  Each cites its pokered source.
 
 local M = {}
+local GameVersion = require("src.core.GameVersion")
 
 local function text(game) return game.data.text end
 
@@ -669,7 +670,28 @@ M.SAFFRON_CITY = {
 local function e4ExitSeal(flag, closedBlock, openBlock, dontRunText, autoFlag)
   local seal = function(game, ow)
     local open = game.save.flags[flag]
-    ow:replaceBlock(2, 0, open and openBlock or closedBlock)
+    -- FireRed's League rooms are Gen 3 metatile maps, not the 2x2-cell
+    -- pokered block maps this shared Kanto helper was originally written for.
+    -- The cartridge opens the north door by changing (6,1) and (6,2) to
+    -- METATILE_PokemonLeague_Door_Top_Open ($28E, still impassable) and
+    -- METATILE_PokemonLeague_Door_Mid_Open ($296, passable).  Writing the
+    -- legacy block at (2,0) only changed an unrelated corner, leaving the
+    -- actual warp cell on its closed non-warp metatile after a victory.
+    if GameVersion.get() == "firered" then
+      if open then
+        ow.map:setBlock(6, 1, 0x28E, true)
+        ow.map:setBlock(6, 2, 0x296, false)
+        -- Keep the collision answer explicit for Gen 3 runtime metatile
+        -- changes, matching g3_set_metatile's setBlock/setCellShut pair.
+        if ow.map.setCellShut then
+          ow.map:setCellShut(6, 1, true)
+          ow.map:setCellShut(6, 2, false)
+        end
+        ow:redrawBlocks()
+      end
+    else
+      ow:replaceBlock(2, 0, open and openBlock or closedBlock)
+    end
     -- the auto walk-in on first (south) entry (LoreleiScriptWalkIntoRoom)
     if autoFlag and not game.save.flags[autoFlag] and ow.player.cellY >= 10 then
       game.save.flags[autoFlag] = true
