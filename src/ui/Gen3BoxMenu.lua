@@ -300,14 +300,23 @@ function Gen3BoxMenu:nameOf(mon)
 end
 
 function Gen3BoxMenu:clampCursor()
-  local used = #self:box()
+  -- Gen 3 storage is a fixed array of slots and imported/cartridge boxes can
+  -- have holes.  Lua's `#box` is undefined for that shape (Boxes.lua documents
+  -- the same invariant), so a mon dropped into slot 3 of an otherwise empty
+  -- box could make `#box` read as 0 and snap the hand back to slot 1.  The next
+  -- A then picked up nothing, which made MOVE POKEMON look broken again even
+  -- after the held-mon logic itself had been fixed.
+  local box = self:box()
+  local last = 0
+  for i = 1, Boxes.capacity() do
+    if box[i] ~= nil then last = i end
+  end
   local slot = (self.row - 1) * COLS + self.col
-  if used == 0 then
+  if last == 0 then
     self.row, self.col = 1, 1
     return
   end
-  if slot > used then
-    local last = used
+  if slot > last then
     self.row = math.floor((last - 1) / COLS) + 1
     self.col = (last - 1) % COLS + 1
   end

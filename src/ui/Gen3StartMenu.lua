@@ -153,10 +153,11 @@ local function isFireRed(game)
   return record and record.layout == "frlg" or false
 end
 
-function Gen3StartMenu.new(game)
+function Gen3StartMenu.new(game, opts)
+  opts = opts or {}
   local self = setmetatable({}, Gen3StartMenu)
   self.game = game
-  self.index = 1
+  self.index = math.max(1, math.floor(tonumber(opts.index) or 1))
   self.blink = 0
 
   local options = game.save and game.save.options
@@ -194,6 +195,7 @@ function Gen3StartMenu.new(game)
 
   self.rows = {}
   self:buildRows(game, labels, playerName)
+  self.index = math.min(self.index, math.max(1, #self.rows))
   self:refreshHelpRow()
   return self
 end
@@ -376,7 +378,15 @@ function Gen3StartMenu:buildRows(game, labels, playerName)
 end
 
 function Gen3StartMenu:reopen()
-  Screens.push(self.game, "Gen3StartMenu")
+  -- FireRed stores this cursor in sStartMenuCursorPos and feeds it back into
+  -- Menu_InitCursor after returning from POKéMON/BAG/OPTION/etc.  Recreating
+  -- this state with the default index made every submenu return jump to
+  -- POKéDEX instead.
+  if isFireRed(self.game) then
+    Screens.push(self.game, "Gen3StartMenu", { index = self.index })
+  else
+    Screens.push(self.game, "Gen3StartMenu")
+  end
 end
 
 -- Pop the menu, and only the menu.

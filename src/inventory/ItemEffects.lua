@@ -709,13 +709,25 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     target.level = target.level + 1
     target.exp = Growth.expForLevel(speciesDef.growthRate, target.level)
     local old = target.stats
-    target.stats = Stats.calc(speciesDef, target.level, target.dvs, target.statExp)
+    -- A Gen 3 party mon carries six IVs, six EVs and a nature.  Passing its
+    -- (non-existent) DV/stat-exp fields through the legacy helper recalculated
+    -- a Rare Candy level with zero IVs/EVs and no nature, even though battle
+    -- level-ups already use the proper Gen 3 path.  Keep item level-ups on the
+    -- same formula as every other FireRed level-up.
+    if Stats.isGen3(speciesDef) then
+      target.stats = Stats.calcGen3(speciesDef, target.level, target.ivs,
+                                    target.evs, target.nature)
+    else
+      target.stats = Stats.calc(speciesDef, target.level, target.dvs,
+                                target.statExp)
+    end
     target.hp = math.min(target.stats.hp, target.hp + (target.stats.hp - old.hp))
     -- PIKAHAPPY_LEVELUP on a candy level (item_effects.asm:1540)
     require("src.world.PikachuFollower")
       .modifyHappiness(save, "LEVELUP", target)
     return "consumed", { Strings("%s grew\nto level %d!", monName(data, target), target.level) },
-           { leveledTo = target.level }
+           { leveledTo = target.level, beforeStats = old,
+             afterStats = target.stats }
   end
 
   if STONES[itemId] then

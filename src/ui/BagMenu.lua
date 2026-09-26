@@ -5,6 +5,7 @@
 local ItemEffects = require("src.inventory.ItemEffects")
 local ListMenu = require("src.ui.ListMenu")
 local TextBox = require("src.render.TextBox")
+local Font = require("src.render.Font")
 
 local BagMenu = {}
 
@@ -64,6 +65,61 @@ local function showMessages(game, msgs, onDone)
     return
   end
   game.stack:push(TextBox.new(game, table.concat(msgs, "\f"), onDone))
+end
+
+-- FireRed's Rare Candy result window lives on the party screen and has two
+-- pages: first the six stat gains, then the six resulting values.  The source
+-- window is sLevelUpStatsWindowTemplate at (19,1), 10x11 tiles with a standard
+-- frame around it (party_menu.c / pokemon_special_anim_scene.c).
+local Gen3LevelUpStats = {}
+Gen3LevelUpStats.__index = Gen3LevelUpStats
+
+function Gen3LevelUpStats.new(game, beforeStats, afterStats, onDone)
+  return setmetatable({ game = game, before = beforeStats or {},
+                        after = afterStats or {}, page = 1,
+                        onDone = onDone }, Gen3LevelUpStats)
+end
+
+function Gen3LevelUpStats:uiSize() return 240, 160 end
+function Gen3LevelUpStats:wantsFillScale() return true end
+
+function Gen3LevelUpStats:update()
+  local input = self.game.input
+  if not (input:wasPressed("a") or input:wasPressed("b")) then return end
+  pcall(function() require("src.core.Sound").play(self.game.data, "Press_AB") end)
+  if self.page == 1 then
+    self.page = 2
+    return
+  end
+  self.game.stack:pop()
+  if self.onDone then self.onDone() end
+end
+
+function Gen3LevelUpStats:draw()
+  -- AddWindow is 10x11 interior tiles at (19,1); DrawStdFrame adds the one-tile
+  -- border, reaching exactly to the GBA screen's right edge.
+  Font.drawBox(18, 0, 12, 13)
+  love.graphics.setColor(0, 0, 0, 1)
+  local rows = {
+    { "MAX. HP", "hp" }, { "ATTACK", "attack" },
+    { "DEFENSE", "defense" }, { "SP. ATK", "spatk" },
+    { "SP. DEF", "spdef" }, { "SPEED", "speed" },
+  }
+  for i, row in ipairs(rows) do
+    local y = 8 + (i - 1) * 15
+    Font.draw(row[1], 152, y)
+    local after = tonumber(self.after[row[2]]) or 0
+    local value
+    if self.page == 1 then
+      local before = tonumber(self.before[row[2]]) or 0
+      local diff = after - before
+      value = (diff >= 0 and "+" or "-") .. tostring(math.abs(diff))
+    else
+      value = tostring(after)
+    end
+    Font.draw(value, 224 - Font.width(value), y)
+  end
+  love.graphics.setColor(1, 1, 1, 1)
 end
 
 -- HOW MANY ARE LEFT, ON WHATEVER SCREEN ASKED.
@@ -417,10 +473,13 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     -- moves and a level evolution follow (item_effects.asm .useRareCandy
     -- runs PrintStatsBox, LearnMoveFromLevelUp and TryEvolvingMon)
     if extra and extra.leveledTo and target then
-      list:close()
+      local GameVersion = require("src.core.GameVersion")
+      local gen3Candy = GameVersion.get() == "firered" and picker ~= nil
+      -- FireRed keeps the item-target party screen underneath the level-up
+      -- message and stat window.  Older generations keep their existing flow.
+      if gen3Candy then refreshCount(game, list, id) else list:close() end
       showMessages(game, payload, function()
-        local StatBox = require("src.battle.BattleState").StatBox
-        game.stack:push(StatBox.new(game, target, function()
+        local function afterStats()
           local Experience = require("src.battle.Experience")
           local def = game.data.pokemon[target.species]
           local moves = Experience.movesLearnedAt(def, extra.leveledTo)
@@ -432,6 +491,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
               local Evolution = require("src.pokemon.Evolution")
               local evoTo, evo = Evolution.pendingFor(game, target,
                                                      { kind = "levelup" })
+              if gen3Candy and picker then picker:close() end
               if evoTo then
                 Evolution.evolve(game, target, evoTo, nil, evo and evo.method)
               end
@@ -452,7 +512,14 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
             end
           end
           nextStep()
-        end))
+        end
+        if gen3Candy then
+          game.stack:push(Gen3LevelUpStats.new(game, extra.beforeStats,
+                                               extra.afterStats, afterStats))
+        else
+          local StatBox = require("src.battle.BattleState").StatBox
+          game.stack:push(StatBox.new(game, target, afterStats))
+        end
       end)
       return
     end
@@ -506,7 +573,9 @@ local function pickTargetAndUse(game, battle, id, list)
     -- HP medicine animates its bar with the picker still up (#252).  Only
     -- out of battle: the in-battle tail closes the bag list underneath
     -- first, which needs the picker already gone.
-    keepOpen = (not battle) and ItemEffects.healsHP(id),
+    keepOpen = (not battle) and (ItemEffects.healsHP(id)
+      or (id == "RARE_CANDY"
+          and require("src.core.GameVersion").get() == "firered")),
     onSwitch = function(mon, picker)
       if not wantsMove then
         useOn(game, battle, id, mon, list, nil, picker)
