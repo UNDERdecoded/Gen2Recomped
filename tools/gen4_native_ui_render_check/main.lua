@@ -16,6 +16,8 @@ function love.load(args)
   local rom=assert(require('src.import.NdsRom').open('Pokemon - Platinum Version (USA) (Rev 1).nds'))
   local resources=require('src.import.Gen4UIResources').images(rom)
   local data={moves=load('moves'),pokemon=load('pokemon'),items=load('items'),constants=load('constants'),gen4_graphics=load('gen4_graphics'),gen4_dex=load('gen4_dex'),gen4_menus=load('gen4_menus'),icons=load('gen4_species_sprites').icons}
+  data.text=load('text')
+  data.gen4_species_sprites=load('gen4_species_sprites')
   data.gen4_models={sets={opening={models={}}}}
   local G=require('src.import.Gen4Graphics')
   local B=require('src.import.Gen4Nsbmd')
@@ -61,11 +63,33 @@ function love.load(args)
    images[key]=love.graphics.newImage(love.image.newImageData(pic.width,pic.height,'rgba8',pic.rgba));data.gen4_graphics.screens[key]={path=key,originX=pic.originX,originY=pic.originY,sequences=pic.sequences};count=count+1
   end
   assert(count>=546,'missing native supplementary UI resources: '..count)
+  for id=0,79 do assert(resources[('summary/ribbon_%02d'):format(id)],'missing ribbon '..id) end
+  assert(resources['summary/ribbon_33'].rgba~=resources['summary/ribbon_37'].rgba,
+    'contest ribbons with different palette indices must not share their colors')
+  assert(resources['summary/sheen_00'],'missing native sheen sprite')
+  for id=1,6 do assert(resources[('summary/status_%02d'):format(id)],'missing status badge '..id) end
+  for _,key in ipairs({'summary/special_00','summary/special_01','summary/pokerus_active'}) do assert(resources[key],key) end
+  for id=1,16 do
+    local pic=assert(resources[('summary/ball_%02d'):format(id)],'missing caught ball '..id)
+    local visible=false
+    for at=4,#pic.rgba,4 do if pic.rgba:byte(at)>0 then visible=true;break end end
+    assert(visible,'transparent caught ball '..id)
+  end
+  for sequence=0,15 do
+    local pic=assert(resources[('summary/tab_%02d'):format(sequence)],'missing summary tab '..sequence)
+    local visible=false
+    for at=4,#pic.rgba,4 do if pic.rgba:byte(at)>0 then visible=true;break end end
+    assert(visible,'transparent summary tab '..sequence)
+  end
   for _,key in ipairs({'shop/cursor_00','shop/scroll_00','shop/scroll_01'}) do assert(resources[key],key) end
   local function capture(name,fn)
    local c=love.graphics.newCanvas(256,192);love.graphics.setCanvas(c);love.graphics.clear();love.graphics.origin();fn();love.graphics.setCanvas()
    local f=assert(io.open(output..'/'..name..'.png','wb'));f:write(c:newImageData():encode('png'):getString());f:close()
   end
+  capture('summary-tab-art',function()
+    love.graphics.setColor(1,1,1,1)
+    for i=0,15 do love.graphics.draw(images[('summary/tab_%02d'):format(i)],i%8*32,math.floor(i/8)*32) end
+  end)
   for _,key in ipairs({'storage/main','storage/wallpaper_00','evolution/background','dex/footprint_387','opening/first_top','opening/first_bottom','opening/first_overlay'}) do
    capture(key:gsub('/','-'),function() love.graphics.setColor(1,1,1,1);love.graphics.draw(images[key],0,0) end)
   end
@@ -102,14 +126,80 @@ function love.load(args)
   for i,id in ipairs(dex.entries) do if id==387 then dex.index=i end end
   for i=1,5 do dex.tab=i;capture('dex-page-'..i,function() dex:draw() end) end
   dex.tab=4;dex.sizeWeight=true;capture('dex-weight',function() dex:draw() end)
+  capture('dex-lower-sinnoh',function() dex:drawBottom() end)
+  dex.tab=3
+  capture('dex-cry-lower',function() dex:drawBottom() end)
+  dex.cryLoop=true;dex.cryRunning=true
+  capture('dex-cry-lower-loop-playing',function() dex:drawBottom() end)
+  dex.cryLoop=false;dex.cryRunning=false;dex.tab=1
+  game.save.pokedex.national=true
+  local nationalDex=require('src.ui.Gen4Pokedex').new(game);nationalDex.page='entry'
+  for i,id in ipairs(nationalDex.entries) do if id==387 then nationalDex.index=i end end
+  capture('dex-national-info',function() nationalDex:drawDetails() end)
+  capture('dex-lower-national',function() nationalDex:drawBottom() end)
+  game.save.pokedex.national=nil
+  local listDex=require('src.ui.Gen4Pokedex').new(game)
+  listDex.art.orders=require('src.import.Gen4Dex').orders(rom)
+  local textArc=require('src.import.NarcArchive').parse(rom:read('/msgdata/pl_msg.narc'))
+  local Text=require('src.import.Gen4Text');local labelBank=Text.bank(textArc:get(697))
+  listDex.art.labels={}
+  for i=0,labelBank.count-1 do listDex.art.labels[i]=Text.render(Text.codes(labelBank,i)) end
+  capture('dex-list-lower',function() listDex:drawListBottom() end)
+  listDex.wheelRotation=math.rad(45)
+  capture('dex-list-wheel-rotated',function() listDex:drawListBottom() end)
+  listDex.national=true
+  capture('dex-list-lower-national',function() listDex:drawListBottom() end)
+  listDex:openSearch()
+  capture('dex-search-top',function() listDex:drawSearch(false) end)
+  capture('dex-search-lower',function() listDex:drawSearch(true) end)
+  listDex.searchField=2
+  capture('dex-search-name-lower',function() listDex:drawSearch(true) end)
+  listDex.searchField=3;listDex.searchSelection[3]=2;listDex.searchSelection[4]=3
+  capture('dex-search-type-lower',function() listDex:drawSearch(true) end)
+  listDex.searchTypePage=1
+  capture('dex-search-type-second-lower',function() listDex:drawSearch(true) end)
+  listDex.searchSelection[5]=2;listDex.searchField=5
+  capture('dex-search-body',function() listDex:drawSearch(false) end)
+  capture('dex-search-body-lower',function() listDex:drawSearch(true) end)
   local summary=require('src.ui.Gen4SummaryMenu').new(game,game.save.party[1])
+  summary.mon.personality=3
+  summary.mon.ivs={hp=31,attack=31,defense=31,speed=31,spAttack=31,spDefense=31}
+  summary.mon.metLevel=5;summary.mon.metLocation='Route 201'
+  summary.mon.metDate={year=2026,month=10,day=1}
+  summary.mon.contest={cool=255,beauty=192,cute=64,smart=0,tough=128,sheen=255}
+  summary.mon.status='PSN'
+  summary.mon.ball='POKE_BALL'
+  summary.mon.shiny=true;summary.mon.pokerus=16
+  summary.mon.ribbons={[32]=true,[37]=true,[53]=true,[59]=true,[65]=true,[69]=true,[79]=true}
   for i=1,#summary.pages do summary.page=i;capture('summary-page-'..i,function() summary:draw() end) end
+  for i,page in ipairs(summary.pages) do if page.key=='memo' then summary.page=i end end
+  game.save.player={id=123,name='Cedric'};summary.mon.otId=456;summary.mon.fatefulEncounter=true
+  capture('summary-traded-fateful-memo',function() summary:draw() end)
+  summary.mon.hatched=true;summary.mon.eggLocation='Day-Care Couple';summary.mon.eggDate={year=26,month=9,day=30}
+  summary.mon.metLocation='Route 209';summary.mon.metLevel=0
+  capture('summary-hatched-fateful-memo',function() summary:draw() end)
+  summary.mon.hatched=nil;summary.mon.fatefulEncounter=nil;summary.mon.metLevel=5
+  for i,page in ipairs(summary.pages) do if page.key=='ribbons' then summary.page=i end end
+  summary.ribbonMode=true;summary.ribbonIndex=2
+  capture('summary-ribbon-detail',function() summary:draw() end)
+  summary.ribbonMode=nil
+  for i,page in ipairs(summary.pages) do if page.key=='moves' then summary.page=i end end
+  summary.moveMode=true;summary.moveIndex=1
+  capture('summary-move-detail',function() summary:draw() end)
+  summary.moveIndex=2;capture('summary-status-move-detail',function() summary:draw() end)
+  local eggSummary=require('src.ui.Gen4SummaryMenu').new(game,{species=387,isEgg=true,eggCycles=5,
+    eggLocation='Solaceon Town',eggDate={year=2026,month=10,day=1}})
+  capture('summary-egg-memo',function() eggSummary:draw() end)
+  assert(eggSummary:pictureArt(),'ordinary egg picture missing')
+  eggSummary.mon.species=490
+  assert(eggSummary:pictureArt(),'Manaphy egg picture missing')
+  capture('summary-manaphy-egg-memo',function() eggSummary:draw() end)
   local evolution=require('src.ui.Gen4EvolutionState').new(game,game.save.party[1],388)
   capture('evolution-opening',function() evolution:draw() end)
   evolution.phase='morph';evolution.t=75
   capture('evolution-morph',function() evolution:draw() end)
   rom:close()
-  print(count..' ROM UI resources, shop icon/quantity/scroll layouts, seven menu pages and two evolution frames rendered')
+  print(count..' ROM UI resources, shop icon/quantity/scroll layouts, summary pages/details and two evolution frames rendered')
  end)
  love.graphics.setCanvas();if not ok then print(why) end
  love.event.quit(ok and 0 or 1)

@@ -22,6 +22,7 @@ local PartyMod = require("src.pokemon.Party")
 local BoxesMod = require("src.pokemon.Boxes")
 local Bag = require("src.inventory.Bag")
 local MonOps = require("MonOps")
+local Catalog = require("Catalog")
 
 local Ops = {}
 
@@ -112,6 +113,7 @@ function Ops.partyAdd(S)
     return Ops.say(S, ("Party is full (%d/%d)"):format(#S.save.party, PartyMod.MAX))
   end
   local species = S.cat.species[1]
+  if not species then return Ops.say(S,'No selectable Pokemon in this dataset') end
   local mon = MonOps.create(S.data, species, 5)
   mon.ot = S.save.player.name
   mon.otId = S.save.player.id
@@ -308,6 +310,7 @@ end
 function Ops.cycleMove(S, mon, slot)
   if not mon then return false end
   local moves = S.cat.moves
+  if not moves or #moves==0 then return Ops.say(S, 'No moves available in this dataset') end
   local current = mon.moves and mon.moves[slot] and mon.moves[slot].id
   local idx = 0
   if current then
@@ -317,7 +320,7 @@ function Ops.cycleMove(S, mon, slot)
   end
   local nextId = moves[(idx % #moves) + 1]
   MonOps.setMove(S.data, mon, slot, nextId)
-  return Ops.mark(S, ("Move %d set to %s"):format(slot, nextId))
+  return Ops.mark(S, ("Move %d set to %s"):format(slot, Catalog.moveLabel(S.data,nextId)))
 end
 
 function Ops.clearMove(S, mon, slot)
@@ -325,13 +328,20 @@ function Ops.clearMove(S, mon, slot)
     return Ops.say(S, ("Move slot %d is already empty"):format(slot))
   end
   local id = mon.moves[slot].id
-  mon.moves[slot] = nil
-  return Ops.mark(S, ("Cleared move slot %d (%s)"):format(slot, id))
+  if (S.data.constants or {}).gen==4 then
+    -- Pokemon_ClearMoveSlot shifts the remaining moves, including their PP
+    -- and PP Ups. A hole also makes ipairs-based battle menus lose later slots.
+    for at=slot,3 do mon.moves[at]=mon.moves[at+1] end
+    mon.moves[4]=nil
+  else
+    mon.moves[slot] = nil
+  end
+  return Ops.mark(S, ("Cleared move slot %d (%s)"):format(slot, Catalog.moveLabel(S.data,id)))
 end
 
 function Ops.resetMoves(S, mon)
   if not mon then return false end
-  local def = S.data.pokemon[mon.species]
+  local def = require('src.pokemon.Gen4Forms').definition(S.data,mon)
   local learned = Pokemon.movesAtLevel(def, mon.level)
   mon.moves = {}
   for slot, id in ipairs(learned) do
@@ -343,14 +353,27 @@ end
 
 function Ops.healMon(S, mon)
   if not mon then return false end
-  if mon.hp == mon.stats.hp and not mon.status then
+  local needsHeal=mon.hp~=mon.stats.hp or mon.status~=nil
+  for slot=1,4 do
+    local mv=(mon.moves or {})[slot]
+    local def=mv and S.data.moves[mv.id]
+    if def then
+      local ups=math.min(3,math.max(0,math.floor(tonumber(mv.ppUps) or 0)))
+      if mv.pp~=def.pp+ups*math.floor(def.pp/5) then needsHeal=true end
+    end
+  end
+  if not needsHeal then
     return Ops.say(S, ("%s is already at full HP"):format(mon.species))
   end
   mon.hp = mon.stats.hp
   mon.status = nil
-  for _, mv in ipairs(mon.moves or {}) do
-    local def = S.data.moves[mv.id]
-    if def then mv.pp = def.pp + ((mv.ppUps or 0) * math.floor(def.pp / 5)) end
+  for slot=1,4 do
+    local mv=(mon.moves or {})[slot]
+    local def = mv and S.data.moves[mv.id]
+    if def then
+      local ups=math.min(3,math.max(0,math.floor(tonumber(mv.ppUps) or 0)))
+      mv.pp = def.pp + ups * math.floor(def.pp / 5)
+    end
   end
   return Ops.mark(S, ("Healed %s to %d/%d HP"):format(mon.species, mon.hp, mon.stats.hp))
 end
@@ -393,6 +416,7 @@ function Ops.boxAdd(S)
       :format(S.selectedBox, BoxesMod.used(box), BoxesMod.capacity()))
   end
   local species = S.cat.species[1]
+  if not species then return Ops.say(S,'No selectable Pokemon in this dataset') end
   local mon = MonOps.create(S.data, species, 5)
   mon.ot = S.save.player.name
   mon.otId = S.save.player.id

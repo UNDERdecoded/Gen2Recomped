@@ -461,6 +461,7 @@ function SpriteRenderer.facingFrames(def, facing, walkPhase, stepFlip)
   local own = def and def.facings
   local cycle = own and (own[facing] or own.down)
   if type(cycle) ~= "table" or cycle[1] == nil then return nil end
+  if def.fullCycle then return cycle[(tonumber(walkPhase) or 0)%#cycle+1] end
   if def.walker and walkPhase == 1 then
     if stepFlip then return cycle[3] or cycle[2] or cycle[1] end
     return cycle[2] or cycle[1]

@@ -38,9 +38,16 @@ require("src.render.Assets").register(invalidate)
 
 -- The record for `species`, or nil on Gold/Silver and for anything the
 -- import could not decode.
-function PicAnim.record(data, species)
+function PicAnim.record(data, species, mon)
   local def = data and data.pokemon and data.pokemon[species]
   local anim = def and def.picAnim
+  local key=require('src.pokemon.Sprites').formIndex(def,mon)
+  if key and type(key)=='string' then
+    anim=def.forms[key].picAnim
+    -- An old import may have only the normal form strip. Keep the shiny
+    -- still rather than flashing normal colours or the wrong form in motion.
+    if anim and not anim.shinySheet and require('src.pokemon.Pokemon').isShiny(mon) then return nil end
+  end
   if type(anim) ~= "table" or not anim.sheet then return nil end
   if type(anim.play) ~= "table" and type(anim.idle) ~= "table" then
     return nil
@@ -103,8 +110,8 @@ end
 -- script before the mon was ever visible.  BattleState starts it on the
 -- first frame it actually draws the pic; the summary screen, which is up
 -- the moment it is constructed, starts it straight away.
-function PicAnim.new(data, species)
-  local anim = PicAnim.record(data, species)
+function PicAnim.new(data, species, mon)
+  local anim = PicAnim.record(data, species, mon)
   if not anim then return nil end
   local self = setmetatable({ anim = anim, paused = true }, PicAnim)
   self:restart("play")
@@ -114,7 +121,7 @@ end
 -- ...and the same, remembering the Pokemon whose colours the strip should be
 -- drawn in.  `species` alone cannot answer that: two ZIGZAGOON differ.
 function PicAnim.forMon(data, mon)
-  local self = PicAnim.new(data, mon and mon.species)
+  local self = PicAnim.new(data, mon and mon.species, mon)
   if self then self.mon = mon end
   return self
 end

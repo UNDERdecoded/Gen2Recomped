@@ -723,8 +723,8 @@ local function gen3Use(data, save, itemId, target, battle, moveIndex)
     local okStats, Stats = pcall(require, "src.pokemon.Stats")
     if okStats and data.pokemon and data.pokemon[target.species] then
       pcall(function()
-        target.stats = Stats.calc(data.pokemon[target.species], target.level,
-                                  target.ivs, target.evs, target.nature)
+        target.stats = Stats.calc(require('src.pokemon.Gen4Forms').definition(data,target),
+                                  target.level,target.ivs,nil,target.evs,target.nature)
         target.hp = math.min(target.hp, target.stats.hp)
       end)
     end
@@ -991,7 +991,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     end
     local Growth = require("src.pokemon.Growth")
     local Stats = require("src.pokemon.Stats")
-    local speciesDef = data.pokemon[target.species]
+    local speciesDef = require('src.pokemon.Gen4Forms').definition(data,target)
     target.level = target.level + 1
     target.exp = Growth.expForLevel(speciesDef.growthRate, target.level)
     local old = target.stats
@@ -1042,7 +1042,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
         or Strings("%s\nis refusing!", monName(data, target))
       return "failed", { line }
     end
-    local speciesDef = data.pokemon[target.species]
+    local speciesDef = require('src.pokemon.Gen4Forms').definition(data,target)
     for _, evo in ipairs(speciesDef.evolutions) do
       if evo.method == "ITEM" and (evo.item == itemId or evo.item == rawItemId) then
         return "consumed", nil, { evolveTo = evo.species }
@@ -1086,7 +1086,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
 
   if itemDef and itemDef.machine then
     if not target then return "failed", { Strings("It won't have\nany effect.") } end
-    local speciesDef = data.pokemon[target.species]
+    local speciesDef = require('src.pokemon.Gen4Forms').definition(data,target)
     local ok = false
     -- `or {}` BECAUSE A CACHE CAN ARRIVE WITHOUT THE LIST, and this line
     -- raised when one did. Every Platinum cache written before the Gen 4

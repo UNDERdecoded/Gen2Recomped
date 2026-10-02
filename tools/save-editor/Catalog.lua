@@ -66,10 +66,34 @@ local function sortedKeys(t)
 end
 
 function Catalog.build(data)
+  local species=sortedKeys(data.pokemon)
+  local moves=sortedKeys(data.moves)
+  if data.isGen4Cache or (data.constants or {}).gen==4 then
+    local selectable={}
+    for _,key in ipairs(species) do
+      local id=tonumber(key) or tonumber(tostring(key):match('^SPECIES_(%d+)$'))
+      -- Personal rows 0 and 494..507 are sentinels, eggs and alternate
+      -- stat records. Forms belong to their base species, not this picker.
+      if id~=0 and not (id and id>=494 and id<=507) then
+        selectable[#selectable+1]=key
+      end
+    end
+    species=selectable
+    local selectableMoves={}
+    for _,key in ipairs(moves) do
+      local id=tonumber(key) or tonumber(tostring(key):match('^MOVE_(%d+)$'))
+      -- Native MAX_MOVES is 468. The archive has three additional unnamed
+      -- internal records; named mod moves beyond the native range remain valid.
+      local entry=data.moves[key]
+      local internal=id and id>=468 and id<=470 and not (type(entry.name)=='string' and entry.name~='')
+      if id~=0 and not internal then selectableMoves[#selectableMoves+1]=key end
+    end
+    moves=selectableMoves
+  end
   return {
-    species = sortedKeys(data.pokemon),
+    species = species,
     items = sortedKeys(data.items),
-    moves = sortedKeys(data.moves),
+    moves = moves,
   }
 end
 
@@ -296,6 +320,13 @@ function Catalog.speciesLabel(data, id)
     end
   end
   return tostring(id or "?")
+end
+
+function Catalog.moveLabel(data, id)
+  if id==nil then return '-- --' end
+  local entry=data and data.moves and data.moves[id]
+  if type(entry)=='table' and type(entry.name)=='string' and entry.name~='' then return entry.name end
+  return tostring(id)
 end
 
 return Catalog

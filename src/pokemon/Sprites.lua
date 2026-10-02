@@ -23,6 +23,7 @@ local function mid2(dv) return math.floor((dv or 0) / 2) % 4 end
 function Sprites.formIndex(def, mon)
   local forms = def and def.forms
   if not (forms and mon) then return nil end
+  if forms.base then return require('src.pokemon.Gen4Forms').key(def, mon) end
   local dvs = mon.dvs
   if type(dvs) ~= "table" then return nil end
   local packed = mid2(dvs.attack) * 64 + mid2(dvs.defense) * 16
@@ -47,7 +48,8 @@ function Sprites.path(data, species, side, opts)
   local formIndex = Sprites.formIndex(def, opts.mon)
   if formIndex then
     local form = def.forms[formIndex]
-    path = (side == "back" and form.spriteBack or form.spriteFront) or path
+    path = (side == "back" and (form.spriteBack or form.back)
+                            or (form.spriteFront or form.front)) or path
   end
   -- A GEN 3 SHINY IS A WHOLE SECOND PICTURE, not a palette swap.
   --
@@ -63,6 +65,11 @@ function Sprites.path(data, species, side, opts)
   -- cartridge applies it to whichever sheet is on screen -- the back pic
   -- included, which is the one the player looks at for the whole battle.
   local shinyPath = (side == "back") and def.spriteShinyBack or def.spriteShiny
+  if formIndex then
+    local form = def.forms[formIndex]
+    shinyPath = (side == 'back' and (form.spriteShinyBack or form.shiny_back)
+                              or (form.spriteShiny or form.shiny_front)) or shinyPath
+  end
   if shinyPath and opts.mon
      and require("src.pokemon.Pokemon").isShiny(opts.mon) then
     path = shinyPath

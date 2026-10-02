@@ -417,7 +417,7 @@ end
 
 -- returns the source (nil headless) so callers that block on the cry
 -- like the original's PlayCry -> WaitForSoundToFinish can poll it
-function Sound.playCry(data, species)
+function Sound.playCry(data, species, opts)
   if not love.audio then return nil end
   -- INTERRUPTION: same cache-poisoning gate as playPath (sessionSuspended)
   if sessionSuspended then return nil end
@@ -452,6 +452,12 @@ function Sound.playCry(data, species)
   -- set every time rather than at build: the cached source outlives a change
   -- of game, and the scale is the loaded cartridge's
   pcall(src.setVolume, src, volumeFor(key) * cryScale(data))
+  -- Interactive Dex playback owns its source; loop/effect settings must never
+  -- leak onto the cached cry used by battles, NPC scripts or other menus.
+  if opts and opts.isolated and src.clone then
+    local ok,copy=pcall(src.clone,src)
+    if ok and copy then src=copy end
+  end
   if not restart(src) then return nil end
   require("src.core.Music").duckForCry(data, src)
   played("cry", species, species)

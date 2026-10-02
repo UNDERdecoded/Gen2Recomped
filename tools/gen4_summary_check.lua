@@ -125,14 +125,11 @@ ok(eggRow ~= nil and eggRow.front ~= nil and eggRow.back == nil,
    eggRow and ("front %s, back %s"):format(tostring(eggRow.front),
                                            tostring(eggRow.back)) or "?",
    "front only")
--- The Manaphy egg exists and is deliberately unreachable.  The test is that
--- the screen holds no STRING for it -- the prose above EGG_KEY names it, which
--- is the point of the prose; a quoted copy would be a key something could
--- choose, and choosing it is what nothing in this port can do correctly yet.
+-- The separate Manaphy egg resource must be available to the summary screen.
 ok(manaphyRow ~= nil
-   and not src:find('"' .. Otherpoke.key(manaphyRow) .. '"', 1, true),
-   "the Manaphy egg is extracted and the screen holds no key for it",
-   manaphyRow and Otherpoke.key(manaphyRow) or "nil", "present, unused")
+   and src:find(Otherpoke.key(manaphyRow), 1, true),
+   "the summary can select the separately extracted Manaphy egg",
+   manaphyRow and Otherpoke.key(manaphyRow) or "nil", "present")
 
 -- ------------------------------------------------------------ the mirror --
 

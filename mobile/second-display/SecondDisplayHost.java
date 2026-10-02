@@ -630,7 +630,7 @@ public class SecondDisplayHost extends ContentProvider {
         case MotionEvent.ACTION_CANCEL:       kind = "up";   break;
         default: return false;
       }
-      if ("move".equals(kind)) {
+      if ("move".equals(kind) || action == MotionEvent.ACTION_CANCEL) {
         for (int i = 0; i < e.getPointerCount(); i++) emit(kind, e, i);
       } else {
         emit(kind, e, e.getActionIndex());

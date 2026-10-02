@@ -331,6 +331,19 @@ function Player:refreshForm(data)
   local sprites = data.sprites or {}
   local walkDef = sprites[walkId]
   local runId = type(walkDef) == "table" and walkDef.run or nil
+  -- Compatibility for imports made before the second walk_and_run cycle
+  -- was exported. These indices are mmodel's ROM sequence frames 64..127.
+  if not runId and walkDef and walkDef.frames==32 and walkDef.facingSource
+     and walkDef.facingSource:find('walk_and_run',1,true) then
+    runId=walkId..'_RUN'
+    if not sprites[runId] then
+      local run={};for k,v in pairs(walkDef) do run[k]=v end
+      run.id=runId
+      run.facings={up={8,9,10,12},down={13,14,15,16},left={17,18,19,20},right={21,23,24,25}}
+      run.fullCycle=true
+      sprites[runId]=run
+    end
+  end
   if runId ~= self.runId then
     self.runId = runId
     self.runSprite = (runId and sprites[runId])
@@ -943,6 +956,9 @@ function Player:pose()
                  -- no run cycle of its own; Hoenn's two both have one
                  or (self.running and self.runSprite)
                  or self.sprite
+  if sprite and sprite.def and sprite.def.fullCycle and (self.moving or self.freeWalking or self.stepLanded) then
+    phase=math.floor((self.animClock or 0)/4)%4
+  end
   return sprite, px, py, facing, phase, flip, hopping
 end
 

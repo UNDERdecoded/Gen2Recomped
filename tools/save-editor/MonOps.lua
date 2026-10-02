@@ -15,7 +15,7 @@ function MonOps.create(data, species, level)
 end
 
 function MonOps.recalc(data, mon)
-  local def = data.pokemon[mon.species]
+  local def = require('src.pokemon.Gen4Forms').definition(data,mon)
   assert(def, "unknown species")
   if type(mon.ivs) == "table" then
     mon.stats = Stats.calcGen3(def, mon.level, mon.ivs, mon.evs, mon.nature)
@@ -38,10 +38,16 @@ function MonOps.setMove(data, mon, slot, moveId)
   local mdef = data.moves[moveId]
   assert(mdef, "unknown move")
   mon.moves = mon.moves or {}
+  local old = mon.moves[slot]
+  local ppUps = old and old.ppUps or 0
+  -- Pokemon_ResetMoveSlot clears PP Ups when learning a replacement. Keep
+  -- existing boosts when selecting the same move to refill it in the editor.
+  if (data.constants or {}).gen==4 and (not old or old.id~=moveId) then ppUps=0 end
+  ppUps=math.min(3,math.max(0,math.floor(tonumber(ppUps) or 0)))
   mon.moves[slot] = {
     id = moveId,
-    pp = mdef.pp + ((mon.moves[slot] and mon.moves[slot].ppUps) or 0) * math.floor(mdef.pp / 5),
-    ppUps = mon.moves[slot] and mon.moves[slot].ppUps or nil,
+    pp = mdef.pp + ppUps * math.floor(mdef.pp / 5),
+    ppUps = ppUps > 0 and ppUps or nil,
   }
 end
 

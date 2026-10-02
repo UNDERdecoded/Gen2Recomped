@@ -908,7 +908,7 @@ end
 -- ---------------------------------------------------------------------
 
 local function makeBattler(data, mon, isPlayer, save)
-  local def = data.pokemon[mon.species]
+  local def = require('src.pokemon.Gen4Forms').definition(data,mon)
   local badgeBoosts = data.constants and data.constants.badgeBoosts
   local badges = nil
   if isPlayer and save then
@@ -1001,9 +1001,10 @@ function BattleState:speciesSprite(species, isPlayerSide)
                   tc)
 end
 
-local function markSeen(game, species)
+local function markSeen(game, species, mon)
   local dex = game.save.pokedex
   if dex then dex.seen[species] = true end
+  require('src.pokemon.Gen4Forms').record(game,species,mon)
 end
 BattleState.markSeen = markSeen
 
@@ -1231,7 +1232,7 @@ end
 -- SetWildMonHeldItem (battle_main.c).  Silent on a dataset that names no
 -- held items, which is every Gen 1 and Gen 2 one.
 function BattleState.giveWildHeldItem(data, mon, rng)
-  local def = data.pokemon and data.pokemon[mon.species]
+  local def = require('src.pokemon.Gen4Forms').definition(data,mon)
   local common = def and def.heldItemCommon
   local rare = def and def.heldItemRare
   if not (common or rare) then return end
@@ -1255,7 +1256,15 @@ function BattleState.newWild(game, species, level, opts)
   else
     self.player = makeBattler(game.data, playerMon, true, game.save)
   end
-  local wild = Pokemon.new(game.data, species, level)
+  local form=opts and opts.form
+  if form==nil and (game.data.constants or {}).gen==4 then
+    local map=game.overworld and game.overworld.map
+    local mapId=map and map.id or game.save.player and game.save.player.map
+    local mapDef=map and map.def or (game.data.maps or {})[mapId]
+    local Encounter=require('src.world.Encounter')
+    form=Encounter.gen4Form(Encounter.forMap(game.data,mapDef,mapId),species)
+  end
+  local wild = Pokemon.new(game.data, species, level, nil, form)
   -- SetWildMonHeldItem: a wild Gen 3 Pokemon may be carrying one of the two
   -- items its base-stat row names -- the first fifty times in a hundred, the
   -- second five, and nothing the other forty-five.  A species whose two are
@@ -1302,7 +1311,7 @@ function BattleState.newWild(game, species, level, opts)
     -- a roamer you slept once still asleep the next time you corner it.
     if opts.roamerStatus then self.enemy.mon.status = opts.roamerStatus end
   end
-  markSeen(game, species)
+  markSeen(game, species, self.enemy.mon)
   if opts and opts.hooked then
     self.introText = self:romText("_HookedMonAttackedText", "The hooked\n%s\nattacked!", self.enemy.name)
   else
@@ -1500,7 +1509,7 @@ local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
                      or TRAINER_DVS
   out = {}
   for _, slot in ipairs(partyDef) do
-    local mon = Pokemon.new(game.data, slot.species, slot.level)
+    local mon = Pokemon.new(game.data, slot.species, slot.level, nil, slot.form)
     -- fixed trainer DVs, recomputed stats.  A party slot that carries its OWN
     -- DVs and stat exp is a stored mon rather than a generated one -- the
     -- Battle Tower's opponents come out of BattleTowerMons with both -- so its
@@ -1519,8 +1528,15 @@ local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
       for key, value in pairs(slot.stats) do stats[key] = value end
       mon.stats = stats
     else
-      mon.stats = require("src.pokemon.Stats").calc(
-        game.data.pokemon[slot.species], slot.level, dvs, slot.statExp)
+      local def=require('src.pokemon.Gen4Forms').definition(game.data,mon)
+      if (game.data.constants or {}).gen==4 then
+        mon.ivs=slot.dvs or mon.ivs
+        mon.stats=require('src.pokemon.Stats').calc(
+          def,slot.level,mon.ivs,nil,mon.evs,mon.nature)
+      else
+        mon.stats = require("src.pokemon.Stats").calc(
+          def, slot.level, dvs, slot.statExp)
+      end
     end
     mon.hp = mon.stats.hp
     table.insert(out, mon)
@@ -1584,7 +1600,7 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
   end
   self.enemy = makeBattler(game.data, self.enemyParty[1], false)
   self.aiUses = self:aiUsesFor() -- wAICount, reset per enemy mon
-  markSeen(game, self.enemyParty[1].species)
+  markSeen(game, self.enemyParty[1].species, self.enemyParty[1])
 
   -- AND THE SECOND PAIR, when this is a double battle.
   --
@@ -1692,7 +1708,7 @@ function BattleState:sendOutSecondPair()
       self.enemyIndexRight = 2
       self:placeBattler(BattleState.POS.OPPONENT_RIGHT,
                         makeBattler(game.data, party[2], false))
-      markSeen(game, party[2].species)
+      markSeen(game, party[2].species, party[2])
     else
       -- a "double" trainer with one Pokemon fights alone on their side,
       -- which is what a two-on-one looks like on the cartridge too
@@ -1750,7 +1766,7 @@ function BattleState:addOpponentTrainer(oppClass)
     -- whatever the first trainer's second Pokemon had been put there
     self:placeBattler(BattleState.POS.OPPONENT_RIGHT,
                       makeBattler(self.game.data, self.enemyPartyB[1], false))
-    markSeen(self.game, self.enemyPartyB[1].species)
+    markSeen(self.game, self.enemyPartyB[1].species, self.enemyPartyB[1])
   end
   return true
 end
@@ -7167,7 +7183,7 @@ function BattleState:executeAction(user, target, action)
       })
       self:abilitySwitchOut(previous)
       self.aiUses = self:aiUsesFor()
-      markSeen(self.game, self.enemy.mon.species)
+      markSeen(self.game, self.enemy.mon.species, self.enemy.mon)
       -- _AIBattleWithdrawText: "X with-/drew Y!"
       self:sayNext(Strings("%s with-\ndrew %s!", self:trainerLabel_(), oldName))
       self:sayNext(Strings("%s sent\nout %s!", self:trainerLabel_(),
@@ -8121,7 +8137,7 @@ function BattleState:fillEmptySlots()
         self:placeBattler(pos, makeBattler(self.data, pick, isPlayer,
                                            isPlayer and self.game.save or nil))
         self:syncSides()
-        if not isPlayer then markSeen(self.game, pick.species) end
+        if not isPlayer then markSeen(self.game, pick.species, pick) end
         local who = self:battlerAt(pos)
         self:sayNext(Strings("%s sent\nout %s!",
                              isPlayer and (self.game.save.player.name or "")
@@ -8410,7 +8426,7 @@ function BattleState:enemyMonFainted()
         })
         self:abilitySwitchOut(previous)
         self.aiUses = self:aiUsesFor()
-        markSeen(self.game, self.enemy.mon.species)
+        markSeen(self.game, self.enemy.mon.species, self.enemy.mon)
         -- EnemySendOutFirstMon .next4 (core.asm:1413-1417): ClearSprites and
         -- the 4x11 ClearScreenArea take the ball row away with the rest of
         -- the enemy HUD block, right before TrainerSentOutText (#283)
@@ -9076,7 +9092,7 @@ function BattleState:storeCaughtMon()
   -- Ruins of Alph researcher and the dex's UNOWN mode gate on
   local form = require("src.pokemon.Sprites").formIndex(
     game.data.pokemon[species], self.enemy.mon)
-  if dex and form then
+  if dex and type(form)=='number' then
     dex.unownForms = dex.unownForms or {}
     if not dex.unownForms[form] then
       dex.unownForms[form] = true
@@ -9093,6 +9109,7 @@ function BattleState:storeCaughtMon()
   -- the whole reason the cartridge stores it separately.
   stampOT(game.save, self.enemy.mon,
           { level = self.enemy.mon.level, location = BattleState.metHere(game) })
+  require('src.pokemon.Gen4Origin').stamp(game,self.enemy.mon,'met',BattleState.metHere(game))
   if isNew then
     -- _ItemUseBallText06 + ShowPokedexData
     self:sayNext(Strings("New POKéDEX data\nwill be added for\n%s!", self.enemy.name))

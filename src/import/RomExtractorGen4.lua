@@ -3923,6 +3923,18 @@ function RomExtractorGen4:extractOverworld()
       source = ("ROM:mmodel.narc[%d]"):format(entry.member),
     }
   end
+  for label,entry in pairs(index.sprites) do
+    if Gen4Facings.sequenceFor(label,entry.frames)=='walk_and_run' then
+      local walk=sprites[RomExtractorGen4.spriteKey(entry.member)]
+      local facings=Gen4Facings.cycles(sequences.walk_and_run,64)
+      if facings then
+        local id=walk.id..'_RUN';local run={}
+        for k,v in pairs(walk) do run[k]=v end
+        run.id=id;run.facings=facings;run.fullCycle=true
+        sprites[id]=run;walk.run=id
+      end
+    end
+  end
   index.facings = facingsReport
   self:write("gen4_overworld", index)
   self:write("sprites", sprites)
@@ -4958,8 +4970,22 @@ function RomExtractorGen4:extractDex()
     weight = self:string(BANK.pokedex, Gen4Dex.LABEL.weight),
     seen = self:string(BANK.pokedex, Gen4Dex.LABEL.seen),
     obtained = self:string(BANK.pokedex, Gen4Dex.LABEL.obtained),
+    search = self:string(BANK.pokedex, Gen4Dex.LABEL.search),
+    switch = self:string(BANK.pokedex, Gen4Dex.LABEL.switch),
   }
+  -- Preserve the whole small label bank for native search descriptions,
+  -- capitalization and order/name/type labels rather than port-written text.
+  out.labels={}
+  local labelBank=self:bank(BANK.pokedex)
+  if labelBank then
+    for i=0,labelBank.count-1 do out.labels[i]=self:string(BANK.pokedex,i) end
+  end
   out.height, out.weight, out.category = {}, {}, {}
+  -- InfoMain substitutes SPECIES_NONE for seen-but-not-caught details.
+  out.height[0] = self:string(BANK.dexHeight, 0)
+  out.weight[0] = self:string(BANK.dexWeight, 0)
+  out.category[0] = self:string(BANK.dexCategory, 0)
+  out.unknownEntry = self:string(BANK.dexEntry, 0)
   local species = 0
   for index = 1, Gen4Dex.MAX_SPECIES do
     local height = self:string(BANK.dexHeight, index)

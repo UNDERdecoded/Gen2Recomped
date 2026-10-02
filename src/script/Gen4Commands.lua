@@ -354,6 +354,20 @@ end
 -- every new command against the real cache rather than by reading them.
 local itemKey
 
+-- ScrCmd_BufferValuePaddingDigits reads a literal u32, not a var operand.
+function Commands.g4_buffer_padded_number(ctx,slot,value,padding,digits)
+  if not ctx.game then return end
+  local number=math.floor(tonumber(value) or 0)%4294967296
+  local text=string.format('%.0f',number)
+  local width=math.max(0,math.min(10,math.floor(tonumber(digits) or 0)))
+  padding=tonumber(padding) or 0
+  if padding==1 or padding==2 then
+    text=string.rep(padding==2 and '0' or ' ',math.max(0,width-#text))..text
+  end
+  ctx.game.stringBuffers=ctx.game.stringBuffers or {}
+  ctx.game.stringBuffers[(tonumber(slot) or 0)+1]=text
+end
+
 function Commands.g4_buffer(ctx, slot, kind, value)
   local game = ctx.game
   if not game then return end
@@ -1282,9 +1296,19 @@ function Commands.g4_signpost_input(ctx, destVar)
 end
 
 Commands.g4_wait_move = noop
-function Commands.g4_wait_sound(ctx)
+function Commands.g4_play_sound(ctx, soundId)
+  Commands.play_sound(ctx, valueOf(ctx, soundId))
+end
+function Commands.g4_play_cry(ctx, species)
+  -- Platinum plays immediately. Its second operand is unused, whereas the
+  -- shared Gen1/2 command queues a cry for a later text box.
+  require('src.core.Sound').playCry(ctx.game.data, valueOf(ctx, species))
+end
+function Commands.g4_wait_sound(ctx, soundId)
   local Sound=require('src.core.Sound')
-  ctx.runner.waitingCheck=function() return not Sound.anyPlaying('sfx') end
+  local id = valueOf(ctx, soundId)
+  -- WaitSE names one effect. Unrelated effects must not keep an event locked.
+  ctx.runner.waitingCheck=function() return not Sound.isPlaying(id) end
   ctx.runner:yield()
 end
 Commands.g4_wait_fanfare = noop
@@ -1293,7 +1317,9 @@ function Commands.g4_wait_cry(ctx)
   ctx.runner.waitingCheck=function() return not Sound.anyPlaying('cry') end
   ctx.runner:yield()
 end
-function Commands.g4_stop_sound(_,id) require('src.core.Sound').stop(id) end
+function Commands.g4_stop_sound(ctx,id)
+  require('src.core.Sound').stop(valueOf(ctx,id))
+end
 Commands.g4_wait_animation = noop
 Commands.g4_wait_fade = noop
 Commands.g4_return_to_field = noop
@@ -2179,6 +2205,37 @@ function Commands.g4_get_trainer_id(ctx, destVar)
   setResult(ctx, id)
 end
 
+-- The cartridge reads the selected encounter slot, not the script owner.
+-- Any nonzero approach number selects the second trainer. This lookup writes
+-- only its destination and leaves the last comparison intact.
+function Commands.g4_get_approaching_trainer_id(ctx, approachNum, destVar)
+  local slot = valueOf(ctx, approachNum) == 0 and 1 or 2
+  local trainers = ctx.gen4ApproachingTrainers
+  local id = trainers and tonumber(trainers[slot])
+  if id == nil and slot == 1 then id = trainerOnObject(ctx) end
+  setVar(ctx.save, destVar, id or 0)
+end
+
+-- GameRecords_AddToRecordValue: record IDs are literal; only the small
+-- add command resolves its amount through script variables. The cartridge
+-- has 71 u32 counters followed by 77 u16 counters, each with its own limit.
+local highRecordLimits = {}
+for id = 0, 40 do highRecordLimits[id] = true end
+for _, id in ipairs({3, 9, 10, 11}) do highRecordLimits[id] = nil end
+for id = 57, 69 do highRecordLimits[id] = true end
+for _, id in ipairs({71, 72, 74, 75, 94, 112}) do highRecordLimits[id] = true end
+function Commands.g4_add_game_record(ctx, recordId, amount, literal)
+  local id = tonumber(recordId)
+  if not ctx.save or not id or id < 0 or id >= 148 or id % 1 ~= 0 then return end
+  local value = literal and tonumber(amount) or valueOf(ctx, amount)
+  value = math.floor(tonumber(value) or 0) % 4294967296
+  local limit = id < 71 and (highRecordLimits[id] and 999999999 or 999999)
+    or (highRecordLimits[id] and 65535 or 9999)
+  local records = ctx.save.gen4GameRecords or {}
+  ctx.save.gen4GameRecords = records
+  records[id] = math.min(limit, ((tonumber(records[id]) or 0) + value) % 4294967296)
+end
+
 -- `checkistrainerdoublebattle <destVar>` -- `battleType != BATTLE_TYPE_SINGLES`
 -- on the trainer this script belongs to.
 function Commands.g4_check_trainer_double(ctx, destVar)
@@ -2586,6 +2643,7 @@ function Commands.g4_trade_start(ctx, slotArg)
   save.pokedex.owned = save.pokedex.owned or {}
   save.pokedex.seen[mon.species] = true
   save.pokedex.owned[mon.species] = true
+  require('src.pokemon.Gen4Forms').record(ctx.game,mon.species,mon)
   -- The slot is spent: a second `getselectedpartyslot` after a swap must not
   -- name a member that has moved.
   ctx.g4PartySlot = nil
@@ -2676,6 +2734,28 @@ function Commands.g4_party_count(ctx, destVar)
   local n = #((ctx.save and ctx.save.party) or {})
   if destVar then setVar(ctx.save, destVar, n) end
   setResult(ctx, n)
+end
+
+-- scrcmd_party.c: excluded slot is zero-based and resolved through vars.
+-- Box Pokemon count regardless of stored HP; eggs never count on either side.
+function Commands.g4_party_alive_except(ctx,destVar,excluded)
+  local n=0;local skip=math.floor(valueOf(ctx,excluded) or -1)
+  for i,mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    if i-1~=skip and not mon.isEgg and (tonumber(mon.hp) or 0)>0 then n=n+1 end
+  end
+  setVar(ctx.save,destVar,n)
+end
+function Commands.g4_party_alive_and_boxes(ctx,destVar)
+  local n=0
+  for _,mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    if not mon.isEgg and (tonumber(mon.hp) or 0)>0 then n=n+1 end
+  end
+  for _,box in pairs((ctx.save and ctx.save.boxes) or {}) do
+    for _,mon in pairs(box) do
+      if type(mon)=='table' and (tonumber(mon.species) or 0)>0 and not mon.isEgg then n=n+1 end
+    end
+  end
+  setVar(ctx.save,destVar,n)
 end
 
 function Commands.g4_party_non_eggs(ctx, destVar)
@@ -2903,13 +2983,45 @@ end
 -- `.owned` whole rather than per-region, so the honest answer is the count of
 -- what has actually been seen, which is right whenever the player has not yet
 -- left Sinnoh -- and that is every script that asks.
-function Commands.g4_dex_seen_count(ctx, destVar)
-  local n = 0
-  for _ in pairs((ctx.save and ctx.save.pokedex and ctx.save.pokedex.seen) or {}) do
-    n = n + 1
+local function dexCount(ctx,field,regional,completion)
+  local dex=(ctx.save and ctx.save.pokedex) or {}
+  local ids={}
+  for key,flag in pairs(dex[field] or {}) do
+    if flag==true or (type(flag)=='number' and flag>0) then
+      local id=speciesNumber({species=key})
+      if id>=1 and id<=493 then ids[id]=true end
+    end
   end
-  if destVar then setVar(ctx.save, destVar, n) end
-  setResult(ctx, n)
+  local region={}
+  if regional then
+    local orders=ctx.game and ctx.game.data and ctx.game.data.gen4_dex
+    for _,id in ipairs(orders and orders.orders and orders.orders.sinnoh or {}) do region[tonumber(id) or id]=true end
+  end
+  local excluded={ [151]=true,[249]=true,[250]=true,[251]=true,[385]=true,[386]=true,
+    [489]=true,[490]=true,[491]=true,[492]=true,[493]=true }
+  local count=0
+  for id in pairs(ids) do
+    if (not regional or region[id]) and (not completion or regional or not excluded[id]) then count=count+1 end
+  end
+  return count
+end
+
+function Commands.g4_dex_seen_count(ctx,destVar)
+  setVar(ctx.save,destVar,dexCount(ctx,'seen',true,false))
+end
+function Commands.g4_dex_complete(ctx,destVar,national)
+  local count=dexCount(ctx,national and 'owned' or 'seen',not national,true)
+  setVar(ctx.save,destVar,count>=(national and 482 or 210) and 1 or 0)
+end
+function Commands.g4_dex_caught_count(ctx,destVar,national)
+  setVar(ctx.save,destVar,dexCount(ctx,'owned',not national,false))
+end
+function Commands.g4_unown_forms_seen(ctx,destVar)
+  setVar(ctx.save,destVar,#require('src.pokemon.Gen4Forms').seen(ctx.save.pokedex,201))
+end
+function Commands.g4_enable_dex_form_detection(ctx)
+  ctx.save.pokedex=ctx.save.pokedex or {seen={},owned={}}
+  ctx.save.pokedex.canDetectForms=true
 end
 
 -- `setstepflag` / `clearstepflag` -- `SystemFlag_SetStep`, the bit that stops
@@ -2929,9 +3041,12 @@ end
 -- elsewhere. PRESENTATION ONLY: the rock is actually removed by the
 -- `RemoveObject` on the very next row, which has always been lowered, so the
 -- path opens with or without the animation. The destination var is the
--- animation's handle, which nothing in the script reads back.
+-- completion flag, not a handle. overlay006/ov6_02248948.c initializes it
+-- to zero and writes ONE after the effect finishes. Roark polls it every
+-- frame after removing the rock. Until the native effect is implemented,
+-- report completion immediately; leaving zero strands that polling loop.
 function Commands.g4_destroy_obstacle_anim(ctx, _, destVar)
-  if destVar then setVar(ctx.save, destVar, 0) end
+  if destVar then setVar(ctx.save, destVar, 1) end
 end
 
 -- `buffermapname <slot> <mapHeaderID>` -- `MapHeader_LoadName`, the PLAYER-
@@ -3050,7 +3165,8 @@ end
 -- `typeIds` on the species row is the cartridge's own pair, already extracted.
 function Commands.g4_mon_types(ctx, type1Var, type2Var, slot)
   local mon = partyMon(ctx, slot)
-  local def = mon and (ctx.game and ctx.game.data and ctx.game.data.pokemon or {})[mon.species]
+  local def = mon and require('src.pokemon.Gen4Forms').definition(
+    ctx.game and ctx.game.data,mon)
   local ids = (def and def.typeIds) or {}
   if type1Var then setVar(ctx.save, type1Var, tonumber(ids[1]) or 0) end
   if type2Var then setVar(ctx.save, type2Var, tonumber(ids[2]) or tonumber(ids[1]) or 0) end
@@ -3084,7 +3200,7 @@ end
 
 -- `checkpartyhasspecies2 <species> <destVar>` -- `Party_HasSpecies`. Note the
 -- order: species first here, destination second, unlike the four above.
-function Commands.g4_party_has_species(ctx, species, destVar)
+function Commands.g4_party_has_species2(ctx, species, destVar)
   local want = math.floor(valueOf(ctx, species) or 0)
   local yes = 0
   for _, mon in ipairs((ctx.save and ctx.save.party) or {}) do
@@ -3092,6 +3208,34 @@ function Commands.g4_party_has_species(ctx, species, destVar)
   end
   if destVar then setVar(ctx.save, destVar, yes) end
   setResult(ctx, yes)
+end
+
+local function fatefulSlot(ctx, species)
+  local Party=require('src.pokemon.Party')
+  for i,mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    local marked=mon.fatefulEncounter
+    if marked==nil then marked=mon.fateful end
+    if not Party.isEgg(mon) and speciesNumber(mon)==species
+        and (marked==true or marked==1) then return i-1 end
+  end
+  return 255
+end
+
+function Commands.g4_fateful_slot(ctx,destVar,species)
+  setVar(ctx.save,destVar,fatefulSlot(ctx,math.floor(valueOf(ctx,species) or 0)))
+end
+
+function Commands.g4_fateful_regigigas(ctx,destVar)
+  setVar(ctx.save,destVar,fatefulSlot(ctx,486)~=255 and 1 or 0)
+end
+
+function Commands.g4_party_pokerus(ctx,destVar)
+  local found=0
+  for _,mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    local virus=tonumber(mon.pokerus or mon.gen4Pokerus or mon.gen3Pokerus) or 0
+    if virus~=0 then found=1;break end
+  end
+  setVar(ctx.save,destVar,found)
 end
 
 -- `startwildbattle <species> <level>` -- the plain scripted wild battle, which
@@ -3112,12 +3256,7 @@ end
 -- `getnationaldexseencount <destVar>` -- the whole dex rather than Sinnoh's
 -- view of it, which is what `save.pokedex.seen` already is.
 function Commands.g4_national_dex_seen(ctx, destVar)
-  local n = 0
-  for _ in pairs((ctx.save and ctx.save.pokedex and ctx.save.pokedex.seen) or {}) do
-    n = n + 1
-  end
-  if destVar then setVar(ctx.save, destVar, n) end
-  setResult(ctx, n)
+  setVar(ctx.save,destVar,dexCount(ctx,'seen',false,false))
 end
 
 -- `getselectedpartyslot <destVar>` -- which slot the party menu came back
@@ -3369,9 +3508,36 @@ function Commands.g4_game_version(ctx, destVar)
   setResult(ctx, value)
 end
 
--- `getleaguevictories <destVar>` -- how many times the Hall of Fame has been
--- entered. `record_hall_of_fame` appends one entry per induction to
--- `save.hallOfFame`, so the count is already kept and this is a length.
+-- FLAG_GAME_COMPLETED follows FLAG_JOURNAL_ACQUIRED in vars_flags.txt.
+-- It is set before the Hall of Fame scene, rather than inferred from credits.
+Gen4Commands.GAME_COMPLETED_FLAG = "FLAG_G4_0964"
+function Commands.g4_set_game_completed(ctx)
+  ctx.save.flags = ctx.save.flags or {}
+  Commands.set_flag(ctx, Gen4Commands.GAME_COMPLETED_FLAG)
+end
+function Commands.g4_game_completed(ctx, destVar)
+  local flag = (ctx.save.flags or {})[Gen4Commands.GAME_COMPLETED_FLAG]
+  -- Older runtime saves recorded inductions without implementing SetGameCompleted.
+  if flag == nil then flag = #((ctx.save and ctx.save.hallOfFame) or {}) > 0 end
+  setVar(ctx.save, destVar, flag == true and 1 or 0)
+end
+function Commands.g4_daycare_has_egg(ctx, destVar)
+  local breed = require('src.pokemon.DayCare').store(ctx.save, false)
+  setVar(ctx.save, destVar, breed and breed.egg ~= nil and 1 or 0)
+end
+function Commands.g4_prepare_hall_of_fame(ctx)
+  Commands.g4_set_game_completed(ctx)
+  Commands.set_flag(ctx, "FLAG_G4_0966") -- communication club access
+  local Party = require('src.pokemon.Party')
+  for _, mon in ipairs(ctx.save.party or {}) do
+    if not Party.isEgg(mon) then
+      mon.ribbons = mon.ribbons or {}
+      mon.ribbons[32] = true -- Sinnoh Champion, distinct from Hoenn's ribbon 0
+    end
+  end
+end
+
+-- `getleaguevictories <destVar>` counts recorded Hall of Fame inductions.
 function Commands.g4_league_victories(ctx, destVar)
   local n = #((ctx.save and ctx.save.hallOfFame) or {})
   if destVar then setVar(ctx.save, destVar, n) end

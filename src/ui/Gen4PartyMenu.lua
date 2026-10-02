@@ -31,10 +31,8 @@
 --     has nothing to do with words: the only caller in the port that pushes
 --     `chooseOrder` is a GEN 3 script special, so no Platinum cache ever
 --     sends one.
---   * GIVE/TAKE AN ITEM is not offered.  `BagMenu.giveItem` is published and
---     would serve it; what is missing is Platinum's own word for it, and a
---     menu entry in the engine's English on a screen that is otherwise the
---     cartridge's is the kind of seam this port does not leave.
+--   * GIVE/TAKE AN ITEM uses the native item submenu and checks bag capacity
+--     before transferring either the chosen item or the previous held item.
 
 local Font = require("src.render.Font")
 local Logger = require("src.core.Logger")
@@ -128,7 +126,7 @@ end
 -- followed by a refusal.
 function Gen4PartyMenu:canLearn(mon)
   local data = self.game.data
-  local def = data.pokemon and data.pokemon[mon.species]
+  local def = require('src.pokemon.Gen4Forms').definition(data,mon)
   for _, move in ipairs((def and def.tmhm) or {}) do
     if move == self.tmhm.move then return true end
   end
@@ -170,7 +168,7 @@ function Gen4PartyMenu:touchpressed(_, px, py)
     local left,top=W-120,H-#actions*16-20
     if x>=left and x<left+112 and y>=top+6 and y<top+6+#actions*16 then
       self:runAction(actions[math.floor((y-top-6)/16)+1])
-    else self.submenu=nil end
+    else self.submenu=nil;self.itemMenu=nil end
     return true
   end
   if y>=CANCEL.y and y<CANCEL.y+CANCEL.h then
@@ -235,6 +233,13 @@ end
 function Gen4PartyMenu:runAction(action)
   local mon = self:party()[self.index]
   self.submenu = nil
+  if action == 'cancel' and self.itemMenu then
+    self.itemMenu=nil;self.submenu=1;return
+  end
+  if action == 'item' then
+    self.itemMenu = true;self.submenu = 1;return
+  end
+  self.itemMenu = nil
   local field=action:match('^field:(.+)$')
   if field and mon then return self:useFieldMove(mon,field) end
   if action == "send" and mon then
@@ -245,10 +250,42 @@ function Gen4PartyMenu:runAction(action)
     -- would be a second place for them to drift.
     return self:handOff(mon)
   elseif action == "summary" and mon then
-    require("src.ui.Screens").push(self.game, "SummaryMenu", mon)
+    require("src.ui.Screens").push(self.game, "SummaryMenu", {
+      mon=mon,readOnlyMoves=self.battle and true or false,
+    })
   elseif action == "switch" then
     self.switchFrom = self.index
+  elseif action == 'give' and mon then
+    require('src.ui.Screens').push(self.game,'BagMenu',{
+      pick=true,onPick=function(id)
+        require('src.ui.BagMenu').handOver(self.game,mon,id,nil,{
+          giveHeld=function(target,item) return self:giveHeld(target,item) end,
+        })
+      end,
+    })
+  elseif action == 'take' and mon then
+    local held=mon.item
+    local got,why=require('src.inventory.Bag').takeHeld(self.game.save,mon,self.game.data)
+    local item=held and self.game.data.items and self.game.data.items[held]
+    local text=got and Strings('Received the %s.',(item and item.name) or held)
+      or why=='full' and Strings("There's no room to store items.")
+      or Strings("This Pokémon isn't holding anything.")
+    self.game.stack:push(require('src.render.TextBox').new(self.game,text))
   end
+end
+
+function Gen4PartyMenu:giveHeld(mon,id)
+  local save=self.game.save
+  if (save.inventory[id] or 0)<1 then return false end
+  local trial={inventory={},bagOrder={}}
+  for key,value in pairs(save.inventory) do trial.inventory[key]=value end
+  for i,value in ipairs(save.bagOrder or {}) do trial.bagOrder[i]=value end
+  local Bag=require('src.inventory.Bag')
+  Bag.remove(trial,id,1)
+  if mon.item and not Bag.add(trial,mon.item,1,self.game.data) then return false end
+  save.inventory,save.bagOrder=trial.inventory,trial.bagOrder
+  mon.item=id
+  return true
 end
 
 Gen4PartyMenu.ACTIONS = { "summary", "switch", "cancel" }
@@ -257,13 +294,16 @@ Gen4PartyMenu.ACTIONS = { "summary", "switch", "cancel" }
 Gen4PartyMenu.BATTLE_ACTIONS = { "send", "summary", "cancel" }
 
 function Gen4PartyMenu:actions()
+  if self.itemMenu then return {'give','take','cancel'} end
   if self.battle then return Gen4PartyMenu.BATTLE_ACTIONS end
   local rows={'summary'}
   local F=require('src.world.Gen4FieldMoves');local mon=self:party()[self.index]
   for _,name in ipairs({'CUT','SURF','DIG','TELEPORT','SWEET_SCENT'}) do
     if F.knows(mon,name) then rows[#rows+1]='field:'..name end
   end
-  rows[#rows+1]='switch';rows[#rows+1]='cancel';return rows
+  rows[#rows+1]='switch'
+  if not require('src.pokemon.Party').isEgg(mon) then rows[#rows+1]='item' end
+  rows[#rows+1]='cancel';return rows
 end
 
 function Gen4PartyMenu:useFieldMove(mon,move)
@@ -293,6 +333,9 @@ function Gen4PartyMenu:actionLabel(action)
   if action == "send" then return Strings("SEND OUT") end
   if action == "summary" then return Strings("SUMMARY") end
   if action == "switch" then return Strings("SWITCH") end
+  if action == 'item' then return self:word('item','ITEM') end
+  if action == 'give' then return self:word('give','GIVE') end
+  if action == 'take' then return self:word('take','TAKE') end
   return Strings("CANCEL")
 end
 
@@ -311,7 +354,8 @@ function Gen4PartyMenu:update(dt)
     elseif input:wasPressed("a") then
       self:runAction(actions[self.submenu])
     elseif input:wasPressed("b") then
-      self.submenu = nil
+      if self.itemMenu then self.itemMenu=nil;self.submenu=1
+      else self.submenu = nil end
     end
     return
   end

@@ -51,18 +51,21 @@ local STAT_KEYS_GEN3 = {
 -- battle screen paints over -- to transparent, so the sprite sits on the card
 -- rather than in a white box.  Species the import already coloured carry
 -- `trueColor` and are left exactly as they are.
-local spriteCache = {}
-function MonEditor.sprite(S, species)
-  if spriteCache[species] ~= nil then return spriteCache[species] or nil end
+local spriteCaches = setmetatable({}, {__mode='k'})
+function MonEditor.sprite(S, species, mon)
   local def = S.data.pokemon[species]
-  local path = def and def.spriteFront
+  local path,trueColor=require('src.pokemon.Sprites').path(S.data,species,'front',
+    {mon=mon,kind='save-editor'})
   if not path or not (love.graphics and love.graphics.newImage) then
-    spriteCache[species] = false
     return nil
   end
   local pals = S.data.palettes and S.data.palettes.palettes
-  local pal = (not def.trueColor) and pals and type(def.palette) == "string"
+  local pal = (not trueColor) and pals and type(def.palette) == "string"
     and pals[def.palette] or nil
+  local spriteCache=spriteCaches[S.data.pokemon]
+  if not spriteCache then spriteCache={};spriteCaches[S.data.pokemon]=spriteCache end
+  local key=path..'#'..tostring(pal)
+  if spriteCache[key]~=nil then return spriteCache[key] or nil end
   local ok, img = pcall(function()
     if not (pal and love.image and love.image.newImageData) then
       return love.graphics.newImage(path)
@@ -78,14 +81,14 @@ function MonEditor.sprite(S, species)
     end)
     return love.graphics.newImage(raw)
   end)
-  spriteCache[species] = ok and img or false
+  spriteCache[key] = ok and img or false
   return ok and img or nil
 end
 
 -- Draw a species sprite fitted into a box, or a dashed placeholder when the
 -- cache has no art for it (a modded species, or a headless run).
-function MonEditor.drawSprite(S, Kit, species, x, y, size)
-  local img = MonEditor.sprite(S, species)
+function MonEditor.drawSprite(S, Kit, species, x, y, size, mon)
+  local img = MonEditor.sprite(S, species, mon)
   if img and love.graphics.draw and img.getDimensions then
     local iw, ih = img:getDimensions()
     if iw > 0 and ih > 0 then
@@ -100,7 +103,7 @@ function MonEditor.drawSprite(S, Kit, species, x, y, size)
   love.graphics.rectangle("fill", x, y, size, size, 8 * Kit.scale, 8 * Kit.scale)
   Theme.col(PAL.cardBorder, 0.35)
   Theme.dashed(x, y, size, size, 8 * Kit.scale, 5 * Kit.scale, 4 * Kit.scale)
-  Kit.textCenter("micro", (species or "?"):sub(1, 3), x,
+  Kit.textCenter("micro", tostring(species or "?"):sub(1, 3), x,
     y + size / 2 - Kit.textHeight("micro") / 2, size, PAL.muted)
 end
 
@@ -138,14 +141,14 @@ function MonEditor.draw(S, Kit, x, y, w, h)
 
   -- ---------------------------------------------------------- header row
   local sprite = 96 * s
-  MonEditor.drawSprite(S, Kit, mon.species, cx, cy, sprite)
+  MonEditor.drawSprite(S, Kit, mon.species, cx, cy, sprite, mon)
   local hx = cx + sprite + 18 * s
   local hw = inner - sprite - 18 * s
 
   local speciesName = Catalog.speciesLabel(S.data, mon.species)
   Kit.text("title", speciesName, hx, cy, PAL.heading)
   local nameW = Kit.textWidth("title", speciesName)
-  Kit.text("tiny", ("#%03d"):format(def and def.dex or 0), hx + nameW + 12 * s,
+  Kit.text("tiny", ("#%03d"):format(tonumber(def and def.dex) or tonumber(mon.species) or 0), hx + nameW + 12 * s,
     cy + Kit.textHeight("title") - Kit.textHeight("tiny") - 2 * s, PAL.caption)
 
   -- One control instead of a pair of arrows: cycling walked the catalog an
@@ -285,7 +288,7 @@ function MonEditor.draw(S, Kit, x, y, w, h)
       ry + (rowH - Kit.textHeight("mono")) / 2, PAL.faint)
     local nameX = rightX + 28 * s
     local nameW2 = math.max(20 * s, clearX - 12 * s - ppW - nameX)
-    Kit.text("monoRow", Kit.ellipsize("monoRow", mv and mv.id or "-- --", nameW2),
+    Kit.text("monoRow", Kit.ellipsize("monoRow", Catalog.moveLabel(S.data, mv and mv.id), nameW2),
       nameX, ry + (rowH - Kit.textHeight("monoRow")) / 2,
       mv and PAL.text or PAL.faint)
     Kit.textRight("tiny", ppText, clearX - 10 * s,

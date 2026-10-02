@@ -31,8 +31,10 @@ function Camera:follow(px, py, viewW, viewH)
   viewW, viewH = viewW or 160, viewH or 144
   local sin = tonumber(self.groundScale) or 1
   if not (sin > 0) then sin = 1 end
-  self.x = px - (viewW / 2 - 16)
-  self.y = py - (viewH / 2 - 8) / sin
+  local centerX = self.spriteCenterX or 16
+  local centerY = self.spriteCenterY or 8
+  self.x = px + centerX - viewW / 2
+  self.y = py - (viewH / 2 - centerY) / sin
 end
 
 return Camera

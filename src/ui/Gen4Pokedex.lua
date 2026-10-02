@@ -14,8 +14,8 @@
 -- The composition is fixed now -- see `Gen4Dex`, and `Gen4Graphics.stamp` for
 -- the thing the planner could not express -- so this is the screen.
 --
--- The list and entry use the cartridge's backgrounds. The full DS scroll
--- wheel, habitat, size, search and form pages still need their own screens.
+-- Native entry/list/search companion art and ROM-backed search are available;
+-- search transitions and habitat/cry/size/form presentations remain incomplete.
 --
 -- WHAT THE PAGE SAYS IS THE CARTRIDGE'S TOO, including the three things the
 -- species table does not carry: Platinum stores height, weight and the
@@ -31,7 +31,10 @@ local NATIONAL_DEX_COUNT = 493
 local Font = require("src.render.Font")
 local Logger = require("src.core.Logger")
 local Sprites = require("src.pokemon.Sprites")
+local Forms = require("src.pokemon.Gen4Forms")
+local SecondScreen = require("src.ui.SecondScreen")
 local Strings = require("src.core.Strings")
+local Search = require('src.ui.Gen4DexSearch')
 
 local Gen4Pokedex = {}
 Gen4Pokedex.__index = Gen4Pokedex
@@ -83,12 +86,14 @@ function Gen4Pokedex.new(game, opts)
                 .. "entry page is drawn in the engine's own frame")
   end
 
+  self.national = ((game.save or {}).pokedex or {}).national and true or false
   self.entries = self:listing()
   self.index = 1
   self.top = 1
   self.tab = 1
   self.page = "list"
   self.scroll = 0
+  self.form = 0
   return self
 end
 
@@ -101,14 +106,13 @@ function Gen4Pokedex:listing()
   local mons = data.pokemon or {}
   local out = {}
   local orders=self.art and self.art.orders
-  local dex=self.game.save.pokedex or {}
-  local order=orders and orders[dex.national and 'national' or 'sinnoh']
+  local order=orders and orders[self.national and 'national' or 'sinnoh']
   if order then
     self.numbers={}
     for number,id in ipairs(order) do
       if mons[id] then out[#out+1]=id;self.numbers[id]=number end
     end
-    return out
+    return self:trimListing(out)
   end
   -- `x or 493` CANNOT CATCH A ZERO, and the zero is what arrives.
   --
@@ -135,7 +139,16 @@ function Gen4Pokedex:listing()
   for id = 1, size do
     if mons[id] then out[#out + 1] = id end
   end
-  return out
+  return self:trimListing(out)
+end
+
+-- PopulateDisplayPokedex_Blanks keeps gaps before the last encountered entry,
+-- but does not append the rest of the unseen regional/national list.
+function Gen4Pokedex:trimListing(entries)
+  local last = 0
+  for i,id in ipairs(entries) do if self:status(id) then last = i end end
+  for i = #entries, last + 1, -1 do entries[i] = nil end
+  return entries
 end
 
 function Gen4Pokedex:species()
@@ -148,10 +161,16 @@ end
 
 -- Seen and caught, from the save the rest of the engine already keeps.
 function Gen4Pokedex:status(species)
+  if species == nil then return nil end
   local dex = (self.game.save or {}).pokedex or {}
-  local owned = (dex.owned or {})[species]
+  local id = Forms.species(species)
+  local function known(t)
+    t = t or {}
+    return t[species] or (id and (t[id] or t['SPECIES_'..id]))
+  end
+  local owned = known(dex.owned)
   if owned then return "owned" end
-  if (dex.seen or {})[species] then return "seen" end
+  if known(dex.seen) then return "seen" end
   return nil
 end
 
@@ -177,9 +196,14 @@ end
 function Gen4Pokedex:stopCry()
   if self.cry and self.cry.stop then self.cry:stop() end
   self.cry=nil
+  self.cryRunning=false;self.cryPointer=nil
+  self.cryCooldown=nil
 end
 
 function Gen4Pokedex:close()
+  self.wheelPointer=nil
+  if self.wheelCanvas and self.wheelCanvas.release then self.wheelCanvas:release() end
+  self.wheelCanvas=nil
   self:stopCry()
   self.game.stack:pop()
   if self.onCancel then self.onCancel() end
@@ -190,29 +214,150 @@ function Gen4Pokedex:move(delta)
   if count == 0 then return end
   self:stopCry()
   self.form=0
-  self.index = (self.index - 1 + delta) % count + 1
+  local index = (self.index - 1 + delta) % count + 1
+  if self.page == 'entry' then
+    -- Entry pages navigate the native caught-status array, which omits blanks.
+    local step = delta < 0 and -1 or 1
+    for _ = 1, count do
+      if self:status(self.entries[index]) then break end
+      index = (index - 1 + step) % count + 1
+    end
+  end
+  self.index = index
+  if not self:tabAvailable(self.tab) then self.tab = 1 end
   if self.index < self.top then self.top = self.index end
   if self.index > self.top + LIST.rows - 1 then
     self.top = self.index - LIST.rows + 1
   end
 end
 
+-- Native entry buttons gate size comparisons on capture and form comparison
+-- on the Pokédex form-detection upgrade (ov21_021E29DC.c).
+function Gen4Pokedex:tabAvailable(tab)
+  if tab == 4 then return self:status(self:species()) == 'owned' end
+  if tab == 5 then return ((self.game.save or {}).pokedex or {}).canDetectForms == true end
+  return tab >= 1 and tab <= 3
+end
+
+function Gen4Pokedex:cycleTab(step)
+  local tab = self.tab
+  for _ = 1, 5 do
+    tab = (tab - 1 + step) % 5 + 1
+    if self:tabAvailable(tab) then self:setTab(tab); return end
+  end
+end
+
+function Gen4Pokedex:setTab(tab)
+  if not self:tabAvailable(tab) then return false end
+  if tab~=self.tab then self:stopCry();self.scroll=0 end
+  self.tab=tab
+  return true
+end
+
+function Gen4Pokedex:bottomVisible()
+  if SecondScreen.stowed(self.game) then return false end
+  return SecondScreen.mode(self.game)~='swap' or SecondScreen.raised(self.game)
+end
+
+function Gen4Pokedex:backToList()
+  self.searchPointer,self.searchPressed=nil,nil
+  self:stopCry();self.wheelPointer=nil;self.page,self.scroll='list',0
+end
+
+function Gen4Pokedex:openEntry()
+  if not self:status(self:species()) then return false end
+  self.wheelPointer=nil;self.page='entry';self.tab=1;self.form=0;self:playCry()
+  return true
+end
+
+function Gen4Pokedex:openSearch()
+  if self.filtered then return false end
+  self:stopCry();self.wheelPointer=nil
+  self.searchSelection=Search.defaults();self.searchField=1;self.searchError=nil;self.page='search'
+  self.searchTypePage,self.searchTypeSlot,self.searchCursor=0,3,nil
+  self.searchPointer,self.searchPressed=nil,nil
+end
+
+function Gen4Pokedex:changeSearch(delta)
+  local field=self.searchField
+  self.searchSelection[field]=(self.searchSelection[field]-1+delta)%#Search.CHOICES[field]+1
+  if field==3 or field==4 then
+    local other=field==3 and 4 or 3
+    if self.searchSelection[field]~=1 and self.searchSelection[field]==self.searchSelection[other] then
+      self.searchSelection[field]=(self.searchSelection[field]-1+delta)%#Search.CHOICES[field]+1
+    end
+  end
+  self.searchError=nil
+end
+
+function Gen4Pokedex:applySearch()
+  local entries,why=Search.results(self,self.searchSelection)
+  if not entries or #entries==0 then
+    self.searchError=why=='missing data' and 'REIMPORT ROM FOR SEARCH DATA' or 'NONE FOUND'
+    return false
+  end
+  self:stopCry();self.entries=entries;self.filtered=true
+  self.page='list';self.index,self.top,self.scroll=1,1,0
+  return true
+end
+
+function Gen4Pokedex:cancelResults()
+  if not self.filtered then self:close();return end
+  local species=self:species()
+  self.filtered=nil;self.entries=self:listing();self.index,self.top=1,1
+  for i,id in ipairs(self.entries) do if id==species then self.index=i;self.top=math.max(1,i-LIST.rows+1);break end end
+end
+
+function Gen4Pokedex:toggleDex()
+  local dex=(self.game.save or {}).pokedex or {}
+  local orders=self.art and self.art.orders
+  if not dex.national or not (orders and orders.sinnoh and orders.national) then return false end
+  if self.filtered then return false end
+  self:stopCry()
+  self.national=not self.national
+  self.entries=self:listing()
+  self.index,self.top,self.scroll,self.form=1,1,0,0
+  return true
+end
+
 function Gen4Pokedex:update()
+  if self.page=='entry' and self.tab==3 and self.cryRunning and self.cry and self.cry.isPlaying then
+    local ok,playing=pcall(self.cry.isPlaying,self.cry)
+    if ok and not playing then
+      if self.cryLoop then
+        self.cryCooldown=(self.cryCooldown or 10)-1
+        if self.cryCooldown<=0 then self:playCry() end
+      else self.cryRunning=false end
+    end
+  end
   local input = self.game.input
   if not input then return end
 
+  if self.page=='search' then
+    local buttons=Search.buttons(self)
+    self.searchCursor=self.searchCursor or 7
+    for _,dir in ipairs({'up','down','left','right'}) do
+      if input:wasPressed(dir) then self.searchCursor=Search.navigate(buttons,self.searchCursor,dir);return end
+    end
+    if input:wasPressed('a') then Search.activate(self,buttons[self.searchCursor])
+    elseif input:wasPressed('start') then self:applySearch()
+    elseif input:wasPressed('b') then self:backToList() end
+    return
+  end
+
   if self.page == "entry" then
-    if input:wasPressed("l") then self.tab = (self.tab - 2) % 5 + 1
-    elseif input:wasPressed("r") or input:wasPressed("select") then self.tab = self.tab % 5 + 1
+    if input:wasPressed("l") then self:cycleTab(-1)
+    elseif input:wasPressed("r") or input:wasPressed("select") then self:cycleTab(1)
     elseif input:wasPressed("up") then self.scroll = math.max(0, self.scroll - 1)
     elseif input:wasPressed("down") then self.scroll = self.scroll + 1
     elseif input:wasPressed("left") then self:move(-1); self.scroll = 0
     elseif input:wasPressed("right") then self:move(1); self.scroll = 0
     elseif input:wasPressed("a") then
-      if self.tab == 3 or self.tab == 1 then self:playCry()
+      if self.tab == 3 then self:pressCryPlay()
+      elseif self.tab == 1 then self:playCry()
       elseif self.tab == 4 then self.sizeWeight=not self.sizeWeight
       elseif self.tab == 5 then self.form = ((self.form or 0) + 1) % #self:forms() end
-    elseif input:wasPressed("b") or input:wasPressed("start") then self:stopCry(); self.page, self.scroll = "list", 0 end
+    elseif input:wasPressed("b") or input:wasPressed("start") then self:backToList() end
     return
   end
 
@@ -220,24 +365,57 @@ function Gen4Pokedex:update()
   elseif input:wasPressed("down") then self:move(1)
   elseif input:wasPressed("left") then self:move(-LIST.rows)
   elseif input:wasPressed("right") then self:move(LIST.rows)
+  elseif input:wasPressed("select") then self:toggleDex()
+  elseif input:wasPressed("x") then if not self.filtered then self:openSearch() end
   elseif input:wasPressed("a") then
     -- ONLY A SEEN SPECIES HAS A PAGE.  The cartridge draws the entry for an
     -- unseen one as an empty frame rather than refusing to open it, but it
     -- also never lets the cursor rest on one that is not in the listing; this
     -- port lists everything, so the refusal is here instead of a page with
     -- nothing on it.
-    if self:status(self:species()) then self.page = "entry"; self.tab = 1; self:playCry() end
+    self:openEntry()
   elseif input:wasPressed("b") or input:wasPressed("start") then
-    self:close()
+    self:cancelResults()
   end
 end
 
-function Gen4Pokedex:touchpressed(_,px,py)
+function Gen4Pokedex:touchpressed(id,px,py)
+  if self:bottomVisible() then
+    local x,y=SecondScreen.toLocal(self.game,px,py)
+    if x then
+      if self.page=='list' then return self:listTouch(id,x,y) end
+      if self.page=='search' then
+        if self.searchPointer then return true end
+        self.searchPointer=id
+        return self:searchTouch(x,y)
+      end
+      if y>=8 and y<40 then
+        for i=1,6 do
+          if math.abs(x-(28+(i-1)*40))<20 then
+            if i==6 then self:backToList() else self:setTab(i) end
+            return true
+          end
+        end
+      end
+      if self.tab==3 then
+        if self.cryPointer then return true end
+        if x>=156 and x<204 and y>=107 and y<155 then self:pressCryPlay();self.cryPointer=id
+        elseif x>=214 and x<246 and y>=150 and y<182 then self.cryLoop=not self.cryLoop;self.cryPointer=id end
+      elseif self.tab==4 and y>=128 then self.sizeWeight=not self.sizeWeight
+      elseif self.tab==5 and y>=128 then self.form=((self.form or 0)+1)%#self:forms() end
+      return true
+    end
+    -- A secondary-panel event must never be reinterpreted as a top-screen tap.
+    return false
+  end
   local r=require('src.render.Renderer').uiPresentation
   if not r or px<r.x or py<r.y or px>=r.x+r.w or py>=r.y+r.h then return false end
   local x,y=(px-r.x)/r.scaleX,(py-r.y)/r.scaleY
-  if self.page=='entry' then
-    if y >= 176 then self.tab = math.min(5, math.floor(x / (W / 5)) + 1)
+  if self.page=='search' then return self:searchTouch(x,y,false)
+  elseif self.page=='entry' then
+    if y >= 176 then
+      local tab = math.min(5, math.floor(x / (W / 5)) + 1)
+      self:setTab(tab)
     elseif self.tab == 5 and y >= 128 then self.form = ((self.form or 0) + 1) % #self:forms()
     elseif self.tab == 4 and y >= 128 then self.sizeWeight=not self.sizeWeight
     elseif self.tab == 3 or x < 96 then self:playCry() end
@@ -245,13 +423,77 @@ function Gen4Pokedex:touchpressed(_,px,py)
     local index=self.top+math.floor((y-LIST.y)/LIST.pitch)
     if self.entries[index] then
       self.index=index
-      if self:status(self:species()) then self.page='entry';self.tab=1;self.form=0;self:playCry() end
+      self:openEntry()
     end
   elseif y>=160 then
     if x<64 then self:move(-LIST.rows)
     elseif x>=192 then self:move(LIST.rows)
-    else self:close() end
+    elseif x<128 then self:openSearch()
+    else self:cancelResults() end
   end
+  return true
+end
+
+function Gen4Pokedex:searchTouch(x,y,companion)
+  if companion~=false then
+    for i,b in ipairs(Search.buttons(self)) do
+      if x>=b.x-b.w/2 and x<b.x+b.w/2 and y>=b.y-b.h/2 and y<b.y+b.h/2 then
+        self.searchCursor=i;self.searchPressed=b;Search.activate(self,b);return true
+      end
+    end
+    return true
+  end
+  if y>=176 then
+    if x<128 then self:backToList() else self:applySearch() end
+  elseif y>=48 then
+    self.searchField=y<72 and 1 or y<96 and 2 or y<114 and 3 or y<136 and 4 or 5
+    self:changeSearch(x<128 and -1 or 1)
+  end
+  return true
+end
+
+-- Native lower hitboxes (ov21_021D76B0): wheel center 248,104, r104.
+function Gen4Pokedex:listTouch(id,x,y)
+  if self.wheelPointer then return true end
+  if x<96 and y>=16 then
+    if y<64 then if not self.filtered then self:openSearch() end
+    elseif y<112 then self:toggleDex()
+    else self:openEntry() end
+  elseif x>=116 and x<180 and y<16 then self:cancelResults()
+  elseif x>=116 and x<132 and y>=56 and y<72 then
+    for i,species in ipairs(self.entries) do if self:status(species) then self:move(i-self.index);break end end
+  elseif x>=116 and x<132 and y>=138 and y<154 then self:move(#self.entries-self.index)
+  elseif (x-248)^2+(y-104)^2<104^2 then
+    self.wheelPointer=id;self.wheelAngle=math.atan2(y-104,x-248);self.wheelRemainder=0
+  end
+  return true
+end
+
+function Gen4Pokedex:touchmoved(id,px,py)
+  if self.page=='search' and id==self.searchPointer then return true end
+  if id~=self.wheelPointer or self.page~='list' then return false end
+  local x,y=SecondScreen.toLocal(self.game,px,py)
+  if not x then return true end
+  if (x-248)^2+(y-104)^2<64 then return true end
+  local angle=math.atan2(y-104,x-248)
+  local delta=(angle-self.wheelAngle+math.pi)%(2*math.pi)-math.pi
+  self.wheelAngle=angle;self.wheelRotation=(self.wheelRotation or 0)+delta
+  self.wheelRemainder=self.wheelRemainder+delta
+  local step=math.rad(25)
+  local steps=self.wheelRemainder>0 and math.floor(self.wheelRemainder/step) or math.ceil(self.wheelRemainder/step)
+  if steps~=0 then
+    -- Clockwise native arc advances toward the beginning, without wrapping.
+    local target=math.max(1,math.min(#self.entries,self.index-steps))
+    self:move(target-self.index);self.wheelRemainder=self.wheelRemainder-steps*step
+  end
+  return true
+end
+
+function Gen4Pokedex:touchreleased(id)
+  if id==self.cryPointer then self.cryPointer=nil;return true end
+  if id==self.searchPointer then self.searchPointer,self.searchPressed=nil,nil;return true end
+  if id~=self.wheelPointer then return false end
+  self.wheelPointer=nil;self.wheelRemainder=0
   return true
 end
 
@@ -306,8 +548,11 @@ function Gen4Pokedex:drawEntry()
   local L = self:layout()
   local species = self:species()
   local def = self:def(species)
+  local caught = self:status(species) == 'owned'
+  local textSpecies = caught and species or 0
 
-  local page = self:img(art.entry)
+  local mode=self.national and 'national' or 'sinnoh'
+  local page = self:screenArt('dex/entry_'..mode) or self:img(art.entry)
   if page then
     g.setColor(1, 1, 1, 1)
     g.draw(page, 0, 0)
@@ -319,7 +564,7 @@ function Gen4Pokedex:drawEntry()
 
   -- The Pokemon, centred on the position the app gives its sprite.
   local path = species and Sprites.path(self.game.data, species, "front",
-                                        { kind = "dex" })
+                                        { kind = "dex", mon = self:displayMon() })
   local image = path and self:img(path)
   if image then
     local iw, ih = image:getDimensions()
@@ -329,43 +574,52 @@ function Gen4Pokedex:drawEntry()
   end
 
   local words = art.words or {}
+  local categoryBox = self:screenArt('pokedex/type_icons_17')
+  if categoryBox then
+    g.setColor(1,1,1,1)
+    -- Cell 17's OAM extent is (-86,-36), not half of its 160x52 crop.
+    g.draw(categoryBox,192,52,0,1,1,86,36)
+  end
   local heading=Font.fit(("%03d  %s"):format((self.numbers and self.numbers[species]) or species or 0,(def and def.name) or "?"),136)
   Font.draw(heading,L.nameNumber.x-math.floor(Font.width(heading)/2),L.nameNumber.y)
 
-  local category = (art.category or {})[species]
-  if category then Font.draw(category, L.category.x, L.category.y) end
+  local category = (art.category or {})[textSpecies]
+  if category then
+    Font.draw(category, L.category.x + math.max(0, math.floor((136 - Font.width(category))/2)), L.category.y)
+  end
 
   Font.draw(words.height or "HT", L.heightLabel.x, L.heightLabel.y)
-  Font.draw((art.height or {})[species] or "???",
+  Font.draw((art.height or {})[textSpecies] or "???",
             L.heightValue.x, L.heightValue.y)
   Font.draw(words.weight or "WT", L.weightLabel.x, L.weightLabel.y)
-  Font.draw((art.weight or {})[species] or "???",
+  Font.draw((art.weight or {})[textSpecies] or "???",
             L.weightValue.x, L.weightValue.y)
 
   -- The entry text.  The cartridge centres it on x = 128 and drops to x = 8
   -- when it is wider than 240 -- its own overflow rule, kept rather than
   -- replaced by a clamp.
-  local entry = (def and def.dexEntry) or ""
+  local entry = caught and ((def and def.dexEntry) or "") or (art.unknownEntry or "")
   local lines = {}
   for line in (tostring(entry) .. "\n"):gmatch("([^\n]*)\n") do
     lines[#lines + 1] = line
   end
   local maxLines = 3
+  local width = 0
+  for _,line in ipairs(lines) do width = math.max(width, Font.width(line)) end
+  local textX = (width < L.entry.maxWidth)
+    and (L.entry.centre - math.floor(width / 2)) or L.entry.overflowX
   if self.scroll > math.max(0, #lines - maxLines) then
     self.scroll = math.max(0, #lines - maxLines)
   end
   for i = 1, maxLines do
     local line = lines[self.scroll + i]
     if line then
-      local width = Font.width(line)
-      local x = (width < L.entry.maxWidth)
-        and (L.entry.centre - math.floor(width / 2)) or L.entry.overflowX
-      Font.draw(line, x, L.entry.y + (i - 1) * 10)
+      Font.draw(line, textX, L.entry.y + (i - 1) * 10)
     end
   end
 
   -- The banner, on its own layer over the page, exactly as the app draws it.
-  local banner = self:img(art.banner)
+  local banner = self:screenArt('dex/banner_'..mode) or self:img(art.banner)
   if banner then
     g.setColor(1, 1, 1, 1)
     g.draw(banner, 0, 0)
@@ -376,15 +630,28 @@ end
 local TABS = { 'INFO', 'AREA', 'CRY', 'SIZE', 'FORMS' }
 function Gen4Pokedex:playCry()
   self:stopCry()
-  self.cry = require('src.core.Sound').playCry(self.game.data, self:species())
+  if not self:status(self:species()) then return end
+  self.cry = require('src.core.Sound').playCry(self.game.data, self:species(),{isolated=true})
+  self.cryRunning=self.cry~=nil
+end
+function Gen4Pokedex:pressCryPlay()
+  if self.cryLoop and self.cryRunning then self:stopCry() else self:playCry() end
+end
+function Gen4Pokedex:displayMon()
+  -- InfoMain uses PokedexSort_DefaultForm: the first form encountered, even
+  -- when that was an alternate form rather than form zero.
+  return { species = self:species(), form = Forms.seen(self.game.save.pokedex, self:species())[1] or 0 }
 end
 function Gen4Pokedex:forms()
   local species = self:species()
-  local out = { false }
-  for name, record in pairs((self:def() or {}).forms or {}) do
-    if record.spriteFront then out[#out+1] = name end
+  local out = {}
+  local forms=(self:def() or {}).forms or {}
+  for _,name in ipairs(Forms.seen(self.game.save.pokedex,species)) do
+    local record=forms[name]
+    if record and (record.spriteFront or record.front) then out[#out+1]=name end
   end
-  table.sort(out,function(a,b) if a==false then return true elseif b==false then return false end return tostring(a)<tostring(b) end)
+  -- Existing saves may have species knowledge but no per-form encounter history.
+  if #out==0 then out[1]=false end
   return out
 end
 function Gen4Pokedex:areas()
@@ -428,11 +695,18 @@ end
 function Gen4Pokedex:drawDetails()
   if self.tab == 1 then
     self:drawEntry()
-    local footprint = self:screenArt(('dex/footprint_%03d'):format(self:species()))
+    if self:status(self:species()) ~= 'owned' then return end
+    local mon = self:displayMon()
+    local id = self:species()
+    if id == 487 and Forms.personalIndex(id, mon.form) ~= id then id = 11 end
+    local footprint = self:screenArt(('dex/footprint_%03d'):format(id))
     if footprint then
-      local at = self:layout().footprint
       love.graphics.setColor(1,1,1,1)
-      love.graphics.draw(footprint, at.x + 16, at.y + 16)
+      love.graphics.draw(footprint, 120, 88, 0, 1, 1, footprint:getWidth()/2, footprint:getHeight()/2)
+    end
+    local types = (Forms.definition(self.game.data, mon) or {}).types or {}
+    for i = 1, 2 do
+      if types[i] and (i == 1 or types[2] ~= types[1]) then self:drawType(types[i], i == 1 and 170 or 220, 72) end
     end
     return
   end
@@ -452,28 +726,173 @@ function Gen4Pokedex:drawDetails()
     local bar=self:screenArt('pokedex/cry_bar_00');if bar then g.draw(bar,112-bar:getWidth()/2,88-bar:getHeight()/2) end
   elseif self.tab==4 then
     if self:status(self:species())=='owned' then
-      Font.draw('HEIGHT '..((self.art.height or {})[self:species()] or '?'),24,120)
-      Font.draw('WEIGHT '..((self.art.weight or {})[self:species()] or '?'),24,144)
+      Font.draw('HEIGHT '..(((self.art or {}).height or {})[self:species()] or '?'),24,120)
+      Font.draw('WEIGHT '..(((self.art or {}).weight or {})[self:species()] or '?'),24,144)
     end
   elseif self.tab==5 then
     local forms=self:forms();local form=forms[(self.form or 0)%#forms+1]
-    local path=form and def.forms[form].spriteFront or Sprites.path(self.game.data,self:species(),'front',{kind='dex'})
+    local record=form and def.forms[form]
+    local path=record and (record.spriteFront or record.front) or Sprites.path(self.game.data,self:species(),'front',{kind='dex'})
     local image=path and self:img(path)
     if image then g.draw(image,88,48,0,80/image:getWidth(),80/image:getHeight()) end
     Font.draw('A: NEXT FORM',64,144)
   end
 end
+local TYPE_ANIM = { NORMAL=0, FIRE=1, GRASS=2, WATER=3, ELECTRIC=4,
+  ROCK=5, FIGHTING=6, GHOST=7, MYSTERY=7, GROUND=8, STEEL=9, POISON=10,
+  BUG=11, DARK=12, ICE=13, FLYING=14, PSYCHIC=15, DRAGON=16 }
+function Gen4Pokedex:drawType(name, x, y)
+  local sequence = TYPE_ANIM[tostring(name):upper()]
+  if sequence == nil then return end
+  local image = self:screenArt(('pokedex/type_icons_%02d'):format(sequence))
+  if image then
+    love.graphics.setColor(1,1,1,1)
+    love.graphics.draw(image,x,y,0,1,1,image:getWidth()/2,image:getHeight()/2)
+  end
+end
 function Gen4Pokedex:drawTabs()
   local g=love.graphics
   for i,label in ipairs(TABS) do
-    g.setColor(i==self.tab and 0.7 or 0.9,0.8,0.85,1)
+    local available = self:tabAvailable(i)
+    g.setColor(available and (i==self.tab and 0.7 or 0.9) or 0.5,0.8,0.85,1)
     g.rectangle('fill',(i-1)*W/5,176,W/5,16);g.setColor(1,1,1,1)
-    Font.draw(label,(i-1)*W/5+4,178)
+    if i ~= 5 or available then Font.draw(label,(i-1)*W/5+4,178) end
   end
 end
 function Gen4Pokedex:draw()
-  if self.page == "entry" then self:drawDetails();self:drawTabs();return end
+  self.game.secondScreenDrawnThisFrame=true
+  if self.page=='search' then
+    self:drawSearch(false)
+    if self:bottomVisible() then SecondScreen.draw(self.game,function() self:drawSearch(true) end) end
+    return
+  end
+  if self.page == "entry" then
+    self:drawDetails()
+    if self:bottomVisible() then
+      SecondScreen.draw(self.game,function() self:drawBottom() end)
+    else self:drawTabs() end
+    return
+  end
   self:drawList()
+  if self:bottomVisible() then SecondScreen.draw(self.game,function() self:drawListBottom() end)
+  elseif not self.filtered then Font.draw('X: SEARCH',72,164) end
+end
+
+function Gen4Pokedex:drawNativeSprite(key,x,y)
+  local record=((self.game.data.gen4_graphics or {}).screens or {})[key]
+  local image=self:screenArt(key)
+  if not image then return false end
+  love.graphics.setColor(1,1,1,1)
+  love.graphics.draw(image,x+(record and record.originX or -image:getWidth()/2),y+(record and record.originY or -image:getHeight()/2))
+  return true
+end
+
+function Gen4Pokedex:drawListBottom()
+  local g=love.graphics
+  g.setColor(0.85,0.9,0.95,1);g.rectangle('fill',0,0,W,H);g.setColor(1,1,1,1)
+  local mode=self.filtered and 'filtered' or (self.national and 'national' or 'sinnoh')
+  -- Compose the rotating affine layer into its own bounded canvas so an inset
+  -- cannot spill wheel pixels onto the main screen.
+  local wheel=self:screenArt('dex/list_wheel')
+  if wheel then
+    if not self.wheelCanvas then self.wheelCanvas=g.newCanvas(W,H,{dpiscale=1});self.wheelCanvas:setFilter('nearest','nearest') end
+    local previous=g.getCanvas();g.push('all');g.setCanvas(self.wheelCanvas);g.origin();g.setScissor();g.clear(0,0,0,0)
+    g.draw(wheel,248,104,self.wheelRotation or 0,1,1,128,104)
+    g.setCanvas(previous);g.pop();g.draw(self.wheelCanvas,0,0)
+  end
+  local bg=self:screenArt('dex/list_panel_'..mode);if bg then g.draw(bg,0,0) end
+  local words=(self.art or {}).words or {}
+  local buttons={{2,48,40,words.search or 'SEARCH'},{0,48,88,words.switch or 'SWITCH'},{1,48,152,'CHECK'},
+    {3,124,64},{4,124,146},{5,124,8,self.filtered and 'CANCEL' or 'QUIT'}}
+  for i,b in ipairs(buttons) do
+    local visible=i~=1 or not self.filtered
+    if i==2 then visible=not self.filtered and ((self.game.save or {}).pokedex or {}).national end
+    if visible then
+      self:drawNativeSprite(('dex/list_button_%02d'):format(b[1]),b[2],b[3])
+      if b[4] then Font.draw(b[4],b[2]+(i==6 and 10 or -40),b[3]-(i==6 and 8 or 14)) end
+    end
+  end
+end
+
+function Gen4Pokedex:drawSearch(companion)
+  local g=love.graphics
+  g.setColor(0.85,0.9,0.95,1);g.rectangle('fill',0,0,W,H);g.setColor(1,1,1,1)
+  local field=self.searchField
+  if companion then self:drawSearchBottom();return end
+  if not companion then
+    local key=({'order','name','type','type','form'})[field]
+    local bg=self:screenArt('dex/search_'..key);if bg then g.draw(bg,0,0) end
+    local message=self.searchError
+    if message=='NONE FOUND' then message=Search.label(self,93,message) end
+    message=message or Search.label(self,({90,87,88,88,89})[field],'SEARCH POKEMON')
+    local lines={};for line in (message..'\n'):gmatch('(.-)\n') do lines[#lines+1]=line end
+    for i,line in ipairs(lines) do
+      line=Font.fit(line,208)
+      Font.draw(line,24+math.floor((208-Font.width(line))/2),8+math.floor((32-#lines*16)/2)+(i-1)*16)
+    end
+  end
+  for i=1,5 do
+    local value=Search.CHOICES[i][self.searchSelection[i]]
+    if i==1 then value=Search.ORDER_LABELS[self.searchSelection[i]] end
+    if i==1 then value=Search.label(self,80+self.searchSelection[i],value)
+    elseif i==2 and self.searchSelection[i]>1 then value=Search.label(self,52+self.searchSelection[i],value)
+    elseif (i==3 or i==4) and self.searchSelection[i]>1 then value=Search.label(self,Search.TYPE_LABEL_IDS[self.searchSelection[i]],value) end
+    if value=='none' then value='----' end
+    local y=({52,77,102,120,164})[i]
+    if i==5 and self.searchSelection[5]>1 then
+      self:drawNativeSprite(('dex/search_shape_%02d'):format(self.searchSelection[5]-1),128,164)
+    elseif i~=5 then Font.draw(value,88+math.max(0,math.floor((80-Font.width(value))/2)),y) end
+  end
+  if not self:bottomVisible() then
+    Font.draw('CANCEL',8,176);Font.draw('SEARCH',184,176)
+  end
+end
+
+function Gen4Pokedex:drawSearchBottom()
+  local g=love.graphics
+  local bg=self:screenArt('dex/search_panel');if bg then g.draw(bg,0,0) end
+  for i,b in ipairs(Search.buttons(self)) do
+    local pressed=self.searchPressed
+    local held=pressed and pressed.action==b.action and pressed.value==b.value
+    local frame=held and 2 or b.selected and 3 or 0
+    local key=('dex/search_buttons_%02d_%02d'):format(b.sequence,frame)
+    if not self:drawNativeSprite(key,b.x,b.y) then
+      g.setColor(b.selected and 1 or 0.85,0.9,0.65,1);g.rectangle('fill',b.x-b.w/2,b.y-16,b.w,32);g.setColor(1,1,1,1)
+    end
+    if b.icon~=nil then self:drawNativeSprite(('dex/search_button_forms_%02d_%02d'):format(b.icon,frame),b.x,b.y)
+    elseif b.label then Font.draw(b.label,b.x-math.floor(Font.width(b.label)/2),b.y-6-(frame==2 and 4 or frame==3 and 2 or 0)) end
+    if self.searchCursor==i then
+      g.setColor(0.2,0.25,0.35,1);g.rectangle('line',b.x-b.w/2+2,b.y-14,b.w-4,28);g.setColor(1,1,1,1)
+    end
+  end
+end
+
+function Gen4Pokedex:drawBottom()
+  local g=love.graphics
+  g.setColor(0.85,0.9,0.95,1);g.rectangle('fill',0,0,W,H);g.setColor(1,1,1,1)
+  local mode=self.national and 'national' or 'sinnoh'
+  local bg=self:screenArt('dex/panel_'..mode)
+  if bg then g.draw(bg,0,0) end
+  if self.tab==3 then
+    local wheel=self:screenArt('dex/cry_wheel');if wheel then g.draw(wheel,0,0) end
+    local panel=self:screenArt('dex/cry_panel');if panel then g.draw(panel,0,0) end
+    self:drawNativeSprite('dex/cry_control_04',64,67)
+    self:drawNativeSprite('dex/cry_control_01',51,157)
+    self:drawNativeSprite(self.cryRunning and 'dex/cry_control_02' or 'dex/cry_control_03',180,131)
+    self:drawNativeSprite(self.cryLoop and 'dex/cry_control_05' or 'dex/cry_control_06',230,166)
+    local text=Search.label(self,41,'CHORUS');Font.draw(text,64-math.floor(Font.width(text)/2),84)
+  end
+  for i=1,6 do
+    if i~=5 or self:tabAvailable(5) then
+      local key=('dex/page_button_%02d'):format(i-1)
+      local record=((self.game.data.gen4_graphics or {}).screens or {})[key]
+      local image=self:screenArt(key) or self:screenArt(('pokedex/page_buttons_%02d'):format(i-1))
+      local x=28+(i-1)*40
+      if image then
+        g.draw(image,x+(record and record.originX or -image:getWidth()/2),24+(record and record.originY or -image:getHeight()/2))
+      else Font.draw(i==6 and 'BACK' or TABS[i],x-16,20) end
+    end
+  end
 end
 
 return Gen4Pokedex

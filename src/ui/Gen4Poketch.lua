@@ -70,7 +70,8 @@ function Gen4Poketch.new(game, opts)
   -- is kept on the save rather than on the session for the same reason the
   -- counter is: closing the watch is not meant to reset it.
   local store = self:store()
-  self.index = math.max(1, math.min(#self.apps, store.app or 1))
+  self.index = math.max(1, math.min(#self.apps, tonumber(store.app) or 1))
+  if not self:isRegistered(self.index) then self:cycle(1) end
   self.flash = 0
   return self
 end
@@ -99,7 +100,19 @@ function Gen4Poketch:img(key)
 end
 
 function Gen4Poketch:app()
-  return self.apps[self.index]
+  return self:isRegistered(self.index) and self.apps[self.index] or nil
+end
+
+function Gen4Poketch:isRegistered(index)
+  local app=self.apps[index]
+  if not app then return false end
+  local store=self:store()
+  local registry=store.registered or store.apps
+  -- Older runtime saves didn't retain the registry. Keep their app access
+  -- until story scripts supply one, without inventing acquisition flags.
+  if type(registry)~='table' then return true end
+  local id=tonumber(app.id) or index-1
+  return registry[id]==true or registry[id]==1
 end
 
 -- ------------------------------------------------------------------ input --
@@ -113,21 +126,32 @@ function Gen4Poketch:cycle(delta)
   self.activeMapMarker=nil
   local count = #self.apps
   if count == 0 then return end
-  self.index = (self.index - 1 + delta) % count + 1
-  self:store().app = self.index
+  local index=self.index
+  for _=1,count do
+    index=(index-1+delta)%count+1
+    if self:isRegistered(index) then
+      self.index=index
+      self:store().app=index
+      return
+    end
+  end
 end
 
-function Gen4Poketch:update(dt)
+function Gen4Poketch:updatePresentation(dt)
   self:updateCoin(dt or 1/60)
   if self.friendshipTouch then
     self.friendshipTouch.frames=self.friendshipTouch.frames-1
     if self.friendshipTouch.frames<=0 then self.friendshipTouch=nil end
   end
-  local input = self.game.input
-  if not input then return end
   self.flash = (self.flash + 1) % 60
   self.elapsed = (self.elapsed or 0) + (dt or 1 / 60)
   if self.scan then self.scan = math.max(0, self.scan - 1) end
+end
+
+function Gen4Poketch:update(dt)
+  self:updatePresentation(dt)
+  local input = self.game.input
+  if not input then return end
 
   if input:wasPressed("r") or input:wasPressed("right") then return self:cycle(1) end
   if input:wasPressed("left") then return self:cycle(-1) end
@@ -197,6 +221,7 @@ end
 function Gen4Poketch:touchpressed(id, px, py)
   local x, y = SecondScreen.toLocal(self.game, px, py)
   if not x then return false end
+  if self.pointer~=nil then return true end
   self.pointer = id
   if x >= 224 and y >= 32 and y < 160 then self:cycle(y < 96 and -1 or 1); return true end
   if x < FACE.x or x >= FACE.x + FACE.w or y < FACE.y or y >= FACE.y + FACE.h then return true end

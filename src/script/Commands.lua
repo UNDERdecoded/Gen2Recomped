@@ -1206,6 +1206,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     level = mon.level,
     location = BattleStateMod.metHere(ctx.game),
   } or nil)
+  require('src.pokemon.Gen4Origin').stamp(ctx.game,mon,mon.isEgg and 'egg' or 'met',
+    BattleStateMod.metHere(ctx.game))
   local addedToParty = Party.add(ctx.save.party, mon)
   local boxNum = nil
   if not addedToParty then
@@ -1220,6 +1222,7 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     dex.seen[species] = true
     dex.owned[species] = true
   end
+  require('src.pokemon.Gen4Forms').record(ctx.game,species,mon)
   ctx.lastCheck = true
   ctx.addedToParty = addedToParty
   require('src.pokemon.Gen4PoketchState').remember(ctx.game, mon)

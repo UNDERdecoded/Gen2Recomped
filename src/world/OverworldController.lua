@@ -1486,10 +1486,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- snap the camera immediately: the overworld doesn't update while a
   -- Transition is on top, so a stale camera would show the new map at
   -- the old scroll position for the whole fade-in
-  self.camera.groundScale = self:groundSin()
-  local camTarget = self:cameraTarget()
-  self.camera:follow(camTarget.px, camTarget.py,
-                     Game.renderer:worldViewSize())
+  self:followCamera()
 
   -- ...AND THE REMATCH ROLL, which happens HERE and not on the step.
   --
@@ -3580,7 +3577,12 @@ function OverworldState:update(dt)
     self.lockedFrames = (self.lockedFrames or 0) + 1
     if self.lockedFrames == 600 then
       local why = {}
-      if self.runner:isRunning() then why[#why + 1] = "a script is running" end
+      if self.runner:isRunning() then
+        why[#why + 1] = ("a script is running at %s (frame wait %s, condition wait %s)")
+          :format(tostring(self.runner.lastRow or "?"),
+                  tostring(self.runner.waitingFrames or "none"),
+                  tostring(self.runner.waitingCheck ~= nil))
+      end
       if #self.scriptMoves > 0 then
         -- NAME THEM, because the count alone is not a lead.
         --
@@ -3689,10 +3691,7 @@ function OverworldState:update(dt)
     self:onStepComplete()
   end
 
-  self.camera.groundScale = self:groundSin()
-  local camTarget = self:cameraTarget()
-  self.camera:follow(camTarget.px, camTarget.py,
-                     Game.renderer:worldViewSize())
+  self:followCamera()
 
   -- pan_camera offset rides on top of the follow; the ramp resumes its
   -- runner when it lands
@@ -5160,8 +5159,7 @@ function OverworldState:crossConnection(dir, conn, scripted)
       self.entities[#self.entities + 1] = e
     end
   end
-  self.camera.groundScale = self:groundSin()
-  self.camera:follow(p.px, p.py)
+  self:followCamera()
   p.facing = dir
   p.targetX, p.targetY = x, y
   p.moving = true
@@ -5950,6 +5948,22 @@ function OverworldState:groundSin()
   sin = ok and tonumber(sin) or nil
   if not (sin and sin > 0) then return 1 end
   return sin
+end
+
+function OverworldState:followCamera()
+  local target = self:cameraTarget()
+  local camera = self.camera
+  camera.groundScale = self:groundSin()
+  camera.spriteCenterX, camera.spriteCenterY = nil, nil
+  local ground = self.map and self.map.renderer and self.map.renderer.gen4Ground
+  if ground and not (ground.freeMode and ground:freeMode()) then
+    -- Platinum's visible 32px body is centered eight pixels across its
+    -- cell, four pixels above the projected cell origin. Terrain lifts it
+    -- by the same amount used by the entity draw pass.
+    local rise = ground:rise(target.px + 8, target.py + 8) or 0
+    camera.spriteCenterX, camera.spriteCenterY = 8, -4 - rise
+  end
+  camera:follow(target.px, target.py, Game.renderer:worldViewSize())
 end
 
 -- The Gen 4 ground when a FREE camera owns the frame, or nil.
@@ -10522,6 +10536,11 @@ function OverworldState:startTrainerApproach(npc, dist, partner)
                           and partner.def.gen3TrainerId or nil
         self.runner:run(rows, { npc = npc, mapId = self.map.id,
                                 gen3PartnerTrainer = partnerId,
+                                gen4ApproachingTrainers = {
+                                  type(npc.def.trainer) == "table" and npc.def.trainer.id or 0,
+                                  partner and partner.def and type(partner.def.trainer) == "table"
+                                    and partner.def.trainer.id or 0,
+                                },
                                 onDone = function()
                                   npc.frozen = false
                                   if partner then partner.frozen = false end
@@ -10590,6 +10609,10 @@ end
 function OverworldState:showMapText(textConst, npc, onDone)
   local mapLabel = self.map.def.label
   local script = mapScripts.talkScript(self.map.id, textConst)
+  if not script and GameVersion.isGen4() then
+    local VM=require('src.script.Gen4ScriptVM')
+    script=VM.resolveTalk(Game.data,self.map.id,npc and npc.def and npc.def.index,textConst)
+  end
   if script then
     -- A GEN 3 SCRIPT TURNS ITS OWN SPEAKER, OR DELIBERATELY DOES NOT.
     --
@@ -10839,6 +10862,7 @@ function OverworldState:stepEggs()
   -- until this moment.
   hatched.metLevel = 0
   hatched.metLocation = require("src.battle.BattleState").metHere(Game)
+  require('src.pokemon.Gen4Origin').stamp(Game,hatched,'hatch',hatched.metLocation)
   Pokemon.heal(hatched)
   -- HatchEggs (5:$6FB0) is `ld a, [wCurPartySpecies] / cp TOGEPI / jr nz,
   -- .nottogepi / ld de, $0054 / ld b, 1 / EventFlagAction` -- hatching a

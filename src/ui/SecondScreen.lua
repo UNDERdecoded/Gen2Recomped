@@ -519,7 +519,12 @@ function SecondScreen.injectTouch(game, method, id, x, y)
     local sw, sh = surfaceSize(game)
     x, y = x * lw / sw, y * lh / sh
   end
-  if not (x and y) or x < 0 or y < 0 or x >= lw or y >= lh then return false end
+  if not (x and y) then return false end
+  local captured=game.pointerOwners and game.pointerOwners[id]
+  if (x<0 or y<0 or x>=lw or y>=lh)
+     and not (captured and (method=='touchmoved' or method=='touchreleased')) then
+    return false
+  end
   local handler = game[method]
   if type(handler) ~= "function" then return false end
   local was = game.secondScreenInjecting

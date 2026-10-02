@@ -328,9 +328,9 @@ L.applymovement = function(ins, s)
   emit(s, { "g4_move", ins.args[1], ins.movement })
 end
 L.waitmovement = function(_, s) emit(s, { "g4_wait_move" }) end
-L.playse = function(ins, s) emit(s, { "play_sound", ins.args[1] }) end
-L.waitse = function(_, s) emit(s, { "g4_wait_sound" }) end
-L.playcry = function(ins, s) emit(s, { "play_cry", ins.args[1], ins.args[2] }) end
+L.playse = function(ins, s) emit(s, { "g4_play_sound", ins.args[1] }) end
+L.waitse = function(ins, s) emit(s, { "g4_wait_sound", ins.args[1] }) end
+L.playcry = function(ins, s) emit(s, { "g4_play_cry", ins.args[1] }) end
 L.playfanfare = function(ins, s) emit(s, { "g4_fanfare", ins.args[1] }) end
 L.waitfanfare = function(_, s) emit(s, { "g4_wait_fanfare" }) end
 -- `fadescreen <steps> <framesPerStep> <type> <colour>` -- FOUR operands, and the
@@ -375,6 +375,9 @@ end
 -- the listing suggests, because a script that stops at one stops before the
 -- battle it exists to start.
 L.gettrainerid = function(ins, s) emit(s, { "g4_get_trainer_id", ins.args[1] }) end
+L.getapproachingtrainerid = function(ins, s)
+  emit(s, { "g4_get_approaching_trainer_id", ins.args[1], ins.args[2] })
+end
 L.checkistrainerdoublebattle = function(ins, s)
   emit(s, { "g4_check_trainer_double", ins.args[1] })
 end
@@ -1002,6 +1005,17 @@ end
 --
 -- Signs are the same shape and are keyed by their index in the map's own
 -- list, which is what the extractor filed them under.
+function Gen4ScriptVM.resolveTalk(data,mapId,index,textConst)
+  local pool=store(data)
+  local entry=pool and pool.maps and pool.maps[mapId]
+  local label=entry and entry.objects and index and entry.objects[index]
+  if not label and entry and entry.shared and index then
+    label=sharedLabel(pool,(entry.shared.objects or {})[index])
+  end
+  if not label and type(textConst)=='string' then label=textConst end
+  return label and Gen4ScriptVM.compile(data,label) or nil
+end
+
 function Gen4ScriptVM.bindObjects(data)
   local pool = store(data)
   if not (pool and pool.maps and data and data.maps) then return 0 end
@@ -1104,6 +1118,14 @@ L.getcurrentmapid = function(ins, s) emit(s, { "g4_get_map_id", ins.args[1] }) e
 -- `ScriptContext_GetVar`, so it may itself be a var.
 L.getrandom = function(ins, s)
   emit(s, { "g4_get_random", ins.args[1], ins.args[2] })
+end
+
+L.getrandom2 = function(ins,s)
+  emit(s, {'g4_get_random',ins.args[1],ins.args[2]})
+  emit(s, {'wait',1})
+end
+L.buffervaluepaddingdigits = function(ins,s)
+  emit(s, {'g4_buffer_padded_number',ins.args[1],ins.args[2],ins.args[3],ins.args[4]})
 end
 
 -- `Party_HealAllMembers`.  The engine already has this verb for four other
@@ -1400,6 +1422,12 @@ L.checkitemisplate = function(ins, s)
 end
 
 L.getpartycount = function(ins, s) emit(s, { "g4_party_count", ins.args[1] }) end
+L.countalivemonsexcept = function(ins,s)
+  emit(s, {'g4_party_alive_except',ins.args[1],ins.args[2]})
+end
+L.countalivemonsandboxmons = function(ins,s)
+  emit(s, {'g4_party_alive_and_boxes',ins.args[1]})
+end
 L.countpartynoneggs = function(ins, s)
   emit(s, { "g4_party_non_eggs", ins.args[1] })
 end
@@ -1496,7 +1524,7 @@ L.gettrainercardlevel = function(ins, s)
   emit(s, { "g4_no_feature", ins.args[1], "the trainer card" })
 end
 L.checkpartypokerus = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "Pokerus" })
+  emit(s, { "g4_party_pokerus", ins.args[1] })
 end
 L.checkdistributionevent = function(ins, s)
   emit(s, { "g4_no_feature", ins.args[2], "Mystery Gift distribution events" })
@@ -1524,7 +1552,7 @@ end
 -- then walked into twice anyway -- on the two commands whose names both contain
 -- "fatefulencounter". Reading carefully is not a substitute for a check.
 L.findpartyslotwithfatefulencounterspecies = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "fateful-encounter Pokemon" })
+  emit(s, { "g4_fateful_slot", ins.args[1], ins.args[2] })
 end
 
 -- FIVE COMMANDS PRET HAS NOT NAMED, and all five turn out to be safe.  Read
@@ -1552,7 +1580,7 @@ L.getlocaldexseencount = function(ins, s)
   emit(s, { "g4_dex_seen_count", ins.args[1] })
 end
 L.checklocaldexcompleted = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the Sinnoh dex completion check" })
+  emit(s, { "g4_dex_complete", ins.args[1], false })
 end
 L.setstepflag = function(_, s)
   emit(s, { "g4_noop", "the step-counter freeze (a script already holds the gate)" })
@@ -1560,8 +1588,8 @@ end
 L.clearstepflag = function(_, s)
   emit(s, { "g4_noop", "the step-counter freeze (a script already holds the gate)" })
 end
-L.incrementgamerecord = function(_, s)
-  emit(s, { "g4_noop", "the game records" })
+L.incrementgamerecord = function(ins, s)
+  emit(s, { "g4_add_game_record", ins.args[1], 1, true })
 end
 L.setinitialvolumeforsequence = function(_, s)
   emit(s, { "g4_noop", "a sequence volume (there is no Gen 4 sequence bank)" })
@@ -1662,7 +1690,7 @@ end
 -- ...and this one puts the destination SECOND, which is why they are lowered
 -- one at a time against `scrcmd_party.c` rather than by pattern.
 L.checkpartyhasspecies2 = function(ins, s)
-  emit(s, { "g4_party_has_species", ins.args[1], ins.args[2] })
+  emit(s, { "g4_party_has_species2", ins.args[1], ins.args[2] })
 end
 
 L.startwildbattle = function(ins, s)
@@ -1809,9 +1837,14 @@ end
 
 -- ODDS AND ENDS, each read on its own.
 L.changedeoxysform = function(_, s) emit(s, { "g4_noop", "Deoxys forms" }) end
-L.addtogamerecord = function(_, s) emit(s, { "g4_noop", "the game records" }) end
+L.addtogamerecord = function(ins, s)
+  emit(s, { "g4_add_game_record", ins.args[1], ins.args[2], false })
+end
+L.addtogamerecordbigvalue = function(ins, s)
+  emit(s, { "g4_add_game_record", ins.args[1], ins.args[2], true })
+end
 L.checkdaycarehasegg = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the Solaceon day care" })
+  emit(s, { "g4_daycare_has_egg", ins.args[1] })
 end
 L.clearspiritombcounter = function(_, s)
   emit(s, { "g4_noop", "the Spiritomb counter (it needs the Underground)" })
@@ -1993,16 +2026,19 @@ L.payshardcost = function(_, s) emit(s, { "g4_noop", "the shard move tutor" }) e
 
 -- THE DEX MILESTONES, none of which this port tracks per-region or per-form.
 L.getunownformsseencount = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "Unown form counting" })
+  emit(s, { "g4_unown_forms_seen", ins.args[1] })
 end
 L.checknationaldexcompleted = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the National Dex completion check" })
+  emit(s, { "g4_dex_complete", ins.args[1], true })
 end
+L.getnationaldexcaughtcount=function(ins,s) emit(s,{'g4_dex_caught_count',ins.args[1],true}) end
+L.getlocaldexcaughtcount_unused=function(ins,s) emit(s,{'g4_dex_caught_count',ins.args[1],false}) end
 L.checkgamecompleted = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the Hall of Fame record" })
+  emit(s, { "g4_game_completed", ins.args[1] })
 end
+L.setgamecompleted = function(_, s) emit(s, { "g4_set_game_completed" }) end
 L.turnonpokedexformdetection = function(_, s)
-  emit(s, { "g4_noop", "Pokedex form detection" })
+  emit(s, { "g4_enable_dex_form_detection" })
 end
 L.showdiplomasinnoh = function(_, s) emit(s, { "g4_noop", "the Sinnoh diploma" }) end
 L.showdiplomanationaldex = function(_, s)
@@ -2032,7 +2068,10 @@ L["29f"] = function(_, s) emit(s, { "g4_noop", "a cartridge no-op (scrcmd 29F)" 
 -- whole flow since Gen 1 as `record_hall_of_fame` -- Gen 2 lowers its own
 -- `HallOfFame` special to the same verb -- so the last three rows of the
 -- Sinnoh story are one line.
-L.cleargame = function(_, s) emit(s, { "record_hall_of_fame" }) end
+L.cleargame = function(_, s)
+  emit(s, { "g4_prepare_hall_of_fame" })
+  emit(s, { "record_hall_of_fame" })
+end
 L.playhalloffamehealinganimation = function(_, s)
   emit(s, { "g4_noop", "the Hall of Fame healing animation" })
 end
@@ -2179,7 +2218,7 @@ end
 -- behind each one branched on the previous command's answer. Caught by comparing
 -- pret's operand KINDS against the arg indices this file passes.
 L.checkpartyhasfatefulencounterregigigas = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "fateful-encounter Regigigas" })
+  emit(s, { "g4_fateful_regigigas", ins.args[1] })
 end
 -- `noop` is named that on the cartridge too.
 L.noop = function(_, s) emit(s, { "g4_noop", "a cartridge no-op" }) end

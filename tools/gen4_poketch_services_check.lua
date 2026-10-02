@@ -20,6 +20,7 @@ check(watch:touchpressed(1, 114, 128) and game.save.poketch.counter == 1, 'count
 watch:touchreleased(1)
 watch:touchpressed(1, 240, 120)
 check(watch.index == 2, 'next bezel button')
+watch:touchreleased(1)
 watch:calculate('8'); watch:calculate('/'); watch:calculate('2'); watch:calculate('=')
 check(game.save.poketch.calculator.display == '4', 'calculator divide')
 watch:calculate('/'); watch:calculate('0'); watch:calculate('=')
@@ -82,7 +83,7 @@ local machine = Archives.find('/fielddata/build_model/build_model.narc', 'pokece
 local ball = Archives.find('/fielddata/build_model/build_model.narc', 'pokecenter_healing_machine_mini_pokeball.nsbmd')
 check(machine ~= nil and ball ~= nil, 'native healing models are indexed')
 local dropped = 0
-local ground = setmetatable({ grid={land={10}}, terrain={chunks={ [10]={objects={
+local ground = setmetatable({ def={}, grid={land={10}}, terrain={chunks={ [10]={objects={
   {model=machine,x=20,y=30,z=40} }}}},
   dropBakes=function() dropped=dropped+1 end,
   signpostsFor=function() return {} end }, {__index=Ground})

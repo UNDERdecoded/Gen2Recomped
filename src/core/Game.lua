@@ -29,6 +29,9 @@ local function bootScreens(game)
 end
 
 function Game:load()
+  self.pointerOwners={}
+  self.secondScreenPointerOwner=nil
+  self.secondScreenOverworldPoketch=nil
   self.data = Data
   Data:load()
 
@@ -394,6 +397,14 @@ function Game:freeView()
   return nil
 end
 
+-- Zoom can dolly the field camera without enabling mouse orbit on it.
+function Game:zoomView()
+  local ground=self.overworld and self.overworld.map and self.overworld.map.renderer
+  ground=ground and ground.gen4Ground
+  local view=ground and ground.view3d
+  if view and view.zoomBy and view.mode~='first' then return view end
+end
+
 -- Degrees of camera per pixel of mouse, and per second at full stick.
 --
 -- Requested: *"the orbit ... should be mouse and right analog stick
@@ -537,6 +548,11 @@ end
 
 function Game:update(dt)
   require('src.pokemon.Gen4PoketchState').tick(self, dt)
+  local panel=self.secondScreenPointerOwner
+  local top=self.stack and self.stack.top and self.stack:top()
+  if panel and panel~=top and panel.updatePresentation then
+    panel:updatePresentation(dt)
+  end
   -- Fast-forward scales only the logic clock (see src/core/GameSpeed.lua).
   -- Give the accumulator room for one full frame at the current speed,
   -- or the anti-spiral clamp quietly caps every level above ~15X.
@@ -863,6 +879,7 @@ function Game:draw()
   -- claims the panel by calling SecondScreen.draw during _draw(). If nothing
   -- claims it, a Gen 4 overworld still needs Platinum's always-present Poketch.
   self.secondScreenDrawnThisFrame = false
+  self.secondScreenPointerOwner = nil
   self:_draw()
 
   -- Single-screen generations use the physical Android lower panel as a live
@@ -884,7 +901,8 @@ function Game:draw()
         end
         local p = self.secondScreenOverworldPoketch
         if p and p.drawWatch then
-          pcall(SS.draw, self, function() p:drawWatch() end)
+          local drawn=pcall(SS.draw, self, function() p:drawWatch() end)
+          if drawn then self.secondScreenPointerOwner=p end
         end
       end
     end
@@ -1090,6 +1108,8 @@ end
 
 -- overworld survey zoom: wheel up / '=' zooms in, wheel down / '-' out
 function Game:zoomStep(delta)
+  local view=self:zoomView()
+  if view and self.stack:top()==self.overworld then view:zoomBy(-delta);return end
   local Zoom = require("src.render.Zoom")
   if not Zoom.gateOK(self.stack:top(), self.overworld) then return end
   local offset = Zoom.step(delta, Renderer:fitScale())
@@ -1108,7 +1128,7 @@ function Game:wheelmoved(_, dy)
   -- zoom below keeps every case it had -- and in third person the wheel
   -- means the thing the player is looking at rather than the size of the
   -- window it is in, which is what a wheel means in every 3D game.
-  local view = self:freeView()
+  local view = self:zoomView()
   if view and view.zoomBy then
     view:zoomBy(dy > 0 and -1 or 1)
     return
@@ -1586,24 +1606,37 @@ end
 -- THE FALL-THROUGH IS THE WHOLE DESIGN. A state claims a press by defining the
 -- handler and returning true; anything else -- no handler, or a handler that
 -- returns false because the point was outside it -- and `TouchControls` receives
--- exactly what it received before. No state in the engine defines these today,
--- so this cannot change Gen 1, 2 or 3 behaviour: the `top.touchpressed` lookup
--- is nil and the next line runs, which is what ran before.
+-- exactly what it received before. Claimed gestures stay with their screen
+-- through release, including the watch drawn on Android's lower panel.
 --
 -- `pcall` because a state that raises inside a touch handler would otherwise
 -- take the d-pad down with it, and losing the controls is worse than losing the
 -- tap.
 local function offerPointer(self, method, id, x, y)
-  local top = self.stack and self.stack.top and self.stack:top()
-  if not (top and top[method]) then return false end
-  local ok, claimed = pcall(top[method], top, id, x, y)
-  if not ok then
-    require("src.core.Logger").warn("%s raised in a touch handler: %s",
-                                    tostring(top.name or "a screen"),
-                                    tostring(claimed))
-    return false
+  self.pointerOwners=self.pointerOwners or {}
+  local captured=self.pointerOwners[id]
+  local function offer(screen)
+    if not (screen and type(screen[method])=='function') then return false end
+    local ok,claimed=pcall(screen[method],screen,id,x,y)
+    if not ok then
+      require('src.core.Logger').warn('%s raised in a touch handler: %s',
+        tostring(screen.name or 'a screen'),tostring(claimed))
+      return false
+    end
+    if claimed==true and method=='touchpressed' then self.pointerOwners[id]=screen end
+    return claimed==true
   end
-  return claimed == true
+  if captured then
+    offer(captured)
+    if method=='touchreleased' then self.pointerOwners[id]=nil end
+    return true
+  end
+  local top = self.stack and self.stack.top and self.stack:top()
+  if offer(top) then return true end
+  -- The always-present Android lower-panel watch is drawn outside the stack.
+  -- Its coordinate mapper rejects main-window input in display mode.
+  local panel=self.secondScreenPointerOwner
+  return panel~=top and offer(panel) or false
 end
 
 function Game:touchpressed(id, x, y)
@@ -1612,6 +1645,7 @@ function Game:touchpressed(id, x, y)
 end
 
 function Game:hasPointerScreen()
+  if self.pointerOwners and self.pointerOwners.mouse then return true end
   local top=self.stack and self.stack.top and self.stack:top()
   return top and type(top.touchpressed)=='function' or false
 end
@@ -1631,6 +1665,9 @@ end
 -- entry chunks wrote before any save existed, while NEW GAME and
 -- CONTINUE replace the backing outright.
 function Game:adoptSave(save, seedBuckets)
+  self.pointerOwners={}
+  self.secondScreenPointerOwner=nil
+  self.secondScreenOverworldPoketch=nil
   save.modData = save.modData or {}
   local loader = self.mods
   if not loader then return end

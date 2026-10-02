@@ -1,0 +1,20 @@
+package.path='./?.lua;'..package.path
+require('src.script.Gen4Commands')
+local C=require('src.script.Commands')
+local VM=require('src.script.Gen4ScriptVM')
+local ctx={save={party={{species=1,hp=10},{species=2,hp=0},{species=3,hp=10,isEgg=true},{species=4,hp=12}},boxes={[1]={[1]={species=5,hp=0},[30]={species=6,hp=0,isEgg=true}},[18]={[30]={species=7,hp=0}}},gen4Vars={[0x4001]=3}},g4Compare=2,lastCheck=false}
+C.g4_party_alive_except(ctx,0x4000,0)
+assert(ctx.save.gen4Vars[0x4000]==1,'excluded slot must be zero based')
+C.g4_party_alive_except(ctx,0x4000,0x4001)
+assert(ctx.save.gen4Vars[0x4000]==1,'excluded slot must resolve variables')
+C.g4_party_alive_except(ctx,0x4000,6)
+assert(ctx.save.gen4Vars[0x4000]==2,'fainted Pokemon and eggs must not count')
+C.g4_party_alive_and_boxes(ctx,0x4000)
+assert(ctx.save.gen4Vars[0x4000]==4,'sparse box slots count non-eggs regardless of HP')
+assert(ctx.g4Compare==2 and ctx.lastCheck==false,'counting must preserve comparison state')
+local rows=VM.lower({{name='countalivemonsexcept',args={0x4000,0x4001}},{name='countalivemonsandboxmons',args={0x4000}}})
+assert(rows[1][1]=='g4_party_alive_except' and rows[1][3]==0x4001)
+assert(rows[2][1]=='g4_party_alive_and_boxes')
+ctx.save.party={};ctx.save.boxes={}
+C.g4_party_alive_and_boxes(ctx,0x4000);assert(ctx.save.gen4Vars[0x4000]==0)
+print('Party event checks: zero-based and variable exclusions, fainted/egg filtering, sparse storage and preserved comparison state passed')

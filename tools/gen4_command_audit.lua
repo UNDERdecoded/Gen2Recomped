@@ -133,7 +133,7 @@ local function try(name, args, expectVar)
     results[#results+1] = ("%-34s MISSING"):format(name); failures = failures + 1
     return
   end
-  local ok, err = pcall(fn, ctx, table.unpack(args))
+  local ok, err = pcall(fn, ctx, (table.unpack or unpack)(args))
   if not ok then
     results[#results+1] = ("%-34s RAISED  %s"):format(name, tostring(err))
     failures = failures + 1
@@ -176,7 +176,7 @@ local function expect(name, args, destVar, want, why)
     return
   end
   if type(args) == "function" then args = args(ctx) end
-  local ok, err = pcall(fn, ctx, table.unpack(args))
+  local ok, err = pcall(fn, ctx, (table.unpack or unpack)(args))
   if not ok then
     results[#results+1] = ("%-34s RAISED  %s"):format(name, tostring(err))
     failures = failures + 1
@@ -231,7 +231,8 @@ try("g4_mon_friendship",     {VAR, 0}, VAR)
 try("g4_mon_types",          {VAR, VAR+1, 0}, VAR)
 try("g4_mon_has_move",       {VAR, 33, 0}, VAR)
 try("g4_first_non_egg",      {VAR}, VAR)
-try("g4_party_has_species",  {387, VAR}, VAR)
+try("g4_party_has_species",  {VAR, 387}, VAR)
+try("g4_party_has_species2", {387, VAR}, VAR)
 try("g4_destroy_obstacle_anim", {0, VAR}, VAR)
 -- state setters (no var)
 try("g4_set_blackout_warp",  {9})

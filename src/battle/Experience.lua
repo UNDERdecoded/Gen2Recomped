@@ -80,7 +80,7 @@ end
 -- before the max-level cap, experience.asm:92-100).
 function Experience.apply(data, mon, defeatedDef, level, isTrainer,
                           numParticipants, traded)
-  local speciesDef = data.pokemon[mon.species]
+  local speciesDef = require('src.pokemon.Gen4Forms').definition(data,mon)
   if Stats.isGen3(speciesDef) then
     -- GEN 3 DOES NOT AWARD STAT EXPERIENCE, it awards EFFORT VALUES, and the
     -- two are not the same thing wearing a different name: stat exp is the

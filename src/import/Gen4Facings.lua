@@ -157,10 +157,11 @@ Gen4Facings.WALK_ANIM_FRAMES = 16
 -- sixteen.  Anything else returns nil and a reason: a berry tree has two
 -- textures and no facing at all, and inventing four directions for it would
 -- be the same class of mistake this module exists to undo.
-function Gen4Facings.cycles(seq)
+function Gen4Facings.cycles(seq, offset)
   if type(seq) ~= "table" then return nil, "no sequence" end
+  offset=tonumber(offset) or 0
   local per = Gen4Facings.WALK_ANIM_FRAMES
-  if seq.frames < per * 4 then
+  if seq.frames < offset + per * 4 then
     return nil, ("%d frames, four walk animations need %d")
                 :format(seq.frames, per * 4)
   end
@@ -168,7 +169,7 @@ function Gen4Facings.cycles(seq)
   for d = 0, 3 do
     local name = Gen4Facings.DIRECTIONS[d + 1]
     local cycle = {}
-    local first = d * per
+    local first = offset + d * per
     local at = first
     while at < first + per do
       cycle[#cycle + 1] = Gen4Facings.textureAt(seq, at)
@@ -189,8 +190,8 @@ end
 -- entries are the same pose, which is exactly why a two-step walk reads as a
 -- walk -- so the three are entries 1, 2 and 4.  A cycle with only two entries
 -- has one step and repeats it, which is what a Game Boy sheet does anyway.
-function Gen4Facings.facings(seq, textureCount)
-  local cycles, why = Gen4Facings.cycles(seq)
+function Gen4Facings.facings(seq, textureCount, offset)
+  local cycles, why = Gen4Facings.cycles(seq,offset)
   if not cycles then return nil, why end
   local out = {}
   for _, name in ipairs(Gen4Facings.DIRECTIONS) do

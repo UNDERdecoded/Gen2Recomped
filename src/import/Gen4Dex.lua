@@ -101,7 +101,8 @@ Gen4Dex.LAYOUT = {
 -- Which entry of the Pokedex's own label bank is which.  From
 -- `res/text/pokedex.json`: 0 seen, 1 obtained, 5 switch, 7 search, 9 HT,
 -- 10 WT, 11 ft, 12 lbs.
-Gen4Dex.LABEL = { seen = 0, obtained = 1, height = 9, weight = 10 }
+Gen4Dex.LABEL = { seen = 0, obtained = 1, switch = 5, search = 7,
+  height = 9, weight = 10 }
 
 -- How far to walk the three per-species banks.  493 is the national dex and
 -- the banks carry a few entries past it for the forms; walking to a fixed
@@ -116,12 +117,198 @@ function Gen4Dex.orders(rom)
   local arc=bytes and require('src.import.NarcArchive').parse(bytes)
   if not arc then return nil end
   local out={}
-  for i,key in ipairs({'national','sinnoh','alphabetical','heaviest','lightest','tallest','smallest'}) do
+  -- NUMSTATFILES + PokedexDataSortIndex, including the native membership
+  -- lists: names/types/body shapes must not be guessed from display strings.
+  local keys=require('src.ui.Gen4DexSearch').DATA_KEYS
+  for i,key in ipairs(keys) do
     local list=arc:get(10+i)
     if list then
       local ids={}
       for at=1,#list,2 do ids[#ids+1]=list:byte(at)+list:byte(at+1)*256 end
       out[key]=ids
+    end
+  end
+  return out
+end
+
+-- Native entry graphics share one tile sheet and full Sinnoh BG palette.
+-- National mode replaces only palette row zero (32 bytes), on both screens.
+function Gen4Dex.images(rom)
+  local G=require('src.import.Gen4Graphics')
+  local A=require('src.import.Gen4Archives')
+  local bytes=rom:read(Gen4Dex.PATH)
+  local arc=bytes and require('src.import.NarcArchive').parse(bytes)
+  if not arc then return {} end
+  local function member(name)
+    local id=A.find(Gen4Dex.PATH,name)
+    local b=id and arc:get(id)
+    if b and G.isCompressed(b) then b=G.decompress(b) end
+    return b
+  end
+  local function palette(name) local b=member(name);return b and G.palette(b) end
+  local function tiles(name) local b=member(name);return b and G.tiles(b) end
+  local function map(name) local b=member(name);return b and G.tilemap(b) end
+  local base=palette(Gen4Dex.PALETTE)
+  local national=palette(Gen4Dex.PALETTE_NATIONAL)
+  local sheet=tiles(Gen4Dex.TILES)
+  if not (base and national and sheet) then return {} end
+  local nationalPalette={}
+  for i,color in ipairs(base) do nationalPalette[i]=color end
+  for i=1,16 do nationalPalette[i]=national[i] end
+  local canvas=G.canvas(32,24)
+  for _,layer in ipairs(Gen4Dex.ENTRY_LAYERS) do
+    local tilemap=map(layer.name)
+    if not tilemap then return {} end
+    G.stamp(canvas,tilemap,layer.x,layer.y)
+  end
+  local banner=map(Gen4Dex.BANNER_MAP)
+  local panel=map('page_panel.NSCR.lz')
+  local sub=tiles('entry_sub.NCGR.lz')
+  local out={}
+  local cryColors={}
+  for i,color in ipairs(base) do cryColors[i]=color end
+  local cryPalette=palette('cry_sub.NCLR')
+  if cryPalette then for i=1,16 do cryColors[112+i]=cryPalette[16+i] end end
+  local cryMap=map('cry_sub.NSCR.lz')
+  local cryWheelMap=map('cry_wheel.NSCR.lz')
+  local cryWheelSheet=tiles('cry_wheel.NCGR.lz')
+  if cryMap and sub then out['dex/cry_panel']=G.compose(cryMap,sub,cryColors) end
+  if cryWheelMap and cryWheelSheet then
+    local pic=G.compose(cryWheelMap,cryWheelSheet,cryColors)
+    if pic then
+      -- Native BG scroll is (-48,-16). Bake the offset into a bounded screen
+      -- layer so inset rendering cannot spill beyond the DS viewport.
+      local rows={};local empty=string.rep('\0',256*4)
+      for y=0,191 do
+        if y<16 or y-16>=pic.height then rows[#rows+1]=empty
+        else
+          local width=math.min(208,pic.width);local at=(y-16)*pic.width*4+1
+          rows[#rows+1]=string.rep('\0',48*4)..pic.rgba:sub(at,at+width*4-1)..string.rep('\0',(208-width)*4)
+        end
+      end
+      out['dex/cry_wheel']={width=256,height=192,rgba=table.concat(rows)}
+    end
+  end
+  local scrollBase=palette('background_scroll_default.NCLR')
+  local scrollSheet=tiles('scroll_sub_background.NCGR.lz')
+  local scrollMap=map('scroll_sub.NSCR.lz')
+  local wheelSheet=tiles('scroll_wheel.NCGR.lz')
+  local wheelMap=map('scroll_wheel.NSCR.lz')
+  if scrollBase and scrollSheet and scrollMap then
+    for _,mode in ipairs({'sinnoh','national'}) do
+      local colors={}
+      for i,color in ipairs(scrollBase) do colors[i]=color end
+      -- Native unfiltered Sinnoh uses default; National overwrites row 3.
+      if mode=='national' then
+        local replacement=palette('background_scroll_national.NCLR')
+        if replacement then for i=1,16 do colors[48+i]=replacement[i] end end
+      end
+      out['dex/list_panel_'..mode]=G.compose(scrollMap,scrollSheet,colors)
+    end
+    if wheelSheet and wheelMap then out['dex/list_wheel']=G.compose(wheelMap,wheelSheet,scrollBase) end
+    local searchPanel=map('search_main.NSCR.lz')
+    if searchPanel then out['dex/search_panel']=G.compose(searchPanel,scrollSheet,scrollBase) end
+    local colors={}
+    for i,color in ipairs(scrollBase) do colors[i]=color end
+    local replacement=palette('background_scroll_sinnoh.NCLR')
+    if replacement then for i=1,16 do colors[48+i]=replacement[i] end end
+    out['dex/list_panel_filtered']=G.compose(scrollMap,scrollSheet,colors)
+    local searchColors={}
+    for i,color in ipairs(scrollBase) do searchColors[i]=color end
+    local replacement=palette('search.NCLR')
+    if replacement then for i=1,16 do searchColors[i]=replacement[i] end end
+    local searchSheet=tiles('scroll_main_background.NCGR.lz')
+    local searchMap=map('search_filter.NSCR.lz')
+    if searchSheet and searchMap then
+      for i,filter in ipairs({'order','name','type','form'}) do
+        local canvas=G.canvas(32,24);G.stamp(canvas,searchMap,0,0)
+        local patch=map('search_filter_'..filter..'.NSCR.lz')
+        if patch then G.stamp(canvas,patch,6,({6,9,12,17})[i]) end
+        out['dex/search_'..filter]=G.compose(canvas,searchSheet,searchColors)
+      end
+    end
+  end
+  for _,mode in ipairs({'sinnoh','national'}) do
+    local colors=mode=='national' and nationalPalette or base
+    out['dex/entry_'..mode]=G.compose(canvas,sheet,colors)
+    if banner then out['dex/banner_'..mode]=G.compose(banner,sheet,colors) end
+    if panel and sub then out['dex/panel_'..mode]=G.compose(panel,sub,colors) end
+  end
+  local C=require('src.import.Gen4Cells')
+  local Anim=require('src.import.Gen4CellAnim')
+  local crySheet=tiles('cry_dials.NCGR.lz')
+  local cryBank=C.parse(member('cry_dials_cell.NCER.lz'),G)
+  local cryAnim=Anim.parse(member('cry_dials_anim.NANR.lz'),G)
+  local cryColors=palette('cry_dials.NCLR')
+  if crySheet and cryBank and cryAnim and cryColors then
+    for i=0,6 do
+      local frames=Anim.frames(cryAnim,i)
+      -- Resting buttons/switches use the end of their native sequence.
+      local frame=frames and frames[#frames]
+      local cell=frame and cryBank.cells[frame.cell+1]
+      local pic=cell and C.assemble(cell,crySheet,cryColors,cryBank,G)
+      if pic then pic.originX,pic.originY=C.extent(cell);out[('dex/cry_control_%02d'):format(i)]=pic end
+    end
+  end
+  -- Search buttons encode normal/selected/pressed as frames in each sequence.
+  for _,name in ipairs({'search_buttons','search_button_forms'}) do
+    local pixels=tiles(name..'.NCGR.lz')
+    local cells=C.parse(member(name..'_cell.NCER.lz'),G)
+    local anim=Anim.parse(member(name..'_anim.NANR.lz'),G)
+    local pal=palette('buttons.NCLR')
+    if pixels and cells and anim and pal then
+      for i=0,(name=='search_buttons' and 6 or 13) do
+        for j,frame in ipairs(Anim.frames(anim,i) or {}) do
+          local cell=cells.cells[frame.cell+1]
+          local pic=cell and C.assemble(cell,pixels,pal,cells,G)
+          if pic then
+            pic.originX,pic.originY=C.extent(cell)
+            out[('dex/%s_%02d_%02d'):format(name,i,j-1)]=pic
+          end
+        end
+      end
+    end
+  end
+  local buttonSheet=tiles('page_buttons.NCGR.lz')
+  local bank=C.parse(member('page_buttons_cell.NCER.lz'),G)
+  local animation=Anim.parse(member('page_buttons_anim.NANR.lz'),G)
+  local colors=palette('info.NCLR')
+  if buttonSheet and bank and animation and colors then
+    for i=0,5 do
+      local frames=Anim.frames(animation,i)
+      local cell=frames and frames[1] and bank.cells[frames[1].cell+1]
+      if cell then
+        local pic=C.assemble(cell,buttonSheet,colors,bank,G)
+        if pic then pic.originX,pic.originY=C.extent(cell);out[('dex/page_button_%02d'):format(i)]=pic end
+      end
+    end
+  end
+  local shapeSheet=tiles('search_body_shapes.NCGR.lz')
+  local shapeBank=C.parse(member('search_body_shapes_cell.NCER.lz'),G)
+  local shapeAnim=Anim.parse(member('search_body_shapes_anim.NANR.lz'),G)
+  local shapeColors=palette('buttons.NCLR')
+  if shapeSheet and shapeBank and shapeAnim and shapeColors then
+    for i=3,16 do
+      local frames=Anim.frames(shapeAnim,i)
+      local cell=frames and frames[1] and shapeBank.cells[frames[1].cell+1]
+      if cell then
+        local pic=C.assemble(cell,shapeSheet,shapeColors,shapeBank,G)
+        if pic then pic.originX,pic.originY=C.extent(cell);out[('dex/search_shape_%02d'):format(i-2)]=pic end
+      end
+    end
+  end
+  local buttonSheet=tiles('scroll_buttons.NCGR.lz')
+  local bank=C.parse(member('scroll_buttons_cell.NCER.lz'),G)
+  local animation=Anim.parse(member('scroll_buttons_anim.NANR.lz'),G)
+  local colors=palette('buttons.NCLR')
+  if buttonSheet and bank and animation and colors then
+    for i=0,5 do
+      local frames=Anim.frames(animation,i)
+      local cell=frames and frames[1] and bank.cells[frames[1].cell+1]
+      if cell then
+        local pic=C.assemble(cell,buttonSheet,colors,bank,G)
+        if pic then pic.originX,pic.originY=C.extent(cell);out[('dex/list_button_%02d'):format(i)]=pic end
+      end
     end
   end
   return out

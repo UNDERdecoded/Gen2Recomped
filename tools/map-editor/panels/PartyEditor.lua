@@ -175,6 +175,24 @@ local function speciesLabel(S, id)
   return tostring(id)
 end
 
+function PartyEditor.moveLabel(S, id)
+  local def=S.data and S.data.moves and S.data.moves[id]
+  return def and type(def.name)=='string' and def.name~='' and def.name or tostring(id)
+end
+
+function PartyEditor.moveList(S, query)
+  local out={}
+  local q=tostring(query or ''):lower()
+  local gen4=((S.data or {}).constants or {}).gen==4
+  for _,id in ipairs((S.cat and S.cat.moves) or {}) do
+    local name=PartyEditor.moveLabel(S,id)
+    local native=tonumber(id) or tonumber(tostring(id):match('^MOVE_(%d+)$'))
+    local internal=gen4 and (native==0 or (native and native>=468 and native<=470 and name==tostring(id)))
+    if not internal and (q=='' or tostring(id):lower():find(q,1,true) or name:lower():find(q,1,true)) then out[#out+1]=id end
+  end
+  return out
+end
+
 function PartyEditor.draw(S, Kit, writeField)
   local ask = S and S.partyAsk
   if not ask then return false end
@@ -332,7 +350,7 @@ function PartyEditor.draw(S, Kit, writeField)
     for i = 1, 4 do
       local id = moves[i]
       if Kit.button(ex, ey, editW - 28 * s, fieldH - 2 * s,
-                    Kit.ellipsize("small", id and tostring(id) or "(learnset)",
+                    Kit.ellipsize("small", id and PartyEditor.moveLabel(S,id) or "(learnset)",
                                   editW - 44 * s), { font = "small" }) then
         S.partyMovePick = { slot = slot, index = i }
       end
@@ -405,16 +423,7 @@ function PartyEditor.draw(S, Kit, writeField)
                                   mw - 20 * s, 26 * s, ask.moveQuery or "",
                                   "search moves...")
     local ly = qy + 32 * s
-    local moves = {}
-    do
-      local all = (S.cat and S.cat.moves) or {}
-      local q = (ask.moveQuery or ""):lower()
-      for _, id in ipairs(all) do
-        if q == "" or tostring(id):lower():find(q, 1, true) then
-          moves[#moves + 1] = id
-        end
-      end
-    end
+    local moves = PartyEditor.moveList(S,ask.moveQuery)
     local mrowH = 22 * s
     local mper = math.max(1, math.floor((my + mh - ly - 34 * s) / mrowH))
     ask.moveScroll = math.max(0, math.min(ask.moveScroll or 0,
@@ -424,7 +433,7 @@ function PartyEditor.draw(S, Kit, writeField)
       local id = moves[i]
       if Kit.button(mx + 10 * s, ly + (i - ask.moveScroll - 1) * mrowH,
                     mw - 20 * s, mrowH - 2 * s,
-                    Kit.ellipsize("small", tostring(id), mw - 40 * s),
+                    Kit.ellipsize("small", PartyEditor.moveLabel(S,id), mw - 40 * s),
                     { font = "small" }) then
         local pick = S.partyMovePick
         pick.slot.moves = pick.slot.moves or {}
@@ -433,7 +442,10 @@ function PartyEditor.draw(S, Kit, writeField)
         -- engine has a meaning for, so a move set into slot 3 with 1 and 2
         -- empty closes up.
         local dense = {}
-        for _, m in ipairs(pick.slot.moves) do dense[#dense + 1] = m end
+        for at=1,4 do
+          local m=pick.slot.moves[at]
+          if m then dense[#dense+1]=m end
+        end
         pick.slot.moves = dense
         S.partyMovePick = nil
       end

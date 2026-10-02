@@ -299,7 +299,12 @@ function Evolution.apply(game, mon, newSpecies, via, evo)
   local fromSpecies = mon.species
   local hpLost = mon.stats.hp - mon.hp
   mon.species = newSpecies
-  mon.stats = Stats.calc(newDef, mon.level, mon.dvs, mon.statExp)
+  if (game.data.constants or {}).gen==4 then
+    newDef=require('src.pokemon.Gen4Forms').definition(game.data,mon)
+    mon.stats=Stats.calc(newDef,mon.level,mon.ivs,nil,mon.evs,mon.nature)
+  else
+    mon.stats = Stats.calc(newDef, mon.level, mon.dvs, mon.statExp)
+  end
   mon.hp = math.max(1, mon.stats.hp - hpLost)
   if game.save.pokedex then
     game.save.pokedex.seen[newSpecies] = true

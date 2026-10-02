@@ -264,7 +264,7 @@ local ORBIT_BASE = atan2(ORBIT_RISE, Gen4View.FOLLOW_DISTANCE)
 -- along the view line and the framing angle does not change -- which is what
 -- stops a zoom from sliding into the ground or over the roof.
 Gen4View.ZOOM_STEP = 1.15
-Gen4View.ZOOM_MIN = 0.45
+Gen4View.ZOOM_MIN = 0.08
 Gen4View.ZOOM_MAX = 2.60
 
 -- zoomBy(notches) -> zoom.  Positive pulls back, negative moves in.
@@ -363,7 +363,7 @@ function Gen4View:follow(x, z, facing, baseY)
     -- third-person camera, and a tilt rung is asking for the map's framing at
     -- a different angle, not for a different framing.
     local cfg = self.config
-    local d = (cfg and tonumber(cfg.distance)) or 512
+    local d = ((cfg and tonumber(cfg.distance)) or 512)*(self.zoom or 1)
     local e = rad(self.fieldPitch or 60)
     local horizontal = cos(e) * d
     -- FIXED HEADING.  The cartridge's field camera does not turn, and a tilt
@@ -472,7 +472,9 @@ function Gen4View:matrix(vw, vh)
   local cfg = (self.mode == "field3d") and self.config or nil
   local proj
   if cfg and cfg.projection == "orthographic" then
-    proj = Gen4Model.orthographic(vh / 2, vw / vh,
+    -- Dolly alone cannot magnify an orthographic map. Keep its visible box
+    -- in step with the dolly so tilted indoor views zoom like outdoor views.
+    proj = Gen4Model.orthographic(vh / 2 * (self.zoom or 1), vw / vh,
                                   tonumber(cfg.near) or Gen4View.NEAR,
                                   tonumber(cfg.far) or Gen4View.FAR)
   else
@@ -586,7 +588,7 @@ function Gen4View:project(x, y, z, vw, vh)
          -- One world unit is one screen pixel under the orthographic box this
          -- view builds, at every distance -- which is the whole difference
          -- between the two projections and the number a billboard needs.
-         ortho and 1 or self:pixelsPerUnitAt(w, vh),
+         ortho and 1 / (self.zoom or 1) or self:pixelsPerUnitAt(w, vh),
          cz / w
 end
 

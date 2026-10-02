@@ -199,7 +199,7 @@ end
 function DayCare.pendingLevel(data, slot)
   local mon = slot and slot.mon
   if not mon then return nil end
-  local def = data.pokemon[mon.species]
+  local def = require('src.pokemon.Gen4Forms').definition(data,mon)
   local exp = (mon.exp or 0) + (slot.steps or 0)
   local level = Growth.levelForExp(def and def.growthRate, exp)
   if level > 100 then level = 100 end
@@ -522,6 +522,7 @@ function DayCare.step(data, save, expPerStep)
   egg.isEgg = true
   egg.nickname = "EGG"
   egg.eggSteps = DayCare.eggSteps(data, species)
+  require('src.pokemon.Gen4Origin').stamp({data=data},egg,'egg','Day-Care Couple')
   -- ...and what its parents give it, which is the whole of breeding
   DayCare.inheritMoves(data, save, egg)
   breed.egg = egg

@@ -190,14 +190,34 @@ end
 --   RADAR -- slots 5, 6, 11 and 12, and only when the radar's `shakeType` is 1.
 --     Needs the Poke Radar and its chain, which the port does not model.
 --   GREAT MARSH -- replaces the whole table from a daily rotation.
---   `formRates` -- not a slot substitution at all: only the first two entries
---     are read, and only to choose Shellos/Gastrodon's form.
---   `unownTable` -- picks Solaceon Ruins' letter distribution, also not a slot.
+--   `formRates` -- APPLIED at wild creation: the first two entries choose
+--     Shellos/Gastrodon's form; these are selectors, not percentages.
+--   `unownTable` -- APPLIED at wild creation: Solaceon Ruins' letter group.
 --
 -- Each of the unapplied ones needs SAVE STATE the port does not keep yet, so
 -- they are listed here with their measured indices ready rather than left to be
 -- rediscovered.
 local GEN4_SPAN = 100
+
+-- overlay006/wild_encounters.c: room tables use zero-based MON_DATA_FORM.
+local UNOWN_FORMS = {
+  [0]={0,1,2,6,7,9,10,11,12,14,15,16,18,19,20,21,22,23,24,25},
+  [1]={5},[2]={17},[3]={8},[4]={13},[5]={4},[6]={3},[7]={26,27},
+}
+function Encounter.gen4Form(def, species, rng)
+  if not def then return nil end
+  local id=require('src.pokemon.Gen4Forms').species(species)
+  if id==422 or id==423 then
+    local selector=(def.formRates or {})[id==422 and 1 or 2]
+    if selector==nil then return nil end
+    return tonumber(selector)==0 and 0 or 1
+  elseif id==201 then
+    local tableId=tonumber(def.unownTable)
+    -- InitEncounterFieldParams converts the archive's 1..8 IDs to 0..7.
+    local forms=tableId and UNOWN_FORMS[tableId==0 and 0 or tableId-1]
+    if forms then return forms[(rng or love.math.random)(0,65535)%#forms+1] end
+  end
+end
 
 -- Keyed on the slot array itself, which lives as long as the dataset.
 local gen4Tables = setmetatable({}, { __mode = "k" })
