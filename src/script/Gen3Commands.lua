@@ -3237,10 +3237,11 @@ end
 -- handles that by ticking the script runner from its own update, because the
 -- state stack only updates the state on top.
 --
--- The GEOMETRY is the script's own.  `10 3` is the window's tile position and
--- a Gen 3 front pic is 64x64 -- eight tiles, not the Game Boy's seven -- so
--- the frame is drawn one tile outside that and PicBox is told both rather
--- than keeping its Game Boy constants.
+-- The GEOMETRY is the script's own. FireRed passes `10 3` to
+-- CreateWindowFromRect, which puts the 8x8 content at (x+1,y+1); the standard
+-- border therefore begins at the script's (x,y). CreateMonSprite_PicBox uses
+-- the same content origin for the 64x64 front pic. PicBox is told the outer
+-- frame directly rather than keeping its Game Boy constants.
 function Commands.g3_show_mon_pic(ctx, species, x, y)
   species = valueOf(ctx, species)   -- ScrCmd_showmonpic: VarGet
   ctx.g3MonPic = tonumber(species)
@@ -3259,8 +3260,8 @@ function Commands.g3_show_mon_pic(ctx, species, x, y)
   local box = require("src.ui.PicBox").new(game, {
     path = path, trueColor = trueColor and true or false,
     passive = true, overworld = ow,
-    -- the frame sits one tile outside the window the script names
-    box = { x = tx - 1, y = ty - 1, w = PIC_TILES + 2, h = PIC_TILES + 2 },
+    -- FireRed's script coordinates name the outer frame origin.
+    box = { x = tx, y = ty, w = PIC_TILES + 2, h = PIC_TILES + 2 },
     picTiles = PIC_TILES,
   })
   ow.pokepicBox = box

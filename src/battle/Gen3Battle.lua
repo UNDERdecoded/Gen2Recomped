@@ -1595,7 +1595,20 @@ end
 local warnedNoPanel = false
 local function panelImage(battle, which)
   local record = Gen3Battle.textbox(battle)
-  local path = record and record.images and record.images[which]
+  local path = nil
+  if record then
+    local options = battle.game and battle.game.save and battle.game.save.options
+                    or battle.save and battle.save.options
+                    or {}
+    local frame = math.floor(tonumber(options.gen3Frame) or 1)
+    local count = math.floor(tonumber(record.frames and record.frames.count) or 0)
+    if count > 0 then frame = math.max(1, math.min(count, frame)) end
+    local perFrame = record.frameImages and record.frameImages[frame]
+    path = perFrame and perFrame[which]
+    if type(path) ~= "string" then
+      path = record.images and record.images[which]
+    end
+  end
   if type(path) ~= "string" then
     if not warnedNoPanel then
       warnedNoPanel = true

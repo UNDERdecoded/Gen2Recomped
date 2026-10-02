@@ -53445,7 +53445,10 @@ function RomExtractorGen3:extractBattleTextbox()
   local base = colours(palRaw)     -- banks 0 and 1
   local menuPal = colours(menuRaw) -- BG palette 5
 
-  -- the twenty OPTIONS frames, each nine tiles and sixteen colours
+  -- The OPTIONS frames, each nine tiles and sixteen colours.  Follow the
+  -- pointer table itself: FireRed has small empty blobs between some of the
+  -- frame graphics, so the tile sheets are deliberately not one contiguous
+  -- `FRAME_TILES + i * size` array.
   local frames = {}
   for i = 0, T.FRAME_COUNT - 1 do
     local at = T.FRAMES + i * 8
@@ -53453,76 +53456,81 @@ function RomExtractorGen3:extractBattleTextbox()
       tiles = rom:pointer(at), palette = rom:pointer(at + 4),
     }
   end
-  -- ...and the table has to be the contiguous run the two blob arrays are,
-  -- which is what says 0x51021C is the struct array and not a palette
-  local contiguous = true
-  for i = 0, T.FRAME_COUNT - 1 do
-    if frames[i + 1].tiles ~= T.FRAME_TILES + i * T.FRAME_TILES_BYTES then
-      contiguous = false
-    end
-    if frames[i + 1].palette ~= T.FRAME_PALETTES + i * T.FRAME_PALETTE_BYTES then
-      contiguous = false
+  local validFrames = true
+  for i = 1, T.FRAME_COUNT do
+    if not (frames[i] and frames[i].tiles and frames[i].palette) then
+      validFrames = false
+      break
     end
   end
-  if not contiguous then
-    Logger.warn("gen3 battle textbox: the frame table at %07X does not point "
-                  .. "at the two contiguous blob arrays -- one frame is used "
-                  .. "for every setting", T.FRAMES)
+  if not validFrames then
+    Logger.warn("gen3 battle textbox: the frame table at %07X has a missing "
+                  .. "tiles/palette pointer -- the battle keeps frame 1", T.FRAMES)
   end
 
   -- ---- compose ------------------------------------------------------------
   local images = {}
+  local frameImages = {}
   local composed = pcall(function()
-    -- the frame the strips are drawn with.  Composing all twenty would be
-    -- twenty times the pictures for a setting almost nobody moves, so this
-    -- takes the first -- which is the frame a new save starts on -- and the
-    -- table above is recorded so a later pass can follow the option.
-    local ft = {}
-    for k = 1, T.FRAME_TILES_BYTES do
-      ft[k] = rom:u8(T.FRAME_TILES + k - 1)
-    end
-    local framePal = {}
-    for k = 1, T.FRAME_PALETTE_BYTES do
-      framePal[k] = rom:u8(T.FRAME_PALETTES + k - 1)
-    end
-    local sheet = {}
-    for k = 1, #tiles do sheet[k] = tiles[k] end
-    for _, tileBase in ipairs(T.FRAME_TILE_BASES or { T.FRAME_TILE_BASE }) do
-      for k = 1, T.FRAME_TILES_BYTES do
-        sheet[tileBase * 32 + k] = ft[k]
-      end
-    end
-    local pal = {}
-    for i = 0, 31 do pal[i] = base[i] end
-    for i = 0, 15 do
-      local r, g, b = RomGba.bgr555(framePal[i * 2 + 1] + framePal[i * 2 + 2] * 256)
-      pal[T.FRAME_BANK * 16 + i] = { r, g, b }
-    end
-    -- partyTile wants a one-based colour list indexed bank*16 + index + 1
-    local flat = {}
-    for i = 0, 31 do flat[i + 1] = pal[i] end
+    -- FireRed loads the selected user frame into BOTH battle tile ranges every
+    -- time battle BGs are initialized.  Bake every available option so the
+    -- battle panel follows the same Frame Type setting as normal windows.
+    for frameIndex = 0, (validFrames and T.FRAME_COUNT or 1) - 1 do
+      local ft = {}
+      local frame = frames[frameIndex + 1]
+      local ftAt = (frame and frame.tiles) or T.FRAME_TILES
+      for k = 1, T.FRAME_TILES_BYTES do ft[k] = rom:u8(ftAt + k - 1) end
 
-    for _, panel in ipairs(T.PANELS) do
-      local img = ImageWriter.blank(T.WIDTH * 8, T.PANEL_ROWS * 8)
-      for r = 0, T.PANEL_ROWS - 1 do
-        for c = 0, T.WIDTH - 1 do
-          local cell = (panel.row + r) * T.COLS + c
-          local e = map[cell * 2 + 1] + map[cell * 2 + 2] * 256
-          local id = e % 1024
-          local bank = math.floor(e / 4096) % 16
-          if id > 0 and id < tileCount and bank < 2 then
-            RomExtractorGen3.partyTile(img, sheet, flat, id, bank, c * 8, r * 8)
+      local framePal = {}
+      local fpAt = (frame and frame.palette) or T.FRAME_PALETTES
+      for k = 1, T.FRAME_PALETTE_BYTES do framePal[k] = rom:u8(fpAt + k - 1) end
+
+      local sheet = {}
+      for k = 1, #tiles do sheet[k] = tiles[k] end
+      for _, tileBase in ipairs(T.FRAME_TILE_BASES or { T.FRAME_TILE_BASE }) do
+        for k = 1, T.FRAME_TILES_BYTES do sheet[tileBase * 32 + k] = ft[k] end
+      end
+
+      local pal = {}
+      for i = 0, 31 do pal[i] = base[i] end
+      for i = 0, 15 do
+        local r, g, b = RomGba.bgr555(framePal[i * 2 + 1] + framePal[i * 2 + 2] * 256)
+        pal[T.FRAME_BANK * 16 + i] = { r, g, b }
+      end
+      local flat = {}
+      for i = 0, 31 do flat[i + 1] = pal[i] end
+
+      local perFrame = {}
+      for _, panel in ipairs(T.PANELS) do
+        local img = ImageWriter.blank(T.WIDTH * 8, T.PANEL_ROWS * 8)
+        for r = 0, T.PANEL_ROWS - 1 do
+          for c = 0, T.WIDTH - 1 do
+            local cell = (panel.row + r) * T.COLS + c
+            local e = map[cell * 2 + 1] + map[cell * 2 + 2] * 256
+            local id = e % 1024
+            local bank = math.floor(e / 4096) % 16
+            if id > 0 and id < tileCount and bank < 2 then
+              RomExtractorGen3.partyTile(img, sheet, flat, id, bank, c * 8, r * 8)
+            end
           end
         end
+        local suffix = frameIndex == 0 and panel.key
+                       or (panel.key .. "_frame" .. tostring(frameIndex + 1))
+        local rel = "battle/textbox_" .. suffix .. ".png"
+        self:saveImage(img, rel)
+        perFrame[panel.key] = "assets/generated/" .. rel
+        if frameIndex == 0 then images[panel.key] = perFrame[panel.key] end
       end
-      self:saveImage(img, "battle/textbox_" .. panel.key .. ".png")
-      images[panel.key] = "assets/generated/battle/textbox_" .. panel.key .. ".png"
+      frameImages[frameIndex + 1] = perFrame
     end
 
-    -- ...and the arrow, which is two tiles of the same sheet in bank 0
+    -- ...and the arrow, which is two tiles of the original battle sheet in
+    -- bank 0; it is independent of the user's decorative frame selection.
+    local cursorPal = {}
+    for i = 0, 31 do cursorPal[i + 1] = base[i] end
     local cur = ImageWriter.blank(8, 8 * #T.CURSOR_TILES)
     for i, id in ipairs(T.CURSOR_TILES) do
-      RomExtractorGen3.partyTile(cur, sheet, flat, id, T.CURSOR_BANK,
+      RomExtractorGen3.partyTile(cur, tiles, cursorPal, id, T.CURSOR_BANK,
                                  0, (i - 1) * 8)
     end
     self:saveImage(cur, "battle/textbox_cursor.png")
@@ -53545,6 +53553,7 @@ function RomExtractorGen3:extractBattleTextbox()
   local constants = self._constants or {}
   constants.gen3BattleTextbox = {
     images = images,
+    frameImages = frameImages,
     y = T.SCREEN_Y,
     width = T.WIDTH * 8,
     height = T.PANEL_ROWS * 8,
