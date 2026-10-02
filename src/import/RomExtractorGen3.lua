@@ -46049,6 +46049,9 @@ RomExtractorGen3.FRLG_NAMING = {
   GFX = 0xE980E4, BG_MAP = 0xE982BC,
   KB_MAPS = { upper = 0xE98398, lower = 0xE98458, symbols = 0xE98518 },
   MENU_PAL = 0xE98024, KB_PAL = 0xE97FE4,
+  -- text.c gKeypadIconTiles is a 128x32 4bpp sheet (64 tiles).  Naming's
+  -- WIN_BANNER loads GetTextWindowPalette(2), the third 16-colour row here.
+  KEYPAD_GFX = 0x1EA700, TEXT_WINDOW_PALS = 0x471DEC,
   -- naming_screen.c's private rival sheet is a second exact copy of
   -- gObjectEventPic_Blue (0x38A428) in the retail ROM.  Its dedicated palette
   -- sits between gNamingScreenKeyboard_Pal and gNamingScreenMenu_Pal in
@@ -46119,6 +46122,39 @@ function RomExtractorGen3:extractFireRedNaming()
   end
   pcall(layer, "bg", N.BG_MAP, true)
   for key, at in pairs(N.KB_MAPS) do pcall(layer, "kb_" .. key, at, false) end
+
+  -- PrintControls does not draw button-shaped boxes.  The {DPAD_ANY},
+  -- {A_BUTTON} and {B_BUTTON} control codes call DrawKeypadIcon, which blits
+  -- these exact pixels from gKeypadIconTiles with colour 0 keyed out.  Pull
+  -- those three icons so the runtime can compose gText_MoveOkBack with the
+  -- cartridge's own small-font glyphs and keypad art.
+  pcall(function()
+    local raw = rom:bytes(N.KEYPAD_GFX, 64 * 32)
+    local px = RomGba.tiles4bpp(raw, 16, 4)
+    local palRaw = rom:bytes(N.TEXT_WINDOW_PALS + 2 * 32, 32)
+    local bannerPal = {}
+    for i = 0, 15 do
+      bannerPal[i] = { RomGba.bgr555(palRaw[i * 2 + 1] + palRaw[i * 2 + 2] * 256) }
+    end
+    local function keypad(key, tile, w, h)
+      local sx, sy = (tile % 16) * 8, math.floor(tile / 16) * 8
+      local img = ImageWriter.blank(w, h)
+      for y = 0, h - 1 do
+        for x = 0, w - 1 do
+          local v = px[sy + y + 1][sx + x + 1]
+          local col = v ~= 0 and bannerPal[v]
+          if col then
+            img:setPixel(x, y, col[1] / 255, col[2] / 255, col[3] / 255, 1)
+          end
+        end
+      end
+      save(key, img)
+    end
+    keypad("help_a", 0x00, 8, 12)
+    keypad("help_b", 0x01, 8, 12)
+    keypad("help_dpad", 0x22, 8, 12) -- CHAR_DPAD_NONE / {DPAD_ANY}
+  end)
+
   for key, spec in pairs(N.SPRITES) do
     pcall(function()
       local at, w, h, bank = spec[1], spec[2], spec[3], spec[4]
@@ -46126,14 +46162,21 @@ function RomExtractorGen3:extractFireRedNaming()
       local raw = rom:bytes(at, cols * rws * 32)
       local px = RomGba.tiles4bpp(raw, cols, rws)
       local img = ImageWriter.blank(w, h)
+      -- SpriteCB_Cursor changes ONLY OBJ palette entry 1 while the keyboard
+      -- cursor idles.  Keep those pixels in a separate white mask so the
+      -- runtime can replace that one colour every frame without tinting the
+      -- rest of the cartridge-ripped cursor art.
+      local pulse = key == "cursor" and ImageWriter.blank(w, h) or nil
       for y = 1, h do
         for x = 1, w do
           local v = px[y][x]
           local col = v ~= 0 and pal[bank * 16 + v]
           if col then img:setPixel(x - 1, y - 1, col[1] / 255, col[2] / 255, col[3] / 255, 1) end
+          if pulse and v == 1 then pulse:setPixel(x - 1, y - 1, 1, 1, 1, 1) end
         end
       end
       save(key, img)
+      if pulse then save("cursor_pulse", pulse) end
     end)
   end
   -- RIVAL's naming icon is not the ordinary object-event sprite at runtime:
@@ -46177,9 +46220,15 @@ function RomExtractorGen3:extractFireRedNaming()
   end)
   local function c(i) local t = pal[i] return { t[1], t[2], t[3] } end
   local constants = self._constants or {}
+  local cursorWord = rom:u16(N.MENU_PAL + 5 * 32 + 2) -- palette 5, entry 1
   constants.gen3FRLGNaming = {
     images = images,
     rivalIcon = rivalIcon,
+    cursorPulseBase = {
+      cursorWord % 32,
+      math.floor(cursorWord / 32) % 32,
+      math.floor(cursorWord / 1024) % 32,
+    },
     colors = {
       fill = { upper = c(10 * 16 + 13), lower = c(10 * 16 + 14), symbols = c(10 * 16 + 15) },
       key = { c(10 * 16 + 1), c(10 * 16 + 2) },

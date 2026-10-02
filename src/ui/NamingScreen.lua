@@ -767,25 +767,30 @@ function NamingScreen:drawFireRed(rec)
   local bg = self:frlgImage("bg")
   if bg then g.draw(bg, 0, 0) end
 
-  -- the banner: window (0,0) 30x2, "{DPAD}MOVE {A}OK {B}BACK" right-aligned
+  -- the banner: PrintControls renders the exact
+  -- "{DPAD_ANY}MOVE {A_BUTTON}OK {B_BUTTON}BACK" string in FONT_SMALL and
+  -- right-aligns it four pixels from the edge.  The control codes are bitmap
+  -- keypad icons, not outlined button boxes.
   g.setColor(0, 123 / 255, 197 / 255, 1)
   g.rectangle("fill", 0, 0, 240, 16)
   local white, darkGray = { 1, 1, 1, 1 }, { 98 / 255, 98 / 255, 98 / 255, 1 }
-  local hints = { { "+", Strings("MOVE") }, { "A", Strings("OK") }, { "B", Strings("BACK") } }
+  local help = {
+    { self:frlgImage("help_dpad"), Strings("MOVE") .. " " },
+    { self:frlgImage("help_a"), Strings("OK") .. " " },
+    { self:frlgImage("help_b"), Strings("BACK") },
+  }
   local faced = Font.hasFace and Font.hasFace("small") and Font.pushFace("small")
   local width = 0
-  for _, h in ipairs(hints) do width = width + 12 + Font.width(h[2]) + 4 end
-  if faced then Font.popFace() end
-  local hx = 240 - 4 - width + 4
-  for _, h in ipairs(hints) do
-    g.setColor(white)
-    g.rectangle("line", hx + 0.5, 2.5, 10, 9, 3, 3)
-    text(h[1], hx + 2, 0, white, darkGray, true)
-    text(h[2], hx + 12, 0, white, darkGray, true)
-    local f2 = Font.hasFace and Font.hasFace("small") and Font.pushFace("small")
-    hx = hx + 12 + Font.width(h[2]) + 4
-    if f2 then Font.popFace() end
+  for _, h in ipairs(help) do width = width + 8 + Font.width(h[2]) end
+  local hx = 240 - 4 - width
+  for _, h in ipairs(help) do
+    g.setColor(1, 1, 1, 1)
+    if h[1] then g.draw(h[1], hx, 0) end
+    hx = hx + 8
+    text(h[2], hx, 0, white, darkGray, false)
+    hx = hx + Font.width(h[2])
   end
+  if faced then Font.popFace() end
 
   -- the question and the typed name, on the plate BG3 already draws
   local entryInk = cc.entry and rgb(cc.entry[2]) or darkGray
@@ -799,9 +804,13 @@ function NamingScreen:drawFireRed(rec)
     if glyph then text(Strings(glyph), x, 48 + 1, entryInk, entryShadow) end
     if underscore then g.draw(underscore, x + 3 - 4, 60 - 4) end
   end
-  local at = math.min(#self.glyphs + 1, self.maxLen)
-  if arrow and math.floor((self.blink or 0) / 30) % 2 == 0 then
-    g.draw(arrow, base + (at - 1) * 8 - 4, 56 - 4)
+  if arrow then
+    -- CreateTextEntrySprites puts this sprite at centre (base-5, 56), and it
+    -- stays there regardless of how many letters are already typed.  Its
+    -- callback cycles x2={0,-4,-2,-1} every eight frames; it does not blink.
+    local wobble = { 0, -4, -2, -1 }
+    local wi = math.floor((self.blink or 0) / 8) % #wobble + 1
+    g.draw(arrow, base - 9 + wobble[wi], 56 - 4)
   end
 
   -- the page: BG1's frame, the window's fill, the keys
@@ -856,7 +865,25 @@ function NamingScreen:drawFireRed(rec)
   -- the cursor, on a key
   local cursor = self:frlgImage("cursor")
   if cursor and self.row <= m.keyRows then
-    g.draw(cursor, 30 + (cols[self.col] or 0), 80 + (self.row - 1) * 16)
+    local x, y = 30 + (cols[self.col] or 0), 80 + (self.row - 1) * 16
+    g.setColor(1, 1, 1, 1)
+    g.draw(cursor, x, y)
+    local pulse = self:frlgImage("cursor_pulse")
+    local base5 = rec.cursorPulseBase
+    if pulse and type(base5) == "table" then
+      -- SpriteCB_Cursor advances 2/4/.../16/14/.../0, each value lasting
+      -- two frames.  MultiplyInvertedPaletteRGBComponents moves green/blue
+      -- toward white by that amount and red by half as much.
+      local k = math.floor((self.blink or 0) / 2) % 16
+      local n = (k < 8) and ((k + 1) * 2) or ((15 - k) * 2)
+      local function brighten(v, amount)
+        v = tonumber(v) or 0
+        return (v + math.floor((31 - v) * amount / 16)) / 31
+      end
+      g.setColor(brighten(base5[1], math.floor(n / 2)),
+                 brighten(base5[2], n), brighten(base5[3], n), 1)
+      g.draw(pulse, x, y)
+    end
   end
   g.setColor(1, 1, 1, 1)
 end

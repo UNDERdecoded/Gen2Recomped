@@ -19,6 +19,13 @@ function Menu.new(game, items, opts)
   self.tx = opts.tx or 10
   self.ty = opts.ty or 0
   self.tw = opts.tw or 10
+  -- Gen 3 WindowTemplate coordinates describe the CONTENT rectangle.  Its
+  -- standard frame is drawn one tile outside on every side.  Most of this
+  -- engine's menus use the older convention where tx/ty/tw/th already name
+  -- the OUTER framed rectangle, so keep that as the default and opt the few
+  -- cartridge-window callers into the GBA convention explicitly.
+  self.gbaWindow = opts.gbaWindow or false
+  self.frameIndex = opts.frameIndex
   -- grow the box to the widest label so longer (e.g. localized) labels don't
   -- overflow the frame; nudge tx left to keep the box on-screen (20 tiles).
   do
@@ -30,7 +37,7 @@ function Menu.new(game, items, opts)
       end
     end
     local needed = widest + 3
-    if needed > self.tw then self.tw = needed end
+    if not self.gbaWindow and needed > self.tw then self.tw = needed end
     -- ...ON THE SCREEN THAT IS ACTUALLY THERE.  Twenty tiles is the Game Boy's
     -- width and was written in here as a constant; Hoenn's screen is thirty,
     -- so a box the cartridge places near the right-hand side was shoved left
@@ -38,7 +45,7 @@ function Menu.new(game, items, opts)
     -- for, and it returns the Game Boy's own 160 for Gen 1 and Gen 2, so
     -- nothing there moves.
     local cols = math.floor(select(1, Theme.uiSize()) / 8)
-    if self.tx + self.tw > cols then
+    if not self.gbaWindow and self.tx + self.tw > cols then
       self.tx = math.max(0, cols - self.tw)
     end
   end
@@ -157,11 +164,16 @@ function Menu:draw()
   -- edge (the START menu asks for "topright").  Only menus that ask for it
   -- move; every other menu is placed exactly as before.
   local r = self.anchor and self.game and self.game.renderer
-  if r and r.setUIAnchor then
-    r:setUIAnchor(self.tx * 8, self.ty * 8,
-                  self.tw * 8, self.th * 8, self.anchor)
+  local frameTx, frameTy, frameTw, frameTh = self.tx, self.ty, self.tw, self.th
+  if self.gbaWindow then
+    frameTx, frameTy = self.tx - 1, self.ty - 1
+    frameTw, frameTh = self.tw + 2, self.th + 2
   end
-  Font.drawBox(self.tx, self.ty, self.tw, self.th)
+  if r and r.setUIAnchor then
+    r:setUIAnchor(frameTx * 8, frameTy * 8,
+                  frameTw * 8, frameTh * 8, self.anchor)
+  end
+  Font.drawBox(frameTx, frameTy, frameTw, frameTh, self.frameIndex)
   love.graphics.setColor(0, 0, 0, 1)
   local visible = (self.maxVisible and math.min(self.maxVisible, #self.items))
     or #self.items
@@ -186,6 +198,24 @@ function Menu:draw()
   -- overhang, which is nothing at all for an 8-pixel font: every Game Boy
   -- menu in this engine draws where it always did, and a taller face lands
   -- with its last descender flush on the inner edge.
+  if self.gbaWindow then
+    -- FireRed Menu_InitCursor + AddTextPrinterParameterized3: the selector is
+    -- at x=0 in the window, labels at x=8, both start one pixel down, and rows
+    -- are sixteen pixels apart in the Oak intro menus.
+    for row = 1, visible do
+      local item = self.items[self.scroll + row]
+      if not item then break end
+      local y = self.ty * 8 + 1 + (row - 1) * self.rowStep * 8
+      Font.draw(item.label, self.tx * 8 + 8, y)
+    end
+    local cursorRow = self.index - self.scroll
+    Font.drawCode(Theme.cursor, self.tx * 8,
+      self.ty * 8 + 1 + (cursorRow - 1) * self.rowStep * 8)
+    self:drawDescription()
+    love.graphics.setColor(1, 1, 1, 1)
+    return
+  end
+
   local lastY = (self.ty + self.th - 2) * 8
   local lift = math.max(0, (lastY + Font.glyphHeight())
                            - (self.ty + self.th - 1) * 8)

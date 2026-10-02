@@ -799,11 +799,20 @@ local function frameIndex(def)
   return want
 end
 
-local function sheetFrame(tx, ty, tw, th)
+local function sheetFrame(tx, ty, tw, th, frameOverride)
   local def = state and state.def or {}
   local quads, image = frameQuads(def)
   if not quads then return false end
-  local set = quads[frameIndex(def)]
+  local want = tonumber(frameOverride)
+  if want then
+    want = math.floor(want)
+    local count = (def.frames and def.frames.count) or 1
+    if want < 1 then want = 1 end
+    if want > count then want = count end
+  else
+    want = frameIndex(def)
+  end
+  local set = quads[want]
   if not set then return false end
   local tile = (def.frames.tile) or 8
   local x, y = tx * 8, ty * 8
@@ -844,11 +853,11 @@ local function drawnFrame(tx, ty, tw, th, style)
 end
 
 -- Draw a Game Boy style bordered box in tile coordinates.
-function Font.drawBox(tx, ty, tw, th)
+function Font.drawBox(tx, ty, tw, th, frameOverride)
   if not FALLBACK.enabled and state and state.def then
     -- the cartridge's own nine-slice first; the drawn rectangle is what a
     -- dataset without one falls back to
-    if state.def.frames and sheetFrame(tx, ty, tw, th) then return end
+    if state.def.frames and sheetFrame(tx, ty, tw, th, frameOverride) then return end
     if state.def.frame == "drawn" or state.def.frame == "sheet" then
       return drawnFrame(tx, ty, tw, th, activeStyle)
     end

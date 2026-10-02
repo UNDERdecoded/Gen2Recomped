@@ -1222,7 +1222,12 @@ end
 --       the one gate that forces a re-import, and main's change alters what a
 --       FireRed cache CONTAINS -- so keeping v359 would let a FireRed cache
 --       built before the tutor fix pass as current. v360 invalidates both.
-local CACHE_FORMAT = "rom-cache-v360:"
+-- v361: FireRed naming fidelity now extracts the cartridge's keypad icons and
+--       the cursor-pulse mask/base colour.  An older cache has none of those
+--       files/fields, so without a format bump an updated runtime would keep
+--       drawing the pre-fix handmade help icons and static selection cursor
+--       until the user happened to force a ROM re-import manually.
+local CACHE_FORMAT = "rom-cache-v361:"
 -- The completion marker is written under each version's cache prefix
 -- (rom-cache.complete for Red, blue/rom-cache.complete for Blue).
 local MARKER_PATH = "rom-cache.complete"

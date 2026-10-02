@@ -68,7 +68,11 @@ function Speech.new(game, onDone)
   self.black = 1          -- whole-screen fade to black
   self.picAlpha = 0       -- trainer pic + platform
   self.picTarget = 0
-  self.picOffset = 0      -- slide left while the name list is up
+  -- Visual offset of BG2 trainer art + the platform OBJ sprites.  Oak speech's
+  -- task variable counts DOWN to -60, but BG2 HOFS=-60 displays the bitmap
+  -- sixty pixels to the RIGHT, while gSpriteCoordOffsetX is explicitly +60.
+  -- Store the screen-space result here so draw() does not invert it again.
+  self.picOffset = 0
   self.picScale = 1
   self.picWhite = 0
   self.nidoAlpha, self.nidoScale, self.nidoWhite = 0, 0, 0
@@ -199,6 +203,7 @@ end
 function Speech:menu(labels, opts)
   local Menu = require("src.ui.Menu")
   local choice
+  opts = opts or {}
   local items = {}
   for i, label in ipairs(labels) do
     items[i] = { label = label, onSelect = function()
@@ -207,6 +212,15 @@ function Speech:menu(labels, opts)
       self.waitFrames = 1
     end }
   end
+  -- oak_speech.c passes WindowTemplate CONTENT coordinates to these menus.
+  -- Their frame is one tile outside the template on every side and every row
+  -- starts at y=1 with a 16-pixel pitch.  A fresh FireRed save has Frame Type
+  -- 1 (optionsWindowFrameType=0), so keep the professor intro on that frame
+  -- even though this port deliberately persists desktop options across New
+  -- Game.
+  opts.gbaWindow = true
+  opts.th = opts.th or (#labels * 2)
+  opts.frameIndex = 1
   opts.cancelable = opts.onCancelIndex ~= nil
   if opts.onCancelIndex then
     opts.onCancel = function() choice = opts.onCancelIndex; self.waitFrames = 1 end
@@ -366,7 +380,7 @@ function Speech:run()
   while true do
     box = self:ask(question)
     question = "rivalNameAgain"
-    if self.picOffset > -60 then self:tween("picOffset", -60, 2) end
+    if self.picOffset < 60 then self:tween("picOffset", 60, 2) end
     local labels = { clean(self.text.newName) or Strings("NEW NAME") }
     for i = 1, 4 do labels[#labels + 1] = rivals[i] end
     local pick = self:menu(labels, { tx = 2, ty = 2, tw = 12 })
