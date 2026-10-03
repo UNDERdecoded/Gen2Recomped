@@ -47,6 +47,7 @@ local Gen4Behaviors = require("src.import.Gen4Behaviors")
 local Gen4InitScripts = require("src.import.Gen4InitScripts")
 local Gen4Encounters = require("src.import.Gen4Encounters")
 local Gen4Trainers = require("src.import.Gen4Trainers")
+local Gen4TrainerMessages = require("src.import.Gen4TrainerMessages")
 local Gen4Maps = require("src.import.Gen4Maps")
 local Gen4Events = require("src.import.Gen4Events")
 local Gen4MapHeaders = require("src.import.Gen4MapHeaders")
@@ -122,6 +123,12 @@ local PATH = {
   encounters = "/fielddata/encountdata/pl_enc_data.narc",
   trainerData = "/poketool/trainer/trdata.narc",
   trainerParty = "/poketool/trainer/trpoke.narc",
+  -- The index that says which of bank 617's 2,497 lines each trainer
+  -- speaks, and as what.  Two files, because the cartridge keeps the
+  -- per-trainer start offsets apart from the records themselves; see
+  -- `Gen4TrainerMessages` for the walk and for why offset 0 means "none".
+  trainerMessages = Gen4TrainerMessages.TABLE_PATH,
+  trainerMessageOffsets = Gen4TrainerMessages.OFFSET_PATH,
   matrices = "/fielddata/mapmatrix/map_matrix.narc",
   land = "/fielddata/land_data/land_data.narc",
   events = "/fielddata/eventdata/zone_event.narc",
@@ -231,7 +238,8 @@ local STAGES = {
   -- now exists so the third one cannot hide.
   "text", "species", "moves", "gen4_move_anims", "gen4_particles",
   "gen4_cellactors", "items", "encounters",
-  "trainers", "maps", "events", "regions", "tilesets", "scripts", "link",
+  "trainers", "gen4_trainer_messages",
+  "maps", "events", "regions", "tilesets", "scripts", "link",
   "graphics", "fonts", "constants", "overworld", "species_sprites",
   "trainer_sprites",
   "heights", "field", "menus", "intro", "naming", "dex", "cries", "models",
@@ -785,6 +793,40 @@ function RomExtractorGen4:extractTrainers()
   self._trainers = out
   self.trainerReport = { trainers = total, zeroSprites = zeroSprites }
   self:write("trainers", out)
+  return out
+end
+
+-- WHICH OF BANK 617'S 2,497 LINES EACH TRAINER SPEAKS, AND AS WHAT.
+--
+-- The strings have been in the cache since the first import -- `extractText`
+-- writes all 724 banks -- so this stage adds no text at all.  It adds the
+-- INDEX, which is the half that was missing and the half without which every
+-- trainer in Sinnoh battles in silence: `scripts_battles.s` asks for a line by
+-- (trainer, message type) and nothing could answer.
+--
+-- 836 rows, not 928.  92 trainers have no dialogue of their own and are left
+-- out rather than written as empty tables -- see `forTrainer` for why an empty
+-- table would be worse than absent.
+--
+-- THE REPORT IS THE CHECK.  `records` and `reached` are two different readings
+-- of the same number (the size of the record table, and how many records the
+-- per-trainer walk actually arrives at) and they must be equal; both must equal
+-- the entry count of bank 617.  They are kept on the extractor so
+-- `tools/gen4_trainer_message_check.lua` can compare all three against a cache
+-- rather than trusting any one of them.
+function RomExtractorGen4:extractTrainerMessages()
+  self:beginStage("gen4_trainer_messages")
+  local records = assert(self:archive("trainerMessages"))
+  local offsets = assert(self:archive("trainerMessageOffsets"))
+  -- Member 0 of each, and only member 0: both archives hold exactly one.
+  local out, report = Gen4TrainerMessages.all(records:get(0), offsets:get(0))
+  -- The third reading, taken here because this is the only place that has the
+  -- message bank open at the same time as the table.
+  local bank = self:bank(Gen4TrainerMessages.BANK)
+  report.bankEntries = bank and bank.count or 0
+  self.trainerMessageReport = report
+  self:write("gen4_trainer_messages", out)
+  self:tick("gen4_trainer_messages", 1, 1)
   return out
 end
 
@@ -1781,15 +1823,32 @@ function RomExtractorGen4:composeJob(arc, job)
     -- the 0xFFFF sprite sheets, so a number here is the cartridge stating a size
     -- rather than a decoder's guess. Only then the archive default or the bare 8.
     --
-    -- MEASURED, because this changes which sheets may call themselves final: of
-    -- the 258 sheets in this table laid out by a chosen width, 65 declare their
-    -- own tilesX/tilesY and 193 say 0xFFFF and genuinely need a bank or a stated
-    -- width. Of those 65, twenty-six are currently drawn at a width the file
-    -- contradicts -- pl_winframe's message boxes among them, declared 6x3 and laid
-    -- out at 8. `preferDeclaredSize` is OPT-IN per archive rather than the new
-    -- default for exactly that reason: turning it on everywhere redraws twenty-six
-    -- existing pictures, several of them visible UI, and that wants its own pass
-    -- and its own play-test instead of riding along with the Underground.
+    -- MEASURED, and RE-measured, because the numbers that used to stand here went
+    -- stale and cost a pass: they said twenty-six sheets were drawn at a width the
+    -- file contradicts, pl_winframe's message boxes among them.  That was true
+    -- when written and is not now -- pl_winframe's twenty-five sheets all come
+    -- from cell banks today, and a bank supersedes the width question entirely.
+    -- Reading the old count as current turned one wrong picture into an imagined
+    -- twenty-six.  `tools/gen4_sheet_layout_check.lua` now pins the census so the
+    -- next reader gets a failure instead of a stale comment.
+    --
+    -- Against the cartridge, all 364 sheets in this table:
+    --   * 179 are assembled through a cell bank and never reach this block;
+    --   * 109 take a width written down for the group (`stated`);
+    --   *  76 take their own header's (`declared`), the archive having invited it;
+    --   *   0 fall through to the bare 8.
+    --
+    -- The last number is the point: nothing in this table is laid out at a width
+    -- NOBODY states.  `fallback` is kept because an archive added tomorrow would
+    -- land there, and the check fails the moment one does.
+    --
+    -- The two sources also agree where they overlap: of the 109 stated widths, 36
+    -- belong to members whose header states a size too, and all 36 match -- so the
+    -- hand-measured numbers in that table are confirmed by the cartridge rather
+    -- than merely plausible.  The other 73 sit on members whose header says
+    -- 0xFFFF, which is why the table cannot simply be deleted in favour of the
+    -- flag.  `preferDeclaredSize` stays OPT-IN: it is the archive's owner saying
+    -- the headers there have been looked at, not a global default.
     local wide
     if job.tilesWideStated then
       wide, layout = job.tilesWide, "stated"
@@ -6189,6 +6248,7 @@ function RomExtractorGen4:run()
   self:extractItems()
   self:extractEncounters()
   self:extractTrainers()
+  self:extractTrainerMessages()
   local headers, names = self:extractMaps()
   local events = self:extractEvents()
   self:extractRegions(events, names)

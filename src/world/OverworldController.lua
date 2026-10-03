@@ -509,11 +509,65 @@ local gfxVarReported = {}
 -- the sprite is named after the ARCHIVE MEMBER it lands on (140 -> mom ->
 -- SPRITE_G4_119).  Both hops are needed, and both are the extractor's own --
 -- `Gen4ObjectGfx.name` and `gen4_overworld.sprites[name].member`.
+-- ...AND THE TWO LISTS SPELL ONE SPRITE DIFFERENTLY.
+--
+-- The hop above joins BY NAME, and the two names come from different places:
+-- `Gen4ObjectGfx.name` is the graphics-id table transcribed from
+-- pokeplatinum's `OBJ_EVENT_GFX_*` constants, while the key is the NARC's own
+-- member name. For 209 of them the two agree exactly. For two they do not:
+--
+--     id 176  player_m_holding_poke_ball  ->  member 155  player_m_holding_pokeball
+--     id 177  player_f_holding_poke_ball  ->  member 156  player_f_holding_pokeball
+--
+-- `poke_ball` against `pokeball`, and NEITHER LIST IS WRONG. pokeplatinum
+-- itself writes both in one line of object_event_gfx_data.c:
+--
+--     { OBJ_EVENT_GFX_PLAYER_M_HOLDING_POKE_BALL, player_m_holding_pokeball_nsbtx }
+--
+-- the constant one way, the file the other. Its distortion-world pair spells
+-- the CONSTANT `POKEBALL` as well, so the cartridge is inconsistent with
+-- itself and a third spelling is a question of when.
+--
+-- WHAT IT COST: those two ids are the player's counterpart holding a Poke
+-- Ball -- Dawn when you are Lucas -- and the one place they are used is the
+-- catching demonstration on Route 201. The var resolved, the gender branch
+-- was right, the member existed with its picture on disk, and the lookup
+-- missed on an underscore, so the object kept its placeholder and drew
+-- nothing. What a player sees is PROFESSOR ROWAN standing alone on the tile
+-- where Dawn should be beside him, which reads as the wrong sprite rather
+-- than a missing one. Reported as exactly that: "Dawn is missing from the
+-- pokeball catching intro it's showing the old man placeholder".
+--
+-- So the join is normalised rather than either list being edited to match the
+-- other: both are faithful to their own source, and renaming one to suit the
+-- other would make it disagree with the thing it was transcribed from. The
+-- exact name is still tried first, so nothing that joins today can be
+-- re-pointed by a loose match -- which is only worth anything while no two
+-- archive names collapse to the same key, and that is asserted rather than
+-- assumed. `tools/gen4_object_sprite_check.lua` pins the collision count at
+-- zero, pins the normalise-only count at two and names them, so a third
+-- spelling is a failure rather than another invisible NPC.
+local function normaliseGfxName(name)
+  return (name:gsub("%.%w+$", ""):gsub("[_%s]", ""):lower())
+end
+
+local gen4NormalisedNames = nil
 local function gen4SpriteFor(data, graphicsId)
   local ok, Gfx = pcall(require, "src.import.Gen4ObjectGfx")
   local name = ok and Gfx and Gfx.name(graphicsId) or nil
   local sprites = data and data.gen4_overworld and data.gen4_overworld.sprites
   local record = name and sprites and sprites[name]
+  if name and sprites and not record then
+    -- Built once, and rebuilt if the table itself is swapped (a mod, or a
+    -- second dataset in one session) rather than cached against the first
+    -- `data` this ever saw.
+    if not (gen4NormalisedNames and gen4NormalisedNames.of == sprites) then
+      local byNorm = {}
+      for key, value in pairs(sprites) do byNorm[normaliseGfxName(key)] = value end
+      gen4NormalisedNames = { of = sprites, map = byNorm }
+    end
+    record = gen4NormalisedNames.map[normaliseGfxName(name)]
+  end
   local member = record and tonumber(record.member)
   if not member then return nil, name end
   return ("SPRITE_G4_%03d"):format(member), name
@@ -549,6 +603,12 @@ local function resolveGraphicsVar(save, obj)
   return copy
 end
 OverworldState.resolveGraphicsVar = resolveGraphicsVar
+-- EXPORTED SO THE JOIN CAN BE TESTED WITH DATA HANDED TO IT. `Game` above is
+-- a module local set on enter, so `resolveGraphicsVar` cannot be exercised
+-- outside a running overworld -- and the thing worth testing is this hop, which
+-- already takes its `data` as an argument. See
+-- `tools/gen4_object_sprite_check.lua`.
+OverworldState.gen4SpriteFor = gen4SpriteFor
 
 local function objectHome(save, mapId, obj)
   save = save or (Game and Game.save)
@@ -1043,6 +1103,34 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
         -- They must not cap the camera's visible terrain to the current town.
         w,h=matrix.width*512,matrix.height*512
       end
+      -- ...AND A MAP WITH A CONNECTION HAS MORE WORLD THAT WAY, so the bound
+      -- on that axis is not the map's width at all.
+      --
+      -- Reported from play: zooming out on a Hoenn route put black bars down
+      -- both sides instead of showing the routes either end of it.  The gym
+      -- rule above is about a map whose BORDER is all there is beyond it;
+      -- a connected edge has a neighbour beyond it, `rebuildNeighbors` loads
+      -- it and the world pass draws it, and survey zoom exists to show
+      -- exactly that.  Reading the map's own extent as the whole world
+      -- cancelled the feature on every map that has a connection.
+      --
+      -- `math.huge` rather than a computed union of the loaded neighbours:
+      -- the union depends on the reach, the reach depends on the view and
+      -- the view depends on this bound, so a union would be a feedback loop
+      -- settling over several frames.  "Unbounded that way" is both the
+      -- honest answer and a fixed point.  The hop budget and `inReach` are
+      -- what actually limit how many maps get loaded, as they always were.
+      --
+      -- Gen 4 has no `connections` table -- its landscape is the matrix
+      -- above -- so this reads false there and that branch is unchanged.
+      local open = { }
+      for dir, conn in pairs(d.connections or {}) do
+        if NEIGHBOUR_DIRS[dir] and conn then
+          if dir=="east" or dir=="west" then open.w=true else open.h=true end
+        end
+      end
+      if open.w then w=math.huge end
+      if open.h then h=math.huge end
       Game.renderer:setWorldBounds(w,h)
     end
   end
@@ -4322,6 +4410,17 @@ function OverworldState:handleInput()
     -- WHICH start menu is the dataset's to say: Emerald's is a different
     -- screen with different rows on a different sized surface, not this one
     -- with the words swapped.
+    -- ...AND UNDERGROUND IT IS A DIFFERENT MENU ENTIRELY. The cartridge
+    -- builds seven rows from `sUndergroundMenuOptions` down there instead of
+    -- the field's, and GO UP is one of them -- the only way out, which is
+    -- why `CanUseExplorerKit` refuses the kit underground. Asked BEFORE the
+    -- dataset's own start menu, because the dataset names the field one and
+    -- has nothing to say about this.
+    local UG = require("src.world.Gen4Underground")
+    if UG.isUnderground(self) then
+      Screens.push(Game, "UndergroundMenu")
+      return
+    end
     local boot = Game.data.field and Game.data.field.boot
     local screens = boot and boot.screens or {}
     Screens.push(Game, screens.startMenu or "StartMenu")
@@ -10720,6 +10819,36 @@ end
 
 -- -------------------------------------------------------------------------
 -- step events
+
+-- Entry 66 of the common-scripts text bank, with the nickname placeholder
+-- filled.  The bank number is `Gen4ScriptBands.TEXT_BANK.common_scripts`
+-- rather than a literal 213, because that table is already the one place that
+-- knows which bank a shared script file reads its text from, and a second
+-- spelling of it is the bug this port keeps finding.
+--
+-- `{STRVAR_1 1 0 0}` is string buffer slot 0, which the cartridge's
+-- `BufferPartyMonNickname 0` fills on the row before the message.  The
+-- trailing \r is its wait-and-clear: each queue entry here is its own box, so
+-- the box already ends where the \r would have ended it.
+local function gen4SurvivedPoisonLine(name)
+  local okB, Bands = pcall(require, "src.import.Gen4ScriptBands")
+  local bank = okB and Bands and Bands.TEXT_BANK
+                and Bands.TEXT_BANK.common_scripts
+  local text
+  if bank then
+    local okT, Gen4Text = pcall(require, "src.import.Gen4Text")
+    if okT and Gen4Text and Gen4Text.label then
+      local key = Gen4Text.label(bank, 66)
+      text = Game.data and Game.data.text and Game.data.text[key]
+    end
+  end
+  if type(text) ~= "string" then
+    return Strings("%s survived\nthe poisoning!", name)
+  end
+  text = text:gsub("{STRVAR_1%s[^}]*}", (tostring(name):gsub("%%", "%%%%")))
+  return (text:gsub("[\r]+$", ""))
+end
+
 -- Field poison (engine/events/poison.asm ApplyOutOfBattlePoisonDamage):
 -- every 4th step, 1 HP per poisoned mon; the BG flickers dark with
 -- SFX_POISONED; fainted mons get their message; a whole-party faint
@@ -10731,18 +10860,96 @@ function OverworldState:applyFieldPoison()
   save.poisonSteps = ((save.poisonSteps or 0) + 1) % interval
   if save.poisonSteps ~= 0 then return false end
   local damage = FieldDefaults.world(Game.data, "poisonDamage") or 1
-  local anyPoisoned, fainted = false, {}
+  -- GEN 4 CHANGED THIS RULE AND THE PORT WAS STILL PLAYING GEN 2'S.
+  --
+  -- `Pokemon_DoPoisonDamage` (pokeplatinum src/unk_02054884.c) is, in full:
+  --
+  --     if (Pokemon_CanBattle(mon) && poisoned) {
+  --         u32 hp = HP(mon);
+  --         if (hp > 1) { hp--; }            <-- never below 1
+  --         SetHP(mon, hp);
+  --         if (hp == 1) {
+  --             numFainted++;
+  --             UpdateFriendship(FRIENDSHIP_EVENT_POISON_SURVIVE);
+  --         }
+  --         numPoisoned++;
+  --     }
+  --
+  -- `if (hp > 1) hp--` is the whole rule: FIELD POISON IN SINNOH CANNOT FAINT A
+  -- POKEMON. It walks it down to 1 HP and stops. The counter pokeplatinum calls
+  -- `numFainted` is a misnomer -- it counts mons that REACHED 1 -- and the
+  -- friendship event it fires is named POISON_SURVIVE, which settles what the
+  -- cartridge thinks is happening.
+  --
+  -- The half that confirms it is the script: `FLDPSN_FAINTED` hands control to
+  -- common script 3, which loops `SurvivePoison` over the party, and
+  -- `Pokemon_TrySurvivePoison` is "if poisoned and HP == 1, CURE IT and return
+  -- TRUE" -- then the box says "<MON> survived the poisoning!".
+  --
+  -- SO IN PLATINUM, WALKING WITH A POISONED POKEMON CANNOT FAINT IT AND CANNOT
+  -- WHITE YOU OUT. This function did both, because it was written from
+  -- Gen 2's `ApplyOutOfBattlePoisonDamage`, where poison does kill. A rule that
+  -- differs rather than a feature that is missing, which is the hardest kind to
+  -- notice: nothing errors, nothing logs, and the game just occasionally robs
+  -- the player of a Pokemon and half their money.
+  --
+  -- Gated on the cache, so Gen 1, Gen 2, Gen 3 and the Crystal hacks keep the
+  -- rule they were written against.
+  local gen4 = GameVersion.isGen4()
+  local anyPoisoned, fainted, survived = false, {}, {}
+  -- `(MON_CONDITION_TOXIC | MON_CONDITION_POISON)` is the cartridge's test, so
+  -- a BADLY poisoned Pokemon takes field poison too. This read `"PSN"` alone,
+  -- which on a Gen 4 cache silently excused every toxic mon from the whole
+  -- mechanic. Widened for Gen 4 only: Gen 1 and Gen 2 have no toxic status to
+  -- carry out of a battle, and Gen 3 is left exactly as it was tested.
+  local function poisonedNow(mon)
+    if mon.status == "PSN" then return true end
+    return gen4 and mon.status == "TOX"
+  end
   for _, mon in ipairs(save.party) do
-    if mon.status == "PSN" and mon.hp > 0 then
+    if poisonedNow(mon) and mon.hp > 0 then
       anyPoisoned = true
-      mon.hp = mon.hp - damage
-      if mon.hp <= 0 then
-        mon.hp = 0
-        mon.status = nil -- the original clears status on the faint
-        table.insert(fainted, mon)
-        -- callfar_ModifyPikachuHappiness PIKAHAPPY_PSNFNT (poison.asm)
-        require("src.world.PikachuFollower")
-          .modifyHappiness(save, "PSNFNT", mon)
+      if gen4 then
+        -- `if (hp > 1) hp--`, and nothing else. A mon already sitting at 1 is
+        -- left alone rather than cured a second time, which is what the
+        -- cartridge does: it only fires the survive path on the step that
+        -- ARRIVES at 1.
+        if mon.hp > 1 then
+          mon.hp = mon.hp - damage
+          if mon.hp < 1 then mon.hp = 1 end
+          if mon.hp == 1 then
+            -- `Pokemon_TrySurvivePoison` clears the status, and the common
+            -- script prints the line. Both are done here because this engine
+            -- does its field-poison messages inline rather than by handing off
+            -- to common script 3 -- and `g4_survive_poison` answers the script
+            -- side for anything that ever does hand off.
+            mon.status = nil
+            survived[#survived + 1] = mon
+            -- FRIENDSHIP_EVENT_POISON_SURVIVE, and the event NAME is a trap:
+            -- its deltas are { -5, -5, -10 }, so friendship goes DOWN. The
+            -- Pokemon survived; it is not pleased about having been carried
+            -- around poisoned.
+            --
+            -- Those are the same three numbers as Gen 2's PIKAHAPPY_PSNFNT, over
+            -- the same bands (100 / 200). Gen 4 did not change the penalty --
+            -- only when it fires, because there is no faint to fire it on.
+            --
+            -- Through `Evolution.changeHappiness`, which is where this engine
+            -- already keeps banded friendship deltas, rather than a second
+            -- mechanism beside it.
+            require("src.pokemon.Evolution").changeHappiness(mon, "POISON_SURVIVE")
+          end
+        end
+      else
+        mon.hp = mon.hp - damage
+        if mon.hp <= 0 then
+          mon.hp = 0
+          mon.status = nil -- the original clears status on the faint
+          table.insert(fainted, mon)
+          -- callfar_ModifyPikachuHappiness PIKAHAPPY_PSNFNT (poison.asm)
+          require("src.world.PikachuFollower")
+            .modifyHappiness(save, "PSNFNT", mon)
+        end
       end
     end
   end
@@ -10753,6 +10960,21 @@ function OverworldState:applyFieldPoison()
   for _, mon in ipairs(fainted) do
     local name = mon.nickname or Game.data.pokemon[mon.species].name
     table.insert(queue, Strings("%s\nfainted!", name))
+  end
+  -- Sinnoh's line, from `CommonStrings_Text_PokemonSurvivedThePoisoning`.
+  -- `fainted` is always empty on a Gen 4 cache and `survived` is always empty
+  -- on every other one, so the two loops never both produce anything.
+  --
+  -- AND IT IS THE CARTRIDGE'S LINE, NOT A PARAPHRASE OF IT.  Pass 170 wrote
+  -- "<mon> survived\nthe poisoning!" from the message's pret IDENTIFIER, which
+  -- is not its text: entry 66 of the common-scripts bank reads "<mon> survived
+  -- the poisoning.\nThe poison faded away!" -- two sentences, breaking in a
+  -- different place.  Cartridge text belongs to the cartridge, so it is read
+  -- out of the extracted bank and only the placeholder is filled; the engine's
+  -- own wording stays as the fallback for a cache that has no such entry.
+  for _, mon in ipairs(survived) do
+    local name = mon.nickname or Game.data.pokemon[mon.species].name
+    table.insert(queue, gen4SurvivedPoisonLine(name))
   end
   local alive = false
   for _, mon in ipairs(save.party) do
@@ -10847,6 +11069,21 @@ function OverworldState:stepEggs()
       if mon.eggSteps <= 0 and not hatched then hatched = mon end
     end
   end
+  if not hatched then return false end
+  return self:hatchEgg(hatched)
+end
+
+-- THE HATCH ITSELF, lifted out of `stepEggs` unchanged so that the Gen 4
+-- script command can reach it too.
+--
+-- `hatchegg` (0x1AC) is one use, in `CommonScript_HatchEgg`, which does the
+-- "Oh?" message and the fade itself and then calls `FieldSystem_HatchEgg` --
+-- `Party_GetFirstEgg` plus the hatch scene. This engine never dispatches that
+-- common script, because `stepEggs` below hatches inline on the step that runs
+-- the counter out; the command is lowered so that anything which ever does
+-- dispatch it gets the same hatch rather than a second copy of these thirty
+-- lines. One spelling, two doors.
+function OverworldState:hatchEgg(hatched)
   if not hatched then return false end
   local Pokemon = require("src.pokemon.Pokemon")
   local def = Game.data.pokemon[hatched.species]
@@ -15750,6 +15987,7 @@ function OverworldState:drawUI()
   end
 
   if self.brailleBox then self:drawBrailleBox() end
+  if self.gen4SaveInfo then self:drawGen4SaveInfo() end
 
   -- TalkToPikachu's picture box (engine/pikachu/pikachu_pic_animation.asm
   -- PlacePikapicTextBoxBorder: TextBoxBorder at (6,5) with b,c = 5,5, so a
@@ -15811,6 +16049,50 @@ end
 -- What is drawn is DOTS.  The extractor knows perfectly well what each wall
 -- says (constants.gen3Braille carries the letters), and printing them would
 -- be a parity break: reading the wall is the puzzle.
+-- SINNOH'S SAVE INFO PANEL (overlay005/save_info_window.c
+-- SaveInfoWindow_Draw / SaveInfoWindow_PrintText).  `opensaveinfo` builds the
+-- rows and `closesaveinfo` clears them; this only draws what is there.
+--
+-- GEOMETRY FROM THE C, not from taste.  `Window_Add(..., 1, 1, width, height,
+-- ...)` puts the window at tile (1,1) and `SAVE_INFO_WINDOW_WIDTH` is 13, so
+-- the standard frame around it is a 15-wide box at tile (0,0) -- the same
+-- relationship FireRed's elevator panel above has.  `SAVE_INFO_WINDOW_HEIGHT`
+-- is 10, less two when the Pokedex row is dropped, and Gen4Save has already
+-- decided which.
+--
+-- The row pitch is `FONTATTR_MAX_LETTER_HEIGHT + FONTATTR_LINE_SPACING`, which
+-- is 16 for the DS system font -- the same pitch TextBox uses for its two
+-- lines.  Labels print at the window's own x 0; values are right-aligned to
+-- `SAVE_INFO_WINDOW_WIDTH * 8` minus their measured width, which is why the
+-- clock's minutes are zero-padded in Gen4Save rather than space-padded here.
+function OverworldState:drawGen4SaveInfo()
+  local panel = self.gen4SaveInfo
+  if type(panel) ~= "table" or type(panel.rows) ~= "table" then return end
+  local Font = require("src.render.Font")
+  local tilesW = panel.tilesW or 13
+  local tilesH = panel.tilesH or 10
+  Font.drawBox(0, 0, tilesW + 2, tilesH + 2)
+  local left = 8
+  local right = 8 + tilesW * 8
+  local y = 8
+  love.graphics.setColor(0, 0, 0, 1)
+  -- Row 0 is the location on its own: bank 534 entry 0 is
+  -- `{COLOR 1}{STRVAR_1 4 0 0}{COLOR 0}` -- a placeholder with a colour change
+  -- and no label, so it is drawn flush left across the whole width.
+  if panel.heading and panel.heading ~= "" then
+    Font.draw(panel.heading, left, y)
+  end
+  for _, row in ipairs(panel.rows) do
+    y = y + 16
+    if row.label then Font.draw(row.label, left, y) end
+    local value = row.value
+    if value and value ~= "" then
+      Font.draw(value, right - Font.width(value), y)
+    end
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
 function OverworldState:drawBrailleBox()
   local box = self.brailleBox
   local wall = box and box.wall

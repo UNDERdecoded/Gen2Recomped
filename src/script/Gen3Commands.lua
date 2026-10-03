@@ -2223,6 +2223,15 @@ local function warpCell(ctx, mapId, index)
 end
 Gen3Commands.warpCell = warpCell
 
+do
+-- Warp x/y are halfword value-or-variable operands (ScrCmd_warpdoor uses
+-- VarGet), unlike the literal byte map and warp IDs. Petalburg's sliding
+-- doors pass VAR_0x8008/8009; treating those as coordinates lands off-map.
+local function warpCoordinate(ctx, operand)
+  if tonumber(operand) == nil then return nil end
+  return valueOf(ctx, operand)
+end
+
 function Commands.g3_warp(ctx, group, number, warpId, x, y)
   local id = mapKey(group, number)
   -- warp id $FF means "use the x/y given"; anything else names a warp on the
@@ -2237,7 +2246,7 @@ function Commands.g3_warp(ctx, group, number, warpId, x, y)
     Logger.warn("gen3 warp: %s has no warp %d -- falling back to the "
                 .. "coordinates beside it", tostring(id), named)
   end
-  Commands.warp(ctx, id, tonumber(x), tonumber(y))
+  Commands.warp(ctx, id, warpCoordinate(ctx, x), warpCoordinate(ctx, y))
 end
 
 -- THE HOLE WARP, which is a slot of its own and not the respawn point.
@@ -2249,7 +2258,7 @@ end
 function Commands.g3_set_hole_warp(ctx, group, number, warpId, x, y)
   ctx.save = ctx.save or {}
   ctx.save.gen3HoleWarp = { map = mapKey(group, number), warp = tonumber(warpId),
-                            x = tonumber(x), y = tonumber(y) }
+                            x = warpCoordinate(ctx, x), y = warpCoordinate(ctx, y) }
 end
 
 function Commands.g3_warp_hole(ctx, group, number)
@@ -2308,7 +2317,7 @@ function Commands.g3_set_warp(ctx, group, number, warpId, x, y)
   ctx.save.gen3PendingWarp = {
     map = mapKey(group, number),
     group = tonumber(group), number = tonumber(number),
-    warp = tonumber(warpId), x = tonumber(x), y = tonumber(y),
+    warp = tonumber(warpId), x = warpCoordinate(ctx, x), y = warpCoordinate(ctx, y),
   }
 end
 
@@ -2328,8 +2337,9 @@ function Commands.g3_set_dynamic_warp(ctx, group, number, warpId, x, y)
   ctx.save = ctx.save or {}
   ctx.save.gen3DynamicWarp = { map = mapKey(group, number),
                                warp = tonumber(warpId),
-                               x = tonumber(x), y = tonumber(y) }
+                               x = warpCoordinate(ctx, x), y = warpCoordinate(ctx, y) }
 end
+end -- warp coordinate operand scope
 
 function Commands.g3_set_respawn(ctx, index)
   local save = ctx.save
@@ -3816,23 +3826,13 @@ end
 -- already have for "it did not happen" -- the tent attendant says nothing more
 -- and lets you walk away, rather than warping you in on a save that is not
 -- there.
+-- The write itself moved to `src/script/ScriptSave.lua` in pass 171, where
+-- Sinnoh's `trysavegame` reads the same sentence.  Nothing about this arm
+-- changed: the veto, the raise and the headless fallback behave as they did
+-- and the log line is the same string.  What changed is that there is now one
+-- copy of it instead of the two this file would otherwise have been half of.
 Gen3Commands.SPECIALS[96] = function(ctx)
-  local game = ctx.game
-  local wrote = false
-  if game and game.writeSave then
-    local ok, result = pcall(game.writeSave, game)
-    wrote = ok and result ~= false
-    if not ok then
-      Logger.warn("gen3 save: the script's save failed: %s", tostring(result))
-    end
-  elseif ctx.save then
-    -- headless: no Game to capture through, so the save table is written as
-    -- it stands.  The scripts still need their answer.
-    local ok, SaveData = pcall(require, "src.core.SaveData")
-    if ok and SaveData and SaveData.save then
-      wrote = pcall(SaveData.save, ctx.save) and true or false
-    end
-  end
+  local wrote = require("src.script.ScriptSave").write(ctx, "gen3")
   local answer = wrote and 1 or 0
   setVar(ctx.save, VAR_RESULT, answer)
   Logger.info("gen3 save: script save %s", wrote and "written" or "declined")

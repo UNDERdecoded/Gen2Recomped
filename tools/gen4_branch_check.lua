@@ -194,7 +194,11 @@ end
 io.write(("corpus: %d blocks, %d rows, %d branch rows, %d labels\n\n")
   :format(blocks, rows, branchRows, labelRows))
 
-ok(blocks == 8567, "blocks in the pool", blocks, 8567)
+-- 8,567 -> 8,571 in pass 168: the decoder stopped truncating four scripts at
+-- the field-move flag commands, so the walk reaches further. A floor, because
+-- reach going up is the work -- and see `gen4_coverage_check` for the two
+-- opcodes that had never been seen anywhere until that walk got past them.
+ok(blocks >= 8571, "blocks in the pool (floor)", blocks, 8571)
 ok(dangling == 0, "jumps to a label that was never emitted", dangling, 0)
 for _, e in ipairs(danglingExamples) do io.write("        " .. e .. "\n") end
 ok(silent == 0, "blocks that branch but compile to no branch", silent, 0)
@@ -202,9 +206,28 @@ for _, e in ipairs(silentExamples) do io.write("        " .. e .. "\n") end
 
 -- rule 4: the totals.  Stated, so a change of METHOD cannot be read as a
 -- change of code -- the same reason the corpus walk states 8,567 blocks.
-ok(labelRows == 74825, "labels emitted across the corpus", labelRows, 74825)
-ok(branchRows == 169017, "branch rows across the corpus", branchRows, 169017)
-ok(rows == 599532, "compiled rows across the corpus", rows, 599532)
+--
+-- FLOORS, NOT EQUALITIES, and that distinction cost a red check. These are
+-- DATA VOLUMES: every opcode that gains a lowering compiles more rows, so an
+-- exact pin turns progress into a failure. It did -- the bag, the berries and
+-- the PC were lowered and `rows` went 599,532 -> 599,584, a check failing
+-- because the port had got better.
+--
+-- What they are really for is a walk that stops short: fewer blocks, a
+-- truncated decode, a corpus that shrank. They may not regress.
+--
+-- THEY DO NOT CATCH A LOWERING BEING LOST, and that was worth finding out
+-- rather than assuming. Deleting `L.openbag` -- 44 occurrences -- left this
+-- check green, because an opcode with no lowering still compiles a row; it
+-- is a different row, not a missing one. `gen4_coverage_check`'s `lowered`
+-- floor is the assertion that catches that, and it only does so while the
+-- floor is kept level with the corpus.
+--
+-- `dangling == 0` and `silent == 0` above stay exact: those are facts about
+-- shape rather than quantities, and may not move at all.
+ok(labelRows >= 74825, "labels emitted across the corpus (floor)", labelRows, 74825)
+ok(branchRows >= 169017, "branch rows across the corpus (floor)", branchRows, 169017)
+ok(rows >= 599584, "compiled rows across the corpus (floor)", rows, 599584)
 
 io.write(("\n%d checks, %d failures\n"):format(checks, fails))
 os.exit(fails == 0 and 0 or 1)

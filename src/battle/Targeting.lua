@@ -40,10 +40,85 @@ Targeting.BOTH             = 0x08
 Targeting.USER             = 0x10
 Targeting.FOES_AND_ALLY    = 0x20
 Targeting.OPPONENTS_FIELD  = 0x40
+-- ONE KIND GEN 3 NEVER PRODUCES: the partner, and only the partner. Hoenn
+-- has no move that names it, Sinnoh has exactly one -- HELPING HAND -- so the
+-- kind is added here rather than invented at the Gen 4 call site.
+Targeting.ALLY             = 0x80
 
+-- SINNOH SPELLS THIS FIELD DIFFERENTLY, AND THE TWO SPELLINGS OVERLAP.
+--
+-- A Gen 4 move record has no `target`. It has `range`, and the cache stores it
+-- as `1 << (id - 1)` of pokeplatinum's `move_ranges.txt` order (id 0 stays 0):
+-- verified over all 468 moves in the cache against pret's own per-move
+-- `res/moves/<move>/data.json`, 468 of 468, no exceptions.
+--
+-- SO IT LOOKS LIKE A `target` BYTE AND IS NOT ONE. Both are small bitmasks and
+-- they agree on 0 and on 0x10, which is exactly enough coincidence to make
+-- `target = range` look right and be wrong:
+--
+--     mask  Sinnoh says              Hoenn's byte would say
+--     0x02  RANDOM_OPPONENT          USER_OR_SELECTED
+--     0x04  ADJACENT_OPPONENTS       RANDOM
+--     0x08  ALL_ADJACENT             BOTH (foes only -- drops your partner)
+--     0x20  USER_SIDE                FOES_AND_ALLY (hits three Pokemon)
+--     0x40  FIELD                    OPPONENTS_FIELD
+--
+-- Assigning one to the other would aim THRASH at a choice, put EXPLOSION's
+-- blast on the foes only, and turn REFLECT into a three-target attack. The
+-- translation is therefore explicit, and `tools/gen4_targeting_check.lua`
+-- asserts the two tables are NOT interchangeable so that nobody collapses
+-- them back into one.
+--
+-- MAPPED WITH THE MOVE LISTS IN HAND rather than by the names lining up. The
+-- two that are not a straight rename:
+--   * USER_SIDE (REFLECT, LIGHT SCREEN, MIST, SAFEGUARD, TAILWIND, HEAL BELL,
+--     AROMATHERAPY, LUCKY CHANT) and FIELD (RAIN DANCE, SANDSTORM, HAIL,
+--     SUNNY DAY, GRAVITY, TRICK ROOM, HAZE, PERISH SONG, MUD SPORT, WATER
+--     SPORT) name no Pokemon at all. They take USER because the effect record
+--     does the real work and only needs somebody plausible to start from --
+--     which is what Hoenn does with the same moves, whose own byte reads USER
+--     for "every stat-up and screen".
+--   * ME FIRST takes SELECTED: it picks one foe, then copies what that foe
+--     was going to do.
+local GEN4_RANGE = {
+  [0]    = Targeting.SELECTED,         -- SINGLE_TARGET, 335 moves
+  [1]    = Targeting.DEPENDS,          -- SINGLE_TARGET_SPECIAL, 11: COUNTER,
+                                       -- MIRROR COAT, METRONOME, MIRROR MOVE,
+                                       -- SLEEP TALK, ASSIST, COPYCAT, SNATCH,
+                                       -- MAGIC COAT, METAL BURST, NATURE POWER
+  [2]    = Targeting.RANDOM,           -- RANDOM_OPPONENT, 4: OUTRAGE, PETAL
+                                       -- DANCE, THRASH, UPROAR -- the same
+                                       -- four Hoenn rolls and then locks in
+  [4]    = Targeting.BOTH,             -- ADJACENT_OPPONENTS, 24: BLIZZARD,
+                                       -- ROCK SLIDE, ICY WIND, GROWL, LEER...
+  [8]    = Targeting.FOES_AND_ALLY,    -- ALL_ADJACENT, 8: EARTHQUAKE,
+                                       -- EXPLOSION, MAGNITUDE, SELFDESTRUCT,
+                                       -- SURF, DISCHARGE, LAVA PLUME, TEETER
+                                       -- DANCE -- Hoenn's own list, exactly
+  [16]   = Targeting.USER,             -- USER, 62 moves
+  [32]   = Targeting.USER,             -- USER_SIDE, 8 (see above)
+  [64]   = Targeting.USER,             -- FIELD, 10 (see above)
+  [128]  = Targeting.OPPONENTS_FIELD,  -- OPPONENT_SIDE, 3: SPIKES, TOXIC
+                                       -- SPIKES, STEALTH ROCK
+  [256]  = Targeting.ALLY,             -- ALLY, 1: HELPING HAND
+  [512]  = Targeting.USER_OR_SELECTED, -- USER_OR_ALLY, 1: ACUPRESSURE -- the
+                                       -- move that finally reaches the branch
+                                       -- Hoenn leaves empty
+  [1024] = Targeting.SELECTED,         -- SINGLE_TARGET_ME_FIRST, 1: ME FIRST
+}
+Targeting.GEN4_RANGE = GEN4_RANGE
+
+-- `target` FIRST, because it is the native field wherever it exists: Hoenn
+-- writes it for all 467 of its moves and no `range` at all, Sinnoh the other
+-- way round. Gen 1 and Gen 2 carry neither and still land on SELECTED, which
+-- in a single battle is "the one foe" -- the answer this engine gave before
+-- any of this existed.
 local function kindOf(move)
   local t = move and tonumber(move.target)
-  return t or Targeting.SELECTED
+  if t then return t end
+  local r = move and tonumber(move.range)
+  if r then return GEN4_RANGE[r] or Targeting.SELECTED end
+  return Targeting.SELECTED
 end
 Targeting.kindOf = kindOf
 
@@ -90,6 +165,16 @@ function Targeting.resolve(battle, user, move, chosen)
   local k = kindOf(move)
 
   if k == Targeting.USER then return { user } end
+
+  -- THE PARTNER, AND NOTHING ELSE. HELPING HAND names the Pokemon standing
+  -- next to yours, so with nobody there the move has no target and fails --
+  -- which is what the cartridge does with it in a single battle, rather than
+  -- quietly aiming it at a foe.
+  if k == Targeting.ALLY then
+    local ally = battle.partnerOf and battle:partnerOf(user)
+    if ally and ally.mon and (ally.mon.hp or 0) > 0 then return { ally } end
+    return {}
+  end
   -- a field move has no Pokemon target; the caller reads the side instead
   if k == Targeting.OPPONENTS_FIELD then return {} end
 

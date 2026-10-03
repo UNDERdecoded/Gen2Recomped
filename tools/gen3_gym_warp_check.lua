@@ -124,6 +124,30 @@ local function load(name)
   return okRun and v or nil
 end
 
+-- THE REPO'S OWN HAND-PORTED SCRIPTS HAVE TO BE REACHABLE.
+--
+-- Entering the gym runs `data/scripts/init.lua`, which is a file in this
+-- REPOSITORY and not in the extracted cache. Run from a tree without it -- a
+-- partial checkout, or a working copy holding only src/ and tools/ -- the
+-- require fails inside the overworld and this check reported "the overworld
+-- would not enter the gym", which is a confident accusation against the
+-- engine for something the engine never saw.
+--
+-- So it is tested up front, and a missing tree exits 2: this tree's
+-- convention for "I could not run", which `tools/run_checks.py` counts as
+-- SKIPPED rather than as a fault.
+do
+  local probe = io.open("data/scripts/init.lua", "rb")
+  if not probe then
+    io.write("cannot reach data/scripts/init.lua from " .. (os.getenv("PWD") or "the")
+             .. " working directory\n")
+    io.write("  the gym entry runs the repo's hand-ported scripts, so this\n"
+             .. "  check needs the whole repository, not just src/ and tools/\n")
+    os.exit(2)
+  end
+  probe:close()
+end
+
 local GameVersion = require("src.core.GameVersion")
 GameVersion.set("emerald")
 
@@ -146,6 +170,10 @@ io.write(("  %s: %d table(s)\n"):format(EM, loaded))
 
 local Game = require("src.core.Game")
 Game.data = Data
+Game.input = { pressed = function() return false end,
+               down = function() return false end, dir = function() end,
+               isDown = function() return false end, wasPressed = function() return false end,
+               direction = function() end }
 Game.save = { player = { name = "MAY", gender = "girl" }, party = {}, flags = {},
               vars = {}, options = {}, bag = {} }
 -- THE RENDERER, ONLY AS FAR AS THE OVERWORLD ASKS IT ANYTHING.  The real one
@@ -165,6 +193,7 @@ Game.stack = StateStack
 -- started on. Named here rather than hidden, because it is the one place this
 -- harness is not the engine.
 local Transition = require("src.render.Transition")
+local realTransitionNew = Transition.new
 Transition.new = function(_, body)
   if type(body) == "function" then pcall(body) end
   return { isTransition = true, update = function() end, draw = function() end }
@@ -341,6 +370,95 @@ ok(stuck == 0, "%d doorway(s) are a trap", stuck)
 -- MetatileBehavior_IsDoor names -- so it is a fact about the map and not a
 -- fault. It is printed because "why am I standing in the door" is a question
 -- this file should be able to answer.
+
+section("5. live transitions and room-entry scripts")
+Transition.new = realTransitionNew
+Game.stack.states = {}
+OW.pendingScripts = {}
+OW.transitioning = nil
+local function settle()
+  for tick = 1, 180 do
+    local top = Game.stack:top()
+    if top then top:update(1/60) else OW:update(1/60) end
+    if not OW.transitioning and not OW.runner:isRunning()
+       and not (OW.pendingScripts and OW.pendingScripts[1]) then return true end
+  end
+  return false
+end
+OW:setMap(GYM, 4, 110, "up")
+ok(settle(), "main room entry did not settle")
+for i, w in ipairs(def.warps or {}) do
+  if w.destMap == GYM then
+    OW.player.cellX, OW.player.cellY = w.x, w.y
+    OW.player.px, OW.player.py = w.x * 16, w.y * 16
+    OW:takeWarp(w)
+    ok(settle(), "live warp %d did not release input", i - 1)
+    for tick = 1, 30 do OW:update(1/60) end
+    local expected = def.warps[w.destWarp]
+    ok(OW.player.cellX == expected.x and OW.player.cellY == expected.y,
+       "live warp %d left player at %s,%s", i - 1,
+       tostring(OW.player.cellX), tostring(OW.player.cellY))
+    local cells, drew = frame()
+    ok(cells > 0 and drew == cells, "live warp %d did not draw its room", i - 1)
+  end
+end
+
+section("6. extracted sliding-door script with variable coordinates")
+-- These doors use an A-button script, rather than ordinary walking warps.
+-- Find its shared warpdoor block in the ROM cache, without depending on a
+-- particular ROM address. The door choice sets these two temporary variables.
+local VM = require("src.script.Gen3ScriptVM")
+local entry
+for label, rows in pairs(Data.map_scripts.scripts) do
+  for _, row in ipairs(rows) do
+    if row[1] == "warpdoor" and row[2] == 8 and row[3] == 1
+       and row[5] == 0x8008 and row[6] == 0x8009 then entry = label end
+  end
+end
+ok(entry ~= nil, "extracted Petalburg variable-coordinate door script missing")
+if entry then
+  local script = assert(VM.compile(Data, entry))
+  for _, slot in ipairs({3,6,9,10,15,16,21,22,23,24,33,34}) do
+    local w = def.warps[slot]
+    local expected = def.warps[w.destWarp]
+    OW:setMap(GYM, w.x, w.y+1, "up")
+    ok(settle(), "door %d entry setup did not settle", slot)
+    Game.save.gen3Vars = Game.save.gen3Vars or {}
+    Game.save.gen3Vars[0x8008], Game.save.gen3Vars[0x8009] = expected.x, expected.y
+    OW.runner:run(script)
+    ok(settle(), "scripted door %d did not release input", slot)
+    ok(OW.player.cellX == expected.x and OW.player.cellY == expected.y,
+       "scripted door %d landed at %s,%s instead of %d,%d", slot,
+       tostring(OW.player.cellX), tostring(OW.player.cellY), expected.x, expected.y)
+    local cells, drew = frame()
+    ok(cells > 0 and drew == cells, "scripted door %d left a black room", slot)
+    local canLeave = false
+    for _, dir in ipairs({"up", "down", "left", "right"}) do
+      canLeave = canLeave or Collision.canMove(OW.map, OW.cast or OW.entities, OW.player, dir)
+    end
+    ok(canLeave, "scripted door %d cannot leave the arrival doorway", slot)
+  end
+end
+
+section("7. stored warp coordinates resolve when recorded")
+local Commands = require("src.script.Commands")
+local ctx = OW.runner:makeContext()
+Game.save.gen3Vars[0x4001], Game.save.gen3Vars[0x8009] = 7, 85
+for _, case in ipairs({{"g3_set_warp", "gen3PendingWarp"},
+                      {"g3_set_dynamic_warp", "gen3DynamicWarp"},
+                      {"g3_set_hole_warp", "gen3HoleWarp"}}) do
+  Commands[case[1]](ctx, 8, 1, 255, 0x4001, 0x8009)
+  Game.save.gen3Vars[0x4001] = 1
+  local recorded = Game.save[case[2]]
+  ok(recorded.x == 7 and recorded.y == 85, "%s stored variable IDs or deferred resolution", case[1])
+  Commands[case[1]](ctx, 8, 1, 255, 0, 98)
+  recorded = Game.save[case[2]]
+  ok(recorded.x == 0 and recorded.y == 98, "%s lost literal coordinates", case[1])
+  Commands[case[1]](ctx, 8, 1, 255, nil, nil)
+  recorded = Game.save[case[2]]
+  ok(recorded.x == nil and recorded.y == nil, "%s converted missing coordinates to zero", case[1])
+  Game.save.gen3Vars[0x4001] = 7
+end
 
 io.write(("\n%d checks, %d failed\n"):format(checks, fails))
 os.exit(fails == 0 and 0 or 1)

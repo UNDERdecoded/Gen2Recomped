@@ -997,6 +997,111 @@ MoveEffects.full.HIDDEN_POWER_EFFECT = {
     return hiddenPowerPower(ctx.user.mon)
   end),
 }
+-- ------------------------------------------- Sinnoh's dynamic power
+--
+-- FOUR EFFECTS, FIVE MOVES, AND EVERY NUMBER TAKEN FROM THE CARTRIDGE'S OWN
+-- EFFECT SCRIPT. pokeplatinum names its per-effect scripts BY EFFECT ID --
+-- `res/battle/scripts/effects/effect_script_NNNN.s` -- so each of these is a
+-- transcription rather than a recollection, and the two that are plain
+-- arithmetic are transcriptions of the command the script calls.
+--
+-- `POWER_MULTI` IN THOSE SCRIPTS IS IN TENTHS: 10 is the move's own power and
+-- 20 is double. That is why the doubling ones read the move's power rather
+-- than naming 130 or 120 outright -- a hardcoded doubled number would stop
+-- agreeing the moment the cartridge's base power did.
+
+-- GYRO BALL, from `BtlCmd_CalcGyroBallPower`:
+--     movePower = 1 + 25 * defenderSpeed / attackerSpeed, capped at 150
+-- Integer division in C, so the floor is part of the formula and not a
+-- rounding choice. Speed is the EFFECTIVE speed -- stages, paralysis, the
+-- badge boost and the weather abilities -- because `monSpeedValues` is what
+-- the cartridge filled from the same places.
+--
+-- The attacker's speed can be zero (a paralysed Shedinja with a speed stage
+-- floor is enough), and C would have divided by it. Guarding at 1 keeps the
+-- cap honest: a zero divisor means "as slow as possible", which is 150.
+MoveEffects.full.POWER_BASED_ON_LOW_SPEED = {
+  chooseDamage = variablePower(function(ctx)
+    local atk = TurnOrder.effectiveSpeed(ctx.user, ctx.battle) or 0
+    local def = TurnOrder.effectiveSpeed(ctx.target, ctx.battle) or 0
+    if atk < 1 then return 150 end
+    return math.min(150, 1 + math.floor(25 * def / atk))
+  end),
+}
+
+-- WRING OUT and CRUSH GRIP, from `BtlCmd_CalcWringOutPower`:
+--     movePower = 1 + (120 * defender.curHP) / defender.maxHP
+-- So it is strongest on a full-health target and decays with the damage it
+-- has already taken -- the opposite way round from Reversal, which is why
+-- this is its own formula and not a sign flip of `reversalPower`.
+MoveEffects.full.INCREASE_POWER_WITH_MORE_HP = {
+  chooseDamage = variablePower(function(ctx)
+    local mon = ctx.target and ctx.target.mon
+    local maxHP = mon and mon.maxHP or 0
+    if maxHP < 1 then return 1 end
+    local cur = math.max(0, math.min(mon.hp or 0, maxHP))
+    return 1 + math.floor(120 * cur / maxHP)
+  end),
+}
+
+-- BRINE, from `effect_script_0221.s`:
+--     temp = defender.maxHP / 2
+--     if defender.curHP > temp then POWER_MULTI = 10 else POWER_MULTI = 20
+--
+-- THE BOUNDARY IS `>` AND THE HALVING FLOORS, which together decide the case
+-- that actually comes up: on an odd maximum, say 21, the half is 10, and a
+-- target sitting on exactly 10 is NOT above it -- so it takes the doubled
+-- hit. Writing this as `cur < maxHP / 2` would quietly disagree with the
+-- cartridge on every target whose health is exactly half, and on every odd
+-- maximum as well.
+MoveEffects.full.DOUBLE_POWER_WHEN_BELOW_HALF = {
+  chooseDamage = variablePower(function(ctx)
+    local mon = ctx.target and ctx.target.mon
+    local base = (ctx.move and ctx.move.power) or 1
+    local maxHP = mon and mon.maxHP or 0
+    if maxHP < 1 then return base end
+    local half = math.floor(maxHP / 2)
+    if (mon.hp or 0) > half then return base end
+    return base * 2
+  end),
+}
+
+-- WAKE-UP SLAP, from `effect_script_0217.s`, which does three things in an
+-- order that matters:
+--
+--     CheckSubstitute DEFENDER -> _022      (skip BOTH halves)
+--     if defender.status has SLEEP -> _014
+--       POWER_MULTI = 10                    (not asleep: ordinary hit)
+--     _014:
+--       POWER_MULTI = 20
+--       SIDE_EFFECT = ON_HIT | HEAL_TARGET_SLEEP
+--
+-- A SUBSTITUTE SKIPS THE DOUBLING *AND* THE WAKE. The jump goes straight past
+-- both, so a sleeping Pokemon behind a Substitute takes 60 and stays asleep.
+-- That is one branch, not two coincidences, and it is the part a from-memory
+-- implementation would miss.
+--
+-- And the wake is ON HIT: it is a side effect of damage landing, so a move
+-- that missed or was absorbed leaves the sleep alone.
+MoveEffects.full.DOUBLE_POWER_HEAL_SLEEP = {
+  chooseDamage = variablePower(function(ctx)
+    local base = (ctx.move and ctx.move.power) or 1
+    local mon = ctx.target and ctx.target.mon
+    if ctx.target and ctx.target.substituteHP then return base end
+    if mon and mon.status == "SLP" then return base * 2 end
+    return base
+  end),
+  afterDamage = function(ctx, totalDealt)
+    if (totalDealt or 0) <= 0 then return end
+    if ctx.target and ctx.target.substituteHP then return end
+    local mon = ctx.target and ctx.target.mon
+    if not (mon and mon.status == "SLP") then return end
+    mon.status = nil
+    mon.sleepTurns = nil
+    ctx.say(Strings("%s\nwoke up!", displayName(ctx.target)))
+  end,
+}
+
 MoveEffects.full.MAGNITUDE_EFFECT = {
   chooseDamage = function(ctx)
     local roll = ctx.battle.rng(100)

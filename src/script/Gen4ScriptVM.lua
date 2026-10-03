@@ -272,6 +272,32 @@ L.messagesynchronized = L.message
 L.messagevar = function(ins, s)
   emit(s, { "g4_message_var", ins.args[1], s.bankFor and s.bankFor(s.member) })
 end
+
+-- `messagefrombank <bank> <entry>` -- an explicit bank rather than the map's,
+-- and otherwise the same operation, so it shares the row. The `instant` twin
+-- differs only in not waiting for the printer, which `show_text` does for both
+-- anyway (the same reason `g4_wait_button` is a no-op).
+--
+-- Nine uses over three bands -- tv_broadcast (6), mystery_gift_deliveryman (2)
+-- and tv_reporter_interviews (1) -- and the latter two have 13 and 12 objects
+-- behind them, which is how the band-reach invariant found them.
+L.messagefrombank = function(ins, s)
+  emit(s, { "g4_message_bank", ins.args[1], ins.args[2] })
+end
+L.messagefrombankinstant = L.messagefrombank
+
+-- `choosecustommessageword <unused> <resultVar> <destVar>` -- two destinations
+-- and a literal 0 the macro emits for an operand pokeplatinum itself calls
+-- unused. See the handler for why it answers "cancelled" rather than nothing.
+L.choosecustommessageword = function(ins, s)
+  emit(s, { "g4_choose_message_word", ins.args[1], ins.args[2], ins.args[3] })
+end
+-- `openmessage` -- AND ITS ABSENCE IS WHY `closemessage` WAS LOWERED ALONE.
+-- The cartridge opens the field text window explicitly before printing into
+-- it and closes it explicitly afterwards; we had the close and not the open,
+-- so the pair was asymmetric in the one direction nothing complains about.
+-- Ten sites, nine of them in `scripts_battles.s`, which is every trainer.
+L.openmessage = function(_, s) emit(s, { "g4_open_message" }) end
 L.closemessage = function(_, s) emit(s, { "g4_close_message" }) end
 L.closemessagewithouterasing = L.closemessage
 L.waitbutton = function(_, s) emit(s, { "g4_wait_button" }) end
@@ -388,12 +414,85 @@ end
 -- `trainerbattle` used to sit here and is not an opcode; the cartridge's own
 -- name is `starttrainerbattle`, which is lowered further down with its two
 -- operands.
+-- `getrematchtrainerid <trainer> <destVar>` -- operand order is value then
+-- DESTINATION, which is the reverse of `getmovementtype` two lines up, and the
+-- C is the only place that says so: `trainerID = ScriptContext_GetVar(ctx)`
+-- comes first, `destVar = ScriptContext_GetVarPointer(ctx)` second.  One use,
+-- reached every time the player talks to a trainer they have already beaten.
+-- THE APPROACH TRIO.  `startapproachingtrainertask <approachNum>`,
+-- `checkisapproachingtrainertaskdone <approachNum> <destVar>` and
+-- `getapproachingtrainertype <destVar>` are the "a trainer notices you and
+-- walks over" sequence, and they are lowered DESPITE being unreachable here
+-- today -- our overworld spots the player itself and then runs the trainer's
+-- own script, so `Battles_ApproachingTrainer` is never entered.
+--
+-- They are lowered anyway because of what the script does with the middle one:
+--
+--     Battles_WaitTrainerSinglesTaskDone:
+--       CheckIsApproachingTrainerTaskDone 0, VAR_RESULT
+--       GoToIfEq VAR_RESULT, FALSE, Battles_WaitTrainerSinglesTaskDone
+--
+-- which is a jump to itself gated on a var the unlowered command never wrote.
+-- The moment anything does dispatch that entry -- a map whose trainer uses the
+-- approach band, a mod, the harness -- a stale FALSE in VAR_RESULT is not a
+-- missing animation, it is a HANG.  Lowering it to the cartridge's own
+-- degenerate answer (see the handler: no task means done) makes the loop
+-- terminate on its first pass, which is exactly what the C does when there is
+-- no task to wait for.
+L.startapproachingtrainertask = function(ins, s)
+  emit(s, { "g4_start_approach", ins.args[1] })
+end
+L.checkisapproachingtrainertaskdone = function(ins, s)
+  emit(s, { "g4_approach_done", ins.args[1], ins.args[2] })
+end
+L.getapproachingtrainertype = function(ins, s)
+  emit(s, { "g4_approach_type", ins.args[1] })
+end
+L.getrematchtrainerid = function(ins, s)
+  emit(s, { "g4_get_rematch_trainer_id", ins.args[1], ins.args[2] })
+end
+-- `setmovecodeforfacingdirection` takes no operands and is answered by doing
+-- nothing; see the handler for why that is a decision and not a stub.
+L.setmovecodeforfacingdirection = function(_, s)
+  emit(s, { "g4_set_move_code_facing" })
+end
 L.checkwonbattle = function(ins, s) emit(s, { "g4_check_won_battle", ins.args[1] }) end
 -- Its twin, and NOT the negation of it: `CheckPlayerLostBattle` reads a
 -- different bit of the same result mask, so a battle that ended some third way
 -- (a draw, a fled wild) answers no to both.  One site in the cartridge.
 L.checklostbattle = function(ins, s)
   emit(s, { "g4_check_lost_battle", ins.args[1] })
+end
+
+-- WHAT THE TRAINER SAYS, which until now was nothing at all.
+--
+-- `gettrainermessagetypes <preVar> <postVar> <notEnoughVar>` writes THREE
+-- message-type numbers into three vars, and the operands are VAR IDS rather
+-- than var-or-literals: the C takes them with `ScriptContext_GetVarPointer`,
+-- not `ScriptContext_GetVar`.  Resolving them as values first -- which is what
+-- most of this file does, and what a copy of a neighbouring lowering would do
+-- -- would read the three destinations and then write to wherever their
+-- CONTENTS pointed, which on a fresh save is var 0 three times.
+--
+-- The rematch twin differs only in the table it picks from, so both go through
+-- one row with a flag; see `Gen4TrainerMessages.SCRIPT_TYPES` for the four
+-- rows and for the literal zeroes that are the cartridge's own.
+L.gettrainermessagetypes = function(ins, s)
+  emit(s, { "g4_trainer_message_types",
+            ins.args[1], ins.args[2], ins.args[3] })
+end
+L.gettrainerrematchmessagetypes = function(ins, s)
+  emit(s, { "g4_trainer_message_types",
+            ins.args[1], ins.args[2], ins.args[3], "rematch" })
+end
+
+-- `printtrainerdialogue <trainer> <messageType>` -- and THESE two ARE
+-- var-or-literal (`ScriptContext_GetVar` both), which is the opposite of the
+-- command above it.  The cartridge writes the string into the script message
+-- buffer and prints it into the window `openmessage` opened, then waits for
+-- the printer; the handler does the same through `show_text`.
+L.printtrainerdialogue = function(ins, s)
+  emit(s, { "g4_print_trainer_dialogue", ins.args[1], ins.args[2] })
 end
 
 -- signposts ---------------------------------------------------------------
@@ -1398,6 +1497,30 @@ L.createjournalevent = function(_, s) emit(s, { "g4_noop", "journal entry" }) en
 L.blackoutfrombattle = function(_, s)
   emit(s, { "g4_noop", "the scripted blackout (the battle teardown has already done it)" })
 end
+-- 0x14B IS THE SAME FUNCTION AS 0x14A IN THE CARTRIDGE -- byte for byte, both
+-- a single `FieldTask_StartBlackOutFromBattle(ctx->task)` -- AND IT STILL MUST
+-- NOT SHARE THE ROW ABOVE. That is the interesting part.
+--
+-- The row above is a no-op, and its reasoning is a claim about the CALLER:
+-- "the battle teardown has already done it". 0x14A's only use is
+-- `CommonScript_LostHoneyTreeBattle`, which is reached after losing a battle,
+-- so the claim holds. 0x14B's only use is `CommonScript_PoisonWhiteout`, where
+-- NO BATTLE HAPPENED -- so the same no-op would leave the player walking around
+-- with a wiped party.
+--
+-- Two identical cartridge functions, and our substitute for one of them is
+-- valid for its caller and not for the other's. A shared row would have been
+-- defensible from the C alone and wrong.
+--
+-- Declared rather than implemented, because the path is UNREACHABLE under the
+-- rule the same pass put in: `Pokemon_DoPoisonDamage` is `if (hp > 1) hp--`, so
+-- field poison cannot take a Pokemon below 1 HP, so `CountAliveMonsExcept`
+-- cannot reach 0 from poison, so this script entry cannot be reached from it.
+-- Implementing it would add a third copy of the engine's whiteout sequence for
+-- a caller that never runs.
+L.blackoutfrombattle2 = function(_, s)
+  emit(s, { "g4_blackout_from_battle_2" })
+end
 L.setblackoutwarpid = function(ins, s)
   emit(s, { "g4_set_blackout_warp", ins.args[1] })
 end
@@ -1421,10 +1544,51 @@ L.checkitemisplate = function(ins, s)
   emit(s, { "g4_item_is_plate", ins.args[1], ins.args[2] })
 end
 
+-- THE ITEM BANDS. `scripts_visible_items.s` (329 objects) and
+-- `scripts_hidden_items.s` (262) are shared bands, and both finish a pickup
+-- with `IsItemTMHM` followed by two `GoToIfEq`s. Unlowered, the var neither
+-- jump tested was ever written, so neither was taken and the script fell into
+-- `End` -- 591 pickups that added the item and said nothing. See the handler.
+L.isitemtmhm = function(ins, s)
+  emit(s, { "g4_item_is_tmhm", ins.args[1], ins.args[2] })
+end
+-- One operand, no destination: a flag the cartridge sets and never reads.
+L.trysetunusedcollectedorbflag = function(ins, s)
+  emit(s, { "g4_try_set_collected_orb_flag", ins.args[1] })
+end
+-- A TV segment with nowhere to go; lowered so the row stops warning on all 262
+-- hidden items.
+L.savetvsegmenthiddenitem = function(ins, s)
+  emit(s, { "g4_save_tv_hidden_item", ins.args[1] })
+end
+
 L.getpartycount = function(ins, s) emit(s, { "g4_party_count", ins.args[1] }) end
 L.countalivemonsexcept = function(ins,s)
   emit(s, {'g4_party_alive_except',ins.args[1],ins.args[2]})
 end
+-- `survivepoison <destVar> <slot>` -- `Pokemon_TrySurvivePoison`, and the
+-- script calls it ONCE PER PARTY SLOT in a loop:
+--
+--     CommonScript_TrySurvivePoison:
+--       SurvivePoison VAR_RESULT, VAR_0x8005
+--       GoToIfEq VAR_RESULT, FALSE, CommonScript_FaintedFromPoison
+--       BufferPartyMonNickname 0, VAR_0x8005
+--       Message CommonStrings_Text_PokemonSurvivedThePoisoning
+--     CommonScript_FaintedFromPoison:
+--       AddVar VAR_0x8005, 1
+--       GoToIfNe VAR_0x8004, VAR_0x8005, CommonScript_TrySurvivePoison
+--
+-- Destination first, slot second -- `GetVarPointer` then `GetVar`, the same
+-- order as `getmovementtype` and the reverse of `getrematchtrainerid`. The loop
+-- terminates on the slot counter either way, so an unlowered row did not hang
+-- it; it printed the survived line for every mon or for none.
+L.survivepoison = function(ins, s)
+  emit(s, { "g4_survive_poison", ins.args[1], ins.args[2] })
+end
+-- `hatchegg` -- no operands. `FieldSystem_HatchEgg` is `Party_GetFirstEgg`
+-- plus the hatch scene; the common script around it does the "Oh?" and the
+-- fades, so this row is only the hatch.
+L.hatchegg = function(_, s) emit(s, { "g4_hatch_egg" }) end
 L.countalivemonsandboxmons = function(ins,s)
   emit(s, {'g4_party_alive_and_boxes',ins.args[1]})
 end
@@ -1604,6 +1768,149 @@ end
 
 L.startdestroyobstacleanimation = function(ins, s)
   emit(s, { "g4_destroy_obstacle_anim", ins.args[1], ins.args[2] })
+end
+
+-- THE OTHER SHARED SCRIPT.  `scripts_field_moves.s` is to HMs what
+-- `scripts_battles.s` is to trainers: one file, seventeen entries, and every
+-- use of Cut, Rock Smash, Strength, Rock Climb, Surf, Waterfall, Defog and
+-- Flash in Sinnoh goes through it -- twice over, because each has a "talk to
+-- the obstacle" path and a "use it from the party menu" path.  Nine of its
+-- commands were unlowered, 23 uses.
+
+-- `playhmcutin <slot>` -- the "<MON> used CUT!" splash, which the cartridge
+-- blocks on (`ScriptContext_Pause(ctx, ScriptContext_WaitForHMCutInFinished)`).
+-- Nine uses: once in every HM path there is.
+L.playhmcutin = function(ins, s) emit(s, { "g4_hm_cut_in", ins.args[1] }) end
+
+-- The three that actually move the player.  Each takes the party slot of the
+-- Pokemon doing it, and each starts a field task the cartridge does not wait
+-- for -- the script ends and the task finishes the motion.
+L.usesurf = function(ins, s) emit(s, { "g4_use_surf", ins.args[1] }) end
+L.usewaterfall = function(ins, s) emit(s, { "g4_use_waterfall", ins.args[1] }) end
+L.userockclimb = function(ins, s) emit(s, { "g4_use_rock_climb", ins.args[1] }) end
+
+-- 0x0C3 AND 0x0C4 ARE THE SAME FUNCTION, BYTE FOR BYTE.  pokeplatinum leaves
+-- both numbered because there is nothing to tell them apart:
+--
+--     FieldOverworldState_SetWeather(fieldState, OVERWORLD_WEATHER_CLEAR);
+--     ov5_021D5F7C(..., FieldOverworldState_GetWeather(fieldState));
+--
+-- in both.  The script uses 0x0C3 after Flash and 0x0C4 after Defog, which is
+-- the only thing that distinguishes them and is not a difference in behaviour.
+--
+-- THAT PLATINUM CLEARS *WEATHER* FOR FLASH IS THE INTERESTING PART: a dark
+-- cave and a foggy route are the same mechanism on this cartridge -- an
+-- overworld weather state -- so lighting a cave and blowing away fog are one
+-- operation. Gen 2 bakes darkness into the palette instead (see the Gen 2
+-- notes on FLASH), which is why nothing in this engine was looking for a
+-- weather write here.
+--
+-- Both lower to ONE row. Two rows doing the same thing is how a port ends up
+-- fixing one and not the other.
+L["0c3"] = function(_, s) emit(s, { "g4_clear_overworld_weather" }) end
+L["0c4"] = L["0c3"]
+
+-- `dostrengthfunc` / `doflashfunc` / `dodefogfunc` -- one opcode each, and all
+-- three are VARIABLE LENGTH: a sub-function byte, plus a destination word only
+-- when that byte is FIELD_MOVE_FUNC_CHECK_ACTIVE.  `Gen4ScriptOps.VARIABLE_SPEC`
+-- now decodes that rule, which is what makes these reachable at all -- the
+-- decoder used to stop the walk here and four scripts ended early.
+--
+-- All six uses in the cartridge are in this one file: SET_ACTIVE twice for
+-- Strength and once each for Flash and Defog, CHECK_ACTIVE twice for Strength.
+-- CLEAR_ACTIVE is never used from a script -- the C clears them -- but it is a
+-- sub-function the opcode defines, so the handler answers it.
+local function fieldMoveFlag(which)
+  return function(ins, s)
+    emit(s, { "g4_field_move_flag", which, ins.args[1], ins.args[2] })
+  end
+end
+L.dostrengthfunc = fieldMoveFlag("strength")
+L.doflashfunc = fieldMoveFlag("flash")
+L.dodefogfunc = fieldMoveFlag("defog")
+
+-- ---------------------------------------------------------------------------
+-- SAVING
+-- ---------------------------------------------------------------------------
+--
+-- `scripts_common.s` holds the whole save dialogue, and twelve of its
+-- commands had no row here, so every one of the eighteen `callcommonscript
+-- 2006` sites in Sinnoh ran into an unlowered command -- and so did the START
+-- menu's SAVE and the Underground descent, which reach the same file from C
+-- (`start_menu.c:1327` and `field_map_change.c:1175` both start
+-- `SCRIPT_ID(COMMON_SCRIPTS, 5)`).
+--
+-- They are lowered as a group because they only make sense as one: the two
+-- `checksavetype` calls decide which of the five save messages the player
+-- reads, and a handler that answered any of them wrongly would put the wrong
+-- text on screen without failing anything.  `src/script/Gen4Save.lua` holds
+-- the model and says why each answer is what it is.
+--
+-- `checksavetype <destVar>` -- 0 overwrite-blocked, 1 first save, 2 full,
+-- 3 quick.  Called twice: once before the "would you like to save?" prompt to
+-- catch the blocked case, once after to pick the message.
+L.checksavetype = function(ins, s) emit(s, { "g4_check_save_type", ins.args[1] }) end
+
+-- `trysavegame <destVar>` -- the write.  `ScrCmd_TrySaveGame` is
+-- `FieldSystem_Save`, which stamps the player's position and sends the Poketch
+-- its SAVE event before `SaveData_Save`, and answers 1 for SAVE_RESULT_OK and
+-- 0 for anything else.  `CommonScript_SaveComplete` branches on that zero
+-- straight into `CommonScript_SaveError`.
+L.trysavegame = function(ins, s) emit(s, { "g4_try_save_game", ins.args[1] }) end
+
+-- `storesaveresult <var>` -- the only way the CALLER learns what happened.
+-- `ScrCmd_StoreSaveResult` writes the var through a pointer the script was
+-- started with, and both C callers pass one: the START menu reads it to decide
+-- whether to show its "saved" state, and the Underground descent reads it to
+-- decide whether to descend at all.  A script started without one ignores the
+-- write, which is why the handler tolerates no destination.
+L.storesaveresult = function(ins, s) emit(s, { "g4_store_save_result", ins.args[1] }) end
+
+-- `showsavingicon` / `hidesavingicon` -- `Window_AddWaitDial`, the spinner in
+-- the corner of the message box while the write runs.  A pair, so both halves
+-- are stated: pass 169's lesson was that a `close` with no `open` cannot be
+-- made truthful after the fact.
+L.showsavingicon = function(_, s) emit(s, { "g4_saving_icon", 1 }) end
+L.hidesavingicon = function(_, s) emit(s, { "g4_saving_icon", 0 }) end
+
+-- `waitabpresstime <frames>` -- wait for A or B, but no longer than N frames.
+-- `CommonScript_SaveComplete` uses it for the 30-frame hold on "<player> saved
+-- the game." after the jingle, so the line is readable whether or not the
+-- player presses anything.
+L.waitabpresstime = function(ins, s) emit(s, { "g4_wait_ab_press_time", ins.args[1] }) end
+
+-- `opensaveinfo` / `closesaveinfo` -- the panel above the message box with the
+-- location, the player's name, the badges, the Pokedex count and the clock.
+-- Three `closesaveinfo` uses and one `opensaveinfo`, because the panel is
+-- opened once and closed on each of the three ways out (saved, cancelled,
+-- errored).
+--
+-- `ScrCmd_OpenSaveInfo` draws nothing when `SaveData_OverwriteCheck` holds,
+-- which is the case this port does not have; see Gen4Save.overwriteBlocked.
+L.opensaveinfo = function(_, s) emit(s, { "g4_save_info", 1 }) end
+L.closesaveinfo = function(_, s) emit(s, { "g4_save_info", 0 }) end
+
+-- 0x258 / 0x259 -- UNNAMED IN POKEPLATINUM AND NOT A MYSTERY.  `ScrCmd_258` is
+-- `ov5_021E1000`, which is `ov5_021E0F54(fieldSystem, PLAYER_TRANSITION_SAVE)`:
+-- it puts the player avatar into the save pose and keeps it there as a task.
+-- `ScrCmd_259` is `ov5_021E100C`, which ends the task and requests the walking
+-- state back.  `CommonScript_StartSave` brackets the write with them.
+--
+-- Note the guard in the C: `ov5_021E0F54` returns NULL unless the player is
+-- PLAYER_AVATAR_WALKING, so saving from a bike or from the water poses nothing
+-- -- and `ov5_021E0FC0` returns immediately on a NULL task, so the close is a
+-- no-op in exactly the same cases.  The handler keeps that pairing.
+L["258"] = function(_, s) emit(s, { "g4_save_pose", 1 }) end
+L["259"] = function(_, s) emit(s, { "g4_save_pose", 0 }) end
+
+-- `saveextradata` / `checkismiscsaveinit` -- the Frontier-records and
+-- battle-video sectors.  `CommonScript_SaveExtraBlock` calls the first behind
+-- `FLAG_MAP_LOCAL_SAVE_EXTRA_BLOCK` and `CommonScript_QuickSaveCheckMiscFlag`
+-- reads the second to turn the first quick save into a full one.  Gen4Save
+-- says what survives the port and what does not.
+L.saveextradata = function(_, s) emit(s, { "g4_save_extra_data" }) end
+L.checkismiscsaveinit = function(ins, s)
+  emit(s, { "g4_misc_save_init", ins.args[1] })
 end
 L.buffermapname = function(ins, s)
   emit(s, { "g4_buffer_map_name", ins.args[1], ins.args[2] })

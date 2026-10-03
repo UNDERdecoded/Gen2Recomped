@@ -184,6 +184,7 @@ local function hasVisual(anim)
   -- sound, which is what they did before either was decoded.
   return anim.afterimage ~= nil or anim.surf ~= nil
          or anim.scale ~= nil or anim.flourish ~= nil or anim.rotate ~= nil
+         or (type(anim.rotateTracks) == "table" and #anim.rotateTracks > 0)
          or anim.acidArmor ~= nil or anim.memento ~= nil
          or anim.transform ~= nil or anim.whiteout ~= nil
          or anim.camouflage ~= nil
@@ -772,6 +773,7 @@ function Gen3MoveAnim:start(moveId, attackerIsPlayer, attackerPosition, targetPo
   self.scale = anim.scale
   self.flourish = anim.flourish
   self.rotate = anim.rotate
+  self.rotateTracks = anim.rotateTracks
   self.affine = anim.affine
   self.affineTasks = anim.affineTasks
   self.voltTackle = anim.voltTackle
@@ -850,6 +852,11 @@ function Gen3MoveAnim:start(moveId, attackerIsPlayer, attackerPosition, targetPo
   end
   if self.rotate then
     extendTask(self.rotate, self.rotate.life or 74)
+  end
+  if type(self.rotateTracks) == "table" then
+    for _, track in ipairs(self.rotateTracks) do
+      extendTask(track, track.life or #(track.angles or {}))
+    end
   end
   if self.flourish then
     extendTask(self.flourish, self.flourish.life or 96)
@@ -1006,6 +1013,7 @@ function Gen3MoveAnim:release()
   self._mementoTiming = nil
   self.scale = nil
   self.flourish, self.rotate, self.affine, self.affineTasks = nil, nil, nil, nil
+  self.rotateTracks = nil
   self.attackerPosition, self.targetPosition = nil, nil
 end
 
@@ -2193,9 +2201,17 @@ end
 -- but the rotation argument.  The import reads the task's three states whole
 -- (RomExtractorGen3:monRotate); this walks them.
 --
+-- Six more moves tip, on the cartridge's GENERAL rotation task rather than
+-- WITHDRAW's one-shape one, and those arrive as TRACKS -- an angle and a lift
+-- per frame, already accumulated by the import because the cartridge's own
+-- step accumulates (RomExtractorGen3:tipOffsets).  A track answers first; the
+-- WITHDRAW shape is the fallback, so neither reading moves the other.
+--
 -- What comes back is RADIANS and a rise in pixels, because that is what a
 -- renderer wants.  The cartridge counts a whole turn as 65536.
 function Gen3MoveAnim:monRotate(battler)
+  local track = self:rotateTrackAt(battler)
+  if track then return track.angle, track.rise end
   local shape = self.rotate
   if not shape then return nil end
   local attacker = (self.attackerIsPlayer and true or false)
@@ -2221,6 +2237,65 @@ function Gen3MoveAnim:monRotate(battler)
   if attacker then angle = -angle end
   local turn = shape.turn or 65536
   return angle / turn * 2 * math.pi, steps * (shape.rise or 1)
+end
+
+-- The tip track covering this battler on this frame, as radians and pixels.
+--
+-- TWO THINGS THE IMPORT LEFT TO HERE, and they are not the same thing:
+--
+--   the ANGLE is authored for the player's side (`authoredForPlayer`, the
+--   convention the offsets already use), so it is used as it stands on your
+--   own Pokemon and negated on the other one.  Both of the cartridge's two
+--   entries negate on side, and work both through and the enemy's track is
+--   the exact negation of the player's -- so one track covers both.
+--
+--   the RISE does NOT negate; it is an absolute value on the cartridge.  But
+--   the plain entry only lifts the sprite when it is the player's, while the
+--   restoring entry lifts both, and `risesOnEnemy` is which.  Mirroring the
+--   lift, or applying it on both sides unconditionally, would each be wrong
+--   for half the six moves.
+--
+-- The LONGEST angle wins when two tracks overlap, matching how the offsets
+-- settle a tie: the tasks do not add up on the cartridge either, because each
+-- one writes the sprite's rotation outright rather than accumulating onto
+-- what another left there.
+function Gen3MoveAnim:rotateTrackAt(battler)
+  local list = self.rotateTracks
+  if type(list) ~= "table" or battler == nil then return nil end
+  local now = self.frame or 0
+  local onPlayer = type(battler) == "table"
+                   and (battler.isPlayer and true or false)
+                   or (battler and true or false)
+  local best = nil
+  for _, track in ipairs(list) do
+    local angles = track.angles
+    if type(angles) == "table" then
+      local age = now - (track.at or 0)
+      if age >= 0 and age < (track.life or #angles) then
+        local raw = angles[age + 1]
+        if raw and raw ~= 0 then
+          local angle = raw
+          if track.authoredForPlayer then
+            if not onPlayer then angle = -angle end
+          elseif onPlayer then
+            angle = -angle
+          end
+          if self:matchesBattler(battler, track.target and true or false, 0) then
+            local rise = 0
+            if onPlayer or track.risesOnEnemy then
+              rise = (track.rises and track.rises[age + 1]) or 0
+            end
+            if not best or math.abs(angle) > math.abs(best.raw) then
+              local turn = track.turn or 65536
+              best = { raw = angle, rise = rise,
+                       angle = angle / turn * 2 * math.pi }
+            end
+          end
+        end
+      end
+    end
+  end
+  return best
 end
 
 -- ---------------------------------------------------------------------------

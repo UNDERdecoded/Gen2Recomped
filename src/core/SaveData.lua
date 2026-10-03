@@ -1303,6 +1303,30 @@ end)
 -- the game file.  mods (when given) refreshes the meta stamp; the write
 -- itself rolls the last good save into .bak and stages the new bytes as
 -- a .tmp witness before the swap, so a crash mid-write is recoverable.
+-- Is there already a save file where the next save will land?
+--
+-- Sinnoh's save script needs this: the cartridge's `SaveData_DataExists`
+-- decides whether the player is asked "There is already a saved file.  Is it
+-- OK to overwrite it?", which the FIRST save into a file skips and every
+-- later one shows (src/scrcmd.c ScrCmd_CheckSaveType).  The engine's answer is
+-- the same question about the active slot, resolved through the same
+-- saveNames/persistFs pair SaveData.save is about to write through, so the
+-- file it reports on is the file that is about to be overwritten.
+--
+-- nil rather than false when it cannot be asked -- an unknown version, or no
+-- filesystem at all under a headless check -- so a caller can tell "there is
+-- no file" from "there was no way to look".
+function SaveData.saveFileExists(version)
+  version = version or GameVersion.get()
+  if not knownVersion(version) then return nil end
+  local FILENAME = saveNames(version)
+  local fs = persistFs(nil)
+  if not (fs and fs.getInfo and FILENAME) then return nil end
+  local ok, info = pcall(fs.getInfo, FILENAME)
+  if not ok then return nil end
+  return info ~= nil
+end
+
 function SaveData.save(data, mods)
   -- write to the file matching this save's own version, not just the active
   -- one, so Blue/Yellow playthroughs land in save_blue.lua / save_yellow.lua

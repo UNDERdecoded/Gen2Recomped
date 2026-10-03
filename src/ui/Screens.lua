@@ -278,6 +278,12 @@ local GEN4_ALIASES = {
   -- declines every push that carries one, and the Safari and Bug Contest
   -- pushes do not carry any either.
   StartMenu = { id = "Gen4StartMenu", opts = { onCancel = true } },
+  -- ...AND THE UNDERGROUND HAS ITS OWN, which REPLACES that one while you
+  -- are down there rather than sitting beside it. The cartridge builds a
+  -- different window from a different table (`sUndergroundMenuOptions` in
+  -- `src/underground/menus.c`), and GO UP exists nowhere else -- which is
+  -- why `CanUseExplorerKit` refuses the kit underground.
+  UndergroundMenu = { id = "Gen4UndergroundMenu", opts = { onCancel = true } },
 }
 
 local function isGen4(game)

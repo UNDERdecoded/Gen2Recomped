@@ -56,6 +56,7 @@ local report = {}
 -- the sixteen ball items and not for the three Safari throws, which meant the
 -- Safari rows reported "ok" on a cache whose frames were never written -- a
 -- check that passes where it does not look.
+local tested, found = 0, 0
 local function check(label, name)
   checked = checked + 1
   local n = frameCount(name)
@@ -68,7 +69,11 @@ local function check(label, name)
   for f = 0, n - 1 do
     local entry = objects[Gen4Battle.ballThrowFrame(name, f)]
     local path = type(entry) == "table" and entry.path
-    if path and not exists(dataRoot .. path) then absent = absent + 1 end
+    if path then
+      tested = tested + 1
+      if exists(dataRoot .. path) then found = found + 1
+      else absent = absent + 1 end
+    end
   end
   if absent > 0 then
     problems = problems + 1
@@ -105,4 +110,20 @@ if controlFrames ~= 0 then
   os.exit(3)
 end
 
+-- HOW COMPLETE THE ASSET TREE IS, stated before the verdict, because the two
+-- ways this check fails look identical in a count of problems: a real install
+-- missing frames, and a working copy that was never given the art. The second
+-- is not a fault in the port and must not read like one.
+io.write(("frames on disk: %d of %d\n"):format(found, tested))
+if tested > 0 and found == 0 then
+  io.write("no ball art on disk at all -- this is not a complete install, so\n"
+           .. "there is nothing here to check\n")
+  os.exit(2)
+end
+
+-- THE VERDICT IN THE SHAPE EVERY OTHER CHECK USES, so a suite runner can read
+-- it. Without this line `tools/run_checks.py` had nothing to parse and filed a
+-- plain failure as an ERROR -- which reads as "the check is broken" rather
+-- than "the check found something".
+io.write(("\n%d checks, %d failed\n"):format(checked, problems))
 os.exit(problems > 0 and 1 or 0)

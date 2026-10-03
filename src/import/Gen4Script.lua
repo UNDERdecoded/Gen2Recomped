@@ -122,14 +122,18 @@ function Gen4Script.decode(data, at)
     local op = u16(data, pc)
     local entry = Ops.COMMANDS[op]
     if not entry then stopped = "unknown"; break end
-    local size = Ops.size(op)
+    -- `sizeAt` rather than `size`: a `*` command whose rule is known resolves
+    -- here from its own operand bytes instead of stopping the walk.  Three do
+    -- (the field-move flag commands); the other six still stop, and stopping
+    -- is still the right answer for them -- see the paragraph in
+    -- `Gen4ScriptOps` for what a guessed width costs.
+    local spec = Ops.specAt(op, data, pc)
+    local size = spec and (Ops.OPCODE_BYTES + Ops.specWidth(spec))
     if not size then
       out[#out + 1] = { at = pc, op = op, name = Ops.name(op), variable = true }
       stopped = "variable"
       break
     end
-
-    local spec = entry[2]
     local args, o = {}, pc + Ops.OPCODE_BYTES
     for i = 1, #spec do
       local c = spec:sub(i, i)

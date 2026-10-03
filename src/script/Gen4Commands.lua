@@ -281,6 +281,22 @@ end
 -- text is acknowledged, so this only has to clear the pending state -- and it
 -- must not be a no-op, because a script that closes and then opens a second
 -- box needs the first one gone.
+-- `openmessage` -- the half of the pair that was missing, and the reason the
+-- other half was clearing a flag nobody set.  Ten sites, nine of them in
+-- `scripts_battles.s`, so this is on the path of every trainer battle in the
+-- region.
+--
+-- SAYING WHAT THIS DOES NOT DO: nothing reads `ctx.textOpen` yet.  The engine's
+-- `show_text` opens and closes its own box per line, so the cartridge's
+-- explicit window lifetime has no consumer here.  The flag is set anyway
+-- because the pair being asymmetric is what made the gap invisible: a renderer
+-- that later wants to keep one box open across several prints needs the state
+-- to already be truthful, and a `close` with no `open` cannot be made truthful
+-- after the fact.
+function Commands.g4_open_message(ctx)
+  ctx.textOpen = true
+end
+
 function Commands.g4_close_message(ctx)
   ctx.textOpen = nil
 end
@@ -846,10 +862,38 @@ end
 -- script reads TEXT_BANK_COMMON_STRINGS wherever the player is standing.  The
 -- lowering knows which member a block came from and puts the bank in the row,
 -- which is why this needs no map at all.
+-- `valueOf` rather than `tonumber`, because `messagefrombank` reaches this row
+-- too and the cartridge takes BOTH its operands with `ScriptContext_GetVar` --
+-- var-or-literal. Safe for the existing callers either way: a bank id is under
+-- 724 and an entry under about 2,500, both far below `VARS_START` (0x4000), so
+-- a literal can never be mistaken for a var id.
 function Commands.g4_message_bank(ctx, bank, entry)
   local Gen4Text = require("src.import.Gen4Text")
-  return Commands.show_text(ctx, Gen4Text.label(tonumber(bank) or 0,
-                                                tonumber(entry) or 0))
+  return Commands.show_text(ctx, Gen4Text.label(valueOf(ctx, bank) or 0,
+                                                valueOf(ctx, entry) or 0))
+end
+
+-- `choosecustommessageword <unused> <resultVar> <destVar>` -- the word-choice
+-- screen a TV interview or the Sunyshore house opens so the player can pick a
+-- word to put in a sentence. The macro emits a literal 0 for the first operand
+-- and pokeplatinum calls it `unused`; the other two are destinations.
+--
+-- THERE IS NO WORD-CHOICE SCREEN IN THIS ENGINE, so this answers the
+-- cartridge's own cancelled path -- and that is a real answer, not a shrug.
+-- `ScrCmd_ChooseCustomMessageWord` writes `*destVar = 0xFFFF` BEFORE it starts
+-- the task, and the caller branches on `resultVar`:
+--
+--     ChooseCustomMessageWord VAR_RESULT, VAR_0x8004
+--     ...
+--     GoToIfEq VAR_RESULT, 0, TVReporterInterviews_ThatsTooBad
+--
+-- so 0 in `resultVar` means "the player backed out", which the script already
+-- has dialogue for. Writing 0 and 0xFFFF takes that branch cleanly; writing
+-- nothing left both destinations holding the previous script's values and the
+-- interview branched at random on its way to using a word nobody picked.
+function Commands.g4_choose_message_word(ctx, _unused, resultVar, destVar)
+  if destVar then setVar(ctx.save, destVar, 0xFFFF) end
+  if resultVar then setVar(ctx.save, resultVar, 0) end
 end
 
 -- `messagevar` takes its entry out of a var rather than out of the row.
@@ -2128,6 +2172,34 @@ local function trainerOnObject(ctx)
   return rec and tonumber(rec.id) or nil
 end
 
+-- `Script_IsTrainerDoubleBattle`: `battleType ~= BATTLE_TYPE_SINGLES` on the
+-- trainer the running script belongs to.  ONE SPELLING, two callers --
+-- `g4_check_trainer_double` answers the script's question and
+-- `g4_trainer_message_types` picks which of four message rows to use, and the
+-- two disagreeing would give a double-battle trainer a single-battle line (or
+-- the reverse) with nothing failing.  That shape of bug -- the same test
+-- spelled twice in places that never meet -- has cost this port eight
+-- separate findings, so the second caller got a helper rather than a copy.
+local function trainerIsDouble(ctx, id)
+  local trainers = ctx.game and ctx.game.data and ctx.game.data.trainers
+  local rec = id and trainers and trainers[id]
+  return (rec and (rec.doubleBattle
+                   or (tonumber(rec.battleType) or 0) ~= 0)) and true or false
+end
+
+-- `Script_GetTrainerBattlerIndex(scriptID)` is `!(scriptID < 5000)` -- which
+-- of a double pair this script is, and it is read off the SCRIPT ID BAND
+-- rather than off the trainer: the second trainer of a pair is addressed by an
+-- id in the `double_battles` band and nothing on the trainer record says so.
+-- The extractor already resolved the band onto the object def (417 of them in
+-- the cartridge: 407 `single_battles` and 10 `double_battles`), so this is a
+-- field read.
+local function trainerBattlerIndex(ctx)
+  local npc = ctx.npc
+  local def = npc and npc.def
+  return (def and def.scriptBand == "double_battles") and 1 or 0
+end
+
 -- `starttrainerbattle <enemy1> <enemy2>` -- both var-or-literal, and the
 -- SECOND is TRAINER_NONE (0) for an ordinary fight. A non-zero second is two
 -- opponents at once, which `start_battle` already knows how to build:
@@ -2216,6 +2288,91 @@ function Commands.g4_get_approaching_trainer_id(ctx, approachNum, destVar)
   setVar(ctx.save, destVar, id or 0)
 end
 
+-- `getrematchtrainerid <trainer> <destVar>` --
+-- `VsSeeker_GetRematchTrainerID(fieldSystem, targetObject, trainerID)`, which
+-- answers TRAINER_NONE (0) when this object is not armed for a rematch.
+--
+-- THIS IS ON THE PATH TAKEN EVERY TIME YOU TALK TO A BEATEN TRAINER.
+-- `scripts_battles.s` opens with `GoToIfDefeated VAR_0x8004,
+-- Battles_TryRematch`, and `Battles_TryRematch` is two lines:
+--
+--     GetRematchTrainerID VAR_0x8004, VAR_RESULT
+--     GoToIfNe VAR_RESULT, TRAINER_NONE, Battles_Rematch
+--
+-- so an unlowered command left VAR_RESULT holding whatever the previous script
+-- put there and the branch was a coin toss: a beaten trainer either greeted you
+-- normally or re-challenged you with a rematch party they were never armed
+-- with.  One use in the file, and one of the most frequently reached lines in
+-- the game -- every beaten trainer you walk past and talk to again.
+--
+-- THE STORE IS PER MAP OBJECT, NOT PER TRAINER ID, because the same trainer id
+-- can appear on two maps; `VsSeeker.rematchFor` is keyed that way already.
+-- `trainer` is accepted and not used in the lookup, which is the cartridge's
+-- shape too -- it passes the id and resolves by object.
+-- `startapproachingtrainertask <approachNum>` -- on the cartridge this spawns
+-- the task that walks the trainer up to the player.  Our overworld has already
+-- done the walking by the time any script runs, so there is nothing to start.
+Commands.g4_start_approach = noop
+
+-- `checkisapproachingtrainertaskdone <approachNum> <destVar>` -- and this one
+-- is NOT cosmetic.  The C's first branch is
+--
+--     if (*task == NULL) { *destVar = TRUE; return TRUE; }
+--
+-- and our task is always NULL, because `g4_start_approach` never makes one.
+-- So TRUE is the faithful answer and not a shortcut -- it is the same line of
+-- the cartridge's own function.
+--
+-- WRITING IT IS THE WHOLE POINT.  `Battles_WaitTrainerSinglesTaskDone` jumps
+-- to itself while this reads FALSE, so a row that wrote nothing left the loop
+-- spinning on whatever the previous script put in VAR_RESULT.  That is a hang,
+-- not a missing animation, and it is why this is lowered now rather than when
+-- the approach band is first dispatched.
+function Commands.g4_approach_done(ctx, approachNum, destVar)
+  if destVar then setVar(ctx.save, destVar, 1) end
+  setResult(ctx, 1)
+end
+
+-- `getapproachingtrainertype <destVar>` -- APPROACH_TYPE_SINGLES (0),
+-- APPROACH_TYPE_DOUBLES (1) or APPROACH_TYPE_VS2 (2), and the cartridge always
+-- reads TRAINER 0's slot even when asking about the pair.
+--
+-- Derived from the pair the overworld put on the context rather than stored:
+-- `gen4ApproachingTrainers` is { id0, id1 } and a non-zero second id is a
+-- double.  VS2 -- two trainers who notice you together and fight you one after
+-- the other -- is NOT reachable from that state, because our sight scan pairs
+-- trainers or takes them singly and has no third arrangement.  Returning
+-- SINGLES for it would be wrong rather than incomplete, so when the day comes
+-- the scan should set the type and this should read it.
+function Commands.g4_approach_type(ctx, destVar)
+  local trainers = ctx.gen4ApproachingTrainers
+  local second = trainers and tonumber(trainers[2]) or 0
+  local kind = (second ~= 0) and 1 or 0
+  if destVar then setVar(ctx.save, destVar, kind) end
+  setResult(ctx, kind)
+end
+
+function Commands.g4_get_rematch_trainer_id(ctx, trainer, destVar)
+  local VsSeeker = require("src.world.VsSeeker")
+  local id = VsSeeker.rematchFor(ctx.save, ctx.overworld, ctx.npc)
+  local value = tonumber(id) or 0
+  if destVar then setVar(ctx.save, destVar, value) end
+  setResult(ctx, value)
+end
+
+-- `setmovecodeforfacingdirection` -- after a battle the cartridge gives the
+-- trainer a movement script that leaves them facing the way they were facing
+-- when you beat them (`VsSeeker_SetMoveCodeForFacingDirection`), with a special
+-- case for the Hearthome Gym's rotating trainers.
+--
+-- A NO-OP, AND SAYING WHY: our trainers do not walk off and return, so there is
+-- no movement code to replace and an NPC keeps the facing it already had.  The
+-- cartridge's purpose is served by doing nothing -- which is NOT the same as
+-- the row being unlowered.  Unlowered it logged a warning in the middle of
+-- every trainer battle in the region and left the next reader unable to tell
+-- whether something was missing.  One use, in `Battles_DoTrainerBattle`.
+Commands.g4_set_move_code_facing = noop
+
 -- GameRecords_AddToRecordValue: record IDs are literal; only the small
 -- add command resolves its amount through script variables. The cartridge
 -- has 71 u32 counters followed by 77 u16 counters, each with its own limit.
@@ -2240,12 +2397,88 @@ end
 -- on the trainer this script belongs to.
 function Commands.g4_check_trainer_double(ctx, destVar)
   local id = trainerOnObject(ctx) or ctx.g4Trainer
-  local trainers = ctx.game and ctx.game.data and ctx.game.data.trainers
-  local rec = id and trainers and trainers[id]
-  local value = (rec and (rec.doubleBattle
-                          or (tonumber(rec.battleType) or 0) ~= 0)) and 1 or 0
+  local value = trainerIsDouble(ctx, id) and 1 or 0
   if destVar then setVar(ctx.save, destVar, value) end
   setResult(ctx, value)
+end
+
+-- `gettrainermessagetypes <preVar> <postVar> <notEnoughVar>` --
+-- `ScrCmd_GetTrainerMessageTypes`, which answers "which of this trainer's
+-- twenty message slots do the three lines in `scripts_battles.s` mean?"
+--
+-- THE OPERANDS ARE VAR IDS, NOT VAR-OR-LITERALS.  The C takes all three with
+-- `ScriptContext_GetVarPointer` rather than `ScriptContext_GetVar`, so they
+-- are destinations.  `valueOf` here would read each destination and then write
+-- to whatever its contents named -- var 0, three times, on a fresh save -- and
+-- the script would go on to print message type 0 for all three lines because
+-- that is what an unwritten var reads as.  Which is PRE_BATTLE, so the defeat
+-- line would be the challenge line and it would look like a text-table
+-- problem rather than an addressing one.
+--
+-- The four rows live in `Gen4TrainerMessages.SCRIPT_TYPES`; see there for the
+-- literal zeroes, which are the cartridge's and not placeholders.
+function Commands.g4_trainer_message_types(ctx, preVar, postVar, notEnoughVar,
+                                           rematch)
+  local Gen4TrainerMessages = require("src.import.Gen4TrainerMessages")
+  local table_ = rematch and Gen4TrainerMessages.SCRIPT_TYPES_REMATCH
+                 or Gen4TrainerMessages.SCRIPT_TYPES
+  local id = trainerOnObject(ctx) or ctx.g4Trainer
+  local row
+  if not trainerIsDouble(ctx, id) then
+    row = table_.singles
+  elseif trainerBattlerIndex(ctx) == 0 then
+    row = table_.doubles_first
+  else
+    row = table_.doubles_second
+  end
+  -- Written unconditionally, including the zeroes: the cartridge writes all
+  -- three slots on every call and a script that read a stale one would branch
+  -- on the previous trainer's answer.
+  if preVar then setVar(ctx.save, preVar, row[1]) end
+  if postVar then setVar(ctx.save, postVar, row[2]) end
+  if notEnoughVar then setVar(ctx.save, notEnoughVar, row[3]) end
+end
+
+-- `printtrainerdialogue <trainer> <messageType>` -- the line itself, and the
+-- command whose absence meant no trainer in Sinnoh ever said anything.
+--
+-- BOTH OPERANDS ARE VAR-OR-LITERAL here, which is the opposite of the command
+-- above: `ScrCmd_PrintTrainerDialogue` takes both with `ScriptContext_GetVar`.
+-- `scripts_battles.s` passes vars for both in the talk path and a LITERAL
+-- message type in the approach path (`PrintTrainerDialogue VAR_0x8004,
+-- TRMSG_PRE_BATTLE`), so a lowering that assumed either shape would break one
+-- of the two ways every battle in the game starts.
+--
+-- The string is reached the same way `g4_message_bank` reaches one, through
+-- `Gen4Text.label`, because the extractor wrote these 2,497 lines into `text`
+-- under exactly those names along with every other bank.  The only thing the
+-- new cache table adds is WHICH entry: `gen4_trainer_messages[trainer][type]`.
+function Commands.g4_print_trainer_dialogue(ctx, trainer, messageType)
+  local Gen4Text = require("src.import.Gen4Text")
+  local Gen4TrainerMessages = require("src.import.Gen4TrainerMessages")
+  local id = math.floor(valueOf(ctx, trainer) or 0)
+  local kind = math.floor(valueOf(ctx, messageType) or 0)
+  local data = ctx.game and ctx.game.data
+  local rows = data and data.gen4_trainer_messages
+  if not rows then
+    Logger.warn("gen4 script: this cache has no trainer message index, so trainer %d says nothing (re-import to build it)", id)
+    return
+  end
+  local row = rows[id]
+  local entry = row and row[kind]
+  if not entry then
+    -- NOT AN ERROR, and the common case: 92 of the 928 trainers have no
+    -- dialogue at all, and of the rest most carry three or four of the twenty
+    -- types.  2,497 pairs exist out of 18,560 possible, so a miss here is what
+    -- the cartridge does too -- `Trainer_LoadMessage` clears the string and
+    -- prints an empty box.  Debug rather than warn, or every battle in the
+    -- region logs.
+    Logger.debug("gen4 script: trainer %d has no message of type %d",
+                 id, kind)
+    return
+  end
+  return Commands.show_text(ctx,
+    Gen4Text.label(Gen4TrainerMessages.BANK, entry))
 end
 
 -- `checkhastwoalivemons <destVar>` -- `Party_HasTwoAliveMons`, which is what
@@ -2268,7 +2501,40 @@ Commands.g4_trainer_battle = Commands.g4_start_battle
 Commands.meta = Commands.meta or {}
 Commands.meta.g4_start_battle = { foreground = true, blocking = true }
 
-pending("g4_get_movement_type", "the movement-script decoder")
+-- `getmovementtype <destVar> <object>` -- `MapObject_GetMovementType`, and
+-- the operands are in THAT order: destination first (GetVarPointer), object
+-- second (GetVar).
+--
+-- WAS A `pending` STUB filed against "the movement-script decoder", which was
+-- the wrong dependency: the cartridge does not run a movement script to answer
+-- this, it reads the field the object was spawned with, and the extractor has
+-- written `movementType` onto every object def since the events stage was
+-- built.
+--
+-- WHAT THE STUB COST, exactly: `scripts_battles.s` opens with
+--
+--     GetMovementType VAR_0x8001, VAR_LAST_TALKED
+--     CallIfEq VAR_0x8001, MOVEMENT_TYPE_DISGUISE_SNOW,  Battles_RevealTrainer
+--     CallIfEq VAR_0x8001, MOVEMENT_TYPE_DISGUISE_SAND,  Battles_RevealTrainer
+--     CallIfEq VAR_0x8001, MOVEMENT_TYPE_DISGUISE_ROCK,  Battles_RevealTrainer
+--     CallIfEq VAR_0x8001, MOVEMENT_TYPE_DISGUISE_GRASS, Battles_RevealTrainer
+--
+-- so with nothing written to VAR_0x8001 all four tests compared a stale var
+-- and no disguised trainer in the region ever stood up.  NINE OBJECTS in the
+-- cartridge carry a disguise movement type -- one snow, three sand, five rock,
+-- none grass -- so this is nine trainers, countable rather than estimated, and
+-- it is the whole of what the stub was costing.
+--
+-- `MOVEMENT_TYPE_NONE` IS 0, and is the cartridge's answer for an object that
+-- is not on the map: it writes NONE first and overwrites only on a hit.  That
+-- matters here because 0 is also the real movement type of 2,051 of Sinnoh's
+-- objects, so "absent" and "stands still" are deliberately indistinguishable.
+function Commands.g4_get_movement_type(ctx, destVar, objectId)
+  local e = objectById(ctx, objectId)
+  local def = e and e.def or defByLocalId(ctx, valueOf(ctx, objectId))
+  local kind = def and tonumber(def.movementType) or 0
+  if destVar then setVar(ctx.save, destVar, kind) end
+end
 -- ---------------------------------------------------------------------------
 -- the shop
 -- ---------------------------------------------------------------------------
@@ -2728,6 +2994,160 @@ function Commands.g4_item_is_plate(ctx, item, destVar)
   setResult(ctx, yes)
 end
 
+-- `isitemtmhm <item> <destVar>` -- `Item_IsTMHM`, AND IT IS AN ID RANGE:
+--
+--     if (item >= ITEM_TM01 && item <= ITEM_HM08) return TRUE;
+--
+-- not a pocket lookup, which is the obvious alternative and a different test.
+-- They were compared rather than assumed: over the cache's 446 items, the id
+-- range and `fieldPocket == TM_HM` select the same 100 rows -- 92 TMs plus 8
+-- HMs -- with nothing in one and not the other, and the ends are clean (327 is
+-- Razor Fang, 428 the Explorer Kit). So either spelling is right on this
+-- cartridge; the cartridge's own is the range, so that is what this is.
+--
+-- THIS IS THE HIGHEST-REACH SCRIPT COMMAND IN THE GAME THAT WAS MISSING.
+-- `scripts_visible_items.s` and `scripts_hidden_items.s` are shared bands with
+-- 329 and 262 objects behind them -- 591 item balls and hidden items across
+-- Sinnoh -- and both end their pickup the same way:
+--
+--     IsItemTMHM VAR_0x8004, VAR_RESULT
+--     GoToIfEq VAR_RESULT, TRUE,  ..._PlayerFoundTMHM
+--     GoToIfEq VAR_RESULT, FALSE, ..._PlayerFoundItem
+--     End
+--
+-- Unlowered, VAR_RESULT was never written, so BOTH branches tested whatever
+-- the previous script had left there. When that is neither 1 nor 0 -- which it
+-- usually is -- neither jump is taken and the script falls into `End`: the item
+-- is added (AddItem has already run) and the player is told NOTHING. Six
+-- hundred pickups that work and say nothing is not a missing message, it is a
+-- game that feels broken, and it is one `GetVarPointer` away.
+--
+-- Derived from the names like `plateRange` above, for the same reason: the TMs
+-- and HMs are one contiguous run, the cache already carries every name, and a
+-- second hard-coded pair of ids is a second thing to keep in step.
+function Gen4Commands.tmhmRange(data)
+  if Gen4Commands._tmhmLow then
+    return Gen4Commands._tmhmLow, Gen4Commands._tmhmHigh
+  end
+  local low, high = nil, nil
+  for id, def in pairs((data and data.items) or {}) do
+    local n = tonumber(id) or tonumber(def and def.id)
+    local name = def and def.name
+    -- `^TM%d` and `^HM%d` rather than the pocket, so this stays the id-range
+    -- test the cartridge performs even if an item is ever re-pocketed.
+    if n and type(name) == "string"
+       and (name:match("^TM%d") or name:match("^HM%d")) then
+      if not low or n < low then low = n end
+      if not high or n > high then high = n end
+    end
+  end
+  Gen4Commands._tmhmLow = low or 0
+  Gen4Commands._tmhmHigh = high or -1
+  return Gen4Commands._tmhmLow, Gen4Commands._tmhmHigh
+end
+
+function Commands.g4_item_is_tmhm(ctx, item, destVar)
+  local id = math.floor(valueOf(ctx, item) or 0)
+  local low, high = Gen4Commands.tmhmRange(ctx.game and ctx.game.data)
+  local yes = (id >= low and id <= high) and 1 or 0
+  if destVar then setVar(ctx.save, destVar, yes) end
+  setResult(ctx, yes)
+end
+
+-- `trysetunusedcollectedorbflag <item>` -- and pokeplatinum's own name says
+-- what it is worth: the flag it sets is read by nothing on the cartridge.
+--
+--     if (item == ITEM_ADAMANT_ORB || item == ITEM_LUSTROUS_ORB) {
+--         Underground_SetUnusedCollectedOrbFlag(underground);
+--     }
+--
+-- Transcribed anyway, with the condition, because it is two lines and because
+-- a row that is lowered and does nothing is honest while a row that is not
+-- lowered warns on every item pickup in the game -- this sits in
+-- `VisibleItems_GiveItem`, which all 329 of them run. The ids are resolved by
+-- NAME for the same reason the range above is.
+function Commands.g4_try_set_collected_orb_flag(ctx, item)
+  local data = ctx.game and ctx.game.data
+  local id = math.floor(valueOf(ctx, item) or 0)
+  local def = data and data.items and data.items[itemKey(data, id)]
+  local name = def and def.name
+  if type(name) ~= "string" then return end
+  if name == "Adamant Orb" or name == "Lustrous Orb" then
+    local ug = ctx.save and ctx.save.underground
+    if not ug and ctx.save then ug = {}; ctx.save.underground = ug end
+    if ug then ug.collectedOrb = true end
+  end
+end
+
+-- `savetvsegmenthiddenitem <item>` -- files a "breaking news" TV segment about
+-- what the player just dug up. There is no TV broadcast system in this engine
+-- at all (the `tv_broadcast` band is unlowered entire), so there is nothing to
+-- file it with.
+--
+-- A no-op rather than a `pending`, and the distinction matters: `pending` says
+-- "this drives something that is not built", which invites building it. This
+-- says the segment is recorded nowhere and nothing would read it if it were.
+-- It is lowered because it sits in `HiddenItems_AddItem`, which all 262 hidden
+-- items run, and an unlowered row there warns on every one of them.
+Commands.g4_save_tv_hidden_item = noop
+
+-- `survivepoison <destVar> <slot>` -- `Pokemon_TrySurvivePoison`, in full:
+--
+--     if (status & (TOXIC | POISON) && HP == 1) {
+--         status = NONE;
+--         return TRUE;
+--     }
+--     return FALSE;
+--
+-- Poisoned AND at exactly 1 HP: cure it and say so. Anything else is FALSE.
+--
+-- THE RULE BEHIND IT is that Sinnoh's field poison cannot faint a Pokemon --
+-- `Pokemon_DoPoisonDamage` is `if (hp > 1) hp--` -- so arriving at 1 HP is the
+-- end of the road and this is what lets go of the status. The engine applies
+-- that rule and prints the line itself, in `OverworldState:applyFieldPoison`,
+-- because this port does its field-poison messages inline rather than handing
+-- off to common script 3. This handler is the half for anything that DOES hand
+-- off -- the script band is lowered and reachable, and a row that wrote nothing
+-- would make the loop print the survived line for every mon in the party or
+-- for none of them, depending on what the last script left in VAR_RESULT.
+--
+-- Exactly 1, not <= 1: a fainted mon is at 0 and is not cured. `MON_DATA_HP`
+-- is the current HP, and the cartridge compares it to the literal 1.
+function Commands.g4_survive_poison(ctx, destVar, slot)
+  local index = math.floor(valueOf(ctx, slot) or 0)
+  local mon = ((ctx.save and ctx.save.party) or {})[index + 1]
+  local poisoned = mon and (mon.status == "PSN" or mon.status == "TOX")
+  local value = 0
+  if poisoned and (mon.hp or 0) == 1 then
+    mon.status = nil
+    value = 1
+  end
+  if destVar then setVar(ctx.save, destVar, value) end
+end
+
+-- `hatchegg` -- `FieldSystem_HatchEgg`: the FIRST egg in the party
+-- (`Party_GetFirstEgg`), then the hatch scene. The common script around it has
+-- already shown "Oh?" and faded out, so this is only the hatch and the reveal.
+--
+-- Through `OverworldState:hatchEgg`, which is the engine's own hatch lifted out
+-- of `stepEggs` by this pass for the purpose -- the met-level-zero stamp, the
+-- Poketch memory, the Gen 4 origin stamp, the 120 base happiness and the
+-- reveal box are thirty lines that must not exist twice.
+--
+-- NOTE WHICH DOOR IS USED IN PRACTICE: this engine hatches inline, on the step
+-- that runs the counter out, so `CommonScript_HatchEgg` is never dispatched
+-- and this handler does not normally run. It is here so that the row is not a
+-- warning on a path that could be reached, and so the two doors cannot drift.
+function Commands.g4_hatch_egg(ctx)
+  local ow = ctx.overworld
+  if not (ow and ow.hatchEgg) then return end
+  for _, mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    if mon.isEgg then return ow:hatchEgg(mon) end
+  end
+  Logger.debug("gen4 script: `hatchegg` ran with no egg in the party")
+end
+Commands.meta.g4_hatch_egg = { foreground = true, blocking = true }
+
 -- `getpartycount <destVar>` -- `Party_GetCurrentCount`, EGGS INCLUDED, which
 -- is why `countpartynoneggs` exists beside it and is a different number.
 function Commands.g4_party_count(ctx, destVar)
@@ -3049,6 +3469,363 @@ function Commands.g4_destroy_obstacle_anim(ctx, _, destVar)
   if destVar then setVar(ctx.save, destVar, 1) end
 end
 
+-- ---------------------------------------------------------------------------
+-- `scripts_field_moves.s` -- the other shared script
+-- ---------------------------------------------------------------------------
+--
+-- One file, seventeen entries, and every use of Cut, Rock Smash, Strength,
+-- Rock Climb, Surf, Waterfall, Defog and Flash in Sinnoh goes through it --
+-- twice over, because each has a "press A on the obstacle" path and a "use it
+-- from the party menu" path. Nine of its commands were unlowered, 23 uses.
+
+-- THE THREE FIELD-MOVE FLAGS, in one handler because they are one opcode shape
+-- three times over and the cartridge's own difference between them is which
+-- flag they touch.
+--
+-- Sub-functions: 0 CLEAR_ACTIVE, 1 SET_ACTIVE, 2 CHECK_ACTIVE -- and only
+-- CHECK carries a destination word, which is why these three are variable
+-- length and why the decoder used to stop the walk here (four scripts ended
+-- early; see `Gen4ScriptOps.VARIABLE_SPEC`). All six uses in the cartridge are
+-- in this one file: SET twice for Strength, once each for Flash and Defog, and
+-- CHECK twice for Strength. CLEAR is never used from a script -- the C clears
+-- these on its own -- but the opcode defines it, so it is answered.
+--
+-- THE FLAGS LIVE ON THE SAVE, which is where the cartridge keeps them
+-- (`VarsFlags`, via `SystemFlag_HandleStrengthActive` and friends) and, more
+-- to the point, is the only way CHECK can read what SET wrote. One store, one
+-- source of truth.
+--
+-- STRENGTH IS ALSO MIRRORED ONTO THE OVERWORLD, deliberately and one way.
+-- `OverworldState:tryPushBoulder` reads `self.strengthActive` and nothing
+-- else -- it is Gen 1/2's spelling of the same bit, and the comment there
+-- records that Hoenn's boulders could not be pushed for exactly this reason:
+-- the flag was in the save and the pusher never looked. A Gen 4 save flag that
+-- the pusher did not consult would be the same bug a third time, so the mirror
+-- is written here rather than hoped for. The save stays the truth; the field is
+-- a view of it.
+--
+-- FLASH AND DEFOG HAVE NO CONSUMER YET, and saying so is the point.
+-- `PaletteFX.daytimeFor(mapDef, hour, flashUsed)` takes the flag as its third
+-- argument and **has no callers at all** -- nothing in `src/` or `tools/` calls
+-- it -- so the dark-cave path it was written for is unwired at the renderer
+-- end. Setting the flag is the half that can be done from here; lighting the
+-- cave is a separate job, and it will find the flag already correct.
+local function fieldMoveFlags(save)
+  if not save then return nil end
+  save.gen4FieldMoveFlags = save.gen4FieldMoveFlags or {}
+  return save.gen4FieldMoveFlags
+end
+
+function Commands.g4_field_move_flag(ctx, which, func, destVar)
+  local Ops = require("src.import.Gen4ScriptOps")
+  local FUNC = Ops.FIELD_MOVE_FUNC
+  local store = fieldMoveFlags(ctx.save)
+  local f = math.floor(tonumber(func) or -1)
+  if f == FUNC.SET_ACTIVE or f == FUNC.CLEAR_ACTIVE then
+    local on = (f == FUNC.SET_ACTIVE) or nil
+    if store then store[which] = on end
+    if which == "strength" and ctx.overworld then
+      ctx.overworld.strengthActive = on and true or false
+    end
+  elseif f == FUNC.CHECK_ACTIVE then
+    -- ONLY the destination var, which is what the C writes. The comparison
+    -- register is deliberately left alone: `GoToIfEq` expands to an explicit
+    -- `CompareVar` followed by `GoToIf 1`, so the branch reads the var rather
+    -- than the register, and writing both would be inventing a side effect the
+    -- cartridge does not have.
+    local value = (store and store[which]) and 1 or 0
+    if destVar then setVar(ctx.save, destVar, value) end
+  else
+    -- `ScrCmd_DoStrengthFunc`'s default arm is `GF_ASSERT(FALSE)`, so a fourth
+    -- value is not something to guess at.
+    Logger.warn("gen4 script: field-move flag %q got sub-function %d, which is "
+                .. "none of CLEAR(0)/SET(1)/CHECK(2)", tostring(which), f)
+  end
+end
+
+-- ---------------------------------------------------------------------------
+-- SAVING
+-- ---------------------------------------------------------------------------
+--
+-- Twelve handlers for one dialogue.  `src/script/Gen4Save.lua` holds the model
+-- -- what a save type means, how `fullSaveRequired` is derived, what the extra
+-- save blocks become -- and these rows are only the wiring.
+--
+-- THE WRITE IS NOT HERE.  `src/script/ScriptSave.lua` has it, shared with Gen
+-- 3's `special SaveGame`, so the engine has one save path and two
+-- presentations of it, which is the arrangement the cartridge has too: its
+-- script wraps `SaveData_Save`.
+
+-- `checksavetype <destVar>`.  Four answers, all of them in Gen4Save.
+function Commands.g4_check_save_type(ctx, destVar)
+  local Gen4Save = require("src.script.Gen4Save")
+  local kind = Gen4Save.typeFor(ctx.save)
+  if destVar then setVar(ctx.save, destVar, kind) end
+  return kind
+end
+
+-- `trysavegame <destVar>` -- 1 when the bytes landed, 0 otherwise, which is
+-- `FieldSystem_Save`'s `SaveData_Save(...) == SAVE_RESULT_OK`.
+--
+-- `Gen4Save.markSaved` is the C's success arm: dataExists becomes true,
+-- isNewGameData false and fullSaveRequired false.  It runs AFTER the write, so
+-- a failed write leaves the next save still reporting FULL_SAVE -- the
+-- cartridge's behaviour, and the safe direction to be wrong in.
+--
+-- It also runs after the write for a second reason: `Game:writeSave` captures
+-- the overworld into the save table on its way past, so a stamp taken before
+-- it would be a stamp of a table that is about to change.
+function Commands.g4_try_save_game(ctx, destVar)
+  local wrote = require("src.script.ScriptSave").write(ctx, "gen4")
+  if wrote then require("src.script.Gen4Save").markSaved(ctx.save) end
+  local answer = wrote and 1 or 0
+  if destVar then setVar(ctx.save, destVar, answer) end
+  Logger.info("gen4 save: script save %s", wrote and "written" or "declined")
+  return answer
+end
+
+-- `storesaveresult <var>` -- hand the result back to whatever started the
+-- script.  The cartridge writes through a pointer passed to
+-- `ScriptManager_Start`, and `include/script_manager.h` says of it that it is
+-- "only defined if ScrCmd_StoreSaveResult is called", so a script started
+-- without one simply does not get the write.
+--
+-- `ctx.saveResultOut` is this port's pointer: whoever starts the save script
+-- sets it to a function and reads what it is given.  Nothing sets it yet --
+-- the START menu's SAVE row still runs the engine's own flow -- so the value
+-- is also left on the context, which is where a C-side caller would look.
+function Commands.g4_store_save_result(ctx, var)
+  local value = valueOf(ctx, var) or 0
+  ctx.gen4SaveResult = value
+  if type(ctx.saveResultOut) == "function" then
+    local ok, err = pcall(ctx.saveResultOut, value)
+    if not ok then
+      Logger.warn("gen4 save: the save-result sink raised (%s)", tostring(err))
+    end
+  end
+  return value
+end
+
+-- `showsavingicon` / `hidesavingicon` -- `Window_AddWaitDial` and
+-- `DestroyWaitDial`.  The dial is a sprite this port does not have yet, so the
+-- flag is kept and the renderer has something true to read when it does; the
+-- write it brackets is synchronous here, so there is no frame in which a
+-- player could see it anyway.
+function Commands.g4_saving_icon(ctx, on)
+  local want = (tonumber(on) or 0) ~= 0
+  ctx.gen4SavingIcon = want or nil
+  if ctx.overworld then ctx.overworld.gen4SavingIcon = want or nil end
+end
+
+-- `waitabpresstime <frames>` -- A or B, or the timeout, whichever comes first
+-- (`ScriptContext_DecrementABPressTimer`).  Var-or-literal, because the C
+-- reads it with `ScriptContext_GetVar`.
+--
+-- The 30-frame hold on "<player> saved the game." is the only use in this
+-- file, and the difference between this and a plain wait is whether an
+-- impatient player can skip it.
+function Commands.g4_wait_ab_press_time(ctx, frames)
+  local left = math.floor(tonumber(valueOf(ctx, frames)) or 0)
+  if left <= 0 then return end
+  local runner = ctx.runner
+  if not runner then return end
+  local input = ctx.game and ctx.game.input
+  runner.waitingCheck = function()
+    if input and input.wasPressed
+       and (input:wasPressed("a") or input:wasPressed("b")) then
+      return true
+    end
+    left = left - 1
+    return left <= 0
+  end
+  runner:yield()
+end
+
+-- `opensaveinfo` / `closesaveinfo` -- the panel the player reads before
+-- answering.  Built from the cartridge's own bank-534 labels by
+-- `Gen4Save.infoPanel` and drawn by `OverworldState:drawUI`.
+function Commands.g4_save_info(ctx, on)
+  local want = (tonumber(on) or 0) ~= 0
+  if not want then
+    ctx.gen4SaveInfo = nil
+    if ctx.overworld then ctx.overworld.gen4SaveInfo = nil end
+    return
+  end
+  local ok, panel = pcall(require("src.script.Gen4Save").infoPanel,
+                          ctx.game, ctx.save)
+  if not ok then
+    Logger.warn("gen4 save: the save-info panel could not be built (%s)",
+                tostring(panel))
+    return
+  end
+  ctx.gen4SaveInfo = panel
+  if ctx.overworld then ctx.overworld.gen4SaveInfo = panel end
+end
+
+-- 0x258 / 0x259 -- the player's save pose, begun as a task and ended.
+--
+-- `ov5_021E0F54` RETURNS NULL UNLESS THE PLAYER IS WALKING, so a save from a
+-- bicycle or from the water poses nothing at all, and `ov5_021E0FC0` returns
+-- immediately on a NULL task so the close is a no-op in exactly those cases.
+-- That guard is the behaviour, not an implementation detail: it is why saving
+-- on a bike does not drop you off it.
+--
+-- There is no save-pose sprite for Dawn or the boy in this port yet -- the
+-- same reason their sprint frames are deferred until the 3D work lands -- so
+-- what this does is record the pose the renderer should be drawing.  The guard
+-- is honoured anyway, because a flag that is set in cases the cartridge never
+-- sets it in would be a wrong flag rather than an unrendered one.
+function Commands.g4_save_pose(ctx, on)
+  local ow = ctx.overworld
+  if not ow then return end
+  if (tonumber(on) or 0) == 0 then
+    ow.gen4SavePose = nil
+    return
+  end
+  local onBike = ctx.save and ctx.save.onBike
+  local surfing = ow.player and ow.player.surfing
+  if onBike or surfing then return end
+  ow.gen4SavePose = true
+end
+
+-- `saveextradata` / `checkismiscsaveinit` -- the Frontier-records and
+-- battle-video sectors, and the flag that says they have been laid down once.
+function Commands.g4_save_extra_data(ctx)
+  require("src.script.Gen4Save").initMiscSave(ctx.save)
+end
+
+function Commands.g4_misc_save_init(ctx, destVar)
+  local init = require("src.script.Gen4Save").miscSaveInit(ctx.save)
+  local value = init and 1 or 0
+  if destVar then setVar(ctx.save, destVar, value) end
+  return value
+end
+
+-- 0x0C3 AND 0x0C4, WHICH ARE THE SAME FUNCTION BYTE FOR BYTE in pokeplatinum:
+-- both set the overworld weather to OVERWORLD_WEATHER_CLEAR and re-apply it.
+-- The script uses one after Flash and the other after Defog, which is the only
+-- thing separating them.
+--
+-- A DARK CAVE AND A FOGGY ROUTE ARE THE SAME MECHANISM ON THIS CARTRIDGE -- an
+-- overworld weather state -- so lighting a cave and blowing fog away are one
+-- operation. That is why Flash clears *weather* here, which looks wrong until
+-- you notice Platinum has no separate darkness concept (Gen 2 bakes darkness
+-- into the palette instead, which is what this engine was built expecting).
+--
+-- AND IT IS READ BACK BY `g4_overworld_weather`, which is the half that makes
+-- this worth writing: that command answered from the MAP's weather byte and
+-- said so, on the grounds that nothing wrote a saved value. Something does
+-- now, so the getter consults it first -- otherwise Defog would clear the fog
+-- and the very next `getoverworldweather` would report fog, which is the
+-- asymmetry that comment was worried about.
+function Commands.g4_clear_overworld_weather(ctx)
+  if ctx.save then ctx.save.gen4WeatherCleared = true end
+  if ctx.overworld then ctx.overworld.gen4WeatherCleared = true end
+end
+
+-- `playhmcutin <slot>` -- nine uses, one in every HM path there is, and the
+-- cartridge BLOCKS on it: `ScriptContext_Pause(ctx,
+-- ScriptContext_WaitForHMCutInFinished)`.
+--
+-- Played through `Gen3FieldMove.show`, which is the field-move sweep this
+-- engine already has -- the mon's front sprite raised over a coloured band
+-- and taken away again. The module is named for the generation it was written
+-- for; the beat is not generation-specific.
+--
+-- IT IS A STAND-IN AND NOT PARITY, stated plainly: Platinum's `HMCutIn` is its
+-- own composition on the DS screen and includes the player's sprite (it takes
+-- `PlayerAvatar_GetGender`). What is faithful here is the blocking beat and the
+-- picture of the Pokemon doing the move; what is not is the layout. Showing
+-- Hoenn's sweep is a visible stand-in, which is the kind that gets corrected;
+-- showing nothing leaves the script's pause with no reason to exist, which is
+-- the kind that does not.
+--
+-- `show` returns false when there is no picture to draw -- no mon in the slot,
+-- or a cache with no front sprite for it -- and then this does nothing rather
+-- than blocking on a screen that would draw nothing.
+function Commands.g4_hm_cut_in(ctx, slot)
+  local game = ctx.game
+  if not (game and game.stack) then return end
+  local index = math.floor(valueOf(ctx, slot) or 0)
+  local mon = ((ctx.save and ctx.save.party) or {})[index + 1]
+  if not mon then
+    Logger.debug("gen4 script: `playhmcutin` names party slot %d, which is empty",
+                 index)
+    return
+  end
+  local Gen3FieldMove = require("src.world.Gen3FieldMove")
+  Gen3FieldMove.show(game, mon, nil)
+end
+Commands.meta.g4_hm_cut_in = { foreground = true, blocking = true }
+
+-- THE THREE THAT MOVE THE PLAYER. Each takes the party slot of the Pokemon
+-- doing it and starts a field task the cartridge does not wait for -- the
+-- script ends and the task finishes the motion.
+--
+-- WHY THESE DO NOT PRINT ANYTHING, which is the trap. The script has already
+-- printed its own line and closed the box before it gets here:
+--
+--     Message FieldMoves_Text_PokemonUsedSurf
+--     CloseMessage
+--     UseSurf VAR_0x8004
+--
+-- so a handler modelled on the Gen 1-3 mount -- which pushes a TextBox saying
+-- "<MON> used SURF!" and rides its fade -- would print the same line twice.
+-- That is why this is a separate, smaller path rather than a call into the two
+-- inline mounts in `OverworldController` (one around a textbox, one on a
+-- force-surf tile): those are the same STATE reached through a different beat.
+function Commands.g4_use_surf(ctx)
+  local ow = ctx.overworld
+  local p = ow and ow.player
+  if not p then return end
+  p.surfing = true
+  -- Being on the water means being at the water's level; the step onto it is
+  -- otherwise refused by the rule that keeps a walker out of the sea.
+  if ow.map and ow.map.cellElevation then
+    local fx, fy = p:facingCell()
+    p.elevation = ow.map:cellElevation(fx, fy) or p.elevation
+  end
+  if ow.syncSurfingPikachu then ow:syncSurfingPikachu() end
+  local okMusic, Music = pcall(require, "src.core.Music")
+  if okMusic and ctx.game then Music.setSurfing(ctx.game.data, true) end
+end
+
+-- `usewaterfall <slot>` -- the climb itself already exists for Hoenn
+-- (`OverworldState:gen3UseWaterfall`), driven from pressing A on the fall. The
+-- Sinnoh script reaches the same motion by a different door, so this hands off
+-- to whichever of those the overworld exposes rather than walking the player
+-- by hand -- the cell-by-cell climb is the overworld's business and a second
+-- copy of it here is how the two end up disagreeing about where you surface.
+function Commands.g4_use_waterfall(ctx)
+  local ow = ctx.overworld
+  local p = ow and ow.player
+  if not (ow and p) then return end
+  if ow.tryWaterfallOW then
+    local handled = ow:tryWaterfallOW()
+    if handled then return end
+  end
+  Logger.info("gen4 script: `usewaterfall` had no overworld climb to hand off "
+              .. "to, so the player stays where they are")
+end
+
+-- `userockclimb <slot>` -- and this one has nothing to hand off to: no
+-- generation in this engine climbs a rock wall. Declared rather than faked,
+-- because the alternative is a script that reports success and a player who
+-- does not move -- and Rock Climb is how Sinnoh gates Route 217 and the
+-- Mt. Coronet back routes, so a silent failure there reads as a broken map.
+-- Through `pending` rather than a one-shot of its own: that helper exists for
+-- exactly this -- "decoded and lowered, the thing it drives is not built" --
+-- and a second hand-rolled copy of its say-once logic would be this port's
+-- favourite fault in miniature.
+pending("g4_use_rock_climb", "a rock-climb motion")
+-- 0x14B. Identical to 0x14A in the cartridge and deliberately NOT sharing its
+-- row: 0x14A's handler is a no-op justified by its caller (a lost honey-tree
+-- battle, where the teardown has already blacked out), and 0x14B's only caller
+-- is `CommonScript_PoisonWhiteout`, where no battle happened. Unreachable under
+-- the Gen 4 poison rule (`if (hp > 1) hp--` cannot wipe a party), so declared
+-- rather than given a third copy of the whiteout sequence. See the lowering.
+pending("g4_blackout_from_battle_2", "a whiteout the Gen 4 poison rule makes unreachable")
+
 -- `buffermapname <slot> <mapHeaderID>` -- `MapHeader_LoadName`, the PLAYER-
 -- FACING name from message bank 433, which every header already carries as
 -- `label` (see Gen4MapHeaders, where confusing that with the internal name is
@@ -3296,10 +4073,23 @@ end
 -- byte is extracted on 592 of 593 rows and is what the cartridge seeds the
 -- saved value FROM on every load, so on the map you are standing on the two
 -- agree. Route 213's two sites are asking about the beach they are on.
+--
+-- ...AND SOMETHING WRITES ONE NOW, so the paragraph above needed its other
+-- half. `g4_clear_overworld_weather` (opcodes 0x0C3 and 0x0C4) is what Flash
+-- and Defog call, and it sets `gen4WeatherCleared`. Without this arm, Defog
+-- would blow the fog away and the very next `getoverworldweather` would report
+-- fog -- the exact asymmetry the reasoning above was guarding against, arrived
+-- at from the other direction.
+--
+-- OVERWORLD_WEATHER_CLEAR IS 0, which is also the answer for the 592 maps that
+-- carry no weather at all, so "cleared" and "never had any" are deliberately
+-- the same value -- as they are on the cartridge, where one enum holds both.
 function Commands.g4_overworld_weather(ctx, destVar)
   local ow = ctx.overworld
+  local cleared = (ctx.save and ctx.save.gen4WeatherCleared)
+                  or (ow and ow.gen4WeatherCleared)
   local def = ow and ow.map and ow.map.def
-  local value = tonumber(def and def.weather) or 0
+  local value = cleared and 0 or (tonumber(def and def.weather) or 0)
   if destVar then setVar(ctx.save, destVar, value) end
   setResult(ctx, value)
 end

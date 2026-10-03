@@ -308,6 +308,14 @@ local GEN4_MOVE_EFFECTS = {
   [211] = { "CALM_MIND_EFFECT" },  -- SP_ATK_SP_DEF_UP
   [212] = { "DRAGON_DANCE_EFFECT" },  -- ATK_SPD_UP
   [213] = { "CAMOUFLAGE_EFFECT" },  -- CAMOUFLAGE
+  -- SINNOH'S DYNAMIC-POWER FAMILY, named here only because it is implemented.
+  -- An id with a name claims `MoveEffects` has a record for it; an id without
+  -- one logs itself through `missing()` instead. Naming an unimplemented effect
+  -- would turn an honest gap into a move that silently runs as a plain hit.
+  [217] = { "DOUBLE_POWER_HEAL_SLEEP" },  -- DOUBLE_POWER_HEAL_SLEEP -- Wake-Up Slap
+  [219] = { "POWER_BASED_ON_LOW_SPEED" },  -- POWER_BASED_ON_LOW_SPEED -- Gyro Ball
+  [221] = { "DOUBLE_POWER_WHEN_BELOW_HALF" },  -- DOUBLE_POWER_WHEN_BELOW_HALF -- Brine
+  [237] = { "INCREASE_POWER_WITH_MORE_HP" },  -- INCREASE_POWER_WITH_MORE_HP -- Wring Out, Crush Grip
   [255] = { "FLY_EFFECT" },  -- Dive -- the engine names the whole semi-invulnerable two-turn family FLY_EFFECT
   [256] = { "FLY_EFFECT" },  -- Dig -- MoveEffects says outright "Fly AND Dig go semi-invulnerable"
   [261] = { "TRAPPING_EFFECT" },  -- Whirlpool -- the bind is exact; the extra double damage on a diving target is not modelled
@@ -330,14 +338,17 @@ Gen4Moves.HIGH_CRIT = GEN4_HIGH_CRIT
 -- The name pokeplatinum gives each effect, for the rows that stay numbers. Not
 -- behaviour: a label, so the gap report names the work.
 Gen4Moves.EFFECT_NAMES = {
+  -- THIS TABLE IS THE BACKLOG, which is why four ids are missing from the run
+  -- below. `gen4_cache_integrity_check` asserts no id appears both here and in
+  -- GEN4_MOVE_EFFECTS: a fallback name exists PRECISELY because there is no
+  -- handler, so an overlap would mean one of the two tables is lying about
+  -- what is implemented. 217, 219, 221 and 237 moved to GEN4_MOVE_EFFECTS when
+  -- their handlers were written, and their pret names went with them.
   [214] = "HEAL_HALF_REMOVE_FLYING_TYPE",
   [215] = "GRAVITY",
   [216] = "IGNORE_EVATION_REMOVE_DARK_IMMUNE",
-  [217] = "DOUBLE_POWER_HEAL_SLEEP",
   [218] = "SPEED_DOWN_HIT",
-  [219] = "POWER_BASED_ON_LOW_SPEED",
   [220] = "FAINT_AND_FULL_HEAL_NEXT_MON",
-  [221] = "DOUBLE_POWER_WHEN_BELOW_HALF",
   [222] = "NATURAL_GIFT",
   [223] = "REMOVE_PROTECT",
   [224] = "EAT_BERRY",
@@ -353,7 +364,6 @@ Gen4Moves.EFFECT_NAMES = {
   [234] = "TRANSFER_STATUS",
   [235] = "HIGHER_POWER_WHEN_LOW_PP",
   [236] = "PREVENT_HEALING",
-  [237] = "INCREASE_POWER_WITH_MORE_HP",
   [238] = "SWAP_ATK_DEF",
   [239] = "SUPRESS_ABILITY",
   [240] = "PREVENT_CRITS",

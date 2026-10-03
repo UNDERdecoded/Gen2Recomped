@@ -229,6 +229,18 @@ local HAPPINESS_CHANGES = {
   WALKING = { 2, 2, 1 },
   USEDITEM = { 5, 3, 2 },
   FAINT = { -1, -1, -1 },
+  -- Gen 4's FRIENDSHIP_EVENT_POISON_SURVIVE (pokeplatinum
+  -- sFriendshipChangeTable): fired when field poison walks a Pokemon down to
+  -- 1 HP and cures it. The name says survive and the numbers say otherwise --
+  -- friendship DROPS, because the Pokemon was carried around poisoned.
+  --
+  -- THE SAME THREE NUMBERS AS GEN 2's PIKAHAPPY_PSNFNT, and over the same
+  -- bands (LOW_FRIENDSHIP_LIMIT 100, MED_FRIENDSHIP_LIMIT 200, which is what
+  -- the band split below already is). So Gen 4 did not change the penalty at
+  -- all -- only WHEN it fires: on reaching 1 HP instead of on fainting, because
+  -- in Sinnoh field poison cannot faint anything. See
+  -- `OverworldState:applyFieldPoison`.
+  POISON_SURVIVE = { -5, -5, -10 },
 }
 
 function Evolution.changeHappiness(mon, reason)

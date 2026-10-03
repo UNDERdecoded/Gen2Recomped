@@ -158,17 +158,43 @@ ok(shared == 195, "this many of Gen 4's ids are in Hoenn's table", shared, 195)
 ok(portHasHoenns == shared,
    "...and the port takes Hoenn's own name for every one of them",
    ("%d of %d"):format(portHasHoenns, shared), shared)
--- ...AND NOTHING WAS INVENTED. Every id the port names is either one of Hoenn's
--- or one of the five Gen 4-only ids argued for in Gen4Moves' own comment.
-local GEN4_OWN = { [255] = true, [256] = true, [261] = true, [263] = true, [272] = true }
-local invented = {}
-for id in pairs(Moves.EFFECTS) do
-  if not (g3[id] or GEN4_OWN[id]) then invented[#invented + 1] = id end
+-- ...AND NOTHING WAS INVENTED. An id the port names that Hoenn does not is a
+-- Gen 4-only naming decision, and the rule for those is the port's own: a name
+-- claims `MoveEffects` has a record, while an id with no name logs itself
+-- through `missing()` instead. So the test is that EVERY such id is IMPLEMENTED.
+--
+-- THIS USED TO BE A HARDCODED LIST of five ids -- 255, 256, 261, 263, 272 --
+-- which is the hardcoded twin of a fact in `Gen4Moves`, and it went stale the
+-- moment a sixth arrived: four implemented effects were reported as inventions
+-- while the invariant actually worth having (a name means a handler) was never
+-- being checked at all. Derived, it holds for nine and fails on a name with no
+-- handler, which is the thing worth preventing.
+local okME, Effects = pcall(require, "src.battle.MoveEffects")
+ok(okME and type(Effects) == "table", "src.battle.MoveEffects did not load",
+   tostring(Effects), "a table")
+local gen4Own, unimplemented = {}, {}
+for id, row in pairs(Moves.EFFECTS) do
+  if not g3[id] then
+    gen4Own[#gen4Own + 1] = id
+    local name = row and row[1]
+    local has = okME and name and (Effects.full[name] or Effects.primary[name]
+                                   or Effects.secondary[name] or Effects.special[name])
+    if not has then
+      unimplemented[#unimplemented + 1] = ("%d (%s)"):format(id, tostring(name))
+    end
+  end
 end
-ok(#invented == 0, "...and the port names no id neither source licenses",
-   #invented == 0 and "none" or table.concat(invented, ","), "none")
-ok(count(Moves.EFFECTS) == 200, "so the table is Hoenn's 195 plus five",
-   count(Moves.EFFECTS), 200)
+table.sort(gen4Own)
+ok(#unimplemented == 0,
+   "...and every Gen 4-only id the port names is implemented",
+   #unimplemented == 0 and "all" or table.concat(unimplemented, ", "), "all")
+-- The count is pinned so a tenth has to be acknowledged here, but it is the
+-- assertion above that makes adding one safe rather than merely noticed.
+ok(#gen4Own == 9,
+   "...and there are nine: five semi-invulnerable/bind rows, four dynamic-power",
+   ("%d (%s)"):format(#gen4Own, table.concat(gen4Own, ",")), 9)
+ok(count(Moves.EFFECTS) == 204, "so the table is Hoenn's 195 plus nine",
+   count(Moves.EFFECTS), 204)
 
 -- THE TWO PLACES THE SOURCES DIFFER, asserted so a future reader does not have
 -- to take the comment's word for either.
@@ -201,8 +227,14 @@ for _, m in pairs(all) do
   if type(m.effect) == "string" then named = named + 1 else numbered = numbered + 1 end
   if m.highCrit then crit = crit + 1 end
 end
-ok(named == 412, "moves carrying an effect NAME", named, 412)
-ok(numbered == 59, "...and moves whose id has no name, left as numbers", numbered, 59)
+-- 417 and 54, not 412 and 59: Gyro Ball, Wring Out, Crush Grip, Brine and
+-- Wake-Up Slap moved across when their handlers were written.
+ok(named == 417, "moves carrying an effect NAME", named, 417)
+ok(numbered == 54, "...and moves whose id has no name, left as numbers", numbered, 54)
+-- THE SUM, because two pins that move together could both be bumped wrongly
+-- and still agree with each other.
+ok(named + numbered == 471, "...and every move is in exactly one of the two",
+   named + numbered, 471)
 -- A NUMBER MUST STILL SAY WHAT IT IS, or the gap report is a column of integers.
 local labelled = 0
 for _, m in pairs(all) do

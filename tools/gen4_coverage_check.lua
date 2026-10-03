@@ -29,7 +29,7 @@
 --
 --     blocks in the pool                8,567
 --     instructions walked              78,093
---     instructions lowered             76,178   = 97.55%
+--     instructions lowered             76,587   = 98.07%
 --
 -- THE TWO FLOORS ARE NOT THE SAME NUMBER TWICE, and raising them together
 -- is a trap this walked into once: the percentage printed is ROUNDED and the
@@ -191,13 +191,72 @@ io.write(("   ... and %d more, of which %d occur exactly once\n\n")
 -- Recorded floors.  Measured, not aspirational: these are what the corpus reads
 -- today, so any future edit that drops a lowering or shortens a decode fails
 -- here instead of quietly lowering the number everything else is quoted against.
-ok(blocks == 8567, "blocks in the pool", blocks, 8567)
-ok(total == 78093, "instructions walked", total, 78093)
+-- THESE THREE MOVED IN PASS 168, UPWARD, AND THEY ARE FLOORS NOW.
+--
+-- `Gen4ScriptOps.VARIABLE_SPEC` taught the decoder the width rule for the
+-- three field-move flag commands, which it used to stop the walk at. Stopping
+-- truncates the script, so four scripts were ending early -- and everything
+-- after the stop had never been decoded in the whole history of this corpus.
+--
+--     blocks in the pool            8,567 -> 8,571    (+4)
+--     instructions walked          78,093 -> 78,189   (+96)
+--     distinct opcodes seen           718 -> 720      (+2)
+--     coverage                      98.06% -> 98.15%
+--
+-- THE +2 IS THE ONE WORTH READING. The two opcodes that appeared are 0x0C3
+-- (x2) and 0x0C4 (x1) -- the weather-clears that Flash and Defog call -- and
+-- they sit on the line directly after `DoFlashFunc` / `DoDefogFunc`. They had
+-- therefore never been seen ANYWHERE in the cartridge, not once, because the
+-- only places they occur are past a truncation point. A corpus census cannot
+-- report what its walk never reaches, and that is the shape of blindness this
+-- comment exists to record.
+--
+-- Verified by reverting the decoder change and re-running the same corpus:
+-- 8 variable stops become 4, and the two opcodes disappear again.
+--
+-- Floors rather than exact pins because reach going UP is the work. A fall
+-- means the decoder lost ground, which is what these are for.
+ok(blocks >= 8571, "blocks in the pool (floor)", blocks, 8571)
+ok(total >= 78189, "instructions walked (floor)", total, 78189)
 ok(stoppedEarly == 0, "blocks whose decode stopped early", stoppedEarly, 0)
-ok(distinct == 718, "distinct opcodes occurring in the corpus", distinct, 718)
-ok(lowered >= 76178, "instructions lowered (floor, may not regress)",
-   lowered, ">= 76178")
-ok(pct >= 97.54, "corpus coverage %", ("%.2f"):format(pct), ">= 97.54")
+ok(distinct >= 720, "distinct opcodes occurring in the corpus (floor)", distinct, 720)
+-- THE FLOOR HAS TO BE RAISED WHEN IT IS PASSED, or it stops protecting
+-- anything. It sat at 76,178 while the real figure had reached 76,587 --
+-- 409 instructions of slack -- and a floor with slack in it does not notice
+-- a lowering being lost. Measured: deleting `L.openbag`, which lowers 44
+-- occurrences, left this check GREEN, and so did every other check in the
+-- tree. Raised to what the corpus actually reads, the same deletion fails
+-- here, which is the only place it can.
+--
+-- So this number is not decoration and not a record of a past run: it is
+-- the one assertion standing between a deleted lowering and nobody
+-- noticing. Raise it whenever it is beaten.
+-- RAISED AGAIN IN PASS 168, and raising it is not bookkeeping. Pass 166 found
+-- this floor sitting 409 instructions below the corpus, which meant up to 409
+-- instructions of lowering could be deleted with every check in the tree
+-- staying green -- and proved it by deleting `L.openbag`. Leaving it at 76,587
+-- after this pass would re-open a 153-instruction gap of exactly the same
+-- kind. A floor is only worth what it is level with.
+-- 76,740 -> 76,781 in pass 169 (the item bands, `messagefrombank` and the
+-- word-choice screen). Re-levelled again rather than left with 41 instructions
+-- of slack, for the reason in the paragraph above: the gap is the whole fault.
+-- 76,781 -> 76,785 in pass 170 (survivepoison, hatchegg, blackoutfrombattle2):
+-- three commands, four instructions, because two of them occur once each in
+-- the whole cartridge. Read off the run rather than predicted -- the first
+-- attempt at this line guessed 76,788 and the check rejected it.
+ok(lowered >= 76785, "instructions lowered (floor, may not regress)",
+   lowered, ">= 76785")
+-- COMPARED ON THE NUMBER IT PRINTS, which it was not, and this check caught
+-- me with it on a clean tree: the true figure is 98.1468%, the line printed
+-- "98.15", I pinned `pct >= 98.15` off the printed value, and the check failed
+-- saying "got 98.15, expected >= 98.15". A check whose message contradicts its
+-- own verdict is worse than no check -- the reader believes the message.
+--
+-- The floor on `lowered` above is the one with teeth (it bites on a single
+-- instruction); this is the human-readable twin, so it compares the same
+-- rounded value it shows.
+local shown = tonumber(("%.2f"):format(pct))
+ok(shown >= 98.20, "corpus coverage %", ("%.2f"):format(pct), ">= 98.20")
 
 io.write(("\n%d checks, %d failures\n"):format(checks, fails))
 os.exit(fails == 0 and 0 or 1)

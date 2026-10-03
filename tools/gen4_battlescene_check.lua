@@ -17,15 +17,37 @@
 -- THE CHECKS START WITH TWO CANARIES on the tables themselves,
 -- because a mistyped enum makes every later check pass against the wrong word.
 --
--- Run:  texlua tools/gen4_battlescene_check.lua <cache dir> [assets dir]
+-- Run:  texlua tools/gen4_battlescene_check.lua <cache dir> [game root]
+--
+-- THE SECOND ARGUMENT IS THE GAME ROOT, not an assets directory, and that is
+-- not a naming quibble -- it produced 160 false failures.  The picture paths
+-- the cache states already BEGIN with `assets/generated/`:
+--
+--     assets/generated/gen4/battle/background/water_day.png
+--
+-- so joining them onto a directory that itself ends in `assets/generated`
+-- looks for `assets/generated/assets/generated/...`, finds nothing, and
+-- reports all 157 stated pictures and all 3 gauge boxes as missing art.  The
+-- argument was called "assets dir", `tools/run_checks.py` has an `--assets`
+-- option, and the obvious thing to pass it is the assets directory -- so the
+-- suite went red for everybody who supplied the input correctly, which is the
+-- worst way for a check to fail: it teaches the reader to disbelieve it.
+--
+-- Both spellings work now.  A path ending in `assets/generated` has that
+-- suffix trimmed, because the stated paths carry it.
 
 local cacheDir = arg and arg[1]
 if not cacheDir then
   io.stderr:write("usage: texlua tools/gen4_battlescene_check.lua "
-                  .. "<cache dir> [assets dir]\n")
+                  .. "<cache dir> [game root]\n")
   os.exit(2)
 end
 local assetsDir = arg and arg[2]
+if assetsDir then
+  assetsDir = assetsDir:gsub("[/\\]+$", "")
+                       :gsub("[/\\]assets[/\\]generated$", "")
+                       :gsub("[/\\]data[/\\]generated$", "")
+end
 
 local root = (arg[0] or ""):gsub("[^/\\]*$", "")
 if root ~= "" then package.path = root .. "../?.lua;" .. package.path end
@@ -324,7 +346,7 @@ end
 -- really there.  Skipped rather than failed when they are not, and SAID so:
 -- a check that silently degrades is one you stop being able to read.
 if assetsDir then
-  local missing = 0
+  local missing, stated = 0, 0
   local function exists(p)
     local f = io.open(assetsDir .. "/" .. p, "rb")
     if f then f:close() return true end
@@ -333,11 +355,34 @@ if assetsDir then
   for _, bg in pairs(Gen4Battle.BACKGROUNDS) do
     for _, when in ipairs({ "day", "evening", "night" }) do
       local row = gfx.backgrounds and gfx.backgrounds[bg .. "_" .. when]
-      if row and row.path and not exists(row.path) then missing = missing + 1 end
+      if row and row.path then
+        stated = stated + 1
+        if not exists(row.path) then missing = missing + 1 end
+      end
     end
   end
   for _, row in pairs(gfx.terrain or {}) do
-    if row.path and not exists(row.path) then missing = missing + 1 end
+    if row.path then
+      stated = stated + 1
+      if not exists(row.path) then missing = missing + 1 end
+    end
+  end
+  -- ZERO OF THEM PRESENT IS "NO ASSET TREE HERE", NOT "ALL THE ART IS GONE".
+  -- Third check in this tree to need this guard: `gen4_ball_throw_check` had
+  -- it (18 of 19 ball sets "broken" against a partial mirror, pass 166),
+  -- `gen4_texture_files_check` had it (3,693 of 3,693 terrain textures
+  -- "missing", pass 167), and this is the same shape a third time. A check
+  -- that cannot tell a missing INPUT from a failing SUBJECT gets believed
+  -- once and switched off after that.
+  --
+  -- 100% is the tell: a real fault takes out a family, not every stated path.
+  if stated > 0 and missing == stated then
+    io.write(("\n  none of the %d stated pictures are on disk -- this looks "
+              .. "like a game root with no asset tree rather than missing "
+              .. "art;\n  pass the platinum/ directory (or its "
+              .. "assets/generated) as the second argument.\n"):format(stated))
+    io.write(("\n%d checks, %d failures\n"):format(checks, fails))
+    os.exit(2)
   end
   ok(missing == 0, "stated picture paths that are not on disk", missing, 0)
 else
@@ -1586,16 +1631,47 @@ do
   ok(caBody:find("s.absoluteX", 1, true) ~= nil,
      "...and an absolute X, which the flying callbacks need",
      caBody:find("s.absoluteX", 1, true) ~= nil, true)
-  for _, axis in ipairs({ { "oy, sy = absY", "absY" }, { "ox, sx = absX", "absX" } }) do
-    local at = caBody:find(axis[1], 1, true)
-    local guard = nil
-    if at then
-      for line in caBody:sub(1, at):gmatch("[^\n]*if [^\n]*") do guard = line end
+  -- THE ABSOLUTE POSITION, TESTED BY CALLING IT RATHER THAN BY READING IT.
+  --
+  -- This used to scan for the inline `oy, sy = absY` and the nearest preceding
+  -- `if`, to catch an absolute that was parsed and then dropped into dead code.
+  -- That worked until the arithmetic moved into `Gen4Battle.effectPosition`,
+  -- where `absoluteY or oy + (y or 0)` is a live expression with no `if` at all
+  -- -- and then the check FAILED on correct code, three times over, for a
+  -- refactor it had no business having an opinion about.
+  --
+  -- A string match encodes the spelling; what matters is the number that comes
+  -- out. So it is called now, which cannot be fooled by a rename, by a dead
+  -- guard, or by the logic moving to another function.
+  ok(type(Gen4Battle.effectPosition) == "function",
+     "...and the position arithmetic is reachable to be tested",
+     type(Gen4Battle.effectPosition), "function")
+  if type(Gen4Battle.effectPosition) == "function" then
+    local fixture = {}
+    local ox, oy = Gen4Battle.particleOrigin(fixture, "player", true)
+    ok(type(ox) == "number" and type(oy) == "number",
+       "...from an origin that resolves",
+       ("%s, %s"):format(tostring(ox), tostring(oy)), "two numbers")
+    if type(ox) == "number" and type(oy) == "number" then
+      -- AN ABSOLUTE Y REPLACES the origin and the offset both. Fissure places
+      -- its crack at a fixed screen height, so an offset leaking in would open
+      -- it at the defender's feet wherever those happen to be.
+      local _, ay = Gen4Battle.effectPosition(fixture, "player", true, 0, 24, nil, 7)
+      ok(ay == 7, "...and an absolute Y wins over the origin and the offset",
+         tostring(ay), 7)
+      -- AN ABSOLUTE X likewise, which IcicleSpear needs: it flies a path
+      -- between the battlers that no offset from either one can express.
+      local axv = Gen4Battle.effectPosition(fixture, "player", true, 99, 0, 5, nil)
+      ok(axv == 5, "...and an absolute X wins too, which the flying callbacks need",
+         tostring(axv), 5)
+      -- WITHOUT ONE, the offset applies to the origin -- so the absolute is a
+      -- genuine branch rather than the only path through the function.
+      local nx, ny = Gen4Battle.effectPosition(fixture, "player", true, 11, 24, nil, nil)
+      ok(nx == ox + 11 and ny == oy + 24,
+         "...and with neither, the offset applies to the origin",
+         ("%s, %s"):format(tostring(nx), tostring(ny)),
+         ("%s, %s"):format(tostring(ox + 11), tostring(oy + 24)))
     end
-    ok(guard ~= nil and guard:find(axis[2], 1, true) ~= nil,
-       "...under a guard that names " .. axis[2] .. ", not a dead one",
-       guard and guard:gsub("^%s+", "") or "no guard found",
-       "if " .. axis[2] .. " then ...")
   end
   -- +Y IS DOWN, and this is the assertion that says so. The offsets on these
   -- records are what `ManagedSprite_OffsetPositionXY` would have added and every
@@ -1603,10 +1679,19 @@ do
   -- An earlier version subtracted it, which drew move 265's sprite twenty-four
   -- pixels above the battler where the cartridge puts it twenty-four below --
   -- and nothing could see it, because a sprite in the wrong place still draws.
-  ok(caBody:find("oy + sy", 1, true) ~= nil and caBody:find("oy - sy", 1, true) == nil,
-     "...and adds the record's Y, because +Y is down on the hardware",
-     caBody:find("oy + sy", 1, true) ~= nil and caBody:find("oy - sy", 1, true) == nil,
-     true)
+  -- Measured rather than matched, for the reason above: a positive Y must land
+  -- BELOW the origin and a negative one above it, whatever the source says.
+  if type(Gen4Battle.effectPosition) == "function" then
+    local fixture = {}
+    local _, oy = Gen4Battle.particleOrigin(fixture, "player", true)
+    local _, down = Gen4Battle.effectPosition(fixture, "player", true, 0, 24, nil, nil)
+    local _, up = Gen4Battle.effectPosition(fixture, "player", true, 0, -24, nil, nil)
+    ok(type(oy) == "number" and down == oy + 24 and up == oy - 24,
+       "...and adds the record's Y, because +Y is down on the hardware",
+       ("+24 -> %s, -24 -> %s (origin %s)"):format(tostring(down), tostring(up), tostring(oy)),
+       ("%s and %s"):format(tostring(type(oy) == "number" and oy + 24),
+                            tostring(type(oy) == "number" and oy - 24)))
+  end
   -- WHAT THE CALLBACK DID TO IT reaches the screen: five channels, and each one
   -- is identity on a sprite whose callback is not ported.
   for _, field in ipairs({ "s.scaleX", "s.scaleY", "s.rotation", "s.flipX", "s.alpha" }) do
@@ -1649,10 +1734,19 @@ do
     -- A FILLED QUAD AT THE FADE'S OWN ALPHA IS THE EXACT OPERATION, because
     -- `BlendColor` IS alpha compositing; the assertion is that the alpha comes
     -- from the fade rather than being a constant somebody liked the look of.
-    ok(bfBody:find("rectangle(\"fill\", 0, 0, Gen4Battle.WIDTH", 1, true) ~= nil,
+    -- ONE QUAD FROM THE ORIGIN ACROSS THE WHOLE SCREEN. The width used to be
+    -- the `Gen4Battle.WIDTH` constant and is now `Gen4Battle.width(battle)`,
+    -- because the screen width varies -- so the constant's NAME is not the
+    -- property. What matters is that the fill starts at 0,0 and spans a width
+    -- the module derives plus the full height, rather than some inset box.
+    local fill = bfBody:find('rectangle("fill", 0, 0,', 1, true)
+    local span = fill and bfBody:match('rectangle%("fill", 0, 0,([^%)]*%)?[^%)]*)%)')
+    ok(fill ~= nil and span ~= nil
+       and span:find("Gen4Battle.width", 1, true) ~= nil
+       and span:find("Gen4Battle.HEIGHT", 1, true) ~= nil,
        "...as one quad over the whole DS screen",
-       bfBody:find("rectangle(\"fill\", 0, 0, Gen4Battle.WIDTH", 1, true) ~= nil,
-       true)
+       span and span:gsub("%s+", " ") or "no 0,0 fill found",
+       "0, 0, Gen4Battle.width(...), Gen4Battle.HEIGHT")
     ok(bfBody:find("setColor(r or 0, g or 0, b or 0, a)", 1, true) ~= nil,
        "...at the fade's own colour and alpha, not a constant",
        bfBody:find("setColor(r or 0, g or 0, b or 0, a)", 1, true) ~= nil, true)
@@ -1682,9 +1776,21 @@ do
        :format(tostring(dpBody:find("tiledQuad", 1, true) ~= nil),
                tostring(dpBody:find("setWrap", 1, true) ~= nil)),
      "both")
-  ok(dpBody:find("sx / tileS", 1, true) ~= nil,
+  -- DIVIDED BY THE TILE COUNT ON BOTH AXES. The source now reads
+  -- `sx*perspective / tileS`, so matching the literal `sx / tileS` failed on a
+  -- correct draw that had merely gained a perspective factor. The property is
+  -- the division: the quad is widened by tileS and the scale divided by it, so
+  -- the footprint is unchanged and the texture repeats inside it. Anything
+  -- MULTIPLYING by tileS there would grow the particle instead, so that is
+  -- asserted against as well.
+  ok(dpBody:find("/ tileS", 1, true) ~= nil and dpBody:find("/ tileT", 1, true) ~= nil,
      "...by dividing the scale rather than growing the particle",
-     dpBody:find("sx / tileS", 1, true) ~= nil, true)
+     ("/ tileS %s, / tileT %s"):format(
+       tostring(dpBody:find("/ tileS", 1, true) ~= nil),
+       tostring(dpBody:find("/ tileT", 1, true) ~= nil)), "both")
+  ok(dpBody:find("* tileS,", 1, true) == nil and dpBody:find("sx * tileS", 1, true) == nil,
+     "...and does not scale the particle UP by the tile count",
+     dpBody:find("* tileS,", 1, true) == nil, true)
   -- AND THE BRANCH IS REACHABLE. `if false then` above the tiled draw leaves
   -- every string above intact and the code dead -- the same fault a dead guard
   -- above the animator's tick pulled once. The nearest `if` must name `tileS`.

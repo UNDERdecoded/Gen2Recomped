@@ -180,6 +180,14 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         -- world is drawn unlit -- which is how the four above it
                         -- were found, one report at a time.
                         "gen4_arealight",
+                        -- WHICH OF BANK 617'S 2,497 LINES EACH TRAINER SPEAKS.
+                        -- The lines themselves are in `text` and always were;
+                        -- this is the index, and without it loaded
+                        -- `g4_print_trainer_dialogue` has nothing to look a
+                        -- trainer up in, which is the fifth instance of
+                        -- "written on every import, loaded by nothing" waiting
+                        -- to happen. Listed from the day the stage was added.
+                        "gen4_trainer_messages",
                         -- the 71 per-area prop allow-lists: a chunk object's
                         -- model id is a GLOBAL build_model.narc member, and one
                         -- outside its area's list draws `dmybox00` rather than

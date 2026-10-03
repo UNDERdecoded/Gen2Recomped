@@ -2252,6 +2252,246 @@ function RomExtractorGen3:monRotate()
 end
 
 -- ---------------------------------------------------------------------------
+-- THE POKEMON THAT TIPS OVER, AND BACK
+--
+-- WITHDRAW's tip (above) is one task with one shape, and it was the only
+-- rotation this port could draw.  The cartridge has a GENERAL one, and six
+-- moves use it: FURY_ATTACK, DOUBLE_EDGE, PECK, LOW_KICK, SKULL_BASH and
+-- ARM_THRUST.  Until now every one of them rotated not at all.
+--
+-- There are two entry points and they share a step, which is the pin this
+-- whole pass hangs on:
+--
+--   AnimTask_RotateMonSpriteToSide      08:$0D6134  ->  step 08:$0D6308
+--   AnimTask_RotateMonToSideAndRestore  08:$0D622C  ->  step 08:$0D6308
+--
+-- ...the SAME step, read out of each one's literal pool as the one odd word
+-- there ($080D6309).  Two functions that install one step are two front doors
+-- on one room, and no unrelated pair of addresses matches that by accident.
+--
+-- WHAT THE STEP DOES, instruction by instruction at 08:$0D6308:
+--
+--   +0x10  ldrh r0,[r4,#0x10]   data[4], the per-frame delta
+--   +0x12  ldrh r1,[r4,#0x0E]   data[3], the angle so far
+--   +0x14  add  r0,r0,r1        data[3] += data[4]
+--   +0x1A  mov  r2,#0x80
+--   +0x1C  lsl  r2,r2,#1        r2 = 0x100 -- the scale, x and y both
+--   +0x22  bl   $0A71B4         SetSpriteRotScale(spriteId, 0x100, 0x100, a)
+--   +0x26  mov  r2,#0x16        data[7], the side gate
+--   +0x30  bl   $0A73A0         SetBattlerSpriteYOffsetFromRotation, if set
+--   +0x36  add  r0,#1           ++data[1]
+--   +0x3E  mov  r2,#0x0C        data[2], the frame limit
+--   +0x52  cmp  r0,#2           mode 2: run it again backwards
+--
+-- ...so the angle is an ACCUMULATOR, not a function of the frame, and the
+-- four script arguments are `frames, delta, battler, mode`.
+--
+-- THE THREE MODES, off data[6]:
+--
+--   0  tip and stay tipped                 (DOUBLE_EDGE's first pair)
+--   1  tip, then reset the matrix          (DOUBLE_EDGE's second pair)
+--   2  tip out over `frames`, then back    (FURY_ATTACK, PECK, LOW_KICK,
+--      over `frames` more, then reset       SKULL_BASH)
+--
+-- ...which is why mode 2 lives twice as long as the other two.
+--
+-- WHICH SIDE THE NUMBER IS WRITTEN FOR.  Both entries negate, and they arrive
+-- at the same place from opposite directions: the plain one sets data[7] from
+-- `side == PLAYER` and negates when it is set, and the restoring one negates
+-- the delta itself when the battler is NOT the player's and then negates
+-- again unconditionally.  Work both through and the enemy's track is the
+-- exact negation of the player's, for both entries -- so this emits the
+-- player's and lets the renderer mirror it, which is the convention the
+-- offsets already use (`authoredForPlayer`).
+--
+-- THE ONE PLACE THEY DIFFER is the RISE.  `SetBattlerSpriteYOffsetFromRotation`
+-- sets y2 = |matrix.c| >> 3, and matrix.c is the sine of the angle in Q8.8 --
+-- so a tipping sprite lifts, or its corner would sink through the platform.
+-- The plain entry only calls it when data[7] is set, which is the player's
+-- side ONLY.  The restoring entry hardcodes data[7] = 1, so it lifts on both.
+-- One flag, `risesOnEnemy`, carries that difference rather than two shapes.
+--
+-- The sine is the CARTRIDGE'S OWN (gSineTable, proven from a real call site
+-- by the ellipse pass), not a computed one, so the whole port keeps one sine.
+-- Note the honest limit: the hardware builds the matrix in the BIOS, whose
+-- table is not in the cartridge and cannot be read from here.  The two agree
+-- on eight of the ten calls and sit one pixel apart on LOW_KICK and
+-- SKULL_BASH; a pixel of lift on two moves is the known residual.
+RomExtractorGen3.MON_TIP = {
+  -- the step's own numbers, pinned at their offsets rather than scanned for
+  SCALE_MOV = { at = 0x1A, op = 0x2280 },   -- mov r2,#0x80
+  SCALE_LSL = { at = 0x1C, op = 0x0052 },   -- lsl r2,r2,#1   -> 0x100
+  DELTA     = { at = 0x10, op = 0x8A20 },   -- ldrh r0,[r4,#0x10]  data[4]
+  ANGLE     = { at = 0x12, op = 0x89E1 },   -- ldrh r1,[r4,#0x0E]  data[3]
+  ACCUM     = { at = 0x14, op = 0x1840 },   -- add  r0,r0,r1
+  STORE     = { at = 0x16, op = 0x81E0 },   -- strh r0,[r4,#0x0E]
+  SIDE      = { at = 0x26, op = 0x2216 },   -- mov r2,#0x16   data[7]
+  TICK      = { at = 0x36, op = 0x3001 },   -- add r0,#1      ++data[1]
+  LIMIT     = { at = 0x3E, op = 0x220C },   -- mov r2,#0x0C   data[2]
+  REVERSE   = { at = 0x52, op = 0x2802 },   -- cmp r0,#2      mode 2
+  ROTSCALE = 0x0A71B4,     -- SetSpriteRotScale, called every frame
+  YOFFSET  = 0x0A73A0,     -- SetBattlerSpriteYOffsetFromRotation, the rise
+  CALL_SCAN = 200, POOL_SCAN = 140,
+  TURN = 65536, STEPS = 256, UNIT = 256, SHIFT = 8,
+  MAX_FRAMES = 64, MAX_DELTA = 8192, MAX_LIFE = 600,
+}
+
+-- The two tip entries and their shared step, checked, or nil.
+function RomExtractorGen3:monTip()
+  if self._monTip ~= nil then return self._monTip or nil end
+  local T = RomExtractorGen3.MON_TIP
+  local function fail(why)
+    Logger.warn("gen3 move animations: %s, so the six tipping moves keep "
+                  .. "their flat sprites", why)
+    self._monTip = false
+    return nil
+  end
+  -- FURY_ATTACK and PECK each call their entry as the FIRST task in their
+  -- script, which is what names the two addresses without a symbol table.
+  local plain = self:moveAnimTask("FURY_ATTACK", 1)
+  local restore = self:moveAnimTask("PECK", 1)
+  if not (plain and restore) then
+    return fail("neither tipping move opens with a task")
+  end
+  if plain == restore then
+    return fail("both tipping moves open with the same task")
+  end
+  -- THE PIN: one step, installed out of both literal pools.
+  local function installed(at)
+    local found = nil
+    for _, word in ipairs(self:poolWords(at, T.POOL_SCAN)) do
+      if word % 2 == 1 then
+        local flat = RomExtractorGen3.romOffset(word - 1)
+        if flat and flat > 0 and flat < self.rom.size then
+          if found and found ~= flat then return nil end
+          found = flat
+        end
+      end
+    end
+    return found
+  end
+  local stepA, stepB = installed(plain), installed(restore)
+  if not (stepA and stepB and stepA == stepB) then
+    return fail("the two tipping entries do not install one shared step")
+  end
+  local step = stepA
+  -- ...AND THE STEP IS THE ONE THE READING ABOVE DESCRIBES.  Each of these is
+  -- a whole halfword at a fixed offset, so a near miss is a miss.
+  for name, pin in pairs({
+    SCALE_MOV = T.SCALE_MOV, SCALE_LSL = T.SCALE_LSL, DELTA = T.DELTA,
+    ANGLE = T.ANGLE, ACCUM = T.ACCUM, STORE = T.STORE, SIDE = T.SIDE,
+    TICK = T.TICK, LIMIT = T.LIMIT, REVERSE = T.REVERSE,
+  }) do
+    local ok, h = pcall(self.rom.u16, self.rom, step + pin.at)
+    if not (ok and h == pin.op) then
+      return fail(("the tip step's %s is not the instruction it should be")
+                  :format(name))
+    end
+  end
+  -- ...AND IT TURNS A SPRITE AND LIFTS IT.  Without both calls this is some
+  -- other step that happens to share a few immediates.
+  local turns, lifts = false, false
+  for _, target in ipairs(self:blTargets(step, T.CALL_SCAN)) do
+    if target == T.ROTSCALE then turns = true end
+    if target == T.YOFFSET then lifts = true end
+  end
+  if not turns then
+    return fail("the tip step never sets a sprite's rotation")
+  end
+  if not lifts then
+    return fail("the tip step never lifts the sprite it rotates")
+  end
+  -- ...AND EVERY CALL IN THE GAME KEEPS THE SAME ARGUMENT SHAPE.
+  local calls = 0
+  for _, list in pairs(self._animTasks or {}) do
+    for _, t in ipairs(list) do
+      local fn = t.fn and (t.fn - (t.fn % 2))
+      if fn == plain or fn == restore then
+        local a = t.args or {}
+        if #a ~= 4
+           or a[1] < 1 or a[1] > T.MAX_FRAMES
+           or a[2] == 0 or math.abs(a[2]) > T.MAX_DELTA
+           or (a[3] ~= 0 and a[3] ~= 1)
+           or a[4] < 0 or a[4] > 2 then
+          return fail("a tip address is also used with another argument shape")
+        end
+        calls = calls + 1
+      end
+    end
+  end
+  if calls < 10 then
+    return fail(("only %d call(s) to the tip carry its argument shape")
+                :format(calls))
+  end
+  -- the cartridge's own sine, proven from a real call site by the ellipse
+  local ellipse = self:monEllipse()
+  local sine = ellipse and ellipse.sine or nil
+  if type(sine) ~= "table" then
+    return fail("the cartridge's sine table is not readable, so the lift "
+                  .. "that keeps a tipped sprite off the platform is unknown")
+  end
+  self._monTip = {
+    plain = plain, restore = restore, step = step, sine = sine,
+    turn = T.TURN, calls = calls,
+    source = ("ROM:the tip entries at %07X and %07X, the step they share at "
+              .. "%07X, its ten pinned immediates and %d call(s)")
+             :format(plain, restore, step, calls),
+  }
+  return self._monTip
+end
+
+-- One script's call, walked frame by frame into the angles it produces.
+--
+-- This is the step above run forward with data[] held in locals, which is the
+-- only honest way to get the track: the angle is an accumulator, so frame N
+-- cannot be computed without frames 1..N-1.
+function RomExtractorGen3:tipOffsets(args, shape, restoring)
+  local T = RomExtractorGen3.MON_TIP
+  if type(args) ~= "table" or #args < 4 then return nil end
+  if not (shape and type(shape.sine) == "table") then return nil end
+  local frames, delta, battler, mode = args[1], args[2], args[3], args[4]
+  if frames < 1 or frames > T.MAX_FRAMES then return nil end
+  if delta == 0 or math.abs(delta) > T.MAX_DELTA then return nil end
+  if battler ~= 0 and battler ~= 1 then return nil end
+  if mode < 0 or mode > 2 then return nil end
+  -- THE PLAYER'S SIDE, which is the one this emits.  Both entries land on
+  -- d4 = -delta there; see the header for the two routes to it.
+  local d4 = -delta
+  local d3 = (mode == 1) and -(frames * delta) or 0
+  local d1, d6 = 0, mode
+  local sine = shape.sine
+  local angles, rises = {}, {}
+  for _ = 1, T.MAX_LIFE do
+    d3 = d3 + d4
+    angles[#angles + 1] = d3
+    -- y2 = |matrix.c| >> 3, and matrix.c is the angle's sine in Q8.8
+    local idx = math.floor((d3 % T.TURN) / T.UNIT) % T.STEPS
+    local s = sine[idx]
+    if s == nil then return nil end
+    rises[#rises + 1] = math.floor(math.abs(s) / T.SHIFT)
+    d1 = d1 + 1
+    if d1 >= frames then
+      if d6 == 2 then
+        -- mode 2 turns around and becomes a mode 1: back, then reset
+        d1, d4, d6 = 0, -d4, 1
+      else
+        break
+      end
+    end
+  end
+  if #angles < 1 then return nil end
+  return {
+    task = restoring and shape.restore or shape.plain,
+    angles = angles, rises = rises,
+    target = battler == 1 or nil,
+    authoredForPlayer = true,
+    risesOnEnemy = restoring or nil,
+    life = #angles, turn = shape.turn or T.TURN,
+    source = shape.source,
+  }
+end
+
+-- ---------------------------------------------------------------------------
 -- THE FLOURISH A STAT-UP MOVE MAKES
 --
 -- HARDEN, IRON DEFENSE and four more drew this port's coarse SCREEN FLASH:
@@ -38114,6 +38354,58 @@ function RomExtractorGen3:extractMoveAnimations()
     if marked > 0 then
       Logger.info("Gen3 move animations: %d move(s) lunge on an ellipse over "
                     .. "%d call(s) (%s)", marked, calls, shape.source)
+    end
+  end
+
+  -- ---- ...AND THE POKEMON THAT TIPS OVER, AND BACK ----------------------
+  --
+  -- NOT written into `shakes`, which is where the sway and the ellipse go: a
+  -- shake is an offset on pos2 and `shakeAt` reads it as one, and a rotation
+  -- is not an offset.  Feeding an angle through the offset channel would slide
+  -- the sprite sideways by the angle's magnitude and never turn it.  So this
+  -- gets a channel of its own, and `Gen3MoveAnim:monRotate` -- which already
+  -- answers (radians, rise) for WITHDRAW -- learns to answer from a list too.
+  -- The return contract does not move, so nothing in BattleState changes.
+  do
+    local shape = self:monTip()
+    local marked, calls = 0, 0
+    if shape then
+      for _, row in pairs(leftovers) do
+        local list = nil
+        for _, t in ipairs(row.tasks or {}) do
+          local fn = t.fn and (t.fn - (t.fn % 2)) or -1
+          local plain = fn == shape.plain or fn == shape.plain + 0x08000000
+          local restoring = fn == shape.restore
+                            or fn == shape.restore + 0x08000000
+          if plain or restoring then
+            local built = self:tipOffsets(t.args, shape, restoring)
+            if built then
+              built.at = t.at or 0
+              list = list or {}
+              list[#list + 1] = built
+              calls = calls + 1
+            end
+          end
+        end
+        if list then
+          row.record = row.record or {}
+          local existing = row.record.rotateTracks or {}
+          for _, entry in ipairs(list) do existing[#existing + 1] = entry end
+          row.record.rotateTracks = existing
+          local longest = 0
+          for _, entry in ipairs(list) do
+            longest = math.max(longest, (entry.at or 0) + entry.life)
+          end
+          row.record.duration = math.max(row.record.duration or 0, longest)
+          row.def.anim = row.record
+          marked = marked + 1
+        end
+      end
+    end
+    if marked > 0 then
+      Logger.info("Gen3 move animations: %d move(s) tip the Pokemon over on "
+                    .. "a rotation track over %d call(s) (%s)", marked, calls,
+                  shape.source)
     end
   end
 
