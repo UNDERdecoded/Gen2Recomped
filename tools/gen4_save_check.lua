@@ -651,10 +651,35 @@ end
 -- THE CANARY FOR THIS SECTION'S OWN METHOD.  `VM.lowered` is asked rather than
 -- the source regexed, because the regex missed nine berry commands lowered
 -- inside a loop and reported a finished band as full of holes.  Prove the
--- detector still says no to something nobody has lowered.
-ok(VM.lowered("checkishalloffamecorrupted") == false,
-   "the lowered-detector reports an unlowered command as lowered, so every "
-   .. "answer above is meaningless")
+-- detector still says no.
+--
+-- IT USED TO NAME ONE COMMAND -- `checkishalloffamecorrupted` -- and pass 173
+-- lowered it, so the canary failed for the best possible reason and had to be
+-- rewritten anyway.  A canary whose subject is a thing somebody is trying to
+-- fix has a half-life.  These two cannot go stale: the first asks about a name
+-- that will never be an opcode, and the second asks the opcode table how many
+-- of its OWN 840 entries are still unlowered -- which is derived, and which
+-- only reaches zero on the day the whole cartridge is lowered.
+ok(VM.lowered("this_is_not_a_cartridge_command") == false,
+   "the lowered-detector answered true for a name that is not an opcode, so "
+   .. "every answer above is meaningless")
+do
+  local Ops = require("src.import.Gen4ScriptOps")
+  local total, unlowered = 0, 0
+  for _, spec in pairs(Ops.COMMANDS or {}) do
+    local name = type(spec) == "table" and spec[1]
+    if type(name) == "string" then
+      total = total + 1
+      if not VM.lowered(name) then unlowered = unlowered + 1 end
+    end
+  end
+  ok(total >= 800, "the opcode table yielded %d names, not the cartridge's "
+     .. "840-odd; the canary below is measuring nothing", total)
+  ok(unlowered > 0,
+     "every one of the %d opcodes reports itself lowered, which is either the "
+     .. "finest day this port has had or a detector that says yes to "
+     .. "everything", total)
+end
 
 -- ---------------------------------------------------------------------------
 section("7. re-derived from pokeplatinum")

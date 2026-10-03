@@ -2185,6 +2185,26 @@ function Data:load()
                     .. "so the back pic keeps its own palette", marked)
       end
     end
+
+    -- A PLATINUM TM CARRIES NO `machine` RECORD, and that one absent field is
+    -- what made every TM and HM answer "This isn't the time to use that!".
+    -- `ItemEffects.markGen4Machines` has the whole story; it derives the record
+    -- from the cartridge's own `fieldUseFunc` and `constants.tmhmMoves` and
+    -- refuses to stamp anything if the two disagree.  Here rather than in the
+    -- extractor for the same reason as the line above: an existing cache is
+    -- fixed without a re-import.
+    do
+      local okM, stamped = pcall(function()
+        return require("src.inventory.ItemEffects").markGen4Machines(self)
+      end)
+      if okM and (stamped or 0) > 0 then
+        Logger.info("gen4 items: %d TM/HM machine record(s) derived, so the "
+                    .. "bag can teach them", stamped)
+      elseif not okM then
+        Logger.warn("gen4 items: the machine records could not be derived (%s)",
+                    tostring(stamped))
+      end
+    end
   end
   -- Hand the cartridge's own battle tables to the two modules that would
   -- otherwise have to approximate them.  Both are no-ops on a Gen 1/Gen 2

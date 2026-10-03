@@ -331,7 +331,12 @@ if PP then
       -- What is left groups as the PC and the Hall of Fame screen (6), the
       -- Underground's traps, spheres, seals and shard counter (8), the
       -- contest backdrop (2), the mailbox (2) and seven others.
-      local EXPECTED_HOLES = { common_scripts = 25 }
+      -- 25 -> 19 in pass 173, which took the PC: the three prop-animation
+      -- rows, the storage TV bulletin, the Hall of Fame corruption check
+      -- and its browser.  The PC is also the pass that made any of this
+      -- reachable -- `Field_TileBehaviorToScript` had no Gen 4 arm, so
+      -- CommonScript_PC was never started; see tools/gen4_tile_script_check.
+      local EXPECTED_HOLES = { common_scripts = 19 }
       local offenders = {}
       for _, b in ipairs(Bands.BANDS) do
         local band, file = b[2], b[3]

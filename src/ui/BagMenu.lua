@@ -691,6 +691,14 @@ local function pickTargetAndUse(game, battle, id, list)
   require("src.ui.Screens").push(game, "PartyMenu", opts)
 end
 
+-- TEXT_BANK_BAG, line 8 of generated/text_banks.txt (zero-based 7), and the
+-- three machine lines in it.  Named rather than written into the lookup, so
+-- the numbers are readable and appear once.
+local BAG_TEXT_BANK = 7
+local BAG_TEXT_BOOTED_TM = 58
+local BAG_TEXT_BOOTED_HM = 59
+local BAG_TEXT_CONTAINED = 60
+
 local function useItem(game, battle, id, list)
   local def = game.data.items[id]
   -- ItemUseTMHM checks wIsInBattle before BootedUpTMText
@@ -711,7 +719,42 @@ local function useItem(game, battle, id, list)
       -- on a yes.  Both lines and the question are the cartridge's own
       -- (constants.gen3ItemText), so this is Hoenn's wording rather than
       -- Johto's with the exclamation marks filed off.
+      -- SINNOH SAYS IT TOO, out of its own bank.
+      --
+      -- `TEXT_BANK_BAG` is bank 7, and the three lines are 58 "Booted up a
+      -- TM.", 59 "Booted up an HM." and 60 "It contained {MOVE}. / Teach
+      -- {MOVE} to a Pokemon?" -- which is the same shape Hoenn has, down to
+      -- the question, and NOT the shape below it: Gen 1's wording ends in
+      -- exclamation marks and never asks, so a Platinum player was reading
+      -- Kanto's lines and being sent straight to the party with no question.
+      --
+      -- Entry 60 carries both halves and the wait-and-scroll between them --
+      -- "It contained CUT." waits for the button, then "Teach CUT to a
+      -- Pokemon?" scrolls up into the same box -- so it is handed to the box
+      -- whole and pages exactly as the cartridge does.
+      --
+      -- THE MOVE NAME GOES IN A BUFFER, NOT A GSUB.  Both halves of entry 60
+      -- say `{STRVAR_1 6 0 0}`, which is string slot 0, and
+      -- `TMHMUseTask` fills it on the row before it formats the line:
+      -- `StringTemplate_SetMoveName(controller->strTemplate, 0, move)`.  One
+      -- buffer, two tokens, and the same expansion every other Gen 4 line
+      -- gets -- which is why `resolve` is handed the game.
       local cart = (game.data.constants or {}).gen3ItemText
+      if require("src.core.GameVersion").isGen4() then
+        local Gen4Text = require("src.import.Gen4Text")
+        Gen4Text.buffer(game, moveName)
+        local contained = Gen4Text.resolve(game.data, BAG_TEXT_BANK,
+                                           BAG_TEXT_CONTAINED, game)
+        if contained then
+          cart = {
+            contained = contained,
+            bootedTM = Gen4Text.resolve(game.data, BAG_TEXT_BANK,
+                                        BAG_TEXT_BOOTED_TM, game),
+            bootedHM = Gen4Text.resolve(game.data, BAG_TEXT_BANK,
+                                        BAG_TEXT_BOOTED_HM, game),
+          }
+        end
+      end
       if cart and type(cart.contained) == "string" then
         local asks = cart.contained:gsub("{VAR1}", moveName)
                                    :gsub("{STR_VAR1}", moveName)

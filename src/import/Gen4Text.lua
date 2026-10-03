@@ -3147,4 +3147,57 @@ function Gen4Text.label(bank, index)
   return ("TEXT_B%04d_%05d"):format(bank, index)
 end
 
+-- ...AND THE STRING ITSELF, markup stripped, for a caller that is not a script.
+--
+-- `label` answers a KEY, which is what a lowered `message` row carries and what
+-- `show_text` resolves.  A screen that wants a cartridge line directly -- the
+-- save panel's labels, the bag's "Booted up a TM." -- has to do three more
+-- things: look the key up in `data.text`, check it is a string, and run it
+-- through `gen4Markup` so `{WAIT 3}` and friends are not printed literally.
+--
+-- That was written out twice before this existed, which is the shape this port
+-- keeps finding.  nil when the cache has no such entry, so a caller can fall
+-- back to its own wording rather than print a key.
+--
+-- `game` IS NOT OPTIONAL WHEN THE LINE HAS A PLACEHOLDER.  `{STRVAR_1 <low>
+-- <slot> <pad>}` expands out of `game.stringBuffers[slot + 1]`, which is the
+-- cartridge's own mechanism -- `StringTemplate_SetMoveName(template, 0, move)`
+-- on the row before `StringTemplate_Format` -- and the only one `gen4Markup`
+-- knows.  Hand it no game and the token is dropped to nothing: the bag's "It
+-- contained {move}." printed as "It contained ." and logged *"string slot 0
+-- was never buffered"*, which is the warning doing its job.
+--
+-- A caller with a name to splice buffers it and calls this; it does NOT gsub
+-- the token itself.  One such gsub already existed (the field-poison line) and
+-- it was the usual bug in the usual shape: written against the decoder of the
+-- day, spelling the control `\r`, and still spelling it `\r` after the decoder
+-- was corrected to `\v`, so it had been stripping nothing for as long as it
+-- had looked right.
+--
+-- THE TRAILING WAIT COMES OFF.  `\v` (wait, scroll) and `\f` (wait, clear) are
+-- a cartridge line's join to whatever the cartridge printed next; a screen
+-- showing the line as a box of its own has nothing next, and `paginate` turns
+-- the dangling marker into a blank line that still wants its button press.
+function Gen4Text.resolve(data, bank, index, game)
+  local text = data and data.text and data.text[Gen4Text.label(bank, index)]
+  if type(text) ~= "string" then return nil end
+  local ok, Commands = pcall(require, "src.script.Commands")
+  if ok and Commands and Commands.gen4Markup then
+    local okM, plain = pcall(Commands.gen4Markup, text, game)
+    if okM and type(plain) == "string" then text = plain end
+  end
+  return (text:gsub("[\v\f]+$", ""))
+end
+
+-- The slot a `{STRVAR_1 <low> <slot> <pad>}` token reads, filled the way every
+-- Gen 4 `buffer` command fills it, so `resolve` can expand it.  `...` is one
+-- value per slot FROM ZERO: `buffer(game, name)` fills slot 0.
+function Gen4Text.buffer(game, ...)
+  if type(game) ~= "table" then return end
+  game.stringBuffers = game.stringBuffers or {}
+  for i = 1, select("#", ...) do
+    game.stringBuffers[i] = tostring(select(i, ...) or "")
+  end
+end
+
 return Gen4Text

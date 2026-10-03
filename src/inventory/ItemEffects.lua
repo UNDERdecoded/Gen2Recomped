@@ -391,6 +391,163 @@ function ItemEffects.healsHP(id)
 end
 
 -- Does this item need a party-member target?
+
+-- A PLATINUM TM HAS NO `machine` RECORD, AND THAT IS WHY NONE OF THEM COULD BE
+-- TAUGHT.
+--
+-- Reported from play, with a screenshot of HM01 in the bag: "This isn't the
+-- time to use that!".
+--
+-- `BagMenu.useItem` gates the whole machine flow -- the boot-up lines, the
+-- party picker in TM/HM mode, the ABLE/UNABLE word -- on `def.machine`, and
+-- `ItemEffects.needsTarget` never answers true without one either.  Across the
+-- 446 items in a Platinum cache, **zero** carry it: Gen 1, 2 and 3 extractors
+-- write `machine = { move, kind }` and the Gen 4 one never has, because the
+-- cartridge does not store it that way.
+--
+-- So every piece of work the TM-teaching pass did -- the party alias's `tmhm`
+-- key, the 128-bit learnset mask, bank 453's ABLE!/UNABLE! -- was correct and
+-- unreachable, because the one field that triggers it was absent.
+--
+-- WHAT THE CARTRIDGE STORES INSTEAD, and it is better than a name match:
+--
+--   * `fieldUseFunc` is an index into `sItemUseFuncs`
+--     (src/item_use_functions.c), and `ITEM_USE_FUNC_TM_HM` is **6**
+--     (include/constants/items.h).  Exactly 100 items carry it.
+--   * `constants.tmhmMoves` is the 100-entry `sTMHMMoves` array in the
+--     cartridge's own order: TM01..TM92 then HM01..HM08.
+--
+-- TWO INDEPENDENT SOURCES, AND THEY MUST AGREE.  `Item_MoveForTMHM` is three
+-- lines of src/item.c and it does not look at a name at all:
+--
+--     item -= ITEM_TM01;
+--     return sTMHMMoves[item];
+--
+-- The ITEM ID IS THE INDEX, which is only true because ITEM_TM01..ITEM_HM08 is
+-- one unbroken run.  So that is the mechanism here too -- and the run being
+-- unbroken is asserted rather than assumed, because the cartridge gets to
+-- assume it and a cache does not.
+--
+-- The NAMES are then the check on the ids instead of a second mechanism: TM01
+-- must land on index 1 and HM01 on index 92 + 1, and if any name disagrees
+-- with where its id put it, nothing is stamped.  A wrong split point does not
+-- fail, it teaches Rock Climb where it should teach Focus Punch.
+--
+-- `kind` is the TM/HM half the index falls in.  The cartridge asks
+-- `Item_IsHMMove(move)` -- it scans the last NUM_HMS entries of the array for
+-- the MOVE -- which is the same answer only while no move sits in both halves.
+-- Measured on Platinum: none does.  The half is used because it is what the
+-- wording and the party picker actually want to know, and the check carries
+-- the cartridge's question as its own assertion so a cache where the two
+-- diverge fails loudly instead of printing "Booted up a TM." for an HM.
+--
+-- Stamped at LOAD rather than in the extractor, the way
+-- `Sprites.markFormsTrueColor` is and for the same reason: an existing cache
+-- is fixed without a re-import.  Only `nil` is filled in, so a mod that
+-- supplies its own machine record keeps it.
+--
+-- Returns the number stamped, or 0 with the reason logged.
+ItemEffects.ITEM_USE_FUNC_TM_HM = 6
+
+function ItemEffects.markGen4Machines(data)
+  local items = data and data.items
+  local moves = data and data.constants and data.constants.tmhmMoves
+  if type(items) ~= "table" or type(moves) ~= "table" then return 0 end
+
+  -- KEYED BY ID, which is also what collapses the dual publication: `Data`
+  -- puts every Gen 4 item in the table under both its numeric id and
+  -- `ITEM_nnn`, pointing at one table.  Walking the values counts each machine
+  -- twice; walking the ids cannot.
+  local byId, lo, hi, n = {}, nil, nil, 0
+  for key, def in pairs(items) do
+    local id = tonumber(key) or tonumber(tostring(key):match("^ITEM_(%d+)$"))
+    if id and type(def) == "table" and byId[id] == nil
+       and def.fieldUseFunc == ItemEffects.ITEM_USE_FUNC_TM_HM then
+      byId[id] = def
+      n = n + 1
+      if not lo or id < lo then lo = id end
+      if not hi or id > hi then hi = id end
+    end
+  end
+  -- ZERO IS NOT A QUIET ANSWER HERE.  This is only ever called on the Gen 4
+  -- branch, and a Platinum cache has a hundred machines; none at all means the
+  -- items were imported without `fieldUseFunc`, which looks exactly like the
+  -- bug this function exists to fix and would otherwise be reported as it.
+  local Logger = require("src.core.Logger")
+  if n == 0 then
+    Logger.warn("gen4 machines: no item carries use function %d, so the TM/HM "
+      .. "flow has nothing to trigger it -- re-import the cache",
+      ItemEffects.ITEM_USE_FUNC_TM_HM)
+    return 0
+  end
+
+  local function refuse(fmt, ...)
+    Logger.warn("gen4 machines: " .. fmt
+      .. " -- no machine record was stamped", ...)
+    return 0
+  end
+
+  if n ~= #moves then
+    return refuse("%d items carry the TM/HM use function but tmhmMoves has "
+      .. "%d entries, so the TM/HM split cannot be placed", n, #moves)
+  end
+  if hi - lo + 1 ~= n then
+    return refuse("the %d machine item ids run %d..%d, which is not one "
+      .. "unbroken run, so an id is not an index into tmhmMoves", n, lo, hi)
+  end
+
+  -- The TM run's length, read off the names rather than assumed to be 92.
+  local tmCount = 0
+  for id in pairs(byId) do
+    if tostring(byId[id].name or ""):match("^TM%d+$") then
+      tmCount = tmCount + 1
+    end
+  end
+
+  -- IN ID ORDER, so a refusal names the FIRST item that disagrees.  `pairs`
+  -- made the message depend on hash order: the same planted fault reported a
+  -- different item run to run, which is a diagnostic nobody can act on.
+  local ids = {}
+  for id in pairs(byId) do ids[#ids + 1] = id end
+  table.sort(ids)
+
+  -- The names against the ids, every one of them.
+  for _, id in ipairs(ids) do
+    local def = byId[id]
+    local index = id - lo + 1
+    local kind, number = tostring(def.name or ""):match("^([TH]M)(%d+)$")
+    if not kind then
+      return refuse("item %d carries the TM/HM use function but is named %q",
+        id, tostring(def.name))
+    end
+    local want = (kind == "HM") and (tmCount + tonumber(number))
+                 or tonumber(number)
+    if want ~= index then
+      return refuse("%s is item %d, which is index %d of the machine run, "
+        .. "but its name puts it at %d", def.name, id, index, want)
+    end
+    if (index > tmCount) ~= (kind == "HM") then
+      return refuse("%s falls in the %s half of the machine run",
+        def.name, index > tmCount and "HM" or "TM")
+    end
+  end
+
+  local stamped = 0
+  for _, id in ipairs(ids) do
+    local def = byId[id]
+    if def.machine == nil then
+      local index = id - lo + 1
+      local move = moves[index]
+      if move then
+        def.machine = { move = move,
+                        kind = (index > tmCount) and "HM" or "TM" }
+        stamped = stamped + 1
+      end
+    end
+  end
+  return stamped
+end
+
 function ItemEffects.needsTarget(id, itemDef)
   -- HOENN ASKS FIRST, and this is what opens the party picker.
   --

@@ -271,12 +271,22 @@ end
 --                               interchangeable here (0x14A's no-op is
 --                               justified by its caller), and unreachable
 --                               under the Gen 4 poison rule
+--   g4_open_hall_of_fame        the PC's post-game record browser.  `pending`
+--                               rather than a no-op BECAUSE THE DATA EXISTS:
+--                               `save.hallOfFame` has been collecting
+--                               {species, level, nickname} rows all along and
+--                               what is missing is a screen to read them back
+--                               (src/ui/HallOfFame.lua is the induction
+--                               ceremony, which walks the LIVE party).  Added
+--                               in pass 173 with the PC itself, which had
+--                               never been reachable: Field_TileBehaviorToScript
+--                               had no Gen 4 arm.
 -- `g4_get_movement_type` was a fourth and is implemented. A new one appearing
 -- here is a gap somebody should have argued for before adding, which is what
 -- pinning the count exactly is for.
-ok(#pendingRows == 3,
-   "%d `pending` row(s), expected exactly 3 (g4_common, g4_use_rock_climb and "
-   .. "g4_blackout_from_battle_2): %s",
+ok(#pendingRows == 4,
+   "%d `pending` row(s), expected exactly 4 (g4_common, g4_use_rock_climb, "
+   .. "g4_blackout_from_battle_2 and g4_open_hall_of_fame): %s",
    #pendingRows, table.concat(pendingRows, ", "))
 io.write(("   %d distinct g4_ rows emitted by the VM\n"):format(emittedCount))
 ok(#unhandled == 0,

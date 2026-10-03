@@ -1559,7 +1559,7 @@ end
 -- A TV segment with nowhere to go; lowered so the row stops warning on all 262
 -- hidden items.
 L.savetvsegmenthiddenitem = function(ins, s)
-  emit(s, { "g4_save_tv_hidden_item", ins.args[1] })
+  emit(s, { "g4_save_tv_segment", "hidden_item", ins.args[1] })
 end
 
 L.getpartycount = function(ins, s) emit(s, { "g4_party_count", ins.args[1] }) end
@@ -1912,6 +1912,51 @@ L.saveextradata = function(_, s) emit(s, { "g4_save_extra_data" }) end
 L.checkismiscsaveinit = function(ins, s)
   emit(s, { "g4_misc_save_init", ins.args[1] })
 end
+
+-- ---------------------------------------------------------------------------
+-- THE PC
+-- ---------------------------------------------------------------------------
+--
+-- `CommonScript_PC` is reached from the tile behaviour rather than from any
+-- object or bg event (`Field_TileBehaviorToScript` -> COMMON_SCRIPTS 18), and
+-- this port had no Gen 4 arm for that dispatch at all -- see
+-- src/world/Gen4TileScripts.lua.  With the dispatch in place these six are
+-- what the script runs into.
+--
+-- `loadpcanimation` / `playpcbootupanimation` / `playpcshutdownanimation`:
+-- the PC's screen lighting up and going dark.  `FieldSystem_LoadPCAnimation`
+-- (overlay006/pc_animation.c) finds the loaded MAP PROP whose model is one of
+-- four PC models -- `pokecenter_pc_nsbmd` and the three desk laptops -- and
+-- hands its prop animations to the one-shot manager under a tag; the other two
+-- play animation 0 and animation 1 of that tag.
+--
+-- THIS IS THE DOOR ANIMATION AGAIN, exactly: an NSBCA one-shot on an NSBMD map
+-- prop.  Same three missing stages (this port reads NSBMD and not NSBCA, bakes
+-- the ground's props into a flat canvas, and has no Gen 4 SE bank), so it
+-- takes the SAME named no-op rather than a fourth spelling of the same
+-- absence.  The sound the script plays either side of them is a separate
+-- command and is already lowered.
+L.loadpcanimation = function(_, s) emit(s, { "g4_noop", "prop animations" }) end
+L.playpcbootupanimation = function(_, s) emit(s, { "g4_noop", "prop animations" }) end
+L.playpcshutdownanimation = function(_, s) emit(s, { "g4_noop", "prop animations" }) end
+
+-- `savetvsegmentpokemonstoragebulletin` -- files a TV segment about the
+-- player's party after a visit to the storage system.  Same answer as
+-- `savetvsegmenthiddenitem` and now the same ROW: there is no TV broadcast
+-- system in this engine, so the segment is recorded nowhere and nothing would
+-- read it if it were.  One statement of that, not two.
+L.savetvsegmentpokemonstoragebulletin = function(_, s)
+  emit(s, { "g4_save_tv_segment", "pokemon_storage_bulletin" })
+end
+
+-- `checkismiscsaveinit`'s neighbour in spirit: `checkishalloffamecorrupted
+-- <destVar>` answers whether the Hall of Fame block failed its checksum.
+L.checkishalloffamecorrupted = function(ins, s)
+  emit(s, { "g4_hall_of_fame_corrupted", ins.args[1] })
+end
+
+-- `openpchalloffamescreen` -- the post-game record browser.
+L.openpchalloffamescreen = function(_, s) emit(s, { "g4_open_hall_of_fame" }) end
 L.buffermapname = function(ins, s)
   emit(s, { "g4_buffer_map_name", ins.args[1], ins.args[2] })
 end

@@ -505,7 +505,6 @@ function Commands.g4_buffer(ctx, slot, kind, value)
     local id = math.floor(valueOf(ctx, value) or 0)
     local label = bank and require("src.import.Gen4Text").label(bank, id)
     text = label and data and data.text and data.text[label]
-    text = Commands.gen4Markup and Commands.gen4Markup(text, game) or text
   elseif kind == "speciesArticle" then
     -- `buffer...specieswitharticle` reads a BANK OF ITS OWN (413), keyed by
     -- species id and holding the article already -- "a TURTWIG", "an IVYSAUR".
@@ -516,7 +515,6 @@ function Commands.g4_buffer(ctx, slot, kind, value)
     local id = math.floor(valueOf(ctx, value) or 0)
     local label = require("src.import.Gen4Text").label(413, id)
     text = data and data.text and data.text[label]
-    text = Commands.gen4Markup and Commands.gen4Markup(text, game) or text
   elseif kind == "tmhmMove" then
     -- `buffertmhmmovename <slot> <item>` -- `Item_MoveForTMHM`, which is a
     -- FLAT ARM9 TABLE (`sTMHMMoves`, 100 u16 in TM01..TM92 then HM01..HM08
@@ -525,29 +523,27 @@ function Commands.g4_buffer(ctx, slot, kind, value)
     -- of 100 even after the line breaks are normalised, so that join was
     -- measured and thrown away rather than shipped.
     --
-    -- The extractor now writes it as `constants.tmhmMoves`. THE INDEX COMES
-    -- FROM THE ITEM'S NAME, not from an item-id anchor -- "TM86" is index 86
-    -- and "HM02" is 92 + 2 -- so nothing here has to know where ITEM_TM01
-    -- sits, and a cache whose item numbering ever shifted would still answer.
+    -- The extractor writes the array as `constants.tmhmMoves`, and THE JOIN
+    -- FROM AN ITEM TO ITS ENTRY IS NOT MADE HERE ANY MORE.  It used to be:
+    -- the index came off the item's NAME, with a literal 92 for where the HM
+    -- run starts.  Then the bag needed the same join -- a TM with no record
+    -- answered "This isn't the time to use that!" -- and the same derivation
+    -- written a second time, with the same 92 in it, is the bug this port
+    -- keeps finding.
+    --
+    -- `ItemEffects.markGen4Machines` owns it now, stamps `def.machine` at
+    -- load the way `Item_MoveForTMHM` reads it (the id IS the index), and
+    -- reads the split off the items rather than assuming 92.  One join.
     local id = math.floor(valueOf(ctx, value) or 0)
     local def = data and data.items and data.items[itemKey(data, id)]
-    local list = data and data.constants and data.constants.tmhmMoves
-    local index
-    local name = def and def.name
-    if type(name) == "string" then
-      local tm = name:match("^TM(%d+)$")
-      local hm = name:match("^HM(%d+)$")
-      if tm then index = tonumber(tm)
-      elseif hm then index = 92 + tonumber(hm) end
-    end
-    local move = index and list and list[index]
+    local move = def and def.machine and def.machine.move
     local mdef = move and data.moves and data.moves[move]
     text = mdef and mdef.name
     if not text and not Gen4Commands._saidTmhm then
       Gen4Commands._saidTmhm = true
-      Logger.warn("gen4 text: the TM/HM move table is not in this cache, so "
-                  .. "the move a TM teaches cannot be named -- re-import to "
-                  .. "pick up `constants.tmhmMoves`")
+      Logger.warn("gen4 text: item %s carries no machine record, so the move "
+                  .. "a TM teaches cannot be named -- re-import to pick up "
+                  .. "`fieldUseFunc` and `constants.tmhmMoves`", tostring(id))
     end
   end
   if (text == nil or text == "") and (kind == "player" or kind == "rival") then
@@ -559,6 +555,17 @@ function Commands.g4_buffer(ctx, slot, kind, value)
                   .. "file written before Rowan's intro asked for it",
                   kind, text)
     end
+  end
+  -- MARKUP ONCE, FOR EVERY BRANCH.  Several of these read a message bank --
+  -- bag pockets (395), item plurals (394), Poketch apps (457), the
+  -- with-article species (413) and the `bank:` family -- and those entries
+  -- carry control markup of their own.  Two branches ran `gen4Markup` right
+  -- after their own read and the rest did not, so a pocket name went into a
+  -- string slot with its tokens still on it; the outer line is marked up
+  -- BEFORE the slot is spliced in, so nothing downstream would ever have
+  -- stripped them.  A value that has no markup is unchanged by this.
+  if type(text) == "string" and Commands.gen4Markup then
+    text = Commands.gen4Markup(text, game)
   end
   game.stringBuffers[(tonumber(slot) or 0) + 1] = text or ""
 end
@@ -3089,7 +3096,8 @@ end
 -- says the segment is recorded nowhere and nothing would read it if it were.
 -- It is lowered because it sits in `HiddenItems_AddItem`, which all 262 hidden
 -- items run, and an unlowered row there warns on every one of them.
-Commands.g4_save_tv_hidden_item = noop
+-- (retired in favour of `g4_save_tv_segment` below, which both TV rows now
+-- lower to -- see the note there.)
 
 -- `survivepoison <destVar> <slot>` -- `Pokemon_TrySurvivePoison`, in full:
 --
@@ -3700,6 +3708,66 @@ function Commands.g4_misc_save_init(ctx, destVar)
   if destVar then setVar(ctx.save, destVar, value) end
   return value
 end
+
+-- ---------------------------------------------------------------------------
+-- THE PC
+-- ---------------------------------------------------------------------------
+
+-- `checkishalloffamecorrupted <destVar>` -- the C loads the Hall of Fame block
+-- and answers TRUE only for `LOAD_RESULT_CORRUPT`, which is a failed checksum
+-- on a save sector.
+--
+-- THIS ENGINE HAS NO SECTOR TO FAIL.  The Hall of Fame is `save.hallOfFame`,
+-- a list inside the one serialised save table, and `SaveData.validate` has
+-- already run over it by the time any script can ask -- a malformed entry is
+-- repaired or dropped on load, not left to be discovered here.  So the honest
+-- answer is FALSE, and that is not a convenience: answering TRUE would send
+-- the script to `CommonScript_HallOfFameDataCorrupted` and tell the player
+-- their records are damaged when they are not.
+--
+-- A list that is ABSENT is not corrupt either -- it is a player who has not
+-- entered the Hall of Fame, and the menu row that reaches this is behind
+-- FLAG_GAME_COMPLETED, so that case cannot arise from the cartridge's own
+-- path.
+function Commands.g4_hall_of_fame_corrupted(ctx, destVar)
+  if destVar then setVar(ctx.save, destVar, 0) end
+  setResult(ctx, 0)
+  return 0
+end
+
+-- `openpchalloffamescreen` -- the post-game browser for recorded Hall of Fame
+-- teams, opened from the PC menu once FLAG_GAME_COMPLETED is set.
+--
+-- `pending` rather than a no-op, and the distinction is the one
+-- `g4_save_tv_segment` draws from the other side: a no-op says "there is
+-- nothing to do and nothing would read it", and that is false here.  The data
+-- exists -- `Commands.hall_of_fame` has been appending `{species, level,
+-- nickname}` rows to `save.hallOfFame` all along -- and what is missing is a
+-- screen to read them back.  `src/ui/HallOfFame.lua` is the INDUCTION
+-- ceremony: it walks `save.party`, the live team, and has no notion of
+-- browsing a record. So this says the screen is unbuilt and leaves the data
+-- where a screen will find it.
+--
+-- The script carries on into `ReturnToField` and back to the PC menu, so the
+-- row answers and the player is returned rather than stranded.
+Commands.g4_open_hall_of_fame = pending("g4_open_hall_of_fame",
+  "the PC's Hall of Fame browser is not built; save.hallOfFame holds the "
+  .. "records and src/ui/HallOfFame.lua is the induction ceremony, not a viewer")
+
+-- `savetvsegment*` -- ONE ROW FOR BOTH, which is the point of the change that
+-- introduced it.  There is no TV broadcast system in this engine at all, so a
+-- segment is recorded nowhere and nothing would read it if it were. That is
+-- one fact about the port, and it was being stated in two places.
+--
+-- A no-op rather than a `pending`: `pending` says "this drives something that
+-- is not built", which invites building it. These are lowered because they sit
+-- in paths everything runs through -- `HiddenItems_AddItem` on all 262 hidden
+-- items, and the PC's storage menu on every visit -- and an unlowered row
+-- there warns on every one.
+--
+-- The segment's NAME is carried so the row is readable in a trace and so a
+-- future TV system has the call sites already naming themselves.
+function Commands.g4_save_tv_segment(_ctx, _segment, _operand) end
 
 -- 0x0C3 AND 0x0C4, WHICH ARE THE SAME FUNCTION BYTE FOR BYTE in pokeplatinum:
 -- both set the overworld weather to OVERWORLD_WEATHER_CLEAR and re-apply it.
@@ -4462,9 +4530,9 @@ function Commands.g4_buffer_floor(ctx, slot, floor)
   local game = ctx.game
   if not game then return end
   local n = math.floor(tonumber(floor) or 1)
-  local key = require("src.import.Gen4Text").label(Elevators.FLOOR_BANK,
-                                                   Elevators.floorEntry(n))
-  local text = game.data and game.data.text and game.data.text[key]
+  local text = require("src.import.Gen4Text")
+                 .resolve(game.data, Elevators.FLOOR_BANK,
+                          Elevators.floorEntry(n), game)
   if type(text) ~= "string" or text == "" then
     text = Elevators.floorLabel(n)
   end

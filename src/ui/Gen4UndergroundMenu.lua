@@ -136,8 +136,13 @@ end
 function Gen4UndergroundMenu:labelFor(option)
   if option.player then return playerName(self.game) end
   local data = self.game and self.game.data
-  local key = Gen4Text.label(Gen4UndergroundMenu.BANK, option.entry)
-  local line = data and data.text and data.text[key]
+  -- `resolve`, NOT A RAW `data.text` LOOKUP.  A row read straight out of the
+  -- table prints whatever control markup the entry carries -- `{WAIT 3}` and
+  -- a dangling wait among them -- because nothing has run `gen4Markup` over
+  -- it, and this reached a menu row rather than a text box, which is the one
+  -- place `show_text` would have done it on the way past.
+  local line = Gen4Text.resolve(data, Gen4UndergroundMenu.BANK, option.entry,
+                                self.game)
   if type(line) == "string" and line ~= "" then return line end
   -- NO ENGLISH FALLBACK.  A missing bank entry is a broken import, and showing
   -- a hardcoded word would hide it behind something that looks right.

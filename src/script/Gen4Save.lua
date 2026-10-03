@@ -263,17 +263,11 @@ end
 Gen4Save.PANEL_TILES_W = 13
 Gen4Save.PANEL_TILES_H = 10
 
+-- (the lookup moved to `Gen4Text.resolve` when the bag needed the same three
+-- steps for its own bank; this is the one caller's name for it.)
 local function bankText(game, index)
-  local Gen4Text = require("src.import.Gen4Text")
-  local key = Gen4Text.label(Gen4Save.INFO_BANK, index)
-  local text = game and game.data and game.data.text and game.data.text[key]
-  if type(text) ~= "string" then return nil end
-  local ok, Commands = pcall(require, "src.script.Commands")
-  if ok and Commands and Commands.gen4Markup then
-    local okM, plain = pcall(Commands.gen4Markup, text)
-    if okM and type(plain) == "string" then return plain end
-  end
-  return text
+  return require("src.import.Gen4Text")
+           .resolve(game and game.data, Gen4Save.INFO_BANK, index, game)
 end
 
 -- { rows = { {label=, value=}, ... }, heading = <location>, tilesH = 10|8 }

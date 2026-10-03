@@ -32966,3 +32966,518 @@ Nothing is marked done. Added to the play-test list:
 27. **Save in Crystal, Gold/Silver, Prism and Emerald** -- all four must behave
     exactly as before. The Gen 3 script save now runs through shared code; the
     Gen 1/2 START menu does not, and both halves want checking.
+
+## Pass 173 -- nine kinds of Sinnoh scenery that answered nothing, the PC among them
+
+`Field_TileBehaviorToScript` (pokeplatinum `src/overlay005/field_control.c`) is
+a plain table from a tile's **behaviour byte** to a script id:
+
+| behaviour | script |
+| --- | --- |
+| `PC` (facing north) | `COMMON_SCRIPTS 18` |
+| `SMALL_BOOKSHELF_1` / `_2` | `BG_EVENTS 0` / `1` |
+| `BOOKSHELF_1` / `_2` | `BG_EVENTS 2` / `3` |
+| `TRASH_CAN` | `BG_EVENTS 4` |
+| `MART_SHELF_1` / `_2` / `_3` | `BG_EVENTS 5` / `6` / `7` |
+| `WATERFALL` | `FIELD_MOVES 6` |
+| `TOWN_MAP` | `BG_EVENTS 8` |
+| `BIKE_PARKING` | `COMMON_SCRIPTS 30` |
+| `TV` (facing north) | `TV_BROADCAST 0` |
+
+**None of these is an object event and none is a bg event.** There is nothing
+in the map data to find: the behaviour byte under the tile is the whole record.
+A port that looks only at objects and bg events finds nothing, and the press
+does nothing.
+
+This port had a Gen 2 arm (collision class `$93`) and a Gen 3 arm (the PC
+metatile) in `tryPcTile`, and **no Gen 4 arm anywhere.**
+
+### What that cost, measured
+
+Counted per layout against the extracted cache and multiplied by the maps that
+use each layout -- a Pokémon Centre's interior is one layout behind many
+headers:
+
+```
+    BIKE_PARKING       2274 tiles across  85 maps
+    MART_SHELF_1        408 tiles across  43 maps
+    TV                  314 tiles across  76 maps
+    BOOKSHELF_1         228 tiles across  42 maps
+    PC                  130 tiles across  66 maps
+    TOWN_MAP             66 tiles across  32 maps
+    TRASH_CAN            45 tiles across  31 maps
+    SMALL_BOOKSHELF_1    44 tiles across  14 maps
+    BOOKSHELF_2          18 tiles across   3 maps
+    TOTAL              3527 tiles across 289 layouts
+```
+
+### It is the fault Gen 3 already had and already fixed
+
+This port's own Gen 3 PC branch says it:
+
+> ...AND WHAT IT OPENS IS THE CARTRIDGE'S OWN SCRIPT, not this port's PC menu.
+> ... Sending it to `openPC` instead was the Game Boy's PC menu in a Hoenn Poké
+> Centre -- and it left the boxes unreachable from every Poké Centre in the
+> region, because the row that reaches them is a row of THAT menu.
+
+Gen 4 was still calling `openPC`, whose Gen 4 arm jumps straight to the storage
+grid. So everything `CommonScript_PC` does on the way was gone: the box PC
+named after Bebe once you have met her, PLAYER'S PC, ROWAN'S/OAK'S PC with the
+dex rating, the HALL OF FAME row behind `FLAG_GAME_COMPLETED`, COMPARE POKéMON
+behind `FLAG_CONTEST_HALL_VISITED`, and the boot-up animation with its sound.
+
+`openPC`'s Gen 4 arm now runs the same script, with the grid left as the
+fallback for a cache whose band will not compile -- so the tile dispatch and
+that call site are **one flow** rather than two that can disagree.
+
+### `src/world/Gen4TileScripts.lua`
+
+The table, by **behaviour name** rather than by number: `Gen4Behaviors.PACKED`
+is the cartridge's own 256-entry name table and is already the one place that
+says which byte is which.
+
+Two rows carry the cartridge's facing guard: `TileBehavior_IsPC(behavior) &&
+playerDir == DIR_NORTH`, and the same for the TV. Both are drawn on the wall
+behind the tile; you cannot read a screen edge-on.
+
+**Rock Climb and Surf are deliberately not in the table.** The two rows below
+it in the C are not equality tests:
+
+```c
+if (PlayerAvatar_CanUseRockClimb(behavior, playerDir))              -> FIELD_MOVES 3
+if (!surfing && CanUseSurf(...) && HasBadge(3)
+    && Party_HasMonWithMove(SURF))                                  -> FIELD_MOVES 4
+```
+
+Each is a derivation of its own, and this port reaches Gen 4's field moves
+through the party menu. Half a rule here would give Sinnoh two ways into Surf
+that can disagree. **Waterfall is** in, because `TileBehavior_IsWaterfall` has
+no guard at all and nothing in this port answers a press at one today.
+
+### One spelling of "run script n of band b"
+
+The honey tree had the only copy, written inline in `interact()`:
+
+```lua
+local pool=VM.store(Game.data)
+local band=pool and pool.bands and pool.bands.common_scripts
+local label=band and band.entries and band.entries[9]
+```
+
+There are fourteen callers now, so it moved to `Gen4TileScripts.compile(data,
+band, index)`. `SCRIPT_ID(band, n)` is **0-based** and `entries` is a Lua
+array, so entry n+1 is script n -- and that off-by-one is the whole reason the
+raw index is stored and converted in one place.
+
+The honey tree is also the control for the convention: `honey_tree.c` says
+`COMMON_SCRIPTS 8` and this port has been reaching it at `entries[9]` since it
+was written, so if the convention were off by one the honey trees would already
+be wrong.
+
+### Does it actually work, or only start?
+
+A dispatch into a band full of unlowered commands would be a press that starts
+a script and then warns its way through it. Measured:
+
+```
+   field_moves       297 uses,   0 unlowered
+   tv_broadcast       30 uses,   0 unlowered
+   bg_events          16 uses,   1 unlowered   openregionmap
+   common_scripts    866 uses,  19 unlowered
+```
+
+So **eight of the nine interaction classes work the moment they are reached.**
+The ninth is the wall map: `openregionmap` wants a Sinnoh region map this port
+has not extracted, and `src/ui/TownMap.lua` carries Kanto and Johto only. Left
+as the one argued hole in `bg_events`, with a ceiling on the band so the other
+eight cannot regress behind it.
+
+### The PC's own six commands
+
+`common_scripts` **25 -> 19**.
+
+- `loadpcanimation` / `playpcbootupanimation` / `playpcshutdownanimation` --
+  the screen lighting up and going dark. `FieldSystem_LoadPCAnimation`
+  (`overlay006/pc_animation.c`) finds the loaded **map prop** whose model is one
+  of four PC models (`pokecenter_pc_nsbmd` and three desk laptops) and hands its
+  animations to the one-shot manager; the other two play animation 0 and 1.
+  **This is the door animation again, exactly** -- an NSBCA one-shot on an NSBMD
+  map prop, with the same three missing stages -- so it takes the *same* named
+  no-op rather than a fourth spelling of the same absence.
+- `savetvsegmentpokemonstoragebulletin` -- and `savetvsegmenthiddenitem` with
+  it. There is no TV broadcast system in this engine, which is **one** fact
+  about the port and was being stated in two places. Both lower to
+  `g4_save_tv_segment` now, carrying the segment's name.
+- `checkishalloffamecorrupted` -- the C answers TRUE only for
+  `LOAD_RESULT_CORRUPT`, a failed checksum on a save sector. This engine has no
+  sector to fail: the Hall of Fame is a list inside the one serialised save
+  table and `SaveData.validate` has already run over it. **FALSE, and that is
+  not a convenience** -- answering TRUE would tell the player their records are
+  damaged when they are not.
+- `openpchalloffamescreen` -- `pending`, and the distinction from the TV row is
+  the point. A no-op says "there is nothing to do and nothing would read it",
+  which is false here: `save.hallOfFame` has been collecting
+  `{species, level, nickname}` rows all along. What is missing is a screen;
+  `src/ui/HallOfFame.lua` is the induction ceremony and walks the **live**
+  party.
+
+### The checks
+
+`tools/gen4_tile_script_check.lua` (NEW, 118 checks): the table and that every
+name in it is a real behaviour and no two rows share a value; the lookup; the
+two facing guards both ways round; the band indices against the cache **through
+`compile`** rather than read off the array; the dispatch wired in the
+cartridge's own slot (after the bg events, before the field moves); and section
+5, which proves the bands the table reaches are lowered end to end.
+
+**Six faults planted, all six caught**, control re-run on md5-identical files.
+The one worth naming is the off-by-one: with `compile` reading `entries[index]`
+instead of `entries[index + 1]`, every row still resolves *something* -- a
+bookshelf would have answered with the trash can's line, silently, forever.
+Section 3 asserts the resolved labels, not the slots' existence, which is what
+catches it.
+
+### Two of this port's own checks caught the work
+
+Both correct, both worth recording.
+
+`gen4_save_check`'s canary asserted
+`VM.lowered("checkishalloffamecorrupted") == false` -- and this pass lowered it,
+so the canary failed for the best possible reason. **A canary whose subject is
+a thing somebody is trying to fix has a half-life.** It is two assertions now,
+neither of which can go stale: a name that will never be an opcode, and the
+count of the opcode table's own 840 entries that are still unlowered, which is
+derived and only reaches zero on the day the whole cartridge is lowered. The
+floor on the second caught its own first draft immediately -- the table is
+`Ops.COMMANDS`, not `Ops.TABLE`, and `0 names` failed rather than passing over
+an empty set.
+
+`gen4_trainer_message_check`'s `pending` pin went 3 -> 4, which is the pin doing
+its job: a new `pending` has to be argued in writing before the count moves.
+
+### Suite
+
+```
+PASS=58  REPORT=4  NOSPEC=41
+```
+
+No FAIL, no SKIP, no PASS\*. Gen 3 clean (5 PASS), script registry 417.
+
+### Still not complete
+
+Nothing is marked done. Added to the play-test list:
+
+28. **Press A at a PC in any Pokémon Centre.** The screen should come on with
+    its sound, then "<PLAYER> booted up the PC" and the four-row menu --
+    SOMEONE'S/BEBE'S PC, PLAYER'S PC, ROWAN'S/OAK'S PC, SWITCH OFF -- not the
+    storage grid directly.
+29. **Approach a PC from the side.** Nothing should happen; it only answers
+    facing north.
+30. **Open the storage system** from that menu and confirm DEPOSIT / WITHDRAW /
+    MOVE POKéMON / MOVE ITEMS / SEE YA! all open, and that COMPARE POKéMON
+    appears once the Contest Hall has been visited.
+31. **Press A at a bookshelf, a trash can and a mart shelf.** Each should print
+    its own line.
+32. **Press A at a television**, facing north.
+33. **Press A at a bike-parking sign.**
+34. **Press A at the wall map** -- it will say the region map is not built,
+    which is the one argued hole.
+35. **Press A facing a waterfall** -- it should offer to use it.
+36. **After the Elite Four, open the PC's HALL OF FAME row** -- it will report
+    the browser as unbuilt and return you to the menu, and must **not** say the
+    data is corrupted.
+37. **A honey tree still works** -- its script lookup moved to the shared
+    helper and nothing else about it changed.
+
+## Pass 174 -- the summary crash, and the silence that let it ship
+
+Reported from play:
+
+```
+src/ui/SummaryMenu.lua:550: attempt to index local 'def' (a nil value)
+```
+
+`def` is `data.pokemon[mon.species]`, and `mon.species` was nil because **`mon`
+was not a Pokémon.** It was an options table.
+
+### The chain
+
+`Gen4PartyMenu`'s SUMMARY row pushes:
+
+```lua
+Screens.push(self.game, "SummaryMenu", { mon = mon, readOnlyMoves = ... })
+```
+
+and `Gen4SummaryMenu.new` reads `arg.readOnlyMoves` -- it is a supported
+option. But the alias in `Screens.lua` listed only `{ onCancel, mon }`, and
+`servedBy` **declines a push carrying a key the alias does not name.** So the
+Gen 4 screen was refused; on a Gen 4 cache the Gen 3 table is never consulted
+(`resolveId` asks `if isGen3(game)`), so the push landed on the Game Boy
+`SummaryMenu`.
+
+**And the two generations' screens have different signatures.** Gen 3 and Gen 4
+screens take `(game, opts)`; the Game Boy ones take `(game, mon, opts)`
+positionally. So the options table arrived where the Pokémon goes, and the draw
+died eight frames later on a line that had nothing to do with it.
+
+Verified rather than reasoned, with `Screens.resolveId` driven directly:
+
+```
+Gen4PartyMenu SUMMARY                -> SummaryMenu        <- the crash
+Gen4PartyMenu SUMMARY (battle)       -> SummaryMenu
+Gen4BoxMenu SUMMARY (positional)     -> Gen4SummaryMenu
+mon + onCancel                       -> Gen4SummaryMenu
+move-learn choose                    -> SummaryMenu
+```
+
+### Why nothing said so
+
+`resolveId` already had a warning that names the key which declined a push --
+*"a push of %s carries `%s`, which %s does not serve"*. It was on the **Gen 3
+path only.** The Gen 4 path declined in silence.
+
+One sentence now, shared by both: `warnDeclined`.
+
+### Three fixes, and a correction
+
+1. **`readOnlyMoves` is named by the Gen 4 alias.** The reported crash.
+2. **The Gen 4 decline warns**, like the Gen 3 one always has.
+3. **The base `SummaryMenu` reads the options shape.** It is the end of the
+   line for every declined push, and a fallback that cannot read its argument
+   is not a fallback. `{ mon = ... }` is unwrapped; the positional call is
+   untouched.
+4. The note on the alias claimed `choose` falls through to the Gen 3 screen.
+   **It does not** -- on Platinum it reaches the Game Boy screen. It is a
+   fallback with a known destination now rather than an assumed one, and (3)
+   is what makes that survivable.
+
+`choose` is still deliberately not served: `Gen4SummaryMenu` assigns
+`self.choose` and never reads it, so serving it there would be a screen with no
+way to pick a move.
+
+### The check, and the rule it took two attempts to state
+
+`tools/screen_alias_check.lua` (NEW, 16 checks).
+
+The obvious sweep -- *every key a call site pushes must be named by its alias*
+-- found **32 offenders**, and **every one of them was correct.** `picked`,
+`giveTo`, `shiftSwitchMon`, `member`, `done`, `old`, `item`, `who`, `save` and
+`name` are read by no Gen 3 or Gen 4 screen at all, so those pushes genuinely
+cannot be served by one and falling back is the right answer. A check that
+reports thirty-two correct things as faults gets switched off.
+
+The rule that is both true and decidable:
+
+> **a key the generation's own screen READS must be named by its alias**
+
+because that, and only that, is a screen declining a push it could have served.
+"Reads" is *mentioned more than once* -- every option is assigned
+(`self.k = arg and arg.k`) and the supported ones are then used. That is
+exactly what separates `readOnlyMoves` in `Gen4SummaryMenu` (assigned at 105,
+consulted at 391) from `choose` (assigned, never read).
+
+Run that way: **66 push sites, 32 declining keys, 0 of them on a screen that
+reads the key.** The declines are counted and floored too, because the result
+is an absence and a rule that is only interesting while declines are common
+needs to know they still are.
+
+Four faults planted. The first is the original bug put back -- `readOnlyMoves`
+off the alias -- and it is caught three ways, including the sweep naming the
+exact call site. The others: the base screen losing its unwrap, and the Gen 4
+decline going silent again.
+
+### Suite
+
+```
+PASS=59  REPORT=4  NOSPEC=41
+```
+
+No FAIL, no SKIP, no PASS\*.
+
+### Still not complete
+
+38. **Open a Pokémon's summary from the Gen 4 party menu**, in the field and in
+    a battle. It should be the Platinum screen, and the move list should be
+    reorderable in the field and not in a battle.
+39. **Open a summary from a PC box** -- that push already worked and must still.
+40. **Learn a move at full moves and choose one to forget.** That page still
+    falls through to the Game Boy screen by design; it must show the mon rather
+    than crash.
+
+
+## Pass 175 -- teaching a TM, and a line with a hole in it
+
+Reported from play, with a screenshot of HM01 selected in the bag's TM/HM
+pocket: *"This isn't the time to use that!"*
+
+### The first fault was one absent field
+
+`BagMenu.useItem` gates the whole machine flow on `def.machine` -- the boot-up
+lines, the party picker's TM/HM mode, the ABLE!/UNABLE! word -- and
+`ItemEffects.needsTarget` will not answer true without one. Of the **446 items
+in a Platinum cache, zero carried it.** Gen 1, 2 and 3 extractors write
+`machine = { move, kind }`; the Gen 4 one never has, because the cartridge does
+not store it that way.
+
+So every piece of work the earlier TM passes did -- the party alias's `tmhm`
+key, the 128-bit learnset mask, bank 453's ABLE!/UNABLE! -- was correct and
+**unreachable**. One field decided all of it.
+
+### What the cartridge stores instead, and it is better than a name match
+
+`Item_MoveForTMHM` is three lines of `src/item.c`:
+
+```c
+item -= ITEM_TM01;
+return sTMHMMoves[item];
+```
+
+**The item id IS the index.** The two sources are `fieldUseFunc == 6`
+(`ITEM_USE_FUNC_TM_HM`, `include/constants/items.h`), which marks exactly 100
+items, and `constants.tmhmMoves`, the 100-entry `sTMHMMoves` array in TM01..TM92
+then HM01..HM08 order.
+
+Measured on a Platinum cache: the machine run is **ids 328..427, unbroken**, 92
+TM then 8 HM, against 100 array entries. `ItemEffects.markGen4Machines` reads
+the ids, asserts the run is unbroken rather than assuming it, and stamps
+`def.machine` at load -- beside `Sprites.markFormsTrueColor` and for the same
+reason: an existing cache is fixed without a re-import. Only `nil` is filled,
+so a mod keeps its own record.
+
+**The names are the check on the ids, not a second mechanism.** TM01 must land
+on index 1 and HM01 on 92 + 1; if any name disagrees with where its id put it,
+**nothing is stamped**. A wrong split point does not fail -- it teaches Rock
+Climb where it should teach Focus Punch.
+
+`kind` is the half the index falls in. The cartridge asks
+`Item_IsHMMove(move)`, which scans the array's tail for the MOVE -- the same
+answer only while no move sits in both halves. Measured: none does. The check
+carries the cartridge's question as its own assertion, so a cache where the two
+diverge fails loudly instead of printing "Booted up a TM." for an HM.
+
+### The second fault was underneath it
+
+With the record stamped, the bag reached its own wording and printed
+
+> It contained .
+
+Bank 7 entry 60 is `It contained\n{STRVAR_1 6 0 0}.` + the wait +
+`Teach {STRVAR_1 6 0 0}\nto a Pokemon?` -- **both halves read string slot 0**,
+and nothing had filled it. `gen4Markup` said so out loud (*"string slot 0 was
+never buffered"*) to a log nobody was reading.
+
+`TMHMUseTask` fills it on the row before it formats the line:
+
+```c
+StringTemplate_SetMoveName(controller->strTemplate, 0, move);
+```
+
+So that is what fills it here. `Gen4Text.buffer(game, moveName)` writes the
+slot and `Gen4Text.resolve(data, bank, index, game)` hands the game to
+`gen4Markup`, which is the only expansion mechanism there is. **No gsub.**
+
+### Three things `resolve` does that a raw `data.text[key]` does not
+
+It checks the value is a string, it runs `gen4Markup` so `{WAIT 3}` is not
+printed literally, and it takes the **trailing wait** off -- `\v` and `\f` are
+a cartridge line's join to whatever the cartridge printed next, and a screen
+showing the line as a box of its own has nothing next. `paginate` turns the
+dangling marker into a blank line that still wants its button press.
+
+### And the field-poison line had been stripping nothing for months
+
+`gen4SurvivedPoisonLine` spliced the name in with its own gsub and then
+stripped a trailing `\r`. The decoder spelled that control `\r` once; it was
+corrected to `\v` (0x25BC, wait and scroll) and **this was not**, so for every
+run since, the strip had matched nothing while looking exactly as though it
+worked. Measured over the whole bank: **0 of 46,053 cartridge strings contain a
+carriage return.**
+
+Both faults are the same bug this port keeps finding -- one idea spelled two
+ways in two files that never meet. There is one way to read a Gen 4 bank line
+now, and the bag's "It contained CUT." and the poison line use it.
+
+### Four more of the same shape, found by the sweep rather than argued
+
+* `Gen4UndergroundMenu:labelFor` read the bank raw, so a row label would print
+  its own control tokens.
+* `g4_buffer_floor` read bank 361 ("1F", "B1F") raw into a string slot.
+* `bufferKind` ran `gen4Markup` in **two** of its branches and not the rest, so
+  a bag pocket name (395), an item plural (394) or a Poketch app name (457)
+  went into a string slot with its markup on. The outer line is marked up
+  *before* the slot is spliced in, so nothing downstream would ever have
+  stripped them. One pass at the end now covers every branch.
+* `buffertmhmmovename` carried **its own copy** of the item-to-move join, off
+  the item's name, with a literal `92` for where the HM run starts. It reads
+  `def.machine` now. One join.
+
+### The check: `tools/gen4_machine_check.lua`, 71 checks
+
+Sections: pret's two sources (the use-function number, and that
+`Item_MoveForTMHM` still indexes by `item - ITEM_TM01`); the derivation against
+the cache, **every one of the 100** rather than four spot checks; that every
+refusal lands; the wording end to end, including how the box pages it; and the
+invariant.
+
+**The invariant, not a list.** A key built by `Gen4Text.label` is by
+construction a Gen 4 bank key, so any site that builds one and then subscripts
+the text table is an offender the day it is written. Two layers, two rules: a
+**screen** has no markup step of its own and must go through `resolve`; the
+**script layer** holds `gen4Markup` and owes only that the function doing the
+read also does the markup -- which is the part that was actually missing. The
+first draft had one rule, found seven sites in `Gen4Commands.lua`, and four of
+them were not faults.
+
+Ten faults planted, and **three did not land on the first attempt**:
+
+* Deleting BagMenu's buffer call left all 67 checks passing, because the
+  section buffered the name *itself* before resolving. BagMenu's own arm was
+  cold. It is asserted on the source now -- buffered, and buffered *before* the
+  resolve.
+* `src:find("markGen4Machines")` still matched after the call was renamed to
+  `markGen4MachinesXX`, because the old name is a prefix of the new one. It
+  anchors on `markGen4Machines%s*%(` now.
+* The third did not land because **the plant itself never applied** -- the
+  `perl` pattern interpolated `\v` and `\f` before `\Q` could quote them, so
+  it had been substituting nothing. A measurement that cannot fail says
+  nothing, and that applies to the apparatus too.
+
+And the fixture shared the `tmhmMoves` array it planted faults in, so one
+`table.remove` left every later fixture in the run built on 99 entries. The
+floor caught it as five refusals refusing for the wrong reason.
+
+`markGen4Machines` iterates its ids **sorted**, so a refusal names the first
+item that disagrees; under `pairs` the same planted fault reported a different
+item run to run, which is a diagnostic nobody can act on.
+
+### Suite
+
+```
+PASS=60  REPORT=4  NOSPEC=41
+```
+
+No FAIL, no SKIP, no PASS\*. Gen 2 and Gen 3 clean, registry 417. And through
+the real `Data:load`: *"gen4 items: 100 TM/HM machine record(s) derived, so the
+bag can teach them"*, HM01 -> HM / move 15 / Cut, `needsTarget` true.
+
+### Still not complete
+
+41. **Teach a TM from the bag in Platinum.** Select one in the TM/HM pocket:
+    "Booted up a TM." should wait for the button, then "It contained
+    <MOVE>." should wait and the question scroll up into the same box. YES
+    should open the party with ABLE!/UNABLE! beside each mon; NO should put you
+    back in the bag with the TM still there.
+42. **Teach an HM the same way** -- it must read "Booted up an **HM**.", and
+    HM01 must offer Cut.
+43. **A mon that cannot learn the move** must read UNABLE! and refuse.
+44. **Teach a TM at four moves** and choose one to forget.
+45. **The field-poison line**, which changed underneath this: walk a poisoned
+    mon to 1 HP in Platinum. "<MON> survived the poisoning. / The poison faded
+    away!" should be one box that ends where it ends -- no blank line wanting
+    an extra press.
+46. **A department-store lift**, for the floor labels: "1F" through "B1F" in
+    the buffer, not a raw token.
+47. **The bag's pocket names and a Poketch app name in a line**, for the
+    markup-once pass.
+48. **Gen 1, 2 and 3 TMs still teach.** Nothing in this pass touches them, and
+    that is worth one TM in Crystal to confirm.

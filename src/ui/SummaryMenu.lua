@@ -116,6 +116,27 @@ function SummaryMenu:sgbPalettes(game)
 end
 
 function SummaryMenu.new(game, mon, opts)
+  -- A FALLBACK MUST BE ABLE TO READ WHAT IT IS HANDED.
+  --
+  -- This screen is the end of the line for `Screens.push("SummaryMenu", ...)`:
+  -- when the Gen 3 or Gen 4 alias declines a push, the arguments arrive here
+  -- unchanged.  But those generations' screens take `(game, opts)` while this
+  -- one takes `(game, mon, opts)` POSITIONALLY, so a declined push arrives
+  -- with its options table sitting in `mon` -- `mon.species` nil,
+  -- `data.pokemon[nil]` nil, and the draw dies on "attempt to index local
+  -- 'def' (a nil value)" several frames later, miles from the cause.
+  --
+  -- That is exactly what the Gen 4 party menu's SUMMARY row did until the
+  -- alias learned `readOnlyMoves` (see src/ui/Screens.lua).  The routing bug
+  -- is fixed there; this is the other half, because the `choose` push still
+  -- falls through here BY DESIGN and a fallback that cannot read its argument
+  -- is not a fallback.
+  --
+  -- Unwrapped rather than refused: the options table carries the Pokemon in
+  -- `mon`, which is everything this screen needs.
+  if type(mon) == "table" and mon.species == nil and type(mon.mon) == "table" then
+    opts, mon = mon, mon.mon
+  end
   opts = opts or {}
   -- status_screen.asm:66-76: StatusScreen recalculates the stat block before
   -- it draws anything when the mon came from a box or the daycare ("mon is

@@ -6202,6 +6202,33 @@ local function interacted(self, fx, fy, kind, target)
                                      kind = kind, target = target })
 end
 
+-- `Field_TileBehaviorToScript` for Gen 4: the behaviour byte under the faced
+-- tile picks a script, and that script is the whole interaction.  Gen4TileScripts
+-- holds the cartridge's table; this is only the lookup and the start.
+--
+-- A behaviour with no row answers false and the press falls through to
+-- everything after it, which is what `0xffff` does in the C.
+function OverworldState:tryGen4TileScript(fx, fy)
+  if not GameVersion.isGen4() then return false end
+  if not (self.map and self.map.cellBehaviour) then return false end
+  local behaviour = self.map:cellBehaviour(fx, fy)
+  if behaviour == nil then return false end
+  local TS = require("src.world.Gen4TileScripts")
+  local row = TS.rowFor(behaviour, self.player and self.player.facing)
+  if not row then return false end
+  local rows, why = TS.compile(Game.data, row.band, row.index)
+  if not rows then
+    -- Named, because a cache imported before one of these bands existed is a
+    -- stale cache and the log should say which tile went unanswered rather
+    -- than leaving a press that does nothing and reports nothing.
+    Logger.warn("gen4 tile script: a %s tile wanted %s %d and %s",
+                row.behaviour, row.band, row.index, tostring(why))
+    return false
+  end
+  self.runner:run(rows, { mapId = self.map.id })
+  return true
+end
+
 function OverworldState:tryPcTile(fx, fy)
   local field = Game.data.field
   -- GSC does not list its PCs anywhere: COLL_PC ($93) IS the PC, and
@@ -6294,10 +6321,11 @@ function OverworldState:interact()
     local H=require('src.world.Gen4HoneyTrees')
     local ground=self.map.renderer and self.map.renderer.gen4Ground
     if H.treeId(self.map.def.header)~=nil and H.facingTree(ground,fx,fy) then
-      local VM=require('src.script.Gen4ScriptVM');local pool=VM.store(Game.data)
-      local band=pool and pool.bands and pool.bands.common_scripts
-      local label=band and band.entries and band.entries[9]
-      local rows=label and VM.compile(Game.data,label)
+      -- `HoneyTree_TryInteract` answers SCRIPT_ID(COMMON_SCRIPTS, 8)
+      -- (overlay005/honey_tree.c).  The lookup used to be written out here;
+      -- it is Gen4TileScripts.compile now, which is the same sentence the
+      -- thirteen tile-behaviour rows need and so is written once.
+      local rows=require('src.world.Gen4TileScripts').compile(Game.data,'common_scripts',8)
       if rows then self.runner:run(rows,{mapId=self.map.id});interacted(self,fx,fy,'honey-tree');return end
     end
   end
@@ -6444,6 +6472,16 @@ function OverworldState:interact()
   -- FireRed's furniture, PC, TV and signs: GetInteractedMetatileScript runs
   -- right after the bg events, ahead of the water and the field moves
   if self:tryFRLGMetatileScript(fx, fy) then
+    interacted(self, fx, fy, "metatile")
+    return
+  end
+
+  -- ...AND SINNOH'S, WHICH IS THE SAME SLOT IN THE SAME ORDER.
+  -- `Field_TileBehaviorToScript` is consulted after the bg events and the
+  -- honey tree and before anything else (overlay005/field_control.c), which
+  -- is exactly where this sits.  See src/world/Gen4TileScripts.lua for the
+  -- table and for what was not working without it.
+  if self:tryGen4TileScript(fx, fy) then
     interacted(self, fx, fy, "metatile")
     return
   end
@@ -9809,7 +9847,22 @@ end
 -- the ui.pc.items hook; LOG OFF is appended after it so a mod cannot
 -- orphan the exit.
 function OverworldState:openPC(onDone)
+  -- SINNOH'S PC IS A SCRIPT, like Hoenn's.  `CommonScript_PC` names the box
+  -- PC after Bebe once you have met her, offers the player's own PC, the
+  -- professor's dex rating, the Hall of Fame after the Elite Four and COMPARE
+  -- POKeMON after the Contest Hall -- none of which a jump straight to the
+  -- storage grid has.  The grid stays as the fallback for a cache whose
+  -- common-scripts band will not compile, so this can only ever do more than
+  -- it did; and going through the script here means the tile dispatch and this
+  -- call site are the SAME flow rather than two that can disagree.
   if GameVersion.isGen4() then
+    local rows = require("src.world.Gen4TileScripts")
+                   .compile(Game.data, "common_scripts", 18)
+    if rows then
+      self.runner:run(rows, { mapId = self.map.id })
+      if onDone then onDone() end
+      return true
+    end
     return Screens.push(Game, 'StorageMenu', { onDone = onDone })
   end
   if GameVersion.isGen3() then
@@ -10827,9 +10880,24 @@ end
 -- spelling of it is the bug this port keeps finding.
 --
 -- `{STRVAR_1 1 0 0}` is string buffer slot 0, which the cartridge's
--- `BufferPartyMonNickname 0` fills on the row before the message.  The
--- trailing \r is its wait-and-clear: each queue entry here is its own box, so
--- the box already ends where the \r would have ended it.
+-- `BufferPartyMonNickname 0` fills on the row before the message -- so that is
+-- what fills it here, through `Gen4Text.buffer`, and `Gen4Text.resolve` does
+-- the expansion.
+--
+-- IT USED TO SPLICE THE NAME ITSELF, with a gsub, and that is why it is worth
+-- a paragraph.  Two faults, both invisible:
+--
+--   * the trailing marker it stripped was spelled `\r`.  The decoder spelled it
+--     `\r` once; it was corrected to `\v` (0x25BC, wait and scroll) and this
+--     was not, so for every run since, the strip had matched nothing while
+--     looking exactly as though it worked.  46,053 strings in the cartridge's
+--     text and not one of them contains a `\r`.
+--   * the name went in by gsub, so it needed `%%` escaping to survive the
+--     replacement -- a hazard a buffer does not have.
+--
+-- Both are the same bug the port keeps finding: one idea spelled two ways in
+-- two files that never meet.  There is one way to read a Gen 4 bank line now,
+-- and it is the one the bag's "It contained CUT." uses too.
 local function gen4SurvivedPoisonLine(name)
   local okB, Bands = pcall(require, "src.import.Gen4ScriptBands")
   local bank = okB and Bands and Bands.TEXT_BANK
@@ -10837,16 +10905,15 @@ local function gen4SurvivedPoisonLine(name)
   local text
   if bank then
     local okT, Gen4Text = pcall(require, "src.import.Gen4Text")
-    if okT and Gen4Text and Gen4Text.label then
-      local key = Gen4Text.label(bank, 66)
-      text = Game.data and Game.data.text and Game.data.text[key]
+    if okT and Gen4Text and Gen4Text.resolve then
+      Gen4Text.buffer(Game, name)
+      text = Gen4Text.resolve(Game.data, bank, 66, Game)
     end
   end
   if type(text) ~= "string" then
     return Strings("%s survived\nthe poisoning!", name)
   end
-  text = text:gsub("{STRVAR_1%s[^}]*}", (tostring(name):gsub("%%", "%%%%")))
-  return (text:gsub("[\r]+$", ""))
+  return text
 end
 
 -- Field poison (engine/events/poison.asm ApplyOutOfBattlePoisonDamage):

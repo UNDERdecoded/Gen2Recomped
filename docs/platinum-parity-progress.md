@@ -976,3 +976,125 @@ the quick-save message after an untouched save, the full-save message after a
 deposit, the missing dex row, NO at either prompt, saving on a bike, the
 Underground descent -- and saving in Crystal, Gold/Silver, Prism and Emerald,
 which must behave exactly as before.
+
+## Pass 173 -- nine kinds of Sinnoh scenery that answered nothing
+
+`Field_TileBehaviorToScript` (overlay005/field_control.c) maps a tile's
+**behaviour byte** to a script id, and it is the only thing that makes the PC,
+four bookshelves, the trash can, three mart shelves, the wall map, the
+bike-parking sign and the television interactive. None of them is an object
+event and none is a bg event -- there is nothing in the map data to find.
+
+This port had a Gen 2 arm (collision class $93) and a Gen 3 arm (the PC
+metatile) and **no Gen 4 arm at all**. Measured against the cache: **3,527
+tiles across 289 layouts**, the PC alone on 66 maps.
+
+It is the fault Gen 3 already had and already fixed -- that branch's own note
+reads *"what it opens is the CARTRIDGE'S OWN SCRIPT, not this port's PC menu
+... it left the boxes unreachable from every Poke Centre in the region"*. Gen 4
+was still calling `openPC`, which jumps straight to the storage grid, so
+`CommonScript_PC` never ran: no Bebe's PC, no PLAYER'S PC, no professor's dex
+rating, no HALL OF FAME row, no COMPARE POKeMON, no boot-up animation.
+
+`src/world/Gen4TileScripts.lua` holds the table, by behaviour **name** rather
+than number (`Gen4Behaviors.PACKED` already is the one place that says which
+byte is which), with the cartridge's two facing guards -- the PC and the TV
+answer only a player facing north. Rock Climb and Surf are deliberately out:
+neither is an equality test, each is a derivation of its own, and this port
+reaches Gen 4's field moves through the party menu. Waterfall is in, because it
+has no guard and nothing answers a press at one today.
+
+**One spelling of "run script n of band b".** The honey tree had the only copy,
+inline; there are fourteen callers now. `SCRIPT_ID(band, n)` is 0-based and
+`entries` is a Lua array, so entry n+1 is script n -- and the honey tree is the
+control for that convention, since it has been reaching `entries[9]` for
+`COMMON_SCRIPTS 8` since it was written.
+
+**Eight of the nine work the moment they are reached**: `field_moves` and
+`tv_broadcast` are at zero unlowered and `bg_events` has one -- `openregionmap`,
+which wants a Sinnoh region map this port has not extracted.
+
+The PC's own six commands took `common_scripts` **25 -> 19**. The three
+prop-animation rows share the DOOR's named no-op (same NSBCA-on-an-NSBMD-prop
+absence, stated once); both TV-segment commands now share one row;
+`checkishalloffamecorrupted` answers FALSE because this engine has no save
+sector to fail a checksum, and answering TRUE would tell the player their
+records are damaged when they are not; `openpchalloffamescreen` is `pending`
+rather than a no-op **because the data exists** -- `save.hallOfFame` has been
+collecting rows all along and what is missing is a screen.
+
+New check `tools/gen4_tile_script_check.lua` (118 checks); six faults planted,
+all six caught. The one worth naming: with `compile` reading `entries[index]`
+instead of `entries[index + 1]` every row still resolves *something*, so a
+bookshelf would have answered with the trash can's line, silently. The check
+asserts the resolved LABELS, not that the slots exist.
+
+**Two of this port's own checks caught this work**, both correctly.
+`gen4_save_check`'s canary named `checkishalloffamecorrupted` as its
+"still-unlowered" subject and this pass lowered it -- a canary whose subject is
+something somebody is trying to fix has a half-life. It is two derived
+assertions now, neither of which can go stale. `gen4_trainer_message_check`'s
+`pending` pin went 3 -> 4, which is the pin doing its job.
+
+Suite: **PASS=58, REPORT=4, NOSPEC=41** -- no FAIL, no SKIP, no PASS*. Gen 3
+clean, registry 417.
+
+**Nothing is marked complete.** Play-test items 28-37: the PC from a Pokemon
+Centre (menu, not the grid), approaching it from the side, the storage rows,
+bookshelves, trash cans, mart shelves, the TV, bike parking, the wall map, a
+waterfall, the post-game Hall of Fame row, and that honey trees still work.
+
+
+## Pass 175 -- TM/HM teaching
+
+A screenshot of HM01 in the bag answering *"This isn't the time to use that!"*,
+and two faults behind it.
+
+**One absent field.** `BagMenu.useItem` gates the entire machine flow on
+`def.machine`; of the 446 items in a Platinum cache, **zero** carried it. Gen 1,
+2 and 3 extractors write it and the Gen 4 one never has. Every earlier piece of
+TM work -- the party alias's `tmhm` key, the learnset mask, bank 453's
+ABLE!/UNABLE! -- was correct and unreachable.
+
+`ItemEffects.markGen4Machines` derives it the way `Item_MoveForTMHM` does: the
+item **id is the index** into `constants.tmhmMoves`. Measured: ids 328..427
+unbroken, 92 TM then 8 HM, 100 array entries. The item NAMES are the check on
+the ids rather than a second mechanism -- TM01 must land on index 1 and HM01 on
+93, and a disagreement stamps **nothing**, because a wrong split does not fail,
+it teaches Rock Climb where it should teach Focus Punch. Stamped at load beside
+`markFormsTrueColor`, so an existing cache is fixed without a re-import.
+
+**And a line with a hole in it.** With the record stamped the bag printed *"It
+contained ."* -- bank 7 entry 60 reads string slot 0 in both halves and nothing
+filled it. `TMHMUseTask` fills it with `StringTemplate_SetMoveName(template, 0,
+move)`, so `Gen4Text.buffer` does, and `Gen4Text.resolve` hands the game to
+`gen4Markup`. No gsub.
+
+**The field-poison line had been stripping nothing for months.** It spliced the
+name in itself and stripped a trailing `\r`; the decoder was corrected to `\v`
+(0x25BC) and that gsub was not. Measured: **0 of 46,053 cartridge strings
+contain a carriage return.** Same bug, same shape: one idea spelled two ways in
+two files that never meet.
+
+Four more of the same found by the sweep, not argued: the Underground menu's
+row labels and `g4_buffer_floor` read their banks raw; `bufferKind` marked up
+two of its branches and not the rest, so a bag pocket or Poketch app name went
+into a string slot with its tokens on; and `buffertmhmmovename` carried its own
+copy of the item-to-move join with a literal 92 in it.
+
+New check `tools/gen4_machine_check.lua` (71 checks), ten faults planted.
+**Three did not land first time**, and each was worth more than the assertion
+it tested: BagMenu's buffer call was a cold arm because the check buffered the
+name itself; `src:find("markGen4Machines")` still matched `markGen4MachinesXX`;
+and one plant **never applied at all** because `perl` ate `\v` and `\f` before
+`\Q` could quote them. A measurement that cannot fail says nothing -- including
+the apparatus.
+
+Suite: **PASS=60, REPORT=4, NOSPEC=41** -- no FAIL, no SKIP, no PASS*. Gen 2
+and Gen 3 clean, registry 417.
+
+**Nothing is marked complete.** Play-test items 41-48: teach a TM and an HM
+from the Platinum bag (both boot-up words, the wait, the question, YES and NO),
+a mon that reads UNABLE!, teaching at four moves, the field-poison line's box,
+a department-store lift's floor labels, a pocket name in a line, and one TM in
+Crystal to confirm Gen 1-3 are untouched.
