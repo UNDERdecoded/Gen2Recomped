@@ -1231,6 +1231,12 @@ local MARKER_PATH = "rom-cache.complete"
 -- that version's ROM hash, so both a format bump and a swapped ROM invalidate.
 local function markerFor(version)
   local revision = version == "platinum" and "platinum-audio-ui-v15:" or ""
+  if version == "emerald" then revision = "emerald-map-popup-v2:" end
+  -- Include version-specific field encounters, sleep, swarm and rate tables.
+  -- Only these three caches need rebuilding; other markers remain stable.
+  if version == "gold" or version == "silver" or version == "crystal" then
+    revision = "gen2-field-encounters-v7:"
+  end
   return CACHE_FORMAT .. revision .. GameVersion.info(version).sha1
 end
 
@@ -1755,9 +1761,28 @@ end
 -- shadow it, because physfs searches the save directory before the source.
 -- Clear it out once, and only when a remnant is actually present so a clean
 -- install pays nothing.
+--
+-- PORTABLE ONLY, AND THAT IS THE WHOLE POINT OF THE TEST BELOW.  This used to
+-- run for ANY non-save root, which includes the player's chosen game-data
+-- folder -- and the launcher calls readyReport for every version the moment
+-- the folder changes.  So choosing a folder DELETED the installed game out of
+-- AppData, a gigabyte at a time, while the new folder was still empty: the
+-- next line of the same report then said "no cache for this version yet" and
+-- the player was told to re-import a game they already had.
+--
+-- It cannot be right for a chosen folder, because the launcher offers MOVE
+-- EXISTING DATA HERE for exactly this case (RomImporter:startDataMove).  A
+-- purge that runs first deletes the thing the move exists to move.  The
+-- shadowing the purge was there to prevent is handled where it belongs now --
+-- CacheFs prepends the live root's generated trees, so the stale copy loses
+-- the read path instead of being destroyed to get out of its way.
+--
+-- A portable install has no such action and no such choice: its root is a
+-- fact about where the copy lives, so clearing the duplicate is still right.
 local saveDirPurged = false
 local function purgeSaveDirCache()
   if saveDirPurged then return end
+  if not require("src.core.SaveData").isPortable() then return end
   saveDirPurged = true
   local saveDir = love.filesystem.getSaveDirectory()
   local function saveDirHas(rel)
@@ -1790,10 +1815,14 @@ end
 function RomImporter.readyReport(version)
   version = version or "red"
   local CacheFs = require("src.import.CacheFs")
-  if CacheFs.root() then
+  if CacheFs.rootReport().kind == "portable" then
     -- Portable: the cache lives in the game folder next to the executable
     -- (mounted onto the read path for a fused build).  Drop any stale
     -- save-directory copy that would otherwise shadow it at runtime.
+    --
+    -- ASKS rootReport, NOT root().  root() is non-nil for a chosen game-data
+    -- folder too, and purging on that one destroyed the installed game the
+    -- moment the setting changed -- see purgeSaveDirCache above.
     purgeSaveDirCache()
   end
   -- Red generated data in the physfs source (developer checkout / Python
@@ -5456,16 +5485,37 @@ function RomImporter:draw()
   local tabBarH = chip + 22 * s
 
   -- Self-updater banner state: computed up front so its band can be reserved
-  -- above the footer, then drawn after the content below.  Only the four
-  -- actionable states surface anything.
-  local upStatus, upLatest, upProgress
+  -- above the footer, then drawn after the content below.
+  --
+  -- WHICH STATES SURFACE is Check's answer, not a list kept here.  It was a
+  -- list, of four, and "error" was not in it -- so a host that cannot check at
+  -- all (the Switch, an Xbox UWP container: no HTTPS client reachable from Lua)
+  -- ended on "error" and the launcher drew NOTHING, which is why those two
+  -- looked like builds with no updater rather than builds with a disabled one.
+  -- Check.STATUS now marks the drawable states and Check.state() reports a
+  -- `notify` one for exactly that case; tools/auto_update_check.lua asserts the
+  -- two halves still agree.
+  --
+  -- upAdvice is "download" | "ota" | "package" | "releases" -- what the player
+  -- should DO on this host, decided in src/update/Check.lua so the banner only
+  -- has to pick the wording.
+  local upStatus, upLatest, upProgress, upAdvice, upCannotCheck
   if self.Check then
     local ok, st = pcall(self.Check.state)
     st = (ok and type(st) == "table") and st or nil
     local status = st and st.status
-    if status == "available" or status == "downloading"
-        or status == "ready" or status == "needs_full" then
+    local drawable = self.Check.STATUS or {}
+    if status and drawable[status] then
       upStatus, upLatest, upProgress = status, st.latest, st.progress
+      upAdvice = st.advice or "releases"
+      -- Resolved HERE and not in the banner below, so that the only places the
+      -- text `upStatus == "<state>"` appears in this file are the branch heads
+      -- of the banner's own dispatch.  tools/auto_update_check.lua derives the
+      -- set of states the banner draws by reading those heads, and a second
+      -- test of the same literal further in made that derivation pass while
+      -- the state was no longer drawn at all -- a vocabulary scan with two
+      -- sources for one token cannot grade membership.
+      upCannotCheck = (status == "notify")
     end
   end
   local bannerActive = upStatus ~= nil
@@ -5764,11 +5814,41 @@ function RomImporter:draw()
         height = rect.height, action = "download" }
       message(upLatest and ("Update v" .. upLatest .. " available")
         or Strings("An update is available"), rect.width)
-    elseif upStatus == "needs_full" then
-      local rect = actionButton("Open releases")
-      self.updateButton = { x = rect.x, y = rect.y, width = rect.width,
-        height = rect.height, action = "openurl" }
-      message("A new version needs a fresh download", rect.width)
+    elseif upStatus == "needs_full" or upStatus == "notify" then
+      -- ONE ROW, THREE TRUTHS, and it used to tell only the first of them.
+      --
+      -- "A new version needs a fresh download" + "Open releases" is right on a
+      -- desktop and on Android: the release carries no in-place payload (or its
+      -- minShell needs a newer native build), and the releases page is where
+      -- the installer is.  It is wrong on both consoles.  A Switch player
+      -- updates by running ports/switch/ota-launcher's gen2recomp.nro, which
+      -- checks GitHub and replaces both NROs itself; an Xbox player installs a
+      -- newer package.  And neither has a browser for the button to open --
+      -- love.system.openURL on those hosts does nothing at best.
+      --
+      -- So the two console advices draw NO button: a dead button is worse than
+      -- no button, because the player taps it and concludes the updater is
+      -- broken.  The sentence is the whole row there.
+      local label, action
+      if upAdvice == "ota" then
+        label = Strings("Update from the OTA launcher (gen2recomp.nro)")
+      elseif upAdvice == "package" then
+        label = Strings("Install the newer package to update")
+      elseif upCannotCheck then
+        label = Strings("Cannot check for updates on this build")
+        action = "openurl"
+      else
+        label = Strings("A new version needs a fresh download")
+        action = "openurl"
+      end
+      local reserve = 0
+      if action then
+        local rect = actionButton("Open releases")
+        self.updateButton = { x = rect.x, y = rect.y, width = rect.width,
+          height = rect.height, action = action }
+        reserve = rect.width
+      end
+      message(label, reserve)
     elseif upStatus == "ready" then
       local rect = actionButton("Restart to update")
       self.updateButton = { x = rect.x, y = rect.y, width = rect.width,
@@ -6497,7 +6577,11 @@ function RomImporter:mousepressed(x, y, button)
     elseif action == "restart" then
       HostShell.restart()
     elseif action == "openurl" and self.Check then
-      love.system.openURL(self.Check.releaseUrl())
+      -- pcall because this is reachable on hosts whose love.system.openURL is
+      -- a stub or absent; an unguarded call there takes the launcher down on a
+      -- tap.  The banner only offers the button where a page can be opened
+      -- (see upAdvice above), so this is the belt to that braces.
+      pcall(love.system.openURL, self.Check.releaseUrl())
     end
     return
   end
@@ -8346,6 +8430,23 @@ function RomImporter:_dataDirNote()
     lines[#lines + 1] = "Games are installed in the app's own folder "
       .. "(" .. tostring(report.path or "AppData on Windows") .. ")."
   end
+  -- STAYS ON THE PANEL, not just in the one-shot notice a tab change clears:
+  -- this is true for the rest of the session, and it is the one thing that
+  -- explains a folder the panel says is in use still reading like the old one.
+  if report.restart then
+    lines[#lines + 1] = "The previous folder is still on the read path. "
+      .. "Restart the app to finish applying this."
+  end
+  -- A DIFFERENT PROBLEM WITH THE SAME SYMPTOM, so it gets its own line.  On a
+  -- build where nothing can position a mount (an Android APK whose liblove.so
+  -- the FFI cannot reach), the chosen folder is written and read but cannot be
+  -- put AHEAD of the default one -- so a game imported before the change goes
+  -- on being the one that loads.  A restart does not help; moving it does.
+  if report.shadowed and report.kind ~= "save" then
+    lines[#lines + 1] = "A game already imported to the default folder can "
+      .. "still be the one that loads on this device. Use MOVE EXISTING DATA "
+      .. "HERE to be sure."
+  end
   -- WHAT MOVES AND WHAT DOES NOT, said here rather than discovered.
   --
   -- Everything that grows without bound follows the folder: the ROM cache, the
@@ -8713,14 +8814,28 @@ function RomImporter:setDataDir(path)
   -- and a confirmation that names a folder nothing will be written to is
   -- worse than no confirmation at all.
   local report = require("src.import.CacheFs").rootReport()
+  -- A FOLDER CHANGE THAT CANNOT FULLY TAKE EFFECT SAYS SO.  CacheFs takes the
+  -- previous home's mounts back off the read path so the change applies
+  -- without a restart; where it cannot (Android's mountDirectory bridge has no
+  -- unmount, and a mount something is streaming from will refuse), the old
+  -- home is still in front of the new one for the rest of the session.  A
+  -- setting that silently does nothing is the bug being fixed here; one that
+  -- says "restart to apply" is not.
+  local tail = report.restart
+    and "  Restart the app to finish applying it." or ""
+  if report.shadowed and report.kind ~= "save" then
+    tail = tail .. "  A game already in the default folder can still be the "
+      .. "one that loads; use MOVE EXISTING DATA HERE."
+  end
   if report.kind == "custom" then
     self.settingsNotice = Strings("Games will be installed in %s",
-      tostring(report.path))
+      tostring(report.path)) .. tail
   elseif path ~= nil and path ~= "" then
     self.settingsNotice = Strings("That folder was saved but cannot be used: %s",
       tostring(report.why or "unknown reason"))
   else
-    self.settingsNotice = Strings("Games will be installed in the default folder")
+    self.settingsNotice =
+      Strings("Games will be installed in the default folder") .. tail
   end
   return true
 end

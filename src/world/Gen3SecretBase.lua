@@ -69,7 +69,7 @@ end
 
 function Gen3SecretBase.mine(save)
   local held = save and save.gen3SecretBase
-  if type(held) == "table" and tonumber(held.id) then return held end
+  if type(held) == "table" and (tonumber(held.id) or 0) > 0 then return held end
   return nil
 end
 
@@ -77,6 +77,8 @@ end
 -- they made it -- which is where the room's exit has to put them back.
 function Gen3SecretBase.claim(save, baseId, map, x, y)
   if not save then return nil end
+  baseId = math.floor(tonumber(baseId) or 0)
+  if baseId < 1 then return nil end
   save.gen3SecretBase = { id = math.floor(tonumber(baseId) or 0),
                           map = map, x = x, y = y }
   return save.gen3SecretBase

@@ -13,6 +13,40 @@ function HostShell.envPrefix()
   return ""
 end
 
+-- CAN THIS HOST START A CHILD PROCESS AT ALL?
+--
+-- One definition, here, because io.popen is not a thing you may test by
+-- calling: on the Switch and inside a UWP app container it does not return nil
+-- the way a missing binary does -- it RAISES "'popen' not supported" from
+-- inside the call, so `io.popen and io.popen(cmd)` is not a guard and never
+-- was (see claude/console_platform_traps).  popen() below pcalls for that
+-- reason; this answers the question before the raise, so the console ports
+-- stop paying for a throw-and-catch on every curl probe, and so the self-
+-- updater can say WHY it has no transport instead of only that it has none.
+--
+-- The allow-list is the positive one src/core/Platform.lua has always
+-- published (Platform.canSpawnProcess now delegates here rather than keeping
+-- a second copy of it).
+local SPAWN_HOSTS = { ["OS X"] = true, Windows = true, Linux = true }
+
+function HostShell.canSpawnProcess()
+  local osName = love and love.system and love.system.getOS and love.system.getOS()
+  return SPAWN_HOSTS[osName] == true
+end
+
+-- The refusal is the mirror image and is deliberately NOT `not
+-- canSpawnProcess()`: a plain-Lua caller (the bundled save editor's catalog
+-- probe, a tools/ script) has no love.system to ask, and refusing there would
+-- take away a shell that works.  So we only refuse on a POSITIVE answer naming
+-- a host that is not one of the three desktops -- "NX", "UWP", "Android",
+-- "iOS", "Web".  Only trust a positive love.system answer: a headless stub
+-- reports "Unknown", which refuses, and nothing headless shells out.
+local function spawnRefused()
+  local osName = love and love.system and love.system.getOS and love.system.getOS()
+  if type(osName) ~= "string" or osName == "" then return false end
+  return SPAWN_HOSTS[osName] ~= true
+end
+
 -- Windows: every host tool we shell out to (curl for the update and mod-index
 -- fetches, the PowerShell ROM picker, the update downloader's `start /b`) is
 -- spawned through io.popen / os.execute, which run it under cmd.exe.  A
@@ -62,8 +96,14 @@ function HostShell.hideHostConsole()
   return consoleHidden
 end
 
--- Wraps io.popen with the AppImage env fix applied and lua errors swallowed
+-- Wraps io.popen with the AppImage env fix applied and lua errors swallowed.
+-- The pcall stays: it is what makes the Switch/UWP raise survivable, and a
+-- desktop with a broken shell still has to degrade rather than throw.  The
+-- early return in front of it is so the console ports never reach the raise
+-- in the first place -- and so a caller that wants to know can ask
+-- HostShell.canSpawnProcess() instead of inferring it from a nil pipe.
 function HostShell.popen(command, mode)
+  if spawnRefused() then return nil end
   local ok, pipe = pcall(io.popen, HostShell.envPrefix() .. command, mode or "r")
   if not ok or not pipe then return nil end
   return pipe
@@ -185,9 +225,54 @@ local function haveBridge()
   return love.system.getOS and love.system.getOS() == "Android"
 end
 
+-- WHICH TRANSPORT, AND WHY NOT.  The one answer; canFetch() is its boolean.
+--
+-- src/update/check_worker.lua used to carry its own byte-for-byte copy of
+-- haveCurl and its own bridge test, so "can this build fetch?" had three
+-- spellings (here, there, and Platform.canFetchRemote) and the self-updater
+-- was gated on a different one from the mod index.  The worker now calls this.
+--
+-- Returns transport, reason:
+--   "curl", nil                     a curl we actually ran --version on
+--   "bridge", nil                   love.system.httpDownload (Android, #597)
+--   nil, "<why>"                    no transport, in words a log can print
+--
+-- Memoized: the curl probe is a process spawn, and the answer cannot change
+-- inside one run.
+local transportKind, transportWhy, transportResolved
+
+function HostShell.transport()
+  if transportResolved then return transportKind, transportWhy end
+  transportResolved = true
+  if HostShell.haveCurl() then
+    transportKind = "curl"
+  elseif haveBridge() then
+    transportKind = "bridge"
+  else
+    local osName = (love and love.system and love.system.getOS
+      and love.system.getOS()) or "?"
+    if not HostShell.canSpawnProcess() then
+      -- The honest sentence for the Switch and for an Xbox UWP container: it
+      -- is not that the package is read-only, it is that there is no HTTPS
+      -- client reachable from Lua.  io.popen cannot start curl, and the JNI
+      -- download bridge only exists in our Android liblove.
+      transportWhy = ("no HTTPS client on %s: this host cannot spawn curl and "
+        .. "exports no download bridge"):format(osName)
+    else
+      transportWhy = ("curl is not installed or not on PATH on %s"):format(osName)
+    end
+  end
+  return transportKind, transportWhy
+end
+
 -- Is any transport available at all?  Callers gate on this, never on curl.
 function HostShell.canFetch()
-  return HostShell.haveCurl() or haveBridge()
+  return (HostShell.transport()) ~= nil
+end
+
+-- Tests swap love.system between cases.
+function HostShell._resetTransportForTests()
+  transportKind, transportWhy, transportResolved = nil, nil, nil
 end
 
 -- Download url to an absolute host path.  Returns true, or nil plus an error.

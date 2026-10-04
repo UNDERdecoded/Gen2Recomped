@@ -336,7 +336,26 @@ if PP then
       -- and its browser.  The PC is also the pass that made any of this
       -- reachable -- `Field_TileBehaviorToScript` had no Gen 4 arm, so
       -- CommonScript_PC was never started; see tools/gen4_tile_script_check.
-      local EXPECTED_HOLES = { common_scripts = 19 }
+      --
+      -- 19 -> 7 in pass 176, which took everything left that could be derived:
+      -- `givetrap` and `givesphere` onto a real 40-slot inventory, the trap
+      -- (630) and item (628) name banks, the contest backdrop names (388),
+      -- `countmailinmailbox` and `countuniquesealsinsealcase` onto
+      -- `g4_no_feature` (neither system exists here and zero is the true
+      -- answer), `opensealcapsuleeditor` to `pending`, `messagefromtrainertype`
+      -- onto the band's own bank with the entry off `ctx.npc`, and
+      -- `waitfortransition` to a no-op because the warp owns the teardown.
+      -- Graded in tools/gen4_underground_inventory_check.lua.
+      --
+      -- THE SEVEN THAT REMAIN ARE NOT A BACKLOG OF THE SAME KIND.  Five
+      -- (`0a5`, `0b3`, `1b3`, `205`, `2f6`) are unnamed in pokeplatinum too --
+      -- a bare `sub_0209ACF4(ctx->task)` with no identified subject, and
+      -- `2f6` gates on a Wi-Fi login this port has no path to. Lowering one
+      -- would mean guessing what it does, which is the mistake the header of
+      -- Gen4ScriptOps records the cost of. The other two (`showshardcost`,
+      -- `closeshardcostwindow`) need `sTeachableMoves`' four shard costs,
+      -- which are not in the cache and want their own extraction stage.
+      local EXPECTED_HOLES = { common_scripts = 7 }
       local offenders = {}
       for _, b in ipairs(Bands.BANDS) do
         local band, file = b[2], b[3]

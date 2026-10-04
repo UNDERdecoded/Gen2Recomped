@@ -46360,10 +46360,75 @@ RomExtractorGen3.FRLG_NAMING = {
   },
 }
 
-function RomExtractorGen3:extractFireRedNaming()
-  self:beginStage("Gen3 FireRed naming screen")
-  if (self.manifest or {}).frlgItemMenu == nil then return end
-  local N = RomExtractorGen3.FRLG_NAMING
+RomExtractorGen3.EMERALD_NAMING = {
+  GFX = 0xDD3838, BG_MAP = 0xDD4544,
+  KB_MAPS = { upper = 0xDD4620, lower = 0xDD46E0, symbols = 0xDD47A0 },
+  MENU_PAL = 0xDD3778, KB_PAL = 0x58BD78,
+  SPRITES = {
+    back = { 0xDD3C84, 40, 24, 4 }, ok = { 0xDD3E64, 40, 24, 4 },
+    frame = { 0xDD3A04, 40, 32, 4 },
+    swap_upper = { 0xDD4404, 32, 16, 1 }, swap_lower = { 0xDD4404, 32, 16, 2 },
+    swap_others = { 0xDD4404, 32, 16, 3 },
+    label_upper = { 0xDD4044, 24, 8, 4 }, label_lower = { 0xDD40E4, 24, 8, 4 },
+    label_others = { 0xDD4184, 24, 8, 4 }, cursor = { 0xDD4224, 16, 16, 5 },
+    cursor_filled = { 0xDD4364, 16, 16, 5 },
+    arrow = { 0xDD4504, 8, 8, 3 }, underscore = { 0xDD4524, 8, 8, 3 },
+  },
+}
+
+function RomExtractorGen3:extractEmeraldMapPopup()
+  local id = type(self.version) == "table" and self.version.id or self.version
+  if id ~= "emerald" then return end
+  self:beginStage("Gen3 Emerald map popup")
+  -- Retail US ROM; all five addresses occur in LoadMapNamePopUpWindowBg's
+  -- literal pools at D4C54..D4CA4. Each art row contains thirty 4bpp tiles.
+  local rom = self.rom
+  local record = {themes={},images={},underwaterImages={},colors={},underwaterColors={},
+    width=96,height=40,delay=31,slideSpeed=2,hold=121,hideFlag=0x4000,
+    source="ROM:map_name_popup.c tables 057C684/057DD04/057F384/057F444/057F464"}
+  for i=0,103 do record.themes[i]=rom:u8(0x57F464+i) end
+  local function compose(theme, paletteAt)
+    local colors=self:palette16(paletteAt)
+    local img=ImageWriter.blank(96,40)
+    local function tile(at,tid,dx,dy,transparent)
+      for y=0,7 do for x=0,7 do
+        local b=rom:u8(at+tid*32+y*4+math.floor(x/2))
+        local index=x%2==0 and b%16 or math.floor(b/16)
+        local c=colors[index+1]
+        if index~=0 or not transparent then img:setPixel(dx+x,dy+y,c[1]/255,c[2]/255,c[3]/255,1) end
+      end end
+    end
+    local edge=0x57DD04+theme*960
+    for x=0,11 do tile(edge,x,x*8,0,true);tile(edge,18+x,x*8,32,true) end
+    for y=0,2 do tile(edge,12+y*2,0,8+y*8,true);tile(edge,13+y*2,88,8+y*8,true) end
+    for y=0,2 do for x=0,9 do tile(0x57C684+theme*960,y*10+x,8+x*8,8+y*8,false) end end
+    return img,colors
+  end
+  for theme=0,5 do
+    local image,colors=compose(theme,0x57F384+theme*32)
+    local path=("map_popup/theme_%d.png"):format(theme)
+    self:saveImage(image,path);record.images[theme]="assets/generated/"..path
+    record.colors[theme]={ink=colors[3],shadow=colors[4]}
+    image,colors=compose(theme,0x57F444)
+    path=("map_popup/theme_%d_underwater.png"):format(theme)
+    self:saveImage(image,path);record.underwaterImages[theme]="assets/generated/"..path
+    record.underwaterColors[theme]={ink=colors[3],shadow=colors[4]}
+  end
+  local constants=self._constants or {};constants.gen3MapPopup=record
+  self._constants=constants;self:write("constants",constants)
+end
+
+function RomExtractorGen3:extractEmeraldNaming()
+  local id = type(self.version) == "table" and self.version.id or self.version
+  if id ~= "emerald" then return end
+  self:extractFireRedNaming(self.EMERALD_NAMING, "naming_emerald", "gen3EmeraldNaming")
+end
+
+function RomExtractorGen3:extractFireRedNaming(namingSpec, folder, constantKey)
+  self:beginStage(namingSpec and "Gen3 Emerald naming screen" or "Gen3 FireRed naming screen")
+  if not namingSpec and (self.manifest or {}).frlgItemMenu == nil then return end
+  local N = namingSpec or RomExtractorGen3.FRLG_NAMING
+  folder, constantKey = folder or "naming_frlg", constantKey or "gen3FRLGNaming"
   local rom = self.rom
   local pal = {}
   local function rows(at, first, count)
@@ -46378,8 +46443,8 @@ function RomExtractorGen3:extractFireRedNaming()
   if not ok then Logger.warn("gen3 frlg naming: tiles did not decompress") return end
   local images = {}
   local function save(key, img)
-    self:saveImage(img, "naming_frlg/" .. key .. ".png")
-    images[key] = "assets/generated/naming_frlg/" .. key .. ".png"
+    self:saveImage(img, folder .. "/" .. key .. ".png")
+    images[key] = "assets/generated/" .. folder .. "/" .. key .. ".png"
   end
   local function layer(key, at, keep0)
     local okM, map = RomExtractorGen3.lz77ok(rom, at)
@@ -46435,6 +46500,7 @@ function RomExtractorGen3:extractFireRedNaming()
   -- offsets are frame indices 0,3,0,4.
   local rivalIcon
   pcall(function()
+    if not N.RIVAL_GFX then return end
     local w, h, frames = 16, 32, 9
     local frameBytes = w * h / 2
     local raw = rom:bytes(N.RIVAL_GFX, frameBytes * frames)
@@ -46469,7 +46535,7 @@ function RomExtractorGen3:extractFireRedNaming()
   end)
   local function c(i) local t = pal[i] return { t[1], t[2], t[3] } end
   local constants = self._constants or {}
-  constants.gen3FRLGNaming = {
+  constants[constantKey] = {
     images = images,
     rivalIcon = rivalIcon,
     colors = {
@@ -46483,7 +46549,7 @@ function RomExtractorGen3:extractFireRedNaming()
   self:write("constants", constants)
   local n = 0
   for _ in pairs(images) do n = n + 1 end
-  Logger.info("Gen3 FireRed naming screen: %d images", n)
+  Logger.info("Gen3 naming screen (%s): %d images", folder, n)
 end
 
 -- ---------------------------------------------------------------------------
@@ -58197,6 +58263,8 @@ RomExtractorGen3.ASSET_STAGES = {
   "extractFireRedStorage",
   "extractFireRedPocketArt",
   "extractFireRedNaming",
+  "extractEmeraldNaming",
+  "extractEmeraldMapPopup",
   "extractFireRedFieldShadow",
   "extractFireRedFlyBird",
   "extractFireRedMapPreviews",

@@ -162,11 +162,45 @@ MapEdits.WARP_FIELDS = {
 -- height are in 32px BLOCKS and not cells or pixels.
 MapEdits.MAP_FIELDS = {
   gen4ModelEdits = 'table',
+  -- SINNOH'S WALKABLE HEIGHT FIELD, sparse "x,y" -> world units.
+  --
+  -- Gen 4 heights live in the BDHC block as PLANES -- a height is
+  -- evaluated, not stored -- so there is no array to patch and this is an
+  -- override layer `Gen4Ground:heightOverride` consults first. Measured
+  -- over all 666 chunks: 8,974 plates, 88.8% of them flat, heights running
+  -- -96 to 480 in steps of 8 (half a tile at `tileUnits = 16`), which is
+  -- where the editor's step and clamp come from.
+  --
+  -- IT MOVES WHAT STANDS ON THE GROUND, NOT THE DRAWN GROUND. BDHC is the
+  -- height field the sprites, the camera and the ledges read; the hill you
+  -- can see is NSBMD geometry and is a separate thing to edit. Saying so
+  -- here because a field called "height" that moved only half of what the
+  -- user means by height would be read as broken.
+  gen4HeightEdits = 'table',
+  -- WHICH PICTURE EACH CELL'S GROUND WEARS, sparse "x,y" -> texture name.
+  --
+  -- Sinnoh has no per-cell texture ids -- its ground is an irregular
+  -- triangulation, and 87.5% of its triangles straddle a cell boundary --
+  -- so a painted cell is drawn as a decal quad laid on the terrain rather
+  -- than by re-texturing any of the cartridge's geometry. See
+  -- `src/render/Gen4Decals.lua` for why that is the shape of the feature.
+  --
+  -- The value is a texture NAME, not a path: paths move when the cache is
+  -- re-extracted and a name does not, which is what keeps a painted map
+  -- painted across a re-import.
+  gen4TextureEdits = 'table',
   name = "string",
   width = "number", height = "number",
   tileset = "string",
   borderBlock = "number",
-  blocks = "table",
+  -- Both shapes: an array on Gen 1/2, a packed u16 string on Gen 3/4.
+  blocks = { "table", "string" },
+  -- THE GEN 4 GROUND'S OTHER HALF. One behaviour byte per cell; see
+  -- `writeTerrainCell` for the invariant that ties it to `blocks`. In the
+  -- allow-list so a map CREATED in this editor can be given a terrain
+  -- layer that survives being saved and loaded again -- without it the
+  -- layer is built, painted, and dropped on the next round trip.
+  behaviorCells = "string",
   music = "string",
   palette = "string",
   environment = "string",
@@ -370,11 +404,31 @@ end
 
 MapEdits.bucket = bucket
 
+-- A FIELD MAY HAVE MORE THAN ONE LEGAL TYPE, and exactly one does.
+--
+-- `blocks` is a flat ARRAY on Gen 1/2 and a packed STRING on Gen 3 and Gen 4 --
+-- `MapLoader.resolveBlocks` hands back whichever the cartridge uses, and
+-- `writePackedBlock` exists precisely because the string form is real. The
+-- allow-list said "table", so a Gen 4 map's grid was rejected by every path
+-- that went through here: silently, because a rejected field is dropped and
+-- the map simply arrives without its ground.
+--
+-- A list rather than a second field name, because it IS one field: the
+-- renderer reads `def.blocks` whichever shape it is in.
 local function typedCopy(patch, allowed)
   local out, rejected = {}, nil
+  local function permits(want, v)
+    if want == nil then return false end
+    if v == nil then return true end
+    if type(want) == "table" then
+      for _, one in ipairs(want) do if type(v) == one then return true end end
+      return false
+    end
+    return type(v) == want
+  end
   for k, v in pairs(patch or {}) do
     local want = allowed[k]
-    if want and (type(v) == want or v == nil) then
+    if permits(want, v) then
       out[k] = v
     else
       rejected = rejected or {}
@@ -1270,6 +1324,177 @@ function MapEdits.writePackedBlock(def,bx,by,id)
   return true
 end
 
+-- GEN 4 TERRAIN, WHICH IS TWO ARRAYS AND ONE FACT.
+--
+-- Sinnoh has no tileset to paint from -- the picture is an NSBMD mesh -- so
+-- "paint the terrain" means setting a cell's BEHAVIOUR: grass, water, a ledge,
+-- a cave floor. That byte lives in two places at once, and the cartridge's own
+-- relationship between them was measured over all 593 maps in the cache:
+--
+--     813,056 cells, 302 maps with both arrays, 0 violations of
+--
+--         blocks[i] == 255          <=>  the cell is blocked
+--         blocks[i] == behaviorCells[i]   otherwise
+--
+-- `behaviorCells` is the semantics -- `Map:behaviourAt` reads it, and so does
+-- every encounter, surf and ledge test. `blocks` is the picture and the
+-- collision: 255 is `Gen4Maps.BLOCKED_CELL`, and 55.6% of all cells are it.
+--
+-- AND THE COLLISION BIT IS NOT USED AT ALL. `Gen4Maps.COLLISION = 0x8000`
+-- exists, and across those 813,056 cells it is set exactly ZERO times: Sinnoh
+-- blocks a cell with metatile 255 and nothing else. A painter that toggled the
+-- bit would be a control with no effect, which is the worst kind -- so this
+-- writes 255 and leaves the bit alone.
+--
+-- ONE FUNCTION FOR BOTH ARRAYS, deliberately. Two setters that a caller has to
+-- remember to pair is exactly the recurring bug in this tree -- the same thing
+-- spelled in two places that never meet -- and here the two spellings would
+-- disagree about whether a cell is water. The behaviour is kept even on a
+-- blocked cell, because the cartridge keeps it: a blocked water cell is still
+-- water, and unblocking it must give the water back rather than bare ground.
+function MapEdits.writeTerrainCell(def, cx, cy, behaviour, blocked)
+  if type(def) ~= "table" or type(def.behaviorCells) ~= "string" then return false end
+  if type(def.blocks) ~= "string" then return false end
+  cx, cy = math.floor(cx or -1), math.floor(cy or -1)
+  if cx < 0 or cy < 0 or cx >= (def.width or 0) or cy >= (def.height or 0) then
+    return false
+  end
+  local i = cy * def.width + cx + 1
+  if #def.behaviorCells < i then return false end
+  -- BEHAVIOUR `nil` MEANS "LEAVE IT AS IT IS", and that is not a convenience.
+  --
+  -- Blocking a cell says nothing about what the cell is made of: a walled-off
+  -- stretch of river is still river, and the wall is why you cannot swim it,
+  -- not what it became. So "block this cell" arrives here with no behaviour,
+  -- and the honest answer is the byte already there -- NOT 0, which is
+  -- `NONE`/ordinary ground and would quietly flatten the terrain under every
+  -- wall the user drew.
+  --
+  -- Found by a planted fault: the first version resolved this with an `and`/`or`
+  -- chain, and `behaviour == nil and cur.b or math.floor(behaviour)` evaluates
+  -- the floor when BOTH are nil -- so blocking a cell nobody had painted yet
+  -- crashed the editor. An `and`/`or` chain is a conditional that still
+  -- evaluates the branch it did not take whenever the taken one is false or
+  -- nil, and `nil` is exactly the value being tested for here.
+  if behaviour == nil then
+    behaviour = def.behaviorCells:byte(i)
+    if behaviour == nil then return false end
+  else
+    behaviour = math.floor(tonumber(behaviour) or 0) % 256
+  end
+  -- The semantics first; it is the one with no second meaning.
+  def.behaviorCells = def.behaviorCells:sub(1, i - 1)
+                      .. string.char(behaviour)
+                      .. def.behaviorCells:sub(i + 1)
+  -- ...and the picture, derived rather than passed, so the invariant above is
+  -- not something a caller can get wrong.
+  local BLOCKED = 255
+  if not MapEdits.writePackedBlock(def, cx, cy, blocked and BLOCKED or behaviour) then
+    return false
+  end
+  def._behaviorArray = nil
+  return true
+end
+
+-- PAINT ONE CELL'S GROUND TEXTURE, or clear it.
+--
+-- Stored on the live def and in the patch store, like every other edit here.
+-- `nil` removes the override and the cell goes back to the cartridge's own
+-- ground -- a separate action from painting it with whatever it looks like
+-- now, which would pin it to today's extraction.
+function MapEdits.setCellTexture(store, game, mapId, cx, cy, texture, def)
+  local key = math.floor(cx) .. "," .. math.floor(cy)
+  if type(def) == "table" then
+    def.gen4TextureEdits = type(def.gen4TextureEdits) == "table"
+                           and def.gen4TextureEdits or {}
+    def.gen4TextureEdits[key] = texture
+    if next(def.gen4TextureEdits) == nil then def.gen4TextureEdits = nil end
+  end
+  local m = bucket(store, game, mapId, true)
+  if not m then return false end
+  m.map = m.map or {}
+  local live = (type(def) == "table" and def.gen4TextureEdits)
+               or m.map.gen4TextureEdits or {}
+  if type(def) ~= "table" then live[key] = texture end
+  m.map.gen4TextureEdits = next(live) ~= nil and live or nil
+  return true
+end
+
+function MapEdits.cellTextureAt(store, game, mapId, cx, cy)
+  local m = bucket(store, game, mapId, false)
+  local edits = m and m.map and m.map.gen4TextureEdits
+  if type(edits) ~= "table" then return nil end
+  local v = edits[math.floor(cx) .. "," .. math.floor(cy)]
+  return type(v) == "string" and v or nil
+end
+
+-- GIVE A MAP A GEN 4 TERRAIN LAYER IT DOES NOT HAVE.
+--
+-- Reported while creating a new Platinum map: TERRAIN says *"This Platinum map
+-- has no terrain layer yet"* and there is no way to make one. The message was
+-- true -- a map invented in this editor has no `map_layouts` entry behind it,
+-- so `MapLoader.resolveBlocks` has nothing to resolve `behaviorCells` FROM --
+-- and useless, because a report with no action is a dead end.
+--
+-- WHAT A BLANK SINNOH GROUND IS: behaviour 0 (`NONE`, ordinary walkable
+-- ground) in every cell, and nothing blocked. That is the honest starting
+-- point -- it is what the cartridge's own open ground is -- and it is not a
+-- guess at what the map maker wanted.
+--
+-- BOTH ARRAYS, through the one writer, so the layer starts out satisfying the
+-- invariant rather than being made to satisfy it later: `blocks[i] == 255`
+-- when blocked, `blocks[i] == behaviorCells[i]` otherwise.
+--
+-- REFUSES A MAP THAT ALREADY HAS ONE. Rebuilding would silently flatten every
+-- cell of a painted map back to bare ground, which is the single most
+-- destructive thing this function could do.
+function MapEdits.createTerrainLayer(store, game, mapId, def)
+  if type(def) ~= "table" then return false, "no map" end
+  local w = math.floor(tonumber(def.width) or 0)
+  local h = math.floor(tonumber(def.height) or 0)
+  if w <= 0 or h <= 0 then return false, "the map has no size" end
+  if type(def.behaviorCells) == "string" and #def.behaviorCells >= w * h
+     and type(def.blocks) == "string" then
+    return false, "this map already has a terrain layer"
+  end
+  local cells = w * h
+  -- A cap, because this allocates two strings sized by the map and a typo in a
+  -- width field should not be an out-of-memory. Sinnoh's largest map is well
+  -- inside it.
+  if cells > 1024 * 1024 then return false, "that map is too large" end
+  def.behaviorCells = string.rep(string.char(0), cells)
+  def.blocks = string.rep(string.char(0, 0), cells)
+
+  -- ...AND INTO THE STORE, when this is a map the editor created.
+  --
+  -- A created map IS its stored record -- `g.newMaps[id]` is the def -- so the
+  -- layer has to be written there too or it lasts until the next load. Written
+  -- directly rather than through `setMapField`, which refuses `blocks` on
+  -- purpose: that refusal is about patching a CARTRIDGE map's grid, and this
+  -- map has no cartridge behind it to go stale against.
+  local g = store and store.games and store.games[game]
+  local created = g and g.newMaps and g.newMaps[mapId]
+  if created then
+    created.behaviorCells = def.behaviorCells
+    created.blocks = def.blocks
+  end
+  return true, created and "created and stored" or "created"
+end
+
+-- Is this cell blocked, by the rule above rather than by a guess? Reads the
+-- PICTURE array, because that is where blocking is recorded.
+function MapEdits.terrainBlocked(def, cx, cy)
+  if type(def) ~= "table" or type(def.blocks) ~= "string" then return nil end
+  cx, cy = math.floor(cx or -1), math.floor(cy or -1)
+  if cx < 0 or cy < 0 or cx >= (def.width or 0) or cy >= (def.height or 0) then
+    return nil
+  end
+  local at = (cy * def.width + cx) * 2 + 1
+  local a, bb = def.blocks:byte(at, at + 1)
+  if not bb then return nil end
+  return (a + bb * 256) % 1024 == 255
+end
+
 function MapEdits.setBlock(store, game, mapId, bx, by, blockId)
   local m = bucket(store, game, mapId, true)
   if not m then return false end
@@ -1284,6 +1509,61 @@ function MapEdits.setBlock(store, game, mapId, bx, by, blockId)
   end
   if next(m.blocks) == nil then m.blocks = nil end
   return true
+end
+
+-- A GEN 4 TERRAIN EDIT, STORED AS THE TWO DECISIONS IT ACTUALLY IS.
+--
+-- `{ b = behaviour, k = blocked }` rather than two sparse maps, for the reason
+-- `writeTerrainCell` is one function: the pair is the edit. A cell whose
+-- behaviour was painted and whose blocking was then toggled is ONE entry, so
+-- there is no order in which the two can be applied that loses one of them.
+--
+-- Sparse and per-coordinate like `setBlock`, and for the same reason: a
+-- whole-array patch on a cartridge map goes stale the moment a re-import
+-- changes the map's size, and this tool's promise is that a re-import is
+-- non-destructive.
+function MapEdits.setTerrain(store, game, mapId, cx, cy, behaviour, blocked)
+  local m = bucket(store, game, mapId, true)
+  if not m then return false end
+  m.terrain = m.terrain or {}
+  local key = string.format("%d,%d", math.floor(cx), math.floor(cy))
+  if behaviour == nil and blocked == nil then
+    m.terrain[key] = nil
+  else
+    -- MERGED, not replaced. Painting a behaviour must not silently unblock the
+    -- cell, and toggling blocking must not reset the behaviour to ground --
+    -- either would be an edit the user did not ask for, applied to a cell they
+    -- were looking at.
+    local cur = m.terrain[key] or {}
+    -- WRITTEN OUT RATHER THAN AS AN `and`/`or` CHAIN. The chain form reads
+    -- well and is wrong here: `behaviour == nil and cur.b or <expr>` falls
+    -- through to `<expr>` whenever `cur.b` is itself nil, which is the normal
+    -- case for the first edit to a cell. The crash it caused is written up on
+    -- `writeTerrainCell`.
+    local b = cur.b
+    if behaviour ~= nil then b = math.floor(behaviour) % 256 end
+    local k = cur.k == true
+    if blocked ~= nil then k = (blocked and true or false) end
+    -- `b` stays nil for a cell that was only ever BLOCKED, and that nil is
+    -- load-bearing: it tells `applyToMap` to keep whatever behaviour the
+    -- freshly extracted map has there. Storing a number instead would pin the
+    -- cell to today's cartridge, so a later ROM revision that changed the
+    -- ground under a wall would be silently overridden by the wall.
+    m.terrain[key] = { b = b, k = k or nil }
+  end
+  if next(m.terrain) == nil then m.terrain = nil end
+  return true
+end
+
+-- The stored edit for a cell, or nil when this cell has not been painted --
+-- which is NOT the same as "ground, passable", and a caller that treats it as
+-- such would paint the whole map on the first click.
+function MapEdits.terrainAt(store, game, mapId, cx, cy)
+  local m = bucket(store, game, mapId, false)
+  if not m or not m.terrain then return nil end
+  local e = m.terrain[string.format("%d,%d", math.floor(cx), math.floor(cy))]
+  if not e then return nil end
+  return e.b, e.k == true
 end
 
 -- A field of the MAP RECORD itself on a cartridge map -- borderBlock, name,
@@ -1824,7 +2104,17 @@ function MapEdits.createMap(store, game, spec)
   clean.tileset = clean.tileset or "OVERWORLD"
   clean.borderBlock = clean.borderBlock or 0
   clean.name = clean.name or "New map"
-  if type(clean.blocks) ~= "table" or #clean.blocks ~= clean.width * clean.height then
+  -- THE GRID, IN WHICHEVER SHAPE THIS CARTRIDGE USES.
+  --
+  -- This normalisation assumed the Gen 1/2 array and rebuilt anything else as
+  -- flat fill -- so a Gen 4 map arriving with its packed u16 string had the
+  -- string thrown away and replaced by a table of border blocks. Silently: the
+  -- map was created, it just had no ground. A correctly sized packed string is
+  -- a valid grid and is left alone.
+  local packed = type(clean.blocks) == "string"
+                 and #clean.blocks == clean.width * clean.height * 2
+  if not packed and (type(clean.blocks) ~= "table"
+                     or #clean.blocks ~= clean.width * clean.height) then
     local fill = clean.borderBlock
     clean.blocks = {}
     for i = 1, clean.width * clean.height do clean.blocks[i] = fill end
@@ -2065,6 +2355,32 @@ function MapEdits.applyToMap(store, game, mapId, def, mintIds)
         applied = applied + 1
       else
         drop(string.format("block %s is outside this map", tostring(key)))
+      end
+    end
+  end
+
+  -- TERRAIN, after blocks and for the same reasons, but through the one writer
+  -- that keeps `behaviorCells` and `blocks` agreeing. Applied AFTER the block
+  -- patches on purpose: a Gen 4 block edit and a terrain edit on the same cell
+  -- are the same cell's picture, and the terrain store is the one that knows
+  -- what the behaviour under it was meant to be.
+  if next(m.terrain or {}) ~= nil then
+    for key, e in pairs(m.terrain) do
+      local cx, cy = key:match("^(-?%d+),(-?%d+)$")
+      cx, cy = tonumber(cx), tonumber(cy)
+      if not (cx and cy) then
+        drop(string.format("terrain %s is not a coordinate", tostring(key)))
+      elseif type(def.behaviorCells) ~= "string" then
+        -- A map with no behaviour array is not a Gen 4 map, or is a cache
+        -- imported before the terrain stage. Reported rather than ignored:
+        -- silently dropping a painted map is how the `mat` field was lost.
+        drop(string.format("terrain %s: this map has no behaviour array to "
+                           .. "paint (re-import with the terrain stage)",
+                           tostring(key)))
+      elseif MapEdits.writeTerrainCell(def, cx, cy, e.b, e.k == true) then
+        applied = applied + 1
+      else
+        drop(string.format("terrain %s is outside this map", tostring(key)))
       end
     end
   end
@@ -2354,6 +2670,7 @@ function MapEdits.count(store, game, mapId)
   for _ in pairs(m.removed or {}) do n = n + 1 end
   for _ in pairs(m.warps or {}) do n = n + 1 end
   for _ in pairs(m.blocks or {}) do n = n + 1 end
+  for _ in pairs(m.terrain or {}) do n = n + 1 end
   for _ in pairs(m.map or {}) do n = n + 1 end
   for _ in pairs(m.removedWarps or {}) do n = n + 1 end
   for _ in pairs(m.events or {}) do n = n + 1 end

@@ -1,0 +1,4 @@
+*.png
+*.log
+result.txt
+constants.lua

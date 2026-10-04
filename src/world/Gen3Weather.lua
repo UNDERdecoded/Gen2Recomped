@@ -120,6 +120,22 @@ local LOOKS = {
   SHADE = { veil = { 0.05, 0.05, 0.12, 0.26 }, count = 0 },
   DROUGHT = { veil = { 1.00, 0.86, 0.55, 0.20 }, count = 0 },
 
+  -- SINNOH'S UNLIT CAVE, and the one look in this table that no Gen 3 weather
+  -- uses.  `OVERWORLD_WEATHER_DARK_FLASH` is a WEATHER in Platinum rather than
+  -- a palette row -- Flash clears it by making the map's weather CLEAR
+  -- (field_map_change.c) -- so the darkness belongs beside the rain and not in
+  -- PaletteFX, and this is the row it wears.
+  --
+  -- THE ALPHA IS THIS PORT'S, and that is worth saying plainly: the cartridge
+  -- states that the place is dark and that Flash lights it, and it draws that
+  -- with a hardware window the DS has and this renderer does not. 0.72 is dark
+  -- enough that Wayward Cave reads as unlit at a glance and light enough that
+  -- the player's own sprite and the tile in front of them stay visible, which
+  -- is the property that matters -- a cave you cannot navigate at all is a
+  -- worse lie than one that is too bright.  SHADE above is 0.26 and is the
+  -- covered-not-dark case; this is four rows darker on purpose.
+  DARKNESS = { veil = { 0.01, 0.01, 0.04, 0.72 }, count = 0 },
+
   ABNORMAL = {
     veil = { 0.20, 0.16, 0.26, 0.32 },
     count = 14, vx = -0.55, vy = 0, size = { 40, 9 }, wrap = "blow",

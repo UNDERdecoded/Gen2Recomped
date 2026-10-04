@@ -493,7 +493,8 @@ function Commands.g4_buffer(ctx, slot, kind, value)
     -- A NAME THAT IS JUST A MESSAGE BANK KEYED BY THE OPERAND, which several
     -- of these are: item names with articles (393), contest accessories (386)
     -- and their with-article twin (387), Underground goods (626) and theirs
-    -- (627).  One kind rather than five near-identical branches, because the
+    -- (627), Underground items (628) and traps (630), and contest backdrops
+    -- (388).  One kind rather than eight near-identical branches, because the
     -- only thing that differs is the number.
     --
     -- THE BANK IDS ARE THE LINE NUMBER IN generated/text_banks.txt MINUS ONE,
@@ -647,6 +648,64 @@ end
 
 -- PlayerAvatar_GetFacingDir: 0 up, 1 down, 2 left, 3 right on the cartridge.
 local FACING = { up = 0, down = 1, left = 2, right = 3 }
+
+-- `scrcmd 20D` -- AND THIS ONE WAS A HANG, not a missing feature.
+--
+--     static BOOL ScrCmd_20D(ScriptContext *ctx) {
+--         u8 v0 = ScriptContext_ReadByte(ctx);      -- a MODE, 0..9
+--         u16 *v1 = ScriptContext_GetVarPointer(ctx);
+--         *v1 = ov6_02243004(ctx->fieldSystem, v0);
+--     }
+--
+-- `ov6_02243004` is a ten-mode switch over one overlay-6 field effect. Eight
+-- of the ten start or stop something and fall through to `return 0`. Exactly
+-- TWO -- mode 1 and mode 6 -- are completion polls:
+--
+--     case 1: if (ov6_0223E708(Unk)) { ov6_0223E700(Unk); return 1; }
+--             else { return 0; }
+--     case 6: if (ov6_0223FCF4(Unk) == 6) { ov6_0223FCE0(Unk); return 1; }
+--             else { return 0; }
+--
+-- and both of those read a staged animation's state counter (`unk_00 == 11`,
+-- `unk_00 == 6`) -- "has the effect finished yet".
+--
+-- The scripts poll them in a BACKWARDS JUMP:
+--
+--     20d 0x1 0x800C  /  comparevartovalue 0x800C 0x0  /  gotoif 1 -18
+--     20d 0x6 0x800C  /  comparevartovalue 0x800C 0x0  /  gotoif 1 -18
+--
+-- so `g4_no_feature`, which writes 0, meant "not finished" forever and the
+-- script span on the spot. Two infinite loops, one in band 236 and one in band
+-- 237, on the Spear Pillar path.
+--
+-- This is the sharpest version of pass 180's lesson. The stub was RIGHT for
+-- eight of the ten modes -- the cartridge writes 0 there too -- which is
+-- exactly why nobody looked: the row behaved correctly almost everywhere. An
+-- effect this port never starts has already finished, so the only non-hanging
+-- answer for the two polls is 1, and it is also the true one.
+local OV6_EFFECT_POLL_MODES = { [1] = true, [6] = true }
+local OV6_EFFECT_MAX_MODE = 9
+
+function Commands.g4_field_effect(ctx, mode, destVar)
+  -- the mode is `ScriptContext_ReadByte`, a literal, NOT a var -- so it is not
+  -- put through `valueOf`, which would read 0..9 as something else entirely if
+  -- a mod ever pointed it at a var id.
+  mode = math.floor(tonumber(mode) or -1)
+  if mode < 0 or mode > OV6_EFFECT_MAX_MODE then
+    -- the cartridge's `default:` is `GF_ASSERT(FALSE)`, so there is no
+    -- behaviour to copy; it writes 0 and so do we, loudly.
+    require("src.core.Logger").warn(
+      "gen4 script: scrcmd 20D mode %d is outside the cartridge's 0-%d "
+      .. "switch, which asserts there -- answering 0", mode,
+      OV6_EFFECT_MAX_MODE)
+    if destVar then setVar(ctx.save, destVar, 0) end
+    setResult(ctx, 0)
+    return
+  end
+  local answer = OV6_EFFECT_POLL_MODES[mode] and 1 or 0
+  if destVar then setVar(ctx.save, destVar, answer) end
+  setResult(ctx, answer)
+end
 
 function Commands.g4_player_dir(ctx, destVar)
   local player = ctx.overworld and ctx.overworld.player
@@ -909,6 +968,34 @@ function Commands.g4_message_var(ctx, id, bank)
   return Commands.g4_message(ctx, getVar(ctx.save, id))
 end
 
+-- `messagefromtrainertype` -- NO OPERANDS AT ALL, and the entry is the object's
+-- own trainer type:
+--
+--     u8 trainerType = MapObject_GetTrainerType(*mapObj);
+--     ScriptMessage_Show(ctx, ctx->loader, trainerType, TRUE, NULL);
+--
+-- `*mapObj` is SCRIPT_MANAGER_TARGET_OBJECT, which is `ctx.npc` here, and a
+-- Gen 4 object record carries `trainerType` (`Gen4Events` reads it at offset 6
+-- of the event row).  The bank came in with the row, resolved at lowering time
+-- from the member the block lives in, exactly as `message`'s does.
+--
+-- WHAT IT IS FOR: a line selected by what KIND of trainer is speaking, so one
+-- script serves a whole class of object.  A missing type is 0, which is the
+-- bank's first entry -- the same thing the cartridge would print for an object
+-- whose type is 0, so there is nothing to invent.
+function Commands.g4_message_trainer_type(ctx, bank)
+  local def = ctx.npc and ctx.npc.def
+  local entry = math.floor(tonumber(def and def.trainerType) or 0)
+  if not def and not Gen4Commands._saidTrainerType then
+    Gen4Commands._saidTrainerType = true
+    Logger.warn("gen4 script: `messagefromtrainertype` ran with no target "
+                .. "object, so the line is the bank's entry 0 rather than the "
+                .. "speaker's own")
+  end
+  if bank then return Commands.g4_message_bank(ctx, bank, entry) end
+  return Commands.g4_message(ctx, entry)
+end
+
 -- `showyesnomenu <destVar>`: the engine's `ask` leaves its answer on the
 -- context, and the cartridge's scripts read it out of a var.
 --
@@ -1053,6 +1140,48 @@ local function objectById(ctx, id)
   end
   return best
 end
+
+-- THE SAME FOUR NUMBERS, INVERTED. `scrcmd 18C` hands a direction to an
+-- object, and the mapping from the cartridge's number to this engine's facing
+-- name is the table above read the other way -- derived once, not typed twice,
+-- because two spellings of one mapping in two places is this port's recurring
+-- bug in its smallest form.
+local FACE_NAME = {}
+for name, n in pairs(FACING) do FACE_NAME[n] = name end
+
+-- `scrcmd 18C` -- "turn this object to face <dir>", and it was filed as "a
+-- Spear Pillar effect" because that is where most of its fifteen sites are.
+--
+--     static BOOL ScrCmd_18C(ScriptContext *ctx) {
+--         u16 localID = ScriptContext_GetVar(ctx);
+--         u16 dir     = ScriptContext_GetVar(ctx);
+--         MapObject *mapObj = MapObjMan_LocalMapObjByIndex(..., localID);
+--         ov5_021ECDFC(mapObj, dir);
+--     }
+--
+-- and `ov5_021ECDFC` is `MapObject_TryFace(mapObj, dir)` plus a shadow nudge
+-- for an object mid-jump. `ScrCmd_FaceTargetObject` and `trainer_encounter.c`
+-- call the very same function, so this port already does this -- under another
+-- name, for another command. Naming a command after the map it appears on is
+-- how a bread-and-butter object operation ends up looking like an
+-- unimplementable set-piece.
+--
+-- Fifteen sites across three bands: local ids 5, 3 and 0xFF (LOCALID_PLAYER,
+-- which `objectById` already resolves), directions 0 through 3 -- all four.
+function Commands.g4_face_dir(ctx, localID, dir)
+  local e = objectById(ctx, localID)
+  if not e then return end
+  local n = math.floor(tonumber(valueOf(ctx, dir)) or -1)
+  local name = FACE_NAME[n]
+  if not name then
+    require("src.core.Logger").warn(
+      "gen4 script: scrcmd 18C asked for direction %d, which is not one of "
+      .. "DIR_NORTH/SOUTH/WEST/EAST (0-3) -- the object is left as it was", n)
+    return
+  end
+  e.facing = name
+end
+
 
 -- `addobject` / `removeobject`, AND THE FLAG THAT MAKES THEM STICK.
 --
@@ -1350,6 +1479,118 @@ Commands.g4_wait_move = noop
 function Commands.g4_play_sound(ctx, soundId)
   Commands.play_sound(ctx, valueOf(ctx, soundId))
 end
+
+-- `loaddooranimation` / `playdooropenanimation` / `playdoorcloseanimation` /
+-- `unloadanimation` -- one handler, because they are one feature with a slot
+-- id in common and splitting them would be four places that have to agree
+-- about what a tag means.
+--
+-- THE TAG IS THE STATE, and it lives on the overworld rather than the save:
+-- `MapPropOneShotAnimationManager` is a field-system object, so a tag means
+-- nothing after a map change, and persisting it into the save would make a
+-- door in Jubilife answer for one in Hearthome. 52 loads against 142 plays
+-- means a tag outlives the script that set it, so it cannot be script-local
+-- either.
+--
+-- `mapX`/`mapZ` are read as raw halfwords by the cartridge and `tileX`/`tileZ`
+-- through `ScriptContext_GetVar`, so only the latter two go through `valueOf`.
+-- Three of the 52 load sites pass a var for a tile, which is why that matters.
+-- `showmoney` / `hidemoney` / `updatemoneydisplay` -- one handler, one piece
+-- of state, for the reason `g4_door_anim` is one handler: three commands with
+-- a single window between them.
+--
+-- THE PANEL IS REBUILT RATHER THAN REFRESHED, and that is the cartridge's
+-- shape rather than a shortcut. `FieldMenu_PrintMoneyToWindow` formats the
+-- balance into bank 543 entry 19 and prints it; the number is spliced into a
+-- cartridge string, so "refresh" means "format it again". Keeping a live
+-- reference to `save.money` and formatting at draw time would be faster and
+-- would also mean the window changed the instant a script took the money,
+-- BEFORE the `updatemoneydisplay` the cartridge puts there -- which is the
+-- beat the Game Corner's counter depends on.
+--
+-- On the overworld rather than the save, like the door tags:
+-- `SCRIPT_MANAGER_MONEY_WINDOW` is a field-system slot, so a window does not
+-- survive a map change and a saved one would come back on a map that never
+-- opened it.
+function Commands.g4_money_window(ctx, which, left, top)
+  local ow = ctx.overworld
+  if not ow then return end
+  if which == "hide" then
+    ow.gen4MoneyWindow = nil
+    return
+  end
+  local MW = require("src.ui.Gen4MoneyWindow")
+  if which == "show" then
+    ow.gen4MoneyWindow = MW.panelFor(ctx.game, valueOf(ctx, left),
+                                     valueOf(ctx, top))
+    return
+  end
+  -- "update": the same window, where it already is. A refresh with no window
+  -- open is not an error on the cartridge either -- the pointer is simply
+  -- stale -- so it is a no-op rather than a warning.
+  local open = ow.gen4MoneyWindow
+  if not open then return end
+  ow.gen4MoneyWindow = MW.panelFor(ctx.game, open.left, open.top)
+end
+
+function Commands.g4_door_anim(ctx, which, a, b, cc, d, e)
+  local ow = ctx.overworld
+  if not ow then return end
+  local Doors = require("src.world.Gen4Doors")
+
+  if which == "load" then
+    local tag = math.floor(tonumber(e) or 0)
+    local mapX = math.floor(tonumber(a) or 0)
+    local mapZ = math.floor(tonumber(b) or 0)
+    local tileX = math.floor(valueOf(ctx, cc) or 0)
+    local tileZ = math.floor(valueOf(ctx, d) or 0)
+    ow.gen4Doors = ow.gen4Doors or {}
+    ow.gen4DoorProps = ow.gen4DoorProps or {}
+    local model, why, info = Doors.modelAt(ctx.game and ctx.game.data,
+                                           ow.map and ow.map.def,
+                                           mapX, mapZ, tileX, tileZ)
+    -- A MISS IS REMEMBERED AS A MISS, not left absent: `open` has to be able
+    -- to tell "this tag was loaded and the model could not be identified"
+    -- from "this tag was never loaded", because the first still gets the
+    -- hinged sound and the second is a script fault worth hearing about.
+    ow.gen4Doors[tag] = model or false
+    -- THE PROP, BY IDENTITY, so the animation can find what to pose.  Kept
+    -- beside the name rather than replacing it: the name is what chooses the
+    -- sound, and a prop the search could not place still gets one.
+    ow.gen4DoorProps[tag] = info and info.object or nil
+    if not model then Doors.note(why) end
+    return
+  end
+
+  if which == "unload" then
+    local tag = math.floor(tonumber(a) or 0)
+    if ow.gen4Doors then ow.gen4Doors[tag] = nil end
+    if ow.gen4DoorProps then ow.gen4DoorProps[tag] = nil end
+    -- `unloadanimation` releases the slot on the cartridge too, and it is why
+    -- a finished one-shot is kept until now rather than cleared when it
+    -- reaches its last frame: that frame is the pose the door holds.
+    require("src.world.Gen4PropOneShot").stop(ow, tag)
+    return
+  end
+
+  local tag = math.floor(tonumber(a) or 0)
+  local model = ow.gen4Doors and ow.gen4Doors[tag]
+  if model == nil then
+    -- Not loaded on this map. The cartridge would have asserted; here the
+    -- door still makes a sound, because a silent door is the fault being
+    -- fixed and the hinged creak is what the cartridge plays for every model
+    -- it does not name specially.
+    Doors.note(("tag %d was never loaded on this map"):format(tag))
+    model = false
+  end
+  Doors.play(ctx.game, model or "unknown-door", which)
+  -- ...AND THE ANIMATION, on the same tag.  `start` refuses a tag whose
+  -- animation cannot be resolved, which is what keeps `waitforanimation` from
+  -- hanging on a door this port could not identify.
+  require("src.world.Gen4PropOneShot").start(
+    ow, tag, model or nil, which,
+    ow.gen4DoorProps and ow.gen4DoorProps[tag] or nil)
+end
 function Commands.g4_play_cry(ctx, species)
   -- Platinum plays immediately. Its second operand is unused, whereas the
   -- shared Gen1/2 command queues a cry for a later text box.
@@ -1371,7 +1612,27 @@ end
 function Commands.g4_stop_sound(ctx,id)
   require('src.core.Sound').stop(valueOf(ctx,id))
 end
-Commands.g4_wait_animation = noop
+-- `waitforanimation <tag>` -- and the tag was being thrown away.
+--
+-- Two things were wrong and the second hid the first.  The handler was `noop`,
+-- and there were TWO lowerings for the command -- an early one onto
+-- `g4_wait_animation` and a later one onto `g4_noop` that silently overwrote
+-- it -- so the census filed all 48 sites under "the door animation's wait"
+-- and this handler was never reached at all.
+--
+-- The wait is per-TAG, matching `ScrCmd_WaitForAnimation`'s byte operand, and
+-- a tag that is not running is finished -- so this steps over rather than
+-- stalling whenever the door could not be identified or its animation not
+-- resolved.  That is what the old no-op did by accident and this does on
+-- purpose.
+function Commands.g4_wait_animation(ctx, tag)
+  local ow = ctx.overworld
+  if not ow then return end
+  local OneShot = require("src.world.Gen4PropOneShot")
+  if OneShot.finished(ow, tag) then return end
+  ctx.runner.waitingCheck = function() return OneShot.finished(ow, tag) end
+  ctx.runner:yield()
+end
 Commands.g4_wait_fade = noop
 Commands.g4_return_to_field = noop
 Commands.g4_menu_close = noop
@@ -1697,13 +1958,28 @@ function Commands.g4_noop(_, what)
   end
 end
 
+-- AND IT RETURNS THE HANDLER IT INSTALLED, which is not a convenience.
+--
+-- There are two spellings of this call in the file -- the bare
+-- `pending("g4_use_rock_climb", ...)` and the assigned
+-- `Commands.g4_open_hall_of_fame = pending("g4_open_hall_of_fame", ...)` --
+-- and while this returned nothing, the assigned form **overwrote the handler
+-- it had just installed with nil**.  Both of them: the PC's Hall of Fame row
+-- (pass 173) and the seal capsule editor reached no handler at all, which is
+-- not a stepped-over row, it is an unknown verb.
+--
+-- The assigned form reads better at a call site that wants to say what the row
+-- is, so the fix is to make it work rather than to ban it.  One idea, two
+-- spellings, one of them silently broken -- the bug this port keeps finding.
 local function pending(verb, what)
-  Commands[verb] = function()
+  local fn = function()
     if said[verb] then return end
     said[verb] = true
     Logger.info("gen4 script: '%s' is decoded and lowered but %s is not built "
                 .. "yet -- the row is stepped over", verb, what)
   end
+  Commands[verb] = fn
+  return fn
 end
 
 -- ---------------------------------------------------------------------------
@@ -3411,13 +3687,22 @@ end
 -- `.owned` whole rather than per-region, so the honest answer is the count of
 -- what has actually been seen, which is right whenever the player has not yet
 -- left Sinnoh -- and that is every script that asks.
-local function dexCount(ctx,field,regional,completion)
+-- THE SET, SORTED, because two callers want different things from it: the
+-- counts below want its size and the News Press wants to pick one member.
+-- Walking the dex twice in two places is how the same question gets two
+-- answers, so the walk lives here once.
+--
+-- Sorted rather than in `pairs` order so a pick made from it is reproducible
+-- for a given RNG value -- an unordered pick would name a different species
+-- run to run on identical input, and a diagnostic nobody can reproduce is not
+-- a diagnostic.
+local function dexIDs(ctx,field,regional)
   local dex=(ctx.save and ctx.save.pokedex) or {}
-  local ids={}
+  local seen={}
   for key,flag in pairs(dex[field] or {}) do
     if flag==true or (type(flag)=='number' and flag>0) then
       local id=speciesNumber({species=key})
-      if id>=1 and id<=493 then ids[id]=true end
+      if id>=1 and id<=493 then seen[id]=true end
     end
   end
   local region={}
@@ -3425,11 +3710,21 @@ local function dexCount(ctx,field,regional,completion)
     local orders=ctx.game and ctx.game.data and ctx.game.data.gen4_dex
     for _,id in ipairs(orders and orders.orders and orders.orders.sinnoh or {}) do region[tonumber(id) or id]=true end
   end
+  local out={}
+  for id in pairs(seen) do
+    if not regional or region[id] then out[#out+1]=id end
+  end
+  table.sort(out)
+  return out
+end
+
+local function dexCount(ctx,field,regional,completion)
+  local ids=dexIDs(ctx,field,regional)
   local excluded={ [151]=true,[249]=true,[250]=true,[251]=true,[385]=true,[386]=true,
     [489]=true,[490]=true,[491]=true,[492]=true,[493]=true }
   local count=0
-  for id in pairs(ids) do
-    if (not regional or region[id]) and (not completion or regional or not excluded[id]) then count=count+1 end
+  for _,id in ipairs(ids) do
+    if (not completion or regional or not excluded[id]) then count=count+1 end
   end
   return count
 end
@@ -3441,6 +3736,60 @@ function Commands.g4_dex_complete(ctx,destVar,national)
   local count=dexCount(ctx,national and 'owned' or 'seen',not national,true)
   setVar(ctx.save,destVar,count>=(national and 482 or 210) and 1 or 0)
 end
+-- THE POKEMON NEWS PRESS at Solaceon.  Three rows: pick a species, remember a
+-- deadline, read the deadline back.
+--
+-- `getrandomseenspecies` was on `g4_no_feature`, which writes 0 -- and 0 is
+-- SPECIES_NONE, so the press named a blank.  This is the goods-PC fault in a
+-- different room: the feature it was declining is PRESENT (the port keeps
+-- `save.pokedex.seen`, and `g4_dex_seen_count` has filtered it by the Sinnoh
+-- dex since before this pass), so the zero was not an absence, it was a wrong
+-- answer the script then printed.
+--
+-- THE DEFAULT IS THE PART TO COPY CAREFULLY.  pret writes it BEFORE the loop:
+--
+--     u16 seenSpeciesCount = Pokedex_CountSeen_Local(pokedex);
+--     u16 random = LCRNG_Next() % seenSpeciesCount;
+--     *destVar = SPECIES_PIKACHU;
+--     for (u16 species = 1, i = 0; species <= NATIONAL_DEX_COUNT; species++) {
+--         if (Pokedex_HasSeenSpecies(pokedex, species) == TRUE
+--             && Pokemon_SinnohDexNumber(species) != FALSE) { ... }
+--     }
+--
+-- so a dex with nothing eligible in it still answers a real Pokemon.  Note
+-- that the cartridge counts with one predicate and iterates with another: if
+-- those ever disagree the loop falls through and Pikachu is what comes out.
+-- Answering Pikachu rather than nothing is therefore the cartridge's
+-- behaviour on the empty case AND on the inconsistent case, and it is the one
+-- species id this command can produce that the player has not necessarily
+-- seen.
+local NEWS_PRESS_DEFAULT_SPECIES = 25 -- SPECIES_PIKACHU
+
+function Commands.g4_news_press_species(ctx,destVar)
+  local ids=dexIDs(ctx,'seen',true)
+  local pick=NEWS_PRESS_DEFAULT_SPECIES
+  if #ids>0 then
+    local r=(love and love.math and love.math.random) or math.random
+    pick=ids[r(1,#ids)]
+  end
+  setVar(ctx.save,destVar,pick)
+  setResult(ctx,pick)
+end
+
+function Commands.g4_news_press_deadline(ctx,mode,operand)
+  local Daily=require("src.script.Gen4Daily")
+  if mode=='set' then
+    local days=math.floor(valueOf(ctx,operand) or 0)
+    if days<0 then days=0 elseif days>0xFFFF then days=0xFFFF end
+    setVar(ctx.save,Daily.NEWS_PRESS_DEADLINE_VAR,days)
+    return
+  end
+  -- `get`: the deadline is a system var like any other, so there is no
+  -- separate store to read -- which is why a save written before this pass
+  -- answers zero rather than nil.
+  setVar(ctx.save,operand,Daily.deadline(ctx.save))
+end
+
 function Commands.g4_dex_caught_count(ctx,destVar,national)
   setVar(ctx.save,destVar,dexCount(ctx,'owned',not national,false))
 end
@@ -3754,6 +4103,73 @@ Commands.g4_open_hall_of_fame = pending("g4_open_hall_of_fame",
   "the PC's Hall of Fame browser is not built; save.hallOfFame holds the "
   .. "records and src/ui/HallOfFame.lua is the induction ceremony, not a viewer")
 
+-- `givetrap <trapID> <unused> <destVar>` and
+-- `givesphere <type> <size> <destVar>` -- the Underground inventory, and the
+-- only two of its eight `scripts_common.s` holes that write real state.
+--
+-- ONE HANDLER, because they are one operation on two 40-slot inventories:
+-- `Underground_TryAddTrap` and `_TryAddSphere` differ in which array they
+-- search for their zero sentinel and whether a second operand rides along.
+-- Writing them twice would be the recurring bug in its favourite shape, and
+-- the cap is the part that must not be spelled twice.
+--
+-- THE DESTINATION VAR IS THE POINT.  Both cartridge handlers end
+-- `*destVar = ...TryAdd...(...)`, and every call site follows with a `gotoif`
+-- on it -- so the var is not a courtesy, it is the branch.  `valueOf` on the
+-- value operands because the cartridge reads both with
+-- `ScriptContext_GetVar`: var-or-literal.
+function Commands.g4_underground_give(ctx, kind, a, b, destVar)
+  local UG = require("src.world.Gen4Underground")
+  local ok
+  if kind == "sphere" then
+    ok = UG.addSphere(ctx.save, valueOf(ctx, a), valueOf(ctx, b))
+  elseif kind == "goodPC" then
+    -- `sendgoodtopc`'s middle operand is `u16 unused` too, so this reads the
+    -- same shape as a trap and drops the same operand.
+    ok = UG.addGoodToPC(ctx.save, valueOf(ctx, a))
+  else
+    -- `givetrap`'s middle operand is `u16 unused` in pokeplatinum; it is read
+    -- off the stream and dropped, which is why it is accepted and ignored here
+    -- rather than left out of the row.
+    ok = UG.addTrap(ctx.save, valueOf(ctx, a))
+  end
+  local answer = ok and 1 or 0
+  if destVar then setVar(ctx.save, destVar, answer) end
+  setResult(ctx, answer)
+end
+
+-- `checkhasroomforgoodsinpc` -- the QUESTION half of the goods PC, and
+-- sixteen of that inventory's seventeen script uses.
+--
+-- It was on `g4_no_feature`, which writes 0 -- and 0 here means "no room", so
+-- every one of those sixteen told the player their PC was full on a save where
+-- it holds nothing. An absent feature answering "no" is honest; a present one
+-- answering "no" is not.
+--
+-- `Underground_IsRoomForGoodsInPC(underground, unused)` returns TRUE on the
+-- first free slot and never looks at its second argument. Both operands are
+-- carried here for the family's sake and both are dropped, which is what the
+-- cartridge does with them.
+function Commands.g4_underground_room(ctx, kind, _a, _b, destVar)
+  local UG = require("src.world.Gen4Underground")
+  local room = (kind == "goodsPC") and UG.roomInGoodsPC(ctx.save) or false
+  local answer = room and 1 or 0
+  if destVar then setVar(ctx.save, destVar, answer) end
+  setResult(ctx, answer)
+end
+
+-- `opensealcapsuleeditor` -- `CapsuleMenu_StartFieldTask`, the screen where a
+-- Ball Capsule's seals are arranged.
+--
+-- `pending` rather than a no-op, for the reason the Hall of Fame row above
+-- states: a no-op claims there is nothing to do, and that is false -- there is a
+-- whole screen to build.  Unlike the Hall of Fame there is no data waiting
+-- either, which is why `countuniquesealsinsealcase` lowers onto
+-- `g4_no_feature` rather than counting something.
+Commands.g4_open_seal_capsule_editor = pending("g4_open_seal_capsule_editor",
+  "the Ball Capsule seal editor (this port has no seal state at all, which is "
+  .. "also why the seal count answers zero)")
+
 -- `savetvsegment*` -- ONE ROW FOR BOTH, which is the point of the change that
 -- introduced it.  There is no TV broadcast system in this engine at all, so a
 -- segment is recorded nowhere and nothing would read it if it were. That is
@@ -3786,8 +4202,22 @@ function Commands.g4_save_tv_segment(_ctx, _segment, _operand) end
 -- now, so the getter consults it first -- otherwise Defog would clear the fog
 -- and the very next `getoverworldweather` would report fog, which is the
 -- asymmetry that comment was worried about.
+-- ...AND IT HAS TO CLEAR WHAT IS ON SCREEN, not only what the getter reports.
+--
+-- `applyMapWeather` recomputes the substitution from the persistent field-move
+-- flag on every map load, which is the cartridge's own arrangement -- the flag
+-- is what makes a lit cave stay lit through the next doorway. But `0C3` and
+-- `0C4` run on the map the player is standing on, right after
+-- `DoFlashFunc SET_ACTIVE`, and the whole point is that the cave lights up
+-- NOW. Setting only the getter's field would have left the darkness drawn
+-- until the next load: Flash would have reported success, said its line, and
+-- changed nothing the player could see -- which is the fault this pass exists
+-- to fix, reintroduced one step further along.
 function Commands.g4_clear_overworld_weather(ctx)
-  if ctx.save then ctx.save.gen4WeatherCleared = true end
+  if ctx.save then
+    ctx.save.gen4WeatherCleared = true
+    ctx.save.gen4WeatherActive = 0
+  end
   if ctx.overworld then ctx.overworld.gen4WeatherCleared = true end
 end
 
@@ -4135,29 +4565,40 @@ end
 
 -- `getoverworldweather <destVar>` -- `FieldOverworldState_GetWeather`.
 --
--- THE PORT KEEPS NO SAVED GEN 4 WEATHER: `applyMapWeather` is Gen 3 only, and
--- inventing a `save.gen4Weather` that one command writes and nothing else
--- reads would be worse than answering from the map. The map's own `weather`
--- byte is extracted on 592 of 593 rows and is what the cartridge seeds the
--- saved value FROM on every load, so on the map you are standing on the two
--- agree. Route 213's two sites are asking about the beach they are on.
+-- THE SAVED VALUE, which this used to say the port did not have.
 --
--- ...AND SOMETHING WRITES ONE NOW, so the paragraph above needed its other
--- half. `g4_clear_overworld_weather` (opcodes 0x0C3 and 0x0C4) is what Flash
--- and Defog call, and it sets `gen4WeatherCleared`. Without this arm, Defog
--- would blow the fog away and the very next `getoverworldweather` would report
--- fog -- the exact asymmetry the reasoning above was guarding against, arrived
--- at from the other direction.
+-- The paragraph here used to read "the port keeps no saved Gen 4 weather:
+-- applyMapWeather is Gen 3 only, and inventing a `save.gen4Weather` that one
+-- command writes and nothing else reads would be worse than answering from
+-- the map". That was true and it was the right call at the time. It stopped
+-- being true when the field weather was wired up: `applyMapWeather` now runs
+-- the cartridge's own three steps on every Gen 4 map load -- resolve a
+-- calendar id against the date, substitute CLEAR for a weather a field move
+-- has turned off, store both -- so there is a saved value and **it is the one
+-- the renderer is drawing**.
 --
--- OVERWORLD_WEATHER_CLEAR IS 0, which is also the answer for the 592 maps that
+-- Reading the map def instead would be the recurring bug exactly: the script
+-- and the picture answering the same question from two places. Route 213 is
+-- the case that proves it -- its header carries 33, a CALENDAR id, and
+-- `getoverworldweather` has to answer today's resolved weather rather than
+-- 33, which is not a weather at all.
+--
+-- The map def stays as the fallback for a save that has not loaded a map yet,
+-- and `gen4WeatherCleared` stays readable because a script may have set it
+-- between loads.
+--
+-- OVERWORLD_WEATHER_CLEAR IS 0, which is also the answer for the 460 maps that
 -- carry no weather at all, so "cleared" and "never had any" are deliberately
 -- the same value -- as they are on the cartridge, where one enum holds both.
 function Commands.g4_overworld_weather(ctx, destVar)
   local ow = ctx.overworld
-  local cleared = (ctx.save and ctx.save.gen4WeatherCleared)
-                  or (ow and ow.gen4WeatherCleared)
-  local def = ow and ow.map and ow.map.def
-  local value = cleared and 0 or (tonumber(def and def.weather) or 0)
+  local value = ctx.save and tonumber(ctx.save.gen4WeatherActive)
+  if value == nil then
+    local cleared = (ctx.save and ctx.save.gen4WeatherCleared)
+                    or (ow and ow.gen4WeatherCleared)
+    local def = ow and ow.map and ow.map.def
+    value = cleared and 0 or (tonumber(def and def.weather) or 0)
+  end
   if destVar then setVar(ctx.save, destVar, value) end
   setResult(ctx, value)
 end
@@ -4663,6 +5104,172 @@ pending("g4_common", "the common-script archive")
 --
 -- Once per opcode rather than once for the wrapper, which is the whole
 -- point; `said` would have hushed the second distinct opcode for ever.
+-- ---------------------------------------------------------------------------
+-- THE PERSISTED MAP FEATURES -- one slot, eleven tenants
+-- ---------------------------------------------------------------------------
+--
+-- See src/world/Gen4DynamicMapFeatures.lua for the whole argument: the
+-- cartridge keeps `{ int id; u8 buffer[32]; }` in the misc save block, one
+-- feature at a time, and the nine `initpersistedmapfeaturesfor*` commands are
+-- nine constructors over that one union rather than nine systems.
+--
+-- ONE HANDLER FOR ALL NINE, which is the point of lowering them together.
+-- The twelve rows had been twelve separately-argued no-ops, and the census
+-- read them as twelve subjects -- "nine separate implementations" was its
+-- phrase. They are one slot, and a single command with a feature id keeps it
+-- that way: a tenth feature is a row in the table below, not a tenth handler
+-- that might clear the slot differently.
+--
+-- The collision resolvers are NOT here and the gyms do not yet block; the
+-- module's `COLLISION_IS_A_HEIGHT_PROBLEM` block has the measurement that
+-- says why (in short: the puzzle is height arithmetic, treating 0x59 as
+-- blocked leaves Pastoria with 57 reachable cells and no button in reach, and
+-- the gates alone change nothing). What lands here is the STATE -- which is
+-- what the save has to carry, what the Great Marsh tram's six branch sites
+-- read, and what a resolver will need to exist before it can be written.
+function Commands.g4_map_feature_init(ctx, which, operand)
+  local M = require("src.world.Gen4DynamicMapFeatures")
+  local save = ctx.save
+  if which == "pastoria" then return M.initForPastoriaGym(save) end
+  if which == "canalave" then return M.initForCanalaveGym(save) end
+  if which == "hearthome" then return M.initForHearthomeGym(save) end
+  if which == "veilstone" then return M.initForVeilstoneGym(save) end
+  if which == "eterna" then return M.initForEternaGym(save) end
+  if which == "villa" then return M.initForVilla(save) end
+  if which == "distortion" then return M.initForDistortionWorld(save) end
+  if which == "platformlift" then return M.initForPlatformLift(save) end
+  if which == "greatmarsh" then return M.initForGreatMarsh(save) end
+  if which == "sunyshore" then
+    -- THE ONLY ONE WITH AN OPERAND, and it needs the player's z as well:
+    -- `PersistedMapFeatures_InitForSunyshoreGym(fieldSystem, roomID)` reads
+    -- `fieldSystem->location->z` and forces the rotation back to 0 when it
+    -- equals the room's entrance z.  The room id is a raw byte operand (the
+    -- opcode spec is "b"), so it does not go through `valueOf`.
+    local player = ctx.overworld and ctx.overworld.player
+    local _, pz = toMatrix(ctx, player and player.cellX, player and player.cellY)
+    return M.initForSunyshoreGym(save, math.floor(tonumber(operand) or 0), pz)
+  end
+  Logger.warn("gen4 script: no persisted map feature named '%s'", tostring(which))
+end
+
+-- `PastoriaGym_PressButton`: the button is whichever of the three models is
+-- under the player's own tile, and nothing happens when there is none.
+function Commands.g4_pastoria_button(ctx)
+  local M = require("src.world.Gen4DynamicMapFeatures")
+  local ow = ctx.overworld
+  local player = ow and ow.player
+  if not player then return end
+  -- The search wants the matrix cell and the tile within it, which is the
+  -- same decomposition `g4_door_anim` hands `Gen4Doors.modelAt` -- except
+  -- that there the script supplies them and here the player's own position
+  -- is the hitbox, so they are derived.
+  local x, z = toMatrix(ctx, player.cellX, player.cellY)
+  local mapX, tileX = math.floor(x / 32), x % 32
+  local mapZ, tileZ = math.floor(z / 32), z % 32
+  local model, why = M.propModelAt(ctx.game and ctx.game.data,
+                                   ow.map and ow.map.def,
+                                   mapX, mapZ, tileX, tileZ,
+                                   M.PASTORIA_BUTTON_MODELS)
+  if not model then
+    -- The cartridge's miss is silent: `FieldSystem_FindCollidingLoadedMapProp`
+    -- answers false and `PressButton` returns.  Logged once because a script
+    -- that pressed nothing and a port that could not find the prop look the
+    -- same from the water level.
+    Logger.debug("gen4 script: no Pastoria button under the player (%s)",
+                 tostring(why))
+    return
+  end
+  if not M.pressPastoriaButton(ctx.save, model) then
+    Logger.warn("gen4 script: the Pastoria button at matrix %d,%d tile %d,%d "
+                .. "is model %s, which is not one of the three -- the slot "
+                .. "holds feature %d",
+                mapX, mapZ, tileX, tileZ, tostring(model), M.id(ctx.save))
+    return
+  end
+  Logger.debug("gen4 script: Pastoria water level -> %s",
+               tostring(M.pastoriaWaterHeight(ctx.save)))
+end
+
+-- `SunyshoreGym_PressButton(fieldSystem, buttonType)` turns the gears, which
+-- is the rotation state the room's collision regions are indexed by.  The
+-- rotation IS persisted state, so it advances here even though nothing turns
+-- on screen yet -- a button that changed nothing would make the room's state
+-- depend on which pass you are playing.
+function Commands.g4_sunyshore_gear_button(ctx, buttonType)
+  local M = require("src.world.Gen4DynamicMapFeatures")
+  local b = M.buffer(ctx.save, M.SUNYSHORE_GYM)
+  if not b then
+    Logger.debug("gen4 script: a Sunyshore gear button ran while the feature "
+                 .. "slot holds %d", M.id(ctx.save))
+    return
+  end
+  b.pressedButton = math.floor(tonumber(buttonType) or 0)
+end
+
+-- `advanceeternagymclock`.  `ScrCmd_AdvanceEternaGymClock` DISCARDS
+-- `EternaGym_AdvanceClockState`'s result and always returns TRUE, so the
+-- refusal at DEFEATED_GYM_LEADER is invisible to the script -- which is why
+-- nothing here writes a var the script could branch on, and why the cap is
+-- still reproduced: it is what stops the state walking past the end of
+-- `sEternaGymClockTimes`.
+function Commands.g4_eterna_clock_advance(ctx)
+  local M = require("src.world.Gen4DynamicMapFeatures")
+  local advanced, state = M.advanceEternaClock(ctx.save)
+  if not advanced then return end
+  -- `SetEternaGymFlowerClockState` mirrors it into
+  -- VAR_ETERNA_GYM_FLOWER_CLOCK_STATE, which is how
+  -- `EternaGym_DynamicMapFeaturesInit` poses the hands on a later entry.  No
+  -- script in the cartridge reads the var -- all 1,124 members of scr_seq
+  -- were scanned for it and none mentions it -- so this is for the engine's
+  -- own benefit, and it is written anyway because the buffer is cleared every
+  -- time another feature takes the slot and the var is not.
+  setVar(ctx.save, M.ETERNA_CLOCK_VAR, state)
+end
+
+-- THE GREAT MARSH TRAM -- three commands, none of which had a lowering, and
+-- one of which is the reason this pass happened.
+--
+-- `checkgreatmarshtramlocation <location>, <destVar>` writes
+-- GREAT_MARSH_TRAM_AT_LOCATION (**5**) or NOT_AT_LOCATION (**6**), and every
+-- one of its six sites is followed by `comparevartovalue <destVar>, 6` and a
+-- `callif` onto `movegreatmarshtram`.  Five and six, not one and zero: a
+-- boolean here is wrong at all six sites in the same direction and the tram
+-- is never summoned.
+function Commands.g4_marsh_tram(ctx, which, a, b)
+  local M = require("src.world.Gen4DynamicMapFeatures")
+  if which == "init" then
+    return M.initForGreatMarsh(ctx.save)
+  end
+  if which == "check" then
+    -- the location is a raw halfword and the destination a var pointer
+    local location = math.floor(tonumber(a) or 0)
+    setVar(ctx.save, b, M.checkTramLocation(ctx.save, location))
+    return
+  end
+  if which == "move" then
+    -- ...and here it is the other way round: `ScrCmd_MoveGreatMarshTram`
+    -- reads the destination through `ScriptContext_GetVarPointer` and the
+    -- movement type as a raw halfword.  The script sets 0x8005 or 0x8006
+    -- immediately before, so reading the operand as a literal would move the
+    -- tram to area 0x8005.
+    local destination = math.floor(valueOf(ctx, a) or 0)
+    local moved = M.moveTramToLocation(ctx.save, destination)
+    if moved == nil then
+      Logger.debug("gen4 script: the tram cannot move; the feature slot holds %d",
+                   M.id(ctx.save))
+      return
+    end
+    -- The ride itself is a FieldTask that walks the tram prop along the
+    -- track and carries the player with it.  Not built: the state is what
+    -- the six branch sites read, and the warp the script does afterwards is
+    -- what actually moves the player between areas.
+    Logger.debug("gen4 script: Great Marsh tram -> area %d (movement %s)",
+                 moved, tostring(b))
+    return
+  end
+  Logger.warn("gen4 script: no Great Marsh tram verb '%s'", tostring(which))
+end
+
 local saidUnlowered = {}
 function Commands.g4_unimplemented(_, name, note)
   local key = tostring(name)

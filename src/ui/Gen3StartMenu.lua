@@ -154,6 +154,7 @@ local function isFireRed(game)
 end
 
 function Gen3StartMenu.new(game, opts)
+  if game.overworld then game.overworld.mapNameSign=nil end
   opts = opts or {}
   local self = setmetatable({}, Gen3StartMenu)
   self.game = game

@@ -295,6 +295,43 @@ end
 -- The same, for an archive named by its cartridge path rather than by a key
 -- in PATH.  The graphics stage walks a table of paths, so keying every one of
 -- them in PATH would be a second list to keep in step with the first.
+-- MAP PROP ANIMATION CLAIMS -- which `bm_anime` members a prop model owns.
+--
+-- `/arc/bm_anime_list.narc` has one 20-byte record per `build_model.narc`
+-- model, each naming up to four `bm_anime` members.  pokeplatinum's own
+-- map-format graph is the authority:
+--
+--     area_build    --> bm_anime_list : mapPropModelIDs
+--     bm_anime_list --> bm_anime      : animeArchiveIDs
+--
+-- Returns { [bm_anime member] = { prop model ids... } }, read once.
+-- `Gen4PropAnim` owns the record layout -- including that the documented
+-- `animeArchiveIDs` offset is wrong by one and that `hasAnimations` is 0xFF
+-- rather than 0 for a prop with none -- so this does not re-spell it.
+function RomExtractorGen4:propAnimationClaims()
+  if self._propClaims ~= nil then
+    if self._propClaims == false then return nil end
+    return self._propClaims
+  end
+  local PropAnim = require("src.import.Gen4PropAnim")
+  local list = self:archiveAt("/arc/bm_anime_list.narc")
+  if not list then self._propClaims = false; return nil end
+  local claims, props = {}, 0
+  for member = 0, list.count - 1 do
+    local entry = PropAnim.parse(list:get(member))
+    if entry and entry.has then
+      props = props + 1
+      for _, id in ipairs(entry.ids) do
+        claims[id] = claims[id] or {}
+        claims[id][#claims[id] + 1] = member
+      end
+    end
+  end
+  self._propClaimCount = props
+  self._propClaims = claims
+  return claims
+end
+
 function RomExtractorGen4:archiveAt(path)
   self._archives = self._archives or {}
   if self._archives[path] then return self._archives[path] end
@@ -5772,7 +5809,7 @@ local MODEL_ARCHIVES = {
   -- with no models beside it is exactly the case a reader that assumed models
   -- would get wrong quietly.
   { path = "/arc/bm_anime.narc", out = "field",
-    label = "field animations" },
+    label = "field animations", claims = true },
   -- THE TITLE SEQUENCE'S OWN 3D, which is the whole of what the title screen
   -- is missing.  `title_gira` is member 1: Giratina, four shapes and 996
   -- triangles, carrying its OWN textures, with a 121-frame joint animation
@@ -6048,12 +6085,43 @@ function RomExtractorGen4:extractModels()
             --
             -- `bm_anime` is earlier in MODEL_ARCHIVES than `build_model`, so
             -- its patterns are already read when this runs.  That ordering is
-            -- load-bearing and is why the list is checked rather than assumed
+            -- load-bearing -- now for `props` as well as for `pattern`, since
+            -- the claim is recorded at the end of the `bm_anime` entry's own
+            -- pass -- and is why the list is checked rather than assumed
             -- present.
+            --
+            -- AND THE MATCH IS BY CLAIM AS WELL AS BY NAME, which is the half
+            -- that was missing.  `record.name == model.name` is this port's
+            -- own join; the cartridge's is `bm_anime_list`, and they disagree
+            -- for 44 of the 112 animated prop models.  Ten of those 44 are
+            -- BTP0, so their flipbook frames were never decoded at all and no
+            -- renderer could have played them -- `ele_door1` (animations 51
+            -- and 52) among them, which is the one door of the twenty that
+            -- moves by texture rather than by joint.
+            --
+            -- Measured against this cartridge before widening it: all ten
+            -- claim-only BTP0 models carry EVERY one of their animation's
+            -- texture names in their own TEX0 -- 15 model/animation pairs, 0
+            -- misses -- so this is the same decode with a longer list of
+            -- names and not a second archive to find.
+            --
+            -- BY INDEX, because that is what a claim names.  `bm_anime_list`
+            -- has one record per `build_model` MODEL and `Gen4Ground` reads a
+            -- claim as `set.models[index + 1]`, so the index this model is
+            -- about to take -- `#set.models`, before the append below -- is
+            -- the number the claim can be compared against.  Verified: all
+            -- 590 members of `build_model.narc` hold exactly one model, so
+            -- member and index coincide for this archive; using the index is
+            -- what keeps that a coincidence rather than a dependency.
             local fieldSet = out.sets.field
+            local modelIndex = #set.models
             if textures and fieldSet and model.name then
               for _, record in ipairs(fieldSet.animations or {}) do
-                if record.name == model.name and record.pattern then
+                local claimed = false
+                for _, owner in ipairs(record.props or {}) do
+                  if owner == modelIndex then claimed = true end
+                end
+                if record.pattern and (record.name == model.name or claimed) then
                   local names = record.pattern.textures or {}
                   local palettes = record.pattern.palettes or {}
                   packed.patternImages = packed.patternImages or {}
@@ -6133,8 +6201,59 @@ function RomExtractorGen4:extractModels()
     -- move, are 200 KB and are written.
     local wearable = {}
     for _, model in ipairs(set.models) do wearable[#model.nodes] = true end
+
+    -- ...AND A SECOND WAY TO BE WORN, for the one archive where counting
+    -- nodes cannot work at all.
+    --
+    -- The rule above asks "is there a model HERE with this many nodes", and
+    -- `bm_anime` has no models, so `wearable` is empty and all 98 of its
+    -- joint animations were skipped.  That was correct by the rule and wrong
+    -- about the cartridge: a map prop animation is claimed by a THIRD file.
+    --
+    -- So for an archive that declares `claims`, the question is answered
+    -- EXACTLY instead of by node count -- is this member claimed by a prop
+    -- model? -- and the claiming models are recorded on the animation, which
+    -- is the join a renderer needs and the node count never gave.
+    --
+    -- THE SIZE COST IS REAL AND IS PAID, and the old comment's number was
+    -- right.  Measured: 32 BCA0 animations, 90 joints, 13,093 joint-frames
+    -- (the longest 600 frames) pack to 613.7 KB, which as escaped Lua string
+    -- literals is the ~2.2 MB it warned about.
+    --
+    -- And the claim test buys NO size saving here: all 98 members are
+    -- claimed by the 112 animated props, so nothing in this archive is
+    -- orphaned and the filter changes `unworn` from 98-of-98 to none.  What
+    -- changed is not the size trade but the reason for taking it: the old
+    -- decision was right while nothing could apply a pose, and the doors
+    -- alone are 48 script sites now that the join exists.
+    --
+    -- Said plainly so a later pass weighing cache size knows this is a
+    -- deliberate 2.2 MB and not an oversight.
+    local claims = entry.claims and self:propAnimationClaims() or nil
+
+    -- THE CLAIM IS RECORDED ON EVERY ANIMATION, not only the joint ones.
+    --
+    -- `pending` holds BCA0 records alone, so writing `props` inside that
+    -- loop recorded the claiming props for 32 of the archive's 98
+    -- animations and left the 43 BTA0 and 23 BTP0 without them.  Those are
+    -- claimed too -- `elevator_door` is BTP0, and it is the one door that
+    -- could move through the texture path -- so a consumer asking "which
+    -- prop owns this flipbook" found nothing.
+    --
+    -- Found by a planted fault that did NOT fail: dropping the `tracks`
+    -- requirement from the renderer's one-shot set changed nothing, because
+    -- every record carrying `props` also carried `tracks` -- which is only
+    -- true because `props` was never written anywhere else.
+    if claims then
+      for _, record in ipairs(set.animations) do
+        local owners = record.member and claims[record.member]
+        if owners then record.props = owners end
+      end
+    end
+
     for _, item in ipairs(pending) do
-      if wearable[item.anim.nodes] then
+      local claimedBy = claims and claims[item.record.member]
+      if wearable[item.anim.nodes] or claimedBy then
         local tracks = Gen4Anim.jointMatrices(item.bytes, item.anim)
         item.record.tracks = {}
         for _, joint in ipairs(tracks or {}) do

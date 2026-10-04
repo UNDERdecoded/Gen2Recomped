@@ -164,6 +164,7 @@ function DayCare.deposit(save, which, mon)
   local breed = DayCare.store(save, true)
   breed[which] = { mon = mon, steps = 0, depositLevel = mon.level }
   breed.steps = 0
+  breed.stepsToEgg = nil
   DayCare.syncFlags(save)
   return breed[which]
 end
@@ -174,7 +175,16 @@ function DayCare.withdraw(save, which)
   local slot = breed[which]
   breed[which] = nil
   breed.steps = 0
-  breed.egg = nil -- RetrieveBreedmon clears the pending EGG with the pair
+  if require("src.core.GameVersion").get() == "emerald" then
+    -- TakeSelectedPokemonMonFromDaycareShiftSlots retains the pending egg
+    -- and moves the second resident, including its earned steps, into slot 1.
+    if which == DayCare.MAN and breed[DayCare.LADY] then
+      breed[DayCare.MAN] = breed[DayCare.LADY]
+      breed[DayCare.LADY] = nil
+    end
+  else
+    breed.egg = nil -- RetrieveBreedmon clears the pending EGG with the pair
+  end
   DayCare.syncFlags(save)
   return slot
 end
@@ -282,22 +292,30 @@ function DayCare.pair(data, save)
   return a, b
 end
 
--- DayCareMonCompatibilityText tiers, 0 = no interest .. 4 = brimming with
--- energy.  wBreedingCompatibility is the ROM's name for this value; the
+-- DayCareMonCompatibilityText tiers: 0 = no interest, 1..4 breedable,
+-- 5 = brimming with energy (the matching-DV rejection). The
 -- ordering is the ROM's too -- a pair that shares an OT ID is the *worst*
 -- match, and two of the same species from different trainers the best.
 function DayCare.compatibility(data, save)
   local a, b = DayCare.pair(data, save)
   if not a then return 0 end
+  local version = require("src.core.GameVersion").get()
+  if (version == "gold" or version == "silver" or version == "crystal") and a.dvs and b.dvs
+      and a.dvs.defense ~= nil and b.dvs.defense ~= nil
+      and a.dvs.special ~= nil and b.dvs.special ~= nil
+      and a.dvs.defense == b.dvs.defense
+      and a.dvs.special % 8 == b.dvs.special % 8 then
+    return 5 -- Compatibility $ff; InitBreeding rejects matching DVs.
+  end
   local sameOT = (a.otId or 0) == (b.otId or 0)
   local sameSpecies = a.species == b.species
   if sameSpecies then return sameOT and 2 or 4 end
   return sameOT and 1 or 3
 end
 
--- Odds of an EGG per 256-step tick, one per compatibility tier.
-DayCare.EGG_ODDS = { [0] = 0, [1] = 64 / 256, [2] = 128 / 256,
-                     [3] = 191 / 256, [4] = 255 / 256 }
+-- DayCareStep compares a random byte with 10, 30, 40 or 80.
+DayCare.EGG_ODDS = { [0] = 0, [1] = 10 / 256, [2] = 40 / 256,
+                     [3] = 30 / 256, [4] = 80 / 256, [5] = 0 }
 
 -- ---------------------------------------------------------------------------
 -- HOENN'S OWN ANSWER TO THE SAME QUESTION (GetDaycareCompatibilityScore).
@@ -388,7 +406,15 @@ function DayCare.eggSpecies(data, save)
   elseif a.species ~= DITTO then
     if DayCare.gender(data, a) == "female" then mother = a end
   end
-  return baseForm(data, mother.species)
+  local species = baseForm(data, mother.species)
+  if require("src.core.GameVersion").get()=="emerald" then
+    species=require("src.pokemon.Gen3Breeding").species(species,a,b)
+  end
+  if species == "SPECIES_029" and require("src.pokemon.Gen2Breeding").isVanilla() then
+    -- InitBreeding: random byte < 128 gives Nidoran F, otherwise Nidoran M.
+    return math.random(0,255) < 128 and species or "SPECIES_032"
+  end
+  return species
 end
 
 -- ---------------------------------------------------------------------------
@@ -399,8 +425,9 @@ end
 -- import -- reached the engine and stopped there.  Breeding inherited
 -- nothing, which is most of what breeding is for.
 --
--- THE CARTRIDGE'S ORDER, and it matters, because a move added to an egg that
--- already knows four pushes the FIRST one out:
+-- A move added to an egg that already knows four pushes the FIRST one out.
+-- Original Gold/Silver/Crystal visit the father's slots once and test each
+-- move against these categories; other datasets keep the category passes:
 --
 --   1. THE FATHER'S EGG MOVES -- any move he knows that appears in the baby
 --      species' egg-move list.
@@ -458,6 +485,20 @@ function DayCare.inheritMoves(data, save, egg)
     given = given + 1
   end
 
+  if require("src.pokemon.Gen2Breeding").isVanilla() then
+    -- InitEggMoves visits the father's slots once, in their stored order.
+    local allowed = {}
+    for _, id in ipairs(baby.eggMoves or {}) do allowed[id]=true end
+    for _, id in ipairs(baby.tmhm or {}) do allowed[id]=true end
+    local byLevel = {}
+    for _, id in ipairs(baby.level1Moves or {}) do byLevel[id]=true end
+    for _, entry in ipairs(baby.learnset or {}) do byLevel[entry.move]=true end
+    for _, move in ipairs(father.moves or {}) do
+      if allowed[move.id] or (byLevel[move.id] and knowsMove(mother,move.id)) then give(move.id) end
+    end
+    return given
+  end
+
   local isEggMove = {}
   for _, id in ipairs(baby.eggMoves or {}) do isEggMove[id] = true end
   for _, mv in ipairs(father.moves or {}) do
@@ -507,24 +548,62 @@ function DayCare.step(data, save, expPerStep)
   elseif not DayCare.pair(data, save) then
     return false
   end
-  breed.steps = (breed.steps or 0) + 1
-  if breed.steps < DayCare.EGG_STEP_PERIOD then return false end
-  breed.steps = 0
+  local version = require("src.core.GameVersion").get()
+  local vanillaGen2 = version == "gold" or version == "silver" or version == "crystal"
+  local tier = DayCare.compatibility(data, save)
+  if vanillaGen2 then
+    if tier == 0 or tier == 5 then return false end
+    -- First attempt: 150..255 steps. Later attempts: a random byte;
+    -- zero underflows in the ROM and counts another 256 steps.
+    breed.stepsToEgg = (breed.stepsToEgg or math.random(150,255)) - 1
+    if breed.stepsToEgg > 0 then return false end
+    local countdown = math.random(0,255)
+    breed.stepsToEgg = countdown == 0 and 256 or countdown
+  elseif version == "emerald" then
+    -- The cartridge uses the second resident's experience-step low byte,
+    -- not a shared counter restarted by every deposit or egg collection.
+    local second = breed[DayCare.LADY]
+    if not second or (second.steps or 0) % 256 ~= 255 then return false end
+  else
+    breed.steps = (breed.steps or 0) + 1
+    if breed.steps < DayCare.EGG_STEP_PERIOD then return false end
+    breed.steps = 0
+  end
+
   -- .check_egg: the roll is against wBreedingCompatibility, so an
   -- indifferent pair simply keeps walking.
   local odds = gen3 and (DayCare.gen3Score(data, save) / 100)
-               or DayCare.EGG_ODDS[DayCare.compatibility(data, save)]
-  if math.random() >= (odds or 0) then return false end
+               or DayCare.EGG_ODDS[tier]
+  if not gen3 and not vanillaGen2 then
+    -- Preserve the existing shared-model behavior for other cartridges.
+    odds = ({[0]=0,[1]=64/256,[2]=128/256,[3]=191/256,[4]=255/256})[tier]
+  end
+  if version == "emerald" then
+    -- Native integer division and strict comparison include distinct edges
+    -- at 20/50/70 percent, and reject the maximum RNG value even at 100.
+    if math.floor(math.random(0,65535) * 100 / 65535) >= DayCare.gen3Score(data,save) then return false end
+  else
+    local roll = vanillaGen2 and math.random(0,255) / 256 or math.random()
+    if roll >= (odds or 0) then return false end
+  end
   local species = DayCare.eggSpecies(data, save)
   if not species then return false end
   local Pokemon = require("src.pokemon.Pokemon")
   local egg = Pokemon.new(data, species, 5)
+  if version=="emerald" then require("src.pokemon.Gen3Breeding").apply(data,save,egg) end
+  if vanillaGen2 then
+    local Breeding = require("src.pokemon.Gen2Breeding")
+    Breeding.inheritDVs(data, save, egg)
+    Breeding.setOwner(save, egg)
+    egg.hp = 0 -- DayCare_GiveEgg initializes current HP to zero.
+  end
   egg.isEgg = true
   egg.nickname = "EGG"
-  egg.eggSteps = DayCare.eggSteps(data, species)
+  egg.eggSteps = DayCare.eggSteps(data, egg.species)
   require('src.pokemon.Gen4Origin').stamp({data=data},egg,'egg','Day-Care Couple')
   -- ...and what its parents give it, which is the whole of breeding
   DayCare.inheritMoves(data, save, egg)
+  if version=="emerald" then require("src.pokemon.Gen3Breeding").voltTackle(data,save,egg) end
   breed.egg = egg
   -- DAYCAREMAN_HAS_EGG_F.  The next time the player steps onto Route 34 the
   -- callback moves the MAN out to the fence -- that walk is the ROM's whole

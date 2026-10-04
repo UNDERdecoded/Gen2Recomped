@@ -38,6 +38,11 @@ function Experience.gainFor(defeatedDef, level, isTrainer, numParticipants,
   end
   local base = math.floor(defeatedDef.baseExp / math.max(1, numParticipants or 1))
   local exp = math.floor(base * level / divisor)
+  if consts and (consts.gen == 3 or consts.gen3Bag) then
+    -- Emerald computes baseExp * level / 7 before dividing participants.
+    exp = math.floor(math.floor(defeatedDef.baseExp * level / divisor)
+      / math.max(1, numParticipants or 1))
+  end
   if traded then
     exp = math.floor(exp * (tradedMult or 1.5))
   end

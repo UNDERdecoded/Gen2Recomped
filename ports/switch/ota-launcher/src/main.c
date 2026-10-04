@@ -107,9 +107,11 @@ static int run_update_flow(const char *install_dir) {
 
   ota_ui_show_progress("Step 2/3: Verifying...", "Checking file integrity.", 0.55f);
   char sums_url[512];
-  snprintf(sums_url, sizeof(sums_url),
-           "https://github.com/UNDERdecodedHD/Gen2Recomped/releases/download/%s/sha256sums.txt",
-           rel.tag);
+  /* One definition, in ota_protocol.h, beside the releases API it shares an
+   * owner with.  This spelled the slug out a second time and spelled it
+   * WRONG -- UNDERdecodedHD is the author name, not the GitHub owner -- so
+   * verification could never have succeeded even if the check had. */
+  snprintf(sums_url, sizeof(sums_url), OTA_SUMS_URL_FMT, rel.tag);
   if (ota_net_download_file(sums_url, sums_path, CHECK_TIMEOUT_MS, err, sizeof(err), NULL,
                             NULL) != 0) {
     remove(zip_path);

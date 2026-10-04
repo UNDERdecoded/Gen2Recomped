@@ -611,6 +611,7 @@ function Commands.g3_lock(ctx, all)
   -- them; lock freezes all but the one being talked to, who is about to be
   -- turned to face the player.  See OverworldState:gen3FreezeObjects.
   local ow = ctx.overworld
+  if ow then ow.mapNameSign=nil end
   if ow and ow.gen3FreezeObjects then
     ow:gen3FreezeObjects(not all and ctx.npc or nil)
   end
@@ -6306,6 +6307,7 @@ end
 Gen3Commands.SPECIALS[186] = function(ctx)
   local breed = dayCare().store(ctx.save, false)
   if breed then breed.egg = nil end
+  if require("src.core.GameVersion").get()=="emerald" then ctx.save.gen3EggStepCounter=0 end
 end
 
 -- 187: GiveEggFromDaycare
@@ -6318,6 +6320,7 @@ Gen3Commands.SPECIALS[187] = function(ctx)
   if #save.party >= 6 then return end
   breed.egg = nil
   table.insert(save.party, egg)
+  if require("src.core.GameVersion").get()=="emerald" then save.gen3EggStepCounter=0 end
 end
 
 -- 188: SetDaycareCompatibilityString -- STR_VAR_4, shown by 144.
@@ -6368,6 +6371,9 @@ Gen3Commands.SPECIALS[190] = function(ctx)
   local free = nil
   for i = 0, 1 do if not dayCareMon(ctx, i) then free = i break end end
   if free == nil then return end
+  if require("src.core.GameVersion").get() == "emerald" then
+    require("src.pokemon.Pokemon").restorePP(mon,ctx.game and ctx.game.data and ctx.game.data.moves)
+  end
   table.remove(party, slot)
   dayCare().deposit(save, dayCareSlot(free), mon)
 end
@@ -6406,24 +6412,27 @@ end
 
 -- 193: GetNumLevelsGainedFromDaycare, for the pen in 0x8004
 Gen3Commands.SPECIALS[193] = function(ctx)
-  local n = dayCareLevelsGained(ctx, getVar(ctx.save, 0x8004) or 0)
+  local index = getVar(ctx.save, 0x8004) or 0
+  local n = dayCareLevelsGained(ctx, index)
   local game = ctx.game
   if game then
     game.stringBuffers = game.stringBuffers or {}
+    game.stringBuffers[1] = dayCareName(ctx,dayCareMon(ctx,index))
     game.stringBuffers[2] = tostring(n)
   end
   return n
 end
 
 -- 194: GetDaycareCostAndPrepareString -- the price into 0x8005, where the
--- till pair (200 and 201) reads it, and into STR_VAR_1 for the line
+-- till pair (200 and 201) reads it; nickname and cost fill STR_VAR_1/2.
 Gen3Commands.SPECIALS[194] = function(ctx)
   local cost = dayCareCost(ctx, getVar(ctx.save, 0x8004) or 0)
   setVar(ctx.save, 0x8005, cost)
   local game = ctx.game
   if game then
     game.stringBuffers = game.stringBuffers or {}
-    game.stringBuffers[1] = tostring(cost)
+    game.stringBuffers[1] = dayCareName(ctx, dayCareMon(ctx,getVar(ctx.save,0x8004) or 0))
+    game.stringBuffers[2] = tostring(cost)
   end
   return cost
 end
@@ -6444,6 +6453,10 @@ Gen3Commands.SPECIALS[195] = function(ctx)
   if not mon then return 0 end
   local startLevel = slot.depositLevel or mon.level or 1
   local newLevel, exp = DC.pendingLevel(data, slot)
+  local emerald = require("src.core.GameVersion").get() == "emerald"
+  -- Native withdrawal converts the boxed resident to a healthy party mon.
+  -- A resident already at level 100 does not receive its banked experience.
+  if emerald and (mon.level or 1) >= 100 then exp = mon.exp end
   DC.withdraw(save, pen)
   local def = data and data.pokemon and data.pokemon[mon.species]
   if newLevel and def then
@@ -6454,7 +6467,7 @@ Gen3Commands.SPECIALS[195] = function(ctx)
       mon.stats = Stats.calc(def, mon.level, mon.ivs or mon.dvs, mon.statExp,
                              mon.evs, mon.nature)
       if mon.stats and mon.stats.hp then
-        mon.hp = math.min(mon.hp or mon.stats.hp, mon.stats.hp)
+        mon.hp = emerald and mon.stats.hp or math.min(mon.hp or mon.stats.hp, mon.stats.hp)
       end
     end
     local okP, Pokemon = pcall(require, "src.pokemon.Pokemon")
@@ -6462,6 +6475,7 @@ Gen3Commands.SPECIALS[195] = function(ctx)
       Pokemon.learnMovesFromDayCare(data, mon, def, startLevel, newLevel)
     end
   end
+  if emerald then mon.status = nil end
   save.party = save.party or {}
   table.insert(save.party, mon)
   local game = ctx.game
@@ -7846,6 +7860,9 @@ end
 -- Zero stays a real answer: it means "not a secret base spot", and the
 -- script's own branches all missing is then correct.
 Gen3Commands.SPECIALS[21] = function(ctx)
+  -- SetCurSecretBaseId captures the entrance before party/field-effect
+  -- scripts reuse VAR_0x8004 for the selected party slot.
+  ctx.g3SecretBaseId = getVar(ctx.save, VAR_SECRET_BASE_ID)
   local SB = require("src.world.Gen3SecretBase")
   local ow = ctx.overworld
   local player = ow and ow.player
@@ -7877,13 +7894,19 @@ end
 Gen3Commands.SPECIALS[6] = function(ctx)
   local save = ctx.save
   if not save then return end
-  local id = math.floor(tonumber(getVar(save, VAR_SECRET_BASE_ID)) or 0)
+  local id = math.floor(tonumber(ctx.g3SecretBaseId or getVar(save, VAR_SECRET_BASE_ID)) or 0)
   local ow = ctx.overworld
   local player = ow and ow.player
-  require("src.world.Gen3SecretBase").claim(save, id,
+  local claimed = require("src.world.Gen3SecretBase").claim(save, id,
                                             ow and ow.map and ow.map.id,
                                             player and player.cellX,
                                             player and player.cellY)
+  if claimed then
+    local def = ow and ow.map and ow.map.def
+    local section = def and def.regionMapSection
+    if section then setVar(save, 0x4026, section) end
+    setVar(save, 0x4054, 0) -- VAR_CURRENT_SECRET_BASE
+  end
 end
 
 local function enterSecretBase(ctx)
@@ -7892,7 +7915,7 @@ local function enterSecretBase(ctx)
   local record = secretBaseRecord(ctx)
   if not save then return end
   local mine = SB.mine(save)
-  local id = mine and mine.id or getVar(save, VAR_SECRET_BASE_ID)
+  local id = ctx.g3SecretBaseId or (mine and mine.id) or getVar(save, VAR_SECRET_BASE_ID)
   local room = SB.roomFor(record, id)
   if not room or not room.map then
     Logger.warn("gen3 secret base: no room for base %s -- this dataset was "

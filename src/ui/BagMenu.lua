@@ -300,7 +300,10 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     -- IsBikeRidingAllowed (home/overworld.asm) for Gen1, BikeFunction
     -- .CheckEnvironment for Gen2; the overworld owns both rules.
     local function bikeAllowed()
-      return ow and ow:bikeAllowed(ow.map.id) or false
+      if not (ow and ow:bikeAllowed(ow.map.id)) then return false end
+      local p = ow.player
+      return not (p and (p.surfing or (ow.map.runningBlockedAt
+        and ow.map:runningBlockedAt(p.cellX, p.cellY))))
     end
     -- WHICH BIKE.  Hoenn has two and they ride differently: the Mach Bike
     -- climbs muddy slopes at speed, and the Acro Bike hops and wheelies over
@@ -359,6 +362,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
       local function taught()
         require("src.world.PikachuFollower")
           .modifyHappiness(game.save, "USEDTMHM", target)
+        require("src.pokemon.Gen2Friendship").change(target,"LEARNMOVE")
       end
       if #target.moves < 4 then
         table.insert(target.moves, { id = moveId, pp = mdef.pp })
@@ -473,7 +477,8 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     -- anywhere -- in a cave, in Victory Road, in the Aqua Hideout, nowhere.
     -- The cartridge keeps it in the map header's flag byte
     -- (`allowEscaping`, alongside allowRunning and allowCycling, which are
-    -- both already read), and it means Escape Rope, Dig and Teleport alike.
+    -- both already read), and it gates Escape Rope and Dig. Teleport uses
+    -- its separate outdoor map-type gate.
     local ow = game.overworld
     local gen3 = require("src.core.GameVersion").isGen3()
     local allowed
@@ -490,8 +495,8 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     -- dig warp is a "can't use that here", not a silent teleport somewhere
     -- else.
     local gen2 = require("src.core.GameVersion").generation() == 2
-    local escapePoint = gen2 and ow and ow.escapePoint and ow:escapePoint()
-    if gen2 and allowed and not escapePoint then allowed = false end
+    local escapePoint = (gen2 or gen3) and ow and ow.escapePoint and ow:escapePoint()
+    if (gen2 or gen3) and allowed and not escapePoint then allowed = false end
 
     if allowed and ow.map.id ~= "AGATHAS_ROOM" then
       list:close()

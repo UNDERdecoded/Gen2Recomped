@@ -116,7 +116,7 @@ function StartMenu.new(game)
   end })
 
   -- LINK needs a party
-  if #game.save.party > 0 then
+  if #game.save.party > 0 and not inContest then
     table.insert(items, { label = Strings("LINK"), onSelect = function()
       local LinkState = require("src.link.LinkState")
       game.stack:push(LinkState.new(game))
@@ -169,6 +169,23 @@ function StartMenu.new(game)
     end })
   end
 
+  if inContest then
+    -- Native order: DEX, MON, GEAR, trainer, QUIT, OPTION, EXIT.
+    local gear, quit
+    for i=#items,1,-1 do
+      if items[i].label == Strings("POKéGEAR") then gear=table.remove(items,i)
+      elseif items[i].label == Strings("QUIT") then quit=table.remove(items,i) end
+    end
+    if gear then
+      local at=1
+      for i,item in ipairs(items) do if item.label==Strings("POKéMON") then at=i+1;break end end
+      table.insert(items,at,gear)
+    end
+    for i,item in ipairs(items) do
+      if item.label==Strings("OPTION") then table.insert(items,i,quit);break end
+    end
+    items[#items+1]={label=Strings("EXIT"),onSelect=function() end}
+  end
   local hooked = Runtime.call("ui.start_menu.items", sameItems, game, items)
   if type(hooked) == "table" then
     items = hooked
@@ -187,14 +204,15 @@ function StartMenu.new(game)
   -- canvas. Cap it at however many rows actually fit and scroll the rest,
   -- with Menu's moreArrow showing while there's more below.
   local rowStep = 2
-  local maxVisible = math.floor((Renderer.HEIGHT / 8 - 2) / rowStep)
+  local maxVisible = math.floor((Renderer.HEIGHT / 8 - (inContest and 4 or 2)) / rowStep)
   local menu = Menu.new(game, items,
     -- the START menu hugs the top-right corner of the SCREEN, not of a
     -- centred letterbox: at 9,0 x 11 it is already flush with the top and
     -- right of the 20x18 grid, so the anchor keeps it flush when the view
     -- is zoomed out and the letterbox no longer fills the window
-    { tx = 9, ty = 0, tw = 11, maxVisible = maxVisible, startCloses = true,
-      anchor = "topright" })
+    { tx = inContest and 10 or 9, ty = inContest and 2 or 0,
+      tw = inContest and 10 or 11, maxVisible = maxVisible, startCloses = true,
+      anchor = not inContest and "topright" or nil })
   -- the cursor position survives closing the menu
   -- (wBattleAndStartSavedMenuItem, home/start_menu.asm)
   menu.index = math.min(game.save.startMenuIndex or 1, #items)
@@ -214,8 +232,8 @@ function StartMenu.new(game)
   -- standing at the counter (#540).  Same map set as the step counter's
   -- (FieldDefaults safari.stepMaps via OverworldState:inSafariStepZone).
   -- StartMenu_PrintBugContestStatus (engine/menus/menu_2.asm:152) draws the
-  -- contest panel above the menu: a Textbox at hlcoord 0,0 with b = 5 rows and
-  -- c = 17 columns, then
+  -- contest panel above the menu: a Textbox at hlcoord 0,0 with b = 5 interior
+  -- rows and c = 17 interior columns (19x7 including borders), then
   --
   --     hlcoord 1, 1  "CAUGHT"     hlcoord 8, 1  <mon name> or "None"
   --     hlcoord 1, 3  "LEVEL"      right after it, the level, left-aligned
@@ -228,8 +246,7 @@ function StartMenu.new(game)
   if inContest then
     local baseDraw = menu.draw
     menu.draw = function(self)
-      baseDraw(self)
-      Font.drawBox(0, 0, 17, 5)
+      Font.drawBox(0, 0, 19, 7)
       love.graphics.setColor(0, 0, 0, 1)
       Font.draw(Strings("CAUGHT"), 8, 8)
       local caught = BugContest.caught(game.save)
@@ -244,6 +261,9 @@ function StartMenu.new(game)
       Font.draw(Strings("BALLS:"), 8, 40)
       Font.draw(("%d"):format(BugContest.ballsLeft(game.save)), 64, 40)
       love.graphics.setColor(1, 1, 1, 1)
+      -- The input loop redraws the right menu over the empty right-hand part
+      -- of the status panel. The name remains above it on row 1.
+      baseDraw(self)
     end
   end
 

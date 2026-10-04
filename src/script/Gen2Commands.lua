@@ -2606,9 +2606,9 @@ function Commands.g2_readvar(ctx, var)
     ctx.g2Var = ((tonumber(os.date("%w")) or 0)
       + (ctx.save.g2DayOffset or 0)) % 7
   elseif var == 16 then
-    -- BoxFreeSpace: the port never fills a box, so every script that
-    -- branches on "is the box full" must take the not-full path
-    ctx.g2Var = 20
+    -- BoxFreeSpace counts only the current box, not all available PC slots.
+    local Boxes = require("src.pokemon.Boxes")
+    ctx.g2Var = math.max(0, Boxes.capacity() - Boxes.used(Boxes.active(ctx.save)))
   elseif var == 17 then
     -- wBugContestMinsRemaining.  StartBugContestTimer writes 20 minutes / 0
     -- seconds and the timer counts down, so this is the WHOLE minutes left --
@@ -4068,9 +4068,23 @@ function Commands.g2_check_item_box(ctx, itemId)
   ctx.lastCheck = (pc[itemId] or 0) > 0
 end
 
--- The port has no swarm table; record the request so a save that already
--- triggered one keeps reporting it rather than silently losing it.
+-- Gold/Silver store one map pair; Crystal stores a map for each swarm kind.
 function Commands.g2_swarm(ctx, kind, mapId)
+  local version=require("src.core.GameVersion").get()
+  if version=="gold" or version=="silver" then
+    local key=type(kind)=="string" and kind or nil
+    if not key then
+      for id,map in pairs(ctx.game.data.maps or {}) do
+        if map.group==kind and map.number==mapId then key=id;break end
+      end
+    end
+    ctx.save.g2Swarm={map=key,group=type(kind)=="number" and kind or nil,number=mapId}
+    return
+  end
+  if version=="crystal" then
+    ctx.save.g2Swarms=ctx.save.g2Swarms or {}
+    ctx.save.g2Swarms[kind]=mapId
+  end
   ctx.save.g2Swarm = { kind = kind, map = mapId }
 end
 
@@ -4281,28 +4295,36 @@ function Gen2Commands.dayCareWithdraw(ctx, which)
   game.stringBuffer = name
 
   if levelsGrown > 0 then
-    Commands.show_text(ctx, t._YourMonHasGrownText
-      or "Your #MON has\ngrown a lot!\fBy level, it's\ngrown by {NUM:wDayCareNumLevelsGrown}!",
-      { RAM = name, NUM = tostring(levelsGrown) })
-    Commands.show_text(ctx, t._AreWeGeniusesText
-      or "Aren't we\ngeniuses?")
+    Commands.ask(ctx, t._AreWeGeniusesText
+      or "Aren't we\ngeniuses?", { RAM = name })
+    if not ctx.lastCheck then
+      return Commands.show_text(ctx, t._OhFineThenText or "Oh, fine then.")
+    end
+    local report = t._YourMonHasGrownText
+      or "Your #MON grew by {NUM:LEVELS} levels.\fIt will cost ¥{NUM:FEE} to take it back."
+    local subs, index = { RAM = name }, 0
+    -- Both decimal RAM operands occur in this line: growth, then price.
+    -- Their addresses differ by cartridge, so substitute in ROM order.
+    for token in report:gmatch("{(NUM:[^}]+)}") do
+      index = index + 1
+      subs[token] = tostring(index == 1 and levelsGrown or fee)
+    end
+    Commands.ask(ctx, report, subs)
   else
-    Commands.show_text(ctx, t._BackAlreadyText
+    Commands.ask(ctx, t._BackAlreadyText
       or "Back already?\nYour #MON needs\nmore time with me.",
       { RAM = name })
   end
-
-  Commands.ask(ctx, Strings("That'll be \194\165%d.\nOK?", fee))
   if not ctx.lastCheck then
     return Commands.show_text(ctx, t._OhFineThenText or "Oh, fine then.")
-  end
-  if #save.party >= Party.MAX then
-    return Commands.show_text(ctx, t._HaveNoRoomText
-      or "You have no room\nfor it.")
   end
   if (save.money or 0) < fee then
     return Commands.show_text(ctx, t._NotEnoughMoneyText
       or "You don't have\nenough money.")
+  end
+  if #save.party >= Party.MAX then
+    return Commands.show_text(ctx, t._HaveNoRoomText
+      or "You have no room\nfor it.")
   end
 
   save.money = save.money - fee
@@ -4311,14 +4333,22 @@ function Gen2Commands.dayCareWithdraw(ctx, which)
   mon.level = newLevel
   if def then
     mon.stats = Stats.calc(def, mon.level, mon.dvs, mon.statExp)
-    mon.hp = math.min(mon.hp or mon.stats.hp, mon.stats.hp)
+    -- RetrieveBreedmon heals and rounds EXP down to this level's minimum.
+    mon.exp = Growth.expForLevel(def.growthRate, newLevel)
     -- WriteMonMoves with wLearningMovesFromDayCare: the levels it grew
     -- through are taught in order, oldest move pushed out first
     Pokemon.learnMovesFromDayCare(game.data, mon, def, startLevel, newLevel)
+    mon.hp = mon.stats.hp
+    mon.status = nil
+    for _, move in ipairs(mon.moves or {}) do
+      local moveDef = game.data.moves and game.data.moves[move.id]
+      if moveDef then move.pp = moveDef.pp + (move.ppUps or 0) * math.floor(moveDef.pp / 5) end
+    end
   end
   table.insert(save.party, mon)
   Commands.show_text(ctx, t._PerfectHeresYourMonText
     or "Perfect! Here's\nyour #MON!")
+  Commands.g2_cry(ctx, mon.species)
   Commands.show_text(ctx, t._GotBackMonText
     or "{PLAYER} got\n{RAM:wStringBuffer} back!", { RAM = name })
 end
@@ -4396,6 +4426,7 @@ function Commands.g2_daycare_outside(ctx)
       or "You have no room\nin your party.")
   end
   breed.egg = nil
+  breed.stepsToEgg = nil -- Accepted egg restarts DayCare_InitBreeding.
   DayCare.syncFlags(save)
   Party.add(save.party, egg)
   ctx.g2Var = 0
@@ -4419,18 +4450,20 @@ function Gen2Commands.dayCareYardMon(ctx, which)
   end
   local name = Gen2Commands.dayCareName(game, mon)
   game.stringBuffer = name
-  ctx.pendingCry = mon.species
-  Commands.show_text(ctx, t.Text_BreedHuh or t._BreedHuhText or "Huh?",
+  Commands.show_text(ctx, (which == 1 and t._LeftWithDayCareManText or t._LeftWithDayCareLadyText)
+    or "{RAM:NAME} was left with\nthe DAY-CARE keeper.",
     { RAM = name })
+  Commands.g2_cry(ctx, mon.species)
   local tiers = {
     [0] = t._BreedNoInterestText,
     [1] = t._BreedShowsInterestText,
-    [2] = t._BreedAppearsToCareForText,
+    [2] = t._BreedFriendlyText,
     [3] = t._BreedFriendlyText or t._BreedAppearsToCareForText,
-    [4] = t._BreedBrimmingWithEnergyText,
+    [4] = t._BreedAppearsToCareForText,
+    [5] = t._BreedBrimmingWithEnergyText,
   }
   local tier = DayCare.compatibility(game.data, ctx.save)
-  if DayCare.pair(game.data, ctx.save) and tiers[tier] then
+  if tiers[tier] then
     Commands.show_text(ctx, tiers[tier])
   end
   ctx.lastCheck = true
@@ -4735,8 +4768,8 @@ end
 -- Radio lucky-number show (specials $51-$54)
 --
 -- wLuckyIDNumber is a 16-bit value printed as five decimal digits with leading
--- zeros (00000-65535).  ResetLuckyNumberShowFlag regenerates it for the day;
--- CheckForLuckyNumberWinners scores party OT IDs by trailing-digit matches.
+-- zeros (00000-65535). ResetLuckyNumberShowFlag restarts the weekly draw;
+-- CheckForLuckyNumberWinners checks party and PC IDs by trailing digits.
 -- ---------------------------------------------------------------------------
 
 local function luckyDigits(n)
@@ -4784,52 +4817,55 @@ local function luckyMatchTier(lucky, otId)
   return 0
 end
 
--- CheckForLuckyNumberWinners ($51): scan party for best matching OT ID.
+-- CheckForLuckyNumberWinners: party, current box, then the other PC boxes.
 function Commands.g2_lucky_winners(ctx)
   local save = ctx.save
   local lucky = ensureLuckyNumber(save)
   local best = 0
   local bestName
-  for _, mon in ipairs(save.party or {}) do
-    local species = mon.species
-    if species and tostring(species):upper() ~= "EGG" then
-      local ot = monOtId(mon)
-      if ot then
-        local tier = luckyMatchTier(lucky, ot)
-        if tier > 0 and (best == 0 or tier < best) then
-          best = tier
-          local def = ctx.game.data.pokemon and ctx.game.data.pokemon[species]
-          bestName = (mon.nickname and mon.nickname ~= "" and mon.nickname)
-            or (def and def.name) or tostring(species)
+  local Party = require("src.pokemon.Party")
+  local function scan(mons)
+    for _, mon in ipairs(mons or {}) do
+      local species = mon.species
+      if species and tostring(species):upper() ~= "EGG" and not Party.isEgg(mon) then
+        local ot = monOtId(mon)
+        if ot then
+          local tier = luckyMatchTier(lucky, ot)
+          if tier > 0 and (best == 0 or tier < best) then
+            best = tier
+            local def = ctx.game.data.pokemon and ctx.game.data.pokemon[species]
+            bestName = (def and def.name) or tostring(species)
+          end
         end
       end
     end
   end
+  scan(save.party)
+  -- The cartridge returns immediately for an empty party.
+  if #(save.party or {}) > 0 then
+    local boxes = require("src.pokemon.Boxes").ensure(save)
+    scan(boxes[save.currentBox])
+    for index, box in ipairs(boxes) do
+      if index ~= save.currentBox then scan(box) end
+    end
+  end
   if best > 0 then
-    ctx.game.stringBuffer = bestName or "POKéMON"
+    setBuffer(ctx.game, 3, bestName or "POKéMON")
   end
   ctx.g2Var = best
   ctx.lastCheck = best > 0
 end
 
--- CheckLuckyNumberShowFlag ($52): has the player already heard today's show?
+-- CheckLuckyNumberShowFlag: the weekly countdown, NOT the prize-claimed bit.
 function Commands.g2_lucky_check_flag(ctx)
-  local Gen2Flags = require("src.script.Gen2Flags")
-  local flags = ctx.save.flags or {}
-  local key = Gen2Flags.engineFlag(77) -- ENGINE_LUCKY_NUMBER_SHOW
-  local set = flags[key] == true or flags.ENGINE_LUCKY_NUMBER_SHOW == true
-  ctx.lastCheck = set and true or false
-  ctx.g2Var = set and 1 or 0
+  local expired = require("src.script.Gen2Daily").lotteryExpired(ctx.save)
+  ctx.lastCheck = expired
+  ctx.g2Var = expired and 1 or 0
 end
 
 -- ResetLuckyNumberShowFlag ($53): clear "already heard" and roll a new ID.
 function Commands.g2_lucky_reset(ctx)
-  local Gen2Flags = require("src.script.Gen2Flags")
-  ctx.save.flags = ctx.save.flags or {}
-  ctx.save.flags[Gen2Flags.engineFlag(77)] = nil
-  ctx.save.flags.ENGINE_LUCKY_NUMBER_SHOW = nil
-  local r = (love and love.math and love.math.random) or math.random
-  ctx.save.g2LuckyNumber = r(0, 65535)
+  require("src.script.Gen2Daily").resetLottery(ctx.save)
   ctx.g2Var = 0
 end
 
@@ -4837,10 +4873,8 @@ end
 function Commands.g2_lucky_print(ctx)
   local n = ensureLuckyNumber(ctx.save)
   local digits = luckyDigits(n)
-  ctx.game.stringBuffer = digits
-  -- Scripts usually print via text that reads the string buffer; also show a
-  -- direct line so a bare special still displays the number.
-  Commands.show_text(ctx, "Today's lucky number is\n" .. digits .. "!")
+  -- This special fills wStringBuffer3; the following ROM text displays it.
+  setBuffer(ctx.game, 3, digits)
 end
 
 function Commands.g2_heal_party(ctx)
@@ -5235,8 +5269,7 @@ end
 --
 -- The caught mon is stamped with the player as OT and National Park as the
 -- catch location, like SetCaughtData does.  The ROM also offers a nickname
--- here (GiveANickname_YesNo); the port does not yet, and the mon arrives under
--- its species name.
+-- here (GiveANickname_YesNo), after transferring it to the party/current box.
 function Commands.g2_contest_party_full(ctx)
   local BugContest = require("src.world.BugContest")
   local save = ctx.save
@@ -5254,12 +5287,34 @@ function Commands.g2_contest_party_full(ctx)
   mon.otId = mon.otId or player.id
   mon.caughtLocation = mon.caughtLocation or "NATIONAL_PARK"
   save.party = save.party or {}
-  if require("src.pokemon.Party").add(save.party, mon) then
-    setScriptVar(ctx, 0)                    -- BUGCONTEST_CAUGHT_MON
-    return
+  local result, stored = 0, require("src.pokemon.Party").add(save.party, mon)
+  if not stored then
+    -- The cartridge checks sBoxCount, not the space in every other box.
+    -- A full current box still reports BOXED_MON and consumes the catch.
+    local Boxes = require("src.pokemon.Boxes")
+    local box = Boxes.active(save)
+    local slot = Boxes.firstFree(box)
+    if slot then box[slot] = mon; stored = true end
+    result = 1
   end
-  pcall(function() require("src.pokemon.Boxes").deposit(save, mon) end)
-  setScriptVar(ctx, 1)                      -- BUGCONTEST_BOXED_MON
+  local def = ctx.game.data.pokemon and ctx.game.data.pokemon[mon.species]
+  local name = mon.nickname or (def and def.name) or mon.species
+  ctx.game.stringBuffer = name
+  if stored and ctx.runner and ctx.game.stack then
+    local prompt = ctx.game.data.text and ctx.game.data.text._CaughtAskNicknameText
+      and "_CaughtAskNicknameText" or Strings("Give a nickname to\n%s?", name)
+    Commands.show_text(ctx, prompt, {RAM=name}, {choice=function(yes)
+      if not yes then ctx.runner:resume(); return end
+      require("src.ui.Screens").push(ctx.game, "NamingScreen", {
+        title=Strings("NICKNAME?"), maxLen=10, kind="mon", mon=mon,
+        onDone=function(nick)
+          if nick and #nick > 0 then mon.nickname=nick end
+          ctx.runner:resume()
+        end,
+      })
+    end})
+  end
+  setScriptVar(ctx, result)                 -- CAUGHT_MON=0 / BOXED_MON=1
 end
 
 -- SelectRandomBugContestContestants (engine/events/bug_contest/contest_2.asm:1)
@@ -5291,7 +5346,6 @@ local BUG_CONTESTANTS_IN_PARK = 5
 function Commands.g2_bug_contest_select(ctx)
   local BugContest = require("src.world.BugContest")
   local state = BugContest.state(ctx.save)
-  if state then state.scores = BugContest.rollContestants(ctx.game) end
 
   local field = ctx.game.data and ctx.game.data.field
   local def = field and field.gen2BugContest
@@ -5319,6 +5373,36 @@ function Commands.g2_bug_contest_select(ctx)
       hidden = hidden + 1
     end
   end
+  if state then state.scores = BugContest.rollContestants(ctx.game) end
+end
+
+-- The rock's ROM script reads wTempWildMonSpecies before randomwildmon.
+-- Mirror that byte as well as the pending battle; a script variable alone
+-- is overwritten by readmem and would silently suppress every encounter.
+function Commands.g2_rock_encounter(ctx)
+  local trees = ctx.game.data.field and ctx.game.data.field.gen2TreeMons
+  local map = ctx.overworld and ctx.overworld.map
+  local set = trees and map and trees.rockMaps and trees.rockMaps[map.def.label]
+  local rows = set and trees.sets[set] and trees.sets[set].common
+  ctx.g2Wild, ctx.g2Trainer = nil, nil
+  local species = 0
+  if rows and math.random(0, 9) < 4 then
+    local pick = math.random(0, 99)
+    for _, row in ipairs(rows) do
+      pick = pick - row.chance
+      if pick < 0 then
+        ctx.g2Wild = {species = row.species, level = row.level}
+        species = tonumber(row.species:match("(%d+)$")) or 0
+        break
+      end
+    end
+  end
+  local mem = wram(ctx)
+  if mem and trees and trees.wildSpeciesAddress then
+    mem[trees.wildSpeciesAddress] = species
+  end
+  setScriptVar(ctx, species)
+  -- No numeric return: ScriptRunner treats it as a jump target.
 end
 
 -- The deferred half of a Gen2 map's onEnter: run the scene script wMapScenes

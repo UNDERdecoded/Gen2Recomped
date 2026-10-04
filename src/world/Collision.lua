@@ -189,6 +189,9 @@ local function verdict(map, entities, mover, dir, tx, ty)
   if not map:inBounds(tx, ty) then
     return false, "bounds"
   end
+  if mover.onBike and map.runningBlockedAt and map:runningBlockedAt(tx, ty) then
+    return false, "tile"
+  end
   if not map:isWalkableCell(tx, ty) then
     if not (mover.surfing and map:isWaterCell(tx, ty)) then
       return false, "tile"

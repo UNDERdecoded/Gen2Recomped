@@ -141,23 +141,80 @@ local function resolveMount()
   return physfsMountFn
 end
 
+-- EVERY MOUNT THIS MODULE MAKES, recorded, so a root change can take the old
+-- root's mounts back off the read path.  Without this an A -> B folder change
+-- leaves A ahead of B for the rest of the process and the player sees the
+-- setting "not take" -- which is one half of the bug this list exists for.
+--
+-- `how` is how it went on ("ffi" | "jni" | "love"), because only the first
+-- can be taken off again by absolute path and only the first can PREPEND:
+-- love.system.mountDirectory takes neither a mount point nor a position.
+local ourMounts = {}
+
+-- Mounts that could not be undone, so the read path still carries a home the
+-- setting has moved away from.  rootReport surfaces it as `restart`.
+local staleMounts = false
+
+-- SET WHEN THE LIVE ROOT CANNOT BE PUT AHEAD OF THE SAVE DIRECTORY AT ALL.
+--
+-- Prepending needs PHYSFS_mount, because it is the only one of the three
+-- mount mechanisms that takes a position and a mount point.  Where the symbol
+-- does not resolve -- an Android APK whose liblove.so the FFI cannot reach,
+-- so love.system.mountDirectory is all there is -- the chosen folder can be
+-- made VISIBLE and cannot be made to WIN, and any copy of the same file still
+-- sitting in the save directory goes on answering for it.  Measured on that
+-- arm: CacheFs.read says the chosen folder and love.filesystem.read says the
+-- save directory, for the same path.
+--
+-- A restart does not fix this one; moving or deleting the old copy does.  So
+-- it is reported separately from `restart`, and the launcher says which.
+local shadowRisk = false
+
 -- append (default true): the game's own source wins a name clash, matching
 -- how the portable cache root has always been mounted.  Pass false to
 -- prepend, so the mounted tree wins -- used to overlay the active version's
--- cache on top of the root (Red) copy and the source.
-local function mountReadable(dir, append)
+-- cache on top of the root (Red) copy and the source, and to put the LIVE
+-- game-data folder ahead of the save directory (which PhysFS always searches
+-- before any appended mount, so an appended custom root loses to every stale
+-- file still sitting in AppData).
+--
+-- mountPoint (default ""): where in the virtual tree `dir` appears.  A
+-- non-empty one is what makes a prepend SAFE -- the folder can then only ever
+-- serve names under that point, so pointing the setting at a folder that
+-- happens to contain a conf.lua cannot shadow the game's own.
+local function mountReadable(dir, append, mountPoint)
+  mountPoint = mountPoint or ""
   local fn = resolveMount()
-  if fn and fn(dir, "", append) then return true end
+  if fn and fn(dir, mountPoint, append) then
+    ourMounts[#ourMounts + 1] =
+      { dir = dir, point = mountPoint, append = append, how = "ffi" }
+    return true
+  end
   -- Android: PHYSFS_mount through the JNI bridge (love.system.mountDirectory)
   -- rather than love.filesystem.mount, which refuses paths outside the save
   -- dir -- and the phone/SD gamedata folder is a sibling of that save dir.
-  if love and love.system and type(love.system.mountDirectory) == "function" then
+  --
+  -- IT TAKES NEITHER ARGUMENT.  It appends, at "", always.  So it cannot
+  -- serve a prepend or a mount point, and asking it to would silently produce
+  -- the appended mount that loses to the save directory -- the failure this
+  -- parameter exists to fix.  A caller that needs a position is told no.
+  if mountPoint == "" and append ~= false
+      and love and love.system and type(love.system.mountDirectory) == "function" then
     local ok, mounted = pcall(love.system.mountDirectory, dir)
-    if ok and mounted then return true end
+    if ok and mounted then
+      ourMounts[#ourMounts + 1] =
+        { dir = dir, point = mountPoint, append = append, how = "jni" }
+      return true
+    end
   end
   if love and love.filesystem and love.filesystem.mount then
-    local ok, mounted = pcall(love.filesystem.mount, dir, "", append ~= false)
-    if ok and mounted then return true end
+    local ok, mounted =
+      pcall(love.filesystem.mount, dir, mountPoint, append ~= false)
+    if ok and mounted then
+      ourMounts[#ourMounts + 1] =
+        { dir = dir, point = mountPoint, append = append, how = "love" }
+      return true
+    end
   end
   return false
 end
@@ -229,6 +286,38 @@ local function resolveMountPoint()
   return physfsMountPointFn
 end
 
+-- THE TWO TREES THE LIVE ROOT MUST WIN, prepended at their own mount points.
+--
+-- Mounting the chosen folder at "" with append=true is enough to make its
+-- files VISIBLE and not enough to make them WIN: PhysFS searches the write
+-- directory (LOVE's save directory) ahead of every appended mount, so a
+-- cache that was imported before the folder was chosen goes on answering
+-- every require() and newImage() while the new import fills the new folder.
+-- Measured: write 'NEW-CUSTOM' through CacheFs.write after setDataDir and
+-- love.filesystem.read hands back the save directory's 'OLD-SAVEDIR'.
+--
+-- So the root's own generated trees are additionally PREPENDED, each at its
+-- own mount point.  The mount point is what keeps this safe: the folder can
+-- only ever serve data/generated/... and assets/generated/..., which the game
+-- source never ships (.gitignore excludes both), so nothing of the game's own
+-- can be shadowed by whatever else is in the folder a player picked.
+local function prependRootTrees(root)
+  if type(root) ~= "string" or root == "" then return false end
+  if not resolveMount() then
+    -- No mechanism can position a mount on this build.  The root is still
+    -- mounted (appended, by the JNI bridge), so writes and fresh reads work;
+    -- what cannot be guaranteed is winning against a stale duplicate.
+    shadowRisk = true
+    return false
+  end
+  local any = false
+  for _, tree in ipairs({ "data/generated", "assets/generated" }) do
+    local real = root .. SEP .. tree:gsub("/", SEP)
+    if mountReadable(real, false, tree) then any = true end
+  end
+  return any
+end
+
 -- The portable game folder when the cache should live there, else nil.
 -- Resolved (and, for a fused build, mounted) once and cached.  Requires a
 -- desktop portable install (SaveData) and a working windowless mkdir.
@@ -248,6 +337,7 @@ local function resolvePortableRoot()
     -- fused build: base is next to the executable; mount it so io.* writes
     -- there are visible to love.filesystem/require/newImage
     portableRoot = base
+    prependRootTrees(base)
   end
   return portableRoot
 end
@@ -286,6 +376,7 @@ local function resolveCustomRoot()
     customRoot = base
   elseif mountReadable(base) then
     customRoot = base
+    prependRootTrees(base)
   else
     customWhy = "that folder could not be added to the read path"
     pcall(function()
@@ -328,11 +419,13 @@ end
 function CacheFs.rootReport()
   local portable = resolvePortableRoot()
   if portable then
-    return { kind = "portable", path = portable }
+    return { kind = "portable", path = portable, restart = staleMounts,
+             shadowed = shadowRisk }
   end
   local custom = resolveCustomRoot()
   if custom then
-    return { kind = "custom", path = custom }
+    return { kind = "custom", path = custom, restart = staleMounts,
+             shadowed = shadowRisk }
   end
   local why = customWhy
   if not why then
@@ -343,18 +436,63 @@ function CacheFs.rootReport()
   end
   local path = nil
   pcall(function() path = love.filesystem.getSaveDirectory() end)
-  return { kind = "save", path = path, why = why }
+  return { kind = "save", path = path, why = why, restart = staleMounts,
+           shadowed = shadowRisk }
 end
 
--- Drop the resolved root so the next call re-reads the setting.  Called when
--- the player changes the game-data folder, which is why it does not also
--- unmount: the old folder stays on the physfs read path for this process, and
--- a read path with a folder on it nothing asks about is harmless, whereas
--- unmounting a folder an open image was streamed from is not.
+-- Drop the resolved root so the next call re-reads the setting, AND take the
+-- old root's mounts back off the read path.
+--
+-- IT USED NOT TO UNMOUNT, on the grounds that "a read path with a folder on
+-- it nothing asks about is harmless".  It is not harmless: PhysFS answers a
+-- name from the first mount that has it, so a folder left on the path goes on
+-- answering for every file it still holds.  Change the setting from A to B
+-- and A keeps serving the cache -- which is a setting that visibly does
+-- nothing, for the whole session, with no message to say why.
+--
+-- What the old comment was right about is the hazard: unmounting a folder an
+-- open image was streamed from is not safe.  So this takes down only the
+-- mounts THIS MODULE made (ourMounts), it only does so through PHYSFS_unmount
+-- or love.filesystem.unmount, and anything it cannot take down sets
+-- staleMounts -- which rootReport turns into `restart` so the panel can say
+-- "restart to finish applying" instead of lying by omission.
 function CacheFs.forgetRoot()
+  local keep = {}
+  local unmount = resolveUnmount()
+  for _, m in ipairs(ourMounts) do
+    local done = false
+    if m.how == "ffi" and unmount then
+      done = unmount(m.dir) and true or false
+    elseif m.how == "love" and love and love.filesystem and love.filesystem.unmount then
+      local ok, res = pcall(love.filesystem.unmount, m.dir)
+      done = (ok and res) and true or false
+    end
+    if not done then
+      -- The JNI bridge has no unmount at all, and a refused PHYSFS_unmount is
+      -- a mount something else is holding.  Either way the old home is still
+      -- in front of the new one until the process restarts.
+      keep[#keep + 1] = m
+      staleMounts = true
+    end
+  end
+  ourMounts = keep
   customResolved = false
   customRoot = nil
   customWhy = nil
+end
+
+-- Whether a folder change left a previous home on the read path, so the
+-- setting will not fully take effect until the game restarts.  Read by
+-- rootReport; the launcher turns it into a line on the settings panel.
+function CacheFs.restartNeeded()
+  return staleMounts
+end
+
+-- Whether a copy of the cache left in a previous home can still win the read
+-- path on this build, because nothing here can position a mount.  See
+-- shadowRisk above; unlike restartNeeded, a restart does not clear it.
+function CacheFs.shadowRisk()
+  return shadowRisk
 end
 
 -- Create a real directory (and only that one -- no parents), for callers
@@ -683,12 +821,25 @@ local dataFsCache = nil
 -- love.filesystem so it drops into the modules that already take an `fs`.
 function CacheFs.dataFs()
   if dataFsCache then return dataFsCache end
+  -- A READ HAS TO RESOLVE THE ROOT FIRST.  The chosen folder is only on the
+  -- PhysFS path because resolveCustomRoot mounted it, and that runs the first
+  -- time anything asks CacheFs.root().  A reader that goes straight to
+  -- love.filesystem before any writer has asked sees a folder that is not
+  -- mounted yet -- so a mod installed in the chosen folder was invisible on a
+  -- launch whose first act was to list mods.  One call, memoised behind
+  -- customResolved, and the union is actually a union.
+  local function mounted(fn)
+    return function(...)
+      CacheFs.root()
+      return fn(...)
+    end
+  end
   dataFsCache = {
     -- reads and enumeration: every home at once
-    getInfo = function(...) return love.filesystem.getInfo(...) end,
-    getDirectoryItems = function(...) return love.filesystem.getDirectoryItems(...) end,
-    read = function(...) return love.filesystem.read(...) end,
-    load = function(...) return love.filesystem.load(...) end,
+    getInfo = mounted(function(...) return love.filesystem.getInfo(...) end),
+    getDirectoryItems = mounted(function(...) return love.filesystem.getDirectoryItems(...) end),
+    read = mounted(function(...) return love.filesystem.read(...) end),
+    load = mounted(function(...) return love.filesystem.load(...) end),
     getSaveDirectory = function() return love.filesystem.getSaveDirectory() end,
     getSource = function() return love.filesystem.getSource() end,
     -- writes and removes: the live root
@@ -766,18 +917,36 @@ end
 -- "could not overlay gold/ onto the read path" while gold/data/generated was
 -- sitting there populated.  Doing both is cheap and is what the working
 -- implementation does.
+-- FROM THE LIVE ROOT, not from a save-directory-relative name.
+--
+-- This is where the game-data folder setting came apart.  The mount source
+-- used to be the bare relative name `platinum/data/generated`, and
+-- love.filesystem.mount resolves a relative source against the SAVE
+-- DIRECTORY and nowhere else -- so this could only ever mount the save
+-- directory's copy, never the chosen folder's.  It is also the LAST prepend
+-- mountVersion makes, which put the stale copy at the very front of the read
+-- path: measured, after an import into a chosen folder, CacheFs.read said
+-- 'NEW-CUSTOM' and love.filesystem.read (what require and newImage use) said
+-- 'OLD-SAVEDIR' for the same logical file.  Every byte went to the right
+-- place and the game read none of it.
+--
+-- So: mount by ABSOLUTE PATH under whichever root is live, and fall back to
+-- the save-dir-relative name only when the save directory IS the live root.
 local function mountGeneratedTrees(prefix)
-  if not (love.filesystem and love.filesystem.mount) then return false end
+  local root = CacheFs.root()
   local mounted = false
-  local trees = {
-    { prefix .. "data/generated",   "data/generated" },
-    { prefix .. "assets/generated", "assets/generated" },
-  }
-  for _, item in ipairs(trees) do
-    local src, dest = item[1], item[2]
-    if love.filesystem.getInfo(src, "directory")
-        and love.filesystem.mount(src, dest, false) then
-      mounted = true
+  for _, tree in ipairs({ "data/generated", "assets/generated" }) do
+    local src, dest = prefix .. tree, tree
+    if root then
+      local real = (root .. SEP .. src):gsub("/", SEP)
+      if mountReadable(real, false, dest) then mounted = true end
+    elseif love.filesystem and love.filesystem.mount
+        and love.filesystem.getInfo(src, "directory") then
+      if love.filesystem.mount(src, dest, false) then
+        ourMounts[#ourMounts + 1] =
+          { dir = src, point = dest, append = false, how = "love" }
+        mounted = true
+      end
     end
   end
   return mounted
@@ -811,8 +980,17 @@ function CacheFs.mountVersion(version)
 
   -- 1. Whole version folder at "", by save-dir-relative name.  No FFI, and
   --    it is enough wherever PhysFS has no colliding data/ to shadow it.
-  if love.filesystem.mount and love.filesystem.getInfo(sub, "directory") then
-    love.filesystem.mount(sub, "", false)
+  --
+  --    ONLY WHEN THE SAVE DIRECTORY IS THE LIVE ROOT.  A relative mount
+  --    source resolves against the save directory, so with a chosen folder in
+  --    use this prepends the folder the player moved AWAY from -- ahead of
+  --    step 2, which prepends the one they moved to.
+  if not CacheFs.root()
+      and love.filesystem.mount and love.filesystem.getInfo(sub, "directory") then
+    if love.filesystem.mount(sub, "", false) then
+      ourMounts[#ourMounts + 1] =
+        { dir = sub, point = "", append = false, how = "love" }
+    end
   end
 
   -- 2. The same folder by absolute path, for a portable desktop install

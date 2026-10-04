@@ -24,21 +24,30 @@
 -- to chainload it.
 
 local Semver = require("src.update.Semver")
+-- The folder, the asset name and the pattern that recognises one all come from
+-- here.  They were three literals in this file and four more in
+-- src/update/check_worker.lua, so the downloader and the boot shell each had
+-- their own copy of where a payload lives -- the recurring fault in this tree.
+local Payload = require("src.update.Payload")
+-- The sideload verdict: a payload that arrived by hand (the only update path
+-- the Switch and Xbox have outside the native OTA launcher) used to be mounted
+-- with no integrity check at all, while every other arrival route refused a bad
+-- hash.  src/update/Sideload.lua owns the decision and the wording; this file
+-- owns the hashing and the mount.
+local Sideload = require("src.update.Sideload")
 
 local Boot = {}
 
 -- Save-directory layout (identity "pokemon-love2d"), per the shared contract.
-local PAYLOAD_DIR = "updates"
-local PENDING = "updates/pending.txt"
+local PAYLOAD_DIR = Payload.DIR
+local PENDING = Payload.PENDING
 
 -- Isolated mountpoint used only to peek at a candidate's Version.lua, so its
 -- copy never collides with the running source's copy at "/".
 local PROBE_MOUNT = "__pokeport_probe"
 
 -- Downloaded payloads are named Gen2Recomped-<X.Y.Z>.love.
-local function isPayloadName(name)
-  return name:match("^Gen2Recomped%-.+%.love$") ~= nil
-end
+local isPayloadName = Payload.isName
 
 -- The love callbacks the payload's main.lua chunk may redefine when it runs.
 -- We snapshot these before a handoff and restore them if the handoff fails, so
@@ -105,6 +114,54 @@ function Boot.probePayload(rel)
     return nil, "payload has no usable Version table"
   end
   return { engine = v.engine, minShell = tonumber(v.minShell) or 1 }
+end
+
+-- Boot.sha256hex(rel) -> lowercase hex | nil, err
+--
+-- love.data is a core module and conf.lua disables only physics, so hash() is
+-- there on every host including NX and UWP.  No incremental form exists in
+-- LOVE 11.x, so the payload is read whole -- which is why this is reached only
+-- when the player has actually placed a manifest (see Boot.sideloadCheck).
+function Boot.sha256hex(rel)
+  if not (love.data and love.data.hash and love.data.encode) then
+    return nil, "love.data is not available to hash with"
+  end
+  local data = love.filesystem.read(rel)
+  if not data then return nil, "could not read " .. tostring(rel) end
+  local ok, digest = pcall(love.data.hash, "sha256", data)
+  if not ok or not digest then return nil, "sha256 failed" end
+  if type(digest) == "userdata" and digest.getString then
+    digest = digest:getString()
+  end
+  local okHex, hex = pcall(love.data.encode, "string", "hex", digest)
+  if not okHex or type(hex) ~= "string" then return nil, "hex encode failed" end
+  return hex:lower()
+end
+
+-- Boot.sideloadCheck(name, sumsText) -> verdict, expected, actual
+--
+-- Split out so the expensive half (reading and hashing the archive) is skipped
+-- entirely when there is no manifest to compare against, and so the cheap half
+-- stays a pure decision in src/update/Sideload.lua.
+function Boot.sideloadCheck(name, sumsText)
+  if type(sumsText) ~= "string" then
+    return Sideload.verdict(name, nil, nil)
+  end
+  -- An unlisted payload is refused without hashing it: the manifest already
+  -- settles the question and 20 MB of sha256 would change nothing.
+  if not Payload.parseSums(sumsText, name) then
+    return Sideload.verdict(name, sumsText, nil)
+  end
+  local actual, err = Boot.sha256hex(PAYLOAD_DIR .. "/" .. name)
+  if not actual then
+    -- Could not hash a payload whose sum IS listed.  Refusing is the only safe
+    -- answer: the alternative is mounting an archive we were asked to verify
+    -- and could not, which is the silent accept this whole module exists to
+    -- remove.  The reason travels in place of the hash so the line says it.
+    return Sideload.MISMATCH, Payload.parseSums(sumsText, name),
+      "unreadable (" .. tostring(err) .. ")"
+  end
+  return Sideload.verdict(name, sumsText, actual)
 end
 
 -- Boot.select(candidates, bundledEngine, bundledShell) -> chosen | nil, toDelete
@@ -212,18 +269,32 @@ local function runInner(args)
     love.filesystem.remove(PENDING)
   end
 
-  -- Enumerate and probe every payload in updates/.
+  -- Enumerate and probe every payload in the payload folder.
+  --
+  -- The checksum manifest is read ONCE for the whole sweep, not per candidate:
+  -- one release's manifest covers every payload the player placed, and reading
+  -- it per file would make the cost scale with the folder.
+  local sumsText = love.filesystem.read(Payload.sumsRel())
   local candidates = {}
   if love.filesystem.getInfo(PAYLOAD_DIR, "directory") then
     for _, entry in ipairs(love.filesystem.getDirectoryItems(PAYLOAD_DIR)) do
       if isPayloadName(entry) then
         local info = Boot.probePayload(PAYLOAD_DIR .. "/" .. entry)
         if info then
-          candidates[#candidates + 1] = {
-            name = entry,
-            engine = info.engine,
-            minShell = info.minShell,
-          }
+          -- VERIFY BEFORE TRUSTING, and say which of the four it was.  A
+          -- refused payload is dropped from the candidate list rather than
+          -- deleted: the player put it there by hand and a second copy attempt
+          -- is the fix, so destroying it would take the diagnosis away with it.
+          local verdict, expected, actual = Boot.sideloadCheck(entry, sumsText)
+          print("update: " .. Sideload.sentence(entry, verdict, expected, actual))
+          if Sideload.mayMount(verdict) then
+            candidates[#candidates + 1] = {
+              name = entry,
+              engine = info.engine,
+              minShell = info.minShell,
+              verdict = verdict,
+            }
+          end
         end
       end
     end
@@ -236,7 +307,43 @@ local function runInner(args)
     love.filesystem.remove(PAYLOAD_DIR .. "/" .. victim)
   end
 
-  if not chosen then return false end
+  if not chosen then
+    -- A PAYLOAD THAT IS PRESENT AND NOT CHOSEN USED TO BE SILENT, and the two
+    -- reasons it can happen look identical from the outside and completely
+    -- different from the inside: an older payload (nothing to do) and a
+    -- payload whose minShell exceeds this shell (the player needs a new native
+    -- build, and no amount of re-downloading will help).  "Auto-update does
+    -- nothing" is what both reported.  Now each candidate says which it was.
+    for _, c in ipairs(candidates) do
+      local why
+      if (c.minShell or 1) > Version.shell then
+        why = ("needs shell %d, this build provides %d -- install a full "
+          .. "release, a payload cannot upgrade the native shell")
+          :format(c.minShell or 1, Version.shell)
+      elseif Semver.compare(c.engine, Version.engine) <= 0 then
+        why = ("is %s, not newer than the bundled %s"):format(
+          tostring(c.engine), tostring(Version.engine))
+      else
+        why = "was not selected"
+      end
+      print(("update: payload %s %s"):format(c.name, why))
+    end
+    return false
+  end
+  -- THIS PRINTED THE BUNDLED VERSION, NOT THE PAYLOAD'S.  It read
+  -- `(engine %s)` with Version.engine, which is the version being REPLACED --
+  -- so the one line that was supposed to say what the player is about to run
+  -- reported the thing they were trying to move off, and a payload that
+  -- advertised the wrong version was indistinguishable in the log from one
+  -- that advertised the right one.  Both versions and the integrity verdict,
+  -- in the one line.
+  local info
+  for _, c in ipairs(candidates) do
+    if c.name == chosen then info = c end
+  end
+  print(("update: chainloading %s (engine %s over bundled %s, %s)"):format(
+    chosen, tostring(info and info.engine), tostring(Version.engine),
+    tostring(info and info.verdict)))
   return chainload(chosen, args)
 end
 
@@ -248,6 +355,22 @@ end
 function Boot.run(args)
   -- Dev / source checkouts never self-update.
   if not (love.filesystem.isFused and love.filesystem.isFused()) then
+    -- Silent on a plain working tree, which is the normal case and must not
+    -- spam the console.  Loud when a payload is actually sitting there being
+    -- ignored: that is the shape of "I copied the .love across and nothing
+    -- happened", and on the console ports (where a hand-placed payload in the
+    -- save directory is the whole update story) it is the first thing to check.
+    local ok, items = pcall(love.filesystem.getDirectoryItems, PAYLOAD_DIR)
+    if ok and type(items) == "table" then
+      local n = 0
+      for _, entry in ipairs(items) do
+        if isPayloadName(entry) then n = n + 1 end
+      end
+      if n > 0 then
+        print(("update: %d payload(s) in %s/ ignored -- this build is not "
+          .. "fused, so it IS the game and runs itself"):format(n, PAYLOAD_DIR))
+      end
+    end
     return false
   end
   -- The chainloaded love.load calls Boot.run again; the flag makes it a no-op.

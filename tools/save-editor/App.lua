@@ -118,6 +118,24 @@ if not okTiles then TilesPanel = nil end
 local okColl, CollisionPanel = pcall(require,
                                      "tools.map-editor.panels.Collision")
 if not okColl then CollisionPanel = nil end
+-- THE PLATINUM PROP PLACER, loaded the same guarded way. It used to be
+-- reached only through TILES -- `Tiles.draw` delegated to it on a generation
+-- 4 map -- which is why Gen 4 had no tile editor: the name was taken. It is
+-- its own tool now, and Sidebar offers it only on a map whose ground is a
+-- mesh (see Models.actsOn).
+local okModels, ModelsPanel = pcall(require,
+                                    "tools.map-editor.panels.Models")
+if not okModels then ModelsPanel = nil end
+-- THE GEN 4 GROUND TOOL, loaded the same guarded way.
+--
+-- TILES is absent on a Sinnoh map because there is no block space to paint
+-- from: the ground is an NSBMD mesh and the stand-in tileset has no `blocks`
+-- table. Reported as "the map painter tiles arent working at all for
+-- platinum nothing shows". This is what painting that ground is instead --
+-- the per-cell behaviour byte and the blocked flag.
+local okTerrain, TerrainPanel = pcall(require,
+                                      "tools.map-editor.panels.Terrain")
+if not okTerrain then TerrainPanel = nil end
 local okPacks, PacksPanel = pcall(require, "tools.map-editor.panels.Packs")
 if not okPacks then PacksPanel = nil end
 local okHistory, History = pcall(require, "tools.map-editor.History")
@@ -136,6 +154,8 @@ local PANELS = {
   wilds = WildsPanel,
   tiles = TilesPanel,
   collision = CollisionPanel,
+  models = ModelsPanel,
+  terrain = TerrainPanel,
 }
 
 -- and if it did not load, take its chip back out. A tab that opens an empty
@@ -361,6 +381,12 @@ function App.load(pathOverride, opts)
     -- require failed must not be in it -- a button that opens nothing reads as
     -- the feature being broken rather than absent.
     S.tab = MAP_TABS[1] and MAP_TABS[1].id or "preview"
+    -- AND THE PANELS THEMSELVES, so anything downstream can ask a panel what
+    -- it can act on instead of guessing from the map's generation. This shell
+    -- is the only thing that knows which panels actually loaded; a second
+    -- guess somewhere else is how the tool list and the drawer's chip row
+    -- came to disagree in the first place. Read by `Sidebar.toolsFor`.
+    S.panels = PANELS
     S.tools = {}
     if PreviewPanel then
       for _, tool in ipairs(PreviewPanel.TOOLS) do
@@ -1532,7 +1558,12 @@ function App.draw()
          -- the pack dialog shields the same way, and has to: it carries a
          -- REMOVE button, and a tap that reached the map underneath it would
          -- be aimed at a control the reader cannot see
-         or S.packsOpen == true) or false
+         or S.packsOpen == true
+         -- THE EYE POPUP SHIELDS TOO. It is a half-screen window centred
+         -- over the picker, and the model rows underneath it are live hit
+         -- targets -- a click meant for "Close" that reached the row
+         -- behind it would arm a model the reader cannot see.
+         or S.modelZoom ~= nil) or false
   Kit.blockClicks = (S.speciesPicker ~= nil) or voxModal
   Kit.blockRect = nil
 
@@ -1587,6 +1618,20 @@ function App.draw()
   if S.mode == "map" and PANELS.voxels and PANELS.voxels.drawDeferred then
     Kit.blockClicks = false
     PANELS.voxels.drawDeferred(S, Kit)
+  end
+  -- ...AND THE MODEL PICKER'S EYE POPUP, for the same reason and in the same
+  -- place: Kit has no z-order, so a big spinning model drawn inside the
+  -- picker would leave the rows under it still taking clicks.
+  if S.mode == "map" and PANELS.models and PANELS.models.drawDeferred then
+    Kit.blockClicks = false
+    PANELS.models.drawDeferred(S, Kit)
+  end
+  -- ...AND THE TERRAIN PAINTER'S TEXTURE PREVIEW, for the third time for the
+  -- third reason that is the same reason: the swatch is enlarged over the
+  -- rows below it, and a row list is drawn inside a clip.
+  if S.mode == "map" and PANELS.terrain and PANELS.terrain.drawDeferred then
+    Kit.blockClicks = false
+    PANELS.terrain.drawDeferred(S, Kit)
   end
   -- The voxel-source list, over the whole frame.  Its button is in the title
   -- bar and the list drops out of it across the tab rail and the panel, so

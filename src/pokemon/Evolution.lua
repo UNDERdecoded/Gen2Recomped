@@ -115,7 +115,7 @@ Evolution.METHODS = {
   },
   -- NINCADA'S SECOND HALF.  On the cartridge the Nincada becomes a NINJASK
   -- (an ordinary level evolution, and that row is filed as one) and a
-  -- SHEDINJA APPEARS BESIDE IT in a free party slot, using up a Poke Ball.
+  -- SHEDINJA APPEARS BESIDE IT in a free party slot (FRLG also needs a ball).
   -- That is a party operation, not an evolution of this mon, and letting it
   -- through here would turn the Nincada INTO a Shedinja and lose the Ninjask.
   -- Named so the row is accounted for rather than silently unmatched.
@@ -229,6 +229,8 @@ local HAPPINESS_CHANGES = {
   WALKING = { 2, 2, 1 },
   USEDITEM = { 5, 3, 2 },
   FAINT = { -1, -1, -1 },
+  -- Emerald FRIENDSHIP_EVENT_FAINT_FIELD_PSN; bonuses apply only to gains.
+  POISONFAINT = { -5, -5, -10 },
   -- Gen 4's FRIENDSHIP_EVENT_POISON_SURVIVE (pokeplatinum
   -- sFriendshipChangeTable): fired when field poison walks a Pokemon down to
   -- 1 HP and cures it. The name says survive and the numbers say otherwise --
@@ -299,6 +301,44 @@ end
 
 -- Mutate the mon into the new species (stats, HP delta, dex flags).
 -- via is the evolution method id when the caller knows it.
+local shedinjaPending = setmetatable({}, { __mode = "k" })
+
+function Evolution.createShedinja(game, mon, fromSpecies)
+  if (game.data.constants or {}).gen == 4 or #game.save.party >= 6 then return end
+  local original = game.data.pokemon[fromSpecies]
+  if not Stats.isGen3(original) then return end
+  for _, row in ipairs(original and original.evolutions or {}) do
+    if row.method == "LEVEL_SHEDINJA" and mon.level >= (row.level or row.param or 20) then
+      local def = game.data.pokemon[row.species]
+      if not def then return end
+      local frlg = (game.data.constants or {}).gen3FRLGNaming
+        or require("src.core.GameVersion").get() == "firered"
+      if frlg and ((game.save.inventory or {}).POKE_BALL or 0) < 1 then return end
+      local function copy(value)
+        if type(value) ~= "table" then return value end
+        local out = {}
+        for k, v in pairs(value) do out[k] = copy(v) end
+        return out
+      end
+      -- Emerald copies the evolved Ninjask after learning its moves. Unlike
+      -- FRLG/Gen4, Emerald does not require or consume a spare Poke Ball.
+      local extra = copy(mon)
+      extra.species, extra.nickname = row.species, def.name
+      extra.item, extra.heldItem, extra.mail = nil, nil, nil
+      extra.markings, extra.ribbons, extra.status = 0, {}, nil
+      extra.stats = Stats.calcGen3(def, extra.level, extra.ivs, extra.evs, extra.nature)
+      extra.hp = extra.stats.hp
+      if frlg then require("src.inventory.Bag").remove(game.save,"POKE_BALL",1) end
+      game.save.party[#game.save.party + 1] = extra
+      if game.save.pokedex then
+        game.save.pokedex.seen[row.species] = true
+        game.save.pokedex.owned[row.species] = true
+      end
+      return extra
+    end
+  end
+end
+
 function Evolution.apply(game, mon, newSpecies, via, evo)
   local newDef = game.data.pokemon[newSpecies]
   assert(newDef, "evolve into unknown species " .. tostring(newSpecies))
@@ -314,6 +354,9 @@ function Evolution.apply(game, mon, newSpecies, via, evo)
   if (game.data.constants or {}).gen==4 then
     newDef=require('src.pokemon.Gen4Forms').definition(game.data,mon)
     mon.stats=Stats.calc(newDef,mon.level,mon.ivs,nil,mon.evs,mon.nature)
+  elseif Stats.isGen3(newDef) then
+    mon.stats = Stats.calcGen3(newDef, mon.level, mon.ivs, mon.evs, mon.nature)
+    shedinjaPending[mon] = fromSpecies
   else
     mon.stats = Stats.calc(newDef, mon.level, mon.dvs, mon.statExp)
   end
@@ -347,6 +390,9 @@ function Evolution.learnEvolutionMoves(game, mon, onDone)
     i = i + 1
     local moveId = moves[i]
     if not moveId then
+      local from = shedinjaPending[mon]
+      shedinjaPending[mon] = nil
+      if from then Evolution.createShedinja(game, mon, from) end
       if onDone then onDone() end
       return
     end

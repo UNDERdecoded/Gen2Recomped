@@ -165,12 +165,22 @@ local INK_SLOT, INK_LETTER, INK_SHADOW = 15, 1, 2
 -- string is `${STRVAR_1 55, 5, 0}` -- a literal ASCII `$` -- because the DS
 -- English font draws that character as the Poke-dollar, a P with a double
 -- stroke.  The extracted charmap agrees: code 424 is "$", and glyph 424 on
--- `font_message_sheet.png` is that sign, checked by looking at it.  The rest
--- of the engine writes money as "₽%d", which the Game Boy fonts have and
--- this one does not -- printing it here logged "font: no glyph" and drew
--- something else.  ShopMenu has the same line and will have the same fault
--- in a Gen 4 shop; that is its own fix.
-local MONEY_SIGN = "$"
+-- `font_message_sheet.png` is that sign, checked by looking at it.
+--
+-- IT USED TO BE A LOCAL HERE, with a closing line reading "ShopMenu has the
+-- same line and will have the same fault in a Gen 4 shop; that is its own
+-- fix".  That fix landed -- `GameVersion.moneySign` is where the three
+-- cartridge families' signs live now, and six screens read it -- so the local
+-- was the last hand-spelling of a thing with an owner, which is the drift this
+-- port keeps finding.  One spelling, and the stale forward reference goes with
+-- it.
+--
+-- (The money WINDOW, pass 179, needs no sign at all: it resolves bank 543
+-- entry 19, `"${STRVAR_1 55 0 0}"`, and the cartridge's own format string
+-- carries the character.)
+local function moneySign()
+  return require("src.core.GameVersion").moneySign()
+end
 
 -- The cartridge's own blanks, `TrainerCard_Text_BlankDate` and the pair of
 -- `TrainerCard_Text_TwoDashes` the time is built from.
@@ -350,7 +360,7 @@ function Gen4TrainerCard:frontRows()
     { Strings("IDNo."), ("%05d"):format(id), FRONT_Y.id, PARTIAL_RIGHT },
     { Strings("NAME"), tostring(player.name or Strings("PLAYER")),
       FRONT_Y.name, PARTIAL_RIGHT },
-    { Strings("MONEY"), MONEY_SIGN .. tostring(math.floor(save.money or 0)),
+    { Strings("MONEY"), moneySign() .. tostring(math.floor(save.money or 0)),
       FRONT_Y.money, PARTIAL_RIGHT },
   }
   if self:hasPokedex() then

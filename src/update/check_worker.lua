@@ -5,11 +5,14 @@
 --   "update_check_cmd"   in:  { cmd = "check" | "download" | "quit" }
 --   "update_check_state" out: { status, latest, progress, error }
 --
--- Transport is curl shelled out via io.popen (curl ships on macOS, Windows 10+
--- and desktop Linux).  Everything is wrapped so a missing curl, an HTTP error,
--- or a hung download degrades to a "error"/"needs_full" state rather than
--- blocking or crashing the game.  On Android curl is absent and the check
--- soft-fails to "error", which the UI hides.
+-- Transport is whichever one HostShell.transport() resolves: curl shelled out
+-- through HostShell.popen (macOS, Windows 10+, desktop Linux), or the Android
+-- JNI download bridge serviced by the main thread.  Everything is wrapped so a
+-- missing curl, an HTTP error, or a hung download degrades to an
+-- "error"/"needs_full" state rather than blocking or crashing the game.  A
+-- host with neither (the Switch, an Xbox UWP container) is the notify-only
+-- leg: it reports what the newest release is and cannot fetch it, and says so
+-- in the log rather than falling silent.
 --
 -- Fresh love threads do not carry the "src.*" package searcher, so sibling
 -- modules are pulled in with love.filesystem.load exactly like
@@ -32,26 +35,54 @@ local function loadModule(path)
 end
 
 local Json    = loadModule("src/link/Json.lua")
-local Check   = loadModule("src/update/Check.lua")
 local Version = loadModule("src/core/Version.lua")
 local Semver  = loadModule("src/update/Semver.lua")
+local Payload = loadModule("src/update/Payload.lua")
 local HostShell = loadModule("src/core/HostShell.lua")
--- Boot's top-level require("src.update.Semver") cannot resolve in this thread
--- (no src.* searcher), which would leave Boot nil and the minShell gate
--- permanently permissive.  Seed the loaded table first so it resolves.
+-- Boot's and Check's top-level requires cannot resolve in this thread (no
+-- src.* searcher), which would leave them nil -- and a nil Boot leaves the
+-- minShell gate permanently permissive.  Seed the loaded table first.
 if Semver then package.loaded["src.update.Semver"] = Semver end
+if Payload then package.loaded["src.update.Payload"] = Payload end
+local Check   = loadModule("src/update/Check.lua")
 local Boot    = loadModule("src/update/Boot.lua")
 
 local cmdCh   = love.thread.getChannel("update_check_cmd")
 local stateCh = love.thread.getChannel("update_check_state")
 
-local function post(t) stateCh:push(t) end
+-- EVERY TERMINAL STATE SAYS SO IN THE LOG.
+--
+-- The launcher banner renders four of the eight states (available,
+-- downloading, ready, needs_full) and draws nothing for the other four, so
+-- "uptodate", "error" and "idle" are invisible by design -- which means a
+-- platform that gave up looked exactly like a platform with no updater.  This
+-- is the same treatment the audio stack gets ("chip audio: music path = ...").
+local announced = {}
+local function post(t)
+  local status = type(t) == "table" and t.status or "?"
+  if status ~= "checking" and status ~= "downloading" and not announced[status] then
+    announced[status] = true
+    print(("update: %s%s%s"):format(status,
+      (type(t) == "table" and t.latest) and (" latest=" .. tostring(t.latest)) or "",
+      (type(t) == "table" and t.error) and (" -- " .. tostring(t.error)) or ""))
+  end
+  stateCh:push(t)
+end
 
 local osName    = (love.system and love.system.getOS and love.system.getOS()) or ""
 local isWindows = osName == "Windows"
 local saveDir   = love.filesystem.getSaveDirectory()
 
-local API_URL = "https://api.github.com/repos/UNDERdecoded/Gen2Recomped/releases/latest"
+-- DERIVED FROM Check.REPO, which is the one place the repository is named.
+-- This line used to spell the slug out a second time, so moving the repo in
+-- Check.lua moved the releases page the player is sent to and left the API the
+-- check actually calls pointing at the old one -- a check that reports "release
+-- check failed" on every platform while the button beside it opens the right
+-- page.  The fallback is only for a thread where Check would not load at all.
+local REPO = (Check and Check.REPO) or nil
+local API_URL = REPO
+  and ("https://api.github.com/repos/" .. REPO .. "/releases/latest")
+  or nil
 
 -- the release picked by the last "check"; kept between commands so "download"
 -- knows the payload url/size/name without re-fetching
@@ -106,39 +137,29 @@ local BRIDGE_RES = "update_bridge_res"
 local bridgeReqCh = love.thread.getChannel(BRIDGE_REQ)
 local bridgeResCh = love.thread.getChannel(BRIDGE_RES)
 
-local function haveCurl()
-  if not (HostShell and HostShell.popen) then return false end
-  local pipe = HostShell.popen("curl --version")
-  if not pipe then return false end
-  local readOk, out = pcall(function() return pipe:read("*a") end)
-  pcall(function() pipe:close() end)
-  return readOk and out ~= nil and out:find("curl", 1, true) ~= nil
-end
-
--- Reading the field is safe on every platform; only CALLING it off the main
--- thread is what we are avoiding.
-local function haveBridge()
-  local sys = love.system
-  return sys ~= nil
-    and type(sys.httpDownload) == "function"
-    and sys.getOS ~= nil
-    and sys.getOS() == "Android"
-end
-
--- Resolved once.  "curl" | "bridge" | false.  curl wins where both exist so
+-- WHICH TRANSPORT.  Asked of HostShell, not answered again here.
+--
+-- This file used to carry its own byte-for-byte copy of haveCurl and its own
+-- Android bridge test, so "can this build fetch?" had three answers in the
+-- tree -- here, in HostShell.canFetch, and in Platform.canFetchRemote -- and
+-- the self-updater was gated on a different one from the mod index.  The curl
+-- probe is also a process spawn, and HostShell.popen now refuses outright on a
+-- host that cannot spawn (the Switch and a UWP container, where io.popen does
+-- not return nil but RAISES), so the console ports no longer pay for a
+-- throw-and-catch to learn what the OS name already said.
+--
+-- "curl" | "bridge" | false, resolved once.  curl wins where both exist so
 -- desktop behaviour is bit-for-bit what it was.
-local transport
+local transportAnnounced
 local function resolveTransport()
-  if transport == nil then
-    if haveCurl() then
-      transport = "curl"
-    elseif haveBridge() then
-      transport = "bridge"
-    else
-      transport = false
-    end
+  if not (HostShell and HostShell.transport) then return false end
+  local kind, why = HostShell.transport()
+  if not transportAnnounced then
+    transportAnnounced = true
+    print(("update: transport = %s%s"):format(kind or "none",
+      (not kind) and (" (" .. tostring(why) .. ")") or ""))
   end
-  return transport
+  return kind or false
 end
 
 local function canFetch()
@@ -154,11 +175,19 @@ end
 -- quit (#339).  A timeout degrades to "no update offered", which is the
 -- failure mode this whole file is designed around.
 local bridgeSeq = 0
-local function bridgeFetch(url, destRel, accept, timeout)
+local function bridgeFetch(url, destRel, accept, timeout, big)
   bridgeSeq = bridgeSeq + 1
   local seq = bridgeSeq
   bridgeResCh:clear() -- strictly synchronous: never more than one in flight
-  bridgeReqCh:push({ seq = seq, url = url, dest = destRel, accept = accept })
+  bridgeReqCh:push({
+    seq = seq, url = url, dest = destRel, accept = accept,
+    -- `big` makes the main thread post the downloading state and let one frame
+    -- draw before it blocks on the transfer (see serviceBridgeRequests); the
+    -- version and size ride along only so that log line can name them.
+    big = big and true or nil,
+    version = big and big.version or nil,
+    size = big and big.size or nil,
+  })
   local res = bridgeResCh:demand(timeout or 45)
   return type(res) == "table" and res.seq == seq and res.ok == true
 end
@@ -262,6 +291,12 @@ local function doCheck()
     return
   end
 
+  if not API_URL then
+    post({ status = "error",
+      error = "the updater does not know which repository to ask" })
+    return
+  end
+
   local body = curlCapture(API_URL)
   if not body then
     post({ status = "error", error = "release check failed" })
@@ -297,7 +332,7 @@ local function doCheck()
 
   -- Already downloaded on a previous run?  Verify and gate it rather than
   -- pulling the bytes again.
-  local finalRel = "updates/" .. rel.payloadName
+  local finalRel = Payload.rel(rel.version)
   if love.filesystem.getInfo(finalRel) then
     local sums = curlCapture(rel.sums.url)
     if sums and verifyPayload(finalRel, rel.payloadName, sums) then
@@ -313,23 +348,28 @@ local function doCheck()
     love.filesystem.remove(finalRel)
   end
 
-  -- Bridge-only platforms (Android) can CHECK but cannot yet fetch a payload:
-  -- launchDownload below is curl-only, and pushing a ~6 MB transfer through
-  -- the blocking main-thread bridge would freeze the launcher for its whole
-  -- duration.  "needs_full" is the state that already exists for exactly this
-  -- case -- the banner offers "Open releases" instead of an Update button that
-  -- stalls at 0% and fails, which is what an Android tap has always done.
+  -- WHAT USED TO BE HERE, AND WHY ANDROID NEVER UPDATED.  A refusal:
   --
-  -- Note this sits AFTER the already-downloaded branch on purpose: chainloading
-  -- a payload works fine on Android, so one that is already present and
-  -- verifies is still offered as "ready".  Only acquiring it is the gap.
-  -- Closing it needs a bridge that transfers in the background and reports
-  -- progress; until then this is the honest answer.
-  if resolveTransport() == "bridge" then
-    post({ status = "needs_full", latest = rel.version })
-    return
-  end
-
+  --     if resolveTransport() == "bridge" then
+  --       post({ status = "needs_full", latest = rel.version })
+  --       return
+  --     end
+  --
+  -- argued on the grounds that launchDownload is curl-only and that "pushing a
+  -- ~6 MB transfer through the blocking main-thread bridge would freeze the
+  -- launcher for its whole duration".  Android is the only bridge platform, so
+  -- that branch WAS the Android update path: every Android release reported
+  -- needs_full, the banner drew "Open releases", and the tap opened the GitHub
+  -- releases page -- which is exactly the report ("makes them go to github to
+  -- get the update").  It was never a failure; it was a policy refusal, which
+  -- is why nothing in any log said anything was wrong.
+  --
+  -- Both premises were out of date.  launchDownload has a bridge branch now
+  -- (doDownload below), and the freeze is real but bounded and is now
+  -- announced: the main thread posts the downloading state and lets a frame
+  -- draw before it blocks, so the player watches a "Downloading update" banner
+  -- instead of a dead launcher.  The measured payload is 20,368,165 bytes
+  -- (v0.8.3's Gen2Recomped-0.8.3.love), not 6 MB.
   post({ status = "available", latest = rel.version })
 end
 
@@ -344,7 +384,7 @@ end
 local function launchDownload(url, partAbs, doneAbs)
   if isWindows then
     -- a tiny batch file sidesteps cmd.exe's nested-quote madness
-    local batRel = "updates/dl.bat"
+    local batRel = Payload.scriptRel()
     love.filesystem.write(batRel,
       "@echo off\r\n"
       .. "curl -fsSL --connect-timeout 15 --max-time 900 -o \""
@@ -364,50 +404,79 @@ local function doDownload()
     post({ status = "error", error = "nothing to download" })
     return
   end
-  -- Belt and braces: doCheck never posts "available" on a bridge-only platform
-  -- so Check.download cannot reach here, but launchDownload has no bridge
-  -- branch and a silent no-op would present as a progress bar frozen at 0%.
-  if resolveTransport() ~= "curl" then
+  local how = resolveTransport()
+  if how == false then
+    -- No transport at all (NX, UWP, a desktop with no curl).  This is the
+    -- notify-only leg and it says so rather than leaving a progress bar at 0%.
+    local _, why = HostShell and HostShell.transport and HostShell.transport()
+    print("update: download impossible -- " .. tostring(why or "no transport"))
     post({ status = "needs_full", latest = pending.version })
     return
   end
   local rel = pending
   post({ status = "downloading", latest = rel.version, progress = 0 })
 
-  love.filesystem.createDirectory("updates")
-  local partRel  = "updates/" .. rel.payloadName .. ".part"
-  local doneRel  = "updates/" .. rel.payloadName .. ".done"
-  local finalRel = "updates/" .. rel.payloadName
+  love.filesystem.createDirectory(Payload.DIR)
+  -- ONE fact for all four spellings of this path.  The part/done/final names
+  -- and the folder came from Payload so the file the transport writes and the
+  -- file Boot.run later mounts cannot drift apart; they were seven separate
+  -- string literals across three files before src/update/Payload.lua existed.
+  local partRel  = Payload.partRel(rel.version)
+  local doneRel  = Payload.doneRel(rel.version)
+  local finalRel = Payload.rel(rel.version)
   love.filesystem.remove(partRel)
   love.filesystem.remove(doneRel)
 
-  local partAbs = saveDir .. "/updates/" .. rel.payloadName .. ".part"
-  local doneAbs = saveDir .. "/updates/" .. rel.payloadName .. ".done"
+  local partAbs = saveDir .. "/" .. partRel
+  local doneAbs = saveDir .. "/" .. doneRel
   local size    = rel.payload.size or 0
 
-  launchDownload(rel.payload.url, partAbs, doneAbs)
-
-  -- poll the .part size for progress until curl drops the done-marker; a
-  -- stalled or run-away transfer breaks out and lets verification fail cleanly
-  local waited, lastSize, lastChange = 0, -1, 0
-  while true do
-    if love.filesystem.getInfo(doneRel) then break end
-    local pinfo = love.filesystem.getInfo(partRel)
-    local cur = (pinfo and pinfo.size) or 0
-    if size > 0 then
-      local p = cur / size
-      if p > 0.999 then p = 0.999 end -- 1.0 is reserved for "ready"
-      post({ status = "downloading", latest = rel.version, progress = p })
-    else
-      post({ status = "downloading", latest = rel.version })
+  if how == "bridge" then
+    -- THE ANDROID PATH.  One whole-file transfer through the JNI bridge, run
+    -- on the MAIN thread because a JNI call from a love.thread is a native
+    -- abort (the thread is not attached to the JVM, which is below anything
+    -- pcall or love.threaderror can see -- see the transport note above).  The
+    -- main thread answers from Check.drain(); `big` makes it draw the
+    -- downloading banner first and tells its log what it is fetching.
+    --
+    -- There is no progress: the bridge deals in whole files and takes no Range
+    -- header, so there is nothing to poll.  The banner shows an empty bar and
+    -- the state goes straight from downloading to ready or error.  A 20 MB
+    -- payload on a slow connection is a long stall; the timeout is 15 minutes,
+    -- matching curl's --max-time 900 below so neither transport gives up
+    -- sooner than the other.
+    local okFetch = bridgeFetch(rel.payload.url, partRel, nil, 900,
+      { version = rel.version, size = size })
+    if not okFetch then
+      love.filesystem.remove(partRel)
+      post({ status = "error", error = "the host download bridge refused the transfer" })
+      return
     end
-    if cur ~= lastSize then lastSize, lastChange = cur, waited end
-    if waited - lastChange > 60 then break end -- 60s with no growth: give up
-    if waited > 960 then break end             -- absolute ceiling
-    love.timer.sleep(0.25)
-    waited = waited + 0.25
+  else
+    launchDownload(rel.payload.url, partAbs, doneAbs)
+
+    -- poll the .part size for progress until curl drops the done-marker; a
+    -- stalled or run-away transfer breaks out and lets verification fail cleanly
+    local waited, lastSize, lastChange = 0, -1, 0
+    while true do
+      if love.filesystem.getInfo(doneRel) then break end
+      local pinfo = love.filesystem.getInfo(partRel)
+      local cur = (pinfo and pinfo.size) or 0
+      if size > 0 then
+        local p = cur / size
+        if p > 0.999 then p = 0.999 end -- 1.0 is reserved for "ready"
+        post({ status = "downloading", latest = rel.version, progress = p })
+      else
+        post({ status = "downloading", latest = rel.version })
+      end
+      if cur ~= lastSize then lastSize, lastChange = cur, waited end
+      if waited - lastChange > 60 then break end -- 60s with no growth: give up
+      if waited > 960 then break end             -- absolute ceiling
+      love.timer.sleep(0.25)
+      waited = waited + 0.25
+    end
+    love.filesystem.remove(doneRel)
   end
-  love.filesystem.remove(doneRel)
 
   local sums = curlCapture(rel.sums and rel.sums.url or "")
   if not sums then
@@ -431,7 +500,7 @@ local function doDownload()
 
   -- finalize: rename the verified .part to its real name (fall back to a
   -- love.filesystem copy if os.rename is unavailable on this platform)
-  if not os.rename(partAbs, saveDir .. "/updates/" .. rel.payloadName) then
+  if not os.rename(partAbs, saveDir .. "/" .. finalRel) then
     local data = love.filesystem.read(partRel)
     if not data then
       post({ status = "error", error = "finalize failed" })

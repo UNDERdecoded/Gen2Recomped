@@ -69,6 +69,13 @@ function Encounter.rollTable(grass, rng, rateMod, rateOverride)
     if rate > rateMax then rate = rateMax end
   end
   if rate <= 0 or rng(0, rateMax - 1) >= rate then return nil end
+  return Encounter.chooseTable(grass, rng)
+end
+
+-- Field moves choose a slot without the walking encounter-rate roll.
+function Encounter.chooseTable(grass, rng)
+  if not grass or not grass.slots then return nil end
+  rng = rng or love.math.random
   -- ...and the same for WHICH slot: Gen 1's thresholds are out of 256 and
   -- Gen 3's are percentages.  A table with twelve slots and ten thresholds
   -- can never reach its last two, and on this cartridge those are the rare
@@ -264,10 +271,13 @@ local gen4Views = setmetatable({}, { __mode = "k" })
 -- and what shape they arrive in.  Gen 1, 2 and 3 fall through it unchanged:
 -- they have no `map.encounters`, so the id is still `mapId`, and no
 -- `grassRate`, so the table is returned exactly as it was.
-function Encounter.forMap(data, mapDef, mapId, hour)
+function Encounter.forMap(data, mapDef, mapId, hour, save)
   local all = data and data.encounters
   if not all then return nil end
   local def = all[(mapDef and mapDef.encounters) or mapId]
+  if data.field and data.field.gen2Swarms then
+    def=require("src.world.Gen2Swarms").forMap(data,save,mapDef,mapId,def)
+  end
   if not isGen4Shaped(def) then return def end
 
   -- REQUIRED LAZILY, INSIDE THE GEN 4 BRANCH.  `Gen4Encounters` has no requires

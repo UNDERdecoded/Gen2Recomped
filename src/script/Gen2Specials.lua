@@ -34,7 +34,9 @@ local function answer(ctx, value)
   value = math.floor(value or 0) % 256
   ctx.g2Var = value
   ctx.lastCheck = value ~= 0
-  return value
+  -- Specials answer through wScriptVar, not the Lua return value. The
+  -- runner interprets a numeric return as a row jump (zero crashes, one
+  -- restarts the script), so even `return answer(...)` must return nil.
 end
 
 local function speciesKey(n)
@@ -398,9 +400,8 @@ function Commands.g2_gameboy_check(ctx)
   answer(ctx, 2)
 end
 
--- ActivateFishingSwarm: stores wScriptVar in wFishingSwarmFlag.  The port has
--- no swarm tables (see g2_swarm), so record it the same way rather than lose
--- the request -- a save that armed a swarm keeps reporting it.
+-- ActivateFishingSwarm stores wScriptVar in wFishingSwarmFlag. Crystal's
+-- phone script sets the separate daily flag; this special does not set it.
 function Commands.g2_activate_fishing_swarm(ctx)
   ctx.save.g2FishSwarm = ctx.g2Var or 0
 end
@@ -449,31 +450,9 @@ function Commands.g2_give_dratini(ctx)
   end
 end
 
--- ---------------------------------------------------------------------------
--- CheckPartyFullAfterContest (engine/pokemon/caught_data.asm)
---
--- The Bug Contest's one caught mon goes to the party, or to a box when the
--- party is full, or nowhere when every box is full too.  wScriptVar reports
--- which: 0 BUGCONTEST_CAUGHT_MON, 1 BUGCONTEST_BOXED_MON, 2 BUGCONTEST_NO_CATCH.
--- Six call sites -- the gate scripts branch on all three.
--- ---------------------------------------------------------------------------
-
-function Commands.g2_contest_party_full(ctx)
-  local BugContest = require("src.world.BugContest")
-  local mon = BugContest.caught(ctx.save)
-  if not mon then return answer(ctx, 2) end
-  local Party = require("src.pokemon.Party")
-  ctx.game.stringBuffer = monName(ctx, mon)
-  if Party.add(ctx.save.party, mon) then
-    BugContest.setCaught(ctx.save, nil)
-    return answer(ctx, 0)
-  end
-  if require("src.pokemon.Boxes").deposit(ctx.save, mon) then
-    BugContest.setCaught(ctx.save, nil)
-    return answer(ctx, 1)
-  end
-  answer(ctx, 2)
-end
+-- CheckPartyFullAfterContest is owned by Gen2Commands. Do not overwrite it:
+-- that handler restores the held party and clears the contest run before
+-- transferring the catch. A second handler here bypassed that cleanup.
 
 -- ---------------------------------------------------------------------------
 -- The Magikarp length guru  (engine/events/magikarp.asm)

@@ -28,6 +28,7 @@
 local MapEdits = require("tools.map-editor.MapEdits")
 local VoxelClasses = require("tools.map-editor.VoxelClasses")
 local ModShapes = require("tools.map-editor.ModShapes")
+local MapKind = require("tools.map-editor.MapKind")
 -- Optional: without it the tools go back to being tabs and this panel still
 -- draws. Required lazily through pcall for the same reason App does -- a
 -- checkout that does not carry the file must lose the drawer, not the editor.
@@ -50,22 +51,48 @@ local Preview = {}
 
 local CELL = 16   -- one walk cell of map art, the unit MapBrowser uses too
 
+-- The DEFAULT camera row's pitch, in degrees below horizontal: the angle most
+-- of Sinnoh is drawn at, and the one the TILT control steps away from on its
+-- first press. The exact figure is `Gen4Camera.TYPES[0].pitch` =
+-- 59.051513671875; rounded here because this is a starting point for a
+-- stepper, not an answer about the cartridge.
+local CARTRIDGE_PITCH = 59
+
 -- The tools, in the order they are used: put a door somewhere, put a person
 -- next to it, give the person something to say, then shape the ground.
-Preview.TOOLS = {
-  { tab = "warps",   title = "WARPS",
-    blurb = "doors, stairs and cave mouths; make new maps" },
-  { tab = "objects", title = "NPCs & ITEMS",
-    blurb = "people, items, trainers and their teams" },
-  { tab = "scripts", title = "SCRIPTS",
-    blurb = "what an object does when you talk to it" },
-  { tab = "voxels",  title = "VOXELS",
-    blurb = "per-cell height and shape for the 3D mods" },
-  { tab = "wilds",   title = "WILDS",
-    blurb = "what lives in the grass, the water and on a hook" },
-  { tab = "tiles",   title = "TILES",
-    blurb = "paint the ground itself, block by block" },
-}
+--
+-- DERIVED FROM `Sidebar.TOOLS`, NOT A SECOND COPY OF IT. This was a literal
+-- list of six and `Sidebar.TOOLS` was a literal list of seven, and the two
+-- had already drifted: WALKABLE existed as a drawer chip and had no button
+-- here, so the only way to reach it was to open another tool first. The same
+-- thing spelled differently in two places that never meet is this tree's
+-- recurring bug, and a tool list is a cheap place to stop repeating it.
+--
+-- The literal below is the fallback for a build with no Sidebar.lua, where
+-- the tools go back to being tabs -- the same reason the require above is a
+-- pcall.
+Preview.TOOLS = (function()
+  local out = {}
+  for _, t in ipairs((Sidebar and Sidebar.TOOLS) or {}) do
+    out[#out + 1] = { tab = t.id, id = t.id, title = t.title,
+                      blurb = t.blurb }
+  end
+  if #out > 0 then return out end
+  return {
+    { tab = "warps",   title = "WARPS",
+      blurb = "doors, stairs and cave mouths; make new maps" },
+    { tab = "objects", title = "NPCs & ITEMS",
+      blurb = "people, items, trainers and their teams" },
+    { tab = "scripts", title = "SCRIPTS",
+      blurb = "what an object does when you talk to it" },
+    { tab = "voxels",  title = "VOXELS",
+      blurb = "per-cell height and shape for the 3D mods" },
+    { tab = "wilds",   title = "WILDS",
+      blurb = "what lives in the grass, the water and on a hook" },
+    { tab = "tiles",   title = "TILES",
+      blurb = "paint the ground itself, block by block" },
+  }
+end)()
 
 -- Bump on every edit. `mapEditsDirty` says THAT something changed; the stamp
 -- says WHEN, which is what the 3D viewport needs to know its mesh is stale.
@@ -374,6 +401,24 @@ local function centerOn(S, cx, cy)
 end
 Preview.centerOn = centerOn
 
+-- clampCam(S, wCells, hCells) -- the camera bound, split out of the draw so it
+-- can be EXECUTED by a check rather than read.
+--
+-- Returns the clamped pair as well as writing it, so a test does not have to
+-- reach into `S` to see what it decided.
+function Preview.clampCam(S, wCells, hCells)
+  local z = S.pvZoom or 2
+  local worldW, worldH = (wCells or 0) * CELL, (hCells or 0) * CELL
+  local winW, winH = (S.pvViewW or 480) / z, (S.pvViewH or 432) / z
+  local function fit(cam, world, win)
+    if world <= win then return (world - win) / 2 end
+    return math.max(0, math.min(cam, world - win))
+  end
+  S.pvCamX = fit(S.pvCamX or 0, worldW, winW)
+  S.pvCamY = fit(S.pvCamY or 0, worldH, winH)
+  return S.pvCamX, S.pvCamY
+end
+
 -- The collision class under a cell, read exactly the way Map:cellTile does.
 local function cellClass(S, def, cx, cy)
   local ts = S.data and S.data.tilesets and S.data.tilesets[def.tileset]
@@ -420,13 +465,70 @@ local function cellAtScreen(S, wCells, hCells, Kit, vx, vy, vw, vh)
   end
 
   local cx = math.floor(((mx - vx) / z + (S.pvCamX or 0)) / CELL)
-  local cy = math.floor((worldY + (S.pvCamY or 0)) / CELL)
+  -- UP THROUGH THE GROUND'S OWN LEAN, which is the inverse of what
+  -- `Preview.groundY` does on the way down. Without it a click lands on the
+  -- cell the pointer is over in FLAT space while the picture under the pointer
+  -- is the leaned one -- so you paint a cell you are not looking at, and by
+  -- more the further down the viewport you click.
+  local cy = math.floor((Preview.groundUn(S, worldY) + (S.pvCamY or 0)) / CELL)
   if cx < 0 or cy < 0 or cx >= wCells or cy >= hCells then return nil end
   return cx, cy
 end
 
 -- ---------------------------------------------------------------------------
--- the 3D view
+-- THE GROUND'S LEAN, AND THE ONE PLACE IT IS APPLIED
+--
+-- Reported from play, repeatedly, and finally in the form that named it:
+-- *"for platinum the npcs and warps arent placed in 3d and are acting as a 2d
+-- overlay that doesnt change with the camera tilt"*, and before that *"npc
+-- sprites loading in my UI outside of the map rendering area"*.
+--
+-- A Gen 4 map is drawn through the cartridge's own pitch. `Gen4Ground` states
+-- its vertical scale as `groundScale` -- 0.8576 for Jubilife's 59.05 degrees --
+-- and paints world row `wy` at view row `(wy - camY) * groundScale`. That is
+-- not a reading of the picture: it is the inverse of the ground's own
+-- `ey = camY + vh / (2 * sinP)`, which is how IT works out what a viewport of
+-- `vh` view pixels covers in world ones.
+--
+-- The editor drew everything else -- warps, NPCs, the cell cursor, the grid --
+-- at `wy - camY`, with no scale at all; `groundScale` appeared nowhere in
+-- `tools/` at all. So the ground and everything standing on it were placed by
+-- two different projections, and they disagree by more the further down the
+-- viewport you look: at the foot of a 199-row viewport the gap is 28 rows,
+-- which is where the sprites that land outside it have been going.
+--
+-- ONE FUNCTION AND ITS INVERSE, used by the drawing AND by the hit test. Two
+-- copies of this arithmetic that agreed today would be the next thing to
+-- drift, and a hit test that disagrees with the picture is worse than either
+-- being wrong on its own: it means clicking paints somewhere other than where
+-- you can see.
+--
+-- Non-Gen 4 maps have no `gen4Ground`, so the scale is 1 and all three of
+-- these are the identity. Gen 1, 2, 3 and the voxel view are untouched by
+-- construction rather than by a branch that has to be remembered.
+function Preview.groundSin(S, map)
+  -- `S._pvMap` is the map the viewport is already holding for this frame --
+  -- NOT a second field of my own with the same meaning, which is how two
+  -- names for one thing start.
+  map = map or (S and S._pvMap)
+  local gr = map and map.renderer and map.renderer.gen4Ground
+  local sinP = tonumber(gr and gr.groundScale) or 1
+  -- A degenerate scale would divide the inverse by nearly nothing and throw
+  -- the hit test off the end of the map; 1 is the honest fallback.
+  if not (sinP > 0.05 and sinP <= 1) then return 1 end
+  return sinP
+end
+
+-- World pixels (down the map) -> view pixels (down the screen).
+function Preview.groundY(S, worldY, map)
+  return (tonumber(worldY) or 0) * Preview.groundSin(S, map)
+end
+
+-- ...and back again, for the hit test.
+function Preview.groundUn(S, viewY, map)
+  return (tonumber(viewY) or 0) / Preview.groundSin(S, map)
+end
+
 -- ---------------------------------------------------------------------------
 --
 -- A real projection of the voxel world, not a heightmap. The first version of
@@ -973,6 +1075,28 @@ function Preview.paintAt(S, cx, cy)
   -- open underneath. Routed through here rather than added as a fourth branch
   -- in the map's click handling because this is the one function that already
   -- knows which cell a click landed on in both 2D and 3D.
+  -- A HELD 3D MODEL TAKES IT ON THE SAME TERMS.
+  --
+  -- Before the asset library rather than after, because a model is armed from
+  -- the prop panel the user is looking at and an asset from the title bar --
+  -- the nearer intent wins. The two can never both be armed in practice; the
+  -- order is written down anyway, because "it cannot happen" is not an order.
+  if S.modelPlacing ~= nil then
+    local okD, Models = pcall(require, "tools.map-editor.panels.Models")
+    if okD and type(Models) == "table" and Models.placeAt then
+      local okP, at = pcall(Models.placeAt, S, cx, cy)
+      if okP and at then
+        S.pvNotice = string.format("placed prop %d - still holding it, Escape "
+                                   .. "or Add again to put it down", at)
+        return true
+      end
+      -- A FAILED PLACE STILL SWALLOWS THE CLICK. Falling through would paint
+      -- or select with a model in hand, which is a different edit than the
+      -- one the user asked for.
+      S.pvNotice = "cannot place a prop here - pick a cell on a built chunk"
+      return true
+    end
+  end
   local okA, MapAssets = pcall(require, "tools.map-editor.MapAssets")
   if okA and type(MapAssets) == "table" then
     local asset, name = MapAssets.armed(S)
@@ -1003,6 +1127,28 @@ function Preview.paintAt(S, cx, cy)
     local okC, Collision = pcall(require, "tools.map-editor.panels.Collision")
     if okC and type(Collision) == "table" and Collision.paintAt then
       return Collision.paintAt(S, cx, cy)
+    end
+    return false
+  end
+  -- THE GEN 4 GROUND BRUSH, beside the collision one and for the same
+  -- reason: they are different tools and only one drawer is open at a time,
+  -- so ordering the tests is what keeps a click meaning one thing.
+  --
+  -- Checked BEFORE the tile painter even though the two can never both be
+  -- offered -- `Tiles.actsOn` is false on exactly the maps TERRAIN is true
+  -- on. Relying on that to make the order not matter is relying on a rule
+  -- held in another file; being explicit costs three lines.
+  if Sidebar and Sidebar.openId(S) == "terrain" then
+    local okT, Terrain = pcall(require, "tools.map-editor.panels.Terrain")
+    -- `paintAt`, which dispatches on the panel's own mode -- the behaviour
+    -- byte or the ground texture. Calling `paintCell` directly from here
+    -- made a drag on the map always paint the behaviour however the panel
+    -- was set, which is a control doing something other than what it says.
+    if okT and type(Terrain) == "table" and Terrain.paintAt then
+      return Terrain.paintAt(S, cx, cy)
+    end
+    if okT and type(Terrain) == "table" and Terrain.paintCell then
+      return Terrain.paintCell(S, cx, cy, nil)
     end
     return false
   end
@@ -1069,11 +1215,18 @@ function Preview.painting(S)
   -- NOT while holding an asset: a drag would stamp a house per cell crossed,
   -- which on a route is two hundred houses and an editor that has stopped
   -- responding. One click, one building.
-  if S.assetPlacing then return false end
+  -- ...NOR WHILE HOLDING A 3D MODEL, for exactly the same reason: a drag
+  -- would stamp a building per cell crossed. One click, one prop.
+  if S.assetPlacing or S.modelPlacing then return false end
   -- A COLLISION EDIT IS A STROKE TOO. Walling off a cliff edge is thirty
   -- cells in a line, and clicking each one is the difference between a tool
   -- and a chore.
   if Sidebar and Sidebar.openId(S) == "collision" then return true end
+  -- SO IS A TERRAIN EDIT. A shoreline, a path or a wall is a line of cells,
+  -- and the brush always has a value -- it defaults to behaviour 0 rather
+  -- than to nil -- so there is no un-picked state to guard the way the tile
+  -- painter's `S.tilePick ~= nil` does.
+  if Sidebar and Sidebar.openId(S) == "terrain" then return true end
   return Sidebar and Sidebar.openId(S) == "tiles"
     and (S.tileMode or "paint") == "paint" and S.tilePick ~= nil
 end
@@ -1132,6 +1285,29 @@ end
 -- which is what a click means everywhere else; with it the cell is toggled, so
 -- the same gesture that adds a cell takes one back out.
 function Preview.selectCell(S, cx, cy, additive)
+  -- A CLICK ON A PROP SELECTS THE PROP, while the prop tool is the open one.
+  --
+  -- Asked for: *"when a 3D model is selected in the map view in platinum it
+  -- should popup with options in the sidebar for it"*. The options ARE the 3D
+  -- PROPS panel, keyed on `S.modelPick`, so selecting the prop is the whole
+  -- job -- there is no popup to build, and a popup would be the wrong answer
+  -- anyway: Kit has no z-order, so a panel drawn over the map leaves the map
+  -- underneath taking every click that lands on it.
+  --
+  -- ONLY WHILE THAT TOOL IS OPEN, and only on a cell that actually holds a
+  -- prop: `Models.pickAt` answers false otherwise and the ordinary cell
+  -- selection below runs. Stealing every click would take the cell selection
+  -- away from the panel, which needs it to know which chunk it is editing --
+  -- and on a shift-click it would take the multi-cell selection with it.
+  if (not additive) and Sidebar and Sidebar.openId(S) == "models" then
+    local okM, Models = pcall(require, "tools.map-editor.panels.Models")
+    if okM and type(Models) == "table" and Models.pickAt then
+      local okP, took = pcall(Models.pickAt, S, cx, cy)
+      -- `pickAt` sets `S.pvCell` itself, so returning here cannot leave the
+      -- panel pointing at the previous cell's chunk.
+      if okP and took then S.pvSel = nil ; return end
+    end
+  end
   if not additive then
     S.pvSel = nil
     S.pvCell = { cx = cx, cy = cy }
@@ -1387,8 +1563,18 @@ local function drawOverlays3D(S, built, vx, vy, vw, vh)
 end
 
 local function drawOverlays(S, map, Kit)
+  -- THROUGH THE GROUND'S LEAN. Every overlay in this function -- the warps,
+  -- the NPCs, the cell cursor, the collision wash -- is placed by this one
+  -- rect, which is why applying the scale here reaches all of them at once
+  -- rather than in a dozen places that could each be forgotten.
+  --
+  -- The CELL ITSELF IS SHORTER TOO, not merely moved: a cell drawn full height
+  -- on leaned ground overhangs the cell below it by the same fraction the
+  -- lean removes, and a cursor that overhangs reads as selecting two cells.
+  local lean = Preview.groundSin(S, map)
   local function rect(cx, cy)
-    return cx * CELL - (S.pvCamX or 0), cy * CELL - (S.pvCamY or 0), CELL, CELL
+    return cx * CELL - (S.pvCamX or 0),
+           (cy * CELL - (S.pvCamY or 0)) * lean, CELL, CELL * lean
   end
   local def = map.def
 
@@ -1550,7 +1736,8 @@ local function drawOverlays(S, map, Kit)
       love.graphics.setColor(1, 0.55, 0.1, 0.22)
       love.graphics.rectangle("fill",
         tonumber(bx) * 2 * CELL - (S.pvCamX or 0),
-        tonumber(by) * 2 * CELL - (S.pvCamY or 0), CELL * 2, CELL * 2)
+        Preview.groundY(S, tonumber(by) * 2 * CELL - (S.pvCamY or 0), map),
+        CELL * 2, CELL * 2 * Preview.groundSin(S, map))
     end
   end
 
@@ -1572,7 +1759,8 @@ local function drawOverlays(S, map, Kit)
       if (S.pvZoom or 2) >= 2 then
         love.graphics.setColor(0.27, 0.59, 1, 0.9)
         love.graphics.print(tostring(i), w.x * CELL - (S.pvCamX or 0) + 2,
-                            w.y * CELL - (S.pvCamY or 0) + 1)
+                            Preview.groundY(S, w.y * CELL - (S.pvCamY or 0),
+                                            map) + 1)
       end
     end
   end
@@ -2283,6 +2471,51 @@ function Preview.draw(S, Kit, x, y, w, h)
       S.pvView = "2d"
     end)
 
+    -- THE CAMERA ANGLE, on a map that has one.
+    --
+    -- Asked for: *"add the tilt back and add an option for changing the
+    -- camera angle above the map view"*. Gen 4 draws its ground through the
+    -- cartridge's camera, and all seventeen of its rows are pitched -- 59.05
+    -- degrees on the default row, which compresses ground depth to
+    -- sin(59.05) = 0.858. Looking straight down (90) is what an editor often
+    -- wants; seeing the map the way the DS draws it is what you want while
+    -- placing something. Both, then -- and the map opens on the cartridge's
+    -- own angle, because that is the picture the game has.
+    --
+    -- ONLY ON A MESH-GROUND MAP. Gen 1-3 renderers have no pitch at all, so
+    -- the control would be inert there -- and an inert control reads as
+    -- broken, which is the argument the tool list already makes.
+    if MapKind and MapKind.meshGround
+       and MapKind.meshGround(S, S.data and S.data.maps
+                                 and S.data.maps[S.mapId or ""] or nil) then
+      local tBtn = 26 * s
+      cur = cur - 10 * s
+      cur = cur - tBtn
+      if Kit.stepper(cur, y + vpad, tBtn, headH, "+") then
+        -- Stepping from the CARTRIDGE angle rather than from a round number,
+        -- so the first press is a small change from what is on screen and not
+        -- a jump to somewhere else.
+        S.pvTilt = math.min(90, (S.pvTilt or CARTRIDGE_PITCH) + 5)
+      end
+      cur = cur - 54 * s
+      -- Clicking the readout puts it back to the map's own camera, which is
+      -- the one value the steppers cannot reach: it is a different KIND of
+      -- answer, not a number on the scale.
+      if Kit.press(cur, y + vpad, 54 * s, headH) then S.pvTilt = nil end
+      Kit.textCenter("mono",
+                     S.pvTilt and (("%ddeg"):format(S.pvTilt)) or "rom", cur,
+                     y + vpad + (headH - Kit.textHeight("mono")) / 2, 54 * s,
+                     S.pvTilt and PAL.yellow or PAL.muted)
+      cur = cur - tBtn
+      if Kit.stepper(cur, y + vpad, tBtn, headH, "-") then
+        S.pvTilt = math.max(20, (S.pvTilt or CARTRIDGE_PITCH) - 5)
+      end
+      cur = cur - 44 * s
+      Kit.textCenter("small", "TILT", cur,
+                     y + vpad + (headH - Kit.textHeight("small")) / 2, 44 * s,
+                     PAL.muted)
+    end
+
     -- THE VOXEL SOURCE MOVED OUT OF THE HEADER.
     --
     -- It was measured from the left while the view presets measured in from
@@ -2301,14 +2534,52 @@ function Preview.draw(S, Kit, x, y, w, h)
     -- uses these, so panning and selecting work on a map the renderer could
     -- not build -- which is exactly the state you are in when you most need to
     -- reach the controls that fix it.
+    --
+    -- THE BLOCK-TO-CELL RATIO COMES FROM THE TILESET, NOT FROM A 2, and that
+    -- 2 was the black bar in this viewport. A 32 px Gen 1/2 block is four
+    -- 16 px cells, so 2 is right there and wrong everywhere else: a Gen 3
+    -- half-bank pair and Gen 4's stand-in both say `blockCells = 1`, because
+    -- a metatile IS the cell. `Map.lua:443` has always derived it that way;
+    -- this line did not, so on every Gen 3 and Gen 4 map the editor believed
+    -- the map was twice as wide and twice as tall as it is -- and `centerOn`
+    -- below therefore aimed the camera at the map's bottom-right CORNER.
+    --
+    -- The arithmetic does not depend on the zoom or the viewport height:
+    -- with `hCells` doubled, `camY` lands at `worldH - window/2`, so the map
+    -- fills EXACTLY THE TOP HALF of the viewport and the plate painted below
+    -- it is never drawn over -- the tile batch has no quads past the end of
+    -- the map. Measured on Platinum C01 (64 x 64 blocks, zoom 2.0): cell
+    -- count 128 x 128 instead of 64 x 64, camY 884 into a world 1024 px
+    -- tall, 140 of the viewport's 280 world pixels covered. Derived, camY is
+    -- 372 and all 280 are covered.
     local mapDef = S.data and S.data.maps and S.data.maps[S.mapId]
-    local wCells = ((mapDef and mapDef.width) or 0) * 2
-    local hCells = ((mapDef and mapDef.height) or 0) * 2
+    local wCells, hCells = MapKind.cellsOf(S, mapDef)
 
     if S._pvCenteredFor ~= S.mapId then
       S._pvCenteredFor = S.mapId
       centerOn(S, wCells / 2, hCells / 2)
     end
+
+    -- ...AND THE CAMERA IS CLAMPED TO THE MAP, every frame. That is the other
+    -- half of the black bar, and it is a different fault from the ratio above.
+    --
+    -- `centerOn`, the right-drag and the arrow keys all write `pvCamX/Y` and
+    -- NONE of the three bounded it, so the view could sit past the edge of the
+    -- world with the plate showing through. On a map SMALLER than the viewport
+    -- the remainder also collected entirely at one side instead of being
+    -- split, which is what an interior like C01FS0101 (32 x 32 cells) shows:
+    -- a thin margin above and a thick band below.
+    --
+    -- Clamped HERE rather than at the three writers on purpose: it is one
+    -- rule, it runs after all of them, and a fourth writer added later cannot
+    -- escape it. The game never needed this because its own camera is clamped
+    -- to the map; the editor's is free, which is the whole point of it.
+    --
+    -- A map narrower or shorter than the window is CENTRED -- `(world - win)/2`
+    -- is negative and splits the remainder evenly -- rather than pinned to the
+    -- origin, because a letterbox that is all on one side reads as the map
+    -- having failed to draw.
+    Preview.clampCam(S, wCells, hCells)
 
     -- MapLoader.build asserts on a map whose tileset will not resolve, and an
     -- editor-created map is exactly where that can happen.
@@ -2356,6 +2627,25 @@ function Preview.draw(S, Kit, x, y, w, h)
     -- The built Map, published for the class picker's swatches: they draw
     -- this cell's real artwork, which needs the renderer's atlas.
     S._pvMap = map
+
+    -- SINNOH, AT THE ANGLE THE USER PICKED.
+    --
+    -- `S.pvTilt` is pitch in degrees, or nil for the cartridge's own camera
+    -- row -- which is the DEFAULT. This panel briefly forced 90 (straight
+    -- down) while chasing the black band; that was wrong twice over: it did
+    -- not fix the band, and it threw away the projection the DS actually
+    -- draws. *"add the tilt back and add an option for changing the camera
+    -- angle above the map view"*.
+    --
+    -- Set every frame rather than once on open: it is a no-op once the pitch
+    -- matches, and `MapLoader` caches maps -- a map built while the overworld
+    -- had its own angle arrives here already pitched, and a map this tool
+    -- angled must not keep that angle when the game reloads it. `pcall`
+    -- because a Gen 1-3 map has no `gen4Ground` at all.
+    if map.renderer and map.renderer.gen4Ground then
+      pcall(map.renderer.gen4Ground.setViewPitch, map.renderer.gen4Ground,
+            S.pvTilt)
+    end
 
     -- THE REAL 3D VIEWPORT, when the driver can give us one. Drawn outside
     -- the 2D translate/scale below: it has its own camera and its own canvas,
@@ -2540,11 +2830,75 @@ function Preview.draw(S, Kit, x, y, w, h)
       -- covers the map and the tools column both -- and an overlay that knows
       -- a size but not an origin can only guess where to land.
       S._pvViewX, S._pvViewY = vx0, vy0
+
+      -- ONE LINE THAT SAYS WHAT THE VIEWPORT ACTUALLY IS.
+      --
+      -- The black band under a Gen 4 map has now survived three fixes that
+      -- were each real: the block-to-cell ratio, the camera clamp, and
+      -- pinning the pitch to 90. Reported back: *"the viewport map render
+      -- isnt aligned properly to the viewport, if you look you can see npc
+      -- sprites loading in my UI outside of the map rendering area about the
+      -- height of the black bar"* -- which is a different defect from the one
+      -- being looked for, and a decisive observation: content that belongs
+      -- inside the viewport is landing above it by the band's own height.
+      --
+      -- Every number below reads correct in the source, so the next question
+      -- is not answerable by reading. These are the values this machine has.
+      --
+      -- Printed ONCE per (map, size, zoom, tilt). A line per frame is not a
+      -- diagnostic, it is a flood that hides the one line you wanted.
+      do
+        local key = table.concat({ tostring(S.mapId), tostring(math.floor(vinner)),
+                                   tostring(math.floor(vh0)), tostring(S.pvZoom),
+                                   tostring(S.pvTilt) }, "|")
+        if S._pvDiagKey ~= key then
+          S._pvDiagKey = key
+          local z = S.pvZoom or 2
+          local gr = map.renderer and map.renderer.gen4Ground
+          local grid = gr and gr.grid
+          -- The ground's own reach, which is the hypothesis a reading cannot
+          -- settle: the terrain is a matrix of chunks, and a viewport taller
+          -- than the matrix's remaining rows has nothing to paint at the
+          -- bottom whatever the projection is doing.
+          local reachY = grid and gr.chunkPx
+                         and (grid.height * gr.chunkPx - (gr.offsetY or 0))
+                         or -1
+          print(string.format(
+            "map editor viewport: map=%s  plate=%.0fx%.0f @%.1fx  canvas=%.0fx%.0f"
+            .. "  cells=%dx%d world=%.0fx%.0f  cam=%.0f,%.0f  win=%.0fx%.0f"
+            .. "  origin=%.0f,%.0f  ground=%s grid=%sx%s chunkPx=%s offset=%s,%s"
+            .. "  reachY=%.0f  sinP=%s  tilt=%s",
+            tostring(S.mapId), vinner, vh0, z, vinner / z, vh0 / z,
+            wCells or 0, hCells or 0, (wCells or 0) * CELL, (hCells or 0) * CELL,
+            S.pvCamX or 0, S.pvCamY or 0, vinner / z, vh0 / z,
+            vx0, vy0,
+            gr and "gen4" or "tile",
+            tostring(grid and grid.width), tostring(grid and grid.height),
+            tostring(gr and gr.chunkPx), tostring(gr and gr.offsetX),
+            tostring(gr and gr.offsetY), reachY,
+            tostring(gr and gr.groundScale), tostring(S.pvTilt)))
+        end
+      end
       if S.pvView == "voxel" then
         drawVoxelView(S, map, vinner, vh0)
       else
         require('tools.map-editor.MapView').draw(S,map,'map',S.pvCamX or 0,S.pvCamY or 0,vinner/S.pvZoom,vh0/S.pvZoom)
       end
+      -- THE SCISSOR, RE-ASSERTED BEFORE THE OVERLAYS.
+      --
+      -- Reported: NPC sprites drawn over the UI above the viewport. Nothing
+      -- inside this block can escape a live scissor, so if they are escaping
+      -- then the scissor is not live by the time the overlays run -- and the
+      -- one thing between it and them is `MapView.draw`, which binds a canvas
+      -- and calls `setScissor()` with no arguments inside a `push('all')`.
+      -- That is supposed to restore on `pop`, and on this driver it may not.
+      --
+      -- Re-asserting costs one call a frame and removes the question. It is
+      -- deliberately NOT a claim to have found the cause: if the sprites stay
+      -- outside after this, the scissor was never the mechanism and the
+      -- geometry line above is what answers it.
+      love.graphics.setScissor(math.floor(vx0), math.floor(vy0),
+                               math.ceil(vinner), math.ceil(vh0))
       drawOverlays(S, map, Kit)
       love.graphics.pop()
       love.graphics.setScissor()
@@ -2596,7 +2950,7 @@ function Preview.draw(S, Kit, x, y, w, h)
     -- nobody is looking at is the kind of cost that shows up later as "the
     -- editor feels heavy". Cleared when nothing is held so a stale square does
     -- not hang over the map.
-    if S.assetPlacing and inside then
+    if (S.assetPlacing or S.modelPlacing) and inside then
       local hx, hy
       if S.pv3DActive and Viewport3D then
         hx, hy = Viewport3D.pick(S, S.pv3D, Kit.mouseX, Kit.mouseY,
@@ -2820,6 +3174,62 @@ function Preview.draw(S, Kit, x, y, w, h)
         wCells, hCells)
     end
     Kit.text("small", footer, vx0, ly2, PAL.muted)
+
+    -- THE GEOMETRY LINE, on a Gen 4 map, under the footer.
+    --
+    -- The black band at the bottom of this viewport has survived four fixes
+    -- that were each real on their own terms, and every number that produces
+    -- it reads correct in the source. Reported back: *"the viewport map
+    -- render isnt aligned properly to the viewport ... npc sprites loading in
+    -- my UI outside of the map rendering area about the height of the black
+    -- bar"*.
+    --
+    -- A `print` was tried first and asks the reader to go and find a log. The
+    -- footer is in every screenshot already, so the numbers go where the
+    -- evidence is being taken. Specifically:
+    --
+    --   win   the world rectangle the viewport can show
+    --   world the map's own extent -- `cam.y + win.h` past `world.h` is a
+    --         band because the map ENDED, and nothing about the projection
+    --         will ever fix that
+    --   sinP  the ground's depth compression; 1.00 is straight down
+    --   reach how far down the chunk matrix actually has terrain, which is a
+    --         different limit from the map's declared size and the one no
+    --         amount of reading could settle
+    local gr4 = S._pvMap and S._pvMap.renderer and S._pvMap.renderer.gen4Ground
+    if gr4 then
+      local z = S.pvZoom or 2
+      local grid = gr4.grid
+      local reachY = (grid and gr4.chunkPx)
+                     and (grid.height * gr4.chunkPx - (gr4.offsetY or 0)) or -1
+      Kit.text("small", string.format(
+        "vp %.0fx%.0f @%.1fx  cam %.0f,%.0f  win %.0fx%.0f  world %dx%d"
+        .. "  sinP %.2f  reach %.0f  grid %sx%s off %s,%s",
+        vinner, vh0, z, S.pvCamX or 0, S.pvCamY or 0, vinner / z, vh0 / z,
+        (wCells or 0) * CELL, (hCells or 0) * CELL,
+        tonumber(gr4.groundScale) or 1, reachY,
+        tostring(grid and grid.width), tostring(grid and grid.height),
+        tostring(gr4.offsetX), tostring(gr4.offsetY)),
+        vx0, ly2 + 13 * s, PAL.yellow)
+      -- ...AND WHAT THE GROUND PASS ACTUALLY PAINTED, which is the one thing
+      -- none of the numbers above can say. `want` is the canvas height it was
+      -- handed; `paint` is the band it covered. A `paint` that stops short of
+      -- `want` IS the black band, and `missing`/`empty` say which of the two
+      -- reasons it was: a chunk whose canvas was not baked, or a grid cell
+      -- with no land in it at all.
+      local lp = gr4.lastPaint
+      if lp then
+        Kit.text("small", string.format(
+          "ground: paint %.0f..%.0f of want %.0f   chunks %d  drawn %d  missing %d  empty %d",
+          lp.top == math.huge and 0 or lp.top,
+          lp.bottom == -math.huge and 0 or lp.bottom,
+          lp.want or 0, lp.chunks or 0, lp.drawn or 0, lp.missing or 0,
+          lp.empty or 0),
+          vx0, ly2 + 26 * s,
+          ((lp.missing or 0) > 0 or (lp.empty or 0) > 0) and PAL.red
+            or PAL.yellow)
+      end
+    end
   end
 
   -- ---------------------------------------------------------------- tools
@@ -2837,7 +3247,38 @@ function Preview.draw(S, Kit, x, y, w, h)
   -- titles are short enough to read at half a column.
   local btnH = 40 * s
   local half = (inner - 8 * s) / 2
+  -- THE TOOLS THIS MAP CAN BE EDITED WITH, which is not all of them: TILES,
+  -- VOXELS and WALKABLE all write through something a Platinum map does not
+  -- have, and 3D PROPS writes through something only a Platinum map has. A
+  -- button that opens a panel saying "this tool cannot edit this map" reads
+  -- as broken rather than absent -- the argument App.lua already makes about
+  -- a tab that opens an empty panel. See `Sidebar.toolsFor`, which asks each
+  -- PANEL what it can act on rather than keeping a table of generations.
+  --
+  -- `S.tools` is the subset the shell loaded (a panel whose require failed is
+  -- dropped); `S.panels` is the shell's own PANELS table, which is what the
+  -- availability test needs to find a panel's `actsOn`. Falling back to the
+  -- full list keeps this panel drawable on its own in a test.
   local tools = S.tools or Preview.TOOLS
+  if Sidebar and Sidebar.toolsFor then
+    local offered, keep = Sidebar.toolsFor(S, S.panels), {}
+    local allow = {}
+    for _, t in ipairs(offered) do allow[t.id] = true end
+    for _, t in ipairs(tools) do
+      if allow[t.tab or t.id] then keep[#keep + 1] = t end
+    end
+    -- A tool the shell loaded, offered for this map, and missing from the
+    -- shell's list because the shell is older than it: added rather than
+    -- dropped, so a new tool is reachable without an App.lua change.
+    local have = {}
+    for _, t in ipairs(keep) do have[t.tab or t.id] = true end
+    for _, t in ipairs(offered) do
+      if not have[t.id] and (S.panels == nil or S.panels[t.id]) then
+        keep[#keep + 1] = t
+      end
+    end
+    tools = keep
+  end
   for i, tool in ipairs(tools) do
     local bx = toolX + pad + ((i - 1) % 2) * (half + 8 * s)
     local by = ty + math.floor((i - 1) / 2) * (btnH + 8 * s)
@@ -3576,3 +4017,5 @@ function Preview.keypressed(S, key)
 end
 
 return Preview
+-- ---------------------------------------------------------------------------
+-- the 3D view

@@ -19,6 +19,7 @@
 -- Read that file's header before changing anything here.
 
 local MapCollision = require("tools.map-editor.MapCollision")
+local MapKind = require("tools.map-editor.MapKind")
 
 local okTheme, Theme = pcall(require, "Theme")
 local PAL = (okTheme and type(Theme) == "table" and Theme.PAL) or {
@@ -36,6 +37,29 @@ Collision.MODES = {
   { id = "floor",  label = "FLOOR",  blurb = "make the cell walkable" },
   { id = "toggle", label = "SWAP",   blurb = "flip whatever is there" },
 }
+
+-- WHAT THIS PANEL CAN ACT ON -- which is `MapCollision.paint`'s own first two
+-- requirements, asked before the tool is offered instead of after the click.
+--
+-- A collision class belongs to the TILESET, so an edit mints a block in it
+-- (MapCollision.lua:200-205): with no tileset the painter answers "this map
+-- has no tileset to edit", and with no `collision` table in it, "this tileset
+-- carries no collision table". Every Gen 4 map is the first case -- its ground
+-- is an NSBMD mesh and its passability is a bit in the cell word, not a class
+-- in a tileset -- so WALKABLE was a tool that refused every click on Sinnoh.
+--
+-- Gen 1/2 tilesets carry `collision`, and so does a Gen 3 half-bank PAIR
+-- record (RomExtractorGen3.lua:26973, `collision = collision` beside
+-- `blockTiles = 2`), so neither loses the tool.
+-- THE STAND-IN HAS A COLLISION TABLE, which is why the first cut of this was
+-- wrong on real data: `TILESET_GEN4_STANDIN` carries 256 collision entries, so
+-- "has a collision table" was true on every Platinum map and WALKABLE offered
+-- itself on all of them -- then refused every click, because `mintBlock` needs
+-- the `blocks` table the stand-in does not have. A stand-in is art.
+function Collision.actsOn(S, def)
+  local ts = MapKind.editableTileset(S, def)
+  return ts ~= nil and type(ts.collision) == "table"
+end
 
 function Collision.draw(S, Kit, x, y, w, h)
   local s = Kit.scale

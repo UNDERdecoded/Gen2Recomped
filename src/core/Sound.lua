@@ -262,6 +262,18 @@ end
 -- returns the started source (nil headless, or when the def failed to load)
 -- so callers that block on a fanfare like the original's
 -- PlaySoundWaitForCurrent -> WaitForSoundToFinish can poll it
+-- Resolve a cartridge effect by its extracted native name, including effects
+-- that have no shared engine role in audio.sfx.
+function Sound.playNamedEffect(data,name)
+  for id,song in pairs(data and data.audio and data.audio.songs or {}) do
+    if type(song)=="table" and song.sfxName==name and tonumber(song.index) then
+      local src=playPath(data,id,{song=id,m4a=tonumber(song.index)})
+      if src then played("sfx",name) end
+      return src
+    end
+  end
+end
+
 function Sound.play(data, name)
   local sfx = data.audio and data.audio.sfx
   local def = sfx and sfx[name]

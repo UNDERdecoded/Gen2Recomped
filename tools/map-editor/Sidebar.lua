@@ -49,7 +49,88 @@ Sidebar.TOOLS = {
     blurb = "paint the ground itself, block by block" },
   { id = "collision", title = "WALKABLE",
     blurb = "where the player can and cannot go, and see it" },
+  -- THE PLATINUM PROP PLACER, ITS OWN TOOL RATHER THAN TILES WEARING ITS NAME.
+  --
+  -- `Tiles.draw` used to open with "if this map is generation 4, draw Models
+  -- instead", so on a Sinnoh map the TILES button WAS this panel -- and Gen 4
+  -- had no tile editor as a direct consequence, because the name was taken.
+  -- Two tools, two names, and TILES is free to become the Gen 4 ground tool.
+  { id = "models",  title = "3D PROPS",
+    blurb = "the models standing on a Platinum chunk" },
+  -- THE GEN 4 GROUND TOOL, which is the other half of the same report.
+  --
+  -- Splitting TILES and 3D PROPS freed the TILES name, but it did not give
+  -- Sinnoh a ground editor -- `Tiles.actsOn` still answers false there,
+  -- correctly, because a Gen 4 map has no block space to paint from. So the
+  -- tool list went from "TILES means props" to "there is no ground tool at
+  -- all", which is what "the map painter tiles arent working at all for
+  -- platinum" describes. This is the ground tool for a map made of
+  -- triangles: the behaviour byte and the blocked flag, per cell.
+  --
+  -- Last in the list because it is offered on exactly the maps TILES is not,
+  -- so the two never both appear and neither moves when the other does.
+  { id = "terrain", title = "TERRAIN",
+    blurb = "paint Sinnoh's ground: grass, water, ledges, walls" },
 }
+
+-- WHICH TOOLS THIS MAP CAN BE EDITED WITH, which is not all of them.
+--
+-- The list above was generation-blind: six tools for every cartridge, and on a
+-- Platinum map two of them meant nothing. VOXELS writes `def.voxelEdits`,
+-- which is read by the selected voxel mod's `TileShape` and by nothing else --
+-- a Gen 4 map renders through `Gen4Ground`'s NSBMD mesh, so the edit saved,
+-- reloaded and changed nothing, which is the `mat` field's fate wearing a
+-- whole tool. WALKABLE mints a block in the map's tileset and `MapCollision`
+-- answers "this map has no tileset to edit" for every Gen 4 map there is.
+-- TILES had the delegation above instead of a palette. An inert tool reads as
+-- broken rather than absent -- the same argument App.lua already makes about a
+-- tab that opens an empty panel -- so it is not offered.
+--
+-- ASKED OF THE PANEL, NOT OF A TABLE OF GENERATION NUMBERS. A panel knows what
+-- it writes to; this file does not, and a list of generations here would be
+-- the hardcoded twin of a fact in seven other files, which is this tree's
+-- recurring bug. So a panel may declare `actsOn(S, def)` and answer from the
+-- map's own data -- a tileset with a block table, a per-cell behaviour string
+-- -- and a panel that declares nothing is offered exactly as it is today.
+--
+-- NO MAP MEANS NO FILTER. With nothing selected there is nothing to derive
+-- from, so the whole set is offered and the buttons say "pick a map first",
+-- which is the existing behaviour and the right one: a rail that fills in as
+-- you pick a map is not a rail anyone can learn.
+--
+-- `panels` is App's PANELS table, the same optional-by-design table `draw`
+-- takes; this file still requires none of them. Entries carry BOTH `id` and
+-- `tab`, because the drawer's chips spell it `id` and Preview's buttons spell
+-- it `tab` -- one list answering to both names is what stops the two lists
+-- drifting apart again.
+function Sidebar.toolsFor(S, panels)
+  panels = panels or (S and S.panels) or nil
+  local def = S and S.data and S.data.maps and S.mapId
+              and S.data.maps[S.mapId] or nil
+  local out = {}
+  for _, t in ipairs(Sidebar.TOOLS) do
+    local panel = panels and panels[t.id] or nil
+    local offer = (panels == nil) or (panel ~= nil and panel.draw ~= nil)
+    if offer and def and panel and type(panel.actsOn) == "function" then
+      local ok, acts = pcall(panel.actsOn, S, def)
+      offer = (not ok) or (acts and true or false)
+    end
+    if offer then
+      out[#out + 1] = { id = t.id, tab = t.id, title = t.title,
+                        blurb = t.blurb }
+    end
+  end
+  return out
+end
+
+-- Is this one tool offered for the map `S` is on? The same answer as
+-- `toolsFor`, for a caller that already has a tool in hand.
+function Sidebar.offers(S, panels, id)
+  for _, t in ipairs(Sidebar.toolsFor(S, panels)) do
+    if t.id == id then return true end
+  end
+  return false
+end
 
 function Sidebar.toolFor(id)
   for _, t in ipairs(Sidebar.TOOLS) do
@@ -170,17 +251,20 @@ function Sidebar.draw(S, Kit, panels, x, y, width, height)
   -- losing it would trade one annoyance for another: a warp needs an NPC
   -- beside it and the NPC needs a script, and closing the drawer to reopen it
   -- somewhere else is three taps for what was one.
+  --
+  -- THE CHIPS ARE THE TOOLS THIS MAP HAS, not the whole catalogue: a chip for
+  -- a tool that cannot act on the open map is a chip that opens a panel saying
+  -- so. See `toolsFor`.
   local chipH = 26 * s
-  local n = #Sidebar.TOOLS
+  local offered = Sidebar.toolsFor(S, panels)
+  local n = math.max(1, #offered)
   local chipW = (w - 2 * pad - (n - 1) * 6 * s) / n
-  for i, t in ipairs(Sidebar.TOOLS) do
-    if panels and panels[t.id] then
-      local cx = dx + pad + (i - 1) * (chipW + 6 * s)
-      if Kit.chip(cx, hy, chipW, chipH, t.title, t.id == sb.id) then
-        -- a new tool starts at the top of itself, not at wherever the last
-        -- one happened to be scrolled to
-        S.sidebar = { id = t.id, scroll = 0 }
-      end
+  for i, t in ipairs(offered) do
+    local cx = dx + pad + (i - 1) * (chipW + 6 * s)
+    if Kit.chip(cx, hy, chipW, chipH, t.title, t.id == sb.id) then
+      -- a new tool starts at the top of itself, not at wherever the last
+      -- one happened to be scrolled to
+      S.sidebar = { id = t.id, scroll = 0 }
     end
   end
   hy = hy + chipH + 10 * s
@@ -235,7 +319,21 @@ function Sidebar.draw(S, Kit, panels, x, y, width, height)
   local maxScroll = math.max(0, vh - bodyH)
   sb.scroll = math.max(0, math.min(sb.scroll or 0, maxScroll))
 
-  if panel and panel.draw then
+  -- AND A DRAWER LEFT OPEN OVER A MAP THE TOOL CANNOT EDIT.
+  --
+  -- The map can change under an open drawer -- the map picker is one tap away
+  -- and `S.mapId` is shared by every panel -- so "offered" has to be tested
+  -- here too and not only when the chip was drawn. Without it, switching from
+  -- Crystal's Route 29 to a Platinum town with TILES open left the tile
+  -- palette up over a map with no blocks in it.
+  local stale = (panel ~= nil) and (#offered > 0)
+                and not Sidebar.offers(S, panels, sb.id)
+  if stale then
+    local tool2 = Sidebar.toolFor(sb.id)
+    Kit.emptyBox(dx + pad, hy, w - 2 * pad, bodyH,
+      (tool2 and tool2.title or string.upper(tostring(sb.id)))
+      .. " cannot edit this map - pick another tool above.")
+  elseif panel and panel.draw then
     Kit.pushClip(dx, hy, w, bodyH)
     -- A CONTROL SCROLLED OUT OF SIGHT MUST BE DEAD. Clipping hides it and
     -- nothing more -- Kit hit-tests raw coordinates -- so a DELETE button

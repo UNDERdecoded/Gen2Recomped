@@ -5179,7 +5179,76 @@ function RomExtractorGen2:gen2Fishing()
       }
     end
   end
-  return groups, times
+  local swarms = {routes={}}
+  local selector = self:symbol("GetFishGroupIndex")
+  local done = self:symbol("GetFishGroupIndex.done")
+  local bases = {}
+  if selector and done then
+    for at=selector.address,done.address-3 do
+      if self.rom:byte(selector.bank,at)==0xFE
+         and self.rom:byte(selector.bank,at+2)==0x28 then
+        bases[#bases+1]=self.rom:byte(selector.bank,at+1)
+      end
+    end
+    for i,name in ipairs({"qwilfish","remoraid"}) do
+      local sym=self:symbol("GetFishGroupIndex."..name)
+      if sym and bases[i] and self.rom:byte(sym.bank,sym.address+3)==0xFE
+         and self.rom:byte(sym.bank,sym.address+7)==0x16 then
+        swarms.routes[bases[i]]={kind=self.rom:byte(sym.bank,sym.address+4),
+          group=self.rom:byte(sym.bank,sym.address+8)}
+      end
+    end
+    -- Crystal begins push hl / ld hl, daily flags / bit n,[hl].
+    -- Resolve that address/bit to the engine flag row scripts set/clear.
+    if self.rom:byte(selector.bank,selector.address)==0xE5
+       and self.rom:byte(selector.bank,selector.address+1)==0x21
+       and self.rom:byte(selector.bank,selector.address+4)==0xCB then
+      local address=self.rom:word(selector.bank,selector.address+2)
+      local bit=math.floor((self.rom:byte(selector.bank,selector.address+5)-0x46)/8)
+      for _,flag in ipairs(self:gen2EngineFlags() or {}) do
+        if flag.address==address and flag.bit==bit then swarms.dailyFlag=flag.row end
+      end
+    end
+  end
+  return groups, times, swarms
+end
+
+-- Alternate encounter records selected before normal map lookup.
+function RomExtractorGen2:gen2SwarmTables()
+  local out={maps={},flags={}}
+  local index=self:gen2MapIndex()
+  for _,spec in ipairs({{"SwarmGrassWildMons","grass",47,7},
+                        {"SwarmWaterWildMons","water",9,3}}) do
+    local sym=self:symbol(spec[1])
+    if sym then
+      local at=sym.address
+      for _=1,64 do
+        local group=self.rom:byte(sym.bank,at);if group==255 then break end
+        local entry=index[group*256+self.rom:byte(sym.bank,at+1)]
+        if entry then
+          local record=out.maps[entry.label] or {};out.maps[entry.label]=record
+          local grass=spec[2]=="grass"
+          local function terrain(time)
+            local start=at+(grass and 5+time*14 or 3)
+            return {rate=self.rom:byte(sym.bank,at+(grass and 2+time or 2)),
+              bucketSpan=100,buckets=grass and {30,60,80,90,95,99,100} or {60,90,100},
+              slots=self:gen2WildSlots(sym.bank,start,spec[4])}
+          end
+          local rows=terrain(grass and 1 or 0)
+          if grass then rows.byTime={morn=terrain(0),nite=terrain(2)} end
+          record[spec[2]]=rows
+        end
+        at=at+spec[3]
+      end
+    end
+  end
+  local swarmFlags=self:symbol("wSwarmFlags")
+  if swarmFlags then
+    for _,flag in ipairs(self:gen2EngineFlags() or {}) do
+      if flag.address==swarmFlags.address and flag.bit<=1 then out.flags[flag.bit]=flag.row end
+    end
+  end
+  return out
 end
 
 function RomExtractorGen2:extractEncounters()
@@ -8020,6 +8089,7 @@ function RomExtractorGen2:gen2ResolveScriptMapIds(maps, keys, pool)
   for _, rows in pairs(pool.scripts) do
     for _, row in ipairs(rows) do
       local slot = GEN2_SCRIPT_MAP_ARG[row[1]]
+      if row[1]=="swarm" and (self.version=="gold" or self.version=="silver") then slot=2 end
       if slot and type(row[slot]) == "number" and type(row[slot + 1]) == "number" then
         local entry = mapIndex[row[slot] * 256 + row[slot + 1]]
         local key = entry and keyByLabel[entry.label]
@@ -8261,7 +8331,9 @@ end
 -- The table has no terminator: it simply ends, so a row whose address leaves
 -- WRAM or whose mask is not a single bit is the first byte past it.
 local GEN2_ENGINE_FLAG_ROW_BYTES = 3
-local GEN2_ENGINE_FLAG_MAX = 128
+-- Crystal has 162 rows, including its phone and swarm flags. Hacks can have
+-- more; validate every WRAM address/mask before accepting a row.
+local GEN2_ENGINE_FLAG_MAX = 512
 local SINGLE_BIT = {
   [0x01] = 0, [0x02] = 1, [0x04] = 2, [0x08] = 3,
   [0x10] = 4, [0x20] = 5, [0x40] = 6, [0x80] = 7,
@@ -8271,7 +8343,12 @@ function RomExtractorGen2:gen2EngineFlags()
   local sym = self:symbol("EngineFlags")
   if not (sym and self.rom) then return nil end
   local out = {}
-  for row = 0, GEN2_ENGINE_FLAG_MAX - 1 do
+  local limit = GEN2_ENGINE_FLAG_MAX
+  local nextTable = self:symbol("_GetVarAction")
+  if nextTable and nextTable.bank == sym.bank and nextTable.address > sym.address then
+    limit = math.min(limit, math.floor((nextTable.address - sym.address) / GEN2_ENGINE_FLAG_ROW_BYTES))
+  end
+  for row = 0, limit - 1 do
     local ok, bytes = pcall(self.rom.bytes, self.rom, sym.bank,
       sym.address + row * GEN2_ENGINE_FLAG_ROW_BYTES, GEN2_ENGINE_FLAG_ROW_BYTES)
     if not ok then break end
@@ -12382,28 +12459,31 @@ function RomExtractorGen2:gen2FruitTrees()
   return out
 end
 
--- TreeMonMaps (2E:$63E6) tags each headbutt map with a set id; TreeMons
--- (2E:$6470) points at the sets, each a common table then a rare table of
--- `db species, level, chance` rows behind a total-chance byte.  Entry 3 is
--- the rock-smash list and uses the shorter `db chance, species, level` form.
+-- Each tree set contains common/rare tables of chance, species, level rows.
+-- Gold/Silver accept indices 1-3; Crystal expanded this to 1-7.
 function RomExtractorGen2:gen2TreeMons()
   local mapsSym = self:symbol("TreeMonMaps")
   local setsSym = self:symbol("TreeMons")
   if not (mapsSym and setsSym and self.rom) then return nil end
   local byGroupNumber = self:gen2MapIndex()
-  local out = { maps = {}, sets = {}, rock = {} }
-  local ok = pcall(function()
+  local out = { maps = {}, sets = {}, rock = {}, rockMaps = {} }
+  local speciesSym = self:symbol("wTempWildMonSpecies")
+  out.wildSpeciesAddress = speciesSym and speciesSym.address
+  local ok, err = pcall(function()
+    local selector = self:symbol("GetTreeMons")
+    local maxSet = 7
+    if selector and self.rom:byte(selector.bank, selector.address) == 0xFE then
+      maxSet = self.rom:byte(selector.bank, selector.address + 1) - 1
+    end
     local address = mapsSym.address
     for _ = 1, 64 do
       local group = self.rom:byte(mapsSym.bank, address)
       if group == 0xFF or group == 0 then break end
       local set = self.rom:byte(mapsSym.bank, address + 2)
       local entry = byGroupNumber[group * 256 + self.rom:byte(mapsSym.bank, address + 1)]
-      -- GetTreeMons (2E:$42D2) is `cp $08 / jr nc, .quit` then `and a / jr z,
-      -- .quit`: the valid set indices are 1 through SEVEN.  Only 0 means "no
-      -- trees here".  Capping this at 3 threw away every map tagged Kanto,
-      -- Lake or Forest.
-      if entry and set >= 1 and set <= 7 then out.maps[entry.label] = set end
+      -- GetTreeMons starts with cp <limit>; zero and indices at/above the
+      -- limit are rejected. Crystal added four sets beyond Gold/Silver.
+      if entry and set >= 1 and set <= maxSet then out.maps[entry.label] = set end
       address = address + 3
     end
     -- A tree set is TWO $FF-terminated tables back to back, common then rare,
@@ -12433,27 +12513,19 @@ function RomExtractorGen2:gen2TreeMons()
       end
       return rows, at
     end
-    -- TreeMons (2E:$42E8) is seven sets, and every one of them is reachable:
-    --   1 Canyon  2 Town  3 Route  4 Kanto  5 Lake  6 Forest  7 Rock
-    -- TreeMonMaps tags maps with 1 through 6, and NINE of them -- Routes 29,
-    -- 30, 31, 34, 35, 36, 37, 38, 39, i.e. most of the early game -- carry
-    -- set 3, Route.
-    --
-    -- Reading only sets 1 and 2 left all of those maps pointing at a set that
-    -- was never extracted, so `sets` came up nil and headbutt on any of them
-    -- could only ever answer "Nope. Nothing…" -- no mon ever appeared.  Set 3
-    -- was ALSO being read as the rock-smash list, which is Route's table, not
-    -- Rock's; rock is set 7, and its own symbol pins it.
+    -- Crystal: Canyon/Town/Route/Kanto/Lake/Forest/Rock (indices 1-7).
+    -- Gold/Silver: Forest/Canyon/Rock (1-3). Reading seven pointers from
+    -- Gold/Silver walks into encounter rows and invalidates the entire rip.
     local rockSym = self:symbol("TreeMonSet_Rock")
-    local rockIndex = 7
-    for set = 1, 7 do
+    local rockIndex = maxSet
+    for set = 1, maxSet do
       if rockSym
          and self.rom:word(setsSym.bank, setsSym.address + set * 2)
              == rockSym.address then
         rockIndex = set
       end
     end
-    for set = 1, 7 do
+    for set = 1, maxSet do
       local at = self.rom:word(setsSym.bank, setsSym.address + set * 2)
       local common, afterCommon = readTable(at)
       -- Rock's set is the last one in the bank and has no rare half; reading
@@ -12467,8 +12539,64 @@ function RomExtractorGen2:gen2TreeMons()
     -- that set's common table.
     out.rock = (readTable((rockSym and rockSym.address)
       or self.rom:word(setsSym.bank, setsSym.address + rockIndex * 2)))
+    local rockMaps = self:symbol("RockMonMaps")
+    if rockMaps then
+      local at = rockMaps.address
+      for _ = 1, 64 do
+        local group = self.rom:byte(rockMaps.bank, at)
+        if group == 0xFF then break end
+        local entry = byGroupNumber[group * 256 + self.rom:byte(rockMaps.bank, at + 1)]
+        local set = self.rom:byte(rockMaps.bank, at + 2)
+        if entry and set >= 1 and set <= maxSet then out.rockMaps[entry.label] = set end
+        at = at + 3
+      end
+    end
+    out.sleeping = {}
+    local treeMon = self:symbol("LoadEnemyMon.TreeMon")
+    local sleeping = self:symbol("LoadEnemyMon.sleeping")
+    if self:symbol("AsleepTreeMonsMorn") then
+      for key, suffix in pairs({morn="Morn",day="Day",nite="Nite"}) do
+        local sym = self:symbol("AsleepTreeMons" .. suffix)
+        local rows = {}
+        if sym then
+          for offset = 0, 63 do
+            local species = self.rom:byte(sym.bank, sym.address + offset)
+            if species == 0xFF then break end
+            rows[string.format("SPECIES_%03d", species)] = true
+          end
+        end
+        out.sleeping[key] = rows
+      end
+      -- call CheckSleepingTreeMon (3 bytes), ld a, sleep turns.
+      if treeMon and self.rom:byte(treeMon.bank, treeMon.address + 3) == 0x3E then
+        out.sleepTurns = self.rom:byte(treeMon.bank, treeMon.address + 4)
+      end
+      out.sleepOnlyTrees, out.silentSleepingTrees = true, true
+    elseif treeMon and sleeping then
+      -- Gold/Silver compare four species directly. Unlike Crystal, their
+      -- LoadEnemyMon does not gate this status assignment on BATTLETYPE_TREE.
+      local boundary = self:symbol("LoadEnemyMon.sleeping_if_not_nite")
+      local species = {}
+      if boundary then
+        for at = treeMon.address, boundary.address - 3 do
+          if self.rom:byte(treeMon.bank, at) == 0xFE
+             and self.rom:byte(treeMon.bank, at + 2) == 0x28 then
+            species[#species + 1] = string.format("SPECIES_%03d", self.rom:byte(treeMon.bank, at + 1))
+          end
+        end
+      end
+      if #species == 4 then
+        out.sleeping.morn = {[species[1]]=true,[species[2]]=true}
+        out.sleeping.day = {[species[1]]=true,[species[2]]=true}
+        out.sleeping.nite = {[species[3]]=true,[species[4]]=true}
+      end
+      if self.rom:byte(sleeping.bank, sleeping.address) == 0x3E then
+        out.sleepTurns = self.rom:byte(sleeping.bank, sleeping.address + 1)
+      end
+    end
   end)
-  if not ok or not next(out.maps) then return nil end
+  if not ok then Logger.warn("Gen2 tree encounter extraction: %s", tostring(err)); return nil end
+  if not next(out.maps) then return nil end
   return out
 end
 
@@ -12482,7 +12610,7 @@ end
 -- just `min` when the two are equal.
 --
 -- BugContestantPointers (04:$7783) is indexed by `contestantID - 1`, so slot 0
--- is unused and the nine AI contestants are IDs 2-10 (the player is 1):
+-- is unused and the ten AI contestants are IDs 2-11 (the player is 1):
 -- ComputeAIContestantScores (04:$78B0) builds the ID with `ld a, e / inc a /
 -- inc a` and indexes with `dec a`.  Each record is `db trainerClass, db
 -- trainerID` followed by THREE `db species, dw score` picks, one of which that
@@ -12796,6 +12924,29 @@ function RomExtractorGen2:gen2NpcTrades()
   return out
 end
 
+function RomExtractorGen2:gen2EncounterRules()
+  if self.version ~= "gold" and self.version ~= "silver" and self.version ~= "crystal" then return nil end
+  local water = self:symbol("ChooseWildEncounter.ok")
+  local contest = self:symbol("TryWildEncounter_BugContest")
+  local tall = self:symbol("CheckSuperTallGrassTile")
+  if not (water and contest and tall) then return nil end
+  local out = {waterLevelThresholds={}, superTallGrass={}}
+  for i=1,4 do
+    local at = water.address - 20 + (i-1)*5
+    assert(self.rom:byte(water.bank,at)==0xFE, "water level comparison")
+    out.waterLevelThresholds[i]=self.rom:byte(water.bank,at+1)
+  end
+  assert(self.rom:byte(contest.bank,contest.address+6)==0x06, "contest tall rate")
+  assert(self.rom:byte(contest.bank,contest.address+10)==0x06, "contest grass rate")
+  out.contestTallRate=self.rom:byte(contest.bank,contest.address+7)
+  out.contestGrassRate=self.rom:byte(contest.bank,contest.address+11)
+  for _, offset in ipairs({0,3}) do
+    assert(self.rom:byte(tall.bank,tall.address+offset)==0xFE, "tall grass comparison")
+    out.superTallGrass[self.rom:byte(tall.bank,tall.address+offset+1)]=true
+  end
+  return out
+end
+
 function RomExtractorGen2:gen2BugContest()
   local monsSym = self:symbol("ContestMons")
   local listSym = self:symbol("BugContestantPointers")
@@ -12817,7 +12968,7 @@ function RomExtractorGen2:gen2BugContest()
       total = total + rate
       if total >= 100 then break end
     end
-    for id = 2, 10 do
+    for id = 2, 11 do
       local address = self.rom:word(listSym.bank, listSym.address + (id - 1) * 2)
       local picks = {}
       for pick = 0, 2 do
@@ -13859,6 +14010,7 @@ function RomExtractorGen2:extractField()
     src.gen2DarkMaps = self:gen2DarkMaps() or src.gen2DarkMaps
     src.gen2TreeMons = self:gen2TreeMons() or src.gen2TreeMons
     src.gen2BugContest = self:gen2BugContest() or src.gen2BugContest
+    src.gen2EncounterRules = self:gen2EncounterRules() or src.gen2EncounterRules
     src.gen2Trades = self:gen2NpcTrades() or src.gen2Trades
     src.gen2UnownWalls = self:gen2UnownWalls() or src.gen2UnownWalls
     -- Crystal only; Gold and Silver have no OddEggs symbol at all
@@ -14018,10 +14170,14 @@ function RomExtractorGen2:extractField()
   -- with nothing anywhere saying why.  A broken fishing extract has to be
   -- loud.
   local fishOk, fishErr = pcall(function()
-    local groups, times = self:gen2Fishing()
+    local groups, times, swarms = self:gen2Fishing()
     if groups then
       src.fishGroups = groups
       src.timeFishGroups = times
+      src.fishSwarms = swarms
+      if self.version=="gold" or self.version=="silver" or self.version=="crystal" then
+        src.gen2Swarms = self:gen2SwarmTables()
+      end
     end
   end)
   if not fishOk then

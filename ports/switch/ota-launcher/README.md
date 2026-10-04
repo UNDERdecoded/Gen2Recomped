@@ -9,9 +9,33 @@ SHA-256 from `sha256sums.txt`, replace **both** `Gen2Recomped-game.nro` and
 `gen2recomp.nro` (matching NACP version for hbmenu/Sphaira), then load the game
 with `envSetNextLoad`.
 
-The LÖVE self-updater (`src/update/Check.lua`) stays **disabled** on NX.
-Wire format (also in Lua): `src/update/SwitchOta.lua`.
+The LÖVE self-updater (`src/update/Check.lua`) resolves **notify-only** on NX,
+and that is a derived answer now rather than an OS list: `Platform.canHostPayload()`
+says the save directory can host a payload (it can — a `.love` copied into
+`pokemon-love2d/updates/` by hand still chainloads), and `HostShell.transport()`
+says there is no HTTPS client reachable from Lua on this console. The launcher
+banner reads "Update from the OTA launcher (gen2recomp.nro)" and draws no button,
+because there is no browser for one to open. See `docs/auto-update.md`.
+
+Wire format: `include/ota_protocol.h` with `src/ota_protocol.c`, exercised on the
+host by `host/test_ota_protocol.c` (`make host-test`, 34 cases). **There is no
+Lua mirror** — this line used to point at a `SwitchOta.lua` under `src/update`
+which has never existed in the tree.
 NACP icon: `ports/switch/assets/icon.jpg`.
+
+## The repository slug was wrong (fixed 2026-10-04)
+
+`OTA_RELEASES_API` and the checksum URL in `src/main.c` both read
+`UNDERdecodedHD/Gen2Recomped`. Measured: that slug answers **HTTP 404** and
+`UNDERdecoded/Gen2Recomped` answers **200**. `UNDERdecodedHD` is the author
+name (the NACP author above, the MSIX publisher, the intro credit); the GitHub
+owner is `UNDERdecoded`. So the quiet release check 404ed on every launch, the
+launcher took its "up to date or offline" path and showed nothing, and the
+console had no working in-app update path at all.
+
+Both URLs derive from one `OTA_REPO_SLUG` in `include/ota_protocol.h` now, and
+`tools/auto_update_check.lua` asserts it equals `Check.REPO` in
+`src/update/Check.lua` — the cross-language half of this port's recurring bug.
 
 ## Layout on microSD
 
@@ -80,6 +104,8 @@ Manifest: `scripts/switch/ota_launcher.manifest`.
 ## Status / known gaps
 
 - Zip extraction uses `switch-zziplib` (`ota_unzip.c`) on device.
+- The releases API and the checksum URL derive from one `OTA_REPO_SLUG` and are
+  cross-checked against `Check.REPO`; before 2026-10-04 both were a 404.
 - OTA replaces game + launcher from the install zip (NACP versions stay aligned).
   The running launcher cannot overwrite its own NRO on sdmc/FAT; a tiny
   `ota-bootstrap.nro` (embedded in romfs) chainloads once to swap the staged

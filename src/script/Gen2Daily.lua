@@ -5,7 +5,8 @@
 -- copyright holder's to license.
 
 -- Daily resets for Gen2 engine flags the ROM clears at midnight
--- (Kurt's ball making, fruit trees, lucky-number show).
+-- (Kurt's ball making, fruit trees, contest, grooming and phone events).
+-- The Lucky Number Show has its own weekly timer, outside the daily flags.
 --
 -- Also seeds Kanto object-visibility flags that InitializeEventsScript sets
 -- on a new game.  Without those bits, Route 25 Misty, the Cerulean Gym
@@ -19,8 +20,7 @@ local Gen2Flags = require("src.script.Gen2Flags")
 local Gen2Daily = {}
 
 local ENGINE_LUCKY_NUMBER_SHOW = 77
-local ENGINE_KURT_MAKING_BALLS = 79
-local ENGINE_ALL_FRUIT_TREES   = 83
+local GameVersion = require("src.core.GameVersion")
 
 -- pret InitializeEventsScript Kanto / late-game visibility bits (EVENT_G2_%04d).
 local INITIAL_HIDDEN_EVENTS = {
@@ -39,8 +39,36 @@ local INITIAL_HIDDEN_EVENTS = {
   1915, -- EVENT_INDIGO_PLATEAU_POKECENTER_RIVAL
 }
 
-local function todayKey()
-  return os.date("%Y-%m-%d")
+local function todayKey(now)
+  return os.date("%Y-%m-%d", now)
+end
+
+local function nextFriday(save, now)
+  local date = os.date("*t", now)
+  local weekday = (date.wday - 1 + (tonumber(save.g2DayOffset) or 0)) % 7
+  local days = (5 - weekday) % 7 -- Match the weekday chosen at Mom's clock.
+  if days == 0 then days = 7 end
+  -- Calendar arithmetic, rather than seconds, also handles daylight saving.
+  date.day, date.hour, date.min, date.sec = date.day + days, 12, 0, 0
+  date.isdst = nil
+  return todayKey(os.time(date))
+end
+
+function Gen2Daily.lotteryExpired(save, now)
+  if not save.g2LuckyNextFriday then
+    -- Old saves already have a drawn ID; retain it when adding the timer.
+    save.g2LuckyNextFriday = nextFriday(save, now)
+  end
+  return todayKey(now) >= save.g2LuckyNextFriday
+end
+
+function Gen2Daily.resetLottery(save, now)
+  save.flags = save.flags or {}
+  save.flags[Gen2Flags.engineFlag(ENGINE_LUCKY_NUMBER_SHOW)] = nil
+  save.flags.ENGINE_LUCKY_NUMBER_SHOW = nil
+  local random = (love and love.math and love.math.random) or math.random
+  save.g2LuckyNumber = random(0, 65535)
+  save.g2LuckyNextFriday = nextFriday(save, now)
 end
 
 function Gen2Daily.seedInitialObjectFlags(save)
@@ -67,22 +95,33 @@ end
 function Gen2Daily.onNewDay(save)
   if not save then return end
   save.flags = save.flags or {}
-  save.flags[Gen2Flags.engineFlag(ENGINE_KURT_MAKING_BALLS)] = nil
-  save.flags[Gen2Flags.engineFlag(ENGINE_LUCKY_NUMBER_SHOW)] = nil
+  local version = GameVersion.get()
+  local function clearRows(first, last)
+    for row = first, last do save.flags[Gen2Flags.scriptFlag(row)] = nil end
+  end
+  -- EngineFlags rows verified against each cartridge's WRAM reset ranges.
+  -- Crystal adds two daily services, swarm bits and three phone bit arrays.
+  if version == "crystal" then
+    clearRows(80, 97)
+    clearRows(101, 158)
+    clearRows(160, 161)
+  elseif version == "gold" or version == "silver" then
+    clearRows(79, 92)
+  else
+    -- Hacks have their own layouts; do not apply vanilla raw flag indices.
+    save.flags[Gen2Flags.engineFlag(79)] = nil
+    save.flags[Gen2Flags.engineFlag(83)] = nil
+  end
   save.g2FruitTrees = {}
-  save.flags[Gen2Flags.engineFlag(ENGINE_ALL_FRUIT_TREES)] = nil
-  -- New 5-digit lucky ID each day (0-65535, printed as 00000-65535).
-  local r = (love and love.math and love.math.random) or math.random
-  save.g2LuckyNumber = r(0, 65535)
   -- Clefairy show is weekly in the ROM; re-hide so the event can fire again.
   save.flags[Gen2Flags.eventFlag(1913)] = true
 end
 
-function Gen2Daily.poll(save)
+function Gen2Daily.poll(save, now)
   Gen2Daily.ensureRoam(save, nil)
   if not save then return end
   Gen2Daily.seedInitialObjectFlags(save)
-  local today = todayKey()
+  local today = todayKey(now)
   if save.g2DailyDay == today then return end
   save.g2DailyDay = today
   Gen2Daily.onNewDay(save)

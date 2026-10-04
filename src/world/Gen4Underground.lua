@@ -343,4 +343,146 @@ function Gen4Underground.tickSparkles(Game, ow)
   end
 end
 
+-- ---------------------------------------------------------------------------
+-- THE INVENTORY: traps and spheres
+-- ---------------------------------------------------------------------------
+--
+-- `GiveTrap` and `GiveSphere` are two of the eight `scripts_common.s` holes
+-- left after the save dialogue and the PC, and they are the two that write real
+-- state rather than open a screen.  Both are three-operand commands ending in a
+-- destination var, and the var is what the `gotoif` behind them tests:
+--
+--     ScrCmd_GiveTrap:    *destVar = Underground_TryAddTrap(ug, trapID)
+--     ScrCmd_GiveSphere:  *destVar = Underground_TryAddSphere(ug, type, size)
+--
+-- so an unlowered row left that var holding whatever the last comparison did,
+-- and the script branched on it.
+--
+-- A FIXED ARRAY WITH A ZERO SENTINEL, which is what the cartridge has:
+-- `Underground_FindEmptyTrapSlot` walks `MAX_TRAP_SLOTS` looking for
+-- `TRAP_NONE`, and `TryAddTrap` answers FALSE when there is none.  Both
+-- sentinels are 0 (`generated/traps.txt` and `generated/sphere_types.txt`,
+-- line one of each), and a sphere occupies the same slot index in two parallel
+-- arrays -- `sphereTypes` and `sphereSizes` -- with the TYPE array being the
+-- one `FindEmptySphereSlot` tests.
+--
+-- Kept as a sparse Lua array of records rather than two fixed arrays of 40,
+-- because the save is serialised as Lua and a 40-entry run of zeros is not
+-- worth writing out.  The CAP is what matters and the cap is enforced.
+Gen4Underground.MAX_TRAP_SLOTS = 40
+Gen4Underground.MAX_SPHERE_SLOTS = 40
+Gen4Underground.MAX_SPHERE_SIZE = 99
+Gen4Underground.TRAP_NONE = 0
+Gen4Underground.SPHERE_NONE = 0
+
+-- ...AND THE GOODS PC, which is the third inventory and the biggest:
+-- `MAX_GOODS_PC_SLOTS` is 200 against the traps' and spheres' 40. Same shape
+-- again -- `Underground_TryAddGoodPC` walks the array for `UG_GOOD_NONE`
+-- (line one of `generated/goods.txt`, so 0) and answers whether it fitted --
+-- which is why it extends this module rather than starting another.
+--
+-- `checkhasroomforgoodsinpc` is sixteen of the seventeen uses and it is only
+-- the question: `Underground_IsRoomForGoodsInPC` returns TRUE the moment it
+-- finds one free slot and ignores its own second operand (pret names it
+-- `unused`). `sendgoodtopc` is the one that writes.
+Gen4Underground.MAX_GOODS_PC_SLOTS = 200
+Gen4Underground.GOOD_NONE = 0
+
+-- `save.underground` is the same table the dig spots already live in; this
+-- only ever creates it, so a save written before the inventory existed grows
+-- the fields on first use rather than needing a migration.
+function Gen4Underground.store(save)
+  if type(save) ~= "table" then return nil end
+  save.underground = save.underground or {}
+  return save.underground
+end
+
+local function listIn(save, key)
+  local ug = Gen4Underground.store(save)
+  if not ug then return nil end
+  ug[key] = ug[key] or {}
+  return ug[key]
+end
+
+function Gen4Underground.traps(save) return listIn(save, "traps") or {} end
+function Gen4Underground.goodsPC(save) return listIn(save, "goodsPC") or {} end
+function Gen4Underground.spheres(save) return listIn(save, "spheres") or {} end
+function Gen4Underground.trapCount(save) return #Gen4Underground.traps(save) end
+function Gen4Underground.sphereCount(save)
+  return #Gen4Underground.spheres(save)
+end
+function Gen4Underground.goodsPCCount(save)
+  return #Gen4Underground.goodsPC(save)
+end
+
+-- `Underground_IsRoomForGoodsInPC` -- the question sixteen of the seventeen
+-- script uses ask.  It is NOT `count < cap`: the cartridge scans for a free
+-- slot, which is the same answer here because this port stores the inventory
+-- densely, and saying so is the point -- a sparse store would make the two
+-- disagree and the cartridge's version is the one the scripts branch on.
+function Gen4Underground.roomInGoodsPC(save)
+  return Gen4Underground.goodsPCCount(save)
+           < Gen4Underground.MAX_GOODS_PC_SLOTS
+end
+
+-- All three cartridge adders -- `Underground_TryAddTrap`,
+-- `Underground_TryAddSphere` and `Underground_TryAddGoodPC` -- have one
+-- shape: find the first slot holding the NONE sentinel, write the value into
+-- it, and answer whether a slot was found.  None of them rejects the sentinel
+-- itself: handed NONE they write NONE into the free slot and answer TRUE.
+--
+-- That is not hypothetical.  Every one of the nineteen operands these three
+-- commands carry in scr_seq.narc is a VAR (0x8004 and 0x8005, destination
+-- 0x800C), never a constant, so the value really is whatever the caller left
+-- in 0x8004 at run time.
+--
+-- This port stores the inventories DENSELY, so there is no slot to write the
+-- sentinel into, and writing it would be worse than the cartridge rather than
+-- equal to it: `#list` would grow, so the count would disagree with a store in
+-- which that slot still reads as empty.  The faithful dense equivalent is to
+-- store nothing and answer TRUE anyway -- the free slot the cartridge found
+-- really was there, and "was there a free slot" is what the branch asks.
+--
+-- One helper, because this is one question.  Answering it separately in three
+-- sibling functions is how the three answers drifted apart in the first place.
+local function addDense(save, key, cap, value, isSentinel)
+  local list = listIn(save, key)
+  if not list or #list >= cap then return false end
+  if not isSentinel then list[#list + 1] = value end
+  return true
+end
+
+-- Returns true when the good went in, false when all 200 slots are taken --
+-- `Underground_TryAddGoodPC`'s own return value, and the thing the script's
+-- `gotoif` tests.
+function Gen4Underground.addGoodToPC(save, goodID)
+  goodID = math.floor(tonumber(goodID) or 0)
+  return addDense(save, "goodsPC", Gen4Underground.MAX_GOODS_PC_SLOTS,
+                  goodID, goodID == Gen4Underground.GOOD_NONE)
+end
+
+-- Returns true when the trap went in, false when every slot is taken -- which
+-- is `Underground_TryAddTrap`'s own return value and the thing the script tests.
+function Gen4Underground.addTrap(save, trapID)
+  trapID = math.floor(tonumber(trapID) or 0)
+  return addDense(save, "traps", Gen4Underground.MAX_TRAP_SLOTS,
+                  trapID, trapID == Gen4Underground.TRAP_NONE)
+end
+
+-- The size is clamped rather than refused: `MAX_SPHERE_SIZE` is 99 and the
+-- cartridge's own growth code saturates there (`Underground_HandleDailyEvents`
+-- caps it), so a script handing over a bigger one is asking for the biggest
+-- there is, not for a failure.
+function Gen4Underground.addSphere(save, sphereType, size)
+  sphereType = math.floor(tonumber(sphereType) or 0)
+  size = math.floor(tonumber(size) or 0)
+  if size < 1 then size = 1 end
+  if size > Gen4Underground.MAX_SPHERE_SIZE then
+    size = Gen4Underground.MAX_SPHERE_SIZE
+  end
+  return addDense(save, "spheres", Gen4Underground.MAX_SPHERE_SLOTS,
+                  { type = sphereType, size = size },
+                  sphereType == Gen4Underground.SPHERE_NONE)
+end
+
 return Gen4Underground

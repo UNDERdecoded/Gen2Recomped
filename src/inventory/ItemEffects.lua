@@ -905,6 +905,30 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   local name = itemDef and itemDef.name or itemId
   local rawItemId = itemId
   itemId = alias(itemId, itemDef)
+  local gen2Friendship = require("src.pokemon.Gen2Friendship")
+  if gen2Friendship.isVanilla() and target and require("src.pokemon.Party").isEgg(target) then
+    return "failed", { Strings("It won't have\nany effect.") }
+  end
+  if gen2Friendship.isVanilla() then
+    -- The herbal shop's medicines use the ordinary heal/cure/revive path,
+    -- then apply bitterness only when the medicine was successfully used.
+    local herbs = {
+      ENERGYPOWDER={"SUPER_POTION","BITTERPOWDER"},
+      ENERGY_ROOT={"HYPER_POTION","ENERGYROOT"},
+      HEAL_POWDER={"FULL_HEAL","BITTERPOWDER"},
+      REVIVAL_HERB={"MAX_REVIVE","REVIVALHERB"},
+    }
+    local herb = herbs[itemId]
+    if herb then
+      local kind, messages, extra = ItemEffects.use(data,save,herb[1],target,battle,moveIndex,ow)
+      if kind == "consumed" then
+        gen2Friendship.change(target,herb[2])
+        messages[#messages+1]=(data.text and (data.text._ItemLooksBitterText or data.text.ItemLooksBitterText))
+          or Strings("It looks bitter…")
+      end
+      return kind,messages,extra
+    end
+  end
   -- SINNOH'S RARE CANDY HAS NO NAME TO MATCH ON.  `alias` answers
   -- "ITEM_050" for it, so the branch that raises a level -- which is
   -- already written, already uses the Gen 3 stat formula and already fires
@@ -990,6 +1014,9 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
         .modifyHappiness(save, "USEDXITEM", b and b.mon)
     end
     if itemId == "X_ACCURACY" then
+      if gen2Friendship.isVanilla() and b.xAccuracy then
+        return "failed", { Strings("It won't have\nany effect.") }
+      end
       -- ItemUseXAccuracy sets USING_X_ACCURACY: moves never miss
       -- (not an accuracy stage)
       b.xAccuracy = true
@@ -997,6 +1024,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     end
     if X_ITEMS[itemId] then
       local stat = X_ITEMS[itemId]
+      gen2Friendship.change(b and b.mon,"XITEM")
       local cur = b.stages[stat] or 0
       -- ItemUseXStat removes the item BEFORE running the stat-up
       -- effect, so at +6 it is still consumed and StatModifierUpEffect
@@ -1010,10 +1038,16 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     -- ItemUseDireHit/ItemUseGuardSpec always set the bit and consume
     -- the item, even when it is already active
     if itemId == "DIRE_HIT" then
+      if gen2Friendship.isVanilla() and b.focusEnergy then
+        return "failed", { Strings("It won't have\nany effect.") }
+      end
       b.focusEnergy = true
       return "consumed", { Strings("%s's\ngetting pumped!", b.name) }
     end
     if itemId == "GUARD_SPEC" then
+      if gen2Friendship.isVanilla() and b.mist then
+        return "failed", { Strings("It won't have\nany effect.") }
+      end
       b.mist = true
       return "consumed", { Strings("%s's\nprotected against\nstat changes!", b.name) }
     end
@@ -1118,7 +1152,8 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
         if b and b.mon == target and b.confusedTurns then confused = b end
       end
     end
-    if not target or ((not target.status or not cures[target.status])
+    if not target or (gen2Friendship.isVanilla() and (target.hp or 0) <= 0)
+                  or ((not target.status or not cures[target.status])
                       and not confused) then
       return "failed", { Strings("It won't have\nany effect.") }
     end
@@ -1168,6 +1203,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     -- PIKAHAPPY_LEVELUP on a candy level (item_effects.asm:1540)
     require("src.world.PikachuFollower")
       .modifyHappiness(save, "LEVELUP", target)
+    gen2Friendship.levelUp(data,save,target)
     return "consumed", { Strings("%s grew\nto level %d!", monName(data, target), target.level) },
            { leveledTo = target.level, beforeStats = old,
              afterStats = target.stats }
@@ -1223,6 +1259,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     target.stats = Stats.calc(data.pokemon[target.species], target.level,
                               target.dvs, target.statExp)
     target.hp = math.min(target.hp, target.stats.hp)
+    gen2Friendship.change(target,"VITAMIN")
     return "consumed", { Strings("%s's %s\nrose!", monName(data, target),
       vitaminStat == "hp" and "HP" or vitaminStat:upper()) }
   end

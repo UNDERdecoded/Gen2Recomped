@@ -15,10 +15,46 @@ extern "C" {
 #define OTA_LAUNCHER_STAGED_SUFFIX ".staged"
 #define OTA_BOOTSTRAP_ROMFS "romfs:/ota-bootstrap.nro"
 #define OTA_BOOTSTRAP_SD_NAME "ota-bootstrap.nro"
+/* THE REPOSITORY, ONCE.
+ *
+ * This read "UNDERdecodedHD/Gen2Recomped", which is not a repository that
+ * exists: measured 2026-10-04, that slug answers HTTP 404 and
+ * "UNDERdecoded/Gen2Recomped" answers 200.  So the quiet release check 404ed
+ * on every launch, the launcher concluded "up to date or offline" and showed
+ * nothing, and the Switch had no working update path at all -- while
+ * src/update/Check.lua carried the correct slug and a comment describing this
+ * exact mistake ("This read UNDERdecodedHD/... for a while, which is not a
+ * repository that exists ... an updater that points at the wrong repo fails
+ * exactly like an updater with no network").
+ *
+ * UNDERdecodedHD is the AUTHOR string -- the NACP author, the MSIX publisher,
+ * the intro credit -- and is correct everywhere it appears as a name.  The
+ * GitHub owner is UNDERdecoded.  The two had been conflated here and in
+ * src/main.c's checksum URL, which is the same slug spelled a second time.
+ *
+ * Both URLs now derive from one definition, and
+ * tools/auto_update_check.lua asserts it equals src/update/Check.lua's
+ * Check.REPO -- the cross-language half of this port's recurring bug (the
+ * same thing spelled differently in two places that never meet).
+ */
+#define OTA_REPO_SLUG "UNDERdecoded/Gen2Recomped"
 #define OTA_RELEASES_API \
-  "https://api.github.com/repos/UNDERdecodedHD/Gen2Recomped/releases/latest"
+  "https://api.github.com/repos/" OTA_REPO_SLUG "/releases/latest"
+/* Takes the release tag ("v0.8.3"). */
+#define OTA_SUMS_URL_FMT \
+  "https://github.com/" OTA_REPO_SLUG "/releases/download/%s/sha256sums.txt"
 
-/* Mirrors src/update/SwitchOta.lua — keep semantics in lockstep. */
+/* There is no Lua mirror of this wire format.  A comment here and a line in
+ * README.md both pointed at a SwitchOta.lua under src/update that has never
+ * existed in the tree; the semantics live in src/ota_protocol.c and are
+ * exercised on the host by host/test_ota_protocol.c ("make host-test").  The
+ * LOVE-side updater deliberately does NOT mirror them -- it is notify-only on
+ * NX for a measured reason (docs/auto-update.md).
+ *
+ * tools/auto_update_check.lua asserts the dead PATH does not come back here
+ * or in README.md.  It matches the path and not the bare name on purpose, so
+ * prose about the removal (this paragraph) is not mistaken for the pointer --
+ * the same distinction the banner-vocabulary scan in that file had to make. */
 
 int ota_compare_semver(const char *a, const char *b);
 int ota_is_ota_asset_name(const char *name);

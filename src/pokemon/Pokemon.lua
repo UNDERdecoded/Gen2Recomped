@@ -211,11 +211,11 @@ function Pokemon.new(data, species, level, rng, form)
     statExp = { hp = 0, attack = 0, defense = 0, speed = 0, special = 0 },
     stats = stats,
     hp = stats.hp,
-    -- Gen2 party mons carry a happiness byte (BASE_HAPPINESS, seeded by
-    -- GivePoke); Gen1 has no such field, so leave it nil there and the
-    -- HAPPINESS evolution method simply never fires.
-    happiness = require("src.core.GameVersion").isGen2()
-      and require("src.pokemon.Evolution").BASE_HAPPINESS or nil,
+    -- Emerald seeds friendship from the species record. Gen2 uses its
+    -- shared BASE_HAPPINESS; Gen1 has no friendship byte.
+    happiness = require("src.core.GameVersion").get()=="emerald" and (def.friendship or 70)
+      or (require("src.core.GameVersion").isGen2()
+      and require("src.pokemon.Evolution").BASE_HAPPINESS or nil),
     -- the Gen1 catch-rate byte freezes at catch time: evolution does NOT
     -- update it, so PKHeX expects a preevolution's rate on an evolved mon
     -- (#206).  Evolution.apply mutates in place and never touches this.
@@ -439,18 +439,22 @@ end
 -- Pokémon Center / blackout heal (engine/events/heal_party.asm
 -- HealParty): full HP, status cleared, and every move's PP restored to
 -- its base plus the PP-Up bonus (RestoreBonusPP adds maxPP/5 per PP UP).
-function Pokemon.heal(mon)
-  mon.hp = mon.stats.hp
-  mon.status = nil
-  local moves = require("src.core.Data").moves
+function Pokemon.restorePP(mon, moves)
+  moves = moves or require("src.core.Data").moves
   if moves then
-    for _, mv in ipairs(mon.moves) do
+    for _, mv in ipairs(mon.moves or {}) do
       local mdef = moves[mv.id]
       if mdef then
         mv.pp = mdef.pp + (mv.ppUps or 0) * math.floor(mdef.pp / 5)
       end
     end
   end
+end
+
+function Pokemon.heal(mon)
+  mon.hp = mon.stats.hp
+  mon.status = nil
+  Pokemon.restorePP(mon)
 end
 
 function Pokemon.isFainted(mon)

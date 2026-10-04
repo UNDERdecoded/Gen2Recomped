@@ -287,10 +287,41 @@ else
       worst[band] = holes
     end
   end
-  -- THE CANARY FOR THE METHOD: `VM.lowered` must still say no to something.
-  ok(VM.lowered("opensealcapsuleeditor") == false,
-     "the lowered-detector reports an unlowered command as lowered, so the "
-     .. "counts above mean nothing")
+  -- THE CANARY FOR THE METHOD, AND IT NAMES NOTHING.
+  --
+  -- It used to assert `VM.lowered("opensealcapsuleeditor") == false`, and pass
+  -- 176 lowered `opensealcapsuleeditor`. That is the second time a canary has
+  -- picked, as its example of an unlowered command, something somebody was
+  -- about to fix -- `gen4_save_check` named `checkishalloffamecorrupted` and
+  -- pass 173 lowered it. **A canary whose subject is a to-do item has a
+  -- half-life.**
+  --
+  -- Derived instead, over the whole opcode table: the detector has to say yes
+  -- to something and no to something. One that answers uniformly -- the inert
+  -- stub answering nil for everything, or a table that lost its `lowered`
+  -- predicate -- fails whichever way it leans, and no individual name can go
+  -- stale underneath it.
+  do
+    local yes, no, total = 0, 0, 0
+    for _, nm in pairs(opName) do
+      if type(nm) == "string" then
+        total = total + 1
+        local answer = VM.lowered(nm)
+        if answer == true then yes = yes + 1
+        elseif answer == false then no = no + 1 end
+      end
+    end
+    ok(total >= 800,
+       "the opcode table named %d command(s), so this canary is asking about "
+       .. "almost nothing", total)
+    ok(yes + no == total,
+       "the detector gave neither true nor false for %d of %d command(s) -- "
+       .. "nil is what the command audit's inert stub answers, and it is not "
+       .. "`false`", total - (yes + no), total)
+    ok(yes > 0 and no > 0,
+       "the detector says yes to %d and no to %d of %d commands; it has to do "
+       .. "both or the counts above mean nothing", yes, no, total)
+  end
   -- bg_events, field_moves and tv_broadcast are the three bands the table
   -- reaches that are NOT common_scripts, and the first two are at zero.
   ok((worst.field_moves or 1) == 0,

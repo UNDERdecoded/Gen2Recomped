@@ -31,6 +31,7 @@
 local Theme = require("Theme")
 local PAL = Theme.PAL
 local MapEdits = require("tools.map-editor.MapEdits")
+local MapKind = require("tools.map-editor.MapKind")
 
 local Tiles = {}
 local gen3Atlases=setmetatable({},{__mode='k'})
@@ -232,7 +233,17 @@ function Tiles.usePick(S, srcTsId, blockId, q)
   return live
 end
 
+-- HOW MANY BLOCKS THERE ARE TO PAINT FROM, and zero for a stand-in.
+--
+-- A Gen 4 map names `TILESET_GEN4_STANDIN`, which reports
+-- `metatileCount = 256` -- so this answered 256 for Sinnoh and the TILES
+-- tool offered itself on every Platinum map there is. The stand-in is
+-- synthesised art that lets a mesh map go through the 2D renderer at all
+-- (src/import/Gen4Tileset.lua:285, `standIn = true`); it has no `blocks`
+-- table, `atlasFor` and `paintCell` both already refuse it, and this is the
+-- third place that had to say so. There is nothing in it to paint with.
 local function blockCount(ts)
+  if ts and ts.standIn == true then return 0 end
   if ts and ts.blockTiles==2 then return ts.metatileCount or 0 end
   if not (ts and type(ts.blocks) == "table") then return 0 end
   return #ts.blocks
@@ -514,10 +525,43 @@ local function pickFrom(S, srcId, idx, q, foreign, added)
   if not live then S.tileNotice = tostring(why) end
 end
 
+-- WHAT THIS PANEL CAN ACT ON, derived from the map rather than declared by
+-- generation: a block space to paint FROM. `blockCount` is the one place that
+-- knows what that means for each cartridge -- `#ts.blocks` for a Gen 1/2
+-- tileset, `ts.metatileCount` for a Gen 3 half-bank pair (`blockTiles == 2`)
+-- -- and a Gen 4 map has no tileset at all, because its ground is an NSBMD
+-- mesh and there is no metatile to edit (src/import/Gen4Maps.lua's header).
+--
+-- Sidebar asks this before offering TILES, which is why the Gen 4 delegation
+-- below is gone. It used to read:
+--
+--     if current and current.generation==4 then
+--       return require('tools.map-editor.panels.Models').draw(...)
+--     end
+--
+-- so on a Sinnoh map the TILES tool WAS the prop placer, and Gen 4 had no
+-- tile editor as a direct consequence: the name was taken. 3D PROPS is its
+-- own tool now and this one is free to become the Gen 4 ground tool -- the
+-- behaviour byte and the collision bit, which is what "edit the texture
+-- tiles" resolves to on a map made of triangles.
+function Tiles.actsOn(S, def)
+  if not def then return false end
+  -- Asked through MapKind as well, so "a stand-in is not a tileset" has
+  -- one spelling across all four availability rules rather than four.
+  if not MapKind.editableTileset(S, def) then return false end
+  return blockCount(tilesetOf(S)) > 0
+end
+
 function Tiles.draw(S, Kit, x, y, w, h)
-  local current=mapDef(S)
-  if current and current.generation==4 then
-    return require('tools.map-editor.panels.Models').draw(S,Kit,x,y,w,h)
+  local current = mapDef(S)
+  if current and not Tiles.actsOn(S, current) then
+    -- Reached only on a build that offers this tool anyway (no Sidebar, or an
+    -- older shell). Says which tool does the job rather than drawing a
+    -- palette of nothing.
+    Kit.emptyBox(x, y, w, h,
+      "This map has no tile blocks to paint - its ground is a mesh. "
+      .. "Use 3D PROPS for the models on it.")
+    return
   end
   local s = Kit.scale
   local pad = 16 * s

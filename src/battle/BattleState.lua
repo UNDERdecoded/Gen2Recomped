@@ -112,6 +112,12 @@ end
 function BattleState:romText(label, fallback, ...)
   return fromRom(self.data, label, fallback, ...)
 end
+
+function BattleState:playEnemyIntroCry()
+  if not self.silentEnemyIntro then
+    return require("src.core.Sound").playCry(self.data, self.enemy.mon.species)
+  end
+end
 -- Letterbox voids around the 160x144 battle canvas fill white so the
 -- window reads as one continuous battle screen (no black bars).
 BattleState.letterboxWhite = true
@@ -1300,6 +1306,7 @@ function BattleState.newWild(game, species, level, opts)
     Pokemon.applySeed(game.data, wild, opts.roamerSeed)
   end
   self.enemy = makeBattler(game.data, wild, false)
+  require("src.battle.Gen2Wild").initialize(self, opts)
   if self.roamer then
     local kept = math.floor(tonumber(opts.roamerHP) or 0)
     if kept > 0 then
@@ -1312,8 +1319,11 @@ function BattleState.newWild(game, species, level, opts)
     if opts.roamerStatus then self.enemy.mon.status = opts.roamerStatus end
   end
   markSeen(game, species, self.enemy.mon)
-  if opts and opts.hooked then
-    self.introText = self:romText("_HookedMonAttackedText", "The hooked\n%s\nattacked!", self.enemy.name)
+  if opts and opts.tree then
+    self.introText = self:romText("PokemonFellFromTreeText", "%s fell\nout of the tree!", self.enemy.name)
+  elseif opts and opts.hooked then
+    local label = GameVersion.isGen2() and "HookedPokemonAttackedText" or "_HookedMonAttackedText"
+    self.introText = self:romText(label, "The hooked\n%s\nattacked!", self.enemy.name)
   else
     self.introText = self:romText("_WildMonAppearedText", "Wild %s\nappeared!", self.enemy.name)
   end
@@ -3400,6 +3410,7 @@ function BattleState:enter()
   if self.isGymLeader then
     require("src.world.PikachuFollower")
       .modifyHappiness(self.game.save, "GYMLEADER")
+    require("src.pokemon.Gen2Friendship").gymBattle(self.game.save)
   end
   -- normally already playing: the transition wipe starts the theme
   -- (audio/play_battle_music.asm runs before the transition, and
@@ -3467,7 +3478,7 @@ function BattleState:enter()
   -- a different point in each battle kind, so queue it per branch
   local function queueEnemyCry()
     self:act(function()
-      require("src.core.Sound").playCry(self.data, self.enemy.mon.species)
+      self:playEnemyIntroCry()
       HeldItems.onEntry(self, self.enemy)
     end)
   end
@@ -5080,7 +5091,9 @@ function BattleState:markParticipant()
   if slots then
     -- indices rather than ipairs: the left flank is nil while it is off the
     -- field and the right one is still owed its share
-    mark(slots[1])
+    -- The intro calls this before syncSides populates its slots. The lead
+    -- must still count, including when switched out before dealing damage.
+    mark(self.player or slots[1])
     mark(slots[2])
   else
     mark(self.player)
@@ -7964,6 +7977,7 @@ function BattleState:onFaint(battler)
                    and "CARELESSTRAINER" or "FAINTED"
     require("src.world.PikachuFollower")
       .modifyHappiness(self.game.save, reason, battler.mon)
+    require("src.pokemon.Gen2Friendship").faint(battler.mon,enemyLevel)
   end
   -- the faint slide + cry ride the queue (after the move animation and
   -- the HP-bar drain, pokered's order); the slide finishes before the
@@ -8243,7 +8257,9 @@ function BattleState:awardExp(fallen)
         .modifyHappiness(game.save, "LEVELUP", mon)
       -- Gen2's own per-mon happiness byte (ChangeHappiness HAPPINESS_GAINLEVEL),
       -- which is what the HAPPINESS evolutions read.
-      require("src.pokemon.Evolution").changeHappiness(mon, "LEVELUP")
+      if not require("src.pokemon.Gen2Friendship").levelUp(game.data,game.save,mon) then
+        require("src.pokemon.Evolution").changeHappiness(mon, "LEVELUP")
+      end
       self:sayNext(Strings("%s grew\nto level %d!", name, lv))
       self:uiNext(function()
         require("src.core.Sound").play(game.data, "Level_Up")
@@ -9664,7 +9680,7 @@ function BattleState:storeContestMon()
     -- same reload a normal catch does (storeCaughtMon's restoreMimicked).
     self:restoreMimicked(self.enemy)
     BugContest.setCaught(save, caught)
-    self:sayNext(Strings("%s was\ncaught!", name))
+    self:sayNext(Strings("Caught %s!", name))
   end
 
   markOwned(self.game, caught.species)
@@ -9674,10 +9690,10 @@ function BattleState:storeContestMon()
     -- _ContestAlreadyCaughtText names the mon you are ALREADY holding, not the
     -- one you just caught: DisplayAlreadyCaughtText is called with
     -- wNamedObjectIndex = [wContestMon] (caught_mon.asm:6-8).  Resolve that
-    -- through the nickname, then the species record, then the raw id -- a nil
+    -- through the species record, then the raw id -- a nil
     -- here used to reach string.format and come back as the untouched source
     -- string, which is why the line arrived with no name in it at all.
-    local heldName = held.nickname
+    local heldName
     if not heldName then
       local heldDef = held.species and self.game.data.pokemon
                       and self.game.data.pokemon[held.species]
@@ -9688,17 +9704,10 @@ function BattleState:storeContestMon()
     -- _ContestAskSwitchText is exactly "Switch #MON?", asked over the
     -- STOCK/THIS comparison box; YES keeps the new one (PlaceYesNoBox's
     -- `ret c` on NO leaves the stock mon alone).
-    self:sayNext(Strings("%s\nLv%d  vs  %s\nLv%d", heldName,
-                         tonumber(held.level) or 0, name,
-                         tonumber(caught.level) or 0))
-    self:sayNext(Strings("Switch POKéMON?"))
     self:uiNext(function()
-      local ChoiceBox = require("src.ui.ChoiceBox")
-      return ChoiceBox.new(self.game, function(yes)
+      return require("src.ui.Gen2ContestComparison").new(self.game, held, caught, function(yes)
         if yes then
           keepNew()
-        else
-          self:sayNext(Strings("%s was\nreleased.", name))
         end
       end)
     end)
@@ -11745,12 +11754,12 @@ function BattleState:drawTextAreaInner()
       Font.drawBox(2, 12, 18, 6)
       Font.draw(Strings("FIGHT"), 32, 112)
       self:drawMenuMonLabel(128, 112)
-      Font.draw(Strings("PARKBALLx"), 32, 128)
+      Font.draw(Strings("PARKBALL×"), 32, 128)
       Font.draw(Strings("RUN"), 128, 128)
       -- .PrintParkBallsRemaining writes at hlcoord 13, 16 -- two digits,
-      -- leading-zeros flag clear, i.e. space padded -- which lands in the two
+      -- with PRINTNUM_LEADINGZEROS -- which lands in the two
       -- cells right after the 'x' of the label.
-      Font.draw(("%2d"):format(self:bugContestBalls()), 104, 128)
+      Font.draw(("%02d"):format(self:bugContestBalls()), 104, 128)
       Font.drawCode(0xED, (col == 0 and 24 or 120), 112 + row * 16)
     else
       -- BATTLE_MENU_TEMPLATE: box (8,12)-(19,17), "FIGHT <PK><MN> /

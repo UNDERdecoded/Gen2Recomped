@@ -108,6 +108,8 @@ function Stats.calcGen3(speciesDef, level, ivs, evs, nature)
   -- `special` stays an alias of Sp.Atk so the Gen 1 code paths and the
   -- summary screens that predate the split still read something sane
   out.special = out.spatk
+  -- CalculateMonStats special-cases Shedinja's base HP of one.
+  if base.hp == 1 then out.hp = 1 end
   return out
 end
 

@@ -249,6 +249,7 @@ function Gen3PartyMenu:knowsFieldMove(mon, moveId)
   local gate = constants.gen3FieldMoves
   local entry = gate and gate[moveId]
   local want = entry and constants.moveOrder and constants.moveOrder[entry.move]
+  if moveId=="SECRET_POWER" then want="SECRET_POWER" end
   if not want then return false end
   for _, slot in ipairs(mon.moves or {}) do
     local id = (type(slot) == "table") and slot.id or slot
@@ -303,7 +304,7 @@ end
 function Gen3PartyMenu:flyUsableBy(mon)
   local ow = self.game.overworld
   if not (ow and ow.map and ow.map.def) then return false end
-  if not require("src.world.Map").isOutdoor(ow.map.def) then return false end
+  if not require("src.world.Gen3FieldRules").allowsTravel(ow.map.def) then return false end
   if not (ow.gen3HasBadge and ow:gen3HasBadge("FLY")) then return false end
   local order = ((self.game.data.field or {}).flyOrder) or {}
   if #order == 0 then return false end
@@ -336,23 +337,32 @@ end
 -- long time (src/ui/PartyMenu.lua's dig / escape / strength arms), so this is
 -- the same call with Hoenn's gate in front of it.
 --
--- SECRET POWER is deliberately NOT here: it builds a secret base, which is a
--- whole feature rather than a call, and offering it would be a row that looks
--- served and is not -- exactly the thing being fixed.
+-- Secret Power uses the native creation callback in useFieldMove below.
 function Gen3PartyMenu:strengthUsableBy(mon)
   local ow = self.game.overworld
   if not (ow and ow.gen3HasBadge and ow:gen3HasBadge("STRENGTH")) then
     return false
   end
   if ow.strengthActive then return false end
+  local x, y = ow.player:facingCell()
+  local npc = ow.npcAtCell and ow:npcAtCell(x, y)
+  if not (npc and npc.def and (require("src.world.Map").isPushable(npc.def)
+      or (npc.def and npc.def.graphicsId == 97))) then return false end
   return self:knowsFieldMove(mon, "STRENGTH")
 end
 
 function Gen3PartyMenu:useStrength(mon)
   local ow = self.game.overworld
   if ow then ow.strengthActive = true end
+  local flag = (self.game.data.constants or {}).gen3StrengthFlag
+  if flag then
+    self.game.save.flags = self.game.save.flags or {}
+    self.game.save.flags[("FLAG_G3_%04X"):format(flag)] = true
+  end
   local def = self.game.data.pokemon[mon.species]
   local name = mon.nickname or (def and def.name) or tostring(mon.species)
+  local native = ow and ow.gen3FieldText and ow:gen3FieldText("STRENGTH", "used")
+  if native then return self:say(native:gsub("{VAR1}", (name:gsub("%%", "%%%%")))) end
   local said = self.game.data.text._UseStrengthText
                or self.game.data.text._UsedStrengthText
   local text = (said or Strings("{RAM:wNameBuffer} used\nSTRENGTH."))
@@ -364,7 +374,8 @@ end
 -- nowhere to back out TO, which is the cartridge's own refusal.
 function Gen3PartyMenu:digUsable()
   local ow = self.game.overworld
-  return (ow and ow.escapePoint and ow:escapePoint()) and true or false
+  return (ow and ow.escapePoint and require("src.world.Gen3FieldRules").allowsEscape(
+    ow.map and ow.map.def, ow:escapePoint())) and true or false
 end
 
 function Gen3PartyMenu:useDig()
@@ -376,7 +387,23 @@ end
 -- one.  beginTeleportOut guards this too; asking here is what keeps the row
 -- from being offered as usable and then doing nothing.
 function Gen3PartyMenu:teleportUsable()
-  return (self.game.save and self.game.save.lastHeal) and true or false
+  local ow = self.game.overworld
+  return (self.game.save and self.game.save.lastHeal and ow and ow.map
+    and require("src.world.Gen3FieldRules").allowsTravel(ow.map.def)) and true or false
+end
+
+function Gen3PartyMenu:surfUsableBy(mon)
+  local ow = self.game.overworld
+  return self:knowsFieldMove(mon, "SURF") and ow and ow.useSurfFieldMove
+    and not ow.player.surfing and ow:useSurfFieldMove() == "ok"
+end
+
+function Gen3PartyMenu:waterfallUsableBy(mon)
+  local ow = self.game.overworld
+  return self:knowsFieldMove(mon, "WATERFALL") and ow and ow.gen3WaterfallAhead
+    and ow.gen3HasBadge and ow:gen3HasBadge("WATERFALL")
+    and ow.player.surfing and ow.player.facing == "up"
+    and ow:gen3WaterfallAhead() ~= nil
 end
 
 function Gen3PartyMenu:useTeleport()
@@ -389,9 +416,9 @@ function Gen3PartyMenu:sweetScentUsable()
   return (ow and ow.gen2SweetScent) and true or false
 end
 
-function Gen3PartyMenu:useSweetScent()
+function Gen3PartyMenu:useSweetScent(mon)
   local ow = self.game.overworld
-  if ow then ow:gen2SweetScent() end
+  if ow then ow:gen2SweetScent(mon) end
 end
 
 -- `mon` is the bird, and it is passed in because the sweep that announces it
@@ -577,7 +604,38 @@ end
 -- untouched, which is why close() above had to become idempotent rather than
 -- these three being rewritten.
 function Gen3PartyMenu:useFieldMove(mon, move)
+  if move=="SOFTBOILED" or move=="MILK_DRINK" then return self:beginHpTransfer(mon) end
   local chamber = self:regiUsableBy(mon)
+  if move=="SECRET_POWER" and self:knowsFieldMove(mon,move) then
+    local Field=require("src.world.Gen3PartyFieldMoves")
+    local ow=self.game.overworld
+    local id,effect=Field.secretTarget(self.game.data,self.game.save,ow)
+    local slot
+    for i,member in ipairs(self:party()) do if member==mon then slot=i-1;break end end
+    local rows=id and slot and Field.secretProgram(self.game.data,id,effect,slot)
+    if rows then
+      self:close()
+      ow:queueScript(rows,{mapId=ow.map.id})
+      return
+    end
+  end
+  -- Object scripts own their field-effect sweep, so they must not also go
+  -- through the generic sweep wrapper below.
+  if not (chamber and chamber.move==move) and (move=="CUT" or move=="ROCK_SMASH") then
+    local Field=require("src.world.Gen3PartyFieldMoves")
+    local ow=self.game.overworld
+    local npc=Field.target(ow,move)
+    local slot
+    for i,member in ipairs(self:party()) do if member==mon then slot=i-1;break end end
+    local rows=npc and slot and self:knowsFieldMove(mon,move)
+      and ow.gen3HasBadge and ow:gen3HasBadge(move)
+      and Field.program(self.game.data,move,slot,npc.def.script)
+    if rows then
+      self:close()
+      ow:queueScript(rows,{npc=npc,mapId=ow.map.id})
+      return
+    end
+  end
   local function run()
     if chamber and chamber.move == move then return self:useRegi(chamber) end
     if move == "FLASH" then return self:useFlash() end
@@ -586,7 +644,17 @@ function Gen3PartyMenu:useFieldMove(mon, move)
     if move == "STRENGTH" then return self:useStrength(mon) end
     if move == "DIG" then return self:useDig() end
     if move == "TELEPORT" then return self:useTeleport() end
-    if move == "SWEET_SCENT" then return self:useSweetScent() end
+    if move == "SWEET_SCENT" then return self:useSweetScent(mon) end
+    if move == "SURF" then
+      local ow = self.game.overworld
+      local x, y = ow.player:facingCell()
+      return ow:trySurf(x, y, nil, mon)
+    end
+    if move == "WATERFALL" then
+      local ow = self.game.overworld
+      local x, y, behaviour = ow:gen3WaterfallAhead()
+      return ow:gen3UseWaterfall(x, y, behaviour, mon)
+    end
   end
   local usable = (chamber and chamber.move == move)
                  or (move == "FLASH" and self:flashUsableBy(mon))
@@ -596,6 +664,8 @@ function Gen3PartyMenu:useFieldMove(mon, move)
                  or (move == "DIG" and self:digUsable())
                  or (move == "TELEPORT" and self:teleportUsable())
                  or (move == "SWEET_SCENT" and self:sweetScentUsable())
+                 or (move == "SURF" and self:surfUsableBy(mon))
+                 or (move == "WATERFALL" and self:waterfallUsableBy(mon))
   if usable then
     self:close()
     -- ...EXCEPT FLY, WHICH ASKS WHERE FIRST.
@@ -625,6 +695,48 @@ function Gen3PartyMenu:useFieldMove(mon, move)
                          or move == "SURF" and said.cantSurfHere
                          or said.cantUseHere)
   self:say(text or Strings("Can't use that here."))
+end
+
+local function transferCost(mon)
+  return math.floor(((mon.stats and mon.stats.hp) or mon.maxHp or 0)/5)
+end
+local function transferText(game,fragment,fallback)
+  for _,text in pairs(game.data.text or {}) do
+    if type(text)=="string" and text:find(fragment,1,true) then return text end
+  end
+  return Strings(fallback)
+end
+function Gen3PartyMenu:beginHpTransfer(mon)
+  local cost=transferCost(mon)
+  if (mon.hp or 0)<=cost then
+    local messages=((self.game.data.constants or {}).gen3PartyActions or {}).messages or {}
+    return self:say(messages.notEnoughHp or Strings("Not enough HP."))
+  end
+  self.hpTransferFrom=mon
+end
+function Gen3PartyMenu:transferHpTo(mon)
+  local donor=self.hpTransferFrom
+  if not donor then return end
+  local cost=transferCost(donor)
+  local maxHp=(mon.stats and mon.stats.hp) or mon.maxHp or 0
+  if mon==donor or (mon.hp or 0)<=0 or mon.hp>=maxHp or (donor.hp or 0)<=cost then
+    return self:say(transferText(self.game,"This can’t be used on", "This can’t be used on\nthat POKéMON."))
+  end
+  local oldDonor,oldRecipient=donor.hp,mon.hp
+  require("src.core.Sound").play(self.game.data,"Get_Item")
+  donor.hp=donor.hp-cost
+  self:animateTo(donor,oldDonor,function()
+    require("src.core.Sound").play(self.game.data,"Get_Item")
+    mon.hp=math.min(maxHp,oldRecipient+cost)
+    self:animateTo(mon,oldRecipient,function()
+      self.hpTransferFrom=nil
+      local name=monName(self.game,mon)
+      local text=transferText(self.game,"HP was restored", "{VAR1}’s HP was restored\nby {VAR2} point(s).")
+      text=text:gsub("{VAR1}",function() return name end)
+        :gsub("{VAR2}",tostring(mon.hp-oldRecipient))
+      self:say(text)
+    end)
+  end)
 end
 
 function Gen3PartyMenu:giveItem(mon)
@@ -842,6 +954,7 @@ end
 function Gen3PartyMenu:choose()
   local mon = self:party()[self.index]
   if not mon then return self:close() end
+  if self.hpTransferFrom then return self:transferHpTo(mon) end
 
   -- CHOOSING A TEAM offers its own two rows and nothing else.  ENTER and
   -- NO ENTRY are the cartridge's own words, sixth and seventh in the run of
@@ -917,8 +1030,10 @@ function Gen3PartyMenu:update(dt)
     local mon = heal.mon
     local maxHp = math.max(1, (mon.stats and mon.stats.hp) or mon.maxHp or 1)
     local want = math.max(0, math.min(maxHp, mon.hp or 0))
-    heal.shown = math.min(want, heal.shown + math.max(1, maxHp) / 96)
-    if heal.shown >= want then
+    local step=math.max(1,maxHp)/96
+    if heal.shown>want then heal.shown=math.max(want,heal.shown-step)
+    else heal.shown=math.min(want,heal.shown+step) end
+    if heal.shown == want then
       self.heal = nil
       if heal.onDone then heal.onDone() end
     end
@@ -959,6 +1074,7 @@ function Gen3PartyMenu:update(dt)
     end
   elseif input:wasPressed("a") then
     if self.index > #self:party() then
+      if self.hpTransferFrom then self.hpTransferFrom=nil;return end
       -- the CANCEL button VALIDATES when a team is being chosen; everywhere
       -- else it is the way out
       if self.chooseOrder then return self:confirmOrder() end
@@ -966,6 +1082,7 @@ function Gen3PartyMenu:update(dt)
     end
     self:choose()
   elseif input:wasPressed("b") then
+    if self.hpTransferFrom then self.hpTransferFrom=nil;return end
     -- B drops a SWITCH that was half-made before it closes the screen
     if self.switchFrom then self.switchFrom = nil return end
     if self.chooseOrder then return self:handOrder(nil) end
@@ -1437,7 +1554,7 @@ function Gen3PartyMenu:draw()
   for n = 1, 6 do
     local mon = party[n]
     local panel = self:panelFor(n)
-    panel.selected = (n == self.index)
+    panel.selected = (n == self.index) or (mon and mon==self.hpTransferFrom) or false
     if ball then
       panel.ballImage = ball
       -- THE BALL HAS TWO FRAMES, so there are two quads -- not six a frame,
@@ -1503,9 +1620,10 @@ end
 -- screen's message text uses.  Only with a machine open: nothing else this
 -- screen does has a question to ask.
 function Gen3PartyMenu:drawTeachPrompt(inset)
-  if not (self.tmhm or self.chooseOrder) then return end
+  if not (self.tmhm or self.chooseOrder or self.hpTransferFrom) then return end
   local words = (self.game.data.constants or {}).gen3TeachText or {}
-  local prompt = self.chooseOrder
+  local messages=((self.game.data.constants or {}).gen3PartyActions or {}).messages or {}
+  local prompt = self.hpTransferFrom and (messages.useOnWhichMon or Strings("Use on which POKéMON?")) or self.chooseOrder
     and self:orderWord("choose", "Choose POKéMON and confirm.")
     or (words.prompt or Strings("Teach which POKéMON?"))
   local tx, ty, tw, th = 0, 16, 20, 4

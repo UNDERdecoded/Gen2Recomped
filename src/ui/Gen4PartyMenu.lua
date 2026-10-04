@@ -301,6 +301,28 @@ function Gen4PartyMenu:actions()
   for _,name in ipairs({'CUT','SURF','DIG','TELEPORT','SWEET_SCENT'}) do
     if F.knows(mon,name) then rows[#rows+1]='field:'..name end
   end
+  -- FLASH AND DEFOG ARE OFFERED BY THE WEATHER, not by the badge case.
+  --
+  -- They were in `Gen4FieldMoves.ids` and on no menu, so a party carrying
+  -- Flash in Wayward Cave had no way to use it -- which is the half of the
+  -- dark-cave work that is not about drawing anything.
+  -- `FieldMoves_CanUseMoves` sets their usable bits from the live weather and
+  -- from nothing else, so the gate is `weatherOffers` rather than `badgeHeld`:
+  -- Flash is taught by HM05 and needs no badge, and offering it on all 593
+  -- maps would put a row on every party menu in Sinnoh that works on one.
+  for name in pairs(F.WEATHER_MOVES) do
+    if F.knows(mon,name) and F.weatherOffers(self.game.save,name) then
+      rows[#rows+1]='field:'..name
+    end
+  end
+  -- SORTED, because `pairs` over a two-key table would put Flash above Defog
+  -- on one run and below it on the next, and a menu whose rows move between
+  -- openings is worse than a menu in the wrong order.
+  table.sort(rows,function(a,b)
+    local fa,fb=a:match('^field:(.*)'),b:match('^field:(.*)')
+    if fa and fb then return fa<fb end
+    return false
+  end)
   rows[#rows+1]='switch'
   if not require('src.pokemon.Party').isEgg(mon) then rows[#rows+1]='item' end
   rows[#rows+1]='cancel';return rows
@@ -309,6 +331,34 @@ end
 function Gen4PartyMenu:useFieldMove(mon,move)
   local ow=self.game.overworld;local F=require('src.world.Gen4FieldMoves')
   local usable=ow and F.badgeHeld(self.game.data,self.game.save,move)
+  -- THE CARTRIDGE'S OWN SCRIPT, for the two the weather offers.
+  --
+  -- `scripts_field_moves.s` entries 14 (Defog) and 15 (Flash) carry the
+  -- message, the HM cut-in, `DoFlashFunc FIELD_MOVE_FUNC_SET_ACTIVE` and the
+  -- immediate weather clear -- every one of them already lowered -- so running
+  -- the entry is both less code and more faithful than reimplementing the
+  -- four steps here. The same route `tryGen4TileScript` takes.
+  local wm=F.WEATHER_MOVES[move]
+  if wm then
+    if not (ow and F.weatherOffers(self.game.save,move)) then
+      self.game.stack:push(require('src.render.TextBox')
+        .new(self.game,"Can't use that here."))
+      return
+    end
+    local TS=require('src.world.Gen4TileScripts')
+    local rows,why=TS.compile(self.game.data,'field_moves',wm.entry)
+    if not rows then
+      require('src.core.Logger').warn(
+        'gen4 field move: %s wanted field_moves %d and %s',
+        move,wm.entry,tostring(why))
+      self.game.stack:push(require('src.render.TextBox')
+        .new(self.game,"Can't use that here."))
+      return
+    end
+    self:close()
+    ow.runner:run(rows,{mapId=ow.map and ow.map.id})
+    return
+  end
   if move=='SURF' then usable=usable and ow:useSurfFieldMove()=='ok'
   elseif move=='CUT' then usable=usable and ow:useCutFieldMove()=='ok'
   elseif move=='DIG' then usable=usable and ow.map.def.allowEscapeRope and ow:escapePoint()

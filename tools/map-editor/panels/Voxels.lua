@@ -42,6 +42,7 @@ local Voxels = {}
 -- `cylinder`, `canopy`, `flower`, `billboard` and nine more were not offered
 -- at all. `post` is every fence in Johto.
 local VoxelClasses = require("tools.map-editor.VoxelClasses")
+local MapKind = require("tools.map-editor.MapKind")
 
 local function classInfo(S)
   local def = S.data and S.data.maps and S.data.maps[S.mapId or ""]
@@ -1814,6 +1815,31 @@ function Voxels.drawProfile(S, Kit, x, y, w, h)
   -- Voxels.drawDeferred.  Its tileset is worked out here and nowhere else, so
   -- it is stashed for the deferred pass to read.
   S._voxProfTileset = tileset
+end
+
+-- WHAT THIS PANEL CAN ACT ON, derived from the map rather than declared by
+-- generation.
+--
+-- A voxel edit is written to `def.voxelEdits` / `def.voxelTileEdits`, and the
+-- only thing that READS either is the selected voxel mod's `TileShape.at`
+-- (ModShapes.lua:387 names both fields) -- asked about a cell of a block grid,
+-- with its class vocabulary and its height profile looked up BY TILESET ID
+-- (`VoxelClasses.list(def.tileset, source)`, `MapEdits.voxelBucket`). A map
+-- with no tileset has no profile to pin a class to and no mesher asking.
+--
+-- A Gen 4 map is exactly that map: it renders through `Gen4Ground`'s NSBMD
+-- terrain, which never consults `voxelEdits`, so every height and shape set
+-- here would save, reload and change nothing -- the `mat` field's fate, except
+-- as a whole tool rather than one field. So the tool is ABSENT on Platinum
+-- rather than present and inert.
+--
+-- Gen 1, 2 and 3 all carry `def.tileset`, so none of them loses anything.
+-- NOT `def.tileset ~= nil`, which was the first cut and was wrong on real
+-- data: a Platinum map DOES name a tileset -- the synthesised stand-in -- so
+-- VOXELS was offered on all 593 of them. A voxel override is keyed to a real
+-- tileset's profile, and the stand-in is art rather than a tileset.
+function Voxels.actsOn(S, def)
+  return MapKind.editableTileset(S, def) ~= nil
 end
 
 function Voxels.draw(S, Kit, x, y, w, h)

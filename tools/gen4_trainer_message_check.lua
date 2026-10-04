@@ -281,12 +281,29 @@ end
 --                               in pass 173 with the PC itself, which had
 --                               never been reachable: Field_TileBehaviorToScript
 --                               had no Gen 4 arm.
+--   g4_open_seal_capsule_editor  the Ball Capsule seal editor
+--                               (`CapsuleMenu_StartFieldTask`).  `pending`
+--                               rather than a no-op for the same reason, with
+--                               the opposite data story: there is no seal
+--                               state in this port at all, which is also why
+--                               `countuniquesealsinsealcase` lowers onto
+--                               `g4_no_feature` and answers zero.  Added in
+--                               pass 176, which took the last of
+--                               `scripts_common.s` that could be derived.
 -- `g4_get_movement_type` was a fourth and is implemented. A new one appearing
 -- here is a gap somebody should have argued for before adding, which is what
 -- pinning the count exactly is for.
-ok(#pendingRows == 4,
-   "%d `pending` row(s), expected exactly 4 (g4_common, g4_use_rock_climb, "
-   .. "g4_blackout_from_battle_2 and g4_open_hall_of_fame): %s",
+--
+-- AND THE PIN FOUND A LIVE BUG WHEN PASS 176 RAISED IT. `pending` installs the
+-- handler itself and returned nothing, so the `Commands.x = pending(...)`
+-- spelling overwrote it with nil -- which meant `g4_open_hall_of_fame`, pinned
+-- here since pass 173, had never had a handler at all. See
+-- tools/gen4_underground_inventory_check.lua, which now sweeps every verb
+-- assigned that way.
+ok(#pendingRows == 5,
+   "%d `pending` row(s), expected exactly 5 (g4_common, g4_use_rock_climb, "
+   .. "g4_blackout_from_battle_2, g4_open_hall_of_fame and "
+   .. "g4_open_seal_capsule_editor): %s",
    #pendingRows, table.concat(pendingRows, ", "))
 io.write(("   %d distinct g4_ rows emitted by the VM\n"):format(emittedCount))
 ok(#unhandled == 0,

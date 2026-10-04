@@ -286,6 +286,21 @@ L.messagefrombank = function(ins, s)
 end
 L.messagefrombankinstant = L.messagefrombank
 
+-- `messagefromtrainertype` -- NO OPERANDS, and the entry comes off the object:
+--
+--     u8 trainerType = MapObject_GetTrainerType(*mapObj);
+--     ScriptMessage_Show(ctx, ctx->loader, trainerType, TRUE, NULL);
+--
+-- `ctx->loader` is the loader the block was loaded WITH, so the bank is the
+-- band's own -- the same resolution `message` does -- and only the entry is
+-- unusual: it is the target object's trainer type, which a Gen 4 object record
+-- already carries (`Gen4Events` reads it at offset 6).  So the bank is baked in
+-- at lowering time, as it is for `message`, and the entry is read at run time
+-- from `ctx.npc`.
+L.messagefromtrainertype = function(_, s)
+  emit(s, { "g4_message_trainer_type", s.bankFor and s.bankFor(s.member) })
+end
+
 -- `choosecustommessageword <unused> <resultVar> <destVar>` -- two destinations
 -- and a literal 0 the macro emits for an operand pokeplatinum itself calls
 -- unused. See the handler for why it answers "cancelled" rather than nothing.
@@ -699,7 +714,9 @@ L.pokemartspecialties = function(ins, s) emit(s, { "g4_pokemart", ins.args[1], "
 L.checkbadgeacquired = function(ins, s) emit(s, { "g4_check_badge", ins.args[1], ins.args[2] }) end
 L.getplayerdir = function(ins, s) emit(s, { "g4_player_dir", ins.args[1] }) end
 L.returntofield = function(_, s) emit(s, { "g4_return_to_field" }) end
-L.waitforanimation = function(_, s) emit(s, { "g4_wait_animation" }) end
+L.waitforanimation = function(ins, s)
+  emit(s, { "g4_wait_animation", ins.args[1] })
+end
 L.drawsignposttextbox = function(_, s) emit(s, { "g4_signpost_command" }) end
 -- `drawsignpostscrollingmessage <messageID> <destVar>` prints its line into
 -- the sign's window and then waits for the player, leaving what they pressed
@@ -1238,11 +1255,27 @@ L.checkmoney = function(ins, s)
 end
 L.removemoney = function(ins, s) emit(s, { "g4_remove_money", ins.args[1] }) end
 
--- The money box is a HUD this port does not draw.  Named so they stop
--- counting as unimplemented, because a noop here is the truth: there is
--- nothing to show or hide.
-L.showmoney = function(_, s) emit(s, { "g4_noop", "money box" }) end
-L.hidemoney = function(_, s) emit(s, { "g4_noop", "money box" }) end
+-- THE MONEY WINDOW.  These said "a HUD this port does not draw ... a noop
+-- here is the truth: there is nothing to show or hide", which was true and is
+-- the second claim of its kind this week to stop being so: there is a window
+-- now (`src/ui/Gen4MoneyWindow.lua`), drawn the same way the save panel and
+-- FireRed's lift window are.
+--
+-- 109 invocations over the decoded corpus, second only to the doors, and NOT
+-- the shop's balance -- this is the standalone window a field script puts up
+-- while you decide: the Game Corner, the Day-Care's fee, the Ribbon
+-- Syndicate, Floaroma's flower seller, the Pastoria gates, the cafe.
+--
+-- `showmoney <left> <top>` -- BOTH var-or-literal, and in THAT order.  pret's
+-- middle layer swaps the parameter names twice so they cancel
+-- (`ScrCmd_ShowMoney` reads left then top, `FieldMenu_CreateMoneyWindow`
+-- declares them the other way round, and `Window_Add` takes left then top
+-- again); the call sites settle it -- `ShowMoney 20, 2` puts a ten-tile window
+-- in the top right of a 32-tile screen.
+L.showmoney = function(ins, s)
+  emit(s, { "g4_money_window", "show", ins.args[1], ins.args[2] })
+end
+L.hidemoney = function(_, s) emit(s, { "g4_money_window", "hide" }) end
 
 -- `u16 *partySlot = GetVarPointer; u16 *destVar = GetVarPointer` -- BOTH are
 -- var ids, and the slot is the VALUE HELD IN THE FIRST.  An egg reads as
@@ -1398,22 +1431,61 @@ L.removecameraoverrideobject = function(_, s)
 end
 
 -- DOORS.  A Gen 4 door is an NSBCA animation on the door's own NSBMD map prop,
--- played on a tagged one-shot slot with a sound effect
--- (`DoorAnimation_FindDoorAndLoad` searches the loaded props for one of twenty
+-- played on a tagged one-shot slot WITH A SOUND EFFECT:
+-- `DoorAnimation_FindDoorAndLoad` searches the loaded props for one of twenty
 -- named door models at the given tile, then
--- `MapPropOneShotAnimationManager_PlayAnimationWithSoundEffect`).  This port
--- reads NSBMD but not NSBCA, bakes the ground's props into a flat canvas, and
--- has no SE bank for Gen 4 yet -- three separate stages, none of them close.
+-- `MapPropOneShotAnimationManager_PlayAnimationWithSoundEffect`.
 --
--- Named rather than left on the unknown-command path, so the log says WHICH
--- feature is absent instead of printing an opcode nobody can look up.  The
--- wait is a no-op too: with nothing animating there is nothing to wait for,
--- and holding the script would be a frozen pause rather than a door opening.
-L.loaddooranimation = function(_, s) emit(s, { "g4_noop", "door animations" }) end
-L.playdooropenanimation = function(_, s) emit(s, { "g4_noop", "door animations" }) end
-L.playdoorcloseanimation = function(_, s) emit(s, { "g4_noop", "door animations" }) end
-L.unloadanimation = function(_, s) emit(s, { "g4_noop", "door animations" }) end
-L.waitforanimation = function(_, s) emit(s, { "g4_noop", "door animations" }) end
+-- THESE WERE A NO-OP, AND THE REASON GIVEN FOR IT HAD EXPIRED.  It read "this
+-- port reads NSBMD but not NSBCA, bakes the ground's props into a flat canvas,
+-- and has no SE bank for Gen 4 yet -- three separate stages, none of them
+-- close."  The first two are still true.  The third is not: `audio.lua` carries
+-- 2,030 sound effects keyed by the cartridge's own SSEQ symbols, and
+-- `g4_play_sound` has been using them all along.
+--
+-- Measured over the decoded corpus, these are **194 invocations** -- the
+-- largest declined subject in the port -- so every door in Sinnoh opened in
+-- silence for want of a claim nobody re-checked.  `src/world/Gen4Doors.lua`
+-- has the three cartridge tables and the hitbox search; the sound plays now
+-- and the animation is still absent, which is said in one place rather than
+-- five.
+--
+-- `loaddooranimation mapX mapZ tileX tileZ tag` -- the first two are matrix
+-- cells read as raw halfwords, the next two are var-or-literal tiles within
+-- that chunk, and the tag is the one-shot slot.  The tag is what `open` and
+-- `close` name later, and it OUTLIVES the script that loaded it: there are 52
+-- loads against 142 plays, because a map loads its door once and opens it
+-- every time somebody walks through.
+L.loaddooranimation = function(ins, s)
+  emit(s, { "g4_door_anim", "load", ins.args[1], ins.args[2],
+            ins.args[3], ins.args[4], ins.args[5] })
+end
+L.playdooropenanimation = function(ins, s)
+  emit(s, { "g4_door_anim", "open", ins.args[1] })
+end
+L.playdoorcloseanimation = function(ins, s)
+  emit(s, { "g4_door_anim", "close", ins.args[1] })
+end
+-- The slot is released and the wait is still a no-op: with nothing animating
+-- there is nothing to wait for, and holding the script would be a frozen pause
+-- rather than a door opening.  `unloadanimation` drops the remembered model so
+-- a tag reused for something else cannot play a door's sound.
+L.unloadanimation = function(ins, s)
+  emit(s, { "g4_door_anim", "unload", ins.args[1] })
+end
+-- `waitforanimation <tag>` IS LOWERED ABOVE, with its operand.
+--
+-- This row used to be a second `L.waitforanimation`, onto `g4_noop`, and
+-- being later in the file it silently OVERWROTE the real one -- so the
+-- handler was unreachable and the declined-subject census filed all 48 sites
+-- under "the door animation's wait".  Two spellings of one command in one
+-- table, which is this port's recurring bug with both copies in the same
+-- file.
+--
+-- Left as a comment rather than deleted, because the no-op's REASONING was
+-- right and is still the contract: a tag that is not running is finished, so
+-- a wait on a door this port could not identify steps over instead of
+-- freezing.  `Gen4PropOneShot.finished` answers exactly that.
 
 -- `FieldMenuManager_SetHorizontalAnchor` / `SetVerticalAnchor` -- which corner
 -- the NEXT script menu is drawn from.  This engine's menu places itself, so
@@ -1628,6 +1700,21 @@ L.setplayerbike = function(ins, s) emit(s, { "g4_player_bike", ins.args[1] }) en
 -- else.
 L.setbgm = function(ins, s) emit(s, { "play_music", ins.args[1] }) end
 L.fadeoutbgm = function(_, s) emit(s, { "g4_noop", "a BGM fade" }) end
+-- `waitfortransition` is `FieldTransition_FinishMap`: it flags the field map as
+-- no longer running and hands the task to `FieldTask_WaitUntilMapFinished`.
+-- It appears once, in `CommonScript_PoisonWhiteout`, between the screen fade
+-- and `BlackOutFromBattle2`:
+--
+--     FadeScreenOut / WaitFadeScreen / WaitForTransition / BlackOutFromBattle2
+--
+-- In this engine the map teardown is not a thing a script can be between.
+-- `BlackOutFromBattle2` lowers onto `warpToHealPoint(nil, { whiteout = true })`,
+-- which heals the party, takes the money and loads the heal point as one
+-- operation -- so the wait has nothing to wait for and the row is a no-op with
+-- its reason written down rather than an unlowered hole that stops the walk.
+L.waitfortransition = function(_, s)
+  emit(s, { "g4_noop", "the field map teardown, which the warp owns here" })
+end
 L.playtrainerencounterbgm = function(_, s)
   emit(s, { "g4_noop", "the trainer encounter jingle" })
 end
@@ -1650,11 +1737,21 @@ L.getdayofweek = function(ins, s) emit(s, { "g4_day_of_week", ins.args[1] }) end
 -- counts its own progress in VAR_ETERNA_GYM_TRAINERS_BEATEN), so nothing reads
 -- a state this port does not keep.  The fidelity gap is real and is recorded in
 -- the tracker; the stall is not.
+-- ...AND THE CLOCK STATE IS AN HONEST NO, which was worth establishing rather
+-- than assuming, because `advanceeternagymclock` writes a VAR and a var is
+-- the one kind of state a script can branch on.  All 1,124 members of
+-- scr_seq were scanned for VAR_ETERNA_GYM_FLOWER_CLOCK_STATE (0x404B) and
+-- NONE mentions it: the var exists so that
+-- `EternaGym_DynamicMapFeaturesInit` can pose the hands on a later entry, and
+-- nothing else reads it.  So the floor stays open and no branch anywhere
+-- takes a wrong arm -- the state is advanced because it is cheap and because
+-- the cap at DEFEATED_GYM_LEADER is what stops it walking past the end of
+-- `sEternaGymClockTimes`.
 L.advanceeternagymclock = function(_, s)
-  emit(s, { "g4_noop", "the Eterna Gym flower clock (the gym floor is open here)" })
+  emit(s, { "g4_eterna_clock_advance" })
 end
 L.initpersistedmapfeaturesforeternagym = function(_, s)
-  emit(s, { "g4_noop", "the Eterna Gym persisted map feature" })
+  emit(s, { "g4_map_feature_init", "eterna" })
 end
 
 -- THE JUBILIFE TAG BATTLE, which is on the critical path and whose absence is
@@ -1667,8 +1764,14 @@ L.starttagbattle = function(ins, s)
 end
 
 L.removemoney2 = function(ins, s) emit(s, { "g4_remove_money", ins.args[1] }) end
+-- `FieldMenu_PrintMoneyToWindow` again, on the window `showmoney` made: the
+-- script calls this after taking or giving money so the balance on screen is
+-- the one in the save.  Nothing is redrawn here -- the window reads the save
+-- every frame -- but the row still has to REBUILD the panel, because the
+-- amount is a cartridge string with the number spliced into it and that
+-- splice happened when the panel was built.
 L.updatemoneydisplay = function(_, s)
-  emit(s, { "g4_noop", "the money window refresh" })
+  emit(s, { "g4_money_window", "update" })
 end
 L.playpokecenterhealinganimation = function(ins, s)
   emit(s, { "g4_heal_animation", ins.args[1] })
@@ -1930,12 +2033,22 @@ end
 -- hands its prop animations to the one-shot manager under a tag; the other two
 -- play animation 0 and animation 1 of that tag.
 --
--- THIS IS THE DOOR ANIMATION AGAIN, exactly: an NSBCA one-shot on an NSBMD map
--- prop.  Same three missing stages (this port reads NSBMD and not NSBCA, bakes
--- the ground's props into a flat canvas, and has no Gen 4 SE bank), so it
--- takes the SAME named no-op rather than a fourth spelling of the same
--- absence.  The sound the script plays either side of them is a separate
--- command and is already lowered.
+-- THIS IS THE DOOR ANIMATION AGAIN, ALMOST: an NSBCA one-shot on an NSBMD map
+-- prop, loaded by the same `MapPropOneShotAnimationManager_LoadPropAnimations`
+-- against a four-model list of its own (`pokecenter_pc` and the three desk
+-- laptops).  Two of the three missing stages are shared -- this port reads
+-- NSBMD without NSBCA and bakes a chunk's props into a flat canvas -- so these
+-- take the SAME named no-op rather than a fourth spelling of one absence.
+--
+-- THE THIRD STAGE IS WHERE THEY PART, and this comment used to get it wrong.
+-- It read "and has no Gen 4 SE bank", which was the same stale claim the door
+-- rows carried: `audio.lua` has 2,030 effects and the doors are audible now
+-- (see `src/world/Gen4Doors.lua`).  It makes no difference HERE, and the
+-- reason is worth stating rather than deleting: the PC plays
+-- `MapPropOneShotAnimationManager_PlayAnimation`, with no sound argument at
+-- all, where a door plays `..._PlayAnimationWithSoundEffect`.  There is no PC
+-- sound to be missing.  The beep the script plays either side of these is a
+-- separate `playse` and is already lowered.
 L.loadpcanimation = function(_, s) emit(s, { "g4_noop", "prop animations" }) end
 L.playpcbootupanimation = function(_, s) emit(s, { "g4_noop", "prop animations" }) end
 L.playpcshutdownanimation = function(_, s) emit(s, { "g4_noop", "prop animations" }) end
@@ -2079,10 +2192,10 @@ end
 -- That is a fidelity gap on the tracker and it is NOT a stall, and only the
 -- measurement tells the two apart.
 L.initpersistedmapfeaturesforhearthomegym = function(_, s)
-  emit(s, { "g4_noop", "the Hearthome Gym persisted map feature" })
+  emit(s, { "g4_map_feature_init", "hearthome" })
 end
 L.initpersistedmapfeaturesforveilstonegym = function(_, s)
-  emit(s, { "g4_noop", "the Veilstone Gym persisted map feature" })
+  emit(s, { "g4_map_feature_init", "veilstone" })
 end
 
 -- ---------------------------------------------------------------------------
@@ -2094,12 +2207,32 @@ end
 -- var-writer in them still writes, because an unlowered one leaves the
 -- comparison register holding the previous command's answer.
 
--- THE UNDERGROUND (the Sinnoh Underground and its goods PC).
+-- THE UNDERGROUND'S GOODS PC -- A THIRD INVENTORY, and `g4_no_feature` was
+-- giving it the WRONG ANSWER rather than no answer.
+--
+-- `g4_no_feature` writes 0, and for `checkhasroomforgoodsinpc` 0 means "no
+-- room": sixteen of its seventeen uses were telling the player their goods PC
+-- was full on a save where it holds nothing.  A fresh Underground has 200 free
+-- slots, so the truthful answer is 1 -- and that is the difference between an
+-- absent feature and a lie about a present one.
+--
+-- Same shape as the traps and the spheres pass 176 built, which is why it
+-- extends `Gen4Underground` rather than starting a module:
+-- `Underground_TryAddGoodPC` walks a 200-slot array for `UG_GOOD_NONE` and
+-- answers whether it fitted; `Underground_IsRoomForGoodsInPC` returns TRUE the
+-- moment it finds one free slot and ignores its own second operand, which pret
+-- names `unused`.
+--
+-- Both are `(var, var, destVarPointer)`, and both middle operands are read and
+-- dropped by the cartridge -- so they are carried to the handler anyway, for
+-- the reason `givetrap`'s is: one row shape for the whole family.
 L.checkhasroomforgoodsinpc = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[3], "the Underground goods PC" })
+  emit(s, { "g4_underground_room", "goodsPC",
+            ins.args[1], ins.args[2], ins.args[3] })
 end
 L.sendgoodtopc = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[3], "the Underground goods PC" })
+  emit(s, { "g4_underground_give", "goodPC",
+            ins.args[1], ins.args[2], ins.args[3] })
 end
 L.getundergroundfossilsunearthed = function(ins, s)
   emit(s, { "g4_no_feature", ins.args[1], "the Underground" })
@@ -2122,9 +2255,80 @@ end
 L.bufferundergroundgoodsnamewitharticle = function(ins, s)
   emit(s, { "g4_buffer", ins.args[1], "bank:627", ins.args[2] })
 end
+-- ...AND SO ARE THE TRAPS AND THE SPHERES.  `StringTemplate_SetUndergroundTrapName`
+-- reads TEXT_BANK_UNDERGROUND_TRAPS and `...ItemName` reads
+-- TEXT_BANK_UNDERGROUND_ITEMS, which the line-number rule puts at 630 and 628.
+--
+-- Three things agree on those two numbers, which is why they are not a guess:
+-- 626 and 627 above sit either side of them and were already confirmed; bank
+-- 634 is the Underground menu's own labels (#198) and lands on
+-- UNDERGROUND_QUESTIONS; and the CONTENT agrees item for item -- bank 630
+-- entry 1 is "Move Trap UP" and `generated/traps.txt` line 2 is TRAP_MOVE_UP,
+-- so **the trap id is its own bank index**, and the same holds for the five
+-- sphere types in 628.  The entries carry {COLOR n} markup, which is the
+-- reason `bufferKind` now runs every branch through `gen4Markup`.
+L.bufferundergroundtrapname = function(ins, s)
+  emit(s, { "g4_buffer", ins.args[1], "bank:630", ins.args[2] })
+end
+L.bufferundergrounditemname = function(ins, s)
+  emit(s, { "g4_buffer", ins.args[1], "bank:628", ins.args[2] })
+end
+
+-- THE TWO THAT WRITE REAL STATE.  `GiveTrap` and `GiveSphere` both end in a
+-- destination var holding whether the item fitted, and the `gotoif` after them
+-- tests it -- so unlowered they did not merely fail to add a trap, they branched
+-- on whatever the previous comparison had left behind.
+--
+-- One row for both, because they are one operation on two inventories: the
+-- cartridge's own `TryAddTrap`/`TryAddSphere` differ only in which 40-slot
+-- array they search and whether a second operand is carried.  `givetrap`'s
+-- middle operand is read and never used (`u16 unused`), which is why it is
+-- passed anyway -- the handler needs the same shape from both.
+L.givetrap = function(ins, s)
+  emit(s, { "g4_underground_give", "trap",
+            ins.args[1], ins.args[2], ins.args[3] })
+end
+L.givesphere = function(ins, s)
+  emit(s, { "g4_underground_give", "sphere",
+            ins.args[1], ins.args[2], ins.args[3] })
+end
+
+-- THE SEAL CASE, and neither of these can be more than this honestly.
+-- `CountUniqueSealsInSealCase` walks SEAL_ID_MAX asking
+-- `SealCase_CountSealOccurrenceAnywhere`, and this port has no seal state at
+-- all -- not a case, not a capsule, not a ball sticker -- so the count is zero
+-- and that is the true answer rather than a stub, which is what `g4_no_feature`
+-- is for.  `OpenSealCapsuleEditor` is a whole screen (`CapsuleMenu_StartFieldTask`),
+-- so it is `pending` rather than a no-op: the row is decoded and lowered and
+-- the thing behind it is not built.
+L.countuniquesealsinsealcase = function(ins, s)
+  emit(s, { "g4_no_feature", ins.args[1], "the seal case" })
+end
+L.opensealcapsuleeditor = function(_, s)
+  emit(s, { "g4_open_seal_capsule_editor" })
+end
+
+-- THE MAILBOX.  `Mailbox_CountMail(mailbox, MAIL_CONTEXT_MAILBOX)` counts the
+-- valid mail in the PC's mailbox, and a Gen 4 save in this port has no mailbox
+-- -- the Gen 3 player PC has the menu for one, the Gen 4 storage does not.
+-- Zero, written to the var, which is also what a mailbox nobody has posted to
+-- would answer.
+L.countmailinmailbox = function(ins, s)
+  emit(s, { "g4_no_feature", ins.args[1], "the mailbox" })
+end
 
 -- CONTESTS, which is also all that is left in chapters two and three.
 L.addcontestbackdrop = function(_, s) emit(s, { "g4_noop", "contest backdrops" }) end
+-- The backdrop NAMES are a bank the same way the accessory names above are:
+-- `StringTemplate_SetContestBackdropName` reads
+-- TEXT_BANK_CONTEST_BACKDROP_NAMES, line 389, so bank 388.  Two uses, and both
+-- of them print a line that would otherwise come up with the token in it --
+-- which is worth lowering even while `addcontestbackdrop` is a no-op, because a
+-- sentence with a hole in it reads as a bug and a backdrop nobody can wear
+-- does not.
+L.buffercontestbackdropname = function(ins, s)
+  emit(s, { "g4_buffer", ins.args[1], "bank:388", ins.args[2] })
+end
 -- `buffercontestantmonname` is deliberately LEFT UNLOWERED: a contestant is a
 -- live entrant, not a table row, so there is no bank to read and filling the
 -- slot with a blank would hide an absent system instead of reporting it.
@@ -2176,15 +2380,18 @@ L.getamitysquareberryoraccessoryidfromman = function(ins, s)
   emit(s, { "g4_no_feature", ins.args[2], "Amity Square accessories" })
 end
 
--- THE POKEMON NEWS PRESS at Solaceon.
+-- THE POKEMON NEWS PRESS at Solaceon.  One block in band 1083, reached four
+-- ways: pick a species the player has SEEN and that has a Sinnoh dex number,
+-- store it in VAR_POKEMON_NEWS_PRESS_REQUESTED_POKEMON (0x40E5, which the
+-- script names itself with `setvarfromvar`), and set a deadline in days.
 L.getrandomseenspecies = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the Pokemon News Press" })
+  emit(s, { "g4_news_press_species", ins.args[1] })
 end
-L.setnewspressdeadline = function(_, s)
-  emit(s, { "g4_noop", "the Pokemon News Press" })
+L.setnewspressdeadline = function(ins, s)
+  emit(s, { "g4_news_press_deadline", "set", ins.args[1] })
 end
 L.getnewspressdeadline = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the Pokemon News Press" })
+  emit(s, { "g4_news_press_deadline", "get", ins.args[1] })
 end
 
 -- ODDS AND ENDS, each read on its own.
@@ -2277,14 +2484,125 @@ end
 -- a route, in a cave or in a building, so treating it as floor cannot let a
 -- player walk off a cliff anywhere else -- which is the question worth asking
 -- before leaving it alone, and the census is what answers it.
+-- ...AND THE STATE BEHIND BOTH IS NOW WRITTEN, which is pass 189 and is a
+-- smaller claim than it sounds.  The gyms still do not block -- the cells
+-- still read as floor -- but the persisted slot the cartridge keeps for them
+-- exists, is saved, and holds the cartridge's own initial values: Pastoria at
+-- GREEN (the MIDDLE water level, NOT the zero value of the enum, which is
+-- ORANGE) and Canalave's 24-platform bitfield with ten platforms starting in
+-- position B.  See src/world/Gen4DynamicMapFeatures.lua, which also has the
+-- measurement saying why the resolvers are a height problem rather than a
+-- behaviour one -- and why blocking the 0x59 cells would leave Pastoria with
+-- 57 reachable cells and not one of its ten buttons in reach.
 L.initpersistedmapfeaturesforpastoriagym = function(_, s)
-  emit(s, { "g4_noop", "the Pastoria Gym water level (its cells read as floor here)" })
+  emit(s, { "g4_map_feature_init", "pastoria" })
 end
 L.initpersistedmapfeaturesforcanalavegym = function(_, s)
-  emit(s, { "g4_noop", "the Canalave Gym sliding floor (its cells read as floor here)" })
+  emit(s, { "g4_map_feature_init", "canalave" })
 end
 L.presspastoriagymbutton = function(_, s)
-  emit(s, { "g4_noop", "the Pastoria Gym water-level button" })
+  emit(s, { "g4_pastoria_button" })
+end
+
+-- ---------------------------------------------------------------------------
+-- THE SIX ROWS THE CENSUS COULD NOT SEE
+-- ---------------------------------------------------------------------------
+--
+-- Pass 189.  Walking the cartridge for the whole persisted-map-feature family
+-- finds 82 sites across nineteen commands.  The census ranked the subject at
+-- 53, and the 29-site gap is not an arithmetic slip -- it is 24 sites across
+-- SIX COMMANDS THAT HAD NO LOWERING AT ALL, plus the rows it merged
+-- elsewhere:
+--
+--     setplayerheightcalculationenabled           12
+--     checkgreatmarshtramlocation                  6
+--     movegreatmarshtram                           2
+--     movehearthomegymdplift                       2
+--     initgreatmarshtram                           1
+--     initpersistedmapfeaturesforvilla             1
+--
+-- The census reads its subjects out of the PROSE in `g4_noop` and
+-- `g4_no_feature` rows.  A command with no lowering emits neither, names no
+-- subject, and is therefore invisible to the ranking: the tool built to stop
+-- a subject hiding has a blind spot shaped exactly like the worst case, since
+-- an unlowered command is strictly worse than a declared one.  Recorded in
+-- claude/check_design_lessons.md.
+--
+-- AND ONE OF THE SIX WAS A LIE.  `checkgreatmarshtramlocation` writes the
+-- answer into a var and all six sites branch on it:
+--
+--     checkgreatmarshtramlocation 0, 0x8004
+--     setvarfromvalue             0x8005, 0
+--     comparevartovalue           0x8004, 6
+--     callif                      1, +0x464      --> movegreatmarshtram 0x8005, 3
+--
+-- GREAT_MARSH_TRAM_AT_LOCATION is **5** and NOT_AT_LOCATION is **6**, not 1
+-- and 0, and the script compares against the literal 6.  Unlowered, 0x8004
+-- keeps whatever the previous script left in it, so whether the tram is
+-- fetched is decided by the last unrelated command to touch that var.  A port
+-- that wrote a boolean would have been wrong at all six sites in the same
+-- direction -- the compare would never match, the tram would never be called,
+-- and a player would stand at a stop that never answers.
+--
+-- The three tram commands and the villa constructor now go through the
+-- persisted slot.  `GreatMarshTram_MoveToLocation` is transcribed as its three
+-- arms with their else-branches rather than as "go to the destination",
+-- because they are not the same function: from area 1-2 the destination is
+-- honoured only when it is 3-4, so asking to go from 1-2 to 1-2 moves the
+-- tram to 5-6.
+L.initgreatmarshtram = function(_, s)
+  emit(s, { "g4_marsh_tram", "init" })
+end
+L.movegreatmarshtram = function(ins, s)
+  emit(s, { "g4_marsh_tram", "move", ins.args[1], ins.args[2] })
+end
+L.checkgreatmarshtramlocation = function(ins, s)
+  emit(s, { "g4_marsh_tram", "check", ins.args[1], ins.args[2] })
+end
+L.initpersistedmapfeaturesforvilla = function(_, s)
+  emit(s, { "g4_map_feature_init", "villa" })
+end
+
+-- THE TWELVE-SITE ONE IS A REAL NO-OP, and naming it is the whole fix.
+--
+-- `setplayerheightcalculationenabled <0|1>` calls
+-- `PlayerAvatar_SetHeightCalculationEnabled`, which clears the flag
+-- `MapObject_RecalculatePositionHeightEx` tests before it will take a height
+-- from the DYNAMIC plate rather than the static BDHC: with it off, the player
+-- keeps the floor's height while something underneath them moves.
+--
+-- ALL TWELVE SITES ARE IN ONE SCRIPT MEMBER -- 497, the Great Marsh tram's
+-- common script, which is also where all six `checkgreatmarshtramlocation`
+-- rows and both `movegreatmarshtram` rows live.  Twelve sites sounded like a
+-- system; it is one script bracketing six rides so the player is not dragged
+-- up and down by the tram prop's own plate.  Counting WHERE the sites are,
+-- not just how many, is what turned the largest unlowered command in the
+-- family into its smallest subject.
+--
+-- This port gives the player no height at all, so there is nothing to
+-- disable; the row is a no-op for the same reason the resolvers are absent
+-- rather than wrong.  It is named here so it stops going through the
+-- unknown-command path -- a log line saying which feature is missing beats
+-- one saying only that a number was not understood, and twelve sites were
+-- producing the latter.
+L.setplayerheightcalculationenabled = function(_, s)
+  emit(s, { "g4_noop", "the player's dynamic height calculation (this port has none)" })
+end
+
+-- HEARTHOME'S LIFT IS DIAMOND AND PEARL'S GYM, not Platinum's.
+--
+-- `movehearthomegymdplift` reaches `HearthomeGym_MoveLift`, whose two task
+-- functions are `HearthomeGymDP_RaiseLift` and `HearthomeGymDP_LowerLift` --
+-- the DP suffix is the cartridge's own.  Platinum rebuilt that gym as
+-- Fantina's quiz doors and left the lift code in the overlay with two script
+-- sites still calling it.  Hearthome is also the one gym of the five whose
+-- persisted feature has NO collision function in
+-- `sCheckCollisionFuncs`, which is the same fact from the other side: there is
+-- no lift to collide with any more.
+--
+-- Named rather than implemented, and named as what it is.
+L.movehearthomegymdplift = function(_, s)
+  emit(s, { "g4_noop", "the Hearthome Gym lift, which is Diamond and Pearl's gym" })
 end
 
 -- THE GREAT MARSH / SAFARI GAME, one absent system.
@@ -2453,7 +2771,7 @@ L.deletedistortionworldmapobject = function(_, s)
   emit(s, { "g4_noop", "a Distortion World cast member (its table is in overlay 9)" })
 end
 L.initpersistedmapfeaturesfordistortionworld = function(_, s)
-  emit(s, { "g4_noop", "the Distortion World persisted map feature" })
+  emit(s, { "g4_map_feature_init", "distortion" })
 end
 L.finishdistortionworldgiratinashadowevent = function(_, s)
   emit(s, { "g4_noop", "the Giratina shadow event" })
@@ -2513,7 +2831,7 @@ L.triggerplatformlift = function(_, s)
   emit(s, { "g4_noop", "the platform lift (all nine rooms are walkable without it)" })
 end
 L.initpersistedmapfeaturesforplatformlift = function(_, s)
-  emit(s, { "g4_noop", "the platform lift persisted map feature" })
+  emit(s, { "g4_map_feature_init", "platformlift" })
 end
 -- ...BUT THE QUESTION THE SLOT IS ASKED IS ANSWERABLE, and an unlowered
 -- var-writer is the dangerous kind -- this is the fifth time that sentence has
@@ -2537,11 +2855,18 @@ end
 -- DYNAMIC_HEIGHT_COLLISION cells (293 of them, chunks 296-298) -- so like
 -- Canalave and Pastoria its floor reads as ordinary ground here and the puzzle
 -- is absent rather than impassable.
-L.presssunyshoregymbutton = function(_, s)
-  emit(s, { "g4_noop", "the Sunyshore Gym gear button" })
+L.presssunyshoregymbutton = function(ins, s)
+  emit(s, { "g4_sunyshore_gear_button", ins.args[1] })
 end
-L.initpersistedmapfeaturesforsunyshoregym = function(_, s)
-  emit(s, { "g4_noop", "the Sunyshore Gym persisted map feature" })
+-- THE ROOM ID IS AN OPERAND AND IT IS NOT THE WHOLE INITIALISATION.
+-- `PersistedMapFeatures_InitForSunyshoreGym(fieldSystem, roomID)` sets the
+-- rotation from a per-room table (2, 1, 0 -- descending) and then forces it
+-- back to 0 if the player's own z equals that room's entrance z (14, 21, 25).
+-- So the same room initialises two different ways depending on which side you
+-- walked in from, and the command needs the player's position as well as its
+-- operand.
+L.initpersistedmapfeaturesforsunyshoregym = function(ins, s)
+  emit(s, { "g4_map_feature_init", "sunyshore", ins.args[1] })
 end
 
 -- `pokemartseal <martID>` -- `SunyshoreMarketDailyStocks[martID]` with
@@ -2588,11 +2913,39 @@ L.noop = function(_, s) emit(s, { "g4_noop", "a cartridge no-op" }) end
 -- to `ScrCmd_CheckABPress`, which does. Matching each definition exactly is
 -- what separated them, and 20D would have left its five Spear Pillar sites
 -- branching on the previous command's answer.
-L["18c"] = function(_, s) emit(s, { "g4_noop", "a Spear Pillar effect (scrcmd 18C)" }) end
-L["2fb"] = function(_, s) emit(s, { "g4_noop", "a Spear Pillar cue (scrcmd 2FB)" }) end
-L["2b6"] = function(_, s) emit(s, { "g4_noop", "an Iron Island cue (scrcmd 2B6)" }) end
+-- ...AND THREE OF THE FOUR WERE NAMED AFTER THE MAP THEY APPEAR ON RATHER
+-- THAN WHAT THEY DO, which is how two ordinary object operations and a hang
+-- sat in the backlog looking like unimplementable set-pieces.
+--
+-- 18C is `MapObject_TryFace` -- turn an object to face a direction, fifteen
+-- sites, and a function this port already calls under another name.
+-- 20D is a ten-mode overlay-6 effect switch whose modes 1 and 6 are
+-- completion polls, and the scripts poll them in a backwards jump: writing 0
+-- there is an INFINITE LOOP, not a missing feature.  See
+-- `Commands.g4_field_effect` for the derivation.
+L["18c"] = function(ins, s)
+  emit(s, { "g4_face_dir", ins.args[1], ins.args[2] })
+end
 L["20d"] = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[2], "a Spear Pillar effect (scrcmd 20D)" })
+  emit(s, { "g4_field_effect", ins.args[1], ins.args[2] })
+end
+-- THE TWO THAT STAY NO-OPS, with the reason rather than the map name.
+--
+-- 2B6 is `sub_02062D80`, which sets or clears MAP_OBJ_STATUS_18 -- the flag
+-- `sub_02063F00` checks when deciding whether another object blocks a tile,
+-- so it is "this object is solid to other objects".  Both of its two sites
+-- (band 329, local id 4) pass 1, which sets the flag OFF, which is solid --
+-- the default, and nothing in the game ever clears it.  So the cartridge
+-- restores a default here and a no-op reaches the same state.  Argued, not
+-- deferred.
+L["2b6"] = function(_, s)
+  emit(s, { "g4_noop", "object-vs-object solidity (scrcmd 2B6)" })
+end
+-- 2FB fades the screen out and starts overlay 100 as a child application,
+-- handed the options and the player gender.  One site, band 236, right after
+-- the 20D mode-1 poll.  That is a whole screen this port does not have.
+L["2fb"] = function(_, s)
+  emit(s, { "g4_noop", "a full-screen child application (scrcmd 2FB)" })
 end
 
 

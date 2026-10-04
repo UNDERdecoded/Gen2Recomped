@@ -1486,9 +1486,7 @@ local ASM = {
   TryStrengthOW    = { "g2_try_strength" },
   SetStrengthFlag  = { "g2_strength_on" },
   GetPartyNickname = { "g2_party_nickname" },
-  -- RockMonEncounter rolls the rock-smash wild table, which the port has no
-  -- data for; report "nothing appeared" so the script ends after the rock.
-  RockMonEncounter = { "g2_setvar", 0 },
+  RockMonEncounter = { "g2_rock_encounter" },
   -- BattleTowerHallwayChooseBattleRoomScript.asm_load_battle_room (27:$75CB)
   -- puts the chosen level group in wScriptVar; the ifequal chain right after
   -- it is what walks the player to the L10-20 / L30-40 / ... door.  The
@@ -2258,8 +2256,8 @@ L.checkver = function(_, s)
             require("src.core.GameVersion").isSilver() and 1 or 0 })
 end
 
--- swarm <type>, <mapgroup+map>: the roaming/swarm species relocation.  The
--- port has no swarm table, so record the request rather than drop it.
+-- Gold/Silver pass a map pair; Crystal passes kind then a map pair. The
+-- extractor resolves the appropriate pair to its registry key.
 L.swarm = function(ir, s) emit(s, { "g2_swarm", ir[2], ir[3] }) end
 
 -- Deliberately nullary.  The port's text box owns its own lifecycle

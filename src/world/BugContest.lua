@@ -132,7 +132,7 @@ function BugContest.start(game)
   return true
 end
 
--- ComputeAIContestantScores (04:$78B0): each of the nine entrants rolls
+-- ComputeAIContestantScores (04:$78B0): each of the selected entrants rolls
 -- `Random & 3` over its three picks and re-rolls on 3, so the three are
 -- equally likely.
 function BugContest.rollContestants(game)
@@ -147,7 +147,7 @@ function BugContest.rollContestants(game)
       repeat pick = rng(0, 3) until pick < #picks
       local chosen = picks[pick + 1]
       scores[entry.id] = {
-        score = chosen.score or 0,
+        score = ((chosen.score or 0) + rng(0, 7)) % 65536,
         species = chosen.species,
         trainerClass = entry.trainerClass,
         trainerId = entry.trainerId,
@@ -160,10 +160,10 @@ end
 -- ChooseWildEncounter_BugContest (25:$7D31).  `Random` is rejected at >= 200
 -- and halved, giving 0-99 against rates that total exactly 100; the level is
 -- min + Random % (max - min + 1), or just min when they are equal.
-function BugContest.rollEncounter(game)
+function BugContest.rollEncounter(game, rng)
   local def = data(game)
   if not (def and def.mons and def.mons[1]) then return nil end
-  local rng = (love and love.math and love.math.random) or math.random
+  rng = rng or (love and love.math and love.math.random) or math.random
   local roll
   repeat roll = rng(0, 255) until roll < 200
   roll = math.floor(roll / 2)
@@ -178,6 +178,21 @@ function BugContest.rollEncounter(game)
     end
   end
   return nil
+end
+
+-- Walking checks the native grass rate and Repel. Sweet Scent calls the slot
+-- chooser directly and therefore retains its guaranteed encounter behavior.
+function BugContest.tryEncounter(game, collision, rng)
+  rng = rng or love.math.random
+  local def = game.data.field and game.data.field.gen2EncounterRules
+  local tall = def and def.superTallGrass or {[0x14]=true,[0x1C]=true}
+  local rate = tall[collision] and (def and def.contestTallRate or 102)
+    or (def and def.contestGrassRate or 51)
+  local Rules = require("src.world.Gen2EncounterRules")
+  rate = Rules.rate(game.data, game.save, rate, require("src.core.Music").current())
+  if rng(0,255) >= rate then return nil end
+  local enc = BugContest.rollEncounter(game, rng)
+  if Rules.repelAllows(game.save, enc) then return enc end
 end
 
 -- Seconds left on the clock, floored at 0.  CheckBugContestTimer (04:$54A4)
@@ -233,20 +248,30 @@ function BugContest.judge(game)
   local s = state(save)
   if not s then return nil, {} end
   local board = {}
+  local def = data(game)
+  local ids = def and def.contestantFlags
+  local flags = save.flags or {}
+  local Gen2Flags = require("src.script.Gen2Flags")
   for id, entry in pairs(s.scores or {}) do
-    board[#board + 1] = { id = id, score = entry.score or 0,
-                          species = entry.species }
+    -- ComputeAIContestantScores skips entrants whose A event flag is set.
+    -- IDs are player=1 and AI=2..11; flag slot 1 belongs to AI contestant 2.
+    local flag = ids and ids[id - 1]
+    if not flag or not flags[Gen2Flags.eventFlag(flag)] then
+      board[#board + 1] = { id = id, score = entry.score or 0,
+                            species = entry.species }
+    end
   end
   board[#board + 1] = {
     id = 1, player = true,
     score = s.caught and BugContest.score(s.caught) or 0,
     species = s.caught and s.caught.species or nil,
   }
-  -- Ties go to the lower contestant id, which puts the player (id 1) ahead of
-  -- the AI field on an exact tie, matching the ROM's first-past comparison.
+  -- DetermineContestWinners inserts on >=. AI run in ascending ID order,
+  -- so the later AI wins an exact tie; the player is inserted last of all.
   table.sort(board, function(a, b)
     if a.score ~= b.score then return a.score > b.score end
-    return a.id < b.id
+    if a.player ~= b.player then return a.player == true end
+    return a.id > b.id
   end)
   local placing
   for index, row in ipairs(board) do

@@ -16,6 +16,11 @@
 -- functions (no love.* calls) so plain-Lua tests can cover them, and so the
 -- worker can reuse the exact same code path via love.filesystem.load.
 
+-- src/update/Payload.lua owns the folder, the asset name and the pattern that
+-- recognises one.  Zero requires and no love.* calls, so it resolves on the
+-- main thread, inside the worker thread, and under plain Lua in a test.
+local Payload = require("src.update.Payload")
+
 local Check = {}
 
 -- MUST match `git remote get-url origin`.  This read UNDERdecodedHD/... for
@@ -65,28 +70,25 @@ function Check.parseRelease(jsonText, Json)
   if not version:match("^%d+%.%d+%.%d+$") then
     return nil, "release tag is not X.Y.Z: " .. tostring(doc.tag_name)
   end
-  local payloadName = "Gen2Recomped-" .. version .. ".love"
+  local payloadName = Payload.name(version)
   return {
     version = version,
     payloadName = payloadName,
     payload = Check.pickAsset(doc.assets, payloadName),
-    sums = Check.pickAsset(doc.assets, "sha256sums.txt"),
+    sums = Check.pickAsset(doc.assets, Payload.SUMS),
   }
 end
 
 -- Parse a shasum -a 256 file ("<hex>  <filename>", bare filenames).  With a
 -- `target` argument returns just that file's hash (or nil); otherwise returns
 -- the whole name -> hash map.  Tolerates the "*" binary marker and "./" prefix.
+-- ONE PARSER, in src/update/Payload.lua.  The body used to live here, and the
+-- sideload verifier in src/update/Boot.lua runs before this module is loaded,
+-- so a copy would have been the ninth instance of the recurring bug.  This
+-- stays the public name: the worker and tools/auto_update_check.lua both drive
+-- Check.parseSums, and both still exercise the one implementation.
 function Check.parseSums(text, target)
-  local map = {}
-  for line in tostring(text):gmatch("[^\r\n]+") do
-    local hash, file = line:match("^(%x+)%s+%*?(%S+)")
-    if hash and file then
-      map[(file:gsub("^%./", ""))] = hash:lower()
-    end
-  end
-  if target ~= nil then return map[target] end
-  return map
+  return Payload.parseSums(text, target)
 end
 
 -- ---------------------------------------------------------------------------
@@ -97,25 +99,150 @@ function Check.releaseUrl()
   return "https://github.com/" .. Check.REPO .. "/releases/latest"
 end
 
--- Can this build replace its own payload?
+-- ---------------------------------------------------------------------------
+-- CAN THIS BUILD REPLACE ITS OWN PAYLOAD?  Derived, not listed.
+-- ---------------------------------------------------------------------------
 --
--- The download path writes the new .love next to the save directory and
--- Boot.run chainloads it on the next launch (src/update/Boot.lua).  That only
--- works where the shell is free to mount an arbitrary file at startup.  On the
--- Switch the payload is fused into the NRO, and an Xbox UWP package is a
--- signed, read-only app container -- neither can pick up a downloaded archive,
--- so those builds CHECK and REPORT but never download.  The UI still has
--- Check.state().latest and Check.releaseUrl() to point the player at.
+-- WHAT WAS HERE, AND WHY IT WAS WRONG.  An OS table --
 --
--- love._os cannot tell a UWP package apart from a desktop Windows build (both
--- report "Windows"), so the console packagers set the global below from their
--- own bootstrap; the Switch is recognised outright.
-local NOTIFY_ONLY_OS = { Horizon = true, NX = true, Switch = true }
+--     local NOTIFY_ONLY_OS = { Horizon = true, NX = true, Switch = true }
+--     function Check.canSelfUpdate()
+--       if _G.POKEPORT_NOTIFY_ONLY_UPDATES then return false end
+--       return not NOTIFY_ONLY_OS[(love and love._os) or ""]
+--     end
+--
+-- with a comment arguing that the Switch payload is fused into the NRO and an
+-- Xbox UWP package is a signed, read-only app container, so "neither can pick
+-- up a downloaded archive".  Three things were measured about that table:
+--
+--   1. POKEPORT_NOTIFY_ONLY_UPDATES, which the comment said "the console
+--      packagers set from their own bootstrap", occurs exactly ONCE in the
+--      whole repository -- the read above.  ports/uwp, scripts/xbox-uwp,
+--      scripts/build_msix.ps1 and ports/uwp/app/main.cpp set nothing.  So the
+--      branch that was supposed to stop Xbox never ran, and on Xbox this
+--      function returned TRUE: love._os is "Windows" in a UWP container.
+--   2. The read-only-container argument answers a question Boot.run does not
+--      ask.  Boot.run never writes inside the package and never replaces the
+--      executable: it mounts a .love out of the SAVE DIRECTORY over "/" and
+--      chainloads it (src/update/Boot.lua).  The save directory is writable on
+--      both consoles -- saves, options and the entire ROM cache already live
+--      there.  A payload PUT there by hand runs on the Switch and on Xbox
+--      today, which is the opposite of what the comment claimed.
+--   3. "Those builds CHECK and REPORT" was not happening either.  With no
+--      transport the worker posts status "error", and the launcher banner
+--      renders only available / downloading / ready / needs_full -- so NX and
+--      UWP showed the player nothing at all, not even a notice.
+--
+-- THE RULE NOW.  Two orthogonal capabilities, each measured by the thing that
+-- owns it, and self-update is their conjunction:
+--
+--   Platform.canHostPayload()  write a byte into the save directory and read
+--                              it back; mount/unmount must exist.
+--   HostShell.transport()      curl we actually ran --version on, or the
+--                              Android JNI download bridge, or nil + a reason.
+--
+-- The notify-only FALLBACK is kept for the case that is now named precisely:
+-- a shell that can host a payload and cannot fetch one (NX, UWP).  There the
+-- player is told, and a payload dropped into the save directory by hand still
+-- boots.  POKEPORT_NOTIFY_ONLY_UPDATES survives as an override and is now also
+-- readable from the environment, so a packager can actually set it.
+local capability
+
+local function announce(cap)
+  print(("update: capability host=%s fused=%s host-payload=%s transport=%s"
+    .. " -> %s%s"):format(
+    cap.host, tostring(cap.fused), tostring(cap.canHostPayload),
+    cap.transport or "none", cap.mode,
+    cap.reason and (" (" .. cap.reason .. ")") or ""))
+end
+
+-- { host, fused, canHostPayload, transport, mode, reason }
+-- mode is "self-update" | "notify-only" | "unavailable" | "suppressed".
+function Check.capability()
+  if capability then return capability end
+  local Platform = require("src.core.Platform")
+  local HostShell = require("src.core.HostShell")
+  -- Only a POSITIVE love.system answer is trusted; a headless run says
+  -- "Unknown" and that is what gets logged.
+  local host = (love and love.system and love.system.getOS
+    and love.system.getOS()) or (love and love._os) or "Unknown"
+  local fused = (love and love.filesystem and love.filesystem.isFused
+    and love.filesystem.isFused()) and true or false
+  local canHost = Platform.canHostPayload()
+  local transport, why = HostShell.transport()
+  local cap = {
+    host = host,
+    fused = fused,
+    canHostPayload = canHost,
+    transport = transport,
+  }
+  local suppressed = _G.POKEPORT_NOTIFY_ONLY_UPDATES
+    or os.getenv("POKEPORT_NOTIFY_ONLY_UPDATES") == "1"
+  if suppressed then
+    cap.mode, cap.reason = "suppressed", "POKEPORT_NOTIFY_ONLY_UPDATES is set"
+  elseif not canHost then
+    cap.mode, cap.reason = "unavailable",
+      "the save directory did not take a test write, so no payload could be mounted"
+  elseif not transport then
+    cap.mode, cap.reason = "notify-only", why
+  elseif not fused then
+    -- A source checkout IS the game; Boot.run no-ops there, so downloading a
+    -- payload would be downloading something that can never run.
+    cap.mode, cap.reason = "notify-only", "not a fused build"
+  else
+    cap.mode = "self-update"
+  end
+  -- WHAT THE PLAYER SHOULD ACTUALLY DO, as an enum rather than a sentence, so
+  -- the launcher owns the wording and this file owns the decision.  The banner
+  -- used to say "A new version needs a fresh download" with an "Open releases"
+  -- button for every refusal, which is wrong on both consoles: a Switch player
+  -- updates from ports/switch/ota-launcher, an Xbox player installs a newer
+  -- package, and neither has a browser for the button to open.
+  --
+  --   "download"  self-update works here
+  --   "ota"       NX -- the native OTA launcher NRO is the update path
+  --   "package"   a packaged container (UWP/MSIX) -- install a newer package
+  --   "releases"  no transport, but a desktop that can open a page
+  if cap.mode == "self-update" then
+    cap.advice = "download"
+  elseif host == "NX" then
+    cap.advice = "ota"
+  elseif Platform.isPackagedContainer() then
+    cap.advice = "package"
+  else
+    cap.advice = "releases"
+  end
+  capability = cap
+  -- A silent three-way branch where the wrong leg does nothing is the whole
+  -- shape of this bug, so every build says which leg it took, once.
+  pcall(announce, cap)
+  return cap
+end
 
 function Check.canSelfUpdate()
-  if _G.POKEPORT_NOTIFY_ONLY_UPDATES then return false end
-  local host = (love and love._os) or ""
-  return not NOTIFY_ONLY_OS[host]
+  return Check.capability().mode == "self-update"
+end
+
+-- One of "download" | "ota" | "package" | "releases" -- see Check.capability.
+-- The launcher turns this into a sentence and decides whether to draw a button;
+-- tools/auto_update_check.lua asserts the launcher handles every value this can
+-- return, so a fifth one cannot be added here and ignored there.
+Check.ADVICE = { download = true, ota = true, package = true, releases = true }
+
+function Check.advice()
+  return Check.capability().advice or "releases"
+end
+
+-- True where we can tell the player about a release but not fetch it: the
+-- banner is still worth drawing, and a hand-placed payload still boots.
+function Check.notifyOnly()
+  local mode = Check.capability().mode
+  return mode == "notify-only" or mode == "suppressed"
+end
+
+-- Tests drive the rule with stub love tables between cases.
+function Check._resetCapabilityForTests()
+  capability = nil
 end
 
 local worker           -- the love.thread, once started
@@ -167,11 +294,35 @@ end
 local BRIDGE_REQ = "update_bridge_req"
 local BRIDGE_RES = "update_bridge_res"
 
+-- A PAYLOAD IS NOT A JSON DOCUMENT.  The release check is a few kilobytes and
+-- the bridge returns before the next frame would have drawn; the payload for
+-- v0.8.3 is 20,368,165 bytes (measured off the release asset), and the bridge
+-- blocks the thread it is called on for the whole transfer.  That thread is
+-- the one LOVE drives the frame loop on -- on Android it is SDL's game thread,
+-- not Android's UI thread, so this stalls the picture rather than tripping an
+-- ANR, but the picture it stalls is whatever was last drawn.
+--
+-- So a request marked `big` is answered one drain LATE.  The first drain that
+-- sees it posts the downloading state and returns, the launcher draws the
+-- banner from it, and the NEXT drain runs the transfer -- the player is
+-- looking at "Downloading update" while it happens rather than at the
+-- untouched launcher.  The worker is blocked on the reply channel either way.
+local deferredBig
 local function serviceBridgeRequests()
   local reqCh = love.thread.getChannel(BRIDGE_REQ)
   local resCh = love.thread.getChannel(BRIDGE_RES)
-  local req = reqCh:pop()
+  local req = deferredBig or reqCh:pop()
+  deferredBig = nil
   while req do
+    if type(req) == "table" and req.big and not req.deferred then
+      req.deferred = true
+      deferredBig = req
+      cache = { status = "downloading", latest = req.version, progress = 0 }
+      print(("update: fetching %s through the host bridge (%s bytes); the "
+        .. "launcher will not redraw until it finishes"):format(
+        tostring(req.dest), tostring(req.size or "?")))
+      return
+    end
     local ok = false
     if type(req) == "table" and type(req.url) == "string"
         and type(req.dest) == "string" and req.dest ~= "" then
@@ -191,6 +342,9 @@ local function serviceBridgeRequests()
           error("download failed: " .. tostring(why or "no reason given"), 0)
         end
       end)
+    end
+    if type(req) == "table" and req.big then
+      print("update: bridge payload fetch " .. (ok and "succeeded" or "FAILED"))
     end
     resCh:push({ seq = (type(req) == "table") and req.seq or nil, ok = ok })
     req = reqCh:pop()
@@ -222,6 +376,29 @@ end
 -- Begin (or, on a prior error, retry) an async check.  Safe to call every frame:
 -- once a check is in flight or has reached a terminal state it is a no-op.
 function Check.start()
+  -- ASK THE CAPABILITY FIRST, so every fused launcher run puts one line in the
+  -- log saying what this build can do about updates.  It used to be asked only
+  -- by Check.download, which on a host that never draws an Update button is
+  -- never called -- so the Switch and Xbox produced no diagnostic at all.
+  local cap = Check.capability()
+  if not cap.transport then
+    -- No HTTPS client reachable from Lua (the Switch, an Xbox UWP container, a
+    -- desktop with no curl).  Spinning up the worker only to have it time out
+    -- against a network it cannot reach wastes a thread and ten seconds, and
+    -- its "error" state draws nothing, so say it here instead and stop.
+    --
+    -- On the Switch this is not the end of the story: ports/switch/ota-launcher
+    -- is a native NRO that does check GitHub and does replace both NROs, and it
+    -- is the hbmenu entry.  A payload copied into the save directory by hand
+    -- also still boots -- see src/update/Boot.lua and docs/auto-update.md.
+    drain()
+    -- "notify", not "error".  The launcher banner draws nothing for "error", so
+    -- this leg produced no UI at all on NX and UWP -- which is why those two
+    -- platforms appeared to have no updater rather than a disabled one.  The
+    -- banner has a notify row now, and Check.advice() says what it should read.
+    cache = { status = "notify", error = cap.reason or "no network transport" }
+    return
+  end
   drain()
   if cache.status == "checking" or cache.status == "downloading" then return end
   if requested and cache.status ~= "error" and cache.status ~= "idle" then return end
@@ -234,8 +411,20 @@ function Check.start()
   cmdCh:push({ cmd = "check" })
 end
 
--- Current snapshot: { status, latest, progress, error }.  status is one of
--- idle | checking | uptodate | available | downloading | ready | needs_full | error.
+-- Current snapshot: { status, latest, progress, error, advice }.
+--
+-- STATUS is one of the nine below, and the four marked (draw) are the ones the
+-- launcher banner renders.  "notify" is new: before it, a host that cannot
+-- check at all ended on "error", which the banner hides, so the Switch and
+-- Xbox showed the player nothing whatsoever.
+Check.STATUS = {
+  idle = false, checking = false, uptodate = false, error = false,
+  available = true,   -- (draw) a payload we can fetch
+  downloading = true, -- (draw)
+  ready = true,       -- (draw) verified, applies on the next launch
+  needs_full = true,  -- (draw) a newer release this build cannot apply in place
+  notify = true,      -- (draw) this host cannot check; say what the path is
+}
 function Check.state()
   drain()
   return {
@@ -243,6 +432,10 @@ function Check.state()
     latest = cache.latest,
     progress = cache.progress,
     error = cache.error,
+    -- Travels with every snapshot so the banner never has to ask the capability
+    -- itself -- one question, one answer, and the launcher cannot drift from
+    -- the gate the way it did when it rendered one sentence for every refusal.
+    advice = Check.advice(),
   }
 end
 
@@ -250,10 +443,21 @@ end
 -- any other state (the worker still holds the release info from the check).
 function Check.download()
   drain()
-  if not cmdCh then return end
   -- Notify-only platforms never start a transfer; the check result stands as
-  -- the whole feature there (see Check.canSelfUpdate).
-  if not Check.canSelfUpdate() then return end
+  -- the whole feature there (see Check.capability).  It used to return
+  -- silently, which is indistinguishable from a button that is not wired up --
+  -- and it used to sit BEHIND the `cmdCh` guard, so on a host with no worker
+  -- the refusal never even ran.  The state it leaves must be one the launcher
+  -- banner draws, or the player is told nothing; "needs_full" is that state
+  -- (tools/auto_update_check.lua checks it against the banner's vocabulary).
+  if not Check.canSelfUpdate() then
+    local cap = Check.capability()
+    print(("update: download refused -- %s (%s)"):format(
+      cap.mode, cap.reason or "no reason recorded"))
+    cache = { status = "needs_full", latest = cache.latest }
+    return
+  end
+  if not cmdCh then return end
   if cache.status ~= "available" then return end
   cache = { status = "downloading", latest = cache.latest, progress = 0 }
   cmdCh:push({ cmd = "download" })

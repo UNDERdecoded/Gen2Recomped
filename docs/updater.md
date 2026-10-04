@@ -1,10 +1,15 @@
 # Updater
 
+**This file is the mechanism. `docs/auto-update.md` is the per-platform story**
+— what each shell can actually do about an update, how that was measured, and
+what the Switch, Xbox and Android were doing wrong. Read that one for "why
+doesn't X update"; read this one for how Boot and Check work.
+
 A fused build (`love.filesystem.isFused()` true) ships a bundled `game.love`
 baked into the executable, but that bundled copy is only ever the *fallback*.
 On every launch, before anything else runs, `Boot.run` (`src/update/Boot.lua`)
 looks in the save directory's `updates/` folder for a downloaded
-`gen1recomp-X.Y.Z.love` payload that is both strictly newer than the bundled
+`Gen2Recomped-X.Y.Z.love` payload that is both strictly newer than the bundled
 engine version and runnable on this shell. If one qualifies, it is mounted
 over `/` (so its files win over the fused source for every subsequent
 `require`) and chainloaded in place: the payload's `main.lua` and `love.load`
@@ -52,12 +57,19 @@ that is exactly the case the updater exists to avoid a reinstall for.
 ## Release assets
 
 Each tagged release `vX.Y.Z` carries the existing per-platform archives
-(`gen1recomp-X.Y.Z-macos.zip`, `-windows.zip`, `-linux.zip`,
-`-android.apk`) plus two assets the updater itself consumes:
+(`Gen2Recomped-X.Y.Z-macos.zip`, `-windows.zip`, `-linux.zip`,
+`-android.apk`, `-switch.zip`, `-xbox-uwp.zip`, `-windows.msix`, `-ios.ipa`,
+`-rg34xxsp-stockos64-mod.zip`, `-linux-arm64.AppImage`) plus two assets the
+updater itself consumes:
 
-- `gen1recomp-X.Y.Z.love` - the payload, matched by the exact pattern
-  `gen1recomp-<version>.love` (see `isPayloadName` in `Boot.lua` and
-  `Check.parseRelease`).
+- `Gen2Recomped-X.Y.Z.love` - the payload. The folder, the prefix, the
+  extension and the pattern that recognises one all live in
+  **`src/update/Payload.lua`**, which is the only place they exist: they used
+  to be seven string literals across `Boot.lua`, `Check.lua` and
+  `check_worker.lua`, so the downloader and the boot shell each had their own
+  idea of where a payload goes. `Boot.isPayloadName` and
+  `Check.parseRelease`'s `payloadName` both come from it, and
+  `tools/auto_update_check.lua` fails if either spells it again.
 - `sha256sums.txt` - `shasum -a 256` output (`<hex>  <filename>`, bare
   filenames) covering at least the `.love` payload. `Check.parseSums`
   tolerates a leading `*` binary marker and a `./` prefix but expects the
@@ -69,10 +81,12 @@ A release missing either asset is treated as "no in-place update available":
 
 ## Save-directory layout
 
-Under the save directory (identity `pokemon-love2d`):
+Under the save directory — identity `Gen2Recomp` on desktop and console,
+`pokemon-love2d` on Android and iOS, which `conf.lua` decides and
+`src/core/SaveIdentity.lua` migrates:
 
 ```
-updates/gen1recomp-<X.Y.Z>.love   downloaded payload(s)
+updates/Gen2Recomped-<X.Y.Z>.love  downloaded payload(s)
 updates/pending.txt                crash-guard marker
 ```
 
@@ -94,8 +108,13 @@ bundled game, in that case.
 2. **Check** (launcher screen): `Check.start()` kicks off an async check
    against the GitHub releases API; safe to call every frame, it is a no-op
    once a check is in flight or has reached a terminal state. `Check.state()`
-   reports `idle | checking | uptodate | available | downloading | ready |
-   needs_full | error` plus the latest version and download progress.
+   reports one of the nine statuses in `Check.STATUS` — `idle | checking |
+   uptodate | available | downloading | ready | needs_full | notify | error` —
+   plus the latest version, download progress and an `advice` enum. Only the
+   five `Check.STATUS` marks `true` are drawn by the launcher banner, and
+   `tools/auto_update_check.lua` asserts the banner's own branches agree with
+   that table: a state posted and not drawn is invisible to the player, which
+   is what `notify` was added to stop.
 3. **Download + verify**: on `available`, `Check.download()` tells the
    worker to fetch the payload, polling the growing `.part` file for
    progress. On completion the worker re-fetches `sha256sums.txt`, verifies
@@ -107,6 +126,34 @@ bundled game, in that case.
    player relaunches; the next launch's Boot step (1) is what actually
    mounts and runs it. There is no in-session hot-swap.
 
+## Verifying a hand-placed payload
+
+On a console the player copies the payload into `updates/` themselves, because
+neither host can fetch (see `docs/auto-update.md`). That copy used to be
+mounted unexamined, while every other arrival route refused a bad hash. If the
+release's own `sha256sums.txt` is copied into `updates/` **beside** the
+payload, `Boot.run` hashes the archive with `love.data.hash("sha256", …)` and
+compares it against the row for that exact filename:
+
+| verdict | when | result |
+|---|---|---|
+| `verified` | listed, hash matches | mounted |
+| `mismatch` | listed, hash differs | refused; both hashes printed; file kept |
+| `unlisted` | manifest present (or empty) and does not name the payload | refused |
+| `unverified` | no manifest in `updates/` | mounted, with a loud line |
+
+The decision and its wording are in `src/update/Sideload.lua` (zero `love.*`
+calls, so it is driven from a plain-Lua test); the hashing and the mount stay in
+`src/update/Boot.lua`. `Payload.SUMS` / `Payload.sumsRel()` /
+`Payload.parseSums()` own the manifest name and its format — `Check.parseSums`
+delegates there, and `tools/auto_update_check.lua` fails on a second spelling in
+either language.
+
+A refused payload is dropped from the candidate list but **not** deleted: the
+player placed it by hand, so copying it again is the fix and the file is the
+evidence. (A payload that fails handoff is still deleted — that one failed
+deterministically.)
+
 ## Known limitations
 
 - **`love.run` persists across handoff.** By the time `chainload` runs, the
@@ -115,11 +162,27 @@ bundled game, in that case.
   already driving the frame. A payload that must change `love.run` itself
   needs a `minShell` bump so an older shell refuses to chainload it rather
   than running with half its intended behavior.
-- **Android has no in-app download transport yet.** `check_worker.lua`
-  shells out to curl for both the release check and the download; curl is
-  absent on Android, so `Check` degrades to `status = "error"` there (the
-  launcher UI hides on that status) and the player is directed to the
-  releases page via `Check.releaseUrl()` instead.
+- **Android downloads through the host bridge.** (This bullet used to deny
+  that Android had any in-app transport at all. That stopped being true a
+  release and a half ago and the bullet outlived it, which is the failure mode
+  `docs/auto-update.md` exists to record;
+  `tools/auto_update_check.lua` now asserts the old claim cannot come back.)
+  `HostShell.transport()` resolves `curl` on desktop and
+  `love.system.httpDownload` — a JNI call into GameActivity that our vendored
+  liblove exports — on Android. The bridge deals in whole files and blocks the
+  calling thread, and it must be called from the main thread (a JNI call from
+  a `love.thread` is a native abort), so `Check.lua` services the worker's
+  request from `drain()` and answers a payload-sized one **a frame late**, so
+  the "Downloading update" banner is on screen before the thread stalls. There
+  is no progress fill on that path: the bridge takes no `Range` header, so
+  there is nothing to poll.
+- **Two hosts can host a payload and cannot fetch one.** On NX and inside a
+  packaged app container there is no HTTPS client reachable from Lua, so the
+  capability resolves `notify-only`: the banner says what the real update path
+  is (the native OTA launcher on Switch, a newer package on Xbox) and a payload
+  placed in `updates/` by hand still chainloads. The full measurement, and why
+  the old "the payload is fused into the NRO" argument was answering the wrong
+  question, is in `docs/auto-update.md`.
 - **Dev/source runs never self-update.** `Boot.run` returns immediately when
   `love.filesystem.isFused()` is false, and a working tree's `engine` is the
   `"0.0.0-dev"` placeholder that always reports up to date, so a source
