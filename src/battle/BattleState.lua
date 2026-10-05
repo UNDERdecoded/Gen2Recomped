@@ -2050,6 +2050,11 @@ function BattleState:makeSafari(state)
   self.safariCatchRate = self.enemy.def.catchRate
   self.baitFactor = 0
   self.escapeFactor = 0
+  -- THE GREAT MARSH'S RULES, not Kanto's: two stage counters starting at 6
+  -- (src/battle/Gen4Safari.lua).
+  if self:gen4Layout() then
+    self.gen4Safari = require("src.battle.Gen4Safari").init()
+  end
 end
 
 -- Bug Catching Contest battles (BATTLETYPE_CONTEST).  Unlike the Safari Zone
@@ -4122,6 +4127,24 @@ function BattleState:update(dt)
     return
   end
 
+  if self.phase == "menu" and self.safari and self.gen4Safari then
+    -- PLATINUM'S FOUR BUTTONS SIT WHERE FIGHT / BAG / POKeMON / RUN DO, in
+    -- that order -- BALL across the top, BAIT and MUD under it, RUN below --
+    -- so the action menu's own walk drives them (BattleSubscreen_DrawActionMenu)
+    local dir = (input:wasPressed("left") and "left")
+             or (input:wasPressed("right") and "right")
+             or (input:wasPressed("up") and "up")
+             or (input:wasPressed("down") and "down")
+    if dir then
+      self.menuIndex, self.gen4MenuColumn =
+        Gen4Battle.actionMove(self.menuIndex, dir, self.gen4MenuColumn)
+    end
+    if input:wasPressed("a") then
+      self:safariAction(({ "ball", "bait", "rock", "run" })[self.menuIndex])
+    end
+    return
+  end
+
   if self.phase == "menu" and self.safari then
     if self.safari.balls <= 0 then
       self:say(Strings("PA: You're out of\nSAFARI BALLs!\nGame over!"))
@@ -4900,7 +4923,10 @@ end
 -- the merged ball record (Catching.attempt handles the unknown-id default)
 function BattleState:ballDef(ball)
   local balls = self.data.balls
-  return balls and balls[ball] or Catching.BALLS[ball]
+  -- Platinum's balls arrive as ITEM NUMBERS and are registered under the
+  -- number's string (src/battle/Gen4Catching.lua)
+  return balls and (balls[ball] or (type(ball) == "number" and balls[tostring(ball)]))
+         or Catching.BALLS[ball]
 end
 
 -- Gen2's item ids are ITEM_nnn while the battle code keys balls by Gen1's
@@ -8575,6 +8601,18 @@ function BattleState:enemyMonFainted()
       prize = prize * 4
     end
     prize = HeldItems.modifyPrize(self, prize)
+    -- PLATINUM PAYS BY ITS OWN RULE, and a Sinnoh trainer record carries no
+    -- `baseMoney` at all -- reported from play: *"Trainers dont give you any
+    -- money"*. BattleScript_CalcPrizeMoney: the LAST party member's level x 4 x
+    -- the class's byte (sTrainerClassPrizeMul, Gen4TrainerPrize) x 2 for an
+    -- Amulet Coin on the field, x 2 again for one trainer's double battle; two
+    -- trainers who walked up together are a tag battle and each pays its own.
+    if require("src.core.GameVersion").isGen4() and self.data.gen4_trainer_prize then
+      local P = require("src.import.Gen4TrainerPrize")
+      local opts = { amuletCoin = self.amuletCoin, double = self.double, tag = self.trainerB ~= nil }
+      prize = P.prize(self.data, self.trainer, opts)
+      if self.trainerB then prize = prize + P.prize(self.data, self.trainerB, opts) end
+    end
     self.game.save.money = self.game.save.money + prize
     -- Prism's Spurge Bank ATM (event/bank.asm) offers DIRECT DEPOSIT: with it
     -- enabled, a quarter of what you win in battle is routed to the account
@@ -8714,8 +8752,36 @@ function BattleState:playerMonFainted()
       -- command sits.  (The Route 22 RIVAL1 wipe darkens one box early, over
       -- Rival1WinText, which pokered prints just before the same command.)
       self.blackedOut = true
-      self:sayNext(Strings("%s is out of\nuseable POKéMON!", self.game.save.player.name))
-      self:sayNext(Strings("%s blacked\nout!", self.game.save.player.name))
+      if require("src.core.GameVersion").isGen4() and self.data.text then
+        -- PLATINUM'S subscript_battle_lost: the money goes IN BATTLE
+        -- (BtlCmd_PayPrizeMoney -> BattleSystem_CalcMoneyPenalty), with the line
+        -- for it, then "... ... ... ..." and the blackout -- bank 368 #36, #35
+        -- (a trainer) or #34 (wild), #38, #37. Nothing is taken when nothing is
+        -- owed, and the Battle Tower's can-lose battles (frontier) take nothing.
+        local T = require("src.import.Gen4Text")
+        local name = self.game.save.player.name or ""
+        local function line(n, amount)
+          local s = self.data.text[T.label(368, n)]
+          if type(s) ~= "string" then return nil end
+          s = s:gsub("{STRVAR_1 3 0 0}", name):gsub("{STRVAR_1 54 1 0}", tostring(amount or 0))
+          return (s:gsub("[\v\f]+$", ""))
+        end
+        local penalty = 0
+        if not self.canLose then
+          penalty = require("src.world.OverworldController").gen4MoneyPenalty(self.game.save)
+          self.game.save.money = (self.game.save.money or 0) - penalty
+        end
+        self.gen4PenaltyPaid = true
+        self:sayNext(line(36) or Strings("%s is out of\nusable Pokémon!", name))
+        if penalty > 0 then
+          self:sayNext(line(self.kind == "trainer" and 35 or 34, penalty))
+        end
+        self:sayNext(line(38) or "... ... ... ...")
+        self:sayNext(line(37) or Strings("%s blacked out!", name))
+      else
+        self:sayNext(Strings("%s is out of\nuseable POKéMON!", self.game.save.player.name))
+        self:sayNext(Strings("%s blacked\nout!", self.game.save.player.name))
+      end
     end
     self.result = "lose"
     self.afterQueue = "finish"
@@ -8805,6 +8871,7 @@ end
 -- the escape factor by 1-5 (zeroing bait) -- ItemUseBait/ItemUseRock,
 -- engine/items/item_effects.asm.
 function BattleState:safariAction(choice)
+  if self.gen4Safari then return self:gen4SafariAction(choice) end
   self.phase = "messages"
   self.afterQueue = "menu"
   local st = self.safari
@@ -8860,6 +8927,102 @@ function BattleState:safariAction(choice)
     self.baitFactor = 0
   end
   self:act(function() self:safariEnemyTurn() end)
+end
+
+-- PLATINUM'S SAFARI TURN -- see src/battle/Gen4Safari.lua for the rules and
+-- where each one is in the cartridge. The player's command, then the wild
+-- Pokemon's own: flee, or watch carefully.
+function BattleState:gen4SafariAction(choice)
+  local G = require("src.battle.Gen4Safari")
+  local st, sf = self.safari, self.gen4Safari
+  local function line(id, fallback, ...)
+    return G.text(self.data, id, ...) or Strings(fallback, ...)
+  end
+  local playerName = self.game.save.player.name
+  local foe = self.enemy.name
+  self.phase = "messages"
+  self.afterQueue = "menu"
+
+  if choice == "run" then
+    require("src.core.Sound").play(self.data, "Run")
+    self:say(line(G.TEXT.gotAway, "Got away safely!"))
+    self.result = "run"
+    self.afterQueue = "finish"
+    return
+  end
+
+  if choice == "ball" then
+    -- the ball comes off the count when the command is chosen
+    st.balls = math.max(0, (st.balls or 0) - 1)
+    local def = self:itemDef(G.SAFARI_BALL)
+    self:say(line(G.TEXT.usedOne, "%s used\none %s!", playerName,
+                  (def and def.name) or "Safari Ball"))
+    self:act(function()
+      require("src.core.Sound").play(self.data, "Ball_Toss")
+      self.lastBall = G.SAFARI_BALL
+      local caught, shakes = self:catchAttempt(G.SAFARI_BALL)
+      Runtime.emit("battle.ball_thrown", {
+        battle = self, ball = G.SAFARI_BALL, caught = caught, shakes = shakes,
+      })
+      self:ballChain(self:tossAnimFor(G.SAFARI_BALL), caught, shakes, G.SAFARI_BALL)
+      if caught then
+        st.caught = (st.caught or 0) + 1
+        self:actNext(function()
+          require("src.core.Sound").play(self.data, "Caught_Mon")
+        end)
+        self:sayNext(Strings("All right!\n%s was\ncaught!", foe))
+        self:act(function() self:storeCaughtMon() end)
+      else
+        self:sayNext(self:ballMissMessage(shakes))
+        if st.balls <= 0 then
+          -- subscript_throw_safari_ball: the announcer, and the battle ends
+          -- as a flight; the field runs the game-over script after it
+          self:sayNext(line(G.TEXT.outOfBalls, "Announcer: You're out of\nSafari Balls! Game over!"))
+          self:actNext(function()
+            self.result = "run"
+            self.afterQueue = "finish"
+          end)
+        else
+          self:act(function() self:gen4SafariEnemyTurn() end)
+        end
+      end
+    end)
+    return
+  end
+
+  local roll = self.rng(0, 9)
+  if choice == "bait" then
+    self:say(line(G.TEXT.bait, "%s threw some Bait\nat the %s!", playerName, foe))
+    local said = G.bait(sf, roll)
+    self:say(line(G.TEXT[said], said == "eating" and "%s is eating!" or "%s is busy eating!", foe))
+  else -- "rock": Platinum's MUD
+    self:say(line(G.TEXT.mud, "%s threw mud at\nthe %s!", playerName, foe))
+    local said = G.mud(sf, roll)
+    self:say(line(G.TEXT[said], said == "angry" and "%s is angry!"
+                                or "%s is beside itself\nwith anger!", foe))
+  end
+  self:act(function() self:gen4SafariEnemyTurn() end)
+end
+
+function BattleState:gen4SafariEnemyTurn()
+  local G = require("src.battle.Gen4Safari")
+  local foe = self.enemy.name
+  local fleeRate = self.enemy.def and self.enemy.def.safariFleeRate or 0
+  local fled = G.flees(self.gen4Safari, fleeRate, self.rng(0, 254))
+  if fled then
+    self:sayNext(G.text(self.data, G.TEXT.wildFled, foe) or Strings("The wild %s fled!", foe))
+    self:actNext(function()
+      require("src.core.Sound").play(self.data, "Run")
+      startPicKind(self, self:picFxFor(self.enemy), "slideOff")
+    end)
+    self.nextInsert = (self.nextInsert or 0) + 1
+    table.insert(self.queue, self.nextInsert, { wait = 24 })
+    self.result = "run"
+    self.afterQueue = "finish"
+  else
+    self:sayNext(G.text(self.data, G.TEXT.watching, foe)
+                 or Strings("%s is watching\ncarefully!", foe))
+  end
 end
 
 -- Per-turn factor decay (PrintSafariZoneBattleText,

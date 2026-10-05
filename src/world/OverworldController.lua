@@ -944,6 +944,9 @@ function OverworldState:enter(mapId, x, y, facing)
   -- a fresh entry, or a stale flag can freeze player input forever
   self.engaging = false
   self.emote = nil
+  self.extraEmotes = nil
+  -- the Poke Radar's chain lives on the field, not the save (src/world/Gen4Radar.lua)
+  self.gen4Radar = nil
   -- survives save/load: a loaded game may start inside a building whose
   -- exit mat is a LAST_MAP warp
   self.lastOutdoor = Game.save.lastOutdoor
@@ -1003,6 +1006,8 @@ end
 
 function OverworldState:setMap(mapId, x, y, facing, opts)
   local fromMapId = self.map and self.map.id
+  -- the header being left, for Platinum's area sign (which compares names)
+  local fromHeader = self.map and self.map.def and self.map.def.header
   if fromMapId then
     Runtime.emit("map.exited", { mapId = fromMapId, toMapId = mapId })
   end
@@ -1158,6 +1163,19 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     self.cutBlocks[mapId] = nil
   end
   self:stampClosedDoors()
+  -- A MAP CHANGE ENDS A POKE RADAR CHAIN (RadarChain_Clear in
+  -- FieldMap_ChangeZone and every field map change)
+  if self.gen4Radar and self.gen4Radar.active then self:gen4RadarEnd() end
+  -- PLATINUM OPENS A FLY DESTINATION ON ARRIVAL (TryUnlockFlyLocationByMap,
+  -- on every map change) -- see src/world/Gen4Fly.lua
+  if GameVersion.isGen4() and self.map and self.map.def then
+    pcall(function()
+      require("src.world.Gen4Fly").onEnter(Game.data, Game.save, self.map.def.header)
+      -- ...and remember where on the town map the player last stood outside,
+      -- for opening it indoors (TownMapContext_Init's exitLocation)
+      require("src.ui.Gen4TownMap").remember(Game)
+    end)
+  end
   -- forced dismount only where riding is disallowed (IsBikeRidingAllowed,
   -- home/overworld.asm: bike_riding_tilesets.asm tilesets plus the
   -- ROUTE_23/INDIGO_PLATEAU map exceptions)
@@ -1233,7 +1251,9 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- cartridges where the zone IS a set of maps.  In Hoenn it is a mode, and
   -- only ExitSafariMode ends it; clearing it here shut the game down on the
   -- first step past the gate.
-  if Game.save.safari and not GameVersion.isGen3()
+  -- ...and in Sinnoh it is a FLAG: the Great Marsh's own scripts end it
+  -- (`startendsafarigame 1`), and walking between its six areas must not.
+  if Game.save.safari and not GameVersion.isGen3() and not GameVersion.isGen4()
      and not Map.inRegion(self.map.def, "SAFARI", "SAFARI_ZONE") then
     Game.save.safari = nil
   end
@@ -1701,7 +1721,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   self:applyForcedBike()
 
   self:rebuildNeighbors()
-  self:updateMapNameSign()
+  self:updateMapNameSign(opts, fromHeader)
   Logger.info("map: %s at (%d,%d)", mapId, x, y)
   -- Route22Gate_Script rewrites wLastMap from the player's Y on entry
   -- too (not only on step), so a save/load mid-gate keeps exits correct
@@ -1778,7 +1798,23 @@ function OverworldState:updateMapNameSignGen3()
   end
 end
 
-function OverworldState:updateMapNameSign()
+function OverworldState:updateMapNameSign(opts, fromHeader)
+  -- SINNOH'S SIGN (src/world/Gen4AreaPopup.lua): a boundary walk announces a
+  -- change of NAME, an arrival announces any signed outdoor header; a reload
+  -- of the same map announces nothing
+  if GameVersion.isGen4() then
+    if opts and opts.via == "reload" then return end
+    local def = self.map and self.map.def
+    local P = require("src.world.Gen4AreaPopup")
+    local sign = self.mapNameSign and self.mapNameSign.gen4 and self.mapNameSign or nil
+    if opts and opts.seamless then
+      sign = P.onCross(Game, sign, fromHeader, def and def.header)
+    else
+      sign = P.onArrive(Game, sign, def and def.header)
+    end
+    self.mapNameSign = sign
+    return
+  end
   if GameVersion.isGen3() then return self:updateMapNameSignGen3() end
   if not GameVersion.isGen2() then return end
   local def = self.map and self.map.def
@@ -3413,7 +3449,9 @@ function OverworldState:update(dt)
   -- PlaceMapNameSign counts wLandmarkSignTimer down each frame and drops
   -- the window (rWY = $90) when it hits zero
   if self.mapNameSign then
-    if self.mapNameSign.emerald then
+    if self.mapNameSign.gen4 then
+      self.mapNameSign = require("src.world.Gen4AreaPopup").tick(Game, self.mapNameSign)
+    elseif self.mapNameSign.emerald then
       self.mapNameSign=require("src.world.Gen3MapPopup").tick(self.mapNameSign)
     else
       self.mapNameSign.frames = self.mapNameSign.frames - 1
@@ -3565,6 +3603,23 @@ function OverworldState:update(dt)
     return
   end
 
+  -- BUBBLES RUNNING ALONGSIDE THE MAIN ONE (see Gen4Commands' emote step):
+  -- each counts down and releases its own movement.
+  if self.extraEmotes and self.extraEmotes[1] then
+    local keep = {}
+    local finished = {}
+    for _, e in ipairs(self.extraEmotes) do
+      e.frames = e.frames - 1
+      if e.frames <= 0 then finished[#finished + 1] = e else keep[#keep + 1] = e end
+    end
+    self.extraEmotes = keep
+    for _, e in ipairs(finished) do if e.onDone then e.onDone() end end
+    -- the main slot emptied first: promote one, so the world keeps holding
+    -- for as long as any bubble is up
+    if not self.emote and self.extraEmotes[1] then
+      self.emote = table.remove(self.extraEmotes, 1)
+    end
+  end
   -- the emotion-bubble pause holds the world for a beat
   if self.emote then
     self.emote.frames = self.emote.frames - 1
@@ -3576,6 +3631,9 @@ function OverworldState:update(dt)
     if cut or self.emote.frames <= 0 then
       local done = self.emote.onDone
       self.emote = nil
+      if self.extraEmotes and self.extraEmotes[1] then
+        self.emote = table.remove(self.extraEmotes, 1)
+      end
       if done then done() end
     end
     self.player:update()
@@ -6015,6 +6073,12 @@ end
 -- cartridge grid under gen3FRLGRegionMap.  Refuse only when the active cache
 -- has neither representation.
 function OverworldState:openRegionMap(opts)
+  -- SINNOH'S TOWN MAP (src/ui/Gen4TownMap.lua)
+  if GameVersion.isGen4() then
+    if not Game.data.gen4_town_map then return false end
+    Game.stack:push(require("src.ui.Gen4TownMap").new(Game, opts or {}))
+    return true
+  end
   if not GameVersion.isGen3() then return false end
   local constants = Game.data.constants or {}
   local hoenn = constants.gen3MapSectionRects and constants.gen3RegionMapPlaces
@@ -6086,6 +6150,26 @@ function OverworldState:closeToMap()
     stack:pop()
     guard = guard + 1
   end
+end
+
+-- PLATINUM'S FLY: the same departure as flyTo, to a spawn-table destination
+-- (src/world/Gen4Fly.lua) rather than a Game Boy fly-warp row.
+function OverworldState:gen4FlyTo(dest, mon)
+  if not (dest and dest.map) then return end
+  require("src.core.Sound").play(Game.data, "Fly")
+  Game.save.onBike = false
+  self:clearBikeFlags()
+  self.player.surfing = false
+  self:closeToMap()
+  self.flyAnim = { frames = 48, mon = mon }
+  if not self:hasFlyBird() then
+    self.player.spinFrames = 48
+    self.player.spinTotal = 48
+    self.player.spinRise = true
+    self.player.spinDrop = nil
+  end
+  self.player.inputLocked = true
+  self.flyDest = { map = dest.map, x = dest.x, y = dest.y }
 end
 
 -- `mon` is who is carrying you, and it is passed in so the departure can
@@ -9350,7 +9434,9 @@ function OverworldState:gen2SweetScentEncounter(deferFailure)
     roamer and {battleType="roaming",roamer=roamer,roamerHP=enc.roamerHP,
       roamerStatus=enc.roamerStatus,roamerSeed=enc.roamerSeed} or nil)
   if contest then battle:makeBugContest() end
-  if GameVersion.isGen3() and self:inSafariGame() then battle:makeSafari(Game.save.safari) end
+  if (GameVersion.isGen3() or GameVersion.isGen4()) and self:inSafariGame() then
+    battle:makeSafari(Game.save.safari)
+  end
   battle.onFinish = function(result) self:afterBattle(result, battle) end
   self:pushBattle(battle)
   return true
@@ -11091,6 +11177,13 @@ function OverworldState:startTrainerApproach(npc, dist, partner)
   -- twins, hiker and Team Aqua stings rather than three of them for everyone.
   local Music = require("src.core.Music")
   local sting = self:trainerEncounterSong(npc)
+  -- PLATINUM: the class's eyes-meet theme (FieldBGM_GetEyesMeetForTrainer),
+  -- which the common encounter script asks for again -- the same song, so
+  -- Music.play's dedupe keeps it running rather than restarting it.
+  local g4 = type(npc.def and npc.def.trainer) == "table" and npc.def.trainer
+  if not sting and g4 and GameVersion.isGen4() then
+    sting = require("src.import.Gen4TrainerMusic").forClass(Game.data, g4.class)
+  end
   if sting then
     Music.play(Game.data, sting)
   else
@@ -11528,8 +11621,12 @@ function OverworldState:applyFieldPoison()
         Strings("%s blacked\nout!", save.player.name), function()
         local Pokemon = require("src.pokemon.Pokemon")
         for _, mon in ipairs(save.party) do Pokemon.heal(mon) end
-        save.money = math.floor(save.money
-          / (FieldDefaults.world(Game.data, "blackoutMoneyDivisor") or 2))
+        -- PLATINUM TAKES NOTHING for a whiteout in the field: the only money
+        -- penalty on the cartridge is BtlCmd_PayPrizeMoney's, in battle.
+        if not GameVersion.isGen4() then
+          save.money = math.floor(save.money
+            / (FieldDefaults.world(Game.data, "blackoutMoneyDivisor") or 2))
+        end
         Runtime.emit("world.blacked_out",
           { save = save, healTarget = self:healPoint(true) })
         self:warpToHealPoint(nil, { whiteout = true })
@@ -11613,6 +11710,13 @@ end
 -- when a ready egg hands control to the hatch scene.
 function OverworldState:stepEggs()
   local save = Game.save
+  -- PLATINUM: Daycare_Update -- the pens, the egg roll and the egg cycles,
+  -- every step (src/pokemon/Gen4DayCare.lua).
+  if GameVersion.isGen4() then
+    local ready = require("src.pokemon.Gen4DayCare").update(Game.data, save)
+    if not ready then return false end
+    return self:hatchEgg(ready)
+  end
   if GameVersion.get()=="emerald" then
     local ready=require("src.pokemon.Gen3EggCycles").advance(Game.data,save)
     if not ready then return false end
@@ -11644,6 +11748,20 @@ end
 -- the counter out; the command is lowered so that anything which ever does
 -- dispatch it gets the same hatch rather than a second copy of these thirty
 -- lines. One spelling, two doors.
+-- BattleSystem_CalcMoneyPenalty (battle_system.c)
+local GEN4_BADGE_MUL = { [0] = 2, 4, 6, 9, 12, 16, 20, 25, 30 }
+function OverworldState.gen4MoneyPenalty(save)
+  local maxLevel = 0
+  for _, mon in ipairs((save and save.party) or {}) do
+    maxLevel = math.max(maxLevel, tonumber(mon.level) or 0)
+  end
+  local badges = 0
+  local held = save and (save.badges or (save.player and save.player.badges))
+  if type(held) == "table" then for _, has in pairs(held) do if has then badges = badges + 1 end end end
+  local penalty = maxLevel * 4 * (GEN4_BADGE_MUL[math.min(8, badges)] or 30)
+  return math.min(penalty, math.max(0, tonumber(save and save.money) or 0))
+end
+
 function OverworldState:hatchEgg(hatched)
   if not hatched then return false end
   local Pokemon = require("src.pokemon.Pokemon")
@@ -11651,6 +11769,7 @@ function OverworldState:hatchEgg(hatched)
   hatched.isEgg = nil
   require('src.pokemon.Gen4PoketchState').remember(Game, hatched)
   hatched.eggSteps = nil
+  hatched.eggCycles = nil
   hatched.nickname = nil
   hatched.happiness = 120  -- BaseHappiness after HatchEggs
   -- THE MEMO'S "hatched at".  Emerald writes met level ZERO on a hatch and
@@ -11986,6 +12105,11 @@ function OverworldState:onStepComplete()
   -- Keep the existing walking rule for other datasets.
   if GameVersion.get()=="emerald" then
     require("src.pokemon.Gen3Friendship").step(Game.data,Game.save,self.map and self.map.def)
+  elseif GameVersion.isGen4() then
+    -- Platinum's own rule: a coin flip, Luxury Ball, egg location and Soothe
+    -- Bell (src/pokemon/Gen4Friendship.lua)
+    require("src.pokemon.Gen4Friendship").step(Game.data, Game.save, self.map and self.map.def,
+      love.math.random)
   elseif not require("src.pokemon.Gen2Friendship").isVanilla() and self.todSteps % 128 == 0 then
     local Evolution = require("src.pokemon.Evolution")
     for _, mon in ipairs(Game.save.party or {}) do
@@ -12188,6 +12312,7 @@ function OverworldState:onStepComplete()
 
   -- the Safari game step counter (engine/events/hidden_events/safari_game.asm)
   if self:safariStep() then return end
+  if GameVersion.isGen4() then self:gen4RadarStep() end
 
   -- day-care: the boarded Pokémon gains 1 exp per step (like the original)
   if Game.save.daycare and Game.save.daycare.mon then
@@ -12307,6 +12432,9 @@ function OverworldState:onStepComplete()
   -- directly by map id, Sinnoh resolved 5 of its 154 wild maps, and those 5
   -- were another map's table rather than their own.
   local encDef = Encounter.forMap(Game.data, self.map.def, self.map.id, nil, Game.save)
+  -- THE POKE RADAR: stepping into a shaking patch is always an encounter, and
+  -- not one Repel or a roamer can touch (src/world/Gen4Radar.lua)
+  if GameVersion.isGen4() and self:gen4RadarEncounter(encDef) then return end
   local enc
   local indoor = Game.data.field.indoorEncounters
   local env = self.map.def.environment
@@ -12783,7 +12911,7 @@ end
 -- everywhere in the region and the whole zone was ordinary grass.
 function OverworldState:inSafariGame()
   if not Game.save.safari then return false end
-  if GameVersion.isGen3() then return true end
+  if GameVersion.isGen3() or GameVersion.isGen4() then return true end
   return Map.inRegion(self.map.def, "SAFARI", "SAFARI_ZONE")
 end
 
@@ -12798,6 +12926,7 @@ function OverworldState:inSafariStepZone()
 end
 
 function OverworldState:safariStep()
+  if GameVersion.isGen4() then return self:gen4SafariStep() end
   local st = Game.save.safari
   if not st or not self:inSafariStepZone() then return false end
   st.steps = st.steps - 1
@@ -12857,8 +12986,197 @@ end
 -- Blackouts return to the last heal point; evolutions run after battles.
 -- battle is optional; when given, Oak's Lab OPP_RIVAL1 losses skip the
 -- blackout (pret HandlePlayerBlackOut) so the map script can HealParty.
+-- THE GREAT MARSH'S STEP (`Field_UpdateSafari`, overlay005/field_control.c),
+-- before the day-care and the repel: no balls left -> the out-of-balls
+-- script; otherwise one more step, and the five-hundredth is "time's up".
+-- Both are `scripts_safari_game` entries, which warp back to the gate and
+-- end the game themselves.
+function OverworldState:gen4SafariStep()
+  local st = Game.save.safari
+  if not st then return false end
+  local entry
+  if (st.balls or 0) <= 0 then
+    entry = 2
+  else
+    st.steps = (st.steps or 0) + 1
+    if st.steps >= 500 then entry = 1 end
+  end
+  if not entry then return false end
+  local rows = require("src.world.Gen4TileScripts").compile(Game.data, "safari_game", entry)
+  if rows then self:queueScript(rows, { mapId = self.map.id }) end
+  return rows ~= nil
+end
+
+-- AFTER A SAFARI BATTLE (`FieldTask_SafariEncounter`, src/encounter.c):
+--   out of balls and it got away -> straight back to the gate (the special
+--     location the gate's script set) and SAFARI_GAME entry 9, which ends it
+--   out of balls on the catch     -> entry 2, the announcer's out-of-balls
+--   balls left but party and boxes full -> entry 22
+function OverworldState:gen4SafariAfterBattle(result, battle)
+  local st = Game.save.safari
+  if not st then return end
+  local Tile = require("src.world.Gen4TileScripts")
+  local caught = result == "caught"
+  if (st.balls or 0) <= 0 then
+    if caught then
+      local rows = Tile.compile(Game.data, "safari_game", 2)
+      if rows then self:queueScript(rows, { mapId = self.map.id }) end
+      return
+    end
+    local rows = Tile.compile(Game.data, "safari_game", 9)
+    local loc = Game.save.gen4SpecialLocation
+    if loc and loc.map then
+      self:startWarpTo(loc.map, loc.x, loc.y, loc.facing or "down", function()
+        if rows then self:queueScript(rows, { mapId = self.map.id }) end
+      end)
+    elseif rows then
+      self:queueScript(rows, { mapId = self.map.id })
+    end
+    return
+  end
+  -- PCBoxes_FirstEmptyBox == MAX_PC_BOXES: no box has a free slot at all
+  local full = #(Game.save.party or {}) >= 6
+  local boxesFull = true
+  local Boxes = require("src.pokemon.Boxes")
+  for _, box in ipairs(Boxes.ensure(Game.save)) do
+    if Boxes.firstFree(box) then boxesFull = false break end
+  end
+  if full and boxesFull then
+    local rows = Tile.compile(Game.data, "safari_game", 22)
+    if rows then self:queueScript(rows, { mapId = self.map.id }) end
+  end
+end
+
+-- Every bubble that is up -- the main slot and any running alongside it --
+-- each lent to `self.emote` for the length of `fn`, because the drawing reads
+-- the slot.
+function OverworldState:eachEmote(fn)
+  local main = self.emote
+  if main then fn(main) end
+  for _, e in ipairs(self.extraEmotes or {}) do
+    self.emote = e
+    fn(e)
+  end
+  self.emote = main
+end
+
+-- ---------------------------------------------------------------------------
+-- THE POKE RADAR (src/world/Gen4Radar.lua holds the rules)
+-- ---------------------------------------------------------------------------
+
+function OverworldState:gen4RadarEnd()
+  self.gen4Radar = nil
+  pcall(function()
+    require("src.core.Music").playMap(Game.data, self.map.id, Game.save.onBike,
+                                      self.player and self.player.surfing)
+  end)
+end
+
+local function radarGrass(self)
+  return function(x, y)
+    if not self.map:inBounds(x, y) then return false end
+    return self.map:cellBehaviour(x, y) == 2      -- TILE_BEHAVIOR_TALL_GRASS
+  end
+end
+
+-- CanUsePokeRadar + RefreshRadarChain. Answers a refusal, or nil.
+function OverworldState:gen4UseRadar()
+  local R = require("src.world.Gen4Radar")
+  local p = self.player
+  if Game.save.onBike then return "bike" end
+  local okF, Follower = pcall(require, "src.world.Gen4Follower")
+  if okF and Follower.hasPartner and Follower.hasPartner(Game.save) then return "partner" end
+  if self.map:cellBehaviour(p.cellX, p.cellY) ~= 2 then return "grass" end
+  local Tile = require("src.world.Gen4TileScripts")
+  local charge = Game.save.gen4RadarCharge or 0
+  if charge < R.BATTERY then
+    Game.save.gen4Vars = Game.save.gen4Vars or {}
+    Game.save.gen4Vars[0x8000] = R.BATTERY - charge
+    local rows = Tile.compile(Game.data, "poke_radar", 0)
+    if rows then self:queueScript(rows, { mapId = self.map.id }) end
+    return nil
+  end
+  Game.save.gen4RadarCharge = 0
+  local chain = self.gen4Radar or R.newChain()
+  self.gen4Radar = chain
+  if R.spawn(chain, p.cellX, p.cellY, radarGrass(self)) then
+    R.setup(chain, false)
+    pcall(function() require("src.core.Music").play(Game.data, "SEQ_KUSAGASA") end)
+  else
+    self.gen4Radar = nil
+    local rows = Tile.compile(Game.data, "poke_radar", 1)
+    if rows then self:queueScript(rows, { mapId = self.map.id }) end
+  end
+  return nil
+end
+
+function OverworldState:gen4RadarStep()
+  local R = require("src.world.Gen4Radar")
+  R.charge(Game.save, ((Game.save.inventory or {})[R.ITEM] or 0) > 0)
+  local chain = self.gen4Radar
+  if not (chain and chain.active) then return end
+  -- PlayerAvatar_SetTransitionState(CYCLING): getting on the bike ends it
+  if Game.save.onBike then return self:gen4RadarEnd() end
+  if not R.trimOutOfView(chain, self.player.cellX, self.player.cellY) then
+    self:gen4RadarEnd()
+  end
+end
+
+function OverworldState:gen4RadarEncounter(encDef)
+  local R = require("src.world.Gen4Radar")
+  local chain = self.gen4Radar
+  local p = self.player
+  local patch = chain and R.patchAt(chain, p.cellX, p.cellY)
+  if not patch then return false end
+  local grass = encDef and encDef.grass
+  local slots = grass and grass.slots
+  local roll = function(tbl)
+    local Encounter = require("src.world.Encounter")
+    local built = Encounter.gen4Table(tbl, 100)
+    if not built then return nil end
+    return require("src.world.Gen4WildLead").choose(Game.data, Game.save, tbl, "grass",
+                                                     nil, love.math.random)
+  end
+  local enc = R.encounter(chain, patch, slots, encDef and encDef.radar, roll, Game.save)
+  if not enc or not enc.species then
+    self:gen4RadarEnd()
+    return false
+  end
+  if chain.active then
+    -- the next set of patches spawns now, around the cell the battle began on
+    R.spawn(chain, p.cellX, p.cellY, radarGrass(self))
+    chain.radarBattle = true
+  end
+  if not chain.active then self.gen4Radar = nil end
+  self.gen4RoamerSlot = nil
+  local BattleState = require("src.battle.BattleState")
+  local battle = BattleState.newWild(Game, enc.species, enc.level,
+    { shiny = enc.shiny, nature = enc.nature, gender = enc.gender })
+  battle.gen4RadarBattle = true
+  battle.onFinish = function(result) self:afterBattle(result, battle) end
+  self:pushBattle(battle)
+  return true
+end
+
 function OverworldState:afterBattle(result, battle)
   self.gen4EncounterAttempts = 0
+  -- encounter.c: a radar battle that ends in a win or a catch keeps the chain
+  -- and sets its new patches up; anything else -- or any other wild battle --
+  -- ends it
+  if GameVersion.isGen4() and self.gen4Radar and self.gen4Radar.active
+     and battle and battle.kind == "wild" then
+    local R = require("src.world.Gen4Radar")
+    local chain = self.gen4Radar
+    if not battle.gen4RadarBattle then chain.radarBattle = false end
+    if R.afterBattle(chain, result) then
+      R.setup(chain, result == "caught")
+    else
+      self:gen4RadarEnd()
+    end
+  end
+  if GameVersion.isGen4() and battle and battle.gen4Safari then
+    self:gen4SafariAfterBattle(result, battle)
+  end
   local lead = Game.save.party[1]
   Logger.info("battle over: %s (lead %s %d/%d)", tostring(result),
               lead and lead.species or "-", lead and lead.hp or 0,
@@ -12952,8 +13270,15 @@ function OverworldState:afterBattle(result, battle)
     for _, mon in ipairs(Game.save.party) do
       Pokemon.heal(mon)
     end
-    Game.save.money = math.floor(Game.save.money
-      / (FieldDefaults.world(Game.data, "blackoutMoneyDivisor") or 2))
+    if GameVersion.isGen4() then
+      -- Nothing here: Platinum takes BattleSystem_CalcMoneyPenalty -- the
+      -- party's highest level x 4 x the badge count's multiplier, capped at
+      -- the wallet -- inside the battle, where its line is printed
+      -- (BattleState, subscript_battle_lost). Not half the money.
+    else
+      Game.save.money = math.floor(Game.save.money
+        / (FieldDefaults.world(Game.data, "blackoutMoneyDivisor") or 2))
+    end
     Runtime.emit("world.blacked_out",
       { save = Game.save, healTarget = self:healPoint(true) })
     self:warpToHealPoint(evolutions, { whiteout = true })
@@ -15476,6 +15801,21 @@ function OverworldState:drawWorld()
     sprite:drawFixedFrame(s.px, s.py + 4, cam.x, cam.y, frame)
   end
 
+  -- THE POKE RADAR'S PATCHES, one at a time like the sparkles
+  local radarOne = nil
+  local function fxRadarOne()
+    local pt = radarOne
+    if not pt then return end
+    require("src.world.Gen4Radar").drawPatch(pt, pt.x * 16 - cam.x, pt.y * 16 - cam.y,
+                                             love.timer and love.timer.getTime() * 60 or 0)
+  end
+  local function fxRadar()
+    for _, pt in ipairs((self.gen4Radar and self.gen4Radar.active and self.gen4Radar.patches) or {}) do
+      if pt.active then radarOne = pt; fxRadarOne() end
+    end
+    radarOne = nil
+  end
+
   local function fxEmote()
     if not (self.emote and self.emote.npc) then return end
     -- bubble = false is a silent hold (a Pikachu emotion that plays a
@@ -15926,9 +16266,9 @@ function OverworldState:drawWorld()
       -- between the water pass and the character pass).  The FLAT path is
       -- unaffected and still draws them through OverworldState:drawRipples.
       -- standing effects anchor at the foot of whoever they belong to
-      if self.emote and self.emote.npc then
-        at(fxEmote, self.emote.npc.px + 8, self.emote.npc.py + 16)
-      end
+      self:eachEmote(function(e)
+        if e.npc then at(fxEmote, e.npc.px + 8, e.npc.py + 16) end
+      end)
       if self.flyAnim then
         at(fxBird, self.player.px + 8, self.player.py + 16)
       end
@@ -15945,6 +16285,10 @@ function OverworldState:drawWorld()
         at(fxSparkleOne, sp.px + 8, sp.py + 16)
       end
       sparkleOne = nil
+      for _, pt in ipairs((self.gen4Radar and self.gen4Radar.active and self.gen4Radar.patches) or {}) do
+        if pt.active then radarOne = pt; at(fxRadarOne, pt.x * 16 + 8, pt.y * 16 + 16) end
+      end
+      radarOne = nil
     end
     override = Pipelines.drawWorld(pipelineId, ctx)
     -- world post-processes (a miniature-diorama blur, a colour grade) fold
@@ -16386,7 +16730,7 @@ function OverworldState:drawWorld()
     -- pass, the projection and the depth test its owner's sprite had.
     local emoteEarly = false
     if freeGround then
-      fxEmote()
+      self:eachEmote(fxEmote)
       emoteEarly = true
     end
     aim(self.map.renderer, 0, 0)
@@ -16405,7 +16749,8 @@ function OverworldState:drawWorld()
     fxDust()
     fxCutTree()
     fxWater()
-    if not emoteEarly then fxEmote() end
+    if not emoteEarly then self:eachEmote(fxEmote) end
+    fxRadar()
     fxSparkle()
     fxBird()
     fxRod()
@@ -16487,11 +16832,12 @@ function OverworldState:drawWorld()
     --   emote bubble  -> the spotting NPC's foot (rides above its head)
     --   fly bird, rod -> the player's foot
     -- (heal machine is ground-hugging -- drawn above with dust/cut)
-    if self.emote and self.emote.npc then
-      local fx = self.emote.npc.px - cam.x + 8
-      local fy = self.emote.npc.py - cam.y + 16
+    self:eachEmote(function(e)
+      if not e.npc then return end
+      local fx = e.npc.px - cam.x + 8
+      local fy = e.npc.py - cam.y + 16
       self:billboard(fx, fy, vw, vh, zoneColorsAt(zones, fx, fy), false, fxEmote)
-    end
+    end)
     if self.flyAnim then
       local fx = self.player.px - cam.x + 8
       local fy = self.player.py - cam.y + 16
@@ -16511,6 +16857,15 @@ function OverworldState:drawWorld()
                      fxSparkleOne)
     end
     sparkleOne = nil
+    for _, pt in ipairs((self.gen4Radar and self.gen4Radar.active and self.gen4Radar.patches) or {}) do
+      if pt.active then
+        radarOne = pt
+        local fx = pt.x * 16 - cam.x + 8
+        local fy = pt.y * 16 - cam.y + 16
+        self:billboard(fx, fy, vw, vh, zoneColorsAt(zones, fx, fy), false, fxRadarOne)
+      end
+    end
+    radarOne = nil
 
     Game.renderer:endUprightPass()
   end
@@ -16658,7 +17013,9 @@ function OverworldState:drawUI()
   -- poison flash below.  PlaceMapNameFrame draws the frame at hlcoord 0, 0
   -- with two interior rows, and PlaceMapNameCenterAlign centres the name on
   -- the second of them (hlcoord 0, 2 + (SCREEN_WIDTH - len) / 2).
-  if self.mapNameSign and self.mapNameSign.emerald then
+  if self.mapNameSign and self.mapNameSign.gen4 then
+    require("src.world.Gen4AreaPopup").draw(Game, self.mapNameSign)
+  elseif self.mapNameSign and self.mapNameSign.emerald then
     require("src.world.Gen3MapPopup").draw(Game.data,self.mapNameSign)
   elseif self.mapNameSign and self.mapNameSign.frlg then
     -- FIRERED (map_name_popup.c): a 14x2 window at tile (1,29) of BG0 with
@@ -16715,6 +17072,10 @@ function OverworldState:drawUI()
   -- `hidemoney` drops it; this only draws whatever is there.
   if self.gen4MoneyWindow then
     require("src.ui.Gen4MoneyWindow").draw(self.gen4MoneyWindow)
+  end
+  -- ...and the Game Corner's coin window (`showcoins` / `hidecoins`).
+  if self.gen4CoinWindow then
+    require("src.ui.Gen4MoneyWindow").drawCoins(self.gen4CoinWindow)
   end
 
   -- TalkToPikachu's picture box (engine/pikachu/pikachu_pic_animation.asm

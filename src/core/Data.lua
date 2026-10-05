@@ -205,6 +205,38 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         -- (Gen4MoveButtons) -- what the battle menu's buttons
                         -- carry besides their names.
                         "gen4_move_buttons", "gen4_encounter_effects",
+                        -- THE TROPHY GARDEN AND GREAT MARSH DAILY LISTS
+                        -- (Gen4SpecialEncounters).
+                        "gen4_special_encounters",
+                        -- PLATINUM'S TOWN MAP: its sprites, name blocks and
+                        -- fly locations (Gen4TownMap).
+                        "gen4_town_map",
+                        -- THE AREA-NAME SIGNS and the per-header label data
+                        -- (Gen4AreaPopup).
+                        "gen4_area_popup",
+                        -- THE SHARD MOVE TUTORS' moves, costs and masks
+                        -- (Gen4MoveTutor).
+                        "gen4_move_tutor",
+                        -- `sEggMoves` from overlay 5 (Gen4EggMoves).
+                        "gen4_egg_moves",
+                        -- the Game Corner's prize table (Gen4GameCorner).
+                        "gen4_game_corner",
+                        -- the seal table and the daily seal stocks (Gen4Seals).
+                        "gen4_seals",
+                        -- each berry's flavors and smoothness (Gen4BerryData).
+                        "gen4_berry_flavors",
+                        -- each trainer class's eyes-meet theme (Gen4TrainerMusic).
+                        "gen4_trainer_music",
+                        -- contest_data.narc: contestants, judges, dress-ups, themes.
+                        "gen4_contest", "gen4_contest_art",
+                        -- the Poffin cooking, case and icon art (Gen4PoffinArt).
+                        "gen4_poffin_art",
+                        -- the Hall of Fame and credits art and staff roll (Gen4EndingArt).
+                        "gen4_ending_art", "gen4_ending",
+                        -- each trainer class's prize multiplier (Gen4TrainerPrize).
+                        "gen4_trainer_prize",
+                        -- each trainer class's front picture (the Hall of Fame's player).
+                        "gen4_trainer_sprites",
                         -- `/data/arealight.narc`: four members of fifteen
                         -- time-of-day templates, selected by the `lighting` byte
                         -- that `gen4_terrain`'s `maps` table has carried on all

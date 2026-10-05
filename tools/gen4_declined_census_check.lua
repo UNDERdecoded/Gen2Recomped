@@ -120,9 +120,8 @@ local MERGES = {
   ["platform lift"]                          = "persisted map features",
   -- ONE JOURNAL. Two rows, one word of prose apart.
   ["journal entry"] = "journal",
-  -- ONE TUTOR, two shopfronts: the Survival Area's charges shards and the
-  -- other does not, and both are blocked on the same `sTeachableMoves`.
-  ["shard move tutor"] = "move tutor",
+  -- ("shard move tutor" -> "move tutor" is gone: the shard tutors and
+  -- Route 210's Draco Meteor tutor both lower to real commands now.)
   -- ONE APPEARANCE SYSTEM, which the trainer card derives a class from.
   ["trainer appearance variants"] = "trainer appearance",
   ["trainer appearance system"]   = "trainer appearance",
@@ -157,7 +156,7 @@ local KNOWN = {
   ["hall of fame healing animation"] = true, ["journal"] = true,
   ["jubilife lottery"] = true, ["lake guardian containment units"] = true,
   ["lift's current-floor window"] = true, ["mailbox"] = true,
-  ["menu anchor side"] = true, ["move tutor"] = true,
+  ["menu anchor side"] = true, ["move tutor"] = true, ["slot machine"] = true, ["contest camera flashes"] = true, ["contest attire"] = true,
   ["mystery gift distribution events"] = true, ["national dex diploma"] = true,
   ["persisted map features"] = true, ["player-state latch"] = true,
   -- pass 189, both named rather than left on the unknown-command path, and
@@ -259,7 +258,9 @@ for _ in pairs(stub) do stubCount = stubCount + 1 end
 -- A FLOOR ON THE SCAN'S OWN INPUT. A pattern that stops matching reports a
 -- clean zero over nothing at all, and an empty census ranks nothing and says
 -- the backlog is clear.
-ok(stubCount >= 90,
+-- (90 until the move tutors, Move Reminder and Move Deleter were lowered;
+-- the floor follows the backlog down, it is not a target.)
+ok(stubCount >= 60,
    "only %d commands were found on a stub verb; the census has been reading "
    .. "an empty set, which looks like an empty backlog", stubCount)
 report("%d commands on g4_noop/g4_no_feature, %d of them naming no subject",

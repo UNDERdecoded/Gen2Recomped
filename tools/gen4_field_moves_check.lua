@@ -121,9 +121,17 @@ for _, op in ipairs({ 0x1CF, 0x1D0, 0x1D1 }) do
      .. "it, because several callers have only an opcode to give", op)
 end
 
--- The six that remain variable must STILL refuse, or this check has quietly
--- blessed a guess somewhere else.
-for _, op in ipairs({ 0x21D, 0x235, 0x237, 0x23E, 0x27C, 0x289 }) do
+-- The four that remain variable must STILL refuse, or this check has quietly
+-- blessed a guess somewhere else. (0x289, givepoffin, left this list: it is
+-- NOT variable -- ScrCmd_GivePoffin reads a var and six more words, sixteen
+-- bytes every time -- and is checked as the fixed width it is just below.)
+ok(Ops.size(0x289) == 16, "0x289 (givepoffin) is a fixed 16 bytes, got %s", tostring(Ops.size(0x289)))
+-- (0x23E, mysterygiftgive, left too: its width is its STAGE operand's, from
+-- the MysteryGiftGive macro, and tools/gen4_mystery_gift_check.lua checks all
+-- nine stages.)
+ok(Ops.sizeAt(0x23E, u16(0x23E) .. u16(1) .. u16(0x40ED), 1) == 6,
+   "0x23E (mysterygiftgive) stage 1 is 6 bytes")
+for _, op in ipairs({ 0x21D, 0x235, 0x237, 0x27C }) do
   ok(Ops.VARIABLE_SPEC[op] == nil,
      "0x%03X (%s) has gained a width rule; if that is real, add it to this "
      .. "list's counterpart and move it", op, Ops.name(op))

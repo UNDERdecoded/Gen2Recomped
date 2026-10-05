@@ -900,7 +900,10 @@ function Game:draw()
           if okNew then self.secondScreenOverworldPoketch = p end
         end
         local p = self.secondScreenOverworldPoketch
-        if p and p.drawWatch then
+        -- `hidepoketch` (SystemFlag_SetPoketchHidden): the contest stage and
+        -- a few other scenes put the watch away; the lower screen stays blank
+        local hidden = self.save and self.save.poketch and self.save.poketch.hidden
+        if p and p.drawWatch and not hidden then
           local drawn=pcall(SS.draw, self, function() p:drawWatch() end)
           if drawn then self.secondScreenPointerOwner=p end
         end
@@ -1665,6 +1668,10 @@ end
 -- entry chunks wrote before any save existed, while NEW GAME and
 -- CONTINUE replace the backing outright.
 function Game:adoptSave(save, seedBuckets)
+  -- Platinum Pokemon made before they carried friendship get their base value
+  if require("src.core.GameVersion").isGen4() then
+    pcall(function() require("src.pokemon.Gen4Friendship").migrate(self.data, save) end)
+  end
   self.pointerOwners={}
   self.secondScreenPointerOwner=nil
   self.secondScreenOverworldPoketch=nil

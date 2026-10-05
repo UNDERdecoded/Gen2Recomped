@@ -376,8 +376,10 @@ local function baseForm(data, species)
     baseFormCache = { data = data, from = {} }
     for id, def in pairs(data.pokemon) do
       for _, evo in ipairs(def.evolutions or {}) do
-        if evo.species and baseFormCache.from[evo.species] == nil then
-          baseFormCache.from[evo.species] = id
+        -- Platinum's personal rows name the evolution `target`
+        local into = evo.species or evo.target
+        if into and baseFormCache.from[into] == nil then
+          baseFormCache.from[into] = id
         end
       end
     end

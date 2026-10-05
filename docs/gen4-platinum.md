@@ -35972,3 +35972,1205 @@ Checks:
   wiring.
 - `tools/gen4_transition_harness` renders contact sheets.
 - `tools/gen4_overworld_harness` gained `TRANSITION_AT`.
+
+## The Trophy Garden, Platinum's catch formula, and the Great Marsh Safari Game
+
+**Trophy Garden** (`src/world/Gen4DailySlots.lua`). Mr. Backlot's
+`addtrophygardenmon` and `gettrophygardenslot1species` were unlowered, so the
+garden never gained a Pokémon. They now work as on the cartridge:
+
+- The daily pick comes from `encdata_ex` member 8 (sixteen species) and is never
+  one of the two already in the garden.
+- The new pick SHIFTS into slot 1, and the old slot 1 moves to slot 2.
+- Once the National Dex is obtained, the two slots become Trophy Garden grass
+  slots 7 and 8.
+
+The Great Marsh's daily pair uses the same two grass slots, during a Safari
+Game only. It is the day's `marshDaily`, which is the swarm's value, cut into
+5-bit fields per area. That indexes member 9 (National Dex) or member 10
+(regional). Extracted to `gen4_special_encounters`. On an older cache, run
+`tools/gen4_special_encounters_extract.lua`.
+
+**The catch formula** (`src/battle/Gen4Catching.lua`). Platinum's balls reach
+the battle as item numbers. No ball record matched them, so **every ball in
+Sinnoh ran Gen 1's ItemUseBall**. They now use `BattleScript_CalcCatchShakes`:
+
+- `sBasicBallMod`, plus each special ball's own rule (Net, Dive, Nest, Repeat,
+  Timer, Dusk, Quick);
+- the HP and status terms;
+- the four 16-bit shake rolls against `0xFFFF0 / sqrt(sqrt(0xFF0000 / rate))`.
+
+**The Safari Game**:
+
+- `startendsafarigame` starts a game with 30 balls and ends it.
+  `getcurrentsafarigamecaughtnum` is answered, and still answered after the game
+  has ended, which is the order the gate's exit script asks in.
+- `Field_UpdateSafari` runs the out-of-balls script, or counts steps up to 500.
+- `FieldTask_SafariEncounter`'s endings: out of balls after a miss sends you to
+  the special location the gate set, then entry 9; out of balls on a catch runs
+  entry 2; full party and boxes run entry 22.
+- In the start menu, RETIRE appears (entry 21), SAVE is hidden, and the
+  Safari Ball count shows.
+- Walking between the marsh's six areas no longer ends the game.
+
+The battle (`src/battle/Gen4Safari.lua`) follows the cartridge's rules, not
+Kanto's:
+
+- BAIT and MUD move two stage counters, both starting at 6 of 0..12.
+- The Safari Ball rate is scaled by `sSafariCatchRate`.
+- Fleeing uses the species' own Safari flee rate times the same thirteen
+  fractions.
+- The menu is BALL / BAIT / MUD / RUN on the action menu's four buttons.
+- The Safari healthbox reads "SAFARI BALLS / Left: NN".
+- All the lines are the cartridge's battle strings.
+
+Checks:
+
+- `tools/gen4_daily_slots_check.lua` (18 checks)
+- `tools/gen4_safari_check.lua` (38 checks)
+- `tools/gen4_battle_harness` with `SAFARI=n` renders a Safari battle.
+
+## Fly, and Platinum's town map
+
+**Fly** (`src/world/Gen4Fly.lua`) was missing from Platinum's party menu. It
+now follows `spawn_locations.c` and `FieldMoves_CheckFly`:
+
+- A destination opens when its first-arrival flag is set
+  (`0x9B1 + firstArrival`).
+- Walking into an `unlockOnMapEntry` map sets its flag; the map scripts set the
+  others.
+- Using Fly needs the Cobble Badge, a map that allows Fly, no partner, and no
+  Safari Game. Teleport is refused during a Safari Game too.
+
+**The town map** (`src/ui/Gen4TownMap.lua`, data in
+`src/import/Gen4TownMap.lua`, cache module `gen4_town_map`). This is the top
+screen of `applications/town_map`, used both for Fly and for the Town Map key
+item (item 442, found by its use function):
+
+- **Map art:** the composed region and route layers.
+- **Town blocks:** the twenty `sFlyLocations` blocks, in their shapes, in
+  sub-palette `5 + palette + unlocked`, blinking under the cursor in fly mode.
+  Pal Park's and Victory Road's blocks are hidden until unlocked.
+- **Markers:** the player icon, at the player's matrix cell or, indoors, the
+  last outdoor cell; and the cursor.
+- **Grid:** `7x + 25, 7z - 34`. The cursor keeps to x 1..28 and z 6..28, and
+  steps once every three ticks.
+- **The bar:** names come from `tmap_block.dat` (182 blocks) and the matrix,
+  plus the cartridge's off-matrix Mt. Coronet and Fight Area gate cells. Fly
+  mode shows "Fly to where?".
+- **Landing spot:** a chosen block lands at the spawn row with the same
+  first-arrival id. The League and the outside of Victory Road share a header,
+  so the header alone can't tell them apart.
+
+Not drawn: the bottom screen's zoomed map and signposts.
+
+On an older cache, run `tools/gen4_town_map_extract.lua`. Checks:
+`tools/gen4_fly_check.lua` (14) and `tools/gen4_town_map_check.lua` (20).
+
+## Two bubbles at once, the area sign, and friendship
+
+**The Sandgem freeze.** Reported from play: after getting the Pokédex,
+leaving Rowan's lab, "the exclamation point appears but it freezes there".
+
+- The scene (`M1059/S057D`) gives the player and object 4 an
+  `EMOTE_EXCLAMATION_MARK` together, then runs `waitmovement` on both.
+- The overworld held one emote at a time, so the second bubble replaced the
+  first. The first movement never finished, and the wait held forever.
+- A bubble that arrives while another is up now runs alongside it
+  (`ow.extraEmotes`): it counts down, releases its own movement, and is drawn
+  at its owner (`OverworldState:eachEmote`).
+- `tools/gen4_concurrent_emote_check.lua` runs the cartridge's own two rows
+  from that scene and requires the wait to clear.
+
+**The area-name sign** (`src/world/Gen4AreaPopup.lua`, data in
+`src/import/Gen4AreaPopup.lua`, cache module `gen4_area_popup`), from
+`map_name_popup.c`:
+
+- **Art:** the nine illustrated signs of `area_win_gra`, 17x5 tiles each,
+  chosen by the header's `mapLabelWindowID`. The name is in the system font,
+  in palette colours 3/2.
+- **Timing:** slides in from 38 px up at 4 per 30 Hz tick, holds 60 ticks,
+  slides out. A new place sends the old sign out first.
+- **Crossing a boundary:** shown whenever the location name changes.
+- **Arriving by warp or Fly:** shown only for a signed, non-building header.
+  So walking out of a house announces the town, and a city's several headers
+  never re-announce it.
+
+On an older cache, run `tools/gen4_area_popup_extract.lua`.
+
+**Friendship.**
+
+- **Missing at creation:** Platinum Pokémon were created with no friendship
+  value, so no friendship evolution could fire. They now start at the species'
+  `baseFriendship`. Saves made earlier get it filled in once, on load.
+- **Walking:** follows `Pokemon_UpdateFriendship(WALK_CYCLE)`. Every 128
+  steps, each Pokémon wins a coin flip for +1, plus 1 for a Luxury Ball, plus
+  1 where its *egg* location matches (the cartridge's own comparison), then
+  ×1.5 with a Soothe Bell.
+
+Checks: `tools/gen4_area_popup_check.lua` (23) and
+`tools/gen4_friendship_check.lua` (12).
+
+## The Poké Radar
+
+`src/world/Gen4Radar.lua`, after `pokeradar.c` and the radar arms of
+`wild_encounters.c` and `encounter.c`. This was a named gap.
+
+**Using it:**
+
+- Only standing in tall grass, not on the bike, and not with a partner.
+- Below 50 steps of charge it reports the steps left (`scripts_poke_radar` 0).
+- At 50, one patch spawns on a random cell of each ring: the 9x9, 7x7, 5x5
+  and 3x3 borders. Only tall grass on this map counts. If none land, it shows
+  `scripts_poke_radar` 1.
+- The radar music plays while patches are up.
+
+**The patches:**
+
+- Each patch continues the chain 88/68/48/28 in 100 by ring, or 98/78/58/38
+  after a catch.
+- A continuing patch shakes the chain's way and is shiny 1 in
+  max(200, 8200 − 200 × chain). A breaking patch shakes soft or hard at random.
+
+**Stepping into a patch** is always an encounter, untouched by Repel or
+roamers:
+
+- A continuing patch gives the same species and level, and adds 1 to the
+  chain (capped at 999).
+- Otherwise it is a grass roll, with the radar species in slots 5/6/11/12 on a
+  hard shake. The same species continues the chain; a different one ends it.
+
+**What ends the chain:**
+
+- an ordinary encounter, a map change, or getting on the bike;
+- walking away from every patch;
+- a radar battle that ends in anything but a win or a catch.
+
+After a win or a catch, new patches spawn around the player. The three best
+chains are kept in `save.gen4RadarRecords`.
+
+**Not reproduced:** the patches' 3D shake model (field-effect renderer context
+19). They are drawn as a procedural grass shake (soft, hard, or sparkling for
+a shiny).
+
+Checks: `tools/gen4_radar_check.lua` (24). `tools/gen4_overworld_harness`
+gained `RADAR_AT`, which switches the radar on in real grass and steps onto a
+patch.
+
+## Poketch: the Trainer Counter and the Color Changer
+
+Two of the Poketch's apps had a background and nothing on it.
+
+**Trainer Counter** (`applications/poketch/trainer_counter`):
+
+- Shows the Poke Radar chain now running (from the field's chain) and the
+  three best chains (`save.gen4RadarRecords`).
+- Each row is a species icon and a three-digit count, with leading zeroes
+  hidden (`UpdateChainCountDigits`), drawn with the cartridge's digit sprites.
+- Positions: icons at (96,32), (112,80), (176,96), (48,104); digits from
+  (144,40), (100,144), (164,160), (36,168).
+- The cartridge draws the icons with an LCD luminance palette; the port's icons
+  stay in colour, as in its other Poketch apps.
+
+**Color Changer** (`applications/poketch/color_changer`):
+
+- A held touch at 136 <= y < 160 and 48 <= x < 184 picks colour
+  `(x − 48) / 16`, from 0 to 7.
+- The slider sprite sits at (56 + 16c, 148).
+- Before this the port read only a drag (not a tap), stepped 17 pixels, and
+  drew no slider. The LCD theme swap itself was already in place
+  (`applyLCDPalette`).
+
+**Link Searcher** is wireless-only and keeps its own background.
+
+Checks: `tools/gen4_poketch_apps_check.lua` (10).
+
+## The shard move tutors
+
+The tutors on Route 212, at the Survival Area and in Snowpoint City were 38
+moves of Platinum that no script could teach: every one of their commands was
+a no-op.
+
+**Data** (`src/import/Gen4MoveTutor.lua`, cache module `gen4_move_tutor`). Read
+from overlay 5, found by content (Dive's 2/4/2/0 row):
+
+- `sTeachableMoves`: 38 rows of 12 bytes each, with the move, its four shard
+  costs, and its location.
+- `sSpeciesLearnsetsByTutor`: 505 five-byte masks, one per species, plus 12
+  form movesets read the cartridge's way (`Pokemon_ReadMovesetMaskByte`).
+- The counts match `res/pokemon/move_tutors.json`: 13 / 17 / 8.
+
+**Commands**, all now real:
+
+- `selectmovetutorpokemon`: the party pick.
+- `checkhaslearnabletutormoves`.
+- `showmovetutormoveselectionmenu`: the moves this Pokemon can learn here and
+  doesn't know, in table order, then EXIT; the move id, or 65534 for EXIT/B.
+- `checkcanaffordmove`: every non-zero cost has to be in the bag.
+- `opensummaryscreenteachmove` / `getsummaryselectedmoveslot`: which move to
+  forget, 0–3, or 4 to keep them all. Drawn as a list rather than the summary
+  screen.
+- `payshardcost`.
+- `resetmoveslot`: writes the move with full PP and no PP Ups.
+
+Checks: `tools/gen4_move_tutor_check.lua` (25). It drives each command and
+confirms all four tutor scripts lower with nothing unlowered.
+
+## Move Reminder, Move Deleter and the Route 210 tutor
+
+Three NPCs who teach or remove moves outside battle. Pastoria's Move Reminder
+and Canalave's Move Deleter were never lowered at all, and Grandma Wilma's
+Draco Meteor (Route 210) was a no-op.
+
+**The teach screen** (`move_reminder.c`). This is one flow that
+`openmoveremindermenu` and `openmovetutormenu` both use:
+
+- The moves on offer: the reminder's list, or the tutor's single move.
+- With a free slot, the move goes straight in with full PP.
+- With four moves known, a forget list appears. An HM can't be forgotten here
+  (`PokemonSummaryScreen_PrintHMMovesCantBeForgotten`), and B returns to the
+  moves.
+- B on the moves gives up. `checklearned{remindermove,tutormove}` then
+  answers 0 (learned) or 0xFF (kept the old moves).
+
+**Reminder list** (`MoveReminderData_GetMoves`): the first 22 learnset rows at
+or below the mon's level that it doesn't already know, each once. Forms read
+their own learnset.
+
+**Deleter**:
+
+- `selectpartymonmove`: any move, HMs included. B answers 0xFF.
+- `clearpartymonmoveslot`: `Pokemon_ClearMoveSlot`, which shifts the moves
+  below up.
+- `bufferpartymovename`.
+
+Checks: `tools/gen4_move_relearn_check.lua` (20).
+
+## The Solaceon Day Care
+
+Every Day Care command was unlowered, so nothing could be deposited and no
+egg was ever laid. Platinum's day care is its own model and lives in
+`src/pokemon/Gen4DayCare.lua` (state in `save.gen4DayCare`). The Johto and
+Hoenn model in `src/pokemon/DayCare.lua` is left alone.
+
+**Pens**:
+
+- Two slots. Each banks one EXP per step.
+- Withdrawing pays out the banked EXP, learns the level-up moves on the way
+  (a full set loses its first move), and shifts slot 1 down.
+- Price is 100 plus 100 per level gained.
+- Shaymin returns to Land Forme on deposit.
+
+**The egg** is first just a personality:
+
+- On every 256th step of the second mon, compatibility (0, 20, 50 or 70) is
+  rolled against 0–99. A success stores the offspring's personality, with an
+  Everstone's 50% chance to keep the nature.
+- `Daycare_HasEgg` means "that personality is non-zero".
+
+The man outside builds the actual egg (`Daycare_GiveEggFromDaycare`):
+
+- Species comes from the mother; Ditto takes whichever role is free.
+- Nidoran and Illumise use the personality's gender bit; Manaphy gives
+  Phione.
+- The incense babies hatch only when a parent holds the incense.
+- The form comes from the mother.
+- Three IVs are inherited.
+- Moves: the father's egg moves, then his TM moves the baby can learn, then
+  the moves both parents know that the baby learns by level.
+- A Pichu with a Light Ball parent gets Volt Tackle.
+
+**Egg cycles**, stored in `mon.eggCycles` (the friendship byte):
+
+- A shared counter takes one cycle off every egg every 255 steps (230 on
+  twelve special dates). Flame Body or Magma Armor in the party takes two.
+- An egg already at zero hatches.
+- This replaces the per-step countdown Gen 4 had been borrowing. Older saves'
+  `eggSteps` read as cycles, capped at the species' `hatchCycles`.
+
+**Egg moves** (`src/import/Gen4EggMoves.lua`, cache module `gen4_egg_moves`):
+`sEggMoves` is read from overlay 5 and found by Bulbasaur's opening row,
+198 species in all.
+
+**Also lowered**: `checkmoney2`, `tryrevertpokemonform` (the Griseous Orb goes
+back to the bag; Giratina, Rotom and Shaymin revert), `checkpoketchenabled`,
+`checkpartyhasbadegg` and `increasepartymonfriendship` (Soothe Bell ×1.5,
+Luxury Ball +1, the egg's home location +1).
+
+**Fix**: `DayCare.baseForm` now reads Platinum's evolution `target` field, so
+Gen 4 pre-evolutions resolve.
+
+**Not done**:
+
+- The Masuda method (parents of different languages).
+- The yard sprites of the boarded Pokemon.
+- The party menu's SUMMARY exit from the deposit picker.
+
+Checks:
+
+- `tools/gen4_daycare_check.lua` (25).
+- `gen4_postgame_daycare_check` was updated to the new model.
+
+## The Veilstone Game Corner
+
+Every coin command was unlowered, so coins couldn't be bought, given or
+counted, and the prize counter showed nothing.
+
+**Coins** (`src/import/Gen4GameCorner.lua`; stored in `save.coins`, the same
+field the Coin Case reads):
+
+- Commands: `addcoins`, `checkcanaddcoins`, `getcoinsamount`,
+  `subtractcoinsfrom{value,var}` and `hascoinsfrom{value,var}`.
+- They follow coins.c: a 50,000 cap, `Coins_Add` clamps, `Coins_Subtract` is
+  all or nothing.
+- **Coin window** (`showcoins` / `updatecoindisplay` / `hidecoins`): a
+  10×2-tile panel beside the money window, showing bank 361 entry 197
+  ("{n} Coins") with five space-padded digits, right-aligned.
+- **Coin Case** (item 444) from the bag prints bank 7 entry 57,
+  "Your Coins: n".
+
+**Prize counter**:
+
+- `getgamecornerprizedata` reads `sGameCornerPrizeData`: 19
+  `{item, price}` rows extracted from ARM9 (cache module `gen4_game_corner`),
+  from the Silk Scarf at 1000 to TM68 at 20000.
+- `showlistmenuremembercursor` opens the list where it was left.
+- `buffervarpaddingdigits` is also lowered.
+
+**Also lowered**:
+
+- `checkbonusroundstreak`.
+- `calchiddenpowertype`: the ROM's bit formula; 0xFFFF for the 16 species
+  that can't learn Hidden Power.
+- `buffertypename` (bank 624).
+
+**Not done**: the slot machine (`267`, overlay 101). It's lowered as a named
+no-op so the census tracks it.
+
+Checks: `tools/gen4_game_corner_check.lua` (29).
+
+## Easy chat, ribbons, fossils, ratings and the Regi ruins
+
+**Easy chat** (`src/pokemon/Gen4EasyChat.lua`):
+
+- Word ids are the cumulative offset over the 11 word banks
+  (`EasyChatWord_FromBankAndEntry`). Bank sizes come from the cache's text.
+- `choosecustommessageword` used to always answer "cancelled", which made
+  Sunyshore's Julia unable to give any ribbon. It now opens a group-then-word
+  picker:
+  - group names come from bank 436;
+  - words are listed alphabetically;
+  - Pokemon is limited to species already seen;
+  - locked tough words are left out.
+- `buffercustommessageword` prints the chosen word.
+
+**Ribbons**: `bufferribbonname` reads bank 535. Each ribbon's name entry is
+its own id (checked for all 80).
+
+**Fossils** (`scrcmd_fossil.c`): `getfossilcount`, `getspeciesfromfossil` and
+`findfossilatthreshold`, using the seven-entry fossil table in its ROM
+order.
+
+**Pokedex ratings** (`loadpokedexrating`): Rowan's and Oak's rating message
+ids, using the cartridge's thresholds:
+
+- the local rating counts seen Sinnoh species and checks Eterna's
+  first-arrival flag;
+- the national rating counts caught species, excluding the 11 mythicals, and
+  has gendered lines at 410+ and on completion.
+
+**Regi ruins** (`activateregiruinsdot`): the seven dot coordinates of each
+ruin. All seven lit is state 260.
+
+**Also lowered**:
+
+- `getpartyrotomcountandfirst`
+- `gethour`
+- `countpartyeggs`
+- `tryrevertpartypokemonforms`
+- `findpartyslotwithnature`
+- `messageunown` (the line, without the Unown font)
+
+Checks: `tools/gen4_field_queries_check.lua` (29).
+
+## Ball Seals and Sunyshore's seal counter
+
+The seal counter in Sunyshore Market only logged a warning, and the
+Unown-seal girl's commands were unlowered.
+
+**Data** (`src/import/Gen4Seals.lua`, cache module `gen4_seals`). Two ARM9
+tables, found by content:
+
+- `sealTypeValues`: 80 rows of 10 bytes, each with a name index, the
+  alphabet-seal flag and a price.
+- `SunyshoreMarketDailyStocks`: seven seal lists, one per day, Monday first.
+
+Names come from bank 12 (singular) and bank 13 (plural), looked up through
+each row's own name index.
+
+**Seal Case** (`save.gen4Seals`):
+
+- `GiveOrTakeSeal` rules: at most 99 of a kind, and a change that would go
+  past 99 or below zero is refused rather than clamped.
+- Capsules aren't modelled, so no seal is ever "in use".
+
+**Commands**:
+
+- `giveortakeseal` (the quantity is an s16, so a var holding 0xFFFF takes one)
+- `countsealoccurence`
+- `countuniquesealsinsealcase` (was `g4_no_feature`)
+- `bufferballsealname` / `bufferballsealnameplural`
+- `findpartyslotwithspecies`
+- `getpartymonform`, via the new `Gen4Forms.index`
+
+**Counter**: `pokemartseal <day>` opens the shop screen through a goods
+adapter in `Gen4ShopMenu`:
+
+- BUY / SEE YA! only, as in `MART_TYPE_SEAL`;
+- prices come from the seal table;
+- the count shown is what's in the Seal Case;
+- a purchase that wouldn't fit shows bank 543 entry 14, "The Seal Case is
+  full.", and nothing is charged.
+
+**Seal Case** (item 434) from the bag prints bank 7 entry 92, "Seals: n".
+
+**Not done**: the capsule editor.
+
+Checks: `tools/gen4_seals_check.lua` (24).
+
+## The Route 224 tablet, and link sync
+
+**Tablet** (Oak's Letter, which leads to Shaymin):
+
+- `openshaymintabletnamingscreen` opens the naming screen with 10 characters
+  under bank 422 entry 6, "Thank who?".
+- The name is kept in `save.gen4TabletName` and `buffertabletname` reads it
+  back.
+- The var gets the screen's return code: 0 for a name, 1 for nothing
+  entered.
+- The scene's field-volume dip and BGM fade-in are declared fades, like
+  `fadeoutbgm`.
+
+**Opcode `0x135`** is `CommTiming_StartSync`, used 53 times in the common
+scripts. With fewer than two players connected it resumes at once, so it now
+lowers to nothing, which matches the cartridge's single-player behaviour
+rather than being a gap.
+
+Checks: `tools/gen4_tablet_check.lua` (6).
+
+## Poffins: cooking, the Poffin Case and feeding
+
+The Poffin House and the Poffin Case were stubs. All three parts now work.
+
+**Data**:
+
+- Each berry's five flavors and smoothness are bytes 7–12 of its
+  `nuts_data.narc` record (`Gen4BerryData.flavors`, cache module
+  `gen4_berry_flavors`).
+- Poffin type names are bank 465.
+- The ROM's text comes from four banks:
+  - 464: cooking messages and the results page;
+  - 463: the case;
+  - 462: how the Pokemon ate;
+  - 455 entry 178: "It won't eat any more...".
+
+**Rules** (`src/pokemon/Gen4Poffin.lua`), transcribed:
+
+- `Poffin_MakePoffin`: the type comes from one or two flavors; three is Rich,
+  four or five is Overripe, any flavor ≥ 50 is Mild. A foul cook gives a
+  cleared Poffin with three random flavors set to 2.
+- `Poffin_CalcLevel`.
+- The cooking result from overlay 83:
+  - flavor differences around the five-flavor ring, minus the count of
+    negatives;
+  - × 1,800,000 / frames (one minute is ×1);
+  - minus burns and overflows;
+  - smoothness is average smoothness minus the number of berries, at least
+    15;
+  - a duplicated berry or four negatives makes it Foul.
+- `PoffinCase_UpdateMonContestStats`: flavors go to cool / beauty / cute /
+  smart / tough and smoothness to sheen; the liked flavor ×1.1 and the
+  disliked ×0.9 by nature; each stat capped at 255; friendship +1.
+- The case holds 100.
+
+**Stirring** (`src/pokemon/Gen4PoffinStir.lua`): overlay 83's per-frame
+physics at 30 Hz:
+
+- the finger's tangential arc length ×160, half near the centre and nothing
+  past the rim;
+- per phase: acceleration {8, 7, 7}/204 and friction {64, 72, 80}, with
+  velocity clamped to ±3640;
+- the angle advances `CalcRadialAngle(68, v/160)`;
+- turns only count in the arrow's direction, and the direction changes on
+  random timers;
+- an overflow every 30 frames at full speed (never in the last phase); a burn
+  every 90 slow frames, the first of each slow stretch being only a warning;
+- three phases of 600 frames or 16 turns.
+
+**Screens**:
+
+- `src/ui/Gen4PoffinCooking.lua` (`openpoffincooking 0`, cooking alone):
+  - pick a Berry, then stir by touch or mouse drag, or hold RIGHT / LEFT for
+    a virtual finger that speeds up the longer the key is held;
+  - the results page and the keep-cooking prompt use the ROM's text.
+- `src/ui/Gen4PoffinCase.lua`: the bag's Poffin Case (item 449) with GIVE /
+  TRASH / BACK and the taste lines.
+- The pot is drawn procedurally; the overlay's own art isn't extracted.
+
+**Commands**: `checkcancookpoffin` (1 no berries / 2 case full / 0),
+`openpoffincooking`, `checkhasemptypoffincaseslot`,
+`getemptypoffincaseslotcount` and `givepoffin`.
+
+**Decoder fix**: `givepoffin` (0x289) had been listed as variable-length, so
+the decoder stopped at it and never decoded the rest of the Hotel Grand Lake
+gift script. Its handler reads seven fixed halfwords, so it now has a fixed
+spec. `tools/gen4_scripts_reextract.lua` re-decodes `map_scripts.lua` in an
+existing cache without a full import.
+
+**Not done**:
+
+- Group cooking (it needs the link).
+- The cooking overlay's art.
+
+**Checks**:
+
+- `tools/gen4_poffin_check.lua` (30).
+- `tools/gen4_poffin_harness` plays a cook and renders `poffin_cook.png`.
+  `FOLLOW=0` holds RIGHT only, and `LIFT=0` never lifts the finger.
+
+## Trainer eyes-meet themes and BGM fades
+
+Platinum's music plays from the cartridge's SDAT (`src/audio/NitroAudio.lua`),
+but the script commands around it were still declared no-ops, written when a
+Platinum cache had no music.
+
+**Eyes-meet themes** (`src/import/Gen4TrainerMusic.lua`, cache module
+`gen4_trainer_music`):
+
+- `sTrainerEncounterBGMs` holds 79 `{class, sequence}` rows, read from ARM9
+  by content (Aroma Lady → SEQ_EYE_LADY, Ruin Maniac → SEQ_EYE_MOUNT).
+- A class the table doesn't name gets SEQ_EYE_KID, as in
+  `FieldBGM_GetEyesMeetForTrainer`.
+- `playtrainerencounterbgm`, the first row of the common trainer-encounter
+  script (M1114) that every spotted trainer runs, now plays it.
+- The approach in `OverworldController:startTrainerApproach` starts the same
+  theme when a Gen 4 trainer spots you. Before, it fell back to Game Boy-era
+  class guesses that have no Platinum songs, so Sinnoh's trainers walked up in
+  silence.
+
+**Fades** (`Music.dsFade` / `Music.setPlayerLevel`): the DS player's two
+volume levels, multiplied into the option volume.
+
+- `fadeoutbgm <volume> <frames>` and `fadeinbgm <frames>` (from zero) ramp the
+  BGM's own level over 60 Hz frames, and the script waits for them
+  (`ScriptContext_IsSoundFadeFinished`).
+- `setplayervolume` sets the field player's level, which outlives songs.
+- A new song, or entering a map (`FieldBGM_PlayForMapHeader`), starts at full
+  level.
+
+Checks:
+
+- `tools/gen4_trainer_music_check.lua` (10): every trainer in the cache gets
+  an eyes-meet sequence.
+- `tools/gen4_bgm_fade_check.lua` (11).
+
+## Super Contests, stage one
+
+The Hearthome Contest Hall's 40-odd contest commands were all unlowered. This
+stage adds the contest's data, its rules, the hall's scripts and the
+Visual-round and final scoring. The Dance and Acting competitions and the
+player's dress-up screen come next.
+
+**Data** (`src/import/Gen4ContestData.lua`, cache module `gen4_contest`), from
+`/contest/data/contest_data.narc`:
+
+- 96 NPC contestants, each with species, four moves, condition stats, rank,
+  type flags, the competition/practice/postgame tags, a dress-up per visual
+  theme, and fame;
+- 12 judges, marked regular or head per type;
+- 96 dress-ups of up to 20 placed accessories;
+- 12 theme tables giving each accessory's worth.
+- Names come from banks 205 (contestants), 207 (judges) and 204 (rank and type
+  names).
+
+**Rules** (`src/pokemon/Gen4Contest.lua`):
+
+- The contest LCRNG (0x41C64E6D, 0x6073, 32-bit exact) drives:
+  - the visual theme (`sub_02095A74`'s rank-limited lists);
+  - opponent selection (`sub_02094F04`: rank, type, competition kind, the
+    postgame split, and a special guest placed at random);
+  - the judges (`sub_020954F0`: two regulars and a random head judge, swapped
+    into the middle).
+- **Visual condition score** (`ov17_0223F374`): the type's stat plus half of
+  its two neighbours and Sheen, then ×1.10 for the type's own Scarf or ×1.05
+  for its two neighbours'.
+- **Dress-up score**: the worth of each worn accessory in the theme's table.
+- **Stars and hearts**: the rank's eight and three thresholds.
+- **Final scoring** (`ov17_02251930`): each round scaled to its best
+  contestant, weighted (a third each for an official contest), turned into
+  192-pixel bars and summed; placement breaks ties randomly.
+- Contest fame, the ribbon ids (33 + type × 4 + rank), and the first-win
+  accessories (the barrette, balloons, Ultra prize and Master stage of the
+  type's colour, verified by name against bank 386).
+
+**Commands**:
+
+- Contest flow: `openpartymenuforcontest` / `getcontestpartymenuresult` (the
+  ROM's eligibility rule: not an egg, not fainted, rank ≤ that type's
+  ribbons, two or more moves), `newcontest`, `runcontestapplication`,
+  `endcontest`.
+- Buffers: judge, trainer, Pokemon, entry number, rank, type, winner, ribbon.
+- Queries: placement, winner, entry, object graphic, fame, mode, ribbon,
+  first-win accessory, skip-ceremony.
+- `endcontest` on a win: the ribbon, the Contest Master flag at Master rank,
+  contest records, and the friendship gain (+3 / +2 / +1 by tier, Luxury Ball,
+  Soothe Bell).
+- Accessories: `addaccessory` / `canfitaccessory`, into `save.gen4Accessories`
+  (ids under 61 stack to 9, the rest are unique).
+- `hidepoketch` / `showpoketch` (the watch screen stays blank while hidden).
+- The link syncs, text-speed locks, HBlank toggles and network icon lower to
+  nothing, which is what the cartridge does without a link.
+- The stage's camera flashes and the change into contest attire are declared
+  presentation no-ops.
+
+**Screen**: `src/ui/Gen4ContestScreen.lua` shows the Visual round's stars and
+hearts and the final bars in placement order.
+
+**Not done yet**:
+
+- The player's dress-up screen (the player enters undressed, so gets no
+  hearts).
+- The Dance and Acting competitions. They are scored level for every
+  contestant, which the final normalization turns into equal bars, so they
+  don't affect placement until they're written. The screen says so.
+- The link contest commands.
+
+**Checks**:
+
+- `tools/gen4_contest_check.lua` (30).
+- `tools/gen4_contest_harness` renders the pages to `contest_pages.png`.
+
+## Fix: the opposing trainer in battle
+
+Reported from play: *"Trainer sprites are missing from battle."* The data was
+fine: all 928 trainers carry a `pic`, and `BattleState` loads it as
+`trainerPic`. The Gen 4 layout never drew it. Its renderer drew the player's
+back sprite (`drawTrainerBack`) but had no opposing-trainer branch, and
+`battlerHidden` didn't hold the foe's Pokemon back, so every Sinnoh trainer
+battle opened with the Pokemon already on the field.
+
+- `Gen4Battle.drawEnemyTrainer` draws the trainer on the foe's platform (and
+  the second trainer on the second foe's slot in a two-trainer double),
+  moved by the engine's own "foe" slide. The trainer leaves before the
+  send-out and comes back after the last Pokemon falls.
+- `battlerHidden` now hides the foe while `showEnemyTrainer`,
+  `enemySendingOut` or `enemyHidden` is set, the same flags the shared pic
+  layer uses.
+- A healthbox comes in with its Pokemon: none for the foe while its trainer
+  is up or its ball is in the air, none for the player while the back sprite
+  is up. A box held back on purpose counts as drawn, so the caller doesn't
+  fall back to its stand-in HUD. That fallback had drawn a stray
+  "BURMY…5" over the real box.
+
+Verified frame by frame with `tools/gen4_battle_harness`, which gains
+`TRAINER=<id>` (a trainer battle) and an ImageData override, so the battle
+pics now load from the cache in the harness instead of placeholders:
+
+- the Youngster on the platform for "Youngster Logan wants to fight!";
+- Burmy and its box after "sent out BURMY!";
+- the wild-battle frame unchanged.
+
+## Fix: prize money, and the money lost in defeat
+
+Reported from play: *"Trainers dont give you any money."* The payout read
+`trainer.baseMoney`, which only the Game Boy and Hoenn imports write; a Sinnoh
+trainer record has none, so every win paid $0.
+
+**Prize** (`src/import/Gen4TrainerPrize.lua`, cache module
+`gen4_trainer_prize`): `sTrainerClassPrizeMul`, one byte per trainer class
+(105), read from the battle overlay (16) by content and checked against the
+decomp header (all 105 match). `BattleScript_CalcPrizeMoney`:
+
+- the trainer's **last** party member's level × 4 × the class byte;
+- × 2 for an Amulet Coin. Platinum checks **every** battler that comes onto
+  the field, either side, and its items name the effect "MONEY_UP". The old
+  check compared against a Game Boy-era number, so the coin never counted;
+- × 2 again for one trainer's double battle. Two trainers who walked up
+  together are a tag battle and each pays its own.
+
+Youngster Logan (one Lv5 Burmy) pays $80.
+
+**Defeat**: Platinum takes `BattleSystem_CalcMoneyPenalty`, not half the money:
+
+- the party's highest level × 4 × the badge count's multiplier (2, 4, 6, 9,
+  12, 16, 20, 25, 30), capped at the wallet;
+- taken inside the battle, as `subscript_battle_lost` does, with its lines
+  from bank 368: "is out of usable Pokemon!", then "paid out $N to the
+  winner." (trainer) or "dropped $N in panic!" (wild), then "... ... ... ..."
+  and "blacked out!";
+- a poison whiteout in the field takes nothing, since the cartridge only ever
+  takes money in battle;
+- the Battle Tower's can-lose battles take nothing.
+
+Checks:
+
+- `tools/gen4_trainer_prize_check.lua` (7).
+- `tools/gen4_battle_harness` gains `WIN=1` and `LOSE=1`, which run the
+  faint paths and print the wallet and the lines (win +$80; loss −$96 at
+  Lv12 with no badges, instead of −$1500).
+
+## Super Contest: the Acting competition
+
+The Acting round is now played turn by turn. Before this it scored every
+contestant the same. The rules are in `src/pokemon/Gen4ContestActing.lua`
+and the screen is `src/ui/Gen4ContestActing.lua`, both ported from overlay017.
+
+**The tables**: two tables are read from the ROM by content and added to
+the `gen4_contest` cache:
+
+- `effects`: ARM9 `Unk_020F568C`, 24 × 26 bytes. For each contest effect it
+  holds the base appeal, the two description lines for the move menu
+  (bank 210), and up to five result lines (bank 211).
+- `actingAI`: overlay 17 `Unk_ov17_02253C30`, 165 rows of 12 bytes. These
+  are the NPCs' move-choice rules: the performance position, one of 28
+  conditions, the moves to weight, how the judge marks are used, and the
+  weights by AI level (contest_data's 2-bit field).
+
+**A turn**: each contestant picks a move and a judge. Each performance is
+then scored in the order `ov17_0223C100` uses:
+
+1. base appeal;
+2. the move's effect (most of the 24 effects run here);
+3. last turn's Double Next Turn;
+4. Voltage. Same type +10, opposite types −10, a neighbour type 0. At 50
+   the judge pays +50, or +80 for the head judge (judge 1), then resets.
+
+After all four:
+
+- the judge share: +30, 20, 10 or 0 for 0–3 others on the same judge;
+- the judge-dependent effects (Doubled, Unique and All Same Judge);
+- Pity Points.
+
+The next order is lowest turn score first. On a tie, whoever performed
+later goes first. Perform First / Last and Random Order override this.
+Moves can't be repeated in consecutive turns unless Consecutive Use worked.
+After four turns, the totals feed the final scoring as the Acting round.
+
+**The first order**: after a Dance round it is best Visual + Dance points
+first. Otherwise it is ids 0..3, reversed for a practice.
+
+**The NPCs** follow `ov17_02246F9C`:
+
+- every matching AI row adds weight to moves and judges;
+- the best move wins, with ties broken by the contest RNG;
+- with no judge preference, an NPC avoids the player's judge with a chance
+  of 230/128/51/0 out of 256 by rank.
+
+Checks:
+
+- `tools/gen4_contest_acting_check.lua` (35): the tables, hand-worked
+  turns, and the NPC choice rules.
+- `tools/gen4_contest_harness` now plays an official contest through all
+  four Acting turns. Set `LINES=1` to print every line.
+
+Still missing: the Dance competition, the player's dress-up screen, and
+link contests.
+
+## Super Contest: the cartridge's art
+
+The contest screens now draw Platinum's own graphics instead of the port's
+plain drawing. `src/import/Gen4ContestArt.lua` builds every picture from
+`/contest/graphic/contest_bg.narc` and `contest_obj.narc`.
+
+pokeplatinum ships both NARCs prebuilt, so no member has a name. Each index
+is the one overlay017 passes to its loaders, and the module's header lists
+the source file for each.
+
+The importer writes the pictures to `assets/generated/gen4/contest/` and
+indexes them in the cache module `gen4_contest_art`. To add them to an
+existing cache without a re-import:
+
+```
+love tools/gen4_contest_art_extract <rom> <asset root> <cache dir>
+```
+
+### Acting, top screen
+
+As `ov17_0223BBA8` builds it:
+
+- BG3: the audience and stage.
+- The three judges at their podiums, with up to five Voltage stars each and
+  the head judge's heart.
+- The performer, at (216, 112).
+- BG2: four score panels in turn order, coloured by contestant (slots
+  6/7/10/11). Each has the Pokémon's and trainer's names and up to 24 hearts.
+  There are six hearts to a row, and the colour steps up every six.
+- BG1: the message window, with text at tile (11, 19).
+
+### Acting, bottom screen
+
+These are `ov17_0223F7E4`'s pages:
+
+- the Pokémon Contest logo with the rank and contest name;
+- the four move buttons. Each is in its move's type colours, from the
+  overlay's own table, and greyed when it can't be used. A button shows the
+  move name, its two effect lines and its appeal hearts;
+- the three judge buttons with the head-judge mark, and EXIT.
+
+The bottom screen follows the second-screen setting:
+
+- on a real second panel, or in the corner inset, it is always shown;
+- in swap mode, or with no second screen, it appears only while you pick a
+  move or a judge.
+
+### Visual round
+
+- The stage has its curtain.
+- Each entry comes on in entry order, introduced with bank 209's lines
+  ("Dexter: Entry number 1! ...").
+- Its stars and hearts are drawn above it. That placement is the port's own.
+
+### Results
+
+- `ov17_02250744`'s board: four rows, each with a 192-pixel bar track (the
+  cartridge's bar length).
+- The bars fill in round by round as bank 218 announces each round, then
+  the winner is named and the placings are shown.
+- The audience is on the bottom screen.
+
+### Found on the way
+
+- **Sprite palettes.** `SpriteSystem_NewSprite` gives each sprite an
+  explicit palette: the resource's base plus the template's `plttIdx`. This
+  replaces the cell's own palette instead of adding to it. The podium cell
+  names palette 2, and the three podiums are rows 2, 4 and 5. Treated as an
+  offset, two of them came out black.
+- **Backdrop.** Where every layer is transparent, the DS shows BG palette
+  entry 0. That colour is filled in under each screen's bottom layer.
+- **`CacheFs.mkdirReal`.** It called `tryMkdirs` before that local was
+  defined, so every call raised an error. In the game-data folder picker,
+  SaveData's `pcall` hid the error, and a folder that didn't exist yet was
+  reported as "could not be written to". Fixed by defining the function
+  below its helper.
+- **Acting judge picker.** It read the A button twice, and the first read
+  could swallow the press.
+
+### Checks
+
+- `tools/gen4_contest_art_check.lua` (110). It composes everything from the
+  ROM and checks every size, the solid backdrops, the coloured podiums, five
+  distinct button colours plus the greyed one, and the 192-pixel bar track.
+  With a cache dir, it also checks the index.
+- `tools/gen4_contest_harness` now reads pictures from
+  `POKEPORT_ASSET_ROOT`, as the battle harness does.
+
+### Not yet drawn from the cartridge
+
+- the score bars' own sprites (the bars are plain fills on the cartridge's
+  tracks);
+- the Visual round's audience reactions;
+- the Dance round, which isn't built.
+
+## The Mart counter, the Poffins in the cartridge's art, and a sweep
+
+### The Mart (src/ui/Gen4ShopMenu.lua): the black box was the field camera
+
+The shop art (shop_gra `tilemap`) is see-through at the top left on purpose:
+the field shows through a window there. In `shop_menu.c`, choosing BUY first
+slides the field camera right, eight units a frame for ten frames, or eight
+frames when the player faces west (`Shop_GetCameraPosDest`,
+`Shop_MoveCamera`). Only then does the counter art appear. The slide puts
+the player and the clerk inside that window.
+
+The port never slid the camera. The window showed whatever lay up and to the
+left of the player, which in a small mart is the black outside the room.
+The flow now follows the overlay:
+
+- BUY / SELL / SEE YA! is a framed window at tile (1, 1) over the field,
+  with the clerk's line in the message box.
+- BUY slides the camera (the shop drives `followCamera` plus the offset,
+  since the field doesn't update under it) and then shows the counter.
+- Backing out slides it back with "Is there anything else I may do for
+  you?"; SEE YA! ends on "Please come again!".
+- Every line comes from bank 543, with no more hardcoded English.
+- The money window is "Money" over the right-aligned amount in the
+  standard frame at (1, 1), 9 × 4.
+
+### Platinum's menu arrow
+
+Platinum's font carries no `symbols`, so every Gen 4 menu that drew
+`Theme.cursor` used Gen 1's `$ED`, which is `)` in pl_font's charset.
+`Theme.load` now takes `CHAR_ARROW_MENU` (0x011F, `‣`, as
+`ColoredArrow_New` prints it) and 0x011D `↓` from a Gen 4 font's own
+charmap. This fixes the YES / NO box and every other shared Gen 4 menu.
+
+### Poffins in their own art (src/import/Gen4PoffinArt.lua)
+
+The importer builds three archives into `gen4_poffin_art`:
+
+- **nutmixer**: the cooking.
+- **poru_gra**: the Poffin Case.
+- **poruact**: the 29 Poffin pictures.
+
+To add them to an existing cache:
+
+```
+love tools/gen4_art_extract <rom> <asset root> <cache dir> [contest] [poffin]
+```
+
+**Cooking.** The pot is overlay083's eight 3D software sprites over
+256×256 textures stored as linear bitmaps. They are drawn in
+`ov83_0223E368`'s order:
+
+1. the tablecloth;
+2. the flames for the phase's heat;
+3. the batter, turned by the stir's angle, scaled by 1 + ¼ of the speed
+   above 910 over 2730 (`ov83_0223FB68`), and cross-faded into the next
+   batter over a phase's last 60 frames or last 5 turns
+   (`ov83_0223FC58`);
+4. the rim.
+
+The spoon follows the finger. The stir arrow appears whenever the batter
+turns the wrong way (`ov83_0223C558`). On a second screen, the top screen's
+own picture is shown.
+
+**The Poffin Case** (src/ui/Gen4PoffinCase.lua) is now the two-screen app
+from `applications/poffin_case`, not field menus:
+
+- Top screen:
+  - six rows at a time, newest first, with CLOSE last;
+  - the cursor box at (105, 40 + 16 × row) and the scroll arrows;
+  - the chosen Poffin's picture at (231, 76), its "SMOOTH / n" and its
+    flavour dots;
+  - GIVE / TRASH / BACK, and "Discard this …?" with YES / NO.
+- Bottom screen: the flavour pentagon with its six coloured filter buttons
+  and the chosen filter's line. On the cartridge they are touched; here L / R
+  also work.
+- A cache without the art keeps the old menus.
+
+### Two decoder fixes the Poffin art needed
+
+- **Compressed palettes.** A PMCP palette (nitro `-pcmp`) can write its
+  TTLP size inverted (`-invertsize`, 0x200 − size). poru_gra's says 160
+  bytes for eleven palettes. `Gen4Graphics.palette` now takes the count and
+  each palette's slot from the PMCP list.
+- **Texture bitmaps.** These textures are linear bitmaps, not tiles
+  (`Gen4PoffinArt.bitmap`).
+
+### Options (src/ui/Gen4Options.lua)
+
+The layout now matches `options_menu.c SetupWindows`: the title at tile
+(1, 0), the entries in the standard frame from (1, 3) with seven rows, and
+the description in the MESSAGE box at (2, 19). Before, the description
+shared a four-tile box with the title, the two printed over each other, and
+its second line was cut off.
+
+### Sweep
+
+Every one of the 139 Gen 4 checks was run, with the arguments each one
+asks for:
+
+- **Outdated checks, fixed:**
+  - `gen4_field_moves_check` still listed `givepoffin` (0x289) as
+    variable-width. It is a fixed 16 bytes (`ScrCmd_GivePoffin`), which is
+    now asserted.
+  - `gen4_poketch_services_check` expected the shop to quit on SEE YA!. It
+    now quits after the parting line, and touch input waits for the camera.
+- **Fixed in the screens:** the Poffin screens used a hand-rolled
+  `{STRVAR}` gsub. They now buffer on the game and let `gen4Markup` expand
+  the strings, as the house rule asks.
+- **Not regressions (environment):** the sweeps that list `src/` by
+  shelling out to `ls` (`machine`, `constants_wiring`, `money_window`) read
+  0 files in this runner. `dynamic_power` wants decomp files this checkout
+  lacks.
+- **Pre-existing:** `gen4_prop_anim_check` disagrees on joint-capable prop
+  counts (40 vs 39). It is untouched by this work.
+
+### Harnesses
+
+The overworld, Poffin and new Poffin Case harnesses read pictures from
+`POKEPORT_ASSET_ROOT`. `tools/gen4_poffin_case_harness` renders the case's
+states on both screens.
+
+## Mystery Gift, the Hall of Fame and credits, Options, feeding, group cooking and the Dance
+
+### The Mart's Mystery Gift deliveryman (src/pokemon/Gen4MysteryGift.lua)
+
+The deliveryman stood in every Mart because `mysterygiftgive` (0x23E) had
+no width rule. The decoder stopped at the Mart's OnTransition (common script
+10200) before it reached the check that hides him. The command's width
+depends on its stage (`ScrCmd_MysteryGiftGive`): stages 1-3 read one more
+word, and stages 5-6 read two more. With that rule the scripts were
+re-extracted, and he now appears only when a gift is waiting, as the
+cartridge does.
+
+Stages are lowered to `g4_mystery_gift`:
+
+- whether a gift is waiting, and its type;
+- whether it can be received (bank 379 #4 when the party is full, #5 when
+  the Bag is);
+- giving it:
+  - The **Member Card**, **Oak's Letter** and **Azure Flute** go into the
+    Bag and set var 0x4043 to the distribution's magic value
+    (`checkdistributionevent`).
+  - Oak's Letter also sets Shaymin's state var 0x4057 to 1.
+  - The **Manaphy Egg** joins the party as an egg.
+- the line to say (bank 379 #13-16).
+
+**PORT ADDITION, as in Gen 3:** after each Hall of Fame entry the player
+picks one gift they have not taken yet. Once a gift is taken it leaves the
+list, and one more gift becomes owed per Hall of Fame entry.
+
+Check: `tools/gen4_mystery_gift_check.lua` (30).
+
+### Hall of Fame and credits (src/ui/Gen4HallOfFame.lua, Gen4Credits.lua)
+
+`cleargame` now runs Platinum's order (`g4_clear_game`):
+
+1. the Hall of Fame;
+2. the record;
+3. the Mystery Gift pick;
+4. "Saving..." and the save;
+5. the credits;
+6. back to the title.
+
+**Hall of Fame.** The pictures come from `dendou_demo`: the stage, the
+overlay and the party shot. Timing follows `hall_of_fame.c`:
+
+- each Pokémon slides in, with its name, level, OT and met place (from the
+  area-popup names);
+- then the party with the player's trainer sprite, and the confetti.
+
+The music is SEQ 1171.
+
+**Credits.** The pictures are `ending.narc`'s:
+
+- the bike ride at morning, day and night;
+- ten memories for Lucas or Dawn;
+- Twinleaf;
+- "FIN".
+
+The staff roll is overlay 99's table of 237 lines (y and centring) in bank
+548, with `{COLOR n}` taken from `text.NCLR`. It scrolls 1 px a frame on
+both screens. START skips to FIN only when the game had been cleared
+before (`main.c`). The music is SEQ 1186.
+
+**Not drawn:** the 3D trees and props, and the bike's blink. The Hall of
+Fame spotlights are drawn flat.
+
+`Gen4Graphics.palette` now reads 256-colour (8bpp) palettes from a PMCP
+list. The memories need it.
+
+Harness: `tools/gen4_ending_harness`.
+
+### Options (src/ui/Gen4Options.lua)
+
+The rows are in the cartridge's order (bank 220): text speed, sound, battle
+scene, battle style, button mode, frame, then CLOSE. Every choice of a row
+is printed side by side:
+
+- choices at x 108 + 48 per choice; the button modes are packed by width;
+- the chosen one in red, the rest in ink;
+- the frame shows only its current number;
+- a red rounded bar marks the row the cursor is on.
+
+**Not done:** the YES/NO prompt on leaving with changes. Changes still
+apply at once.
+
+### Feeding (src/ui/Gen4PoffinFeed.lua)
+
+GIVE in the Poffin Case now plays `cutscene.c`, on `porudemo.narc`'s two
+screens:
+
+1. the Poffin arcs up and shrinks while the Pokémon grows and hops forward;
+2. the cry;
+3. back to its place;
+4. three hops if it liked the Poffin, a shake if it did not;
+5. bank 462's line;
+6. the fade.
+
+### Group Poffin cooking (src/ui/Gen4PoffinCooking.lua)
+
+"In a group" runs `StartBattleServer` / `StartBattleClient` mode 6 (the
+Wireless Club), then `OpenPoffinCooking TRUE`.
+
+**Platinum has no computer cooks.** Every partner in a group is another DS.
+
+**PORT ADDITION:** the link commands, when given mode 6, ask how many will
+cook (2-4). Local cooks fill the other places, each bringing a different
+Berry. They stir the right way round, are a little late to notice a change
+of direction, ease off when the pot runs fast, and keep pace with the
+player's finger.
+
+Every other link mode answers COMM_CLUB_RET_ERROR (3), the path each
+script already has for a link that would not start.
+
+The rest is the cartridge's group rules (`ov83_0223F7F4.c`):
+
+- every cook's weighted arc is summed and divided by the number of cooks;
+- **sync** (`ov83_0223FCE8`): the pot neither slow nor overflowing, every
+  finger on the batter and moving more than 600, all within 32 px of the
+  first cook's. After 4 frames like that, each frame counts and sparkles,
+  and the direction holds while the group is in sync;
+- the smoothness loses min(10, (synced / 6) × {0, 1, 5, 10}[cooks] / 10);
+- the same Berry twice makes a Foul Poffin;
+- each cook gets one Poffin per cook.
+
+The top screen is `top_screen_multi`, with the names centred on its plates.
+
+### The Dance competition (src/pokemon/Gen4ContestDance.lua, src/ui/Gen4ContestDance.lua)
+
+The Dance round is no longer scored level. It is played to overlay017's
+rules:
+
+- **Songs.** Seven songs by rank and type (`Unk_ov17_0225312C`). A step
+  is 1800 / BPM frames; a measure is 16 steps (or 12).
+- **Rounds.** Four rounds, led by contestants 3, 2, 1, then the player,
+  for two measures each.
+- **Timing.** The lead moves in the first half and the others copy in the
+  second. A move snaps to the nearest half step and its distance is
+  measured against the song's thresholds:
+  - Excellent: 2 points;
+  - Good: 1;
+  - Miss: 0.
+- **Copying.** A copy counts only if the lead moved exactly half a measure
+  earlier, in the same direction.
+- **Computer dancers.** Their skill comes from contest_data (bits 14-15):
+  - leading follows `ov17_0224E990`: slots, jitter, and repeat odds by rank;
+  - copying follows `ov17_0224EE90`, with errors for the weak direction, a
+    change of direction, a change of beat, and a long gap.
+- **Score.** The points over all four rounds are the contest's `dance`
+  score.
+
+At Normal rank a half step is 7.5 frames and Good reaches 3, so only a
+wrong or unmatched copy can miss.
+
+**Art** (added to `Gen4ContestArt`):
+
+- the stage for each layout (contest_bg 13 with map 14/15, palette 32 +
+  36);
+- the dance pad (18, maps 28 under 17, palette 33);
+- contest_obj palette 6's sprites: the notes by move and by owner (yours,
+  another dancer's, the lead's ghost), the Excellent / Good / Miss bubbles,
+  the beat ball, the playhead, the arrow and the shadow.
+
+The words are bank 206's: the pad's labels, "UP" for Diglett and Dugtrio,
+the verdicts, the instructions, and the leader's announcement.
+
+**Buttons:** UP / X is JUMP, DOWN / B is FRONT, LEFT / Y is LEFT, and
+RIGHT / A is RIGHT. The pad dims while the player cannot move.
+
+**Not done:**
+
+- the 3D particles and fireworks;
+- the pad's press animation;
+- the sound effects (no SE table on hand).
+
+Check: `tools/gen4_contest_dance_check.lua` (26). Harness:
+`tools/gen4_contest_dance_harness`.
+
+### Fixed on the way
+
+`Gen4PoffinCooking` and `Gen4MysteryGift` required `src.ui.TextBox`, which
+does not exist. They now require `src.render.TextBox`, so "keep cooking?"
+and the gift picker's messages no longer error.

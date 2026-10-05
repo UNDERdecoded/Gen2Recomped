@@ -63,6 +63,20 @@ function love.load()
         end
         return held[path] or realImage(path, ...)
       end
+      -- ...and the ImageData path the battle pics are baked through
+      local realData = Assets.imageData
+      local heldData = {}
+      Assets.imageData = function(path, ...)
+        if type(path) == "string" and not heldData[path] then
+          local f = io.open(assetRoot .. "/" .. path, "rb")
+          if f then
+            local bytes = f:read("*a"); f:close()
+            local okD, d = pcall(love.image.newImageData, love.filesystem.newFileData(bytes, path))
+            if okD then heldData[path] = d end
+          end
+        end
+        return heldData[path] or realData(path, ...)
+      end
     end
 
     local Data = require("src.core.Data")
@@ -130,9 +144,20 @@ function love.load()
         tostring(d and d.name), tostring(d and d.holdEffect),
         tostring(d and (d.holdEffectParam or d.effectParam))))
     end
-    local battle = BattleState.newWild(Game,
-      tonumber(os.getenv("SPECIES") or "396"),
-      tonumber(os.getenv("LEVEL") or "3"))
+    -- TRAINER=<id>: a trainer battle against Data.trainers[id] instead.
+    local battle
+    if os.getenv("TRAINER") then
+      battle = BattleState.newTrainer(Game, tonumber(os.getenv("TRAINER")), 1)
+    else
+      battle = BattleState.newWild(Game,
+        tonumber(os.getenv("SPECIES") or "396"),
+        tonumber(os.getenv("LEVEL") or "3"))
+    end
+    -- SAFARI=n: a Great Marsh battle with n Safari Balls left.
+    if os.getenv("SAFARI") then
+      Game.save.safari = { balls = tonumber(os.getenv("SAFARI")) or 30, steps = 0, caught = 0, gen4 = true }
+      battle:makeSafari(Game.save.safari)
+    end
     -- ENTER IT, which is where a battle loads its pictures.
     --
     -- The first version of this harness constructed a battle and drew it
@@ -142,6 +167,34 @@ function love.load()
     -- picture would have been answered "missing" when the real game has it.
     -- A harness that skips a lifecycle step reports the step, not the engine.
     if battle.enter then pcall(battle.enter, battle) end
+    -- WIN=1: every foe fainted at once and the faint path run, which is where
+    -- a trainer battle pays out; prints the wallet and the lines queued.
+    -- LOSE=1: the whole party fainted and the player's faint path run, which is
+    -- where Platinum takes its money penalty; prints the wallet and the lines.
+    if os.getenv("LOSE") then
+      local before = Game.save.money or 0
+      for _, mon in ipairs(Game.save.party or {}) do mon.hp = 0 end
+      local okL, errL = pcall(battle.playerMonFainted, battle)
+      if not okL then print("[lose] error: " .. tostring(errL)) end
+      print(("[lose] money %d -> %d (-%d)"):format(before, Game.save.money or 0, before - (Game.save.money or 0)))
+      for _, item in ipairs(battle.queue or {}) do
+        if item.text then print("[lose] " .. tostring(item.text):gsub("\n", " / ")) end
+      end
+      love.event.quit()
+      return
+    end
+    if os.getenv("WIN") then
+      local before = Game.save.money or 0
+      for _, mon in ipairs(battle.enemyParty or {}) do mon.hp = 0 end
+      local okW, errW = pcall(battle.enemyMonFainted, battle)
+      if not okW then print("[win] error: " .. tostring(errW)) end
+      print(("[win] money %d -> %d (+%d)"):format(before, Game.save.money or 0, (Game.save.money or 0) - before))
+      for _, item in ipairs(battle.queue or {}) do
+        if item.text then print("[win] " .. tostring(item.text):gsub("\n", " / ")) end
+      end
+      love.event.quit()
+      return
+    end
     if not battle or battle.dead then
       print("no battle: " .. (battle and "dead" or "nil"))
       love.event.quit() return
@@ -268,6 +321,12 @@ function love.load()
           b and ("%s (%.0f,%.0f) cell=%s scale=%.2f hidden=%s"):format(
             tostring(ph and ph.kind), b.x or -1, b.y or -1, tostring(b.cell),
             b.monScale or -1, tostring(b.monHidden)) or "none"))
+        -- the gates updateQueue waits on, in its own order
+        print(("    gates: ui=%s anim4=%s wait=%s sound=%s drain=%s anim=%s current=%s intro=%s"):format(
+          tostring(battle.waitingUI), tostring(battle.gen4AnimPlaying), tostring(battle.waitFrames),
+          tostring(battle.waitingSound), tostring(battle.draining), tostring(battle.animPlaying),
+          tostring(battle.current and (battle.current.text or battle.current.kind or "item")),
+          tostring(battle.introSlide)))
       end
     end
 

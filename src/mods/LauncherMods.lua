@@ -181,6 +181,9 @@ function LauncherMods.deriveList(manifests, options)
       status = status,
       statusDetail = detail,
       github = m.github,
+      -- the creator's donation link, for the card's "Support the creator"
+      -- button (Manifest.validate accepts http(s) only)
+      support = m.support,
       updateCheck = m.updateCheck ~= false,
       experimental = m.experimental == true,
     }

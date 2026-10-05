@@ -495,15 +495,6 @@ function CacheFs.shadowRisk()
   return shadowRisk
 end
 
--- Create a real directory (and only that one -- no parents), for callers
--- outside this module that need the same windowless mkdir: SaveData proves a
--- chosen game-data folder is writable and may have to create it first.
-function CacheFs.mkdirReal(path)
-  if type(path) ~= "string" or path == "" then return false end
-  tryMkdirs(path)
-  return true
-end
-
 local function realPath(root, rel)
   return root .. SEP .. rel:gsub("/", SEP)
 end
@@ -522,6 +513,18 @@ local function tryMkdirs(path)
   end
   local mkdir = resolveMkdir()
   if mkdir then mkdir(path) end
+end
+
+-- Create a real directory (and only that one -- no parents), for callers
+-- outside this module that need the same windowless mkdir: SaveData proves a
+-- chosen game-data folder is writable and may have to create it first.
+-- Defined BELOW tryMkdirs on purpose: above it, `tryMkdirs` named a global
+-- that does not exist, every call raised, and SaveData's pcall turned a
+-- folder that merely did not exist yet into "could not be written to".
+function CacheFs.mkdirReal(path)
+  if type(path) ~= "string" or path == "" then return false end
+  tryMkdirs(path)
+  return true
 end
 
 local function ensureParents(root, rel)

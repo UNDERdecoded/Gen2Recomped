@@ -247,12 +247,25 @@ static void blit_logo(u32 *fb, u32 stride_px, int dst_x, int dst_y, int max_w) {
     for (int x = 0; x < dw; x++) {
       int sx = x * g_logo_w / dw;
       u32 px = g_logo[sy * g_logo_w + sx];
-      u8 a = (px >> 24) & 0xff;
-      if (a < 16) continue;
+      u32 a = (px >> 24) & 0xff;
+      if (a == 0) continue;
       int dx = dst_x + x;
       int dy = dst_y + y;
       if (dx < 0 || dy < 0 || dx >= FB_W || dy >= FB_H) continue;
-      fb[dy * stride_px + dx] = px | 0xff000000u;
+      u32 *dst = &fb[dy * stride_px + dx];
+      if (a == 0xff) {
+        *dst = px | 0xff000000u;
+        continue;
+      }
+      /* gen2logo.png's lightning glow is soft-edged: blend it over the
+       * background instead of thresholding, or the glow turns into hard
+       * blocks. RGBA8 packs R in the low byte. */
+      u32 d = *dst;
+      u32 inv = 255u - a;
+      u32 r = ((px & 0xff) * a + (d & 0xff) * inv) / 255u;
+      u32 g = (((px >> 8) & 0xff) * a + ((d >> 8) & 0xff) * inv) / 255u;
+      u32 bl = (((px >> 16) & 0xff) * a + ((d >> 16) & 0xff) * inv) / 255u;
+      *dst = r | (g << 8) | (bl << 16) | 0xff000000u;
     }
   }
 }

@@ -133,4 +133,47 @@ function Gen4MoneyWindow.draw(panel)
   return true
 end
 
+-- THE COIN WINDOW (FieldMenu_DrawCoinWindow / FieldMenu_PrintCoinsToWindow):
+-- COIN_BP_WINDOW_WIDTH x HEIGHT, 10 x 2 tiles, one line -- bank 361
+-- (TEXT_BANK_MENU_ENTRIES) entry 197, "{STRVAR_1 54 0 0} Coins", with the
+-- count in five space-padded digits, right-aligned like the money.
+Gen4MoneyWindow.COIN_BANK = 361
+Gen4MoneyWindow.COIN_ENTRY = 197
+Gen4MoneyWindow.COIN_DIGITS = 5
+
+function Gen4MoneyWindow.coinPanelFor(game, left, top)
+  local save = game and game.save
+  if type(save) ~= "table" then return nil end
+  local coins = require("src.import.Gen4GameCorner").coins(save)
+  local digits = tostring(coins)
+  local amount = (" "):rep(math.max(0, Gen4MoneyWindow.COIN_DIGITS - #digits)) .. digits
+  local saved = game.stringBuffers and game.stringBuffers[1]
+  require("src.import.Gen4Text").buffer(game, amount)
+  local line = require("src.import.Gen4Text").resolve(game.data, Gen4MoneyWindow.COIN_BANK,
+                                                       Gen4MoneyWindow.COIN_ENTRY, game)
+  -- the window must not eat the script's own buffer 0
+  if game.stringBuffers then game.stringBuffers[1] = saved end
+  if type(line) ~= "string" or line == "" then line = amount end
+  return {
+    left = math.floor(tonumber(left) or 20),
+    top = math.floor(tonumber(top) or 2),
+    amount = line,
+    coins = true,
+    tilesW = 10,
+    tilesH = 2,
+  }
+end
+
+function Gen4MoneyWindow.drawCoins(panel)
+  if type(panel) ~= "table" then return false end
+  local Font = require("src.render.Font")
+  local left, top = panel.left or 20, panel.top or 2
+  Font.drawBox(left - 1, top - 1, panel.tilesW + 2, panel.tilesH + 2)
+  local right = (left + panel.tilesW) * 8
+  love.graphics.setColor(0, 0, 0, 1)
+  Font.draw(panel.amount, right - Font.width(panel.amount), top * 8)
+  love.graphics.setColor(1, 1, 1, 1)
+  return true
+end
+
 return Gen4MoneyWindow

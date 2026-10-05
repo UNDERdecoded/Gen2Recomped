@@ -101,8 +101,17 @@ function Gen4StartMenu.new(game, opts)
   end
 
   self.rows = {}
+  -- DURING A SAFARI GAME the cartridge swaps its hide flags for
+  -- `StartMenu_GetSafariHiddenOptions` -- SAVE and CHAT only -- so RETIRE,
+  -- which the record marks hidden for the ordinary field, appears, and SAVE
+  -- goes.
+  self.safari = (game.save or {}).safari ~= nil
   for _, row in ipairs(source) do
-    if not row.hidden and self:available(row.id) then
+    local hidden = row.hidden
+    if self.safari then
+      hidden = (row.id == "save" or row.id == "chat")
+    end
+    if not hidden and self:available(row.id) then
       self.rows[#self.rows + 1] = {
         id = row.id,
         label = self:labelFor(row),
@@ -199,6 +208,15 @@ function Gen4StartMenu:select()
   local id = row.id
   if id == "exit" then return self:close() end
   self.game.stack:pop()
+  if id == "retire" then
+    -- `StartMenu_SelectRetire`: SCRIPT_ID(SAFARI_GAME, 21) -- "Would you like
+    -- to retire from the Safari Game?" and, on yes, back to the gate
+    local ow = self.game.overworld
+    local rows = require("src.world.Gen4TileScripts").compile(self.game.data, "safari_game", 21)
+    if ow and rows then ow:queueScript(rows, { mapId = ow.map and ow.map.id }) end
+    if self.onCancel then self.onCancel() end
+    return
+  end
   if id == "pokedex" then
     Screens.push(self.game, "PokedexMenu", { onCancel = reopen })
   elseif id == "pokemon" then
@@ -320,6 +338,20 @@ function Gen4StartMenu:drawPanel()
   g.setColor(1, 1, 1, 1)
 end
 
+-- THE BALL COUNT (`StartMenu_PrintBallCount`): a 12x4-tile window at tile
+-- (1, 1) while a Safari Game runs -- "SAFARI BALLS" over "Stock: NN".
+function Gen4StartMenu:drawBallCount()
+  local st = (self.game.save or {}).safari
+  if not st then return end
+  local text = (self.game.data or {}).text or {}
+  Font.drawBox(1, 1, 12, 4)
+  local title = text.TEXT_B0367_00009 or "SAFARI BALLS"
+  local stock = (text.TEXT_B0367_00011 or "Stock: {N}")
+    :gsub("{[^}]*}", ("%d"):format(st.balls or 0), 1)
+  Font.draw(title, 16, 16)
+  Font.draw(stock, 16, 32)
+end
+
 function Gen4StartMenu:draw()
   if self:style() == "bottom" and SecondScreen.mode(self.game) ~= "off" then
     -- The authentic arrangement, through the second-screen surface -- so on
@@ -329,6 +361,7 @@ function Gen4StartMenu:draw()
     return SecondScreen.draw(self.game, function() self:drawPanel() end)
   end
   self:drawPanel()
+  self:drawBallCount()
 end
 
 return Gen4StartMenu

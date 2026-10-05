@@ -458,6 +458,14 @@ end
 -- that legacy bug by initializing a normal Gen II confusion duration.
 function HeldItems.onEntry(battle, holder)
   if not (battle and isAlive(holder)) then return false end
+  -- PLATINUM'S AMULET COIN counts on EITHER side: battle_lib.c's
+  -- SWITCH_IN_CHECK_STATE_AMULET_COIN walks every battler on the field, and its
+  -- items name the effect "MONEY_UP" rather than the Game Boy number.
+  if require("src.core.GameVersion").isGen4() then
+    local mon = holder.mon
+    local def = mon and battle.data and battle.data.items and battle.data.items[tonumber(mon.item or mon.heldItem) or -1]
+    if def and def.holdEffect == "MONEY_UP" then battle.amuletCoin = true end
+  end
   if HeldItems.itemKey(battle.data, holder) ~= "BERSERK_GENE" then return false end
   consume(holder)
   holder.stages = holder.stages or {}

@@ -57,9 +57,16 @@ local RESUME_RETRY_FRAMES = 60
 local RESUME_RETRY_TRIES = 5
 local resumeRetry -- { song, wait, left } while a resume re-cue is still owed
 
+-- THE DS SOUND PLAYER'S TWO LEVELS (Platinum's scripts): the BGM's own fade
+-- level, which `fadeoutbgm` / `fadeinbgm` ramp over 60 Hz frames
+-- (Sound_FadeOutBGM / Sound_FadeInBGM) and a new song resets, and the field
+-- player's volume, which `setplayervolume` sets and which outlives songs
+-- (NNS_SndPlayerSetPlayerVolume). Both multiply the option volume.
+local dsLevel, dsPlayer, dsFade = 1, 1, nil
+
 local function applyVolume(src)
   if not src then return end
-  local vol = VOLUME * volumeScale
+  local vol = VOLUME * volumeScale * dsLevel * dsPlayer
   if cryDuck then vol = vol * cryDuck.scale end
   if Runtime.wantsHook("music.volume") then
     local ctx = {
@@ -328,6 +335,8 @@ function Music.play(data, song, loop, ctx)
   -- swapped it when the new song is chip-backed too
   if state.chip and not isChip then require("src.core.ChipAudio").stopMusic() end
   state.fade = nil
+  -- a new sequence starts at its full level; the player volume stays
+  dsLevel, dsFade = 1, nil
   if loopSrc then
     -- intro plays once, then update() chains to the loop body
     -- (for one-shot jingles the body plays once and doesn't repeat)
@@ -432,6 +441,13 @@ function Music.playMap(data, mapId, onBike, surfing)
   state.onBike = not not onBike
   state.surfing = not not surfing
   local play = effectiveMapSong(data, song)
+  -- FieldBGM_PlayForMapHeader starts the map's BGM at its full level, so a
+  -- script's fade-out does not carry silence onto a map with the same song
+  if dsFade == nil and dsLevel < 1 then
+    dsLevel = 1
+    applyVolume(state.source)
+    applyVolume(state.loopSource)
+  end
   if play then Music.play(data, play, nil, { reason = "map", mapId = mapId }) end
 end
 
@@ -499,6 +515,25 @@ function Music.restoreMap(data)
   local play = effectiveMapSong(data, state.mapSong)
   if play then Music.play(data, play, nil, { reason = "map" }) end
 end
+
+-- Sound_FadeOutBGM / Sound_FadeInBGM: ramp the BGM's own level (0..1) to
+-- `to` over `frames` 60 Hz frames; `from` starts it somewhere else first
+-- (BGM_FADE_IN_TYPE_FROM_ZERO). Music.dsFading() is ScriptContext_IsSoundFadeFinished.
+function Music.dsFade(to, frames, from)
+  if from then dsLevel = from end
+  frames = math.max(0, math.floor(tonumber(frames) or 0))
+  if frames == 0 then dsLevel, dsFade = to, nil
+  else dsFade = { from = dsLevel, to = to, frames = frames, left = frames } end
+  applyVolume(state.source)
+  applyVolume(state.loopSource)
+end
+function Music.dsFading() return dsFade ~= nil end
+function Music.setPlayerLevel(level)
+  dsPlayer = math.max(0, math.min(1, tonumber(level) or 1))
+  applyVolume(state.source)
+  applyVolume(state.loopSource)
+end
+function Music.dsLevels() return dsLevel, dsPlayer end
 
 -- 0-7 music volume (0 mutes), applied to the playing song and the
 -- queued loop body as well as everything played later
@@ -653,7 +688,15 @@ function Music.update(data)
     applyVolume(state.source)
     applyVolume(state.loopSource)
   end
-  -- volume ramp (Music.fadeOut): hold the current level for `control`
+  -- (the DS fade, ticked here: see dsLevel above)
+  if dsFade then
+    dsFade.left = dsFade.left - 1
+    if dsFade.left <= 0 then dsLevel, dsFade = dsFade.to, nil
+    else dsLevel = dsFade.to + (dsFade.from - dsFade.to) * dsFade.left / dsFade.frames end
+    applyVolume(state.source)
+    applyVolume(state.loopSource)
+  end
+-- volume ramp (Music.fadeOut): hold the current level for `control`
   -- frames, then drop one level (FadeOutAudio decrements both rAUDVOL
   -- nibbles when its counter reaches 0); at level 0 the music stops.
   if state.fade then

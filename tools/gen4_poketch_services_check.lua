@@ -63,7 +63,11 @@ game.stack.push = function(_, screen) pushed = screen end
 local Screens = require('src.ui.Screens')
 local screen = Screens.push(game, 'ShopMenu', {4,17}, function() quit = true end)
 check(screen == pushed and screen.screenId == 'Gen4ShopMenu', 'Platinum shop alias')
+-- SEE YA! says "Please come again!" first (shop_menu.c); the counter ends,
+-- and the script resumes, at finish
 screen:close()
+check(not quit and screen.mode == 'exit', 'SEE YA! shows the parting line before the counter closes')
+screen:finish()
 check(quit, 'positional shop callback preserved so script resumes')
 local scissors = {}
 love.graphics = { setColor=function() end, rectangle=function() end, setLineWidth=function() end,
@@ -154,6 +158,7 @@ commands.g4_pokemart({game=game,save=game.save,runner={
  yield=function() yielded=yielded+1 end,resume=function() resumed=resumed+1 end}},0x8004,'specialty')
 check(pushed.stock[1]==17 and yielded==1, 'specialty clerk resolves variable stock ID and waits')
 pushed:close()
+pushed:finish()
 check(resumed==1, 'specialty clerk resumes after closing shop')
 local seal = VM.lower({{name='pokemartseal',args={0x8004}}},{})
 check(seal[1][3]=='seal', 'seal inventory is not treated as specialty bag items')
@@ -165,8 +170,13 @@ package.loaded['src.render.Renderer']={uiPresentation={x=100,y=50,w=512,h=384,sc
 local touchShop=Shop.new(game,{17})
 local function tap(x,y) return touchShop:touchpressed(1,100+x*2,50+y*2) end
 check(not touchShop:touchpressed(1,90,60),'shop rejects touches outside presented UI')
-tap(120,20)
+-- BUY / SELL / SEE YA! is the framed window at tile (1, 1) over the field
+tap(40,12)
 check(touchShop.mode=='buy','scaled touch selects buy')
+-- the counter takes input once the field camera has slid over (Shop_MoveCamera)
+check(not touchShop:counterUp(),'the counter waits for the camera')
+touchShop.camStep=touchShop:cameraTarget()
+check(touchShop:counterUp(),'the counter is up once the camera arrives')
 tap(120,20)
 check(touchShop.mode=='quantity','scaled touch selects stock item')
 tap(200,80)

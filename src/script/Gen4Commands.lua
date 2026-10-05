@@ -957,10 +957,25 @@ end
 -- has dialogue for. Writing 0 and 0xFFFF takes that branch cleanly; writing
 -- nothing left both destinations holding the previous script's values and the
 -- interview branched at random on its way to using a word nobody picked.
+-- `choosecustommessageword <unused> <resultVar> <destVar>`: the easy-chat
+-- screen, one word (src/pokemon/Gen4EasyChat.lua). The word goes in destVar
+-- (0xFFFF until one is chosen) and resultVar answers 1, or 0 when the player
+-- backs out -- which is what Sunyshore's Julia branches on before her ribbon.
 function Commands.g4_choose_message_word(ctx, _unused, resultVar, destVar)
   if destVar then setVar(ctx.save, destVar, 0xFFFF) end
   if resultVar then setVar(ctx.save, resultVar, 0) end
+  if not (ctx.game and ctx.game.stack) then return end
+  local runner = ctx.runner
+  require("src.pokemon.Gen4EasyChat").pick(ctx.game, function(word)
+    if word then
+      if destVar then setVar(ctx.save, destVar, word) end
+      if resultVar then setVar(ctx.save, resultVar, 1) end
+    end
+    if runner then runner:resume() end
+  end)
+  if runner then runner:yield() end
 end
+Commands.meta.g4_choose_message_word = { foreground = true, blocking = true }
 
 -- `messagevar` takes its entry out of a var rather than out of the row.
 function Commands.g4_message_var(ctx, id, bank)
@@ -1884,11 +1899,28 @@ function Commands.g4_move(ctx, id, steps)
       -- ...and on Sinnoh's own timing and art: 7 frames of bounce and 30 of
       -- hold (Gen4Emotes.FRAMES), "!!" for EMOTE_DOUBLE_EXCLAMATION_MARK, and
       -- the SEQ_SE_DP_DECIDE pop the field effect plays as it appears.
+      -- TWO AT ONCE IS ORDINARY, and the slot used to hold one.
+      --
+      -- Reported from play: leaving Rowan's lab in Sandgem after the Pokedex,
+      -- "the exclamation point appears but it freezes there". That scene
+      -- (M1059/S057D) gives the player AND object 4 an
+      -- EMOTE_EXCLAMATION_MARK in the same breath and then `waitmovement`s
+      -- on both. The second bubble overwrote the first in `ow.emote`, so the
+      -- first one's `onDone` never ran, its movement never finished, and the
+      -- wait held the scene forever. A bubble that arrives while another is
+      -- up now runs ALONGSIDE it (`ow.extraEmotes`), as the cartridge's two
+      -- field effects do.
       local Gen4Emotes = require("src.import.Gen4Emotes")
-      ow.emote = { npc = entity, frames = Gen4Emotes.FRAMES,
-                   totalFrames = Gen4Emotes.FRAMES,
-                   bubble = (action.emote == "double_exclamation") and "double" or 1,
-                   onDone = nextStep }
+      local bubble = { npc = entity, frames = Gen4Emotes.FRAMES,
+                       totalFrames = Gen4Emotes.FRAMES,
+                       bubble = (action.emote == "double_exclamation") and "double" or 1,
+                       onDone = nextStep }
+      if ow.emote then
+        ow.extraEmotes = ow.extraEmotes or {}
+        ow.extraEmotes[#ow.extraEmotes + 1] = bubble
+      else
+        ow.emote = bubble
+      end
       pcall(function()
         require("src.core.Sound").play(ctx.game and ctx.game.data, "SEQ_SE_DP_DECIDE")
       end)
@@ -2034,6 +2066,7 @@ function Commands.g4_menu_show(ctx)
     cancelable = menu.cancelable,
     onCancel = menu.cancelable and function() pick(MENU_CANCEL) end or nil,
     index = menu.cursor,
+    onHighlight = menu.onHighlight,
   }))
   runner:yield()
 end
@@ -2070,6 +2103,40 @@ function Commands.g4_swarm_map_species(ctx, mapVar, speciesVar)
     .mapAndSpecies(ctx.game and ctx.game.data, ctx.save)
   setVar(ctx.save, mapVar, header)
   setVar(ctx.save, speciesVar, species)
+end
+
+-- THE SAFARI GAME (`ScrCmd_StartEndSafariGame`). Starting one is thirty
+-- Safari Balls and a zeroed step count; ending one zeroes both. The flag the
+-- cartridge sets is `save.safari` here, the field reads it
+-- (`OverworldState:gen4SafariStep`, `:gen4SafariAfterBattle`) and so does the
+-- battle (`BattleState:makeSafari`). The catch count is the port's own tally
+-- for `getcurrentsafarigamecaughtnum` -- the cartridge reads it off the TV
+-- broadcast's Safari record, which counts the same thing.
+Commands.SAFARI_BALLS, Commands.SAFARI_STEPS = 30, 500
+function Commands.g4_safari_game(ctx, state)
+  local mode = math.floor(valueOf(ctx, state) or 0)
+  ctx.save = ctx.save or {}
+  if mode == 0 then
+    ctx.save.safari = { balls = Commands.SAFARI_BALLS, steps = 0, caught = 0, gen4 = true }
+  else
+    if ctx.save.safari then ctx.save.gen4SafariLastCaught = ctx.save.safari.caught or 0 end
+    ctx.save.safari = nil
+  end
+end
+function Commands.g4_safari_caught(ctx, destVar)
+  local st = ctx.save and ctx.save.safari
+  local n = st and st.caught or (ctx.save and ctx.save.gen4SafariLastCaught) or 0
+  setVar(ctx.save, destVar, n)
+end
+
+-- THE TROPHY GARDEN (`ScrCmd_AddTrophyGardenMon`,
+-- `ScrCmd_GetTrophyGardenSlot1Species`) -- see src/world/Gen4DailySlots.lua.
+function Commands.g4_add_trophy_garden_mon(ctx)
+  require("src.world.Gen4DailySlots").addTrophyMon(ctx.game and ctx.game.data, ctx.save)
+end
+function Commands.g4_trophy_garden_slot1(ctx, destVar)
+  setVar(ctx.save, destVar, require("src.world.Gen4DailySlots")
+    .trophySlot1Species(ctx.game and ctx.game.data, ctx.save))
 end
 
 -- AMITY SQUARE'S STEP COUNT -- see `OverworldState:gen4CountAmityStep`.
@@ -3153,10 +3220,7 @@ local function martStock(ctx)
 end
 
 function Commands.g4_pokemart(ctx, martId, kind)
-  if kind == 'seal' then
-    Logger.warn('gen4 shop: seal counters need the seal inventory and pricing system')
-    return
-  end
+  if kind == 'seal' then return Commands.g4_seal_mart(ctx, martId) end
   local stock, badges, tier
   if kind == 'specialty' then
     stock = ((ctx.game.data.constants or {}).martSpecialties or {})[valueOf(ctx, martId)]
@@ -5110,8 +5174,8 @@ function Commands.g4_game_completed(ctx, destVar)
   setVar(ctx.save, destVar, flag == true and 1 or 0)
 end
 function Commands.g4_daycare_has_egg(ctx, destVar)
-  local breed = require('src.pokemon.DayCare').store(ctx.save, false)
-  setVar(ctx.save, destVar, breed and breed.egg ~= nil and 1 or 0)
+  -- Daycare_HasEgg: the offspring personality is set (src/pokemon/Gen4DayCare.lua)
+  setVar(ctx.save, destVar, require('src.pokemon.Gen4DayCare').hasEgg(ctx.save) and 1 or 0)
 end
 function Commands.g4_prepare_hall_of_fame(ctx)
   Commands.g4_set_game_completed(ctx)
@@ -5568,5 +5632,1362 @@ function Commands.g4_unimplemented(_, name, note)
               .. "stepped over and the script carries on", key,
               note and (" (" .. tostring(note) .. ")") or "")
 end
+
+-- THE SHARD MOVE TUTORS (scrcmd_move_tutor.c) -- see src/import/Gen4MoveTutor.lua.
+local function tutorRec(ctx) return ctx.game and ctx.game.data and ctx.game.data.gen4_move_tutor end
+local MENU_CANCEL = 65534
+
+-- `selectmovetutorpokemon`: the party, pick one; getselectedpartyslot reads it.
+function Commands.g4_select_tutor_mon(ctx)
+  return Commands.g4_open_party_for_trade(ctx)
+end
+Commands.meta.g4_select_tutor_mon = { foreground = true, blocking = true }
+
+function Commands.g4_tutor_has_moves(ctx, slot, location, destVar)
+  local T = require("src.import.Gen4MoveTutor")
+  local mon = partyMon(ctx, slot)
+  local n = mon and #T.learnable(tutorRec(ctx), mon, math.floor(valueOf(ctx, location) or 0)) or 0
+  setVar(ctx.save, destVar, n > 0 and 1 or 0)
+end
+
+-- ScrCmd_ShowMoveTutorMoveSelectionMenu: the moves this Pokemon can learn
+-- here and does not know, in table order, then EXIT.
+function Commands.g4_tutor_menu(ctx, slot, location, destVar)
+  local T = require("src.import.Gen4MoveTutor")
+  local data = ctx.game and ctx.game.data or {}
+  local raw = math.floor(valueOf(ctx, slot) or Gen4Commands.PARTY_SLOT_NONE)
+  local mon = raw ~= Gen4Commands.PARTY_SLOT_NONE and partyMon(ctx, slot) or nil
+  local moves = T.learnable(tutorRec(ctx), mon, math.floor(valueOf(ctx, location) or 0))
+  local items = {}
+  for _, id in ipairs(moves) do
+    local def = data.moves and data.moves[id]
+    items[#items + 1] = { value = id, label = (def and def.name) or ("MOVE " .. id) }
+  end
+  items[#items + 1] = { value = MENU_CANCEL, label = require("src.core.Strings")("EXIT") }
+  local runner = ctx.runner
+  setVar(ctx.save, destVar, MENU_CANCEL)
+  local rows = {}
+  for i, item in ipairs(items) do
+    rows[i] = { label = item.label, onSelect = function()
+      setVar(ctx.save, destVar, item.value)
+      if runner then runner:resume() end
+    end }
+  end
+  ctx.game.stack:push(require("src.ui.Menu").new(ctx.game, rows, {
+    cancelable = true,
+    onCancel = function()
+      setVar(ctx.save, destVar, MENU_CANCEL)
+      if runner then runner:resume() end
+    end,
+  }))
+  if runner then runner:yield() end
+end
+Commands.meta.g4_tutor_menu = { foreground = true, blocking = true }
+
+-- ScrCmd_CheckCanAffordMove: every non-zero cost must be in the bag.
+function Commands.g4_tutor_can_afford(ctx, move, destVar)
+  local T = require("src.import.Gen4MoveTutor")
+  local row = T.row(tutorRec(ctx), math.floor(valueOf(ctx, move) or 0))
+  local inv = (ctx.save and ctx.save.inventory) or {}
+  local ok = row ~= nil
+  if row then
+    for colour, item in pairs(T.SHARDS) do
+      local cost = row[colour] or 0
+      if cost > 0 and (tonumber(inv[item]) or 0) < cost then ok = false end
+    end
+  end
+  setVar(ctx.save, destVar, ok and 1 or 0)
+end
+
+-- ScrCmd_PayShardCost
+function Commands.g4_tutor_pay(ctx, move)
+  local T = require("src.import.Gen4MoveTutor")
+  local row = T.row(tutorRec(ctx), math.floor(valueOf(ctx, move) or 0))
+  if not row then return end
+  local Bag = require("src.inventory.Bag")
+  for colour, item in pairs(T.SHARDS) do
+    local cost = row[colour] or 0
+    if cost > 0 then Bag.remove(ctx.save, item, cost) end
+  end
+end
+
+-- The summary screen's "forget which move?": a list of the four (B keeps
+-- them all -- slot 4, LEARNED_MOVES_MAX).
+function Commands.g4_tutor_forget_menu(ctx, slot, move)
+  local mon = partyMon(ctx, slot)
+  local data = ctx.game and ctx.game.data or {}
+  ctx.g4TutorForget = 4
+  if not mon then return end
+  local items = {}
+  for i, mv in ipairs(mon.moves or {}) do
+    local id = tonumber(mv) or tonumber(mv and mv.id) or 0
+    local def = data.moves and data.moves[id]
+    items[#items + 1] = { value = i - 1, label = (def and def.name) or ("MOVE " .. id) }
+  end
+  local runner = ctx.runner
+  local rows = {}
+  for i, item in ipairs(items) do
+    rows[i] = { label = item.label, onSelect = function()
+      ctx.g4TutorForget = item.value
+      if runner then runner:resume() end
+    end }
+  end
+  ctx.game.stack:push(require("src.ui.Menu").new(ctx.game, rows, {
+    cancelable = true,
+    onCancel = function()
+      ctx.g4TutorForget = 4
+      if runner then runner:resume() end
+    end,
+  }))
+  if runner then runner:yield() end
+end
+Commands.meta.g4_tutor_forget_menu = { foreground = true, blocking = true }
+
+function Commands.g4_tutor_forget_slot(ctx, destVar)
+  setVar(ctx.save, destVar, ctx.g4TutorForget or 4)
+end
+
+-- Pokemon_ResetMoveSlot: the move, full PP, no PP Ups.
+function Commands.g4_tutor_set_move(ctx, slot, move, moveSlot)
+  local mon = partyMon(ctx, slot)
+  if not mon then return end
+  local id = math.floor(valueOf(ctx, move) or 0)
+  local index = math.floor(valueOf(ctx, moveSlot) or 0) + 1
+  local def = ctx.game and ctx.game.data and ctx.game.data.moves and ctx.game.data.moves[id]
+  mon.moves = mon.moves or {}
+  mon.moves[index] = { id = id, pp = def and def.pp or 0, ppUps = 0 }
+end
+
+-- TEACHING AND FORGETTING MOVES OUTSIDE BATTLE: the Move Reminder in
+-- Pastoria (`openmoveremindermenu`), Grandma Wilma's Draco Meteor on Route 210
+-- (`openmovetutormenu`) and the Move Deleter in Canalave
+-- (`selectpartymonmove` / `clearpartymonmoveslot`). scrcmd_party_mon_moves.c,
+-- move_reminder_data.c and applications/move_reminder.c.
+local function learnMoveId(mv) return tonumber(mv) or tonumber(mv and mv.id) or 0 end
+
+-- Item_IsHMMove: the last eight of `sTMHMMoves`.
+function Gen4Commands.isHMMove(data, move)
+  local list = data and data.constants and data.constants.tmhmMoves
+  if not list then return false end
+  for i = 93, #list do
+    if list[i] == move then return true end
+  end
+  return false
+end
+
+-- MoveReminderData_GetMoves: the first 22 rows of the level-up learnset
+-- (MAX_NUMBER_REMINDER_MOVES), those at or below the mon's level that it does
+-- not know, each once, in learnset order. Forms read their own learnset.
+function Gen4Commands.reminderMoves(data, mon)
+  local out = {}
+  if not mon then return out end
+  local def = require("src.pokemon.Gen4Forms").definition(data, mon)
+  local known = {}
+  for _, mv in ipairs(mon.moves or {}) do known[learnMoveId(mv)] = true end
+  local level = tonumber(mon.level) or 1
+  local seen = {}
+  local learnset = (def and def.learnset) or {}
+  for i = 1, math.min(22, #learnset) do
+    local e = learnset[i]
+    if e.level <= level and not known[e.move] and not seen[e.move] then
+      seen[e.move] = true
+      out[#out + 1] = e.move
+    end
+  end
+  return out
+end
+
+local function learnMoveName(data, id)
+  local def = data and data.moves and data.moves[id]
+  return (def and def.name) or ("MOVE " .. id)
+end
+
+-- The teach screen. The moves on offer, then -- with four known -- which one
+-- to forget; an HM cannot be forgotten in this mode
+-- (PokemonSummaryScreen_PrintHMMovesCantBeForgotten), and backing out of the
+-- forget list returns to the moves. B on the moves gives up: keepOldMove.
+local function openLearnMenu(ctx, mon, moves)
+  local game = ctx.game
+  local data = game and game.data or {}
+  local runner = ctx.runner
+  ctx.g4LearnKeepOld = true
+  if not (mon and game and #moves > 0) then return end
+  local Menu = require("src.ui.Menu")
+  local function finish(keepOld)
+    ctx.g4LearnKeepOld = keepOld
+    if runner then runner:resume() end
+  end
+  local function teach(index, move)
+    local def = data.moves and data.moves[move]
+    mon.moves = mon.moves or {}
+    mon.moves[index] = { id = move, pp = def and def.pp or 0, ppUps = 0 }
+    finish(false)
+  end
+  local openMoves
+  local function openForget(move)
+    local rows = {}
+    for i, mv in ipairs(mon.moves or {}) do
+      local id = learnMoveId(mv)
+      if Gen4Commands.isHMMove(data, id) then
+        rows[#rows + 1] = { label = learnMoveName(data, id), keepOpen = true }
+      else
+        rows[#rows + 1] = { label = learnMoveName(data, id), onSelect = function() teach(i, move) end }
+      end
+    end
+    game.stack:push(Menu.new(game, rows, { cancelable = true, onCancel = function() openMoves() end }))
+  end
+  openMoves = function()
+    local rows = {}
+    for _, move in ipairs(moves) do
+      rows[#rows + 1] = { label = learnMoveName(data, move), onSelect = function()
+        local count, free = 0, nil
+        for i = 1, 4 do
+          local id = learnMoveId((mon.moves or {})[i])
+          if id ~= 0 then count = count + 1 elseif not free then free = i end
+        end
+        if count < 4 then teach(free, move) else openForget(move) end
+      end }
+    end
+    game.stack:push(Menu.new(game, rows, {
+      cancelable = true, maxVisible = math.min(#rows, 7),
+      onCancel = function() finish(true) end,
+    }))
+  end
+  openMoves()
+  if runner then runner:yield() end
+end
+
+-- `openmovetutormenu <partySlot> <move>`: the teach screen with one move.
+function Commands.g4_open_move_tutor_menu(ctx, slot, move)
+  openLearnMenu(ctx, partyMon(ctx, slot), { math.floor(valueOf(ctx, move)) })
+end
+Commands.meta.g4_open_move_tutor_menu = { foreground = true, blocking = true }
+
+-- `openmoveremindermenu <partySlot>`
+function Commands.g4_open_move_reminder_menu(ctx, slot)
+  local mon = partyMon(ctx, slot)
+  openLearnMenu(ctx, mon, Gen4Commands.reminderMoves(ctx.game and ctx.game.data, mon))
+end
+Commands.meta.g4_open_move_reminder_menu = { foreground = true, blocking = true }
+
+-- `checklearnedtutormove` / `checklearnedremindermove <destVar>`: 0 when a
+-- move was learned, 0xFF when the old moves were kept.
+function Commands.g4_learned_move(ctx, destVar)
+  setVar(ctx.save, destVar, ctx.g4LearnKeepOld == false and 0 or 0xFF)
+  ctx.g4LearnKeepOld = nil
+end
+
+-- `checkhaslearnableremindermoves <destVar> <partySlot>`
+function Commands.g4_has_reminder_moves(ctx, destVar, slot)
+  local mon = partyMon(ctx, slot)
+  local moves = Gen4Commands.reminderMoves(ctx.game and ctx.game.data, mon)
+  setVar(ctx.save, destVar, #moves > 0 and 1 or 0)
+end
+
+-- `selectpartymonmove <partySlot>`: the summary screen's move cursor, any
+-- move (HMs included -- the deleter's whole point); B is slot 4, which
+-- `getselectedpartymonmove` answers as MOVE_NOT_SELECTED (0xFF).
+function Commands.g4_select_party_mon_move(ctx, slot)
+  local mon = partyMon(ctx, slot)
+  local game = ctx.game
+  local data = game and game.data or {}
+  local runner = ctx.runner
+  ctx.g4SelectedMoveSlot = 4
+  if not (mon and game) then return end
+  local rows = {}
+  for i, mv in ipairs(mon.moves or {}) do
+    local id = learnMoveId(mv)
+    if id ~= 0 then
+      rows[#rows + 1] = { label = learnMoveName(data, id), onSelect = function()
+        ctx.g4SelectedMoveSlot = i - 1
+        if runner then runner:resume() end
+      end }
+    end
+  end
+  game.stack:push(require("src.ui.Menu").new(game, rows, {
+    cancelable = true,
+    onCancel = function()
+      ctx.g4SelectedMoveSlot = 4
+      if runner then runner:resume() end
+    end,
+  }))
+  if runner then runner:yield() end
+end
+Commands.meta.g4_select_party_mon_move = { foreground = true, blocking = true }
+
+function Commands.g4_selected_party_mon_move(ctx, destVar)
+  local v = ctx.g4SelectedMoveSlot or 4
+  setVar(ctx.save, destVar, v == 4 and 0xFF or v)
+  ctx.g4SelectedMoveSlot = nil
+end
+
+-- `clearpartymonmoveslot <partySlot> <moveSlot>`: Pokemon_ClearMoveSlot --
+-- the moves below shift up, PP and PP Ups with them, and the last is empty.
+function Commands.g4_clear_move_slot(ctx, slot, moveSlot)
+  local mon = partyMon(ctx, slot)
+  if not (mon and mon.moves) then return end
+  local index = math.floor(valueOf(ctx, moveSlot)) + 1
+  if index < 1 or index > 4 then return end
+  table.remove(mon.moves, index)
+end
+
+-- `bufferpartymovename <buffer> <partySlot> <moveSlot>`
+function Commands.g4_buffer_party_move(ctx, buffer, slot, moveSlot)
+  local mon = partyMon(ctx, slot)
+  local mv = mon and (mon.moves or {})[math.floor(valueOf(ctx, moveSlot)) + 1]
+  return Commands.g4_buffer(ctx, buffer, "move", learnMoveId(mv))
+end
+
+-- THE SOLACEON DAY CARE (scrcmd_daycare.c) -- see src/pokemon/Gen4DayCare.lua.
+local function setBuffer(ctx, slot, text)
+  local game = ctx.game
+  if not game then return end
+  game.stringBuffers = game.stringBuffers or {}
+  game.stringBuffers[(tonumber(slot) or 0) + 1] = text or ""
+end
+
+local function dcMonName(ctx, mon)
+  local data = ctx.game and ctx.game.data or {}
+  local reg = data.pokemon or {}
+  local def = mon and (reg[mon.species] or reg[require("src.pokemon.Gen4DayCare").speciesOf(mon)])
+  return mon and (mon.nickname or (def and def.name)) or ""
+end
+
+-- ov5_021E72BC: buffer 0 the first mon, 2 its OT, 1 the second.
+function Commands.g4_daycare_names(ctx)
+  local DC = require("src.pokemon.Gen4DayCare")
+  local a, b = DC.slot(ctx.save, 0), DC.slot(ctx.save, 1)
+  if a and a.mon then
+    setBuffer(ctx, 0, dcMonName(ctx, a.mon))
+    setBuffer(ctx, 2, a.mon.otName or (ctx.save.player and ctx.save.player.name) or "")
+  end
+  if b and b.mon then setBuffer(ctx, 1, dcMonName(ctx, b.mon)) end
+end
+
+function Commands.g4_daycare_state(ctx, destVar)
+  setVar(ctx.save, destVar, require("src.pokemon.Gen4DayCare").state(ctx.save))
+end
+
+function Commands.g4_daycare_reset_egg(ctx)
+  local dc = require("src.pokemon.Gen4DayCare").store(ctx.save, true)
+  dc.personality, dc.counter = 0, 0
+end
+
+function Commands.g4_daycare_give_egg(ctx)
+  require("src.pokemon.Gen4DayCare").giveEgg(ctx.game, ctx.save)
+end
+
+-- `movemontopartyfromdaycareslot <destVar> <slot>`: buffer 0 the nickname,
+-- answer the species.
+function Commands.g4_daycare_withdraw(ctx, destVar, slot)
+  local DC = require("src.pokemon.Gen4DayCare")
+  local i = math.floor(valueOf(ctx, slot))
+  local s = DC.slot(ctx.save, i)
+  if s and s.mon then setBuffer(ctx, 0, dcMonName(ctx, s.mon)) end
+  setVar(ctx.save, destVar, DC.withdraw(ctx.game.data, ctx.save, i))
+end
+
+-- `bufferdaycarepricebyslot <destVar> <slot>`: buffer 0 the name, 1 the price.
+function Commands.g4_daycare_price(ctx, destVar, slot)
+  local DC = require("src.pokemon.Gen4DayCare")
+  local i = math.floor(valueOf(ctx, slot))
+  local s = DC.slot(ctx.save, i)
+  local price = DC.price(ctx.game.data, ctx.save, i)
+  if s and s.mon then setBuffer(ctx, 0, dcMonName(ctx, s.mon)) end
+  setBuffer(ctx, 1, tostring(price))
+  setVar(ctx.save, destVar, price)
+end
+
+-- `bufferdaycaregainedlevelsbyslot <destVar> <slot>`: buffer 0 the name, 1 the levels.
+function Commands.g4_daycare_gained(ctx, destVar, slot)
+  local DC = require("src.pokemon.Gen4DayCare")
+  local i = math.floor(valueOf(ctx, slot))
+  local s = DC.slot(ctx.save, i)
+  local n = 0
+  if s and s.mon then
+    n = DC.gainedLevels(ctx.game.data, ctx.save, i)
+    setBuffer(ctx, 1, tostring(n))
+    setBuffer(ctx, 0, dcMonName(ctx, s.mon))
+  end
+  setVar(ctx.save, destVar, n)
+end
+
+-- `bufferpartymonnicknamereturnspecies <unused> <partySlot> <destVar>`
+function Commands.g4_buffer_nickname_species(ctx, slot, destVar)
+  local mon = partyMon(ctx, slot)
+  setBuffer(ctx, 0, dcMonName(ctx, mon))
+  setVar(ctx.save, destVar, mon and require("src.pokemon.Gen4DayCare").speciesOf(mon) or 0)
+end
+
+function Commands.g4_daycare_store(ctx, slot)
+  require("src.pokemon.Gen4DayCare").deposit(ctx.game.data, ctx.save, math.floor(valueOf(ctx, slot)))
+end
+
+-- Daycare_BufferNicknameLevelGender: the level with the banked EXP, and no
+-- gender sign for an un-nicknamed Nidoran (the sign is in its name).
+function Commands.g4_daycare_name_level_gender(ctx, nick, level, gender, slot)
+  local DC = require("src.pokemon.Gen4DayCare")
+  local s = DC.slot(ctx.save, math.floor(valueOf(ctx, slot)))
+  if not (s and s.mon) then return end
+  local data = ctx.game.data
+  setBuffer(ctx, valueOf(ctx, nick), dcMonName(ctx, s.mon))
+  setBuffer(ctx, valueOf(ctx, level), tostring(DC.levelWithSteps(data, s)))
+  local g = DC.gender(data, s.mon)
+  local sp = DC.speciesOf(s.mon)
+  if (sp == 29 or sp == 32) and not s.mon.nickname then g = "none" end
+  setBuffer(ctx, valueOf(ctx, gender), g == "male" and "♂" or g == "female" and "♀" or "")
+end
+
+function Commands.g4_daycare_compatibility(ctx, destVar)
+  setVar(ctx.save, destVar, require("src.pokemon.Gen4DayCare").compatibilityLevel(ctx.game.data, ctx.save))
+end
+
+-- `checkmoney2 <destVar> <amount>` -- the amount through ScriptContext_GetVar.
+function Commands.g4_check_money_var(ctx, destVar, amount)
+  return Commands.g4_check_money(ctx, destVar, valueOf(ctx, amount))
+end
+
+-- `openpartymenufordaycare` / `getdaycarepartymenuresult <slotVar> <summaryVar>`:
+-- the party pick; the SUMMARY exit never comes back from this port's picker,
+-- so the second answer is always FALSE.
+function Commands.g4_daycare_party_menu(ctx)
+  return Commands.g4_open_party_for_trade(ctx)
+end
+Commands.meta.g4_daycare_party_menu = { foreground = true, blocking = true }
+
+function Commands.g4_daycare_party_result(ctx, slotVar, summaryVar)
+  setVar(ctx.save, slotVar, ctx.g4PartySlot or Gen4Commands.PARTY_SLOT_NONE)
+  setVar(ctx.save, summaryVar, 0)
+end
+
+-- `setmonsummary <slot>` / `getmonpartyslot <destVar>`: the summary screen
+-- and the slot it was left on -- the one it opened on, here.
+function Commands.g4_set_mon_summary(ctx, slot)
+  ctx.g4SummarySlot = math.floor(valueOf(ctx, slot))
+end
+
+function Commands.g4_get_mon_party_slot(ctx, destVar)
+  setVar(ctx.save, destVar, ctx.g4SummarySlot or 0)
+  ctx.g4SummarySlot = nil
+end
+
+-- ScrCmd_TryRevertPokemonForm: a held Griseous Orb goes back to the bag (0xFF
+-- when it will not fit), and Giratina, Rotom and Shaymin go to their base forms.
+function Commands.g4_try_revert_form(ctx, slot, destVar)
+  setVar(ctx.save, destVar, 0)
+  local raw = math.floor(valueOf(ctx, slot))
+  if raw == 0xFF then return end
+  local mon = partyMon(ctx, slot)
+  if not mon then return end
+  local item = tonumber(mon.item or mon.heldItem) or 0
+  if item == 112 then
+    local Bag = require("src.inventory.Bag")
+    if Bag.add(ctx.save, 112, 1, ctx.game.data) == false then
+      setVar(ctx.save, destVar, 0xFF)
+      return
+    end
+    mon.item, mon.heldItem = nil, nil
+  end
+  local sp = require("src.pokemon.Gen4DayCare").speciesOf(mon)
+  if (tonumber(mon.form) or 0) > 0 and (sp == 487 or sp == 479 or sp == 492) then
+    require("src.pokemon.Gen4Forms").setForm(ctx.game.data, mon, 0)
+  end
+end
+
+-- `checkpoketchenabled <destVar>`
+function Commands.g4_poketch_enabled(ctx, destVar)
+  local p = ctx.save and ctx.save.poketch
+  setVar(ctx.save, destVar, (p and p.enabled) and 1 or 0)
+end
+
+-- `checkpartyhasbadegg <destVar>`: an egg that failed its checksum. This port
+-- keeps no checksum, so only an egg explicitly marked bad counts.
+function Commands.g4_party_has_bad_egg(ctx, destVar)
+  for _, mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    if mon.isEgg and (mon.isBadEgg or mon.badEgg) then setVar(ctx.save, destVar, 1) return end
+  end
+  setVar(ctx.save, destVar, 0)
+end
+
+-- ScrCmd_IncreasePartyMonFriendship <value> <slot>: a Soothe Bell makes it
+-- 150%, a Luxury Ball and being in the place it hatched add one each; capped
+-- at 255.
+function Commands.g4_increase_friendship(ctx, value, slot)
+  local mon = partyMon(ctx, slot)
+  if not mon then return end
+  local v = math.floor(valueOf(ctx, value))
+  if v > 0 then
+    if tonumber(mon.item or mon.heldItem) == 218 then v = math.floor(v * 150 / 100) end
+    if tonumber(mon.ball) == 11 or mon.ball == "LUXURY_BALL" then v = v + 1 end
+    local here = ctx.overworld and ctx.overworld.map and ctx.overworld.map.id
+    if here and mon.eggLocation and mon.eggLocation == here then v = v + 1 end
+  end
+  local f = tonumber(mon.happiness or mon.friendship) or 0
+  mon.happiness = math.max(0, math.min(255, f + v))
+end
+
+-- THE VEILSTONE GAME CORNER (scrcmd_coins.c, scrcmd_game_corner_prize.c) --
+-- see src/import/Gen4GameCorner.lua. Coins live in save.coins, which the
+-- Coin Case already reads.
+local function GC() return require("src.import.Gen4GameCorner") end
+
+function Commands.g4_coin_window(ctx, which, left, top)
+  local ow = ctx.overworld
+  if not ow then return end
+  if which == "hide" then ow.gen4CoinWindow = nil return end
+  local MW = require("src.ui.Gen4MoneyWindow")
+  if which == "show" then
+    ow.gen4CoinWindow = MW.coinPanelFor(ctx.game, valueOf(ctx, left), valueOf(ctx, top))
+  elseif ow.gen4CoinWindow then
+    ow.gen4CoinWindow = MW.coinPanelFor(ctx.game, ow.gen4CoinWindow.left, ow.gen4CoinWindow.top)
+  end
+end
+
+function Commands.g4_add_coins(ctx, amount)
+  GC().add(ctx.save, math.floor(valueOf(ctx, amount)))
+end
+
+function Commands.g4_subtract_coins(ctx, amount)
+  GC().subtract(ctx.save, math.floor(valueOf(ctx, amount)))
+end
+
+function Commands.g4_get_coins(ctx, destVar)
+  setVar(ctx.save, destVar, GC().coins(ctx.save))
+end
+
+function Commands.g4_can_add_coins(ctx, destVar, amount)
+  setVar(ctx.save, destVar, GC().canAdd(ctx.save, math.floor(valueOf(ctx, amount))) and 1 or 0)
+end
+
+-- `hascoinsfromvar` / `hascoinsfromvalue <destVar> <amount>`
+function Commands.g4_has_coins(ctx, destVar, amount)
+  setVar(ctx.save, destVar, GC().coins(ctx.save) >= math.floor(valueOf(ctx, amount)) and 1 or 0)
+end
+
+-- `getgamecornerprizedata <index> <itemVar> <priceVar>`
+function Commands.g4_prize_data(ctx, index, itemVar, priceVar)
+  local rec = ctx.game and ctx.game.data and ctx.game.data.gen4_game_corner
+  local row = rec and rec.prizes and rec.prizes[math.floor(valueOf(ctx, index)) + 1]
+  setVar(ctx.save, itemVar, row and row.item or 0)
+  setVar(ctx.save, priceVar, row and row.price or 0)
+end
+
+-- `checkbonusroundstreak`: ten consecutive bonus-round wins or more.
+function Commands.g4_bonus_streak(ctx, destVar)
+  setVar(ctx.save, destVar, (tonumber(ctx.save and ctx.save.gen4BonusRoundStreak) or 0) >= 10 and 1 or 0)
+end
+
+-- `showlistmenuremembercursor <offsetVar> <cursorVar>`: the list opens where
+-- it was left and writes the cursor back as it moves.
+function Commands.g4_menu_show_remember(ctx, offsetVar, cursorVar)
+  local menu = ctx.g4Menu
+  if menu then
+    menu.cursor = math.floor(getVar(ctx.save, offsetVar) or 0) + math.floor(getVar(ctx.save, cursorVar) or 0) + 1
+    menu.onHighlight = function(i)
+      setVar(ctx.save, offsetVar, 0)
+      setVar(ctx.save, cursorVar, i - 1)
+    end
+  end
+  return Commands.g4_menu_show(ctx)
+end
+Commands.meta.g4_menu_show_remember = { foreground = true, blocking = true }
+
+-- `buffervarpaddingdigits <slot> <var> <padding> <digits>`
+function Commands.g4_buffer_padded_var(ctx, slot, value, padding, digits)
+  return Commands.g4_buffer_padded_number(ctx, slot, valueOf(ctx, value), padding, digits)
+end
+
+-- `buffertypename <slot> <type>`: bank 624, TEXT_BANK_POKEMON_TYPE_NAMES.
+function Commands.g4_buffer_type_name(ctx, slot, typeVar)
+  local t = math.floor(valueOf(ctx, typeVar))
+  local Gen4Text = require("src.import.Gen4Text")
+  local data = ctx.game and ctx.game.data
+  local text = data and data.text and data.text[Gen4Text.label(624, t)]
+  if not ctx.game then return end
+  ctx.game.stringBuffers = ctx.game.stringBuffers or {}
+  ctx.game.stringBuffers[(tonumber(slot) or 0) + 1] = text or ""
+end
+
+-- ScrCmd_CalcHiddenPowerType <partySlot> <destVar>: the low IV bits; 0xFFFF
+-- for the sixteen species that cannot learn it.
+local NO_HIDDEN_POWER = { [10] = true, [11] = true, [13] = true, [14] = true, [129] = true,
+  [132] = true, [202] = true, [235] = true, [265] = true, [266] = true, [268] = true,
+  [360] = true, [374] = true, [412] = true, [415] = true, [401] = true }
+function Gen4Commands.hiddenPowerType(ivs)
+  ivs = ivs or {}
+  local function bit(k) return math.floor(tonumber(ivs[k]) or 0) % 2 end
+  local n = bit("hp") + 2 * bit("attack") + 4 * bit("defense") + 8 * bit("speed")
+            + 16 * bit("spatk") + 32 * bit("spdef")
+  local t = math.floor(n * 15 / 63) + 1
+  if t >= 9 then t = t + 1 end   -- TYPE_MYSTERY
+  return t
+end
+function Commands.g4_hidden_power_type(ctx, slot, destVar)
+  local mon = partyMon(ctx, slot)
+  if not mon then return end
+  local sp = require("src.pokemon.Gen4DayCare").speciesOf(mon)
+  if not mon.isEgg and NO_HIDDEN_POWER[sp] then setVar(ctx.save, destVar, 0xFFFF) return end
+  setVar(ctx.save, destVar, Gen4Commands.hiddenPowerType(mon.ivs))
+end
+
+-- `buffercustommessageword <slot> <word>` (StringTemplate_SetEasyChatWord)
+function Commands.g4_buffer_message_word(ctx, slot, word)
+  if not ctx.game then return end
+  local text = require("src.pokemon.Gen4EasyChat").toString(ctx.game.data, valueOf(ctx, word))
+  ctx.game.stringBuffers = ctx.game.stringBuffers or {}
+  ctx.game.stringBuffers[math.floor(valueOf(ctx, slot)) + 1] = text
+end
+
+-- `bufferribbonname <slot> <ribbon>`: bank 535 (TEXT_BANK_RIBBON_NAMES), whose
+-- entry for each of the 80 ribbons is its own id (sRibbonDataTable.nameID).
+function Commands.g4_buffer_ribbon_name(ctx, slot, ribbon)
+  if not ctx.game then return end
+  local T = require("src.import.Gen4Text")
+  local data = ctx.game.data
+  local text = data and data.text and data.text[T.label(535, math.floor(valueOf(ctx, ribbon)))]
+  ctx.game.stringBuffers = ctx.game.stringBuffers or {}
+  ctx.game.stringBuffers[(tonumber(slot) or 0) + 1] = text or ""
+end
+
+-- THE OREBURGH MUSEUM (scrcmd_fossil.c): sFossilItemToSpeciesMapping, in order.
+Gen4Commands.FOSSILS = {
+  { item = 103, species = 142 },  -- Old Amber -> Aerodactyl
+  { item = 101, species = 138 },  -- Helix Fossil -> Omanyte
+  { item = 102, species = 140 },  -- Dome Fossil -> Kabuto
+  { item = 99, species = 345 },   -- Root Fossil -> Lileep
+  { item = 100, species = 347 },  -- Claw Fossil -> Anorith
+  { item = 104, species = 410 },  -- Armor Fossil -> Shieldon
+  { item = 105, species = 408 },  -- Skull Fossil -> Cranidos
+}
+local function bagCount(save, item)
+  local inv = save and save.inventory or {}
+  return tonumber(inv[item]) or tonumber(inv[tostring(item)]) or 0
+end
+
+function Commands.g4_fossil_count(ctx, destVar)
+  local n = 0
+  for _, f in ipairs(Gen4Commands.FOSSILS) do n = n + bagCount(ctx.save, f.item) end
+  setVar(ctx.save, destVar, n)
+end
+
+function Commands.g4_species_from_fossil(ctx, destVar, item)
+  local id = math.floor(valueOf(ctx, item))
+  local species = 0
+  for _, f in ipairs(Gen4Commands.FOSSILS) do
+    if f.item == id then species = f.species break end
+  end
+  setVar(ctx.save, destVar, species)
+end
+
+-- `findfossilatthreshold <itemVar> <indexVar> <threshold>`: the running total
+-- in table order, and the first fossil at which it reaches the threshold.
+function Commands.g4_fossil_at_threshold(ctx, itemVar, indexVar, threshold)
+  local want = math.floor(valueOf(ctx, threshold))
+  setVar(ctx.save, itemVar, 0)
+  setVar(ctx.save, indexVar, 0)
+  local n = 0
+  for i, f in ipairs(Gen4Commands.FOSSILS) do
+    n = n + bagCount(ctx.save, f.item)
+    if n >= want then
+      setVar(ctx.save, itemVar, f.item)
+      setVar(ctx.save, indexVar, i - 1)
+      return
+    end
+  end
+end
+
+-- `getpartyrotomcountandfirst <countVar> <slotVar>`: Rotom not in its base form.
+function Commands.g4_party_rotom_forms(ctx, countVar, slotVar)
+  local n, first = 0, Gen4Commands.PARTY_SLOT_NONE
+  for i, mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    local sp = require("src.pokemon.Gen4DayCare").speciesOf(mon)
+    if sp == 479 and (tonumber(mon.form) or 0) ~= 0 and not mon.isEgg then
+      if first == Gen4Commands.PARTY_SLOT_NONE then first = i - 1 end
+      n = n + 1
+    end
+  end
+  setVar(ctx.save, countVar, n)
+  setVar(ctx.save, slotVar, first)
+end
+
+-- `loadpokedexrating <national> <destVar>` (Pokedex_GetRatingMessageID_*): the
+-- entry in Rowan's or Oak's rating bank (pokedex_ratings, the map's own).
+local LOCAL_RATING = { { 15, 6 }, { 30, 7 }, { 45, 8 }, { 60, 9 }, { 80, 10 }, { 100, 11 },
+  { 120, 12 }, { 140, 13 }, { 160, 14 }, { 180, 15 }, { 200, 16 }, { 209, 17 } }
+local NATIONAL_RATING = { { 39, 22 }, { 59, 23 }, { 89, 24 }, { 119, 25 }, { 149, 26 },
+  { 189, 27 }, { 229, 28 }, { 269, 29 }, { 309, 30 }, { 349, 31 }, { 379, 32 }, { 409, 33 },
+  { 429, "gender410" }, { 449, 36 }, { 459, 37 }, { 469, 38 }, { 475, 39 }, { 481, 40 } }
+function Gen4Commands.dexRating(national, count, female, eterna)
+  if not national then
+    for _, r in ipairs(LOCAL_RATING) do if count <= r[1] then return r[2] end end
+    return eterna and 4 or 5
+  end
+  for _, r in ipairs(NATIONAL_RATING) do
+    if count <= r[1] then
+      if r[2] == "gender410" then return female and 35 or 34 end
+      return r[2]
+    end
+  end
+  return female and 42 or 41
+end
+function Commands.g4_dex_rating(ctx, national, destVar)
+  local nat = (tonumber(national) or 0) ~= 0
+  local count = nat and dexCount(ctx, "owned", false, true) or dexCount(ctx, "seen", true, false)
+  local female = ctx.save and ctx.save.player and ctx.save.player.gender == "girl"
+  local eterna = ctx.save and ctx.save.flags and ctx.save.flags.FLAG_G4_09BB
+  setVar(ctx.save, destVar, Gen4Commands.dexRating(nat, count, female, eterna))
+end
+
+-- `gethour <destVar>` (FieldSystem_GetHour)
+function Commands.g4_get_hour(ctx, destVar)
+  setVar(ctx.save, destVar, tonumber(os.date("*t").hour) or 0)
+end
+
+function Commands.g4_count_party_eggs(ctx, destVar)
+  local n = 0
+  for _, mon in ipairs((ctx.save and ctx.save.party) or {}) do if mon.isEgg then n = n + 1 end end
+  setVar(ctx.save, destVar, n)
+end
+
+-- ScrCmd_TryRevertPartyPokemonForms: every held Griseous Orb back to the bag
+-- (0xFF when they will not fit), then Giratina, Rotom and Shaymin revert.
+function Commands.g4_try_revert_party_forms(ctx, destVar)
+  setVar(ctx.save, destVar, 0)
+  local party = (ctx.save and ctx.save.party) or {}
+  local orbs = 0
+  for _, mon in ipairs(party) do if tonumber(mon.item or mon.heldItem) == 112 then orbs = orbs + 1 end end
+  if orbs > 0 then
+    if require("src.inventory.Bag").add(ctx.save, 112, orbs, ctx.game and ctx.game.data) == false then
+      setVar(ctx.save, destVar, 0xFF)
+      return
+    end
+    for _, mon in ipairs(party) do
+      if tonumber(mon.item or mon.heldItem) == 112 then mon.item, mon.heldItem = nil, nil end
+    end
+  end
+  for _, mon in ipairs(party) do
+    local sp = require("src.pokemon.Gen4DayCare").speciesOf(mon)
+    if (tonumber(mon.form) or 0) > 0 and (sp == 487 or sp == 479 or sp == 492) then
+      require("src.pokemon.Gen4Forms").setForm(ctx.game and ctx.game.data, mon, 0)
+    end
+  end
+end
+
+-- `findpartyslotwithnature <destVar> <nature>`: first non-egg, else 0xFF.
+function Commands.g4_party_slot_with_nature(ctx, destVar, nature)
+  local want = math.floor(valueOf(ctx, nature))
+  for i, mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    if not mon.isEgg and mon.personality and math.floor(tonumber(mon.personality)) % 25 == want then
+      setVar(ctx.save, destVar, i - 1)
+      return
+    end
+  end
+  setVar(ctx.save, destVar, 0xFF)
+end
+
+-- THE REGI RUINS' DOTS (ScrCmd_ActivateRegiRuinsDot): standing on one of
+-- the seven dots of the ruin sets its bit; all seven is state 260.
+Gen4Commands.REGI_DOTS = {
+  [588] = { { 4, 7 }, { 5, 5 }, { 5, 9 }, { 7, 7 }, { 9, 5 }, { 9, 9 }, { 10, 7 } },   -- Iron
+  [590] = { { 3, 7 }, { 5, 7 }, { 7, 5 }, { 7, 7 }, { 7, 9 }, { 9, 7 }, { 11, 7 } },   -- Iceberg
+  [592] = { { 5, 5 }, { 5, 7 }, { 5, 9 }, { 7, 7 }, { 9, 5 }, { 9, 7 }, { 9, 9 } },    -- Rock Peak
+}
+function Commands.g4_regi_dot(ctx, destVar, dotType, x, z)
+  local dots = Gen4Commands.REGI_DOTS[math.floor(valueOf(ctx, dotType))]
+  if not dots then return end
+  local v = math.floor(getVar(ctx.save, destVar) or 0)
+  local px, pz = math.floor(valueOf(ctx, x)), math.floor(valueOf(ctx, z))
+  for i, d in ipairs(dots) do
+    if d[1] == px and d[2] == pz then
+      local bit = 2 ^ (i - 1)
+      if math.floor(v / bit) % 2 == 0 then v = v + bit end
+      pcall(function() require("src.core.Sound").play(ctx.game and ctx.game.data, "SEQ_SE_PL_JUMP2") end)
+      break
+    end
+  end
+  if v == 0x7F then v = 260 end
+  setVar(ctx.save, destVar, v)
+end
+
+-- THE BALL SEALS (ball_seal_info.c) -- see src/import/Gen4Seals.lua.
+local function Seals() return require("src.import.Gen4Seals") end
+
+-- `pokemartseal <day>`: Sunyshore Market's seal counter, the day's stock
+-- (SunyshoreMarketDailyStocks, Monday = 0) on the shop screen, BUY / SEE YA!
+-- only, priced and named by the seal table, into the Seal Case.
+function Commands.g4_seal_mart(ctx, day)
+  local data = ctx.game and ctx.game.data
+  local rec = data and data.gen4_seals
+  local stock = rec and rec.stocks and rec.stocks[math.floor(valueOf(ctx, day)) + 1]
+  if not stock then
+    Logger.warn("gen4 shop: no seal stock for this day; re-import the ROM")
+    return
+  end
+  local T = require("src.import.Gen4Text")
+  local full = data.text and data.text[T.label(543, 14)]
+  local goods = {
+    def = function(id)
+      local name = Seals().name(data, id)
+      return name and { name = name, price = Seals().price(data, id), description = "" } or nil
+    end,
+    owned = function(id) return Seals().count(ctx.save, id) end,
+    canAdd = function(id, qty) return Seals().canChange(ctx.save, id, qty) end,
+    add = function(id, qty) Seals().change(ctx.save, id, qty) end,
+    fullMessage = full,
+    ownedLabel = "In Case: ",
+  }
+  local runner = ctx.runner
+  require("src.ui.Screens").push(ctx.game, "ShopMenu", stock, function()
+    if runner then runner:resume() end
+  end, goods)
+  if runner then runner:yield() end
+end
+Commands.meta.g4_seal_mart = { foreground = true, blocking = true }
+
+-- `giveortakeseal <seal> <quantity>`: the quantity is an s16, so a var
+-- holding 0xFFFF takes one away.
+function Commands.g4_give_or_take_seal(ctx, seal, quantity)
+  local q = math.floor(valueOf(ctx, quantity))
+  if q >= 0x8000 then q = q - 0x10000 end
+  Seals().change(ctx.save, math.floor(valueOf(ctx, seal)), q)
+end
+
+function Commands.g4_count_seal(ctx, seal, destVar)
+  setVar(ctx.save, destVar, Seals().count(ctx.save, math.floor(valueOf(ctx, seal))))
+end
+
+function Commands.g4_count_unique_seals(ctx, destVar)
+  setVar(ctx.save, destVar, Seals().unique(ctx.save))
+end
+
+function Commands.g4_buffer_seal_name(ctx, slot, seal, plural)
+  if not ctx.game then return end
+  local name = Seals().name(ctx.game.data, math.floor(valueOf(ctx, seal)), plural)
+  ctx.game.stringBuffers = ctx.game.stringBuffers or {}
+  ctx.game.stringBuffers[(tonumber(slot) or 0) + 1] = name or ""
+end
+
+-- `findpartyslotwithspecies <destVar> <species>`: the first non-egg, else 0xFF.
+function Commands.g4_party_slot_with_species(ctx, destVar, species)
+  local want = math.floor(valueOf(ctx, species))
+  for i, mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    if not mon.isEgg and require("src.pokemon.Gen4DayCare").speciesOf(mon) == want then
+      setVar(ctx.save, destVar, i - 1)
+      return
+    end
+  end
+  setVar(ctx.save, destVar, 0xFF)
+end
+
+-- `getpartymonform <slot> <destVar>` (Pokemon_GetForm)
+function Commands.g4_party_mon_form(ctx, slot, destVar)
+  setVar(ctx.save, destVar, require("src.pokemon.Gen4Forms").index(partyMon(ctx, slot)))
+end
+
+-- THE ROUTE 224 TABLET (Oak's Letter): `openshaymintabletnamingscreen <destVar>`
+-- is the naming screen of type SHAYMIN_TABLET -- ten characters under bank 422
+-- #6, "Thank who?" -- whose text the cartridge keeps in the misc save block
+-- (MiscSaveBlock_SetTabletName) and `buffertabletname` reads back. The var gets
+-- the screen's returnCode: 0 for a name, 1 for nothing entered.
+function Commands.g4_tablet_naming(ctx, destVar)
+  setVar(ctx.save, destVar, 1)
+  if not (ctx.game and ctx.game.stack) then return end
+  local T = require("src.import.Gen4Text")
+  local title = ctx.game.data and ctx.game.data.text and ctx.game.data.text[T.label(422, 6)]
+  title = type(title) == "string" and title:gsub("{YESNO %d+}", "") or "Thank who?"
+  local runner = ctx.runner
+  require("src.ui.Screens").push(ctx.game, "NamingScreen", {
+    kind = "tablet", maxLen = 10, title = title,
+    onDone = function(typed)
+      local name = tostring(typed or "")
+      if name ~= "" then
+        ctx.save.gen4TabletName = name
+        setVar(ctx.save, destVar, 0)
+      end
+      if runner then runner:resume() end
+    end,
+  })
+  if runner then runner:yield() end
+end
+Commands.meta.g4_tablet_naming = { foreground = true, blocking = true }
+
+function Commands.g4_buffer_tablet_name(ctx, slot)
+  if not ctx.game then return end
+  ctx.game.stringBuffers = ctx.game.stringBuffers or {}
+  ctx.game.stringBuffers[(tonumber(slot) or 0) + 1] = ctx.save and ctx.save.gen4TabletName or ""
+end
+
+-- THE POFFIN HOUSE AND THE POFFIN CASE -- src/pokemon/Gen4Poffin.lua.
+-- `checkcancookpoffin <destVar>`: 1 with no Berries, 2 with a full case, else 0.
+function Commands.g4_can_cook_poffin(ctx, destVar)
+  local P = require("src.pokemon.Gen4Poffin")
+  if #P.berries(ctx.game and ctx.game.data, ctx.save) == 0 then setVar(ctx.save, destVar, 1)
+  elseif P.empty(ctx.save) <= 0 then setVar(ctx.save, destVar, 2)
+  else setVar(ctx.save, destVar, 0) end
+end
+
+-- `openpoffincooking <mode>`: FALSE is cooking alone, TRUE the group the
+-- Wireless Club gathered (g4_link_club below).
+function Commands.g4_open_poffin_cooking(ctx, mode)
+  if not (ctx.game and ctx.game.stack) then return end
+  local group = math.floor(valueOf(ctx, mode)) ~= 0 and (ctx.game.gen4LinkGroup or 2) or nil
+  local runner = ctx.runner
+  ctx.game.stack:push(require("src.ui.Gen4PoffinCooking").new(ctx.game, {
+    group = group,
+    onDone = function() if runner then runner:resume() end end,
+  }))
+  if runner then runner:yield() end
+end
+
+-- `startbattleserver / startbattleclient <mode> ... <dest>`. PORT ADDITION:
+-- Platinum gathers 2-4 DSes for mode 6 (Poffin cooking); with no link the
+-- port asks how many will cook and fills the other places with local cooks
+-- who stir alongside the player. COMM_CLUB_RET_0 (0) when gathered,
+-- _CANCEL (1) on B, _ERROR (3) for every other mode.
+function Commands.g4_link_club(ctx, mode, dest)
+  local game = ctx.game
+  if math.floor(valueOf(ctx, mode)) ~= 6 or not (game and game.stack) then
+    setVar(ctx.save, dest, 3)
+    return
+  end
+  local runner = ctx.runner
+  local function answer(v, n)
+    game.gen4LinkGroup = n
+    setVar(ctx.save, dest, v)
+    if runner then runner:resume() end
+  end
+  local rows = {}
+  for n = 2, 4 do
+    rows[#rows + 1] = { label = require("src.core.Strings")("%d cooks", n), onSelect = function() answer(0, n) end }
+  end
+  game.stack:push(require("src.ui.Menu").new(game, rows, {
+    cancelable = true, onCancel = function() answer(1, nil) end,
+  }))
+  if runner then runner:yield() end
+end
+Commands.meta.g4_link_club = { foreground = true, blocking = true }
+
+function Commands.g4_end_communication(ctx)
+  if ctx.game then ctx.game.gen4LinkGroup = nil end
+end
+Commands.meta.g4_open_poffin_cooking = { foreground = true, blocking = true }
+
+function Commands.g4_poffin_case_has_room(ctx, destVar)
+  setVar(ctx.save, destVar, require("src.pokemon.Gen4Poffin").empty(ctx.save) > 0 and 1 or 0)
+end
+
+function Commands.g4_poffin_case_empty_slots(ctx, destVar)
+  setVar(ctx.save, destVar, require("src.pokemon.Gen4Poffin").empty(ctx.save))
+end
+
+-- `givepoffin <destVar> <spicy> <dry> <sweet> <bitter> <sour> <smoothness>`:
+-- the type made, or POFFIN_NONE (0xFFFF) when the case is full.
+function Commands.g4_give_poffin(ctx, destVar, a, b, c, d, e, smooth)
+  local P = require("src.pokemon.Gen4Poffin")
+  local flavors = {}
+  for i, v in ipairs({ a, b, c, d, e }) do flavors[i] = math.floor(valueOf(ctx, v)) % 256 end
+  local p = P.make(flavors, math.floor(valueOf(ctx, smooth)) % 256, false)
+  setVar(ctx.save, destVar, P.add(ctx.save, p) and p.type or 0xFFFF)
+end
+
+-- `playtrainerencounterbgm <trainer>` -- Sound_SwapBGM(FieldBGM_GetEyesMeetForTrainer):
+-- the trainer's class theme, at once.
+function Commands.g4_trainer_encounter_bgm(ctx, trainer)
+  local data = ctx.game and ctx.game.data
+  local seq = require("src.import.Gen4TrainerMusic").forTrainer(data, math.floor(valueOf(ctx, trainer)))
+  ctx.g4LastEncounterBgm = seq
+  if seq then require("src.core.Music").play(data, seq) end
+end
+
+-- THE BGM FADES (scrcmd_sound.c), on the DS player's levels in src/core/Music.lua.
+-- `fadeoutbgm <targetVolume> <frames>` and `fadeinbgm <frames>` (from zero to
+-- 127) both wait for the fade, as ScriptContext_IsSoundFadeFinished does.
+local function waitFade(ctx)
+  local Music = require("src.core.Music")
+  local runner = ctx.runner
+  if not (runner and Music.dsFading()) then return end
+  runner.waitingCheck = function() return not Music.dsFading() end
+  runner:yield()
+end
+
+function Commands.g4_fade_out_bgm(ctx, target, frames)
+  local Music = require("src.core.Music")
+  if Music.dsFading() then return waitFade(ctx) end   -- Sound_FadeOutBGM: an active fade is kept
+  Music.dsFade(math.max(0, math.min(127, tonumber(target) or 0)) / 127, tonumber(frames) or 0)
+  return waitFade(ctx)
+end
+
+function Commands.g4_fade_in_bgm(ctx, frames)
+  require("src.core.Music").dsFade(1, tonumber(frames) or 0, 0)
+  return waitFade(ctx)
+end
+
+-- `setplayervolume <volume>` -- NNS_SndPlayerSetPlayerVolume(PLAYER_FIELD, v).
+function Commands.g4_set_player_volume(ctx, volume)
+  require("src.core.Music").setPlayerLevel(math.floor(valueOf(ctx, volume)) / 127)
+end
+
+-- THE SUPER CONTEST (scrcmd_contests.c, contest.c) -- src/pokemon/Gen4Contest.lua
+-- holds the rules; the running contest lives on the game (SCRIPT_MANAGER_DATA_PTR),
+-- not in the save.
+local function Contest() return require("src.pokemon.Gen4Contest") end
+local function current(ctx) return ctx.game and ctx.game.gen4Contest end
+
+local function setBuf(ctx, slot, text)
+  if not ctx.game then return end
+  ctx.game.stringBuffers = ctx.game.stringBuffers or {}
+  ctx.game.stringBuffers[math.floor(valueOf(ctx, slot)) + 1] = text or ""
+end
+
+local function contestText(ctx, bank, n)
+  local T = require("src.import.Gen4Text")
+  local data = ctx.game and ctx.game.data
+  return data and data.text and data.text[T.label(bank, n)]
+end
+
+-- CheckContestEligibility (party_menu/main.c): not an egg, not fainted, at
+-- least `rank` of the type's ribbons, and two moves or more.
+function Gen4Commands.contestEligible(mon, rank, contestType)
+  if not mon or mon.isEgg or (tonumber(mon.hp) or 1) <= 0 then return false end
+  local ribbons = 0
+  for r = 0, 3 do
+    if mon.ribbons and mon.ribbons[Contest().ribbonId(contestType, r)] then ribbons = ribbons + 1 end
+  end
+  local moves = 0
+  for i = 1, 4 do
+    local mv = (mon.moves or {})[i]
+    local id = tonumber(mv) or tonumber(mv and mv.id) or 0
+    if id == 0 then break end
+    moves = moves + 1
+  end
+  return rank <= ribbons and moves >= 2
+end
+
+-- `openpartymenuforcontest <slot> <rank> <type> <useDefaultRank>` /
+-- `getcontestpartymenuresult <slotVar> <summaryVar>`
+function Commands.g4_contest_party_menu(ctx, _slot, rank, contestType)
+  local game = ctx.game
+  local runner = ctx.runner
+  ctx.g4ContestSlot = Gen4Commands.PARTY_SLOT_NONE
+  local r, t = math.floor(valueOf(ctx, rank)), math.floor(valueOf(ctx, contestType))
+  local rows = {}
+  for i, mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    local def = game.data.pokemon and game.data.pokemon[mon.species]
+    local ok = Gen4Commands.contestEligible(mon, r, t)
+    rows[#rows + 1] = {
+      label = ("%s  %s"):format(mon.isEgg and "EGG" or (mon.nickname or (def and def.name) or "?"), ok and "ABLE" or "NOT ABLE"),
+      keepOpen = not ok,
+      onSelect = ok and function()
+        ctx.g4ContestSlot = i - 1
+        if runner then runner:resume() end
+      end or nil,
+    }
+  end
+  game.stack:push(require("src.ui.Menu").new(game, rows, {
+    cancelable = true,
+    onCancel = function() if runner then runner:resume() end end,
+  }))
+  if runner then runner:yield() end
+end
+Commands.meta.g4_contest_party_menu = { foreground = true, blocking = true }
+
+function Commands.g4_contest_party_result(ctx, slotVar, summaryVar)
+  setVar(ctx.save, slotVar, ctx.g4ContestSlot or Gen4Commands.PARTY_SLOT_NONE)
+  setVar(ctx.save, summaryVar, 0)
+end
+
+-- `newcontest <rank> <type> <competition> <partySlot>` (ScrCmd_NewContest)
+function Commands.g4_new_contest(ctx, rank, contestType, competition, slot)
+  local game = ctx.game
+  local s = math.floor(valueOf(ctx, slot))
+  local save = ctx.save
+  game.gen4Contest = Contest().new({
+    data = game.data,
+    rank = math.floor(valueOf(ctx, rank)), type = math.floor(valueOf(ctx, contestType)),
+    competition = math.floor(valueOf(ctx, competition)), partySlot = s,
+    mon = save.party and save.party[s + 1],
+    playerName = save.player and save.player.name,
+    playerGender = (save.player and save.player.gender == "girl") and 1 or 0,
+    -- isGameCompleted and isNatDexObtained
+    postgame = (save.flags and save.flags.FLAG_G4_0964 and save.pokedex and save.pokedex.national) and true or false,
+    seed = os.time() % 65536,
+  })
+end
+
+function Commands.g4_run_contest(ctx)
+  local c = current(ctx)
+  if not c then return end
+  local runner = ctx.runner
+  ctx.game.stack:push(require("src.ui.Gen4ContestScreen").new(ctx.game, c, function()
+    if runner then runner:resume() end
+  end))
+  if runner then runner:yield() end
+end
+Commands.meta.g4_run_contest = { foreground = true, blocking = true }
+
+-- Contest_EndContest, then Contest_Free.
+function Commands.g4_end_contest(ctx)
+  local c = current(ctx)
+  if not c then return end
+  local C = Contest()
+  local single = c.competition == C.VISUAL or c.competition == C.DANCE or c.competition == C.ACTING
+  if not C.isPractice(c.competition) and not single and c.placement then
+    local mon = c.contestants[0].mon
+    local won = c.placement[0] == 0
+    local save = ctx.save
+    if won then
+      if c.rank >= C.MASTER and c.competition == C.OFFICIAL then
+        save.gen4ContestMaster = save.gen4ContestMaster or {}
+        save.gen4ContestMaster[c.type] = true
+      end
+      mon.ribbons = mon.ribbons or {}
+      mon.ribbons[C.ribbonId(c.type, c.rank)] = true
+      -- Pokemon_UpdateFriendship(FRIENDSHIP_EVENT_CONTEST_WIN): +3 / +2 / +1 by
+      -- tier (under 100, under 200, above), then Luxury Ball +1, Soothe Bell x1.5
+      local f = tonumber(mon.happiness or mon.friendship) or 0
+      local gain = f < 100 and 3 or f < 200 and 2 or 1
+      if tonumber(mon.ball) == 11 or mon.ball == "LUXURY_BALL" then gain = gain + 1 end
+      if tonumber(mon.item or mon.heldItem) == 218 then gain = math.floor(gain * 150 / 100) end
+      mon.happiness = math.min(255, f + gain)
+    end
+    save.gen4ContestRecords = save.gen4ContestRecords or { entered = 0, won = 0 }
+    save.gen4ContestRecords.entered = save.gen4ContestRecords.entered + 1
+    if won then save.gen4ContestRecords.won = save.gen4ContestRecords.won + 1 end
+  end
+  ctx.game.gen4Contest = nil
+end
+
+-- the buffers
+function Commands.g4_contest_buffer(ctx, kind, a, b)
+  local c = current(ctx)
+  if not c then return end
+  local C = Contest()
+  local data = ctx.game.data
+  local function monName(e)
+    local def = data.pokemon and data.pokemon[e.mon and e.mon.species]
+    return (e.mon and e.mon.nickname) or (def and def.name) or "?"
+  end
+  if kind == "judge" then
+    local j = data.gen4_contest.judges[c.judges[math.floor(valueOf(ctx, a)) + 1]]
+    setBuf(ctx, b, j and contestText(ctx, C.JUDGE_NAMES, j.nameId))
+  elseif kind == "trainer" or kind == "mon" then
+    local e = c.contestants[C.entryToId(math.floor(valueOf(ctx, a)))]
+    if e then setBuf(ctx, b, kind == "trainer" and e.trainer or monName(e)) end
+  elseif kind == "entry" then
+    setBuf(ctx, b, tostring(math.floor(valueOf(ctx, a))))
+  elseif kind == "rank" then
+    -- Contest_GetContestRankTitleMessageID: practice, or the rank's name
+    -- (bank 204: NORMAL..MASTER RANK 46..49, PRACTICE 50)
+    setBuf(ctx, a, contestText(ctx, C.TEXT_BANK, C.isPractice(c.competition) and 50 or 46 + c.rank))
+  elseif kind == "type" then
+    -- Contest_GetFullContestTypeMessageID: COOL..TOUGH CONTEST 41..45, or plain
+    -- CONTEST (52) for the practice Dance
+    setBuf(ctx, a, contestText(ctx, C.TEXT_BANK, c.competition == C.PRACTICE_DANCE and 52 or 41 + c.type))
+  elseif kind == "winTrainer" or kind == "winMon" then
+    local e = c.contestants[C.winner(c)]
+    setBuf(ctx, a, kind == "winTrainer" and e.trainer or monName(e))
+  elseif kind == "ribbon" then
+    setBuf(ctx, a, contestText(ctx, 535, C.ribbonId(c.type, c.rank)))
+  end
+end
+
+-- the queries
+function Commands.g4_contest_query(ctx, kind, a, b)
+  local c = current(ctx)
+  local C = Contest()
+  if kind == "true" then return setVar(ctx.save, a, 1) end
+  if not c then return end
+  if kind == "placement" then setVar(ctx.save, a, c.placement and c.placement[0] or 0)
+  elseif kind == "winner" then setVar(ctx.save, a, C.idToEntry(C.winner(c)))
+  elseif kind == "entry" then setVar(ctx.save, a, C.idToEntry(0))
+  elseif kind == "gfx" then
+    local e = c.contestants[C.entryToId(math.floor(valueOf(ctx, a)))]
+    local g = e and e.gfx
+    if g == "player_m" then g = 0 elseif g == "player_f" then g = 97
+    elseif g == "player_m_contest" then g = 186 elseif g == "player_f_contest" then g = 187 end
+    setVar(ctx.save, b, tonumber(g) or 0)
+  elseif kind == "fame" then
+    local e = c.contestants[C.entryToId(math.floor(valueOf(ctx, a)))]
+    setVar(ctx.save, b, e and e.fame or 1)
+  elseif kind == "mode" then setVar(ctx.save, a, C.mode(c))
+  elseif kind == "ribbon" then
+    local mon = c.contestants[0].mon
+    setVar(ctx.save, a, (mon and mon.ribbons and mon.ribbons[C.ribbonId(c.type, c.rank)]) and 1 or 0)
+  elseif kind == "firstWin" then
+    if not c.placement or c.placement[0] ~= 0 then return setVar(ctx.save, a, 0xFFFF) end
+    local acc = C.FIRST_WIN_ACCESSORY[c.type][c.rank]
+    setVar(ctx.save, a, Gen4Commands.canFitAccessory(ctx.save, acc, 1) and acc or 0xFFFF)
+  elseif kind == "skipCeremony" then
+    local single = c.competition == C.VISUAL or c.competition == C.DANCE or c.competition == C.ACTING
+    local skip = C.isPractice(c.competition) or single or C.winner(c) ~= 0
+    setVar(ctx.save, a, skip and 1 or 0)
+  end
+end
+
+function Commands.g4_contest_info(ctx, rankVar, typeVar, compVar, slotVar)
+  local c = current(ctx)
+  if not c then return end
+  setVar(ctx.save, rankVar, c.rank)
+  setVar(ctx.save, typeVar, c.type)
+  setVar(ctx.save, compVar, c.competition)
+  setVar(ctx.save, slotVar, c.partySlot or 0)
+end
+
+-- THE FASHION CASE'S ACCESSORIES (unk_020298BC.c): ids below 61
+-- (NON_UNIQUE_ACCESSORY_COUNT) stack to 9, the rest to 1.
+function Gen4Commands.accessoryCount(save, id)
+  return tonumber(save and save.gen4Accessories and save.gen4Accessories[id]) or 0
+end
+function Gen4Commands.canFitAccessory(save, id, n)
+  local cap = id < 61 and 9 or 1
+  return Gen4Commands.accessoryCount(save, id) + n <= cap
+end
+function Commands.g4_add_accessory(ctx, id, n)
+  local a, k = math.floor(valueOf(ctx, id)), math.floor(valueOf(ctx, n))
+  ctx.save.gen4Accessories = ctx.save.gen4Accessories or {}
+  local cap = a < 61 and 9 or 1
+  ctx.save.gen4Accessories[a] = math.min(cap, Gen4Commands.accessoryCount(ctx.save, a) + k)
+end
+function Commands.g4_can_fit_accessory(ctx, id, n, destVar)
+  setVar(ctx.save, destVar, Gen4Commands.canFitAccessory(ctx.save, math.floor(valueOf(ctx, id)), math.floor(valueOf(ctx, n))) and 1 or 0)
+end
+
+-- `hidepoketch` / `showpoketch` (SystemFlag_Set/ClearPoketchHidden)
+function Commands.g4_poketch_hidden(ctx, hidden)
+  ctx.save.poketch = ctx.save.poketch or {}
+  ctx.save.poketch.hidden = hidden or nil
+end
+
+
+-- ---------------------------------------------------------------------------
+-- MYSTERY GIFTS (src/scrcmd_mystery_gift.c ScrCmd_MysteryGiftGive), the
+-- deliveryman's commands over src/pokemon/Gen4MysteryGift.lua.
+-- ---------------------------------------------------------------------------
+
+-- `mysterygiftgive <stage> [dest] [dest2]`
+function Commands.g4_mystery_gift(ctx, stage, a, b)
+  local MG = require("src.pokemon.Gen4MysteryGift")
+  local save, game = ctx.save, ctx.game
+  stage = math.floor(tonumber(stage) or 0)
+  local g = MG.current(save)
+  if stage == 1 then                                   -- CHECK_AVAILABLE_PGT
+    setVar(save, a, g and 1 or 0)
+  elseif stage == 2 then                               -- GET_PGT_TYPE
+    setVar(save, a, MG.currentType(save))
+  elseif stage == 3 then                               -- CHECK_CAN_RECEIVE
+    setVar(save, a, MG.canReceive(game, save) and 1 or 0)
+  elseif stage == 4 then                               -- GIVE, then free the slot
+    MG.give(game, save, setVar)
+  elseif stage == 5 or stage == 6 then                 -- RECEIVED / CANT_RECEIVE
+    if not g then return end
+    local items = game and game.data and game.data.items or {}
+    local itemName = g.item and items[g.item] and items[g.item].name or ""
+    local player = (save.player and save.player.name) or save.playerName or ""
+    game.stringBuffers = game.stringBuffers or {}
+    local id
+    if stage == 5 then
+      id = g.text
+      game.stringBuffers[1], game.stringBuffers[2] = player, itemName
+    else
+      id = g.item and MG.TEXT.CANNOT_TOO_MANY or MG.TEXT.CANNOT_PARTY_FULL
+      game.stringBuffers[1] = itemName
+    end
+    setVar(save, a, MG.BANK)
+    setVar(save, b, id)
+  end
+  -- 0 LOAD, 7 / 8 the UNLOADs: the save's gift block, which needs no loading here
+end
+Commands.meta = Commands.meta or {}
+
+-- `checkdistributionevent <event> <dest>`: SystemVars_CheckDistributionEvent,
+-- the event var holding its magic number
+function Commands.g4_check_distribution_event(ctx, event, dest)
+  local MG = require("src.pokemon.Gen4MysteryGift")
+  local e = math.floor(valueOf(ctx, event) or 0)
+  local magic = MG.MAGIC[e]
+  local on = magic ~= nil and getVar(ctx.save, MG.DISTRIBUTION_VAR + e) == magic
+  setVar(ctx.save, dest, on and 1 or 0)
+  setResult(ctx, on and 1 or 0)
+end
+
+-- After the Hall of Fame: this port's offer of one gift per induction
+-- (src/pokemon/Gen4MysteryGift.lua). The script waits for the picker.
+function Commands.g4_mystery_gift_offer(ctx)
+  local runner, game = ctx.runner, ctx.game
+  local MG = require("src.pokemon.Gen4MysteryGift")
+  if not (game and game.stack) or MG.owed(ctx.save) < 1 or #MG.available(ctx.save) == 0 then return end
+  local resumed = false
+  MG.offer(game, function()
+    resumed = true
+    if runner and runner.resume then runner:resume() end
+  end)
+  if runner and not resumed then runner:yield() end
+end
+Commands.meta.g4_mystery_gift_offer = { foreground = true, blocking = true }
+
+
+-- `cleargame` -- ClearGame (src/clear_game.c), Platinum's own end:
+--   1. the Hall of Fame app (src/ui/Gen4HallOfFame.lua)
+--   2. [this port's addition] the Mystery Gift offer, one per induction
+--   3. "Saving... Don't turn off the power." (bank 213 #15), the party
+--      healed, the induction recorded, the save, "{player} saved the game."
+--      (#16)
+--   4. the end credits (src/ui/Gen4Credits.lua), START skipping them only if
+--      the game had been cleared before this time
+--   5. OS_ResetSystem: the cartridge reboots, so this returns to the title
+--      and the script never resumes
+function Commands.g4_clear_game(ctx)
+  local game, save, runner = ctx.game, ctx.save, ctx.runner
+  local flag = (save.flags or {})[Gen4Commands.GAME_COMPLETED_FLAG]
+  local clearedBefore = flag == true or #((save and save.hallOfFame) or {}) > 0
+  Commands.g4_prepare_hall_of_fame(ctx)
+  local T = require("src.import.Gen4Text")
+  local TextBox = require("src.render.TextBox")
+  local function line(n)
+    T.buffer(game, (save.player and save.player.name) or "")
+    return T.resolve(game.data, 213, n, game) or ""
+  end
+  local function credits()
+    game.stack:push(require("src.ui.Gen4Credits").new(game, {
+      canSkip = clearedBefore,
+      onDone = function() if game.returnToTitle then game:returnToTitle() end end,
+    }))
+  end
+  local function saveGame()
+    local Pokemon = require("src.pokemon.Pokemon")
+    for _, mon in ipairs(save.party or {}) do pcall(Pokemon.heal, mon) end
+    local SaveData = require("src.core.SaveData")
+    local boot = game.data.field and game.data.field.boot or {}
+    pcall(SaveData.applyPostGameHome, save, boot)
+    if game.overworld then game.overworld.lastOutdoor = save.lastOutdoor end
+    local allowed = true
+    if game.writeSave then allowed = game:writeSave() ~= false end
+    pcall(SaveData.applyPostGameHome, save, boot)
+    if allowed then pcall(SaveData.save, save) end
+  end
+  local party = {}
+  for _, mon in ipairs(save.party or {}) do party[#party + 1] = mon end
+  game.stack:push(require("src.ui.Gen4HallOfFame").new(game, {
+    party = party,
+    onDone = function()
+      -- the induction (HallOfFame_AddEntry), which the gift offer counts
+      save.hallOfFame = save.hallOfFame or {}
+      local entry = {}
+      for _, mon in ipairs(party) do
+        entry[#entry + 1] = { species = mon.species, level = mon.level, nickname = mon.nickname }
+      end
+      table.insert(save.hallOfFame, entry)
+      require("src.pokemon.Gen4MysteryGift").offer(game, function()
+        game.stack:push(TextBox.new(game, line(15), function()
+          saveGame()
+          game.stack:push(TextBox.new(game, line(16), credits))
+        end))
+      end)
+    end,
+  }))
+  if runner then runner:yield() end
+end
+Commands.meta = Commands.meta or {}
+Commands.meta.g4_clear_game = { foreground = true, blocking = true }
 
 return Gen4Commands

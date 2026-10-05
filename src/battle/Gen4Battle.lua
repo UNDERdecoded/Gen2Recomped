@@ -648,6 +648,14 @@ function Gen4Battle.battlerHidden(battle, battler)
   if battle and battle.showPlayerBack and battler and battler == battle.player then
     return true
   end
+  -- ...AND THE FOE'S, while its trainer stands on the platform or the ball is
+  -- on its way: the same three flags the shared pic layer honours
+  -- (showEnemyTrainer, enemySendingOut, enemyHidden).  Without them a trainer
+  -- battle opened with the Pokemon already out and no trainer at all.
+  if battle and battler and battler == battle.enemy
+     and (battle.showEnemyTrainer or battle.enemySendingOut or battle.enemyHidden) then
+    return true
+  end
 
   -- A POKEMON INSIDE A THROWN BALL IS NOT ON THE FIELD.  Asked through the
   -- same seam a move animation uses, rather than a second hiding rule.
@@ -730,6 +738,32 @@ function Gen4Battle.drawTrainerBack(battle)
   g.setColor(1, 1, 1, 1)
   g.draw(img, x, y)
   return true
+end
+
+-- THE OPPOSING TRAINER, on the foe's platform until the send-out and again
+-- after the last Pokemon falls.  Reported from play: *"Trainer sprites are
+-- missing from battle"* -- the shared pic layer has the branch, this layout
+-- never called it, so a Sinnoh trainer battle opened on the Pokemon.  Placed by
+-- the foe's own `corner`, as the player's back is by the player's, and slid by
+-- the engine's own "foe" pic offset (the slide off before the send-out and back
+-- on at the end).  A second trainer, when two walked up, stands on the second
+-- foe's slot.
+function Gen4Battle.drawEnemyTrainer(battle)
+  if not (battle and battle.showEnemyTrainer and battle.trainerPic) then return false end
+  local g = love.graphics
+  local off = battle.picOffset and battle:picOffset("foe") or 0
+  local function one(pic, slot)
+    local img = battle.picImage and battle:picImage(pic) or pic
+    if not (img and img.getWidth) then return false end
+    local pos = Gen4Battle.battlerPos(battle, slot)
+    if not pos then return false end
+    local x, y = corner(pos.x, pos.y, img)
+    g.setColor(1, 1, 1, 1)
+    g.draw(img, x + off, y)
+    return true
+  end
+  if battle.trainerPicB and battle.isDouble and battle:isDouble() then pcall(one, battle.trainerPicB, 3) end
+  return one(battle.trainerPic, 1)
 end
 
 function Gen4Battle.drawBattlers(battle)
@@ -1482,9 +1516,41 @@ function Gen4Battle.drawHealthboxes(battle)
   local drew = 0
   for _, row in ipairs(sides) do
     local art = Gen4Battle.HEALTHBOX_ART[row.side]
+    -- THE SAFARI BOX stands where the player's would: "SAFARI BALLS" and
+    -- "Left: NN" in FONT_SYSTEM at the cell rows HealthBox_DrawBallCount and
+    -- _DrawBallsLeftMessage copy them to (tile rows 2 and 4, from column 2).
+    if row.side == "player" and battle.gen4Safari then
+      local img = healthboxImage(battle, "healthbox_safari")
+      local centre = Gen4Battle.healthboxPos(battle, row.slot)
+      if img and centre then
+        local x, y = centre.x + art.ox, centre.y + art.oy
+        g.setColor(1, 1, 1, 1)
+        g.draw(img, x, y)
+        local Font = require("src.render.Font")
+        local G = require("src.battle.Gen4Safari")
+        local balls = battle.safari and battle.safari.balls or 0
+        local faced = Font.pushFace("system")
+        g.setColor(0.2, 0.2, 0.2, 1)
+        Font.draw(G.text(battle.data, G.TEXT.boxTitle) or "SAFARI BALLS", x + 16, y + 16)
+        Font.draw(G.text(battle.data, G.TEXT.boxLeft, ("%2d"):format(balls))
+                  or ("Left: %2d"):format(balls), x + 16, y + 32)
+        if faced then Font.popFace() end
+        g.setColor(1, 1, 1, 1)
+        drew = drew + 1
+      end
+      goto continue
+    end
     local img = art and healthboxImage(battle, art.key)
     local centre = Gen4Battle.healthboxPos(battle, row.slot)
-    if img and centre and row.battler and row.battler.mon then
+    -- A BOX COMES IN WITH ITS POKEMON: none for the foe while its trainer
+    -- still stands on the platform or its ball is in the air, none for the
+    -- player while the trainer's back is up.
+    local notOut = (row.side == "enemy" and (battle.showEnemyTrainer or battle.enemySendingOut))
+        or (row.side == "player" and battle.showPlayerBack)
+    -- (a box held back on purpose is handled, not missing: it must not send
+    -- the caller to its stand-in HUD, which would draw over the other box)
+    if notOut then drew = drew + 1 end
+    if img and centre and row.battler and row.battler.mon and not notOut then
       local x, y = centre.x + art.ox, centre.y + art.oy
       g.setColor(1, 1, 1, 1)
       g.draw(img, x, y)
@@ -1500,6 +1566,7 @@ function Gen4Battle.drawHealthboxes(battle)
                                    okNum and lettered or false)
       drew = drew + 1
     end
+    ::continue::
   end
   return drew == 2
 end
@@ -1726,6 +1793,16 @@ Gen4Battle.MENU_GAP = 108
 -- cartridge prints.
 function Gen4Battle.actionLabels(battle)
   local Strings = require("src.core.Strings")
+  -- THE GREAT MARSH'S FOUR, in the same four places (BattleSubscreen_
+  -- DrawActionMenu swaps the strings and nothing else).
+  if battle and battle.gen4Safari then
+    local G = require("src.battle.Gen4Safari")
+    local out, fallback = {}, { "BALL", "BAIT", "MUD", "RUN" }
+    for i, id in ipairs({ G.TEXT.labelBall, G.TEXT.labelBait, G.TEXT.labelMud, G.TEXT.labelRun }) do
+      out[i] = G.text(battle.data, id) or Strings(fallback[i])
+    end
+    return out
+  end
   local rec = battle and battle.data and battle.data.constants
              and battle.data.constants.gen4BattleMenu
   local out = {}
@@ -2856,6 +2933,7 @@ function Gen4Battle.draw(battle)
   Gen4Battle.drawEffectBackground(battle)
 
   Gen4Battle.drawBattlers(battle)
+  pcall(Gen4Battle.drawEnemyTrainer, battle)
 
   -- The trainer, while the first Pokemon is still in its ball.  Before the
   -- thrown ball so a send-out throw draws over the trainer rather than under.

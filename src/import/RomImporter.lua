@@ -1297,6 +1297,38 @@ local DONATE_URL = "https://www.paypal.com/ncp/payment/F3QPTKT4E8HCS"
 -- after.
 local MAP_EDITOR_LABEL = "Map Editor (Beta)"
 local UD_URL = "https://discord.gg/4VXnEnePT"
+
+-- WHO MADE THE GAME ON THIS TAB, AND WHERE TO THANK THEM.
+--
+-- The footer's credit line and its donate buttons, per tab:
+--   * Red, Blue and Yellow are bryanthaboi's / Boi's Club's work, and they
+--     asked for no donation link -- so there is none on those tabs.
+--   * FireRed is Tranzue's, and the buttons go to Tranzue: Patreon and Ko-fi.
+--   * Everything else -- the other games and the non-game tabs like mods --
+--     is UNDERdecoded's, with the PayPal link.
+-- A table rather than branches in `draw`, so a new tab is one row here.
+local CREDITS = {
+  default = {
+    by = "UNDERdecoded",
+    links = { { label = "DONATE", url = DONATE_URL } },
+  },
+  red = { by = "bryanthaboi / boisclub", links = {} },
+  blue = { by = "bryanthaboi / boisclub", links = {} },
+  yellow = { by = "bryanthaboi / boisclub", links = {} },
+  firered = {
+    by = "Tranzue",
+    links = {
+      { label = "Tranzue on Patreon",
+        url = "https://www.patreon.com/c/cartethyia_bot/shop" },
+      { label = "Tranzue on Ko-fi", url = "https://ko-fi.com/cartethyiabot" },
+    },
+  },
+}
+RomImporter.CREDITS = CREDITS
+
+function RomImporter.creditFor(tab)
+  return CREDITS[tab] or CREDITS.default
+end
 local TRUST_WARNING = "if you did not get this from UNDERdecodedHD's github " ..
   "or a link from the discord that UNDERdecodedHD himself posted, just know " ..
   "it might have been tampered with. go to the discord to verify " ..
@@ -5463,11 +5495,15 @@ function RomImporter:draw()
   local bcgW, bcgH = bcgImage:getDimensions()
   local bcgScale = math.min(math.min(appW - 48 * s, 190 * s) / bcgW, height * 0.06 / bcgH)
   local bcgDW, bcgDH = bcgW * bcgScale, bcgH * bcgScale
-  -- The donate chip sits on its own row under the warning, so its height is
-  -- reserved here too: measure it the same way _chipButton will, or the page
-  -- ends up scrolling short and the chip falls off the bottom edge.
+  -- The credit line and the donate chips sit on their own rows under the
+  -- warning, so their height is reserved here too: measure them the same way
+  -- _chipButton will, or the page ends up scrolling short and a chip falls off
+  -- the bottom edge. A tab with no donate links reserves no chip row.
+  local credit = RomImporter.creditFor(self.tab)
+  local creditH = self.hintFont:getHeight()
   local donateH = self.hintFont:getHeight() + 10 * s
-  local footerH = 10 * s + bcgDH + 6 * s + warningH + 8 * s + donateH + 12 * s
+  local chipsH = (#credit.links > 0) and (8 * s + donateH) or 0
+  local footerH = 10 * s + bcgDH + 6 * s + warningH + 8 * s + creditH + chipsH + 12 * s
 
   -- Logo: centred over the strip, width clamped, gentle bob + glow pulse.  The
   -- resting metrics fix the tab bar's top so the layout never shifts as it bobs.
@@ -5924,14 +5960,36 @@ function RomImporter:draw()
     end
   end
 
-  -- Donate: centred on its own row below the warning.  Drawn from warningY so
-  -- it tracks the footer wherever the footer landed (pinned or scrolled).
+  -- "Created by ..." and the tab's donate chips (see CREDITS), centred on
+  -- their own rows below the warning.  Drawn from warningY so they track the
+  -- footer wherever the footer landed (pinned or scrolled).
   do
     love.graphics.setFont(self.hintFont)
-    local dw = self.hintFont:getWidth("DONATE") + 24 * s
-    self.donateButton = self:_chipButton(appX + (appW - dw) / 2,
-      warningY + warningH + 8 * s, "DONATE",
-      { font = self.hintFont, w = dw, h = donateH, kind = "accent" })
+    local creditY = warningY + warningH + 8 * s
+    col(PAL.warning)
+    love.graphics.printf("Created by " .. credit.by, appX, creditY, appW, "center")
+    self.donateButtons = {}
+    self.donateButton = nil
+    if #credit.links > 0 then
+      local gap = 10 * s
+      local widths, total = {}, 0
+      for i, link in ipairs(credit.links) do
+        widths[i] = self.hintFont:getWidth(link.label) + 24 * s
+        total = total + widths[i] + (i > 1 and gap or 0)
+      end
+      local x = appX + (appW - total) / 2
+      local y = creditY + creditH + 8 * s
+      for i, link in ipairs(credit.links) do
+        local rect = self:_chipButton(x, y, link.label,
+          { font = self.hintFont, w = widths[i], h = donateH, kind = "accent" })
+        if rect then
+          rect.url = link.url
+          self.donateButtons[#self.donateButtons + 1] = rect
+        end
+        x = x + widths[i] + gap
+      end
+      self.donateButton = self.donateButtons[1]
+    end
   end
 
   -- End of the scrolling column; the logo and the page scrollbar are pinned and
@@ -6560,9 +6618,11 @@ function RomImporter:mousepressed(x, y, button)
     love.system.openURL(self.bcgUrl or COMMUNITY_URL)
     return
   end
-  if inside(self.donateButton, x, y) then
-    love.system.openURL(DONATE_URL)
-    return
+  for _, button in ipairs(self.donateButtons or {}) do
+    if inside(button, x, y) then
+      love.system.openURL(button.url or DONATE_URL)
+      return
+    end
   end
   if inside(self.linkUrlRect, x, y) then
     love.system.openURL(COMMUNITY_URL)
@@ -6815,6 +6875,12 @@ function RomImporter:mousepressed(x, y, button)
   for _, r in ipairs(self.modImportGameRects or {}) do
     if inside(r, x, y) then
       if r.version then self:choose(r.version) end
+      return
+    end
+  end
+  for _, r in ipairs(self.modSupportRects or {}) do
+    if inside(r, x, y) then
+      if r.url then love.system.openURL(r.url) end
       return
     end
   end
@@ -9903,6 +9969,7 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
     self.modVersionsRects = {}
     self.modImportFileRects = {}
     self.modImportGameRects = {}
+    self.modSupportRects = {}
     self.modGenRects = {}
     self._modMax = 0
     return (top - y) + boxH
@@ -10006,8 +10073,13 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
         or ("Needs " .. tostring(needGame.name) .. " imported")
     end
 
+    -- "Support the creator": the manifest's `support` link, first in the row
+    -- so it is the button a player reads before the maintenance ones.
+    local supLabel = (m.support and m.support ~= "") and "Support the creator" or nil
+    local supW = supLabel and (self.hintFont:getWidth(supLabel) + 24 * s) or 0
     local btnRowW = delW
     if hasGh then btnRowW = updW + btnGap + verW + btnGap + delW end
+    if supLabel then btnRowW = supW + btnGap + btnRowW end
     if impLabel then btnRowW = impW + btnGap + btnRowW end
     if gameLabel then btnRowW = gameW + btnGap + btnRowW end
     -- PER-GENERATION CHIPS, under the switch.
@@ -10069,7 +10141,8 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
       needs = needs, impLabel = impLabel, impW = impW, needLine = needLine,
       readyLine = readyLine,
       needGame = needGame, gameLabel = gameLabel, gameW = gameW,
-      gameLine = gameLine, gameLineH = gameLineH }
+      gameLine = gameLine, gameLineH = gameLineH,
+      supLabel = supLabel, supW = supW, support = m.support }
     total = total + cardH
   end
   total = total + (#mods - 1) * cardGap
@@ -10087,6 +10160,7 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
   self.modVersionsRects = {}
   self.modImportFileRects = {}
   self.modImportGameRects = {}
+  self.modSupportRects = {}
   self.modGenRects = {}
 
   if not paged then
@@ -10269,6 +10343,17 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
             id = rect.id,
           }
         end
+      end
+      if L.supLabel then
+        local srect = self:_chipButton(btnX, btnY, L.supLabel, {
+          w = L.supW, h = btnH, id = m.id, kind = "accent",
+        })
+        local before = #self.modSupportRects
+        clipHit(srect, self.modSupportRects)
+        if #self.modSupportRects > before then
+          self.modSupportRects[#self.modSupportRects].url = L.support
+        end
+        btnX = btnX + L.supW + btnGap
       end
       if L.impLabel then
         local irect = self:_chipButton(btnX, btnY, L.impLabel, {

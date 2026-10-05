@@ -14,12 +14,13 @@ ctx.save.flags.FLAG_G4_0964=false
 C.g4_game_completed(ctx,0x8000);assert(ctx.save.gen4Vars[0x8000]==0,'explicit cleared ROM flag must take precedence')
 ctx.save.flags={}
 ctx.save.hallOfFame={}
-C.g4_daycare_has_egg(ctx,0x8000);assert(ctx.save.gen4Vars[0x8000]==0 and ctx.save.daycare==nil,'query cannot create a day care save')
-ctx.save.daycare={breed={}}
+-- Daycare_HasEgg is "the offspring personality is non-zero" (src/pokemon/Gen4DayCare.lua)
+C.g4_daycare_has_egg(ctx,0x8000);assert(ctx.save.gen4Vars[0x8000]==0 and ctx.save.gen4DayCare==nil,'query cannot create a day care save')
+ctx.save.gen4DayCare={mons={},personality=0,counter=0}
 C.g4_daycare_has_egg(ctx,0x8000);assert(ctx.save.gen4Vars[0x8000]==0)
-ctx.save.daycare.breed.egg={species=175,isEgg=true}
+ctx.save.gen4DayCare.personality=0x12345678
 C.g4_daycare_has_egg(ctx,0x8000);assert(ctx.save.gen4Vars[0x8000]==1)
-ctx.save.daycare.breed.egg=nil
+ctx.save.gen4DayCare.personality=0
 C.g4_daycare_has_egg(ctx,0x8000);assert(ctx.save.gen4Vars[0x8000]==0)
 assert(ctx.g4Compare==2 and ctx.lastCheck==false)
 local root=arg[1] or 'G:/Gen2Recomped/platinum/data/generated/'

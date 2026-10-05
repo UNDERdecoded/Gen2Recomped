@@ -1692,14 +1692,14 @@ L.changeplayerstate = function(_, s)
 end
 L.setplayerbike = function(ins, s) emit(s, { "g4_player_bike", ins.args[1] }) end
 
--- MUSIC.  `playmusic` already lowers to the shared `play_music`, so `setbgm`
--- goes to the same verb: the cartridge's distinction is "play now" against
--- "play on this map from now on", and without a Gen 4 sequence bank there is
--- nothing on either side of it.  The fades and the encounter jingle are noops
--- for the same reason -- `audio.lua` on a Platinum cache is cries and nothing
--- else.
+-- MUSIC.  `playmusic` lowers to the shared `play_music`, and `setbgm` to the
+-- same verb: the cartridge distinguishes "play now" from "play on this map from
+-- now on", and this port re-cues the map theme on its own. Platinum's music
+-- plays from the cartridge's SDAT (src/audio/NitroAudio.lua); the fades, the
+-- field-player volume and the trainer eyes-meet themes are real -- see
+-- `g4_fade_out_bgm`, `g4_set_player_volume` and `g4_trainer_encounter_bgm`.
 L.setbgm = function(ins, s) emit(s, { "play_music", ins.args[1] }) end
-L.fadeoutbgm = function(_, s) emit(s, { "g4_noop", "a BGM fade" }) end
+L.fadeoutbgm = function(ins, s) emit(s, { "g4_fade_out_bgm", ins.args[1], ins.args[2] }) end
 -- `waitfortransition` is `FieldTransition_FinishMap`: it flags the field map as
 -- no longer running and hands the task to `FieldTask_WaitUntilMapFinished`.
 -- It appears once, in `CommonScript_PoisonWhiteout`, between the screen fade
@@ -1715,8 +1715,11 @@ L.fadeoutbgm = function(_, s) emit(s, { "g4_noop", "a BGM fade" }) end
 L.waitfortransition = function(_, s)
   emit(s, { "g4_noop", "the field map teardown, which the warp owns here" })
 end
-L.playtrainerencounterbgm = function(_, s)
-  emit(s, { "g4_noop", "the trainer encounter jingle" })
+-- `playtrainerencounterbgm <trainer>`: the class's eyes-meet theme
+-- (src/import/Gen4TrainerMusic.lua), the first row of the common
+-- trainer-encounter script.
+L.playtrainerencounterbgm = function(ins, s)
+  emit(s, { "g4_trainer_encounter_bgm", ins.args[1] })
 end
 
 L.getdayofweek = function(ins, s) emit(s, { "g4_day_of_week", ins.args[1] }) end
@@ -1793,8 +1796,17 @@ end
 L.checkpartypokerus = function(ins, s)
   emit(s, { "g4_party_pokerus", ins.args[1] })
 end
+-- SystemVars_CheckDistributionEvent: the event var against its magic number,
+-- which a Mystery Gift's handler sets (src/pokemon/Gen4MysteryGift.lua)
 L.checkdistributionevent = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[2], "Mystery Gift distribution events" })
+  emit(s, { "g4_check_distribution_event", ins.args[1], ins.args[2] })
+end
+-- `mysterygiftgive <stage> [dest] [dest2]` (ScrCmd_MysteryGiftGive): the
+-- deliveryman, and every mart's OnTransition that shows him only while a
+-- gift is waiting
+L.mysterygiftgive = function(ins, s)
+  local a = ins.args or {}
+  emit(s, { "g4_mystery_gift", a[1], a[2], a[3] })
 end
 
 
@@ -2107,6 +2119,11 @@ end
 -- command's answer.
 -- DAILY SWARMS -- see src/world/Gen4Swarms.lua.
 L.enableswarms = function(_, s) emit(s, { "g4_enable_swarms" }) end
+-- THE TROPHY GARDEN -- see src/world/Gen4DailySlots.lua.
+L.addtrophygardenmon = function(_, s) emit(s, { "g4_add_trophy_garden_mon" }) end
+L.gettrophygardenslot1species = function(ins, s)
+  emit(s, { "g4_trophy_garden_slot1", ins.args[1] })
+end
 L.getswarmmapandspecies = function(ins, s)
   emit(s, { "g4_swarm_map_species", ins.args[1], ins.args[2] })
 end
@@ -2304,16 +2321,33 @@ L.givesphere = function(ins, s)
             ins.args[1], ins.args[2], ins.args[3] })
 end
 
--- THE SEAL CASE, and neither of these can be more than this honestly.
--- `CountUniqueSealsInSealCase` walks SEAL_ID_MAX asking
--- `SealCase_CountSealOccurrenceAnywhere`, and this port has no seal state at
--- all -- not a case, not a capsule, not a ball sticker -- so the count is zero
--- and that is the true answer rather than a stub, which is what `g4_no_feature`
--- is for.  `OpenSealCapsuleEditor` is a whole screen (`CapsuleMenu_StartFieldTask`),
--- so it is `pending` rather than a no-op: the row is decoded and lowered and
--- the thing behind it is not built.
+-- THE SEAL CASE. Seal counts live in save.gen4Seals (src/import/Gen4Seals.lua);
+-- no capsules are modelled, so a seal on a capsule never exists and the case
+-- count is the whole count.  `OpenSealCapsuleEditor` is a whole screen
+-- (`CapsuleMenu_StartFieldTask`) and stays `pending`.
 L.countuniquesealsinsealcase = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the seal case" })
+  emit(s, { "g4_count_unique_seals", ins.args[1] })
+end
+-- ...and the seals themselves (src/import/Gen4Seals.lua).
+L.findpartyslotwithspecies = function(ins, s)
+  emit(s, { "g4_party_slot_with_species", ins.args[1], ins.args[2] })
+end
+L.getpartymonform = function(ins, s) emit(s, { "g4_party_mon_form", ins.args[1], ins.args[2] }) end
+-- THE ROUTE 224 TABLET and its two sound dips (field-player volume and a
+-- BGM fade-in, which join `fadeoutbgm` as declared fades).
+L.openshaymintabletnamingscreen = function(ins, s) emit(s, { "g4_tablet_naming", ins.args[1] }) end
+L.buffertabletname = function(ins, s) emit(s, { "g4_buffer_tablet_name", ins.args[1] }) end
+L.setplayervolume = function(ins, s) emit(s, { "g4_set_player_volume", ins.args[1] }) end
+L.fadeinbgm = function(ins, s) emit(s, { "g4_fade_in_bgm", ins.args[1] }) end
+-- `135 <syncNo>` is CommTiming_StartSync, which resumes at once when fewer than
+-- two players are connected -- always, here. A no-op is the cartridge's own
+-- single-player answer, not a gap.
+L["135"] = function(_, s) end
+L.giveortakeseal = function(ins, s) emit(s, { "g4_give_or_take_seal", ins.args[1], ins.args[2] }) end
+L.countsealoccurence = function(ins, s) emit(s, { "g4_count_seal", ins.args[1], ins.args[2] }) end
+L.bufferballsealname = function(ins, s) emit(s, { "g4_buffer_seal_name", ins.args[1], ins.args[2] }) end
+L.bufferballsealnameplural = function(ins, s)
+  emit(s, { "g4_buffer_seal_name", ins.args[1], ins.args[2], true })
 end
 L.opensealcapsuleeditor = function(_, s)
   emit(s, { "g4_open_seal_capsule_editor" })
@@ -2347,13 +2381,29 @@ L.contestphotohasdata = function(ins, s)
   emit(s, { "g4_no_feature", ins.args[2], "contest photos" })
 end
 L.checkhasemptypoffincaseslot = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the poffin case" })
+  emit(s, { "g4_poffin_case_has_room", ins.args[1] })
+end
+-- THE POFFIN HOUSE (src/pokemon/Gen4Poffin.lua, src/ui/Gen4PoffinCooking.lua)
+L.getemptypoffincaseslotcount = function(ins, s) emit(s, { "g4_poffin_case_empty_slots", ins.args[1] }) end
+L.checkcancookpoffin = function(ins, s) emit(s, { "g4_can_cook_poffin", ins.args[1] }) end
+L.openpoffincooking = function(ins, s) emit(s, { "g4_open_poffin_cooking", ins.args[1] }) end
+-- `startbattleserver / startbattleclient <mode> 0 0 <dest>` (the Wireless
+-- Club, COMM_CLUB_RET_*) and `endcommunication`: there is no DS link here.
+-- Mode 6 is the Poffin House's group cooking, which the port gathers locally
+-- (Commands.g4_link_club); every other mode answers COMM_CLUB_RET_ERROR, the
+-- path each script already has for a link that could not start.
+L.startbattleserver = function(ins, s) emit(s, { "g4_link_club", ins.args[1], ins.args[4], 1 }) end
+L.startbattleclient = function(ins, s) emit(s, { "g4_link_club", ins.args[1], ins.args[4], 0 }) end
+L.endcommunication = function(_, s) emit(s, { "g4_end_communication" }) end
+L.givepoffin = function(ins, s)
+  local a = ins.args or {}
+  emit(s, { "g4_give_poffin", a[1], a[2], a[3], a[4], a[5], a[6], a[7] })
 end
 
 -- ACCESSORIES (the contest dress-up items).
-L.addaccessory = function(_, s) emit(s, { "g4_noop", "contest accessories" }) end
+L.addaccessory = function(ins, s) emit(s, { "g4_add_accessory", ins.args[1], ins.args[2] }) end
 L.canfitaccessory = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[3], "contest accessories" })
+  emit(s, { "g4_can_fit_accessory", ins.args[1], ins.args[2], ins.args[3] })
 end
 L.bufferaccessoryname = function(ins, s)
   emit(s, { "g4_buffer", ins.args[1], "bank:386", ins.args[2] })
@@ -2363,12 +2413,39 @@ L.bufferaccessorynamewitharticle = function(ins, s)
 end
 
 -- THE MOVE TUTOR at Grandma Wilma's house on Route 210.
-L.openmovetutormenu = function(_, s) emit(s, { "g4_noop", "the move tutor" }) end
+L.openmovetutormenu = function(ins, s)
+  emit(s, { "g4_open_move_tutor_menu", ins.args[1], ins.args[2] })
+end
+-- ...and the SHARD tutors' party pick (src/import/Gen4MoveTutor.lua).
 L.selectmovetutorpokemon = function(_, s)
-  emit(s, { "g4_noop", "the move tutor" })
+  emit(s, { "g4_select_tutor_mon" })
 end
 L.checklearnedtutormove = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the move tutor" })
+  emit(s, { "g4_learned_move", ins.args[1] })
+end
+-- THE MOVE REMINDER (Pastoria) and THE MOVE DELETER (Canalave) --
+-- scrcmd_party_mon_moves.c; the commands sit with the teach screen in
+-- Gen4Commands.
+L.checkhaslearnableremindermoves = function(ins, s)
+  emit(s, { "g4_has_reminder_moves", ins.args[1], ins.args[2] })
+end
+L.openmoveremindermenu = function(ins, s)
+  emit(s, { "g4_open_move_reminder_menu", ins.args[1] })
+end
+L.checklearnedremindermove = function(ins, s)
+  emit(s, { "g4_learned_move", ins.args[1] })
+end
+L.selectpartymonmove = function(ins, s)
+  emit(s, { "g4_select_party_mon_move", ins.args[1] })
+end
+L.getselectedpartymonmove = function(ins, s)
+  emit(s, { "g4_selected_party_mon_move", ins.args[1] })
+end
+L.clearpartymonmoveslot = function(ins, s)
+  emit(s, { "g4_clear_move_slot", ins.args[1], ins.args[2] })
+end
+L.bufferpartymovename = function(ins, s)
+  emit(s, { "g4_buffer_party_move", ins.args[1], ins.args[2], ins.args[3] })
 end
 
 -- AMITY SQUARE's berry-and-accessory man.
@@ -2417,6 +2494,153 @@ L.addtogamerecord = function(ins, s)
 end
 L.addtogamerecordbigvalue = function(ins, s)
   emit(s, { "g4_add_game_record", ins.args[1], ins.args[2], true })
+end
+-- SMALL FIELD QUERIES, ribbons, fossils, ratings and the Regi ruins.
+L.buffercustommessageword = function(ins, s) emit(s, { "g4_buffer_message_word", ins.args[1], ins.args[2] }) end
+L.bufferribbonname = function(ins, s) emit(s, { "g4_buffer_ribbon_name", ins.args[1], ins.args[2] }) end
+L.getfossilcount = function(ins, s) emit(s, { "g4_fossil_count", ins.args[1] }) end
+L.getspeciesfromfossil = function(ins, s) emit(s, { "g4_species_from_fossil", ins.args[1], ins.args[2] }) end
+L.findfossilatthreshold = function(ins, s)
+  emit(s, { "g4_fossil_at_threshold", ins.args[1], ins.args[2], ins.args[3] })
+end
+L.getpartyrotomcountandfirst = function(ins, s)
+  emit(s, { "g4_party_rotom_forms", ins.args[1], ins.args[2] })
+end
+L.loadpokedexrating = function(ins, s) emit(s, { "g4_dex_rating", ins.args[1], ins.args[2] }) end
+L.gethour = function(ins, s) emit(s, { "g4_get_hour", ins.args[1] }) end
+L.countpartyeggs = function(ins, s) emit(s, { "g4_count_party_eggs", ins.args[1] }) end
+L.tryrevertpartypokemonforms = function(ins, s) emit(s, { "g4_try_revert_party_forms", ins.args[1] }) end
+L.findpartyslotwithnature = function(ins, s)
+  emit(s, { "g4_party_slot_with_nature", ins.args[1], ins.args[2] })
+end
+-- `messageunown` prints in FONT_UNOWN; this port has the line, not the font.
+L.messageunown = L.message
+L.activateregiruinsdot = function(ins, s)
+  emit(s, { "g4_regi_dot", ins.args[1], ins.args[2], ins.args[3], ins.args[4] })
+end
+
+-- THE SUPER CONTEST (scrcmd_contests.c) -- src/pokemon/Gen4Contest.lua.
+L.openpartymenuforcontest = function(ins, s)
+  emit(s, { "g4_contest_party_menu", ins.args[1], ins.args[2], ins.args[3], ins.args[4] })
+end
+L.getcontestpartymenuresult = function(ins, s) emit(s, { "g4_contest_party_result", ins.args[1], ins.args[2] }) end
+L.newcontest = function(ins, s)
+  emit(s, { "g4_new_contest", ins.args[1], ins.args[2], ins.args[3], ins.args[4] })
+end
+L.runcontestapplication = function(_, s) emit(s, { "g4_run_contest" }) end
+L.endcontest = function(_, s) emit(s, { "g4_end_contest" }) end
+L.getcontestinfo = function(ins, s)
+  emit(s, { "g4_contest_info", ins.args[1], ins.args[2], ins.args[3], ins.args[4] })
+end
+L.bufferjudgename = function(ins, s) emit(s, { "g4_contest_buffer", "judge", ins.args[1], ins.args[2] }) end
+L.buffercontestanttrainername = function(ins, s) emit(s, { "g4_contest_buffer", "trainer", ins.args[1], ins.args[2] }) end
+L.buffercontestantmonname = function(ins, s) emit(s, { "g4_contest_buffer", "mon", ins.args[1], ins.args[2] }) end
+L.buffercontestregistrationentrynumber = function(ins, s)
+  emit(s, { "g4_contest_buffer", "entry", ins.args[1], ins.args[2] })
+end
+L.buffercontestrank = function(ins, s) emit(s, { "g4_contest_buffer", "rank", ins.args[1] }) end
+L.buffercontesttype = function(ins, s) emit(s, { "g4_contest_buffer", "type", ins.args[1] }) end
+L.bufferwinningcontestanttrainername = function(ins, s) emit(s, { "g4_contest_buffer", "winTrainer", ins.args[1] }) end
+L.bufferwinningcontestantmonname = function(ins, s) emit(s, { "g4_contest_buffer", "winMon", ins.args[1] }) end
+L.setribbonname = function(ins, s) emit(s, { "g4_contest_buffer", "ribbon", ins.args[1] }) end
+L.settrue = function(ins, s) emit(s, { "g4_contest_query", "true", ins.args[1] }) end
+L.getplayercontestplacement = function(ins, s) emit(s, { "g4_contest_query", "placement", ins.args[1] }) end
+L.getwinningcontestantentrynum = function(ins, s) emit(s, { "g4_contest_query", "winner", ins.args[1] }) end
+L.getcontestregistrationentrynum = function(ins, s) emit(s, { "g4_contest_query", "entry", ins.args[1] }) end
+L.getcontestantobjeventgfx = function(ins, s) emit(s, { "g4_contest_query", "gfx", ins.args[1], ins.args[2] }) end
+L.getcontestantmoncontestfame = function(ins, s) emit(s, { "g4_contest_query", "fame", ins.args[1], ins.args[2] }) end
+L.getcontestmode = function(ins, s) emit(s, { "g4_contest_query", "mode", ins.args[1] }) end
+L.checkplayermonhasribbon = function(ins, s) emit(s, { "g4_contest_query", "ribbon", ins.args[1] }) end
+L.getfirsttimevictoryaccessory = function(ins, s) emit(s, { "g4_contest_query", "firstWin", ins.args[1] }) end
+L.getshouldskipawardceremony = function(ins, s) emit(s, { "g4_contest_query", "skipCeremony", ins.args[1] }) end
+-- The link half resumes at once without a link (Contest_IsSyncState answers
+-- TRUE when the contest is not a link contest), and the text-speed locks, the
+-- HBlank toggles, the network icon and the comm teardown (2B0, 2BB) have
+-- nothing to act on here: these lower to nothing, which is the cartridge's own
+-- single-player behaviour.
+L.startcontestcommsync = function(_, s) end
+L.waitforcommsyncstate = function(_, s) end
+L.lockautoscrollforlinkcontests = function(_, s) end
+L.locktextspeed = function(_, s) end
+L.starthblank = function(_, s) end
+L.stophblank = function(_, s) end
+L.destroynetworkicon = function(_, s) end
+L["2b0"] = function(_, s) end
+L["2bb"] = function(_, s) end
+-- The camera flashes on the stage and the change into contest attire are
+-- presentation this port does not draw: declared, so the census keeps them.
+L.startcontestcameraflashtask = function(_, s) emit(s, { "g4_noop", "contest camera flashes" }) end
+L.waitforcontestcameraflashtask = function(_, s) emit(s, { "g4_noop", "contest camera flashes" }) end
+L.changeintocontestattire = function(_, s) emit(s, { "g4_noop", "contest attire" }) end
+L.hidepoketch = function(_, s) emit(s, { "g4_poketch_hidden", true }) end
+L.showpoketch = function(_, s) emit(s, { "g4_poketch_hidden", false }) end
+
+-- THE VEILSTONE GAME CORNER (scrcmd_coins.c) -- Gen4GameCorner.
+L.showcoins = function(ins, s) emit(s, { "g4_coin_window", "show", ins.args[1], ins.args[2] }) end
+L.hidecoins = function(_, s) emit(s, { "g4_coin_window", "hide" }) end
+L.updatecoindisplay = function(_, s) emit(s, { "g4_coin_window", "update" }) end
+L.getcoinsamount = function(ins, s) emit(s, { "g4_get_coins", ins.args[1] }) end
+L.addcoins = function(ins, s) emit(s, { "g4_add_coins", ins.args[1] }) end
+L.subtractcoinsfromvalue = function(ins, s) emit(s, { "g4_subtract_coins", ins.args[1] }) end
+L.subtractcoinsfromvar = L.subtractcoinsfromvalue
+L.hascoinsfromvalue = function(ins, s) emit(s, { "g4_has_coins", ins.args[1], ins.args[2] }) end
+L.hascoinsfromvar = L.hascoinsfromvalue
+L.checkcanaddcoins = function(ins, s) emit(s, { "g4_can_add_coins", ins.args[1], ins.args[2] }) end
+L.getgamecornerprizedata = function(ins, s)
+  emit(s, { "g4_prize_data", ins.args[1], ins.args[2], ins.args[3] })
+end
+L.checkbonusroundstreak = function(ins, s) emit(s, { "g4_bonus_streak", ins.args[1] }) end
+-- `267 <machine>` is the slot machine (overlay 101), not built: a named gap.
+L["267"] = function(_, s) emit(s, { "g4_noop", "the slot machine" }) end
+L.showlistmenuremembercursor = function(ins, s)
+  emit(s, { "g4_menu_show_remember", ins.args[1], ins.args[2] })
+end
+L.buffervarpaddingdigits = function(ins, s)
+  emit(s, { "g4_buffer_padded_var", ins.args[1], ins.args[2], ins.args[3], ins.args[4] })
+end
+L.buffertypename = function(ins, s) emit(s, { "g4_buffer_type_name", ins.args[1], ins.args[2] }) end
+L.calchiddenpowertype = function(ins, s)
+  emit(s, { "g4_hidden_power_type", ins.args[1], ins.args[2] })
+end
+
+-- THE SOLACEON DAY CARE (scrcmd_daycare.c) -- src/pokemon/Gen4DayCare.lua.
+L.bufferdaycaremonnicknames = function(_, s) emit(s, { "g4_daycare_names" }) end
+L.getdaycarestate = function(ins, s) emit(s, { "g4_daycare_state", ins.args[1] }) end
+L.resetdaycarepersonalityandstepcounter = function(_, s) emit(s, { "g4_daycare_reset_egg" }) end
+L.giveeggfromdaycare = function(_, s) emit(s, { "g4_daycare_give_egg" }) end
+L.movemontopartyfromdaycareslot = function(ins, s)
+  emit(s, { "g4_daycare_withdraw", ins.args[1], ins.args[2] })
+end
+L.bufferdaycarepricebyslot = function(ins, s)
+  emit(s, { "g4_daycare_price", ins.args[1], ins.args[2] })
+end
+L.bufferdaycaregainedlevelsbyslot = function(ins, s)
+  emit(s, { "g4_daycare_gained", ins.args[1], ins.args[2] })
+end
+L.bufferpartymonnicknamereturnspecies = function(ins, s)
+  emit(s, { "g4_buffer_nickname_species", ins.args[2], ins.args[3] })
+end
+L.storepartymonintodaycare = function(ins, s) emit(s, { "g4_daycare_store", ins.args[1] }) end
+L.bufferdaycarenicknamelevelgender = function(ins, s)
+  emit(s, { "g4_daycare_name_level_gender", ins.args[1], ins.args[2], ins.args[3], ins.args[4] })
+end
+L.getdaycarecompatibilitylevel = function(ins, s)
+  emit(s, { "g4_daycare_compatibility", ins.args[1] })
+end
+L.checkmoney2 = function(ins, s) emit(s, { "g4_check_money_var", ins.args[1], ins.args[2] }) end
+L.openpartymenufordaycare = function(_, s) emit(s, { "g4_daycare_party_menu" }) end
+L.getdaycarepartymenuresult = function(ins, s)
+  emit(s, { "g4_daycare_party_result", ins.args[1], ins.args[2] })
+end
+L.setmonsummary = function(ins, s) emit(s, { "g4_set_mon_summary", ins.args[1] }) end
+L.getmonpartyslot = function(ins, s) emit(s, { "g4_get_mon_party_slot", ins.args[1] }) end
+L.tryrevertpokemonform = function(ins, s)
+  emit(s, { "g4_try_revert_form", ins.args[1], ins.args[2] })
+end
+L.checkpoketchenabled = function(ins, s) emit(s, { "g4_poketch_enabled", ins.args[1] }) end
+L.checkpartyhasbadegg = function(ins, s) emit(s, { "g4_party_has_bad_egg", ins.args[1] }) end
+L.increasepartymonfriendship = function(ins, s)
+  emit(s, { "g4_increase_friendship", ins.args[1], ins.args[2] })
 end
 L.checkdaycarehasegg = function(ins, s)
   emit(s, { "g4_daycare_has_egg", ins.args[1] })
@@ -2621,13 +2845,14 @@ L.movehearthomegymdplift = function(_, s)
   emit(s, { "g4_noop", "the Hearthome Gym lift, which is Diamond and Pearl's gym" })
 end
 
--- THE GREAT MARSH / SAFARI GAME, one absent system.
-L.startendsafarigame = function(_, s) emit(s, { "g4_noop", "the Great Marsh safari game" }) end
+-- THE GREAT MARSH / SAFARI GAME -- see `Commands.g4_safari_game`.
+-- `startendsafarigame <state>` -- one BYTE: 0 starts a game, 1 ends it.
+L.startendsafarigame = function(ins, s) emit(s, { "g4_safari_game", ins.args[1] }) end
 L.startgreatmarshlookout = function(_, s)
   emit(s, { "g4_noop", "the Great Marsh lookout" })
 end
 L.getcurrentsafarigamecaughtnum = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the Great Marsh safari game" })
+  emit(s, { "g4_safari_caught", ins.args[1] })
 end
 -- !! `setspeciallocation` IS THE LIFT, AND THIS USED TO THROW IT AWAY.
 --
@@ -2689,26 +2914,34 @@ L.playelevatoranimation = function(_, s)
   emit(s, { "g4_noop", "the elevator animation" })
 end
 
--- THE SHARD MOVE TUTOR in the Route 212 house, one absent system. Its
--- var-writers must still write: `checkcanaffordmove` answering a leftover
--- would let a script charge for a move it never taught.
+-- THE SHARD MOVE TUTORS (Route 212, the Survival Area, Snowpoint City) --
+-- scrcmd_move_tutor.c, data in src/import/Gen4MoveTutor.lua.
+-- `checkcanaffordmove <move> <destVar>`
 L.checkcanaffordmove = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[2], "the shard move tutor" })
+  emit(s, { "g4_tutor_can_afford", ins.args[1], ins.args[2] })
 end
+-- `checkhaslearnabletutormoves <partySlot> <location> <destVar>`
 L.checkhaslearnabletutormoves = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[3], "the shard move tutor" })
+  emit(s, { "g4_tutor_has_moves", ins.args[1], ins.args[2], ins.args[3] })
+end
+-- `opensummaryscreenteachmove <partySlot> <move>` -- which move to forget;
+-- `getsummaryselectedmoveslot <destVar>` reads the answer (0..3, 4 = keep)
+L.opensummaryscreenteachmove = function(ins, s)
+  emit(s, { "g4_tutor_forget_menu", ins.args[1], ins.args[2] })
 end
 L.getsummaryselectedmoveslot = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the shard move tutor" })
+  emit(s, { "g4_tutor_forget_slot", ins.args[1] })
 end
-L.opensummaryscreenteachmove = function(_, s)
-  emit(s, { "g4_noop", "the shard move tutor" })
+-- `showmovetutormoveselectionmenu <partySlot> <location> <destVar>` -- the
+-- choice is the MOVE ID, or 65534 (MENU_CANCEL) for EXIT / B
+L.showmovetutormoveselectionmenu = function(ins, s)
+  emit(s, { "g4_tutor_menu", ins.args[1], ins.args[2], ins.args[3] })
 end
-L.showmovetutormoveselectionmenu = function(_, s)
-  emit(s, { "g4_noop", "the shard move tutor" })
+-- `resetmoveslot <partySlot> <move> <moveSlot>` / `payshardcost <move>`
+L.resetmoveslot = function(ins, s)
+  emit(s, { "g4_tutor_set_move", ins.args[1], ins.args[2], ins.args[3] })
 end
-L.resetmoveslot = function(_, s) emit(s, { "g4_noop", "the shard move tutor" }) end
-L.payshardcost = function(_, s) emit(s, { "g4_noop", "the shard move tutor" }) end
+L.payshardcost = function(ins, s) emit(s, { "g4_tutor_pay", ins.args[1] }) end
 
 -- THE DEX MILESTONES, none of which this port tracks per-region or per-form.
 L.getunownformsseencount = function(ins, s)
@@ -2754,9 +2987,11 @@ L["29f"] = function(_, s) emit(s, { "g4_noop", "a cartridge no-op (scrcmd 29F)" 
 -- whole flow since Gen 1 as `record_hall_of_fame` -- Gen 2 lowers its own
 -- `HallOfFame` special to the same verb -- so the last three rows of the
 -- Sinnoh story are one line.
+-- Platinum's own ClearGame (Gen4Commands.g4_clear_game): its Hall of Fame,
+-- the save, its credits and the reset -- and, this port's addition, one
+-- Mystery Gift per induction, delivered by the cartridge's own deliveryman
 L.cleargame = function(_, s)
-  emit(s, { "g4_prepare_hall_of_fame" })
-  emit(s, { "record_hall_of_fame" })
+  emit(s, { "g4_clear_game" })
 end
 L.playhalloffamehealinganimation = function(_, s)
   emit(s, { "g4_noop", "the Hall of Fame healing animation" })

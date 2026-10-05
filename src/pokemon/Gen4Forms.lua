@@ -45,6 +45,17 @@ function Forms.personalIndex(species, value)
   end
   return index and (personal[id] or {})[index] or id
 end
+-- Pokemon_GetForm: the zero-based MON_DATA_FORM, whichever way it is stored.
+function Forms.index(mon)
+  local value = mon and (mon.form == nil and mon.gen4Form or mon.form)
+  if value == nil then return 0 end
+  if tonumber(value) then return math.floor(tonumber(value)) end
+  local id = Forms.species(mon.species)
+  for i, key in ipairs(order[id] or {}) do
+    if key == value then return i - 1 end
+  end
+  return 0
+end
 function Forms.definition(data, mon)
   local registry=data and data.pokemon or {}
   local id=mon and Forms.species(mon.species)

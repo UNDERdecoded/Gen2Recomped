@@ -40,6 +40,27 @@ function love.load()
     local GameVersion = require("src.core.GameVersion")
     GameVersion.set(os.getenv("VERSION") or "platinum")
 
+    -- POKEPORT_ASSET_ROOT: the launcher mounts the cache's `assets/`; with no
+    -- launcher here, read pictures straight from that folder (as the battle
+    -- and contest harnesses do), or every screen pushed over the world --
+    -- the shop's counter art included -- comes up placeholder.
+    local assetRoot = os.getenv("POKEPORT_ASSET_ROOT")
+    if assetRoot then
+      local Assets = require("src.render.Assets")
+      local realImage, held = Assets.image, {}
+      Assets.image = function(path, ...)
+        if type(path) == "string" and not held[path] then
+          local f = io.open(assetRoot .. "/" .. path, "rb")
+          if f then
+            local bytes = f:read("*a"); f:close()
+            local okI, img = pcall(love.graphics.newImage, love.filesystem.newFileData(bytes, path))
+            if okI then img:setFilter("nearest", "nearest"); held[path] = img end
+          end
+        end
+        return held[path] or realImage(path, ...)
+      end
+    end
+
     local Data = require("src.core.Data")
     Data:load()
     if not Data.isGen4Cache then
@@ -283,6 +304,12 @@ function love.load()
         type(d)=="table" and tostring(d.banner and d.banner.path) or "-"))
     end
 
+    -- GIFT=<key>: a Mystery Gift waiting for the deliveryman (Gen4MysteryGift)
+    if os.getenv("GIFT") then
+      local MG = require("src.pokemon.Gen4MysteryGift")
+      Game.save.hallOfFame = { {} }
+      print(("[gift] waiting %s -> %s"):format(os.getenv("GIFT"), tostring(MG.choose(Game.save, os.getenv("GIFT")))))
+    end
     -- A PARTY, because a new-game save has none and a heal test on an empty
     -- party is a test that cannot fail.
     if os.getenv("PARTY") then
@@ -393,6 +420,32 @@ function love.load()
         local okT, errT = pcall(OW.pushBattleTransition, OW, fake, nil, function() end)
         print(("[transition] %s"):format(okT and "pushed" or tostring(errT)))
       end
+      -- RADAR_AT=n: switch the Poke Radar on at tick n where the player
+      -- stands, then put them on the first live patch (src/world/Gen4Radar.lua)
+      if tonumber(os.getenv("RADAR_AT") or "") == i then
+        Game.save.inventory = Game.save.inventory or {}
+        Game.save.inventory[431] = 1
+        Game.save.gen4RadarCharge = 50
+        local why = OW:gen4UseRadar()
+        local c = OW.gen4Radar
+        print(("[radar] use -> %s; chain active=%s"):format(tostring(why), tostring(c and c.active)))
+        for k, pt in ipairs((c and c.patches) or {}) do
+          print(("[radar] patch %d at (%d,%d) active=%s continue=%s shake=%s"):format(k, pt.x, pt.y,
+            tostring(pt.active), tostring(pt.continueChain), tostring(pt.shakeType)))
+        end
+        for _, pt in ipairs((c and c.patches) or {}) do
+          if pt.active then
+            OW.player.cellX, OW.player.cellY = pt.x, pt.y
+            local ok, hit = pcall(OW.gen4RadarEncounter, OW,
+              require("src.world.Encounter").forMap(Game.data, OW.map.def, OW.map.id, nil, Game.save))
+            local top = Game.stack.states[#Game.stack.states]
+            print(("[radar] stepped on (%d,%d): encounter=%s top=%s chain=%s species=%s"):format(pt.x, pt.y,
+              tostring(ok and hit or hit), tostring(top and (top.kind or top.name or top.style)),
+              tostring(OW.gen4Radar and OW.gen4Radar.count), tostring(OW.gen4Radar and OW.gen4Radar.species)))
+            break
+          end
+        end
+      end
       local okU, errU = pcall(Game.stack.update, Game.stack, 1 / 60)
       if not okU then print(("update raised on tick %d: %s"):format(i, tostring(errU))) break end
       -- WATCH ONE ACTOR BY SPRITE NAME.  The absence of a warning is not
@@ -484,6 +537,22 @@ function love.load()
     -- step inside that and paints into a surface nobody had set up.  A
     -- harness that skips it is not testing what the player sees.
     print("party after:  " .. partyHp())
+    -- DUMPNPCS=1: every object on the map and whether it stands there
+    if os.getenv("GIFT") then
+      local MG = require("src.pokemon.Gen4MysteryGift")
+      local st = MG.state(Game.save)
+      print(("[gift] after: waiting %d, Member Card %s, Oak's Letter %s, Azure Flute %s, var 4043=%s 4044=%s 4045=%s"):format(
+        #st.waiting, tostring((Game.save.inventory or {})[454]), tostring((Game.save.inventory or {})[452]),
+        tostring((Game.save.inventory or {})[455]), tostring((Game.save.gen4Vars or {})[0x4043]),
+        tostring((Game.save.gen4Vars or {})[0x4044]), tostring((Game.save.gen4Vars or {})[0x4045])))
+    end
+    if os.getenv("DUMPNPCS") then
+      for _, n in ipairs(OW.npcs or {}) do
+        local d = n.def or {}
+        print(("[npc] local %s %s at (%s,%s) hidden=%s"):format(tostring(d.localId or n.localId),
+          tostring(d.spriteName or d.sprite), tostring(n.cellX), tostring(n.cellY), tostring(n.hidden)))
+      end
+    end
     _G.__owHarness = { game = Game, ow = OW, tag = TAG }
   end, debug.traceback)
   if not ok then print("FAILED:\n" .. tostring(err)) end

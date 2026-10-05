@@ -213,7 +213,13 @@ function Pokemon.new(data, species, level, rng, form)
     hp = stats.hp,
     -- Emerald seeds friendship from the species record. Gen2 uses its
     -- shared BASE_HAPPINESS; Gen1 has no friendship byte.
-    happiness = require("src.core.GameVersion").get()=="emerald" and (def.friendship or 70)
+    -- ...AND SO DOES PLATINUM (`baseFriendship`, the personal record's own
+    -- byte), which had none: every Sinnoh Pokemon's friendship was nil, so
+    -- the friendship evolutions (Golbat, Chansey, Riolu, Budew, Chingling,
+    -- Munchlax, Azurill ...) could never fire and Return hit for nothing.
+    happiness = (require("src.core.GameVersion").isGen4()
+                 and (def.baseFriendship or def.friendship or 70))
+      or require("src.core.GameVersion").get()=="emerald" and (def.friendship or 70)
       or (require("src.core.GameVersion").isGen2()
       and require("src.pokemon.Evolution").BASE_HAPPINESS or nil),
     -- the Gen1 catch-rate byte freezes at catch time: evolution does NOT

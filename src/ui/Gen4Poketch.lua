@@ -238,6 +238,8 @@ function Gen4Poketch:touchpressed(id, px, py)
     elseif x>=80 then s.memoErasing=not s.memoErasing end
   elseif name == 'Memo Pad' or name == 'Dot Artist' then
     self:doodle(x, y)
+  elseif name == 'Color Changer' then
+    self:colorTouch(x, y)
   elseif name == 'Calendar' then
     local col, row = math.floor((x - FACE.x - 12) / 20), math.floor((y - FACE.y - 22) / 14)
     local now = os.date('*t')
@@ -334,10 +336,18 @@ function Gen4Poketch:touchmoved(id, px, py)
     marker.x=math.max(24,math.min(200,x)); marker.y=math.max(24,math.min(168,y))
   end
   if x and (name == 'Memo Pad' or name == 'Dot Artist') then self:doodle(x, y) end
-  if x and name == 'Color Changer' and x >= 48 and x < 184 and y >= 136 and y < 160 then
-    self:store().color = math.min(7, math.floor((x - 48) / 17))
-  end
+  if x and name == 'Color Changer' then self:colorTouch(x, y) end
   return true
+end
+
+-- THE COLOR CHANGER (applications/poketch/color_changer): a held touch on the
+-- slider, 136 <= y < 160 and 48 <= x < 184, picks colour (x - 48) / 16, the
+-- last of the eight being 7 (POKETCH_SCREEN_COLOR_MAX - 1). The whole LCD takes
+-- that theme -- `applyLCDPalette` reads it.
+function Gen4Poketch:colorTouch(x, y)
+  if y >= 136 and y < 160 and x >= 48 and x < 184 then
+    self:store().color = math.min(7, math.floor((x - 48) / 16))
+  end
 end
 
 function Gen4Poketch:touchreleased(id)
@@ -819,6 +829,64 @@ function Gen4Poketch:applyLCDPalette()
   g.setShader(self.lcdShader)
 end
 
+-- The slider: its sprite at (56 + 16 x colour, 148) -- COLOR_SLIDER_LEFT_X,
+-- COLOR_SLIDER_WIDTH, COLOR_SLIDER_Y -- the 32x32 cell centred there.
+function Gen4Poketch:drawColorChanger()
+  local slider = self:img('poketch/color_changer_sprite')
+  if not slider then return end
+  local c = self:store().color or 0
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(slider, 56 + 16 * c - 16, 148 - 16)
+end
+
+-- THE TRAINER COUNTER (applications/poketch/trainer_counter): the Poke Radar's
+-- chain now running and the three best ever, each a Pokemon icon and a
+-- three-digit count with leading zeroes hidden (UpdateChainCountDigits).
+-- Icons at (96, 32), (112, 80), (176, 96), (48, 104); their digits from
+-- (144, 40), (100, 144), (164, 160), (36, 168), eight pixels apart.
+local COUNTER_ICONS = { { 96, 32 }, { 112, 80 }, { 176, 96 }, { 48, 104 } }
+local COUNTER_DIGITS = { { 144, 40 }, { 100, 144 }, { 164, 160 }, { 36, 168 } }
+Gen4Poketch.COUNTER_ICONS, Gen4Poketch.COUNTER_DIGITS = COUNTER_ICONS, COUNTER_DIGITS
+
+function Gen4Poketch.counterDigits(n)
+  n = math.max(0, math.min(999, math.floor(tonumber(n) or 0)))
+  local out, started = {}, false
+  local div = 100
+  for i = 1, 3 do
+    local d = math.floor(n / div)
+    if started or d ~= 0 or i == 3 then out[i] = d; started = true else out[i] = false end
+    n = n - d * div
+    div = div / 10
+  end
+  return out
+end
+
+function Gen4Poketch:drawTrainerCounter()
+  local rows = {}
+  local ow = self.game.overworld
+  local chain = ow and ow.gen4Radar
+  rows[1] = (chain and chain.active and chain.species ~= 0)
+            and { species = chain.species, count = chain.count } or nil
+  for i, r in ipairs((self.game.save or {}).gen4RadarRecords or {}) do
+    if i <= 3 then rows[i + 1] = r end
+  end
+  for i = 1, 4 do
+    local r = rows[i]
+    if r and r.species and r.species ~= 0 then
+      self:drawMonIcon({ species = r.species }, COUNTER_ICONS[i][1] - 16, COUNTER_ICONS[i][2] - 16)
+      for k, d in ipairs(Gen4Poketch.counterDigits(r.count)) do
+        if d then
+          local img = self:img(('poketch/trainer_counter_sprite_%02d'):format(d))
+          if img then
+            love.graphics.setColor(1, 1, 1, 1)
+            love.graphics.draw(img, COUNTER_DIGITS[i][1] + 8 * (k - 1) - 4, COUNTER_DIGITS[i][2] - 8)
+          end
+        end
+      end
+    end
+  end
+end
+
 local DRAW = {
   ["Digital Watch"] = Gen4Poketch.drawDigitalWatch,
   ["Analog Watch"] = Gen4Poketch.drawAnalogWatch,
@@ -842,6 +910,8 @@ local DRAW = {
   ["Move Tester"] = Gen4Poketch.drawMoveTester,
   ["Matchup Checker"] = Gen4Poketch.drawMatchup,
   ["Pokémon History"] = Gen4Poketch.drawHistory,
+  ["Color Changer"] = Gen4Poketch.drawColorChanger,
+  ["Trainer Counter"] = Gen4Poketch.drawTrainerCounter,
 }
 
 -- ------------------------------------------------------------------- draw --

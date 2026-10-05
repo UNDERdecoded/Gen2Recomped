@@ -210,7 +210,8 @@ end
 --     and never will be, so the cartridge's own answer is the base slots.
 --   RADAR -- slots 5, 6, 11 and 12, and only when the radar's `shakeType` is 1.
 --     Needs the Poke Radar and its chain, which the port does not model.
---   GREAT MARSH -- replaces the whole table from a daily rotation.
+--   GREAT MARSH -- slots 7 and 8 from the day's marsh value, during a Safari
+--     Game. APPLIED: src/world/Gen4DailySlots.lua.
 --   `formRates` -- APPLIED at wild creation: the first two entries choose
 --     Shellos/Gastrodon's form; these are selectors, not percentages.
 --   `unownTable` -- APPLIED at wild creation: Solaceon Ruins' letter group.
@@ -306,6 +307,9 @@ function Encounter.forMap(data, mapDef, mapId, hour, save)
   -- ...AND ON TODAY'S SWARM, which rewrites slots 1 and 2 on one map a day.
   local Gen4Swarms = require("src.world.Gen4Swarms")
   local swarmKey = Gen4Swarms.key(save, mapDef, def)
+  -- ...AND THE TROPHY GARDEN'S / GREAT MARSH'S DAILY PAIR (Gen4DailySlots).
+  local Gen4DailySlots = require("src.world.Gen4DailySlots")
+  swarmKey = swarmKey .. "|" .. Gen4DailySlots.key(data, save, mapDef)
   local cached = gen4Views[def]
   if cached and cached.timedBand == band and cached.swarmKey == swarmKey then
     return cached
@@ -349,6 +353,20 @@ function Encounter.forMap(data, mapDef, mapId, hour, save)
     for n = 1, 2 do if out[n] then out[n].species = swarm[n] end end
     grassSlots = out
     view.swarmGrass = out
+  end
+  -- SLOTS 7 AND 8: the Trophy Garden's pair once the National Dex is had, or
+  -- the Great Marsh's daily species during a Safari Game -- after the swarm,
+  -- the cartridge's order.
+  local daily = Gen4DailySlots.slotsFor(data, save, mapDef)
+  if daily and type(grassSlots) == "table" then
+    local out = {}
+    for i, slot in ipairs(grassSlots) do
+      out[i] = { level = slot.level, species = slot.species, chance = slot.chance,
+                 minLevel = slot.minLevel, maxLevel = slot.maxLevel }
+    end
+    for n = 7, 8 do if out[n] and daily[n] then out[n].species = daily[n] end end
+    grassSlots = out
+    view.dailyGrass = out
   end
   view.grass = Encounter.gen4Table(grassSlots, def.grassRate)
   view.water = def.surf

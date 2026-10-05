@@ -383,6 +383,31 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     return
   end
 
+  -- THE POFFIN CASE: its list on top of the bag (src/ui/Gen4PoffinCase.lua)
+  if result == "poffin_case" then
+    require("src.ui.Gen4PoffinCase").open(game)
+    return
+  end
+
+  -- THE POKE RADAR: close the bag and switch it on (src/world/Gen4Radar.lua)
+  if result == "poke_radar" then
+    local ow = game and game.overworld
+    local refusal = ow and ow.gen4UseRadar and ow:gen4UseRadar()
+    if refusal then
+      showMessages(game, { Strings("Can't use that here.") })
+      return
+    end
+    if list and list.close then list:close() end
+    pcall(function()
+      local stack = game.stack
+      local guard = 0
+      while stack.top and stack:top() and stack:top() ~= ow and guard < 8 do
+        stack:pop(); guard = guard + 1
+      end
+    end)
+    return
+  end
+
   -- the TOWN MAP screen (engine/menus/town_map.asm)
   if result == "townmap" then
     -- KANTO AND HOENN HAVE THEIR OWN MAP, AND IT IS NOT THIS ONE.

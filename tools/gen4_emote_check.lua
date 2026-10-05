@@ -85,12 +85,12 @@ check(cmd:find('frames = Gen4Emotes.FRAMES', 1, true), 'on the cartridge\'s timi
 -- moved inside it, it was depth-tested at its trainer's FEET and lost to the
 -- treetops behind him.
 local ow = io.open('src/world/OverworldController.lua'):read('a')
-local early = ow:find('if freeGround then\n      fxEmote()', 1, true)
-  or ow:find('if freeGround then\r\n      fxEmote()', 1, true)
+local early = ow:find('if freeGround then\n      self:eachEmote(fxEmote)', 1, true)
+  or ow:find('if freeGround then\r\n      self:eachEmote(fxEmote)', 1, true)
 local canopy = ow:find('self.map.renderer:drawAbove(cam.x, bgY, vw, vh)', 1, true)
 check(early and canopy and early < canopy,
       'with a free camera the "!" must be drawn before drawAbove closes the 3D pass')
-check(ow:find('if not emoteEarly then fxEmote() end', 1, true),
+check(ow:find('if not emoteEarly then self:eachEmote(fxEmote) end', 1, true),
       'and not drawn a second time after it')
 check(ow:find('Gen4Emotes.LIFT + 8)', 1, true),
       'and depth-tested at the bubble\'s own height, not its trainer\'s feet')

@@ -5603,6 +5603,20 @@ function RomExtractorGen4:extractTerrain(names)
   self:emotes()
   self:moveButtons()
   self:encounterEffects()
+  self:specialEncounters()
+  self:townMap()
+  self:areaPopup()
+  self:moveTutor()
+  self:eggMoves()
+  self:gameCorner()
+  self:seals()
+  self:berryFlavors()
+  self:trainerMusic()
+  self:contestData()
+  self:contestArt()
+  self:poffinArt()
+  self:endingArt()
+  self:trainerPrize()
 
   self:write("gen4_terrain", out)
   self.terrainReport = {
@@ -5782,6 +5796,112 @@ function RomExtractorGen4:moveButtons()
 end
 
 -- THE BATTLE TRANSITIONS' PICTURES -- see src/import/Gen4EncounterEffects.lua.
+-- THE TROPHY GARDEN AND GREAT MARSH DAILY LISTS -- see
+-- src/import/Gen4SpecialEncounters.lua.
+-- THE TOWN MAP'S SPRITES, NAME BLOCKS AND FLY LOCATIONS -- see
+-- src/import/Gen4TownMap.lua.
+-- THE AREA-NAME SIGNS -- see src/import/Gen4AreaPopup.lua.
+-- THE SHARD MOVE TUTORS -- see src/import/Gen4MoveTutor.lua.
+-- THE PRIZE MONEY MULTIPLIERS -- see src/import/Gen4TrainerPrize.lua.
+function RomExtractorGen4:trainerPrize()
+  local out = self.rom and require("src.import.Gen4TrainerPrize").extract(self.rom)
+  if out then self:write("gen4_trainer_prize", out) end
+end
+
+-- THE SUPER CONTEST'S DATA -- see src/import/Gen4ContestData.lua.
+function RomExtractorGen4:contestData()
+  local out = self.rom and require("src.import.Gen4ContestData").extract(self.rom)
+  if out then self:write("gen4_contest", out) end
+end
+
+-- THE CONTEST'S OWN ART -- see src/import/Gen4ContestArt.lua.
+function RomExtractorGen4:contestArt()
+  local images = self.rom and require("src.import.Gen4ContestArt").images(self.rom)
+  if not images then return end
+  local index = {}
+  for key, image in pairs(images) do
+    index[key] = self:saveImage("contest/" .. key, image, { originX = image.originX, originY = image.originY })
+  end
+  self:write("gen4_contest_art", index)
+end
+
+-- THE HALL OF FAME AND THE CREDITS -- see src/import/Gen4EndingArt.lua.
+function RomExtractorGen4:endingArt()
+  local E = self.rom and require("src.import.Gen4EndingArt")
+  if not E then return end
+  local images = E.images(self.rom)
+  if images then
+    local index = {}
+    for key, image in pairs(images) do
+      index[key] = self:saveImage("ending/" .. key, image, { originX = image.originX, originY = image.originY })
+    end
+    self:write("gen4_ending_art", index)
+  end
+  self:write("gen4_ending", E.data(self.rom))
+end
+
+-- THE POFFIN COOKING, CASE AND ICONS -- see src/import/Gen4PoffinArt.lua.
+function RomExtractorGen4:poffinArt()
+  local images = self.rom and require("src.import.Gen4PoffinArt").images(self.rom)
+  if not images then return end
+  local index = {}
+  for key, image in pairs(images) do
+    index[key] = self:saveImage("poffin/" .. key, image, { originX = image.originX, originY = image.originY })
+  end
+  self:write("gen4_poffin_art", index)
+end
+
+-- THE TRAINER EYES-MEET THEMES -- see src/import/Gen4TrainerMusic.lua.
+function RomExtractorGen4:trainerMusic()
+  local out = self.rom and require("src.import.Gen4TrainerMusic").extract(self.rom)
+  if out then self:write("gen4_trainer_music", out) end
+end
+
+-- THE BERRIES' POFFIN FLAVORS -- see Gen4BerryData.flavors.
+function RomExtractorGen4:berryFlavors()
+  local B = require("src.import.Gen4BerryData")
+  local out = B.flavors(self:archiveAt(B.PATH))
+  if out then self:write("gen4_berry_flavors", out) end
+end
+
+-- THE BALL SEALS AND SUNYSHORE'S SEAL STOCKS -- see src/import/Gen4Seals.lua.
+function RomExtractorGen4:seals()
+  local out = self.rom and require("src.import.Gen4Seals").extract(self.rom)
+  if out then self:write("gen4_seals", out) end
+end
+
+-- THE GAME CORNER'S PRIZES -- see src/import/Gen4GameCorner.lua.
+function RomExtractorGen4:gameCorner()
+  local out = self.rom and require("src.import.Gen4GameCorner").extract(self.rom)
+  if out then self:write("gen4_game_corner", out) end
+end
+
+-- THE EGG MOVES -- see src/import/Gen4EggMoves.lua.
+function RomExtractorGen4:eggMoves()
+  local out = self.rom and require("src.import.Gen4EggMoves").extract(self.rom)
+  if out then self:write("gen4_egg_moves", out) end
+end
+
+function RomExtractorGen4:moveTutor()
+  local out = self.rom and require("src.import.Gen4MoveTutor").extract(self.rom)
+  if out then self:write("gen4_move_tutor", out) end
+end
+
+function RomExtractorGen4:areaPopup()
+  local out = self.rom and require("src.import.Gen4AreaPopup").extract(self.rom)
+  if out then self:write("gen4_area_popup", out) end
+end
+
+function RomExtractorGen4:townMap()
+  local out = self.rom and require("src.import.Gen4TownMap").extract(self.rom)
+  if out then self:write("gen4_town_map", out) end
+end
+
+function RomExtractorGen4:specialEncounters()
+  local out = self.rom and require("src.import.Gen4SpecialEncounters").extract(self.rom)
+  if out then self:write("gen4_special_encounters", out) end
+end
+
 function RomExtractorGen4:encounterEffects()
   local out = self.rom and require("src.import.Gen4EncounterEffects").extract(self.rom)
   if out then self:write("gen4_encounter_effects", out) end

@@ -113,6 +113,11 @@ function Catching.registerInto(registry, data, owner)
   -- Hoenn's override the ones that share a name and add the seven that had
   -- none, so this runs after the table above rather than instead of it
   registerGen3(registry, data, owner)
+  -- ...AND SINNOH'S SIXTEEN, keyed by item number -- see src/battle/Gen4Catching.lua.
+  local constants = data and data.constants
+  if (data and data.isGen4Cache) or (type(constants) == "table" and constants.gen == 4) then
+    require("src.battle.Gen4Catching").registerInto(registry, owner)
+  end
 end
 
 -- The stock ItemUseBall math.  On failure the ball wobbles per the

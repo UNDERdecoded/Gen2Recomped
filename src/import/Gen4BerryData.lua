@@ -50,6 +50,20 @@ function B.growth(archive)
   end
   return out
 end
+-- THE POFFIN HALF of the same records (BerryData: u16 size, firmness, yield,
+-- stage hours, drain, then spicy/dry/sweet/bitter/sour and smoothness --
+-- bytes 7..12), which the cooking result reads (ov83_0223F7F4).
+function B.flavors(archive)
+  if not archive or archive.count ~= 64 then return nil end
+  local out = {}
+  for i = 0, 63 do
+    local bytes = archive:get(i)
+    if not bytes or #bytes < 12 then return nil end
+    local a, b, c, d, e, smooth = bytes:byte(7, 12)
+    out[149 + i] = { flavors = { a, b, c, d, e }, smoothness = smooth }
+  end
+  return out
+end
 function B.positions(rom)
   local anchor='\5\20\5\20\6\20\6\20\6\19\6\19\7\17\7\17'
   local found,hits=nil,0

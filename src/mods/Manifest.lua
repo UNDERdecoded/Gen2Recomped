@@ -277,6 +277,24 @@ function Manifest.validate(raw, path)
 
   local conflicts = mergeConflictLists(raw.conflicts, raw.incompatible)
 
+  -- `support`: where to thank the mod's creator -- a Ko-fi, a Patreon, a
+  -- PayPal page. The launcher's mod card turns it into a "Support the
+  -- creator" button. ONLY http(s) is accepted, because the button hands it
+  -- to the OS to open: a `file:` or custom-scheme link from a downloaded
+  -- manifest is not something a click on a donate button should run. A bad
+  -- value is dropped with a warning rather than refusing the whole mod.
+  local support = raw.support or raw.support_url
+  if support ~= nil then
+    if type(support) == "string" and support:match("^https?://[%w%-%.]+%.%a+")
+       and not support:find("%s") then
+      support = scrubUtf8(support)
+    else
+      violation(false, raw.id, ("support must be an http(s) URL, got %q")
+        :format(tostring(support)))
+      support = nil
+    end
+  end
+
   return {
     id = raw.id,
     name = raw.name,
@@ -295,6 +313,7 @@ function Manifest.validate(raw, path)
     game_version = raw.game_version,
     description = raw.description or "",
     github = github,
+    support = support,
     updateCheck = updateCheck,
     experimental = experimental,
     profile = profile,

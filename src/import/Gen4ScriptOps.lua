@@ -721,7 +721,7 @@ Gen4ScriptOps.COMMANDS = {
   [0x286] = { "getundergrounditemsgivenaway", "w" },
   [0x287] = { "getundergroundfossilsunearthed", "w" },
   [0x288] = { "getundergroundtrapsset", "w" },
-  [0x289] = { "givepoffin", "*" },  -- variable; see VARIABLE_LENGTH
+  [0x289] = { "givepoffin", "wwwwwww" },  -- destVar, five flavors, smoothness (ScrCmd_GivePoffin)
   [0x28A] = { "checkhasemptypoffincaseslot", "w" },
   [0x28B] = { "checkdistributionevent", "bw" },
   [0x28C] = { "drawpokemonpreviewfrompartyslot", "w" },
@@ -914,7 +914,7 @@ Gen4ScriptOps.COMMANDS = {
   [0x347] = { "bufferfloornumber", "bb" },
 }
 
--- The nine handlers whose operand count depends on what they just read, so
+-- The eight handlers whose operand count depends on what they just read, so
 -- no fixed spec can describe them.  Left unresolved on purpose: a guessed
 -- width here is the Sootopolis bug again, and the decoder should refuse a
 -- command it cannot size rather than silently walk past it.  Each needs its
@@ -928,7 +928,8 @@ Gen4ScriptOps.VARIABLE_LENGTH = {
   [0x237] = "calltvinterview",  -- scrcmd_tv_broadcast.c
   [0x23E] = "mysterygiftgive",  -- scrcmd_mystery_gift.c
   [0x27C] = "27c",  -- scrcmd_tv_broadcast.c
-  [0x289] = "givepoffin",  -- scrcmd.c
+  -- (givepoffin, 0x289, was listed here and is NOT variable: ScrCmd_GivePoffin
+  -- reads one var pointer and six vars, every time.)
 }
 
 -- What ends a script.  `end` returns from the whole script; `return` pops one
@@ -1007,7 +1008,24 @@ local function fieldMoveFuncSpec(data, pc)
   return nil
 end
 
+-- MysteryGiftGive (scrcmd.inc): a u16 STAGE, then one destination var for
+-- CHECK_AVAILABLE_PGT / GET_PGT_TYPE / CHECK_CAN_RECEIVE (1, 2, 3), two for
+-- RECEIVED / CANT_RECEIVE (5, 6), and nothing for LOAD, GIVE and the two
+-- UNLOADs (0, 4, 7, 8). Undecodable before, so every mart's OnTransition
+-- (common script 10200) stopped at its first instruction and never set
+-- FLAG_HIDE_MART_MYSTERY_GIFT_DELIVERYMAN -- the deliveryman stood in every
+-- mart whether or not a gift was waiting.
+Gen4ScriptOps.MYSTERY_GIFT_STAGE_ARGS = { [0] = 0, 1, 1, 1, 0, 2, 2, 0, 0 }
+local function mysteryGiftSpec(data, pc)
+  local lo, hi = data:byte(pc + Gen4ScriptOps.OPCODE_BYTES, pc + Gen4ScriptOps.OPCODE_BYTES + 1)
+  if not (lo and hi) then return nil end
+  local args = Gen4ScriptOps.MYSTERY_GIFT_STAGE_ARGS[lo + hi * 256]
+  if not args then return nil end
+  return "w" .. ("w"):rep(args)
+end
+
 Gen4ScriptOps.VARIABLE_SPEC = {
+  [0x23E] = mysteryGiftSpec,    -- mysterygiftgive
   [0x1CF] = fieldMoveFuncSpec,  -- dostrengthfunc
   [0x1D0] = fieldMoveFuncSpec,  -- doflashfunc
   [0x1D1] = fieldMoveFuncSpec,  -- dodefogfunc

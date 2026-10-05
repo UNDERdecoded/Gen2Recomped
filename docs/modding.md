@@ -254,3 +254,26 @@ without the engine knowing the layout.
 
 Developer mode also arms the mod loader's dev tripwire, which flags mods
 that reach outside their permission set.
+
+## Support link (`support`)
+
+A mod can add a link where players can thank its creator: a Ko-fi, Patreon or
+PayPal page.
+
+```json
+{
+  "id": "my_mod",
+  "name": "My Mod",
+  "version": "1.0.0",
+  "entry": "init.lua",
+  "support": "https://ko-fi.com/yourname"
+}
+```
+
+When a mod has a `support` link, the launcher's mod card shows a
+**Support the creator** button that opens it. `support_url` works as an alias.
+
+The launcher hands the link to the operating system to open, so only `http://`
+and `https://` links are accepted. Any other value, such as a `file:` link or
+a custom scheme, is dropped with a warning. The mod itself still loads; it
+just gets no button.

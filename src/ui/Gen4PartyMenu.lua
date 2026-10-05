@@ -298,7 +298,7 @@ function Gen4PartyMenu:actions()
   if self.battle then return Gen4PartyMenu.BATTLE_ACTIONS end
   local rows={'summary'}
   local F=require('src.world.Gen4FieldMoves');local mon=self:party()[self.index]
-  for _,name in ipairs({'CUT','SURF','DIG','TELEPORT','SWEET_SCENT'}) do
+  for _,name in ipairs({'CUT','FLY','SURF','DIG','TELEPORT','SWEET_SCENT'}) do
     if F.knows(mon,name) then rows[#rows+1]='field:'..name end
   end
   -- FLASH AND DEFOG ARE OFFERED BY THE WEATHER, not by the badge case.
@@ -359,10 +359,39 @@ function Gen4PartyMenu:useFieldMove(mon,move)
     ow.runner:run(rows,{mapId=ow.map and ow.map.id})
     return
   end
+  -- FLY (src/world/Gen4Fly.lua): FieldMoves_CheckFly, then a destination
+  if move=='FLY' then
+    local Fly=require('src.world.Gen4Fly')
+    local ok=ow and Fly.check(self.game.data,self.game.save,ow.map and ow.map.def)
+    local dests=ok and Fly.destinations(self.game.data,self.game.save) or {}
+    if not ok or #dests==0 then
+      self.game.stack:push(require('src.render.TextBox').new(self.game,"Can't use that here."));return
+    end
+    local game=self.game
+    self:close()
+    -- PLATINUM'S TOWN MAP IN FLY MODE (src/ui/Gen4TownMap.lua); the list is
+    -- the fallback for a cache without the town map's data
+    if game.data.gen4_town_map then
+      game.stack:push(require('src.ui.Gen4TownMap').new(game,{mode='fly',
+        onFly=function(firstArrival)
+          local dest=Fly.destinationFor(game.data,firstArrival)
+          if dest then ow:gen4FlyTo(dest,mon) end
+        end}))
+      return
+    end
+    local items={}
+    for _,d in ipairs(dests) do items[#items+1]={value=d,label=d.label} end
+    game.stack:push(require('src.ui.ListMenu').new(game,"FLY TO?",items,{
+      onChoose=function(item,list) list:close();ow:gen4FlyTo(item.value,mon) end,
+    }))
+    return
+  end
   if move=='SURF' then usable=usable and ow:useSurfFieldMove()=='ok'
   elseif move=='CUT' then usable=usable and ow:useCutFieldMove()=='ok'
   elseif move=='DIG' then usable=usable and ow.map.def.allowEscapeRope and ow:escapePoint()
   elseif move=='TELEPORT' then usable=usable and ow.map.def.allowFly and self.game.save.lastHeal
+    -- PlayerInSafariZoneOrPalPark: no Teleport out of a Safari Game
+    and not self.game.save.safari
   elseif move=='SWEET_SCENT' then
     local enc=ow and require('src.world.Encounter').forMap(self.game.data,ow.map.def,ow.map.id)
     usable=usable and enc and (ow.player.surfing and enc.water or enc.grass)

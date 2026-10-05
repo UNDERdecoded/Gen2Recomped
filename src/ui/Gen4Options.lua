@@ -53,17 +53,22 @@ Gen4Options.isOpaque = true
 
 local W, H = 256, 192
 
--- The description strip at the top, then the list.  Both are Platinum's own
--- window frame, which is what `Font.drawBox` now draws on a Gen 4 cache.
-local DESC = { tx = 1, ty = 1, tw = 30, th = 4 }
-local LIST = { tx = 1, ty = 6, tw = 30 }
+-- options_menu.c SetupWindows: the title at tile (1, 0), 12 x 2, straight on
+-- the background; the entries at (1, 3), 30 x 14, in the standard frame --
+-- seven rows of SINGLE_ENTRY_HEIGHT 16; the description at (2, 19), 27 x 4,
+-- in the MESSAGE box at the bottom. This used to put the description in a
+-- box of its own under the title, four tiles tall for a title line and a
+-- 16-pixel description, so the two printed over each other.
+local TITLE = { x = 8, y = 0 }
+local DESC = { tx = 1, ty = 18, tw = 29, th = 6 }
+local LIST = { tx = 0, ty = 2, tw = 32 }
 local ROW_STEP = 2
 local LABEL_X = 3
 local VALUE_X = 136
 local CURSOR_X = 1
--- How many rows fit between the list's top border and the bottom of the
--- screen: 192px is 24 tiles, the list opens at 6 and a row is two tiles.
-local VISIBLE = 8
+-- Seven rows fit the cartridge's 14-tile entries window; the engine's own
+-- extra rows scroll.
+local VISIBLE = 7
 
 local FRAME_TYPES = 20
 
@@ -127,6 +132,11 @@ function Gen4Options.new(game, opts)
       self.closeDescription = row.description
     end
   end
+  -- the cartridge's own screen order (enum OptionsMenuEntryID), which is not
+  -- the bank's: TEXT SPEED, SOUND, BATTLE SCENE, BATTLE STYLE, BUTTON MODE,
+  -- FRAME, then CLOSE
+  local ORDER = { textSpeed = 1, sound = 2, battleScene = 3, battleStyle = 4, buttonMode = 5, frame = 6 }
+  table.sort(self.rows, function(a, b) return (ORDER[a.key] or 99) < (ORDER[b.key] or 99) end)
   self.cartridgeRows = #self.rows
   self.closeLabel = self.closeLabel or Strings("CLOSE")
 
@@ -284,49 +294,102 @@ function Gen4Options:description()
   return row.label or ""
 end
 
+-- THE SCREEN AS options_menu.c DRAWS IT:
+--   * BG_MAIN_2 filled with config_gra tile 1 -- light blue-grey (197,205,213)
+--   * "OPTIONS" on it at (10, 2), no window frame
+--   * the entries window, tile (1, 3) 30 x 14 in the standard frame, white;
+--     labels at (12, 24 + 16 x row); every choice of TEXT SPEED, SOUND, BATTLE
+--     SCENE and BATTLE STYLE side by side from x 108 every 48, BUTTON MODE's
+--     packed (each one its width + 12 after the last), FRAME only the chosen
+--     "TYPE n" at x 156; the chosen choice red (TEXT_COLOR(3,4,15): 238,32,16
+--     over 255,172,189), the rest grey (TEXT_COLOR(1,2,15): 90,90,82 over
+--     172,189,189)
+--   * the highlight bar: config_gra's tilemap.bin rows 0-1 on BG_MAIN_0, a
+--     hollow red rounded box from x 8 to 247, sixteen high, over the row
+--   * the selected row's description in the message box, tile (2, 19), text
+--     at (20, 152)
+local INK = { text = { 90 / 255, 90 / 255, 82 / 255 }, shadow = { 172 / 255, 189 / 255, 189 / 255 } }
+local RED = { text = { 238 / 255, 32 / 255, 16 / 255 }, shadow = { 1, 172 / 255, 189 / 255 } }
+local CHOICES_X, CHOICE_STEP = 108, 48
+
+-- the bar's tiles: tile 3 the corner (rows 00444444 / 04444444 / 44400000 /
+-- 44000000...), tile 4 the two-pixel top edge, mirrored for the other side
+local function drawBar(y)
+  local g = love.graphics
+  g.setColor(1, 0, 0, 1)
+  local x0, x1 = 8, 248
+  g.rectangle("fill", x0 + 2, y, x1 - x0 - 4, 1)
+  g.rectangle("fill", x0 + 1, y + 1, x1 - x0 - 2, 1)
+  g.rectangle("fill", x0 + 2, y + 15, x1 - x0 - 4, 1)
+  g.rectangle("fill", x0 + 1, y + 14, x1 - x0 - 2, 1)
+  g.rectangle("fill", x0, y + 2, 3, 1)
+  g.rectangle("fill", x0, y + 13, 3, 1)
+  g.rectangle("fill", x0, y + 3, 2, 10)
+  g.rectangle("fill", x1 - 3, y + 2, 3, 1)
+  g.rectangle("fill", x1 - 3, y + 13, 3, 1)
+  g.rectangle("fill", x1 - 2, y + 3, 2, 10)
+  g.setColor(1, 1, 1, 1)
+end
+
+function Gen4Options:drawChoices(row, y)
+  if row.engine then
+    Font.pushStyle(RED)
+    Font.draw(self:valueText(row), 156, y)
+    Font.popStyle()
+    return
+  end
+  local values = row.values or {}
+  local chosen = self:choiceOf(row)
+  if row.key == "frame" then
+    Font.pushStyle(RED)
+    Font.draw(values[chosen] or values[1] or "", 156, y)
+    Font.popStyle()
+    return
+  end
+  local x = CHOICES_X
+  for i, v in ipairs(values) do
+    Font.pushStyle(i == chosen and RED or INK)
+    Font.draw(v, x, y)
+    Font.popStyle()
+    if row.key == "buttonMode" then x = x + Font.width(v) + 12 else x = x + CHOICE_STEP end
+  end
+end
+
 function Gen4Options:draw()
   local g = love.graphics
-  local colors = ((self.game.data and self.game.data.gen4_menus) or {}).colors
-  local bg = (colors and colors.background) or { 0.39, 0.39, 1 }
-  g.setColor(bg[1], bg[2], bg[3], 1)
+  g.setColor(197 / 255, 205 / 255, 213 / 255, 1)
   g.rectangle("fill", 0, 0, W, H)
   g.setColor(1, 1, 1, 1)
-
-  local glyphH = Font.glyphHeight()
-  local inset = math.max(0, math.floor((ROW_STEP * 8 - glyphH) / 2))
-
-  -- Drawn at white, not black: Platinum's font page is pre-tinted, so
-  -- multiplying it by black paints the letter's shadow black too.  See the
-  -- same note on Gen4MainMenu.
-  Font.drawBox(DESC.tx, DESC.ty, DESC.tw, DESC.th)
-  Font.draw(self.title, (DESC.tx + 1) * 8, (DESC.ty + 1) * 8)
-  local desc = self:description()
-  local y = (DESC.ty + 2) * 8 + 2
-  for line in (tostring(desc) .. "\n"):gmatch("([^\n]*)\n") do
-    if y < (DESC.ty + DESC.th) * 8 then
-      Font.draw(line, (DESC.tx + 1) * 8, y)
-      y = y + glyphH + 1
-    end
-  end
-
+  Font.pushStyle(INK)
+  Font.draw(self.title, 10, 2)
+  Font.popStyle()
+  Font.drawBox(0, 2, 32, 16)
   local total = #self.rows + 1
   local shown = math.min(VISIBLE, total)
-  Font.drawBox(LIST.tx, LIST.ty, LIST.tw, shown * ROW_STEP + 2)
-
   for slot = 1, shown do
     local i = slot + self.scroll
-    local rowY = (LIST.ty + 1 + (slot - 1) * ROW_STEP) * 8 + inset
+    local y = 24 + (slot - 1) * 16
+    Font.pushStyle(INK)
     if i <= #self.rows then
-      local row = self.rows[i]
-      Font.draw(row.label, (LIST.tx + LABEL_X) * 8, rowY)
-      Font.draw(self:valueText(row), VALUE_X, rowY)
+      Font.draw(self.rows[i].label, 12, y)
     elseif i == total then
-      Font.draw(self.closeLabel, (LIST.tx + LABEL_X) * 8, rowY)
+      Font.draw(self.closeLabel, 12, y)
     end
-    if i == self.index then
-      Font.drawCode(Theme.cursor, (LIST.tx + CURSOR_X) * 8, rowY)
-    end
+    Font.popStyle()
+    if i <= #self.rows then self:drawChoices(self.rows[i], y) end
+    if i == self.index then drawBar(y) end
   end
+  if Font.hasDialogueFrame and Font.hasDialogueFrame() then
+    Font.drawDialogueBox(DESC.tx, DESC.ty, DESC.tw, DESC.th)
+  else
+    Font.drawBox(DESC.tx, DESC.ty, DESC.tw, DESC.th)
+  end
+  Font.pushStyle(INK)
+  local y = 152
+  for line in (tostring(self:description()) .. "\n"):gmatch("([^\n]*)\n") do
+    if y < 184 then Font.draw(line, 20, y); y = y + 16 end
+  end
+  Font.popStyle()
   g.setColor(1, 1, 1, 1)
 end
 

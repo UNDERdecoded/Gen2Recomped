@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bake assets/logo/logo.png into a pre-scaled RGBA blob for the Switch OTA UI.
+"""Bake assets/logo/gen2logo.png into a pre-scaled RGBA blob for the Switch OTA UI.
 
 Output format (little-endian):
   uint32 width, uint32 height, then width*height RGBA8888 pixels.
@@ -22,7 +22,7 @@ import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_SRC = ROOT / "assets/logo/logo.png"
+DEFAULT_SRC = ROOT / "assets/logo/gen2logo.png"
 DEFAULT_OUT = ROOT / "ports/switch/assets/logo.rgba"
 DEFAULT_MAX_W = 320
 DEFAULT_MAX_H = 90

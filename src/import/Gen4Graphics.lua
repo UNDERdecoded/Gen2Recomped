@@ -286,6 +286,40 @@ function Gen4Graphics.palette(data)
   local stated = floor((size or 0) / 2)
   local count = (room < stated) and room or stated
   if count < 0 then count = 0 end
+  -- A COMPRESSED PALETTE (a PMCP section, nitro's `-pcmp`) says itself how
+  -- many 16-colour palettes it holds and which slot each goes to, and its
+  -- TTLP size may be written INVERTED (`-invertsize`: 0x200 - size). The
+  -- Poffin Case's background.NCLR states 160 bytes for eleven palettes; read
+  -- by the size it came out five palettes long, and the case's screens
+  -- composed with the wrong colours or none. With a PMCP the slot list is
+  -- the authority, each palette placed at its slot.
+  local pm = c.sections.PMCP
+  if pm then
+    local n = u16(c.data, pm.body) or 0
+    local listAt = pm.body + (u32(c.data, pm.body + 4) or 8) - 0
+    -- a PMCP palette is sixteen colours at 4bpp and 256 at 8bpp (depth 4,
+    -- an extended palette): the credits' memories are the latter, and read
+    -- sixteen at a time they came out in their first sixteen colours only
+    local per = (u32(c.data, s.body) == 4) and 256 or 16
+    local out = {}
+    for k = 0, n - 1 do
+      local slot = u16(c.data, listAt + k * 2)
+      if slot == nil or (k + 1) * per > room then break end
+      for i = 0, per - 1 do
+        local v = u16(c.data, at + (k * per + i) * 2)
+        if v then
+          local r, g, b = bgr555(v)
+          out[slot * per + i + 1] = { r, g, b }
+        end
+      end
+    end
+    -- slots that no palette fills stay black rather than holes, so `#` and
+    -- ipairs over the result behave as they do for an ordinary file
+    local top = 0
+    for i in pairs(out) do if i > top then top = i end end
+    for i = 1, top do out[i] = out[i] or { 0, 0, 0 } end
+    if top > 0 then return out, perPalette end
+  end
   local out = {}
   for i = 0, count - 1 do
     local v = u16(c.data, at + i * 2)
