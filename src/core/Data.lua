@@ -171,6 +171,40 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         -- the name -> archive member hop for `var_0`..`var_f`;
                         -- see the paragraph above for what its absence cost
                         "gen4_overworld",
+                        -- ...AND THE FIFTH INSTANCE OF THE SAME BUG, moved here
+                        -- for the same reason `gen4_overworld` was.
+                        --
+                        -- It really was extractor input: the stage lowers a
+                        -- behaviour grid into the 302 map defs that carry one.
+                        -- The other 291 -- every OUTDOOR map, and so every cave
+                        -- mouth and every bike slope in Sinnoh -- keep theirs
+                        -- only in the land chunk's permission block, which is
+                        -- this module and nothing else.
+                        --
+                        -- `Gen4Ground:behaviourAt` reads it now. Without it the
+                        -- directional cave entrances and the bike slopes have
+                        -- no data at all and silently do nothing -- which is
+                        -- exactly how it was reported: *"walking directly into
+                        -- the cave entrance still doesnt work"*.
+                        "gen4_map_permissions",
+                        -- THE MATRICES, for their ALTITUDE section -- how far up
+                        -- each chunk is drawn (`Gen4Ground:chunkLift`). Written
+                        -- on every import and loaded by nothing, so the lift was
+                        -- zero in the game while a harness that loaded the file
+                        -- itself showed it working. Reported twice: *"map
+                        -- boundaries arent at the proper height"*, then *"i
+                        -- reloaded the game and the borders still looks the same"*.
+                        "gen4_map_matrices",
+                        -- MT. CORONET'S FEEBAS TILES (Gen4Feebas, Gen4Fishing).
+                        -- A cache imported before the stage existed has none,
+                        -- and Feebas simply never bites -- as before.
+                        "gen4_feebas",
+                        -- THE "!" OVER A TRAINER WHO HAS SEEN YOU (Gen4Emotes).
+                        "gen4_emotes",
+                        -- THE MOVE BUTTONS' TYPE COLOURS, MASKS AND PP PALETTE
+                        -- (Gen4MoveButtons) -- what the battle menu's buttons
+                        -- carry besides their names.
+                        "gen4_move_buttons", "gen4_encounter_effects",
                         -- `/data/arealight.narc`: four members of fifteen
                         -- time-of-day templates, selected by the `lighting` byte
                         -- that `gen4_terrain`'s `maps` table has carried on all

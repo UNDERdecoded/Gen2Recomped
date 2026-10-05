@@ -207,13 +207,32 @@ function Gen4Terrain.setIdFor(data, def)
   return record and record.texture or nil
 end
 
--- One texture by name, searched across every set. Returns the record and the
--- set it was found in.
-function Gen4Terrain.textureRecord(data, name)
+-- The order a texture name is resolved in: the map's own set, then every
+-- other set by id. ONE ORDER for the palette, this lookup and the renderer
+-- (`Gen4Ground:textureNamed`), because a name appears in several sets with
+-- different palettes -- and the lookup used to walk `pairs`, whose order is
+-- not even stable between runs, so a decal could preview in one set's colours
+-- and draw in another's.
+function Gen4Terrain.setOrder(sets, ownSet)
+  local ids = {}
+  for id in pairs(sets or {}) do
+    if id ~= ownSet then ids[#ids + 1] = id end
+  end
+  table.sort(ids, function(a, b) return tostring(a) < tostring(b) end)
+  if ownSet ~= nil and sets and sets[ownSet] then table.insert(ids, 1, ownSet) end
+  return ids
+end
+
+-- One texture by name, searched across every set in `setOrder`. Returns the
+-- record and the set it was found in. Pass the map's `def` so its own set wins,
+-- exactly as it does in the palette.
+function Gen4Terrain.textureRecord(data, name, def)
   local terrain = terrainOf(data)
   if not (terrain and terrain.sets and name) then return nil end
-  for setId, set in pairs(terrain.sets) do
-    local rec = set.textures and set.textures[name]
+  local ownSet = def and Gen4Terrain.setIdFor(data, def) or nil
+  for _, setId in ipairs(Gen4Terrain.setOrder(terrain.sets, ownSet)) do
+    local set = terrain.sets[setId]
+    local rec = set and set.textures and set.textures[name]
     if rec then return rec, setId end
   end
   return nil
@@ -226,9 +245,7 @@ function Gen4Terrain.textures(data, def)
   local terrain = terrainOf(data)
   if not (terrain and terrain.sets) then return {} end
   local ownSet = Gen4Terrain.setIdFor(data, def)
-  local ids = {}
-  for id in pairs(terrain.sets) do ids[#ids + 1] = id end
-  table.sort(ids, function(a, b) return tostring(a) < tostring(b) end)
+  local ids = Gen4Terrain.setOrder(terrain.sets, nil)
 
   local out, seen = {}, {}
   local function add(id, own)

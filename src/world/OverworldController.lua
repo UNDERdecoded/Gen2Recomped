@@ -2427,6 +2427,15 @@ function OverworldState:pushBattleTransition(battle, opts, onDone)
     trainerName = trainer and trainer.name or nil,
     legendary = battle and battle.legendary or nil,
     legendSpecies = (speciesDef and speciesDef.name) or enemySpecies,
+    -- what Platinum's EncEffects_CutInEffect reads besides the class and the
+    -- levels (src/world/Gen4EncounterEffect.lua): the wild lead's species,
+    -- the zone (Pal Park keeps its birds and Regis ordinary), the battle
+    -- terrain, and whether it is a double battle
+    species = tonumber(enemySpecies),
+    zone = self.map and self.map.def and tonumber(self.map.def.header) or nil,
+    terrain = GameVersion.isGen4() and require("src.battle.Gen4Battle").terrainFor(Game) or nil,
+    double = battle and battle.isDouble and battle:isDouble() or nil,
+    playerGender = Game.save and Game.save.player and Game.save.player.gender or nil,
   }))
   return true
 end
@@ -3363,6 +3372,7 @@ function OverworldState:update(dt)
   self.player.machBike = (kind == "mach") or nil
   self:updateAcroBike()
   self:updateMachBike()
+  self:updateGen4Bike()
   -- the rendered neighbor set depends on the view size; zooming out (or
   -- resizing) past what setMap computed re-runs the walk in place
   if self.map and (self.neighborViewW or 0) > 0 then
@@ -3916,6 +3926,64 @@ end
 -- deliberate: you may turn round on the mat you have just this moment landed
 -- on and walk straight back out of the Center, which is what the game lets
 -- you do.
+-- WALKING INTO A GEN 4 DOOR OR CAVE MOUTH.
+--
+-- Reported from play at the Mt. Coronet mouth on Route 208: walking left into
+-- the cave did nothing, and inside, the exit could be taken by walking up or
+-- down onto it.
+--
+-- `Field_CheckMapTransition` (pokeplatinum src/overlay005/field_control.c) is
+-- the cartridge's whole press rule, and this is it in the same order. It runs
+-- while the player stands still holding the way they face, and:
+--
+--   1. only when the TERRAIN ahead is a wall. A press toward open ground is a
+--      step, whatever the tile underfoot says.
+--   2. a DOOR ahead carrying a warp event is taken -- a house door.
+--   3. otherwise the behaviour UNDERFOOT is read, and an east, west or south
+--      warp, entrance or staircase refuses every press but its own direction
+--      (`Map:gen4PressWarpDir`). Then the warp event on that tile is taken if
+--      the tile is one of those, or a door.
+--
+-- Route 208's mouth is (8,20), WARP_WEST, with the wall at (7,20): one press
+-- left walks onto it, and holding left on into the wall goes in. Nothing on
+-- arrival -- see `Warp.onArrive` -- so landing on it from above or below just
+-- stands there, and a press up or down is a step off it.
+--
+-- Modelled on `checkGen3ArrowWarp` directly below: the same shape of rule one
+-- cartridge later, answered at the press rather than at the end of a step.
+function OverworldState:checkGen4EntranceWarp(dir)
+  local p = self.player
+  local map = self.map
+  -- duck-typed map stubs (the editor, the save converter, a mod's fixture)
+  -- may not carry the methods; they are not Gen 4 maps either
+  if not (map.gen4PressWarpDir and map.gen4TerrainBlocked) then return false end
+  if (map.def and map.def.generation) ~= 4 then return false end
+  local tx, ty = Collision.target(p.cellX, p.cellY, dir)
+  if not map:gen4TerrainBlocked(tx, ty) then return false end
+
+  -- THE DOOR IN FRONT. The warp event sits on the door, not on the ground the
+  -- player stands on, so it is the target that is asked.
+  if map.gen4DoorAt and map:gen4DoorAt(tx, ty) then
+    local w = map:warpAtCell(tx, ty)
+    if w then
+      self:takeWarp(w.def)
+      return true
+    end
+  end
+
+  -- THE TILE UNDERFOOT, which must name this direction or be a door.
+  local named = map:gen4PressWarpDir(p.cellX, p.cellY)
+  if named then
+    if named ~= dir then return false end
+  elseif not (map.gen4DoorAt and map:gen4DoorAt(p.cellX, p.cellY)) then
+    return false
+  end
+  local w = map:warpAtCell(p.cellX, p.cellY)
+  if not w then return false end
+  self:takeWarp(w.def)
+  return true
+end
+
 function OverworldState:checkGen3ArrowWarp(dir)
   local p = self.player
   -- duck-typed map stubs (the editor, the save converter, a mod's fixture)
@@ -4579,6 +4647,7 @@ function OverworldState:handleInput()
       if not self.player.moving and self.player.facing == dir then
         if self:checkGen2CarpetExit(dir) then return end
         if self:checkGen3ArrowWarp(dir) then return end
+        if self:checkGen4EntranceWarp(dir) then return end
         if self:checkEdgeExit(dir) then return end
         if self:checkLedgeHop(dir) then return end
         if self:checkBoulderPush(dir) then return end
@@ -4615,6 +4684,7 @@ function OverworldState:handleInput()
         -- for the 385 mats whose front is off the map, and it is gated on
         -- BIT_STANDING_ON_WARP, which is clear on every mat.
         if self:checkGen3ArrowWarp(dir) then return end
+        if self:checkGen4EntranceWarp(dir) then return end
         if self:checkEdgeExit(dir) then return end
         if self:checkLedgeHop(dir) then return end
         if self:checkBoulderPush(dir) then return end
@@ -4977,6 +5047,16 @@ function OverworldState:checkLedgeHop(dir)
   if byBehaviour then
     local behaviour = self.map:cellBehaviour(fx, fy)
     if behaviour and ledgeDirection(byBehaviour[behaviour]) == dir then
+      -- PLATINUM'S DOUBLE JUMP, the Distortion World's: `JUMP_*_TWICE`
+      -- (0x5A..0x5D) plays MOVEMENT_ACTION_JUMP_DISTORTION_WORLD_*, which
+      -- moves 2 units a frame for 24 frames -- THREE tiles, against an
+      -- ordinary ledge's 16 frames and two -- and passes SEQ_NONE, so it is
+      -- silent (pokeplatinum src/unk_020655F4.c). All 224 such tiles are in
+      -- the D34 rooms; taken as ordinary ledges they landed a tile short.
+      if (self.map.def and self.map.def.generation) == 4
+         and behaviour >= 0x5A and behaviour <= 0x5D then
+        return self:startLedgeHop(dir, fx, fy, 3, true)
+      end
       return self:startLedgeHop(dir, fx, fy)
     end
     -- a dataset that names its ledges by behaviour has said all it has to
@@ -5061,9 +5141,12 @@ function OverworldState:checkGen2Stairs(dir)
   return true
 end
 
-function OverworldState:startLedgeHop(dir, fx, fy)
+function OverworldState:startLedgeHop(dir, fx, fy, tiles, silent)
   local p = self.player
+  tiles = tiles or 2
   local lx, ly = Collision.target(fx, fy, dir)
+  -- A longer jump lands further past the ledge cell.
+  for _ = 3, tiles do lx, ly = Collision.target(lx, ly, dir) end
   if not self.map:inBounds(lx, ly) then
     -- The landing is on the CONNECTED map.  pokered never checks where a
     -- hop lands (engine/overworld/ledges.asm HandleLedges just simulates
@@ -5087,9 +5170,10 @@ function OverworldState:startLedgeHop(dir, fx, fy)
   end
   if not Collision.occupied(self.entities, lx, ly, p)
      and self.map:isWalkableCell(lx, ly) then
-    require("src.core.Sound").play(Game.data, "Ledge")
-    p.hopFrames, p.hopTotal = 32, 32 -- jump arc (cosmetic)
-    self:scriptMove(p, dir, 2)
+    if not silent then require("src.core.Sound").play(Game.data, "Ledge") end
+    -- jump arc (cosmetic), sixteen frames a tile
+    p.hopFrames, p.hopTotal = 16 * tiles, 16 * tiles
+    self:scriptMove(p, dir, tiles)
     return true
   end
   return false
@@ -5730,6 +5814,16 @@ end
 -- Goldeen/Poliwag L10; Super Rod uses the map's extracted fishing group
 -- (no group means "Not even a nibble!").
 function OverworldState:goFishing(rod)
+  -- SINNOH FISHES FROM ITS OWN TABLES -- see src/world/Gen4Fishing.lua. The
+  -- pool below is the Gen 1/2 rod configuration and has nothing for Platinum.
+  local gen4Rod = (self.map.def and self.map.def.generation) == 4
+    and require("src.world.Gen4Fishing").rodOf(Game.data, rod)
+  if gen4Rod then
+    local fx, fy = self.player:facingCell()
+    local enc = require("src.world.Gen4Fishing").roll(Game.data, Game.save,
+      self.map.def, self.map.id, gen4Rod, fx, fy)
+    return self:castLine(enc)
+  end
   local pool, always = fishingPool(Game.data, rod, self.map.id)
   local enc
   -- Gen2 carts answer from the ROM's own fish groups; `handled` is true as
@@ -5748,6 +5842,12 @@ function OverworldState:goFishing(rod)
   else
     enc = catchFrom(pool, always)
   end
+  return self:castLine(enc)
+end
+
+-- The cast itself, once the roll is decided: "...", then a bite or not.
+-- Shared by every generation's roll.
+function OverworldState:castLine(enc)
   -- the bobber waits a beat before the verdict (the original's
   -- FishingInit dot animation); the rod pose draws in the meantime
   self.fishing = { facing = self.player.facing }
@@ -5774,7 +5874,8 @@ function OverworldState:goFishing(rod)
       self.fishing = nil
       self.player.fishing = nil
       local BattleState = require("src.battle.BattleState")
-      local battle = BattleState.newWild(Game, enc.species, enc.level, { hooked = true })
+      local battle = BattleState.newWild(Game, enc.species, enc.level,
+        { hooked = true, nature = enc.nature, gender = enc.gender })
       if self:inSafariGame() then
         battle:makeSafari(Game.save.safari)
       end
@@ -8556,6 +8657,79 @@ function OverworldState:updateMachBike()
   end
 end
 
+-- PLATINUM'S BICYCLE: TWO GEARS, AND A SPEED ONLY THE FAST ONE BUILDS.
+--
+-- `PlayerAvatar_AccelerateBike` adds one rung per step to a maximum of
+-- `AVATAR_MOVE_SPEED_3`, and it is called from the FOURTH-gear movement
+-- handlers only -- measured in pret, `PlayerAvatar_SetMovement_BikeThirdGearMoving`
+-- never calls it and only ever clears the speed. So three banked steps in the
+-- fast gear is the whole of "the right bike", and the slow gear can never earn
+-- a rung however far it is ridden.
+local GEN4_BIKE_TOP_SPEED = 3
+
+-- ONE RUNG OF THE BICYCLE'S LADDER, banked on a completed step.
+--
+-- `PlayerAvatar_AccelerateBike` adds one to a maximum of
+-- `AVATAR_MOVE_SPEED_3`, and only the fourth-gear handlers call it. Banked per
+-- STEP rather than on the held direction because that is what the cartridge
+-- counts -- the Mach bike's counter is a frame counter and is right to be
+-- written the other way round.
+--
+-- NOT ON THE SLIDE's own step: a ramp that pushed you back down while paying
+-- you for the trip would hand you the climb on the second attempt.
+--
+-- Its own method so it can be graded on its own: `onStepComplete` does a dozen
+-- unrelated things and is not drivable from a check.
+function OverworldState:gen4BankStep()
+  local p = self.player
+  if self.muddySlide then return end
+  if (p.gen4Gear or 0) ~= 1 then return end
+  p.gen4Speed = math.min((p.gen4Speed or 0) + 1, GEN4_BIKE_TOP_SPEED)
+end
+
+function OverworldState:updateGen4Bike()
+  local p = self.player
+  local map = self.map
+  local gen4 = (map and map.def and map.def.generation) == 4
+  local G0 = Game or require("src.core.Game")
+  if not (gen4 and G0 and G0.save and G0.save.onBike) then
+    p.gen4Gear, p.gen4Speed = nil, nil
+    return
+  end
+  p.gen4Gear = math.floor(tonumber(p.gen4Gear) or 0)
+  p.gen4Speed = math.floor(tonumber(p.gen4Speed) or 0)
+
+  local G = Game or require("src.core.Game")
+  local input = G and G.input
+  -- B CHANGES GEAR, which is the control every slope is gated behind.
+  -- `PlayerAvatar_UpdateCyclingGear` toggles between 0 and 1 on PAD_BUTTON_B
+  -- and plays a different sound each way; the gear starts at 0 on mounting.
+  --
+  -- WITHOUT THIS THE SLOPES WOULD BE IMPASSABLE RATHER THAN HARD -- the gear
+  -- that can bank speed would be unreachable, which is a worse bug than the
+  -- one being fixed.
+  if input and input.wasPressed and input:wasPressed("b") then
+    p.gen4Gear = (p.gen4Gear == 1) and 0 or 1
+    -- A gear change is not riding. Carrying a run across it would make the
+    -- slow gear a way to bank speed, which is the one thing it cannot do.
+    p.gen4Speed = 0
+  end
+
+  -- A forced slide neither earns nor spends, exactly as it does not on Gen 3.
+  if self.muddySlide then return end
+
+  -- COASTING DOWN, on the HELD DIRECTION rather than on `moving`: a step ends
+  -- one frame before the next begins, so a rule written on movement would
+  -- empty the ladder between every pair of steps -- the same trap the Mach
+  -- bike's counter above is written around.
+  if input and input.isDown then
+    for _, dir in ipairs(BIKE_DIRS) do
+      if input:isDown(dir) then return end
+    end
+  end
+  if p.gen4Speed > 0 then p.gen4Speed = p.gen4Speed - 1 end
+end
+
 function OverworldState:updateAcroBike()
   local p = self.player
   if not p.acroBike then
@@ -8822,7 +8996,64 @@ function OverworldState:acroBumpyHere()
   return (row and row.kind == "bumpy_slope") == true
 end
 
+-- PLATINUM'S BIKE SLOPES -- the mud ramps above Oreburgh.
+--
+-- Reported from play: *"the mudslides above oreburge city that usually require
+-- a bike to get up arent working properly ... cant be walked up without the
+-- right bike"*. They were not implemented at all: behaviours 0xD9 and 0xDA
+-- reached no code, so every ramp in Sinnoh was ordinary ground.
+--
+-- `PlayerAvatar_TileMove_BikeSlope` (pokeplatinum src/player_move.c), keyed on
+-- the behaviour of the tile UNDERFOOT -- `MapObject_GetCurrTileBehavior` --
+-- rather than the one being stepped into:
+--
+--   * moving NORTH: you climb only if the player state is CYCLING and the
+--     speed is at least `AVATAR_MOVE_SPEED_3`. Otherwise the direction is
+--     reversed and you are forced back down at walking pace, with the speed
+--     cleared.
+--   * moving SOUTH: you ride down it.
+--
+-- The same shape as Hoenn's mud ramp below, one cartridge later, so it reuses
+-- that slide outright -- but NOT its threshold: Hoenn asks for a speed
+-- STRICTLY above 3 because the Mach ladder's top rung is 4, and Platinum's
+-- ladder tops out AT 3. Two cartridges, two scales, and reading one with the
+-- other's comparison is the shape of bug this port keeps finding.
+function OverworldState:checkGen4BikeSlope()
+  local map, p = self.map, self.player
+  -- duck-typed map stubs (the editor, the save converter, a mod's fixture)
+  -- may not carry the method; they are not Gen 4 maps either
+  if not (map and map.gen4BikeSlopeAt) then return false end
+  if p.surfing then return false end
+  if not map:gen4BikeSlopeAt(p.cellX, p.cellY) then
+    self.muddySlide = nil
+    return false
+  end
+  -- `Game` is a file-local set on enter, so it is nil until a session has
+  -- started -- the same fallback `bikeRules` uses, and what makes this rule
+  -- gradable outside one.
+  local G = Game or require("src.core.Game")
+  local onBike = G and G.save and G.save.onBike
+  if p.facing == "up" and onBike
+     and (p.gen4Gear or 0) == 1
+     and (p.gen4Speed or 0) >= GEN4_BIKE_TOP_SPEED then
+    self.muddySlide = nil
+    return false
+  end
+  -- ...and otherwise the ramp puts you back at the bottom of it.
+  if not Collision.canMove(map, self.cast or self.entities, p, "down") then
+    self.muddySlide = nil
+    return false
+  end
+  -- `PlayerAvatar_ClearSpeed` on the cartridge's own push-back: a failed climb
+  -- costs the run, so a rider cannot nudge their way up one step at a time.
+  p.gen4Speed = 0
+  self.muddySlide = true
+  self:scriptMove(p, "down", 1, function() self:onStepComplete() end, true)
+  return true
+end
+
 function OverworldState:checkMuddySlope()
+  if self:checkGen4BikeSlope() then return true end
   if not GameVersion.isGen3() then return false end
   local map, p = self.map, self.player
   if not (map and map.muddySlopeAt) then return false end
@@ -9127,11 +9358,15 @@ end
 
 -- Sweet Scent chooses a native slot directly, bypassing walking grace/rate rolls.
 function OverworldState:gen4SweetScent()
-  local encDef=Encounter.forMap(Game.data,self.map.def,self.map.id)
+  local encDef=Encounter.forMap(Game.data,self.map.def,self.map.id,nil,Game.save)
   local slots=encDef and (self.player.surfing and encDef.water or encDef.grass)
-  local enc=slots and Encounter.rollTable(slots,nil,nil,slots.rateMax or 100)
+  local enc=slots and Encounter.rollTable(slots,nil,nil,slots.rateMax or 100,function(tbl,rng)
+    return require('src.world.Gen4WildLead').choose(Game.data,Game.save,tbl.slots,
+      self.player.surfing and 'water' or 'grass',nil,rng)
+  end)
   if not enc then Game.stack:push(TextBox.new(Game,Strings('Nothing appeared...')));return end
-  local battle=require('src.battle.BattleState').newWild(Game,enc.species,enc.level)
+  local battle=require('src.battle.BattleState').newWild(Game,enc.species,enc.level,
+    {nature=enc.nature,gender=enc.gender})
   battle.onFinish=function(result) self:afterBattle(result,battle) end
   self:pushBattle(battle)
 end
@@ -10934,8 +11169,15 @@ function OverworldState:startTrainerApproach(npc, dist, partner)
   end
   -- the "!" bubble pause before the walk-up (EmotionBubble holds the
   -- world for 60 frames, engine/overworld/emotion_bubbles.asm)
+  -- ...which on Sinnoh is the cartridge's own 37 (Gen4Emotes.FRAMES: seven of
+  -- bounce, thirty of hold) with the SEQ_SE_DP_DECIDE pop as it appears.
+  local spotFrames = 60
+  if (self.map.def and self.map.def.generation) == 4 then
+    spotFrames = require("src.import.Gen4Emotes").FRAMES
+    pcall(function() require("src.core.Sound").play(Game.data, "SEQ_SE_DP_DECIDE") end)
+  end
   self.emote = {
-    npc = npc, frames = 60, totalFrames = 60,
+    npc = npc, frames = spotFrames, totalFrames = spotFrames,
     onDone = function()
       if dist > 1 then
         self:scriptMove(npc, npc.facing, dist - 1, fight)
@@ -11340,7 +11582,15 @@ function OverworldState:rollEncounter(encDef, terrain)
   end
   if not (Runtime.wantsHook("encounter.roll")
           or Runtime.wantsHook("encounter.species")) then
-    local enc = Encounter.roll(encDef, nil, rateMod, rateOverride)
+    -- SINNOH'S SLOT, LEVEL AND LEAD ABILITIES -- see src/world/Gen4WildLead.lua.
+    local chooser
+    if GameVersion.isGen4() then
+      chooser = function(tbl, rng)
+        return require("src.world.Gen4WildLead").choose(Game.data, Game.save,
+          tbl.slots, terrain == "water" and "water" or "grass", nil, rng)
+      end
+    end
+    local enc = Encounter.roll(encDef, nil, rateMod, rateOverride, chooser)
     if terrain == "water" then
       enc = require("src.world.Gen2EncounterRules").waterLevel(Game.data, enc)
     end
@@ -11623,8 +11873,51 @@ function OverworldState:gen3AboveTopLayer(e)
                                 self:gen3DrawElevation(e))
 end
 
+-- AMITY SQUARE'S STEP COUNT, which `Field_ProcessStep` advances on every step
+-- the player takes anywhere -- `SystemVars_IncrementAmitySquareStepCount`,
+-- saturating at 10,000 -- and the square's gift-giver reads and clears. Not
+-- counted, so `getamitysquarestepcount` had nothing to report and his berries
+-- and accessories never came.
+function OverworldState:gen4CountAmityStep()
+  local map = self.map
+  if (map and map.def and map.def.generation) ~= 4 then return end
+  local G = Game or require("src.core.Game")
+  local save = G and G.save
+  if not save then return end
+  save.gen4Vars = save.gen4Vars or {}
+  local n = tonumber(save.gen4Vars[0x403A]) or 0
+  save.gen4Vars[0x403A] = (n < 10000) and (n + 1) or 10000
+end
+
+-- WHERE SINNOH'S "!" IS DRAWN: the top-left of the bubble in the same screen
+-- space the owner's sprite is drawn in, and the terrain rise that space uses.
+--
+-- The bubble's bottom edge sits on the sprite's top edge and is centred on it
+-- (the billboard plane rises 0..16 from an anchor 32 units over the owner --
+-- the top of a 32-unit character; see Gen4Emotes), less the bounce. The rise
+-- is `riseOf`'s, and the sprite's top is `SpriteRenderer:draw`'s own
+-- arithmetic, so the two cannot drift apart.
+function OverworldState.gen4EmoteSpot(ground, npc, cam, record, age)
+  local Gen4Emotes = require("src.import.Gen4Emotes")
+  local sprite, px, py = npc.sprite, npc.px or 0, npc.py or 0
+  if npc.pose then
+    local okP, s2, ppx, ppy = pcall(npc.pose, npc)
+    if okP and s2 then sprite, px, py = s2, ppx or px, ppy or py end
+  end
+  local sinP = ground.scale and select(1, ground:scale()) or 1
+  local rise = ground:rise((npc.px or 0) + (npc.shiftPx or 0) + 8, (npc.py or 0) + 8)
+  if sinP < 1 then rise = ((npc.py or 0) - cam.y) * (1 - sinP) + rise end
+  local camY = cam.y + rise
+  local sx = math.floor(px - cam.x) - (sprite.offsetX or 0)
+  local top = math.floor(py - camY) + (sprite.cellYBias or -4) - (sprite.offsetY or 0)
+  local w = sprite.tileW or 16
+  return sx + math.floor((w - (record.width or 16)) / 2),
+         top - (record.height or 16) - Gen4Emotes.bounce(age), rise
+end
+
 function OverworldState:onStepComplete()
   local p = self.player
+  self:gen4BankStep()
   -- THE POKETCH'S PEDOMETER, which is a step counter and has to be counted
   -- where steps are.  Gated on the cartridge having a second screen at all, so
   -- no Gen 1-3 step pays for it, and kept on the save because closing the watch
@@ -11633,6 +11926,7 @@ function OverworldState:onStepComplete()
     Game.save.poketch = Game.save.poketch or {}
     Game.save.poketch.steps = (Game.save.poketch.steps or 0) + 1
   end
+  self:gen4CountAmityStep()
   -- THE REMATCH STEP COUNTER.
   --
   -- IncrementRematchStepCounter (0x080B215C) runs once per step and only
@@ -12148,7 +12442,9 @@ function OverworldState:onStepComplete()
       roamer and { battleType = "roaming", roamer = roamer,
                    roamerHP = enc.roamerHP,
                    roamerStatus = enc.roamerStatus,
-                   roamerSeed = enc.roamerSeed } or nil)
+                   roamerSeed = enc.roamerSeed }
+      or ((enc.nature or enc.gender) and { nature = enc.nature, gender = enc.gender })
+      or nil)
     -- map.ghostBattles: unidentifiable without the named item (the
     -- Pokemon Tower's Silph Scope)
     local ghost = Map.ghostBattles(self.map.def)
@@ -15186,6 +15482,62 @@ function OverworldState:drawWorld()
     -- cry with no bubble still pauses the world for its beat)
     if self.emote.bubble == false then return end
     local npc = self.emote.npc
+    -- SINNOH'S OWN BUBBLE, ON TOP OF THE HEAD, IN THE GROUND'S PROJECTION.
+    --
+    -- Reported from play: *"were missing the proper exclamation point above
+    -- trainers when they see you for battle and its not above their heads"*.
+    -- Platinum had neither art source below, so it fell to the hand-drawn box,
+    -- placed with flat 2D arithmetic that knows nothing of terrain height or
+    -- the tilt -- so it landed across the face.
+    --
+    -- The cartridge (src/overlay005/ov5_021F5A10.c, see Gen4Emotes): a 16x16
+    -- billboard from fldeff.narc whose plane rises 0..16 from an anchor 32
+    -- units above the owner's drawn position -- the top of a 32-unit
+    -- character -- bouncing 6, 10, 12, 12, 10, 6, 0 and then holding. So the
+    -- bubble's bottom edge sits on the sprite's top edge, centred on it, and
+    -- it is drawn through exactly the transform the sprite is: the same
+    -- terrain rise, and `freeEntity` when a 3D camera owns the frame.
+    local g4emotes = Game.data and Game.data.gen4_emotes
+    local g4ground = self.map and self.map.renderer and self.map.renderer.gen4Ground
+    if g4emotes and g4ground and npc.sprite then
+      local Gen4Emotes = require("src.import.Gen4Emotes")
+      local kind = (self.emote.bubble == "double" or self.emote.bubble == 2)
+        and g4emotes.double and "double" or "exclamation"
+      local record = g4emotes[kind]
+      self.gen4EmoteImages = self.gen4EmoteImages or {}
+      local img = self.gen4EmoteImages[kind]
+      if img == nil and record and record.rgba then
+        local okI, made = pcall(function()
+          local data = love.image.newImageData(record.width, record.height,
+                                               "rgba8", record.rgba)
+          local image = love.graphics.newImage(data)
+          image:setFilter("nearest", "nearest")
+          return image
+        end)
+        img = okI and made or false
+        self.gen4EmoteImages[kind] = img
+      end
+      if img then
+        local age = math.max(0, (self.emote.totalFrames or Gen4Emotes.FRAMES)
+                                - (self.emote.frames or 0))
+        local bx, by, rise = OverworldState.gen4EmoteSpot(g4ground, npc, cam,
+                                                          record, age)
+        local function draw()
+          love.graphics.setColor(1, 1, 1, 1)
+          love.graphics.draw(img, bx, by)
+        end
+        local free = g4ground.freeMode and g4ground:freeMode()
+        if free then
+          -- Depth-tested where the cartridge's billboard actually is -- the
+          -- middle of a bubble 32 units up -- not at its trainer's feet.
+          g4ground:freeEntity(npc.px or 0, npc.py or 0, cam.x, cam.y, rise, draw,
+                              Gen4Emotes.LIFT + 8)
+        else
+          draw()
+        end
+        return
+      end
+    end
     -- WHERE IT HANGS, which the cartridge states outright.
     --
     -- Reported from play: the bubble "should appear above the trainers head".
@@ -16012,10 +16364,39 @@ function OverworldState:drawWorld()
     -- Gen 1 or Gen 2 map this returns false and draws nothing, so there is
     -- no generation test at the call site.
     love.graphics.setColor(1, 1, 1, 1)
+    -- THE PLAYER'S FEET, for Sinnoh's canopy pass: what it may paint over the
+    -- sprites is measured from them, and the view centre it used to assume is
+    -- not the player at every zoom. Cleared after, so a stale focus can never
+    -- outlive the frame it was true for.
+    local feetX, feetZ = (self.player.px or 0) + 8, (self.player.py or 0) + 8
+    local function aim(renderer, ox, oy)
+      local g4 = renderer and renderer.gen4Ground
+      if g4 then
+        if ox then g4.focusX, g4.focusZ = feetX - ox, feetZ - oy
+        else g4.focusX, g4.focusZ = nil, nil end
+      end
+    end
+    -- THE "!" GOES IN WHILE A FREE CAMERA'S 3D PASS IS STILL OPEN.
+    --
+    -- Reported from play: *"in tilted camera modes, first and third person
+    -- mode im not seeing the ! icon appear"*. Those modes draw every sprite
+    -- into an open 3D pass that `drawAbove` -> `drawCanopy` CLOSES, and the
+    -- effects below run after it -- so the bubble was projected for a canvas
+    -- that was no longer bound and landed nowhere. Drawn here, it shares the
+    -- pass, the projection and the depth test its owner's sprite had.
+    local emoteEarly = false
+    if freeGround then
+      fxEmote()
+      emoteEarly = true
+    end
+    aim(self.map.renderer, 0, 0)
     self.map.renderer:drawAbove(cam.x, bgY, vw, vh)
+    aim(self.map.renderer)
     for _, nb in ipairs(self.neighbors) do
       if nb.map.renderer.drawAbove then
+        aim(nb.map.renderer, nb.ox, nb.oy)
         nb.map.renderer:drawAbove(cam.x - nb.ox, bgY - nb.oy, vw, vh)
+        aim(nb.map.renderer)
       end
     end
     for _, e in ipairs(onTop or {}) do drawEntity(e) end
@@ -16024,7 +16405,7 @@ function OverworldState:drawWorld()
     fxDust()
     fxCutTree()
     fxWater()
-    fxEmote()
+    if not emoteEarly then fxEmote() end
     fxSparkle()
     fxBird()
     fxRod()

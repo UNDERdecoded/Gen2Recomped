@@ -101,7 +101,10 @@ end
 -- once at the end, because 666 chunks appended to a growing string is the
 -- difference between an import and a hang.
 function Gen4Terrain.newBlob()
-  return { geometry = {}, geometryAt = 0, heights = {}, heightsAt = 0 }
+  return { geometry = {}, geometryAt = 0, heights = {}, heightsAt = 0,
+           -- ...AND THE PERMISSIONS, which are the per-tile BEHAVIOUR of the
+           -- outdoor world and were parsed and dropped. See `append`.
+           perms = {}, permsAt = 0 }
 end
 
 function Gen4Terrain.append(state, chunk)
@@ -114,6 +117,49 @@ function Gen4Terrain.append(state, chunk)
   -- one" from "the cartridge said nothing".
   if chunk.objects and #chunk.objects > 0 then
     entry.objects = chunk.objects
+  end
+
+  -- WHERE THE CHUNK'S OWN GEOMETRY STANDS, when it does not stand at the
+  -- origin.
+  --
+  -- Reported from play: *"the bike routes building entrance also isnt
+  -- rendering properly above oreburg, its putting the npcs and players in a
+  -- dark area and the building area is to the right"*.
+  --
+  -- A chunk model's shapes are drawn through a NODE, exactly like every other
+  -- model in this cartridge, and `Gen4ModelPack.pack` has carried `nodes` and
+  -- `ops` all along with a comment saying why they must not be baked into the
+  -- vertices. This function then wrote neither, so the whole mechanism stopped
+  -- here and every chunk was drawn as though its node were the identity.
+  --
+  -- On 649 of the 666 chunks it IS the identity, which is why this went
+  -- unnoticed. The rest carry a real translation: Route 206's gate sits on a
+  -- node at (-135.99, 21.45, -133.93), and applying it moves the room from
+  -- tiles 8.5..22.5 -- where it was drawn, beside the players standing in the
+  -- dark -- onto tiles 0..14, which is exactly where that chunk's own
+  -- permission grid puts its walls and where its warps and NPCs already were.
+  --
+  -- WRITTEN ONLY WHEN IT SAYS SOMETHING. 666 identity matrices would be ~11,000
+  -- numbers in a cache file that is already 163,899 lines, to state that
+  -- nothing moves. A reader that finds no nodes draws at the origin, which is
+  -- what it did before and is right for those chunks.
+  local moved = false
+  for _, node in ipairs(chunk.packed.nodes or {}) do
+    local m = node.matrix
+    -- The translation column of a 4x4 held row-major: a node that only ever
+    -- rotates or scales still has to be carried, so this tests the WHOLE
+    -- matrix against the identity rather than its translation alone.
+    if type(m) == "table" then
+      for i = 1, 16 do
+        local want = (i == 1 or i == 6 or i == 11 or i == 16) and 1 or 0
+        if math.abs((m[i] or want) - want) > 1e-6 then moved = true break end
+      end
+    end
+    if moved then break end
+  end
+  if moved then
+    entry.nodes = chunk.packed.nodes
+    entry.ops = chunk.packed.ops
   end
 
   for _, shape in ipairs(chunk.packed.shapes) do
@@ -161,11 +207,37 @@ function Gen4Terrain.append(state, chunk)
     state.heightsAt = state.heightsAt + #chunk.bdhc
   end
 
+  -- THE PER-TILE BEHAVIOUR OF THE OUTDOOR WORLD, which was parsed and dropped.
+  --
+  -- Reported from play: *"i cant walk directly into the cave it wont warp me"*.
+  -- A Gen 4 door or cave mouth is opened by pressing the direction the tile
+  -- under the player NAMES (`PlayerAvatar_WillWarp`, src/player_move.c), and
+  -- that name is a behaviour byte. Only 302 of Platinum's 593 map defs carry a
+  -- behaviour grid of their own; the other 291 -- which is every outdoor map,
+  -- and so every cave mouth in Sinnoh -- keep theirs in the land chunk's
+  -- PERMISSION block, one u16 per tile.
+  --
+  -- `Gen4Terrain.chunk` has read that block since the map work and `append`
+  -- never wrote it, so at runtime the outdoor world had no behaviour at all:
+  -- not a wrong answer, no answer. Measured on the cache before this line
+  -- existed -- zero warps in all of Sinnoh sat on a press-north mat, because
+  -- the maps that carry them hold no grid to read.
+  --
+  -- A SIDE-CAR, like the heights above it. 666 chunks of 32x32 u16 is 1.3 MB,
+  -- which is a file and not a Lua table; `heights.bin` is the pattern and the
+  -- reader is the same two fields.
+  if chunk.permissions and #chunk.permissions > 0 then
+    entry.permAt = state.permsAt
+    entry.permBytes = #chunk.permissions
+    state.perms[#state.perms + 1] = chunk.permissions
+    state.permsAt = state.permsAt + #chunk.permissions
+  end
+
   return entry
 end
 
 function Gen4Terrain.finish(state)
-  return concat(state.geometry), concat(state.heights)
+  return concat(state.geometry), concat(state.heights), concat(state.perms)
 end
 
 -- ---------------------------------------------------------------------------
@@ -295,7 +367,15 @@ function Gen4Terrain.grid(matrix)
       land[y * matrix.width + x + 1] = Gen4Maps.chunkAt(matrix, x, y)
     end
   end
-  return { width = matrix.width, height = matrix.height, land = land }
+  -- ...and how far up each chunk is drawn (`Gen4Ground.chunkLift`). Carried
+  -- only when the matrix has the section, which is the overworld and a few
+  -- others; an interior's grid stays as small as it was.
+  local altitudes
+  for _, a in ipairs(matrix.altitudes or {}) do
+    if a ~= 0 then altitudes = matrix.altitudes break end
+  end
+  return { width = matrix.width, height = matrix.height, land = land,
+           altitudes = altitudes }
 end
 
 return Gen4Terrain

@@ -1772,6 +1772,8 @@ end
 -- finds it is mechanical: for each `local function NAME`, look for `NAME(` at a
 -- LOWER line number.
 local bottomScreenUp
+-- ...and the move-button data, read by drawTextArea above its definition.
+local moveButtons
 
 -- The selected move's type and PP. On the cartridge these are printed on the
 -- BUTTON, and on either presentation the button is somewhere this cannot
@@ -1960,13 +1962,13 @@ function Gen4Battle.drawTextArea(battle)
   if phase == "moveSelect" then
     if presentation == "bottom"
        and Gen4Battle.drawBottomScreen(battle, SecondScreen, "moves") then
-      -- The move's type and PP still belong on the main screen: the cartridge
-      -- prints them on the button, and the button is on the other surface.
-      Gen4Battle.drawMoveDetail(battle)
+      -- The type and PP are ON THE BUTTONS now, as the cartridge prints them;
+      -- a cache without the button data still gets them in the box.
+      if not moveButtons(battle) then Gen4Battle.drawMoveDetail(battle) end
       return
     end
     if presentation == "compact" and Gen4Battle.drawCompactMoves(battle) then
-      Gen4Battle.drawMoveDetail(battle)
+      if not moveButtons(battle) then Gen4Battle.drawMoveDetail(battle) end
       return
     end
     if presentation == "compact" then
@@ -2363,12 +2365,28 @@ function Gen4Battle.compactButtonRect(i)
          slot.w - pad * 2, h - pad * 2
 end
 
--- The move list gets the same eight rows, directly above the message box, so
--- the type and PP lines still have the box to print in.
-Gen4Battle.MOVE_STRIP = { x = 0, y = 80, w = 256, h = 64 }
+-- THE MOVE LIST GOES TO THE BOTTOM OF THE SCREEN, and carries its own PP.
+--
+-- Requested from play: *"currently it shows the pp below the move tiles, move
+-- them down so theyre on the bottom of the screen and include the pp of the
+-- move as well as any other info the normal move tiles include"*. It was eight
+-- rows above the message box with TYPE/PP printed in the box under it. Each
+-- tile now carries what the cartridge's own button does -- name, type icon,
+-- "PP cur/max" in its PP colour, the type's button colours -- so the box has
+-- nothing left to say and the tiles take the bottom of the screen instead:
+-- y 136..192, starting where the player's healthbox plaque ends (measured at
+-- 84 + 52, see STRIP above), two rows of 28.
+Gen4Battle.MOVE_STRIP = { x = 0, y = 136, w = 256, h = 56 }
+Gen4Battle.MOVE_STRIP_PAD = 0
+-- The cartridge's button is a dark frame round a panel that holds both lines
+-- (measured off the mask: frame rows 0..11 and 51..54, panel between). Sliced
+-- at its own 8-pixel inset into a 28-row tile the frame took 16 of the 28 rows
+-- and the name landed on it, clipped; a 4-pixel inset keeps the frame's dark
+-- edge and gives the panel the room.
+Gen4Battle.MOVE_STRIP_INSET = 4
 
 function Gen4Battle.compactMoveRect(i)
-  local S, pad = Gen4Battle.MOVE_STRIP, Gen4Battle.STRIP_PAD
+  local S, pad = Gen4Battle.MOVE_STRIP, Gen4Battle.MOVE_STRIP_PAD
   local c, r = (i - 1) % 2, math.floor((i - 1) / 2)
   local w, h = S.w / 2, S.h / 2
   return S.x + c * w + pad, S.y + r * h + pad, w - pad * 2, h - pad * 2
@@ -2394,8 +2412,135 @@ function Gen4Battle.hasSubscreenArt(battle)
   return (row and row.images and next(row.images) ~= nil) and true or false
 end
 
--- The compact MOVE list: the same four buttons, in the strip above the message
--- box, so the type and PP lines still have the box to print in.
+-- ---------------------------------------------------------------------------
+-- What a Platinum move button carries (src/import/Gen4MoveButtons.lua)
+-- ---------------------------------------------------------------------------
+
+moveButtons = function(battle)
+  local data = battle and (battle.data or (battle.game and battle.game.data))
+  return data and data.gen4_move_buttons or nil
+end
+Gen4Battle.hasMoveButtons = function(battle) return moveButtons(battle) ~= nil end
+
+-- The move in slot i: its definition, type id and PP, or nil for an empty slot.
+function Gen4Battle.moveSlot(battle, i)
+  local chooser = battle.menuBattler and battle:menuBattler()
+  local mv = chooser and chooser.curMoves and chooser.curMoves[i]
+  if not mv then return nil end
+  local def = battle.data and battle.data.moves and battle.data.moves[mv.id]
+  local maxPP = def and def.pp and (def.pp + (mv.ppUps or 0) * math.floor(def.pp / 5)) or 0
+  return { move = mv, def = def, typeId = def and tonumber(def.typeId),
+           pp = tonumber(mv.pp) or 0, maxPP = maxPP }
+end
+
+-- The button body in its move's TYPE colours (`LoadMoveSelectPltt`), or in the
+-- empty slot's (`LoadEmptyMoveSlotBg`), as an image the size of the button:
+-- every pixel the mask says is drawn from the slot sub-palette, painted from
+-- the same entry of the chosen palette. Cached per slot and type.
+local buttonImages = {}
+function Gen4Battle.moveButtonImage(battle, slot, typeId)
+  local rec = moveButtons(battle)
+  local mask = rec and rec.masks and rec.masks[slot]
+  if not mask then return nil end
+  local key = slot .. ":" .. tostring(typeId)
+  local held = buttonImages[key]
+  if held ~= nil then return held or nil end
+  local pal = (typeId and rec.types[typeId]) or rec.empty
+  local ok, img = pcall(function()
+    local data = love.image.newImageData(mask.w, mask.h)
+    for y = 0, mask.h - 1 do
+      for x = 0, mask.w - 1 do
+        local k = mask.index:byte(y * mask.w + x + 1)
+        local c = k and k > 0 and pal[k + 1]
+        if c then data:setPixel(x, y, c[1] / 255, c[2] / 255, c[3] / 255, 1) end
+      end
+    end
+    local made = love.graphics.newImage(data)
+    made:setFilter("nearest", "nearest")
+    return made
+  end)
+  buttonImages[key] = ok and img or false
+  return ok and img or nil
+end
+
+local function rgb01(c)
+  c = c or {}
+  return { (c[1] or 0) / 255, (c[2] or 0) / 255, (c[3] or 0) / 255, 1 }
+end
+
+-- The button's words and icon, laid out as `BattleSubscreen_DrawMoveSelectMenu`
+-- does within a 128-wide column whose left edge is `colX`: the name centred
+-- on x 64 (FONT_SUBSCREEN, TEXT_COLOR(7,8,9) on OBJ palette 3) in the window
+-- whose top is `nameTop`; the type icon at x 16 and "PP" at x 59 and the
+-- count at x 76 (FONT_SYSTEM, `GetPPTextColor` on OBJ palette 4), all on the
+-- row whose top is `infoTop`. An empty slot carries nothing.
+-- `small`: the single-screen strip's tiles, which are half the cartridge
+-- button's height. Requested from play: *"shrink the type icon for the moves
+-- and the pp/pp text to better fit in the buttons"* -- so the info row is
+-- drawn at three-quarter size, its icon, "PP" and count packed left to right
+-- under the name rather than spread across the cartridge's 128-wide layout.
+Gen4Battle.SMALL_INFO_SCALE = 0.75
+function Gen4Battle.drawMoveFace(battle, i, colX, nameTop, infoTop, small)
+  local slot = Gen4Battle.moveSlot(battle, i)
+  if not slot then return end
+  local Font = require("src.render.Font")
+  local Sub = require("src.import.Gen4MoveButtons")
+  local rec = moveButtons(battle)
+  local text = rec and rec.text
+  local g = love.graphics
+  local name = slot.def and slot.def.name or tostring(slot.move.id)
+  local faced = Font.pushFace("subscreen")
+  local tone = text and Font.beginTwoTone(rgb01(text.name[8]), rgb01(text.name[9]))
+  if not tone then g.setColor(0, 0, 0, 1) end
+  local tw = Font.width and Font.width(name) or (#name * 8)
+  Font.draw(name, math.floor(colX + 64 - tw / 2), nameTop)
+  if tone then Font.endTwoTone() end
+  if faced then Font.popFace() end
+  g.setColor(1, 1, 1, 1)
+  local typeName = slot.def and slot.def.type and tostring(slot.def.type):lower()
+  local icon = typeName and image("assets/generated/gen4/battle/type_icons_" .. typeName .. ".png")
+  local ink, shadow = Sub.ppColour(slot.pp, slot.maxPP)
+  local count = ("%2d/%2d"):format(slot.pp, slot.maxPP)
+  if small then
+    -- One row, centred in the column: icon, gap, "PP", gap, count -- all at
+    -- SMALL_INFO_SCALE, drawn in a scaled space so the pixel font stays crisp
+    -- relative to itself.
+    local k = Gen4Battle.SMALL_INFO_SCALE
+    faced = Font.pushFace("system")
+    local ppW = Font.width and Font.width("PP") or 16
+    local cW = Font.width and Font.width(count) or 40
+    if faced then Font.popFace() end
+    local iconW = icon and (icon:getWidth()) or 0
+    local total = iconW + 4 + ppW + 3 + cW
+    local x0 = colX + 64 - total * k / 2
+    g.push()
+    g.translate(math.floor(x0), infoTop)
+    g.scale(k, k)
+    if icon then g.draw(icon, 0, 0) end
+    faced = Font.pushFace("system")
+    tone = text and Font.beginTwoTone(rgb01(text.pp[ink + 1]), rgb01(text.pp[shadow + 1]))
+    if not tone then g.setColor(0, 0, 0, 1) end
+    Font.draw("PP", iconW + 4, 0)
+    Font.draw(count, iconW + 4 + ppW + 3, 0)
+    if tone then Font.endTwoTone() end
+    if faced then Font.popFace() end
+    g.pop()
+    g.setColor(1, 1, 1, 1)
+    return
+  end
+  if icon then g.draw(icon, colX + 16, infoTop) end
+  faced = Font.pushFace("system")
+  tone = text and Font.beginTwoTone(rgb01(text.pp[ink + 1]), rgb01(text.pp[shadow + 1]))
+  if not tone then g.setColor(0, 0, 0, 1) end
+  Font.draw("PP", colX + 59, infoTop)
+  Font.draw(count, colX + 76, infoTop)
+  if tone then Font.endTwoTone() end
+  if faced then Font.popFace() end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- The compact MOVE list: the four buttons along the bottom of the screen, each
+-- carrying its own type colours, type icon and PP (see MOVE_STRIP).
 function Gen4Battle.drawCompactMoves(battle)
   local Font = require("src.render.Font")
   local ok, Sub = pcall(require, "src.import.Gen4Subscreen")
@@ -2403,23 +2548,41 @@ function Gen4Battle.drawCompactMoves(battle)
   local chooser = battle:menuBattler()
   if not (ok and art and chooser) then return false end
   local sel = battle.moveIndex or 1
+  local full = moveButtons(battle) ~= nil
   for i = 1, 4 do
     local src = Sub.MOVE_BUTTONS[i]
     local x, y, w, h = Gen4Battle.compactMoveRect(i)
-    if not nineSlice(art, src, x, y, w, h) then return false end
+    local inset = full and Gen4Battle.MOVE_STRIP_INSET or src.inset
+    local cut = { x = src.x, y = src.y, w = src.w, h = src.h, inset = inset }
+    if not nineSlice(art, cut, x, y, w, h) then return false end
+    local slot = Gen4Battle.moveSlot(battle, i)
+    if full then
+      local body = Gen4Battle.moveButtonImage(battle, i, slot and slot.typeId)
+      if body then
+        nineSlice(body, { x = 0, y = 0, w = src.w, h = src.h, inset = inset },
+                  x, y, w, h)
+      end
+    end
     if i == sel then
       love.graphics.setColor(1, 1, 1, 0.28)
       love.graphics.rectangle("fill", x + 2, y + 2, w - 4, h - 4)
       love.graphics.setColor(1, 1, 1, 1)
     end
-    local mv = chooser.curMoves and chooser.curMoves[i]
-    local def = mv and battle.data.moves[mv.id]
-    local text = def and def.name or (mv and tostring(mv.id)) or "-"
-    local tw = Font.width and Font.width(text) or (#text * 8)
-    local th = Font.glyphHeight and Font.glyphHeight() or 8
-    love.graphics.setColor(0, 0, 0, 1)
-    Font.draw(text, math.floor(x + (w - tw) / 2), math.floor(y + (h - th) / 2))
-    love.graphics.setColor(1, 1, 1, 1)
+    if full then
+      -- The column's left edge, so the cartridge's x offsets land as they do on
+      -- its 128-wide half of the screen; the two rows squeezed into the tile.
+      local colX = ((i - 1) % 2) * 128
+      Gen4Battle.drawMoveFace(battle, i, colX, y, y + h - 14, true)
+    else
+      local mv = chooser.curMoves and chooser.curMoves[i]
+      local def = mv and battle.data.moves[mv.id]
+      local text = def and def.name or (mv and tostring(mv.id)) or "-"
+      local tw = Font.width and Font.width(text) or (#text * 8)
+      local th = Font.glyphHeight and Font.glyphHeight() or 8
+      love.graphics.setColor(0, 0, 0, 1)
+      Font.draw(text, math.floor(x + (w - tw) / 2), math.floor(y + (h - th) / 2))
+      love.graphics.setColor(1, 1, 1, 1)
+    end
   end
   return true
 end
@@ -2487,15 +2650,58 @@ end
 
 -- Black, because every one of these panels is a light or saturated fill and the
 -- compact buttons are lettered the same way.
+-- THE CARTRIDGE'S OWN LABELS, where `BattleSubscreen_DrawActionMenu` and
+-- `_DrawMoveSelectMenu` put them: FONT_SUBSCREEN centred on x, `y` the centre
+-- of a 16-row window, each in its own TEXT_COLOR trio on sub OBJ palette 2.
+-- menuIndex order: FIGHT, BAG, POKeMON, RUN.
+Gen4Battle.ACTION_LABEL_SPOTS = {
+  { x = 128, y = 84,  ink = 1,  shadow = 2 },
+  { x = 40,  y = 170, ink = 4,  shadow = 5 },
+  { x = 216, y = 170, ink = 7,  shadow = 8 },
+  { x = 128, y = 178, ink = 10, shadow = 11 },
+}
+Gen4Battle.CANCEL_LABEL_SPOT = { x = 128, y = 178, ink = 10, shadow = 11 }
+
+local function drawLabelAt(battle, text, spot)
+  local Font = require("src.render.Font")
+  local rec = moveButtons(battle)
+  local pal = rec and rec.text and rec.text.action
+  local faced = Font.pushFace("subscreen")
+  local tone = pal and Font.beginTwoTone(rgb01(pal[spot.ink + 1]), rgb01(pal[spot.shadow + 1]))
+  if not tone then love.graphics.setColor(0, 0, 0, 1) end
+  local tw = Font.width and Font.width(text) or (#text * 8)
+  Font.draw(text, math.floor(spot.x - tw / 2), spot.y - 8)
+  if tone then Font.endTwoTone() end
+  if faced then Font.popFace() end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
 function Gen4Battle.drawBottomLabels(battle, over)
   local g = love.graphics
   g.setColor(0, 0, 0, 1)
-  if over == "action" then
+  if over == "action" and moveButtons(battle) then
+    local labels = Gen4Battle.actionLabels(battle)
+    for i = 1, 4 do
+      if labels[i] then drawLabelAt(battle, labels[i], Gen4Battle.ACTION_LABEL_SPOTS[i]) end
+    end
+  elseif over == "action" then
     local labels = Gen4Battle.actionLabels(battle)
     for i = 1, 4 do
       local slot = Gen4Battle.COMPACT_SLOTS[i]
       centreText(labels[i], slot and Gen4Battle.ACTION_RECTS[slot.art])
     end
+  elseif over == "moves" and moveButtons(battle) then
+    -- THE CARTRIDGE'S OWN BUTTON FACE: name, type icon and PP, at
+    -- `BattleSubscreen_DrawMoveSelectMenu`'s positions (font OAM y is the
+    -- centre of a 16-row window, so the windows' tops are 38 and 54).
+    g.setColor(1, 1, 1, 1)
+    for i = 1, 4 do
+      local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+      Gen4Battle.drawMoveFace(battle, i, col * 128, 38 + row * 64, 54 + row * 64)
+    end
+    -- ...and the bar under them, which the cartridge labels too.
+    local Strings = require("src.core.Strings")
+    drawLabelAt(battle, Strings("CANCEL"), Gen4Battle.CANCEL_LABEL_SPOT)
   elseif over == "moves" then
     local chooser = battle.menuBattler and battle:menuBattler()
     for i = 1, 4 do
@@ -2559,6 +2765,16 @@ function Gen4Battle.drawBottomScreen(battle, SecondScreen, over)
     g.setColor(1, 1, 1, 1)
     if base then g.draw(base, 0, 0) end
     if top then g.draw(top, 0, 0) end
+    -- Each move button in its move's TYPE colours, or the empty slot's.
+    if over == "moves" and moveButtons(battle) then
+      local Sub = require("src.import.Gen4Subscreen")
+      for i = 1, 4 do
+        local slot = Gen4Battle.moveSlot(battle, i)
+        local body = Gen4Battle.moveButtonImage(battle, i, slot and slot.typeId)
+        local r = Sub.MOVE_BUTTONS[i]
+        if body and r then g.draw(body, r.x, r.y) end
+      end
+    end
     -- Over the buttons and UNDER the cursor wash, so the highlight tints the
     -- word with the button rather than covering it.
     Gen4Battle.drawBottomLabels(battle, over)

@@ -1308,6 +1308,23 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     return (itemDef.machine.kind == "HM" and "learnkept" or "learn"), itemDef.machine.move
   end
 
+  -- SINNOH'S RODS, which are numbered and carry `fieldUseFunc` 16/17/18 rather
+  -- than a Gen 1 name. Matched by name alone they were never rods: every cast
+  -- in Platinum answered the OAK line below. `CanUseFishingRod` allows a rod
+  -- while SURFING (unlike Gen 1/2) and refuses it only in the Distortion World;
+  -- facing water is checked by the bag before `goFishing`.
+  local gen4Rod = require("src.world.Gen4Fishing").rodFor(itemDef)
+    or require("src.world.Gen4Fishing").rodOf(data, rawItemId)
+  if gen4Rod then
+    if battle then
+      return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
+    end
+    local header = ow and ow.map and ow.map.def and ow.map.def.header
+    if header and require("src.world.Gen4Fishing").NO_FISHING[header] then
+      return "failed", { Strings("It can't be used here.") }
+    end
+    return "fish", rawItemId
+  end
   if itemId == "OLD_ROD" or itemId == "GOOD_ROD" or itemId == "SUPER_ROD" then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }

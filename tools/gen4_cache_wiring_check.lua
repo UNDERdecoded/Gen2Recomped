@@ -158,7 +158,10 @@ local DUMPS = {
   gen4_events = "lowered into `map_scripts`",
   gen4_map_matrices = "lowered into `maps`",
   gen4_map_objects = "lowered into `maps`",
-  gen4_map_permissions = "lowered into `maps`",
+  -- `gen4_map_permissions` WAS HERE and is on the loaded list now: the
+  -- 291 outdoor maps carry no `behaviorCells`, so the land chunk's
+  -- permission block is the only thing that names a cave mouth or a bike
+  -- slope, and `Gen4Ground:behaviourAt` reads it.
   gen4_map_heights = "lowered into `maps`",
   gen4_trainer_sprites = "lowered into `trainers`",
   gen4_fonts = "lowered into `font`",

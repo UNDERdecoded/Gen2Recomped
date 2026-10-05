@@ -23,6 +23,10 @@ local function runRoark(script)
  local roark={localId=0,cellX=18,cellY=28,stepFrames=16,def={index=1},facePlayer=function() end}
  local rock={localId=1,def={index=2}}
  local ow={map={id='D01R0102',def=data.maps.D01R0102},entities={roark,rock},messages={},player={cellX=16,cellY=28,stepFrames=16}}
+ -- The real overworld queues pauses and on-the-spot steps the same way it
+ -- queues walks; without this the movement chain raised at Roark's first
+ -- pause and the scene froze in the CHECK rather than in the game.
+ function ow:scriptPause(entity,frames,done) self.pending=function() done() end end
  function ow:scriptMove(entity,dir,tiles,done)
   self.pending=function()
    local dx=dir=='right' and 1 or dir=='left' and -1 or 0

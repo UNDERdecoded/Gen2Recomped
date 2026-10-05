@@ -197,8 +197,20 @@ Gen4ParticleSystem.EMISSION = {
 -- A SEEDED GENERATOR, because a battle that replays the same move must look the
 -- same twice and because a check cannot assert anything about a system driven
 -- by a real die.
+-- MULTIPLIED IN TWO HALVES, because the game runs on LuaJIT and a LuaJIT
+-- number is a double. `state * 1103515245` reaches 2.4e18 -- past 2^53 -- and
+-- silently drops its low bits there, while Lua 5.3 (`texlua`, which the checks
+-- were written on) multiplies integers exactly. So the game and the check ran
+-- two different random streams: `gen4_particle_check` measured the corpus at
+-- 17,829 units under texlua and 17,910 under LuaJIT, and 34 target crossings
+-- against 28. The same split `Gen4MoveAnimPlayer.lcrngNext` already uses:
+-- `state * lo` stays under 2^47, and only `hi`'s product modulo 2^15 can reach
+-- bits below 2^31, so every term is exact on both interpreters.
+local MUL_HI, MUL_LO = 16838, 20077   -- 1103515245 = 16838 * 65536 + 20077
 local function nextRandom(state)
-  state = (state * 1103515245 + 12345) % 2147483648
+  local lo = state * MUL_LO
+  local hi = (state * MUL_HI) % 32768
+  state = (lo + hi * 65536 + 12345) % 2147483648
   return state, state / 2147483648
 end
 

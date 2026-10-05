@@ -285,25 +285,93 @@ end
 -- ---------------------------------------------------------------------------
 --
 -- "CARTRIDGE" is the map header's own camera type, which is the answer this
--- file exists to give; the fixed angles are there because a player who wants
--- the old flat view, or more lean than Sinnoh ever uses, should not have to
--- edit a file for it.  90 is exactly the straight-down bake.
--- 30 is the steepest rung, and it is the clamp above that decides that rather
--- than taste: at the DEFAULT camera's ground scale it puts the height scale at
--- 1.485, a hair under MAX_HEIGHT_SCALE, and a 42-unit tree at 63 screen pixels
--- against the cartridge's 22.
+-- file exists to give; the fixed angles are there because a player who wants a
+-- different lean should not have to edit a file for it.
+--
+-- THE NUMERIC RUNGS STAY INSIDE THE PITCH RANGE THE CARTRIDGE ACTUALLY USES.
+--
+-- Reported from play, three times across three fixes: *"changing the tilt
+-- seems to be stretching the buildings rather than changing the tilt of the
+-- camera"*, then *"the tilted camera seems to be stretching things again"*,
+-- and then *"the vertical stretching with the different camera angles when i
+-- press 3 its stretiching things"*.
+--
+-- The first two were faults in how the rung reached the renderer -- `mode`
+-- answering `field3d`, and `heightPitch` doing double duty -- and both are
+-- fixed. The camera matrix is now exact at every rung: measured through
+-- `Gen4View:project`, one world unit is 1.0000 screen pixels across the ground
+-- and cos(pitch) up it, at every rung and on both projection kinds. So the
+-- third report is not the renderer. It is the LADDER.
+--
+-- MEASURED over all 17 rows of `sCameraTypes[]`: Platinum's pitch runs from
+-- 40.5890 degrees (row 9) to 78.3765 (row 14, HALL_OF_ORIGIN). The ladder
+-- offered 90 and 80 -- both STEEPER than anything the cartridge draws -- and
+-- 30, shallower than anything it draws.
+--
+-- That matters because the world's on-screen height is cos(pitch) while an
+-- overworld character is a camera-facing BILLBOARD and is not foreshortened at
+-- all. The billboard is ROM PARITY rather than a bug: the cartridge uses the
+-- same unforeshortened sprite art across its whole 40.6..78.4 degree range, so
+-- scaling sprites by pitch would BREAK parity, not restore it. What a rung
+-- really moves is the sprite-to-world height ratio, and outside the
+-- cartridge's range that ratio leaves every picture the ROM has behind:
+--
+--   rung 90 -> cos 0.0000 -- the world has ZERO height. Every building, tree
+--              and sign collapses to nothing while a character stands full
+--              size on top of it.
+--   rung 80 -> cos 0.1736 -- below the ROM's own floor of 0.2015 (row 14).
+--
+-- And "3" CYCLES the ladder, so those two were the first two things a player
+-- saw on pressing it, which is exactly when it was reported.
+--
+-- The RANGE is the ROM's, read off the rows rather than written out again. The
+-- even spacing between the ends is the ladder's own, because a ladder should
+-- step evenly -- so every rung lies inside a range the cartridge uses and the
+-- two ends are exactly its own.
+local function ladder(count)
+  local steepest, shallowest
+  for _, row in pairs(Gen4Camera.TYPES or {}) do
+    local p = tonumber(row and row.pitch)
+    if p then
+      if not steepest or p > steepest then steepest = p end
+      if not shallowest or p < shallowest then shallowest = p end
+    end
+  end
+  -- A table this cannot read costs a LADDER, not a camera: the cartridge's own
+  -- angle is still reachable on the CARTRIDGE rung either way.
+  if not (count > 1 and steepest and shallowest and steepest > shallowest) then
+    return { 78, 72, 66, 60, 53, 47, 41 }
+  end
+  local hi, lo = math.floor(steepest + 0.5), math.floor(shallowest + 0.5)
+  local out = {}
+  for i = 0, count - 1 do
+    out[#out + 1] = math.floor(hi - (hi - lo) * i / (count - 1) + 0.5)
+  end
+  return out
+end
+
 -- ...AND THE TWO FREE MODES ON THE END OF THE SAME LADDER.
 --
 -- Requested: *"have first and third person as an option within the tilt"*.
 -- They belong here rather than on a control of their own because they answer
 -- the same question every other rung does -- how much of the world's height do
--- I want to see -- and a player who has walked the ladder from CARTRIDGE down
--- to 30 is already asking for more of it.
+-- I want to see -- and a player who has walked the ladder down to its
+-- shallowest rung is already asking for more of it.
 --
 -- A string rung carries no pitch, so `forMap` leaves the map header's own in
 -- place and `Gen4Ground` reads the MODE instead; every consumer that asks this
--- table for a number still gets one for the eight numeric rungs.
-Gen4Camera.TILTS = { "cartridge", 90, 80, 70, 60, 50, 40, 30, "third", "first" }
+-- table for a number still gets one for the seven numeric rungs.
+--
+-- SEVEN numeric rungs, unchanged in COUNT, and that is deliberate:
+-- `save.options.gen4CameraTilt` stores the chosen INDEX, so a ladder of a
+-- different length would silently move every saved choice onto another angle.
+Gen4Camera.TILTS = (function()
+  local t = { "cartridge" }
+  for _, p in ipairs(ladder(7)) do t[#t + 1] = p end
+  t[#t + 1] = "third"
+  t[#t + 1] = "first"
+  return t
+end)()
 
 -- THE CLOSEST THE CARTRIDGE EVER PUTS THE CAMERA: HALL_OF_ORIGIN, row 14 of
 -- sCameraTypes[], distance 169.462158203125 at a 78.38 degree pitch.
@@ -324,6 +392,24 @@ local SHALLOWEST = (function()
     if n and (least == nil or n < least) then least = n end
   end
   return least or 30
+end)()
+
+-- The steepest numeric rung, from the ladder for the same reason SHALLOWEST is
+-- taken from it.
+--
+-- `forMap` used the LITERAL 90 as the top of the parallax interpolation, which
+-- was the top of the ladder only while the ladder started at 90. Clamping the
+-- rungs to the cartridge's range left `t` unable to reach 0, so the steepest
+-- rung would have started with parallax the map header never asks for -- and an
+-- orthographic room, whose whole point is that it has none, would have got some
+-- on every rung.
+local STEEPEST = (function()
+  local most
+  for _, rung in ipairs(Gen4Camera.TILTS) do
+    local n = tonumber(rung)
+    if n and (most == nil or n > most) then most = n end
+  end
+  return most or 90
 end)()
 
 -- Which rungs hand the frame to `Gen4View` rather than to the oblique matrix.
@@ -430,7 +516,34 @@ function Gen4Camera.forMap(def)
   -- the blit, the sprite placement, `unprojectGround` turning a screen row
   -- back into a tile row -- still gets the map's own answer and needs no
   -- second thought about which pitch it is holding.
-  copy.heightPitch = tonumber(chosen) or config.pitch
+  -- THE RUNG'S ANGLE GOES IN ITS OWN FIELD, AND NOT IN `heightPitch`.
+  --
+  -- Reported from play, twice now: *"changing the tilt seems to be stretching
+  -- the buildings rather than changing the tilt of the camera"*, and again
+  -- after it was supposedly fixed: *"the tilted camera seems to be stretching
+  -- things again"*.
+  --
+  -- It never stopped. The fix was made in `Gen4Camera.mode`, which now answers
+  -- `field3d` for a numeric rung so the ladder selects a REAL camera at that
+  -- angle -- and this line, the thing that did the stretching, was left as it
+  -- was. So a rung did both: it built a 3D camera AND went on exaggerating
+  -- `heightPitch`, which is the one number that says how tall to draw whatever
+  -- stands on the ground. `scales()` reads it as `cot(heightPitch)`, so rung 30
+  -- draws a 42-unit tree at nearly three times its height. The two halves of
+  -- one decision were written in two files and never met.
+  --
+  -- It could not simply be deleted, because `heightPitch` was doing DOUBLE
+  -- DUTY: `Gen4Ground:applyCamera` passes it to `Gen4View:useConfig` as the
+  -- pitch for the 3D camera, so it was also the only way the rung's angle
+  -- reached the view. One field meaning two things is why removing the stretch
+  -- would have flattened the ladder instead -- every rung the same picture.
+  --
+  -- So the angle now travels as `rungPitch`, which nothing else reads, and
+  -- `heightPitch` keeps the map header's own answer. The oblique pass draws
+  -- heights exactly as the cartridge does at every rung; the ladder's angle
+  -- reaches the camera that is actually drawing the frame.
+  copy.rungPitch = tonumber(chosen) or nil
+  copy.heightPitch = config.heightPitch or config.pitch
   copy.chosen = true
 
   -- AND HOW MUCH PARALLAX, which is the other half of *"make the tilt show 3d
@@ -458,8 +571,8 @@ function Gen4Camera.forMap(def)
   -- `projection` are all left alone for the same reason.
   local rung = tonumber(chosen)
   if rung then
-    local span = 90 - SHALLOWEST
-    local t = span > 0 and (90 - rung) / span or 0
+    local span = STEEPEST - SHALLOWEST
+    local t = span > 0 and (STEEPEST - rung) / span or 0
     if t < 0 then t = 0 elseif t > 1 then t = 1 end
     -- INTERPOLATE THE RECIPROCAL, because the spread IS proportional to 1 over
     -- the distance.  Two things follow, and both are the reason it is written

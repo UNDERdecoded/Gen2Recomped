@@ -90,6 +90,7 @@ local UV_UNITS = 16
 -- every model in the game off at the waist.
 local SHADER = [[
 varying float vModelY;
+varying float vModelZ;
 #ifdef VERTEX
 uniform mat4 mvp;
 // x = how much a unit of HEIGHT spreads; y = THE HEIGHT IT SPREADS ABOUT.
@@ -139,6 +140,7 @@ vec4 position(mat4 transform_projection, vec4 vertex_position)
 {
     vec4 turned = turnToCamera(vertex_position);
     vModelY = turned.y;
+    vModelZ = turned.z;
     vec4 p = mvp * turned;
     // THE ONE PERSPECTIVE TERM, and the reason it is here and not in `mvp`.
     //
@@ -165,9 +167,13 @@ vec4 position(mat4 transform_projection, vec4 vertex_position)
 uniform vec4 uvRotScale;
 uniform vec2 uvTranslate;
 uniform float yCut;
+// (lo, hi] in model z: a band of the cut pass that is left unpainted -- the
+// ground just BEHIND the player, see Gen4Ground:livePass. Empty by default.
+uniform vec2 zKeep;
 vec4 effect(vec4 colour, Image tex, vec2 uv, vec2 screen)
 {
     if (vModelY <= yCut) { discard; }
+    if (vModelZ > zKeep.x && vModelZ <= zKeep.y) { discard; }
     vec2 t = vec2(uvRotScale.x * uv.x + uvRotScale.y * uv.y,
                   uvRotScale.z * uv.x + uvRotScale.w * uv.y) + uvTranslate;
     vec4 texel = Texel(tex, t);
@@ -2478,6 +2484,9 @@ local NO_SPREAD = { 0, 0 }
 -- so a caller that never touches it renders exactly as it did.  `Gen4Ground`
 -- sets it immediately before its chunk draws and puts it back to zero after.
 Gen4Model.billboardYaw = 0
+-- A model-z band the height cut leaves unpainted, or nil. Set per chunk by
+-- the canopy pass; see `Gen4Ground:livePass`.
+Gen4Model.zKeep = nil
 
 -- `depthCompare` defaults to "less", which is right for every pass that draws
 -- a piece of geometry ONCE.
@@ -2510,7 +2519,14 @@ function Gen4Model:draw(viewProjection, pose, materials, yCut, spread, depthComp
   -- overdrawn pixels.
   g.setMeshCullMode("none")
   g.setColor(1, 1, 1, 1)
-  if shaderCuts then shader:send("yCut", tonumber(yCut) or NO_CUT) end
+  if shaderCuts then
+    shader:send("yCut", tonumber(yCut) or NO_CUT)
+    -- Only meaningful with a cut, and cleared otherwise -- an unset uniform
+    -- reads as (0, 0), an empty band, but stating it is what keeps a stale
+    -- band from one pass out of the next.
+    local band = yCut and Gen4Model.zKeep
+    shader:send("zKeep", band and { band[1], band[2] } or { 1.0e9, -1.0e9 })
+  end
   shader:send("heightSpread", spread or NO_SPREAD)
   -- SENT ON EVERY DRAW, for the reason `yCut` and `heightSpread` are: an unset
   -- uniform reads as zero, and relying on that is how the texture matrix once

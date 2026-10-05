@@ -120,6 +120,11 @@ local function build(data, mapId)
   assert(def, "unknown map: " .. tostring(mapId) ..
          " (not in the maps registry)")
   MapLoader.resolveBlocks(data, def)
+  -- PLATINUM'S HIDDEN PATHS, on the collision -- see Gen4HiddenPaths. Applied
+  -- on every build, as the cartridge does on every map change.
+  if def.generation == 4 then
+    MapLoader.applyHiddenPaths(data, def)
+  end
   local tilesetDef = MapLoader.tilesetFor(data, def)
   assert(tilesetDef, ("map %s wants unknown tileset: %s (not in the " ..
          "tilesets registry)"):format(tostring(mapId), tostring(def.tileset)))
@@ -137,9 +142,34 @@ local function build(data, mapId)
   return map
 end
 
+-- The save the hidden paths are read from. `Game` is required lazily: the
+-- loader is used by tools that have no game.
+local function currentSave()
+  local ok, Game = pcall(require, "src.core.Game")
+  return ok and type(Game) == "table" and Game.save or nil
+end
+
+function MapLoader.applyHiddenPaths(data, def)
+  local Gen4HiddenPaths = require("src.world.Gen4HiddenPaths")
+  return Gen4HiddenPaths.applyToDef(data, def, currentSave())
+end
+
 function MapLoader.load(data, mapId)
   local m = cache[mapId]
-  if m then touch(mapId); return m end
+  if m then
+    -- A cached overworld map built before a hidden path was unlocked (or
+    -- locked) is rebuilt, so the collision matches the save -- the cartridge
+    -- re-applies the patches on every map change.
+    local def = m.def
+    if def and def.generation == 4 and def.gen4HiddenKey then
+      local Gen4HiddenPaths = require("src.world.Gen4HiddenPaths")
+      if def.gen4HiddenKey ~= Gen4HiddenPaths.key(currentSave()) then
+        MapLoader.evict(mapId)
+        return build(data, mapId)
+      end
+    end
+    touch(mapId); return m
+  end
   return build(data, mapId)
 end
 

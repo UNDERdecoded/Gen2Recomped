@@ -1237,18 +1237,32 @@ end
 -- opts.hooked: rod encounter, announced with _HookedMonAttackedText
 -- SetWildMonHeldItem (battle_main.c).  Silent on a dataset that names no
 -- held items, which is every Gen 1 and Gen 2 one.
-function BattleState.giveWildHeldItem(data, mon, rng)
+-- SINNOH KEEPS THE SAME TWO ITEMS UNDER ANOTHER NAME, and the port read only
+-- Hoenn's: `heldItems = { common, rare }` (0 = none) on every Platinum species
+-- record, so not one wild Pokemon in Sinnoh ever held an item. Read here as
+-- the form's own record (`SpeciesData_GetFormValue`).
+--
+-- `compoundEyes`: the lead's COMPOUND EYES (`AddWildMonToParty`), which moves
+-- `Pokemon_GiveHeldItem`'s odds from 45/50/5 to 20/60/20.
+function BattleState.giveWildHeldItem(data, mon, rng, compoundEyes)
   local def = require('src.pokemon.Gen4Forms').definition(data,mon)
   local common = def and def.heldItemCommon
   local rare = def and def.heldItemRare
+  local held = def and def.heldItems
+  if common == nil and rare == nil and type(held) == "table" then
+    common = (tonumber(held.common) or 0) ~= 0 and tonumber(held.common) or nil
+    rare = (tonumber(held.rare) or 0) ~= 0 and tonumber(held.rare) or nil
+  end
   if not (common or rare) then return end
   if common and common == rare then
     mon.item = common
     return
   end
   local roll = (rng or love.math.random)(0, 99)
-  if roll < 45 then return end
-  if roll < 95 then mon.item = common or nil
+  local none, upToCommon = 45, 95
+  if compoundEyes then none, upToCommon = 20, 80 end
+  if roll < none then return end
+  if roll < upToCommon then mon.item = common or nil
   else mon.item = rare or nil end
 end
 
@@ -1271,12 +1285,20 @@ function BattleState.newWild(game, species, level, opts)
     form=Encounter.gen4Form(Encounter.forMap(game.data,mapDef,mapId),species)
   end
   local wild = Pokemon.new(game.data, species, level, nil, form)
+  -- SYNCHRONIZE'S NATURE AND CUTE CHARM'S GENDER, decided with the slot (see
+  -- src/world/Gen4WildLead.lua) and applied the cartridge's way: personality
+  -- re-drawn until it carries them.
+  if opts and (opts.nature ~= nil or opts.gender ~= nil) then
+    require("src.world.Gen4WildLead").apply(game.data, wild, opts.nature, opts.gender)
+  end
   -- SetWildMonHeldItem: a wild Gen 3 Pokemon may be carrying one of the two
   -- items its base-stat row names -- the first fifty times in a hundred, the
   -- second five, and nothing the other forty-five.  A species whose two are
   -- the SAME item always has it, which is how the cartridge says "always"
   -- without a third field.  147 species in Hoenn name something.
-  BattleState.giveWildHeldItem(game.data, wild)
+  local compoundEyes = (game.data.constants or {}).gen == 4
+    and require("src.world.Gen4WildLead").lead(game.data, game.save).ability == "COMPOUND_EYES"
+  BattleState.giveWildHeldItem(game.data, wild, nil, compoundEyes)
   -- BATTLETYPE_SHINY (`loadvar 3, 7` before the loadwildmon) overwrites the
   -- rolled DVs with the fixed shiny pair; the Lake of Rage Gyarados is the
   -- only encounter in Gold that uses it.

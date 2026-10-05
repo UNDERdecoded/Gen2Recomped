@@ -35921,3 +35921,54 @@ Gen 3 checks in the suite are green.
      chunks of 666 rebuild a canvas each frame today, and 41 once the flipbooks
      land. The trade is recorded in `Gen4Ground`; conditional membership is the
      fix if it shows.
+
+## Platinum's battle transitions
+
+Requested from play: *"add in pokemon platinums battle transitions with rom
+parity"*. Every Platinum battle used to begin behind the Game Boy's spiral.
+
+**The choice** is `src/world/Gen4EncounterEffect.lua`, after
+`EncEffects_CutInEffect` (`src/enc_effects.c`) and `CutInEffects_ForBattle`
+(`overlay005/encounter_effect.c`). The trainer class or the wild lead's species
+picks the effect, and Pal Park keeps its birds and Regis ordinary. Ordinary
+battles use one of six effects per side: plain, water or cave terrain, and
+whether the opponent's lead is *strictly* higher level. The cartridge's own
+bug is kept: a special trainer in a double battle loses their cut-in, except
+Volkner, and Team Galactic.
+
+**The effects** are `src/render/Gen4BattleTransition.lua`. All 31 cut-ins of
+`encounter_effect_core.c` run as coroutines that follow the C state machines,
+at the field's 30 Hz. They use:
+
+- the same interpolators, flashes and master brightness;
+- ScreenSlice, ScreenSplit, and the per-scanline water wave;
+- camera distance and FOV, applied as a zoom of the frame about the camera's
+  target;
+- the screen fades: circle, blinds, the X, the box and the dome.
+
+The pictures come from `/graphic/field_encounteffect.narc`, extracted by
+`src/import/Gen4EncounterEffects.lua` into the cache module
+`gen4_encounter_effects`. On an existing cache, run
+`tools/gen4_encounter_effects_extract.lua`. The pictures are:
+
+- the Poké Balls and the Galactic "G";
+- the leaders' banners and the VS;
+- every mugshot, and the animated League banner.
+
+The window's margin past the DS letterbox is more of the same top screen, so
+every effect runs out to the window's edges.
+
+**Not reproduced:**
+
+- the Elite Four's 3D particle bursts;
+- the mythical camera's pitch and yaw snaps (its FOV, the zoom, is applied);
+- the class battle palette that the cartridge darkens for mugshot silhouettes.
+  The mugshot's own palette is used instead.
+
+Checks:
+
+- `tools/gen4_battle_transition_check.lua` (161 checks) covers the choice, the
+  arithmetic, all 31 effects running to a covered screen, the cache and the
+  wiring.
+- `tools/gen4_transition_harness` renders contact sheets.
+- `tools/gen4_overworld_harness` gained `TRANSITION_AT`.

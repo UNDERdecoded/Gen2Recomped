@@ -215,10 +215,25 @@ if type(terrain) == 'table' then
   end
 
   -- A record found by name must be the one the decal will load.
-  local sample = list[1] and list[1].texture
-  local rec = sample and Terrain4.textureRecord(data, sample)
-  check(rec and rec.path == list[1].path,
-        'textureRecord must agree with the catalogue about a texture\'s path')
+  -- EVERY ENTRY, not a sample: a name repeats across sets with different
+  -- palettes, and the lookup walked `pairs` -- an order that changes between
+  -- runs -- so a single sample passed or failed by luck. The editor's lookup
+  -- and the renderer's must both land on the copy the palette offered.
+  local fakeGround = setmetatable({ terrain = terrain,
+    set = ownSet ~= nil and terrain.sets[ownSet] or nil }, { __index = Ground })
+  local editorWrong, gameWrong = 0, 0
+  for _, e in ipairs(list) do
+    local rec = Terrain4.textureRecord(data, e.texture, def)
+    if not (rec and rec.path == e.path) then editorWrong = editorWrong + 1 end
+    local live = fakeGround:textureNamed(e.texture)
+    if not (live and live.path == e.path) then gameWrong = gameWrong + 1 end
+  end
+  check(editorWrong == 0,
+        'textureRecord must agree with the catalogue about every texture\'s '
+        .. 'path, got ' .. editorWrong .. ' disagreeing')
+  check(gameWrong == 0,
+        'and so must the renderer -- what the editor shows is what the game '
+        .. 'draws -- got ' .. gameWrong .. ' disagreeing')
 end
 
 -- The store: a painted cell round-trips, and clearing removes it rather than

@@ -5497,10 +5497,18 @@ function RomExtractorGen4:extractTerrain(names)
     end
     self:tick("terrain", m + 1, land.count + matrices.count + (texArc and texArc.count or 0))
   end
-  local geometry, heights = Gen4Terrain.finish(blob)
+  local geometry, heights, perms = Gen4Terrain.finish(blob)
   out.chunkFile = self:saveBinary("terrain/chunks.bin", geometry)
   out.heightFile = self:saveBinary("terrain/heights.bin", heights)
+  -- ...AND THE PER-TILE BEHAVIOUR OF THE OUTDOOR WORLD.
+  --
+  -- The land chunk's permission block, which this stage has parsed since the
+  -- map work and thrown away ever since. It is what says a tile is a cave
+  -- mouth you walk north into, and without it the outdoor world has no
+  -- behaviour at all -- see `Gen4Terrain.append`.
+  out.permissionFile = self:saveBinary("terrain/permissions.bin", perms)
   out.chunkBytes, out.heightBytes = #geometry, #heights
+  out.permissionBytes = #perms
 
   -- The matrices, which are what says WHICH chunk is where.  A map def already
   -- carries its matrix id and its corner in it, so nothing here is per map.
@@ -5591,6 +5599,10 @@ function RomExtractorGen4:extractTerrain(names)
 
   self:areaLights(out.maps)
   self:mapProps()
+  self:feebas()
+  self:emotes()
+  self:moveButtons()
+  self:encounterEffects()
 
   self:write("gen4_terrain", out)
   self.terrainReport = {
@@ -5757,6 +5769,41 @@ end
 -- KEYED BY THE BYTE, NOT BY MAP. There are four members and 593 maps, so keying
 -- per map would store the same fifteen templates 593 times; the byte is what the
 -- cartridge selects on and it is already on every map record.
+-- THE FEEBAS TILES of Mt. Coronet B1F, from `/arc/encdata_ex.narc` -- see
+-- src/import/Gen4Feebas.lua. Without them Feebas cannot be fished in Sinnoh.
+-- THE "!" AND "!!" BUBBLES -- see src/import/Gen4Emotes.lua.
+-- THE MOVE BUTTONS' TYPE PALETTES, MASKS AND PP TEXT -- see
+-- src/import/Gen4MoveButtons.lua.
+function RomExtractorGen4:moveButtons()
+  local Gen4MoveButtons = require("src.import.Gen4MoveButtons")
+  local arc = self:archiveAt(Gen4Subscreen.PATH)
+  local out = arc and Gen4MoveButtons.extract(self.rom, arc, Gen4Graphics, Gen4Subscreen)
+  if out then self:write("gen4_move_buttons", out) end
+end
+
+-- THE BATTLE TRANSITIONS' PICTURES -- see src/import/Gen4EncounterEffects.lua.
+function RomExtractorGen4:encounterEffects()
+  local out = self.rom and require("src.import.Gen4EncounterEffects").extract(self.rom)
+  if out then self:write("gen4_encounter_effects", out) end
+end
+
+function RomExtractorGen4:emotes()
+  local Gen4Emotes = require("src.import.Gen4Emotes")
+  local raw = self.rom and self.rom:read(Gen4Emotes.ARCHIVE)
+  local arc = raw and Narc.parse(raw)
+  local out = arc and Gen4Emotes.extract(arc)
+  if out then self:write("gen4_emotes", out) end
+end
+
+function RomExtractorGen4:feebas()
+  local Gen4Feebas = require("src.import.Gen4Feebas")
+  local raw = self.rom and self.rom:read(Gen4Feebas.PATH)
+  local arc = raw and Narc.parse(raw)
+  local out = arc and Gen4Feebas.parse(arc:get(0), arc:get(1))
+  if out then self:write("gen4_feebas", out) end
+  self.feebasReport = { tiles = out and #out.tiles or 0 }
+end
+
 function RomExtractorGen4:areaLights(mapsByName)
   local raw = self.rom and self.rom:read(Gen4AreaLight.PATH)
   local arc = raw and Narc.parse(raw)

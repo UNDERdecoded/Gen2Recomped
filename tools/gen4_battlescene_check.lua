@@ -772,9 +772,13 @@ local S, M = Gen4Battle.STRIP, Gen4Battle.MOVE_STRIP
 ok(S.y + S.h == 192 and S.x == 0 and S.w == 256,
    "the action strip is the bottom of the screen",
    ("%d,%d %dx%d"):format(S.x, S.y, S.w, S.h), "0,128 256x64")
-ok(M.y + M.h == Gen4Battle.MESSAGE_BOX.ty * 8,
-   "the move strip's bottom meets the message box's top",
-   M.y + M.h, Gen4Battle.MESSAGE_BOX.ty * 8)
+-- THE MOVE STRIP IS THE BOTTOM OF THE SCREEN NOW. It used to end where the
+-- message box began, because the box printed TYPE/PP under it; requested from
+-- play, the tiles carry their own PP and take the bottom instead (see
+-- MOVE_STRIP in Gen4Battle and tools/gen4_battle_menu_check.lua).
+ok(M.y + M.h == 192,
+   "the move strip reaches the bottom of the screen",
+   M.y + M.h, 192)
 
 local spill = {}
 for i = 1, 4 do

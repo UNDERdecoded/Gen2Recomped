@@ -1475,7 +1475,29 @@ function Commands.g4_signpost_input(ctx, destVar)
   setResult(ctx, 1)
 end
 
-Commands.g4_wait_move = noop
+-- `waitmovement` -- THE JOIN, and until now a no-op.
+--
+-- It could afford to be while `applymovement` blocked: by the time the script
+-- reached this line the movement had already finished, so waiting for it was
+-- waiting for nothing. Now that an apply only QUEUES, this is the line that
+-- makes a cutscene wait for its actors, and 2,167 sites across the cartridge
+-- depend on it.
+--
+-- Waits for ALL movements in flight rather than for the one object named.
+-- `ScrCmd_WaitMovement` takes an id and waits on that object; the honest
+-- version of that needs a per-object handle the queue does not carry yet.
+-- Waiting for all of them is the conservative difference: every scene that
+-- waits for the right actor still waits long enough, and one that would have
+-- run on while a SECOND actor was still walking now holds until they land.
+-- That is the old behaviour's timing in the worst case and the cartridge's in
+-- the common one -- where the script waits once, after the last apply.
+function Commands.g4_wait_move(ctx)
+  if (ctx.g4Moving or 0) <= 0 then return end
+  local runner = ctx.runner
+  if not runner then return end
+  ctx.g4MoveJoin = function() runner:resume() end
+  runner:yield()
+end
 function Commands.g4_play_sound(ctx, soundId)
   Commands.play_sound(ctx, valueOf(ctx, soundId))
 end
@@ -1772,21 +1794,70 @@ function Commands.g4_move(ctx, id, steps)
                tostring((tonumber(fromX) or 0) + netX),
                tostring((tonumber(fromY) or 0) + netY))
 
-  for _, step in ipairs(steps) do
+  -- QUEUED, NOT PLAYED HERE -- which is what the cartridge does.
+  --
+  -- Reported from play: *"in oreburg where the npc walks you to the gym it has
+  -- me walk to the gym and then the player walks to the gym after i get there
+  -- instead of following"*.
+  --
+  -- `ScrCmd_ApplyMovement` STARTS an animation and lets the script run on to
+  -- `waitmovement`. This played the whole list inline through `walkEntity`,
+  -- which yields per step -- so two objects told to move in consecutive rows
+  -- moved one after the other instead of together. The file said so and called
+  -- it a timing difference; it is a timing difference in exactly the scenes
+  -- that are ABOUT timing.
+  --
+  -- MEASURED over the cartridge's 8,567 scripts: 3,025 `applymovement` against
+  -- 2,167 `waitmovement`, and 862 of those applies are issued BACK-TO-BACK with
+  -- no wait between them -- two or more actors the cartridge moves together.
+  -- All 862 were being serialised, so this is 862 scenes rather than one.
+  --
+  -- The queue the overworld already keeps is the whole mechanism: `scriptMove`,
+  -- `scriptPause` and `marchInPlace` all take a completion callback and advance
+  -- on their own, and `scriptPause`'s own comment says why -- *"a delay that
+  -- BLOCKS the script runner would serialise the two walks it is there to
+  -- separate"*. That was already understood one layer down.
+  --
+  -- NOTHING IN THE CHAIN MAY YIELD. Every link after the first runs from the
+  -- overworld's update rather than from inside the script coroutine, so a
+  -- `Commands.wait` or `Commands.emote` here -- both of which yield -- would
+  -- raise "attempt to yield from outside a coroutine" somewhere far from this
+  -- line. The emote is therefore armed directly, the same way `Commands.emote`
+  -- arms it, minus the yield.
+  Commands.claimMove(ctx, entity)
+  local index, finished = 0, false
+  local function finish()
+    if finished then return end
+    finished = true
+    ctx.g4Moving = math.max(0, (ctx.g4Moving or 1) - 1)
+    -- The join, if a `waitmovement` is already parked on it.
+    if ctx.g4Moving == 0 and ctx.g4MoveJoin then
+      local join = ctx.g4MoveJoin
+      ctx.g4MoveJoin = nil
+      join()
+    end
+  end
+  local nextStep
+  local function advance()
+    index = index + 1
+    local step = steps[index]
+    if not step then return finish() end
     local action = Gen4Movement.action(step.action)
     local count = math.max(tonumber(step.count) or 1, 1)
     if action == nil then
       -- An action nobody has named -- 20 steps in the whole cartridge, all in
       -- the unnamed MOVEMENT_ACTION_1xx range.  Skipped rather than guessed.
+      return nextStep()
     elseif action.kind == "walk" then
       -- ...AT THE ACTION'S OWN SPEED.  A Gen 4 movement action names a speed
       -- as well as a direction and the table carries it now; without it a
       -- scene written in WALK_FAST played at a stroll, which is the same fault
       -- Gen 3 had before `MOVE_SPEED` was read.
-      Commands.walkEntity(ctx, entity, action.dir, (action.tiles or 1) * count,
-                          action.rate)
+      ow:scriptMove(entity, action.dir, (action.tiles or 1) * count,
+                    nextStep, nil, action.rate)
     elseif action.kind == "face" then
       entity.facing = action.dir
+      return nextStep()
     elseif action.kind == "spot" then
       -- Marking time: the sprite animates without moving, which a cutscene
       -- uses as a pause with a facing.  One repetition costs one step, so the
@@ -1795,24 +1866,56 @@ function Commands.g4_move(ctx, id, steps)
       entity.facing = action.dir
       -- The beat is one walk cycle, and the on-spot actions carry the same
       -- five speeds the walking ones do -- a fast mark-time is a short beat.
-      Commands.wait(ctx, math.max(1, math.floor(
-        (entity.stepFrames or 16) * (action.rate or 1) * count + 0.5)))
+      ow:scriptPause(entity, math.max(1, math.floor(
+        (entity.stepFrames or 16) * (action.rate or 1) * count + 0.5)), nextStep)
     elseif action.kind == "wait" then
-      Commands.wait(ctx, (action.frames or 1) * count)
+      ow:scriptPause(entity, (action.frames or 1) * count, nextStep)
     elseif action.kind == "hide" then
       entity.hidden = true
+      return nextStep()
     elseif action.kind == "show" then
       entity.hidden = nil
+      return nextStep()
     elseif action.kind == "emote" then
       -- EMOTE_EXCLAMATION_MARK is 73 of the cartridge's 1,278 steps -- the "!"
       -- over a trainer who has just spotted you.  Both it and the double mark
       -- are the shock bubble; this engine has three (shock, question, happy)
       -- and Platinum's movement table names no others.
-      local target = (entity == ow.player) and "player"
-        or (entity.def and entity.def.index)
-      if target then Commands.emote(ctx, target, "shock") end
+      -- ...and on Sinnoh's own timing and art: 7 frames of bounce and 30 of
+      -- hold (Gen4Emotes.FRAMES), "!!" for EMOTE_DOUBLE_EXCLAMATION_MARK, and
+      -- the SEQ_SE_DP_DECIDE pop the field effect plays as it appears.
+      local Gen4Emotes = require("src.import.Gen4Emotes")
+      ow.emote = { npc = entity, frames = Gen4Emotes.FRAMES,
+                   totalFrames = Gen4Emotes.FRAMES,
+                   bubble = (action.emote == "double_exclamation") and "double" or 1,
+                   onDone = nextStep }
+      pcall(function()
+        require("src.core.Sound").play(ctx.game and ctx.game.data, "SEQ_SE_DP_DECIDE")
+      end)
+    else
+      return nextStep()
     end
   end
+  -- A STEP THAT RAISES MUST STILL RELEASE THE JOIN.
+  --
+  -- Every link after the first runs from the overworld's update, outside the
+  -- runner's own error handling, and the counter above is only paid back by
+  -- `finish`. Without this a single failing step -- an overworld missing one
+  -- of the three queue methods, a movement aimed at an object that despawned
+  -- -- left `g4Moving` raised for good, and every later `waitmovement` in the
+  -- script parked forever: a frozen game instead of one skipped animation.
+  -- Found by `gen4_event_completion_check`, whose stub overworld had no
+  -- `scriptPause` and froze Roark in the Oreburgh Mine on exactly this.
+  nextStep = function()
+    local ok, err = pcall(advance)
+    if not ok then
+      Logger.warn("g4_move: step %d for object %s failed (%s); releasing the "
+                  .. "wait on it", index, tostring(id), tostring(err))
+      finish()
+    end
+  end
+  ctx.g4Moving = (ctx.g4Moving or 0) + 1
+  nextStep()
 end
 
 -- THE ONES THAT ARE NOT DONE, and are named rather than silently skipped.
@@ -1950,6 +2053,57 @@ Commands.meta.g4_move = { blocking = true }
 -- handler for one of those is to do nothing and be able to say so.
 local noopSeen = {}
 
+-- `ScrCmd_SetHiddenLocation` -- sets the location's var to its magic number,
+-- or clears it. The matrix patches that read it run on the next map load, as
+-- the cartridge's do (Gen4HiddenPaths, MapLoader.load).
+function Commands.g4_set_hidden_location(ctx, location, enable)
+  local Gen4HiddenPaths = require("src.world.Gen4HiddenPaths")
+  Gen4HiddenPaths.set(ctx.save, valueOf(ctx, location), (tonumber(enable) or 0) ~= 0)
+end
+
+-- DAILY SWARMS (`ScrCmd_EnableSwarms`, `ScrCmd_GetSwarmMapAndSpecies`).
+function Commands.g4_enable_swarms(ctx)
+  require("src.world.Gen4Swarms").enable(ctx.save)
+end
+function Commands.g4_swarm_map_species(ctx, mapVar, speciesVar)
+  local header, species = require("src.world.Gen4Swarms")
+    .mapAndSpecies(ctx.game and ctx.game.data, ctx.save)
+  setVar(ctx.save, mapVar, header)
+  setVar(ctx.save, speciesVar, species)
+end
+
+-- AMITY SQUARE'S STEP COUNT -- see `OverworldState:gen4CountAmityStep`.
+local AMITY_STEPS = 0x403A
+function Commands.g4_clear_amity_steps(ctx) setVar(ctx.save, AMITY_STEPS, 0) end
+function Commands.g4_get_amity_steps(ctx, destVar)
+  setVar(ctx.save, destVar, getVar(ctx.save, AMITY_STEPS))
+end
+
+-- PARTY FORM CHANGES (pokeplatinum src/scrcmd.c), each followed by the
+-- cartridge's `Pokedex_Capture` so the new form is registered as seen.
+local function partyForms(ctx, species, apply)
+  local Forms = require("src.pokemon.Gen4Forms")
+  local Party = require("src.pokemon.Party")
+  local data = ctx.game and ctx.game.data
+  for _, mon in ipairs((ctx.save and ctx.save.party) or {}) do
+    if Forms.species(mon.species) == species and not Party.isEgg(mon) then
+      apply(Forms, data, mon)
+      Forms.record(ctx.game, mon.species, mon)
+    end
+  end
+end
+function Commands.g4_giratina_form(ctx, form)
+  local origin = (tonumber(valueOf(ctx, form)) or 0) ~= 0
+  partyForms(ctx, 487, function(Forms, data, mon)
+    if origin then Forms.setForm(data, mon, 1)
+    else Forms.giratinaByHeldItem(data, mon) end
+  end)
+end
+function Commands.g4_deoxys_form(ctx, form)
+  local value = tonumber(valueOf(ctx, form)) or 0
+  partyForms(ctx, 386, function(Forms, data, mon) Forms.setForm(data, mon, value) end)
+end
+
 function Commands.g4_noop(_, what)
   local key = tostring(what)
   if not noopSeen[key] then
@@ -1997,6 +2151,141 @@ function Commands.g4_get_map_id(ctx, destVar)
   local mapId = ctx.save and ctx.save.player and ctx.save.player.map
   local def = mapId and data and data.maps and data.maps[mapId]
   setVar(ctx.save, destVar, tonumber(def and def.header) or 0)
+end
+
+-- ---------------------------------------------------------------------------
+-- TURNBACK CAVE
+-- ---------------------------------------------------------------------------
+--
+-- `initturnbackcave <varPillarsSeen> <varRoomsVisited>` -- 20 uses, one in the
+-- init script of every room of the cave, and the most widely reached unlowered
+-- command in the cartridge measured by maps rather than by occurrences.
+--
+-- WITHOUT IT GIRATINA CANNOT BE REACHED, and not as a matter of degree: every
+-- room ships with all four of its exits pointing at the entrance. Measured on
+-- `D17R0105` (PILLAR_1_ROOM_1), whose four warps all carry
+-- `destHeader = 268` -- the entrance. So the cave is one room you walk out of,
+-- for ever, and the Giratina room has no route to it at all.
+--
+-- The cartridge builds the maze by REWRITING THE LOADED ROOM'S WARPS as the
+-- room loads (`ScrCmd_InitTurnbackCave`, src/scrcmd.c): every exit except the
+-- one you came in by is pointed at a freshly chosen room.
+--
+-- THE MAP IDS ARE DERIVED, not guessed, and from two sources that agree.
+-- pokeplatinum's `generated/map_headers.txt` gives the header NUMBER for each
+-- `MAP_HEADER_TURNBACK_CAVE_*` name by its line (line - 1, zero-based), and
+-- every one of our own map defs carries that same number in `def.header` --
+-- `D17R0105.header` is 271, which that list calls PILLAR_1_ROOM_1. The two
+-- were worked out independently and line up across all 21 rooms.
+local TURNBACK_ENTRANCE = 268
+local TURNBACK_PILLAR_ROOM = 269
+local TURNBACK_GIRATINA = 270
+
+-- The eighteen pillar rooms, in the cartridge's own order: pillar 1 rooms 1-6,
+-- then pillar 2, then pillar 3. The split run (271-273 then 518-520) is the
+-- cartridge's own numbering and not a transcription slip -- the first three
+-- rooms were laid out with the entrance and the rest were appended later.
+local TURNBACK_ROOMS = {
+  271, 272, 273, 518, 519, 520,
+  521, 522, 523, 524, 525, 526,
+  527, 528, 529, 530, 531, 532,
+}
+
+-- A header number back to the map id that carries it. Built once and kept on
+-- the data table rather than recomputed per call: 593 defs is not free, and a
+-- room load runs this immediately.
+local function mapForHeader(data, header)
+  if not (data and data.maps and header) then return nil end
+  local index = rawget(data, "_gen4HeaderIndex")
+  if not index then
+    index = {}
+    for id, def in pairs(data.maps) do
+      local h = tonumber(def.header)
+      if h then index[h] = id end
+    end
+    rawset(data, "_gen4HeaderIndex", index)
+  end
+  return index[math.floor(header)]
+end
+
+-- WHICH OF THE FOUR EXITS THE PLAYER CAME IN BY, from where they are standing.
+--
+-- Transcribed from the cartridge, including the shape of its final `else`:
+--
+--     if (xPos == 11) { zPos == 1 ? 0 : zPos == 20 ? 2 : 5 }
+--     else            { xPos == 20 ? 1 : 3 }
+--
+-- 5 is not a warp. Four warps are rewritten in a loop over 0..3, so an entry
+-- of 5 matches none of them and ALL FOUR are repointed -- which is what
+-- happens when the script runs with the player somewhere other than a doorway,
+-- and is reproduced rather than tidied away.
+local function turnbackEntryWarp(x, z)
+  if x == 11 then
+    if z == 1 then return 0 end
+    if z == 20 then return 2 end
+    return 5
+  end
+  if x == 20 then return 1 end
+  return 3
+end
+
+function Commands.g4_init_turnback_cave(ctx, varPillars, varRooms)
+  local ow = ctx.overworld
+  local data = ctx.game and ctx.game.data
+  if not (ow and ow.map and data) then return end
+  local pillarsSeen = math.floor(valueOf(ctx, varPillars) or 0)
+  local roomsVisited = math.floor(valueOf(ctx, varRooms) or 0)
+
+  -- The cartridge's own ladder, in its own order. Three pillars seen is the
+  -- way out to Giratina; thirty rooms without finding them puts you back at
+  -- the entrance; otherwise a one-in-four chance of a pillar room and
+  -- otherwise one of the six rooms belonging to the pillar you are on.
+  local header
+  if pillarsSeen >= 3 then
+    header = TURNBACK_GIRATINA
+  elseif roomsVisited >= 30 then
+    header = TURNBACK_ENTRANCE
+  elseif math.random(0, 99) < 25 then
+    header = TURNBACK_PILLAR_ROOM
+  else
+    -- `pillarRooms[(rand % 6) + pillarsSeen * 6]`. Clamped, because a save
+    -- whose counter has gone past 2 would index off the end of the table and
+    -- raise under the player rather than putting them somewhere.
+    local band = math.min(math.max(pillarsSeen, 0), 2)
+    header = TURNBACK_ROOMS[math.random(0, 5) + band * 6 + 1]
+  end
+
+  local dest = mapForHeader(data, header)
+  if not dest then
+    Logger.warn("gen4 turnback cave: no map carries header %s -- this cache "
+                .. "predates the Turnback rooms, so the maze cannot be built",
+                tostring(header))
+    return
+  end
+
+  local p = ow.player
+  local entry = turnbackEntryWarp(p and p.cellX, p and p.cellY)
+
+  -- HELD ON THE SAVE, NOT WRITTEN INTO THE MAP.
+  --
+  -- The cartridge edits the loaded map header's warp events, which live only
+  -- as long as that load. Here `MapLoader` caches one def per map id and hands
+  -- the SAME table to everything -- the renderer, the editor, the next visit --
+  -- so writing a destination into it would make one visit's maze permanent and
+  -- leak into every other reader of that map.
+  --
+  -- The save is also where `gen4SpecialLocation` keeps the lifts' dynamic
+  -- destination, so this follows the arrangement already there. It survives a
+  -- save inside the cave, which the cartridge achieves by re-running this very
+  -- script on load.
+  ctx.save.gen4Turnback = { map = ow.map.id, dest = dest,
+                            keep = (entry <= 3) and (entry + 1) or nil }
+  Logger.debug("gen4 turnback cave: %s -- %d pillar(s) seen, %d room(s) "
+               .. "visited, player at (%s,%s) came in by warp %d; the other "
+               .. "exits now lead to %s",
+               tostring(ow.map.id), pillarsSeen, roomsVisited,
+               tostring(p and p.cellX), tostring(p and p.cellY), entry,
+               tostring(dest))
 end
 
 -- `*destVar = LCRNG_Next() % upperBound`.

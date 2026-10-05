@@ -42,6 +42,29 @@ function love.load()
     local GameVersion = require("src.core.GameVersion")
     GameVersion.set(os.getenv("VERSION") or "platinum")
 
+    -- POKEPORT_ASSET_ROOT: the version's cache folder (the one holding
+    -- `assets/` and `data/`). The game reaches its images through a mount the
+    -- launcher makes; this harness has no launcher, so without this every
+    -- extracted picture -- buttons, icons, healthboxes -- comes up placeholder.
+    local assetRoot = os.getenv("POKEPORT_ASSET_ROOT")
+    if assetRoot then
+      local Assets = require("src.render.Assets")
+      local realImage = Assets.image
+      local held = {}
+      Assets.image = function(path, ...)
+        if type(path) == "string" and not held[path] then
+          local f = io.open(assetRoot .. "/" .. path, "rb")
+          if f then
+            local bytes = f:read("*a"); f:close()
+            local okI, img = pcall(love.graphics.newImage,
+                                   love.filesystem.newFileData(bytes, path))
+            if okI then img:setFilter("nearest", "nearest"); held[path] = img end
+          end
+        end
+        return held[path] or realImage(path, ...)
+      end
+    end
+
     local Data = require("src.core.Data")
     Data:load()
     if not Data.isGen4Cache then
@@ -255,6 +278,25 @@ function love.load()
       print(("[hp] after %d ticks: player %s/%s  enemy %s/%s"):format(ticks,
         tostring(battle.player.mon.hp), tostring(battle.player.mon.stats.hp),
         tostring(battle.enemy.mon.hp), tostring(battle.enemy.mon.stats.hp)))
+    end
+    -- PHASE / MOVEINDEX / DRAINPP: open a menu for the picture -- the move list
+    -- has no other way to be looked at headless. DRAINPP=n spends each move's
+    -- PP down by n*slot so the four PP colours (`GetPPTextColor`) all show.
+    -- SINGLE=1: the single-screen presentation (the compact strip), as a
+    -- player with the second screen turned off sees it.
+    if os.getenv("SINGLE") then
+      local okS, SS = pcall(require, "src.ui.SecondScreen")
+      if okS and SS then SS.mode = function() return "off" end end
+    end
+    if os.getenv("PHASE") then
+      battle.phase = os.getenv("PHASE")
+      battle.moveIndex = tonumber(os.getenv("MOVEINDEX") or "1")
+      local drain = tonumber(os.getenv("DRAINPP") or "0")
+      if drain > 0 and battle.player and battle.player.curMoves then
+        for i, mv in ipairs(battle.player.curMoves) do
+          mv.pp = math.max(0, (mv.pp or 0) - drain * i)
+        end
+      end
     end
     local canvas = love.graphics.newCanvas(W, H)
     love.graphics.setCanvas(canvas)

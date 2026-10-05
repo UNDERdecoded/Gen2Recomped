@@ -698,6 +698,27 @@ function Map:cellBehaviour(cx, cy)
     if not self:inBounds(cx, cy) then return nil end
     return self.def.behaviorCells:byte(cy * self.widthCells + cx + 1)
   end
+
+  -- THE OUTDOOR HALF OF SINNOH KEEPS ITS BEHAVIOUR SOMEWHERE ELSE.
+  --
+  -- Only 302 of Platinum's 593 map defs carry a `behaviorCells` grid. The
+  -- other 291 are the outdoor maps, and their per-tile behaviour lives in the
+  -- land chunk's permission block -- which is where every cave mouth in the
+  -- region says which way you have to walk to go in.
+  --
+  -- Without this the outdoor world answered nil here: not a wrong behaviour,
+  -- NO behaviour, so every rule keyed on one was silently off. Reported as
+  -- *"i cant walk directly into the cave it wont warp me"*.
+  --
+  -- Asked of the ground rather than of the def, because that is what holds the
+  -- matrix, this map's corner in it and the open side-car. `pcall` because a
+  -- map built from a cache written before the importer carried permissions has
+  -- none, and must keep answering exactly as it did.
+  local ground = self.renderer and self.renderer.gen4Ground
+  if ground and ground.behaviourAt then
+    local okB, behaviour = pcall(ground.behaviourAt, ground, cx, cy)
+    if okB and behaviour then return behaviour end
+  end
   if not self.def.collisionCells then return nil end
   if cx < 0 or cy < 0 or cx >= self.widthCells or cy >= self.heightCells then
     return nil
@@ -1302,6 +1323,130 @@ local GEN3_ARROW_WARPS = {
 -- rather than restate it
 Map.gen3ArrowWarps = GEN3_ARROW_WARPS
 
+-- WHICH WAY YOU HAVE TO PRESS TO GO IN, on a Gen 4 directional warp.
+--
+-- Reported from play, at the Mt. Coronet mouth on Route 208: walking LEFT
+-- into the cave did nothing, and inside, stepping onto the exit from above or
+-- below threw the player out. The mouth is (8,20), `TILE_BEHAVIOR_WARP_WEST`;
+-- the exit inside is (27,20), `TILE_BEHAVIOR_WARP_EAST`.
+--
+-- `Field_CheckMapTransition` (pokeplatinum src/overlay005/field_control.c) is
+-- the cartridge's PRESS path. It runs while the player stands still holding
+-- the direction they face, and only when the tile ahead is a WALL. It reads
+-- the behaviour UNDERFOOT and refuses any press that disagrees with it:
+--
+--     WARP_ENTRANCE_EAST  || WARP_EAST  || WARP_STAIRS_EAST  -> DIR_EAST only
+--     WARP_ENTRANCE_WEST  || WARP_WEST  || WARP_STAIRS_WEST  -> DIR_WEST only
+--     WARP_ENTRANCE_SOUTH || WARP_SOUTH                      -> DIR_SOUTH only
+--
+-- and then takes the warp event on that tile. Nothing north is here: a
+-- north-facing warp is an ARRIVAL warp, see `gen4ArrivalWarpAt`.
+--
+-- The earlier version of this table carried only the four ENTRANCE bytes.
+-- The cave mouths, cave exits and gate doorways on WARP_EAST/WEST/SOUTH, and
+-- every staircase, were left to the arrival rule, which fired from any
+-- direction -- the whole report.
+--
+-- The bytes are the cartridge's own, from
+-- `include/constants/field/map_tile_behaviors.h`.
+local GEN4_PRESS_WARP_DIRS = {
+  [0x5E] = "right",   -- TILE_BEHAVIOR_WARP_STAIRS_EAST
+  [0x5F] = "left",    -- TILE_BEHAVIOR_WARP_STAIRS_WEST
+  [0x62] = "right",   -- TILE_BEHAVIOR_WARP_ENTRANCE_EAST
+  [0x63] = "left",    -- TILE_BEHAVIOR_WARP_ENTRANCE_WEST
+  [0x65] = "down",    -- TILE_BEHAVIOR_WARP_ENTRANCE_SOUTH
+  [0x6C] = "right",   -- TILE_BEHAVIOR_WARP_EAST
+  [0x6D] = "left",    -- TILE_BEHAVIOR_WARP_WEST
+  [0x6F] = "down",    -- TILE_BEHAVIOR_WARP_SOUTH
+}
+Map.gen4PressWarpDirs = GEN4_PRESS_WARP_DIRS
+
+-- ...AND THE ONLY WARPS A COMPLETED STEP TAKES.
+--
+-- `Field_CheckTransition` is the ARRIVAL path, run when a step lands, and it
+-- opens a warp event for exactly these: the two escalators, WARP_ENTRANCE_NORTH
+-- or WARP_NORTH, and a WARP_PANEL. Every other warp event -- doors, mats,
+-- stairs, and the two dozen sitting on plain ground as script destinations --
+-- is never taken by stepping onto it, from any direction.
+local GEN4_ARRIVAL_WARPS = {
+  [0x64] = true,      -- TILE_BEHAVIOR_WARP_ENTRANCE_NORTH
+  [0x67] = true,      -- TILE_BEHAVIOR_WARP_PANEL
+  [0x6A] = true,      -- TILE_BEHAVIOR_ESCALATOR_FLIP_FACE
+  [0x6B] = true,      -- TILE_BEHAVIOR_ESCALATOR
+  [0x6E] = true,      -- TILE_BEHAVIOR_WARP_NORTH
+}
+Map.gen4ArrivalWarps = GEN4_ARRIVAL_WARPS
+
+function Map:gen4PressWarpDir(cx, cy)
+  -- GEN 4 ONLY, and tested on the map rather than the global version so the
+  -- editor and a mod's fixture answer for the data they actually hold. These
+  -- bytes mean something else on every earlier cartridge -- 0x62 is an
+  -- ordinary tile id in Kanto -- and reading them as doors there is exactly
+  -- the mistake `Map:speaksGen2Collision` exists to stop.
+  if (self.def and self.def.generation) ~= 4 then return nil end
+  local b = self:cellBehaviour(cx, cy)
+  return b and GEN4_PRESS_WARP_DIRS[b] or nil
+end
+
+-- true / false for a Gen 4 cell whose behaviour is known; nil when this is not
+-- a Gen 4 map or the cell has no behaviour to read, so a caller can keep its
+-- old answer rather than invent one.
+function Map:gen4ArrivalWarpAt(cx, cy)
+  if (self.def and self.def.generation) ~= 4 then return nil end
+  local b = self:cellBehaviour(cx, cy)
+  if b == nil then return nil end
+  return GEN4_ARRIVAL_WARPS[b] == true
+end
+
+-- THE TERRAIN SAYS WALL, which is the gate on the whole press path:
+-- `TerrainCollisionManager_CheckCollision` on the tile ahead, before any
+-- behaviour is read. Terrain only -- not `isWalkableCell`, which calls every
+-- cell carrying a warp walkable and so would call a door open ground.
+function Map:gen4TerrainBlocked(cx, cy)
+  if not self:inBounds(cx, cy) then return true end
+  return self:cellTile(cx, cy) == 0xFF
+end
+
+-- PLATINUM'S BIKE SLOPES -- the mud ramps you need the bicycle to climb.
+--
+-- `TILE_BEHAVIOR_BIKE_SLOPE_TOP` is 0xD9 and `_BOTTOM` 0xDA, read straight off
+-- pokeplatinum's `enum TileBehavior`. MEASURED over the whole permission grid:
+-- 17 of each, in eight land chunks -- a small feature, and one that reached no
+-- code at all before this, so every ramp in Sinnoh was ordinary ground.
+--
+-- GEN 4 ONLY, tested on the map rather than the global version for the reason
+-- `gen4PressWarpDir` is: these bytes mean something else on every earlier
+-- cartridge.
+local GEN4_BIKE_SLOPES = { [0xD9] = true, [0xDA] = true }
+
+-- A DOOR IS THE TILE YOU WALK INTO, NOT THE ONE YOU STAND ON.
+--
+-- `TILE_BEHAVIOR_DOOR` is 0x69, and it is the OTHER half of
+-- `PlayerAvatar_WillWarp` -- the half this port never had. The first half asks
+-- what the mat UNDER the player names; this one steps one cell in the pressed
+-- direction and asks whether what is there is a door:
+--
+--     x += MapObject_GetDxFromDir(dir);
+--     z += MapObject_GetDzFromDir(dir);
+--     tileBehavior = TerrainCollisionManager_GetTileBehavior(fieldSystem, x, z);
+--     if (TileBehavior_IsDoor(tileBehavior) == TRUE) return TRUE;
+--
+-- MEASURED: 192 door tiles across 95 chunks, carrying 177 of the region's
+-- 1,213 warps -- and every one of those 177 has a plain walkable neighbour to
+-- be pressed into from. Cave mouths are doors, which is why walking into one
+-- did nothing: the behaviour the port read was the ordinary ground the player
+-- was standing on, and the door was never consulted at all.
+function Map:gen4DoorAt(cx, cy)
+  if (self.def and self.def.generation) ~= 4 then return false end
+  return self:cellBehaviour(cx, cy) == 0x69
+end
+
+function Map:gen4BikeSlopeAt(cx, cy)
+  if (self.def and self.def.generation) ~= 4 then return false end
+  local b = self:cellBehaviour(cx, cy)
+  return (b ~= nil and GEN4_BIKE_SLOPES[b]) == true
+end
+
 function Map:arrowWarpDirAt(cx, cy)
   -- ONLY WHERE WARPS ARE EVENTS, which is the one thing a Gen 3 tileset says
   -- about itself and exactly the test isWarpTileCell already keys off.  On a
@@ -1310,6 +1455,13 @@ function Map:arrowWarpDirAt(cx, cy)
   -- reading them as arrows there would quietly disable real doors, which is
   -- the mistake Map:speaksGen2Collision exists to stop.
   if not (self.tileset and self.tileset.warpsAreEvents) then return nil end
+  -- ...AND NOT ON GEN 4, whose stand-in tileset also says its warps are
+  -- events. The bytes overlap and disagree: Hoenn's 0x6D is
+  -- MB_WATER_SOUTH_ARROW_WARP, Sinnoh's is TILE_BEHAVIOR_WARP_WEST. Read as an
+  -- arrow, the Mt. Coronet mouth on Route 208 -- WARP_WEST -- opened on a
+  -- press DOWN and refused the step LEFT, which is the report word for word.
+  -- Gen 4's own rule is `gen4PressWarpDir`.
+  if (self.def and self.def.generation) == 4 then return nil end
   local arrows = self.tileset.arrowWarpBehaviours or GEN3_ARROW_WARPS
   -- cellBehaviour, not cellTile: cellTile answers $FF for anything the
   -- collision bits block, and a Gen 3 warp cell very often IS blocked -- the

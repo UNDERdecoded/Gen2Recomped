@@ -957,7 +957,8 @@ function Renderer:endFrame(zones, worldZones)
   -- frames so there is a texture we can snapshot before the wipe; reading the
   -- texture that is also the active render target is undefined on GPUs.
   local battleNeedsSource = self.battleWipe
-                            and self.battleWipe.style == "frlg_swirl"
+                            and (self.battleWipe.style == "frlg_swirl"
+                                 or self.battleWipe.needsSource)
                             and self.battleWipe.screenDraw
   local needPresent = GBCFX.active() or Pipelines.wantsPresent()
                       or battleNeedsSource

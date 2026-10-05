@@ -381,6 +381,18 @@ function love.load()
       -- Centre nurse parked at `g4_message_var` for 360 frames and the
       -- party never healed, which reads exactly like the play report and
       -- was this loop.
+      -- TRANSITION_AT=n: start Platinum's into-battle cut-in on tick n over
+      -- the real field (TRANSITION_CLASS for a trainer, else a wild one of
+      -- TRANSITION_SPECIES/TRANSITION_LEVEL), with nothing pushed after it.
+      if tonumber(os.getenv("TRANSITION_AT") or "") == i then
+        local class = tonumber(os.getenv("TRANSITION_CLASS") or "")
+        local fake = { kind = class and "trainer" or "wild",
+                       trainer = class and { class = class, name = os.getenv("NAME") or "ROARK" } or nil,
+                       enemy = { mon = { species = tonumber(os.getenv("TRANSITION_SPECIES") or "396"),
+                                         level = tonumber(os.getenv("TRANSITION_LEVEL") or "3") } } }
+        local okT, errT = pcall(OW.pushBattleTransition, OW, fake, nil, function() end)
+        print(("[transition] %s"):format(okT and "pushed" or tostring(errT)))
+      end
       local okU, errU = pcall(Game.stack.update, Game.stack, 1 / 60)
       if not okU then print(("update raised on tick %d: %s"):format(i, tostring(errU))) break end
       -- WATCH ONE ACTOR BY SPRITE NAME.  The absence of a warning is not

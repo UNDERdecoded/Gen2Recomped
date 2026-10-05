@@ -1885,6 +1885,17 @@ end
 -- Nine uses: once in every HM path there is.
 L.playhmcutin = function(ins, s) emit(s, { "g4_hm_cut_in", ins.args[1] }) end
 
+-- `initturnbackcave <varPillarsSeen> <varRoomsVisited>` -- the maze itself.
+--
+-- 20 uses, one in the init script of every room of Turnback Cave, and the most
+-- widely reached unlowered command in the cartridge when counted by MAPS
+-- rather than by occurrences. Every room ships with all four exits pointing at
+-- the entrance; this is what repoints them, so without it Giratina has no
+-- route to it. See `Commands.g4_init_turnback_cave`.
+L.initturnbackcave = function(ins, s)
+  emit(s, { "g4_init_turnback_cave", ins.args[1], ins.args[2] })
+end
+
 -- The three that actually move the player.  Each takes the party slot of the
 -- Pokemon doing it, and each starts a field task the cartridge does not wait
 -- for -- the script ends and the task finishes the motion.
@@ -2094,10 +2105,10 @@ end
 -- this port does not run for Gen 4.  `getswarmmapandspecies` writes TWO vars
 -- and both must be written, or the comparison behind either reads the last
 -- command's answer.
-L.enableswarms = function(_, s) emit(s, { "g4_noop", "daily swarms" }) end
+-- DAILY SWARMS -- see src/world/Gen4Swarms.lua.
+L.enableswarms = function(_, s) emit(s, { "g4_enable_swarms" }) end
 L.getswarmmapandspecies = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "daily swarms" })
-  emit(s, { "g4_no_feature", ins.args[2], "daily swarms" })
+  emit(s, { "g4_swarm_map_species", ins.args[1], ins.args[2] })
 end
 -- ...AND THE ROAMERS ARE NOT SWARMS, though they sit next to them in the
 -- opcode table and in `special_encounter.h`.
@@ -2361,11 +2372,14 @@ L.checklearnedtutormove = function(ins, s)
 end
 
 -- AMITY SQUARE's berry-and-accessory man.
+-- `VAR_AMITY_SQUARE_STEP_COUNT`, counted on every step (capped at 10,000)
+-- and read by the man who hands out berries and accessories. Both commands
+-- were stubs, so his gifts never came.
 L.clearamitysquarestepcount = function(_, s)
-  emit(s, { "g4_noop", "the Amity Square step count" })
+  emit(s, { "g4_clear_amity_steps" })
 end
 L.getamitysquarestepcount = function(ins, s)
-  emit(s, { "g4_no_feature", ins.args[1], "the Amity Square step count" })
+  emit(s, { "g4_get_amity_steps", ins.args[1] })
 end
 L.calcamitysquarefoundaccessory = function(ins, s)
   emit(s, { "g4_no_feature", ins.args[1], "Amity Square accessories" })
@@ -2395,7 +2409,9 @@ L.getnewspressdeadline = function(ins, s)
 end
 
 -- ODDS AND ENDS, each read on its own.
-L.changedeoxysform = function(_, s) emit(s, { "g4_noop", "Deoxys forms" }) end
+-- `ScrCmd_ChangeDeoxysForm`: the form is a var; every Deoxys in the party
+-- takes it -- the Veilstone meteorites.
+L.changedeoxysform = function(ins, s) emit(s, { "g4_deoxys_form", ins.args[1] }) end
 L.addtogamerecord = function(ins, s)
   emit(s, { "g4_add_game_record", ins.args[1], ins.args[2], false })
 end
@@ -2777,8 +2793,11 @@ L.finishdistortionworldgiratinashadowevent = function(_, s)
   emit(s, { "g4_noop", "the Giratina shadow event" })
 end
 L.dodwwarp = function(_, s) emit(s, { "g4_noop", "the Distortion World warp" }) end
-L.setpartygiratinaform = function(_, s)
-  emit(s, { "g4_noop", "Giratina's forms" })
+-- `ScrCmd_SetPartyGiratinaForm`: non-zero forces Origin Forme on every
+-- Giratina in the party (the Distortion World), zero puts each back by its
+-- held item. Both register the form in the Pokedex.
+L.setpartygiratinaform = function(ins, s)
+  emit(s, { "g4_giratina_form", ins.args[1] })
 end
 
 L.getbattleresult = function(ins, s)
@@ -2885,8 +2904,11 @@ end
 L.deactivatelakeguardiancontainmentunits = function(_, s)
   emit(s, { "g4_noop", "the lake guardian containment units" })
 end
-L.sethiddenlocation = function(_, s)
-  emit(s, { "g4_noop", "a hidden location marker" })
+-- `ScrCmd_SetHiddenLocation`: a location (var or literal) and an on/off byte.
+-- Was a no-op, so no hidden location could ever be unlocked -- Spring Path,
+-- Seabreak Path and the two moon islands. See Gen4HiddenPaths.
+L.sethiddenlocation = function(ins, s)
+  emit(s, { "g4_set_hidden_location", ins.args[1], ins.args[2] })
 end
 -- !! THE DESTINATION IS OPERAND 1, AND THIS PASSED OPERAND 2.
 -- `checkpartyhasfatefulencounterregigigas` takes ONE operand and pret reads it

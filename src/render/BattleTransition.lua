@@ -1084,6 +1084,14 @@ end
 
 -- opts: trainer (bool), stronger (bool), dungeon (bool)
 function BattleTransition.new(game, onDone, opts)
+  -- PLATINUM PLAYS ITS OWN: the 31 cut-ins of encounter_effect_core.c, picked
+  -- by EncEffects_CutInEffect -- see src/render/Gen4BattleTransition.lua. A
+  -- mod that hooks `transition.style` still gets the Game Boy path by
+  -- answering a style here; vanilla Platinum never asks it.
+  if require("src.core.GameVersion").isGen4()
+     and not (opts and opts.forceClassic) then
+    return require("src.render.Gen4BattleTransition").new(game, onDone, opts)
+  end
   local self = setmetatable({}, BattleTransition)
   self.game = game
   self.onDone = onDone

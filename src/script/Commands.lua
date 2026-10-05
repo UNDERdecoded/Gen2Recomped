@@ -784,6 +784,16 @@ end
 -- lock, the yield and the parallel-runner preemption identical.
 Commands.walkEntity = walkEntity
 
+-- ...AND THE LOCK ON ITS OWN, for a caller that queues a movement WITHOUT
+-- blocking on it.
+--
+-- Gen 4's `applymovement` does not wait -- the cartridge starts the animation
+-- and runs on to `waitmovement` -- so it cannot go through `walkEntity`, which
+-- yields. It still needs the same lock and the same parallel-runner
+-- preemption, and the only honest way to share those is to publish them rather
+-- than to write a second copy that drifts.
+Commands.claimMove = claimMove
+
 function Commands.move_player(ctx, dir, tiles)
   walkEntity(ctx, ctx.overworld.player, dir, tiles)
 end

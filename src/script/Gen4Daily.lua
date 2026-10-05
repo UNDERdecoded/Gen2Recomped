@@ -92,6 +92,9 @@ function Gen4Daily.countdown(save, daysPassed)
 end
 
 function Gen4Daily.onDays(save, daysPassed)
+  -- `FieldSystem_HandleDailyEvents` order: the record-mixed RNG (and with it
+  -- the day's swarm) before the News Press deadline.
+  pcall(function() require("src.world.Gen4Swarms").onDays(save, daysPassed) end)
   return Gen4Daily.countdown(save, daysPassed)
 end
 

@@ -78,6 +78,50 @@ function Forms.record(game, species, mon)
   for _,seen in ipairs(list) do if seen==key then return end end
   list[#list+1]=key
 end
+-- SET A FORM AND RECALCULATE, as `Pokemon_CalcLevelAndStats` does after every
+-- form change on the cartridge. The stats come from the form's own personal
+-- row (`definition`), and so does the ability -- `abilitySlot` indexes the
+-- form's ability list. HP follows `Pokemon_CalcStats`: it moves by the change
+-- in max HP, a fainted mon stays fainted, and a one-HP species stays at one.
+function Forms.setForm(data, mon, form)
+  if type(mon) ~= 'table' then return false end
+  mon.form = form
+  mon.gen4Form = nil
+  local okS, Stats = pcall(require, 'src.pokemon.Stats')
+  local def = Forms.definition(data, mon)
+  if not (okS and def and def.baseStats) then return true end
+  local oldMax = mon.stats and mon.stats.hp or 0
+  local okC, stats = pcall(Stats.calc, def, mon.level or 1, mon.ivs, nil, mon.evs, mon.nature)
+  if not (okC and type(stats) == 'table') then return true end
+  mon.stats = stats
+  local hp = tonumber(mon.hp) or 0
+  if hp ~= 0 or oldMax == 0 then
+    if stats.hp == 1 then hp = 1
+    elseif hp == 0 then hp = stats.hp
+    else hp = hp + (stats.hp - oldMax) end
+  end
+  mon.hp = math.max(0, math.min(hp, stats.hp))
+  return true
+end
+
+-- GIRATINA FOLLOWS ITS HELD ITEM: Origin while holding the Griseous Orb,
+-- Altered otherwise (`BoxPokemon_SetGiratinaForm`). The cartridge re-applies
+-- this whenever a held item can have changed -- giving or taking one in the
+-- party menu, the PC, after a battle -- and the port applied it nowhere, so an
+-- Orb did nothing at all. Returns the form set, or nil for any other species.
+local GIRATINA, GRISEOUS_ORB = 487, 112
+local function itemNumber(id)
+  if type(id) == 'number' then return id end
+  return tonumber(tostring(id or ''):match('(%d+)$'))
+end
+function Forms.giratinaByHeldItem(data, mon)
+  if not (mon and Forms.species(mon.species) == GIRATINA) then return nil end
+  if require('src.pokemon.Party').isEgg(mon) then return nil end
+  local form = itemNumber(mon.item) == GRISEOUS_ORB and 1 or 0
+  if (tonumber(mon.form) or 0) ~= form then Forms.setForm(data, mon, form) end
+  return form
+end
+
 function Forms.seen(dex, species)
   return ((dex and dex.gen4FormsSeen) or {})[Forms.species(species)] or {}
 end
