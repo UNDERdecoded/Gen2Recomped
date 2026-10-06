@@ -1022,6 +1022,18 @@ function Font.hasDialogueFrame()
   return not FALLBACK.enabled and def ~= nil and def.dialogueFrame ~= nil
 end
 
+-- Dock the full painted ROM frame, including caps beyond the conventional
+-- interior-plus-one-border rectangle. Otherwise only the middle moves.
+function Font.dialogueBoxBounds(tx, ty, tw, th)
+  local rec = Font.hasDialogueFrame() and state.def.dialogueFrame
+  if rec and rec.layout == 'gen4' and tw >= 3 and th >= 3 then
+    return (tx-1)*8, ty*8, (tw+3)*8, th*8
+  elseif rec and rec.layout ~= 'gen4' and th >= 4 then
+    return (tx-1)*8, ty*8, (tw+2)*8, th*8
+  end
+  return tx*8, ty*8, tw*8, th*8
+end
+
 function Font.drawDialogueBox(tx, ty, tw, th)
   local rec = Font.hasDialogueFrame() and state.def.dialogueFrame
   if rec and dialogueSheet.path ~= rec.image then

@@ -13,6 +13,8 @@ local GamepadMap = {}
 GamepadMap.DEFAULT_GAMEPAD_BINDINGS = {
   dpup = "up", dpdown = "down", dpleft = "left", dpright = "right",
   a = "a", b = "b",
+  -- DS X is north and Y is west (SDL uses Xbox position names).
+  y = "x", x = "y",
   start = "start", back = "select",
   -- ...and the two shoulders, which are L and R on the console this
   -- generation was made for
@@ -25,6 +27,8 @@ GamepadMap.NX_GAMEPAD_BINDINGS = {
   dpup = "up", dpdown = "down", dpleft = "left", dpright = "right",
   a = "b", -- SDL south = Nintendo B → GB B
   b = "a", -- SDL east = Nintendo A → GB A
+  y = "x", -- SDL north = Nintendo X
+  x = "y", -- SDL west = Nintendo Y
   start = "start", back = "select",
   leftshoulder = "l", rightshoulder = "r",
 }
@@ -37,14 +41,16 @@ GamepadMap.NX_GAMEPAD_BINDINGS = {
 -- are served from this table (see GamepadMap.ignoreRawForJoystick).
 GamepadMap.RAW_BUTTON_BINDINGS = {
   [1] = "a", [2] = "b",
+  [3] = "y", [4] = "x",
   [7] = "select", [8] = "start", [9] = "select", [10] = "start",
 }
 
 -- Switch OLED raw indices (1-based). Only when NOT isGamepad() — love-nx
 -- also emits gamepadpressed; dual-path face presses break NamingScreen.
--- #1 = Nintendo B, #2 = Nintendo A (probe); Y/X left unmapped for naming.
+-- #1 = Nintendo B, #2 = Nintendo A; west/north serve DS Y/X.
 GamepadMap.NX_RAW_BUTTON_BINDINGS = {
   [1] = "b", [2] = "a",
+  [3] = "y", [4] = "x",
   [9] = "select", [10] = "start",
 }
 
@@ -76,6 +82,22 @@ end
 function GamepadMap.gamepadBindings()
   if nxActive() then return GamepadMap.NX_GAMEPAD_BINDINGS end
   return GamepadMap.DEFAULT_GAMEPAD_BINDINGS
+end
+
+-- The Controls menu uses the same defaults as Input, and displays Nintendo
+-- labels rather than SDL's Xbox labels on Switch.
+function GamepadMap.defaultPadForAction(action)
+  for button, mapped in pairs(GamepadMap.gamepadBindings()) do
+    if mapped == action then return button end
+  end
+end
+
+function GamepadMap.buttonLabel(button)
+  if nxActive() then
+    local labels = {a='B',b='A',x='Y',y='X'}
+    if labels[button] then return labels[button] end
+  end
+  return button:upper()
 end
 
 -- Whole raw-index table for Input:applyBindings joyBindings seeding (#632).

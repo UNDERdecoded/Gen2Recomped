@@ -5527,11 +5527,12 @@ function RomImporter:draw()
   local paypalFont = self.hintFont
   if paypalLink and paypalFont:getWidth(paypalLink.label)>paypalW-12*s then paypalFont=self.warningFont end
   local paypalBaseW = paypalW
-  paypalW = paypalW * 2
-  local paypalH = donateH * 2
-  local paypalStacked = paypalLink and appW < 2 * (paypalW + padH + 8 * s) + 180 * s
+  local paypalMultiplier = height > width and 1 or 2
+  paypalW = paypalW * paypalMultiplier
+  local paypalH = donateH * paypalMultiplier
+  local paypalStacked = paypalLink and paypalMultiplier==2 and appW < 2 * (paypalW + padH + 8 * s) + 180 * s
   if paypalLink then
-    local fontSize=paypalFont:getHeight()*2
+    local fontSize=paypalFont:getHeight()*paypalMultiplier
     if self._paypalFontSize~=fontSize then
       self._paypalFontSize=fontSize
       self._paypalFont=love.graphics.newFont(fontSize)

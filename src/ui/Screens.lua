@@ -284,7 +284,7 @@ local GEN4_ALIASES = {
   NamingScreen = { id = "Gen4NamingScreen",
                    opts = { title = true, presets = true, maxLen = true,
                             default = true, onDone = true, kind = true,
-                            species = true, mon = true } },
+                            species = true, mon = true, female = true } },
   -- THE POKEDEX, which was the last of the four screens reported as "looking
   -- like gen1 still" without an entry here.  It was left without one on
   -- purpose: its art composed blank, and a Gen 4 Pokedex drawn on a blank page

@@ -7,6 +7,7 @@
 -- after, so SDL "a" is the button physically labelled B.  Selecting the
 -- table at call time keeps that entirely inside GamepadMap.
 local GamepadMap = require("src.core.GamepadMap")
+local GameVersion = require("src.core.GameVersion")
 
 local Input = {}
 
@@ -17,6 +18,7 @@ local DEFAULT_BINDINGS = {
   right = "right", d = "right",
   z = "a", ["return"] = "a", space = "a",
   x = "b", backspace = "b",
+  ["/"] = "x", ["'"] = "y",
   ["kpenter"] = "start", escape = "start",
   -- Select: fight-menu move reorder + bag item reorder. Tab is the
   -- discoverable default (shown in CONTROLS); both shifts stay as
@@ -392,6 +394,12 @@ end
 -- ...and the one place both readers go through, so a mode that aliases a
 -- button cannot be honoured by one of them and not the other.
 local function alsoHeld(self, map, btn)
+  -- Gen4's X opens the field menu and Y uses the registered key item.
+  -- Keep START/SELECT as portable shortcuts for existing screen callers.
+  if GameVersion.isGen4() then
+    if btn=='start' and map.x then return true end
+    if btn=='select' and map.y then return true end
+  end
   local extra = self.buttonAlias and self.buttonAlias[btn]
   if not extra then return false end
   for _, from in ipairs(extra) do

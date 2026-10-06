@@ -612,8 +612,11 @@ function TextBox:draw()
   -- where it always was (Renderer:setUIAnchor).
   local r = self.game and self.game.renderer
   if r and r.setUIAnchor then
-    r:setUIAnchor(self.boxTx * 8, self.boxTy * 8,
-                  self.boxTw * 8, self.boxTh * 8, "bottom")
+    local x,y,w,h = self.boxTx*8,self.boxTy*8,self.boxTw*8,self.boxTh*8
+    if self.drawFrame and Font.dialogueBoxBounds then
+      x,y,w,h = Font.dialogueBoxBounds(self.boxTx,self.boxTy,self.boxTw,self.boxTh)
+    end
+    r:setUIAnchor(x,y,w,h,"bottom")
   end
   if self.drawFrame then
     Font.drawDialogueBox(self.boxTx, self.boxTy, self.boxTw, self.boxTh)

@@ -9,6 +9,8 @@ local ListMenu = require("src.ui.ListMenu")
 local ChoiceBox = require("src.ui.ChoiceBox")
 local Input = require("src.core.Input")
 local Strings = require("src.core.Strings")
+local GameVersion = require("src.core.GameVersion")
+local GamepadMap = require("src.core.GamepadMap")
 
 local BindingsMenu = setmetatable({}, { __index = ListMenu })
 BindingsMenu.__index = BindingsMenu
@@ -25,6 +27,8 @@ local BUTTONS = {
   { id = "right", label = "RIGHT", key = "right", pad = "dpright" },
   { id = "a", label = "A", key = "z", pad = "a" },
   { id = "b", label = "B", key = "x", pad = "b" },
+  { id = "x", label = "X", key = "/", pad = "y", gen4 = true },
+  { id = "y", label = "Y", key = "'", pad = "x", gen4 = true },
   { id = "start", label = "START", key = "escape", pad = "start" },
   { id = "select", label = "SELECT", key = "tab", pad = "back" },
   -- L AND R.  Two buttons the Game Boy did not have and every game after it
@@ -46,7 +50,7 @@ end
 local function boundPad(overlay, def)
   local b = overlay and overlay[def.id]
   if type(b) == "table" and b.pad then return b.pad end
-  return def.pad
+  return GamepadMap.defaultPadForAction(def.id) or def.pad
 end
 
 -- The right column is KEY/PAD (e.g. "Z/A").  The row is 20 tiles and the
@@ -56,6 +60,7 @@ end
 local KEY_SHORT = {
   escape = "ESC", backspace = "BKSP", ["return"] = "ENTER",
   kpenter = "ENTER", space = "SPACE",
+  ["/"] = "SLASH", ["'"] = "QUOTE",
 }
 local PAD_SHORT = {
   dpup = "D-UP", dpdown = "D-DN", dpleft = "D-LT", dpright = "D-RT",
@@ -74,7 +79,11 @@ end
 local function boundRight(overlay, def)
   local key = shortName(boundKey(overlay, def), KEY_SHORT)
   local pad = boundPad(overlay, def)
-  if pad then return key .. "/" .. shortName(pad, PAD_SHORT) end
+  if pad then
+    local label = shortName(pad, PAD_SHORT)
+    if pad=='a' or pad=='b' or pad=='x' or pad=='y' then label=GamepadMap.buttonLabel(pad) end
+    return key .. "/" .. label
+  end
   return key
 end
 
@@ -82,11 +91,13 @@ function BindingsMenu.new(game)
   local overlay = game.save and game.save.options
                   and game.save.options.bindings
   local items = {}
-  for i, def in ipairs(BUTTONS) do
+  for _, def in ipairs(BUTTONS) do
     -- translated here, not in ROWS: that table is built at require
     -- time, before Strings.load has a catalog to look in
-    items[i] = { label = Strings(def.label),
-                 right = boundRight(overlay, def), button = def }
+    if not def.gen4 or GameVersion.isGen4() then
+      items[#items + 1] = { label = Strings(def.label),
+                          right = boundRight(overlay, def), button = def }
+    end
   end
   local self = setmetatable(ListMenu.new(game, "CONTROLS", items, {
     -- 6 rows leaves the bottom two lines free for the hint; a clear or

@@ -313,6 +313,7 @@ function Game:_step(dt)
     ModRuntime.call("input.step", function() end, self, dt)
     close()
   end
+  if TouchControls.pollTouches then TouchControls:pollTouches() end
   self.input:step()
   -- A+B+SELECT+START held for 16 steps: SoftReset (home/init.asm) stops the
   -- audio, whites the palettes out and falls through into Init, i.e. the
@@ -1645,7 +1646,15 @@ local function offerPointer(self, method, id, x, y)
 end
 
 function Game:touchpressed(id, x, y)
+  -- Visible virtual controls own their complete gesture, even when pressing
+  -- one opens a different screen before the finger is lifted.
+  if not self.secondScreenInjecting and TouchControls.visible and TouchControls:visible()
+     and TouchControls:hitTest(x,y) then
+    TouchControls:touchpressed(id,x,y)
+    return
+  end
   if offerPointer(self, "touchpressed", id, x, y) then return end
+  if self.secondScreenInjecting then return end
   TouchControls:touchpressed(id, x, y)
 end
 
@@ -1659,12 +1668,22 @@ function Game:hasPointerScreen()
 end
 
 function Game:touchmoved(id, x, y)
+  if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
+    TouchControls:touchmoved(id,x,y)
+    return
+  end
   if offerPointer(self, "touchmoved", id, x, y) then return end
+  if self.secondScreenInjecting then return end
   TouchControls:touchmoved(id, x, y)
 end
 
 function Game:touchreleased(id, x, y)
+  if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
+    TouchControls:touchreleased(id,x,y)
+    return
+  end
   if offerPointer(self, "touchreleased", id, x, y) then return end
+  if self.secondScreenInjecting then return end
   TouchControls:touchreleased(id, x, y)
 end
 

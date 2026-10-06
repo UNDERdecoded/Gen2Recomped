@@ -28,6 +28,7 @@
 
 local Input = require("src.core.Input")
 local SafeArea = require("src.core.SafeArea")
+local GameVersion = require("src.core.GameVersion")
 
 local TouchControls = {}
 
@@ -46,7 +47,7 @@ local DPAD_DEAD = 0.16
 -- hit slop: how far past the visible edge a press still counts, as a
 -- multiplier on the control's half-width.  START/SELECT get more because
 -- the glyphs are small.
-local SLOP = { a = 1.3, b = 1.3, start = 1.4, select = 1.4, l = 1.3, r = 1.3 }
+local SLOP = { a = 1.3, b = 1.3, x = 1.15, y = 1.15, start = 1.4, select = 1.4, l = 1.3, r = 1.3 }
 
 -- L AND R, asked for so a phone can reach what a pad can.
 --
@@ -59,8 +60,13 @@ local SLOP = { a = 1.3, b = 1.3, start = 1.4, select = 1.4, l = 1.3, r = 1.3 }
 -- OPTIONAL BY CONSTRUCTION: `loadImages` returns nil if ANY image is missing
 -- and that switches the whole overlay off, so an install whose assets predate
 -- these two would lose its d-pad. They are skipped instead -- see OPTIONAL.
-local BUTTONS = { "a", "b", "start", "select", "l", "r" }
-local CONTROLS = { "dpad", "a", "b", "start", "select", "l", "r" }
+local BUTTONS = { "a", "b", "x", "y", "start", "select", "l", "r" }
+local CONTROLS = { "dpad", "a", "b", "x", "y", "start", "select", "l", "r" }
+
+local function buttonAvailable(self, btn)
+  if btn == 'x' or btn == 'y' then return GameVersion.isGen4() end
+  return self.img and self.img[btn] ~= nil
+end
 
 -- Buttons the overlay can do without. A missing REQUIRED image still turns the
 -- overlay off, which is the old behaviour and the right one: half a d-pad is
@@ -170,7 +176,7 @@ function TouchControls.defaultLayout(ww, wh, ox, oy, scale)
   local ssW = dpadW * 0.30
   local lrW = dpadW * 0.52
   local margin = dpadW * 0.12
-  return {
+  local layout = {
     dpad = { cx = ox + margin + dpadW / 2, cy = oy + wh - margin - dpadW / 2, w = dpadW },
     a = { cx = ox + ww - margin - abW * 0.55, cy = oy + wh - margin - abW * 1.75, w = abW },
     b = { cx = ox + ww - margin - abW * 1.60, cy = oy + wh - margin - abW * 0.55, w = abW },
@@ -183,6 +189,16 @@ function TouchControls.defaultLayout(ww, wh, ox, oy, scale)
     l = { cx = ox + margin + lrW / 2, cy = oy + margin + lrW * 0.30, w = lrW },
     r = { cx = ox + ww - margin - lrW / 2, cy = oy + margin + lrW * 0.30, w = lrW },
   }
+  if GameVersion.isGen4() then
+    local w = dpadW * 0.38
+    local step = w * 1.1
+    local cx, cy = ox + ww - margin - step - w / 2, oy + wh - margin - step - w / 2
+    layout.a = {cx=cx+step,cy=cy,w=w}
+    layout.b = {cx=cx,cy=cy+step,w=w}
+    layout.x = {cx=cx,cy=cy-step,w=w}
+    layout.y = {cx=cx-step,cy=cy,w=w}
+  end
+  return layout
 end
 
 local function loadImages()
@@ -326,11 +342,13 @@ end
 function TouchControls:layout()
   local ox, oy, sw, sh = SafeArea.rect()
   if self.layoutW == sw and self.layoutH == sh
-     and self.layoutOx == ox and self.layoutOy == oy and self.L then
+     and self.layoutOx == ox and self.layoutOy == oy
+     and self.layoutVersion == GameVersion.get() and self.L then
     return self.L
   end
   self.layoutW, self.layoutH = sw, sh
   self.layoutOx, self.layoutOy = ox, oy
+  self.layoutVersion = GameVersion.get()
   -- orientation picks which saved layout applies; rotating swaps buckets
   -- because sw/sh swapped, which is already the cache key above (#633)
   local bucket = self:currentBucket()
@@ -414,7 +432,7 @@ end
 function TouchControls:hitTest(x, y)
   local L = self:layout()
   for _, btn in ipairs(BUTTONS) do
-    if self.img[btn] and L[btn] and inCircle(L[btn], x, y, SLOP[btn]) then return btn end
+    if buttonAvailable(self,btn) and L[btn] and inCircle(L[btn], x, y, SLOP[btn]) then return btn end
   end
   local dz = L.dpad
   local half = dz.w * 0.65
@@ -463,17 +481,18 @@ function TouchControls:touchpressed(id, x, y)
   -- preview mode is layout-edit only: never press GB buttons
   if self.preview then return end
   if not (self.active and self.enabled ~= false and self.img) then return end
-  -- a controller hid the overlay; the first touch only brings it back
+  -- A reused native pointer id must release its previous hold first.
+  if self.touches[id] then self:touchreleased(id,x,y) end
+  -- A controller hid the overlay; restore it and accept this same press.
   if self.controllerHidden then
     self.controllerHidden = false
-    return
   end
   local L = self:layout()
   for _, btn in ipairs(BUTTONS) do
-    if self.img[btn] and L[btn] and inCircle(L[btn], x, y, SLOP[btn]) then
+    if buttonAvailable(self,btn) and L[btn] and inCircle(L[btn], x, y, SLOP[btn]) then
       self.touches[id] = { control = btn }
       pressBtn(self, btn)
-      return
+      return true
     end
   end
   -- square hit zone a bit past the cross art; one owning finger at a time
@@ -485,6 +504,7 @@ function TouchControls:touchpressed(id, x, y)
     local touch = { control = "dpad", dir = nil }
     self.touches[id] = touch
     setDpad(self, touch, dpadDir(dz, x, y))
+    return true
   end
 
   -- Gen4 free camera: touch drag on open screen controls camera
@@ -517,7 +537,9 @@ function TouchControls:touchmoved(id, x, y)
   -- the d-pad and left stick both track movement (slide between
   -- directions without lifting); buttons hold until release wherever the finger wanders
   if touch.control == "dpad" then
-    setDpad(self, touch, dpadDir(self:layout()[touch.control], x, y))
+    local zone = self:layout().dpad
+    local inside = math.abs(x-zone.cx)<=zone.w*0.65 and math.abs(y-zone.cy)<=zone.w*0.65
+    setDpad(self, touch, inside and dpadDir(zone,x,y) or nil)
   elseif touch.control == "leftstick" then
     setLeftStick(self, touch, dpadDir(self:layout()[touch.control], x, y))
   elseif touch.control == "rightstick" then
@@ -557,6 +579,20 @@ function TouchControls:reset()
   self.rightStickTouch = nil
   self.cameraLookTouch = nil
   self.cameraLookStart = nil
+end
+
+-- Recover if Android cancels a contact without delivering touchreleased.
+-- Mouse emulation has its own release callback and is not in getTouches().
+function TouchControls:pollTouches()
+  if not (love.touch and love.touch.getTouches) then return end
+  local ok, ids = pcall(love.touch.getTouches)
+  if not ok or type(ids)~='table' then return end
+  local live, ended = {}, {}
+  for _,id in ipairs(ids) do live[id]=true end
+  for id in pairs(self.touches or {}) do
+    if id~='mouse' and not live[id] then ended[#ended+1]=id end
+  end
+  for _,id in ipairs(ended) do self:touchreleased(id) end
 end
 
 -- a gamepad is being used: hide the overlay (dropping anything it held)
@@ -608,8 +644,21 @@ function TouchControls:draw()
   drawIcon(dir and self.img["dpad_" .. dir] or self.img.dpad, L.dpad,
            dir ~= nil, alphaMul)
   for _, btn in ipairs(BUTTONS) do
-    if self.img[btn] and L[btn] then
-      drawIcon(self.img[btn], L[btn], self.held[btn] ~= nil, alphaMul)
+    if buttonAvailable(self,btn) and L[btn] then
+      if self.img[btn] then
+        drawIcon(self.img[btn], L[btn], self.held[btn] ~= nil, alphaMul)
+      else
+        local zone = L[btn]
+        local size = math.max(12,math.floor(zone.w*0.50))
+        if not self.faceFont or self.faceFontSize~=size then
+          self.faceFontSize=size;self.faceFont=love.graphics.newFont(size)
+        end
+        love.graphics.setColor(0.2,0.2,0.2,(self.held[btn] and ALPHA_PRESSED or ALPHA)*alphaMul)
+        love.graphics.circle('fill',zone.cx,zone.cy,zone.w*0.58)
+        love.graphics.setFont(self.faceFont)
+        love.graphics.setColor(0.8,0.8,0.8,alphaMul)
+        love.graphics.print(btn:upper(),zone.cx-self.faceFont:getWidth(btn:upper())/2,zone.cy-self.faceFont:getHeight()/2)
+      end
     end
   end
 
