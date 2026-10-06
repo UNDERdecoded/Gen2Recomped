@@ -962,18 +962,33 @@ function love.mousereleased(x, y, button, istouch)
   if editorMode and EditorApp.mousereleased then
     return EditorApp.mousereleased(x, y, button)
   end
-  if Game and (mouseTouch or Game:hasPointerScreen()) and button == 1 and not istouch then
-    Game:touchreleased("mouse", x, y)
+  if mouseTouch then
+    if Game and button == 1 then pcall(function() Game:touchreleased("mouse", x, y) end) end
+    return
+  end
+  if Game and Game.mousereleased and not istouch then
+    Game:mousereleased(x, y, button, istouch)
+  end
+  if Game and Game.recenterLookPointer and not istouch then
+    Game:recenterLookPointer()
   end
 end
 
 function love.mousemoved(x, y, dx, dy, istouch)
   -- FREE-CAMERA LOOK FIRST, and only when one is up: `Game:cameraLook`
   -- answers false on every other map and camera, so the touch path below
-  -- keeps every case it had.
+  -- keeps every case it had. Warp back to centre after a real look so the
+  -- pointer never sits on the window edge (where dx/dy become zero).
+  if Game and Game.lookWarping then
+    Game.lookWarping = false
+    return
+  end
   if Game and not istouch and not (editorMode or Importer or TouchEditor)
      and not Game:hasPointerScreen()
      and Game.cameraLook and Game:cameraLook(dx, dy) then
+    if ((dx or 0) ~= 0 or (dy or 0) ~= 0) and Game.recenterLookPointer then
+      Game:recenterLookPointer()
+    end
     return
   end
   if TouchEditor then

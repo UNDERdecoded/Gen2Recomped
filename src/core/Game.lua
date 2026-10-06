@@ -416,72 +416,82 @@ Game.LOOK_PER_PIXEL = 0.20
 Game.LOOK_RISE_PER_PIXEL = 0.12
 Game.LOOK_PER_SECOND = 150
 Game.LOOK_RISE_PER_SECOND = 80
+Game.TOUCH_LOOK_MULTIPLIER = 3.0
+Game.TOUCH_RISE_MULTIPLIER = 3.0
 -- Below this the stick is treated as centred, and past it the response starts
 -- from zero rather than jumping -- otherwise a worn stick drifts the camera
 -- round on its own and a small push snaps.
 Game.STICK_DEADZONE = 0.22
-
--- Mouse look.  Returns true when it consumed the movement.
--- THE LARGEST TURN ONE MOUSE EVENT MAY ASK FOR, in degrees.
---
--- A hand cannot move the mouse this far between two frames.  At 60 Hz a fast
--- flick of a thousand pixels a second is about sixteen pixels an event, which
--- at `LOOK_PER_PIXEL` is 3.3 degrees; twelve is nearly four times that, so no
--- real movement is ever refused.  What DOES produce a delta this size is the
--- pointer being warped, and SDL emits exactly one enormous `mousemoved` when
--- relative mode is turned on or off.
-Game.LOOK_MAX_DEGREES = 12
-
--- How many events to ignore after relative mode is toggled.
 Game.LOOK_SETTLE_EVENTS = 2
 
-function Game:cameraLook(dx, dy)
+-- Accumulated mouse deltas for Gen4 camera
+Game.cameraLookDX = 0
+Game.cameraLookDY = 0
+
+local function lookPointerWanted(self)
+  if not self:freeView() then return false end
+  if (self.stack and self.stack:top()) ~= self.overworld then return false end
+  if love.window and love.window.hasFocus then
+    local ok, focused = pcall(love.window.hasFocus)
+    return ok and focused or false
+  end
+  return true
+end
+
+-- Confine the look pointer: relative deltas, and grab
+-- plus a warp to the window centre so look never dies on the frame edge.
+local function syncLookPointer(self, want)
+  if not (love and love.mouse) then
+    self.lookRelative = false
+    return
+  end
+  local mouse = love.mouse
+  local changed = (self.lookRelative == true) ~= (want == true)
+  if mouse.setRelativeMode then
+    pcall(mouse.setRelativeMode, want)
+  end
+  if mouse.setGrabbed then
+    pcall(mouse.setGrabbed, want)
+  end
+  if mouse.setVisible then
+    pcall(mouse.setVisible, not want)
+  end
+  self.lookRelative = want and true or false
+  if changed then
+    self.lookSettle = Game.LOOK_SETTLE_EVENTS
+  end
+end
+
+function Game:recenterLookPointer()
+  if not lookPointerWanted(self) then return end
+  if not (love.mouse and love.mouse.setPosition) then return end
+  local w, h = 0, 0
+  if love.graphics and love.graphics.getDimensions then
+    w, h = love.graphics.getDimensions()
+  elseif love.window and love.window.getMode then
+    w, h = love.window.getMode()
+  end
+  if not (w and h) or w <= 0 or h <= 0 then return end
+
+  self.lookWarping = true
+  pcall(love.mouse.setPosition, w * 0.5, h * 0.5)
+end
+
+function Game:cameraLook(dx, dy, isTouch)
   local view = self:freeView()
   if not view then return false end
-  if (dx == 0 or dx == nil) and (dy == 0 or dy == nil) then return true end
-
-  -- A WARP IS NOT A LOOK.
-  --
-  -- HONESTY FIRST: this guard was added as a proposed cause of the reported
-  -- camera flip, and that proposal was WRONG.  The flip was two maps each
-  -- owning a `Gen4View` and the frame being drawn through whichever one was
-  -- current -- see the note in `Gen4View:follow`, which measures the two
-  -- disagreeing by 84 degrees.  The guard was instrumented to say so, and the
-  -- play test that found the real cause never printed its line.
-  --
-  -- It is kept, and only for what it is: relative mouse mode is toggled every
-  -- time the overworld stops or starts being the top screen, each toggle warps
-  -- the pointer, and SDL reports a warp as one `mousemoved` carrying a delta
-  -- the width of the window.  That is a real event whether or not it was the
-  -- flip.  A hand cannot move twelve degrees between two frames -- a fast
-  -- flick of a thousand pixels a second is 3.3 degrees an event -- so this
-  -- cannot refuse a real movement.  If it ever does, delete it rather than
-  -- raise the cap: it is a net, not a feature.
-  --
-  -- DROPPED rather than clamped: a clamped warp still turns the camera twelve
-  -- degrees for no reason, and the event is not a small movement that got too
-  -- big, it is not a movement at all.
   if (self.lookSettle or 0) > 0 then
     self.lookSettle = self.lookSettle - 1
     return true
   end
-  local turn = math.abs((dx or 0) * Game.LOOK_PER_PIXEL)
-  local lift = math.abs((dy or 0) * Game.LOOK_RISE_PER_PIXEL)
-  if turn > Game.LOOK_MAX_DEGREES or lift > Game.LOOK_MAX_DEGREES then
-    -- SAID ONCE, because this is a hypothesis about a report and the next play
-    -- test is what confirms it.  If the flip stops and this line never
-    -- appears, the cause was something else and this guard is dead weight.
-    if not Game.saidLookSpike then
-      Game.saidLookSpike = true
-      Logger.info("gen4 camera: dropped a mouse look of %.1f/%.1f degrees "
-                  .. "(cap %.1f) -- a pointer warp, not a hand",
-                  turn, lift, Game.LOOK_MAX_DEGREES)
-    end
-    return true
-  end
+  if (dx == 0 or dx == nil) and (dy == 0 or dy == nil) then return true end
 
-  view:orbit((dx or 0) * Game.LOOK_PER_PIXEL,
-             (dy or 0) * Game.LOOK_RISE_PER_PIXEL)
+  local multX = isTouch and Game.TOUCH_LOOK_MULTIPLIER or 1
+  local multY = isTouch and Game.TOUCH_RISE_MULTIPLIER or 1
+
+  Game.cameraLookDX = (Game.cameraLookDX or 0) + ((dx or 0) * multX)
+  Game.cameraLookDY = (Game.cameraLookDY or 0) + ((dy or 0) * multY)
+
   return true
 end
 
@@ -501,33 +511,25 @@ end
 function Game:updateCameraStick(dt)
   local view = self:freeView()
   if not view then
-    if self.lookRelative and love.mouse and love.mouse.setRelativeMode then
-      pcall(love.mouse.setRelativeMode, false)
-      self.lookRelative = false
-      self.lookSettle = Game.LOOK_SETTLE_EVENTS
-    end
+    if self.lookRelative then syncLookPointer(self, false) end
+    Game.cameraLookDX = 0
+    Game.cameraLookDY = 0
     return
   end
-  -- RELATIVE MODE, or the pointer hits the edge of the window and the look
-  -- stops dead.  Only while the overworld itself is on top: a menu over a free
-  -- camera still wants a real cursor.
-  local wantRelative = (self.stack and self.stack:top()) == self.overworld
-  if wantRelative and love.window and love.window.hasFocus then
-    local ok, focused = pcall(love.window.hasFocus)
-    wantRelative = ok and focused or false
+  -- Relative mode, grab, and a warp to centre: without those the pointer
+  -- hits the window edge and look stops. A menu over a free camera still
+  -- wants a real cursor, so capture only while the overworld is on top.
+  local wantRelative = lookPointerWanted(self)
+  if (self.lookRelative == true) ~= (wantRelative == true) then
+    syncLookPointer(self, wantRelative)
+    if wantRelative then self:recenterLookPointer() end
   end
-  local actualRelative = self.lookRelative
-  if love.mouse and love.mouse.getRelativeMode then
-    local ok, relative = pcall(love.mouse.getRelativeMode)
-    if ok then actualRelative = relative end
-  end
-  if love.mouse and love.mouse.setRelativeMode and actualRelative ~= wantRelative then
-    local ok = pcall(love.mouse.setRelativeMode, wantRelative)
-    self.lookRelative = ok and wantRelative or false
-    -- ...and ignore what the warp this causes is about to report.
-    self.lookSettle = Game.LOOK_SETTLE_EVENTS
-  else
-    self.lookRelative = actualRelative
+
+  local dx, dy = Game.cameraLookDX or 0, Game.cameraLookDY or 0
+  Game.cameraLookDX = 0
+  Game.cameraLookDY = 0
+  if dx ~= 0 or dy ~= 0 then
+    view:orbit(dx * Game.LOOK_PER_PIXEL, dy * Game.LOOK_RISE_PER_PIXEL)
   end
   if not (love.joystick and love.joystick.getJoysticks) then return end
   local ok, pads = pcall(love.joystick.getJoysticks)
@@ -1648,6 +1650,9 @@ function Game:touchpressed(id, x, y)
 end
 
 function Game:hasPointerScreen()
+  -- Allow camera look in Gen4 free camera mode even if a pointer screen exists
+  -- (e.g., Poketch visible but not actively interacting with UI)
+  if self:freeView() then return false end
   if self.pointerOwners and self.pointerOwners.mouse then return true end
   local top=self.stack and self.stack.top and self.stack:top()
   return top and type(top.touchpressed)=='function' or false
