@@ -42,8 +42,23 @@ Gen4Pokedex.isOpaque = true
 
 local W, H = 256, 192
 
--- The list page, which is this port's and says so.
-local LIST = { x = 24, y = 48, pitch = 16, rows = 5 }
+-- The list page, ov21_021D5AEC.c: nine plates around the selected entry, which
+-- is always slot 4.  Slot k shows display index current+k-4.  {x, y, sprite
+-- palette row of buttons.NCLR}; drawn far to near.
+local LIST_SLOTS = {
+  [0] = { 185, 22, 9 }, { 181, 26, 9 }, { 177, 42, 8 }, { 175, 58, 7 },
+  { 170, 82, 0 }, { 175, 106, 7 }, { 177, 122, 8 }, { 181, 138, 9 }, { 185, 142, 9 },
+}
+local LIST_SELECTED = 4
+local LIST_DRAW_ORDER = { 0, 8, 1, 7, 2, 6, 3, 5, 4 }
+local LIST_PAGE = 5
+-- one step's counter runs from 640 down by 60 a frame; held steps speed up
+-- by x1.6, at most four times
+local LIST_SCROLL, LIST_SCROLL_STEP, LIST_HOLD_GAIN, LIST_HOLD_MAX = 640, 60, 1.6, 4
+local LIST_PREVIEW = { x = 56, y = 80 }
+local LIST_INK_FALLBACK = {
+  [0] = '636363', [7] = '635a6b', [8] = '635a7b', [9] = '5a528c',
+}
 
 -- Where the entry page's words go, when the cache has no layout of its own.
 -- Every number is `Gen4Dex.LAYOUT`'s; they are repeated here only so a cache
@@ -223,11 +238,42 @@ function Gen4Pokedex:move(delta)
       index = (index - 1 + step) % count + 1
     end
   end
+  local before = self.index
   self.index = index
   if not self:tabAvailable(self.tab) then self.tab = 1 end
-  if self.index < self.top then self.top = self.index end
-  if self.index > self.top + LIST.rows - 1 then
-    self.top = self.index - LIST.rows + 1
+  if self.page == 'list' and index ~= before then
+    -- a one-entry step slides the plates; anything else only fades the
+    -- preview back in
+    local change = index - before
+    self.listAnim = { counter = LIST_SCROLL, dir = (change == 1 or change == -1) and change or 0, speed = 1 }
+  end
+end
+
+-- One list step from the pad; `key` is remembered so a held key repeats.
+function Gen4Pokedex:listStep(delta, key, repeats)
+  local count = #self.entries
+  if count == 0 then return end
+  self:move(delta)
+  if self.listAnim then
+    self.listAnim.key = key
+    self.listAnim.repeats = repeats or 0
+    self.listAnim.speed = LIST_HOLD_GAIN ^ math.min(repeats or 0, LIST_HOLD_MAX)
+  end
+end
+
+function Gen4Pokedex:updateListAnim(frames)
+  local a = self.listAnim
+  if not a then return end
+  a.counter = a.counter - LIST_SCROLL_STEP * a.speed * frames
+  if a.counter > 0 then return end
+  self.listAnim = nil
+  local input = self.game.input
+  if a.key and a.dir ~= 0 and input and input.isDown and input:isDown(a.key) then
+    local target = self.index + a.dir
+    -- a held key stops at the ends rather than wrapping
+    if target >= 1 and target <= #self.entries then
+      self:listStep(a.dir, a.key, (a.repeats or 0) + 1)
+    end
   end
 end
 
@@ -305,7 +351,8 @@ function Gen4Pokedex:cancelResults()
   if not self.filtered then self:close();return end
   local species=self:species()
   self.filtered=nil;self.entries=self:listing();self.index,self.top=1,1
-  for i,id in ipairs(self.entries) do if id==species then self.index=i;self.top=math.max(1,i-LIST.rows+1);break end end
+  for i,id in ipairs(self.entries) do if id==species then self.index=i;break end end
+  self.listAnim=nil
 end
 
 function Gen4Pokedex:toggleDex()
@@ -320,7 +367,9 @@ function Gen4Pokedex:toggleDex()
   return true
 end
 
-function Gen4Pokedex:update()
+function Gen4Pokedex:update(dt)
+  local frames=(type(dt)=='number' and dt>0) and math.min(dt*60,4) or 1
+  if self.page=='list' then self:updateListAnim(frames) else self.listAnim=nil end
   if self.page=='entry' and self.tab==3 and self.cryRunning and self.cry and self.cry.isPlaying then
     local ok,playing=pcall(self.cry.isPlaying,self.cry)
     if ok and not playing then
@@ -361,10 +410,10 @@ function Gen4Pokedex:update()
     return
   end
 
-  if input:wasPressed("up") then self:move(-1)
-  elseif input:wasPressed("down") then self:move(1)
-  elseif input:wasPressed("left") then self:move(-LIST.rows)
-  elseif input:wasPressed("right") then self:move(LIST.rows)
+  if input:wasPressed("up") then self:listStep(-1,'up')
+  elseif input:wasPressed("down") then self:listStep(1,'down')
+  elseif input:wasPressed("left") then self:listStep(-LIST_PAGE)
+  elseif input:wasPressed("right") then self:listStep(LIST_PAGE)
   elseif input:wasPressed("select") then self:toggleDex()
   elseif input:wasPressed("x") then if not self.filtered then self:openSearch() end
   elseif input:wasPressed("a") then
@@ -419,15 +468,15 @@ function Gen4Pokedex:touchpressed(id,px,py)
     elseif self.tab == 5 and y >= 128 then self.form = ((self.form or 0) + 1) % #self:forms()
     elseif self.tab == 4 and y >= 128 then self.sizeWeight=not self.sizeWeight
     elseif self.tab == 3 or x < 96 then self:playCry() end
-  elseif y>=LIST.y and y<LIST.y+LIST.rows*LIST.pitch then
-    local index=self.top+math.floor((y-LIST.y)/LIST.pitch)
-    if self.entries[index] then
-      self.index=index
-      self:openEntry()
-    end
+  elseif math.abs(x-LIST_PREVIEW.x)<32 and math.abs(y-LIST_PREVIEW.y)<32 then
+    -- the preview is the selected entry
+    self:openEntry()
+  elseif self:listPlateAt(x,y) then
+    local slot=self:listPlateAt(x,y)
+    if slot==LIST_SELECTED then self:openEntry() else self:move(slot-LIST_SELECTED) end
   elseif y>=160 then
-    if x<64 then self:move(-LIST.rows)
-    elseif x>=192 then self:move(LIST.rows)
+    if x<64 then self:move(-LIST_PAGE)
+    elseif x>=192 then self:move(LIST_PAGE)
     elseif x<128 then self:openSearch()
     else self:cancelResults() end
   end
@@ -499,45 +548,174 @@ end
 
 -- ------------------------------------------------------------------- draw --
 
+-- The list's own pictures: a fresh import files them with the rest of the dex
+-- art in `gen4_graphics.screens`; tools/gen4_dex_art_extract adds them to an
+-- older cache's `gen4_dex.listArt` instead.
+function Gen4Pokedex:listArt(key)
+  local record=((self.game.data.gen4_graphics or {}).screens or {})[key]
+  if not record then record=((self.art or {}).listArt or {})[key] end
+  local image=record and self:img(record)
+  return image,record
+end
+
+-- Draws a sprite picture at its OAM position (picture origin = cell extent).
+function Gen4Pokedex:drawListSprite(key,x,y,alpha)
+  local image,record=self:listArt(key)
+  if not image then return false end
+  love.graphics.setColor(1,1,1,alpha or 1)
+  love.graphics.draw(image,x+(record.originX or -math.floor(image:getWidth()/2)),
+    y+(record.originY or -math.floor(image:getHeight()/2)))
+  return true
+end
+
+local function hexColour(hex)
+  hex=tostring(hex or '000000')
+  return { (tonumber(hex:sub(1,2),16) or 0)/255, (tonumber(hex:sub(3,4),16) or 0)/255,
+    (tonumber(hex:sub(5,6),16) or 0)/255, 1 }
+end
+
+local function drawInk(text,x,y,ink,shadow)
+  local two=Font.beginTwoTone and Font.beginTwoTone(hexColour(ink),hexColour(shadow))
+  Font.draw(text,x,y)
+  if two then Font.endTwoTone() end
+end
+
+-- Where each slot is this frame: its table position, or on the way there
+-- from its neighbour's while a step is sliding.
+function Gen4Pokedex:listSlotPosition(k)
+  local slot=LIST_SLOTS[k]
+  local a=self.listAnim
+  if not (a and a.dir~=0 and a.counter>0) then return slot[1],slot[2],slot[3] end
+  local t=(LIST_SCROLL-a.counter)/LIST_SCROLL
+  local from=LIST_SLOTS[k+a.dir]
+  local fx,fy,frow
+  if from then fx,fy,frow=from[1],from[2],from[3]
+  else
+    local other=LIST_SLOTS[k-a.dir]
+    fx,fy,frow=2*slot[1]-other[1],2*slot[2]-other[2],slot[3]
+  end
+  local x=math.floor(fx+(slot[1]-fx)*t+0.5)
+  local y=math.floor(fy+(slot[2]-fy)*t+0.5)
+  return x,y,(t<0.5 and frow or slot[3])
+end
+
+-- The plate under a top-screen point, nearest first.
+function Gen4Pokedex:listPlateAt(px,py)
+  for i=#LIST_DRAW_ORDER,1,-1 do
+    local k=LIST_DRAW_ORDER[i]
+    if self.entries[self.index+k-LIST_SELECTED] then
+      local x,y=LIST_SLOTS[k][1],LIST_SLOTS[k][2]
+      local _,record=self:listArt('dex/list_plate_r'..LIST_SLOTS[k][3])
+      local ox,oy=record and record.originX or -64,record and record.originY or -16
+      local w,h=record and record.width or 128,record and record.height or 32
+      if px>=x+ox and px<x+ox+w and py>=y+oy and py<y+oy+h then return k end
+    end
+  end
+  return nil
+end
+
+-- The number a plate shows: the Sinnoh or National number per mode for a
+-- known entry (bank entry 100 "---" when it has none), the list position for
+-- a never-seen gap.
+function Gen4Pokedex:listNumber(at,id)
+  if not self:status(id) then return ('%03d'):format(at) end
+  local n
+  if self.numbers then n=self.numbers[id] else n=id end
+  if not n then return Search.label(self,100,'---') end
+  return ('%03d'):format(n)
+end
+
 function Gen4Pokedex:drawList()
   local g = love.graphics
-  g.setColor(0.08, 0.14, 0.24, 1)
-  g.rectangle("fill", 0, 0, W, H)
+  local art = self.art or {}
+  local ink = art.listInk or {}
   g.setColor(1, 1, 1, 1)
 
-  local back=self:img(self.art and self.art.list)
-  if back then g.draw(back,0,0) end
-
-  local words = (self.art or {}).words or {}
-  local seen, owned = 0, 0
-  for _, id in ipairs(self.entries) do
-    local state = self:status(id)
-    if state then seen = seen + 1 end
-    if state == "owned" then owned = owned + 1 end
+  -- BG3
+  local main = self:listArt('dex/list_main')
+  if main then g.draw(main, 0, 0)
+  else
+    g.setColor(0.08, 0.14, 0.24, 1);g.rectangle("fill", 0, 0, W, H);g.setColor(1, 1, 1, 1)
   end
-  Font.draw(("%s %d   %s %d"):format(words.seen or Strings("SEEN"), seen,
-                                     words.obtained or Strings("OWN"), owned),
-            16, 10)
 
-  for row = 0, LIST.rows - 1 do
-    local at = self.top + row
+  -- the preview, fading in after a step
+  local a = self.listAnim
+  local alpha = a and math.max(0, math.min(1, (LIST_SCROLL - a.counter) / LIST_SCROLL)) or 1
+  local species = self:species()
+  if species then
+    local drawn = false
+    if self:status(species) then
+      local path = Sprites.path(self.game.data, species, "front", { kind = "dex", mon = self:displayMon() })
+      local image = path and self:img(path)
+      if image then
+        local iw, ih = image:getDimensions()
+        g.setColor(1, 1, 1, alpha)
+        g.draw(image, LIST_PREVIEW.x - SPRITE_SIZE / 2, LIST_PREVIEW.y - SPRITE_SIZE / 2, 0, SPRITE_SIZE / iw, SPRITE_SIZE / ih)
+        drawn = true
+      end
+    else
+      drawn = self:drawListSprite('dex/list_unseen', LIST_PREVIEW.x, LIST_PREVIEW.y, alpha)
+    end
+    if not drawn and not self:status(species) then Font.draw('?', LIST_PREVIEW.x - 4, LIST_PREVIEW.y - 8) end
+  end
+
+  -- the plates, far to near
+  for _, k in ipairs(LIST_DRAW_ORDER) do
+    local at = self.index + k - LIST_SELECTED
     local id = self.entries[at]
     if id then
-      local y = LIST.y + row * LIST.pitch
-      local def = self:def(id)
+      local x, y, row = self:listSlotPosition(k)
+      self:drawListSprite('dex/list_plate_r'..row, x, y)
       local state = self:status(id)
-      local name = state and (def and def.name or tostring(id))
-        or ("-"):rep(8)
-      if at == self.index then
-        g.setColor(0.98, 0.83, 0.30, 0.85)
-        g.rectangle("fill", LIST.x - 6, y - 2, W - 2 * LIST.x + 12,
-                    LIST.pitch - 2)
-        g.setColor(1, 1, 1, 1)
+      if state == 'owned' then self:drawListSprite('dex/list_ball_r'..row, x - 54, y) end
+      local name
+      if state then
+        local def = self:def(id)
+        name = def and def.name or tostring(id)
+      else
+        name = Search.label(self, 99, '-----')
       end
-      Font.draw(("%03d"):format(self.numbers and self.numbers[id] or id), LIST.x, y)
-      Font.draw(tostring(name), LIST.x + 40, y)
-      if state == "owned" then Font.draw("*", LIST.x - 14, y) end
+      local rowInk = (ink.rows or {})[row] or {}
+      local inkHex = rowInk.ink or LIST_INK_FALLBACK[row]
+      local shadowHex = rowInk.shadow or inkHex
+      local bx, by = x - 64, y - 8
+      drawInk(self:listNumber(at, id), bx + 22, by, inkHex, shadowHex)
+      drawInk(Font.fit(tostring(name), 78), bx + 49, by, inkHex, shadowHex)
     end
+  end
+
+  -- the scroll thumb
+  local count = #self.entries
+  if count > 0 then
+    self:drawListSprite('dex/list_thumb', 248, 58 + math.floor((self.index - 1) * 54 / count))
+  end
+
+  -- BG2, the header and footer bars
+  local mode = self.national and 'national' or 'sinnoh'
+  local frame = self:listArt('dex/list_frame_'..mode..(self.filtered and '_filtered' or ''))
+    or self:listArt('dex/list_frame_'..mode)
+  g.setColor(1, 1, 1, 1)
+  if frame then g.draw(frame, 0, 0) end
+
+  -- BG1, the counters
+  local counterInk = (self.filtered and ink.counterFiltered or ink.counter) or {}
+  local cInk = counterInk.ink or 'ffffff'
+  local cShadow = counterInk.shadow or (self.filtered and '000000' or '101921')
+  if self.filtered then
+    drawInk(Search.label(self, 109, 'RESULTS'), 8, 152, cInk, cShadow)
+    drawInk(('%03d'):format(count), 48, 170, cInk, cShadow)
+  else
+    local words = art.words or {}
+    local seen, owned = 0, 0
+    for _, id in ipairs(self.entries) do
+      local state = self:status(id)
+      if state then seen = seen + 1 end
+      if state == "owned" then owned = owned + 1 end
+    end
+    drawInk(Search.label(self, 0, words.seen or Strings("SEEN")), 8, 152, cInk, cShadow)
+    drawInk(Search.label(self, 1, words.obtained or Strings("OBTAINED")), 128, 152, cInk, cShadow)
+    drawInk(('%03d'):format(seen), 48, 170, cInk, cShadow)
+    drawInk(('%03d'):format(owned), 180, 170, cInk, cShadow)
   end
   g.setColor(1, 1, 1, 1)
 end
@@ -775,7 +953,8 @@ function Gen4Pokedex:draw()
   end
   self:drawList()
   if self:bottomVisible() then SecondScreen.draw(self.game,function() self:drawListBottom() end)
-  elseif not self.filtered then Font.draw('X: SEARCH',72,164) end
+  -- between the two counts, which sit at x 48 and 180 on that line
+  elseif not self.filtered then Font.draw('X: SEARCH',96,170) end
 end
 
 function Gen4Pokedex:drawNativeSprite(key,x,y)

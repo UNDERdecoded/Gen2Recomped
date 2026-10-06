@@ -67,7 +67,12 @@ game.input={wasPressed=function(_,key) return key==pressed end}
 summary:update();assert(summary.moveMode and summary.moveIndex==1)
 summary.readOnlyMoves=true;summary:selectMove();assert(not summary.swapMove)
 pressed='b';summary:update();assert(not summary.moveMode)
+-- before the Contest Hall (FLAG_CONTEST_HALL_VISITED) the contest pages are
+-- skipped: MOVES -> EXIT
 pressed='right';local before=summary.page;summary:update()
+assert(summary.pages[summary.page].key=='exit' and #summary:visiblePages()==5)
+summary.page=before;game.save.flags={FLAG_G4_0978=true}
+summary:update()
 assert(summary.page==before%#summary.pages+1)
 summary.mon.ribbons={[0]=true,[32]=true,['32']=true,[53]=1,[900]=true,[1]=false}
 local ribbons=summary:ribbonList()
@@ -109,7 +114,10 @@ summary:update();assert(closed==1,'A on the Exit page must close')
 pressed='b';summary.page=1;summary:update();assert(closed==2,'B must close ordinary pages')
 local tabs=summary:pageTabs()
 assert(tabs[1].width==24 and tabs[2].width==16)
-assert(tabs[1].x==128 and tabs[#tabs].x+tabs[#tabs].width==248,'tabs must center on ROM x188')
+-- x is the tab SPRITE's anchor (sprites.c UpdatePageTabSprites): eight
+-- visible pages put the first at 188 - (24 + 7*16)/2 = 120; the cells reach
+-- 8 left of their anchor, so the strip ends at the last anchor + 8
+assert(#tabs==8 and tabs[1].x==120 and tabs[#tabs].x+8==248,'tabs must sit where CalcPageTabsBaseXPos puts them')
 summary:touchpressed('finger',10+(tabs[2].x+4)*2,20+24*2)
 assert(summary.page==2,'touch must select the displayed tab through presentation scaling')
 summary:mousepressed(10+(tabs[3].x+4)*2,20+24*2,1)

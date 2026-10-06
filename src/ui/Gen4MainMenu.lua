@@ -171,17 +171,22 @@ function Gen4MainMenu:choose()
   end
 end
 
-function Gen4MainMenu:update()
+-- FocusNextOption: the focus STOPS at either end of the list (no wrap), and
+-- only a move that lands somewhere new makes a sound.
+function Gen4MainMenu:update(dt)
+  dt = dt or 1 / 60
+  self.t = (self.t or 0) + dt
+  self:scrollStep(dt)
   local input = self.game.input
   if not input then return end
   local n = #self.items
   if n == 0 then return end
   if input:wasPressed("down") then
-    self.index = self.index % n + 1
-    beep(self)
+    if self.index < n then self.index = self.index + 1; beep(self) end
+    self:targetScroll()
   elseif input:wasPressed("up") then
-    self.index = (self.index - 2) % n + 1
-    beep(self)
+    if self.index > 1 then self.index = self.index - 1; beep(self) end
+    self:targetScroll()
   elseif input:wasPressed("a") then
     beep(self)
     self:choose()
@@ -230,20 +235,138 @@ function Gen4MainMenu:hasPokedex()
   return next(dex.owned or {}) ~= nil
 end
 
+-- ------------------------------------------------------------ the windows --
+--
+-- THE FOCUSED OPTION IS A DIFFERENT WINDOW, NOT A CURSOR.  RenderOptionsFrames
+-- draws the focused option in STANDARD_WINDOW_FIELD's frame (palette 3, whose
+-- colour 6 DoColorCycleStep rewrites every frame from
+-- sFocusedOptionBorderColors) over white paper, and every other option in
+-- STANDARD_WINDOW_SYSTEM's frame over grey paper (UNFOCUSED_OPTION_BG_COLOR in
+-- colour 15 of palette 1).  There is no arrow anywhere on the screen; the old
+-- one was this port's.  The pictures are Gen4MainMenuArt's (`gen4_main_menu_art`)
+-- and the colours its `gen4_main_menu_ink`; a cache without them draws the
+-- engine's own frame and keeps the arrow, so focus is still visible.
+
+local function art(self, key)
+  local rec = ((self.game.data or {}).gen4_main_menu_art or {})[key]
+  local path = type(rec) == "table" and rec.path or rec
+  if type(path) ~= "string" then return nil, {} end
+  self.images = self.images or {}
+  if self.images[path] == nil then
+    local ok, img = pcall(require("src.render.Assets").image, path)
+    self.images[path] = ok and img or false
+    if self.images[path] then self.images[path]:setFilter("nearest", "nearest") end
+  end
+  return self.images[path] or nil, type(rec) == "table" and rec or {}
+end
+
+local function rgb(c) return { c[1] / 255, c[2] / 255, c[3] / 255 } end
+
+function Gen4MainMenu:ink()
+  return (self.game.data or {}).gen4_main_menu_ink
+end
+
+-- a 24 x 24 nine-slice around the content rect (tx, ty, tw, th), in pixels
+-- already scrolled by `oy`
+local function nineSlice(self, img, tx, ty, tw, th, oy)
+  local g = love.graphics
+  local iw, ih = img:getDimensions()
+  self.quads = self.quads or {}
+  local function q(i)
+    local key = tostring(img) .. i
+    if not self.quads[key] then
+      self.quads[key] = g.newQuad((i % 3) * 8, math.floor(i / 3) * 8, 8, 8, iw, ih)
+    end
+    return self.quads[key]
+  end
+  local x0, y0 = (tx - 1) * 8, (ty - 1) * 8 - oy
+  local x1, y1 = (tx + tw) * 8, (ty + th) * 8 - oy
+  g.draw(img, q(0), x0, y0); g.draw(img, q(2), x1, y0)
+  g.draw(img, q(6), x0, y1); g.draw(img, q(8), x1, y1)
+  for i = 0, tw - 1 do
+    g.draw(img, q(1), (tx + i) * 8, y0); g.draw(img, q(7), (tx + i) * 8, y1)
+  end
+  for j = 0, th - 1 do
+    g.draw(img, q(3), x0, (ty + j) * 8 - oy); g.draw(img, q(5), x1, (ty + j) * 8 - oy)
+  end
+end
+
+-- The focused border's colour this frame: one step of the 28-colour cycle per
+-- frame (MainMenu_Main calls DoColorCycleStep every frame).
+function Gen4MainMenu:borderColour()
+  local ink = self:ink()
+  local cycle = ink and ink.borderCycle
+  if type(cycle) ~= "table" or #cycle == 0 then return nil end
+  local step = math.floor((self.t or 0) * 60) % #cycle + 1
+  return cycle[step]
+end
+
+-- the windows' tops in tiles, `height + 2` apart from y = 1 (RenderOptions)
+function Gen4MainMenu:tops()
+  local L = self.layout
+  local tops, ty = {}, L.firstY
+  for i, item in ipairs(self.items) do
+    tops[i] = ty
+    ty = ty + (item.lines or 1) * L.lineTiles + L.gap
+  end
+  return tops
+end
+
+-- TargetFocusedOptionForScroll, in pixels: scroll up to a window whose top
+-- (frame included) is above the view, or down until a window whose top is
+-- below the view's bottom has its frame's bottom on the bottom edge.
+function Gen4MainMenu:targetScroll()
+  local L = self.layout
+  local tops = self:tops()
+  local item = self.items[self.index]
+  if not (item and tops[self.index]) then return end
+  local top = (tops[self.index] - 1) * 8
+  local height = ((item.lines or 1) * L.lineTiles + 2) * 8
+  local target = self.scrollTarget or 0
+  if target > top then target = top end
+  if target + H <= top then target = top + height - H end
+  self.scrollTarget = target
+  self.scrollPos = self.scrollPos or 0
+end
+
+-- DoScrollStep: a quarter of the distance a frame, at most 12 pixels
+function Gen4MainMenu:scrollStep(dt)
+  local target = self.scrollTarget or 0
+  local pos = self.scrollPos or 0
+  if pos == target then return end
+  self.scrollAcc = (self.scrollAcc or 0) + dt * 60
+  while self.scrollAcc >= 1 and pos ~= target do
+    self.scrollAcc = self.scrollAcc - 1
+    local speed = (target - pos) / 4
+    if speed > 12 then speed = 12 elseif speed < -12 then speed = -12 end
+    pos = pos + speed
+    if math.abs(target - pos) < 1 / 8 then pos = target end
+  end
+  if pos == target then self.scrollAcc = 0 end
+  self.scrollPos = pos
+end
+
 -- `tx, ty, tw` are the window's CONTENT rect, which is what the cartridge's
 -- own coordinates are in: RenderContinueOption prints at x = 32 and
 -- y = TEXT_LINES(i) INSIDE the window, and the frame is drawn outside it.
-function Gen4MainMenu:drawContinue(tx, ty, tw)
+-- The words AND the figures are in the player's colours -- TEXT_COLOR(7, 8,
+-- 15) for a boy, (3, 4, 15) for a girl.
+function Gen4MainMenu:drawContinue(tx, ty, tw, oy)
   local L = self.layout
   local left = tx * 8
   local right = (tx + tw) * 8
+  local ink = self:ink()
+  local player = self.save and self.save.player or {}
+  local female = player.gender == "female" or player.gender == "girl" or player.gender == 1
+  local pair = ink and (female and ink.female or ink.male)
+  if pair then Font.pushStyle({ text = rgb(pair[1]), shadow = rgb(pair[2]) }) end
   -- Line 0 is the word CONTINUE itself, printed by the caller; the summary
   -- starts on line 1, exactly as the cartridge's loop does.
   local line = 1
   for _, row in ipairs(self.continueRows) do
     if not (row.needsPokedex and not self:hasPokedex()) then
       local value = self:value(row.value)
-      local y = ty * 8 + line * L.linePixels
+      local y = ty * 8 + line * L.linePixels - oy
       Font.draw(tostring(row.label or ""), left + L.margin, y)
       -- Right-aligned with the same margin the labels are inset by, which is
       -- what PrintRightAlignedWithMargin does: one number, used on both sides.
@@ -251,83 +374,87 @@ function Gen4MainMenu:drawContinue(tx, ty, tw)
       line = line + 1
     end
   end
+  if pair then Font.popStyle() end
 end
 
 function Gen4MainMenu:draw()
   local g = love.graphics
-  local bg = self.colors.background or FALLBACK.colors.background
+  local ink = self:ink()
+  local bg = ink and rgb(ink.background) or self.colors.background or FALLBACK.colors.background
   g.setColor(bg[1], bg[2], bg[3], 1)
   g.rectangle("fill", 0, 0, W, H)
   g.setColor(1, 1, 1, 1)
 
   local L = self.layout
-  local glyphH = Font.glyphHeight()
-  local inset = math.max(0, math.floor((L.linePixels - glyphH) / 2))
+  if self.scrollTarget == nil then self:targetScroll(); self.scrollPos = self.scrollTarget end
+  local oy = math.floor(self.scrollPos or 0)
 
-  -- THE WINDOW THE PLAYER SEES IS THE FRAME AROUND THE CONTENT, and drawing
-  -- the content rect alone is why the boxes were half the height they should
-  -- be.  Reported twice: "the tiles are too small", then "the boxes
-  -- surrounding the text are still too small thry should match the rom".
-  --
+  -- THE WINDOW THE PLAYER SEES IS THE FRAME AROUND THE CONTENT.
   -- `Window_DrawStandardFrame` -> `DrawStandardWindowFrame` (render_window.c)
   -- lays the frame at `x - 1 .. x + width` and `y - 1 .. y + height`, one tile
   -- outside the window on every side, and `RenderOptions` advances by
   -- `height + 2` with the comment "Add 2 to account for the window border".
-  -- So a one-line option is 2 content tiles and FOUR visible ones -- 32 px,
-  -- not 16 -- and the column is 28 tiles wide, not 26: x = 3, width = 26,
-  -- frame from tile 2 to tile 29, which is 16 px to 240 px and centred on a
-  -- 256 px screen.  Drawn as the content rect it was 208 px wide starting at
-  -- 24, which is neither the right size nor centred.
-  --
-  -- Everything below is in the cartridge's own numbers; only the cursor is
-  -- this port's, because Platinum marks the focused option by swapping its
-  -- frame tiles (FOCUSED_OPTION_FRAME_BASE_TILE) rather than by drawing one.
-  local tops = {}
-  local ty = L.firstY
-  for i, item in ipairs(self.items) do
-    tops[i] = ty
-    ty = ty + (item.lines or 1) * L.lineTiles + L.gap
-  end
-  local screenTiles = math.floor(H / 8)
-
-  -- ...AND THE COLUMN CAN BE TALLER THAN THE SCREEN, on the cartridge too:
-  -- CONTINUE alone is 12 visible tiles and eight options do not fit in 24,
-  -- which is what Platinum's scroll arrows are for.  Keeping the selected
-  -- window on screen is the same answer; dropping the rows that fall past the
-  -- bottom edge -- which is what the old `break` did -- makes EXIT
-  -- unreachable the moment a save exists.
-  local selTop = tops[self.index] or L.firstY
-  local selH = (self.items[self.index] and self.items[self.index].lines or 1)
-               * L.lineTiles
-  local scroll = 0
-  local bottomEdge = selTop + selH + 1
-  if bottomEdge > screenTiles then scroll = bottomEdge - screenTiles end
-  if selTop - 1 - scroll < 0 then scroll = selTop - 1 end
+  -- So a one-line option is 2 content tiles and FOUR visible ones, and the
+  -- column is 28 tiles wide: x = 3, width = 26, frame from tile 2 to tile 29.
+  local unfocused = art(self, "frame_unfocused")
+  local focused = art(self, "frame_focused")
+  local glow = art(self, "frame_focused_glow")
+  local haveArt = unfocused and focused
+  local tops = self:tops()
+  local cycle = self:borderColour()
 
   for i, item in ipairs(self.items) do
     local th = (item.lines or 1) * L.lineTiles
-    local y = tops[i] - scroll
-    -- Wholly off either edge: not drawn at all, rather than clipped into a
-    -- half window.
-    if y + th + 1 > 0 and y - 1 < screenTiles then
-      Font.drawBox(L.optionX - 1, y - 1, L.optionWidth + 2, th + 2)
+    local ty = tops[i]
+    local y = ty * 8 - oy
+    if y + (th + 1) * 8 > 0 and y - 8 < H then
+      local isFocused = i == self.index
+      if haveArt then
+        local paper = ink and (isFocused and ink.paper or ink.paperUnfocused)
+          or (isFocused and { 255, 255, 255 } or { 214, 214, 214 })
+        g.setColor(paper[1] / 255, paper[2] / 255, paper[3] / 255, 1)
+        g.rectangle("fill", L.optionX * 8, y, L.optionWidth * 8, th * 8)
+        g.setColor(1, 1, 1, 1)
+        nineSlice(self, isFocused and focused or unfocused, L.optionX, ty, L.optionWidth, th, oy)
+        if isFocused and glow and cycle then
+          g.setColor(cycle[1] / 255, cycle[2] / 255, cycle[3] / 255, 1)
+          nineSlice(self, glow, L.optionX, ty, L.optionWidth, th, oy)
+          g.setColor(1, 1, 1, 1)
+        end
+      else
+        Font.drawBox(L.optionX - 1, ty - 1 - oy / 8, L.optionWidth + 2, th + 2)
+      end
 
       -- DRAWN AT WHITE, not at black.  Platinum's font page is PRE-TINTED: the
-      -- sheet bakes the letter dark and its shadow light, and Font.drawCode blits
-      -- it as it stands when no style is pushed.  Multiplying it by black -- which
-      -- is what every Game Boy screen in this engine does, because its glyphs are
-      -- a mask -- would paint the shadow black as well and thicken every letter.
-      Font.draw(item.label, L.optionX * 8, y * 8 + inset)
+      -- sheet bakes the letter dark and its shadow light -- TEXT_COLOR(1, 2,
+      -- 15), which is exactly what MainMenuUtil_InitWindow asks for.
+      if ink and ink.text then Font.pushStyle({ text = rgb(ink.text[1]), shadow = rgb(ink.text[2]) }) end
+      Font.draw(item.label, L.optionX * 8, y)
+      if ink and ink.text then Font.popStyle() end
       if item.key == "continue" then
-        self:drawContinue(L.optionX, y, L.optionWidth)
+        self:drawContinue(L.optionX, ty, L.optionWidth, oy)
       end
-      if i == self.index then
-        -- In the frame's own left column, so the label keeps the cartridge's
-        -- content origin rather than being pushed a tile right to make room.
-        Font.drawCode(Theme.cursor, (L.optionX - 1) * 8, y * 8 + inset)
+      if isFocused and not haveArt then
+        Font.drawCode(Theme.cursor, (L.optionX - 1) * 8, y)
       end
     end
   end
+
+  -- DrawScrollArrows: up while any window's top is above the view, down while
+  -- any window's top is at or below its bottom edge, at (128, 8) / (128, 184)
+  local target = self.scrollTarget or 0
+  local up, down = false, false
+  for i, item in ipairs(self.items) do
+    local top = (tops[i] - 1) * 8
+    if target > top then up = true end
+    if target + H <= top then down = true end
+  end
+  local function arrow(key, x, yy)
+    local img, rec = art(self, key)
+    if img then g.draw(img, x + (rec.originX or -img:getWidth() / 2), yy + (rec.originY or -img:getHeight() / 2)) end
+  end
+  if up then arrow("scroll_up", W / 2, 8) end
+  if down then arrow("scroll_down", W / 2, H - 8) end
 end
 
 return Gen4MainMenu

@@ -404,7 +404,8 @@ function Cook:drawTopScreen()
   local ok, SS = pcall(require, "src.ui.SecondScreen")
   if not ok then return end
   local mode = SS.mode(self.game)
-  if (mode == "display" or mode == "inset") and not SS.stowed(self.game) then
+  self.topShown = (mode == "display" or mode == "inset") and not SS.stowed(self.game)
+  if self.topShown then
     SS.draw(self.game, function()
       local g = love.graphics
       local img = self:art(self.group > 1 and "cook_top_multi" or "cook_top_single")
@@ -413,15 +414,34 @@ function Cook:drawTopScreen()
         -- the plates, two by two: names centred at x 80 / 176, y 112 / 152
         local names = { self.game.save.player and self.game.save.player.name or "" }
         for _, p in ipairs(self.partners or {}) do names[#names + 1] = p.name end
-        g.setColor(0.25, 0.25, 0.25, 1)
         for i, name in ipairs(names) do
           local col, row = (i - 1) % 2, math.floor((i - 1) / 2)
+          -- the cook's plate at tile (5 + col x 12, 13 + row x 5) (ov83_0223DFAC)
+          local plate = self:art(("cook_plate_%d_%d"):format(col, row))
+          g.setColor(1, 1, 1, 1)
+          if plate then g.draw(plate, 40 + col * 96, 104 + row * 40) end
+          g.setColor(0.25, 0.25, 0.25, 1)
           Font.draw(name, (col == 0 and 80 or 176) - math.floor(Font.width(name) / 2), row == 0 and 112 or 152)
         end
         g.setColor(1, 1, 1, 1)
       end
+      -- the messages are the top screen's: a message box at tile (4, 19),
+      -- 23 x 4 (ov83_0223E09C)
+      if self.message then self:drawMessage(3, 18, 25, 6, 32) end
     end)
   end
+end
+
+function Cook:drawMessage(tx, ty, tw, th, x)
+  local g = love.graphics
+  if Font.hasDialogueFrame and Font.hasDialogueFrame() then Font.drawDialogueBox(tx, ty, tw, th)
+  else Font.drawBox(tx, ty, tw, th) end
+  g.setColor(0, 0, 0, 1)
+  local y = 152
+  for l in (tostring(self.message) .. "\n"):gmatch("([^\n]*)\n") do
+    Font.draw(l, x, y); y = y + 16
+  end
+  g.setColor(1, 1, 1, 1)
 end
 
 function Cook:draw()
@@ -465,14 +485,8 @@ function Cook:draw()
     local left = 1 - math.min(1, math.max(s.phaseFrames / 600, s.turns / 16))
     g.rectangle("fill", 8, 8 + 160 * (1 - left), 8, 160 * left)
   end
-  if self.message then
-    Font.drawBox(0, 18, 32, 6)
-    g.setColor(0, 0, 0, 1)
-    local y = 152
-    for l in (tostring(self.message) .. "\n"):gmatch("([^\n]*)\n") do
-      Font.draw(l, 8, y); y = y + 16
-    end
-  end
+  -- with no top screen showing, the messages come down onto this one
+  if self.message and not (hasArt and self.topShown) then self:drawMessage(0, 18, 32, 6, 8) end
   g.setColor(1, 1, 1, 1)
 end
 

@@ -958,6 +958,7 @@ function Gen4Ground.oneShotAnimations()
   for _, row in ipairs(PropAnim.DOORS or {}) do
     for _, id in ipairs(row.ids or {}) do set[id] = true end
   end
+  for _,id in ipairs(PropAnim.INTERACTION_ANIMATIONS) do set[id]=true end
   Gen4Ground._oneShotAnimations = set
   return set
 end
@@ -979,7 +980,9 @@ function Gen4Ground:animationsFor(index, archive)
   local list, seen = nil, {}
   local function add(records)
     for _, record in ipairs(records or {}) do
-      if not seen[record] and not (record.member and oneShot[record.member]) then
+      local scripted=record.member and oneShot[record.member]
+      if record.member==32 and self.healScreenActive then scripted=false end
+      if not seen[record] and not scripted then
         seen[record] = true
         list = list or {}
         list[#list + 1] = record
@@ -1178,6 +1181,7 @@ end
 -- The healing balls are map props in Platinum, placed relative to the
 -- console, so they participate in the same depth/camera pass as its ROM art.
 function Gen4Ground:setHealingBalls(count, visible)
+  self.healScreenActive=(count or 0)>0
   local key = tostring(count or 0) .. ':' .. tostring(visible)
   if self.healingPropsKey == key then return end
   self.healingPropsKey, self.healingProps = key, nil

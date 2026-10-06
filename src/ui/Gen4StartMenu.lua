@@ -170,7 +170,10 @@ end
 
 function Gen4StartMenu:img(key)
   local rec = self.art[key]
-  local path = (type(rec) == "table" and rec.path) or rec
+  return self:imgAt((type(rec) == "table" and rec.path) or rec)
+end
+
+function Gen4StartMenu:imgAt(path)
   if type(path) ~= "string" then return nil end
   if self.cache[path] == nil then
     local ok, image = pcall(Assets.image, path)
@@ -300,7 +303,11 @@ function Gen4StartMenu:drawPanel()
     -- The cursor first: on hardware it is a sprite behind the row, and drawing
     -- it after the label would cover the label.
     if selected then
-      local cursor = self:img("menu/cursor")
+      -- menu_gra's cursor in menu.NCLR ROW 1 (the orange edge) from
+      -- `gen4_menu_art`; the planner's `menu/cursor` is row 0 (grey). The
+      -- cell's origin is (-48, -16) on its 96x32, i.e. centred.
+      local rec = ((self.game.data or {}).gen4_menu_art or {}).cursor
+      local cursor = (type(rec) == "table" and self:imgAt(rec.path)) or self:img("menu/cursor")
       if cursor then
         local cw, ch = cursor:getDimensions()
         g.setColor(1, 1, 1, 1)

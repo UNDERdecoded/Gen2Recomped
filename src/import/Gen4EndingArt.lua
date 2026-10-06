@@ -129,6 +129,8 @@ function Gen4EndingArt.images(rom)
              "bike_bg_objects.NCLR", s)
     end
   end
+  -- the 3D props' textures (Gen4EndingArt.models)
+  for key, pic in pairs(Gen4EndingArt.modelPictures(rom)) do out[key] = pic end
   return out
 end
 
@@ -178,6 +180,68 @@ function Gen4EndingArt.data(rom)
     local pal = b and G.palette(b)
     if pal and pal[18] then out.hofText = { ink = pal[18], shadow = pal[19] } end
   end
+  out.models = Gen4EndingArt.models(rom)
+  return out
+end
+
+-- THE CREDITS' 3D (scenes.c Load3DModels*): the morning's two tree rows, the
+-- day's lampposts, the night's trees, snowy trees and lampposts -- each BMD0
+-- packed as the other model screens' are (Gen4ModelPack, drawn by
+-- src/render/Gen4Model.lua), its textures decoded from its own TEX0 and
+-- saved beside the credits' pictures as `model_<name>_<texture>`.
+Gen4EndingArt.MODELS = { "background_morning_tree_1", "background_morning_tree_2", "background_day_lamppost",
+  "background_night_tree_1_normal", "background_night_tree_1_snowy", "background_night_tree_2",
+  "background_night_lamppost" }
+
+local function packModels(rom)
+  local G = require("src.import.Gen4Graphics")
+  local A = require("src.import.Gen4Archives")
+  local Nsbmd = require("src.import.Gen4Nsbmd")
+  local Models = require("src.import.Gen4Models")
+  local Pack = require("src.import.Gen4ModelPack")
+  local bytes = rom:read(Gen4EndingArt.CREDITS)
+  if not bytes then return nil, nil end
+  local narc = require("src.import.NarcArchive").parse(bytes)
+  local records, pictures = {}, {}
+  for _, name in ipairs(Gen4EndingArt.MODELS) do
+    local i = A.find(Gen4EndingArt.CREDITS, name .. ".BMD0")
+    local b = i and narc:get(i)
+    if b and G.isCompressed(b) then b = G.decompress(b) end
+    local parsed = b and Nsbmd.parse(b)
+    local model = parsed and parsed.models and parsed.models[1]
+    if model then
+      local sections = Nsbmd.sections(b)
+      local textures = sections and sections.TEX0 and Models.parse(b, sections.TEX0) or nil
+      local packed = Pack.pack(model)
+      packed.animations = {}
+      for _, shape in ipairs(packed.shapes) do
+        if shape.texture and textures then
+          local key = ("model_%s_%s"):format(name, shape.texture):gsub("[^%w_]", "_")
+          if pictures[key] == nil then
+            local index, palette
+            for k, t in ipairs(textures.textures) do if t.name == shape.texture then index = k end end
+            for k, p in ipairs(textures.palettes) do if p.name == shape.palette then palette = k end end
+            pictures[key] = index and Models.decode(textures, b, index, palette or 1) or false
+          end
+          if pictures[key] then shape.image = "assets/generated/gen4/ending/" .. key .. ".png" end
+        end
+      end
+      packed.name = name
+      records[name] = packed
+    end
+  end
+  return records, pictures
+end
+
+function Gen4EndingArt.models(rom)
+  local records = packModels(rom)
+  return records
+end
+
+function Gen4EndingArt.modelPictures(rom)
+  local _, pictures = packModels(rom)
+  local out = {}
+  for k, v in pairs(pictures or {}) do if v then out[k] = v end end
   return out
 end
 

@@ -17,16 +17,13 @@ for _,size in ipairs({{1536,1024},{1920,1080},{800,1200},{256,192}}) do
   checks=checks+3
  end
 end
--- EARLIER GENERATIONS COVER THE WINDOW TOO, by design since Renderer's "ONE
--- CAP FOR EVERY GENERATION": Gen 1-3 used to clamp each axis on its own and
--- blit the canvas centred, which is the black bar a Hoenn route showed when
--- zoomed out. This line used to assert Emerald stayed at scale 1 -- the rule
--- that bug report retired -- so it now asserts the window is covered instead.
+-- Earlier generations retain the selected scale rather than auto-enlarging
+-- narrow maps. Their full-size view renders border/neighbor tiles instead.
 V.set('emerald');r:setWorldBounds(144,1792)
 local es=r:worldPresentationScale(1,1920,1080,240,1080)
-assert(240*es>=1920 and 1080*es>=1080,'Emerald must cover the window too')
+assert(es==1,'Emerald map bounds must not override selected zoom')
 -- ...and with no bounds set -- a battle, a menu, the title -- nothing moves.
 r:setWorldBounds(nil,nil)
 assert(r:worldPresentationScale(1,1920,1080,240,1080)==1,'unbounded passes keep their scale')
 checks=checks+2
-print(checks..' viewport checks passed; every generation covers the window, unbounded passes unchanged')
+print(checks..' viewport checks passed; Gen4 bounds preserved, Gen1-3 zoom unchanged by bounds')

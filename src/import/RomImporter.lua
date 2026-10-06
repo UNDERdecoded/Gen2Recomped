@@ -1232,6 +1232,7 @@ local MARKER_PATH = "rom-cache.complete"
 local function markerFor(version)
   local revision = version == "platinum" and "platinum-audio-ui-v15:" or ""
   if version == "emerald" then revision = "emerald-map-popup-v2:" end
+  if version == "polishedcrystal" then revision = "polished-audio-v1:" end
   -- Include version-specific field encounters, sleep, swarm and rate tables.
   -- Only these three caches need rebuilding; other markers remain stable.
   if version == "gold" or version == "silver" or version == "crystal" then
@@ -1284,6 +1285,7 @@ local function parseMarker(raw)
   return head, absent
 end
 local COMMUNITY_URL = "https://discord.gg/4VXnEnePT"
+local TILT_RIPS_URL = "https://tiltrips.com/r/GEN2RECOMP/"
 -- Donations.  A plain PayPal checkout link, opened with the same
 -- love.system.openURL the community mark and the release links use.
 local DONATE_URL = "https://www.paypal.com/ncp/payment/F3QPTKT4E8HCS"
@@ -2817,6 +2819,7 @@ function RomImporter.new(onComplete, opts)
     settingsScroll = 0,
     tab = "red",          -- active launcher tab: "red"/"blue"/"yellow"/"mods"
     logo = love.graphics.newImage("assets/logo/logo.png"),
+    tiltRipsLogo = love.graphics.newImage("assets/logo/tilt-rips.png",{mipmaps=true}),
     bcg = love.graphics.newImage("assets/logo/UD.png"),
     -- Gold/Silver get their own branding: the Gen2 wordmark over the strip and
     -- the UD credit in the footer, swapped in whenever one of those tabs is up.
@@ -5500,24 +5503,53 @@ function RomImporter:draw()
   -- _chipButton will, or the page ends up scrolling short and a chip falls off
   -- the bottom edge. A tab with no donate links reserves no chip row.
   local credit = RomImporter.creditFor(self.tab)
+  local footerLinks, paypalLink = {},nil
+  for _,link in ipairs(credit.links) do
+    if link.url==DONATE_URL then paypalLink=link
+    else footerLinks[#footerLinks+1]=link end
+  end
   local creditH = self.hintFont:getHeight()
   local donateH = self.hintFont:getHeight() + 10 * s
-  local chipsH = (#credit.links > 0) and (8 * s + donateH) or 0
+  local chipsH = (#footerLinks > 0) and (8 * s + donateH) or 0
   local footerH = 10 * s + bcgDH + 6 * s + warningH + 8 * s + creditH + chipsH + 12 * s
 
   -- Logo: centred over the strip, width clamped, gentle bob + glow pulse.  The
   -- resting metrics fix the tab bar's top so the layout never shifts as it bobs.
   local logoW, logoH = logoImage:getDimensions()
-  local logoTargetW = math.max(math.min(180 * s, appW - 32 * s),
-    math.min(330 * s, appW - 32 * s))
+  local tiltW, tiltH = self.tiltRipsLogo:getDimensions()
+  local tiltTargetW = math.min(116 * s,appW * 0.20)
+  local tiltScale = tiltTargetW / tiltW
+  local tiltDH = tiltH * tiltScale
+  local tiltCodeScale = math.min(1,tiltTargetW / self.warningFont:getWidth("GEN2RECOMP"))
+  local tiltCodeH = self.warningFont:getHeight() * 2 * tiltCodeScale
+  local tiltBlockH = tiltDH + 4 * s + tiltCodeH
+  local paypalW = paypalLink and math.min(self.hintFont:getWidth(paypalLink.label)+24*s,appW*0.20) or 0
+  local paypalFont = self.hintFont
+  if paypalLink and paypalFont:getWidth(paypalLink.label)>paypalW-12*s then paypalFont=self.warningFont end
+  local paypalBaseW = paypalW
+  paypalW = paypalW * 2
+  local paypalH = donateH * 2
+  local paypalStacked = paypalLink and appW < 2 * (paypalW + padH + 8 * s) + 180 * s
+  if paypalLink then
+    local fontSize=paypalFont:getHeight()*2
+    if self._paypalFontSize~=fontSize then
+      self._paypalFontSize=fontSize
+      self._paypalFont=love.graphics.newFont(fontSize)
+    end
+    paypalFont=self._paypalFont
+  end
+  -- Keep the centered wordmark clear of the corner link on narrow screens.
+  local logoTargetW = math.min(appW - 2 * (math.max(tiltTargetW,paypalStacked and paypalBaseW or paypalW) + padH + 8 * s),math.max(math.min(180 * s, appW - 32 * s),
+    math.min(330 * s, appW - 32 * s)))
   local logoScale = math.min(logoTargetW / logoW, height * 0.15 / logoH)
   local logoDW, logoDH = logoW * logoScale, logoH * logoScale
   local logoY = stripY + stripH + 14 * s
+  local paypalY = paypalStacked and (logoY + math.max(logoDH,tiltBlockH) + 12 * s) or (logoY + 16 * s)
 
   -- Tab bar: R/B/Y/divider/MODS chips (label + underline on the active one),
   -- with "N of X ready" right-aligned.
   local chip = 44 * s
-  local tabBarY = logoY + logoDH + 6 * s
+  local tabBarY = math.max(logoY + math.max(logoDH,tiltBlockH),paypalLink and (paypalY+paypalH) or 0) + 6 * s
   local tabBarH = chip + 22 * s
 
   -- Self-updater banner state: computed up front so its band can be reserved
@@ -5970,16 +6002,16 @@ function RomImporter:draw()
     love.graphics.printf("Created by " .. credit.by, appX, creditY, appW, "center")
     self.donateButtons = {}
     self.donateButton = nil
-    if #credit.links > 0 then
+    if #footerLinks > 0 then
       local gap = 10 * s
       local widths, total = {}, 0
-      for i, link in ipairs(credit.links) do
+      for i, link in ipairs(footerLinks) do
         widths[i] = self.hintFont:getWidth(link.label) + 24 * s
         total = total + widths[i] + (i > 1 and gap or 0)
       end
       local x = appX + (appW - total) / 2
       local y = creditY + creditH + 8 * s
-      for i, link in ipairs(credit.links) do
+      for i, link in ipairs(footerLinks) do
         local rect = self:_chipButton(x, y, link.label,
           { font = self.hintFont, w = widths[i], h = donateH, kind = "accent" })
         if rect then
@@ -5996,6 +6028,14 @@ function RomImporter:draw()
   -- draw outside it.
   if paged then love.graphics.setScissor() end
 
+  if paypalLink then
+    local rect=self:_chipButton(appX+padH,paypalY,paypalLink.label,
+      {font=paypalFont,w=paypalW,h=paypalH,r=16*s,kind="accent",pinned=true})
+    rect.url=paypalLink.url
+    self.donateButtons[#self.donateButtons+1]=rect
+    self.donateButton=rect
+  end
+
   -- logo, over the split, with a gentle bob + gold glow + sweeping shine
   local bob = math.sin(pulse * (2 * math.pi / 4)) * 6 * s
   local lx, ly = ox + (width - logoDW) / 2, logoY + bob
@@ -6011,6 +6051,24 @@ function RomImporter:draw()
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(logoImage, lx, ly, 0, logoScale, logoScale)
   love.graphics.setShader()
+
+  local tiltX = appX + appW - padH - tiltTargetW
+  self.tiltRipsButton = {x=tiltX,y=logoY,width=tiltTargetW,height=tiltBlockH,pinned=true}
+  if not self._tiltFilterSet then
+    self.tiltRipsLogo:setFilter("linear","linear")
+    self.tiltRipsLogo:setMipmapFilter("linear")
+    self._tiltFilterSet=true
+  end
+  local tiltHot = self:_hover(self.tiltRipsButton)
+  love.graphics.setColor(1,1,1,tiltHot and 1 or 0.92)
+  love.graphics.draw(self.tiltRipsLogo,tiltX,logoY,0,tiltScale,tiltScale)
+  love.graphics.push("all")
+  love.graphics.translate(tiltX,logoY + tiltDH + 4 * s)
+  love.graphics.scale(tiltCodeScale,tiltCodeScale)
+  love.graphics.setFont(self.warningFont)
+  col(PAL.ink)
+  printfB("Use code\nGEN2RECOMP",0,0,tiltTargetW / tiltCodeScale,"center")
+  love.graphics.pop()
 
   -- page scrollbar: the same thin thumb the lists use, against the app edge
   if paged then
@@ -6618,6 +6676,10 @@ function RomImporter:mousepressed(x, y, button)
     love.system.openURL(self.bcgUrl or COMMUNITY_URL)
     return
   end
+  if inside(self.tiltRipsButton,x,y) then
+    love.system.openURL(TILT_RIPS_URL)
+    return
+  end
   for _, button in ipairs(self.donateButtons or {}) do
     if inside(button, x, y) then
       love.system.openURL(button.url or DONATE_URL)
@@ -7126,7 +7188,7 @@ function RomImporter:_chipButton(x, y, label, opts)
   local w = opts.w or (font:getWidth(label) + 2 * padX)
   local r = opts.r or math.min(8 * s, h / 2)
   local kind = opts.kind or "neutral"
-  local rect = { x = x, y = y, width = w, height = h, id = opts.id }
+  local rect = { x = x, y = y, width = w, height = h, id = opts.id, pinned = opts.pinned }
   local hot = self:_hover(rect)
 
   if kind == "dangerArmed" then

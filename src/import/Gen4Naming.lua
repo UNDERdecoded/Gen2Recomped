@@ -113,5 +113,106 @@ Gen4Naming.ALT_COLOUR = { 3, 6, 12, 9, 9 }
 Gen4Naming.HOME_X = 4
 Gen4Naming.HOME_Y = 0x44
 Gen4Naming.HOME_SPRITE_X = { 4, 36, 68, 101, 136, 176 }
+-- ...BUT THOSE SIX ARE CHILDREN OF THE OVERLAY SPRITE, which sits at x 22: a
+-- per-frame task sets child.x = overlay.x + table.x (naming_screen.c
+-- 1984-1995). So the buttons are at 26, 58, 90 (the tabs), 158 (BACK) and 198
+-- (OK) on screen, and the home-row cursor at sHomeRowCursorXCoords.
+Gen4Naming.PARENT_X = 22
+Gen4Naming.TAB_X = { 26, 58, 90 }
+Gen4Naming.BACK_X, Gen4Naming.OK_X = 158, 198
+Gen4Naming.HOME_CURSOR_X = { 25, 57, 89, 97, 122, 158, 198 }
+
+-- ---------------------------------------------------------------------------
+-- THE SPRITES (members 1 / 10 / 12 / 14). Every label -- UPPER, lower,
+-- Others, BACK, OK, the overlay's SELECT / B BUTTON / START hints -- is baked
+-- into these cells; no text bank is involved. The naming screen adds its
+-- sprites with SpriteList_AddAffine and no explicit palette, so a cell's own
+-- OAM palette picks the row; every cell below has one palette, given here.
+-- Cells are taken by INDEX, not "first frame of sequence n": the sequence ->
+-- cell mapping is not one to one (sequence 17 shows cell 51).
+-- ---------------------------------------------------------------------------
+Gen4Naming.SPRITE_PALETTE, Gen4Naming.SPRITE_TILES = 1, 10
+Gen4Naming.SPRITE_CELLS, Gen4Naming.SPRITE_ANIMS = 12, 14
+
+Gen4Naming.SPRITES = {
+  tab_upper_on = { 0, 1 }, tab_upper_off = { 2, 1 }, tab_lower_on = { 4, 1 }, tab_lower_off = { 6, 1 },
+  tab_others_on = { 8, 1 }, tab_others_off = { 10, 1 },
+  back = { 19, 1 }, back_pressed = { 20, 1 }, ok = { 21, 1 }, ok_pressed = { 22, 1 },
+  overlay = { 31, 2 },
+  underscore = { 36, 2 },
+  gender_male = { 39, 3 }, gender_female = { 40, 3 },
+  icon_box_0 = { 41, 3 }, icon_box_1 = { 42, 3 }, icon_box_2 = { 43, 3 }, icon_box_3 = { 44, 3 },
+  icon_male_0 = { 45, 4 }, icon_male_1 = { 46, 4 }, icon_male_2 = { 47, 4 },
+  icon_female_0 = { 48, 5 }, icon_female_1 = { 49, 5 }, icon_female_2 = { 50, 5 },
+  icon_rival_0 = { 54, 7 }, icon_rival_1 = { 55, 7 }, icon_rival_2 = { 56, 7 },
+  icon_palpad = { 58, 8 }, icon_group = { 59, 8 }, icon_shaymin = { 60, 8 },
+}
+-- the cursor's cells, saved as WHITE MASKS: every opaque pixel is colour 13
+-- of row 1, which the screen's glow rewrites every frame (ns.c 2629-2641)
+Gen4Naming.CURSOR_SPRITES = {
+  cursor_key_0 = 32, cursor_key_1 = 37, cursor_key_2 = 38, cursor_tab = 33, cursor_wide = 34,
+  cursor_pop_0 = 65, cursor_pop_1 = 66, cursor_pop_2 = 67, cursor_pop_3 = 68, cursor_pop_4 = 69,
+}
+
+function Gen4Naming.images(rom)
+  local G = require("src.import.Gen4Graphics")
+  local N = require("src.import.NarcArchive")
+  local Cells = require("src.import.Gen4Cells")
+  local bytes = rom:read(Gen4Naming.PATH)
+  if not bytes then return nil, "namein.narc missing" end
+  local narc = N.parse(bytes)
+  local function member(i)
+    local b = narc:get(i)
+    if b and G.isCompressed(b) then b = G.decompress(b) end
+    return b
+  end
+  local sheet = G.tiles(member(Gen4Naming.SPRITE_TILES))
+  local bank = Cells.parse(member(Gen4Naming.SPRITE_CELLS), G)
+  local all = G.palette(member(Gen4Naming.SPRITE_PALETTE))
+  if not (sheet and bank and all) then return nil, "naming sprites unreadable" end
+  local out = {}
+  local function cell(key, index, row, mask)
+    local c = bank.cells[index + 1]
+    if not c then return end
+    local flat = {}
+    for k, v in pairs(c) do flat[k] = v end
+    flat.oam = {}
+    for i, o in ipairs(c.oam) do
+      local copy = {}
+      for k, v in pairs(o) do copy[k] = v end
+      copy.palette = 0
+      flat.oam[i] = copy
+    end
+    local colours = {}
+    for i = row * 16 + 1, #all do colours[#colours + 1] = all[i] end
+    local pic = Cells.assemble(flat, sheet, colours, bank, G)
+    if not pic then return end
+    if mask then
+      local px = {}
+      for p = 0, pic.width * pic.height - 1 do
+        px[p + 1] = pic.rgba:byte(p * 4 + 4) ~= 0 and "\255\255\255\255" or "\0\0\0\0"
+      end
+      pic.rgba = table.concat(px)
+    end
+    pic.originX, pic.originY = Cells.extent(flat)
+    out[key] = pic
+  end
+  for key, s in pairs(Gen4Naming.SPRITES) do cell(key, s[1], s[2]) end
+  for key, index in pairs(Gen4Naming.CURSOR_SPRITES) do cell(key, index, 1, true) end
+  return out
+end
+
+-- the entered name's colours, TEXT_COLOR(14, 15, 1) of background row 0
+-- (ns.c 2416-2424), and the glow's base colour row
+function Gen4Naming.data(rom)
+  local G = require("src.import.Gen4Graphics")
+  local bytes = rom:read(Gen4Naming.PATH)
+  if not bytes then return {} end
+  local b = require("src.import.NarcArchive").parse(bytes):get(Gen4Naming.PALETTE)
+  if b and G.isCompressed(b) then b = G.decompress(b) end
+  local pal = b and G.palette(b)
+  if not pal then return {} end
+  return { ink = pal[15], shadow = pal[16], fill = pal[2] }
+end
 
 return Gen4Naming

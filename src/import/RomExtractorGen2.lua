@@ -16867,6 +16867,21 @@ function RomExtractorGen2:gen2Drumkits(banks)
   local sym = self:symbol("Drumkits")
   if not (sym and self.rom) then return nil end
   local kits = {}
+  if self.version=="polishedcrystal" then
+    -- Polished uses one-byte, entry-relative pointers at both levels.
+    for kit=0,6 do
+      local row=sym.address+kit
+      local base=row+self.rom:byte(sym.bank,row)
+      local drums={}
+      for drum=0,12 do
+        local at=base+drum
+        drums[tostring(drum)]={bank=sym.bank,address=at+self.rom:byte(sym.bank,at)}
+      end
+      kits[tostring(kit)]=drums
+    end
+    banks[sym.bank]=true
+    return kits
+  end
   local ok = pcall(function()
     for kit = 0, 5 do
       local base = self.rom:word(sym.bank, sym.address + kit * 2)
@@ -17057,11 +17072,12 @@ function RomExtractorGen2:extractAudio()
     source = "canonical Pokemon Gold ROM sound programs",
     runtime = true,
     gen2 = true,
+    gen2Dialect = self.version=="polishedcrystal" and "polishedcrystal" or nil,
     programFile = "assets/generated/audio/programs.bin",
     bankOrder = bankOrder,
     waveBanks = {
       -- WaveSamples holds ten distinct 16-byte waves, not Gen1's five
-      gen2 = { bank = waves.bank, address = waves.address, count = 10 },
+      gen2 = { bank = waves.bank, address = waves.address, count = self.version=="polishedcrystal" and 13 or 10 },
     },
     drumkits = drumkits and { gen2 = drumkits } or nil,
     songs = songs,

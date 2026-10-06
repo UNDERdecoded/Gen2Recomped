@@ -311,7 +311,139 @@ function Gen4Dex.images(rom)
       end
     end
   end
+  for key,pic in pairs(Gen4Dex.listImages(member)) do out[key]=pic end
   return out
 end
+
+-- ---------------------------------------------------------------------------
+-- The LIST screen (top), ov21_021D5AEC.c
+-- ---------------------------------------------------------------------------
+--
+-- Back to front: BG3 the scroll background with the species window stamped
+-- at tile (1,4), the preview Pokemon, the plates/balls/thumb sprites, BG2
+-- the header and footer bars, BG1 the counters.
+--
+--   BG3  scroll_main_background.NSCR at (0,0) + register_species_window.NSCR
+--        at (1,4), over scroll_main_background.NCGR, palette
+--        background_scroll_default.NCLR whole.
+--   BG2  search_sinnoh/search_national.NSCR: the app scrolls the 32x32 map so
+--        its rows 29..31 sit at screen rows 0..2 and rows 0..5 at 18..23.  In
+--        search results palette row 0 is register.NCLR's row 0 (red bars).
+--   OBJ  buttons.NCLR with an explicit palette row per sprite (the template's
+--        plttIdx replaces the cell's own OAM palette): plates and balls take
+--        row 0 for the selected slot and 7/8/9 for the farther ones, the
+--        scroll thumb row 0, the unseen "?" row 10.
+Gen4Dex.LIST_ROWS = { 0, 7, 8, 9 }
+-- ink (colour 3) and shadow (colour 2) per sprite row, if the palette is
+-- missing; read from buttons.NCLR when it is there.
+Gen4Dex.LIST_INK_FALLBACK = {
+  [0] = { ink = '636363', shadow = '636363' },
+  [7] = { ink = '635a6b', shadow = '635a6b' },
+  [8] = { ink = '635a7b', shadow = '635a7b' },
+  [9] = { ink = '5a528c', shadow = '5a528c' },
+}
+
+local function copy(list) local t={} for i,v in ipairs(list) do t[i]=v end return t end
+local function hex(c) return c and ('%02x%02x%02x'):format(c[1]%256,c[2]%256,c[3]%256) or nil end
+
+-- `member(name)` returns the decompressed bytes of a zukan.narc member.
+function Gen4Dex.listImages(member)
+  local G=require('src.import.Gen4Graphics')
+  local C=require('src.import.Gen4Cells')
+  local Anim=require('src.import.Gen4CellAnim')
+  local out={}
+  local function get(name,fn) local b=member(name);return b and fn(b) end
+  local sheet=get('scroll_main_background.NCGR.lz',G.tiles)
+  local default=get('background_scroll_default.NCLR',G.palette)
+  local register=get('register.NCLR',G.palette)
+  local mainMap=get('scroll_main_background.NSCR.lz',G.tilemap)
+  local windowMap=get('register_species_window.NSCR.lz',G.tilemap)
+  if sheet and default and mainMap then
+    local canvas=G.canvas(32,24)
+    G.stamp(canvas,mainMap,0,0)
+    if windowMap then G.stamp(canvas,windowMap,1,4) end
+    out['dex/list_main']=G.compose(canvas,sheet,default)
+    local filtered=copy(default)
+    if register then for i=1,16 do filtered[i]=register[i] end end
+    for _,mode in ipairs({'sinnoh','national'}) do
+      local map=get('search_'..mode..'.NSCR.lz',G.tilemap)
+      if map then
+        local w=math.floor(map.width/8)
+        local frame=G.canvas(32,24)
+        local function row(dst,src)
+          for x=0,31 do
+            local cell=map.cells[src*w+x+1]
+            if cell then frame.cells[dst*32+x+1]=cell end
+          end
+        end
+        for y=0,2 do row(y,29+y) end
+        for y=18,23 do row(y,y-18) end
+        out['dex/list_frame_'..mode]=G.compose(frame,sheet,default)
+        if register then out['dex/list_frame_'..mode..'_filtered']=G.compose(frame,sheet,filtered) end
+      end
+    end
+  end
+  local buttons=get('buttons.NCLR',G.palette)
+  local function sprite(key,name,sequence,paletteRow)
+    local pixels=get(name..'.NCGR.lz',G.tiles)
+    local bank=get(name..'_cell.NCER.lz',function(b) return C.parse(b,G) end)
+    local anim=get(name..'_anim.NANR.lz',function(b) return Anim.parse(b,G) end)
+    if not (buttons and pixels and bank and anim) then return end
+    local colours={}
+    for i=paletteRow*16+1,#buttons do colours[#colours+1]=buttons[i] end
+    local frames=Anim.frames(anim,sequence)
+    local cell=frames and frames[1] and bank.cells[frames[1].cell+1]
+    if not cell then return end
+    -- SpriteSystem_NewSprite: the explicit palette replaces the OAM one.
+    local flat={oam={}}
+    for k,v in pairs(cell) do if k~='oam' then flat[k]=v end end
+    for i,o in ipairs(cell.oam) do
+      local c2={};for k,v in pairs(o) do c2[k]=v end;c2.palette=0;flat.oam[i]=c2
+    end
+    local pic=C.assemble(flat,pixels,colours,bank,G)
+    if pic then pic.originX,pic.originY=C.extent(flat);out[key]=pic end
+  end
+  for _,r in ipairs(Gen4Dex.LIST_ROWS) do
+    sprite('dex/list_plate_r'..r,'search_body_shapes',0,r)
+    sprite('dex/list_ball_r'..r,'search_body_shapes',1,r)
+  end
+  sprite('dex/list_thumb','search_body_shapes',2,0)
+  sprite('dex/list_unseen','unseen_icon',0,10)
+  return out
+end
+
+-- The list's text colours, out of the same palettes the art uses: a plate's
+-- words take its sprite row's colours 3 (ink) and 2 (shadow); the counters on
+-- BG1 take BG palette row 0's colours 2 (ink) and 1 (shadow), which in search
+-- results is register.NCLR's row 0.
+function Gen4Dex.listInkFrom(member)
+  local G=require('src.import.Gen4Graphics')
+  local function get(name) local b=member(name);return b and G.palette(b) end
+  local buttons,default,register=get('buttons.NCLR'),get('background_scroll_default.NCLR'),get('register.NCLR')
+  local out={ rows={} }
+  for _,r in ipairs(Gen4Dex.LIST_ROWS) do
+    local fb=Gen4Dex.LIST_INK_FALLBACK[r]
+    out.rows[r]={ ink=buttons and hex(buttons[r*16+4]) or fb.ink, shadow=buttons and hex(buttons[r*16+3]) or fb.shadow }
+  end
+  out.counter={ ink=default and hex(default[3]) or 'ffffff', shadow=default and hex(default[2]) or '101921' }
+  out.counterFiltered={ ink=register and hex(register[3]) or 'ffffff', shadow=register and hex(register[2]) or '000000' }
+  return out
+end
+
+local function opener(rom)
+  local G=require('src.import.Gen4Graphics')
+  local A=require('src.import.Gen4Archives')
+  local bytes=rom:read(Gen4Dex.PATH)
+  local arc=bytes and require('src.import.NarcArchive').parse(bytes)
+  return function(name)
+    local id=arc and A.find(Gen4Dex.PATH,name)
+    local b=id and arc:get(id)
+    if b and G.isCompressed(b) then b=G.decompress(b) end
+    return b
+  end
+end
+
+function Gen4Dex.listInk(rom) return Gen4Dex.listInkFrom(opener(rom)) end
+function Gen4Dex.listOnly(rom) return Gen4Dex.listImages(opener(rom)) end
 
 return Gen4Dex

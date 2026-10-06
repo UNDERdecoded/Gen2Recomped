@@ -3997,6 +3997,7 @@ function BattleState:touchpressed(_, px, py)
   local over
   if self.phase == "menu" then over = "action"
   elseif self.phase == "moveSelect" then over = "moves"
+  elseif self.phase == "targetSelect" then over = "target"
   else return false end
 
   local okG, Gen4B = pcall(require, "src.battle.Gen4Battle")
@@ -4023,6 +4024,14 @@ function BattleState:touchpressed(_, px, py)
     self.moveIndex = index
     input:overlayPressed("a")
     input:overlayReleased("a")
+  elseif kind == "target" then
+    -- a slot with nobody to aim at is cleared on the cartridge: not a button
+    local pick = Gen4B.targetSlots(self)[index]
+    if pick then
+      self.targetIndex = pick
+      input:overlayPressed("a")
+      input:overlayReleased("a")
+    end
   end
   return true
 end
@@ -8820,7 +8829,7 @@ function BattleState:openReplacementMenu()
   self.phase = "messages"
   self.afterQueue = "menu"
   self:ui(function()
-    return self:buildScreen("PartyMenu", {
+    return self:buildScreen(Gen4Battle.partyScreenId(self) or "PartyMenu", {
       battle = self,
       -- ChooseNextMon: pick immediately (no SWITCH/STATS/CANCEL)
       forceSwitch = true,
@@ -9909,7 +9918,7 @@ function BattleState:openParty()
   self.phase = "messages"
   self.afterQueue = "menu"
   self:ui(function()
-    return self:buildScreen("PartyMenu", {
+    return self:buildScreen(Gen4Battle.partyScreenId(self) or "PartyMenu", {
       battle = self,
       onSwitch = function(mon)
         -- NIL IS "I CHANGED MY MIND", NOT A POKEMON.

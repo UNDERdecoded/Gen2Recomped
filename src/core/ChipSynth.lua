@@ -215,6 +215,7 @@ function Channel.new(engine, spec, options)
     -- Gen2 dialect: notes carry the pitch in the high nibble and SFX/cry
     -- channels take the four-byte ParseSFXOrCry form ($DF toggles it)
     gen2 = options.gen2 or false,
+    polished = options.polished or false,
     sfxNote = isSfxChannel,
     noiseSet = 0,
     noiseOn = false,
@@ -486,11 +487,46 @@ end
 -- need separate decoders.  SFX and cry channels read the four byte
 -- ParseSFXOrCry form instead: duration, volume/fade, then a frequency word
 -- (one byte on the noise channels).
+-- Polished Crystal 3.x packs duty and panning into the opcodes and shifts
+-- the other commands. Normalize only this explicitly selected dialect.
+local POLISHED_COMMANDS={
+  [0xDC]=0xD8,[0xDD]=0xD9,[0xDE]=0xDA,[0xDF]=0xDC,
+  [0xE0]=0xDD,[0xE1]=0xDE,[0xE2]=0xDF,[0xE3]=0xE0,
+  [0xE4]=0xE1,[0xE5]=0xE3,[0xE6]=0xE5,[0xE7]=0xE6,
+  [0xE8]=0xE9,[0xE9]=0xEA,[0xEA]=0xEB,[0xEB]=0xEC,[0xEC]=0xED,
+}
 function Channel:nextEventGen2()
   if self.ended then return nil end
   for _ = 1, 100000 do
     local commandAddress = self.address
     local command = self:byte()
+
+    if self.polished then
+      if command>=0xD8 and command<=0xDB then
+        self.duty=bit.band(command,3)
+        command=0xF1 -- no operand: duty is encoded in the command itself
+      elseif command>=0xED and command<=0xEF then
+        local right=bit.lshift(1,self.hardware-1)
+        local left=bit.lshift(right,4)
+        local pan=bit.band(self.engine.pan,bit.bnot(bit.bor(left,right)))
+        if command~=0xEE then pan=bit.bor(pan,left) end
+        if command~=0xED then pan=bit.bor(pan,right) end
+        self.engine.pan=pan
+        command=0xF1
+      elseif command==0xF9 then
+        self.noiseSet=self:byte()
+        command=0xF1
+      elseif command==0xFA then
+        self.condition=self:byte()
+        command=0xF1
+      elseif command==0xFB then
+        local condition,target=self:byte(),self:word()
+        if condition==self.condition then self.address=target end
+        command=0xF1
+      else
+        command=POLISHED_COMMANDS[command] or command
+      end
+    end
 
     if command < 0xD0 then
       local length = bit.band(command, 0x0F) + 1
@@ -543,7 +579,8 @@ function Channel:nextEventGen2()
       self.transposeOctave = bit.rshift(packed, 4)
       self.transposeNote = bit.band(packed, 0x0F)
     elseif command == 0xDA then                       -- tempo
-      self.engine.tempo = self:byte() * 0x100 + self:byte()
+      if self.polished then self.engine.tempo=self:word()
+      else self.engine.tempo = self:byte() * 0x100 + self:byte() end
     elseif command == 0xDB then                       -- duty cycle
       self.duty = bit.band(self:byte(), 3)
     elseif command == 0xDC then                       -- volume envelope
@@ -576,7 +613,7 @@ function Channel:nextEventGen2()
       local length, packed = self:byte(), self:byte()
       -- Music_PitchSlide runs the target through GetFrequency, so the
       -- channel's transposition applies to it exactly like a played note
-      local note = bit.band(packed, 0x0F) - 1 + self.transposeNote
+      local note = bit.band(packed, 0x0F) - (self.polished and 0 or 1) + self.transposeNote
       local octave = 8 - bit.rshift(packed, 4) - self.transposeOctave
       while note >= 12 do note = note - 12; octave = octave + 1 end
       while note < 0 do note = note + 12; octave = octave - 1 end
@@ -616,7 +653,7 @@ function Channel:nextEventGen2()
       -- reading it little-endian scaled the offset by 256 and threw every
       -- note on the channel to a random register.
       local high, low = self:byte(), self:byte()
-      local offset = high * 0x100 + low
+      local offset = self.polished and (low * 0x100 + high) or (high * 0x100 + low)
       if offset >= 0x8000 then offset = offset - 0x10000 end
       self.pitchOffset = offset
     elseif command == 0xE9 then                       -- tempo, relative
@@ -987,6 +1024,7 @@ function Engine.new(data, header, options)
     engine.channels[#engine.channels + 1] = Channel.new(engine, spec, {
       bank = chip and 0 or header.bank,
       gen2 = engineNumber == "gen2",
+      polished = not chip and audio.gen2Dialect=="polishedcrystal",
       sfx = options.sfx,
       allowLoops = options.allowLoops,
       frequencyOffset = options.frequencyOffset,

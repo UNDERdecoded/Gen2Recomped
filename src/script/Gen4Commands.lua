@@ -6960,8 +6960,10 @@ function Commands.g4_clear_game(ctx)
     local boot = game.data.field and game.data.field.boot or {}
     pcall(SaveData.applyPostGameHome, save, boot)
     if game.overworld then game.overworld.lastOutdoor = save.lastOutdoor end
-    local allowed = true
-    if game.writeSave then allowed = game:writeSave() ~= false end
+    -- the one save write every script save goes through (ScriptSave); the
+    -- capture puts the player back where they stand, so the post-game home is
+    -- applied again after it and that save written as it stands
+    local allowed = require("src.script.ScriptSave").write(ctx, "hall of fame")
     pcall(SaveData.applyPostGameHome, save, boot)
     if allowed then pcall(SaveData.save, save) end
   end

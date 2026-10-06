@@ -1282,8 +1282,8 @@ do
 
   -- both sides are the same distance out at the same moment, which is the
   -- symmetry check 9 asserts for the endpoints, now asserted for the walk
-  local ph = math.abs(at(INTRO // 2, "player") - Gen4Battle.PLATFORM_POS.player.x)
-  local eh = math.abs(at(INTRO // 2, "enemy") - Gen4Battle.PLATFORM_POS.enemy.x)
+  local ph = math.abs(at(math.floor(INTRO / 2), "player") - Gen4Battle.PLATFORM_POS.player.x)
+  local eh = math.abs(at(math.floor(INTRO / 2), "enemy") - Gen4Battle.PLATFORM_POS.enemy.x)
   ok(ph == eh, "both platforms are equally far out mid-intro",
      ("player %d, enemy %d"):format(ph, eh), "equal")
 

@@ -40,6 +40,9 @@
 -- Place at: src/import/Gen4PropAnim.lua
 
 local Gen4PropAnim = {}
+-- bm_anime_list flags=3: PC on/off and healing displays are loaded by
+-- interactions, not by the ambient animation clock.
+Gen4PropAnim.INTERACTION_ANIMATIONS={31,32,41,42}
 
 -- ---------------------------------------------------------------------------
 -- the record

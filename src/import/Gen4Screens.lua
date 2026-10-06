@@ -232,7 +232,7 @@ Gen4Screens.ARCHIVES = {
     -- Both watches draw on one background, and the digit strip has its own.
     tilesFrom = {
       digital_watch = "watch", analog_watch = "watch",
-      digital_watch_digits = "digits",
+      digital_watch_digits = "generic",
       marking_map = "map", berry_searcher = "map",
     },
   },
@@ -562,6 +562,7 @@ function Gen4Screens.plan(path, options)
           firstTile = options.firstTileFor and options.firstTileFor[group.base],
           paletteSlot = options.paletteSlotFor and options.paletteSlotFor[group.base],
           tilemap = group.NSCR,
+          watchDigits = path=="/graphic/poketch.narc" and group.base=="digital_watch_digits" or nil,
           tilesWide = (options.tilesWideFor
                        and options.tilesWideFor[group.base])
                       or options.tilesWide or 8,

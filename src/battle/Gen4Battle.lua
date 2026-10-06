@@ -1301,6 +1301,19 @@ Gen4Battle.LEVEL_PARTS = {
   none   = { top = 64, bottom = 76 },
 }
 
+-- Where the nickname window lands on each box (see drawHealthboxText).
+Gen4Battle.HEALTHBOX_NAME_AT = {
+  healthbox_player_singles = { x = 24, y = 16 },
+  healthbox_enemy          = { x = 8,  y = 16 },
+  healthbox_player_doubles = { x = 16, y = 16 },
+}
+
+-- The gen4_battle_art index and its data module (src/import/Gen4BattleArt.lua).
+local function battleArtData(battle)
+  local data = battle and (battle.data or (battle.game and battle.game.data))
+  return data and data.gen4_battle_art, data and data.gen4_battle_anims
+end
+
 local function healthboxImage(battle, key)
   local gfx = graphics(battle)
   local row = gfx and gfx.battleObjects and gfx.battleObjects[key]
@@ -1503,6 +1516,63 @@ function Gen4Battle.drawHealthboxNumbers(battle, key, battler, boxX, boxY)
   return true
 end
 
+-- THE STATUS AND CAUGHT ICONS (HealthBox_DrawStatusIcon / _DrawCaughtIcon).
+-- Both are tile copies into the box's own character data, at VRAM offsets
+-- that turn into tiles the same way the numbers' do (offset / 32, tiles 0..63
+-- the left 64x64 square, row-major by eight):
+--
+--   sStatusIconVRAMTransfer  0x480 solo player -> tile 36 -> (32, 32)
+--                            0x440 enemies     -> tile 34 -> (16, 32)
+--                            0x460 player 1/2  -> tile 35 -> (24, 32)
+--   each 0x60 bytes = THREE tiles across, STATUS_<X>_0..2 out of the parts
+--   blob (HEALTHY_0..2 when there is none, which is the box's own colour).
+--
+--   sCaughtIconVRAMTransfer  0x420 enemies -> tile 33 -> (8, 32), one tile,
+--   CAUGHT_INDICATOR when the species is owned -- enemy boxes only, and
+--   never in a trainer battle (HealthBox_DrawInfo strips the flag).
+Gen4Battle.HEALTHBOX_STATUS = {
+  healthbox_player_singles = { x = 32, y = 32 },
+  healthbox_enemy          = { x = 16, y = 32 },
+  healthbox_player_doubles = { x = 24, y = 32 },
+}
+Gen4Battle.HEALTHBOX_CAUGHT = { healthbox_enemy = { x = 8, y = 32 } }
+-- enum HealthBoxPart, zero-based: the first of each three-tile run.
+Gen4Battle.STATUS_PARTS = { PAR = 41, FRZ = 44, SLP = 47, PSN = 50, TOX = 50, BRN = 53 }
+Gen4Battle.CAUGHT_PART = 59
+
+function Gen4Battle.statusPart(status)
+  if type(status) ~= "string" or status == "" then return nil end
+  return Gen4Battle.STATUS_PARTS[status:upper():sub(1, 3)]
+end
+
+function Gen4Battle.drawHealthboxIcons(battle, key, battler, boxX, boxY, side)
+  local rec, img, quads = partsFor(battle)
+  if not (rec and img and quads) then return false end
+  local mon = battler and battler.mon
+  if not mon then return false end
+  love.graphics.setColor(1, 1, 1, 1)
+  local spot = Gen4Battle.HEALTHBOX_STATUS[key]
+  local status = battler.shownStatus
+  if status == nil then status = mon.status end
+  local part = Gen4Battle.statusPart(status)
+  if spot and part then
+    for i = 0, 2 do
+      local q = quads[part + i]
+      if q then love.graphics.draw(img, q, boxX + spot.x + i * 8, boxY + spot.y) end
+    end
+  end
+  local cspot = Gen4Battle.HEALTHBOX_CAUGHT[key]
+  if cspot and side == "enemy" and battle.kind ~= "trainer" then
+    local save = battle.game and battle.game.save
+    local owned = save and save.pokedex and save.pokedex.owned
+    if owned and owned[mon.species] then
+      local q = quads[Gen4Battle.CAUGHT_PART]
+      if q then love.graphics.draw(img, q, boxX + cspot.x, boxY + cspot.y) end
+    end
+  end
+  return true
+end
+
 -- drawHealthboxes(battle) -> true when BOTH were drawn
 --
 -- All or nothing on purpose: one Platinum box beside one Game Boy panel is
@@ -1564,6 +1634,7 @@ function Gen4Battle.drawHealthboxes(battle)
         pcall(Gen4Battle.drawHealthboxNumbers, battle, art.key, row.battler, x, y)
       Gen4Battle.drawHealthboxText(battle, row.battler, x, y, art.key,
                                    okNum and lettered or false)
+      pcall(Gen4Battle.drawHealthboxIcons, battle, art.key, row.battler, x, y, row.side)
       drew = drew + 1
     end
     ::continue::
@@ -1619,7 +1690,22 @@ function Gen4Battle.drawHealthboxText(battle, battler, boxX, boxY, key, lettered
   local glyphH = Font.glyphHeight and Font.glyphHeight() or 12
   local ty = boxY + win.y + math.floor((win.h - glyphH) / 2)
 
-  love.graphics.setColor(0, 0, 0, 1)
+  -- THE NAME WINDOW'S OWN ORIGIN, from sBattlerNameVRAMTransfer: the 8x2-tile
+  -- window's first row lands at tile 19 (solo player), 17 (enemies) or 18
+  -- (player doubles), i.e. box x 24 / 8 / 16, y 16, printed at (0, 0).
+  local at = lettered and Gen4Battle.HEALTHBOX_NAME_AT[key]
+  if at then
+    win = { x = at.x, y = at.y, w = 64, h = 16 }
+    ty = boxY + at.y
+  end
+
+  -- ...in TEXT_COLOR(14, 2, 15) of the boxes' palette when the cache has it.
+  local _, anims = battleArtData(battle)
+  local ink = anims and anims.healthboxInk and anims.healthboxInk.name
+  local tone = ink and ink.ink and ink.shadow and Font.beginTwoTone
+               and Font.beginTwoTone({ ink.ink[1] / 255, ink.ink[2] / 255, ink.ink[3] / 255, 1 },
+                                     { ink.shadow[1] / 255, ink.shadow[2] / 255, ink.shadow[3] / 255, 1 })
+  if not tone then love.graphics.setColor(0, 0, 0, 1) end
 
   -- HOW MUCH ROOM THE NAME HAS, and the two answers are different pictures.
   -- With the tiles up, the "Lv" block starts at a stated x and the name stops
@@ -1628,7 +1714,7 @@ function Gen4Battle.drawHealthboxText(battle, battler, boxX, boxY, key, lettered
   local room
   if lettered then
     local lvSpot = Gen4Battle.HEALTHBOX_LV[key]
-    room = (lvSpot and (lvSpot.x - win.x - 2)) or (win.w - 24)
+    room = (lvSpot and (lvSpot.x - win.x)) or (win.w - 24)
   else
     local lv = "Lv" .. level
     local lvW = Font.width and Font.width(lv) or (#lv * 8)
@@ -1636,6 +1722,7 @@ function Gen4Battle.drawHealthboxText(battle, battler, boxX, boxY, key, lettered
     room = win.w - lvW - 6
   end
   Font.draw(Font.fit and Font.fit(name, room) or name, boxX + win.x, ty)
+  if tone then Font.endTwoTone(); tone = nil; love.graphics.setColor(0, 0, 0, 1) end
 
   -- THE FALLBACK, and it is the whole of what this function used to do.
   -- A cache imported before the digit strip existed has no tiles to blit, so
@@ -1896,7 +1983,9 @@ end
 -- to draw the message box and nothing else.
 function Gen4Battle.menuPresentation(battle, phase)
   phase = phase or (battle and battle.phase)
-  if phase ~= "menu" and phase ~= "moveSelect" then return nil, nil end
+  if phase ~= "menu" and phase ~= "moveSelect" and phase ~= "targetSelect" then
+    return nil, nil
+  end
   local up, SecondScreen = bottomScreenUp(battle and battle.game)
   if up then return "bottom", SecondScreen end
   if Gen4Battle.hasSubscreenArt(battle) then return "compact", SecondScreen end
@@ -1997,6 +2086,12 @@ function Gen4Battle.drawTextArea(battle)
     return
   end
 
+  -- With the menus on the bottom screen the top box keeps the cartridge's
+  -- prompt for the whole choice -- the action menu and the move list alike.
+  if presentation == "bottom" and Gen4Battle.hasSubscreenArt(battle) then
+    Gen4Battle.drawWhatWill(battle)
+  end
+
   if phase == "menu" then
     if presentation == "bottom"
        and Gen4Battle.drawBottomScreen(battle, SecondScreen, "action") then
@@ -2073,6 +2168,27 @@ function Gen4Battle.drawTextArea(battle)
       Font.drawCode(Theme.cursorHollow, T.x + sc * GAP, rows[sr + 1] or rows[2])
     end
     Gen4Battle.drawMoveDetail(battle)
+    return
+  end
+
+  -- A DOUBLE BATTLE'S "AT WHOM?" -- the cartridge's target buttons on the
+  -- bottom screen; with that put away, the candidates' names in the box.
+  if phase == "targetSelect" then
+    if presentation == "bottom"
+       and Gen4Battle.drawBottomScreen(battle, SecondScreen, "target") then
+      return
+    end
+    if presentation == "compact" then
+      Font.drawDialogueBox(B.tx, B.ty, B.tw, B.th)
+    end
+    g.setColor(0, 0, 0, 1)
+    for i, b in ipairs(battle.targetChoices or {}) do
+      local c, r = (i - 1) % 2, math.floor((i - 1) / 2)
+      Font.draw(b.name or "", T.x + 10 + c * GAP, ROWS[r + 1] or ROWS[2])
+    end
+    local ti = battle.targetIndex or 1
+    Font.drawCode(Theme.cursor, T.x + ((ti - 1) % 2) * GAP,
+                  ROWS[math.floor((ti - 1) / 2) + 1] or ROWS[2])
     return
   end
 
@@ -2822,6 +2938,11 @@ function Gen4Battle.bottomHit(x, y, over)
       local slot = Gen4Battle.COMPACT_SLOTS[i]
       if inside(slot and Gen4Battle.ACTION_RECTS[slot.art]) then return "action", i end
     end
+  elseif over == "target" then
+    if inside(Gen4Battle.TARGET_CANCEL) then return "cancel" end
+    for slot = 0, 3 do
+      if inside(Gen4Battle.TARGET_RECTS[slot]) then return "target", slot end
+    end
   elseif over == "moves" then
     -- CANCEL FIRST.  Its bar overlaps nothing, but the move rects run to y 144
     -- and the bar starts at 152, so testing it last would still be right and
@@ -2835,6 +2956,17 @@ function Gen4Battle.bottomHit(x, y, over)
 end
 function Gen4Battle.drawBottomScreen(battle, SecondScreen, over)
   local base = subscreenLayer(battle, "base")
+  if over == "target" then
+    local layer = subscreenLayer(battle, Gen4Battle.TARGET_LAYER)
+    if not (base and layer) then return false end
+    SecondScreen.draw(battle.game, function()
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(base, 0, 0)
+      Gen4Battle.drawTargetSelect(battle, layer)
+    end)
+    SecondScreen.drawFrame(battle.game)
+    return true
+  end
   local top = subscreenLayer(battle, over)
   if not (base or top) then return false end
   local g = love.graphics
@@ -2855,11 +2987,11 @@ function Gen4Battle.drawBottomScreen(battle, SecondScreen, over)
     -- Over the buttons and UNDER the cursor wash, so the highlight tints the
     -- word with the button rather than covering it.
     Gen4Battle.drawBottomLabels(battle, over)
-    -- The cursor, in the engine's own marker rather than the cartridge's
-    -- `cursor` tilemap: that layer draws all four move outlines at once and
-    -- has nothing for the action buttons, so it cannot say WHICH is chosen.
-    local Theme = require("src.ui.Theme")
-    local Font = require("src.render.Font")
+    -- The party balls along the top, on the action menu only.
+    if over == "action" then pcall(Gen4Battle.drawSubscreenBalls, battle) end
+    -- THE CURSOR IS THE CARTRIDGE'S: cursor_renderer.c's four red corners at
+    -- the chosen button's touch rect inset by eight.  Only a cache without
+    -- gen4_battle_art falls back to the engine's own marker and wash.
     local rect
     if over == "action" then
       local slot = Gen4Battle.COMPACT_SLOTS[battle.menuIndex or 1]
@@ -2867,7 +2999,9 @@ function Gen4Battle.drawBottomScreen(battle, SecondScreen, over)
     else
       rect = Gen4Battle.MOVE_RECTS[battle.moveIndex or 1]
     end
-    if rect then
+    if rect and not Gen4Battle.drawCursorCorners(battle, rect) then
+      local Theme = require("src.ui.Theme")
+      local Font = require("src.render.Font")
       g.setColor(1, 1, 1, 0.25)
       g.rectangle("fill", rect.left, rect.top,
                   rect.right - rect.left, rect.bottom - rect.top)
@@ -2917,6 +3051,381 @@ function Gen4Battle.drawThrownBall(battle)
   return true
 end
 
+-- ---------------------------------------------------------------------------
+-- THE CARTRIDGE'S ANIMATED BATTLE SPRITES (src/import/Gen4BattleArt.lua):
+-- the subscreen cursor, the subscreen party balls and the top screen's party
+-- gauge.  Each picture carries the cell's own origin, so a sprite is placed at
+-- the position the cartridge gives its OAM and nothing is hand-offset here.
+-- ---------------------------------------------------------------------------
+
+local battleArt = battleArtData
+Gen4Battle.hasBattleArt = function(battle) return battleArt(battle) ~= nil end
+
+local function drawArt(battle, key, x, y, alpha)
+  local art = battleArt(battle)
+  local row = art and art[key]
+  if not row then return false end
+  local img = image(row.path)
+  if not img then return false end
+  love.graphics.setColor(1, 1, 1, alpha or 1)
+  love.graphics.draw(img, math.floor(x + (row.originX or 0)), math.floor(y + (row.originY or 0)))
+  love.graphics.setColor(1, 1, 1, 1)
+  return true
+end
+
+-- The frame of `prefix` sequence `seq` showing `tick` frames in (looping),
+-- using the sequence's own durations.
+local function animFrame(battle, prefix, seq, tick)
+  local _, anims = battleArt(battle)
+  local durations = anims and anims[prefix] and anims[prefix][seq]
+  if not durations or #durations == 0 then return 0 end
+  local total = 0
+  for _, d in ipairs(durations) do total = total + math.max(1, d) end
+  local t = (math.floor(tonumber(tick) or 0)) % total
+  for i, d in ipairs(durations) do
+    t = t - math.max(1, d)
+    if t < 0 then return i - 1 end
+  end
+  return 0
+end
+Gen4Battle.animFrame = animFrame
+
+-- THE KEYPAD CURSOR (cursor_renderer.c).  Four corner sprites, sequences 0..3,
+-- placed by BattleSystem_DrawCursor at the touch rect inset by eight on every
+-- side -- (left+8, top+8), (right-8, top+8), (left+8, bottom-8),
+-- (right-8, bottom-8) -- which is how every subscreen menu calls it.  The
+-- corners pulse through their four frames at six ticks each.
+Gen4Battle.CURSOR_INSET = 8
+function Gen4Battle.drawCursorCorners(battle, rect)
+  if not (rect and battleArt(battle)) then return false end
+  local i = Gen4Battle.CURSOR_INSET
+  local x1, x2 = rect.left + i, rect.right - i
+  local y1, y2 = rect.top + i, rect.bottom - i
+  local tick = battle.frame or 0
+  local spots = { { x1, y1 }, { x2, y1 }, { x1, y2 }, { x2, y2 } }
+  local drew = true
+  for seq = 0, 3 do
+    local f = animFrame(battle, "cursor", seq, tick)
+    local p = spots[seq + 1]
+    drew = drawArt(battle, ("cursor_%d_%d"):format(seq, f), p[1], p[2]) and drew
+  end
+  return drew
+end
+
+-- THE STOCK STATUS OF A PARTY (BattleController_SetCommandSelection): eggs
+-- and empty slots skipped and the rest packed to the front, each 1 alive,
+-- 2 fainted, 3 alive with a status condition; slots past the party are 0.
+Gen4Battle.STOCK_NONE, Gen4Battle.STOCK_ALIVE = 0, 1
+Gen4Battle.STOCK_FAINTED, Gen4Battle.STOCK_STATUS = 2, 3
+function Gen4Battle.stockStatus(party)
+  local out, n = { 0, 0, 0, 0, 0, 0 }, 0
+  for _, mon in ipairs(party or {}) do
+    local egg = mon and (mon.isEgg or mon.egg)
+    if mon and mon.species and mon.species ~= 0 and not egg and n < 6 then
+      n = n + 1
+      if (tonumber(mon.hp) or 0) <= 0 then
+        out[n] = Gen4Battle.STOCK_FAINTED
+      elseif mon.status and mon.status ~= "" then
+        out[n] = Gen4Battle.STOCK_STATUS
+      else
+        out[n] = Gen4Battle.STOCK_ALIVE
+      end
+    end
+  end
+  return out
+end
+
+local function playerParty(battle)
+  local save = battle and battle.game and battle.game.save
+  return (battle and battle.playerParty) or (save and save.party) or {}
+end
+
+-- GetBallStatusAnimID: 0 -> 0, 1 -> 1, 2 (fainted) -> 3, 3 (status) -> 2.
+Gen4Battle.BALL_STATUS_ANIM = { [0] = 0, 1, 3, 2 }
+
+-- THE BOTTOM SCREEN'S PARTY BALLS, on the action menu only
+-- (BattleSubscreen_ShowBallSprites at command selection, hidden again the
+-- moment a menu is left).  The player's six at (12 + 19i, 13), the foe's six
+-- at (246 - 12i, 9) and only in a trainer battle.
+function Gen4Battle.drawSubscreenBalls(battle)
+  if not battleArt(battle) then return false end
+  local mine = Gen4Battle.stockStatus(playerParty(battle))
+  for i = 0, 5 do
+    drawArt(battle, "stock_player_" .. Gen4Battle.BALL_STATUS_ANIM[mine[i + 1]], 12 + 19 * i, 13)
+  end
+  if battle.kind == "trainer" then
+    local theirs = Gen4Battle.stockStatus(battle.enemyParty)
+    for i = 0, 5 do
+      drawArt(battle, "stock_enemy_" .. Gen4Battle.BALL_STATUS_ANIM[theirs[i + 1]], 246 - 12 * i, 9)
+    end
+  end
+  return true
+end
+
+-- THE TARGET SELECT (BattleSubscreen_DrawTargetSelectMenu), a double battle's
+-- "at whom?".  Its tilemap is pl_batt_bg 0x2C -- the layer this port's
+-- Gen4Subscreen calls `moves_pressed`, which is in fact the four target
+-- buttons (the foes' two in orange along the top, the player's two in grey
+-- underneath) over a CANCEL bar -- and a slot that cannot be chosen is
+-- cleared back to the base panel (ClearMenuSlotBg).
+--
+-- Slot i is battler type 2 + i, i.e. this engine's BattleState.POS order:
+--   0 player left   { 88..144,   0..120 }     name centred (60, 116)
+--   1 foe left      {  8.. 80, 136..255 }     name centred (196, 32)
+--   2 player right  { 88..144, 136..255 }     name centred (196, 116)
+--   3 foe right     {  8.. 80,   0..120 }     name centred (60, 32)
+-- (sTargetSelectMenuTouchRects, sTargetSelectNamePositions), CANCEL at
+-- (128, 178) on { 152..192, 8..248 }.  Names are FONT_SUBSCREEN on sub OBJ
+-- palette 6, TEXT_COLOR(1,2,3) for the odd slots and (4,5,6) for the even.
+Gen4Battle.TARGET_LAYER = "moves_pressed"
+Gen4Battle.TARGET_RECTS = {
+  [0] = { top = 88, bottom = 144, left = 0,   right = 120 },
+  [1] = { top = 8,  bottom = 80,  left = 136, right = 255 },
+  [2] = { top = 88, bottom = 144, left = 136, right = 255 },
+  [3] = { top = 8,  bottom = 80,  left = 0,   right = 120 },
+}
+Gen4Battle.TARGET_CANCEL = { top = 152, bottom = 192, left = 8, right = 248 }
+Gen4Battle.TARGET_NAME_SPOTS = {
+  [0] = { x = 60, y = 116 }, [1] = { x = 196, y = 32 },
+  [2] = { x = 196, y = 116 }, [3] = { x = 60, y = 32 },
+}
+
+-- slot -> index into battle.targetChoices, for the slots that can be chosen
+function Gen4Battle.targetSlots(battle)
+  local out = {}
+  for i, b in ipairs((battle and battle.targetChoices) or {}) do
+    local slot = tonumber(b and b.position)
+    if slot and Gen4Battle.TARGET_RECTS[slot] then out[slot] = i end
+  end
+  return out
+end
+
+local targetQuads = {}
+function Gen4Battle.drawTargetSelect(battle, layer)
+  local Font = require("src.render.Font")
+  local Strings = require("src.core.Strings")
+  local g = love.graphics
+  local slots = Gen4Battle.targetSlots(battle)
+  local _, anims = battleArt(battle)
+  local ink = anims and anims.subscreenInk and anims.subscreenInk.target
+  local function quad(r)
+    local key = tostring(layer) .. r.left .. "," .. r.top
+    local q = targetQuads[key]
+    if not q then
+      local iw, ih = layer:getDimensions()
+      q = g.newQuad(r.left, r.top, r.right - r.left, r.bottom - r.top, iw, ih)
+      targetQuads[key] = q
+    end
+    return q
+  end
+  g.setColor(1, 1, 1, 1)
+  if layer then
+    for slot, r in pairs(Gen4Battle.TARGET_RECTS) do
+      if slots[slot] then g.draw(layer, quad(r), r.left, r.top) end
+    end
+    g.draw(layer, quad(Gen4Battle.TARGET_CANCEL), Gen4Battle.TARGET_CANCEL.left, Gen4Battle.TARGET_CANCEL.top)
+  end
+  local faced = Font.pushFace("subscreen")
+  for slot, i in pairs(slots) do
+    local b = battle.targetChoices[i]
+    local name = b and b.name or ""
+    local okP, Pokemon = pcall(require, "src.pokemon.Pokemon")
+    local gender = okP and Pokemon.genderOf and b and b.mon
+                   and Pokemon.genderOf(battle.data, b.mon)
+    if gender == "male" then name = name .. "♂" elseif gender == "female" then name = name .. "♀" end
+    local a, s = 4, 5
+    if slot % 2 == 1 then a, s = 1, 2 end
+    local tone = ink and ink[a] and Font.beginTwoTone(rgb01(ink[a]), rgb01(ink[s]))
+    if not tone then g.setColor(0, 0, 0, 1) end
+    local spot = Gen4Battle.TARGET_NAME_SPOTS[slot]
+    local tw = Font.width and Font.width(name) or (#name * 8)
+    Font.draw(name, math.floor(spot.x - tw / 2), spot.y - 8)
+    if tone then Font.endTwoTone() end
+  end
+  if faced then Font.popFace() end
+  -- CANCEL in the bar's own colours, as the move list's is
+  drawLabelAt(battle, Strings("CANCEL"), Gen4Battle.CANCEL_LABEL_SPOT)
+  local chosen = battle.targetChoices and battle.targetChoices[battle.targetIndex or 1]
+  local rect = chosen and Gen4Battle.TARGET_RECTS[tonumber(chosen.position) or -1]
+  if rect then Gen4Battle.drawCursorCorners(battle, rect) end
+  g.setColor(1, 1, 1, 1)
+  return true
+end
+
+-- THE PARTY GAUGE (party_gauge.c), shown at the start of a trainer battle --
+-- subscript_start_encounter: ShowBattleStartPartyGauge for both sides with
+-- the encounter message, the foe's hidden as it sends out its first Pokemon
+-- and the player's as the player sends out theirs.
+--
+-- The arrow slides in at 18 px/frame to x 224 (ours, y 120) or 32 (theirs,
+-- y 56).  Ball s waits 3s + 5 frames, rolls in at 18 px/frame to its
+-- overflow spot (128 + 34 + 15s - 6 ours, 128 - 34 - 15s + 6 theirs), and
+-- once all six are in they ease back at 6 px/frame to their rest
+-- (162 + 16s / 94 - 16s), six pixels above the arrow.  Hiding: the arrow
+-- fades over sixteen frames after a four-frame delay, drifting 4 px/frame,
+-- and each ball leaves at 12 px/frame after 4 + 3s frames.
+Gen4Battle.GAUGE = {
+  ours   = { arrowSeq = 8, arrowFrom = 352, arrowTo = 224, arrowY = 120,
+             ballFrom = 276, ballSeq = { [1] = 3, [2] = 5, [3] = 4 } },
+  theirs = { arrowSeq = 7, arrowFrom = -96, arrowTo = 32, arrowY = 56,
+             ballFrom = -20, ballSeq = { [1] = 0, [2] = 2, [3] = 1 } },
+}
+Gen4Battle.GAUGE_EMPTY_SEQ = 6
+
+local function gaugeWanted(battle, side)
+  if battle.kind ~= "trainer" then return false end
+  if side == "theirs" then
+    return battle.introBalls and battle.showEnemyTrainer and not battle.enemySendingOut
+  end
+  return battle.showPlayerBack and not battle.sendingOut
+end
+
+-- Where everything is `t` frames after the gauge was shown; `hide` frames
+-- since it began to go, or nil.
+function Gen4Battle.gaugeLayout(side, t, hide)
+  local G = Gen4Battle.GAUGE[side]
+  local ours = side == "ours"
+  local out = { balls = {} }
+  local ax
+  if ours then ax = math.max(G.arrowTo, G.arrowFrom - 18 * t)
+  else ax = math.min(G.arrowTo, G.arrowFrom + 18 * t) end
+  local alpha = 1
+  if hide then
+    local fade = math.max(0, hide - 4)
+    alpha = math.max(0, 1 - fade / 16)
+    ax = ax + (ours and -4 or 4) * fade
+  end
+  out.arrow = { x = ax, y = G.arrowY, alpha = alpha }
+  -- every ball's arrival, so the ease-back starts when the last lands
+  local arrive, lastIn = {}, 0
+  for s = 0, 5 do
+    local over = ours and (162 + 15 * s - 6) or (94 - 15 * s + 6)
+    local dist = math.abs(G.ballFrom - over)
+    arrive[s] = 3 * s + 5 + math.ceil(dist / 18)
+    if arrive[s] > lastIn then lastIn = arrive[s] end
+  end
+  for s = 0, 5 do
+    local over = ours and (162 + 15 * s - 6) or (94 - 15 * s + 6)
+    local rest = ours and (162 + 16 * s) or (94 - 16 * s)
+    local delay = 3 * s + 5
+    local x, rolling, flipped
+    if t < delay then
+      x = nil
+    elseif t < arrive[s] then
+      local moved = 18 * (t - delay)
+      x = ours and math.max(over, G.ballFrom - moved) or math.min(over, G.ballFrom + moved)
+      rolling = t - delay
+    elseif t < lastIn then
+      x = over
+    else
+      local moved = 6 * (t - lastIn)
+      x = ours and math.min(rest, over + moved) or math.max(rest, over - moved)
+      flipped = true
+      if x ~= rest then rolling = t - lastIn end
+    end
+    if x and hide then
+      local go = hide - 4 - 3 * s
+      if go > 0 then x = x + (ours and -12 or 12) * go end
+      if alpha <= 0 or x < -16 or x > 256 + 16 then x = nil end
+    end
+    out.balls[s] = x and { x = x, y = G.arrowY - 6, rolling = rolling, flipped = flipped } or nil
+  end
+  out.done = hide and alpha <= 0
+  return out
+end
+
+function Gen4Battle.drawPartyGauges(battle)
+  if not battleArt(battle) then return false end
+  battle.gen4Gauge = battle.gen4Gauge or {}
+  local now = battle.frame or 0
+  for _, side in ipairs({ "theirs", "ours" }) do
+    local st = battle.gen4Gauge[side]
+    local want = gaugeWanted(battle, side)
+    if want and not st and battle.phase == "messages" and battle.current then
+      st = { shown = now }
+      battle.gen4Gauge[side] = st
+    elseif st and not want and not st.hidden then
+      st.hidden = now
+    end
+    if st and not st.finished then
+      local L = Gen4Battle.gaugeLayout(side, now - st.shown, st.hidden and (now - st.hidden))
+      if L.done then
+        st.finished = true
+      else
+        local G = Gen4Battle.GAUGE[side]
+        drawArt(battle, ("gauge_%d_0"):format(G.arrowSeq), L.arrow.x, L.arrow.y, L.arrow.alpha)
+        local party = side == "ours" and playerParty(battle) or battle.enemyParty
+        local stock = Gen4Battle.stockStatus(party)
+        local other = Gen4Battle.GAUGE[side == "ours" and "theirs" or "ours"]
+        for s = 0, 5 do
+          local b = L.balls[s]
+          if b then
+            local status = stock[s + 1]
+            local seq = status == 0 and Gen4Battle.GAUGE_EMPTY_SEQ
+                        or (b.flipped and other or G).ballSeq[status]
+            local f = 0
+            if b.rolling and seq ~= Gen4Battle.GAUGE_EMPTY_SEQ then
+              f = animFrame(battle, "gauge", seq, b.rolling)
+            end
+            drawArt(battle, ("gauge_%d_%d"):format(seq, f), b.x, b.y, L.arrow.alpha)
+          end
+        end
+      end
+    end
+  end
+  return true
+end
+
+-- WHICH PARTY SCREEN A PLATINUM BATTLE OPENS.  With the bottom screen up it
+-- is the cartridge's own battle party list on that screen
+-- (src/ui/Gen4BattleParty.lua) while the battle stays on top; put away, or
+-- in a cache without that art, or with a mod serving "PartyMenu", it is the
+-- field's party screen as before.  nil means "PartyMenu".
+function Gen4Battle.partyScreenId(battle)
+  if not (battle and battle.gen4Layout and battle:gen4Layout()) then return nil end
+  local data = battle.data or (battle.game and battle.game.data)
+  if data and data.screens and data.screens.PartyMenu then return nil end
+  if not bottomScreenUp(battle.game) then return nil end
+  local ok, P = pcall(require, "src.ui.Gen4BattleParty")
+  if ok and P.available(data) then return "Gen4BattleParty" end
+  return nil
+end
+
+-- "WHAT WILL X DO?" -- BattleStrings 921 (922 "What will X throw?" in the
+-- Great Marsh), printed at once (speed 0) by BattleDisplay's command
+-- selection and left in the message box for as long as the player is
+-- choosing on the bottom screen.
+Gen4Battle.WHAT_WILL = { pokemon = 921, throw = 922 }
+function Gen4Battle.whatWillText(battle)
+  local G = require("src.battle.Gen4Safari")
+  local Strings = require("src.core.Strings")
+  if battle.gen4Safari then
+    local who = (battle.game and battle.game.save and battle.game.save.playerName)
+                or (battle.game and battle.game.save and battle.game.save.name) or "PLAYER"
+    return G.text(battle.data, Gen4Battle.WHAT_WILL.throw, who)
+           or Strings("What will %s throw?", who)
+  end
+  local chooser = battle.menuBattler and battle:menuBattler() or battle.player
+  local name = chooser and chooser.name or ""
+  return G.text(battle.data, Gen4Battle.WHAT_WILL.pokemon, name)
+         or Strings("What will %s do?", name)
+end
+
+function Gen4Battle.drawWhatWill(battle)
+  local Font = require("src.render.Font")
+  local T = Gen4Battle.MESSAGE_TEXT
+  local text = Gen4Battle.whatWillText(battle)
+  if not text or text == "" then return end
+  love.graphics.setColor(0, 0, 0, 1)
+  local row = 1
+  for line in (text .. "\n"):gmatch("([^\n]*)\n") do
+    if row > 2 then break end
+    Font.draw(line, T.x, Gen4Battle.MESSAGE_ROWS[row])
+    row = row + 1
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
 function Gen4Battle.draw(battle)
   local g = love.graphics
   battle:drawBattleField()
@@ -2947,6 +3456,10 @@ function Gen4Battle.draw(battle)
   local boxes = false
   local okBoxes, result = pcall(Gen4Battle.drawHealthboxes, battle)
   if okBoxes then boxes = result end
+
+  -- The trainer battle's party gauges, over the field and under the message
+  -- box (they are OBJs at priority 8-10, the box is BG1).
+  pcall(Gen4Battle.drawPartyGauges, battle)
 
   -- The name-and-level panels are STILL the engine's when Platinum's boxes have
   -- not assembled, and the engine's are Game Boy geometry -- so they keep the

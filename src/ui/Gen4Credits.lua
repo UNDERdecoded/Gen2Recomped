@@ -25,7 +25,8 @@
 -- {COLOR n} picks text.NCLR's pair 2n+1 / 2n+2. START skips to FIN only when
 -- the game had been cleared before (main.c:195).
 --
--- Not drawn: the 3D trees, lampposts and the bike's eye-blink tiles.
+-- The 3D trees and lampposts are the cartridge's models (Gen4Model); not drawn:
+-- the bike's eye-blink tiles; the props' lighting is one tint per scene (PROP_TINT).
 -- Music: SEQ_BLD_ENDING (1186).
 
 local Font = require("src.render.Font")
@@ -171,6 +172,119 @@ function Credits:drawRoll(topY, clipTop, clipBottom)
   g.setScissor()
 end
 
+-- THE 3D PROPS (common.c sEndCredits3DModelAnims, EndCreditsCommon_Scroll3DModels;
+-- the camera from main.c EndCredits_InitCamera). Each row is `count` copies of
+-- one model on a diagonal -- start - offset x j, in fx32 -- all sliding
+-- offset x count / speed a frame toward the start and, on reaching it,
+-- jumping `count` places back. The night's first row changes model as each
+-- tree comes round: a lamppost every eighth, otherwise sEndCreditsNightTreeTypes
+-- from the sixteenth on, snowy past its end.
+local OFFSET = { 116736, 178176, 290816 }
+Credits.ROWS = {
+  morning = { { model = "background_morning_tree_1", count = 14, speed = 940, start = { 415744, -217088, 28672 } },
+              { model = "background_morning_tree_2", count = 14, speed = 1560, start = { 634880, -217088, 28672 } } },
+  day = { { model = "background_day_lamppost", count = 14, speed = 440, start = { 415744, -217088, 28672 } } },
+  night = { { night = true, count = 16, speed = 940, start = { 415744, -217088, 28672 } },
+            { model = "background_night_tree_2", count = 14, speed = 1560, start = { 634880, -217088, 28672 } } },
+}
+-- 0 a tree, 1 a snowy tree, 3 a lamppost (bike_night.c)
+local NIGHT_TYPES = { 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 1, 1, 0, 0, 1, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1, 1, 1 }
+local NIGHT_MODELS = { [0] = "background_night_tree_1_normal", [1] = "background_night_tree_1_snowy",
+                       [3] = "background_night_lamppost" }
+local function nightType(m)
+  if m % 8 == 0 then return 3 end
+  if m >= #NIGHT_TYPES then return 1 end
+  return NIGHT_TYPES[m + 1]
+end
+local EYE = { -31712 / 4096, -142304 / 4096, 496744 / 4096 }
+local LOOK = { -31712 / 4096, -67780 / 4096, -5704 / 4096 }
+local FLIP_Y = { 1, 0, 0, 0, 0, -1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 }
+
+local function multiply(a, b)
+  local out = {}
+  for row = 0, 3 do
+    for col = 0, 3 do
+      local sum = 0
+      for k = 0, 3 do sum = sum + a[row * 4 + k + 1] * b[k * 4 + col + 1] end
+      out[row * 4 + col + 1] = sum
+    end
+  end
+  return out
+end
+
+function Credits:prop(name)
+  self.props = self.props or {}
+  if self.props[name] == nil then
+    local rec = ((self.data.gen4_ending or {}).models or {})[name]
+    local ok, model = false, nil
+    if rec then ok, model = pcall(require("src.render.Gen4Model").new, rec) end
+    self.props[name] = ok and model or false
+  end
+  return self.props[name] or nil
+end
+
+-- where each prop of a row stands `n` frames into its scene, and which model
+function Credits.propPlaces(row, n)
+  local out = {}
+  local moved = n * row.count / row.speed
+  for j = 0, row.count - 1 do
+    local s = (j - moved) % row.count
+    local name = row.model
+    if row.night then
+      local wraps = moved >= j and (math.floor((moved - j) / row.count) + 1) or 0
+      name = NIGHT_MODELS[wraps == 0 and nightType(j) or nightType(16 + (wraps - 1) * row.count + j)]
+    end
+    out[#out + 1] = { name = name, x = (row.start[1] - OFFSET[1] * s) / 4096,
+      y = (row.start[2] - OFFSET[2] * s) / 4096, z = (row.start[3] - OFFSET[3] * s) / 4096 }
+  end
+  return out
+end
+
+function Credits:drawProps(s)
+  local rows = Credits.ROWS[s.time]
+  if not rows or self.noProps then return end
+  local Gen4Model = require("src.render.Gen4Model")
+  if not self.propTarget then
+    self.propTarget, self.propDepth = Gen4Model.newTarget(256, 192)
+    if not self.propTarget then self.noProps = true return end
+  end
+  local g = love.graphics
+  local previous = { g.getCanvas() }
+  g.setCanvas({ self.propTarget, depthstencil = self.propDepth })
+  g.clear(0, 0, 0, 0, true, true)
+  local vp = multiply(FLIP_Y, multiply(Gen4Model.perspective(math.rad(44), 256 / 192, 1, 900),
+                                       Gen4Model.lookAt(EYE, LOOK)))
+  local n = self.frame - s.from
+  for _, row in ipairs(rows) do
+    for _, p in ipairs(Credits.propPlaces(row, n)) do
+      local model = p.name and self:prop(p.name)
+      if model then
+        model:draw(multiply(vp, { 1, 0, 0, p.x, 0, 1, 0, p.y, 0, 0, 1, p.z, 0, 0, 0, 1 }))
+      end
+    end
+  end
+  g.setCanvas(previous[1] and previous or nil)
+  local t = Credits.PROP_TINT[s.time] or { 1, 1, 1 }
+  g.setColor(t[1], t[2], t[3], 1)
+  g.draw(self.propTarget, 0, 0)
+  g.setColor(1, 1, 1, 1)
+end
+
+-- EndCredits_Draw3DModels' light and material per scene, reduced to one tint:
+-- ambient + diffuse x light colour x 0.7 (the light's slant onto an upright
+-- prop) + emission, each from its GX_RGB -- e.g. the morning's (28, 12, 6)
+-- light makes its trees orange, the night's (11, 11, 16) a cool blue
+local function lit(amb, diff, light, emi)
+  local out = {}
+  for i = 1, 3 do out[i] = math.min(1, (amb[i] + diff[i] * light[i] / 31 * 0.7 + emi[i]) / 31) end
+  return out
+end
+Credits.PROP_TINT = {
+  morning = lit({ 11, 12, 12 }, { 15, 15, 15 }, { 28, 12, 6 }, { 8, 8, 7 }),
+  day = lit({ 9, 11, 11 }, { 15, 15, 15 }, { 22, 22, 20 }, { 14, 14, 14 }),
+  night = lit({ 10, 10, 10 }, { 14, 14, 16 }, { 11, 11, 16 }, { 14, 14, 16 }),
+}
+
 function Credits:drawBike(s)
   local g = love.graphics
   local img = self:art("credits_" .. s.time .. "_bottom")
@@ -179,6 +293,8 @@ function Credits:drawBike(s)
     g.draw(img, -scroll, 0)
     g.draw(img, 256 - scroll, 0)
   end
+  -- BG0's 3D, over the background (priority 3) and under the bike
+  self:drawProps(s)
   local bob = math.floor(self.frame / 8) % 2
   self:sprite("credits_bike_" .. self.who, 192, 160 + bob)
   self:sprite("credits_scarf_" .. self.who, 192, 160 + bob)

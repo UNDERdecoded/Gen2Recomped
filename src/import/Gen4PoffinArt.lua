@@ -139,10 +139,36 @@ function Gen4PoffinArt.images(rom)
   -- THE COOKING
   local cook = open(Gen4PoffinArt.COOK)
   if cook then
+    -- ov83_0223E15C: top_screen.NCLR's two palettes go to slots 2-3; the
+    -- screen's map is re-coloured to slot 3 (the file's second palette) and
+    -- each cook's plate is a 10 x 4 piece of player_name.NSCR in slot 2 (the
+    -- first), cut at (col x 10, row x 4) and put at tile (5 + col x 12,
+    -- 13 + row x 5) -- ov83_0223DFAC
     local topPal = cook.pal("top_screen.NCLR")
+    local function recolour(map, row)
+      if not map then return nil end
+      local cells = {}
+      for k, c in ipairs(map.cells) do
+        cells[k] = { tile = c.tile, flipX = c.flipX, flipY = c.flipY, palette = row }
+      end
+      return { width = map.width, height = map.height, cells = cells }
+    end
     for _, which in ipairs({ "single", "multi" }) do
-      local pic = G.compose(cook.map("top_screen_" .. which .. ".NSCR"), cook.tiles("top_screen.NCGR"), topPal)
+      local pic = G.compose(recolour(cook.map("top_screen_" .. which .. ".NSCR"), 1), cook.tiles("top_screen.NCGR"), topPal)
       out["cook_top_" .. which] = backdrop(pic, topPal and topPal[1])
+    end
+    local plates = G.compose(recolour(cook.map("player_name.NSCR"), 0), cook.tiles("top_screen.NCGR"), topPal)
+    if plates then
+      for row = 0, 1 do
+        for col = 0, 1 do
+          local rows = {}
+          for y = 0, 31 do
+            local at = ((row * 32 + y) * plates.width + col * 80) * 4
+            rows[#rows + 1] = plates.rgba:sub(at + 1, at + 80 * 4)
+          end
+          out[("cook_plate_%d_%d"):format(col, row)] = { width = 80, height = 32, rgba = table.concat(rows) }
+        end
+      end
     end
     out.cook_textbox = G.compose(cook.map("textbox.NSCR"), cook.tiles("textbox.NCGR"), cook.pal("textbox.NCLR"))
     out.cook_cloth = bitmap(cook.tiles("tablecloth.NCGR"), cook.pal("tablecloth.NCLR"), 256)

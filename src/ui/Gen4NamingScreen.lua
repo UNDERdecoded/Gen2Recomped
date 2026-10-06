@@ -44,15 +44,23 @@
 --     per page rather than stored in the tilemap, which is why opening the
 --     archive alone would still have left a frame with nothing in it.
 --
--- WHAT IS STILL NOT THE CARTRIDGE'S, said plainly rather than quietly skipped:
--- the home row's BUTTON ART and the CURSOR.  Both are the sprite cell bank at
--- members 10/12/14, and composing one is a different job from composing a
--- tilemap.  They are the engine's own frames, drawn at the cartridge's own
--- positions.
+--   * THE HOME ROW, THE CURSOR AND THE ENTRY ARE THE SPRITE BANK (members
+--     1/10/12/14, Gen4Naming.images, cache `gen4_naming_art`): the overlay
+--     frame with its SELECT / B BUTTON / START hints, the UPPER / lower /
+--     Others tabs (the page's bright), BACK and OK with their pressed frames
+--     -- every label baked into the art -- the glowing cursor, the
+--     underscores, the header icon and a Pokemon's gender mark. Children of
+--     the overlay at x 22, so they wiggle with it when a page lands.
+--   * THE HOME ROW HAS NO SPACE KEY: columns 7-8 are NMS_CONTROL_SKIP and the
+--     cursor never stops there.
+--
+-- The prompt is the BOTTOM screen's message box; with no second screen it
+-- sits in the top strip beside the icon.
 
 local Font = require("src.render.Font")
 local Logger = require("src.core.Logger")
 local Strings = require("src.core.Strings")
+local Gen4Naming = require("src.import.Gen4Naming")
 
 local Gen4NamingScreen = {}
 Gen4NamingScreen.__index = Gen4NamingScreen
@@ -67,18 +75,7 @@ Gen4NamingScreen.COLS = 13
 -- cells; the drawing merges them and the cursor does not.
 local HOME = {
   "upper", "upper", "lower", "lower", "others", "others",
-  "space", "space", "back", "back", "back", "ok", "ok",
-}
-
--- WHAT EACH BUTTON SAYS, AND THESE WORDS ARE THE PORT'S.  The cartridge's home
--- row is six wordless pictures out of the sprite bank, which is not composed
--- here -- so there is nothing to copy and something has to be written.  They
--- are short because the buttons are two cells wide (three for BACK), and a
--- label that does not fit its own button is the fault this screen was reported
--- for in the first place.
-local LABEL = {
-  upper = "A-Z", lower = "a-z", others = "SYM",
-  space = "SPC", back = "BACK", ok = "OK",
+  "skip", "skip", "back", "back", "back", "ok", "ok",
 }
 
 -- The three English pages, five rows of thirteen each.  `sCharCodesUpper0..4`
@@ -174,6 +171,8 @@ function Gen4NamingScreen.new(game, opts)
   self.presets = opts.presets
   self.choice = self.presets and #self.presets > 0 and 1 or nil
   self.kind = opts.kind
+  self.female = opts.female
+  self.mon = opts.mon
   self.species = opts.species or (opts.mon and opts.mon.species)
 
   self.glyphs = {}
@@ -182,9 +181,14 @@ function Gen4NamingScreen.new(game, opts)
   end
 
   self.page = 1
-  self.row, self.col = 1, 1   -- 1 is the home row; 2..6 are the characters
+  -- 1 is the home row; 2..6 are the characters. The cursor starts hidden on
+  -- the first key, (0, 1) in the app's terms (ns.c 2584-2587).
+  self.row, self.col = 2, 1
 
   self.art = (game.data or {}).gen4_naming or nil
+  self.sprites = (game.data or {}).gen4_naming_art or nil
+  self.ink = (game.data or {}).gen4_naming_ink or nil
+  self.glow, self.ticks, self.cursorTick = 180, 0, 0
   self.cache = {}
   if not self.art then
     Logger.warn("gen4 naming screen: this cache carries no `gen4_naming` "
@@ -243,6 +247,28 @@ function Gen4NamingScreen:typed()
   return table.concat(self.glyphs)
 end
 
+-- -------------------------------------------------------------- the cursor --
+
+-- Where the cursor sprite stands (NamingScreen_UpdateCursorSpritePosition,
+-- ns.c 2591-2627): on a key at (26 + 16 col, 91 + 19 row); on the home row at
+-- sHomeRowCursorXCoords, y 68, the bracket for a tab or the wide one for
+-- BACK / OK.
+local HOME_BUTTON = { upper = 1, lower = 2, others = 3, back = 6, ok = 7 }
+function Gen4NamingScreen:cursorPlace()
+  if self.row == 1 then
+    local id = HOME[self.col]
+    local n = HOME_BUTTON[id] or 1
+    return Gen4Naming.HOME_CURSOR_X[n], 68, (id == "back" or id == "ok") and "cursor_wide" or "cursor_tab"
+  end
+  return 26 + 16 * (self.col - 1), 91 + 19 * (self.row - 2), nil
+end
+
+-- every reposition starts the glow at 180 degrees (ns.c 2627)
+function Gen4NamingScreen:placed()
+  self.glow = 180
+  self.cursorTick = 0
+end
+
 function Gen4NamingScreen:press(cell)
   if not cell then return end
   if cell.kind == "char" then
@@ -250,48 +276,94 @@ function Gen4NamingScreen:press(cell)
     -- cartridge's CHAR_SPACE cells do in the middle of a page.
     if cell.value ~= "" and #self.glyphs < self.maxLen then
       self.glyphs[#self.glyphs + 1] = cell.value
+      -- the cursor's pop (seq 60): a dot swelling and shrinking, 2 ticks a
+      -- frame; then, if the name is full, the cursor goes to OK
+      self.pop = { tick = 0, x = select(1, self:cursorPlace()), y = select(2, self:cursorPlace()) }
     end
     return
   end
   local id = cell.value
-  if id == "upper" then self.page = 1
-  elseif id == "lower" then self.page = 2
-  elseif id == "others" then self.page = 3
-  elseif id == "space" then
-    if #self.glyphs < self.maxLen then self.glyphs[#self.glyphs + 1] = " " end
+  if id == "upper" then self:turnTo(1)
+  elseif id == "lower" then self:turnTo(2)
+  elseif id == "others" then self:turnTo(3)
   elseif id == "back" then
-    if #self.glyphs > 0 then self.glyphs[#self.glyphs] = nil end
+    -- BACK animates only when something was deleted (ns.c 2934-2970)
+    if #self.glyphs > 0 then
+      self.glyphs[#self.glyphs] = nil
+      self.pressed = { id = "back", tick = 0 }
+    end
   elseif id == "ok" then
+    self.pressed = { id = "ok", tick = 0 }
     self:close(self:typed())
   end
 end
 
-function Gen4NamingScreen:move(dx, dy)
-  local rows, cols = Gen4NamingScreen.ROWS, Gen4NamingScreen.COLS
-  if dy ~= 0 then
-    self.row = (self.row - 1 + dy) % rows + 1
-  end
-  if dx ~= 0 then
-    if self.row == 1 then
-      -- OFF THE BUTTON IN ONE STEP.  A button three cells wide would otherwise
-      -- take three presses to leave, which is not how it behaves on hardware:
-      -- the cursor sits on the BUTTON, so moving means moving to the next one.
-      local id = HOME[self.col]
-      local col = self.col
-      repeat
-        col = (col - 1 + dx) % cols + 1
-      until HOME[col] ~= id or col == self.col
-      self.col = col
-    else
-      self.col = (self.col - 1 + dx) % cols + 1
-    end
-  end
-  -- Landing on the home row from a character row keeps the column, which can
-  -- be in the middle of a wide button; that is fine, because the button is
-  -- selected by span rather than by its first cell.
+-- A page change (ns.c 2213-2265): the new panel slides in from the left, 24
+-- pixels a 30 Hz frame, the old one drops away 10 a frame, and when the new
+-- one lands the overlay and its buttons wiggle.
+function Gen4NamingScreen:turnTo(page)
+  if page == self.page then return end
+  self.slide = { from = self.page, frame = 0 }
+  self.page = page
 end
 
-function Gen4NamingScreen:update()
+-- THE MOVE (NamingScreen_MoveCursor, ns.c 2489-2526): the grid wraps; a step
+-- passes over SKIP cells and, on the home row, over the rest of the button it
+-- started on, so a wide button is left in one press.
+function Gen4NamingScreen:move(dx, dy)
+  local rows, cols = Gen4NamingScreen.ROWS, Gen4NamingScreen.COLS
+  local startId = self.row == 1 and HOME[self.col] or nil
+  local row, col = self.row, self.col
+  if dx ~= 0 then self.lastDx = dx end
+  for _ = 1, rows * cols do
+    row = (row - 1 + dy) % rows + 1
+    col = (col - 1 + dx) % cols + 1
+    local id = row == 1 and HOME[col] or nil
+    local same = dx ~= 0 and row == 1 and id == startId
+    if id ~= "skip" and not same then break end
+  end
+  self.row, self.col = row, col
+  self:placed()
+end
+
+-- 60 Hz ticks and the 30 Hz frames the app's logic runs on
+function Gen4NamingScreen:tickTimers(dt)
+  self.clock = (self.clock or 0) + (dt or 1 / 60) * 60
+  while self.clock >= 1 do
+    self.clock = self.clock - 1
+    self.ticks = (self.ticks or 0) + 1
+    self.cursorTick = (self.cursorTick or 0) + 1
+    if self.pop then
+      self.pop.tick = self.pop.tick + 1
+      if self.pop.tick >= 18 then
+        self.pop = nil
+        if #self.glyphs >= self.maxLen then self.row, self.col = 1, 12; self:placed() end
+      end
+    end
+    if self.pressed then
+      self.pressed.tick = self.pressed.tick + 1
+      if self.pressed.tick >= 8 then self.pressed = nil end
+    end
+    if self.ticks % 2 == 0 then
+      -- the glow: +20 degrees a frame, back to 0 past 360 (ns.c 2629-2641)
+      self.glow = (self.glow or 180) + 20
+      if self.glow > 360 then self.glow = 0 end
+      if self.slide then
+        self.slide.frame = self.slide.frame + 1
+        if 238 - 24 * self.slide.frame <= -1 then
+          self.slide = nil
+          self.wiggle = 0
+        end
+      elseif self.wiggle then
+        self.wiggle = self.wiggle + 1
+        if self.wiggle >= 7 then self.wiggle = nil end
+      end
+    end
+  end
+end
+
+function Gen4NamingScreen:update(dt)
+  self:tickTimers(dt)
   local input = self.game.input
   if not input then return end
   if self.choice then
@@ -304,17 +376,32 @@ function Gen4NamingScreen:update()
     end
     return
   end
+  -- THE CURSOR STARTS HIDDEN, and the first d-pad or A press only shows it
+  -- (ns.c 2584-2587, 2854-2857)
+  if not self.cursorShown then
+    for _, k in ipairs({ "left", "right", "up", "down", "a" }) do
+      if input:wasPressed(k) then self.cursorShown = true; self:placed(); return end
+    end
+  end
   if input:wasPressed("left") then self:move(-1, 0) end
   if input:wasPressed("right") then self:move(1, 0) end
   if input:wasPressed("up") then self:move(0, -1) end
   if input:wasPressed("down") then self:move(0, 1) end
   if input:wasPressed("a") then self:press(self:cell(self.row, self.col)) end
-  if input:wasPressed("b") then
-    if #self.glyphs > 0 then self.glyphs[#self.glyphs] = nil end
+  if input:wasPressed("b") then self:press({ kind = "button", value = "back" }) end
+  if input:wasPressed("select") then self:turnTo(self.page % 3 + 1) end
+  -- START goes to OK (12, 0) rather than confirming
+  if input:wasPressed("start") then
+    self.cursorShown = true
+    self.row, self.col = 1, 12
+    self:placed()
   end
-  if input:wasPressed("start") then self:close(self:typed()) end
 end
 
+-- THE TOUCH RECTANGLES (ns.c 3243-3315): the tabs at (25|57|89, 60) 32x23,
+-- BACK (157, 60) 33x23, OK (197, 60) 33x23, the keys 17x20 from (28, 88)
+local TOUCH_HOME = { { 25, "upper", 32 }, { 57, "lower", 32 }, { 89, "others", 32 }, { 157, "back", 33 }, { 197, "ok", 33 } }
+local HOME_COL = { upper = 1, lower = 3, others = 5, back = 9, ok = 12 }
 function Gen4NamingScreen:touchpressed(_, px, py)
   local r = require("src.render.Renderer").uiPresentation
   if not r or px < r.x or py < r.y or px >= r.x + r.w or py >= r.y + r.h then return false end
@@ -326,29 +413,33 @@ function Gen4NamingScreen:touchpressed(_, px, py)
     end
     return true
   end
-  local row, col
-  if y >= HOME_Y and y < HOME_Y + HOME_H then
-    row, col = 1, math.floor((x - HOME_X) / CELL_W) + 1
-  elseif y >= GRID_Y and y < GRID_Y + CHAR_ROWS * CELL_H then
-    row, col = math.floor((y - GRID_Y) / CELL_H) + 2, math.floor((x - GRID_X) / CELL_W) + 1
+  if y >= 60 and y <= 83 then
+    for _, b in ipairs(TOUCH_HOME) do
+      if x >= b[1] and x <= b[1] + b[3] then
+        self.row, self.col = 1, HOME_COL[b[2]]
+        self:placed()
+        self:press({ kind = "button", value = b[2] })
+        return true
+      end
+    end
   end
-  if row and col >= 1 and col <= Gen4NamingScreen.COLS then
-    self.row, self.col = row, col
-    self:press(self:cell(row, col))
+  for row = 0, CHAR_ROWS - 1 do
+    for col = 0, Gen4NamingScreen.COLS - 1 do
+      local kx, ky = 28 + 16 * col, 88 + 19 * row
+      if x >= kx and x <= kx + 16 and y >= ky and y <= ky + 19 then
+        self.row, self.col = row + 2, col + 1
+        self:placed()
+        self:press(self:cell(self.row, self.col))
+        return true
+      end
+    end
   end
   return true
 end
 
 -- ------------------------------------------------------------------- draw --
 
--- The selection, and the page you are on, drawn BEHIND whatever sits in the
--- cell so neither one covers the other. Colours only; the frame is already
--- there.
--- A BOX IN PIXELS.  `Font.drawBox` takes TILE coordinates, and this screen's
--- rows are nineteen pixels tall because the cartridge's are -- so a tile box
--- cannot land on one.  Rounding the cells to eight to suit the box is what the
--- previous version did, and it made the layout wrong in order to make the
--- drawing tidy.  The box is drawn in pixels instead.
+-- A BOX IN PIXELS, for the screen's fallbacks (a cache without the sprites)
 local function frame(x, y, w, h)
   local g = love.graphics
   g.setColor(0.08, 0.10, 0.16, 0.72)
@@ -358,45 +449,55 @@ local function frame(x, y, w, h)
   g.setColor(1, 1, 1, 1)
 end
 
-local function highlight(x, y, w, h, selected, active)
-  local g = love.graphics
-  if selected then
-    g.setColor(0.98, 0.83, 0.30, 0.85)
-  elseif active then
-    g.setColor(0.35, 0.47, 0.78, 0.60)
-  else
-    return
-  end
-  g.rectangle("fill", x + 1, y + 1, w - 2, h - 2)
-  g.setColor(1, 1, 1, 1)
+-- one of the cartridge's naming sprites at its sprite position
+function Gen4NamingScreen:sprite(key, x, y)
+  local rec = self.sprites and self.sprites[key]
+  local img = rec and self:img(rec)
+  if not img then return false end
+  love.graphics.draw(img, x + (rec.originX or 0), y + (rec.originY or 0))
+  return true
 end
 
--- THE HOME ROW, in the engine's frame because its art is a sprite bank this
--- port does not compose -- but at the cartridge's own y and on the keyboard's
--- own column pitch, so the six buttons land within a few pixels of where their
--- sprites do.  See Gen4Naming.HOME_SPRITE_X for that comparison written out.
+-- the overlay's wiggle, +4 +4 -3 -3 +2 +2 0 (ns.c 2147-2178)
+local WIGGLE = { 4, 4, -3, -3, 2, 2, 0 }
+function Gen4NamingScreen:wiggleX()
+  return self.wiggle and WIGGLE[self.wiggle + 1] or 0
+end
+
+-- THE HOME ROW: the tabs (the page's bright, the others dim), BACK and OK
+-- (pressed for 8 ticks), every label baked into its sprite; children of the
+-- overlay, so they wiggle with it
 function Gen4NamingScreen:drawHomeRow()
+  local dx = self:wiggleX()
+  local names = { "upper", "lower", "others" }
+  for i, id in ipairs(names) do
+    self:sprite(("tab_%s_%s"):format(id, self.page == i and "on" or "off"), Gen4Naming.TAB_X[i] + dx, 68)
+  end
+  local p = self.pressed
+  self:sprite((p and p.id == "back") and "back_pressed" or "back", Gen4Naming.BACK_X + dx, 68)
+  self:sprite((p and p.id == "ok") and "ok_pressed" or "ok", Gen4Naming.OK_X + dx, 68)
+end
+
+-- the engine's own home row, for a cache without the sprites
+local LABEL = { upper = "A-Z", lower = "a-z", others = "SYM", back = "BACK", ok = "OK" }
+function Gen4NamingScreen:drawHomeRowFallback()
   local col = 1
   while col <= Gen4NamingScreen.COLS do
     local id = HOME[col]
     local span = 0
     while HOME[col + span] == id do span = span + 1 end
-    local x = HOME_X + (col - 1) * CELL_W
-    local w = span * CELL_W
-    local selected = self.row == 1 and self.col >= col and self.col < col + span
-    local active = (id == PAGES[self.page].id)
-    frame(x, HOME_Y, w, HOME_H)
-    -- The selection is a HIGHLIGHT, not a ">" in front of the word.  Prefixing
-    -- it pushed every label one glyph right and out of its own button, and on
-    -- the widest labels pushed the last letter out entirely -- so the thing
-    -- meant to show where you are was itself putting text outside the boxes.
-    highlight(x, HOME_Y, w, HOME_H, selected, active)
-    local label = LABEL[id] or ""
-    -- Centred in its own button, and measured rather than assumed: a clip here
-    -- would mean the label did not fit, which is the fault this screen was
-    -- reported for, so it is worth seeing if it ever happens.
-    local width = Font.width(label)
-    Font.draw(label, x + math.floor((w - width) / 2), HOME_Y + 2)
+    if id ~= "skip" then
+      local x = HOME_X + (col - 1) * CELL_W
+      local w = span * CELL_W
+      frame(x, HOME_Y, w, HOME_H)
+      if self.row == 1 and HOME[self.col] == id or id == PAGES[self.page].id then
+        love.graphics.setColor(0.98, 0.83, 0.30, 0.6)
+        love.graphics.rectangle("fill", x + 1, HOME_Y + 1, w - 2, HOME_H - 2)
+        love.graphics.setColor(1, 1, 1, 1)
+      end
+      local label = LABEL[id] or ""
+      Font.draw(label, x + math.floor((w - Font.width(label)) / 2), HOME_Y + 2)
+    end
     col = col + span
   end
 end
@@ -404,21 +505,163 @@ end
 -- THE CHECKERBOARD, exactly as `NamingScreen_InitializeCharsGraphics` paints
 -- it: the whole window in one colour, then 16x19 rectangles of the other over
 -- the ODD columns of rows 0, 2 and 4 and the EVEN columns of rows 1 and 3.
-function Gen4NamingScreen:drawChecker()
+function Gen4NamingScreen:drawChecker(page, ox, oy)
   local g = love.graphics
+  local saved = self.page
+  self.page = page
   local base, alt = self:checkerColours()
+  self.page = saved
   local cols = Gen4NamingScreen.COLS
+  local gx, gy = GRID_X + (ox or 0), GRID_Y + (oy or 0)
   g.setColor(base[1], base[2], base[3], 1)
-  g.rectangle("fill", GRID_X, GRID_Y, cols * CELL_W, CHAR_ROWS * CELL_H)
+  g.rectangle("fill", gx, gy, cols * CELL_W, CHAR_ROWS * CELL_H)
   g.setColor(alt[1], alt[2], alt[3], 1)
   for row = 0, CHAR_ROWS - 1 do
-    -- Rows 0, 2, 4 start on the second column; rows 1 and 3 start on the first.
     for col = (row % 2 == 0) and 1 or 0, cols - 1, 2 do
-      g.rectangle("fill", GRID_X + col * CELL_W, GRID_Y + row * CELL_H,
-                  CELL_W, CELL_H)
+      g.rectangle("fill", gx + col * CELL_W, gy + row * CELL_H, CELL_W, CELL_H)
     end
   end
   g.setColor(1, 1, 1, 1)
+end
+
+-- one keyboard page -- its panel, checkerboard and characters -- moved by
+-- (ox, oy) from where the app parks it
+function Gen4NamingScreen:drawPage(page, ox, oy)
+  local g = love.graphics
+  local art = self.art or {}
+  local panel = self:img((art.panels or {})[page])
+  if panel then
+    g.setColor(1, 1, 1, 1)
+    g.draw(panel, PANEL_X + ox, PANEL_Y + oy)
+  end
+  self:drawChecker(page, ox, oy)
+  local rows = PAGES[page] and PAGES[page].rows or {}
+  for r = 1, CHAR_ROWS do
+    local y = GRID_Y + oy + (r - 1) * CELL_H
+    for col = 1, Gen4NamingScreen.COLS do
+      local ch = rows[r] and rows[r][col]
+      if ch and ch ~= "" then
+        local x = GRID_X + ox + (col - 1) * CELL_W
+        Font.draw(ch, x + math.floor((CELL_W - Font.width(ch)) / 2), y + GLYPH_INSET)
+      end
+    end
+  end
+end
+
+-- THE CURSOR: a white mask in the glow's colour -- (29, sin(angle) x 10 + 15,
+-- 0) of 31 -- cycling cells 32, 37, 38, 37 eight ticks each on a key, the
+-- bracket on the home row; and the pop after a character is typed
+function Gen4NamingScreen:drawCursor()
+  local g = love.graphics
+  local G = math.floor(math.sin(math.rad(self.glow or 180)) * 10) + 15
+  if G < 0 then G = 0 end
+  g.setColor(29 / 31, G / 31, 0, 1)
+  if self.pop then
+    local k = math.floor(self.pop.tick / 2)
+    local seq = { 0, 1, 2, 3, 4, 3, 2, 1, 0 }
+    g.setColor(29 / 31, G / 31, 0, 0.5)
+    self:sprite("cursor_pop_" .. (seq[math.min(9, k + 1)]), self.pop.x, self.pop.y)
+  elseif self.cursorShown then
+    local x, y, key = self:cursorPlace()
+    if not key then
+      local cycle = { 0, 1, 2, 1 }
+      key = "cursor_key_" .. cycle[math.floor((self.cursorTick or 0) / 8) % 4 + 1]
+    else
+      x = x + self:wiggleX()
+    end
+    self:sprite(key, x, y)
+  end
+  g.setColor(1, 1, 1, 1)
+end
+
+-- THE NAME AS TYPED (ns.c 2364-2424): the window at tile (10, 3), twelve
+-- pixels a character in TEXT_COLOR(14, 15, 1); an underscore under each place
+-- at (80 + 12 i, 39), the next one bobbing 0 / +1 / +2 / +1 for 6 / 3 / 3 / 4
+-- ticks; the header icon at (24, 8); a Pokemon's gender at (80 + 13 max, 27)
+function Gen4NamingScreen:drawEntry()
+  local ink = self.ink or {}
+  local function c(rgb, fb) rgb = rgb or fb return { rgb[1] / 255, rgb[2] / 255, rgb[3] / 255 } end
+  Font.pushStyle({ text = c(ink.ink, { 16, 25, 33 }), shadow = c(ink.shadow, { 173, 189, 189 }) })
+  for i, ch in ipairs(self.glyphs) do
+    local x = 80 + 12 * (i - 1)
+    Font.draw(ch, x + math.floor((12 - Font.width(ch)) / 2), 24)
+  end
+  Font.popStyle()
+  local bob = { 0, 0, 0, 0, 0, 0, 1, 1, 1, 2, 2, 2, 1, 1, 1, 1 }
+  for i = 1, self.maxLen do
+    local dy = (i == #self.glyphs + 1) and bob[(self.ticks or 0) % 16 + 1] or 0
+    self:sprite("underscore", 80 + 12 * (i - 1), 39 + dy)
+  end
+  -- the header icon
+  local t = self.ticks or 0
+  local walk = { 0, 1, 2, 1 }
+  local kind = self.kind
+  if kind == "mon" or kind == "pokemon" then
+    self:drawMonIcon(t)
+  elseif kind == "box" then
+    self:sprite("icon_box_" .. (math.floor(t / 6) % 4), 24, 8)
+  elseif kind == "tablet" then
+    self:sprite("icon_shaymin", 24, 8)
+  elseif kind == "rival" then
+    self:sprite("icon_rival_" .. walk[math.floor(t / 12) % 4 + 1], 24, 8)
+  elseif kind == "player" or kind == nil then
+    local female = self.female
+    if female == nil then
+      local p = self.game.save and self.game.save.player
+      female = p and (p.gender == 1 or p.gender == "girl" or p.gender == "female")
+    end
+    self:sprite((female and "icon_female_" or "icon_male_") .. walk[math.floor(t / 12) % 4 + 1], 24, 8)
+  end
+  -- a Pokemon's gender mark
+  if self.mon then
+    local ok, Pokemon = pcall(require, "src.pokemon.Pokemon")
+    local gender = ok and Pokemon.genderOf(self.game.data, self.mon)
+    if gender == "male" or gender == "female" then
+      self:sprite("gender_" .. gender, 80 + self.maxLen * 13, 27)
+    end
+  end
+end
+
+-- the Pokemon's own icon where cell 52 stands, hopping 6 px up for 3 ticks
+-- in every 23 (seq 50)
+function Gen4NamingScreen:drawMonIcon(t)
+  local data = self.game.data or {}
+  local species = self.species or (self.mon and self.mon.species)
+  local icons = data.icons
+  local def = data.pokemon and data.pokemon[species]
+  local entry = (icons and icons.bySpecies and icons.bySpecies[species]) or (def and def.icon)
+  local path = type(entry) == "table" and entry.image or entry
+  local img = type(path) == "string" and self:img(path)
+  if not img then return end
+  local frameH = (type(entry) == "table" and tonumber(entry.frameHeight)) or 32
+  local iw, ih = img:getDimensions()
+  local quad = love.graphics.newQuad(0, 0, iw, math.min(frameH, ih), iw, ih)
+  local hop = (t % 23) >= 20 and -6 or 0
+  local ref = self.sprites and self.sprites.icon_male_0
+  local ox, oy = ref and ref.originX or -16, ref and ref.originY or -16
+  love.graphics.draw(img, quad, 24 + ox, 8 + oy + hop)
+end
+
+function Gen4NamingScreen:drawPrompt()
+  -- THE PROMPT IS THE BOTTOM SCREEN'S: a message box at tile (2, 19), 27 x 4
+  -- (ns.c 2396-2409). With no second screen showing it goes in the top
+  -- strip beside the icon, the only place this screen leaves for it.
+  local ok, SS = pcall(require, "src.ui.SecondScreen")
+  local mode = ok and SS.mode(self.game) or "off"
+  if (mode == "display" or mode == "inset") and not SS.stowed(self.game) then
+    SS.draw(self.game, function()
+      love.graphics.setColor(0, 0, 0, 1)
+      love.graphics.rectangle("fill", 0, 0, W, H)
+      love.graphics.setColor(1, 1, 1, 1)
+      if Font.hasDialogueFrame and Font.hasDialogueFrame() then Font.drawDialogueBox(1, 18, 29, 6)
+      else Font.drawBox(1, 18, 29, 6) end
+      Font.pushStyle({ text = { 0.25, 0.25, 0.25 }, shadow = { 0.8, 0.8, 0.8 } })
+      Font.draw(self.title, 16, 152)
+      Font.popStyle()
+    end)
+    return
+  end
+  Font.draw(self.title, 56, 4)
 end
 
 function Gen4NamingScreen:draw()
@@ -443,8 +686,7 @@ function Gen4NamingScreen:draw()
     return
   end
 
-  -- The backdrop.  A flat fill when the cache has none, so a pre-`naming`
-  -- cache still gets a readable screen rather than whatever was behind it.
+  -- BG2, the backdrop (priority 3)
   local background = self:img(art.background)
   if background then
     g.setColor(1, 1, 1, 1)
@@ -455,47 +697,37 @@ function Gen4NamingScreen:draw()
     g.setColor(1, 1, 1, 1)
   end
 
-  -- The prompt and the typed name, which are the bottom screen's on hardware.
-  Font.draw(self.title, 16, TITLE_Y)
-  local shown = {}
-  for i = 1, self.maxLen do shown[i] = self.glyphs[i] or "_" end
-  frame(8, ENTRY_Y - 5, W - 16, 22)
-  Font.draw(table.concat(shown, " "), 16, ENTRY_Y)
-
-  -- The panel for THIS page, at the offset the app parks its layer at.  The
-  -- checkerboard goes on top of it, inside the window it frames.
-  local panel = self:img((art.panels or {})[self.page])
-  if panel then
-    g.setColor(1, 1, 1, 1)
-    g.draw(panel, PANEL_X, PANEL_Y)
-  end
-  self:drawChecker()
-  if not panel then
-    frame(GRID_X - 2, GRID_Y - 2, Gen4NamingScreen.COLS * CELL_W + 4,
-          CHAR_ROWS * CELL_H + 4)
+  local hasSprites = self.sprites and self.sprites.overlay
+  -- the page dropping away (priority 2), then the overlay sprite (priority 2,
+  -- in front of a background of its own priority), then the page in front
+  if self.slide then
+    local f = self.slide.frame
+    self:drawPage(self.slide.from, 0, math.min(116, 10 * f))
+    if hasSprites then self:sprite("overlay", Gen4Naming.PARENT_X, 56) end
+    self:drawPage(self.page, -(238 - 24 * f) - 11, 0)
+  else
+    if hasSprites then self:sprite("overlay", Gen4Naming.PARENT_X + self:wiggleX(), 56) end
+    self:drawPage(self.page, 0, 0)
   end
 
-  for row = 2, Gen4NamingScreen.ROWS do
-    local y = GRID_Y + (row - 2) * CELL_H
-    for col = 1, Gen4NamingScreen.COLS do
-      local cell = self:cell(row, col)
-      local x = GRID_X + (col - 1) * CELL_W
-      -- Highlight first, glyph second: drawing the cursor as a GLYPH put it in
-      -- the same cell as the letter it was pointing at, so the two drew on top
-      -- of each other.
-      highlight(x, y, CELL_W, CELL_H, self.row == row and self.col == col, false)
-      if cell and cell.value ~= "" then
-        local width = Font.width(cell.value)
-        Font.draw(cell.value, x + math.floor((CELL_W - width) / 2),
-                  y + GLYPH_INSET)
-      end
+  if hasSprites then
+    self:drawHomeRow()
+    self:drawEntry()
+    self:drawCursor()
+  else
+    local shown = {}
+    for i = 1, self.maxLen do shown[i] = self.glyphs[i] or "_" end
+    frame(8, ENTRY_Y - 5, W - 16, 22)
+    Font.draw(table.concat(shown, " "), 16, ENTRY_Y)
+    self:drawHomeRowFallback()
+    if self.row > 1 then
+      local x, y = self:cursorPlace()
+      g.setColor(0.98, 0.83, 0.30, 0.6)
+      g.rectangle("fill", x + 1, y - 2, CELL_W - 2, CELL_H - 2)
+      g.setColor(1, 1, 1, 1)
     end
   end
-
-  -- LAST, because on hardware they are sprites and sprites draw over
-  -- backgrounds: the buttons sit at y = 68 and the panel starts at 80, so a
-  -- button drawn first would have its bottom four pixels covered by the panel.
-  self:drawHomeRow()
+  self:drawPrompt()
   g.setColor(1, 1, 1, 1)
 end
 

@@ -81,16 +81,30 @@ Gen4Icons.TILES_WIDE = 4           -- 32 pixels across
 -- assumed: a cartridge whose icons used more would need a wider scan.
 Gen4Icons.RAMPS = 3
 
--- The seven the render was checked against, by eye, at the offset the scan
--- returns. Species id -> ramp.
+-- !! THE ANCHORS ARE THE CARTRIDGE'S OWN VALUES NOW, not a render judged by
+-- eye. The first version of this table was "checked by looking" and was
+-- wrong for Pikachu and Piplup (0, where pokeplatinum's
+-- res/pokemon/<species>/data.json says `"icon_palette": 2`): the scan had
+-- found a run of small bytes that STARTS 118 bytes before the real array, so
+-- every species read its neighbour's ramp -- Infernape green and pink,
+-- Pikachu purple, reported from the party screen. The table is now located
+-- by these values, at whatever offset inside a qualifying run they all hold.
+-- Species id -> ramp, from each species' data.json.
 Gen4Icons.VERIFIED = {
-  [1] = 1,    -- Bulbasaur, green
-  [4] = 0,    -- Charmander, orange
-  [7] = 0,    -- Squirtle, blue
-  [25] = 0,   -- Pikachu, yellow
+  [1] = 1,    -- Bulbasaur
+  [4] = 0,    -- Charmander
+  [7] = 0,    -- Squirtle
+  [25] = 2,   -- Pikachu
+  [54] = 1,   -- Psyduck
+  [74] = 1,   -- Geodude
+  [130] = 0,  -- Gyarados
+  [133] = 2,  -- Eevee
+  [150] = 2,  -- Mewtwo
   [387] = 1,  -- Turtwig
   [390] = 1,  -- Chimchar
-  [393] = 0,  -- Piplup
+  [392] = 0,  -- Infernape
+  [393] = 2,  -- Piplup
+  [395] = 0,  -- Empoleon
 }
 
 local function spread(bin, at, count, ramps)
@@ -129,6 +143,14 @@ function Gen4Icons.findPaletteTable(bin, icons)
       while last <= n and (bin:byte(last) or ramps) < ramps do last = last + 1 end
       local length = last - at
       if length >= icons then
+        -- the array can begin INSIDE the run (the bytes before it may be
+        -- small too): the offset where every anchor holds wins outright
+        for start = at, last - icons do
+          if Gen4Icons.verify(bin, start) then
+            local h, counts = spread(bin, start, icons, ramps)
+            return start, h, counts
+          end
+        end
         local h, counts = spread(bin, at, icons, ramps)
         if h and h > best then best, bestAt, bestCounts = h, at, counts end
       end

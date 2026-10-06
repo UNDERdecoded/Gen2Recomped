@@ -66,6 +66,7 @@ function love.load()
       shots[math.floor(s - 20)] = "r" .. r .. " pre"
       shots[math.floor(s + ui.d.half - 6)] = "r" .. r .. " lead"
       shots[math.floor(s + ui.d.measure - 20)] = "r" .. r .. " copy"
+      if r == 3 then shots[math.floor(s) + 32] = "r3 press" end
     end
     for f = 1, 30000 do
       local ms = ui.ms

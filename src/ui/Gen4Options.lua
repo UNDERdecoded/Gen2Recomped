@@ -295,7 +295,8 @@ function Gen4Options:description()
 end
 
 -- THE SCREEN AS options_menu.c DRAWS IT:
---   * BG_MAIN_2 filled with config_gra tile 1 -- light blue-grey (197,205,213)
+--   * BG_MAIN_2 filled with config_gra tile 1 -- light blue-grey (197,206,214);
+--     SUB_0, the bottom screen, the same
 --   * "OPTIONS" on it at (10, 2), no window frame
 --   * the entries window, tile (1, 3) 30 x 14 in the standard frame, white;
 --     labels at (12, 24 + 16 x row); every choice of TEXT SPEED, SOUND, BATTLE
@@ -312,10 +313,30 @@ local INK = { text = { 90 / 255, 90 / 255, 82 / 255 }, shadow = { 172 / 255, 189
 local RED = { text = { 238 / 255, 32 / 255, 16 / 255 }, shadow = { 1, 172 / 255, 189 / 255 } }
 local CHOICES_X, CHOICE_STEP = 108, 48
 
--- the bar's tiles: tile 3 the corner (rows 00444444 / 04444444 / 44400000 /
--- 44000000...), tile 4 the two-pixel top edge, mirrored for the other side
-local function drawBar(y)
+-- the cartridge's pictures (src/import/Gen4OptionsArt.lua), when the cache has them
+local artImages = {}
+local function art(game, key)
+  local index = game and game.data and game.data.gen4_options_art
+  local rec = index and index[key]
+  if not rec then return nil end
+  if artImages[rec.path] == nil then
+    local ok, img = pcall(require("src.render.Assets").image, rec.path)
+    artImages[rec.path] = ok and img or false
+  end
+  return artImages[rec.path] or nil
+end
+
+-- the bar: config_gra's tilemap rows 0-1, or (without the cache's picture)
+-- its tiles by hand -- tile 3 the corner (rows 00444444 / 04444444 /
+-- 44400000 / 44000000...), tile 4 the two-pixel top edge, mirrored
+local function drawBar(y, game)
   local g = love.graphics
+  local img = art(game, "options_cursor")
+  if img then
+    g.setColor(1, 1, 1, 1)
+    g.draw(img, 0, y)
+    return
+  end
   g.setColor(1, 0, 0, 1)
   local x0, x1 = 8, 248
   g.rectangle("fill", x0 + 2, y, x1 - x0 - 4, 1)
@@ -357,9 +378,20 @@ end
 
 function Gen4Options:draw()
   local g = love.graphics
-  g.setColor(197 / 255, 205 / 255, 213 / 255, 1)
-  g.rectangle("fill", 0, 0, W, H)
+  local bg = art(self.game, "options_bg")
+  if bg then
+    g.setColor(1, 1, 1, 1)
+    g.draw(bg, 0, 0)
+  else
+    g.setColor(197 / 255, 206 / 255, 214 / 255, 1)
+    g.rectangle("fill", 0, 0, W, H)
+  end
   g.setColor(1, 1, 1, 1)
+  local okS, SS = pcall(require, "src.ui.SecondScreen")
+  local mode = okS and SS.mode(self.game) or "off"
+  if bg and (mode == "display" or mode == "inset") and not SS.stowed(self.game) then
+    SS.draw(self.game, function() g.draw(bg, 0, 0) end)
+  end
   Font.pushStyle(INK)
   Font.draw(self.title, 10, 2)
   Font.popStyle()
@@ -377,7 +409,7 @@ function Gen4Options:draw()
     end
     Font.popStyle()
     if i <= #self.rows then self:drawChoices(self.rows[i], y) end
-    if i == self.index then drawBar(y) end
+    if i == self.index then drawBar(y, self.game) end
   end
   if Font.hasDialogueFrame and Font.hasDialogueFrame() then
     Font.drawDialogueBox(DESC.tx, DESC.ty, DESC.tw, DESC.th)

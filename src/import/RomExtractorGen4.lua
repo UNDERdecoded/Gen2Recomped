@@ -1851,6 +1851,7 @@ function RomExtractorGen4:composeJob(arc, job)
   local map
   local layout = "tilemap"
   if job.tilemap then map = Gen4Graphics.tilemap(member(job.tilemap)) end
+  if map and job.watchDigits then map=require("src.import.Gen4PoketchArt").digitalWatchMap(map) end
   if not map then
     -- WHERE THE WIDTH COMES FROM, in order, and the order is the point.
     --
@@ -5004,14 +5005,10 @@ function RomExtractorGen4:extractDex()
   end
 
   local paletteBytes = member(Gen4Dex.PALETTE)
-  local listPalette = member("background_scroll_sinnoh.NCLR")
-  local listTiles = member("scroll_main_background.NCGR.lz")
-  local listMap = member("scroll_main_background.NSCR.lz")
-  if listPalette and listTiles and listMap then
-    out.list = self:saveImage("dex/list_page", Gen4Graphics.compose(
-      Gen4Graphics.tilemap(listMap), Gen4Graphics.tiles(listTiles),
-      Gen4Graphics.paletteAtSlot(Gen4Graphics.palette(listPalette), 5)))
-  end
+  -- The list screen's pictures (`dex/list_*`) come with the other dex art
+  -- through Gen4UIResources into `gen4_graphics.screens`; its text colours
+  -- are recorded here, beside the words.
+  out.listInk = Gen4Dex.listInkFrom(member)
   local palette = paletteBytes and Gen4Graphics.palette(paletteBytes)
   local tilesBytes = member(Gen4Dex.TILES)
   local sheet = tilesBytes and Gen4Graphics.tiles(tilesBytes)
@@ -5165,6 +5162,17 @@ function RomExtractorGen4:extractNaming()
   end
 
   self:write("gen4_naming", out)
+
+  -- the home row, the cursor and the entry's sprites (Gen4Naming.images)
+  local sprites = self.rom and Gen4Naming.images(self.rom)
+  if sprites then
+    local index = {}
+    for key, image in pairs(sprites) do
+      index[key] = self:saveImage("naming/" .. key, image, { originX = image.originX, originY = image.originY })
+    end
+    self:write("gen4_naming_art", index)
+    self:write("gen4_naming_ink", Gen4Naming.data(self.rom))
+  end
 
   local panels = 0
   for _ in pairs(out.panels) do panels = panels + 1 end
@@ -5615,7 +5623,15 @@ function RomExtractorGen4:extractTerrain(names)
   self:contestData()
   self:contestArt()
   self:poffinArt()
+  self:optionsArt()
+  self:miningArt()
+  self:partyArt()
+  self:battleArt()
+  self:summaryArt()
+  self:bagAndCardArt()
+  self:pcMartMenuArt()
   self:endingArt()
+  self:poketchEvolutionArt()
   self:trainerPrize()
 
   self:write("gen4_terrain", out)
@@ -5840,6 +5856,32 @@ function RomExtractorGen4:endingArt()
   self:write("gen4_ending", E.data(self.rom))
 end
 
+-- THE POKETCH APPS' SPRITES AND TILES (src/import/Gen4PoketchArt.lua) AND THE
+-- EVOLUTION SCENE'S PARTICLES (src/import/Gen4EvolutionArt.lua).
+-- (Literal module names, for tools/gen4_cache_wiring_check.lua.)
+function RomExtractorGen4:poketchEvolutionArt()
+  if not self.rom then return end
+  local function save(dir, images)
+    local index = {}
+    for key, image in pairs(images or {}) do
+      index[key] = self:saveImage(dir .. "/" .. key, image, { originX = image.originX, originY = image.originY })
+    end
+    return index
+  end
+  local P = require("src.import.Gen4PoketchArt")
+  local poketch = P.images(self.rom)
+  if poketch then
+    self:write("gen4_poketch_art", save("poketch_art", poketch))
+    self:write("gen4_poketch_ink", P.data(self.rom))
+  end
+  local E = require("src.import.Gen4EvolutionArt")
+  local evolution = E.images(self.rom)
+  if evolution then
+    self:write("gen4_evolution_art", save("evolution_art", evolution))
+    self:write("gen4_evolution_ink", E.data(self.rom))
+  end
+end
+
 -- THE POFFIN COOKING, CASE AND ICONS -- see src/import/Gen4PoffinArt.lua.
 function RomExtractorGen4:poffinArt()
   local images = self.rom and require("src.import.Gen4PoffinArt").images(self.rom)
@@ -5849,6 +5891,123 @@ function RomExtractorGen4:poffinArt()
     index[key] = self:saveImage("poffin/" .. key, image, { originX = image.originX, originY = image.originY })
   end
   self:write("gen4_poffin_art", index)
+end
+
+-- THE OPTIONS SCREEN'S BACKDROP AND CURSOR -- see src/import/Gen4OptionsArt.lua.
+-- THE MINING GAME'S BUTTONS, SHEETS AND SPRITES (Gen4MiningArt) and the field
+-- menus' cursor and Underground icons in their real palette rows (Gen4MenuArt).
+function RomExtractorGen4:miningArt()
+  if not self.rom then return end
+  -- the two modules' names are literal, so the cache-wiring check sees
+  -- each one written
+  local function index(module, dir)
+    local images = require(module).images(self.rom)
+    if not images then return nil end
+    local out = {}
+    for key, image in pairs(images) do
+      out[key] = self:saveImage(dir .. "/" .. key, image, { originX = image.originX, originY = image.originY })
+    end
+    return out
+  end
+  local mining = index("src.import.Gen4MiningArt", "mining")
+  if mining then self:write("gen4_mining_art", mining) end
+  local menu = index("src.import.Gen4MenuArt", "menu_art")
+  if menu then self:write("gen4_menu_art", menu) end
+end
+
+function RomExtractorGen4:optionsArt()
+  local images = self.rom and require("src.import.Gen4OptionsArt").images(self.rom)
+  if not images then return end
+  local index = {}
+  for key, image in pairs(images) do index[key] = self:saveImage("options/" .. key, image) end
+  self:write("gen4_options_art", index)
+end
+
+-- THE PARTY SCREEN'S PANELS, SPRITES AND DIGITS -- see src/import/Gen4PartyArt.lua.
+-- THE SUMMARY SCREEN'S SPRITES, BARS AND BOTTOM SCREEN -- see src/import/Gen4SummaryArt.lua.
+function RomExtractorGen4:summaryArt()
+  local S = require("src.import.Gen4SummaryArt")
+  local images = self.rom and S.images(self.rom)
+  if not images then return end
+  local index = {}
+  for key, image in pairs(images) do
+    index[key] = self:saveImage("summary_art/" .. key, image, { originX = image.originX, originY = image.originY })
+  end
+  self:write("gen4_summary_art", index)
+  self:write("gen4_summary_ink", S.data(self.rom))
+end
+
+function RomExtractorGen4:partyArt()
+  local P = require("src.import.Gen4PartyArt")
+  local images = self.rom and P.images(self.rom)
+  if not images then return end
+  local index = {}
+  for key, image in pairs(images) do
+    index[key] = self:saveImage("party/" .. key, image, { originX = image.originX, originY = image.originY })
+  end
+  self:write("gen4_party_art", index)
+  self:write("gen4_party_ink", P.data(self.rom))
+end
+
+-- THE BATTLE'S CURSOR, PARTY BALLS AND PARTY GAUGE -- see src/import/Gen4BattleArt.lua.
+function RomExtractorGen4:battleArt()
+  local B = require("src.import.Gen4BattleArt")
+  local images = self.rom and B.images(self.rom)
+  if not images then return end
+  local index = {}
+  for key, image in pairs(images) do
+    index[key] = self:saveImage("battle_art/" .. key, image, { originX = image.originX, originY = image.originY })
+  end
+  self:write("gen4_battle_art", index)
+  self:write("gen4_battle_anims", B.data(self.rom))
+end
+
+-- THE BAG'S SPRITES, WINDOW BLITS AND TOUCH SCREEN -- see src/import/Gen4BagArt.lua.
+-- THE TRAINER CASE IN PLATINUM'S OWN PALETTES -- see src/import/Gen4TrainerCardArt.lua.
+-- (Each write names its module literally: tools/gen4_cache_wiring_check.lua
+-- finds the written tables by reading these calls.)
+function RomExtractorGen4:bagAndCardArt()
+  if not self.rom then return end
+  local function save(dir, images)
+    local index = {}
+    for key, image in pairs(images or {}) do
+      index[key] = self:saveImage(dir .. "/" .. key, image, { originX = image.originX, originY = image.originY })
+    end
+    return index
+  end
+  local bag = require("src.import.Gen4BagArt").images(self.rom)
+  if bag then self:write("gen4_bag_art", save("bag_art", bag)) end
+  local card = require("src.import.Gen4TrainerCardArt").images(self.rom)
+  if card then self:write("gen4_trainer_card_art", save("trainer_card_art", card)) end
+end
+
+-- THE PC STORAGE SCREEN (Gen4BoxArt), THE MAIN MENU'S WINDOWS
+-- (Gen4MainMenuArt) AND THE POKE MART COUNTER (Gen4ShopArt) -- each module's
+-- pictures to assets/generated/gen4/<dir>/ and its index (and ink) to the cache.
+-- (Literal module names, for tools/gen4_cache_wiring_check.lua.)
+function RomExtractorGen4:pcMartMenuArt()
+  if not self.rom then return end
+  local function save(dir, images)
+    local index = {}
+    for key, image in pairs(images or {}) do
+      index[key] = self:saveImage(dir .. "/" .. key, image, { originX = image.originX, originY = image.originY })
+    end
+    return index
+  end
+  local Box = require("src.import.Gen4BoxArt")
+  local box = Box.images(self.rom)
+  if box then
+    self:write("gen4_box_art", save("box", box))
+    self:write("gen4_box_ink", Box.data(self.rom))
+  end
+  local MainMenu = require("src.import.Gen4MainMenuArt")
+  local menu = MainMenu.images(self.rom)
+  if menu then
+    self:write("gen4_main_menu_art", save("main_menu", menu))
+    self:write("gen4_main_menu_ink", MainMenu.data(self.rom))
+  end
+  local shop = require("src.import.Gen4ShopArt").images(self.rom)
+  if shop then self:write("gen4_shop_art", save("shop_art", shop)) end
 end
 
 -- THE TRAINER EYES-MEET THEMES -- see src/import/Gen4TrainerMusic.lua.
@@ -6594,4 +6753,3 @@ end
 --     builds the world those objects stand in.
 
 return RomExtractorGen4
-

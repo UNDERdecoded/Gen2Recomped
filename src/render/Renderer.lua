@@ -281,44 +281,13 @@ function Renderer:worldViewSize()
     local g = Tilt.viewGrowth()
     vw, vh = math.ceil(vw * g), math.ceil(vh * g)
   end
-  -- ...AND A MAP SMALLER THAN THE VIEW DOES NOT FILL THE REST WITH SCENERY.
-  --
-  -- Reported from play: "petalburg gym in emerald still showing as a black
-  -- background when i warp through the rooms even with no mods on".
-  --
-  -- Every measurement said the gym renders correctly, and it does. The gym is
-  -- ONE map nine blocks wide, and `data/layouts/PetalburgCity_Gym/border.bin`
-  -- on the cartridge is metatile 0x208 four times over -- a block whose 256
-  -- pixels are, every one of them, pure black. Nine blocks is 144 world
-  -- pixels. The Game Boy Advance shows 240, so even the cartridge draws three
-  -- columns of black either side; this window pass shows `pw / scale`, which
-  -- on a phone in landscape is several times that, and every extra column is
-  -- more of the same black. The void was being filled with more void.
-  --
-  -- So the view never exceeds what there is to see: the map's own extent, or
-  -- the screen the generation was drawn for, whichever is larger. It can only
-  -- ever REDUCE the view, and never below the cartridge's own framing, so a
-  -- map at least as big as that screen -- which is very nearly all of them,
-  -- in every generation -- comes out at exactly the size it did before.
-  -- ...AND AN AXIS WITH A CONNECTION ON IT IS NOT BOUNDED AT ALL.
-  --
-  -- Reported from play: zooming out on a Hoenn route left black bars down
-  -- both sides of the window instead of the route carrying on into its
-  -- neighbours.  The clamp above reads a map's own width as "all there is to
-  -- see", which is true of Petalburg Gym and false of every map with a
-  -- connection -- and survey zoom exists precisely to draw those neighbours.
-  -- So the overworld reports `math.huge` for an axis the map connects along,
-  -- which is the honest answer to "how much world is there that way" and
-  -- drops straight out of the `min` below.
-  --
-  -- ONE CAP FOR EVERY GENERATION, which is the other half of the report.
-  -- Gen 4 already capped by a single aspect-preserving ratio and then filled
-  -- the window with it (worldPresentationScale); Gen 1, 2 and 3 clamped each
-  -- axis on its own, so the canvas stopped matching the window's shape and
-  -- was blitted centred -- which IS the black bar.  The Gen 4 branch was not
-  -- a Gen 4 rule, it was this rule, written where the bug was noticed.
+  -- Gen4 retains its bounded 3D terrain framing. Earlier generations use
+  -- the full selected view and draw native border/neighbor tiles around it.
   local bw, bh = self.worldBoundsW, self.worldBoundsH
-  if bw and bh then
+  -- Gen 1-3 render native border tiles beyond the map. Capping their view
+  -- here and enlarging it during presentation silently changes the user's
+  -- zoom on every building/route transition and makes small-map zoom inert.
+  if bw and bh and require("src.core.GameVersion").isGen4() then
     local uw, uh = self:uiSize()
     -- Never below the screen the generation was drawn for, so a map at least
     -- that big comes out exactly the size it did before.
@@ -332,18 +301,14 @@ function Renderer:worldViewSize()
   return vw, vh
 end
 
--- A WORLD CANVAS SMALLER THAN THE WINDOW IS SCALED UP TO COVER IT, NOT
--- CENTRED IN IT.  `worldViewSize` only ever shrinks the canvas by an
--- aspect-preserving ratio, so covering crops nothing; blitting it at the
--- zoom's own scale instead leaves the difference as background, and the
--- background is black.  Gated on bounds being set at all, so a battle, a
--- menu or the title screen -- none of which set them -- is untouched.
+-- Gen4's bounded terrain canvas fills the window. Gen1-3 keep the selected
+-- zoom scale; enlarging a small-map canvas would undo the user's zoom.
 --
 -- Tilt is excluded because it grows the view on purpose (Tilt.viewGrowth) to
 -- keep the projected ground plane covering the receded corners; filling with
 -- it would undo the growth it just asked for.
 function Renderer:worldPresentationScale(sp, pw, ph, vw, vh)
-  if self.worldBoundsW and not Tilt.active() then
+  if self.worldBoundsW and require("src.core.GameVersion").isGen4() and not Tilt.active() then
     return math.max(sp, pw / vw, ph / vh)
   end
   return sp

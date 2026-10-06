@@ -231,8 +231,41 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         "gen4_contest", "gen4_contest_art",
                         -- the Poffin cooking, case and icon art (Gen4PoffinArt).
                         "gen4_poffin_art",
+                        -- the Options screen's backdrop and cursor (Gen4OptionsArt).
+                        "gen4_options_art",
+                        -- the mining game's buttons, sheets and sprites
+                        -- (Gen4MiningArt) and the menus' cursor and
+                        -- Underground icons (Gen4MenuArt).
+                        "gen4_mining_art", "gen4_menu_art",
+                        -- the party screen's panels, sprites and colours (Gen4PartyArt).
+                        "gen4_party_art", "gen4_party_ink",
+                        -- the battle's cursor, party balls and party gauge
+                        -- with their frame timings (Gen4BattleArt).
+                        "gen4_battle_art", "gen4_battle_anims",
+                        -- the bag's sprites, blits and touch screen (Gen4BagArt)
+                        -- and the trainer case in Platinum's colours
+                        -- (Gen4TrainerCardArt).
+                        "gen4_bag_art", "gen4_trainer_card_art",
+                        -- the naming screen's sprites and entry colours (Gen4Naming).
+                        "gen4_naming_art", "gen4_naming_ink",
+                        -- the PC storage screen's layers, sprites and ink
+                        -- (Gen4BoxArt), the main menu's two frames and
+                        -- colours (Gen4MainMenuArt) and the Poke Mart
+                        -- counter's art (Gen4ShopArt).
+                        "gen4_box_art", "gen4_box_ink",
+                        "gen4_main_menu_art", "gen4_main_menu_ink",
+                        "gen4_shop_art",
+                        -- the summary screen's sprites, bars, bottom screen
+                        -- and window colours (Gen4SummaryArt).
+                        "gen4_summary_art", "gen4_summary_ink",
                         -- the Hall of Fame and credits art and staff roll (Gen4EndingArt).
                         "gen4_ending_art", "gen4_ending",
+                        -- the Poketch apps' sprites (against each app's own OBJ
+                        -- VRAM), BG tile sheets, animations and tilemaps
+                        -- (Gen4PoketchArt); the evolution scene's particles
+                        -- (Gen4EvolutionArt).
+                        "gen4_poketch_art", "gen4_poketch_ink",
+                        "gen4_evolution_art", "gen4_evolution_ink",
                         -- each trainer class's prize multiplier (Gen4TrainerPrize).
                         "gen4_trainer_prize",
                         -- each trainer class's front picture (the Hall of Fame's player).
@@ -949,6 +982,9 @@ local function ensureGen2HomeTextFallbacks(self)
 end
 
 function Data:applyVersionedFieldData()
+  if require("src.core.GameVersion").get()=="polishedcrystal" and self.audio then
+    self.audio.gen2Dialect="polishedcrystal"
+  end
   if require("src.core.GameVersion").isYellow() then
     self.field.trades = copy(YELLOW_TRADES)
     -- The old man's catch demo is a RATTATA in Yellow

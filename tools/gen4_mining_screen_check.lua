@@ -123,22 +123,37 @@ ok(cells == Mining.GRID_WIDTH * Mining.GRID_HEIGHT,
 ok(wrong == 0, "%d cells are not exactly %d pixels", wrong, L.CELL * L.CELL)
 
 section("3. the sidebar picks a tool")
-local hammer, pickaxe, neither = 0, 0, 0
-for y = 0, H - 1 do
-  local tool = Screen.toolAt(y)
-  if tool == "hammer" then hammer = hammer + 1
-  elseif tool == "pickaxe" then pickaxe = pickaxe + 1
-  else neither = neither + 1 end
+-- Mining_ButtonTouchCheck's own comparisons, computed here independently and
+-- swept over every pixel of the sidebar: 26*8+6 < x < 31*8+4, hammer
+-- 5*8+3 < y < 13*8+6, pickaxe 14*8+2 < y < 21*8+6 -- all strict. (This section
+-- used to assert the DRAWN rectangles, which is not what the cartridge tests.)
+local function cartridgeTool(x, y)
+  if not (26 * 8 + 6 < x and x < 31 * 8 + 4) then return nil end
+  if 5 * 8 + 3 < y and y < 13 * 8 + 6 then return "hammer" end
+  if 14 * 8 + 2 < y and y < 21 * 8 + 6 then return "pickaxe" end
+  return nil
 end
-io.write(("  hammer %d rows, pickaxe %d rows, neither %d\n"):format(hammer, pickaxe, neither))
-ok(hammer == L.HAMMER.h, "the hammer button covers %d rows, not %d", hammer, L.HAMMER.h)
-ok(pickaxe == L.PICKAXE.h, "the pickaxe button covers %d rows, not %d", pickaxe, L.PICKAXE.h)
-ok(neither > 0, "every row of the sidebar picks a tool; the gap between the two "
+local hammer, pickaxe, neither, wrongTool = 0, 0, 0, 0
+for y = 0, H - 1 do
+  for x = L.SIDEBAR_X, W - 1 do
+    local tool = Screen.toolAt(y, x)
+    if tool ~= cartridgeTool(x, y) then wrongTool = wrongTool + 1 end
+    if tool == "hammer" then hammer = hammer + 1
+    elseif tool == "pickaxe" then pickaxe = pickaxe + 1
+    else neither = neither + 1 end
+  end
+end
+io.write(("  hammer %d px, pickaxe %d px, neither %d\n"):format(hammer, pickaxe, neither))
+ok(wrongTool == 0, "%d sidebar pixels pick a different tool than the cartridge's test", wrongTool)
+ok(hammer == 37 * 66, "the hammer covers %d pixels, not 37 x 66", hammer)
+ok(pickaxe == 37 * 59, "the pickaxe covers %d pixels, not 37 x 59", pickaxe)
+ok(neither > 0, "every pixel of the sidebar picks a tool; the gap between the two "
    .. "buttons and the margins have gone")
-ok(Screen.toolAt(L.HAMMER.y) == "hammer", "the hammer's first row does not pick it")
-ok(Screen.toolAt(L.HAMMER.y + L.HAMMER.h) ~= "hammer",
-   "the hammer's rect is inclusive at the end; the cartridge's loop is y < endY")
-ok(Screen.toolAt(L.PICKAXE.y) == "pickaxe", "the pickaxe's first row does not pick it")
+ok(Screen.toolAt(43, 230) == nil and Screen.toolAt(44, 230) == "hammer",
+   "the hammer's test is 43 < y, strict")
+ok(Screen.toolAt(110, 230) == nil, "the hammer's test is y < 110, strict")
+ok(Screen.toolAt(80, 214) == nil and Screen.toolAt(80, 252) == nil,
+   "the x test is 214 < x < 252, strict at both ends")
 
 section("4. the dirt quads")
 -- Mining_DrawDirt names four tile indices per layer; the sheet is 16 tiles wide

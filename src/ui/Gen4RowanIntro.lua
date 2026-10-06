@@ -347,6 +347,7 @@ function Gen4RowanIntro:askName()
   local maxLen = (self.game.data.constants or {}).playerNameLength or 7
   Screens.push(self.game, "NamingScreen", {
     title = self:fill((self.rec.text or {}).name or Strings("YOUR NAME?")),
+    kind = "player", female = self.answers.gender == "girl",
     presets = presets,
     maxLen = maxLen,
     onDone = function(name)
@@ -371,6 +372,7 @@ function Gen4RowanIntro:askRivalName()
   local maxLen = (self.game.data.constants or {}).playerNameLength or 7
   Screens.push(self.game, "NamingScreen", {
     title = self:fill((self.rec.text or {}).rivalName or Strings("RIVAL")),
+    kind = "rival",
     presets = presets,
     maxLen = maxLen,
     onDone = function(name)

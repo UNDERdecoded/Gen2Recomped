@@ -23,7 +23,7 @@
 -- THE BUTTONS (ov17_022492DC): UP or X is JUMP, DOWN or B is FRONT, LEFT or Y
 -- is LEFT, RIGHT or A is RIGHT.
 --
--- Not drawn: the 3D particles and fireworks, the move press animation. The
+-- Not drawn: the 3D particles and fireworks. The
 -- sound effects wait on the contest's SE table.
 
 local Font = require("src.render.Font")
@@ -227,6 +227,7 @@ function UI:tick()
     for key, dir in pairs(UI.KEYS) do
       if input:wasPressed(key) then
         self:act(0, t, dir, ms.lead == 0)
+        self.press = { dir = dir, from = self.frame }
         break
       end
     end
@@ -368,14 +369,25 @@ function UI:drawPad()
       Art.draw(self.game, "sub_logo_" .. (self.c.type or 0), 0, 0)
       return
     end
-    Art.draw(self.game, "dance_pad", 0, 0)
+    -- the pressed button's frames (ov17_02249DA0): its tiles pushed in, then
+    -- half back, then at rest, three frames each, its label down 16, up 4,
+    -- then home
+    local pressed, frame, drop = nil, nil, 0
+    if self.press then
+      local k = self.frame - self.press.from
+      if k < 3 then frame, drop = 0, 16 elseif k < 6 then frame, drop = 1, 12 elseif k < 9 then frame = 2 end
+      if frame then pressed = self.press.dir end
+    end
+    if not (pressed and Art.draw(self.game, ("dance_pad_%d_%d"):format(pressed, frame), 0, 0)) then
+      Art.draw(self.game, "dance_pad", 0, 0)
+    end
     local species = self.c.contestants[0].mon and self.c.contestants[0].mon.species
     local cantJump = species == 50 or species == 51
     local labels = { { cantJump and 1 or 0, 128, 24 }, { 2, 128, 120 }, { 3, 48, 64 }, { 4, 208, 64 } }
     Font.pushStyle({ text = { 1, 1, 1 }, shadow = { 0.3, 0.3, 0.3 } })
-    for _, l in ipairs(labels) do
+    for move, l in ipairs(labels) do
       local s = T.resolve(self.data, Dance.BANK, l[1], self.game) or ""
-      Font.draw(s, l[2] - math.floor(Font.width(s) / 2), l[3])
+      Font.draw(s, l[2] - math.floor(Font.width(s) / 2), l[3] + (move == pressed and drop or 0))
     end
     Font.popStyle()
     -- dimmed while you cannot move (PaletteData_Blend at 6/16)

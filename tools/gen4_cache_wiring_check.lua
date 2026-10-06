@@ -156,14 +156,16 @@ io.write("\nthe seam\n")
 local DUMPS = {
   gen4_text = "lowered into `text` (and `text_pointers`)",
   gen4_events = "lowered into `map_scripts`",
-  gen4_map_matrices = "lowered into `maps`",
+  -- `gen4_map_matrices` WAS HERE: Data loads it now for the matrix border
+  -- heights (Gen4Ground), so it has a reader of its own.
   gen4_map_objects = "lowered into `maps`",
   -- `gen4_map_permissions` WAS HERE and is on the loaded list now: the
   -- 291 outdoor maps carry no `behaviorCells`, so the land chunk's
   -- permission block is the only thing that names a cave mouth or a bike
   -- slope, and `Gen4Ground:behaviourAt` reads it.
   gen4_map_heights = "lowered into `maps`",
-  gen4_trainer_sprites = "lowered into `trainers`",
+  -- `gen4_trainer_sprites` WAS HERE: the Hall of Fame reads it directly for
+  -- the player's own picture on the last page (src/ui/Gen4HallOfFame.lua).
   gen4_fonts = "lowered into `font`",
 }
 local stranded, dumps = {}, 0

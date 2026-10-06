@@ -222,6 +222,34 @@ function Gen4ContestArt.images(rom)
     out.dance_stage_1 = backdrop(picture(13, 15, palette), palette[1])
     local p33 = pal(33)
     out.dance_pad = backdrop(over(picture(18, 28, p33), picture(18, 17, p33)), p33[1])
+    -- THE PRESS (ov17_02249DA0): a button's 6 x 12 tiles, at column
+    -- {JUMP 0, FRONT 18, LEFT 6, RIGHT 12} of the 32-wide character block,
+    -- are overwritten from member 16 (18 tiles wide, three frames side by
+    -- side) -- column 12, then 6, then 0, about three frames apart
+    -- (Unk_ov17_02254630). One whole pad per button and frame.
+    local sheet, press = tiles(18), tiles(16)
+    if sheet and press then
+      local per = sheet.perTile
+      local DST = { 0, 0x12, 6, 0xC }
+      for move = 1, 4 do
+        for f, src in ipairs({ 12, 6, 0 }) do
+          local chunks = {}
+          for t = 0, sheet.count - 1 do chunks[t + 1] = sheet.pixels:sub(t * per + 1, (t + 1) * per) end
+          for row = 0, 11 do
+            for col = 0, 5 do
+              local s = row * 18 + src + col
+              local d = row * 32 + DST[move] + col
+              if d < sheet.count then chunks[d + 1] = press.pixels:sub(s * per + 1, (s + 1) * per) end
+            end
+          end
+          local patched = {}
+          for k, v in pairs(sheet) do patched[k] = v end
+          patched.pixels = table.concat(chunks)
+          local pic = over(G.compose(map(28), patched, p33), G.compose(map(17), patched, p33))
+          out[("dance_pad_%d_%d"):format(move, f - 1)] = backdrop(pic, p33[1])
+        end
+      end
+    end
   end
   do
     local palette = copy(pal(39))

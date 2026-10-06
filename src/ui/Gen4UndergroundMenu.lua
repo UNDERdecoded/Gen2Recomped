@@ -101,7 +101,13 @@ Gen4UndergroundMenu._layout = {
   pitch = 3 * 8,
   firstCentreY = 1 * 8 + (3 * 8) / 2,
   cursorX = 204,
-  textX = 20 * 8 + 8,          -- `sListMenuTemplate.textXOffset` is 8
+  -- `Menu_New(&template, 28, 4, ...)`: the labels start 28px into the window
+  -- and 4px down, one every 16px of font + `lineSpacing` 8 -- so x 188 and
+  -- row tops 12 + 24 * i
+  textX = 20 * 8 + 28,
+  textY = 1 * 8 + 4,
+  -- sSpriteTemplates[ICON_TEMPLATE]: the option icons at x 174, y 20 + 24 * i
+  iconX = 174,
 }
 
 -- The rectangle option `i` occupies, derived from `_layout` alone so that the
@@ -259,6 +265,20 @@ end
 
 -- ------------------------------------------------------------------- draw --
 
+-- a sprite from `gen4_menu_art` (src/import/Gen4MenuArt.lua) and its record
+local artImages = {}
+function Gen4UndergroundMenu.art(game, key)
+  local index = game and game.data and game.data.gen4_menu_art
+  local rec = index and index[key]
+  if type(rec) ~= "table" or type(rec.path) ~= "string" then return nil end
+  if artImages[rec.path] == nil then
+    local ok, img = pcall(require("src.render.Assets").image, rec.path)
+    artImages[rec.path] = ok and img or false
+    if artImages[rec.path] then artImages[rec.path]:setFilter("nearest", "nearest") end
+  end
+  return artImages[rec.path] or nil, rec
+end
+
 function Gen4UndergroundMenu:draw()
   local g = love.graphics
   local L = Gen4UndergroundMenu._layout
@@ -268,17 +288,34 @@ function Gen4UndergroundMenu:draw()
 
   for i, row in ipairs(self.rows) do
     local centre = L.firstCentreY + (i - 1) * L.pitch
-    if i == self.index then
-      g.setColor(0.98, 0.83, 0.30, 0.55)
-      local rx, ry, rw, rh = Gen4UndergroundMenu.rowRect(i, count)
-      g.rectangle("fill", rx + 2, ry + 2, rw - 4, rh - 4)
+    local selected = (i == self.index)
+    if selected then
+      -- the start menu's cursor sprite (menu_gra cursor, underground_menu.NCLR
+      -- row 1), at x 204, y 20 + 24 * pos: a 96x32 cell from (-48, -16)
+      local cursor, rec = Gen4UndergroundMenu.art(self.game, "ug_cursor")
+      if cursor then
+        g.setColor(1, 1, 1, 1)
+        g.draw(cursor, L.cursorX + (rec.originX or -48), centre + (rec.originY or -16))
+      else
+        g.setColor(0.98, 0.83, 0.30, 0.55)
+        local rx, ry, rw, rh = Gen4UndergroundMenu.rowRect(i, count)
+        g.rectangle("fill", rx + 2, ry + 2, rw - 4, rh - 4)
+        g.setColor(1, 1, 1, 1)
+      end
+    end
+    -- the option's icon: colour (palette row 1) on the cursor's row, grey
+    -- (row 0) elsewhere -- the first frame of animation option * 3
+    local icon, irec = Gen4UndergroundMenu.art(self.game,
+      ("ug_icon_%d_%s"):format(i - 1, selected and "colour" or "grey"))
+    if icon then
       g.setColor(1, 1, 1, 1)
+      g.draw(icon, L.iconX + (irec.originX or -16), centre + (irec.originY or -16))
     end
     -- An unserved row is drawn dimmed, so the refusal is visible before the
     -- tap rather than only after it.
     local dim = Gen4UndergroundMenu.UNSERVED[row.id] ~= nil
     if dim then g.setColor(0.60, 0.60, 0.60, 1) end
-    Font.draw(row.label or "?", L.textX, centre - 6)
+    Font.draw(row.label or "?", L.textX, L.textY + (i - 1) * L.pitch)
     if dim then g.setColor(1, 1, 1, 1) end
   end
 

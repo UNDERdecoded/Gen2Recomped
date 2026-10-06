@@ -1152,26 +1152,27 @@ else
     local propSet = ground:oneShotProps()
     local propCount = 0
     for _ in pairs(propSet) do propCount = propCount + 1 end
-    ok(propCount == 39,
-       "%d prop model(s) can run a joint one-shot, not 39 -- the twenty doors "
-       .. "plus nineteen other animated props", propCount)
+    ok(propCount == 46,
+       "%d prop models support script-driven motion, expected 46 including "
+       .. "PC/healing display texture animations", propCount)
 
     -- EVERY DOOR IS IN THE SET, by index.
     local absent = {}
     for _, row in ipairs(Gen4PropAnim.DOORS) do
-      -- elevator_door's animations are BTP0, so it has no joint tracks and is
-      -- NOT one-shot capable by this test -- it moves through the texture path
-      -- instead, which `animationsFor` already answers for.
-      if row.name ~= "elevator_door" and not propSet[row.member] then
+      -- Both joint and texture one-shots require a live prop.
+      if not propSet[row.member] then
         absent[#absent + 1] = ("%s (member %d)"):format(row.name, row.member)
       end
     end
     ok(#absent == 0,
        "%d door(s) cannot run a one-shot: %s", #absent,
        table.concat(absent, ", "))
-    ok(propSet[75] ~= true,
-       "elevator_door (member 75) is listed as joint-capable; its animations "
-       .. "are BTP0 and it has no tracks, so it belongs to the texture path")
+    ok(propSet[75] == true,
+       "elevator_door (member 75) must remain live for its script-driven BTP0")
+    for _,model in ipairs({112,115,119,124,248,517}) do
+      ok(propSet[model]==true,"PC/healing display model %d must remain live",model)
+      ok(ground:animationsFor(model)==nil,"PC/healing display model %d must not loop at idle",model)
+    end
 
     -- THE COMPLEMENT, over every placed prop in every chunk.
     local placed, baked, animated, both, neither = 0, 0, 0, 0, 0
@@ -1233,12 +1234,12 @@ else
         end
       end
     end
-    -- 218 placements are joint-capable; 7 of those are ALSO texture-animated
-    -- (three models are in both sets), so 211 move for a joint reason alone.
+    -- The live set includes script-owned texture displays as well as joints.
+    -- Current ROM/cache census: 290 placements, seven also ambient-animated.
     -- Both numbers are asserted, because quoting one where the other belongs
     -- is how this assertion failed on a correct tree the first time.
-    ok(jointOnly == 211,
-       "%d placed prop(s) move for a JOINT reason alone; it is 211, and zero "
+    ok(jointOnly == 283,
+       "%d placed props require a script-driven live pass; expected 283, and zero "
        .. "would mean the split answers false everywhere and every door is "
        .. "still baked flat", jointOnly)
     local jointCapable = 0
@@ -1249,9 +1250,9 @@ else
         end
       end
     end
-    ok(jointCapable == 218,
-       "%d placement(s) are joint-capable, not 218", jointCapable)
-    report("%d joint-capable placements, %d of them moving for that reason "
+    ok(jointCapable == 290,
+       "%d placements support script-driven motion, expected 290", jointCapable)
+    report("%d script-driven placements, %d of them live for that reason "
            .. "alone (the other 7 are texture-animated too)",
            jointCapable, jointOnly)
   end

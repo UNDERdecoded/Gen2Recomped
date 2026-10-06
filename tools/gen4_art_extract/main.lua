@@ -7,22 +7,36 @@
 -- index to <cache dir>/<module>.lua, so a cache gains them without a
 -- re-import. Name modules to do only some: contest, poffin.
 --
---   love tools/gen4_art_extract <platinum .nds> <asset root> <cache dir> [contest] [poffin] [ending]
+--   love tools/gen4_art_extract <platinum .nds> <asset root> <cache dir> [contest] [poffin] [ending] [options] [mining] [menu] [party]
 
 local MODULES = {
   contest = { module = "src.import.Gen4ContestArt", dir = "contest", cache = "gen4_contest_art" },
   poffin = { module = "src.import.Gen4PoffinArt", dir = "poffin", cache = "gen4_poffin_art" },
   ending = { module = "src.import.Gen4EndingArt", dir = "ending", cache = "gen4_ending_art", dataCache = "gen4_ending" },
+  options = { module = "src.import.Gen4OptionsArt", dir = "options", cache = "gen4_options_art" },
+  mining = { module = "src.import.Gen4MiningArt", dir = "mining", cache = "gen4_mining_art" },
+  menu = { module = "src.import.Gen4MenuArt", dir = "menu_art", cache = "gen4_menu_art" },
+  party = { module = "src.import.Gen4PartyArt", dir = "party", cache = "gen4_party_art", dataCache = "gen4_party_ink" },
+  naming = { module = "src.import.Gen4Naming", dir = "naming", cache = "gen4_naming_art", dataCache = "gen4_naming_ink" },
+  bag = { module = "src.import.Gen4BagArt", dir = "bag_art", cache = "gen4_bag_art" },
+  trainer_card = { module = "src.import.Gen4TrainerCardArt", dir = "trainer_card_art", cache = "gen4_trainer_card_art" },
+  summary = { module = "src.import.Gen4SummaryArt", dir = "summary_art", cache = "gen4_summary_art", dataCache = "gen4_summary_ink" },
+  box = { module = "src.import.Gen4BoxArt", dir = "box", cache = "gen4_box_art", dataCache = "gen4_box_ink" },
+  mainmenu = { module = "src.import.Gen4MainMenuArt", dir = "main_menu", cache = "gen4_main_menu_art", dataCache = "gen4_main_menu_ink" },
+  shop = { module = "src.import.Gen4ShopArt", dir = "shop_art", cache = "gen4_shop_art" },
+  battle = { module = "src.import.Gen4BattleArt", dir = "battle_art", cache = "gen4_battle_art", dataCache = "gen4_battle_anims" },
+  poketch = { module = "src.import.Gen4PoketchArt", dir = "poketch_art", cache = "gen4_poketch_art", dataCache = "gen4_poketch_ink" },
+  evolution = { module = "src.import.Gen4EvolutionArt", dir = "evolution_art", cache = "gen4_evolution_art", dataCache = "gen4_evolution_ink" },
 }
 
 function love.load(args)
   local ok, err = xpcall(function()
     local romPath, assetRoot, cacheDir = args[1], args[2], args[3]
-    assert(romPath and assetRoot and cacheDir, "usage: love tools/gen4_art_extract <rom> <asset root> <cache dir> [contest] [poffin] [ending]")
+    assert(romPath and assetRoot and cacheDir, "usage: love tools/gen4_art_extract <rom> <asset root> <cache dir> [contest] [poffin] [ending] [options] [mining] [menu] [party]")
     assetRoot, cacheDir = assetRoot:gsub("[/\\]$", ""), cacheDir:gsub("[/\\]$", "")
     local wanted = {}
     for i = 4, #args do wanted[args[i]] = true end
-    if next(wanted) == nil then wanted = { contest = true, poffin = true, ending = true } end
+    if next(wanted) == nil then for name in pairs(MODULES) do wanted[name] = true end end
     local rom = assert(require("src.import.NdsRom").open(romPath))
     for name, m in pairs(MODULES) do
       if wanted[name] then

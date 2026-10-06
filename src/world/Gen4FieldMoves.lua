@@ -1,7 +1,12 @@
 -- Move IDs and badge IDs from Platinum's FieldMoves_Check* functions.
 local F = {}
 F.ids = {CUT=15,FLY=19,SURF=57,STRENGTH=70,FLASH=148,ROCK_SMASH=249,
-  WATERFALL=127,ROCK_CLIMB=431,DEFOG=432,DIG=91,TELEPORT=100,SWEET_SCENT=230}
+  WATERFALL=127,ROCK_CLIMB=431,DEFOG=432,DIG=91,TELEPORT=100,SWEET_SCENT=230,
+  CHATTER=448,MILK_DRINK=208,SOFTBOILED=135}
+-- party_menu/main.c sFieldMoves: every move the party menu lists, whatever
+-- the badges -- the check (field_move_tasks.c) answers at the press
+F.ORDER = {'CUT','FLY','SURF','STRENGTH','DEFOG','ROCK_SMASH','WATERFALL','ROCK_CLIMB',
+  'FLASH','TELEPORT','DIG','SWEET_SCENT','CHATTER','MILK_DRINK','SOFTBOILED'}
 -- Badge-list positions follow TrainerInfo's IDs, not Platinum's gym visit order.
 F.badges = {CUT=2,FLY=3,SURF=4,STRENGTH=6,DEFOG=5,ROCK_SMASH=1,WATERFALL=8,ROCK_CLIMB=7}
 function F.knows(mon, name)

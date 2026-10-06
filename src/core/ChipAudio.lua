@@ -232,6 +232,8 @@ local function slimAudio(data)
     programPrefix = require('src.core.WorkerFs').prefix(),
     bankOrder = audio.bankOrder,
     waveBanks = audio.waveBanks,
+    gen2Dialect = audio.gen2Dialect,
+    drumkits = audio.gen2Dialect=="polishedcrystal" and audio.drumkits or nil,
     noiseHeaders = audio.noiseHeaders,
     -- the Gen 3 synth reads its bytecode, voicegroups and sampled
     -- instruments out of one image beside the cache; this is where it is

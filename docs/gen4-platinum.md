@@ -37174,3 +37174,346 @@ Check: `tools/gen4_contest_dance_check.lua` (26). Harness:
 `Gen4PoffinCooking` and `Gen4MysteryGift` required `src.ui.TextBox`, which
 does not exist. They now require `src.render.TextBox`, so "keep cooking?"
 and the gift picker's messages no longer error.
+
+## Platinum's own art for the Options screen, group cooking, the Dance pad and the credits' 3D
+
+### Options (src/import/Gen4OptionsArt.lua, cache `gen4_options_art`)
+
+`options_menu.c LoadBgTiles` draws the screen from `/graphic/config_gra.narc`
+(`tiles.NCGR`, `tiles.NCLR`, `tilemap.bin`):
+
+- **Backdrop.** BG_MAIN_2 and the bottom screen's SUB_0 are filled with
+  tile 1, colour (197, 206, 214). The port's hard-coded colour was one shade
+  off.
+- **Cursor.** BG_MAIN_0 shows the tilemap's first two rows, scrolled to
+  row × 16 + 24, at priority 1, above the windows. It is the red rounded bar
+  the port used to draw by hand.
+
+Both are now the cartridge's pictures, and the hand-drawn versions remain
+only as a fallback for a cache without them. Harness:
+`tools/gen4_options_harness`.
+
+### Group cooking (src/import/Gen4PoffinArt.lua, src/ui/Gen4PoffinCooking.lua)
+
+From `ov83_0223E15C` and `ov83_0223DFAC`:
+
+- `top_screen.NCLR`'s two palettes load into slots 2–3. The top screen's
+  map is re-coloured to slot 3, the file's second palette, and the port now
+  composes it that way.
+- Each cook's **plate** is a 10 × 4-tile piece of `player_name.NSCR`, cut at
+  (col × 10, row × 4) and placed at tile (5 + col × 12, 13 + row × 5), in
+  slot 2. They are `cook_plate_<col>_<row>`: red, blue, yellow and green. The
+  names are centred on them.
+- The cooking **messages** belong on the top screen, in a message box at
+  tile (4, 19), 23 × 4 (`ov83_0223E09C`). With a second screen they are drawn
+  there and the pot is left clear. Without one they still come down to the
+  main screen.
+
+### The Dance pad's press (src/import/Gen4ContestArt.lua)
+
+When a button is pressed, `ov17_02249DA0` overwrites that button's 6 × 12
+tiles in the character block:
+
+- The button sits at block column JUMP 0, FRONT 18, LEFT 6 or RIGHT 12.
+- The new tiles come from contest_bg member 16, which holds three frames
+  side by side, 18 tiles wide. Columns 12, 6 and 0 are pressed, half-up and
+  rest, about three frames each (`Unk_ov17_02254630`).
+- The label drops 16, rises 4, then returns.
+
+They are imported as `dance_pad_<move>_<frame>`, and the pad plays them.
+
+### The credits' trees and lampposts (src/import/Gen4EndingArt.lua, src/ui/Gen4Credits.lua)
+
+The credits' BG0 is 3D: seven BMD0 models from `ending.narc`. They are now
+packed with `Gen4ModelPack` and their TEX0 textures decoded
+(`model_<name>_<texture>`); the records are in `gen4_ending.models`, and
+`Gen4Model` draws them. The placement is `common.c`'s:
+
+- Rows of 14 or 16 copies on a diagonal, from the start position minus
+  (116736, 178176, 290816) × j in fx32.
+- Each copy slides offset × count / speed a frame. On reaching the start it
+  jumps back `count` places.
+- Morning has two tree rows, day one lamppost row, and night a tree row
+  plus a row of trees and lampposts. The night's front row follows
+  `sEndCreditsNightTreeTypes`: a lamppost every eighth, then snowy trees.
+- The camera is `EndCredits_InitCamera`'s: eye (−31712, −142304, 496744),
+  target (−31712, −67780, −5704), 44°, clipping 1–900.
+- The props draw over the background (priority 3) and under the bike and
+  the roll.
+
+Positions are computed in closed form from the scene's frame, so seeking in
+the credits still places them right.
+
+**Approximated:** the per-scene light and material colours are reduced to
+one tint per scene (`PROP_TINT`): warm in the morning, cool at night.
+
+### What stays as it is
+
+- **Hall of Fame spotlights and confetti.** These are BG0 polygons with no
+  2D art, drawn flat at the cartridge's angles, speeds and colours.
+- **Menus with no Platinum screen.** The Mystery Gift picker and the "how
+  many cooks" menu are the port's own additions and use the standard menu
+  window.
+
+### Checks
+
+`tools/gen4_screen_art_check.lua <cache> [<asset root>]` (8): the backdrop
+and cursor, the four plates, the pad's twelve press frames, and the seven
+props with every textured shape's picture.
+
+## More screens on Platinum's own art: naming, Pokédex list, party, mining, the Underground menu, and the Pokémon icons
+
+### Naming screen (src/import/Gen4Naming.lua, src/ui/Gen4NamingScreen.lua)
+
+The home row, the cursor and the name entry are sprites from `namein.narc`
+(members 1/10/12/14), now imported into `gen4_naming_art`, with the entry's
+colours in `gen4_naming_ink`. Every label (UPPER, lower, Others, BACK, OK,
+SELECT, B BUTTON, START) is baked into the art.
+
+- **Overlay and buttons.** The overlay sits at (22, 56), and the buttons are
+  its children: tabs at 26/58/90, BACK at 158, OK at 198, all at y 68. The
+  current page's tab is lit. BACK and OK show their pressed frame for 8 ticks.
+- **Cursor.** A white mask tinted with the glow, colour (29, sin(a)·10+15, 0),
+  where a rises 20° per 30 Hz frame. On a key it cycles cells 32/37/38/37;
+  on the home row it is the bracket. Typing a character plays the pop. The
+  cursor starts hidden on the first key, and the first press only shows it.
+- **Movement.** The port's invented SPACE key is gone. Columns 7–8 are SKIP
+  cells, as on the cartridge, and the cursor steps over them. START jumps to
+  OK, B is BACK, and SELECT cycles the page.
+- **Page change.** The new page slides in 24 px a frame while the old one
+  drops away, then the overlay wiggles +4 +4 −3 −3 +2 +2 0.
+- **Name entry.** The typed name sits at (80 + 12i, 24), in background
+  colours 14/15. Underscores are at (80 + 12i, 39), and the next one bobs.
+- **Header icon** at (24, 8): the player (by gender), the rival, the box,
+  Shaymin's tablet, or the Pokémon's own icon hopping. A Pokémon's gender
+  mark is at (80 + 13·max, 27).
+- **Prompt.** It goes in the bottom screen's message box at (2, 19). With no
+  second screen it sits beside the icon.
+- The Rowan intro and the PC now pass `kind`, so the header shows the right
+  picture.
+
+Harness: `tools/gen4_naming_harness`.
+
+### Pokédex list (src/import/Gen4Dex.lua, src/ui/Gen4Pokedex.lua)
+
+The top screen is now `ov21_021D5AEC.c`'s:
+
+- the olive background with the picture frame, and the SINNOH/NATIONAL
+  banner and footer (red for search results);
+- nine curved name plates around the selected entry, each with its own
+  palette row (0, 7, 8, 9 by distance from the middle), with a Poké Ball for
+  caught entries;
+- the preview, or the "?" icon for an unseen entry, and the red scroll thumb;
+- SEEN / OBTAINED at (8, 152) and (128, 152).
+
+Scrolling slides the plates the cartridge's way: 640 down by 60 a frame,
+1.6× faster while held. The yellow highlight and the "*" are gone.
+
+Tool: `tools/gen4_dex_art_extract` (adds the art to an existing cache).
+Harness: `tools/gen4_pokedex_harness`.
+
+### Party screen (src/import/Gen4PartyArt.lua, src/ui/Gen4PartyMenu.lua)
+
+The six panels are BG2 (`menu_panels.NSCR`), which the port had never drawn:
+
+- **Panels.** Lead, back, egg and empty templates. The colour comes from
+  `menu.NCLR` row 3+v: normal, cursor, fainted, or green while switching.
+- **Panel contents.**
+  - The name and ♂/♀ in the menu palette.
+  - "Lv" and the HP numbers in `font_special_chars`.
+  - The HP bar's three rows from x 64, in the cartridge's green, yellow and
+    red.
+  - Status, held-item, mail and seal icons.
+- **Cursor.** The cursor sprite at panel+(0, 1), orange, turning grey while
+  the submenu is open. While switching, a source marker replaces the yellow
+  rectangle.
+- **CANCEL and messages.** The CANCEL button sprite. "Choose a Pokémon." and
+  "Do what with …?" are drawn in message boxes.
+- **Submenu.** Field moves are listed in move-slot order, in blue.
+- **Navigation.** The cartridge's table.
+
+Tool: `tools/gen4_art_extract … party`. Harness:
+`tools/gen4_party_harness`. Check: `tools/gen4_party_art_check.lua`.
+
+### Mining and the Underground menu (src/import/Gen4MiningArt.lua, Gen4MenuArt.lua)
+
+- **Tool buttons.** These are `interface_tiles` blocks (up, transition,
+  pressed) with the cartridge's tap area, replacing the hand-drawn "HAM"/"PIC"
+  boxes.
+- **Crack and dirt palette.** Both use `interface_tiles` row 2; they had been
+  composed in row 0.
+- **Sprites.** The swing, impact and sparkle sprites from `ug_anim`, the crack
+  end, the screen shake, and the sparkles on a fully uncovered treasure.
+- **Messages.** Drawn in the message box from bank 634, including the
+  first-time tutorial.
+- **Behaviour change, as on the cartridge.** A collapse still awards the
+  treasures that were already fully dug out.
+- **Underground menu.** The cursor is `menu_gra`'s cursor sprite in palette
+  row 1 (orange), and the icons are colour on the selected row and grey
+  elsewhere.
+- **Start menu.** Its cursor was composed in row 0, which is grey; it now
+  uses row 1.
+
+Tool: `tools/gen4_art_extract … mining menu`. Check:
+`tools/gen4_mining_sprites_check.lua <rom>` (274).
+
+### Fix: every Pokémon icon was in its neighbour's colours (src/import/Gen4Icons.lua)
+
+`sPokemonIconPaletteIndex` was found by scanning ARM9 for a long run of
+bytes below 3. The run that won begins 118 bytes **before** the real array,
+so every species read another species' ramp: Infernape came out green, and
+Pikachu purple. The seven "checked by eye" anchors had been taken from that
+wrong render, so the check agreed with the wrong table.
+
+The anchors are now fourteen species' `icon_palette` values from
+pokeplatinum's `res/pokemon/<species>/data.json`. The table is the offset,
+inside a qualifying run, where all fourteen hold, which is ARM9+0xF0780.
+
+An existing cache is repaired with `tools/gen4_icon_reextract <rom> <asset
+root>`, which rewrites the 540 icons in place.
+
+### Fix: the Hall of Fame save
+
+`g4_clear_game` called `Game:writeSave` itself, which `gen4_save_check`
+forbids. It now writes through `ScriptSave.write`, like every other script
+save.
+
+## Summary, Bag, Trainer Card, PC, main menu and Mart on Platinum's art; the party menu's field moves
+
+### Summary screen (src/import/Gen4SummaryArt.lua, src/ui/Gen4SummaryMenu.lua)
+
+**Panels.** The move-detail and ribbon panels are `move_info.NSCR`, shown at
+the cartridge's scrolls: (0,0) for battle moves, (0,256) for contest moves and
+(256,56) for ribbons. They were hand-drawn boxes before.
+
+**Bars.** The HP and EXP bars are drawn from tiles 0xC0/0xE0/0x100 and 0xAC,
+using `App_PixelCount` and the green/yellow/red thresholds.
+
+**Sprites.** Now drawn: markings, page arrows, the A-button prompt, the "Lv"
+glyph, the category icon, the move panel's species and type icons, the
+contest dots, the ribbon arrows, and the bottom screen (rings and eight page
+buttons). Type icons take the template's EXPLICIT palette row; before, every
+type came out in one colour.
+
+**Positions and colours.**
+- Move types sit at (151, 42+32i) and the move cursor at (194, 48+32i).
+- Skill labels sit at x 128.
+- Text uses palette row 15's inks.
+
+**Condition graph.** Drawn as `3d_anim.c`'s four quads at alpha 20/31.
+
+**New page.** A contest moves page.
+
+Harness: `tools/gen4_summary_harness`. Checks: `gen4_summary_art_check` (12)
+and `gen4_summary_check` (20). The `ribbonCount` label in Gen4Menus is 182
+(it read 180, which is "INFO").
+
+### Bag (src/import/Gen4BagArt.lua, src/ui/Gen4BagMenu.lua)
+
+**List.** The cartridge's ListMenu:
+- 9 rows, 16 px apart, in the window at tile (14,0);
+- headers that are never selected, and no wrapping;
+- a cursor remembered per pocket.
+
+**Quantities and numbers.** Quantities are "x" plus a number right-aligned to
+134. TMs and Berries show "No." and two digits, HMs their tag, and a
+registered key item the SELECT tag.
+
+**Sprites.** The pocket highlight and arrows, the item highlight, the bag
+sprite for each pocket and gender, and CLOSE BAG's return icon.
+
+**Bottom screen.** The Poké Ball dial with one button per pocket. A bag
+opened on a single pocket shows only that pocket.
+
+### Trainer Card (src/import/Gen4TrainerCardArt.lua, src/ui/Gen4TrainerCard.lua)
+
+**Colours.** The cartridge writes `case_platinum` over row 0 of both screens'
+palettes, so the case, card faces and badge case come out in Platinum's
+cream and gold. The port had been drawing Diamond's light blue.
+
+**Faces.** All seven: normal through black, plus no-Pokédex.
+
+**Case and time.** The case is now drawn around the card. Play time is live,
+and its colon blinks every 15 frames.
+
+**Badge case.** Shown on the bottom screen: the lid on pages 1–2, open with
+the badges on page 3. Badges sit at `sBadgeCoordinates`.
+
+Check: `gen4_bag_card_check` (32). Harnesses: `tools/gen4_bag_harness` and
+`tools/gen4_trainer_card_harness`.
+
+### PC storage, the CONTINUE menu, the Poké Mart (Gen4BoxArt, Gen4MainMenuArt, Gen4ShopArt)
+
+**PC storage** is drawn as ov19's layers:
+- the wallpaper with the box name in its own colours;
+- icons at (112+24c, 40+24r);
+- PARTY PKMN and CLOSE BOX as button sprites;
+- the party panel;
+- the preview: species, No., nickname and gender, "Lv", markings, and an
+  info line that rotates through item, type, nature and ability;
+- the hand cursor with its shadow, and the header arrows;
+- menus in banks 18/19.
+
+The header menu is JUMP / WALLPAPER / NAME, and there is a MARK menu. RELEASE
+asks Yes/No first.
+
+**The CONTINUE menu.**
+- The focused row uses the field frame on white, with its border cycling.
+- Other rows use the system frame on grey.
+- The details are blue for a boy and red for a girl.
+- The menu scrolls smoothly and stops at the ends, with the cartridge's
+  scroll arrows.
+
+**The Mart.**
+- **Buying.** The list stays up. The cursor changes palette when an item is
+  chosen, and the "In Bag:" and quantity windows appear (with arrows),
+  followed by "That will be $N. OK?" and YES/NO.
+- **Scrolling and TMs.** The scroll arrows follow the game's rule, and TMs
+  show "No.NN".
+- **Selling.** SELL picks from the Bag and asks bank 7's questions.
+
+Check: `gen4_pc_mart_menu_check` (33). Harness:
+`tools/gen4_pc_mart_harness`.
+
+### The party menu's field moves (src/ui/Gen4PartyMenu.lua, src/world/Gen4FieldMoves.lua)
+
+`GetContextMenuEntriesForPartyMon` lists every field move the Pokémon knows,
+whatever the badges or weather: CUT, FLY, SURF, STRENGTH, DEFOG, ROCK SMASH,
+WATERFALL, ROCK CLIMB, FLASH, TELEPORT, DIG, SWEET SCENT, CHATTER, MILK DRINK
+and SOFTBOILED. The port listed eight, and Flash/Defog only in matching
+weather.
+
+`FieldMoves_Check*` answers when a row is chosen, with the party menu's own
+lines from bank 453:
+- 76: no badge;
+- 104: can't use it here;
+- 196: someone is with you;
+- 102: already surfing.
+
+The moves themselves:
+- **Cut, Rock Smash, Strength.** These need the faced object's graphics ID
+  (86, 85, 84) and run `scripts_field_moves.s` entries 8, 9 and 10, with
+  VAR_0x8000 set to the slot and VAR_LAST_TALKED to the object.
+- **Waterfall and Rock Climb.** These need the faced tile (WATERFALL, or
+  ROCK_CLIMB_N_S / _E_W by facing) and run entries 13 and 11.
+- **Milk Drink and Softboiled.** These move a fifth of the user's max HP to
+  another member:
+  - "Not enough HP..." (138) when the user has no more than that;
+  - "This can't be used on that Pokémon." (131) for itself, a fainted target
+    or one at full HP;
+  - entry 64 for the result.
+- **Chatter.** It records the player's voice on the cartridge; with no
+  microphone, it plays the cry.
+
+`gen4_weather_check` asserted the old weather gate on the menu rows. It now
+asserts the cartridge's rule: list every known move, and refuse at the press.
+
+The party screen's "Do what with …?" line went through a hand-written STRVAR
+gsub. It is now buffered and expanded the normal way.
+
+### Cache wiring
+
+The Mining/Menu hook writes its two modules by literal name, so the cache
+wiring check sees them written. `gen4_map_matrices` and
+`gen4_trainer_sprites` have readers now, so they have left the
+write-only-dump list.

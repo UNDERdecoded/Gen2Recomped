@@ -335,6 +335,12 @@ Gen4Menus.PARTY_TEXT = {
   -- the question along the bottom, one per reason the screen was opened
   choose = 29, moveWhere = 30, giveTo = 31, useOn = 32,
   teachWhich = 33, chooseAndConfirm = 34,
+  -- the CANCEL button's label, the gender symbols on a panel, and the
+  -- question while the submenu is open ("Do what with\n{nickname}?")
+  cancelButton = 1, male = 27, female = 28, promptPokemon = 37,
+  promptItem = 38,
+  -- the item submenu
+  give = 160, take = 161,
   -- the submenu
   switch = 145, summary = 146, item = 147, mail = 148,
   mailRead = 149, mailTake = 150, mailStore = 151, cancel = 152,
@@ -429,7 +435,7 @@ Gen4Menus.SUMMARY_TEXT = {
   pp = 135, cancel = 146, power = 147, accuracy = 148, category = 149,
   switch = 152, dashes = 153, dashesLong = 154,
   -- the MEMO page
-  memo = 23, sheen = 127, ribbonCount = 180,
+  memo = 23, sheen = 127, ribbonCount = 182,
 }
 
 -- Twenty-five natures and thirty characteristics (five per stat), in the

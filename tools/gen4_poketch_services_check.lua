@@ -46,12 +46,21 @@ local shop = Shop.new(game, {4,17})
 shop:choose(); shop:choose(); shop.qty = 10; shop:choose(); shop:choose()
 check(game.save.inventory[4] == 10 and game.save.money == 3000, 'numeric item purchase')
 check(game.save.inventory[12] == 1, 'Premier Ball bonus')
-shop:back(); shop.cursor = 2; shop:choose(); shop.cursor = 1; shop:choose()
-shop.qty = 2; shop:choose(); shop:choose()
+-- SELL is Platinum's Bag (BAG_MODE_SELL_ITEMS): the shop opens the Bag in pick
+-- mode and sells what it hands back, so the item arrives through sellItem
+-- rather than a list drawn on the counter
+local bagOpened
+local realScreens = package.loaded['src.ui.Screens']
+package.loaded['src.ui.Screens'] = { push = function(_, id, opts) bagOpened = { id = id, opts = opts } end }
+shop:back(); shop.cursor = 2; shop:choose()
+package.loaded['src.ui.Screens'] = realScreens
+check(shop.mode == 'sell' and bagOpened and bagOpened.id == 'BagMenu' and bagOpened.opts.pick,
+ 'SELL opens the Bag to pick from')
+shop:sellItem(4); shop.qty = 2; shop:choose(); shop:choose()
 check(game.save.inventory[4] == 8 and game.save.money == 3200, 'sell transaction')
 game.save.inventory[428] = 1
-shop.cursor = #shop:rows(); shop:choose()
-check(shop.mode == 'sell', 'key item cannot be sold')
+shop:sellItem(428)
+check(shop.mode == 'sell' and shop.item ~= 428, 'key item cannot be sold')
 local VM = require('src.script.Gen4ScriptVM')
 local rows = VM.lower({{name='messagevar',args={32772}}, {name='playpokecenterhealinganimation',args={32774}}},
  {member=211,bankFor=function() return 361 end})
@@ -179,12 +188,14 @@ touchShop.camStep=touchShop:cameraTarget()
 check(touchShop:counterUp(),'the counter is up once the camera arrives')
 tap(120,20)
 check(touchShop.mode=='quantity','scaled touch selects stock item')
-tap(200,80)
+-- the cartridge's own windows (shop_menu.c): the quantity window at (19, 13)
+-- with its up/down marks at x 162, then YES / NO at (23, 13)
+tap(160,104)
 check(touchShop.qty==2,'touch quantity plus')
-tap(120,104)
+tap(200,112)
 check(touchShop.mode=='confirm','touch quantity confirmation')
 local money=game.save.money
-tap(120,104)
+tap(200,104)
 check(game.save.money==money-600 and touchShop.mode=='buy','touch purchase completes once')
 tap(220,176)
 check(touchShop.mode=='menu','touch back returns to shop menu')

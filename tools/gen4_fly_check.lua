@@ -58,9 +58,10 @@ end
 local ok, why = Fly.check(data, { badges = {} }, { allowFly = true })
 check(not ok and why == 'badge', 'no Cobble Badge, no Fly')
 local src = io.open('src/ui/Gen4PartyMenu.lua'):read('a')
-check(src:find("{'CUT','FLY','SURF'", 1, true), 'the party menu offers FLY')
+local fm = io.open('src/world/Gen4FieldMoves.lua'):read('a')
+check(fm:find("F.ORDER = {'CUT','FLY','SURF'", 1, true) and src:find("F.ORDER", 1, true), 'the party menu offers FLY')
 check(src:find("ow:gen4FlyTo(item.value,mon)", 1, true), 'and flies to the chosen destination')
-check(src:find('and not self.game.save.safari', 1, true), 'and Teleport is refused in a Safari Game')
+check(src:find('and not save.safari', 1, true), 'and Teleport is refused in a Safari Game')
 local ow = io.open('src/world/OverworldController.lua'):read('a')
 check(ow:find('require("src.world.Gen4Fly").onEnter(Game.data, Game.save, self.map.def.header)', 1, true),
       'every map change runs TryUnlockFlyLocationByMap')

@@ -539,29 +539,37 @@ do
      "Gen4PartyMenu never mentions WEATHER_MOVES, so Flash and Defog are "
      .. "still on no menu and a party carrying Flash in Wayward Cave has no "
      .. "way to use it")
-  -- IN `actions()`, NOT ANYWHERE IN THE FILE.  The first spelling of this was
-  -- `src:find("weatherOffers")` over the whole module, and deleting the gate
-  -- from the ROW-BUILDING loop left all 113 checks green -- because
-  -- `useFieldMove` calls it too, further down, for its own reasons. The
-  -- function that decides whether the row appears is the subject.
+  -- THE ROW IS NOT THE GATE.  This used to demand that `actions()` asked
+  -- `weatherOffers` before listing Flash or Defog.  The cartridge does not:
+  -- GetContextMenuEntriesForPartyMon (party_menu/main.c) lists every known
+  -- field move through GetFieldMoveIndex and asks nothing else; the weather
+  -- is FieldMoves_SetUsableMoves' usable bit, read by FieldMoves_CheckFlash /
+  -- _CheckDefog when the row is CHOSEN, which answers "You can't use that
+  -- here." in clear weather.  So the rows walk the field-move list, and the
+  -- weather gate lives in `useFieldMove` (asserted just below).
   local actions = src:match("function Gen4PartyMenu:actions%(%)(.-)\nend")
   ok(actions ~= nil, "Gen4PartyMenu:actions is gone")
-  ok(actions == nil or actions:find("weatherOffers%s*%(") ~= nil,
-     "Gen4PartyMenu:actions adds the weather moves without asking "
-     .. "weatherOffers, so Flash and Defog would sit on every party menu in "
-     .. "Sinnoh and work on two maps")
-  ok(actions == nil or actions:find("WEATHER_MOVES") ~= nil,
-     "Gen4PartyMenu:actions does not walk WEATHER_MOVES, so the two moves "
-     .. "reach no menu row at all")
+  ok(actions == nil or actions:find("F%.ORDER") ~= nil,
+     "Gen4PartyMenu:actions does not walk the field-move list (F.ORDER), so "
+     .. "Flash and Defog reach no menu row at all")
+  ok(actions == nil or actions:find("weatherOffers%s*%(") == nil,
+     "Gen4PartyMenu:actions hides Flash/Defog by the weather; the cartridge "
+     .. "lists them and refuses at the press")
   -- ...and `useFieldMove` must ask as well, because a row can be reached by a
   -- stale menu or by a mod.
   local use = src:match("function Gen4PartyMenu:useFieldMove(.-)\nend")
   ok(use ~= nil and use:find("weatherOffers%s*%(") ~= nil,
      "Gen4PartyMenu:useFieldMove runs the weather moves without re-checking "
      .. "the weather")
-  ok(src:find("table%.sort%s*%(%s*rows") ~= nil,
-     "the action rows are not sorted, so a two-key `pairs` walk can put "
-     .. "Flash above Defog on one opening and below it on the next")
+  -- THE ROWS FOLLOW THE MON'S MOVE SLOTS (context_menu.c walks them), which
+  -- is stable between openings without a sort.  This used to demand a
+  -- `table.sort(rows`, which kept a `pairs` walk still but put the moves in
+  -- an order the cartridge never shows.
+  ok(actions ~= nil and actions:find("ipairs%s*%(%s*mon%.moves") ~= nil
+     and actions:find("table%.sort") == nil,
+     "the field-move rows are not built in move-slot order, so Flash and "
+     .. "Defog can trade places between openings or sit out of the "
+     .. "cartridge's order")
 end
 
 -- ---------------------------------------------------------------------------
