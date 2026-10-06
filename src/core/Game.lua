@@ -877,6 +877,13 @@ Game.centerClassicZones = centerClassicZones
 
 function Game:draw()
   local closeDraw = FrameProfile.section("draw: whole frame")
+  local screenLayout=require('src.ui.SecondScreen')
+  Renderer.splitViewport=nil
+  if screenLayout.combined(self) then
+    local w,h=love.graphics.getDimensions()
+    w,h=screenLayout.mainSize(self,w,h)
+    Renderer.splitViewport={w=w,h=h}
+  end
 
   -- A specialized lower-screen state (battle menu, mining, Poketch screen)
   -- claims the panel by calling SecondScreen.draw during _draw(). If nothing
@@ -894,7 +901,7 @@ function Game:draw()
 
   do
     local okSS, SS = pcall(require, "src.ui.SecondScreen")
-    if okSS and SS.mode and SS.mode(self) == "display"
+    if okSS and SS.mode and (SS.mode(self) == "display" or SS.combined(self))
        and not self.secondScreenDrawnThisFrame then
       local okP, Poketch = pcall(require, "src.ui.Gen4Poketch")
       if okP and Poketch and Poketch.new then
@@ -914,6 +921,10 @@ function Game:draw()
     end
   end
 
+  if screenLayout.combined(self) then
+    screenLayout.composeWindow(self)
+    TouchControls:draw()
+  end
   closeDraw()
   -- THE SECOND PANEL'S FRAME LEAVES LAST.
   --
@@ -1109,7 +1120,7 @@ function Game:_draw()
     ModRuntime.call("render.hud", function() end, self, viewport)
   end
   -- on-screen mobile controls: pure screen-space, over the finished frame
-  TouchControls:draw()
+  if not Renderer.splitViewport then TouchControls:draw() end
 end
 
 -- overworld survey zoom: wheel up / '=' zooms in, wheel down / '-' out

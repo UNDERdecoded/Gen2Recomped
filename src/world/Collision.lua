@@ -289,6 +289,12 @@ end
 -- `dist` is in cells and is at least 1; a trainer standing next to the player
 -- has no gap to walk and is always clear, which is the cartridge's
 -- `approachDistance - 1` loop count.
+function Collision.sameElevation(a,b)
+  local az=a and (a.elevation or a.gen3Elevation)
+  local bz=b and (b.elevation or b.gen3Elevation)
+  return az==nil or bz==nil or az==0 or bz==0 or az==bz
+end
+
 function Collision.sightPathClear(map, entities, watcher, dir, dist)
   local x, y = watcher.cellX, watcher.cellY
   for _ = 1, (tonumber(dist) or 0) - 1 do

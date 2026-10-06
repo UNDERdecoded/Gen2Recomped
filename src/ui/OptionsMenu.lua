@@ -598,6 +598,7 @@ local function buildRows(game)
       -- what this mode says is WHERE it goes -- the device's own panel rather
       -- than a corner of the window.
       display = Strings("DEVICE"),
+      vertical = Strings('TOP/BOTTOM'), horizontal = Strings('SIDE BY SIDE'),
     }
     rows[#rows + 1] = { id = "secondScreenMode", label = Strings("2ND SCREEN"),
       value = function(g)

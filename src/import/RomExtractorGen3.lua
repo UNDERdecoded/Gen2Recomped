@@ -191,6 +191,7 @@ end
 -- ---------------------------------------------------------------------------
 
 function RomExtractorGen3:beginStage(name)
+  self.stageName=name
   self.stage = self.stage + 1
   if self.progress then
     self.progress(self.stage - 1, STAGE_COUNT, name, 0, 1)
@@ -205,10 +206,12 @@ function RomExtractorGen3:tick(name, current, total)
 end
 
 function RomExtractorGen3:write(name, value)
+  if self.checkpoint and self.stageName=='Gen3 constants' then self.checkpoint('Writing '..name..'.lua') end
   LuaWriter.write("data/generated/" .. name .. ".lua", value)
 end
 
 function RomExtractorGen3:saveImage(image, relative)
+  if self.checkpoint and self.stageName=='Gen3 constants' then self.checkpoint('Encoding '..relative) end
   ImageWriter.save(image, "assets/generated/" .. relative)
 end
 

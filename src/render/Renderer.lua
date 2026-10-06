@@ -101,6 +101,10 @@ local function displayMetrics()
   end
   if dpiX < 1e-6 then dpiX = 1 end
   if dpiY < 1e-6 then dpiY = 1 end
+  if Renderer.splitViewport then
+    ww,wh=Renderer.splitViewport.w,Renderer.splitViewport.h
+    pw,ph=ww*dpiX,wh*dpiY
+  end
   return ww, wh, pw, ph, dpiX, dpiY
 end
 
@@ -844,7 +848,7 @@ function Renderer:endFrame(zones, worldZones)
   -- GB pixel stops being a whole number of screen pixels, which is the trade
   -- the setting exists to offer.  Clamped on the horizontal too, so a narrow
   -- window scales to fit instead of overflowing off both sides.
-  if self.uiFill then
+  if self.uiFill or self.splitViewport then
     Up = math.min(ph / uih, pw / uiw)
   end
   local Ux, Uy = Up / dpiX, Up / dpiY
@@ -1298,6 +1302,9 @@ function Renderer:endFrame(zones, worldZones)
     -- the full surface, so rect() answers 0, 0, ww, wh and every number below
     -- is what it has always been.  Which is exactly why only mobile saw this.
     local sax, say, saw, sah = require("src.core.SafeArea").rect()
+    if self.splitViewport then
+      saw=math.max(0,math.min(saw,ww-sax));sah=math.max(0,math.min(sah,wh-say))
+    end
     local saRight, saBottom = sax + saw, say + sah
     for _, a in ipairs(anchors) do
       local dw, dh = a.w * Ux, a.h * Uy

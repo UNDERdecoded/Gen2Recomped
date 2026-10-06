@@ -482,7 +482,7 @@ function SummaryMenu:drawGen2GreenPage()
     Font.draw(mv and (mdef and mdef.name or "-") or "-", 64, y)
     if mv then
       Font.draw(Strings("PP"), 96, y + 8)
-      rightAlign(("%2d/%2d"):format(mv.pp or 0, (mdef and mdef.pp) or 0),
+      rightAlign(("%2d/%2d"):format(mv.pp or 0, require('src.pokemon.Pokemon').maxPP(mdef,mv)),
         160, y + 8)
     else
       Font.draw("--", 136, y + 8)
@@ -661,7 +661,7 @@ function SummaryMenu:draw()
         local mdef = data.moves[mv.id]
         Font.draw(mdef.name, 16, y)
         Font.draw(Strings("PP"), 88, y + 8)
-        Font.draw(("%2d/%2d"):format(mv.pp, mdef.pp), 112, y + 8)
+        Font.draw(("%2d/%2d"):format(mv.pp, require('src.pokemon.Pokemon').maxPP(mdef,mv)), 112, y + 8)
       else
         Font.draw("-", 16, y)
         Font.draw("--", 112, y + 8)

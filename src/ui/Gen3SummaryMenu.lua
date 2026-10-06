@@ -1572,7 +1572,7 @@ function Gen3SummaryMenu:drawMoves(contest)
         local pp = (type(slot) == "table") and slot.pp or (def and def.pp)
         right = ("%s%s/%s"):format(ppSymbol(),
                                    tostring(pp or "-"),
-                                   tostring(def and def.pp or "-"))
+                                   tostring(def and require('src.pokemon.Pokemon').maxPP(def,slot) or "-"))
       end
       row(i, (def and def.name) or tostring(id), right)
     else
@@ -1867,12 +1867,12 @@ function Gen3SummaryMenu:drawFireRed(r)
     local px, py = 160, 16
     local moves = mon.moves or {}
     local moveColors = colors.moves or { pane, pane, pane, pane }
-    local function drawMove(i, id, pp)
+    local function drawMove(i, id, pp, slot)
       local mdef = id and (data.moves or {})[id]
       local y = py + (i - 1) * 28
       frlgText(mdef and mdef.name or "-", px + 3, y + 5, moveColors[1])
       if mdef then
-        local maxPP = mdef.pp or 0
+        local maxPP = require('src.pokemon.Pokemon').maxPP(mdef,slot)
         local cur = pp or maxPP
         local idx = 1
         if cur == 0 then idx = 4
@@ -1889,7 +1889,7 @@ function Gen3SummaryMenu:drawFireRed(r)
     for i = 1, 4 do
       local slot = moves[i]
       local id = (type(slot) == "table") and slot.id or slot
-      drawMove(i, id, type(slot) == "table" and slot.pp or nil)
+      drawMove(i, id, type(slot) == "table" and slot.pp or nil, slot)
     end
     if picking then drawMove(5, self.choose.move, nil) end
     if detail then

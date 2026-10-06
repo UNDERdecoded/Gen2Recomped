@@ -1531,9 +1531,15 @@ local function scrubMonList(list, where, save, data, report, slots)
 end
 
 local function scrubItemMap(map, where, save, data, report)
+  local badges={}
+  if where=='inventory' and data.isGen4Cache then
+    for _,entry in ipairs(Badges.list(data)) do badges[Badges.itemFor(entry)]=entry end
+  end
   if type(map) ~= "table" then return end
   for id, count in pairs(map) do
-    if not known(data.items, id) then
+    if badges[id] then
+      Badges.set(save,badges[id],true,'platinum')
+    elseif not known(data.items, id) then
       map[id] = nil
       ensureOrphaned(save)
       save.orphaned.items[#save.orphaned.items + 1] =

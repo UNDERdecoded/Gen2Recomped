@@ -2720,8 +2720,7 @@ function Commands.g4_give_badge(ctx, badgeNum)
   end
   save.badges = save.badges or {}
   save.badges[id] = true
-  save.inventory = save.inventory or {}
-  save.inventory[id] = save.inventory[id] or 1
+  require('src.inventory.Badges').set(save,row,true,'platinum')
   Logger.info("gen4: awarded %s", id)
 end
 

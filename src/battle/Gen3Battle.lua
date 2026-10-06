@@ -1948,7 +1948,8 @@ local function drawCommandMenu(battle)
     -- One colour for both is what made the whole strip read wrong.
     shadowed(battle, "message", function(dx, dy)
       local prompt = record and record.prompt
-      local who = battle.player and battle.player.name or ""
+      local chooser = (battle.menuBattler and battle:menuBattler()) or battle.player
+      local who = chooser and chooser.name or ""
       if prompt and prompt[1] and prompt[2] then
         Font.draw(prompt[1], w.prompt.textX + dx, w.prompt.row1 + dy)
         local second = tostring(prompt[2]):gsub("{MON}", fitName(who, 88))

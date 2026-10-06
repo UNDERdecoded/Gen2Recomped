@@ -142,7 +142,7 @@ for i, name in ipairs(modes) do seen[name] = i end
 ok(seen.display ~= nil, "there is no `display` mode at all")
 ok(seen.swap and seen.inset and seen.off,
    "one of the original three modes went missing adding the fourth")
-ok(#modes == 4, "MODES has %d entries; swap/inset/display/off is four", #modes)
+ok(#modes == 6, "MODES has %d entries; expected six screen layouts", #modes)
 -- `off` stays last so the row's cycle ends on it, which is what every build so
 -- far has trained the player to expect.
 ok(seen.off == #modes, "`off` is entry %d of %d; it used to be last",

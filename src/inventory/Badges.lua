@@ -30,6 +30,10 @@ function Badges.list(data, version)
   local list = data and data.constants and data.constants.badges
   if type(list) == "table" and #list > 0 then return list end
   if require("src.core.GameVersion").isGen2(version) then return GEN2 end
+  if require('src.core.GameVersion').isGen4(version) then
+    return {{id='BADGE_COAL'},{id='BADGE_FOREST'},{id='BADGE_COBBLE'},{id='BADGE_FEN'},
+      {id='BADGE_RELIC'},{id='BADGE_MINE'},{id='BADGE_ICICLE'},{id='BADGE_BEACON'}}
+  end
   return VANILLA
 end
 
@@ -45,6 +49,7 @@ end
 function Badges.has(save, entry)
   local key = Badges.itemFor(entry)
   return (save.inventory and save.inventory[key])
+    or (save.badges and save.badges[entry.id])
     or (save.flags and save.flags[key]) and true or false
 end
 
@@ -72,11 +77,15 @@ function Badges.set(save, entry, on, version)
   if not on then
     save.inventory[key] = nil
     save.flags[key] = nil
+    if save.badges then save.badges[entry.id]=nil end
     return true
   end
 
   local GameVersion = require("src.core.GameVersion")
-  local flagBadge = GameVersion.isGen2(version) or GameVersion.isGen3(version)
+  local flagBadge = GameVersion.isGen2(version) or GameVersion.isGen3(version) or GameVersion.isGen4(version)
+  if GameVersion.isGen4(version) then
+    save.badges=save.badges or {};save.badges[entry.id]=true
+  end
   if flagBadge then
     save.flags[key] = true
     save.inventory[key] = nil

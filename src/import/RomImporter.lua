@@ -2244,6 +2244,7 @@ end
 -- that one alone.
 local function consumePickedRomError(self)
   local preferred = "picked_rom.gb"
+  if self.failedRoms and self.failedRoms[preferred] then return false end
   if not love.filesystem.getInfo(preferred, "file") then return false end
   local data = love.filesystem.read(preferred)
   if type(data) == "string" and isSupportedRomSize(#data) then
@@ -2947,6 +2948,16 @@ function RomImporter.new(onComplete, opts)
   end
 
   BootTrace.mark("launcher: versions scanned")
+  local interrupted=require('src.import.ImportRecovery').load()
+  if interrupted then
+    self.interruptedImport=interrupted
+    self.failedRoms=self.failedRoms or {};self.failedRoms[interrupted.source]=true
+    self.workState='error';self.errorVersion=interrupted.version or self.tab
+    self.status='Previous import stopped'
+    self.detail=('Stopped at %s%s. Tap Import to retry. Data folder: %s'):format(
+      interrupted.stage or 'verification',interrupted.operation and (' / '..interrupted.operation) or '',interrupted.root or 'default')
+    if interrupted.version and GameVersion.VERSIONS[interrupted.version] then self.tab=interrupted.version end
+  end
 
   -- Android: import a save-dir .gb/.gbc that is not yet ready (USB drop or a
   -- leftover SAF pick), routed by SHA-1.  Already-imported carts are skipped
@@ -2955,7 +2966,7 @@ function RomImporter.new(onComplete, opts)
   for _, version in ipairs(GameVersion.ORDER) do
     if not self.ready[version] then needRom = true; break end
   end
-  if android and needRom then
+  if android and needRom and not interrupted then
     local name, data, romPath = findPendingRom(self.ready, self.failedRoms)
     if name then
       self:startData(data, name, romPath)
@@ -3046,6 +3057,11 @@ end
 -- _pollPickedFiles must stay armed so it consumes the file when it lands
 -- moments later (it clears pickPending itself once something is found).
 function RomImporter:focus(f)
+  if f and love.filesystem.getInfo('pick_done.flag','file') then
+    local picked=love.filesystem.read('pick_done.flag')
+    love.filesystem.remove('pick_done.flag')
+    if type(picked)=='string' and self.failedRoms and not self.interruptedImport then self.failedRoms[picked]=nil end
+  end
   if not (f and self.android and self.workState ~= "working") then return end
   -- SAF create-document finished: GameActivity wrote export_done.flag.
   if love.filesystem.getInfo("export_done.flag", "file") then
@@ -3155,6 +3171,7 @@ function RomImporter:focus(f)
       self.saveNotice[version] and self.saveNotice[version].ok)
     return
   end
+  if self.interruptedImport then return end
   for _, v in ipairs(GameVersion.ORDER) do
     if not self.ready[v] then
       local name, data, romPath = findPendingRom(self.ready, self.failedRoms)
@@ -3176,6 +3193,7 @@ function RomImporter:focus(f)
 end
 
 function RomImporter:setError(message, version)
+  self.interruptedImport=require('src.import.ImportRecovery').fail(message)
   require("src.import.CacheFs").prefix = ""
   -- THIS FILE HAS HAD ITS TURN. Without this the Android scan hands the same
   -- failing cartridge back on every attempt and nothing else can be imported;
@@ -3229,6 +3247,7 @@ end
 -- the cartridge itself and read ranges out of it on demand.
 function RomImporter:startData(data, displayName, sourcePath, verified)
   if self.workState == "working" then return end
+  self:_acknowledgeInterruptedImport()
   if not verified and type(data)=='string' then
     if self:_beginRomProbe(data,sourcePath,displayName) then return end
   end
@@ -3268,6 +3287,7 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
   self.progress = 0
   self.romData = data
   self.romPath = sourcePath
+  self.importRecovery=require('src.import.ImportRecovery').begin(displayName or sourcePath,version,require('src.import.CacheFs').root())
   -- KEPT SO A FAILURE CAN BE ATTRIBUTED. `setError` clears everything else, and
   -- without the name there is no way to know which pending file to stop
   -- offering -- see `findPendingRom`'s `skip`.
@@ -3306,7 +3326,7 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
       [3]='src.import.RomExtractorGen3',[4]='src.import.RomExtractorGen4'}
     local task=require('src.import.RomImportTask').new({action='extract',version=version,
       generation=info.generation,module=modules[info.generation],manifest=manifest,
-      prefix=info.cachePrefix,root=CacheFs.root(),path=self.romPath,bytes=info.generation~=4 and self.romData or nil,clear=true})
+      prefix=info.cachePrefix,root=CacheFs.root(),path=self.romPath,bytes=info.generation~=4 and self.romData or nil,clear=true,recovery=self.importRecovery})
     if task then
       self.romData=nil
       local complete=false
@@ -3380,6 +3400,7 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
       -- without anybody having to reproduce it under a profiler.
       if stage ~= markedStage then
         markedStage = stage
+        require('src.import.ImportRecovery').stage(stage)
         BootTrace.mark(("import %s: %s (%.0f MB lua)"):format(
           tostring(version), tostring(stage), collectgarbage("count") / 1024))
       end
@@ -3416,6 +3437,7 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
         and RomExtractor.new(self.romData, version, manifest, onProgress)
         or RomExtractor.new(self.romData, manifest, onProgress)
     end
+    extractor.checkpoint=function(operation) require('src.import.ImportRecovery').stage(markedStage,operation) end
     extractor:run()
     if extractor.close then extractor:close() end
     self.romData = nil
@@ -3445,6 +3467,7 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     local ok, writeError = CacheFs.write(MARKER_PATH, markerBody(version, gaps))
     CacheFs.prefix = ""   -- restore the default so later writes stay at the root
     if not ok then error("could not finish the private cache: " .. tostring(writeError)) end
+    require('src.import.ImportRecovery').finish()
     self.ready[version] = true
     self.returning[version] = false
     self.romName[version] = (displayName
@@ -3472,7 +3495,9 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
 end
 
 function RomImporter:_beginRomProbe(bytes,path,name)
-  local task=require('src.import.RomImportTask').new({action='verify',bytes=bytes,path=path})
+  self:_acknowledgeInterruptedImport()
+  self.importRecovery=require('src.import.ImportRecovery').begin(name or path,nil,require('src.import.CacheFs').root())
+  local task=require('src.import.RomImportTask').new({action='verify',bytes=bytes,path=path,recovery=self.importRecovery})
   if not task then return false end
   self.probeTask=task;self.probePath=path;self.probeName=name
   self.workState='working';self.importing=GameVersion.VERSIONS[self.tab] and self.tab or nil
@@ -3745,6 +3770,7 @@ end
 -- The button.  One press: pick, sort, queue.
 function RomImporter:chooseRomBatch()
   if self.workState == "working" then return end
+  self:_acknowledgeInterruptedImport()
   self.romBatch = nil
   local paths
   if self.android or self.ios then
@@ -4576,8 +4602,17 @@ end
 -- version argument only titles the dialog and steers error/notice text; the
 -- picked ROM is still routed by its SHA-1, so choosing a Blue cart in the Red
 -- column imports Blue.
+function RomImporter:_acknowledgeInterruptedImport()
+  if self.interruptedImport then
+    if self.failedRoms then self.failedRoms[self.interruptedImport.source]=nil end
+    self.interruptedImport=nil
+    require('src.import.ImportRecovery').finish()
+  end
+end
+
 function RomImporter:choose(version)
   if self.workState == "working" then return end
+  self:_acknowledgeInterruptedImport()
   self.chooseVersion = version or "red"
   if self.ios and love.system.getPickedFile then
     self.iosPendingKind = "rom"
@@ -4705,6 +4740,7 @@ function RomImporter:_pollPickedFiles(dt)
     return
   end
   local found = love.filesystem.getInfo("export_done.flag", "file") ~= nil
+    or love.filesystem.getInfo('pick_done.flag','file') ~= nil
     or love.filesystem.getInfo("pick_error.flag", "file") ~= nil
     or love.filesystem.getInfo("picked_folder.txt", "file") ~= nil
   if not found then

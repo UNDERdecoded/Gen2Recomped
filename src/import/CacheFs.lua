@@ -547,8 +547,10 @@ function CacheFs.write(rel, data)
     ensureParents(root, rel)
     local f, err = io.open(realPath(root, rel), "wb")
     if not f then return false, err end
-    f:write(data)
-    f:close()
+    local written, writeError = f:write(data)
+    local closed, closeError = f:close()
+    if not written then return false, writeError end
+    if not closed then return false, closeError end
     return true
   end
   local parent = rel:match("^(.*)/[^/]+$")

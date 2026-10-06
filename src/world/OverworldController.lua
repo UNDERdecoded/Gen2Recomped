@@ -7434,6 +7434,8 @@ end
 -- confirmed to be water -- there is no overworld A-press hook.  onClose is
 -- that menu's own close, called when the got-on text ends (see below).
 function OverworldState:trySurf(fx, fy, onClose, selectedMon)
+  if GameVersion.isGen3() and not self.player.surfing
+     and self.player.elevation~=nil and self.player.elevation~=3 then return false end
   local mon = selectedMon or self:partyKnows("SURF")
   if not mon then return end
   local name = mon.nickname or Game.data.pokemon[mon.species].name
@@ -9756,6 +9758,7 @@ function OverworldState:useSurfFieldMove()
   -- starts.  Surf is the fifth.
   if GameVersion.isGen3() then
     if not gen3BadgeHeld("SURF") then return "no_badge" end
+    if not p.surfing and p.elevation~=nil and p.elevation~=3 then return 'no_water' end
     if not p.surfing and self:frlgFastWaterAt(p:facingCell()) then return "current" end
     if p.surfing then
       return self:facingIsLandDismount() and "dismount" or "no_place"
@@ -11066,6 +11069,7 @@ function OverworldState:checkTrainerSight()
           --
           -- Reported from play: "they also see me through each other".
           local clear = pixelDist > 0
+            and (not GameVersion.isGen3() or Collision.sameElevation(npc,p))
             and Collision.sightPathClear(self.map, self.cast or self.entities,
                                          npc, way, dist)
           if clear and pixelDist <= range * 16 then
