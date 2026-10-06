@@ -218,6 +218,10 @@ function TouchControls:init()
   -- and lifting one of them must not release the other's hold
   self.held = {}
   self.dpadTouch = nil
+  self.cameraLookTouch = nil
+  self.cameraLookStart = nil
+  self.leftStickTouch = nil
+  self.rightStickTouch = nil
   self.layoutW, self.layoutH = nil, nil
   self.img = nil
   -- Images load whenever the platform wants the overlay OR the launcher
@@ -482,15 +486,43 @@ function TouchControls:touchpressed(id, x, y)
     self.touches[id] = touch
     setDpad(self, touch, dpadDir(dz, x, y))
   end
+
+  -- Gen4 free camera: touch drag on open screen controls camera
+  local Game = require("src.core.Game")
+  if Game and Game.freeView and Game:freeView() then
+    self.cameraLookTouch = id
+    self.cameraLookStart = { x = x, y = y }
+    self.touches[id] = { control = "cameralook" }
+    return true
+  end
 end
 
 function TouchControls:touchmoved(id, x, y)
   if self.preview then return end
   local touch = self.touches[id]
-  -- only the d-pad tracks movement (slide between directions without
-  -- lifting); buttons hold until release wherever the finger wanders
-  if not touch or touch.control ~= "dpad" then return end
-  setDpad(self, touch, dpadDir(self:layout().dpad, x, y))
+  if not touch then return end
+
+  -- Gen4 free camera look
+  if touch.control == "cameralook" and self.cameraLookStart then
+    local dx = x - self.cameraLookStart.x
+    local dy = y - self.cameraLookStart.y
+    self.cameraLookStart = { x = x, y = y }
+    local Game = require("src.core.Game")
+    if Game and Game.cameraLook then
+      Game:cameraLook(dx, dy, true)
+    end
+    return
+  end
+
+  -- the d-pad and left stick both track movement (slide between
+  -- directions without lifting); buttons hold until release wherever the finger wanders
+  if touch.control == "dpad" then
+    setDpad(self, touch, dpadDir(self:layout()[touch.control], x, y))
+  elseif touch.control == "leftstick" then
+    setLeftStick(self, touch, dpadDir(self:layout()[touch.control], x, y))
+  elseif touch.control == "rightstick" then
+    setRightStickDir(self, touch, dpadDir(self:layout().rightstick, x, y))
+  end
 end
 
 function TouchControls:touchreleased(id, x, y)
@@ -498,7 +530,11 @@ function TouchControls:touchreleased(id, x, y)
   local touch = self.touches[id]
   if not touch then return end
   self.touches[id] = nil
-  if touch.control == "dpad" then
+
+  if touch.control == "cameralook" then
+    self.cameraLookTouch = nil
+    self.cameraLookStart = nil
+  elseif touch.control == "dpad" then
     setDpad(self, touch, nil)
     self.dpadTouch = nil
   else
@@ -517,6 +553,10 @@ function TouchControls:reset()
   self.held = {}
   self.touches = {}
   self.dpadTouch = nil
+  self.leftStickTouch = nil
+  self.rightStickTouch = nil
+  self.cameraLookTouch = nil
+  self.cameraLookStart = nil
 end
 
 -- a gamepad is being used: hide the overlay (dropping anything it held)
