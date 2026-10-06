@@ -2115,7 +2115,6 @@ function Gen4Poketch:drawWatch()
   if g.transformPoint then
     sx, sy = g.transformPoint(sx, sy); ex, ey = g.transformPoint(ex, ey)
   end
-  g.setScissor(sx, sy, ex - sx, ey - sy)
 
   -- THE LCD IS COMPOSED FIRST, THEN RECOLOURED AS ONE PICTURE: the apps draw
   -- in theme 0 (their icons and text through shaders of their own), and the
@@ -2126,22 +2125,29 @@ function Gen4Poketch:drawWatch()
   local phase = self:shutterCover()
   if self.shutter and phase == 'close' then shown = self.apps[self.shutter.from] or app end
   if g.newCanvas and g.setCanvas and g.getCanvas then
-    self.lcdCanvas = self.lcdCanvas or g.newCanvas(W, H)
+    -- Match the transport canvas on high-DPI Android; inheriting the window's
+    -- DPI here gives the LCD a different pixel grid from its device bezel.
+    self.lcdCanvas = self.lcdCanvas or g.newCanvas(W, H, { dpiscale = 1 })
     local prevCanvas = g.getCanvas()
     g.push('all')
     g.setCanvas(self.lcdCanvas)
     g.origin()
     g.setScissor()
+    if g.setShader then g.setShader() end
     g.clear(0, 0, 0, 0)
+    -- Clip in the LCD's own pixel grid, not in the primary window's DPI
+    -- coordinates. The resulting transparent canvas scales with the bezel.
+    g.setScissor(FACE.x, FACE.y, FACE.w, FACE.h)
     self:drawLCD(shown)
     self:drawShutter()
+    g.setCanvas(prevCanvas)
     g.pop()
-    if prevCanvas then g.setCanvas(prevCanvas) end
     self:applyLCDPalette(backlight)
     g.setColor(1, 1, 1, 1)
     g.draw(self.lcdCanvas, 0, 0)
     if g.setShader then g.setShader(oldShader) end
   else
+    g.setScissor(sx, sy, ex - sx, ey - sy)
     self:applyLCDPalette(backlight)
     self:drawLCD(shown)
     if g.setShader then g.setShader(oldShader) end
@@ -2153,6 +2159,8 @@ function Gen4Poketch:drawWatch()
   -- extracted full-screen border contains the bezel and physical app-change
   -- buttons and must mask the edges of every app tilemap.
   local border = self:img(self.border)
+  -- The shell is true-colour ROM artwork, outside the LCD palette pass.
+  if g.setShader then g.setShader() end
   if border then
     g.setColor(1, 1, 1, 1)
     g.draw(border, 0, 0)
@@ -2171,6 +2179,7 @@ function Gen4Poketch:drawWatch()
   end
 
   g.setColor(1, 1, 1, 1)
+  if g.setShader then g.setShader(oldShader) end
 end
 
 function Gen4Poketch:draw()

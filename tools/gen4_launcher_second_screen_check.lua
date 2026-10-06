@@ -498,7 +498,7 @@ do
   for _, p in ipairs(REC.prints) do names[p.text] = true end
   local absent = {}
   for i, g in ipairs(LSS._shelf(I)) do
-    if i <= 9 and not names[g.name] then absent[#absent + 1] = g.name end
+    if i <= 9 and not names[g.name:gsub(' %b()$', '')] then absent[#absent + 1] = g.name end
   end
   ok(#absent == 0, "on screen but unnamed: %s", table.concat(absent, ", "))
   ok(names["MANAGE MODS"] == true, "MANAGE MODS was not drawn")
@@ -532,5 +532,24 @@ do
      tostring(I.tab))
 end
 
+section('11. lower-panel text is independent of the selected cartridge font')
+do
+  local current, sizes = fakeFont, {}
+  love.graphics.newFont = function(size)
+    sizes[#sizes+1]=size
+    return {getWidth=function(_,s) return #tostring(s)*4 end,getHeight=function() return size end}
+  end
+  love.graphics.setFont = function(font) current=font end
+  love.graphics.getFont = function() return current end
+  local expected
+  for _, id in ipairs(require('src.core.GameVersion').ORDER) do
+    I.tab=id
+    current={getHeight=function() return 30 end,getWidth=function(_,s) return #s*20 end}
+    ok(LSS.tick(I),'lower launcher draws after selecting %s',id)
+    expected=expected or current
+    ok(current==expected and current:getHeight()==8,'stable lower font for %s',id)
+  end
+  ok(#sizes==1,'lower launcher font is allocated once')
+end
 io.write(("\n%d checks, %d failed\n"):format(checks, fails))
 os.exit(fails == 0 and 0 or 1)

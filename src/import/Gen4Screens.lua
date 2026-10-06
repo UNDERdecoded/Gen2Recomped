@@ -225,7 +225,8 @@ Gen4Screens.ARCHIVES = {
     preferDeclaredSize = true,
     shared = "generic",
     firstTileFor = { poketch_border = 64 },
-    paletteSlotFor = { poketch_border = 15 },
+    -- The border NCLR already contains all 256 entries, including slot 15.
+    -- Relocating its first (black) row to slot 15 erases the device artwork.
     tilesWideFor = {
       generic = 4,
     },

@@ -29,6 +29,26 @@ function love.load(args)
         end
         return held[path] or realImage(path, ...)
       end
+      -- Optional fresh extraction: checks recipe changes without modifying a
+      -- player's installed cache. Otherwise the harness uses the cache as-is.
+      local romPath = os.getenv('POKEPORT_ROM')
+      if romPath then
+        local rom = assert(require('src.import.NdsRom').open(romPath))
+        local S = require('src.import.Gen4Screens')
+        local arc = assert(require('src.import.NarcArchive').parse(rom:read('/graphic/poketch.narc')))
+        local E = require('src.import.RomExtractorGen4')
+        for _, entry in ipairs(S.ARCHIVES) do
+          if entry.out == 'poketch' then
+            for _, job in ipairs(S.plan(entry.path, entry)) do
+              if job.name == 'poketch_border' then
+                local image = assert(E.composeJob({}, arc, job))
+                held['assets/generated/gen4/poketch/poketch_border.png'] = love.graphics.newImage(
+                  love.image.newImageData(image.width,image.height,'rgba8',image.rgba))
+              end
+            end
+          end
+        end
+      end
     end
     -- a fixed clock: 10:42 on Tuesday 14 October 2025
     local realDate = os.date

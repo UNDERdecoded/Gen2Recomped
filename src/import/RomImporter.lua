@@ -1230,7 +1230,7 @@ local MARKER_PATH = "rom-cache.complete"
 -- The marker a finished import writes for a version: the generation tag plus
 -- that version's ROM hash, so both a format bump and a swapped ROM invalidate.
 local function markerFor(version)
-  local revision = version == "platinum" and "platinum-audio-ui-v15:" or ""
+  local revision = version == "platinum" and "platinum-audio-ui-v16:" or ""
   if version == "emerald" then revision = "emerald-map-popup-v2:" end
   if version == "polishedcrystal" then revision = "polished-audio-v1:" end
   -- Include version-specific field encounters, sleep, swarm and rate tables.

@@ -358,6 +358,11 @@ function SecondScreen.draw(game, body)
       g.setCanvas(canvas)
       g.origin()
       g.setScissor()
+      -- This target has no world stencil/depth buffer or palette shader.
+      -- Inheriting those from the top screen can hide the watch shell.
+      if g.setShader then g.setShader() end
+      if g.setStencilTest then g.setStencilTest() end
+      if g.setDepthMode then g.setDepthMode() end
       g.setColor(1, 1, 1, 1)
       g.clear(0, 0, 0, 1)
       if game.secondScreenNativePanel then

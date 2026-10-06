@@ -59,12 +59,19 @@ check(named.berry_searcher.tiles == named.marking_map.tiles, 'Berry Searcher sha
 check(named.coin_toss_sprite and named.coin_toss_sprite.cell, 'coin sprites retained alongside BG')
 check(named.counter_sprite and named.counter_sprite.cell, 'counter sprites retained alongside BG')
 local border = named.poketch_border
-local image = assert(G.compose(G.tilemap(member(border.tilemap)), G.tiles(member(border.tiles)),
- G.paletteAtSlot(G.palette(member(border.palette)), border.paletteSlot), border.firstTile))
+local image = assert(require('src.import.RomExtractorGen4').composeJob({}, arc, border))
+check(border.paletteSlot == nil, 'full border palette is not relocated')
 local function alpha(x,y) return image.rgba:byte((y*image.width+x)*4+4) end
 check(alpha(240,64) == 255, 'bezel button has opaque ROM pixels')
 check(alpha(100,80) == 0, 'border leaves LCD hole transparent')
 check(alpha(16,100) == 0 and alpha(200,100) == 0, 'full LCD width remains visible')
+local red, white = 0, 0
+for at = 1, #image.rgba, 4 do
+ local r,g,b,a = image.rgba:byte(at,at+3)
+ if a==255 and r>200 and g<130 and b<150 then red=red+1 end
+ if a==255 and r>200 and g>200 and b>200 then white=white+1 end
+end
+check(red>500 and white>5000, 'ROM red buttons and light device bezel retain their colours')
 local Script = require('src.import.Gen4Script')
 local seq = assert(N.parse(rom:read('/fielddata/script/scr_seq.narc')))
 local common = seq:get(A.find('/fielddata/script/scr_seq.narc','scripts_common'))

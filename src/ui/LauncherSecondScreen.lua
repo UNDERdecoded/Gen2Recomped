@@ -269,11 +269,33 @@ end
 
 local function body(importer)
   local g = love.graphics
+  -- Never inherit the font left by a cartridge's launcher panel.
+  if g.newFont and g.setFont then
+    local pw, ph = SecondScreen.panelSize()
+    local density = math.max(1, math.ceil(math.max(pw / W, ph / H)))
+    if not state.font or state.fontDensity ~= density then
+      -- Rasterize at panel resolution while keeping fixed logical metrics.
+      local made, font = pcall(g.newFont, 8, 'normal', density)
+      state.font = made and font or g.newFont(8)
+      state.fontDensity = density
+    end
+    g.setFont(state.font)
+  end
+  local pal = importer and importer.palette and importer.palette() or {}
+  local function color(key, fallback, alpha)
+    local c = pal[key] or fallback
+    g.setColor(c[1] / 255, c[2] / 255, c[3] / 255, alpha or 1)
+  end
   local games = shelf(importer)
   clampScroll(#games)
 
-  g.setColor(0.07, 0.08, 0.11, 1)
-  g.rectangle("fill", 0, 0, W, H)
+  local top, bot = pal.bgTop or {22,34,74}, pal.bgBot or {7,11,29}
+  for y = 0, H - 1 do
+    local t = y / (H - 1)
+    g.setColor((top[1]*(1-t)+bot[1]*t)/255,
+      (top[2]*(1-t)+bot[2]*t)/255, (top[3]*(1-t)+bot[3]*t)/255, 1)
+    g.rectangle("fill", 0, y, W, 1)
+  end
 
   local press = state.pressed
   local sortName = LauncherSecondScreen.SORTS[state.sort] or "generation"
@@ -292,17 +314,16 @@ local function body(importer)
       -- A CARTRIDGE THAT IS NOT IMPORTED READS AS ABSENT, not as missing: it
       -- keeps its place in the grid so the shelf does not reshuffle as games
       -- are added, and dims instead.
-      local dim = game.ready and 1 or 0.34
-      g.setColor(tint[1] * dim, tint[2] * dim, tint[3] * dim, 1)
-      if held then
-        g.setColor(math.min(1, tint[1] * 1.4), math.min(1, tint[2] * 1.4),
-                   math.min(1, tint[3] * 1.4), 1)
-      end
+      color("cardBlue", {12,18,40}, held and 0.75 or 1)
       g.rectangle("fill", x, y, w, h, 4, 4)
-      g.setColor(1, 1, 1, game.ready and 0.30 or 0.14)
+      local selected = importer and importer.tab == game.id
+      g.setColor(tint[1], tint[2], tint[3], selected and 1 or 0.5)
       g.rectangle("line", x, y, w, h, 4, 4)
+      g.rectangle("fill", x + 4, y + 2, w - 8, 2)
       g.setColor(1, 1, 1, game.ready and 1 or 0.5)
-      g.print(game.name, x + 5, y + 5)
+      -- Release-status suffixes belong to the detailed top-screen card.
+      local name = game.name:gsub(' %b()$', '')
+      g.print(name, x + 5, y + 5)
       g.setColor(1, 1, 1, game.ready and 0.72 or 0.38)
       g.print("GEN " .. game.gen, x + 5, y + h - 16)
       if not game.ready then
