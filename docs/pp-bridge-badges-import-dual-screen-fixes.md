@@ -74,3 +74,27 @@ and custom folders with the resulting Lua tables parsed successfully. These
 are stage probes, not full imports or physical Android 16 verification. The
 reported constants-stage crash was not reproduced locally. Test the updated
 APK on the affected device before claiming that its native crash is resolved.
+
+The updated Razr report stops at `Preparing private game data / Checking
+data-folder access`. This identifies a shared native storage path before any
+game-specific extraction. `CacheFs.write` calls `love.system.mkdirs` from the
+import thread. The Android `callStaticBool` bridge previously used
+`FindClass("org/love2d/android/GameActivity")` and unconditionally passed its
+result to `GetStaticMethodID`. A native worker's class-loader context can fail
+that lookup; using the missing class with a pending exception can abort the JVM.
+Lua `pcall` cannot catch such an abort.
+
+The storage bridge now obtains the class through SDL's live activity, matching
+the existing background HTTP bridge. It checks the environment, activity,
+class, method and string allocation, and clears Java exceptions before returning
+failure. This also protects the permission/app-owned-path calls sharing the
+same helper. No ROM-format behavior changes are needed.
+
+`tools/android_storage_jni_check.py` compiles the production C++ helper and
+Java directory method and runs them with JNI checking enabled in a real JVM.
+Its 17 checks reproduce the missing-class lookup from an isolated worker
+context, create nested default/custom directories, retain foreground behavior,
+and exercise missing methods, incorrect signatures, Java exceptions, absent
+activity/environment and successful calls following a failure. The checks pass.
+Physical Razr confirmation is still needed. This fix requires rebuilding the
+Android native library and APK; replacing only `game.love` will not include it.

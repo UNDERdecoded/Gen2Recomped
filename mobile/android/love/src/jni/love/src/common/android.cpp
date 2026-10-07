@@ -307,17 +307,54 @@ bool mountDirectory(const char *path)
 static bool callStaticBool(const char *name, const char *sig, const char *arg)
 {
 	JNIEnv *env = (JNIEnv*) SDL_AndroidGetJNIEnv();
-	jclass activity = env->FindClass("org/love2d/android/GameActivity");
+	if (env == nullptr)
+		return false;
+	// Folder creation also runs in the ROM import worker. FindClass on a
+	// native thread uses the system loader, which cannot resolve app classes.
+	// Use SDL's live activity, as the background HTTP bridge does below.
+	jobject activityObj = (jobject) SDL_AndroidGetActivity();
+	if (env->ExceptionCheck() || activityObj == nullptr)
+	{
+		env->ExceptionClear();
+		if (activityObj != nullptr) env->DeleteLocalRef(activityObj);
+		return false;
+	}
+	jclass activity = env->GetObjectClass(activityObj);
+	env->DeleteLocalRef(activityObj);
+	if (env->ExceptionCheck() || activity == nullptr)
+	{
+		env->ExceptionClear();
+		if (activity != nullptr) env->DeleteLocalRef(activity);
+		return false;
+	}
 	jmethodID method = env->GetStaticMethodID(activity, name, sig);
+	if (env->ExceptionCheck() || method == nullptr)
+	{
+		env->ExceptionClear();
+		env->DeleteLocalRef(activity);
+		return false;
+	}
 	jboolean result;
 	if (arg != nullptr)
 	{
 		jstring jarg = env->NewStringUTF(arg);
+		if (env->ExceptionCheck() || jarg == nullptr)
+		{
+			env->ExceptionClear();
+			if (jarg != nullptr) env->DeleteLocalRef(jarg);
+			env->DeleteLocalRef(activity);
+			return false;
+		}
 		result = env->CallStaticBooleanMethod(activity, method, jarg);
 		env->DeleteLocalRef(jarg);
 	}
 	else
 		result = env->CallStaticBooleanMethod(activity, method);
+	if (env->ExceptionCheck())
+	{
+		env->ExceptionClear();
+		result = JNI_FALSE;
+	}
 	env->DeleteLocalRef(activity);
 	return result;
 }
