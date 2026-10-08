@@ -203,6 +203,7 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
   -- it lived inside a `scall` and so could not be folded at compile time.
   if textId ~= nil then ctx.g2LastText = textId end
   local text = textId ~= nil and ctx.game.data.text[textId] or nil
+  local literal=false
   if not text and ctx.overworld then
     text = ctx.game.data:resolveText(ctx.overworld.map.def.label, textId)
   end
@@ -216,10 +217,7 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
     -- past the reader instead of waiting for A. Marked-up text is returned
     -- unchanged, so nothing the extractor produced is re-broken.
     text = textId
-    if type(text) == "string" then
-      local okTB, TB = pcall(require, "src.render.TextBox")
-      if okTB and TB.fromProse then text = TB.fromProse(text) end
-    end
+    literal=true
   end
   -- Belt and braces: a row that reaches here with no usable id at all used to
   -- throw on the first gsub below, and a throw inside the runner leaves the
@@ -261,6 +259,7 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
   text = gen4Markup(text, ctx.game)
   if text:find("{RAM:", 1, true) then
     text = text:gsub("{RAM:([%w_]*)}", function(name)
+      if name=='hScriptVar' then return tostring(ctx.g2Var or 0) end
       local slot = tonumber(name:match("^wStringBuffer(%d)$") or "")
       if slot then
         local slots = ctx.game.stringBuffers
@@ -289,6 +288,7 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
     end)
   end
   local runner = ctx.runner
+  if literal then text=TextBox.fromProse(text) end
   local opts
   if ctx.pendingCry then
     local species = ctx.pendingCry
@@ -1206,6 +1206,10 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     skipNickname = true
   end
   ctx.game.stringBuffer = ctx.game.data.pokemon[species].name or species
+  if require('src.core.GameVersion').isGen2() then
+    ctx.game.stringBuffers=ctx.game.stringBuffers or {}
+    ctx.game.stringBuffers[1]=ctx.game.stringBuffer
+  end
   ctx.pendingPokemonName = species
   -- GIVEN: a gift, a starter or an egg.  An EGG has no met level yet -- the
   -- cartridge writes zero when it HATCHES, and zero is what makes the memo

@@ -19,6 +19,15 @@ local Strings = require("src.core.Strings")
 local Evolution = {}
 
 Evolution.METHODS = {
+  -- Gen4 NARC records retain their numeric target and parameter. Keep these
+  -- methods usable for installed caches as well as fresh imports.
+  level = {
+    check = function(game, mon, evo, trigger)
+      return trigger.kind == "levelup" and not Evolution.holdsEverstone(game, mon)
+        and mon.level >= (tonumber(evo.param) or 0)
+    end,
+    describe = function(evo) return Strings("Level %d", evo.param or 0) end,
+  },
   LEVEL = {
     check = function(game, mon, evo, trigger)
       if Evolution.holdsEverstone(game, mon) then return false end
@@ -280,7 +289,7 @@ function Evolution.pendingFor(game, mon, trigger)
       else
         should = method.check(game, mon, evo, trigger)
       end
-      if should then return evo.species, evo end
+      if should then return evo.species or evo.target, evo end
     end
   end
   return nil

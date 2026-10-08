@@ -134,6 +134,16 @@ HUD_LAYOUT = {
 # of Prism's 71 tilesets came out with no palMap and no palColors at all --
 # i.e. the whole GBC colour layer for the overworld was missing.
 LOCAL_DIRECT = {
+    'CardFlip_DisplayCardFaceUp.FaceUpCardTilemap': 'CardFlip_DisplayCardFaceUp.FaceUpCardTilemap',
+    'CardFlip_InitAttrPals.palettes': 'CardFlip_InitAttrPals.palettes',
+    **{'CardFlip_UpdateCursorOAM.' + name: 'CardFlip_UpdateCursorOAM.' + name for name in (
+        'OAMData', 'SingleTile', 'PokeGroup', 'NumGroup', 'NumGroupPair', 'PokeGroupPair', 'Impossible')},
+    'MemoryGame_GetDistributionOfTiles.distributions': 'MemoryGame_GetDistributionOfTiles.distributions',
+    'GameCornerMemoryGame.items': 'GameCornerMemoryGame.items',
+    **{'NameRater.' + name: 'NameRater.' + name for name in (
+        'intro_text', 'select_mon_text', 'offer_name_change_text', 'ask_new_name_text',
+        'confirm_new_name_text', 'after_renaming_text', 'same_name_text',
+        'egg_text', 'traded_text', 'cancel_text')},
     # Crystal: EnvironmentColorsPointers.  Same shape in Prism -- 8 `dw` by
     # environment, each to 4 time-of-day rows of 8 TilesetBGPalette indices.
     'LoadMapPals.TilesetColorsPointers': 'EnvironmentColorsPointers',

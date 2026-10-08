@@ -957,9 +957,18 @@ function Commands.g2_memory_game(ctx)
     say(ctx, nil, Strings("You don't have\nany coins."))
     return answer(ctx, 0)
   end
-  Logger.warn("g2_memory_game: no memory-game screen -- skipped")
-  say(ctx, nil, Strings("The machine is\nout of order."))
-  answer(ctx, 0)
+  require('src.ui.Screens').push(ctx.game,'PrismMemoryGame',function(matches)
+    ctx.g2MemoryMatches=matches
+    answer(ctx,#matches>0 and matches[1] or 0)
+    if ctx.runner then ctx.runner:resume() end
+  end)
+  if ctx.runner then ctx.runner:yield() end
+end
+
+function Commands.g2_memory_reward_next(ctx)
+  local match=table.remove(ctx.g2MemoryMatches or {},1)
+  local rewards=((ctx.game.data.field or {}).gen2MemoryGame or {}).rewards or {}
+  answer(ctx,match and rewards[match] or 0)
 end
 
 -- Special_SpurgeMartBank (Prism, event/bank.asm): an ATM.  Deposit, withdraw,

@@ -7897,12 +7897,16 @@ Gen3Commands.SPECIALS[6] = function(ctx)
   local id = math.floor(tonumber(ctx.g3SecretBaseId or getVar(save, VAR_SECRET_BASE_ID)) or 0)
   local ow = ctx.overworld
   local player = ow and ow.player
+  local back = save.gen3DynamicWarp
+  local outside = require("src.world.Gen3SecretBase").isRoom(secretBaseRecord(ctx),
+                         ow and ow.map and ow.map.id) and back or nil
   local claimed = require("src.world.Gen3SecretBase").claim(save, id,
-                                            ow and ow.map and ow.map.id,
-                                            player and player.cellX,
-                                            player and player.cellY)
+                                            outside and outside.map or (ow and ow.map and ow.map.id),
+                                            outside and outside.x or (player and player.cellX),
+                                            outside and outside.y or (player and player.cellY))
   if claimed then
-    local def = ow and ow.map and ow.map.def
+    local def = outside and ctx.game and ctx.game.data and ctx.game.data.maps
+                 and ctx.game.data.maps[outside.map] or (ow and ow.map and ow.map.def)
     local section = def and def.regionMapSection
     if section then setVar(save, 0x4026, section) end
     setVar(save, 0x4054, 0) -- VAR_CURRENT_SECRET_BASE

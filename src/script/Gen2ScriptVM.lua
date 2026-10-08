@@ -468,8 +468,14 @@ L.faceplayer = function(_, s) emit(s, { "face_player" }) end
 
 -- flags and events ---------------------------------------------------------
 
-L.checkevent = function(ir, s) emit(s, { "check_flag", eventFlag(ir[2]) }) end
-L.setevent = function(ir, s) emit(s, { "set_flag", eventFlag(ir[2]) }) end
+L.checkevent = function(ir, s)
+  if ir[2]==65535 or ir[2]==-1 then emit(s,{"g2_halfword_event","check"})
+  else emit(s,{"check_flag",eventFlag(ir[2])}) end
+end
+L.setevent = function(ir, s)
+  if ir[2]==65535 or ir[2]==-1 then emit(s,{"g2_halfword_event","set"})
+  else emit(s,{"set_flag",eventFlag(ir[2])}) end
+end
 L.clearevent = function(ir, s) emit(s, { "clear_flag", eventFlag(ir[2]) }) end
 L.checkflag = function(ir, s) emit(s, { "check_flag", engineFlag(ir[2]) }) end
 L.setflag = function(ir, s) emit(s, { "set_flag", engineFlag(ir[2]) }) end
@@ -607,7 +613,7 @@ L.giveegg = function(ir, s)
   emit(s, { "g2_give_egg", string.format("SPECIES_%03d", ir[2] or 0), ir[3] })
 end
 L.givepoke = function(ir, s)
-  emit(s, { "give_pokemon", string.format("SPECIES_%03d", ir[2] or 0), ir[3] })
+  emit(s, { "g2_give_poke", ir[2], ir[3], ir[4] })
 end
 -- Gen1's play_cry arms the *following* text box (the box auto-closes when
 -- the cry ends).  Gen2's `cry` is a standalone PlayMonCry between pokepic
@@ -1522,6 +1528,7 @@ local ASM = {
   -- export keeps none of those, so the extractor can only name it by bank and
   -- address -- the same way the Battle Tower's room chooser is listed above.
   ["17:6D3A"] = { "g2_orphan_donate" },
+  ["1B:6C3A"] = { "g2_memory_reward_next" },
   -- Prism's Pachisi board.  Five routines over two flat byte tables per board
   -- -- the tile at each position and the step that leaves it -- plus the
   -- position counter the script keeps in an event variable.  See the block in
@@ -1949,7 +1956,7 @@ end
 
 -- FruitTreeScript (17:$4000): tree n hands over FruitTreeItems[n] once, then
 -- remembers the pick in wFruitTreeFlags until TryResetFruitTrees clears it.
-L.fruittree = function(ir, s) emit(s, { "g2_fruittree", ir[2] }) end
+L.fruittree = function(ir, s) emit(s, { "g2_fruittree", ir[2], ir[3] }) end
 
 -- `givetm <n>` / `givetmnomessage <n>` (Script_giveTM 25:$67F8, and $68B2 for
 -- the quiet form).  The extractor has already turned the machine number into

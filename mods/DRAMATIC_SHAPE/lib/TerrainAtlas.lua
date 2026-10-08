@@ -156,11 +156,14 @@ local function staticAtlas(map, colors)
 
   local path = map.tileset.image
   local key = path .. "#" .. paletteKey(colors)
+  if require('src.core.GameVersion').get() == 'polishedcrystal' then
+    key = key .. '#' .. tostring(map.id)
+  end
   if cache[key] ~= nil then return cache[key] or base, cacheData[key] end
 
   local data
   local ok, img = pcall(function()
-    local src = Assets.imageData(path)
+    local src = V.require('PolishedAtlas').forMap(map) or Assets.imageData(path)
     local w, h = src:getDimensions()
     local out = love.image.newImageData(w, h)
     for y = 0, h - 1 do
@@ -336,6 +339,7 @@ local function readback(image)
     return nil
   end
   local prev = love.graphics.getCanvas()
+  love.graphics.push('all')
   local ok, data = pcall(function()
     local w, h = image:getDimensions()
     -- dpiscale = 1, or this is not a copy. On a highdpi surface (Android,
@@ -345,6 +349,14 @@ local function readback(image)
     -- eights from the top-left, would land somewhere between two tiles.
     local canvas = love.graphics.newCanvas(w, h, { dpiscale = 1 })
     love.graphics.setCanvas(canvas)
+    -- This runs while the scene shader and its depth state are active.
+    -- Atlas copying is a 2D operation; inheriting that shader projects the
+    -- image out of the scene and caches a transparent terrain texture.
+    love.graphics.setShader()
+    love.graphics.origin()
+    love.graphics.setDepthMode()
+    love.graphics.setStencilTest()
+    love.graphics.setScissor()
     love.graphics.clear(0, 0, 0, 0)
     -- straight copy: no blending against the cleared target, no tint from
     -- whatever colour the pass left set, or the atlas comes back wrong
@@ -359,6 +371,8 @@ local function readback(image)
     if canvas.release then canvas:release() end
     return out
   end)
+  love.graphics.setCanvas(prev)
+  love.graphics.pop()
   pcall(love.graphics.setCanvas, prev)
   return ok and data or nil
 end
@@ -439,6 +453,13 @@ end
 -- index and `palColors` holds the seven four-colour CGB palettes, both off
 -- the ROM. Same clamp, same recolorSample cutoffs.
 local function gen2Pixels(map)
+  -- Preserve the engine's map-group roof and special palette bake when
+  -- animation makes its private atlas copy. A tileset-only rebake loses both.
+  if require('src.core.GameVersion').get() == 'polishedcrystal'
+      and map.renderer and map.renderer.trueColor then
+    local pixels = readback(map.renderer.image)
+    if pixels then return pixels end
+  end
   local tileset = map.tileset
   local palMap, palColors = tileset and tileset.palMap, tileset and tileset.palColors
   if not (palMap and palColors and #palMap > 0 and #palColors > 0
@@ -639,6 +660,7 @@ function TerrainAtlas.animate(map, colors, base, baked)
   -- on the tileset and palette alone, which is bounded by how many of those
   -- exist at all.
   local perMap = map.renderer and map.renderer.gbcAtlas and map.id or nil
+  if require('src.core.GameVersion').get() == 'polishedcrystal' then perMap = map.id end
   local key = map.tileset.image .. "#a#" .. paletteKey(colors or {})
     .. (perMap or "")
   local entry = animated[key]

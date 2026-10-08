@@ -3484,8 +3484,13 @@ function BattleState:enter()
       { kind = "battle", demo = self.demo, oakDemo = self.oakDemo,
         pokedudeDemo = self.pokedudeDemo ~= nil,
         battle = self })
-  self.playerBackPic = getImage(backPath,
-    namedPalette(self.data, "MEWMON"), backTrueColor)
+  local backPalette=namedPalette(self.data,"MEWMON")
+  if not self.demo and not backTrueColor then
+    local colors,key=require('src.render.PlayerPalette').of(self.data,self.game.save,
+      backPalette and backPalette.colors or require('src.render.PaletteFX').GRAYS)
+    if colors then backPalette={name='prism-player-'..key,colors=colors} end
+  end
+  self.playerBackPic = getImage(backPath,backPalette,backTrueColor)
   self.showPlayerBack = self.playerBackPic ~= nil
   -- ...AND THE OTHER THREE FRAMES OF THAT SHEET (#407).  The single pic is
   -- still what the placement and the scale are measured from; the strip is
@@ -11127,6 +11132,10 @@ function BattleState:sgbBattlePals()
     -- back to the ROM pack for exactly this case.
     [4] = pals.EXPBAR or PaletteFX.pal(self.data, "EXPBAR"),
   }
+  if self.showPlayerBack and not self.demo then
+    local colors=require('src.render.PlayerPalette').of(self.data,self.game.save,out[2] or PaletteFX.GRAYS)
+    if colors then out[2]=colors end
+  end
   -- OG RED: the Game Boy Color drew the whole battle from one BG palette --
   -- white paper, black ink -- so every zone shares the same background and
   -- outline; only the two mid shades differ per element (green HP bar, red

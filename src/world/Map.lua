@@ -782,7 +782,7 @@ end
 -- what a mover's elevation becomes after landing on (cx,cy)
 function Map:elevationAfter(at, cx, cy)
   local there = self:cellElevation(cx, cy)
-  if there == nil or there == ELEVATION_UNDER_BRIDGE then return at end
+  if there == nil or there == ELEVATION_ANY or there == ELEVATION_UNDER_BRIDGE then return at end
   return there
 end
 

@@ -5281,7 +5281,11 @@
     "trainerPartyBits": 1,
     "tutorCount": 35,
     "typeNamesOffsets": 1,
-    "wildSlotBytes": 3
+    "wildSlotBytes": 3,
+    "spriteVarsBase": 245,
+    "townMapGfxCompressed": 1,
+    "townMapPalettes": 8,
+    "townMapPackedFlips": 1
   },
   "maps": {
     "AZALEA_GYM": {

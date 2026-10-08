@@ -663,6 +663,7 @@ local function gen2RoofFor(map, data)
     slot = roofs.slot or 10,
     count = roofs.count or 9,
     palIndex = roofs.palIndex or 6,
+    variants = tileset.tileVariants,
     key = "#roof:" .. tostring(id) .. "." .. tostring(group),
   }
 end
@@ -753,6 +754,17 @@ local function getGen2Atlas(key, imagePath, perRow, palMap, palColors,
               end
             end
           end
+        end
+      end
+    end
+    if roof and roof.variants then
+      for tile,variant in pairs(roof.variants)do
+        if variant.base>=roof.slot and variant.base<roof.slot+roof.count then
+          local sx,sy=variant.base%perRow*8,math.floor(variant.base/perRow)*8
+          local dx,dy=tile%perRow*8,math.floor(tile/perRow)*8
+          for y=0,7 do for x=0,7 do
+            out:setPixel(dx+x,dy+y,out:getPixel(sx+(variant.flipX and 7-x or x),sy+(variant.flipY and 7-y or y)))
+          end end
         end
       end
     end

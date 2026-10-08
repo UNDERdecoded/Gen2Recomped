@@ -1095,7 +1095,8 @@ function TileShape.at(map, shapes, tile, tx, ty)
       else
         local n = Gen3.tileAt(map, tx, rule.side == "above" and ty - rule.rows
                                                        or ty + rule.rows)
-        hit = n and rule.set[n]
+        local variant = n and map.tileset.tileVariants and map.tileset.tileVariants[n]
+        hit = n and (rule.set[n] or (variant and rule.set[variant.base]))
       end
       if hit then
         -- shapes.condShape, NOT shapes.classes: the canonical class

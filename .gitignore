@@ -75,6 +75,7 @@ mobile/ios/build/
 
 # Final packaged build artifacts (mac/win/web/android/ios) — see scripts/build.sh
 /dist/
+/tmp/
 
 # Legacy manual convenience-copy location (superseded by /dist/android/)
 mobile/dist/

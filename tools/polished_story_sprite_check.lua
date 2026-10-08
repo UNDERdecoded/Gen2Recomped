@@ -1,0 +1,17 @@
+package.path='./?.lua;'..package.path
+love=require('tests.love_stub')
+local T=require('tests.harness').suite('Polished story sprite identities')
+local V=require('src.core.GameVersion')
+package.loaded['src.render.SpriteRenderer']={new=function(def)return def end}
+local NPC=require('src.world.NPC')
+V.set('polishedcrystal')
+T.eq(NPC.variableSpriteSlot('SPRITE_WEIRD_TREE'),nil,'Polished Weird Tree is a sheet, not slot four')
+T.eq(NPC.variableSpriteSlot('SPRITE_VAR_04'),4,'explicit Polished variable slots still resolve')
+local sprites=dofile('tmp/polished-voxel-probe/output/data/generated/sprites.lua')
+T.check(sprites.SPRITE_WEIRD_TREE and sprites.SPRITE_WEIRD_TREE.image,'ROM has real Weird Tree art')
+local G=require('src.core.Game');G.save={gen2VarSprites={[4]=114}}
+local npc=NPC.new({sprites=sprites},'ROUTE36',{index=1,sprite='SPRITE_WEIRD_TREE',x=1,y=1,movement='STAY',range='ANY_DIR'})
+T.eq(npc.sprite.image,sprites.SPRITE_WEIRD_TREE.image,'saved variable sprite cannot replace Sudowoodo with Kimono Girl')
+V.set('crystal')
+T.eq(NPC.variableSpriteSlot('SPRITE_WEIRD_TREE'),4,'Crystal still uses original story slot')
+T.finish()

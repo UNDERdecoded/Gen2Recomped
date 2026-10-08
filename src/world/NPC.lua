@@ -129,6 +129,9 @@ end
 -- people whatever the slot actually held.
 local function isVariableSpriteId(spriteId)
   if type(spriteId) ~= "string" then return false end
+  if require("src.core.GameVersion").get() == "polishedcrystal" then
+    return spriteId:match("^SPRITE_VAR_%d+$") ~= nil
+  end
   if VAR_SPRITE_SLOTS[spriteId] then return true end
   return spriteId:match("^SPRITE_VAR_%d+$") ~= nil
 end
@@ -145,6 +148,7 @@ function NPC.variableSpriteSlot(spriteId)
   if type(spriteId) ~= "string" then return nil end
   local slot = tonumber(spriteId:match("^SPRITE_VAR_(%d+)$"))
   if slot then return slot end
+  if require("src.core.GameVersion").get() == "polishedcrystal" then return nil end
   slot = VAR_SPRITE_SLOTS[spriteId]
   if slot then return slot end
   -- raw $F0-$FF spellings, the same last resort resolveVariableSprite takes
@@ -384,7 +388,8 @@ local function resolveSpriteDef(data, spriteId)
   -- Sudowoodo post-reveal sheet by direct id.  The OverworldSprites row is
   -- $52 (pret SPRITE_SUDOWOODO) -- $6D is not a sprite constant at all, and
   -- looking it up is why the revealed tree came back as a placeholder.
-  if spriteId == "SPRITE_SUDOWOODO" or spriteId == 0x52 then
+  if (spriteId == "SPRITE_SUDOWOODO" or spriteId == 0x52)
+     and require("src.core.GameVersion").get() ~= "polishedcrystal" then
     local s = findSheet(sprites, {
       "SPRITE_SUDOWOODO", "sudowoodo", "Sudowoodo",
     }, 0x52)

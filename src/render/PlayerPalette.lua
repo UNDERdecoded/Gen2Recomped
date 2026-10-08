@@ -49,6 +49,15 @@ function PlayerPalette.available(data)
   return type(list) == "table" and list[1] ~= nil
 end
 
+function PlayerPalette.picture(path,data,save)
+  local Assets=require('src.render.Assets')
+  local colors,key=PlayerPalette.of(data,save,{{255,255,255},{170,170,170},{85,85,85},{0,0,0}})
+  if not colors or not love.image then return Assets.image(path),false end
+  local image=require('src.render.SpriteRenderer').obpImage(path,colors,'prism-player:'..key)
+  if image then return image,true end
+  return Assets.image(path),false
+end
+
 -- The four colours to bake `base`'s sheet with, plus a cache key that changes
 -- whenever they do. `base` is the sheet's own gen2ObjPal, which supplies the
 -- two entries customisation does not own.

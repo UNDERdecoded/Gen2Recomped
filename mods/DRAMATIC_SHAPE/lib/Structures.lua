@@ -377,6 +377,10 @@ local cache = {}
 local atlasData = {}
 
 local function pixels(tileset, map)
+  if map then
+    local roofArt = V.require('PolishedAtlas').forMap(map)
+    if roofArt then return roofArt end
+  end
   local path = tileset.image
   -- A GEN 3 PAIR HAS NO SHEET ON DISK.  Its art is two baked metatile sheets
   -- that live only in the renderer, so `tileset.image` is nil -- and

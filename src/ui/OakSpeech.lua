@@ -560,6 +560,9 @@ function OakSpeech:formPic(gender)
   local path = form and (form.intro or form.card)
   local img = path and tryImage(path) or self.playerPic
   local trueColor = (path and img and form.trueColor) and true or false
+  if path and require('src.render.PlayerPalette').available(self.game.data) then
+    img,trueColor=require('src.render.PlayerPalette').picture(path,self.game.data,self.game.save)
+  end
   if img == self.playerPic then trueColor = self.playerTrueColor or false end
   self._formPics[gender] = { img, trueColor }
   return img, trueColor
@@ -594,6 +597,12 @@ function OakSpeech:applyPlayerForm()
   local sprites = self.game.data.sprites or {}
   local sheet = form and form.walk and sprites[form.walk]
   self.walkSheet = tryImage(sheet and sheet.image) or self.walkSheet
+  if sheet and require('src.render.PlayerPalette').available(self.game.data) then
+    self.walkSheet,self.customPlayerColors=require('src.render.PlayerPalette').picture(sheet.image,self.game.data,self.game.save)
+    local gfx=(self.game.data.field or {}).oakSpeech or {}
+    self.shrinkPic1=require('src.render.PlayerPalette').picture(gfx.shrink1 or 'assets/generated/intro/shrink1.png',self.game.data,self.game.save)
+    self.shrinkPic2=require('src.render.PlayerPalette').picture(gfx.shrink2 or 'assets/generated/intro/shrink2.png',self.game.data,self.game.save)
+  end
   self.walkQuad = nil
   local overworld = self.game.overworld
   local player = overworld and overworld.player
@@ -894,10 +903,10 @@ function OakSpeech:update(dt)
   s.frame = s.frame + 1
   if s.frame == 5 then
     self.pic = self.shrinkPic1 or self.pic
-    self.picTrueColor = false
+    self.picTrueColor = self.customPlayerColors or false
   elseif s.frame == 9 then
     self.pic = self.shrinkPic2 or self.pic
-    self.picTrueColor = false
+    self.picTrueColor = self.customPlayerColors or false
     -- wAudioFadeOutControl = 10: the music ramps to silence over ~70
     -- frames (7 levels x 10), reaching 0 just as the fade-to-white
     -- begins at frame 79, instead of a hard cut (oak_speech.asm:145-149,
@@ -955,6 +964,7 @@ function OakSpeech:draw()
     self.walkQuad = self.walkQuad
       or love.graphics.newQuad(0, 0, 16, 16, self.walkSheet:getDimensions())
     love.graphics.draw(self.walkSheet, self.walkQuad, 64, 60)
+    if self.customPlayerColors then require('src.render.PaletteFX').markTrueColor(64,60,16,16) end
   end
   if self.shrinkText then
     -- This is a REPLICA of the dialogue box that just closed, redrawn at

@@ -92751,6 +92751,90 @@
     "_hl_": [
       0,
       5347
+    ],
+    "GameCornerMemoryGame.items": [
+      27,
+      27740
+    ],
+    "NameRater.intro_text": [
+      39,
+      31245
+    ],
+    "NameRater.select_mon_text": [
+      39,
+      31305
+    ],
+    "NameRater.offer_name_change_text": [
+      39,
+      31337
+    ],
+    "NameRater.ask_new_name_text": [
+      39,
+      31412
+    ],
+    "NameRater.confirm_new_name_text": [
+      39,
+      31442
+    ],
+    "NameRater.after_renaming_text": [
+      39,
+      31469
+    ],
+    "NameRater.same_name_text": [
+      39,
+      31498
+    ],
+    "NameRater.egg_text": [
+      39,
+      31548
+    ],
+    "NameRater.traded_text": [
+      39,
+      31567
+    ],
+    "NameRater.cancel_text": [
+      39,
+      31613
+    ],
+    "MemoryGame_GetDistributionOfTiles.distributions": [
+      56,
+      24348
+    ],
+    "CardFlip_DisplayCardFaceUp.FaceUpCardTilemap": [
+      56,
+      17162
+    ],
+    "CardFlip_UpdateCursorOAM.OAMData": [
+      56,
+      18118
+    ],
+    "CardFlip_UpdateCursorOAM.SingleTile": [
+      56,
+      18310
+    ],
+    "CardFlip_UpdateCursorOAM.PokeGroup": [
+      56,
+      18335
+    ],
+    "CardFlip_UpdateCursorOAM.NumGroup": [
+      56,
+      18440
+    ],
+    "CardFlip_UpdateCursorOAM.NumGroupPair": [
+      56,
+      18521
+    ],
+    "CardFlip_UpdateCursorOAM.PokeGroupPair": [
+      56,
+      18642
+    ],
+    "CardFlip_UpdateCursorOAM.Impossible": [
+      56,
+      18795
+    ],
+    "CardFlip_InitAttrPals.palettes": [
+      56,
+      18896
     ]
   },
   "text": {},

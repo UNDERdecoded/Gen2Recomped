@@ -199,6 +199,11 @@ function V.data(name)
     return value
   end
   local value = chunkFor("data/" .. name .. ".lua")(V)
+  if name == "voxel_heights" and version == "polishedcrystal" then
+    value = V.require("PolishedProfile").apply(value,
+      chunkFor("data/polishedcrystal/voxel_indices.lua")(V),
+      chunkFor("data/polishedcrystal/furniture.lua")(V))
+  end
   dataFiles[name] = value
   return value
 end
@@ -216,6 +221,9 @@ local VoxelScene = V.require("VoxelScene")
 local NativeGen4 = V.require('NativeGen4')
 local TiltShift = V.require("TiltShift")
 local ChunkMesher = V.require("ChunkMesher")
+if require('src.core.GameVersion').get() == 'polishedcrystal' then
+  ChunkMesher.setCacheRulesTag('polished-roofs-landmarks-v9')
+end
 -- Forward declaration: the prebake pass is set up far below (it needs the
 -- options schema first) but the update hook that drives it is written above
 -- that, and a closure cannot capture a local that does not exist yet.

@@ -1088,6 +1088,9 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     end
   end
   self.map = MapLoader.load(Game.data, mapId)
+  if GameVersion.isGen3() then
+    require("src.world.Gen3SecretBase").restoreEntrance(Game.data, Game.save, self.map)
+  end
   self.gen4EncounterAttempts = 0
   -- THE VIEW IS TOLD HOW MUCH WORLD THERE IS, because on a map smaller than
   -- the window the rest of the window is border -- and a border is not always
@@ -6571,6 +6574,9 @@ function OverworldState:interact()
     local fx2, fy2 = Collision.target(fx, fy, p.facing)
     npc = self:npcAtCell(fx2, fy2)
   end
+  if npc and GameVersion.isGen3() and not Collision.sameElevation(p, npc) then
+    npc = nil
+  end
   if npc then
     if npc.pikachuFollower then
       -- the companion answers directly (TalkToPikachu), no map text id --
@@ -11926,6 +11932,12 @@ function OverworldState:gen3SecretBaseEntrance(sign)
   local id = tonumber(sign.secretBaseId)
   if not id or id < 1 then return false end
   require("src.script.Gen3Commands").setVar(Game.save, 0x8004, id)
+  local held = require("src.world.Gen3SecretBase").mine(Game.save)
+  if held and tonumber(held.id) == id then
+    self:queueScript({ { "g3_special", 21 }, { "g3_special", 8 }, { "end" } },
+                     { mapId = self.map.id })
+    return true
+  end
   return self:gen3RunFieldScript(script, "secret base") and true or false
 end
 
@@ -12040,6 +12052,10 @@ end
 
 function OverworldState:onStepComplete()
   local p = self.player
+  -- Commit the cell serial before its coord event fires. Player:update calls
+  -- this after the frame's earlier noteCellChange; leaving the old serial
+  -- here made the next idle check treat the same switch as a second visit.
+  self:noteCellChange()
   self:gen4BankStep()
   -- THE POKETCH'S PEDOMETER, which is a step counter and has to be counted
   -- where steps are.  Gated on the cartridge having a second screen at all, so
@@ -12158,6 +12174,8 @@ function OverworldState:onStepComplete()
   -- agreeing.
   if p.surfing and self.map:isWalkableCell(p.cellX, p.cellY)
      and not self.map:isWaterCell(p.cellX, p.cellY)
+     and (not GameVersion.isGen3() or (self.map.cellElevation
+          and self.map:cellElevation(p.cellX, p.cellY) == 3))
      and not (self.map.isUnderBridgeCell
               and self.map:isUnderBridgeCell(p.cellX, p.cellY)) then
     p.surfing = false

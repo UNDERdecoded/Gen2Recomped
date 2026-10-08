@@ -1413,9 +1413,11 @@ end
 --      reader does not mistake it for a symptom of this one.
 local function statedFrame(map, e)
   if e == nil then return nil end
-  if not Gen3.mapIsGen3(map) then return nil end
   local fixed = tonumber(e.fixedFrame)
   if fixed then return fixed end
+  -- Fixed rows are also published by Gen2's ball/cut/fruit sheet. Only the
+  -- dynamic growth-stage lookup below belongs to Gen3.
+  if not Gen3.mapIsGen3(map) then return nil end
   if e.berryTreeId == nil then return nil end
   local sp = e.sprite
   local def = sp and sp.def
@@ -1431,6 +1433,8 @@ local function statedFrame(map, e)
   end)
   return (ok and frame) or nil
 end
+
+VoxelScene.statedFrame = statedFrame
 
 local function castHides(e, isPlayer)
   if e == nil then return false end

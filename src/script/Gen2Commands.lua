@@ -392,7 +392,29 @@ local CUSTOM_ARG_DISPATCH = {
     -- port keeps no second one
     if (a[1] or 0) == 0 then Commands.give_money(ctx, a[2] or 0) end
   end,
+  givepoke = function(ctx,a) Commands.g2_give_poke(ctx,a[1],a[2],a[3]) end,
 }
+
+function Commands.g2_give_poke(ctx,species,level,item)
+  species=tonumber(species) or 0
+  if species==0 then species=scriptVar(ctx) end
+  local id=("SPECIES_%03d"):format(species)
+  if not ctx.game.data.pokemon[id] then setScriptVar(ctx,2);return end
+  if #(ctx.save.party or {})>=6 then
+    local Boxes=require('src.pokemon.Boxes')
+    local boxes=Boxes.ensure(ctx.save)
+    if not Boxes.firstFree(boxes[ctx.save.currentBox]) then setScriptVar(ctx,2);return end
+  end
+  Commands.give_pokemon(ctx,id,level or 1,false,
+    item and item>0 and {heldItem=("ITEM_%03d"):format(item)} or nil)
+  setScriptVar(ctx,ctx.lastCheck and (ctx.addedToParty and 0 or 1) or 2)
+end
+
+function Commands.g2_halfword_event(ctx,action)
+  local flag=require('src.script.Gen2Flags').eventFlag(ctx.g2HalfwordVar or 0)
+  if action=='set' then Commands.set_flag(ctx,flag)
+  else Commands.check_flag(ctx,flag);setScriptVar(ctx,ctx.lastCheck and 1 or 0) end
+end
 
 function Commands.g2_cmd_array_args(ctx, built)
   if type(built) ~= "table" then return end
@@ -3315,7 +3337,7 @@ end
 -- answers 0 richer / 1 exact / 2 short like every other funds test.
 local function orphanAmount(ctx, operand)
   local amount = tonumber(operand)
-  if amount == nil or amount == 0xFFFF then return scriptVar(ctx) end
+  if amount == nil or amount == 0xFFFF then return ctx.g2HalfwordVar or 0 end
   return amount
 end
 
@@ -3857,6 +3879,9 @@ function Commands.g2_fruittree(ctx, tree, fallback)
   local t = game.data.text
   save.g2FruitTrees = save.g2FruitTrees or {}
   local itemId = ((game.data.field or {}).gen2FruitTrees or {})[tree]
+  if not itemId and type(fallback) == 'number' and fallback > 0 then
+    itemId = string.format('ITEM_%03d', fallback)
+  end
   if not itemId and type(fallback) == "string" and fallback ~= ""
      and fallback ~= "0" then
     itemId = fallback
@@ -3879,7 +3904,8 @@ function Commands.g2_fruittree(ctx, tree, fallback)
     or ("Hey! It's\n" .. name .. "!"),
   { RAM = name }
   )
-  if not require("src.inventory.Bag").add(save, itemId, 1, game.data) then
+  local quantity = require('src.core.GameVersion').get() == 'polishedcrystal' and math.random(1,3) or 1
+  if not require("src.inventory.Bag").add(save, itemId, quantity, game.data) then
     -- .packisfull: the fruit stays on the tree, so the flag is NOT set
     return Commands.show_text(ctx,
       t._FruitPackIsFullText or "But the PACK is\nfull…")
@@ -4153,11 +4179,12 @@ function Commands.g2_name_rater(ctx)
       or "Whoa… That's just\nan EGG.")
   end
 
-  game.stringBuffer = nickOf(picked)
+  setBuffer(game,1,nickOf(picked))
   -- .traded: a mon whose OT is not the player can't be renamed, and the rater
   -- covers for himself by declaring the name it already has perfect
   local ot = picked.otName or picked.ot
-  if ot and ot ~= (save.player and save.player.name) then
+  local player=save.player or {}
+  if (ot and ot ~= player.name) or (picked.otId~=nil and player.id~=nil and picked.otId~=player.id) then
     return Commands.show_text(ctx, t._NameRaterPerfectNameText
       or "Hm… {RAM:wStringBuffer1}?\nWhat a great name!")
   end
@@ -4182,12 +4209,12 @@ function Commands.g2_name_rater(ctx)
   -- .samename: the rater still congratulates himself when the new name is
   -- the one it already had
   if not chosen or chosen == "" or chosen == nickOf(picked) then
-    game.stringBuffer = nickOf(picked)
+    setBuffer(game,1,nickOf(picked))
     return Commands.show_text(ctx, t._NameRaterSameNameText
       or "It might look the\nsame as before,\fbut this new name\nis much better!")
   end
   picked.nickname = chosen
-  game.stringBuffer = chosen
+  setBuffer(game,1,chosen)
   Commands.show_text(ctx, t._NameRaterNamedText
     or "All right. This\nPOKéMON is now\vnamed {RAM:wStringBuffer1}.")
   Commands.show_text(ctx, t._NameRaterFinishedText

@@ -102,7 +102,8 @@ Collision.entityAbsent = entityAbsent
 
 function Collision.occupied(entities, cx, cy, ignore)
   for _, e in ipairs(entities) do
-    if e ~= ignore and e.of ~= ignore and not e.passable and not entityAbsent(e) then
+    if e ~= ignore and e.of ~= ignore and not e.passable and not entityAbsent(e)
+       and Collision.sameElevation(e, ignore) then
       if entityBlocks(e, cx, cy) then
         return e
       end
@@ -213,6 +214,7 @@ local function verdict(map, entities, mover, dir, tx, ty)
     -- coast rather than only where the map says so.
     local landing = mover.surfing and map.isWaterCell
                     and map:isWalkableCell(tx, ty) and not map:isWaterCell(tx, ty)
+                    and map.cellElevation and map:cellElevation(tx, ty) == 3
     if not landing then
       return false, "elevation"
     end

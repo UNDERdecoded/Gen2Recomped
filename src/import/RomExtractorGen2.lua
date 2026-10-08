@@ -2251,6 +2251,13 @@ function RomExtractorGen2:extractTextFromRom()
 
   -- kept live for gen2DexEntries, which appends the dex descriptions and
   -- rewrites the file after extractPokemon has run
+  if self.version=='prism' then
+    local aliases={Hello='intro_text',WhichMon='select_mon_text',BetterName='offer_name_change_text',WhatName='ask_new_name_text',Named='confirm_new_name_text',Finished='after_renaming_text',SameName='same_name_text',Egg='egg_text',PerfectName='traded_text',ComeAgain='cancel_text'}
+    for key,label in pairs(aliases) do
+      local symbol=self:symbol('NameRater.'..label)
+      if symbol then texts['_NameRater'..key..'Text']=self:decodeGen2TextAt(symbol.bank,symbol.address,charmap,true) end
+    end
+  end
   self._gen2Texts = texts
   self:write("text", texts)
 end
@@ -6642,12 +6649,13 @@ function RomExtractorGen2:extractMapsFromRom()
             local monBase = self:layout("spritePokemonBase", GEN2_SPRITE_POKEMON)
             local breed1 = self:layout("spriteBreedFirst", GEN2_SPRITE_BREED_1)
             local breed2 = self:layout("spriteBreedSecond", GEN2_SPRITE_BREED_2)
-            if row[1] >= GEN2_SPRITE_VARS then
+            local varsBase = self:layout("spriteVarsBase", GEN2_SPRITE_VARS)
+            if row[1] >= varsBase then
               -- $F0+ indexes wVariableSprites.  Copycat and some gym
               -- impersonators are driven this way; still honour an override
               -- if the constant was pinned (e.g. SPRITE_COPYCAT at $FB).
-              spriteId = GEN2_SPRITE_ID_OVERRIDES[row[1]]
-                or string.format("SPRITE_VAR_%02d", row[1] - GEN2_SPRITE_VARS)
+              spriteId = (self:layout("spriteOverrides", 1) ~= 0 and GEN2_SPRITE_ID_OVERRIDES[row[1]])
+                or string.format("SPRITE_VAR_%02d", row[1] - varsBase)
             elseif row[1] == breed1 then
               spriteId = "SPRITE_MON_BREED_1"
             elseif row[1] == breed2 then
@@ -6672,6 +6680,12 @@ function RomExtractorGen2:extractMapsFromRom()
                 or "SPRITE_GRAMPS"
             end
             local kind = row[8] % 16
+            if kind == self:layout("objectPokemonKind", -1) then
+              -- Polished's SPRITE_MON_ICON reads the species from the object
+              -- palette/parameter byte, rather than Crystal's SpriteMons.
+              local species = row[5]
+              if species and species > 0 then spriteId = gen2MonSpriteId(species) end
+            end
             local scriptAddress = row[10] + row[11] * 256
             local eventFlag = row[12] + row[13] * 256
             local textConst = string.format("TEXT_%s_OBJ_%03d", mapId, i)
@@ -6725,6 +6739,9 @@ function RomExtractorGen2:extractMapsFromRom()
             -- tiles 4-7, the second frame; fruit uses the third.  Without
             -- this every cuttable tree stood there as a POKe BALL.
             local action = behavior and behavior.action or -1
+            if self.version == 'polishedcrystal' and sprite and sprite.base == 'BallCutFruit' then
+              object.frame = 0
+            end
             if action >= 0 then
               if action == self:layout("movementCutTreeAction", -1) then
                 object.frame = 1
@@ -6777,7 +6794,7 @@ function RomExtractorGen2:extractMapsFromRom()
                 inlineStd = a1
               elseif op == self:opcode("fruittree") then
                 fruitTree = a1
-                item = fruitTreeItems[a1]
+                item = self.version == 'polishedcrystal' and a2 or fruitTreeItems[a1]
                 quantity = 1
               elseif op == self:opcode("pokemart") then
                 local marts = self:gen2Marts()
@@ -6794,7 +6811,7 @@ function RomExtractorGen2:extractMapsFromRom()
             -- the item id as a text address, so every Prism item ball printed
             -- a line decoded out of whatever bytes lived at $0028.
             if kind == GEN2_OBJECT_KIND_ITEMBALL
-               and self:layout("objectItemInline", 0) ~= 0 then
+               and (self:layout("objectItemInline", 0) ~= 0 or self.version == 'polishedcrystal') then
               item = row[10]
               quantity = row[9]
             elseif kind == 3
@@ -6987,6 +7004,7 @@ function RomExtractorGen2:extractMapsFromRom()
               -- of those trees answered "You examine the object." instead of
               -- behaving like a tree.
               object.fruitTree = fruitTree
+              if item and item > 0 then object.item = string.format('ITEM_%03d', item) end
               object.quantity = quantity
               itemObjects = itemObjects + 1
             elseif item and item > 0 then
@@ -9434,6 +9452,8 @@ function RomExtractorGen2:gen2CustomArgsCommand(blob)
       at = at + width
     end
     if bytes[at - 1] == nil then return nil end
+    -- GivePoke omits its nickname/OT pointers for an ordinary gift.
+    if spec.name=='givepoke' and i==4 and args[i].value==0 then break end
   end
   return { command = spec.name, args = args }
 end
@@ -11262,7 +11282,7 @@ function RomExtractorGen2:gen2TownMapPalettes(which)
   local pals = {}
   if not (sym and self.rom) then return pals end
   pcall(function()
-    for p = 0, GEN2_TOWN_MAP_PALETTES - 1 do
+    for p = 0, self:layout("townMapPalettes", GEN2_TOWN_MAP_PALETTES) - 1 do
       local colors = {}
       for c = 0, 3 do
         local raw = self.rom:word(sym.bank, sym.address + (p * 4 + c) * 2)
@@ -11282,9 +11302,11 @@ function RomExtractorGen2:gen2TownMapImage(mapSymbol, relative)
   local map = self:symbol(mapSymbol)
   local gfx = self:symbol("TownMapGFX")
   if not (map and gfx and self.rom) then return nil end
-  local palMap = self:symbol("TownMapPals.PalMap")
+  local palMap = self:symbol("TownMapPals.PalMap") or self:symbol("GetNextTownMapTilePalette.PalMap")
   local ok = pcall(function()
-    local tiles = self.rom:bytes(gfx.bank, gfx.address, GEN2_TOWN_MAP_TILES * 16)
+    local tiles = self:layout("townMapGfxCompressed", 0) ~= 0
+      and assert(self:gen2Lz("TownMapGFX"))
+      or self.rom:bytes(gfx.bank, gfx.address, GEN2_TOWN_MAP_TILES * 16)
     local nibbles = palMap and self.rom:bytes(palMap.bank, palMap.address,
                                               GEN2_TOWN_MAP_PAL_LIMIT / 2)
     local pals = self:gen2TownMapPalettes()
@@ -11293,7 +11315,9 @@ function RomExtractorGen2:gen2TownMapImage(mapSymbol, relative)
     local image = love.image.newImageData(GEN2_TOWN_MAP_WIDTH * 8,
                                           GEN2_TOWN_MAP_HEIGHT * 8)
     for cell = 0, GEN2_TOWN_MAP_WIDTH * GEN2_TOWN_MAP_HEIGHT - 1 do
-      local tile = cells[cell + 1] or 0
+      local packedTile = cells[cell + 1] or 0
+      local flipped = self:layout("townMapPackedFlips", 0) ~= 0
+      local tile = flipped and packedTile % 64 or packedTile
       local palIndex = 0
       if nibbles and tile < GEN2_TOWN_MAP_PAL_LIMIT then
         local packed = nibbles[math.floor(tile / 2) + 1] or 0
@@ -11303,12 +11327,14 @@ function RomExtractorGen2:gen2TownMapImage(mapSymbol, relative)
       local colors = pals[palIndex] or pals[0]
       local px = (cell % GEN2_TOWN_MAP_WIDTH) * 8
       local py = math.floor(cell / GEN2_TOWN_MAP_WIDTH) * 8
-      local base = (tile % GEN2_TOWN_MAP_TILES) * 16
+      local base = (tile % math.floor(#tiles / 16)) * 16
       for y = 0, 7 do
-        local low = tiles[base + y * 2 + 1] or 0
-        local high = tiles[base + y * 2 + 2] or 0
+        local sy = flipped and packedTile >= 128 and 7-y or y
+        local low = tiles[base + sy * 2 + 1] or 0
+        local high = tiles[base + sy * 2 + 2] or 0
         for x = 0, 7 do
-          local divisor = 2 ^ (7 - x)
+          local sx = flipped and math.floor(packedTile / 64) % 2 == 1 and 7-x or x
+          local divisor = 2 ^ (7 - sx)
           local shade = math.floor(high / divisor) % 2 * 2
             + math.floor(low / divisor) % 2
           local c = colors and colors[shade] or { 0, 0, 0 }
@@ -11395,7 +11421,11 @@ function RomExtractorGen2:gen2TownMap()
   pcall(function()
     local sym = self:symbol("ChrisSpriteGFX")
     if not (sym and self.rom) then return end
-    local raw = self.rom:bytes(sym.bank, sym.address, 4 * 16)
+    local sheet = self:layout("spritesCompressed", 0) ~= 0 and self:gen2Lz("ChrisSpriteGFX")
+    local raw = sheet or self.rom:bytes(sym.bank, sym.address, 4 * 16)
+    if sheet then
+      raw = {}; for i = 1, 4 * 16 do raw[i] = sheet[i] end
+    end
     -- MapObjectPals red (0-31 RGB → 0-1): light, skin, red, black
     local redPal = {
       { 28/31, 31/31, 16/31 },
@@ -11971,7 +12001,9 @@ function RomExtractorGen2:extractPrismPlayerForms()
       -- battle, and it was the same for all fourteen characters because only
       -- one symbol was ever consulted.
       -- and GetPlayerBackpic is the same shape, with the same cut-off -- the
-      -- last two characters' back pic is 7x7 rather than 6x6.
+      -- The patroller LOADS 49 tiles, but GetPlayerBackpicCoords still
+      -- displays 6x6. Its pp.xbpp contains 36 tiles; the extra loaded bytes
+      -- are not another row/column of the picture.
       if set < RomExtractorGen2.PRISM_PLAYER_FLAT_SETS and backSym then
         record.back = self:gen2RawColumnPicAt(
           backSym.bank, backSym.address + set * PRISM_BACKPIC_BYTES,
@@ -11980,7 +12012,7 @@ function RomExtractorGen2:extractPrismPlayerForms()
       elseif patrolBackSym then
         record.back = self:gen2RawColumnPicAt(
           patrolBackSym.bank, patrolBackSym.address,
-          G.intro.cols, G.intro.rows,
+          G.back.cols, G.back.rows,
           "battle/prism_playerback" .. set .. ".png", nil)
       end
       if record.walk then
@@ -13373,6 +13405,29 @@ RomExtractorGen2.CARD_FLIP_CURSOR_SHAPES = {
   "NumGroupPair", "PokeGroupPair", "Impossible",
 }
 
+function RomExtractorGen2:gen2MemoryGame()
+  local tiles=self:symbol('MemoryGameTiles')
+  local distribution=self:symbol('MemoryGame_GetDistributionOfTiles.distributions')
+  local rewards=self:symbol('GameCornerMemoryGame.items')
+  if not (tiles and distribution and rewards and self.rom) then return nil end
+  local pixels=self:gen2Lz('MemoryGameTiles')
+  if not pixels then return nil end
+  local rows=math.ceil(#pixels/(16*16))
+  for i=#pixels+1,rows*16*16 do pixels[i]=0 end
+  self:saveImage(ImageWriter.decode2bpp(pixels,128,rows*8,false),'minigames/memorygame.png')
+  local out={image='assets/generated/minigames/memorygame.png',distributions={},rewards={}}
+  local glove=self:symbol('MemoryGameGloveGFX')
+  if glove then
+    self:saveImage(ImageWriter.decode2bpp(self.rom:bytes(glove.bank,glove.address,64),16,16,true),'minigames/memorygame_glove.png')
+    out.cursor='assets/generated/minigames/memorygame_glove.png'
+  end
+  local prompt=self:symbol('MemoryWantToPlayText')
+  if prompt then out.prompt=self:decodeGen2TextAt(prompt.bank,prompt.address,self:readSourceTable('charmap'),true) end
+  for tier=1,3 do out.distributions[tier]=self.rom:bytes(distribution.bank,distribution.address+(tier-1)*8,8) end
+  for i=0,7 do out.rewards[i+1]=self.rom:byte(rewards.bank,rewards.address+i) end
+  return out
+end
+
 function RomExtractorGen2:gen2CardFlip()
   if not self.rom then return nil end
   local ok, out = pcall(function()
@@ -14021,6 +14076,7 @@ function RomExtractorGen2:extractField()
     src.gen2BattleTower = self:gen2BattleTower() or src.gen2BattleTower
     src.gen2Slots = self:gen2Slots() or src.gen2Slots
     src.gen2CardFlip = self:gen2CardFlip() or src.gen2CardFlip
+    src.gen2MemoryGame = self:gen2MemoryGame() or src.gen2MemoryGame
     src.egg = self:gen2Egg() or src.egg
     src.pokegear = self:gen2Pokegear() or src.pokegear
     -- Crystal's boy/girl asset sets; nil on Gold and Silver, which have only
@@ -16166,6 +16222,25 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       -- tileset was rendering the wrong art AND the wrong palette.
       local attrSplit = preAttrRaw and 128 or nil
       local palMapFromAttr = preAttrRaw and {} or nil
+      local variants, variantIds, extra = {}, {}, {}
+      local function flipped(index, attr)
+        if self.version ~= 'polishedcrystal' then return index end
+        local fx, fy = math.floor(attr/32)%2==1, math.floor(attr/64)%2==1
+        if not fx and not fy then return index end
+        local key=index..':'..tostring(fx)..':'..tostring(fy)
+        if variantIds[key] then return variantIds[key] end
+        local new=tileCount+#extra/16
+        for y=0,7 do
+          local sy=fy and 7-y or y
+          for plane=1,2 do
+            local byte=pixels[index*16+sy*2+plane] or 0
+            if fx then local reversed=0;for bit=0,7 do reversed=reversed+(math.floor(byte/2^bit)%2)*2^(7-bit)end;byte=reversed end
+            extra[#extra+1]=byte
+          end
+        end
+        variants[new]={base=index,flipX=fx,flipY=fy};variantIds[key]=new
+        return new
+      end
       for offset = 1, #blocksRaw, 16 do
         local block = {}
         for pos = offset, offset + 15 do
@@ -16177,6 +16252,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
             -- a sheet shorter than the split still has to land somewhere real
             if index >= tileCount then index = blocksRaw[pos] or 0 end
             if index >= tileCount then index = 0 end
+            index = flipped(index, attr)
             palMapFromAttr[index + 1] = attr % 8
           else
             index = GEN2_PAL.tileIndex(blocksRaw[pos], tileCount)
@@ -16184,6 +16260,13 @@ function RomExtractorGen2:extractRuntimeScaffolds()
           block[#block + 1] = index
         end
         blocks[#blocks + 1] = block
+      end
+      if #extra>0 then
+        for _,byte in ipairs(extra)do pixels[#pixels+1]=byte end
+        width,height=inferTilesetDimensions(#pixels)
+        while #pixels<width*height/4 do pixels[#pixels+1]=0 end
+        ImageWriter.save(ImageWriter.decode2bpp(pixels,width,height),imagePath)
+        tileCount=width*height/64
       end
       -- Dense, not sparse.  Only tiles a block actually references pick up an
       -- attribute, so the table above has holes -- and `#` on a table with
@@ -16221,6 +16304,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         -- reader below sees this and leaves it alone rather than looking for
         -- a symbol that does not exist on this cartridge.
         palMap = palMapFromAttr,
+        tileVariants = next(variants) and variants or nil,
         collision = collision,
         walkable = classes.land,
         waterTiles = classes.water,
