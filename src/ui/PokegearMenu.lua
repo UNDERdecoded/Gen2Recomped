@@ -252,7 +252,7 @@ function PokegearMenu:tile(id, tx, ty)
     G.setColor(1, 1, 1, 1)
     return
   end
-  if id == BLANK_TILE then
+  if id == (self.gfx.blankTile or BLANK_TILE) then
     G.setColor(0, 0, 0, 1)
     G.rectangle("fill", tx * 8, ty * 8, 8, 8)
     G.setColor(1, 1, 1, 1)
@@ -276,12 +276,14 @@ end
 
 -- Pokegear_FinishTilemap: 2x2 icons for each owned card
 function PokegearMenu:drawStrip()
-  for x = 0, SCREEN_W - 1 do
-    self:tile(BLANK_TILE, x, 0)
-    self:tile(BLANK_TILE, x, 1)
+  -- The icon strip occupies the left eight columns. Clearing the entire
+  -- header erased the clock plate and the phone panel's upper border.
+  for x = 0, 7 do
+    self:tile(self.gfx.blankTile or BLANK_TILE, x, 0)
+    self:tile(self.gfx.blankTile or BLANK_TILE, x, 1)
   end
   for _, card in ipairs(self.cards) do
-    local n, x = card.icon, card.iconX
+    local n, x = card.icon+(self.gfx.cardIconOffset or 0), card.iconX
     self:tile(n, x, 0)
     self:tile(n + 1, x + 1, 0)
     self:tile(n + 0x10, x, 1)

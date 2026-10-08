@@ -47,3 +47,29 @@ for _,id in ipairs({'polished_sprout_tower','polished_radio_west','polished_ligh
   assert(landmarks[id],'missing complete landmark '..id)
 end
 print('PASS landmark models and pagoda roof boundaries')
+local function classFor(entry,tile)
+  for class,tiles in pairs(entry)do
+    if type(tiles)=='table' and type(tiles[1])=='number'then
+      for _,id in ipairs(tiles)do if id==tile then return class end end
+    end
+  end
+end
+for _,id in ipairs({'TilesetJohto1','TilesetJohto2','TilesetJohto3','TilesetJohto4','TilesetJohto5'})do
+  for _,tile in ipairs({70,71,86,87})do
+    assert(classFor(complete.tilesets[id],tile)=='signpost',id..' sign must use thin billboard art')
+  end
+end
+for _,tile in ipairs({8,24})do
+  assert(classFor(complete.tilesets.TilesetJohto2,tile)=='fence','trackside fence row misclassified')
+end
+assert(complete.tilesets.TilesetJohto2.heights.fence==8,'rail fence must stay low')
+for _,tile in ipairs({198,199,200,201,214,215,216,217,202,203,204,205,218,219,220,221})do
+  assert(classFor(complete.tilesets.TilesetJohto1,tile)==(tile==198 and 'canopy' or 'cylinder'),'pink tree canopy group split')
+end
+for _,tile in ipairs({73,74,75,78,79,94,95})do
+  assert(classFor(complete.tilesets.TilesetJohto3,tile)=='wall','Alph masonry becomes a tree')
+end
+for _,tile in ipairs({128,129,144,145,224,225,240,241})do
+  assert(classFor(complete.tilesets.TilesetAlph,tile)=='wall','Unown glyph must stay upright')
+end
+print('PASS signs, trackside fences, pink crowns and Alph masonry/glyphs')

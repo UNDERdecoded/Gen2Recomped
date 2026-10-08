@@ -51,6 +51,8 @@ end
 function HoldItems.effectOf(battler)
   local def = HoldItems.defOf(battler)
   if not def then return nil end
+  local effect,param=require('src.inventory.PolishedBerries').held(def,battler.mon)
+  if effect then return effect,param,def end
   local effect = def.holdEffect
   if type(effect) ~= "string" then return nil end
   return effect, tonumber(def.holdEffectParam) or 0, def

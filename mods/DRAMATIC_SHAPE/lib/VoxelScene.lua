@@ -934,6 +934,7 @@ local function maskEngine(state)
   end
   if data and data.maps and type(compute) == "function" then
     maskMaps, maskCompute = data.maps, compute
+
   end
   return maskMaps, maskCompute
 end
@@ -945,6 +946,10 @@ function VoxelScene.masksFor(map, state)
   if hit ~= nil then return hit or nil end
   local maps, compute = maskEngine(state)
   if not (maps and compute) then return nil end
+  if require("src.core.GameVersion").get()=="polishedcrystal" then
+    maskMemo=V.require("BorderMaskGraph").build(maps,compute)
+    return maskMemo[id]
+  end
   -- ...AND EVERY BODY THE RING CAN ACTUALLY TOUCH, WHICHEVER HOP IT IS ON.
   --
   -- Two hops is the set the engine LOADS, not the set that can stand under
@@ -1510,6 +1515,7 @@ local function posesOf(state, spriteColors)
     -- actor is still POSED and only its card is dropped.  Posing it
     -- conditionally would leave it a frame behind every time it reappeared.
     local sprite, vx, vy, facing, phase, flip = g.npc:pose()
+    sprite=V.require('PolishedFruitSprite').sprite(g.map or state.map,g.npc,sprite)
     if not castHides(g.npc) then
       local gmap = g.map or state.map
       posed[#posed + 1] = {
@@ -1531,6 +1537,7 @@ local function posesOf(state, spriteColors)
   for _, e in ipairs(state.entities or {}) do
     if not (state.flyAnim and e == state.player) then
       local sprite, vx, vy, facing, phase, flip = e:pose()
+      sprite=V.require('PolishedFruitSprite').sprite(state.map,e,sprite)
       if not castHides(e, e == state.player) then
         posed[#posed + 1] = {
           sprite = sprite, px = vx, py = e.py,

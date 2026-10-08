@@ -106,6 +106,11 @@ end
 function HeldItems.effect(data, holder)
   local def, id = itemDef(data, holder)
   if type(def) ~= "table" then return HeldItems.EFFECT.NONE, 0 end
+  -- Modern Polished berries are handled by HoldItems; their enum values
+  -- otherwise collide with GSC Leftovers/PP/status effects here.
+  if require('src.inventory.PolishedBerries').held(def,monOf(holder)) then
+    return HeldItems.EFFECT.NONE,0
+  end
 
   -- Intentional Gen II cleanup approved for the recomp ruleset: retail
   -- Crystal accidentally assigns HELD_DRAGON_BOOST to Dragon Scale and leaves

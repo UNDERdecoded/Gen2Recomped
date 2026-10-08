@@ -1284,6 +1284,10 @@ function BattleState.newWild(game, species, level, opts)
     local Encounter=require('src.world.Encounter')
     form=Encounter.gen4Form(Encounter.forMap(game.data,mapDef,mapId),species)
   end
+  if form==nil and require("src.core.GameVersion").get()=="polishedcrystal"
+     and game.data.pokemon[species] and game.data.pokemon[species].forms then
+    form=require("src.pokemon.PolishedUnown").choose(game.save)
+  end
   local wild = Pokemon.new(game.data, species, level, nil, form)
   -- SYNCHRONIZE'S NATURE AND CUTE CHARM'S GENDER, decided with the slot (see
   -- src/world/Gen4WildLead.lua) and applied the cartridge's way: personality

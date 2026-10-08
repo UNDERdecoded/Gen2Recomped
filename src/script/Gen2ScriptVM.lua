@@ -1593,7 +1593,13 @@ local READ_VARS = {
 }
 
 L.readvar = function(ir, s)
-  if READ_VARS[ir[2]] then emit(s, { "g2_readvar", ir[2] }) end
+  local id=ir[2]
+  if require('src.core.GameVersion').get()=='polishedcrystal' then
+    -- Polished removed two earlier vars: its coordinate bytes are $10/$11,
+    -- while the shared GSC command handler uses $12/$13.
+    if id==16 then id=18 elseif id==17 then id=19 end
+  end
+  if READ_VARS[id] then emit(s, { "g2_readvar", id }) end
 end
 -- Persistent WRAM byte used by scripts (wUndergroundSwitchPositions, etc.).
 -- ir[2] is the 16-bit address the disassembler emitted.
@@ -2322,12 +2328,18 @@ Gen2ScriptVM.store = store
 -- is deliberately left out of this list and stays in the audit.
 L.nooryes = L.yesorno
 L.random16 = L.random
-L.checkkeyitem = L.checkitem
-L.givekeyitem = L.giveitem
-L.takekeyitem = L.takeitem
-L.verbosegivekeyitem = L.verbosegiveitem
+local function keyItemOperand(value)
+  local n=tonumber(value) or tonumber(tostring(value):match('(%d+)$'))
+  return n and string.format('KEY_ITEM_%03d',n) or value
+end
+L.checkkeyitem=function(ir,s)emit(s,{'check_item',keyItemOperand(ir[2])})end
+L.givekeyitem=function(ir,s)emit(s,{'g2_giveitem',keyItemOperand(ir[2]),1})end
+L.takekeyitem=function(ir,s)emit(s,{'take_item',keyItemOperand(ir[2]),1})end
+L.verbosegivekeyitem=function(ir,s)emit(s,{'give_item',keyItemOperand(ir[2]),1})end
 L.givespecialitem = L.giveitem
-L.applyonemovement = L.applymovement
+L.applyonemovement = function(ir,s)
+  emit(s,{'g2_one_move',ir[2],ir[3],ir[4]})
+end
 -- `loadtrainerwithpal <group>, <id>, <palette>` is `loadtrainer` plus the
 -- palette the trainer's pic is drawn in -- Script_loadtrainerwithpal falls
 -- into the same battle setup, and the port picks a pic's palette from the

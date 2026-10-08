@@ -192,7 +192,10 @@ def build(prepared, crystal, target):
                 for n,warp in enumerate(m.get('warps',[])):
                     dest=warp.get('destMap','')
                     if ('POKE_CENTER1_F' in dest or dest.endswith('_MART')):
-                        add_grid(mapid+'_civic_'+str(n),m,warp['x']*2-2,warp['y']*2-6,8,8,40)
+                        # Only the first two rows are uninterrupted roof.
+                        # The emblem starts in row three and belongs to the
+                        # vertical facade, rather than the folded roof slab.
+                        add_grid(mapid+'_civic_'+str(n),m,warp['x']*2-2,warp['y']*2-6,8,8,16)
             if name=='TilesetJohto2':
                 add_grid('radio_west',maps['GOLDENROD_CITY'],16,8,4,24,16)
                 add_grid('radio_east',maps['GOLDENROD_CITY'],20,20,4,12,16)
@@ -226,8 +229,28 @@ def build(prepared, crystal, target):
             # The six-tile tree drawing and the four-tile sign are shared by
             # all five Johto families, even where their surrounding art differs.
             for tile in [30,31,46,47,62,63]: candidates[tile]={'cylinder'}
-            for tile in [70,71,86,87]: candidates[tile]={'signpost'}
+            # Polished has both metal notices and wooden route signs.
+            for tile in [70,71,86,87,105,106,121,122]: candidates[tile]={'signpost'}
+            entry.setdefault('heights',{})['signpost']=16
+            if name == 'TilesetJohto1':
+                # One canopy anchor per complete 32px pink-tree drawing.
+                for tile in [198,199,200,201,214,215,216,217,202,203,204,205,218,219,220,221]:
+                    candidates[tile]={'canopy' if tile==198 else 'cylinder'}
+            if name == 'TilesetJohto2':
+                # Trackside pickets occupy two rows (8/24); 141/157
+                # are crossing posts, not the horizontal fence drawing.
+                for tile in [8,24,140,141,156,157,148,149,164,165]: candidates[tile]={'fence'}
+                entry.setdefault('heights',{})['fence']=8
+            if name == 'TilesetJohto3':
+                # These pixels resemble the shared broadleaf tree tiles,
+                # but Polished uses them as Alph's masonry and entrances.
+                for tile in [73,74,75,78,79,94,95,165,166,181,182]: candidates[tile]={'wall'}
+                for tile in [160,161,162,176,177,178,192,193,194]: candidates[tile]={'roof'}
             rules.pop('when_below',None)
+        if name == 'TilesetAlph':
+            # Keep all carved letters upright, including their lower halves.
+            # Collision-only inference otherwise flattens most of the alphabet.
+            for tile in list(range(48,79))+list(range(128,250)): candidates[tile]={'wall'}
         if name=='TilesetKanto1':
             # Celadon's store and civic blocks use their own complete facade
             # drawings rather than Johto's interchangeable roof band.
@@ -254,6 +277,17 @@ def build(prepared, crystal, target):
         for k,v in entry.items():
             if isinstance(v,list) and all(isinstance(n,int) for n in v): v.sort()
         result['tilesets'][name] = entry
+        # Exact whole-object models keep the monitor/statue above its base.
+        # Tile-wide pins would also turn shared wall trims into computers.
+        objects={
+            'TilesetPokeCenter':[('center_pc',[[22,23],[38,39],[54,165]])],
+            'TilesetRadioTower':[('radio_pc',[[46,47],[62,63],[58,59]])],
+            'TilesetRuins':[('alph_statue',[[22,23],[38,39],[24,25],[40,41]])],
+        }
+        for label,grid in objects.get(name,[]):
+            templates.insert(0,{'id':'polished_'+label,'tiles':grid,
+                'roofRows':0,'roofBack':0,'roofFront':0,'roofCycle':[0,0],
+                'slab':0,'frontEave':0,'depth':1,'seal':'s'})
         result['buildings'][name] = templates
         buildings += len(templates)
     sections = []

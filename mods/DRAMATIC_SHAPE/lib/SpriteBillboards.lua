@@ -120,7 +120,8 @@ local function buildCardStated(img, frame, fw, fh)
 end
 
 local function buildCard(def, frame)
-  local ok, img = pcall(Assets.image, def.image)
+  local ok, img = true,def.billboardTexture
+  if not img then ok,img=pcall(Assets.image,def.image)end
   if not (ok and img) then return nil end
   local iw, ih = img:getDimensions()
 

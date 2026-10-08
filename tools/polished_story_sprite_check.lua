@@ -12,6 +12,9 @@ T.check(sprites.SPRITE_WEIRD_TREE and sprites.SPRITE_WEIRD_TREE.image,'ROM has r
 local G=require('src.core.Game');G.save={gen2VarSprites={[4]=114}}
 local npc=NPC.new({sprites=sprites},'ROUTE36',{index=1,sprite='SPRITE_WEIRD_TREE',x=1,y=1,movement='STAY',range='ANY_DIR'})
 T.eq(npc.sprite.image,sprites.SPRITE_WEIRD_TREE.image,'saved variable sprite cannot replace Sudowoodo with Kimono Girl')
+T.eq(npc.fixedFrame,0,'Weird Tree holds its ROM pose when talked to')
+npc:facePlayer({cellX=2,cellY=1})
+T.eq(npc.fixedFrame,0,'turning does not switch to another shake pose')
 V.set('crystal')
 T.eq(NPC.variableSpriteSlot('SPRITE_WEIRD_TREE'),4,'Crystal still uses original story slot')
 T.finish()

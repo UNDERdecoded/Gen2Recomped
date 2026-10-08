@@ -1232,7 +1232,7 @@ local MARKER_PATH = "rom-cache.complete"
 local function markerFor(version)
   local revision = version == "platinum" and "platinum-audio-ui-v16:" or ""
   if version == "emerald" then revision = "emerald-map-popup-v2:" end
-  if version == "polishedcrystal" then revision = "polished-overworld-map-sprites-v3:" end
+  if version == "polishedcrystal" then revision = "polished-stored-unown-forms-v7:" end
   if version == "prism" then revision = "prism-events-art-v2:" end
   -- Include version-specific field encounters, sleep, swarm and rate tables.
   -- Only these three caches need rebuilding; other markers remain stable.

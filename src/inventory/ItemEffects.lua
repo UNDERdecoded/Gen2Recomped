@@ -378,6 +378,10 @@ end
 -- ask `gen3RecordFor` asks this instead, so the party picker, the heal path
 -- and `use` all agree about what an item does on every cartridge.
 function ItemEffects.recordFor(id, data)
+  local Data=data or require('src.core.Data')
+  local def=type(id)=='table' and id or (Data.items and Data.items[id])
+  local berry=require('src.inventory.PolishedBerries').record(def)
+  if berry then return berry end
   return ItemEffects.gen3RecordFor(id, data)
       or ItemEffects.gen4RecordFor(id, data)
 end
@@ -658,12 +662,7 @@ local GEN3_EV_TOTAL = 510          -- across the six
 local GEN3_EV_ORDER = { "hp", "attack", "defense", "speed", "spatk", "spdef" }
 
 local function gen3Record(data, itemId)
-  local c = data and data.constants
-  local all = c and c.gen3ItemEffects
-  local r = type(all) == "table" and all[itemId] or nil
-  if r then return r end
-  -- ...and Sinnoh's, decoded from the item's own struct (gen4RecordFor).
-  return ItemEffects.gen4RecordFor(itemId, data)
+  return ItemEffects.recordFor(itemId,data)
 end
 
 -- The friendship a medicine moves, which is a third of the record the port
@@ -742,6 +741,7 @@ local function gen3Use(data, save, itemId, target, battle, moveIndex)
     local before = target.hp
     if not full then
       local by = r.amount
+      if r.hpDivisor then by=math.max(1,math.floor(maxHP/r.hpDivisor))end
       if by == "all" then
         target.hp = maxHP
       elseif by == "half" then
@@ -875,7 +875,13 @@ local function gen3Use(data, save, itemId, target, battle, moveIndex)
     else
       want = math.max(0, now + by)
     end
-    if want == now then return "failed", fail end
+    if want == now then
+      if r.friendshipOnly and (tonumber(target.happiness) or 0)<255 then
+        gen3Friendship(target,r.friendship)
+        return "consumed",{Strings("%s became\nfriendlier!",monName(data,target))}
+      end
+      return "failed", fail
+    end
     target.evs[r.ev] = want
     local okStats, Stats = pcall(require, "src.pokemon.Stats")
     if okStats and data.pokemon and data.pokemon[target.species] then

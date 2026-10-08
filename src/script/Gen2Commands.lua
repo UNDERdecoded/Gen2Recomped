@@ -1474,10 +1474,17 @@ local function queueFollower(ow, follower, leader, dirs)
   if runDir and run > 0 then ow:scriptMove(follower, runDir, run) end
 end
 
+function Commands.g2_one_move(ctx,target,opcode,param)
+  local version=require('src.core.GameVersion').get()
+  local name=require('src.import.Gen2ScriptOps').movementsFor(version)[opcode]
+  if name then return Commands.g2_move(ctx,target,{{name,param}}) end
+end
+
 function Commands.g2_move(ctx, target, movementLabel)
   local data = ctx.game and ctx.game.data
   local store = data and data.map_scripts
-  local rows = store and store.movements and store.movements[movementLabel]
+  local rows = type(movementLabel)=='table' and movementLabel
+    or (store and store.movements and store.movements[movementLabel])
   -- A MOVEMENT THE SCRIPT BUILT IN RAM.
   --
   -- `applymovement PLAYER, wPachisiPath` names a WRAM buffer rather than a
@@ -2047,7 +2054,7 @@ end
 function Gen2Commands.phoneName(data, id)
   local entry = phoneContact(data, id)
   if not entry then return nil end
-  if entry.name then return entry.name end
+  if entry.name then return entry.name, entry.role end
   local best = phoneTrainerDef(data, entry)
   if not best then return nil end
   local names = best.partyNames
@@ -2929,6 +2936,9 @@ function Commands.g2_unown_puzzle(ctx)
   local UnownPuzzle = require("src.ui.UnownPuzzle")
   game.stack:push(UnownPuzzle.new(game, picture, function(solved)
     ctx.lastCheck = solved and true or false
+    if solved and require("src.core.GameVersion").get()=="polishedcrystal" then
+      require("src.pokemon.PolishedUnown").unlock(game.save,picture)
+    end
     runner:resume()
   end))
   runner:yield()
@@ -4609,13 +4619,24 @@ end
 -- `special SlotMachine`: the `setval 0/1` ahead of it marks the one machine
 -- Slots_InitBias makes generous.  Nothing follows in the script but
 -- closetext/end, so this does not have to yield.
+local function requireCoinCase(ctx)
+  for id,count in pairs(ctx.save.inventory or {})do
+    local def=ctx.game.data.items and ctx.game.data.items[id]
+    if count>0 and ((def and def.key=='COIN_CASE') or id=='COIN_CASE')then return true end
+  end
+  Commands.show_text(ctx,"You'll need a\nCOIN CASE!")
+  return false
+end
+
 function Commands.g2_slots(ctx)
+  if not requireCoinCase(ctx)then return end
   require("src.ui.Screens").push(ctx.game, "Gen2Slots", scriptVar(ctx) == 1)
 end
 
 -- `special CardFlip`: takes no argument, and like the slots nothing follows it
 -- in the script but closetext/end, so it does not have to yield.
 function Commands.g2_card_flip(ctx)
+  if not requireCoinCase(ctx)then return end
   require("src.ui.Screens").push(ctx.game, "Gen2CardFlip")
 end
 

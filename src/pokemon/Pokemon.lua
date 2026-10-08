@@ -175,6 +175,10 @@ end
 
 function Pokemon.new(data, species, level, rng, form)
   local nativeForm=(data.constants or {}).gen==4 and (form or 0) or nil
+  local speciesDef=(data.pokemon or {})[species]
+  if require("src.core.GameVersion").get()=="polishedcrystal" and speciesDef and speciesDef.forms then
+    nativeForm=form or require("src.pokemon.PolishedUnown").choose(nil,rng)
+  end
   local def = require('src.pokemon.Gen4Forms').definition(data,
     {species=species,form=nativeForm})
   assert(def, "unknown species " .. tostring(species))

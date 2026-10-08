@@ -24,6 +24,9 @@ function Sprites.formIndex(def, mon)
   local forms = def and def.forms
   if not (forms and mon) then return nil end
   if forms.base then return require('src.pokemon.Gen4Forms').key(def, mon) end
+  if require("src.core.GameVersion").get()=="polishedcrystal" and mon.form and forms[mon.form] then
+    return mon.form
+  end
   local dvs = mon.dvs
   if type(dvs) ~= "table" then return nil end
   local packed = mid2(dvs.attack) * 64 + mid2(dvs.defense) * 16

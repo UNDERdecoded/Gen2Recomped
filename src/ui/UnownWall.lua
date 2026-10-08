@@ -41,7 +41,13 @@ local LITERAL = {
 -- unshifted.
 local GLYPH_BANK1 = 96
 
-local function glyphTiles(id)
+local function glyphTiles(id, polished)
+  -- Polished loads the alphabet into bank 1 after 128 bank-0 tiles;
+  -- its ConvertChar routine uses the same 2x2 layout for Y/Z/dash too.
+  if polished then
+    local base = id + 128
+    return {base, base + 1, base + 16, base + 17}
+  end
   local literal = LITERAL[id]
   if literal then return literal end
   local base = id + GLYPH_BANK1
@@ -52,6 +58,7 @@ function UnownWall.new(game, opts)
   local self = setmetatable({}, UnownWall)
   opts = opts or {}
   self.game = game
+  self.polished = require('src.core.GameVersion').get() == 'polishedcrystal'
   self.onDone = opts.onDone
   local walls = ((game.data.field or {}).gen2UnownWalls) or {}
   local index = (tonumber(opts.word) or 0) + 1
@@ -62,6 +69,7 @@ function UnownWall.new(game, opts)
   -- over the word, it does not strip it to black and white
   local ow = game.overworld
   local name = ow and ow.map and ow.map.def and ow.map.def.tileset
+  if self.polished then name = 'TilesetAlph' end
   local def = name and (game.data.tilesets or {})[name]
   if def and def.image then
     local ok, img = pcall(Assets.image, def.image)
@@ -109,7 +117,7 @@ function UnownWall:draw()
   local ox = (box.x1 + 1) * TILE
   local oy = (box.y1 + 2) * TILE
   for i, id in ipairs(self.word) do
-    local tiles = glyphTiles(id)
+    local tiles = glyphTiles(id, self.polished)
     local gx = ox + (i - 1) * TILE * 2
     self:drawTile(tiles[1], gx, oy)
     self:drawTile(tiles[2], gx + TILE, oy)

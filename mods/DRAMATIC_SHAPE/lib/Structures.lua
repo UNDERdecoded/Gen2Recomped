@@ -12732,6 +12732,23 @@ function Structures.forMap(map)
   -- call.  (g3-basin-311.)
   Structures.buildGen3Basins(S, map, x0, x1, y0, y1, "claim")
 
+  if require('src.core.GameVersion').get()=='polishedcrystal' then
+    -- Fruit is an OAM overlay on a terrain tree in the ROM. The voxel
+    -- cast composites both as one sprite, so claim the terrain base here.
+    for _,object in ipairs(map.def.objects or {})do if object.fruitTree then
+      local cx,cy=object.x,object.y
+      local gx,gy
+      for _,d in ipairs({{0,1},{1,0},{-1,0},{0,-1}})do
+        local nx,ny=cx+d[1],cy+d[2]
+        if map:inBounds(nx,ny) and map:isWalkableCell(nx,ny)then gx,gy=nx,ny;break end
+      end
+      if gx then for dy=0,1 do for dx=0,1 do
+        local k=keyOf(cx*2+dx,cy*2+dy)
+        S.shapeAt[k]={class='ground',art='flat',flat=true,h=0,authored=true}
+        S.skip[k]=true;S.ground[k]=S.tileAt[keyOf(gx*2+dx,gy*2+dy)]
+      end end end
+    end end
+  end
   Structures.buildCylinders(S, map, x0, x1, y0, y1, groundTiles)
 
   -- ---- rocks in water: a hull over sea that stays sea ----
@@ -14696,7 +14713,26 @@ local function roundTemplate(S, map, data, cx, cy, groundTiles, N, capRows,
   -- should be. Flooding through `off` alone gives the exact outline of what
   -- is drawn, which is the whole reason the shape surface exists.
   local mask = {}
-  if S.isGen3 then
+  local pinkCanopy = false
+  if NX == 32 and NY == 32 and map.tileset.id == 'TilesetJohto1'
+     and require('src.core.GameVersion').get() == 'polishedcrystal' then
+    local t = tileOf(0, 0)
+    local variant = map.tileset.tileVariants and map.tileset.tileVariants[t]
+    pinkCanopy = (variant and variant.base or t) == 198
+  end
+  if pinkCanopy then
+    -- Pink blossoms share the grass's light shades and have an open
+    -- outline. A shade flood eats the flowers and leaves a black hull.
+    -- Give this authored crown a rounded top and a narrow trunk instead.
+    for iy = 0, 29 do
+      local radius = iy < 24 and (15 * math.sqrt(math.max(0,
+          1 - ((iy - 13) / 14) ^ 2))) or 3
+      for ix = 0, NX - 1 do
+        if math.abs(ix + .5 - 16) <= radius then mask[iy*NX+ix] = true end
+      end
+    end
+  end
+  if S.isGen3 and not pinkCanopy then
     for band = 0, NY / NX - 1 do
       local y0, y1 = band * NX, band * NX + NX - 1
       local out = floodOutside({ off = true }, y0, y1)
@@ -15205,6 +15241,16 @@ local function roundTemplate(S, map, data, cx, cy, groundTiles, N, capRows,
   -- cap interiors sample the canopy a couple of rows below the rim,
   -- skipping outline-dark pixels
   local function deepTexel(ix, iy)
+    if pinkCanopy then
+      -- The lid wears blossom material, not the sprite's shadow outline.
+      for distance = 0, 32 do
+        for yy = 2, 21 do for xx = 2, 29 do
+          if math.abs(xx-ix)+math.abs(yy-iy)==distance
+             and mask[yy*NX+xx] and cls[yy*NX+xx] ~= 'black'
+             and cls[yy*NX+xx] ~= 'off' then return texel(xx,yy) end
+        end end
+      end
+    end
     for iy2 = iy + 2, math.min(NY - 1, iy + 4) do
       local i = iy2 * NX + ix
       if mask[i] and cls[i] ~= "black" then return texel(ix, iy2) end

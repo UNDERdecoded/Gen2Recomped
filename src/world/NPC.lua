@@ -595,6 +595,10 @@ function NPC.new(data, mapId, objDef)
   -- draws exactly this 16x16 row and skips facing entirely -- a tree has
   -- no directions to turn to.
   self.fixedFrame = objDef.frame
+  -- Polished packs the Weird Tree's shake poses into one non-directional
+  -- sheet. Turning toward the player must not select a different pose.
+  if require('src.core.GameVersion').get() == 'polishedcrystal'
+     and objDef.sprite == 'SPRITE_WEIRD_TREE' then self.fixedFrame = 0 end
   self.moving = false
   self.progress = 0
   self.stepFlip = false

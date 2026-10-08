@@ -222,7 +222,7 @@ local NativeGen4 = V.require('NativeGen4')
 local TiltShift = V.require("TiltShift")
 local ChunkMesher = V.require("ChunkMesher")
 if require('src.core.GameVersion').get() == 'polishedcrystal' then
-  ChunkMesher.setCacheRulesTag('polished-roofs-landmarks-v9')
+  ChunkMesher.setCacheRulesTag('polished-incoming-border-masks-v14')
 end
 -- Forward declaration: the prebake pass is set up far below (it needs the
 -- options schema first) but the update hook that drives it is written above

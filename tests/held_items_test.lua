@@ -72,18 +72,18 @@ do
   local b = battler("RATTATA", nil, 100)
   local calls = 0
   local rng = function() calls = calls + 1; return 0 end
-  check(TurnOrder.firstMover(a, { priority = 0 }, b, { priority = 0 }, rng, nil, data),
+  check(TurnOrder.firstMover(a, { priority = 0 }, b, { priority = 0 }, rng, nil, nil, data),
         "Quick Claw can move a slower holder first")
   eq(calls, 1, "Quick Claw consumes one roll when the first holder succeeds")
   calls = 0
-  check(not TurnOrder.firstMover(a, { priority = 0 }, b, { priority = 1 }, rng, nil, data),
+  check(not TurnOrder.firstMover(a, { priority = 0 }, b, { priority = 1 }, rng, nil, nil, data),
         "Quick Claw never crosses move-priority classes")
   eq(calls, 0, "different move priority does not roll Quick Claw")
 
   local qa = battler("EEVEE", "QUICK_CLAW", 10)
   local qb = battler("RATTATA", "QUICK_CLAW", 100)
   calls = 0
-  check(TurnOrder.firstMover(qa, {}, qb, {}, rng, nil, data),
+  check(TurnOrder.firstMover(qa, {}, qb, {}, rng, nil, nil, data),
         "first checked Quick Claw holder wins immediately")
   eq(calls, 1, "two holders do not pre-roll both claws")
 end
@@ -272,7 +272,7 @@ end
 do
   local calls = 0
   local enc = { grass = { rate = 25, buckets = { 256 }, slots = { { species = "RATTATA", level = 2 } } } }
-  local got = Encounter.roll(enc, function() calls = calls + 1; return calls == 1 and 12 or 0 end, 12)
+  local got = Encounter.roll(enc, function() calls = calls + 1; return calls == 1 and 12 or 0 end, nil, 12)
   check(got == nil, "halved encounter rate rejects roll equal to threshold")
   eq(calls, 1, "failed rate check consumes no encounter-slot roll")
 end

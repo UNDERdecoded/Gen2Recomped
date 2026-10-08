@@ -2501,6 +2501,21 @@ function RomExtractorGen2:extractScaffoldCore()
           end
         end
       end
+      if self.version=='polishedcrystal' then
+        local order=self:symbol('KeyItemNameOrder')
+        local count=0
+        if order then for offset=0,127 do
+          local id=self.rom:byte(order.bank,order.address+offset)
+          if id==255 then break end
+          count=math.max(count,id)
+        end end
+        for index,label in ipairs(self:varNames('KeyItemNames',count))do
+          local id=string.format('KEY_ITEM_%03d',index)
+          data[id]={id=id,key=gen2ItemKey(label),name=label,keyItem=true,
+            keyItemIndex=index,pocket='KEY_ITEM',price=0,cantToss=true,
+            source='ROM:KeyItemNames['..index..']'}
+        end
+      end
     elseif name == "moves" and self.rom then
       local romNames = self:varNames("MoveNames", 300)
       for id, entry in pairs(data) do
@@ -4468,8 +4483,8 @@ function RomExtractorGen2:extractPokemon()
       -- (GetUnownLetter 20:$5749); without them every UNOWN was an "A".
       if cleanName == "unown" then
         forms = {}
-        for index = 1, 26 do
-          local letter = string.char(64 + index)
+        for index = 1, (self.version=="polishedcrystal" and 28 or 26) do
+          local letter = index==27 and "Exclamation" or index==28 and "Question" or string.char(64 + index)
           local base = "unown_" .. letter:lower()
           forms[index] = {
             letter = letter,
@@ -8432,16 +8447,26 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
   local sym = self:symbol("PhoneContacts")
   if not (sym and self.rom) then return nil end
 
-  -- the five NonTrainerCallerNames pointers, in PHONE_* id order
+  -- Polished names can contain a Huffman-compressed suffix ($5D).
+  -- Decode the string stream before applying its charmap.
   local names = {}
   local nsym = self:symbol("NonTrainerCallerNames")
   if nsym then
-    for id = 0, GEN2_NONTRAINER_NAMES - 1 do
+    local polished = self.version == "polishedcrystal"
+    local count = polished and 7 or GEN2_NONTRAINER_NAMES
+    for id = 1, count - 1 do
       local ok, address = pcall(self.rom.word, self.rom, nsym.bank,
         nsym.address + id * 2)
-      if not ok then break end
-      local read, raw = pcall(self.rom.bytes, self.rom, nsym.bank, address, 16)
-      if read then names[id] = gen2DecodeString(raw, 16) end
+      if ok and self:gen2InRom(nsym.bank, address) then
+        local read, raw = pcall(function()
+          if polished then return self:gen2PolishedText(nsym.bank, address) end
+          return self.rom:bytes(nsym.bank, address, 32)
+        end)
+        if read then
+          names[id] = RomExtractorGen2.NAME_DECODER
+            and RomExtractorGen2.NAME_DECODER(raw) or gen2DecodeString(raw,32)
+        end
+      end
     end
   end
 
@@ -8464,7 +8489,8 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
     if class ~= 0 then
       entry = { class = class, trainer = trainer }
     elseif trainer ~= 0 and names[trainer] then
-      entry = { name = names[trainer] }
+      local name, role = names[trainer]:match("^([^\n\f\v]+)[\n\f\v]%s*(.*)$")
+      entry = { name = (name or names[trainer]):gsub(":$", ""), role = role }
     end
     -- The contact's OWN map, bytes 3 and 4.  GetAvailableCallers (36:$40DE)
     -- compares it against wMapGroup/wMapNumber and drops the contact from the
@@ -8647,7 +8673,8 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
               self._gen2Stds = self._gen2Stds or self:gen2QueueStdScripts(pool)
               label = self._gen2Stds
                 and self._gen2Stds[row[GEN2_OBJECT_ROW_SCRIPT]] or nil
-            elseif not self:gen2InRom(bank, pointer) then
+            elseif not self:gen2InRom(bank, pointer)
+               and kind ~= self:layout("objectCommandKind", -1) then
               label = nil
             else
               -- a pointer below $4000 lives in the always-mapped home bank
@@ -11428,10 +11455,10 @@ function RomExtractorGen2:gen2TownMap()
     end
     -- MapObjectPals red (0-31 RGB → 0-1): light, skin, red, black
     local redPal = {
-      { 28/31, 31/31, 16/31 },
-      { 31/31, 19/31, 10/31 },
-      { 31/31,  7/31,  1/31 },
-      { 0, 0, 0 },
+      [0] = { 28/31, 31/31, 16/31 },
+      [1] = { 31/31, 19/31, 10/31 },
+      [2] = { 31/31,  7/31,  1/31 },
+      [3] = { 0, 0, 0 },
     }
     local image
     if ImageWriter.decode2bppColor then
@@ -11496,10 +11523,14 @@ function RomExtractorGen2:gen2Pokegear()
 
   local townMap = loadLzOrRaw("TownMapGFX", 48) or {}
   local gearTiles = loadLzOrRaw("PokegearGFX", 48) or {}
+  local polished=self.version=='polishedcrystal'
+  local gearOffset=polished and 0x50 or 0x30
+  local tileCount=gearOffset+0x30
+  out.blankTile=polished and 0xF7 or 0x4F
+  out.cardIconOffset=polished and 0x10 or 0
   local sheet = {}
-  for i = 1, 0x30 * 16 do sheet[i] = townMap[i] or 0 end
-  for i = 1, 0x30 * 16 do sheet[0x30 * 16 + i] = gearTiles[i] or 0 end
-  while #sheet < 96 * 16 do sheet[#sheet + 1] = 0 end
+  for i = 1, gearOffset * 16 do sheet[i] = townMap[i] or 0 end
+  for i = 1, 0x30 * 16 do sheet[gearOffset * 16 + i] = gearTiles[i] or 0 end
 
   local borderPal = {
     [0] = { 28/31, 31/31, 20/31 },
@@ -11509,9 +11540,9 @@ function RomExtractorGen2:gen2Pokegear()
   }
   local image
   if ImageWriter.decode2bppColor then
-    image = ImageWriter.decode2bppColor(sheet, 128, 48, borderPal, false)
+    image = ImageWriter.decode2bppColor(sheet, 128, tileCount/16*8, borderPal, false)
   else
-    image = ImageWriter.decode2bpp(sheet, 128, 48, false)
+    image = ImageWriter.decode2bpp(sheet, 128, tileCount/16*8, false)
   end
   self:saveImage(image, "ui/pokegear_gear.png")
   out.tiles = "assets/generated/ui/pokegear_gear.png"
@@ -11532,7 +11563,7 @@ function RomExtractorGen2:gen2Pokegear()
         cells[#cells + 1] = tile
       end
     end
-    while #cells < 20 * 18 do cells[#cells + 1] = 0x4F end
+    while #cells < 20 * 18 do cells[#cells + 1] = out.blankTile end
     return cells
   end
 
@@ -11665,7 +11696,14 @@ function RomExtractorGen2:gen2Pokegear()
   pcall(function()
     local sym = self:symbol("ChrisSpriteGFX")
     if not (sym and self.rom) then return end
-    local raw = self.rom:bytes(sym.bank, sym.address, 4 * 16)
+    -- Polished stores this sheet compressed. This icon is also preferred
+    -- by TownMap/Fly, so decoding the compressed header here overwrote the
+    -- correctly decoded town-map marker with scrambled pixels.
+    local sheet = self:layout("spritesCompressed", 0) ~= 0 and self:gen2Lz("ChrisSpriteGFX")
+    local raw = sheet or self.rom:bytes(sym.bank, sym.address, 4 * 16)
+    if sheet then
+      raw = {}; for i = 1, 4 * 16 do raw[i] = sheet[i] end
+    end
     local redPal = {
       [0] = { 28/31, 31/31, 16/31 },
       [1] = { 31/31, 19/31, 10/31 },
@@ -13332,7 +13370,7 @@ function RomExtractorGen2:gen2Slots()
     -- between SlotsTilemap and Slots1LZ holds
     local mapSym = self:symbol("SlotsTilemap")
     local bgSym = self:symbol("Slots1LZ")
-    local tilemap
+    local tilemap=self:symbol('SlotsTilemapLZ') and self:gen2Lz('SlotsTilemapLZ') or nil
     if mapSym and bgSym then
       tilemap = {}
       for at = 0, (bgSym.address - mapSym.address) - 1 do
@@ -14429,6 +14467,15 @@ function RomExtractorGen2:extractTrainerCardBadges()
   local trainers = self:gen2TrainerPalettes(9)
   if not trainers then return false end
   return (pcall(function()
+    local unpacked={}
+    local function bytes(sym,offset,count)
+      if self.version=='polishedcrystal' then
+        if not unpacked[sym] then unpacked[sym]=assert(self:gen2LzAt(sym.bank,sym.address))end
+        local out={};for n=1,count do out[n]=assert(unpacked[sym][offset+n])end
+        return out
+      end
+      return self.rom:bytes(sym.bank,sym.address+offset,count)
+    end
     -- badge box i takes the gym leader's own trainer-class palette
     local slotPal = { 1, 3, 2, 4, 7, 6, 5, 1 }
     local faceTiles = 10
@@ -14453,16 +14500,16 @@ function RomExtractorGen2:extractTrainerCardBadges()
       local box = (index - 1) % 8 + 1
       local pal = trainers[slotPal[box] + 1]
       local sym = entry.kanto and kanto or johto
-      local badge = gen2SplitTiles(self.rom:bytes(sym.bank,
-        sym.address + entry.bit * GEN2_BADGE_TILES * GEN2_BADGE_TILE_BYTES,
+      local badge = gen2SplitTiles(bytes(sym,
+        entry.bit * GEN2_BADGE_TILES * GEN2_BADGE_TILE_BYTES,
         GEN2_BADGE_TILES * GEN2_BADGE_TILE_BYTES))
       for t = 0, GEN2_BADGE_TILES - 1 do
         draw(badges, badge[t], t % 2 * 8,
           (index - 1) * 16 + math.floor(t / 2) * 8, pal)
       end
       local faceSym = entry.kanto and kantoFaces or johtoFaces
-      local head = gen2SplitTiles(self.rom:bytes(faceSym.bank,
-        faceSym.address + (box - 1) * faceTiles * GEN2_BADGE_TILE_BYTES,
+      local head = gen2SplitTiles(bytes(faceSym,
+        (box - 1) * faceTiles * GEN2_BADGE_TILE_BYTES,
         faceTiles * GEN2_BADGE_TILE_BYTES))
       local y0 = (index - 1) * 24
       draw(slots, head[0], 0, y0, pal)

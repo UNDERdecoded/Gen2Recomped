@@ -8,17 +8,67 @@ function love.load()
   local E=require('src.import.RomExtractorGen2')
   local e=E.new(read(root..'polishedcrystal-3.2.3 (1).gbc'),'polishedcrystal',require('src.link.Json').decode(read(root..'tools/rom_manifest_polishedcrystal.json')))
   e.readSourceTable=function(self,n)
-    local f=loadfile(C.root()..'/data/generated/'..n..'.lua') or assert(loadfile(root..self.sourceDir..'/'..n..'.lua'))
+    local f=loadfile(C.root()..'/data/generated/'..n..'.lua')
+      or loadfile('G:/Gen2Recomped/polishedcrystal/data/generated/'..n..'.lua')
+      or assert(loadfile(root..self.sourceDir..'/'..n..'.lua'))
     return f()
   end
   if os.getenv('POLISHED_FRESH')=='1' then e:extractMapsFromRom() end
+  if os.getenv('POLISHED_EVENTS')=='1' then
+    e:extractScaffoldCore();e:extractMapsFromRom();e:extractMapScripts()
+    local items=dofile(C.root()..'/data/generated/items.lua')
+    local found=false
+    for _,item in pairs(items)do if item.key=='COIN_CASE' and item.keyItem then found=true end end
+    assert(found,'Polished key-item space must include Coin Case')
+    local scripts=dofile(C.root()..'/data/generated/map_scripts.lua')
+    assert(scripts.maps.GOLDENROD_GAME_CORNER.objects[1],'inline coin-vendor standard script linked')
+    for _,contact in pairs(scripts.phone or {})do
+      if contact.name then assert(not contact.name:find('{',1,true),'phone name decoded as raw ngrams')end
+    end
+    print('PASS Coin Case registry, coin vendor linkage and phone names')
+  end
   e:extractIcons()
   e:extractRuntimeScaffolds()
   assert(e:gen2TownMapImage('JohtoMap','ui/town_map_johto.png'))
   assert(e:gen2TownMapImage('KantoMap','ui/town_map_kanto.png'))
   local townMap=assert(e:gen2TownMap())
   assert(townMap.playerIcon,'compressed player icon extracted for town map')
+  local gear=assert(e:gen2Pokegear())
+  assert(gear.playerIcon,'compressed player icon extracted for Pokegear')
+  assert(gear.cardIconOffset==16 and gear.blankTile==247,'Polished Pokegear VRAM layout')
+  local gearSheet=love.image.newImageData(love.filesystem.newFileData(read(C.root()..'/'..gear.tiles),gear.tiles))
+  assert(gearSheet:getWidth()==128 and gearSheet:getHeight()==64,'full Polished Pokegear sheet')
+  local gearImage=love.graphics.newImage(gearSheet);gearImage:setFilter('nearest','nearest')
+  for _,page in ipairs({'clock','phone','radio'})do
+    assert(#gear.cards[page]==360 and gear.cards[page][360]==247,'ROM page clear/padding '..page)
+    local canvas=love.graphics.newCanvas(160,144,{dpiscale=1})
+    love.graphics.push('all');love.graphics.origin();love.graphics.setShader();love.graphics.setCanvas(canvas);love.graphics.clear(0,0,0,1)
+    for i,tile in ipairs(gear.cards[page])do
+      local x,y=(i-1)%20*8,math.floor((i-1)/20)*8
+      if tile==127 then
+        love.graphics.setColor(230/255,1,164/255,1);love.graphics.rectangle('fill',x,y,8,8)
+      elseif tile<128 and tile~=247 then
+        love.graphics.setColor(1,1,1,1)
+        love.graphics.draw(gearImage,love.graphics.newQuad(tile%16*8,math.floor(tile/16)*8,8,8,128,64),x,y)
+      end
+    end
+    love.graphics.setCanvas();love.graphics.pop()
+    local f=assert(io.open(root..'tmp/polished-voxel-probe/pokegear-'..page..'-shell.png','wb'));f:write(canvas:newImageData():encode('png'):getString());f:close()
+  end
+  local marker=love.image.newImageData(love.filesystem.newFileData(read(C.root()..'/'..townMap.playerIcon),townMap.playerIcon))
+  local gearMarker=love.image.newImageData(love.filesystem.newFileData(read(C.root()..'/'..gear.playerIcon),gear.playerIcon))
+  assert(marker:getString()==gearMarker:getString(),'Pokegear must not overwrite the valid TownMap icon with compressed bytes')
+  print('PASS Pokegear and TownMap player markers match pixel for pixel')
   print('PASS extracted Polished Crystal tilesets')
+  if os.getenv("POLISHED_UNOWN")=="1" then
+    e:extractPokemon()
+    local pokemon=dofile(C.root().."/data/generated/pokemon.lua")
+    local u=pokemon.SPECIES_201
+    assert(u and #u.forms==28,"Polished must extract 28 Unown forms")
+    local paths={}
+    for i,f in ipairs(u.forms)do assert(f.spriteFront and not paths[f.spriteFront],"duplicate Unown front "..i); paths[f.spriteFront]=true end
+    print("PASS 28 distinct ROM-extracted Unown front sprites")
+  end
   require('src.core.GameVersion').set('polishedcrystal')
   local ts=assert(loadfile(C.root()..'/data/generated/tilesets.lua'))()
   local cache=os.getenv('POLISHED_CACHE') or 'G:/Gen2Recomped/polishedcrystal/data/generated'
@@ -44,10 +94,18 @@ function love.load()
   end
   local Shapes=V.require('TileShape');local Map=require('src.world.Map')
   local Scene=V.require('VoxelScene')
+  local alph=maps.RUINS_OF_ALPH_OUTSIDE
+  local masks=Scene.masksFor({id="VIOLET_CITY"})
+  local clipped=false
+  for _,r in ipairs(masks or {})do
+    if r[1]==-256 and r[2]==192 and r[3]==-256+alph.width*32 and r[4]==192+alph.height*32 then clipped=true end
+  end
+  assert(clipped,"live Violet border mask must include Alph body")
+  print("PASS live voxel mask resolver clips incoming border trees over Alph")
   local sceneMap=Map.new(maps.ROUTE30,ts[maps.ROUTE30.tileset])
   assert(Scene.statedFrame(sceneMap,{fixedFrame=2})==2,'Gen2 fruit row reaches the voxel cast')
   assert(Scene.statedFrame(sceneMap,{fixedFrame=0})==0,'Gen2 ball row reaches the voxel cast')
-  V.require('ChunkMesher').setCacheRulesTag('polished-roofs-landmarks-v9')
+  V.require('ChunkMesher').setCacheRulesTag('polished-incoming-border-masks-v14')
   if os.getenv('POLISHED_RENDER_ONLY') then
     local B=V.require('Buildings');local build=B.build
     B.build=function(S,map,pixels,perRow)
@@ -113,10 +171,28 @@ function love.load()
     report:close();assert(#failures==0,table.concat(failures,'\n'))
     print('PASS complete mesh audit '..#ids..' maps')
   end
-  for _,id in ipairs({'ROUTE30','NEW_BARK_TOWN','GOLDENROD_CITY','CELADON_CITY','VIOLET_CITY','OLIVINE_CITY','ECRUTEAK_CITY','AZALEA_TOWN','RUINS_OF_ALPH_OUTSIDE','GOLDENROD_HARBOR','ROUTE34_COAST','PALLET_TOWN','ELMS_LAB','ILEX_FOREST','DARK_CAVE_VIOLET_ENTRANCE','PLAYERS_HOUSE1_F','PLAYERS_HOUSE2_F'})do
+  for _,id in ipairs({'RADIO_TOWER1_F','CHERRYGROVE_POKE_CENTER1_F','RUINS_OF_ALPH_AERODACTYL_CHAMBER','CHERRYGROVE_CITY','RUINS_OF_ALPH_HO_OH_WORD_ROOM','ROUTE30','NEW_BARK_TOWN','GOLDENROD_CITY','CELADON_CITY','VIOLET_CITY','OLIVINE_CITY','ECRUTEAK_CITY','AZALEA_TOWN','RUINS_OF_ALPH_OUTSIDE','GOLDENROD_HARBOR','ROUTE34_COAST','PALLET_TOWN','ELMS_LAB','ILEX_FOREST','DARK_CAVE_VIOLET_ENTRANCE','PLAYERS_HOUSE1_F','PLAYERS_HOUSE2_F'})do
     if maps[id] and (not os.getenv('POLISHED_RENDER_ONLY') or os.getenv('POLISHED_RENDER_ONLY')==id) then
       local map=Map.new(maps[id],ts[maps[id].tileset]);local S=V.require('Structures').forMap(map)
       print('MESH '..id..' quads='..#S.objectQuads)
+      if id=='CHERRYGROVE_CITY' then
+        local count=0
+        for y=0,map.def.height*4-4 do for x=0,map.def.width*4-4 do
+          local tile=map:tileAt(x,y)
+          local variant=map.tileset.tileVariants and map.tileset.tileVariants[tile]
+          if (variant and variant.base or tile)==198 then
+            local found=false
+            for _,stamp in ipairs(S.roundStamps)do
+              if stamp.mx==x*8+16 and stamp.mz==y*8+16 and stamp.r==16
+                 and #stamp.quads>0 then found=true break end
+            end
+            assert(found,'pink tree lacks full round canopy at '..x..','..y)
+            count=count+1
+          end
+        end end
+        assert(count>10,'southern pink grove must be included')
+        print('PASS '..count..' complete Cherrygrove pink canopies')
+      end
       if id=='ECRUTEAK_CITY' and os.getenv('POLISHED_RENDER_ONLY') then
         local hist={}
         for _,q in ipairs(S.objectQuads)do
@@ -137,7 +213,8 @@ function love.load()
       print('FULL '..id..' vertices='..mesh:getVertexCount())
       do
         local raw=V.require('PolishedAtlas').forMap(map) or A.imageData(map.tileset.image)
-        local texture=love.graphics.newImage(raw);texture:setFilter('nearest','nearest')
+        local texture=(os.getenv('POLISHED_COLOR')=='1' and require('src.render.TileRenderer').gen2AtlasFor(map.tileset))
+          or love.graphics.newImage(raw);texture:setFilter('nearest','nearest')
         V.require('VoxelState').angle=math.rad(35)
         local g=V.require('Voxel3D');local vw=math.max(map.def.width*32,map.def.height*32*800/650)*1.25
         assert(g.beginScene(800,650,map.def.width*16,map.def.height*16,vw,vw*650/800))
@@ -146,6 +223,18 @@ function love.load()
         f:write(g.canvas():newImageData():encode('png'):getString());f:close()
       end
       if id=='ROUTE30' then
+        local def=map.def.objects[10]
+        local npc=require('src.world.NPC').new({sprites=sprites},id,def)
+        local proxy=V.require('PolishedFruitSprite').sprite(map,npc,npc.sprite)
+        assert(proxy~=npc.sprite and proxy.def.billboardTexture,'berry terrain and fruit form one billboard')
+        for dy=0,1 do for dx=0,1 do
+          local key=(def.y*2+dy+64)*4096+def.x*2+dx+64
+          assert(S.skip[key] and S.shapeAt[key].class=='ground','berry base must not remain a prism')
+        end end
+        local img=proxy:resolveImage();local c=love.graphics.newCanvas(16,16,{dpiscale=1})
+        love.graphics.push('all');love.graphics.setCanvas(c);love.graphics.origin();love.graphics.setShader();love.graphics.clear(0,0,0,0);love.graphics.setColor(1,1,1,1);love.graphics.draw(img);love.graphics.setCanvas();love.graphics.pop()
+        local f=assert(io.open(root..'tmp/polished-voxel-probe/berry-billboard.png','wb'));f:write(c:newImageData():encode('png'):getString());f:close()
+        print('PASS combined berry billboard and flat soil footprint')
         local baked,why=V.require('ChunkMesher').bake(map,'body');assert(baked or why=='cached',why)
         local hit,cached=V.require('VoxelDiskCache').load(map,'body')
         assert(hit and cached)
@@ -183,7 +272,10 @@ function love.load()
         g.draw(mesh,texture);g.endScene()
         local f=assert(io.open(root..'tmp/polished-voxel-probe/full-'..id..'.png','wb'));f:write(g.canvas():newImageData():encode('png'):getString());f:close()
       end
-      if id~='DARK_CAVE_VIOLET_ENTRANCE' and id~='ROUTE34_COAST'then assert(#S.objectQuads>0)end
+      -- Alphabet chambers contain ordinary terrain walls and floor tiles,
+      -- with no freestanding props. Their terrain mesh was checked above.
+      if id~='DARK_CAVE_VIOLET_ENTRANCE' and id~='ROUTE34_COAST'
+         and id~='RUINS_OF_ALPH_HO_OH_WORD_ROOM'then assert(#S.objectQuads>0)end
       if id=='NEW_BARK_TOWN'then
         local pixels=assert(V.require('PolishedAtlas').forMap(map));local texture=love.graphics.newImage(pixels)
         -- Animation's private atlas must preserve the map's roof artwork.
