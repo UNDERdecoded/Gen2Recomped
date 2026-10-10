@@ -17,6 +17,9 @@
        the link screen shows as "(Operation not permitted)" (issue #287).
        scripts/build_android.sh must not strip this again. -->
   <uses-permission android:name="android.permission.INTERNET" />
+  <!-- In-app updates: hand a downloaded release APK to Android's installer
+       (GameActivity.installApk). Android asks the player once to allow it. -->
+  <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
   <!-- Step bridge: love.system.syncHealthSteps reads the hardware step
        counter, which Android 10+ gates behind this runtime permission.
        Requested only on the first sync call (the Pokéwalker mod's SYNC
@@ -65,5 +68,15 @@
             android:authorities="com.underdecodedhd.gen2recomp.seconddisplay"
             android:exported="false"
             android:initOrder="100" />
+        <!-- shares a downloaded update APK with the package installer -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+          <meta-data
+              android:name="android.support.FILE_PROVIDER_PATHS"
+              android:resource="@xml/update_paths" />
+        </provider>
     </application>
 </manifest>

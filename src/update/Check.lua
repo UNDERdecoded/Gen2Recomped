@@ -75,6 +75,7 @@ function Check.parseRelease(jsonText, Json)
     version = version,
     payloadName = payloadName,
     payload = Check.pickAsset(doc.assets, payloadName),
+    apk = Check.pickAsset(doc.assets, Payload.apkName(version)),
     sums = Check.pickAsset(doc.assets, Payload.SUMS),
   }
 end
@@ -245,6 +246,25 @@ function Check._resetCapabilityForTests()
   capability = nil
 end
 
+-- NATIVE CALLS THIS CODE NEEDS FROM THE ANDROID APP. A payload update brings
+-- new Lua onto whatever app is installed, so the app can be older than the
+-- code. Any of these missing means the installed app is out of date, and the
+-- updater offers the release's APK even when the game files are current.
+-- Add a name here whenever the Lua starts depending on a new JNI bridge.
+Check.ANDROID_NATIVE = { "installApk", "canInstallApks", "requestInstallPermission", "translateOffline" }
+
+local function isAndroid()
+  return love and love.system and love.system.getOS and love.system.getOS() == "Android"
+end
+
+function Check.appOutdated()
+  if not isAndroid() then return false end
+  for _, name in ipairs(Check.ANDROID_NATIVE) do
+    if type(love.system[name]) ~= "function" then return true end
+  end
+  return false
+end
+
 local worker           -- the love.thread, once started
 local cmdCh, stateCh   -- the two channels
 local workerReady      -- nil = untried, true = running, false = unavailable
@@ -408,7 +428,8 @@ function Check.start()
   end
   requested = true
   cache = { status = "checking" }
-  cmdCh:push({ cmd = "check" })
+  cmdCh:push({ cmd = "check", android = isAndroid() and true or false,
+               appOutdated = Check.appOutdated() })
 end
 
 -- Current snapshot: { status, latest, progress, error, advice }.
@@ -424,6 +445,8 @@ Check.STATUS = {
   ready = true,       -- (draw) verified, applies on the next launch
   needs_full = true,  -- (draw) a newer release this build cannot apply in place
   notify = true,      -- (draw) this host cannot check; say what the path is
+  install = true,     -- (draw) Android: the app update is downloaded; Install
+  browser = true,     -- (draw) Android, older app: the browser fetched the APK
 }
 function Check.state()
   drain()
@@ -436,13 +459,62 @@ function Check.state()
     -- itself -- one question, one answer, and the launcher cannot drift from
     -- the gate the way it did when it rendered one sentence for every refusal.
     advice = Check.advice(),
+    -- the Android app update (see check_worker's doAppDownload)
+    app = cache.app,
+    native = cache.native,
+    needsPermission = cache.needsPermission,
+    installStarted = cache.installStarted,
   }
+end
+
+-- Open Android's installer on the downloaded APK (main thread: a JNI call).
+-- The first time, Android needs "install unknown apps" allowed for this app;
+-- that screen opens instead, and the player taps Install again after.
+function Check.install()
+  drain()
+  if cache.status ~= "install" or type(cache.path) ~= "string" then return end
+  local sys = love.system
+  if type(sys.canInstallApks) == "function" and not sys.canInstallApks() then
+    if type(sys.requestInstallPermission) == "function" then pcall(sys.requestInstallPermission) end
+    cache.needsPermission = true
+    return
+  end
+  local ok, started = pcall(sys.installApk, cache.path)
+  cache.needsPermission = nil
+  cache.installStarted = ok and started and true or nil
+  if not cache.installStarted then
+    print("update: Android did not open the installer for " .. tostring(cache.path))
+  end
+end
+
+-- Tests set the snapshot the main thread would have drained from the worker.
+function Check._setStateForTests(t) cache = t end
+
+-- Open the APK's download link again (older apps: see Check.download).
+function Check.openApk()
+  drain()
+  if cache.apkUrl then pcall(love.system.openURL, cache.apkUrl) end
 end
 
 -- Start downloading the payload announced by an "available" check.  A no-op in
 -- any other state (the worker still holds the release info from the check).
 function Check.download()
   drain()
+  -- AN ANDROID APP UPDATE ON AN APP TOO OLD TO INSTALL ONE ITSELF: the app
+  -- predates love.system.installApk, so the browser downloads the APK and
+  -- Android's own download notification installs it -- still over the
+  -- installed app, no uninstall. Every app from this one on installs in-app.
+  if cache.status == "available" and cache.app and type(love.system.installApk) ~= "function" then
+    if cache.apkUrl then pcall(love.system.openURL, cache.apkUrl) end
+    cache = { status = "browser", latest = cache.latest, app = true, apkUrl = cache.apkUrl }
+    return
+  end
+  if cache.status == "available" and cache.app then
+    if not cmdCh then return end
+    cache = { status = "downloading", latest = cache.latest, progress = 0, app = true }
+    cmdCh:push({ cmd = "download" })
+    return
+  end
   -- Notify-only platforms never start a transfer; the check result stands as
   -- the whole feature there (see Check.capability).  It used to return
   -- silently, which is indistinguishable from a button that is not wired up --

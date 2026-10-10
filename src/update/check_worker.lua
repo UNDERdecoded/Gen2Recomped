@@ -283,6 +283,20 @@ end
 -- check
 -- ---------------------------------------------------------------------------
 
+-- What the main thread knows about this host and this check: whether it is
+-- Android, and whether the installed app is missing native calls this code
+-- uses (Check.appOutdated -- asked on the main thread, where they live).
+local host = {}
+
+-- APKs left from an update that has since been installed.
+local function removeStaleApks()
+  for _, entry in ipairs(love.filesystem.getDirectoryItems(Payload.DIR) or {}) do
+    if entry:match("%-android%.apk$") or entry:match("%-android%.apk%.part$") then
+      love.filesystem.remove(Payload.DIR .. "/" .. entry)
+    end
+  end
+end
+
 local function doCheck()
   post({ status = "checking" })
 
@@ -316,6 +330,23 @@ local function doCheck()
   if currentEngine == "0.0.0-dev" then
     post({ status = "uptodate", latest = rel.version })
     return
+  end
+
+  -- ANDROID UPDATES THE APP, NOT JUST THE GAME FILES. A payload cannot bring
+  -- new native code, so on Android the release's APK is the update: Android's
+  -- installer puts it over the installed app (same signing key), saves kept.
+  -- Offered for a newer release, and also for the current one when the
+  -- installed app is older than this code (an earlier payload update brought
+  -- new Lua onto an old app -- the translation bridge was the first case).
+  if host.android and rel.apk and rel.apk.url then
+    local newer = compareVersions(rel.version, currentEngine) > 0
+    if newer or host.appOutdated then
+      rel.app = true
+      post({ status = "available", latest = rel.version, app = true, apkUrl = rel.apk.url,
+             native = (not newer) or nil })
+      return
+    end
+    removeStaleApks()
   end
 
   if compareVersions(rel.version, currentEngine) <= 0 then
@@ -399,7 +430,52 @@ local function launchDownload(url, partAbs, doneAbs)
   end
 end
 
+-- The release's APK into updates/, verified, then handed to the main thread,
+-- which opens Android's installer (Check.install). Android only: its one
+-- transport is the main-thread bridge.
+local function doAppDownload()
+  local rel = pending
+  local finalRel = Payload.apkRel(rel.version)
+  local partRel = finalRel .. ".part"
+  local size = rel.apk.size or 0
+  local function finished()
+    post({ status = "install", latest = rel.version, app = true, apkUrl = rel.apk.url,
+           path = saveDir .. "/" .. finalRel })
+  end
+  local have = love.filesystem.getInfo(finalRel)
+  if have and (size == 0 or have.size == size) then return finished() end
+  love.filesystem.createDirectory(Payload.DIR)
+  love.filesystem.remove(partRel)
+  post({ status = "downloading", latest = rel.version, progress = 0, app = true })
+  if resolveTransport() ~= "bridge" then
+    post({ status = "error", error = "no Android download bridge" })
+    return
+  end
+  local okFetch = bridgeFetch(rel.apk.url, partRel, "application/vnd.android.package-archive", 900,
+    { version = rel.version, size = size })
+  local got = love.filesystem.getInfo(partRel)
+  if not (okFetch and got and got.size > 0 and (size == 0 or got.size == size)) then
+    love.filesystem.remove(partRel)
+    post({ status = "error", error = "the app download did not complete" })
+    return
+  end
+  -- No sha256 here, unlike the payload: the APK is ~125 MB, and hashing it
+  -- in Lua means holding all of it in memory on a phone. Android verifies it
+  -- instead -- an update must carry this app's signing certificate or the
+  -- installer refuses it -- and the byte count above catches a cut transfer.
+  if not os.rename(saveDir .. "/" .. partRel, saveDir .. "/" .. finalRel) then
+    local data = love.filesystem.read(partRel)
+    if not (data and love.filesystem.write(finalRel, data)) then
+      post({ status = "error", error = "could not store the app update" })
+      return
+    end
+    love.filesystem.remove(partRel)
+  end
+  finished()
+end
+
 local function doDownload()
+  if pending and pending.app then return doAppDownload() end
   if not (pending and pending.payload and pending.payload.url) then
     post({ status = "error", error = "nothing to download" })
     return
@@ -523,6 +599,7 @@ while true do
     if cmd.cmd == "quit" then
       break
     elseif cmd.cmd == "check" then
+      host = { android = cmd.android and true or false, appOutdated = cmd.appOutdated and true or false }
       local ok, err = pcall(doCheck)
       if not ok then post({ status = "error", error = tostring(err) }) end
     elseif cmd.cmd == "download" then

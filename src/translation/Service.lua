@@ -52,6 +52,52 @@ function Service.setLauncher(options)
   if love.filesystem.getInfo("translations/fonts/"..font)then Service.launcherFont="translations/fonts/"..font end
  end
 end
+-- ANDROID'S JAVA CALLS, answered for the worker (see worker.lua's bridge).
+-- A request waits one frame so the launcher draws its status first -- the
+-- first translation can block while ML Kit downloads its model -- and a batch
+-- of translations is spread over frames, ~35 ms of work per frame.
+local BRIDGE_REQ,BRIDGE_RES="rom.translation.bridge.req","rom.translation.bridge.res"
+local function serviceBridge()
+ local job=Service.bridgeJob
+ if not job then
+  local req=love.thread.getChannel(BRIDGE_REQ):pop()
+  if req then Service.bridgeJob={req=req,out={},i=1} end
+  return
+ end
+ local req=job.req
+ local ok,err=pcall(function()
+  if req.op=="download" then
+   local got,why=require("src.core.HostShell").httpDownload(req.url,
+     love.filesystem.getSaveDirectory().."/"..req.rel,"Gen2Recomp/translation")
+   job.reply={ok=got and true or false,err=why and tostring(why) or nil}
+  elseif req.op=="close" then
+   if love.system.closeOfflineTranslation then love.system.closeOfflineTranslation() end
+   job.reply={ok=true}
+  elseif req.op=="translate" then
+   local deadline=love.timer.getTime()+0.035
+   while job.i<=#req.texts do
+    local result,message=love.system.translateOffline(req.source,req.target,req.texts[job.i])
+    if not result then job.reply={ok=false,err=message};return end
+    job.out[job.i]=result;job.i=job.i+1
+    if love.timer.getTime()>deadline then return end
+   end
+   job.reply={ok=true,out=job.out}
+  else
+   job.reply={ok=false,err="unknown translation request "..tostring(req.op)}
+  end
+ end)
+ if not ok then job.reply={ok=false,err=tostring(err)} end
+ if job.reply then
+  love.thread.getChannel(BRIDGE_RES):push(job.reply)
+  Service.bridgeJob=nil
+ end
+end
+-- At quit: LOVE waits for every live love.thread before the process exits
+-- (#339), so a worker waiting on the bridge is told to stop.
+function Service.shutdown()
+ if not Service.thread then return end
+ love.thread.getChannel("rom.translation.stop"):push(true)
+end
 function Service.update()
  if Service.thread then
   while true do
@@ -68,9 +114,13 @@ function Service.update()
     if Service.version=="launcher"then Service.launcherRevision=(Service.launcherRevision or 0)+1 end
     Service.progress={done=1,total=1,phase="complete"}
    elseif event.kind=="error" then
-    Service.status="error";Service.message=event.message;Service.thread=nil
+    print("translation: "..tostring(event.message))
+    -- the player reads the reason, not "worker.lua:86:" and a traceback
+    local reason=(tostring(event.message or ""):match("^[^\n]*"):gsub("^.-%.lua:%d+: ",""))
+    Service.status="error";Service.message=reason;Service.thread=nil
    else Service.status="working";Service.message=event.message or ((event.done or 0).." / "..(event.total or 0).." text segments")end
   end
+  if Service.thread then serviceBridge() end
   if Service.thread and Service.thread:getError()then
    Service.status="error";Service.message=Service.thread:getError();Service.thread=nil
   end
@@ -97,9 +147,15 @@ function Service.update()
  -- cached ends without ever showing progress
  Service.version=job.version;Service.status="checking";Service.progress=nil;Service.message=nil
  Service.channel=love.thread.getChannel("rom.translation.progress");Service.channel:clear()
+ love.thread.getChannel(BRIDGE_REQ):clear();love.thread.getChannel(BRIDGE_RES):clear()
+ love.thread.getChannel("rom.translation.stop"):clear();Service.bridgeJob=nil
+ -- Android runs its Java calls through serviceBridge; whether this installed
+ -- app has them is asked here, on the main thread
+ local android=love.system.getOS()=="Android"
  Service.thread=love.thread.newThread("src/translation/worker.lua")
  Service.thread:start(Json.encode({source=source,target=target,dataDirectory=directory,launcher=job.version=="launcher",
    hardware=job.options.translationHardware or "auto",
+   android=android,bridge=android and type(love.system.translateOffline)=="function",
    cachePath=path(job.version,source,target),font=font,fontUrl=url,
    helper=love.filesystem.getSourceBaseDirectory().."/translation/rom-translate"..
      (love.system.getOS()=="Windows" and ".exe" or "")}))

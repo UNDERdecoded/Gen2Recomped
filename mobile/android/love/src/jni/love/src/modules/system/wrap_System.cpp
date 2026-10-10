@@ -36,6 +36,22 @@ int w_closeOfflineTranslation(lua_State *L)
     luax_pushboolean(L, love::android::closeOfflineTranslation());
     return 1;
 }
+int w_installApk(lua_State *L)
+{
+    const char *path = luaL_checkstring(L, 1);
+    luax_pushboolean(L, love::android::installApk(path));
+    return 1;
+}
+int w_canInstallApks(lua_State *L)
+{
+    luax_pushboolean(L, love::android::canInstallApks());
+    return 1;
+}
+int w_requestInstallPermission(lua_State *L)
+{
+    luax_pushboolean(L, love::android::requestInstallPermission());
+    return 1;
+}
 int w_translateOffline(lua_State *L)
 {
     const char *source = luaL_checkstring(L, 1);
@@ -212,6 +228,9 @@ static const luaL_Reg functions[] =
 #ifdef LOVE_ANDROID
     { "translateOffline", w_translateOffline },
     { "closeOfflineTranslation", w_closeOfflineTranslation },
+    { "installApk", w_installApk },
+    { "canInstallApks", w_canInstallApks },
+    { "requestInstallPermission", w_requestInstallPermission },
 #endif
 	{ "getProcessorCount", w_getProcessorCount },
 	{ "setClipboardText", w_setClipboardText },

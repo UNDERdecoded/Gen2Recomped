@@ -5,6 +5,30 @@ local Json=require("src.link.Json")
 local job=Json.decode(...)
 local channel=love.thread.getChannel("rom.translation.progress")
 local function emit(event)channel:push(Json.encode(event))end
+-- ANDROID'S JAVA CALLS RUN ON THE MAIN THREAD. love.system.translateOffline
+-- and love.system.httpDownload are JNI calls into GameActivity, and a JNI call
+-- from a love.thread is what used to abort the app with no Lua error
+-- (src/update/check_worker.lua). So on Android this thread only prepares the
+-- text; it hands each download and each batch of translations to
+-- Service.update, which runs them between frames and answers here.
+local bridgeReq=love.thread.getChannel("rom.translation.bridge.req")
+local bridgeRes=love.thread.getChannel("rom.translation.bridge.res")
+-- set (never popped) by Service.shutdown at quit: LOVE waits for every live
+-- love.thread before the process exits (#339), so a wait here must end then
+local stop=love.thread.getChannel("rom.translation.stop")
+local function bridge(request)
+ bridgeRes:clear()
+ bridgeReq:push(request)
+ while true do
+  local reply=bridgeRes:demand(0.25)
+  if type(reply)=="table" then return reply end
+  assert(stop:peek()==nil,"Translation stopped: the app is closing")
+ end
+end
+local function bridgeDownload(url,rel)
+ local reply=bridge({op="download",url=url,rel=rel})
+ return reply.ok,reply.err
+end
 local ok,err=xpcall(function()
  local save=love.filesystem.getSaveDirectory()
  if not job.plan then
@@ -43,7 +67,9 @@ local ok,err=xpcall(function()
   -- time a language is used (the project ships none of them)
   -- (only when there is something to translate, and not for the launcher's UI)
   local terms={}
-  if #pending>0 and not job.launcher then terms=require("src.translation.Glossary").ensure(job.target,emit) end
+  if #pending>0 and not job.launcher then
+   terms=require("src.translation.Glossary").ensure(job.target,emit,job.android and bridgeDownload or nil)
+  end
   job.plan=require("src.translation.Plan").build(pending,terms)
   data=nil;collectgarbage("collect")
  end
@@ -53,21 +79,32 @@ local ok,err=xpcall(function()
   -- everything is already in the cache: leave the file alone and finish quietly
   emit({kind="done",fallback=0,noop=true})
   return
- elseif love.system.translateOffline then
-  local fontPath=save.."/translations/fonts/"..job.font
-  if not love.filesystem.getInfo("translations/fonts/"..job.font)then
+ elseif job.android then
+  -- Service checked love.system.translateOffline on the main thread, where
+  -- the app's own Java bridge lives; an in-app update replaces only the game
+  -- files, so an older installed app can be running this newer code
+  assert(job.bridge,"This installed Android app is older than offline translation. "
+   .."Update the app from the update banner above (your saves are kept), then translate again.")
+  local fontRel="translations/fonts/"..job.font
+  if not love.filesystem.getInfo(fontRel)then
    emit({kind="status",phase="font",message="Downloading language font"})
-   assert(love.system.httpDownload(job.fontUrl,fontPath..".part","Gen2Recomp/translation"),"Could not download language font")
-   local f=assert(io.open(fontPath..".part","rb"));local bytes=f:read("*a");f:close()
-   assert(love.filesystem.write("translations/fonts/"..job.font,bytes));os.remove(fontPath..".part")
+   love.filesystem.createDirectory("translations/fonts")
+   local ok,why=bridgeDownload(job.fontUrl,fontRel..".part")
+   local bytes=love.filesystem.read(fontRel..".part")
+   love.filesystem.remove(fontRel..".part")
+   assert(ok and bytes and #bytes>0,"Could not download language font: "..tostring(why or "empty file"))
+   assert(love.filesystem.write(fontRel,bytes))
   end
-  emit({kind="status",phase="download",message="Preparing offline language model over Wi-Fi if needed"})
+  emit({kind="status",phase="download",message="Preparing the language model (downloads over Wi-Fi the first time)"})
   translated={}
-  for i,text in ipairs(texts)do
-   local result,message=love.system.translateOffline(job.source,job.target,text)
-   assert(result,message or "Offline translation failed")
-   translated[i]=result
-   if i==1 or i%16==0 or i==#texts then emit({kind="progress",phase="translate",message="Translating game text",done=i,total=#texts,unit="segments"})end
+  local BATCH=24
+  for first=1,#texts,BATCH do
+   local batch={}
+   for i=first,math.min(#texts,first+BATCH-1)do batch[#batch+1]=texts[i]end
+   local reply=bridge({op="translate",source=job.source,target=job.target,texts=batch})
+   assert(reply.ok,reply.err or "Offline translation failed. Check Wi-Fi and available storage for the model download.")
+   for k,text in ipairs(reply.out)do translated[first+k-1]=text end
+   emit({kind="progress",phase="translate",message="Translating game text",done=#translated,total=#texts,unit="segments"})
   end
  else
   local Shell=require("src.core.HostShell")
@@ -115,7 +152,9 @@ local ok,err=xpcall(function()
  local loaded=assert(love.filesystem.read(job.cachePath..".tmp"))
  assert(love.filesystem.write(job.cachePath,loaded))
  love.filesystem.remove(job.cachePath..".tmp")
+ -- release ML Kit's model while the main thread is still answering: once
+ -- "done" is out, Service stops servicing the bridge
+ if job.android and job.bridge then pcall(bridge,{op="close"})end
  emit({kind="done",fallback=fallback})
 end,debug.traceback)
-if love.system.closeOfflineTranslation then pcall(love.system.closeOfflineTranslation)end
 if not ok then emit({kind="error",message=tostring(err)})end

@@ -120,19 +120,26 @@ end
 -- `emit` reports progress the worker's way. Errors when the download fails:
 -- translating without the official names would bake machine-made names into
 -- the cache.
-function Glossary.ensure(target, emit)
+--
+-- `download(url, rel)` fetches into a save-directory-relative path and returns
+-- ok, why. The default is HostShell (curl on desktop); Android passes the
+-- worker's main-thread bridge, because its download is a JNI call that must
+-- not run on a love.thread (see src/update/check_worker.lua).
+function Glossary.ensure(target, emit, download)
   local have = Glossary.read(target)
   if have then return have end
   emit = emit or function() end
-  local HostShell = require("src.core.HostShell")
+  download = download or function(url, rel)
+    return require("src.core.HostShell").httpDownload(url, love.filesystem.getSaveDirectory() .. "/" .. rel,
+      "Gen2Recomp/translation")
+  end
   love.filesystem.createDirectory("translations/glossary")
-  local save = love.filesystem.getSaveDirectory()
   local csvs = {}
   for k, spec in ipairs(Glossary.FILES) do
     emit({ kind = "progress", phase = "glossary", message = "Downloading official Pokémon names",
            done = k - 1, total = #Glossary.FILES, unit = "files" })
     local rel = "translations/glossary/" .. spec.file
-    local ok, why = HostShell.httpDownload(Glossary.BASE .. spec.file, save .. "/" .. rel, "Gen2Recomp/translation")
+    local ok, why = download(Glossary.BASE .. spec.file, rel)
     local text = love.filesystem.read(rel)
     love.filesystem.remove(rel)
     assert(ok and text and #text > 0, "Could not download the official Pokémon names ("

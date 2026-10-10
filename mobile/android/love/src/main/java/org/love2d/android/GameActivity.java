@@ -2089,6 +2089,59 @@ public class GameActivity extends SDLActivity {
         return OfflineTranslation.translate(source, target, input);
     }
 
+    /**
+     * Gen2Recomp in-app updates (src/update/Check.lua, Check.install): open
+     * Android's package installer on a downloaded release APK. Every release
+     * is signed with the same key (docs/android-signing.md), so it installs
+     * over this app in place and the save directory is kept. The APK is in the
+     * app's own storage, shared through the FileProvider declared in the app
+     * manifest (authority <applicationId>.updates).
+     */
+    public static boolean installApk(String path) {
+        GameActivity self = (GameActivity) mSingleton;
+        if (self == null || path == null) return false;
+        try {
+            Context context = self.getApplicationContext();
+            if (!canInstallApks()) return false;
+            File apk = new File(path);
+            if (!apk.isFile()) return false;
+            Uri uri = androidx.core.content.FileProvider.getUriForFile(
+                context, context.getPackageName() + ".updates", apk);
+            Intent intent = new Intent(Intent.ACTION_VIEW);
+            intent.setDataAndType(uri, "application/vnd.android.package-archive");
+            intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_ACTIVITY_NEW_TASK);
+            self.startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            Log.d("GameActivity", "could not open the installer: " + e.getMessage());
+            return false;
+        }
+    }
+
+    /** Android 8+: has the player allowed installs from this app? */
+    public static boolean canInstallApks() {
+        GameActivity self = (GameActivity) mSingleton;
+        if (self == null) return false;
+        if (android.os.Build.VERSION.SDK_INT < 26) return true;
+        return self.getPackageManager().canRequestPackageInstalls();
+    }
+
+    /** Open the "install unknown apps" setting for this app. */
+    public static boolean requestInstallPermission() {
+        GameActivity self = (GameActivity) mSingleton;
+        if (self == null || android.os.Build.VERSION.SDK_INT < 26) return false;
+        try {
+            Intent intent = new Intent(android.provider.Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:" + self.getPackageName()));
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+            self.startActivity(intent);
+            return true;
+        } catch (Exception e) {
+            Log.d("GameActivity", "could not open the install permission screen: " + e.getMessage());
+            return false;
+        }
+    }
+
     public static boolean closeOfflineTranslation() {
         OfflineTranslation.close();
         return true;

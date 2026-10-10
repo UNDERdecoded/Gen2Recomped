@@ -464,6 +464,21 @@ bool httpDownload(const char *url, const char *destPath, const char *userAgent, 
 	return result;
 }
 
+bool installApk(const char *path)
+{
+    return callStaticBool("installApk", "(Ljava/lang/String;)Z", path);
+}
+
+bool canInstallApks()
+{
+    return callStaticBool("canInstallApks", "()Z", nullptr);
+}
+
+bool requestInstallPermission()
+{
+    return callStaticBool("requestInstallPermission", "()Z", nullptr);
+}
+
 bool closeOfflineTranslation()
 {
     return callStaticBool("closeOfflineTranslation", "()Z", nullptr);

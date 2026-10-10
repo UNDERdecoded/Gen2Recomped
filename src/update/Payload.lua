@@ -70,6 +70,21 @@ function Payload.name(version)
   return Payload.PREFIX .. tostring(version) .. Payload.EXT
 end
 
+-- THE ANDROID APP ITSELF. A .love payload replaces only the game files; a
+-- release that needs newer native code (a new Java/JNI bridge, a new LOVE)
+-- reaches Android players as the release's APK, which the updater downloads
+-- here and hands to Android's package installer. Signed with the same key as
+-- every release (docs/android-signing.md), it installs over the app in place:
+-- no uninstall, saves kept. Not a payload name, so Boot never probes it.
+-- Payload.apkName("0.8.3") -> "Gen2Recomped-0.8.3-android.apk" (release.yml)
+function Payload.apkName(version)
+  return Payload.PREFIX .. tostring(version) .. "-android.apk"
+end
+
+function Payload.apkRel(version)
+  return Payload.DIR .. "/" .. Payload.apkName(version)
+end
+
 -- Save-directory-relative path of a finished payload.
 function Payload.rel(version)
   return Payload.DIR .. "/" .. Payload.name(version)

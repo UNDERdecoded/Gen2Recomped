@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Where LOVE's save directory can live on Android; the updater downloads the
+     release APK into its updates/ folder (src/update/Payload.lua apkRel). -->
+<paths>
+    <files-path name="internal" path="." />
+    <external-files-path name="external" path="." />
+</paths>

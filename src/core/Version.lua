@@ -7,7 +7,10 @@ local Version = {
   engine = "0.7.6",       -- game/engine release (semver).  CI restamps this in
                           -- the packed game.love; the working tree carries the
                           -- release it is building towards.
-  shell = 1,              -- native-shell contract this build implements
+  shell = 2,              -- native-shell contract this build implements
+                          -- (2: Android offline translation + in-app APK
+                          -- install; payloads still run on 1 and test for
+                          -- the calls -- see Check.ANDROID_NATIVE)
   minShell = 1,           -- lowest shell contract that can RUN this payload.
                           -- Bump only when a payload needs a newer native
                           -- binary (e.g. a LOVE version bump); an older shell

@@ -5624,7 +5624,7 @@ function RomImporter:draw()
   -- upAdvice is "download" | "ota" | "package" | "releases" -- what the player
   -- should DO on this host, decided in src/update/Check.lua so the banner only
   -- has to pick the wording.
-  local upStatus, upLatest, upProgress, upAdvice, upCannotCheck
+  local upStatus, upLatest, upProgress, upAdvice, upCannotCheck, upInfo
   if self.Check then
     local ok, st = pcall(self.Check.state)
     st = (ok and type(st) == "table") and st or nil
@@ -5632,6 +5632,7 @@ function RomImporter:draw()
     local drawable = self.Check.STATUS or {}
     if status and drawable[status] then
       upStatus, upLatest, upProgress = status, st.latest, st.progress
+      upInfo = st
       upAdvice = st.advice or "releases"
       -- Resolved HERE and not in the banner below, so that the only places the
       -- text `upStatus == "<state>"` appears in this file are the branch heads
@@ -5937,8 +5938,32 @@ function RomImporter:draw()
       local rect = actionButton("Update")
       self.updateButton = { x = rect.x, y = rect.y, width = rect.width,
         height = rect.height, action = "download" }
-      message(upLatest and ("Update v" .. upLatest .. " available")
-        or Strings("An update is available"), rect.width)
+      local text = upLatest and ("Update v" .. upLatest .. " available")
+        or Strings("An update is available")
+      -- Android: the whole app is updated (installs over it, saves kept)
+      if upInfo and upInfo.app then
+        text = upInfo.native and Strings("An app update is needed for new features")
+          or (upLatest and ("App update v" .. upLatest .. " available")) or Strings("An app update is available")
+      end
+      message(text, rect.width)
+    elseif upStatus == "install" then
+      -- the APK is downloaded; Android's installer puts it over this app
+      local rect = actionButton("Install")
+      self.updateButton = { x = rect.x, y = rect.y, width = rect.width,
+        height = rect.height, action = "install" }
+      local text = Strings("App update downloaded. Your saves are kept.")
+      if upInfo and upInfo.needsPermission then
+        text = Strings("Allow installs from this app, then tap Install again")
+      elseif upInfo and upInfo.installStarted then
+        text = Strings("Confirm the update in Android's installer")
+      end
+      message(text, rect.width)
+    elseif upStatus == "browser" then
+      -- an app too old to install updates itself: the browser fetched the APK
+      local rect = actionButton("Download again")
+      self.updateButton = { x = rect.x, y = rect.y, width = rect.width,
+        height = rect.height, action = "openapk" }
+      message(Strings("Open the downloaded APK to update. Your saves are kept."), rect.width)
     elseif upStatus == "needs_full" or upStatus == "notify" then
       -- ONE ROW, THREE TRUTHS, and it used to tell only the first of them.
       --
@@ -6753,6 +6778,10 @@ function RomImporter:mousepressed(x, y, button)
     local action = self.updateButton.action
     if action == "download" and self.Check then
       pcall(self.Check.download)
+    elseif action == "install" and self.Check then
+      pcall(self.Check.install)
+    elseif action == "openapk" and self.Check then
+      pcall(self.Check.openApk)
     elseif action == "restart" then
       HostShell.restart()
     elseif action == "openurl" and self.Check then

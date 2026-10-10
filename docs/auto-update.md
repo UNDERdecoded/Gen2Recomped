@@ -784,3 +784,33 @@ the payload folder, which only a fused build reaches.
      update`, **no button** — and the capability line must say `host=Windows
      … -> notify-only`, which is also the confirmation that
      `isPackagedContainer()` recognised the `LocalState` save path.
+
+## Android: updating the app, not only the game files
+
+A `.love` payload replaces the game files only. When a release needs new
+native code (a new Java/JNI call, a new LÖVE), Android players get the
+release's APK through the same banner, and it installs over the app in place.
+Every release is signed with the same key (`docs/android-signing.md`), so
+nobody has to uninstall and their saves are kept.
+
+- **When it's offered:** on Android, whenever the release has a
+  `Gen2Recomped-<version>-android.apk` asset and either:
+  - the release is newer; or
+  - the installed app is missing one of `Check.ANDROID_NATIVE`. That happens
+    when an earlier payload update brought new Lua onto an old app.
+
+  Add a name to that list whenever the Lua starts depending on a new JNI call.
+- **How it installs:**
+  1. The worker downloads the APK into `updates/` through the main-thread
+     bridge, then checks its byte count.
+  2. **Install** calls `love.system.installApk`, which opens Android's package
+     installer through a FileProvider (authority `<applicationId>.updates`).
+  3. The first time, Android 8+ shows the "install unknown apps" screen for this
+     app instead. The player allows it and taps Install again.
+- **Checksum:** there's no in-Lua SHA-256 for the APK, because hashing 125 MB
+  in memory is a risk on phones. Android's installer only accepts an APK signed
+  with this app's certificate.
+- **Older apps:** an app built before shell 2 has no `installApk`. The banner
+  opens the APK link in the browser instead, and Android's own download
+  notification installs it over the app. Later updates are in-app.
+- **Tests:** `tools/android_app_update_check.lua`.
