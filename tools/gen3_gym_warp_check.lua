@@ -460,5 +460,52 @@ for _, case in ipairs({{"g3_set_warp", "gen3PendingWarp"},
   Game.save.gen3Vars[0x4001] = 7
 end
 
+section("8. Mossdeep rotating objects survive internal teleport pads")
+local MOSS="MAP_G14_N00"
+OW:setMap(MOSS,7,35,"up")
+local rotateCtx=OW.runner:makeContext()
+Commands.g3_rotate_init(rotateCtx,0)
+local spec=Data.constants.gen3RotatingTiles
+ok(spec~=nil,"ROM rotating floor data missing")
+local moved={}
+for puzzle=0,(spec and spec.puzzles or 0)-1 do
+ Commands.g3_rotate_move(rotateCtx,puzzle)
+ for _,record in ipairs(rotateCtx.g3RotatingTiles.objects)do
+  moved[record.index]=record
+ end
+ for frame=1,160 do
+  OW:updateScriptMoves()
+  for _,npc in ipairs(OW.npcs)do npc:update(OW.map,OW.npcs)end
+ end
+end
+local snapshots={}
+for index,record in pairs(moved)do
+ local npc=OW:npcByIndex(index)
+ local home=Game.save.gen3ObjectHomes and Game.save.gen3ObjectHomes[MOSS]
+ ok(home and home[index] and home[index].x==record.x and home[index].y==record.y,
+    "rotating object %s did not update its template",tostring(index))
+ ok(npc.cellX==record.x and npc.cellY==record.y,
+    "rotating object %s did not reach its ROM destination",tostring(index))
+ snapshots[index]={x=npc.cellX,y=npc.cellY,facing=npc.facing,entity=npc}
+end
+ok(next(snapshots)~=nil,"Mossdeep floor did not move any objects")
+local internal=0
+for _,warp in ipairs(Data.maps[MOSS].warps or {})do
+ if warp.destMap==MOSS then
+  OW:setMap(MOSS,warp.x,warp.y,"up")
+  OW:takeWarp(warp)
+  for index,before in pairs(snapshots)do
+   local npc=OW:npcByIndex(index)
+   ok(npc==before.entity and npc.cellX==before.x and npc.cellY==before.y
+      and npc.facing==before.facing,"Mossdeep warp reset object %s",tostring(index))
+  end
+  internal=internal+1
+ end
+end
+ok(internal>0,"no gym teleport pads exercised")
+OW:setMap("MAP_G00_N06",10,10,"down")
+OW:setMap(MOSS,7,35,"up")
+ok(not (Game.save.gen3ObjectHomes and Game.save.gen3ObjectHomes[MOSS]),
+   "leaving the gym failed to reset visit-scoped object templates")
 io.write(("\n%d checks, %d failed\n"):format(checks, fails))
 os.exit(fails == 0 and 0 or 1)

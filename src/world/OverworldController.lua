@@ -1337,7 +1337,8 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- clear after the spawn would leave the stale placement standing for one
   -- more visit -- which for this report is the visit the player is in.
   if GameVersion.isGen3() and Game and Game.save
-     and Game.save.gen3ObjectHomes then
+     and Game.save.gen3ObjectHomes
+     and (fromMapId ~= mapId or (opts and opts.via == "boot")) then
     Game.save.gen3ObjectHomes[mapId] = nil
   end
 
@@ -1348,7 +1349,9 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- survey zoom.  Warps rebuild from scratch, like the original's
   -- per-entry sprite init (home/overworld.asm LoadMapHeader
   -- .loadSpriteData).
-  if not (opts and opts.seamless and self.npcPool) then
+  if not ((opts and opts.seamless and self.npcPool)
+      or (GameVersion.isGen3() and fromMapId == mapId and self.npcPool
+          and not (opts and opts.via == "boot"))) then
     self.npcPool = {}
     -- LoadMapObjects re-reads every object_event from ROM, so a `moveobject`
     -- from the last visit does not survive the reload
@@ -1382,7 +1385,10 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     -- ...and Gen 3's, which is the same idea for the same reason: a
     -- `removeobject` with no event flag behind it lasts as long as the map
     -- stays loaded and no longer.
-    Game.save.gen3SessionObjects = nil
+    if not (GameVersion.isGen3() and fromMapId == mapId
+            and not (opts and opts.via == "boot")) then
+      Game.save.gen3SessionObjects = nil
+    end
   end
   -- MAPCALLBACK_OBJECTS: ROUTE_34 and DAY_CARE both re-derive their day-care
   -- sprite events from the engine flags every time the map is set up

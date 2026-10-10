@@ -13861,6 +13861,7 @@ function Structures.forMap(map)
     Structures.buildGen3Overhead(S, map, x0, x1, y0, y1)
   end
 
+  V.require("EmeraldBuildings").settle(S)
   return S
 end
 
@@ -29932,7 +29933,7 @@ end
 --- cell is TWO tile rows and TWO tile columns, so a mat is four tiles and the
 --- behaviour byte is asked once per CELL (`math.floor(t / 2)`) and answered
 --- for all four.
-function Structures.buildGen3Grass(S, map, x0, x1, y0, y1)
+function Structures.buildGen3GrassMats(S, map, x0, x1, y0, y1)
   local sp = Gen3.spec()
   local kinds = sp and sp.grass_kind
   if type(kinds) ~= "table" then return end
@@ -30040,11 +30041,39 @@ function Structures.buildGen3Grass(S, map, x0, x1, y0, y1)
   end
 end
 
+function Structures.buildGen3Grass(S,map,x0,x1,y0,y1,data)
+  if require("src.core.GameVersion").get()~="emerald" then
+    return Structures.buildGen3GrassMats(S,map,x0,x1,y0,y1)
+  end
+  local kinds=Gen3.spec().grass_kind
+  local ctx=Gen3.forMap(map)
+  local perRow,w,h=geomOf(map.tileset)
+  local templates={}
+  local cards=V.require("GrassSprites")
+  for ty=y0,y1 do for tx=x0,x1 do
+    Budget.tick()
+    local k=keyOf(tx,ty)
+    local shape=S.shapeAt[k]
+    if shape and shape.art=="grass" and not S.skip[k]
+      and gen3GrassKind(ctx,kinds,math.floor(tx/2),math.floor(ty/2)) then
+      local tile=S.tileAt[k]
+      local tpl=templates[tile]
+      if not tpl then tpl=cards.template(data,tile,perRow,w,h);templates[tile]=tpl end
+      local base=(S.runs[k] and S.runs[k].h) or shape.h or 0
+      for _,q in ipairs(tpl)do
+        local copy={uv=q.uv,shade=q.shade}
+        for i=1,4 do copy[i]={q[i][1]+tx*8,q[i][2]+base,q[i][3]+ty*8}end
+        S.grassQuads[#S.grassQuads+1]=copy
+      end
+    end
+  end end
+end
+
 function Structures.buildGrass(S, map, x0, x1, y0, y1, data)
   -- Hoenn takes the mat above; Kanto, Johto and Prism the per-pixel tufts
   -- their own art draws (see the header on GRASS_MAT for why they differ).
   if S.isGen3 and Gen3.mapIsGen3(map) then
-    return Structures.buildGen3Grass(S, map, x0, x1, y0, y1)
+    return Structures.buildGen3Grass(S, map, x0, x1, y0, y1, data)
   end
   local templates = {}
   local quads = S.grassQuads

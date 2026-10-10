@@ -2485,6 +2485,10 @@ function Commands.g3_rotate_move(ctx, puzzle)
       local step = ROTATE_STEP[spec.order[dir + 1]]
       local rows = rotatingMovement(ctx, spec.walk[dir + 1])
       if step then
+        -- RotateTilePuzzle moves the template when the slide starts.
+        -- Internal gym teleports must respawn it at that destination.
+        rememberHome(ctx, npc.def and npc.def.index,
+                     npc.cellX + step[1], npc.cellY + step[2])
         state.objects[#state.objects + 1] = {
           entity = npc, index = npc.def and npc.def.index, from = dir,
           x = npc.cellX + step[1], y = npc.cellY + step[2],

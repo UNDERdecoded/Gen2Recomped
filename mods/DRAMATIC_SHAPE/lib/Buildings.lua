@@ -150,7 +150,7 @@ local models = {}          -- "<tileset>:<index>" -> prebuilt local quads
 -- topRows (placement is still by `tiles` alone); they exist so the MODEL
 -- is built from the complete drawing and the tower rises to its real
 -- height instead of folding as two half-buildings.
-local function read(t, data, perRow)
+local function read(t, data, perRow, colors)
   local tiles = t.tiles
   if t.topRows then
     tiles = {}
@@ -255,7 +255,48 @@ local function read(t, data, perRow)
       end
     end
   end
-  return { W = W, H = H, col = col, ax = ax, ay = ay, inside = inside }
+  if t.civic and colors then
+    local lawn={}
+    for y=0,H-1 do
+      local lo,hi=W,-1
+      if y<t.roofRows then
+        for x=0,W-1 do
+          local i=y*W+x
+          local r,g,b=colors:getPixel(ax[i],ay[i])
+          local painted=t.civic=="center" and r>g*1.2 and r>b*1.15
+            or t.civic=="mart" and b>r*1.2 and b>g*1.05
+          if painted then lo=math.min(lo,x);hi=math.max(hi,x)end
+        end
+        lo,hi=math.max(0,lo-1),math.min(W-1,hi+1)
+      end
+      if y<t.roofRows then
+        for x=0,W-1 do inside[y*W+x]=x>=lo and x<=hi end
+      end
+      for x=0,W-1 do
+        local i=y*W+x
+        local r,g,b=colors:getPixel(ax[i],ay[i])
+        if g>r*1.12 and g>b*1.05 then inside[i]=false; lawn[i]=true end
+      end
+    end
+    -- Interior/rim material lookups can reference a silhouette pixel that
+    -- was removed. Give those texels building material, never the lawn.
+    local donor
+    for i=0,W*H-1 do
+      if inside[i] and not lawn[i] then donor=i;break end
+    end
+    for i in pairs(lawn)do
+      local source=donor
+      local x,y=i%W,math.floor(i/W)
+      for distance=1,W do
+        local left,right=y*W+x-distance,y*W+x+distance
+        if x-distance>=0 and inside[left] and not lawn[left] then source=left;break end
+        if x+distance<W and inside[right] and not lawn[right] then source=right;break end
+      end
+      if source then ax[i],ay[i],col[i]=ax[source],ay[source],col[source] end
+    end
+  end
+  return { W = W, H = H, col = col, ax = ax, ay = ay, inside = inside,
+           civicColors = t.civic and colors or nil }
 end
 
 -- --------------------------------------------------------------- measure --
@@ -933,6 +974,63 @@ local function model(sp, pr, t)
 
   local T = {}
   for x = 0, W - 1 do T[x] = ytop - top[x] end
+  if t.civic then
+    -- The curved north outline is perspective, not a raised roof block.
+    local eave=ground-roofRows+slab-1
+    for x=0,W-1 do
+      T[x]=eave+math.floor(math.min(math.max(0,x-x0d),math.max(0,x1d-x),8)/2)
+    end
+    ytop=eave+4
+    for z=rz0,rz1 do
+      roofSy[z]=math.floor(8+(roofRows-9)*(z-rz0)/(rz1-rz0))
+    end
+  end
+  local function roofPixel(x,sy)
+    if not t.civic then return sy*W+x end
+    -- A corner's lawn texels must never wrap onto the roof or flank.
+    for distance=0,W do
+      for _,dx in ipairs({-distance,distance})do
+        local nx=x+dx
+        if nx>=0 and nx<W and sp.inside[sy*W+nx] then return sy*W+nx end
+      end
+    end
+    return pr.shadeTexel[DARK]
+  end
+  local sideRows={}
+  if t.civic then
+    -- Front outlines and window frames are not the side wall's material.
+    for sy=roofRows,H-1 do
+      local counts,texels={},{}
+      local best,n=nil,0
+      for sx=0,W-1 do
+        local i=sy*W+sx
+        local shade=sp.col[i]
+        if sp.inside[i] and shade~=BLACK then
+          counts[shade]=(counts[shade] or 0)+1
+          texels[shade]=texels[shade] or i
+          if counts[shade]>n then best,n=shade,counts[shade] end
+        end
+      end
+      sideRows[sy]=best and texels[best] or pr.shadeTexel[DARK]
+      if sp.civicColors then
+        local score,material=-1,nil
+        for sx=0,W-1 do
+          local i=sy*W+sx
+          if sp.inside[i] then
+            local r,g,b=sp.civicColors:getPixel(sp.ax[i],sp.ay[i])
+            local value
+            if sy<H-16 then
+              value=t.civic=='center' and (r-math.max(g,b)) or (b-r)
+            elseif math.max(r,g,b)-math.min(r,g,b)<0.18 then
+              value=math.min(r,g,b)
+            end
+            if value and value>score then score,material=value,i end
+          end
+        end
+        if material then sideRows[sy]=material end
+      end
+    end
+  end
 
   local function at(x, y, z)
     if x < 0 or x >= W then return nil end
@@ -947,7 +1045,7 @@ local function model(sp, pr, t)
         -- instead of falling off the silhouette.
         local sy = roofSy[z]
         if sy < top[x] then sy = top[x] end
-        return sy * W + x
+        return roofPixel(x,sy)
       end
       -- The rim reproduces the eave the drawing itself paints under the
       -- roof: a black outline, a shaded fascia, closed by the outline
@@ -991,6 +1089,7 @@ local function model(sp, pr, t)
       if pr.recess[i] then return nil end
       return i
     end
+    if t.civic then return sideRows[sy] or pr.shadeTexel[DARK] end
     if z == 0 then return i end
     return pr.interior[i]
   end
@@ -1215,6 +1314,8 @@ function Buildings.build(S, map, data, perRow)
   local tileset = map.tileset
   local s = profile()
   local list = s and s.buildings and s.buildings[tileset.id]
+  local civic=V.require("EmeraldBuildings").forMap(S,map)
+  if civic then list=civic end
   if not list then return end
 
   -- ASK GEN 3 FOR ITS OWN SHEET. `imageWidth or 128` / `imageHeight or 48`
@@ -1226,7 +1327,8 @@ function Buildings.build(S, map, data, perRow)
     local okG, info = pcall(Gen3.describe, tileset)
     if okG and info then atlasW, atlasH = info.width, info.height end
   end
-  local tw, th = map.def.width * 4, map.def.height * 4
+  local blockTiles=Gen3.isGen3(tileset) and 2 or 4
+  local tw, th = map.def.width * blockTiles, map.def.height * blockTiles
   local quads = S.objectQuads
 
   for index, t in ipairs(list) do
@@ -1245,7 +1347,8 @@ function Buildings.build(S, map, data, perRow)
           -- second building behind the tower. First claim wins, so the
           -- list order below is the priority order -- the tower's own
           -- templates come first precisely so they take those cells.
-          local free = S.tileAt[keyOf(tx, ty)] == first
+          local free = (not t.position or (tx==t.position[1] and ty==t.position[2]))
+            and S.tileAt[keyOf(tx, ty)] == first
           if free then
             for r = 0, bh - 1 do
               for c = 0, bw - 1 do
@@ -1259,7 +1362,7 @@ function Buildings.build(S, map, data, perRow)
           end
           if free and matches(S, t, tx, ty) then
             if not built then
-              local key = tileset.id .. ":" .. index
+              local key = tileset.id .. ":" .. (civic and map.id..":" or "") .. index
               if not models[key] then
                 if t.claimOnly then
                   -- claim the cells, stamp nothing: the drawing here is
@@ -1269,7 +1372,7 @@ function Buildings.build(S, map, data, perRow)
                   -- detector they stood as a second half-building.
                   models[key] = {}
                 else
-                  local sp = read(t, data, perRow)
+                  local sp = read(t, data, perRow, civic and Gen3.atlasDataForTileset(tileset) or nil)
                   local pr = measure(sp, t)
                   models[key] = emit(model(sp, pr, t), sp, atlasW, atlasH)
                 end
@@ -1381,6 +1484,7 @@ function Buildings.stamp(S, map, quads, tx, ty, bw, bh, t)
   local mx, mz = tx * 8, ty * 8
   local my = base
   local out = S.objectQuads
+  local firstQuad=#out+1
   for _, q in ipairs(quads) do
     out[#out + 1] = {
       { q[1][1] + mx, q[1][2] + my, q[1][3] + mz },
@@ -1396,6 +1500,10 @@ function Buildings.stamp(S, map, quads, tx, ty, bw, bh, t)
       -- opened the roof rim into the sky from across the seam)
       own = true,
     }
+  end
+  if t and t.civic then
+    S.civicPlacements=S.civicPlacements or {}
+    S.civicPlacements[#S.civicPlacements+1]={first=firstQuad,last=#out,base=base,door=t.door}
   end
 end
 
