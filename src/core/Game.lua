@@ -82,6 +82,7 @@ function Game:load()
   self.renderer = Renderer
   Renderer:init()
 
+  require("src.translation.Service").install(Data,require("src.core.GameVersion").get(),SaveData.loadOptions())
   require("src.render.Font").load(Data)
   -- menu cursor/border/geometry constants; field.theme restyles them
   require("src.ui.Theme").load(Data)
@@ -1703,6 +1704,8 @@ end
 -- entry chunks wrote before any save existed, while NEW GAME and
 -- CONTINUE replace the backing outright.
 function Game:adoptSave(save, seedBuckets)
+  -- species-name nicknames show in the player's language (see the function)
+  pcall(require("src.translation.Service").normalizeNicknames, self.data, save)
   -- Platinum Pokemon made before they carried friendship get their base value
   if require("src.core.GameVersion").isGen4() then
     pcall(function() require("src.pokemon.Gen4Friendship").migrate(self.data, save) end)

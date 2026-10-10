@@ -160,3 +160,8 @@ mobile/ios/bundle_id.local
 /mods/DRAMATIC_SHAPE/tools/
 /mods/DRAMATIC_SHAPE/CHANGELOG.md
 /mods/DRAMATIC_SHAPE/VOXEL_HOENN_PLAN.md
+
+# The offline translator helper (rom-translate / rom-translate.exe, ~65 MB),
+# built by tools/translation/build_desktop.py. The release workflow builds it
+# fresh; scripts/build.sh only copies it into packages when present.
+/translation/

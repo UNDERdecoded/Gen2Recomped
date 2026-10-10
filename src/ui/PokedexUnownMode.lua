@@ -45,7 +45,7 @@ end
 -- know what the cache calls species 201.
 local function unownDef(data)
   for _, def in pairs((data and data.pokemon) or {}) do
-    if def.name == "UNOWN" then return def end
+    if (def.translationSourceName or def.name) == "UNOWN" then return def end
   end
   return nil
 end

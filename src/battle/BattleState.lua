@@ -3029,7 +3029,7 @@ function BattleState:gen3MusicKind()
     local player = self.game and self.game.save and self.game.save.player
     local rival = player and player.rival
     if themes.rival and rival and self.trainer.name
-       and tostring(self.trainer.name):upper() == tostring(rival):upper() then
+       and tostring(self.trainer.translationSourceName or self.trainer.name):upper() == tostring(rival):upper() then
       self.isGymLeader = false
       return "rival"
     end
@@ -3071,7 +3071,7 @@ function BattleState:gen3MusicKind()
     if require("src.core.GameVersion").get() == "firered" then
       table_ = GEN3_LEGEND_MUSIC_FRLG
     end
-    local kind = table_[tostring((def and def.name) or species):upper()]
+    local kind = table_[tostring((def and (def.translationSourceName or def.name)) or species):upper()]
     if kind and themes[kind] then return kind end
   end
   return nil

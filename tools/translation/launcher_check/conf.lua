@@ -1,0 +1,1 @@
+function love.conf(t)t.identity="Gen2Recomp";t.console=true;t.window.width=640;t.window.height=400;t.modules.audio=false end

@@ -460,7 +460,7 @@ end
 -- and never mis-fires on a name the charmap mangles.
 local function speciesName(cw, species)
   local def = species and cw.speciesDefs[species]
-  return (def and def.name) or species or ""
+  return (def and (def.translationSourceName or def.name)) or species or ""
 end
 
 -- stored fixed-length name -> save.lua nickname (nil when never nicknamed)

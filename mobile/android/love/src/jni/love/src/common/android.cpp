@@ -464,6 +464,40 @@ bool httpDownload(const char *url, const char *destPath, const char *userAgent, 
 	return result;
 }
 
+bool closeOfflineTranslation()
+{
+    return callStaticBool("closeOfflineTranslation", "()Z", nullptr);
+}
+
+// Gen2Recomp: byte arrays preserve standard UTF-8, including supplementary characters.
+bool translateOffline(const char *source, const char *target, const std::string &text, std::string &output)
+{
+    JNIEnv *env = (JNIEnv*) SDL_AndroidGetJNIEnv();
+    jobject obj = (jobject) SDL_AndroidGetActivity();
+    if (!obj) return false;
+    jclass activity = env->GetObjectClass(obj);
+    env->DeleteLocalRef(obj);
+    jmethodID method = env->GetStaticMethodID(activity, "translateOffline", "(Ljava/lang/String;Ljava/lang/String;[B)[B");
+    if (!method) { env->ExceptionClear(); env->DeleteLocalRef(activity); return false; }
+    jstring from = env->NewStringUTF(source);
+    jstring to = env->NewStringUTF(target);
+    jbyteArray bytes = env->NewByteArray((jsize) text.size());
+    env->SetByteArrayRegion(bytes, 0, (jsize) text.size(), (const jbyte*) text.data());
+    jbyteArray result = (jbyteArray) env->CallStaticObjectMethod(activity, method, from, to, bytes);
+    bool ok = !env->ExceptionCheck() && result;
+    if (env->ExceptionCheck()) { env->ExceptionDescribe(); env->ExceptionClear(); }
+    if (ok) {
+        output.resize(env->GetArrayLength(result));
+        if (!output.empty()) env->GetByteArrayRegion(result, 0, (jsize) output.size(), (jbyte*) &output[0]);
+    }
+    if (result) env->DeleteLocalRef(result);
+    env->DeleteLocalRef(bytes);
+    env->DeleteLocalRef(from);
+    env->DeleteLocalRef(to);
+    env->DeleteLocalRef(activity);
+    return ok;
+}
+
 /*
  * Helper functions for the filesystem module
  */

@@ -355,8 +355,8 @@ function Gen4MiningScreen:itemIdFor(constant)
   if not self.itemsByName then
     local out = {}
     for id, def in pairs((self.game.data or {}).items or {}) do
-      if type(def) == "table" and type(def.name) == "string" then
-        out[def.name:upper()] = id
+      if type(def) == "table" and type((def.translationSourceName or def.name)) == "string" then
+        out[(def.translationSourceName or def.name):upper()] = id
       end
     end
     self.itemsByName = out

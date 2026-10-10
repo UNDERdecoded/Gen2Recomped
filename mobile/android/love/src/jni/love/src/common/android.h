@@ -31,6 +31,10 @@ namespace love
 {
 namespace android
 {
+// Gen2Recomp offline translation bridge, called from a LOVE worker thread.
+bool closeOfflineTranslation();
+bool translateOffline(const char *source, const char *target, const std::string &text, std::string &output);
+
 
 /**
  * Enables or disables immersive mode where the navigation bar is hidden.

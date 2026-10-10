@@ -29,7 +29,11 @@ end
 -- name instead of their raw id)
 function TypeChart.displayName(typeId)
   local record = types and types[typeId] or TypeChart.TYPES[typeId]
-  return record and record.name or typeId
+  local name = record and record.name or typeId
+  -- the record keeps the English name (matchups and checks compare it); the
+  -- screen shows the installed translation of it
+  local service = package.loaded["src.translation.Service"]
+  return service and service.name(name) or name
 end
 
 -- The x10 multipliers of every TypeEffects row that applies, in ROM

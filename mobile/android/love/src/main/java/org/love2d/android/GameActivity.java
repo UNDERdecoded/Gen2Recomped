@@ -2084,4 +2084,13 @@ public class GameActivity extends SDLActivity {
             }
         }
     }
+
+    public static byte[] translateOffline(String source, String target, byte[] input) throws Exception {
+        return OfflineTranslation.translate(source, target, input);
+    }
+
+    public static boolean closeOfflineTranslation() {
+        OfflineTranslation.close();
+        return true;
+    }
 }

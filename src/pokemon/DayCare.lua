@@ -345,7 +345,8 @@ local function isDitto(data, mon)
   if mon.species == DITTO or mon.species == "DITTO" then return true end
   local def = data and data.pokemon and data.pokemon[mon.species]
   return mon.species == 132 or mon.species == "SPECIES_132"
-    or (def and type(def.name) == "string" and def.name:upper() == "DITTO") or false
+    or (def and type(def.translationSourceName or def.name) == "string"
+        and (def.translationSourceName or def.name):upper() == "DITTO") or false
 end
 DayCare.isDitto = isDitto
 

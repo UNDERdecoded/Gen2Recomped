@@ -154,6 +154,10 @@ build_mac() {
   # drop any bundled placeholder .love and fuse ours in
   find "$out_app/Contents/Resources" -maxdepth 1 -name '*.love' -delete
   cp "$LOVE_FILE" "$out_app/Contents/Resources/game.love"
+  if [ -f "$ROOT/translation/rom-translate" ]; then
+    mkdir -p "$out_app/Contents/Resources/translation"
+    cp "$ROOT/translation/rom-translate" "$out_app/Contents/Resources/translation/"
+  fi
 
   local plist="$out_app/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$plist" 2>/dev/null \
@@ -244,6 +248,10 @@ build_win() {
   cp "$love_dir"/license.txt "$out_dir"/ 2>/dev/null || true
 
   cat "$love_dir/love.exe" "$LOVE_FILE" > "$out_dir/$APP_NAME.exe"
+  if [ -f "$ROOT/translation/rom-translate.exe" ]; then
+    mkdir -p "$out_dir/translation"
+    cp "$ROOT/translation/rom-translate.exe" "$out_dir/translation/"
+  fi
 
   local zip_out="$DIST/win/$APP_NAME-win64.zip"
   rm -f "$zip_out"
@@ -302,6 +310,10 @@ build_linux() {
   unsquashfs -q -no-xattrs -o "$sfs_offset" -d "$appdir" "$love_appimage" >/dev/null
 
   cp "$LOVE_FILE" "$appdir/game.love"
+  if [ -f "$ROOT/translation/rom-translate" ]; then
+    mkdir -p "$appdir/translation"
+    cp "$ROOT/translation/rom-translate" "$appdir/translation/"
+  fi
   # `sed -i` takes a MANDATORY backup suffix on BSD and forbids one on GNU, so
   # no single spelling works on both -- and `sed -i ''` on Linux silently ate
   # the next argument as the script, which is why this step could only ever run

@@ -443,7 +443,7 @@ function Sound.playCry(data, species, opts)
   local def = cries and cries[species]
   if not def and type(species) == "number" then
     local mon = data.pokemon and data.pokemon[species]
-    def = cries and mon and cries[mon.name]
+    def = cries and mon and cries[mon.translationSourceName or mon.name]
   end
   if not def then return nil end
   local key = "cry:" .. tostring(species)

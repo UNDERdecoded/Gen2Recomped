@@ -2099,7 +2099,7 @@ function Gen4Poketch:drawLCD(app)
     if body then
       body(self)
     elseif not face then
-      local label = app.name or Strings("APP")
+      local label = app.name and require("src.translation.Service").name(app.name) or Strings("APP")
       Font.draw(label, FACE.x + 8, FACE.y + 8)
       Font.draw(Strings("NOT BUILT YET"), FACE.x + 8, FACE.y + 24)
     end

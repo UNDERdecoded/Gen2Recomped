@@ -2768,6 +2768,8 @@ end
 -- the bundled editor in map mode on that game; drawn only when supplied AND
 -- the game is imported, because the editor has nothing to show otherwise).
 function RomImporter.new(onComplete, opts)
+  require("src.translation.Service").resetRuntime()
+  Strings.load({})
   opts = opts or {}
   -- iOS rides the same mobile import flows as Android: the save-dir
   -- pending-file scan plus love.system.pickFile / createFile, provided
@@ -3482,6 +3484,7 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     self.importing = nil
     self.workState = "complete"
     self.completeVersion = version
+    require("src.translation.Service").enqueue(version,self:_settings())
     self.status = "Ready"
     self.detail = "Starting " .. info.displayName .. "..."
     self.progress = 1
@@ -4784,6 +4787,15 @@ function RomImporter:_pollPickedFiles(dt)
 end
 
 function RomImporter:update(dt)
+  local translation=require("src.translation.Service")
+  translation.update()
+  translation.setLauncher(self:_settings())
+  if not self._launcherTranslationRequested then
+    self._launcherTranslationRequested=true;translation.enqueueLauncher(self:_settings())
+  end
+  if self._translationMessage~=translation.message then
+    self._translationMessage=translation.message;self._settingsRowCache=nil
+  end
   self.pulse = self.pulse + dt
   self:_updatePadCursor(dt)
   -- A drop that landed last frame is a COMPLETE drop now: LOVE hands over one
@@ -5097,10 +5109,12 @@ end
 -- Faux-bold: the launcher's UI font ships no bold face, so 800-weight text
 -- (headings, buttons) is thickened with a second sub-pixel pass.
 local function printfB(text, x, y, w, align)
+  text=require("src.translation.Service").launcherLookup(text)
   love.graphics.printf(text, x, y, w, align)
   love.graphics.printf(text, x + 0.6, y, w, align)
 end
 local function printB(text, x, y)
+  text=require("src.translation.Service").launcherLookup(text)
   love.graphics.print(text, x, y)
   love.graphics.print(text, x + 0.6, y)
 end
@@ -5205,9 +5219,9 @@ end
 -- Draw letterspaced text (the UI font has no tracking control): advance glyph
 -- by glyph.  Returns the total drawn width so a caller can align to it.
 local function printSpaced(font, text, x, y, spacing)
+  text=require("src.translation.Service").launcherLookup(text)
   local cx = x
-  for i = 1, #text do
-    local ch = text:sub(i, i)
+  for ch in text:gmatch("[%z\1-\127\194-\244][\128-\191]*") do
     love.graphics.print(ch, cx, y)
     cx = cx + font:getWidth(ch) + spacing
   end
@@ -5347,6 +5361,7 @@ function RomImporter:_resetFrameRects()
   self.settingsRect = nil
   self.settingsRowRects = nil
   self.mapEditorRect = nil
+  self.translateGameRect = nil
   -- Rebuilt only by the FIND MODS panel.
   self.findAddRect = nil
   self.findRefreshRect = nil
@@ -5391,10 +5406,14 @@ function RomImporter:draw()
 
   -- Fonts + size-dependent scenery, rebuilt only when the window / safe
   -- area changes (rotation, resize, inset changes).
-  local fontKey = ("%dx%d@%d,%d"):format(fullW, fullH, ox, oy)
+  local launcherFont=require("src.translation.Service").launcherFont
+  local fontKey = ("%dx%d@%d,%d"):format(fullW, fullH, ox, oy)..tostring(launcherFont)
   if self.fontKey ~= fontKey then
     self.fontKey = fontKey
-    local function f(px) return love.graphics.newFont(math.max(8, math.floor(px + 0.5))) end
+    local function f(px)
+      px=math.max(8,math.floor(px+0.5))
+      return launcherFont and love.graphics.newFont(launcherFont,px) or love.graphics.newFont(px)
+    end
     self.headFont     = f(19 * s)
     self.detailFont   = f(14 * s)
     self.buttonFont   = f(19 * s)
@@ -6883,6 +6902,10 @@ function RomImporter:mousepressed(x, y, button)
     if self.onEditTouchControls then self.onEditTouchControls() end
     return
   end
+  if inside(self.translateGameRect, x, y) then
+    self:_openTranslationSettings(self.panelVersion)
+    return
+  end
   if inside(self.mapEditorRect, x, y) then
     if self.onEditMaps then self.onEditMaps(self.panelVersion) end
     return
@@ -7182,6 +7205,7 @@ end
 -- pushes a label over, and then it looks like the button is broken rather
 -- than the label being long.
 function RomImporter:_fittingFont(label, w)
+  label=Strings(label)
   for _, font in ipairs({ self.saveBtnFont, self.hintFont }) do
     if font and font:getWidth(label) <= w then return font end
   end
@@ -7189,6 +7213,7 @@ function RomImporter:_fittingFont(label, w)
 end
 
 function RomImporter:_glassyButton(x, y, w, h, label, font, enabled)
+  label=Strings(label)
   local s = self._s
   local r = 10 * s
   love.graphics.setFont(font)
@@ -7217,6 +7242,7 @@ end
 -- kind: "neutral" (default), "accent" (green), "danger" (red), "dangerArmed"
 -- (filled confirm). Returns the hit rect; opts.id is copied onto it.
 function RomImporter:_chipButton(x, y, label, opts)
+  label=Strings(label)
   opts = opts or {}
   local s = self._s
   local font = opts.font or self.hintFont
@@ -7985,13 +8011,16 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- The row is reserved when EITHER button wants it. Keying the height off
   -- onEditTouchControls alone left touchY equal to playY on a build without
   -- it, which drew the map button straight over Play.
-  local touchBtnH = (self.onEditTouchControls or showMapBtn)
-    and math.max(38 * s, self.saveBtnFont:getHeight() + 20 * s) or 0
+  local touchBtnH = math.max(38 * s, self.saveBtnFont:getHeight() + 20 * s)
   -- The one-line reason under a disabled Map Editor button needs room of its
   -- own, or it prints through Play -- which is how the Touch Controls row got
   -- its own note about reserving height in the first place.
   local mapHintH = (showMapBtn and not canMapEdit and touchBtnH > 0)
     and (self.hintFont:getHeight() + 4 * s) or 0
+  local translation=require("src.translation.Service")
+  local showTranslationProgress=translation.version==version and translation.status~="idle" and translation.status~="checking"
+  local translationY=mapHintH
+  if showTranslationProgress then mapHintH=mapHintH+2*self.hintFont:getHeight()+24*s end
   local touchGap = touchBtnH > 0 and (12 * s) or 0
 
   -- vertical placement of the left column
@@ -8078,24 +8107,13 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- Touch Controls: open the drag-to-reposition / disable editor (#327).
   -- Map Editor beside it when this game is imported: the two share the row,
   -- each taking half, so adding the second button did not push Play down.
-  if self.onEditTouchControls and touchBtnH > 0 then
-    if showMapBtn then
-      local halfW = (colW - 10 * s) / 2
-      self.touchControlsRect = self:_glassyButton(
-        leftX, touchY, halfW, touchBtnH, "Touch Controls", self.saveBtnFont, true)
-      self.mapEditorRect = self:_glassyButton(
-        leftX + halfW + 10 * s, touchY, halfW, touchBtnH, MAP_EDITOR_LABEL,
-        self:_fittingFont(MAP_EDITOR_LABEL, halfW - 16 * s), canMapEdit)
-    else
-      self.touchControlsRect = self:_glassyButton(
-        leftX, touchY, colW, touchBtnH, "Touch Controls", self.saveBtnFont, true)
-    end
-  elseif showMapBtn and touchBtnH > 0 then
-    -- No Touch Controls host (a desktop-only build): the map button takes the
-    -- reserved row on its own.
-    self.mapEditorRect = self:_glassyButton(
-      leftX, touchY, colW, touchBtnH, MAP_EDITOR_LABEL,
-      self:_fittingFont(MAP_EDITOR_LABEL, colW - 16 * s), canMapEdit)
+  local tools={{rect="translateGameRect",label="Translate",enabled=true}}
+  if self.onEditTouchControls then table.insert(tools,1,{rect="touchControlsRect",label="Touch Controls",enabled=true})end
+  if showMapBtn then table.insert(tools,#tools,{rect="mapEditorRect",label=MAP_EDITOR_LABEL,enabled=canMapEdit})end
+  local toolW=(colW-(#tools-1)*10*s)/#tools
+  for i,tool in ipairs(tools)do
+    self[tool.rect]=self:_glassyButton(leftX+(i-1)*(toolW+10*s),touchY,toolW,touchBtnH,
+      tool.label,self:_fittingFont(tool.label,toolW-16*s),tool.enabled)
   end
   -- WHY IT IS GREY, under it, rather than left to be guessed at. One line,
   -- and only when the button is disabled: a reader looking at a lit button
@@ -8109,6 +8127,9 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   end
 
   -- Play button
+  if showTranslationProgress then
+    self:_drawTranslationProgress(leftX,touchY+touchBtnH+translationY+4*s,colW,s)
+  end
   self:_playButton(leftX, playY, colW, playH, gameName, ready, locked)
 
   -- SAVE SLOT card (right column, or stacked below Play when single-column).
@@ -8367,10 +8388,29 @@ function RomImporter:_settingsRows()
   -- games and what colour it paints itself are about the launcher, they are
   -- set once and never again, and interleaving them with the rows a player
   -- actually comes here to change makes both lists longer to read.
+  if self.settingsPage~="translation"then
   add({ kind = "section", label = "LAUNCHER" })
   add({ kind = "action", label = "LAUNCHER SETTINGS",
         value = "OPEN", action = "launcherPage",
         note = "Where games are installed, and how the launcher looks." })
+  end
+
+  local translationVersion=(self.settingsPage=="translation" and self._translationSettingsVersion)
+    or self:_savedropTarget() or GameVersion.get()
+  local languages=require("src.translation.Languages")
+  local values,labels=languages.choices(true)
+  -- No ROM TEXT LANGUAGE row: the ROM's language is known (Languages.romLanguage),
+  -- and a row offering it let French -> French jobs leave the text in English.
+  add({kind="section",label="THIS GAME: TEXT TRANSLATION",
+    note="Applies to "..tostring(translationVersion)..". The ROM's text is English. Play after translation finishes; ORIGINAL ROM TEXT restores the imported wording."})
+  add({kind="option",scope="translation",version=translationVersion,label="LANGUAGE",
+    row={id="target",values=values,labels=labels}})
+  add({kind="action",label="TRANSLATE THIS GAME",value="START",action="translateGame",version=translationVersion})
+  add({kind="progress",label="TRANSLATION STATUS"})
+  if self.settingsPage=="translation"then
+    add({kind="action",label="BACK TO SETTINGS",value="BACK",action="settingsBack"})
+    return rows
+  end
 
   add({ kind = "section", label = "GAME DEFAULTS",
         note = "These are the defaults every game starts with. A "
@@ -8456,6 +8496,20 @@ function RomImporter:_launcherSettingsRows()
 
   add({ kind = "action", label = "BACK", value = "SETTINGS",
         action = "settingsBack" })
+
+  local languages=require("src.translation.Languages")
+  local values,labels=languages.choices(false)
+  local launcherLanguages={};for _,value in ipairs(values)do if value~="original"then launcherLanguages[#launcherLanguages+1]=value end end
+  add({kind="section",label="LAUNCHER LANGUAGE",note="English is the default. Other launcher languages are translated on this device and cached separately from game dialogue."})
+  add({kind="option",scope="launcher",label="LAUNCHER LANGUAGE",row={id="launcherLanguage",values=launcherLanguages,labels=labels}})
+  add({kind="option",scope="launcher",label="TRANSLATION HARDWARE",row={id="translationHardware",values={"auto","gpu","cpu"},labels={auto="Automatic (GPU when available)",gpu="NVIDIA GPU (download support)",cpu="CPU"}}})
+  add({kind="section",label="GPU SUPPORT",note="NVIDIA GPU mode can download about 435 MB of support files once on Windows. Automatic uses existing GPU support, with a CPU fallback. Android uses its on-device translation runtime."})
+  add({kind="section",label="GAME TEXT TRANSLATION",
+    note="Translate imported game text on this device. Language models and fonts download once; dialogue is never uploaded. Machine translation may differ from official dialogue."})
+  add({kind="option",scope="launcher",label="DEFAULT LANGUAGE",
+    row={id="translationLanguage",values=values,labels=labels}})
+  add({kind="action",label="TRANSLATE IMPORTED GAMES",value="START",action="translateAll"})
+  add({kind="progress",label="TRANSLATION STATUS"})
 
   -- ------- where games are installed
   add({ kind = "section", label = "GAME DATA FOLDER",
@@ -8665,6 +8719,14 @@ end
 -- The current value of one entry, whichever scope it lives in.
 function RomImporter:_settingValue(entry)
   local opts = self:_settings()
+  if entry.scope=="translation" then
+    local per=opts.translationPerGame and opts.translationPerGame[entry.version] or {}
+    return per[entry.row.id] or (entry.row.id=="target" and "inherit" or opts.translationSource or "en")
+  end
+  if entry.scope == "launcher" and entry.row.id=="translationLanguage" then return opts.translationLanguage or "original" end
+  if entry.scope=="launcher" and entry.row.id=="launcherLanguage"then return opts.launcherLanguage or "en"end
+  if entry.scope=="launcher" and entry.row.id=="translationHardware"then return opts.translationHardware or "auto"end
+  if entry.scope == "launcher" and entry.row.id=="translationSource" then return opts.translationSource or "en" end
   if entry.scope == "settingsGen" then
     -- `false` rather than nil: the stepper matches against its own value list,
     -- and ALL is spelled `false` there for the same reason the generation
@@ -8693,6 +8755,25 @@ end
 
 function RomImporter:_setSettingValue(entry, value)
   local opts = self:_settings()
+  if entry.scope=="launcher" and entry.row.id=="launcherLanguage"then
+    opts.launcherLanguage=value
+    require("src.translation.Service").setLauncher(opts)
+    require("src.translation.Service").enqueueLauncher(opts)
+    self._settingsRowCache=nil
+    return
+  end
+  if entry.scope=="translation" then
+    opts.translationPerGame=opts.translationPerGame or {}
+    opts.translationPerGame[entry.version]=opts.translationPerGame[entry.version] or {}
+    opts.translationPerGame[entry.version][entry.row.id]=value
+    require("src.translation.Service").enqueue(entry.version,opts)
+    return
+  end
+  if entry.scope=="launcher" and (entry.row.id=="translationLanguage" or entry.row.id=="translationSource")then
+    opts[entry.row.id]=value
+    require("src.translation.Service").enqueueAll(opts)
+    return
+  end
   if entry.scope == "settingsGen" then
     self.settingsGen = RomImporter.isGeneration(value)
     -- The rows below it change meaning, and one of them (USE SHARED VALUES)
@@ -8843,10 +8924,54 @@ end
 -- What an `action` row does when it is pressed.  One place rather than a chain
 -- of ifs in mousepressed, because the drawer now has two pages of them and the
 -- touch path below resolves the same rows on release.
+function RomImporter:_drawTranslationProgress(x,y,w,s)
+  local service=require("src.translation.Service")
+  local fraction,detail,message=require("src.translation.Progress").describe(service)
+  love.graphics.setFont(self:_fittingFont(message,w))
+  col(PAL.ink);printB(message,x,y)
+  local barY=y+self.hintFont:getHeight()+4*s
+  local barH=8*s
+  col(PAL.cardBlue,0.8);love.graphics.rectangle("fill",x,barY,w,barH,4*s,4*s)
+  col(service.status=="error" and PAL.warning or PAL.link)
+  if fraction then
+    love.graphics.rectangle("fill",x,barY,w*fraction,barH,4*s,4*s)
+  elseif service.status=="working"then
+    local phase=(love.timer.getTime()*0.45)%1
+    local width=w*0.22
+    love.graphics.rectangle("fill",x+(w-width)*phase,barY,width,barH,4*s,4*s)
+  end
+  if detail then
+    love.graphics.setFont(self.hintFont);col(PAL.ink)
+    printB(detail,x,barY+barH+4*s)
+  end
+  return 2*self.hintFont:getHeight()+24*s
+end
+
+function RomImporter:_openTranslationSettings(version)
+  self._translationSettingsVersion=version or self:_savedropTarget()
+  self.settingsOpen=true
+  self.settingsPage="translation"
+  self.settingsScroll=0
+  self.settingsNotice=nil
+  self._settingsPress=nil
+  self._settingsRowCache=nil
+end
+
 function RomImporter:_settingsAction(entry)
   local action = entry and entry.action
   if not action or action == "none" then return end
-  if action == "touchLayout" then
+  if action=="translateAll" then
+    require("src.translation.Service").enqueueAll(self:_settings())
+  elseif action=="translateGame" then
+    local target=require("src.translation.Languages").resolve(self:_settings(),entry.version)
+    if target=="original"then
+      self.settingsNotice="Choose a translation LANGUAGE above first. The ROM text is already English, and Original ROM text needs no translating."
+    else
+      require("src.translation.Service").enqueue(entry.version,self:_settings())
+      self.settingsNotice="Translation queued. Its progress will appear below; start the game when translation is ready."
+    end
+    self._settingsRowCache=nil
+  elseif action == "touchLayout" then
     if self.onEditTouchControls then self.onEditTouchControls() end
   elseif action == "launcherPage" then
     self.settingsPage = "launcher"
@@ -10791,6 +10916,10 @@ function RomImporter:_drawSettingsPanel(x, y, w, h, paged)
   -- Built once per entry into the tab, not once per frame: reading every
   -- installed mod's schema file is disk work, and at sixty frames a second on
   -- a folder of mods it is disk work the whole time the screen is open.
+  local translationVersion=self:_savedropTarget()
+  if self._settingsTranslationVersion~=translationVersion then
+    self._settingsTranslationVersion=translationVersion;self._settingsRowCache=nil
+  end
   if not self._settingsRowCache then
     self._settingsRowCache = self:_settingsRows()
   end
@@ -10798,7 +10927,8 @@ function RomImporter:_drawSettingsPanel(x, y, w, h, paged)
 
   love.graphics.setFont(self.gameNameFont)
   col(PAL.ink)
-  printB(self.settingsPage == "launcher" and Strings("Launcher settings")
+  printB(self.settingsPage == "translation" and Strings("Translate game")
+       or self.settingsPage == "launcher" and Strings("Launcher settings")
                                           or Strings("Settings"), x, y)
   local top = y + self.gameNameFont:getHeight() + 10 * s
 
@@ -10846,6 +10976,8 @@ function RomImporter:_drawSettingsPanel(x, y, w, h, paged)
         cy = cy + 8 * s
       end
 
+    elseif entry.kind == "progress"then
+      cy=cy+self:_drawTranslationProgress(x,cy,w,s)+8*s
     elseif entry.kind == "action" then
       col(PAL.cardBlue, 0.55)
       love.graphics.rectangle("fill", x, cy, w, rowH - 4 * s, 6 * s, 6 * s)

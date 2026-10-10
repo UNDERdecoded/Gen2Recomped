@@ -1411,7 +1411,7 @@ function Gen3Save.buildBoxMon(mon, cw, owner)
     -- the species' own name, which is what the cartridge puts in an
     -- un-nicknamed record: a blank one shows as blanks, not as the species
     local def = cw and cw.speciesDefs and cw.speciesDefs[mon.species]
-    nickname = (def and def.name) or tostring(mon.species or "")
+    nickname = (def and (def.translationSourceName or def.name)) or tostring(mon.species or "")
   end
   local otName = mon.gen3OtName or owner.name or ""
   local flags = Gen3Save.MON_HAS_SPECIES

@@ -60,14 +60,14 @@ end
 -- that collide; the plain key is tried after it, so a translation that does
 -- not care about the distinction can supply one entry for both.
 function Strings.lookup(source, context)
-  if not catalog then return source end
+  if not catalog then return require("src.translation.Service").lookup(source) end
   if context then
     local hit = catalog[context .. "|" .. source]
     if type(hit) == "string" then return hit end
   end
   local hit = catalog[source]
   if type(hit) == "string" then return hit end
-  return source
+  return require("src.translation.Service").lookup(source)
 end
 
 -- Count `%`-directives so a translation that drops or adds one is caught

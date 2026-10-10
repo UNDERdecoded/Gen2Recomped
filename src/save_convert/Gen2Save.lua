@@ -712,7 +712,7 @@ end
 -- so the two conventions are translated at this boundary.
 local function speciesName(cw, species)
   local def = species and cw.speciesDefs[species]
-  return (def and def.name) or species or ""
+  return (def and (def.translationSourceName or def.name)) or species or ""
 end
 
 local function importedNickname(cw, species, stored)

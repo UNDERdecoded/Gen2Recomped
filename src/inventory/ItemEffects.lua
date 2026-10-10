@@ -1400,7 +1400,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     return "explorer_kit"
   end
   -- THE POKE RADAR (fieldUseFunc 11, ITEM_USE_FUNC_POKE_RADAR)
-  if itemDef and itemDef.fieldUseFunc == 11 and itemDef.name == "Poké Radar" then
+  if itemDef and itemDef.fieldUseFunc == 11 and (itemDef.translationSourceName or itemDef.name) == "Poké Radar" then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
     end
@@ -1409,7 +1409,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   -- Platinum's is item 442, which has no Gen 1 name key: its own use
   -- function row (`fieldUseFunc` 2, UseTownMapFromBag) says what it is
   local isGen4TownMap = itemDef and itemDef.fieldUseFunc == 2
-    and itemDef.name == "Town Map"
+    and (itemDef.translationSourceName or itemDef.name) == "Town Map"
   if itemId == "TOWN_MAP" or isGen4TownMap then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
@@ -1439,7 +1439,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   end
   -- PLATINUM'S COIN CASE (item 444): BagContext_FormatUsageMessage prints bank
   -- 7 (TEXT_BANK_BAG) #57, "Your Coins: {STRVAR_1 54 0 0}", unpadded.
-  if tonumber(rawItemId) == 444 and itemDef and itemDef.name == "Coin Case" then
+  if tonumber(rawItemId) == 444 and itemDef and (itemDef.translationSourceName or itemDef.name) == "Coin Case" then
     local key = require("src.import.Gen4Text").label(7, 57)
     local line = data and data.text and data.text[key]
     local coins = tostring(require("src.import.Gen4GameCorner").coins(save))
@@ -1447,14 +1447,14 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     return "failed", { line }
   end
   -- THE POFFIN CASE (item 449): its own screen (src/ui/Gen4PoffinCase.lua).
-  if tonumber(rawItemId) == 449 and itemDef and itemDef.name == "Poffin Case" then
+  if tonumber(rawItemId) == 449 and itemDef and (itemDef.translationSourceName or itemDef.name) == "Poffin Case" then
     if battle then
       return "failed", { Strings("OAK: %s!\nThis isn't the\ntime to use that!", save.player.name) }
     end
     return "poffin_case"
   end
   -- ...and the SEAL CASE (item 434): bank 7 #92, "Seals: n" -- CalcTotalBallSeals.
-  if tonumber(rawItemId) == 434 and itemDef and itemDef.name == "Seal Case" then
+  if tonumber(rawItemId) == 434 and itemDef and (itemDef.translationSourceName or itemDef.name) == "Seal Case" then
     local key = require("src.import.Gen4Text").label(7, 92)
     local line = data and data.text and data.text[key]
     local n = tostring(require("src.import.Gen4Seals").total(save))

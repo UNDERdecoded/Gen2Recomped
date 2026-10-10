@@ -332,7 +332,7 @@ function Evolution.createShedinja(game, mon, fromSpecies)
       -- Emerald copies the evolved Ninjask after learning its moves. Unlike
       -- FRLG/Gen4, Emerald does not require or consume a spare Poke Ball.
       local extra = copy(mon)
-      extra.species, extra.nickname = row.species, def.name
+      extra.species, extra.nickname = row.species, nil  -- shown as the species name, in the player's language
       extra.item, extra.heldItem, extra.mail = nil, nil, nil
       extra.markings, extra.ribbons, extra.status = 0, {}, nil
       extra.stats = Stats.calcGen3(def, extra.level, extra.ivs, extra.evs, extra.nature)

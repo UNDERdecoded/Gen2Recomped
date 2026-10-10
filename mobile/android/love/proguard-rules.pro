@@ -15,3 +15,7 @@
 #-keepclassmembers class fqcn.of.javascript.interface.for.webview {
 #   public *;
 #}
+
+-keepclassmembers class org.love2d.android.GameActivity { public static byte[] translateOffline(java.lang.String, java.lang.String, byte[]); }
+
+-keepclassmembers class org.love2d.android.GameActivity { public static boolean closeOfflineTranslation(); }
