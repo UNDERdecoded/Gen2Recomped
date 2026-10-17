@@ -360,4 +360,61 @@ function ModUpdate.downloadZip(url, destName, expectBytes)
   return name
 end
 
+-- Active release fetch jobs: handle -> { repo, modId, options, startedAt, done, releases, err }
+local releaseJobs = {}
+local nextReleaseHandle = 1
+
+-- Begin an async release fetch. Returns a handle for pumpFetchReleases.
+-- opts: { force = bool }
+function ModUpdate.beginFetchReleases(repo, modId, opts)
+  if type(repo) ~= "string" or repo == "" then
+    return nil
+  end
+
+  local handle = nextReleaseHandle
+  nextReleaseHandle = nextReleaseHandle + 1
+
+  releaseJobs[handle] = {
+    repo = repo,
+    modId = modId,
+    options = opts or {},
+    startedAt = os.time(),
+    done = false,
+    releases = nil,
+    err = nil,
+  }
+
+  -- Start the fetch in a coroutine (simulated async)
+  -- In a real engine this would be threaded, but for now we'll do sync fetch on first pump
+  return handle
+end
+
+-- Pump an async release fetch. Returns done, releases, err.
+-- Call this per frame until done is true.
+function ModUpdate.pumpFetchReleases(handle)
+  local job = releaseJobs[handle]
+  if not job then
+    return true, nil, "invalid release fetch handle"
+  end
+
+  if job.done then
+    return true, job.releases, job.err
+  end
+
+  -- Perform the actual fetch (sync for now, but framed as async)
+  local ok, result, err = pcall(function()
+    return ModUpdate.fetchReleases(job.repo, job.modId, job.options)
+  end)
+
+  job.done = true
+  if ok then
+    job.releases = result
+    job.err = err
+  else
+    job.err = result or "fetch failed"
+  end
+
+  return job.done, job.releases, job.err
+end
+
 return ModUpdate

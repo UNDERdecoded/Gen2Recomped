@@ -396,6 +396,12 @@ local function persistFs(fs)
   return SaveData.portableFs() or fs or (love and love.filesystem)
 end
 
+-- Public seam for mods (Stadium import, HD zip install, custom pickers).
+-- Same routing as options/saves: injected fs, then portable.io, then LOVE.
+function SaveData.persistenceFs()
+  return persistFs(love and love.filesystem)
+end
+
 -- Port + original Options menu defaults.  Missing keys on load are filled
 -- from this table so old options.lua files stay compatible.
 function SaveData.defaultOptions()
