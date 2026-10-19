@@ -1070,6 +1070,7 @@ function BattleState:speciesSprite(species, isPlayerSide)
 end
 
 local function markSeen(game, species, mon)
+  if not game or not game.save then return end
   local dex = game.save.pokedex
   if dex then dex.seen[species] = true end
   require('src.pokemon.Gen4Forms').record(game,species,mon)
