@@ -152,8 +152,8 @@ function Sidebar.modTags(m)
   return tags
 end
 
-Sidebar.MOD_SORTS = { "name", "enabled", "updated", "category" }
-Sidebar.MOD_SORT_LABELS = { name = "Name A-Z", enabled = "Enabled first",
+Sidebar.MOD_SORTS = { "name", "order", "enabled", "updated", "category" }
+Sidebar.MOD_SORT_LABELS = { name = "Name A-Z", order = "Load order", enabled = "Enabled first",
                             updated = "Recently updated", category = "Category" }
 
 local function modTime(m)
@@ -185,7 +185,13 @@ function Sidebar.filterMods(mods, query, tag, sort)
     if ok then out[#out + 1] = m end
   end
   local function nm(m) return tostring(m.name or m.id or ""):lower() end
-  if sort == "enabled" then
+  if sort == "order" then
+    table.sort(out, function(a, b)
+      local pa, pb = a.orderPosition or math.huge, b.orderPosition or math.huge
+      if pa ~= pb then return pa < pb end
+      return a.id < b.id
+    end)
+  elseif sort == "enabled" then
     table.sort(out, function(a, b)
       if (a.enabled and 1 or 0) ~= (b.enabled and 1 or 0) then return a.enabled == true end
       return nm(a) < nm(b)

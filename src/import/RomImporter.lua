@@ -5447,6 +5447,9 @@ function RomImporter:_resetFrameRects()
   self.modImportManyRect = nil
   self.modImportFolderRect = nil
   self.modGenRects = nil
+  self.modOrderRects = nil
+  self.modResetOrderRect = nil
+  self.modOrderViewRect = nil
   -- The generation dropdown is drawn on every tab, but only when the row is
   -- wide enough for it (see draw()), so a stale rect would keep taking clicks
   -- on a narrow window.  The MENU's rows are rebuilt only while it is open.
@@ -7143,6 +7146,28 @@ function RomImporter:mousepressed(x, y, button)
   if inside(self.modImportRect, x, y) then
     self:chooseMod(); return
   end
+  if inside(self.modOrderViewRect, x, y) then
+    self.modSort = "order"
+    local options = self:_settings()
+    options.launcherModSort = "order"
+    require("src.core.SaveData").saveOptions(options)
+    self._settingsCache = nil
+    self.pageScroll, self.modScroll = 0, 0
+    return
+  end
+  if inside(self.modResetOrderRect, x, y) then
+    local ok = require("src.mods.LauncherMods").resetOrder()
+    self.modNotice = { ok = ok, text = ok and Strings("Default load order restored.")
+      or Strings("Could not save load order.") }
+    self:_refreshMods()
+    return
+  end
+  for _, r in ipairs(self.modOrderRects or {}) do
+    if inside(r, x, y) then
+      self:_moveModInOrder(r.id, r.delta)
+      return
+    end
+  end
   -- Enable all / Disable all sit in that same fixed header, so they dispatch on
   -- press like the import button rather than arming a drag (#647).
   if inside(self.modEnableAllRect, x, y) then
@@ -7440,9 +7465,13 @@ function RomImporter:_chipButton(x, y, label, opts)
   local r = opts.r or math.min(8 * s, h / 2)
   local kind = opts.kind or "neutral"
   local rect = { x = x, y = y, width = w, height = h, id = opts.id, pinned = opts.pinned }
-  local hot = self:_hover(rect)
+  local hot = opts.enabled ~= false and self:_hover(rect)
 
-  if kind == "dangerArmed" then
+  if opts.enabled == false then
+    col(PAL.disabled, 0.12)
+    love.graphics.rectangle("fill", x, y, w, h, r, r)
+    col(PAL.disabled, 0.45)
+  elseif kind == "dangerArmed" then
     fillGradRounded(x, y, w, h, r, PAL.chooseTop, PAL.chooseBot,
       hot and 1 or 0.92, hot and 1 or 0.92)
     col(PAL.white)
@@ -9912,6 +9941,16 @@ function RomImporter:_ensureMods()
   if not self.mods then self:_refreshMods() end
 end
 
+function RomImporter:_moveModInOrder(id, delta)
+  local ok, err = require("src.mods.LauncherMods").moveInOrder(id, delta,
+    self._visibleOrderMods)
+  if ok then
+    self:_refreshMods()
+  elseif err then
+    self.modNotice = { ok = false, text = Strings(err) }
+  end
+end
+
 -- Resolve cached (or freshly fetched) GitHub status for every mod that
 -- declares a github field and has not opted out with `update_check: false`.
 -- force=true bypasses the 6h cache on every repo.
@@ -10289,7 +10328,12 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
   local mods = self.mods or {}
   if self.sidebarMode then
     mods = require("src.import.LauncherSidebar").filterMods(mods, self.modSearch, self.modTag, self.modSort)
+  else
+    mods = require("src.import.LauncherSidebar").filterMods(mods, nil, nil, "order")
   end
+  local showOrder = not self.sidebarMode or self.modSort == "order"
+  self._visibleOrderMods = mods
+  self.modOrderRects = {}
 
   -- header: "Mods" + "N of M enabled" (left) and "Import mod .zip" (right)
   love.graphics.setFont(self.gameNameFont)
@@ -10387,6 +10431,24 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
   end
 
   local top = y + headerH + 14 * s
+  -- A separate row stays reachable on narrow layouts; card actions already
+  -- contain several maintenance buttons. Only load-order view offers moves.
+  self.modOrderViewRect = self:_chipButton(x, top, Strings("Load order"),
+    { h = btnH, kind = showOrder and "accent" or "neutral" })
+  local resetX, resetY = self.modOrderViewRect.x + self.modOrderViewRect.width + 8 * s, top
+  local resetLabel = Strings("Reset order")
+  if resetX + self.hintFont:getWidth(resetLabel) + 24 * s > x + w then
+    resetX, resetY = x, top + btnH + 8 * s
+  end
+  self.modResetOrderRect = self:_chipButton(resetX, resetY, resetLabel,
+    { h = btnH })
+  top = resetY + btnH + 8 * s
+  love.graphics.setFont(self.hintFont)
+  col(PAL.detail)
+  local orderHint = Strings("Earlier loads first; dependencies always load first. Changes apply on next launch.")
+  local _, orderLines = self.hintFont:getWrap(orderHint, w)
+  love.graphics.printf(orderHint, x, top, w, "left")
+  top = top + math.max(1, #orderLines) * self.hintFont:getHeight() + 10 * s
 
   -- Notice line: the last install/delete result, else the platform hint.
   --
@@ -10626,6 +10688,7 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
     end
     local bodyH = math.max(nameH + 4 * s + metaH, clusterH)
     local cardH = padV * 2 + bodyH + 10 * s + btnH
+    if showOrder then cardH = cardH + btnH + 8 * s end
     layout[i] = { h = cardH, leftW = leftW, clusterW = clusterW,
       genW = genW, genH = genH, genGap = genGap, genRowW = genRowW,
       chipText = chipText, chipW = chipW, delW = delW,
@@ -10826,6 +10889,30 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
 
       -- Action chip-buttons in one right-aligned row under the body
       local btnY = cy + cardH - padV - btnH
+      if showOrder then
+        local orderY = btnY
+        local moveX = nx
+        for _, action in ipairs({
+          { label = Strings("Earlier"), delta = -1, enabled = i > 1 },
+          { label = Strings("Later"), delta = 1, enabled = i < #mods },
+        }) do
+          local rect = self:_chipButton(moveX, orderY, action.label,
+            { h = btnH, enabled = action.enabled })
+          if action.enabled then
+            local vy, vy2 = math.max(rect.y, top), math.min(rect.y + rect.height, top + listH)
+            if vy2 > vy then
+              self.modOrderRects[#self.modOrderRects + 1] = {
+                x = rect.x, y = vy, width = rect.width, height = vy2 - vy,
+                id = m.id, delta = action.delta }
+            end
+          end
+          moveX = moveX + rect.width + 8 * s
+        end
+        love.graphics.setFont(self.hintFont)
+        col(PAL.detail)
+        love.graphics.print("#" .. tostring(m.orderPosition or i), moveX, orderY + 5 * s)
+        btnY = btnY - btnH - 8 * s
+      end
       local btnX = x + w - padH - L.btnRowW
       local darmed = armedDelete(self._confirmDelete, "mod", m.id, nil)
       local function clipHit(rect, bucket)

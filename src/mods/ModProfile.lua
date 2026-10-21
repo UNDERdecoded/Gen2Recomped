@@ -9,6 +9,7 @@
 --   { name    = "PROFILE 1",
 --     enabled = { [modId] = true|false },     -- missing means enabled
 --     options = { [modId] = { key = value } },-- mirrors options.modOptions
+--     order   = { "first_mod", "second_mod" }, -- optional on old profiles
 --     slots   = { red = "slot1", blue = "slot2", yellow = nil } }
 -- Exports are SaveSerializer-encoded (data-only parse, an imported file can
 -- never execute code) under profiles/<NAME>.g1rmodlist in the save dir, the
@@ -17,6 +18,7 @@
 local SaveSerializer = require("src.core.SaveSerializer")
 local SaveData = require("src.core.SaveData")
 local GameVersion = require("src.core.GameVersion")
+local LoadOrder = require("src.mods.LoadOrder")
 
 local ModProfile = {}
 
@@ -36,7 +38,7 @@ end
 -- Capture the live setup.  `available` is ManagerState.status.available (the
 -- loader's status manifests, m.enabled = the desired set including staged
 -- flips); `modOptions` is options.modOptions.
-function ModProfile.capture(available, modOptions)
+function ModProfile.capture(available, modOptions, order)
   local enabled, options = {}, {}
   for _, m in ipairs(available or {}) do
     enabled[m.id] = m.enabled and true or false
@@ -55,7 +57,8 @@ function ModProfile.capture(available, modOptions)
     local ok, slot = pcall(SaveData.activeSlot, id)
     if ok and slot then slots[id] = slot end
   end
-  return { enabled = enabled, options = options, slots = slots }
+  return { enabled = enabled, options = options, slots = slots,
+    order = LoadOrder.normalize(order) }
 end
 
 -- The slot moves a profile may actually make: a slot id has to be registered
@@ -94,7 +97,7 @@ function ModProfile.encode(p)
     format = ModProfile.FORMAT,
     formatVersion = ModProfile.FORMAT_VERSION,
     profile = { name = p.name, enabled = p.enabled,
-                options = p.options, slots = p.slots },
+                options = p.options, slots = p.slots, order = p.order },
   })
 end
 
@@ -110,6 +113,9 @@ function ModProfile.decode(body)
     return nil, "BAD FILE"
   end
   local p = { name = raw.name:sub(1, 10), enabled = {}, options = {}, slots = {} }
+  -- Legacy exports have no order; applying one preserves the current order.
+  if raw.order ~= nil and type(raw.order) ~= "table" then return nil, "BAD LOAD ORDER" end
+  if raw.order ~= nil then p.order = LoadOrder.normalize(raw.order) end
   for id, on in pairs(type(raw.enabled) == "table" and raw.enabled or {}) do
     if type(id) == "string" then p.enabled[id] = on and true or false end
   end
@@ -196,7 +202,7 @@ function ModProfile.ensureFirst(opts, available, modOptions)
   opts.modProfilesSeeded = true
   opts.modProfiles = opts.modProfiles or {}
   if #opts.modProfiles > 0 then return nil end
-  local p = ModProfile.capture(available, modOptions)
+  local p = ModProfile.capture(available, modOptions, opts.modOrder)
   p.name = "PROFILE 1"
   opts.modProfiles[1] = p
   opts.activeProfile = p.name

@@ -38,6 +38,7 @@ local Version = require("src.core.Version")
 local SaveData = require("src.core.SaveData")
 local CacheFs = require("src.import.CacheFs")
 
+local LoadOrder = require("src.mods.LoadOrder")
 local LauncherMods = {}
 
 -- ------- pure status derivation
@@ -89,6 +90,7 @@ end
 -- sorted by id so the panel order is stable.
 function LauncherMods.deriveList(manifests, options)
   local mods = options and options.mods or {}
+  local rank = LoadOrder.rank(options and options.modOrder, manifests)
   local ordered = {}
   for _, m in ipairs(manifests) do ordered[#ordered + 1] = m end
   table.sort(ordered, function(a, b) return a.id < b.id end)
@@ -127,6 +129,8 @@ function LauncherMods.deriveList(manifests, options)
     local needs = ModImports.missing(m)
     out[#out + 1] = {
       id = m.id,
+      orderPosition = rank[m.id],
+      priority = m.priority,
       name = m.name or m.id,
       requiredImports = ModImports.of(m),
       missingImports = needs,
@@ -665,6 +669,26 @@ function LauncherMods.normalizeSlots(options, byId)
     end
   end
   return changed
+end
+
+-- The visible list may be filtered; moves must not shuffle hidden mods.
+function LauncherMods.moveInOrder(id, delta, visible)
+  local options = SaveData.loadOptions()
+  local manifests = discover()
+  local known = false
+  for _, m in ipairs(manifests) do if m.id == id then known = true break end end
+  if not known then return false, "Unknown mod" end
+  local order, changed = LoadOrder.move(options.modOrder, manifests, visible, id, delta)
+  if not changed then return false end
+  options.modOrder, options.activeProfile = order, nil
+  if not SaveData.saveOptions(options) then return false, "Could not save load order" end
+  return true
+end
+
+function LauncherMods.resetOrder()
+  local options = SaveData.loadOptions()
+  options.modOrder, options.activeProfile = {}, nil
+  return SaveData.saveOptions(options) ~= nil
 end
 
 -- setEnabled(id, enabled): persist options.mods[id] in the exact shape
