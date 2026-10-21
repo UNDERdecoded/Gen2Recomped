@@ -12,6 +12,7 @@ local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
 local PixelCanvas = require("src.render.PixelCanvas")
 local Runtime = require("src.mods.Runtime")
+local GbcColorCorrection = require("src.render.GbcColorCorrection")
 
 -- RESOLVED ONCE, NOT EVERY FRAME.  These three were `require`d from inside
 -- beginFrame and endFrame -- three string hashes into package.loaded on every
@@ -929,7 +930,7 @@ function Renderer:endFrame(zones, worldZones)
                             and (self.battleWipe.style == "frlg_swirl"
                                  or self.battleWipe.needsSource)
                             and self.battleWipe.screenDraw
-  local needPresent = GBCFX.active() or Pipelines.wantsPresent()
+  local needPresent = GBCFX.active() or GbcColorCorrection.active() or Pipelines.wantsPresent()
                       or battleNeedsSource
   local present = nil
   if needPresent then
@@ -1399,8 +1400,9 @@ function Renderer:endFrame(zones, worldZones)
     -- LCD grid is then drawn over rather than something that smears the
     -- grid itself.  Each pass hands back a canvas; with none registered
     -- this returns `present` unchanged and the frame is byte-identical.
-    local composed = Pipelines.present(present,
-      { width = ww, height = wh, scale = Sp, dpi = dpiY, dpiX = dpiX, dpiY = dpiY }) or present
+    local corrected = GbcColorCorrection.apply(present)
+    local composed = Pipelines.present(corrected,
+      { width = ww, height = wh, scale = Sp, dpi = dpiY, dpiX = dpiX, dpiY = dpiY }) or corrected
     if GBCFX.active() then
       -- shader grid/shadow math is in framebuffer pixels
       GBCFX.present(composed, Sp)

@@ -1855,6 +1855,7 @@ function Game:applyOptions(opts)
     self.input:setButtonMode(opts.gen3ButtonMode or 1)
   end
   require("src.render.PaletteFX").applyOptions(opts)
+  require("src.render.GbcColorCorrection").applyOptions(opts)
   require("src.render.Tilt").applyOptions(opts)
   -- after Tilt, so a persisted world pipeline can switch the tilt level it
   -- just restored back off (the two are mutually exclusive)

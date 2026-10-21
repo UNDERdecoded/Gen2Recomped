@@ -459,6 +459,8 @@ function SaveData.defaultOptions()
     colors = "gbc",
     tilt = 0,
     gbcfx = 0,
+    -- Optional GBC display response, separate from the LCD grid/glare effects.
+    gbcColorCorrection = "off",
     -- survey zoom offset from window fit scale (0 = FIT); see Zoom.lua
     zoom = 0,
     -- OVERWORLD beyond-edge fill: trees | water | black

@@ -143,6 +143,15 @@ effect, `=1` forces it available. The Anbernic handheld pack exports `0` from
 its launcher because the device reports `"Linux"` while its GPU is in the
 phone class (see [Anbernic RG34XXSP](anbernic-rg34xxsp.md)).
 
+## GBC colour correction
+
+Gold, Silver and Crystal offer **OPTIONS -> GBC COLOR -> OFF / ACCURATE /
+HARSH**, independently of GBC FX. The profiles adapt SameBoy's Modern Accurate
+and Harsh Reality GBC display response. OFF preserves the previous rendering;
+the selection is saved and does not require a ROM reimport. Details, scope,
+source attribution and verification are in
+[GBC colour correction](gbc-color-correction.md).
+
 ## Performance tier (low-end devices)
 
 The Options **PERFORMANCE** row scales the port's optional presentation
