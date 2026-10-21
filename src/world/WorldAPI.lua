@@ -6,6 +6,7 @@
 -- stays unsupported; anything a mod legitimately needs belongs here.
 
 local Logger = require("src.core.Logger")
+local Actions = require("src.world.WorldActions")
 local MapLoader = require("src.world.MapLoader")
 local Gen3Elevation = require("src.world.Gen3Elevation")
 local Runtime = require("src.mods.Runtime")
@@ -385,6 +386,14 @@ function WorldAPI:queueScript(rows, extra)
   ow.runner:run(rows, extra)
   return true
 end
+
+-- Public field mutations are kept behind the same free-roam boundary.
+function WorldAPI:canReorderParty() return Actions.canReorderParty(self.game, self:overworld()) end
+function WorldAPI:reorderParty(fromSlot, toSlot) return Actions.reorderParty(self.game, self:overworld(), fromSlot, toSlot) end
+function WorldAPI:availableFieldActions() return Actions.availableFieldActions(self.game, self:overworld()) end
+function WorldAPI:useFieldAction(id, opts) return Actions.useFieldAction(self.game, self:overworld(), id, opts) end
+function WorldAPI:canFly() return Actions.canFly(self.game, self:overworld()) end
+function WorldAPI:flyTo(mapId) return Actions.flyTo(self.game, self:overworld(), mapId) end
 
 -- drop a map's cached instance so the next load re-reads its record; when
 -- it is the active map the world reloads around the player in place
