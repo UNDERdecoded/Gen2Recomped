@@ -891,6 +891,7 @@ function Loader:_api(mod)
     },
     -- a deep copy: what a mod does to its own view never reaches the loader
     manifest = Merge.deepCopy(mod.manifest),
+    callbackFormat = mod.manifest.callback_format or "native",
     content = {},
     exports = {},
     DELETE = Registry.DELETE,
@@ -999,6 +1000,9 @@ function Loader:_api(mod)
     },
   }
   self.exports[modId] = api.exports
+  if api.callbackFormat == "unified" then
+    engineRequire("src.mods.UnifiedCallbacks").install(loader, api, modId, hostGen)
+  end
   -- a handle, not the mod object: {id, version, exports} or nil when the
   -- other mod is absent, disabled, failed, or has not run yet.  Tolerates
   -- mod:find(id) as well as the documented mod.find(id).

@@ -279,6 +279,10 @@ function Manifest.validate(raw, path)
     return value
   end
 
+  assert(raw.callback_format == nil or raw.callback_format == "native" or raw.callback_format == "unified",
+    "callback_format must be native or unified")
+  assert(raw.callback_format ~= "unified" or api >= 2, "callback_format unified requires mod API 2")
+
   local conflicts = mergeConflictLists(raw.conflicts, raw.incompatible)
 
   -- `support`: where to thank the mod's creator -- a Ko-fi, a Patreon, a
@@ -316,6 +320,7 @@ function Manifest.validate(raw, path)
     category = raw.category or "OTHER",
     game_version = raw.game_version,
     description = raw.description or "",
+    callback_format = raw.callback_format or "native",
     github = github,
     support = support,
     updateCheck = updateCheck,
