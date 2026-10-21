@@ -1968,4 +1968,6 @@ end
 Gen3SummaryMenu.STAT_ROWS = STAT_ROWS
 Gen3SummaryMenu.FALLBACK_PAGES = FALLBACK_PAGES
 
+require("src.ui.Gen3SummaryLayout").apply(Gen3SummaryMenu)
+
 return Gen3SummaryMenu

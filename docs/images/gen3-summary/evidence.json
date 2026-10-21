@@ -1,0 +1,605 @@
+{
+  "baseRevision": "13af468b97dc37015d14ad5c71d7f067c3ee810d",
+  "passed": true,
+  "liveLanguage": "English",
+  "views": [
+    {
+      "game": "firered",
+      "view": "page-1",
+      "comparison": "firered-page-1.png",
+      "comparisonSha256": "2ef14d3d7f6df67478a75df7798d8dbe16eaca0008d05e4f7233f1395d4b1930",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "firered-page-1.png",
+          "sha256": "f1f02421e097c1fc6ea48eeb79274d918924979d5a3ff478993c2276a0e917a1",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "firered-page-1.png",
+          "sha256": "7c8d25a23dc114a8526124aea6cc9f14c325314f56da697d1924e649bbc73e6a",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "firered",
+      "view": "page-2",
+      "comparison": "firered-page-2.png",
+      "comparisonSha256": "229a45a325b6f83c95ca9042f3039be7025a107b86bca2b0cd0aed63370691b9",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "firered-page-2.png",
+          "sha256": "8fbd2cc65f74a320c9f16cbeda387945c62a5d3b4e37f7e32cc48748001fd430",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "firered-page-2.png",
+          "sha256": "2be965a3c1077d3dc1ae279ec1a478d29c7b1fb7adef7af8e085b23cb30976a8",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "firered",
+      "view": "page-3",
+      "comparison": "firered-page-3.png",
+      "comparisonSha256": "95956a904f7bb2ac2726096b577e1096307496b709e5fe4f13a49ed07c0d468b",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "firered-page-3.png",
+          "sha256": "e092d725bd854c4f7d3a96cabd24bda0309bead105d026385d298e533b773dfb",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "firered-page-3.png",
+          "sha256": "9c041816dfb8bd2f057467a315e0eddc1a784475070c83e4bd1e60ea850c9116",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "firered",
+      "view": "detail-second",
+      "comparison": "firered-detail-second.png",
+      "comparisonSha256": "93bba5ade1e323600a86f7db07ab3a863a930e1eb09e7cc380a39044a31153fb",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "firered-detail-second.png",
+          "sha256": "135e219779b62ab199724d50a86a7017514b101a09022af2a3ed14a1aa1f168f",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "firered-detail-second.png",
+          "sha256": "1e7c608629b7ffe5011df3bdbc2bacfcad8ac91131031afeab8f0be2bece06de",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "firered",
+      "view": "learn-fifth",
+      "comparison": "firered-learn-fifth.png",
+      "comparisonSha256": "80412e53c93479d2d28c1f0f3807de69b4263a0aec1a7a05d3641431526488e5",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "firered-learn-fifth.png",
+          "sha256": "6150b9a72877fe8e6402a4b51d8a64c801afc110c139b16a4385f93607f7ff60",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "firered-learn-fifth.png",
+          "sha256": "1c16d6463491d04fb2ce440d0191ab84742b6e4d2ace70a7db5b9bd49167e18e",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "emerald",
+      "view": "page-1",
+      "comparison": "emerald-page-1.png",
+      "comparisonSha256": "ca010f132f17ae368e33e87fc4e36ff0e91156281db81c4487c8a3350871634c",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "emerald-page-1.png",
+          "sha256": "64f34cc13fbab300d78fd58ac5a97f26f628662ec8b99d71b8e5646f5339b95a",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "emerald-page-1.png",
+          "sha256": "9cdc6bb6c3569a49393b92804f40feba1d3a24d8ffcd1154c31a3c9337c62bae",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "emerald",
+      "view": "page-2",
+      "comparison": "emerald-page-2.png",
+      "comparisonSha256": "ea38166d974d485680b4162a6b9ac7632cd325b2454b0770940d93fde3534ee5",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "emerald-page-2.png",
+          "sha256": "7037a497dc3bed81e20a3347550ef68f3734bc70cd1f6c0258b612830f7f0550",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "emerald-page-2.png",
+          "sha256": "ac3168c604d2b69ee05e606d1d47f62174477d3eada5ae65565d30b1d8a1a82d",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "emerald",
+      "view": "page-3",
+      "comparison": "emerald-page-3.png",
+      "comparisonSha256": "cbb8724ccbf37cfa6038c816821e1203ec84280cd4402309c4ad8f389f496175",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "emerald-page-3.png",
+          "sha256": "4fc27680b2e32f7f64499595c5c5e1ae5065a33fa08d9b3928d83c8183351248",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "emerald-page-3.png",
+          "sha256": "575102ed0e3188aa022db38cdbac938c544b7f840affe097cfb7c36ac968c1ec",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "emerald",
+      "view": "page-4",
+      "comparison": "emerald-page-4.png",
+      "comparisonSha256": "1943824972b7b794d8a390ec97f05b403b3c7d3cf83c272d8b40e5308a7e6fa7",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "emerald-page-4.png",
+          "sha256": "639a25459dd1eeed10bea4a6cd01a1eacddd136c04ea3a4500b7c9302b0ef85f",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "emerald-page-4.png",
+          "sha256": "eb8335a42b612de104a2edaab9044fbc1aaf00c4fc6b068c8f00d4c645e2b266",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "emerald",
+      "view": "detail-second",
+      "comparison": "emerald-detail-second.png",
+      "comparisonSha256": "b9f5595a24272eeff1c2e185a7c5e2ab0075410eebe6a30b7f29026c25d5a6e2",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "emerald-detail-second.png",
+          "sha256": "adb11bd3d4893ccfd8040ef322a5e3c7677537e0a0882cda9c48884b934538ee",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "emerald-detail-second.png",
+          "sha256": "3cd5597af85ebbb70decf2170be948076aadd370911469f2528335360b55fea7",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    },
+    {
+      "game": "emerald",
+      "view": "learn-fifth",
+      "comparison": "emerald-learn-fifth.png",
+      "comparisonSha256": "c41cbdc4b95d7eeabc71cd018e0049e85c6babeb06f27e46ae80f1ed2cd4550e",
+      "inputs": [
+        {
+          "kind": "before",
+          "file": "emerald-learn-fifth.png",
+          "sha256": "bbbf3132c514481447a6e29c93b1bf44de689e5f7da3fc47c9695c59050305a7",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        },
+        {
+          "kind": "after",
+          "file": "emerald-learn-fifth.png",
+          "sha256": "89a87ad51504323915d0435b275d033cee9a49baea0c34e46c6a2a22723b8760",
+          "dimensions": [
+            2048,
+            1536
+          ],
+          "viewport": [
+            64,
+            128,
+            1920,
+            1280
+          ],
+          "integerScale": 8
+        }
+      ]
+    }
+  ],
+  "checks": [
+    {
+      "kind": "visible-control-hint",
+      "game": "firered",
+      "view": "page-1",
+      "whitePixels": 206,
+      "passed": true
+    },
+    {
+      "kind": "visible-control-hint",
+      "game": "firered",
+      "view": "page-2",
+      "whitePixels": 89,
+      "passed": true
+    },
+    {
+      "kind": "visible-control-hint",
+      "game": "firered",
+      "view": "page-3",
+      "whitePixels": 202,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-3",
+      "row": 1,
+      "frame": 0,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-3",
+      "row": 2,
+      "frame": 0,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-3",
+      "row": 3,
+      "frame": 12,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-3",
+      "row": 4,
+      "frame": 12,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-panel-palette",
+      "view": "page-3",
+      "pixel": [
+        0,
+        150
+      ],
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-panel-palette",
+      "view": "page-3",
+      "pixel": [
+        160,
+        0
+      ],
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-panel-palette",
+      "view": "page-3",
+      "pixel": [
+        160,
+        15
+      ],
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-4",
+      "row": 1,
+      "frame": 22,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-4",
+      "row": 2,
+      "frame": 20,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-4",
+      "row": 3,
+      "frame": 21,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-badge-pixels",
+      "view": "page-4",
+      "row": 4,
+      "frame": 21,
+      "opaquePixels": 444,
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-panel-palette",
+      "view": "page-4",
+      "pixel": [
+        0,
+        150
+      ],
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-panel-palette",
+      "view": "page-4",
+      "pixel": [
+        160,
+        0
+      ],
+      "maxRgbDifference": 0,
+      "passed": true
+    },
+    {
+      "kind": "source-panel-palette",
+      "view": "page-4",
+      "pixel": [
+        160,
+        15
+      ],
+      "maxRgbDifference": 0,
+      "passed": true
+    }
+  ],
+  "badgeSheetSha256": "5e6519358580d17a935574db597acb4bad9d64376f016753cbf7e5843081daa2",
+  "captureLogSha256": "ec1d336f2a779ce1cdbb10753987a7c85795ff16fef63e9260e3300942113806",
+  "scope": "Native final-frame source sprites/palettes, hints and input regressions. No claim of full-frame equality or untested language ROM coverage."
+}

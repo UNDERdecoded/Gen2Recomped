@@ -1278,8 +1278,9 @@ local function markerFor(version)
   -- emerald-trade-scene-v3 / firered-trade-scene-v1: the in-game trade
   -- sequence's art (extractTradeScene, gen3_trade_art) -- without it special
   -- 257 falls back to the bare swap, so both Gen 3 caches re-import once
-  if version == "emerald" then revision = "emerald-trade-scene-v3:" end
-  if version == "firered" then revision = "firered-trade-scene-v1:" end
+  -- Summary presentation v1 adds source controls, type/category sprites and PP colours.
+  if version == "emerald" then revision = "emerald-trade-scene-v3:summary-presentation-v1:" end
+  if version == "firered" then revision = "firered-trade-scene-v1:summary-presentation-v1:" end
   if version == "polishedcrystal" then revision = "polished-stored-unown-forms-v7:" end
   if version == "prism" then revision = "prism-events-art-v2:" end
   -- hgss-phone-call-v1: gen4_hgss_phone_call (Gen4HgssPhoneCall), the
@@ -1586,11 +1587,19 @@ local VERSION_REQUIRED_FILES = {
   -- come back with nothing at all -- no title art, and no marker here
   -- to notice it was missing.
   prism = { "assets/generated/title/prism_title.png" },
+  -- Summary sprites and controls are extracted only for their verified source.
+  emerald = {
+    "assets/generated/ui/summary_buttons.png",
+    "assets/generated/ui/summary_markings.png",
+    "assets/generated/ui/summary_selector.png",
+    "assets/generated/ui/summary_types.png",
+  },
   -- item_pc.c is FireRed-only, and an older FireRed cache otherwise has no
   -- reason to re-run the new extraction stage: constants.lua already exists
   -- and the shared Gen 3 required-file set is satisfied.  Requiring the one
   -- background this stage always writes upgrades only FireRed caches.
   firered = {
+    "assets/generated/ui/summary_keypad.png",
     "assets/generated/ui/item_pc_frlg.png",
     "assets/generated/ui/bag_male_item_pc.png",
   },

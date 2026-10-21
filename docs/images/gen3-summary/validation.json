@@ -1,0 +1,35 @@
+{
+  "baseCommit": "13af468b97dc37015d14ad5c71d7f067c3ee810d",
+  "romFreeResourceRegression": true,
+  "nativeControllerRegression": true,
+  "freshNativeImports": [
+    "BPRE0",
+    "BPEE0"
+  ],
+  "nativeFinalFrameViewsPerRevision": 11,
+  "finalFramePixelChecks": 17,
+  "localizedModInteroperability": [
+    "firered-de",
+    "emerald-de"
+  ],
+  "baselineFailureLineCount": 27,
+  "candidateFailureLineCount": 27,
+  "baselineFailuresUnchanged": true,
+  "failureLinesSha256": "95b5bfcce7f15ae869e5bba19a7df90c4817476884e13ca1ca14d518808e9df3",
+  "files": {
+    "src/ui/Gen3SummaryLayout.lua": "14b7988f5f7bec0a7426088700a612259f6946a1f705f16e785e31f1f851ae94",
+    "src/ui/Gen3SummaryMenu.lua": "b5f51e30dceab93d809ba3f1f6abe25247828eff031115337775011d9ed29c5d",
+    "src/import/Gen3SummaryParts.lua": "42a1579645cafd59b299a4b1ef7dd53f4165f2b8b3099c2648c9c36f5157f6b5",
+    "src/import/RomExtractorGen3.lua": "928553ebf037438dcfb08677ebca4d78b3457a9d37603c9662e08bf7ccb9d6ef",
+    "src/import/RomImporter.lua": "8721837d301653457ebfec87a3b92d0d216344fbf6abf8322289c204b0ccf006",
+    "scripts/test.sh": "a87a1f003a462240e80de45977ae5b693188de23a7db77c75fd1604c1025e206",
+    "tests/gen3_summary_test.lua": "3226d41f74ace7cb18b7d389310c8f90e9fa113a51a86a3e4da05e992db53819",
+    "tests/gen3_summary_parts_test.lua": "421060ea81ba1cae6305cb11c993d6dae223922dbfe67c0ee0781d8bca5e49dc",
+    "tests/gen3_summary_capture.lua": "15581bf582d229468610d19b127102c2565e1cf05d2802c4771e899938149ce9",
+    "tools/compare_gen3_summary.py": "070a933003c3195f9c0dd82fd5c8748ff6af4930416cca966c4fd7dd1cd01849"
+  },
+  "limitations": [
+    "Native screenshots use English imports. Six PP-label configurations are synthetic; no missing-language ROM certification.",
+    "Existing repository T1/T2 failures remain; full CI is not green."
+  ]
+}
