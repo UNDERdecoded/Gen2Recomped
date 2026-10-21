@@ -277,3 +277,10 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+## Unified content records (opt-in)
+
+API-2 mods can select `"content_format": "unified"` to read and edit common
+Pokémon, move, item, trainer and encounter definition shapes. Existing mods
+keep native formats. See [the format, supported operations and limitations](unified-mod-content.md)
+for the manifest guard, generation coverage, symbolic IDs and failure behavior.

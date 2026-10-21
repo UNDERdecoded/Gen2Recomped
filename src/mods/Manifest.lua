@@ -223,6 +223,10 @@ function Manifest.validate(raw, path)
   assert(api <= Version.modApi, ("requires mod API %d; this engine provides %d")
     :format(api, Version.modApi))
   local strict = api >= 2
+  assert(raw.content_format == nil or raw.content_format == "native"
+      or raw.content_format == "unified", "content_format must be native or unified")
+  assert(raw.content_format ~= "unified" or api >= 2,
+    "unified content requires mod API 2")
 
   local profile = raw.profile or "content"
   if not Manifest.PROFILES[profile] then
@@ -305,6 +309,7 @@ function Manifest.validate(raw, path)
     version = raw.version,
     entry = raw.entry,
     api = api,
+    content_format = raw.content_format or "native",
     priority = tonumber(raw.priority) or 0,
     dependencies = array(raw.dependencies),
     optional_dependencies = array(raw.optional_dependencies),
