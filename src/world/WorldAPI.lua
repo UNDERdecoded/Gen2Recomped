@@ -9,14 +9,15 @@ local Logger = require("src.core.Logger")
 local MapLoader = require("src.world.MapLoader")
 local Gen3Elevation = require("src.world.Gen3Elevation")
 local Runtime = require("src.mods.Runtime")
+local Reads = require("src.mods.WorldReads")
 
 local WorldAPI = {}
 WorldAPI.__index = WorldAPI
 
 local NO_OVERWORLD = "no overworld"
 
-function WorldAPI.new(game, modId)
-  return setmetatable({ game = game, modId = modId }, WorldAPI)
+function WorldAPI.new(game, modId, readContext)
+  return setmetatable({ game = game, modId = modId, readContext = readContext }, WorldAPI)
 end
 
 -- the live overworld, or nil.  Game.overworld is the fast path; the stack
@@ -56,6 +57,28 @@ function WorldAPI:current()
            elevation = elevation,
            layer = Gen3Elevation.layerOf(self.game and self.game.data,
                                          elevation) }
+end
+
+-- Detached common Pokemon records. This also works with a save at the title
+-- screen: reading the party does not need an active overworld.
+function WorldAPI:party()
+  return Reads.party(self.game, self.readContext)
+end
+
+-- Require the expected active map to reject stale requests after a warp.
+-- The second result describes block size/coordinates and the DS proxy grid.
+function WorldAPI:activeBlockAt(mapId, bx, by)
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return Reads.activeBlockAt(ow.map, mapId, bx, by)
+end
+
+-- Loaded maps only, active first and with distinct placements. loadedMaps()
+-- retains its legacy shape/order; these records also describe block units.
+function WorldAPI:liveMaps()
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return Reads.liveMaps(ow)
 end
 
 -- opts.arrive = "fly" | "teleport" picks the arrival FX; anything else
