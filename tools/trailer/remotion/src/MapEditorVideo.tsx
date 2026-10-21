@@ -150,7 +150,7 @@ const beats: Beat[] = [
         <div style={{ fontFamily: SANS, fontSize: 34, color: "white", marginTop: 40, fontWeight: 700 }}>
           Export your edits as a map pack and share them as a mod.
         </div>
-        <div style={{ fontFamily: SANS, fontSize: 28, color: "#b9c6ff", marginTop: 30 }}>discord.gg/4VXnEnePT</div>
+        <div style={{ fontFamily: SANS, fontSize: 28, color: "#b9c6ff", marginTop: 30 }}>discord.gg/VswK7HpYab</div>
         <div style={{ fontFamily: SANS, fontSize: 26, color: "white", marginTop: 34 }}>Rip packs with us on Tilt Rips:</div>
         <div style={{ fontFamily: PIXEL, fontSize: 28, color: GOLD, marginTop: 14 }}>tiltrips.com/r/GEN2RECOMP</div>
       </Card>

@@ -1359,7 +1359,7 @@ local function parseMarker(raw)
   end
   return head, absent
 end
-local COMMUNITY_URL = "https://discord.gg/4VXnEnePT"
+local COMMUNITY_URL = "https://discord.gg/VswK7HpYab"
 local TILT_RIPS_URL = "https://tiltrips.com/r/GEN2RECOMP/"
 -- Donations.  A plain PayPal checkout link, opened with the same
 -- love.system.openURL the community mark and the release links use.
@@ -1373,7 +1373,7 @@ local DONATE_URL = "https://www.paypal.com/ncp/payment/F3QPTKT4E8HCS"
 -- much of an evening to spend in it deserves to know that up front rather than
 -- after.
 local MAP_EDITOR_LABEL = "Map Editor (Beta)"
-local UD_URL = "https://discord.gg/4VXnEnePT"
+local UD_URL = "https://discord.gg/VswK7HpYab"
 
 -- WHO MADE THE GAME ON THIS TAB, AND WHERE TO THANK THEM.
 --
