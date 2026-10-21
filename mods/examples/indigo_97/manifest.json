@@ -1,0 +1,20 @@
+{
+  "id": "indigo_97",
+  "name": "INDIGO//97",
+  "version": "1.2.1",
+  "api": 2,
+  "games": ["gen2"],
+  "entry": "main.lua",
+  "profile": "content",
+  "game_version": ">=0.7.6 <1.0.0",
+  "category": "GRAPHICS",
+  "priority": 200,
+  "assets_transforms": "transforms.lua",
+  "dependencies": [],
+  "optional_dependencies": ["voxel_characters"],
+  "conflicts": ["retro_anime_trainer"],
+  "incompatible": [],
+  "experimental": false,
+  "github": "n47h4ni3l/gen2recomp-indigo97",
+  "description": "Late-1990s anime-inspired true-colour player designs and fishing poses for Gen2Recomped. Pair with Voxel Characters for depth."
+}
