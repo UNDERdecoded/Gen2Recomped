@@ -9,6 +9,8 @@ local Logger = require("src.core.Logger")
 local MapLoader = require("src.world.MapLoader")
 local Gen3Elevation = require("src.world.Gen3Elevation")
 local Runtime = require("src.mods.Runtime")
+local WorldOverview = require("src.mods.WorldOverview")
+local MapOverview = require("src.world.MapOverview")
 
 local WorldAPI = {}
 WorldAPI.__index = WorldAPI
@@ -56,6 +58,19 @@ function WorldAPI:current()
            elevation = elevation,
            layer = Gen3Elevation.layerOf(self.game and self.game.data,
                                          elevation) }
+end
+
+-- Detached, zero-based terrain and marker grids for companion UIs/minimaps.
+function WorldAPI:mapOverview()
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return MapOverview.build(self.game, ow)
+end
+
+-- Table distribution before per-step RNG, repel, roamers and roll hooks.
+-- Explicit map IDs also work at the title screen without loading that map.
+function WorldAPI:effectiveEncounters(mapId, terrain, opts)
+  return WorldOverview.encounters(self.game, self:overworld(), self.overviewContext, mapId, terrain, opts)
 end
 
 -- opts.arrive = "fly" | "teleport" picks the arrival FX; anything else
