@@ -1,0 +1,7 @@
+pokemon 0ad4d8a59c0daa59
+moves 54b3cb2c1776ed48
+type_chart cc5bd80d003bd459
+statuses 68247ced2ed19a21
+move_effects 3bef37494ca4a845
+constants e4cf6f91ff122fa5
+mods 6a9ee9de68f78902
