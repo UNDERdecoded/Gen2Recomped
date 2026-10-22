@@ -37,6 +37,7 @@ local Theme = require("src.ui.Theme")
 local Gen3Options = {}
 Gen3Options.__index = Gen3Options
 Gen3Options.isOpaque = true
+Gen3Options.shaderPresetBypass = true
 
 local GBA_W, GBA_H = 240, 160
 
