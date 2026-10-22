@@ -31,6 +31,8 @@ local function gbcFX()
   return GBCFXMod
 end
 
+local ShaderPresets = require("src.render.ShaderPresets")
+
 local Renderer = {}
 
 -- The Game Boy surface.  WIDTH/HEIGHT are the classic dimensions every
@@ -930,6 +932,7 @@ function Renderer:endFrame(zones, worldZones)
                                  or self.battleWipe.needsSource)
                             and self.battleWipe.screenDraw
   local needPresent = GBCFX.active() or Pipelines.wantsPresent()
+                      or (ShaderPresets:active() and not self.shaderPresetBypass)
                       or battleNeedsSource
   local present = nil
   if needPresent then
@@ -1401,6 +1404,7 @@ function Renderer:endFrame(zones, worldZones)
     -- this returns `present` unchanged and the frame is byte-identical.
     local composed = Pipelines.present(present,
       { width = ww, height = wh, scale = Sp, dpi = dpiY, dpiX = dpiX, dpiY = dpiY }) or present
+    if not self.shaderPresetBypass then composed = ShaderPresets:apply(composed, Sp) end
     if GBCFX.active() then
       -- shader grid/shadow math is in framebuffer pixels
       GBCFX.present(composed, Sp)

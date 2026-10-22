@@ -1187,6 +1187,9 @@ function love.quit()
   if package.loaded["src.update.Check"] then
     pcall(package.loaded["src.update.Check"].shutdown)
   end
+  if package.loaded["src.render.ShaderBrowser"] then
+    pcall(package.loaded["src.render.ShaderBrowser"].shutdown)
+  end
   if package.loaded["src.translation.Service"] then
     pcall(package.loaded["src.translation.Service"].shutdown)
   end
