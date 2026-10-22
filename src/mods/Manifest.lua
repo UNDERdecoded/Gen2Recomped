@@ -240,6 +240,10 @@ function Manifest.validate(raw, path)
     end
   end
 
+  local scriptFormat = raw.script_format == nil and "native" or raw.script_format
+  assert(scriptFormat == "native" or scriptFormat == "unified", "script_format must be native or unified")
+  assert(scriptFormat ~= "unified" or api >= 2, "unified scripts require mod API 2")
+
   local gameVersionOk, gameVersionErr = Semver.validRange(raw.game_version)
   assert(gameVersionOk, ("malformed game_version %q: %s")
     :format(tostring(raw.game_version), tostring(gameVersionErr)))
@@ -325,6 +329,7 @@ function Manifest.validate(raw, path)
     affects_link = affectsLink,
     permissions = permissions,
     permissionSet = permissionSet,
+    script_format = scriptFormat,
     options_schema = optionalFile(raw.options_schema, "options_schema"),
     -- Base files the mod needs but cannot ship -- a Stadium 2 cartridge, a
     -- second game's ROM.  Declared here, satisfied by the launcher, read by

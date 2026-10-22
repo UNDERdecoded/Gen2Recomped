@@ -87,6 +87,13 @@ An edited vanilla map becomes a `mod.content.maps:patch` carrying only the
 fields that moved; a new map becomes a `:register`. See
 `docs/new-features.md` and the extension's own README.
 
+## Portable dialogue scripts (opt-in)
+
+API-2 mods can select `"script_format": "unified"` for prevalidated, copied
+`mod.world:queueScript()` dialogue/control-flow programs with exactly-once
+completion and owner-only cancellation. Existing manifests keep native script
+behavior. See [portable commands, ownership and limits](portable-world-scripts.md).
+
 ## Rendering pipelines
 
 Most registries hand the engine *content*. `render_pipelines` hands it
