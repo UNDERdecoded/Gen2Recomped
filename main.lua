@@ -892,7 +892,7 @@ function love.touchpressed(id, x, y, dx, dy, pressure)
   end
   if Importer then return Importer:touchpressed(id,x,y,dx,dy,pressure) end
   if not Game then return end
-  Game:touchpressed(id, x, y)
+  Game:touchpressed(id, x, y, dx, dy, pressure)
 end
 
 function love.touchmoved(id, x, y, dx, dy, pressure)
@@ -906,7 +906,7 @@ function love.touchmoved(id, x, y, dx, dy, pressure)
   end
   if Importer then return Importer:touchmoved(id,x,y,dx,dy,pressure) end
   if not Game then return end
-  Game:touchmoved(id, x, y)
+  Game:touchmoved(id, x, y, dx, dy, pressure)
 end
 
 function love.touchreleased(id, x, y, dx, dy, pressure)
@@ -920,7 +920,7 @@ function love.touchreleased(id, x, y, dx, dy, pressure)
   end
   if Importer then return Importer:touchreleased(id,x,y,dx,dy,pressure) end
   if not Game then return end
-  Game:touchreleased(id, x, y)
+  Game:touchreleased(id, x, y, dx, dy, pressure)
 end
 
 function love.wheelmoved(x, y)

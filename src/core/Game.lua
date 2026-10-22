@@ -7,6 +7,7 @@ local Input = require("src.core.Input")
 local Logger = require("src.core.Logger")
 local Platform = require("src.core.Platform")
 local Renderer = require("src.render.Renderer")
+local GameViewport = require("src.render.GameViewport")
 local SaveData = require("src.core.SaveData")
 local StateStack = require("src.core.StateStack")
 local FrameProfile = require("src.core.FrameProfile")
@@ -30,6 +31,7 @@ end
 
 function Game:load()
   self.pointerOwners={}
+  self.modPointers={}
   self.secondScreenPointerOwner=nil
   self.secondScreenOverworldPoketch=nil
   self.data = Data
@@ -917,6 +919,8 @@ Game.centerClassicZones = centerClassicZones
 function Game:draw()
   local closeDraw = FrameProfile.section("draw: whole frame")
   local screenLayout=require('src.ui.SecondScreen')
+  local generation = require('src.core.GameVersion').generation()
+  GameViewport.begin(generation, generation <= 3 and not screenLayout.combined(self))
   Renderer.splitViewport=nil
   if screenLayout.combined(self) then
     local w,h=love.graphics.getDimensions()
@@ -979,8 +983,9 @@ function Game:draw()
 
   if screenLayout.combined(self) then
     screenLayout.composeWindow(self)
-    TouchControls:draw()
   end
+  GameViewport.finish(self)
+  TouchControls:draw()
   closeDraw()
   -- THE SECOND PANEL'S FRAME LEAVES LAST.
   --
@@ -1176,7 +1181,7 @@ function Game:_draw()
     ModRuntime.call("render.hud", function() end, self, viewport)
   end
   -- on-screen mobile controls: pure screen-space, over the finished frame
-  if not Renderer.splitViewport then TouchControls:draw() end
+  -- OS-window controls draw after GameViewport.finish in Game:draw.
 end
 
 -- overworld survey zoom: wheel up / '=' zooms in, wheel down / '-' out
@@ -1710,9 +1715,13 @@ end
 local function offerPointer(self, method, id, x, y)
   self.pointerOwners=self.pointerOwners or {}
   local captured=self.pointerOwners[id]
+  local gameX, gameY, inside = GameViewport.toLocal(x, y)
+  local panel = self.secondScreenPointerOwner
   local function offer(screen)
     if not (screen and type(screen[method])=='function') then return false end
-    local ok,claimed=pcall(screen[method],screen,id,x,y)
+    local ok,claimed=pcall(screen[method],screen,id,
+      (self.secondScreenInjecting or screen == panel) and x or gameX,
+      (self.secondScreenInjecting or screen == panel) and y or gameY)
     if not ok then
       require('src.core.Logger').warn('%s raised in a touch handler: %s',
         tostring(screen.name or 'a screen'),tostring(claimed))
@@ -1727,14 +1736,42 @@ local function offerPointer(self, method, id, x, y)
     return true
   end
   local top = self.stack and self.stack.top and self.stack:top()
-  if offer(top) then return true end
+  if (inside or self.secondScreenInjecting) and offer(top) then return true end
   -- The always-present Android lower-panel watch is drawn outside the stack.
   -- Its coordinate mapper rejects main-window input in display mode.
-  local panel=self.secondScreenPointerOwner
   return panel~=top and offer(panel) or false
 end
 
-function Game:touchpressed(id, x, y)
+-- Window-space pointer metadata plus coordinates local to the game rectangle.
+local function pointerUnclaimed() return false end
+function Game:pointerEvent(phase, source, id, x, y, dx, dy, pressure, button)
+  local gameX, gameY, inside = GameViewport.toLocal(x, y)
+  return ModRuntime.call("input.pointer", pointerUnclaimed, self, {
+    phase = phase, source = source, id = id, x = x, y = y,
+    gameX = gameX, gameY = gameY, insideGame = inside,
+    dx = dx or 0, dy = dy or 0, pressure = pressure, button = button,
+  }) == true
+end
+local function modPointer(self, phase, id, x, y, dx, dy, pressure)
+  if self.secondScreenInjecting then return false end
+  local p = self.modPointers and self.modPointers[id]
+  if phase == "pressed" then
+    if not ModRuntime.wantsHook("input.pointer") then return false end
+    self.modPointers = self.modPointers or {}
+    p = { source = id == "mouse" and "mouse" or "touch", x = x, y = y }
+    self.modPointers[id] = p
+  elseif not p then return false end
+  dx, dy = dx or (x - p.x), dy or (y - p.y)
+  p.x, p.y = x, y
+  if pressure ~= nil then p.pressure = pressure end
+  local nativeOwner = self.pointerOwners and self.pointerOwners[id]
+  local claimed = self:pointerEvent(phase, p.source, id, x, y, dx, dy, p.pressure, id == "mouse" and 1 or nil)
+  if not nativeOwner and claimed then p.claimed = true end
+  if phase == "released" and self.modPointers then self.modPointers[id] = nil end
+  return not nativeOwner and p.claimed == true
+end
+
+function Game:touchpressed(id, x, y, dx, dy, pressure)
   -- Visible virtual controls own their complete gesture, even when pressing
   -- one opens a different screen before the finger is lifted.
   if not self.secondScreenInjecting and TouchControls.visible and TouchControls:visible()
@@ -1742,6 +1779,7 @@ function Game:touchpressed(id, x, y)
     TouchControls:touchpressed(id,x,y)
     return
   end
+  if modPointer(self, "pressed", id, x, y, dx, dy, pressure) then return end
   if offerPointer(self, "touchpressed", id, x, y) then return end
   if self.secondScreenInjecting then return end
   TouchControls:touchpressed(id, x, y)
@@ -1756,21 +1794,23 @@ function Game:hasPointerScreen()
   return top and type(top.touchpressed)=='function' or false
 end
 
-function Game:touchmoved(id, x, y)
+function Game:touchmoved(id, x, y, dx, dy, pressure)
   if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
     TouchControls:touchmoved(id,x,y)
     return
   end
+  if modPointer(self, "moved", id, x, y, dx, dy, pressure) then return end
   if offerPointer(self, "touchmoved", id, x, y) then return end
   if self.secondScreenInjecting then return end
   TouchControls:touchmoved(id, x, y)
 end
 
-function Game:touchreleased(id, x, y)
+function Game:touchreleased(id, x, y, dx, dy, pressure)
   if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
     TouchControls:touchreleased(id,x,y)
     return
   end
+  if modPointer(self, "released", id, x, y, dx, dy, pressure) then return end
   if offerPointer(self, "touchreleased", id, x, y) then return end
   if self.secondScreenInjecting then return end
   TouchControls:touchreleased(id, x, y)

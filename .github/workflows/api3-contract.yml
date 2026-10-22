@@ -1,0 +1,61 @@
+name: API 3 contracts
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/api3-contract.yml'
+      - 'src/**'
+      - 'tests/api3_contract/**'
+      - 'tests/engine/api3_*.lua'
+      - 'tools/api3-contract-check/**'
+      - 'tools/flag-catalog-check/**'
+  push:
+    branches: [main, dev]
+    paths:
+      - '.github/workflows/api3-contract.yml'
+      - 'src/**'
+      - 'tests/api3_contract/**'
+      - 'tests/engine/api3_*.lua'
+      - 'tools/api3-contract-check/**'
+      - 'tools/flag-catalog-check/**'
+permissions:
+  contents: read
+concurrency:
+  group: api3-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: gen2
+          sparse-checkout: |
+            src
+            data
+            tests
+            tools/api3-contract-check
+            tools/flag-catalog-check
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: gen1-reference
+          sparse-checkout: |
+            src
+            data
+            tests
+            assets/fonts
+      - name: install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: native flag catalog provenance
+        run: python3 gen2/tools/flag-catalog-check/generate.py --gen1 gen1-reference
+      - name: identical mod contracts on both engines
+        run: >-
+          python3 gen2/tools/api3-contract-check/check.py
+          --gen1 gen1-reference --gen2 gen2
+          --report "${{ runner.temp }}/api3-report.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: api3-contract-report
+          path: ${{ runner.temp }}/api3-report.json
+          if-no-files-found: error

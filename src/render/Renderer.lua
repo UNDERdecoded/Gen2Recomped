@@ -12,6 +12,8 @@ local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
 local PixelCanvas = require("src.render.PixelCanvas")
 local Runtime = require("src.mods.Runtime")
+local Output = require("src.render.Output")
+local GameViewport = require("src.render.GameViewport")
 
 -- RESOLVED ONCE, NOT EVERY FRAME.  These three were `require`d from inside
 -- beginFrame and endFrame -- three string hashes into package.loaded on every
@@ -85,10 +87,10 @@ Renderer.UPRIGHT_MARGIN = 160
 -- Keep separate dpiX/dpiY so each GB pixel covers fitScale() physical pixels
 -- on BOTH axes (square).
 local function displayMetrics()
-  local ww, wh = love.graphics.getDimensions()
+  local ww, wh = GameViewport.dimensions()
   local pw, ph = ww, wh
   if love.graphics.getPixelDimensions then
-    pw, ph = love.graphics.getPixelDimensions()
+    pw, ph = GameViewport.pixelDimensions()
   end
   local dpiX, dpiY = 1, 1
   if ww > 0 and pw > 0 then dpiX = pw / ww end
@@ -109,6 +111,7 @@ local function displayMetrics()
 end
 
 function Renderer:init()
+  GameViewport.reset()
   -- 160x144 real pixels, never DPI-scaled: see src/render/PixelCanvas.lua
   -- (#208).  Every canvas below is sized in framebuffer pixels for the same
   -- reason -- worldViewSize() already works in drawable pixels.
@@ -827,7 +830,7 @@ end
 -- When GBC FX is active the composite is drawn into presentCanvas and
 -- presented through the GBC FX shader as a final pass.
 function Renderer:endFrame(zones, worldZones)
-  love.graphics.setCanvas()
+  GameViewport.setTarget()
   local ww, wh, pw, ph, dpiX, dpiY = displayMetrics()
   -- Sp = integer framebuffer pixels per GB pixel;
   -- Sx/Sy = LOVE-unit draw scales (may differ when dpiX ≠ dpiY).
@@ -929,8 +932,9 @@ function Renderer:endFrame(zones, worldZones)
                             and (self.battleWipe.style == "frlg_swirl"
                                  or self.battleWipe.needsSource)
                             and self.battleWipe.screenDraw
+  local hasOutputHook = Output.enabled()
   local needPresent = GBCFX.active() or Pipelines.wantsPresent()
-                      or battleNeedsSource
+                      or battleNeedsSource or hasOutputHook
   local present = nil
   if needPresent then
     if not self.presentCanvas or self.presentCanvas:getWidth() ~= ww
@@ -943,6 +947,7 @@ function Renderer:endFrame(zones, worldZones)
       -- what remains here is the dpiX vs dpiY truncation gap (well under 1%,
       -- one seam across the window) that a single scalar dpiscale cannot
       -- express.
+      if self.presentCanvas and self.presentCanvas.release then self.presentCanvas:release() end
       self.presentCanvas = love.graphics.newCanvas(ww, wh)
       -- NEAREST, like every other surface in this pipeline.
       --
@@ -1393,7 +1398,7 @@ function Renderer:endFrame(zones, worldZones)
   end
 
   if present then
-    love.graphics.setCanvas()
+    GameViewport.setTarget()
     -- Post-process pipelines run over the finished composite -- world, UI
     -- and all -- and before GBC FX, so a blur or colour grade is what the
     -- LCD grid is then drawn over rather than something that smears the
@@ -1401,7 +1406,15 @@ function Renderer:endFrame(zones, worldZones)
     -- this returns `present` unchanged and the frame is byte-identical.
     local composed = Pipelines.present(present,
       { width = ww, height = wh, scale = Sp, dpi = dpiY, dpiX = dpiX, dpiY = dpiY }) or present
-    if GBCFX.active() then
+    local outputHandled = hasOutputHook and Output.draw({
+      canvas = composed, width = ww, height = wh,
+      gameX = ox, gameY = oy, gameWidth = vpw, gameHeight = vph,
+      scale = Sp, dpiX = dpiX, dpiY = dpiY,
+      generation = require("src.core.GameVersion").generation(),
+    })
+    if outputHandled then
+      -- The enabled owner presented the composed frame.
+    elseif GBCFX.active() then
       -- shader grid/shadow math is in framebuffer pixels
       GBCFX.present(composed, Sp)
     else
