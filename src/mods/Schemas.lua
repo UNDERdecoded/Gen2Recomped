@@ -268,13 +268,14 @@ end
 
 -- ------- cross-reference pass
 
+local NUMERIC_REFS = { pokemon = true, moves = true, items = true, trainers = true }
 local collectRefs
 collectRefs = function(t, value, path, out)
   if value == nil or value == Merge.DELETE then return end
   local kind = t.kind
   if kind == "opt" then return collectRefs(t.inner, value, path, out) end
   if kind == "id" then
-    if type(value) == "string" then
+    if type(value) == "string" or NUMERIC_REFS[t.registry] and type(value) == "number" and value > 0 then
       out[#out + 1] = { registry = t.registry, ref = value, path = path }
     end
     return
@@ -353,7 +354,7 @@ function Schemas.crossValidate(loader, data)
     end
   end
   for name, registry in pairs(loader.content) do
-    local spec = registry.spec
+    local spec = registry.referenceSpec or registry.spec
     for id in pairs(registry.ops) do
       local value = registry:get(id)
       if value ~= nil and registry.owners[id] ~= Schemas.ENGINE then
