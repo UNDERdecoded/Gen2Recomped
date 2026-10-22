@@ -370,9 +370,9 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
   -- ctx.lastCheck untouched -- the prompt never appears and the script reads
   -- the stale value as the answer.
   if opts and opts.choice then opts.auto = nil end
-  ctx.game.stack:push(TextBox.new(ctx.game, text, function()
-    runner:resume()
-  end, opts))
+  local onDone = function() runner:resume() end
+  if ctx.portableCallback then onDone = ctx.portableCallback(onDone) end
+  ctx.game.stack:push(TextBox.new(ctx.game, text, onDone, opts))
   runner:yield()
 end
 
@@ -554,7 +554,7 @@ function Commands.give_item(ctx, itemId, count, gotText)
   if not require("src.inventory.Bag").add(
       ctx.save, itemId, count or 1, ctx.game.data) then
     ctx.lastCheck = false
-    Commands.show_text(ctx, ctx.game.data.text
+    Commands.show_text(ctx, ctx.portableBagFullText or ctx.game.data.text
       and ctx.game.data.text._BagFullText or Strings("You can't carry\nany more items!"))
     return math.huge
   end
@@ -1221,21 +1221,24 @@ local function askNickname(ctx, mon)
   -- opts.choice (TextBox.lua): the YES/NO box rides over the still-visible
   -- question instead of a bare ChoiceBox popping up after an A press
   -- already cleared it (same fix as Commands.ask).
-  Commands.show_text(ctx, textId, subs, { choice = function(yes)
+  local choice = function(yes)
     if not yes then
       ctx.lastCheck = success
       runner:resume()
       return
     end
+    local onDone = function(nick)
+      if nick and #nick > 0 then mon.nickname = nick end
+      ctx.lastCheck = success
+      runner:resume()
+    end
+    if ctx.portableCallback then onDone = ctx.portableCallback(onDone) end
     Screens.push(ctx.game, "NamingScreen", {
-      title = Strings("NICKNAME?"), maxLen = 10,
-      onDone = function(nick)
-        if nick and #nick > 0 then mon.nickname = nick end
-        ctx.lastCheck = success
-        runner:resume()
-      end,
+      title = Strings("NICKNAME?"), maxLen = 10, onDone = onDone,
     })
-  end })
+  end
+  if ctx.portableCallback then choice = ctx.portableCallback(choice) end
+  Commands.show_text(ctx, textId, subs, { choice = choice })
 end
 
 -- give_pokemon <species> <level>: _GivePokemon (engine/events/
@@ -1265,6 +1268,7 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     ctx.game.mods.events:emit("pokemon.before_give", gift)
     species, level = gift.species, gift.level
   end
+  if ctx.portableAlive and not ctx.portableAlive() then return end
   local Pokemon = require("src.pokemon.Pokemon")
   local Party = require("src.pokemon.Party")
   local Boxes = require("src.pokemon.Boxes")
@@ -1314,6 +1318,17 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
   ctx.addedToParty = addedToParty
   require('src.pokemon.Gen4PoketchState').remember(ctx.game, mon)
   ctx.boxNum = boxNum
+  if ctx.portableGiftText and ctx.runner then
+    local wait = true
+    if not gift.nickname and not skipNickname then wait = false end
+    ctx.textOpts = ctx.textOpts or {}
+    ctx.textOpts.auto = {
+      sound = function() return require("src.core.Sound").play(ctx.game.data, "Get_Item1") end,
+      wait = wait,
+    }
+    Commands.show_text(ctx, ctx.game.data.text and ctx.game.data.text._GotMonText
+      or Strings("{PLAYER} received\n%s!", ctx.game.stringBuffer))
+  end
   -- AskName: both AddPartyMon and SendNewMonToBox; skip mod-set nicks
   -- and callback-style callers with no script runner to yield on.
   if not gift.nickname and not skipNickname and ctx.runner then

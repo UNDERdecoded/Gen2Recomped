@@ -1680,6 +1680,24 @@ local function requiredFiles(version)
   return REQUIRED_FILES_GEN1
 end
 
+-- Read-only metadata inspection shares the importer's exact format/hash gate.
+-- This descriptor does not read files, mount caches or touch active prefixes.
+function RomImporter.datasetContract(version)
+  local info = GameVersion.info(version)
+  if not info or info.generation > 3 then return nil end
+  local modules, seen = {}, {}
+  for _, path in ipairs(requiredFiles(version)) do
+    local name = path:match("^data/generated/(.+)%.lua$")
+    if name and not seen[name] then modules[#modules + 1] = name; seen[name] = true end
+  end
+  for _, name in ipairs({ "constants", "pokemon", "moves", "items", "maps",
+      "trainers", "encounters", "type_chart" }) do
+    if not seen[name] then modules[#modules + 1] = name; seen[name] = true end
+  end
+  table.sort(modules)
+  return { marker = markerFor(version), modules = modules }
+end
+
 local function gen2TilesetRegistryLooksValid(version)
   if GameVersion.generation(version) ~= 2 then return true end
   local CacheFs = require("src.import.CacheFs")
