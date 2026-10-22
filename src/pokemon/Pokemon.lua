@@ -467,10 +467,10 @@ function Pokemon.restorePP(mon, moves)
   end
 end
 
-function Pokemon.heal(mon)
+function Pokemon.heal(mon, moves)
   mon.hp = mon.stats.hp
   mon.status = nil
-  Pokemon.restorePP(mon)
+  Pokemon.restorePP(mon, moves)
 end
 
 function Pokemon.isFainted(mon)
