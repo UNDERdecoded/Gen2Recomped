@@ -144,7 +144,7 @@ end
 -- SHIELD DUST still refuses a doubled roll.
 local function sideChance(move, fallback, user, target)
   local own = move and tonumber(move.effectChance)
-  local base = (own and own > 0) and own or fallback
+  local base = (own and (own > 0 or move._api3EffectChance)) and own or fallback
   if user or target then
     base = require("src.battle.Abilities").secondaryOdds(user, target, base)
   end
