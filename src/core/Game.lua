@@ -1168,6 +1168,9 @@ function Game:_draw()
   if worldDrawn and self.overworld.sgbWorldZones then
     worldZones = self.overworld:sgbWorldZones()
   end
+  -- Keep shader controls readable even when a local shader paints black.
+  local top = self.stack:top()
+  Renderer.shaderPresetBypass = top and top.shaderPresetBypass or false
   local viewport = Renderer:endFrame(zones, worldZones)
   -- Persistent tool status is screen-space UI: draw it over the completed
   -- render pipeline with exact playfield/margin geometry, but below mobile
@@ -1346,6 +1349,14 @@ end
 
 function Game:keypressed(key)
   -- ...ahead of the delegation below, which is unconditional.
+  if key == "f8" then
+    require("src.render.ShaderPresets"):off()
+    if self.save and self.save.options then
+      self.save.options.shaderPreset = "off"
+      self:writeOptions()
+    end
+    return
+  end
   if key == "f9" then return self:unstick() end
   if key == "f11" then return self:toggleFrameProfile() end
   if key == "f10" then return self:toggleModManager() end
@@ -1859,6 +1870,7 @@ function Game:applyOptions(opts)
   -- after Tilt, so a persisted world pipeline can switch the tilt level it
   -- just restored back off (the two are mutually exclusive)
   require("src.render.Pipelines").applyOptions(opts)
+  require("src.render.ShaderPresets"):applyOptions(opts)
   require("src.render.Zoom").applyOptions(opts)
   require("src.render.TileRenderer").applyOptions(opts)
   -- returns true when a persisted GBC FX level was cleared on mobile
