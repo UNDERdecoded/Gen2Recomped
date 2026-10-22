@@ -12,6 +12,7 @@ local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
 local PixelCanvas = require("src.render.PixelCanvas")
 local Runtime = require("src.mods.Runtime")
+local Output = require("src.render.Output")
 
 -- RESOLVED ONCE, NOT EVERY FRAME.  These three were `require`d from inside
 -- beginFrame and endFrame -- three string hashes into package.loaded on every
@@ -929,8 +930,9 @@ function Renderer:endFrame(zones, worldZones)
                             and (self.battleWipe.style == "frlg_swirl"
                                  or self.battleWipe.needsSource)
                             and self.battleWipe.screenDraw
+  local hasOutputHook = Output.enabled()
   local needPresent = GBCFX.active() or Pipelines.wantsPresent()
-                      or battleNeedsSource
+                      or battleNeedsSource or hasOutputHook
   local present = nil
   if needPresent then
     if not self.presentCanvas or self.presentCanvas:getWidth() ~= ww
@@ -1401,7 +1403,15 @@ function Renderer:endFrame(zones, worldZones)
     -- this returns `present` unchanged and the frame is byte-identical.
     local composed = Pipelines.present(present,
       { width = ww, height = wh, scale = Sp, dpi = dpiY, dpiX = dpiX, dpiY = dpiY }) or present
-    if GBCFX.active() then
+    local outputHandled = hasOutputHook and Output.draw({
+      canvas = composed, width = ww, height = wh,
+      gameX = ox, gameY = oy, gameWidth = vpw, gameHeight = vph,
+      scale = Sp, dpiX = dpiX, dpiY = dpiY,
+      generation = require("src.core.GameVersion").generation(),
+    })
+    if outputHandled then
+      -- The enabled owner presented the composed frame.
+    elseif GBCFX.active() then
       -- shader grid/shadow math is in framebuffer pixels
       GBCFX.present(composed, Sp)
     else
