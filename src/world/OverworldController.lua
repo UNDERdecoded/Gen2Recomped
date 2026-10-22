@@ -14777,7 +14777,7 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
   self.arriveWarp = nil
   local fromId = self.map.id
   local fromSection = self.map.def and self.map.def.regionMapSection
-  Game.stack:push(Transition.new(Game, function()
+  local transition = Transition.new(Game, function()
     self:setMap(mapId, x, y, facing or "down", opts)
     self:noteGen2Spawn(fromId)
     -- FIRERED'S SIDE STAIRS (ExitStairsMovement): you land ON the stair tile
@@ -14967,7 +14967,15 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
     -- side, which is what the scripts already do.
     if self.player then self.player.inputLocked = false end
     if onDone then onDone() end
-  end))
+  end)
+  -- API 3 exposes the Gen 3 no-fade option. Reuse the exact native midpoint
+  -- and completion path; ordinary/native callers keep their existing fade.
+  if opts and opts.fade == false then
+    transition.onMidpoint()
+    transition.onDone()
+  else
+    Game.stack:push(transition)
+  end
 end
 
 -- Re-read a map record after its data changed (WorldAPI:invalidateMap,
