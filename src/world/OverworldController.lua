@@ -7007,6 +7007,12 @@ function OverworldState:npcAtCell(cx, cy)
   return nil
 end
 
+-- The continuation receives the original opaque world and NPC handles.
+-- Keep it outside interact so an unhooked A press allocates no closure.
+local function vanillaTalk(world, target)
+  world:talkTo(target)
+end
+
 -- what the A press resolved to, for world.interacted's listeners
 -- A LINE THE CARTRIDGE ITSELF PRINTS, named by the import rather than typed
 -- here.  `constants.gen3<name>` holds a TEXT_ key and the text pool holds the
@@ -7197,7 +7203,7 @@ function OverworldState:interact()
       -- rules, answered mid-step like the Pikachu above
       if not npc.hidden then require("src.world.HgssFollowMon").talk(Game, self, npc) end
     elseif not npc.moving then
-      self:talkTo(npc)
+      Runtime.call("world.talk", vanillaTalk, self, npc)
     end
     interacted(self, fx, fy, "npc", npc)
     return
@@ -11500,6 +11506,8 @@ function OverworldState:trainerDefeated(npc)
   return false
 end
 
+OverworldState.prepareTrainerBattle = require("src.battle.TrainerPreparation").prepare
+
 -- Run the pre-battle text -> battle -> won text -> flags sequence.
 function OverworldState:engageTrainer(npc, onDone)
   local d = npc.def
@@ -11514,7 +11522,7 @@ function OverworldState:engageTrainer(npc, onDone)
   local wonText = header and header.won and Game.data.text[header.won]
 
   local BattleState = require("src.battle.BattleState")
-  Game.stack:push(TextBox.new(Game, battleText, function()
+  local function startBattle(options)
     -- A TEAM THE AUTHOR BUILT WINS OVER AN INDEX INTO SOMEBODY ELSE'S.
     --
     -- `trainerParty` selects one of the parties the cartridge shipped for
@@ -11525,10 +11533,10 @@ function OverworldState:engageTrainer(npc, onDone)
     local battle
     if type(d.trainerTeam) == "table" and #d.trainerTeam > 0 then
       battle = BattleState.newEditorTrainer(Game, d.trainerTeam,
-                                            d.trainerClass, d.trainerName)
+                                            d.trainerClass, d.trainerName, options)
     end
     battle = battle or BattleState.newTrainer(Game, d.trainerClass,
-                                              d.trainerParty)
+                                              d.trainerParty, options)
     -- PrintEndBattleText (home/trainers.asm:341) is called from
     -- TrainerBattleVictory (engine/battle/core.asm:942), i.e. ON the battle
     -- screen once ScrollTrainerPicAfterBattle has brought the beaten trainer
@@ -11557,6 +11565,34 @@ function OverworldState:engageTrainer(npc, onDone)
       end
     end
     self:pushBattle(battle)
+  end
+  Game.stack:push(TextBox.new(Game, battleText, function()
+    local liveGame, liveSave, liveData, liveStack, liveSession = Game, Game.save, Game.data, Game.stack, Game.sessionStartedAt
+    local map, def = self.map, npc.def
+    local class, party, npcId, team = d.trainerClass, d.trainerParty, npc.id, d.trainerTeam
+    local wasEngaging = self.engaging
+    self.engaging = true
+    OverworldState.prepareTrainerBattle(Game, {
+      trainerClass = class, partyIndex = party or 1, mapId = map.id, npcId = npc.id,
+    }, function(options)
+      self.engaging = wasEngaging
+      startBattle(options)
+    end, function()
+      self.engaging = wasEngaging
+      self.spotHush = { cellX = self.player.cellX, cellY = self.player.cellY, [npc] = true }
+      if onDone then onDone() end
+    end, function()
+      if Game ~= liveGame or self.map ~= map or npc.id ~= npcId or npc.def ~= def
+        or d.trainerTeam ~= team or def.trainerClass ~= class
+        or def.trainerParty ~= party then return false end
+      for _, actor in ipairs(self.npcs or {}) do if actor == npc then return true end end
+      return false
+    end, function()
+      if Game == liveGame and Game.save == liveSave and Game.data == liveData
+        and Game.stack == liveStack and Game.sessionStartedAt == liveSession and self.map == map then
+        self.engaging, npc.frozen = false, false
+      end
+    end)
   end))
 end
 
