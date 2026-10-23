@@ -42,6 +42,7 @@ local Font = require("src.render.Font")
 local HudTiles = require("src.render.HudTiles")
 local PaletteFX = require("src.render.PaletteFX")
 local Runtime = require("src.mods.Runtime")
+local StatusHUDVisibility = require("src.battle.StatusHUDVisibility")
 local Strings = require("src.core.Strings")
 local TypeChart = require("src.battle.TypeChart")
 local GameVersion = require("src.core.GameVersion")
@@ -1440,17 +1441,18 @@ local function healthboxAt(battle, key, panel, fx, fy)
 end
 
 local function drawHUDs(battle, slide)
+  local showStatus = StatusHUDVisibility.forBattle(battle)
   local record = hudRecord(battle)
   local images = record and record.images or {}
   local double = battle.isDouble and battle:isDouble()
-  if not double and battle.enemy and not battle.showEnemyTrainer
+  if showStatus and not double and battle.enemy and not battle.showEnemyTrainer
       and not battle.enemySendingOut and not battle:growInScale(battle.enemy)
       and slide == 0 and not battle.introBalls and not battle.enemy.fainted then
     local x, y = healthboxAt(battle, "singlesOpponent",
                              hudImage(images.opponent), 8, 8)
     drawStatusPanel(battle, battle.enemy, x, y, false)
   end
-  if not double and not battle.safari and battle.player and not battle.demo
+  if showStatus and not double and not battle.safari and battle.player and not battle.demo
       and not battle.showPlayerBack and slide == 0 then
     local x, y = healthboxAt(battle, "singlesPlayer",
                              hudImage(images.player), 112, 64)
@@ -1467,7 +1469,7 @@ local function drawHUDs(battle, slide)
   -- The player's doubles panel is its own art too -- shorter, and with no
   -- EXP bar, which is why the cartridge ships five healthbox blobs and not
   -- two.
-  if double and slide == 0 then
+  if showStatus and double and slide == 0 then
     local pairs_ = {
       { pos = 0, key = "playerLeft",    img = images.player,        player = true },
       { pos = 2, key = "playerRight",   img = images.playerDoubles
