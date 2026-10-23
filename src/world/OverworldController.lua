@@ -7007,6 +7007,12 @@ function OverworldState:npcAtCell(cx, cy)
   return nil
 end
 
+-- The continuation receives the original opaque world and NPC handles.
+-- Keep it outside interact so an unhooked A press allocates no closure.
+local function vanillaTalk(world, target)
+  world:talkTo(target)
+end
+
 -- what the A press resolved to, for world.interacted's listeners
 -- A LINE THE CARTRIDGE ITSELF PRINTS, named by the import rather than typed
 -- here.  `constants.gen3<name>` holds a TEXT_ key and the text pool holds the
@@ -7197,7 +7203,7 @@ function OverworldState:interact()
       -- rules, answered mid-step like the Pikachu above
       if not npc.hidden then require("src.world.HgssFollowMon").talk(Game, self, npc) end
     elseif not npc.moving then
-      self:talkTo(npc)
+      Runtime.call("world.talk", vanillaTalk, self, npc)
     end
     interacted(self, fx, fy, "npc", npc)
     return

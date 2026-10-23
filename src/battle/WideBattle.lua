@@ -15,6 +15,8 @@ local Font = require("src.render.Font")
 local HudTiles = require("src.render.HudTiles")
 local PaletteFX = require("src.render.PaletteFX")
 local Runtime = require("src.mods.Runtime")
+local StatusHUDVisibility = require("src.battle.StatusHUDVisibility")
+local UIVisibility = require("src.battle.UIVisibility")
 local Strings = require("src.core.Strings")
 local TypeChart = require("src.battle.TypeChart")
 
@@ -224,7 +226,8 @@ local function drawIntroBalls(battle)
 end
 
 local function drawHUDs(battle, slide)
-  if battle.enemy and not battle.showEnemyTrainer
+  local showStatus = StatusHUDVisibility.forBattle(battle)
+  if showStatus and battle.enemy and not battle.showEnemyTrainer
       and not battle.enemySendingOut and not battle:growInScale(battle.enemy)
       and slide == 0 and not battle.introBalls and not battle.enemy.fainted then
     drawStatusPanel(battle, battle.enemy, 0, 0, false)
@@ -235,7 +238,7 @@ local function drawHUDs(battle, slide)
   -- item, not a HUD element (DisplayBattleMenu prints wNumSafariBalls inside
   -- the battle menu box, engine/battle/core.asm:2074-2079), so it rides in
   -- drawCommandMenu below like the classic layout's (#540).
-  if not battle.safari and battle.player and not battle.demo
+  if showStatus and not battle.safari and battle.player and not battle.demo
       and not battle.showPlayerBack and slide == 0 then
     -- WHERE THE PLAYER'S BLOCK SITS.  The framed panel was fifteen tiles
     -- wide and filled the corner; the Game Boy block is only four tiles plus
@@ -359,6 +362,7 @@ local function drawMoveMenu(battle)
 end
 
 local function drawTextArea(battle)
+  if not UIVisibility.bottomVisible(battle, true) then return end
   if battle.phase == "messages" and (battle.current or battle.animPlaying) then
     drawMessageBox(battle)
   elseif battle.phase == "menu" then
