@@ -433,7 +433,7 @@ OPS["count_usable_party_mons"] = function(vm, args)
   local party
   if b.isPlayer then
     party = battle.playerParty or (battle.game and battle.game.save
-                                   and battle.game.save.party)
+                                   and (battle.playerParty or battle.game.save.party))
   else
     party = battle.enemyParty
   end
