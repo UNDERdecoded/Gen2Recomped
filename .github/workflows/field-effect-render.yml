@@ -1,0 +1,55 @@
+name: portable Gen3 field effect render contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: field-effect-render-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtimes
+        run: sudo apt-get update && sudo apt-get install -y luajit love xvfb xauth
+      - name: Test observations and resource ownership
+        run: |
+          luajit tests/engine/field_effect_render_data.lua
+          luajit tests/engine/field_effect_resources.lua
+      - name: Compare both native engines through the same consumer
+        run: |
+          mkdir -p /tmp/field-effect-render-reports
+          python3 tools/field-effect-render-check/check.py --gen1 .contract-reference/gen1 \
+            --lua luajit --report /tmp/field-effect-render-reports/contract.json
+      - name: Compare native and public GPU pixels
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          export FIELD_RENDER_ROOT="$GITHUB_WORKSPACE"
+          for backend in gen2 gen1; do
+            export FIELD_RENDER_BACKEND="$backend"
+            if [ "$backend" = gen1 ]; then
+              cd "$GITHUB_WORKSPACE/.contract-reference/gen1"
+            else
+              cd "$GITHUB_WORKSPACE"
+            fi
+            for version in firered emerald; do
+              export FIELD_RENDER_VERSION="$version"
+              export FIELD_RENDER_REPORT="/tmp/field-effect-render-reports/$backend-$version.json"
+              xvfb-run -a love "$FIELD_RENDER_ROOT/tools/field-effect-render-check"
+            done
+          done
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: field-effect-render-contract
+          path: /tmp/field-effect-render-reports
+          if-no-files-found: ignore

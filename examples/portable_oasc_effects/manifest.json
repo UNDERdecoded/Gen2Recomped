@@ -1,0 +1,14 @@
+{
+  "id": "effect_reference",
+  "name": "Portable field effect render reference",
+  "version": "1.0.0",
+  "api": 2,
+  "entry": "main.lua",
+  "games": [
+    "gen3"
+  ],
+  "generations": [
+    3
+  ],
+  "affects_link": false
+}
