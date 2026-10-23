@@ -1,0 +1,10 @@
+{
+  "id": "portable_core_update",
+  "name": "Portable Frame Update",
+  "version": "1.0.0",
+  "api": 2,
+  "entry": "main.lua",
+  "games": ["all"],
+  "generations": [1, 2, 3, 4, 5],
+  "affects_link": false
+}
