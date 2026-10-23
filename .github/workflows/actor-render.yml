@@ -1,0 +1,47 @@
+name: portable Gen3 actor render contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: actor-render-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtimes
+        run: sudo apt-get update && sudo apt-get install -y luajit love xvfb xauth
+      - name: Test actor snapshots and resource ownership
+        run: |
+          luajit tests/engine/actor_render_data.lua
+          luajit tests/engine/actor_billboard_resources.lua
+      - name: Compare real loaders and resolved frame pixels
+        run: |
+          mkdir -p /tmp/actor-render-reports
+          python3 tools/actor-render-check/check.py --gen1 .contract-reference/gen1 \
+            --lua luajit --report /tmp/actor-render-reports/contract.json
+      - name: Real GPU comparison against native actor draws
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          ACTOR_RENDER_BACKEND: gen2
+          ACTOR_RENDER_VERSION: firered
+          ACTOR_RENDER_REPORT: /tmp/actor-render-reports/gpu.json
+          ACTOR_RENDER_SHOT: /tmp/actor-render-reports/gpu.png
+        run: |
+          export ACTOR_RENDER_ROOT="$GITHUB_WORKSPACE"
+          xvfb-run -a love tools/actor-render-check
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: actor-render-contract
+          path: /tmp/actor-render-reports
+          if-no-files-found: ignore

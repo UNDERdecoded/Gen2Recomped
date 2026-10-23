@@ -1,0 +1,10 @@
+{
+  "id": "actor_reference",
+  "name": "Portable actor render reference",
+  "version": "1.0.0",
+  "api": 2,
+  "entry": "main.lua",
+  "games": ["gen3"],
+  "generations": [3],
+  "affects_link": false
+}
