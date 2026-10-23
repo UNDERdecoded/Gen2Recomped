@@ -50,6 +50,12 @@ function FixedStep:update(dt)
   end
 end
 
+-- End only the current accelerated frame. Unlike discardCatchup, this must
+-- not suppress the next real-time frame after a speed lock becomes active.
+function FixedStep:endFrame()
+  self.accum = 0
+end
+
 -- Drop any pending catch-up steps and arm the one-frame clamp above.  A
 -- hitch inside one logic step (map seam setMap / song start) makes the
 -- next real-time dt huge; without this the while-loop above would advance

@@ -11,6 +11,7 @@ local BagMenu = {}
 
 local Bag = require("src.inventory.Bag")
 local Strings = require("src.core.Strings")
+local Runtime = require("src.mods.Runtime")
 
 -- The money line under the bag, with the cartridge's own sign -- Kanto's
 -- U+00A5 is the JAPANESE YEN KANJI in Platinum's font.  See
@@ -172,7 +173,7 @@ BagMenu.refreshCount = refreshCount
 -- the stack, so every exit that prints has to close it afterwards.  For
 -- every other item the picker popped itself first and closePicker's identity
 -- check makes it a no-op (#252).
-local function useOn(game, battle, id, target, list, moveIndex, picker)
+local function vanillaUseOn(game, battle, id, target, list, moveIndex, picker)
   -- HGSS: the party screen's own msg_0300 line for the item (src/ui/Gen4PartyText.lua)
   local PartyText = require("src.ui.Gen4PartyText")
   local g4Before = (not battle and target) and PartyText.snapshot(game, target) or nil
@@ -745,6 +746,16 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
   showMessages(game, payload, closePicker) -- failed
 end
 
+local function useOn(game, battle, id, target, list, moveIndex, picker)
+  -- Gen1's GB seam owns the entire effect/UI dispatch after target selection.
+  -- Its GBA field producer has a different tuple contract; do not advertise
+  -- this UI-shaped call as a producer for that generation.
+  if require("src.core.GameVersion").generation() == 1 then
+    return Runtime.call("item.use", vanillaUseOn, game, battle, id, target, list, moveIndex, picker)
+  end
+  return vanillaUseOn(game, battle, id, target, list, moveIndex, picker)
+end
+
 local function pickTargetAndUse(game, battle, id, list)
   -- pick a target from the party
   -- the ETHERs and PP UP open the move menu after picking a mon
@@ -1234,11 +1245,14 @@ function BagMenu.new(game, opts)
         options[#options + 1] = { label = Strings("QUIT"), onSelect = function() end }
       end
       local th = #options * 2 + 1
-      game.stack:push(Menu.new(game, options, gen2
+      local actions = Menu.new(game, options, gen2
         and { tx = 0, ty = 12 - th, tw = 7, th = th }
-        or { tx = 13, ty = 10, tw = 7, th = th }))
+        or { tx = 13, ty = 10, tw = 7, th = th })
+      actions.publicUIKind = "bag_actions"
+      game.stack:push(actions)
     end,
   })
+  list.publicUIKind, list.publicUIBattle = "bag", battle
   if gen2 then list.sgbPalettes = packPalettes end
   return list
 end
