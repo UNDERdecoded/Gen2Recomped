@@ -33,6 +33,7 @@
 -- screenshot.
 
 local Font = require("src.render.Font")
+local LevelDisplay = require("src.ui.LevelDisplay")
 local Logger = require("src.core.Logger")
 local Stats = require("src.pokemon.Stats")
 local Strings = require("src.core.Strings")
@@ -962,8 +963,10 @@ function Gen3SummaryMenu:drawHeader()
       if bandWin then
         local species = (def and def.name) or tostring(mon.species)
         putIn(bandWin, species, 0, 1, PLAIN)
-        putIn(bandWin, ("Lv%d"):format(mon.level or 1), PANEL_LEVEL_X, 17,
-              PLAIN)
+        if LevelDisplay.visible(mon, "summary", self.game) then
+          putIn(bandWin, ("Lv%d"):format(mon.level or 1), PANEL_LEVEL_X, 17,
+                PLAIN)
+        end
         local mark = self:genderMark()
         if mark then
           putIn(bandWin, mark, PANEL_GENDER_X, 17,
@@ -971,7 +974,9 @@ function Gen3SummaryMenu:drawHeader()
         end
       else
         local _, levelY = self:panelRows()
-        put(("Lv%d"):format(mon.level or 1), PANEL_TEXT_X + 24, levelY, PLAIN)
+        if LevelDisplay.visible(mon, "summary", self.game) then
+          put(("Lv%d"):format(mon.level or 1), PANEL_TEXT_X + 24, levelY, PLAIN)
+        end
       end
     end
     put(title, COL_RIGHT - Font.width(title), 4, PLAIN)
@@ -989,7 +994,9 @@ function Gen3SummaryMenu:drawHeader()
     return
   end
   put(name, 40, 10, PLAIN)
-  put(("Lv%d"):format(mon.level or 1), 40, 24, PLAIN)
+  if LevelDisplay.visible(mon, "summary", self.game) then
+    put(("Lv%d"):format(mon.level or 1), 40, 24, PLAIN)
+  end
   -- the page name sits on the right of the header, where the cartridge's
   -- page indicator is
   put(title, GBA_W - 8 - Font.width(title), 10, PLAIN)
@@ -1780,7 +1787,7 @@ function Gen3SummaryMenu:drawFireRed(r)
   frlgText(self.pages[self.page], 4, 1, header)
   if not mon then return end
   local t = r.text or {}
-  if not detail then
+  if not detail and LevelDisplay.visible(mon, "summary", self.game) then
     frlgText("Lv" .. tostring(mon.level or 1), 4, 18, header, true)
   end
   frlgText(mon.nickname or def.name or tostring(mon.species), 40, 18, header)
