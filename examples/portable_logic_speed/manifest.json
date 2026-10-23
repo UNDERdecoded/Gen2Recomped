@@ -1,0 +1,10 @@
+{
+  "id": "portable_logic_speed",
+  "name": "Portable Logic Speed",
+  "version": "1.0.0",
+  "api": 3,
+  "entry": "main.lua",
+  "games": ["all"],
+  "generations": [1, 2, 3, 4, 5],
+  "affects_link": false
+}
