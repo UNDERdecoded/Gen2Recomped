@@ -1,0 +1,45 @@
+name: portable GBA field item contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gba-item-use-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native GBA field flow and compatibility
+        run: |
+          luajit tests/engine/gba_field_item_use.lua
+          luajit tests/engine/item_use_dispatch.lua
+          luajit tests/engine/api3_compat.lua
+          luajit tests/engine/unified_mod_callbacks.lua
+      - name: Compare both engines in every SDK mode
+        run: |
+          mkdir -p /tmp/gba-item-use-contract
+          python3 tools/gba-item-use-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 1 --format native --report /tmp/gba-item-use-contract/api1-native.json
+          python3 tools/gba-item-use-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 2 --format native --report /tmp/gba-item-use-contract/api2-native.json
+          python3 tools/gba-item-use-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 2 --format unified --report /tmp/gba-item-use-contract/api2-unified.json
+          python3 tools/gba-item-use-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 3 --format unified --report /tmp/gba-item-use-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: gba-item-use-contract
+          path: /tmp/gba-item-use-contract
+          if-no-files-found: ignore

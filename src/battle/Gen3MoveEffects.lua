@@ -256,7 +256,7 @@ P.HEAL_BELL_EFFECT = function(battle, user)
   user.mon.status = nil
   user.toxicCounter = nil
   local party = user.isPlayer and battle.game and battle.game.save
-                and battle.game.save.party
+                and (battle.playerParty or battle.game.save.party)
   for _, mon in ipairs(party or {}) do mon.status = nil end
   return { Strings("A bell chimed!") }
 end
@@ -1006,7 +1006,7 @@ F.FUTURE_SIGHT_EFFECT = {
 F.BEAT_UP_EFFECT = {
   hitCount = function(ctx)
     local party = ctx.user.isPlayer and ctx.battle.game
-                  and ctx.battle.game.save and ctx.battle.game.save.party
+                  and ctx.battle.game.save and (ctx.battle.playerParty or ctx.battle.game.save.party)
     if not party then return 1 end
     local n = 0
     for _, mon in ipairs(party) do

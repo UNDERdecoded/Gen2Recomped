@@ -132,10 +132,13 @@ end
 -- the party itself.
 function Encounter.leadRateMod(data, save, weather)
   local lead = save and save.party and save.party[1]
-  if not lead then return nil end
-  local def = data and data.pokemon and data.pokemon[lead.species]
-  local n, d = require("src.battle.Abilities").encounterRateMod(lead, def,
-                                                                weather)
+  local def = lead and data and data.pokemon and data.pokemon[lead.species]
+  local n, d = 1, 1
+  if lead then n, d = require("src.battle.Abilities").encounterRateMod(lead, def, weather) end
+  if require("src.core.GameVersion").isGen3() and save then
+    if save.gen3Flute == "white" then n, d = n * 3, d * 2
+    elseif save.gen3Flute == "black" then d = d * 2 end
+  end
   if n == 1 and d == 1 then return nil end
   return { n, d }
 end
