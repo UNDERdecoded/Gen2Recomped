@@ -1,0 +1,39 @@
+name: Gen3 render data contract
+on:
+  pull_request:
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/gen3-render-contract/**'
+      - '.github/workflows/gen3-render-contract.yml'
+  push:
+    branches: [dev, main]
+    paths:
+      - 'src/**'
+      - 'tests/**'
+      - 'tools/gen3-render-contract/**'
+      - '.github/workflows/gen3-render-contract.yml'
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Check out pinned Gen1 reference
+        uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+          persist-credentials: false
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Compare the identical mod on both loaders
+        run: python3 tools/gen3-render-contract/check.py --gen1 .contract-reference/gen1 --report render-contract-report.json
+      - name: Upload contract provenance
+        uses: actions/upload-artifact@v7
+        with:
+          name: gen3-render-contract
+          path: render-contract-report.json
+          if-no-files-found: error
