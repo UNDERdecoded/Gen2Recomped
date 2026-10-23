@@ -1,0 +1,52 @@
+name: portable Gen3 world contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: portable-world-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtimes
+        run: sudo apt-get update && sudo apt-get install -y luajit love xvfb xauth
+      - name: Test independent pipeline boundary and adapter
+        run: |
+          luajit tests/engine/portable_world_context.lua
+          luajit tests/engine/portable_oasc_adapter.lua
+      - name: Compose pinned render-data dependency for the example
+        run: |
+          if [ ! -f src/mods/RenderData.lua ]; then
+            git fetch --no-tags https://github.com/Roxas2712/Gen2Recomped.git c33d4d397193e3b4ce30b8f7f4ea0cd995ee80c4
+            git cherry-pick --no-commit FETCH_HEAD
+          fi
+      - name: Compare both engine loaders and native compositor pixels
+        run: |
+          mkdir -p /tmp/portable-world-reports
+          python3 tools/portable-world-check/check.py --gen1 .contract-reference/gen1 \
+            --lua luajit --report /tmp/portable-world-reports/contract.json
+      - name: Real GPU readback through final renderer
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          OASC_WORLD_BACKEND: gen2
+          OASC_WORLD_API: '2'
+          OASC_WORLD_REPORT: /tmp/portable-world-reports/gpu.json
+        run: |
+          export OASC_WORLD_ROOT="$GITHUB_WORKSPACE"
+          xvfb-run -a love tools/portable-world-check
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: portable-world-contract
+          path: /tmp/portable-world-reports
+          if-no-files-found: ignore

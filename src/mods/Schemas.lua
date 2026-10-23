@@ -894,6 +894,9 @@ R.render_pipelines = {
     -- you hand back to the window, so a supersampled or low-res canvas is
     -- fine too -- but matching the pixel size is the one that is exact.
     drawWorld = f.opt(f.fn),
+    -- Explicit opt-in: detached Gen3 frame metrics instead of native state,
+    -- camera objects and FX closures. Existing pipelines retain their ctx.
+    worldFormat = f.opt(f.enum { "renderData.v1" }),
     -- (canvas, ctx) -> canvas: post-process the WORLD image, before the UI
     -- composites over it -- a depth-of-field or colour grade that must not
     -- touch the dialog boxes and menus sitting on top.  Only runs when some
