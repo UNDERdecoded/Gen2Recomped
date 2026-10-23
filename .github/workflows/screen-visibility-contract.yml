@@ -1,0 +1,45 @@
+name: portable screen.render_visible contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: screen-visibility-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native composition and input/update ownership
+        run: |
+          luajit tests/engine/screen_visibility.lua
+          luajit tests/engine/screen_visibility_routing.lua
+      - name: Compare native API 1 and 2
+        run: |
+          mkdir -p /tmp/screen-visibility-contract
+          python3 tools/screen-visibility-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 1 --report /tmp/screen-visibility-contract/api1-native.json
+          python3 tools/screen-visibility-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --report /tmp/screen-visibility-contract/api2-native.json
+      - name: Compare unified callbacks and API 3
+        run: |
+          python3 tools/screen-visibility-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --format unified --report /tmp/screen-visibility-contract/api2-unified.json
+          python3 tools/screen-visibility-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 3 --format unified --report /tmp/screen-visibility-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: screen-visibility-contract
+          path: /tmp/screen-visibility-contract
+          if-no-files-found: ignore

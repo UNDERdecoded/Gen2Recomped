@@ -609,7 +609,7 @@ end
 local function beatUp(G5)
   return F({ perform = function(ctx, rec)
     local battle, user, target, move = ctx.battle, ctx.user, ctx.target, ctx.move
-    local party = user.isPlayer and battle.game and battle.game.save and battle.game.save.party
+    local party = user.isPlayer and battle.game and battle.game.save and (battle.playerParty or battle.game.save.party)
                   or battle.enemyParty or {}
     local members = {}
     for _, mon in ipairs(party) do

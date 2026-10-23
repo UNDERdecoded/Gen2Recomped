@@ -404,8 +404,8 @@ end
 
 -- Public seam for mods (Stadium import, HD zip install, custom pickers).
 -- Same routing as options/saves: injected fs, then portable.io, then LOVE.
-function SaveData.persistenceFs()
-  return persistFs(love and love.filesystem)
+function SaveData.persistenceFs(injectedFs)
+  return persistFs(injectedFs or (love and love.filesystem))
 end
 
 -- Port + original Options menu defaults.  Missing keys on load are filled
@@ -597,6 +597,12 @@ function SaveData.saveOptions(opts, fs, gen)
   -- write cannot clobber another mod's persisted keys.  Every other
   -- option stays on the shallow path.
   local onDisk = readTable(fs, OPTIONS_FILENAME)
+  -- A pre-storage UI/settings snapshot has no identity map. Saving it must
+  -- not erase tool state allocated since that snapshot was taken. Engine
+  -- routing changes supply a table explicitly (including an empty table).
+  if onDisk and opts.playthroughIds == nil and type(onDisk.playthroughIds) == "table" then
+    opts.playthroughIds = onDisk.playthroughIds
+  end
   if onDisk and type(onDisk.modOptions) == "table" then
     local merged = {}
     for modId, bucket in pairs(onDisk.modOptions) do
@@ -853,6 +859,8 @@ local function tryMigrateLegacy(version, fs)
   local opts = SaveData.loadOptions(fs)
   opts.saveSlots = opts.saveSlots or {}
   opts.saveSlots[version] = { list = { id }, active = id }
+  local ids = opts.playthroughIds and opts.playthroughIds[version]
+  if ids and ids.legacy then ids[id], ids.legacy = ids.legacy, nil end
   SaveData.saveOptions(opts, fs)
   return id
 end
@@ -1131,11 +1139,14 @@ function SaveData.writeSlot(version, slotId, saveTable)
   if type(slotId) ~= "string" then return false, "missing slot id" end
   if type(saveTable) ~= "table" then return false, "missing save table" end
   local main, bak = slotNames(version, slotId)
-  local encoded = SaveSerializer.encode(saveTable)
   local fs = persistFs(nil)
+  saveTable = require("src.core.PlaythroughIdentity").prepareSlot(saveTable, version, slotId, fs)
+  local encoded = SaveSerializer.encode(saveTable)
   ensureParentDir(fs, main)
   -- atomic, previous good copy kept (SaveData.commitSave)
-  return SaveData.commitSave(fs, main, bak, encoded, saveTable)
+  local ok, err = SaveData.commitSave(fs, main, bak, encoded, saveTable)
+  if ok then require("src.core.PlaythroughIdentity").remember(saveTable, fs, slotId, version) end
+  return ok, err
 end
 
 -- Delete a registered slot: remove its main/.bak/.tmp files, drop it from the
@@ -1174,6 +1185,8 @@ function SaveData.deleteSlot(version, slotId)
     end
   end
 
+  local ids = opts.playthroughIds and opts.playthroughIds[version]
+  if ids then ids[slotId] = nil end
   table.remove(reg.list, idx)
   if reg.names then reg.names[slotId] = nil end
   if reg.active == slotId then
@@ -1192,6 +1205,14 @@ end
 function SaveData.resetSlotState()
   for k in pairs(activeSlotCache) do activeSlotCache[k] = nil end
   for k in pairs(slotsChecked) do slotsChecked[k] = nil end
+end
+
+-- Internal identity routing follows this process's resolved save destination.
+-- A different launcher window can change options without moving this game.
+function SaveData._storageSlot(version, fs)
+  if fs == persistFs(nil) and slotsChecked[version] then
+    return activeSlotCache[version] or "legacy"
+  end
 end
 
 -- ------- meta
@@ -1216,6 +1237,7 @@ function SaveData.buildMeta(mods, previous)
     engine = Version.engine,
     savedAt = os.time(),
     mods = list,
+    playthroughId = type(previous) == "table" and previous.playthroughId or nil,
   }
 end
 
@@ -1719,7 +1741,11 @@ function SaveData.save(data, mods)
   -- write to the file matching this save's own version, not just the active
   -- one, so Blue/Yellow playthroughs land in save_blue.lua / save_yellow.lua
   local FILENAME, BACKUP_FILENAME = saveNames(data.version)
+  local identity = require("src.core.PlaythroughIdentity")
+  local fs = persistFs(nil)
+  identity.inherit(data, fs)
   if data.options then
+    identity.preserveOptions(data.options, fs)
     SaveData.saveOptions(data.options)
   end
   if mods ~= nil or data.meta == nil then
@@ -1732,7 +1758,6 @@ function SaveData.save(data, mods)
     end
     return SaveSerializer.encode(gameOnly)
   end
-  local fs = persistFs(nil)
   -- the active slot may live in saves/<version>/, which must exist before
   -- the .tmp/.bak/main writes land (a no-op for the flat legacy path)
   ensureParentDir(fs, FILENAME)
@@ -1741,6 +1766,7 @@ function SaveData.save(data, mods)
     Logger.error("save failed: %s", tostring(err))
     return false
   end
+  identity.remember(data, fs)
   markOpen(fs, FILENAME)
   Logger.info("saved game")
   return true
@@ -1802,6 +1828,7 @@ function SaveData.load(version)
   loadedWalkerKeys[FILENAME] = SaveSafety.walkerKeys(data)
   markOpen(fs, FILENAME)
   SaveData.runMigrations(data)
+  require("src.core.PlaythroughIdentity").inherit(data, fs)
   data.options = SaveData.optionsFor(version)
   Logger.info("loaded save")
   return data, recovered
@@ -2570,7 +2597,20 @@ function SaveData.newGame(boot)
   --
   -- Callers that ARE starting a playthrough pass nothing and are unaffected.
   if boot.noHooks then return save end
-  return Runtime.call("save.new_game", function(s) return s end, save)
+  save = Runtime.call("save.new_game", function(s) return s end, save)
+  require("src.core.PlaythroughIdentity").markFresh(save)
+  return save
+end
+
+-- Engine-owned persistence scope used by the portable storage facade.
+function SaveData.ensurePlaythroughId(save, fs)
+  return require("src.core.PlaythroughIdentity").ensure(save, persistFs(fs))
+end
+function SaveData.selectedPlaythroughId(save, fs)
+  return require("src.core.PlaythroughIdentity").selected(save, persistFs(fs))
+end
+function SaveData.selectedNormalSaveInfo(save, fs)
+  return require("src.core.PlaythroughIdentity").normalInfo(save, persistFs(fs))
 end
 
 return SaveData

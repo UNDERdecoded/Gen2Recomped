@@ -1545,7 +1545,7 @@ end })
 DEF.BW_BEAT_UP = F({
   hitCount = function(ctx)
     local party = ctx.user.isPlayer and ctx.battle.game and ctx.battle.game.save
-                  and ctx.battle.game.save.party or ctx.battle.enemyParty
+                  and (ctx.battle.playerParty or ctx.battle.game.save.party) or ctx.battle.enemyParty
     local n = 0
     for _, mon in ipairs(party or {}) do
       if (mon.hp or 0) > 0 and not mon.status then n = n + 1 end
@@ -1708,7 +1708,7 @@ end })
 local function benchOf(battle, b)
   local out = {}
   if b.isPlayer then
-    local party = battle.game and battle.game.save and battle.game.save.party or {}
+    local party = battle.game and battle.game.save and (battle.playerParty or battle.game.save.party) or {}
     for _, mon in ipairs(party) do
       if mon ~= b.mon and (mon.hp or 0) > 0 and not mon.isEgg and not mon.egg then
         local onField = false
@@ -2105,7 +2105,7 @@ DEF.BW_REFRESH = P({ run = enginePrimary("REFRESH_EFFECT") })
 DEF.BW_HEAL_BELL = P({ run = function(ctx)
   local battle, user = ctx.battle, ctx.user
   user.mon.status, user.toxicCounter = nil, nil
-  local party = user.isPlayer and battle.game and battle.game.save and battle.game.save.party
+  local party = user.isPlayer and battle.game and battle.game.save and (battle.playerParty or battle.game.save.party)
                 or battle.enemyParty
   for _, mon in ipairs(party or {}) do mon.status = nil end
   return { T.std(battle, ctx.move.id == 312 and "aroma" or "bell") }
@@ -2490,7 +2490,7 @@ DEF.BW_METRONOME = F({ callsMove = function(ctx)
 end })
 DEF.BW_ASSIST = F({ callsMove = function(ctx)
   local battle, u = ctx.battle, ctx.user
-  local party = u.isPlayer and battle.game and battle.game.save and battle.game.save.party or battle.enemyParty
+  local party = u.isPlayer and battle.game and battle.game.save and (battle.playerParty or battle.game.save.party) or battle.enemyParty
   local pool = {}
   for _, mon in ipairs(party or {}) do
     if mon ~= u.mon then
