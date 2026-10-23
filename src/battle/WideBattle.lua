@@ -15,6 +15,7 @@ local Font = require("src.render.Font")
 local HudTiles = require("src.render.HudTiles")
 local PaletteFX = require("src.render.PaletteFX")
 local Runtime = require("src.mods.Runtime")
+local UIVisibility = require("src.battle.UIVisibility")
 local Strings = require("src.core.Strings")
 local TypeChart = require("src.battle.TypeChart")
 
@@ -359,6 +360,7 @@ local function drawMoveMenu(battle)
 end
 
 local function drawTextArea(battle)
+  if not UIVisibility.bottomVisible(battle, true) then return end
   if battle.phase == "messages" and (battle.current or battle.animPlaying) then
     drawMessageBox(battle)
   elseif battle.phase == "menu" then
