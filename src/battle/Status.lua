@@ -313,13 +313,34 @@ function Status.residual(battler, opponent, battle)
   -- mon had already moved, drop the flag before it leaks into next turn
   battler.skipMove = nil
   if mon.hp <= 0 then return msgs end
+  local gba = require("src.core.GameVersion").isGen3()
+  local seedSource
+  if gba and battler.leechSeeded then
+    local source = battler.leechSeedSource or opponent
+    -- Resolve the slot again: a switched-out seeder does not receive HP.
+    if source and source.position ~= nil and battle.battlerAt then
+      source = battle:battlerAt(source.position)
+    elseif source and source.isPlayer ~= nil then
+      source = source.isPlayer and battle.player or battle.enemy
+    end
+    if source and source.mon.hp > 0 then
+      local dmg = math.min(mon.hp, math.max(1, math.floor(mon.stats.hp / 8)))
+      mon.hp = mon.hp - dmg
+      if require("src.battle.Abilities").of(battler) == "LIQUID_OOZE" then
+        source.mon.hp = math.max(0, source.mon.hp - dmg)
+        if source.mon.hp == 0 then seedSource = source end
+      else source.mon.hp = math.min(source.mon.stats.hp, source.mon.hp + dmg) end
+      msgs[#msgs + 1] = Strings("LEECH SEED saps\n%s!", name(battler))
+    end
+  end
+  if mon.hp <= 0 then return msgs, seedSource end
   local record = Status.recordFor(battleStatuses(battle), mon.status)
   if record and record.residual then
     for _, m in ipairs(record.residual(battler, opponent, battle) or {}) do
       msgs[#msgs + 1] = m
     end
   end
-  if battler.leechSeeded and mon.hp > 0 and opponent.mon.hp > 0 then
+  if not gba and battler.leechSeeded and mon.hp > 0 and opponent.mon.hp > 0 then
     -- the shared Toxic counter multiplies (and advances on) the seed
     -- drain too -- the Gen 1 Leech Seed glitch
     -- (HandlePoisonBurnLeechSeed_DecreaseOwnHP)
@@ -333,7 +354,7 @@ function Status.residual(battler, opponent, battle)
     opponent.mon.hp = math.min(opponent.mon.stats.hp, opponent.mon.hp + dmg)
     table.insert(msgs, Strings("LEECH SEED saps\n%s!", name(battler)))
   end
-  return msgs
+  return msgs, seedSource
 end
 
 return Status

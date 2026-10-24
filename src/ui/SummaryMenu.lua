@@ -13,6 +13,7 @@
 -- go, and one of four lines about how close it is to hatching.
 
 local Font = require("src.render.Font")
+local LevelDisplay = require("src.ui.LevelDisplay")
 -- status_screen.asm PrintMonType prints the type's DISPLAY name from the
 -- TypeNames table, not the constant: species types are stored as pokered
 -- constants (RomExtractor:typesById) and PSYCHIC's is "PSYCHIC_TYPE" (so it
@@ -148,6 +149,7 @@ function SummaryMenu.new(game, mon, opts)
   -- SaveData.validate has run over a loaded save, but this is the site the
   -- original recomputes at, and it also covers a mon handed in by a mod.
   Stats.ensure(game.data.pokemon[mon.species], mon)
+  require("src.pokemon.Pokemon").syncIdentity(game.data, mon)
   local self = setmetatable({
     game = game,
     mon = mon,
@@ -359,7 +361,9 @@ function SummaryMenu:drawGen2Header()
   HudTiles.statusTile(0x74, 64, 0) -- №
   Font.drawCode(0xF2, 72, 0)       -- <DOT>
   Font.draw(("%03d"):format(def.dex or 0), 80, 0)
-  printLevel(14, 0, mon.level)
+  if LevelDisplay.visible(mon, "summary", self.game) then
+    printLevel(14, 0, mon.level)
+  end
   local gender = require("src.pokemon.DayCare").gender(data, mon)
   if gender == "male" or gender == "female" then
     Font.draw(gender == "male" and "♂" or "♀", 144, 0)
@@ -445,8 +449,10 @@ function SummaryMenu:drawGen2PinkPage()
   local nextExp = (mon.level or 1) < 100
     and (Growth.expForLevel(def.growthRate, mon.level + 1) - (mon.exp or 0)) or 0
   rightAlign(("%d"):format(math.max(0, nextExp)), 160, 104)
-  Font.draw(Strings("TO"), 112, 112)
-  printLevel(17, 14, math.min(100, (mon.level or 1) + 1))
+  if LevelDisplay.visible(mon, "summary", self.game) then
+    Font.draw(Strings("TO"), 112, 112)
+    printLevel(17, 14, math.min(100, (mon.level or 1) + 1))
+  end
 
   -- FillInExpBar between the $40/$41 end caps, its RIGHT edge pinned at
   -- column 18 and the bar growing leftward from there: eight tiles from
@@ -583,7 +589,9 @@ function SummaryMenu:draw()
     -- bracket around the name/HP block, and PrintLevel at (14,2).  The
     -- level belongs to page 1 ONLY: StatusScreen2 opens with ClearScreenArea
     -- over (9,2) 5x10 (status_screen.asm:303-305), which wipes it. #280
-    printLevel(14, 2, mon.level)
+    if LevelDisplay.visible(mon, "summary", self.game) then
+      printLevel(14, 2, mon.level)
+    end
     drawLineBox(19, 1, 6, 10)
     -- same as the pink page above: the HP palette covers the whole screen, so
     -- the fill stays grey and the zone pass colours it
@@ -641,8 +649,10 @@ function SummaryMenu:draw()
     local nextExp = mon.level < 100
       and (Growth.expForLevel(def.growthRate, mon.level + 1) - mon.exp) or 0
     Font.draw(("%7d"):format(math.max(0, nextExp)), 56, 48)
-    HudTiles.statusTile(0x70, 112, 48) -- '<to>' at (14,6), was missing (#280)
-    printLevel(16, 6, math.min(100, mon.level + 1))
+    if LevelDisplay.visible(mon, "summary", self.game) then
+      HudTiles.statusTile(0x70, 112, 48) -- '<to>' at (14,6), was missing (#280)
+      printLevel(16, 6, math.min(100, mon.level + 1))
+    end
     -- Gen2's stats screen carries the same exp bar the battle HUD does
     -- (stats_screen.asm calls FillInExpBar too).  It lands on DrawLineBox's
     -- bottom run, which is exactly the eight tiles PlaceExpBar writes.

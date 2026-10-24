@@ -1,0 +1,1 @@
+{"id": "portable_live_maps", "name": "Portable live-map lifecycle", "version": "1.0.0", "api": 3, "games": ["all"], "entry": "main.lua", "affects_link": false}

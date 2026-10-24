@@ -332,8 +332,8 @@ end
 function TrainerAI.chooseMove(battler, rng, battle)
   rng = rng or love.math.random
   -- Gen 1: SelectEnemyMove never consults wEnemyMonPP; Struggle only when
-  -- every move slot is missing/disabled (core.asm:2957-2999). modern_clean
-  -- depletes enemy PP and falls back to Struggle when none remain.
+  -- every move slot is missing/disabled (core.asm:2957-2999). Finite-PP
+  -- rulesets (including the Gen-2 default) fall back to Struggle when empty.
   local unlimited = battle and battle.ruleset and battle.ruleset.enemyUnlimitedPP
   local usable = {}
   for i, mv in ipairs(battler.curMoves) do

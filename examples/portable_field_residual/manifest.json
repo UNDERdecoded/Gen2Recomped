@@ -1,0 +1,8 @@
+{
+  "id": "portable_field_residual",
+  "name": "Portable Field Residual",
+  "version": "1.0.0",
+  "api": 3,
+  "games": ["gen1", "gen2", "gen3"],
+  "entry": "main.lua"
+}

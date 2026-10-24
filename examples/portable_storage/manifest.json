@@ -1,0 +1,1 @@
+{"id": "portable_storage", "name": "Portable playthrough storage", "version": "1.0.0", "api": 3, "games": ["all"], "entry": "main.lua"}

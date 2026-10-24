@@ -125,6 +125,7 @@ function ScriptRunner:run(script, extra)
   end
   self.co = coroutine.create(function()
     self:exec(script, ctx)
+    if ctx.trainerPreparationCancelled then return end
     -- Commands can defer a game action until the script's own dialogue is
     -- done. start_battle uses this for win-path evolutions, which must not
     -- be covered by post-battle trainer text.
@@ -251,6 +252,10 @@ function ScriptRunner:exec(script, ctx)
         if ok then
           jump = result
         else
+          if result == require("src.battle.TrainerPreparation").CANCEL_SCRIPT then
+            self:cancelTrainerPreparation(ctx, self.co)
+            return
+          end
           Logger.error("script: command '%s' failed at row %d (skipped): %s",
                        tostring(name), pc, tostring(result))
           jump = nil
@@ -275,6 +280,22 @@ function ScriptRunner:exec(script, ctx)
   end
 end
 
+-- Retire only the coroutine that owns this admission; cancellation is not a
+-- native battle outcome and must never reach post-win script rows/callbacks.
+function ScriptRunner:cancelTrainerPreparation(ctx, co, silent)
+  if self.ctx ~= ctx or self.co ~= co or not co then return false end
+  ctx.trainerPreparationCancelled = true
+  ctx.lastCheck, ctx.lastBattleResult = false, "cancel"
+  self.co, self.waitingFrames, self.waitingCheck = nil, nil, nil
+  if silent then return true end
+  if ctx.g3Locked and Commands.g3_release then Commands.g3_release(ctx) end
+  if ctx.g4Locked and Commands.g4_release_all then Commands.g4_release_all(ctx) end
+  if ctx.g3FadedOut then require("src.script.Gen3Commands").restoreFade(ctx) end
+  if ctx.onDone then ctx.onDone() end
+  Runtime.emit("script.ended", { ctx = ctx, completed = false })
+  return true
+end
+
 -- Called by blocking commands from inside the coroutine.
 function ScriptRunner:yield()
   return coroutine.yield()
@@ -294,6 +315,10 @@ function ScriptRunner:resume(...)
   end
   local ok, err = coroutine.resume(co, ...)
   if not ok then
+    if err == require("src.battle.TrainerPreparation").CANCEL_SCRIPT then
+      self:cancelTrainerPreparation(self.ctx, co)
+      return
+    end
     local source = self.ctx and self.ctx.source
     local where = source
       and Strings(" [%s %s.%s]", tostring(source.modId or "engine"),
