@@ -32,6 +32,7 @@ local REGISTRANTS = {
   { name = "tokens", from = "src.render.TextBox" },
   -- plain data files with no owning module: registered from here
   { name = "rulesets", modules = { "src.battle.rulesets.gen1_faithful",
+                                   "src.battle.rulesets.gen2_finite_pp",
                                    "src.battle.rulesets.modern_clean",
                                    "src.battle.rulesets.gen3_emerald",
                                    "src.battle.rulesets.gen4_platinum" },

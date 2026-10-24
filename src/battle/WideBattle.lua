@@ -12,9 +12,12 @@
 -- prompt/command window, and a 2x2 move menu with an attached PP/type panel.
 
 local Font = require("src.render.Font")
+local LevelDisplay = require("src.ui.LevelDisplay")
 local HudTiles = require("src.render.HudTiles")
 local PaletteFX = require("src.render.PaletteFX")
 local Runtime = require("src.mods.Runtime")
+local StatusHUDVisibility = require("src.battle.StatusHUDVisibility")
+local UIVisibility = require("src.battle.UIVisibility")
 local Strings = require("src.core.Strings")
 local TypeChart = require("src.battle.TypeChart")
 
@@ -86,7 +89,9 @@ end
 local function levelAt(battle, battler, x, y)
   if battler.shownStatus then
     Font.draw(battle:statusLabel({ status = battler.shownStatus }), x, y)
-  else
+  elseif LevelDisplay.visible(battler.mon,
+      (battler.isPlayer == true or battler == battle.player) and "battle.player" or "battle.enemy",
+      battle.game) then
     HudTiles.tile(0x6E, x, y) -- '<LV>'
     Font.draw(tostring(battler.mon.level), x + 8, y)
   end
@@ -162,7 +167,16 @@ local function drawGen2Panel(battle, battler, x, y, player, gray)
     end
     HudTiles.tile(0x6F, x, y + 32)
   else
-    Font.draw(fitName(battler.name, 80), nameX(x + 8, battler.name), y)
+    local nx = nameX(x + 8, battler.name)
+    local width = Font.draw(fitName(battler.name, 80), nx, y)
+    if require("src.battle.CaughtMarker").forBattle(battle, battler) then
+      if require("src.core.GameVersion").isGen2() then
+        HudTiles.tile(0x5d, x + 8, y + 8)
+      else
+        battle:drawCaughtBall(nx + width, y)
+      end
+      love.graphics.setColor(0, 0, 0, 1)
+    end
     levelAt(battle, battler, x + 32, y + 8)
     HudTiles.tile(0x73, x + 8, y + 16)
     HudTiles.drawHPBar(data, tx + 2, ty + 2, bar, nil, gray)
@@ -224,7 +238,8 @@ local function drawIntroBalls(battle)
 end
 
 local function drawHUDs(battle, slide)
-  if battle.enemy and not battle.showEnemyTrainer
+  local showStatus = StatusHUDVisibility.forBattle(battle)
+  if showStatus and battle.enemy and not battle.showEnemyTrainer
       and not battle.enemySendingOut and not battle:growInScale(battle.enemy)
       and slide == 0 and not battle.introBalls and not battle.enemy.fainted then
     drawStatusPanel(battle, battle.enemy, 0, 0, false)
@@ -235,7 +250,7 @@ local function drawHUDs(battle, slide)
   -- item, not a HUD element (DisplayBattleMenu prints wNumSafariBalls inside
   -- the battle menu box, engine/battle/core.asm:2074-2079), so it rides in
   -- drawCommandMenu below like the classic layout's (#540).
-  if not battle.safari and battle.player and not battle.demo
+  if showStatus and not battle.safari and battle.player and not battle.demo
       and not battle.showPlayerBack and slide == 0 then
     -- WHERE THE PLAYER'S BLOCK SITS.  The framed panel was fifteen tiles
     -- wide and filled the corner; the Game Boy block is only four tiles plus
@@ -359,6 +374,7 @@ local function drawMoveMenu(battle)
 end
 
 local function drawTextArea(battle)
+  if not UIVisibility.bottomVisible(battle, true) then return end
   if battle.phase == "messages" and (battle.current or battle.animPlaying) then
     drawMessageBox(battle)
   elseif battle.phase == "menu" then

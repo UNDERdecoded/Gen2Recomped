@@ -1,0 +1,39 @@
+{
+  "profiles": {
+    "emerald": {
+      "tables": [],
+      "text": {
+        "gMenuText_Give": 6196436,
+        "gText_Cancel": 6196464,
+        "gText_Cancel2": 6196471,
+        "gText_Enter": 6198980,
+        "gText_Item": 6196491,
+        "gText_NoEntry": 6198986,
+        "gText_SendOut": 6198950,
+        "gText_Shift": 6198944,
+        "gText_Store": 6196506,
+        "gText_Summary5": 6198966,
+        "gText_Switch2": 6198959,
+        "gText_Take": 6196501,
+        "gText_Take2": 6198995
+      }
+    },
+    "firered": {
+      "tables": {
+        "sCursorOptions": {
+          "addr": 4564504,
+          "count": 30,
+          "name": "sCursorOptions",
+          "stride": 8
+        }
+      },
+      "text": {
+        "gFameCheckerText_Cancel": 4284865,
+        "gOtherText_Give": 4284850,
+        "gText_Withdraw": 4290741,
+        "gText_WithdrawItem": 4290727
+      }
+    }
+  },
+  "reference_ref": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91"
+}

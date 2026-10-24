@@ -40514,6 +40514,35 @@ function RomExtractorGen3.signedByte(v)
   return v > 127 and (v - 256) or v
 end
 
+-- Retain the native effect bytes as well as the existing parsed medicine
+-- view. Battle AI reads individual X-item bits and raw sentinel amounts.
+-- Multiple EV arguments each consume a byte; the two PP bits share one.
+function RomExtractorGen3.itemEffectBytes(rom, at)
+  assert(type(at) == "number" and at % 1 == 0 and at >= 0, "invalid item effect offset")
+  local bytes = {}
+  for i = 0, 5 do
+    local value = rom:u8(at + i)
+    assert(type(value) == "number" and value % 1 == 0 and value >= 0 and value <= 255,
+      "truncated item effect header")
+    bytes[i + 1] = value
+  end
+  local function bits(value)
+    local count = 0
+    while value > 0 do count, value = count + value % 2, math.floor(value / 2) end
+    return count
+  end
+  local e4, e5 = bytes[5], bytes[6]
+  local count = bits(e4 % 8) + (math.floor(e4 / 8) % 4 ~= 0 and 1 or 0)
+    + bits(e5 % 16) + bits(math.floor(e5 / 32))
+  for i = 1, count do
+    local value = rom:u8(at + 5 + i)
+    assert(type(value) == "number" and value % 1 == 0 and value >= 0 and value <= 255,
+      "truncated item effect arguments")
+    bytes[#bytes + 1] = value
+  end
+  return bytes
+end
+
 function RomExtractorGen3:extractItemEffects()
   self:beginStage("Gen3 item effects")
   local E = RomExtractorGen3.ITEM_EFFECTS
@@ -40535,7 +40564,8 @@ function RomExtractorGen3:extractItemEffects()
       local b = {}
       for i = 0, 5 do b[i] = rom:u8(at + i) end
       local effect, arg, ok = { source = ("ROM:gItemEffectTable[%d] %08X")
-                                         :format(k, at + 0x08000000) }, E.ARGS_AT, true
+                                         :format(k, at + 0x08000000),
+                               bytes = RomExtractorGen3.itemEffectBytes(rom, at) }, E.ARGS_AT, true
 
       -- ---- the battle-only three, recorded and not run ------------------
       if b[0] % 0x40 ~= 0 or b[1] ~= 0 or b[2] ~= 0 then
@@ -43946,6 +43976,19 @@ function RomExtractorGen3:hudImage(raw, from, cols, rows, colors)
     end
   end
   return image
+end
+
+-- The dedicated 8x8 caught indicator from the validated healthbox sheet.
+function RomExtractorGen3:battleCaughtMarker(elementsAt, colors)
+  local rom = self.rom
+  if type(elementsAt) ~= "number" or elementsAt < 0 or not rom
+      or elementsAt + 71 * 32 > rom.size then return nil end
+  -- The bar/status scan intentionally ends after tile 65. Read tile 70
+  -- separately; extending that scan would change its end-of-sheet checks.
+  local raw = rom:bytes(elementsAt + 70 * 32, 32)
+  local path = "battle/hud/caught.png"
+  self:saveImage(self:hudImage(raw, 1, 1, 1, colors), path)
+  return "assets/generated/" .. path
 end
 
 -- The two OAM halves side by side, which is the panel as the player sees it.
@@ -49922,6 +49965,9 @@ function RomExtractorGen3:extractBattleHud()
     bars.label = "assets/generated/battle/hud/hp_label.png"
   end)
   local _ = okBars
+
+  -- B_INTERFACE_GFX_CAUGHT_BALL (tile 70) uses the healthbox palette.
+  images.caught = self:battleCaughtMarker(elementsAt, boxColors)
 
   -- WHERE INSIDE ITS OWN TILE THE EXP BAR ACTUALLY IS.
   --
