@@ -18445,7 +18445,7 @@ function OverworldState:drawBrailleBox()
   self.brailleQuads = self.brailleQuads or {}
   love.graphics.setColor(1, 1, 1, 1)
   for row, line in ipairs(wall.lines or {}) do
-    local y = wall.y * 8 + 8 + (row - 1) * lineHeight
+    local y = (wall.textY or (wall.y * 8 + 8)) + (row - 1) * lineHeight
     for col, value in ipairs(line) do
       local quad = self.brailleQuads[value]
       if not quad then
@@ -18455,7 +18455,7 @@ function OverworldState:drawBrailleBox()
                                      img:getWidth(), img:getHeight())
         self.brailleQuads[value] = quad
       end
-      love.graphics.draw(img, quad, wall.x * 8 + (col - 1) * advance, y)
+      love.graphics.draw(img, quad, (wall.textX or (wall.x * 8)) + (col - 1) * advance, y)
     end
   end
 end

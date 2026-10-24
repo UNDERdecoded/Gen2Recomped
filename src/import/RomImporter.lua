@@ -7758,6 +7758,9 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     -- what that costs: the game was hashed, recognised by setup, counted in
     -- "N of X ready" -- and had no way in.  The tab row showed eight tabs
     -- beside a counter that said nine.
+    { id = "ruby", letter = "R", top = PAL.chipFireRedTop,
+      bot = PAL.chipFireRedBot, under = PAL.chipFireRedTop,
+      label = Strings("RUBY"), ink = PAL.chipInkSilver },
     { id = "emerald", letter = "E", top = PAL.chipEmeraldTop,
       bot = PAL.chipEmeraldBot, under = PAL.chipEmeraldTop,
       label = Strings("EMERALD"), ink = PAL.chipInkSilver },

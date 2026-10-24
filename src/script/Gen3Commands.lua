@@ -4537,6 +4537,13 @@ Gen3Commands.MAUVILLE = {
   RED_V2 = 0x249,
 }
 
+-- RS has three switches at its own ROM coordinates; Emerald has four.
+-- Keep the default unchanged for existing imports without this metadata.
+function Gen3Commands.mauvilleProfile(ctx)
+  local constants = ctx.game and ctx.game.data and ctx.game.data.constants
+  return constants and constants.gen3MauvilleGym or Gen3Commands.MAUVILLE
+end
+
 -- metatile -> { metatile it becomes, impassable }
 local MAUVILLE_TOGGLE = {
   [0x220] = { 0x230, false }, [0x221] = { 0x231, false },   -- green H, on
@@ -4591,7 +4598,7 @@ end
 local function mauvilleSweep(ctx, table_, floorCase)
   local map = mauvilleMap(ctx, "the barrier sweep")
   if not map then return 0 end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   local changed = 0
   for y = M.Y0, M.Y1 do
     for x = M.X0, M.X1 do
@@ -4674,7 +4681,7 @@ Gen3Commands.MAUVILLE_SOLID = {
 function Gen3Commands.mauvilleAssert(ctx, why)
   local map = mauvilleMap(ctx, why)
   if not (map and map.setCellShut and map.cellCollision) then return 0 end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   local fixed, first = 0, nil
   for y = M.Y0, M.Y1 do
     for x = M.X0, M.X1 do
@@ -4701,7 +4708,7 @@ end
 function Gen3Commands.mauvilleReport(ctx, why)
   local map = ctx.overworld and ctx.overworld.map
   if not (map and map.blockAt and map.cellCollision) then return end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   Logger.debug("mauville gym: %s -- window x%d..%d y%d..%d",
                tostring(why), M.X0, M.X1, M.Y0, M.Y1)
   for y = M.Y0, M.Y1 do
@@ -4719,7 +4726,7 @@ end
 Gen3Commands.SPECIALS[143] = function(ctx)
   local map = mauvilleMap(ctx, "MauvilleGymPressSwitch")
   if not map then return end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   local pressed = tonumber(getVar(ctx.save, 0x8004))
   -- 0x8004 IS THE WHOLE ARGUMENT, and a nil one presses nothing: every
   -- switch comes up raised and the room looks untouched.  The four coord
@@ -4763,7 +4770,7 @@ end
 Gen3Commands.SPECIALS[147] = function(ctx)
   local map = mauvilleMap(ctx, "MauvilleGymDeactivatePuzzle")
   if not map then return end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   for _, at in ipairs(M.SWITCHES) do
     map:setBlock(at[1], at[2], M.PRESSED_SWITCH, false)
   end

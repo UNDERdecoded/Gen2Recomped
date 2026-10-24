@@ -3902,6 +3902,7 @@ function RomExtractorGen3:extractConstants()
     self:layoutValue("abilityNameLength", 13), numAbilities, "constants")
 
   local constants = { source = "ROM:Emerald" }
+  constants.gen3MauvilleGym = self.manifest.mauvilleGym
 
   -- WHERE A NEW GAME STARTS, and it is not a constant anywhere on the
   -- cartridge -- it is the argument list of WarpToTruck, the only call to
@@ -5829,7 +5830,7 @@ function RomExtractorGen3:extractConstants()
     constants.types = {}
     constants.typeOrder = {}
     for i = 0, numTypes - 1 do
-      local id = slug(typeNames[i])
+      local id = (self.manifest.typeIds or {})[i + 1] or slug(typeNames[i])
       if id == "" then id = ("TYPE_%02d"):format(i) end
       -- ONE-BASED, unlike speciesOrder / moveOrder / itemOrder, which are
       -- keyed by the cartridge's own number.  It is not an accident and it
@@ -7368,6 +7369,17 @@ function RomExtractorGen3:extractFont()
       local srcRow = top + row
       local half = srcRow < 8 and 0 or 2       -- the top pair of tiles, or the bottom
       local line = {}
+      if font.bits == 4 then
+        -- RS's shadowed 8x16 Latin font is two raw 4bpp tiles. Its
+        -- ApplyColors_ShadowedFont maps nibble F to ink and E to shadow.
+        local word = self.rom:u32(base + srcRow * 4)
+        for px = 0, cellW - 1 do
+          local nibble = math.floor(word / 2 ^ (px * 4)) % 16
+          local role = nibble == 15 and 1 or (nibble == 14 and 2 or 0)
+          line[px + 1] = role
+          if role ~= 0 then any = true end
+        end
+      else
       for tile = 0, 1 do
         local word = self.rom:u16(base + (half + tile) * 16 + (srcRow % 8) * 2)
         for x = 0, 7 do
@@ -7379,6 +7391,7 @@ function RomExtractorGen3:extractFont()
             if role == 1 or role == 2 then any = true end
           end
         end
+      end
       end
       cell[row + 1] = line
     end
@@ -7654,12 +7667,21 @@ function RomExtractorGen3:extractFont()
       local across = math.floor(tonumber(face.tilesAcross) or 2)
       local stride = math.floor(tonumber(face.glyphBytes) or 0x40)
       for code = 0, count - 1 do
-        local base = face.glyphs + code * stride
+        local glyphCode = face.glyphMap and self.rom:u8(face.glyphMap
+          + code * (face.glyphMapStride or 1) + (face.glyphMapOffset or 0)) or code
+        local base = face.glyphs + glyphCode * stride
         local cell = {}
         for row = 0, fh - 1 do
           local srcRow = ftop + row
           local half = srcRow < 8 and 0 or across
           local line = {}
+          if face.bits == 4 then
+            local word = self.rom:u32(base + srcRow * 4)
+            for px = 0, fw - 1 do
+              local nibble = math.floor(word / 2 ^ (px * 4)) % 16
+              line[px + 1] = nibble == 15 and 1 or (nibble == 14 and 2 or 0)
+            end
+          else
           for tile = 0, across - 1 do
             local word = self.rom:u16(base + (half + tile) * 16
                                       + (srcRow % 8) * 2)
@@ -7670,10 +7692,11 @@ function RomExtractorGen3:extractFont()
               end
             end
           end
+          end
           cell[row + 1] = line
         end
         cells[code + 1] = cell
-        fadv[code + 1] = self.rom:u8(face.widths + code)
+        fadv[code + 1] = self.rom:u8(face.widths + glyphCode)
       end
       local okFace = pcall(function()
         local image = paintPage(cells, fw, fh)
@@ -7868,6 +7891,30 @@ RomExtractorGen3.BRAILLE_ALPHABET = {
 -- One 16x16 cell out of the sheet, as roles: 1 raised, 2 unraised, 3 paper.
 function RomExtractorGen3:brailleGlyph(base, value)
   local B = RomExtractorGen3.BRAILLE
+  local profile = self.manifest and self.manifest.braille
+  if profile and profile.bits == 1 then
+    local cell = {}
+    for row = 0, B.CELL - 1 do
+      local line = {}
+      for half = 0, 1 do
+        local code = value + half * profile.halfCodeOffset
+        local tile = self.rom:u8(profile.glyphMap + code * 2 + math.floor(row / 8))
+        local blank = self.rom:u8(profile.glyphMap
+          + half * profile.halfCodeOffset * 2 + math.floor(row / 8))
+        local word = self.rom:u8(base + tile * 8 + row % 8)
+        local paper = self.rom:u8(base + blank * 8 + row % 8)
+        for x = 0, 7 do
+          local ink = math.floor(word / 2 ^ (7 - x)) % 2 == 1
+          local unraised = math.floor(paper / 2 ^ (7 - x)) % 2 == 1
+          -- RS draws small dots even in the blank cell. Keep those as a
+          -- separate role so the six raised-dot masks can still be proved.
+          line[half * 8 + x + 1] = ink and (unraised and 2 or 1) or 3
+        end
+      end
+      cell[row + 1] = line
+    end
+    return cell
+  end
   local at = base + math.floor(value / B.PER_ROW) * B.ROW
               + (value % B.PER_ROW) * B.STRIDE
   local cell = {}
@@ -7921,6 +7968,7 @@ end
 function RomExtractorGen3:extractBraille()
   self:beginStage("Gen3 braille")
   local B = RomExtractorGen3.BRAILLE
+  local profile = self.manifest and self.manifest.braille
   local base = self:symbol("gFontBrailleLatinGlyphs")
   local pool = self._scriptPool
   if not base then
@@ -8021,7 +8069,7 @@ function RomExtractorGen3:extractBraille()
     local height = math.min(B.WINDOW.maxHeight,
                             B.WINDOW.baseHeight
                               + B.WINDOW.perLine * (#lines - 1))
-    return {
+    local wall = {
       at = at,
       format = format,
       lines = lines,
@@ -8031,6 +8079,15 @@ function RomExtractorGen3:extractBraille()
       x = math.floor((B.WINDOW.screenWidth - width) / 2),
       y = math.floor((B.WINDOW.screenHeight - height) / 2),
     }
+    if profile and profile.frameFromHeader then
+      -- RS's frame coordinates include the border, and its text origin is
+      -- independent of that frame. Preserve both from ScrCmd_braillemessage.
+      wall.x, wall.y = format[1] + 1, format[2] + 1
+      wall.width, wall.height = format[3] - format[1] - 1,
+                               format[4] - format[2] - 1
+      wall.textX, wall.textY = format[5] * 8, format[6] * 8
+    end
+    return wall
   end
 
   local messages, count, unreadable = {}, 0, 0
@@ -8064,7 +8121,7 @@ function RomExtractorGen3:extractBraille()
     perRow = B.PER_ROW,
     count = B.COUNT,
     advance = B.CELL,
-    lineHeight = B.CELL + B.LINE_SPACING,
+    lineHeight = profile and profile.lineHeight or (B.CELL + B.LINE_SPACING),
     window = B.WINDOW,
     messages = messages,
     source = ("ROM:gFontBrailleLatinGlyphs %07X (%d cells, %dx%d, %d per "
@@ -8074,7 +8131,8 @@ function RomExtractorGen3:extractBraille()
   }
 
   local okPage, pageErr = pcall(function()
-    local paint = { [1] = FONT_TEXT, [2] = FONT_SHADOW }
+    local paint = { [1] = FONT_TEXT,
+      [2] = profile and profile.bits == 1 and FONT_TEXT or FONT_SHADOW }
     local rows = math.ceil(B.COUNT / B.PER_ROW)
     local image = self:fontSheet(B.PER_ROW * B.CELL, rows * B.CELL)
     if not image then return end
@@ -13797,6 +13855,14 @@ RomExtractorGen3.FIELD_CALLS = {
 -- is what lets a stage read what a special DOES rather than take its name on
 -- trust.
 function RomExtractorGen3:specialAddress(index)
+  -- Stage readers name engine/Emerald specials; the RS cartridge numbers
+  -- the same functions differently. Unknown identities must not probe an
+  -- unrelated native function at the engine's numeric slot.
+  local indices = self.manifest.specialIndexMap
+  if indices then
+    index = indices[tostring(index)]
+    if index == nil then return nil end
+  end
   local base = self:symbol("gSpecials")
   if not base then return nil end
   local ptr = self.rom:u32(base + (tonumber(index) or 0) * 4)
@@ -29019,6 +29085,8 @@ end
 function RomExtractorGen3:extractPlayerBackPic()
   self:beginStage("Gen3 player back pic")
   local rom = self.rom
+  local profile = self.manifest.trainerBack
+  local backCount = profile and profile.count or GEN3_BACK_COUNT
   if (self.manifest or {}).frlgItemMenu ~= nil then
     return self:extractPlayerBackPicFireRed()
   end
@@ -29033,7 +29101,7 @@ function RomExtractorGen3:extractPlayerBackPic()
 
   local function runAt(at)
     local recs = {}
-    for k = 0, GEN3_BACK_COUNT - 1 do
+    for k = 0, backCount - 1 do
       local r = recordAt(at + k * 8)
       if not r then return nil end
       if r.tag ~= k then return nil end
@@ -29049,13 +29117,28 @@ function RomExtractorGen3:extractPlayerBackPic()
   end
 
   local found, at = nil, 0
-  while at < rom.size - GEN3_BACK_COUNT * 8 do
+  if profile then
+    assert(backCount >= 1 and backCount <= 8, "invalid trainer back count")
+    local recs = {}
+    for k = 0, backCount - 1 do
+      local row = recordAt(profile.table + k * 8)
+      if not (row and row.tag == k and row.size > 0
+              and row.size % GEN3_BACK_FRAME_BYTES == 0
+              and row.size <= GEN3_BACK_FRAME_BYTES * GEN3_BACK_MAX_FRAMES) then
+        Logger.warn("gen3 player back pic: invalid native compressed row %d", k)
+        return
+      end
+      recs[k + 1] = row
+    end
+    found = { at = profile.table, recs = recs }
+  end
+  while not profile and at < rom.size - backCount * 8 do
     local recs = runAt(at)
     if recs then
       -- ...and the run has to STOP at eight, or it is some other table
-      local ninth = recordAt(at + GEN3_BACK_COUNT * 8)
+      local ninth = recordAt(at + backCount * 8)
       local last = recs[#recs]
-      if not (ninth and ninth.tag == GEN3_BACK_COUNT
+      if not (ninth and ninth.tag == backCount
               and ninth.at == last.at + last.size) then
         if found then
           Logger.warn("gen3 player back pic: %07X and %07X both look like the "
@@ -29071,14 +29154,14 @@ function RomExtractorGen3:extractPlayerBackPic()
   end
   if not found then
     Logger.warn("gen3 player back pic: no run of %d sheets is laid out end to "
-                  .. "end, so no back pic is written", GEN3_BACK_COUNT)
+                  .. "end, so no back pic is written", backCount)
     return
   end
 
   -- the palettes sit immediately after, one per sheet, in the same order
-  local palBase = found.at + GEN3_BACK_COUNT * 8
+  local palBase = profile and profile.palettes or (found.at + backCount * 8)
   local palettes = {}
-  for k = 0, GEN3_BACK_COUNT - 1 do
+  for k = 0, backCount - 1 do
     local ptr = rom:pointer(palBase + k * 8)
     local tag = rom:u16(palBase + k * 8 + 4)
     local ok, raw = RomExtractorGen3.lz77ok(rom, ptr or 0)
@@ -29086,7 +29169,7 @@ function RomExtractorGen3:extractPlayerBackPic()
             and #raw >= GEN3_BACK_PAL_BYTES) then
       Logger.warn("gen3 player back pic: the palette table after %07X does "
                     .. "not run 0..%d, so no back pic is written",
-                  found.at, GEN3_BACK_COUNT - 1)
+                  found.at, backCount - 1)
       return
     end
     palettes[k] = RomGba.palette(raw)
@@ -29177,7 +29260,7 @@ function RomExtractorGen3:extractPlayerBackPic()
   local mine = {}
   if wanted.boy and wanted.girl then
     local best = {}
-    for k = 0, GEN3_BACK_COUNT - 1 do
+    for k = 0, backCount - 1 do
       local b = shared(palettes[k], wanted.boy)
       local g = shared(palettes[k], wanted.girl)
       if b >= GEN3_BACK_PAL_MIN and b - g >= GEN3_BACK_PAL_MARGIN then
@@ -29194,7 +29277,7 @@ function RomExtractorGen3:extractPlayerBackPic()
   if not (mine.boy and mine.girl) then
     Logger.warn("gen3 player back pic: no two of the %d backs are drawn in "
                   .. "the same palettes as the player's own two front pics, "
-                  .. "so none is claimed", GEN3_BACK_COUNT)
+                  .. "so none is claimed", backCount)
   end
 
   -- ...and the same match for the two who borrow the player's side of the
@@ -29205,7 +29288,7 @@ function RomExtractorGen3:extractPlayerBackPic()
     local want = wanted[role]
     if want then
       local best, runnerUp
-      for k = 0, GEN3_BACK_COUNT - 1 do
+      for k = 0, backCount - 1 do
         local n = shared(palettes[k], want)
         if not best or n > best.score then
           runnerUp = best
@@ -29228,9 +29311,17 @@ function RomExtractorGen3:extractPlayerBackPic()
 
   -- ---- and write them -----------------------------------------------------
   local images, written = {}, 0
-  for k = 0, GEN3_BACK_COUNT - 1 do
+  for k = 0, backCount - 1 do
     local rec = found.recs[k + 1]
-    local raw = rom:bytes(rec.at, rec.size)
+    local raw
+    if profile and profile.compressed then
+      local ok, bytes = RomExtractorGen3.lz77ok(rom, rec.at)
+      if not ok or #bytes ~= rec.size then
+        Logger.warn("gen3 player back pic: compressed sheet %d has the wrong size", k)
+        return
+      end
+      raw = bytes
+    else raw = rom:bytes(rec.at, rec.size) end
     local frames = math.floor(rec.size / GEN3_BACK_FRAME_BYTES)
     local ok = pcall(function()
       -- frame 1 is the one a battle opens on; the rest are the throw
@@ -29346,7 +29437,7 @@ function RomExtractorGen3:extractPlayerBackPic()
     end
     local function arrayAt(a)
       local rows = {}
-      for k = 0, GEN3_BACK_COUNT - 1 do
+      for k = 0, backCount - 1 do
         local ptr = rom:pointer(a + k * 4)
         if not ptr then return nil end
         local rec = found.recs[k + 1]
@@ -29364,7 +29455,7 @@ function RomExtractorGen3:extractPlayerBackPic()
         throwsAt, anims = a, rows
         -- on the image rows too, where everything else about a back already
         -- is -- but the record below is what survives a headless import
-        for k = 0, GEN3_BACK_COUNT - 1 do
+        for k = 0, backCount - 1 do
           if images[k] then
             images[k].rest = rows[k].rest
             images[k].throw = rows[k].throw
@@ -29401,7 +29492,7 @@ function RomExtractorGen3:extractPlayerBackPic()
   local constants = self._constants or {}
   constants.gen3TrainerBack = {
     images = images,
-    count = GEN3_BACK_COUNT,
+    count = backCount,
     anims = anims,
     throwAnim = throwsAt and RomExtractorGen3.BACK_INTRO.THROW_ANIM or nil,
     intro = intro,
