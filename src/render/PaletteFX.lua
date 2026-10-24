@@ -467,6 +467,10 @@ local gen2ClockTod = "DAY"   -- what the clock alone says
 local gen2MapPalette = 0     -- PALETTE_* from the current map's header
 -- OverworldState:timeOfDay answers "MORNING"/"NITE"; a mod's world.tod hook may
 -- answer "NIGHT".  Normalise to the four row names the importer writes.
+-- Public ROM row order, shared with native Gen2 atlas consumers.
+PaletteFX.DAYTIMES = { "MORN", "DAY", "NITE", "DARK" }
+PaletteFX.DAYTIME_ID = { MORN = 1, DAY = 2, NITE = 3, DARK = 4 }
+
 local GEN2_TOD_ALIAS = {
   MORN = "MORN", MORNING = "MORN", DAY = "DAY", DAYTIME = "DAY",
   NITE = "NITE", NIGHT = "NITE", EVE = "NITE", EVENING = "NITE",
