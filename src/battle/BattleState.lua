@@ -5224,8 +5224,11 @@ function BattleState:effectRecord(effect)
     return require("src.battle.Gen5MoveEffects").record(self, effect)
   end
   local effects = self.data.move_effects
-  if effects then return effects[effect] end
-  return MoveEffects.RECORDS[effect]
+  local record = effects and effects[effect] or not effects and MoveEffects.RECORDS[effect]
+  if GameVersion.isGen3() and effect == "OHKO_EFFECT" then
+    return require("src.battle.Gen3OHKO").record(record, MoveEffects.RECORDS.OHKO_EFFECT)
+  end
+  return record
 end
 
 -- the merged ball record (Catching.attempt handles the unknown-id default)
@@ -6244,6 +6247,14 @@ function BattleState:focusBandHolds(battler, incoming)
     if battler.mon.hp <= 0 or incoming < battler.mon.hp then return false end
     return require("src.battle.Gen5HoldItems").focusBand(self, battler, incoming)
   end
+  if GameVersion.isGen3() then
+    if battler.mon.hp <= 0 then return false end
+    local effect, chance = HoldItems.effectOf(battler, "endure")
+    if effect ~= "FOCUS_BAND" then return false end
+    if (self.rng or love.math.random)(0, 99) >= chance then return false end
+    require("src.battle.Gen3AIItemKnowledge").record(self, battler, 39)
+    return incoming >= battler.mon.hp
+  end
   -- only a hit that would actually finish it, and only from full-ish health
   -- is NOT a condition: the cartridge lets a band save a Pokemon on 1 HP too
   if battler.mon.hp <= 0 or incoming < battler.mon.hp then return false end
@@ -6307,6 +6318,7 @@ function BattleState:holdItemTrigger(battler, when)
     battler.mon.hp = math.min(max, battler.mon.hp + act.amount)
     self:drainNext(battler, battler.mon.hp)
     if act.effect == "LEFTOVERS" then
+      require("src.battle.Gen3AIItemKnowledge").record(self, battler, 43)
       self:sayNext(Strings("%s restored a little\nHP using its\n%s!",
                            who, label))
     else
@@ -7875,10 +7887,13 @@ function BattleState:statusInterrupt(user, target)
     local dmg = self:computeDamage(user, user,
                                    { id = "CONFUSED", power = 40, type = "NORMAL", accuracy = 100 },
                                    { rng = self.rng, forceCrit = false, typeless = true,
-                                     screens = target })
+                                     screens = GameVersion.isGen3() and user or target })
+    if GameVersion.isGen3() then
+      dmg = math.max(1, math.floor(dmg * self.rng(85, 100) / 100))
+    end
     self:sayNext(self:romText("_HurtItselfText", "It hurt itself in\nits confusion!"))
     self:clearVolatiles(user, true)
-    self:applyDamage(user, dmg)
+    self:applyDamage(user, dmg, false, GameVersion.isGen3() and { confusion = true } or nil)
     if user.mon.hp <= 0 then self:onFaint(user) end
     return true
   end
@@ -8326,8 +8341,16 @@ end
 -- caller that cares about: the band saves a Pokemon from an attack and not
 -- from a sandstorm, its own recoil or a Substitute's upkeep, and applyDamage
 -- is the one door all of those come through.
-function BattleState:applyDamage(target, dmg, fromMove)
-  if target.substituteHP then
+function BattleState:applyDamage(target, dmg, fromMove, adjustment)
+  -- GBA adjusts every direct hit before Substitute/Endure, including a
+  -- successful Focus Band roll on a nonlethal hit and a zero-percent item.
+  local gba = GameVersion.isGen3()
+  adjustment = type(adjustment) == "table" and adjustment or nil
+  local prepared = gba and adjustment and adjustment.bandRolled == true
+  local selfHit = gba and adjustment and adjustment.confusion == true
+  local gbaBand = not prepared and gba and (fromMove == true or selfHit) and self:focusBandHolds(target, dmg)
+  if target.substituteHP and not selfHit then
+    local absorbed = math.min(math.max(0, dmg), target.substituteHP)
     target.substituteHP = target.substituteHP - dmg
     if target.substituteHP <= 0 then
       target.substituteHP = nil
@@ -8335,7 +8358,12 @@ function BattleState:applyDamage(target, dmg, fromMove)
     else
       self:sayNext(self:romText("_SubstituteTookDamageText", "The SUBSTITUTE\ntook damage for\n%s!", displayName(target)))
     end
-    return dmg
+    if prepared and adjustment.endured then
+      self:sayNext(Strings("%s endured\nthe hit!", displayName(target)))
+    elseif prepared and adjustment.hung then
+      self:sayNext(Strings("%s hung on\nusing its FOCUS BAND!", displayName(target)))
+    end
+    return gba and absorbed or dmg
   end
   -- FOCUS BAND, asked before the HP is taken: a one-in-ten hold leaves the
   -- Pokemon standing on a single HP instead of fainting.  Asked here rather
@@ -8344,11 +8372,17 @@ function BattleState:applyDamage(target, dmg, fromMove)
   -- what was actually dealt.
   -- ENDURE first: it is a certainty where the band is a roll, so a Pokemon
   -- that used ENDURE this turn never needs the band at all.
-  local endured = fromMove == true and target.enduring == true
+  local mayEndure = fromMove == true or selfHit
+  if selfHit and (target.substituteHP or 0) > 0 then mayEndure, gbaBand = false, false end
+  local endured = mayEndure and target.enduring == true
                   and target.mon.hp > 0 and dmg >= target.mon.hp
-  local band = not endured and fromMove == true
-               and self:focusBandHolds(target, dmg)
-  if endured or band then dmg = math.max(0, target.mon.hp - 1) end
+  local band = gba and gbaBand or (not gba and not endured and fromMove == true
+               and self:focusBandHolds(target, dmg))
+  if prepared then
+    endured, band = adjustment.endured, adjustment.hung
+  elseif endured or band then
+    dmg = math.max(0, target.mon.hp - 1)
+  end
   local dealt = math.min(dmg, target.mon.hp)
   if fromMove and dealt > 0 then target.hurtThisTurn = true end
   target.mon.hp = target.mon.hp - dealt
