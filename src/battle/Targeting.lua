@@ -178,6 +178,7 @@ end
 -- `chosen` is the battler the player picked, when they were asked.  A single
 -- battle passes the one foe it always passed and gets it straight back.
 function Targeting.resolve(battle, user, move, chosen)
+  if type(chosen) ~= "table" then chosen = nil end
   local k = kindOf(move)
 
   -- BLACK AND WHITE: FOLLOW ME / RAGE POWDER draw every single-target move
@@ -218,7 +219,7 @@ function Targeting.resolve(battle, user, move, chosen)
   if k == Targeting.RANDOM then
     -- rolled once and then held for as long as the rampage lasts, which is
     -- why it is remembered on the user rather than re-rolled each turn
-    local held = user.thrashTarget
+    local held = type(user.thrashTarget) == "table" and user.thrashTarget or nil
     if held and held.mon and (held.mon.hp or 0) > 0 then return { held } end
     if #foes == 0 then return {} end
     local pick = foes[1]
@@ -266,6 +267,7 @@ end
 -- With one foe there is nothing to re-point to and this answers the same
 -- empty list the old `target.mon.hp <= 0` guard produced.
 function Targeting.redirect(battle, user, move, target)
+  if type(target) ~= "table" then target = nil end
   if target and target.mon and (target.mon.hp or 0) > 0 then return { target } end
   local wanted = target and target.isPlayer
   local pool
