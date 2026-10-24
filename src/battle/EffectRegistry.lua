@@ -348,7 +348,10 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     elseif info.typeMult < 10 then
       battle:sayNext(Strings("It's not very\neffective..."))
     end
-    if Runtime.wants("battle.damage_dealt") then
+    -- GBA's zero-power default script never runs the HP-damage command.
+    -- Keep explicit custom/fixed damage and the earlier generations' events.
+    if Runtime.wants("battle.damage_dealt") and (dealt > 0 or move.power ~= 0
+        or (record and record.chooseDamage) or not require("src.core.GameVersion").isGen3()) then
       Runtime.emit("battle.damage_dealt", {
         battle = battle, user = user, target = target, move = move,
         damage = dealt, crit = info.crit, typeMult = info.typeMult,
