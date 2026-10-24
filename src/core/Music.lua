@@ -380,6 +380,17 @@ function Music.current()
   return state.current
 end
 
+-- The native map cue survives battle, jingle and music.select overrides.
+-- Expose the same read/write contract as Gen1Recomp without starting audio:
+-- callers still replay it through this module's ordinary ownership paths.
+function Music.mapSong()
+  return state.mapSong
+end
+
+function Music.setMapSong(song)
+  state.mapSong = song
+end
+
 function Music.stop()
   local previous = state.current
   stopSource(state.source)
