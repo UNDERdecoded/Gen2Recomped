@@ -1,0 +1,1 @@
+{"id":"portable_charge_required","name":"Portable charge-turn control","version":"1.0.0","api":3,"games":["gen1","gen2","gen3"],"entry":"main.lua","affects_link":true}

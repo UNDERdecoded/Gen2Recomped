@@ -269,7 +269,7 @@ local function defaultsSave()
     options = {
       textSpeed = 3, animations = true, battleStyle = "shift",
       battleLayout = "og",
-      ruleset = "gen1_faithful", musicVol = 7, sfxVol = 7, pikaVol = 7,
+      ruleset = false, musicVol = 7, sfxVol = 7, pikaVol = 7,
       musicFilter = 0,
       speed = 1, colors = "gbc", tilt = 0, gbcfx = 0,
       videoMode = "windowed", mods = {},
