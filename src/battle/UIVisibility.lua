@@ -23,7 +23,8 @@
 --
 -- `box` is the TextBox / ChoiceBox instance about to draw and may be nil;
 -- `isTextBox` is true for the text box and false for the choice box.  Both are
--- passed to every predicate; neither is interpreted here.
+-- passed unchanged to every legacy claim. The public hook below uses
+-- isTextBox to decide whether to query that individual state as well.
 --
 -- A predicate that throws is treated as "no opinion" and its claim is dropped,
 -- because this is called from inside a draw and a broken claim must not be
@@ -31,6 +32,7 @@
 -- session, which would leave the game unplayable with no error on screen.
 
 local Logger = require("src.core.Logger")
+local Runtime = require("src.mods.Runtime")
 
 local UIVisibility = {}
 
@@ -42,16 +44,62 @@ local bottomClaims = {}
 -- twice with the same owner replaces the predicate rather than stacking, so
 -- an install that runs again after a reload cannot leak a claim.
 function UIVisibility.claimBottom(owner, predicate)
-  if owner == nil or type(predicate) ~= "function" then return false end
+  if owner == nil or type(predicate) ~= "function" then
+    return false
+  end
   bottomClaims[owner] = predicate
   return true
 end
 
 function UIVisibility.releaseBottom(owner)
-  if owner == nil then return false end
+  if owner == nil then
+    return false
+  end
   local had = bottomClaims[owner] ~= nil
   bottomClaims[owner] = nil
   return had
+end
+
+local function visibleByDefault()
+  return true
+end
+
+local function enclosingBattle(state)
+  local stack = state and state.game and state.game.stack
+  local states = stack and stack.states
+  if not states then
+    return nil
+  end
+  local found = false
+  for i = #states, 1, -1 do
+    local candidate = states[i]
+    if candidate == state then
+      found = true
+    end
+    if found and candidate and (candidate.isBattle or candidate.isBattleState) then
+      return candidate
+    end
+  end
+end
+
+-- TextBox is queried individually too. ChoiceBox only inherits an enclosing
+-- battle, so a field YES/NO never becomes a battle-hook state.
+local function hookBottomVisible(state, queryState)
+  if not Runtime.wantsHook("battle.bottom_ui_visible") then
+    return true
+  end
+  local battle = enclosingBattle(state)
+  if
+    battle
+    and battle ~= state
+    and Runtime.call("battle.bottom_ui_visible", visibleByDefault, battle) == false
+  then
+    return false
+  end
+  if queryState or battle == state then
+    return Runtime.call("battle.bottom_ui_visible", visibleByDefault, state) ~= false
+  end
+  return true
 end
 
 -- Whoever is asking is allowed to draw the bottom box, unless a claim says no.
@@ -60,21 +108,28 @@ function UIVisibility.bottomVisible(box, isTextBox)
     local ok, visible = pcall(predicate, box, isTextBox)
     if not ok then
       bottomClaims[owner] = nil
-      Logger.warn("UIVisibility: bottom claim %s failed and was dropped: %s",
-        tostring(owner), tostring(visible))
+      Logger.warn(
+        "UIVisibility: bottom claim %s failed and was dropped: %s",
+        tostring(owner),
+        tostring(visible)
+      )
     elseif visible == false then
       return false
     end
   end
-  return true
+  return hookBottomVisible(box, isTextBox)
 end
 
 -- Introspection for the mod manager / a diagnostic overlay: who is currently
 -- holding the strip.  Returns a fresh array of owner ids.
 function UIVisibility.bottomClaimants()
   local out = {}
-  for owner in pairs(bottomClaims) do out[#out + 1] = owner end
-  table.sort(out, function(a, b) return tostring(a) < tostring(b) end)
+  for owner in pairs(bottomClaims) do
+    out[#out + 1] = owner
+  end
+  table.sort(out, function(a, b)
+    return tostring(a) < tostring(b)
+  end)
   return out
 end
 
