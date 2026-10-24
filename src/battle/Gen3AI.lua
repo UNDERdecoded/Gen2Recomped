@@ -679,6 +679,8 @@ end
 -- Running one script over one move
 -- ---------------------------------------------------------------------------
 
+require("src.battle.Gen3AIAttackingMoves").install(Gen3AI)
+
 -- Every opcode a script can reach, followed through its branches.  Memoised
 -- on the program table: the answer depends only on the cartridge.
 function Gen3AI.reachable(program, entry)
