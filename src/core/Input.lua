@@ -8,6 +8,7 @@
 -- table at call time keeps that entirely inside GamepadMap.
 local GamepadMap = require("src.core.GamepadMap")
 local GameVersion = require("src.core.GameVersion")
+local InputControl = require("src.mods.InputControl")
 
 local Input = {}
 
@@ -144,6 +145,7 @@ end
 -- that would have cleared a held direction. Called from Game on those
 -- transitions so a stuck flag can't outlive them.
 function Input:reset()
+  InputControl.forget(self)
   self.state = {}
   self.pressQueue = {}
   self.pressed = {}
@@ -235,6 +237,16 @@ end
 
 function Input:overlayReleased(btn)
   release(self, btn, "touch:" .. btn)
+end
+
+-- Internal source-aware entry points for mod.input. Each token owns a
+-- separate source, so releasing it cannot release physical/other mod input.
+function Input:sourcePress(button, source)
+  press(self, button, source)
+end
+
+function Input:sourceRelease(button, source)
+  release(self, button, source)
 end
 
 function Input:gamepadpressed(joystick, button)

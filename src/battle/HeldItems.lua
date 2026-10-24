@@ -49,6 +49,7 @@ HeldItems.EFFECT = {
   AMULET_COIN = 76,
   BRIGHTPOWDER = 77,
   FOCUS_BAND = 79,
+  PREVENT_CONFUSE = "PREVENT_CONFUSE",
 }
 
 local TYPE_BY_EFFECT = {
@@ -103,28 +104,38 @@ function HeldItems.itemKey(data, holder)
   return norm(key or (def and (def.key or def.name)) or id)
 end
 
-function HeldItems.effect(data, holder)
+local function nativeEffect(data, holder)
   local def, id = itemDef(data, holder)
   if type(def) ~= "table" then return HeldItems.EFFECT.NONE, 0 end
-  -- Modern Polished berries are handled by HoldItems; their enum values
-  -- otherwise collide with GSC Leftovers/PP/status effects here.
-  if require('src.inventory.PolishedBerries').held(def,monOf(holder)) then
-    return HeldItems.EFFECT.NONE,0
+  -- An explicit public held definition takes precedence over the host's
+  -- cartridge-name special cases. Unmodified items retain those policies.
+  if not require("src.mods.HeldItemContent").changed(def) then
+    -- Modern Polished berries are handled by HoldItems; their enum values
+    -- otherwise collide with GSC Leftovers/PP/status effects here.
+    if require('src.inventory.PolishedBerries').held(def,monOf(holder)) then
+      return HeldItems.EFFECT.NONE,0
+    end
+
+    -- Intentional Gen II cleanup approved for the recomp ruleset: retail
+    -- Crystal accidentally assigns HELD_DRAGON_BOOST to Dragon Scale and leaves
+    -- Dragon Fang with HELD_NONE.  Treat Dragon Fang as the Dragon-type booster
+    -- and Dragon Scale as a normal held item instead of reproducing that bug.
+    local key = norm(ItemEffects.alias(id, def) or def.key or def.name or id)
+    if key == "DRAGON_FANG" then
+      return HeldItems.EFFECT.DRAGON_BOOST, 10
+    elseif key == "DRAGON_SCALE" then
+      return HeldItems.EFFECT.NONE, 0
+    end
   end
 
-  -- Intentional Gen II cleanup approved for the recomp ruleset: retail
-  -- Crystal accidentally assigns HELD_DRAGON_BOOST to Dragon Scale and leaves
-  -- Dragon Fang with HELD_NONE.  Treat Dragon Fang as the Dragon-type booster
-  -- and Dragon Scale as a normal held item instead of reproducing that bug.
-  local key = norm(ItemEffects.alias(id, def) or def.key or def.name or id)
-  if key == "DRAGON_FANG" then
-    return HeldItems.EFFECT.DRAGON_BOOST, 10
-  elseif key == "DRAGON_SCALE" then
-    return HeldItems.EFFECT.NONE, 0
-  end
-
-  return tonumber(def.heldEffect) or HeldItems.EFFECT.NONE,
+  return tonumber(def.heldEffect) or require("src.battle.HeldItemRead").goldNative(def.heldEffect) or HeldItems.EFFECT.NONE,
          tonumber(def.heldParam) or 0
+end
+
+function HeldItems.effect(data, holder, trigger)
+  local effect, param = nativeEffect(data, holder)
+  local def = itemDef(data, holder)
+  return require("src.battle.HeldItemRead").read(holder, def, effect, param, trigger, 2)
 end
 
 local function speciesKey(holder)
@@ -173,19 +184,19 @@ end
 -- -------------------------------------------------------------------------
 
 function HeldItems.quickClaw(data, holder, rng)
-  local effect, param = HeldItems.effect(data, holder)
+  local effect, param = HeldItems.effect(data, holder, "priority")
   if effect ~= HeldItems.EFFECT.QUICK_CLAW then return false end
   rng = rng or love.math.random
   return rng(0, 255) < param
 end
 
 function HeldItems.accuracyPenalty(data, holder)
-  local effect, param = HeldItems.effect(data, holder)
+  local effect, param = HeldItems.effect(data, holder, "accuracy")
   return effect == HeldItems.EFFECT.BRIGHTPOWDER and param or 0
 end
 
 function HeldItems.criticalStageBonus(data, holder)
-  local effect = HeldItems.effect(data, holder)
+  local effect = HeldItems.effect(data, holder, "damage")
   if effect == HeldItems.EFFECT.CRITICAL_UP then return 1 end
   local key, species = HeldItems.itemKey(data, holder), speciesKey(holder)
   if key == "STICK" and species == "FARFETCHD" then return 2 end
@@ -199,7 +210,7 @@ end
 
 function HeldItems.modifyBattleStats(data, attacker, defender, atkStat, defStat, atk, dfn)
   local aKey, aSpecies = HeldItems.itemKey(data, attacker), speciesKey(attacker)
-  local dEffect = HeldItems.effect(data, defender)
+  local dEffect = HeldItems.effect(data, defender, "damage")
   local dSpecies = speciesKey(defender)
 
   if aKey == "THICK_CLUB" and (aSpecies == "CUBONE" or aSpecies == "MAROWAK")
@@ -222,7 +233,7 @@ function HeldItems.modifyBattleStats(data, attacker, defender, atkStat, defStat,
 end
 
 function HeldItems.applyTypeBoost(data, attacker, moveType, damage)
-  local effect, param = HeldItems.effect(data, attacker)
+  local effect, param = HeldItems.effect(data, attacker, "damage")
   if TYPE_BY_EFFECT[effect] ~= moveType then return damage end
   -- ItemAttributes stores 10 for the retail type boosters: x1.10, with the
   -- floor occurring here inside the damage pipeline.
@@ -231,10 +242,10 @@ end
 
 function HeldItems.limitDirectDamage(data, target, damage, rng)
   if not isAlive(target) or damage <= 0 then return damage end
-  local effect, param = HeldItems.effect(data, target)
-  if effect ~= HeldItems.EFFECT.FOCUS_BAND then return damage end
   local hp = tonumber(monOf(target).hp) or 0
-  if hp <= 1 or damage < hp then return damage end
+  if hp <= 0 or damage < hp then return damage end
+  local effect, param = HeldItems.effect(data, target, "endure")
+  if effect ~= HeldItems.EFFECT.FOCUS_BAND then return damage end
   rng = rng or love.math.random
   if rng(0, 255) < param then return hp - 1 end
   return damage
@@ -298,7 +309,7 @@ function HeldItems.tryKingsRock(data, user, target, move, rng, blockedBySubstitu
   if blockedBySubstitute or not isAlive(target) or not HeldItems.supportsKingsRock(move) then
     return false
   end
-  local effect, param = HeldItems.effect(data, user)
+  local effect, param = HeldItems.effect(data, user, "flinch")
   if effect ~= HeldItems.EFFECT.FLINCH then return false end
   rng = rng or love.math.random
   if rng(0, 255) < param then
@@ -344,7 +355,7 @@ end
 
 function HeldItems.onStatus(battle, holder)
   if not (battle and isAlive(holder)) then return {} end
-  local effect = HeldItems.effect(battle.data, holder)
+  local effect = HeldItems.effect(battle.data, holder, "status")
   local wanted = STATUS_BY_EFFECT[effect]
   local changed = false
   if wanted then
@@ -367,11 +378,11 @@ end
 
 function HeldItems.onConfusion(battle, holder)
   if not (battle and isAlive(holder)) or not holder.confusedTurns then return {} end
-  local effect = HeldItems.effect(battle.data, holder)
+  local effect, _, changed = HeldItems.effect(battle.data, holder, "status")
   local key = HeldItems.itemKey(battle.data, holder)
   if effect ~= HeldItems.EFFECT.HEAL_CONFUSION
      and effect ~= HeldItems.EFFECT.HEAL_STATUS
-     and key ~= "BITTER_BERRY" and key ~= "MIRACLE_BERRY" then
+     and (changed or (key ~= "BITTER_BERRY" and key ~= "MIRACLE_BERRY")) then
     return {}
   end
   holder.confusedTurns = nil
@@ -401,7 +412,7 @@ end
 
 local function processLeftovers(battle, holder)
   if not isAlive(holder) then return end
-  local effect = HeldItems.effect(battle.data, holder)
+  local effect = HeldItems.effect(battle.data, holder, "residual")
   if effect ~= HeldItems.EFFECT.LEFTOVERS then return end
   local mon = monOf(holder)
   local maxHP = mon.stats and tonumber(mon.stats.hp)
@@ -414,7 +425,7 @@ end
 
 local function processRestorePP(battle, holder)
   if not isAlive(holder) then return end
-  local effect = HeldItems.effect(battle.data, holder)
+  local effect = HeldItems.effect(battle.data, holder, "pp")
   if effect == HeldItems.EFFECT.RESTORE_PP and restorePP(battle.data, holder) then
     consume(holder)
     battle:sayNext(Strings("%s's held item\nrestored PP!", displayName(holder)))
@@ -423,11 +434,11 @@ end
 
 local function processHealingItem(battle, holder)
   if not isAlive(holder) then return end
-  local effect, param = HeldItems.effect(battle.data, holder)
+  local effect, param = HeldItems.effect(battle.data, holder, "residual")
   local mon = monOf(holder)
   if effect == HeldItems.EFFECT.BERRY then
     local maxHP = mon.stats and tonumber(mon.stats.hp)
-    if maxHP and mon.hp * 2 <= maxHP then
+    if maxHP and mon.hp * 2 < maxHP then
       local got = heal(holder, param)
       if got > 0 then
         consume(holder)
@@ -463,6 +474,9 @@ end
 -- that legacy bug by initializing a normal Gen II confusion duration.
 function HeldItems.onEntry(battle, holder)
   if not (battle and isAlive(holder)) then return false end
+  if require("src.core.GameVersion").isGen3() then
+    return battle:holdItemTrigger(holder, "entry")
+  end
   -- PLATINUM'S AMULET COIN counts on EITHER side: battle_lib.c's
   -- SWITCH_IN_CHECK_STATE_AMULET_COIN walks every battler on the field, and its
   -- items name the effect "MONEY_UP" rather than the Game Boy number.
@@ -494,7 +508,7 @@ end
 
 function HeldItems.observeParticipant(battle, holder)
   if battle and holder and holder.isPlayer then
-    local effect = HeldItems.effect(battle.data, holder)
+    local effect = HeldItems.effect(battle.data, holder, "check")
     if effect == HeldItems.EFFECT.AMULET_COIN then battle.amuletCoin = true end
   end
 end
@@ -506,7 +520,10 @@ end
 function HeldItems.canEscape(data, holder)
   -- BLACK AND WHITE's Smoke Ball (src/battle/Gen5HoldItems.lua)
   if require("src.battle.Gen5HoldItems").canEscape(holder) then return true end
-  local effect = HeldItems.effect(data, holder)
+  if require("src.core.GameVersion").isGen3() then
+    return require("src.battle.HoldItems").effectOf(holder, "run") == "CAN_ALWAYS_RUN"
+  end
+  local effect = HeldItems.effect(data, holder, "check")
   return effect == HeldItems.EFFECT.ESCAPE
 end
 

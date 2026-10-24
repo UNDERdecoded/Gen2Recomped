@@ -1877,16 +1877,15 @@ end
 
 -- `pokemart MARTTYPE_*, MART_*`: the item list lives in map_scripts.marts,
 -- read straight out of the ROM's Marts pointer table.
-function Commands.g2_mart(ctx, index)
-  local pool = ctx.game.data.map_scripts
-  local stock = pool and pool.marts and pool.marts[index]
+function Commands.g2_mart(ctx, index, martType)
+  local stock, opts = require("src.inventory.Gen2MartStock").get(ctx.game.data, index, martType)
   if type(stock) ~= "table" or #stock == 0 then
     Logger.warn("gen2 script: no mart %s", tostring(index))
     return
   end
   local runner = ctx.runner
   local Screens = require("src.ui.Screens")
-  Screens.push(ctx.game, "ShopMenu", stock, function() runner:resume() end)
+  Screens.push(ctx.game, "ShopMenu", stock, function() runner:resume() end, opts)
   runner:yield()
 end
 

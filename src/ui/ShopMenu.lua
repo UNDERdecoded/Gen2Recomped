@@ -94,15 +94,17 @@ local function price(game, amount)
   return sign .. tostring(amount)
 end
 
-local function buy(game, stock)
+local function buy(game, stock, bargain, onQuit)
   local items = {}
-  for _, id in ipairs(stock) do
+  for _, row in ipairs(stock) do
+    local id = bargain and row.item or row
     local def = game.data.items[id]
     if def then
       table.insert(items, {
         value = id,
         label = def.name,
-        right = price(game, def.price),
+        right = price(game, bargain and row.price or def.price),
+        unitPrice = bargain and row.price or nil,
       })
     end
   end
@@ -115,22 +117,28 @@ local function buy(game, stock)
     dialogue = true,
     money = function() return game.save.money end,
     footer = greet,
+    onCancel = onQuit,
     onChoose = function(item)
       local def = game.data.items[item.value]
-      if game.save.money < def.price then
+      local unitPrice = item.unitPrice or def.price
+      if bargain and (game.save.bargainShop or {})[item.value] then
+        list.footer = Strings("SOLD OUT")
+        return
+      end
+      if game.save.money < unitPrice then
         list.footer = notEnough
         return
       end
-      local affordable = math.min(99, math.floor(game.save.money / math.max(1, def.price)))
+      local affordable = bargain and 1 or math.min(99, math.floor(game.save.money / math.max(1, unitPrice)))
       game.stack:push(QuantityBox.new(game, {
         max = affordable,
-        unitPrice = def.price,
+        unitPrice = unitPrice,
         onDone = function(qty)
           if not qty then
             list.footer = greet
             return
           end
-          local cost = qty * def.price
+          local cost = qty * unitPrice
           -- _PokemartTellBuyPriceText + yes/no confirm
           list.footer = line(game, "buyTotal",
                              Strings("%s?\nThat will be\n%s. OK?", def.name,
@@ -140,6 +148,10 @@ local function buy(game, stock)
           game.stack:push(ChoiceBox.new(game, function(yes)
             if not yes then
               list.footer = greet
+              return
+            end
+            if bargain and (game.save.bargainShop or {})[item.value] then
+              list.footer = Strings("SOLD OUT")
               return
             end
             if game.save.money < cost then
@@ -153,6 +165,10 @@ local function buy(game, stock)
               return
             end
             require("src.core.Sound").play(game.data, "Purchase")
+            if bargain then
+              game.save.bargainShop = game.save.bargainShop or {}
+              game.save.bargainShop[item.value] = true
+            end
             game.save.money = game.save.money - cost
             list.footer = line(game, "boughtBag",
                                txt(game, "_PokemartBoughtItemText",
@@ -162,7 +178,8 @@ local function buy(game, stock)
       }))
     end,
   })
-  game.stack:push(list)
+  if not bargain then game.stack:push(list) end
+  return list
 end
 
 local function sell(game)
@@ -294,7 +311,8 @@ function ShopMenu.coverWith(game, screen)
   game.stack:push(screen)
 end
 
-function ShopMenu.new(game, stock, onQuit)
+function ShopMenu.new(game, stock, onQuit, opts)
+  if opts and opts.bargain then return buy(game, stock, true, onQuit) end
   local counter = gen3Counter(game)
   if counter then
     local fireRed = require("src.core.GameVersion").get() == "firered"
