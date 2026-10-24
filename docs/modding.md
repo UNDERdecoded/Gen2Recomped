@@ -1,5 +1,14 @@
 # Native modding
 
+## Worker threads
+
+Mods using `love.thread` may declare `"compute"` in their manifest's
+`permissions` array. This matches the Gen1 mod contract and uses the bundled
+LÖVE thread/channel API. It is separate from a `mod.job` background-job API;
+declaring `compute` does not grant or implement that service. Unknown
+permissions still fail strict API-2/API-3 manifest validation.
+
+
 The modding book lives on the
 [project wiki](https://github.com/bryanthaboi/gen1recomp/wiki).
 
