@@ -66,6 +66,23 @@ end
 
 local OverworldState = { isOpaque = true, isOverworld = true }
 
+-- The legacy 3D image is mirrored at presentation on LÖVE 12. Its native
+-- 2D field effects need the inverse transform inside that image so their
+-- artwork and projected anchors remain upright after the final composite.
+function OverworldState.withOverrideMirror(draw, pipeline)
+  local g = love.graphics
+  if not require("src.render.Renderer").mirrorsWorldOverride(pipeline) then return draw() end
+  local target = g.getCanvas()
+  if target and not target.getHeight then target = target[1] or target.canvas end
+  if target and not target.getHeight then target = target.canvas end
+  if not (target and target.getHeight) then return draw() end
+  g.push()
+  g.translate(0, target:getHeight())
+  g.scale(1, -1)
+  draw()
+  g.pop()
+end
+
 local Game -- set on enter (avoids circular require at load time)
 
 -- AN EMPTY PLOT DRAWS NOTHING, asked once per entity per frame.  Written
@@ -16672,7 +16689,7 @@ function OverworldState:drawWorld()
   -- wins over it.  It falls back to the tilt/flat path whenever it cannot
   -- run this frame -- headless, a driver with no depth canvas, or a mod
   -- that threw -- so no caller ever sees a blank frame.
-  local pipelineId = Pipelines.worldPipeline()
+  local pipelineId, pipelineDef = Pipelines.worldPipeline()
   local tilt = (not pipelineId) and Tilt.active()
   -- the pipeline's finished world image, once it has run; nil keeps every
   -- path below on the vanilla flat/tilt draw
@@ -17422,55 +17439,57 @@ function OverworldState:drawWorld()
         love.graphics.pop()
         if shader then love.graphics.setShader() end
       end
-      -- ground-hugging effects sit on the cell they belong to
-      if self.dustAnim then
-        at(fxDust, self.dustAnim.x * 16 + 8, self.dustAnim.y * 16 + 8)
-      end
-      if self.cutAnim then
-        at(fxCutTree, self.cutAnim.x * 16 + 8, self.cutAnim.y * 16 + 16)
-      end
-      if self.waterAnim then
-        at(fxWater, self.waterAnim.x * 16 + 8, self.waterAnim.y * 16 + 16)
-      end
-      if self.healAnim then
-        at(fxHeal, self.healAnim.px + 8, self.healAnim.py + 16)
-      end
-      -- THE WATER RIPPLES ARE NOT HERE, AND MUST NOT BE.
-      --
-      -- They are the one field effect that is not a picture pasted over the
-      -- scene: a ring LIES ON THE WATER, so it has to be drawn with the
-      -- water, under whoever is standing in it.  This seam composites over
-      -- the FINISHED scene -- terrain, water and every character already
-      -- down -- which is exactly the report it produced when the rings were
-      -- offered here: "the ripples are appearing over the player character".
-      -- A pipeline that wants them draws them itself, as ground geometry, in
-      -- its own pass ordering (DRAMATIC_SHAPE: VoxelScene.drawRipples, drawn
-      -- between the water pass and the character pass).  The FLAT path is
-      -- unaffected and still draws them through OverworldState:drawRipples.
-      -- standing effects anchor at the foot of whoever they belong to
-      self:eachEmote(function(e)
-        if e.npc then at(fxEmote, e.npc.px + 8, e.npc.py + 16) end
-      end)
-      if self.flyAnim then
-        at(fxBird, self.player.px + 8, self.player.py + 16)
-      end
-      if self.fishing then
-        at(fxRod, self.player.px + 8, self.player.py + 16)
-      end
-      -- The S.S. Anne effects are authored in screen OAM coordinates for this
-      -- fixed-camera cutscene.  Keep them as an upright overlay for a custom
-      -- world pipeline; the flat/tilt paths place the wake behind the ship.
-      fxSSAnneWake()
-      fxSSAnneSmoke()
-      for _, sp in ipairs(self.sparkles or {}) do
-        sparkleOne = sp
-        at(fxSparkleOne, sp.px + 8, sp.py + 16)
-      end
-      sparkleOne = nil
-      for _, pt in ipairs((self.gen4Radar and self.gen4Radar.active and self.gen4Radar.patches) or {}) do
-        if pt.active then radarOne = pt; at(fxRadarOne, pt.x * 16 + 8, pt.y * 16 + 16) end
-      end
-      radarOne = nil
+      OverworldState.withOverrideMirror(function()
+        -- ground-hugging effects sit on the cell they belong to
+        if self.dustAnim then
+          at(fxDust, self.dustAnim.x * 16 + 8, self.dustAnim.y * 16 + 8)
+        end
+        if self.cutAnim then
+          at(fxCutTree, self.cutAnim.x * 16 + 8, self.cutAnim.y * 16 + 16)
+        end
+        if self.waterAnim then
+          at(fxWater, self.waterAnim.x * 16 + 8, self.waterAnim.y * 16 + 16)
+        end
+        if self.healAnim then
+          at(fxHeal, self.healAnim.px + 8, self.healAnim.py + 16)
+        end
+        -- THE WATER RIPPLES ARE NOT HERE, AND MUST NOT BE.
+        --
+        -- They are the one field effect that is not a picture pasted over the
+        -- scene: a ring LIES ON THE WATER, so it has to be drawn with the
+        -- water, under whoever is standing in it.  This seam composites over
+        -- the FINISHED scene -- terrain, water and every character already
+        -- down -- which is exactly the report it produced when the rings were
+        -- offered here: "the ripples are appearing over the player character".
+        -- A pipeline that wants them draws them itself, as ground geometry, in
+        -- its own pass ordering (DRAMATIC_SHAPE: VoxelScene.drawRipples, drawn
+        -- between the water pass and the character pass).  The FLAT path is
+        -- unaffected and still draws them through OverworldState:drawRipples.
+        -- standing effects anchor at the foot of whoever they belong to
+        self:eachEmote(function(e)
+          if e.npc then at(fxEmote, e.npc.px + 8, e.npc.py + 16) end
+        end)
+        if self.flyAnim then
+          at(fxBird, self.player.px + 8, self.player.py + 16)
+        end
+        if self.fishing then
+          at(fxRod, self.player.px + 8, self.player.py + 16)
+        end
+        -- The S.S. Anne effects are authored in screen OAM coordinates for this
+        -- fixed-camera cutscene.  Keep them as an upright overlay for a custom
+        -- world pipeline; the flat/tilt paths place the wake behind the ship.
+        fxSSAnneWake()
+        fxSSAnneSmoke()
+        for _, sp in ipairs(self.sparkles or {}) do
+          sparkleOne = sp
+          at(fxSparkleOne, sp.px + 8, sp.py + 16)
+        end
+        sparkleOne = nil
+        for _, pt in ipairs((self.gen4Radar and self.gen4Radar.active and self.gen4Radar.patches) or {}) do
+          if pt.active then radarOne = pt; at(fxRadarOne, pt.x * 16 + 8, pt.y * 16 + 16) end
+        end
+        radarOne = nil
+      end, pipelineDef)
     end
     override = Pipelines.drawWorld(pipelineId, ctx)
     -- world post-processes (a miniature-diorama blur, a colour grade) fold
@@ -17478,7 +17497,7 @@ function OverworldState:drawWorld()
     if override then
       override = Pipelines.worldPresent(override, ctx)
     end
-    Game.renderer:setWorldOverride(override)
+    Game.renderer:setWorldOverride(override, pipelineDef)
     if not override then
       -- The pipeline declined this frame (nothing to draw, or it threw and
       -- was retired).  The ground pass was skipped on its behalf above, so
