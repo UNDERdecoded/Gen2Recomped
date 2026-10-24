@@ -24,11 +24,9 @@
 -- The merge is non-destructive: a name MoveEffects already defines wins, so
 -- this file can never quietly redefine an effect that already worked.
 --
--- WHAT IS NOT HERE, and deliberately -- eight effects, and each for a
--- reason rather than for want of time:
+-- Remaining effects need separate native producers:
 --
---   FOLLOW ME and HELPING HAND do nothing outside a DOUBLE battle, and this
---   engine fights one Pokemon a side.
+--   HELPING HAND needs its own double-battle ally action modifier.
 --
 --   MAGIC COAT, SNATCH and IMPRISON all reach INTO another battler's move
 --   as it is being resolved -- bouncing it back, stealing it, forbidding it
@@ -39,9 +37,8 @@
 --   effect is chosen the same way.  The terrain half of that is real work
 --   in the world layer, not the battle one.
 --
--- Those eight still warn once and fall through to plain damage, which is
--- the honest behaviour for an effect that is not implemented.  Everything
--- else Emerald has runs.
+-- Unimplemented effects still warn once and fall through to plain damage.
+-- FOLLOW ME is registered below with round-scoped native GBA targeting.
 
 local Status = require("src.battle.Status")
 local StatusRegistry = require("src.battle.StatusRegistry")
@@ -117,6 +114,12 @@ local function confuse(battle, target, pierceSub)
   end
   target.confusedTurns = battle.rng(2, 5)
   return { Strings("%s\nbecame confused!", displayName(target)) }
+end
+
+-- Imported GBA effect 172 is already named FOLLOW_ME_EFFECT. Register the
+-- ordinary record so native imports and the public effect adapter agree.
+P.FOLLOW_ME_EFFECT = function(battle, user)
+  return require("src.battle.Gen3FollowMe").apply(battle, user)
 end
 
 -- ---------------------------------------------------------------------
