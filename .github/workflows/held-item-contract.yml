@@ -1,0 +1,45 @@
+name: portable held-item contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: held-item-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native held readers, metadata authority and SDK compatibility
+        run: |
+          luajit tests/engine/held_item_contract.lua
+          luajit tests/engine/held_item_authority.lua
+          luajit tests/engine/api3_compat.lua
+          luajit tests/engine/unified_mod_callbacks.lua
+      - name: Compare both engines in every SDK mode
+        run: |
+          mkdir -p /tmp/held-item-contract
+          python3 tools/held-item-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 1 --format native --report /tmp/held-item-contract/api1-native.json
+          python3 tools/held-item-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 2 --format native --report /tmp/held-item-contract/api2-native.json
+          python3 tools/held-item-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 2 --format unified --report /tmp/held-item-contract/api2-unified.json
+          python3 tools/held-item-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 3 --format unified --report /tmp/held-item-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: held-item-contract
+          path: /tmp/held-item-contract
+          if-no-files-found: ignore

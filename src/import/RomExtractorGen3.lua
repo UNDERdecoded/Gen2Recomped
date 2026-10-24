@@ -43948,6 +43948,19 @@ function RomExtractorGen3:hudImage(raw, from, cols, rows, colors)
   return image
 end
 
+-- The dedicated 8x8 caught indicator from the validated healthbox sheet.
+function RomExtractorGen3:battleCaughtMarker(elementsAt, colors)
+  local rom = self.rom
+  if type(elementsAt) ~= "number" or elementsAt < 0 or not rom
+      or elementsAt + 71 * 32 > rom.size then return nil end
+  -- The bar/status scan intentionally ends after tile 65. Read tile 70
+  -- separately; extending that scan would change its end-of-sheet checks.
+  local raw = rom:bytes(elementsAt + 70 * 32, 32)
+  local path = "battle/hud/caught.png"
+  self:saveImage(self:hudImage(raw, 1, 1, 1, colors), path)
+  return "assets/generated/" .. path
+end
+
 -- The two OAM halves side by side, which is the panel as the player sees it.
 -- TWO SPRITES SIDE BY SIDE -- AND THEY ARE NOT ALWAYS THE SAME SIZE.
 --
@@ -49922,6 +49935,9 @@ function RomExtractorGen3:extractBattleHud()
     bars.label = "assets/generated/battle/hud/hp_label.png"
   end)
   local _ = okBars
+
+  -- B_INTERFACE_GFX_CAUGHT_BALL (tile 70) uses the healthbox palette.
+  images.caught = self:battleCaughtMarker(elementsAt, boxColors)
 
   -- WHERE INSIDE ITS OWN TILE THE EXP BAR ACTUALLY IS.
   --
