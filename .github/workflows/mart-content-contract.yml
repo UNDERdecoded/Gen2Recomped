@@ -1,0 +1,40 @@
+name: portable mart content
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mart-content-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: .contract-reference/gen1
+      - name: Install test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Validate native definitions and authority
+        run: |
+          luajit tests/engine/mart_content.lua
+          luajit tests/engine/mart_content_authority.lua
+          luajit tests/engine/mod_supports.lua
+      - name: Compare both SDKs in all four modes
+        run: |
+          mkdir -p /tmp/mart-content
+          python3 tools/mart-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 1 --format native --report /tmp/mart-content/api1.json
+          python3 tools/mart-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 2 --format native --report /tmp/mart-content/api2-native.json
+          python3 tools/mart-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 2 --format unified --report /tmp/mart-content/api2-unified.json
+          python3 tools/mart-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 3 --format unified --report /tmp/mart-content/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mart-content-contract
+          path: /tmp/mart-content
+          if-no-files-found: ignore

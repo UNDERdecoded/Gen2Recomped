@@ -45,9 +45,9 @@ function Gen3StorageMenu.record(game)
   local pc = c and c.gen3PCMenu
   local box = pc and pc.storage
   if type(box) == "table" and type(box.rows) == "table" and #box.rows > 0 then
-    return box
+    return require("src.mods.RomTextContent").storageView(game, box)
   end
-  return FALLBACK
+  return require("src.mods.RomTextContent").storageView(game, FALLBACK)
 end
 
 -- The three that open the grid, in the cartridge's own order.

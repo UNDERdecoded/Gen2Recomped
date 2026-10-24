@@ -236,9 +236,10 @@ function Commands.show_text(ctx, textId, subs, extraOpts)
   -- id shown lets those prompts reproduce it when the writetext that printed
   -- it lived inside a `scall` and so could not be folded at compile time.
   if textId ~= nil then ctx.g2LastText = textId end
-  local text = textId ~= nil and ctx.game.data.text[textId] or nil
+  local text, private = require("src.script.ScriptText").get(ctx.game.data, textId)
+  if private and (text == nil or text == "") then text = "..." end
   local literal=false
-  if not text and ctx.overworld then
+  if not text and not private and ctx.overworld then
     text = ctx.game.data:resolveText(ctx.overworld.map.def.label, textId)
   end
   if not text and type(textId) == "string" and textId:match("^TEXT_B%d+_%d+$") then
@@ -620,6 +621,36 @@ end
 
 -- start_battle "wild" species level | start_battle "trainer" OPP_CLASS partyIndex
 function Commands.start_battle(ctx, kind, a, b, opts)
+  local skipPreparation = opts and (opts.link or opts.firstBattle or opts.firstBattleKind
+    or opts.oldManTutorial or opts.tutorialKind)
+  if kind ~= "wild" and not skipPreparation
+    and require("src.mods.Runtime").wantsHook("trainer.before_battle") then
+    local runner, co, map = ctx.runner, ctx.runner.co, ctx.overworld and ctx.overworld.map
+    local ready, waiting, cancelled, selected = false, false, false, nil
+    local function finish(options)
+      selected, ready = options, true
+      if waiting then runner:resume() end
+    end
+    require("src.battle.TrainerPreparation").prepare(ctx.game, {
+      trainerClass = a, partyIndex = b or 1,
+      mapId = map and map.id, npcId = ctx.npc and ctx.npc.id,
+    }, finish, function()
+      cancelled, ready = true, true
+      ctx.lastCheck, ctx.lastBattleResult = false, "cancel"
+      ctx.trainerPreparationCancelled = true
+      if waiting then runner:cancelTrainerPreparation(ctx, co) end
+    end, function()
+      return runner.co == co and runner.ctx == ctx and runner:isRunning()
+        and (not ctx.overworld or ctx.overworld.map == map)
+    end, function() runner:cancelTrainerPreparation(ctx, co, true) end)
+    if not ready then waiting = true; runner:yield(); waiting = false end
+    if cancelled then error(require("src.battle.TrainerPreparation").CANCEL_SCRIPT, 0) end
+    local original = opts
+    opts = {}
+    for key, value in pairs(original or {}) do opts[key] = value end
+    if type(selected) == "table" then opts.playerPartyIndices = selected.playerPartyIndices end
+  end
+
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
   local battle
@@ -649,7 +680,7 @@ function Commands.start_battle(ctx, kind, a, b, opts)
       battle.enemy.mon.fatefulEncounter = true
     end
   else
-    battle = BattleState.newTrainer(ctx.game, a, b)
+    battle = BattleState.newTrainer(ctx.game, a, b, opts)
     -- the beaten trainer's own line, printed on the battle screen before
     -- MoneyForWinningText rather than by the script afterwards
     battle.endBattleText = opts and opts.endBattleText or nil
@@ -1463,14 +1494,15 @@ end
 function Commands.open_mart(ctx, textConst)
   local ow = ctx.overworld
   local entry = ctx.game.data:textEntry(ow.map.def.label, textConst)
-  if not entry or not entry.mart then
+  local stock, opts = require("src.inventory.Gen2MartStock").entry(ctx.game.data, entry)
+  if not stock then
     Logger.warn("open_mart: no mart on %s/%s", ow.map.def.label, tostring(textConst))
     return
   end
   local runner = ctx.runner
-  Screens.push(ctx.game, "ShopMenu", entry.mart, function()
+  Screens.push(ctx.game, "ShopMenu", stock, function()
     runner:resume()
-  end)
+  end, opts)
   runner:yield()
 end
 

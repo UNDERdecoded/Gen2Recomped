@@ -1,0 +1,8 @@
+{
+  "id": "portable_text_sources",
+  "name": "Portable text sources",
+  "version": "1.0.0",
+  "api": 3,
+  "games": ["red", "blue", "yellow", "gold", "silver", "crystal", "firered", "emerald"],
+  "entry": "main.lua"
+}

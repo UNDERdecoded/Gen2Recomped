@@ -1,0 +1,8 @@
+{
+  "id": "portable_ai_class_content",
+  "name": "Portable AI Class Records",
+  "version": "1.0.0",
+  "api": 3,
+  "games": ["gen1", "gen2", "gen3"],
+  "entry": "main.lua"
+}

@@ -39,9 +39,11 @@ local Assets = require("src.render.Assets")
 local Logger = require("src.core.Logger")
 local Theme = require("src.ui.Theme")
 local Font = require("src.render.Font")
+local LevelDisplay = require("src.ui.LevelDisplay")
 local HudTiles = require("src.render.HudTiles")
 local PaletteFX = require("src.render.PaletteFX")
 local Runtime = require("src.mods.Runtime")
+local StatusHUDVisibility = require("src.battle.StatusHUDVisibility")
 local Strings = require("src.core.Strings")
 local TypeChart = require("src.battle.TypeChart")
 local GameVersion = require("src.core.GameVersion")
@@ -890,13 +892,46 @@ end
 local HUD_TEXT_STYLE = { text = { 0.16, 0.16, 0.16, 1 } }
 Gen3Battle.HUD_TEXT_STYLE = HUD_TEXT_STYLE
 
-local function levelAt(battle, battler, x, y, text)
+local function levelAt(battle, battler, x, y, text, isStatus)
+  if not (isStatus or (not text and battler.shownStatus))
+      and not LevelDisplay.visible(battler.mon,
+        (battler.isPlayer == true or battler == battle.player) and "battle.player" or "battle.enemy",
+        battle.game) then return end
   if text then
     Font.draw(text, x, y)
   elseif battler.shownStatus then
     Font.draw(battle:statusLabel({ status = battler.shownStatus }), x, y)
   else
     Font.draw("Lv" .. tostring(battler.mon.level), x, y)
+  end
+end
+
+-- Native imports carry tile 70 of the healthbox elements. Older caches use
+-- the existing Pokédex marker, cropped to the native 8x8 healthbox footprint.
+local caughtQuads = setmetatable({}, { __mode = "k" })
+local function drawCaughtMarker(battle, battler, x, y)
+  if not require("src.battle.CaughtMarker").gbaVisible(battle, battler) then return end
+  local record = hudRecord(battle)
+  local path = record and record.images and record.images.caught
+  local function exists(p) return type(p) == "string" and p ~= "" and Assets.exists(Assets.resolve(p)) end
+  if not exists(path) then
+    path = require("src.core.GameVersion").get() == "firered"
+      and "assets/generated/pokedex_frlg/caught.png" or "assets/generated/ui/pokedex/caught_ball.png"
+  end
+  if not exists(path) then return end
+  love.graphics.setColor(1, 1, 1, 1)
+  local image = Assets.image(path)
+  local w, h = image:getDimensions()
+  if w == 8 and h == 16 then
+    -- The older Emerald Pokédex cache centers a 7x7 mark inside an 8x16 cell.
+    local quad = caughtQuads[image]
+    if not quad then
+      quad = love.graphics.newQuad(0, 4, 8, 8, w, h)
+      caughtQuads[image] = quad
+    end
+    love.graphics.draw(image, quad, x + 8, y + 16)
+  else
+    love.graphics.draw(image, x + 8, y + 16)
   end
 end
 
@@ -913,6 +948,7 @@ local function drawStatusPanel(battle, battler, x, y, player)
     Font.drawBox(tx, ty, tw, th)
     love.graphics.setColor(0, 0, 0, 1)
     Font.draw(fitName(battler.name, 56), x + 8, y + 8)
+    if not player then drawCaughtMarker(battle, battler, x, y) end
     levelAt(battle, battler, x + tw * 8 - 40, y + 8)
     if player then
       Font.draw(("%3d/%3d"):format(shownHP(battler), battler.mon.stats.hp),
@@ -923,6 +959,7 @@ local function drawStatusPanel(battle, battler, x, y, player)
 
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(panel, x, y)
+  if not player then drawCaughtMarker(battle, battler, x, y) end
 
   -- THE SMALL FACE, which is what the cartridge sets a healthbox in.
   --
@@ -1126,7 +1163,8 @@ local function drawStatusPanel(battle, battler, x, y, player)
     Font.draw(symbol, ix + 1 + Font.width(shown), nameY)
     Font.popStyle()
   end
-  levelAt(battle, battler, ix + inner.w - levelW - 1, nameY, level)
+  levelAt(battle, battler, ix + inner.w - levelW - 1, nameY, level,
+          not badge and battler.shownStatus)
 
   -- the foe's exact HP is never shown, as on every cartridge
   if player then
@@ -1440,17 +1478,18 @@ local function healthboxAt(battle, key, panel, fx, fy)
 end
 
 local function drawHUDs(battle, slide)
+  local showStatus = StatusHUDVisibility.forBattle(battle)
   local record = hudRecord(battle)
   local images = record and record.images or {}
   local double = battle.isDouble and battle:isDouble()
-  if not double and battle.enemy and not battle.showEnemyTrainer
+  if showStatus and not double and battle.enemy and not battle.showEnemyTrainer
       and not battle.enemySendingOut and not battle:growInScale(battle.enemy)
       and slide == 0 and not battle.introBalls and not battle.enemy.fainted then
     local x, y = healthboxAt(battle, "singlesOpponent",
                              hudImage(images.opponent), 8, 8)
     drawStatusPanel(battle, battle.enemy, x, y, false)
   end
-  if not double and not battle.safari and battle.player and not battle.demo
+  if showStatus and not double and not battle.safari and battle.player and not battle.demo
       and not battle.showPlayerBack and slide == 0 then
     local x, y = healthboxAt(battle, "singlesPlayer",
                              hudImage(images.player), 112, 64)
@@ -1467,7 +1506,7 @@ local function drawHUDs(battle, slide)
   -- The player's doubles panel is its own art too -- shorter, and with no
   -- EXP bar, which is why the cartridge ships five healthbox blobs and not
   -- two.
-  if double and slide == 0 then
+  if showStatus and double and slide == 0 then
     local pairs_ = {
       { pos = 0, key = "playerLeft",    img = images.player,        player = true },
       { pos = 2, key = "playerRight",   img = images.playerDoubles
