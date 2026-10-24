@@ -231,61 +231,69 @@ function Game:bootConfig()
   return boot
 end
 
+-- Public lifecycle entry points used by native integrations and the UI.
+function Game:newGame()
+  local OverworldState = require("src.world.OverworldController")
+  while self.stack:top() do self.stack:pop() end
+  if self.overworld then self.overworld.fadeOverlay = nil end
+  -- New Game keeps the standalone options.lua preferences
+  self.save = SaveData.newGame(self:bootConfig())
+  -- no bucket carry-over: mod state from an abandoned session must
+  -- not leak into a fresh slot; mods seed via save.created instead
+  self:adoptSave(self.save)
+  ModRuntime.emit("save.created", { save = self.save })
+  self:applyOptions(self.save.options)
+  self.stack:push(OverworldState, self.save.player.map,
+                  self.save.player.x, self.save.player.y,
+                  self.save.player.facing)
+  local newGameScreen = bootScreens(self).newGame
+  if newGameScreen == nil and not require("src.core.GameVersion").isGen2() then
+    newGameScreen = "OakSpeech"
+  end
+  if newGameScreen then
+    Screens.push(self, newGameScreen, function() end)
+  else
+    -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
+    -- never appeared.  Data.lua sets boot.screens.newGame = false for any
+    -- dataset with no OakText* -- Prism writes its own introduction in
+    -- engine/intro_menu.asm rather than replaying the professor's -- so
+    -- OakSpeech does not run, and the `customize_player` step lives INSIDE
+    -- OakSpeech.  The step was correct and simply unreachable.
+    --
+    -- IntroductionSpeech calls PlayerCustomization before it asks the
+    -- player's name, and the name prompt on this path comes from the
+    -- intro map's own script, so pushing it here puts it in the same
+    -- place: after New Game, before the map runs.
+    -- pcall, not a bare require: a dataset can want this screen without
+    -- the build shipping it (that is exactly how NEW GAME on Prism went
+    -- from "no customisation menu" to "module not found" the moment the
+    -- branch became reachable).  A missing screen must cost the player
+    -- the customisation, not the save file they were starting.
+    local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
+    if okCust and type(Cust) == "table" and Cust.available(self) then
+      Screens.push(self, "PrismCustomization", function() end)
+    elseif not okCust then
+      require("src.core.Logger").error(
+        "player customisation screen unavailable: %s", tostring(Cust))
+    end
+  end
+end
+
+function Game:continueGame(loaded, recovered)
+  if not loaded then return self:newGame() end
+  return self:restoreSave(loaded, recovered)
+end
+
 -- the title screen with its NEW GAME / CONTINUE wiring; used at boot
 -- and by the START-menu QUIT confirmation
 function Game:makeTitleState()
-  local OverworldState = require("src.world.OverworldController")
   local factory = Screens.get(self, bootScreens(self).title or "TitleState")
   local title = factory.new(self, {
-    onNewGame = function()
-      while self.stack:top() do self.stack:pop() end
-      if self.overworld then self.overworld.fadeOverlay = nil end
-      -- New Game keeps the standalone options.lua preferences
-      self.save = SaveData.newGame(self:bootConfig())
-      -- no bucket carry-over: mod state from an abandoned session must
-      -- not leak into a fresh slot; mods seed via save.created instead
-      self:adoptSave(self.save)
-      ModRuntime.emit("save.created", { save = self.save })
-      self:applyOptions(self.save.options)
-      self.stack:push(OverworldState, self.save.player.map,
-                      self.save.player.x, self.save.player.y,
-                      self.save.player.facing)
-      local newGameScreen = bootScreens(self).newGame
-      if newGameScreen == nil and not require("src.core.GameVersion").isGen2() then
-        newGameScreen = "OakSpeech"
-      end
-      if newGameScreen then
-        Screens.push(self, newGameScreen, function() end)
-      else
-        -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
-        -- never appeared.  Data.lua sets boot.screens.newGame = false for any
-        -- dataset with no OakText* -- Prism writes its own introduction in
-        -- engine/intro_menu.asm rather than replaying the professor's -- so
-        -- OakSpeech does not run, and the `customize_player` step lives INSIDE
-        -- OakSpeech.  The step was correct and simply unreachable.
-        --
-        -- IntroductionSpeech calls PlayerCustomization before it asks the
-        -- player's name, and the name prompt on this path comes from the
-        -- intro map's own script, so pushing it here puts it in the same
-        -- place: after New Game, before the map runs.
-        -- pcall, not a bare require: a dataset can want this screen without
-        -- the build shipping it (that is exactly how NEW GAME on Prism went
-        -- from "no customisation menu" to "module not found" the moment the
-        -- branch became reachable).  A missing screen must cost the player
-        -- the customisation, not the save file they were starting.
-        local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
-        if okCust and type(Cust) == "table" and Cust.available(self) then
-          Screens.push(self, "PrismCustomization", function() end)
-        elseif not okCust then
-          require("src.core.Logger").error(
-            "player customisation screen unavailable: %s", tostring(Cust))
-        end
-      end
-    end,
+    onNewGame = function() return self:newGame() end,
     onContinue = function()
       local loaded, recovered = SaveData.load()
       if loaded then
-        self:restoreSave(loaded, recovered)
+        self:continueGame(loaded, recovered)
       end
     end,
   })
@@ -1371,7 +1379,7 @@ function Game:keypressed(key)
     return
   elseif key == "f2" then
     local loaded, recovered = SaveData.load()
-    if loaded then self:restoreSave(loaded, recovered) end
+    if loaded then self:continueGame(loaded, recovered) end
     return
   elseif key == "-" then
     self:zoomStep(-1)
