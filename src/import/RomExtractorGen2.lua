@@ -3340,6 +3340,25 @@ function RomExtractorGen2:gen2Marts()
       end
     end)
   end
+  local bargain = self:symbol("BargainShopData")
+  if bargain and self.rom then
+    local ok, rows = pcall(function()
+      local stock = {}
+      local size = math.min(self.rom:byte(bargain.bank, bargain.address), 32)
+      for slot = 0, size - 1 do
+        local address = bargain.address + 1 + slot * 3
+        local item = self.rom:byte(bargain.bank, address)
+        if item == 0xFF then break end
+        stock[#stock + 1] = {
+          item = string.format("ITEM_%03d", item),
+          price = self.rom:word(bargain.bank, address + 1),
+        }
+      end
+      return stock
+    end)
+    if ok then out.bargain = rows
+    else Logger.warn("gen2 bargain stock unavailable: %s", tostring(rows)) end
+  end
   self._marts = out
   return out
 end
@@ -3355,8 +3374,9 @@ function RomExtractorGen2:gen2MartStock(bank, address)
     if op == self:opcode("pokemart") then
       local dialog = self.rom:byte(bank, address + offset + 1)
       local index = self.rom:word(bank, address + offset + 2)
-      if dialog <= GEN2_MART_TYPE_MAX and marts[index] and #marts[index] > 0 then
-        return marts[index]
+      local stock = dialog == 2 and marts.bargain or marts[index]
+      if dialog <= GEN2_MART_TYPE_MAX and stock and #stock > 0 then
+        return stock, index, dialog
       end
     end
   end
@@ -6779,7 +6799,7 @@ function RomExtractorGen2:extractMapsFromRom()
             -- opcode and rows 10-12 its operands.  957 objects here: the
             -- jumptext(faceplayer) NPCs whose dialogue nothing ever read, the
             -- jumpstd bookshelves, the berry trees, the mart clerks.
-            local inlineText, inlineStd, inlineMart, silent, machineItem
+            local inlineText, inlineStd, inlineMart, inlineMartId, inlineMartType, silent, machineItem
             -- THE SHARED PLACEHOLDER OBJECT.  Forty-nine of Prism's objects
             -- point their script at ObjectEvent (00:$1AD1), the home-bank stub
             -- whose whole body is `jumptextfaceplayer ObjectEventText`
@@ -6813,7 +6833,8 @@ function RomExtractorGen2:extractMapsFromRom()
                 quantity = 1
               elseif op == self:opcode("pokemart") then
                 local marts = self:gen2Marts()
-                inlineMart = marts[a2] or marts[a2 + row[12] * 256]
+                inlineMartId, inlineMartType = a2 + row[12] * 256, a1
+                inlineMart = inlineMartType == 2 and marts.bargain or marts[inlineMartId]
               end
             end
             -- Crystal's itemball field is a POINTER to `itemball ITEM` --
@@ -6861,7 +6882,8 @@ function RomExtractorGen2:extractMapsFromRom()
               -- scriptAddress is row[10] + row[11] * 256, so the mart index
               -- the command's second operand takes is simply row[11]
               local marts = self:gen2Marts()
-              inlineMart = marts[row[11]]
+              inlineMartId, inlineMartType = row[11], row[10]
+              inlineMart = inlineMartType == 2 and marts.bargain or marts[inlineMartId]
               silent = inlineMart == nil
             elseif script and kind == GEN2_OBJECT_KIND_ITEMBALL then
               item = self.rom:byte(bank, scriptAddress)
@@ -6967,8 +6989,8 @@ function RomExtractorGen2:extractMapsFromRom()
                    and self.rom:byte(bank, scriptAddress + 1) == GEN2_STD_POKECENTER_NURSE then
                   marker = { nurse = true }
                 else
-                  local stock = self:gen2MartStock(bank, scriptAddress)
-                  if stock then marker = { mart = stock } end
+                  local stock, martId, martType = self:gen2MartStock(bank, scriptAddress)
+                  if stock then marker = { mart = stock, martId = martId, martType = martType } end
                 end
 
                 -- Scan opening bytecode for `special <id>` (op $0F, dw index).
@@ -6996,6 +7018,7 @@ function RomExtractorGen2:extractMapsFromRom()
                 local entry = textPointers[mapId][textConst] or { text = textConst }
                 entry.nurse = marker.nurse
                 entry.mart = marker.mart
+                entry.martId, entry.martType = marker.martId, marker.martType
                 if marker.special then
                   entry.special = marker.special
                   entry.specialId = marker.specialId
@@ -7041,6 +7064,7 @@ function RomExtractorGen2:extractMapsFromRom()
                 spokenObjects = spokenObjects + 1
               elseif inlineMart then
                 entry.mart = inlineMart
+                entry.martId, entry.martType = inlineMartId, inlineMartType
                 serviceObjects = serviceObjects + 1
               elseif inlineStd == GEN2_STD_POKECENTER_NURSE then
                 entry.nurse = true

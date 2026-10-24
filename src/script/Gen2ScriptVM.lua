@@ -786,7 +786,7 @@ L.waitsfx = function(_, s) emit(s, { "g2_nop" }) end
 
 -- `pokemart MARTTYPE_*, MART_*`: the second operand indexes the Marts pointer
 -- table the extractor stamps into map_scripts.marts.
-L.pokemart = function(ir, s) emit(s, { "g2_mart", ir[3] }) end
+L.pokemart = function(ir, s) emit(s, { "g2_mart", ir[3], ir[2] }) end
 -- The extractor resolves both pointers into tables at import time: `elevator`
 -- into its floor list, `loadmenu` into its MenuData labels.  `verticalmenu`
 -- runs the armed menu and drops the 1-based choice (0 = cancelled) into the
