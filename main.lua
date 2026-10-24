@@ -241,6 +241,7 @@ local lastLogFlush = 0
 -- unrelated push overflows it and ends the process with a traceback pointing at
 -- innocent code.  See src/render/GraphicsStack.lua.
 local GraphicsStack = require("src.render.GraphicsStack")
+local PlatformHooks = require("src.core.PlatformHooks")
 -- Declared HERE rather than further down beside its first mark: bootGame below
 -- calls BootTrace.booted(), and a `local` declared after a function's body is
 -- not in scope inside it -- the name resolved to the nil GLOBAL instead and
@@ -688,7 +689,9 @@ function love.update(dt)
   -- unguarded dereference here is not a theoretical race -- it is
   -- "attempt to index upvalue 'Game' (a nil value)" a second after launch.
   if not Game then return end
-  Game:update(dt)
+  -- Only the interactive game frame is a core.update seam, as in Gen1.
+  -- Scripted act+step loops above retain their deterministic direct updates.
+  PlatformHooks.update(Game, dt)
 end
 
 -- THE LAUNCHER'S OWN BOTTOM SCREEN.

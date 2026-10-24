@@ -1,0 +1,49 @@
+name: portable battle.status_hud_visible contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: status-hud-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check status HUD and native battle composition
+        run: |
+          luajit tests/engine/status_hud.lua
+          luajit tests/engine/status_hud_composition.lua
+          luajit tests/engine/status_hud_renderers.lua
+      - name: Validate pinned native Gen1 GBA battle UI
+        working-directory: .contract-reference/gen1
+        run: luajit tests/modkit/cases/unified_gen3_battle_hooks.lua
+      - name: Compare native API 1 and 2
+        run: |
+          mkdir -p /tmp/status-hud-contract
+          python3 tools/status-hud-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 1 --report /tmp/status-hud-contract/api1-native.json
+          python3 tools/status-hud-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --report /tmp/status-hud-contract/api2-native.json
+      - name: Compare unified callbacks and API 3
+        run: |
+          python3 tools/status-hud-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --format unified --report /tmp/status-hud-contract/api2-unified.json
+          python3 tools/status-hud-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 3 --format unified --report /tmp/status-hud-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: status-hud-contract
+          path: /tmp/status-hud-contract
+          if-no-files-found: ignore

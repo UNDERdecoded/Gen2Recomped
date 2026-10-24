@@ -180,7 +180,7 @@ function Damage.accuracyRoll(ruleset, move, attacker, defender, rng,
   -- one, otherwise a 1/256 hit chance is invented.  A Gen 3 dataset has no
   -- such attribute and this answers zero.
   acc = math.max(0, acc - HeldItems.accuracyPenalty(data, defender))
-  if not ruleset.oneIn256Miss and basePct >= 100 and not deepFog
+  if not ruleset.oneIn256Miss and basePct >= 100 and acc >= 255 and not deepFog
      and (attacker.stages.accuracy or 0) >= (defender.stages.evasion or 0) then
     return true
   end
