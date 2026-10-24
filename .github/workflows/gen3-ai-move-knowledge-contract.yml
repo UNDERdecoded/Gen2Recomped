@@ -1,0 +1,34 @@
+name: native GBA AI move knowledge
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen3-ai-move-knowledge-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: .contract-reference/gen1
+      - name: Install runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native move knowledge
+        run: luajit tests/engine/gen3_ai_move_knowledge.lua
+      - name: Compare actual native AI interpreters
+        run: |
+          mkdir -p /tmp/gen3-ai-move-knowledge
+          python3 tools/gen3-ai-move-knowledge-contract-check/check.py --gen1 .contract-reference/gen1 --report /tmp/gen3-ai-move-knowledge/records.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: gen3-ai-move-knowledge
+          path: /tmp/gen3-ai-move-knowledge
+          if-no-files-found: ignore
