@@ -1,0 +1,1 @@
+{"id": "portable_party_grid", "name": "Portable party navigation", "version": "1.0.0", "api": 3, "generations": [1, 2, 3], "entry": "main.lua", "games": ["all"], "affects_link": false}

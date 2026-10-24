@@ -1,0 +1,40 @@
+name: portable held-item definitions
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: held-content-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Validate native definitions and authority
+        run: |
+          luajit tests/engine/held_item_content.lua
+          luajit tests/engine/held_item_content_authority.lua
+          luajit tests/engine/mod_supports.lua
+      - name: Compare both SDKs in all four modes
+        run: |
+          mkdir -p /tmp/held-content
+          python3 tools/held-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 1 --format native --report /tmp/held-content/api1.json
+          python3 tools/held-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 2 --format native --report /tmp/held-content/api2-native.json
+          python3 tools/held-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 2 --format unified --report /tmp/held-content/api2-unified.json
+          python3 tools/held-content-contract-check/check.py --gen1 .contract-reference/gen1 --api 3 --format unified --report /tmp/held-content/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: held-content-contract
+          path: /tmp/held-content
+          if-no-files-found: ignore
