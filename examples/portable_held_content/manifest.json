@@ -1,0 +1,8 @@
+{
+  "id": "portable_held_content",
+  "name": "Portable Held Item Definitions",
+  "version": "1.0.0",
+  "api": 3,
+  "games": ["gen2"],
+  "entry": "main.lua"
+}

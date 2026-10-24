@@ -1,0 +1,41 @@
+name: portable ROM prose
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: rom-text-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: .contract-reference/gen1
+      - name: Install runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Validate native readers and namespace ownership
+        run: |
+          luajit tests/engine/rom_text_content.lua
+          luajit tests/engine/rom_text_authority.lua
+          luajit tests/engine/rom_text_format.lua
+          luajit tests/engine/rom_text_labels.lua
+      - name: Verify provenance and compare native contracts
+        run: |
+          mkdir -p /tmp/rom-text-contract
+          python3 tools/rom-text-contract-check/generate-labels.py --gen1 .contract-reference/gen1 --check
+          python3 tools/rom-text-contract-check/check-format.py --gen1 .contract-reference/gen1 --report /tmp/rom-text-contract/format.json
+          python3 tools/rom-text-contract-check/check.py --gen1 .contract-reference/gen1 --report /tmp/rom-text-contract/api3.json
+          python3 tools/rom-text-contract-check/check.py --gen1 .contract-reference/gen1 --host-api 2 --report /tmp/rom-text-contract/host2.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: rom-text-contract
+          path: /tmp/rom-text-contract
+          if-no-files-found: ignore

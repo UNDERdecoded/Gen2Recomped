@@ -231,6 +231,11 @@ local DITTO = "SPECIES_132"
 -- is compared against, scaled by 16: below it the mon is female.
 function DayCare.gender(data, mon)
   if not (data and mon) then return nil end
+  local generation = require("src.core.GameVersion").generation()
+  if (generation == 2 or generation == 3) and require("src.mods.Runtime").wantsHook("gender.roll") then
+    local gender = require("src.pokemon.IdentityRolls").gender(data, mon, generation)
+    return gender == "unknown" and "none" or gender
+  end
   local def = data.pokemon and data.pokemon[mon.species]
   local ratio = def and def.genderRatio
   if ratio == nil then return nil end            -- Gen1 import: no gender data
@@ -247,7 +252,7 @@ function DayCare.gender(data, mon)
     return (ratio > (mon.personality % 256)) and "female" or "male"
   end
   local atk = (mon.dvs and mon.dvs.attack) or 0
-  return (atk * 16 < ratio) and "female" or "male"
+  return (atk * 16 + ((mon.dvs or {}).speed or 0) <= ratio) and "female" or "male"
 end
 
 local function eggGroupsOf(data, mon)

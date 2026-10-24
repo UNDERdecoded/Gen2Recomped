@@ -223,6 +223,16 @@ function Manifest.validate(raw, path)
   assert(api <= Version.modApi, ("requires mod API %d; this engine provides %d")
     :format(api, Version.modApi))
   local strict = api >= 2
+  -- API 3 is one portable contract, not three independent API-2 opt-ins.
+  for _, field in ipairs({ "content_format", "callback_format", "script_format" }) do
+    assert(api < 3 or raw[field] == nil or raw[field] == "unified",
+      "API 3 requires unified " .. field)
+  end
+  local defaultFormat = api >= 3 and "unified" or "native"
+  assert(raw.content_format == nil or raw.content_format == "native"
+      or raw.content_format == "unified", "content_format must be native or unified")
+  assert(raw.content_format ~= "unified" or api >= 2,
+    "unified content requires mod API 2")
 
   local profile = raw.profile or "content"
   if not Manifest.PROFILES[profile] then
@@ -239,6 +249,10 @@ function Manifest.validate(raw, path)
       violation(strict, raw.id, ("unknown permission %q"):format(tostring(name)))
     end
   end
+
+  local scriptFormat = raw.script_format == nil and defaultFormat or raw.script_format
+  assert(scriptFormat == "native" or scriptFormat == "unified", "script_format must be native or unified")
+  assert(scriptFormat ~= "unified" or api >= 2, "unified scripts require mod API 2")
 
   local gameVersionOk, gameVersionErr = Semver.validRange(raw.game_version)
   assert(gameVersionOk, ("malformed game_version %q: %s")
@@ -279,6 +293,10 @@ function Manifest.validate(raw, path)
     return value
   end
 
+  assert(raw.callback_format == nil or raw.callback_format == "native" or raw.callback_format == "unified",
+    "callback_format must be native or unified")
+  assert(raw.callback_format ~= "unified" or api >= 2, "callback_format unified requires mod API 2")
+
   local conflicts = mergeConflictLists(raw.conflicts, raw.incompatible)
 
   -- `support`: where to thank the mod's creator -- a Ko-fi, a Patreon, a
@@ -305,6 +323,7 @@ function Manifest.validate(raw, path)
     version = raw.version,
     entry = raw.entry,
     api = api,
+    content_format = raw.content_format or defaultFormat,
     priority = tonumber(raw.priority) or 0,
     dependencies = array(raw.dependencies),
     optional_dependencies = array(raw.optional_dependencies),
@@ -316,6 +335,7 @@ function Manifest.validate(raw, path)
     category = raw.category or "OTHER",
     game_version = raw.game_version,
     description = raw.description or "",
+    callback_format = raw.callback_format or defaultFormat,
     github = github,
     support = support,
     updateCheck = updateCheck,
@@ -325,6 +345,7 @@ function Manifest.validate(raw, path)
     affects_link = affectsLink,
     permissions = permissions,
     permissionSet = permissionSet,
+    script_format = scriptFormat,
     options_schema = optionalFile(raw.options_schema, "options_schema"),
     -- Base files the mod needs but cannot ship -- a Stadium 2 cartridge, a
     -- second game's ROM.  Declared here, satisfied by the launcher, read by
