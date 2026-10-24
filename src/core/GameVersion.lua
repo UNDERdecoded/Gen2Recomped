@@ -897,6 +897,13 @@ GameVersion.VERSIONS = {
     hasRunning = true,
   },
 
+  sapphire = {
+    id = "sapphire", generation = 3, label = "Sapphire", displayName = "Pokemon Sapphire",
+    launcherName = "Sapphire", sha1 = "3ccbbd45f8553c36463f13b938e833f652b793e4",
+    manifest = "tools/rom_manifest_sapphire.json", cachePrefix = "sapphire/", saveSuffix = "_sapphire",
+    importable = true, experimental = true, experimentalLabel = "ALPHA", hasRunning = true,
+  },
+
   emerald = {
     id = "emerald",
     generation = 3,
@@ -1075,7 +1082,7 @@ GameVersion.VERSIONS = {
 -- put a Game Boy Advance game behind two Game Boy Color hacks, and broke the
 -- ordering rule tests/polished_crystal_registration_test.lua asserts.
 GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
-                      "firered", "emerald", "platinum",
+                      "firered", "sapphire", "emerald", "platinum",
                       "heartgold", "soulsilver", "black", "white",
                       "prism", "polishedcrystal" }
 
