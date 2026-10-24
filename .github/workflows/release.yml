@@ -372,6 +372,15 @@ jobs:
           echo "LOVE_APP=$app" >> "$GITHUB_ENV"
           echo "using LÖVE bundle: $app"
 
+      - name: Build universal shader importer and notices
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          rustup target add aarch64-apple-darwin x86_64-apple-darwin
+          python3 tools/slang-import/package.py build --universal-macos
+          python3 tools/slang-import/package.py verify --platform macos --arch universal
+
       - name: Build macOS app
         run: |
           set -euo pipefail
@@ -379,6 +388,7 @@ jobs:
           # notarize separately below so it uses secret credentials, not a
           # login-keychain profile.
           bash scripts/build.sh mac --version "${{ needs.version.outputs.version }}" --no-notarize
+          [ -f .bazinga/work/Gen2Recomped.app/Contents/Resources/shader-tools/gen2-slang-import ] || exit 1
           [ -f .bazinga/work/Gen2Recomped.app/Contents/Resources/translation/rom-translate ] \
             || { echo "::error::rom-translate is missing from the macOS app"; exit 1; }
 
@@ -436,6 +446,65 @@ jobs:
         if: ${{ always() && vars.APPLE_SIGNING == 'true' }}
         run: |
           security delete-keychain "$RUNNER_TEMP/pokemon-signing.keychain-db" 2>/dev/null || true
+
+  # Native optional shader compiler artifacts. Each shipping job consumes its own architecture.
+  windows-shaders:
+    name: Windows shader importer
+    needs: version
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build locked converter and dependency notices
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          python tools/slang-import/package.py build
+          python tools/slang-import/package.py verify --platform windows --arch x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shader-tools-win
+          path: shader-tools
+          if-no-files-found: error
+
+  linux-shaders:
+    name: Linux x86_64 shader importer
+    needs: version
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build locked converter and dependency notices
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          python3 tools/slang-import/package.py build
+          python3 tools/slang-import/package.py verify --platform linux --arch x86_64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shader-tools-linux-x86_64
+          path: shader-tools
+          if-no-files-found: error
+
+  arm64-shaders:
+    name: Linux ARM64 shader importer
+    needs: version
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build locked converter and dependency notices
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: |
+          rustup toolchain install 1.99.1 --profile minimal
+          python3 tools/slang-import/package.py build
+          python3 tools/slang-import/package.py verify --platform linux --arch aarch64
+      - uses: actions/upload-artifact@v7
+        with:
+          name: shader-tools-linux-aarch64
+          path: shader-tools
+          if-no-files-found: error
 
   # --------------------------------------------------------------- Windows
   # ubuntu-latest, not macOS.  scripts/build.sh's build_win is curl + unzip +
@@ -513,10 +582,14 @@ jobs:
 
   windows:
     name: Windows (win64)
-    needs: [version, windows-translator]
+    needs: [version, windows-translator, windows-shaders]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: shader-tools-win
+          path: shader-tools
 
       - uses: actions/download-artifact@v7
         with:
@@ -539,6 +612,7 @@ jobs:
         run: |
           set -euo pipefail
           listing="$(unzip -l dist/win/Gen2Recomped-win64.zip)"
+          grep -q "shader-tools/gen2-slang-import.exe" <<<"$listing" || exit 1
           grep -q "translation/rom-translate.exe" <<<"$listing" \
             || { echo "::error::rom-translate.exe is missing from the Windows zip"; exit 1; }
 
@@ -574,10 +648,14 @@ jobs:
   # business needing it.
   linux:
     name: Linux (x86_64 AppImage)
-    needs: [version, linux-translator]
+    needs: [version, linux-translator, linux-shaders]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: shader-tools-linux-x86_64
+          path: shader-tools
 
       - uses: actions/download-artifact@v7
         with:
@@ -611,6 +689,7 @@ jobs:
         run: |
           set -euo pipefail
           bash scripts/build.sh linux --version "${{ needs.version.outputs.version }}"
+          [ -f .bazinga/work/linux-appdir/shader-tools/gen2-slang-import ] || exit 1
           [ -f .bazinga/work/linux-appdir/translation/rom-translate ] \
             || { echo "::error::rom-translate is missing from the Linux AppImage"; exit 1; }
 
@@ -1115,11 +1194,15 @@ jobs:
   # ------------------------------------------------------------------ arm64
   arm64:
     name: Linux ARM64 AppImage
-    needs: [version, payload, linux-translator]
+    needs: [version, payload, linux-translator, arm64-shaders]
     runs-on: ubuntu-24.04-arm
     continue-on-error: true
     steps:
       - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v7
+        with:
+          name: shader-tools-linux-aarch64
+          path: shader-tools
 
       - uses: actions/download-artifact@v7
         with:

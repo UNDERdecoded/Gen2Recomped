@@ -1,0 +1,51 @@
+[
+  {
+    "repository": "https://github.com/SnowflakePowered/glslang-rs",
+    "commit": "877868f2f02ebdaa85f7dcf8575d984ebfdcbc00",
+    "url": "https://raw.githubusercontent.com/SnowflakePowered/glslang-rs/877868f2f02ebdaa85f7dcf8575d984ebfdcbc00/LICENSE.md",
+    "file": "glslang-rs-877868f2f02e-LICENSE.md",
+    "sha256": "162b2e076e7fb5f1a1bbe5f9170a7ba30a860a96161c997dd888d6612f58e0e1"
+  },
+  {
+    "repository": "https://github.com/SnowflakePowered/librashader",
+    "commit": "87e8a97b50516d997defeaa168173dcd185d4022",
+    "url": "https://raw.githubusercontent.com/SnowflakePowered/librashader/87e8a97b50516d997defeaa168173dcd185d4022/LICENSE.md",
+    "file": "librashader-87e8a97b5051-LICENSE.md",
+    "sha256": "69c15395f33bc9ce8e1d8b6cef42b7e49cdec4c6f5233d4b9cfc4bfa335f97f9"
+  },
+  {
+    "repository": "https://github.com/gfx-rs/rspirv",
+    "commit": "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4",
+    "url": "https://raw.githubusercontent.com/gfx-rs/rspirv/8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4/LICENSE",
+    "file": "rspirv-8afc3d0ac8e1-LICENSE",
+    "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+  },
+  {
+    "repository": "https://github.com/SnowflakePowered/spirv-cross2",
+    "commit": "dc4d907f58b31058177112e47852648af4c0f2ad",
+    "url": "https://raw.githubusercontent.com/SnowflakePowered/spirv-cross2/dc4d907f58b31058177112e47852648af4c0f2ad/LICENSE-APACHE",
+    "file": "spirv-cross2-dc4d907f58b3-LICENSE-APACHE",
+    "sha256": "769f80b5bcb42ed0af4e4d2fd74e1ac9bf843cb80c5a29219d1ef3544428a6bb"
+  },
+  {
+    "repository": "https://github.com/SnowflakePowered/spirv-cross2",
+    "commit": "dc4d907f58b31058177112e47852648af4c0f2ad",
+    "url": "https://raw.githubusercontent.com/SnowflakePowered/spirv-cross2/dc4d907f58b31058177112e47852648af4c0f2ad/LICENSE-MIT",
+    "file": "spirv-cross2-dc4d907f58b3-LICENSE-MIT",
+    "sha256": "59a7815d2e2a7e4f7645bb1597e8fdd622541b9af54e0ace40758ecd5d057c46"
+  },
+  {
+    "repository": "https://github.com/SnowflakePowered/spirv-cross2",
+    "commit": "aded817c71e0b5fb6171cc3b396352075de6acda",
+    "url": "https://raw.githubusercontent.com/SnowflakePowered/spirv-cross2/aded817c71e0b5fb6171cc3b396352075de6acda/LICENSE-APACHE",
+    "file": "spirv-cross2-aded817c71e0-LICENSE-APACHE",
+    "sha256": "769f80b5bcb42ed0af4e4d2fd74e1ac9bf843cb80c5a29219d1ef3544428a6bb"
+  },
+  {
+    "repository": "https://github.com/SnowflakePowered/spirv-cross2",
+    "commit": "aded817c71e0b5fb6171cc3b396352075de6acda",
+    "url": "https://raw.githubusercontent.com/SnowflakePowered/spirv-cross2/aded817c71e0b5fb6171cc3b396352075de6acda/LICENSE-MIT",
+    "file": "spirv-cross2-aded817c71e0-LICENSE-MIT",
+    "sha256": "59a7815d2e2a7e4f7645bb1597e8fdd622541b9af54e0ace40758ecd5d057c46"
+  }
+]

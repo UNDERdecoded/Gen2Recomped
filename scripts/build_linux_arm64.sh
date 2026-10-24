@@ -112,6 +112,10 @@ if [ -f "$ROOT/translation/rom-translate" ]; then
   fi
 fi
 
+rm -rf "$IN_DIR/shader-tools"
+python3 "$ROOT/tools/slang-import/package.py" install --platform linux --arch aarch64 \
+  --destination "$IN_DIR/shader-tools" --optional
+
 # --------------------------------------------------------------- downloads
 # Fetched on the host and checksum-pinned here so the container never needs
 # network access and every input is verified in exactly one place.

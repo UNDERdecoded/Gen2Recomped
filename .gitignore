@@ -171,3 +171,6 @@ mobile/ios/bundle_id.local
 # secrets as public -- but GitHub's secret scanning flags it, so it is kept out
 # of the repository and injected into release builds instead.
 /cloud_clients.lua
+
+# Optional desktop shader compiler bundle (built from tools/slang-import).
+/shader-tools/
