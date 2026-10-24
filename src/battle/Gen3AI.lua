@@ -131,15 +131,18 @@ OPS["if_not_in_hwords"] = OPS["if_not_in_bytes"]
 
 -- ------- the roll
 --
--- Random() & 0xFF < n, so `if_random_less_than 0x80` is a coin flip and
--- 0x50 is a little under a third.
-OPS["if_random_less_than"] = function(vm, args)
-  if vm.rng(0, 255) < args[1] then return args[#args] end
+-- Random() returns a u16. Compare its low byte while consuming the same
+-- range as the native interpreter, including values above 255.
+local function randomBranch(test)
+  return function(vm, args)
+    if test(vm.rng(0, 65535) % 256, args[1]) then return args[#args] end
+  end
 end
 
-OPS["if_random_greater_than"] = function(vm, args)
-  if vm.rng(0, 255) > args[1] then return args[#args] end
-end
+OPS["if_random_less_than"] = randomBranch(function(a, b) return a < b end)
+OPS["if_random_greater_than"] = randomBranch(function(a, b) return a > b end)
+OPS["if_random_equal"] = randomBranch(function(a, b) return a == b end)
+OPS["if_random_not_equal"] = randomBranch(function(a, b) return a ~= b end)
 
 -- ------- reading the battle
 
