@@ -1,0 +1,51 @@
+name: portable world.talk contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: world-talk-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native NPC dispatch and dialogue
+        run: |
+          luajit tests/engine/world_talk.lua
+          luajit tests/engine/world_talk_routing.lua
+          luajit tests/engine/world_talk_dialogue.lua
+      - name: Validate pinned native Gen1 NPC contracts
+        working-directory: .contract-reference/gen1
+        run: |
+          luajit tests/modkit/cases/world_talk.lua
+          luajit tests/modkit/cases/unified_npcs.lua
+      - name: Compare native API 1 and 2
+        run: |
+          mkdir -p /tmp/world-talk-contract
+          python3 tools/world-talk-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 1 --report /tmp/world-talk-contract/api1-native.json
+          python3 tools/world-talk-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --report /tmp/world-talk-contract/api2-native.json
+      - name: Compare unified callbacks and API 3
+        run: |
+          python3 tools/world-talk-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --format unified --report /tmp/world-talk-contract/api2-unified.json
+          python3 tools/world-talk-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 3 --format unified --report /tmp/world-talk-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: world-talk-contract
+          path: /tmp/world-talk-contract
+          if-no-files-found: ignore

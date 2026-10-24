@@ -1,0 +1,52 @@
+name: portable trainer.before_battle contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: trainer-preparation-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native trainer admission, scripts and party scope
+        run: |
+          luajit tests/engine/trainer_preparation.lua
+          luajit tests/engine/trainer_preparation_native.lua
+          luajit tests/engine/trainer_party_scope.lua
+      - name: Validate pinned native Gen1 trainer contracts
+        working-directory: .contract-reference/gen1
+        run: |
+          luajit tests/modkit/cases/trainer_before_battle.lua
+          luajit tests/modkit/cases/unified_gen2_hooks.lua
+          luajit tests/modkit/cases/unified_gen3_hooks.lua
+      - name: Compare native API 1 and 2
+        run: |
+          mkdir -p /tmp/trainer-preparation-contract
+          python3 tools/trainer-preparation-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 1 --report /tmp/trainer-preparation-contract/api1-native.json
+          python3 tools/trainer-preparation-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --report /tmp/trainer-preparation-contract/api2-native.json
+      - name: Compare unified callbacks and API 3
+        run: |
+          python3 tools/trainer-preparation-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --format unified --report /tmp/trainer-preparation-contract/api2-unified.json
+          python3 tools/trainer-preparation-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 3 --format unified --report /tmp/trainer-preparation-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: trainer-preparation-contract
+          path: /tmp/trainer-preparation-contract
+          if-no-files-found: ignore

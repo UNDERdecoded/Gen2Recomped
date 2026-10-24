@@ -299,19 +299,25 @@ do
     menu:update(1 / 60)
     pressed = {}
   end
+  check(game.save.options.ruleset == false,
+        "new saves follow the cartridge default")
+  press("right")
+  check(game.save.options.ruleset == "aaa_rules",
+        "AUTO steps to the first sorted explicit id")
+  press("right")
   check(game.save.options.ruleset == "gen1_faithful",
-        "new saves start on the default ruleset")
+        "the explicit Gen-1 record remains selectable")
   press("right")
   check(game.save.options.ruleset == "modern_clean",
         "right steps to the next sorted id")
   press("right")
-  check(game.save.options.ruleset == "aaa_rules",
-        "a mod-registered ruleset is selectable")
-  press("right")
-  check(game.save.options.ruleset == "gen1_faithful",
-        "the cycle wraps and never offers the hidden record")
+  check(game.save.options.ruleset == false,
+        "the cycle returns to AUTO and skips hidden records")
   press("left")
-  check(game.save.options.ruleset == "aaa_rules", "left steps backwards")
+  check(game.save.options.ruleset == "modern_clean", "left steps backwards")
+  press("right")
+  press("right")
+  check(game.save.options.ruleset == "aaa_rules", "a mod record remains selectable")
 
   local drawn = {}
   local savedDraw = Font.draw
