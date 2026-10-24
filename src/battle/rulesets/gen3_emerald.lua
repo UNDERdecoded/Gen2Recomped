@@ -32,6 +32,9 @@ return {
   -- re-floors, so the two produce different numbers; this is not a
   -- reformulation of the same rule.
   critMultiplier = 2,
+  -- Cmd_critcalc's multiplier is applied before Cmd_typecalc's STAB and
+  -- per-type floors. Applying it after resistance loses odd damage points.
+  critBeforeType = true,
 
   -- TWO ON THE FIELD CHANGES TWO NUMBERS, and both of them live in
   -- CalculateBaseDamage (0806957C) rather than anywhere the port would

@@ -1,0 +1,8 @@
+{
+  "id": "portable_gba_menu_prose",
+  "name": "Portable GBA menu prose",
+  "version": "1.0.0",
+  "api": 3,
+  "games": ["firered", "emerald"],
+  "entry": "main.lua"
+}

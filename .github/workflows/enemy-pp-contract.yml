@@ -1,0 +1,47 @@
+name: native enemy PP contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: enemy-pp-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native defaults, AI fallback and compatibility
+        run: |
+          luajit tests/engine/enemy_pp_defaults.lua
+          luajit tests/engine/charge_required_contract.lua
+          luajit tests/engine/api3_compat.lua
+          luajit tests/engine/unified_mod_callbacks.lua
+      - name: Compare raw PP policy in every SDK mode and the API-3 observer
+        run: |
+          mkdir -p /tmp/enemy-pp-contract
+          python3 tools/enemy-pp-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --report /tmp/enemy-pp-contract/observer.json
+          python3 tools/charge-required-contract-check/check.py --gen1 .contract-reference/gen1 --require-native-policy-parity \
+            --api 1 --format native --report /tmp/enemy-pp-contract/api1-native.json
+          python3 tools/charge-required-contract-check/check.py --gen1 .contract-reference/gen1 --require-native-policy-parity \
+            --api 2 --format native --report /tmp/enemy-pp-contract/api2-native.json
+          python3 tools/charge-required-contract-check/check.py --gen1 .contract-reference/gen1 --require-native-policy-parity \
+            --api 2 --format unified --report /tmp/enemy-pp-contract/api2-unified.json
+          python3 tools/charge-required-contract-check/check.py --gen1 .contract-reference/gen1 --require-native-policy-parity \
+            --api 3 --format unified --report /tmp/enemy-pp-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: enemy-pp-contract
+          path: /tmp/enemy-pp-contract
+          if-no-files-found: ignore

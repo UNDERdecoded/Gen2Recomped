@@ -1,0 +1,8 @@
+{
+  "id": "portable_rom_text",
+  "name": "Portable ROM prose",
+  "version": "1.0.0",
+  "api": 3,
+  "games": ["red", "blue", "yellow", "gold", "silver", "crystal", "firered", "emerald"],
+  "entry": "main.lua"
+}

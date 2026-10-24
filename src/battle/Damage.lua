@@ -180,7 +180,7 @@ function Damage.accuracyRoll(ruleset, move, attacker, defender, rng,
   -- one, otherwise a 1/256 hit chance is invented.  A Gen 3 dataset has no
   -- such attribute and this answers zero.
   acc = math.max(0, acc - HeldItems.accuracyPenalty(data, defender))
-  if not ruleset.oneIn256Miss and basePct >= 100 and not deepFog
+  if not ruleset.oneIn256Miss and basePct >= 100 and acc >= 255 and not deepFog
      and (attacker.stages.accuracy or 0) >= (defender.stages.evasion or 0) then
     return true
   end
@@ -451,6 +451,10 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     d = Weather.applyModifier(d, opts.weather, move.type, move.effect)
   end
 
+  if crit and ruleset.critMultiplier and ruleset.critBeforeType then
+    d = math.floor(d * ruleset.critMultiplier)
+  end
+
   local mult = 10
   if not opts.typeless then
     -- STAB
@@ -545,9 +549,9 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   -- random factor; the typeless confusion self-hit skips RandomizeDamage
   -- along with AdjustDamageForMoveType (HandleSelfConfusionDamage calls
   -- CalculateDamage directly), so it is fully deterministic
-  -- Gen 3's critical multiplier lands here, after STAB and the type chart
-  -- and before the random factor, which is where pokeemerald applies it.
-  if crit and ruleset.critMultiplier then
+  -- Profiles without the Gen-3 ordering flag retain their existing final
+  -- multiplier. Gen 3 has already applied it before STAB/type rounding.
+  if crit and ruleset.critMultiplier and not ruleset.critBeforeType then
     d = math.floor(d * ruleset.critMultiplier)
   end
   if d > 1 and not opts.typeless then

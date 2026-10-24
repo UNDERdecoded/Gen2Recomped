@@ -35,6 +35,14 @@ function Gen3ItemPcSubmenu.new(game, itemPc, itemName, onPick)
   return self
 end
 
+function Gen3ItemPcSubmenu:entries()
+  local out, prose = {}, require("src.ui.GbaProse")
+  for i, entry in ipairs(ENTRIES) do
+    out[i] = { label = prose.itemPc(self.game, entry.kind, Strings(entry.label)), kind = entry.kind }
+  end
+  return out
+end
+
 function Gen3ItemPcSubmenu:move(delta)
   self.index = math.max(1, math.min(#ENTRIES, self.index + delta))
   Sound.play(self.game.data, "Press_AB")
@@ -82,9 +90,9 @@ function Gen3ItemPcSubmenu:draw()
   love.graphics.setColor(0, 0, 0, 1)
   local styles = self.game.data.font and self.game.data.font.uiTextStyles or {}
   if styles.dark then Font.pushStyle(styles.dark) end
-  for i, entry in ipairs(ENTRIES) do
+  for i, entry in ipairs(self:entries()) do
     local y = b.y + 2 + (i - 1) * 16
-    Font.draw(Strings(entry.label), b.x + 8, y)
+    Font.draw(entry.label, b.x + 8, y)
     if i == self.index then Font.drawCode(Theme.cursor, b.x, y) end
   end
 

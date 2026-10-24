@@ -1,0 +1,37 @@
+name: portable AI class content
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: ai-class-content-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: .contract-reference/gen1
+      - name: Install runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check item-reference and loader boundaries
+        run: |
+          luajit tests/engine/unified_content.lua
+          luajit tests/engine/ai_class_content.lua
+      - name: Compare unchanged public consumer
+        run: |
+          mkdir -p /tmp/ai-class-content
+          python3 tools/ai-class-content-contract-check/check.py --gen1 .contract-reference/gen1 --host-api 3 --report /tmp/ai-class-content/api3.json
+          python3 tools/ai-class-content-contract-check/check.py --gen1 .contract-reference/gen1 --host-api 2 --report /tmp/ai-class-content/api2.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: ai-class-content
+          path: /tmp/ai-class-content
+          if-no-files-found: ignore
