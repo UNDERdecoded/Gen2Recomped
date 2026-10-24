@@ -133,16 +133,22 @@ Status.RECORDS = {
     catchBonus = 25, shakeBonus = 10,
     beforeMovePriority = 40,
     beforeMove = function(battler)
-      battler.sleepTurns = (battler.sleepTurns or 1) - 1
+      local gba = require("src.core.GameVersion").isGen3()
+      local step = gba and require("src.battle.Abilities").sleepStep(battler) or 1
+      battler.sleepTurns = (battler.sleepTurns or 1) - step
+      if gba then battler.mon.sleepTurns = math.max(0, battler.sleepTurns) end
       if battler.sleepTurns <= 0 then
         battler.mon.status = nil
-        return false, { Strings("%s\nwoke up!", name(battler)) } -- wakes, loses the turn
+        return gba, { Strings("%s\nwoke up!", name(battler)) }
       end
       return false, { Strings("%s\nis fast asleep!", name(battler)) }
     end,
     onInflict = function(battle, target, opts, display)
-      target.sleepTurns = battle.rng(rule(battle, "sleepTurnsMin"),
-                                     rule(battle, "sleepTurnsMax"))
+      local low, high = rule(battle, "sleepTurnsMin"), rule(battle, "sleepTurnsMax")
+      local gba = require("src.core.GameVersion").isGen3()
+      if gba and low == 2 and high == 5 then target.sleepTurns = battle.rng(0, 3) + 2
+      else target.sleepTurns = battle.rng(low, high) end
+      if gba then target.mon.sleepTurns = target.sleepTurns end
       return { Strings("%s\nfell asleep!", display) }
     end,
   },
@@ -182,6 +188,7 @@ Status.RECORDS = {
       return true
     end,
     onInflict = function(_, target, opts, display)
+      if require("src.core.GameVersion").isGen3() then target.mon._gen3Toxic = opts.toxic == true end
       if opts.toxic then
         target.toxicCounter = 1
         -- _BadlyPoisonedText

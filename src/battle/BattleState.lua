@@ -7812,6 +7812,7 @@ function BattleState:preRechargeChecks(user, target)
     -- count -- it decrements the counter TWICE -- which is the same thing
     -- except that a one-turn sleep still costs the turn it is spent on.
     user.sleepTurns = (user.sleepTurns or 1) - Abilities.sleepStep(user)
+    if GameVersion.isGen3() then mon.sleepTurns = math.max(0, user.sleepTurns) end
     if user.sleepTurns <= 0 then
       mon.status = nil
       self:sayNext(self:romText("_WokeUpText", "%s\nwoke up!", displayName(user)))

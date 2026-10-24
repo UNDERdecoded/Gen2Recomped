@@ -1,0 +1,34 @@
+name: native GBA AI party status
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen3-ai-party-status-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: Roxas2712/gen1recomp-Mac-fix
+          ref: 9e372ef7f18a8069289b3c2b367fa45490f98ab0
+          path: .contract-reference/gen1
+      - name: Install runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native party equality and status producers
+        run: luajit tests/engine/gen3_ai_party_status.lua
+      - name: Compare actual native AI and effect paths
+        run: |
+          mkdir -p /tmp/gen3-ai-party-status
+          python3 tools/gen3-ai-party-status-contract-check/check.py --gen1 .contract-reference/gen1 --report /tmp/gen3-ai-party-status/records.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: gen3-ai-party-status
+          path: /tmp/gen3-ai-party-status
+          if-no-files-found: ignore
