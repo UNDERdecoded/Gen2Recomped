@@ -38,6 +38,9 @@ local WideBattle = require("src.battle.WideBattle")
 local Gen3Battle = require("src.battle.Gen3Battle")
 local Gen4Battle = require("src.battle.Gen4Battle")
 local GameVersion = require("src.core.GameVersion")
+local BattleCommands = require("src.battle.BattleCommands")
+local EnemyMoveChoice = require("src.battle.EnemyMoveChoice")
+local EnemyActionContext = require("src.battle.EnemyActionContext")
 
 -- FORWARD-DECLARED, because they are defined next to the other doubles
 -- helpers two thousand lines down but read from `stepHPDrain` up here.  A
@@ -53,6 +56,10 @@ local TEXT_AREA_ROWS = { 112, 128 }
 local BattleState = {}
 BattleState.__index = BattleState
 BattleState.isOpaque = true
+-- Data readers can identify the shared Gen 1-5 battle without loading this module.
+BattleState.isBattleState = true
+-- Input and public intents share the exact same native command dispatch.
+for name, method in pairs(BattleCommands.methods) do BattleState[name] = method end
 
 -- pokered prints the battle lines itself (engine/battle/core.asm and the
 -- move-effect banks), and the importer extracts every one of them, so the
@@ -4406,7 +4413,7 @@ function BattleState:update(dt)
         Gen4Battle.actionMove(self.menuIndex, dir, self.gen4MenuColumn)
     end
     if input:wasPressed("a") then
-      self:safariAction(({ "ball", "bait", "rock", "run" })[self.menuIndex])
+      self:chooseSafari(({ "ball", "bait", "rock", "run" })[self.menuIndex])
     end
     return
   end
@@ -4432,7 +4439,7 @@ function BattleState:update(dt)
     end
     self.menuIndex = row * 2 + col + 1
     if input:wasPressed("a") then
-      self:safariAction(({ "ball", "bait", "rock", "run" })[self.menuIndex])
+      self:chooseSafari(({ "ball", "bait", "rock", "run" })[self.menuIndex])
     end
     return
   end
@@ -4512,60 +4519,10 @@ function BattleState:update(dt)
     -- asked (fainted, or locked into a move it cannot choose).
     if input:wasPressed("b") and self:isDouble()
        and self:choosingSlotNow() == BattleState.POS.PLAYER_RIGHT then
-      local left = self:battlerAt(BattleState.POS.PLAYER_LEFT)
-      local pend = self.pendingActions and self.pendingActions[BattleState.POS.PLAYER_LEFT]
-      if left and not left.ally and (left.mon and left.mon.hp or 0) > 0 and pend
-         and not self:menuLockedAction(left) then
-        self.pendingActions[BattleState.POS.PLAYER_LEFT] = nil
-        if self.chosenTargets then self.chosenTargets[BattleState.POS.PLAYER_LEFT] = nil end
-        self.choosingSlot = BattleState.POS.PLAYER_LEFT
-        self.menuIndex, self.moveIndex = 1, 1
-        pcall(function() require("src.core.Sound").play(self.game.data, "SEQ_SE_DP_DECIDE") end)
-        return
-      end
+      if self:cancelMove() then return end
     end
     if input:wasPressed("a") then
-      local choice = self:menuActions()[self.menuIndex]
-      -- BattleMenu_Pack `.contest` (core.asm:4990): `ld a, PARK_BALL /
-      -- ld [wCurItem], a / call DoItemEffect`.  No pack, no submenu -- the
-      -- third slot IS the ball, so the item action becomes the throw.
-      if choice == "item" and self.bugContest then
-        self:bugContestBall()
-        return
-      end
-      if choice == "fight" and self.ghost then
-        self:say(Strings("%s is too\nscared to move!", self.player.name))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-        self:act(function()
-          self:executeAction(self.enemy, self.player, self:enemyAction())
-        end)
-        self:act(function() self:endOfTurn() end)
-      elseif choice == "fight" then
-        -- After the menu: own trapping/Bide or foe Wrap skips the move
-        -- list and forces the locked action (core.asm:320-329)
-        local fightLock = self:fightLockedAction(self.player)
-        if fightLock then
-          self:resolveTurn(fightLock)
-          return
-        end
-        local who = self:menuBattler()
-        if not self:playerHasPP(who) then
-          -- _NoMovesLeftText, then Struggle engages
-          self:say(Strings("%s has no\nmoves left!", who.name))
-          self:chooseAction({ id = "STRUGGLE", pp = 1, struggle = true })
-          return
-        end
-        self.phase = "moveSelect"
-        self.moveIndex = math.min(self.moveIndex, #who.curMoves)
-        self.moveSwapIndex = nil
-      elseif choice == "run" then
-        self:tryRun()
-      elseif choice == "item" then
-        self:openItems()
-      else
-        self:openParty()
-      end
+      self:chooseMenu(self:menuActions()[self.menuIndex])
     end
     return
   end
@@ -4591,58 +4548,14 @@ function BattleState:update(dt)
         self.moveSwapIndex = self.moveIndex
       end
     elseif input:wasPressed("b") then
-      self.moveSwapIndex = nil
-      self.phase = "menu"
+      self:cancelMove()
     elseif input:wasPressed("a") then
       if self.moveSwapIndex then
         self:swapMoves(self.moveSwapIndex, self.moveIndex)
         self.moveSwapIndex = nil
         return
       end
-      local mv = moves[self.moveIndex]
-      local mvDef = mv and self.data.moves[mv.id]
-      if chooser.disabledSlot == self.moveIndex then
-        self:say(self:romText("_MoveDisabledText", "The move is\ndisabled!"))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      -- TAUNT and TORMENT refuse the move at SELECTION rather than after the
-      -- fact, the way DISABLE already does, so the player is never told to
-      -- pick again for something the game was never going to allow.
-      elseif self.bw and require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true) then
-        -- BLACK AND WHITE: the Choice lock, Imprison, Gravity, Heal Block
-        self:say(require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif self:tauntBlocks(chooser, mvDef) then
-        self:say(Strings("%s can't use\n%s after the\ntaunt!",
-                         chooser.name, mvDef and mvDef.name or mv.id))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif self:tormentBlocks(chooser, mvDef) then
-        self:say(Strings("%s can't use the\nsame move twice in\na row due to the\nTORMENT!",
-                         chooser.name))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif mv.pp <= 0 then
-        self:say(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif Targeting.needsChoice(self, self:choosingBattler(), mvDef) then
-        -- WHICH OF THE TWO, when the move takes one and there are two.
-        --
-        -- Emerald's selector cycles over the legal slots and names the
-        -- candidate; nothing else in the menu changes.  A single battle
-        -- never gets here, because needsChoice answers false whenever there
-        -- is only one thing to aim at -- and on the Game Boy cartridges the
-        -- moves carry no target byte at all, so it answers false for every
-        -- move in the game.
-        self.pendingMove = mv
-        self.targetChoices = Targeting.choices(self, self:menuBattler())
-        self.targetIndex = 1
-        self.phase = "targetSelect"
-      else
-        self:chooseAction(mv)
-      end
+      self:chooseMove(self.moveIndex)
     end
     return
   end
@@ -4660,16 +4573,9 @@ function BattleState:update(dt)
     elseif input:wasPressed("right") or input:wasPressed("down") then
       self.targetIndex = self.targetIndex < #list and self.targetIndex + 1 or 1
     elseif input:wasPressed("b") then
-      self.pendingMove, self.targetChoices = nil, nil
-      self.phase = "moveSelect"
+      self:cancelMove()
     elseif input:wasPressed("a") then
-      local mv = self.pendingMove
-      local pick = list[self.targetIndex]
-      self.pendingMove, self.targetChoices = nil, nil
-      self.chosenTargets = self.chosenTargets or {}
-      local who = self:menuBattler()
-      if who and who.position then self.chosenTargets[who.position] = pick end
-      self:chooseAction(mv)
+      self:chooseTarget(self.targetIndex)
     end
     return
   end
@@ -4690,12 +4596,7 @@ function BattleState:update(dt)
     elseif input:wasPressed("down") then
       self.mimicIndex = self.mimicIndex < #moves and self.mimicIndex + 1 or 1
     elseif input:wasPressed("a") then
-      local pick = moves[self.mimicIndex]
-      local ctx = self.mimicCtx
-      self.mimicMoves, self.mimicCtx = nil, nil
-      self.phase = "messages"
-      self.nextInsert = 0 -- the copy's anim + text go to the queue head
-      self:applyMimic(ctx.user, ctx.target, ctx.moveInst, pick.slot)
+      self:chooseMimic(self.mimicIndex)
     end
     return
   end
@@ -4759,7 +4660,7 @@ function BattleState:applyMimic(user, target, moveInst, slot)
   if not (src and src.id) then return end
   local mySlot
   for i, m in ipairs(user.curMoves) do
-    if m == moveInst then mySlot = i break end
+    if m == EnemyMoveChoice.slot(moveInst) then mySlot = i break end
   end
   if not mySlot then
     -- a called Mimic (Metronome) isn't in the list.  For the player,
@@ -5490,6 +5391,7 @@ end
 -- "menuLockedAction: attempt to index local 'battler' (a nil value)" after
 -- killing their first Pokemon.  A slot with nobody in it has no action.
 function BattleState:enemyAction(battler)
+  local requestedBattler = battler
   battler = battler or self.enemy
   if not battler then return nil end
   -- The POKé DUDE opponent does not run the AI at all.  Its controller feeds
@@ -5500,6 +5402,18 @@ function BattleState:enemyAction(battler)
     if move then return move end
   end
   if Runtime.wantsHook("battle.enemy_action") then
+    if GameVersion.generation() == 3 then
+      return EnemyActionContext.call(self, requestedBattler, function()
+        local delegated, captured
+        local result = Runtime.call("battle.enemy_action", function(battle, who)
+          delegated, captured = EnemyMoveChoice.delegate(who or battle.enemy, battle:vanillaEnemyAction(who))
+          return delegated
+        end, self, battler)
+        return EnemyMoveChoice.normalize(self.data, battler, result, delegated, captured)
+          or EnemyMoveChoice.normalize(self.data, battler, delegated, delegated, captured)
+          or self:vanillaEnemyAction(battler)
+      end)
+    end
     return Runtime.call("battle.enemy_action", function(battle, who)
       return battle:vanillaEnemyAction(who)
     end, self, battler)
@@ -5593,7 +5507,7 @@ end
 function BattleState:resolveTurn(playerAction)
   -- nil in a double battle whose left-hand foe has fainted with nothing on
   -- the bench to replace it; `actionFor` asks each surviving slot for its own
-  local enemyAction = self:enemyAction(self.enemy)
+  local enemyAction = self:enemyAction(self:isDouble() and self.enemy or nil)
   self.turnCount = (self.turnCount or 0) + 1
   -- BATTLE ARENA: arenaTurnCounter
   if self.arena then require("src.battle.Gen3Arena").turnStarted(self) end
@@ -8094,6 +8008,11 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
       or moveInst == user.rageMove
   local enemyUnlimited = not user.isPlayer and self.kind ~= "link"
       and self.ruleset and self.ruleset.enemyUnlimitedPP
+  if not isContinuation and not moveInst.struggle and not isCalled
+      and not enemyUnlimited and EnemyMoveChoice.exhausted(moveInst) then
+    self:sayNext(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
+    return
+  end
   if not isContinuation and not moveInst.struggle and not isCalled
       and not enemyUnlimited then
     -- PRESSURE costs the ATTACKER an extra point for every move aimed at its
