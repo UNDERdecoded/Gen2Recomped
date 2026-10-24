@@ -48,7 +48,8 @@ end
 -- The named effect and its parameter, or nil.  An effect the extractor had
 -- no name for comes back as a number and matches no rule below, which is
 -- the same silence an unknown ability gets.
-function HoldItems.effectOf(battler)
+function HoldItems.effectOf(battler, trigger, native)
+  if type(native) == "table" then return native.effect, native.parameter, HoldItems.defOf(battler) end
   local def = HoldItems.defOf(battler)
   if not def then return nil end
   local effect,param=require('src.inventory.PolishedBerries').held(def,battler.mon)
