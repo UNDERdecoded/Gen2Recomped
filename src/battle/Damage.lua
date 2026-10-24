@@ -285,6 +285,8 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   end
 
   local special = categoryOf(move) == "special"
+  local gbaBase = ruleset.baseDamageStyle == "gba"
+  local burnAfterBase, gbaScreen
   -- Gen 2 kept the same type-based physical/special split but gave the
   -- attacker Sp.Atk and the defender Sp.Def.  A Gen 1 stat block has
   -- neither key, so it stays on the single `special`.
@@ -323,7 +325,11 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     -- penalty into a bonus: it ignores the drop AND hits half again as hard
     if penalty and penalty.stat == atkStat and not attacker.hazeStatReset
        and not Abilities.ignoresBurnDrop(attacker) then
-      atk = math.max(1, math.floor(atk / penalty.div))
+      if gbaBase and record.id == "BRN" then
+        burnAfterBase = penalty.div
+      else
+        atk = math.max(1, math.floor(atk / penalty.div))
+      end
     end
     -- screens double the effective defense (crits bypass them).  The
     -- confusion self-hit is the quirk case: HandleSelfConfusionDamage
@@ -337,7 +343,9 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
       if screens then
         local up = (special and screens.lightScreen)
                    or (not special and screens.reflect)
-        if up then
+        if up and gbaBase then
+          gbaScreen = true
+        elseif up then
           -- A SCREEN IS WEAKER WHEN TWO ARE STANDING BEHIND IT.
           --
           -- 0806_9B48 (REFLECT) and 0806_9C88 (LIGHT SCREEN) check
@@ -391,7 +399,7 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   end
   -- GetDamageVars .scaleStats: when either stat no longer fits a byte,
   -- BOTH are quartered (losing low bits), each bumped to at least 1
-  if atk > 255 or dfn > 255 then
+  if not gbaBase and (atk > 255 or dfn > 255) then
     atk = math.max(1, math.floor(atk / 4))
     dfn = math.max(1, math.floor(dfn / 4))
   end
@@ -420,6 +428,13 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   end
   d = math.floor(math.floor(d * power * atk / math.max(1, dfn)) / 50)
 
+  if gbaBase then
+    if burnAfterBase then d = math.floor(d / burnAfterBase) end
+    if gbaScreen then
+      d = opts.doublesScreens and 2 * math.floor(d / 3) or math.floor(d / 2)
+    end
+  end
+
   -- A MOVE THAT HITS BOTH OF THEM DOES HALF TO EACH.
   --
   -- The cartridge applies this inside CalculateBaseDamage -- after the burn
@@ -432,7 +447,24 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     d = math.floor(d * ruleset.spreadNum / ruleset.spreadDen)
   end
 
-  d = math.min(d, 997) + 2
+  if gbaBase then
+    -- Physical CalculateBaseDamage raises a zero base to one. Special
+    -- damage has no equivalent minimum before the final +2.
+    if not special then d = math.max(1, d) end
+    if special and not opts.typeless and opts.weather then
+      -- GBA applies each weather step to the base without Gen-2's minimum
+      -- one/clamp. Solar Beam's penalty follows the type-weather step.
+      local modifier = Weather.modifier(opts.weather, move.type)
+      if modifier then d = math.floor(d * modifier / 10) end
+      if (opts.weather == "RAIN" or opts.weather == "SAND" or opts.weather == "SANDSTORM" or opts.weather == "HAIL")
+         and (move.gen3Effect == 151 or move.effect == "SOLARBEAM_EFFECT") then
+        d = math.floor(d / 2)
+      end
+    end
+    d = d + 2
+  else
+    d = math.min(d, 997) + 2
+  end
 
   -- Held type boosters live inside BattleCommand_DamageCalc, before weather,
   -- STAB and effectiveness.  This placement matters because every stage floors
@@ -447,7 +479,7 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   -- as damage * modifier / 10.  The confusion self-hit reaches
   -- CalculateDamage directly and never runs `stab`, so the typeless path
   -- skips weather along with STAB and the type chart.
-  if not opts.typeless and opts.weather then
+  if not gbaBase and not opts.typeless and opts.weather then
     d = Weather.applyModifier(d, opts.weather, move.type, move.effect)
   end
 
