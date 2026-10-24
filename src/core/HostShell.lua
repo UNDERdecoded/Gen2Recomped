@@ -381,4 +381,71 @@ function HostShell.httpGet(url, userAgent, accept)
   return body
 end
 
+
+-- Worker-only GET. Curl arguments containing remote input live in a config
+-- file, never in shell syntax (also preserves percent-encoded Windows URLs).
+-- errorPath belongs to the engine's private per-job workspace, not the mod.
+function HostShell.httpGetBounded(url, opts)
+  opts = opts or {}
+  if not HostShell.canSpawnProcess() then return nil, "bounded GET requires desktop curl" end
+  if type(url) ~= "string" or #url > 8192 or url:find("[%z%c%s]")
+      or not url:lower():match("^https?://[^/?#]+") then return nil, "invalid HTTP URL" end
+  if opts.httpsOnly and not url:lower():match("^https://") then return nil, "HTTPS required" end
+  local function bounded(n, default, cap)
+    n = tonumber(n)
+    if not n or n ~= n then n = default end
+    return math.max(0.1, math.min(cap, n))
+  end
+  local seconds = bounded(opts.maxSeconds, 20, 30)
+  local bytes = math.floor(bounded(opts.maxBytes, 4 * 1024 * 1024, 16 * 1024 * 1024))
+  if bytes < 1 then return nil, "invalid byte limit" end
+  local path = opts.errorPath
+  if type(path) ~= "string" or path == "" or path:find("[%z%c]") then return nil, "missing worker path" end
+  local windows = love.system.getOS() == "Windows"
+  -- cmd expands these even inside quotes. Only the local config pathname is
+  -- shell-visible; refuse an unsupported local pathname rather than expand it.
+  if windows and path:find('[%%!"^]') then return nil, "unsupported characters in worker path" end
+  local configPath = path .. ".cfg"
+  local function quoted(value)
+    value = tostring(value)
+    if value:find("[%z%c]") then return nil end
+    return '"' .. value:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+  end
+  local ua, accept = quoted(opts.userAgent or "gen2recomp"), quoted(opts.accept or "*/*")
+  if not ua or not accept then return nil, "invalid HTTP header" end
+  local config = table.concat({"silent", "show-error", "fail", "location", "globoff",
+    "connect-timeout = " .. math.min(10, seconds), "max-time = " .. seconds,
+    "max-filesize = " .. bytes, "max-redirs = 5",
+    'proto = "=' .. (opts.httpsOnly and "https" or "http,https") .. '"',
+    'proto-redir = "=' .. (opts.httpsOnly and "https" or "http,https") .. '"',
+    "user-agent = " .. ua, "header = " .. quoted("Accept: " .. (opts.accept or "*/*")),
+    "stderr = " .. quoted(path), 'write-out = "\\n%{http_code}"', "url = " .. quoted(url), ""}, "\n")
+  local f, err = io.open(configPath, "wb")
+  if not f then return nil, tostring(err) end
+  local wrote, why = f:write(config); local closed = f:close()
+  if not wrote or not closed then os.remove(configPath); return nil, tostring(why or "config write failed") end
+  local pipe = HostShell.popen("curl --disable --config " .. HostShell.quote(configPath), windows and "rb" or "r")
+  if not pipe then os.remove(configPath); return nil, "could not start curl" end
+  local ok, body = pcall(pipe.read, pipe, bytes + 5)
+  local closeOk, done, _, code = pcall(pipe.close, pipe)
+  os.remove(configPath)
+  local ef = io.open(path, "rb")
+  local complaint
+  if ef then complaint = HostShell.curlComplaint(ef:read(4096)); ef:close() end
+  os.remove(path)
+  if not ok then return nil, "response read failed" end
+  body = body or ""
+  local status = tonumber(body:match("\n(%d%d%d)$"))
+  if status then body = body:sub(1, -5) end
+  if #body > bytes then return nil, "response exceeds byte limit" end
+  if complaint then
+    return nil, complaint, tonumber(complaint:match("returned error: (%d%d%d)"))
+  end
+  if not closeOk or done == nil or (type(code) == "number" and code ~= 0) then
+    return nil, "curl failed"
+  end
+  if not status or status < 200 or status >= 300 then return nil, "incomplete HTTP response", status end
+  return body, nil, status
+end
+
 return HostShell

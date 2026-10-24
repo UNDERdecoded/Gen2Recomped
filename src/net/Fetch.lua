@@ -1,8 +1,8 @@
--- Streaming download API for mods to download large files with progress.
--- Wraps HostShell's httpDownload in an async job interface for per-frame pumping.
--- Required by mods like HD sheet installer that need progress updates during download.
+-- GETs run on bounded engine workers; poll never waits for a GET transport.
+-- The older download-to-file API retains its synchronous first-poll behavior.
 
 local Fetch = {}
+local AsyncGet = require("src.net.AsyncGet")
 
 -- Active jobs table: jobId -> { url, dest, size, userAgent, startedAt, maxSeconds, state, progress, err, downloaded }
 local jobs = {}
@@ -40,7 +40,7 @@ function Fetch.download(url, dest, options)
   local jobId = newJob(url, dest, options)
   local job = jobs[jobId]
 
-  -- Start the download in background using HostShell
+  -- Resolve the legacy download transport
   local HostShell = require("src.core.HostShell")
   if not HostShell.canFetch() then
     job.state = "error"
@@ -72,6 +72,7 @@ function Fetch.poll(jobId)
   if not job then
     return { status = "error", err = "invalid job handle" }
   end
+  if job.kind == "get" then return AsyncGet.poll(job.request) end
 
   if job.state ~= "pending" then
     return { status = job.state, progress = job.progress, err = job.err }
@@ -137,6 +138,7 @@ end
 function Fetch.cancel(jobId)
   local job = jobs[jobId]
   if not job then return end
+  if job.kind == "get" then return AsyncGet.cancel(job.request) end
   if job.state == "pending" then
     job.state = "error"
     job.err = "cancelled"
@@ -149,7 +151,28 @@ end
 
 -- Release job resources. Call after job is complete or cancelled.
 function Fetch.release(jobId)
+  local job = jobs[jobId]
+  if job and job.kind == "get" then AsyncGet.release(job.request) end
   jobs[jobId] = nil
 end
+
+-- The existing download API keeps its call shape. GETs use a real worker
+-- pool, so a mod's per-frame poll never performs a network/pipe read.
+function Fetch.get(url, options)
+  local request, err = AsyncGet.get(url, options)
+  if not request then return nil, err end
+  local id = newJob(url, nil, options)
+  jobs[id].kind, jobs[id].request = "get", request
+  return id
+end
+
+function Fetch.available() return AsyncGet.available() end
+function Fetch.isPending(id)
+  local job = jobs[id]
+  if not job then return false end
+  if job.kind == "get" then return AsyncGet.poll(job.request).status == "pending" end
+  return job.state == "pending"
+end
+function Fetch.shutdown() AsyncGet.shutdown() end
 
 return Fetch

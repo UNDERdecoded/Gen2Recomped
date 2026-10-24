@@ -1190,6 +1190,9 @@ function love.quit()
   if package.loaded["src.translation.Service"] then
     pcall(package.loaded["src.translation.Service"].shutdown)
   end
+  if package.loaded["src.net.Fetch"] then
+    pcall(package.loaded["src.net.Fetch"].shutdown)
+  end
 end
 
 function love.filedropped(file)
