@@ -177,7 +177,7 @@ function Warp.extraCheck(map, carpets, cx, cy, dir)
   -- to ExtraWarpCheck made plain-floor script destinations live whenever they
   -- happened to sit at a map edge.
   local GameVersion = require("src.core.GameVersion")
-  if GameVersion.get() == "firered" then return false end
+  if GameVersion.isFRLG() then return false end
   local Collision = require("src.world.Collision")
   local facingEdge =
     (dir == "up" and cy == 0)

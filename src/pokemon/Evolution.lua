@@ -321,7 +321,7 @@ function Evolution.createShedinja(game, mon, fromSpecies)
       local def = game.data.pokemon[row.species]
       if not def then return end
       local frlg = (game.data.constants or {}).gen3FRLGNaming
-        or require("src.core.GameVersion").get() == "firered"
+        or require("src.core.GameVersion").isFRLG()
       if frlg and ((game.save.inventory or {}).POKE_BALL or 0) < 1 then return end
       local function copy(value)
         if type(value) ~= "table" then return value end

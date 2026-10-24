@@ -1914,7 +1914,7 @@ function Game:restoreSave(loaded, recovered)
   -- already partway through the Elite Four predate that bridge and may have
   -- only one side, leaving the next room sealed after an update.  Reconcile
   -- those run-scoped flags before the room's ON_LOAD script evaluates them.
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     local okG3, G3 = pcall(require, "src.script.Gen3Commands")
     if okG3 and G3 and G3.repairFireRedLeagueFlags
        and G3.repairFireRedLeagueFlags(loaded) then

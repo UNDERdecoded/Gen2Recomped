@@ -657,7 +657,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     -- runs PrintStatsBox, LearnMoveFromLevelUp and TryEvolvingMon)
     if extra and extra.leveledTo and target then
       local GameVersion = require("src.core.GameVersion")
-      local gen3Candy = GameVersion.get() == "firered" and picker ~= nil
+      local gen3Candy = GameVersion.isFRLG() and picker ~= nil
       -- FireRed keeps the item-target party screen underneath the level-up
       -- message and stat window.  Older generations keep their existing flow.
       if gen3Candy then refreshCount(game, list, id) else list:close() end
@@ -759,7 +759,7 @@ local function pickTargetAndUse(game, battle, id, list)
     -- first, which needs the picker already gone.
     keepOpen = (not battle) and (ItemEffects.healsHP(id)
       or (id == "RARE_CANDY"
-          and require("src.core.GameVersion").get() == "firered")),
+          and require("src.core.GameVersion").isFRLG())),
     onSwitch = function(mon, picker)
       if not wantsMove then
         useOn(game, battle, id, mon, list, nil, picker)

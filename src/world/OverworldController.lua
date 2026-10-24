@@ -380,7 +380,7 @@ local function objectVisible(save, mapId, obj)
       visible = not told
     elseif here ~= nil then
       visible = here
-    elseif obj.eventFlag and GameVersion.get() == "firered" then
+    elseif obj.eventFlag and GameVersion.isFRLG() then
       -- An object with its OWN hide flag is spawned at map load whenever
       -- that flag is clear; an addobject somewhere else on the map does not
       -- change that. FireRed's lab rival is exactly this: present from the
@@ -1916,7 +1916,7 @@ function OverworldState:updateMapNameSignGen3()
   end
   -- FireRed's popup slides 12 frames in, holds 120, slides 12 out
   -- (Task_MapNamePopup); the other Gen 3 sign keeps the old timing
-  local frlg = GameVersion.get and GameVersion.get() == "firered"
+  local frlg = GameVersion.get and GameVersion.isFRLG()
   local text = Strings((name:gsub("[\n\f\v]", " ")))
   local width = 14
   -- MapNamePopupAppendFloorNum: " B1F" / " 5F" widen the window by 5 tiles,
@@ -2561,7 +2561,7 @@ function OverworldState:pushBattleTransition(battle, opts, onDone)
   -- FireRed's trainer transition comparison sums two Pokemon only when the
   -- trainer record itself is flagged as a double battle.  Equal levels take
   -- the second column, just like stronger opponents do.
-  if GameVersion.get() == "firered" and battle and battle.kind == "trainer"
+  if GameVersion.isFRLG() and battle and battle.kind == "trainer"
      and battle.trainer and battle.trainer.doubleBattle then
     compareEnemyLevel = 0
     for i = 1, math.min(2, #(battle.enemyParty or {})) do
@@ -7111,7 +7111,7 @@ function OverworldState:tryPcTile(fx, fy)
     -- cache produced before that stage from falling through to the old PC
     -- menu while still leaving other Gen 3 datasets data-driven.
     local pc = Game.data.constants and Game.data.constants.gen3PcBehaviour
-    if not pc and GameVersion.get() == "firered" then pc = 0x83 end
+    if not pc and GameVersion.isFRLG() then pc = 0x83 end
     if pc and self.map:cellBehaviour(fx, fy) == pc then
       -- ...AND WHAT IT OPENS IS THE CARTRIDGE'S OWN SCRIPT, not this port's
       -- PC menu.  EventScript_PC is what the field runs for this behaviour:
@@ -11585,7 +11585,7 @@ function OverworldState:checkVictoryRewards(trainerClass, partyIndex)
   if reward.flag then
     if Game.save.flags[reward.flag] then return self:runVictoryHook() end
     Game.save.flags[reward.flag] = true
-    if GameVersion.get() == "firered" and reward.fireredFlag then
+    if GameVersion.isFRLG() and reward.fireredFlag then
       Game.save.flags[reward.fireredFlag] = true
     end
   end
@@ -12879,7 +12879,7 @@ function OverworldState:onStepComplete()
   -- Hoenn ever wanted a rematch -- the whole POKéNAV MATCH CALL list would
   -- have shown a region of trainers with nothing to say.
   if GameVersion.isGen3() then
-    if GameVersion.get() == "firered" then
+    if GameVersion.isFRLG() then
       require("src.world.VsSeeker").step(Game.save)
     else
       require("src.script.MatchCall").step(Game.data, Game.save)
@@ -14687,7 +14687,7 @@ function OverworldState:warpToHealPoint(onDone, opts)
     end
   end
   local finished = onDone
-  if opts and opts.whiteout and GameVersion.get() == "firered" then
+  if opts and opts.whiteout and GameVersion.isFRLG() then
     finished = function()
       -- FieldCB_RushInjuredPokemonToCenter prints this recovery message after
       -- the whiteout warp and before the nurse/mom follow-up script.  The port
@@ -14797,7 +14797,7 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
     end
     -- FIRERED: a warp into a dungeon with a preview picture shows it first
     local section = self.map.def and self.map.def.regionMapSection
-    if section and section ~= fromSection and GameVersion.get() == "firered" then
+    if section and section ~= fromSection and GameVersion.isFRLG() then
       local Preview = require("src.world.Gen3MapPreviewFRLG")
       if Preview.record(Game, section) then
         local frlg = (Game.data.constants or {}).gen3FRLGRegionMap

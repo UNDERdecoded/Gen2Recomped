@@ -184,7 +184,7 @@ function Bag.add(save, id, qty, data)
       -- if that key-item slot cannot be made.  Without this, Brock could hand
       -- over TM39 while the UI truthfully had no TM CASE to open afterwards.
       if pocket == "TM_HM"
-         and require("src.core.GameVersion").get() == "firered"
+         and require("src.core.GameVersion").isFRLG()
          and not save.inventory.TM_CASE then
         if not Bag.add(save, "TM_CASE", 1, data) then return false end
       end
@@ -222,7 +222,7 @@ end
 -- refusing the repair would strand those machines forever.  Future Bag.add
 -- calls still enforce the cartridge capacity, so the repair cannot compound.
 function Bag.repairFireRedTMCase(save, data)
-  if require("src.core.GameVersion").get() ~= "firered" then return false end
+  if not require("src.core.GameVersion").isFRLG() then return false end
   if type(save) ~= "table" or type(save.inventory) ~= "table" then return false end
   if save.inventory.TM_CASE then return false end
   data = data or require("src.core.Data")

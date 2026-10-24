@@ -39,6 +39,10 @@ function Title.new(game, opts)
   self.frame = 0
   self.phase = "intro"
   self.flames = {}
+  self.streaks = {}
+  for i = 1, math.min(4, #(self.rec.streakY or {})) do
+    self.streaks[i] = { x = W + 16 + 40 * (i - 1), y = self.rec.streakY[i], index = i }
+  end
   self.spawnTimer, self.spawnDelay, self.offsetX = 0, 0, 0
   self.rng = love.math.newRandomGenerator(30840)
   self.blinkTimer, self.blinkOn = 0, false
@@ -114,7 +118,7 @@ function Title:update(dt)
     self:skipToRun()
   elseif self.phase == "run" and pressed then
     self.phase, self.leaveTimer = "leaving", 0
-    pcall(require("src.core.Sound").playCry, self.game.data, "CHARIZARD")
+    pcall(require("src.core.Sound").playCry, self.game.data, self.rec.cry or "CHARIZARD")
   end
 end
 
@@ -141,6 +145,7 @@ function Title:spawnFlame(x, y, sx, sy, visible)
 end
 
 function Title:tickFlames()
+  if self.rec.effect == "leaves" then return self:tickLeaves() end
   local r = self.rng
   self.spawnTimer = self.spawnTimer + 1
   if self.spawnTimer >= self.spawnDelay then
@@ -165,6 +170,36 @@ function Title:tickFlames()
     local x, y = math.floor(f.px / 16), math.floor(f.py / 16)
     if x < -8 or y < 16 or y > 200 or f.anim > #FLAME_DURATIONS then
       table.remove(self.flames, i)
+    end
+  end
+end
+
+-- LeafGreen's Task_LeafSpawner / SpriteCallback_TitleScreenLeaf: the
+-- eleven 16x16 frames loop, with leftward drift instead of rising embers.
+function Title:tickLeaves()
+  local r = self.rng
+  self.spawnTimer = self.spawnTimer + 1
+  if self.spawnTimer >= self.spawnDelay then
+    self.spawnTimer, self.spawnDelay = 0, r:random(0, 5) + 6
+    local roll = r:random(0, 29)
+    local sx = roll < 6 and 16 or (roll < 12 and 24 or 48)
+    local sy, y = r:random(0, 3) - 2, r:random(0, 87) + 32
+    self:spawnFlame(W, y, sx, sy, true)
+  end
+  for i = #self.flames, 1, -1 do
+    local f = self.flames[i]
+    f.px, f.py = f.px - f.sx, f.py + f.sy
+    f.t = f.t + 1
+    if f.t >= 8 then f.t, f.anim = 0, f.anim % 11 + 1 end
+    local x, y = math.floor(f.px / 16), math.floor(f.py / 16)
+    if x < -8 or y < 16 or y > 200 then table.remove(self.flames, i) end
+  end
+  local ys = self.rec.streakY
+  for _, s in ipairs(self.streaks) do
+    s.x = s.x - 7
+    if s.x < -16 then
+      s.index = s.index % #ys + 1
+      s.x, s.y = W + 16, ys[s.index]
     end
   end
 end
@@ -202,6 +237,11 @@ function Title:draw()
   end
 
   -- embers ride just over the border field
+  local streak = self:img("streak")
+  if streak and not intro then
+    g.setColor(1, 1, 1, 1)
+    for _, s in ipairs(self.streaks) do g.draw(streak, s.x - 16, s.y - 8) end
+  end
   local flames, frec = self:img("flames")
   if flames and not intro then
     local size = (type(frec) == "table" and frec.size) or 16

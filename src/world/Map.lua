@@ -1170,7 +1170,7 @@ local FRLG_ARRIVAL_WARP = {
 -- or nil when the cell is not one of FireRed's directional warps.
 function Map:frlgWarpDirection(cx, cy)
   if not self.tileset.behaviourBytes then return nil end
-  if GameVersion.get() ~= "firered" then return nil end
+  if not GameVersion.isFRLG() then return nil end
   local b = self:cellBehaviour(cx, cy)
   return b and FRLG_DIRECTIONAL_WARP[b] or nil
 end
@@ -1308,7 +1308,7 @@ function Map:isWarpTileCell(cx, cy)
   -- not name stopped firing.  The tileset now states the rule instead of the
   -- engine inferring it from a gap.
   if self.tileset.warpsAreEvents then
-    if GameVersion.get() == "firered" then
+    if GameVersion.isFRLG() then
       if not self:warpAtCell(cx, cy) then return false end
       local b = self:cellBehaviour(cx, cy)
       return b ~= nil and FRLG_ARRIVAL_WARP[b] == true

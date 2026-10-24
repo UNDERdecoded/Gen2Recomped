@@ -375,7 +375,7 @@ MoveEffects.primary = {
     -- mosaic and HandleSpeciesGfxDataChange performs it at callback 46.
     -- Gen3MoveAnim owns that visual midpoint, so changing the FireRed sprite
     -- here would expose the copied species for the first 45 callbacks.
-    if GameVersion.get() ~= "firered" then
+    if not GameVersion.isFRLG() then
       user.sprite = battle:speciesSprite(target.mon.species, user.isPlayer)
                     or user.sprite
       -- Black / White draw a live animation over `sprite`, so their picture

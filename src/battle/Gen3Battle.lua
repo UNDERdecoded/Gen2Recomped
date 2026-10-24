@@ -493,7 +493,7 @@ function Gen3Battle.terrainFor(game)
   local cy = player and (player.cellY or player.y)
   local behaviour = Gen3Battle.behaviourUnder(game)
 
-  if GameVersion.get() == "firered" then
+  if GameVersion.isFRLG() then
     -- BattleSetup_GetTerrainId, in source order.
     if behaviour == "TALL_GRASS"
        or behaviour == "CYCLING_ROAD_PULL_DOWN_GRASS" then

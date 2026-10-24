@@ -966,7 +966,7 @@ local function gen3Style(ctx)
   -- FireRed's two tables (battle_setup.c sBattleTransitionTable_Wild /
   -- _Trainer): column 0 when the foe is weaker than the lead.  Unlike the old
   -- shortcut, the ROW matters too: water/flash/cave each have their own pair.
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     local weaker = ctx.weaker
     if weaker == nil then weaker = not ctx.stronger end
     if ctx.trainer then
@@ -1118,7 +1118,7 @@ function BattleTransition.new(game, onDone, opts)
   end
   self.style = style
   self.def = def
-  self.fireRed = require("src.core.GameVersion").get() == "firered"
+  self.fireRed = require("src.core.GameVersion").isFRLG()
   -- Every FireRed battle transition first runs CreateIntroTask(0,0,2,2,2):
   -- two 16-frame gray pulses.  It does not use the Gen 1 circle-flash prelude.
   if self.fireRed then

@@ -395,7 +395,7 @@ function Gen3Title:draw()
   local prompt = Strings("PRESS START")
   local promptY = GBA_H - 34
   local GameVersion = require("src.core.GameVersion")
-  local fireRed = GameVersion.get() == "firered"
+  local fireRed = GameVersion.isFRLG()
   if not drewBrand then
     local brand = self.title.brandText
                   or (fireRed and Strings("POKéMON FIRERED"))

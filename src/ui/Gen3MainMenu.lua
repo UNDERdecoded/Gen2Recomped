@@ -149,7 +149,7 @@ function Gen3MainMenu:choose()
     self.game.stack:pop()
     return item.onSelect()
   end
-  if item.key == "continue" and GameVersion.get() == "firered" then
+  if item.key == "continue" and GameVersion.isFRLG() then
     -- the stats are already on the window; A loads straight away
     if self.onContinue then self.onContinue() end
   elseif item.key == "continue" then
@@ -361,7 +361,7 @@ function Gen3MainMenu:drawFireRed()
 end
 
 function Gen3MainMenu:draw()
-  if GameVersion.get() == "firered" then return self:drawFireRed() end
+  if GameVersion.isFRLG() then return self:drawFireRed() end
   -- the plain field the cartridge clears to, not the title art: the menu is
   -- its own screen and nothing shows through it
   -- the plain field runs the whole width of whatever surface this is on, so a
