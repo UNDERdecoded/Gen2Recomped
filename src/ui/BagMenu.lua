@@ -11,6 +11,7 @@ local BagMenu = {}
 
 local Bag = require("src.inventory.Bag")
 local Strings = require("src.core.Strings")
+local Runtime = require("src.mods.Runtime")
 
 -- The money line under the bag, with the cartridge's own sign -- Kanto's
 -- U+00A5 is the JAPANESE YEN KANJI in Platinum's font.  See
@@ -172,17 +173,28 @@ BagMenu.refreshCount = refreshCount
 -- the stack, so every exit that prints has to close it afterwards.  For
 -- every other item the picker popped itself first and closePicker's identity
 -- check makes it a no-op (#252).
-local function useOn(game, battle, id, target, list, moveIndex, picker)
+local function vanillaUseOn(game, battle, id, target, list, moveIndex, picker, prepared)
   -- HGSS: the party screen's own msg_0300 line for the item (src/ui/Gen4PartyText.lua)
   local PartyText = require("src.ui.Gen4PartyText")
   local g4Before = (not battle and target) and PartyText.snapshot(game, target) or nil
-  local result, payload, extra = ItemEffects.use(game.data, game.save, id, target,
-                                                 battle, moveIndex, game.overworld)
+  local result, payload, extra
+  if prepared then
+    result, payload, extra = prepared.result, prepared.payload, prepared.extra
+  else
+    result, payload, extra = ItemEffects.use(game.data, game.save, id, target,
+                                             battle, moveIndex, game.overworld)
+  end
   if g4Before then
     payload = PartyText.itemUseMessages(game, id, target, g4Before, result, payload, moveIndex)
   end
   local function closePicker()
     if picker then picker:close() end
+  end
+  if prepared and (prepared.closeBag or prepared.action) then
+    if prepared.closeBag and list and list.close then list:close() end
+    if prepared.action then prepared.action() end
+    if prepared.text then showMessages(game, { prepared.text }, closePicker) end
+    return
   end
   -- BLACK / WHITE's own field uses: the bike, repels, the Dowsing MCHN ...
   -- (src/inventory/Gen5ItemUse.lua)
@@ -455,7 +467,11 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
       end
     end
     list:close()
-    teach()
+    if prepared and prepared.payloadIsData and prepared.textChanged then
+      showMessages(game, prepared.text and { prepared.text } or nil, teach)
+    else
+      teach()
+    end
     return
   end
 
@@ -645,7 +661,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
   end
 
   if result == "consumed" then
-    consume(game, id)
+    if not (prepared and prepared.consumed) then consume(game, id) end
     if extra and extra.evolveTo then
       list:close()
       local Evolution = require("src.pokemon.Evolution")
@@ -745,6 +761,22 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
   showMessages(game, payload, closePicker) -- failed
 end
 
+local function useOn(game, battle, id, target, list, moveIndex, picker)
+  -- Gen1's GB seam owns the entire effect/UI dispatch after target selection.
+  -- GBA instead prepares its native field triple before presenting the final
+  -- text, using its distinct slot/bag argument shape.
+  if require("src.core.GameVersion").generation() == 1 then
+    return Runtime.call("item.use", vanillaUseOn, game, battle, id, target, list, moveIndex, picker)
+  end
+  if require("src.core.GameVersion").generation() == 3 and not battle then
+    local slot
+    for i, mon in ipairs(game.save.party or {}) do if mon == target then slot = i break end end
+    local _, _, _, prepared = require("src.inventory.Gen3FieldUse").call(game, id, slot, moveIndex)
+    return vanillaUseOn(game, nil, prepared.id, prepared.target, list, moveIndex, picker, prepared)
+  end
+  return vanillaUseOn(game, battle, id, target, list, moveIndex, picker)
+end
+
 local function pickTargetAndUse(game, battle, id, list)
   -- pick a target from the party
   -- the ETHERs and PP UP open the move menu after picking a mon
@@ -752,6 +784,7 @@ local function pickTargetAndUse(game, battle, id, list)
   local def = game.data.items[id]
   local key = ItemEffects.alias(id, def)
   local wantsMove = key == "ETHER" or key == "MAX_ETHER" or key == "PP_UP"
+    or (key == "PP_MAX" and require("src.core.GameVersion").isGen3())
   local opts = {
     pickOnly = true,
     -- HP medicine animates its bar with the picker still up (#252).  Only
@@ -1234,11 +1267,14 @@ function BagMenu.new(game, opts)
         options[#options + 1] = { label = Strings("QUIT"), onSelect = function() end }
       end
       local th = #options * 2 + 1
-      game.stack:push(Menu.new(game, options, gen2
+      local actions = Menu.new(game, options, gen2
         and { tx = 0, ty = 12 - th, tw = 7, th = th }
-        or { tx = 13, ty = 10, tw = 7, th = th }))
+        or { tx = 13, ty = 10, tw = 7, th = th })
+      actions.publicUIKind = "bag_actions"
+      game.stack:push(actions)
     end,
   })
+  list.publicUIKind, list.publicUIBattle = "bag", battle
   if gen2 then list.sgbPalettes = packPalettes end
   return list
 end

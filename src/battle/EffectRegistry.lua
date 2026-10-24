@@ -428,6 +428,8 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   -- KING'S ROCK flinches the target, SHELL BELL feeds the attacker, and a
   -- SITRUS BERRY the hit dropped below half goes off immediately rather
   -- than waiting for the end of the turn.
+  local gba = require("src.core.GameVersion").isGen3()
+  if gba then require("src.battle.GbaItemSchedule").moveEnd(battle) end
   if totalDealt > 0 and battle.shellBellDrain then
     local flinch = HoldItems.flinchChance(user, move)
     if flinch > 0 and target.mon.hp > 0 and not target.substituteHP
@@ -436,7 +438,7 @@ function EffectRegistry.runDamaging(battle, ctx, record)
       target.flinched = true
     end
     battle:shellBellDrain(user, totalDealt)
-    if target.mon.hp > 0 then battle:holdItemTrigger(target, "hit") end
+    if not gba and target.mon.hp > 0 then battle:holdItemTrigger(target, "hit") end
   end
 
   if target.mon.hp <= 0 then

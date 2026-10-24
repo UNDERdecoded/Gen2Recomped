@@ -177,7 +177,7 @@ end
 
 -- FireRed's dedicated Item PC, or the shared Gen 3 bag-list fallback on the
 -- other Gen 3 dataset. This list is one list, not bag pockets.
-local function storageList(game, title, rows, onPick, onCancel, onReorder)
+local function storageList(game, title, rows, onPick, onCancel, onReorder, nativeProse)
   local bagScreen = (game.data.constants or {}).gen3BagScreen
   local fireRed = ((game.data.constants or {}).gen3FRLGItemPc ~= nil)
                   or (type(bagScreen) == "table" and bagScreen.layout == "frlg")
@@ -185,7 +185,7 @@ local function storageList(game, title, rows, onPick, onCancel, onReorder)
   if fireRed then
     menu = require("src.ui.Gen3ItemPcFRLG").new(game, {
       title = title, rows = rows, onPick = onPick, onCancel = onCancel,
-      onReorder = onReorder,
+      onReorder = onReorder, nativeProse = nativeProse,
     })
   else
     menu = require("src.ui.Gen3BagMenu").new(game, {
@@ -296,7 +296,7 @@ local function g3Withdraw(game, back)
       end, back, function(sourceId, beforeId)
         reorderPc(game, pc, sourceId, beforeId)
         current:setRows(storageRows(game, pc))
-      end)
+      end, true)
   end
   open()
 end
