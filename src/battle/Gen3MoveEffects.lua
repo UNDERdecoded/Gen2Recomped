@@ -24,11 +24,7 @@
 -- The merge is non-destructive: a name MoveEffects already defines wins, so
 -- this file can never quietly redefine an effect that already worked.
 --
--- WHAT IS NOT HERE, and deliberately -- eight effects, and each for a
--- reason rather than for want of time:
---
---   FOLLOW ME and HELPING HAND do nothing outside a DOUBLE battle, and this
---   engine fights one Pokemon a side.
+-- Remaining effects need separate native producers:
 --
 --   MAGIC COAT, SNATCH and IMPRISON all reach INTO another battler's move
 --   as it is being resolved -- bouncing it back, stealing it, forbidding it
@@ -39,9 +35,8 @@
 --   effect is chosen the same way.  The terrain half of that is real work
 --   in the world layer, not the battle one.
 --
--- Those eight still warn once and fall through to plain damage, which is
--- the honest behaviour for an effect that is not implemented.  Everything
--- else Emerald has runs.
+-- Unimplemented effects still warn once and fall through to plain damage.
+-- FOLLOW ME and HELPING HAND are registered below with native GBA turn state.
 
 local Status = require("src.battle.Status")
 local StatusRegistry = require("src.battle.StatusRegistry")
@@ -117,6 +112,16 @@ local function confuse(battle, target, pierceSub)
   end
   target.confusedTurns = battle.rng(2, 5)
   return { Strings("%s\nbecame confused!", displayName(target)) }
+end
+
+-- Imported GBA effect 172 is already named FOLLOW_ME_EFFECT. Register the
+-- ordinary record so native imports and the public effect adapter agree.
+P.FOLLOW_ME_EFFECT = function(battle, user)
+  return require("src.battle.Gen3FollowMe").apply(battle, user)
+end
+
+P.HELPING_HAND_EFFECT = function(battle, user)
+  return require("src.battle.Gen3HelpingHand").apply(battle, user)
 end
 
 -- ---------------------------------------------------------------------
@@ -744,10 +749,31 @@ P.SWALLOW_EFFECT = function(battle, user)
   return { Strings("%s\nregained health!", displayName(user)) }
 end
 
--- SPIT UP is a damaging move whose power IS the counter: 100, 200, 300.
+-- GBA Spit Up scales the calculated base (including +2), rather than power.
+-- The earlier-generation fallback retains the existing power-based path.
 F.SPIT_UP_EFFECT = {
-  gate = function(ctx)
+  rev = 1, -- Native set-damage semantics change link compatibility.
+  onProtect = function(ctx)
+    if not require("src.core.GameVersion").isGen3() then return false end
     if (ctx.user.stockpile or 0) <= 0 then
+      ctx.say(Strings("But, it failed!"))
+      return true
+    end
+    ctx.user.stockpile = 0
+    return false
+  end,
+  chooseDamage = function(ctx)
+    if not require("src.core.GameVersion").isGen3() then
+      return ctx.computeDamage({ rng = ctx.rng, powerMultiplier = math.max(1, ctx.user.stockpile or 1) })
+    end
+    if ctx.battle.abilityAbsorb and ctx.battle:abilityAbsorb(ctx.target, ctx.move) then return nil end
+    local n = ctx.user.stockpile or 0
+    if n <= 0 then return nil, Strings("But, it failed!") end
+    ctx.user.stockpile = 0
+    return ctx.computeDamage({ rng = ctx.rng, forceCrit = false, gbaSetDamage = n })
+  end,
+  gate = function(ctx)
+    if not require("src.core.GameVersion").isGen3() and (ctx.user.stockpile or 0) <= 0 then
       return false, Strings("But, it failed!")
     end
     return true
