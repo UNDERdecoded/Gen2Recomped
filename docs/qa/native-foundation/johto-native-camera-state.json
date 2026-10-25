@@ -1,0 +1,305 @@
+{
+  "schema": 1,
+  "sourceCommit": "2c0320062fe5a08f38c6e68f5679841502b55027",
+  "independentUpstreamSource": "edc4cbef",
+  "previousMain": "321019ae83d70314aab7ac86d91ef0bf9b52b320",
+  "fullQuick": {
+    "engineSuites": 328,
+    "sdkSuites": 3,
+    "allTiersPassed": true
+  },
+  "focusedChecks": {
+    "fieldStateQueries": 30,
+    "forcedBodyHandoff": 584,
+    "existingBodyPhases": 21,
+    "existingSpecialHandoffs": 549,
+    "existingCountStep": 313
+  },
+  "suppliedCameraProbe": {
+    "checks": 92,
+    "passedInForkAndIndependentUpstream": true,
+    "modVersion": "3.1.2-omega.1.8",
+    "sourceUnmodified": true,
+    "cameraModes": [
+      "first",
+      "third"
+    ],
+    "thirdPersonExtension": 1,
+    "nativeMapsCollisionActorsScriptRunnerAndCounters": true,
+    "rendererAvailabilityBoundarySubstituted": true,
+    "gpuExecuted": false,
+    "importedRomUsed": false,
+    "oldMainResult": "Controller installation fails: Gold free-movement dependencies unavailable",
+    "moduleSha256": {
+      "GoldCameraControls.lua": "e1cd84d74faabdde0de18cba1565f5646b91b2ab6577cccb5793e1e875ba8d67",
+      "FirstPerson.lua": "482c40977d95e5aaa8476f1e3676050c69af959028fa1a4e6d397efa51250417",
+      "ThirdPerson.lua": "56a98dd4a71bd07b1c75db1adc649a43c96e6dff1e9a7f51325efc398f9deee1",
+      "VoxelState.lua": "bfa464e438f8a8d2476502301d0f7727f6868545a5fe68b452237b1914918658",
+      "Mat4.lua": "af1bf410b6d2855cce3d361837f9096613b17f4300a076e8b530fae5228b4827"
+    }
+  },
+  "scope": "CPU query and native movement/landing integration; not full VASC graphics, gameplay or all field-move parity.",
+  "releaseUpdated": false,
+  "privateContentDistributed": false,
+  "protectedPlayerOrGen1Used": false,
+  "logSha256": {
+    "gen2-camera-full-quick.log": "c7ce7db7b553098b65bd64046d221a859d04cb32fc573c96b92f38d2dc6c41b5",
+    "gen2_field_state_queries.log": "bf6badcb7884bcaeef04ec740078da42737b7db55cf0d7fccfec09f85e408cb7",
+    "gen2_forced_body_handoff.log": "cdf15faad3d37080d24fdf3d2e86b61e40f157f617ef2d44fdc1e9969fce71a3",
+    "gen2-camera-upstream-focused.log": "b3e21e7c3244136f2b6dc49a07fb212580d4a7e1587554e9e562397d21bff7c4",
+    "vasc-camera-native-probe.log": "b411ac287fbcd321b4b2af2fb38effc4fae1ac811f114743a3b3d79b0a53d701",
+    "vasc-camera-upstream-probe.log": "64e4937e9fb4d0a26736beb7e956770c5717fa6b6ef6c779267a8b327e77d960",
+    "gen2-camera-main-negative.log": "ac0622b0f37afd4b1e88e4f6547148a39985eb120f077a256899b7a679c2b0ca"
+  },
+  "gpuMotionSmoke": {
+    "sourceCommit": "62ca106fadebfcca1b262cde05a60a081c10d765",
+    "runtimeCommit": "937eb3b21f973607ab080aa26b7ef2a6b3b2b663",
+    "runtimeExecutableSha256": "cb136e72f2f2639f889245c0a6fca355178da71f05e460a9f3d01d0fafcc1b0b",
+    "package": "3.1.2-omega.1.8",
+    "runs": [
+      {
+        "sourceCommit": "62ca106fadebfcca1b262cde05a60a081c10d765",
+        "backend": "OpenGL",
+        "vsync": 0,
+        "checks": 19,
+        "modFilesVerifiedUnmodified": 27329,
+        "romSha1": "f4cd194bdee0d04ca4eac29e09b8e4e9d818c133",
+        "osWindowProofs": {
+          "initial-map": {
+            "freshFrameStamp": 540,
+            "minimumFrameStamp": 531,
+            "centralColours": 9398,
+            "colourProfile": "gbc",
+            "minimumColours": 4,
+            "screenshot": "os-window-initial-map.png",
+            "attempts": 1
+          },
+          "second-map": {
+            "freshFrameStamp": 842,
+            "minimumFrameStamp": 836,
+            "centralColours": 1555,
+            "colourProfile": "gbc",
+            "minimumColours": 4,
+            "screenshot": "os-window-second-map.png",
+            "attempts": 1
+          }
+        },
+        "motionAndVSwitchPassed": true,
+        "modelRendererInstalled": false,
+        "visualParityAccepted": false,
+        "phases": [
+          {
+            "camera": "first",
+            "map": "NEW_BARK_TOWN",
+            "distance": 12,
+            "start": {
+              "x": 48,
+              "y": 80
+            },
+            "finish": {
+              "x": 48,
+              "y": 96
+            },
+            "before": {
+              "remaps": 0,
+              "freeFrames": 0,
+              "freeCells": 0,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldZ": 0,
+              "lastWorldX": 0,
+              "installed": true
+            },
+            "after": {
+              "remaps": 0,
+              "freeFrames": 12,
+              "freeCells": 1,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldZ": 0,
+              "lastWorldX": 0,
+              "installed": true
+            },
+            "rendererInstalled": false
+          },
+          {
+            "camera": "third",
+            "map": "NEW_BARK_TOWN",
+            "distance": 12,
+            "start": {
+              "x": 48,
+              "y": 80
+            },
+            "finish": {
+              "x": 48,
+              "y": 96
+            },
+            "before": {
+              "remaps": 0,
+              "freeFrames": 12,
+              "freeCells": 1,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldZ": 0,
+              "lastWorldX": 0,
+              "installed": true
+            },
+            "after": {
+              "remaps": 0,
+              "freeFrames": 24,
+              "freeCells": 2,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldZ": 0,
+              "lastWorldX": 0,
+              "installed": true
+            },
+            "rendererInstalled": false
+          }
+        ],
+        "evidenceSha256": {
+          "native.log": "a9be790e90a430551e195d51795a9db49b79eff126a3334de4e64ce0acfc8f8b",
+          "verification.json": "245f74e1b3203347613effcb6b32e6327929d8c907b83b203bcd99bf072325ad",
+          "result.json": "2362b8dd97396d302b9b71871bffe1fd1b53769aba74fa400f24787d2cfeb808",
+          "os-window-initial-map.png": "c23ba20ce7bede8b4d51c7f77615681078490d3f97b156818756b3f1a884f20a",
+          "os-window-second-map.png": "13a5cb28b065b6de9f24cb9b15b1e6104fbca5a158b5e3a9c4eb59a28469f689",
+          "first.png": "ce2163504242c5d7ac0643672b7e2bad3a32cf57a31cbcbd89f0f6f3818784cd",
+          "third.png": "de46237d37b51d1e2be7b41dc18c788cb0ba674b4593942458270c85e9478f47"
+        }
+      },
+      {
+        "sourceCommit": "62ca106fadebfcca1b262cde05a60a081c10d765",
+        "backend": "Metal",
+        "vsync": 1,
+        "checks": 19,
+        "modFilesVerifiedUnmodified": 27329,
+        "romSha1": "f4cd194bdee0d04ca4eac29e09b8e4e9d818c133",
+        "osWindowProofs": {
+          "initial-map": {
+            "freshFrameStamp": 538,
+            "minimumFrameStamp": 531,
+            "centralColours": 9032,
+            "colourProfile": "gbc",
+            "minimumColours": 4,
+            "screenshot": "os-window-initial-map.png",
+            "attempts": 1
+          },
+          "second-map": {
+            "freshFrameStamp": 841,
+            "minimumFrameStamp": 834,
+            "centralColours": 1307,
+            "colourProfile": "gbc",
+            "minimumColours": 4,
+            "screenshot": "os-window-second-map.png",
+            "attempts": 1
+          }
+        },
+        "motionAndVSwitchPassed": true,
+        "modelRendererInstalled": false,
+        "visualParityAccepted": false,
+        "phases": [
+          {
+            "camera": "first",
+            "map": "NEW_BARK_TOWN",
+            "distance": 12,
+            "start": {
+              "y": 80,
+              "x": 48
+            },
+            "finish": {
+              "y": 96,
+              "x": 48
+            },
+            "before": {
+              "remaps": 0,
+              "freeFrames": 0,
+              "freeCells": 0,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "installed": true,
+              "lastWorldZ": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldX": 0
+            },
+            "after": {
+              "remaps": 0,
+              "freeFrames": 12,
+              "freeCells": 1,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "installed": true,
+              "lastWorldZ": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldX": 0
+            },
+            "rendererInstalled": false
+          },
+          {
+            "camera": "third",
+            "map": "NEW_BARK_TOWN",
+            "distance": 12,
+            "start": {
+              "y": 80,
+              "x": 48
+            },
+            "finish": {
+              "y": 96,
+              "x": 48
+            },
+            "before": {
+              "remaps": 0,
+              "freeFrames": 12,
+              "freeCells": 1,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "installed": true,
+              "lastWorldZ": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldX": 0
+            },
+            "after": {
+              "remaps": 0,
+              "freeFrames": 24,
+              "freeCells": 2,
+              "wallSlides": 0,
+              "specialHandoffs": 0,
+              "installed": true,
+              "lastWorldZ": 0,
+              "mode": "first_and_third_person_continuous",
+              "lastWorldX": 0
+            },
+            "rendererInstalled": false
+          }
+        ],
+        "evidenceSha256": {
+          "native.log": "653c46f649777f0e153eab84beaeab33d3966a5734e0a223ad0fe83f2fa0c1b5",
+          "verification.json": "4ea9f2ce8cd2a790447d328e01e42e68fcaff51e1bc23e9b21c172786b36b7c8",
+          "result.json": "c030fb7f024a1c035e59c2d87877fb28c3a87a86cb03531363cbff22e56423fc",
+          "os-window-initial-map.png": "7421f033e768d5e2f2c7a0fd20ccb62fcdcd37047d1c730c479e238680f07729",
+          "os-window-second-map.png": "ad1b27ae476a9b0a135b12116042746cdcc23e2b19b2d558c879cf3d91696826",
+          "first.png": "559328b80003b4869fa05927550a6b8dec273c5d2d9568ed849ccb388b11647c",
+          "third.png": "59889c184d1edfc15ff34d2d5542f3473bfb89b73692f342747bdfa79c3dc0ee"
+        }
+      }
+    ],
+    "scope": "Fresh actual Crystal import and full unchanged mod; introduction skipped, native town position chosen for controlled walking; 12 free movement ticks and actual V input in each selected camera, then one fresh OS capture per mode. Not all-map, story, forced-terrain GPU or complete model/visual acceptance.",
+    "renderingLimit": "The supplied generated renderer remains uninstalled at the LuaJIT 60-upvalue compiler limit. The existing fallback renders; complete avatar/occlusion and visual parity are not accepted.",
+    "hostOnlyChanges": [
+      "Entry-point isolation: reject identity switches, bypass legacy migration, reject portable/external roots.",
+      "Explicit backend, window dimensions and VSync.",
+      "Frame-marker and test driver; no production/mod sources edited."
+    ],
+    "initialHarnessFailure": "First own run stopped at an incorrect test assumption that npcAt exists; the revised test uses native Collision.occupied. No blank-frame retry or last-good-image fallback was added.",
+    "privateImagesDistributed": false,
+    "driverSha256": "493f1faa9cffae5319cfc06e9793b48fcebac5ea5b49b04ab3312e12e05d9190"
+  },
+  "hostedCI": {
+    "pullRequest": 3,
+    "head": "62ca106fadebfcca1b262cde05a60a081c10d765",
+    "all65ChecksPassed": true
+  }
+}

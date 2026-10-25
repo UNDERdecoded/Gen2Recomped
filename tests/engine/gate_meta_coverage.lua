@@ -126,7 +126,6 @@ local DEBT = {
   ["event:save.writing"] = "M11",
   ["event:trade.completed"] = "M12",
   ["event:world.blacked_out"] = "M5",
-  ["event:world.boulder_moved"] = "M5",
   ["event:world.interacted"] = "M5",
   ["event:world.npc_spawned"] = "M5",
   ["event:world.trainer_engaged"] = "M5",

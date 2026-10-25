@@ -42,6 +42,17 @@ T.eq(Performance.detect(), "balanced", "iOS -> balanced")
 device("OS X", "x64", 8)
 T.eq(Performance.detect(), "high", "8-core desktop -> high")
 
+device("OS X", "arm64", 8)
+T.eq(Performance.detect(), "high", "Apple Silicon is a desktop, not an ARM handheld")
+T.eq(Performance.resolve("auto"), "high", "Apple Silicon AUTO avoids the handheld cap")
+Performance.applyOptions({ performance = "auto" })
+T.eq(Performance.tier, "high", "Apple Silicon publishes the resolved desktop tier")
+T.eq(Performance.resolve("low"), "low", "explicit low remains selectable on Apple Silicon")
+T.eq(Performance.resolve("balanced"), "balanced", "explicit balanced remains selectable on Apple Silicon")
+
+device("OS X", "arm64", 2)
+T.eq(Performance.detect(), "balanced", "Apple Silicon retains the desktop core-count floor")
+
 device("Windows", "x64", 2)
 T.eq(Performance.detect(), "balanced", "dual-core desktop -> balanced")
 

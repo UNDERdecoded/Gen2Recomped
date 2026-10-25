@@ -1,0 +1,251 @@
+{
+  "scope": "macOS Apple Silicon classification and scoped Crystal GPU resolution comparison; not full VASC visual or gameplay parity",
+  "sourceCommit": "7b05320fcc85c13f445f928586d5cd91ea39e16b",
+  "upstreamSourceCommit": "37ff3c20",
+  "runtime": "LOVE 12 commit 937eb3b21f973607ab080aa26b7ef2a6b3b2b663",
+  "performanceRegressionChecks": 42,
+  "logicalWindow": [
+    800,
+    720
+  ],
+  "physicalWindow": [
+    1600,
+    1440
+  ],
+  "oldSource": "9a4f30989d7fd0a846a8fb3228aee380403a2d9c",
+  "oldObservedAuto": {
+    "engineTier": "low",
+    "modInitialTier": "low",
+    "sceneColorPixels": [
+      800,
+      720
+    ],
+    "sky": "flat",
+    "clouds": "off",
+    "shadows": false
+  },
+  "runs": [
+    {
+      "backend": "OpenGL",
+      "sourceCommit": "7b05320fcc85c13f445f928586d5cd91ea39e16b",
+      "engineTier": "high",
+      "initialAuto": {
+        "deviceProfile": "auto",
+        "sceneResolution": "balanced",
+        "aa": 0,
+        "sky": "full",
+        "clouds": "on",
+        "shadows": true
+      },
+      "checks": 13,
+      "ownedWindowProofs": 2,
+      "proofLabelsAreTransitionTests": false,
+      "modFilesVerified": 27329,
+      "originalModUnchanged": true,
+      "resultSha256": "bdaaaede073090b90c176f6c7c2d1503f0e00299cb118a1163830d3b47e2c91f",
+      "verificationSha256": "2ad883bf605a3c4b801a9ce9f5ddbe67836dceec1249f296e1128a16a02cde3c",
+      "selections": [
+        {
+          "camera": "first",
+          "selection": "default",
+          "sceneColorPixels": [
+            1200,
+            1080
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "balanced",
+          "aa": 0
+        },
+        {
+          "camera": "first",
+          "selection": "native",
+          "sceneColorPixels": [
+            1600,
+            1440
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 0
+        },
+        {
+          "camera": "first",
+          "selection": "native-aa2",
+          "sceneColorPixels": [
+            2263,
+            2036
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 2
+        },
+        {
+          "camera": "third",
+          "selection": "default",
+          "sceneColorPixels": [
+            1200,
+            1080
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "balanced",
+          "aa": 0
+        },
+        {
+          "camera": "third",
+          "selection": "native",
+          "sceneColorPixels": [
+            1600,
+            1440
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 0
+        },
+        {
+          "camera": "third",
+          "selection": "native-aa2",
+          "sceneColorPixels": [
+            2263,
+            2036
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 2
+        }
+      ]
+    },
+    {
+      "backend": "Metal",
+      "sourceCommit": "7b05320fcc85c13f445f928586d5cd91ea39e16b",
+      "engineTier": "high",
+      "initialAuto": {
+        "deviceProfile": "auto",
+        "sceneResolution": "balanced",
+        "aa": 0,
+        "sky": "full",
+        "clouds": "on",
+        "shadows": true
+      },
+      "checks": 13,
+      "ownedWindowProofs": 2,
+      "proofLabelsAreTransitionTests": false,
+      "modFilesVerified": 27329,
+      "originalModUnchanged": true,
+      "resultSha256": "d0a46b9a9f85a5c1b0f03ad939651a1e8d5176fe695e0f7d3ff53a8b58f671de",
+      "verificationSha256": "40d82a9632d001daaef557562552438f91817ac904b98066ebb0460f32121563",
+      "selections": [
+        {
+          "camera": "first",
+          "selection": "default",
+          "sceneColorPixels": [
+            1200,
+            1080
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "balanced",
+          "aa": 0
+        },
+        {
+          "camera": "first",
+          "selection": "native",
+          "sceneColorPixels": [
+            1600,
+            1440
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 0
+        },
+        {
+          "camera": "first",
+          "selection": "native-aa2",
+          "sceneColorPixels": [
+            2263,
+            2036
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 2
+        },
+        {
+          "camera": "third",
+          "selection": "default",
+          "sceneColorPixels": [
+            1200,
+            1080
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "balanced",
+          "aa": 0
+        },
+        {
+          "camera": "third",
+          "selection": "native",
+          "sceneColorPixels": [
+            1600,
+            1440
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 0
+        },
+        {
+          "camera": "third",
+          "selection": "native-aa2",
+          "sceneColorPixels": [
+            2263,
+            2036
+          ],
+          "worldOutputPixels": [
+            1600,
+            1440
+          ],
+          "sceneResolution": "native",
+          "aa": 2
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Own fresh profiles; introduction skipped and New Bark position selected by QA",
+    "Only fork GPU runs; upstream has the same source change, no upstream GPU claim",
+    "OS window proofs cover default selections; quality alternatives have driver screenshots and actual allocation measurements",
+    "No Windows hardware test or FPS benchmark",
+    "Generated Stadium overworld extension still exceeds 60 upvalues",
+    "Preliminary 4X run failed its second OS proof as stale; not accepted",
+    "No private assets, mod source, cartridge data, screenshots or saves published",
+    "Existing distributed release remains source 321019ae; this change is pushed in development PRs"
+  ]
+}

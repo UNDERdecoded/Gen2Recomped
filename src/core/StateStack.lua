@@ -81,12 +81,58 @@ local deepSaid = {}
 
 function StateStack:init()
   self.states = {}
+  self.worldState, self.worldOwner, self._sceneStack = nil, nil, nil
 end
+
+-- Gen2's persistent world is not a screen. The public stack contains only
+-- overlays; the native update and scene-render paths still own that world.
+function StateStack:setWorldOwner(owner)
+  self:clearWorld()
+  self.worldOwner = owner
+  if owner then owner.world = nil end
+end
+
+function StateStack:clearWorld()
+  local world = self.worldState
+  self.worldState = nil
+  if self.worldOwner then self.worldOwner.world = nil end
+  if world and type(world.exit) == "function" then world:exit() end
+end
+
+function StateStack:active()
+  return self:top() or self.worldState
+end
+
+-- A scene view includes the persistent world for native composition. Its
+-- states are separate from the real overlay stack: drawing the overlay stack
+-- from a mod cannot re-enter the world's render pipeline recursively.
+function StateStack:sceneStack()
+  if not self.worldState then return self end
+  local view = self._sceneStack
+  if not view then
+    view = { states = {}, visibleBase = StateStack.visibleBase }
+    view.renderVisible = function(_, state) return not self.renderVisible or self:renderVisible(state) end
+    self._sceneStack = view
+  end
+  local states = view.states
+  states[1] = self.worldState
+  for i, state in ipairs(self.states) do states[i + 1] = state end
+  for i = #self.states + 2, #states do states[i] = nil end
+  return view
+end
+
+
 
 -- screen.pushed/popped fire after enter/exit so listeners observe the
 -- settled state; the wants guard keeps the no-listener path allocation-free
 
 function StateStack:push(state, ...)
+  if self.worldOwner and state.isOverworld then
+    if self.worldState and self.worldState ~= state then self:clearWorld() end
+    self.worldState, self.worldOwner.world = state, state
+    if type(state.enter) == "function" then state:enter(...) end
+    return
+  end
   table.insert(self.states, state)
   if state.enter then state:enter(...) end
   local depth = #self.states
@@ -113,7 +159,7 @@ function StateStack:pop()
   -- breath; everywhere else it is one pop too many, and the thing it leaves
   -- behind -- a screen that never changes, with no error -- gives the reader
   -- nothing to search for.  So it is said in words, once per culprit.
-  if state ~= nil and #self.states == 0 then
+  if state ~= nil and #self.states == 0 and not self.worldState then
     Logger.warn("state stack: popping %s emptied the stack -- nothing will "
       .. "update or draw until something is pushed back", 
       StateStack.describe(state))
@@ -139,6 +185,10 @@ end
 -- does not emit screen.pushed, because nothing was entered.
 function StateStack:restore(state)
   if type(state) ~= "table" then return false end
+  if self.worldOwner and state.isOverworld then
+    self.worldState, self.worldOwner.world = state, state
+    return true
+  end
   table.insert(self.states, state)
   Logger.warn("state stack: restored %s (depth %d)",
               StateStack.describe(state), #self.states)
@@ -173,7 +223,7 @@ end
 -- second one on the same press) and it must not push, pop or finish. A state
 -- that wants both puts the motion in animate and calls it from update.
 function StateStack:update(dt)
-  local top = self:top()
+  local top = self:active()
   if top and top.update then top:update(dt) end
   for i = self:visibleBase(), #self.states - 1 do
     local state = self.states[i]

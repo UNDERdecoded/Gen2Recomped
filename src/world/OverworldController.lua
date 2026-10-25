@@ -66,7 +66,173 @@ end
 
 local OverworldState = { isOpaque = true, isOverworld = true }
 
+function OverworldState:playerCollision()
+  local player = self.player
+  if not (player and self.map) then return nil end
+  return self.map:cellCollision(player.cellX, player.cellY)
+end
+
+function OverworldState:grassAt(x, y)
+  return self.map ~= nil and self.map:isGrassCell(x, y) or false
+end
+
+
 local Game -- set on enter (avoids circular require at load time)
+
+local GEN2_HANDOFF_LOCKS = {
+  "transitioning", "flyAnim", "teleportOut", "engaging", "emote",
+  "pikaHop", "healAnim", "whirlSpin", "battleActive",
+  "fieldMove", "fishing", "headbutt", "mapSetup", "moveState", "iceSlide",
+  "frameScriptThisTick", "_modScriptLock", "droppingScriptMoves",
+}
+local gen2Handoffs = setmetatable({}, { __mode = "k" })
+
+local function gen2HandoffReady(world, dir)
+  if not GameVersion.isGen2() or not Collision.DELTA[dir] or gen2Handoffs[world] then return false end
+  if not (Game and Game.data and Game.save and Game.overworld == world) then return false end
+  local map, p, stack = world.map, world.player, Game.stack
+  if not (map and p and stack and type(stack.top) == "function") then return false end
+  local top = stack:top()
+  if top and top ~= world then return false end
+  if Game.linkSession or (Game.linkNet and not Game.linkNet.closed) then return false end
+  if p.moving or p.inputLocked or p.stairExit or p.spinning or p.fieldMove then return false end
+  if (world.whirlHold or 0) > 0 then return false end
+  for _, key in ipairs(GEN2_HANDOFF_LOCKS) do if world[key] then return false end end
+  if not (world.runner and type(world.runner.isRunning) == "function")
+     or world.runner:isRunning() or #(world.scriptMoves or {}) > 0
+     or #(world.pendingScripts or {}) > 0 then return false end
+  if type(p.cellX) ~= "number" or type(p.cellY) ~= "number"
+     or p.cellX % 1 ~= 0 or p.cellY % 1 ~= 0 then return false end
+  return map:inBounds(p.cellX, p.cellY)
+end
+
+local function gen2Handoff(world, dir, handler, ...)
+  if not gen2HandoffReady(world, dir) then return false end
+  -- A native sound/event callback can call back into the public methods
+  -- before the handler has queued its movement. Admit that action once.
+  gen2Handoffs[world] = true
+  local ok, result = pcall(handler, world, dir, ...)
+  gen2Handoffs[world] = nil
+  if not ok then error(result, 0) end
+  return result and true or false
+end
+
+local function gen2ConnectionHandoff(world, dir)
+  -- Exit carpets are directional input actions, not arrival warps. A free
+  -- body stopped at the map edge still needs the native carpet exit path.
+  if world:checkGen2CarpetExit(dir) then return true end
+  return world:checkEdgeExit(dir)
+end
+
+local function gen2BoulderHandoff(world, dir, cx, cy)
+  local x, y = Collision.target(world.player.cellX, world.player.cellY, dir)
+  if cx ~= x or cy ~= y then return false end
+  return world:checkBoulderPush(dir)
+end
+
+-- Free-body controls return special movement to these same native handlers.
+-- No parallel transition, boulder animation, scripted queue or map owner is
+-- created. Readiness is checked again after the caller's ordinary body tick.
+function OverworldState:tryConnection(dir)
+  return gen2Handoff(self, dir, gen2ConnectionHandoff)
+end
+
+function OverworldState:tryLedgeJump(dir)
+  return gen2Handoff(self, dir, self.checkLedgeHop)
+end
+
+function OverworldState:tryPushBoulder(dir, cx, cy)
+  return gen2Handoff(self, dir, gen2BoulderHandoff, cx, cy)
+end
+
+local function gen2ForcedHandoff(world, dir, ice)
+  local p = world.player
+  -- The caller has centred its free body before returning ownership. The
+  -- existing ice handler owns its queue, collision and subsequent landings.
+  if ice then
+    world.iceSlide = dir
+    if not world:checkGen2Ice() then world.turningDirection = nil end
+    return true
+  end
+  -- Current/door collisions choose movement without a held direction. A
+  -- blocked forced tile still owns this input frame; it cannot be escaped
+  -- by substituting a different held direction for the forced one.
+  if Collision.canMove(world.map, world.cast or world.entities, p, dir) then
+    p.facing = dir
+    world:scriptMove(p, dir, 1, function() world:onStepComplete() end)
+  end
+  return true
+end
+
+-- Resume the native mover after an external body lands on forced terrain.
+-- A free body has already run the public landing phases; replaying the whole
+-- landing here would double-count steps/events. Start only the existing
+-- native movement queue, whose completion runs the next actual landing.
+function OverworldState:resumeForcedMovement()
+  if not GameVersion.isGen2() or not (self.map and self.player
+      and type(self.map.cellCollision) == "function") then return false end
+  local coll = self:playerCollision()
+  local dir = Collision.currentDirection(coll) or Collision.doorForcedDirection(coll)
+  local ice = Collision.isIce(coll)
+  if not ice then self.turningDirection = nil end
+  if not dir and ice then dir = self.turningDirection end
+  if not Collision.DELTA[dir] then return false end
+  return gen2Handoff(self, dir, gen2ForcedHandoff, ice)
+end
+
+function OverworldState:movementState()
+  if not GameVersion.isGen2() then return nil end
+  return require("src.world.Gen2PlayerState").read(self.player, Game and Game.save)
+end
+
+function OverworldState:applyPlayerState(state)
+  if not GameVersion.isGen2() then return nil, "not Gen2" end
+  return require("src.world.Gen2PlayerState").apply(self.player, Game and Game.save, state)
+end
+
+-- Script_wildon/wildoff change a transient field bit, not a saved event flag.
+-- Explicit script-controlled battles do not consult this random-battle gate.
+function OverworldState:setWildEncounters(enabled)
+  if not GameVersion.isGen2() then return nil, "not Gen2" end
+  if type(enabled) ~= "boolean" then return nil, "expected encounter enable boolean" end
+  self.noWildEncounters = not enabled
+  return true
+end
+
+-- EnterMap's five-step counter protects four completed encounter phases;
+-- the fifth is allowed to roll. Public encounter polling consumes it only
+-- after the physical-visit guard below, so repeats cannot shorten it.
+function OverworldState:armWildCooldown()
+  if not GameVersion.isGen2() then return false end
+  self.wildCooldown = 5
+  return true
+end
+
+function OverworldState:wildCooldownStep()
+  if not GameVersion.isGen2() then return false end
+  local left = self.wildCooldown or 0
+  if left <= 0 then return false end
+  self.wildCooldown = left - 1
+  return left > 1
+end
+
+-- This engine's live world is the module itself (StateStack.push enters it
+-- directly). A computed property keeps every native script/warp change
+-- observable immediately without maintaining another saved state field.
+setmetatable(OverworldState, {
+  __index = function(world, key)
+    if key == "playerState" then return world:movementState() end
+  end,
+  __newindex = function(world, key, value)
+    if key == "playerState" and GameVersion.isGen2() then
+      local ok, reason = world:applyPlayerState(value)
+      if not ok then error(reason, 2) end
+    else
+      rawset(world, key, value)
+    end
+  end,
+})
+
 
 -- AN EMPTY PLOT DRAWS NOTHING, asked once per entity per frame.  Written
 -- with `pcall(function() ... require(...) ... end)` this was a closure, a
@@ -995,6 +1161,11 @@ function OverworldState:enter(mapId, x, y, facing)
   self.camera = Camera.new()
   self.runner = ScriptRunner.new(Game, self)
   self.scriptMoves = {}
+  -- A fresh world entry may reuse this singleton and the same save/data.
+  -- It starts a new coordinate visit; a same-map graphics rebuild does not.
+  self.gen2CoordVisit, self.gen2StepVisit, self.gen2EncounterVisit, self.lastCellMapId = nil, nil, nil, nil
+  self.noWildEncounters, self.wildCooldown = nil, nil
+  if GameVersion.isGen2() then self.noWildEncounters = false end
   self.pendingScripts = {}
   self.parallelRunners = {}
   self.parallelQueue = {}
@@ -1065,6 +1236,7 @@ function OverworldState:stampClosedDoors()
 end
 
 function OverworldState:setMap(mapId, x, y, facing, opts)
+  if GameVersion.isGen2() then self.turningDirection, self.iceSlide = nil, nil end
   -- BLACK / WHITE'S ARRIVAL GUARD: the warp you land on stays disarmed until
   -- you step off it (see checkGen4EntranceWarp's gen5 branch)
   self.gen5ArrivalMap, self.gen5ArrivalX, self.gen5ArrivalY = mapId, x, y
@@ -1163,6 +1335,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     end
   end
   self.map = MapLoader.load(Game.data, mapId)
+  if GameVersion.isGen2() then self:armWildCooldown() end
   if GameVersion.isGen3() then
     require("src.world.Gen3SecretBase").restoreEntrance(Game.data, Game.save, self.map)
   end
@@ -2774,8 +2947,11 @@ end
 function OverworldState:noteCellChange()
   local p = self.player
   if not (p and p.cellX and p.cellY) then return end
-  if self.lastCellX ~= p.cellX or self.lastCellY ~= p.cellY then
+  local mapId = GameVersion.isGen2() and self.map and self.map.id or nil
+  if self.lastCellX ~= p.cellX or self.lastCellY ~= p.cellY
+     or (GameVersion.isGen2() and self.lastCellMapId ~= mapId) then
     self.lastCellX, self.lastCellY = p.cellX, p.cellY
+    if GameVersion.isGen2() then self.lastCellMapId = mapId end
     self.cellSerial = (self.cellSerial or 0) + 1
     if self.gen5ArrivalMap and (p.cellX ~= self.gen5ArrivalX or p.cellY ~= self.gen5ArrivalY) then
       self.gen5ArrivalMap = nil
@@ -3257,23 +3433,24 @@ end
 -- Poll it here, on an idle frame, and hand the caller script to the same
 -- pending-script FIFO a warp cutscene uses.
 function OverworldState:checkSpecialPhoneCall()
-  if not GameVersion.isGen2() then return end
-  if Game.save.g2SpecialCall == nil then return end
+  if not GameVersion.isGen2() then return false end
+  if Game.save.g2SpecialCall == nil then return false end
   if self.transitioning or self.runner:isRunning() or #self.scriptMoves > 0 then
-    return
+    return false
   end
-  if self.player and (self.player.moving or self.player.targetX) then return end
+  if self.player and (self.player.moving or self.player.targetX) then return false end
   local outside = self.map and self.map.def and Map.isOutdoor(self.map.def)
   local Gen2Commands = require("src.script.Gen2Commands")
   local caller, script =
     Gen2Commands.pendingSpecialCall(Game.data, Game.save, outside)
-  if not script then return end
+  if not script then return false end
   Game.save.g2SpecialCallActive = Game.save.g2SpecialCall
   Game.save.g2SpecialCall = nil
   -- wCurCaller, which the caller script's `readvar 23` reads back
   Game.save.g2CurCaller = caller
   self:queueScript(script, { phoneCaller = caller,
     onDone = function() Game.save.g2CurCaller = nil end })
+  return true
 end
 
 -- CheckPhoneCall (36:$4074): the random incoming call, rolled on every step
@@ -3286,22 +3463,22 @@ end
 -- "in-game minutes since the last call", and the port has no separate RTC to
 -- keep them apart.
 function OverworldState:checkIncomingPhoneCall()
-  if not GameVersion.isGen2() then return end
+  if not GameVersion.isGen2() then return false end
   if self.transitioning or self.runner:isRunning() or #self.scriptMoves > 0 then
-    return
+    return false
   end
-  if Game.save.g2SpecialCall ~= nil then return end
-  if self.pendingScripts and self.pendingScripts[1] then return end
+  if Game.save.g2SpecialCall ~= nil then return false end
+  if self.pendingScripts and self.pendingScripts[1] then return false end
   local p = self.player
-  if not (p and self.map) then return end
+  if not (p and self.map) then return false end
   -- CheckStandingOnEntrance: no call while the player is on a door or warp
-  if self.map:warpAtCell(p.cellX, p.cellY) then return end
+  if self.map:warpAtCell(p.cellX, p.cellY) then return false end
   local Gen2Commands = require("src.script.Gen2Commands")
   local minutes = math.floor(
     require("src.core.SaveData").playSeconds(Game.save) / 60)
   local id, script = Gen2Commands.rollIncomingCall(
     Game.data, Game.save, self.map.def, self:timeOfDay(), minutes, false)
-  if not script then return end
+  if not script then return false end
   Game.save.g2CurCaller = id
   -- Phone_StartRinging (36:$4337) before the script, Phone_CallEnd after it
   pcall(function() require("src.core.Sound").play(Game.data, "Call") end)
@@ -3309,6 +3486,7 @@ function OverworldState:checkIncomingPhoneCall()
     Game.save.g2CurCaller = nil
     pcall(function() require("src.core.Sound").play(Game.data, "Hang_Up") end)
   end })
+  return true
 end
 
 function OverworldState:update(dt)
@@ -3641,7 +3819,7 @@ function OverworldState:update(dt)
   -- a standing instruction ("wPlayerState is PLAYER_BIKE while this is set"),
   -- not an event, and the check is two flag reads.
   self:applyForcedBike()
-  self:checkSpecialPhoneCall()
+  if not require("src.world.Gen2StepEvents").vanilla() then self:checkSpecialPhoneCall() end
   self:checkBugContestClock()
   -- world.tick: the per-frame seam for mods that simulate something in the
   -- overworld rather than draw it.
@@ -3962,6 +4140,33 @@ function OverworldState:update(dt)
     UG.tickSparkles(Game, self)
   end
   -- every body on screen, home and foreign alike, in this map's cells
+  self:stepBody(scriptJustEnded)
+
+  self:followCamera()
+
+  -- pan_camera offset rides on top of the follow; the ramp resumes its
+  -- runner when it lands
+  local pan = self.cameraPan
+  if pan then
+    if pan.frames then
+      pan.t = pan.t + 1
+      local k = math.min(1, pan.t / pan.frames)
+      pan.ox = pan.fromX + (pan.toX - pan.fromX) * k
+      pan.oy = pan.fromY + (pan.toY - pan.fromY) * k
+      if pan.t >= pan.frames then
+        pan.frames = nil
+        local done = pan.onDone
+        pan.onDone = nil
+        if done then done() end
+      end
+    end
+    self.camera.x = self.camera.x + pan.ox
+    self.camera.y = self.camera.y + pan.oy
+  end
+end
+
+-- Native actor/input/player phase; outer update retains clocks, runners and camera.
+function OverworldState:stepBody(scriptJustEnded)
   self:updateCast()
   local cast = self.cast or self.entities
   for _, npc in ipairs(self.npcs) do
@@ -4051,7 +4256,7 @@ function OverworldState:update(dt)
                or self.whirlSpin or self.player.stairExit
   end
   if (not scripted and not self.transitioning) or gen2BootBedroom then
-    self:handleInput()
+    if not self:resumeForcedMovement() then self:handleInput() end
     self.lockedFrames = nil
   else
     -- THE WATCHDOG, because "I could not walk" is the one bug report this
@@ -4199,27 +4404,6 @@ function OverworldState:update(dt)
     self:onStepComplete()
   end
 
-  self:followCamera()
-
-  -- pan_camera offset rides on top of the follow; the ramp resumes its
-  -- runner when it lands
-  local pan = self.cameraPan
-  if pan then
-    if pan.frames then
-      pan.t = pan.t + 1
-      local k = math.min(1, pan.t / pan.frames)
-      pan.ox = pan.fromX + (pan.toX - pan.fromX) * k
-      pan.oy = pan.fromY + (pan.toY - pan.fromY) * k
-      if pan.t >= pan.frames then
-        pan.frames = nil
-        local done = pan.onDone
-        pan.onDone = nil
-        if done then done() end
-      end
-    end
-    self.camera.x = self.camera.x + pan.ox
-    self.camera.y = self.camera.y + pan.oy
-  end
 end
 
 -- any direction currently held (hJoyHeld & PAD_CTRL_PAD)
@@ -5031,6 +5215,45 @@ function OverworldState:gen3DecorateInput()
   return true
 end
 
+-- Public Gen2 menu predicates use the native script/transition owners. They
+-- do not infer readiness merely from a visible map or an empty overlay stack.
+function OverworldState:scriptRunning()
+  return (self.runner and self.runner:isRunning()) and true or false
+end
+
+function OverworldState:busy()
+  -- Gen2's world lives below overlays. A movement wrapper runs after the
+  -- native body, including a START/A press that just opened a screen: it
+  -- must not move behind that new owner on the same tick.
+  if GameVersion.isGen2() then
+    if self.battleActive then return true end
+    local stack = Game and Game.stack
+    local top = stack and stack.top and stack:top()
+    if top and top ~= self then return true end
+  end
+  return (self:scriptRunning() or (self.scriptMoves and #self.scriptMoves > 0)
+    or self.engaging or self.emote or self.teleportOut or self.whirlSpin
+    or self.gen4Waterfall or self.transitioning or self.flyAnim or self.fishing
+    or (self.player and (self.player.stairExit or self.player.inputLocked))
+    or (self.pendingScripts and self.pendingScripts[1])) and true or false
+end
+
+function OverworldState:acceptsMenuInput()
+  return not self.battleActive and not self:busy()
+    and not (self.player and self.player.moving) and not self.iceSlide
+end
+
+function OverworldState:pollInput(input)
+  local dir
+  if input then
+    if input:isDown("up") then dir = "up"
+    elseif input:isDown("down") then dir = "down"
+    elseif input:isDown("left") then dir = "left"
+    elseif input:isDown("right") then dir = "right" end
+  end
+  self.heldDir = dir
+end
+
 function OverworldState:handleInput()
   local input = Game.input
   if self.gen3Decorate then return self:gen3DecorateInput() end
@@ -5245,8 +5468,11 @@ function OverworldState:handleInput()
     return
   end
 
+  local gen2Intent = GameVersion.isGen2()
+  if gen2Intent then self:pollInput(input) end
   for _, pressed in ipairs({ "up", "down", "left", "right" }) do
-    if input:isDown(pressed) then
+    if (gen2Intent and self.heldDir == pressed)
+       or (not gen2Intent and input:isDown(pressed)) then
       -- WHAT THAT PRESS MEANS UNDER A SWUNG CAMERA.
       --
       -- Everything below this line -- turning, stepping, ledges, warps, the
@@ -5254,7 +5480,7 @@ function OverworldState:handleInput()
       -- always been handed the key that was pressed, because until there was
       -- a camera that could turn, those were the same thing.  Rotating here
       -- and nowhere else means not one of them learns about cameras.
-      local dir = self:walkDirection(pressed)
+      local dir = gen2Intent and pressed or self:walkDirection(pressed)
       -- .Normal and .Surf both `call .CheckTile` straight after .GetAction
       -- and `ret c`, so the eddy pre-empts turning, stepping, ledges and
       -- warps alike -- and, being a bump, it never lets the player in.
@@ -5464,6 +5690,14 @@ function OverworldState:checkBoulderPush(dir)
   end
   local bx, by = Collision.target(fx, fy, dir)
   if not self.map:inBounds(bx, by) then self.boulderTried = nil return false end
+  if GameVersion.isGen2() and self.map:speaksGen2Collision() then
+    local function collision(x, y) return self.map:cellTile(x, y) end
+    if not Collision.stepPermitted(collision, p.cellX, p.cellY, dir)
+       or not Collision.stepPermitted(collision, fx, fy, dir) then
+      self.boulderTried = nil
+      return false
+    end
+  end
   -- DistWorld_WillBoulderBeAtFallLocation: a Distortion World pit takes a
   -- boulder although nothing may walk there (Gen4DistPlatforms.fallAt)
   local dwFall = self.map.def and self.map.def.gen4DistWorld
@@ -5917,6 +6151,23 @@ function OverworldState:crossConnection(dir, conn, scripted)
   end
   conn = landed or conn
   local p = self.player
+  if not scripted and GameVersion.isGen2() then
+    -- Border strips carry the same one-way walls as interior cells. Checking
+    -- only land/water passability admitted both standing walls and walls
+    -- facing us on the destination map. Scripted seams deliberately bypass
+    -- collision, just as their in-map movement queue does.
+    local edgeX, edgeY = Collision.target(p.cellX, p.cellY, dir)
+    local function collision(cx, cy)
+      if cx == edgeX and cy == edgeY then
+        if ts.collision and not ts.behaviourBytes and (tonumber(ts.blockCells) or 2) > 1 then
+          return Map.defCellTile(dest, ts, x, y)
+        end
+        return 0
+      end
+      return self.map:speaksGen2Collision() and self.map:cellTile(cx, cy) or 0
+    end
+    if not Collision.stepPermitted(collision, p.cellX, p.cellY, dir) then return false end
+  end
   -- pokered's collision check reads the NEIGHBOR strip's tile bytes, so
   -- stepping off the edge onto a solid tile of the connected map bumps
   -- exactly like an in-map wall. Without this read, Pallet's south
@@ -8260,7 +8511,6 @@ end
 -- any step that LANDS on one into STEP_ICE: the walk repeats in the same
 -- direction, ignoring the d-pad, until the player leaves the ice or the next
 -- cell is blocked.  Mahogany Gym's floor is the whole puzzle.
-local GEN2_ICE_TILES = { [0x23] = true, [0x2B] = true }
 
 -- THE SOOTOPOLIS GYM'S ICE, which is the whole of that gym.
 --
@@ -9990,7 +10240,7 @@ end
 
 function OverworldState:gen2IsIce(cx, cy)
   local tile = self.map and self.map:cellTile(cx, cy)
-  return tile ~= nil and GEN2_ICE_TILES[tile] == true
+  return Collision.isIce(tile)
 end
 
 -- ICE, WHOEVER'S IT IS.  Johto names it by a collision class and Hoenn by a
@@ -11693,8 +11943,9 @@ local function canFieldTwo(save)
 end
 
 function OverworldState:checkTrainerSight()
-  if self.player.moving or self.engaging then return end
-  if Game.stack:top() ~= self then return end
+  if self.player.moving or self.engaging then return false end
+  if (Game.stack.active and Game.stack:active() or Game.stack:top()) ~= self then return false end
+  if GameVersion.isGen2() and #(Game.save.party or {}) == 0 then return false end
   local p = self.player
   -- A TRAINER WHOSE APPROACH ENDED WITHOUT A BATTLE MUST NOT RE-APPROACH
   -- FROM THE SAME TILE.
@@ -11886,15 +12137,23 @@ function OverworldState:checkTrainerSight()
       if aloneIsDouble or #spotted >= 2 or not pairUp then break end
     end
   end
-  if #spotted == 0 then return end
+  if #spotted == 0 then return false end
   -- Both walk up; the first one spotted leads, and its script is the one
   -- that runs -- which on the cartridge is the synthesized approach that
   -- sets trainer A and then trainer B.
   if #spotted >= 2 then
     self:startTrainerApproach(spotted[1].npc, spotted[1].dist, spotted[2].npc)
-    return
+    return self.engaging and true or false
   end
   self:startTrainerApproach(spotted[1].npc, spotted[1].dist)
+  return self.engaging and true or false
+end
+
+-- A completed-cell handoff must report whether the native approach acquired
+-- control. It cannot start an unscripted trainer event under another owner.
+function OverworldState:checkTrainerBattle()
+  if not (self.map and self.player and self.runner and Game and Game.save) or self:busy() then return false end
+  return self:checkTrainerSight()
 end
 
 -- data/trainers/encounter_types.asm
@@ -12256,14 +12515,28 @@ end
 -- SFX_POISONED; fainted mons get their message; a whole-party faint
 -- blacks out like a lost battle.  Returns true when the step should
 -- stop (a text box is up).
-function OverworldState:applyFieldPoison()
+function OverworldState:advanceFieldPoisonCounter(deferReset)
   local save = Game.save
   local emerald = GameVersion.get() == "emerald"
   -- UpdatePoisonStepCounter does not advance while inside a Secret Base.
   if emerald and self.map and self.map.def and self.map.def.mapType == "SECRET_BASE" then return false end
   local interval = FieldDefaults.world(Game.data, "poisonStepInterval") or 4
+  if deferReset then
+    save.poisonSteps=((save.poisonSteps or 0)+1)%256
+    return save.poisonSteps>=interval
+  end
   save.poisonSteps = ((save.poisonSteps or 0) + 1) % interval
-  if save.poisonSteps ~= 0 then return false end
+  return save.poisonSteps == 0
+end
+
+function OverworldState:applyFieldPoison()
+  if not self:advanceFieldPoisonCounter() then return false end
+  return self:applyFieldPoisonDamage()
+end
+
+function OverworldState:applyFieldPoisonDamage()
+  local save = Game.save
+  local emerald = GameVersion.get() == "emerald"
   local damage = FieldDefaults.world(Game.data, "poisonDamage") or 1
   -- GEN 4 CHANGED THIS RULE AND THE PORT WAS STILL PLAYING GEN 2'S.
   --
@@ -12610,6 +12883,62 @@ function OverworldState:hatchEgg(hatched)
   return true
 end
 
+-- Gen2's native coord scripts and authored tile events share a completed-cell
+-- handoff. Both native step completion and deferred/scripted-arrival checks
+-- use this phase; polling an already claimed visit cannot replay its script.
+function OverworldState:tryCoordScript()
+  local p, map = self.player, self.map
+  if not GameVersion.isGen2() or not (p and map and mapScripts and self.runner
+      and Game and Game.data and Game.save) or p.moving or self:busy() then return false end
+  self:noteCellChange()
+  -- A completed later phase retires this landing even when its script only
+  -- changes the scene. Idle/script-end re-asks must not run backwards through
+  -- coord events; actual scripted movement still gets a fresh cell serial.
+  local Steps = require("src.world.Gen2StepEvents")
+  if Steps.matches(self.gen2StepVisit,self,Game)
+     or Steps.matches(self.gen2EncounterVisit,self,Game) then return false end
+  local old = self.gen2CoordVisit
+  if old and old.mapId == map.id and old.save == Game.save
+     and old.data == Game.data and old.serial == self.cellSerial then return false end
+  -- Immediate native warps retain priority; a directional carpet still falls
+  -- through to its scene event, and an inert arrival cell stays inert.
+  if not self:warpsSuppressed()
+     and Warp.onArrive(map, p.cellX, p.cellY, p.facing) then return false end
+  local visit = { mapId = map.id, data = Game.data, save = Game.save, serial = self.cellSerial }
+  local events = map.def and map.def.events
+  if type(events) == "table" then
+    for _, ev in ipairs(events) do
+      if ev.replaces and ev.x == p.cellX and ev.y == p.cellY
+         and type(ev.script) == "table" and #ev.script > 0 then
+        self.gen2CoordVisit = visit
+        self.runner:run(ev.script, { event = ev.id })
+        return true
+      end
+    end
+  end
+  local hooks = mapScripts.get(map.id)
+  if hooks and hooks.onStep then
+    -- Install before dispatch: a synchronous script/hook may call back into
+    -- this phase. A non-matching hook does not consume the visit.
+    self.gen2CoordVisit = visit
+    if hooks.onStep(Game, self, p.cellX, p.cellY) then return true end
+    if self.map ~= map or self.player ~= p or Game.save ~= visit.save
+       or Game.data ~= visit.data or self:busy() then return true end
+    if self.gen2CoordVisit == visit then self.gen2CoordVisit = nil end
+  end
+  if type(events) == "table" then
+    for _, ev in ipairs(events) do
+      if ev.x == p.cellX and ev.y == p.cellY
+         and type(ev.script) == "table" and #ev.script > 0 then
+        self.gen2CoordVisit = visit
+        self.runner:run(ev.script, { event = ev.id })
+        return true
+      end
+    end
+  end
+  return false
+end
+
 -- Run the map's step trigger for the cell the player is standing on, once.
 --
 -- `onStep` is the same hook onStepComplete uses; what is different here is
@@ -12630,6 +12959,7 @@ end
 -- fired at the cell the player is standing on, so a row cannot run twice
 -- while the player stands there however often it is asked.
 function OverworldState:checkCoordEventHere(again)
+  if GameVersion.isGen2() then return self:tryCoordScript() end
   local hooks = mapScripts.get(self.map and self.map.id)
   if not (hooks and hooks.onStep) then return false end
   local p = self.player
@@ -12834,6 +13164,133 @@ function OverworldState.gen4EmoteSpot(ground, npc, cam, record, age)
          top - (record.height or 16) - Gen4Emotes.bounce(age), rise
 end
 
+-- Arrival suppression is the native destination cell, not a frame counter or
+-- a second compatibility-only cooldown. Reading it does not consume it.
+function OverworldState:warpsSuppressed()
+  local entry, p = self.warpEntryCell, self.player
+  return (entry and p and p.cellX == entry.x and p.cellY == entry.y) and true or false
+end
+
+function OverworldState:clearWarpCooldownIfLeft()
+  local entry, p = self.warpEntryCell, self.player
+  if entry and p and (p.cellX ~= entry.x or p.cellY ~= entry.y) then
+    self.warpEntryCell = nil
+  end
+end
+
+-- Shared native arrival phase. Directional Gen2 carpets stay on the input
+-- side (checkGen2CarpetExit); a side-step onto one must leave its coord event
+-- reachable. A true verdict means a real resolved warp acquired control.
+function OverworldState:checkWarpOnArrive()
+  local p = self.player
+  if not (p and self.map and Game and Game.data and Game.save) then return false end
+  if GameVersion.isGen2() and (p.moving or self:busy()) then return false end
+  -- The arrival disable is POSITIONAL: warpEntryCell above is the whole
+  -- test.  Consuming a completed step with a one-shot "just warped" counter
+  -- instead swallowed the warp under the player's feet, which is why a
+  -- second ladder one cell from the first did nothing (Seafoam B3F has warp
+  -- tiles on (25,3) and (25,4)) -- issue #265.  pokered has no such counter:
+  -- every completed step runs CheckWarpsNoCollision (home/overworld.asm).
+  -- That same step is where BIT_STANDING_ON_WARP is maintained: cleared
+  -- before the check (home/overworld.asm:324), set again while standing on a
+  -- warp square, then cleared once more when the square is a warp-activating
+  -- tile that is not a door tile (IsPlayerStandingOnDoorTileOrWarpTile).
+  self:refreshStandingOnWarp()
+  if self:warpsSuppressed() then
+    -- still standing on the warp we arrived through; do not re-trigger it
+  else
+    -- CheckWarpsNoCollision: door/warp tiles fire immediately; otherwise
+    -- ExtraWarpCheck must pass AND either a d-pad is held or BIT_FORCED_WARP
+    -- is set (Seafoam B3F currents -- home/overworld.asm).
+    -- ...and the direction goes to THIS one too.  It was stated at the
+    -- ordering check above and not at the call that actually takes the warp
+    -- once before -- that is exactly how the Gen 2 doormat became a trapdoor
+    -- (see the comment on Warp.onArrive), so both sites pass it.
+    local w = Warp.onArrive(self.map, p.cellX, p.cellY, p.facing)
+    -- ...and ExtraWarpCheck is a GEN 1 routine with no Gen 2 counterpart.
+    -- Gen 2's CheckTileEvent runs CheckWarpTile and nothing else; the only
+    -- other way a warp fires there is DoPlayerMovement .CheckWarp, which is
+    -- the directional carpet and is handled on the input side.
+    --
+    -- Leaving this on would put the corner mats back: ExtraWarpCheck falls
+    -- back to "is the player facing the map edge", so a LEFT-facing carpet
+    -- sitting on the bottom row would still warp somebody who walked down
+    -- along it -- the same wrong exit, through a different door.
+    local gen2Classes = GameVersion.isGen2()
+      and self.map.speaksGen2Collision and self.map:speaksGen2Collision()
+    if not w and not gen2Classes and (self:dirHeld() or self.forcedWarp) then
+      w = Warp.onCollision(self.map, Game.data.field.warpCarpets,
+                           p.cellX, p.cellY, p.facing)
+    end
+    if w then
+      return self:takeWarp(w.def) and true or false
+    end
+  end
+  return false
+end
+
+-- Native Gen2 CountStep, after warp/coordinate ownership and before encounters.
+-- Existing save counters and presentation remain authoritative. A repeat uses
+-- the same carry verdict without ticking again; hatch retains pending poison.
+function OverworldState:countStep()
+  local p=self.player
+  if not GameVersion.isGen2() or not (p and self.map and self.runner and Game and Game.data and Game.save)
+     or p.moving then return false end
+  if self:busy() then return true end -- an actual script/overlay already owns this frame
+  self:noteCellChange()
+  local Steps=require("src.world.Gen2StepEvents")
+  if Steps.matches(self.gen2CoordVisit,self,Game)
+     or Steps.matches(self.gen2EncounterVisit,self,Game) then return true end
+  if Steps.matches(self.gen2StepVisit,self,Game) then return self.gen2StepVisit.blocked end
+  local visit=Steps.visit(self,Game);self.gen2StepVisit=visit
+  local function stop()visit.blocked=true;return true end
+  if Steps.vanilla() and self:checkSpecialPhoneCall() then return stop() end
+  local save=Game.save
+  if Steps.vanilla() and save.repelSteps and save.repelSteps>0 then
+    save.repelSteps=save.repelSteps-1
+    if save.repelSteps==0 then
+      Game.stack:push(TextBox.new(Game,Strings("REPEL's effect\nwore off.")))
+      return stop()
+    end
+  end
+  self.todSteps=(self.todSteps or 0)+1
+  require("src.world.PikachuFollower").onStep(save)
+  require("src.world.HgssFollowMon").onStep(Game,self)
+  if not require("src.pokemon.Gen2Friendship").isVanilla() and self.todSteps%128==0 then
+    for _,mon in ipairs(save.party or {}) do require("src.pokemon.Evolution").changeHappiness(mon,"WALKING") end
+  end
+  if Runtime.wantsHook("world.tod") then self:timeOfDay() end
+  if self:safariStep() then return stop() end
+  local due
+  if Steps.vanilla() then
+    due=self:advanceFieldPoisonCounter(true)
+    if self:stepEggs() then return stop() end
+  end
+  if save.daycare and save.daycare.mon then
+    save.daycare.steps=(save.daycare.steps or 0)+(FieldDefaults.world(Game.data,"daycareExpPerStep") or 1)
+  end
+  require("src.pokemon.DayCare").step(Game.data,save,FieldDefaults.world(Game.data,"daycareExpPerStep") or 1)
+  if Steps.vanilla() then
+    if due then
+      save.poisonSteps=0
+      if self:applyFieldPoisonDamage() then return stop() end
+    end
+    Steps.bikeStep(save,self:movementState(),self.map.def)
+  else
+    -- Preserve non-vanilla Gen2 datasets' own per-step egg and poison rules.
+    if self:applyFieldPoison() or self:stepEggs() then return stop() end
+    if save.repelSteps and save.repelSteps>0 then
+      save.repelSteps=save.repelSteps-1
+      if save.repelSteps==0 then
+        Game.stack:push(TextBox.new(Game,Strings("REPEL's effect\nwore off.")))
+        return stop()
+      end
+    end
+  end
+  if self:checkIncomingPhoneCall() then return stop() end
+  return false
+end
+
 function OverworldState:onStepComplete()
   local p = self.player
   -- THE DISTORTION WORLD'S COORDINATE EVENTS fire where a step ends
@@ -12846,6 +13303,14 @@ function OverworldState:onStepComplete()
   -- this after the frame's earlier noteCellChange; leaving the old serial
   -- here made the next idle check treat the same switch as a second visit.
   self:noteCellChange()
+  if GameVersion.isGen2() then
+    p.inGrass = self.map ~= nil and self.map:isGrassCell(p.cellX, p.cellY) or false
+    p.grassShake = p.inGrass or nil
+    -- PlayerEvents checks trainer sight before the tile's warp/coord event
+    -- or step counters. The earlier input scan ran while this step was still
+    -- moving, so it cannot stand in for this completed-cell check.
+    if self:checkTrainerBattle() then return true end
+  end
   self:gen4BankStep()
   -- Gen 4's elevated-bridge bit (Gen4CyclingRoad: the Cycling Road roll)
   if GameVersion.isGen4() then pcall(require("src.world.Gen4CyclingRoad").stepEnded, self) end
@@ -12930,6 +13395,7 @@ function OverworldState:onStepComplete()
     p.elevation = self.map:elevationAfter(p.elevation, p.cellX, p.cellY, from and from.x, from and from.y)
     self.elevationFrom = { map = self.map, x = p.cellX, y = p.cellY }
   end
+  if not GameVersion.isGen2() then
   self.todSteps = (self.todSteps or 0) + 1
   -- UpdatePikachuHappinessAndMood rides the step counter (poison.asm)
   require("src.world.PikachuFollower").onStep(Game.save)
@@ -12953,6 +13419,8 @@ function OverworldState:onStepComplete()
   -- paletteNameFor reads self.tod on the next paint
   if Runtime.wantsHook("world.tod") then
     self:timeOfDay()
+  end
+
   end
 
   -- hot path: the payload is only built when something is listening
@@ -13006,7 +13474,7 @@ function OverworldState:onStepComplete()
   self:gen3FieldCallStep()
 
   -- CheckPhoneCall rides this same step, right after the warp checks
-  self:checkIncomingPhoneCall()
+  if not GameVersion.isGen2() then self:checkIncomingPhoneCall() end
 
   -- Route 22 Gate rewrites LAST_MAP by Y before warps/guards fire
   self:syncLastMapRewrite()
@@ -13051,6 +13519,16 @@ function OverworldState:onStepComplete()
     end
   end
 
+  if GameVersion.isGen2() then
+    if self:busy() then return true end
+    self.boulderTried=nil
+    self:clearWarpCooldownIfLeft()
+    if self:checkWarpOnArrive() then return true end
+    if self:tryCoordScript() then return true end
+    if self:countStep() then return true end
+    if self:tryWildEncounter() then return true end
+  end
+
   -- AN AUTHORED EVENT THAT DECLARES ITSELF A REPLACEMENT, ahead of the hooks.
   --
   -- The default below is that the cartridge's own scenes own their squares,
@@ -13068,7 +13546,7 @@ function OverworldState:onStepComplete()
   -- STILL AFTER THE WARP. That half of the ordering is not about authorship --
   -- it is CheckTileEvent testing the warp tile first -- and an authored event
   -- that swallowed a door would strand the player just as surely.
-  if not warpFirst and not self.runner:isRunning() then
+  if not GameVersion.isGen2() and not warpFirst and not self.runner:isRunning() then
     local events = self.map and self.map.def and self.map.def.events
     if type(events) == "table" then
       for _, ev in ipairs(events) do
@@ -13155,7 +13633,7 @@ function OverworldState:onStepComplete()
 
   -- hand-ported step triggers (Pallet intro, Saffron gate guards, ...)
   local hooks = mapScripts.get(self.map.id)
-  if not warpFirst and hooks and hooks.onStep then
+  if not GameVersion.isGen2() and not warpFirst and hooks and hooks.onStep then
     if hooks.onStep(Game, self, p.cellX, p.cellY) then
       return
     end
@@ -13176,7 +13654,7 @@ function OverworldState:onStepComplete()
   -- second interpreter. Whether the event repeats is the SCRIPT's business:
   -- it opens with its own `check_flag`/`jump_if_true` when the author asked
   -- for once-only, which is the same mechanism they use for everything else.
-  if not warpFirst and not self.runner:isRunning() then
+  if not GameVersion.isGen2() and not warpFirst and not self.runner:isRunning() then
     local events = self.map and self.map.def and self.map.def.events
     if type(events) == "table" then
       for _, ev in ipairs(events) do
@@ -13226,13 +13704,13 @@ function OverworldState:onStepComplete()
   if self:checkHgssSpinTiles() then return end
 
   -- the Safari game step counter (engine/events/hidden_events/safari_game.asm)
-  if self:safariStep() then return end
+  if not GameVersion.isGen2() and self:safariStep() then return end
   if GameVersion.isGen4() then self:gen4RadarStep() end
   -- BLACK / WHITE: the phenomena's step roll (src/world/Gen5Phenomena.lua)
   if GameVersion.isGen5() then require("src.world.Gen5Phenomena").step(self) end
 
   -- day-care: the boarded Pokémon gains 1 exp per step (like the original)
-  if Game.save.daycare and Game.save.daycare.mon then
+  if not GameVersion.isGen2() and Game.save.daycare and Game.save.daycare.mon then
     Game.save.daycare.steps = (Game.save.daycare.steps or 0)
       + (FieldDefaults.world(Game.data, "daycareExpPerStep") or 1)
   end
@@ -13241,74 +13719,23 @@ function OverworldState:onStepComplete()
   -- and rolls for an egg when the counter's low byte comes round.  Without
   -- this the Route 117 day care took your Pokemon and then stood still --
   -- nothing grew a level and no egg was ever laid.
-  if GameVersion.isGen2() or GameVersion.isGen3() then
+  if GameVersion.isGen3() then
     require("src.pokemon.DayCare").step(Game.data, Game.save,
       FieldDefaults.world(Game.data, "daycareExpPerStep") or 1)
   end
 
   -- out-of-battle poison (engine/events/poison.asm): every 4th step
   -- each poisoned mon loses 1 HP, with the screen flicker + sound
-  if self:applyFieldPoison() then return end
+  if not GameVersion.isGen2() and self:applyFieldPoison() then return end
 
   -- an EGG one step from hatching owns the screen the same way
-  if self:stepEggs() then return end
+  if not GameVersion.isGen2() and self:stepEggs() then return end
 
+  if GameVersion.isGen2() then return end -- shared native count/encounter phases already ran
   self.boulderTried = nil -- a completed step ends any armed boulder push
 
-  -- arriving on a door/warp tile warp; a non-door warp square also fires
-  -- when the extra check passes and the d-pad is held
-  -- (CheckWarpsNoCollision)
-  -- The cell we warped in on is inert until we step off it: standing on it,
-  -- or being walked back onto it before leaving, does not re-fire (see
-  -- warpEntryCell where it is set). Once we are on any other cell it clears
-  -- and every warp is live again.
-  local entry = self.warpEntryCell
-  if entry and (p.cellX ~= entry.x or p.cellY ~= entry.y) then
-    self.warpEntryCell = nil
-    entry = nil
-  end
-  -- The arrival disable is POSITIONAL: warpEntryCell above is the whole
-  -- test.  Consuming a completed step with a one-shot "just warped" counter
-  -- instead swallowed the warp under the player's feet, which is why a
-  -- second ladder one cell from the first did nothing (Seafoam B3F has warp
-  -- tiles on (25,3) and (25,4)) -- issue #265.  pokered has no such counter:
-  -- every completed step runs CheckWarpsNoCollision (home/overworld.asm).
-  -- That same step is where BIT_STANDING_ON_WARP is maintained: cleared
-  -- before the check (home/overworld.asm:324), set again while standing on a
-  -- warp square, then cleared once more when the square is a warp-activating
-  -- tile that is not a door tile (IsPlayerStandingOnDoorTileOrWarpTile).
-  self:refreshStandingOnWarp()
-  if entry then
-    -- still standing on the warp we arrived through; do not re-trigger it
-  else
-    -- CheckWarpsNoCollision: door/warp tiles fire immediately; otherwise
-    -- ExtraWarpCheck must pass AND either a d-pad is held or BIT_FORCED_WARP
-    -- is set (Seafoam B3F currents -- home/overworld.asm).
-    -- ...and the direction goes to THIS one too.  It was stated at the
-    -- ordering check above and not at the call that actually takes the warp
-    -- once before -- that is exactly how the Gen 2 doormat became a trapdoor
-    -- (see the comment on Warp.onArrive), so both sites pass it.
-    local w = Warp.onArrive(self.map, p.cellX, p.cellY, p.facing)
-    -- ...and ExtraWarpCheck is a GEN 1 routine with no Gen 2 counterpart.
-    -- Gen 2's CheckTileEvent runs CheckWarpTile and nothing else; the only
-    -- other way a warp fires there is DoPlayerMovement .CheckWarp, which is
-    -- the directional carpet and is handled on the input side.
-    --
-    -- Leaving this on would put the corner mats back: ExtraWarpCheck falls
-    -- back to "is the player facing the map edge", so a LEFT-facing carpet
-    -- sitting on the bottom row would still warp somebody who walked down
-    -- along it -- the same wrong exit, through a different door.
-    local gen2Classes = GameVersion.isGen2()
-      and self.map.speaksGen2Collision and self.map:speaksGen2Collision()
-    if not w and not gen2Classes and (self:dirHeld() or self.forcedWarp) then
-      w = Warp.onCollision(self.map, Game.data.field.warpCarpets,
-                           p.cellX, p.cellY, p.facing)
-    end
-    if w then
-      self:takeWarp(w.def)
-      return
-    end
-  end
+  self:clearWarpCooldownIfLeft()
+  if self:checkWarpOnArrive() then return end
 
   if Game.save.repelSteps and Game.save.repelSteps > 0 then
     Game.save.repelSteps = Game.save.repelSteps - 1
@@ -13334,6 +13761,28 @@ function OverworldState:onStepComplete()
     end
   end
 
+  self:tryWildEncounter()
+end
+
+function OverworldState:tryWildEncounter()
+  local p = self.player
+  if not (p and self.map and Game and Game.data and Game.save) then return false end
+  if GameVersion.isGen2() then
+    if p.moving or self:busy() or not self.map:inBounds(p.cellX,p.cellY) then return false end
+    self:noteCellChange()
+    local Steps = require("src.world.Gen2StepEvents")
+    if Steps.matches(self.gen2CoordVisit,self,Game)
+       or (Steps.matches(self.gen2StepVisit,self,Game) and self.gen2StepVisit.blocked)
+       or Steps.matches(self.gen2EncounterVisit,self,Game) then return false end
+    self.gen2EncounterVisit=Steps.visit(self,Game)
+    if self:wildCooldownStep() then return false end
+    if not (Game.save.party and #Game.save.party>0) then return false end
+    if self.noWildEncounters then return false end
+    if self.map:speaksGen2Collision()
+       and not require("src.world.Gen2EncounterRules").canEncounterWildMon(
+         self.map.def.environment, self.map:cellTile(p.cellX,p.cellY),
+         self.noWildEncounters, self.map:isEncounterCell(p.cellX,p.cellY)) then return false end
+  end
   -- TryWildEncounter_BugContest (25:$7D64): while the contest is running the
   -- park rolls its OWN table (ContestMons) and ignores the map's wildmons
   -- entirely.  Guarded on the run being live, so visiting the park outside the
@@ -13352,7 +13801,7 @@ function OverworldState:onStepComplete()
         end
         self:pushBattle(battle)
       end
-      return
+      return battle ~= nil
     end
   end
   local BugContest = require("src.world.BugContest")
@@ -13367,7 +13816,7 @@ function OverworldState:onStepComplete()
       battle.onFinish = function(result) self:afterBattle(result, battle) end
       self:pushBattle(battle)
     end
-    return
+    return wild ~= nil
   end
 
   -- wild encounters in grass, on water while surfing, or -- on indoor
@@ -13391,9 +13840,9 @@ function OverworldState:onStepComplete()
   if pyramidWild then encDef = Pyramid.wildTable(Game.save) end
   -- THE POKE RADAR: stepping into a shaking patch is always an encounter, and
   -- not one Repel or a roamer can touch (src/world/Gen4Radar.lua)
-  if GameVersion.isGen4() and self:gen4RadarEncounter(encDef) then return end
+  if GameVersion.isGen4() and self:gen4RadarEncounter(encDef) then return true end
   -- BLACK / WHITE: a phenomenon underfoot is its own guaranteed encounter
-  if GameVersion.isGen5() and require("src.world.Gen5Phenomena").encounter(self, encDef) then return end
+  if GameVersion.isGen5() and require("src.world.Gen5Phenomena").encounter(self, encDef) then return true end
   local enc
   local indoor = Game.data.field.indoorEncounters
   local env = self.map.def.environment
@@ -13403,8 +13852,17 @@ function OverworldState:onStepComplete()
   local bwDark = GameVersion.isGen5() and encDef and encDef.darkGrass
                  and require("src.world.Gen5FieldRules").isDarkGrass(self.map, p.cellX, p.cellY) or false
   if bwDark then land = { grass = encDef.darkGrass } end
-  local onWater = (p.surfing and self.map:isWaterCell(p.cellX, p.cellY)) or false
-  if pikeWild or pyramidWild then
+  local nativeGen2 = GameVersion.isGen2() and self.map:speaksGen2Collision()
+  local onWater = ((nativeGen2 or p.surfing) and self.map:isWaterCell(p.cellX, p.cellY)) or false
+  if nativeGen2 then
+    -- CheckOnWater selects the table by permission, independently of the
+    -- player's sprite/state. Missing water data must not reuse cave grass.
+    if onWater then
+      enc = self:rollEncounter(encDef and {grass=encDef.water}, "water")
+    else
+      enc = self:rollEncounter(land, CAVE_ENVIRONMENTS[env] and "indoor" or "grass")
+    end
+  elseif pikeWild or pyramidWild then
     -- ...on EVERY tile of the room: StandardWildEncounter's Pike and Pyramid
     -- arms ask no metatile behaviour, only whether this is a new tile
     enc = self:rollEncounter(land, "grass")
@@ -13453,12 +13911,12 @@ function OverworldState:onStepComplete()
   if pyramidWild and enc then
     -- GenerateBattlePyramidWildMon: the slot names an index into the round's list
     enc = Pyramid.wildFor(Game.data, Game.save, enc)
-    if not enc then return end
+    if not enc then return false end
   elseif pikeWild and enc then
     -- TryGenerateBattlePikeWildMon(TRUE): its level, its moves, and the lead's
     -- Keen Eye / Intimidate; no roamer joins
     enc = Pike.wildFor(Game.data, Game.save, enc)
-    if not enc then return end
+    if not enc then return false end
   elseif enc and GameVersion.isGen3() and (not onWater or GameVersion.get()=="emerald") then
     -- HOENN'S ROAMER IS ONE, NOT THREE, and the roll is its own: the
     -- cartridge asks IsRoamerAt first and only then spends a quarter chance,
@@ -13540,7 +13998,7 @@ function OverworldState:onStepComplete()
     local lead = Party.firstHealthy(Game.save.party) or Game.save.party[1]
     if Game.save.repelSteps and Game.save.repelSteps > 0
        and lead and lead.level and enc.level < lead.level then
-      return
+      return false
     end
     local BattleState = require("src.battle.BattleState")
     -- BATTLETYPE_ROAMING: Music_SuicuneBattle, the one-turn flee, and the
@@ -13570,7 +14028,7 @@ function OverworldState:onStepComplete()
         Pyramid.afterBattle(Game, self)
       end
       self:pushBattle(battle)
-      return
+      return true
     end
     if pikeWild then
       Pike.prepareWild(battle, enc)
@@ -13579,7 +14037,7 @@ function OverworldState:onStepComplete()
         self:afterBattle(result, battle)
       end
       self:pushBattle(battle)
-      return
+      return true
     end
     -- BLACK / WHITE: the terrain under the battle, and dark grass's thick-
     -- grass flag and double (src/world/Gen5WildTables.lua)
@@ -13588,12 +14046,13 @@ function OverworldState:onStepComplete()
     end
     -- PLATINUM, WALKING WITH A PARTNER: a double, the partner beside you
     if GameVersion.isGen4() and self:gen4Escorted() and not roamer then
-      if not self:gen4EscortWild(battle, onWater, land) then return end
+      if not self:gen4EscortWild(battle, onWater, land) then return false end
     end
     battle.onFinish = function(result) self:afterBattle(result, battle) end
     self:pushBattle(battle)
-    return
+    return true
   end
+  return false
 end
 
 -- SystemFlag_CheckHasPartner: Cheryl, Mira, Riley, Marley or Buck is walking
@@ -14230,6 +14689,7 @@ function OverworldState:gen4FieldResumed()
 end
 
 function OverworldState:afterBattle(result, battle)
+  if GameVersion.isGen2() then self:armWildCooldown() end
   self.gen4EncounterAttempts = 0
   -- a battle a script did not start (a wild one, a trainer's sight) comes
   -- back to the field here; a scripted one already did in its onFinish
@@ -14491,7 +14951,7 @@ function OverworldState:takeWarp(warpDef)
   -- door naming the dynamic-warp placeholder before anything set it.  Standing
   -- still with a line in the log beats handing MapLoader an id that does not
   -- exist, which raises under the player's feet.
-  if not destMap then return end
+  if not destMap then return false end
   -- GEN 4'S LIFTS REMEMBER THE FLOOR YOU GOT ON AT, and the door you are
   -- taking is the only place that knows it.  Stepping into a lift car
   -- overwrites the special location with the floor being left
@@ -14529,17 +14989,17 @@ function OverworldState:takeWarp(warpDef)
     self.player.spinTimer = 0
     self.arriveWarp = "teleport"
     self:startWarpTo(destMap, x, y, facing)
-    return
+    return true
   elseif pad == "hole" then
     -- falling through a hole: no door SFX, no walk-out step.  Lavaridge's two
     -- are holes with an animation of their own -- see startLavaridgeWarp
     local lav = self.map.lavaridgeWarpAt
                 and self.map:lavaridgeWarpAt(self.player.cellX, self.player.cellY)
     if lav and self:startLavaridgeWarp(lav, destMap, x, y, facing) then
-      return
+      return true
     end
     self:startWarpTo(destMap, x, y, facing)
-    return
+    return true
   end
   -- THE ESCALATORS.  All 34 of them already carried a warp event, so the
   -- player was being moved between floors correctly -- through the DOOR path,
@@ -14557,10 +15017,11 @@ function OverworldState:takeWarp(warpDef)
     self.arriveWarp = "escalator"
     self.escalatorWay = escalator
     self:startWarpTo(destMap, x, y, facing)
-    return
+    return true
   end
   self.doorWarp = true -- door SFX + PlayerStepOutFromDoor walk-out
   self:startWarpTo(destMap, x, y, facing)
+  return true
 end
 
 -- wDigWarpNumber / wDigMapGroup / wDigMapNumber (EnterMapWarp.SaveDigWarp).
@@ -16069,6 +16530,12 @@ end
 --
 -- Zoom is folded in, so this tracks the survey/diorama ladder rather than the
 -- fixed fit scale.  Returns nil before the renderer exists (headless, boot).
+-- Screen units per native UI pixel, matching the renderer's DPI conversion.
+function OverworldState:fitScale()
+  if not (Game and Game.renderer and Game.renderer.drawScale) then return nil end
+  return Game.renderer:drawScale()
+end
+
 function OverworldState:zoomScale()
   if not (Game and Game.renderer and Game.renderer.fitScale) then return nil end
   local ok, fit = pcall(Game.renderer.fitScale, Game.renderer)

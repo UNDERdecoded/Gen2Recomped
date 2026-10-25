@@ -19,7 +19,7 @@ local scissorClamped, captured
 do
   local f = io.open("src/render/Renderer.lua", "rb")
   check(f ~= nil, "Renderer source is readable")
-  local src = f and f:read("*a") or ""
+  local src = (f and f:read("*a") or ""):gsub("\r\n", "\n")
   if f then f:close() end
   local body = src:match("\nlocal function scissorClamped.-\nend\n")
   check(body ~= nil, "scissorClamped is still a single local function")

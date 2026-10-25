@@ -81,7 +81,8 @@ local function processorCount()
 end
 
 -- CPU architecture via LuaJIT's jit.arch when present: "arm"/"arm64" on
--- phones and PortMaster handhelds, "x86"/"x64" on desktops.  nil under a
+-- phones, Apple Silicon Macs and PortMaster handhelds; "x86"/"x64" on
+-- Intel/AMD desktops. nil under a
 -- plain-Lua tool or test with no jit table, which resolves to HIGH (no
 -- clamping) so tooling is never surprised.
 local function cpuArch()
@@ -102,7 +103,7 @@ function Performance.detect()
 
   -- PortMaster-style ARM Linux handhelds (e.g. the RG34XXSP the project
   -- already ships a build for): the weakest target here.
-  if isArm and os ~= "Android" and os ~= "iOS" then
+  if isArm and os ~= "Android" and os ~= "iOS" and os ~= "OS X" then
     return "low"
   end
   -- Phones and tablets: GBC FX is already force-disabled here (issue #136);

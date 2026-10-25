@@ -27,9 +27,6 @@
 -- Deliberately ABSENT, because this engine has no equivalent module and the
 -- honest answer is "not found":
 --
---   src.world.gen2.FieldMoves   field-move entry points live in
---                               src/script/* and the fieldmove.eligibility
---                               hook, not one module
 --   src.world.gen2.Follower     PikachuFollower is Yellow's, not a general
 --                               party follower
 --   src.ui.gen2.Chrome          no shared window-chrome module
@@ -63,6 +60,9 @@ ModCompat.ALIASES = {
   ["src.world.gen2.World"] = "src.world.OverworldController",
   ["src.world.gen2.Map"] = "src.world.Map",
   ["src.world.gen2.Permissions"] = "src.world.Collision",
+  -- State predicates share the actual native mover. Legacy field-action,
+  -- collision classification and fly-picker functions are not emulated.
+  ["src.world.gen2.FieldMoves"] = "src.world.Gen2FieldMoves",
   ["src.world.gen2.Palettes"] = "src.render.PaletteFX",
 
   -- save-side data
