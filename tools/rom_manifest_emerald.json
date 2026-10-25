@@ -1,4 +1,119 @@
 {
+  "terrainPalettePrograms": {
+    "version": 1,
+    "game": "emerald",
+    "romSha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+    "source": "https://github.com/pret/pokeemerald/blob/3ec4d98de95a2aeb12f3c738b3496d0b3a830793/src/tileset_anims.c",
+    "programs": {
+      "658288": {
+        "id": "general",
+        "kind": "static",
+        "secondary": false
+      },
+      "658356": {
+        "id": "building",
+        "kind": "static",
+        "secondary": false
+      },
+      "659516": {
+        "id": "rustboro",
+        "kind": "static",
+        "secondary": true
+      },
+      "659640": {
+        "id": "dewford",
+        "kind": "static",
+        "secondary": true
+      },
+      "659664": {
+        "id": "slateport",
+        "kind": "static",
+        "secondary": true
+      },
+      "659688": {
+        "id": "mauville",
+        "kind": "static",
+        "secondary": true
+      },
+      "659804": {
+        "id": "lavaridge",
+        "kind": "static",
+        "secondary": true
+      },
+      "659848": {
+        "id": "ever-grande",
+        "kind": "static",
+        "secondary": true
+      },
+      "659964": {
+        "id": "pacifidlog",
+        "kind": "static",
+        "secondary": true
+      },
+      "660012": {
+        "id": "sootopolis",
+        "kind": "static",
+        "secondary": true
+      },
+      "660036": {
+        "id": "underwater",
+        "kind": "static",
+        "secondary": true
+      },
+      "660064": {
+        "id": "cave",
+        "kind": "static",
+        "secondary": true
+      },
+      "660092": {
+        "id": "frontier-west",
+        "kind": "static",
+        "secondary": true
+      },
+      "660116": {
+        "id": "frontier-east",
+        "kind": "static",
+        "secondary": true
+      },
+      "660928": {
+        "id": "mauville-gym",
+        "kind": "static",
+        "secondary": true
+      },
+      "660952": {
+        "id": "sootopolis-gym",
+        "kind": "static",
+        "secondary": true
+      },
+      "660976": {
+        "id": "elite-four",
+        "kind": "static",
+        "secondary": true
+      },
+      "661020": {
+        "id": "bike-shop",
+        "kind": "static",
+        "secondary": true
+      },
+      "661044": {
+        "id": "battle-pyramid",
+        "kind": "static",
+        "secondary": true
+      },
+      "661080": {
+        "id": "battle-dome-floor",
+        "kind": "frames",
+        "secondary": true,
+        "table": 5392508,
+        "frames": 4,
+        "first": 128,
+        "count": 16,
+        "step": 4,
+        "phase": 0,
+        "excludes": "cartridge fade and battle-transition task state"
+      }
+    }
+  },
   "bagSprite": {
     "female": 14260736,
     "frameHeight": 64,

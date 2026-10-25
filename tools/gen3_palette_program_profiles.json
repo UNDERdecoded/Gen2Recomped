@@ -1,0 +1,155 @@
+{
+  "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc": {
+    "game": "firered",
+    "programs": {
+      "459040": {
+        "id": "general",
+        "kind": "static",
+        "secondary": false
+      },
+      "459180": {
+        "id": "celadon",
+        "kind": "static",
+        "secondary": true
+      },
+      "459300": {
+        "id": "silph",
+        "kind": "static",
+        "secondary": true
+      },
+      "459420": {
+        "id": "ember",
+        "kind": "static",
+        "secondary": true
+      },
+      "459524": {
+        "id": "vermilion-gym",
+        "kind": "static",
+        "secondary": true
+      },
+      "459624": {
+        "id": "celadon-gym",
+        "kind": "static",
+        "secondary": true
+      }
+    },
+    "romSha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc",
+    "source": "https://github.com/pret/pokefirered/blob/d58bf398b2b83a326d23d14d531de7f45a1058bb/asm/tileset_anims.s",
+    "version": 1
+  },
+  "f3ae088181bf583e55daf962a92bb46f4f1d07b7": {
+    "game": "emerald",
+    "programs": {
+      "658288": {
+        "id": "general",
+        "kind": "static",
+        "secondary": false
+      },
+      "658356": {
+        "id": "building",
+        "kind": "static",
+        "secondary": false
+      },
+      "659516": {
+        "id": "rustboro",
+        "kind": "static",
+        "secondary": true
+      },
+      "659640": {
+        "id": "dewford",
+        "kind": "static",
+        "secondary": true
+      },
+      "659664": {
+        "id": "slateport",
+        "kind": "static",
+        "secondary": true
+      },
+      "659688": {
+        "id": "mauville",
+        "kind": "static",
+        "secondary": true
+      },
+      "659804": {
+        "id": "lavaridge",
+        "kind": "static",
+        "secondary": true
+      },
+      "659848": {
+        "id": "ever-grande",
+        "kind": "static",
+        "secondary": true
+      },
+      "659964": {
+        "id": "pacifidlog",
+        "kind": "static",
+        "secondary": true
+      },
+      "660012": {
+        "id": "sootopolis",
+        "kind": "static",
+        "secondary": true
+      },
+      "660036": {
+        "id": "underwater",
+        "kind": "static",
+        "secondary": true
+      },
+      "660064": {
+        "id": "cave",
+        "kind": "static",
+        "secondary": true
+      },
+      "660092": {
+        "id": "frontier-west",
+        "kind": "static",
+        "secondary": true
+      },
+      "660116": {
+        "id": "frontier-east",
+        "kind": "static",
+        "secondary": true
+      },
+      "660928": {
+        "id": "mauville-gym",
+        "kind": "static",
+        "secondary": true
+      },
+      "660952": {
+        "id": "sootopolis-gym",
+        "kind": "static",
+        "secondary": true
+      },
+      "660976": {
+        "id": "elite-four",
+        "kind": "static",
+        "secondary": true
+      },
+      "661020": {
+        "id": "bike-shop",
+        "kind": "static",
+        "secondary": true
+      },
+      "661044": {
+        "id": "battle-pyramid",
+        "kind": "static",
+        "secondary": true
+      },
+      "661080": {
+        "count": 16,
+        "excludes": "cartridge fade and battle-transition task state",
+        "first": 128,
+        "frames": 4,
+        "id": "battle-dome-floor",
+        "kind": "frames",
+        "phase": 0,
+        "secondary": true,
+        "step": 4,
+        "table": 5392508
+      }
+    },
+    "romSha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+    "source": "https://github.com/pret/pokeemerald/blob/3ec4d98de95a2aeb12f3c738b3496d0b3a830793/src/tileset_anims.c",
+    "version": 1
+  }
+}
