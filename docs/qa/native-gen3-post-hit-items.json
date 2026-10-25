@@ -1,0 +1,63 @@
+{
+  "feature": {
+    "full_gate_ref": "d88be1fc42df80756dfc7daa918b7d5c77e80004",
+    "oracle_ref": "80c8bd8e4d2e403b94679f6e9283d616d77f5007",
+    "engine_suites": "149/158",
+    "fail_counter_lines": 25,
+    "oracle_workers": 160,
+    "oracle_rows": 103868,
+    "post_hit_command_rows": 7488,
+    "post_hit_execution_rows": 15840,
+    "oracle_sha256": "cf5b7057e2a4aa0f5de258e199459499865ebdf12022ced188e8fa8ec3ef4255",
+    "full_log_sha256": "3caa779b45c625ed14f0408786b152976d74c63a1621029b465bbd4aeb3f063a"
+  },
+  "combined": {
+    "full_gate_ref": "d9cf080d676eccefa861b8ecc93de621782dd5a6",
+    "oracle_ref": "f829462500c6dc2035fd06739f2e2cc95495df2f",
+    "engine_suites": "267/267",
+    "fail_counter_lines": 0,
+    "oracle_workers": 160,
+    "oracle_rows": 103868,
+    "post_hit_command_rows": 7488,
+    "post_hit_execution_rows": 15840,
+    "oracle_sha256": "d7bd74e730b482c95b709a291d6f261a16b0bfbd09d3cb610404c1b51b492b4d",
+    "full_log_sha256": "1d8cdba4cadf8e8c5f2043a1e3c24399cabdaf656c5f3c0b3594316c9b21433b"
+  },
+  "reference": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "native_command_revision": 13,
+  "party_codec_revision": 1,
+  "native_digest": "beacb71804a6af34",
+  "legacy_digest": "e33d251961f2a41d",
+  "sdk_suites": "3/3",
+  "b30": "passed",
+  "additional_damage_rows": {
+    "held_command": 2040,
+    "ordinary_damage": 6912
+  },
+  "strict_held": {
+    "workers": 40,
+    "rows": 1914
+  },
+  "charge": {
+    "workers": 64,
+    "rows": 1020,
+    "strict_native_policy": "combined"
+  },
+  "old_execution_different_rows": 12032,
+  "old_spectator_failed_checks": 14,
+  "post_hit_link_checks": 172,
+  "actual_import_controlled_scenarios": 32,
+  "sleep_talk_phase_reads": {
+    "success": 10,
+    "awake": 2,
+    "empty": 2,
+    "blocked": 4
+  },
+  "failed_observations_retained": [
+    "initial mismatched fixture flags",
+    "initial spectator turn overlap",
+    "superseded sixty-second checker timeout"
+  ],
+  "timeout_negative": "exit 124 remains failed; partial text and exact bytes retained; later comparisons complete",
+  "scope": "Selected FireRed/Emerald native command and script contracts; no full-mod, graphical-playthrough, full-catalog or Ruby/Sapphire per-hit acceptance"
+}

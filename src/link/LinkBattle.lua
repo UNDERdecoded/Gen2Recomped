@@ -152,17 +152,29 @@ local function volStr(b)
   return table.concat(out, ",")
 end
 
-local function activeStr(b)
+local function toxicSignature(mon)
+  if not require("src.core.GameVersion").isGen3() then return "" end
+  return ":toxic=" .. tostring(mon.status == "PSN" and mon.toxic == true)
+    .. require("src.link.Gen3Party").signature(mon)
+end
+local function activeStr(b, role)
   return ("%s:%d:%s:%s:%s:%s"):format(b.mon.species, b.mon.hp,
                                       tostring(b.mon.status), tostring(b.mon.item),
-                                      stageStr(b), ppStr(b.mon))
+                                      stageStr(b), ppStr(b.mon)) .. toxicSignature(b.mon)
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3LockOn").signature(b, role) or "")
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3BatonPass").signature(b, role) or "")
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3Encore").signature(b) or "")
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3Disable").signature(b) or "")
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3Rage").signature(b) or "")
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3ChoiceBand").signature(b) or "")
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3MirrorMove").signature(b) or "")
 end
 
 local function benchStr(party)
   local out = {}
   for i, mon in ipairs(party or {}) do
     out[i] = ("%s:%d:%s:%s"):format(tostring(mon.species), mon.hp or 0,
-                                    tostring(mon.status), tostring(mon.item))
+                                    tostring(mon.status), tostring(mon.item)) .. toxicSignature(mon)
   end
   return table.concat(out, "|")
 end
@@ -174,7 +186,7 @@ local function stateSig(self, role, myParty, theirParty)
   local hostParty = role == "host" and myParty or theirParty
   local guestParty = role == "host" and theirParty or myParty
   return {
-    actives = Fingerprint.digest(activeStr(host) .. "|" .. activeStr(guest)),
+    actives = Fingerprint.digest(activeStr(host, role) .. "|" .. activeStr(guest, role)),
     volatile = Fingerprint.digest(volStr(host) .. "|" .. volStr(guest)),
     bench = Fingerprint.digest(benchStr(hostParty) .. "|" .. benchStr(guestParty)),
   }
@@ -244,6 +256,7 @@ function LinkBattle.new(game, net, opts)
                                          or "RATTATA", 5)
   self.kind = "link"
   self.linkRole = role
+  if require("src.core.GameVersion").isGen3() then self._gbaInitialItemEntries = {} end
   self.net = net
   -- BattleState:update only runs while it's the top of the state
   -- stack, but the player can push PartyMenu/ChoiceBox/NamingScreen on
@@ -388,6 +401,13 @@ function LinkBattle.new(game, net, opts)
     end
   end
 
+  if require("src.core.GameVersion").isGen3() then
+    require("src.link.Gen3BatonChoice").attach(self, {
+      role=role, mine=myParty, theirs=theirParty, send=send,
+      invalid=function() endAsDraw(self, Strings("Link choice mismatch!")) end,
+    })
+  end
+
   -- both actions in hand: resolve the turn identically on both machines
   local function resolveLockstep(s, myMsg, theirMsg)
     if myMsg.kind == "run" or theirMsg.kind == "run" then
@@ -417,9 +437,24 @@ function LinkBattle.new(game, net, opts)
 
     s:act(function()
       local theirAction = decodeTheirAction(s, theirMsg)
+      local selectedMine,selectedTheirs=myAction,theirAction
+      if require("src.core.GameVersion").isGen3() then
+        local Choice=require("src.battle.Gen3ChoiceBand")
+        -- Held hooks can be stateful. Both simulations query the canonical
+        -- host actor first, as the spectator does, regardless of local side.
+        if role == "host" then
+          myAction = Choice.plan(s,s.player,myAction)
+          theirAction = Choice.plan(s,s.enemy,theirAction)
+        else
+          theirAction = Choice.plan(s,s.enemy,theirAction)
+          myAction = Choice.plan(s,s.player,myAction)
+        end
+        local Rage=require("src.battle.Gen3Rage")
+        Rage.selected(s,s.player,myAction);Rage.selected(s,s.enemy,theirAction)
+      end
       Runtime.emit("battle.turn_started", {
         battle = s, turn = s.turnCount,
-        playerAction = myAction, enemyAction = theirAction,
+        playerAction = selectedMine, enemyAction = selectedTheirs,
       })
       if myAction and theirAction then
         -- the tie-break roll is shared: the guest inverts it so both
@@ -572,12 +607,14 @@ function LinkBattle.new(game, net, opts)
   end
 
   local baseUpdate = self.update
-  self.update = function(s, dt)
+  local function poll(s)
     net:update()
     for _, msg in ipairs(net:poll()) do
       if msg.type == "action" then
         s.remoteAction = msg
         tryResolve(s)
+      elseif msg.type == "baton_pass" then
+        require("src.link.Gen3BatonChoice").receive(s, msg)
       elseif msg.type == "hash" then
         s.remoteHashes[msg.turn or 0] = msg.value
         s.remoteParts[msg.turn or 0] = msg.parts
@@ -606,6 +643,10 @@ function LinkBattle.new(game, net, opts)
     if net.closed and not s.linkEnded and not s.result then
       endAsDraw(s)
     end
+  end
+  self._gen3BatonPoll = poll
+  self.update = function(s, dt)
+    poll(s)
     -- Both early returns below skip baseUpdate, which is where the
     -- presentational clock normally advances -- so tick it here, in the same
     -- order baseUpdate would (fx, then the queue).  Without this an
@@ -714,6 +755,7 @@ function LinkBattle.newSpectator(game, net, opts)
   local self = BattleState.newWild(game, guestParty[1] and guestParty[1].species
                                          or "RATTATA", 5)
   self.kind = "link" -- exact same visual treatment as a real link battle
+  if require("src.core.GameVersion").isGen3() then self._gbaInitialItemEntries = {} end
   self.spectating = true -- Tournament.lua's marker: don't report a result for this one
   self.net = net
   game.linkNet = net
@@ -775,6 +817,13 @@ function LinkBattle.newSpectator(game, net, opts)
     end)
   end
 
+  if require("src.core.GameVersion").isGen3() then
+    require("src.link.Gen3BatonChoice").attach(self, {
+      role="host", mine=hostParty, theirs=guestParty, spectator=true,
+      invalid=function() endSpectate(self, "Invalid Baton Pass choice.") end,
+    })
+  end
+
   local function resolveSpecTurn(s, hostMsg, guestMsg)
     if hostMsg.kind == "run" or guestMsg.kind == "run" then
       endSpectate(s, "The match ended.")
@@ -805,9 +854,16 @@ function LinkBattle.newSpectator(game, net, opts)
                           and decodeWireAction(s, hostMsg, s.player) or nil
       local guestAction = guestMsg.kind ~= "switch" and guestMsg.kind ~= "run"
                           and decodeWireAction(s, guestMsg, s.enemy) or nil
+      local selectedHost,selectedGuest=hostAction,guestAction
+      if require("src.core.GameVersion").isGen3() then
+        local Choice=require("src.battle.Gen3ChoiceBand")
+        hostAction,guestAction=Choice.plan(s,s.player,hostAction),Choice.plan(s,s.enemy,guestAction)
+        local Rage=require("src.battle.Gen3Rage")
+        Rage.selected(s,s.player,hostAction);Rage.selected(s,s.enemy,guestAction)
+      end
       Runtime.emit("battle.turn_started", {
         battle = s, turn = s.turnCount,
-        playerAction = hostAction, enemyAction = guestAction,
+        playerAction = selectedHost, enemyAction = selectedGuest,
       })
       if hostAction and guestAction then
         local hostMove, guestMove = orderMove(hostAction), orderMove(guestAction)
@@ -868,7 +924,7 @@ function LinkBattle.newSpectator(game, net, opts)
     s.afterQueue = "finish"
   end
 
-  self.hostMsg, self.guestMsg = nil, nil
+  local hostActions, guestActions = {}, {}
   local baseUpdate = self.update
   self.update = function(s, dt)
     net:update()
@@ -876,12 +932,10 @@ function LinkBattle.newSpectator(game, net, opts)
       if msg.type == "spectate" then
         local inner = msg.msg
         if inner.type == "action" then
-          if msg.side == "host" then s.hostMsg = inner else s.guestMsg = inner end
-          if s.hostMsg and s.guestMsg then
-            local h, g = s.hostMsg, s.guestMsg
-            s.hostMsg, s.guestMsg = nil, nil
-            resolveSpecTurn(s, h, g)
-          end
+          local pending = msg.side == "host" and hostActions or guestActions
+          pending[#pending + 1] = inner
+        elseif inner.type == "baton_pass" then
+          require("src.link.Gen3BatonChoice").receive(s, inner, msg.side)
         elseif inner.type == "bye" or inner.type == "forfeit" then
           if not s.result then endSpectate(s, "The match ended.") end
         end
@@ -897,6 +951,13 @@ function LinkBattle.newSpectator(game, net, opts)
     end
     if net.closed and not s.linkEnded and not s.result then
       endSpectate(s)
+    end
+    -- Participants can finish animations before the spectator. Keep later
+    -- actions FIFO and advance the logical turn only after the current queue
+    -- has completed; otherwise its remaining commands observe the next turn.
+    if not s.result and not s.linkEnded and (s.phase == "menu" or s.phase == "waitBoth")
+        and #hostActions > 0 and #guestActions > 0 then
+      resolveSpecTurn(s, table.remove(hostActions, 1), table.remove(guestActions, 1))
     end
     -- same as the real-participant loop: every path that skips baseUpdate
     -- still has to advance the presentational clock, and a spectator sits in
