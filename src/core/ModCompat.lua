@@ -30,8 +30,6 @@
 --   src.world.gen2.FieldMoves   field-move entry points live in
 --                               src/script/* and the fieldmove.eligibility
 --                               hook, not one module
---   src.world.gen2.Follower     PikachuFollower is Yellow's, not a general
---                               party follower
 --   src.ui.gen2.Chrome          no shared window-chrome module
 --   src.ui.gen2.SaveMenu        the save flow is part of StartMenu here
 --   src.ui.gen2.BattleAnimView  Gen2AnimPlayer is a player, not a view
@@ -63,6 +61,8 @@ ModCompat.ALIASES = {
   ["src.world.gen2.World"] = "src.world.OverworldController",
   ["src.world.gen2.Map"] = "src.world.Map",
   ["src.world.gen2.Permissions"] = "src.world.Collision",
+  -- Native optional companion, with Gen2 predicate and lifecycle lookup.
+  ["src.world.gen2.Follower"] = "src.world.OptionalFollower",
   ["src.world.gen2.Palettes"] = "src.render.PaletteFX",
 
   -- save-side data

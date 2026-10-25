@@ -29,6 +29,7 @@ function HotReload.run(game, opts)
   local Assets = require("src.render.Assets")
   local Runtime = require("src.mods.Runtime")
   local Logger = require("src.core.Logger")
+  if game.mods and game.mods._closeModInput then game.mods:_closeModInput() end
   local data = game.data
   if data and data.reloadGenerated then data:reloadGenerated() end
   local loader = Loader.new(opts and { fs = opts.fs, dev = opts.dev } or nil)
