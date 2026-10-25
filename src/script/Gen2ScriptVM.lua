@@ -186,7 +186,6 @@ L.ifequalfwd = compare("eq")
 --
 --   opentext/closetext      the port's show_text owns its own box
 --   waitbutton/promptbutton show_text already waits for A
---   wildon/wildoff          encounters are gated by the map, not a script flag
 --   loademote               showemote carries the emote id itself
 --   encountermusic          the battle intro picks its own track
 --   deactivatefacing        facing locks are not modelled
@@ -194,7 +193,7 @@ L.ifequalfwd = compare("eq")
 --   delcmdqueue             the cmd queue only ever holds the stone table
 local function noop() end
 for _, name in ipairs({
-  "opentext", "closetext", "waitbutton", "promptbutton", "wildon", "wildoff",
+  "opentext", "closetext", "waitbutton", "promptbutton",
   "loademote", "encountermusic", "deactivatefacing", "writeunusedbyte",
   "delcmdqueue",
   -- fieldmovepokepic farcalls FieldMovePokepicScript (2c:$5189), which opens
@@ -211,6 +210,9 @@ for _, name in ipairs({
 }) do
   L[name] = noop
 end
+
+L.wildon = function(_,s) emit(s,{"g2_wild_encounters",true}) end
+L.wildoff = function(_,s) emit(s,{"g2_wild_encounters",false}) end
 
 -- Script_checkjustbattled: true when the script was re-entered straight out
 -- of a won battle, which is the same flag g2_endifjustbattled reads.
@@ -2226,8 +2228,8 @@ end
 -- pass, reanchormap re-centres it -- and without them a block a script
 -- rewrote stayed invisible until the player walked out and back in.
 L.refreshmap = function(_, s) emit(s, { "g2_refreshmap" }) end
-L.reloadmap = L.refreshmap
-L.newloadmap = L.refreshmap
+L.reloadmap = function(_, s) emit(s, { "g2_refreshmap", true }) end
+L.newloadmap = L.reloadmap
 L.reanchormap = L.refreshmap
 -- warpcheck re-tests the tile the player is standing on, which is how the
 -- Ruins of Alph floor opens underfoot rather than on the next step.
