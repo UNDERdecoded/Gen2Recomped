@@ -295,14 +295,15 @@ end
 -- anywhere in the ROM.  So this answers a number, by looking for a role that
 -- already plays it.
 --
--- A number no role covers plays nothing and says nothing: the animation is
--- still right, it is just quieter, and inventing a substitute sound would be
--- worse than silence.
+-- Native GBA numbers without a named role resolve through their imported
+-- song metadata. Explicit pan/mono controls own separate source variants;
+-- other generations retain their existing named-role lookup.
 local byNumber = nil
-function Sound.playId(data, id)
+function Sound.playId(data, id, options)
   id = tonumber(id)
   local sfx = data and data.audio and data.audio.sfx
-  if not (id and sfx) then return end
+  if not id then return end
+  sfx = sfx or {}
   if byNumber == nil or byNumber.__sfx ~= sfx then
     byNumber = { __sfx = sfx }
     for name, def in pairs(sfx) do
@@ -311,6 +312,34 @@ function Sound.playId(data, id)
     end
   end
   local name = byNumber[id]
+  if require("src.core.GameVersion").isGen3() then
+    if id ~= id or id < 0 or id > 65535 or id % 1 ~= 0 then return end
+    local songKey = ("SONG_%03X"):format(id)
+    local song = data and data.audio and data.audio.songs and data.audio.songs[songKey]
+    if song and (not name or type(options) == "table") then
+      name = name or song.sfxName or songKey
+      local def = {}
+      local selected = sfx[name]
+      if selected == false then return end
+      if type(selected) == "string" then
+        def.file = selected
+      else
+        for key, value in pairs(selected or { m4a = id }) do def[key] = value end
+      end
+      options = type(options) == "table" and options or {}
+      if options.pan ~= nil or options.mono ~= nil then
+        def.nativePan = require("src.core.NativeSoundPan").value(options.pan)
+        def.nativeMono = options.mono and true or false
+      end
+      local key = name .. "@native:" .. tostring(def.nativePan) .. ":" .. tostring(def.nativeMono)
+      local src = playPath(data, key, def)
+      if src then
+        if ducks(data, name, def) then require("src.core.Music").duckForFanfare(src) end
+        played("sfx", name)
+      end
+      return src
+    end
+  end
   if not name then return end
   return Sound.play(data, name)
 end
@@ -781,6 +810,7 @@ end
 -- hot reload / jukebox A-B: drop one key's sources (its pitch-tempo
 -- variants included) or all of them, so the next play re-resolves the def
 function Sound.invalidate(name)
+  byNumber = nil
   local function evict(store, key)
     local src = store[key]
     if src then pcall(src.stop, src) end

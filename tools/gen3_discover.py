@@ -482,6 +482,16 @@ def verify_charmap(rom, f):
 
 def discover(rom):
     f = Finder(rom)
+    from gba_substitute_art import discover as discover_substitute_art
+    try:
+        substitute = discover_substitute_art(rom, lz77_at)
+        for part, name in (("palette", "gSubstituteDollPal"),
+                           ("front", "gSubstituteDollFrontGfx"),
+                           ("back", "gSubstituteDollBackGfx")):
+            f.record(name, substitute[part],
+                     "verified Substitute DMA loader at %08X" % substitute["loaderPool"])
+    except ValueError as error:
+        f.miss("Substitute art", str(error))
 
     # ------------------------------------------------------------ names ----
     sp = f.names('gSpeciesNames', 'BULBASAUR', 1, 11, NUM_SPECIES)

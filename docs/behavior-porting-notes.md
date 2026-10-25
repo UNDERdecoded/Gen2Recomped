@@ -513,3 +513,13 @@ What was ported from pokered's engine code and where it came from.
 - The autopilot run reproduces the original's early flow on real map
   data: Pallet sign text, lab door warp target (5,11), Oak's Lab exit by
   walking off the mat, connection into Route 1 at matching x.
+
+## Native GBA received-move history and presentation
+
+FireRed/Emerald Mirror Move and API-3 `MIRROR_MOVE_EFFECT` registrations use
+the recipient's native received-move history, caller eligibility and parent PP
+commands. The actual queue executes Substitute lowering/restoration/fade,
+Focus Band and Poison controllers with native sound controls; native doll
+art comes from the user's cartridge. [Contract and validation](native-gen3-mirror-move.md)
+describe the scope, revision 17 compatibility, retained failure evidence and
+remaining audio/profile/graphics qualification.

@@ -1,0 +1,93 @@
+{
+  "feature": {
+    "runtime_ref": "dc7e13c22eb297fa345b4e92f7a9d5a5a01b8ecd",
+    "engine": "157/166",
+    "fail_counter_lines": 25,
+    "sdk": "3/3",
+    "oracle_workers": 188,
+    "oracle_rows": 160724,
+    "selected_paired_workers": 196,
+    "selected_paired_rows": 169676,
+    "new_assist_rows": {
+      "assist": 13440,
+      "assist_content": 13680,
+      "assist_held": 11520,
+      "assist_failed_callers": 72
+    },
+    "strict_contracts": {
+      "held-item": {
+        "workers": 40,
+        "rows": 1914
+      },
+      "charge-required": {
+        "workers": 64,
+        "rows": 1020
+      }
+    },
+    "imported_scenarios": {
+      "imported-assist": 80,
+      "imported-assist-nested": 80
+    },
+    "oracle_sha256": "b9959b60be923020b9ed42baef3f19dc8af48039fe6abed8da2b94b39629ccab",
+    "full_gate_sha256": "91a20b9ad104feb74c60ffaefa913803644b3691cb67245a5863bdfa68d901f9"
+  },
+  "combined": {
+    "runtime_ref": "5e384409322e98dfd292716b9c97d2bdcdf9936e",
+    "engine": "275/275",
+    "fail_counter_lines": 0,
+    "sdk": "3/3",
+    "oracle_workers": 188,
+    "oracle_rows": 160724,
+    "selected_paired_workers": 196,
+    "selected_paired_rows": 169676,
+    "new_assist_rows": {
+      "assist": 13440,
+      "assist_content": 13680,
+      "assist_held": 11520,
+      "assist_failed_callers": 72
+    },
+    "strict_contracts": {
+      "held-item": {
+        "workers": 40,
+        "rows": 1914
+      },
+      "charge-required": {
+        "workers": 64,
+        "rows": 1020
+      }
+    },
+    "imported_scenarios": {
+      "imported-assist": 80,
+      "imported-assist-nested": 80
+    },
+    "oracle_sha256": "08131511b25504d4371855de52d314610c1cc5020df4ed252cedb9279ef306f4",
+    "full_gate_sha256": "b2119bb37065b4d59eda6181e005903bd6edb0eb7702223e4ba20a577b2cf29d"
+  },
+  "reference": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "prerequisite_ref": "812ec1f2354d4f98a5f4ebff15876120743ea7a9",
+  "native_command_revision": 15,
+  "party_codec_revision": 1,
+  "native_digest": "662d7e5ee823ce82",
+  "legacy_digest": "e33d251961f2a41d",
+  "old_parent_negative": {
+    "native_rows": 6480,
+    "native_different": 4860,
+    "failed_caller_rows": 36,
+    "failed_history_different": 36
+  },
+  "old_public_registration": "unsupported: effect has no native handler: ASSIST",
+  "native_linked_checks": 120,
+  "assist_direct_checks": 60846,
+  "assist_public_checks": 27482,
+  "assist_failed_caller_checks": 506,
+  "independent_hash_audit_sha256": "8925ad25ff57739b2ddd91486ff95e1c9542922902cf642586af91a8411bbbbc",
+  "frozen_parent_serializer_sha256": "688baad34c546f3c6fb77727e6f2e10ba1a72fb30067323d75f6a3307b93a048",
+  "raw_failed_and_superseded_evidence_retained": true,
+  "scope": "Selected native GBA Assist/party/PP/history/targeting contracts and API-3 registration; owned native-shaped definitions plus separate actual-import CPU menu scenarios; no whole-catalog, graphical, full-mod or full-playthrough acceptance",
+  "negative_evidence_sha256": {
+    "animations-and-failed.json": "2139a0a918383cb089e18958b90038b5ef1b38a477253667025cf845e2b9cd8a",
+    "parent-native-negative.log": "7960e5db4b9061f3bc5b48fe9cf4ee45f463272d9dc92b6a60e8e7efc469fd4e",
+    "parent-failed-callers-negative.log": "04241920b057c3ce7684704915b72764e73179ee4f75f042f4e28dcf8f0ba8e1",
+    "parent-public-negative.log": "5225ec67f4ceefb099a0423f18432e30395d2e8baf278bde33f65844ce1dd4eb"
+  }
+}

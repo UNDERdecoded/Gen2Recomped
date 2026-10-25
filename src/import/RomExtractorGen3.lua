@@ -53,7 +53,7 @@ RomExtractorGen3.__index = RomExtractorGen3
 -- The progress denominator.  Kept honest with the two stage lists below: a
 -- mismatch does not break anything, it just makes the bar lie, which is the
 -- kind of small wrongness that survives for months.
-local STAGE_COUNT = 94
+local STAGE_COUNT -- assigned from the completed stage lists below
 
 -- ---------------------------------------------------------------------------
 -- The stage tables below are keyed to Emerald's ROM.  A sibling cartridge
@@ -58837,7 +58837,7 @@ end
 RomExtractorGen3.ASSET_STAGES = {
   "extractAudioImage", "extractFanfares",
   "extractSongNames", "extractSfxNames", "extractEncounterMusic",
-  "extractSprites", "extractTrainerSprites", "extractIntroSprites",
+  "extractSprites", "extractSubstituteArt", "extractTrainerSprites", "extractIntroSprites",
   "extractMonIcons", "extractBattleBackgrounds", "extractBattleScenes",
   "extractSummaryScreen",
   "extractPlayerBackPic",
@@ -58877,6 +58877,14 @@ RomExtractorGen3.ASSET_STAGES = {
   "extractSlotMachine",
   "extractTradeScene",
 }
+
+STAGE_COUNT = #RomExtractorGen3.DATA_STAGES + #RomExtractorGen3.ASSET_STAGES
+
+function RomExtractorGen3:extractSubstituteArt()
+  self:beginStage("Gen3 Substitute art")
+  local record, why = require("src.import.Gen3SubstituteArt").extract(self)
+  if not record then Logger.warn("gen3: %s", why) end
+end
 
 -- STAGE: the in-game trade sequence's art -- the wireless GBA, the signal
 -- rings, the platform, the balls, the link mon and every palette and table
