@@ -173,7 +173,7 @@ function Pokemon.applySeed(data, mon, seed)
   return true
 end
 
-function Pokemon.new(data, species, level, rng, form)
+function Pokemon.new(data, species, level, rng, form, opts)
   local nativeForm=(data.constants or {}).gen==4 and (form or 0) or nil
   local speciesDef=(data.pokemon or {})[species]
   if require("src.core.GameVersion").get()=="polishedcrystal" and speciesDef and speciesDef.forms then
@@ -241,7 +241,39 @@ function Pokemon.new(data, species, level, rng, form)
   -- meaning "in tall grass only".  At the default setting shinyOddsOf answers
   -- nil and this returns immediately, leaving the cartridge's own 1/8192
   -- exactly as it was.
+  local generation = require("src.core.GameVersion").generation()
+  local Runtime = require("src.mods.Runtime")
+  if generation == 2 then
+    if opts and opts.shiny then mon.shiny = true
+    elseif Runtime.wantsHook("shiny.roll") then
+      mon.shiny = require("src.pokemon.IdentityRolls").gen2Shiny(mon, def)
+    end
+    if Runtime.wantsHook("gender.roll") then
+      mon.gender = require("src.pokemon.IdentityRolls").gender(data, mon, 2, level)
+    end
+  elseif generation == 3 then
+    if Runtime.wantsHook("gender.roll") then
+      mon.gender = require("src.pokemon.IdentityRolls").gender(data, mon, 3)
+    end
+    if opts and opts.shiny then mon.isShiny, mon.shiny = true, true end
+  end
   Pokemon.rollShiny(data, nil, mon, rng)
+  return mon
+end
+
+-- Gen 2 refreshes identity at its summary/stat-refresh boundary. A true
+-- shiny stays authoritative; a cached false and gender are read again.
+function Pokemon.syncIdentity(data, mon)
+  if type(mon) ~= "table" or require("src.core.GameVersion").generation() ~= 2 then return mon end
+  local Runtime, Rolls = require("src.mods.Runtime"), require("src.pokemon.IdentityRolls")
+  local def = data and data.pokemon and data.pokemon[mon.species]
+  if not def then return mon end
+  if mon.gender ~= nil or Runtime.wantsHook("gender.roll") then
+    mon.gender = Rolls.gender(data, mon, 2, mon.level)
+  end
+  if mon.shiny ~= nil or Runtime.wantsHook("shiny.roll") then
+    mon.shiny = mon.shiny or Rolls.gen2Shiny(mon, def)
+  end
   return mon
 end
 
@@ -261,6 +293,9 @@ Pokemon.SHINY_DVS = { attack = 14, defense = 10, speed = 10, special = 10, hp = 
 -- player passes it here and the personality is moved for real at birth.
 function Pokemon.forceShiny(data, mon, rng, otId)
   if type(mon) ~= "table" then return mon end
+  local generation = require("src.core.GameVersion").generation()
+  if generation == 2 then mon.shiny = true end
+  if generation == 3 then mon.isShiny = true end
   -- A GEN 3 POKEMON IS NOT MADE SHINY BY ITS DVs, because it has none.  Its
   -- personality and the trainer's id decide it, and Stats.shinyPersonality
   -- moves the half of the personality that decides nothing else -- so the
@@ -379,6 +414,20 @@ end
 --                             what an editor writes
 function Pokemon.isShiny(mon)
   if type(mon) ~= "table" then return false end
+  local generation = require("src.core.GameVersion").generation()
+  if generation == 2 and mon.shiny ~= nil then return not not mon.shiny end
+  if generation == 3 then
+    if mon.isShiny ~= nil then return not not mon.isShiny end
+    if require("src.mods.Runtime").wantsHook("shiny.roll") then
+      return require("src.pokemon.IdentityRolls").gen3Shiny(mon)
+    end
+    -- Split trainer IDs and the reference's trainerId alias are explicit
+    -- identity data too; a delegating hook must not be their only reader.
+    if mon.otSecretId ~= nil or (mon.otId == nil and mon.trainerId ~= nil) then
+      return require("src.pokemon.IdentityRolls").nativeGen3Shiny(
+        mon.personality, mon.otId or mon.trainerId, mon.otSecretId) or mon.shiny == true
+    end
+  end
   -- PERSONALITY FIRST, and this order is the whole correctness of it:
   -- Pokemon.new rolls DVs for every Pokemon including Hoenn's, so a Gen 3 mon
   -- has BOTH fields and asking `dvs` first sent it down Johto's branch, where
