@@ -1,0 +1,10 @@
+{
+  "id": "portable_level_visible",
+  "name": "Portable Level Visibility",
+  "version": "1.0.0",
+  "api": 3,
+  "entry": "main.lua",
+  "games": ["all"],
+  "generations": [1, 2, 3],
+  "affects_link": false
+}
