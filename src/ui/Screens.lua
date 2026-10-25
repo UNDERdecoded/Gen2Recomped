@@ -558,6 +558,7 @@ local function pushWith(game, id, ...)
     local ok, result = pcall(factory.new, game, ...)
     if ok and result then
       inst = result
+      inst.modOwnedScreen = true
     else
       Logger.error("mod screen '%s' failed: %s", id, tostring(result))
       cache[id] = nil

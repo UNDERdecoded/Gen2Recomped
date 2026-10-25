@@ -18,6 +18,76 @@ Regenerate the reference straight into a wiki checkout:
 luajit tools/gen_registry_docs.lua ../gen1recomp.wiki
 ```
 
+## Shared API 3 entry
+
+The [API-3 entry and cross-engine contracts](api3-portability.md) describe
+using the same manifest and mod source on Gen1Recomp and Gen2Recomped.
+API 3 selects the unified adapters automatically; API 1/2 keep their defaults.
+
+## Feature queries (`mod:supports`)
+
+`mod:supports(surface, name)` returns `true` when the selected host exposes an
+existing API-2 capability, or `false, reason` when it does not. Unknown names,
+unknown surfaces and invalid names return `false` with an explanation. Check
+for the method itself when supporting older engine builds:
+
+```lua
+if mod.supports and mod:supports("hooks", "battle.damage") then
+  mod.hooks:wrap("battle.damage", function(next, ctx)
+    return next(ctx)
+  end)
+end
+
+local canFly = mod.supports and mod:supports("world", "flyTo") -- false here
+```
+
+The four surfaces are:
+
+| Surface | Meaning of `true` |
+| --- | --- |
+| `content` | An API-2 registry exists, e.g. `pokemon` or `render_pipelines`. |
+| `world` | A public `mod.world` method exists, e.g. `warpTo` or `terrainAt`. |
+| `hooks` | The engine has a native hook call site for this version. |
+| `events` | The engine has a native event call site for this version, or the name is a non-empty `mod.<id>.<event>` namespace. |
+
+Queries work in the entry chunk without an active overworld, save, graphics
+context or imported ROM. They do not subscribe, wrap hooks, load the Game or
+materialize `mod.world`. Answers are bound to the host selected when that mod
+API was built; changing the mod's copy of `gameVersion` or `host` cannot change
+them. Availability does not imply the current game state permits the action:
+`warpTo` can still return `nil, "no overworld"`, and elevation readers can
+return `nil, "map carries no elevation"`.
+
+Callback availability follows Gen2Recomped's actual implementation, rather
+than Gen1Recomp's newer catalog. For example, `item.use` and `egg.hatched` have no native call sites here; the hatch event here is
+`pokemon.egg_hatched` (Gen 2–5). `battle.status_hud_visible` is available on
+Gen 4–5, `battle.overlay` on Gen 1–3, and the normal start-menu, party-submenu
+and naming-grid hooks on Gen 1–3. `ui.pc.items` is available on Gen 1–2.
+Oak-speech callbacks apply to Gen 1–2 except Prism; Birch-speech events apply
+to Emerald. Other versions use their own intros. An event still needs its
+trigger to occur; custom events also need another mod to emit them.
+
+For API 1/2, the query describes the existing interfaces and does not itself
+normalize records, IDs or callback payloads. API 3 selects the portable
+adapters described in [Shared API 3 entry](api3-portability.md), with explicit
+limits on availability. Existing API-1/2 registration/subscription behavior
+remains unchanged. When adding a native callback or changing screen routing,
+update `src/mods/Capabilities.lua` and the capability tests in the same change.
+
+Additional read-only world summaries: [map overview and encounter queries](world-overview.md).
+
+## Per-state main-screen visibility
+
+The [portable screen visibility contract](portable-screen-visibility.md)
+describes `screen.render_visible(next, state)`: hide a native state's main
+render, opacity and palette ownership while keeping its update/input owner.
+
+## Logic speed hook
+
+The [portable logic speed contract](portable-logic-speed.md) documents
+`core.logic_speed(next, game)`, its native speed resolution, hard locks and
+explicit-override precedence for native API 1/2, unified API 2 and API 3.
+
 ## Bulk storage (`mod.storage`)
 
 `mod.save` is the right home for a handful of per-playthrough values: it lives
@@ -70,6 +140,14 @@ is a normal answer rather than a failure, and telling it apart from
 per frame, and a directory walk over several hundred blobs per frame is not
 something a menu can afford.
 
+## Read-only world and party queries
+
+`mod.world:party()`, `activeBlockAt(mapId, bx, by)` and `liveMaps()` expose
+common Pokémon snapshots and current runtime map data across generations
+1–5. Reads return detached data and do not load maps or change gameplay.
+See [record fields, coordinate units and DS limitations](world-read-api.md).
+The existing `loadedMaps()` method retains its legacy shape.
+
 ## Editing maps in Tiled
 
 Maps are data, not assets, so they can be authored in a real map editor and
@@ -86,6 +164,13 @@ Open `build/tiled/gen1.tiled-project`, edit any of the 222 maps (or
 An edited vanilla map becomes a `mod.content.maps:patch` carrying only the
 fields that moved; a new map becomes a `:register`. See
 `docs/new-features.md` and the extension's own README.
+
+## Portable dialogue scripts (opt-in)
+
+API-2 mods can select `"script_format": "unified"` for prevalidated, copied
+`mod.world:queueScript()` dialogue/control-flow programs with exactly-once
+completion and owner-only cancellation. Existing manifests keep native script
+behavior. See [portable commands, ownership and limits](portable-world-scripts.md).
 
 ## Rendering pipelines
 
@@ -152,6 +237,17 @@ Three rules worth knowing:
 Returning `nil` from `drawWorld` is a normal answer meaning "not this
 frame"; the engine draws the vanilla world instead.
 
+## Read-only battle snapshots
+
+`mod.battle:snapshot()` returns a detached common battle view on Gen 1–5,
+including singles and doubles, or `nil, "no battle"`. It can be captured in
+an entry chunk before Game exists. See [Battle snapshot API](battle-snapshot-api.md)
+for records, revisions, prompt semantics and intentionally omitted previews.
+The snapshot reads state only. The [Battle action API](battle-actions-api.md)
+adds validated `mod.battle:submit(intent)` for the native menu, move, target,
+back, Safari and Mimic paths. When capability queries are
+installed, `mod:supports("battle", "snapshot")` reports this interface.
+
 ## Battle sprite scaling
 
 The enemy's front pic draws at 1x and the player's back pic at 2x, the way
@@ -192,6 +288,14 @@ default** (1x front, 2x back).
   ball-to-pic grow multiplies your scale through each stage, so a rescaled
   mon still grows into place from the ball, grounded the whole way.
 
+## Unified hook and event records (opt-in)
+
+API-2 mods can select `"callback_format": "unified"` independently of their
+content format. Known Pokémon, battler, trainer-slot and encounter records
+then use common fields and symbolic IDs. Existing mods keep native payloads.
+See [the callback format and mutation contract](unified-mod-callbacks.md) for
+adapted arguments/results, native handles and validation rules.
+
 ## Developer console
 
 Boot with developer mode on to unlock the in-game console and hot-reload
@@ -218,6 +322,14 @@ The console understands these verbs (anything else is evaluated as Lua):
 - `reload` — hot-reload mods (same as `F5`).
 - `trace PAT | trace off` — trace events/hooks matching a glob pattern.
 - `help` — list the verbs.
+
+## Public party, bag and dialogue actions
+
+`mod.ui:snapshot()` returns detached options for the current native screen;
+`mod.ui:submit(intent)` selects a row, goes back, changes bag pocket or advances
+ready text through its native flow. See [Public UI actions](ui-actions-api.md)
+for revision/ID requirements, per-generation menu behavior and supported screens.
+The existing `mod.ui` list-building helpers retain their original signatures.
 
 ## Tool input and title-menu hooks
 
@@ -255,6 +367,15 @@ without the engine knowing the layout.
 Developer mode also arms the mod loader's dev tripwire, which flags mods
 that reach outside their permission set.
 
+## Public world actions
+
+`mod.world` exposes guarded party swaps, verified contextual field actions
+and native flight through `canReorderParty`, `reorderParty`,
+`availableFieldActions`, `useFieldAction`, `canFly` and `flyTo`.
+See [contracts, busy-state checks and generation coverage](world-actions-api.md).
+Calls revalidate the live state and preserve native gameplay paths; the
+field-action adapter explicitly refuses unsupported script-driven cases.
+
 ## Support link (`support`)
 
 A mod can add a link where players can thank its creator: a Ko-fi, Patreon or
@@ -277,3 +398,10 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+## Unified content records (opt-in)
+
+API-2 mods can select `"content_format": "unified"` to read and edit common
+Pokémon, move, item, trainer and encounter definition shapes. Existing mods
+keep native formats. See [the format, supported operations and limitations](unified-mod-content.md)
+for the manifest guard, generation coverage, symbolic IDs and failure behavior.
