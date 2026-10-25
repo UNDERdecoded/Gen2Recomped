@@ -3756,6 +3756,7 @@ function Gen3Commands.firstBattle(ctx)
   Commands.start_battle(ctx, "wild", species, level, {
     -- BATTLE_TYPE_FIRST_BATTLE: there is nowhere to run to and nothing to
     -- black out to, and the script heals the party two commands later
+    firstBattle = true,
     noRun = true,
     canLose = record.canLose and true or false,
   })
