@@ -144,7 +144,7 @@ end
 -- SHIELD DUST still refuses a doubled roll.
 local function sideChance(move, fallback, user, target)
   local own = move and tonumber(move.effectChance)
-  local base = (own and own > 0) and own or fallback
+  local base = (own and (own > 0 or move._api3EffectChance)) and own or fallback
   if user or target then
     base = require("src.battle.Abilities").secondaryOdds(user, target, base)
   end
@@ -199,6 +199,9 @@ end
 
 local function confuse(battle, target, pierceSub)
   if target.confusedTurns or (target.substituteHP and not pierceSub) then
+    return { Strings("But, it failed!") }
+  end
+  if HeldItems.effect(battle.data, target, "confuse") == HeldItems.EFFECT.PREVENT_CONFUSE then
     return { Strings("But, it failed!") }
   end
   target.confusedTurns = battle.rng(2, 5)
@@ -267,6 +270,7 @@ MoveEffects.primary = {
       if t == "GRASS" then return { Strings("But, it failed!") } end
     end
     target.leechSeeded = true
+    if require("src.core.GameVersion").isGen3() then target.leechSeedSource = user end
     return { Strings("%s\nwas seeded!", displayName(target)) }
   end,
 
