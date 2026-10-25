@@ -1,0 +1,131 @@
+name: Native runtime capacity
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/runtime-upvalues.yml'
+      - 'tools/runtime-upvalue-check/**'
+      - 'tools/build_native_preview.py'
+      - 'tools/package_native_release.py'
+      - 'tests/test_runtime_component.py'
+      - 'tests/test_native_preview.py'
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+concurrency:
+  group: runtime-upvalues-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  qualify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            label: linux-x64
+          - runner: windows-2022
+            label: windows-x64
+            love-artifact: '12514271124'
+            library: lua51.dll
+          - runner: macos-15-intel
+            label: macos-x64
+            love-artifact: '12513712494'
+            library: libluajit.so
+          - runner: macos-15
+            label: macos-arm64
+            love-artifact: '12513712494'
+            library: libluajit.so
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: engine
+          ref: ${{ github.sha }}
+      - uses: actions/checkout@v7
+        with:
+          repository: LuaJIT/LuaJIT
+          ref: a4c064539ea931274d407e1249b4bb575424a0f4
+          path: runtime-source
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: Build both runtimes and qualify closures, C API and engine
+        shell: bash
+        run: >-
+          python engine/tools/runtime-upvalue-check/qualify.py
+          --luajit-source runtime-source
+          --output "${{ runner.temp }}/runtime-capacity/candidate"
+          --engine-tests
+      - name: Fetch pinned LOVE12 host artifact
+        if: matrix.love-artifact != ''
+        shell: bash
+        run: >-
+          curl --fail --location --retry 2
+          --output "${{ runner.temp }}/love-runtime.zip"
+          "https://nightly.link/love2d/love/actions/artifacts/${{ matrix.love-artifact }}.zip"
+      - name: Qualify the actual LOVE12 host, thread VM and FFI
+        if: matrix.love-artifact != ''
+        shell: bash
+        run: >-
+          python engine/tools/runtime-upvalue-check/love_abi.py
+          --runtime-archive "${{ runner.temp }}/love-runtime.zip"
+          --qualification "${{ runner.temp }}/runtime-capacity/candidate/report.json"
+          --library "${{ runner.temp }}/runtime-capacity/candidate/artifacts/extended/${{ matrix.library }}"
+          --output "${{ runner.temp }}/runtime-love-abi/candidate"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: runtime-capacity-${{ matrix.label }}
+          path: |
+            ${{ runner.temp }}/runtime-capacity/candidate/report.json
+            ${{ runner.temp }}/runtime-capacity/candidate/*.log
+            ${{ runner.temp }}/runtime-capacity/candidate/artifacts/
+            ${{ runner.temp }}/runtime-love-abi/candidate/report.json
+            ${{ runner.temp }}/runtime-love-abi/candidate/*.log
+          if-no-files-found: error
+          retention-days: 14
+  components:
+    needs: qualify
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: engine
+          ref: ${{ github.sha }}
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: runtime-capacity-*
+          path: runtime-candidates
+      - name: Verify component packaging guards
+        shell: bash
+        run: python -m unittest discover -s engine/tests -p test_runtime_component.py -v
+      - name: Combine the two qualified Mac slices
+        shell: bash
+        run: >-
+          python engine/tools/runtime-upvalue-check/component.py
+          --platform macos
+          --candidate runtime-candidates/runtime-capacity-macos-x64
+          --candidate runtime-candidates/runtime-capacity-macos-arm64
+          --output "${{ runner.temp }}/qualified-runtime/candidate/macos"
+      - name: Stage the qualified Windows component
+        shell: bash
+        run: >-
+          python engine/tools/runtime-upvalue-check/component.py
+          --platform windows
+          --candidate runtime-candidates/runtime-capacity-windows-x64
+          --output "${{ runner.temp }}/qualified-runtime/candidate/windows"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: qualified-desktop-runtime
+          path: ${{ runner.temp }}/qualified-runtime/candidate/
+          if-no-files-found: error
+          retention-days: 14

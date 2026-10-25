@@ -23,6 +23,11 @@ local Strings = require("src.core.Strings")
 
 local Gen2Commands = {}
 
+function Commands.g2_wild_encounters(ctx, enabled)
+  local ow=ctx.overworld
+  if ow and ow.setWildEncounters then ow:setWildEncounters(enabled) end
+end
+
 local function scriptVar(ctx)
   return ctx.g2Var or 0
 end
@@ -1768,6 +1773,7 @@ end
 -- `reloadmapafterbattle`, and branch on the result themselves.  The canLose
 -- guard is belt and braces for a mod that pairs them anyway.
 function Commands.g2_after_battle(ctx)
+  if ctx.overworld and ctx.overworld.armWildCooldown then ctx.overworld:armWildCooldown() end
   if ctx.lastBattleResult == "lose" and not ctx.lastBattleCanLose then
     return math.huge
   end
@@ -3952,9 +3958,12 @@ function Commands.g2_changemap(ctx, blocks)
   end
 end
 
--- refreshmap / reloadmap / newloadmap / reanchormap: redraw the loaded map.
-function Commands.g2_refreshmap(ctx)
+-- Refresh-only operations redraw without entering the map; setup/reload
+-- operations also rearm EnterMap's native random-encounter grace interval.
+-- Their existing object/graphics refresh remains the same here.
+function Commands.g2_refreshmap(ctx, setup)
   local ow = ctx.overworld
+  if setup and ow and ow.armWildCooldown then ow:armWildCooldown() end
   if ow and ow.map and ow.map.renderer then ow.map.renderer:rebuild() end
   Commands.reload_map_objects(ctx)
 end

@@ -11282,7 +11282,7 @@ end
 
 -- POKéGEAR town map.  FillTownMap copies a flat run of tile ids into the
 -- screen tilemap until $FF, TownMapPals gives every tile a palette from a
--- nibble table, and TownMapGFX is 48 raw tiles.  Landmark rows are
+-- nibble table, and TownMapGFX expands to 48 tiles.  Landmark rows are
 -- `db x, y, dw name` (GetLandmarkCoords / GetLandmarkName).
 local GEN2_TOWN_MAP_WIDTH = 20
 local GEN2_TOWN_MAP_HEIGHT = 18
@@ -11331,9 +11331,15 @@ function RomExtractorGen2:gen2TownMapImage(mapSymbol, relative)
   if not (map and gfx and self.rom) then return nil end
   local palMap = self:symbol("TownMapPals.PalMap") or self:symbol("GetNextTownMapTilePalette.PalMap")
   local ok = pcall(function()
-    local tiles = self:layout("townMapGfxCompressed", 0) ~= 0
+    -- Retail G/S/C call FarDecompress / DecompressRequest2bpp here. Reading
+    -- the compressed command bytes as pixels creates a dash on every tile.
+    -- Keep explicit hack layouts authoritative, including a raw-data opt-out.
+    local retail = self.version == "gold" or self.version == "silver"
+      or self.version == "crystal"
+    local tiles = self:layout("townMapGfxCompressed", retail and 1 or 0) ~= 0
       and assert(self:gen2Lz("TownMapGFX"))
       or self.rom:bytes(gfx.bank, gfx.address, GEN2_TOWN_MAP_TILES * 16)
+    assert(#tiles >= GEN2_TOWN_MAP_TILES * 16, "short town-map graphics")
     local nibbles = palMap and self.rom:bytes(palMap.bank, palMap.address,
                                               GEN2_TOWN_MAP_PAL_LIMIT / 2)
     local pals = self:gen2TownMapPalettes()

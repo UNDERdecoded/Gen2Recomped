@@ -25,6 +25,7 @@ end
 function WorldAPI:overworld()
   local game = self.game
   local stack = game and game.stack
+  if stack and stack.worldOwner then return stack.worldState end
   local states = stack and stack.states
   if states then
     for i = #states, 1, -1 do

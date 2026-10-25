@@ -37,17 +37,23 @@ end
 -- Gen2 town map.  field.townMap is a completely different shape from Gen1's:
 -- two full-screen pictures (johto/kanto) plus `landmarks`, a flat id -> {name,
 -- x, y} table whose coordinates are absolute screen pixels, and every map
--- record carries the landmark id it belongs to.  Landmarks from $2E up are
--- Kanto: `DEF KANTO_LANDMARK EQU const_value` sits immediately BEFORE
--- LANDMARK_PALLET_TOWN in constants/landmark_constants.asm, so Pallet is
--- the first of them, not Route 1.  A landmark short of it and Pallet read
--- as Johto -- flown to off the Johto picture with no cursor drawn on it.
+-- record carries the landmark id it belongs to. Gold/Silver's fallback
+-- boundary is $2e; Crystal inserts the Battle Tower and starts Kanto at $2f.
+-- Prefer the active cartridge's imported Pallet header below.
 local GEN2_KANTO_FIRST = 0x2E
 
 local function gen2Locations(game)
   local tm = (game.data.field or {}).townMap
   if type(tm) ~= "table" or type(tm.landmarks) ~= "table" or not tm.johto then
     return nil
+  end
+  -- Crystal inserts the Battle Tower landmark before Silver Cave. The
+  -- native Pallet header is the first Kanto landmark on the active cartridge;
+  -- the old Gold-only $2e boundary misclassified Crystal's Silver Cave.
+  local kantoFirst = GEN2_KANTO_FIRST
+  if require("src.world.Gen2Fly").supported() then
+    local pallet = game.data.maps and game.data.maps.PALLET_TOWN
+    kantoFirst = tonumber(pallet and pallet.landmark) or kantoFirst
   end
   local byLandmark, locs = {}, {}
   for id, e in pairs(tm.landmarks) do
@@ -62,7 +68,7 @@ local function gen2Locations(game)
         -- draws around -- taken raw, every nest sat 4px right and 12px
         -- below the town it belongs to.
         px = x - 4, py = y - 12, landmark = tonumber(id),
-        region = tonumber(id) >= GEN2_KANTO_FIRST and "kanto" or "johto",
+        region = tonumber(id) >= kantoFirst and "kanto" or "johto",
       }
       byLandmark[tonumber(id)] = loc
       locs[#locs + 1] = loc
@@ -210,6 +216,10 @@ end
 -- towns that have a fly-warp spot, deduped, reusing the grid loc so the cursor
 -- lands on the town and its name shows in the banner.
 local function buildFlyList(game, byMap)
+  local Fly = require("src.world.Gen2Fly")
+  if Fly.supported() then
+    return Fly.picker(game, byMap, require("src.world.Gen2FieldMoves"))
+  end
   local field = game.data.field or {}
   local visited = game.save.visited or {}
   local flyWarps = field.flyWarps or {}

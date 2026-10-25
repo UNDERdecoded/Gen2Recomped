@@ -1,0 +1,296 @@
+{
+  "scope": "Crystal full-package normal door/carpet and Cherrygrove/Route29 seam smoke with unchanged continuous VASC controls",
+  "runs": [
+    {
+      "backend": "OpenGL",
+      "sourceCommit": "18489b7acc27b44dc5ef5ddb1877f0a870a794a9",
+      "checks": 212,
+      "transitions": [
+        {
+          "kind": "door-entry-CHERRYGROVE_MART",
+          "camera": "first",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_MART",
+          "freeFramesBefore": 0,
+          "freeFramesAfter": 9,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_MART",
+          "camera": "first",
+          "source": "CHERRYGROVE_MART",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 41,
+          "freeFramesAfter": 60,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-entry-CHERRYGROVE_POKECENTER1_F",
+          "camera": "first",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_POKECENTER_1F",
+          "freeFramesBefore": 60,
+          "freeFramesAfter": 69,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_POKECENTER1_F",
+          "camera": "first",
+          "source": "CHERRYGROVE_POKECENTER_1F",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 85,
+          "freeFramesAfter": 104,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "east-map-seam",
+          "camera": "first",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "ROUTE_29",
+          "freeFramesBefore": 104,
+          "freeFramesAfter": 123,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "west-map-seam",
+          "camera": "first",
+          "source": "ROUTE_29",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 123,
+          "freeFramesAfter": 126,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-entry-CHERRYGROVE_MART",
+          "camera": "third",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_MART",
+          "freeFramesBefore": 126,
+          "freeFramesAfter": 135,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_MART",
+          "camera": "third",
+          "source": "CHERRYGROVE_MART",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 167,
+          "freeFramesAfter": 186,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-entry-CHERRYGROVE_POKECENTER1_F",
+          "camera": "third",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_POKECENTER_1F",
+          "freeFramesBefore": 186,
+          "freeFramesAfter": 195,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_POKECENTER1_F",
+          "camera": "third",
+          "source": "CHERRYGROVE_POKECENTER_1F",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 211,
+          "freeFramesAfter": 230,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "east-map-seam",
+          "camera": "third",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "ROUTE_29",
+          "freeFramesBefore": 230,
+          "freeFramesAfter": 249,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "west-map-seam",
+          "camera": "third",
+          "source": "ROUTE_29",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 249,
+          "freeFramesAfter": 252,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        }
+      ],
+      "menus": 4,
+      "ownedWindowProofs": 4,
+      "proofLabels": [
+        "initial-map",
+        "second-map",
+        "resized",
+        "map-return"
+      ],
+      "proofLabelsDoNotImplyResize": true,
+      "originalModUnchanged": true,
+      "verifiedModFiles": 27329,
+      "modelRendererInstalled": false,
+      "resultSha256": "ca4482f7dc4a53f477c34b6947fd945b3208173cdce1ef2b001c4b4775eecf97",
+      "verificationSha256": "cb2330ebb884aed865d768faeb8f79e93d8e7807ae1cc95c22c05dae02e0d716"
+    },
+    {
+      "backend": "Metal",
+      "sourceCommit": "aa669f69136d1db579937e767a2ff63beb755ad1",
+      "checks": 212,
+      "transitions": [
+        {
+          "kind": "door-entry-CHERRYGROVE_MART",
+          "camera": "first",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_MART",
+          "freeFramesBefore": 0,
+          "freeFramesAfter": 9,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_MART",
+          "camera": "first",
+          "source": "CHERRYGROVE_MART",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 41,
+          "freeFramesAfter": 60,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-entry-CHERRYGROVE_POKECENTER1_F",
+          "camera": "first",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_POKECENTER_1F",
+          "freeFramesBefore": 60,
+          "freeFramesAfter": 69,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_POKECENTER1_F",
+          "camera": "first",
+          "source": "CHERRYGROVE_POKECENTER_1F",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 85,
+          "freeFramesAfter": 104,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "east-map-seam",
+          "camera": "first",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "ROUTE_29",
+          "freeFramesBefore": 104,
+          "freeFramesAfter": 123,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "west-map-seam",
+          "camera": "first",
+          "source": "ROUTE_29",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 123,
+          "freeFramesAfter": 126,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-entry-CHERRYGROVE_MART",
+          "camera": "third",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_MART",
+          "freeFramesBefore": 126,
+          "freeFramesAfter": 135,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_MART",
+          "camera": "third",
+          "source": "CHERRYGROVE_MART",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 167,
+          "freeFramesAfter": 186,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-entry-CHERRYGROVE_POKECENTER1_F",
+          "camera": "third",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "CHERRYGROVE_POKECENTER_1F",
+          "freeFramesBefore": 186,
+          "freeFramesAfter": 195,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "door-exit-CHERRYGROVE_POKECENTER1_F",
+          "camera": "third",
+          "source": "CHERRYGROVE_POKECENTER_1F",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 211,
+          "freeFramesAfter": 230,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "east-map-seam",
+          "camera": "third",
+          "source": "CHERRYGROVE_CITY",
+          "destination": "ROUTE_29",
+          "freeFramesBefore": 230,
+          "freeFramesAfter": 249,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        },
+        {
+          "kind": "west-map-seam",
+          "camera": "third",
+          "source": "ROUTE_29",
+          "destination": "CHERRYGROVE_CITY",
+          "freeFramesBefore": 249,
+          "freeFramesAfter": 252,
+          "busyAfter": false,
+          "nativeOverlayAfter": false
+        }
+      ],
+      "menus": 4,
+      "ownedWindowProofs": 4,
+      "proofLabels": [
+        "initial-map",
+        "second-map",
+        "resized",
+        "map-return"
+      ],
+      "proofLabelsDoNotImplyResize": true,
+      "originalModUnchanged": true,
+      "verifiedModFiles": 27329,
+      "modelRendererInstalled": false,
+      "resultSha256": "1662374c40fbdd10c25cfd11a2cc3ce379f5224d9b1941615ad3f47153be8653",
+      "verificationSha256": "2eaee97dd6480a937fd4463205cafb0e687b212e3c64416fb0a8260f9cff85d9"
+    }
+  ],
+  "setup": "Fresh owned profiles; introduction skipped; initial exterior approaches selected by QA. Door traversal, interior walking, exit carpets and connection crossings use real input and native owners. Camera yaw uses the supplied look API, not OS mouse hardware.",
+  "limits": [
+    "Not all-story, forced-terrain GPU, all maps, Windows or complete visual parity acceptance",
+    "Initial backward-facing door scenario failed the blank-frame guard; test approach was corrected without weakening the guard",
+    "Fresh-save New Bark west approach did not settle; its story/owner scenario remains open and is not accepted by this matrix",
+    "OpenGL precedes the separate launcher merge; Metal uses the combined fork including that merge",
+    "Four legacy capture labels identify two buildings in two cameras; no resize is claimed",
+    "Generated Stadium extension remains uninstalled; no private source, ROM data, assets, images or saves are published"
+  ]
+}

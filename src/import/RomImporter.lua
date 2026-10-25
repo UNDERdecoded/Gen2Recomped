@@ -1306,7 +1306,7 @@ local function markerFor(version)
   -- Only these three caches need rebuilding; other markers remain stable.
   -- v8: field.gen2TradeAnim, GSC's own trade movie art (Gen2TradeArt).
   if version == "gold" or version == "silver" or version == "crystal" then
-    revision = "gen2-field-encounters-v8:"
+    revision = "gen2-field-encounters-v8:gen2-town-map-lz-v1:"
   end
   -- field.tradeArt: the cable-trade movie's tiles out of the ROM
   -- (Gen1TradeArt); without it the trade ran on drawn stand-ins.

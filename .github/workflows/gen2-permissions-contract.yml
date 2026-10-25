@@ -1,0 +1,38 @@
+name: native Gen2 movement permissions
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen2-permissions-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: .contract-reference/gen1
+      - name: Install test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Compare queries with actual native grid movement
+        run: luajit tests/engine/gen2_movement_permissions.lua
+      - name: Exercise native special movement handoffs
+        run: luajit tests/engine/gen2_movement_handoffs.lua
+      - name: Compare all Crystal collision pairs with the pinned Gen1 engine
+        run: |
+          mkdir -p /tmp/gen2-permissions-contract
+          luajit tools/gen2_permissions_contract.lua native > /tmp/gen2-permissions-contract/native.txt
+          (cd .contract-reference/gen1 && luajit "$GITHUB_WORKSPACE/tools/gen2_permissions_contract.lua" reference) > /tmp/gen2-permissions-contract/reference.txt
+          cmp /tmp/gen2-permissions-contract/native.txt /tmp/gen2-permissions-contract/reference.txt
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: gen2-permissions-contract
+          path: /tmp/gen2-permissions-contract
+          if-no-files-found: ignore

@@ -1,0 +1,23 @@
+name: native GSC flight destinations
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen2-fly-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Native flags, destination facade, actual picker and mod unload
+        run: luajit tests/engine/gen2_fly_destinations.lua
+      - name: Existing native field state queries
+        run: luajit tests/engine/gen2_field_state_queries.lua
+      - name: ROM-free town-map pixel import regression
+        run: luajit tests/engine/gen2_town_map_pixels.lua

@@ -164,7 +164,7 @@ local function source(path)
   check(f ~= nil, path .. " is readable")
   local text = f and f:read("*a") or ""
   if f then f:close() end
-  return text
+  return (text:gsub("\r\n", "\n"))
 end
 
 local chipSrc = source("src/core/chip_worker.lua")
