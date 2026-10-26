@@ -209,13 +209,17 @@ function ManagerState:refresh()
   self.status = (loader and loader.status and loader:status())
     or self.game.modStatus or { available = {}, errors = {} }
   self.byId = {}
+  self.assetsChanged = false
   for _, m in ipairs(self.status.available or {}) do
     self.byId[m.id] = m
+    if m.waitingAssets and not require("src.mods.AssetPacks").missing(m,loader and loader.fs) then
+      self.assetsChanged = true
+    end
   end
   if self.currentMod then
     self.currentMod = self.byId[self.currentMod.id]
   end
-  self.restartPending = #self:stagedList() > 0
+  self.restartPending = #self:stagedList() > 0 or self.assetsChanged == true
   -- a live set that drifted off the named profile reverts to ad-hoc
   local opts = self:optionsTable()
   if opts.activeProfile then
@@ -265,6 +269,7 @@ end
 function ManagerState:glyphFor(m)
   if self:isStaged(m) then return GLYPH.staged end
   if not m.enabled then return GLYPH.disabled end
+  if m.waitingAssets then return GLYPH.blocked end
   if m.state == "blocked_dependency" then return GLYPH.blocked end
   if m.error then return GLYPH.errored end
   return " "

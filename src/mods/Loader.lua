@@ -502,7 +502,16 @@ function Loader:_validate()
         if err then reason = reason .. " (" .. err .. ")" end
       end
     end
-    if reason then self:_fail(mod, "invalid", reason) end
+    if reason then self:_fail(mod, "invalid", reason)
+    else
+      local assets = require("src.mods.AssetPacks").missing(manifest, self.fs)
+      if assets then
+        mod.missingAssets = assets
+        local first = assets[1]
+        self:_fail(mod, "missing_assets", ("required asset pack not ready: %s/%s (%s)")
+          :format(first.importer, first.pack, tostring(first.reason)))
+      end
+    end
   end
 end
 
@@ -1119,6 +1128,7 @@ function Loader:_api(mod)
       end
       return data
     end)
+  api.packs = require("src.mods.AssetPacks").new(mod.manifest, loader.fs)
   -- mod.world / mod.game / mod.storage all materialize on first touch, for
   -- the same reason: a headless load must not drag the world stack in, and
   -- the Game the facade acts on is still being wired when the entry chunk
@@ -1632,6 +1642,8 @@ function Loader:status()
     manifest.enabled = mod.enabled ~= false
     manifest.state = mod.state or (manifest.enabled and "loaded" or "disabled")
     manifest.error = mod.failure
+    manifest.waitingAssets = mod.state == "missing_assets"
+    manifest.missingAssets = mod.missingAssets
     available[#available + 1] = manifest
     if manifest.state == "loaded" then loaded[#loaded + 1] = manifest end
   end
