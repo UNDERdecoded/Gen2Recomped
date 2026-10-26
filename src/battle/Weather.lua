@@ -286,9 +286,9 @@ local function maxHpOf(battler)
   return (mon.stats and mon.stats.hp) or mon.maxHp or 8
 end
 
-local function weatherDamage(battle, battler, weather)
+local function weatherDamage(battle, battler, weather, gba)
   if not (battler and battler.mon) or battler.mon.hp <= 0 then return end
-  if underground(battler) then return end
+  if underground(battler) or (gba and battler.hiddenAs == "underwater") then return end
   -- SAND VEIL: a CACNEA stands in its own sandstorm untouched.  Gen 1 and
   -- Gen 2 answer false here, so nothing about the older sandstorm changes.
   if require("src.battle.Abilities")
@@ -303,19 +303,22 @@ local function weatherDamage(battle, battler, weather)
                   battler.isPlayer)
   -- GetEighthMaxHP is GetQuarterMaxHP followed by one more shift, each step
   -- floored at 1: floor(floor(maxHP / 4) / 2), minimum 1
-  local eighth = math.max(1, math.floor(math.floor(maxHpOf(battler) / 4) / 2))
+  local eighth = math.max(1, math.floor(maxHpOf(battler) / (gba and 16 or 8)))
   battle:applyDamage(battler, eighth)
   battle:sayNext(weather == Weather.HAIL
                  and Strings("%s is\npelted by HAIL!", displayName(battler))
                  or Strings("The SANDSTORM hits\n%s!", displayName(battler)))
   battle:drainNext()
-  if battler.mon.hp <= 0 then battle:onFaint(battler) end
+  if battler.mon.hp <= 0 then
+    if gba then battler.destinyBond, battler.grudge = nil, nil end
+    battle:onFaint(battler)
+  end
 end
 
 -- HandleWeather, called once per turn from HandleBetweenTurnEffects after
 -- HandleFutureSight and before HandleWrap.  The count is decremented first:
 -- on zero the "ended" line prints and NO sandstorm damage is dealt.
-function Weather.upkeep(battle)
+function Weather.upkeep(battle, order)
   local field = battle and battle.field
   local weather = field and field.weather
   if not weather then return end
@@ -342,8 +345,12 @@ function Weather.upkeep(battle)
   -- HandleWeather damages the player's side first and the enemy's second.
   -- That order is the serial-connection one (hSerialConnectionStatus), not a
   -- speed check, so a single-player battle is always player-then-enemy.
-  weatherDamage(battle, battle.player, weather)
-  weatherDamage(battle, battle.enemy, weather)
+  if order then
+    for _, b in ipairs(order) do weatherDamage(battle, b, weather, true) end
+  else
+    weatherDamage(battle, battle.player, weather)
+    weatherDamage(battle, battle.enemy, weather)
+  end
 end
 
 return Weather

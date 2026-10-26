@@ -59,6 +59,10 @@ local function effectiveSpeed(battler, battle)
   if battler.items or battler.bwBattle then
     spd = require("src.battle.Gen5HoldItems").speed(battler, spd)
   end
+  if require("src.core.GameVersion").isGen3()
+      and require("src.battle.HoldItems").effectOf(battler, "priority") == "MACHO_BRACE" then
+    spd = math.max(1, math.floor(spd / 2))
+  end
   return spd
 end
 
@@ -93,11 +97,13 @@ function TurnOrder.firstMover(a, aMove, b, bMove, rng, invertTie, battle, data)
   local first, second = a, b
   local firstIsA = true
   if invertTie then first, second, firstIsA = b, a, false end
-  if HeldItems.effect(data, first) == HeldItems.EFFECT.QUICK_CLAW then
-    if HeldItems.quickClaw(data, first, rng) then return firstIsA end
+  local firstEffect, firstParam = HeldItems.effect(data, first, "priority")
+  if firstEffect == HeldItems.EFFECT.QUICK_CLAW then
+    if rng(0, 255) < firstParam then return firstIsA end
   end
-  if HeldItems.effect(data, second) == HeldItems.EFFECT.QUICK_CLAW then
-    if HeldItems.quickClaw(data, second, rng) then return not firstIsA end
+  local secondEffect, secondParam = HeldItems.effect(data, second, "priority")
+  if secondEffect == HeldItems.EFFECT.QUICK_CLAW then
+    if rng(0, 255) < secondParam then return not firstIsA end
   end
 
   local sa, sb = effectiveSpeed(a, battle), effectiveSpeed(b, battle)

@@ -1,0 +1,8 @@
+{
+  "id": "portable_critical_order",
+  "name": "Portable critical-hit probe",
+  "version": "1.0.0",
+  "api": 3,
+  "entry": "main.lua",
+  "games": ["gen3"]
+}
