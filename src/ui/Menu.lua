@@ -120,6 +120,35 @@ function Menu:clampScroll()
   end
 end
 
+function Menu:choose()
+  -- HandleMenuInput_ (home/window.asm): SFX_PRESS_AB on every A press
+  if not self.noSound then
+    require("src.core.Sound").play(self.game.data, "Press_AB")
+  end
+  local item = self.items[self.index]
+  -- keepOpen entries run without closing the menu (e.g. the
+  -- Pokédex CRY option keeps the side menu up)
+  if not item.keepOpen then
+    self.game.stack:pop()
+  end
+  if item.onSelect then
+    item.onSelect()
+  end
+end
+
+function Menu:cancel()
+  if not self.cancelable then
+    return
+  end
+  if not self.noSound then
+    require("src.core.Sound").play(self.game.data, "Press_AB")
+  end
+  self.game.stack:pop()
+  if self.onCancel then
+    self.onCancel()
+  end
+end
+
 function Menu:update(dt)
   local input = self.game.input
   local wasIndex = self.index
@@ -128,15 +157,7 @@ function Menu:update(dt)
   elseif input:wasPressed("down") then
     self.index = self.index < #self.items and self.index + 1 or 1
   elseif input:wasPressed("a") then
-    -- HandleMenuInput_ (home/window.asm): SFX_PRESS_AB on every A press
-    if not self.noSound then
-      require("src.core.Sound").play(self.game.data, "Press_AB")
-    end
-    local item = self.items[self.index]
-    -- keepOpen entries run without closing the menu (e.g. the
-    -- Pokédex CRY option keeps the side menu up)
-    if not item.keepOpen then self.game.stack:pop() end
-    if item.onSelect then item.onSelect() end
+    self:choose()
   elseif self.cancelable and (input:wasPressed("b")
       or (self.startCloses and input:wasPressed("start"))) then
     -- HandleMenuInput_ returns for any watched key, but only replays
