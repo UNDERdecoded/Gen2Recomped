@@ -1,0 +1,56 @@
+name: portable Gen3 surf mount render contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: surf-mount-render-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtimes
+        run: sudo apt-get update && sudo apt-get install -y luajit love xvfb xauth
+      - name: Test observations and resource ownership
+        run: |
+          luajit tests/engine/surf_mount_render_data.lua
+          luajit tests/engine/surf_mount_clock.lua
+          luajit tests/engine/surf_mount_resources.lua
+      - name: Compare both native engines through the same consumer
+        run: |
+          mkdir -p /tmp/surf-mount-render-reports
+          python3 tools/surf-mount-render-check/check.py --gen1 .contract-reference/gen1 \
+            --lua luajit --report /tmp/surf-mount-render-reports/contract.json
+      - name: Compare native and public GPU pixels
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          export SURF_RENDER_ROOT="$GITHUB_WORKSPACE"
+          for backend in gen2 gen1; do
+            export SURF_RENDER_BACKEND="$backend"
+            if [ "$backend" = gen1 ]; then
+              cd "$GITHUB_WORKSPACE/.contract-reference/gen1"
+            else
+              cd "$GITHUB_WORKSPACE"
+            fi
+            for version in firered emerald; do
+              export SURF_RENDER_VERSION="$version"
+              export SURF_RENDER_REPORT="/tmp/surf-mount-render-reports/$backend-$version.json"
+              xvfb-run -a love "$SURF_RENDER_ROOT/tools/surf-mount-render-check"
+            done
+          done
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: surf-mount-render-contract
+          path: /tmp/surf-mount-render-reports
+          if-no-files-found: ignore
