@@ -37,6 +37,8 @@ local state
 -- extractor writes it as constants.gen3Cry.duckBgm/scale) and Music.update
 -- clears it once the cry source has finished.
 local cryDuck = nil
+local nativeCryLevel, nativeCryHold, nativeCryRestore = 1, 0, false
+local nativeCryFinished
 
 -- AUDIO SESSION SUSPEND / RESUME state (mobile interruption: an incoming
 -- call).  Declared up here with the other module state because Music.stop --
@@ -67,6 +69,7 @@ local dsLevel, dsPlayer, dsFade = 1, 1, nil
 local function applyVolume(src)
   if not src then return end
   local vol = VOLUME * volumeScale * dsLevel * dsPlayer
+  vol = vol * nativeCryLevel
   if cryDuck then vol = vol * cryDuck.scale end
   if Runtime.wantsHook("music.volume") then
     local ctx = {
@@ -147,6 +150,29 @@ function Music.duckForCry(data, src)
     applyVolume(state.source)
     applyVolume(state.loopSource)
   end
+end
+
+function Music.nativeCryStarted(params, options, finished)
+  nativeCryFinished = finished
+  local changed = false
+  if options.release == true then
+    if params.mode ~= 1 and options.multi ~= true then nativeCryLevel, changed = 85 / 256, true end
+  elseif params.mode ~= 1 and options.noDuck ~= true then
+    nativeCryLevel, nativeCryHold, nativeCryRestore, changed = 85 / 256, 2, true, true
+  end
+  if changed and not state.fade then
+    applyVolume(state.source)
+    applyVolume(state.loopSource)
+  end
+end
+
+function Music.nativeCryStopped()
+  nativeCryLevel, nativeCryHold, nativeCryRestore = 1, 0, false
+  if not state.fade then applyVolume(state.source); applyVolume(state.loopSource) end
+end
+
+function Music.nativeCryMixSnapshot()
+  return { level = nativeCryLevel, hold = nativeCryHold, restore = nativeCryRestore }
 end
 
 -- true while a cry is still holding the song down
@@ -703,6 +729,12 @@ function Music.update(data)
     end
   end
   if state.chip then require("src.core.ChipAudio").update() end
+  if nativeCryHold > 0 then
+    nativeCryHold = nativeCryHold - 1
+  elseif nativeCryRestore and nativeCryFinished and nativeCryFinished() then
+    nativeCryRestore, nativeCryLevel = false, 1
+    if not state.fade then applyVolume(state.source); applyVolume(state.loopSource) end
+  end
   -- restore the song's level once the cry that ducked it has finished
   if cryDuck and not cryDuckActive() then
     cryDuck = nil

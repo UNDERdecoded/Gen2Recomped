@@ -3204,6 +3204,26 @@ function Commands.g3_play_fanfare(ctx, song, number)
                     seconds = frames and frames / 60 or nil }
 end
 
+function Commands.g3_wait_se(ctx)
+  local Sound = require("src.core.Sound")
+  if not Sound.isSePlaying(ctx.game.data) then return end
+  ctx.runner.waitingCheck = Sound.waitSe(ctx.game.data)
+  ctx.runner:yield()
+end
+
+function Commands.g3_play_cry(ctx, species, mode)
+  local raw = valueOf(ctx, species)
+  require("src.core.Sound").playCry(ctx.game.data, Gen3Commands.speciesId(ctx.game.data, raw),
+    { nativeSpecies = raw, mode = valueOf(ctx, mode), mono = ctx.save.options and ctx.save.options.stereo == false })
+end
+
+function Commands.g3_wait_cry(ctx)
+  local Sound = require("src.core.Sound")
+  if Sound.isCryFinished() then return end
+  ctx.runner.waitingCheck = Sound.waitCry()
+  ctx.runner:yield()
+end
+
 function Commands.g3_wait_fanfare(ctx)
   local fanfare = ctx.g3Fanfare
   if not fanfare then return end
@@ -3756,6 +3776,7 @@ function Gen3Commands.firstBattle(ctx)
   Commands.start_battle(ctx, "wild", species, level, {
     -- BATTLE_TYPE_FIRST_BATTLE: there is nowhere to run to and nothing to
     -- black out to, and the script heals the party two commands later
+    firstBattle = true,
     noRun = true,
     canLose = record.canLose and true or false,
   })

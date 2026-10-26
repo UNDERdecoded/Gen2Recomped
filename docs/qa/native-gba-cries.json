@@ -1,0 +1,1772 @@
+{
+  "schema": 1,
+  "reference": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "native_command_revision": 19,
+  "native_party_revision": 1,
+  "native_fixture_digest": "22e453523676534e",
+  "legacy_fixture_digest": "e33d251961f2a41d",
+  "runtimes": [
+    {
+      "qualified_head": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+      "src_tree": "5e6df82f1a96f251cb39fc40092fa65cffec6e96",
+      "tests_tree": "cdd5c58cfb0e36907cc9a29d2cb70df42c52a566",
+      "workers": 240,
+      "complete_paired_rows": 176170,
+      "slowest_worker_seconds": 76.4408,
+      "all_modes_backends_profiles_exactly_once": true,
+      "all_complete_observations_recompared": true,
+      "json_boolean_types_preserved": true,
+      "fixture_sha256": {
+        "examples/portable_enemy_action/main.lua": "45f32dd07fe49b4b1d69a14b7685c9f92e5c5e11bc6a429ed48ae16e4931e35c",
+        "examples/portable_enemy_action/manifest.json": "44a5af16dc7e9980c54b1f01f880bb749b591ebe7161805ecc31d02bf4ead462",
+        "tests/post_hit_items/command-cases.json": "16255564717600d4ff54991d64055dc5211f0fbc4df049fb94a267264c240320",
+        "tests/enemy_actions/accuracy.lua": "77d77f61c391b2a919cd80874c0bfa407238321d203fbfa6b9943208dd713e71",
+        "tests/enemy_actions/arguments.lua": "1be797a88e4b16a94daa21b842abd7c3fc285a65c450bbb5da21ea7da1c8a331",
+        "tests/enemy_actions/assist.lua": "af4df57be823bf8a0c8136f68ee0ac9384b06ac2b97d1ae02eaccca57add6174",
+        "tests/enemy_actions/baton_pass.lua": "b7d34d8aa599f15f89c452bd6c3005f9944a273f564627b698e3263e7b015255",
+        "tests/enemy_actions/battle_effect_presentation.lua": "7e96da1c96ea935f343189563698bb4b839b38fc6ed47bc6118016ea9c3a2db6",
+        "tests/enemy_actions/beat_up.lua": "8785b017f6d5d3b25eee4d0660da923f7c2a02e3c4baf29b6f8900c4a3fc8ee2",
+        "tests/enemy_actions/cases.lua": "1e8e34b3f4d430215e88487af35d325b69652c836f3ae93a748c20ba189d169b",
+        "tests/enemy_actions/choice_band.lua": "1d63434a99aef6bd5cda2b146a3598419839c64392388ce9df202f0da0f1c514",
+        "tests/enemy_actions/choice_call_failure.lua": "26d4605fd6c36b2792c6e28e541753235208ad6befff86eb1febb2cdcd2e4c3b",
+        "tests/enemy_actions/choice_content.lua": "2a1fefad3a9dd74ed4e3aa8c1498977a964a0a8f01a1b95712a8af599a3062fc",
+        "tests/enemy_actions/choice_planning.lua": "0bc6f8c48d73dd4dac3df8b22e197388b27ea3557b66ff494c7fc29a50e97a7b",
+        "tests/enemy_actions/choice_selection.lua": "0bf5e872eb7776acd6544c5bc687b80102bda17fa1ca1596970961af430a7eaa",
+        "tests/enemy_actions/choice_wild.lua": "8c686058d633547156ba2503c85ff0bb529fbc0cc85f5c099c5ccf565674a174",
+        "tests/enemy_actions/constrained_party.lua": "90d8eb904acf611870066c3d96e3df97a6fb97c74fda6ad63fa20b74de722478",
+        "tests/enemy_actions/critical_kinds.lua": "e1f12a0512bf04ca81c6003bbf98de625aebefd580819873a64e5eb7470b56a5",
+        "tests/enemy_actions/disable.lua": "c72e0a46c08dc18c9fa4d242a64ad6be1d33a304e42ec36afcf1a7f8378cc5ed",
+        "tests/enemy_actions/encore.lua": "b1098ab50112d378d00daecec6bde3582e16aaf9893e4de2cdc74d6a8393e786",
+        "tests/enemy_actions/fixture.lua": "c9a47efd9a96bb16786ba0593ab4c659112adc30a5febda05ee516e36eb59a83",
+        "tests/enemy_actions/follow_me.lua": "73996c39ac7a6499c5036821a2c8d0c4b6e025eddea66df9adb1223dfaa056e8",
+        "tests/enemy_actions/helping_hand.lua": "80dfd210f629a81b06dea5227e0d2cd98daf1909ab7824cb0ce487305266745e",
+        "tests/enemy_actions/lock_on.lua": "e0a034cacbce4053da9fa71b7930cf2553d8e19bc742ab02c247da50692adaef",
+        "tests/enemy_actions/mirror_move.lua": "605ad320af100a0e821da104e37f914ca3f262d49ed5d632878dd9ae5f80cb1b",
+        "tests/enemy_actions/move_used_pp.lua": "a82587b98b62258476906c72bfaca7076228dbedf1df6ba4029df4dbb054b5a7",
+        "tests/enemy_actions/multi_hit.lua": "ce3f976363fc9698edbd2adad5cf0038dc63720b2247e65368793cd67b0d3faa",
+        "tests/enemy_actions/native_cry_commands.lua": "39613836177d1e0b53ee175948d5f8e7f48fd6c7ae0348de04c48b53c0345178",
+        "tests/enemy_actions/native_cry_lifecycle.lua": "e7c9fa11f9e2c39afa240cad2e580fe5ee2f0149bcd8a4463ec8d08b9c66d6b6",
+        "tests/enemy_actions/native_cry_pcm.lua": "f194ac72d6218a568be9cfe547db238ae09724ba4f7ada244edc5bfc14e571a9",
+        "tests/enemy_actions/native_sound_lifecycle.lua": "de0c2d661bf16b0eaf6077ae56ca9385798d591821e5d07d9469415eef89df08",
+        "tests/enemy_actions/native_sound_pan.lua": "0c123bbfaefe763f5af169e3e6bdcdc9a334bb008a2a33f77c768ff2459c9b3b",
+        "tests/enemy_actions/native_sound_script_waits.lua": "84addd72ead7b69af4c42155591d160d15dd4d391568927438aae2ec8765d3e4",
+        "tests/enemy_actions/nature_power.lua": "962bea0356b91bc08036ad6a2e5736dfd0a7676d6833e281ccfb689585967015",
+        "tests/enemy_actions/party_codec.lua": "b93a7ca419db9157ac6039ef6b0815714cd3f8702df2053125f9c00b2e847ab2",
+        "tests/enemy_actions/party_codec_hooks.lua": "03ee43ce8a3d0993b8fb4bc0f497b8950543d1f208c7915f8e817a98adcff8e5",
+        "tests/enemy_actions/post_hit_items.lua": "20c457c610b1b9e943d438a301c9e2e0b315273216a592a8a47b103d4d5d6262",
+        "tests/enemy_actions/rage.lua": "9ab04345ace6bae4f9cdeb03ca7817955a46c0a670cfb1810411cb020a5f702d",
+        "tests/enemy_actions/records.lua": "46a4e3212c8d17fbd10956ae2988f4fde08548f929dd0c617e664ab18537b592",
+        "tests/enemy_actions/secondary.lua": "c356415b82f5040b8baf7bf1b370e2726965534cf8421bc5a41db6aa941f3a13",
+        "tests/enemy_actions/sleep_talk.lua": "94cc5d33e71a968233eebe5e3db57fe842922006489c6e0ddd087b072189c4d0",
+        "tests/enemy_actions/spit_up.lua": "302a5510f0854b00f76d1566954b979eb9aacc6083014b69d1a4bfc137672750",
+        "tests/enemy_actions/substitute_fade.lua": "f56d807b858d882d04b061dea13f5e1488ec5492aab72236568d07ba159cafd5",
+        "tests/enemy_actions/substitute_presentation.lua": "830db8653efe84dcf117e305e1b5c5056fb424670d8eb20bba85c0d80af1e5cb",
+        "tests/enemy_actions/targets.lua": "487ba3e87c8f9796679afc6984a2f69f5ed25e8a7590509eb269f2682ffb2ce6",
+        "tests/enemy_actions/triple_kick.lua": "9ed45dff2ae14220672caa3d9458401b42d9ab26dbbb8f62204d9172b06301fa",
+        "tools/enemy-action-contract-check/worker.lua": "25e75cfa1e719c3b0a3538297a055f0d0bb8659bda1a9eff82f802e62e37c2ff",
+        "tests/native_sound/fixture.lua": "9990683d1b7fc4c5af6d9119d14fa2ee8bf9897ec3aeb7fab5029057f0e33292",
+        "tests/native_cry/fixture.lua": "ce350eff0f5e6a537c75d103a03e9f676d838ae7a8d833a745431bfffca894c8"
+      },
+      "branch": "feature/native-cry-commands",
+      "raw_reports": [
+        {
+          "sha256": "9bdad00634f6576298e80c1142777581bfc278ea3ecc2b10693698c30968c6dc",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-01.json"
+        },
+        {
+          "sha256": "618cac07821aaf2d1d5eb74d2a82feb8a06e21b4bf24e1f340554990f26ecc56",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-02.json"
+        },
+        {
+          "sha256": "3705cbb11241fdfef5c90eae05cd482fc4513a6cc1472109e3037a4d301f0499",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": false,
+          "path": "tmp/native-cry-broad-qa/batch-03.json"
+        },
+        {
+          "sha256": "16a3c9711d5233b0ed8b4c39abc32fafd46b3729fd69fa3d60e1f0690bd6b9d0",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-04.json"
+        },
+        {
+          "sha256": "fa916bea3ea3f5dcb78e70c2698b25dbf7806551ca40befdd727024ff9e8328d",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-05.json"
+        },
+        {
+          "sha256": "4eed1aa342fc4048dd5c3bc8115e670290f20341978a1a93f44e71b61c83caba",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-06.json"
+        },
+        {
+          "sha256": "5be603d547ce3fe9d2046a381d691b0ea672d7ff34ced454b742a716e0ac7051",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-07.json"
+        },
+        {
+          "sha256": "2cb2fd4de017fe53b9279934eec3686506c5ba0d4be106a7ec80cae2da1ab25f",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-08.json"
+        },
+        {
+          "sha256": "582566eb2bc2713b3be978f49efb155642157094367e7cbf96e8a34310657707",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-09.json"
+        },
+        {
+          "sha256": "7037a113e254803ac1314fc8bd9591da0ae652088016948a13ca48d5c1b3f435",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-10.json"
+        },
+        {
+          "sha256": "98fbec63e99f99f9079e2e0d7a899655e44c89bd03ce3d210af0abe0fff78571",
+          "host_ref": "1322ee81ed956b79d3f0da68e8bb3d5bc19d2d99",
+          "bounded_retry": true,
+          "path": "tmp/native-cry-nature-power-retry-qa/bounded-retry.json"
+        }
+      ],
+      "retained_initial_timeouts": [
+        {
+          "worker": [
+            "gen2",
+            "firered",
+            3,
+            "nature_power"
+          ],
+          "seconds": 60,
+          "sha256": "3705cbb11241fdfef5c90eae05cd482fc4513a6cc1472109e3037a4d301f0499",
+          "raw_report": "tmp/native-cry-broad-qa/batch-03.json"
+        }
+      ]
+    },
+    {
+      "qualified_head": "0286d291ffe9588d31679dc543508501857d5e39",
+      "src_tree": "27c23e9133c28e1912fea9a393b5748708bdc3bf",
+      "tests_tree": "5c97db04e40ee96268d365824bae4841757257a5",
+      "workers": 240,
+      "complete_paired_rows": 176170,
+      "slowest_worker_seconds": 47.3421,
+      "all_modes_backends_profiles_exactly_once": true,
+      "all_complete_observations_recompared": true,
+      "json_boolean_types_preserved": true,
+      "fixture_sha256": {
+        "examples/portable_enemy_action/main.lua": "45f32dd07fe49b4b1d69a14b7685c9f92e5c5e11bc6a429ed48ae16e4931e35c",
+        "examples/portable_enemy_action/manifest.json": "44a5af16dc7e9980c54b1f01f880bb749b591ebe7161805ecc31d02bf4ead462",
+        "tests/post_hit_items/command-cases.json": "16255564717600d4ff54991d64055dc5211f0fbc4df049fb94a267264c240320",
+        "tests/enemy_actions/accuracy.lua": "77d77f61c391b2a919cd80874c0bfa407238321d203fbfa6b9943208dd713e71",
+        "tests/enemy_actions/arguments.lua": "1be797a88e4b16a94daa21b842abd7c3fc285a65c450bbb5da21ea7da1c8a331",
+        "tests/enemy_actions/assist.lua": "af4df57be823bf8a0c8136f68ee0ac9384b06ac2b97d1ae02eaccca57add6174",
+        "tests/enemy_actions/baton_pass.lua": "b7d34d8aa599f15f89c452bd6c3005f9944a273f564627b698e3263e7b015255",
+        "tests/enemy_actions/battle_effect_presentation.lua": "7e96da1c96ea935f343189563698bb4b839b38fc6ed47bc6118016ea9c3a2db6",
+        "tests/enemy_actions/beat_up.lua": "8785b017f6d5d3b25eee4d0660da923f7c2a02e3c4baf29b6f8900c4a3fc8ee2",
+        "tests/enemy_actions/cases.lua": "1e8e34b3f4d430215e88487af35d325b69652c836f3ae93a748c20ba189d169b",
+        "tests/enemy_actions/choice_band.lua": "1d63434a99aef6bd5cda2b146a3598419839c64392388ce9df202f0da0f1c514",
+        "tests/enemy_actions/choice_call_failure.lua": "26d4605fd6c36b2792c6e28e541753235208ad6befff86eb1febb2cdcd2e4c3b",
+        "tests/enemy_actions/choice_content.lua": "2a1fefad3a9dd74ed4e3aa8c1498977a964a0a8f01a1b95712a8af599a3062fc",
+        "tests/enemy_actions/choice_planning.lua": "0bc6f8c48d73dd4dac3df8b22e197388b27ea3557b66ff494c7fc29a50e97a7b",
+        "tests/enemy_actions/choice_selection.lua": "0bf5e872eb7776acd6544c5bc687b80102bda17fa1ca1596970961af430a7eaa",
+        "tests/enemy_actions/choice_wild.lua": "8c686058d633547156ba2503c85ff0bb529fbc0cc85f5c099c5ccf565674a174",
+        "tests/enemy_actions/constrained_party.lua": "90d8eb904acf611870066c3d96e3df97a6fb97c74fda6ad63fa20b74de722478",
+        "tests/enemy_actions/critical_kinds.lua": "e1f12a0512bf04ca81c6003bbf98de625aebefd580819873a64e5eb7470b56a5",
+        "tests/enemy_actions/disable.lua": "c72e0a46c08dc18c9fa4d242a64ad6be1d33a304e42ec36afcf1a7f8378cc5ed",
+        "tests/enemy_actions/encore.lua": "b1098ab50112d378d00daecec6bde3582e16aaf9893e4de2cdc74d6a8393e786",
+        "tests/enemy_actions/fixture.lua": "c9a47efd9a96bb16786ba0593ab4c659112adc30a5febda05ee516e36eb59a83",
+        "tests/enemy_actions/follow_me.lua": "73996c39ac7a6499c5036821a2c8d0c4b6e025eddea66df9adb1223dfaa056e8",
+        "tests/enemy_actions/helping_hand.lua": "80dfd210f629a81b06dea5227e0d2cd98daf1909ab7824cb0ce487305266745e",
+        "tests/enemy_actions/lock_on.lua": "e0a034cacbce4053da9fa71b7930cf2553d8e19bc742ab02c247da50692adaef",
+        "tests/enemy_actions/mirror_move.lua": "605ad320af100a0e821da104e37f914ca3f262d49ed5d632878dd9ae5f80cb1b",
+        "tests/enemy_actions/move_used_pp.lua": "a82587b98b62258476906c72bfaca7076228dbedf1df6ba4029df4dbb054b5a7",
+        "tests/enemy_actions/multi_hit.lua": "ce3f976363fc9698edbd2adad5cf0038dc63720b2247e65368793cd67b0d3faa",
+        "tests/enemy_actions/native_cry_commands.lua": "39613836177d1e0b53ee175948d5f8e7f48fd6c7ae0348de04c48b53c0345178",
+        "tests/enemy_actions/native_cry_lifecycle.lua": "e7c9fa11f9e2c39afa240cad2e580fe5ee2f0149bcd8a4463ec8d08b9c66d6b6",
+        "tests/enemy_actions/native_cry_pcm.lua": "f194ac72d6218a568be9cfe547db238ae09724ba4f7ada244edc5bfc14e571a9",
+        "tests/enemy_actions/native_sound_lifecycle.lua": "de0c2d661bf16b0eaf6077ae56ca9385798d591821e5d07d9469415eef89df08",
+        "tests/enemy_actions/native_sound_pan.lua": "0c123bbfaefe763f5af169e3e6bdcdc9a334bb008a2a33f77c768ff2459c9b3b",
+        "tests/enemy_actions/native_sound_script_waits.lua": "84addd72ead7b69af4c42155591d160d15dd4d391568927438aae2ec8765d3e4",
+        "tests/enemy_actions/nature_power.lua": "962bea0356b91bc08036ad6a2e5736dfd0a7676d6833e281ccfb689585967015",
+        "tests/enemy_actions/party_codec.lua": "b93a7ca419db9157ac6039ef6b0815714cd3f8702df2053125f9c00b2e847ab2",
+        "tests/enemy_actions/party_codec_hooks.lua": "03ee43ce8a3d0993b8fb4bc0f497b8950543d1f208c7915f8e817a98adcff8e5",
+        "tests/enemy_actions/post_hit_items.lua": "20c457c610b1b9e943d438a301c9e2e0b315273216a592a8a47b103d4d5d6262",
+        "tests/enemy_actions/rage.lua": "9ab04345ace6bae4f9cdeb03ca7817955a46c0a670cfb1810411cb020a5f702d",
+        "tests/enemy_actions/records.lua": "46a4e3212c8d17fbd10956ae2988f4fde08548f929dd0c617e664ab18537b592",
+        "tests/enemy_actions/secondary.lua": "c356415b82f5040b8baf7bf1b370e2726965534cf8421bc5a41db6aa941f3a13",
+        "tests/enemy_actions/sleep_talk.lua": "94cc5d33e71a968233eebe5e3db57fe842922006489c6e0ddd087b072189c4d0",
+        "tests/enemy_actions/spit_up.lua": "302a5510f0854b00f76d1566954b979eb9aacc6083014b69d1a4bfc137672750",
+        "tests/enemy_actions/substitute_fade.lua": "f56d807b858d882d04b061dea13f5e1488ec5492aab72236568d07ba159cafd5",
+        "tests/enemy_actions/substitute_presentation.lua": "830db8653efe84dcf117e305e1b5c5056fb424670d8eb20bba85c0d80af1e5cb",
+        "tests/enemy_actions/targets.lua": "487ba3e87c8f9796679afc6984a2f69f5ed25e8a7590509eb269f2682ffb2ce6",
+        "tests/enemy_actions/triple_kick.lua": "9ed45dff2ae14220672caa3d9458401b42d9ab26dbbb8f62204d9172b06301fa",
+        "tools/enemy-action-contract-check/worker.lua": "25e75cfa1e719c3b0a3538297a055f0d0bb8659bda1a9eff82f802e62e37c2ff",
+        "tests/native_sound/fixture.lua": "9990683d1b7fc4c5af6d9119d14fa2ee8bf9897ec3aeb7fab5029057f0e33292",
+        "tests/native_cry/fixture.lua": "ce350eff0f5e6a537c75d103a03e9f676d838ae7a8d833a745431bfffca894c8"
+      },
+      "branch": "integration/native-cry-commands",
+      "raw_reports": [
+        {
+          "sha256": "ad7600ab6f55870570f259e9a61618ae6407128512a6bb62b45b1288b51bfc80",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-01.json"
+        },
+        {
+          "sha256": "8d400cebf7ba0bcdc23ae5a245b9a071fd7d0a2dabbd3e19d7eb077eda10fc18",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-02.json"
+        },
+        {
+          "sha256": "4cc13dcad20adee8ab8fa74945f320d1bbcc2c5e23a3e666dbb03dd0b2c7c156",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-03.json"
+        },
+        {
+          "sha256": "5356d12f0b86400f56129cb211af44149a5101a0e50b962249202870535d6c2f",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-04.json"
+        },
+        {
+          "sha256": "42a0e27dc236d0b19506ba2e9a70685b525b1dc2ffee59f3256bd34b31e530a8",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-05.json"
+        },
+        {
+          "sha256": "15c4b4e83f0a7903d67fcf8b588dadc6406318a0688095cbccfd04f149288447",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-06.json"
+        },
+        {
+          "sha256": "2429a4200a5f6fd6ed0f98f84bfff9c15c13bc518a7b6975ee72373ab2da86d6",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-07.json"
+        },
+        {
+          "sha256": "5a3ffe80f15de341a9f1cd27c7159f20c01687acd4de5b46ae08c005350f08da",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-08.json"
+        },
+        {
+          "sha256": "dcafd6858b02036dce94c0bf22fd5d3865d04cb11392df5730860c664bba2836",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-09.json"
+        },
+        {
+          "sha256": "5f7923e4a05319a9550b1134817b4d4435361fd509068307d02d832e65f11e7a",
+          "host_ref": "0286d291ffe9588d31679dc543508501857d5e39",
+          "original_passed": true,
+          "path": "tmp/native-cry-broad-qa/batch-10.json"
+        }
+      ],
+      "retained_initial_timeouts": []
+    }
+  ],
+  "full_regression": {
+    "feature": {
+      "engine": "167/176",
+      "sdk": "3/3",
+      "b30": true,
+      "log_sha256": "d183f46570a8fa823e85c8b63909aa4b556c3511c9b81603b19b9a790abf1c18"
+    },
+    "fresh_parent": {
+      "engine": "166/175",
+      "sdk": "3/3",
+      "b30": true,
+      "log_sha256": "fabc6c9e19a4ccb0c7a9e2ddc2a0a8c7692be2331f8a9edf9f34ef6fd1a5a14d"
+    },
+    "combined": {
+      "head": "0286d291ffe9588d31679dc543508501857d5e39",
+      "engine": "285/285",
+      "sdk": "3/3",
+      "b30": true,
+      "all_quick_tiers": true,
+      "anchored_FAIL_Counter": {},
+      "sha256": "80ce2b06322a6a50f08db450541ad0010773fb539d9b47120f3661c3e61a3c76"
+    },
+    "exact_feature_parent_FAIL_Counter": {
+      "FAIL hook:battle.status_hud_visible has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+      "FAIL event:intro.birch_speech.finished has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+      "FAIL event:intro.birch_speech.started has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+      "FAIL event:pokemon.egg_hatched has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+      "FAIL event:world.blocks_replaced has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+      "FAIL event:world.tick has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+      "FAIL tests/engine/gate_meta_coverage.lua": 1,
+      "FAIL the process exit runs only after love.quit declined to veto": 1,
+      "FAIL the process exit is gated on Android": 1,
+      "FAIL tests/engine/quit_thread_shutdown.lua": 1,
+      "FAIL and stays out of the live pad map until close (got x, want nil)": 1,
+      "FAIL tests/engine/rebind_capture_bug510.lua": 1,
+      "FAIL all eight actions still have exactly one pad button (got 12, want 8)": 1,
+      "FAIL tests/engine/rebind_swap_clear_bug589.lua": 1,
+      "FAIL tests/engine/soft_reset_bug563.lua": 1,
+      "FAIL tests/engine/tool_mod_hooks.lua": 1,
+      "FAIL releaseUrl points at the repo's latest release (got https://github.com/UNDERdecoded/Gen2Recomped/releases/latest, want https://github.com/bryanthaboi/gen1recomp/releases/latest)": 1,
+      "FAIL payload name derived from version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+      "FAIL tests/engine/update_check_tests.lua": 1,
+      "FAIL parseRelease derives the payload name from the version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+      "FAIL tests/engine/update_tests.lua": 1,
+      "FAIL a player-side frame lands on the player anchor (got 37, want 20)": 1,
+      "FAIL a player-side frame lands on the player baseline (got 7, want 8)": 1,
+      "FAIL an enemy-side frame lands on the enemy anchor (got 131, want 136)": 1,
+      "FAIL tests/engine/wide_battle_layout.lua": 1
+    }
+  },
+  "targeted_engine_checks": {
+    "native_cry": 10983,
+    "protocol": 175,
+    "se_player_lifecycle": 110,
+    "world_se_waits": 6306
+  },
+  "negative_audio_clock": {
+    "runtime_line_removed": "Game:update Sound.updateCry call",
+    "fail_counter": {
+      "FAIL Game:update advances the independent real audio clock after script completion": 6
+    },
+    "negative_checks": "10977/10983",
+    "positive_checks": "10983/10983",
+    "raw_log_sha256": "3e6db98a3770fed89d1ec35661ec9118bfadc4b734fb0dcf8670905333bfedd9"
+  },
+  "tool_qualification": {
+    "imported_cry_scripts": {
+      "tool": "tools/enemy-action-contract-check/imported-native-cry-smoke.lua",
+      "tool_sha256": "8a14e5a9a449a990c37ec9fdd0341ee2fb6ee026dd4d92223cefe2c7164eb363",
+      "runs": [
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen1-firered-commands-first.log",
+          "sha256": "06e1d77b9f49ebdfe68eb432e810e44b8d0b6ddecd2991f35644d025f24d95a1"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen2-firered-commands-first.log",
+          "sha256": "d5f58d85c918dd96766eb1e78c4397011b180b0731071cb86b4e13304ea32a8f"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen1-emerald-commands-first.log",
+          "sha256": "8edf699dfc6461e6c8a835866416c89a39f6602e0548fe0f2dcd753502a29b04"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen2-emerald-commands-first.log",
+          "sha256": "fbbfa30b39dda37c867e9c37af9ae6559afdfe967805331eb7f445535dbb1d30"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen1-firered-commands-first.log",
+          "sha256": "2d317e11df5ff579f8e3b9f3c1448cc618ae52f848eeb709867df21fd0050eb4"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen2-firered-commands-first.log",
+          "sha256": "3ff6e4e6f01f799002ab359ef8870debb5c52104e70fbbeec5d129c498be5c8d"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen1-emerald-commands-first.log",
+          "sha256": "37d1189e93fc214e13817cfefdfc5c1dd7b64958801cbba4e301911f950d8ae3"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-import-qa/gen2-emerald-commands-first.log",
+          "sha256": "3b8c097cd28ae67a3e4c3e4dae2a42bba7d6cf0f559483a713dee300b2ee921b"
+        }
+      ],
+      "complete_pairs_across_two_runtimes": 36,
+      "comparison_details": [
+        {
+          "version": "firered",
+          "equal": true,
+          "cases": 9,
+          "rows": [
+            {
+              "species": 4,
+              "mode": 0,
+              "index": 3,
+              "completed": 41,
+              "frames": 221,
+              "samples": 29925
+            },
+            {
+              "species": 4,
+              "mode": 6,
+              "index": 3,
+              "completed": 40,
+              "frames": 221,
+              "samples": 29047
+            },
+            {
+              "species": 4,
+              "mode": 9,
+              "index": 3,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 277,
+              "mode": 0,
+              "index": 273,
+              "completed": 33,
+              "frames": 221,
+              "samples": 24136
+            },
+            {
+              "species": 277,
+              "mode": 6,
+              "index": 273,
+              "completed": 32,
+              "frames": 221,
+              "samples": 23427
+            },
+            {
+              "species": 277,
+              "mode": 9,
+              "index": 273,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 411,
+              "mode": 0,
+              "index": 387,
+              "completed": 29,
+              "frames": 221,
+              "samples": 20796
+            },
+            {
+              "species": 411,
+              "mode": 6,
+              "index": 387,
+              "completed": 28,
+              "frames": 221,
+              "samples": 20186
+            },
+            {
+              "species": 411,
+              "mode": 9,
+              "index": 387,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            }
+          ]
+        },
+        {
+          "version": "emerald",
+          "equal": true,
+          "cases": 9,
+          "rows": [
+            {
+              "species": 4,
+              "mode": 0,
+              "index": 3,
+              "completed": 41,
+              "frames": 221,
+              "samples": 29925
+            },
+            {
+              "species": 4,
+              "mode": 6,
+              "index": 3,
+              "completed": 40,
+              "frames": 221,
+              "samples": 29047
+            },
+            {
+              "species": 4,
+              "mode": 9,
+              "index": 3,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 277,
+              "mode": 0,
+              "index": 273,
+              "completed": 33,
+              "frames": 221,
+              "samples": 24136
+            },
+            {
+              "species": 277,
+              "mode": 6,
+              "index": 273,
+              "completed": 32,
+              "frames": 221,
+              "samples": 23427
+            },
+            {
+              "species": 277,
+              "mode": 9,
+              "index": 273,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 411,
+              "mode": 0,
+              "index": 387,
+              "completed": 29,
+              "frames": 221,
+              "samples": 20796
+            },
+            {
+              "species": 411,
+              "mode": 6,
+              "index": 387,
+              "completed": 28,
+              "frames": 221,
+              "samples": 20186
+            },
+            {
+              "species": 411,
+              "mode": 9,
+              "index": 387,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            }
+          ]
+        },
+        {
+          "version": "firered",
+          "equal": true,
+          "cases": 9,
+          "rows": [
+            {
+              "species": 4,
+              "mode": 0,
+              "index": 3,
+              "completed": 41,
+              "frames": 221,
+              "samples": 29925
+            },
+            {
+              "species": 4,
+              "mode": 6,
+              "index": 3,
+              "completed": 40,
+              "frames": 221,
+              "samples": 29047
+            },
+            {
+              "species": 4,
+              "mode": 9,
+              "index": 3,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 277,
+              "mode": 0,
+              "index": 273,
+              "completed": 33,
+              "frames": 221,
+              "samples": 24136
+            },
+            {
+              "species": 277,
+              "mode": 6,
+              "index": 273,
+              "completed": 32,
+              "frames": 221,
+              "samples": 23427
+            },
+            {
+              "species": 277,
+              "mode": 9,
+              "index": 273,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 411,
+              "mode": 0,
+              "index": 387,
+              "completed": 29,
+              "frames": 221,
+              "samples": 20796
+            },
+            {
+              "species": 411,
+              "mode": 6,
+              "index": 387,
+              "completed": 28,
+              "frames": 221,
+              "samples": 20186
+            },
+            {
+              "species": 411,
+              "mode": 9,
+              "index": 387,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            }
+          ]
+        },
+        {
+          "version": "emerald",
+          "equal": true,
+          "cases": 9,
+          "rows": [
+            {
+              "species": 4,
+              "mode": 0,
+              "index": 3,
+              "completed": 41,
+              "frames": 221,
+              "samples": 29925
+            },
+            {
+              "species": 4,
+              "mode": 6,
+              "index": 3,
+              "completed": 40,
+              "frames": 221,
+              "samples": 29047
+            },
+            {
+              "species": 4,
+              "mode": 9,
+              "index": 3,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 277,
+              "mode": 0,
+              "index": 273,
+              "completed": 33,
+              "frames": 221,
+              "samples": 24136
+            },
+            {
+              "species": 277,
+              "mode": 6,
+              "index": 273,
+              "completed": 32,
+              "frames": 221,
+              "samples": 23427
+            },
+            {
+              "species": 277,
+              "mode": 9,
+              "index": 273,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            },
+            {
+              "species": 411,
+              "mode": 0,
+              "index": 387,
+              "completed": 29,
+              "frames": 221,
+              "samples": 20796
+            },
+            {
+              "species": 411,
+              "mode": 6,
+              "index": 387,
+              "completed": 28,
+              "frames": 221,
+              "samples": 20186
+            },
+            {
+              "species": 411,
+              "mode": 9,
+              "index": 387,
+              "completed": 21,
+              "frames": 221,
+              "samples": 15506
+            }
+          ]
+        }
+      ]
+    },
+    "actual_cry_pcm": {
+      "tool": "tools/enemy-action-contract-check/imported-native-cry-render.lua",
+      "tool_sha256": "e0e5fbc309f17a807731f4515d5ae94b990d1d03ebfa7050a447f0ad4ee4000d",
+      "runs": [
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen1-firered-render-frozen.log",
+          "sha256": "0377d9cf86558564cddc230ebd71f023587002b1eb279a729bca140f552765d7"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen2-firered-render-frozen.log",
+          "sha256": "b36615f72d185823ac73f8056a153c3f2c2c499c1c6da267ddb4714fddd6f1e9"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen1-emerald-render-frozen.log",
+          "sha256": "7eb55912951dd3ba8d0c14cbe054aea750e711a17f5f0721dceb2972d96fdd06"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen2-emerald-render-frozen.log",
+          "sha256": "80741b584a2e83043bde7f388ff708cbbf080b4132bbf37c8110ee8a2a785a35"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen1-firered-render-frozen.log",
+          "sha256": "5a18759207421bbac2fe3bc2c2bbef7eec7f52b27e33b77c5a15080ac3cbb68e"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen2-firered-render-frozen.log",
+          "sha256": "82a930fd492d31b4d530bede09bbe70712a89751435d2202319a8f6dbb471e67"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen1-emerald-render-frozen.log",
+          "sha256": "0fc6f9003f6eef02d698ed06082407779a6955330f829645bb44733370c5d3dd"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-render-qa/gen2-emerald-render-frozen.log",
+          "sha256": "bcf5ecfae3866cec2bbb65447e49e87a62fa3c56a69716a068a4330d0ae52f2f"
+        }
+      ],
+      "complete_pairs_across_two_runtimes": 96,
+      "comparison_details": [
+        {
+          "version": "firered",
+          "equal": true,
+          "cases": 24,
+          "rows": [
+            {
+              "index": 0,
+              "mode": 0,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 1,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 6,
+              "frames": 46,
+              "samples": 33322,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 12,
+              "frames": 50,
+              "samples": 36918,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 0,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 1,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 6,
+              "frames": 40,
+              "samples": 29047,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 12,
+              "frames": 46,
+              "samples": 33228,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 0,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 1,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 6,
+              "frames": 32,
+              "samples": 23427,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 12,
+              "frames": 37,
+              "samples": 26799,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 0,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 1,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 4,
+              "frames": 27,
+              "samples": 19771,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 6,
+              "frames": 28,
+              "samples": 20186,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 12,
+              "frames": 32,
+              "samples": 23091,
+              "channels": 1,
+              "rate": 44100
+            }
+          ]
+        },
+        {
+          "version": "emerald",
+          "equal": true,
+          "cases": 24,
+          "rows": [
+            {
+              "index": 0,
+              "mode": 0,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 1,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 6,
+              "frames": 46,
+              "samples": 33322,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 12,
+              "frames": 50,
+              "samples": 36918,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 0,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 1,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 6,
+              "frames": 40,
+              "samples": 29047,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 12,
+              "frames": 46,
+              "samples": 33228,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 0,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 1,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 6,
+              "frames": 32,
+              "samples": 23427,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 12,
+              "frames": 37,
+              "samples": 26799,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 0,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 1,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 4,
+              "frames": 27,
+              "samples": 19771,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 6,
+              "frames": 28,
+              "samples": 20186,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 12,
+              "frames": 32,
+              "samples": 23091,
+              "channels": 1,
+              "rate": 44100
+            }
+          ]
+        },
+        {
+          "version": "firered",
+          "equal": true,
+          "cases": 24,
+          "rows": [
+            {
+              "index": 0,
+              "mode": 0,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 1,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 6,
+              "frames": 46,
+              "samples": 33322,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 12,
+              "frames": 50,
+              "samples": 36918,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 0,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 1,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 6,
+              "frames": 40,
+              "samples": 29047,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 12,
+              "frames": 46,
+              "samples": 33228,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 0,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 1,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 6,
+              "frames": 32,
+              "samples": 23427,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 12,
+              "frames": 37,
+              "samples": 26799,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 0,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 1,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 4,
+              "frames": 27,
+              "samples": 19771,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 6,
+              "frames": 28,
+              "samples": 20186,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 12,
+              "frames": 32,
+              "samples": 23091,
+              "channels": 1,
+              "rate": 44100
+            }
+          ]
+        },
+        {
+          "version": "emerald",
+          "equal": true,
+          "cases": 24,
+          "rows": [
+            {
+              "index": 0,
+              "mode": 0,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 1,
+              "frames": 47,
+              "samples": 34330,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 6,
+              "frames": 46,
+              "samples": 33322,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 0,
+              "mode": 12,
+              "frames": 50,
+              "samples": 36918,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 0,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 1,
+              "frames": 41,
+              "samples": 29925,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 6,
+              "frames": 40,
+              "samples": 29047,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 3,
+              "mode": 12,
+              "frames": 46,
+              "samples": 33228,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 0,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 1,
+              "frames": 33,
+              "samples": 24136,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 4,
+              "frames": 30,
+              "samples": 22151,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 6,
+              "frames": 32,
+              "samples": 23427,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 273,
+              "mode": 12,
+              "frames": 37,
+              "samples": 26799,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 0,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 1,
+              "frames": 29,
+              "samples": 20796,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 4,
+              "frames": 27,
+              "samples": 19771,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 6,
+              "frames": 28,
+              "samples": 20186,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 9,
+              "frames": 21,
+              "samples": 15506,
+              "channels": 1,
+              "rate": 44100
+            },
+            {
+              "index": 387,
+              "mode": 12,
+              "frames": 32,
+              "samples": 23091,
+              "channels": 1,
+              "rate": 44100
+            }
+          ]
+        }
+      ]
+    },
+    "nonfading_bgm_sources": {
+      "tool": "tools/enemy-action-contract-check/native-cry-bgm-smoke.lua",
+      "tool_sha256": "c674da396a8e98797dce9697b346a74c5cec97669f11e59a21622703204ac1ac",
+      "runs": [
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen1-firered-first.log",
+          "sha256": "f30393d6d8ae9f8a15481455368ed967adaff63d14b00666322609e454ac7b25"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen1-emerald-first.log",
+          "sha256": "94a69a09fd783947a8398a1780cb4872c3595d1b22e0274eef14c473a7350631"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen2-firered-first.log",
+          "sha256": "729364a79180eddc4a7bc0766e287d84a2cebfc56301a7275376e0d6ae8f7321"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands",
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen2-emerald-first.log",
+          "sha256": "aab3390ec8cb90fe6f023509858d1f2abe71966a83e0ec1ea7e2670dfb6bb3fa"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen1-firered-first.log",
+          "sha256": "75ab79ac817b5cf38998e35c3ea81126f95eb3122fa966ac58ac7bfd7ebd84c2"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen1-emerald-first.log",
+          "sha256": "0cbbc191f07cad5428cbb81bfadd6bd1c94c1512badb844dd98d8b02bde5ea8c"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen2-firered-first.log",
+          "sha256": "c31f6f0f9afc85c8bbfe8149cbd2263ded138c8255016dd9285432f1933163aa"
+        },
+        {
+          "host": "gen2recomped-native-cry-commands-integration",
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "log": "tmp/native-cry-published-bgm-qa/gen2-emerald-first.log",
+          "sha256": "0b6c8dcb6113346916cb2a0696d5f2fc10f64e8b75f60857cee003615b180d2b"
+        }
+      ],
+      "scope": "Actual nonfading BGM source attenuation relative to each backend baseline gain; raw gains retained; no full BGM synthesizer or fade equivalence claim"
+    }
+  },
+  "published_checker": {
+    "worker_timeout_for_nature_power": 180,
+    "sha256": "e9273be2d423153f0cb09381a258e51a73ba511d1bab6743b5a9e257b4f8dec7",
+    "runtimes": [
+      {
+        "head": "729445bebfb715696c71ff5ec7beb4028debc1b1",
+        "report": "tmp/native-cry-qa/published-nature-power.json",
+        "sha256": "966eda8e62a67e3bf523281706b88bdc888fbf9c42ad47ad166d83779234ef28",
+        "workers": 4,
+        "passed": true
+      },
+      {
+        "head": "5b50e039d71a88469678a798a8ddf31cb8f295f4",
+        "report": "tmp/native-cry-qa/published-nature-power.json",
+        "sha256": "3e8474847e0ace773c038bf9c6389b57d4812691e54106e17c3ecb0ada87e8eb",
+        "workers": 4,
+        "passed": true
+      }
+    ]
+  },
+  "native_species_control_map": {
+    "module_sha256": "a2cfb7b11aba09e5f6735e4ccf0a8169c9b9f2b6f712e8d2caa0fe7b0bdb89a9",
+    "profiles": [
+      {
+        "version": "firered",
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc",
+        "offset": 2439636,
+        "control_table_sha256": "ce1f862369df5567ee685755d5ec34760f2e43b921cd581d46f1ffd82ccf741c",
+        "entries": 135,
+        "all_runtime_ids_equal": true
+      },
+      {
+        "version": "emerald",
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+        "offset": 3274268,
+        "control_table_sha256": "ce1f862369df5567ee685755d5ec34760f2e43b921cd581d46f1ffd82ccf741c",
+        "entries": 135,
+        "all_runtime_ids_equal": true
+      }
+    ]
+  },
+  "existing_import_regressions": {
+    "comparisons": [
+      {
+        "tool": "imported-native-sound-smoke.lua",
+        "cases": 10,
+        "strict_complete_equal": true
+      },
+      {
+        "tool": "imported-mirror-smoke.lua",
+        "cases": 24,
+        "strict_complete_equal": true
+      }
+    ],
+    "logs": [
+      {
+        "tool": "imported-native-sound-smoke.lua",
+        "host": "gen2recomped-native-cry-commands",
+        "sha256": "5a2552ce876b7262164656d139a73d05606452c38811defd1597137fdf24dfa0"
+      },
+      {
+        "tool": "imported-native-sound-smoke.lua",
+        "host": "gen2recomped-native-cry-commands-integration",
+        "sha256": "7fdc8d18f697e08d0db1fee9ba7787de3b6e657e283067ce21cac6469045090a"
+      },
+      {
+        "tool": "imported-mirror-smoke.lua",
+        "host": "gen2recomped-native-cry-commands",
+        "sha256": "c7b62727a1d4f7ac4445c1ea9b544e1aa14d04135009257cfe9fdbe4d213427f"
+      },
+      {
+        "tool": "imported-mirror-smoke.lua",
+        "host": "gen2recomped-native-cry-commands-integration",
+        "sha256": "55c78fe99c2f4f0b9edd9fe3c3af14455e8f0c853c503bb177e3809e979346de"
+      }
+    ]
+  },
+  "scope": "Local CPU validation on admitted FireRed/Emerald native contracts. No GPU/device/playthrough or full public-audio timing claim. Nonfading BGM checks validate attenuation relative to retained per-backend baseline gains.",
+  "next_verified_gap": {
+    "command": "fadeoutbgm 4",
+    "native_stop_tick": 64,
+    "host_stop_tick": 0,
+    "profiles": [
+      "firered",
+      "emerald"
+    ],
+    "scope": "Actual world VMs over owned running BGM-source state; kept separate from cry playback."
+  },
+  "evidence_audit_sha256": {
+    "native-cry-final-contract-audit.json": "6d0c4e3981f3cac8cc118d11dbf77f3f24e9c37c746a8bd6018cddceed2d8907",
+    "native-cry-feature-regression-audit.json": "32622dfc3df0bbc479af39096005a01e9b1ce2b4dace63385b55d80211c5da54",
+    "native-cry-integration-regression-audit.json": "083ea8cc78d76285d2e7960e167c896395397b88da14caf3b45fcc378a5963f7",
+    "native-cry-negative-clock-audit.json": "4c7320d47f59caf91208d8fab906598c62a393e0e66571020f7ef550c37f507a",
+    "native-cry-species-map-final-audit.json": "95e1555a49d4efba60f3851424ec88dc27f4cb1d3c036bc0cea8b900519e0cae",
+    "native-cry-frozen-protocol-audit.log": "aee7f827e1e2ffda60100b46afbeaca0174a8596a92ab022abc81018ca1ecab5"
+  }
+}

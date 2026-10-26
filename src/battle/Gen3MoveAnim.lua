@@ -4018,7 +4018,9 @@ function Gen3MoveAnim:battlerOamY(battle, battler)
   local _, rawY = self:battlerRawCoords(battle, battler)
   if rawY == nil then return nil end
   local centreY
-  if battler.substituteHP and not battler.fainted then
+  local substitute = battle.substituteVisible and battle:substituteVisible(battler)
+  if battle.substituteVisible == nil then substitute = battler.substituteHP end
+  if substitute and not battler.fainted then
     -- GetSubstituteSpriteDefault_Y: raw BATTLER_COORD_Y + 17 (player) / 16
     -- (opponent).  The substitute still uses the ordinary 64x64 battler OAM.
     centreY = rawY + (battler.isPlayer and 17 or 16)
