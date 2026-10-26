@@ -32,6 +32,13 @@ require("src.core.ModCompat").install()
 local Loader = {}
 Loader.__index = Loader
 
+-- Only an already-loaded field service owns resources. Retire it after
+-- wrapper unwind without importing a compatibility module on ordinary boot.
+local function retireFieldEffects()
+  local service=package.loaded['src.core.game3.field_effects']
+  if type(service)=='table' and type(service.release)=='function' then service.release()end
+end
+
 local MOD_STATE_FILE = "mod_state.lua" -- legacy migration only
 
 -- walk a dotted target path without creating anything; the base view a
@@ -1315,6 +1322,7 @@ function Loader:load(data)
   -- again (and the launcher backdrop boots the plain game in between); the
   -- wraps and flags the previous load put on engine tables come off first.
   ModSeams.unwindAll()
+  retireFieldEffects()
   self.baseData = data
   -- every registry folds against the pristine view of its Data target;
   -- resolution is lazy so optional namespaces may appear later
@@ -1654,6 +1662,7 @@ end
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
   local undone = select(1, ModSeams.unwindAll())
+  retireFieldEffects()
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
     Runtime.currentMod = nil
