@@ -212,6 +212,18 @@ function Bag.add(save, id, qty, data)
   return true
 end
 
+-- Read-only admission uses the same pocket/container rules on a detached
+-- inventory. A query can never grant a TM CASE or reorder the live bag.
+function Bag.canAdd(save,id,qty,data)
+  if not(save and type(save.inventory)=='table')then return false end
+  qty=qty or 1
+  if type(qty)~='number'or qty~=qty or qty%1~=0 or qty<=0 or qty>999 then return false end
+  local shadow={inventory={},bagOrder={},gen3PyramidBag=save.gen3PyramidBag and true or nil}
+  for key,value in pairs(save.inventory)do shadow.inventory[key]=value end
+  for i,value in ipairs(save.bagOrder or{})do shadow.bagOrder[i]=value end
+  return Bag.add(shadow,id,qty,data)
+end
+
 -- Saves made before the FRLG AddBagItem parity fix could contain TMs/HMs but
 -- no TM CASE.  Retail never permits that state: acquiring the first machine
 -- inserts ITEM_TM_CASE at the same time.  Repair such old port saves on load

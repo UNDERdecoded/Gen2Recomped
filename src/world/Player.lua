@@ -725,6 +725,7 @@ function Player:freeWalk(vx, vy, map, entities)
 end
 
 function Player:update()
+  local pose=package.loaded["src.compat.gen1.PlayerPose"];if pose then pose.tick(self)end
   -- A PENDING FREE-WALK IS THIS FRAME'S STEP.
   --
   -- Consumed here rather than driven from the input handler so that the

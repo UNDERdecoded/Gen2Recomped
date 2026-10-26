@@ -53,6 +53,8 @@ local TEXT_AREA_ROWS = { 112, 128 }
 local BattleState = {}
 BattleState.__index = BattleState
 BattleState.isOpaque = true
+-- Native source observations identify this admitted controller directly.
+BattleState.isBattleState = true
 
 -- pokered prints the battle lines itself (engine/battle/core.asm and the
 -- move-effect banks), and the importer extracts every one of them, so the
@@ -596,10 +598,7 @@ function BattleState:sgbPalettes()
   return nil
 end
 
-local Rulesets = {
-  gen1_faithful = require("src.battle.rulesets.gen1_faithful"),
-  modern_clean = require("src.battle.rulesets.modern_clean"),
-}
+local Rulesets = require('src.battle.Rulesets')
 
 -- the Poké Ball toss chain (TossBallAnimation) plays even with battle
 -- animations off: PlayMoveAnimation jumps to it before checking wOptions
@@ -1364,6 +1363,12 @@ function BattleState.giveWildHeldItem(data, mon, rng, compoundEyes)
 end
 
 function BattleState.newWild(game, species, level, opts)
+  local authored
+  if opts and opts.wildRecord then
+    local why;authored,why=require('src.battle.WildRecord').validate(game.data,opts.wildRecord)
+    assert(authored,why)
+    assert(authored.species==species and authored.level==level,'encounter identity mismatch')
+  end
   local self = newBattle(game)
   self.kind = "wild"
   local playerMon = Party.firstHealthy(game.save.party)
@@ -1428,6 +1433,7 @@ function BattleState.newWild(game, species, level, opts)
   if opts and opts.roamerSeed then
     Pokemon.applySeed(game.data, wild, opts.roamerSeed)
   end
+  if authored then require('src.battle.WildRecord').apply(game.data,wild,authored)end
   self.enemy = makeBattler(game.data, wild, false)
   require("src.battle.Gen2Wild").initialize(self, opts)
   if self.roamer then
@@ -2593,11 +2599,9 @@ function BattleState:beginMsgLine()
   self.shown[#self.shown + 1] = {}
 end
 
-function BattleState:updateQueue()
-  if self.waitingUI then
-    if self.game.stack:top() ~= self then return true end
-    self.waitingUI = nil
-  end
+-- Only display controllers live here. Command holds, HP awards, turn rows
+-- and completion remain in updateQueue, even while a mod holds presentation.
+function BattleState:updateMovePresentation()
   -- HOENN'S PARTICLES TICK BEFORE THE QUEUE'S OWN HOLD, and the whole
   -- reason the animations looked broken is that they used to tick after it.
   --
@@ -2648,11 +2652,16 @@ function BattleState:updateQueue()
       if not anim.caught then self.gen3Ball = nil end
     end
   end
+end
+
+-- Display-only waits and bar completion. Returning idle grants no command;
+-- only updateQueue may consume a battle row after this gate.
+function BattleState:updateQueuePresentation()
+  self:updateMovePresentation()
+  local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle.anim']
+  if source and source._holdsNativeQueue(self) then return true end
   -- a queued hold (faint slide, hit blink) counts down before the next row
-  if self.waitFrames and self.waitFrames > 0 then
-    self.waitFrames = self.waitFrames - 1
-    return true
-  end
+  if self:stepPresentationWait() then return true end
   -- WaitForSoundToFinish (home/delay.asm:15-20) blocks until the sfx has
   -- actually stopped sounding, which is how the original gives a sound its
   -- own clear window instead of letting the next beat play over it
@@ -2682,6 +2691,15 @@ function BattleState:updateQueue()
     if self:stepExpBar() then return true end
     self.expFilling = nil
   end
+  return false
+end
+
+function BattleState:updateQueue()
+  if self.waitingUI then
+    if self.game.stack:top() ~= self then return true end
+    self.waitingUI = nil
+  end
+  if self:updateQueuePresentation() then return true end
   if self.animPlaying then
     self.animPlayer:update()
     if self.animPlayer.pollEffects and self.applyAnimEffect then
@@ -4270,17 +4288,38 @@ function BattleState:touchpressed(_, px, py)
   end
   return true
 end
+function BattleState:updateBattlerPresentation(dt)
+  for _, b in activeBattlers(self) do
+    if b and b.picAnim then b.picAnim:update(dt) end
+    if b and b.monAnim then b.monAnim:update(dt) end
+  end
+end
+
+function BattleState:stepPresentationWait()
+  if self.waitFrames and self.waitFrames > 0 then
+    self.waitFrames = self.waitFrames - 1
+    return true
+  end
+  return false
+end
+
+-- Advance an ending/pose hold without executing battle commands or input.
+function BattleState:updatePresentation(dt)
+  self:tickFx()
+  self:updateBattlerPresentation(dt)
+  self:updateQueuePresentation()
+end
+
 function BattleState:update(dt)
+  local shortcuts=package.loaded['src.mods.FeatureOptions']and require('src.battle.QuickItem')
+  local quick=shortcuts and shortcuts.request(self)
   self:tickFx()
   -- one sample a second into the fight, while it is still on screen
   self._stadiumReportTicks = (self._stadiumReportTicks or 0) + 1
   if self._stadiumReportTicks == 60 then self:reportStadiumBattle("mid") end
   -- Crystal pic animations run off the wall clock like every other battle
   -- pic effect; a Gold/Silver battler has no picAnim and this is a no-op.
-  for _, b in activeBattlers(self) do
-    if b and b.picAnim then b.picAnim:update(dt) end
-    if b and b.monAnim then b.monAnim:update(dt) end
-  end
+  self:updateBattlerPresentation(dt)
   local input = self.game.input
 
   -- L PUTS THE BOTTOM SCREEN AWAY, AND BRINGS IT BACK.
@@ -4455,6 +4494,7 @@ function BattleState:update(dt)
   end
 
   if self.phase == "menu" then
+    if quick and shortcuts.dispatch(self,quick)then return end
     -- WHO THIS MENU IS FOR, when the left flank is gone.
     --
     -- `self.player` is the left flank, and in a double battle that flank can
@@ -12852,6 +12892,59 @@ function BattleState:drawClassic()
   -- the vanilla link is a no-op so an empty chain costs nothing.
   if Runtime.wantsHook("battle.overlay") then
     Runtime.call("battle.overlay", function() end, self)
+  end
+end
+
+-- Source wrappers observe the real GBA owner. Unrequested modules and other
+-- generations keep the direct native path; there is no additional clock.
+do
+  local update, draw, field, exit, enter = BattleState.update, BattleState.draw,
+    BattleState.drawBattleField, BattleState.exit, BattleState.enter
+  local Clock = require('src.battle.PresentationClock')
+  for _, name in ipairs{'tickFx','updateBattlerPresentation','updateMovePresentation',
+                        'stepHPDrain','stepExpBar','stepPresentationWait','updateQueuePresentation'} do
+    local body = BattleState[name]
+    BattleState[name] = function(self, ...)
+      return Clock.once(self, name, body, ...)
+    end
+  end
+  BattleState._drawNative = draw
+  local battlerDraw = BattleState.drawBattlerPic
+  function BattleState:drawBattlerPic(battler, ...)
+    local anim = GameVersion.isGen3() and package.loaded['src.core.game3.battle.anim']
+    if anim then return anim._drawBattler(self, battler, battlerDraw, ...) end
+    return battlerDraw(self, battler, ...)
+  end
+  function BattleState:enter()
+    enter(self)
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeEnter(self) end
+  end
+  function BattleState:update(dt)
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    local anim = source and package.loaded['src.core.game3.battle.anim']
+    if anim then
+      return Clock.run(self, dt, function()
+        return source._nativeUpdate(self, dt, update)
+      end)
+    end
+    if source then return source._nativeUpdate(self, dt, update) end
+    return update(self, dt)
+  end
+  function BattleState:draw()
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeDraw(self, draw) end
+    return draw(self)
+  end
+  function BattleState:drawBattleField()
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeField(self, field) end
+    return field(self)
+  end
+  function BattleState:exit()
+    local source = package.loaded['src.core.game3.battle']
+    if source then source._nativeExit(self) end
+    return exit(self)
   end
 end
 

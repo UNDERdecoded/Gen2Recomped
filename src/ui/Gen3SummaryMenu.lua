@@ -517,6 +517,7 @@ function Gen3SummaryMenu:update(dt)
   if self.monAnim then self.monAnim:update(dt) end
   local input = self.game.input
   if not input then return end
+  if package.loaded['src.mods.FeatureOptions']and require('src.ui.TrainingDetails').input(self,input)then return end
   if type(self.choose) == "table" then
     self:chooseInput(input)
     return
@@ -928,6 +929,7 @@ function Gen3SummaryMenu:drawHeader()
   if not mon then return end
   local name = mon.nickname or (def and def.name) or tostring(mon.species)
   local title = self.pages[self.page] or ""
+  if package.loaded['src.mods.FeatureOptions']then title=require('src.ui.TrainingDetails').title(self,title)end
   if self.hasArt then
     -- THE PANEL, MEASURED.  Its picture box is the striped rectangle in the
     -- art: x 8..71, y 32..95, which is exactly 64 by 64 -- a Gen 3 front pic.
@@ -1281,7 +1283,9 @@ local STAT_ROWS = {
 
 function Gen3SummaryMenu:drawSkills()
   local mon = self.mon
-  local stats = mon and mon.stats or {}
+  local details=package.loaded['src.mods.FeatureOptions']and require('src.ui.TrainingDetails')
+  local training=details and details.stats(self)
+  local stats = training or mon and mon.stats or {}
   local Y = self:rows()
   local labelX, valueX, rightLabelX, rightValueX = self:cols()
   -- the six stat names come off the cartridge in ITS order (HP last); this
@@ -1314,7 +1318,7 @@ function Gen3SummaryMenu:drawSkills()
     local rowY = statY[left and i or (i - 3)] or Y[2]
     local label = romLabel[row.key] or Strings(row.label)
     local value
-    if row.key == "hp" then
+    if row.key == "hp"and not training then
       value = ("%d/%d"):format(mon.hp or 0, stats.hp or 0)
     else
       value = tostring(stats[row.key] or 0)
@@ -1777,7 +1781,9 @@ function Gen3SummaryMenu:drawFireRed(r)
   end
 
   -- header windows: page name (0,0)+4,1; level (0,2)+4,2; nickname +40; gender +105
-  frlgText(self.pages[self.page], 4, 1, header)
+  local title=self.pages[self.page]
+  if package.loaded['src.mods.FeatureOptions']then title=require('src.ui.TrainingDetails').title(self,title)end
+  frlgText(title, 4, 1, header)
   if not mon then return end
   local t = r.text or {}
   if not detail then
@@ -1835,8 +1841,10 @@ function Gen3SummaryMenu:drawFireRed(r)
     end
   elseif self.page == 2 then
     local px, py = 160, 16
-    local stats = mon.stats or {}
-    frlgRight(("%d/%d"):format(mon.hp or 0, stats.hp or 0), px + 77, py + 4, pane)
+    local details=package.loaded['src.mods.FeatureOptions']and require('src.ui.TrainingDetails')
+    local training=details and details.stats(self)
+    local stats = training or mon.stats or {}
+    frlgRight(training and tostring(stats.hp or 0)or("%d/%d"):format(mon.hp or 0, stats.hp or 0), px + 77, py + 4, pane)
     local order = { "attack", "defense", "spatk", "spdef", "speed" }
     for i, key in ipairs(order) do
       frlgRight(tostring(stats[key] or 0), px + 77, py + 22 + (i - 1) * 13, pane)

@@ -5594,60 +5594,6 @@ function OverworldState:startWaterAnim(cx, cy, onDone)
   self.waterAnim = { x = cx, y = cy, frames = 40, total = 40, onDone = onDone }
 end
 
--- TWO VOCABULARIES FOR THE SAME FOUR DIRECTIONS, and they never met.
---
--- The tileset's ledge table names its directions the way the CARTRIDGE does:
--- MB_JUMP_EAST, MB_JUMP_SOUTH -- so the extracted table reads
--- `[0x3B] = "south"`.  Movement here names them the way the PLAYER'S INPUT
--- does: up, down, left, right.  The test below compared one against the other
--- and, of course, never matched -- and then took the early return that says
--- "a dataset that names its ledges by behaviour has said all it has to say",
--- so it did not fall through to anything either.
---
--- The result was the exact bug the table was added to fix, still standing
--- with the table in place: every ledge in Hoenn a wall, no route down off any
--- terrace in the region.  Both halves were right on their own and the join
--- was never driven.
---
--- So the join is one function, and it accepts either word.  A dataset or a
--- mod may say "north" or "up" and mean the same thing.
-local LEDGE_DIRECTIONS = {
-  north = "up", south = "down", west = "left", east = "right",
-  up = "up", down = "down", left = "left", right = "right",
-}
-
-local function ledgeDirection(word)
-  return word and LEDGE_DIRECTIONS[word] or nil
-end
-
--- The eight Gen 3 ledge behaviours, by the direction you must be walking to
--- take them (metatile_behaviors.h). The four diagonals are listed under the
--- axis a cardinal input can satisfy: Emerald lets a diagonal ledge be entered
--- from either of its two components, and up/down is the one this engine's
--- movement can express.
-local GEN3_LEDGE_BEHAVIOURS = {
-  [0x38] = "right",   -- MB_JUMP_EAST
-  [0x39] = "left",    -- MB_JUMP_WEST
-  [0x3A] = "up",      -- MB_JUMP_NORTH
-  [0x3B] = "down",    -- MB_JUMP_SOUTH
-  [0x3C] = "up",      -- MB_JUMP_NORTHEAST
-  [0x3D] = "up",      -- MB_JUMP_NORTHWEST
-  [0x3E] = "down",    -- MB_JUMP_SOUTHEAST
-  [0x3F] = "down",    -- MB_JUMP_SOUTHWEST
-}
-
--- BLACK / WHITE'S FOUR, from the tile records' behaviour byte (Gen5Field):
--- measured over every zone, 0x72 / 0x73 only ever run in columns and 0x74 /
--- 0x75 only in rows, and Route 2's two ledges (y 16 and 20, facing south) are
--- 0x75 -- Generation IV's east / west / north / south order, carried on.
--- Reported from play: "allow hoppable ledges to work, they currently don't".
-local GEN5_LEDGE_BEHAVIOURS = {
-  [0x72] = "right",
-  [0x73] = "left",
-  [0x74] = "up",
-  [0x75] = "down",
-}
-
 -- Ledge hops (data/tilesets/ledge_tiles.asm): standing tile + ledge tile
 -- in front + matching input direction -> jump two cells.
 function OverworldState:checkLedgeHop(dir)
@@ -5658,60 +5604,13 @@ function OverworldState:checkLedgeHop(dir)
   if not self.map:inBounds(fx, fy) then return false end
   local front = self.map:cellTile(fx, fy)
 
-  -- A GEN 3 LEDGE IS A PROPERTY OF THE TILE IN FRONT, not of a pair.
-  --
-  -- Gen 1 and Gen 2 decide a hop from (tile you stand on, tile in front,
-  -- direction) because their tilesets have no room to say more.  Gen 3 says
-  -- it outright: the metatile's behaviour byte IS "you jump this, eastward".
-  -- Nothing derived a pair table for Hoenn, so field.ledges was empty and
-  -- every ledge in the region was simply a wall -- there was no route down
-  -- off any terrace in the game.
-  --
-  -- cellBehaviour rather than cellTile because a ledge is blocked, and
-  -- cellTile answers $FF for anything blocked.
-  --
-  -- ...AND NOTHING EVER SUPPLIED THE TABLE. `field.ledgeBehaviours` is read
-  -- here and written nowhere: no importer produces it and no dataset ships
-  -- one, so `byBehaviour` was nil on every map in the game and Hoenn fell
-  -- through to the pair tables below -- which are Gen 1 and Gen 2 rows keyed
-  -- by tile id, and match nothing on a Gen 3 pair. Every ledge in Hoenn was
-  -- a wall you could not hop.
-  --
-  -- The cartridge's own answer is a fixed run of eight behaviour bytes
-  -- (metatile_behaviors.h, MB_JUMP_EAST through MB_JUMP_SOUTHWEST), so it is
-  -- stated here rather than derived. A dataset that ships its own table
-  -- still wins; this only fills the gap. Gated on the pair shape -- 2x2
-  -- tiles to a metatile, one collision cell -- because those byte values
-  -- mean something else entirely in Kanto and Johto.
-  local byBehaviour = self.map.tileset and self.map.tileset.ledgeBehaviours
-    or Game.data.field and Game.data.field.ledgeBehaviours
-  -- first on a Black / White zone: its stand-in tileset carries Platinum's
-  -- table, whose codes mean other things here
-  if self.map.def and self.map.def.gen5 then byBehaviour = GEN5_LEDGE_BEHAVIOURS end
-  if not byBehaviour then
-    local ts = self.map.tileset
-    if ts and tonumber(ts.blockTiles) == 2 and tonumber(ts.blockCells) == 1
-       and ts.collision then
-      byBehaviour = GEN3_LEDGE_BEHAVIOURS
+  local handled, x, y, distance, silent = require("src.world.Ledge").approach(
+    self.map, Game.data, p.cellX, p.cellY, dir)
+  if handled then
+    if x then
+      if distance then return self:startLedgeHop(dir, x, y, distance, silent) end
+      return self:startLedgeHop(dir, x, y)
     end
-  end
-  if byBehaviour then
-    local behaviour = self.map:cellBehaviour(fx, fy)
-    if behaviour and ledgeDirection(byBehaviour[behaviour]) == dir then
-      -- PLATINUM'S DOUBLE JUMP, the Distortion World's: `JUMP_*_TWICE`
-      -- (0x5A..0x5D) plays MOVEMENT_ACTION_JUMP_DISTORTION_WORLD_*, which
-      -- moves 2 units a frame for 24 frames -- THREE tiles, against an
-      -- ordinary ledge's 16 frames and two -- and passes SEQ_NONE, so it is
-      -- silent (pokeplatinum src/unk_020655F4.c). All 224 such tiles are in
-      -- the D34 rooms; taken as ordinary ledges they landed a tile short.
-      if (self.map.def and self.map.def.generation) == 4
-         and behaviour >= 0x5A and behaviour <= 0x5D then
-        return self:startLedgeHop(dir, fx, fy, 3, true)
-      end
-      return self:startLedgeHop(dir, fx, fy)
-    end
-    -- a dataset that names its ledges by behaviour has said all it has to
-    -- say; the pair tables below are the older generations' answer
     return false
   end
   if self:gen2LedgeAllows(standing, dir) then
@@ -7236,7 +7135,35 @@ function OverworldState:tryPcTile(fx, fy)
   return false
 end
 
+function OverworldState:scriptRunning()
+  return (self.runner and self.runner:isRunning()) and true or false
+end
+
+function OverworldState:busy()
+  local field=package.loaded["src.core.game3.field"]
+  if GameVersion.isGen3()and field and field._locked(Game,self)then return true end
+  -- Gen2's world lives below overlays. A movement wrapper runs after the
+  -- native body, including a START/A press that just opened a screen: it
+  -- must not move behind that new owner on the same tick.
+  if GameVersion.isGen2() then
+    if self.battleActive then return true end
+    local stack = Game and Game.stack
+    local top = stack and stack.top and stack:top()
+    if top and top ~= self then return true end
+  end
+  return (self:scriptRunning() or (self.scriptMoves and #self.scriptMoves > 0)
+    or self.engaging or self.emote or self.teleportOut or self.whirlSpin
+    or self.gen4Waterfall or self.transitioning or self.flyAnim or self.fishing
+    or (self.player and (self.player.stairExit or self.player.inputLocked or self.player.fieldMove))
+    or (self.pendingScripts and self.pendingScripts[1])) and true or false
+end
+
 function OverworldState:interact()
+  local field=package.loaded["src.core.game3.field"]
+  if GameVersion.isGen3()and field then return field._dispatch(Game,self,function()return self:_interactBody()end)end
+  return self:_interactBody()
+end
+function OverworldState:_interactBody()
   local p = self.player
   local fx, fy = p:facingCell()
 
@@ -10235,13 +10162,8 @@ function OverworldState:gen2SweetScentEncounter(deferFailure)
     if contest then enc = BugContest.rollEncounter(Game)
     elseif slots and (GameVersion.isGen3() or (slots.rate or 0) > 0) then
       if GameVersion.isGen3() then
-        local Roam=require("src.world.Gen3Roamers")
-        if Roam.check(Game.data,Game.save,self.map.id,love.math.random) then
-          enc=Roam.encounterFor(Game.data,Game.save)
-          if enc then roamer="gen3" end
-        end
-      end
-      if not enc then enc = Encounter.chooseTable(slots) end
+        enc,roamer=Encounter.sweetScent(Game.data,Game.save,self.map.def,self.map.id,water,true,love.math.random)
+      else enc = Encounter.chooseTable(slots) end
     end
   end
   if not enc then
@@ -13547,7 +13469,10 @@ function OverworldState:onStepComplete()
         local okT, T = pcall(require, "src.import.Gen4Text")
         g4line = okT and T.resolve(Game.data, hgss and 40 or 213, hgss and 65 or 79, Game) or nil
       end
-      Game.stack:push(TextBox.new(Game, g4line or Strings("REPEL's effect\nwore off.")))
+      local again=GameVersion.isGen3()and package.loaded['src.mods.FeatureOptions']and function()
+        require('src.ui.RepelPrompt').show(Game)
+      end or nil
+      Game.stack:push(TextBox.new(Game, g4line or Strings("REPEL's effect\nwore off."),again))
       return
     end
   end
@@ -16854,7 +16779,7 @@ function OverworldState:poseBerryTrees()
   end
 end
 
-function OverworldState:drawWorld()
+local function drawWorldBody(self)
   -- Dark-map BG shade shift, armed for the whole frame before anything draws.
   -- home/fade.asm's LoadGBPal writes ONE rBGP for the screen, so terrain, the
   -- characters standing on it and any dialog over them darken together (#322);
@@ -17923,7 +17848,7 @@ function OverworldState:drawWorld()
           e.spriteOffset and e.spriteOffset.lift, e.spriteOffset and e.spriteOffset.oz)
         -- UNDER the sprite, and lifted by the same terrain rise it is, so a
         -- character on a slope keeps their feet on it.
-        if shadows then
+        if shadows and not e.customSourceActor then
           if depth then
             spriteDepthGround:withSpriteDepth(depth, function()
               shadows:draw(self.map, e, cam.x, cam.y, e == self.player, riseOf(e))
@@ -18860,6 +18785,20 @@ function OverworldState:captureSave(save)
     -- where they were then (setMap only reads this on a continue)
     save.gen4Objects = any and { [self.map.id] = here } or nil
   end
+end
+
+function OverworldState:drawWorld()
+  local field=package.loaded["src.core.game3.field_view"]
+  if not GameVersion.isGen3()then return drawWorldBody(self)end
+  local effects=package.loaded["src.core.game3.field_effects"]
+  if effects and effects._hasActorExtensions and effects._hasActorExtensions()then
+    return require('src.compat.gen1.SourceActors').withActors(Game,self,function()
+      if field then return field._nativeDraw(Game,self,drawWorldBody)end
+      return drawWorldBody(self)
+    end)
+  end
+  if field then return field._nativeDraw(Game,self,drawWorldBody)end
+  return drawWorldBody(self)
 end
 
 return OverworldState

@@ -801,11 +801,16 @@ end
 -- carries you between levels.  Reported from play: "unable to walk down the
 -- stairs into the beach's low water" -- Mossdeep's stairs are 0 and the
 -- shallow water 3; keeping the upper ground's 4 on the stairs walled it off.
+function Map.elevationTransition(at, there, previous)
+  if there == nil or there == ELEVATION_UNDER_BRIDGE or previous == ELEVATION_UNDER_BRIDGE then
+    return at, nil
+  end
+  return there, there ~= ELEVATION_ANY and there or nil
+end
 function Map:elevationAfter(at, cx, cy, px, py)
-  local there = self:cellElevation(cx, cy)
-  if there == nil or there == ELEVATION_UNDER_BRIDGE then return at end
-  if px and py and self:cellElevation(px, py) == ELEVATION_UNDER_BRIDGE then return at end
-  return there
+  local previous = px and py and self:cellElevation(px, py) or nil
+  local elevation = Map.elevationTransition(at, self:cellElevation(cx, cy), previous)
+  return elevation
 end
 
 -- A CELL A SCRIPT SHUT, as opposed to one the shipped map ships shut.

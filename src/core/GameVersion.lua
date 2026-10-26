@@ -1117,6 +1117,14 @@ end
 -- ways no amount of widening an `isGen2()` reaches -- a filesystem instead of
 -- a flat ROM, two screens instead of one, and a 3D field.  This exists so the
 -- Gen 4 work has a gate to hang itself on without touching the branches the
+-- Registered GBA family for source mod probes; cache/save ownership stays native.
+local gbaLayouts={firered='frlg',leafgreen='frlg',ruby='rse',sapphire='rse',emerald='rse'}
+function GameVersion.layout(id,versionId)
+  if id==GameVersion then id=versionId end
+  local info=GameVersion.info(id)
+  return info and(info.layout or gbaLayouts[info.id])or nil
+end
+
 -- other three generations take.
 function GameVersion.isGen4(id)
   return GameVersion.generation(id) == 4

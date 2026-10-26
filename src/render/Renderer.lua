@@ -320,6 +320,7 @@ end
 
 -- transparent: the world pass shows through (UI pass draws overlays only)
 function Renderer:beginFrame(transparent)
+  self.frameSerial=(self.frameSerial or 0)+1
   -- a frame that ends early -- a state that returns before endFrame, an error
   -- caught upstream -- must not leak a queued native-resolution draw into the
   -- next frame's composite
