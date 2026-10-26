@@ -13,6 +13,9 @@
 return {
   name = "gen3_emerald",
 
+  -- Gen 3 uses wide stats and applies burn/screens/weather before the +2.
+  baseDamageStyle = "gba",
+
   -- The 1/256 miss is GONE.  Gen 1 rolled rand(0..255) against
   -- floor(acc * 255 / 100), so a 100%-accurate move still failed on a roll of
   -- 255.  Gen 3 checks accuracy as a percentage out of 100 and a move at 100%
