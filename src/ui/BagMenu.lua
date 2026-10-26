@@ -1234,11 +1234,14 @@ function BagMenu.new(game, opts)
         options[#options + 1] = { label = Strings("QUIT"), onSelect = function() end }
       end
       local th = #options * 2 + 1
-      game.stack:push(Menu.new(game, options, gen2
+      local actions = Menu.new(game, options, gen2
         and { tx = 0, ty = 12 - th, tw = 7, th = th }
-        or { tx = 13, ty = 10, tw = 7, th = th }))
+        or { tx = 13, ty = 10, tw = 7, th = th })
+      actions.publicUIKind = "bag_actions"
+      game.stack:push(actions)
     end,
   })
+  list.publicUIKind, list.publicUIBattle = "bag", battle
   if gen2 then list.sgbPalettes = packPalettes end
   return list
 end
