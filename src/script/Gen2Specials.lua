@@ -716,12 +716,16 @@ function Commands.g2_pokemon_center_pc(ctx)
   answer(ctx, 0)
 end
 
--- PlayerPC is a Menu of its own, so it closes on its LOG OFF row and on B.
--- Neither reaches this script, so there is nothing to wait on: push it and
--- answer, exactly as g2_card_flip does.
+-- The house script branches on the accumulated decoration-change bit only
+-- after LOG OFF/B. Returning before the menu closes silently skips its reload.
 function Commands.g2_players_house_pc(ctx)
-  require("src.ui.Screens").push(ctx.game, "PlayerPC")
-  answer(ctx, 0)
+  local runner=ctx.runner
+  local done,changed=false,false
+  require("src.ui.Screens").push(ctx.game,"PlayerPC",{house=true,onDone=function(value)
+    if done then return end;done=true;changed=value==true;runner:resume()
+  end})
+  runner:yield()
+  answer(ctx,changed and 1 or 0)
 end
 
 -- ---------------------------------------------------------------------------

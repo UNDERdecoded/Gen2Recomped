@@ -48,8 +48,13 @@ local function openMenu(game)
   return bm
 end
 
--- rows are BindingsMenu's BUTTONS order; 5 = A, 6 = B
-local ROW_A, ROW_B = 5, 6
+-- Find actions by their public menu row metadata, not by a generation's order.
+local function row(menu, action)
+  for i, item in ipairs(menu.items) do
+    if item.button and item.button.id == action then return i end
+  end
+  error("missing controls row: " .. action)
+end
 
 -- The mechanism, pinned so a future "just apply it immediately" revert
 -- fails here: a rebind overwrites whatever the key used to do, so B = Z
@@ -73,14 +78,14 @@ check(game.save.options.bindings == nil,
       "escaping a capture writes no binding")
 eq(game.wroteOptions, 0, "and does not touch options on disk")
 
-bm.index = ROW_B
+bm.index = row(bm, "b")
 press(bm, "a")
 bm:onKeyPressed("z")
 check(game.save.options.bindings == nil,
       "a capture holds its press; nothing stores before the release (#589)")
 bm:onKeyReleased("z")
 eq(game.save.options.bindings.b.key, "z", "releasing the press stores B = Z")
-eq(bm.items[ROW_B].right, "Z/B", "the row shows the new key straight away")
+eq(bm.items[row(bm, "b")].right, "Z/B", "the row shows the new key straight away")
 eq(game.wroteOptions, 1, "the choice persists immediately")
 eq(Input.keyBindings["z"], "a",
    "but the live map still reads Z as A while the screen is open (#510)")
@@ -90,12 +95,12 @@ eq(#game.stack.states, 1, "capturing Z does not close the screen")
 -- inherits B's previous key and no key serves two rows (#589)
 eq(game.save.options.bindings.a.key, "x",
    "capturing A's key for B hands A the old B key")
-eq(bm.items[ROW_A].right, "X/A", "and the A row redraws with it")
+eq(bm.items[row(bm, "a")].right, "X/A", "and the A row redraws with it")
 
 -- the next Z the player presses is still confirm, so the A row can be armed
-bm.index = ROW_A
+bm.index = row(bm, "a")
 press(bm, "a")
-eq(bm.capture, bm.items[ROW_A], "the A row arms instead of the screen closing")
+eq(bm.capture, bm.items[row(bm, "a")], "the A row arms instead of the screen closing")
 bm:onKeyPressed("x")
 bm:onKeyReleased("x")
 eq(game.save.options.bindings.a.key, "x", "re-capturing A's own key keeps it")
@@ -117,16 +122,18 @@ eq(Input.keyBindings["z"], "b", "a reload reaches the same map as the close")
 Input:init()
 local padGame = newGame()
 local padBm = openMenu(padGame)
-padBm.index = ROW_B
+padBm.index = row(padBm, "b")
 press(padBm, "a")
 padBm:onGamepadPressed("y")
 padBm:onGamepadReleased("y")
 eq(padGame.save.options.bindings.b.pad, "y", "a pad capture stores")
-eq(Input.padBindings["y"], nil, "and stays out of the live pad map until close")
+eq(Input.padBindings["y"], "x", "pad Y keeps its default DS X action until close")
+eq(padGame.save.options.bindings.x.pad, "b", "DS X inherits the captured row's pad B")
+eq(Input.padBindings["b"], "b", "the donor swap is also deferred until close")
 
 -- a second input going down while the first is held backs the capture out
 -- with no keyboard in reach, the pad's Escape (#589)
-padBm.index = ROW_A
+padBm.index = row(padBm, "a")
 press(padBm, "a")
 padBm:onGamepadPressed("x")
 padBm:onGamepadPressed("b")
@@ -139,6 +146,20 @@ eq(padGame.save.options.bindings.a, nil,
 
 press(padBm, "b")
 eq(Input.padBindings["y"], "b", "closing commits the pad half too")
+eq(Input.padBindings["b"], "x", "closing commits the DS X donor half")
+
+-- A genuinely unbound input must also remain absent until the screen closes.
+Input:init()
+local spareGame = newGame()
+local spareBm = openMenu(spareGame)
+spareBm.index = row(spareBm, "a")
+press(spareBm, "a")
+spareBm:onGamepadPressed("leftstick")
+spareBm:onGamepadReleased("leftstick")
+eq(spareGame.save.options.bindings.a.pad, "leftstick", "unbound pad capture stores")
+eq(Input.padBindings.leftstick, nil, "unbound pad remains absent while the menu is open")
+press(spareBm, "b")
+eq(Input.padBindings.leftstick, "a", "closing activates the newly bound pad")
 
 Input:init()
 T.finish("rebind_capture_bug510")

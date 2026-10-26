@@ -20,6 +20,7 @@ local Logger = require("src.core.Logger")
 local Probe = require("src.core.Probe")
 local Map = require("src.world.Map")
 local MapLoader = require("src.world.MapLoader")
+local LiveMaps = require("src.world.LiveMaps")
 local NPC = require("src.world.NPC")
 local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
@@ -28,6 +29,7 @@ local Runtime = require("src.mods.Runtime")
 local Screens = require("src.ui.Screens")
 local ScriptRunner = require("src.script.ScriptRunner")
 local GameVersion = require("src.core.GameVersion")
+local Gen2Clock = require("src.core.Gen2Clock")
 local Tilt = require("src.render.Tilt")
 local TextBox = require("src.render.TextBox")
 local Transition = require("src.render.Transition")
@@ -283,7 +285,7 @@ local function objectTodBit()
   local ow = Game and Game.overworld
   local bit = ow and tonumber(ow.objectTodBit)
   if bit then return bit end
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   if period and tonumber(period.bit) then return tonumber(period.bit) end
   return TOD_BITS[objectTimeOfDay()] or TOD_BITS.DAY
 end
@@ -2186,6 +2188,10 @@ function OverworldState:neighborReach()
   return rw, rh, vw, vh
 end
 
+function OverworldState:liveMaps()
+  return LiveMaps.snapshot(self)
+end
+
 function OverworldState:rebuildNeighbors()
   local mapId = self.map.id
   self.neighbors = {}
@@ -2202,11 +2208,13 @@ function OverworldState:rebuildNeighbors()
                                                      hops, reachW, reachH)) do
     keep[n.id] = true
     local m = MapLoader.load(Game.data, n.id)
-    table.insert(self.neighbors, { map = m, ox = n.ox, oy = n.oy })
+    table.insert(self.neighbors, { map = m, ox = n.ox, oy = n.oy, cx = n.ox / 16, cy = n.oy / 16 })
   end
   -- bound resident memory: drop maps behind us that are neither current nor
   -- a drawn neighbor, releasing their window batch / border image / atlas
   MapLoader.trim(keep)
+  LiveMaps.preparing(self)
+
 
   -- visual-only NPCs on connected maps (survey zoom): same spawn filter
   -- as a real map entry, but they never join self.entities -- no sight
@@ -2236,7 +2244,6 @@ function OverworldState:rebuildNeighbors()
     -- the seam offset in CELLS.  Everything in this engine steps on a 16px
     -- grid whatever the dataset's block size, and a connection offset is a
     -- whole number of blocks, so this is always exact.
-    nb.cx, nb.cy = nb.ox / 16, nb.oy / 16
     for _, obj in ipairs(nb.map.def.objects or {}) do
       if objectVisible(Game.save, nb.map.id, obj) and not offMap(nb.map.def, obj) then
         local npc = pooledNPC(self.npcPool, Game.data, nb.map.id, obj)
@@ -2248,6 +2255,7 @@ function OverworldState:rebuildNeighbors()
     end
   end
   self.cast = nil
+  LiveMaps.updated(self)
 end
 
 -- ONE CAST, IN EVERY LOADED MAP'S OWN CELLS.
@@ -2391,7 +2399,7 @@ local function sameTod(tod) return tod end
 -- < 4 NITE, < 10 MORN, < 18 DAY, else NITE.  Gen 1 has no clock at all, so
 -- only Gen 2 consults the host one.
 local function clockTimeOfDay()
-  local hour = tonumber(os.date("%H")) or 12
+  local hour = Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil)
   if hour < 4 then return "NITE" end
   if hour < 10 then return "MORNING" end
   if hour < 18 then return "DAY" end
@@ -2404,7 +2412,7 @@ OverworldState.clockTimeOfDay = clockTimeOfDay
 
 -- The cartridge's MAPOBJECT_TIMEOFDAY bit for the hour on the clock right now.
 function OverworldState.clockTimeOfDayBit()
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   return (period and tonumber(period.bit)) or TOD_BITS.DAY
 end
 
@@ -2427,6 +2435,7 @@ function OverworldState:syncGen2Tod(tod)
 end
 
 function OverworldState:timeOfDay()
+  if GameVersion.isGen2() then Gen2Clock.weekday(Game and Game.save) end
   local tod = GameVersion.isGen2() and clockTimeOfDay() or (self.tod or "DAY")
   if not Runtime.wantsHook("world.tod") then
     if tod ~= self.tod then
@@ -2462,6 +2471,12 @@ function OverworldState:timeOfDay()
   self:syncGen2Tod(self.tod)
   return self.tod
 end
+
+-- Legacy callers and native scripts read the same saved RTC offset. Both
+-- dot and colon calls are observational; no cached second clock on World.
+function OverworldState.hour() return Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.minute() return Gen2Clock.minute(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.weekday() return Gen2Clock.weekday(GameVersion.isGen2() and Game and Game.save or nil) end
 
 function OverworldState:paletteNameFor(map)
   local palettes = FieldDefaults.field(Game.data, "palettes")
@@ -3424,6 +3439,34 @@ function OverworldState:checkSpecialPhoneCall()
   Game.save.g2CurCaller = caller
   self:queueScript(script, { phoneCaller = caller,
     onDone = function() Game.save.g2CurCaller = nil end })
+  Gen2Commands.announceIncomingCall(Game.data, caller, Game.save.g2SpecialCallActive)
+end
+
+-- A purchase is already committed at trainer reload. Its original phone
+-- program waits for the trainer's queued dialogue and overlays to finish.
+function OverworldState:checkMomShoppingCall()
+  local pending=self.g2MomCallPending
+  if not pending then return false end
+  if pending.save~=Game.save or pending.data~=Game.data then self.g2MomCallPending=nil;return false end
+  local top=Game.stack and Game.stack.top and Game.stack:top()
+  if top and top~=self then return false end
+  if self.player and(self.player.moving or self.player.targetX or self.player.stairExit or self.player.inputLocked)then return false end
+  if self.transitioning or self.runner:isRunning()or #(self.scriptMoves or{})>0 or self.engaging or self.emote or
+      self.teleportOut or self.whirlSpin or self.gen4Waterfall or self.flyAnim or self.fishing or
+      self.pendingScripts and self.pendingScripts[1]then return false end
+  self.g2MomCallPending=nil
+  local purchase=pending.purchase
+  Game.save.g2CurCaller=purchase.caller
+  pcall(function()require("src.core.Sound").play(Game.data,"Call")end)
+  self:queueScript(purchase.script,{phoneCaller=purchase.caller,onDone=function()
+    if Game.save~=pending.save or Game.data~=pending.data then return end
+    Game.save.g2CurCaller=nil
+    require("src.script.Gen2Commands").resetCallDelay(Game.save,math.floor(require("src.core.SaveData").playSeconds(Game.save)/60))
+    pcall(function()require("src.core.Sound").play(Game.data,"Hang_Up")end)
+  end})
+  local commands=require("src.script.Gen2Commands")
+  if commands.announceIncomingCall then commands.announceIncomingCall(Game.data,purchase.caller)end
+  return true
 end
 
 -- CheckPhoneCall (36:$4074): the random incoming call, rolled on every step
@@ -3459,6 +3502,7 @@ function OverworldState:checkIncomingPhoneCall()
     Game.save.g2CurCaller = nil
     pcall(function() require("src.core.Sound").play(Game.data, "Hang_Up") end)
   end })
+  Gen2Commands.announceIncomingCall(Game.data, id)
 end
 
 function OverworldState:update(dt)
@@ -3793,6 +3837,7 @@ function OverworldState:update(dt)
   -- not an event, and the check is two flag reads.
   self:applyForcedBike()
   self:checkSpecialPhoneCall()
+  self:checkMomShoppingCall()
   self:checkBugContestClock()
   -- world.tick: the per-frame seam for mods that simulate something in the
   -- overworld rather than draw it.
@@ -7263,6 +7308,12 @@ function OverworldState:npcAtCell(cx, cy)
   return nil
 end
 
+-- The continuation receives the original opaque world and NPC handles.
+-- Keep it outside interact so an unhooked A press allocates no closure.
+local function vanillaTalk(world, target)
+  world:talkTo(target)
+end
+
 -- what the A press resolved to, for world.interacted's listeners
 -- A LINE THE CARTRIDGE ITSELF PRINTS, named by the import rather than typed
 -- here.  `constants.gen3<name>` holds a TEXT_ key and the text pool holds the
@@ -7470,7 +7521,7 @@ function OverworldState:interact()
       -- rules, answered mid-step like the Pikachu above
       if not npc.hidden then require("src.world.HgssFollowMon").talk(Game, self, npc) end
     elseif not npc.moving then
-      self:talkTo(npc)
+      Runtime.call("world.talk", vanillaTalk, self, npc)
     end
     interacted(self, fx, fy, "npc", npc)
     return
@@ -11817,6 +11868,8 @@ function OverworldState:trainerDefeated(npc)
   return false
 end
 
+OverworldState.prepareTrainerBattle = require("src.battle.TrainerPreparation").prepare
+
 -- Run the pre-battle text -> battle -> won text -> flags sequence.
 function OverworldState:engageTrainer(npc, onDone)
   local d = npc.def
@@ -11831,7 +11884,7 @@ function OverworldState:engageTrainer(npc, onDone)
   local wonText = header and header.won and Game.data.text[header.won]
 
   local BattleState = require("src.battle.BattleState")
-  Game.stack:push(TextBox.new(Game, battleText, function()
+  local function startBattle(options)
     -- A TEAM THE AUTHOR BUILT WINS OVER AN INDEX INTO SOMEBODY ELSE'S.
     --
     -- `trainerParty` selects one of the parties the cartridge shipped for
@@ -11842,10 +11895,10 @@ function OverworldState:engageTrainer(npc, onDone)
     local battle
     if type(d.trainerTeam) == "table" and #d.trainerTeam > 0 then
       battle = BattleState.newEditorTrainer(Game, d.trainerTeam,
-                                            d.trainerClass, d.trainerName)
+                                            d.trainerClass, d.trainerName, options)
     end
     battle = battle or BattleState.newTrainer(Game, d.trainerClass,
-                                              d.trainerParty)
+                                              d.trainerParty, options)
     -- PrintEndBattleText (home/trainers.asm:341) is called from
     -- TrainerBattleVictory (engine/battle/core.asm:942), i.e. ON the battle
     -- screen once ScrollTrainerPicAfterBattle has brought the beaten trainer
@@ -11874,6 +11927,34 @@ function OverworldState:engageTrainer(npc, onDone)
       end
     end
     self:pushBattle(battle)
+  end
+  Game.stack:push(TextBox.new(Game, battleText, function()
+    local liveGame, liveSave, liveData, liveStack, liveSession = Game, Game.save, Game.data, Game.stack, Game.sessionStartedAt
+    local map, def = self.map, npc.def
+    local class, party, npcId, team = d.trainerClass, d.trainerParty, npc.id, d.trainerTeam
+    local wasEngaging = self.engaging
+    self.engaging = true
+    OverworldState.prepareTrainerBattle(Game, {
+      trainerClass = class, partyIndex = party or 1, mapId = map.id, npcId = npc.id,
+    }, function(options)
+      self.engaging = wasEngaging
+      startBattle(options)
+    end, function()
+      self.engaging = wasEngaging
+      self.spotHush = { cellX = self.player.cellX, cellY = self.player.cellY, [npc] = true }
+      if onDone then onDone() end
+    end, function()
+      if Game ~= liveGame or self.map ~= map or npc.id ~= npcId or npc.def ~= def
+        or d.trainerTeam ~= team or def.trainerClass ~= class
+        or def.trainerParty ~= party then return false end
+      for _, actor in ipairs(self.npcs or {}) do if actor == npc then return true end end
+      return false
+    end, function()
+      if Game == liveGame and Game.save == liveSave and Game.data == liveData
+        and Game.stack == liveStack and Game.sessionStartedAt == liveSession and self.map == map then
+        self.engaging, npc.frozen = false, false
+      end
+    end)
   end))
 end
 
@@ -13088,6 +13169,12 @@ function OverworldState:hatchEgg(hatched)
   elseif GameVersion.isGen3() and Game.save then
     require("src.pokemon.Gen3GameStats").increment(Game.save, 13)      -- GAME_STAT_HATCHED_EGGS
   end
+  local hatchObserver=GameVersion.isGen2() and Runtime.wants("egg.hatched")
+  local originalEgg,eggSlot
+  if hatchObserver then
+    originalEgg=require('src.mods.Merge').deepCopy(hatched)
+    for slot,mon in ipairs(Game.save.party or{})do if mon==hatched then eggSlot=slot;break end end
+  end
   local Pokemon = require("src.pokemon.Pokemon")
   local def = Game.data.pokemon[hatched.species]
   hatched.isEgg = nil
@@ -13119,6 +13206,10 @@ function OverworldState:hatchEgg(hatched)
   local name = def and def.name or hatched.species
   local function finished()
     Runtime.emit("pokemon.egg_hatched", { mon = hatched })
+    if hatchObserver then
+      Runtime.emit("egg.hatched",{mon=hatched,egg=originalEgg,slot=eggSlot,
+        species=originalEgg.species,nickname=hatched.nickname})
+    end
   end
   local hatchText = Strings("Huh?\f%s hatched\nfrom the EGG!", name)
   local askText = gen2 and Strings("Give a nickname to\n%s?", name) or nil
@@ -14827,6 +14918,19 @@ function OverworldState:gen4FieldResumed()
 end
 
 function OverworldState:afterBattle(result, battle)
+  if result=="win" and battle and battle.kind=="trainer" and not battle.linkBattle and not battle.battleTower and
+      not battle.g2MomHandled and require("src.world.Gen2MomShopping").stock()then
+    battle.g2MomHandled=true
+    if not self.g2MomCallPending then
+      local purchase=require("src.world.Gen2MomShopping").tryBuy(Game.data,Game.save,{
+        phoneService=require("src.world.Gen2PhoneService").available(self.map and self.map.def),
+        queued=self.pendingScripts and self.pendingScripts[1]~=nil,
+      })
+      if purchase then self.g2MomCallPending={save=Game.save,data=Game.data,purchase=purchase}end
+    end
+  end
+
+
   self.gen4EncounterAttempts = 0
   -- a battle a script did not start (a wild one, a trainer's sight) comes
   -- back to the field here; a scripted one already did in its onFinish
@@ -15374,7 +15478,7 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
   self.arriveWarp = nil
   local fromId = self.map.id
   local fromSection = self.map.def and self.map.def.regionMapSection
-  Game.stack:push(Transition.new(Game, function()
+  local transition = Transition.new(Game, function()
     self:setMap(mapId, x, y, facing or "down", opts)
     self:noteGen2Spawn(fromId)
     -- FIRERED'S SIDE STAIRS (ExitStairsMovement): you land ON the stair tile
@@ -15564,7 +15668,15 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
     -- side, which is what the scripts already do.
     if self.player then self.player.inputLocked = false end
     if onDone then onDone() end
-  end))
+  end)
+  -- API 3 exposes the Gen 3 no-fade option. Reuse the exact native midpoint
+  -- and completion path; ordinary/native callers keep their existing fade.
+  if opts and opts.fade == false then
+    transition.onMidpoint()
+    transition.onDone()
+  else
+    Game.stack:push(transition)
+  end
 end
 
 -- Re-read a map record after its data changed (WorldAPI:invalidateMap,

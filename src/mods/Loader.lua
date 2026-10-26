@@ -11,18 +11,29 @@ local Data = require("src.core.Data")
 local Version = require("src.core.Version")
 local Assets = require("src.render.Assets")
 local ModUI = require("src.ui.ModUI")
+local PortableScripts = require("src.mods.PortableScripts")
+local Api3Warp = require("src.mods.Api3Warp")
+local Api3NPC = require("src.mods.Api3NPC")
+local Net = require("src.mods.Net")
 local AssetTransform = require("src.mods.AssetTransform")
 local Manifest = require("src.mods.Manifest")
 local Merge = require("src.mods.Merge")
 local Registry = require("src.mods.Registry")
 local Schemas = require("src.mods.Schemas")
+local Capabilities = require("src.mods.Capabilities")
 local Semver = require("src.mods.Semver")
 local Events = require("src.mods.Events")
 local Hooks = require("src.mods.Hooks")
 local ModStorage = require("src.mods.Storage")
+local WorldReads = require("src.mods.WorldReads")
 local Runtime = require("src.mods.Runtime")
+local InputControl = require("src.mods.InputControl")
+local BattleSnapshots = require("src.mods.BattleSnapshots")
+local UIActions = require("src.mods.UIActions")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
+local WorldActions = require("src.world.WorldActions")
+local WorldOverview = require("src.mods.WorldOverview")
 -- Module-name aliases for mods written against the Gold port's per-generation
 -- layout (src.world.gen2.Player and friends).  Installed here because this is
 -- the module that loads mods: the searcher has to be in place before the
@@ -149,8 +160,10 @@ function Loader.new(opts)
   end
   local self = setmetatable({
     mods = {}, loaded = {}, errors = {}, initialized = false,
-    events = Events.new(), hooks = Hooks.new(), content = {}, assets = {},
+    events = Events.new(), hooks = Hooks.new(), _decodedHooks = Hooks.new(), content = {}, assets = {},
+    _callbackProfiles = opts and opts.callbackProfiles,
     exports = {}, apis = {}, migrations = {}, order = {},
+    inputControl = InputControl.new(),
     modSave = {}, modOptions = {}, optionSchemas = {},
     optionStatus = {}, imageCache = {},
     fs = (opts and opts.fs) or (love and love.filesystem),
@@ -193,6 +206,7 @@ function Loader:_loadState()
   end
   -- mod.options reads through this; M11 owns writing it back
   self.modOptions = options.modOptions or {}
+  self._callbackProfiles = self._callbackProfiles or options.modCallbackProfiles or {}
   -- Migrate the original prototype manager's separate state file into the
   -- normal persistent options file once.  New Game never resets options.
   if next(options.mods or {}) == nil and self.fs.getInfo
@@ -502,7 +516,16 @@ function Loader:_validate()
         if err then reason = reason .. " (" .. err .. ")" end
       end
     end
-    if reason then self:_fail(mod, "invalid", reason) end
+    if reason then self:_fail(mod, "invalid", reason)
+    else
+      local assets = require("src.mods.AssetPacks").missing(manifest, self.fs)
+      if assets then
+        mod.missingAssets = assets
+        local first = assets[1]
+        self:_fail(mod, "missing_assets", ("required asset pack not ready: %s/%s (%s)")
+          :format(first.importer, first.pack, tostring(first.reason)))
+      end
+    end
   end
 end
 
@@ -717,7 +740,7 @@ function Loader:_contentApi(mod, registry, deprecation)
     if apiLevel >= 2 then error(err, 0) end
     Logger.warn("[%s] %s", modId, err)
   end
-  return {
+  local api = {
     register = function(_, id, value)
       note()
       validate("register", id, value)
@@ -750,6 +773,23 @@ function Loader:_contentApi(mod, registry, deprecation)
       return registry:each()
     end,
   }
+  if registry.name == "radio_channels" then
+    return require("src.mods.RadioContent").api(loader,mod,api,loader:_generation())
+  end
+  if registry.name == "phone_contacts" then
+    return require("src.mods.PhoneContent").api(loader,mod,api,loader:_generation())
+  end
+  if registry.name == "apricorns" then
+    return require("src.mods.ApricornContent").api(loader,mod,api,loader:_generation())
+  end
+  if registry.name == "landmarks" then
+    return require("src.mods.LandmarkContent").api(loader,mod,api,loader:_generation())
+  end
+  if registry.name=="decorations"then
+    return require("src.mods.DecorationContent").api(loader,mod,api,loader:_generation())
+  end
+  return api
+
 end
 
 -- mod.commands is sugar over the commands registry; the engine's own verbs
@@ -803,6 +843,16 @@ function Loader.freshness(fs, root)
   return (" (newest file %s, %s)"):format(tostring(newestName), when)
 end
 
+-- Recovery releases holds while keeping the current API usable. Retirement
+-- (rollback/reload/teardown) additionally disables the old API's presses.
+function Loader:releaseModInput(owner)
+  self.inputControl:release(owner)
+end
+
+function Loader:_closeModInput()
+  self.inputControl:close()
+end
+
 function Loader:_api(mod)
   local loader = self
   local modId = mod.manifest.id
@@ -831,7 +881,7 @@ function Loader:_api(mod)
   -- new game and a new load.
   local hostGen, hostId, hostInfo = 1, nil, nil
   do
-    local okV, GameVersion = pcall(require, "src.core.GameVersion")
+    local okV, GameVersion = pcall(engineRequire, "src.core.GameVersion")
     if okV and GameVersion then
       local okG, g = pcall(GameVersion.generation)
       if okG and tonumber(g) then hostGen = tonumber(g) end
@@ -841,9 +891,11 @@ function Loader:_api(mod)
       if okN then hostInfo = info end
     end
   end
+  -- Capture pristine ID aliases before mod merges; the facade resolves Game only on a read.
+  local battle = BattleSnapshots.new(function() return loader:_game(true) end, loader)
   local engineVersion
   do
-    local okE, V = pcall(require, "src.core.Version")
+    local okE, V = pcall(engineRequire, "src.core.Version")
     engineVersion = okE and V and V.engine or nil
   end
   local api = {
@@ -868,6 +920,7 @@ function Loader:_api(mod)
     -- returns the same module table the engine holds, so a mod that mutates
     -- one is changing the engine, exactly as it always was.
     engineRequire = engineRequire,
+    battle = battle,
     -- 1 to 5.  The one field worth reaching for before anything else.
     generation = hostGen,
     -- the version id the launcher started: "red", "crystal", "emerald",
@@ -884,13 +937,14 @@ function Loader:_api(mod)
       label = hostInfo and hostInfo.label or hostId,
       engine = engineVersion,
       modApi = (function()
-        local okE, V = pcall(require, "src.core.Version")
+        local okE, V = pcall(engineRequire, "src.core.Version")
         return okE and V and V.modApi or nil
       end)(),
       developer = loader.dev == true,
     },
     -- a deep copy: what a mod does to its own view never reaches the loader
     manifest = Merge.deepCopy(mod.manifest),
+    callbackFormat = mod.manifest.callback_format or "native",
     content = {},
     exports = {},
     DELETE = Registry.DELETE,
@@ -911,12 +965,14 @@ function Loader:_api(mod)
         return loader.events:emit(name, payload)
       end,
     },
+    input = loader.inputControl:api(modId),
     hooks = { wrap = function(_, name, callback, priority)
       return loader.hooks:wrap(name, callback, priority, modId)
     end },
-    -- the widget toolkit facade (12 4.5) is one shared surface, not
-    -- per-mod state; each widget inside it loads on first touch
-    ui = ModUI,
+    -- Per-mod action/revision state, with the existing lazy widget builders.
+    -- Reading the facade early must not construct Game or a native screen.
+    ui = UIActions.new(function() return loader:_game(true) end, loader, ModUI),
+    fetch = Net.forMod(loader, mod),
     -- namespaced per mod; M11 backs these with save.modData /
     -- options.modOptions, the shape mods compile against is already final
     save = {
@@ -999,6 +1055,16 @@ function Loader:_api(mod)
     },
   }
   self.exports[modId] = api.exports
+  local callbackProfile = self._callbackProfiles and self._callbackProfiles[modId]
+  assert(callbackProfile == nil or callbackProfile == "native" or callbackProfile == "decoded",
+    "unknown callback profile for " .. modId)
+  if callbackProfile == "decoded" then
+    assert(api.callbackFormat == "native", "decoded profile cannot be combined with unified callbacks")
+    engineRequire("src.mods.DecodedCallbacks").install(loader, api, modId, hostGen)
+  end
+  if api.callbackFormat == "unified" then
+    engineRequire("src.mods.UnifiedCallbacks").install(loader, api, modId, hostGen)
+  end
   -- a handle, not the mod object: {id, version, exports} or nil when the
   -- other mod is absent, disabled, failed, or has not run yet.  Tolerates
   -- mod:find(id) as well as the documented mod.find(id).
@@ -1019,6 +1085,10 @@ function Loader:_api(mod)
   for alias, canonical in pairs(Schemas.ALIASES) do
     api.content[alias] = self:_contentApi(mod, self.content[canonical],
       ("the %s registry is deprecated; use %s"):format(alias, canonical))
+  end
+  api.contentFormat = mod.manifest.content_format or "native"
+  if api.contentFormat == "unified" then
+    api.content = engineRequire("src.mods.UnifiedContent").new(loader, mod, api.content, hostGen)
   end
   -- assets keeps the v1 alias to the content accessors and adds the file
   -- helpers on top, so mod.assets.pokemon and mod.assets:image both resolve
@@ -1119,13 +1189,43 @@ function Loader:_api(mod)
       end
       return data
     end)
+  -- Capture the host selected for this API, as with generation/gameVersion.
+  -- Probing must not instantiate mod.world/mod.game or register callbacks.
+  function api:supports(surface, name)
+    return Capabilities.supports(surface, name, hostId)
+  end
+  api.packs = require("src.mods.AssetPacks").new(mod.manifest, loader.fs)
+  api.postLog = Net.logReporter(loader,mod)
   -- mod.world / mod.game / mod.storage all materialize on first touch, for
-  -- the same reason: a headless load must not drag the world stack in, and
-  -- the Game the facade acts on is still being wired when the entry chunk
+  -- the same reason: a headless load must not drag the world stack in.
+  -- Battle capability queries can also be installed before Game exists.
+  BattleSnapshots.withCapabilities(api)
+  UIActions.withCapabilities(api)
+  -- The Game the facade acts on is still being wired when the entry chunk
   -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
   -- namespace per mod for payloads too large to belong in a save file.
+  -- When capability queries are installed, these additive methods exist on
+  -- every host; individual actions still validate native version and state.
+  if api.supports then
+    local supports = api.supports
+    function api:supports(surface, name)
+      if surface == "world" and WorldActions.supports(name) then return true end
+      return supports(self, surface, name)
+    end
+  end
   local world, storage
-  setmetatable(api, { __index = function(_, key)
+  local overviewContext = WorldOverview.install(api, loader)
+  local readContext = WorldReads.context(loader)
+  -- Capability queries are optional on older API-2 hosts. When present,
+  -- report the additive readers without constructing Game or the world.
+  if api.supports then
+    local supports = api.supports
+    function api:supports(surface, name)
+      if surface == "world" and WorldReads.supports(name) then return true end
+      return supports(self, surface, name)
+    end
+  end
+  setmetatable(api, PortableScripts.wrap({ __index = function(_, key)
     if key == "game" then return loader:_game() end
     if key == "storage" then
       -- Do not pass loader.fs when it is love.filesystem: that always writes
@@ -1139,17 +1239,41 @@ function Loader:_api(mod)
     local game = loader:_game()
     local module = game and engineRequire("src.world.WorldAPI")
     if not module then return nil end
-    world = module.new(game, modId)
+    world = module.new(game, modId, readContext)
+    world._npcAlive = function()
+      return loader.mods[modId] == mod and loader.apis[modId] == api
+        and loader.exports[modId] ~= nil and isActive(mod)
+    end
+    world.overviewContext = overviewContext
     return world
-  end })
+  end }, api, loader, mod.manifest))
+  -- When capability queries are installed, report the selected content
+  -- format's actual availability. Other surfaces retain their host query.
+  if api.contentFormat == "unified" and api.supports then
+    local supports, content = api.supports, api.content
+    api.supports = function(self, surface, name)
+      local handle = type(name) == "string" and content[name]
+      if surface == "content" and handle and handle.supports then return handle:supports() end
+      return supports(self, surface, name)
+    end
+  end
+  if (mod.manifest.api or 1) >= 3 then
+    engineRequire("src.mods.Api3").install(api, loader, readContext, overviewContext, engineRequire)
+  end
   return api
 end
 
 -- the live Game.  An injected reference wins so a headless caller can hand
 -- over a stub; otherwise the boot singleton, whose stack and overworld fill
 -- in after this loader returns -- holding the table keeps the facade live.
-function Loader:_game()
-  return self.game or engineRequire("src.core.Game")
+function Loader:_game(loadedOnly)
+  if self.game then return self.game end
+  -- Observational facades must not bootstrap Game from an early/headless read.
+  if loadedOnly then
+    local game = package.loaded["src.core.Game"]
+    return type(game) == "table" and game or nil
+  end
+  return engineRequire("src.core.Game")
 end
 
 function Loader:_loadMod(mod)
@@ -1196,11 +1320,17 @@ end
 -- migration it took goes with them.  The journal only exists around an
 -- entry chunk; a later failure (script validation) purges every registry.
 function Loader:_rollback(modId)
+  Api3NPC.cancelAll(self, modId)
+  Api3Warp.cancelAll(self, modId)
+  self.inputControl:retire(modId)
+  PortableScripts.cancelAll(self, modId, "mod rolled back")
+  Net.releaseAll(self, modId)
   for name in pairs(self.journal or self.content) do
     self.content[name]:rollback(modId)
   end
   self.events:removeOwner(modId)
   self.hooks:removeOwner(modId)
+  self._decodedHooks:removeOwner(modId)
   self.exports[modId] = nil
   self.optionSchemas[modId] = nil
   self.optionStatus[modId] = nil
@@ -1310,12 +1440,20 @@ local function stampAudioOwners(data, name, registry)
 end
 
 function Loader:load(data)
+  local clock = package.loaded["src.core.Gen2Clock"]
+  if clock then clock.resetObservations() end
+  Api3NPC.cancelAll()
+  Api3Warp.cancelAll()
+  InputControl.closeAll()
+  self.inputControl = InputControl.new()
+  PortableScripts.cancelAll(nil, nil, "mods reloaded")
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
   -- wraps and flags the previous load put on engine tables come off first.
   ModSeams.unwindAll()
   self.baseData = data
+  require("src.compat.gen2.Decorations").useRegistry(data)
   -- every registry folds against the pristine view of its Data target;
   -- resolution is lazy so optional namespaces may appear later
   for _, registry in pairs(self.content) do
@@ -1326,8 +1464,13 @@ function Loader:load(data)
       end
     end
   end
+  require("src.mods.RadioContent").prepare(self, data)
+  require("src.mods.ApricornContent").prepare(self, data)
+  require("src.mods.LandmarkContent").prepare(self, data)
+  require("src.mods.DecorationContent").prepare(self,data)
   -- vanilla content is registrations too, and they land before discovery so
   -- a mod's register collides with the engine's and has to say override
+  require("src.mods.PhoneContent").prepare(self, data)
   require("src.mods.Builtins").install(self.content, data)
   self:_loadState()
   self:_discover()
@@ -1356,7 +1499,10 @@ function Loader:load(data)
         tostring(id or "?"))
     end
     for id, mod in pairs(self.mods) do
-      if not self.disabled[id] and mod.manifest.experimental
+      local env=mod.manifest.force_enable_env
+      local forceEnabled=not self.noMods and env and os.getenv(env)=='1'
+      if forceEnabled then self.disabled[id]=nil end
+      if not forceEnabled and not self.disabled[id] and mod.manifest.experimental
           and ModGens.active(modsOpt[id], gen) ~= true then
         self.disabled[id] = true
       end
@@ -1450,6 +1596,7 @@ function Loader:load(data)
   end)
   -- engine call sites reach these buses -- and this error feed, for failures
   -- that only surface at play time -- through Runtime from here on
+  self.hooks._decodedHooks = self._decodedHooks
   Runtime.install(self.events, self.hooks, self.errors)
   self:_validate()
   local ordered = self:_resolve()
@@ -1490,6 +1637,27 @@ function Loader:load(data)
   -- the commands registry is final once every entry chunk has run, so
   -- each map_scripts contribution's rows can be judged before they merge
   self:_validateScripts()
+  -- Resolve recipe/item forward references against all surviving entries,
+  -- before any native script projection or data merge. Repeat after owner
+  -- rollback so another recipe cannot retain an item supplied by a failed mod.
+  for _=1,#self.order+1 do
+    local problems=require("src.mods.ApricornContent").validate(self)
+    local failed=false
+    for _,problem in ipairs(problems)do
+      local mod=problem.owner and self.mods[problem.owner]
+      if mod and not mod.failed then self:_fail(mod,"failed",problem.message);failed=true end
+    end
+    if not failed then break end
+    self:_enforceDependencies()
+    for i=#self.loaded,1,-1 do
+      local mod=self.loaded[i]
+      if mod.failed then self:_rollback(mod.manifest.id);table.remove(self.loaded,i)end
+    end
+    for i=#self.order,1,-1 do
+      local mod=self.mods[self.order[i]]
+      if mod and mod.failed then table.remove(self.order,i)end
+    end
+  end
   -- merge: fold every touched id from its pristine base value and write it
   -- home, creating the Data namespace when the base modules never shipped
   -- one.  A registry nobody wrote to -- engine included -- is skipped, so
@@ -1551,6 +1719,10 @@ function Loader:load(data)
       stampAudioOwners(data, name, registry)
     end
   end
+  require("src.mods.PhoneContent").apply(self, data)
+  require("src.mods.ApricornContent").apply(self, data)
+  require("src.mods.LandmarkContent").apply(self, data)
+  require("src.mods.DecorationContent").apply(self,data)
   -- dangling f.id references are attributed to the id's last writer;
   -- api 1 mods keep the warning-only compat path
   if data then
@@ -1632,6 +1804,8 @@ function Loader:status()
     manifest.enabled = mod.enabled ~= false
     manifest.state = mod.state or (manifest.enabled and "loaded" or "disabled")
     manifest.error = mod.failure
+    manifest.waitingAssets = mod.state == "missing_assets"
+    manifest.missingAssets = mod.missingAssets
     available[#available + 1] = manifest
     if manifest.state == "loaded" then loaded[#loaded + 1] = manifest end
   end
@@ -1653,6 +1827,14 @@ end
 -- boots) ran on a modded engine whose mod instance nothing drives any more,
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
+  local clock = package.loaded["src.core.Gen2Clock"]
+  if clock then clock.resetObservations() end
+  Api3NPC.cancelAll()
+  Api3Warp.cancelAll()
+  InputControl.closeAll()
+  PortableScripts.cancelAll(nil, nil, "mods unloaded")
+  require("src.compat.gen2.Decorations").useRegistry(nil)
+  Net.unloadAll()
   local undone = select(1, ModSeams.unwindAll())
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
