@@ -9093,20 +9093,8 @@ function BattleState:enemyMonFainted()
       end)
       return
     end
-    -- ComputeTrainerReward (0E:58D4) sets wBattleReward = the class's base
-    -- reward byte (TrainerClassAttributes+2) times wCurPartyLevel, the level
-    -- of the LAST mon the party reader loaded.  That is only a QUARTER of the
-    -- payout though: WinTrainerBattle (0F:4F46) then runs `ld c, 4` and adds
-    -- wBattleReward once per iteration -- b of the four quarters through
-    -- .AddMoneyToMom, the remaining c through .AddMoneyToWallet -- so the
-    -- trainer is worth base * level * 4 in total.  b comes from
-    -- wMomSavingMoney & 7 (0 = you keep it all, 3 = she banks all four), and
-    -- is forced to 0 when Mom's account is already maxed.  Nothing here
-    -- models Mom's savings account, which is the `keep it all` branch, so all
-    -- four quarters land in the wallet -- Falkner pays 25 * 9 * 4 = 900 and a
-    -- Sprout Tower sage 8 * 3 * 4 = 96, instead of the 225 and 24 a single
-    -- quarter gives.  Gen1's TrainerBattleVictory has no such split, so the
-    -- multiplier stays on the Gen2 side of the fence.
+    -- Native GSC rewards are four quarters. Their destination is selected
+    -- by Mom's saving bits; Gen2MomShopping applies the per-account cap.
     -- THE LEVEL THE PRIZE IS COUNTED FROM.
     --
     -- Gen 1 and Gen 2 count from the mon that was out when the battle ended.
@@ -9154,7 +9142,9 @@ function BattleState:enemyMonFainted()
       prize = P.prize(self.data, self.trainer, opts)
       if self.trainerB then prize = prize + P.prize(self.data, self.trainerB, opts) end
     end
-    self.game.save.money = self.game.save.money + prize
+    local momAward=require("src.world.Gen2MomShopping").reward(self.game.save,prize)
+    if not momAward then self.game.save.money=self.game.save.money+prize end
+    self.g2MomAward=momAward
     -- Prism's Spurge Bank ATM (event/bank.asm) offers DIRECT DEPOSIT: with it
     -- enabled, a quarter of what you win in battle is routed to the account
     -- instead of the wallet.  The switch lives in the ATM special
@@ -9215,9 +9205,17 @@ function BattleState:enemyMonFainted()
     -- Platinum's font, so a Sinnoh win read "got 円 480". This default is
     -- only reached when the dataset has no `_MoneyForWinningText` of its own,
     -- which is every Gen 3 and Gen 4 cartridge.
-    self:sayNext(self:romText("_MoneyForWinningText",
-      "%s got " .. require("src.core.GameVersion").moneySign() .. "%d\nfor winning!",
-      self.game.save.player.name, prize))
+    local momPool=require("src.world.Gen2MomShopping").pool(self.data)
+    local moneyText=momAward and momPool and momPool.rewardTexts and momPool.rewardTexts[momAward.mode]
+    if moneyText and (self.data.text and self.data.text[moneyText])then
+      local text=self.data.text[moneyText]
+      text=text:gsub("{PLAYER}",function()return self.game.save.player.name end):gsub("{NUM}",tostring(prize))
+      self:sayNext(text)
+    else
+      self:sayNext(self:romText("_MoneyForWinningText",
+        "%s got " .. require("src.core.GameVersion").moneySign() .. "%d\nfor winning!",
+        self.game.save.player.name, prize))
+    end
   end
   self.result = "win"
   self.afterQueue = "finish"

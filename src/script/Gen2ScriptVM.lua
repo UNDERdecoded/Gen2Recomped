@@ -278,17 +278,28 @@ L.givepokemail = function() end
 --                  NPC instead.
 --   loadtemptrainer/randomwildmon/loadpikachudata build a battle out of WRAM
 --                  scratch the port fills from its own encounter tables.
---   _2dmenu/describedecoration are presentation the port has no
+--   _2dmenu is presentation the port has no
 --                  equivalent for; the surrounding dialogue still runs.
 --   autoinput      replays a canned joypad script over a cutscene.
 --   (catchtutorial used to live here too; it is implemented now, below.)
 local function vmNoop() end
 for _, name in ipairs({
   "xycompare", "writeobjectxy", "loadtemptrainer", "randomwildmon",
-  "loadpikachudata", "_2dmenu", "describedecoration",
+  "loadpikachudata", "_2dmenu",
   "autoinput",
 }) do
   L[name] = vmNoop
+end
+
+L.describedecoration=function(ir,s)
+  local p=s.decorationPrograms
+  if type(p)~='table'then return end
+  local allowed={}
+  for _,label in pairs(p.posters or{})do local target=branch(s,label);if target then allowed[target]=true end end
+  for _,role in ipairs({'ornament','big','null'})do
+    local target=branch(s,p[role]);if target then allowed[target]=true end
+  end
+  emit(s,{'g2_deco_description',ir[2],allowed})
 end
 
 
@@ -1080,6 +1091,12 @@ local SPECIALS = {
   PokemonCenterPC = "g2_pokemon_center_pc",
   Special_PokemonCenterPC = "g2_pokemon_center_pc",
   PlayersHousePC = "g2_players_house_pc",
+  ToggleDecorationsVisibility = "g2_deco_visibility",
+  ToggleDecorationsVisibilitySpecial = "g2_deco_visibility",
+  Special_ToggleDecorationsVisibility = "g2_deco_visibility",
+  ToggleMaptileDecorations = "g2_deco_tiles",
+  ToggleMaptileDecorationsSpecial = "g2_deco_tiles",
+  Special_ToggleMaptileDecorations = "g2_deco_tiles",
   Special_PlayersHousePC = "g2_players_house_pc",
   Special_KrissHousePC = "g2_players_house_pc",
   MoveTutor = "g2_move_tutor",
@@ -1215,9 +1232,6 @@ local SPECIALS_NOOP = {
   PlayCurMonCry = true,
   PlaySlowCry = true,
   SurfStartStep = true,
-  -- decorations are not modelled, so toggling their visibility does nothing
-  ToggleDecorationsVisibility = true,
-  ToggleMaptileDecorations = true,
   UnusedDummySpecial = true,
   UnusedBattleTowerDummySpecial1 = true,
   UnusedBattleTowerDummySpecial2 = true,
@@ -2380,6 +2394,7 @@ function Gen2ScriptVM.compile(data, entry)
   local state = {
     out = out,
     stds = pool.stds,
+    decorationPrograms = pool.decorationPrograms,
     has = function(label)
       return type(label) == "string" and scripts[label] ~= nil
     end,

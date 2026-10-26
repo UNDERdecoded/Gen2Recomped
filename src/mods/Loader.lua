@@ -717,7 +717,7 @@ function Loader:_contentApi(mod, registry, deprecation)
     if apiLevel >= 2 then error(err, 0) end
     Logger.warn("[%s] %s", modId, err)
   end
-  return {
+  local api = {
     register = function(_, id, value)
       note()
       validate("register", id, value)
@@ -750,6 +750,11 @@ function Loader:_contentApi(mod, registry, deprecation)
       return registry:each()
     end,
   }
+  if registry.name=="decorations"then
+    return require("src.mods.DecorationContent").api(loader,mod,api,loader:_generation())
+  end
+  return api
+
 end
 
 -- mod.commands is sugar over the commands registry; the engine's own verbs
@@ -1316,6 +1321,7 @@ function Loader:load(data)
   -- wraps and flags the previous load put on engine tables come off first.
   ModSeams.unwindAll()
   self.baseData = data
+  require("src.compat.gen2.Decorations").useRegistry(data)
   -- every registry folds against the pristine view of its Data target;
   -- resolution is lazy so optional namespaces may appear later
   for _, registry in pairs(self.content) do
@@ -1326,6 +1332,7 @@ function Loader:load(data)
       end
     end
   end
+  require("src.mods.DecorationContent").prepare(self,data)
   -- vanilla content is registrations too, and they land before discovery so
   -- a mod's register collides with the engine's and has to say override
   require("src.mods.Builtins").install(self.content, data)
@@ -1551,6 +1558,7 @@ function Loader:load(data)
       stampAudioOwners(data, name, registry)
     end
   end
+  require("src.mods.DecorationContent").apply(self,data)
   -- dangling f.id references are attributed to the id's last writer;
   -- api 1 mods keep the warning-only compat path
   if data then
@@ -1653,6 +1661,7 @@ end
 -- boots) ran on a modded engine whose mod instance nothing drives any more,
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
+  require("src.compat.gen2.Decorations").useRegistry(nil)
   local undone = select(1, ModSeams.unwindAll())
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)

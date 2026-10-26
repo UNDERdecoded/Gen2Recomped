@@ -1887,6 +1887,7 @@ function Data:seedDefaults()
     end
     seedMissingGen2Tilesets(self)
     self:publishGen2Palettes()
+    require("src.compat.gen2.Decorations").useRegistry(self)
     ensureGen2WarpFallbacks(self)
     ensureGen2HomeTextFallbacks(self)
   end

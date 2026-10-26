@@ -3300,6 +3300,33 @@ function OverworldState:checkSpecialPhoneCall()
     onDone = function() Game.save.g2CurCaller = nil end })
 end
 
+-- A purchase is already committed at trainer reload. Its original phone
+-- program waits for the trainer's queued dialogue and overlays to finish.
+function OverworldState:checkMomShoppingCall()
+  local pending=self.g2MomCallPending
+  if not pending then return false end
+  if pending.save~=Game.save or pending.data~=Game.data then self.g2MomCallPending=nil;return false end
+  local top=Game.stack and Game.stack.top and Game.stack:top()
+  if top and top~=self then return false end
+  if self.player and(self.player.moving or self.player.targetX or self.player.stairExit or self.player.inputLocked)then return false end
+  if self.transitioning or self.runner:isRunning()or #(self.scriptMoves or{})>0 or self.engaging or self.emote or
+      self.teleportOut or self.whirlSpin or self.gen4Waterfall or self.flyAnim or self.fishing or
+      self.pendingScripts and self.pendingScripts[1]then return false end
+  self.g2MomCallPending=nil
+  local purchase=pending.purchase
+  Game.save.g2CurCaller=purchase.caller
+  pcall(function()require("src.core.Sound").play(Game.data,"Call")end)
+  self:queueScript(purchase.script,{phoneCaller=purchase.caller,onDone=function()
+    if Game.save~=pending.save or Game.data~=pending.data then return end
+    Game.save.g2CurCaller=nil
+    require("src.script.Gen2Commands").resetCallDelay(Game.save,math.floor(require("src.core.SaveData").playSeconds(Game.save)/60))
+    pcall(function()require("src.core.Sound").play(Game.data,"Hang_Up")end)
+  end})
+  local commands=require("src.script.Gen2Commands")
+  if commands.announceIncomingCall then commands.announceIncomingCall(Game.data,purchase.caller)end
+  return true
+end
+
 -- CheckPhoneCall (36:$4074): the random incoming call, rolled on every step
 -- the player finishes off a warp tile.  Gen2Commands.rollIncomingCall carries
 -- the ROM's own gating -- the receive-call delay, the one-in-two coin flip, the
@@ -3666,6 +3693,7 @@ function OverworldState:update(dt)
   -- not an event, and the check is two flag reads.
   self:applyForcedBike()
   self:checkSpecialPhoneCall()
+  self:checkMomShoppingCall()
   self:checkBugContestClock()
   -- world.tick: the per-frame seam for mods that simulate something in the
   -- overworld rather than draw it.
@@ -14458,6 +14486,19 @@ function OverworldState:gen4FieldResumed()
 end
 
 function OverworldState:afterBattle(result, battle)
+  if result=="win" and battle and battle.kind=="trainer" and not battle.linkBattle and not battle.battleTower and
+      not battle.g2MomHandled and require("src.world.Gen2MomShopping").stock()then
+    battle.g2MomHandled=true
+    if not self.g2MomCallPending then
+      local purchase=require("src.world.Gen2MomShopping").tryBuy(Game.data,Game.save,{
+        phoneService=require("src.world.Gen2PhoneService").available(self.map and self.map.def),
+        queued=self.pendingScripts and self.pendingScripts[1]~=nil,
+      })
+      if purchase then self.g2MomCallPending={save=Game.save,data=Game.data,purchase=purchase}end
+    end
+  end
+
+
   self.gen4EncounterAttempts = 0
   -- a battle a script did not start (a wild one, a trainer's sight) comes
   -- back to the field here; a scripted one already did in its onFinish
