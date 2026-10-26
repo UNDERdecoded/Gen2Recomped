@@ -10,6 +10,7 @@ local SaveData = require("src.core.SaveData")
 local Data = require("src.core.Data")
 local Version = require("src.core.Version")
 local Assets = require("src.render.Assets")
+local ActorRenderData = require("src.mods.ActorRenderData")
 local ModUI = require("src.ui.ModUI")
 local AssetTransform = require("src.mods.AssetTransform")
 local Manifest = require("src.mods.Manifest")
@@ -1165,7 +1166,7 @@ function Loader:_loadMod(mod)
         mod.manifest.id, tostring(row.entry.name), tostring(row.entry.file))
     end
   end
-  local api = self:_api(mod)
+  local api = ActorRenderData.install(self:_api(mod), self)
   -- KEEP THE API OBJECT, not only its exports.
   --
   -- `self.exports[id]` has always been the mod's published surface, and that is
