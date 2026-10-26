@@ -111,13 +111,11 @@ local DEBT = {
 
   ["hook:encounter.fishing"] = "M5",
   ["hook:render.zones"] = "M9",
-  ["hook:trainer.party"] = "M7",
   ["hook:ui.pc.items"] = "M8",
 
   ["event:link.connected"] = "M12",
   ["event:link.ended"] = "M12",
   ["event:player.warped"] = "M5",
-  ["event:pokemon.before_give"] = "M7",
   ["event:pokemon.evolved"] = "M7",
   ["event:pokemon.level_up"] = "M7",
   ["event:pokemon.move_learned"] = "M7",
