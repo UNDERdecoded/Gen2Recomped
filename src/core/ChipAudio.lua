@@ -269,7 +269,7 @@ local MUSIC_FILL_PER_CALL = 3
 
 local function fillSync(limit)
   local music = currentMusic
-  if not music or not music.engine or music.engine:finished() then return end
+  if not music or not music.engine or not music.nativeBgm and music.engine:finished() then return end
   -- INTERRUPTION: never synthesize into a Source whose device the OS has
   -- taken (see sessionSuspended).  Returning leaves the engine untouched, so
   -- nothing about the song's position is lost while the call is in progress.
@@ -277,7 +277,7 @@ local function fillSync(limit)
   limit = limit or MUSIC_FILL_PER_CALL
   local free = freeBuffers(music.source)
   if not free then return end
-  while free > 0 and limit > 0 and not music.engine:finished() do
+  while free > 0 and limit > 0 and (music.nativeBgm or not music.engine:finished()) do
     -- soundData is pure synthesis and stays OUTSIDE the guard on purpose: a
     -- raise from there is a malformed song def, which is a real bug and must
     -- not be quietly turned into silence.  Only queue -- the call that talks
@@ -293,22 +293,27 @@ local function fillSync(limit)
   end
 end
 
-local function playMusicSync(data, header, allowLoops, synthName)
+local function playMusicSync(data, header, allowLoops, synthName, nativeBgm, reuseSource)
   local synth = synthFor(synthName)
   -- build before tearing down: a def that fails to compile must leave the
   -- outgoing song sounding
   local ok, engine = pcall(synth.newEngine, data, header,
                            { allowLoops = allowLoops })
   if not ok then return nil, engine end
-  local ok2, source = pcall(
-    love.audio.newQueueableSource, SAMPLE_RATE, 16, 2, MUSIC_BUFFER_COUNT)
-  if not ok2 or not source then warnNoQueue(source) return nil, source end
+  local source = reuseSource
+  if not source then
+    local ok2
+    ok2, source = pcall(love.audio.newQueueableSource, SAMPLE_RATE, 16, 2, MUSIC_BUFFER_COUNT)
+    if not ok2 or not source then warnNoQueue(source) return nil, source end
+  end
   ChipAudio.stopMusic()
   currentMusic = { source = source, engine = engine, threaded = false,
                    synth = synth, synthName = synthName,
-                   started = true, finished = false }
-  fillSync(MUSIC_FILL_INITIAL)
-  if not musicHeld then source:play() end
+                   nativeBgm = nativeBgm, started = not nativeBgm, finished = false }
+  if not nativeBgm then
+    fillSync(MUSIC_FILL_INITIAL)
+    if not musicHeld then source:play() end
+  end
   return source
 end
 
@@ -318,13 +323,14 @@ end
 
 local musicGen = 0
 
-function ChipAudio.playMusic(data, header, allowLoops, synthName)
+function ChipAudio.playMusic(data, header, allowLoops, synthName, options)
   local synth = synthFor(synthName)
+  local nativeBgm = options and options.nativeBgm == true
   if not ensureWorker() then
     announcePath("synchronous",
                  (love.thread and love.thread.newThread)
                    and "worker would not start" or "no love.thread")
-    return playMusicSync(data, header, allowLoops, synthName)
+    return playMusicSync(data, header, allowLoops, synthName, nativeBgm)
   end
   announcePath("threaded worker")
   -- validate the def on this thread (cheap: engine construction, no synthesis)
@@ -346,6 +352,8 @@ function ChipAudio.playMusic(data, header, allowLoops, synthName)
                channelPitches = ChipSynth.getChannelPitches() })
   currentMusic = { source = source, gen = gen, threaded = true,
                    synth = synth, synthName = synthName,
+                   nativeBgm = nativeBgm,
+                   nativeEpoch = 0,
                    started = false, finished = false,
                    -- kept so a worker that dies before delivering its first
                    -- buffer can be recovered onto the sync path below
@@ -380,13 +388,16 @@ local function updateThreaded()
     -- the result is indistinguishable from "this build has no music".  That is
     -- the shape of a silent port.  Re-drive it on the synchronous path, which
     -- is the same path a host without love.thread uses all the time.
-    if not m.started and not m.finished and m.def then
+    if (not m.started or m.nativeBgm) and not m.finished and m.def then
       local def = m.def
       currentMusic = nil
       require("src.core.Logger").warn(
-        "chip audio: worker died before first buffer, replaying on the "
-        .. "synchronous path")
-      playMusicSync(def.data, def.header, def.allowLoops, def.synth)
+        "chip audio: worker died, recovering on the synchronous path")
+      -- Native Music still owns this source and its fade. Keep queued PCM
+      -- and recover the producer behind that same source, including when a
+      -- worker dies after its first buffer.
+      playMusicSync(def.data, def.header, def.allowLoops, def.synth, m.nativeBgm,
+        m.nativeBgm and m.source or nil)
     end
     return
   end
@@ -399,7 +410,7 @@ local function updateThreaded()
     local buf = pendingBuf
     if buf then pendingBuf = nil else buf = outCh:pop() end
     if not buf then break end
-    if buf.gen ~= m.gen then
+    if buf.gen ~= m.gen or m.nativeBgm and (buf.nativeEpoch or 0) ~= (m.nativeEpoch or 0) then
       -- stale buffer from a superseded song: drop it
     elseif buf.done then
       m.finished = true
@@ -421,7 +432,7 @@ local function updateThreaded()
       end
     end
   end
-  if not m.started and not musicHeld then
+  if not m.nativeBgm and not m.started and not musicHeld then
     -- getFreeBufferCount used to be called bare here.  On the frame that
     -- straddles an interruption this is a raise, and it is raised from inside
     -- Music.update with nothing between it and love.run: one of the concrete
@@ -437,12 +448,13 @@ end
 function ChipAudio.update()
   local m = currentMusic
   if not m then return end
+  if m.nativePaused then return end
   -- INTERRUPTION: nothing is fed to the device while the OS holds the session
   if sessionSuspended then return end
   if m.threaded then
     updateThreaded()
   else
-    fillSync()
+    fillSync(m.nativeBgm and 1 or nil)
   end
 end
 
@@ -451,11 +463,27 @@ end
 -- pause/resume behavior.
 function ChipAudio.ensureMusicPlaying()
   local m = currentMusic
-  if not m or m.finished or musicHeld then return end
+  if not m or m.finished or musicHeld or m.nativePaused then return end
   -- INTERRUPTION: a queue that stopped draining because the OS took the
   -- audio session is not a render stall, and must not be "recovered" by
   -- poking the dead device once every frame of the call
   if sessionSuspended then return end
+  if m.nativeBgm then
+    -- The native service fills the queue before starting it, after Music
+    -- has applied this tick's fade. Finished sequences keep their silent
+    -- carrier until a native stop or replacement command owns the stream.
+    local free = freeBuffers(m.source)
+    if free and (MUSIC_BUFFER_COUNT - free) > 0 then
+      local ok, playing = pcall(m.source.isPlaying, m.source)
+      if ok and not playing then
+        local started = safeAudio("QueueableSource:play", m.source.play, m.source)
+        if started then m.started = true end
+      elseif ok and playing then
+        m.started = true
+      end
+    end
+    return
+  end
   if m.threaded then
     if not m.started then return end
     local ok, playing = pcall(function() return m.source:isPlaying() end)
@@ -475,6 +503,36 @@ function ChipAudio.ensureMusicPlaying()
       pcall(m.source.play, m.source)
     end
   end
+end
+
+function ChipAudio.nativeBgmState()
+  local m = currentMusic
+  if not (m and m.nativeBgm) then return nil end
+  return { threaded = m.threaded, paused = m.nativePaused or false, started = m.started }
+end
+
+function ChipAudio.pauseNativeMusic()
+  local m = currentMusic
+  if not (m and m.nativeBgm) or m.nativePaused then return end
+  m.nativePaused = true
+  m.nativeEpoch = (m.nativeEpoch or 0) + 1
+  safeAudio("Source:stop", m.source.stop, m.source)
+  pendingBuf = nil
+  if m.threaded then
+    if outCh then outCh:clear() end
+    cmdCh:push({ cmd = "nativePause", gen = m.gen, nativeEpoch = m.nativeEpoch })
+  elseif m.engine then
+    m.engine.voices = {}
+    for _, track in ipairs(m.engine.tracks or {}) do track.voices = {} end
+  end
+end
+
+function ChipAudio.resumeNativeMusic()
+  local m = currentMusic
+  if not (m and m.nativeBgm) then return end
+  m.nativePaused = false
+  if m.threaded then cmdCh:push({ cmd = "nativeResume", gen = m.gen, nativeEpoch = m.nativeEpoch }) end
+  safeAudio("Source:play", m.source.play, m.source)
 end
 
 -- Silence the song for the length of a fanfare and start whatever was held
@@ -499,6 +557,7 @@ local forceAwaitingFirstBuffer -- test-only override (see _simulate*)
 function ChipAudio.awaitingFirstBuffer()
   if forceAwaitingFirstBuffer then return true end
   local m = currentMusic
+  if m and m.nativeBgm and not m.started and not m.finished then return true end
   if not (m and m.threaded and not m.started and not m.finished) then
     return false
   end
@@ -674,6 +733,9 @@ function ChipAudio.newM4AEffect(data, def)
   if not song then return nil end
   local sd = synthFor("m4a").renderEffect(data, song)
   if not sd then return nil end
+  if def.nativePan ~= nil or def.nativeMono ~= nil then
+    sd = require("src.core.NativeSoundPan").apply(sd, def.nativePan, def.nativeMono)
+  end
   return love.audio.newSource(sd, "static")
 end
 

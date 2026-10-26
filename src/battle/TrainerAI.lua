@@ -331,13 +331,19 @@ end
 
 function TrainerAI.chooseMove(battler, rng, battle)
   rng = rng or love.math.random
+  local nativeMask = battle and require("src.battle.Gen3MoveSelection").aiMask(battle, battler)
+  if nativeMask and require("src.battle.Gen3MoveSelection").ordinaryWild(battle) then
+    return require("src.battle.Gen3MoveSelection").wildMove(battle, battler, nativeMask, rng)
+  end
   -- Gen 1: SelectEnemyMove never consults wEnemyMonPP; Struggle only when
   -- every move slot is missing/disabled (core.asm:2957-2999). modern_clean
   -- depletes enemy PP and falls back to Struggle when none remain.
   local unlimited = battle and battle.ruleset and battle.ruleset.enemyUnlimitedPP
   local usable = {}
   for i, mv in ipairs(battler.curMoves) do
-    if battler.disabledSlot ~= i and (unlimited or mv.pp > 0) then
+    if (nativeMask and i <= 4 and not nativeMask[i])
+        or (not nativeMask and not require("src.battle.Gen3Disable").blocked(battler, mv, i)
+          and (unlimited or mv.pp > 0)) then
       table.insert(usable, mv)
     end
   end

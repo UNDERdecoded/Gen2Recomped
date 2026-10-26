@@ -654,30 +654,21 @@ L.playse = function(ir, s)
   local song = songLabel(ir[2])
   if song then emit(s, { "play_sound", song }) end
 end
-L.waitse = L.nop
+L.waitse = function(_, s) emit(s, { "g3_wait_se" }) end
 -- A FANFARE STARTS AND THE SCRIPT KEEPS GOING: `playfanfare / message /
 -- waitmessage / waitfanfare` prints "received" while the jingle plays.
 -- Lowered to a blocking play_once, the box only appeared after the whole
 -- rendered song -- trailing silence included -- had run out.
 L.playfanfare = function(ir, s)
-  local song = songLabel(ir[2])
-  if song then emit(s, { "g3_play_fanfare", song, tonumber(ir[2]) }) end
+  emit(s, { "g3_play_fanfare", ir[2] })
 end
 L.waitfanfare = function(_, s) emit(s, { "g3_wait_fanfare" }) end
-L.playbgm = function(ir, s)
-  local song = songLabel(ir[2])
-  if song then emit(s, { "play_music", song }) end
+for _, operation in ipairs({ "playbgm", "savebgm", "fadedefaultbgm", "fadenewbgm", "fadeoutbgm", "fadeinbgm" }) do
+  local name = operation
+  L[name] = function(ir, s) emit(s, { "g3_bgm", name, ir[2], ir[3] }) end
 end
-L.savebgm = L.nop
-L.fadedefaultbgm = function(_, s) emit(s, { "play_default_music" }) end
-L.fadenewbgm = function(ir, s)
-  local song = songLabel(ir[2])
-  if song then emit(s, { "play_music", song }) end
-end
-L.fadeoutbgm = function(_, s) emit(s, { "stop_music" }) end
-L.fadeinbgm = function(_, s) emit(s, { "play_default_music" }) end
-L.playmoncry = function(ir, s) emit(s, { "play_cry", ir[2] }) end
-L.waitmoncry = L.nop
+L.playmoncry = function(ir, s) emit(s, { "g3_play_cry", ir[2], ir[3] }) end
+L.waitmoncry = function(_, s) emit(s, { "g3_wait_cry" }) end
 
 -- screen, field, world -----------------------------------------------------
 

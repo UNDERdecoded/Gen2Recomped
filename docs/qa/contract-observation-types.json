@@ -1,0 +1,46 @@
+{
+  "schema": 1,
+  "scope": "Python contract comparison and CLI admission; no Lua runtime changes or new native execution in replay.",
+  "qualified_checker_ref": "93f0cc5e9b13847b0c180972ea12d617ad7f5e4c",
+  "checker_sha256": "4a281fd8063f1f8de8e0d95ea0f98a3f3837dec3835aaf4394f0423178f6ca7b",
+  "src_tree": "fde61c049daa7ad9bd93331359c07643285ffc39",
+  "tests_tree": "a597de503c73634197de092adb759d74daff93d1",
+  "unit": {
+    "new_cli_methods": 5,
+    "synthetic_cli_cases": 26,
+    "all_tool_tests": 13,
+    "all_tool_tests_pass": true,
+    "unchanged_checker_negative_failures": 12,
+    "unit_log_sha256": "954f9332ab5d42967280d4f997f62671342249aafb7220f9a2e39cd2fe34509e",
+    "all_tools_log_sha256": "4589eccfeac72ae07e7ecf9ea3287888502da33f33452c67926961f64303f122",
+    "negative_log_sha256": "89c0e5907b5ef9a10a927fd46873362a463d72e6ed27ac856b6149e7b37d0524"
+  },
+  "replays": [
+    {
+      "producer_ref": "540dc5472deeec21f79ff66cba2d8f4056dcf592",
+      "workers": 268,
+      "complete_paired_observations": 178264,
+      "raw_reparsed": true,
+      "audit_evidence": "typed-contract-feature-replay-qa/audit.json",
+      "audit_sha256": "05d0b24aa896d56cd8866ed06021da1c05da7d595888197d522d07a9fc5277cd",
+      "matrix_summary_sha256": "4f2d9fbf3cb6ed3672a1b8196d4aba1a27f014b492d57480c7e74d625010be4f",
+      "independent_prior_audit_sha256": "871a13251a3f8b957aa3ddfb7178071caf4f8044809ce6518e1cd34f6d285b52"
+    },
+    {
+      "producer_ref": "e436fba6228bd6e73a97497107e4a15f61c0d052",
+      "workers": 268,
+      "complete_paired_observations": 178264,
+      "raw_reparsed": true,
+      "audit_evidence": "typed-contract-integration-replay-qa/audit.json",
+      "audit_sha256": "ee87a81e68f4b52169969e9b081c4153cdf87c7171dcf006cb213ef02897c704",
+      "matrix_summary_sha256": "3ff3def013cac593c7e9a666544ee0ce9a43df44a57df6542aceb0c347b7101c",
+      "independent_prior_audit_sha256": "73b77b0b0c4ac907e571221bb5fbcfbc2e3b34ed9e25b118f4e55b8cd8403eaa"
+    }
+  ],
+  "black_box_old_checker_negative": {
+    "false_positive_profile_comparisons": 2,
+    "false_zero_and_nested_true_one_admitted": true,
+    "receipt_sha256": "a7d7fbadfb23fe87264f5fd3bccd984ee65a6108909c089d62346b9010b16a45"
+  },
+  "source_runtime_unchanged": true
+}

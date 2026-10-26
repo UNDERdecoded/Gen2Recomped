@@ -513,3 +513,34 @@ What was ported from pokered's engine code and where it came from.
 - The autopilot run reproduces the original's early flow on real map
   data: Pallet sign text, lab door warp target (5,11), Oak's Lab exit by
   walking off the mat, connection into Route 1 at matching x.
+
+## Native GBA received-move history and presentation
+
+FireRed/Emerald Mirror Move and API-3 `MIRROR_MOVE_EFFECT` registrations use
+the recipient's native received-move history, caller eligibility and parent PP
+commands. The actual queue executes Substitute lowering/restoration/fade,
+Focus Band and Poison controllers with native sound controls; native doll
+art comes from the user's cartridge. [Contract and validation](native-gen3-mirror-move.md)
+describe the scope, revision 17 compatibility, retained failure evidence and
+remaining audio/profile/graphics qualification.
+
+## Native GBA sound-player ownership
+
+Native effects now replace the previous source on their imported M4A player
+across sound IDs, named roles and pan/mono variants, while independent players
+retain their voices. Native queries/stops, override behavior and cache/device
+cleanup are covered by [the source-bound sound-player contract](native-sound-player-lifecycle.md).
+This follow-up uses native revision 18, with unchanged party codec 1 and legacy
+digests. The earlier Mirror Move receipt remains historical validation of its
+revision-17 foundation. Public sound-event timing remains separate qualification work; native
+world-script waits are covered by the follow-up below.
+
+## Native GBA world-script sound waits
+
+Native `waitse` now yields on current SE-player state, preserving its latched
+180-tick real-time audio callback and separate 181-poll logic fallback. The
+actual game audio loop services callbacks after logic; field objects and input
+locks are released after the wait, with command hooks and source metadata
+preserved. [The source-bound contract](native-sound-script-waits.md) records
+actual native-controller, game-update and imported-PCM qualification, complete
+retained negative controls and the remaining sound/visual/session limits.
