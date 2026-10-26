@@ -961,6 +961,9 @@ function RomExtractorGen2:constants()
     -- Generation is runtime metadata, not cartridge data.  Battle formulas use
     -- it to select the Gen II critical-hit ladder without guessing from a ROM id.
     self._constants.generation = 2
+    -- Numeric phone/trainer identities are independent of localized names.
+    require("src.import.Gen2PhoneIdentities").install(
+      self._constants, self.manifest, self.version)
     local badges = {}
     -- A CARTRIDGE MAY HAVE ITS OWN SET.  Prism awards TWENTY badges across
     -- three engine-flag bytes, and its flag keys keep the ENGINE_ prefix that
@@ -8431,7 +8434,6 @@ end
 -- POKeGEAR had no dialogue at all to show.
 local GEN2_PHONE_ROW_BYTES = 12
 local GEN2_PHONE_MAX = 64
-local GEN2_NONTRAINER_NAMES = 5
 -- db class, id | db group, number | db ptime, bank, dw callee script (the one
 -- that runs when YOU ring them) | db ctime, bank, dw caller script (the one
 -- that runs when THEY ring you -- ELM's is the same $41E1
@@ -8447,14 +8449,30 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
   local sym = self:symbol("PhoneContacts")
   if not (sym and self.rom) then return nil end
 
+  -- SpecialPhoneCallList closes the table, including the reserved holes.
+  local limit = GEN2_PHONE_MAX
+  local stop = self:symbol("SpecialPhoneCallList")
+  if stop and stop.bank == sym.bank and stop.address > sym.address then
+    limit = math.floor((stop.address - sym.address) / GEN2_PHONE_ROW_BYTES)
+  end
+  local rows, rowsRead, lastName = {}, 0, 0
+  for id = 0, limit - 1 do
+    local ok, row = pcall(self.rom.bytes, self.rom, sym.bank,
+      sym.address + id * GEN2_PHONE_ROW_BYTES, GEN2_PHONE_ROW_BYTES)
+    if not ok then break end
+    rows[id], rowsRead = row, rowsRead + 1
+    if row[1] == 0 then lastName = math.max(lastName, row[2]) end
+  end
+
   -- Polished names can contain a Huffman-compressed suffix ($5D).
-  -- Decode the string stream before applying its charmap.
+  -- Decode the string stream before applying its charmap. Read every name
+  -- referenced by the actual table: the Gold-sized four-name bound discarded
+  -- Crystal's Buena row (non-trainer identity5), including both call scripts.
   local names = {}
   local nsym = self:symbol("NonTrainerCallerNames")
   if nsym then
     local polished = self.version == "polishedcrystal"
-    local count = polished and 7 or GEN2_NONTRAINER_NAMES
-    for id = 1, count - 1 do
+    for id = 1, lastName do
       local ok, address = pcall(self.rom.word, self.rom, nsym.bank,
         nsym.address + id * 2)
       if ok and self:gen2InRom(nsym.bank, address) then
@@ -8470,18 +8488,9 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
     end
   end
 
-  -- SpecialPhoneCallList closes the table; sizing off it beats guessing
-  local limit = GEN2_PHONE_MAX
-  local stop = self:symbol("SpecialPhoneCallList")
-  if stop and stop.bank == sym.bank and stop.address > sym.address then
-    limit = math.floor((stop.address - sym.address) / GEN2_PHONE_ROW_BYTES)
-  end
-
   local out = {}
-  for id = 0, limit - 1 do
-    local ok, row = pcall(self.rom.bytes, self.rom, sym.bank,
-      sym.address + id * GEN2_PHONE_ROW_BYTES, GEN2_PHONE_ROW_BYTES)
-    if not ok then break end
+  for id = 0, rowsRead - 1 do
+    local row = rows[id]
     local class, trainer = row[1], row[2]
     -- the unused rows are class 0 / id 0, which GetCallerName renders as the
     -- "----------" placeholder; skip them so the POKeGEAR can never list one
@@ -8490,7 +8499,8 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
       entry = { class = class, trainer = trainer }
     elseif trainer ~= 0 and names[trainer] then
       local name, role = names[trainer]:match("^([^\n\f\v]+)[\n\f\v]%s*(.*)$")
-      entry = { name = (name or names[trainer]):gsub(":$", ""), role = role }
+      entry = { name = (name or names[trainer]):gsub(":$", ""), role = role,
+                contactNumber = trainer }
     end
     -- The contact's OWN map, bytes 3 and 4.  GetAvailableCallers (36:$40DE)
     -- compares it against wMapGroup/wMapNumber and drops the contact from the
@@ -8510,8 +8520,9 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
     end
     out[id] = entry
   end
-  if not next(out) then return nil end
-  return out
+  local info = { size = limit, rowsRead = rowsRead, nonTrainerNames = names }
+  if not next(out) then return nil, info end
+  return out, info
 end
 
 -- `SpecialPhoneCallList` ([36,$45F6] .. PhoneOutOfAreaScript, 48 bytes) is
@@ -8900,7 +8911,7 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
   -- drawn in.
   self._gen2Spawns = out.spawns
   self._gen2MapDefs = maps
-  out.phone = self:gen2PhoneContacts(pool)
+  out.phone, out.phoneInfo = self:gen2PhoneContacts(pool)
   out.specialCalls = self:gen2SpecialPhoneCalls(pool)
   -- wVariableSprites as InitializeEventsScript leaves it on a new game, so an
   -- object_event whose sprite byte is $F0 or more resolves before the map's

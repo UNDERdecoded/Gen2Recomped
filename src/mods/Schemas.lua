@@ -1259,6 +1259,19 @@ R.text_pointers = {
 
 -- ------- persistence
 
+R.phone_contacts = {
+  semantics = "record", generations = "2",
+  fields = {
+    index=f.opt(f.int(1,255)), number=f.opt(f.int(0,255)),
+    name=f.opt(f.str), class=f.opt(f.str), member=f.opt(f.str),
+    map=f.opt(f.id("maps")), rematchEvent=f.opt(f.int(0,2047)),
+    calleeTime=f.opt(f.int(0,7)), callerTime=f.opt(f.int(0,7)),
+    callee=f.opt(f.str), caller=f.opt(f.str), calleeKey=f.opt(f.str), callerKey=f.opt(f.str),
+  },
+  example='mod.content.phone_contacts:patch("PHONE_YOUNGSTER_JOEY", { map="ROUTE_31" })',
+  notes="Gen2 native numeric phone book. Existing indices and reserved holes remain fixed; new contacts append at 1..255. Caller/callee keys must name existing native imported scripts, not Gen1 bytecode. New authored scripts, forward script/map references and the legacy Phone facade are separate work.",
+}
+
 -- compose, keyed by the owning mod id: the runner walks each owner's chain
 -- in semver order against the versions recorded in the save
 R.migrations = {

@@ -5,6 +5,7 @@ local Theme = require("src.ui.Theme")
 local Screens = require("src.ui.Screens")
 local Sound = require("src.core.Sound")
 local Strings = require("src.core.Strings")
+local Runtime = require("src.mods.Runtime")
 
 local PokegearMenu = {}
 PokegearMenu.__index = PokegearMenu
@@ -389,14 +390,50 @@ end
 -- `db PHONE_MOM, PHONE_ELM, -1`): those two can never be deleted.
 local GEN2_PERMANENT_NUMBERS = { [1] = true, [4] = true }
 
-function PokegearMenu.canDeleteContact(entry)
+function PokegearMenu.canDeleteContact(entry, data)
   local id = tonumber(entry and entry.id)
-  return id ~= nil and not GEN2_PERMANENT_NUMBERS[id]
+  if not id or id < 1 then return false end
+  if entry.permanent ~= nil then return not entry.permanent end
+  if data then return require("src.world.Gen2PhoneBook").canDelete(data, id) end
+  return not GEN2_PERMANENT_NUMBERS[id]
 end
 
 function PokegearMenu:contacts()
   local data = self.game.data
   local save = self.game.save
+
+  if require("src.core.GameVersion").isGen2() then
+    local Book = require("src.world.Gen2PhoneBook")
+    local Calls = require("src.script.Gen2Commands")
+    local slots = Book.contacts(save)
+    if Runtime.wantsHook("phone.contact_list") then
+      -- Save is an opaque native handle; the display list is detached. The
+      -- incoming selector continues to use the unhooked physical book.
+      local shown = Runtime.call("phone.contact_list", function(_, list) return list end,
+        save, Book.contacts(save))
+      if type(shown) == "table" and #shown == Book.SIZE then
+        slots = {}
+        for i = 1, Book.SIZE do
+          local value = shown[i]
+          local id = (type(value) == "number" or type(value) == "string") and tonumber(value)
+          slots[i] = id and id % 1 == 0 and id >= 1 and id <= 255
+            and Calls.phoneContact(data, id) and id or 0
+        end
+      end
+    end
+    local physical = Book.contacts(save)
+    local permanent, out = Book.permanent(data), {}
+    for displaySlot, id in ipairs(slots) do
+      local name = Calls.phoneName(data,id)
+      local slot = id == 0 and displaySlot or nil
+      if id ~= 0 then
+        for i, nativeId in ipairs(physical) do if nativeId == id then slot = i; break end end
+      end
+      out[displaySlot] = { id=name and id or 0, slot=slot, name=name or "----------",
+        permanent=permanent[id] == true }
+    end
+    return out
+  end
 
   local list = {}
   local registered = save and save.g2Phone
@@ -528,7 +565,7 @@ function PokegearMenu:update(dt)
       -- stay filled -- and the ROM's DELETE refuses only for the two
       -- PermanentNumbers, MOM and PROF.ELM.
       local entry = list[self.contact]
-      local canDelete = entry and PokegearMenu.canDeleteContact(entry)
+      local canDelete = entry and PokegearMenu.canDeleteContact(entry, self.game.data)
       if canDelete and (input:wasPressed("down") or input:wasPressed("up")) then
         self.phoneAction = self.phoneAction == "delete" and "call" or "delete"
         Sound.play(self.game.data, "Tink")
@@ -539,9 +576,15 @@ function PokegearMenu:update(dt)
         self.phoneAction = nil
         self.callText = nil
         if entry and deleting then
-          require("src.script.Gen2Commands").phoneList(self.game.save)[entry.id] = nil
+          if require("src.core.GameVersion").isGen2() then
+            local Book = require("src.world.Gen2PhoneBook")
+            if entry.slot then Book.deleteAt(self.game.save, entry.slot)
+            else Book.remove(self.game.save, entry.id) end
+          else
+            require("src.script.Gen2Commands").phoneList(self.game.save)[entry.id] = nil
+          end
           if self.contact > 1 then self.contact = self.contact - 1 end
-        elseif entry then
+        elseif entry and entry.id ~= 0 then
           self:startPhoneCall(entry)
         end
       elseif input:wasPressed("b") then
@@ -558,7 +601,8 @@ function PokegearMenu:update(dt)
         self.contact = self.contact > 1 and self.contact - 1 or #list
         Sound.play(self.game.data, "Tink")
       elseif input:wasPressed("a") then
-        if #list > 0 then
+        local entry = list[self.contact]
+        if entry and entry.id ~= 0 then
           self.phoneSubmenu = true
           self.phoneAction = "call"
           Sound.play(self.game.data, "Press_AB")
@@ -767,22 +811,22 @@ function PokegearMenu:drawPhone()
   self:drawStrip()
 
   local list = self:contacts()
-  if type(list) ~= "table" or #list == 0 then
+  if (type(list) ~= "table" or #list == 0) and not require("src.core.GameVersion").isGen2() then
     list = { { name = "MOM" }, { name = "PROF.ELM" } }
   end
   if self.contact < 1 then self.contact = 1 end
   if self.contact > #list then self.contact = #list end
 
   local selectedName = nil
-  -- One row per contact, starting at tile row 4 (inside the cream plate)
+  -- Keep the selected native slot visible, including slots nine and ten.
+  local top = math.max(0, self.contact - 8)
   for i, entry in ipairs(list) do
     local name = tostring(
       (type(entry) == "table" and (entry.name or entry.label)) or entry or "?"
     ):upper()
-    local ty = 3 + i   -- MOM at row 4, next at 5, ...
+    local ty = 3 + i - top
     if ty > 11 then break end
-
-    if i == self.contact then
+    if ty >= 4 and i == self.contact then
       selectedName = name
       -- THE CURSOR IS A GLYPH, NOT THE LETTER ">".
       --
@@ -806,7 +850,7 @@ function PokegearMenu:drawPhone()
       Font.draw(Strings(name), 18, ty * 8)
       if Font.endTint then Font.endTint() end
       love.graphics.setColor(1, 1, 1, 1)
-    else
+    elseif ty >= 4 then
       self:text(name, 3, ty)
     end
   end

@@ -3424,6 +3424,7 @@ function OverworldState:checkSpecialPhoneCall()
   Game.save.g2CurCaller = caller
   self:queueScript(script, { phoneCaller = caller,
     onDone = function() Game.save.g2CurCaller = nil end })
+  Gen2Commands.announceIncomingCall(Game.data, caller, Game.save.g2SpecialCallActive)
 end
 
 -- CheckPhoneCall (36:$4074): the random incoming call, rolled on every step
@@ -3459,6 +3460,7 @@ function OverworldState:checkIncomingPhoneCall()
     Game.save.g2CurCaller = nil
     pcall(function() require("src.core.Sound").play(Game.data, "Hang_Up") end)
   end })
+  Gen2Commands.announceIncomingCall(Game.data, id)
 end
 
 function OverworldState:update(dt)
