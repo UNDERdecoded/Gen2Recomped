@@ -348,7 +348,8 @@ end
 function Gen3TradeArt.extract(x)
   local rom = x.rom
   local key = Gen3TradeArt.romKey(rom)
-  local T = key and Gen3TradeArt.ROMS[key]
+  local mapped = x.manifest and x.manifest.tradeArt
+  local T = mapped and mapped.romKey == key and mapped or key and Gen3TradeArt.ROMS[key]
   if not T then
     Logger.warn("gen3 trade art: no address table for cartridge %s -- in-game "
                   .. "trades keep the bare swap", tostring(key))

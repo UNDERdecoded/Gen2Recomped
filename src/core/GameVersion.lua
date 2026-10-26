@@ -897,6 +897,22 @@ GameVersion.VERSIONS = {
     hasRunning = true,
   },
 
+  leafgreen = {
+    id = "leafgreen",
+    generation = 3,
+    label = "LeafGreen",
+    displayName = "Pokemon LeafGreen",
+    launcherName = "LeafGreen",
+    sha1 = "574fa542ffebb14be69902d1d36f1ec0a4afd71e",
+    manifest = "tools/rom_manifest_leafgreen.json",
+    cachePrefix = "leafgreen/",
+    saveSuffix = "_leafgreen",
+    importable = true,
+    experimental = true,
+    experimentalLabel = "ALPHA",
+    hasRunning = true,
+  },
+
   emerald = {
     id = "emerald",
     generation = 3,
@@ -1075,7 +1091,7 @@ GameVersion.VERSIONS = {
 -- put a Game Boy Advance game behind two Game Boy Color hacks, and broke the
 -- ordering rule tests/polished_crystal_registration_test.lua asserts.
 GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
-                      "firered", "emerald", "platinum",
+                      "firered", "leafgreen", "emerald", "platinum",
                       "heartgold", "soulsilver", "black", "white",
                       "prism", "polishedcrystal" }
 
@@ -1110,6 +1126,13 @@ end
 -- widened WITH; it is not, on its own, support.
 function GameVersion.isGen3(id)
   return GameVersion.generation(id) == 3
+end
+
+-- The paired Kanto games share field/script/UI contracts, while their ROM
+-- addresses, art, encounters, caches and saves remain cartridge-specific.
+function GameVersion.isFRLG(id)
+  id = id or GameVersion.get()
+  return id == "firered" or id == "leafgreen"
 end
 
 -- The fourth arm.  Same caveat the Gen 3 one carries and then some: a

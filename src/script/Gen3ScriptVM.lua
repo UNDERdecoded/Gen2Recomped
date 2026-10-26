@@ -570,7 +570,7 @@ end
 -- text.
 L.trainerbattle = function(ir, s)
   local isFireRedEarlyRival = tonumber(ir[2]) == 9
-    and require("src.core.GameVersion").get() == "firered"
+    and require("src.core.GameVersion").isFRLG()
   if isFireRedEarlyRival then
     -- ir[6] is the raw RIVAL_BATTLE_* bitfield, passed in the handler's
     -- sixth operand position so the early-rival path can apply it directly.

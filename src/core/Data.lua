@@ -1120,7 +1120,7 @@ function Data:seedDefaults()
       -- still gets SOMETHING rather than a screen with no images to draw.
       local core = self.constants and self.constants.gen3FRLGIntro
       local images = core and core.images
-      if V.get() == "firered" and type(images) == "table"
+      if V.isFRLG() and type(images) == "table"
          and images.gfBg and images.scene1Grass and images.scene3Bg then
         boot.screens.splash = "Gen3IntroFRLG"
       end
@@ -1940,7 +1940,7 @@ function Data:seedDefaults()
       end
     end
   end
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     seedMapAliases(self.maps, FIRERED_STORY_MAP_ALIASES)
     preferMapAliases(self.maps, FIRERED_STORY_MAP_ALIASES)
     for mapId, textConst in pairs(FIRERED_STORY_OBJECT_TEXT) do

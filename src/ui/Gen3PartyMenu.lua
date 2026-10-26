@@ -1433,7 +1433,7 @@ function Gen3PartyMenu:drawMember(mon, panel, selected, inset)
 
   -- (FireRed's DisplayPartyPokemonBarDetail prints every field in FONT_SMALL,
   -- the lead panel's name included)
-  local frlg = require("src.core.GameVersion").get() == "firered"
+  local frlg = require("src.core.GameVersion").isFRLG()
   local faced = (not panel.wide or frlg) and Font.pushFace("small") or nil
   love.graphics.setColor(0, 0, 0, 1)
 

@@ -93,7 +93,7 @@ local function frameTypeCount(game)
   -- Old/pre-frame caches do not carry the extracted count.  Keep the
   -- cartridge defaults rather than exposing Emerald's twenty choices on
   -- FireRed, whose option menu has exactly ten (sOptionMenuItemCounts).
-  return require("src.core.GameVersion").get() == "firered" and 10 or 20
+  return require("src.core.GameVersion").isFRLG() and 10 or 20
 end
 
 function Gen3Options.new(game, opts)
@@ -379,7 +379,7 @@ function Gen3Options:drawFireRed()
 end
 
 function Gen3Options:draw()
-  if require("src.core.GameVersion").get() == "firered" then return self:drawFireRed() end
+  if require("src.core.GameVersion").isFRLG() then return self:drawFireRed() end
   love.graphics.setColor(0.30, 0.44, 0.64, 1)
   love.graphics.rectangle("fill", 0, 0, GBA_W, GBA_H)
 

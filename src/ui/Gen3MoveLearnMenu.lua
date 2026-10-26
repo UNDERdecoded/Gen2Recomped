@@ -163,7 +163,13 @@ function Gen3MoveLearnMenu:forget(index)
   if hm[old.id] then
     local TextBox = require("src.render.TextBox")
     self.game.stack:push(TextBox.new(self.game,
-      Strings("HM moves can't be\nforgotten now.")))
+      Strings("HM moves can't be\nforgotten now."), function()
+        -- The summary chooser closed before answering. Return to it after
+        -- the refusal; the native list fallback already remains selectable.
+        if self.game.stack:top() == self and not self.selecting then
+          if not self:askOnSummary() then self.selecting = true end
+        end
+      end))
     return false
   end
   local def = self.game.data.moves[self.newMoveId]
