@@ -12,11 +12,13 @@
 
 local Assets = require("src.render.Assets")
 local Map = require("src.world.Map")
+local MapIdentity = require("src.core.MapIdentity")
 local TileRenderer = require("src.render.TileRenderer")
 
 local MapLoader = {}
 
 local cache = {}
+local aliases = {}
 -- mapId -> monotonic access stamp, for LRU eviction
 local lru = {}
 local accessSeq = 0
@@ -139,6 +141,10 @@ local function build(data, mapId)
 
   local map = Map.new(def, tilesetDef)
   map.renderer = TileRenderer.new(map, data)
+  -- Remember every physical alias for lifecycle APIs which do not receive Data.
+  for name, record in pairs(data.maps) do
+    if name ~= mapId and record == def and MapIdentity.runtimeId(data, name) == mapId then aliases[name] = mapId end
+  end
   cache[mapId] = map
   touch(mapId)
   return map
@@ -159,6 +165,9 @@ function MapLoader.applyHiddenPaths(data, def)
 end
 
 function MapLoader.load(data, mapId)
+  local requested = mapId
+  mapId = MapIdentity.runtimeId(data, mapId)
+  if requested ~= nil then aliases[requested] = requested ~= mapId and mapId or nil end
   -- EMERALD'S BATTLE PYRAMID FLOOR is rebuilt from the save every time it is
   -- loaded, as the cartridge rebuilds it (GenerateBattlePyramidFloorLayout)
   if mapId == "MAP_G26_N26" and require("src.core.GameVersion").get() == "emerald" then
@@ -194,6 +203,7 @@ end
 -- the live instance for a map id, or nil when it has not been loaded;
 -- callers that must not build a map (invalidation, tests) use this
 function MapLoader.cached(mapId)
+  mapId = aliases[mapId] or mapId
   local m = cache[mapId]
   if m then touch(mapId) end
   return m
@@ -204,6 +214,7 @@ end
 -- strip (nothing live may hold its renderer) -- MapLoader.trim guarantees
 -- this via its `protected` set.
 function MapLoader.evict(mapId)
+  mapId = aliases[mapId] or mapId
   local m = cache[mapId]
   if not m then return false end
   cache[mapId] = nil
@@ -217,6 +228,11 @@ end
 -- never evicted (the current map and everything drawn as a connected
 -- strip); the rest is trimmed least-recently-used down to RESIDENT_CAP.
 function MapLoader.trim(protected)
+  if protected and next(aliases) ~= nil then
+    local physical = {}
+    for id, keep in pairs(protected) do if keep then physical[aliases[id] or id] = true end end
+    protected = physical
+  end
   local n = 0
   for _ in pairs(cache) do n = n + 1 end
   if n <= RESIDENT_CAP then return end
@@ -241,6 +257,7 @@ end
 -- The orphaned instance is reclaimed by GC; MapLoader.evict is the path
 -- that releases eagerly, and it only runs on maps nothing live holds.
 function MapLoader.invalidate(mapId)
+  mapId = aliases[mapId] or mapId
   local had = cache[mapId] ~= nil
   cache[mapId] = nil
   lru[mapId] = nil
@@ -248,6 +265,7 @@ function MapLoader.invalidate(mapId)
 end
 
 function MapLoader.invalidateAll()
+  aliases = {}
   cache = {}
   lru = {}
 end

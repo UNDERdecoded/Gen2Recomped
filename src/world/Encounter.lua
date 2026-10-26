@@ -4,6 +4,7 @@
 -- probability buckets.
 
 local FieldDefaults = require("src.world.FieldDefaults")
+local MapIdentity = require("src.core.MapIdentity")
 
 local Encounter = {}
 
@@ -341,9 +342,9 @@ local gen4Views = setmetatable({}, { __mode = "k" })
 function Encounter.forMap(data, mapDef, mapId, hour, save)
   local all = data and data.encounters
   if not all then return nil end
-  local def = all[(mapDef and mapDef.encounters) or mapId]
+  local def = MapIdentity.lookup(data, all, (mapDef and mapDef.encounters) or mapId)
   if data.field and data.field.gen2Swarms then
-    def=require("src.world.Gen2Swarms").forMap(data,save,mapDef,mapId,def)
+    def=require("src.world.Gen2Swarms").forMap(data,save,mapDef,MapIdentity.sourceId(data,mapId),def)
   end
   if not isGen4Shaped(def) then return def end
   -- BLACK / WHITE: seasons, dark grass, phenomena, rippling water (src/world/Gen5WildTables.lua)

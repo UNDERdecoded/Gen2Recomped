@@ -9,6 +9,7 @@
 
 local Logger = require("src.core.Logger")
 local Runtime = require("src.mods.Runtime")
+local MapIdentity = require("src.core.MapIdentity")
 
 local Music = {}
 
@@ -447,11 +448,12 @@ end
 -- bike/surf songs and restore the map theme when they end
 function Music.playMap(data, mapId, onBike, surfing)
   local song = data and data.audio and data.audio.mapSongs
-    and mapId and data.audio.mapSongs[mapId] or nil
+    and mapId and MapIdentity.lookup(data, data.audio.mapSongs, mapId) or nil
   local nights = data and data.audio and data.audio.mapNightSongs
-  if nights and nights[mapId] then
+  local nightSong = MapIdentity.lookup(data, nights, mapId)
+  if nightSong then
     local hour = tonumber(os.date('%H')) or 12
-    if hour < 4 or hour >= 20 then song = nights[mapId] end
+    if hour < 4 or hour >= 20 then song = nightSong end
   end
   state.mapSong = song
   state.onBike = not not onBike

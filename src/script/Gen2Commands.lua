@@ -936,6 +936,8 @@ local function mapKeyAliases(mapId)
   return aliases
 end
 
+local MapIdentity = require("src.core.MapIdentity")
+
 local function resolveMapKey(ctx, mapId)
   if type(mapId) == "number" then
     -- Extract failed to fold (group, number) → registry key.  Never fall back
@@ -944,12 +946,13 @@ local function resolveMapKey(ctx, mapId)
     return nil
   end
   if type(mapId) ~= "string" or mapId == "" then
-    return ctx.overworld and ctx.overworld.map and ctx.overworld.map.id
+    return MapIdentity.sourceId(ctx.game and ctx.game.data,
+      ctx.overworld and ctx.overworld.map and ctx.overworld.map.id)
   end
   local data = ctx.game and ctx.game.data
   local maps = data and data.maps
   for _, key in ipairs(mapKeyAliases(mapId)) do
-    if maps and maps[key] then return key end
+    if maps and maps[key] then return MapIdentity.sourceId(data, key) end
   end
   -- Prefer the compact form (ROUTE25) which matches scaffold registry keys.
   return mapKeyAliases(mapId)[1] and (mapId:gsub("_(%d+)$", "%1")) or mapId
@@ -959,11 +962,13 @@ local function sceneMapId(ctx, mapId)
   return resolveMapKey(ctx, mapId)
 end
 
-function Gen2Commands.getScene(save, mapId)
+function Gen2Commands.getScene(save, mapId, data)
   local scenes = save.g2Scenes or {}
   if type(mapId) ~= "string" then return scenes[mapId] or 0 end
-  for _, key in ipairs(mapKeyAliases(mapId)) do
-    if scenes[key] ~= nil then return scenes[key] end
+  for _, name in ipairs(MapIdentity.aliases(data, mapId)) do
+    for _, key in ipairs(mapKeyAliases(name)) do
+      if scenes[key] ~= nil then return scenes[key] end
+    end
   end
   return 0
 end
@@ -999,8 +1004,10 @@ local function mapHasScene(ctx, id)
   -- actually carry callbacks
   if type(vars) ~= "table" then return true end
   if id == nil then return false end
-  for _, key in ipairs(mapKeyAliases(id)) do
-    if vars[key] ~= nil then return true end
+  for _, name in ipairs(MapIdentity.aliases(data, id)) do
+    for _, key in ipairs(mapKeyAliases(name)) do
+      if vars[key] ~= nil then return true end
+    end
   end
   return false
 end
@@ -1010,7 +1017,7 @@ function Commands.g2_check_scene(ctx, mapId)
   if not mapHasScene(ctx, id) then
     ctx.g2Var = SCENE_NONE
   else
-    ctx.g2Var = id and Gen2Commands.getScene(ctx.save, id) or 0
+    ctx.g2Var = id and Gen2Commands.getScene(ctx.save, id, ctx.game and ctx.game.data) or 0
   end
   ctx.lastCheck = ctx.g2Var ~= 0
 end
@@ -5198,7 +5205,8 @@ function Commands.g2_update_roam_positions(ctx)
   local r = (love and love.math and love.math.random) or math.random
   local curMap = ctx.game and ctx.game.overworld and ctx.game.overworld.map
     and ctx.game.overworld.map.id
-  local lastMap = ctx.save.g2RoamLastMap
+  curMap = MapIdentity.sourceId(ctx.game and ctx.game.data, curMap)
+  local lastMap = MapIdentity.sourceId(ctx.game and ctx.game.data, ctx.save.g2RoamLastMap)
 
   -- Always refresh landmarks
   Commands.g2_ensure_roam_landmarks(ctx)

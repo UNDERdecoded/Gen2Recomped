@@ -486,6 +486,8 @@ R.items = {
 
 R.maps = {
   semantics = "record", target = "maps",
+  canonicalId = require("src.core.Gen2MapNames").registryId,
+  write = require("src.core.Gen2MapNames").write,
   fields = {
     -- the byte cap is a ROM table artifact; mod maps use ids at or above
     -- 1000, and the indoor/connection range compares read the number
