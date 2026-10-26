@@ -1,0 +1,34 @@
+name: native GBA AI item knowledge
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen3-ai-item-knowledge-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: Roxas2712/gen1recomp-Mac-fix
+          ref: 12c9e5b5a2325470d6bb266c9a1f37b7954b698e
+          path: .contract-reference/gen1
+      - name: Install runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native item queries and observation producers
+        run: luajit tests/engine/gen3_ai_item_knowledge.lua
+      - name: Compare actual native AI and effect paths
+        run: |
+          mkdir -p /tmp/gen3-ai-item-knowledge
+          python3 tools/gen3-ai-item-knowledge-contract-check/check.py --gen1 .contract-reference/gen1 --report /tmp/gen3-ai-item-knowledge/records.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: gen3-ai-item-knowledge
+          path: /tmp/gen3-ai-item-knowledge
+          if-no-files-found: ignore

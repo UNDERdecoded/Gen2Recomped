@@ -323,10 +323,9 @@ MANIFEST_TEMPLATE = """{
   "id": "{{id}}",
   "name": "{{name}}",
   "version": "0.1.0",
-  "api": 2,
-  "entry": "main.lua",
-  "profile": "{{profile}}",
-  "game_version": ">={{game_version}} <{{next_major}}.0.0",
+  "api": {{api}},
+  "entry": "main.lua",{{games_line}}
+  "profile": "{{profile}}",{{engine_range_line}}
   "category": "GAMEPLAY",
   "priority": 100,
   "dependencies": [],
@@ -378,7 +377,7 @@ def check_github_field(manifest):
             "MK001", "error", str(err), "manifest.json"))
     return findings, notes
 
-MAIN_CONTENT = """-- {{id}}: a content-profile mod (api 2).
+MAIN_CONTENT = """-- {{id}}: a content-profile mod (api {{api}}).
 -- The 10-minute loop: edit, save, F5 in a POKEPORT_DEV=1 game, repeat.
 return function(mod)
   -- patch, not override: every field you do not name keeps its base value
@@ -391,7 +390,16 @@ return function(mod)
 end
 """
 
-MAIN_OVERHAUL = """-- {{id}}: an overhaul-profile mod (api 2).
+MAIN_PORTABLE = """-- {{id}}: portable API {{api}} entry for Gen1Recomp and Gen2Recomped.
+return function(mod)
+  if mod.content.moves:has("POUND") then
+    local ok, reason = mod.content.moves:patch("POUND", { power = 45 })
+    if not ok then mod.log:warn("%s", reason) end
+  end
+end
+"""
+
+MAIN_OVERHAUL = """-- {{id}}: an overhaul-profile mod (api {{api}}).
 return function(mod)
   mod.options:define({
     { key = "difficulty", label = "DIFFICULTY", kind = "choice",
@@ -411,7 +419,7 @@ return function(mod)
 end
 """
 
-MAIN_TC = """-- {{id}}: a total-conversion-profile mod (api 2).
+MAIN_TC = """-- {{id}}: a total-conversion-profile mod (api {{api}}).
 return function(mod)
   -- the new game itself: spawn, names, money (field.boot, D11)
   -- mod.content.field:patch("boot", {
@@ -442,7 +450,7 @@ LUARC_TEMPLATE = """{
 
 README_TEMPLATE = """# {{name}}
 
-A `{{profile}}` mod for the LOVE2D Pokemon Red engine (mod api 2).
+A `{{profile}}` mod for {{target_engine}} (mod api {{api}}).
 
 ## Layout
 
@@ -489,6 +497,10 @@ def cmd_scaffold(args, repo):
         "{{game_version}}": engine, "{{next_major}}": str(next_major),
         "{{extra}}": extra,
         "{{github_line}}": github_line,
+        "{{api}}": str(args.api),
+        "{{games_line}}": '\n  "games": ["gen1", "gen2", "gen3"],' if args.api == 3 else "",
+        "{{engine_range_line}}": "" if args.api == 3 else f'\n  "game_version": ">={engine} <{next_major}.0.0",',
+        "{{target_engine}}": "Gen1Recomp and Gen2Recomped" if args.api == 3 else "the LOVE2D Pokemon Red engine",
         "{{experimental}}": "true" if getattr(args, "experimental", False)
         else "false",
     }
@@ -504,6 +516,8 @@ def cmd_scaffold(args, repo):
 
     main = {"content": MAIN_CONTENT, "overhaul": MAIN_OVERHAUL,
             "total_conversion": MAIN_TC}[profile]
+    if args.api == 3:
+        main = MAIN_PORTABLE
     layout_extra = ""
     if profile == "total_conversion":
         layout_extra = "- `transforms.lua` - asset transforms over the player's cache\n"
@@ -519,7 +533,7 @@ def cmd_scaffold(args, repo):
         emit("transforms.lua", TRANSFORMS_TEMPLATE)
 
     if not args.quiet:
-        print(f"created {dest} ({profile} profile, api 2)")
+        print(f"created {dest} ({profile} profile, api {args.api})")
         print(f"next: python3 tools/modkit.py validate {args.id}")
     return 0
 
@@ -1964,7 +1978,7 @@ def main(argv):
     p.add_argument("id")
     p.add_argument("--profile", default="content",
                    choices=["content", "overhaul", "total_conversion"])
-    p.add_argument("--api", type=int, default=2)
+    p.add_argument("--api", type=int, choices=(1, 2, 3), default=2)
     p.add_argument("--github", default="",
                    help="optional owner/repo (enables launcher auto-update)")
     p.add_argument("--experimental", action="store_true",

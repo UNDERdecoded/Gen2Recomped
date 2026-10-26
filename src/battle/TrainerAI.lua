@@ -337,7 +337,7 @@ function TrainerAI.chooseMove(battler, rng, battle)
   local unlimited = battle and battle.ruleset and battle.ruleset.enemyUnlimitedPP
   local usable = {}
   for i, mv in ipairs(battler.curMoves) do
-    if battler.disabledSlot ~= i and (unlimited or mv.pp > 0) then
+    if not require("src.battle.Gen3Disable").blocked(battler, mv, i) and (unlimited or mv.pp > 0) then
       table.insert(usable, mv)
     end
   end

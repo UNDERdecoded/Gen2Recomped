@@ -7,7 +7,8 @@
 -- tables, or an edit through one dataset (hot reload, a test loading
 -- twice) reaches the other and the module's own statics.  Functions ride
 -- the copy by reference, so handlers keep their identity and the merged
--- value stays equal to the vanilla one -- the mod-free merge is a no-op.
+-- value stays equal to vanilla. Native GBA command adapters are installed
+-- per dataset before mods capture builtin handlers for delegation.
 -- Modules are required lazily -- the loader must not drag the battle and
 -- script stacks in with it at require time.
 local Logger = require("src.core.Logger")
@@ -83,9 +84,10 @@ end
 -- the write verbs copy their payload before it lands; centralized here so
 -- the isolation holds for every registrant instead of leaning on each
 -- module to hand over fresh tables
-local function isolate(registry)
+local function isolate(registry, adapt)
   return setmetatable({
     register = function(_, id, value, owner)
+      if adapt then value = adapt(id, value) end
       return registry:register(id, Merge.deepCopy(value), owner)
     end,
     override = function(_, id, value, owner)
@@ -99,7 +101,8 @@ end
 
 function Builtins.install(content, data)
   for _, entry in ipairs(REGISTRANTS) do
-    local registry = content[entry.name] and isolate(content[entry.name])
+    local adapt = entry.name == "move_effects" and require("src.battle.Gen3Disable").builtin or nil
+    local registry = content[entry.name] and isolate(content[entry.name], adapt)
     if registry then
       if entry.install then
         local modules, complete = {}, true

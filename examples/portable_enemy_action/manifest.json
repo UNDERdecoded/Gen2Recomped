@@ -1,0 +1,11 @@
+{
+  "id": "portable_enemy_action",
+  "name": "Portable enemy action",
+  "version": "1.0.0",
+  "api": 3,
+  "entry": "main.lua",
+  "games": [
+    "gen3"
+  ],
+  "affects_link": true
+}
