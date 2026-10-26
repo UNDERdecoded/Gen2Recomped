@@ -30,6 +30,18 @@ function ChoiceBox.new(game, onChoose, opts)
   return self
 end
 
+function ChoiceBox:choose(index)
+  if self.pending ~= nil then
+    return
+  end
+  if not self.noSound then
+    require("src.core.Sound").play(self.game.data, "Press_AB")
+  end
+  self.index = index
+  self.pending = index == 1
+  self.holdFrames = Timing.YES_NO_ANSWER
+end
+
 function ChoiceBox:update(dt)
   local input = self.game.input
   -- Both branches of DisplayTwoOptionMenu hold 15 frames with the menu still
@@ -48,21 +60,9 @@ function ChoiceBox:update(dt)
   if input:wasPressed("up") or input:wasPressed("down") then
     self.index = self.index == 1 and 2 or 1
   elseif input:wasPressed("a") then
-    -- HandleMenuInput_ (home/window.asm): SFX_PRESS_AB on A and B alike
-    if not self.noSound then
-      require("src.core.Sound").play(self.game.data, "Press_AB")
-    end
-    self.pending = (self.index == 1)
-    self.holdFrames = Timing.YES_NO_ANSWER
+    self:choose(self.index)
   elseif input:wasPressed("b") then
-    if not self.noSound then
-      require("src.core.Sound").play(self.game.data, "Press_AB")
-    end
-    -- .choseSecondMenuItem writes wCurrentMenuItem = 1 before the hold, so
-    -- the cursor visibly snaps to NO for those 15 frames
-    self.index = 2
-    self.pending = false
-    self.holdFrames = Timing.YES_NO_ANSWER
+    self:choose(2)
   end
 end
 
