@@ -412,6 +412,8 @@ end
 -- from this table so old options.lua files stay compatible.
 function SaveData.defaultOptions()
   return {
+    dateFormat = 'device',
+    timeFormat = 'device',
     -- textSpeed 3 = MEDIUM, matching InitOptions' TEXT_DELAY_MEDIUM
     -- in wOptions (engine/menus/main_menu.asm)
     textSpeed = 3,

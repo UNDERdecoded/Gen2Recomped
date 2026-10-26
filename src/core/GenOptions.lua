@@ -43,6 +43,8 @@ GenOptions.GENERATIONS = { 1, 2, 3, 4 }
 GenOptions.COUNT = 4
 
 GenOptions.SHARED_ONLY = {
+  dateFormat = true,
+  timeFormat = true,
   mods = true,
   modOptions = true,
   modData = true,

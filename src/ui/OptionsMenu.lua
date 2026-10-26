@@ -747,6 +747,7 @@ local function buildRows(game)
       end }
   end
 
+  for _,row in ipairs(require('src.core.DateTime').rows(Strings)) do rows[#rows+1]=row end
   local pipelineRows = Pipelines.rows(game)
   if pipelineRows[1] then
     local merged = {}

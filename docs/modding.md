@@ -277,3 +277,9 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+## Native host services
+
+The [native host services](mod-host-services.md) expose shared date/time
+presentation and read-only device power information through `mod.datetime`
+and `mod.device`.

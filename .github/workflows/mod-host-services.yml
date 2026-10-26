@@ -1,0 +1,23 @@
+name: Native mod host services
+on:
+  pull_request:
+    paths:
+      - 'src/core/DateTime.lua'
+      - 'src/core/GenOptions.lua'
+      - 'src/core/SaveData.lua'
+      - 'src/mods/HostServices.lua'
+      - 'src/mods/Loader.lua'
+      - 'src/ui/*Options*.lua'
+      - 'tests/engine/native_host_services.lua'
+      - '.github/workflows/mod-host-services.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  host-services:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y luajit
+      - run: luajit tests/engine/native_host_services.lua
