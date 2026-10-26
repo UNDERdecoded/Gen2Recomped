@@ -222,6 +222,9 @@ jobs:
       - run: sudo apt-get update && sudo apt-get install -y luajit
       - run: python3 -m pip install --upgrade pillow
 
+      - name: translation generation regressions
+        run: python3 -m unittest discover -s tests/tools -p test_translation_source_encoding.py -v
+
       # constraint 1, enforced automatically: a committed mod that ships
       # ROM-derived bytes fails the build.  `lint` is the no-ROM-content
       # check; `validate` is deliberately not run here because it resolves

@@ -1373,7 +1373,10 @@ def harvest_engine_strings(repo):
                 continue
             path = os.path.join(root, name)
             rel = os.path.relpath(path, repo)
-            with open(path, encoding="utf-8") as handle:
+            # Legacy comments can contain non-UTF-8 bytes. Keep them
+            # losslessly while scanning; harvested catalog keys must
+            # still be valid UTF-8.
+            with open(path, encoding="utf-8", errors="surrogateescape") as handle:
                 body = handle.read()
             for match in STRINGS_CALL.finditer(body):
                 literal = match.group(1)
@@ -1381,6 +1384,12 @@ def harvest_engine_strings(repo):
                     # normalise to the double-quoted form the catalog uses
                     literal = '"' + literal[1:-1].replace('"', '\\"') + '"'
                 line = body.count("\n", 0, match.start()) + 1
+                try:
+                    literal.encode("utf-8")
+                except UnicodeEncodeError:
+                    raise ValueError(
+                        f"{rel}:{line}: translation source literal is not valid UTF-8"
+                    ) from None
                 if literal in seen:
                     continue
                 seen.add(literal)
@@ -1708,7 +1717,11 @@ def cmd_translation(args, repo):
     for entries in grouped.values():
         entries.sort()
 
-    engine = harvest_engine_strings(repo)
+    try:
+        engine = harvest_engine_strings(repo)
+    except ValueError as err:
+        print(f"modkit: could not read engine strings ({err})")
+        return 1
 
     catalogs = [
         ("dialogue", "Script text", grouped.get("dialogue", []), False,
@@ -1750,13 +1763,20 @@ def cmd_translation(args, repo):
         changed[name] = len(done) - kept[name]
 
     engine_version_ = engine_version(repo)
+    next_major = str(int(engine_version_.split(".")[0]) + 1)
     subst = {
         "{{id}}": mod_id,
         "{{name}}": args.id,
         "{{lang}}": lang_name,
         "{{lang_id}}": re.sub(r"\W+", "_", args.id).lower(),
         "{{game_version}}": engine_version_,
-        "{{next_major}}": str(int(engine_version_.split(".")[0]) + 1),
+        "{{next_major}}": next_major,
+        # The shared scaffold can use either the legacy manifest or the
+        # parameterized API-3 template. Translation output keeps its API-2
+        # contract and engine range with either layout.
+        "{{api}}": "2",
+        "{{games_line}}": "",
+        "{{engine_range_line}}": f'\n  "game_version": ">={engine_version_} <{next_major}.0.0",',
         "{{profile}}": "content",
         "{{extra}}": "",
         "{{github_line}}": "",
