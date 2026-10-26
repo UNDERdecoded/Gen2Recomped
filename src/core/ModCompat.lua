@@ -32,7 +32,6 @@
 --                               hook, not one module
 --   src.world.gen2.Follower     PikachuFollower is Yellow's, not a general
 --                               party follower
---   src.ui.gen2.Chrome          no shared window-chrome module
 --   src.ui.gen2.SaveMenu        the save flow is part of StartMenu here
 --   src.ui.gen2.BattleAnimView  Gen2AnimPlayer is a player, not a view
 --   src.battle.UIVisibility     no equivalent
@@ -80,6 +79,7 @@ ModCompat.ALIASES = {
   ["src.battle.gen2.Effects"] = "src.battle.MoveEffects",
   ["src.battle.gen2.Mon"] = "src.pokemon.Pokemon",
   ["src.ui.gen2.BattleState"] = "src.battle.BattleState",
+  ["src.ui.gen2.Chrome"] = "src.ui.Gen2Chrome",
 
   -- menus.  The Gold port names two of these differently rather than
   -- namespacing them, so both spellings land on the one implementation.

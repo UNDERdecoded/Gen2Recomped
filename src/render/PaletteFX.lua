@@ -1155,7 +1155,7 @@ function PaletteFX.paperShade(data)
   return c[1] / 255, c[2] / 255, c[3] / 255
 end
 
-function PaletteFX.effectiveColors(c)
+function PaletteFX.effectiveColors(c, invert)
   if not c then return nil end
   local mode = PaletteFX.mode or "gbc"
   local out = c
@@ -1176,6 +1176,10 @@ function PaletteFX.effectiveColors(c)
   -- cave has to read dark in CLASSIC's pea greens and in plain DMG grays too
   -- (#322).  permute() is the identity (and returns `out` itself, which the
   -- mod-graphics parity check leans on) while nothing has armed one.
+  -- An inverted font page reverses its settled display ramp before the
+  -- hardware shade register permutes it. Keep this on the native path so
+  -- Gen2 menu chrome cannot carry a second palette mode/register state.
+  if invert then out = { out[4], out[3], out[2], out[1] } end
   return PaletteFX.permute(out, shadeMap)
 end
 
