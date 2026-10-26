@@ -1,0 +1,7 @@
+{
+  "id": "path_probe",
+  "name": "Filesystem path probe",
+  "version": "1.0.0",
+  "api": 2,
+  "entry": "main.lua"
+}

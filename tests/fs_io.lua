@@ -99,6 +99,14 @@ function FsIo.new(rootDir)
 
   local function abs(path)
     if path == nil or path == "" then return base end
+    -- The SDK aliases mods/<name> to the selected mod directory, which
+    -- may live outside this checkout. Joining an absolute alias to base
+    -- turns it into a different, usually missing path (.//home/...)
+    -- and silently leaves the loader with no mod to test.
+    if path:sub(1, 1) == "/"
+      or (FsIo.isWindows and (path:sub(1, 1) == "\\" or path:match("^%a:[/\\]"))) then
+      return path
+    end
     return base .. "/" .. path
   end
 

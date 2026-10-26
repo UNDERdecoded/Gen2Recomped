@@ -1,0 +1,39 @@
+{
+  "parent": "ed5189c247ee7a2ccca666784e21fd4fba8df781",
+  "production_source_tree": "0342c57e494d1ff9344b3b9a89b431745aa12ed7",
+  "production_source_changed": false,
+  "changed_file_sha256": {
+    "tests/fs_io.lua": "a58a5a97496283c4033feca0d7ba8a4a547ae314db2d12df3c86594ae91b6259",
+    "tests/modkit/cases/filesystem_paths.lua": "66f81e2c0128cb6bd260d671e2783027908b17db6c51ce642456853330d21db5",
+    "tests/modkit/fixtures/path probe/manifest.json": "16ba7afd42c9057f5690dc87e545869ff97c2628858faf1b65cdfb1354a854e4",
+    "tests/modkit/fixtures/path probe/main.lua": "a95d0fce070987a02a1153308e38b8b94a7df9c3ebee599f2e1a2e541e31f993",
+    "tests/modkit/fixtures/path probe/payload.txt": "79ba5cc145a36578f482e0bf924ee6547ffceb25e949acda3616993d2ff06e28"
+  },
+  "acceptance": {
+    "targeted_checks_passed": 77,
+    "targeted_checks_total": 77,
+    "sdk_suites_passed": 4,
+    "sdk_suites_total": 4,
+    "unchanged_parent_failed_checks": 38,
+    "platform": "macOS with Windows path-policy doubles"
+  },
+  "legacy_developer_tooling": {
+    "candidate": "126/129",
+    "parent": "126/129",
+    "exact_fail_counters_match": true,
+    "fail_lines": [
+      "FAIL CONSTANT_DEFAULTS seeds fallbackMove = TACKLE",
+      "FAIL letter keys append to the buffer",
+      "FAIL backspace edits the buffer"
+    ]
+  },
+  "raw_log_sha256": {
+    "unchanged-parent-negative": "8671e0a48c0ece28cdc4178ad084180729a73d50c4ccfc2e09209372b8b4e874",
+    "targeted": "fb390b46f87f629bf73e83515c6d60618d7cc50e7b8725c182300565221fd5a2",
+    "sdk": "46386467a53e6c1e64e09c6c2821ab9c1c438526d413cbe68b02ba09e6b8c265",
+    "parent-developer": "63efa9d896bd519cec02dfa7ddf083fdf3f17d14493c9943c6e2be873c4e9e05",
+    "candidate-developer": "ce1f446fe62408206171a7ec6c83adbd03cf4aa83ff402daf8935c495eb20c2b"
+  },
+  "scope": "ROM-free filesystem adapter and SDK loading; no production modules, graphics/device launch or full-mod gameplay acceptance.",
+  "earlier_failed_setups_retained": true
+}
