@@ -1,0 +1,3 @@
+#reference "probe.slangp"
+parameters = "gain"
+gain = 0.7
