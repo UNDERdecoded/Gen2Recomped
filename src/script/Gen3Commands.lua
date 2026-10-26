@@ -2665,7 +2665,6 @@ function Commands.g3_set_layout(ctx, layoutId)
   local map = ow and ow.map
   local id = tonumber(valueOf(ctx, layoutId))
   if not (map and id) then return end
-  map.gen3LayoutOverride = id
   local layouts = ctx.game and ctx.game.data and ctx.game.data.map_layouts
   local layout = layouts and layouts[id]
   if not layout then
@@ -2679,9 +2678,12 @@ function Commands.g3_set_layout(ctx, layoutId)
   if changed == nil then
     Logger.warn("setmaplayoutindex: %s could not take layout %d -- %s",
                 tostring(map.id), id, tostring(why))
-  elseif changed > 0 then
-    Logger.info("setmaplayoutindex: %s redrawn from layout %d (%d cell(s) "
-                  .. "differ)", tostring(map.id), id, changed)
+  else
+    map.gen3LayoutOverride = id
+    if changed > 0 then
+      Logger.info("setmaplayoutindex: %s redrawn from layout %d (%d cell(s) "
+                    .. "differ)", tostring(map.id), id, changed)
+    end
   end
 end
 
