@@ -23,6 +23,7 @@ local ModStorage = require("src.mods.Storage")
 local Runtime = require("src.mods.Runtime")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
+local WorldActions = require("src.world.WorldActions")
 -- Module-name aliases for mods written against the Gold port's per-generation
 -- layout (src.world.gen2.Player and friends).  Installed here because this is
 -- the module that loads mods: the searcher has to be in place before the
@@ -1124,6 +1125,15 @@ function Loader:_api(mod)
   -- the Game the facade acts on is still being wired when the entry chunk
   -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
   -- namespace per mod for payloads too large to belong in a save file.
+  -- When capability queries are installed, these additive methods exist on
+  -- every host; individual actions still validate native version and state.
+  if api.supports then
+    local supports = api.supports
+    function api:supports(surface, name)
+      if surface == "world" and WorldActions.supports(name) then return true end
+      return supports(self, surface, name)
+    end
+  end
   local world, storage
   setmetatable(api, { __index = function(_, key)
     if key == "game" then return loader:_game() end

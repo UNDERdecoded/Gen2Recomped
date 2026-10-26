@@ -255,6 +255,15 @@ without the engine knowing the layout.
 Developer mode also arms the mod loader's dev tripwire, which flags mods
 that reach outside their permission set.
 
+## Public world actions
+
+`mod.world` exposes guarded party swaps, verified contextual field actions
+and native flight through `canReorderParty`, `reorderParty`,
+`availableFieldActions`, `useFieldAction`, `canFly` and `flyTo`.
+See [contracts, busy-state checks and generation coverage](world-actions-api.md).
+Calls revalidate the live state and preserve native gameplay paths; the
+field-action adapter explicitly refuses unsupported script-driven cases.
+
 ## Support link (`support`)
 
 A mod can add a link where players can thank its creator: a Ko-fi, Patreon or
