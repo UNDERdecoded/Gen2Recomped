@@ -16,7 +16,7 @@ local Version = {
                           -- binary (e.g. a LOVE version bump); an older shell
                           -- refuses to chainload a payload whose minShell
                           -- exceeds the shell it provides.
-  modApi = 2,             -- mod API major (manifest `api`)
+  modApi = 3,             -- mod API major (manifest `api`)
   linkProtocol = 2,       -- link handshake wire version (Handshake.PROTOCOL)
   saveFormat = 4,         -- save.meta.format
   cache = "rom-cache-v5", -- ROM import cache generation (RomImporter marker)

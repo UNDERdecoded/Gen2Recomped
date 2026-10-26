@@ -1098,6 +1098,12 @@ function Commands.g2_object(ctx, index, visible)
     obj, mapId = objectByIndex(ctx, index)
   end
   if not obj or not mapId then return end
+  return Gen2Commands.setObjectVisibility(ctx, obj, mapId, visible)
+end
+
+-- Shared native effect after resolving a map object. Public API adapters can
+-- supply the resolved template without depending on cached script-ID numbering.
+function Gen2Commands.setObjectVisibility(ctx, obj, mapId, visible)
   local OverworldState = require("src.world.OverworldController")
   local name = OverworldState.objectToggleKey(obj)
   -- The PERSISTENT half, which this used to leave to a `setevent` the ROM
