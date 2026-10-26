@@ -486,13 +486,17 @@ function SaveData.defaultOptions()
     -- Native mod enablement is an installation option, not save-slot data.
     -- Missing entries mean enabled so newly installed mods work by default.
     mods = {},
+    -- Desired load order; dependencies still load before their dependents.
+    -- Empty uses manifest priority/id. Kept across games and New Game.
+    modOrder = {},
     -- Which generation the launcher's chip row is filtered to (1/2/3), or
     -- false for ALL.  A view setting, not game state: it hides chips and
     -- nothing else, and every game stays registered and playable.
     launcherGeneration = false,
     -- Named setups the player can switch between (#593; src/mods/ModProfile.lua
     -- owns the shape, src/mods/ManagerState.lua the UI): each row is
-    -- { name, enabled = {id=bool}, options = {id={k=v}}, slots = {version=slotId} }.
+    -- { name, enabled = {id=bool}, options = {id={k=v}}, slots = {version=slotId},
+    --   order = {id, ...} }.
     -- activeProfile names the row the live set currently matches (nil for
     -- ad-hoc, so it has no default entry here; mergeOptions preserves it).
     -- modProfilesSeeded records that the pre-profiles setup was already

@@ -1,5 +1,26 @@
 # Native modding
 
+## Choosing mod load order
+
+In the launcher's **Mods** panel, choose **Load order**, then **Earlier** or
+**Later** on a mod's card. Earlier mods initialize first; later mods can
+override their content and assets. Dependencies always load before the mods
+that need them, even when the requested order says otherwise. Explicit hook,
+event and composed-record priorities retain their existing meaning.
+
+The preference is saved in `options.lua` as `modOrder`, shared by all games.
+Changes take effect on the next game launch. **Reset order** restores the
+original manifest-priority order (ascending priority, then mod id).
+Newly installed mods follow the saved list in that default order. Disabled
+and temporarily absent mods keep their positions. Search/category filters
+only move the visible mods; hidden positions are preserved.
+
+The in-game mod manager also has **LOAD ORDER..** at the end of its mod list.
+Use Left/Right to move a mod, then START for the usual apply/restart or
+discard actions. Opening the order screen does not change the running set.
+Mod profiles include the order when saved or exported. Older profiles that
+have no order keep the current preference when applied.
+
 The modding book lives on the
 [project wiki](https://github.com/bryanthaboi/gen1recomp/wiki).
 

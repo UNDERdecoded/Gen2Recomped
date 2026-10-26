@@ -44,6 +44,7 @@ GenOptions.COUNT = 4
 
 GenOptions.SHARED_ONLY = {
   mods = true,
+  modOrder = true,
   modOptions = true,
   modData = true,
   modIndexes = true,

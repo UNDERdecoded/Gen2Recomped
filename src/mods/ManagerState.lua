@@ -13,6 +13,7 @@ local Theme = require("src.ui.Theme")
 local OptionRows = require("src.ui.OptionRows")
 local Strings = require("src.core.Strings")
 local ModProfile = require("src.mods.ModProfile")
+local LoadOrder = require("src.mods.LoadOrder")
 
 local ManagerState = {}
 ManagerState.__index = ManagerState
@@ -215,7 +216,11 @@ function ManagerState:refresh()
   if self.currentMod then
     self.currentMod = self.byId[self.currentMod.id]
   end
-  self.restartPending = #self:stagedList() > 0
+  if not self.bootOrder then
+    self.bootOrder = LoadOrder.normalize(loader and loader.requestedOrder
+      or self:optionsTable().modOrder)
+  end
+  self.restartPending = #self:stagedList() > 0 or self:orderChanged()
   -- a live set that drifted off the named profile reverts to ad-hoc
   local opts = self:optionsTable()
   if opts.activeProfile then
@@ -295,8 +300,49 @@ function ManagerState:modRows()
   end
   if #rows == 0 then
     rows[1] = { header = true, label = Strings("NO MODS INSTALLED") }
+  else
+    rows[#rows + 1] = { label = Strings("LOAD ORDER.."),
+      action = function() self:goTo("order") end }
   end
   return rows
+end
+
+function ManagerState:orderChanged()
+  return not LoadOrder.same(self:optionsTable().modOrder, self.bootOrder,
+    self.status.available)
+end
+
+function ManagerState:orderRows()
+  local rows = {}
+  for _, id in ipairs(LoadOrder.materialize(self:optionsTable().modOrder,
+      self.status.available)) do
+    local m = self.byId[id]
+    if m then rows[#rows + 1] = { orderId = id,
+      label = tostring(#rows + 1) .. " " .. (m.name or id) } end
+  end
+  rows[#rows + 1] = { label = Strings("RESET ORDER"), action = function()
+    self:optionsTable().modOrder = {}
+    self:optionsTable().activeProfile = nil
+    self:persistOptions()
+    self:refresh()
+  end }
+  return rows
+end
+
+function ManagerState:moveInOrder(dir)
+  local row = self:focusedRow()
+  if not (row and row.orderId) then return end
+  local opts = self:optionsTable()
+  local order, changed = LoadOrder.move(opts.modOrder, self.status.available,
+    nil, row.orderId, dir)
+  if not changed then return end
+  opts.modOrder, opts.activeProfile = order, nil
+  self:persistOptions()
+  self:refresh()
+  for i, candidate in ipairs(self:orderRows()) do
+    if candidate.orderId == row.orderId then self.cursor = i break end
+  end
+  self:snapCursor()
 end
 
 function ManagerState:profileRows()
@@ -407,6 +453,8 @@ function ManagerState:rowsForScreen()
     return self.currentMod and self:permissionRows(self.currentMod) or {}
   elseif self.screen == "apply" then
     return self:applyRows()
+  elseif self.screen == "order" then
+    return self:orderRows()
   end
   return {}
 end
@@ -469,7 +517,9 @@ function ManagerState:moveCursor(dir)
 end
 
 function ManagerState:adjustOrTab(dir)
-  if self.screen == "list" then
+  if self.screen == "order" then
+    self:moveInOrder(dir)
+  elseif self.screen == "list" then
     self.tab = clampIndex(self.tab + dir, #TABS)
     self.cursor, self.scroll = 1, 1
     self:snapCursor()
@@ -823,6 +873,8 @@ end
 function ManagerState:discardChanges()
   local loader = self.game.mods
   local opts = self:optionsTable()
+  opts.modOrder = LoadOrder.normalize(self.bootOrder)
+  self:persistOptions()
   for _, m in ipairs(self:stagedList()) do
     local en = bootEnabled(m)
     if loader and loader.setEnabled then loader:setEnabled(m.id, en) end
@@ -852,6 +904,8 @@ function ManagerState:findProfile(name)
 end
 
 function ManagerState:matchesProfile(p)
+  if p.order ~= nil and not LoadOrder.same(p.order,
+      self:optionsTable().modOrder, self.status.available) then return false end
   for _, m in ipairs(self.status.available or {}) do
     local want = p.enabled[m.id] ~= false
     if (m.enabled and true or false) ~= want then return false end
@@ -895,8 +949,10 @@ function ManagerState:applyProfile(p)
   for _, move in ipairs(ModProfile.slotMoves(p)) do
     require("src.core.SaveData").setActiveSlot(move[1], move[2])
   end
+  if p.order ~= nil then self:optionsTable().modOrder = LoadOrder.normalize(p.order) end
   self:optionsTable().activeProfile = p.name
   self:persistOptions()
+  self:refresh()
   local missing = ModProfile.missingIds(p, self.byId)
   if #missing > 0 then
     self:notify(#missing .. " MODS MISSING")
@@ -914,11 +970,12 @@ function ManagerState:saveCurrentAs()
       local opts = self:optionsTable()
       opts.modProfiles = opts.modProfiles or {}
       local snap = ModProfile.capture(self.status.available,
-        self:modOptionsTable())
+        self:modOptionsTable(), opts.modOrder)
       local existing = self:findProfile(name)
       if existing then
         existing.enabled, existing.options, existing.slots =
           snap.enabled, snap.options, snap.slots
+        existing.order = snap.order
       else
         snap.name = name
         opts.modProfiles[#opts.modProfiles + 1] = snap
@@ -1360,6 +1417,10 @@ function ManagerState:drawApply()
   drawTruncated("PENDING CHANGES", 16, 2 * 8, 17)
   local staged = self:stagedList()
   local y = LIST_TOP
+  if self:orderChanged() then
+    Font.draw(Strings("LOAD ORDER CHANGED"), 16, y * 8)
+    y = y + 1
+  end
   local shown = math.min(#staged, 7)
   for i = 1, shown do
     local m = staged[i]
@@ -1367,7 +1428,7 @@ function ManagerState:drawApply()
     drawTruncated(verb .. (m.name or m.id), 16, y * 8, 17)
     y = y + 1
   end
-  if #staged == 0 then
+  if #staged == 0 and not self:orderChanged() then
     Font.draw(Runtime.safeMode and "SAFE MODE" or Strings("NO CHANGES"), 16, y * 8)
     y = y + 1
   end
@@ -1431,6 +1492,10 @@ function ManagerState:draw()
     self:drawErrors()
   elseif self.screen == "apply" then
     self:drawApply()
+  elseif self.screen == "order" then
+    drawTruncated(Strings("LOAD ORDER"), 16, 2 * 8, 17)
+    self:drawRows(self:orderRows())
+    self:drawFooter(Strings("LEFT/RIGHT:MOVE"), Strings("START:APPLY B:BACK"))
   end
   if self.overlay then self:drawOverlay() end
 end

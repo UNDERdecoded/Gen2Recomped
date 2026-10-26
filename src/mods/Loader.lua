@@ -23,6 +23,7 @@ local ModStorage = require("src.mods.Storage")
 local Runtime = require("src.mods.Runtime")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
+local LoadOrder = require("src.mods.LoadOrder")
 -- Module-name aliases for mods written against the Gold port's per-generation
 -- layout (src.world.gen2.Player and friends).  Installed here because this is
 -- the module that loads mods: the searcher has to be in place before the
@@ -184,6 +185,7 @@ end
 function Loader:_loadState()
   self.disabled = {}
   local options = SaveData.loadOptions(self.fs)
+  self.requestedOrder = LoadOrder.normalize(options.modOrder)
   local gen = self:_generation()
   for id, value in pairs(options.mods or {}) do
     -- `false` still means off, and a bare `true` still means on -- ModGens
@@ -609,10 +611,13 @@ function Loader:_enforceConflicts()
   end
 end
 
--- Kahn over the surviving graph with the ready set kept in (priority, id)
--- order, so dependencies come first and the rest matches the v1 contract
+-- Dependencies always come first. The saved order ranks the ready set only;
+-- without a preference it is exactly the original (priority, id) order.
 function Loader:_order()
   local pending, indegree, dependents = {}, {}, {}
+  local entries = {}
+  for _, mod in pairs(self.mods) do entries[#entries + 1] = mod end
+  local rank = LoadOrder.rank(self.requestedOrder, entries)
   for _, id in ipairs(orderedIds(self.mods, isActive)) do
     pending[id], indegree[id] = true, 0
   end
@@ -636,9 +641,7 @@ function Loader:_order()
         if not best then
           best = id
         else
-          local pa, pb = self.mods[id].manifest.priority,
-            self.mods[best].manifest.priority
-          if pa < pb or (pa == pb and id < best) then best = id end
+          if rank[id] < rank[best] then best = id end
         end
       end
     end
