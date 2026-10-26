@@ -11,6 +11,7 @@ local Data = require("src.core.Data")
 local Version = require("src.core.Version")
 local Assets = require("src.render.Assets")
 local ModUI = require("src.ui.ModUI")
+local PortableScripts = require("src.mods.PortableScripts")
 local AssetTransform = require("src.mods.AssetTransform")
 local Manifest = require("src.mods.Manifest")
 local Merge = require("src.mods.Merge")
@@ -1125,7 +1126,7 @@ function Loader:_api(mod)
   -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
   -- namespace per mod for payloads too large to belong in a save file.
   local world, storage
-  setmetatable(api, { __index = function(_, key)
+  setmetatable(api, PortableScripts.wrap({ __index = function(_, key)
     if key == "game" then return loader:_game() end
     if key == "storage" then
       -- Do not pass loader.fs when it is love.filesystem: that always writes
@@ -1141,7 +1142,7 @@ function Loader:_api(mod)
     if not module then return nil end
     world = module.new(game, modId)
     return world
-  end })
+  end }, api, loader, mod.manifest))
   return api
 end
 
@@ -1196,6 +1197,7 @@ end
 -- migration it took goes with them.  The journal only exists around an
 -- entry chunk; a later failure (script validation) purges every registry.
 function Loader:_rollback(modId)
+  PortableScripts.cancelAll(self, modId, "mod rolled back")
   for name in pairs(self.journal or self.content) do
     self.content[name]:rollback(modId)
   end
@@ -1310,6 +1312,7 @@ local function stampAudioOwners(data, name, registry)
 end
 
 function Loader:load(data)
+  PortableScripts.cancelAll(nil, nil, "mods reloaded")
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
@@ -1653,6 +1656,7 @@ end
 -- boots) ran on a modded engine whose mod instance nothing drives any more,
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
+  PortableScripts.cancelAll(nil, nil, "mods unloaded")
   local undone = select(1, ModSeams.unwindAll())
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
