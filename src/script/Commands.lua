@@ -1285,7 +1285,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
   -- This is intentionally an event rather than a special-case starter hook:
   -- mods can use the same seam for story gifts, fossils, or custom scripts.
   local gift = { ctx = ctx, species = species, level = level }
-  if ctx.game.mods then
+  local giftEvents = ctx.game.mods and ctx.game.mods.events
+  if giftEvents and (not giftEvents.listeners or giftEvents.listeners["pokemon.before_give"]) then
     ctx.game.mods.events:emit("pokemon.before_give", gift)
     species, level = gift.species, gift.level
   end

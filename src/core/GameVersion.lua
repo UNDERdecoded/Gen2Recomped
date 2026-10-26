@@ -1082,7 +1082,12 @@ GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
 GameVersion.current = "red"
 
 function GameVersion.set(id)
+  local previous = GameVersion.current
   GameVersion.current = GameVersion.VERSIONS[id] and id or "red"
+  if previous ~= GameVersion.current then
+    local decorations = package.loaded["src.compat.gen2.Decorations"]
+    if decorations then decorations.useRegistry(nil) end
+  end
   return GameVersion.current
 end
 

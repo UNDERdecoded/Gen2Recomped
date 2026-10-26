@@ -8,6 +8,7 @@ package.path = "./?.lua;./?/init.lua;" .. package.path
 local T = require("tests.modkit")
 local Hooks = require("src.mods.Hooks")
 local Runtime = require("src.mods.Runtime")
+local Game = require("src.core.Game")
 
 local savedEvents, savedHooks, savedErrors =
   Runtime.events, Runtime.hooks, Runtime.errors
@@ -19,14 +20,14 @@ Runtime.hooks = hooks
 -- ordering rather than merely checking that a hook was registered.
 do
   local order = {}
-  local fake = {
+  local fake = setmetatable({
     input = { step = function() order[#order + 1] = "input" end },
-    stack = { update = function(_, dt)
+    stack = { states = { {} }, update = function(_, dt)
       order[#order + 1] = "world"
       T.eq(dt, 1 / 60, "the world receives the fixed-step dt")
     end },
     save = {},
-  }
+  }, { __index = Game })
   hooks:wrap("input.step", function(nextFn, game, dt)
     T.check(game == fake, "input.step receives the live Game object")
     T.eq(dt, 1 / 60, "input.step receives the fixed-step dt")
@@ -71,10 +72,10 @@ end
 -- the live snapshot in preparation for disk IO.
 do
   local captured = false
-  local fake = {
+  local fake = setmetatable({
     save = {},
     overworld = { captureSave = function() captured = true end },
-  }
+  }, { __index = Game })
   hooks:wrap("save.write", function(nextFn, game)
     T.check(game == fake, "save.write receives the live Game object")
     return false
@@ -112,14 +113,14 @@ do
   -- Game:draw iterates stack.states and calls each state's draw (it no
   -- longer goes through stack:draw), so the fixture must put a drawable
   -- state on the stack to observe composition order.
-  local fake = {
+  local fake = setmetatable({
     overworld = {},
     stack = {
       states = {
         { draw = function() order[#order + 1] = "states" end },
       },
     },
-  }
+  }, { __index = Game })
   function fake.stack:visibleBase() return 1 end
   function fake.stack:top() return self.states[#self.states] end
 
