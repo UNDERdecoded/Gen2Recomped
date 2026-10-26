@@ -53,6 +53,8 @@ local TEXT_AREA_ROWS = { 112, 128 }
 local BattleState = {}
 BattleState.__index = BattleState
 BattleState.isOpaque = true
+-- Native source observations identify this admitted controller directly.
+BattleState.isBattleState = true
 
 -- pokered prints the battle lines itself (engine/battle/core.asm and the
 -- move-effect banks), and the importer extracts every one of them, so the
@@ -12852,6 +12854,39 @@ function BattleState:drawClassic()
   -- the vanilla link is a no-op so an empty chain costs nothing.
   if Runtime.wantsHook("battle.overlay") then
     Runtime.call("battle.overlay", function() end, self)
+  end
+end
+
+-- Source wrappers observe the real GBA owner. Unrequested modules and other
+-- generations keep the direct native path; there is no additional clock.
+do
+  local update, draw, field, exit, enter = BattleState.update, BattleState.draw,
+    BattleState.drawBattleField, BattleState.exit, BattleState.enter
+  BattleState._drawNative = draw
+  function BattleState:enter()
+    enter(self)
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeEnter(self) end
+  end
+  function BattleState:update(dt)
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeUpdate(self, dt, update) end
+    return update(self, dt)
+  end
+  function BattleState:draw()
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeDraw(self, draw) end
+    return draw(self)
+  end
+  function BattleState:drawBattleField()
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeField(self, field) end
+    return field(self)
+  end
+  function BattleState:exit()
+    local source = package.loaded['src.core.game3.battle']
+    if source then source._nativeExit(self) end
+    return exit(self)
   end
 end
 
