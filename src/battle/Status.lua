@@ -291,8 +291,12 @@ function Status.beforeMove(battler, rng, battle)
       table.insert(msgs, Strings("%s\nsnapped out of\nconfusion!", name(battler)))
     else
       table.insert(msgs, Strings("%s\nis confused!", name(battler)))
-      -- cp 50 percent + 1 / jr c: hurt itself on rand >= 128 (128/256)
-      if rng(0, 255) < 128 then
+      -- GBA's attack canceller flips a two-value roll. Older games keep
+      -- their byte-range convention; shared callbacks see the native ABI.
+      local selfHit
+      if require("src.core.GameVersion").isGen3() then selfHit = rng(0, 1) == 0
+      else selfHit = rng(0, 255) < 128 end
+      if selfHit then
         return false, msgs, true -- hurt itself
       end
     end
