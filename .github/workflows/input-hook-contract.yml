@@ -1,0 +1,43 @@
+name: portable input hook contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: input-hook-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native input and host routing
+        run: |
+          luajit tests/engine/portable_input_hooks.lua
+          luajit tests/engine/portable_input_routing.lua
+      - name: Compare both native engines through the same mod
+        run: |
+          mkdir -p /tmp/input-hook-contract
+          python3 tools/input-hook-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --report /tmp/input-hook-contract/api2-native.json
+      - name: Check unified callback and API-3 integration
+        run: |
+          python3 tools/input-hook-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --format unified --report /tmp/input-hook-contract/api2-unified.json
+          python3 tools/input-hook-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --api 3 --format unified --report /tmp/input-hook-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: input-hook-contract
+          path: /tmp/input-hook-contract
+          if-no-files-found: ignore

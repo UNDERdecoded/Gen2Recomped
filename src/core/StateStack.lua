@@ -172,26 +172,48 @@ end
 -- update opens the menu on A, and running that under the menu would open a
 -- second one on the same press) and it must not push, pop or finish. A state
 -- that wants both puts the motion in animate and calls it from update.
+-- Update/covered animation follows native opacity, regardless of rendering.
+-- Hiding a mirrored menu must not animate newly exposed states during logic.
+local function opaqueBase(states)
+  for i = #states, 1, -1 do
+    if states[i].isOpaque then return i end
+  end
+  return 1
+end
+
 function StateStack:update(dt)
   local top = self:top()
   if top and top.update then top:update(dt) end
-  for i = self:visibleBase(), #self.states - 1 do
+  for i = opaqueBase(self.states), #self.states - 1 do
     local state = self.states[i]
     if state.animate then state:animate(dt) end
   end
 end
 
--- index of the lowest state drawn this frame (highest opaque, else 1)
+local function visibleByDefault() return true end
+
+-- A pure main-screen predicate: only literal false hides the native state.
+-- Update/input ownership and the stored stack remain unchanged.
+function StateStack:renderVisible(state)
+  if not state then return false end
+  if not Runtime.wantsHook("screen.render_visible") then return true end
+  return Runtime.call("screen.render_visible", visibleByDefault, state) ~= false
+end
+
+-- index of the lowest state drawn this frame (highest visible opaque, else 1)
 function StateStack:visibleBase()
+  if not Runtime.wantsHook("screen.render_visible") then return opaqueBase(self.states) end
   for i = #self.states, 1, -1 do
-    if self.states[i].isOpaque then return i end
+    local state = self.states[i]
+    if self:renderVisible(state) and state.isOpaque then return i end
   end
   return 1
 end
 
 function StateStack:draw()
   for i = self:visibleBase(), #self.states do
-    if self.states[i].draw then self.states[i]:draw() end
+    local state = self.states[i]
+    if self:renderVisible(state) and state.draw then state:draw() end
   end
 end
 
