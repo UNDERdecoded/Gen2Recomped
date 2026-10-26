@@ -690,6 +690,32 @@ local function gen2PaletteRows(tileset)
   return rows
 end
 
+-- Native map records retain their ROM environment byte and identifiers.
+-- Publish the missing host/render metadata without replacing authored values.
+-- The Gen2 header enum is TOWN=1, ROUTE=2, followed by enclosed environments
+-- 3..7 (the importer uses the same 1/2 test for outdoor behavior).
+function Data:publishGen2MapMetadata()
+  if not require("src.core.GameVersion").isGen2() or type(self.maps) ~= "table" then
+    return false
+  end
+  for _, def in pairs(self.maps) do
+    if type(def) == "table" then
+      if def.generation == nil then def.generation = 2 end
+      if def.outdoor == nil then
+        local env = def.environment
+        if type(env) == "number" and env % 1 == 0 and env >= 1 and env <= 7 then
+          def.outdoor = env == 1 or env == 2
+        elseif env == "TOWN" or env == "ROUTE" then
+          def.outdoor = true
+        elseif env == "INDOOR" or env == "CAVE" or env == "GATE" or env == "DUNGEON" then
+          def.outdoor = false
+        end
+      end
+    end
+  end
+  return true
+end
+
 function Data:publishGen2Palettes()
   local tilesets = self.tilesets
   if type(tilesets) ~= "table" then return false end
@@ -1893,6 +1919,7 @@ function Data:seedDefaults()
     end
     seedMissingGen2Tilesets(self)
     self:publishGen2Palettes()
+    self:publishGen2MapMetadata()
     ensureGen2WarpFallbacks(self)
     ensureGen2HomeTextFallbacks(self)
   end

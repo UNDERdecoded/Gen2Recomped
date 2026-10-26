@@ -75,6 +75,7 @@ function Game:load()
   -- neighbours are in colour, which is harder to diagnose than a whole
   -- grey world because it reads as a bug in that map.
   Data:publishGen2Palettes()
+  Data:publishGen2MapMetadata()
   -- render pipelines dispatch off the merged dataset; point them at the
   -- one the mods just merged into before anything can draw a frame
   require("src.render.Pipelines").install(Data)

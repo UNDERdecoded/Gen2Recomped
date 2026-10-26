@@ -5522,6 +5522,8 @@ function RomExtractorGen2:gen2MapIndex()
             -- PALETTE_DARK, the only value ReplaceTimeOfDayPals answers with
             -- .NeedsFlash (23:$4400)
             palette = field(paletteAt, 0) % 16,
+            paletteBits = field(paletteAt, 0),
+            phoneService = math.floor(field(paletteAt, 0) / 16) % 16 == 0,
           }
           byGroupNumber[group * 256 + number] = entry
           byLabel[label] = byLabel[label] or entry
@@ -6521,6 +6523,10 @@ function RomExtractorGen2:extractMapsFromRom()
       -- is why a Pokemon Center does not go dark at night on hardware -- and
       -- the Ruins of Alph chambers carry it too.
       def.mapPalette = header and header.palette or def.mapPalette
+      if header then
+        def.mapPaletteBits = header.paletteBits
+        def.phoneService = header.phoneService -- false is a real no-service header
+      end
       -- Byte 8 is the FISHGROUP_* constant, and 0 is FISHGROUP_NONE -- NOT
       -- FISHGROUP_SHORE, which is 1 (constants/map_data_constants.asm).
       -- gen2Fishing keys its table by that same constant, so 0 finds nothing

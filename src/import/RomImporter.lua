@@ -1314,9 +1314,9 @@ local function markerFor(version)
   if version == "heartgold" or version == "soulsilver" then revision = "hgss-special-marts-v1:hgss-tmhm-v1:hgss-athlon-rooms-v1:hgss-athlon-team-v1:hgss-athlon-common-v1:hgss-disc-catch-v1:hgss-lamp-jump-v1:hgss-ring-drop-v1:hgss-snow-throw-v1:hgss-goal-roll-v1:hgss-circle-push-v1:hgss-pennant-v1:hgss-relay-run-v1:hgss-block-smash-v1:hgss-athlon-rivals-v1:hgss-hurdle-dash-v1:hgss-athlon-courses-v1:hgss-athlon-perf-v1:hgss-fly-map-v1:hgss-scratch-off-v1:hgss-legend-wing-v1:hgss-hideout-fx-v1:hgss-alph-panel-v1:hgss-poke-motion-v1:hgss-egg-hatch-v1:hgss-egg-moves-v1:hgss-gear-dex-v1:hgss-summary-v2:hgss-effect-bg-v1:hgss-field-fx-v1:hgss-pc-anim-v1:ds-back-throw-v1:pal-park-v1:hgss-enc-effects-v1:hgss-frontier-v2:" end
   -- Include version-specific field encounters, sleep, swarm and rate tables.
   -- Only these three caches need rebuilding; other markers remain stable.
-  -- v8: field.gen2TradeAnim, GSC's own trade movie art (Gen2TradeArt).
+  -- v9: retain the map header's phone-service nibble beside its palette.
   if version == "gold" or version == "silver" or version == "crystal" then
-    revision = "gen2-field-encounters-v8:"
+    revision = "gen2-field-encounters-v9:"
   end
   -- field.tradeArt: the cable-trade movie's tiles out of the ROM
   -- (Gen1TradeArt); without it the trade ran on drawn stand-ins.

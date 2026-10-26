@@ -2186,8 +2186,7 @@ function Gen2Commands.rollIncomingCall(data, save, mapDef, tod, minutes, entranc
   -- `Random / ld b, a / and $7f / cp b` is true only when bit 7 is clear
   if math.random(0, 255) >= 128 then return nil end
   -- GetMapPhoneService: the palette byte's high nibble, nonzero = no service
-  local palette = mapDef and tonumber(mapDef.mapPalette) or 0
-  if math.floor(palette / 16) % 16 ~= 0 then return nil end
+  if not require("src.world.Gen2PhoneService").available(mapDef) then return nil end
   local callers = Gen2Commands.availableCallers(data, save, mapDef, tod)
   if #callers == 0 then return nil end
   local id = callers[math.random(#callers)]
