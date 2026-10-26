@@ -18,6 +18,8 @@ Regenerate the reference straight into a wiki checkout:
 luajit tools/gen_registry_docs.lua ../gen1recomp.wiki
 ```
 
+Additional read-only world summaries: [map overview and encounter queries](world-overview.md).
+
 ## Bulk storage (`mod.storage`)
 
 `mod.save` is the right home for a handful of per-playthrough values: it lives

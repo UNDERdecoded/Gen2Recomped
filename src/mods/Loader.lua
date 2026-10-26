@@ -23,6 +23,7 @@ local ModStorage = require("src.mods.Storage")
 local Runtime = require("src.mods.Runtime")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
+local WorldOverview = require("src.mods.WorldOverview")
 -- Module-name aliases for mods written against the Gold port's per-generation
 -- layout (src.world.gen2.Player and friends).  Installed here because this is
 -- the module that loads mods: the searcher has to be in place before the
@@ -1125,6 +1126,7 @@ function Loader:_api(mod)
   -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
   -- namespace per mod for payloads too large to belong in a save file.
   local world, storage
+  local overviewContext = WorldOverview.install(api, loader)
   setmetatable(api, { __index = function(_, key)
     if key == "game" then return loader:_game() end
     if key == "storage" then
@@ -1140,6 +1142,7 @@ function Loader:_api(mod)
     local module = game and engineRequire("src.world.WorldAPI")
     if not module then return nil end
     world = module.new(game, modId)
+    world.overviewContext = overviewContext
     return world
   end })
   return api
