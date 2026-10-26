@@ -1,0 +1,105 @@
+name: shader import
+on:
+  workflow_dispatch:
+    inputs:
+      network_browser:
+        description: Run the optional live shader browser smoke test
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - '.github/workflows/shader-import.yml'
+      - 'tools/slang-import/**'
+      - 'tools/slang-import-check/**'
+      - 'src/render/ShaderPresets.lua'
+      - 'src/render/ShaderGraph.lua'
+      - 'src/render/ShaderBrowser.lua'
+      - 'src/render/shader_browser_worker.lua'
+      - 'src/ui/ShaderPresetMenu.lua'
+      - 'src/translation/DesktopProcess.lua'
+      - 'tools/shader-browser-check/**'
+      - 'tests/engine/shader_browser.lua'
+      - 'tools/shader-graph-check/**'
+      - 'tests/engine/shader_graph.lua'
+      - 'tests/engine/slang_presets.lua'
+  push:
+    branches: [main, dev]
+    paths:
+      - '.github/workflows/shader-import.yml'
+      - 'tools/slang-import/**'
+      - 'tools/slang-import-check/**'
+      - 'src/render/ShaderPresets.lua'
+      - 'src/render/ShaderGraph.lua'
+      - 'src/render/ShaderBrowser.lua'
+      - 'src/render/shader_browser_worker.lua'
+      - 'src/ui/ShaderPresetMenu.lua'
+      - 'src/translation/DesktopProcess.lua'
+      - 'tools/shader-browser-check/**'
+      - 'tests/engine/shader_browser.lua'
+      - 'tools/shader-graph-check/**'
+      - 'tests/engine/shader_graph.lua'
+      - 'tests/engine/slang_presets.lua'
+permissions:
+  contents: read
+concurrency:
+  group: shader-import-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  importer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: install Rust
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+      - name: bundle architecture, integrity and installation tests
+        run: python tools/slang-import/tests/package_test.py
+      - name: format
+        run: cargo +1.99.1 fmt --manifest-path tools/slang-import/Cargo.toml --check
+      - name: lint
+        run: cargo +1.99.1 clippy --manifest-path tools/slang-import/Cargo.toml --locked --release --all-targets -- -D warnings
+      - name: compiler, rejection and publication tests
+        run: cargo +1.99.1 test --manifest-path tools/slang-import/Cargo.toml --locked --release
+      - name: build native converter bundle and notices
+        env:
+          RUSTUP_TOOLCHAIN: 1.99.1
+        run: python tools/slang-import/package.py build --output "${{ runner.temp }}/shader-tools"
+      - name: validate native bundle architecture
+        shell: bash
+        run: |
+          case "$RUNNER_OS" in
+            Windows) platform=windows; arch=x86_64 ;;
+            macOS) platform=macos; if [ "$(uname -m)" = arm64 ]; then arch=aarch64; else arch=x86_64; fi ;;
+            Linux) platform=linux; arch=x86_64 ;;
+          esac
+          python tools/slang-import/package.py verify --bundle "$RUNNER_TEMP/shader-tools" --platform "$platform" --arch "$arch"
+      - name: install LÖVE and virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y love xvfb
+      - name: import fixtures and compare GPU pixels
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          destination="$RUNNER_TEMP/slang-presets"
+          mkdir -p "$destination"
+          for name in probe wrap graph; do
+            xvfb-run -a tools/slang-import/target/release/gen2-slang-import \
+              "tools/slang-import/fixtures/$name.slangp" "$destination" --name "${name^^}"
+          done
+          # Test against actual generated files through LÖVE's source filesystem.
+          # Distro LÖVE 11 may not expose the private PhysFS mount symbols.
+          cp -R "$destination" tools/slang-import-check/imports
+          cp -R "$destination" tools/shader-graph-check/imports
+          SLANG_IMPORT_CHECK_DIR=imports xvfb-run -a love tools/slang-import-check
+          SHADER_GRAPH_CHECK_DIR=imports xvfb-run -a love tools/shader-graph-check
+      - name: optional native HTTPS browser smoke test
+        if: runner.os == 'Linux' && github.event_name == 'workflow_dispatch' && inputs.network_browser
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          SHADER_BROWSER_HELPER: ${{ github.workspace }}/tools/slang-import/target/release/gen2-slang-import
+        run: xvfb-run -a love tools/shader-browser-check

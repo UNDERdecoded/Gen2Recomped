@@ -196,6 +196,8 @@ build_mac() {
     cp "$ROOT/translation/rom-translate" "$out_app/Contents/Resources/translation/"
   fi
 
+  python3 "$ROOT/tools/slang-import/package.py" install --platform macos --arch universal \
+    --destination "$out_app/Contents/Resources/shader-tools" --optional
   local plist="$out_app/Contents/Info.plist"
   /usr/libexec/PlistBuddy -c "Set :CFBundleName $APP_NAME" "$plist" 2>/dev/null \
     || /usr/libexec/PlistBuddy -c "Add :CFBundleName string $APP_NAME" "$plist"
@@ -226,6 +228,11 @@ build_mac() {
   fi
   if [ -n "$id" ]; then
     say "codesigning with: $id"
+    # Resources holds a bare executable: sign it explicitly before sealing the app.
+    if [ -f "$out_app/Contents/Resources/shader-tools/gen2-slang-import" ]; then
+      codesign --force --options runtime --timestamp --sign "$id" \
+        "$out_app/Contents/Resources/shader-tools/gen2-slang-import"
+    fi
     codesign --deep --force --options runtime --timestamp \
       --entitlements "$ENTITLEMENTS" --sign "$id" "$out_app"
     codesign --verify --deep --strict --verbose=2 "$out_app"
@@ -351,6 +358,8 @@ build_win() {
     cp "$ROOT/translation/rom-translate.exe" "$out_dir/translation/"
   fi
 
+  python3 "$ROOT/tools/slang-import/package.py" install --platform windows --arch x86_64 \
+    --destination "$out_dir/shader-tools" --optional
   local zip_out="$DIST/win/$APP_NAME-win64.zip"
   rm -f "$zip_out"
   (cd "$WORK" && zip -q -9 -r "$zip_out" "$APP_NAME-win64")
@@ -422,6 +431,8 @@ build_linux() {
     mkdir -p "$appdir/translation"
     cp "$ROOT/translation/rom-translate" "$appdir/translation/"
   fi
+  python3 "$ROOT/tools/slang-import/package.py" install --platform linux --arch x86_64 \
+    --destination "$appdir/shader-tools" --optional
   # `sed -i` takes a MANDATORY backup suffix on BSD and forbids one on GNU, so
   # no single spelling works on both -- and `sed -i ''` on Linux silently ate
   # the next argument as the script, which is why this step could only ever run

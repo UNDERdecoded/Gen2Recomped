@@ -1,8 +1,8 @@
 local P={}
-function P.open(executable,request)
+function P.open(executable,request,captureErrors)
  if love.system.getOS()~="Windows"then
   local shell=require("src.core.HostShell")
-  return shell.popen(shell.quote(executable).." --request "..shell.quote(request),"r")
+  return shell.popen(shell.quote(executable).." --request "..shell.quote(request)..(captureErrors and " 2>&1" or ""),"r")
  end
  local ffi=require("ffi")
  ffi.cdef[[

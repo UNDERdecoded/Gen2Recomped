@@ -19,3 +19,7 @@ mobile/android/gradlew text eol=lf
 
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# Pinned upstream notices are authenticated as exact bytes in the converter
+# bundle. Windows checkout must not rewrite their line endings.
+tools/slang-import/licenses/** -text
