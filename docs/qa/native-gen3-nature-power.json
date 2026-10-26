@@ -1,0 +1,68 @@
+{
+  "feature": {
+    "runtime_ref": "0536521ea23e41af8c206961a266db96f5ff6eb1",
+    "engine": "153/162",
+    "fail_counter_lines": 25,
+    "sdk": "3/3",
+    "oracle_workers": 172,
+    "oracle_rows": 122012,
+    "selected_paired_workers": 180,
+    "selected_paired_rows": 130964,
+    "new_nature_rows": {
+      "nature_power": 6048,
+      "nature_power_content": 6048,
+      "nature_power_chained": 6048
+    },
+    "imported_scenarios": {
+      "imported-nature-power": 80,
+      "imported-nature-power-chained": 80
+    },
+    "oracle_sha256": "1d4dd0098213dd91b5dd31c5b6db8541342a8b8b77b713c30a0f6e7dd193f7ba",
+    "full_gate_sha256": "ba8b46bf7a65667f4399737518b06c75dcf61d8e6698265e146db0d6f3f40557"
+  },
+  "combined": {
+    "runtime_ref": "0ed0602be9019102a06f4df3ee22480bca1d800f",
+    "engine": "271/271",
+    "fail_counter_lines": 0,
+    "sdk": "3/3",
+    "oracle_workers": 172,
+    "oracle_rows": 122012,
+    "selected_paired_workers": 180,
+    "selected_paired_rows": 130964,
+    "new_nature_rows": {
+      "nature_power": 6048,
+      "nature_power_content": 6048,
+      "nature_power_chained": 6048
+    },
+    "imported_scenarios": {
+      "imported-nature-power": 80,
+      "imported-nature-power-chained": 80
+    },
+    "oracle_sha256": "7a06e058137eb17884e4fd3d5087022d66e2e992fa13a8233a58e06f8174130c",
+    "full_gate_sha256": "e95d0f5030fc4221b410f8a6238300c71aeab3e7153055c10cdb75554dafd3ec"
+  },
+  "reference": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "prerequisite_ref": "1ea0f875ea03cc1ca7b22f88191d9bb15b51bac0",
+  "native_command_revision": 14,
+  "party_codec_revision": 1,
+  "native_digest": "cb314093f24370e7",
+  "legacy_digest": "e33d251961f2a41d",
+  "strict_held": {
+    "workers": 40,
+    "rows": 1914
+  },
+  "charge": {
+    "workers": 64,
+    "rows": 1020,
+    "strict_native_policy": "combined"
+  },
+  "native_linked_checks": 108,
+  "nature_direct_checks": 28926,
+  "nature_public_checks": 17474,
+  "nature_chained_checks": 15458,
+  "old_prerequisite_different_rows": 5376,
+  "before_chain_fix_different_rows": 4032,
+  "old_public_registration": "unsupported: effect has no native handler: NATURE_POWER",
+  "raw_failed_and_interrupted_evidence_retained": true,
+  "scope": "Selected native GBA caller/PP/history and public API-3 registration; owned native-shaped matrix definitions and separate actual-import CPU menu scenarios; no full-catalog, graphical or full-mod acceptance"
+}

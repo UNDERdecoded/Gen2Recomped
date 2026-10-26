@@ -3180,10 +3180,8 @@ function Commands.g3_fade_screen(ctx, mode)
   end
 end
 
--- sound.c sFanfares: how many frames WaitFanfare holds for each jingle.  The
--- rendered song can run far past this (its tail is silence), so the frame
--- count is the cartridge's answer to "is the fanfare over".  Keyed by
--- FireRed's song numbers; another cartridge waits for the song itself.
+-- Retained legacy export for consumers using FireRed's numeric timers.
+-- Native playback and waits resolve per-version metadata through Gen3Fanfare.
 Gen3Commands.FRLG_FANFARE_FRAMES = {
   [256] = 160, [257] = 80, [258] = 160, [259] = 220, [260] = 340,
   [261] = 220, [262] = 120, [268] = 250, [269] = 150, [270] = 180,
@@ -3191,40 +3189,40 @@ Gen3Commands.FRLG_FANFARE_FRAMES = {
 }
 
 function Commands.g3_play_fanfare(ctx, song, number)
-  local Music = require("src.core.Music")
-  if not Music.playOnce(ctx.game.data, song) then
-    ctx.g3Fanfare = nil
-    return
-  end
-  local frames
-  if require("src.core.GameVersion").get() == "firered" then
-    frames = Gen3Commands.FRLG_FANFARE_FRAMES[tonumber(number) or -1]
-  end
-  ctx.g3Fanfare = { started = (ctx.game.save and ctx.game.save.playTime) or 0,
-                    seconds = frames and frames / 60 or nil }
+  local hex = type(song) == "string" and song:match("^SONG_(%x+)$")
+  local id = number or hex and tonumber(hex, 16) or song
+  return require("src.core.Music").nativeFanfare(ctx.game.data, valueOf(ctx, id), ctx)
+end
+
+function Commands.g3_wait_se(ctx)
+  local Sound = require("src.core.Sound")
+  if not Sound.isSePlaying(ctx.game.data) then return end
+  ctx.runner.waitingCheck = Sound.waitSe(ctx.game.data)
+  ctx.runner:yield()
+end
+
+function Commands.g3_bgm(ctx, operation, song, keep)
+  return require("src.core.Music").nativeCommand(ctx.game.data, operation, song, keep, ctx)
+end
+
+function Commands.g3_play_cry(ctx, species, mode)
+  local raw = valueOf(ctx, species)
+  require("src.core.Sound").playCry(ctx.game.data, Gen3Commands.speciesId(ctx.game.data, raw),
+    { nativeSpecies = raw, mode = valueOf(ctx, mode), mono = ctx.save.options and ctx.save.options.stereo == false })
+end
+
+function Commands.g3_wait_cry(ctx)
+  local Sound = require("src.core.Sound")
+  if Sound.isCryFinished() then return end
+  ctx.runner.waitingCheck = Sound.waitCry()
+  ctx.runner:yield()
 end
 
 function Commands.g3_wait_fanfare(ctx)
-  local fanfare = ctx.g3Fanfare
-  if not fanfare then return end
-  local Music = require("src.core.Music")
-  local function over()
-    if not Music.oneShotPlaying() then return true end
-    -- game time (save.playTime steps 1/60 per logic frame), not wall time
-    local now = (ctx.game.save and ctx.game.save.playTime) or 0
-    if fanfare.seconds and now - fanfare.started >= fanfare.seconds then
-      -- the jingle's audible part is done; bring the map theme back now
-      -- rather than after the rendered tail
-      pcall(Music.restoreMap, ctx.game.data)
-      return true
-    end
-    return false
-  end
-  ctx.g3Fanfare = nil
-  if over() then return end
-  local runner = ctx.runner
-  runner.waitingCheck = function() return over() end
-  runner:yield()
+  local wait = require("src.core.Music").nativeWaitFanfare()
+  if not wait then return end
+  ctx.runner.waitingCheck = wait
+  ctx.runner:yield()
 end
 
 function Commands.g3_wait_state(ctx)
@@ -3756,6 +3754,7 @@ function Gen3Commands.firstBattle(ctx)
   Commands.start_battle(ctx, "wild", species, level, {
     -- BATTLE_TYPE_FIRST_BATTLE: there is nowhere to run to and nothing to
     -- black out to, and the script heals the party two commands later
+    firstBattle = true,
     noRun = true,
     canLose = record.canLose and true or false,
   })

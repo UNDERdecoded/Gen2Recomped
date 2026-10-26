@@ -115,6 +115,7 @@ local GEN3_ALIASES = {
   PartyMenu = { id = "Gen3PartyMenu", opts = {
     onCancel = true, onSwitch = true, battle = true,
     forceSwitch = true, pickOnly = true, keepOpen = true,
+    party = true, noCancel = true, onUpdate = true,
     -- TM/HM teaching.  Reported from play: "when teaching a move its falling
     -- back to the gen1 party menu instead of emerald".  It was declined here
     -- until Emerald's screen could answer ABLE / NOT ABLE off the learnset,

@@ -926,6 +926,42 @@ local CRY_CAP = 5           -- seconds; nothing in the cartridge is close
 -- which sits around a tenth of full scale
 local CRY_GAIN = 0.5
 
+-- Cry recordings carry WaveData.type, including Game Freak DPCM. Keep this
+-- reader separate from sequenced instrument voices and expose decoded input
+-- so the native cry controller can use its own pitch/envelope/mode rules.
+function M4A.nativeCrySample(data, index)
+  local audio = data and data.audio or {}
+  local metadata, gen3 = audio.gen3Cries, audio.gen3
+  index = tonumber(index)
+  if not (metadata and gen3 and metadata.table and index and index == index and index >= 0 and index % 1 == 0) then return nil end
+  if metadata.count and index >= metadata.count then return nil end
+  local image = loadImage(audio)
+  local base = gen3.base or 0
+  local pointer = pointerAt(image, base, metadata.table + index * TONE_BYTES + 4)
+  if not pointer then return nil end
+  local kind, freq, count = u16At(image, base, pointer), u32At(image, base, pointer + 4), u32At(image, base, pointer + 12)
+  if not (kind and freq and count and count > 0 and count <= 4 * 1024 * 1024) then return nil end
+  local size = kind == 1 and math.ceil(count / 64) * 33 or count
+  if kind ~= 0 and kind ~= 1 then return nil end
+  local offset = pointer + WAVE_HEADER - base
+  if offset < 0 or offset + size > #image then return nil end
+  local pcm = image:sub(offset + 1, offset + size)
+  local Cry = require("src.core.NativeCryPcm")
+  if kind == 1 then pcm = Cry.decodeDpcm(pcm, count) end
+  if #pcm ~= count then return nil end
+  return pcm, Cry.waveRate(freq), { index = index, type = kind, samples = count, wave = pointer }
+end
+
+function M4A.renderNativeCry(data, index, options)
+  options = options or {}
+  local pcm, rate = M4A.nativeCrySample(data, index)
+  if not pcm then return nil end
+  local Cry = require("src.core.NativeCryPcm")
+  local params = Cry.params(options.mode, options.version, options.volume)
+  local sound, info = Cry.render(pcm, rate, params, { outRate = SAMPLE_RATE, pan = options.pan, mono = options.mono })
+  return sound, info, params
+end
+
 function M4A.renderCry(data, index, options)
   options = options or {}
   local audio = (data and data.audio) or {}

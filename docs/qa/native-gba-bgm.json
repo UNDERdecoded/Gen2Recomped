@@ -1,0 +1,506 @@
+{
+  "schema": 1,
+  "contract": "native GBA music commands, fanfare waits and audio session ownership",
+  "profiles": [
+    "firered",
+    "emerald"
+  ],
+  "native_command_revision": 20,
+  "native_party_revision": 1,
+  "native_digest": "43fe7ea27b438e0e",
+  "legacy_digest": "e33d251961f2a41d",
+  "reference_ref": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "luajit_ref": "a4c064539ea931274d407e1249b4bb575424a0f4",
+  "runtimes": [
+    {
+      "role": "feature",
+      "qualified_ref": "540dc5472deeec21f79ff66cba2d8f4056dcf592",
+      "src_tree": "fde61c049daa7ad9bd93331359c07643285ffc39",
+      "tests_tree": "1447de335cde7e9caa2477c9fd3ed0377e303bcf",
+      "engine_suites": {
+        "passed": 174,
+        "total": 183
+      },
+      "sdk_suites": {
+        "passed": 3,
+        "total": 3
+      },
+      "b30": true,
+      "full_contracts": {
+        "workers": 268,
+        "paired_observations": 178264,
+        "all_modes_backends_profiles_exactly_once": true,
+        "complete_typed_raw_observations_recompared": true,
+        "slowest_worker_seconds": 84.0181,
+        "audit_evidence": "native-bgm-feature-session-full-qa/independent-audit.json",
+        "audit_sha256": "871a13251a3f8b957aa3ddfb7178071caf4f8044809ce6518e1cd34f6d285b52",
+        "batch_reports": [
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-01.json",
+            "sha256": "94ef70f98196800b2837df23284a00fb8df4d31cdedbbb5fbcb0302953a0ee2d"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-02.json",
+            "sha256": "86ffb3e246213179af8fbd69a42db852bde38eed1291cecf1c65e2ba2b47e9ec"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-03.json",
+            "sha256": "e4041e8ad6412b7d9e2501d5b0c408a527c1e04ccbc9f58c9f06727edb0e96d8"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-04.json",
+            "sha256": "99e7dfbe8a2d3d3459d1c094b977676101240da2424d6155c8fcdabdd25dbb1e"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-05.json",
+            "sha256": "c44c814ec98687f67397dd8ff32dc6d3076b627802c87b7640ba278777c73e08"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-06.json",
+            "sha256": "4994a0154694d766682b0ea4fe8b0209941d7d26a39db1e11a55e41b6a28fc2f"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-07.json",
+            "sha256": "a1026e191e6d3ad15b165a884f6821566763b7ac68bd9d2a8de146fc678680b7"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-08.json",
+            "sha256": "3c31ae864a312500f2d6502d5b8af0cc082227c62a1c5f18ae7cd83956d41f70"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-09.json",
+            "sha256": "95c819b51f19a8ed059af1ab86ec231ae7018864569cd7661c80199dfb526732"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-10.json",
+            "sha256": "acab079e52593febd48c22b9517e2410f225e361d0647524187e935bf1020199"
+          },
+          {
+            "evidence": "native-bgm-feature-session-full-qa/batch-11.json",
+            "sha256": "9cb33b847a2d3748dc73a12e58ecede7c7b830fe6adf65624fbfc7270254a1c0"
+          }
+        ]
+      },
+      "initialized_session": {
+        "workers": 8,
+        "paired_scenarios": 4,
+        "paired_snapshots": 36,
+        "individual_snapshots": 72,
+        "old_sources_and_listeners_retired": true,
+        "fresh_public_listener_and_fanfare_wait_work": true,
+        "full_raw_inventories_equal": false,
+        "audit_evidence": "native-game-audio-session-corrected-feature-qa/independent-audit.json",
+        "audit_sha256": "f3c378a1bc4fa1a93d2f1faba249b7e020ae8f28f316df8a8e3add38bca3385b"
+      },
+      "full_quick_log_sha256": "80bc0ddfd72d01fdb954e090d5df9b57d93dffc04108eb6894caf1e28d07b473"
+    },
+    {
+      "role": "combined",
+      "qualified_ref": "e436fba6228bd6e73a97497107e4a15f61c0d052",
+      "src_tree": "52e2e3ffc7e8f1145b0edffa16ca3713324bb8d2",
+      "tests_tree": "f033a6f7f66579d8322f01536ea16452233f0cf7",
+      "engine_suites": {
+        "passed": 292,
+        "total": 292
+      },
+      "sdk_suites": {
+        "passed": 3,
+        "total": 3
+      },
+      "b30": true,
+      "full_contracts": {
+        "workers": 268,
+        "paired_observations": 178264,
+        "all_modes_backends_profiles_exactly_once": true,
+        "complete_typed_raw_observations_recompared": true,
+        "slowest_worker_seconds": 71.7116,
+        "audit_evidence": "native-bgm-integration-session-full-qa/independent-audit.json",
+        "audit_sha256": "73b77b0b0c4ac907e571221bb5fbcfbc2e3b34ed9e25b118f4e55b8cd8403eaa",
+        "batch_reports": [
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-01.json",
+            "sha256": "ef8c3bc1cfffb422c1d5d2b0f75677a5f6e24720f7a1c574f6af333adce8bf26"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-02.json",
+            "sha256": "79836e511402e43e7c174a745a762d7afbf289892f4b7a3e9f78e5a0b59e8f42"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-03.json",
+            "sha256": "c58d2857ab143ba7a58293e242f6d89dbaf38a05c149eedca789525773fbd1ca"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-04.json",
+            "sha256": "2fee961b40c2c6a184923169fc51805f18612c839d3ef692fe481f1a7ff0c3e2"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-05.json",
+            "sha256": "107bc14e5016fde7d4a38583ef147cdbe82de29a5b29d9037a13e05f40c65a91"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-06.json",
+            "sha256": "168002f2845c04f59d7e2c9303f319289e6313c23e69461313d226cf42cec778"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-07.json",
+            "sha256": "5d839c42aced012d0b35cc45689f483a8ddf476e327126d61ad40ca7202a1b0b"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-08.json",
+            "sha256": "a06a157f59a738b624e963e5bb632f813dc2d0594f644f401c3039a177baf002"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-09.json",
+            "sha256": "0aeb92108aa3c0ab2e25de47354734967888d87da062a0f066a66bd1108a41f5"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-10.json",
+            "sha256": "f542e98bf7fdc286da9654ef88be5dbf1d613572b2806f876444952640d6022f"
+          },
+          {
+            "evidence": "native-bgm-integration-session-full-qa/batch-11.json",
+            "sha256": "5cd0b090c1a0d0bf1952a96fc661dfe26b2f96968b928ee64c60d6fa656f63a9"
+          }
+        ]
+      },
+      "initialized_session": {
+        "workers": 8,
+        "paired_scenarios": 4,
+        "paired_snapshots": 36,
+        "individual_snapshots": 72,
+        "old_sources_and_listeners_retired": true,
+        "fresh_public_listener_and_fanfare_wait_work": true,
+        "full_raw_inventories_equal": false,
+        "audit_evidence": "native-game-audio-session-corrected-integration-qa/independent-queue-audit.json",
+        "audit_sha256": "8007a8970cfe86c4826ebe9318ba09b1dc19dea63918ddb31c8e607de349c1d6"
+      },
+      "full_quick_log_sha256": "bcab5429b129a4d4b54867888c87e2bb056f55abe656bbc97615fa3a639d5f36"
+    }
+  ],
+  "baseline_regression": {
+    "parent_ref": "4994a41ca09fe50e4f186260ed8f5b7b1f233f4d",
+    "parent_engine_suites": {
+      "passed": 174,
+      "total": 183
+    },
+    "same_exact_fail_line_counter": true,
+    "inherited_fail_lines": 25,
+    "inherited_failing_suites": 9,
+    "all_expected_suites_executed_exactly_once": true,
+    "parent_log_sha256": "230a324c728fc63a6868e9ae4cf42ba729b775f1d76bc92408257d7884a4d003",
+    "audit_sha256": "30bf8400b109cf8d0e6f20d1ea7eccb3c1191fc08ed25bbc44cd6500c2d50976",
+    "protocol_checks": {
+      "feature": 175,
+      "integration": 179
+    },
+    "protocol_test_source_identical": true,
+    "party_codec_checks": 194540,
+    "cold_and_entry_checks": 69,
+    "audio_option_checks": 102
+  },
+  "combined_physical_audio": [
+    {
+      "kind": "bgm-streams",
+      "workers": 4,
+      "paired_cases": 18,
+      "paired_frames": 1534,
+      "cold_userdata_admission": true,
+      "raw_pcm_retained": true,
+      "whole_waveform_parity": false,
+      "audit_sha256": "12e16a3fd886324d4bbefb2942bbd6ad824491003549f914b605a05c3f2cdf33",
+      "raw_workers": [
+        {
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "raw_sha256": "a5dfb5552b334d44e88c1015d594831d9bd890d52167008cf14d43d0f1d0aabd",
+          "raw_bytes": 81186860,
+          "cases": 9
+        },
+        {
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "raw_sha256": "2fc4b04f04aa6f1f7264840411e39e38fd6ee99c740047c07ccb8fd9a64429f0",
+          "raw_bytes": 85172966,
+          "cases": 9
+        },
+        {
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "raw_sha256": "f31142f65bfa9e723c51f57a88abe8414c31c1e365cfb02291a9ee1f9266fecc",
+          "raw_bytes": 81186860,
+          "cases": 9
+        },
+        {
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "raw_sha256": "b12ce5cbcc761b753ae31a5fde5c0c364fcdcf02b57e4b0acbb7f82704ecdf41",
+          "raw_bytes": 85172966,
+          "cases": 9
+        }
+      ]
+    },
+    {
+      "kind": "fanfare-streams",
+      "workers": 4,
+      "paired_cases": 12,
+      "paired_frames": 156,
+      "cold_userdata_admission": true,
+      "raw_pcm_retained": true,
+      "whole_waveform_parity": false,
+      "audit_sha256": "ecaacf5d03a0d01071b10eadcc0b2ee1631c1474933fb5f7cb8838bd22442d9f",
+      "raw_workers": [
+        {
+          "backend": "gen1",
+          "version": "firered",
+          "exit": 0,
+          "raw_sha256": "635b00cec6704aacd9a853fec2f0c44a5e5067e45e50ab0fba7dbb9a338f8f5d",
+          "raw_bytes": 32677339
+        },
+        {
+          "backend": "gen2",
+          "version": "firered",
+          "exit": 0,
+          "raw_sha256": "c423a940802a2404a7af3f0591a6c8abb4ca0afb43f5cbfbc4a0532ac5e677b4",
+          "raw_bytes": 34154025
+        },
+        {
+          "backend": "gen1",
+          "version": "emerald",
+          "exit": 0,
+          "raw_sha256": "d49ee363c4b111933c07b21a3fe858f1b6c78f7fc0e3708f96cdedc0bb47297d",
+          "raw_bytes": 32677350
+        },
+        {
+          "backend": "gen2",
+          "version": "emerald",
+          "exit": 0,
+          "raw_sha256": "46c2c15d4312f38f22d0b96411f3dffba869210b71729d2a8ab1228281af67aa",
+          "raw_bytes": 34154036
+        }
+      ]
+    },
+    {
+      "kind": "actual-imports",
+      "workers": 4,
+      "paired_cases": 8,
+      "paired_frames": 688,
+      "cold_userdata_admission": true,
+      "raw_pcm_retained": true,
+      "whole_waveform_parity": false,
+      "audit_sha256": "ef94e9642747e085303d8f9d258277bc0372a65f57171b022d90d492da72451e",
+      "raw_workers": [
+        {
+          "version": "firered",
+          "backend": "gen1",
+          "exit": 0,
+          "log_sha256": "6e4ea4d321959e971cd307274e5ebaa9dc2de3d0860ced067b5930d0a06ea4a0",
+          "raw_bytes": 29923161
+        },
+        {
+          "version": "firered",
+          "backend": "gen2",
+          "exit": 0,
+          "log_sha256": "9f416b1410288dd4053c53d1ad83803c2e307575dc769259c7a0d172e84f80ac",
+          "raw_bytes": 21662006
+        },
+        {
+          "version": "emerald",
+          "backend": "gen1",
+          "exit": 0,
+          "log_sha256": "3f85f7b1ae202cde933730019f412973d6c93b1761e329c5487e75980d81dc73",
+          "raw_bytes": 29819715
+        },
+        {
+          "version": "emerald",
+          "backend": "gen2",
+          "exit": 0,
+          "log_sha256": "6551cd9254620de1708c06877063f57dee1339d9a4c301201fc101f08764277f",
+          "raw_bytes": 23295035
+        }
+      ]
+    }
+  ],
+  "combined_service_and_protocol": {
+    "protocol_profiles": [
+      {
+        "tokenChanges": 0,
+        "previous": "e33d251961f2a41d",
+        "version": "red",
+        "current": "e33d251961f2a41d"
+      },
+      {
+        "tokenChanges": 1,
+        "previous": "22e453523676534e",
+        "version": "firered",
+        "current": "43fe7ea27b438e0e"
+      },
+      {
+        "tokenChanges": 0,
+        "previous": "e33d251961f2a41d",
+        "version": "gold",
+        "current": "e33d251961f2a41d"
+      },
+      {
+        "tokenChanges": 1,
+        "previous": "22e453523676534e",
+        "version": "emerald",
+        "current": "43fe7ea27b438e0e"
+      },
+      {
+        "tokenChanges": 0,
+        "previous": "e33d251961f2a41d",
+        "version": "diamond",
+        "current": "e33d251961f2a41d"
+      },
+      {
+        "tokenChanges": 0,
+        "previous": "e33d251961f2a41d",
+        "version": "black",
+        "current": "e33d251961f2a41d"
+      }
+    ],
+    "paired_audio_session_cases": 8,
+    "paired_snapshots": 72,
+    "all_old_sources_stopped": true,
+    "native_queue_allocation_difference_cases": 4,
+    "audit_sha256": "04245d3354feb3632e53b478194c178e30c7940a21d6e1fe704c11f06e321d9e"
+  },
+  "negative_controls": {
+    "old_production_cold_checks": {
+      "passed": 59,
+      "total": 69,
+      "failures": 10,
+      "log_sha256": "ca7f4d509cc0d3fb68b95a6f24937ba7c771d6a540b1380a8caeb6e1c506288a",
+      "corrected_69_check_log_sha256": "10479cf1d551c909f8e3819090c626cb89dbbe69248e01bed929fcdafd79355c"
+    },
+    "old_initialized_session_entry": {
+      "reference_passed": 4,
+      "host_failed": 4,
+      "report_sha256": "e9ef4e4f9938bf4122c5c1bad0b6648fc1fd1ec3eb10ea93bf2d6b05e8301287"
+    },
+    "superseded_broad_runs": {
+      "deliberately_cancelled": true,
+      "accepted_as_passes": false,
+      "receipt_sha256": "f995c8ffd31ac4226b33f3a6c74501e764a28f2a794b52211cc090ad38fc5b65"
+    }
+  },
+  "changed_file_sha256": {
+    "feature": {
+      ".github/workflows/enemy-action-contract.yml": "8cb6f43a60e2b3316c9916a15a09d169512e2cc9ab2ec750fbe39fc1d71d2df3",
+      "src/audio/AudioMix.lua": "d2df2bd4d9b23f63e11fd452aa8ccef96b8c95f147038759f42cd8051a6bc7ec",
+      "src/core/ChipAudio.lua": "3e12fdae76d3d1dde7b1d680451e93e348eec6ce0b72c2637fb6b25ab89dc6fa",
+      "src/core/Game.lua": "4985cbaa07d67f6efd0748c19ae56e45c4581c272fead923897238372bcbb98d",
+      "src/core/Gen3Fanfare.lua": "37be04861249b3628d58b92175e144c20ef8698a4e79d976817936364df0f964",
+      "src/core/Gen3Music.lua": "099f6c586b9b7eb0690068ff30c1cc6e7d7d4a725d4c93c3d66e32549ea51e82",
+      "src/core/Gen3MusicPolicy.lua": "bebd1d0e95d48a6fcb257a7ec21ef8f3ae3e46015575b5dbcedf3ae442dec6f3",
+      "src/core/Gen3SongIds.lua": "b5c2cd8e700a4bfeb63bcb6ed0296f7167a710aa1c88ea2c79c0b2d2543e9e3e",
+      "src/core/Music.lua": "7c3f2c4f03049e7ae337ed4f2e38234a658418b4d5415c11477f70fe113d6850",
+      "src/core/Sound.lua": "e9908dc1af854872a5fc1740c4a8874d2d4e04b120f44aaf52aa3cdb42114a73",
+      "src/core/chip_worker.lua": "7c09154146ea1f9de85b0f2bf7ab16316c215520d34ed68d4d05527b9bdeea4e",
+      "src/link/Fingerprint.lua": "2b5f6859349da5580796f5b96a7b798f9207f54b58182144495172095d5ea0e4",
+      "src/script/Gen3Commands.lua": "6dc3f25eef29045ee7a6dff47f6e25556d51681139cecf643d5ebab6234f687d",
+      "src/script/Gen3ScriptVM.lua": "6782ea393c57c8d4df444680b47c267052afbd4862bcb672f7c804932461029a",
+      "tests/enemy_actions/native_bgm_commands.lua": "7a33d49193ac1c793c81aa3b7ad634f2d7dc18b3469e1e99c5e96b5f055294f1",
+      "tests/enemy_actions/native_bgm_devices.lua": "53476ed69a985404e6655e45ea3b476e7a9fa5770a07a1d3c0bd92577cc8d3e5",
+      "tests/enemy_actions/native_bgm_hooks.lua": "f4c9d9394918cc8e682950da7b3c1dbf93085cca4f980aa4c07e36be06eb9ae5",
+      "tests/enemy_actions/native_bgm_options.lua": "cd4411750c77d4fc0a5732ebd4d7735c8a6fb0d1ea576458eb9784f6f7db4cb4",
+      "tests/enemy_actions/native_bgm_policy.lua": "f534775c922fa4b00c02bf0bc732783dd8e04e78a703c55bf9bf05122806f0ef",
+      "tests/enemy_actions/native_bgm_symbols.lua": "46d525eb14d21bbc350ce2820c0723700bcb102d7f280106ee4031f4eb20bc9c",
+      "tests/enemy_actions/native_fanfare_commands.lua": "aa33d95e22569bd647be83afe9d392b5cce7f51a1f23b4eb949263205e098f08",
+      "tests/engine/gen3_audio_cold.lua": "62514821fc9dc1a1d70af45022ccd44ec8e05854569a499eb7da7538b70ed563",
+      "tests/engine/gen3_audio_options.lua": "4cb4487ced2e64e2ab777e9ef53363b9219291c7bd3d3806393ddb6469547903",
+      "tests/engine/gen3_audio_recovery.lua": "d9b567a9de22d6247ce258ee926f4e43b88a21c2d5a51fc654062ca2557f224e",
+      "tests/engine/gen3_battle_protocol.lua": "4ede8f50b249db1c04e374bdc58add1bbe9ecd7a0de003a4a12fec68659f262e",
+      "tests/engine/gen3_bgm_commands.lua": "cafe816e212cc9afe8e5cac2d05a169502e2d62704c76d24641eb9e0f56c50e9",
+      "tests/engine/gen3_bgm_streams.lua": "da6dbdd14befd3204f177cb61a7eb3b43fa56a04821e35f187b1aaa7aee43ad2",
+      "tests/engine/gen3_music_hooks.lua": "eaebaca6e3136b21648ad52d1e7dfc2b987cbd8659aa07dac04ad292b6468ec0",
+      "tests/engine/gen3_native_fanfare.lua": "151c3b0b744804d566ceba405bf11213ee0c8ab217872c194b0fdf8f526de4b1",
+      "tests/native_bgm/fanfares.lua": "107d91d2c2dbd9486fb89f8c443495d95faed424212ae555c050d488b46afd46",
+      "tests/native_bgm/fixture.lua": "d3fdc59d7486d8aff32c07b3fd6e22ce73a1e37b53f55d22a2fb2a2233c7487a",
+      "tests/native_bgm/sounddata.lua": "614c7234468600700fd387b813016c1c9f5db1afdf1b38bd46a0773e456c456a",
+      "tests/native_bgm/streams.lua": "ff10171f0dd01890057cdf2c3012ceba3492984b5fa51d09ad4e7ceeca3f4d3b",
+      "tests/native_bgm/worker.lua": "fa31ad662d5eba68398966954862effb7551d84a9c9a55a66c72208ea3bfe725",
+      "tests/native_cry/fixture.lua": "607cfa7602c20cc66f4014bf3ad688253e93a47019804cf105e2bd659b2d96b0",
+      "tools/enemy-action-contract-check/check.py": "3ab116a1863c5d813a38c19f8f9d7f1cb16f6e28c10352c3e3a8acdb9ee1a0b2",
+      "tools/enemy-action-contract-check/imported-native-bgm-smoke.lua": "a5cc97e09c6b22f1469aef2cf37b43c0f5925fb86739560866aedc59a5255ce6",
+      "tools/enemy-action-contract-check/imported-native-fanfare-metadata.lua": "e8d035a574d0be4d95c30a44e64dfed016b2ac6fc0544dc9f11950f49d09684f",
+      "tools/enemy-action-contract-check/native-audio-session-smoke.lua": "da94961bb6dc60924fc633612cf92521771aa762a0e085a8ff37b6f9a334f457",
+      "tools/enemy-action-contract-check/native-bgm-stream-smoke.lua": "e2f0e3bd0fcc317ce3ee00106fd1717ed174c0ce0cdd31b5bfe2d291672a0f92",
+      "tools/enemy-action-contract-check/native-fanfare-stream-smoke.lua": "09cd54b8e1ac4b0b830b55e542770b49495e8a0668d12aab15dee279158b505e",
+      "tools/enemy-action-contract-check/native-game-audio-session-smoke.lua": "4d6b8d6b31bcec16f1cd7d383877c92eb6ccbfc641fa1f17ecbd802f60aed934",
+      "tools/enemy-action-contract-check/native-protocol-audit.lua": "927188bb1dfa1e341f4bab292cbed2aabc7d8564f3882510beee349870954a98",
+      "tools/enemy-action-contract-check/worker.lua": "9202766ff657bd2fa2e54e064a0cc8af27d1881b71dce159a1d34a13bf3418e0"
+    },
+    "combined": {
+      ".github/workflows/enemy-action-contract.yml": "8cb6f43a60e2b3316c9916a15a09d169512e2cc9ab2ec750fbe39fc1d71d2df3",
+      "src/audio/AudioMix.lua": "d2df2bd4d9b23f63e11fd452aa8ccef96b8c95f147038759f42cd8051a6bc7ec",
+      "src/core/ChipAudio.lua": "3e12fdae76d3d1dde7b1d680451e93e348eec6ce0b72c2637fb6b25ab89dc6fa",
+      "src/core/Game.lua": "59d2d79bb34c3470b2e7510dc3333a5083c20865477192c8d0c7f46cd70eef0d",
+      "src/core/Gen3Fanfare.lua": "37be04861249b3628d58b92175e144c20ef8698a4e79d976817936364df0f964",
+      "src/core/Gen3Music.lua": "099f6c586b9b7eb0690068ff30c1cc6e7d7d4a725d4c93c3d66e32549ea51e82",
+      "src/core/Gen3MusicPolicy.lua": "bebd1d0e95d48a6fcb257a7ec21ef8f3ae3e46015575b5dbcedf3ae442dec6f3",
+      "src/core/Gen3SongIds.lua": "b5c2cd8e700a4bfeb63bcb6ed0296f7167a710aa1c88ea2c79c0b2d2543e9e3e",
+      "src/core/Music.lua": "7c3f2c4f03049e7ae337ed4f2e38234a658418b4d5415c11477f70fe113d6850",
+      "src/core/Sound.lua": "67ded2de63e5dd7cad3899532b05a974c68b4c76ec919e9860866e9de20c12d2",
+      "src/core/chip_worker.lua": "7c09154146ea1f9de85b0f2bf7ab16316c215520d34ed68d4d05527b9bdeea4e",
+      "src/link/Fingerprint.lua": "2b5f6859349da5580796f5b96a7b798f9207f54b58182144495172095d5ea0e4",
+      "src/script/Gen3Commands.lua": "6dc3f25eef29045ee7a6dff47f6e25556d51681139cecf643d5ebab6234f687d",
+      "src/script/Gen3ScriptVM.lua": "6782ea393c57c8d4df444680b47c267052afbd4862bcb672f7c804932461029a",
+      "tests/enemy_actions/native_bgm_commands.lua": "7a33d49193ac1c793c81aa3b7ad634f2d7dc18b3469e1e99c5e96b5f055294f1",
+      "tests/enemy_actions/native_bgm_devices.lua": "53476ed69a985404e6655e45ea3b476e7a9fa5770a07a1d3c0bd92577cc8d3e5",
+      "tests/enemy_actions/native_bgm_hooks.lua": "f4c9d9394918cc8e682950da7b3c1dbf93085cca4f980aa4c07e36be06eb9ae5",
+      "tests/enemy_actions/native_bgm_options.lua": "cd4411750c77d4fc0a5732ebd4d7735c8a6fb0d1ea576458eb9784f6f7db4cb4",
+      "tests/enemy_actions/native_bgm_policy.lua": "f534775c922fa4b00c02bf0bc732783dd8e04e78a703c55bf9bf05122806f0ef",
+      "tests/enemy_actions/native_bgm_symbols.lua": "46d525eb14d21bbc350ce2820c0723700bcb102d7f280106ee4031f4eb20bc9c",
+      "tests/enemy_actions/native_fanfare_commands.lua": "aa33d95e22569bd647be83afe9d392b5cce7f51a1f23b4eb949263205e098f08",
+      "tests/engine/gen3_audio_cold.lua": "62514821fc9dc1a1d70af45022ccd44ec8e05854569a499eb7da7538b70ed563",
+      "tests/engine/gen3_audio_options.lua": "4cb4487ced2e64e2ab777e9ef53363b9219291c7bd3d3806393ddb6469547903",
+      "tests/engine/gen3_audio_recovery.lua": "d9b567a9de22d6247ce258ee926f4e43b88a21c2d5a51fc654062ca2557f224e",
+      "tests/engine/gen3_battle_protocol.lua": "4ede8f50b249db1c04e374bdc58add1bbe9ecd7a0de003a4a12fec68659f262e",
+      "tests/engine/gen3_bgm_commands.lua": "cafe816e212cc9afe8e5cac2d05a169502e2d62704c76d24641eb9e0f56c50e9",
+      "tests/engine/gen3_bgm_streams.lua": "da6dbdd14befd3204f177cb61a7eb3b43fa56a04821e35f187b1aaa7aee43ad2",
+      "tests/engine/gen3_music_hooks.lua": "eaebaca6e3136b21648ad52d1e7dfc2b987cbd8659aa07dac04ad292b6468ec0",
+      "tests/engine/gen3_native_fanfare.lua": "151c3b0b744804d566ceba405bf11213ee0c8ab217872c194b0fdf8f526de4b1",
+      "tests/native_bgm/fanfares.lua": "107d91d2c2dbd9486fb89f8c443495d95faed424212ae555c050d488b46afd46",
+      "tests/native_bgm/fixture.lua": "d3fdc59d7486d8aff32c07b3fd6e22ce73a1e37b53f55d22a2fb2a2233c7487a",
+      "tests/native_bgm/sounddata.lua": "614c7234468600700fd387b813016c1c9f5db1afdf1b38bd46a0773e456c456a",
+      "tests/native_bgm/streams.lua": "ff10171f0dd01890057cdf2c3012ceba3492984b5fa51d09ad4e7ceeca3f4d3b",
+      "tests/native_bgm/worker.lua": "fa31ad662d5eba68398966954862effb7551d84a9c9a55a66c72208ea3bfe725",
+      "tests/native_cry/fixture.lua": "607cfa7602c20cc66f4014bf3ad688253e93a47019804cf105e2bd659b2d96b0",
+      "tools/enemy-action-contract-check/check.py": "3ab116a1863c5d813a38c19f8f9d7f1cb16f6e28c10352c3e3a8acdb9ee1a0b2",
+      "tools/enemy-action-contract-check/imported-native-bgm-smoke.lua": "a5cc97e09c6b22f1469aef2cf37b43c0f5925fb86739560866aedc59a5255ce6",
+      "tools/enemy-action-contract-check/imported-native-fanfare-metadata.lua": "e8d035a574d0be4d95c30a44e64dfed016b2ac6fc0544dc9f11950f49d09684f",
+      "tools/enemy-action-contract-check/native-audio-session-smoke.lua": "da94961bb6dc60924fc633612cf92521771aa762a0e085a8ff37b6f9a334f457",
+      "tools/enemy-action-contract-check/native-bgm-stream-smoke.lua": "e2f0e3bd0fcc317ce3ee00106fd1717ed174c0ce0cdd31b5bfe2d291672a0f92",
+      "tools/enemy-action-contract-check/native-fanfare-stream-smoke.lua": "09cd54b8e1ac4b0b830b55e542770b49495e8a0668d12aab15dee279158b505e",
+      "tools/enemy-action-contract-check/native-game-audio-session-smoke.lua": "4d6b8d6b31bcec16f1cd7d383877c92eb6ccbfc641fa1f17ecbd802f60aed934",
+      "tools/enemy-action-contract-check/native-protocol-audit.lua": "927188bb1dfa1e341f4bab292cbed2aabc7d8564f3882510beee349870954a98",
+      "tools/enemy-action-contract-check/worker.lua": "9202766ff657bd2fa2e54e064a0cc8af27d1881b71dce159a1d34a13bf3418e0"
+    }
+  },
+  "scope": {
+    "local_cpu_qualification": true,
+    "reference_unmodified": true,
+    "actual_game_boot": false,
+    "gpu_or_audio_device": false,
+    "normal_save_or_import_writes": false,
+    "full_mod_or_playthrough_qualification": false,
+    "hosted_ci_execution_claim": false,
+    "known_differences": [
+      "native synthesizer PCM and baseline gains",
+      "two shared GB lookahead cases",
+      "native queue allocation counts"
+    ],
+    "remaining": [
+      "complete map/bike/surf transition coverage",
+      "other editions",
+      "real device recovery",
+      "full hot-reload screens",
+      "arbitrary full mods/playthroughs"
+    ]
+  }
+}

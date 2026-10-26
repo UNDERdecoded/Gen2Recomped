@@ -612,7 +612,9 @@ function Game:update(dt)
     local close = FrameProfile.section("  update: music")
     while self.audioAccum >= step do
       self.audioAccum = self.audioAccum - step
-      require("src.core.Music").update(Data)
+      require("src.core.Sound").updateCry()
+      require("src.core.Music").update(self.data or Data)
+      require("src.core.Sound").update()
     end
     close()
   end
@@ -1677,7 +1679,7 @@ function Game:audioSession(active, why)
     if not self.audioSuspended then return end
     self.audioSuspended = false
     Logger.info("audio session: %s regained -- rebuilding audio", why)
-    Music.resume(Data)
+    Music.resume(self.data or Data)
     -- The app was parked inside SDL's event loop for the whole call, so the
     -- first love.timer.step() after it returns the LENGTH OF THE CALL.
     -- FixedStep already clamps its accumulator (FixedStep.maxAccum, 0.25s =
@@ -1861,7 +1863,7 @@ function Game:applyOptions(opts)
   opts = opts or (self.save and self.save.options) or {}
   local Music = require("src.core.Music")
   local Sound = require("src.core.Sound")
-  if Music.applyOptions then Music.applyOptions(opts) end
+  if Music.applyOptions then Music.applyOptions(opts, self.data or Data) end
   if Sound.applyOptions then Sound.applyOptions(opts) end
   -- EMERALD'S BUTTON MODE, which decides what L and R do.  Applied here
   -- rather than read at the input site so that a mode set on the OPTION
