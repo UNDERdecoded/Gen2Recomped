@@ -3317,6 +3317,48 @@ function RomExtractorGen2:gen2MovementTable()
   return out
 end
 
+-- Kurt's actual selection-order and recipe pairs, not the bag's item order.
+function RomExtractorGen2:gen2ApricornBalls()
+  if self.version~="gold" and self.version~="silver" and self.version~="crystal" then return nil end
+  local sym=self:symbol("ApricornBalls")
+  if not (sym and self.rom) then return nil end
+  local rows,seen={},{}
+  local info={source="ApricornBalls",complete=false,rowsRead=0}
+  -- Native db apricorn,ball pairs, terminated by a single $ff apricorn.
+  -- Never walk through a bank boundary or accept an unterminated prefix.
+  for slot=0,128 do
+    local at=sym.address+slot*2
+    local ok,apricorn=pcall(function()return self.rom:byte(sym.bank,at)end)
+    if not ok then info.reason="truncated table";return {},info end
+    if apricorn==255 then info.complete=true;return rows,info end
+    if slot==128 then info.reason="unterminated table";return {},info end
+    local read,ball=pcall(function()return self.rom:byte(sym.bank,at+1)end)
+    if not read then info.reason="truncated pair";return {},info end
+    if apricorn==0 or ball==0 or ball==255 or seen[apricorn] then
+      info.reason="invalid or duplicate native item";return {},info
+    end
+    seen[apricorn]=true
+    rows[#rows+1]={index=slot+1,apricorn=string.format("ITEM_%03d",apricorn),
+      ball=string.format("ITEM_%03d",ball)}
+    info.rowsRead=#rows
+  end
+end
+
+function RomExtractorGen2:gen2QueueApricornPrograms(pool)
+  if self.version~="gold" and self.version~="silver" and self.version~="crystal" then return nil end
+  local symbols={ask="Kurt1.AskApricorn",pending="Kurt1.GotLureBall",
+    gave="Kurt1.GaveKurtApricorns",cancel="Kurt1.Cancel"}
+  local found={}
+  for role,name in pairs(symbols)do
+    local at=self:symbol(name)
+    if not at or at.address<0x4000 or not self:gen2InRom(at.bank,at.address) then return nil end
+    found[role]=at
+  end
+  local out={}
+  for role,at in pairs(found)do out[role]=self:gen2QueueScript(at.bank,at.address,pool)end
+  return out
+end
+
 -- Marts is a dw pointer table; each mart is `db count`, the item ids, `db -1`.
 -- The table ends where its own first entry starts.
 function RomExtractorGen2:gen2Marts()
@@ -8892,6 +8934,8 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
 
   out.stds = self:gen2QueueStdScripts(pool)
   out.marts = self:gen2Marts()
+  out.apricornBalls, out.apricornInfo = self:gen2ApricornBalls()
+  out.apricornPrograms = self:gen2QueueApricornPrograms(pool)
   out.spawns = self:gen2SpawnPoints(maps, keys)
   -- extractField runs after this stage and needs both of these: GSC has no
   -- Fly-warp list of its own, because Fly lands on the SPAWN POINT of the

@@ -896,6 +896,13 @@ function Gen2Commands.scriptVarValue(ctx, var)
   return 1
 end
 
+function Commands.g2_apricorn_converted(ctx,apricorn,ball,event)
+  local Runtime=require("src.mods.Runtime")
+  if Runtime.wants("apricorn.converted")then
+    Runtime.emit("apricorn.converted",{apricorn=apricorn,ball=ball,event=event})
+  end
+end
+
 -- Script_loadmem (25:$7495): write an immediate byte to a WRAM address.  The
 -- same address-keyed mirror readmem/writemem use -- keyed by the raw
 -- address number exactly as they key it, so a script that pokes a byte here
@@ -3002,72 +3009,60 @@ end
 -- run of `ifequal` rows that decide which ball Kurt starts on.
 -- ---------------------------------------------------------------------------
 
--- RED, BLU, BLK, WHT, PNK, GRN, YLW -- the same ids Kurt1 `checkitem`s before
--- it bothers to ask
-local APRICORNS = { 85, 89, 92, 93, 97, 99, 101 }
-
 function Commands.g2_select_apricorn(ctx)
-  local game, runner, save = ctx.game, ctx.runner, ctx.save
-  local Bag = require("src.inventory.Bag")
-  local Menu = require("src.ui.Menu")
-  local picked, held, items = 0, 0, {}
-  -- SelectApricornForKurt zeroes wKurtApricornQuantity on entry, so a
-  -- cancelled pick cannot leave the previous count standing.
-  save.g2KurtApricorns = 0
-  for _, id in ipairs(APRICORNS) do
-    local key = string.format("ITEM_%03d", id)
-    local qty = save.inventory and save.inventory[key] or 0
-    if qty > 0 then
-      local def = game.data.items and game.data.items[key]
-      items[#items + 1] = {
-        label = string.format("%s x%d", (def and def.name) or key, qty),
-        onSelect = function() picked, held = id, qty runner:resume() end,
-      }
+  local game,runner,save=ctx.game,ctx.runner,ctx.save
+  local Bag=require("src.inventory.Bag")
+  local Menu=require("src.ui.Menu")
+  local Apricorns=require("src.world.Gen2Apricorns")
+  local version=require("src.core.GameVersion").get()
+  local stock=version=="gold" or version=="silver" or version=="crystal"
+  save.g2KurtApricorns=0
+  local selected=1
+  while true do
+    local picked,held,key=0,0,nil
+    local items={}
+    for _,row in ipairs(Apricorns.inBag(game.data,save))do
+      local id,quantity,item=row.item,row.quantity,row.apricorn
+      local def=game.data.items and game.data.items[item]
+      items[#items+1]={label=string.format("%s x%d",(def and def.name) or item,quantity),
+        onSelect=function()picked,held,key=id,quantity,item;runner:resume()end}
+    end
+    if #items==0 then ctx.g2Var,ctx.lastCheck=0,false;return end
+    if stock then
+      items[#items+1]={label="CANCEL",onSelect=function()runner:resume()end}
+    end
+    local menu=Menu.new(game,items,{maxVisible=version=="crystal" and 4 or 8,
+      onCancel=function()runner:resume()end})
+    menu.index=math.min(selected,#items);menu:clampScroll()
+    game.stack:push(menu);runner:yield()
+    if picked==0 then ctx.g2Var,ctx.lastCheck=0,false;return end
+    selected=menu.index
+    local count,cancelled=1,false
+    -- Gold/Silver's special always tosses exactly one. Crystal asks even
+    -- for a one-item stack and goes back to the list on quantity cancel.
+    if version=="crystal" or version~="gold" and version~="silver" and held>1 then
+      local choices={}
+      for n=1,held do
+        local quantity=n
+        choices[#choices+1]={label=string.format("x%d",n),
+          onSelect=function()count=quantity;runner:resume()end}
+      end
+      game.stack:push(Menu.new(game,choices,{maxVisible=5,
+        onCancel=function()cancelled=true;runner:resume()end}))
+      runner:yield()
+    end
+    if not cancelled or version~="crystal" then
+      count=math.max(1,math.min(count,held))
+      local available=tonumber(save.inventory and save.inventory[key]) or 0
+      if available~=available or available<count then
+        ctx.g2Var,ctx.lastCheck=0,false;return
+      end
+      Bag.remove(save,key,count)
+      save.g2KurtApricorns=count
+      ctx.g2Var,ctx.lastCheck=picked,true
+      return
     end
   end
-  if #items == 0 then
-    ctx.g2Var, ctx.lastCheck = 0, false
-    return
-  end
-  game.stack:push(Menu.new(game, items, {
-    onCancel = function() runner:resume() end,
-  }))
-  runner:yield()
-  if picked == 0 then
-    ctx.g2Var, ctx.lastCheck = 0, false
-    return
-  end
-
-  -- "How many should I make?" -- Kurt_SelectQuantity (engine/events/kurt.asm)
-  -- loads wItemQuantity with how many of that apricorn you HAVE and lets you
-  -- scroll 1..that, then Kurt_GiveUpSelectedQuantityOfSelectedApricorn takes
-  -- exactly that many and the count goes into wKurtApricornQuantity --
-  -- VAR_KURT_APRICORNS, which the `verbosegiveitemvar` on the collection
-  -- branch reads back to decide how many balls to hand over.
-  --
-  -- Taking one apricorn and never writing that var is what left the var at 0
-  -- and, with verbosegiveitemvar unlowered as well, Kurt holding a ball he
-  -- could never give.
-  local count = 1
-  if held > 1 then
-    local rows = {}
-    for n = 1, held do
-      rows[#rows + 1] = {
-        label = string.format("x%d", n),
-        onSelect = function() count = n runner:resume() end,
-      }
-    end
-    game.stack:push(Menu.new(game, rows, {
-      -- backing out of the quantity box returns to the apricorn list on
-      -- hardware; one apricorn is the closest single-step equivalent here
-      onCancel = function() count = 1 runner:resume() end,
-    }))
-    runner:yield()
-  end
-  count = math.max(1, math.min(count, held))
-  Bag.remove(save, string.format("ITEM_%03d", picked), count)
-  save.g2KurtApricorns = count
-  ctx.g2Var, ctx.lastCheck = picked, true
 end
 
 -- ---------------------------------------------------------------------------

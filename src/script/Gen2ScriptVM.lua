@@ -477,6 +477,7 @@ L.setevent = function(ir, s)
   else emit(s,{"set_flag",eventFlag(ir[2])}) end
 end
 L.clearevent = function(ir, s) emit(s, { "clear_flag", eventFlag(ir[2]) }) end
+L.apricornconverted = function(ir,s)emit(s,{"g2_apricorn_converted",ir[2],ir[3],ir[4]})end
 L.checkflag = function(ir, s) emit(s, { "check_flag", engineFlag(ir[2]) }) end
 L.setflag = function(ir, s) emit(s, { "set_flag", engineFlag(ir[2]) }) end
 L.clearflag = function(ir, s) emit(s, { "clear_flag", engineFlag(ir[2]) }) end
