@@ -178,3 +178,10 @@ mobile/ios/bundle_id.local
 # secrets as public -- but GitHub's secret scanning flags it, so it is kept out
 # of the repository and injected into release builds instead.
 /cloud_clients.lua
+
+# Owned compatibility fixtures; external source remains outside this checkout.
+!/tests/fixtures/
+/tests/fixtures/*
+!/tests/fixtures/upstream_mods/
+!/tests/fixtures/legacy_npc_controls/
+!/tests/engine/

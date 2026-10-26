@@ -264,6 +264,10 @@ function TitleState.new(game, opts)
 end
 
 function TitleState:enter()
+  if require('src.core.GameVersion').isGen2()then
+    local Runtime=require('src.mods.Runtime')
+    if Runtime.wants("intro.boot.title")then Runtime.emit("intro.boot.title",{screen=self,game=self.game})end
+  end
   -- Yellow defers the title theme until after the logo drop and
   -- Pikachu's cry (title.asm plays MUSIC_TITLE_SCREEN only after
   -- WaitForSoundToFinish on PikachuCry1)

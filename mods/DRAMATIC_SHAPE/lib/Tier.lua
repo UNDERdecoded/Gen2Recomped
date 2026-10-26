@@ -144,10 +144,13 @@ end
 --              player's OWN choice on, and a ceiling cannot.
 local CAPS = {
   high     = { shadows = true,  shadowRes = nil,  shadowHz = nil,
+               waterRaySteps = 12, waterRayRefine = 3,
                water = nil, waterCast = nil, waterPlanar = nil, aa = nil },
   balanced = { shadows = true,  shadowRes = 1024, shadowHz = 3,
+               waterRaySteps = 12, waterRayRefine = 3,
                water = 1,   waterCast = 0,   waterPlanar = 0,   aa = 2 },
   low      = { shadows = false, shadowRes = 1024, shadowHz = 0,
+               waterRaySteps = 12, waterRayRefine = 3,
                water = 0,   waterCast = 0,   waterPlanar = 0,   aa = 0 },
 }
 

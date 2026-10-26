@@ -1,0 +1,98 @@
+{
+  "runtimeCommit": "c1906c64a62e13cd3d5585e9c77ef387d483c44d",
+  "native": {
+    "metal": {
+      "checks": 4092,
+      "scope": "Owned water/foreground geometry, native shader/targets/scene producer; CPU submission and pass completion with equal one-pixel GPU fences, no ROM or game FPS",
+      "phases": [
+        {
+          "meanFencedMs": 1.5684343750000107,
+          "mode": "legacy",
+          "frames": 120,
+          "warmupFrames": 120,
+          "meanSubmitMs": 0.12469236111114317
+        },
+        {
+          "meanFencedMs": 1.0172923611111089,
+          "mode": "budget",
+          "frames": 120,
+          "warmupFrames": 120,
+          "meanSubmitMs": 0.10366909722220505
+        }
+      ],
+      "renderer": "Metal",
+      "sha256": {
+        "mods/DRAMATIC_SHAPE/lib/RenderScale.lua": "2cff29fdcac5aa5eb69020432cce25dab050a2f3475c20767bbc872573386774",
+        "mods/DRAMATIC_SHAPE/lib/WaterBudget.lua": "0616d66174acb385a52025e695e10488024ea93e9b28b5df9dd1fb844afdeb49",
+        "mods/DRAMATIC_SHAPE/lib/ShaderState.lua": "5a43d3be681ffaab6744425a1a6a9964c466b9a8a568e2286947dcc04ac38595",
+        "mods/DRAMATIC_SHAPE/lib/Water.lua": "47ea97b33cd6b3fe9b8cfb65e763fe04d5f2857e48dd0759c8074ac7405dfa9a",
+        "mods/DRAMATIC_SHAPE/lib/VoxelScene.lua": "115e2a358d94bdafdbaf6395edd15bc76b678515f36ba2c7c61f90472093e195",
+        "mods/DRAMATIC_SHAPE/lib/Voxel3D.lua": "8c19dd62281c8a2eff129627e51bf2d50c208c672d76808b9ec9ab31190807ed",
+        "mods/DRAMATIC_SHAPE/lib/Tier.lua": "a02d73cd3eef5461632a2fc6e6934cb1d2298c15fc199d1500a59d3bb76ab386",
+        "mods/DRAMATIC_SHAPE/lib/TileShape.lua": "1ded661f0a08c719ce42994d643c43cbffcaa03e27ae260a1ed4d3d444e90931",
+        "mods/DRAMATIC_SHAPE/manifest.json": "b94bdb437120be77c014937f0949a17ee81377db570abb46d997e80dd7e52ca3",
+        "mods/DRAMATIC_SHAPE/main.lua": "b9285e7d22948ea731713ae501c43f8a673f1c397053ba8cf0d7120693381012",
+        "tools/render-budget-check/main.lua": "fdf6ec2c11427b8b465d337c37ca57f676d9ab044ccf8659124698dac7c7ce6d",
+        "tools/render-budget-check/conf.lua": "05f59ce05bdda5cfa9dbe8b13cadf0179c6ff82e237503e810e8da7ed5ce8e8d"
+      },
+      "playerProfilesUsed": false
+    },
+    "openGL": {
+      "checks": 4094,
+      "scope": "Owned water/foreground geometry, native shader/targets/scene producer; CPU submission and pass completion with equal one-pixel GPU fences, no ROM or game FPS",
+      "phases": [
+        {
+          "mode": "legacy",
+          "frames": 120,
+          "warmupFrames": 120,
+          "meanSubmitMs": 0.14358993055555064,
+          "meanFencedMs": 1.3747506944444303
+        },
+        {
+          "mode": "budget",
+          "frames": 120,
+          "warmupFrames": 120,
+          "meanSubmitMs": 0.1722927083333492,
+          "meanFencedMs": 0.8823149305555666
+        }
+      ],
+      "renderer": "OpenGL",
+      "sha256": {
+        "mods/DRAMATIC_SHAPE/lib/RenderScale.lua": "2cff29fdcac5aa5eb69020432cce25dab050a2f3475c20767bbc872573386774",
+        "mods/DRAMATIC_SHAPE/lib/WaterBudget.lua": "0616d66174acb385a52025e695e10488024ea93e9b28b5df9dd1fb844afdeb49",
+        "mods/DRAMATIC_SHAPE/lib/ShaderState.lua": "5a43d3be681ffaab6744425a1a6a9964c466b9a8a568e2286947dcc04ac38595",
+        "mods/DRAMATIC_SHAPE/lib/Water.lua": "47ea97b33cd6b3fe9b8cfb65e763fe04d5f2857e48dd0759c8074ac7405dfa9a",
+        "mods/DRAMATIC_SHAPE/lib/VoxelScene.lua": "115e2a358d94bdafdbaf6395edd15bc76b678515f36ba2c7c61f90472093e195",
+        "mods/DRAMATIC_SHAPE/lib/Voxel3D.lua": "8c19dd62281c8a2eff129627e51bf2d50c208c672d76808b9ec9ab31190807ed",
+        "mods/DRAMATIC_SHAPE/lib/Tier.lua": "a02d73cd3eef5461632a2fc6e6934cb1d2298c15fc199d1500a59d3bb76ab386",
+        "mods/DRAMATIC_SHAPE/lib/TileShape.lua": "1ded661f0a08c719ce42994d643c43cbffcaa03e27ae260a1ed4d3d444e90931",
+        "mods/DRAMATIC_SHAPE/manifest.json": "b94bdb437120be77c014937f0949a17ee81377db570abb46d997e80dd7e52ca3",
+        "mods/DRAMATIC_SHAPE/main.lua": "b9285e7d22948ea731713ae501c43f8a673f1c397053ba8cf0d7120693381012",
+        "tools/render-budget-check/main.lua": "fdf6ec2c11427b8b465d337c37ca57f676d9ab044ccf8659124698dac7c7ce6d",
+        "tools/render-budget-check/conf.lua": "05f59ce05bdda5cfa9dbe8b13cadf0179c6ff82e237503e810e8da7ed5ce8e8d"
+      },
+      "playerProfilesUsed": false
+    }
+  },
+  "acceptance": {
+    "enginePassed": 156,
+    "engineSuites": 167,
+    "inheritedFailingSuites": 11,
+    "unchangedFailureLines": 29,
+    "baselineCommit": "de1a7e8d827400e48c62975457fa7e9a53be9fe1",
+    "sdkSuites": 3,
+    "galleryChecks": 253,
+    "api3Comparisons": 48,
+    "isolatedApi3Workers": 96,
+    "externalFixtureEntrypoints": 17,
+    "externalFixturePhase": "complete",
+    "head": "c1906c64a62e13cd3d5585e9c77ef387d483c44d",
+    "exitCodes": {
+      "engine": 1,
+      "sdk": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    }
+  }
+}

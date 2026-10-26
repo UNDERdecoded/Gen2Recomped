@@ -25,6 +25,55 @@ FrameCap.DEFAULT = 60
 -- save editor are paced before any save applies its stored option.
 FrameCap.current = FrameCap.DEFAULT
 
+-- P1 rollback switch. Each frame still falls back to software pacing when
+-- there was no present, VSync is off, or the display rate is unavailable.
+FrameCap.vsyncPacing = true
+local _refreshWindow, _refreshVsync, _refreshAt, _refreshRate
+local REFRESH_POLL_SECONDS = 1
+
+local function presentationPaces(window, now)
+  if not (window and window.getVSync and window.getMode) then return false end
+  local vsync = window.getVSync()
+  if type(vsync) ~= "number" or vsync == 0 then
+    _refreshVsync = vsync
+    return false
+  end
+  -- getMode returns a new flags table: sample it once a second rather than
+  -- allocate one each frame. Provider/VSync changes invalidate the sample;
+  -- display-rate changes are observed on the next periodic sample.
+  if window ~= _refreshWindow or vsync ~= _refreshVsync or not _refreshAt
+      or now < _refreshAt or now - _refreshAt >= REFRESH_POLL_SECONDS then
+    local _, _, flags = window.getMode()
+    local rate = type(flags) == "table" and tonumber(flags.refreshrate)
+    _refreshWindow, _refreshVsync, _refreshAt = window, vsync, now
+    _refreshRate = rate and rate > 0 and rate < math.huge and rate or nil
+  end
+  return _refreshRate ~= nil and FrameCap.current >= _refreshRate
+end
+
+-- The run loop owns the deadline and passes back the returned value. Keeping
+-- the original fallback here lets tests exercise the real pacing operation.
+function FrameCap.pace(timer, window, presented, nextFrame, idleWork)
+  local now = timer.getTime()
+  local budget = 1 / FrameCap.current
+  nextFrame = nextFrame + budget
+  if FrameCap.vsyncPacing and presented and presentationPaces(window, now) then
+    if idleWork then
+      idleWork(timer, nextFrame)
+      return timer.getTime()
+    end
+    return now
+  end
+  if now - nextFrame > budget then nextFrame = now end
+  if idleWork then idleWork(timer, nextFrame) end
+  while true do
+    local remaining = nextFrame - timer.getTime()
+    if remaining <= 0 then break end
+    timer.sleep(remaining < 0.001 and remaining or 0.001)
+  end
+  return nextFrame
+end
+
 -- Nearest valid step for an arbitrary value (a hand-edited options.lua or
 -- an old save with no fpsCap key), so a bad number degrades to something
 -- sane; nil / non-numbers fall back to the default.  A value below MIN or

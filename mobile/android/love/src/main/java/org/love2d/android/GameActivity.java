@@ -1175,6 +1175,8 @@ public class GameActivity extends SDLActivity {
         HttpURLConnection conn = null;
         try {
             org.json.JSONObject req = new org.json.JSONObject(json);
+            if (req.has("boundedEnvelope")) return BoundedHttp.request(req.getJSONObject("boundedEnvelope"));
+            if (req.has("boundedVersion")) return BoundedHttp.request(req);
             String method = req.optString("method", "GET");
             URL url = new URL(req.getString("url"));
             conn = (HttpURLConnection) url.openConnection();

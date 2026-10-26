@@ -896,6 +896,27 @@ function Gen2Commands.scriptVarValue(ctx, var)
   return 1
 end
 
+function Commands.g2_apricorn_converted(ctx,apricorn,ball,event)
+  local Runtime=require("src.mods.Runtime")
+  if Runtime.wants("apricorn.converted")then
+    Runtime.emit("apricorn.converted",{apricorn=apricorn,ball=ball,event=event})
+  end
+end
+
+function Commands.g2_deco_visibility(ctx)
+  require('src.world.Gen2Decorations').visibility(ctx)
+end
+function Commands.g2_deco_tiles(ctx)
+  require('src.world.Gen2Decorations').tiles(ctx)
+end
+function Commands.g2_deco_description(ctx,kind,allowed)
+  local target,name=require('src.world.Gen2Decorations').description(ctx.game.data,ctx.save,kind)
+  if target and allowed and allowed[target]then
+    if name then setBuffer(ctx.game,3,name)end
+    return target
+  end
+end
+
 -- Script_loadmem (25:$7495): write an immediate byte to a WRAM address.  The
 -- same address-keyed mirror readmem/writemem use -- keyed by the raw
 -- address number exactly as they key it, so a script that pokes a byte here
@@ -1098,6 +1119,12 @@ function Commands.g2_object(ctx, index, visible)
     obj, mapId = objectByIndex(ctx, index)
   end
   if not obj or not mapId then return end
+  return Gen2Commands.setObjectVisibility(ctx, obj, mapId, visible)
+end
+
+-- Shared native effect after resolving a map object. Public API adapters can
+-- supply the resolved template without depending on cached script-ID numbering.
+function Gen2Commands.setObjectVisibility(ctx, obj, mapId, visible)
   local OverworldState = require("src.world.OverworldController")
   local name = OverworldState.objectToggleKey(obj)
   -- The PERSISTENT half, which this used to leave to a `setevent` the ROM
@@ -1779,6 +1806,19 @@ end
 -- ---------------------------------------------------------------------------
 
 function Commands.g2_warp(ctx, mapId, x, y, facing)
+  if mapId=="NONE" then
+    local ow=ctx.overworld
+    if ow and ow.map and type(ow.reloadMap)=="function"then
+      local map=ow.map.id
+      ctx.afterScript=ctx.afterScript or{}
+      ctx.afterScript[#ctx.afterScript+1]=function()
+        if ow.player and DIRS[facing]then ow.player.facing=DIRS[facing]end
+        ow:reloadMap(map,"native-script")
+      end
+      return math.huge
+    end
+    return
+  end
   if type(mapId) ~= "string" or mapId == "" then return end
   Commands.warp(ctx, mapId, x, y, facing)
 end
@@ -2054,11 +2094,31 @@ end
 function Gen2Commands.phoneName(data, id)
   local entry = phoneContact(data, id)
   if not entry then return nil end
-  if entry.name then return entry.name, entry.role end
   local best = phoneTrainerDef(data, entry)
+  if entry.name then return entry.name, entry.role or (best and best.name) end
   if not best then return nil end
   local names = best.partyNames
   return (names and names[entry.trainer]) or best.name, best.name
+end
+
+-- Observation of an admitted native incoming call, never of a model-side
+-- candidate. Keep the payload detached from the native row and queued IR.
+function Gen2Commands.announceIncomingCall(data, id, special)
+  local Runtime = require("src.mods.Runtime")
+  if not Runtime.wants("phone.call_received") then return end
+  local row = phoneContact(data, id) or {}
+  local pool = data and data.map_scripts or {}
+  local specialRow = special and pool.specialCalls and pool.specialCalls[special]
+  local key = specialRow and specialRow.script or row.receive
+  local name, className = Gen2Commands.phoneName(data, id)
+  local constants = data and data.constants or {}
+  local class = (constants.trainerClassOrder or {})[row.class]
+  local member = class and (constants.trainerClassMembers or {})[class]
+  local call = {kind="call", direction="incoming", contact=id,
+    class=class, member=member and member[row.trainer], number=row.contactNumber,
+    script=key, scriptKey=key, special=special}
+  Runtime.emit("phone.call_received", {call=call, contact=id,
+    name=name, className=className, special=special, scriptKey=key})
 end
 
 -- The row's second `dba` is the script PhoneCall (36:$4298) runs when the
@@ -2122,14 +2182,14 @@ function Gen2Commands.phoneCallDelay(save)
   return GEN2_CALL_DELAYS[math.min(cycles, #GEN2_CALL_DELAYS - 1) + 1]
 end
 
--- The sample GetAvailableCallers builds, in PHONE_* order.
+-- The sample GetAvailableCallers builds, in saved phone-slot order.
 function Gen2Commands.availableCallers(data, save, mapDef, tod)
   local bit = GEN2_TOD_BIT[tod] or 2
   local out = {}
   local group = mapDef and tonumber(mapDef.group)
   local number = mapDef and tonumber(mapDef.number)
-  for id, registered in pairs(phoneList(save)) do
-    if registered and type(id) == "number" then
+  for _, id in ipairs(require("src.world.Gen2PhoneBook").contacts(save)) do
+    if id ~= 0 then
       local entry = phoneContact(data, id)
       local mask = entry and tonumber(entry.receiveTime) or 0
       -- `and [hl]` on the mask, then the map compare
@@ -2139,8 +2199,17 @@ function Gen2Commands.availableCallers(data, save, mapDef, tod)
       end
     end
   end
-  table.sort(out)
   return out
+end
+
+-- ChooseRandomCaller swaps one Random byte's nibbles, masks to five bits,
+-- then takes the remainder against the eligible count. Preserve that exact
+-- mapping and byte consumption rather than drawing a uniform list index.
+function Gen2Commands.chooseRandomCaller(callers, rng)
+  if not callers or #callers == 0 then return nil end
+  local byte = (rng and rng() or math.random(0, 255)) % 256
+  local swapped = (byte % 16) * 16 + math.floor(byte / 16)
+  return callers[(swapped % 32) % #callers + 1]
 end
 
 -- Returns the caller id and its compiled receive script, or nil.  `minutes` is
@@ -2190,7 +2259,7 @@ function Gen2Commands.rollIncomingCall(data, save, mapDef, tod, minutes, entranc
   if math.floor(palette / 16) % 16 ~= 0 then return nil end
   local callers = Gen2Commands.availableCallers(data, save, mapDef, tod)
   if #callers == 0 then return nil end
-  local id = callers[math.random(#callers)]
+  local id = Gen2Commands.chooseRandomCaller(callers)
   local script = Gen2Commands.phoneReceiveScript(data, id)
   if not script then return nil end
   -- InitCallReceiveDelay at the tail of Script_ReceivePhoneCall (36:$42B7):
@@ -2290,16 +2359,18 @@ end
 
 function Commands.g2_bank_of_mom(ctx)
   local save = ctx.save
+  local Mom=require("src.world.Gen2MomShopping")
+  Mom.prepareBank(save)
   -- CheckIfBankInitialized: the first visit opens the account and asks
   if save.g2MomBankOpen == nil then
-    save.g2MomBankOpen = true
+    Mom.openBank(save)
     Commands.ask(ctx, momLine(ctx, "saveMoney",
       "Should I save money for you?"))
     if ctx.lastCheck then
-      save.g2MomSaving = true
+      Mom.setSaving(save,true)
       return momSay(ctx, "startSavingMoney", "OK, I'll save your money.")
     end
-    save.g2MomSaving = false
+    Mom.setSaving(save,false)
     return momSay(ctx, "justDoWhatYouCan", "Just do what you can.")
   end
 
@@ -2364,7 +2435,7 @@ function Commands.g2_bank_of_mom(ctx)
       momSay(ctx, "takenMoney", "Took ¥" .. amount .. ".")
     end)
   elseif choice == 3 then
-    save.g2MomSaving = not save.g2MomSaving
+    Mom.setSaving(save,not save.g2MomSaving)
     if save.g2MomSaving then
       momSay(ctx, "startSavingMoney", "OK, I'll save your money.")
     else
@@ -2628,12 +2699,9 @@ function Commands.g2_readvar(ctx, var)
   elseif var == 6 then
     ctx.g2Var = countKeys(ctx.save.pokedex and ctx.save.pokedex.seen)
   elseif var == 10 then
-    ctx.g2Var = tonumber(os.date("%H")) or 0
+    ctx.g2Var = require("src.core.Gen2Clock").hour(ctx.save)
   elseif var == 11 then
-    -- g2DayOffset is what mom's SetDayOfWeek picker answered, as a shift off
-    -- the host day, so Arthur still shows up on a real Thursday.
-    ctx.g2Var = ((tonumber(os.date("%w")) or 0)
-      + (ctx.save.g2DayOffset or 0)) % 7
+    ctx.g2Var = require("src.core.Gen2Clock").weekday(ctx.save)
   elseif var == 16 then
     -- BoxFreeSpace counts only the current box, not all available PC slots.
     local Boxes = require("src.pokemon.Boxes")
@@ -2666,6 +2734,12 @@ function Commands.g2_readvar(ctx, var)
     -- sampled by `special SampleKenjiBreakCountdown`
     ctx.g2Var = ctx.save.g2KenjiBreak or 0
   elseif var == 14 then
+    local Unown = require("src.pokemon.Gen2Unown")
+    if Unown.supported() then
+      ctx.g2Var = Unown.count(ctx.save)
+      ctx.lastCheck = ctx.g2Var ~= 0
+      return
+    end
     -- UnownCaught (engine/events/unown_walls.asm): how many distinct UNOWN
     -- letters are in the dex.  The port has no per-letter model, so a caught
     -- UNOWN counts once -- enough for the Ruins researcher's `ifgreater 2`
@@ -2720,39 +2794,25 @@ end
 -- Phone_FindOpenSlot (36:$402D) fails when none of them is free.  That cap is
 -- the whole point of the ".PhoneFull" branch every phone trainer carries -- an
 -- uncapped list can never reach it.
-local GEN2_PHONE_SLOTS = 10
-
-local function phoneListCount(save)
-  local n = 0
-  for _, registered in pairs(phoneList(save)) do
-    if registered then n = n + 1 end
-  end
-  return n
-end
-
 -- AddPhoneNumber (36:$4000): carry means "not added" -- either the id is
--- already in the list or there is no free slot.
-local function addPhoneNumber(save, id)
-  local list = phoneList(save)
-  if list[id] then return false end
-  if phoneListCount(save) >= GEN2_PHONE_SLOTS then return false end
-  list[id] = true
-  return true
+-- already in the list or there is no unreserved slot. Keep the same ordered
+-- native book for the script verbs and Pokegear; the set remains compatible.
+local function addPhoneNumber(ctx, id)
+  return require("src.world.Gen2PhoneBook").add(
+    ctx.data or (ctx.game and ctx.game.data), ctx.save, id)
 end
 
 function Commands.g2_cellnum(ctx, id, add)
   if type(id) ~= "number" then return end
   if add then
-    ctx.lastCheck = addPhoneNumber(ctx.save, id)
+    ctx.lastCheck = addPhoneNumber(ctx, id)
   else
-    local list = phoneList(ctx.save)
-    ctx.lastCheck = list[id] == true
-    list[id] = nil
+    ctx.lastCheck = require("src.world.Gen2PhoneBook").remove(ctx.save, id)
   end
 end
 
 function Commands.g2_check_cellnum(ctx, id)
-  ctx.lastCheck = phoneList(ctx.save)[id] == true
+  ctx.lastCheck = require("src.world.Gen2PhoneBook").has(ctx.save, id)
   ctx.g2Var = ctx.lastCheck and 1 or 0
 end
 
@@ -2783,7 +2843,7 @@ function Commands.g2_ask_cellnum(ctx, id, textId)
     ctx.g2Var = 2
     return
   end
-  if addPhoneNumber(ctx.save, id) then
+  if addPhoneNumber(ctx, id) then
     ctx.g2Var = 0
   else
     ctx.g2Var = 1
@@ -2898,7 +2958,8 @@ local WEEKDAYS = {
 -- either way the day still rolls over at real midnight instead of freezing.
 function Commands.g2_set_day_of_week(ctx)
   local game, runner = ctx.game, ctx.runner
-  local host = tonumber(os.date("%w")) or 0
+  local Clock = require("src.core.Gen2Clock")
+  local current = Clock.weekday(ctx.save)
   local picked
   repeat
     Commands.show_text(ctx, "SetDayOfWeek.OakTimeWhatDayIsItText")
@@ -2912,14 +2973,14 @@ function Commands.g2_set_day_of_week(ctx)
     -- no cancel: the ROM's loop watches A only, and onCancel is the only
     -- other path back to runner:resume()
     local menu = require("src.ui.Menu").new(game, items, { cancelable = false })
-    menu.index = host + 1
+    menu.index = current + 1
     menu:clampScroll()
     game.stack:push(menu)
     runner:yield()
     Commands.ask(ctx, Strings(WEEKDAYS[picked + 1])
       .. resolvedText(ctx, "SetDayOfWeek.OakTimeIsItText"))
   until ctx.lastCheck
-  ctx.save.g2DayOffset = (picked - host) % 7
+  Clock.setWeekday(ctx.save, picked)
 end
 
 -- UnownPuzzle (SpecialsPointers row 41).  The chamber scripts run
@@ -3002,72 +3063,60 @@ end
 -- run of `ifequal` rows that decide which ball Kurt starts on.
 -- ---------------------------------------------------------------------------
 
--- RED, BLU, BLK, WHT, PNK, GRN, YLW -- the same ids Kurt1 `checkitem`s before
--- it bothers to ask
-local APRICORNS = { 85, 89, 92, 93, 97, 99, 101 }
-
 function Commands.g2_select_apricorn(ctx)
-  local game, runner, save = ctx.game, ctx.runner, ctx.save
-  local Bag = require("src.inventory.Bag")
-  local Menu = require("src.ui.Menu")
-  local picked, held, items = 0, 0, {}
-  -- SelectApricornForKurt zeroes wKurtApricornQuantity on entry, so a
-  -- cancelled pick cannot leave the previous count standing.
-  save.g2KurtApricorns = 0
-  for _, id in ipairs(APRICORNS) do
-    local key = string.format("ITEM_%03d", id)
-    local qty = save.inventory and save.inventory[key] or 0
-    if qty > 0 then
-      local def = game.data.items and game.data.items[key]
-      items[#items + 1] = {
-        label = string.format("%s x%d", (def and def.name) or key, qty),
-        onSelect = function() picked, held = id, qty runner:resume() end,
-      }
+  local game,runner,save=ctx.game,ctx.runner,ctx.save
+  local Bag=require("src.inventory.Bag")
+  local Menu=require("src.ui.Menu")
+  local Apricorns=require("src.world.Gen2Apricorns")
+  local version=require("src.core.GameVersion").get()
+  local stock=version=="gold" or version=="silver" or version=="crystal"
+  save.g2KurtApricorns=0
+  local selected=1
+  while true do
+    local picked,held,key=0,0,nil
+    local items={}
+    for _,row in ipairs(Apricorns.inBag(game.data,save))do
+      local id,quantity,item=row.item,row.quantity,row.apricorn
+      local def=game.data.items and game.data.items[item]
+      items[#items+1]={label=string.format("%s x%d",(def and def.name) or item,quantity),
+        onSelect=function()picked,held,key=id,quantity,item;runner:resume()end}
+    end
+    if #items==0 then ctx.g2Var,ctx.lastCheck=0,false;return end
+    if stock then
+      items[#items+1]={label="CANCEL",onSelect=function()runner:resume()end}
+    end
+    local menu=Menu.new(game,items,{maxVisible=version=="crystal" and 4 or 8,
+      onCancel=function()runner:resume()end})
+    menu.index=math.min(selected,#items);menu:clampScroll()
+    game.stack:push(menu);runner:yield()
+    if picked==0 then ctx.g2Var,ctx.lastCheck=0,false;return end
+    selected=menu.index
+    local count,cancelled=1,false
+    -- Gold/Silver's special always tosses exactly one. Crystal asks even
+    -- for a one-item stack and goes back to the list on quantity cancel.
+    if version=="crystal" or version~="gold" and version~="silver" and held>1 then
+      local choices={}
+      for n=1,held do
+        local quantity=n
+        choices[#choices+1]={label=string.format("x%d",n),
+          onSelect=function()count=quantity;runner:resume()end}
+      end
+      game.stack:push(Menu.new(game,choices,{maxVisible=5,
+        onCancel=function()cancelled=true;runner:resume()end}))
+      runner:yield()
+    end
+    if not cancelled or version~="crystal" then
+      count=math.max(1,math.min(count,held))
+      local available=tonumber(save.inventory and save.inventory[key]) or 0
+      if available~=available or available<count then
+        ctx.g2Var,ctx.lastCheck=0,false;return
+      end
+      Bag.remove(save,key,count)
+      save.g2KurtApricorns=count
+      ctx.g2Var,ctx.lastCheck=picked,true
+      return
     end
   end
-  if #items == 0 then
-    ctx.g2Var, ctx.lastCheck = 0, false
-    return
-  end
-  game.stack:push(Menu.new(game, items, {
-    onCancel = function() runner:resume() end,
-  }))
-  runner:yield()
-  if picked == 0 then
-    ctx.g2Var, ctx.lastCheck = 0, false
-    return
-  end
-
-  -- "How many should I make?" -- Kurt_SelectQuantity (engine/events/kurt.asm)
-  -- loads wItemQuantity with how many of that apricorn you HAVE and lets you
-  -- scroll 1..that, then Kurt_GiveUpSelectedQuantityOfSelectedApricorn takes
-  -- exactly that many and the count goes into wKurtApricornQuantity --
-  -- VAR_KURT_APRICORNS, which the `verbosegiveitemvar` on the collection
-  -- branch reads back to decide how many balls to hand over.
-  --
-  -- Taking one apricorn and never writing that var is what left the var at 0
-  -- and, with verbosegiveitemvar unlowered as well, Kurt holding a ball he
-  -- could never give.
-  local count = 1
-  if held > 1 then
-    local rows = {}
-    for n = 1, held do
-      rows[#rows + 1] = {
-        label = string.format("x%d", n),
-        onSelect = function() count = n runner:resume() end,
-      }
-    end
-    game.stack:push(Menu.new(game, rows, {
-      -- backing out of the quantity box returns to the apricorn list on
-      -- hardware; one apricorn is the closest single-step equivalent here
-      onCancel = function() count = 1 runner:resume() end,
-    }))
-    runner:yield()
-  end
-  count = math.max(1, math.min(count, held))
-  Bag.remove(save, string.format("ITEM_%03d", picked), count)
-  save.g2KurtApricorns = count
-  ctx.g2Var, ctx.lastCheck = picked, true
 end
 
 -- ---------------------------------------------------------------------------
@@ -4802,19 +4851,14 @@ function Commands.g2_magnet_train(ctx)
 end
 
 -- `special SnorlaxAwake` ($5F).  ROM checks wMapMusic == MUSIC_POKE_FLUTE_CHANNEL.
--- That channel is only unlocked with the EXPN Card from Lavender Radio Tower
--- (ENGINE_EXPN_CARD / event flag row $03).  Gen2 has no usable Poké Flute item
--- in normal play; matching ITEM_056 as "flute" was a false positive.
+-- The EXPN Card unlocks the tuner; owning it alone does not wake Snorlax.
+-- Admission reads actual playback and the native local cell, not stale save
+-- hints or globally rebased rendering coordinates.
 function Commands.g2_snorlax_awake(ctx)
-  local save = ctx.save
-  local flags = save.flags or {}
-  local Gen2Flags = require("src.script.Gen2Flags")
-  local expnKey = Gen2Flags.engineFlag(3) -- EVENT_GOT_EXPN_CARD
-  local hasExpn = flags[expnKey] == true
-    or flags.EVENT_GOT_EXPN_CARD == true
-    or flags.ENGINE_EXPN_CARD == true
-  ctx.lastCheck = hasExpn and true or false
-  ctx.g2Var = hasExpn and 1 or 0
+  local awake = require("src.world.Gen2RadioAudio").snorlaxAwake(
+    ctx.overworld and ctx.overworld.player)
+  ctx.lastCheck = awake
+  ctx.g2Var = awake and 1 or 0
 end
 
 -- ---------------------------------------------------------------------------
@@ -4970,7 +5014,14 @@ function Commands.g2_town_map(ctx)
 end
 
 function Commands.g2_map_radio(ctx)
-  ctx.lastCheck = true
+  local done=false
+  local radio=require("src.ui.Gen2MapRadio").new(ctx.game,{channel=ctx.g2Var or 0,onDone=function()
+    if done then return end
+    done=true;ctx.runner:resume()
+  end})
+  if not radio.station then return end
+  ctx.game.stack:push(radio)
+  ctx.runner:yield()
 end
 
 function Commands.g2_check_pokerus(ctx)
@@ -5226,8 +5277,15 @@ function Commands.g2_update_roam_positions(ctx)
       -- rerolls, so a beast never hops onto the route behind you.
       if dest and dest == normalizeMapId(lastMap) then dest = nil end
       if dest then
+        local from=info.mapId
         info.mapId = dest
         info.landmark = LANDMARK_BY_MAP[dest] or mapToLandmark(ctx.game, dest)
+        local Runtime=require('src.mods.Runtime')
+        if dest~=from and Runtime.wants("roamer.moved")then
+          local indices={RAIKOU=1,ENTEI=2,SUICUNE=3}
+          Runtime.emit("roamer.moved",{index=indices[name],slot=info,species=info.species or name,
+            from=from,to=dest,reason='map'})
+        end
       end
     end
   end

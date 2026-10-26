@@ -1,0 +1,108 @@
+{
+  "runtimeCommit": "73ff4d48756f10ae848ee3b745cb67ab2b2fc7bd",
+  "native": {
+    "metal": {
+      "checks": 22,
+      "scope": "Offscreen owned geometry, actual scene casting/shaders/targets, one-pixel GPU completion fence; no presentation, ROM or full-game FPS",
+      "renderer": "Metal",
+      "phases": [
+        {
+          "warmupFrames": 120,
+          "staticPasses": 0,
+          "dynamicPasses": 0,
+          "legacyPasses": 120,
+          "mode": "legacy",
+          "frames": 120,
+          "meanMs": 0.7672239583333287,
+          "meanSubmitMs": 0.09647534722222184,
+          "meanFrameMs": 0.8747288194444452
+        },
+        {
+          "warmupFrames": 120,
+          "staticPasses": 4,
+          "dynamicPasses": 120,
+          "legacyPasses": 0,
+          "mode": "world anchored",
+          "frames": 120,
+          "meanMs": 0.5632812500000001,
+          "meanSubmitMs": 0.07356666666667824,
+          "meanFrameMs": 0.5803350694444542
+        }
+      ],
+      "sha256": {
+        "mods/DRAMATIC_SHAPE/lib/ShadowMap.lua": "049897e9f7ac8c791cfd54e22d13161e4d0ac3f70b6000689d1a5e8d118d7f26",
+        "mods/DRAMATIC_SHAPE/lib/WorldShadows.lua": "121d65657f992b93cf63b2f50455297943efe89d9150822a02b8e89ca160419d",
+        "mods/DRAMATIC_SHAPE/lib/VoxelScene.lua": "ddea948a3027ad72f2d9d3544e27b30bab3801b3021a795b09bd9975924afc68",
+        "mods/DRAMATIC_SHAPE/lib/Voxel3D.lua": "ada0f764add2ef7eb0e52660db30d84415b9b80f9b4cf9a3b9b158ea326dda62",
+        "mods/DRAMATIC_SHAPE/lib/Tier.lua": "fe9ed868da8aa8feb3824d8dd9edd2307df89631500aa4ed69a9e436919de329",
+        "mods/DRAMATIC_SHAPE/manifest.json": "b94bdb437120be77c014937f0949a17ee81377db570abb46d997e80dd7e52ca3",
+        "mods/DRAMATIC_SHAPE/main.lua": "9cac22e8385199ce15d43afe458d9a12e4271f2f54a008e1a24242c4da0ed8b3",
+        "tools/world-shadow-check/main.lua": "d4a495cece9e2ab0d091f1f2d2992f654ebe34cdb1da16a38af3cd5d0cc0579c",
+        "tools/world-shadow-check/conf.lua": "26f7c0d1ad1cf92a36858450d5778c69bb465fc85b6227d54cd9bc8061e0af99"
+      },
+      "playerProfilesUsed": false
+    },
+    "openGL": {
+      "phases": [
+        {
+          "meanMs": 0.7941934027777819,
+          "meanSubmitMs": 0.08953645833333682,
+          "meanFrameMs": 0.8148767361111123,
+          "warmupFrames": 120,
+          "staticPasses": 0,
+          "dynamicPasses": 0,
+          "legacyPasses": 120,
+          "frames": 120,
+          "mode": "legacy"
+        },
+        {
+          "meanMs": 0.29765173611111617,
+          "meanSubmitMs": 0.04534131944444464,
+          "meanFrameMs": 0.3067003472222209,
+          "warmupFrames": 120,
+          "staticPasses": 4,
+          "dynamicPasses": 120,
+          "legacyPasses": 0,
+          "frames": 120,
+          "mode": "world anchored"
+        }
+      ],
+      "renderer": "OpenGL",
+      "scope": "Offscreen owned geometry, actual scene casting/shaders/targets, one-pixel GPU completion fence; no presentation, ROM or full-game FPS",
+      "checks": 22,
+      "sha256": {
+        "mods/DRAMATIC_SHAPE/lib/ShadowMap.lua": "049897e9f7ac8c791cfd54e22d13161e4d0ac3f70b6000689d1a5e8d118d7f26",
+        "mods/DRAMATIC_SHAPE/lib/WorldShadows.lua": "121d65657f992b93cf63b2f50455297943efe89d9150822a02b8e89ca160419d",
+        "mods/DRAMATIC_SHAPE/lib/VoxelScene.lua": "ddea948a3027ad72f2d9d3544e27b30bab3801b3021a795b09bd9975924afc68",
+        "mods/DRAMATIC_SHAPE/lib/Voxel3D.lua": "ada0f764add2ef7eb0e52660db30d84415b9b80f9b4cf9a3b9b158ea326dda62",
+        "mods/DRAMATIC_SHAPE/lib/Tier.lua": "fe9ed868da8aa8feb3824d8dd9edd2307df89631500aa4ed69a9e436919de329",
+        "mods/DRAMATIC_SHAPE/manifest.json": "b94bdb437120be77c014937f0949a17ee81377db570abb46d997e80dd7e52ca3",
+        "mods/DRAMATIC_SHAPE/main.lua": "9cac22e8385199ce15d43afe458d9a12e4271f2f54a008e1a24242c4da0ed8b3",
+        "tools/world-shadow-check/main.lua": "d4a495cece9e2ab0d091f1f2d2992f654ebe34cdb1da16a38af3cd5d0cc0579c",
+        "tools/world-shadow-check/conf.lua": "26f7c0d1ad1cf92a36858450d5778c69bb465fc85b6227d54cd9bc8061e0af99"
+      },
+      "playerProfilesUsed": false
+    }
+  },
+  "acceptance": {
+    "enginePassed": 156,
+    "engineSuites": 167,
+    "inheritedFailingSuites": 11,
+    "unchangedFailureLines": 29,
+    "baselineCommit": "5af8542a384f01beeffc1c1f88f82d9b9a0926c4",
+    "sdkSuites": 3,
+    "galleryChecks": 253,
+    "api3Comparisons": 48,
+    "isolatedApi3Workers": 96,
+    "externalFixtureEntrypoints": 17,
+    "externalFixturePhase": "complete",
+    "head": "73ff4d48756f10ae848ee3b745cb67ab2b2fc7bd",
+    "exitCodes": {
+      "engine": 1,
+      "sdk": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    }
+  }
+}

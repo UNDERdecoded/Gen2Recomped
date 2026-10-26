@@ -3,6 +3,7 @@ local V=...
 local S={}
 local values=setmetatable({}, {__mode="k"})
 local unpack=table.unpack or unpack
+local lastBudget
 -- Snapshot small plain numeric vectors/matrices. Comparing table identity is
 -- unsafe: callers mutate camera and model arrays in place between draws.
 local function numericSize(value)
@@ -13,11 +14,14 @@ local function numericSize(value)
  return n
 end
 function S.send(shader,name,...)
- if not (V and V.sharedHulls) then return pcall(shader.send,shader,name,...) end
+ local budget=V and V.renderBudget~=false
+ if budget~=lastBudget then values=setmetatable({}, {__mode="k"});lastBudget=budget end
+ if not budget and not (V and V.sharedHulls) then return pcall(shader.send,shader,name,...) end
  local record=values[shader]
  if not record then record={};values[shader]=record end
  local args=record[name]
  if not args then args={};record[name]=args end
+ if budget and args.failed then return false,args.failed end
  local arrays=args.arrays
  if not arrays then arrays={};args.arrays=arrays end
  local n=select("#",...)
@@ -46,7 +50,10 @@ function S.send(shader,name,...)
  end
  for i=n+1,args.n or #args do args[i]=nil;arrays[i]=nil end
  args.n=n
- local ok,err=pcall(shader.send,shader,name,...)
+ local ok,err
+ if budget and args.sent then shader:send(name,...);ok=true
+ else ok,err=pcall(shader.send,shader,name,...) end
+ if budget and not ok and (not shader.hasUniform or not shader:hasUniform(name)) then args.failed=err end
  args.sent=ok
  return ok,err
 end
