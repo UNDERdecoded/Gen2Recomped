@@ -47,6 +47,7 @@ local BOX_TW = 9
 local ROW_STEP = 2                    -- tiles between rows
 local TEXT_INSET_X = 8
 local CURSOR_X = 2
+Gen3StartMenu.CURSOR_WIDTH = TEXT_INSET_X
 
 -- HOW FAR DOWN ITS ROW A LINE SITS, which is not a constant either.
 --
@@ -352,6 +353,7 @@ function Gen3StartMenu:buildRows(game, labels, playerName)
   -- calling next() (src/mods/Hooks.lua) -- and the START menu is not a screen
   -- that may refuse to open.  A throwing hook leaves the cartridge's rows and
   -- a line on the console, which is the degradation every other seam here has.
+  for _,row in ipairs(self.rows)do if row.id==nil then row.id=row.key end end
   local ok, hooked = pcall(Runtime.call, "ui.start_menu.items", sameRows,
                            game, self.rows)
   if not ok then
@@ -638,6 +640,24 @@ function Gen3StartMenu:drawSavePanel(inset)
 end
 
 -- FireRed shows a row's explanation once, then remembers it in shared options.
+-- One detached content rectangle feeds the native skin and source wrappers.
+-- Existing row keys still dispatch native actions; source IDs are observations.
+function Gen3StartMenu:nativeContentTemplate()
+  local left,top,width,height=BOX_TX+1,BOX_TY+1,BOX_TW-2,#self.rows*ROW_STEP
+  if isFireRed(self.game)then
+    left,top,width,height=22,1,7,math.ceil(#self.rows*15/8)+1
+    for _,row in ipairs(self.rows)do width=math.max(width,math.ceil((Font.width(row.label)+10)/8))end
+    left=math.min(left,29-width)
+  end
+  return {left=left,top=top,width=width,height=height,
+    tilemapLeft=left,tilemapTop=top,w=width,h=height}
+end
+function Gen3StartMenu:contentTemplate()
+  local source=package.loaded['src.ui.game3.start_menu']
+  if source then return source._contentTemplate(self)end
+  return self:nativeContentTemplate()
+end
+
 function Gen3StartMenu:drawFireRed(record)
   local g = love.graphics
 
@@ -679,20 +699,13 @@ function Gen3StartMenu:drawFireRed(record)
     self.displayedHelpKey = nil
   end
 
-  local n = #self.rows
-  local innerH = math.ceil((n * 15) / 8) + 1
-  local left = 22
-  local width = 7
-  -- widen for the port's own rows (MODS, QUIT GAME) so nothing spills
-  for _, r in ipairs(self.rows) do
-    width = math.max(width, math.ceil((Font.width(r.label) + 10) / 8))
-  end
-  left = math.min(left, 29 - width)
-  Font.drawBox(left - 1, 0, width + 2, innerH + 2)
+  local tpl=self:contentTemplate()
+  local left,top,width,height=tpl.left,tpl.top,tpl.width,tpl.height
+  Font.drawBox(left-1,top-1,width+2,height+2)
   g.setColor(0, 0, 0, 1)
   for i, r in ipairs(self.rows) do
-    local y = 8 + (i - 1) * 15
-    Font.draw(r.label, left * 8 + 8, y)
+    local y = top*8 + (i - 1) * 15
+    Font.draw(r.label, left * 8 + self.CURSOR_WIDTH, y)
     if i == self.index then Font.drawCode(Theme.cursor, left * 8, y) end
   end
   g.setColor(1, 1, 1, 1)
@@ -703,12 +716,12 @@ function Gen3StartMenu:draw()
   if self.savePanel then return self:drawSavePanel(inset) end
   local record = (self.game.data.constants or {}).gen3StartMenu
   if record and record.layout == "frlg" then return self:drawFireRed(record) end
-  local th = #self.rows * ROW_STEP + 2
-  Font.drawBox(BOX_TX, BOX_TY, BOX_TW, th)
+  local tpl=self:contentTemplate()
+  Font.drawBox(tpl.left-1,tpl.top-1,tpl.width+2,tpl.height+2)
   love.graphics.setColor(0, 0, 0, 1)
   for i, row in ipairs(self.rows) do
-    local y = (BOX_TY + 1 + (i - 1) * ROW_STEP) * 8 + inset
-    Font.draw(row.label, BOX_TX * 8 + TEXT_INSET_X, y)
+    local y = (tpl.top + (i - 1) * ROW_STEP) * 8 + inset
+    Font.draw(row.label, (tpl.left-1) * 8 + TEXT_INSET_X, y)
     if i == self.index then
       -- Theme.cursor, not a literal arrow: this cartridge has NO arrow in
       -- its font (Emerald draws the menu cursor as a sprite), so the
@@ -720,10 +733,23 @@ function Gen3StartMenu:draw()
       --
       -- It also does not BLINK.  The Gen 2 list cursor blinks; Emerald's
       -- sits still and the selected row is the only thing that moves.
-      Font.drawCode(Theme.cursor, BOX_TX * 8 + CURSOR_X, y)
+      Font.drawCode(Theme.cursor, (tpl.left-1) * 8 + CURSOR_X, y)
     end
   end
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- Source wrappers enter the same native update/draw phase and cannot run a
+-- second input clock by calling their base repeatedly.
+local nativeUpdate,nativeDraw=Gen3StartMenu.update,Gen3StartMenu.draw
+function Gen3StartMenu:update(dt)
+  local source=package.loaded['src.ui.game3.start_menu']
+  if source then return source._update(self,dt,nativeUpdate)end
+  return nativeUpdate(self,dt)
+end
+function Gen3StartMenu:draw()
+  local source=package.loaded['src.ui.game3.start_menu']
+  if source then return source._draw(self,nativeDraw)end
+  return nativeDraw(self)
+end
 return Gen3StartMenu

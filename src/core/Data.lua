@@ -541,6 +541,20 @@ local function normalizeMapId(mapId)
   return table.concat(out)
 end
 
+-- Imported GBA addresses already identify physical headers. A readable or
+-- normalized spelling must share that record, rather than create another
+-- header at the same group/number. Keep authored/non-GBA aliases unchanged.
+local function gbaMapSlot(maps, source)
+  if not require("src.core.GameVersion").isGen3() then return false end
+  local group, number = source:match("^MAP_G(%d+)_N(%d+)$")
+  group, number = tonumber(group), tonumber(number)
+  local def = maps[source]
+  return group ~= nil and source == string.format("MAP_G%02d_N%02d", group, number)
+    and type(def) == "table" and def.id == source
+    and def.group == group and def.number == number
+    and (def.sourceId == nil or def.sourceId == source)
+end
+
 -- AN ALIAS REMEMBERS WHAT IT WAS MADE FROM.
 --
 -- `normalizeMapId` exists for the Game Boy games, where a map id like
@@ -564,6 +578,7 @@ end
 local function aliasMap(maps, source)
   local alias = normalizeMapId(source)
   if alias == source or maps[alias] or not maps[source] then return end
+  if gbaMapSlot(maps, source) then maps[alias] = maps[source]; return end
   local mapped = copy(maps[source])
   mapped.id = alias
   mapped.sourceId = source
@@ -586,7 +601,12 @@ local function seedMapAliases(maps, aliases)
       local mapped = copy(maps[friendlyId]); mapped.id = rawId; maps[rawId] = mapped
     end
     if not maps[friendlyId] and maps[rawId] then
-      local mapped = copy(maps[rawId]); mapped.id = friendlyId; maps[friendlyId] = mapped
+      if gbaMapSlot(maps, rawId) then maps[friendlyId] = maps[rawId]
+      else
+        local mapped = copy(maps[rawId]); mapped.id = friendlyId
+        if require("src.core.GameVersion").isGen2() then mapped.sourceId = maps[rawId].sourceId or rawId end
+        maps[friendlyId] = mapped
+      end
     end
   end
 end
@@ -1940,7 +1960,7 @@ function Data:seedDefaults()
       end
     end
   end
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     seedMapAliases(self.maps, FIRERED_STORY_MAP_ALIASES)
     preferMapAliases(self.maps, FIRERED_STORY_MAP_ALIASES)
     for mapId, textConst in pairs(FIRERED_STORY_OBJECT_TEXT) do

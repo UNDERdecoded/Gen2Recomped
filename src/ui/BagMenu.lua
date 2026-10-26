@@ -172,6 +172,21 @@ BagMenu.refreshCount = refreshCount
 -- the stack, so every exit that prints has to close it afterwards.  For
 -- every other item the picker popped itself first and closePicker's identity
 -- check makes it a no-op (#252).
+-- Shared with optional command shortcuts. Validate inventory and battle
+-- before consuming; the native throw owns animation, catch and the turn.
+function BagMenu.throwBall(game,battle,id,close)
+  local def=game.data.items[id]
+  if not battle or(game.save.inventory[id]or 0)<1 or not ItemEffects.isBall(id,def)then return false end
+  if battle.kind=='wild'and battle.wildFoesStanding and battle:wildFoesStanding()>1 then
+    showMessages(game,{(game.data.text and game.data.text.TEXT_B0002_00044)
+      or Strings("It's no good! It's impossible to aim\nwhen there are two POKéMON!")})
+    return false
+  end
+  consume(game,id)
+  if close then close()end
+  battle:throwBall(ItemEffects.alias(id,def))
+  return true
+end
 local function useOn(game, battle, id, target, list, moveIndex, picker)
   -- PLATINUM / HGSS: EMBARGO keeps the bag off a battler under it -- refused
   -- with its line, the item kept and the turn not spent (battle_bag.c
@@ -425,16 +440,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
                               game.save.player.name) })
       return
     end
-    -- BattleBag's hasTwoOpponents: no ball while two wild Pokemon stand
-    if battle.kind == "wild" and battle.wildFoesStanding and battle:wildFoesStanding() > 1 then
-      showMessages(game, { (game.data.text and game.data.text.TEXT_B0002_00044)
-        or Strings("It's no good! It's impossible to aim\nwhen there are two POKéMON!") })
-      return
-    end
-    consume(game, id)
-    list:close()
-    -- Catching/AnimPlayer key off the Gen1 ball ids
-    battle:throwBall(ItemEffects.alias(id, game.data.items[id]))
+    BagMenu.throwBall(game,battle,id,function()list:close()end)
     return
   end
 

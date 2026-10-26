@@ -435,4 +435,16 @@ function Warp.destination(data, warpDef, lastMap, backupWarp, save)
                       { warp = warpDef, lastMap = lastMap, data = data })
 end
 
+-- Presentation forecasts use the same native landing rules without invoking
+-- the committing warp hook or admitting a map, script or player transition.
+function Warp.peekDestination(data, warpDef, lastMap, backupWarp, save)
+  if type(warpDef) ~= "table" or not (data and data.maps) then return nil end
+  local dest = warpDef.destMap
+  if dest == "LAST_MAP" and not lastMap then return nil end
+  if dest == "LAST_WARP" and not backupWarp and not lastMap then return nil end
+  if not (data.maps[dest] or dest == "LAST_MAP" or dest == "LAST_WARP"
+      or dest == GEN3_DYNAMIC_MAP or dest == GEN4_DYNAMIC_MAP) then return nil end
+  return resolve(data, warpDef, lastMap, backupWarp, save)
+end
+
 return Warp

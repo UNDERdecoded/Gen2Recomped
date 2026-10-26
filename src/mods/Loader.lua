@@ -32,6 +32,29 @@ require("src.core.ModCompat").install()
 local Loader = {}
 Loader.__index = Loader
 
+-- Compatibility battle services also retire on older native hosts whose
+-- stream service is available but not yet driven by loader retirement.
+local function retireBattlePresentation()
+  local first
+  for _,name in ipairs({'src.core.game3.battle','src.core.game3.battle.anim','src.core.game3.battle.anim_coords','src.core.game3.pokemon','src.core.game3.mon_anim'})do
+    local module=package.loaded[name];local service=type(module)=='table'and module._service
+    if type(service)=='table'and type(service.release)=='function'then
+      local ok,why=pcall(service.release,service)
+      if not ok and not first then first=why end
+    end
+  end
+  if first then error(first,0)end
+end
+
+-- Only an already-loaded field service owns resources. Retire it after
+-- wrapper unwind without importing a compatibility module on ordinary boot.
+local function retireFieldEffects()
+  for _,name in ipairs({'src.core.game3.field_effects','src.core.game3.field_move_show_mon'})do
+    local service=package.loaded[name]
+    if type(service)=='table' and type(service.release)=='function' then service.release()end
+  end
+end
+
 local MOD_STATE_FILE = "mod_state.lua" -- legacy migration only
 
 -- walk a dotted target path without creating anything; the base view a
@@ -1196,6 +1219,10 @@ end
 -- migration it took goes with them.  The journal only exists around an
 -- entry chunk; a later failure (script validation) purges every registry.
 function Loader:_rollback(modId)
+  local stream=package.loaded['src.core.game3.asset_stream']
+  if stream and stream.cancelOwner then pcall(stream.cancelOwner,modId)end
+  local move=package.loaded['src.core.game3.field_move_show_mon']
+  if move and move.cancelOwner then pcall(move.cancelOwner,modId)end
   for name in pairs(self.journal or self.content) do
     self.content[name]:rollback(modId)
   end
@@ -1309,12 +1336,24 @@ local function stampAudioOwners(data, name, registry)
   owners[key] = map
 end
 
+-- Optional collision observations retire after wrapper unwind, without
+-- loading compatibility modules on an ordinary native boot.
+local function retireCompatibilityCollision()
+  local module = package.loaded["src.core.game3.collision"]
+  if type(module) == "table" and type(module.release) == "function" then module.release() end
+end
+
 function Loader:load(data)
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
   -- wraps and flags the previous load put on engine tables come off first.
   ModSeams.unwindAll()
+  retireCompatibilityCollision()
+  retireBattlePresentation()
+  retireFieldEffects()
+  local stream=package.loaded['src.core.game3.asset_stream']
+  if stream and stream.release then stream.release()end
   self.baseData = data
   -- every registry folds against the pristine view of its Data target;
   -- resolution is lazy so optional namespaces may appear later
@@ -1654,6 +1693,11 @@ end
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
   local undone = select(1, ModSeams.unwindAll())
+  retireCompatibilityCollision()
+  retireBattlePresentation()
+  retireFieldEffects()
+  local stream=package.loaded['src.core.game3.asset_stream']
+  if stream and stream.release then stream.release()end
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
     Runtime.currentMod = nil

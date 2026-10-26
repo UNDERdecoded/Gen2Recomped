@@ -30,7 +30,7 @@ function Preview.new(game, section, name, onDone)
   local ok, img = pcall(require("src.render.Assets").image, rec.image)
   if not (ok and img) then return nil end
   return setmetatable({
-    game = game, image = img, name = name or "", onDone = onDone,
+    game = game, section = section, image = img, name = name or "", onDone = onDone,
     hold = seen and 40 or 120, t = 0, phase = "in",
   }, Preview)
 end

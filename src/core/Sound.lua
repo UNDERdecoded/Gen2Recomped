@@ -12,6 +12,8 @@ local Runtime = require("src.mods.Runtime")
 local Sound = {}
 
 local cache = {}
+local effectUses = setmetatable({}, { __mode = "k" })
+local effectCapture
 -- port addition: 0-7 SFX volume from save.options.sfxVol (OptionsMenu),
 -- scaling the 0.8 base every source gets
 local BASE_VOLUME = 0.8
@@ -227,6 +229,7 @@ end
 
 local function playPath(data, key, def, pitch, tempo)
   key = tostring(key)
+  if effectCapture and not effectCapture.source then key = key .. "@borrow:" .. effectCapture.owner end
   if not love.audio or not def then return nil end
   -- INTERRUPTION: building a Source now would fail and cache `false` below,
   -- permanently disabling this effect (see sessionSuspended, case 2)
@@ -245,6 +248,8 @@ local function playPath(data, key, def, pitch, tempo)
     src = s
   end
   if not restart(src) then return nil end
+  local use = { key = key }; effectUses[src] = use
+  if effectCapture and not effectCapture.source then effectCapture.source, effectCapture.use = src, use end
   return src
 end
 
@@ -264,14 +269,76 @@ end
 -- PlaySoundWaitForCurrent -> WaitForSoundToFinish can poll it
 -- Resolve a cartridge effect by its extracted native name, including effects
 -- that have no shared engine role in audio.sfx.
-function Sound.playNamedEffect(data,name)
-  for id,song in pairs(data and data.audio and data.audio.songs or {}) do
-    if type(song)=="table" and song.sfxName==name and tonumber(song.index) then
-      local src=playPath(data,id,{song=id,m4a=tonumber(song.index)})
-      if src then played("sfx",name) end
-      return src
+-- Native numeric/symbolic sequence aliases must resolve unambiguously.
+function Sound.sequenceKey(data, name)
+  if type(name) ~= "string" and type(name) ~= "number" then return nil end
+  local songs = data and data.audio and data.audio.songs or {}
+  if (type(name) == "string" or type(name) == "number") and (type(songs[name]) == "string" or type(songs[name]) == "table") then
+    return name, songs[name]
+  end
+  local key, found
+  for id, song in pairs(songs) do
+    if type(song) == "table" and (song.sfxName == name or song.musName == name
+       or type(name) == "number" and song.index == name) then
+      if found and found ~= song then return nil, "ambiguous native audio id" end
+      key, found = id, song
     end
   end
+  return key, found
+end
+
+-- Borrow the first playback atomically. Events may start another effect
+-- before playSe returns; a replaced playback cannot transfer its new owner
+-- to the earlier caller. Borrowed cache variants preserve native voice gain.
+function Sound.borrowEffect(owner, play, ...)
+  local previous = effectCapture
+  local capture = { owner = tostring(owner) }
+  effectCapture = capture
+  local ok, src = pcall(play, ...)
+  effectCapture = previous
+  if not ok then error(src, 0) end
+  local use = capture.use
+  if not use or capture.source ~= src then return src, nil end
+  local function valid()
+    return not sessionSuspended and effectUses[src] == use and cache[use.key] == src
+  end
+  return src, { valid = valid, level = function()return volumeFor(use.key)end, stop = function()
+    if not valid() then return false end
+    effectUses[src] = nil
+    safeAudio("Source:stop", src.stop, src)
+    return true
+  end }
+end
+
+function Sound.playNamedEffect(data, name)
+  local id, song = Sound.sequenceKey(data, name)
+  if not id then return nil end
+  local def = song
+  if type(song) == "table" and tonumber(song.index) and not song.file then
+    def = { song = id, m4a = tonumber(song.index) }
+  end
+  local src = playPath(data, id, def)
+  if src then played("sfx", name) end
+  return src
+end
+
+-- Weather owns a separate native voice: an ambient stop must not cut off a
+-- mod or scripted one-shot of the same cartridge sequence.
+function Sound.playWeatherEffect(data, name, looping)
+  return Runtime.call("field.weather.sound", function(value)
+    local id, song = Sound.sequenceKey(data, value)
+    if not id then return nil end
+    local def = song
+    if type(song) == "table" and tonumber(song.index) and not song.file then
+      def = { song = id, m4a = tonumber(song.index) }
+    end
+    local src = playPath(data, "weather:" .. tostring(id), def)
+    if src then
+      safeAudio("Source:setLooping", src.setLooping, src, looping == true)
+      played("sfx", value)
+    end
+    return src
+  end, name)
 end
 
 function Sound.play(data, name)
@@ -630,7 +697,12 @@ function Sound.playCry(data, species, opts)
   end
   -- set every time rather than at build: the cached source outlives a change
   -- of game, and the scale is the loaded cartridge's
-  pcall(src.setVolume, src, volumeFor(key) * cryScale(data))
+  local scale=cryScale(data)
+  if opts and type(opts.volume)=='number'and opts.volume==opts.volume and opts.volume>=0 and opts.volume<=256 then
+    local unit=data.constants and data.constants.gen3Cry and tonumber(data.constants.gen3Cry.scale)or 256
+    if unit and unit>0 then scale=opts.volume/unit end
+  end
+  pcall(src.setVolume, src, volumeFor(key) * scale)
   -- Interactive Dex playback owns its source; loop/effect settings must never
   -- leak onto the cached cry used by battles, NPC scripts or other menus.
   if opts and opts.isolated and src.clone then
@@ -638,7 +710,7 @@ function Sound.playCry(data, species, opts)
     if ok and copy then src=copy end
   end
   if not restart(src) then return nil end
-  require("src.core.Music").duckForCry(data, src)
+  require("src.core.Music").duckForCry(data, src,opts and opts.noDuck==true)
   played("cry", species, species)
   return src
 end

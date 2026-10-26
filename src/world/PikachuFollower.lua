@@ -189,6 +189,9 @@ function PikachuFollower.current(ow)
 end
 
 function PikachuFollower.onMapEntered(game, ow, opts)
+  if require('src.core.GameVersion').isGen3()then
+    return require('src.world.OptionalFollower').onMapEntered(game,ow,opts,true)
+  end
   -- Bill's House owns a short scripted scene that deliberately keeps
   -- Pikachu off the normal trailing loop.  A new map instance ends it.
   ow.pikachuBillsScene = nil
@@ -395,6 +398,11 @@ end
 -- one follow step per frame: chase the cell the player last vacated
 -- (pikachu_follow.asm keeps it one walk step behind)
 function PikachuFollower.update(game, ow)
+  if require('src.core.GameVersion').isGen3()then
+    local source=package.loaded['src.compat.game3.Follower']or package.loaded['src.world.game3.Follower']
+    if source and source._dispatch then return source._dispatch(game,ow,function()return require('src.world.OptionalFollower').update(game,ow)end)end
+    return require('src.world.OptionalFollower').update(game,ow)
+  end
   if ow.pikaHop then return end -- the counter hop owns the follower (#417)
   if ow.pikachuBillsScene then return end
   local npc = findFollower(ow)

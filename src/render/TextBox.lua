@@ -420,7 +420,66 @@ function TextBox:beginLine()
   table.insert(self.shown, {})
 end
 
+-- Only the manual input branches; typing, automatic text and holds still
+-- belong to update(), including the delay after a page/line advance.
+function TextBox:advance()
+  if (self.holdFrames or 0) > 0 or (self.preWait or 0) > 0 then
+    return
+  end
+  if self.done then
+    if self.stay or self.auto or self.choice then
+      return
+    end
+    require("src.core.Sound").play(self.game.data, "Press_AB")
+    self.game.stack:pop()
+    if self.onDone then
+      self.onDone()
+    end
+  elseif self.waiting then
+    require("src.core.Sound").play(self.game.data, "Press_AB")
+    self.waiting = false
+    if self.contAdvance then
+      -- ContText / ManualTextScroll: keep the box, scroll one line
+      self.contAdvance = false
+      self.lineIndex = self.lineIndex + 1
+      self:beginLine()
+      -- ScrollTextUpOneLine is 5 blocking frames and, as its own comment
+      -- says, is "always called twice in a row" (home/text.asm:280-305)
+      self.holdFrames = self.scrollHoldFrames or Timing.TEXT_SCROLL_PAIR
+    else
+      self.shown = {}
+      self.pageIndex = self.pageIndex + 1
+      self.lineIndex = 1
+      self:beginLine()
+      -- ClearScreenArea then DelayFrames 20: the box sits empty before the
+      -- next page starts typing (home/text.asm:236-240)
+      self.holdFrames = Timing.TEXT_PAGE_CLEAR
+    end
+  end
+end
+
+-- Reveal only the current native page; no input, sound or clock is pumped.
+function TextBox:revealPage()
+  while not self.waiting and not self.done do
+    local line=self.shown[#self.shown]
+    for i=self.charIndex+1,#self.codes do line[#line+1]=self.codes[i]end
+    self.charIndex=#self.codes
+    local page=self.pages[self.pageIndex]
+    if self.lineIndex<#page then
+      local nextIdx=self.lineIndex+1
+      local conts=self.pages.contBefore and self.pages.contBefore[self.pageIndex]
+      if conts and conts[nextIdx]then self.waiting=true;self.contAdvance=true
+      else self.lineIndex=nextIdx;self:beginLine()end
+    elseif self.pageIndex<#self.pages then self.waiting=true;self.contAdvance=false
+    else self.done=true end
+  end
+end
 function TextBox:update(dt)
+  local source=package.loaded['src.ui.game3.message']
+  if require('src.core.GameVersion').isGen3()and source then return source._update(self,function()return self:_updateBody(dt)end)end
+  return self:_updateBody(dt)
+end
+function TextBox:_updateBody(dt)
   local input = self.game.input
   self.blink = (self.blink + 1) % 60
   -- A page or CONT advance blocks the whole box while the original's scroll
@@ -618,6 +677,11 @@ function TextBox:uiSize()
 end
 
 function TextBox:draw()
+  local source=package.loaded['src.ui.game3.message']
+  if require('src.core.GameVersion').isGen3()and source then return source._draw(self,function()return self:_drawBody()end)end
+  return self:_drawBody()
+end
+function TextBox:_drawBody()
   -- The dialogue box belongs against the bottom of the screen, not floating
   -- in the middle of a zoomed-out letterbox.  Declared per frame; the
   -- renderer blits this region to the screen edge and the rest of the UI

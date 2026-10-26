@@ -87,6 +87,7 @@ end
 -- settled state; the wants guard keeps the no-listener path allocation-free
 
 function StateStack:push(state, ...)
+  local flows=package.loaded["src.compat.gen1.UiFlow"];if flows then flows.inherit(self,state)end
   table.insert(self.states, state)
   if state.enter then state:enter(...) end
   local depth = #self.states
@@ -105,15 +106,14 @@ function StateStack:push(state, ...)
   end
 end
 
-function StateStack:pop()
-  local state = table.remove(self.states)
+local function finishRemoval(self, state)
   if state and state.exit then state:exit() end
   -- A POP THAT EMPTIES THE STACK is not debug-level news.  The engine does it
   -- on purpose in exactly two places and pushes the replacement in the same
   -- breath; everywhere else it is one pop too many, and the thing it leaves
   -- behind -- a screen that never changes, with no error -- gives the reader
   -- nothing to search for.  So it is said in words, once per culprit.
-  if state ~= nil and #self.states == 0 then
+  if state ~= nil and #self.states == 0 and not self.worldState then
     Logger.warn("state stack: popping %s emptied the stack -- nothing will "
       .. "update or draw until something is pushed back", 
       StateStack.describe(state))
@@ -125,6 +125,35 @@ function StateStack:pop()
     Runtime.emit("screen.popped", { state = state })
   end
   return state
+end
+
+function StateStack:pop()
+  local state = table.remove(self.states)
+  if state and self._modalTracker then self._modalTracker:removed(state) end
+  return finishRemoval(self, state)
+end
+
+-- Remove actual native states, including a named modal beneath another one.
+-- Detach the whole selection before callbacks: a new screen opened by exit
+-- must survive and must never receive another removed screen's exit event.
+function StateStack:removeAll(selected)
+  local wanted, removed = {}, {}
+  for _, state in ipairs(selected) do wanted[state] = true end
+  for i = #self.states, 1, -1 do
+    local state = self.states[i]
+    if wanted[state] then
+      table.remove(self.states, i)
+      if self._modalTracker then self._modalTracker:removed(state) end
+      removed[#removed + 1] = state
+    end
+  end
+  local firstError
+  for _, state in ipairs(removed) do
+    local ok, err = pcall(finishRemoval, self, state)
+    if not ok and not firstError then firstError = err end
+  end
+  if firstError then error(firstError, 0) end
+  return #removed
 end
 
 function StateStack:top()
@@ -174,7 +203,12 @@ end
 -- that wants both puts the motion in animate and calls it from update.
 function StateStack:update(dt)
   local top = self:top()
-  if top and top.update then top:update(dt) end
+  if top and top.update then
+    local flow=top.nativeUiFlow
+    if flow then
+      if flow:valid()then flow:admit(top.update,top,dt)else flow:retire()end
+    else top:update(dt)end
+  end
   for i = self:visibleBase(), #self.states - 1 do
     local state = self.states[i]
     if state.animate then state:animate(dt) end
