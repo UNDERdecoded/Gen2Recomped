@@ -1,0 +1,111 @@
+{
+  "referenceCommit": "37a49b31f458d51ea9e00b90f2a247272ad09cb8",
+  "nativeCpuImport": {
+    "gpu": false,
+    "status": "pass",
+    "editions": {
+      "firered": {
+        "maps": 425,
+        "metadataDifferent": [],
+        "layoutDifferent": [],
+        "cells": 240512
+      },
+      "leafgreen": {
+        "maps": 425,
+        "metadataDifferent": [],
+        "layoutDifferent": [],
+        "cells": 240512
+      },
+      "emerald": {
+        "maps": 518,
+        "metadataDifferent": [],
+        "layoutDifferent": [],
+        "cells": 322688
+      },
+      "ruby": {
+        "maps": 394,
+        "metadataDifferent": [],
+        "layoutDifferent": [],
+        "cells": 258200
+      },
+      "sapphire": {
+        "maps": 394,
+        "metadataDifferent": [],
+        "layoutDifferent": [],
+        "cells": 258200
+      }
+    },
+    "fullCompatibility": false,
+    "playerProfilesUsed": false
+  },
+  "syntheticChecks": 236,
+  "customDefinitionGraphComparison": {
+    "values": 194623,
+    "cases": 1000,
+    "hashA": 733965428,
+    "hashB": 2084460788
+  },
+  "realMapsMatched": 2156,
+  "realPaddedCellsMatched": 1320112,
+  "nativeDefinitionWrites": false,
+  "nativePlayerOrScriptOwnerChanged": false,
+  "originalEntryProgress": {
+    "previousMissingModule": "src.core.game3.map",
+    "currentMissingModule": "src.core.game3.player",
+    "unchangedOriginalPackageLoaded": false,
+    "editions": {
+      "firered": {
+        "initialized": false,
+        "missingModule": "src.core.game3.player"
+      },
+      "leafgreen": {
+        "initialized": false,
+        "missingModule": "src.core.game3.player"
+      },
+      "emerald": {
+        "initialized": false,
+        "missingModule": "src.core.game3.player"
+      },
+      "ruby": {
+        "initialized": false,
+        "missingModule": "src.core.game3.player"
+      },
+      "sapphire": {
+        "initialized": false,
+        "missingModule": "src.core.game3.player"
+      }
+    },
+    "sourceIdentity": {
+      "version": "1.0.9",
+      "manifestEntryMainMatchPinnedSource": true
+    },
+    "unadmittedAttemptRetained": "An absolute-path SDK attempt discovered no mod and is excluded; final relative-path probes assert mod discovery."
+  },
+  "playerProfilesUsed": false,
+  "minimumFreeGiB": 8,
+  "newGpuAcceptance": false,
+  "fullCompatibility": false,
+  "sourceSha256": {
+    "src/compat/gen1/MapRuntime.lua": "e03ce2834a778a77d382a6d26b1a5ac6540619521182e941c325afe8eb34b8c0",
+    "src/compat/gen1/MapGraph.lua": "eb93413b3950b56790f305b1b27f650ed32ae9372e308bec32ccdd8528375d41",
+    "src/core/game3/map.lua": "46205d43526a25e8e246b3d46db7bd83e7c89fc44fa78ddcee137ebb953d0c96",
+    "src/mods/Loader.lua": "2a0bd033bb94c1db76d300029395689428f1db9df3077b8df8ba9c6b155c828b",
+    "tools/map-runtime/check.lua": "c2deb123128521f6f2df28b58c8a79be47481d8077775c9a70bf34447c675640",
+    "tools/map-runtime/oracle.lua": "5766540cc86b766caeef26f74b28da95ca02d9eeb56c35fc44ae595f0f65a175",
+    "tools/map-runtime/projection.lua": "e4e922bfb801195fc77642d9243b544e141553ba4b0ef118144c0ae6ddee9a8a",
+    "tools/map-runtime/graph-consumer.lua": "c2187de06296e6f31db0c0e1679561c914857d486b4aecff6e31affc58f0c346",
+    "tools/map-runtime/fixture.lua": "23c3f572424dd9920a8c8f3436d8f918e47474808f667111eeca99439797c2c9",
+    "tools/map-runtime/rom-host/main.lua": "f16121883e375cda83323bc78b36d1e4f146088b7e1d7c999256026dbf77927b",
+    "tools/map-runtime/rom-host/conf.lua": "ca03796261c6b6e10f2785d2c32f0b23b7e9b8356921594825173401ad0fd940"
+  },
+  "sourceHashScope": "composed five-edition host; companion contributions required",
+  "composedRegression": {
+    "commit": "9fcc703ebff48e62eb0c008fbc739eae1faa42be",
+    "engineSuitesPassed": 329,
+    "engineSuitesTotal": 329,
+    "sdkSuitesPassed": 3,
+    "sdkSuitesTotal": 3,
+    "dramaticShapeB30": "pass",
+    "fullCompatibility": false
+  }
+}

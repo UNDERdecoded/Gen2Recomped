@@ -1309,12 +1309,21 @@ local function stampAudioOwners(data, name, registry)
   owners[key] = map
 end
 
+-- Compatibility observations own decoded views, not the native simulation.
+-- Retire them after wrapper unwind on reload/exit, without loading Game or
+-- any compatibility module on an ordinary native boot.
+local function retireCompatibilityMaps()
+  local maps = package.loaded["src.core.game3.map"]
+  if type(maps) == "table" and type(maps.release) == "function" then maps.release() end
+end
+
 function Loader:load(data)
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
   -- wraps and flags the previous load put on engine tables come off first.
   ModSeams.unwindAll()
+  retireCompatibilityMaps()
   self.baseData = data
   -- every registry folds against the pristine view of its Data target;
   -- resolution is lazy so optional namespaces may appear later
@@ -1654,6 +1663,7 @@ end
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
   local undone = select(1, ModSeams.unwindAll())
+  retireCompatibilityMaps()
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
     Runtime.currentMod = nil
