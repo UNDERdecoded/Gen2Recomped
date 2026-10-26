@@ -171,7 +171,8 @@ local function isDarkMap(mapId)
     if (def and dark and dark[def.label]) == true then return true end
     -- Fallback when gen2DarkMaps was not extracted (stale cache): maps
     -- using TilesetDarkCave are always dark.  TilesetCave is the lit variant.
-    if def and (def.tileset == "TilesetDarkCave") then return true end
+    if def and (def.tileset == "TilesetDarkCave"
+                or def.tileset == "TILESET_DARK_CAVE") then return true end
     return false
   end
   -- GEN 3 SAYS IT IN THE MAP HEADER, one byte, and nothing read it.

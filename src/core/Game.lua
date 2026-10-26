@@ -74,6 +74,7 @@ function Game:load()
   -- too: an uncovered tileset renders that ONE map grey while its
   -- neighbours are in colour, which is harder to diagnose than a whole
   -- grey world because it reads as a bug in that map.
+  Data:publishGen2TilesetNames()
   Data:publishGen2Palettes()
   -- render pipelines dispatch off the merged dataset; point them at the
   -- one the mods just merged into before anything can draw a frame
