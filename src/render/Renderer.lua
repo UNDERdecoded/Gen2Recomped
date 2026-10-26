@@ -33,6 +33,20 @@ end
 
 local Renderer = {}
 
+-- Legacy world shaders pre-flip clip-space Y for LÖVE 11 render targets.
+-- LÖVE 12 normalizes that coordinate itself on every backend, so those
+-- completed images need one presentation mirror. Native targets and the
+-- detached renderData contract already use LÖVE's current image convention.
+function Renderer.mirrorsWorldOverride(pipeline)
+  if not love.getVersion or love.getVersion() < 12 then return false end
+  pipeline = pipeline or {}
+  if pipeline.worldOrientation == "native" or pipeline.worldFormat == "renderData.v1" then
+    return false
+  end
+  if pipeline.worldOrientation == "legacy" then return true end
+  return require("src.core.GameVersion").generation() <= 3
+end
+
 -- The Game Boy surface.  WIDTH/HEIGHT are the classic dimensions every
 -- screen is laid out in; uiWidth/uiHeight are the surface actually
 -- allocated this frame, which a state may widen through setUISize (the
@@ -127,18 +141,20 @@ function Renderer:init()
   -- frame", which is every vanilla frame.
   self.uiOverride = nil
   self.worldOverride = nil
+  self.worldOverrideMirrored = nil
 end
 
 -- Hand endFrame a pipeline's world image to composite instead of the world
 -- canvas.  Cleared every frame, so a pipeline that declines one frame falls
 -- straight back to the 2D path rather than showing a stale image.
-function Renderer:setWorldOverride(canvas)
+function Renderer:setWorldOverride(canvas, pipeline)
   -- Defensive: a pipeline that hands back a non-canvas (forgotten return, a
   -- truthy sentinel) must not reach the worldOverride blit in endFrame, where
   -- love.graphics.draw on it would crash the frame.  Reject it and fall back
   -- to the 2D path rather than trust it.
   if canvas ~= nil and not isCanvas(canvas) then canvas = nil end
   self.worldOverride = canvas
+  self.worldOverrideMirrored = canvas ~= nil and Renderer.mirrorsWorldOverride(pipeline)
 end
 
 -- Integer framebuffer pixels per GB pixel that fit the window.  Zoom /
@@ -332,6 +348,7 @@ function Renderer:beginFrame(transparent)
   self.uprightActive = false
   self.uiOverride = nil
   self.worldOverride = nil
+  self.worldOverrideMirrored = nil
   -- warp-fade overlay from Transition (issue #121); cleared each frame so
   -- a popped transition cannot leave a sticky black veil
   self.worldFadeAlpha = nil
@@ -915,6 +932,7 @@ function Renderer:endFrame(zones, worldZones)
       -- Gen 2 and the right one for Gen 3.
       generation = require("src.core.GameVersion").generation(),
       worldOverride = self.worldOverride,
+      worldOverrideMirrored = self.worldOverrideMirrored,
       worldActive = self.worldActive and true or false,
       zones = zones, worldZones = worldZones,
       ww = ww, wh = wh, pw = pw, ph = ph, ox = ox, oy = oy,
@@ -926,7 +944,8 @@ function Renderer:endFrame(zones, worldZones)
       self.worldActive = false
       self.uprightActive = false
       self.uiOverride = nil
-  self.worldOverride = nil
+      self.worldOverride = nil
+      self.worldOverrideMirrored = nil
       PaletteFX.setPass(nil)
       return {
         width = ww, height = wh, gameX = ox, gameY = oy,
@@ -1063,7 +1082,10 @@ function Renderer:endFrame(zones, worldZones)
   if wobble == 0 then wobble = nil end
   if self.worldOverride then
     local measurable = pcall(self.worldOverride.getDimensions, self.worldOverride)
-    if not measurable then self.worldOverride = nil end
+    if not measurable then
+      self.worldOverride = nil
+      self.worldOverrideMirrored = nil
+    end
   end
 
   if self.worldOverride then
@@ -1094,17 +1116,9 @@ function Renderer:endFrame(zones, worldZones)
     local ow, oh = self.worldOverride:getDimensions()
     local osx = (ow and ow > 0) and (ww / ow) or (1 / dpiX)
     local osy = (oh and oh > 0) and (wh / oh) or (1 / dpiY)
-    -- iOS still needs the historical presentation flip for the older
-    -- generations. Gen 4 is the exception: its 3D worldOverride already
-    -- reaches this point in the correct orientation, so applying the same
-    -- iOS flip a second time turns Platinum upside down while its UI remains
-    -- upright.
-    local loveMajor = love.getVersion()
-    local gen = require("src.core.GameVersion").generation()
-    if love.system and love.system.getOS
-       and love.system.getOS() == "iOS"
-       and loveMajor >= 12
-       and gen ~= 4 then
+    -- Retain the producer's orientation with its image rather than guessing
+    -- from the OS at composition time. The UI is composited separately.
+    if self.worldOverrideMirrored then
       love.graphics.draw(self.worldOverride, 0, wh, 0, osx, -osy)
     elseif wobble then
       -- a DS pixel is a UI pixel here (Ux, Uy); the bands from the UI's top
@@ -1453,6 +1467,7 @@ function Renderer:endFrame(zones, worldZones)
   self.uprightActive = false
   self.uiOverride = nil
   self.worldOverride = nil
+  self.worldOverrideMirrored = nil
   PaletteFX.setPass(nil)
   return {
     width = ww, height = wh,

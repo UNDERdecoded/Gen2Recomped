@@ -1,0 +1,570 @@
+{
+  "schema": 1,
+  "status": "pass",
+  "runtimeSource": "2709bda8a1011d34b41961777d662c8ac5d16658",
+  "rendererDependency": "de28fe4c",
+  "runs": [
+    {
+      "receipt": {
+        "identity": "oasc-gen2recomp-qa-full109-fork-798e91db65db-firered",
+        "engineCommit": "2709bda8a1011d34b41961777d662c8ac5d16658",
+        "engineVersionStamp": "0.8.45",
+        "engineApi": 3,
+        "modSha256": "4302ea1d3d135348be529fd077893f2408ca7d87647dd8afcafd7b80101c2085",
+        "driverSha256": "50637276bb29a2e30f702462384261e9adda3689ec39bbcf0927a33c922112ba",
+        "edition": "firered",
+        "renderer": "opengl",
+        "vsync": 0,
+        "fullParity": false,
+        "status": "pass",
+        "completionReports": [
+          "capture-result.json"
+        ]
+      },
+      "result": {
+        "playerProfilesUsed": false,
+        "fullGameplayAcceptance": false,
+        "status": "pass",
+        "allSaveFilesOwnedQA": true,
+        "captures": [
+          {
+            "nativeDriverBytesExact": true,
+            "rgbaCorrect": true,
+            "upright": true,
+            "phase": "initial-map",
+            "mode": "opengl-cocoa-frame",
+            "width": 2048,
+            "height": 1536
+          },
+          {
+            "nativeDriverBytesExact": true,
+            "rgbaCorrect": true,
+            "upright": true,
+            "phase": "second-map",
+            "mode": "opengl-cocoa-frame",
+            "width": 2048,
+            "height": 1536
+          },
+          {
+            "nativeDriverBytesExact": true,
+            "rgbaCorrect": true,
+            "upright": true,
+            "phase": "resized",
+            "mode": "opengl-cocoa-frame",
+            "width": 1920,
+            "height": 1280
+          },
+          {
+            "nativeDriverBytesExact": true,
+            "rgbaCorrect": true,
+            "upright": true,
+            "phase": "map-return",
+            "mode": "opengl-cocoa-frame",
+            "width": 1920,
+            "height": 1280
+          }
+        ],
+        "rawSystemCaptureCorrect": false,
+        "edition": "firered"
+      },
+      "frames": {
+        "phases": [
+          {
+            "map": "MAP_G03_N00",
+            "name": "initial-map",
+            "colors": 42,
+            "frames": 35,
+            "mode": "opengl-cocoa-frame"
+          },
+          {
+            "map": "MAP_G03_N00",
+            "name": "second-map",
+            "colors": 27,
+            "frames": 35,
+            "mode": "opengl-cocoa-frame"
+          },
+          {
+            "map": "MAP_G03_N00",
+            "name": "resized",
+            "colors": 31,
+            "frames": 35,
+            "mode": "opengl-cocoa-frame"
+          },
+          {
+            "map": "MAP_G03_N00",
+            "name": "map-return",
+            "colors": 31,
+            "frames": 35,
+            "mode": "opengl-cocoa-frame"
+          }
+        ],
+        "blank": 0,
+        "stale": 0,
+        "frames": 140
+      },
+      "osWindowProofs": {
+        "initial-map": {
+          "freshFrameStamp": 33,
+          "minimumFrameStamp": 24,
+          "centralColours": 53,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-initial-map.png",
+          "attempts": 1
+        },
+        "second-map": {
+          "freshFrameStamp": 73,
+          "minimumFrameStamp": 63,
+          "centralColours": 29,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-second-map.png",
+          "attempts": 1
+        },
+        "resized": {
+          "freshFrameStamp": 114,
+          "minimumFrameStamp": 104,
+          "centralColours": 41,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-resized.png",
+          "attempts": 1
+        },
+        "map-return": {
+          "freshFrameStamp": 153,
+          "minimumFrameStamp": 143,
+          "centralColours": 41,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-map-return.png",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "receipt": {
+        "identity": "oasc-gen2recomp-qa-full109-fork-1df2d02d521b-emerald",
+        "engineCommit": "2709bda8a1011d34b41961777d662c8ac5d16658",
+        "engineVersionStamp": "0.8.45",
+        "engineApi": 3,
+        "modSha256": "4302ea1d3d135348be529fd077893f2408ca7d87647dd8afcafd7b80101c2085",
+        "driverSha256": "50637276bb29a2e30f702462384261e9adda3689ec39bbcf0927a33c922112ba",
+        "edition": "emerald",
+        "renderer": "opengl",
+        "vsync": 0,
+        "fullParity": false,
+        "status": "pass",
+        "completionReports": [
+          "capture-result.json"
+        ]
+      },
+      "result": {
+        "edition": "emerald",
+        "fullGameplayAcceptance": false,
+        "playerProfilesUsed": false,
+        "captures": [
+          {
+            "phase": "initial-map",
+            "upright": true,
+            "width": 2048,
+            "height": 1536,
+            "rgbaCorrect": true,
+            "mode": "opengl-cocoa-frame",
+            "nativeDriverBytesExact": true
+          },
+          {
+            "phase": "second-map",
+            "upright": true,
+            "width": 2048,
+            "height": 1536,
+            "rgbaCorrect": true,
+            "mode": "opengl-cocoa-frame",
+            "nativeDriverBytesExact": true
+          },
+          {
+            "phase": "resized",
+            "upright": true,
+            "width": 1920,
+            "height": 1280,
+            "rgbaCorrect": true,
+            "mode": "opengl-cocoa-frame",
+            "nativeDriverBytesExact": true
+          },
+          {
+            "phase": "map-return",
+            "upright": true,
+            "width": 1920,
+            "height": 1280,
+            "rgbaCorrect": true,
+            "mode": "opengl-cocoa-frame",
+            "nativeDriverBytesExact": true
+          }
+        ],
+        "status": "pass",
+        "rawSystemCaptureCorrect": false,
+        "allSaveFilesOwnedQA": true
+      },
+      "frames": {
+        "frames": 136,
+        "stale": 0,
+        "phases": [
+          {
+            "frames": 35,
+            "map": "MAP_G00_N09",
+            "colors": 43,
+            "name": "initial-map",
+            "mode": "opengl-cocoa-frame"
+          },
+          {
+            "frames": 34,
+            "map": "MAP_G00_N09",
+            "colors": 24,
+            "name": "second-map",
+            "mode": "opengl-cocoa-frame"
+          },
+          {
+            "frames": 34,
+            "map": "MAP_G00_N09",
+            "colors": 41,
+            "name": "resized",
+            "mode": "opengl-cocoa-frame"
+          },
+          {
+            "frames": 33,
+            "map": "MAP_G00_N09",
+            "colors": 41,
+            "name": "map-return",
+            "mode": "opengl-cocoa-frame"
+          }
+        ],
+        "blank": 0
+      },
+      "osWindowProofs": {
+        "initial-map": {
+          "freshFrameStamp": 33,
+          "minimumFrameStamp": 24,
+          "centralColours": 50,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-initial-map.png",
+          "attempts": 1
+        },
+        "second-map": {
+          "freshFrameStamp": 72,
+          "minimumFrameStamp": 63,
+          "centralColours": 26,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-second-map.png",
+          "attempts": 1
+        },
+        "resized": {
+          "freshFrameStamp": 114,
+          "minimumFrameStamp": 103,
+          "centralColours": 49,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-resized.png",
+          "attempts": 1
+        },
+        "map-return": {
+          "freshFrameStamp": 150,
+          "minimumFrameStamp": 141,
+          "centralColours": 49,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-map-return.png",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "receipt": {
+        "identity": "oasc-gen2recomp-qa-full109-fork-8ea15c1d7ff5-firered",
+        "engineCommit": "2709bda8a1011d34b41961777d662c8ac5d16658",
+        "engineVersionStamp": "0.8.45",
+        "engineApi": 3,
+        "modSha256": "4302ea1d3d135348be529fd077893f2408ca7d87647dd8afcafd7b80101c2085",
+        "driverSha256": "50637276bb29a2e30f702462384261e9adda3689ec39bbcf0927a33c922112ba",
+        "edition": "firered",
+        "renderer": "metal",
+        "vsync": 0,
+        "fullParity": false,
+        "status": "pass",
+        "completionReports": [
+          "capture-result.json"
+        ]
+      },
+      "result": {
+        "rawSystemCaptureCorrect": true,
+        "edition": "firered",
+        "playerProfilesUsed": false,
+        "fullGameplayAcceptance": false,
+        "allSaveFilesOwnedQA": true,
+        "status": "pass",
+        "captures": [
+          {
+            "phase": "initial-map",
+            "nativeDriverBytesExact": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "upright": true,
+            "width": 2048,
+            "height": 1536
+          },
+          {
+            "phase": "second-map",
+            "nativeDriverBytesExact": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "upright": true,
+            "width": 2048,
+            "height": 1536
+          },
+          {
+            "phase": "resized",
+            "nativeDriverBytesExact": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "upright": true,
+            "width": 1920,
+            "height": 1280
+          },
+          {
+            "phase": "map-return",
+            "nativeDriverBytesExact": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "upright": true,
+            "width": 1920,
+            "height": 1280
+          }
+        ]
+      },
+      "frames": {
+        "frames": 154,
+        "stale": 0,
+        "phases": [
+          {
+            "frames": 39,
+            "name": "initial-map",
+            "mode": "metal-frame",
+            "map": "MAP_G03_N00",
+            "colors": 42
+          },
+          {
+            "frames": 39,
+            "name": "second-map",
+            "mode": "metal-frame",
+            "map": "MAP_G03_N00",
+            "colors": 27
+          },
+          {
+            "frames": 41,
+            "name": "resized",
+            "mode": "metal-frame",
+            "map": "MAP_G03_N00",
+            "colors": 31
+          },
+          {
+            "frames": 35,
+            "name": "map-return",
+            "mode": "metal-frame",
+            "map": "MAP_G03_N00",
+            "colors": 31
+          }
+        ],
+        "blank": 0
+      },
+      "osWindowProofs": {
+        "initial-map": {
+          "freshFrameStamp": 34,
+          "minimumFrameStamp": 24,
+          "centralColours": 54,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-initial-map.png",
+          "attempts": 1
+        },
+        "second-map": {
+          "freshFrameStamp": 79,
+          "minimumFrameStamp": 67,
+          "centralColours": 29,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-second-map.png",
+          "attempts": 1
+        },
+        "resized": {
+          "freshFrameStamp": 126,
+          "minimumFrameStamp": 112,
+          "centralColours": 41,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-resized.png",
+          "attempts": 1
+        },
+        "map-return": {
+          "freshFrameStamp": 169,
+          "minimumFrameStamp": 157,
+          "centralColours": 41,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-map-return.png",
+          "attempts": 1
+        }
+      }
+    },
+    {
+      "receipt": {
+        "identity": "oasc-gen2recomp-qa-full109-fork-65d4b69f9850-emerald",
+        "engineCommit": "2709bda8a1011d34b41961777d662c8ac5d16658",
+        "engineVersionStamp": "0.8.45",
+        "engineApi": 3,
+        "modSha256": "4302ea1d3d135348be529fd077893f2408ca7d87647dd8afcafd7b80101c2085",
+        "driverSha256": "50637276bb29a2e30f702462384261e9adda3689ec39bbcf0927a33c922112ba",
+        "edition": "emerald",
+        "renderer": "metal",
+        "vsync": 0,
+        "fullParity": false,
+        "status": "pass",
+        "completionReports": [
+          "capture-result.json"
+        ]
+      },
+      "result": {
+        "allSaveFilesOwnedQA": true,
+        "edition": "emerald",
+        "fullGameplayAcceptance": false,
+        "playerProfilesUsed": false,
+        "status": "pass",
+        "captures": [
+          {
+            "nativeDriverBytesExact": true,
+            "upright": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "phase": "initial-map",
+            "width": 2048,
+            "height": 1536
+          },
+          {
+            "nativeDriverBytesExact": true,
+            "upright": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "phase": "second-map",
+            "width": 2048,
+            "height": 1536
+          },
+          {
+            "nativeDriverBytesExact": true,
+            "upright": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "phase": "resized",
+            "width": 1920,
+            "height": 1280
+          },
+          {
+            "nativeDriverBytesExact": true,
+            "upright": true,
+            "mode": "metal-frame",
+            "rgbaCorrect": true,
+            "phase": "map-return",
+            "width": 1920,
+            "height": 1280
+          }
+        ],
+        "rawSystemCaptureCorrect": true
+      },
+      "frames": {
+        "frames": 159,
+        "blank": 0,
+        "phases": [
+          {
+            "frames": 37,
+            "mode": "metal-frame",
+            "name": "initial-map",
+            "map": "MAP_G00_N09",
+            "colors": 43
+          },
+          {
+            "frames": 46,
+            "mode": "metal-frame",
+            "name": "second-map",
+            "map": "MAP_G00_N09",
+            "colors": 18
+          },
+          {
+            "frames": 39,
+            "mode": "metal-frame",
+            "name": "resized",
+            "map": "MAP_G00_N09",
+            "colors": 41
+          },
+          {
+            "frames": 37,
+            "mode": "metal-frame",
+            "name": "map-return",
+            "map": "MAP_G00_N09",
+            "colors": 41
+          }
+        ],
+        "stale": 0
+      },
+      "osWindowProofs": {
+        "initial-map": {
+          "freshFrameStamp": 35,
+          "minimumFrameStamp": 24,
+          "centralColours": 50,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-initial-map.png",
+          "attempts": 1
+        },
+        "second-map": {
+          "freshFrameStamp": 78,
+          "minimumFrameStamp": 65,
+          "centralColours": 29,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-second-map.png",
+          "attempts": 1
+        },
+        "resized": {
+          "freshFrameStamp": 130,
+          "minimumFrameStamp": 117,
+          "centralColours": 49,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-resized.png",
+          "attempts": 1
+        },
+        "map-return": {
+          "freshFrameStamp": 173,
+          "minimumFrameStamp": 160,
+          "centralColours": 49,
+          "colourProfile": "gba",
+          "minimumColours": 16,
+          "screenshot": "os-window-map-return.png",
+          "attempts": 1
+        }
+      }
+    }
+  ],
+  "reserveGiB": 8,
+  "playerProfilesUsed": false,
+  "romsAssetsCachesSavesIncluded": false,
+  "scope": [
+    "Two editions, Metal and OpenGL; fixed QA field, native summary, real window resize and field return",
+    "Queued API and native driver PNG bytes are identical in the same frame; explicit red/blue/top markers prove orientation and channel order",
+    "Sixteen actual owned OS-window captures with current-frame stamps; no screenshot editing or post-encoding transform",
+    "Own trusted local QA driver and window observer; no original Origami runtime dependency",
+    "Introduction bypassed and QA-provided party/warps; not story, all-game, context-loss or performance acceptance"
+  ],
+  "preservedFailures": [
+    "First standalone test selected the native four-colour Options screen, which fails the existing >=16-colour observer threshold; replaced only that QA fixture with the actual colour-rich native summary. No production change or threshold widening.",
+    "An earlier composed-fork queued-capture run used the preceding committed runtime accidentally; it was stopped in its owned process and is not accepted."
+  ]
+}

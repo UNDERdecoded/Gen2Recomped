@@ -24,6 +24,7 @@ if love.filesystem.getInfo("love12_preview.lua", "file") then
 end
 
 local Game, EditorApp, Importer, TouchEditor
+local WindowFrame = require("src.render.WindowFrame")
 
 local autopilot -- optional scripted-input dev tool (tests/autopilot.lua)
 local driverCo  -- optional frame-driver (POKEPORT_DRIVER=file.lua): a
@@ -733,19 +734,6 @@ function love.draw()
 
   if not Game then return drawSecondPanel() end
   Game:draw()
-  -- frame capture requested by a driver
-  if Game.capturePath then
-    local path = Game.capturePath
-    Game.capturePath = nil
-    love.graphics.captureScreenshot(function(imagedata)
-      local fd = imagedata:encode("png")
-      local f = io.open(path, "wb")
-      if f then
-        f:write(fd:getString())
-        f:close()
-      end
-    end)
-  end
 end
 
 function love.keypressed(key, scancode, isrepeat)
@@ -1084,6 +1072,7 @@ local defaultErrorHandler = love.errorhandler or love.errhand
 -- device with no console and no file manager to hand.
 local function minimalErrorScreen(text)
   if not (love.graphics and love.event) then return nil end
+  pcall(WindowFrame.shutdown)
   local ok = pcall(function()
     love.graphics.reset()
     love.graphics.setNewFont(14)
@@ -1094,16 +1083,19 @@ local function minimalErrorScreen(text)
     if love.event then
       love.event.pump()
       for name, a in love.event.poll() do
-        if name == "quit" then return 1 end
-        if name == "keypressed" and (a == "escape" or a == "q") then return 1 end
+        if name == "quit" or name == "keypressed" and (a == "escape" or a == "q") then
+          WindowFrame.shutdown();return 1
+        end
       end
     end
     if love.graphics and love.graphics.isActive() then
-      love.graphics.origin()
-      love.graphics.clear(0.35, 0.06, 0.06)
-      love.graphics.setColor(1, 1, 1)
-      local w = love.graphics.getWidth()
-      love.graphics.printf(text, 20, 20, math.max(120, w - 40), "left")
+      WindowFrame.draw(function()
+        love.graphics.origin()
+        love.graphics.clear(0.35, 0.06, 0.06)
+        love.graphics.setColor(1, 1, 1)
+        local w = love.graphics.getWidth()
+        love.graphics.printf(text, 20, 20, math.max(120, w - 40), "left")
+      end)
       love.graphics.present()
     end
     if love.timer then love.timer.sleep(0.02) end
@@ -1175,6 +1167,7 @@ function love.quit()
   if editorMode and EditorApp.quit then
     return EditorApp.quit() -- return true to abort quit
   end
+  WindowFrame.shutdown()
   walkerTick("quit")
   -- let go of the "save open in a running game" markers (SaveData.closeOpen),
   -- so the launcher's Pokewalker in a later run is not told to wait
@@ -1275,9 +1268,21 @@ function love.run()
     end
 
     if love.graphics and love.graphics.isActive() then
-      love.graphics.origin()
-      love.graphics.clear(love.graphics.getBackgroundColor())
-      if love.draw then love.draw() end
+      local capture
+      if Game and Game.capturePath and not (Importer or bootReport or editorMode or TouchEditor) then
+        local path = Game.capturePath
+        Game.capturePath = nil
+        capture = function(data)
+          local encoded = data:encode("png")
+          local file = assert(io.open(path, "wb"))
+          file:write(encoded:getString()); file:close()
+        end
+      end
+      WindowFrame.draw(function()
+        love.graphics.origin()
+        love.graphics.clear(love.graphics.getBackgroundColor())
+        if love.draw then love.draw() end
+      end, capture)
       local closeP = FrameProfile.section("present (GPU wait / vsync)")
       love.graphics.present()
       closeP()
