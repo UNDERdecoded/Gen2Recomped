@@ -14,6 +14,7 @@ local V = ...
 
 local Mat4 = V.require("Mat4")
 local Perf = V.require("Perf")
+local FrameProfile = require("src.core.FrameProfile")
 -- The PERFORMANCE tier's ceilings (lib/Tier.lua). Top-level here rather
 -- than lazily as in ShadowMap/Water/AntiAlias: Tier requires nothing from
 -- this mod, so there is no load order to protect, and the sun's rate
@@ -2725,8 +2726,10 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- reaches far north and barely south, which is right for every rung
   -- but a head free to face south.
   local shCx, shCy = FirstPerson.shadowCenter(cx, cy, vh)
+  local closeSun = FrameProfile.section("    voxel: sun pass")
   castShadows(state, terrain, nbMesh, posed, shCx, shCy, vw, vh, atlasFor,
               water, nbWater, battleCards, battleToken)
+  closeSun()
 
   -- Everything between beginScene and endScene, as one function: the flat
   -- path runs it once, a VR frame runs it once PER EYE -- same posed
@@ -2734,11 +2737,14 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- about anything but their viewpoint.
   local function drawScene()
 
+  local closeTerrain = FrameProfile.section("    voxel: terrain")
   Voxel3D.draw(terrain, atlasFor(state.map), nil)
   for i, nb in ipairs(state.neighbors or {}) do
     Voxel3D.draw(nbMesh[i], atlasFor(nb.map),
                  Mat4.translate(nb.ox, 0, nb.oy))
   end
+
+  closeTerrain()
 
   -- Without a shadow map (headless, or a driver that could not make the
   -- canvas) the old flat decals stand in: ground-only, characters only,
@@ -2824,6 +2830,7 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- lake would otherwise wear one as a black smear. Water covers them,
   -- which is the same answer the shadow map's own pass gives (see
   -- ShadowMap.sprites) -- people do not shadow water either way.
+  local closeWater = FrameProfile.section("    voxel: water")
   local waterDraws = {}
   if water then
     waterDraws[#waterDraws + 1] = { water, atlasFor(state.map), nil }
@@ -2858,6 +2865,8 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
     VoxelScene.drawWater(waterDraws, Water.reflectCast() and castOnce or nil,
                          planarTex, planarY)
   end
+
+  closeWater()
 
   -- AND THE RIPPLE RINGS ON TOP OF IT, BEFORE ANYBODY IS STANDING IN IT.
   --
@@ -2920,10 +2929,12 @@ function VoxelScene.render(state, w, h, vw, vh, paletteFor, eyes)
   -- drawEntity resolves the lean-over-the-wall-in-front case, and a
   -- character genuinely behind a building is far deeper and loses the
   -- test, so buildings and trees really occlude.
+  local closeCards = FrameProfile.section("    voxel: cards")
   drawCast(state, posed, atlasFor)
   -- and the staged fight's mons over them, exactly as they were painted
   -- into the water's reflection copy a few lines up (see drawBattleCards)
   drawBattleCards()
+  closeCards()
   -- tall grass last, pulled camera-ward exactly as far as the characters
   -- were (same per-vertex shader bias, so grass never drifts either):
   -- relative depth between a walker and the tuft row south of their feet

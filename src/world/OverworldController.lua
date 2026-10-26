@@ -9,6 +9,7 @@
 -- surfing, Cut trees, trainer sight lines, and dispatches interactions to
 -- map scripts (data/scripts/), marts, nurses or extracted text.
 
+local FrameProfile = require("src.core.FrameProfile")
 local Assets = require("src.render.Assets")
 local Camera = require("src.render.Camera")
 local Collision = require("src.world.Collision")
@@ -17286,6 +17287,7 @@ function OverworldState:drawWorld()
   -- path below on the vanilla flat/tilt draw
   local override
   if not pipelineId then
+    local closeTiles = FrameProfile.section("  world: tiles")
     self.map.renderer:drawBorderFill(cam.x, bgY, vw, vh)
     self.map.renderer:draw(cam.x, bgY, vw, vh)
     for _, nb in ipairs(self.neighbors) do
@@ -17295,6 +17297,7 @@ function OverworldState:drawWorld()
     if self.g3MirageTower then
       require("src.world.Gen3MirageTower").drawTower(self, cam)
     end
+    closeTiles()
   end
   -- per-billboard SGB palette source; only needed (and only paid for) when
   -- tilting.  nil headless / on stale palettes -> billboards go uncolorized.
@@ -18009,6 +18012,7 @@ function OverworldState:drawWorld()
     -- Deliberately unscaled by depth, like :billboard: an effect keeps its
     -- crisp authored size and only its anchor moves.
     ctx.drawFx = function(project, scale)
+      local closeFx = FrameProfile.section("  world: FX")
       scale = scale or pscale
       local colors = ctx.spriteColors()
       local function at(drawFn, wx, wy)
@@ -18079,6 +18083,7 @@ function OverworldState:drawWorld()
         if pt.active then radarOne = pt; at(fxRadarOne, pt.x * 16 + 8, pt.y * 16 + 16) end
       end
       radarOne = nil
+      closeFx()
     end
     override = Pipelines.drawWorld(pipelineId, ctx)
     -- world post-processes (a miniature-diorama blur, a colour grade) fold
@@ -18092,11 +18097,13 @@ function OverworldState:drawWorld()
       -- was retired).  The ground pass was skipped on its behalf above, so
       -- draw it now and fall through to the flat path below rather than
       -- compositing an empty canvas.
+      local closeTiles = FrameProfile.section("  world: tiles")
       self.map.renderer:drawBorderFill(cam.x, bgY, vw, vh)
       self.map.renderer:draw(cam.x, bgY, vw, vh)
       for _, nb in ipairs(self.neighbors) do
         nb.map.renderer:drawMapOnly(cam.x - nb.ox, bgY - nb.oy, vw, vh)
       end
+      closeTiles()
     end
   end
 
@@ -18189,6 +18196,7 @@ function OverworldState:drawWorld()
     -- The COLLISION GRID IS UNTOUCHED by any of this.  It is in map pixels and
     -- stays there; only the picture is projected, which is why a compressed
     -- world still walks the same.
+    local closeGhosts = FrameProfile.section("  world: entities")
     for _, g in ipairs(self.ghosts) do
       -- A GHOST GOES THROUGH THE FREE CAMERA TOO.
       --
@@ -18214,6 +18222,7 @@ function OverworldState:drawWorld()
       end
       if not drawn then g.npc:draw(cam.x - g.ox, cam.y - g.oy) end
     end
+    closeGhosts()
     -- HIDDEN MEANS HIDDEN, for the player as much as for anybody.
     --
     -- Two Gen 3 things write this and neither had a reader: the
@@ -18534,6 +18543,7 @@ function OverworldState:drawWorld()
        and groundForRise:beginSprites() then
       spriteDepthGround = groundForRise
     end
+    local closeEntities = FrameProfile.section("  world: entities")
     for _, e in ipairs(self.entities) do
       if self:gen3AboveTopLayer(e) then
         onTop = onTop or {}
@@ -18550,6 +18560,7 @@ function OverworldState:drawWorld()
       spriteDepthGround:endSprites()
       spriteDepthGround = nil
     end
+    closeEntities()
     -- The Gen 3 top layer goes on AFTER the entity pass and before the
     -- field effects: it is the half of every metatile the player walks
     -- behind -- treetops, upper storeys, the far rail of a bridge.  On a
@@ -18581,6 +18592,7 @@ function OverworldState:drawWorld()
       self:eachEmote(fxEmote)
       emoteEarly = true
     end
+    local closeTiles = FrameProfile.section("  world: tiles")
     aim(self.map.renderer, 0, 0)
     self.map.renderer:drawAbove(cam.x, bgY, vw, vh)
     aim(self.map.renderer)
@@ -18591,8 +18603,12 @@ function OverworldState:drawWorld()
         aim(nb.map.renderer)
       end
     end
+    closeTiles()
+    closeEntities = FrameProfile.section("  world: entities")
     for _, e in ipairs(onTop or {}) do drawEntity(e) end
+    closeEntities()
 
+    local closeFx = FrameProfile.section("  world: FX")
     fxHeal()
     fxDust()
     fxCutTree()
@@ -18613,6 +18629,7 @@ function OverworldState:drawWorld()
     fxRod()
     -- Smoke keeps the template's priority 0, above the ship and map layers.
     fxSSAnneSmoke()
+    closeFx()
   else
     -- === TILT PATH: ground-hugging FX stay on the projected ground, all
     -- standing things billboard upright over it in a separate pass. ======
@@ -18622,6 +18639,7 @@ function OverworldState:drawWorld()
     -- draws them last, over the sprites, in the same canvas; here the two
     -- layers are separate and composited ground-under-upright, so drawing
     -- them now into the still-active ground canvas is order-equivalent.
+    local closeFx = FrameProfile.section("  world: FX")
     fxHeal()
     fxDust()
     fxCutTree()
@@ -18629,6 +18647,7 @@ function OverworldState:drawWorld()
     -- ...and the gates with them: they are behind every upright sprite (see
     -- drawGen3Gates), so the ground canvas is exactly where they belong
     self:drawGen3Gates(cam)
+    closeFx()
 
     Game.renderer:beginUprightPass()
 
@@ -18649,6 +18668,7 @@ function OverworldState:drawWorld()
     end
     table.sort(items, function(a, b) return a.y < b.y end)
 
+    local closeEntities = FrameProfile.section("  world: entities")
     for _, it in ipairs(items) do
       if it.kind == "ghost" then
         -- ghosts billboard just like real entities (foot offset folds in the
@@ -18684,6 +18704,8 @@ function OverworldState:drawWorld()
       end
     end
 
+    closeEntities()
+    closeFx = FrameProfile.section("  world: FX")
     -- Standing world FX: each billboards at the ground foot of the
     -- character it belongs to, so it stays upright over the tilted ground.
     --   emote bubble  -> the spotting NPC's foot (rides above its head)
@@ -18725,6 +18747,7 @@ function OverworldState:drawWorld()
     radarOne = nil
 
     Game.renderer:endUprightPass()
+    closeFx()
   end
 
   -- LAST IN THE WORLD PASS, over everything the cave contains: the black
@@ -18732,6 +18755,7 @@ function OverworldState:drawWorld()
   -- drawUI because it is anchored to the PLAYER, not to the screen -- the
   -- cartridge can put it at a fixed (120,80) because its camera never lets
   -- the player leave the middle, and this port's does at a map edge.
+  local closeFx = FrameProfile.section("  world: FX")
   self:drawGen3Flash(cam, vw, vh)
   -- the Mirage Tower's falling fossil and ceiling crumbs: OAM priority 0
   if self.g3MirageTower or self.g3MirageCrumbles then
@@ -18743,6 +18767,7 @@ function OverworldState:drawWorld()
   -- in the world pass rather than the UI pass for the same reason the flash
   -- is: it is anchored to a CELL, not to the screen.
   self:drawGen3Decorate(cam)
+  closeFx()
 end
 
 -- The cursor the DECORATE row hands the player: the decoration's own

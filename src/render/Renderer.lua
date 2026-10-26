@@ -6,6 +6,7 @@
 -- neighbor filtering.
 -- Spec: docs/new-features.md (survey zoom)
 
+local FrameProfile = require("src.core.FrameProfile")
 local Zoom = require("src.render.Zoom")
 local Tilt = require("src.render.Tilt")
 local PaletteFX = require("src.render.PaletteFX")
@@ -686,11 +687,13 @@ end
 -- render.compose mod can composite the world/UI canvases into its own layout.
 function Renderer:blitCanvas(canvas, sx, sy, zoneList, zoneSx, zoneSy,
                              bx, by, boxX, boxY, boxW, boxH, dpiX, dpiY)
+  local closeBlit = FrameProfile.section("  renderer: zone blit")
   local shader = zoneList and zoneList[1] and PaletteFX.shader() or nil
   if not shader then
     love.graphics.setScissor(boxX, boxY, boxW, boxH)
     love.graphics.draw(canvas, bx, by, 0, sx, sy)
     love.graphics.setScissor()
+    closeBlit()
     return
   end
   love.graphics.setShader(shader)
@@ -713,6 +716,7 @@ function Renderer:blitCanvas(canvas, sx, sy, zoneList, zoneSx, zoneSy,
   end
   love.graphics.setScissor()
   love.graphics.setShader()
+  closeBlit()
 end
 
 -- THE BARS, FILLED WITH THE EDGE THEY FRAME.
@@ -1431,6 +1435,7 @@ function Renderer:endFrame(zones, worldZones)
   end
 
   if present then
+    local closePresent = FrameProfile.section("  renderer: present pipeline")
     love.graphics.setCanvas()
     -- Post-process pipelines run over the finished composite -- world, UI
     -- and all -- and before GBC FX, so a blur or colour grade is what the
@@ -1448,6 +1453,7 @@ function Renderer:endFrame(zones, worldZones)
       love.graphics.setColor(1, 1, 1, 1)
       love.graphics.draw(composed, 0, 0)
     end
+    closePresent()
   end
   self.worldActive = false
   self.uprightActive = false
