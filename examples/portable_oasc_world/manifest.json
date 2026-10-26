@@ -1,0 +1,11 @@
+{
+  "id": "portable_oasc_world",
+  "name": "Portable OASC terrain reference",
+  "version": "1.0.0",
+  "api": 2,
+  "entry": "main.lua",
+  "game_version": ">=0.0.0",
+  "games": ["gen3"],
+  "generations": [3],
+  "affects_link": false
+}

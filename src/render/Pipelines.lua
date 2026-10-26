@@ -25,6 +25,8 @@ local Logger = require("src.core.Logger")
 local FrameProfile = require("src.core.FrameProfile")
 local Runtime = require("src.mods.Runtime")
 local Zoom = require("src.render.Zoom")
+local PortableWorld = require("src.render.PortableWorld")
+local GameVersion = require("src.core.GameVersion")
 
 local Pipelines = {}
 
@@ -447,6 +449,7 @@ end
 function Pipelines.eligible(id)
   local def = Pipelines.get(id)
   if not def or broken[id] then return false end
+  if def.worldFormat == "renderData.v1" and GameVersion.generation() ~= 3 then return false end
   if Pipelines.level(id) <= 0 then return false end
   if def.available and guard(id, def.available) ~= true then return false end
   return true
@@ -526,7 +529,12 @@ function Pipelines.drawWorld(id, ctx)
   -- it, this line is the difference between "the mod's renderer is the frame"
   -- and "the mod is fine and something else is wrong".
   local close = FrameProfile.section("  world pass: " .. tostring(id))
-  local canvas = guardRender(id, def.drawWorld, ctx)
+  local canvas
+  if def.worldFormat == "renderData.v1" then
+    canvas = guard(id, PortableWorld.draw, def.drawWorld, ctx)
+  else
+    canvas = guardRender(id, def.drawWorld, ctx)
+  end
   close()
   return canvas
 end
@@ -541,10 +549,16 @@ function Pipelines.worldPresent(canvas, ctx)
   if canvas == nil then return nil end
   for _, entry in ipairs(Pipelines.list()) do
     if entry.def.worldPresent and Pipelines.eligible(entry.id) then
-      local out = guardRender(entry.id, entry.def.worldPresent, canvas, ctx)
+      local out
+      if entry.def.worldFormat == "renderData.v1" then
+        out = guard(entry.id, PortableWorld.draw, entry.def.worldPresent, ctx, canvas)
+      else
+        out = guardRender(entry.id, entry.def.worldPresent, canvas, ctx)
+      end
       -- accept only a real Canvas: a pass that returns a non-canvas (a
       -- forgotten return, a shade string) is ignored, not folded in
       if isCanvas(out) then canvas = out end
+      if entry.def.worldFormat == "renderData.v1" and not PortableWorld.isCanvas(canvas) then return nil end
     end
   end
   return canvas
@@ -633,7 +647,13 @@ end
 -- Drop every pipeline's GPU objects (window resize, hot reload).
 function Pipelines.invalidate()
   for _, entry in ipairs(Pipelines.list()) do
-    if entry.def.invalidate then guardRender(entry.id, entry.def.invalidate) end
+    if entry.def.invalidate then
+      if entry.def.worldFormat == "renderData.v1" then
+        guard(entry.id, PortableWorld.invalidate, entry.def.invalidate)
+      else
+        guardRender(entry.id, entry.def.invalidate)
+      end
+    end
   end
 end
 
