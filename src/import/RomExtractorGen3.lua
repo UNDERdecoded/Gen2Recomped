@@ -12751,6 +12751,19 @@ function RomExtractorGen3:extractMapLayouts()
       if secondary then tilesets[secondary] = true end
       local blockPtr = self.rom:pointer(a + 12)
       local borderPtr = self.rom:pointer(a + 8)
+      local borderW, borderH = 2, 2
+      if (self.manifest.metatileAttributes or {}).bytes == 4 then
+        borderW, borderH = self.rom:u8(a + 24), self.rom:u8(a + 25)
+      end
+      local nativeBorder = borderPtr and self:layoutBlocks(borderPtr, 4) or nil
+      -- Unused layout records can declare a zero-sized source border. Keep
+      -- native extraction unchanged and report unavailable source metadata;
+      -- do not turn a compatibility observation into a native import failure.
+      local sourceBorder
+      if borderW > 0 and borderH > 0 and borderPtr and borderPtr + borderW * borderH * 2 <= self.rom.size then
+        sourceBorder = borderW * borderH == 4 and nativeBorder
+          or self:layoutBlocks(borderPtr, borderW * borderH)
+      end
       cells = cells + width * height
       -- COLLISION LIVES ON THE MAP CELL, not on the tileset.
       --
@@ -12784,7 +12797,10 @@ function RomExtractorGen3:extractMapLayouts()
         primaryTileset = primary,
         secondaryTileset = secondary,
         -- the border is always 2x2 metatiles in Emerald
-        border = borderPtr and self:layoutBlocks(borderPtr, 4) or nil,
+        border = nativeBorder,
+        sourceBorder = sourceBorder,
+        sourceBorderWidth = borderW,
+        sourceBorderHeight = borderH,
         blocks = blockPtr and self:layoutBlocks(blockPtr, width * height) or nil,
         source = ("ROM:gMapLayouts[%d]"):format(i),
       }
@@ -13413,7 +13429,7 @@ function RomExtractorGen3:extractMaps()
       local count = rom:u32(connAt)
       local at = rom:pointer(connAt + 4)
       if at and count > 0 and count <= 8 then
-        local byDir = {}
+        local byDir, sourceConnections = {}, {}
         local byDirRows, order = {}, {}
         local any = false
         for i = 0, count - 1 do
@@ -13441,6 +13457,7 @@ function RomExtractorGen3:extractMaps()
           -- way.  `list` carries all of them in ROM order, which is the
           -- order the cartridge searches.
           if dir and to then
+            sourceConnections[#sourceConnections + 1] = { dir = dir, map = to, offset = rom:s32(o + 4) }
             local rows = byDirRows[dir]
             if not rows then
               rows = {}
@@ -13471,6 +13488,7 @@ function RomExtractorGen3:extractMaps()
         end
         if any then
           def.connections = byDir
+          def.sourceConnections = sourceConnections
           connected = connected + 1
         end
       end
@@ -13489,6 +13507,8 @@ function RomExtractorGen3:extractMaps()
       def.collisionCells = layout.collisionCells
       def.elevationCells = layout.elevationCells
       def.border = layout.border
+      def.sourceBorder, def.sourceBorderWidth, def.sourceBorderHeight =
+        layout.sourceBorder, layout.sourceBorderWidth, layout.sourceBorderHeight
       -- Gen 3 has no single border BLOCK -- it has a 2x2 border patch -- so
       -- the def carries its top-left corner for the engine's border fill and
       -- the full patch beside it.
@@ -27074,7 +27094,9 @@ function RomExtractorGen3:extractTilesets()
         end
         -- metatile composition and attributes, as byte strings for the same
         -- reason the blockdata is: 73 tilesets come to about 26,000 metatiles
-        local comp, attrs = {}, {}
+        local comp, attrs, sourceAttrs = {}, {}, {}
+        local A = self.manifest.metatileAttributes
+        local sourceBytes = A and A.bytes == 4 and 4 or 2
         for m = 0, metatiles - 1 do
           for t = 0, 7 do
             local v = rom:u16(metaAt + m * 16 + t * 2)
@@ -27085,10 +27107,12 @@ function RomExtractorGen3:extractTilesets()
           -- downstream reads Emerald's u16 (behaviour low byte, layer type
           -- bits 12-15) with Emerald's numbering, so the record is packed
           -- into that shape here, once (manifest `metatileAttributes`).
-          local A = self.manifest.metatileAttributes
           local av
           if A and A.bytes == 4 then
             local raw32 = rom:u32(attrAt + m * 4)
+            sourceAttrs[#sourceAttrs + 1] = string.char(raw32 % 256,
+              math.floor(raw32 / 256) % 256, math.floor(raw32 / 65536) % 256,
+              math.floor(raw32 / 16777216) % 256)
             local beh = raw32 % ((A.behaviorMask or 0x1FF) + 1)
             local own = RomExtractorGen3.FRLG_BEHAVIOUR_OVERRIDES[beh]
             local mapped = A.behaviorRemap and A.behaviorRemap[tostring(beh)]
@@ -27125,6 +27149,12 @@ function RomExtractorGen3:extractTilesets()
           tiles = table.concat(pixels),
           metatiles = table.concat(comp),
           attributes = table.concat(attrs),
+          -- Compatibility readers need the cartridge's own behavior IDs.
+          -- Native FRLG normalization is many-to-one and cannot be reversed.
+          -- A 16-bit source is already byte-exact in attributes: do not copy it.
+          sourceAttributes = sourceBytes == 4 and table.concat(sourceAttrs) or nil,
+          sourceAttributeBytes = sourceBytes,
+          sourceBehaviorMask = A and A.behaviorMask or (sourceBytes == 4 and 511 or 255),
           callback = rom:u32(a + (attrAt == rom:pointer(a + 16) and 20 or 16)),
           image = "assets/generated/tilesets/" .. key:lower() .. ".png",
           source = ("ROM:Tileset@%07X"):format(a),
@@ -27469,6 +27499,11 @@ function RomExtractorGen3:extractTilesets()
     palettesInPrimary = self:layoutValue("palettesInPrimary", 6),
     metatileLayers = self:layoutValue("metatileLayers", 2),
   }
+  if self.manifest.metatileBehaviorFlags then
+    local raw, why = require("src.import.Gen3SourceFlags").read(self.rom, self.manifest.metatileBehaviorFlags)
+    assert(raw, why)
+    constants.gen3SourceBehaviorFlags = { version = 1, raw = raw, romSha1 = self.manifest.romSha1 }
+  end
   self._constants = constants
   self:write("constants", constants)
   Logger.info("Gen3 tileset pairs: %d (the unit a metatile actually draws from)",

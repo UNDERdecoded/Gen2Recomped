@@ -1,0 +1,50 @@
+{
+  "checks": 49,
+  "romFree": true,
+  "actualExtractorWriteBoundary": true,
+  "newGpuAcceptance": false,
+  "playerProfilesUsed": false,
+  "fullCompatibility": false,
+  "sourceSha256": {
+    "src/import/RomExtractorGen3.lua": "60b9b3cf85a5e7219526fe101a99e7bf3303c122b8a114dde6fea63408333808",
+    "src/import/RomImporter.lua": "e6c97f3e0a124f34b680978e6685f8cca3f9c02c34943fe2fbd07ba99afbbbed",
+    "src/render/Gen3Tiles.lua": "2215a2d4963600cf2443d921467731772e4b9ee29965a513057154c6bbde7e7d",
+    "tests/engine/gen3_source_attributes.lua": "cdb728a211dc52b2948772e77915a9212b405106a792b0f87034f2754cb5bfd8",
+    "src/import/Gen3SourceFlags.lua": "ff7ea9ce067cf888f9dee49027549223e6ea2ee34deaf42b65cba82826ab58f8",
+    "tools/gen3_source_flags.py": "38f7dce1dc02a3642a18ca9979e05e0e1c37cd49da6902dc10da8ae74a811b9b",
+    "tools/rom_manifest_emerald.json": "d035bd07f1c8fd13c4524b297055eb8b82de1dd9eda0ce14c710306467631bfc",
+    "tests/engine/gen3_source_flags.lua": "4790d60bfa4d2f8cf892ad4d5a4b6c8d9fa27969f1e0364fc9dd697c40a5846d",
+    "tests/engine/gen3_source_map_layouts.lua": "bec844a2bee57e1e17f8135d5708aac20f472bb059d043fb6d4245bc5329e57b"
+  },
+  "composedForkVerification": {
+    "commit": "f2d9c5bc328de9e3ac1923c46c24b5cbcbc01018",
+    "engineSuitesPassed": 326,
+    "engineSuitesTotal": 326,
+    "sdkSuitesPassed": 3,
+    "sdkSuitesTotal": 3
+  },
+  "additionalSourceMapChecks": {
+    "flagReader": 13,
+    "sourceLayout": 21,
+    "combinedIndependentChecks": 83,
+    "realComposedMaps": 2156,
+    "realComposedPaddedCells": 1320112,
+    "realComposedProof": "docs/qa/native-map-observations.json",
+    "companionIntegrationRequired": true,
+    "gpu": false,
+    "fullCompatibility": false,
+    "minimumFreeGiB": 8
+  },
+  "latestComposedRegression": {
+    "commit": "e64a5b8d",
+    "engineSuitesPassed": 328,
+    "engineSuitesTotal": 328,
+    "sdkSuitesPassed": 3,
+    "sdkSuitesTotal": 3,
+    "dramaticShapeB30": "pass",
+    "independentChecks": 83,
+    "fullCompatibility": false,
+    "playerProfilesUsed": false,
+    "firstComposedFailureRetained": true
+  }
+}

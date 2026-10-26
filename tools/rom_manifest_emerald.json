@@ -2832,5 +2832,12 @@
     ],
     "tiles": 128,
     "width": 32
+  },
+  "metatileBehaviorFlags": {
+    "offset": 4747004,
+    "count": 240,
+    "sha256": "df47dad13de9a1968ac4d772c23c36636e60b25580ac428d86ef24350b3631f3",
+    "sourceSha256": "7aa89d639517803972b2b59ae36ab2852ea3eb22582a2908c15d6adb5c375471",
+    "source": "https://github.com/pret/pokeemerald/blob/3ec4d98de95a2aeb12f3c738b3496d0b3a830793/src/metatile_behavior.c"
   }
 }

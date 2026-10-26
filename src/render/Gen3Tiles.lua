@@ -161,6 +161,22 @@ function Gen3Tiles:attributes(metatile)
   return word % 256, math.floor(word / 4096) % 16
 end
 
+-- Original cartridge behavior, distinct from attributes()' native numbering.
+-- Old normalized-only records cannot prove this value and must not guess it.
+function Gen3Tiles:sourceBehavior(metatile)
+  if type(metatile) ~= "number" or metatile < 0 or metatile % 1 ~= 0 then return nil end
+  if metatile >= self.metatilesInPrimary and not self.secondary then return nil end
+  local record, index = self:metatileBank(metatile)
+  local stride = record and record.sourceAttributeBytes
+  local mask = record and record.sourceBehaviorMask
+  if (stride ~= 2 and stride ~= 4) or type(mask) ~= "number"
+      or (mask ~= 255 and mask ~= 511) then return nil end
+  local data = stride == 4 and record.sourceAttributes or record.attributes
+  local base = index * stride
+  if type(data) ~= "string" or base + stride > #data then return nil end
+  return (byte(data, base + 1) + byte(data, base + 2) * 256) % (mask + 1)
+end
+
 -- Draw one metatile's layer into `plot(x, y, r, g, b)` at (ox, oy).  Layer 1
 -- is what the player walks in front of and layer 2 what they walk behind, so
 -- the caller draws them either side of the sprites rather than flattening the
