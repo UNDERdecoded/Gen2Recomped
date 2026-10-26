@@ -928,6 +928,13 @@ function Map:isWalkableCell(cx, cy)
   return self:warpAtCell(cx, cy) ~= nil
 end
 
+-- Public Gen2 terrain query. Native connection movement may inspect the
+-- extended border through isWalkableCell; a free body's current map ends
+-- at its actual bounds and must hand off to the connection controller.
+function Map:isWalkable(cx, cy)
+  return self:inBounds(cx, cy) and self:isWalkableCell(cx, cy)
+end
+
 function Map:isGrassCell(cx, cy)
   -- Off-map cells never count as tall grass (issue #217).  cellTile
   -- border-extends out-of-bounds coordinates with the map's borderBlock,
@@ -1076,9 +1083,17 @@ function Map:setCellShut(cx, cy, shut)
   return true
 end
 
--- What the collision bits say about a cell, with any runtime change applied.
+-- The native collision value: Gen2 COLL_* classes or per-cell blocking bits.
 function Map:cellCollision(cx, cy)
   local cells = self.def.collisionCells
+  -- Gen2 callers ask for the COLL_* class, not Gen3's per-cell blocking
+  -- bits. Read the same live block/quad as the native mover, including
+  -- changeblock and closed-cell patches. A one-cell metatile or an explicit
+  -- collisionCells array retains the existing blocking-bit contract.
+  if not cells and self.blockCells > 1 and self:speaksGen2Collision() then
+    if not self:inBounds(cx, cy) then return 0xFF end
+    return self:cellTile(cx, cy)
+  end
   if cx < 0 or cy < 0 or cx >= self.def.width or cy >= self.def.height then
     return cells and 1 or 0
   end

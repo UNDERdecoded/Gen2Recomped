@@ -66,6 +66,17 @@ end
 
 local OverworldState = { isOpaque = true, isOverworld = true }
 
+function OverworldState:playerCollision()
+  local player = self.player
+  if not (player and self.map) then return nil end
+  return self.map:cellCollision(player.cellX, player.cellY)
+end
+
+function OverworldState:grassAt(x, y)
+  return self.map ~= nil and self.map:isGrassCell(x, y) or false
+end
+
+
 local Game -- set on enter (avoids circular require at load time)
 
 -- AN EMPTY PLOT DRAWS NOTHING, asked once per entity per frame.  Written
