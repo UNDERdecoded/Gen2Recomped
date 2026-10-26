@@ -1327,7 +1327,10 @@ function Gen3SummaryMenu:drawSkills()
       putIn(valueWin, value, left and 4 or 2, rowY - valueWin.y, colour)
     else
       put(label, left and labelX or rightLabelX, rowY, colour)
-      put(value, left and valueX or rightValueX, rowY, colour)
+      -- Without extracted window art these are column ENDS. Left-aligning
+      -- a value at x=120 ran it into the second stat label at x=132.
+      local edge = left and (rightLabelX - 8) or (GBA_W - 16)
+      put(value, edge - Font.width(value), rowY, colour)
     end
   end
 
