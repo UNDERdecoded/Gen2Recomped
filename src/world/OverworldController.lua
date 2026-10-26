@@ -68,6 +68,72 @@ local OverworldState = { isOpaque = true, isOverworld = true }
 
 local Game -- set on enter (avoids circular require at load time)
 
+local GEN2_HANDOFF_LOCKS = {
+  "transitioning", "flyAnim", "teleportOut", "engaging", "emote",
+  "pikaHop", "healAnim", "whirlSpin", "battleActive",
+  "fieldMove", "fishing", "headbutt", "mapSetup", "moveState", "iceSlide",
+  "frameScriptThisTick", "_modScriptLock", "droppingScriptMoves",
+}
+local gen2Handoffs = setmetatable({}, { __mode = "k" })
+
+local function gen2HandoffReady(world, dir)
+  if not GameVersion.isGen2() or not Collision.DELTA[dir] or gen2Handoffs[world] then return false end
+  if not (Game and Game.data and Game.save and Game.overworld == world) then return false end
+  local map, p, stack = world.map, world.player, Game.stack
+  if not (map and p and stack and type(stack.top) == "function") then return false end
+  local top = stack:top()
+  if top and top ~= world then return false end
+  if Game.linkSession or (Game.linkNet and not Game.linkNet.closed) then return false end
+  if p.moving or p.inputLocked or p.stairExit or p.spinning or p.fieldMove then return false end
+  if (world.whirlHold or 0) > 0 then return false end
+  for _, key in ipairs(GEN2_HANDOFF_LOCKS) do if world[key] then return false end end
+  if not (world.runner and type(world.runner.isRunning) == "function")
+     or world.runner:isRunning() or #(world.scriptMoves or {}) > 0
+     or #(world.pendingScripts or {}) > 0 then return false end
+  if type(p.cellX) ~= "number" or type(p.cellY) ~= "number"
+     or p.cellX % 1 ~= 0 or p.cellY % 1 ~= 0 then return false end
+  return map:inBounds(p.cellX, p.cellY)
+end
+
+local function gen2Handoff(world, dir, handler, ...)
+  if not gen2HandoffReady(world, dir) then return false end
+  -- A native sound/event callback can call back into the public methods
+  -- before the handler has queued its movement. Admit that action once.
+  gen2Handoffs[world] = true
+  local ok, result = pcall(handler, world, dir, ...)
+  gen2Handoffs[world] = nil
+  if not ok then error(result, 0) end
+  return result and true or false
+end
+
+local function gen2ConnectionHandoff(world, dir)
+  -- Exit carpets are directional input actions, not arrival warps. A free
+  -- body stopped at the map edge still needs the native carpet exit path.
+  if world:checkGen2CarpetExit(dir) then return true end
+  return world:checkEdgeExit(dir)
+end
+
+local function gen2BoulderHandoff(world, dir, cx, cy)
+  local x, y = Collision.target(world.player.cellX, world.player.cellY, dir)
+  if cx ~= x or cy ~= y then return false end
+  return world:checkBoulderPush(dir)
+end
+
+-- Free-body controls return special movement to these same native handlers.
+-- No parallel transition, boulder animation, scripted queue or map owner is
+-- created. Readiness is checked again after the caller's ordinary body tick.
+function OverworldState:tryConnection(dir)
+  return gen2Handoff(self, dir, gen2ConnectionHandoff)
+end
+
+function OverworldState:tryLedgeJump(dir)
+  return gen2Handoff(self, dir, self.checkLedgeHop)
+end
+
+function OverworldState:tryPushBoulder(dir, cx, cy)
+  return gen2Handoff(self, dir, gen2BoulderHandoff, cx, cy)
+end
+
 -- AN EMPTY PLOT DRAWS NOTHING, asked once per entity per frame.  Written
 -- with `pcall(function() ... require(...) ... end)` this was a closure, a
 -- pcall frame and a package.loaded lookup for every entity on the map, sixty
@@ -5649,6 +5715,14 @@ function OverworldState:checkBoulderPush(dir)
   end
   local bx, by = Collision.target(fx, fy, dir)
   if not self.map:inBounds(bx, by) then self.boulderTried = nil return false end
+  if GameVersion.isGen2() and self.map:speaksGen2Collision() then
+    local function collision(x, y) return self.map:cellTile(x, y) end
+    if not Collision.stepPermitted(collision, p.cellX, p.cellY, dir)
+       or not Collision.stepPermitted(collision, fx, fy, dir) then
+      self.boulderTried = nil
+      return false
+    end
+  end
   -- DistWorld_WillBoulderBeAtFallLocation: a Distortion World pit takes a
   -- boulder although nothing may walk there (Gen4DistPlatforms.fallAt)
   local dwFall = self.map.def and self.map.def.gen4DistWorld
@@ -6169,6 +6243,23 @@ function OverworldState:crossConnection(dir, conn, scripted)
   end
   conn = landed or conn
   local p = self.player
+  if not scripted and GameVersion.isGen2() then
+    -- Border strips carry the same one-way walls as interior cells. Checking
+    -- only land/water passability admitted both standing walls and walls
+    -- facing us on the destination map. Scripted seams deliberately bypass
+    -- collision, just as their in-map movement queue does.
+    local edgeX, edgeY = Collision.target(p.cellX, p.cellY, dir)
+    local function collision(cx, cy)
+      if cx == edgeX and cy == edgeY then
+        if ts.collision and not ts.behaviourBytes and (tonumber(ts.blockCells) or 2) > 1 then
+          return Map.defCellTile(dest, ts, x, y)
+        end
+        return 0
+      end
+      return self.map:speaksGen2Collision() and self.map:cellTile(cx, cy) or 0
+    end
+    if not Collision.stepPermitted(collision, p.cellX, p.cellY, dir) then return false end
+  end
   -- pokered's collision check reads the NEIGHBOR strip's tile bytes, so
   -- stepping off the edge onto a solid tile of the connected map bumps
   -- exactly like an in-map wall. Without this read, Pallet's south
@@ -8547,7 +8638,6 @@ end
 -- any step that LANDS on one into STEP_ICE: the walk repeats in the same
 -- direction, ignoring the d-pad, until the player leaves the ice or the next
 -- cell is blocked.  Mahogany Gym's floor is the whole puzzle.
-local GEN2_ICE_TILES = { [0x23] = true, [0x2B] = true }
 
 -- THE SOOTOPOLIS GYM'S ICE, which is the whole of that gym.
 --
@@ -10288,7 +10378,7 @@ end
 
 function OverworldState:gen2IsIce(cx, cy)
   local tile = self.map and self.map:cellTile(cx, cy)
-  return tile ~= nil and GEN2_ICE_TILES[tile] == true
+  return Collision.isIce(tile)
 end
 
 -- ICE, WHOEVER'S IT IS.  Johto names it by a collision class and Hoenn by a

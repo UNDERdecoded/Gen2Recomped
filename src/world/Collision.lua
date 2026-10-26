@@ -6,7 +6,43 @@ local Runtime = require("src.mods.Runtime")
 local Collision = {}
 
 local DELTA = { up = { 0, -1 }, down = { 0, 1 }, left = { -1, 0 }, right = { 1, 0 } }
+local OPPOSITE = { up = "down", down = "up", left = "right", right = "left" }
 Collision.DELTA = DELTA
+
+-- Public Gen2 terrain queries used by camera-relative movement. These accept
+-- COLL_* bytes, rather than the blocking bits of later generations. Walking
+-- still needs map passability, bounds, occupants and movement.collision; the
+-- directional query below only answers the side-wall part of that decision.
+function Collision.isIce(coll)
+  return coll == 0x23 or coll == 0x2B
+end
+
+local CURRENT_DIRECTIONS = { "right", "left", "up", "down" }
+function Collision.currentDirection(coll)
+  if type(coll) ~= "number" or coll % 1 ~= 0 or coll < 0x30 or coll > 0x3F then
+    return nil
+  end
+  return CURRENT_DIRECTIONS[coll % 4 + 1]
+end
+
+function Collision.doorForcedDirection(coll)
+  if coll == 0x71 or coll == 0x79 or coll == 0x7A or coll == 0x7B then
+    return "down"
+  end
+  return nil
+end
+
+function Collision.stepPermitted(collOf, cx, cy, dir)
+  local delta = DELTA[dir]
+  if not delta then return false end
+  -- The same side classification used by Map:sideWallAt and the grid mover.
+  -- Resolve lazily: loading the map class must not load a second world owner.
+  local sides = require("src.world.Map").gen2SideWall
+  local leave = sides(collOf(cx, cy))
+  if leave and leave[dir] then return false end
+  local enter = sides(collOf(cx + delta[1], cy + delta[2]))
+  return not (enter and enter[OPPOSITE[dir]])
+end
 
 function Collision.target(cx, cy, dir)
   local d = DELTA[dir]
@@ -181,8 +217,6 @@ end
 --
 -- Two halves, matching the ROM: the standing tile blocks stepping OUT over
 -- its walled side, and the destination tile blocks stepping IN through it.
-local OPPOSITE = { up = "down", down = "up", left = "right", right = "left" }
-
 -- Collision.lua
 local function sideWallBlocked(map, mover, dir, tx, ty)
   if not map.sideWallAt then return false end
