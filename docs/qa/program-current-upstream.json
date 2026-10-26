@@ -1,0 +1,520 @@
+{
+  "schema": 2,
+  "date": "2026-10-26",
+  "upstream": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d",
+  "fork": {
+    "head": "8e336d459619d26f7099825248a655f2d5385940",
+    "exitCodes": {
+      "engine": 0,
+      "modkit": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    },
+    "engineSuites": {
+      "passed": 561,
+      "total": 561,
+      "sourceCommit": "a6f947a5f9f9e836fafd4f57dae961a631e4193c"
+    },
+    "contractComparisons": 200,
+    "completeFixtures": 17,
+    "sdkSuites": 3,
+    "galleryChecks": 253,
+    "focusedChecks": {
+      "Native checkpoint actor continuation": 432,
+      "Native checkpoint battle continuation": 1118,
+      "Native trainer checkpoint producer": 236,
+      "Native checkpoint story continuation": 756
+    },
+    "editionSelections": [
+      "red",
+      "blue",
+      "yellow",
+      "gold",
+      "silver",
+      "crystal",
+      "firered",
+      "leafgreen",
+      "ruby",
+      "sapphire",
+      "emerald",
+      "platinum",
+      "heartgold",
+      "soulsilver",
+      "black",
+      "white",
+      "prism",
+      "polishedcrystal"
+    ],
+    "engineScope": "Full suite at a6f947a5; 22 affected engine suites and every required compatibility gate at the final concurrent integration.",
+    "fullEngineBaseline": {
+      "head": "a6f947a5f9f9e836fafd4f57dae961a631e4193c",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 1
+      }
+    },
+    "targetedEngineSuites": {
+      "sourceCommit": "8e336d459619d26f7099825248a655f2d5385940",
+      "passed": 22,
+      "total": 22,
+      "exitCodes": {
+        "link_battle_ended": 0,
+        "api3_compat": 0,
+        "gate_meta_coverage": 0,
+        "mod_supports": 0,
+        "unified_mod_callbacks": 0,
+        "gate_fingerprint": 0,
+        "gate_hooks": 0,
+        "gate_events": 0,
+        "checkpoint_battle_continuation": 0,
+        "native_follower_callback_owner": 0,
+        "native_session_callbacks": 0,
+        "native_companion_runtime": 0,
+        "suspend_continue": 0,
+        "suspend_journal": 0,
+        "suspend_store": 0,
+        "screen_space_ui": 0,
+        "friend_wager": 0,
+        "friend_activity": 0,
+        "friend_chat": 0,
+        "friend_maps": 0,
+        "account_workspace": 0,
+        "friends_menu": 0
+      }
+    }
+  },
+  "publicM4": {
+    "head": "d25511709163eaf8fd80f55a1692ef806d63a372",
+    "exitCodes": {
+      "engine": 0,
+      "modkit": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    },
+    "engineSuites": {
+      "passed": 168,
+      "total": 168
+    },
+    "contractComparisons": 48,
+    "completeFixtures": 17,
+    "sdkSuites": 3,
+    "galleryChecks": 253,
+    "focusedChecks": {
+      "Native checkpoint actor continuation": 360,
+      "Native checkpoint battle continuation": 858,
+      "Native trainer checkpoint producer": 197,
+      "Native checkpoint story continuation": 630
+    },
+    "editionSelections": [
+      "red",
+      "blue",
+      "yellow",
+      "gold",
+      "silver",
+      "crystal",
+      "firered",
+      "emerald",
+      "platinum",
+      "heartgold",
+      "soulsilver",
+      "black",
+      "white",
+      "prism",
+      "polishedcrystal"
+    ]
+  },
+  "branches": {
+    "upstream-perf-p3": {
+      "head": "7e3d306b6f740197f6c4308badcf5d69651d8b34",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 1,
+        "api3": 2,
+        "fixtures": 2
+      },
+      "engineSuites": {
+        "passed": 80,
+        "total": 80
+      },
+      "scope": "Standalone engine/SDK pass; this early host retains inherited missing gallery files and lacks later contract/external-fixture tooling. Complete compatibility is qualified on the composed fork/P9 stack."
+    },
+    "upstream-perf-p4": {
+      "head": "6d2e0c1749c1435c9e84aef02b8a6f079762e295",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 1,
+        "api3": 2,
+        "fixtures": 2
+      },
+      "engineSuites": {
+        "passed": 81,
+        "total": 81
+      },
+      "scope": "Standalone engine/SDK pass; this early host retains inherited missing gallery files and lacks later contract/external-fixture tooling. Complete compatibility is qualified on the composed fork/P9 stack."
+    },
+    "upstream-perf-p5": {
+      "head": "c89369556cf30328264a41b2d0f523785cb0c0ee",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 1,
+        "api3": 2,
+        "fixtures": 2
+      },
+      "engineSuites": {
+        "passed": 82,
+        "total": 82
+      },
+      "scope": "Standalone engine/SDK pass; this early host retains inherited missing gallery files and lacks later contract/external-fixture tooling. Complete compatibility is qualified on the composed fork/P9 stack."
+    },
+    "upstream-perf-p6": {
+      "head": "538a636833d175b02ed2e796fddacabce1a0da70",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 0
+      },
+      "engineSuites": {
+        "passed": 169,
+        "total": 169
+      },
+      "scope": "All five gates pass, including 17 complete unchanged external entrypoints."
+    },
+    "upstream-perf-p7": {
+      "head": "cc32b57423f4cecfd7c93e1a08cae25098e8aca1",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 0
+      },
+      "engineSuites": {
+        "passed": 169,
+        "total": 169
+      },
+      "scope": "All five gates pass, including 17 complete unchanged external entrypoints."
+    },
+    "upstream-perf-p8": {
+      "head": "5a1b786ebe2b66734b06491b9f09f313088576ee",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 0
+      },
+      "engineSuites": {
+        "passed": 169,
+        "total": 169
+      },
+      "scope": "All five gates pass, including 17 complete unchanged external entrypoints."
+    },
+    "upstream-perf-p9": {
+      "head": "094d8627e173715907d5d7c913b3b2b23415c911",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 0
+      },
+      "engineSuites": {
+        "passed": 180,
+        "total": 180
+      },
+      "scope": "All five gates pass, including 17 complete unchanged external entrypoints."
+    },
+    "upstream-compat-m5": {
+      "head": "9fbf292c785bf2ec42dbec4b599f84a54d4a5bde",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 1
+      },
+      "engineSuites": {
+        "passed": 90,
+        "total": 90
+      },
+      "scope": "Intermediate dependency host: engine/SDK/gallery/contract pass; 12/14 external entrypoints load. Existing asset-pack/follower offers complete the stack on M8/P9."
+    },
+    "upstream-compat-m6": {
+      "head": "3e9b01b19b6d99d66e6d684087925b35c5c61e82",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 1
+      },
+      "engineSuites": {
+        "passed": 94,
+        "total": 94
+      },
+      "scope": "Intermediate dependency host: engine/SDK/gallery/contract pass; 12/14 external entrypoints load. Existing asset-pack/follower offers complete the stack on M8/P9."
+    },
+    "upstream-compat-m7": {
+      "head": "36d78277688d3a34ddbfee9c6ad466ccedbaa871",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 1
+      },
+      "engineSuites": {
+        "passed": 114,
+        "total": 114
+      },
+      "scope": "Intermediate dependency host: engine/SDK/gallery/contract pass; 12/14 external entrypoints load. Existing asset-pack/follower offers complete the stack on M8/P9."
+    },
+    "upstream-compat-m8": {
+      "head": "886a0090f7229d138d95a46a248a77d652953364",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 0
+      },
+      "engineSuites": {
+        "passed": 162,
+        "total": 162
+      },
+      "scope": "All five gates pass, including 17 complete unchanged external entrypoints.",
+      "fixtureFollowUp": {
+        "head": "0fafaa48",
+        "completeEntrypoints": 17,
+        "nativeObjectConstructors": true
+      }
+    }
+  },
+  "pullRequests": [
+    {
+      "number": 102,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "aa406f27fa4467ac9b50acd533ad5a8a32e494ce",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 122,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "ce62c61b31d0efb6e092dcabd4930499343a0426",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 155,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "91f14c97ebdf892a0373e747d3b6aa96cd9620a6",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 272,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "01b6b2480e75e2604c6a07625ed922ed847aa8db",
+      "baseRefOid": "13af468b97dc37015d14ad5c71d7f067c3ee810d"
+    },
+    {
+      "number": 274,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "fd332722acba0edad6a2d9deb13450d9a50e3ee9",
+      "baseRefOid": "13af468b97dc37015d14ad5c71d7f067c3ee810d"
+    },
+    {
+      "number": 279,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "7d8d81f69fd21356c2b30fd8541259b22520c51e",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 283,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "5507ef2f5f5a4b869470d7861ad6fec39daa1422",
+      "baseRefOid": "ed5189c247ee7a2ccca666784e21fd4fba8df781"
+    },
+    {
+      "number": 288,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "cb62f9404efd9bfbf34c92c5187d2357c0084cd2",
+      "baseRefOid": "ed5189c247ee7a2ccca666784e21fd4fba8df781"
+    },
+    {
+      "number": 290,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "7e3d306b6f740197f6c4308badcf5d69651d8b34",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 291,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "6d2e0c1749c1435c9e84aef02b8a6f079762e295",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 293,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "c89369556cf30328264a41b2d0f523785cb0c0ee",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 303,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "9fbf292c785bf2ec42dbec4b599f84a54d4a5bde",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 305,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "3e9b01b19b6d99d66e6d684087925b35c5c61e82",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 306,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "36d78277688d3a34ddbfee9c6ad466ccedbaa871",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 312,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "0fafaa48846c3583c45141b044e33902b47ae63a",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 316,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "538a636833d175b02ed2e796fddacabce1a0da70",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 319,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "cc32b57423f4cecfd7c93e1a08cae25098e8aca1",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 321,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "5a1b786ebe2b66734b06491b9f09f313088576ee",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    },
+    {
+      "number": 323,
+      "isDraft": false,
+      "mergeable": "MERGEABLE",
+      "headRefOid": "094d8627e173715907d5d7c913b3b2b23415c911",
+      "baseRefOid": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d"
+    }
+  ],
+  "performanceEvidence": "Full-game Metal and partial OpenGL samples retain their original recorded source revisions. They are not new measurements of this subsequent integration.",
+  "earlierHosts": {
+    "api3-acceptance-pr": {
+      "head": "aa406f27fa4467ac9b50acd533ad5a8a32e494ce",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 0,
+        "api3": 0,
+        "fixtures": 1
+      },
+      "engineSuites": {
+        "passed": 88,
+        "total": 88
+      },
+      "scope": "Preparation/early dependency host. Engine/SDK pass; raw exit codes retain inherited gallery/tooling gaps. Complete unchanged-fixture acceptance is qualified on the composed M8/P9 stack."
+    },
+    "legacy-datasets-pr": {
+      "head": "ce62c61b31d0efb6e092dcabd4930499343a0426",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 1,
+        "api3": 2,
+        "fixtures": 2
+      },
+      "engineSuites": {
+        "passed": 110,
+        "total": 110
+      },
+      "scope": "Preparation/early dependency host. Engine/SDK pass; raw exit codes retain inherited gallery/tooling gaps. Complete unchanged-fixture acceptance is qualified on the composed M8/P9 stack."
+    },
+    "legacy-storage-pr": {
+      "head": "91f14c97ebdf892a0373e747d3b6aa96cd9620a6",
+      "exitCodes": {
+        "engine": 0,
+        "modkit": 0,
+        "gallery": 1,
+        "api3": 2,
+        "fixtures": 2
+      },
+      "engineSuites": {
+        "passed": 120,
+        "total": 120
+      },
+      "scope": "Preparation/early dependency host. Engine/SDK pass; raw exit codes retain inherited gallery/tooling gaps. Complete unchanged-fixture acceptance is qualified on the composed M8/P9 stack."
+    }
+  },
+  "finalConcurrentIntegration": {
+    "incoming": "fc46bd85c919b6faef1c470597397d7ef02b96bb",
+    "head": "8e336d459619d26f7099825248a655f2d5385940",
+    "fullEngineBaseline": "a6f947a5f9f9e836fafd4f57dae961a631e4193c",
+    "scope": "Twenty-two targeted engine suites after integrating the separately qualified native link-result, suspend/friends and Gen2 menu publication, plus every required SDK/gallery/contract/unchanged-fixture gate. Full engine qualification is recorded at its exact baseline revision.",
+    "exitCodes": {
+      "link_battle_ended": 0,
+      "api3_compat": 0,
+      "gate_meta_coverage": 0,
+      "mod_supports": 0,
+      "unified_mod_callbacks": 0,
+      "gate_fingerprint": 0,
+      "gate_hooks": 0,
+      "gate_events": 0,
+      "checkpoint_battle_continuation": 0,
+      "native_follower_callback_owner": 0,
+      "native_session_callbacks": 0,
+      "native_companion_runtime": 0,
+      "suspend_continue": 0,
+      "suspend_journal": 0,
+      "suspend_store": 0,
+      "screen_space_ui": 0,
+      "friend_wager": 0,
+      "friend_activity": 0,
+      "friend_chat": 0,
+      "friend_maps": 0,
+      "account_workspace": 0,
+      "friends_menu": 0,
+      "modkit": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    }
+  }
+}

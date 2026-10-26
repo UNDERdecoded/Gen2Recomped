@@ -38,13 +38,38 @@ T.eq(WideBattle.navigate(1, 4, pressing("right")), 2,
 T.eq(WideBattle.navigate(1, 4, pressing("a")), nil,
   "navigate leaves A / B / SELECT to the battle engine")
 
--- animation frames shift as one rigid group toward the side they play on
-local px, py = WideBattle.animationOffset({ { x = 24 }, { x = 64 } })
-T.eq(px, 20, "a player-side frame lands on the player anchor")
-T.eq(py, 8, "a player-side frame lands on the player baseline")
-local ex, ey = WideBattle.animationOffset({ { x = 104 }, { x = 144 } })
-T.eq(ex, 136, "an enemy-side frame lands on the enemy anchor")
-T.eq(ey, 0, "an enemy-side frame lands on the enemy baseline")
+-- OAM x is the right edge of an 8px sprite. These groups are centered on
+-- the authored player (26) and enemy (124) anchors, rather than merely
+-- falling somewhere on their half of the 160px screen.
+local px, py = WideBattle.animationOffset({ { x = 14 }, { x = 46 } })
+T.eq(px, 20, "the player anchor maps to its wide-layout offset")
+T.eq(py, 8, "the player anchor maps to its wide-layout baseline")
+local ex, ey = WideBattle.animationOffset({ { x = 112 }, { x = 144 } })
+T.eq(ex, 136, "the enemy anchor maps to its wide-layout offset")
+T.eq(ey, 0, "the enemy anchor maps to its wide-layout baseline")
+
+local function offset(x, wantX, wantY, label)
+  local dx, dy = WideBattle.animationOffset({ { x = x } })
+  T.eq(dx, wantX, label .. " horizontal offset")
+  T.eq(dy, wantY, label .. " vertical offset")
+end
+offset(30, 20, 8, "single sprite at the player anchor")
+offset(128, 136, 0, "single sprite at the enemy anchor")
+offset(79, 78, 4, "midpoint between anchors")
+-- Wobble must continue across the anchor instead of sticking at it.
+offset(29, 19, 8, "one pixel before the player anchor")
+offset(31, 21, 8, "one pixel after the player anchor")
+offset(127, 135, 0, "one pixel before the enemy anchor")
+offset(129, 137, 0, "one pixel after the enemy anchor")
+-- Bounded overshoot lets balls leave the picture without unbounded offsets.
+offset(-1000, -3, 10, "far left overshoot")
+offset(1000, 159, -2, "far right overshoot")
+local rx, ry = WideBattle.animationOffset({ { x = 46 }, { x = 14 } })
+T.eq(rx, px, "sprite ordering does not change the rigid frame offset")
+T.eq(ry, py, "sprite ordering does not change the baseline")
+local emptyX, emptyY = WideBattle.animationOffset({})
+T.eq(emptyX, 0, "an empty frame has no horizontal offset")
+T.eq(emptyY, 0, "an empty frame has no vertical offset")
 
 -- the surface: a request outside the bounds falls back to the GB screen,
 -- and the canvas is only reallocated when the size actually changes

@@ -47,6 +47,8 @@ local Strings = require("src.core.Strings")
 local TextBox = require("src.render.TextBox")
 local Theme = require("src.ui.Theme")
 
+local UiQuad = require("src.render.UiQuad")
+local Performance = require("src.core.Performance")
 local Gen3BoxMenu = {}
 Gen3BoxMenu.__index = Gen3BoxMenu
 Gen3BoxMenu.isOpaque = true
@@ -685,11 +687,15 @@ function Gen3BoxMenu:drawIcon(mon, cx, cy)
     and (math.floor(((self.t or 0) % (ICON_PERIOD * frames)) / ICON_PERIOD)
          % frames) or 0
   self.quads = self.quads or {}
+  local quad
+  if Performance.lowTierBudget then quad=UiQuad.get(self,"box-icon",img,0,frame*frameH,iw,frameH,iw,ih)
+  else
   local key = ("%d:%d:%d"):format(iw, frameH, frame)
-  local quad = self.quads[key]
+  quad = self.quads[key]
   if not quad then
     quad = love.graphics.newQuad(0, frame * frameH, iw, frameH, iw, ih)
     self.quads[key] = quad
+  end
   end
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(img, quad, math.floor(cx - iw / 2),
@@ -805,6 +811,9 @@ function Gen3BoxMenu:frlgImage(key)
 end
 
 function Gen3BoxMenu:frlgQuad(img, x, y, w, h)
+  if Performance.lowTierBudget then
+    return UiQuad.get(self,"frlg",img,x,y,w,h,img:getDimensions())
+  end
   self._quads = self._quads or {}
   local key = ("%s:%d:%d:%d:%d"):format(tostring(img), x, y, w, h)
   local q = self._quads[key]
@@ -1223,7 +1232,7 @@ function Gen3BoxMenu:drawParty()
   local panel = self:partyPanel()
   if panel then
     local pw, ph = panel:getDimensions()
-    local quad = love.graphics.newQuad(0, 0, math.min(pw, PARTY.w),
+    local quad = UiQuad.get(self,"party-panel",panel,0,0,math.min(pw, PARTY.w),
                                        math.min(ph, PARTY.h), pw, ph)
     love.graphics.draw(panel, quad, PARTY.x, PARTY.y)
   else

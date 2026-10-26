@@ -1,0 +1,62 @@
+name: shader import
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/shader-import.yml'
+      - 'tools/slang-import/**'
+      - 'tools/slang-import-check/**'
+      - 'src/render/ShaderPresets.lua'
+      - 'src/render/ShaderGraph.lua'
+      - 'tools/shader-graph-check/**'
+      - 'tests/engine/shader_graph.lua'
+      - 'tests/engine/slang_presets.lua'
+  push:
+    branches: [main, dev]
+    paths:
+      - '.github/workflows/shader-import.yml'
+      - 'tools/slang-import/**'
+      - 'tools/slang-import-check/**'
+      - 'src/render/ShaderPresets.lua'
+      - 'src/render/ShaderGraph.lua'
+      - 'tools/shader-graph-check/**'
+      - 'tests/engine/shader_graph.lua'
+      - 'tests/engine/slang_presets.lua'
+permissions:
+  contents: read
+concurrency:
+  group: shader-import-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  importer:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: install Rust
+        run: rustup toolchain install 1.99.1 --profile minimal --component rustfmt --component clippy
+      - name: format
+        run: cargo +1.99.1 fmt --manifest-path tools/slang-import/Cargo.toml --check
+      - name: lint
+        run: cargo +1.99.1 clippy --manifest-path tools/slang-import/Cargo.toml --locked --release --all-targets -- -D warnings
+      - name: compiler, rejection and publication tests
+        run: cargo +1.99.1 test --manifest-path tools/slang-import/Cargo.toml --locked --release
+      - name: install LÖVE and virtual display
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y love xvfb
+      - name: import fixtures and compare GPU pixels
+        if: runner.os == 'Linux'
+        shell: bash
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: |
+          destination="$RUNNER_TEMP/slang-presets"
+          mkdir -p "$destination"
+          for name in probe wrap graph; do
+            xvfb-run -a tools/slang-import/target/release/gen2-slang-import \
+              "tools/slang-import/fixtures/$name.slangp" "$destination" --name "${name^^}"
+          done
+          SLANG_IMPORT_CHECK_DIR="$destination" xvfb-run -a love tools/slang-import-check
+          SHADER_GRAPH_CHECK_DIR="$destination" xvfb-run -a love tools/shader-graph-check

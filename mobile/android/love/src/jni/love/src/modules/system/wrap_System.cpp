@@ -22,6 +22,7 @@
 #include "wrap_System.h"
 #include "common/android.h"
 #include "sdl/System.h"
+#include <cstring>
 
 namespace love
 {
@@ -199,6 +200,24 @@ int w_httpRequest(lua_State *L)
 	return 1;
 }
 
+// Bounded worker transport added by Roxas2712; shares the existing JNI route.
+int w_httpRequestBounded(lua_State *L)
+{
+	size_t size = 0;
+	const char *json = luaL_checklstring(L, 1, &size);
+	if (size > 1024 * 1024 || std::memchr(json, 0, size) != nullptr)
+		lua_pushliteral(L, "{\"error\":\"invalid bounded request\"}");
+	else
+	{
+		std::string envelope = "{\"boundedEnvelope\":";
+		envelope.append(json, size);
+		envelope.push_back('}');
+	luax_pushstring(L, instance()->httpRequest(envelope.c_str()));
+	}
+	return 1;
+}
+int w_boundedHttpVersion(lua_State *L) { lua_pushinteger(L, 1); return 1; }
+
 int w_walkerNotify(lua_State *L)
 {
 	const char *json = luaL_checkstring(L, 1);
@@ -263,6 +282,8 @@ static const luaL_Reg functions[] =
 	{ "mkdirs", w_mkdirs },
 	{ "walkerNotify", w_walkerNotify },
 	{ "httpRequest", w_httpRequest },
+	{ "httpRequestBounded", w_httpRequestBounded },
+	{ "boundedHttpVersion", w_boundedHttpVersion },
 	{ "syncHealthSteps", w_syncHealthSteps },
 	{ "restartApp", w_restartApp },
 	{ "httpDownload", w_httpDownload },

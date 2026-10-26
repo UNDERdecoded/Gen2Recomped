@@ -30,8 +30,6 @@
 --   src.world.gen2.FieldMoves   field-move entry points live in
 --                               src/script/* and the fieldmove.eligibility
 --                               hook, not one module
---   src.world.gen2.Follower     PikachuFollower is Yellow's, not a general
---                               party follower
 --   src.ui.gen2.Chrome          no shared window-chrome module
 --   src.ui.gen2.SaveMenu        the save flow is part of StartMenu here
 --   src.ui.gen2.BattleAnimView  Gen2AnimPlayer is a player, not a view
@@ -63,10 +61,17 @@ ModCompat.ALIASES = {
   ["src.world.gen2.World"] = "src.world.OverworldController",
   ["src.world.gen2.Map"] = "src.world.Map",
   ["src.world.gen2.Permissions"] = "src.world.Collision",
+  -- Native optional companion, with Gen2 predicate and lifecycle lookup.
+  ["src.world.gen2.Follower"] = "src.world.OptionalFollower",
   ["src.world.gen2.Palettes"] = "src.render.PaletteFX",
 
   -- save-side data
   ["src.core.gen2.Boxes"] = "src.pokemon.Boxes",
+  ["src.core.gen2.Clock"] = "src.core.Gen2Clock",
+  ["src.ui.gen2.MapRadio"] = "src.ui.Gen2MapRadio",
+  -- Explicit signature adapter: native operations take (data, save).
+  ["src.core.gen2.Decorations"] = "src.compat.gen2.Decorations",
+  ["src.core.gen2.Unown"] = "src.compat.gen2.Unown",
   ["src.core.gen2.BugContest"] = "src.world.BugContest",
   ["src.core.gen2.ItemEffects"] = "src.inventory.ItemEffects",
   ["src.core.gen2.Save"] = "src.core.SaveData",
@@ -100,6 +105,13 @@ ModCompat.ALIASES = {
   ["src.render.GbcPalette"] = "src.render.GBCFX",
 }
 
+-- Extend the data vocabulary without changing loader permissions or public
+-- module objects. Existing aliases retain their native identities.
+local Compatibility = require("src.mods.Gen1Compat")
+for name, target in pairs(Compatibility.ALIASES) do
+  if ModCompat.ALIASES[name] == nil then ModCompat.ALIASES[name] = target end
+end
+
 local seen = {}
 local installed = false
 
@@ -107,6 +119,8 @@ local installed = false
 -- matters because "the target is missing too" is a build problem, not a mod
 -- problem, and should not be reported as an unknown module.
 function ModCompat.resolve(name)
+  local missing = Compatibility.unavailable(name)
+  if missing then return nil, missing end
   local target = ModCompat.ALIASES[name]
   if not target then return nil, nil end
   local ok, value = pcall(require, target)
@@ -128,7 +142,23 @@ function ModCompat.install()
   if installed then return false end
   local loaders = package.loaders or package.searchers
   if type(loaders) ~= "table" then return false end
-  loaders[#loaders + 1] = function(name)
+  local searcher
+  searcher = function(name)
+    local missing = Compatibility.unavailable(name)
+    if missing then
+      -- A later host/plugin provider still outranks an unsupported descriptor.
+      local following = false
+      for _, candidate in ipairs(loaders) do
+        if candidate == searcher then following = true
+        elseif following then
+          local provider, origin = candidate(name)
+          if type(provider) == "function" then return provider, origin end
+        end
+      end
+      -- Raise before require installs its in-progress sentinel. Retrying the
+      -- import must retain the diagnostic instead of reporting a fake loop.
+      error(missing, 0)
+    end
     if not ModCompat.ALIASES[name] then
       -- the standard "not found" contract: a string the require error joins
       return "\n\tno mod-compat alias for '" .. tostring(name) .. "'"
@@ -142,6 +172,7 @@ function ModCompat.install()
       return value
     end
   end
+  loaders[#loaders + 1] = searcher
   installed = true
   return true
 end

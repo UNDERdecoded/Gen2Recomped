@@ -282,6 +282,11 @@ function BugContest.judge(game)
   if placing and placing > 3 then placing = nil end
   s.placing = placing
   s.board = board
+  local Runtime=require('src.mods.Runtime')
+  if Runtime.wants("bug_contest.scored")then
+    Runtime.emit("bug_contest.scored",{mon=s.caught,score=s.caught and BugContest.score(s.caught)or 0,
+      place=placing or 0,results=board})
+  end
   return placing, board
 end
 

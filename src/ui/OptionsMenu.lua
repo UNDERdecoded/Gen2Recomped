@@ -14,6 +14,7 @@ local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
 local Tilt = require("src.render.Tilt")
 local GBCFX = require("src.render.GBCFX")
+local GbcColorCorrection = require("src.render.GbcColorCorrection")
 local Zoom = require("src.render.Zoom")
 local TileRenderer = require("src.render.TileRenderer")
 local GameSpeed = require("src.core.GameSpeed")
@@ -31,6 +32,7 @@ local Strings = require("src.core.Strings")
 local OptionsMenu = {}
 OptionsMenu.__index = OptionsMenu
 OptionsMenu.isOpaque = true
+OptionsMenu.shaderPresetBypass = true
 
 -- Opaque full-screen menu: own MEWMON so opening OPTION from the title
 -- (or over the overworld) does not inherit TitleState's LOGO1 band -- that
@@ -380,6 +382,17 @@ local function buildRows(game)
         PaletteFX.setMode(o.colors)
         return true
       end },
+    { id = "gbcColorCorrection", label = Strings("GBC COLOR"),
+      value = function(g)
+        return Strings(GbcColorCorrection.LABELS[
+          GbcColorCorrection.normalize(g.save.options.gbcColorCorrection)])
+      end,
+      step = function(g, dir)
+        local o = g.save.options
+        o.gbcColorCorrection = GbcColorCorrection.cycle(o.gbcColorCorrection, dir)
+        GbcColorCorrection.applyOptions(o)
+        return true
+      end },
     { id = "tilt", label = Strings("TILT"),
       value = function(g) return Tilt.levelLabel(g.save.options.tilt or 0) end,
       step = function(g, dir)
@@ -406,6 +419,14 @@ local function buildRows(game)
         o.gbcfx = wrapIndex((o.gbcfx or 0) + dir, 5)
         GBCFX.setLevel(o.gbcfx)
         return true
+      end },
+    { id = "shaderPreset", label = Strings("SHADER PRESET"),
+      value = function(g)
+        local presets = require("src.render.ShaderPresets")
+        return presets.entry and presets.entry.name:sub(1, 12) or "OFF"
+      end,
+      activate = function(g)
+        g.stack:push(require("src.ui.ShaderPresetMenu").new(g))
       end },
     { id = "zoom", label = Strings("ZOOM"),
       value = function(g)
@@ -522,6 +543,14 @@ local function buildRows(game)
         return true
       end },
   }
+  -- GBC response curves do not describe the other generations' displays.
+  if not GameVersion.isGen2() then
+    local filtered = {}
+    for _, row in ipairs(rows) do
+      if row.id ~= "gbcColorCorrection" then filtered[#filtered + 1] = row end
+    end
+    rows = filtered
+  end
   -- issue #136: hide GBC FX on Android/iOS -- the present shader soft-bricks
   if not GBCFX.isSupported() then
     local filtered = {}

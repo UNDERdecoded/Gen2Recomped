@@ -54,6 +54,7 @@
 -- the item's own cartridge index.
 
 local Assets = require("src.render.Assets")
+local UiQuad = require("src.render.UiQuad")
 local Bag = require("src.inventory.Bag")
 local Font = require("src.render.Font")
 local Logger = require("src.core.Logger")
@@ -1000,7 +1001,7 @@ function Gen3BagMenu:bagFrame()
   local fh = math.floor(tonumber(record.frameHeight) or 64)
   local index = math.min(frames, self.pocket) - 1
   local iw, ih = image:getDimensions()
-  return image, love.graphics.newQuad(index * fw, 0, fw, fh, iw, ih), fw, fh
+  return image, UiQuad.get(self,"pocket",image,index * fw,0,fw,fh,iw,ih), fw, fh
 end
 
 -- The screen's own background, in the palette this save's player carries.
@@ -1038,7 +1039,7 @@ function Gen3BagMenu:itemIcon(id, forcedIndex)
   local size = math.max(1, math.floor(tonumber(rec.size) or 24))
   local cols = math.max(1, math.floor(tonumber(rec.cols) or 1))
   local iw, ih = img:getDimensions()
-  return img, love.graphics.newQuad((index % cols) * size,
+  return img, UiQuad.get(self,"item",img,(index % cols) * size,
                                     math.floor(index / cols) * size,
                                     size, size, iw, ih), size
 end

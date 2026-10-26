@@ -42,6 +42,23 @@
 
 local Performance = {}
 
+-- P2 is independently reversible. Tier rows can reduce the idle budget or
+-- tune the collector without changing the persisted presentation options.
+Performance.gcBudget = true
+-- P3: cache hot-path dependencies and reuse engine-private presentation data.
+Performance.hotPathHoist = true
+-- P4: independent world-draw closure, list and protection optimization.
+Performance.worldDrawHoist = true
+-- P5: palette upload batching and cropped zone quads.
+Performance.paletteZoneCache = true
+-- P6: PCM bulk writes, speculative effect prewarming and DS worker transport.
+Performance.audioWorkerOptimization = true
+-- P9: additional LOW presentation caps, pixel-area AUTO and native UI quads.
+Performance.lowTierBudget = true
+Performance.GC_PAUSE = 120
+Performance.GC_STEP_MUL = 300
+Performance.GC_BUDGET_SECONDS = 0.0005
+
 -- Option-row order (auto first, then most to least capable).
 Performance.TIERS = { "auto", "high", "balanced", "low" }
 
@@ -60,6 +77,16 @@ Performance.CAPS = {
   balanced = { tilt = false, gbcfx = false, survey = true,  fpsMax = false },
   low      = { tilt = false, gbcfx = false, survey = false, fpsMax = 60 },
 }
+for name, caps in pairs(Performance.CAPS) do
+  caps.shaderPresets = name~="low"
+  caps.colorCorrection = name~="low"
+  caps.gen3PaletteCycle = name=="low" and "quarter" or "full"
+  caps.reflections = name~="low"
+  caps.discordPresence = name~="low"
+  caps.gcPause = Performance.GC_PAUSE
+  caps.gcStepMul = Performance.GC_STEP_MUL
+  caps.gcBudgetSeconds = Performance.GC_BUDGET_SECONDS
+end
 
 -- Live resolved tier (never "auto"); Game:applyOptions sets it and the
 -- renderer / options row read it back.  Defaults to the unclamped tier so
@@ -81,7 +108,8 @@ local function processorCount()
 end
 
 -- CPU architecture via LuaJIT's jit.arch when present: "arm"/"arm64" on
--- phones and PortMaster handhelds, "x86"/"x64" on desktops.  nil under a
+-- phones, Apple Silicon Macs and PortMaster handhelds; "x86"/"x64" on
+-- Intel/AMD desktops. nil under a
 -- plain-Lua tool or test with no jit table, which resolves to HIGH (no
 -- clamping) so tooling is never surprised.
 local function cpuArch()
@@ -94,26 +122,40 @@ end
 -- multi-core desktop -- the common case, and every existing install whose
 -- options.lua predates this option -- resolves to HIGH and behaves exactly
 -- as before.
+Performance.AUTO_DESKTOP_PIXELS = 3840 * 2160
+Performance.AUTO_MOBILE_PIXELS = 1920 * 1080
+local function pixelArea()
+  if not Performance.lowTierBudget then return nil end
+  local graphics=love and love.graphics
+  if not (graphics and graphics.getPixelDimensions)then return nil end
+  local ok,w,h=pcall(graphics.getPixelDimensions)
+  if ok and type(w)=="number" and type(h)=="number" and w>0 and h>0
+      and w<math.huge and h<math.huge then return w*h end
+end
 function Performance.detect()
   local os = loveOS()
   local arch = cpuArch()
   local isArm = arch == "arm" or arch == "arm64"
   local cores = processorCount()
+  local pixels = pixelArea()
 
   -- PortMaster-style ARM Linux handhelds (e.g. the RG34XXSP the project
   -- already ships a build for): the weakest target here.
-  if isArm and os ~= "Android" and os ~= "iOS" then
+  if isArm and os ~= "Android" and os ~= "iOS" and os ~= "OS X" then
     return "low"
   end
   -- Phones and tablets: GBC FX is already force-disabled here (issue #136);
   -- balanced additionally drops the 3D tilt, the heaviest remaining extra.
   if os == "Android" or os == "iOS" then
+    if pixels and pixels>Performance.AUTO_MOBILE_PIXELS then return "low"end
     return "balanced"
   end
   -- Desktop: a dual-core (or single-core) box is the low-end line.
   if cores and cores <= 2 then
+    if pixels and pixels>1280*720 then return "low"end
     return "balanced"
   end
+  if pixels and pixels>=Performance.AUTO_DESKTOP_PIXELS then return "balanced"end
   return "high"
 end
 
@@ -168,4 +210,13 @@ function Performance.cycle(value, dir)
   return Performance.TIERS[nextIdx]
 end
 
+-- Added presentation caps use the live tier without changing the stored choices.
+function Performance.extraCap(name)
+  if not Performance.lowTierBudget then return nil end
+  return (Performance.CAPS[Performance.tier] or Performance.CAPS.high)[name]
+end
+function Performance.paletteTick(tick)
+  if Performance.extraCap("gen3PaletteCycle")=="quarter" then return math.floor(tick/4)*4 end
+  return tick
+end
 return Performance

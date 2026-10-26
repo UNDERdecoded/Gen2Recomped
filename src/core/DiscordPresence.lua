@@ -8,6 +8,7 @@
 
 local Json = require("src.link.Json")
 local Logger = require("src.core.Logger")
+local Performance = require("src.core.Performance")
 local Runtime = require("src.mods.Runtime")
 local Strings = require("src.core.Strings")
 
@@ -478,6 +479,7 @@ local function activityKey(activity)
 end
 
 local function flush(force)
+  if Performance.extraCap("discordPresence")==false then return end
   if not state.enabled or not state.connected then return end
   local ok = pcall(function()
     local now = love.timer.getTime()
@@ -717,6 +719,7 @@ function DiscordPresence.init(game)
     end
 
     subscribe(game)
+    if Performance.extraCap("discordPresence")==false then return end
     if connect() then
       flush(true)
     else
@@ -734,6 +737,10 @@ function DiscordPresence.init(game)
 end
 
 function DiscordPresence.update(_dt)
+  if Performance.extraCap("discordPresence")==false then
+    if state.connected then closeSocket()end
+    return
+  end
   if not state.enabled then return end
   pcall(function()
     local now = love.timer.getTime()

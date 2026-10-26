@@ -45,6 +45,9 @@ local mod = ...
 -- passed in as its vararg (`local V = ...`).
 
 local V = { mod = mod, path = mod.path }
+-- P7: independently reversible world-anchored static and 256px actor shadows.
+V.shadowWorldAnchor = true
+V.renderBudget = true
 -- Repeated Gen 3 hulls share immutable GPU meshes where the driver can draw
 -- their offsets per instance. Other drivers keep the expanded vertex path.
 do
@@ -263,6 +266,7 @@ local DayNight = V.require("DayNight")
 local DayTint = V.require("DayTint")
 local Water = V.require("Water")
 local AntiAlias = V.require("AntiAlias")
+local RenderScale = V.require("RenderScale")
 local FirstPerson = V.require("FirstPerson")
 local FreeMove = V.require("FreeMove")
 local CamControl = V.require("CamControl")
@@ -468,7 +472,8 @@ mod.content.render_pipelines:register("voxel", {
     -- these two lines knows: every pass in the frame measures itself in the
     -- canvas it was handed, so the sky's dither, the water's march and the
     -- camera itself all come out the same picture at a higher sample rate.
-    local rw, rh = AntiAlias.expand(sw, sh)
+    local bw, bh = RenderScale.size(sw, sh)
+    local rw, rh = AntiAlias.expand(bw, bh)
     local drawStarted=love.timer.getTime()
     local canvas = VoxelScene.render(ctx.state, rw, rh,
                                      ctx.vw, ctx.vh, ctx.paletteFor)
@@ -489,18 +494,19 @@ mod.content.render_pipelines:register("voxel", {
       ctx.drawFx(function(wx, wy)
                    return Voxel3D.project(wx, Voxel3D.groundY or 0, wy)
                  end,
-                 ctx.scale * AntiAlias.factor())
+                 ctx.scale * AntiAlias.factor() * bw / sw)
       -- the horde's readout rides the same overlay, over the FX: health,
       -- ammunition, the crosshair and the banners, sized in the same
       -- supersampled canvas pixels everything else here is drawn in. A
       -- headset never reaches this line (drawWorld returns the mirror
       -- above) -- lib/VR draws the same HUD onto each eye instead.
-      HordeHud.drawFlat(rw, rh, ctx.scale * AntiAlias.factor())
+      HordeHud.drawFlat(rw, rh, ctx.scale * AntiAlias.factor() * bw / sw)
       Voxel3D.endOverlay()
     end
     -- and back to the window's own size, which is what the engine composites
     -- one canvas pixel to one display pixel.  A pass-through when AA is off.
-    local out = AntiAlias.resolve(canvas, sw, sh, "world")
+    local out = AntiAlias.resolve(canvas, bw, bh, "world")
+    out = RenderScale.present(out, sw, sh)
     -- THE FRAME SEAM.  Perf.frame stamps one whole-frame time per RENDERED
     -- frame and this is the only place in the mod that is reached exactly
     -- once per rendered world frame -- Pipelines calls drawWorld from
@@ -518,6 +524,7 @@ mod.content.render_pipelines:register("voxel", {
     Voxel3D.invalidate()
     OverworldBattle.invalidate()
     AntiAlias.invalidate()
+    RenderScale.invalidate()
     ChunkMesher.invalidate()   -- no map id = every cached mesh
     VR.invalidate()            -- the mirror, and FBO ids of dead canvases
   end,
@@ -754,6 +761,10 @@ local SETTINGS = {
   -- machine it happens to be running on, so it neither sets this nor takes
   -- the row away -- the player decides what their hardware can carry, from
   -- inside FULL like anywhere else.
+  { RenderScale.setting,
+    "Render the world at fewer pixels, then enlarge with nearest filtering. "
+    .. "AUTO uses 2X on mobile and Linux ARM; desktop uses 1X. UI stays at its own resolution.",
+    full = true },
   { AntiAlias.setting,
     "Smooth the stair-stepped edges of the 3D world -- roof ridges, ledge "
     .. "lips, a tree against the sky -- by rendering the diorama larger than "

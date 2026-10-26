@@ -570,8 +570,15 @@ end
 -- apron, which on Route 119 is about eighty thousand calls per rebuild.
 local gen3Shapes = {}
 local function gen3Shape(class, h, pinned)
-  local key = class .. "\0" .. h .. (pinned and "\0p" or "")
-  local hit = gen3Shapes[key]
+  local bucket=gen3Shapes
+  local key
+  if V.renderBudget~=false then
+    local group=bucket[class]
+    if not group then group={{},{}};bucket[class]=group end
+    bucket=group[pinned and 2 or 1]
+    key=h
+  else key=class .. "\0" .. h .. (pinned and "\0p" or "") end
+  local hit = bucket[key]
   if hit then return hit end
   local art = ART[class] or "upright"
   local rec = {
@@ -593,7 +600,7 @@ local function gen3Shape(class, h, pinned)
     authored = pinned or (art ~= "upright"),
     gen3 = true,
   }
-  gen3Shapes[key] = rec
+  bucket[key] = rec
   return rec
 end
 

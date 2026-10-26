@@ -132,6 +132,12 @@ local ShadowMap = V.require("ShadowMap")
 local Mat4 = V.require("Mat4")
 
 local Water = {}
+local Budget = V.require("WaterBudget")
+local ShaderState = V.require("ShaderState")
+local function sendUniform(shader,name,...)
+  if Budget.enabled()then return ShaderState.send(shader,name,...)end
+  return pcall(shader.send,shader,name,...)
+end
 
 -- ------- the row
 --
@@ -144,8 +150,8 @@ Water.KEY = "water"
 Water.LABEL = "WATER"
 
 Water.setting = ModSetting.new(Water.KEY, Water.LABEL,
-                               { "full", "sky", "off" },
-                               { "FULL", "SKY", "OFF" })
+                               { "auto", "full", "sky", "off" },
+                               { "AUTO", "FULL", "SKY", "OFF" })
 
 -- The PERFORMANCE tier's ceilings (see lib/Tier.lua), resolved lazily for
 -- the same reason ShadowMap's are.
@@ -164,7 +170,7 @@ end
 
 function Water.level()
   local v = Water.setting:get()
-  local lv = 2
+  local lv = v == "auto" and Budget.defaultLevel() or 2
   if v == "off" then lv = 0
   elseif v == "sky" then lv = 1 end
   -- A CEILING, NOT A SETTING.  The row's own three rungs are the player's
@@ -773,6 +779,8 @@ uniform float waveHeight;    // the tallest column, in whole world pixels
 uniform float waveSlope;     // how far a column's neighbours tilt its normal
 uniform float waveSlopeLean; // and how far the horizon lean may open that up
 uniform float waveT;
+uniform Image waveField;
+uniform float waveFieldOn;
 uniform vec4 faceShade;      // the mesh's own direction shading: E, W, S, N
 uniform vec2 atlasSize;      // the tileset atlas, in texels
 uniform float fresnelFloor;
@@ -1063,7 +1071,8 @@ vec4 march(vec3 origin, vec3 dir) {
 // and the reasoning behind their weights live; pasted in rather than sent,
 // so the speed derived from those same numbers cannot drift from the field
 // they describe.
-float waveRaw(vec2 q) {
+float waveRaw(LOVE_HIGHP_OR_MEDIUMP vec2 q) {
+  if(waveFieldOn>0.5)return Texel(waveField,(q+vec2(0.5))/256.0).r;
   float h = 0.0;
 //@TRAINS
   return h * 0.5 + 0.5;
@@ -1475,16 +1484,61 @@ end
 
 Water._trainSource = trainSource       -- named for the suite
 
+local bakeSource
+function Water._waveBakeSource()
+  if bakeSource then return bakeSource end
+  local function periodic(value)return math.floor(value*256/(2*math.pi)+0.5)*(2*math.pi)/256 end
+  local src=trainSource()
+  src=src:gsub("vec2%(([%d%.%-]+), ([%d%.%-]+)%)",function(x,z)
+    return ("vec2(%.9f, %.9f)"):format(periodic(tonumber(x)),periodic(tonumber(z)))
+  end)
+  bakeSource="float waveRaw(vec2 q){float h=0.0;\n"..src.."\nreturn h*0.5+0.5;}"
+  return bakeSource
+end
+
 local function source(grid)
   local src = SHADER_SRC:gsub("//@CRATERS", (craterSource():gsub("%%", "%%%%")))
   src = src:gsub("//@TRAINS", (trainSource():gsub("%%", "%%%%")))
+  if Budget.enabled() then
+    src=src:gsub("precision highp float;","precision mediump float;")
+    src=src:gsub("uniform mat4", "uniform LOVE_HIGHP_OR_MEDIUMP mat4")
+    src=src:gsub("uniform vec3 curve", "uniform LOVE_HIGHP_OR_MEDIUMP vec3 curve")
+    src=src:gsub("uniform vec3 eye", "uniform LOVE_HIGHP_OR_MEDIUMP vec3 eye")
+    src=src:gsub("varying vec3 vSun", "varying LOVE_HIGHP_OR_MEDIUMP vec3 vSun")
+    -- These routines carry world coordinates, projected depth and ray crossings.
+    -- Color/sky lighting and normalized texture values keep the stage default.
+    for _,name in ipairs({"bendDrop","project","march","relief","waveAt","waveNormal"})do
+      local from=src:find("[%w_]+%s+"..name.."%(")
+      if from then
+        local open=src:find("{",from,true)
+        local at,level=open,1
+        repeat
+          at=at+1
+          local c=src:sub(at,at)
+          if c=="{"then level=level+1 elseif c=="}"then level=level-1 end
+        until level==0 or at>#src
+        local fn=src:sub(from,at):gsub("(vec[234])(%s+[%w_]+)","LOVE_HIGHP_OR_MEDIUMP %1%2")
+          :gsub("float(%s+[%w_]+)","LOVE_HIGHP_OR_MEDIUMP float%1")
+        src=src:sub(1,from-1)..fn..src:sub(at+1)
+      end
+    end
+    for _,name in ipairs({"selfC","selfZ","sheet","view","hit","col","surf"})do
+      src=src:gsub("  (vec[234]) "..name.."([ ;=])","  LOVE_HIGHP_OR_MEDIUMP %1 "..name.."%2")
+      src=src:gsub("  float "..name.."([ ;=])","  LOVE_HIGHP_OR_MEDIUMP float "..name.."%1")
+    end
+  end
+  if love.getVersion and love.getVersion()>=12 then
+    -- LÖVE 12 declares effect's numeric parameters at high precision.
+    src=src:gsub("effect%(mediump vec4 color, Image tex, mediump vec2 tc, mediump vec2 sc%)",
+      "effect(LOVE_HIGHP_OR_MEDIUMP vec4 color, Image tex, LOVE_HIGHP_OR_MEDIUMP vec2 tc, LOVE_HIGHP_OR_MEDIUMP vec2 sc)")
+  end
   local head = ("#define RAY_STEPS %d\n#define RAY_REFINE %d\n"
                 .. "#define WAVE_STEPS %d\n#define WAVE_STRIDE %.1f\n"
                 -- compiled in rather than sent, like the step bounds beside
                 -- it: a uniform that failed to send would silently take the
                 -- slack back to zero, which is the bug this is here to fix
                 .. "#define RAY_BIAS %.6f\n")
-    :format(Water.RAY_STEPS, Water.RAY_REFINE, Water.WAVE_STEPS,
+    :format(Budget.steps(Water.RAY_STEPS,Water.RAY_REFINE), select(2,Budget.steps(Water.RAY_STEPS,Water.RAY_REFINE)), Water.WAVE_STEPS,
             Water.WAVE_STRIDE, Water.RAY_BIAS)
   if grid then head = head .. "#define VOXEL_GRID 1\n" end
   return head .. src
@@ -1499,10 +1553,12 @@ Water._source = source                 -- named for the suite
 local shaders = { [false] = nil, [true] = nil }
 
 function Water.shader(grid)
+  local steps,refine=Budget.steps(Water.RAY_STEPS,Water.RAY_REFINE)
+  local key=tostring(grid and true or false)..":"..steps..":"..refine..":"..tostring(Budget.enabled())
   grid = grid and true or false
-  if shaders[grid] == nil then
+  if shaders[key] == nil then
     if not (love.graphics and love.graphics.newShader) then
-      shaders[grid] = false
+      shaders[key] = false
     else
       local ok, sh = pcall(love.graphics.newShader, V.require("GraphicsCompat").shader(source(grid)))
       if not ok and V and V.mod and V.mod.log then
@@ -1511,10 +1567,10 @@ function Water.shader(grid)
         V.mod.log:warn("water shader did not compile: %s -- lakes draw flat",
                        tostring(sh))
       end
-      shaders[grid] = (ok and sh) or false
+      shaders[key] = (ok and sh) or false
     end
   end
-  return shaders[grid] or nil
+  return shaders[key] or nil
 end
 
 -- ------- the pass
@@ -1566,7 +1622,7 @@ function Water.begin(ctx)
   love.graphics.setShader(sh)
   love.graphics.setColor(1, 1, 1, 1)
   local function send(name, ...)
-    pcall(sh.send, sh, name, ...)
+    sendUniform(sh, name, ...)
   end
 
   send("vp", "row", ctx.vp)
@@ -1594,7 +1650,7 @@ function Water.begin(ctx)
   send("sunTexel", { texel, texel })
   send("dayTint", Voxel3D.tint or { 1, 1, 1 })
 
-  send("rays", level >= 2 and 1 or 0)
+  send("rays", level >= 2 and not (Budget.enabled() and ctx.planar) and 1 or 0)
   -- THE PLANAR MIRROR, or the switch that says there is not one.
   --
   -- planarTex is bound EITHER WAY. A declared sampler left unbound is a
@@ -1615,7 +1671,11 @@ function Water.begin(ctx)
   send("waveHeight", Water.WAVE_HEIGHT)
   send("waveSlope", Water.WAVE_SLOPE)
   send("waveSlopeLean", Water.WAVE_SLOPE_LEAN)
-  send("waveT", waveTime())
+  local wt=waveTime()
+  local field=Budget.waveTexture(wt, Water._waveBakeSource())
+  send("waveField",field or ctx.reflect)
+  send("waveFieldOn",field and 1 or 0)
+  send("waveT", wt)
   -- the columns' side faces wear the MESH's own direction shading, sent in
   -- rather than restated, so a wave crest is lit like every other voxel
   local fs = Voxel3D.FACE_SHADE
@@ -1646,7 +1706,7 @@ end
 -- back at itself, which is what a pond in a cave does.
 function Water.sendSky(sh, ctx)
   local function send(name, ...)
-    pcall(sh.send, sh, name, ...)
+    sendUniform(sh, name, ...)
   end
   local ramp, count = Sky.ramp()
   local edge = ctx.skyEdge
@@ -1711,7 +1771,7 @@ function Water.draw(mesh, texture, model)
   if not (active and mesh) then return end
   local parts = type(mesh) == "table" and mesh.parts
   if texture and not parts then mesh:setTexture(texture) end
-  pcall(active.send, active, "model", "row", model or Mat4.identity())
+  sendUniform(active, "model", "row", model or Mat4.identity())
   -- Per draw rather than per pass, and read off the TEXTURE rather than
   -- assumed: it is what converts a world pixel of the columns' parallax into
   -- the texel of art standing on it, and two maps in one frame can be drawn
@@ -1719,7 +1779,7 @@ function Water.draw(mesh, texture, model)
   if texture and texture.getDimensions then
     local ok, w, h = pcall(texture.getDimensions, texture)
     if ok and w and h then
-      pcall(active.send, active, "atlasSize", { w, h })
+      sendUniform(active, "atlasSize", { w, h })
     end
   end
   if parts then V.require("MeshBatch").draw(mesh, texture, nil, model)
@@ -1733,6 +1793,8 @@ end
 -- Drop the compiled shaders (window resize, hot reload): they are GPU
 -- objects on a context that may not exist any more.
 function Water.invalidate()
+  bakeSource=nil
+  Budget.invalidate()
   for k, sh in pairs(shaders) do
     if sh and sh.release then pcall(sh.release, sh) end
     shaders[k] = nil

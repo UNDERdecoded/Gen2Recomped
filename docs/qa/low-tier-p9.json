@@ -1,0 +1,122 @@
+{
+  "runtimeCommit": "455f911e81a1a176615578935e5e430f77275ab2",
+  "native": {
+    "forkMetal": {
+      "renderer": "Metal",
+      "phases": [
+        {
+          "warmupFrames": 120,
+          "meanMs": 0.29062048611111596,
+          "quadAllocations": 15480,
+          "mode": "legacy",
+          "frames": 120
+        },
+        {
+          "warmupFrames": 120,
+          "meanMs": 0.17250069444444496,
+          "quadAllocations": 0,
+          "mode": "cached",
+          "frames": 120
+        }
+      ],
+      "checks": 6,
+      "scope": "Actual bag, box and textbox draw producers with owned artwork; CPU draw submission, no ROM or full-game FPS",
+      "sha256": {
+        "src/core/Performance.lua": "def2c6b3d5e93ce8a10c10f03b40f30ac05997a1330f3ed49b8d1395399b4877",
+        "src/render/UiQuad.lua": "8d7715e0bbfc21d2408c6652def9e01474a7dedcbc5bc9e15f0cf39b60aa73b3",
+        "src/render/TextBox.lua": "ba2c8e0203d6b039d88e3224186722c1065894488896f3dba39a9b4572240d8c",
+        "src/ui/Gen3BagMenu.lua": "98c15a587096e342f052605dc2dac3b03ebb420b39812dfd9a45316fc7701bae",
+        "src/ui/Gen3BoxMenu.lua": "b56c3829b9f82d4c01d278ef6745e8cec3a3cc7ce111151ecf5c3db0c72478fd",
+        "tools/low-tier-check/main.lua": "79600f553d50494af156caeb3351448180b8e869281f1b60e55c65c5cf42472b",
+        "tools/low-tier-check/conf.lua": "322a7089a908d54dad4c6b13ccad4fec62400433c436e54eed401930ada7e44b"
+      },
+      "playerProfilesUsed": false
+    },
+    "forkOpenGL": {
+      "scope": "Actual bag, box and textbox draw producers with owned artwork; CPU draw submission, no ROM or full-game FPS",
+      "renderer": "OpenGL",
+      "phases": [
+        {
+          "warmupFrames": 120,
+          "meanMs": 0.6349649305555677,
+          "quadAllocations": 15480,
+          "mode": "legacy",
+          "frames": 120
+        },
+        {
+          "warmupFrames": 120,
+          "meanMs": 0.5209718749999889,
+          "quadAllocations": 0,
+          "mode": "cached",
+          "frames": 120
+        }
+      ],
+      "checks": 6,
+      "sha256": {
+        "src/core/Performance.lua": "def2c6b3d5e93ce8a10c10f03b40f30ac05997a1330f3ed49b8d1395399b4877",
+        "src/render/UiQuad.lua": "8d7715e0bbfc21d2408c6652def9e01474a7dedcbc5bc9e15f0cf39b60aa73b3",
+        "src/render/TextBox.lua": "ba2c8e0203d6b039d88e3224186722c1065894488896f3dba39a9b4572240d8c",
+        "src/ui/Gen3BagMenu.lua": "98c15a587096e342f052605dc2dac3b03ebb420b39812dfd9a45316fc7701bae",
+        "src/ui/Gen3BoxMenu.lua": "b56c3829b9f82d4c01d278ef6745e8cec3a3cc7ce111151ecf5c3db0c72478fd",
+        "tools/low-tier-check/main.lua": "79600f553d50494af156caeb3351448180b8e869281f1b60e55c65c5cf42472b",
+        "tools/low-tier-check/conf.lua": "322a7089a908d54dad4c6b13ccad4fec62400433c436e54eed401930ada7e44b"
+      },
+      "playerProfilesUsed": false
+    },
+    "publicMetal": {
+      "checks": 6,
+      "scope": "Actual bag, box and textbox draw producers with owned artwork; CPU draw submission, no ROM or full-game FPS",
+      "renderer": "Metal",
+      "phases": [
+        {
+          "quadAllocations": 15480,
+          "frames": 120,
+          "mode": "legacy",
+          "warmupFrames": 120,
+          "meanMs": 0.38583715277779407
+        },
+        {
+          "quadAllocations": 0,
+          "frames": 120,
+          "mode": "cached",
+          "warmupFrames": 120,
+          "meanMs": 0.22241388888885977
+        }
+      ],
+      "sha256": {
+        "src/core/Performance.lua": "def2c6b3d5e93ce8a10c10f03b40f30ac05997a1330f3ed49b8d1395399b4877",
+        "src/render/UiQuad.lua": "8d7715e0bbfc21d2408c6652def9e01474a7dedcbc5bc9e15f0cf39b60aa73b3",
+        "src/render/TextBox.lua": "6ccdc8b5b4622502e3b3036a935d98f9e2ca14fbb37c0d92a0ffe7a2920732e2",
+        "src/ui/Gen3BagMenu.lua": "98c15a587096e342f052605dc2dac3b03ebb420b39812dfd9a45316fc7701bae",
+        "src/ui/Gen3BoxMenu.lua": "b56c3829b9f82d4c01d278ef6745e8cec3a3cc7ce111151ecf5c3db0c72478fd",
+        "tools/low-tier-check/main.lua": "79600f553d50494af156caeb3351448180b8e869281f1b60e55c65c5cf42472b",
+        "tools/low-tier-check/conf.lua": "322a7089a908d54dad4c6b13ccad4fec62400433c436e54eed401930ada7e44b"
+      },
+      "playerProfilesUsed": false
+    }
+  },
+  "acceptance": {
+    "enginePassed": 167,
+    "engineSuites": 178,
+    "baselinePassed": 166,
+    "baselineSuites": 177,
+    "inheritedFailingSuites": 11,
+    "unchangedFailureLines": 29,
+    "baselineCommit": "3bd33cb3fd2a813ff9cd7c6289f7e89fc8bc5b48",
+    "sdkSuites": 3,
+    "galleryChecks": 253,
+    "api3Comparisons": 48,
+    "isolatedApi3Workers": 96,
+    "externalFixtureEntrypoints": 17,
+    "externalFixturePhase": "complete",
+    "focusedChecks": 86,
+    "head": "455f911e81a1a176615578935e5e430f77275ab2",
+    "exitCodes": {
+      "engine": 1,
+      "sdk": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    }
+  }
+}

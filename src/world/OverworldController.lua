@@ -9,6 +9,8 @@
 -- surfing, Cut trees, trainer sight lines, and dispatches interactions to
 -- map scripts (data/scripts/), marts, nurses or extracted text.
 
+local FrameProfile = require("src.core.FrameProfile")
+local Performance = require("src.core.Performance")
 local Assets = require("src.render.Assets")
 local Camera = require("src.render.Camera")
 local Collision = require("src.world.Collision")
@@ -20,6 +22,7 @@ local Logger = require("src.core.Logger")
 local Probe = require("src.core.Probe")
 local Map = require("src.world.Map")
 local MapLoader = require("src.world.MapLoader")
+local LiveMaps = require("src.world.LiveMaps")
 local NPC = require("src.world.NPC")
 local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
@@ -28,6 +31,7 @@ local Runtime = require("src.mods.Runtime")
 local Screens = require("src.ui.Screens")
 local ScriptRunner = require("src.script.ScriptRunner")
 local GameVersion = require("src.core.GameVersion")
+local Gen2Clock = require("src.core.Gen2Clock")
 local Tilt = require("src.render.Tilt")
 local TextBox = require("src.render.TextBox")
 local Transition = require("src.render.Transition")
@@ -283,7 +287,7 @@ local function objectTodBit()
   local ow = Game and Game.overworld
   local bit = ow and tonumber(ow.objectTodBit)
   if bit then return bit end
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   if period and tonumber(period.bit) then return tonumber(period.bit) end
   return TOD_BITS[objectTimeOfDay()] or TOD_BITS.DAY
 end
@@ -2186,6 +2190,10 @@ function OverworldState:neighborReach()
   return rw, rh, vw, vh
 end
 
+function OverworldState:liveMaps()
+  return LiveMaps.snapshot(self)
+end
+
 function OverworldState:rebuildNeighbors()
   local mapId = self.map.id
   self.neighbors = {}
@@ -2202,11 +2210,13 @@ function OverworldState:rebuildNeighbors()
                                                      hops, reachW, reachH)) do
     keep[n.id] = true
     local m = MapLoader.load(Game.data, n.id)
-    table.insert(self.neighbors, { map = m, ox = n.ox, oy = n.oy })
+    table.insert(self.neighbors, { map = m, ox = n.ox, oy = n.oy, cx = n.ox / 16, cy = n.oy / 16 })
   end
   -- bound resident memory: drop maps behind us that are neither current nor
   -- a drawn neighbor, releasing their window batch / border image / atlas
   MapLoader.trim(keep)
+  LiveMaps.preparing(self)
+
 
   -- visual-only NPCs on connected maps (survey zoom): same spawn filter
   -- as a real map entry, but they never join self.entities -- no sight
@@ -2236,7 +2246,6 @@ function OverworldState:rebuildNeighbors()
     -- the seam offset in CELLS.  Everything in this engine steps on a 16px
     -- grid whatever the dataset's block size, and a connection offset is a
     -- whole number of blocks, so this is always exact.
-    nb.cx, nb.cy = nb.ox / 16, nb.oy / 16
     for _, obj in ipairs(nb.map.def.objects or {}) do
       if objectVisible(Game.save, nb.map.id, obj) and not offMap(nb.map.def, obj) then
         local npc = pooledNPC(self.npcPool, Game.data, nb.map.id, obj)
@@ -2248,6 +2257,7 @@ function OverworldState:rebuildNeighbors()
     end
   end
   self.cast = nil
+  LiveMaps.updated(self)
 end
 
 -- ONE CAST, IN EVERY LOADED MAP'S OWN CELLS.
@@ -2391,7 +2401,7 @@ local function sameTod(tod) return tod end
 -- < 4 NITE, < 10 MORN, < 18 DAY, else NITE.  Gen 1 has no clock at all, so
 -- only Gen 2 consults the host one.
 local function clockTimeOfDay()
-  local hour = tonumber(os.date("%H")) or 12
+  local hour = Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil)
   if hour < 4 then return "NITE" end
   if hour < 10 then return "MORNING" end
   if hour < 18 then return "DAY" end
@@ -2404,7 +2414,7 @@ OverworldState.clockTimeOfDay = clockTimeOfDay
 
 -- The cartridge's MAPOBJECT_TIMEOFDAY bit for the hour on the clock right now.
 function OverworldState.clockTimeOfDayBit()
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   return (period and tonumber(period.bit)) or TOD_BITS.DAY
 end
 
@@ -2427,6 +2437,7 @@ function OverworldState:syncGen2Tod(tod)
 end
 
 function OverworldState:timeOfDay()
+  if GameVersion.isGen2() then Gen2Clock.weekday(Game and Game.save) end
   local tod = GameVersion.isGen2() and clockTimeOfDay() or (self.tod or "DAY")
   if not Runtime.wantsHook("world.tod") then
     if tod ~= self.tod then
@@ -2462,6 +2473,12 @@ function OverworldState:timeOfDay()
   self:syncGen2Tod(self.tod)
   return self.tod
 end
+
+-- Legacy callers and native scripts read the same saved RTC offset. Both
+-- dot and colon calls are observational; no cached second clock on World.
+function OverworldState.hour() return Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.minute() return Gen2Clock.minute(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.weekday() return Gen2Clock.weekday(GameVersion.isGen2() and Game and Game.save or nil) end
 
 function OverworldState:paletteNameFor(map)
   local palettes = FieldDefaults.field(Game.data, "palettes")
@@ -3424,6 +3441,34 @@ function OverworldState:checkSpecialPhoneCall()
   Game.save.g2CurCaller = caller
   self:queueScript(script, { phoneCaller = caller,
     onDone = function() Game.save.g2CurCaller = nil end })
+  Gen2Commands.announceIncomingCall(Game.data, caller, Game.save.g2SpecialCallActive)
+end
+
+-- A purchase is already committed at trainer reload. Its original phone
+-- program waits for the trainer's queued dialogue and overlays to finish.
+function OverworldState:checkMomShoppingCall()
+  local pending=self.g2MomCallPending
+  if not pending then return false end
+  if pending.save~=Game.save or pending.data~=Game.data then self.g2MomCallPending=nil;return false end
+  local top=Game.stack and Game.stack.top and Game.stack:top()
+  if top and top~=self then return false end
+  if self.player and(self.player.moving or self.player.targetX or self.player.stairExit or self.player.inputLocked)then return false end
+  if self.transitioning or self.runner:isRunning()or #(self.scriptMoves or{})>0 or self.engaging or self.emote or
+      self.teleportOut or self.whirlSpin or self.gen4Waterfall or self.flyAnim or self.fishing or
+      self.pendingScripts and self.pendingScripts[1]then return false end
+  self.g2MomCallPending=nil
+  local purchase=pending.purchase
+  Game.save.g2CurCaller=purchase.caller
+  pcall(function()require("src.core.Sound").play(Game.data,"Call")end)
+  self:queueScript(purchase.script,{phoneCaller=purchase.caller,onDone=function()
+    if Game.save~=pending.save or Game.data~=pending.data then return end
+    Game.save.g2CurCaller=nil
+    require("src.script.Gen2Commands").resetCallDelay(Game.save,math.floor(require("src.core.SaveData").playSeconds(Game.save)/60))
+    pcall(function()require("src.core.Sound").play(Game.data,"Hang_Up")end)
+  end})
+  local commands=require("src.script.Gen2Commands")
+  if commands.announceIncomingCall then commands.announceIncomingCall(Game.data,purchase.caller)end
+  return true
 end
 
 -- CheckPhoneCall (36:$4074): the random incoming call, rolled on every step
@@ -3459,6 +3504,7 @@ function OverworldState:checkIncomingPhoneCall()
     Game.save.g2CurCaller = nil
     pcall(function() require("src.core.Sound").play(Game.data, "Hang_Up") end)
   end })
+  Gen2Commands.announceIncomingCall(Game.data, id)
 end
 
 function OverworldState:update(dt)
@@ -3793,6 +3839,7 @@ function OverworldState:update(dt)
   -- not an event, and the check is two flag reads.
   self:applyForcedBike()
   self:checkSpecialPhoneCall()
+  self:checkMomShoppingCall()
   self:checkBugContestClock()
   -- world.tick: the per-frame seam for mods that simulate something in the
   -- overworld rather than draw it.
@@ -7263,6 +7310,12 @@ function OverworldState:npcAtCell(cx, cy)
   return nil
 end
 
+-- The continuation receives the original opaque world and NPC handles.
+-- Keep it outside interact so an unhooked A press allocates no closure.
+local function vanillaTalk(world, target)
+  world:talkTo(target)
+end
+
 -- what the A press resolved to, for world.interacted's listeners
 -- A LINE THE CARTRIDGE ITSELF PRINTS, named by the import rather than typed
 -- here.  `constants.gen3<name>` holds a TEXT_ key and the text pool holds the
@@ -7470,7 +7523,7 @@ function OverworldState:interact()
       -- rules, answered mid-step like the Pikachu above
       if not npc.hidden then require("src.world.HgssFollowMon").talk(Game, self, npc) end
     elseif not npc.moving then
-      self:talkTo(npc)
+      Runtime.call("world.talk", vanillaTalk, self, npc)
     end
     interacted(self, fx, fy, "npc", npc)
     return
@@ -11817,6 +11870,8 @@ function OverworldState:trainerDefeated(npc)
   return false
 end
 
+OverworldState.prepareTrainerBattle = require("src.battle.TrainerPreparation").prepare
+
 -- Run the pre-battle text -> battle -> won text -> flags sequence.
 function OverworldState:engageTrainer(npc, onDone)
   local d = npc.def
@@ -11831,7 +11886,7 @@ function OverworldState:engageTrainer(npc, onDone)
   local wonText = header and header.won and Game.data.text[header.won]
 
   local BattleState = require("src.battle.BattleState")
-  Game.stack:push(TextBox.new(Game, battleText, function()
+  local function startBattle(options)
     -- A TEAM THE AUTHOR BUILT WINS OVER AN INDEX INTO SOMEBODY ELSE'S.
     --
     -- `trainerParty` selects one of the parties the cartridge shipped for
@@ -11842,10 +11897,10 @@ function OverworldState:engageTrainer(npc, onDone)
     local battle
     if type(d.trainerTeam) == "table" and #d.trainerTeam > 0 then
       battle = BattleState.newEditorTrainer(Game, d.trainerTeam,
-                                            d.trainerClass, d.trainerName)
+                                            d.trainerClass, d.trainerName, options)
     end
     battle = battle or BattleState.newTrainer(Game, d.trainerClass,
-                                              d.trainerParty)
+                                              d.trainerParty, options)
     -- PrintEndBattleText (home/trainers.asm:341) is called from
     -- TrainerBattleVictory (engine/battle/core.asm:942), i.e. ON the battle
     -- screen once ScrollTrainerPicAfterBattle has brought the beaten trainer
@@ -11874,6 +11929,34 @@ function OverworldState:engageTrainer(npc, onDone)
       end
     end
     self:pushBattle(battle)
+  end
+  Game.stack:push(TextBox.new(Game, battleText, function()
+    local liveGame, liveSave, liveData, liveStack, liveSession = Game, Game.save, Game.data, Game.stack, Game.sessionStartedAt
+    local map, def = self.map, npc.def
+    local class, party, npcId, team = d.trainerClass, d.trainerParty, npc.id, d.trainerTeam
+    local wasEngaging = self.engaging
+    self.engaging = true
+    OverworldState.prepareTrainerBattle(Game, {
+      trainerClass = class, partyIndex = party or 1, mapId = map.id, npcId = npc.id,
+    }, function(options)
+      self.engaging = wasEngaging
+      startBattle(options)
+    end, function()
+      self.engaging = wasEngaging
+      self.spotHush = { cellX = self.player.cellX, cellY = self.player.cellY, [npc] = true }
+      if onDone then onDone() end
+    end, function()
+      if Game ~= liveGame or self.map ~= map or npc.id ~= npcId or npc.def ~= def
+        or d.trainerTeam ~= team or def.trainerClass ~= class
+        or def.trainerParty ~= party then return false end
+      for _, actor in ipairs(self.npcs or {}) do if actor == npc then return true end end
+      return false
+    end, function()
+      if Game == liveGame and Game.save == liveSave and Game.data == liveData
+        and Game.stack == liveStack and Game.sessionStartedAt == liveSession and self.map == map then
+        self.engaging, npc.frozen = false, false
+      end
+    end)
   end))
 end
 
@@ -13088,6 +13171,12 @@ function OverworldState:hatchEgg(hatched)
   elseif GameVersion.isGen3() and Game.save then
     require("src.pokemon.Gen3GameStats").increment(Game.save, 13)      -- GAME_STAT_HATCHED_EGGS
   end
+  local hatchObserver=GameVersion.isGen2() and Runtime.wants("egg.hatched")
+  local originalEgg,eggSlot
+  if hatchObserver then
+    originalEgg=require('src.mods.Merge').deepCopy(hatched)
+    for slot,mon in ipairs(Game.save.party or{})do if mon==hatched then eggSlot=slot;break end end
+  end
   local Pokemon = require("src.pokemon.Pokemon")
   local def = Game.data.pokemon[hatched.species]
   hatched.isEgg = nil
@@ -13119,6 +13208,10 @@ function OverworldState:hatchEgg(hatched)
   local name = def and def.name or hatched.species
   local function finished()
     Runtime.emit("pokemon.egg_hatched", { mon = hatched })
+    if hatchObserver then
+      Runtime.emit("egg.hatched",{mon=hatched,egg=originalEgg,slot=eggSlot,
+        species=originalEgg.species,nickname=hatched.nickname})
+    end
   end
   local hatchText = Strings("Huh?\f%s hatched\nfrom the EGG!", name)
   local askText = gen2 and Strings("Give a nickname to\n%s?", name) or nil
@@ -14827,6 +14920,19 @@ function OverworldState:gen4FieldResumed()
 end
 
 function OverworldState:afterBattle(result, battle)
+  if result=="win" and battle and battle.kind=="trainer" and not battle.linkBattle and not battle.battleTower and
+      not battle.g2MomHandled and require("src.world.Gen2MomShopping").stock()then
+    battle.g2MomHandled=true
+    if not self.g2MomCallPending then
+      local purchase=require("src.world.Gen2MomShopping").tryBuy(Game.data,Game.save,{
+        phoneService=require("src.world.Gen2PhoneService").available(self.map and self.map.def),
+        queued=self.pendingScripts and self.pendingScripts[1]~=nil,
+      })
+      if purchase then self.g2MomCallPending={save=Game.save,data=Game.data,purchase=purchase}end
+    end
+  end
+
+
   self.gen4EncounterAttempts = 0
   -- a battle a script did not start (a wild one, a trainer's sight) comes
   -- back to the field here; a scripted one already did in its onFinish
@@ -15374,7 +15480,7 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
   self.arriveWarp = nil
   local fromId = self.map.id
   local fromSection = self.map.def and self.map.def.regionMapSection
-  Game.stack:push(Transition.new(Game, function()
+  local transition = Transition.new(Game, function()
     self:setMap(mapId, x, y, facing or "down", opts)
     self:noteGen2Spawn(fromId)
     -- FIRERED'S SIDE STAIRS (ExitStairsMovement): you land ON the stair tile
@@ -15564,7 +15670,15 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
     -- side, which is what the scripts already do.
     if self.player then self.player.inputLocked = false end
     if onDone then onDone() end
-  end))
+  end)
+  -- API 3 exposes the Gen 3 no-fade option. Reuse the exact native midpoint
+  -- and completion path; ordinary/native callers keep their existing fade.
+  if opts and opts.fade == false then
+    transition.onMidpoint()
+    transition.onDone()
+  else
+    Game.stack:push(transition)
+  end
 end
 
 -- Re-read a map record after its data changed (WorldAPI:invalidateMap,
@@ -17223,6 +17337,827 @@ function OverworldState:poseBerryTrees()
   end
 end
 
+-- Only public callback seams bind a frame; ordinary draws pass context explicitly.
+local function bindWorldFx(fn, state, cam)
+  return function() return fn(state, cam) end
+end
+
+-- the Pokémon Center heal machine (PokeCenterOAMData): the monitor
+-- tile over the machine's screen and one ball per healed mon in two
+-- mirrored columns, all blinking during the jingle flash.  The GB
+-- draws it at fixed screen coords with the player's cell BG-aligned
+-- at (64,64); anchoring those coords to where the player stood keeps
+-- the overlay on the machine at any zoom.
+function OverworldState:_worldFxHeal(cam)
+  if not self.healAnim then return end
+  local ha = self.healAnim
+  -- HOENN'S MACHINE IS NOT AN OAM TABLE.
+  --
+  -- Everything below this block is the Game Boy's: two 8x8 tiles out of
+  -- field.overworldFx.healMachine at coordinates a table in the ROM gives.
+  -- Emerald has no such table -- its machine is a field effect whose two
+  -- sprites are created by machine code, and where they go is four
+  -- immediates INSIDE that code.  extractHealMachine reads them, and the
+  -- record it writes carries the positions already measured from the corner
+  -- of the player's own cell, so nothing here has to know where the
+  -- cartridge's camera puts anybody.
+  if GameVersion.isGen4() then return end
+  if self:drawGen3Heal(ha, cam) then return end
+  local fxDef = Game.data.field.overworldFx
+  if self.healMachineImg == nil and fxDef and fxDef.healMachine then
+    local ok, img = pcall(love.graphics.newImage, fxDef.healMachine.path)
+    self.healMachineImg = ok and img or false
+  end
+  local img = self.healMachineImg
+  if img then
+    if not self.healMachineQuads then
+      local w, h = img:getWidth(), img:getHeight()
+      self.healMachineQuads = {
+        love.graphics.newQuad(0, 0, 8, 8, w, h), -- monitor ($7c)
+        love.graphics.newQuad(0, 8, 8, 8, w, h), -- ball ($7d)
+      }
+    end
+    -- The machine carries its OWN four colours.  HealMachineAnim.LoadPalettes
+    -- (04:$6434) copies them over OBJ palette 6 before the animation runs --
+    -- which is why every row of its OAM table names palette 6 -- and they are
+    -- white / light orange / red / black: a Poke Ball.  Nothing was applying
+    -- any palette at all, so the sheet drew in the DMG greys it is decoded
+    -- in and a Pokemon Center healed with grey balls.
+    local def = fxDef and fxDef.healMachine
+    local objPal = def and def.gen2ObjPal
+    local basePal = (objPal and objPal[1] and objPal) or PaletteFX.GRAYS
+    -- the jingle flash recolors the machine sprites in place
+    -- (FlashSprite8Times XORs rOBP1; the sprites never disappear):
+    -- ha.visible == false is the flashed half of each beat, drawn with
+    -- the light/dark shades swapped instead of skipped
+    local shader
+    if (not ha.visible) or basePal ~= PaletteFX.GRAYS then
+      shader = PaletteFX.shader()
+      if shader then
+        PaletteFX.sendColors(shader, ha.visible and basePal
+          or PaletteFX.permute(basePal, HEAL_FLASH_MAP))
+        love.graphics.setShader(shader)
+      end
+    end
+    -- TileRenderer windows with -floor(cam), so the overlay must use the
+    -- same snap or a fractional camera (odd fill/tilt view sizes) parks
+    -- the balls a pixel off the machine tiles
+    local ox = ha.px - 64 - math.floor(cam.x)
+    local oy = ha.py - 64 - math.floor(cam.y)
+    -- Gen2 puts these sprites somewhere else entirely.  Its
+    -- HealMachineAnim.PC_ElmsLab_OAM (04:$63BC) has the monitor at x 26/30
+    -- and the balls at x 24/32; Gen1's PokeCenterOAMData has the balls at
+    -- 40/48.  The extractor reads that OAM table straight off the cartridge
+    -- into field.overworldFx.healMachine, so use it where it exists and keep
+    -- the Gen1 constants as the fallback -- drawn at Gen1's offsets the
+    -- whole overlay sat a full 16px right of the Gen2 machine.
+    local monitor = (def and def.monitor) or { { 44, 20 } }
+    local balls = (def and def.balls) or HEAL_BALL_XY
+    love.graphics.setColor(1, 1, 1, 1)
+    for _, m in ipairs(monitor) do
+      love.graphics.draw(img, self.healMachineQuads[1], ox + m[1], oy + m[2])
+    end
+    for i = 1, math.min(ha.lit, #balls) do
+      local b = balls[i]
+      if b[3] then -- right column: OAM_XFLIP
+        love.graphics.draw(img, self.healMachineQuads[2],
+                           ox + b[1] + 8, oy + b[2], 0, -1, 1)
+      else
+        love.graphics.draw(img, self.healMachineQuads[2],
+                           ox + b[1], oy + b[2])
+      end
+    end
+    if shader then love.graphics.setShader() end
+  end
+end
+
+-- the Cut/boulder dust puff: the smoke tile drawn 2x2 over the cell,
+-- flickering (AnimateBoulderDust XORs the OBJ palette every step)
+function OverworldState:_worldFxDust(cam)
+  if not self.dustAnim then return end
+  local fxDef = Game.data.field.overworldFx
+  local smoke = fxDef and fxDef.smoke
+  if smoke then
+    if self.smokeImg == nil then
+      local ok, img = pcall(love.graphics.newImage, smoke.path)
+      self.smokeImg = ok and img or false
+    end
+    if self.smokeImg then
+      local da = self.dustAnim
+      local dx = da.x * 16 - cam.x
+      local dy = da.y * 16 - cam.y
+      local flicker = math.floor(da.frames / 4) % 2 == 0
+      love.graphics.setColor(1, 1, 1, flicker and 1 or 0.55)
+      for i = 0, 1 do
+        for j = 0, 1 do
+          love.graphics.draw(self.smokeImg, dx + i * 8, dy + j * 8)
+        end
+      end
+      love.graphics.setColor(1, 1, 1, 1)
+    end
+  end
+end
+
+-- FireRed's S.S. Anne departure uses two ordinary OBJ sprites that are not
+-- object events: a looping 16x32 wake behind the ship and 16x16 smoke puffs
+-- from its funnel.  Special 401 owns their exact lifetime/positions; this
+-- pass only turns that state into the extracted ROM frames.
+function OverworldState:_worldSsAnneArt(cam)
+  local def = Game.data.constants and Game.data.constants.gen3SSAnneFx
+  if not def then return nil end
+  if self.ssAnneWakeImg == nil then
+    local ok, img = pcall(Assets.image, def.wake)
+    self.ssAnneWakeImg = ok and img or false
+  end
+  if self.ssAnneSmokeImg == nil then
+    local ok, img = pcall(Assets.image, def.smoke)
+    self.ssAnneSmokeImg = ok and img or false
+  end
+  if self.ssAnneWakeImg and not self.ssAnneWakeQuads then
+    local w, h = self.ssAnneWakeImg:getDimensions()
+    self.ssAnneWakeQuads = {
+      love.graphics.newQuad(0, 0, 16, 32, w, h),
+      love.graphics.newQuad(16, 0, 16, 32, w, h),
+    }
+  end
+  if self.ssAnneSmokeImg and not self.ssAnneSmokeQuads then
+    local w, h = self.ssAnneSmokeImg:getDimensions()
+    self.ssAnneSmokeQuads = {}
+    for i = 0, 3 do
+      self.ssAnneSmokeQuads[i + 1] = love.graphics.newQuad(i * 16, 0, 16, 16, w, h)
+    end
+  end
+  return self.ssAnneWakeImg, self.ssAnneSmokeImg
+end
+
+function OverworldState:_worldFxSSAnneWake(cam)
+  local fx = self.ssAnneDepartureFx
+  if not (fx and fx.boat) then return end
+  local wake = self:_worldSsAnneArt(cam)
+  if not (wake and self.ssAnneWakeQuads) then return end
+  local age = math.min(fx.wakeAge or 0, 132)
+  local cx = fx.boat.px + (fx.boat.shiftPx or 0) + 8 - cam.x
+             + 80 + math.floor(age / 6)
+  if cx < -18 then return end
+  local frame = math.floor(age / 12) % 2 + 1
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(wake, self.ssAnneWakeQuads[frame],
+                     math.floor(cx - 8), 109 - 16)
+end
+
+function OverworldState:_worldFxSSAnneSmoke(cam)
+  local fx = self.ssAnneDepartureFx
+  if not (fx and fx.smoke and #fx.smoke > 0) then return end
+  local _, smoke = self:_worldSsAnneArt(cam)
+  if not (smoke and self.ssAnneSmokeQuads) then return end
+  love.graphics.setColor(1, 1, 1, 1)
+  for _, puff in ipairs(fx.smoke) do
+    local age = puff.age or 0
+    local frame
+    if age < 10 then frame = 1
+    elseif age < 30 then frame = 2
+    elseif age < 50 then frame = 3
+    else frame = 4 end
+    local cx = puff.x + math.floor(age / 4)
+    love.graphics.draw(smoke, self.ssAnneSmokeQuads[frame],
+                       math.floor(cx - 8), 78 - 8)
+  end
+end
+
+-- the watering can's water: droplets arcing down onto the soil, and a
+-- sparkle on the last few frames as it soaks in
+function OverworldState:_worldFxWater(cam)
+  if not self.waterAnim then return end
+  local wa = self.waterAnim
+  local total = wa.total or 40
+  local age = total - wa.frames
+  local dx = wa.x * 16 - cam.x
+  local dy = wa.y * 16 - cam.y
+  love.graphics.setColor(0.55, 0.80, 0.98, 0.95)
+  for i = 0, 5 do
+    -- each droplet falls on its own phase, so they read as a stream
+    local t = ((age * 3 + i * 7) % 24) / 24
+    local px = dx + 2 + i * 2 + t * 10
+    local py = dy - 6 + t * 20
+    if py < dy + 16 then
+      love.graphics.rectangle("fill", px, py, 2, 3)
+    end
+  end
+  -- the soak: a brief bright ring once the water has been falling a while
+  if age > total * 0.55 then
+    local k = (age - total * 0.55) / (total * 0.45)
+    love.graphics.setColor(1, 1, 1, 0.8 * (1 - k))
+    love.graphics.rectangle("fill", dx + 2, dy + 12, 12, 2)
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- the cut tree splitting apart (AnimCut): top half slides right,
+-- bottom half slides left, 1px per frame, flickering as they go
+function OverworldState:_worldFxCutTree(cam)
+  if not self.cutAnim then return end
+  local fxDef = Game.data.field.overworldFx
+  local tree = fxDef and fxDef.cutTree
+  if not tree then return end
+  if self.cutTreeImg == nil then
+    local ok, img = pcall(love.graphics.newImage, tree.path)
+    self.cutTreeImg = ok and img or false
+  end
+  local img = self.cutTreeImg
+  if not img then return end
+  if not self.cutTreeQuads then
+    local w, h = img:getWidth(), img:getHeight()
+    self.cutTreeQuads = {
+      love.graphics.newQuad(0, 0, 16, 8, w, h), -- top half
+      love.graphics.newQuad(0, 8, 16, 8, w, h), -- bottom half
+    }
+  end
+  local ca = self.cutAnim
+  local off = (ca.total or 8) - ca.frames
+  local dx = ca.x * 16 - cam.x
+  local dy = ca.y * 16 - cam.y
+  local flicker = ca.frames % 2 == 0
+  love.graphics.setColor(1, 1, 1, flicker and 1 or 0.55)
+  love.graphics.draw(img, self.cutTreeQuads[1], dx + off, dy)
+  love.graphics.draw(img, self.cutTreeQuads[2], dx - off, dy + 8)
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+-- the "!" bubble above a trainer who spotted the player
+-- the tile-anchored sparkle: an OAM sprite in the cartridge, so it rides
+-- the camera the way a body does rather than the background's shake
+function OverworldState:_worldFxSparkle(cam)
+  love.graphics.setColor(1, 1, 1, 1)
+  self:drawSparkles(cam.x, cam.y)
+end
+
+-- ...and ONE of them, for the two paths that cannot draw the set in screen
+-- space: each sparkle sits on its own cell, so a projected scene has to
+-- anchor each one separately.  The upvalue is set immediately before each
+-- call and cleared after, which is the same shape the emote path uses for
+-- the one NPC it belongs to.
+function OverworldState:_worldFxSparkleOne(cam, item)
+  local s = item
+  if not s then return end
+  local sprite = self:sparkleSprite()
+  if not sprite then return end
+  local frame = self:sparkleFrame(s.clock)
+  if not frame then return end
+  love.graphics.setColor(1, 1, 1, 1)
+  sprite:drawFixedFrame(s.px, s.py + 4, cam.x, cam.y, frame)
+end
+
+-- THE POKE RADAR'S PATCHES, one at a time like the sparkles
+function OverworldState:_worldFxRadarOne(cam, item)
+  local pt = item
+  if not pt then return end
+  require("src.world.Gen4Radar").drawPatch(pt, pt.x * 16 - cam.x, pt.y * 16 - cam.y,
+                                           love.timer and love.timer.getTime() * 60 or 0)
+end
+
+function OverworldState:_worldFxRadar(cam)
+  for _, pt in ipairs((self.gen4Radar and self.gen4Radar.active and self.gen4Radar.patches) or {}) do
+    if pt.active then self:_worldFxRadarOne(cam, pt) end
+  end
+  radarOne = nil
+end
+
+function OverworldState:_worldFxEmote(cam)
+  if not (self.emote and self.emote.npc) then return end
+  -- bubble = false is a silent hold (a Pikachu emotion that plays a
+  -- cry with no bubble still pauses the world for its beat)
+  if self.emote.bubble == false then return end
+  local npc = self.emote.npc
+  -- SINNOH'S OWN BUBBLE, ON TOP OF THE HEAD, IN THE GROUND'S PROJECTION.
+  --
+  -- Reported from play: *"were missing the proper exclamation point above
+  -- trainers when they see you for battle and its not above their heads"*.
+  -- Platinum had neither art source below, so it fell to the hand-drawn box,
+  -- placed with flat 2D arithmetic that knows nothing of terrain height or
+  -- the tilt -- so it landed across the face.
+  --
+  -- The cartridge (src/overlay005/ov5_021F5A10.c, see Gen4Emotes): a 16x16
+  -- billboard from fldeff.narc whose plane rises 0..16 from an anchor 32
+  -- units above the owner's drawn position -- the top of a 32-unit
+  -- character -- bouncing 6, 10, 12, 12, 10, 6, 0 and then holding. So the
+  -- bubble's bottom edge sits on the sprite's top edge, centred on it, and
+  -- it is drawn through exactly the transform the sprite is: the same
+  -- terrain rise, and `freeEntity` when a 3D camera owns the frame.
+  local g4emotes = Game.data and Game.data.gen4_emotes
+  local g4ground = self.map and self.map.renderer and self.map.renderer.gen4Ground
+  if g4emotes and g4ground and npc.sprite then
+    local Gen4Emotes = require("src.import.Gen4Emotes")
+    local kind = (self.emote.bubble == "double" or self.emote.bubble == 2)
+      and g4emotes.double and "double" or "exclamation"
+    -- BW's "?", note and "..." by name (Gen5MoveExec), when the cache has them
+    local named = self.emote.bubble
+    if type(named) == "string" and named ~= "double" and type(g4emotes[named]) == "table" then
+      kind = named
+    end
+    local record = g4emotes[kind]
+    self.gen4EmoteImages = self.gen4EmoteImages or {}
+    local img = self.gen4EmoteImages[kind]
+    if img == nil and record and record.rgba then
+      local okI, made = pcall(function()
+        local data = love.image.newImageData(record.width, record.height,
+                                             "rgba8", record.rgba)
+        local image = love.graphics.newImage(data)
+        image:setFilter("nearest", "nearest")
+        return image
+      end)
+      img = okI and made or false
+      self.gen4EmoteImages[kind] = img
+    end
+    if img then
+      local age = math.max(0, (self.emote.totalFrames or Gen4Emotes.FRAMES)
+                              - (self.emote.frames or 0))
+      -- HEARTGOLD / SOULSILVER: the cartridge's own anchor, 32 world units
+      -- over the owner through the camera now drawing, the player
+      -- included (src/world/Gen4EmoteDraw.lua); Platinum below, unchanged
+      local EmoteDraw = require("src.world.Gen4EmoteDraw")
+      if EmoteDraw.applies(self.map) then
+        EmoteDraw.draw(self, g4ground, npc, cam, record, img, age)
+        return
+      end
+      local bx, by, rise = OverworldState.gen4EmoteSpot(g4ground, npc, cam,
+                                                        record, age)
+      local function draw()
+        love.graphics.setColor(1, 1, 1, 1)
+        love.graphics.draw(img, bx, by)
+      end
+      local free = g4ground.freeMode and g4ground:freeMode()
+      if free then
+        -- Depth-tested where the cartridge's billboard actually is -- the
+        -- middle of a bubble 32 units up -- not at its trainer's feet.
+        g4ground:freeEntity(npc.px or 0, npc.py or 0, cam.x, cam.y, rise, draw,
+                            Gen4Emotes.LIFT + 8)
+      else
+        draw()
+      end
+      return
+    end
+  end
+  -- WHERE IT HANGS, which the cartridge states outright.
+  --
+  -- Reported from play: the bubble "should appear above the trainers head".
+  -- It was four pixels right of them and six low, which on a 16x32 walker
+  -- put it across the face rather than over it.
+  --
+  -- The icon's own sprite callback (0B4724) copies the owner's position
+  -- every frame and offsets it by exactly one thing:
+  --
+  --     icon->x  = owner->x
+  --     icon->y  = owner->y - 16
+  --
+  -- and a GBA sprite's x/y is its CENTRE (the corner comes from
+  -- centerToCornerVec), so this is "the icon's centre sits sixteen pixels
+  -- above the owner's" -- which is a different top-left offset for a 16x16
+  -- object than for a 16x32 one, and is why one number could never be right
+  -- for both.  Stated as centres it falls out the same for either: the x
+  -- offsets cancel whatever the sprite's width, and the y is the owner's
+  -- half-height less the icon's eight plus the sixteen.
+  local half = math.floor(((npc.sprite and npc.sprite.tileH) or 16) / 2)
+  local ex = npc.px - cam.x
+  local ey = npc.py - cam.y - 12 - half
+  local bubble = Game.data.field.emotionBubbles
+  local drawn = false
+
+  -- HOENN'S OWN BUBBLE, which is not on the Game Boy's sheet.
+  --
+  -- The "!" over a trainer's head is three 16x16 icons hanging off a sprite
+  -- template that only a field-effect script reaches (see extractEmotes) --
+  -- which is why every sweep of the field-effect tables missed it.  A Gen 3
+  -- dataset that has them draws them; one that does not falls through to
+  -- the Game Boy sheet and then to the box below, exactly as before.
+  local icons = (Game.data.constants or {}).gen3Emotes
+  if icons then
+    local role = GEN3_EMOTE_ROLES[self.emote.bubble or 1] or "exclamation"
+    local record = icons[role]
+    local path = record and record.image
+    if path then
+      self.gen3EmoteImages = self.gen3EmoteImages or {}
+      local held = self.gen3EmoteImages[path]
+      if held == nil then
+        local okImg, img = pcall(require("src.render.Assets").image, path)
+        held = (okImg and img) or false
+        self.gen3EmoteImages[path] = held
+      end
+      if held then
+        local age = math.max(0, (self.emote.totalFrames or 60)
+                                - self.emote.frames)
+        local frame = 0
+        local left = age
+        for _, step in ipairs(record.timeline or {}) do
+          local duration = tonumber(step[2]) or 1
+          if left < duration then
+            frame = tonumber(step[1]) or 0
+            break
+          end
+          left = left - duration
+          frame = tonumber(step[1]) or frame
+        end
+        -- SpriteCB_TrainerIcons starts data[3] at -5, accumulates it into
+        -- data[4], and increments that velocity until the offset returns 0.
+        local bounce, velocity = 0, -5
+        for _ = 1, math.min(age + 1, 11) do
+          bounce = bounce + velocity
+          if bounce ~= 0 then velocity = velocity + 1 else velocity = 0 end
+        end
+        local fw, fh = tonumber(record.width) or 16, tonumber(record.height) or 16
+        local iw, ih = held:getDimensions()
+        local q = nil
+        if (tonumber(record.frames) or 1) > 1 then
+          self.gen3EmoteQuads = self.gen3EmoteQuads or {}
+          local key = path .. ":" .. tostring(frame)
+          q = self.gen3EmoteQuads[key]
+          if not q then
+            q = love.graphics.newQuad(frame * fw, 0, fw, fh, iw, ih)
+            self.gen3EmoteQuads[key] = q
+          end
+        end
+        love.graphics.setColor(1, 1, 1, 1)
+        if q then love.graphics.draw(held, q, ex, ey + bounce)
+        else love.graphics.draw(held, ex, ey + bounce) end
+        drawn = true
+      end
+    end
+  end
+  if not drawn and bubble and bubble.path then
+    local ok, img = pcall(function()
+      self.emoteImg = self.emoteImg or obpEmoteImage(bubble.path)
+      return self.emoteImg
+    end)
+    -- EXCLAMATION_BUBBLE is index 0 -> first crop; the emote command
+    -- picks question/happy crops instead
+    local bi = self.emote.bubble or 1
+    local rect = bubble.bubbles and bubble.bubbles[bi]
+    if ok and img and rect then
+      love.graphics.setColor(1, 1, 1, 1)
+      -- one Quad per bubble crop, cached: this draws every frame the "!"
+      -- (or the emote-command crops) is up, so a fresh Quad here churned
+      -- the GC.  The bubble set is small and fixed, so the cache is bounded.
+      self.emoteQuads = self.emoteQuads or {}
+      local q = self.emoteQuads[bi]
+      if not q then
+        q = love.graphics.newQuad(rect.x, rect.y, rect.w, rect.h,
+                                  img:getDimensions())
+        self.emoteQuads[bi] = q
+      end
+      love.graphics.draw(img, q, ex, ey)
+      drawn = true
+    end
+  end
+  if not drawn then
+    local Font = require("src.render.Font")
+    love.graphics.setColor(1, 1, 1, 1)
+    love.graphics.rectangle("fill", ex, ey, 10, 12)
+    love.graphics.setColor(0, 0, 0, 1)
+    love.graphics.rectangle("line", ex + 0.5, ey + 0.5, 10, 12)
+    Font.draw("!", ex + 1, ey + 2)
+    love.graphics.setColor(1, 1, 1, 1)
+  end
+end
+
+-- the FLY bird sweeping off with the player
+function OverworldState:_worldFxBird(cam)
+  if not self.flyAnim then return end
+  -- FireRed has a dedicated five-frame 64x64 field-effect bird.  Frames 1
+  -- and 3 already contain Red/Leaf riding it during fly-out, so use the
+  -- cartridge sheet directly instead of substituting the selected mon's
+  -- battle front sprite.
+  local frlg = Game.data.constants and Game.data.constants.gen3FRLGFlyBird
+  if frlg and frlg.path then
+    if self.flyBirdImg == nil then
+      local ok, img = pcall(love.graphics.newImage, frlg.path)
+      self.flyBirdImg = ok and img or false
+    end
+    if self.flyBirdImg then
+      local gender = ((Game.save or {}).player or {}).gender == "girl"
+                     and "girl" or "boy"
+      local frame = ((frlg.flyOut or {})[gender]) or (gender == "girl" and 3 or 1)
+      local fw = frlg.frameWidth or 64
+      local fh = frlg.frameHeight or 64
+      self.flyBirdQuads = self.flyBirdQuads or {}
+      if not self.flyBirdQuads[frame] then
+        local iw, ih = self.flyBirdImg:getDimensions()
+        self.flyBirdQuads[frame] = love.graphics.newQuad(
+          0, frame * fh, fw, fh, iw, ih)
+      end
+      local t = math.max(0, math.min(48, 48 - self.flyAnim.frames))
+      local reach = 16
+      local dx, dy
+      if t <= reach then
+        local k = 1 - t / reach
+        dx, dy = -96 * k, -72 * k
+      else
+        local k = (t - reach) / (48 - reach)
+        dx, dy = -120 * k * k, -96 * k * k
+      end
+      local px = math.floor(self.player.px - cam.x + 8 - fw / 2 + dx)
+      local py = math.floor(self.player.py - cam.y + 8 - fh / 2 + dy)
+      love.graphics.setColor(1, 1, 1, 1)
+      love.graphics.draw(self.flyBirdImg, self.flyBirdQuads[frame], px, py)
+      require("src.render.PaletteFX").markTrueColor(px, py, fw, fh)
+      return
+    end
+  end
+  local birdId = FieldDefaults.fieldValue(Game.data, "playerSprites", "fly")
+  if not self.birdSprite and birdId and Game.data.sprites[birdId] then
+    local SR = require("src.render.SpriteRenderer")
+    self.birdSprite = SR.new(Game.data.sprites[birdId])
+  end
+  if self.birdSprite then
+    local t = 48 - self.flyAnim.frames
+    local bx = self.player.px - t * 4
+    local by = self.player.py - math.floor(t * 1.5)
+    love.graphics.setColor(1, 1, 1, 1)
+    self.birdSprite:draw(bx, by, cam.x, cam.y, "left",
+                         math.floor(t / 4) % 2, false)
+    return
+  end
+
+  -- Legacy fallback for datasets that predate the ROM-extracted FireRed
+  -- bird above.  Keep it for old caches/other games, but current FireRed
+  -- imports should never reach this branch.
+  --
+  -- Reported from play, twice: "ensure the animation of the flying type
+  -- pokemon swooping up my player plays after the fly hm transition" and
+  -- then "Theres still no fly swoop".  The machinery above has been here the
+  -- whole time and has never had a sprite to draw: it wants
+  -- playerSprites.fly, and no Gen 3 cache carries one.
+  --
+  -- IT WAS LOOKED FOR PROPERLY THIS TIME, and it is not where a sheet like
+  -- that would be.  Emerald's fly bird is not an object-event graphics row
+  -- -- the three 64x64 rows in that table are Rayquaza twice and the cable
+  -- car, and every 32x32 row is a person or a legendary -- and it is not
+  -- hanging off any field-effect script either: not one of the sixty-seven
+  -- scripts loads tiles, and no native any of them calls reaches a sprite
+  -- template with frames that size.  It is loaded by C, from a sheet only
+  -- the fly task names, and nothing the import can currently follow gets to
+  -- it.
+  --
+  -- So the departure is drawn with something this port certainly does have
+  -- and the cartridge's own bird is not: the FRONT SPRITE OF THE POKEMON
+  -- THAT IS ACTUALLY CARRYING YOU -- the same one the field-move sweep just
+  -- showed.  It stoops in from the upper left, meets the player, and lifts
+  -- away with them.  Reconstructed, and said so; the moment the bird IS
+  -- found, playerSprites.fly makes the branch above win again and this is
+  -- never reached.
+  local mon = self.flyAnim.mon
+  if not mon then return end
+  if self.flyMonImg == nil then
+    local okPath, path = pcall(function()
+      return require("src.pokemon.Sprites").path(
+        Game.data, mon.species, "front", { mon = mon })
+    end)
+    local img
+    if okPath and type(path) == "string" then
+      local okImg, loaded = pcall(love.graphics.newImage, path)
+      img = okImg and loaded or nil
+    end
+    self.flyMonImg = img or false
+  end
+  if not self.flyMonImg then return end
+  local total = 48
+  local t = math.max(0, math.min(total, total - self.flyAnim.frames))
+  -- the stoop: in over sixteen frames, away over the rest, and the two
+  -- meet on the player rather than anywhere else
+  local reach = 16
+  local dx, dy
+  if t <= reach then
+    local k = 1 - t / reach
+    dx, dy = -96 * k, -72 * k
+  else
+    local k = (t - reach) / (total - reach)
+    dx, dy = -120 * k * k, -96 * k * k
+  end
+  local iw, ih = self.flyMonImg:getDimensions()
+  local px = math.floor(self.player.px - cam.x + 8 - iw / 2 + dx)
+  local py = math.floor(self.player.py - cam.y + 8 - ih / 2 + dy)
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(self.flyMonImg, px, py)
+  require("src.render.PaletteFX").markTrueColor(px, py, iw, ih)
+end
+
+-- fishing pose: the rod tile over the faced water (gfx/fishing.asm)
+function OverworldState:_worldFxRod(cam)
+  if not self.fishing then return end
+  local fx = Game.data.field.overworldFx
+  local rod = fx and fx.fishingRod
+  if rod then
+    if self.rodImg == nil then
+      local ok, img = pcall(love.graphics.newImage, rod.path)
+      self.rodImg = ok and img or false
+    end
+    if self.rodImg then
+      local p = self.player
+      local oam = ROD_OAM[self.fishing.facing] or ROD_OAM.down
+      if not self.rodQuads then
+        -- one quad per 8x8 tile of the stacked sheet (ROD_OAM.tile)
+        local iw, ih = self.rodImg:getDimensions()
+        self.rodQuads = {}
+        for i = 0, math.floor(ih / 8) - 1 do
+          self.rodQuads[i] = love.graphics.newQuad(0, i * 8, 8, 8, iw, ih)
+        end
+      end
+      local quad = self.rodQuads[oam.tile]
+      -- the sprite's top-left is 4px above its cell (SpriteRenderer:draw)
+      local rx = p.px - cam.x + oam.dx
+      local ry = p.py - cam.y - 4 + oam.dy
+      love.graphics.setColor(1, 1, 1, 1)
+      if quad and oam.flip then
+        love.graphics.draw(self.rodImg, quad, rx + 8, ry, 0, -1, 1)
+      elseif quad then
+        love.graphics.draw(self.rodImg, quad, rx, ry)
+      end
+    end
+  end
+end
+
+function OverworldState:_worldRise(e, groundForRise, groundSin, cam)
+  if not groundForRise then return 0 end
+  local rise = groundForRise:rise(e.px + (e.shiftPx or 0) + 8, e.py + 8)
+  -- A SPRITE OFFSET (MapObject_SetSpritePosOffset: the surf mount's ride,
+  -- the Distortion World cast's flights) in the field view: up by the
+  -- camera's height lean, toward it by the ground's
+  local so = e.spriteOffset
+  if so and (so.lift or so.oz) then
+    rise = rise + (so.lift or 0) * (groundForRise.heightScale or 0)
+                - (so.oz or 0) * (groundForRise.groundScale or 1)
+  end
+  if groundSin >= 1 then return rise end
+  return (e.py - cam.y) * (1 - groundSin) + rise
+end
+
+function OverworldState:_worldDrawEntity(e, cam, bgY, freeGround, groundForRise, groundSin, grassColors, spriteDepthGround, shadows, riseOf, gymFog)
+  if not (self.flyAnim and self:hasFlyBird() and e == self.player)
+     and not e.hidden and not e.berryVisualEmpty and not plotIsEmpty(e) then
+    -- A FREE CAMERA PLACES ITS OWN CHARACTERS.
+    --
+    -- Reported from play: *"isnt keeping the player the right size"*, with a
+    -- screenshot of a third-person Twinleaf in correct perspective and two
+    -- characters standing in it at flat 2D scale.  They were drawn by the
+    -- line below, which places every sprite at `py - camY` -- the field
+    -- camera's 1:1 mapping, and simply not this camera's.
+    --
+    -- `freeEntity` runs THIS SAME DRAW inside a transform, so nothing here
+    -- learns about projection and the entity keeps owning its own sprite,
+    -- frame and palette.
+    --
+    -- In FIRST person the player is the eye, so drawing them puts their own
+    -- back across the middle of the view.
+    if freeGround then
+      if not (freeGround:freeMode() == "first" and e == self.player) then
+        local rise = riseOf(self, e, groundForRise, groundSin, cam)
+        -- ...AND WHICH WAY THEY FACE ON SCREEN.
+        --
+        -- Reported from play: *"when i orbit the camera 180 degrees if i
+        -- walk left it looks like hes walking right"*.  `screenToWorld`
+        -- turns the PRESS into a world direction, so the step is right;
+        -- the sprite then showed that world facing under a camera that is
+        -- no longer looking north, so the artwork was the one thing still
+        -- in the old frame.  `worldToScreen` is its inverse, and the pair
+        -- are inverses because the camera sits between them.
+        --
+        -- Set and restored around the draw rather than threaded through,
+        -- because `facing` is what every pose, animation and follower path
+        -- in the entity reads, and none of them should learn about cameras.
+        local view, saved = freeGround.view3d, e.facing
+        if view and view.worldToScreen then
+          e.facing = view:worldToScreen(saved)
+        end
+        local fogRow = GameVersion.isGen4() and self.map and self.map.def
+          and self.map.def.gen4DepthFog
+        local fogged = GameVersion.isGen4()
+          and not (type(fogRow) == "table" and fogRow.exempt and fogRow.exempt(e, self))
+        freeGround:freeEntity((e.px or 0), (e.py or 0), cam.x, cam.y, rise,
+                              function() e:draw(cam.x, cam.y + rise) end,
+                              nil, require("src.world.Gen4SurfMount").poseFor(e, e == self.player and self.dwPose or nil), fogged)
+        e.facing = saved
+      end
+      -- Deliberately without the flat shadow and the grass overdraw below:
+      -- both are drawn in screen space against a ground plane this camera
+      -- does not have, and a shadow in the wrong place is worse than none.
+      return
+    end
+    -- IN THE WORLD'S DEPTH on Sinnoh's cartridge camera
+    -- (Gen4Ground:beginSprites): the billboard origin's depth, so a prop in
+    -- front of a character hides them; nil leaves the draw as it was
+    local depth = spriteDepthGround and spriteDepthGround:billboardDepth(
+      (e.px or 0) + (e.shiftPx or 0), e.py or 0,
+      e.spriteOffset and e.spriteOffset.lift, e.spriteOffset and e.spriteOffset.oz)
+    -- UNDER the sprite, and lifted by the same terrain rise it is, so a
+    -- character on a slope keeps their feet on it.
+    if shadows then
+      if depth then
+        spriteDepthGround:withSpriteDepth(depth, function()
+          shadows:draw(self.map, e, cam.x, cam.y, e == self.player, riseOf(self, e, groundForRise, groundSin, cam))
+        end, false)
+      else
+        shadows:draw(self.map, e, cam.x, cam.y, e == self.player, riseOf(self, e, groundForRise, groundSin, cam))
+      end
+    end
+    local fogLeft = gymFog and gymFog(e)
+    if fogLeft then love.graphics.setColor(fogLeft, fogLeft, fogLeft, 1) end
+    if depth then
+      spriteDepthGround:withSpriteDepth(depth, function() e:draw(cam.x, cam.y + riseOf(self, e, groundForRise, groundSin, cam)) end)
+    else
+      e:draw(cam.x, cam.y + riseOf(self, e, groundForRise, groundSin, cam))
+    end
+    if fogLeft then love.graphics.setColor(1, 1, 1, 1) end
+    -- tall grass overdraws the sprite's feet (GB sprite priority);
+    -- the overdraw is BG tiles, so it rides the shake offset too
+    love.graphics.setColor(1, 1, 1, 1)
+    if self.map:isGrassCell(e.cellX, e.cellY) then
+      if not self:drawGen3Grass(e.cellX, e.cellY, cam.x, bgY,
+                                self:gen3GrassFrame(e, false)) then
+        self.map.renderer:drawCellBottom(e.cellX, e.cellY, cam.x, bgY)
+        if grassColors then
+          self.map.renderer:markCellBottomRedraw(e.cellX, e.cellY,
+                                                 cam.x, bgY, grassColors)
+        end
+      end
+    end
+    if e.targetX and self.map:isGrassCell(e.targetX, e.targetY) then
+      if not self:drawGen3Grass(e.targetX, e.targetY, cam.x, bgY,
+                                self:gen3GrassFrame(e, true)) then
+        self.map.renderer:drawCellBottom(e.targetX, e.targetY, cam.x, bgY)
+        if grassColors then
+          self.map.renderer:markCellBottomRedraw(e.targetX, e.targetY,
+                                                 cam.x, bgY, grassColors)
+        end
+      end
+    end
+  end
+end
+
+function OverworldState:_worldAim(renderer, ox, oy, feetX, feetZ)
+  local g4 = renderer and renderer.gen4Ground
+  if g4 then
+    if ox then g4.focusX, g4.focusZ = feetX - ox, feetZ - oy
+    else g4.focusX, g4.focusZ = nil, nil end
+  end
+end
+
+-- Private cell columns never cross the public rippleCells seam.
+local nativeRippleCells = OverworldState.rippleCells
+function OverworldState:_worldAddCoverCell(pool, cx, cy)
+  local key = cx * 4096 + cy
+  if pool.seen[key] then return end
+  pool.seen[key] = true
+  local n = pool.n + 1
+  pool.n, pool.x[n], pool.y[n] = n, cx, cy
+end
+
+function OverworldState:_worldReflectionCover(reflectors, count, renderer, cam, bgY)
+  local pool = self._worldCover
+  if not pool then
+    pool = {x={}, y={}, seen={}, n=0}
+    self._worldCover = pool
+  elseif pool.busy then
+    pool = {x={}, y={}, seen={}, n=0}
+  end
+  pool.busy = true
+  local oldN = pool.n
+  pool.n = 0
+  for key in pairs(pool.seen) do pool.seen[key] = nil end
+  for i = 1, count do
+    local cx0, cy0, cx1, cy1 = self:reflectionRect(reflectors[i])
+    if cx0 then
+      for cy = cy0, cy1 do
+        for cx = cx0, cx1 do self:_worldAddCoverCell(pool, cx, cy) end
+      end
+    end
+  end
+  for _, r in ipairs(self.ripples or {}) do
+    for cy = math.floor(r.py / 16), math.floor((r.py + 15) / 16) do
+      for cx = math.floor(r.px / 16), math.floor((r.px + 15) / 16) do
+        self:_worldAddCoverCell(pool, cx, cy)
+      end
+    end
+  end
+  for i = pool.n + 1, oldN do pool.x[i], pool.y[i] = nil, nil end
+  for i = 1, pool.n do
+    renderer:drawReflectionCover(pool.x[i], pool.y[i], cam.x, bgY)
+  end
+  pool.busy = nil
+end
+
+function OverworldState:_worldEntityLoop(drawEntity, cam, bgY, freeGround, groundForRise,
+                                          groundSin, grassColors, spriteDepthGround, shadows, riseOf, gymFog)
+  local onTop
+  for _, e in ipairs(self.entities) do
+    if self:gen3AboveTopLayer(e) then
+      onTop = onTop or {}
+      onTop[#onTop + 1] = e
+    else
+      drawEntity(self, e, cam, bgY, freeGround, groundForRise, groundSin,
+                 grassColors, spriteDepthGround, shadows, riseOf, gymFog)
+    end
+  end
+  return onTop
+end
+
 function OverworldState:drawWorld()
   -- Dark-map BG shade shift, armed for the whole frame before anything draws.
   -- home/fade.asm's LoadGBPal writes ONE rBGP for the screen, so terrain, the
@@ -17286,6 +18221,7 @@ function OverworldState:drawWorld()
   -- path below on the vanilla flat/tilt draw
   local override
   if not pipelineId then
+    local closeTiles = FrameProfile.section("  world: tiles")
     self.map.renderer:drawBorderFill(cam.x, bgY, vw, vh)
     self.map.renderer:draw(cam.x, bgY, vw, vh)
     for _, nb in ipairs(self.neighbors) do
@@ -17295,6 +18231,7 @@ function OverworldState:drawWorld()
     if self.g3MirageTower then
       require("src.world.Gen3MirageTower").drawTower(self, cam)
     end
+    closeTiles()
   end
   -- per-billboard SGB palette source; only needed (and only paid for) when
   -- tilting.  nil headless / on stale palettes -> billboards go uncolorized.
@@ -17312,638 +18249,23 @@ function OverworldState:drawWorld()
   -- in their historical order.  (Bodies are byte-identical to the pre-tilt
   -- inline code, so the flat draw sequence is unchanged.)
 
-  -- the Pokémon Center heal machine (PokeCenterOAMData): the monitor
-  -- tile over the machine's screen and one ball per healed mon in two
-  -- mirrored columns, all blinking during the jingle flash.  The GB
-  -- draws it at fixed screen coords with the player's cell BG-aligned
-  -- at (64,64); anchoring those coords to where the player stood keeps
-  -- the overlay on the machine at any zoom.
-  local function fxHeal()
-    if not self.healAnim then return end
-    local ha = self.healAnim
-    -- HOENN'S MACHINE IS NOT AN OAM TABLE.
-    --
-    -- Everything below this block is the Game Boy's: two 8x8 tiles out of
-    -- field.overworldFx.healMachine at coordinates a table in the ROM gives.
-    -- Emerald has no such table -- its machine is a field effect whose two
-    -- sprites are created by machine code, and where they go is four
-    -- immediates INSIDE that code.  extractHealMachine reads them, and the
-    -- record it writes carries the positions already measured from the corner
-    -- of the player's own cell, so nothing here has to know where the
-    -- cartridge's camera puts anybody.
-    if GameVersion.isGen4() then return end
-    if self:drawGen3Heal(ha, cam) then return end
-    local fxDef = Game.data.field.overworldFx
-    if self.healMachineImg == nil and fxDef and fxDef.healMachine then
-      local ok, img = pcall(love.graphics.newImage, fxDef.healMachine.path)
-      self.healMachineImg = ok and img or false
-    end
-    local img = self.healMachineImg
-    if img then
-      if not self.healMachineQuads then
-        local w, h = img:getWidth(), img:getHeight()
-        self.healMachineQuads = {
-          love.graphics.newQuad(0, 0, 8, 8, w, h), -- monitor ($7c)
-          love.graphics.newQuad(0, 8, 8, 8, w, h), -- ball ($7d)
-        }
-      end
-      -- The machine carries its OWN four colours.  HealMachineAnim.LoadPalettes
-      -- (04:$6434) copies them over OBJ palette 6 before the animation runs --
-      -- which is why every row of its OAM table names palette 6 -- and they are
-      -- white / light orange / red / black: a Poke Ball.  Nothing was applying
-      -- any palette at all, so the sheet drew in the DMG greys it is decoded
-      -- in and a Pokemon Center healed with grey balls.
-      local def = fxDef and fxDef.healMachine
-      local objPal = def and def.gen2ObjPal
-      local basePal = (objPal and objPal[1] and objPal) or PaletteFX.GRAYS
-      -- the jingle flash recolors the machine sprites in place
-      -- (FlashSprite8Times XORs rOBP1; the sprites never disappear):
-      -- ha.visible == false is the flashed half of each beat, drawn with
-      -- the light/dark shades swapped instead of skipped
-      local shader
-      if (not ha.visible) or basePal ~= PaletteFX.GRAYS then
-        shader = PaletteFX.shader()
-        if shader then
-          PaletteFX.sendColors(shader, ha.visible and basePal
-            or PaletteFX.permute(basePal, HEAL_FLASH_MAP))
-          love.graphics.setShader(shader)
-        end
-      end
-      -- TileRenderer windows with -floor(cam), so the overlay must use the
-      -- same snap or a fractional camera (odd fill/tilt view sizes) parks
-      -- the balls a pixel off the machine tiles
-      local ox = ha.px - 64 - math.floor(cam.x)
-      local oy = ha.py - 64 - math.floor(cam.y)
-      -- Gen2 puts these sprites somewhere else entirely.  Its
-      -- HealMachineAnim.PC_ElmsLab_OAM (04:$63BC) has the monitor at x 26/30
-      -- and the balls at x 24/32; Gen1's PokeCenterOAMData has the balls at
-      -- 40/48.  The extractor reads that OAM table straight off the cartridge
-      -- into field.overworldFx.healMachine, so use it where it exists and keep
-      -- the Gen1 constants as the fallback -- drawn at Gen1's offsets the
-      -- whole overlay sat a full 16px right of the Gen2 machine.
-      local monitor = (def and def.monitor) or { { 44, 20 } }
-      local balls = (def and def.balls) or HEAL_BALL_XY
-      love.graphics.setColor(1, 1, 1, 1)
-      for _, m in ipairs(monitor) do
-        love.graphics.draw(img, self.healMachineQuads[1], ox + m[1], oy + m[2])
-      end
-      for i = 1, math.min(ha.lit, #balls) do
-        local b = balls[i]
-        if b[3] then -- right column: OAM_XFLIP
-          love.graphics.draw(img, self.healMachineQuads[2],
-                             ox + b[1] + 8, oy + b[2], 0, -1, 1)
-        else
-          love.graphics.draw(img, self.healMachineQuads[2],
-                             ox + b[1], oy + b[2])
-        end
-      end
-      if shader then love.graphics.setShader() end
-    end
-  end
-
-  -- the Cut/boulder dust puff: the smoke tile drawn 2x2 over the cell,
-  -- flickering (AnimateBoulderDust XORs the OBJ palette every step)
-  local function fxDust()
-    if not self.dustAnim then return end
-    local fxDef = Game.data.field.overworldFx
-    local smoke = fxDef and fxDef.smoke
-    if smoke then
-      if self.smokeImg == nil then
-        local ok, img = pcall(love.graphics.newImage, smoke.path)
-        self.smokeImg = ok and img or false
-      end
-      if self.smokeImg then
-        local da = self.dustAnim
-        local dx = da.x * 16 - cam.x
-        local dy = da.y * 16 - cam.y
-        local flicker = math.floor(da.frames / 4) % 2 == 0
-        love.graphics.setColor(1, 1, 1, flicker and 1 or 0.55)
-        for i = 0, 1 do
-          for j = 0, 1 do
-            love.graphics.draw(self.smokeImg, dx + i * 8, dy + j * 8)
-          end
-        end
-        love.graphics.setColor(1, 1, 1, 1)
-      end
-    end
-  end
-
-  -- FireRed's S.S. Anne departure uses two ordinary OBJ sprites that are not
-  -- object events: a looping 16x32 wake behind the ship and 16x16 smoke puffs
-  -- from its funnel.  Special 401 owns their exact lifetime/positions; this
-  -- pass only turns that state into the extracted ROM frames.
-  local function ssAnneArt()
-    local def = Game.data.constants and Game.data.constants.gen3SSAnneFx
-    if not def then return nil end
-    if self.ssAnneWakeImg == nil then
-      local ok, img = pcall(Assets.image, def.wake)
-      self.ssAnneWakeImg = ok and img or false
-    end
-    if self.ssAnneSmokeImg == nil then
-      local ok, img = pcall(Assets.image, def.smoke)
-      self.ssAnneSmokeImg = ok and img or false
-    end
-    if self.ssAnneWakeImg and not self.ssAnneWakeQuads then
-      local w, h = self.ssAnneWakeImg:getDimensions()
-      self.ssAnneWakeQuads = {
-        love.graphics.newQuad(0, 0, 16, 32, w, h),
-        love.graphics.newQuad(16, 0, 16, 32, w, h),
-      }
-    end
-    if self.ssAnneSmokeImg and not self.ssAnneSmokeQuads then
-      local w, h = self.ssAnneSmokeImg:getDimensions()
-      self.ssAnneSmokeQuads = {}
-      for i = 0, 3 do
-        self.ssAnneSmokeQuads[i + 1] = love.graphics.newQuad(i * 16, 0, 16, 16, w, h)
-      end
-    end
-    return self.ssAnneWakeImg, self.ssAnneSmokeImg
-  end
-
-  local function fxSSAnneWake()
-    local fx = self.ssAnneDepartureFx
-    if not (fx and fx.boat) then return end
-    local wake = ssAnneArt()
-    if not (wake and self.ssAnneWakeQuads) then return end
-    local age = math.min(fx.wakeAge or 0, 132)
-    local cx = fx.boat.px + (fx.boat.shiftPx or 0) + 8 - cam.x
-               + 80 + math.floor(age / 6)
-    if cx < -18 then return end
-    local frame = math.floor(age / 12) % 2 + 1
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(wake, self.ssAnneWakeQuads[frame],
-                       math.floor(cx - 8), 109 - 16)
-  end
-
-  local function fxSSAnneSmoke()
-    local fx = self.ssAnneDepartureFx
-    if not (fx and fx.smoke and #fx.smoke > 0) then return end
-    local _, smoke = ssAnneArt()
-    if not (smoke and self.ssAnneSmokeQuads) then return end
-    love.graphics.setColor(1, 1, 1, 1)
-    for _, puff in ipairs(fx.smoke) do
-      local age = puff.age or 0
-      local frame
-      if age < 10 then frame = 1
-      elseif age < 30 then frame = 2
-      elseif age < 50 then frame = 3
-      else frame = 4 end
-      local cx = puff.x + math.floor(age / 4)
-      love.graphics.draw(smoke, self.ssAnneSmokeQuads[frame],
-                         math.floor(cx - 8), 78 - 8)
-    end
-  end
-
-  -- the watering can's water: droplets arcing down onto the soil, and a
-  -- sparkle on the last few frames as it soaks in
-  local function fxWater()
-    if not self.waterAnim then return end
-    local wa = self.waterAnim
-    local total = wa.total or 40
-    local age = total - wa.frames
-    local dx = wa.x * 16 - cam.x
-    local dy = wa.y * 16 - cam.y
-    love.graphics.setColor(0.55, 0.80, 0.98, 0.95)
-    for i = 0, 5 do
-      -- each droplet falls on its own phase, so they read as a stream
-      local t = ((age * 3 + i * 7) % 24) / 24
-      local px = dx + 2 + i * 2 + t * 10
-      local py = dy - 6 + t * 20
-      if py < dy + 16 then
-        love.graphics.rectangle("fill", px, py, 2, 3)
-      end
-    end
-    -- the soak: a brief bright ring once the water has been falling a while
-    if age > total * 0.55 then
-      local k = (age - total * 0.55) / (total * 0.45)
-      love.graphics.setColor(1, 1, 1, 0.8 * (1 - k))
-      love.graphics.rectangle("fill", dx + 2, dy + 12, 12, 2)
-    end
-    love.graphics.setColor(1, 1, 1, 1)
-  end
-
-  -- the cut tree splitting apart (AnimCut): top half slides right,
-  -- bottom half slides left, 1px per frame, flickering as they go
-  local function fxCutTree()
-    if not self.cutAnim then return end
-    local fxDef = Game.data.field.overworldFx
-    local tree = fxDef and fxDef.cutTree
-    if not tree then return end
-    if self.cutTreeImg == nil then
-      local ok, img = pcall(love.graphics.newImage, tree.path)
-      self.cutTreeImg = ok and img or false
-    end
-    local img = self.cutTreeImg
-    if not img then return end
-    if not self.cutTreeQuads then
-      local w, h = img:getWidth(), img:getHeight()
-      self.cutTreeQuads = {
-        love.graphics.newQuad(0, 0, 16, 8, w, h), -- top half
-        love.graphics.newQuad(0, 8, 16, 8, w, h), -- bottom half
-      }
-    end
-    local ca = self.cutAnim
-    local off = (ca.total or 8) - ca.frames
-    local dx = ca.x * 16 - cam.x
-    local dy = ca.y * 16 - cam.y
-    local flicker = ca.frames % 2 == 0
-    love.graphics.setColor(1, 1, 1, flicker and 1 or 0.55)
-    love.graphics.draw(img, self.cutTreeQuads[1], dx + off, dy)
-    love.graphics.draw(img, self.cutTreeQuads[2], dx - off, dy + 8)
-    love.graphics.setColor(1, 1, 1, 1)
-  end
-
-  -- the "!" bubble above a trainer who spotted the player
-  -- the tile-anchored sparkle: an OAM sprite in the cartridge, so it rides
-  -- the camera the way a body does rather than the background's shake
-  local function fxSparkle()
-    love.graphics.setColor(1, 1, 1, 1)
-    self:drawSparkles(cam.x, cam.y)
-  end
-
-  -- ...and ONE of them, for the two paths that cannot draw the set in screen
-  -- space: each sparkle sits on its own cell, so a projected scene has to
-  -- anchor each one separately.  The upvalue is set immediately before each
-  -- call and cleared after, which is the same shape the emote path uses for
-  -- the one NPC it belongs to.
-  local sparkleOne = nil
-  local function fxSparkleOne()
-    local s = sparkleOne
-    if not s then return end
-    local sprite = self:sparkleSprite()
-    if not sprite then return end
-    local frame = self:sparkleFrame(s.clock)
-    if not frame then return end
-    love.graphics.setColor(1, 1, 1, 1)
-    sprite:drawFixedFrame(s.px, s.py + 4, cam.x, cam.y, frame)
-  end
-
-  -- THE POKE RADAR'S PATCHES, one at a time like the sparkles
-  local radarOne = nil
-  local function fxRadarOne()
-    local pt = radarOne
-    if not pt then return end
-    require("src.world.Gen4Radar").drawPatch(pt, pt.x * 16 - cam.x, pt.y * 16 - cam.y,
-                                             love.timer and love.timer.getTime() * 60 or 0)
-  end
-  local function fxRadar()
-    for _, pt in ipairs((self.gen4Radar and self.gen4Radar.active and self.gen4Radar.patches) or {}) do
-      if pt.active then radarOne = pt; fxRadarOne() end
-    end
-    radarOne = nil
-  end
-
-  local function fxEmote()
-    if not (self.emote and self.emote.npc) then return end
-    -- bubble = false is a silent hold (a Pikachu emotion that plays a
-    -- cry with no bubble still pauses the world for its beat)
-    if self.emote.bubble == false then return end
-    local npc = self.emote.npc
-    -- SINNOH'S OWN BUBBLE, ON TOP OF THE HEAD, IN THE GROUND'S PROJECTION.
-    --
-    -- Reported from play: *"were missing the proper exclamation point above
-    -- trainers when they see you for battle and its not above their heads"*.
-    -- Platinum had neither art source below, so it fell to the hand-drawn box,
-    -- placed with flat 2D arithmetic that knows nothing of terrain height or
-    -- the tilt -- so it landed across the face.
-    --
-    -- The cartridge (src/overlay005/ov5_021F5A10.c, see Gen4Emotes): a 16x16
-    -- billboard from fldeff.narc whose plane rises 0..16 from an anchor 32
-    -- units above the owner's drawn position -- the top of a 32-unit
-    -- character -- bouncing 6, 10, 12, 12, 10, 6, 0 and then holding. So the
-    -- bubble's bottom edge sits on the sprite's top edge, centred on it, and
-    -- it is drawn through exactly the transform the sprite is: the same
-    -- terrain rise, and `freeEntity` when a 3D camera owns the frame.
-    local g4emotes = Game.data and Game.data.gen4_emotes
-    local g4ground = self.map and self.map.renderer and self.map.renderer.gen4Ground
-    if g4emotes and g4ground and npc.sprite then
-      local Gen4Emotes = require("src.import.Gen4Emotes")
-      local kind = (self.emote.bubble == "double" or self.emote.bubble == 2)
-        and g4emotes.double and "double" or "exclamation"
-      -- BW's "?", note and "..." by name (Gen5MoveExec), when the cache has them
-      local named = self.emote.bubble
-      if type(named) == "string" and named ~= "double" and type(g4emotes[named]) == "table" then
-        kind = named
-      end
-      local record = g4emotes[kind]
-      self.gen4EmoteImages = self.gen4EmoteImages or {}
-      local img = self.gen4EmoteImages[kind]
-      if img == nil and record and record.rgba then
-        local okI, made = pcall(function()
-          local data = love.image.newImageData(record.width, record.height,
-                                               "rgba8", record.rgba)
-          local image = love.graphics.newImage(data)
-          image:setFilter("nearest", "nearest")
-          return image
-        end)
-        img = okI and made or false
-        self.gen4EmoteImages[kind] = img
-      end
-      if img then
-        local age = math.max(0, (self.emote.totalFrames or Gen4Emotes.FRAMES)
-                                - (self.emote.frames or 0))
-        -- HEARTGOLD / SOULSILVER: the cartridge's own anchor, 32 world units
-        -- over the owner through the camera now drawing, the player
-        -- included (src/world/Gen4EmoteDraw.lua); Platinum below, unchanged
-        local EmoteDraw = require("src.world.Gen4EmoteDraw")
-        if EmoteDraw.applies(self.map) then
-          EmoteDraw.draw(self, g4ground, npc, cam, record, img, age)
-          return
-        end
-        local bx, by, rise = OverworldState.gen4EmoteSpot(g4ground, npc, cam,
-                                                          record, age)
-        local function draw()
-          love.graphics.setColor(1, 1, 1, 1)
-          love.graphics.draw(img, bx, by)
-        end
-        local free = g4ground.freeMode and g4ground:freeMode()
-        if free then
-          -- Depth-tested where the cartridge's billboard actually is -- the
-          -- middle of a bubble 32 units up -- not at its trainer's feet.
-          g4ground:freeEntity(npc.px or 0, npc.py or 0, cam.x, cam.y, rise, draw,
-                              Gen4Emotes.LIFT + 8)
-        else
-          draw()
-        end
-        return
-      end
-    end
-    -- WHERE IT HANGS, which the cartridge states outright.
-    --
-    -- Reported from play: the bubble "should appear above the trainers head".
-    -- It was four pixels right of them and six low, which on a 16x32 walker
-    -- put it across the face rather than over it.
-    --
-    -- The icon's own sprite callback (0B4724) copies the owner's position
-    -- every frame and offsets it by exactly one thing:
-    --
-    --     icon->x  = owner->x
-    --     icon->y  = owner->y - 16
-    --
-    -- and a GBA sprite's x/y is its CENTRE (the corner comes from
-    -- centerToCornerVec), so this is "the icon's centre sits sixteen pixels
-    -- above the owner's" -- which is a different top-left offset for a 16x16
-    -- object than for a 16x32 one, and is why one number could never be right
-    -- for both.  Stated as centres it falls out the same for either: the x
-    -- offsets cancel whatever the sprite's width, and the y is the owner's
-    -- half-height less the icon's eight plus the sixteen.
-    local half = math.floor(((npc.sprite and npc.sprite.tileH) or 16) / 2)
-    local ex = npc.px - cam.x
-    local ey = npc.py - cam.y - 12 - half
-    local bubble = Game.data.field.emotionBubbles
-    local drawn = false
-
-    -- HOENN'S OWN BUBBLE, which is not on the Game Boy's sheet.
-    --
-    -- The "!" over a trainer's head is three 16x16 icons hanging off a sprite
-    -- template that only a field-effect script reaches (see extractEmotes) --
-    -- which is why every sweep of the field-effect tables missed it.  A Gen 3
-    -- dataset that has them draws them; one that does not falls through to
-    -- the Game Boy sheet and then to the box below, exactly as before.
-    local icons = (Game.data.constants or {}).gen3Emotes
-    if icons then
-      local role = GEN3_EMOTE_ROLES[self.emote.bubble or 1] or "exclamation"
-      local record = icons[role]
-      local path = record and record.image
-      if path then
-        self.gen3EmoteImages = self.gen3EmoteImages or {}
-        local held = self.gen3EmoteImages[path]
-        if held == nil then
-          local okImg, img = pcall(require("src.render.Assets").image, path)
-          held = (okImg and img) or false
-          self.gen3EmoteImages[path] = held
-        end
-        if held then
-          local age = math.max(0, (self.emote.totalFrames or 60)
-                                  - self.emote.frames)
-          local frame = 0
-          local left = age
-          for _, step in ipairs(record.timeline or {}) do
-            local duration = tonumber(step[2]) or 1
-            if left < duration then
-              frame = tonumber(step[1]) or 0
-              break
-            end
-            left = left - duration
-            frame = tonumber(step[1]) or frame
-          end
-          -- SpriteCB_TrainerIcons starts data[3] at -5, accumulates it into
-          -- data[4], and increments that velocity until the offset returns 0.
-          local bounce, velocity = 0, -5
-          for _ = 1, math.min(age + 1, 11) do
-            bounce = bounce + velocity
-            if bounce ~= 0 then velocity = velocity + 1 else velocity = 0 end
-          end
-          local fw, fh = tonumber(record.width) or 16, tonumber(record.height) or 16
-          local iw, ih = held:getDimensions()
-          local q = nil
-          if (tonumber(record.frames) or 1) > 1 then
-            self.gen3EmoteQuads = self.gen3EmoteQuads or {}
-            local key = path .. ":" .. tostring(frame)
-            q = self.gen3EmoteQuads[key]
-            if not q then
-              q = love.graphics.newQuad(frame * fw, 0, fw, fh, iw, ih)
-              self.gen3EmoteQuads[key] = q
-            end
-          end
-          love.graphics.setColor(1, 1, 1, 1)
-          if q then love.graphics.draw(held, q, ex, ey + bounce)
-          else love.graphics.draw(held, ex, ey + bounce) end
-          drawn = true
-        end
-      end
-    end
-    if not drawn and bubble and bubble.path then
-      local ok, img = pcall(function()
-        self.emoteImg = self.emoteImg or obpEmoteImage(bubble.path)
-        return self.emoteImg
-      end)
-      -- EXCLAMATION_BUBBLE is index 0 -> first crop; the emote command
-      -- picks question/happy crops instead
-      local bi = self.emote.bubble or 1
-      local rect = bubble.bubbles and bubble.bubbles[bi]
-      if ok and img and rect then
-        love.graphics.setColor(1, 1, 1, 1)
-        -- one Quad per bubble crop, cached: this draws every frame the "!"
-        -- (or the emote-command crops) is up, so a fresh Quad here churned
-        -- the GC.  The bubble set is small and fixed, so the cache is bounded.
-        self.emoteQuads = self.emoteQuads or {}
-        local q = self.emoteQuads[bi]
-        if not q then
-          q = love.graphics.newQuad(rect.x, rect.y, rect.w, rect.h,
-                                    img:getDimensions())
-          self.emoteQuads[bi] = q
-        end
-        love.graphics.draw(img, q, ex, ey)
-        drawn = true
-      end
-    end
-    if not drawn then
-      local Font = require("src.render.Font")
-      love.graphics.setColor(1, 1, 1, 1)
-      love.graphics.rectangle("fill", ex, ey, 10, 12)
-      love.graphics.setColor(0, 0, 0, 1)
-      love.graphics.rectangle("line", ex + 0.5, ey + 0.5, 10, 12)
-      Font.draw("!", ex + 1, ey + 2)
-      love.graphics.setColor(1, 1, 1, 1)
-    end
-  end
-
-  -- the FLY bird sweeping off with the player
-  local function fxBird()
-    if not self.flyAnim then return end
-    -- FireRed has a dedicated five-frame 64x64 field-effect bird.  Frames 1
-    -- and 3 already contain Red/Leaf riding it during fly-out, so use the
-    -- cartridge sheet directly instead of substituting the selected mon's
-    -- battle front sprite.
-    local frlg = Game.data.constants and Game.data.constants.gen3FRLGFlyBird
-    if frlg and frlg.path then
-      if self.flyBirdImg == nil then
-        local ok, img = pcall(love.graphics.newImage, frlg.path)
-        self.flyBirdImg = ok and img or false
-      end
-      if self.flyBirdImg then
-        local gender = ((Game.save or {}).player or {}).gender == "girl"
-                       and "girl" or "boy"
-        local frame = ((frlg.flyOut or {})[gender]) or (gender == "girl" and 3 or 1)
-        local fw = frlg.frameWidth or 64
-        local fh = frlg.frameHeight or 64
-        self.flyBirdQuads = self.flyBirdQuads or {}
-        if not self.flyBirdQuads[frame] then
-          local iw, ih = self.flyBirdImg:getDimensions()
-          self.flyBirdQuads[frame] = love.graphics.newQuad(
-            0, frame * fh, fw, fh, iw, ih)
-        end
-        local t = math.max(0, math.min(48, 48 - self.flyAnim.frames))
-        local reach = 16
-        local dx, dy
-        if t <= reach then
-          local k = 1 - t / reach
-          dx, dy = -96 * k, -72 * k
-        else
-          local k = (t - reach) / (48 - reach)
-          dx, dy = -120 * k * k, -96 * k * k
-        end
-        local px = math.floor(self.player.px - cam.x + 8 - fw / 2 + dx)
-        local py = math.floor(self.player.py - cam.y + 8 - fh / 2 + dy)
-        love.graphics.setColor(1, 1, 1, 1)
-        love.graphics.draw(self.flyBirdImg, self.flyBirdQuads[frame], px, py)
-        require("src.render.PaletteFX").markTrueColor(px, py, fw, fh)
-        return
-      end
-    end
-    local birdId = FieldDefaults.fieldValue(Game.data, "playerSprites", "fly")
-    if not self.birdSprite and birdId and Game.data.sprites[birdId] then
-      local SR = require("src.render.SpriteRenderer")
-      self.birdSprite = SR.new(Game.data.sprites[birdId])
-    end
-    if self.birdSprite then
-      local t = 48 - self.flyAnim.frames
-      local bx = self.player.px - t * 4
-      local by = self.player.py - math.floor(t * 1.5)
-      love.graphics.setColor(1, 1, 1, 1)
-      self.birdSprite:draw(bx, by, cam.x, cam.y, "left",
-                           math.floor(t / 4) % 2, false)
-      return
-    end
-
-    -- Legacy fallback for datasets that predate the ROM-extracted FireRed
-    -- bird above.  Keep it for old caches/other games, but current FireRed
-    -- imports should never reach this branch.
-    --
-    -- Reported from play, twice: "ensure the animation of the flying type
-    -- pokemon swooping up my player plays after the fly hm transition" and
-    -- then "Theres still no fly swoop".  The machinery above has been here the
-    -- whole time and has never had a sprite to draw: it wants
-    -- playerSprites.fly, and no Gen 3 cache carries one.
-    --
-    -- IT WAS LOOKED FOR PROPERLY THIS TIME, and it is not where a sheet like
-    -- that would be.  Emerald's fly bird is not an object-event graphics row
-    -- -- the three 64x64 rows in that table are Rayquaza twice and the cable
-    -- car, and every 32x32 row is a person or a legendary -- and it is not
-    -- hanging off any field-effect script either: not one of the sixty-seven
-    -- scripts loads tiles, and no native any of them calls reaches a sprite
-    -- template with frames that size.  It is loaded by C, from a sheet only
-    -- the fly task names, and nothing the import can currently follow gets to
-    -- it.
-    --
-    -- So the departure is drawn with something this port certainly does have
-    -- and the cartridge's own bird is not: the FRONT SPRITE OF THE POKEMON
-    -- THAT IS ACTUALLY CARRYING YOU -- the same one the field-move sweep just
-    -- showed.  It stoops in from the upper left, meets the player, and lifts
-    -- away with them.  Reconstructed, and said so; the moment the bird IS
-    -- found, playerSprites.fly makes the branch above win again and this is
-    -- never reached.
-    local mon = self.flyAnim.mon
-    if not mon then return end
-    if self.flyMonImg == nil then
-      local okPath, path = pcall(function()
-        return require("src.pokemon.Sprites").path(
-          Game.data, mon.species, "front", { mon = mon })
-      end)
-      local img
-      if okPath and type(path) == "string" then
-        local okImg, loaded = pcall(love.graphics.newImage, path)
-        img = okImg and loaded or nil
-      end
-      self.flyMonImg = img or false
-    end
-    if not self.flyMonImg then return end
-    local total = 48
-    local t = math.max(0, math.min(total, total - self.flyAnim.frames))
-    -- the stoop: in over sixteen frames, away over the rest, and the two
-    -- meet on the player rather than anywhere else
-    local reach = 16
-    local dx, dy
-    if t <= reach then
-      local k = 1 - t / reach
-      dx, dy = -96 * k, -72 * k
-    else
-      local k = (t - reach) / (total - reach)
-      dx, dy = -120 * k * k, -96 * k * k
-    end
-    local iw, ih = self.flyMonImg:getDimensions()
-    local px = math.floor(self.player.px - cam.x + 8 - iw / 2 + dx)
-    local py = math.floor(self.player.py - cam.y + 8 - ih / 2 + dy)
-    love.graphics.setColor(1, 1, 1, 1)
-    love.graphics.draw(self.flyMonImg, px, py)
-    require("src.render.PaletteFX").markTrueColor(px, py, iw, ih)
-  end
-
-  -- fishing pose: the rod tile over the faced water (gfx/fishing.asm)
-  local function fxRod()
-    if not self.fishing then return end
-    local fx = Game.data.field.overworldFx
-    local rod = fx and fx.fishingRod
-    if rod then
-      if self.rodImg == nil then
-        local ok, img = pcall(love.graphics.newImage, rod.path)
-        self.rodImg = ok and img or false
-      end
-      if self.rodImg then
-        local p = self.player
-        local oam = ROD_OAM[self.fishing.facing] or ROD_OAM.down
-        if not self.rodQuads then
-          -- one quad per 8x8 tile of the stacked sheet (ROD_OAM.tile)
-          local iw, ih = self.rodImg:getDimensions()
-          self.rodQuads = {}
-          for i = 0, math.floor(ih / 8) - 1 do
-            self.rodQuads[i] = love.graphics.newQuad(0, i * 8, 8, 8, iw, ih)
-          end
-        end
-        local quad = self.rodQuads[oam.tile]
-        -- the sprite's top-left is 4px above its cell (SpriteRenderer:draw)
-        local rx = p.px - cam.x + oam.dx
-        local ry = p.py - cam.y - 4 + oam.dy
-        love.graphics.setColor(1, 1, 1, 1)
-        if quad and oam.flip then
-          love.graphics.draw(self.rodImg, quad, rx + 8, ry, 0, -1, 1)
-        elseif quad then
-          love.graphics.draw(self.rodImg, quad, rx, ry)
-        end
-      end
-    end
-  end
+  local sparkleOne, radarOne
+  local boundFx = not Performance.worldDrawHoist or pipelineId or tilt
+  local fxHeal = boundFx and bindWorldFx(self._worldFxHeal, self, cam) or self._worldFxHeal
+  local fxDust = boundFx and bindWorldFx(self._worldFxDust, self, cam) or self._worldFxDust
+  local fxSSAnneWake = boundFx and bindWorldFx(self._worldFxSSAnneWake, self, cam) or self._worldFxSSAnneWake
+  local fxSSAnneSmoke = boundFx and bindWorldFx(self._worldFxSSAnneSmoke, self, cam) or self._worldFxSSAnneSmoke
+  local fxWater = boundFx and bindWorldFx(self._worldFxWater, self, cam) or self._worldFxWater
+  local fxCutTree = boundFx and bindWorldFx(self._worldFxCutTree, self, cam) or self._worldFxCutTree
+  local fxSparkle = boundFx and bindWorldFx(self._worldFxSparkle, self, cam) or self._worldFxSparkle
+  local fxSparkleOne
+  if boundFx then fxSparkleOne = function() return self:_worldFxSparkleOne(cam, sparkleOne) end end
+  local fxRadarOne
+  if boundFx then fxRadarOne = function() return self:_worldFxRadarOne(cam, radarOne) end end
+  local fxRadar = boundFx and bindWorldFx(self._worldFxRadar, self, cam) or self._worldFxRadar
+  local fxEmote = bindWorldFx(self._worldFxEmote, self, cam)
+  local fxBird = boundFx and bindWorldFx(self._worldFxBird, self, cam) or self._worldFxBird
+  local fxRod = boundFx and bindWorldFx(self._worldFxRod, self, cam) or self._worldFxRod
 
   if pipelineId then
     -- === PIPELINE PATH: a mod owns the world pass. ======================
@@ -18009,6 +18331,7 @@ function OverworldState:drawWorld()
     -- Deliberately unscaled by depth, like :billboard: an effect keeps its
     -- crisp authored size and only its anchor moves.
     ctx.drawFx = function(project, scale)
+      local closeFx = FrameProfile.section("  world: FX")
       scale = scale or pscale
       local colors = ctx.spriteColors()
       local function at(drawFn, wx, wy)
@@ -18068,8 +18391,8 @@ function OverworldState:drawWorld()
       -- The S.S. Anne effects are authored in screen OAM coordinates for this
       -- fixed-camera cutscene.  Keep them as an upright overlay for a custom
       -- world pipeline; the flat/tilt paths place the wake behind the ship.
-      fxSSAnneWake()
-      fxSSAnneSmoke()
+      fxSSAnneWake(self, cam)
+      fxSSAnneSmoke(self, cam)
       for _, sp in ipairs(self.sparkles or {}) do
         sparkleOne = sp
         at(fxSparkleOne, sp.px + 8, sp.py + 16)
@@ -18079,6 +18402,7 @@ function OverworldState:drawWorld()
         if pt.active then radarOne = pt; at(fxRadarOne, pt.x * 16 + 8, pt.y * 16 + 16) end
       end
       radarOne = nil
+      closeFx()
     end
     override = Pipelines.drawWorld(pipelineId, ctx)
     -- world post-processes (a miniature-diorama blur, a colour grade) fold
@@ -18092,11 +18416,13 @@ function OverworldState:drawWorld()
       -- was retired).  The ground pass was skipped on its behalf above, so
       -- draw it now and fall through to the flat path below rather than
       -- compositing an empty canvas.
+      local closeTiles = FrameProfile.section("  world: tiles")
       self.map.renderer:drawBorderFill(cam.x, bgY, vw, vh)
       self.map.renderer:draw(cam.x, bgY, vw, vh)
       for _, nb in ipairs(self.neighbors) do
         nb.map.renderer:drawMapOnly(cam.x - nb.ox, bgY - nb.oy, vw, vh)
       end
+      closeTiles()
     end
   end
 
@@ -18123,19 +18449,9 @@ function OverworldState:drawWorld()
                       and groundForRise:freeMode()) and groundForRise or nil
   local groundSin = groundForRise and groundForRise.scale
     and select(1, groundForRise:scale()) or 1
-  local function riseOf(e)
-    if not groundForRise then return 0 end
-    local rise = groundForRise:rise(e.px + (e.shiftPx or 0) + 8, e.py + 8)
-    -- A SPRITE OFFSET (MapObject_SetSpritePosOffset: the surf mount's ride,
-    -- the Distortion World cast's flights) in the field view: up by the
-    -- camera's height lean, toward it by the ground's
-    local so = e.spriteOffset
-    if so and (so.lift or so.oz) then
-      rise = rise + (so.lift or 0) * (groundForRise.heightScale or 0)
-                  - (so.oz or 0) * (groundForRise.groundScale or 1)
-    end
-    if groundSin >= 1 then return rise end
-    return (e.py - cam.y) * (1 - groundSin) + rise
+  local riseOf = self._worldRise
+  if not Performance.worldDrawHoist then
+    riseOf = function(_self, e) return self:_worldRise(e, groundForRise, groundSin, cam) end
   end
 
   if override then
@@ -18189,6 +18505,7 @@ function OverworldState:drawWorld()
     -- The COLLISION GRID IS UNTOUCHED by any of this.  It is in map pixels and
     -- stays there; only the picture is projected, which is why a compressed
     -- world still walks the same.
+    local closeGhosts = FrameProfile.section("  world: entities")
     for _, g in ipairs(self.ghosts) do
       -- A GHOST GOES THROUGH THE FREE CAMERA TOO.
       --
@@ -18214,6 +18531,7 @@ function OverworldState:drawWorld()
       end
       if not drawn then g.npc:draw(cam.x - g.ox, cam.y - g.oy) end
     end
+    closeGhosts()
     -- HIDDEN MEANS HIDDEN, for the player as much as for anybody.
     --
     -- Two Gen 3 things write this and neither had a reader: the
@@ -18225,7 +18543,6 @@ function OverworldState:drawWorld()
     -- ...AND A PLOT'S ANSWER CHANGES WHILE YOU ARE STANDING THERE.  A tree
     -- is planted, grows and is picked without the map reloading, so its
     -- emptiness is asked at draw time rather than remembered at spawn.
-    local plotEmpty = plotIsEmpty
     -- the ground whose depth the entity pass is drawing into, while it is
     local spriteDepthGround = nil
     -- SINNOH'S CHARACTERS STAND ON SOMETHING.  Built once per frame rather
@@ -18237,115 +18554,15 @@ function OverworldState:drawWorld()
       shadows = require("src.render.Gen4Shadows").forMap(Game.data) or false
       self.gen4Shadows = shadows
     end
-    -- A GYM'S FOG ON THE CHARACTERS (Hearthome's dark rooms, Canalave's depth
-    -- fog): the brightness the DS's fog leaves a billboard, nil for none
-    -- (src/world/Gen4GymFx.lua spriteFog)
+    -- Native DS fog is evaluated once per pass and passed through the
+    -- private hoisted entity path, including its rollback implementation.
     local gymFog = GameVersion.isGen4() and self.map and self.map.def
       and self.map.def.gen4DepthFog and require("src.world.Gen4GymFx").spriteFog(self) or nil
-    local function drawEntity(e)
-      if not (self.flyAnim and self:hasFlyBird() and e == self.player)
-         and not e.hidden and not e.berryVisualEmpty and not plotEmpty(e) then
-        -- A FREE CAMERA PLACES ITS OWN CHARACTERS.
-        --
-        -- Reported from play: *"isnt keeping the player the right size"*, with a
-        -- screenshot of a third-person Twinleaf in correct perspective and two
-        -- characters standing in it at flat 2D scale.  They were drawn by the
-        -- line below, which places every sprite at `py - camY` -- the field
-        -- camera's 1:1 mapping, and simply not this camera's.
-        --
-        -- `freeEntity` runs THIS SAME DRAW inside a transform, so nothing here
-        -- learns about projection and the entity keeps owning its own sprite,
-        -- frame and palette.
-        --
-        -- In FIRST person the player is the eye, so drawing them puts their own
-        -- back across the middle of the view.
-        if freeGround then
-          if not (freeGround:freeMode() == "first" and e == self.player) then
-            local rise = riseOf(e)
-            -- ...AND WHICH WAY THEY FACE ON SCREEN.
-            --
-            -- Reported from play: *"when i orbit the camera 180 degrees if i
-            -- walk left it looks like hes walking right"*.  `screenToWorld`
-            -- turns the PRESS into a world direction, so the step is right;
-            -- the sprite then showed that world facing under a camera that is
-            -- no longer looking north, so the artwork was the one thing still
-            -- in the old frame.  `worldToScreen` is its inverse, and the pair
-            -- are inverses because the camera sits between them.
-            --
-            -- Set and restored around the draw rather than threaded through,
-            -- because `facing` is what every pose, animation and follower path
-            -- in the entity reads, and none of them should learn about cameras.
-            local view, saved = freeGround.view3d, e.facing
-            if view and view.worldToScreen then
-              e.facing = view:worldToScreen(saved)
-            end
-            -- ...IN THE FIELD'S FOG, as the live pass tints them (gymFog):
-            -- the gyms' and the weathers' depth fog at the character's depth
-            -- on this camera, but not a model the fog leaves out (Hearthome's
-            -- player, gFogIgnoredModels)
-            local fogRow = GameVersion.isGen4() and self.map and self.map.def
-              and self.map.def.gen4DepthFog
-            local fogged = GameVersion.isGen4()
-              and not (type(fogRow) == "table" and fogRow.exempt and fogRow.exempt(e, self))
-            freeGround:freeEntity((e.px or 0), (e.py or 0), cam.x, cam.y, rise,
-                                  function() e:draw(cam.x, cam.y + rise) end,
-                                  nil, require("src.world.Gen4SurfMount").poseFor(e, e == self.player and self.dwPose or nil),
-                                  fogged)
-            e.facing = saved
-          end
-          -- Deliberately without the flat shadow and the grass overdraw below:
-          -- both are drawn in screen space against a ground plane this camera
-          -- does not have, and a shadow in the wrong place is worse than none.
-          return
-        end
-        -- IN THE WORLD'S DEPTH on Sinnoh's cartridge camera
-        -- (Gen4Ground:beginSprites): the billboard origin's depth, so a prop in
-        -- front of a character hides them; nil leaves the draw as it was
-        local depth = spriteDepthGround and spriteDepthGround:billboardDepth(
-          (e.px or 0) + (e.shiftPx or 0), e.py or 0,
-          e.spriteOffset and e.spriteOffset.lift, e.spriteOffset and e.spriteOffset.oz)
-        -- UNDER the sprite, and lifted by the same terrain rise it is, so a
-        -- character on a slope keeps their feet on it.
-        if shadows then
-          if depth then
-            spriteDepthGround:withSpriteDepth(depth, function()
-              shadows:draw(self.map, e, cam.x, cam.y, e == self.player, riseOf(e))
-            end, false)
-          else
-            shadows:draw(self.map, e, cam.x, cam.y, e == self.player, riseOf(e))
-          end
-        end
-        local fogLeft = gymFog and gymFog(e)
-        if fogLeft then love.graphics.setColor(fogLeft, fogLeft, fogLeft, 1) end
-        if depth then
-          spriteDepthGround:withSpriteDepth(depth, function() e:draw(cam.x, cam.y + riseOf(e)) end)
-        else
-          e:draw(cam.x, cam.y + riseOf(e))
-        end
-        if fogLeft then love.graphics.setColor(1, 1, 1, 1) end
-        -- tall grass overdraws the sprite's feet (GB sprite priority);
-        -- the overdraw is BG tiles, so it rides the shake offset too
-        love.graphics.setColor(1, 1, 1, 1)
-        if self.map:isGrassCell(e.cellX, e.cellY) then
-          if not self:drawGen3Grass(e.cellX, e.cellY, cam.x, bgY,
-                                    self:gen3GrassFrame(e, false)) then
-            self.map.renderer:drawCellBottom(e.cellX, e.cellY, cam.x, bgY)
-            if grassColors then
-              self.map.renderer:markCellBottomRedraw(e.cellX, e.cellY,
-                                                     cam.x, bgY, grassColors)
-            end
-          end
-        end
-        if e.targetX and self.map:isGrassCell(e.targetX, e.targetY) then
-          if not self:drawGen3Grass(e.targetX, e.targetY, cam.x, bgY,
-                                    self:gen3GrassFrame(e, true)) then
-            self.map.renderer:drawCellBottom(e.targetX, e.targetY, cam.x, bgY)
-            if grassColors then
-              self.map.renderer:markCellBottomRedraw(e.targetX, e.targetY,
-                                                     cam.x, bgY, grassColors)
-            end
-          end
-        end
+    local drawEntity = self._worldDrawEntity
+    if not Performance.worldDrawHoist then
+      drawEntity = function(_self, e)
+        return self:_worldDrawEntity(e, cam, bgY, freeGround, groundForRise, groundSin,
+                                    grassColors, spriteDepthGround, shadows, riseOf, gymFog)
       end
     end
 
@@ -18400,16 +18617,25 @@ function OverworldState:drawWorld()
     -- rectangle each, which is precisely what a scissor is.  It is set per
     -- cell and intersected with whatever clip the caller already had, so a
     -- reflection is painted once per water cell it falls across.
-    local reflectors = {}
+    local reflectors = Performance.worldDrawHoist and self._worldReflectors or nil
+    if not reflectors or reflectors.busy then
+      reflectors = {n=0}
+      if Performance.worldDrawHoist and not self._worldReflectors then self._worldReflectors = reflectors end
+    end
+    reflectors.busy = true
+    local oldReflectors, reflectorCount = reflectors.n, 0
     for _, e in ipairs(self.entities) do
-      if not e.hidden and e.drawReflection then
+      if Performance.extraCap("reflections")~=false and not e.hidden and e.drawReflection then
         e.reflects = self:reflectionSearch(e)
         if e.reflects then
           e.reflectStill = self:stillReflection(e.reflects)
-          reflectors[#reflectors + 1] = e
+          reflectorCount = reflectorCount + 1
+          reflectors[reflectorCount] = e
         end
       end
     end
+    for i = reflectorCount + 1, oldReflectors do reflectors[i] = nil end
+    reflectors.n = reflectorCount
     self.reflectProbe = (self.reflectProbe or 0) + 1
     if self.reflectProbe % 90 == 1 then
       local p, set = self.player, Game and Game.data and Game.data.constants
@@ -18499,6 +18725,9 @@ function OverworldState:drawWorld()
       love.graphics.setColor(1, 1, 1, 1)
       local renderer = self.map.renderer
       if renderer.drawReflectionCover then
+        if Performance.worldDrawHoist and self.rippleCells == nativeRippleCells then
+          self:_worldReflectionCover(reflectors, reflectorCount, renderer, cam, bgY)
+        else
         local seen, cells = {}, {}
         for _, e in ipairs(reflectors) do
           local cx0, cy0, cx1, cy1 = self:reflectionRect(e)
@@ -18518,15 +18747,17 @@ function OverworldState:drawWorld()
         for _, cell in ipairs(cells) do
           renderer:drawReflectionCover(cell[1], cell[2], cam.x, bgY)
         end
+        end
       end
     end
+    reflectors.busy = nil
 
     -- The rotating gates sit under the entity pass; the S.S. Anne wake has
     -- priority below the ship and therefore belongs immediately before it.
     self:drawGen3Gates(cam)
     -- OBJ priority 2 and a later sprite id put the wake behind the ship at the
     -- same priority on hardware.  Draw it immediately before the entity pass.
-    fxSSAnneWake()
+    fxSSAnneWake(self, cam)
     local onTop = nil
     -- SINNOH'S CARTRIDGE CAMERA: the characters go into the world's own depth
     -- buffer (Gen4Ground:beginSprites) so props in front of them hide them
@@ -18534,22 +18765,34 @@ function OverworldState:drawWorld()
        and groundForRise:beginSprites() then
       spriteDepthGround = groundForRise
     end
+    local closeEntities = FrameProfile.section("  world: entities")
+    if Performance.worldDrawHoist then
+      local okE, result = pcall(self._worldEntityLoop, self, drawEntity, cam, bgY, freeGround,
+                                groundForRise, groundSin, grassColors, spriteDepthGround, shadows, riseOf, gymFog)
+      if not okE then
+        if spriteDepthGround then spriteDepthGround:endSprites(); spriteDepthGround = nil end
+        error(result, 0)
+      end
+      onTop = result
+    else
     for _, e in ipairs(self.entities) do
       if self:gen3AboveTopLayer(e) then
         onTop = onTop or {}
         onTop[#onTop + 1] = e
       else
-        local okE, errE = pcall(drawEntity, e)
+        local okE, errE = pcall(drawEntity, self, e, cam, bgY, freeGround, groundForRise, groundSin, grassColors, spriteDepthGround, shadows, riseOf, gymFog)
         if not okE then
           if spriteDepthGround then spriteDepthGround:endSprites(); spriteDepthGround = nil end
           error(errE, 0)
         end
       end
     end
+    end
     if spriteDepthGround then
       spriteDepthGround:endSprites()
       spriteDepthGround = nil
     end
+    closeEntities()
     -- The Gen 3 top layer goes on AFTER the entity pass and before the
     -- field effects: it is the half of every metatile the player walks
     -- behind -- treetops, upper storeys, the far rail of a bridge.  On a
@@ -18561,11 +18804,10 @@ function OverworldState:drawWorld()
     -- not the player at every zoom. Cleared after, so a stale focus can never
     -- outlive the frame it was true for.
     local feetX, feetZ = (self.player.px or 0) + 8, (self.player.py or 0) + 8
-    local function aim(renderer, ox, oy)
-      local g4 = renderer and renderer.gen4Ground
-      if g4 then
-        if ox then g4.focusX, g4.focusZ = feetX - ox, feetZ - oy
-        else g4.focusX, g4.focusZ = nil, nil end
+    local aim = self._worldAim
+    if not Performance.worldDrawHoist then
+      aim = function(_self, renderer, ox, oy)
+        return self:_worldAim(renderer, ox, oy, feetX, feetZ)
       end
     end
     -- THE "!" GOES IN WHILE A FREE CAMERA'S 3D PASS IS STILL OPEN.
@@ -18581,24 +18823,29 @@ function OverworldState:drawWorld()
       self:eachEmote(fxEmote)
       emoteEarly = true
     end
-    aim(self.map.renderer, 0, 0)
+    local closeTiles = FrameProfile.section("  world: tiles")
+    aim(self, self.map.renderer, 0, 0, feetX, feetZ)
     self.map.renderer:drawAbove(cam.x, bgY, vw, vh)
-    aim(self.map.renderer)
+    aim(self, self.map.renderer, nil, nil, feetX, feetZ)
     for _, nb in ipairs(self.neighbors) do
       if nb.map.renderer.drawAbove then
-        aim(nb.map.renderer, nb.ox, nb.oy)
+        aim(self, nb.map.renderer, nb.ox, nb.oy, feetX, feetZ)
         nb.map.renderer:drawAbove(cam.x - nb.ox, bgY - nb.oy, vw, vh)
-        aim(nb.map.renderer)
+        aim(self, nb.map.renderer, nil, nil, feetX, feetZ)
       end
     end
-    for _, e in ipairs(onTop or {}) do drawEntity(e) end
+    closeTiles()
+    closeEntities = FrameProfile.section("  world: entities")
+    for _, e in ipairs(onTop or {}) do drawEntity(self, e, cam, bgY, freeGround, groundForRise, groundSin, grassColors, spriteDepthGround, shadows, riseOf, gymFog) end
+    closeEntities()
 
-    fxHeal()
-    fxDust()
-    fxCutTree()
-    fxWater()
+    local closeFx = FrameProfile.section("  world: FX")
+    fxHeal(self, cam)
+    fxDust(self, cam)
+    fxCutTree(self, cam)
+    fxWater(self, cam)
     if not emoteEarly then self:eachEmote(fxEmote) end
-    fxRadar()
+    fxRadar(self, cam)
     -- BLACK / WHITE: the phenomenon spot and the rod's lure (Gen5Phenomena)
     if GameVersion.isGen5() then
       local g5ground = self.map and self.map.renderer and self.map.renderer.gen4Ground
@@ -18608,11 +18855,12 @@ function OverworldState:drawWorld()
     end
     -- HGSS: the Dowsing MCHN's reading (src/world/HgssDowsing.lua)
     if self.hgssDowsing then require("src.world.HgssDowsing").draw(self, vw, vh) end
-    fxSparkle()
-    fxBird()
-    fxRod()
+    fxSparkle(self, cam)
+    fxBird(self, cam)
+    fxRod(self, cam)
     -- Smoke keeps the template's priority 0, above the ship and map layers.
-    fxSSAnneSmoke()
+    fxSSAnneSmoke(self, cam)
+    closeFx()
   else
     -- === TILT PATH: ground-hugging FX stay on the projected ground, all
     -- standing things billboard upright over it in a separate pass. ======
@@ -18622,17 +18870,19 @@ function OverworldState:drawWorld()
     -- draws them last, over the sprites, in the same canvas; here the two
     -- layers are separate and composited ground-under-upright, so drawing
     -- them now into the still-active ground canvas is order-equivalent.
-    fxHeal()
-    fxDust()
-    fxCutTree()
-    fxWater()
+    local closeFx = FrameProfile.section("  world: FX")
+    fxHeal(self, cam)
+    fxDust(self, cam)
+    fxCutTree(self, cam)
+    fxWater(self, cam)
     -- ...and the gates with them: they are behind every upright sprite (see
     -- drawGen3Gates), so the ground canvas is exactly where they belong
     self:drawGen3Gates(cam)
+    closeFx()
 
     Game.renderer:beginUprightPass()
 
-    fxSSAnneWake()
+    fxSSAnneWake(self, cam)
 
     -- One y-sorted list of ALL upright billboards -- sprites (player, NPCs,
     -- ghosts) -- keyed on baseline world y (the foot / base row).  Farther
@@ -18649,6 +18899,7 @@ function OverworldState:drawWorld()
     end
     table.sort(items, function(a, b) return a.y < b.y end)
 
+    local closeEntities = FrameProfile.section("  world: entities")
     for _, it in ipairs(items) do
       if it.kind == "ghost" then
         -- ghosts billboard just like real entities (foot offset folds in the
@@ -18664,7 +18915,7 @@ function OverworldState:drawWorld()
         local fy = e.py - cam.y + 16
         local colors = zoneColorsAt(zones, fx, fy)
         self:billboard(fx, fy, vw, vh, colors, false,
-                       function() e:draw(cam.x, cam.y + riseOf(e)) end)
+                       function() e:draw(cam.x, cam.y + riseOf(self, e, groundForRise, groundSin, cam)) end)
         -- tall-grass feet overdraw glued to the sprite: same anchor + depth
         -- so it keeps hiding the feet, color-0-keyed palette so its white
         -- gaps still show the sprite through (drawCellBottomRaw lets the
@@ -18684,6 +18935,8 @@ function OverworldState:drawWorld()
       end
     end
 
+    closeEntities()
+    closeFx = FrameProfile.section("  world: FX")
     -- Standing world FX: each billboards at the ground foot of the
     -- character it belongs to, so it stays upright over the tilted ground.
     --   emote bubble  -> the spotting NPC's foot (rides above its head)
@@ -18705,7 +18958,7 @@ function OverworldState:drawWorld()
       local fy = self.player.py - cam.y + 16
       self:billboard(fx, fy, vw, vh, zoneColorsAt(zones, fx, fy), false, fxRod)
     end
-    fxSSAnneSmoke()
+    fxSSAnneSmoke(self, cam)
     for _, sp in ipairs(self.sparkles or {}) do
       sparkleOne = sp
       local fx = sp.px - cam.x + 8
@@ -18725,6 +18978,7 @@ function OverworldState:drawWorld()
     radarOne = nil
 
     Game.renderer:endUprightPass()
+    closeFx()
   end
 
   -- LAST IN THE WORLD PASS, over everything the cave contains: the black
@@ -18732,6 +18986,7 @@ function OverworldState:drawWorld()
   -- drawUI because it is anchored to the PLAYER, not to the screen -- the
   -- cartridge can put it at a fixed (120,80) because its camera never lets
   -- the player leave the middle, and this port's does at a map edge.
+  local closeFx = FrameProfile.section("  world: FX")
   self:drawGen3Flash(cam, vw, vh)
   -- the Mirage Tower's falling fossil and ceiling crumbs: OAM priority 0
   if self.g3MirageTower or self.g3MirageCrumbles then
@@ -18743,7 +18998,9 @@ function OverworldState:drawWorld()
   -- in the world pass rather than the UI pass for the same reason the flash
   -- is: it is anchored to a CELL, not to the screen.
   self:drawGen3Decorate(cam)
+  closeFx()
 end
+
 
 -- The cursor the DECORATE row hands the player: the decoration's own
 -- footprint, outlined, blinking, anchored at its bottom-left the way the
