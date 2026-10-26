@@ -152,6 +152,17 @@ Three rules worth knowing:
 Returning `nil` from `drawWorld` is a normal answer meaning "not this
 frame"; the engine draws the vanilla world instead.
 
+## Read-only battle snapshots
+
+`mod.battle:snapshot()` returns a detached common battle view on Gen 1–5,
+including singles and doubles, or `nil, "no battle"`. It can be captured in
+an entry chunk before Game exists. See [Battle snapshot API](battle-snapshot-api.md)
+for records, revisions, prompt semantics and intentionally omitted previews.
+The snapshot reads state only. The [Battle action API](battle-actions-api.md)
+adds validated `mod.battle:submit(intent)` for the native menu, move, target,
+back, Safari and Mimic paths. When capability queries are
+installed, `mod:supports("battle", "snapshot")` reports this interface.
+
 ## Battle sprite scaling
 
 The enemy's front pic draws at 1x and the player's back pic at 2x, the way
@@ -218,6 +229,14 @@ The console understands these verbs (anything else is evaluated as Lua):
 - `reload` — hot-reload mods (same as `F5`).
 - `trace PAT | trace off` — trace events/hooks matching a glob pattern.
 - `help` — list the verbs.
+
+## Public party, bag and dialogue actions
+
+`mod.ui:snapshot()` returns detached options for the current native screen;
+`mod.ui:submit(intent)` selects a row, goes back, changes bag pocket or advances
+ready text through its native flow. See [Public UI actions](ui-actions-api.md)
+for revision/ID requirements, per-generation menu behavior and supported screens.
+The existing `mod.ui` list-building helpers retain their original signatures.
 
 ## Tool input and title-menu hooks
 
