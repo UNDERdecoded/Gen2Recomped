@@ -961,6 +961,9 @@ function RomExtractorGen2:constants()
     -- Generation is runtime metadata, not cartridge data.  Battle formulas use
     -- it to select the Gen II critical-hit ladder without guessing from a ROM id.
     self._constants.generation = 2
+    -- Numeric phone/trainer identities are independent of localized names.
+    require("src.import.Gen2PhoneIdentities").install(
+      self._constants, self.manifest, self.version)
     local badges = {}
     -- A CARTRIDGE MAY HAVE ITS OWN SET.  Prism awards TWENTY badges across
     -- three engine-flag bytes, and its flag keys keep the ENGINE_ prefix that
@@ -3317,6 +3320,221 @@ function RomExtractorGen2:gen2MovementTable()
   return out
 end
 
+-- Kurt's actual selection-order and recipe pairs, not the bag's item order.
+function RomExtractorGen2:gen2ApricornBalls()
+  if self.version~="gold" and self.version~="silver" and self.version~="crystal" then return nil end
+  local sym=self:symbol("ApricornBalls")
+  if not (sym and self.rom) then return nil end
+  local rows,seen={},{}
+  local info={source="ApricornBalls",complete=false,rowsRead=0}
+  -- Native db apricorn,ball pairs, terminated by a single $ff apricorn.
+  -- Never walk through a bank boundary or accept an unterminated prefix.
+  for slot=0,128 do
+    local at=sym.address+slot*2
+    local ok,apricorn=pcall(function()return self.rom:byte(sym.bank,at)end)
+    if not ok then info.reason="truncated table";return {},info end
+    if apricorn==255 then info.complete=true;return rows,info end
+    if slot==128 then info.reason="unterminated table";return {},info end
+    local read,ball=pcall(function()return self.rom:byte(sym.bank,at+1)end)
+    if not read then info.reason="truncated pair";return {},info end
+    if apricorn==0 or ball==0 or ball==255 or seen[apricorn] then
+      info.reason="invalid or duplicate native item";return {},info
+    end
+    seen[apricorn]=true
+    rows[#rows+1]={index=slot+1,apricorn=string.format("ITEM_%03d",apricorn),
+      ball=string.format("ITEM_%03d",ball)}
+    info.rowsRead=#rows
+  end
+end
+
+function RomExtractorGen2:gen2QueueApricornPrograms(pool)
+  if self.version~="gold" and self.version~="silver" and self.version~="crystal" then return nil end
+  local symbols={ask="Kurt1.AskApricorn",pending="Kurt1.GotLureBall",
+    gave="Kurt1.GaveKurtApricorns",cancel="Kurt1.Cancel"}
+  local found={}
+  for role,name in pairs(symbols)do
+    local at=self:symbol(name)
+    if not at or at.address<0x4000 or not self:gen2InRom(at.bank,at.address) then return nil end
+    found[role]=at
+  end
+  local out={}
+  for role,at in pairs(found)do out[role]=self:gen2QueueScript(at.bank,at.address,pool)end
+  return out
+end
+
+-- Six native bytes per attribute row: kind/name/action/event-word/sprite.
+-- Names immediately follow attributes in stock GSC; that boundary supplies
+-- the row count instead of a copied retail catalogue.
+-- Native Mom tables have eight bytes: two big-endian money triples and
+-- kind/item bytes. End symbols supply counts, never a copied retail list.
+function RomExtractorGen2:gen2MomShopping(pool)
+  if self.version~="gold"and self.version~="silver"and self.version~="crystal"then return nil end
+  local result={complete=false}
+  local ok,why=pcall(function()
+    for role,name in pairs({random="MomItems_1",ladder="MomItems_2"})do
+      local first,last=self:symbol(name),self:symbol(name..".End")
+      assert(first and last and first.bank==last.bank,"missing Mom table bounds")
+      local count=(last.address-first.address)/8
+      assert(count%1==0 and count>0 and count<=255 and first.address>=0x4000 and last.address<=0x8000,"invalid Mom table bounds")
+      local rows={}
+      for i=0,count-1 do
+        local b=self.rom:bytes(first.bank,first.address+i*8,8)
+        local trigger=b[1]*65536+b[2]*256+b[3];local cost=b[4]*65536+b[5]*256+b[6]
+        assert(trigger<=999999 and cost<=999999 and(b[7]==1 or b[7]==2)and b[8]>0 and b[8]<255,"invalid Mom row")
+        rows[#rows+1]={trigger=trigger,cost=cost,kind=b[7],item=b[8]}
+      end
+      result[role]=rows
+    end
+    local at,ram=self:symbol("CheckBalance_MomItem2.check_have_2300"),self:symbol("hMoneyTemp")
+    assert(at and ram,"missing Mom trigger instructions")
+    local b=self.rom:bytes(at.bank,at.address,11)
+    assert(b[1]==0x21 and b[2]+b[3]*256==ram.address and b[4]==0x36 and b[6]==0x23 and
+      b[7]==0x36 and b[9]==0x23 and b[10]==0x36,"unrecognized Mom trigger instructions")
+    result.step=b[5]*65536+b[8]*256+b[11]
+    assert(result.step>0 and result.step<=999999,"invalid Mom trigger amount")
+  end)
+  if not ok then return{complete=false,reason=tostring(why)}end
+  local found={}
+  for role,name in pairs({item="Mom_GetScriptPointer.ItemScript",doll="Mom_GetScriptPointer.DollScript"})do
+    local at=self:symbol(name)
+    if not at or at.address<0x4000 or not self:gen2InRom(at.bank,at.address)then return{complete=false,reason="missing Mom phone program"}end
+    found[role]=at
+  end
+  result.programs={}
+  for role,at in pairs(found)do result.programs[role]=self:gen2QueueScript(at.bank,at.address,pool)end
+  result.rewardTexts={}
+  self._gen2ScriptTexts=self._gen2ScriptTexts or{}
+  for mode,name in pairs({[0]="GotMoneyForWinningText",[1]="SentSomeToMomText",[2]="SentHalfToMomText",[3]="SentAllToMomText"})do
+    local at=self:symbol(name)
+    if at and self:gen2InRom(at.bank,at.address)then result.rewardTexts[mode]=self:gen2RegisterScriptText(at.bank,at.address)end
+  end
+  result.complete=true;return result
+end
+
+function RomExtractorGen2:gen2Decorations()
+  if self.version~="gold" and self.version~="silver" and self.version~="crystal" then return nil end
+  local info={complete=false,rowsRead=0,defaultsComplete=false,giftsComplete=false}
+  local attr,names=self:symbol("DecorationAttributes"),self:symbol("DecorationNames")
+  local function fail(why)info.reason=why;return {},info end
+  if not attr or not names then return fail("missing decoration table symbols")end
+  local count=(names.address-attr.address)/6
+  if attr.bank~=names.bank or count%1~=0 or count<1 or count>256 or
+      attr.address<0x4000 or names.address>0x8000 then return fail("invalid decoration table boundary")end
+  local Native=require("src.world.Gen2Decorations")
+  local ok,rows=pcall(function()
+    local raw,maxName={},0
+    for i=0,count-1 do
+      local r=self.rom:bytes(attr.bank,attr.address+i*6,6)
+      assert(r[1]>=1 and r[1]<=6,"invalid decoration kind")
+      assert(r[3]==0 or Native.actionName(r[3]),"invalid decoration action")
+      assert(r[4]+r[5]*256<65535,"indirect decoration event")
+      raw[i]=r;if r[1]<=3 then maxName=math.max(maxName,r[2])end
+    end
+    local charmap=self:readSourceTable("charmap")
+    local words,pc={},names.address
+    for i=0,maxName do
+      local bytes,ended={},false
+      for _=1,128 do
+        assert(pc<0x8000,"decoration name crosses bank")
+        local b=self.rom:byte(names.bank,pc);pc=pc+1
+        if b==0x50 then ended=true;break end
+        bytes[#bytes+1]=b
+      end
+      assert(ended,"unterminated decoration name")
+      words[i]=self:gen2GlyphBytes(bytes,charmap)
+    end
+    local pokemon=self:symbol("PokemonNames")
+    local out={}
+    for i=0,count-1 do
+      local r=raw[i];local name=words[r[2]]
+      if r[1]>=4 then
+        assert(pokemon and r[2]>=1,"missing decoration species name")
+        local address=pokemon.address+(r[2]-1)*10
+        assert(address>=0x4000 and address+10<=0x8000,"decoration species name crosses bank")
+        local bytes={}
+        for n=0,9 do local b=self.rom:byte(pokemon.bank,address+n);if b==0x50 then break end;bytes[#bytes+1]=b end
+        name=self:gen2GlyphBytes(bytes,charmap)
+        info.species=info.species or{};info.sourceNames=info.sourceNames or{}
+        info.species[i]=string.format("SPECIES_%03d",r[2]);info.sourceNames[i]=name
+      end
+      assert(type(name)=="string" and name~="","missing decoration name")
+      out[i]={type=r[1],name=name,action=Native.actionName(r[3]),flag=r[4]+r[5]*256,sprite=r[6]}
+    end
+    return out
+  end)
+  if not ok then return fail(tostring(rows))end
+  local init=self:symbol("InitDecorations")
+  if init then
+    local valid,bytes=pcall(self.rom.bytes,self.rom,init.bank,init.address,11)
+    if valid and bytes[1]==0x3e and bytes[3]==0xea and bytes[6]==0x3e and bytes[8]==0xea and bytes[11]==0xc9 and
+        rows[bytes[2]] and rows[bytes[2]].action=="SET_UP_BED" and rows[bytes[7]] and rows[bytes[7]].action=="SET_UP_POSTER" then
+      local bed,poster=self:symbol("wDecoBed"),self:symbol("wDecoPoster")
+      if bed and poster and bytes[4]+bytes[5]*256==bed.address and bytes[9]+bytes[10]*256==poster.address then
+        info.defaults={bed=bytes[2],poster=bytes[7]};info.defaultsComplete=true
+      end
+    end
+  end
+  local gifts=self:symbol("DecorationIDs")
+  if gifts then
+    local valid,list=pcall(function()
+      local out={}
+      for n=0,255 do
+        assert(gifts.address+n<0x8000,"decoration gift table crosses bank")
+        local id=self.rom:byte(gifts.bank,gifts.address+n)
+        if id==255 then return out end
+        assert(rows[id] and Native.action(rows[id].action) and not Native.action(rows[id].action).put,"invalid gift decoration")
+        out[#out+1]=id
+      end
+      error("unterminated decoration gift table")
+    end)
+    if valid then info.gifts=list;info.giftsComplete=true end
+  end
+  info.complete=true;info.rowsRead=count
+  return rows,info
+end
+
+function RomExtractorGen2:gen2QueueDecorationPrograms(pool)
+  if self.version~="gold" and self.version~="silver" and self.version~="crystal" then return nil end
+  local roles={ornament="DecorationDesc_OrnamentOrConsole.OrnamentConsoleScript",
+    big="DecorationDesc_GiantOrnament.BigDollScript",null="DecorationDesc_NullPoster"}
+  local found={}
+  for role,name in pairs(roles)do
+    local at=self:symbol(name)
+    if not at or at.address<0x4000 or not self:gen2InRom(at.bank,at.address)then return nil end
+    found[role]=at
+  end
+  local pointers=self:symbol("DecorationDesc_PosterPointers")
+  if not pointers then return nil end
+  local ok,posters=pcall(function()
+    local out={}
+    for n=0,255 do
+      local pc=pointers.address+n*3;assert(pc<0x8000,"poster pointers cross bank")
+      local id=self.rom:byte(pointers.bank,pc)
+      if id==255 then return out end
+      assert(pc+2<0x8000,"truncated poster pointer")
+      local address=self.rom:word(pointers.bank,pc+1)
+      assert(address>=0x4000 and self:gen2InRom(pointers.bank,address)and not out[id],"invalid poster pointer")
+      out[id]={bank=pointers.bank,address=address}
+    end
+    error("unterminated poster pointers")
+  end)
+  if not ok then return nil end
+  local out={posters={},texts={}}
+  self._gen2ScriptTexts=self._gen2ScriptTexts or{}
+  for role,name in pairs({put="PutAwayTheDecoText",empty="NothingToPutAwayText",
+      setup="SetUpTheDecoText",replace="PutAwayAndSetUpText",same="AlreadySetUpText",
+      noChoice="PopulateDecoCategoryMenu.NothingToChooseText",
+      sideSetup="WhichSidePutOnText",sidePut="WhichSidePutAwayText"})do
+    local at=self:symbol(name)
+    if at and self:gen2InRom(at.bank,at.address)then
+      out.texts[role]=self:gen2RegisterScriptText(at.bank,at.address)
+    end
+  end
+  for role,at in pairs(found)do out[role]=self:gen2QueueScript(at.bank,at.address,pool)end
+  for id,at in pairs(posters)do out.posters[id]=self:gen2QueueScript(at.bank,at.address,pool)end
+  return out
+end
+
 -- Marts is a dw pointer table; each mart is `db count`, the item ids, `db -1`.
 -- The table ends where its own first entry starts.
 function RomExtractorGen2:gen2Marts()
@@ -5522,6 +5740,8 @@ function RomExtractorGen2:gen2MapIndex()
             -- PALETTE_DARK, the only value ReplaceTimeOfDayPals answers with
             -- .NeedsFlash (23:$4400)
             palette = field(paletteAt, 0) % 16,
+            paletteBits = field(paletteAt,0),
+            phoneService = math.floor(field(paletteAt,0)/16)%16==0,
           }
           byGroupNumber[group * 256 + number] = entry
           byLabel[label] = byLabel[label] or entry
@@ -6521,6 +6741,7 @@ function RomExtractorGen2:extractMapsFromRom()
       -- is why a Pokemon Center does not go dark at night on hardware -- and
       -- the Ruins of Alph chambers carry it too.
       def.mapPalette = header and header.palette or def.mapPalette
+      if header then def.mapPaletteBits=header.paletteBits;def.phoneService=header.phoneService end
       -- Byte 8 is the FISHGROUP_* constant, and 0 is FISHGROUP_NONE -- NOT
       -- FISHGROUP_SHORE, which is 1 (constants/map_data_constants.asm).
       -- gen2Fishing keys its table by that same constant, so 0 finds nothing
@@ -8126,7 +8347,10 @@ function RomExtractorGen2:gen2ResolveScriptMapIds(maps, keys, pool)
       if slot and type(row[slot]) == "number" and type(row[slot + 1]) == "number" then
         local entry = mapIndex[row[slot] * 256 + row[slot + 1]]
         local key = entry and keyByLabel[entry.label]
-        if key then
+        if (row[1]=="warp"or row[1]=="warpfacing") and row[slot]==0 and row[slot+1]==0 and
+            (self.version=="gold"or self.version=="silver"or self.version=="crystal")then
+          row[slot]="NONE";row[slot+1]=0
+        elseif key then
           row[slot] = key
           row[slot + 1] = 0
         end
@@ -8431,7 +8655,6 @@ end
 -- POKeGEAR had no dialogue at all to show.
 local GEN2_PHONE_ROW_BYTES = 12
 local GEN2_PHONE_MAX = 64
-local GEN2_NONTRAINER_NAMES = 5
 -- db class, id | db group, number | db ptime, bank, dw callee script (the one
 -- that runs when YOU ring them) | db ctime, bank, dw caller script (the one
 -- that runs when THEY ring you -- ELM's is the same $41E1
@@ -8447,14 +8670,30 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
   local sym = self:symbol("PhoneContacts")
   if not (sym and self.rom) then return nil end
 
+  -- SpecialPhoneCallList closes the table, including the reserved holes.
+  local limit = GEN2_PHONE_MAX
+  local stop = self:symbol("SpecialPhoneCallList")
+  if stop and stop.bank == sym.bank and stop.address > sym.address then
+    limit = math.floor((stop.address - sym.address) / GEN2_PHONE_ROW_BYTES)
+  end
+  local rows, rowsRead, lastName = {}, 0, 0
+  for id = 0, limit - 1 do
+    local ok, row = pcall(self.rom.bytes, self.rom, sym.bank,
+      sym.address + id * GEN2_PHONE_ROW_BYTES, GEN2_PHONE_ROW_BYTES)
+    if not ok then break end
+    rows[id], rowsRead = row, rowsRead + 1
+    if row[1] == 0 then lastName = math.max(lastName, row[2]) end
+  end
+
   -- Polished names can contain a Huffman-compressed suffix ($5D).
-  -- Decode the string stream before applying its charmap.
+  -- Decode the string stream before applying its charmap. Read every name
+  -- referenced by the actual table: the Gold-sized four-name bound discarded
+  -- Crystal's Buena row (non-trainer identity5), including both call scripts.
   local names = {}
   local nsym = self:symbol("NonTrainerCallerNames")
   if nsym then
     local polished = self.version == "polishedcrystal"
-    local count = polished and 7 or GEN2_NONTRAINER_NAMES
-    for id = 1, count - 1 do
+    for id = 1, lastName do
       local ok, address = pcall(self.rom.word, self.rom, nsym.bank,
         nsym.address + id * 2)
       if ok and self:gen2InRom(nsym.bank, address) then
@@ -8470,18 +8709,9 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
     end
   end
 
-  -- SpecialPhoneCallList closes the table; sizing off it beats guessing
-  local limit = GEN2_PHONE_MAX
-  local stop = self:symbol("SpecialPhoneCallList")
-  if stop and stop.bank == sym.bank and stop.address > sym.address then
-    limit = math.floor((stop.address - sym.address) / GEN2_PHONE_ROW_BYTES)
-  end
-
   local out = {}
-  for id = 0, limit - 1 do
-    local ok, row = pcall(self.rom.bytes, self.rom, sym.bank,
-      sym.address + id * GEN2_PHONE_ROW_BYTES, GEN2_PHONE_ROW_BYTES)
-    if not ok then break end
+  for id = 0, rowsRead - 1 do
+    local row = rows[id]
     local class, trainer = row[1], row[2]
     -- the unused rows are class 0 / id 0, which GetCallerName renders as the
     -- "----------" placeholder; skip them so the POKeGEAR can never list one
@@ -8490,7 +8720,9 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
       entry = { class = class, trainer = trainer }
     elseif trainer ~= 0 and names[trainer] then
       local name, role = names[trainer]:match("^([^\n\f\v]+)[\n\f\v]%s*(.*)$")
-      entry = { name = (name or names[trainer]):gsub(":$", ""), role = role }
+      -- Keep the non-trainer's native identity; names are localizable.
+      entry = { name = (name or names[trainer]):gsub(":$", ""), role = role,
+                class = 0, contactNumber = trainer }
     end
     -- The contact's OWN map, bytes 3 and 4.  GetAvailableCallers (36:$40DE)
     -- compares it against wMapGroup/wMapNumber and drops the contact from the
@@ -8510,8 +8742,9 @@ function RomExtractorGen2:gen2PhoneContacts(pool)
     end
     out[id] = entry
   end
-  if not next(out) then return nil end
-  return out
+  local info = { size = limit, rowsRead = rowsRead, nonTrainerNames = names }
+  if not next(out) then return nil, info end
+  return out, info
 end
 
 -- `SpecialPhoneCallList` ([36,$45F6] .. PhoneOutOfAreaScript, 48 bytes) is
@@ -8891,7 +9124,12 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
   end
 
   out.stds = self:gen2QueueStdScripts(pool)
+  out.momShopping=self:gen2MomShopping(pool)
+  out.decorations,out.decorationInfo=self:gen2Decorations()
+  out.decorationPrograms=self:gen2QueueDecorationPrograms(pool)
   out.marts = self:gen2Marts()
+  out.apricornBalls, out.apricornInfo = self:gen2ApricornBalls()
+  out.apricornPrograms = self:gen2QueueApricornPrograms(pool)
   out.spawns = self:gen2SpawnPoints(maps, keys)
   -- extractField runs after this stage and needs both of these: GSC has no
   -- Fly-warp list of its own, because Fly lands on the SPAWN POINT of the
@@ -8900,7 +9138,7 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
   -- drawn in.
   self._gen2Spawns = out.spawns
   self._gen2MapDefs = maps
-  out.phone = self:gen2PhoneContacts(pool)
+  out.phone, out.phoneInfo = self:gen2PhoneContacts(pool)
   out.specialCalls = self:gen2SpecialPhoneCalls(pool)
   -- wVariableSprites as InitializeEventsScript leaves it on a new game, so an
   -- object_event whose sprite byte is $F0 or more resolves before the map's
@@ -11418,7 +11656,10 @@ function RomExtractorGen2:gen2Landmarks()
   if not (sym and self.rom) then return nil end
   local charmap = self:readSourceTable("charmap")
   local out = {}
-  for id = 0, GEN2_LANDMARK_COUNT - 1 do
+  local order,why=require("src.world.Gen2Landmarks").order(self.version,self.manifest)
+  if why then return nil end
+  local count=#order>0 and #order or self:layout("townMapLandmarkCount",GEN2_LANDMARK_COUNT)
+  for id = 0, math.min(256,count) - 1 do
     pcall(function()
       local row = sym.address + id * GEN2_LANDMARK_BYTES
       local name = self:decodeGen2TextAt(sym.bank,
@@ -11426,6 +11667,7 @@ function RomExtractorGen2:gen2Landmarks()
       -- $1F is the landmark line break (TownMap_ConvertLineBreakCharacters)
       name = name:gsub("{BYTE:1F}", "\n")
       out[id] = {
+        id = order[id+1], index = id,
         x = self.rom:byte(sym.bank, row),
         y = self.rom:byte(sym.bank, row + 1),
         name = name ~= "" and name or nil,
@@ -11436,12 +11678,15 @@ function RomExtractorGen2:gen2Landmarks()
 end
 
 function RomExtractorGen2:gen2TownMap()
+  local landmarks = self:gen2Landmarks()
   local johto = self:gen2TownMapImage("JohtoMap", "ui/town_map_johto.png")
-  if not johto then return nil end
+  -- Native name scripts do not depend on a successfully decoded map picture.
+  if not johto and not landmarks then return nil end
   local out = {
     johto = johto,
     kanto = self:gen2TownMapImage("KantoMap", "ui/town_map_kanto.png"),
-    landmarks = self:gen2Landmarks(),
+    landmarks = landmarks,
+    landmarkOrder = require("src.world.Gen2Landmarks").order(self.version,self.manifest),
   }
   -- Player "you are here" icon: ChrisSpriteGFX facing-down (4 tiles = 16x16)
   -- tinted with PAL_OW_RED so it is not a greyscale silhouette on the map.

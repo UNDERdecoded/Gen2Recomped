@@ -1072,17 +1072,7 @@ end
 -- is available on worker threads, so this is the hand-off unit the worker
 -- produces and the main thread queues.
 local function soundData(engine, samples, channels)
-  local result = love.sound.newSoundData(samples, SAMPLE_RATE, 16, channels)
-  for index = 0, samples - 1 do
-    if channels == 2 then
-      local left, right = engine:sampleStereo()
-      result:setSample(index, 1, left)
-      result:setSample(index, 2, right)
-    else
-      result:setSample(index, engine:sample())
-    end
-  end
-  return result
+  return require('src.core.AudioPcm').render(engine,samples,channels,SAMPLE_RATE)
 end
 
 -- Render a one-shot effect (SFX/cry) to a two-channel SoundData, or nil when
@@ -1115,13 +1105,7 @@ local function renderEffectData(data, header, options)
     values[count] = engine:sample()
   end
   if count < math.floor(SAMPLE_RATE / 100) then return nil end
-  local result = love.sound.newSoundData(count, SAMPLE_RATE, 16, 2)
-  for index = 1, count do
-    local value = values[index]
-    result:setSample(index - 1, 1, value)
-    result:setSample(index - 1, 2, value)
-  end
-  return result
+  return require('src.core.AudioPcm').arrays(values,nil,count,SAMPLE_RATE)
 end
 
 ChipSynth.newEngine = Engine.new

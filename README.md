@@ -605,6 +605,11 @@ platform, renderer, and tooling are theirs; the Generation II import, script
 VM, world, and battle work are this fork's. See [LICENSE.MD](LICENSE.MD) for
 the full copyright split.
 
+Contributions by **Roxas2712** — <https://github.com/Roxas2712>. Original native
+asset-producer additions are covered by [the contribution terms](LICENSE-ROXAS2712.md),
+including the specific integration permission for Cedric / UNDERdecoded. Earlier
+grants and other contributors' rights remain effective.
+
 ## Licence in one paragraph
 
 Two parts. **Everything inherited from Gen1Recomp, and every shared engine

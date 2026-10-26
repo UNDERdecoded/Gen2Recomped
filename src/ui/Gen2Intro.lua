@@ -208,11 +208,30 @@ function Gen2Intro.new(game, onDone)
   return self
 end
 
+local function bootStage(self)
+  if not self._bootEntered then return end
+  local phase=self.scene==1 and 'copyright' or self.scene==2 and 'gamefreak' or 'movie'
+  if phase==self._bootStage then return end
+  self._bootStage=phase
+  if phase=='movie'then self._bootMovie=true;self._bootFrames=0 end
+  local Runtime=require('src.mods.Runtime')
+  local event='intro.boot.'..phase
+  if Runtime.wants(event)then
+    local payload={screen=self,game=self.game}
+    if phase=='copyright'then Runtime.emit("intro.boot.copyright",payload)
+    elseif phase=='gamefreak'then Runtime.emit("intro.boot.gamefreak",payload)
+    else Runtime.emit("intro.boot.movie",payload)end
+  end
+end
+
 function Gen2Intro:enter()
   if self.skipAll then
     self:finish()
     return
   end
+  self._bootEntered=true
+  self._bootFrames=0
+  bootStage(self)
   local data = self.game.data
   local song = self.cfg.music or "Music_TitleScreen"
   if data.audio and data.audio.songs and data.audio.songs[song] then
@@ -223,6 +242,13 @@ end
 function Gen2Intro:finish()
   if self.finished then return end
   self.finished = true
+  if self._bootMovie then
+    local Runtime=require('src.mods.Runtime')
+    if Runtime.wants("intro.boot.movie_ended")then
+      Runtime.emit("intro.boot.movie_ended",{screen=self,game=self.game,
+        skipped=self._bootSkipped==true,frames=self._bootFrames or 0})
+    end
+  end
   pcall(Music.stop)
   self.game.stack:pop()
   if self.onDone then self.onDone() end
@@ -230,9 +256,11 @@ end
 
 function Gen2Intro:update(dt)
   if self.finished then return end
+  self._bootFrames=(self._bootFrames or 0)+1
   local input = self.game.input
   if input and (input:wasPressed("start") or input:wasPressed("a")
                 or input:wasPressed("b")) then
+    self._bootSkipped=true
     self:finish()
     return
   end
@@ -250,6 +278,7 @@ end
 -- hSCX / hSCY as each scene's setup leaves them (IntroScene1 and
 -- IntroScene6 both DisableLCD and reseed the camera).
 function Gen2Intro:enterScene()
+  if self.scenes[self.scene]then bootStage(self)end
   local scene = self.scenes[self.scene]
   local name = scene and scene[1]
   if name == "underwater" then

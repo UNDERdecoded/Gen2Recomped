@@ -296,7 +296,7 @@ end
 -- 5 = brimming with energy (the matching-DV rejection). The
 -- ordering is the ROM's too -- a pair that shares an OT ID is the *worst*
 -- match, and two of the same species from different trainers the best.
-function DayCare.compatibility(data, save)
+local function nativeCompatibility(data, save)
   local a, b = DayCare.pair(data, save)
   if not a then return 0 end
   local version = require("src.core.GameVersion").get()
@@ -316,6 +316,35 @@ end
 -- DayCareStep compares a random byte with 10, 30, 40 or 80.
 DayCare.EGG_ODDS = { [0] = 0, [1] = 10 / 256, [2] = 40 / 256,
                      [3] = 30 / 256, [4] = 80 / 256, [5] = 0 }
+
+local compatibilityBytes={[0]=0,[1]=10,[2]=40,[3]=30,[4]=80,[5]=255}
+local function evaluateCompatibility(data,save)
+  local tier=nativeCompatibility(data,save)
+  local byte=compatibilityBytes[tier]
+  local Runtime=require('src.mods.Runtime')
+  if not require('src.core.GameVersion').isGen2() or not Runtime.wantsHook("breeding.compatibility")then
+    return tier,byte
+  end
+  local context={data=data,mon1=DayCare.mon(save,1),mon2=DayCare.mon(save,2),dayCare=true}
+  local result=Runtime.call("breeding.compatibility",function(c)
+    local view={daycare={breed={{mon=c.mon1},{mon=c.mon2}}}}
+    return compatibilityBytes[nativeCompatibility(c.data,view)]
+  end,context)
+  local n=tonumber(result)
+  if not n or n~=n or math.abs(n)==math.huge then return tier,byte end
+  n=math.max(0,math.min(255,math.floor(n)))
+  -- Preserve the native public text tier. The step loop also receives the
+  -- exact byte so an authored probability need not round to a stock tier.
+  if n==0 then tier=0 elseif n==255 then tier=5
+  elseif n<=10 then tier=1 elseif n<=30 then tier=3 elseif n<=40 then tier=2 else tier=4 end
+  return tier,n,true
+end
+local compatibilityReads=setmetatable({},{__mode='k'})
+function DayCare.compatibility(data,save)
+  local tier,byte,hooked=evaluateCompatibility(data,save)
+  if hooked and save then compatibilityReads[save]={tier=tier,byte=byte}end
+  return tier
+end
 
 -- ---------------------------------------------------------------------------
 -- HOENN'S OWN ANSWER TO THE SAME QUESTION (GetDaycareCompatibilityScore).
@@ -553,7 +582,11 @@ function DayCare.step(data, save, expPerStep)
   end
   local version = require("src.core.GameVersion").get()
   local vanillaGen2 = version == "gold" or version == "silver" or version == "crystal"
+  compatibilityReads[save]=nil
   local tier = DayCare.compatibility(data, save)
+  local reading=compatibilityReads[save];compatibilityReads[save]=nil
+  local hooked=reading and reading.tier==tier
+  local compatibility=hooked and reading.byte or compatibilityBytes[tier]
   if vanillaGen2 then
     if tier == 0 or tier == 5 then return false end
     -- First attempt: 150..255 steps. Later attempts: a random byte;
@@ -577,6 +610,7 @@ function DayCare.step(data, save, expPerStep)
   -- indifferent pair simply keeps walking.
   local odds = gen3 and (DayCare.gen3Score(data, save) / 100)
                or DayCare.EGG_ODDS[tier]
+  if vanillaGen2 and hooked then odds=compatibility/256 end
   if not gen3 and not vanillaGen2 then
     -- Preserve the existing shared-model behavior for other cartridges.
     odds = ({[0]=0,[1]=64/256,[2]=128/256,[3]=191/256,[4]=255/256})[tier]
@@ -612,6 +646,12 @@ function DayCare.step(data, save, expPerStep)
   -- callback moves the MAN out to the fence -- that walk is the ROM's whole
   -- "an EGG is waiting" announcement, there is no phone call for it.
   DayCare.syncFlags(save)
+  local Runtime=require('src.mods.Runtime')
+  if require('src.core.GameVersion').isGen2() and Runtime.wants("breeding.egg_created")then
+    local mother,father=DayCare.parents(data,save)
+    Runtime.emit("breeding.egg_created",{egg=egg,mother=mother,father=father,
+      compatibility=compatibility,stepsToEgg=breed.stepsToEgg})
+  end
   return true
 end
 

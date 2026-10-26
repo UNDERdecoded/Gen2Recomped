@@ -1,7 +1,10 @@
 -- Nintendo DS SSEQ transport over the ROM's SBNK/SWAR instruments.
 -- PCM/ADPCM mixing is local; no replacement MIDI soundfont is used.
+local FrameProfile = require("src.core.FrameProfile")
 local Sdat=require('src.import.Gen4Sdat')
-local Audio={};local Player={};Player.__index=Player
+local Transport=require('src.audio.NitroTransport')
+local Audio={};local Player={}
+Player.__index=Player
 local archives,players={},setmetatable({}, {__mode="k"})
 local RATE,BLOCK=32768,512
 local function u8(s,o) return s:byte(o+1) end
@@ -27,15 +30,22 @@ function Audio.archive(data)
  end
  return arc
 end
-function Audio.new(data,def)
- local arc=Audio.archive(data)
+local function engineFor(arc,def)
  local seq=assert(Sdat.sequence(arc,assert(def.nds)),'missing SDAT sequence')
  local at,size=Sdat.fileAt(arc,seq.file);local bytes=arc.data:sub(at+1,at+size)
  assert(bytes:sub(1,4)=='SSEQ','not a native SSEQ')
  local start=assert(u32(bytes,24),'truncated sequence')
- local self=setmetatable({arc=arc,seq=seq,bytes=bytes,start=start,tracks={[0]=track(start)},
+ return setmetatable({arc=arc,seq=seq,bytes=bytes,start=start,tracks={[0]=track(start)},
   voices={},samples={},tempo=120,tickPhase=0,master=(seq.volume or 127)/127,
-  queue=love.audio.newQueueableSource(RATE,16,2,4),looping=true,running=false},Player)
+  looping=true,running=false},Player)
+end
+local hydrate
+function Audio.new(data,def)
+ local self=engineFor(Audio.archive(data),def)
+ local threaded=Transport.attach(self,{nds=def.nds},function(...)return hydrate(...)end,function(state)
+  state.tracks={[0]=track(state.start)};state.voices={};state.tickPhase=1;state.variables={};state.ended=false
+ end)
+ self.queue=love.audio.newQueueableSource(RATE,16,2,threaded and 16 or 4)
  players[self]=true
  return self
 end
@@ -45,12 +55,14 @@ end
 -- NNS_SndPlayerReadVariable), so nothing outside the sequences writes them.
 local globalVariables={}
 function Player:variable(index)
+ local value,handled=Transport.variable(self,index);if handled then return value end
  if index>=32 then return 0 end
  local v
  if index<16 then v=self.variables and self.variables[index] else v=globalVariables[index-16] end
  if v==nil then return -1 end;return v
 end
 function Player:setVariable(index,v)
+ if Transport.setVariable(self,index,v)then return end
  v=math.floor(v)%65536;if v>=32768 then v=v-65536 end
  if index<16 then self.variables=self.variables or {};self.variables[index]=v
  elseif index<32 then globalVariables[index-16]=v end
@@ -62,15 +74,31 @@ function Player:getPitch() return self.pitch or 1 end
 function Player:getVolume() return self.queue:getVolume() end
 function Player:setFilter(...) return self.queue:setFilter(...) end
 function Player:setLooping(v) self.looping=v end
-function Player:isPlaying() return self.running and (not self.ended or #self.voices>0 or self.queue:isPlaying()) end
-function Player:stop() self.running=false;self.queue:stop();self.voices={} end
+function Player:isPlaying() local value=Transport.isPlaying(self);if value~=nil then return value end;return self.running and (not self.ended or #self.voices>0 or self.queue:isPlaying()) end
+function Player:stop() if Transport.stop(self)then return end;self.running=false;self.queue:stop();self.voices={} end
 function Player:pause() self.paused=true;self.queue:pause() end
 function Player:play()
+ if Transport.play(self)then return end
  if self.paused then self.paused=false;self.queue:play();return end
  self.queue:stop();self.tracks={[0]=track(self.start)};self.voices={};self.tickPhase=1;self.variables={}
  self.ended=false;self.running=true;self:update();self.queue:play()
 end
 local function signed(v) return v>=128 and v-256 or v end
+-- Worker-only PCM storage. The public legacy player still exposes Lua arrays.
+local packed=setmetatable({},{__mode='k'})
+local workerEngines=setmetatable({},{__mode='k'})
+local ffiOK,ffi=pcall(require,'ffi')
+local function compactSample(sample,key)
+ if not ffiOK or packed[sample]then return end
+ local kind=tonumber(key:match('^(%d+):'))
+ local scale=kind==1 and 1/32768 or kind==2 and .5 or .3
+ local pcm=sample.pcm
+ local bytes=love.data.newByteData(#pcm*2)
+ local pointer=ffi.cast('int16_t *',bytes:getFFIPointer())
+ for n=1,#pcm do pointer[n-1]=pcm[n]/scale end
+ packed[sample]={bytes=bytes,pointer=pointer,count=#pcm,scale=scale}
+ sample.pcm=pointer
+end
 function Player:note(t,note,velocity,duration)
  note=note+t.transpose
  local ins=Sdat.instrument(self.arc,self.seq.bank,t.program,note)
@@ -93,6 +121,7 @@ function Player:note(t,note,velocity,duration)
   end
  end
  if not sample then return end
+ if workerEngines[self]then compactSample(sample,key)end
  if #self.voices>=32 then table.remove(self.voices,1) end
  local root=ins.kind==1 and ins.root or 69
  local pan=math.max(0,math.min(127,t.pan+ins.pan-64))/127
@@ -194,6 +223,8 @@ function Player:tick()
  for _,v in ipairs(self.voices) do v.ticks=v.ticks-1;if v.ticks<=0 and v.release==0 then v.release=math.floor(RATE*0.04) end end
 end
 function Player:render()
+ Transport.detach(self,'explicit render call')
+ local closeRender=FrameProfile.section("  audio: Nitro render")
  local sound=love.sound.newSoundData(BLOCK,RATE,16,2)
  for i=0,BLOCK-1 do
   self.tickPhase=self.tickPhase+self.tempo*48/60/RATE
@@ -215,9 +246,11 @@ function Player:render()
   sound:setSample(i,1,math.max(-1,math.min(1,left)))
   sound:setSample(i,2,math.max(-1,math.min(1,right)))
  end
+ closeRender()
  return sound
 end
 function Player:update()
+ if Transport.update(self)then return end
  if not self.running or self.paused then return end
  if self.ended and #self.voices==0 then
   if not self.queue:isPlaying() then self.running=false end
@@ -225,6 +258,97 @@ function Player:update()
  end
  while self.queue:getFreeBufferCount()>0 do self.queue:queue(self:render());if self.ended and #self.voices==0 then break end end
  if not self.queue:isPlaying() then self.queue:play() end
+end
+function Audio._workerNew(arc,def)
+ local self=engineFor(arc,def)
+ workerEngines[self]=true
+ self.tickPhase=1;self.variables={};self.running=true
+ return self
+end
+local function workerSnapshot(self,sent)
+ local state={tracks=self.tracks,voices={},variables=self.variables,tempo=self.tempo,
+  tickPhase=self.tickPhase,master=self.master,ended=self.ended==true}
+ local samples,keys={},{}
+ for key,s in pairs(self.samples)do
+  keys[s]=key
+  if not sent[key]then
+   local p=assert(packed[s],'unpacked worker sample')
+   samples[key]={bytes=p.bytes,count=p.count,scale=p.scale,loop=s.loop,loopAt=s.loopAt,rate=s.rate}
+   sent[key]=true
+  end
+ end
+ for n,v in ipairs(self.voices)do
+  local row={sampleKey=assert(keys[v.sample])}
+  for key,value in pairs(v)do if key~='sample'then row[key]=value end end
+  state.voices[n]=row
+ end
+ return state,samples
+end
+hydrate=function(self,state,samples)
+ local decoded={}
+ for key,s in pairs(samples)do
+  local pointer=ffi.cast('int16_t *',s.bytes:getFFIPointer())
+  local pcm={};for n=1,s.count do pcm[n]=pointer[n-1]*s.scale end
+  decoded[key]={pcm=pcm,loop=s.loop,loopAt=s.loopAt,rate=s.rate}
+ end
+ local voices={}
+ for n,v in ipairs(state.voices or {})do
+  if v.sampleKey then
+   local row={sample=assert(decoded[v.sampleKey])}
+   for key,value in pairs(v)do if key~='sampleKey'then row[key]=value end end
+   voices[n]=row
+  else voices[n]=v end
+ end
+ for key,value in pairs(state)do rawset(self,key,value)end
+ rawset(self,'voices',voices)
+ if next(samples)then rawset(self,'samples',decoded)end
+end
+-- Mix a constant-event span by voice. Phase increments retain the original
+-- addition order; tick() runs before the exact same first sample of a tick.
+function Audio._workerRender(self,count,sent)
+ assert(ffiOK,'FFI unavailable')
+ local buffers=workerEngines[self]
+ if buffers==true then
+  buffers={left=ffi.new('double[?]',count+1),right=ffi.new('double[?]',count+1)}
+  workerEngines[self]=buffers
+ end
+ local left,right=buffers.left,buffers.right
+ ffi.fill(left,(count+1)*8);ffi.fill(right,(count+1)*8)
+ local at,actual=0,count
+ while at<count do
+  local blockEnd=math.min(count,at+BLOCK)
+  while at<blockEnd do
+   self.tickPhase=self.tickPhase+self.tempo*48/60/RATE
+   while self.tickPhase>=1 do self.tickPhase=self.tickPhase-1;self:tick()end
+   local last=at+1
+   local step=self.tempo*48/60/RATE
+   while last<blockEnd and self.tickPhase+step<1 do
+    self.tickPhase=self.tickPhase+step;last=last+1
+   end
+   for n=#self.voices,1,-1 do
+    local v=self.voices[n];local s=v.sample;local p=assert(packed[s])
+    for i=at,last-1 do
+     if v.pos>=p.count then
+      if s.loop and p.count>s.loopAt then v.pos=s.loopAt+(v.pos-s.loopAt)%(p.count-s.loopAt)
+      else table.remove(self.voices,n);break end
+     end
+     local gain=v.gain;local remove=false
+     if v.release>0 then gain=gain*v.release/(RATE*.04);v.release=v.release-1;remove=v.release==0 end
+     local index=math.floor(v.pos)
+     local value=(index>=0 and index<p.count and tonumber(p.pointer[index])*p.scale or 0)*gain
+     left[i+1]=left[i+1]+value*v.left;right[i+1]=right[i+1]+value*v.right
+     v.pos=v.pos+v.step*(self.pitch or 1)
+     if remove then table.remove(self.voices,n);break end
+    end
+   end
+   at=last
+  end
+  if self.ended and #self.voices==0 then actual=at;break end
+ end
+ for n=1,actual do left[n]=math.max(-1,math.min(1,left[n]));right[n]=math.max(-1,math.min(1,right[n]))end
+ local sound=require('src.core.AudioPcm').arrays(left,right,actual,RATE)
+ local state,samples=workerSnapshot(self,sent)
+ return sound,state,samples,self.ended and #self.voices==0
 end
 function Audio.update()
  for p in pairs(players) do

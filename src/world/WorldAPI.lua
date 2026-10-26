@@ -6,17 +6,24 @@
 -- stays unsupported; anything a mod legitimately needs belongs here.
 
 local Logger = require("src.core.Logger")
+local Actions = require("src.world.WorldActions")
 local MapLoader = require("src.world.MapLoader")
 local Gen3Elevation = require("src.world.Gen3Elevation")
 local Runtime = require("src.mods.Runtime")
+local NpcControls = require("src.world.NpcControls")
+local Collision = require("src.world.Collision")
+local Version = require("src.core.GameVersion")
+local Reads = require("src.mods.WorldReads")
+local WorldOverview = require("src.mods.WorldOverview")
+local MapOverview = require("src.world.MapOverview")
 
 local WorldAPI = {}
 WorldAPI.__index = WorldAPI
 
 local NO_OVERWORLD = "no overworld"
 
-function WorldAPI.new(game, modId)
-  return setmetatable({ game = game, modId = modId }, WorldAPI)
+function WorldAPI.new(game, modId, readContext)
+  return setmetatable({ game = game, modId = modId, readContext = readContext }, WorldAPI)
 end
 
 -- the live overworld, or nil.  Game.overworld is the fast path; the stack
@@ -56,6 +63,41 @@ function WorldAPI:current()
            elevation = elevation,
            layer = Gen3Elevation.layerOf(self.game and self.game.data,
                                          elevation) }
+end
+
+-- Detached common Pokemon records. This also works with a save at the title
+-- screen: reading the party does not need an active overworld.
+function WorldAPI:party()
+  return Reads.party(self.game, self.readContext)
+end
+
+-- Require the expected active map to reject stale requests after a warp.
+-- The second result describes block size/coordinates and the DS proxy grid.
+function WorldAPI:activeBlockAt(mapId, bx, by)
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return Reads.activeBlockAt(ow.map, mapId, bx, by)
+end
+
+-- Loaded maps only, active first and with distinct placements. loadedMaps()
+-- retains its legacy shape/order; these records also describe block units.
+function WorldAPI:liveMaps()
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return Reads.liveMaps(ow)
+end
+
+-- Detached, zero-based terrain and marker grids for companion UIs/minimaps.
+function WorldAPI:mapOverview()
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return MapOverview.build(self.game, ow)
+end
+
+-- Table distribution before per-step RNG, repel, roamers and roll hooks.
+-- Explicit map IDs also work at the title screen without loading that map.
+function WorldAPI:effectiveEncounters(mapId, terrain, opts)
+  return WorldOverview.encounters(self.game, self:overworld(), self.overviewContext, mapId, terrain, opts)
 end
 
 -- opts.arrive = "fly" | "teleport" picks the arrival FX; anything else
@@ -362,6 +404,79 @@ function Handle:elevation()
   return self.npc.gen3Elevation
 end
 
+-- New immediate controls retain the legacy handle and its existing methods.
+-- A retained handle cannot apply these controls to a later native cohort.
+local function npcCoordinate(v)
+  return type(v) == "number" and v == v and v >= 0 and v <= 1000000 and v % 1 == 0
+end
+local function control(handle, name, a, b, c)
+  local context = handle._controlContext
+  local api, game, ow, actor = context[1], context[2], context[3], context[4]
+  if
+    not ow.map
+    or handle.ow ~= ow
+    or handle.npc ~= actor
+    or api.game ~= game
+    or game.data ~= context[5]
+    or game.save ~= context[6]
+    or Version.get() ~= context[8]
+    or api:overworld() ~= ow
+    or ow.map ~= context[7]
+    or ow.map.id ~= context[10]
+    or game.overworld ~= context[11]
+    or api._npcAlive and (not api._npcAlive() or Runtime.hooks ~= context[9])
+  then
+    return nil, "NPC handle is stale"
+  end
+  local found = false
+  for _, candidate in ipairs(ow.npcs or {}) do
+    if candidate == actor then
+      found = true
+      break
+    end
+  end
+  if not found then
+    return nil, "NPC handle is stale"
+  end
+  if name == "stepNow" or name == "canStep" then
+    if not Collision.DELTA[a] then
+      return nil, "invalid direction"
+    end
+  end
+  if name == "placeAt" then
+    if not npcCoordinate(a) or not npcCoordinate(b) or c ~= nil and not Collision.DELTA[c] then
+      return nil, "invalid coordinates"
+    end
+  end
+  if name == "canStep" then
+    return NpcControls.canStep(actor, ow.map, ow.cast or ow.entities, a)
+  end
+  if name == "isMoving" then
+    return NpcControls.isMoving(actor)
+  end
+  if name == "setAppearance" then
+    return NpcControls.setAppearance(actor, game, a)
+  end
+  if name == "setPassable" then
+    return NpcControls.setPassable(actor, not not a)
+  end
+  return NpcControls[name](actor, a, b, c)
+end
+for _, method in ipairs({ "stepNow", "canStep", "placeAt", "isMoving", "setPassable", "setAppearance" }) do
+  local name = method
+  Handle[name] = function(self, ...)
+    local previous = Runtime.currentMod
+    Runtime.currentMod = nil
+    local result = { pcall(control, self, name, ...) }
+    Runtime.currentMod = previous
+    if not result[1] then
+      local ok, message = pcall(tostring, result[2])
+      return nil, "NPC operation failed: " .. (ok and message or "unprintable error")
+    end
+    return result[2], result[3]
+  end
+end
+
 function WorldAPI:npc(mapId, indexOrName)
   local ow = self:overworld()
   if not ow then return nil, NO_OVERWORLD end
@@ -369,7 +484,9 @@ function WorldAPI:npc(mapId, indexOrName)
   for _, npc in ipairs(ow.npcs or {}) do
     if npc.def.index == indexOrName or npc.def.name == indexOrName
        or npc.id == indexOrName then
-      return setmetatable({ ow = ow, npc = npc, id = npc.id }, Handle)
+      return setmetatable({ ow = ow, npc = npc, id = npc.id,
+        _controlContext = { self, self.game, ow, npc, self.game.data, self.game.save,
+          ow.map, Version.get(), Runtime.hooks, ow.map and ow.map.id, self.game.overworld } }, Handle)
     end
   end
   return nil, "no such object: " .. tostring(indexOrName)
@@ -385,6 +502,14 @@ function WorldAPI:queueScript(rows, extra)
   ow.runner:run(rows, extra)
   return true
 end
+
+-- Public field mutations are kept behind the same free-roam boundary.
+function WorldAPI:canReorderParty() return Actions.canReorderParty(self.game, self:overworld()) end
+function WorldAPI:reorderParty(fromSlot, toSlot) return Actions.reorderParty(self.game, self:overworld(), fromSlot, toSlot) end
+function WorldAPI:availableFieldActions() return Actions.availableFieldActions(self.game, self:overworld()) end
+function WorldAPI:useFieldAction(id, opts) return Actions.useFieldAction(self.game, self:overworld(), id, opts) end
+function WorldAPI:canFly() return Actions.canFly(self.game, self:overworld()) end
+function WorldAPI:flyTo(mapId) return Actions.flyTo(self.game, self:overworld(), mapId) end
 
 -- drop a map's cached instance so the next load re-reads its record; when
 -- it is the active map the world reloads around the player in place

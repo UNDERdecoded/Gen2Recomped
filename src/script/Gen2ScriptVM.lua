@@ -23,6 +23,7 @@
 -- behind the hand-ported data/scripts/ modules, which still win outright.
 
 local Logger = require("src.core.Logger")
+local Decoded = require("src.script.DecodedScript")
 local MapScripts = require("src.script.MapScripts")
 local Gen2Flags = require("src.script.Gen2Flags")
 require("src.script.Gen2Commands")
@@ -75,7 +76,10 @@ local function itemId(n) return string.format("ITEM_%03d", n) end
 
 local L = {}
 
-local function emit(s, row) s.out[#s.out + 1] = row end
+local function emit(s, row)
+  s.out[#s.out + 1] = row
+  if s._decoded then Decoded.emit(s._decoded, row) end
+end
 
 -- A pointer that fell outside the ROM, or a far script that failed to
 -- disassemble, is stored as "" by the extractor.  Branches to one lower to
@@ -278,17 +282,28 @@ L.givepokemail = function() end
 --                  NPC instead.
 --   loadtemptrainer/randomwildmon/loadpikachudata build a battle out of WRAM
 --                  scratch the port fills from its own encounter tables.
---   _2dmenu/describedecoration are presentation the port has no
+--   _2dmenu is presentation the port has no
 --                  equivalent for; the surrounding dialogue still runs.
 --   autoinput      replays a canned joypad script over a cutscene.
 --   (catchtutorial used to live here too; it is implemented now, below.)
 local function vmNoop() end
 for _, name in ipairs({
   "xycompare", "writeobjectxy", "loadtemptrainer", "randomwildmon",
-  "loadpikachudata", "_2dmenu", "describedecoration",
+  "loadpikachudata", "_2dmenu",
   "autoinput",
 }) do
   L[name] = vmNoop
+end
+
+L.describedecoration=function(ir,s)
+  local p=s.decorationPrograms
+  if type(p)~='table'then return end
+  local allowed={}
+  for _,label in pairs(p.posters or{})do local target=branch(s,label);if target then allowed[target]=true end end
+  for _,role in ipairs({'ornament','big','null'})do
+    local target=branch(s,p[role]);if target then allowed[target]=true end
+  end
+  emit(s,{'g2_deco_description',ir[2],allowed})
 end
 
 
@@ -477,6 +492,7 @@ L.setevent = function(ir, s)
   else emit(s,{"set_flag",eventFlag(ir[2])}) end
 end
 L.clearevent = function(ir, s) emit(s, { "clear_flag", eventFlag(ir[2]) }) end
+L.apricornconverted = function(ir,s)emit(s,{"g2_apricorn_converted",ir[2],ir[3],ir[4]})end
 L.checkflag = function(ir, s) emit(s, { "check_flag", engineFlag(ir[2]) }) end
 L.setflag = function(ir, s) emit(s, { "set_flag", engineFlag(ir[2]) }) end
 L.clearflag = function(ir, s) emit(s, { "clear_flag", engineFlag(ir[2]) }) end
@@ -1080,6 +1096,12 @@ local SPECIALS = {
   PokemonCenterPC = "g2_pokemon_center_pc",
   Special_PokemonCenterPC = "g2_pokemon_center_pc",
   PlayersHousePC = "g2_players_house_pc",
+  ToggleDecorationsVisibility = "g2_deco_visibility",
+  ToggleDecorationsVisibilitySpecial = "g2_deco_visibility",
+  Special_ToggleDecorationsVisibility = "g2_deco_visibility",
+  ToggleMaptileDecorations = "g2_deco_tiles",
+  ToggleMaptileDecorationsSpecial = "g2_deco_tiles",
+  Special_ToggleMaptileDecorations = "g2_deco_tiles",
   Special_PlayersHousePC = "g2_players_house_pc",
   Special_KrissHousePC = "g2_players_house_pc",
   MoveTutor = "g2_move_tutor",
@@ -1215,9 +1237,6 @@ local SPECIALS_NOOP = {
   PlayCurMonCry = true,
   PlaySlowCry = true,
   SurfStartStep = true,
-  -- decorations are not modelled, so toggling their visibility does nothing
-  ToggleDecorationsVisibility = true,
-  ToggleMaptileDecorations = true,
   UnusedDummySpecial = true,
   UnusedBattleTowerDummySpecial1 = true,
   UnusedBattleTowerDummySpecial2 = true,
@@ -2365,7 +2384,7 @@ function Gen2ScriptVM.lowered(op)
   return L[op] ~= nil
 end
 
-function Gen2ScriptVM.compile(data, entry)
+local function compile(data, entry, options)
   local pool = store(data)
   local scripts = pool and pool.scripts
   if not (scripts and type(entry) == "string" and scripts[entry]) then return nil end
@@ -2373,13 +2392,15 @@ function Gen2ScriptVM.compile(data, entry)
   local key = entry
   compiled[scripts] = compiled[scripts] or {}
   local hit = compiled[scripts][key]
-  if hit ~= nil then return hit or nil end
+  if not options and hit ~= nil then return hit or nil end
 
   local out, queued, order = {}, { [entry] = true }, { entry }
   local counter = 0
   local state = {
     out = out,
+    _decoded = options and options.trace,
     stds = pool.stds,
+    decorationPrograms = pool.decorationPrograms,
     has = function(label)
       return type(label) == "string" and scripts[label] ~= nil
     end,
@@ -2391,14 +2412,20 @@ function Gen2ScriptVM.compile(data, entry)
     end,
     newLabel = function()
       counter = counter + 1
-      return string.format("%s_r%d", entry, counter)
+      local label = string.format("%s_r%d", entry, counter)
+      if options then Decoded.returnLabel(options.trace, label) end
+      return label
     end,
   }
 
+  if options and options.keepLabels then
+    for label in pairs(options.keepLabels) do state.want(label) end
+  end
   local index = 1
   while index <= #order do
     local label = order[index]
     index = index + 1
+    if options then options.trace.current = nil end
     emit(state, { "label", label })
     state.lastText = nil
     state.lastTextRow = nil
@@ -2423,6 +2450,7 @@ function Gen2ScriptVM.compile(data, entry)
     local sifStack, guardLabel = {}, nil
     local rows = scripts[label] or {}
     for irIndex, ir in ipairs(rows) do
+      if options then Decoded.begin(options.trace, label, irIndex, ir) end
       local op = ir[1]
       if SIF_OPS[op] then
         local after = state.newLabel()
@@ -2488,7 +2516,9 @@ function Gen2ScriptVM.compile(data, entry)
     for i = #sifStack, 1, -1 do emit(state, { "label", sifStack[i] }) end
     if guardLabel then emit(state, { "label", guardLabel }) end
     -- a script that ran off the end of its own bytecode still has to unwind
-    emit(state, { "g2_return" })
+    local finish = { "g2_return" }
+    if options then options.trace.current = nil; options.trace.labels[label] = finish end
+    emit(state, finish)
   end
 
   -- A script that lowers to nothing is why an NPC can be walked up to,
@@ -2498,8 +2528,19 @@ function Gen2ScriptVM.compile(data, entry)
   if #out == 0 then
     Logger.warn("gen2 script vm: '%s' compiled to zero rows (silent NPC)", key)
   end
-  compiled[scripts][key] = #out > 0 and out or false
+  if options then
+    Decoded.finish(out, options.trace)
+  else
+    Decoded.origin(out, data, entry, compile, 2)
+    compiled[scripts][key] = #out > 0 and out or false
+  end
   return #out > 0 and out or nil
+end
+
+-- Keep the public compiler's original two-argument contract. Profile tracing
+-- uses its private compiler reference, including when a mod wraps compile().
+function Gen2ScriptVM.compile(data, entry)
+  return compile(data, entry)
 end
 
 -- Prism renamed a good deal of Crystal's script vocabulary without changing

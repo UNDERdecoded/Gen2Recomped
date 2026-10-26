@@ -104,6 +104,11 @@ function RoamMons.check(save, mapId, onWater, rng)
   -- which is the same statement. UpdateRoamMons stores the id it hopped to,
   -- so both sides of this are already normalised.
   if info.mapId ~= mapId then return nil end
+  local Runtime=require('src.mods.Runtime')
+  if Runtime.wants("roamer.encountered")then
+    Runtime.emit("roamer.encountered",{index=a,slot=info,species=info.species or name,
+      level=info.level or RoamMons.LEVEL,mapId=mapId})
+  end
   return name, info
 end
 
