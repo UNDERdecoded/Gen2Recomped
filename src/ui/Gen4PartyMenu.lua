@@ -886,6 +886,28 @@ function Gen4PartyMenu:step(dir)
   end
 end
 
+function Gen4PartyMenu:cancel()
+  if self.switchFrom then
+    self.switchFrom = nil
+  elseif self.hpTransfer then
+    self.hpTransfer = nil
+    -- B IN A BATTLE IS "BACK TO THE MENU", NOT "I PICK NOTHING".
+    --
+    -- Out of a battle, handing the answer back as nil is how a caller learns
+    -- the player cancelled, and that is right. IN a battle it crashed: the
+    -- battle's own onSwitch is written for a Pokemon and went straight into
+    -- `mon.hp`.  The battle already knows what to do when this screen simply
+    -- closes, so closing is both the safe answer and the correct one.
+  elseif self.onSwitch and not (self.pickOnly or self.forceSwitch) and not self.battle then
+    self:handOff(nil)
+  elseif self.select then
+    self.index = self:count()
+    self:choose()
+  else
+    self:close()
+  end
+end
+
 function Gen4PartyMenu:update(dt)
   self.t = (self.t or 0) + (dt or 1 / 60)
   local input = self.game.input
@@ -918,23 +940,7 @@ function Gen4PartyMenu:update(dt)
   elseif input:wasPressed("a") then
     self:choose()
   elseif input:wasPressed("b") or input:wasPressed("start") then
-    if self.switchFrom then self.switchFrom = nil
-    elseif self.hpTransfer then self.hpTransfer = nil
-    -- B IN A BATTLE IS "BACK TO THE MENU", NOT "I PICK NOTHING".
-    --
-    -- Out of a battle, handing the answer back as nil is how a caller learns
-    -- the player cancelled, and that is right. IN a battle it crashed: the
-    -- battle's own onSwitch is written for a Pokemon and went straight into
-    -- `mon.hp`.  The battle already knows what to do when this screen simply
-    -- closes, so closing is both the safe answer and the correct one.
-    elseif self.onSwitch and not (self.pickOnly or self.forceSwitch)
-           and not self.battle then
-      self:handOff(nil)
-    elseif self.select then
-      self.index = self:count(); self:choose()
-    else
-      self:close()
-    end
+    self:cancel()
   end
 end
 
