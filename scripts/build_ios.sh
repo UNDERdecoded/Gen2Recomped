@@ -3,7 +3,7 @@
 # iOS Xcode project.
 #
 # Usage: scripts/build_ios.sh [--fetch] [--device] [--release] [--install]
-#                             [--version X.Y.Z] [--package-only]
+#                             [--version X.Y.Z] [--package-only] [--game-love PATH]
 #
 #   (default)         Simulator Debug (ad-hoc signed)
 #   --device          iphoneos SDK; signing team auto-detected from the
@@ -15,6 +15,7 @@
 #                     MARKETING_VERSION / CURRENT_PROJECT_VERSION
 #   --fetch           Fetch LÖVE 12.0 sources and Apple dependencies into mobile/ios/love-src/
 #   --package-only    Zip game.love + apply plist overlay; skip xcodebuild
+#   --game-love PATH  Embed an already built payload byte-for-byte
 #
 # Prerequisites:
 #   - macOS + Xcode (xcodebuild)
@@ -65,6 +66,7 @@ DEVICE=false
 RELEASE=false
 PACKAGE_ONLY=false
 INSTALL=false
+GAME_LOVE=""
 CREATE_IPA=false
 # Last resort for an incomplete source export, mirroring build_android.sh.
 MANIFEST_BASE_URL="${MANIFEST_BASE_URL:-https://raw.githubusercontent.com/UNDERdecodedHD/Gen2Recomped/main}"
@@ -82,6 +84,7 @@ while [ $# -gt 0 ]; do
     --device) DEVICE=true ;;
     --release) RELEASE=true ;;
     --package-only) PACKAGE_ONLY=true ;;
+    --game-love) [ $# -ge 2 ] || fail "--game-love requires a path"; GAME_LOVE="$2"; shift ;;
     --install) INSTALL=true ;;
     --ipa) CREATE_IPA=true ;;
     --version) VERSION="$2"; shift ;;
@@ -163,11 +166,9 @@ fetch_love_ios() {
   local tmp
   tmp="$(mktemp -d "$CACHE/extract.XXXXXX")"
   say "fetching LÖVE $LOVE_VERSION sources ($LOVE_SOURCE_REF)"
-  git clone --depth 1 --branch "$LOVE_SOURCE_REF" "$LOVE_SOURCE_REPO" "$tmp/love" \
-    || fail "failed to fetch LÖVE sources from $LOVE_SOURCE_REPO"
+  fetch_ios_tree "$LOVE_SOURCE_REPO" "$LOVE_SOURCE_REF" "$tmp/love"
   say "fetching Apple dependencies ($APPLE_DEPENDENCIES_REF)"
-  git clone --depth 1 --branch "$APPLE_DEPENDENCIES_REF" "$APPLE_DEPENDENCIES_REPO" "$tmp/dependencies" \
-    || fail "failed to fetch Apple dependencies from $APPLE_DEPENDENCIES_REPO"
+  fetch_ios_tree "$APPLE_DEPENDENCIES_REPO" "$APPLE_DEPENDENCIES_REF" "$tmp/dependencies"
   rm -rf "$LOVE_SRC"
   mv "$tmp/love" "$LOVE_SRC"
   mkdir -p "$LIBS_DIR" "$XCODE_DIR/shared"
@@ -175,6 +176,17 @@ fetch_love_ios() {
   cp -R "$tmp/dependencies/shared/." "$XCODE_DIR/shared"
   rm -rf "$tmp"
   say "love-src ready (LÖVE $LOVE_VERSION)"
+}
+
+# Accept an immutable commit as well as a branch/tag. git clone --branch does
+# not accept commit IDs, which prevented release jobs from freezing this input.
+fetch_ios_tree() {
+  local repo="$1" ref="$2" destination="$3"
+  git init -q "$destination"
+  git -C "$destination" remote add origin "$repo"
+  git -C "$destination" fetch --depth 1 origin "$ref" \
+    || fail "failed to fetch $repo at $ref"
+  git -C "$destination" checkout -q --detach FETCH_HEAD
 }
 
 if [ ! -d "$XCODE_DIR/love.xcodeproj" ]; then
@@ -306,6 +318,10 @@ ensure_manifests() {
 }
 
 pack_game_love() {
+  if [ -n "$GAME_LOVE" ]; then
+    python3 "$ROOT/tools/stage_game_payload.py" "$GAME_LOVE" "$LOVE_FILE" --version "$VERSION"
+    return
+  fi
   say "packing game.love for love-ios resources"
   mkdir -p "$RESOURCES_DIR"
   rm -f "$LOVE_FILE"
@@ -793,7 +809,7 @@ apply_ios_branding
 apply_ios_icon
 say "applying iOS native bridge patches (picker/Files support)"
 python3 "$IOS_DIR/patch_love_src.py" || fail "patch_love_src.py failed"
-ensure_manifests
+if [ -z "$GAME_LOVE" ]; then ensure_manifests; fi
 pack_game_love
 ensure_game_love_in_xcode
 suppress_love_dependency_warnings

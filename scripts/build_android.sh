@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Packages the LÃ–VE2D PokÃ©mon Red port into an Android APK via love-android 11.5a.
 #
-# Usage: scripts/build_android.sh [--version X.Y.Z] [--package-only]
+# Usage: scripts/build_android.sh [--version X.Y.Z] [--package-only] [--game-love PATH]
 #
 #   --version X.Y.Z  set app.version_name / app.version_code (else left as-is)
 #   --package-only   zip game.love + apply branding; skip gradle
+#   --game-love PATH embed an already built payload byte-for-byte
 #
 # Prerequisites:
 #   - mobile/android vendored love-android tree at tag 11.5a (in-repo; see mobile/ANDROID.md)
@@ -30,10 +31,10 @@ ANDROID_DIR="$ROOT/mobile/android"
 EMBED_ASSETS="$ANDROID_DIR/app/src/embed/assets"
 LOVE_FILE="$EMBED_ASSETS/game.love"
 DIST="$ROOT/dist/android"
-APP_NAME="gen2recomp"
+APP_NAME="${GEN2_APP_NAME:-gen2recomp}"
 # Distinct from the Gen 1 port's application id so the two can sit side by
 # side on one device; see mobile/ANDROID.md.
-APPLICATION_ID="com.underdecodedhd.gen2recomp"
+APPLICATION_ID="${GEN2_APPLICATION_ID:-com.underdecodedhd.gen2recomp}"
 LOVE_ANDROID_VERSION="11.5a"
 NDK_VERSION="25.2.9519653"
 MANIFEST_BASE_URL="${MANIFEST_BASE_URL:-https://raw.githubusercontent.com/UNDERdecoded/Gen2Recomped/main}"
@@ -45,6 +46,7 @@ GEN2_SOURCE_TABLES="constants charmap items maps moves text text_pointers traine
 
 VERSION=""
 PACKAGE_ONLY=false
+GAME_LOVE=""
 
 say()  { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33mwarn:\033[0m %s\n' "$*" >&2; }
@@ -63,6 +65,7 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --version) VERSION="$2"; shift ;;
     --package-only) PACKAGE_ONLY=true ;;
+    --game-love) [ $# -ge 2 ] || fail "--game-love requires a path"; GAME_LOVE="$2"; shift ;;
     -h|--help)
       sed -n '2,20p' "$0"
       exit 0
@@ -457,6 +460,10 @@ PY
 
 # --------------------------------------------------------------- game.love
 pack_game_love() {
+  if [ -n "$GAME_LOVE" ]; then
+    python3 "$ROOT/tools/stage_game_payload.py" "$GAME_LOVE" "$LOVE_FILE" --version "$VERSION"
+    return
+  fi
   say "packing game.love for love-android embed flavor"
   ensure_manifests
   ensure_gen2_sources
@@ -755,7 +762,22 @@ text = path.read_text()
 name = "org.love2d.android.SecondDisplayHost"
 
 if name in text:
-    sys.stdout.write("   second-display provider already registered\n")
+    # Rebuilding a preview from the vendored stable manifest must update this
+    # authority too: Android requires provider authorities to be device-wide
+    # unique, even when the application IDs differ.
+    provider_pattern = r'<provider\b(?=[^>]*android:name="' + re.escape(name) + r'")[^>]*>'
+    def update_authority(match):
+        updated, count = re.subn(r'android:authorities="[^"]*"',
+                                 'android:authorities="%s.seconddisplay"' % app_id,
+                                 match.group(0))
+        if count != 1:
+            raise SystemExit("second-display provider must declare one authority")
+        return updated
+    text, count = re.subn(provider_pattern, update_authority, text)
+    if count != 1:
+        raise SystemExit("expected one second-display provider")
+    path.write_text(text)
+    sys.stdout.write("   second-display provider authority refreshed\n")
     raise SystemExit(0)
 
 # An authority must be unique across the whole device, so it hangs off the

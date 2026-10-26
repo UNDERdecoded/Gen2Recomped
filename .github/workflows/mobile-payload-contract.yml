@@ -1,0 +1,29 @@
+name: Mobile payload contract
+on:
+  pull_request:
+    paths:
+      - 'scripts/build_android.sh'
+      - 'scripts/build_ios.sh'
+      - 'tools/stage_game_payload.py'
+      - 'tests/game_payload_test.py'
+      - '.github/workflows/mobile-payload-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/build_android.sh'
+      - 'scripts/build_ios.sh'
+      - 'tools/stage_game_payload.py'
+      - 'tests/game_payload_test.py'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  payload:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - run: bash -n scripts/build_android.sh scripts/build_ios.sh
+      - run: python3 tests/game_payload_test.py
