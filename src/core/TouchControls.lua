@@ -321,7 +321,7 @@ end
 -- demand.  Mirrors it into self.orientation / self.positions / self.scale,
 -- which layout(), the editor chrome and the tests read.
 function TouchControls:currentBucket()
-  local _, _, sw, sh = SafeArea.rect()
+  local _, _, sw, sh = (SafeArea.windowRect or SafeArea.rect)()
   local o = orientationFor(sw, sh)
   self.layouts = self.layouts or { portrait = {}, landscape = {} }
   local b = self.layouts[o]
@@ -347,7 +347,7 @@ end
 -- while sizes stay derived from the short edge, times the orientation's
 -- size setting (#633).
 function TouchControls:layout()
-  local ox, oy, sw, sh = SafeArea.rect()
+  local ox, oy, sw, sh = (SafeArea.windowRect or SafeArea.rect)()
   if self.layoutW == sw and self.layoutH == sh
      and self.layoutOx == ox and self.layoutOy == oy
      and self.layoutVersion == GameVersion.get() and self.L then
@@ -383,7 +383,7 @@ end
 -- Move one control to a screen-space point and persist its normalized
 -- position within the safe rect.  Used by the layout editor while dragging.
 function TouchControls:setControlCenter(name, cx, cy)
-  local ox, oy, sw, sh = SafeArea.rect()
+  local ox, oy, sw, sh = (SafeArea.windowRect or SafeArea.rect)()
   local L = self:layout()
   local zone = L[name]
   if not zone then return end

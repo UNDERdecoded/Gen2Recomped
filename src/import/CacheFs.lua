@@ -399,6 +399,12 @@ end
 -- PORTABLE FIRST.  A portable copy has already said where it keeps its
 -- things, and it says so with a file sitting next to the executable, which
 -- beats a line in an options file the portable copy may not even be reading.
+-- Observational counterpart for dataset views: never resolves or mounts a root.
+function CacheFs.datasetRoot()
+  if not portableResolved or (not portableRoot and not customResolved) then return nil, false end
+  return portableRoot or customRoot, true
+end
+
 function CacheFs.root()
   return resolvePortableRoot() or resolveCustomRoot()
 end
@@ -1189,6 +1195,19 @@ end
 -- need to reason about read-path state use this instead of poking the local.
 function CacheFs.activePrefixShim()
   return shimPrefix
+end
+
+-- Exact developer-source reads for read-only version datasets. Refuse an
+-- active overlay rather than reading another edition under an unprefixed path.
+function CacheFs.datasetSourceFile(path, maximum, infoOnly)
+  local fs = love and love.filesystem
+  if not fs or not fs.getRealDirectory or not fs.getSource
+      or fs.getRealDirectory(path) ~= fs.getSource() then return nil end
+  local info = (shimRealGetInfo or fs.getInfo)(path, "file")
+  if not info or info.type and info.type ~= "file" then return nil end
+  if infoOnly then return info end
+  if info.size and info.size > maximum then return nil, "size limit" end
+  return (shimRealRead or fs.read)(path)
 end
 
 -- Undo mountVersion.  A process normally mounts exactly one version and then

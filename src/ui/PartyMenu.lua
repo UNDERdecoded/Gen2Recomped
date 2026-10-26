@@ -472,6 +472,399 @@ function PartyMenu:close()
   if self.game.stack:top() == self then self.game.stack:pop() end
 end
 
+-- Native confirmation shared by input and the public UI facade.
+function PartyMenu:confirm()
+  local party = self.party or self.game.save.party
+  if self.submenu then
+    local mon = party[self.index]
+    local entry = self.subItems[self.subIndex]
+    local action = entry.action
+    if not action and entry.onSelect then
+      -- hook-injected entries carry a callback instead of an action id
+      entry.onSelect(mon, self.game)
+    elseif action == "stats" then
+      -- battle and field alike return to the party list afterwards
+      -- (core.asm .partyMenuWasSelected)
+      Screens.push(self.game, "SummaryMenu", mon, {
+        mons = party,
+        index = self.index,
+        onMonChange = function(index) self.index = index end,
+      })
+    elseif action == "battle_switch" then
+      self.game.stack:pop()
+      self.onSwitch(mon)
+      return
+    elseif action == "cancel" then
+      self.game.stack:pop()
+      if self.onCancel then self.onCancel() end
+      return
+    elseif action == "switch" then
+      self.swapFrom = self.index
+    elseif action == "item" then
+      self:openItemMenu(mon)
+    elseif action == "quit" then
+      self.submenu = nil
+    elseif action == "fly" then
+      -- FLY opens the TOWN MAP with a cursor over the visited fly towns,
+      -- not a plain text list (engine/menus/town_map.asm LoadTownMap_Fly).
+      -- flyTo (OverworldController) validates the fly-warp + runs the
+      -- departure/warp, so we just hand it the chosen mapId (#195).
+      local ow = self.game.overworld
+      self.game.stack:pop() -- close the party menu
+      Screens.push(self.game, "TownMap", { fly = true, onFly = function(mapId)
+        if ow then ow:flyTo(mapId) end
+      end })
+      return
+    elseif action == "flash" then -- FLASH lights dark tunnels
+      -- start_sub_menus.asm .flash: PrintText _FlashLightsAreaText runs
+      -- with the party menu still on screen, and only then
+      -- GBPalWhiteOutWithDelay3 + jp .goBackToMap.  So the message reads
+      -- over the menu, and the cave is lit when the blink hands the
+      -- screen back, never under the text (#385).
+      local ow = self.game.overworld
+      local TextBox = require("src.render.TextBox")
+      local Transition = require("src.render.Transition")
+      -- The other half of CheckUseFlash: using it in the Aerodactyl chamber
+      -- opens the wall.  The chamber's scene script plays the opening the
+      -- next time the map loads, exactly as the escape-rope one does.
+      require("src.script.RuinsOfAlph").aerodactylChamber(self.game)
+      self.game.save.flashLit = true
+      self.game.stack:push(TextBox.new(self.game,
+        self.game.data.text._FlashLightsAreaText
+        or Strings("A blinding FLASH\nlights the area!"), function()
+          self:close()
+          -- setDark, not a bare field write: ADVANCED carries the darkness
+          -- in a baked atlas, so lighting the cave drops every resident map
+          -- and rebakes this one (#383).  It runs HERE, before the blink,
+          -- because start_sub_menus.asm .flash clears wMapPalOffset before
+          -- PrintText and blinks last of all: the cave is already lit by the
+          -- time GBPalWhiteOutWithDelay3 runs.  Hanging the rebuild off the
+          -- blink's completion instead left that rebuild's whole cost --
+          -- seconds of per-pixel atlas baking on a phone -- on screen as a
+          -- solid white frame with nothing under it, which reads as a
+          -- lockup (#610).
+          ow:setDark(false)
+          self.game.stack:push(Transition.whiteFlash(self.game))
+        end))
+      return
+    elseif action == "surf" then
+      -- start_sub_menus.asm .surf: SOULBADGE-gated (checked at list time
+      -- above), then IsSurfingAllowed (the Cycling Road / Seafoam B4F
+      -- current refusals, both of which loop back to the submenu), then
+      -- ItemUseSurfboard: while surfing it tries to dismount instead;
+      -- otherwise it mounts only if the FACING tile is water, else
+      -- SurfingAttemptFailed (_NoSurfingHereText) loops back to the
+      -- submenu.  useSurfFieldMove reports which; trySurf does the mount.
+      local ow = self.game.overworld
+      local reason = ow:useSurfFieldMove()
+      local Transition = require("src.render.Transition")
+      if reason == "ok" then
+        -- UseItem prints _SurfingGotOnText with the party menu still up;
+        -- GBPalWhiteOutWithDelay3 + jp .goBackToMap only follow it, so
+        -- trySurf closes this menu when its text does (#385)
+        local fx, fy = ow.player:facingCell()
+        ow:trySurf(fx, fy, function() self:close() end)
+        return
+      end
+      if reason == "dismount" then
+        -- ItemUseSurfboard .stopSurfing: no text -- the walking state
+        -- and music return first (PlayDefaultMusic +
+        -- LoadWalkingPlayerSpriteGraphics), the menu closes with the
+        -- GBPalWhiteOutWithDelay3 blink, and the simulated pad press
+        -- steps the player forward onto land (or across a connection
+        -- strip when the shore is the next map's edge)
+        self.game.stack:pop()
+        ow.player.surfing = false
+        require("src.core.Music").setSurfing(self.game.data, false)
+        self.game.stack:push(Transition.whiteFlash(self.game, nil, function()
+          ow:stepForwardOrCrossEdge(ow.player.facing)
+        end))
+        return
+      end
+      local TextBox = require("src.render.TextBox")
+      local def = self.game.data.pokemon[mon.species]
+      local key = ({ no_badge = "_NewBadgeRequiredText",
+                     forced_bike = "_CyclingIsFunText",
+                     current = "_CurrentTooFastText",
+                     no_place = "_SurfingNoPlaceToGetOffText" })[reason]
+                  or "_NoSurfingHereText"
+      local txt = (self.game.data.text[key] or Strings("No SURFing here!"))
+                  :gsub("{RAM:wNameBuffer}", mon.nickname or def.name)
+      if reason == "no_place" then
+        -- .cannotStopSurfing prints _SurfingNoPlaceToGetOffText but
+        -- never zeroes wActionResultOrTookBattleTurn, so unlike the
+        -- other refusals the menu still closes afterwards
+        -- (GBPalWhiteOutWithDelay3 + .goBackToMap), and the text prints
+        -- over the still-open menu like every other .loop refusal (#385)
+        self.game.stack:push(TextBox.new(self.game, txt, function()
+          self:close()
+          self.game.stack:push(Transition.whiteFlash(self.game))
+        end))
+        return
+      end
+      self.game.stack:push(TextBox.new(self.game, txt))
+      return -- .loop: submenu stays open behind the message
+    elseif action == "cut" then
+      -- start_sub_menus.asm .cut -> predef UsedCut (engine/overworld/cut.asm):
+      -- CASCADEBADGE-gated (list time); _NothingToCutText loops back to the
+      -- submenu when the FACING tile isn't a cuttable tree.
+      local ow = self.game.overworld
+      local reason = ow:useCutFieldMove()
+      if reason == "ok" then
+        self.game.stack:pop() -- close the party menu (CloseTextDisplay)
+        local fx, fy = ow.player:facingCell()
+        ow:tryCut(fx, fy)
+        return
+      end
+      local TextBox = require("src.render.TextBox")
+      local def = self.game.data.pokemon[mon.species]
+      local key = (reason == "no_badge") and "_NewBadgeRequiredText"
+                                          or "_NothingToCutText"
+      local txt = (self.game.data.text[key] or Strings("Nothing to CUT!"))
+                  :gsub("{RAM:wNameBuffer}", mon.nickname or def.name)
+      self.game.stack:push(TextBox.new(self.game, txt))
+      return -- .loop: submenu stays open behind the message
+    elseif action == "strength" then
+      -- start_sub_menus.asm .strength: RAINBOWBADGE-gated (list time);
+      -- predef PrintStrengthText (field_move_messages.asm) sets
+      -- BIT_STRENGTH_ACTIVE of wStatusFlags1 -- the sole gate
+      -- push_boulder.asm reads -- then prints _UseStrengthText (no
+      -- prompt: after the text, the text_asm tail plays the chosen
+      -- mon's cry, Delay3, and it auto-advances) and
+      -- _MoveBoulderText (`prompt`: waits for A/B).  Back in
+      -- .strength, GBPalWhiteOutWithDelay3 blinks the screen white
+      -- before CloseTextDisplay returns to the map.
+      local ow = self.game.overworld
+      local TextBox = require("src.render.TextBox")
+      local Transition = require("src.render.Transition")
+      local def = self.game.data.pokemon[mon.species]
+      local name = mon.nickname or (def and def.name) or mon.species
+      ow.strengthActive = true
+      -- Gen2 text keys are _UseStrengthText / _MoveBoulderText;
+      -- Gen1 uses _UsedStrengthText / _CanMoveBouldersText.  Try both.
+      local t1raw = self.game.data.text._UseStrengthText
+                 or self.game.data.text._UsedStrengthText
+      local t2raw = self.game.data.text._MoveBoulderText
+                 or self.game.data.text._CanMoveBouldersText
+      local t1 = (t1raw or Strings("{RAM:wNameBuffer} used\nSTRENGTH.")):gsub("{RAM:wNameBuffer}", name)
+      local t2 = (t2raw or Strings("{RAM:wNameBuffer} can\nmove boulders.")):gsub("{RAM:wNameBuffer}", name)
+      -- like surf (#320, #385): both texts print with the party menu
+      -- still on screen, and the blink IS the menu closing afterwards,
+      -- not a flashbang on the empty map
+      self.game.stack:push(TextBox.new(self.game, t1, function()
+        self.game.stack:push(TextBox.new(self.game, t2, function()
+          self:close()
+          self.game.stack:push(Transition.whiteFlash(self.game))
+        end))
+      end, { auto = { sound = function()
+        return require("src.core.Sound").playCry(self.game.data, mon.species)
+      end } }))
+      return
+    elseif action == "gen2_field" then
+      -- GSC runs the same handler from the menu as from the overworld
+      -- A press (SurfFromMenuScript / HeadbuttFromMenuScript), so the
+      -- tile check lives in one place.
+      local ow = self.game.overworld
+      local fx, fy = ow.player:facingCell()
+      self:close()
+      if not ow:gen2FieldMoveAt(entry.move, mon, fx, fy) then
+        local TextBox = require("src.render.TextBox")
+        -- _CantSurfText is "You can't SURF here", so using it for every
+        -- field move told a player holding HEADBUTT that the game thought
+        -- they had picked SURF.  Only SURF gets the surf line.
+        local text = (entry.move == "SURF")
+          and self.game.data.text._CantSurfText or nil
+        self.game.stack:push(TextBox.new(self.game,
+          text or Strings("You can't use that\nhere.")))
+      end
+      return
+    elseif action == "softboiled" then
+      -- field SOFTBOILED (StartMenu_Pokemon .softboiled): transfer
+      -- 1/5 of the user's max HP to a chosen teammate
+      self.softboiledFrom = self.index
+    elseif action == "dig" then
+      -- GEN 2 (.DoDig): back out through the recorded entrance, arriving as
+      -- a DOOR warp so the player steps out of the opening rather than
+      -- standing in it.  GEN 1's DIG is ItemUseEscapeRope and shares
+      -- TELEPORT's Pokemon Center warp, so it falls through to the same
+      -- departure with no target.
+      local ow = self.game.overworld
+      self.game.stack:pop()
+      if ow then
+        local escape = require("src.core.GameVersion").isGen2()
+          and ow.escapePoint and ow:escapePoint() and true or nil
+        ow:beginTeleportOut(nil, { escape = escape })
+      end
+      return
+    elseif action == "escape" then
+      -- TELEPORT warps to the last Pokémon Center TOWN (wLastBlackoutMap,
+      -- special_warps.asm escape warp) -- and Gen 2 agrees: TeleportFunction
+      -- .TryTeleport requires an OUTDOOR map and warps to wLastSpawnMapGroup
+      -- / wLastSpawnMapNumber, so this destination is right for both
+      -- generations.  Only DIG diverged; it has its own branch above.
+      -- pokered's .dig/.teleport spin the
+      -- player up (LeaveMapAnim), white/fade out, then land it; this port
+      -- lands OUTSIDE the town PC door like Fly (#196).  beginTeleportOut
+      -- centralizes the spin -> fade -> warp so BagMenu's ESCAPE ROPE shares
+      -- the exact departure; the fade + warp fire when the spin ends.
+      local ow = self.game.overworld
+      self.game.stack:pop()
+      if ow then ow:beginTeleportOut() end
+      return
+    end
+    self.submenu = nil
+    return
+  end
+  if #party == 0 then return end
+  local mon = party[self.index]
+  if self.softboiledFrom then
+    local user = party[self.softboiledFrom]
+    local heal = math.floor(user.stats.hp / 5)
+    if mon == user or mon.hp <= 0 or mon.hp >= mon.stats.hp
+       or user.hp <= heal then
+      self.softboiledFrom = nil
+      local TextBox = require("src.render.TextBox")
+      self.game.stack:push(TextBox.new(self.game, Strings("It won't have\nany effect.")))
+    else
+      user.hp = user.hp - heal
+      mon.hp = math.min(mon.stats.hp, mon.hp + heal)
+      self.softboiledFrom = nil
+      require("src.core.Sound").play(self.game.data, "Heal_HP")
+      local def = self.game.data.pokemon[mon.species]
+      local TextBox = require("src.render.TextBox")
+      self.game.stack:push(TextBox.new(self.game,
+        Strings("%s's HP\nwas restored!", mon.nickname or def.name)))
+    end
+  elseif self.swapFrom then
+    if self.swapFrom ~= self.index then
+      party[self.swapFrom], party[self.index] = party[self.index], party[self.swapFrom]
+      require("src.core.Sound").play(self.game.data, "Swap")
+    end
+    self.swapFrom = nil
+  elseif self.onSwitch and (self.forceSwitch or self.pickOnly or not self.battle) then
+    -- keepOpen callers (HP medicine) need the menu still drawn while the
+    -- bar fills and the message prints, and close it themselves; everyone
+    -- else keeps the old pop-then-call order.  Popping first is what made
+    -- a POTION snap the picker shut before the item had even run (#252).
+    if not self.keepOpen then self.game.stack:pop() end
+    self.onSwitch(mon, self)
+  else
+    self.submenu = true
+    self.subIndex = 1
+    local items
+    local ow = self.game.overworld
+    if self.battle and self.onSwitch then
+      -- SwitchStatsCancelText (core.asm PartyMenuOrRockOrRun)
+      items = { { label = Strings("SWITCH"), action = "battle_switch" },
+                { label = Strings("STATS"), action = "stats" },
+                { label = Strings("CANCEL"), action = "cancel" } }
+    else
+      -- STATS/SWITCH plus this mon's field moves (start_sub_menus.asm
+      -- builds the same dynamic list)
+      items = { { label = Strings("STATS"), action = "stats" },
+                { label = Strings("SWITCH"), action = "switch" } }
+      -- Field moves (HMs/TMs) are usable out of battle even when the mon
+      -- is fainted -- Gen 1 does not require HP for Cut/Fly/Surf/etc.
+      -- Battle still excludes this list via `not self.battle`. Softboiled
+      -- can appear for a fainted user; its heal transfer then no-ops.
+      if not self.battle and ow then
+        -- FLY/TELEPORT: CheckIfInOutsideMap (OVERWORLD + PLATEAU --
+        -- Route 23 / Indigo Plateau outdoor), not OVERWORLD alone (#83)
+        local outside = Map.isOutside(ow.map.def,
+          FieldDefaults.field(self.game.data, "outsideTilesets"))
+        -- The badge gate per field move comes from constants.hmBadges and
+        -- the badge itself through Badges.has: Gen2 gates the same moves on
+        -- the Johto badges and stores them as engine flags rather than bag
+        -- items, so the hard-coded R/B item names listed nothing at all.
+        local gates = FieldDefaults.constant(self.game.data, "hmBadges") or {}
+        local function badged(moveId)
+          local gate = gates[moveId]
+          if not (gate and gate.badge) then return true end
+          return Badges.has(self.game.save, { id = gate.badge })
+        end
+        for _, mv in ipairs(mon.moves) do
+          if mv.id == "FLY" and outside and badged("FLY") then
+            table.insert(items, { label = Strings("FLY"), action = "fly" })
+          -- LIGHT is carved on the Aerodactyl chamber wall, and the
+          -- chamber is not a dark cave -- so CheckUseFlash asks
+          -- SpecialAerodactylChamber FIRST and lets FLASH be used on its
+          -- carry, before it ever looks at the palset
+          -- (engine/events/overworld.asm:285).  Without this the move is
+          -- never even offered there and the wall can never open.
+          elseif mv.id == "FLASH" and badged("FLASH")
+              and (ow.dark or (ow.map and ow.map.id
+                == require("src.script.RuinsOfAlph").MAPS.aerodactyl)) then
+            table.insert(items, { label = Strings("FLASH"), action = "flash" })
+          elseif mv.id == "CUT" and badged("CUT") then
+            -- CUT/SURF/STRENGTH are party-menu field moves too
+            -- (start_sub_menus.asm .outOfBattleMovePointers); listed here
+            -- with the same list-time badge filter this file already uses
+            -- for FLY/FLASH.  The facing-tile/activation check happens on
+            -- selection (useCutFieldMove/useSurfFieldMove).
+            table.insert(items, { label = Strings("CUT"), action = "cut" })
+          elseif mv.id == "SURF" and badged("SURF") then
+            table.insert(items, { label = Strings("SURF"), action = "surf" })
+          elseif mv.id == "STRENGTH" and badged("STRENGTH") then
+            table.insert(items, { label = Strings("STRENGTH"), action = "strength" })
+          elseif mv.id == "SOFTBOILED" or mv.id == "MILK_DRINK" then
+            table.insert(items, { label = Strings(mv.id:gsub("_", " ")),
+                                  action = "softboiled" })
+          elseif mv.id == "TELEPORT" and outside then
+            -- TELEPORT works only OUTDOORS (start_sub_menus.asm
+            -- .teleport -> CheckIfInOutsideMap); dark maps don't
+            -- block it
+            table.insert(items, { label = Strings("TELEPORT"), action = "escape" })
+          elseif mv.id == "DIG" and ow.map.id ~= "AGATHAS_ROOM"
+             and (DIG_TILESETS[ow.map.def.tileset]
+                  or (GEN2_DIG_ENVIRONMENTS[ow.map.def.environment]
+                      and ow.escapePoint and ow:escapePoint())) then
+            -- GEN 1: DIG runs ItemUseEscapeRope (.dig sets wCurItem =
+            -- ESCAPE_ROPE): usable in the dungeon tilesets of
+            -- escape_rope_tilesets.asm minus Agatha's room, even in
+            -- the dark (Rock Tunnel).
+            -- GEN 2: .CheckCanDig instead -- CAVE or DUNGEON, and a
+            -- recorded entrance to come back out of.  Its own action,
+            -- because Gen 2's DIG and TELEPORT no longer share a
+            -- destination the way Gen 1's did.
+            table.insert(items, { label = Strings("DIG"), action = "dig" })
+          elseif GEN2_FIELD_MOVES[mv.id] and badged(mv.id) then
+            -- GSC's own field moves; the tile check happens on selection,
+            -- exactly like CUT's (start_sub_menus.asm never gates the list
+            -- on where the player is standing)
+            table.insert(items, { label = Strings(mv.id:gsub("_", " ")),
+                                  action = "gen2_field", move = mv.id })
+          end
+        end
+      end
+      if require("src.core.GameVersion").isGen2() then
+        -- GSC's MonMenu lists the field moves first, then STATS, SWITCH,
+        -- ITEM and QUIT; Gen 1 has no held items and no QUIT row.
+        local stats, switch = table.remove(items, 1), table.remove(items, 1)
+        items[#items + 1] = stats
+        items[#items + 1] = switch
+        items[#items + 1] = { label = Strings("ITEM"), action = "item" }
+        items[#items + 1] = { label = Strings("QUIT"), action = "quit" }
+      end
+    end
+    local ctx = { battle = self.battle, overworld = ow }
+    local hooked = Runtime.call("ui.party.submenu", sameItems,
+                                self.game, items, mon, ctx)
+    if type(hooked) == "table" then
+      items = hooked
+    else
+      Logger.error("ui.party.submenu returned %s; keeping the vanilla list",
+                   type(hooked))
+    end
+    self.subItems = items
+  end
+end
+
+function PartyMenu:cancel()
+  if self.submenu then self.submenu = nil; return end
+  self.game.stack:pop()
+  if self.onCancel then self.onCancel() end
+end
+
 function PartyMenu:update(dt)
   -- icon animation counter; 320 = a whole cycle at every HP speed
   self.blink = ((self.blink or 0) + 1) % 320
@@ -505,245 +898,9 @@ function PartyMenu:update(dt)
     elseif input:wasPressed("down") then
       self.subIndex = self.subIndex < n and self.subIndex + 1 or 1
     elseif input:wasPressed("b") then
-      self.submenu = nil
+      self:cancel()
     elseif input:wasPressed("a") then
-      local mon = party[self.index]
-      local entry = self.subItems[self.subIndex]
-      local action = entry.action
-      if not action and entry.onSelect then
-        -- hook-injected entries carry a callback instead of an action id
-        entry.onSelect(mon, self.game)
-      elseif action == "stats" then
-        -- battle and field alike return to the party list afterwards
-        -- (core.asm .partyMenuWasSelected)
-        Screens.push(self.game, "SummaryMenu", mon, {
-          mons = party,
-          index = self.index,
-          onMonChange = function(index) self.index = index end,
-        })
-      elseif action == "battle_switch" then
-        self.game.stack:pop()
-        self.onSwitch(mon)
-        return
-      elseif action == "cancel" then
-        self.game.stack:pop()
-        if self.onCancel then self.onCancel() end
-        return
-      elseif action == "switch" then
-        self.swapFrom = self.index
-      elseif action == "item" then
-        self:openItemMenu(mon)
-      elseif action == "quit" then
-        self.submenu = nil
-      elseif action == "fly" then
-        -- FLY opens the TOWN MAP with a cursor over the visited fly towns,
-        -- not a plain text list (engine/menus/town_map.asm LoadTownMap_Fly).
-        -- flyTo (OverworldController) validates the fly-warp + runs the
-        -- departure/warp, so we just hand it the chosen mapId (#195).
-        local ow = self.game.overworld
-        self.game.stack:pop() -- close the party menu
-        Screens.push(self.game, "TownMap", { fly = true, onFly = function(mapId)
-          if ow then ow:flyTo(mapId) end
-        end })
-        return
-      elseif action == "flash" then -- FLASH lights dark tunnels
-        -- start_sub_menus.asm .flash: PrintText _FlashLightsAreaText runs
-        -- with the party menu still on screen, and only then
-        -- GBPalWhiteOutWithDelay3 + jp .goBackToMap.  So the message reads
-        -- over the menu, and the cave is lit when the blink hands the
-        -- screen back, never under the text (#385).
-        local ow = self.game.overworld
-        local TextBox = require("src.render.TextBox")
-        local Transition = require("src.render.Transition")
-        -- The other half of CheckUseFlash: using it in the Aerodactyl chamber
-        -- opens the wall.  The chamber's scene script plays the opening the
-        -- next time the map loads, exactly as the escape-rope one does.
-        require("src.script.RuinsOfAlph").aerodactylChamber(self.game)
-        self.game.save.flashLit = true
-        self.game.stack:push(TextBox.new(self.game,
-          self.game.data.text._FlashLightsAreaText
-          or Strings("A blinding FLASH\nlights the area!"), function()
-            self:close()
-            -- setDark, not a bare field write: ADVANCED carries the darkness
-            -- in a baked atlas, so lighting the cave drops every resident map
-            -- and rebakes this one (#383).  It runs HERE, before the blink,
-            -- because start_sub_menus.asm .flash clears wMapPalOffset before
-            -- PrintText and blinks last of all: the cave is already lit by the
-            -- time GBPalWhiteOutWithDelay3 runs.  Hanging the rebuild off the
-            -- blink's completion instead left that rebuild's whole cost --
-            -- seconds of per-pixel atlas baking on a phone -- on screen as a
-            -- solid white frame with nothing under it, which reads as a
-            -- lockup (#610).
-            ow:setDark(false)
-            self.game.stack:push(Transition.whiteFlash(self.game))
-          end))
-        return
-      elseif action == "surf" then
-        -- start_sub_menus.asm .surf: SOULBADGE-gated (checked at list time
-        -- above), then IsSurfingAllowed (the Cycling Road / Seafoam B4F
-        -- current refusals, both of which loop back to the submenu), then
-        -- ItemUseSurfboard: while surfing it tries to dismount instead;
-        -- otherwise it mounts only if the FACING tile is water, else
-        -- SurfingAttemptFailed (_NoSurfingHereText) loops back to the
-        -- submenu.  useSurfFieldMove reports which; trySurf does the mount.
-        local ow = self.game.overworld
-        local reason = ow:useSurfFieldMove()
-        local Transition = require("src.render.Transition")
-        if reason == "ok" then
-          -- UseItem prints _SurfingGotOnText with the party menu still up;
-          -- GBPalWhiteOutWithDelay3 + jp .goBackToMap only follow it, so
-          -- trySurf closes this menu when its text does (#385)
-          local fx, fy = ow.player:facingCell()
-          ow:trySurf(fx, fy, function() self:close() end)
-          return
-        end
-        if reason == "dismount" then
-          -- ItemUseSurfboard .stopSurfing: no text -- the walking state
-          -- and music return first (PlayDefaultMusic +
-          -- LoadWalkingPlayerSpriteGraphics), the menu closes with the
-          -- GBPalWhiteOutWithDelay3 blink, and the simulated pad press
-          -- steps the player forward onto land (or across a connection
-          -- strip when the shore is the next map's edge)
-          self.game.stack:pop()
-          ow.player.surfing = false
-          require("src.core.Music").setSurfing(self.game.data, false)
-          self.game.stack:push(Transition.whiteFlash(self.game, nil, function()
-            ow:stepForwardOrCrossEdge(ow.player.facing)
-          end))
-          return
-        end
-        local TextBox = require("src.render.TextBox")
-        local def = self.game.data.pokemon[mon.species]
-        local key = ({ no_badge = "_NewBadgeRequiredText",
-                       forced_bike = "_CyclingIsFunText",
-                       current = "_CurrentTooFastText",
-                       no_place = "_SurfingNoPlaceToGetOffText" })[reason]
-                    or "_NoSurfingHereText"
-        local txt = (self.game.data.text[key] or Strings("No SURFing here!"))
-                    :gsub("{RAM:wNameBuffer}", mon.nickname or def.name)
-        if reason == "no_place" then
-          -- .cannotStopSurfing prints _SurfingNoPlaceToGetOffText but
-          -- never zeroes wActionResultOrTookBattleTurn, so unlike the
-          -- other refusals the menu still closes afterwards
-          -- (GBPalWhiteOutWithDelay3 + .goBackToMap), and the text prints
-          -- over the still-open menu like every other .loop refusal (#385)
-          self.game.stack:push(TextBox.new(self.game, txt, function()
-            self:close()
-            self.game.stack:push(Transition.whiteFlash(self.game))
-          end))
-          return
-        end
-        self.game.stack:push(TextBox.new(self.game, txt))
-        return -- .loop: submenu stays open behind the message
-      elseif action == "cut" then
-        -- start_sub_menus.asm .cut -> predef UsedCut (engine/overworld/cut.asm):
-        -- CASCADEBADGE-gated (list time); _NothingToCutText loops back to the
-        -- submenu when the FACING tile isn't a cuttable tree.
-        local ow = self.game.overworld
-        local reason = ow:useCutFieldMove()
-        if reason == "ok" then
-          self.game.stack:pop() -- close the party menu (CloseTextDisplay)
-          local fx, fy = ow.player:facingCell()
-          ow:tryCut(fx, fy)
-          return
-        end
-        local TextBox = require("src.render.TextBox")
-        local def = self.game.data.pokemon[mon.species]
-        local key = (reason == "no_badge") and "_NewBadgeRequiredText"
-                                            or "_NothingToCutText"
-        local txt = (self.game.data.text[key] or Strings("Nothing to CUT!"))
-                    :gsub("{RAM:wNameBuffer}", mon.nickname or def.name)
-        self.game.stack:push(TextBox.new(self.game, txt))
-        return -- .loop: submenu stays open behind the message
-      elseif action == "strength" then
-        -- start_sub_menus.asm .strength: RAINBOWBADGE-gated (list time);
-        -- predef PrintStrengthText (field_move_messages.asm) sets
-        -- BIT_STRENGTH_ACTIVE of wStatusFlags1 -- the sole gate
-        -- push_boulder.asm reads -- then prints _UseStrengthText (no
-        -- prompt: after the text, the text_asm tail plays the chosen
-        -- mon's cry, Delay3, and it auto-advances) and
-        -- _MoveBoulderText (`prompt`: waits for A/B).  Back in
-        -- .strength, GBPalWhiteOutWithDelay3 blinks the screen white
-        -- before CloseTextDisplay returns to the map.
-        local ow = self.game.overworld
-        local TextBox = require("src.render.TextBox")
-        local Transition = require("src.render.Transition")
-        local def = self.game.data.pokemon[mon.species]
-        local name = mon.nickname or (def and def.name) or mon.species
-        ow.strengthActive = true
-        -- Gen2 text keys are _UseStrengthText / _MoveBoulderText;
-        -- Gen1 uses _UsedStrengthText / _CanMoveBouldersText.  Try both.
-        local t1raw = self.game.data.text._UseStrengthText
-                   or self.game.data.text._UsedStrengthText
-        local t2raw = self.game.data.text._MoveBoulderText
-                   or self.game.data.text._CanMoveBouldersText
-        local t1 = (t1raw or Strings("{RAM:wNameBuffer} used\nSTRENGTH.")):gsub("{RAM:wNameBuffer}", name)
-        local t2 = (t2raw or Strings("{RAM:wNameBuffer} can\nmove boulders.")):gsub("{RAM:wNameBuffer}", name)
-        -- like surf (#320, #385): both texts print with the party menu
-        -- still on screen, and the blink IS the menu closing afterwards,
-        -- not a flashbang on the empty map
-        self.game.stack:push(TextBox.new(self.game, t1, function()
-          self.game.stack:push(TextBox.new(self.game, t2, function()
-            self:close()
-            self.game.stack:push(Transition.whiteFlash(self.game))
-          end))
-        end, { auto = { sound = function()
-          return require("src.core.Sound").playCry(self.game.data, mon.species)
-        end } }))
-        return
-      elseif action == "gen2_field" then
-        -- GSC runs the same handler from the menu as from the overworld
-        -- A press (SurfFromMenuScript / HeadbuttFromMenuScript), so the
-        -- tile check lives in one place.
-        local ow = self.game.overworld
-        local fx, fy = ow.player:facingCell()
-        self:close()
-        if not ow:gen2FieldMoveAt(entry.move, mon, fx, fy) then
-          local TextBox = require("src.render.TextBox")
-          -- _CantSurfText is "You can't SURF here", so using it for every
-          -- field move told a player holding HEADBUTT that the game thought
-          -- they had picked SURF.  Only SURF gets the surf line.
-          local text = (entry.move == "SURF")
-            and self.game.data.text._CantSurfText or nil
-          self.game.stack:push(TextBox.new(self.game,
-            text or Strings("You can't use that\nhere.")))
-        end
-        return
-      elseif action == "softboiled" then
-        -- field SOFTBOILED (StartMenu_Pokemon .softboiled): transfer
-        -- 1/5 of the user's max HP to a chosen teammate
-        self.softboiledFrom = self.index
-      elseif action == "dig" then
-        -- GEN 2 (.DoDig): back out through the recorded entrance, arriving as
-        -- a DOOR warp so the player steps out of the opening rather than
-        -- standing in it.  GEN 1's DIG is ItemUseEscapeRope and shares
-        -- TELEPORT's Pokemon Center warp, so it falls through to the same
-        -- departure with no target.
-        local ow = self.game.overworld
-        self.game.stack:pop()
-        if ow then
-          local escape = require("src.core.GameVersion").isGen2()
-            and ow.escapePoint and ow:escapePoint() and true or nil
-          ow:beginTeleportOut(nil, { escape = escape })
-        end
-        return
-      elseif action == "escape" then
-        -- TELEPORT warps to the last Pokémon Center TOWN (wLastBlackoutMap,
-        -- special_warps.asm escape warp) -- and Gen 2 agrees: TeleportFunction
-        -- .TryTeleport requires an OUTDOOR map and warps to wLastSpawnMapGroup
-        -- / wLastSpawnMapNumber, so this destination is right for both
-        -- generations.  Only DIG diverged; it has its own branch above.
-        -- pokered's .dig/.teleport spin the
-        -- player up (LeaveMapAnim), white/fade out, then land it; this port
-        -- lands OUTSIDE the town PC door like Fly (#196).  beginTeleportOut
-        -- centralizes the spin -> fade -> warp so BagMenu's ESCAPE ROPE shares
-        -- the exact departure; the fade + warp fire when the spin ends.
-        local ow = self.game.overworld
-        self.game.stack:pop()
-        if ow then ow:beginTeleportOut() end
-        return
-      end
-      self.submenu = nil
+      self:confirm()
     end
     return
   end
@@ -753,150 +910,9 @@ function PartyMenu:update(dt)
   elseif input:wasPressed("down") then
     self.index = self.index < #party and self.index + 1 or 1
   elseif input:wasPressed("b") then
-    self.game.stack:pop()
-    if self.onCancel then self.onCancel() end
+    self:cancel()
   elseif input:wasPressed("a") and #party > 0 then
-    local mon = party[self.index]
-    if self.softboiledFrom then
-      local user = party[self.softboiledFrom]
-      local heal = math.floor(user.stats.hp / 5)
-      if mon == user or mon.hp <= 0 or mon.hp >= mon.stats.hp
-         or user.hp <= heal then
-        self.softboiledFrom = nil
-        local TextBox = require("src.render.TextBox")
-        self.game.stack:push(TextBox.new(self.game, Strings("It won't have\nany effect.")))
-      else
-        user.hp = user.hp - heal
-        mon.hp = math.min(mon.stats.hp, mon.hp + heal)
-        self.softboiledFrom = nil
-        require("src.core.Sound").play(self.game.data, "Heal_HP")
-        local def = self.game.data.pokemon[mon.species]
-        local TextBox = require("src.render.TextBox")
-        self.game.stack:push(TextBox.new(self.game,
-          Strings("%s's HP\nwas restored!", mon.nickname or def.name)))
-      end
-    elseif self.swapFrom then
-      if self.swapFrom ~= self.index then
-        party[self.swapFrom], party[self.index] = party[self.index], party[self.swapFrom]
-        require("src.core.Sound").play(self.game.data, "Swap")
-      end
-      self.swapFrom = nil
-    elseif self.onSwitch and (self.forceSwitch or self.pickOnly or not self.battle) then
-      -- keepOpen callers (HP medicine) need the menu still drawn while the
-      -- bar fills and the message prints, and close it themselves; everyone
-      -- else keeps the old pop-then-call order.  Popping first is what made
-      -- a POTION snap the picker shut before the item had even run (#252).
-      if not self.keepOpen then self.game.stack:pop() end
-      self.onSwitch(mon, self)
-    else
-      self.submenu = true
-      self.subIndex = 1
-      local items
-      local ow = self.game.overworld
-      if self.battle and self.onSwitch then
-        -- SwitchStatsCancelText (core.asm PartyMenuOrRockOrRun)
-        items = { { label = Strings("SWITCH"), action = "battle_switch" },
-                  { label = Strings("STATS"), action = "stats" },
-                  { label = Strings("CANCEL"), action = "cancel" } }
-      else
-        -- STATS/SWITCH plus this mon's field moves (start_sub_menus.asm
-        -- builds the same dynamic list)
-        items = { { label = Strings("STATS"), action = "stats" },
-                  { label = Strings("SWITCH"), action = "switch" } }
-        -- Field moves (HMs/TMs) are usable out of battle even when the mon
-        -- is fainted -- Gen 1 does not require HP for Cut/Fly/Surf/etc.
-        -- Battle still excludes this list via `not self.battle`. Softboiled
-        -- can appear for a fainted user; its heal transfer then no-ops.
-        if not self.battle and ow then
-          -- FLY/TELEPORT: CheckIfInOutsideMap (OVERWORLD + PLATEAU --
-          -- Route 23 / Indigo Plateau outdoor), not OVERWORLD alone (#83)
-          local outside = Map.isOutside(ow.map.def,
-            FieldDefaults.field(self.game.data, "outsideTilesets"))
-          -- The badge gate per field move comes from constants.hmBadges and
-          -- the badge itself through Badges.has: Gen2 gates the same moves on
-          -- the Johto badges and stores them as engine flags rather than bag
-          -- items, so the hard-coded R/B item names listed nothing at all.
-          local gates = FieldDefaults.constant(self.game.data, "hmBadges") or {}
-          local function badged(moveId)
-            local gate = gates[moveId]
-            if not (gate and gate.badge) then return true end
-            return Badges.has(self.game.save, { id = gate.badge })
-          end
-          for _, mv in ipairs(mon.moves) do
-            if mv.id == "FLY" and outside and badged("FLY") then
-              table.insert(items, { label = Strings("FLY"), action = "fly" })
-            -- LIGHT is carved on the Aerodactyl chamber wall, and the
-            -- chamber is not a dark cave -- so CheckUseFlash asks
-            -- SpecialAerodactylChamber FIRST and lets FLASH be used on its
-            -- carry, before it ever looks at the palset
-            -- (engine/events/overworld.asm:285).  Without this the move is
-            -- never even offered there and the wall can never open.
-            elseif mv.id == "FLASH" and badged("FLASH")
-                and (ow.dark or (ow.map and ow.map.id
-                  == require("src.script.RuinsOfAlph").MAPS.aerodactyl)) then
-              table.insert(items, { label = Strings("FLASH"), action = "flash" })
-            elseif mv.id == "CUT" and badged("CUT") then
-              -- CUT/SURF/STRENGTH are party-menu field moves too
-              -- (start_sub_menus.asm .outOfBattleMovePointers); listed here
-              -- with the same list-time badge filter this file already uses
-              -- for FLY/FLASH.  The facing-tile/activation check happens on
-              -- selection (useCutFieldMove/useSurfFieldMove).
-              table.insert(items, { label = Strings("CUT"), action = "cut" })
-            elseif mv.id == "SURF" and badged("SURF") then
-              table.insert(items, { label = Strings("SURF"), action = "surf" })
-            elseif mv.id == "STRENGTH" and badged("STRENGTH") then
-              table.insert(items, { label = Strings("STRENGTH"), action = "strength" })
-            elseif mv.id == "SOFTBOILED" or mv.id == "MILK_DRINK" then
-              table.insert(items, { label = Strings(mv.id:gsub("_", " ")),
-                                    action = "softboiled" })
-            elseif mv.id == "TELEPORT" and outside then
-              -- TELEPORT works only OUTDOORS (start_sub_menus.asm
-              -- .teleport -> CheckIfInOutsideMap); dark maps don't
-              -- block it
-              table.insert(items, { label = Strings("TELEPORT"), action = "escape" })
-            elseif mv.id == "DIG" and ow.map.id ~= "AGATHAS_ROOM"
-               and (DIG_TILESETS[ow.map.def.tileset]
-                    or (GEN2_DIG_ENVIRONMENTS[ow.map.def.environment]
-                        and ow.escapePoint and ow:escapePoint())) then
-              -- GEN 1: DIG runs ItemUseEscapeRope (.dig sets wCurItem =
-              -- ESCAPE_ROPE): usable in the dungeon tilesets of
-              -- escape_rope_tilesets.asm minus Agatha's room, even in
-              -- the dark (Rock Tunnel).
-              -- GEN 2: .CheckCanDig instead -- CAVE or DUNGEON, and a
-              -- recorded entrance to come back out of.  Its own action,
-              -- because Gen 2's DIG and TELEPORT no longer share a
-              -- destination the way Gen 1's did.
-              table.insert(items, { label = Strings("DIG"), action = "dig" })
-            elseif GEN2_FIELD_MOVES[mv.id] and badged(mv.id) then
-              -- GSC's own field moves; the tile check happens on selection,
-              -- exactly like CUT's (start_sub_menus.asm never gates the list
-              -- on where the player is standing)
-              table.insert(items, { label = Strings(mv.id:gsub("_", " ")),
-                                    action = "gen2_field", move = mv.id })
-            end
-          end
-        end
-        if require("src.core.GameVersion").isGen2() then
-          -- GSC's MonMenu lists the field moves first, then STATS, SWITCH,
-          -- ITEM and QUIT; Gen 1 has no held items and no QUIT row.
-          local stats, switch = table.remove(items, 1), table.remove(items, 1)
-          items[#items + 1] = stats
-          items[#items + 1] = switch
-          items[#items + 1] = { label = Strings("ITEM"), action = "item" }
-          items[#items + 1] = { label = Strings("QUIT"), action = "quit" }
-        end
-      end
-      local ctx = { battle = self.battle, overworld = ow }
-      local hooked = Runtime.call("ui.party.submenu", sameItems,
-                                  self.game, items, mon, ctx)
-      if type(hooked) == "table" then
-        items = hooked
-      else
-        Logger.error("ui.party.submenu returned %s; keeping the vanilla list",
-                     type(hooked))
-      end
-      self.subItems = items
-    end
+    self:confirm()
   end
 end
 
