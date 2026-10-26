@@ -1,0 +1,55 @@
+{
+  "parent": "ed5189c247ee7a2ccca666784e21fd4fba8df781",
+  "qualified_ref": "e4fd1372c6a4a0abf7936c7b97d5ec97ecec80ee",
+  "source_tree": "8bb26cd5e051f1b1c10c09a9cec0bce216a38315",
+  "engine_tests_tree": "5d258d003caa784b1ee88eaa50fd2dd6c4e8f871",
+  "changed_source_sha256": {
+    "src/ui/Gen5PokeTransferScreen.lua": "8f620da488776fcfb5d97c060bfbb500578ea6e06ec0ddbecc73206836a28335",
+    "src/ui/HgssAthleteShop.lua": "15353d8de4a6d3f5e46cd61d16e1a9924cfed5b3afd3ed254e6612bcecf85ce6",
+    "src/ui/HgssPokeathlonTeamInfo.lua": "d91d0ebebf8f823722f6906478ea0dae89e5aa66a2f1b7c52fd83cd5c8a7ce42",
+    "src/pokemon/Gen45Hatch.lua": "ed8c894c6e3a2102b6f378b51a23cc7f6a4da84b253834240d4e355b77f44899"
+  },
+  "test_sha256": "b5570b63a4fef563332feb39717bb0433c5564caee6644bd3edf1bdbe5114191",
+  "acceptance": {
+    "public_mod_consumer_checks": "85/85",
+    "unchanged_parent_consumer_checks": "55/85",
+    "unchanged_parent_failures": 30,
+    "coverage_gate": "16/16",
+    "existing_string_registry": "20/20",
+    "sdk": "3/3",
+    "scoped_catalog_templates": "13/13"
+  },
+  "scoped_harvester": {
+    "parent": {
+      "wanted": 13,
+      "missing": [
+        "Oh?",
+        "%s hatched from the Egg!",
+        "Would you like to nickname the newly\nhatched %s?",
+        "Would you like\n%s?",
+        "All right, here you go.\nCome back anytime!",
+        "Here you are!\nThank you!",
+        "You don't have enough points!",
+        "Athlete Pts.",
+        "%sP",
+        "An Egg cannot be transferred.",
+        "A Pok\u00e9mon holding an item cannot\nbe transferred.",
+        "This Pok\u00e9mon knows a hidden move.\nIt cannot be transferred.",
+        "Medals won by\n%s"
+      ]
+    },
+    "candidate": {
+      "wanted": 13,
+      "missing": []
+    }
+  },
+  "raw_log_sha256": {
+    "public-mod": "5cb16d0561319cb4227e59bb644880b45f3b5915f9b47e88dc450c7454015ae4",
+    "unchanged-negative": "0b4431bcc89729ff92db94da2e07785255544cff5d871f735dcb55a91329e256",
+    "coverage-gate": "231c5892548816c5075e62b3600cd1b4636a0776700ef39c0bb5439a9c2f513a",
+    "existing-strings": "acbfbe9eb08a90f4ffe6be92c6d8f1fea81a20113757db6e5e8a9c31acdeb8d8",
+    "sdk": "3a2d30f5b08727b17bbbb29d4598d856822ed2a3ba82563d1f18b55c593112ef"
+  },
+  "scope": "ROM-free public API-2 translation mod, native consumer methods, synthetic data and graphics doubles. Includes hatch families, card awards, Athlete Points, refusal text boxes, panel draw and ROM-message precedence. Scoped source harvesting only; no full translation CLI, actual ROM import, device or graphical/full-game playthrough claim.",
+  "initial_failed_fixture_retained": "Earlier probe labels exceeded a text-box line; translated output wrapped. The final probe uses short labels to test text lookup independently of wrapping."
+}

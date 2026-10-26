@@ -104,9 +104,9 @@ function S:picked(e)
 end
 
 local REFUSE = {
-  egg = "An Egg cannot be transferred.",
-  item = "A Pokémon holding an item cannot\nbe transferred.",
-  hm = "This Pokémon knows a hidden move.\nIt cannot be transferred.",
+  egg = Strings.source("An Egg cannot be transferred."),
+  item = Strings.source("A Pokémon holding an item cannot\nbe transferred."),
+  hm = Strings.source("This Pokémon knows a hidden move.\nIt cannot be transferred."),
 }
 
 function S:toggle(e)

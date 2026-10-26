@@ -31,6 +31,7 @@
 -- like any other (whether overlay 31 dims it was not read).
 
 local T = require("src.import.Gen4Text")
+local Strings = require("src.core.Strings")
 
 local M = {}
 
@@ -90,18 +91,18 @@ local function choose(self)
   if not def then return self:back() end
   self.item, self.unit, self.qty, self.transaction = id, tonumber(def.price) or 0, 1, "buy"
   local why = M.check(self, id, self.cursor - 1)
-  if why == M.FAILED_DAILY then self.message = bank(self, 25, "You can't buy any more today!")
-  elseif why == M.FAILED_CARD then self.message = bank(self, 26, "You already have this!")
-  elseif why == M.FAILED_POOR then self.message = bank(self, 48, "You don't have enough points!") end
+  if why == M.FAILED_DAILY then self.message = bank(self, 25, Strings("You can't buy any more today!"))
+  elseif why == M.FAILED_CARD then self.message = bank(self, 26, Strings("You already have this!"))
+  elseif why == M.FAILED_POOR then self.message = bank(self, 48, Strings("You don't have enough points!")) end
   if why ~= 0 then self.item = nil; return end
   se(self, "SEQ_SE_DP_SELECT")
   if not room(self, id) then
     self.item = nil
-    self.message = bank(self, 16, "You don't have enough room.")
+    self.message = bank(self, 16, Strings("You don't have enough room."))
     return
   end
   self.mode, self.yesNo = "confirm", 1
-  self.message = bank(self, 46, "Would you like\n" .. (def.name or "") .. "?", def.name or "")
+  self.message = bank(self, 46, Strings("Would you like\n%s?", def.name or ""), def.name or "")
 end
 
 local function transact(self)
@@ -109,21 +110,21 @@ local function transact(self)
   local S = Shops()
   local def = self:def(id) or {}
   if points(self) < cost then
-    self.message, self.mode, self.item = bank(self, 48, "You don't have enough points!"), "buy", nil
+    self.message, self.mode, self.item = bank(self, 48, Strings("You don't have enough points!")), "buy", nil
     return
   end
   if self.athlon.kind == "daily" then
     if isApricorn(id) then
       require("src.world.HgssApricorns").give(save, id - M.APRICORN_FIRST, 1)
-      self.message = bank(self, 49, "All right, here you go.\nCome back anytime!")
+      self.message = bank(self, 49, Strings("All right, here you go.\nCome back anytime!"))
     else
       require("src.inventory.Bag").add(save, id, 1, self.game.data)
-      self.message = self:line(6, "Here you are!\nThank you!", def.name or "", self:pocketName(def))
+      self.message = self:line(6, Strings("Here you are!\nThank you!"), def.name or "", self:pocketName(def))
     end
     S.takeDaily(save, self.cursor - 1)
   else
     S.giveCard(save, (tonumber(id) or 0) - M.DATA_CARD_01)
-    self.message = bank(self, 49, "All right, here you go.\nCome back anytime!")
+    self.message = bank(self, 49, Strings("All right, here you go.\nCome back anytime!"))
   end
   -- MartData_SubCurrency (PokeathlonSave_SubAthletePoints: not below 0) and
   -- GAME_STAT_CURRENCY_SPENT
@@ -162,7 +163,7 @@ function M.install(Shop)
     return pay(self, n)
   end
   Shop.poorLine = function(self)
-    if self.athlon then return bank(self, 48, "You don't have enough points!") end
+    if self.athlon then return bank(self, 48, Strings("You don't have enough points!")) end
     return poorLine(self)
   end
   Shop.owned = function(self, id)
@@ -175,9 +176,9 @@ function M.install(Shop)
   -- the purse and the price in points (#33 / #32 / #19)
   Shop.line = function(self, n, fallback, ...)
     if self.athlon then
-      if n == 18 then return bank(self, 33, "Athlete Pts.") end
-      if n == 19 then local p = tostring(points(self)); return bank(self, 32, p .. "P", p) end
-      if n == 9 then local p = tostring((...) or ""):gsub("^%s+", ""); return bank(self, 19, p .. "P", p) end
+      if n == 18 then return bank(self, 33, Strings("Athlete Pts.")) end
+      if n == 19 then local p = tostring(points(self)); return bank(self, 32, Strings("%sP", p), p) end
+      if n == 9 then local p = tostring((...) or ""):gsub("^%s+", ""); return bank(self, 19, Strings("%sP", p), p) end
     end
     return line(self, n, fallback, ...)
   end
