@@ -1020,6 +1020,10 @@ function Loader:_api(mod)
     api.content[alias] = self:_contentApi(mod, self.content[canonical],
       ("the %s registry is deprecated; use %s"):format(alias, canonical))
   end
+  api.contentFormat = mod.manifest.content_format or "native"
+  if api.contentFormat == "unified" then
+    api.content = engineRequire("src.mods.UnifiedContent").new(loader, mod, api.content, hostGen)
+  end
   -- assets keeps the v1 alias to the content accessors and adds the file
   -- helpers on top, so mod.assets.pokemon and mod.assets:image both resolve
   -- A RELATIVE PATH STAYS RELATIVE.
@@ -1142,6 +1146,16 @@ function Loader:_api(mod)
     world = module.new(game, modId)
     return world
   end })
+  -- When capability queries are installed, report the selected content
+  -- format's actual availability. Other surfaces retain their host query.
+  if api.contentFormat == "unified" and api.supports then
+    local supports, content = api.supports, api.content
+    api.supports = function(self, surface, name)
+      local handle = type(name) == "string" and content[name]
+      if surface == "content" and handle and handle.supports then return handle:supports() end
+      return supports(self, surface, name)
+    end
+  end
   return api
 end
 
