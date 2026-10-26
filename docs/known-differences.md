@@ -40,3 +40,18 @@ functional in the original game. The door layout lives in
 `tools/rom_manifest.json` (`field.cardKeyDoors.closedDoors`), hand-ported
 since no retail ROM data encodes it; `src/import/RomExtractor.lua` copies
 it straight through on ROM import.
+
+## Native GBA Beat Up party damage
+
+Beat Up now reads each healthy party member's level/species base Attack
+and target species base Defense, with per-hit native critical/variation
+rolls, live callback eligibility, Substitute continuation and last-strike
+special counter memory. The effect revision intentionally changes the link
+fingerprint; see [the contract and remaining acceptance](native-gba-beat-up.md).
+
+## Native GBA Beat Up shared side parties
+
+Beat Up now reads the entire side party in two-trainer and player/ally
+battles, retaining live slot replacement and the active user's HP/status.
+Replacement benches remain owned separately. The reviewed effect revision
+changes the link fingerprint; see [contract coverage and remaining scope](native-gba-beat-up-side-parties.md).

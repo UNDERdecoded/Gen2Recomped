@@ -508,3 +508,18 @@ file pickers are ordinary desktop dialogs and still appear normally, and a
 run started from a terminal (`lovec.exe`, what `scripts\run.ps1` prefers)
 keeps its terminal and its printed output. Set `POKEPORT_CONSOLE=1` to opt
 out.
+
+## Native GBA Beat Up party damage
+
+Beat Up now reads each healthy party member's level/species base Attack
+and target species base Defense, with per-hit native critical/variation
+rolls, live callback eligibility, Substitute continuation and last-strike
+special counter memory. The effect revision intentionally changes the link
+fingerprint; see [the contract and remaining acceptance](native-gba-beat-up.md).
+
+## Native GBA Beat Up shared side parties
+
+Beat Up now reads the entire side party in two-trainer and player/ally
+battles, retaining live slot replacement and the active user's HP/status.
+Replacement benches remain owned separately. The reviewed effect revision
+changes the link fingerprint; see [contract coverage and remaining scope](native-gba-beat-up-side-parties.md).
