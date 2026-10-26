@@ -1323,6 +1323,9 @@ local function markerFor(version)
   if version == "red" or version == "blue" or version == "yellow" then
     revision = "gen1-trade-art-v1:"
   end
+  if version == 'ruby' or version == 'sapphire' then
+    revision = revision .. 'rs-transition-classes-v1:'
+  end
   return CACHE_FORMAT .. revision .. GameVersion.info(version).sha1
 end
 

@@ -5171,7 +5171,8 @@ function RomExtractorGen3:extractConstants()
         underwater = trans.underwater,
         secretBaseOpponent = trans.secretBaseOpponent,
         secretBaseTransition = trans.championTransition,
-        trainerClasses = trans.trainerClasses,
+        trainerClasses = require('src.import.Gen3TransitionProfile').classes(
+          type(self.version)=='table' and self.version.id or self.version, trans.trainerClasses),
         eliteFour = trans.eliteFour,
         championTransition = trans.championTransition,
         aquaTransition = trans.aquaTransition,

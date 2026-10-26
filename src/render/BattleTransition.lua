@@ -1103,6 +1103,12 @@ function BattleTransition.new(game, onDone, opts)
   self.game = game
   self.onDone = onDone
   self.t = 0
+  self.frame = 0
+  self.options = opts or {}
+  if game and game.data and game.save then
+    self.cohort = { data=game.data, save=game.save, loader=game.mods,
+      edition=require('src.core.GameVersion').get() }
+  end
   opts = opts or {}
   -- EVERYTHING EMERALD'S CHOICE ASKS FOR.  The three the Game Boy needed are
   -- still here; the rest are what GetBattleTransitionTypeByMap,
@@ -1115,8 +1121,10 @@ function BattleTransition.new(game, onDone, opts)
                 trainerClass = opts.trainerClass, trainerId = opts.trainerId,
                 trainerName = opts.trainerName,
                 legendSpecies = opts.legendSpecies,
-                legendary = opts.legendary }
-  local style = Runtime.call("transition.style", vanillaStyle, ctx)
+                legendary = opts.legendary, requestedStyle = opts.style }
+  local style = Runtime.call("transition.style", function(value)
+    return value.requestedStyle or vanillaStyle(value)
+  end, ctx)
   local def = styleDef(game, style)
   -- a hook that names an unregistered style falls back to the vanilla bits
   if not def then
@@ -1140,7 +1148,53 @@ function BattleTransition.new(game, onDone, opts)
   return self
 end
 
-function BattleTransition:update(dt)
+local function present(self)
+  local c=self.cohort
+  if c and (self.game.data~=c.data or self.game.save~=c.save or self.game.mods~=c.loader
+      or require('src.core.GameVersion').get()~=c.edition) then return false end
+  local states=self.game.stack and self.game.stack.states
+  if states then
+    for _,state in ipairs(states)do if state==self then return true end end
+    return false
+  end
+  return true
+end
+
+function BattleTransition:enter()
+  local source=package.loaded['src.core.game3.battle_transition']
+  if require('src.core.GameVersion').isGen3() and source and source._nativeStart then source._nativeStart(self)end
+end
+
+function BattleTransition:exit()
+  local source=package.loaded['src.core.game3.battle_transition']
+  if source and source._nativeExit then source._nativeExit(self)end
+end
+
+function BattleTransition:complete(completed)
+  if self.finished or not present(self) then return false end
+  local stack=self.game.stack
+  if stack.top and stack:top()~=self then return false,'transition is covered by another native state'end
+  self.finished=true
+  self.phase=completed and 'done' or 'idle'
+  local callback=self.onDone;self.onDone=nil
+  stack:pop()
+  if completed and callback then callback()end
+  return true
+end
+
+function BattleTransition:finish()
+  if self.finished or not present(self)then return false end
+  local source=package.loaded['src.core.game3.battle_transition']
+  if require('src.core.GameVersion').isGen3() and source and source._nativeFinish then
+    return source._nativeFinish(self,function()return self:complete(true)end)
+  end
+  return self:complete(true)
+end
+
+local function updateBody(self,dt)
+  if self.finished or not present(self)then return false end
+  if self.game.stack.top and self.game.stack:top()~=self then return false end
+  self.frame = self.frame + 1
   self.t = self.t + 1
   if self.phase == "frlg_intro" then
     if self.t >= FRLG_INTRO_FRAMES then
@@ -1154,20 +1208,20 @@ function BattleTransition:update(dt)
     end
   else
     if self.t >= self.wipeLen + self.blackHold then
-      self.game.stack:pop()
-      if self.onDone then self.onDone() end
+      self:finish()
     end
   end
 end
 
-function BattleTransition:draw()
+local function drawBody(self, renderer)
   if self.phase == "frlg_intro" then
     local p = (math.max(1, self.t) - 1) % 16
     local blend = p < 8 and (p + 1) * 2 or (15 - p) * 2
     local a = math.max(0, math.min(1, blend / 16))
-    local r = self.game and self.game.renderer
+    local r = renderer or self.game and self.game.renderer
     if r then
       r.screenVeil = { FRLG_INTRO_GRAY, a }
+      r.nativeTransitionVeil = { state=self, value=r.screenVeil }
     else
       love.graphics.setColor(FRLG_INTRO_GRAY, FRLG_INTRO_GRAY,
                              FRLG_INTRO_GRAY, a)
@@ -1184,9 +1238,10 @@ function BattleTransition:draw()
       -- pixel the LCD shows.  Hand it to the renderer as a screen-space veil
       -- so it covers the whole surface at any zoom; only the headless and
       -- no-renderer paths fall back to filling the 160x144 box.
-      local r = self.game and self.game.renderer
+      local r = renderer or self.game and self.game.renderer
       if r then
         r.screenVeil = { shade, math.abs(v) }
+        r.nativeTransitionVeil = { state=self, value=r.screenVeil }
         return
       end
       love.graphics.setColor(shade, shade, shade, math.abs(v))
@@ -1216,7 +1271,7 @@ function BattleTransition:draw()
   -- alongside a second one outside it.  Nothing is stretched -- the pattern is
   -- continued with more tiles, not scaled-up pixels -- so at 1x the grid works
   -- out to exactly 20x18 and this is the classic wipe unchanged.
-  local renderer = self.game and self.game.renderer
+  renderer = renderer or self.game and self.game.renderer
   if renderer then
     renderer.battleWipe = { style = style, prog = prog, t = self.t,
                             game = self.game,
@@ -1281,6 +1336,47 @@ function BattleTransition:draw()
     love.graphics.rectangle("fill", 0, 0, 160, 144)
   end
   love.graphics.setColor(1, 1, 1, 1)
+end
+
+function BattleTransition:update(dt)
+  local source=package.loaded['src.core.game3.battle_transition']
+  if require('src.core.GameVersion').isGen3() and source and source._nativeTick then
+    return source._nativeTick(self,function()return updateBody(self,dt)end)
+  end
+  return updateBody(self,dt)
+end
+
+function BattleTransition:draw()
+  if self.finished or not present(self)then return false end
+  local source=package.loaded['src.core.game3.battle_transition']
+  if require('src.core.GameVersion').isGen3() and source and source._nativeDraw then
+    return source._nativeDraw(self,function()return drawBody(self)end)
+  end
+  return drawBody(self)
+end
+
+-- Render the same current native effect onto an owned world view. Collect
+-- screen-space packets locally; do not replace Game.renderer or sample the
+-- canvas being written by scanline effects.
+function BattleTransition:drawInto(canvas,w,h,source)
+  if self.finished or not present(self)then return false end
+  local g=love.graphics
+  g.push('all')
+  local ok,why=pcall(function()
+    g.origin();g.setCanvas(canvas);g.setShader();g.setScissor();g.setDepthMode()
+    local packet={};drawBody(self,packet)
+    if packet.battleWipe then
+      require('src.render.Renderer').drawBattleWipe(self.game.renderer or {},packet.battleWipe,
+        w,h,math.floor((w-240)/2),math.floor((h-160)/2),240,160,1,1,source)
+    end
+    local veil=packet.screenVeil
+    if veil and veil[2]>0 then
+      g.setColor(veil[1],veil[1],veil[1],veil[2]);g.rectangle('fill',0,0,w,h)
+    end
+  end)
+  g.pop()
+  if not ok then error(why,0)end
+  return true
 end
 
 return BattleTransition
