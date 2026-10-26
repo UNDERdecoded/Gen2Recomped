@@ -675,6 +675,8 @@ OPS["if_level_cond"] = function(vm, args)
   if hit then return args[#args] end
 end
 
+require("src.battle.Gen3AIQueries").install(Gen3AI)
+
 -- ---------------------------------------------------------------------------
 -- Running one script over one move
 -- ---------------------------------------------------------------------------
