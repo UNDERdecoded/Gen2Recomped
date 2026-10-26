@@ -33,6 +33,7 @@
 local Manifest = require("src.mods.Manifest")
 local ManagerState = require("src.mods.ManagerState")
 local ModGens = require("src.mods.ModGens")
+local ModTargets = require("src.mods.ModTargets")
 local Semver = require("src.mods.Semver")
 local Version = require("src.core.Version")
 local SaveData = require("src.core.SaveData")
@@ -46,13 +47,21 @@ local LauncherMods = {}
 -- the id -> validated-manifest map resolveToggle reads (its dependencySpecs,
 -- conflictSpecs, version and game_version are exactly the fields the loader's
 -- Manifest.validate produced); enabledSet is the current desired enable-set.
-local function statusFor(mods, id, enabledSet, enabled)
+local function statusFor(mods, id, enabledSet, enabled, version, options)
   local m = mods[id]
+  if version and not ModTargets.supports(m, version) then
+    if ModTargets.forced(options, id, version) then return "warn", "Forced onto " .. version end
+    return "other_game", ModTargets.detail(m, version)
+  end
+  if version and not ModGens.allows(m, require("src.core.GameVersion").generation(version))
+      and not ModTargets.forced(options, id, version) then
+    return "other_game", "Outside declared generations"
+  end
   -- conflict only bites an enabled mod: resolveToggle's conflict list is
   -- bidirectional (this mod's conflicts spec vs an enabled other, and an
   -- enabled other's spec vs this mod), which is exactly the launcher chip.
   if enabled then
-    local r = ManagerState.resolveToggle(mods, id, true, enabledSet)
+    local r = ManagerState.resolveToggle(mods, id, true, enabledSet, version)
     if #r.conflicts > 0 then
       local otherId = r.conflicts[1]
       local other = mods[otherId]
@@ -70,6 +79,7 @@ local function statusFor(mods, id, enabledSet, enabled)
   -- resolveToggle would cascade-enable a merely-disabled dep rather than flag
   -- it, so the disabled case is judged straight off the manifest here.
   for _, spec in ipairs(m.dependencySpecs or {}) do
+    if ModTargets.specApplies(spec, version) then
     local dep = mods[spec.id]
     if not dep then
       return "warn", "Needs " .. spec.id .. " (not installed)"
@@ -79,15 +89,59 @@ local function statusFor(mods, id, enabledSet, enabled)
         and not Semver.satisfies(dep.version, spec.range) then
       return "warn", "Needs " .. spec.id .. " " .. spec.range
     end
+    end
   end
   return "ok", "Ready"
+end
+
+-- Normalized source hints are links for review, never automatic installs.
+function LauncherMods.resolveDependencyRepo(id, parent, installed, version)
+  for _, group in ipairs({parent and parent.dependencySpecs or {}, parent and parent.optionalSpecs or {}}) do
+    for _, spec in ipairs(group) do
+      if spec.id == id and spec.github and ModTargets.specApplies(spec, version) then
+        local ok, clean = pcall(Manifest.parseGithub, spec.github)
+        if ok and clean then return clean end
+      end
+    end
+  end
+  local ok, clean = pcall(Manifest.parseGithub, installed and installed.github)
+  return ok and clean or nil
+end
+
+local function dependencyReport(manifest, options, version, byId)
+  local out = {hasIssues=false, targetMod=manifest, deps={}}
+  for _, group in ipairs({{field="dependencySpecs",kind="dependency"},{field="optionalSpecs",kind="optional"}}) do
+    for _, spec in ipairs(manifest and manifest[group.field] or {}) do
+      if ModTargets.specApplies(spec, version) then
+        local dep, status = byId[spec.id], "satisfied"
+        if not dep then status="missing"
+        elseif spec.range and not Semver.satisfies(dep.version,spec.range) then status="incompatible"
+        else
+          local choice = ModGens.active(options and options.mods and options.mods[spec.id], version and require("src.core.GameVersion").generation(version))
+          if choice == false or (choice == nil and dep.experimental) then status="disabled" end
+        end
+        local repo = LauncherMods.resolveDependencyRepo(spec.id,manifest,dep,version)
+        out.deps[#out.deps+1] = {id=spec.id,name=dep and dep.name or spec.id,range=spec.range,
+          kind=group.kind,optional=group.kind=="optional",status=status,installedVersion=dep and dep.version,
+          github=repo,safeUrl=repo and ("https://github.com/"..repo)}
+        if group.kind=="dependency" and status~="satisfied" then out.hasIssues=true end
+      end
+    end
+  end
+  return out
+end
+
+function LauncherMods.checkDependencies(manifest, options, version, installedManifests)
+  local byId = {}
+  for _, installed in ipairs(installedManifests or {}) do byId[installed.id] = installed end
+  return dependencyReport(manifest, options, version, byId)
 end
 
 -- deriveList(manifests, options) -> the panel row list, pure.
 -- manifests is an array of validated manifests (Manifest.validate output);
 -- options is the options table (only options.mods is read).  Rows come back
 -- sorted by id so the panel order is stable.
-function LauncherMods.deriveList(manifests, options)
+function LauncherMods.deriveList(manifests, options, version)
   local mods = options and options.mods or {}
   local ordered = {}
   for _, m in ipairs(manifests) do ordered[#ordered + 1] = m end
@@ -112,7 +166,7 @@ function LauncherMods.deriveList(manifests, options)
   local out = {}
   for _, m in ipairs(ordered) do
     local enabled = enabledSet[m.id] == true
-    local status, detail = statusFor(byId, m.id, enabledSet, enabled)
+    local status, detail = statusFor(byId, m.id, enabledSet, enabled, version, options)
     local raw = m.raw or {}
     local badge = tostring(raw.category or m.profile or "MOD"):upper()
     if m.experimental then badge = "EXPERIMENTAL" end
@@ -172,7 +226,9 @@ function LauncherMods.deriveList(manifests, options)
       -- The generations the MOD says it works in, so the card can show a chip
       -- the player cannot usefully turn on (see ModGens.supported).  nil on
       -- every mod that declares nothing, which is every mod predating it.
-      supportedGens = m.generations,
+      supportedGens = ModTargets.generations(m) or m.generations,
+      games = m.games,
+      targets = ModTargets.label(m),
       -- ...and the generations the player has overruled that claim for, so a
       -- chip the mod says it cannot fill can still be drawn as one the player
       -- deliberately lit (see ModGens.forced).  All false on every row nobody
@@ -180,6 +236,7 @@ function LauncherMods.deriveList(manifests, options)
       forcedGens = forceSet[m.id],
       status = status,
       statusDetail = detail,
+      dependencies = dependencyReport(m, options, version, byId),
       github = m.github,
       -- the creator's donation link, for the card's "Support the creator"
       -- button (Manifest.validate accepts http(s) only)

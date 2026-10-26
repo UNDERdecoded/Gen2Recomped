@@ -4,6 +4,7 @@
 local Logger = require("src.core.Logger")
 local Semver = require("src.mods.Semver")
 local Version = require("src.core.Version")
+local ModTargets = require("src.mods.ModTargets")
 
 local Manifest = {}
 
@@ -30,25 +31,67 @@ local function violation(strict, id, message)
   Logger.warn("[%s] %s", tostring(id), message)
 end
 
--- "id" or "id@<range>"; a malformed id or range fails for every api level
--- because there is no sane fallback reading for it
-local function parseSpecs(list, field)
+-- Repository hints are advisory; dependency identity, ranges and scopes are
+-- enforced. A bad hint never grants a URL or invalidates an otherwise usable mod.
+local function parseSpecs(list, field, sources)
   local specs = {}
+  local count = 0
+  for key in pairs(list) do
+    count = count + 1
+    assert(type(key) == "number" and key % 1 == 0 and key >= 1 and key <= #list,
+      field .. " must be an array")
+  end
+  assert(count == #list, field .. " must be an array")
   for _, entry in ipairs(list) do
-    assert(type(entry) == "string" and entry ~= "",
-      field .. " entries must be non-empty strings")
-    local id, range = entry:match("^([%w_%-]+)@(.+)$")
-    if not id then
-      id = entry:match("^([%w_%-]+)$")
-      assert(id, ("malformed %s entry %q"):format(field, entry))
-      range = nil
+    local id, range, hint, gamesRaw, engineRange
+    if type(entry) == "table" then
+      id, range = entry.id, entry.range
+      if range == nil then range = entry.version end
+      hint, gamesRaw = entry.github or entry.repo, entry.games
+      if gamesRaw == nil then gamesRaw = entry.game end
+      engineRange = entry.game_version
+    else
+      assert(type(entry) == "string" and entry ~= "", field .. " entries must be strings or objects")
+      local token = entry
+      if token:find("#", 1, true) then
+        token, hint = token:match("^([^#]+)#([^#]+)$")
+        assert(token, "malformed " .. field .. " source hint")
+      end
+      id, range = token:match("^([%w_%-]+)@(.+)$")
+      if not id then id = token:match("^([%w_%-]+)$") end
     end
+    assert(type(id) == "string" and id:match("^[%w_%-]+$"), "malformed " .. field .. " id")
     local ok, err = Semver.validRange(range)
-    assert(ok, ("malformed %s range in %q: %s"):format(field, entry, tostring(err)))
-    specs[#specs + 1] = { id = id, range = range }
+    assert(ok, ("malformed %s range for %s: %s"):format(field, id, tostring(err)))
+    ok, err = Semver.validRange(engineRange)
+    assert(ok, ("malformed %s game_version for %s: %s"):format(field, id, tostring(err)))
+    local games
+    if gamesRaw ~= nil then
+      if type(gamesRaw) == "string" then gamesRaw = {gamesRaw} end
+      assert(type(gamesRaw) == "table", field .. " games must be a string or array")
+      local n = 0
+      for key in pairs(gamesRaw) do
+        n = n + 1
+        assert(type(key) == "number" and key % 1 == 0 and key >= 1 and key <= #gamesRaw,
+          field .. " games must be an array")
+      end
+      assert(n == #gamesRaw, field .. " games must be an array")
+      local unknown
+      games, unknown = ModTargets.normalize(gamesRaw)
+      assert(#unknown == 0 and #games > 0, field .. " games must name supported editions")
+    end
+    if hint == nil and type(sources) == "table" then hint = sources[id] end
+    local github
+    if hint ~= nil then
+      local clean
+      ok, clean = pcall(Manifest.parseGithub, hint)
+      if ok then github = clean else Logger.warn("[%s] ignored invalid source hint for %s", field, id) end
+    end
+    specs[#specs + 1] = { id = id, range = range, github = github, games = games, game_version = engineRange }
   end
   return specs
 end
+Manifest.parseSpecs = parseSpecs
 
 -- Optional GitHub repo for launcher auto-update / other-versions.
 -- Accepts "owner/repo" or a github.com URL; empty/absent means no updates.
@@ -223,6 +266,15 @@ function Manifest.validate(raw, path)
   assert(api <= Version.modApi, ("requires mod API %d; this engine provides %d")
     :format(api, Version.modApi))
   local strict = api >= 2
+  local games, unknownGames = ModTargets.parse(raw)
+  for _, token in ipairs(unknownGames or {}) do
+    violation(strict, raw.id, "unknown game " .. token)
+  end
+  if raw.games ~= nil and #raw.games == 0 then
+    violation(strict, raw.id, "games names no game this engine knows")
+  end
+  local gen2compat = raw.gen2compat
+  if games then gen2compat = ModTargets.supports({games=games}, nil, 2) end
 
   local profile = raw.profile or "content"
   if not Manifest.PROFILES[profile] then
@@ -310,8 +362,8 @@ function Manifest.validate(raw, path)
     optional_dependencies = array(raw.optional_dependencies),
     conflicts = conflicts,
     incompatible = array(raw.incompatible),
-    dependencySpecs = parseSpecs(array(raw.dependencies), "dependencies"),
-    optionalSpecs = parseSpecs(array(raw.optional_dependencies), "optional_dependencies"),
+    dependencySpecs = parseSpecs(array(raw.dependencies), "dependencies", raw.dependency_sources),
+    optionalSpecs = parseSpecs(array(raw.optional_dependencies), "optional_dependencies", raw.dependency_sources),
     conflictSpecs = parseSpecs(conflicts, "conflicts"),
     category = raw.category or "OTHER",
     game_version = raw.game_version,
@@ -356,6 +408,8 @@ function Manifest.validate(raw, path)
     -- not default them or refuse.  Declared here, it can do both.  Absent
     -- means all three, which is every mod that predates the field.
     generations = parseGenerations(raw),
+    games = games,
+    gen2compat = gen2compat,
     -- Which maps this mod says it touches; see parseMaps. Absent on every mod
     -- that predates the field, which is why nothing may depend on it.
     maps = parseMaps(raw),

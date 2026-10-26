@@ -1,0 +1,23 @@
+name: Edition-scoped mod loading
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: mod-game-targets-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  targets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install test runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check actual loading, dependencies and per-game overrides
+        run: luajit tests/engine/mod_targets.lua
+      - name: Check launcher behavior and translatable text
+        run: |
+          luajit tests/engine/launcher_mods_tests.lua
+          luajit tests/engine/gate_strings_coverage.lua

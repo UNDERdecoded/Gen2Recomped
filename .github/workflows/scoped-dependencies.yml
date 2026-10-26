@@ -1,0 +1,20 @@
+name: Scoped mod dependency contracts
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: scoped-dependencies-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  dependencies:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y luajit
+      - run: luajit tests/engine/scoped_dependencies.lua
+      - run: luajit tests/engine/mod_targets.lua
+      - run: luajit tests/engine/launcher_mods_tests.lua
+      - run: luajit tests/engine/mod_index_tests.lua

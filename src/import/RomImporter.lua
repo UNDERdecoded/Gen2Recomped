@@ -10288,6 +10288,7 @@ end
 local function modStatusChip(status)
   if status == "ok" then return "Ready", PAL.green end
   if status == "conflict" then return "Conflict", PAL.red end
+  if status == "other_game" then return "Other game", PAL.detail end
   return "Incompatible", PAL.gold   -- "warn": bad range or missing dependency
 end
 
@@ -10581,6 +10582,9 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
       -- tells the reader to redo something they are looking at the result of.
       gameLine = okA and AT.requirementText(m.missingGames, "This mod", true)
         or ("Needs " .. tostring(needGame.name) .. " imported")
+    end
+    if m.targets then
+      gameLine = table.concat({Strings("For %s", m.targets), gameLine}, "\n")
     end
 
     -- "Support the creator": the manifest's `support` link, first in the row

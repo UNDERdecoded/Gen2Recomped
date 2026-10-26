@@ -319,17 +319,18 @@ function ModIndex.compatIssues(entry, ctx)
     warn("Requests permission: " .. name)
   end
 
-  -- dependencies / conflicts arrive as the manifest's own vocabulary: either
-  -- an array of "id" / "id@<range>" strings or an id -> range map.
+  -- Catalogue warnings consume the same string/object scopes as installed
+  -- manifests; retain the older id -> range catalogue shape as well.
   local installed = ctx.installed or {}
   local function eachSpec(spec, fn)
     if type(spec) ~= "table" then return end
     for k, v in pairs(spec) do
-      if type(k) == "number" and type(v) == "string" then
-        local id, range = v:match("^([^@]+)@(.+)$")
-        fn(id or v, range)
-      elseif type(k) == "string" then
-        fn(k, type(v) == "string" and v or nil)
+      local value = v
+      if type(k) == "string" then value = {id=k,range=type(v)=="string" and v or nil} end
+      local ok, parsed = pcall(require("src.mods.Manifest").parseSpecs, {value}, "catalogue")
+      if ok and parsed[1] and require("src.mods.ModTargets").specApplies(parsed[1],
+          ctx.gameVersion or ctx.version, ctx.generation, ctx.engineVersion) then
+        fn(parsed[1].id, parsed[1].range)
       end
     end
   end
@@ -339,8 +340,10 @@ function ModIndex.compatIssues(entry, ctx)
       warn("Needs " .. id .. (range and (" " .. range) or "") .. " (not installed)")
     end
   end)
-  eachSpec(entry.conflicts, function(id)
-    if installed[id] ~= nil then
+  eachSpec(entry.conflicts, function(id, range)
+    local value = installed[id]
+    local version = type(value) == "table" and value.version or value
+    if value ~= nil and (not range or (type(version)=="string" and require("src.mods.Semver").satisfies(version,range))) then
       warn("Conflicts with installed " .. id)
     end
   end)

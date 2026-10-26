@@ -22,6 +22,8 @@ local Hooks = require("src.mods.Hooks")
 local ModStorage = require("src.mods.Storage")
 local Runtime = require("src.mods.Runtime")
 local ModGens = require("src.mods.ModGens")
+local ModTargets = require("src.mods.ModTargets")
+local GameVersion = require("src.core.GameVersion")
 local ModSeams = require("src.mods.ModSeams")
 -- Module-name aliases for mods written against the Gold port's per-generation
 -- layout (src.world.gen2.Player and friends).  Installed here because this is
@@ -179,6 +181,16 @@ function Loader:_generation()
   if not okV then return nil end
   local okG, gen = pcall(GameVersion.generation)
   return okG and gen or nil
+end
+
+function Loader:_dependencySpecs(manifest, field)
+  local out = {}
+  for _, spec in ipairs(manifest[field] or {}) do
+    if ModTargets.specApplies(spec, GameVersion.get(), self:_generation()) then
+      out[#out + 1] = spec
+    end
+  end
+  return out
 end
 
 function Loader:_loadState()
@@ -471,7 +483,12 @@ end
 local function isActive(mod)
   -- a superseded mod keeps the player's flag and simply does not run: another
   -- enabled copy of the same mod does (src/mods/ModCopies.lua)
-  return mod.enabled and not mod.failed and not mod.superseded
+  return mod.enabled and not mod.failed and not mod.superseded and not mod.skipped
+end
+
+function Loader:_skip(mod, reason)
+  mod.skipped, mod.state, mod.skipReason = true, "wrong_game", reason
+  Logger.info("mod %s skipped: %s", mod.manifest.id, reason)
 end
 
 function Loader:_exists(path)
@@ -514,11 +531,16 @@ function Loader:_enforceDependencies()
     changed = false
     for _, id in ipairs(orderedIds(self.mods, isActive)) do
       local mod = self.mods[id]
-      for _, spec in ipairs(mod.manifest.dependencySpecs) do
+      for _, spec in ipairs(self:_dependencySpecs(mod.manifest, "dependencySpecs")) do
         local dep = self.mods[spec.id]
         local reason
         if not dep then
           reason = "missing dependency: " .. spec.id
+        elseif dep.skipped then
+          self:_skip(mod, ("depends on %s, which does not run here (%s)")
+            :format(spec.id, tostring(dep.skipReason)))
+          changed = true
+          break
         elseif not dep.enabled then
           reason = ("dependency %s is disabled"):format(spec.id)
         elseif dep.failed then
@@ -553,7 +575,7 @@ function Loader:_failCycles()
     stack[#stack + 1] = id
     onStack[id] = true
     local selfEdge = false
-    for _, spec in ipairs(mods[id].manifest.dependencySpecs) do
+    for _, spec in ipairs(self:_dependencySpecs(mods[id].manifest, "dependencySpecs")) do
       local dep = mods[spec.id]
       if spec.id == id then selfEdge = true end
       if dep and isActive(dep) and spec.id ~= id then
@@ -593,7 +615,7 @@ function Loader:_enforceConflicts()
   local doomed = {}
   for _, id in ipairs(orderedIds(self.mods, isActive)) do
     local mod = self.mods[id]
-    for _, spec in ipairs(mod.manifest.conflictSpecs) do
+    for _, spec in ipairs(self:_dependencySpecs(mod.manifest, "conflictSpecs")) do
       local other = self.mods[spec.id]
       if other and isActive(other)
           and (not spec.range
@@ -624,9 +646,12 @@ function Loader:_order()
       dependents[depId][#dependents[depId] + 1] = id
       indegree[id] = indegree[id] + 1
     end
-    for _, spec in ipairs(manifest.dependencySpecs) do edge(spec.id) end
+    for _, spec in ipairs(self:_dependencySpecs(manifest, "dependencySpecs")) do edge(spec.id) end
     -- optional dependencies order without requiring anything
-    for _, spec in ipairs(manifest.optionalSpecs) do edge(spec.id) end
+    for _, spec in ipairs(self:_dependencySpecs(manifest, "optionalSpecs")) do
+      local dep = self.mods[spec.id]
+      if dep and (not spec.range or Semver.satisfies(dep.manifest.version, spec.range)) then edge(spec.id) end
+    end
   end
   local ordered = {}
   local function nextId()
@@ -1343,6 +1368,7 @@ function Loader:load(data)
     local options = SaveData.loadOptions(self.fs)
     local modsOpt = options.mods or {}
     local gen = self:_generation()
+    local gameId = GameVersion.get()
     -- SAID ONCE PER BOOT, because a mod picking the wrong generation is
     -- invisible from the engine's side and expensive from the mod's: the
     -- author of one spent a session chasing a white screen that was its own
@@ -1380,9 +1406,13 @@ function Loader:load(data)
       -- ships.  A forced mod loads and says loudly that it is outside its own
       -- claim, so the next log still reads straight.
       if not self.disabled[id] then
+        local forcedGame = ModTargets.forced(options, id, gameId)
         local ok, why = ModGens.permits(mod.manifest, modsOpt[id], gen)
+        if forcedGame then ok, why = true, "game_forced" end
         local claim = table.concat(mod.manifest.generations or {}, "/")
-        if not ok then
+        if not forcedGame and not ModTargets.supports(mod.manifest, gameId, gen) then
+          self:_skip(mod, ModTargets.detail(mod.manifest, gameId))
+        elseif not ok then
           self.disabled[id] = true
           mod.unsupportedGeneration = gen
           Logger.info("%s is for generation %s; this is generation %s, so it is "
@@ -1394,12 +1424,16 @@ function Loader:load(data)
             .. "misbehaves from here is the mod running somewhere it was not "
             .. "written for, not the engine.", id, claim, tostring(gen))
         end
+        if forcedGame then
+          mod.forcedGame = gameId
+          Logger.warn("mod %s forced onto %s by the player's per-game preference", id, gameId)
+        end
       end
     end
   end
   for id, mod in pairs(self.mods) do
     mod.enabled = not self.disabled[id]
-    mod.state = mod.enabled and "pending" or "disabled"
+    mod.state = mod.skipped and "wrong_game" or (mod.enabled and "pending" or "disabled")
   end
   -- ONE ENABLED COPY PER MOD.  Two ids can be one mod: a launcher copy
   -- (install_source_id), a rename (previous_ids), a fork that kept the
@@ -1415,7 +1449,7 @@ function Loader:load(data)
       switchedOn = SaveData.loadOptions(self.fs).modSwitchedOn or {}
     end)
     local ok, losers = pcall(require("src.mods.ModCopies").supersede, self.mods,
-      function(id, mod) return mod.enabled end, switchedOn)
+      function(id, mod) return isActive(mod) end, switchedOn)
     for _, row in ipairs(ok and losers or {}) do
       local mod = self.mods[row.id]
       mod.superseded = true
@@ -1632,6 +1666,8 @@ function Loader:status()
     manifest.enabled = mod.enabled ~= false
     manifest.state = mod.state or (manifest.enabled and "loaded" or "disabled")
     manifest.error = mod.failure
+    manifest.skipReason = mod.skipReason
+    manifest.forcedGame = mod.forcedGame
     available[#available + 1] = manifest
     if manifest.state == "loaded" then loaded[#loaded + 1] = manifest end
   end

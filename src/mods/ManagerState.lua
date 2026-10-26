@@ -7,12 +7,15 @@
 local Font = require("src.render.Font")
 local Runtime = require("src.mods.Runtime")
 local ModImports = require("src.mods.ModImports")
+local ModTargets = require("src.mods.ModTargets")
+local GameVersion = require("src.core.GameVersion")
 local Semver = require("src.mods.Semver")
 local Version = require("src.core.Version")
 local Theme = require("src.ui.Theme")
 local OptionRows = require("src.ui.OptionRows")
 local Strings = require("src.core.Strings")
 local ModProfile = require("src.mods.ModProfile")
+local Merge = require("src.mods.Merge")
 
 local ManagerState = {}
 ManagerState.__index = ManagerState
@@ -99,9 +102,16 @@ end
 -- mods is id -> status manifest; enabledSet is the current desired set.
 -- Module-level so tests table-drive it without a game.
 
-function ManagerState.resolveToggle(mods, id, want, enabledSet)
+function ManagerState.resolveToggle(mods, id, want, enabledSet, version)
   local r = { apply = {}, alsoEnable = {}, alsoDisable = {},
               conflicts = {}, missing = {}, badVersion = {} }
+  local function specs(manifest, field)
+    local out = {}
+    for _, spec in ipairs(manifest and manifest[field] or {}) do
+      if ModTargets.specApplies(spec, version) then out[#out + 1] = spec end
+    end
+    return out
+  end
   local function enabledAfter(mid)
     if r.apply[mid] ~= nil then return r.apply[mid] end
     return enabledSet[mid] and true or false
@@ -116,7 +126,7 @@ function ManagerState.resolveToggle(mods, id, want, enabledSet)
       r.badVersion[#r.badVersion + 1] =
         { id = mid, need = m.game_version, got = Version.engine, engine = true }
     end
-    for _, spec in ipairs(m.dependencySpecs or {}) do
+    for _, spec in ipairs(specs(m, "dependencySpecs")) do
       local dep = mods[spec.id]
       if not dep then
         r.missing[#r.missing + 1] = spec.id
@@ -135,7 +145,7 @@ function ManagerState.resolveToggle(mods, id, want, enabledSet)
     -- reverse hard deps: whoever needs mid has to switch off with it
     for otherId, other in pairs(mods) do
       if enabledAfter(otherId) then
-        for _, spec in ipairs(other.dependencySpecs or {}) do
+        for _, spec in ipairs(specs(other, "dependencySpecs")) do
           if spec.id == mid then
             disableWalk(otherId, false)
             break
@@ -149,7 +159,7 @@ function ManagerState.resolveToggle(mods, id, want, enabledSet)
     -- a conflict blocks whichever side declared it
     for mid in pairs(r.apply) do
       local m = mods[mid]
-      for _, spec in ipairs((m and m.conflictSpecs) or {}) do
+      for _, spec in ipairs(specs(m, "conflictSpecs")) do
         local other = mods[spec.id]
         if other and spec.id ~= mid and enabledAfter(spec.id)
             and (not spec.range or Semver.satisfies(other.version, spec.range)) then
@@ -158,7 +168,7 @@ function ManagerState.resolveToggle(mods, id, want, enabledSet)
       end
       for otherId, other in pairs(mods) do
         if otherId ~= mid and enabledAfter(otherId) then
-          for _, spec in ipairs(other.conflictSpecs or {}) do
+          for _, spec in ipairs(specs(other, "conflictSpecs")) do
             if spec.id == mid and (not spec.range
                 or not m or Semver.satisfies(m.version, spec.range)) then
               r.conflicts[#r.conflicts + 1] = otherId
@@ -215,7 +225,7 @@ function ManagerState:refresh()
   if self.currentMod then
     self.currentMod = self.byId[self.currentMod.id]
   end
-  self.restartPending = #self:stagedList() > 0
+  self.restartPending = #self:stagedList() > 0 or self.targetsChanged == true
   -- a live set that drifted off the named profile reverts to ad-hoc
   local opts = self:optionsTable()
   if opts.activeProfile then
@@ -265,6 +275,7 @@ end
 function ManagerState:glyphFor(m)
   if self:isStaged(m) then return GLYPH.staged end
   if not m.enabled then return GLYPH.disabled end
+  if m.skipReason then return GLYPH.disabled end
   if m.state == "blocked_dependency" then return GLYPH.blocked end
   if m.error then return GLYPH.errored end
   return " "
@@ -344,6 +355,33 @@ function ManagerState:detailRows(m)
   local rows = {}
   rows[#rows + 1] = { label = m.enabled and "DISABLE" or "ENABLE",
     action = function() self:beginToggle(m) end }
+  local version = GameVersion.get()
+  if m.games then
+    for _, line in ipairs(wrap("FOR " .. ModTargets.label(m):upper(), 16)) do
+      rows[#rows + 1] = { label = line, inert = true }
+    end
+    if not ModTargets.supports(m, version) then
+      local forced = ModTargets.forced(self:optionsTable(), m.id, version)
+      rows[#rows + 1] = { label = forced and "STOP FORCING HERE" or "TRY HERE ANYWAY",
+        action = function()
+          local options = self:optionsTable()
+          if not self.bootGameOverrides then
+            self.bootGameOverrides = Merge.deepCopy(options.modsGames or {})
+          end
+          ModTargets.setForced(options, m.id, version, not forced)
+          self.targetBaseline = self.targetBaseline or {}
+          self.targetEdits = self.targetEdits or {}
+          if self.targetBaseline[m.id] == nil then self.targetBaseline[m.id] = forced end
+          self.targetEdits[m.id] = (not forced) ~= self.targetBaseline[m.id] and true or nil
+          self.targetsChanged = next(self.targetEdits) ~= nil
+          self:persistOptions()
+          self:refresh()
+        end }
+    end
+  end
+  if m.skipReason then
+    for _, line in ipairs(wrap(m.skipReason, 16)) do rows[#rows + 1] = { label = line, inert = true } end
+  end
   -- a mod with no options_schema still gets an OPTIONS screen when it
   -- declares a required import, because that is where its IMPORT row lives
   if self:schemaFor(m) or ModImports.of(m) then
@@ -782,7 +820,7 @@ function ManagerState:beginToggle(m)
     r = loader:resolveToggle(m.id, want, self:enabledSet())
   else
     r = ManagerState.resolveToggle(self:manifestMap(), m.id, want,
-                                   self:enabledSet())
+                                   self:enabledSet(), GameVersion.get())
   end
   local function proceed()
     if #r.missing > 0 or #r.conflicts > 0 or #r.badVersion > 0 then
@@ -823,6 +861,8 @@ end
 function ManagerState:discardChanges()
   local loader = self.game.mods
   local opts = self:optionsTable()
+  if self.bootGameOverrides then opts.modsGames = Merge.deepCopy(self.bootGameOverrides) end
+  self.targetsChanged, self.targetEdits = false, {}
   for _, m in ipairs(self:stagedList()) do
     local en = bootEnabled(m)
     if loader and loader.setEnabled then loader:setEnabled(m.id, en) end
@@ -830,6 +870,7 @@ function ManagerState:discardChanges()
     opts.mods[m.id] = en
   end
   if loader and loader.status then self.game.modStatus = loader:status() end
+  self:persistOptions()
   self:refresh()
   self:notify("CHANGES DISCARDED")
 end
@@ -871,7 +912,7 @@ function ManagerState:applyProfile(p)
     local want = p.enabled[m.id] ~= false
     local cur = set[m.id] and true or false
     if cur ~= want then
-      local r = ManagerState.resolveToggle(mods, m.id, want, set)
+      local r = ManagerState.resolveToggle(mods, m.id, want, set, GameVersion.get())
       if #r.missing > 0 or #r.conflicts > 0 or #r.badVersion > 0 then
         self:openBlocked(r)
         return
@@ -1360,6 +1401,10 @@ function ManagerState:drawApply()
   drawTruncated("PENDING CHANGES", 16, 2 * 8, 17)
   local staged = self:stagedList()
   local y = LIST_TOP
+  if self.targetsChanged then
+    Font.draw("GAME TARGET CHANGED", 16, y * 8)
+    y = y + 1
+  end
   local shown = math.min(#staged, 7)
   for i = 1, shown do
     local m = staged[i]
@@ -1367,7 +1412,7 @@ function ManagerState:drawApply()
     drawTruncated(verb .. (m.name or m.id), 16, y * 8, 17)
     y = y + 1
   end
-  if #staged == 0 then
+  if #staged == 0 and not self.targetsChanged then
     Font.draw(Runtime.safeMode and "SAFE MODE" or Strings("NO CHANGES"), 16, y * 8)
     y = y + 1
   end

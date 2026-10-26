@@ -26,6 +26,7 @@
 -- a reset to all three.  That is the whole reason this is a record and not
 -- three loose booleans.
 
+local ModTargets = require("src.mods.ModTargets")
 local ModGens = {}
 
 -- Five since Black and White: Gen 5 gets its own chip like every other.
@@ -51,9 +52,16 @@ end
 -- engine bug.
 function ModGens.supported(manifest)
   local list = manifest and manifest.generations
-  if type(list) ~= "table" or not list[1] then return nil end
+  local games = ModTargets.generations(manifest)
+  if type(list) ~= "table" or not list[1] then list = games end
+  if type(list) ~= "table" then return nil end
   local set = {}
   for _, n in ipairs(list) do set[tonumber(n)] = true end
+  if games then
+    local allowed = {}
+    for _, n in ipairs(games) do allowed[n] = true end
+    for n in pairs(set) do if not allowed[n] then set[n] = nil end end
+  end
   return set
 end
 
