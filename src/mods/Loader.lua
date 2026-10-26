@@ -21,6 +21,7 @@ local Events = require("src.mods.Events")
 local Hooks = require("src.mods.Hooks")
 local ModStorage = require("src.mods.Storage")
 local Runtime = require("src.mods.Runtime")
+local Job = require("src.mods.Job")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
 -- Module-name aliases for mods written against the Gold port's per-generation
@@ -502,7 +503,22 @@ function Loader:_validate()
         if err then reason = reason .. " (" .. err .. ")" end
       end
     end
-    if reason then self:_fail(mod, "invalid", reason) end
+    if reason then self:_fail(mod, "invalid", reason)
+    else
+      local missing = ModImports.missing(manifest,false,self.fs)
+      if missing then
+        mod.missingImports = missing
+        local first = missing[1]
+        self:_fail(mod,"missing_imports",("required import not ready: %s (%s)")
+          :format(first.entry.name,tostring(first.reason or first.entry.file)))
+      elseif require("src.mods.AssetPacks").missing(manifest, self.fs) then
+        local assets = require("src.mods.AssetPacks").missing(manifest, self.fs)
+        mod.missingAssets = assets
+        local first = assets[1]
+        self:_fail(mod, "missing_assets", ("required asset pack not ready: %s/%s (%s)")
+          :format(first.importer, first.pack, tostring(first.reason)))
+      end
+    end
   end
 end
 
@@ -1072,6 +1088,7 @@ function Loader:_api(mod)
     local path = within(relative)
     local fs = loader.fs
     if not (path and fs and fs.getInfo) then return nil end
+    path = ModImports.resolveRead(mod.manifest,relative,fs) or path
     local info = fs.getInfo(path)
     if not info then return nil end
     -- a copy, not love's own record: what a mod does to it stays with the mod
@@ -1079,7 +1096,11 @@ function Loader:_api(mod)
   end
 
   api.assets = setmetatable({
-    path = function(_, relative) return mod.path .. "/" .. relative end,
+    path = function(_, relative)
+      local path=within(relative)
+      if not path then return nil end
+      return ModImports.resolveRead(mod.manifest,relative,loader.fs) or path
+    end,
     list = function(_, relative) return listIn(relative) end,
     info = function(_, relative) return infoIn(relative) end,
     image = function(_, relative)
@@ -1094,7 +1115,9 @@ function Loader:_api(mod)
     end,
   }, { __index = api.content })
   function api:read(relative)
-    local path = self.path .. "/" .. relative
+    local path = within(relative)
+    if not path then return nil,"read must stay inside this mod" end
+    path = ModImports.resolveRead(mod.manifest,relative,loader.fs) or path
     return loader.fs.read(path)
   end
   -- the same two on the api itself, because a Gen 1 mod spells them mod:list
@@ -1119,6 +1142,8 @@ function Loader:_api(mod)
       end
       return data
     end)
+  api.packs = require("src.mods.AssetPacks").new(mod.manifest, loader.fs)
+  api.job = Job.forMod(loader, mod, api.cache)
   -- mod.world / mod.game / mod.storage all materialize on first touch, for
   -- the same reason: a headless load must not drag the world stack in, and
   -- the Game the facade acts on is still being wired when the entry chunk
@@ -1156,15 +1181,6 @@ function Loader:_loadMod(mod)
   local path = mod.path .. "/" .. mod.manifest.entry
   local chunk, err = self.fs.load(path)
   if not chunk then error(err or ("unable to load " .. path)) end
-  -- A mod whose declared base file never arrived loads fine and then does
-  -- nothing, which from the log looks identical to a mod that is simply
-  -- quiet.  Say which file is missing (src/mods/ModImports.lua).
-  do
-    for _, row in ipairs(ModImports.missing(mod.manifest) or {}) do
-      Logger.warn("[%s] needs %s at %s; import it from the mods panel",
-        mod.manifest.id, tostring(row.entry.name), tostring(row.entry.file))
-    end
-  end
   local api = self:_api(mod)
   -- KEEP THE API OBJECT, not only its exports.
   --
@@ -1196,6 +1212,7 @@ end
 -- migration it took goes with them.  The journal only exists around an
 -- entry chunk; a later failure (script validation) purges every registry.
 function Loader:_rollback(modId)
+  Job.releaseAll(self, modId)
   for name in pairs(self.journal or self.content) do
     self.content[name]:rollback(modId)
   end
@@ -1310,6 +1327,7 @@ local function stampAudioOwners(data, name, registry)
 end
 
 function Loader:load(data)
+  Job.releaseAll(self)
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
@@ -1632,6 +1650,10 @@ function Loader:status()
     manifest.enabled = mod.enabled ~= false
     manifest.state = mod.state or (manifest.enabled and "loaded" or "disabled")
     manifest.error = mod.failure
+    manifest.waitingAssets = mod.state == "missing_assets"
+    manifest.missingAssets = mod.missingAssets
+    manifest.waitingImports = mod.state == "missing_imports"
+    manifest.missingImports = mod.missingImports
     available[#available + 1] = manifest
     if manifest.state == "loaded" then loaded[#loaded + 1] = manifest end
   end
@@ -1653,6 +1675,7 @@ end
 -- boots) ran on a modded engine whose mod instance nothing drives any more,
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
+  Job.unloadAll()
   local undone = select(1, ModSeams.unwindAll())
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)

@@ -646,6 +646,8 @@ local function walkerTick(fn, ...)
 end
 
 function love.update(dt)
+  local jobs=package.loaded['src.mods.Job']
+  if jobs then jobs.update() end
   -- Unwind anything the previous frame left on the graphics stack before this
   -- one starts building on top of it.
   do
@@ -1172,9 +1174,15 @@ function love.threaderror(thread, errorstring)
 end
 
 function love.quit()
+  local jobs=package.loaded['src.mods.Job']
   if editorMode and EditorApp.quit then
-    return EditorApp.quit() -- return true to abort quit
+    local abort=EditorApp.quit()
+    if not abort then
+      if jobs then jobs.unloadAll() end
+    end
+    return abort -- return true to abort quit
   end
+  if jobs then jobs.unloadAll() end
   walkerTick("quit")
   -- let go of the "save open in a running game" markers (SaveData.closeOpen),
   -- so the launcher's Pokewalker in a later run is not told to wait

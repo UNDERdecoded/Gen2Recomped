@@ -23,6 +23,7 @@
 -- bytes there, and to refuse the wrong file before it does.
 
 local Logger = require("src.core.Logger")
+local ImportFiles = require("src.mods.ImportFiles")
 
 local ModImports = {}
 
@@ -61,17 +62,28 @@ end
 -- a single string -- it is what names the shared bank and nothing else should
 -- have to learn a new shape -- and `md5s` carries the full set for the one
 -- place that compares.
-local HASH = ("%x"):rep(32)
+local function dense(value,label)
+  assert(type(value)=="table",label.." must be an array")
+  local count=0
+  for key in pairs(value) do
+    count=count+1
+    assert(type(key)=="number" and key%1==0 and key>=1 and key<=#value,label.." must be an array")
+  end
+  assert(count==#value,label.." must be an array")
+end
 
 local function md5Set(raw)
-  local out = {}
+  local out,seen = {},{}
   local function add(value)
-    if type(value) ~= "string" then return end
-    for hash in value:lower():gmatch(HASH) do out[#out + 1] = hash end
+    assert(type(value)=="string","import md5 values must be strings")
+    for hash in value:lower():gmatch("[^%s,;]+") do
+      assert(#hash==32 and hash:match("^%x+$"),"invalid import md5")
+      if not seen[hash] then seen[hash]=true;out[#out+1]=hash end
+    end
   end
   if type(raw) == "table" then
     for _, value in ipairs(raw) do add(value) end
-  else
+  elseif raw~=nil then
     add(raw)
   end
   return out[1], out[1] and out or nil
@@ -95,14 +107,30 @@ local function magicSet(raw)
   return out[1] and out or nil
 end
 
-local function normalise(raw, index)
-  if type(raw) ~= "table" then return nil end
+local function normalise(raw, index, required)
+  assert(type(raw) == "table", "import entries must be objects")
   local file = raw.file
-  if type(file) ~= "string" or file == "" then return nil end
-  -- never let a manifest write outside its own folder
-  if file:find("%.%.") or file:sub(1, 1) == "/" or file:find("^%a:") then
-    return nil
+  assert(type(file) == "string" and file ~= "", "import file is required")
+  assert(not file:find("[%z\1-\31\\:]") and file:sub(1,1) ~= "/", "unsafe import file")
+  for part in file:gmatch("[^/]+") do
+    assert(part ~= "." and part ~= "..", "unsafe import file")
   end
+  assert(not file:find("//",1,true) and file:sub(-1) ~= "/", "unsafe import file")
+  local id = raw.id or ("import" .. index)
+  assert(type(id) == "string" and id:match("^[%w_%-]+$"), "invalid import id")
+  assert(raw.name==nil or type(raw.name)=="string" and raw.name~="", "invalid import name")
+  local description=raw.description
+  if description==nil then description=raw.hint end
+  assert(description==nil or type(description)=="string" and description~="", "invalid import description")
+  assert(raw.root == nil or raw.root == "mod" or raw.root == "save" or raw.root == "root", "invalid import root")
+  assert(raw.verify == nil or raw.verify == "mod", "import verify must be mod")
+  local size, maxSize = tonumber(raw.size), tonumber(raw.max_size)
+  for key, value in pairs({size=raw.size,max_size=raw.max_size,magic_offset=raw.magic_offset}) do
+    local n = tonumber(value)
+    assert(n and n == n and n < math.huge and n % 1 == 0
+      and n >= (key == "magic_offset" and 0 or 1), "invalid import " .. key)
+  end
+  assert(not (size and maxSize) or size <= maxSize, "import size exceeds max_size")
   -- WHERE the mod reads it from.  "mod" (the default) is inside the mod's own
   -- folder, which is all a sandboxed `mod:read` can reach.  "save" is the
   -- PhysFS root -- the save directory and the game folder, searched under one
@@ -111,12 +139,41 @@ local function normalise(raw, index)
   -- cartridge into the mod folder satisfied the manifest and left the mod
   -- still reporting no ROM.  The `..`/absolute guard above applies to both.
   local root = (raw.root == "save" or raw.root == "root") and "save" or "mod"
+  assert(root~="save" or not file:match("^imports/staging/") and not file:match("^imports/validated/"), "import path uses engine-owned metadata")
+  if type(raw.md5)=="table" then dense(raw.md5,"import md5") end
   local first, all = md5Set(raw.md5)
+  if raw.md5 ~= nil then
+    local delegated = raw.verify=="mod" and type(raw.md5)=="table" and next(raw.md5)==nil
+    assert(first or delegated, "import md5 must contain a 32-character hexadecimal digest")
+  end
+  local extensions
+  if raw.extensions ~= nil then
+    dense(raw.extensions,"import extensions")
+    assert(type(raw.extensions) == "table" and #raw.extensions > 0, "import extensions must be an array")
+    extensions = {}
+    for _, ext in ipairs(raw.extensions) do
+      assert(type(ext) == "string" and ext:match("^%.?[%w]+$"), "invalid import extension")
+      extensions[#extensions+1] = "." .. ext:gsub("^%.", ""):lower()
+    end
+  end
+  local magic = magicSet(raw.magic)
+  if raw.magic ~= nil then
+    local values = type(raw.magic) == "table" and raw.magic or {raw.magic}
+    dense(values,"import magic")
+    assert(magic and #magic == #values, "invalid import magic")
+    for _, hex in ipairs(magic) do
+      assert((tonumber(raw.magic_offset) or 0) + #hex/2 <= 8*1024*1024, "import signature exceeds bounded read limit")
+    end
+  end
+  local portable = (raw.root == nil or raw.portable == true) and not file:find("/",1,true)
   return {
-    id = tostring(raw.id or ("import" .. index)),
+    id = id,
     name = tostring(raw.name or raw.id or file),
-    description = type(raw.description) == "string" and raw.description or nil,
+    description = description,
     file = file,
+    relativeFile = portable and ("baseroms/" .. file) or file,
+    portable = portable,
+    required = required ~= false,
     root = root,
     format = type(raw.format) == "string" and raw.format:lower() or nil,
     -- WHAT TO RUN ONCE THE FILE IS THERE.
@@ -143,9 +200,12 @@ local function normalise(raw, index)
     -- A list means alternatives (several good dumps, several regions a mod
     -- actually supports); hex, because a game id is bytes and quoting them as
     -- text invites an encoding to get in the way.
-    magic = magicSet(raw.magic),
+    magic = magic,
     magicOffset = math.max(0, math.floor(tonumber(raw.magic_offset) or 0)),
-    size = tonumber(raw.size),
+    size = size,
+    max_size = maxSize,
+    extensions = extensions,
+    verify = raw.verify,
     md5 = first,
     md5s = all,
   }
@@ -153,12 +213,14 @@ end
 
 -- Manifest.validate hands the parsed list straight through; this is also the
 -- reader for a raw manifest table, so the launcher can ask before a mod loads.
-function ModImports.parse(raw)
-  local list = raw and raw.required_imports
-  if type(list) ~= "table" then return nil end
+function ModImports.parse(raw, field)
+  field = field or "required_imports"
+  local list = raw and raw[field]
+  if list == nil then return nil end
+  dense(list,field)
   local out = {}
   for index, entry in ipairs(list) do
-    local row = normalise(entry, index)
+    local row = normalise(entry, index, field ~= "optional_imports")
     if row then out[#out + 1] = row end
   end
   return out[1] and out or nil
@@ -166,7 +228,21 @@ end
 
 function ModImports.of(manifest)
   if type(manifest) ~= "table" then return nil end
-  return manifest.requiredImports or ModImports.parse(manifest.raw)
+  local out = {}
+  for _, list in ipairs({ModImports.required(manifest) or {}, ModImports.optional(manifest) or {}}) do
+    for _, entry in ipairs(list) do out[#out+1] = entry end
+  end
+  return out[1] and out or nil
+end
+
+function ModImports.required(manifest)
+  if type(manifest) ~= "table" then return nil end
+  return manifest.requiredImports or ModImports.parse(manifest.raw or manifest)
+end
+
+function ModImports.optional(manifest)
+  if type(manifest) ~= "table" then return nil end
+  return manifest.optionalImports or ModImports.parse(manifest.raw or manifest,"optional_imports")
 end
 
 -- The extensions a picker should offer for one entry.  `format` names a family
@@ -194,6 +270,11 @@ ModImports.FORMATS = {
 
 function ModImports.extensions(entry)
   if not entry then return {} end
+  if entry.extensions then
+    local out = {}
+    for _, ext in ipairs(entry.extensions) do out[#out+1] = ext:gsub("^%.", "") end
+    return out
+  end
   local byFormat = entry.format and ModImports.FORMATS[entry.format]
   if byFormat then return byFormat end
   local suffix = tostring(entry.file or ""):match("%.(%w+)$")
@@ -292,7 +373,7 @@ function ModImports.sharedSource(entry)
   if target == "" then return nil end
   local info = f.getInfo(target, "file")
   if not info then return nil end
-  if entry.size and info.size and info.size ~= entry.size then return nil end
+  if not ImportFiles.layout(entry,f,target,info) then return nil end
   return target
 end
 
@@ -311,27 +392,7 @@ end
 -- better failure than quietly filling a disk.
 ModImports.MAX_BANK_BYTES = 256 * 1024 * 1024
 
--- Forward-declared: keepShared is the first caller and bankPointer is defined
--- below it, so without this the call would resolve to a nil global.
 local bankPointer
-
-local function keepShared(entry, bytes, wrotePath)
-  local f = fs()
-  local path = ModImports.sharedPath(entry)
-  if not (f and path) then return end
-  if f.getInfo(path, "file") then return end   -- already banked
-  if #bytes > ModImports.MAX_BANK_BYTES then
-    -- nothing to point at means nothing to bank; the ordinary import flow
-    -- simply asks the next mod for the file
-    if wrotePath then bankPointer(entry, wrotePath) end
-    return
-  end
-  if f.createDirectory then
-    f.createDirectory("imports")
-    f.createDirectory(SHARED_DIR)
-  end
-  pcall(f.write, path, bytes)
-end
 
 -- Point the bank at a copy that already exists at a stable path, and drop the
 -- byte bank if one was taken earlier (that is the 64 MB this reclaims).
@@ -346,7 +407,8 @@ function bankPointer(entry, path)
     f.createDirectory("imports")
     f.createDirectory(SHARED_DIR)
   end
-  if not pcall(f.write, ptr, path) then return end
+  local called,written=pcall(f.write,ptr,path)
+  if not called or not written or f.read(ptr)~=path then return end
   if banked and f.remove then
     -- only after the pointer is on disk, so a crash between the two leaves
     -- the store with a copy too many rather than none at all
@@ -414,11 +476,29 @@ end
 -- panel says "ready" and the mod folder looks empty: for those entries the
 -- file was never meant to be in the mod folder at all.  ModImports.describe
 -- below is what the card prints so that is not a guess.
-function ModImports.pathFor(manifest, entry)
+function ModImports.pathFor(manifest, entry, handle)
   if not entry then return nil end
   if entry.root == "save" then return entry.file end
   if not (manifest and manifest.path) then return nil end
-  return manifest.path .. "/" .. entry.file
+  local canonical = manifest.path .. "/" .. (entry.relativeFile or entry.file)
+  local legacy = manifest.path .. "/" .. entry.file
+  handle = handle or fs()
+  if canonical ~= legacy and handle and handle.getInfo
+      and not handle.getInfo(canonical,"file") and handle.getInfo(legacy,"file") then
+    return legacy
+  end
+  return canonical
+end
+
+-- Both declared spellings resolve to the same existing file, without copying
+-- a player's legacy import or exposing a path outside this mod's declarations.
+function ModImports.resolveRead(manifest, relative, handle)
+  for _, entry in ipairs(ModImports.of(manifest) or {}) do
+    if entry.root ~= "save" and (relative == entry.file or relative == entry.relativeFile) then
+      return ModImports.pathFor(manifest,entry,handle)
+    end
+  end
+  return nil
 end
 
 -- A one-line "where is it" for the launcher.  "<name>: ready" on its own was
@@ -446,29 +526,23 @@ function ModImports.describe(manifest, entry)
     shared and " -- shared with your other mods that want this file" or "")
 end
 
--- Is one entry already satisfied?  Presence is the test the mod itself makes,
--- so presence is the test here -- a size mismatch is reported but a file that
--- is there is not deleted behind the player's back.
-function ModImports.have(manifest, entry)
-  local f = fs()
-  local path = ModImports.pathFor(manifest, entry)
-  if not (f and path) then return false end
-  local info = f.getInfo(path, "file")
-  if not info then return false end
-  if entry.size and info.size and info.size ~= entry.size then
-    return false, ("%s is %d bytes; expected %d")
-      :format(entry.file, info.size, entry.size)
-  end
-  return true
+-- A declaration is satisfied only by a validated file. Invalid existing
+-- files are reported and retained; validation never deletes player imports.
+function ModImports.have(manifest, entry, handle)
+  local f = handle or fs()
+  local path = ModImports.pathFor(manifest, entry, f)
+  local called,layout,why = pcall(ImportFiles.validate,entry,f,path)
+  if not called then return false,tostring(layout) end
+  return layout~=nil, why, layout
 end
 
 -- Every unsatisfied entry for one mod, or nil when it needs nothing.
-function ModImports.missing(manifest)
-  local list = ModImports.of(manifest)
+function ModImports.missing(manifest, optional, handle)
+  local list = optional and ModImports.optional(manifest) or ModImports.required(manifest)
   if not list then return nil end
   local out = {}
   for _, entry in ipairs(list) do
-    local ok, why = ModImports.have(manifest, entry)
+    local ok, why = ModImports.have(manifest, entry, handle)
     if not ok then
       out[#out + 1] = { entry = entry, reason = why }
     end
@@ -480,96 +554,20 @@ function ModImports.satisfied(manifest)
   return ModImports.missing(manifest) == nil
 end
 
-local function md5Of(bytes)
-  if not (love and love.data and love.data.hash and love.data.encode) then
-    return nil
-  end
-  local ok, value = pcall(function()
-    local digest = love.data.hash("md5", bytes)
-    if type(digest) == "userdata" and digest.getString then
-      digest = digest:getString()
-    end
-    return love.data.encode("string", "hex", digest)
-  end)
-  return ok and value or nil
-end
-
--- N64 cartridge dumps come in three byte orders and only the mod knows which
--- one it wants, so the size and hash checks have to allow all three.  Byte
--- swapping is the mod's job (STADIUM2_IMPORTER's Rom.normalise does it), which
--- is why this converts only for the purpose of CHECKING the hash.
-local N64_ORDERS = {
-  { magic = "\128\055\018\064", swap = 0 },   -- z64, big endian
-  { magic = "\055\128\064\018", swap = 2 },   -- v64, byte swapped
-  { magic = "\064\018\055\128", swap = 4 },   -- n64, little endian
-}
-
-local function toBigEndian(bytes)
-  if #bytes < 4 then return bytes end
-  local head = bytes:sub(1, 4)
-  for _, order in ipairs(N64_ORDERS) do
-    if head == order.magic then
-      if order.swap == 0 then return bytes end
-      if order.swap == 2 then return (bytes:gsub("(.)(.)", "%2%1")) end
-      return (bytes:gsub("(.)(.)(.)(.)", "%4%3%2%1"))
-    end
-  end
-  return bytes
-end
-
--- Check bytes against one entry WITHOUT writing anything.  Returns true, or
--- false plus a sentence the launcher can put on screen.
-function ModImports.check(entry, bytes)
-  if type(bytes) ~= "string" or bytes == "" then
-    return false, "that file is empty"
-  end
-  if entry.size and #bytes ~= entry.size then
-    return false, ("that file is %d bytes; %s needs %d")
-      :format(#bytes, entry.name, entry.size)
-  end
-  if entry.md5 then
-    local want = entry.md5s or { entry.md5 }
-    local function accepted(hash)
-      if not hash then return false end
-      hash = hash:lower()
-      for _, one in ipairs(want) do
-        if hash == one then return true end
-      end
-      return false
-    end
-    local hash = md5Of(bytes)
-    -- an n64 entry accepts any of the three byte orders: hash the big-endian
-    -- form, which is what the declared md5 is taken over
-    if not accepted(hash) and entry.format == "n64" then
-      hash = md5Of(toBigEndian(bytes))
-    end
-    if hash and not accepted(hash) then
-      return false, ("that is not the right file (MD5 %s)"):format(hash:sub(1, 8))
-    end
-  end
-  return true
+-- Validate a caller-owned byte string through the same bounded range path.
+function ModImports.check(entry,bytes)
+  if type(bytes)~="string" or bytes=="" then return false,"that file is empty" end
+  local memory={getInfo=function()return {type="file",size=#bytes}end,
+    readRange=function(_,at,length)return bytes:sub(at+1,at+length)end}
+  local row,why=ImportFiles.validate(entry,memory,"bytes")
+  return row~=nil,why
 end
 
 -- Validate and install.  Returns true, or false + why.  `fromShared` skips
 -- banking the bytes again (they came out of the store).
 function ModImports.install(manifest, entry, bytes, fromShared)
-  local ok, why = ModImports.check(entry, bytes)
-  if not ok then return false, why end
-  local f = fs()
-  local path = ModImports.pathFor(manifest, entry)
-  if not (f and path) then return false, "no writable mod folder" end
-  local dir = path:match("^(.*)/[^/]*$")
-  if dir and f.createDirectory then f.createDirectory(dir) end
-  local wrote, err = f.write(path, bytes)
-  if not wrote then
-    return false, ("could not write %s (%s)"):format(entry.file, tostring(err))
-  end
-  if not fromShared then keepShared(entry, bytes, path) end
-  -- the file now sits at a stable root path, so the bank need not hold bytes
-  if entry.root == "save" then bankPointer(entry, path) end
-  Logger.info("mod import: %s -> %s (%d bytes)%s", entry.id, path, #bytes,
-    fromShared and " [adopted from the shared store, not imported]" or "")
-  return true
+  if type(bytes)~="string" or bytes=="" then return false,"that file is empty" end
+  return ModImports.installFrom(manifest,entry,{bytes=bytes},{fromShared=fromShared})
 end
 
 -- ---------------------------------------------------------------------------
@@ -589,25 +587,15 @@ end
 -- is the whole of the fix -- a phone copies a disc as comfortably as a
 -- cartridge, and a 32-bit build never has to find a contiguous 1.4 GB.
 --
--- WHAT THIS COSTS IS THE HASH, and it is worth being plain about.  LOVE's
--- love.data.hash takes a whole string and there is no incremental form, so a
--- file too big to hold is a file too big to MD5 -- and hashing it by
--- reading it back in one piece would put back exactly the allocation this
--- removes.  So:
---
---   * SIZE is always checked, before a byte is copied.  It is cheap, it comes
---     off getInfo, and for a cartridge or a disc it is most of the answer.
---   * MD5 is checked when the file is small enough that holding it is safe on
---     THIS machine -- see hashLimit, which is far lower on a phone than on a
---     64-bit desktop.
---   * When it is skipped, the caller is TOLD, and says so.  A verification
---     that silently stops happening is worse than one that admits it.
+-- Hashes are incremental too. Validation therefore has the same bounded
+-- memory use for a cartridge, a large optical image and a phone import.
+-- A completed file is published only after its declared checks succeed.
 -- ---------------------------------------------------------------------------
 
 ModImports.COPY_CHUNK = 1024 * 1024
 
--- How many bytes this machine can be asked to hold in one string just to hash
--- them.  Deliberately conservative: the number is a budget for one transient
+-- Legacy allocation hint retained for callers; streamed import validation
+-- no longer skips a checksum above this size.  Deliberately conservative: the number is a budget for one transient
 -- allocation on top of everything the launcher or the running game is already
 -- holding, not a measure of free memory.
 function ModImports.hashLimit()
@@ -627,13 +615,21 @@ end
 -- folder); `path` is an absolute one off a native picker.
 function ModImports.openSource(source)
   local f = fs()
+  if type(source)=="table" and type(source.bytes)=="string" then
+    local body,at=source.bytes,0
+    return {size=#body,read=function(n)
+      local data=body:sub(at+1,at+n);at=at+#data
+      return #data>0 and data or nil
+    end,close=function()end}
+  end
   if type(source) == "table" and source.savePath then
     if not (f and f.newFile) then return nil, "no filesystem" end
     local info = f.getInfo(source.savePath, "file")
     if not info then return nil, "that file is not there any more" end
-    local handle = f.newFile(source.savePath)
-    local ok = handle and handle:open("r")
-    if not ok then return nil, "that file could not be opened" end
+    local made,handle = pcall(f.newFile,source.savePath)
+    if not made or not handle then return nil,"that file could not be opened" end
+    local called,ok = pcall(handle.open,handle,"r")
+    if not called or not ok then pcall(handle.close,handle);return nil, "that file could not be opened" end
     return {
       size = info.size,
       read = function(n)
@@ -673,39 +669,85 @@ end
 -- signature check consumes a prefix, and a stream cannot be rewound, so those
 -- bytes have to be written back before the rest or the copy is short by
 -- exactly that much.
-local function streamTo(reader, path, head)
+local function streamTo(reader, path, head, options)
+  options=options or {}
   local f = fs()
   if not (f and f.newFile) then return nil, "no writable filesystem" end
   local dir = path:match("^(.*)/[^/]*$")
   if dir and f.createDirectory then f.createDirectory(dir) end
   local out = f.newFile(path)
-  local opened, openErr = out:open("w")
-  if not opened then
+  if not out then return nil,"could not create import staging file" end
+  local called,opened, openErr = pcall(out.open,out,"w")
+  if not called or not opened then
+    pcall(out.close,out)
     return nil, ("could not write %s (%s)"):format(path, tostring(openErr))
   end
-  local written = 0
-  if head and #head > 0 then
-    local ok, err = out:write(head)
-    if not ok then
-      pcall(out.close, out)
-      pcall(f.remove, path)
-      return nil, ("could not write %s (%s)"):format(path, tostring(err))
+  local written,pending=0,""
+  local layout=options.layout or {offset=0,width=1}
+  local skip=layout.offset
+  local digest=options.hash and require("src.mods.StreamMD5").new() or nil
+  local function consume(raw)
+    local data=raw
+    if skip>0 then local n=math.min(skip,#data);data=data:sub(n+1);skip=skip-n end
+    data=pending..data
+    local full=math.floor(#data/layout.width)*layout.width
+    pending=data:sub(full+1)
+    data=ImportFiles.swap(data:sub(1,full),layout.width)
+    if digest then digest:update(data) end
+    local output=options.canonical and data or raw
+    if #output>0 then
+      local ok,err=out:write(output)
+      if not ok then error(err or "could not write import",0) end
+      written=written+#output
     end
-    written = #head
   end
-  while true do
-    local chunk = reader.read(ModImports.COPY_CHUNK)
-    if not chunk then break end
-    local ok, err = out:write(chunk)
-    if not ok then
-      pcall(out.close, out)
-      pcall(f.remove, path)
-      return nil, ("could not write %s (%s)"):format(path, tostring(err))
+  local ok,err=pcall(function()
+    if head and #head>0 then consume(head) end
+    while true do
+      local chunk,readErr=reader.read(ModImports.COPY_CHUNK)
+      if not chunk then if readErr then error(readErr,0) end;break end
+      if #chunk==0 then break end
+      consume(chunk)
     end
-    written = written + #chunk
+    if #pending>0 or skip>0 then error("incomplete import stream",0) end
+  end)
+  local closed,closeResult=pcall(out.close,out)
+  if not ok or not closed or closeResult==false then
+    if f.remove then pcall(f.remove,path) end
+    return nil,tostring(err or "could not finish import")
   end
-  pcall(out.close, out)
-  return written
+  return written,nil,digest and digest:final()
+end
+
+local importSerial=0
+local function incoming(path)
+  importSerial=importSerial+1
+  return "imports/staging/"..require("src.mods.StreamMD5").new():update(path):final().."-"..importSerial..".part"
+end
+
+local function publish(f,from,to)
+  if f.rename then return f.rename(from,to) end
+  local source=require("src.core.SaveSafety").realPath(f,from)
+  local target=require("src.core.SaveSafety").realPath(f,to)
+  if source and target then return require("src.net.DownloadPublish")(source,target) end
+  return nil,"atomic import publication is unavailable"
+end
+
+local function bankPublished(entry,path)
+  if entry.root=="save" then bankPointer(entry,path);return end
+  local f=fs()
+  local stat=f.getInfo(path,"file")
+  if not stat or not stat.size or stat.size>ModImports.MAX_BANK_BYTES then bankPointer(entry,path);return end
+  local bank=ModImports.sharedPath(entry)
+  if not bank or f.getInfo(bank,"file") then return end
+  local reader=ModImports.openSource({savePath=path})
+  if not reader then return end
+  local staged=incoming(bank)
+  local written=streamTo(reader,staged)
+  reader.close()
+  local info=f.getInfo(staged,"file")
+  if written==stat.size and info and info.size==written then publish(f,staged,bank) end
+  if f.remove and f.getInfo(staged,"file") then f.remove(staged) end
 end
 
 -- Install from a FILE rather than from bytes.
@@ -736,69 +778,67 @@ end
 
 function ModImports.installFrom(manifest, entry, source, opts)
   opts = opts or {}
-  local path = ModImports.pathFor(manifest, entry)
-  if not path then return false, "no writable mod folder" end
+  local f = fs()
+  local path = ModImports.pathFor(manifest, entry, f)
+  if not (path and f) then return false, "no writable mod folder" end
   local reader, why = ModImports.openSource(source)
   if not reader then return false, why end
-
-  -- SIZE FIRST, so the wrong file costs nothing.  This is the check that used
-  -- to happen after the whole thing was in memory.
-  if entry.size and reader.size and reader.size ~= entry.size then
-    reader.close()
-    return false, ("that file is %d bytes; %s needs %d")
-      :format(reader.size, entry.name, entry.size)
+  local need = entry.format == "n64" and 516 or 0
+  for _, hex in ipairs(entry.magic or {}) do
+    need = math.max(need,(entry.magicOffset or 0)+#hex/2)
   end
-
-  -- ...THEN THE SIGNATURE, still before a byte is copied.  The prefix read
-  -- here is CARRIED FORWARD rather than re-read, because the reader is a
-  -- stream: consuming it twice would skip that much of the file.
-  local prefix = nil
-  if entry.magic then
-    local need = (entry.magicOffset or 0)
-    for _, hex in ipairs(entry.magic) do need = math.max(need, (entry.magicOffset or 0) + #hex / 2) end
-    prefix = reader.read(need)
-    local ok, shown, hexGot = ModImports.matchMagic(entry, prefix)
-    if not ok then
-      reader.close()
-      return false, ("that is not the right %s -- it starts with %s (%s)")
-        :format(tostring(entry.name), tostring(shown), tostring(hexGot))
-    end
+  need = math.min(need,reader.size or need)
+  local prefix = ""
+  if need>0 then
+    local called,result=pcall(reader.read,need)
+    if not called then reader.close();return false,tostring(result) end
+    prefix=result
   end
-
-  -- ...then the hash, when the file is small enough to hold.  Read once here
-  -- and hand the same string to install(), so a cartridge takes exactly the
-  -- path it always took and nothing about the verified case changes.
-  local limit = ModImports.hashLimit()
-  if entry.md5 and reader.size and reader.size <= limit then
-    local rest = reader.read(reader.size)
-    reader.close()
-    local whole = (prefix or "") .. (rest or "")
-    if rest == nil and not prefix then return false, "that file could not be read" end
-    local ok, installWhy = ModImports.install(manifest, entry, whole, opts.fromShared)
-    return ok, installWhy, nil
+  if type(prefix) ~= "string" or #prefix ~= need then
+    reader.close();return false,"source import could not be read"
   end
-
-  local skipped = nil
-  if entry.md5 then
-    skipped = ("%s is %d MB, too large to checksum on this device -- its size "
-               .. "matches, but the MD5 was not checked")
-              :format(entry.name, math.floor((reader.size or 0) / 1048576))
+  local probe = {readRange=function(_,offset,length)return prefix:sub(offset+1,offset+length)end}
+  local layout,layoutErr = ImportFiles.layout(entry,probe,"source",{size=reader.size})
+  if not layout then reader.close();return false,layoutErr end
+  if not ModImports.matchMagic(entry,prefix) then
+    reader.close();return false,"import signature does not match declaration"
   end
-  local written, streamWhy = streamTo(reader, path, prefix)
+  local made,staged = pcall(incoming,path)
+  if not made then reader.close();return false,tostring(staged) end
+  local streamed,written,streamErr,value = pcall(streamTo,reader,staged,prefix,{
+    layout=layout,canonical=entry.portable==true,
+    hash=entry.md5~=nil and entry.verify~="mod",
+  })
   reader.close()
-  if not written then return false, streamWhy end
-  if entry.size and written ~= entry.size then
-    pcall(fs().remove, path)
-    return false, ("only %d of %d bytes could be copied"):format(written, entry.size)
+  if not streamed then streamErr,written=tostring(written),nil end
+  local function clean()
+    if f.remove then pcall(f.remove,staged) end
+    ImportFiles.invalidate(f,staged)
   end
-  -- The bank never holds a file this big (see keepShared); a pointer at the
-  -- copy just written is what the next mod gets.  Not when the bytes CAME from
-  -- the bank, though -- that would aim an existing record at a copy inside a
-  -- mod folder that an uninstall can take away.
-  if not opts.fromShared then bankPointer(entry, path) end
-  Logger.info("mod import: %s -> %s (%d bytes, streamed)%s", entry.id, path,
-              written, skipped and " [hash skipped]" or "")
-  return true, nil, skipped
+  local expected = entry.portable and layout.size or reader.size
+  if written ~= expected then
+    clean();return false,streamErr or "source import changed while copying"
+  end
+  local stagedInfo=f.getInfo(staged,"file")
+  if not stagedInfo or stagedInfo.size~=written then
+    clean();return false,"copied import is incomplete"
+  end
+  local valid,verifyErr = ImportFiles.record(entry,f,staged,value)
+  if not valid then clean();return false,verifyErr end
+  local called,published,publishErr = pcall(publish,f,staged,path)
+  if not called or not published then
+    clean();return false,tostring(publishErr or published or "could not publish import")
+  end
+  ImportFiles.invalidate(f,staged)
+  ImportFiles.invalidate(f,path)
+  valid,verifyErr = ImportFiles.record(entry,f,path,value)
+  if not valid then return false,verifyErr end
+  if not opts.fromShared then
+    local banked,bankErr = pcall(bankPublished,entry,path)
+    if not banked then Logger.warn("import shared copy unavailable: %s",tostring(bankErr)) end
+  end
+  Logger.info("mod import: %s -> %s (%d bytes, streamed and validated)",entry.id,path,written)
+  return true
 end
 
 -- ---------------------------------------------------------------------------
@@ -1244,21 +1284,6 @@ ModImports.MAX_READ_BYTES = 8 * 1024 * 1024
 -- allocation; an injected fs in a test has read() and nothing else, so this
 -- returns nil there and the caller falls back to reading whole and cutting.
 -- Never the other way around: the fallback is the slow path, not the default.
-local function slice(path, offset, length)
-  local f = fs()
-  if not (f and f.newFile) then return nil end
-  local handle = f.newFile(path, "r")
-  if not handle then return nil end
-  if offset > 0 and handle.seek then
-    if handle:seek(offset) == false then
-      if handle.close then handle:close() end
-      return nil
-    end
-  end
-  local data = handle:read(length)
-  if handle.close then handle:close() end
-  return data
-end
 
 -- The mod-facing view, hung off the mod api as `mod.imports`.  A mod that
 -- wants to be polite can ask whether its base file arrived before it starts,
@@ -1273,7 +1298,8 @@ end
 -- narrows any of them breaks a mod silently, at the one moment the mod is
 -- trying to find out whether it can run at all.  `info` and the offset/length
 -- arguments to `read` are additions on top; nothing above them moved.
-function ModImports.api(manifest, read)
+function ModImports.api(manifest, read, handle)
+  local function filesystem() return handle or fs() end
   local list = ModImports.of(manifest) or {}
   local byId = {}
   for _, entry in ipairs(list) do byId[entry.id] = entry end
@@ -1282,9 +1308,14 @@ function ModImports.api(manifest, read)
     list = function()
       local copy = {}
       for index, entry in ipairs(list) do
+        local extensions
+        if entry.extensions then
+          extensions={};for i,ext in ipairs(entry.extensions) do extensions[i]=ext end
+        end
         copy[index] = { id = entry.id, name = entry.name, file = entry.file,
                         root = entry.root, format = entry.format,
-                        size = entry.size }
+                        size = entry.size, required = entry.required ~= false,
+                        max_size = entry.max_size, extensions = extensions }
       end
       return copy
     end,
@@ -1294,7 +1325,7 @@ function ModImports.api(manifest, read)
     have = function(_, id)
       local entry = byId[id]
       if not entry then return false, "no import declared with that id" end
-      local ok, why = ModImports.have(manifest, entry)
+      local ok, why = ModImports.have(manifest, entry, filesystem())
       return ok == true, why
     end,
     path = function(_, id)
@@ -1307,11 +1338,15 @@ function ModImports.api(manifest, read)
     info = function(_, id)
       local entry = byId[id]
       if not entry then return nil end
-      local ok, why = ModImports.have(manifest, entry)
+      local ok, why, layout = ModImports.have(manifest, entry, filesystem())
+      if entry.portable and not ok then return nil,why end
       local row = { id = entry.id, name = entry.name, file = entry.file,
                     root = entry.root, format = entry.format,
-                    size = entry.size, ready = ok == true, reason = why }
-      local f, at = fs(), ModImports.pathFor(manifest, entry)
+                    size = entry.size, ready = ok == true, reason = why,
+                    required = entry.required ~= false,
+                    md5 = layout and layout.md5, verified = layout and layout.verified }
+      local f = filesystem()
+      local at = ModImports.pathFor(manifest, entry, f)
       local on = f and at and f.getInfo(at, "file") or nil
       if on then
         row.bytes = on.size
@@ -1329,21 +1364,30 @@ function ModImports.api(manifest, read)
       -- `have` refuses a half-copied file against, and a fallback that
       -- overrode it would quietly turn that check into a tautology.  This only
       -- fills a hole.
-      if row.size == nil then row.size = row.bytes end
+      if entry.portable and layout then row.size = layout.size
+      elseif row.size == nil then row.size = row.bytes end
       return row
     end,
     -- `read(id)` is the whole file; `read(id, offset, length)` is a slice,
     -- capped at MAX_READ_BYTES so chunking a cartridge stays chunked.
     read = function(_, id, offset, length)
       local entry = byId[id]
-      if not entry then return nil end
+      if not entry then return nil,"undeclared import: "..tostring(id) end
+      local f=filesystem()
+      local path=ModImports.pathFor(manifest,entry,f)
+      local valid,why,layout=ModImports.have(manifest,entry,f)
+      if not valid then return nil,why end
+      if entry.portable then
+        if offset==nil or length==nil then return nil,"offset and length are required" end
+        return ImportFiles.canonicalRange(f,path,layout,tonumber(offset),tonumber(length))
+      end
       local whole = function()
         if entry.root == "save" then
-          local f = fs()
+          local f = filesystem()
           return f and f.read(entry.file) or nil
         end
         if not read then return nil end
-        return read(entry.file)
+        return read(entry.relativeFile or entry.file)
       end
       if offset == nil and length == nil then return whole() end
       local at = math.floor(tonumber(offset) or 0)
@@ -1355,9 +1399,11 @@ function ModImports.api(manifest, read)
                      .. "further offset"):format(ModImports.MAX_READ_BYTES)
       end
       if want == 0 then return "" end
-      local path = ModImports.pathFor(manifest, entry)
-      local cut = path and slice(path, at, want)
+      local size=layout and layout.physicalSize
+      if size and at+want>size then return nil,"import read is out of bounds" end
+      local cut = path and ImportFiles.range(f,path,at,want,size)
       if cut ~= nil then return cut end
+      if size and size>ModImports.MAX_READ_BYTES then return nil,"bounded file access is unavailable" end
       local body = whole()
       if not body then return nil end
       return body:sub(at + 1, at + want)

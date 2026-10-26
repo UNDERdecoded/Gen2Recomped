@@ -4906,6 +4906,7 @@ function RomImporter:_pollPickedFiles(dt)
 end
 
 function RomImporter:update(dt)
+  self:_stepAssetPacks()
   local translation=require("src.translation.Service")
   translation.update()
   translation.setLauncher(self:_settings())
@@ -5452,6 +5453,7 @@ function RomImporter:_resetFrameRects()
   self.modRects = nil
   self.modDeleteRects = nil
   self.modImportRect = nil
+  self.modAssetPacksRect = nil
   self.modImportFileRects = nil
   self.modImportGameRects = nil
   -- Enable all / Disable all share that header and the same rule (#647): they
@@ -7155,6 +7157,9 @@ function RomImporter:mousepressed(x, y, button)
   -- conflict); Delete fires immediately; a toggle switch, which lives in the
   -- scrollable list, only ARMS a press so _updateSlotDrag can tell a click from
   -- a drag-scroll (Android, with no pointer polling, toggles on press).
+  if inside(self.modAssetPacksRect, x, y) then
+    self:installAssetPacks(); return
+  end
   if inside(self.modImportRect, x, y) then
     self:chooseMod(); return
   end
@@ -9880,6 +9885,36 @@ end
 -- same options.mods enable-state the loader persists).  Cheap enough to call on
 -- any toggle / install; the per-frame draw calls it lazily through _ensureMods
 -- so a still list costs nothing after the first paint.
+function RomImporter:installAssetPacks()
+  if self.workState=="working" or self._assetPackInstallJob then return end
+  self._assetPackInstallJob=require("src.import.PackInbox").start()
+  self.modNotice={ok=true,text=Strings("Reading asset pack inbox...")}
+end
+
+function RomImporter:_stepAssetPacks()
+  local co=self._assetPackInstallJob
+  if not co then return end
+  -- One bounded entry per frame, on phones and consoles as on desktop.
+  local ok,value=coroutine.resume(co)
+  if not ok then
+    self._assetPackInstallJob=nil
+    self.modNotice={ok=false,text=Strings("Asset pack installation failed: %s",tostring(value))}
+  elseif coroutine.status(co)=="dead" then
+    self._assetPackInstallJob=nil
+    if value.found==0 then
+      self.modNotice={ok=false,text=Strings("Copy extracted packs into %s/imports/asset_packs/<importer>/<pack>/, or supported cartridges into imports/asset_sources/.",
+        require("src.import.CacheFs").rootReport().path or love.filesystem.getSaveDirectory())}
+    elseif #value.failed>0 then
+      local first=value.failed[1]
+      self.modNotice={ok=false,text=Strings("Installed %d pack(s); %s/%s failed: %s",#value.installed,
+        first.importer,first.pack,first.error)}
+    else self.modNotice={ok=true,text=Strings("Installed %d asset pack(s).",#value.installed)} end
+    self:_refreshMods()
+  else
+    self.modNotice={ok=true,text=Strings("Installing %s/%s: %d/%d",value.importer,value.pack,value.done,value.total)}
+  end
+end
+
 function RomImporter:_refreshMods()
   local LauncherMods = require("src.mods.LauncherMods")
   -- Once per session, ahead of the first listing: pull in any mod the player
@@ -10402,6 +10437,10 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
   end
 
   local top = y + headerH + 14 * s
+  self.modAssetPacksRect = self:_glassyButton(x, top, w, btnH,
+    self._assetPackInstallJob and Strings("Installing asset packs...") or Strings("Import asset packs from inbox"),
+    self.saveBtnFont, not self._assetPackInstallJob and self.workState~="working")
+  top = top + btnH + 8 * s
 
   -- Notice line: the last install/delete result, else the platform hint.
   --

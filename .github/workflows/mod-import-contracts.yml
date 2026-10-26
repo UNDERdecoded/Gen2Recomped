@@ -1,0 +1,27 @@
+name: Native mod import contracts
+on:
+  pull_request:
+    paths:
+      - 'src/mods/ModImports.lua'
+      - 'src/mods/Import*.lua'
+      - 'src/mods/StreamMD5.lua'
+      - 'src/mods/Manifest.lua'
+      - 'src/mods/Loader.lua'
+      - 'src/mods/LauncherMods.lua'
+      - 'src/mods/ManagerState.lua'
+      - 'src/import/CacheFs.lua'
+      - 'tests/engine/import_contracts.lua'
+      - '.github/workflows/mod-import-contracts.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  imports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y luajit lua5.4
+      - run: luajit tests/engine/import_contracts.lua
+      - name: Check the plain Lua digest backend
+        run: lua5.4 -e 'local m=require("src.mods.StreamMD5");assert(m.new():final()=="d41d8cd98f00b204e9800998ecf8427e");assert(m.new():update("abc"):final()=="900150983cd24fb0d6963f7d28e17f72")'

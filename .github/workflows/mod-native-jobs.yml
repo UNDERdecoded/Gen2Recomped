@@ -1,0 +1,40 @@
+name: Native mod worker contracts
+on:
+  pull_request:
+    paths:
+      - 'main.lua'
+      - 'src/mods/**'
+      - 'src/import/Pack*.lua'
+      - 'src/import/Importers.lua'
+      - 'src/import/CacheFs.lua'
+      - 'src/import/LuaWriter.lua'
+      - 'tests/engine/native_jobs.lua'
+      - 'tests/pack_sources/fixture.lua'
+      - 'tests/native_jobs_runtime/**'
+      - 'tools/qualify_native_jobs.py'
+      - '.github/workflows/mod-native-jobs.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  workers:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y luajit love
+      - run: luajit tests/engine/native_jobs.lua
+      - name: Exercise real background threads with the stock Linux runtime
+        env:
+          SDL_VIDEODRIVER: dummy
+          SDL_AUDIODRIVER: dummy
+        run: python3 tools/qualify_native_jobs.py --love /usr/bin/love --output "${{ runner.temp }}/native-jobs"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-mod-workers-linux
+          path: |
+            ${{ runner.temp }}/native-jobs/*.json
+            ${{ runner.temp }}/native-jobs/*.log
+          if-no-files-found: error
+          retention-days: 7

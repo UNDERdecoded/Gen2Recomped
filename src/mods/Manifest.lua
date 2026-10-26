@@ -8,7 +8,11 @@ local Version = require("src.core.Version")
 local Manifest = {}
 
 Manifest.PROFILES = { content = true, overhaul = true, total_conversion = true }
-Manifest.PERMISSIONS = { network = true, filesystem = true, engine_internals = true }
+-- `compute` declares direct LÖVE worker-thread use. It is distinct from the
+-- sandboxed mod.job/background service; the native host already exposes the
+-- LÖVE thread module and must not reject a mod which declares that use.
+Manifest.PERMISSIONS = { network = true, filesystem = true,
+                         engine_internals = true, compute = true, background = true }
 
 -- link-relevant registries; a mod that writes into one of these while
 -- declaring affects_link = false gets an attributed warning from the loader
@@ -280,6 +284,32 @@ function Manifest.validate(raw, path)
   end
 
   local conflicts = mergeConflictLists(raw.conflicts, raw.incompatible)
+  local requiredAssets, optionalAssets = require("src.mods.AssetPacks").parse(raw.required_assets, raw.optional_assets)
+  local ModImports = require("src.mods.ModImports")
+  local requiredImports = ModImports.parse(raw)
+  local optionalImports = ModImports.parse(raw,"optional_imports")
+  local importIds, importPaths = {}, {}
+  for _, list in ipairs({requiredImports or {}, optionalImports or {}}) do
+    for _, entry in ipairs(list) do
+      entry.name=scrubUtf8(entry.name)
+      entry.description=scrubUtf8(entry.description)
+      local key = entry.root .. "/" .. entry.relativeFile
+      assert(not importIds[entry.id], "duplicate import id: " .. entry.id)
+      assert(not importPaths[key], "duplicate import file: " .. entry.file)
+      importIds[entry.id], importPaths[key] = true, true
+    end
+  end
+  local function importSpecs(list)
+    local out={}
+    for _,entry in ipairs(list or {}) do
+      local copy={}
+      for key,value in pairs(entry) do copy[key]=value end
+      copy.md5=entry.md5s or (entry.verify=="mod" and {} or nil)
+      copy.format=entry.format or "raw"
+      out[#out+1]=copy
+    end
+    return out
+  end
 
   -- `support`: where to thank the mod's creator -- a Ko-fi, a Patreon, a
   -- PayPal page. The launcher's mod card turns it into a "Support the
@@ -329,7 +359,12 @@ function Manifest.validate(raw, path)
     -- Base files the mod needs but cannot ship -- a Stadium 2 cartridge, a
     -- second game's ROM.  Declared here, satisfied by the launcher, read by
     -- the mod out of its own folder (src/mods/ModImports.lua).
-    requiredImports = require("src.mods.ModImports").parse(raw),
+    requiredImports = requiredImports,
+    optionalImports = optionalImports,
+    required_imports = importSpecs(requiredImports),
+    optional_imports = importSpecs(optionalImports),
+    required_assets = requiredAssets,
+    optional_assets = optionalAssets,
     -- Cartridges that must be IMPORTED for this mod to mean anything -- a
     -- different thing from requiredImports above, which is a file the player
     -- hands over and the launcher writes into the mod's folder.

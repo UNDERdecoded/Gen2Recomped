@@ -1,5 +1,14 @@
 # Native modding
 
+## Worker threads
+
+Mods using `love.thread` may declare `"compute"` in their manifest's
+`permissions` array for the bundled LÖVE thread/channel API.
+The separate `"background"` permission enables the scoped `mod.job` service
+with cancellation and transactional cache output; see
+[native background jobs](mod-native-jobs.md). Unknown permissions still fail
+manifest validation.
+
 The modding book lives on the
 [project wiki](https://github.com/bryanthaboi/gen1recomp/wiki).
 

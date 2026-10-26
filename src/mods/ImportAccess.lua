@@ -25,6 +25,7 @@ local ModImports = require("src.mods.ModImports")
 local ModStorage = require("src.mods.Storage")
 
 local ImportAccess = {}
+ImportAccess.MAX_READ_BYTES = ModImports.MAX_READ_BYTES
 
 -- One cache write.  mod.storage has no ceiling of its own -- it is the store
 -- a mod puts a decoded 300 MB asset pack in, a key at a time -- but a SINGLE
@@ -46,6 +47,11 @@ ImportAccess.MAX_CACHE_WRITE_BYTES = 64 * 1024 * 1024
 -- code in `err` and "not_found" is a normal answer rather than a failure.
 local function makeCache(modId, fs)
   local store = ModStorage.new(modId, fs)
+  local handle=store:_fs()
+  if handle then
+    local ok,why=require('src.mods.JobCache').recover(store,handle)
+    assert(ok,'job cache recovery failed: '..tostring(why))
+  end
   local cache = { modId = modId }
 
   function cache:write(key, bytes)
@@ -82,7 +88,7 @@ end
 -- injected filesystem in a test reaches the same files the sandbox does.
 function ImportAccess.new(manifest, fs, read)
   assert(type(manifest) == "table", "import access needs a manifest")
-  return ModImports.api(manifest, read), makeCache(manifest.id, fs)
+  return ModImports.api(manifest, read, fs), makeCache(manifest.id, fs)
 end
 
 return ImportAccess
