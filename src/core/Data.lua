@@ -392,13 +392,13 @@ local OPTIONAL = { "audio", "palettes", "icons", "unown_puzzle", "unown_dex",
                    "gen3_frontier_speech",
                    -- the in-game trade sequence's art and tables
                    -- (Emerald/FireRed, src/import/Gen3TradeArt.lua)
-                   "gen3_trade_art" }
+                   "gen3_trade_art", "gen3_object_sheets" }
 
 -- Gen 3's own optional tables. On a Gen 4 / Black-White cache nothing writes
 -- them, and the additive overlay would hand the root cache's copy (another
 -- cartridge's) to the Sinnoh dataset -- the `icons` bug's shape
 -- (tools/gen4_party_icon_check.lua section 6) -- so they are not even asked.
-local GEN3_ONLY = { "gen3_frontier_speech", "gen3_trade_art" }
+local GEN3_ONLY = { "gen3_frontier_speech", "gen3_trade_art", "gen3_object_sheets" }
 
 -- Vanilla defaults for rules exposed through the constants registry.  A
 -- value has to exist before a mod can patch it; each one matches the
@@ -2200,6 +2200,10 @@ function Data:load()
   end
   for _, name in ipairs(OPTIONAL) do
     if isRequired[name] then goto continue end
+    if name == "gen3_object_sheets" and not isGen3Cache then
+      self[name] = nil
+      goto continue
+    end
     if blocked[name] then
       -- Deliberately not even attempted.  It would very likely SUCCEED -- the
       -- root cache is Red's and the overlay does not hide it -- and the result

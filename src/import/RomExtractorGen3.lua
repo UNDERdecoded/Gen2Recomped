@@ -9305,7 +9305,7 @@ function RomExtractorGen3:extractOverworldSprites()
 
       pixels[id] = { cells = cells, colors = colors,
                      width = width, height = frameHeight,
-                     runCells = runCells }
+                     runCells = runCells, originalOrder = order, originalRunOrder = runOrder }
 
       local key = ("SPRITE_G3_%03d"):format(id)
       out[key] = {
@@ -9828,6 +9828,35 @@ function RomExtractorGen3:extractOverworldSprites()
                    walkers = walkers, still = still, failed = failed,
                    sheets = drawn, substituted = substituted }
   self:write("sprites", out)
+  -- Keep original picture-table order and palette words as an additive
+  -- compact cache. Existing actor sheets and their frame numbers stay intact.
+  local edition = type(self.version) == "table" and self.version.id or self.version
+  local originalSheets = require("src.import.Gen3ObjectSheets").extract(self.rom, {
+    edition = edition, romSha1 = self.manifest.romSha1,
+    gfxTable = table_, count = count, paletteTable = palTable, paletteCount = palCount,
+    wideSubsprites = edition == "ruby" or edition == "sapphire",
+    reflectionProfile = edition == "emerald" and "raw" or "paired",
+    avatarTables = self.manifest.objectAvatars or require("src.import.gba.object_avatar_tables")[edition],
+    reflectionFor = function(info) return self:reflectionPaletteFor(info) end,
+    progress = function(current,total)
+      if self.checkpoint then self.checkpoint(("Decoding original object sheets %d/%d"):format(current,total)) end
+    end,
+  })
+  for id,cell in pairs(pixels) do
+    local record = originalSheets.objects[id]
+    if record then
+      local key = ("SPRITE_G3_%03d"):format(id)
+      record.native = { key=key, width=cell.width, height=cell.height, order=cell.originalOrder, walker=out[key] and out[key].walker,
+        image=out[key] and out[key].image, frames=out[key] and math.max(out[key].frames or 1,out[key].poseFrames or 1),
+        defaultWidth=out[key] and out[key].frameWidth, defaultHeight=out[key] and out[key].frameHeight,
+        runKey=out[key.."_RUN"] and key.."_RUN" or nil, runOrder=cell.originalRunOrder,
+        runImage=out[key.."_RUN"] and out[key.."_RUN"].image,
+        runFrames=out[key.."_RUN"] and math.max(out[key.."_RUN"].frames or 1,out[key.."_RUN"].poseFrames or 1),
+        runWidth=out[key.."_RUN"] and out[key.."_RUN"].frameWidth,runHeight=out[key.."_RUN"] and out[key.."_RUN"].frameHeight,
+        reflectionKey=out[key.."_REFLECT"] and key.."_REFLECT" or nil }
+    end
+  end
+  self:write("gen3_object_sheets", originalSheets)
   Logger.info("Gen3 overworld sprites: %d rows, %d that turn and walk, %d "
               .. "non-walkers, %d unreadable, %d sheets composed, %d "
               .. "run-time slots standing in",
