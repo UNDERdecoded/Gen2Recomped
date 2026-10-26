@@ -8949,6 +8949,21 @@ function BattleState:awardExp(fallen)
   self.participants = {}
 end
 
+local function styleFromOptions(battle)
+  return tostring(((battle.game.save or {}).options or {}).battleStyle or "shift"):lower()
+end
+
+-- Gen1's battle.style decision is independent of the stored OPTION row.
+-- Other generations keep their existing native policy and do not dispatch it.
+function BattleState:battleStyle()
+  if GameVersion.generation() ~= 1 or not Runtime.wantsHook("battle.style") then
+    return styleFromOptions(self)
+  end
+  local style = Runtime.call("battle.style", styleFromOptions, self)
+  if style == "set" or style == "shift" then return style end
+  return styleFromOptions(self)
+end
+
 function BattleState:enemyMonFainted()
   -- IN A DOUBLE THE EXP IS ALREADY PAID.  Each foe's share is awarded as it
   -- falls (doubleFaint), because by the time the side is beaten there is no
@@ -8977,8 +8992,7 @@ function BattleState:enemyMonFainted()
       -- remaining HP); SET / single-mon / fainted active skip the prompt.
       local nextMon = self.enemyParty[self.enemyIndex]
       local nextName = nextMon.nickname or self.data.pokemon[nextMon.species].name
-      local style = tostring((self.game.save.options or {}).battleStyle or "shift")
-        :lower()
+      local style = self:battleStyle()
       local partyCount = #self.game.save.party
       -- ReplaceFaintedEnemyMon (core.asm:892-896): DrawEnemyPokeballs puts the
       -- foe's party ball row -- and the HUD chrome PlaceEnemyHUDTiles lays

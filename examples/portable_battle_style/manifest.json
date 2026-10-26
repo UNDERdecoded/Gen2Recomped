@@ -1,0 +1,10 @@
+{
+  "id": "portable_battle_style",
+  "name": "Portable Battle Style",
+  "version": "1.0.0",
+  "api": 2,
+  "entry": "main.lua",
+  "generations": [1],
+  "games": ["red", "blue", "yellow"],
+  "affects_link": true
+}

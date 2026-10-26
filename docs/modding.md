@@ -277,3 +277,21 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+
+### Battle style decision (Gen 1)
+
+`battle.style` wraps the native SHIFT/SET choice before a trainer sends out
+its next Pokemon. `function(next, battle)` returns `"shift"` or `"set"`;
+`next(battle)` reads the saved option without modifying it. Other return
+values fall back to the saved choice. The normal party-count and live-active
+Pokemon gates still apply. The decision is not queried after the last enemy
+faints. Gen 2 and later keep their existing native policy; this hook has the
+same Gen-1 availability as the reference engine.
+
+See `examples/portable_battle_style`. ROM-free checks:
+
+```sh
+luajit tests/engine/battle_style.lua
+luajit tests/engine/trainer_shift_prompt_bug565.lua
+```
