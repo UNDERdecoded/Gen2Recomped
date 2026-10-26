@@ -502,7 +502,16 @@ function Loader:_validate()
         if err then reason = reason .. " (" .. err .. ")" end
       end
     end
-    if reason then self:_fail(mod, "invalid", reason) end
+    if reason then self:_fail(mod, "invalid", reason)
+    else
+      local missing = ModImports.missing(manifest,false,self.fs)
+      if missing then
+        mod.missingImports = missing
+        local first = missing[1]
+        self:_fail(mod,"missing_imports",("required import not ready: %s (%s)")
+          :format(first.entry.name,tostring(first.reason or first.entry.file)))
+      end
+    end
   end
 end
 
@@ -1072,6 +1081,7 @@ function Loader:_api(mod)
     local path = within(relative)
     local fs = loader.fs
     if not (path and fs and fs.getInfo) then return nil end
+    path = ModImports.resolveRead(mod.manifest,relative,fs) or path
     local info = fs.getInfo(path)
     if not info then return nil end
     -- a copy, not love's own record: what a mod does to it stays with the mod
@@ -1079,7 +1089,11 @@ function Loader:_api(mod)
   end
 
   api.assets = setmetatable({
-    path = function(_, relative) return mod.path .. "/" .. relative end,
+    path = function(_, relative)
+      local path=within(relative)
+      if not path then return nil end
+      return ModImports.resolveRead(mod.manifest,relative,loader.fs) or path
+    end,
     list = function(_, relative) return listIn(relative) end,
     info = function(_, relative) return infoIn(relative) end,
     image = function(_, relative)
@@ -1094,7 +1108,9 @@ function Loader:_api(mod)
     end,
   }, { __index = api.content })
   function api:read(relative)
-    local path = self.path .. "/" .. relative
+    local path = within(relative)
+    if not path then return nil,"read must stay inside this mod" end
+    path = ModImports.resolveRead(mod.manifest,relative,loader.fs) or path
     return loader.fs.read(path)
   end
   -- the same two on the api itself, because a Gen 1 mod spells them mod:list
@@ -1156,15 +1172,6 @@ function Loader:_loadMod(mod)
   local path = mod.path .. "/" .. mod.manifest.entry
   local chunk, err = self.fs.load(path)
   if not chunk then error(err or ("unable to load " .. path)) end
-  -- A mod whose declared base file never arrived loads fine and then does
-  -- nothing, which from the log looks identical to a mod that is simply
-  -- quiet.  Say which file is missing (src/mods/ModImports.lua).
-  do
-    for _, row in ipairs(ModImports.missing(mod.manifest) or {}) do
-      Logger.warn("[%s] needs %s at %s; import it from the mods panel",
-        mod.manifest.id, tostring(row.entry.name), tostring(row.entry.file))
-    end
-  end
   local api = self:_api(mod)
   -- KEEP THE API OBJECT, not only its exports.
   --
@@ -1632,6 +1639,8 @@ function Loader:status()
     manifest.enabled = mod.enabled ~= false
     manifest.state = mod.state or (manifest.enabled and "loaded" or "disabled")
     manifest.error = mod.failure
+    manifest.waitingImports = mod.state == "missing_imports"
+    manifest.missingImports = mod.missingImports
     available[#available + 1] = manifest
     if manifest.state == "loaded" then loaded[#loaded + 1] = manifest end
   end

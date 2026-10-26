@@ -25,6 +25,7 @@ local ModImports = require("src.mods.ModImports")
 local ModStorage = require("src.mods.Storage")
 
 local ImportAccess = {}
+ImportAccess.MAX_READ_BYTES = ModImports.MAX_READ_BYTES
 
 -- One cache write.  mod.storage has no ceiling of its own -- it is the store
 -- a mod puts a decoded 300 MB asset pack in, a key at a time -- but a SINGLE
@@ -82,7 +83,7 @@ end
 -- injected filesystem in a test reaches the same files the sandbox does.
 function ImportAccess.new(manifest, fs, read)
   assert(type(manifest) == "table", "import access needs a manifest")
-  return ModImports.api(manifest, read), makeCache(manifest.id, fs)
+  return ModImports.api(manifest, read, fs), makeCache(manifest.id, fs)
 end
 
 return ImportAccess

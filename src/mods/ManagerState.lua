@@ -209,13 +209,17 @@ function ManagerState:refresh()
   self.status = (loader and loader.status and loader:status())
     or self.game.modStatus or { available = {}, errors = {} }
   self.byId = {}
+  self.importsChanged = false
   for _, m in ipairs(self.status.available or {}) do
     self.byId[m.id] = m
+    if m.waitingImports and not ModImports.missing(m,false,loader and loader.fs) then
+      self.importsChanged = true
+    end
   end
   if self.currentMod then
     self.currentMod = self.byId[self.currentMod.id]
   end
-  self.restartPending = #self:stagedList() > 0
+  self.restartPending = #self:stagedList() > 0 or self.importsChanged == true
   -- a live set that drifted off the named profile reverts to ad-hoc
   local opts = self:optionsTable()
   if opts.activeProfile then
@@ -265,6 +269,7 @@ end
 function ManagerState:glyphFor(m)
   if self:isStaged(m) then return GLYPH.staged end
   if not m.enabled then return GLYPH.disabled end
+  if m.waitingImports then return GLYPH.blocked end
   if m.state == "blocked_dependency" then return GLYPH.blocked end
   if m.error then return GLYPH.errored end
   return " "
@@ -666,12 +671,21 @@ function ManagerState:_clearImportReadyMarks()
   self._readyRuns = nil
 end
 
+function ManagerState:_importLanded(manifest, entry)
+  local loader=self.game and self.game.mods
+  if entry.required ~= false and manifest.waitingImports
+      and not ModImports.missing(manifest,false,loader and loader.fs) then
+    self.importsChanged, self.restartPending = true, true
+  end
+end
+
 function ManagerState:_pollImport()
   local pending = self._importPending
   if not pending then return end
   local ok, why = ModImports.poll(pending.manifest, pending.entry)
   if ok then
     self._importPending = nil
+    self:_importLanded(pending.manifest,pending.entry)
     -- the mobile picker's answer lands here rather than in activate, so the
     -- announcement has to happen here too or a phone never gets one
     ModImports.announce(pending.manifest, pending.entry, false)
@@ -1178,6 +1192,7 @@ function ManagerState:buildOptionRows(m, schema)
         -- actually listening, so the notice below never claims something
         -- started when nothing did.
         if ModImports.have(m, entry) == true then
+          self:_importLanded(m,entry)
           if ModImports.announce(m, entry, true) then
             self:notify(Strings("READY - WORKING"))
           else
@@ -1193,7 +1208,10 @@ function ManagerState:buildOptionRows(m, schema)
         end
         -- ...and a file that has just landed is announced too, which is the
         -- more natural moment for a mod to start building from it.
-        if ok == true then ModImports.announce(m, entry, how == "present") end
+        if ok == true then
+          self:_importLanded(m,entry)
+          ModImports.announce(m, entry, how == "present")
+        end
         self:notify(tostring(message or ""))
         return ok ~= false
       end,
@@ -1360,6 +1378,10 @@ function ManagerState:drawApply()
   drawTruncated("PENDING CHANGES", 16, 2 * 8, 17)
   local staged = self:stagedList()
   local y = LIST_TOP
+  if self.importsChanged then
+    Font.draw(Strings("IMPORTED %s", ""), 16, y * 8)
+    y = y + 1
+  end
   local shown = math.min(#staged, 7)
   for i = 1, shown do
     local m = staged[i]
@@ -1367,7 +1389,7 @@ function ManagerState:drawApply()
     drawTruncated(verb .. (m.name or m.id), 16, y * 8, 17)
     y = y + 1
   end
-  if #staged == 0 then
+  if #staged == 0 and not self.importsChanged then
     Font.draw(Runtime.safeMode and "SAFE MODE" or Strings("NO CHANGES"), 16, y * 8)
     y = y + 1
   end
