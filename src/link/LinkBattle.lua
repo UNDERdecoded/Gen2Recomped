@@ -152,17 +152,21 @@ local function volStr(b)
   return table.concat(out, ",")
 end
 
+local function toxicSignature(mon)
+  if not require("src.core.GameVersion").isGen3() then return "" end
+  return ":toxic=" .. tostring(mon.status == "PSN" and mon.toxic == true)
+end
 local function activeStr(b)
   return ("%s:%d:%s:%s:%s:%s"):format(b.mon.species, b.mon.hp,
                                       tostring(b.mon.status), tostring(b.mon.item),
-                                      stageStr(b), ppStr(b.mon))
+                                      stageStr(b), ppStr(b.mon)) .. toxicSignature(b.mon)
 end
 
 local function benchStr(party)
   local out = {}
   for i, mon in ipairs(party or {}) do
     out[i] = ("%s:%d:%s:%s"):format(tostring(mon.species), mon.hp or 0,
-                                    tostring(mon.status), tostring(mon.item))
+                                    tostring(mon.status), tostring(mon.item)) .. toxicSignature(mon)
   end
   return table.concat(out, "|")
 end

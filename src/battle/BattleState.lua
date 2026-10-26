@@ -38,6 +38,9 @@ local WideBattle = require("src.battle.WideBattle")
 local Gen3Battle = require("src.battle.Gen3Battle")
 local Gen4Battle = require("src.battle.Gen4Battle")
 local GameVersion = require("src.core.GameVersion")
+local BattleCommands = require("src.battle.BattleCommands")
+local EnemyMoveChoice = require("src.battle.EnemyMoveChoice")
+local EnemyActionContext = require("src.battle.EnemyActionContext")
 
 -- FORWARD-DECLARED, because they are defined next to the other doubles
 -- helpers two thousand lines down but read from `stepHPDrain` up here.  A
@@ -53,6 +56,10 @@ local TEXT_AREA_ROWS = { 112, 128 }
 local BattleState = {}
 BattleState.__index = BattleState
 BattleState.isOpaque = true
+-- Data readers can identify the shared Gen 1-5 battle without loading this module.
+BattleState.isBattleState = true
+-- Input and public intents share the exact same native command dispatch.
+for name, method in pairs(BattleCommands.methods) do BattleState[name] = method end
 
 -- pokered prints the battle lines itself (engine/battle/core.asm and the
 -- move-effect banks), and the importer extracts every one of them, so the
@@ -1022,6 +1029,7 @@ local function makeBattler(data, mon, isPlayer, save)
     -- while the tilemap still shows the prior condition until the next
     -- post-action HUD refresh (core.asm after Execute*Move)
     shownStatus = mon.status,
+    toxicCounter = GameVersion.isGen3() and mon.status == "PSN" and mon.toxic == true and 1 or nil,
     -- a sleep put on outside battle with its own count (the Battle Pike's
     -- Kirlia: STATUS1_SLEEP, all three bits); spent, it is gone
     sleepTurns = (mon.status == "SLP" and mon.sleepTurns) or nil,
@@ -1385,7 +1393,7 @@ function BattleState.newWild(game, species, level, opts)
      and game.data.pokemon[species] and game.data.pokemon[species].forms then
     form=require("src.pokemon.PolishedUnown").choose(game.save)
   end
-  local wild = Pokemon.new(game.data, species, level, nil, form)
+  local wild = Pokemon.new(game.data, species, level, nil, form, opts)
   -- SYNCHRONIZE'S NATURE AND CUTE CHARM'S GENDER, decided with the slot (see
   -- src/world/Gen4WildLead.lua) and applied the cartridge's way: personality
   -- re-drawn until it carries them.
@@ -1419,6 +1427,11 @@ function BattleState.newWild(game, species, level, opts)
   -- kind of their own, because everything else about the fight -- the music,
   -- the intro line, the wild-mon held item roll -- is an ordinary wild one.
   self.noRun = opts and opts.noRun or nil
+  if GameVersion.isGen3() then
+    self.firstBattle = opts and opts.firstBattle and true or nil
+    self.firstBattleKind = opts and opts.firstBattleKind
+      or (self.firstBattle and (GameVersion.get() == "emerald" and "birch" or "oak"))
+  end
   self.canLose = opts and opts.canLose or nil
   -- ...AND A ROAMER IS THE SAME INDIVIDUAL EVERY TIME.  The cartridge keeps
   -- its personality and IVs and rebuilds from them, which is what makes a
@@ -1462,11 +1475,11 @@ end
 local POKEDUDE_DEMOS = {
   battle = {
     player = {
-      { species="RATTATA", level=15, nature="LONELY",
-        moves={"TACKLE","TAIL_WHIP","HYPER_FANG","QUICK_ATTACK"} },
+      { species=19, level=15, nature=1, gender="male",
+        moves={33,39,158,98} },
     },
-    enemy = { species="PIDGEY", level=18, nature="NAUGHTY",
-              moves={"TACKLE","SAND_ATTACK","GUST","QUICK_ATTACK"} },
+    enemy = { species=16, level=18, nature=4, gender="male",
+              moves={33,28,16,98} },
     turns = {
       { action="fight", playerMove=3, enemyMove=3, voices={1} },
       { action="fight", playerMove=3, enemyMove=3, voices={2,3}, repeatTurn=true },
@@ -1475,11 +1488,11 @@ local POKEDUDE_DEMOS = {
   },
   status = {
     player = {
-      { species="RATTATA", level=15, nature="LONELY",
-        moves={"TACKLE","TAIL_WHIP","HYPER_FANG","QUICK_ATTACK"} },
+      { species=19, level=15, nature=1, gender="male",
+        moves={33,39,158,98} },
     },
-    enemy = { species="ODDISH", level=14, nature="RASH",
-              moves={"ABSORB","SWEET_SCENT","POISONPOWDER"} },
+    enemy = { species=43, level=14, nature=19, gender="male",
+              moves={71,230,77} },
     turns = {
       { action="fight", playerMove=3, enemyMove=3 },
       { action="item", item="ANTIDOTE", enemyMove=1, voices={1,2} },
@@ -1489,13 +1502,13 @@ local POKEDUDE_DEMOS = {
   },
   matchups = {
     player = {
-      { species="POLIWAG", level=15, nature="RASH",
-        moves={"WATER_GUN","HYPNOSIS","BUBBLE"} },
-      { species="BUTTERFREE", level=15, nature="RASH",
-        moves={"CONFUSION","POISONPOWDER","STUN_SPORE","SLEEP_POWDER"} },
+      { species=60, level=15, nature=19, gender="male",
+        moves={55,95,145} },
+      { species=12, level=15, nature=19, gender="male",
+        moves={93,77,78,79} },
     },
-    enemy = { species="ODDISH", level=14, nature="RASH",
-              moves={"ABSORB","SWEET_SCENT","POISONPOWDER"} },
+    enemy = { species=43, level=14, nature=19, gender="male",
+              moves={71,230,77} },
     turns = {
       { action="fight", playerMove=3, enemyMove=1 },
       { action="switch", switchTo=2, enemyMove=1, voices={1,2,3} },
@@ -1505,11 +1518,11 @@ local POKEDUDE_DEMOS = {
   },
   catch = {
     player = {
-      { species="BUTTERFREE", level=15, nature="RASH",
-        moves={"CONFUSION","POISONPOWDER","SLEEP_POWDER","STUN_SPORE"} },
+      { species=12, level=15, nature=19, gender="male",
+        moves={93,77,79,78} },
     },
-    enemy = { species="JIGGLYPUFF", level=11, nature="CAREFUL",
-              moves={"SING","DEFENSE_CURL","POUND"} },
+    enemy = { species=39, level=11, nature=23, gender="male",
+              moves={47,111,1} },
     turns = {
       { action="fight", playerMove=1, enemyMove=3, voices={1} },
       { action="fight", playerMove=3, enemyMove=3, voices={2,3} },
@@ -1519,33 +1532,14 @@ local POKEDUDE_DEMOS = {
   },
 }
 
-local function pokedudeMon(game, spec)
-  -- Fixed mid-range IVs keep the scripted demonstrations deterministic while
-  -- still using the ordinary Gen-3 stat path.  Retail's creator also forces
-  -- the requested nature/gender rather than using the player's Pokémon.
-  local mon = Pokemon.new(game.data, spec.species, spec.level,
-                          function(a, b) return math.floor((a + b) / 2) end)
-  mon.nature = spec.nature
-  mon.gender = "male"
-  mon.stats = require("src.pokemon.Stats").calc(game.data.pokemon[spec.species],
-                                                spec.level, mon.ivs, mon.evs,
-                                                mon.nature)
-  mon.hp = mon.stats.hp
-  mon.moves = {}
-  for _, id in ipairs(spec.moves) do
-    local def = game.data.moves[id]
-    mon.moves[#mon.moves + 1] = { id=id, pp=def and def.pp or 0,
-                                  maxPp=def and def.pp or 0 }
-  end
-  return mon
-end
-
-function BattleState.newPokedudeDemo(game, lesson)
+function BattleState.newPokedudeDemo(game, lesson, rng)
+  local Preset = require("src.pokemon.Gen3ConstrainedMon")
   local def = POKEDUDE_DEMOS[lesson]
   assert(def, "unknown POKé DUDE lesson " .. tostring(lesson))
   local savedParty = game.save.party
   local party = {}
-  for _, spec in ipairs(def.player) do party[#party + 1] = pokedudeMon(game, spec) end
+  for _, spec in ipairs(def.player) do party[#party + 1] = Preset.new(game.data, spec, rng) end
+  local enemyParty = { Preset.new(game.data, def.enemy, rng) }
   require("src.pokemon.PartyAside").hold(game.save, savedParty)  -- kept in the save too
   game.save.party = party
 
@@ -1553,7 +1547,7 @@ function BattleState.newPokedudeDemo(game, lesson)
   self.kind = "wild"
   self.noRun = true
   self.player = makeBattler(game.data, party[1], true, game.save)
-  self.enemyParty = { pokedudeMon(game, def.enemy) }
+  self.enemyParty = enemyParty
   self.enemy = makeBattler(game.data, self.enemyParty[1], false)
   self.introText = self:romText("_WildMonAppearedText", "Wild %s\nappeared!",
                                 self.enemy.name)
@@ -1562,10 +1556,9 @@ function BattleState.newPokedudeDemo(game, lesson)
     lesson=lesson, def=def, turn=1, timer=0, savedParty=savedParty,
     voiceDone={},
   }
-  -- The retail tutorial is a prerecorded demonstration, not a battle whose
-  -- damage/accuracy swings with the player's global RNG state.  A midpoint
-  -- generator keeps the scripted turns stable while still running through the
-  -- ordinary Gen-3 battle formulas and status checks.
+  -- The existing scripted-turn midpoint policy is separate from native
+  -- identity creation above. Whole-game RNG scheduling and retail demo
+  -- playback timing still need their own controller-level comparison.
   self.rng = function(a, b)
     if a ~= nil and b ~= nil then return math.floor((a + b) / 2) end
     if a ~= nil then return math.max(1, math.floor((a + 1) / 2)) end
@@ -2140,6 +2133,7 @@ end
 -- script under "PROF.OAK" (pokeyellow core.asm .profOakName), so the
 -- displayed thrower name is a parameter.
 function BattleState:makeOldManDemo(name)
+  self.wallyTutorial = nil
   self.demo = true
   self.demoName = name or "OLD MAN"
   -- LoadPlayerBackPic and DisplayBattleMenu split on the same wBattleType:
@@ -2187,6 +2181,7 @@ end
 function BattleState:makeDudeDemo(name)
   self:makeOldManDemo(name or "DUDE")
   self.dudeDemo = true
+  self.wallyTutorial = GameVersion.get() == "emerald" and true or nil
   self.demoBallCount = "x1"
 end
 
@@ -4423,7 +4418,7 @@ function BattleState:update(dt)
       if self.palPark then require("src.battle.Gen4PalParkBattle").skipRow(self, dir) end
     end
     if input:wasPressed("a") then
-      self:safariAction(({ "ball", "bait", "rock", "run" })[self.menuIndex])
+      self:chooseSafari(({ "ball", "bait", "rock", "run" })[self.menuIndex])
     end
     return
   end
@@ -4449,7 +4444,7 @@ function BattleState:update(dt)
     end
     self.menuIndex = row * 2 + col + 1
     if input:wasPressed("a") then
-      self:safariAction(({ "ball", "bait", "rock", "run" })[self.menuIndex])
+      self:chooseSafari(({ "ball", "bait", "rock", "run" })[self.menuIndex])
     end
     return
   end
@@ -4529,60 +4524,10 @@ function BattleState:update(dt)
     -- asked (fainted, or locked into a move it cannot choose).
     if input:wasPressed("b") and self:isDouble()
        and self:choosingSlotNow() == BattleState.POS.PLAYER_RIGHT then
-      local left = self:battlerAt(BattleState.POS.PLAYER_LEFT)
-      local pend = self.pendingActions and self.pendingActions[BattleState.POS.PLAYER_LEFT]
-      if left and not left.ally and (left.mon and left.mon.hp or 0) > 0 and pend
-         and not self:menuLockedAction(left) then
-        self.pendingActions[BattleState.POS.PLAYER_LEFT] = nil
-        if self.chosenTargets then self.chosenTargets[BattleState.POS.PLAYER_LEFT] = nil end
-        self.choosingSlot = BattleState.POS.PLAYER_LEFT
-        self.menuIndex, self.moveIndex = 1, 1
-        pcall(function() require("src.core.Sound").play(self.game.data, "SEQ_SE_DP_DECIDE") end)
-        return
-      end
+      if self:cancelMove() then return end
     end
     if input:wasPressed("a") then
-      local choice = self:menuActions()[self.menuIndex]
-      -- BattleMenu_Pack `.contest` (core.asm:4990): `ld a, PARK_BALL /
-      -- ld [wCurItem], a / call DoItemEffect`.  No pack, no submenu -- the
-      -- third slot IS the ball, so the item action becomes the throw.
-      if choice == "item" and self.bugContest then
-        self:bugContestBall()
-        return
-      end
-      if choice == "fight" and self.ghost then
-        self:say(Strings("%s is too\nscared to move!", self.player.name))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-        self:act(function()
-          self:executeAction(self.enemy, self.player, self:enemyAction())
-        end)
-        self:act(function() self:endOfTurn() end)
-      elseif choice == "fight" then
-        -- After the menu: own trapping/Bide or foe Wrap skips the move
-        -- list and forces the locked action (core.asm:320-329)
-        local fightLock = self:fightLockedAction(self.player)
-        if fightLock then
-          self:resolveTurn(fightLock)
-          return
-        end
-        local who = self:menuBattler()
-        if not self:playerHasPP(who) then
-          -- _NoMovesLeftText, then Struggle engages
-          self:say(Strings("%s has no\nmoves left!", who.name))
-          self:chooseAction({ id = "STRUGGLE", pp = 1, struggle = true })
-          return
-        end
-        self.phase = "moveSelect"
-        self.moveIndex = math.min(self.moveIndex, #who.curMoves)
-        self.moveSwapIndex = nil
-      elseif choice == "run" then
-        self:tryRun()
-      elseif choice == "item" then
-        self:openItems()
-      else
-        self:openParty()
-      end
+      self:chooseMenu(self:menuActions()[self.menuIndex])
     end
     return
   end
@@ -4608,58 +4553,14 @@ function BattleState:update(dt)
         self.moveSwapIndex = self.moveIndex
       end
     elseif input:wasPressed("b") then
-      self.moveSwapIndex = nil
-      self.phase = "menu"
+      self:cancelMove()
     elseif input:wasPressed("a") then
       if self.moveSwapIndex then
         self:swapMoves(self.moveSwapIndex, self.moveIndex)
         self.moveSwapIndex = nil
         return
       end
-      local mv = moves[self.moveIndex]
-      local mvDef = mv and self.data.moves[mv.id]
-      if chooser.disabledSlot == self.moveIndex then
-        self:say(self:romText("_MoveDisabledText", "The move is\ndisabled!"))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      -- TAUNT and TORMENT refuse the move at SELECTION rather than after the
-      -- fact, the way DISABLE already does, so the player is never told to
-      -- pick again for something the game was never going to allow.
-      elseif self.bw and require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true) then
-        -- BLACK AND WHITE: the Choice lock, Imprison, Gravity, Heal Block
-        self:say(require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif self:tauntBlocks(chooser, mvDef) then
-        self:say(Strings("%s can't use\n%s after the\ntaunt!",
-                         chooser.name, mvDef and mvDef.name or mv.id))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif self:tormentBlocks(chooser, mvDef) then
-        self:say(Strings("%s can't use the\nsame move twice in\na row due to the\nTORMENT!",
-                         chooser.name))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif mv.pp <= 0 then
-        self:say(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif Targeting.needsChoice(self, self:choosingBattler(), mvDef) then
-        -- WHICH OF THE TWO, when the move takes one and there are two.
-        --
-        -- Emerald's selector cycles over the legal slots and names the
-        -- candidate; nothing else in the menu changes.  A single battle
-        -- never gets here, because needsChoice answers false whenever there
-        -- is only one thing to aim at -- and on the Game Boy cartridges the
-        -- moves carry no target byte at all, so it answers false for every
-        -- move in the game.
-        self.pendingMove = mv
-        self.targetChoices = Targeting.choices(self, self:menuBattler())
-        self.targetIndex = 1
-        self.phase = "targetSelect"
-      else
-        self:chooseAction(mv)
-      end
+      self:chooseMove(self.moveIndex)
     end
     return
   end
@@ -4677,16 +4578,9 @@ function BattleState:update(dt)
     elseif input:wasPressed("right") or input:wasPressed("down") then
       self.targetIndex = self.targetIndex < #list and self.targetIndex + 1 or 1
     elseif input:wasPressed("b") then
-      self.pendingMove, self.targetChoices = nil, nil
-      self.phase = "moveSelect"
+      self:cancelMove()
     elseif input:wasPressed("a") then
-      local mv = self.pendingMove
-      local pick = list[self.targetIndex]
-      self.pendingMove, self.targetChoices = nil, nil
-      self.chosenTargets = self.chosenTargets or {}
-      local who = self:menuBattler()
-      if who and who.position then self.chosenTargets[who.position] = pick end
-      self:chooseAction(mv)
+      self:chooseTarget(self.targetIndex)
     end
     return
   end
@@ -4707,12 +4601,7 @@ function BattleState:update(dt)
     elseif input:wasPressed("down") then
       self.mimicIndex = self.mimicIndex < #moves and self.mimicIndex + 1 or 1
     elseif input:wasPressed("a") then
-      local pick = moves[self.mimicIndex]
-      local ctx = self.mimicCtx
-      self.mimicMoves, self.mimicCtx = nil, nil
-      self.phase = "messages"
-      self.nextInsert = 0 -- the copy's anim + text go to the queue head
-      self:applyMimic(ctx.user, ctx.target, ctx.moveInst, pick.slot)
+      self:chooseMimic(self.mimicIndex)
     end
     return
   end
@@ -4776,7 +4665,7 @@ function BattleState:applyMimic(user, target, moveInst, slot)
   if not (src and src.id) then return end
   local mySlot
   for i, m in ipairs(user.curMoves) do
-    if m == moveInst then mySlot = i break end
+    if m == EnemyMoveChoice.slot(moveInst) then mySlot = i break end
   end
   if not mySlot then
     -- a called Mimic (Metronome) isn't in the list.  For the player,
@@ -5241,8 +5130,11 @@ function BattleState:effectRecord(effect)
     return require("src.battle.Gen5MoveEffects").record(self, effect)
   end
   local effects = self.data.move_effects
-  if effects then return effects[effect] end
-  return MoveEffects.RECORDS[effect]
+  local record = effects and effects[effect] or not effects and MoveEffects.RECORDS[effect]
+  if GameVersion.isGen3() and effect == "OHKO_EFFECT" then
+    return require("src.battle.Gen3OHKO").record(record, MoveEffects.RECORDS.OHKO_EFFECT)
+  end
+  return record
 end
 
 -- the merged ball record (Catching.attempt handles the unknown-id default)
@@ -5293,6 +5185,9 @@ end
 -- sun and rain, and `50 percent + 1` is 128 rather than the 127 a percentage
 -- would round to.
 function BattleState:accuracyRoll(move, user, target, accuracyRaw)
+  if GameVersion.isGen3() then
+    return require("src.battle.Gen3Accuracy").check(self, move, user, target, accuracyRaw)
+  end
   -- LOCK-ON / MIND READER: the next move cannot miss, and the aim is spent
   -- whether it was needed or not.
   if user.lockedOn == target then
@@ -5343,6 +5238,10 @@ end
 -- Damage.compute, hooked as battle.damage; the ctx table is only built
 -- when a chain is installed, so the no-mod path allocates nothing
 function BattleState:computeDamage(user, target, move, opts)
+  if GameVersion.isGen3() then
+    opts = opts or {}
+    opts.battle = self
+  end
   -- Damage's Gen II held-item path needs the imported item records alongside
   -- the ordinary formula options. Keep Gen I's no-mod fast path allocation-free.
   if self.data and self.data.constants and self.data.constants.generation == 2 then
@@ -5429,7 +5328,7 @@ function BattleState:computeDamage(user, target, move, opts)
     opts = opts or {}
     opts.bwBattle = self
   end
-  if Runtime.wantsHook("battle.damage") then
+  if Runtime.wantsHook("battle.damage") and not (opts and opts.gbaSetDamage) then
     return Runtime.call("battle.damage", function(c)
       return Damage.compute(c.ruleset, c.user, c.target, c.move, c.opts)
     end, { battle = self, ruleset = self.ruleset, user = user,
@@ -5507,6 +5406,7 @@ end
 -- "menuLockedAction: attempt to index local 'battler' (a nil value)" after
 -- killing their first Pokemon.  A slot with nobody in it has no action.
 function BattleState:enemyAction(battler)
+  local requestedBattler = battler
   battler = battler or self.enemy
   if not battler then return nil end
   -- The POKé DUDE opponent does not run the AI at all.  Its controller feeds
@@ -5517,6 +5417,18 @@ function BattleState:enemyAction(battler)
     if move then return move end
   end
   if Runtime.wantsHook("battle.enemy_action") then
+    if GameVersion.generation() == 3 then
+      return EnemyActionContext.call(self, requestedBattler, function()
+        local delegated, captured
+        local result = Runtime.call("battle.enemy_action", function(battle, who)
+          delegated, captured = EnemyMoveChoice.delegate(battle, who or battle.enemy, battle:vanillaEnemyAction(who))
+          return delegated
+        end, self, battler)
+        return EnemyMoveChoice.normalize(self.data, battler, result, delegated, captured)
+          or EnemyMoveChoice.normalize(self.data, battler, delegated, delegated, captured)
+          or self:vanillaEnemyAction(battler)
+      end)
+    end
     return Runtime.call("battle.enemy_action", function(battle, who)
       return battle:vanillaEnemyAction(who)
     end, self, battler)
@@ -5610,8 +5522,9 @@ end
 function BattleState:resolveTurn(playerAction)
   -- nil in a double battle whose left-hand foe has fainted with nothing on
   -- the bench to replace it; `actionFor` asks each surviving slot for its own
-  local enemyAction = self:enemyAction(self.enemy)
+  local enemyAction = self:enemyAction(self:isDouble() and self.enemy or nil)
   self.turnCount = (self.turnCount or 0) + 1
+  if GameVersion.isGen3() then require("src.battle.Gen3FollowMe").clear(self) end
   -- BATTLE ARENA: arenaTurnCounter
   if self.arena then require("src.battle.Gen3Arena").turnStarted(self) end
   -- TURN-SCOPED FLAGS, cleared before anybody moves.  REVENGE reads
@@ -5622,6 +5535,7 @@ function BattleState:resolveTurn(playerAction)
       b.hurtThisTurn = nil
       b.specialDamageTaken, b.physicalDamageTaken = nil, nil
       b.protecting, b.enduring = nil, nil
+      if GameVersion.isGen3() then b._gen3HelpingHand = nil end
       b.turnsOut = (b.turnsOut or 0) + 1
     end
   end
@@ -5735,6 +5649,10 @@ function BattleState:resolveTurn(playerAction)
 
   self.phase = "messages"
   self.afterQueue = "menu"
+  if GameVersion.generation() == 3 then
+    self._actionTargetOrder = {}
+    for _, entry in ipairs(order) do self._actionTargetOrder[#self._actionTargetOrder + 1] = entry[1].position end
+  end
 
   for _, entry in ipairs(order) do
     self:act(function()
@@ -5764,7 +5682,7 @@ function BattleState:resolveTurn(playerAction)
   end
   self:act(function()
     -- the collected choices belong to the turn that just ran, not the next
-    self.pendingActions, self.chosenTargets = nil, nil
+    self.pendingActions, self.chosenTargets, self._actionTargetOrder = nil, nil, nil
     self:endOfTurn()
   end)
 end
@@ -6261,6 +6179,14 @@ function BattleState:focusBandHolds(battler, incoming)
     if battler.mon.hp <= 0 or incoming < battler.mon.hp then return false end
     return require("src.battle.Gen5HoldItems").focusBand(self, battler, incoming)
   end
+  if GameVersion.isGen3() then
+    if battler.mon.hp <= 0 then return false end
+    local effect, chance = HoldItems.effectOf(battler, "endure")
+    if effect ~= "FOCUS_BAND" then return false end
+    if (self.rng or love.math.random)(0, 99) >= chance then return false end
+    require("src.battle.Gen3AIItemKnowledge").record(self, battler, 39)
+    return incoming >= battler.mon.hp
+  end
   -- only a hit that would actually finish it, and only from full-ish health
   -- is NOT a condition: the cartridge lets a band save a Pokemon on 1 HP too
   if battler.mon.hp <= 0 or incoming < battler.mon.hp then return false end
@@ -6324,6 +6250,7 @@ function BattleState:holdItemTrigger(battler, when)
     battler.mon.hp = math.min(max, battler.mon.hp + act.amount)
     self:drainNext(battler, battler.mon.hp)
     if act.effect == "LEFTOVERS" then
+      require("src.battle.Gen3AIItemKnowledge").record(self, battler, 43)
       self:sayNext(Strings("%s restored a little\nHP using its\n%s!",
                            who, label))
     else
@@ -6381,7 +6308,8 @@ function BattleState:holdItemTrigger(battler, when)
     end
 
   elseif act.kind == "critUp" then
-    battler.critStage = (battler.critStage or 0) + act.delta
+    if GameVersion.isGen3() then battler.focusEnergy = true
+    else battler.critStage = (battler.critStage or 0) + act.delta end
     self:sayNext(Strings("%s used its\n%s!", who, label))
     self:sayNext(Strings("%s is getting\npumped!", who))
 
@@ -7624,6 +7552,14 @@ function BattleState:executeAction(user, target, action)
   if not (user and user.mon) then return end
   if user.mon.hp <= 0 then return end
   if not action then return end
+  local explicitTarget = false
+  if GameVersion.generation() == 3 and self:isDouble() and not action.special then
+    local selected
+    selected, explicitTarget = Targeting.fromAction(self, action)
+    if explicitTarget then
+      target = Targeting.redirect(self, user, nil, selected)[1] or self:defaultTargetFor(user)
+    end
+  end
   -- A SWITCH NEEDS NO TARGET.  Everything else does, and with four on the
   -- field the one it was aimed at can already be off it -- the entry's
   -- target is resolved as the entry runs, and there may be nobody left to
@@ -7780,8 +7716,9 @@ function BattleState:executeAction(user, target, action)
         local targetKind = tonumber(def.target)
         spreadAnimation = targetKind == Targeting.BOTH
                           or targetKind == Targeting.FOES_AND_ALLY
-        local chosen = (self.chosenTargets or {})[user.position] or target
-        local got = Targeting.resolve(self, user, def, chosen)
+        local chosen = explicitTarget and target or (self.chosenTargets or {})[user.position] or target
+        local got = explicitTarget and Targeting.actionTargets(self, user, def, chosen)
+          or Targeting.resolve(self, user, def, chosen)
         if #got > 0 then list = got end
       end
     end
@@ -7790,7 +7727,7 @@ function BattleState:executeAction(user, target, action)
       if one and one.mon and (one.mon.hp or 0) > 0 then
         -- only the first announces; the rest are the same move landing again
         self:performMove(user, one, action, i > 1,
-                         spreadAnimation and animationPlayed)
+                         spreadAnimation and animationPlayed, GameVersion.generation() == 3 and i > 1)
         -- FireRed's Cmd_attackanimation increments animTargetsHit only when an
         -- animation actually survives the no-effect/failure path.  If the
         -- first target cancels it, a later spread target is still allowed to
@@ -7921,10 +7858,13 @@ function BattleState:statusInterrupt(user, target)
     local dmg = self:computeDamage(user, user,
                                    { id = "CONFUSED", power = 40, type = "NORMAL", accuracy = 100 },
                                    { rng = self.rng, forceCrit = false, typeless = true,
-                                     screens = target })
+                                     screens = GameVersion.isGen3() and user or target })
+    if GameVersion.isGen3() then
+      dmg = math.max(1, math.floor(dmg * self.rng(85, 100) / 100))
+    end
     self:sayNext(self:romText("_HurtItselfText", "It hurt itself in\nits confusion!"))
     self:clearVolatiles(user, true)
-    self:applyDamage(user, dmg)
+    self:applyDamage(user, dmg, false, GameVersion.isGen3() and { confusion = true } or nil)
     if user.mon.hp <= 0 then self:onFaint(user) end
     return true
   end
@@ -8072,7 +8012,7 @@ local WEATHER_BALL_ANIM = {
   SUN = 1, RAIN = 2, SANDSTORM = 3, HAIL = 4,
 }
 
-function BattleState:performMove(user, target, moveInst, isCalled, suppressAnimation)
+function BattleState:performMove(user, target, moveInst, isCalled, suppressAnimation, spreadContinuation)
   local move = self:moveDef(moveInst)
   if not move then
     Logger.warn("unknown move instance %s", tostring(moveInst.id))
@@ -8141,11 +8081,17 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
   local enemyUnlimited = not user.isPlayer and self.kind ~= "link"
       and self.ruleset and self.ruleset.enemyUnlimitedPP
   if not isContinuation and not moveInst.struggle and not isCalled
+      and not enemyUnlimited and EnemyMoveChoice.exhausted(moveInst) then
+    self:sayNext(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
+    return
+  end
+  if not isContinuation and not moveInst.struggle and not isCalled
       and not enemyUnlimited then
     -- PRESSURE costs the ATTACKER an extra point for every move aimed at its
     -- holder.  Two per use, not double the total -- which is why it is
     -- subtracted here rather than multiplying the cost.
-    local cost = 1 + Abilities.extraPP(target)
+    local cost = GameVersion.generation() == 3 and Targeting.gen3PPCost(self, user, target, move)
+      or 1 + Abilities.extraPP(target)
     moveInst.pp = math.max(0, moveInst.pp - cost)
   end
 
@@ -8166,10 +8112,12 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
       table.insert(self.queue, self.nextInsert, self.moveAnimRow)
     end
   end
-  Runtime.emit("battle.move_used", {
-    battle = self, user = user, target = target, move = move,
-    isCalled = isCalled or false,
-  })
+  if not spreadContinuation then
+    Runtime.emit("battle.move_used", {
+      battle = self, user = user, target = target, move = move,
+      isCalled = isCalled or false,
+    })
+  end
 
   -- PROTECT stops a status move too, and it is the only check that has to
   -- happen before the effect record is consulted at all.
@@ -8265,9 +8213,13 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
     -- 100%-accuracy early-out (even Thunder Wave misses on the 255
     -- roll) and misses outright against a mid-Fly/Dig target; the
     -- never-miss paths (X ACCURACY) live inside Damage.accuracyRoll
-    if record.accuracyChecked
-       and (target.invulnerable
-            or not self:accuracyRoll(move, user, target)) then
+    local hit, reason = true, nil
+    if record.accuracyChecked then
+      if target.invulnerable and not GameVersion.isGen3() then hit = false
+      else hit, reason = self:accuracyRoll(move, user, target) end
+    end
+    if not hit then
+      if reason == "absorbed" then self:cancelMoveAnim(); return end
       -- SleepEffect/PoisonEffect/... call PlayCurrentMoveAnimation only
       -- after the effect lands; a miss skips it
       self:cancelMoveAnim()
@@ -8372,8 +8324,16 @@ end
 -- caller that cares about: the band saves a Pokemon from an attack and not
 -- from a sandstorm, its own recoil or a Substitute's upkeep, and applyDamage
 -- is the one door all of those come through.
-function BattleState:applyDamage(target, dmg, fromMove)
-  if target.substituteHP then
+function BattleState:applyDamage(target, dmg, fromMove, adjustment)
+  -- GBA adjusts every direct hit before Substitute/Endure, including a
+  -- successful Focus Band roll on a nonlethal hit and a zero-percent item.
+  local gba = GameVersion.isGen3()
+  adjustment = type(adjustment) == "table" and adjustment or nil
+  local prepared = gba and adjustment and adjustment.bandRolled == true
+  local selfHit = gba and adjustment and adjustment.confusion == true
+  local gbaBand = not prepared and gba and (fromMove == true or selfHit) and self:focusBandHolds(target, dmg)
+  if target.substituteHP and not selfHit then
+    local absorbed = math.min(math.max(0, dmg), target.substituteHP)
     target.substituteHP = target.substituteHP - dmg
     if target.substituteHP <= 0 then
       target.substituteHP = nil
@@ -8381,7 +8341,12 @@ function BattleState:applyDamage(target, dmg, fromMove)
     else
       self:sayNext(self:romText("_SubstituteTookDamageText", "The SUBSTITUTE\ntook damage for\n%s!", displayName(target)))
     end
-    return dmg
+    if prepared and adjustment.endured then
+      self:sayNext(Strings("%s endured\nthe hit!", displayName(target)))
+    elseif prepared and adjustment.hung then
+      self:sayNext(Strings("%s hung on\nusing its FOCUS BAND!", displayName(target)))
+    end
+    return gba and absorbed or dmg
   end
   -- FOCUS BAND, asked before the HP is taken: a one-in-ten hold leaves the
   -- Pokemon standing on a single HP instead of fainting.  Asked here rather
@@ -8390,11 +8355,17 @@ function BattleState:applyDamage(target, dmg, fromMove)
   -- what was actually dealt.
   -- ENDURE first: it is a certainty where the band is a roll, so a Pokemon
   -- that used ENDURE this turn never needs the band at all.
-  local endured = fromMove == true and target.enduring == true
+  local mayEndure = fromMove == true or selfHit
+  if selfHit and (target.substituteHP or 0) > 0 then mayEndure, gbaBand = false, false end
+  local endured = mayEndure and target.enduring == true
                   and target.mon.hp > 0 and dmg >= target.mon.hp
-  local band = not endured and fromMove == true
-               and self:focusBandHolds(target, dmg)
-  if endured or band then dmg = math.max(0, target.mon.hp - 1) end
+  local band = gba and gbaBand or (not gba and not endured and fromMove == true
+               and self:focusBandHolds(target, dmg))
+  if prepared then
+    endured, band = adjustment.endured, adjustment.hung
+  elseif endured or band then
+    dmg = math.max(0, target.mon.hp - 1)
+  end
   local dealt = math.min(dmg, target.mon.hp)
   if fromMove and dealt > 0 then target.hurtThisTurn = true end
   target.mon.hp = target.mon.hp - dealt

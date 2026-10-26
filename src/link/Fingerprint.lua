@@ -18,6 +18,13 @@ local Runtime = require("src.mods.Runtime")
 
 local Fingerprint = {}
 
+-- Runtime command semantics are part of native GBA lockstep compatibility,
+-- even when both peers load byte-identical data. Keep older game digests.
+local function nativeBattleRevision()
+  return require("src.core.GameVersion").isGen3() and 1 or nil
+end
+Fingerprint.nativeBattleRevision = nativeBattleRevision
+
 -- ------- FNV-1a, two lanes
 
 -- Two 32-bit lanes with different offset bases, concatenated into a 64-bit
@@ -151,11 +158,20 @@ local RECORD_FIELDS = { pokemon = SPECIES_FIELDS, moves = MOVE_FIELDS,
                         statuses = STATUS_FIELDS, move_effects = EFFECT_FIELDS }
 
 Fingerprint.FIELDS = RECORD_FIELDS
+local GBA_MOVE_FIELDS = {}
+for _, field in ipairs(MOVE_FIELDS) do GBA_MOVE_FIELDS[#GBA_MOVE_FIELDS + 1] = field end
+for _, field in ipairs({ "index", "gen3Effect", "secondaryChance", "target", "flags", "protectAffected" }) do
+  GBA_MOVE_FIELDS[#GBA_MOVE_FIELDS + 1] = field
+end
+Fingerprint.GBA_MOVE_FIELDS = GBA_MOVE_FIELDS
+local function fieldsFor(kind)
+  return kind == "moves" and nativeBattleRevision() and GBA_MOVE_FIELDS or RECORD_FIELDS[kind]
+end
 
 local function writeSection(out, data, kind)
   local map = data[kind]
   if map == nil then return end
-  local fields = RECORD_FIELDS[kind]
+  local fields = fieldsFor(kind)
   out[#out + 1] = "[" .. kind .. "]"
   for _, id in ipairs(sortedIds(map)) do
     local record = map[id]
@@ -238,6 +254,8 @@ local function surface(data, mods)
   writeSection(out, data, "move_effects")
   writeConstants(out, data)
   writeLinkFields(out, data)
+  local revision = nativeBattleRevision()
+  if revision then out[#out + 1] = "[native_gba_commands]" .. revision end
   out[#out + 1] = "[mods]" .. modKey(mods)
   return table.concat(out)
 end
@@ -247,7 +265,7 @@ Fingerprint.surface = surface
 -- mods: { { id, version, affectsLink } } -- the hello's mod array
 function Fingerprint.compute(data, mods)
   if not data then return digest("") end
-  local key = modKey(mods)
+  local key = modKey(mods) .. "|native_gba:" .. tostring(nativeBattleRevision())
   local hit = cache[data]
   if hit and hit.key == key then return hit.value end
   local value = Runtime.call("link.fingerprint", function(d, m)
@@ -262,14 +280,15 @@ end
 local recordCache = setmetatable({}, { __mode = "k" })
 
 function Fingerprint.records(data, kind)
-  local fields = RECORD_FIELDS[kind]
+  local fields = fieldsFor(kind)
   assert(fields, "no record allowlist for " .. tostring(kind))
   local perData = recordCache[data]
   if not perData then
     perData = {}
     recordCache[data] = perData
   end
-  if perData[kind] then return perData[kind] end
+  local recordKey = kind .. "|native_gba:" .. tostring(nativeBattleRevision())
+  if perData[recordKey] then return perData[recordKey] end
   local map = data[kind] or {}
   local out = {}
   for id, record in pairs(map) do
@@ -279,7 +298,7 @@ function Fingerprint.records(data, kind)
       out[id] = digest(table.concat(buf))
     end
   end
-  perData[kind] = out
+  perData[recordKey] = out
   return out
 end
 

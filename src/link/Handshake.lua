@@ -158,6 +158,7 @@ function Handshake.hello(game, mode)
     engineVersion = Version.engine,
     apiVersion = Version.modApi,
     fingerprint = Fingerprint.compute(game and game.data, mods),
+    nativeBattleRevision = Fingerprint.nativeBattleRevision(),
     linkModified = Handshake.linkModified(game),
     mods = mods,
   }
@@ -174,6 +175,7 @@ end
 function Handshake.checkCompat(localHello, remoteHello)
   localHello = localHello or {}
   if not remoteHello or not remoteHello.protocol then
+    if localHello.nativeBattleRevision then return "refused", "native_rules_required" end
     if localHello.linkModified then
       return "refused", "peer_v1_modified"
     end
@@ -265,6 +267,12 @@ function Handshake.describe(localHello, remoteHello, verdict, mode)
   local lines = {}
   local peer = (remoteHello and remoteHello.name) or "THEY"
   if verdict == "refused" then
+    if localHello.nativeBattleRevision and not (remoteHello and remoteHello.protocol) then
+      wrap(lines, "The other game needs")
+      wrap(lines, "an engine update")
+      wrap(lines, "before linking.")
+      return lines
+    end
     if not (remoteHello and remoteHello.protocol) then
       wrap(lines, "The other game is")
       wrap(lines, "an older version")
@@ -276,6 +284,14 @@ function Handshake.describe(localHello, remoteHello, verdict, mode)
       wrap(lines, "different engine")
       wrap(lines, "versions.")
     end
+    return lines
+  end
+  if localHello.nativeBattleRevision ~= (remoteHello and remoteHello.nativeBattleRevision) then
+    wrap(lines, "The battle rules")
+    wrap(lines, "need matching")
+    wrap(lines, "engine versions.")
+    if mode == "trade" then wrap(lines, "Trading is limited")
+      wrap(lines, "to shared POKéMON.") end
     return lines
   end
   wrap(lines, "Your games differ.")
