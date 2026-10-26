@@ -21,17 +21,21 @@ end
 -- Returns messages; empty means the status did not land.
 function StatusRegistry.inflict(battle, target, status, opts)
   opts = opts or {}
+  local nativeGba = opts.nativeGbaSecondary and require("src.core.GameVersion").isGen3()
   if target.mon.status then return {} end
   -- Substitutes block poison (PoisonEffect calls CheckTargetSubstitute)
   -- and every secondary status, but NOT primary Sleep or Thunder Wave,
   -- their handlers never check the substitute in Gen 1.
-  if target.substituteHP and (opts.secondary or status == "PSN") then
+  local substitute = nativeGba and (target.substituteHP or 0) > 0
+    or not nativeGba and target.substituteHP
+  if substitute and (opts.secondary or status == "PSN") then
     return {}
   end
   -- FreezeBurnParalyzeEffect: a secondary status never lands when the
   -- move's type matches either of the target's types (Body Slam can't
   -- paralyze Normals, Fire can't burn Fire, Ice can't freeze Ice)
-  if opts.secondary and status ~= "PSN" then
+  if opts.secondary and status ~= "PSN"
+     and not nativeGba then
     for _, t in ipairs(target.curTypes or {}) do
       if opts.moveType == t then return {} end
     end
@@ -46,7 +50,10 @@ function StatusRegistry.inflict(battle, target, status, opts)
   -- SAFEGUARD: the veil refuses every status for its five turns.  A status a
   -- Pokemon inflicts on ITSELF still lands -- REST is the whole reason that
   -- distinction exists -- which is what opts.selfInflicted marks.
-  if target.safeguardTurns and not opts.selfInflicted then
+  local safeguard = nativeGba and (target.safeguardTurns == true
+      or type(target.safeguardTurns) == "number" and target.safeguardTurns > 0)
+    or not nativeGba and target.safeguardTurns
+  if safeguard and not opts.selfInflicted then
     return {}
   end
   local statuses = battle and battle.data and battle.data.statuses
@@ -54,10 +61,15 @@ function StatusRegistry.inflict(battle, target, status, opts)
   -- `battle` is passed so a record can ask the RULESET: Hoenn's poison
   -- immunity covers STEEL as well as POISON, and the records are shared
   if record and record.canInflict
+     and not (opts.nativeGbaSecondary and status == "PAR" and require("src.core.GameVersion").isGen3()
+       and record.canInflict == Status.RECORDS.PAR.canInflict)
      and not record.canInflict(target, opts, battle) then
     return {}
   end
   target.mon.status = status
+  if require("src.core.GameVersion").isGen3() then
+    target.mon.toxic = status == "PSN" and opts.toxic == true or nil
+  end
   local msgs
   local display = displayName(target)
   if record and record.onInflict then
@@ -67,7 +79,7 @@ function StatusRegistry.inflict(battle, target, status, opts)
                record and record.label or tostring(status)) }
   end
   Runtime.emit("battle.status_inflicted", {
-    battle = battle, target = target, status = status, source = opts.source,
+    battle = battle, target = target, status = opts.nativeGbaSecondary and opts.toxic and "TOX" or status, source = opts.source,
   })
       -- Gen II status berries resolve immediately after the condition lands.
       -- Keep the infliction text first, then append the held-item cure line.
