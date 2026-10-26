@@ -1,0 +1,74 @@
+name: Enemy move choice contracts
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/enemy-action-contract.yml'
+      - 'src/**'
+      - 'examples/portable_enemy_action/**'
+      - 'tests/enemy_actions/**'
+      - 'tests/engine/portable_enemy_action_*.lua'
+      - 'tests/engine/portable_enemy_move_records.lua'
+      - 'tests/engine/portable_enemy_targets.lua'
+      - 'tests/engine/gen3_follow_me.lua'
+      - 'tests/engine/gen3_helping_hand.lua'
+      - 'tests/engine/gen3_spit_up.lua'
+      - 'tests/engine/gen3_beat_up.lua'
+      - 'tests/engine/gen3_beat_up_adjustment.lua'
+      - 'tests/engine/gen3_beat_up_side_party.lua'
+      - 'tests/engine/gen3_critical_context.lua'
+      - 'tests/engine/gen3_constrained_party.lua'
+      - 'tests/engine/gen3_native_accuracy.lua'
+      - 'tests/engine/gen3_native_secondary.lua'
+      - 'tests/engine/gen3_battle_protocol.lua'
+      - 'tests/engine/gen3_party_codec.lua'
+      - 'tests/engine/gen3_party_transport.lua'
+      - 'tests/engine/gen3_lock_on.lua'
+      - 'tests/engine/gen3_lock_on_link.lua'
+      - 'tests/engine/gen3_baton_pass*.lua'
+      - 'tests/engine/gen3_encore*.lua'
+      - 'tests/engine/gen3_disable*.lua'
+      - 'tests/engine/gen3_multi_hit*.lua'
+      - 'tests/engine/gen3_rage*.lua'
+      - 'tests/engine/gen3_triple_kick*.lua'
+      - 'tests/engine/gen3_sleep_talk*.lua'
+      - 'tools/enemy-action-contract-check/**'
+  push:
+    branches: [main, dev]
+permissions:
+  contents: read
+concurrency:
+  group: enemy-action-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: gen2
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: gen1-reference
+      # Pin the maintained VM: the local 2.1.1700008891 ARM64 runtime
+      # produces JIT-dependent Thick Fat results in unchanged reference code.
+      - uses: actions/checkout@v7
+        with:
+          repository: LuaJIT/LuaJIT
+          ref: a4c064539ea931274d407e1249b4bb575424a0f4
+          path: luajit-runtime
+      - name: Build pinned LuaJIT
+        run: make -C luajit-runtime -j2
+      - name: Actual public hook and native move execution
+        run: >-
+          python3 gen2/tools/enemy-action-contract-check/check.py
+          --gen1 gen1-reference --gen2 gen2
+          --lua "${{ github.workspace }}/luajit-runtime/src/luajit"
+          --report "${{ runner.temp }}/enemy-action-report.json"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: enemy-action-contract-report
+          path: ${{ runner.temp }}/enemy-action-report.json
+          if-no-files-found: error

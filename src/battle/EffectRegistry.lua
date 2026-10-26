@@ -96,14 +96,29 @@ local function hitCount(ctx, record)
   return dist[r + 1]
 end
 
+local function ordinaryDamage(battle, ctx, record)
+  return battle:computeDamage(ctx.user, ctx.target, ctx.move,
+    { rng = battle.rng, explode = (record and record.explode) or nil,
+      powerMultiplier = record and record.powerMultiplier and record.powerMultiplier(ctx) or nil,
+      highCrit = record and record.highCrit or nil,
+      power = record and record.gbaTripleKick and 10 * (ctx.gbaHit or 1) or nil })
+end
+
 -- The damaging pipeline, extracted from the performMove monolith: every
--- stage keeps the original's exact check order and rng consumption
--- (invulnerability -> gate -> hit count -> pre-accuracy -> accuracy ->
--- damage choice -> hits -> messages -> after-damage -> secondary run).
+-- stage keeps its generation's check order and RNG consumption. GBA draws
+-- hit count after accuracy and computes ordinary damage separately per hit;
+-- older generations retain their pre-accuracy count and shared damage roll.
 function EffectRegistry.runDamaging(battle, ctx, record)
   local user, target = ctx.user, ctx.target
   local move, moveInst = ctx.move, ctx.moveInst
   local neverMiss = record and record.neverMiss
+  local gba = require("src.core.GameVersion").isGen3()
+  local ordinaryMulti = gba and require("src.battle.Gen3MultiHit").ordinary(move)
+  local tripleKick = gba and record and record.gbaTripleKick
+  local nativeMulti = ordinaryMulti or tripleKick
+  if gba and type(target.substituteHP) == "number" and target.substituteHP <= 0 then
+    target.substituteHP = nil
+  end
   -- alwaysHits is neverMiss's weaker sibling and the distinction is CheckHit's
   -- own ordering: .FlyDigMoves is tested BEFORE .ThunderRain
   -- (effect_commands.asm:1559-1563), so Thunder in rain skips the accuracy
@@ -115,13 +130,18 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   -- accuracyRaw replaces the move's accuracy BYTE for this turn
   -- (BattleCommand_ThunderAccuracy), so it is a 0-255 threshold, not a percent
   local accuracyRaw = record and record.accuracyRaw and record.accuracyRaw(ctx)
+  local nativeAccuracy = gba and (not neverMiss and not alwaysHits
+    or move.gen3Effect == 17 or move.gen3Effect == 78 or move.gen3Effect == 152)
 
   -- PROTECT and DETECT, before anything else happens.  Only a move the
   -- cartridge marks PROTECT-affected is stopped, which is the second use the
   -- extracted flags byte is put to; a move with no flags recorded (every Gen
   -- 1 and Gen 2 one) is treated as affected, which is that generation's rule.
-  if target.protecting and move.protectAffected ~= false then
+  local lockedOHKO = record and record.gbaOHKO
+    and require("src.battle.Gen3LockOn").active(battle, user, target)
+  if target.protecting and (not gba or target ~= user) and move.protectAffected ~= false and not lockedOHKO then
     battle:cancelMoveAnim()
+    if record and record.onProtect and record.onProtect(ctx) then return end
     battle:sayNext(Strings("%s\nprotected itself!", displayName(target)))
     return
   end
@@ -130,8 +150,8 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   -- SWIFT_EFFECT before the INVULNERABLE check), and so does SKY UPPERCUT,
   -- which reaches a target in the middle of FLY without being a never-miss
   -- move in any other respect -- hence the second, narrower field.
-  if target.invulnerable and not neverMiss
-     and not (record and record.neverMissInvulnerable) then
+  if target.invulnerable and not nativeAccuracy and not neverMiss
+     and not (record and record.neverMissInvulnerable) and not lockedOHKO then
     -- Explosion/Selfdestruct still animate on a miss (HandleIfPlayerMoveMissed)
     if not (record and record.explode) then battle:cancelMoveAnim() end
     missBeat(battle, record)
@@ -151,16 +171,23 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     if not ok then
       battle:cancelMoveAnim()
       if failMsg then battle:sayNext(failMsg) end
+      if ctx.gbaOHKOMiss and record.onMiss then record.onMiss(ctx, "accuracy") end
       return
     end
   end
 
-  local hits = hitCount(ctx, record)
+  local hits = not gba and hitCount(ctx, record) or 1
 
   if record and record.beforeAccuracy then record.beforeAccuracy(ctx) end
 
-  if not neverMiss and not alwaysHits then
-    if not battle:accuracyRoll(move, user, target, accuracyRaw) then
+  if nativeAccuracy or not neverMiss and not alwaysHits then
+    local hit, reason = battle:accuracyRoll(move, user, target, accuracyRaw)
+    if not hit then
+      if reason == "absorbed" then
+        battle:cancelMoveAnim()
+        if record and record.onMiss then record.onMiss(ctx, "absorbed") end
+        return
+      end
       -- Explosion/Selfdestruct still animate on a miss (HandleIfPlayerMoveMissed)
       if not (record and record.explode) then battle:cancelMoveAnim() end
       missBeat(battle, record)
@@ -171,6 +198,9 @@ function EffectRegistry.runDamaging(battle, ctx, record)
       return
     end
   end
+
+  if gba and record and record.gbaAfterAccuracy then record.gbaAfterAccuracy(ctx) end
+  if gba then hits = hitCount(ctx, record) end
 
   -- damage per hit
   local dmg, info
@@ -208,13 +238,7 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     end
     dmg, info = chosen, extra or { crit = false, typeMult = 10 }
   else
-    dmg, info = battle:computeDamage(user, target, move,
-      { rng = battle.rng, explode = (record and record.explode) or nil,
-        -- a record whose EFFECT decides the power or the crit rate this
-        -- turn rather than the move's own byte
-        powerMultiplier = record and record.powerMultiplier
-                          and record.powerMultiplier(ctx) or nil,
-        highCrit = record and record.highCrit or nil })
+    dmg, info = ordinaryDamage(battle, ctx, record)
   end
 
   if battle.arenaOutcome then
@@ -248,9 +272,9 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     if record and record.onMiss then record.onMiss(ctx, "floored") end
     return
   end
-  -- Focus Band belongs to the direct-damage seam below.  It is evaluated per
-  -- damaging strike so a later hit of a multi-hit move can save a battler once
-  -- that particular strike becomes lethal; Substitute never consumes its RNG.
+  -- Focus Band belongs to the damage-adjustment seam below. GBA rolls on
+  -- every direct strike, including nonlethal/Substitute hits; older rules
+  -- keep their own eligibility. OHKO supplies its already evaluated result.
   battle.lastDamage = dmg -- wDamage (shared by both sides, read by Counter)
 
   -- the hit blink + damage sound ride each animation row, placed BEFORE
@@ -277,6 +301,36 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   local landed, brokeSub = 0, false
   for h = 1, hits do
     if target.mon.hp <= 0 then break end
+    if nativeMulti and (user.mon.hp <= 0 or h > 1 and user.mon.status == "SLP"
+        and not require("src.battle.Gen3MultiHit").sleepTalk(battle)) then break end
+    -- Unlike ordinary multi-hit moves, each reached native kick checks
+    -- accuracy again before its critical/damage opcodes. A later miss ends
+    -- the script quietly; already landed kicks still reach move-end (Rage).
+    if tripleKick and h > 1 and (nativeAccuracy or not neverMiss and not alwaysHits) then
+      local hit = battle:accuracyRoll(move, user, target, accuracyRaw)
+      if not hit then break end
+    end
+    ctx.gbaHit = h
+    if record and record.perHitDamage then
+      local nextDamage, nextInfo = record.perHitDamage(ctx, h, dmg, info)
+      if nextDamage == nil then break end
+      dmg, info = nextDamage, nextInfo or info
+    elseif nativeMulti and h > 1
+        and not (record and record.chooseDamage) then
+      dmg, info = ordinaryDamage(battle, ctx, record)
+      if info.typeMult == 0 or info.missed then
+        ctx.gbaNoEffect = true
+        if info.typeMult == 0 then
+          if not (info.ability and battle.abilityAbsorb and battle:abilityAbsorb(target, move)) then
+            battle:sayNext(Strings("It doesn't affect\n%s!", displayName(target)))
+          end
+        else
+          battle:sayNext(Strings("%s's\nattack missed!", displayName(user)))
+        end
+        if record and record.onMiss then record.onMiss(ctx, info.typeMult == 0 and "immune" or "floored") end
+        break
+      end
+    end
     local hitRow
     if h == 1 then
       hitRow = battle.moveAnimRow
@@ -316,12 +370,21 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     battle.lastDamage = hitDamage
     -- ...and the one applyDamage a Gen 3 FOCUS BAND answers: a move landing
     -- on someone
-    local dealt = battle:applyDamage(target, hitDamage, true)
+    local substituteBefore = target.substituteHP
+    local dealt, endured = battle:applyDamage(target, hitDamage, true, info.damageAdjustment)
+    if (info.gbaSetDamage or info.gbaBeatUp) and substituteBefore then dealt = math.min(dealt, substituteBefore) end
     totalDealt = totalDealt + dealt
+    if gba and not hadSub and require("src.battle.Damage").isSpecial(move.type) then
+      ctx.gbaSpecialHit = true
+    end
     -- MIRROR COAT is COUNTER's special twin and needs the SPECIAL half of
     -- the damage kept separately; battle.lastDamage is shared by both and
     -- cannot answer for it.  Cleared at the head of every turn.
-    if dealt > 0 then
+    if info.gbaBeatUp then
+      -- Scripted Beat Up records each strike, including Endure's zero HP
+      -- loss; Substitute strikes leave the previous counter memory alone.
+      if not hadSub then target.specialDamageTaken = dealt end
+    elseif dealt > 0 and not (hadSub and require("src.core.GameVersion").isGen3()) then
       if require("src.battle.Damage").isSpecial(move.type) then
         target.specialDamageTaken = (target.specialDamageTaken or 0) + dealt
       else
@@ -348,20 +411,39 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     elseif info.typeMult < 10 then
       battle:sayNext(Strings("It's not very\neffective..."))
     end
-    if Runtime.wants("battle.damage_dealt") then
+    -- GBA's zero-power default script never runs the HP-damage command.
+    -- Keep explicit custom/fixed damage and the earlier generations' events.
+    if Runtime.wants("battle.damage_dealt") and (dealt > 0 or move.power ~= 0
+        or (record and record.chooseDamage) or not require("src.core.GameVersion").isGen3()) then
+      local eventCritical = info.crit
+      if info.gbaBeatUp then eventCritical = false end
+      local gba = require("src.core.GameVersion").isGen3()
+      local eventKind
+      if info.gbaBeatUp then eventKind = "special"
+      elseif gba then
+        local physical = info.physical
+        if physical == nil then physical = not require("src.battle.Damage").isSpecial(move.type) end
+        eventKind = physical and "physical" or "special"
+      end
       Runtime.emit("battle.damage_dealt", {
         battle = battle, user = user, target = target, move = move,
-        damage = dealt, crit = info.crit, typeMult = info.typeMult,
+        damage = dealt, crit = eventCritical, typeMult = info.eventTypeMult or info.typeMult,
+        substitute = (gba or info.gbaSetDamage or info.gbaBeatUp) and hadSub or nil,
+        kind = eventKind,
       })
     end
-    if hadSub and not target.substituteHP then
-      -- AttackSubstitute: breaking the substitute ends a multi-hit move
-      brokeSub = true
-      break
+    if battle.firstBattle then
+      require("src.battle.Gen3Critical").noteHit(battle, user, target, dealt, hadSub)
     end
+    if hadSub and not target.substituteHP and not info.gbaBeatUp then
+      -- Older AttackSubstitute ends the move; GBA continues against real HP.
+      brokeSub = true
+      if not gba then break end
+    end
+    if nativeMulti and endured then break end
   end
   hits = landed > 0 and landed or hits
-  if hits > 1 then
+  if hits > 1 and not info.gbaBeatUp then
     -- player: _MultiHitText; enemy: _HitXTimesText (always plural)
     if user.isPlayer then
       battle:sayNext(Strings("Hit the enemy\n%d times!", hits))
@@ -382,8 +464,11 @@ function EffectRegistry.runDamaging(battle, ctx, record)
     battle:applyDamage(user, recoil)
   end
 
-  -- secondary side effects (blocked by fainting)
-  if record and record.run and record.kind ~= "primary"
+  -- Native chance runs before effect-level faint/Substitute/ability guards.
+  local nativeSecondary = require("src.core.GameVersion").isGen3()
+    and require("src.battle.Gen3Secondary").run(ctx, record)
+  -- Other/custom records retain their existing post-damage handler.
+  if not nativeSecondary and record and record.run and record.kind ~= "primary"
      and target.mon.hp > 0 and totalDealt > 0 then
     for _, m in ipairs(record.run(ctx)) do
       battle:sayNext(m)
@@ -391,6 +476,14 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   end
   if record == nil then
     MoveEffects.warnUnknown(move.effect)
+  end
+
+  if gba then require("src.battle.Gen3Rage").moveEnd(battle, ctx, landed) end
+
+  if gba and ctx.gbaSpecialHit and target ~= user and target.mon.hp > 0
+      and target.mon.status == "FRZ" and require("src.battle.Abilities").normalizeType(move.type) == "FIRE" then
+    target.mon.status = nil
+    battle:sayNext(Strings("Fire defrosted\n%s!", displayName(target)))
   end
 
   -- King's Rock is an explicit command in selected Gen II move scripts.  It
@@ -428,6 +521,8 @@ function EffectRegistry.runDamaging(battle, ctx, record)
   -- KING'S ROCK flinches the target, SHELL BELL feeds the attacker, and a
   -- SITRUS BERRY the hit dropped below half goes off immediately rather
   -- than waiting for the end of the turn.
+  local gba = require("src.core.GameVersion").isGen3()
+  if gba then require("src.battle.GbaItemSchedule").moveEnd(battle) end
   if totalDealt > 0 and battle.shellBellDrain then
     local flinch = HoldItems.flinchChance(user, move)
     if flinch > 0 and target.mon.hp > 0 and not target.substituteHP
@@ -436,7 +531,7 @@ function EffectRegistry.runDamaging(battle, ctx, record)
       target.flinched = true
     end
     battle:shellBellDrain(user, totalDealt)
-    if target.mon.hp > 0 then battle:holdItemTrigger(target, "hit") end
+    if not gba and target.mon.hp > 0 then battle:holdItemTrigger(target, "hit") end
   end
 
   if target.mon.hp <= 0 then
