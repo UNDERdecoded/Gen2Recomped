@@ -1333,6 +1333,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     dex.seen[species] = true
     dex.owned[species] = true
   end
+  local Unown = require("src.pokemon.Gen2Unown")
+  if Unown.supported() then Unown.registerCatch(ctx.save, mon, ctx.game.data) end
   require('src.pokemon.Gen4Forms').record(ctx.game,species,mon)
   ctx.lastCheck = true
   ctx.addedToParty = addedToParty

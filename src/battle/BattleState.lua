@@ -9940,7 +9940,8 @@ function BattleState:storeCaughtMon()
   -- Ruins of Alph researcher and the dex's UNOWN mode gate on
   local form = require("src.pokemon.Sprites").formIndex(
     game.data.pokemon[species], self.enemy.mon)
-  if dex and type(form)=='number' then
+  local nativeUnown = require("src.pokemon.Gen2Unown")
+  if not nativeUnown.supported() and dex and type(form)=='number' then
     dex.unownForms = dex.unownForms or {}
     if not dex.unownForms[form] then
       dex.unownForms[form] = true
@@ -9984,12 +9985,14 @@ function BattleState:storeCaughtMon()
     self.enemy.mon.ball = self.lastBall
   end
   if Party.add(game.save.party, self.enemy.mon) then
+    if nativeUnown.supported() then nativeUnown.registerCatch(game.save, self.enemy.mon, game.data) end
     require('src.pokemon.Gen4PoketchState').remember(game, self.enemy.mon)
     askCaughtNickname()
   else
     destination = "box"
     local boxNum = require("src.pokemon.Boxes").deposit(game.save, self.enemy.mon)
     if boxNum then
+      if nativeUnown.supported() then nativeUnown.registerCatch(game.save, self.enemy.mon, game.data) end
       require('src.pokemon.Gen4PoketchState').remember(game, self.enemy.mon)
       askCaughtNickname()
       -- _ItemUseBallText07/08 keyed on EVENT_MET_BILL

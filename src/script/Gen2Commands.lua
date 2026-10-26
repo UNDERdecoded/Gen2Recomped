@@ -2666,6 +2666,12 @@ function Commands.g2_readvar(ctx, var)
     -- sampled by `special SampleKenjiBreakCountdown`
     ctx.g2Var = ctx.save.g2KenjiBreak or 0
   elseif var == 14 then
+    local Unown = require("src.pokemon.Gen2Unown")
+    if Unown.supported() then
+      ctx.g2Var = Unown.count(ctx.save)
+      ctx.lastCheck = ctx.g2Var ~= 0
+      return
+    end
     -- UnownCaught (engine/events/unown_walls.asm): how many distinct UNOWN
     -- letters are in the dex.  The port has no per-letter model, so a caught
     -- UNOWN counts once -- enough for the Ruins researcher's `ifgreater 2`
