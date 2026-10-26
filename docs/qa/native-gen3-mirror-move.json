@@ -1,0 +1,338 @@
+{
+  "schema_version": 1,
+  "reference_commit": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "reference_read_only": true,
+  "lua_jit_commit": "a4c064539ea931274d407e1249b4bb575424a0f4",
+  "feature_qualified_head": "eab96604b54ee06a9a3dc17ffd34af6443c8403f",
+  "feature_runtime_regression_commit": "f9016f1c23d0d97fd21b761d2f76d15c3f38884d",
+  "feature_runtime_src_tree": "d44e9c6082e15d606664ea22936fd5464c09c09c",
+  "feature_tests_tree": "c7b3779282cc4cc529ddee33a37f23552736a995",
+  "combined_qualified_head": "513bb62e3d14cf3525b8c96a5a826f760125fce1",
+  "combined_full_regression_commit": "01315149fd67cb7262c9ac7d786294409033fcbb",
+  "combined_src_tree": "4bcf6c817e867f54596b259d2c8d9a088d6519d2",
+  "combined_tests_tree": "6f4e04d1ba79f0a318bab3723f397ad551cdae03",
+  "native_command_revision": 17,
+  "party_codec_revision": 1,
+  "native_digest": "351a5becf7f236a0",
+  "legacy_digest": "e33d251961f2a41d",
+  "full_regression": {
+    "candidate_head": "01315149fd67cb7262c9ac7d786294409033fcbb",
+    "baseline_head": "66ec5c141f0d49a9d4c163f842837d295668139d",
+    "exact_counter_equal": true,
+    "baseline_fail_lines": 0,
+    "candidate_fail_lines": 0,
+    "new": {},
+    "removed": {},
+    "engine": [
+      "engine: 282/282 suites passed"
+    ],
+    "baseline_engine": [
+      "engine: 275/275 suites passed"
+    ],
+    "sdk": [
+      "modkit: 3/3 suites passed"
+    ],
+    "baseline_sdk": [
+      "modkit: 3/3 suites passed"
+    ],
+    "b30": [
+      "PASS Dramatic Shape B30 profile"
+    ],
+    "baseline_b30": [
+      "PASS Dramatic Shape B30 profile"
+    ],
+    "candidate_log_sha256": "8bf366cde1ba96343a7a941a2e1d6488e3b0ddcb3987f66f8213d18b23a7c605",
+    "baseline_log_sha256": "9f1170c2bf359898924836adc67743c587387541e64fa8baef61f4df3634573b"
+  },
+  "feature_regression": {
+    "engine": "163/172",
+    "sdk": "3/3",
+    "b30": true,
+    "baseline_engine": "157/166",
+    "exact_anchored_FAIL_Counter_equal": true,
+    "inherited_fail_lines": 25,
+    "inherited_failing_suites": 9,
+    "later_added_received_history_checks": 994
+  },
+  "contracts": [
+    {
+      "host": "feature",
+      "qualified_workers": 220,
+      "qualified_comparisons": 110,
+      "paired_rows": 175540,
+      "reports": [
+        {
+          "path": "tmp/mirror-history-qa/frozen-command-matrix.json",
+          "sha256": "cd5979084c65525e7d0b1dcf1a7fc1154d89cf474d20872fe4ca4fd915c0a2c1",
+          "host_ref": "74602df7a96205fbc92d563e4466ada399842756"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-01.json",
+          "sha256": "f3fba3e360addddf9f1e4c29a10fc20fbcc58fbb93ef19b4445c3a79ac0b9de7",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-02.json",
+          "sha256": "4b0c2fe2b1f005f823f992145173db2c768a6a44802fce6996561f2fb6b84ce3",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-03.json",
+          "sha256": "3e6c169305488ffe4123a5eb8f6d3029a3c456fa69c8a73dd15159cf799f6bfb",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-04.json",
+          "sha256": "90245b4dbb94de41cd3057d894d0055c8bbf596e2c0dcc6601a8da30a8c5bd75",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-05.json",
+          "sha256": "b943e5daff0eac373952467c66a5b18e2b7f605f532024539f24a6160fe1650c",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-06.json",
+          "sha256": "5c9d2c3ccb80c290b1178749e1df313dc63310992073b13fc18e950301dcf5f5",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-07.json",
+          "sha256": "624b530df5b65052b342ead8f48482b488c78e552f994a2a0c9cb4e244752744",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-08.json",
+          "sha256": "5439a87845f82ee54da0962c6ea10b4faa257f3624910edb6d1b1a65572a98a2",
+          "host_ref": "a215dc3db1432989c8daedef0d09056096806c43"
+        }
+      ],
+      "retained_failed_attempts": [],
+      "rerun_timings": []
+    },
+    {
+      "host": "combined",
+      "qualified_workers": 220,
+      "qualified_comparisons": 110,
+      "paired_rows": 175540,
+      "reports": [
+        {
+          "path": "tmp/mirror-integration-qa/frozen-command-matrix.json",
+          "sha256": "d26ae49f0446937926fe8a6b91ec3d4fb472a3088508c239e61fb6edc1c5fdc6",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-01.json",
+          "sha256": "ec11710dd39d13ee430b48c199f1260cd3ad0c184f1a5983b7b057b8b4a77ca3",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-02.json",
+          "sha256": "0d6304503132d055d2ebf839ee9a3a2ec21cc05cd311f041c76f505c3357676d",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-03.json",
+          "sha256": "7704e2bcc58c8a018f6aa097db10910c40f3b6744d8af248d3b11d3344b8e949",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-04.json",
+          "sha256": "ef443c280bb1996ad43128068f98000f72e256dccd5892345ef1aba52a8f2a2c",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-05.json",
+          "sha256": "41ee847562998b9f9e26537aec9e212a5f8b50fe81e59373ddbedd3588450294",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-06.json",
+          "sha256": "4c6f6f1eaaff09bbb7457a6d70f58f1816572ac3441b6a994b19fb2fd97a08af",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-07.json",
+          "sha256": "735963641e138bf781679c54434a7c1df8dc9b9a93c548aad32dc20344fe5c6c",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/batch-08.json",
+          "sha256": "a4eb32eb688c705891c2f505d8d718d73e2be04996f605cb6a3668c623d12886",
+          "host_ref": "01315149fd67cb7262c9ac7d786294409033fcbb"
+        },
+        {
+          "path": "tmp/mirror-broad-qa/bounded-assist-rerun.json",
+          "sha256": "0e18b4084e836f0973a353434b0a4a1c9f42d063501a4af5c3b2bff88ce1f25b",
+          "host_ref": "513bb62e3d14cf3525b8c96a5a826f760125fce1"
+        }
+      ],
+      "retained_failed_attempts": [
+        {
+          "key": [
+            "gen2",
+            "firered",
+            3,
+            "assist"
+          ],
+          "exit": 124,
+          "timeout": {
+            "seconds": 60,
+            "stdout_hex": null,
+            "stderr_hex": null
+          },
+          "vm": []
+        },
+        {
+          "key": [
+            "gen2",
+            "emerald",
+            3,
+            "assist_held"
+          ],
+          "exit": 124,
+          "timeout": {
+            "seconds": 60,
+            "stdout_hex": null,
+            "stderr_hex": null
+          },
+          "vm": []
+        }
+      ],
+      "rerun_timings": [
+        {
+          "key": [
+            "gen1",
+            "firered",
+            3,
+            "assist"
+          ],
+          "seconds": 14.1076
+        },
+        {
+          "key": [
+            "gen2",
+            "firered",
+            3,
+            "assist"
+          ],
+          "seconds": 34.8894
+        },
+        {
+          "key": [
+            "gen1",
+            "firered",
+            3,
+            "assist_held"
+          ],
+          "seconds": 12.1253
+        },
+        {
+          "key": [
+            "gen2",
+            "firered",
+            3,
+            "assist_held"
+          ],
+          "seconds": 36.2911
+        },
+        {
+          "key": [
+            "gen1",
+            "emerald",
+            3,
+            "assist"
+          ],
+          "seconds": 10.2617
+        },
+        {
+          "key": [
+            "gen2",
+            "emerald",
+            3,
+            "assist"
+          ],
+          "seconds": 30.6749
+        },
+        {
+          "key": [
+            "gen1",
+            "emerald",
+            3,
+            "assist_held"
+          ],
+          "seconds": 11.3661
+        },
+        {
+          "key": [
+            "gen2",
+            "emerald",
+            3,
+            "assist_held"
+          ],
+          "seconds": 30.4373
+        }
+      ]
+    }
+  ],
+  "controller_ticks": {
+    "swap_inputs": 360,
+    "swap_ticks": 5240,
+    "poison_focus_inputs": 384,
+    "poison_focus_ticks": 11112,
+    "substitute_fade_inputs": 288,
+    "substitute_fade_ticks": 23488,
+    "common_pcm_inputs": 56
+  },
+  "units": {
+    "received_history": 994,
+    "linked_roles": 108,
+    "protocol": 154,
+    "effect_controller": 13778,
+    "fade_producer_controller": 104512,
+    "art_import_draw": 70,
+    "native_M4A_sound": 165455,
+    "import_locator": 8
+  },
+  "real_imports": {
+    "per_runtime_scenarios": 24,
+    "turns": 48,
+    "move_used_events": 120,
+    "profiles": [
+      "firered",
+      "emerald"
+    ],
+    "native_and_registered": true,
+    "incoming_moves": [
+      "TACKLE",
+      "SCRATCH",
+      "GROWL"
+    ],
+    "held_items": [
+      "CHOICE_BAND",
+      "SHELL_BELL"
+    ],
+    "ordinary_cache_save_writes": false
+  },
+  "actual_doll_imports": {
+    "compared_RGBA_pixels": 16384,
+    "different_pixels": 0,
+    "transparent_RGB_compared": true,
+    "cartridge_assets_committed": false
+  },
+  "late_nonbehavior_changes": {
+    "Sound.lua_comment_edit": "Identical stripped LuaJIT bytecode before/after; feature13949 bytes, combined14383 bytes. All other runtime sources unchanged from their full-test commits.",
+    "checker_budget": "Exhaustive Assist/Assist-content/Assist-held use180s bounded workers; all othersretain60s exceptexisting180spost-hit execution. wall_seconds records actual worker elapsed time before observation parsing.",
+    "retained_timeouts": "Two original candidate workers terminated at60s(exit124). Eight fresh Assist/Assist-held workers all exit0 under180s; every earlier completed observation is unchanged. Largest fresh worker36.2911s."
+  },
+  "limitations": [
+    "FireRed/Emerald qualified; Ruby/Sapphire/LeafGreen support prerequisites are separate",
+    "CPU native state/audio controls/draw commands; final GPU scene pixels not established",
+    "Common-carrier PCM equality is not full-synthesizer waveform parity",
+    "All public audio-event timing and native M4A player lifecycle are not covered by this foundation",
+    "Separate lifecycle negative control:20pairedcases,16differences;follow-up branch feature/native-sound-player-lifecycle",
+    "Arbitrary complete mods and a full playthrough not established"
+  ],
+  "raw_failed_and_superseded_reports_retained": true,
+  "ordinary_game_gpu_or_audio_device_launched": false
+}

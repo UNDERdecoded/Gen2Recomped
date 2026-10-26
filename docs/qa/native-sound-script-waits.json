@@ -1,0 +1,528 @@
+{
+  "schema_version": 1,
+  "reference_commit": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "reference_read_only": true,
+  "lua_jit_commit": "a4c064539ea931274d407e1249b4bb575424a0f4",
+  "prerequisite_pr": "https://github.com/UNDERdecoded/Gen2Recomped/pull/277",
+  "feature_frozen_head": "974ec078b51ad07690c183c224db293738080b19",
+  "feature_src_tree": "99122e59f7e2d599ba96ca80f2c0763ee4a6a3ae",
+  "feature_tests_tree": "5f847cdabb17bcd77d31d9d4d770d6ed63ad2fa9",
+  "combined_frozen_head": "f04fdf95164b2f3cc6d2da9563931ff53722ec15",
+  "combined_src_tree": "90688af7c38d19843369b895f87bc83a5697d753",
+  "combined_tests_tree": "c4fd68af51840dc517e20379e1e8c5e95c11a9ec",
+  "native_battle_revision_unchanged": 18,
+  "party_codec_revision_unchanged": 1,
+  "native_digest_unchanged": "c82a14f754706103",
+  "legacy_digest_unchanged": "e33d251961f2a41d",
+  "feature_regression": {
+    "candidate": {
+      "log": "frozen-full.log",
+      "sha256": "55d524fee921418ffc0111aa2c7003ec9c3fb44ac05ce7fa339d3c004e507fbb",
+      "fail_counter": {
+        "FAIL hook:battle.status_hud_visible has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.finished has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.started has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:pokemon.egg_hatched has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.blocks_replaced has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.tick has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL tests/engine/gate_meta_coverage.lua": 1,
+        "FAIL the process exit runs only after love.quit declined to veto": 1,
+        "FAIL the process exit is gated on Android": 1,
+        "FAIL tests/engine/quit_thread_shutdown.lua": 1,
+        "FAIL and stays out of the live pad map until close (got x, want nil)": 1,
+        "FAIL tests/engine/rebind_capture_bug510.lua": 1,
+        "FAIL all eight actions still have exactly one pad button (got 12, want 8)": 1,
+        "FAIL tests/engine/rebind_swap_clear_bug589.lua": 1,
+        "FAIL tests/engine/soft_reset_bug563.lua": 1,
+        "FAIL tests/engine/tool_mod_hooks.lua": 1,
+        "FAIL releaseUrl points at the repo's latest release (got https://github.com/UNDERdecoded/Gen2Recomped/releases/latest, want https://github.com/bryanthaboi/gen1recomp/releases/latest)": 1,
+        "FAIL payload name derived from version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_check_tests.lua": 1,
+        "FAIL parseRelease derives the payload name from the version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_tests.lua": 1,
+        "FAIL a player-side frame lands on the player anchor (got 37, want 20)": 1,
+        "FAIL a player-side frame lands on the player baseline (got 7, want 8)": 1,
+        "FAIL an enemy-side frame lands on the enemy anchor (got 131, want 136)": 1,
+        "FAIL tests/engine/wide_battle_layout.lua": 1
+      },
+      "engine": [
+        "engine: 166/175 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true
+    },
+    "baseline": {
+      "log": "fresh-full.log",
+      "sha256": "65e7e2b8f3021ac8d3a80887bcb002f485eb51e3e8c4889c927f1e0bf71ba075",
+      "fail_counter": {
+        "FAIL hook:battle.status_hud_visible has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.finished has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.started has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:pokemon.egg_hatched has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.blocks_replaced has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.tick has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL tests/engine/gate_meta_coverage.lua": 1,
+        "FAIL the process exit runs only after love.quit declined to veto": 1,
+        "FAIL the process exit is gated on Android": 1,
+        "FAIL tests/engine/quit_thread_shutdown.lua": 1,
+        "FAIL and stays out of the live pad map until close (got x, want nil)": 1,
+        "FAIL tests/engine/rebind_capture_bug510.lua": 1,
+        "FAIL all eight actions still have exactly one pad button (got 12, want 8)": 1,
+        "FAIL tests/engine/rebind_swap_clear_bug589.lua": 1,
+        "FAIL tests/engine/soft_reset_bug563.lua": 1,
+        "FAIL tests/engine/tool_mod_hooks.lua": 1,
+        "FAIL releaseUrl points at the repo's latest release (got https://github.com/UNDERdecoded/Gen2Recomped/releases/latest, want https://github.com/bryanthaboi/gen1recomp/releases/latest)": 1,
+        "FAIL payload name derived from version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_check_tests.lua": 1,
+        "FAIL parseRelease derives the payload name from the version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_tests.lua": 1,
+        "FAIL a player-side frame lands on the player anchor (got 37, want 20)": 1,
+        "FAIL a player-side frame lands on the player baseline (got 7, want 8)": 1,
+        "FAIL an enemy-side frame lands on the enemy anchor (got 131, want 136)": 1,
+        "FAIL tests/engine/wide_battle_layout.lua": 1
+      },
+      "engine": [
+        "engine: 165/174 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true
+    },
+    "exact_anchored_FAIL_Counter_equal": true,
+    "inherited_fail_lines": 25,
+    "candidate_exit": 1,
+    "baseline_exit": 1
+  },
+  "combined_regression": {
+    "candidate": {
+      "log": "frozen-full.log",
+      "sha256": "697eb9a34cdcbedcf72358e692b405dc0e8fc857e5e5a36f0822557700a33441",
+      "fail_counter": {},
+      "engine": [
+        "engine: 284/284 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true
+    },
+    "baseline": {
+      "log": "frozen-full.log",
+      "sha256": "0b4918de8241acdb4f35a0ea06ec8b1108afa0c9d16b3d475d7f11fa3f0706e4",
+      "fail_counter": {},
+      "engine": [
+        "engine: 283/283 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true
+    },
+    "exact_anchored_FAIL_Counter_equal": true,
+    "candidate_exit": 0,
+    "baseline_exit": 0
+  },
+  "paired_native_wait_cases": 36,
+  "actual_host_checks": {
+    "checks": 6306,
+    "path": "tmp/native-sound-script-waits-qa/actual-game-field.log",
+    "sha256": "83a96e41c855b89980508feebfcfe5c407d81de5143bb907e1d15970b65d6866"
+  },
+  "contracts": [
+    {
+      "host": "feature",
+      "head": "974ec078b51ad07690c183c224db293738080b19",
+      "src_tree": "99122e59f7e2d599ba96ca80f2c0763ee4a6a3ae",
+      "tests_tree": "5f847cdabb17bcd77d31d9d4d770d6ed63ad2fa9",
+      "qualified_workers": 228,
+      "qualified_comparisons": 114,
+      "paired_rows": 175616,
+      "reports": [
+        {
+          "path": "tmp/native-sound-script-waits-qa/frozen-command-matrix.json",
+          "sha256": "cba654e5926c44a85a21f7b3e944c8a0e11843f83430706b43fe907cd9aa9e75",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-01.json",
+          "sha256": "aec85be7eb623385d00fa88fcd315bcdfbbe33ddf4943eabe315cc6823dc84b6",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-02.json",
+          "sha256": "0808cff3700f38632111949549ae7bc2546ba72b933c19884b427c87ffa56d30",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-03.json",
+          "sha256": "d8bbc7efea607c1292c30f61e42a6323f95bcd298a393ad307c58ab7b4872617",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-04.json",
+          "sha256": "bf2131557ba855a1127ad3e80cabad52123b300ef35e85d183613f3c531dc29a",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-05.json",
+          "sha256": "9724f762953ac72f86c5907ad1aec86f2fd959dfffae7cd642b628ca7889fc56",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-06.json",
+          "sha256": "020c1e70440e6bf8220de49aa70a90357cd83936f30b9b02144fd9ce62004dbe",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-07.json",
+          "sha256": "97566f44edf4992a8f33c2db4ea9a3b0a08c4fddd3fd4091f2d26b28cc6d05e7",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-08.json",
+          "sha256": "cc8a93ba45b39824a938f79cbad1b38371c6104b57104b47de9ade5a0b4c4a9c",
+          "host_ref": "974ec078b51ad07690c183c224db293738080b19"
+        }
+      ],
+      "slowest_worker_seconds": 124.7249,
+      "complete_observations_recompared": true,
+      "json_boolean_types_preserved": true
+    },
+    {
+      "host": "combined",
+      "head": "f04fdf95164b2f3cc6d2da9563931ff53722ec15",
+      "src_tree": "90688af7c38d19843369b895f87bc83a5697d753",
+      "tests_tree": "c4fd68af51840dc517e20379e1e8c5e95c11a9ec",
+      "qualified_workers": 228,
+      "qualified_comparisons": 114,
+      "paired_rows": 175616,
+      "reports": [
+        {
+          "path": "tmp/native-world-wait-integration-qa/frozen-command-matrix.json",
+          "sha256": "83a3e325089b4c6c375d1180e41538704c7cd757f53e7d565175e24b03bd01a0",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-01.json",
+          "sha256": "f6ecc5095ee907b3c7b771a799c44e6512d635b323ea737c4c4e25c17fa81597",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-02.json",
+          "sha256": "09a0e35259e8fec5a5c58b64061822b9b13afc05fc98cb5b1203c2113d248011",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-03.json",
+          "sha256": "0bd083b2775a173015238a5bafcb776d39ba9919a7bd48c9113cc32537e7510d",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-04.json",
+          "sha256": "15bd28c7a9f73013b03b583cdcf7b19cbed436d7cdf0c3ac3b86285e76a35f80",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-05.json",
+          "sha256": "0bf29f721413c4abbabacc040b221dc37a36aed3d07c390a124d273e4bd9ef65",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-06.json",
+          "sha256": "be106097bd1966c2a504fcf65aa1b2d7437745e94b8fddbf5da7e77f5141054f",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-07.json",
+          "sha256": "6434e159d3360455119d93397c179734757fde7253c36deafcfd62cf60431d2d",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        },
+        {
+          "path": "tmp/native-world-wait-broad-qa/batch-08.json",
+          "sha256": "a158959f6f9cbcc84c06a29a2a8cc6641a8e9648bab7548b56f7b92d1e828c90",
+          "host_ref": "f04fdf95164b2f3cc6d2da9563931ff53722ec15"
+        }
+      ],
+      "slowest_worker_seconds": 52.5738,
+      "complete_observations_recompared": true,
+      "json_boolean_types_preserved": true
+    }
+  ],
+  "existing_actual_imports": [
+    {
+      "host": "feature",
+      "reports": [
+        {
+          "log": "tmp/native-sound-script-waits-qa/actual-audio-import.log",
+          "sha256": "5a2552ce876b7262164656d139a73d05606452c38811defd1597137fdf24dfa0",
+          "scenario_or_source_count": 10,
+          "turns": null,
+          "move_used_events": null
+        },
+        {
+          "log": "tmp/native-sound-script-waits-qa/frozen-imported.log",
+          "sha256": "b702a5fc22d4ff4ea84667499d0584d6a3ee5eb5349d2eca26bf4da52c045221",
+          "scenario_or_source_count": 24,
+          "turns": 48,
+          "move_used_events": 120
+        }
+      ]
+    },
+    {
+      "host": "combined",
+      "reports": [
+        {
+          "log": "tmp/native-world-wait-integration-qa/actual-audio-import.log",
+          "sha256": "8e79583c1f53bb02395d13d4f244d6c6ae1fc298cc4904e5c4c3bd5552d9fd98",
+          "scenario_or_source_count": 10,
+          "turns": null,
+          "move_used_events": null
+        },
+        {
+          "log": "tmp/native-world-wait-integration-qa/frozen-imported.log",
+          "sha256": "ebb6eb96734f571a4882dd004703e1f57db4853dfd1fda7cc07ed92f7a6e9e5d",
+          "scenario_or_source_count": 24,
+          "turns": 48,
+          "move_used_events": 120
+        }
+      ]
+    }
+  ],
+  "actual_native_field_imports": [
+    {
+      "host": "feature",
+      "log": "tmp/native-sound-script-waits-qa/actual-field-import-first.log",
+      "sha256": "be3b170be6e9e5850861fb184eac0ee3ee88a3e89c032fd0a32b7b211123ad7a",
+      "strict_complete_outputs_equal": true,
+      "profiles": [
+        {
+          "version": "firered",
+          "completed": 25,
+          "samples": 17641,
+          "rate": 44100,
+          "channels": 2
+        },
+        {
+          "version": "emerald",
+          "completed": 34,
+          "samples": 24256,
+          "rate": 44100,
+          "channels": 2
+        }
+      ],
+      "recorded_frames_per_profile": 100
+    },
+    {
+      "host": "combined",
+      "log": "tmp/native-world-wait-integration-qa/actual-field-import.log",
+      "sha256": "170ed946c6bdba99745af7cee6316ac9b692b206ea5ea49d35fc8d6eb51530a8",
+      "strict_complete_outputs_equal": true,
+      "profiles": [
+        {
+          "version": "firered",
+          "completed": 25,
+          "samples": 17641,
+          "rate": 44100,
+          "channels": 2
+        },
+        {
+          "version": "emerald",
+          "completed": 34,
+          "samples": 24256,
+          "rate": 44100,
+          "channels": 2
+        }
+      ],
+      "recorded_frames_per_profile": 100
+    }
+  ],
+  "private_import_inputs": {
+    "inputs_read_only": true,
+    "files": [
+      {
+        "version": "firered",
+        "path": "data/generated/audio.lua",
+        "bytes": 184817,
+        "sha256": "fca8c548ee8cf47c638a824794b80f708431e765bf9eae9157274189b4b46e69"
+      },
+      {
+        "version": "firered",
+        "path": "assets/generated/audio/m4a.bin",
+        "bytes": 2563861,
+        "sha256": "c01203f0323711b00781a7ce25ad7306b71d5791a0f07fac2d6c0e128e5d0940"
+      },
+      {
+        "version": "emerald",
+        "path": "data/generated/audio.lua",
+        "bytes": 276284,
+        "sha256": "5825679875f18a4d726db9fd9609a5d20f8365682d02f89d5eb92e7fe2954d4a"
+      },
+      {
+        "version": "emerald",
+        "path": "assets/generated/audio/m4a.bin",
+        "bytes": 3330877,
+        "sha256": "ab8621d57ce4c43b09343ebf1a0af168b59992b6a84ade4e10459696431625ab"
+      }
+    ]
+  },
+  "negative_controls": {
+    "original_vm_wait": {
+      "schema_version": 1,
+      "source_ref": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+      "host_ref": "aaf44f4eed3bb49a910b8a77d11e73c2075d8396",
+      "paired_cases": 12,
+      "different_cases": [
+        {
+          "version": "firered",
+          "case": "native-player-one"
+        },
+        {
+          "version": "firered",
+          "case": "native-player-two"
+        },
+        {
+          "version": "firered",
+          "case": "special-player-three"
+        },
+        {
+          "version": "firered",
+          "case": "native-and-file-override"
+        },
+        {
+          "version": "emerald",
+          "case": "native-player-one"
+        },
+        {
+          "version": "emerald",
+          "case": "native-player-two"
+        },
+        {
+          "version": "emerald",
+          "case": "native-and-file-override"
+        }
+      ],
+      "workers": 4,
+      "all_workers_exit_zero": true,
+      "voices_and_queries_equal": true,
+      "raw_negative_path": "tmp/native-sound-script-waits-qa/frozen-negative.json",
+      "raw_negative_sha256": "cab9d8bbf9ca0086842223cc25c23b45f660806bd9ed24f130e56a4b5bc32f9f",
+      "runtime_unchanged_from": "e70129d1311ca81a57dc67cc56967dac45975000",
+      "status": "reproduced; implementation and qualification pending",
+      "next_required": [
+        "Preserve immediate completion for silence/override-only and Emerald player three",
+        "Preserve polling of current players after stops/replacements",
+        "Qualify the native 181-poll fallback and real Audio.update callback timing before choosing a timeout implementation",
+        "Cover imported-script lowering, actual runner, native script hooks and gameplay return path",
+        "Do not alter or publish the separate frozen sound-player ownership change until its existing gates finish"
+      ]
+    },
+    "audio_service_wire": {
+      "base": "974ec078b51ad07690c183c224db293738080b19",
+      "change": "Only remove Sound.update() from Game.update audio loop",
+      "exit": 1,
+      "checks_passed": 6304,
+      "checks_total": 6306,
+      "exact_failures": [
+        "actual Game:update services audio after logic independently of fast-forward (got 181, want 180)",
+        "actual Game:update services audio after logic independently of fast-forward (got 181, want 180)"
+      ],
+      "path": "tmp/native-sound-no-audio-qa/actual-game-negative.log",
+      "sha256": "32b26dada2eac3b8c75a98c1d09feb1c1c0dd4b295751840a3f5b9c2e690d847"
+    },
+    "actual_parent_field_script": {
+      "head": "8e06021a19dca8a150fbc27a6af20cd7c8ea4f2f",
+      "exit": 1,
+      "reason": "actual native wait must end with decoded PCM: got 0, want 25",
+      "path": "tmp/native-world-wait-baseline-qa/actual-field-negative.log",
+      "sha256": "b59a6717518d56abb4a1453ea54bff540eadba9fb60a90fceddb708080a15454"
+    }
+  },
+  "native_clock_oracle": {
+    "schema_version": 1,
+    "source_ref": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+    "reference_functions_unchanged": true,
+    "raw_log": "workspace/tmp/native-sound-script-wait-clock-oracle.log",
+    "raw_log_sha256": "68f89c3fcf2a204ecd996b3b32ca1c911bfae891602a52d7b18d7c8b4cae24f9",
+    "command_exit": 0,
+    "cases": [
+      {
+        "version": "firered",
+        "case": "logic-only",
+        "completion_logic_tick": 181,
+        "recorded_frames": 182
+      },
+      {
+        "version": "firered",
+        "case": "normal-audio-after-logic",
+        "completion_logic_tick": 180,
+        "recorded_frames": 181
+      },
+      {
+        "version": "firered",
+        "case": "two-audio-ticks-per-logic",
+        "completion_logic_tick": 90,
+        "recorded_frames": 91
+      },
+      {
+        "version": "firered",
+        "case": "one-audio-tick-per-two-logic",
+        "completion_logic_tick": 181,
+        "recorded_frames": 182
+      },
+      {
+        "version": "firered",
+        "case": "latched-silence-before-replacement",
+        "completion_logic_tick": 2,
+        "recorded_frames": 3
+      },
+      {
+        "version": "emerald",
+        "case": "logic-only",
+        "completion_logic_tick": 181,
+        "recorded_frames": 182
+      },
+      {
+        "version": "emerald",
+        "case": "normal-audio-after-logic",
+        "completion_logic_tick": 180,
+        "recorded_frames": 181
+      },
+      {
+        "version": "emerald",
+        "case": "two-audio-ticks-per-logic",
+        "completion_logic_tick": 90,
+        "recorded_frames": 91
+      },
+      {
+        "version": "emerald",
+        "case": "one-audio-tick-per-two-logic",
+        "completion_logic_tick": 181,
+        "recorded_frames": 182
+      },
+      {
+        "version": "emerald",
+        "case": "latched-silence-before-replacement",
+        "completion_logic_tick": 2,
+        "recorded_frames": 3
+      }
+    ],
+    "scope": "Actual native VM, native audio entrypoints, Audio.update and callback list; own speaker/carrier/initial state. Reproduces logic-before-audio owner order; no full game/GPU scene claim."
+  },
+  "retained_first_invocation": {
+    "path": "tmp/native-sound-script-waits-qa/actual-game-first.log",
+    "sha256": "7fb583a193a9ba3c38fd390c3b6707c9964642020271acd62a928a073dde9402"
+  },
+  "limits": [
+    "Only admitted FireRed and Emerald native world-controller behavior is qualified",
+    "Native audio/script/runner functions are unchanged in the reference; input state, waveform hardware and operation definitions are owned",
+    "Actual-import field speaker completion uses decoded PCM sample duration; no physical audio-device timing claim",
+    "No complete mobile audio-session, all public sound-event timing, waveform equality, GPU scene or unregistered profile claim",
+    "No arbitrary whole-mod or full-playthrough claim",
+    "No ROM/audio assets, normal cache/save writes or automatic game/audio-device/GPU launch",
+    "Feature keeps nine inherited failing suites visible; combined fork passes every quick tier",
+    "Hosted CI must be inspected separately after publication"
+  ]
+}

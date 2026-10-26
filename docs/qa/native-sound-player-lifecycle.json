@@ -1,0 +1,703 @@
+{
+  "schema_version": 1,
+  "reference_commit": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "reference_read_only": true,
+  "lua_jit_commit": "a4c064539ea931274d407e1249b4bb575424a0f4",
+  "feature_frozen_head": "e70129d1311ca81a57dc67cc56967dac45975000",
+  "feature_src_tree": "fca83427924ade60e5f65df71790ad4a93ddcda7",
+  "feature_tests_tree": "e044ca1c05d8d24bd30f7ec8d570cb23e6157d32",
+  "combined_frozen_head": "7607388218b2d08dd5835369dec104f894ecd942",
+  "combined_src_tree": "f3284d939aba866975579e4ea0f85dff6bdac543",
+  "combined_tests_tree": "9cd1bb00ab3758dc1becdf7191d49832425a3a8d",
+  "native_command_revision": 18,
+  "party_codec_revision": 1,
+  "independent_native_digest": "c82a14f754706103",
+  "unchanged_legacy_digest": "e33d251961f2a41d",
+  "fingerprint_audit": {
+    "path": "tmp/native-sound-lifecycle-qa/hash-audit.log",
+    "sha256": "ad34bf815771fa5934809bab5599cc3ab719b3f0af0096dae5743f6db981cca7"
+  },
+  "feature_regression": {
+    "candidate": {
+      "log": "tmp/native-sound-lifecycle-qa/frozen-full.log",
+      "sha256": "75e4c2b6d80fef6020d3944adb9432166b3651a0cd6c4acca46478109ee17f79",
+      "fail_counter": {
+        "FAIL hook:battle.status_hud_visible has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.finished has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.started has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:pokemon.egg_hatched has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.blocks_replaced has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.tick has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL tests/engine/gate_meta_coverage.lua": 1,
+        "FAIL the process exit runs only after love.quit declined to veto": 1,
+        "FAIL the process exit is gated on Android": 1,
+        "FAIL tests/engine/quit_thread_shutdown.lua": 1,
+        "FAIL and stays out of the live pad map until close (got x, want nil)": 1,
+        "FAIL tests/engine/rebind_capture_bug510.lua": 1,
+        "FAIL all eight actions still have exactly one pad button (got 12, want 8)": 1,
+        "FAIL tests/engine/rebind_swap_clear_bug589.lua": 1,
+        "FAIL tests/engine/soft_reset_bug563.lua": 1,
+        "FAIL tests/engine/tool_mod_hooks.lua": 1,
+        "FAIL releaseUrl points at the repo's latest release (got https://github.com/UNDERdecoded/Gen2Recomped/releases/latest, want https://github.com/bryanthaboi/gen1recomp/releases/latest)": 1,
+        "FAIL payload name derived from version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_check_tests.lua": 1,
+        "FAIL parseRelease derives the payload name from the version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_tests.lua": 1,
+        "FAIL a player-side frame lands on the player anchor (got 37, want 20)": 1,
+        "FAIL a player-side frame lands on the player baseline (got 7, want 8)": 1,
+        "FAIL an enemy-side frame lands on the enemy anchor (got 131, want 136)": 1,
+        "FAIL tests/engine/wide_battle_layout.lua": 1
+      },
+      "engine": [
+        "engine: 165/174 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true,
+      "tier_summary": [
+        "",
+        "==============================================================",
+        "  1 TIER(S) FAILED",
+        "    - T1/T2 engine invariants + parity gates",
+        "=============================================================="
+      ]
+    },
+    "baseline": {
+      "log": "fresh-full.log",
+      "sha256": "4f3553e3a478ca2b7b67e0b885975f4c5c577e2c15cd2c31eb3fee34dfaa09b5",
+      "fail_counter": {
+        "FAIL hook:battle.status_hud_visible has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.finished has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:intro.birch_speech.started has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:pokemon.egg_hatched has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.blocks_replaced has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL event:world.tick has no unit test naming it through the public mod API (add one, or add a DEBT entry saying which milestone owes it)": 1,
+        "FAIL tests/engine/gate_meta_coverage.lua": 1,
+        "FAIL the process exit runs only after love.quit declined to veto": 1,
+        "FAIL the process exit is gated on Android": 1,
+        "FAIL tests/engine/quit_thread_shutdown.lua": 1,
+        "FAIL and stays out of the live pad map until close (got x, want nil)": 1,
+        "FAIL tests/engine/rebind_capture_bug510.lua": 1,
+        "FAIL all eight actions still have exactly one pad button (got 12, want 8)": 1,
+        "FAIL tests/engine/rebind_swap_clear_bug589.lua": 1,
+        "FAIL tests/engine/soft_reset_bug563.lua": 1,
+        "FAIL tests/engine/tool_mod_hooks.lua": 1,
+        "FAIL releaseUrl points at the repo's latest release (got https://github.com/UNDERdecoded/Gen2Recomped/releases/latest, want https://github.com/bryanthaboi/gen1recomp/releases/latest)": 1,
+        "FAIL payload name derived from version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_check_tests.lua": 1,
+        "FAIL parseRelease derives the payload name from the version (got Gen2Recomped-1.4.2.love, want gen1recomp-1.4.2.love)": 1,
+        "FAIL tests/engine/update_tests.lua": 1,
+        "FAIL a player-side frame lands on the player anchor (got 37, want 20)": 1,
+        "FAIL a player-side frame lands on the player baseline (got 7, want 8)": 1,
+        "FAIL an enemy-side frame lands on the enemy anchor (got 131, want 136)": 1,
+        "FAIL tests/engine/wide_battle_layout.lua": 1
+      },
+      "engine": [
+        "engine: 164/173 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true,
+      "tier_summary": [
+        "",
+        "==============================================================",
+        "  1 TIER(S) FAILED",
+        "    - T1/T2 engine invariants + parity gates",
+        "=============================================================="
+      ]
+    },
+    "exact_anchored_FAIL_Counter_equal": true,
+    "inherited_fail_lines": 25,
+    "candidate_exit": 1,
+    "baseline_exit": 1
+  },
+  "combined_regression": {
+    "candidate": {
+      "log": "tmp/native-sound-integration-qa/frozen-full.log",
+      "sha256": "0b4918de8241acdb4f35a0ea06ec8b1108afa0c9d16b3d475d7f11fa3f0706e4",
+      "fail_counter": {},
+      "engine": [
+        "engine: 283/283 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true,
+      "tier_summary": [
+        "   import a ROM to run them; the modded-link cases ran in T4)",
+        "",
+        "==============================================================",
+        "  ALL TIERS PASSED",
+        "=============================================================="
+      ]
+    },
+    "baseline": {
+      "log": "frozen-full.log",
+      "sha256": "8bf366cde1ba96343a7a941a2e1d6488e3b0ddcb3987f66f8213d18b23a7c605",
+      "fail_counter": {},
+      "engine": [
+        "engine: 282/282 suites passed"
+      ],
+      "sdk": [
+        "modkit: 3/3 suites passed"
+      ],
+      "b30": true,
+      "tier_summary": [
+        "   import a ROM to run them; the modded-link cases ran in T4)",
+        "",
+        "==============================================================",
+        "  ALL TIERS PASSED",
+        "=============================================================="
+      ]
+    },
+    "exact_anchored_FAIL_Counter_equal": true,
+    "candidate_exit": 0,
+    "baseline_exit": 0
+  },
+  "contracts": [
+    {
+      "host": "feature",
+      "head": "e70129d1311ca81a57dc67cc56967dac45975000",
+      "src_tree": "fca83427924ade60e5f65df71790ad4a93ddcda7",
+      "tests_tree": "e044ca1c05d8d24bd30f7ec8d570cb23e6157d32",
+      "qualified_workers": 224,
+      "qualified_comparisons": 112,
+      "paired_rows": 175580,
+      "reports": [
+        {
+          "path": "tmp/native-sound-lifecycle-qa/frozen-command-matrix.json",
+          "sha256": "a3f859b053b19da04644ad210e656879302d7a773e1e517019a37abf10f41a8c",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-01.json",
+          "sha256": "146d2724621f27a09faa8998e3cde6d904555a29d156e620e635afb08b70957c",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-02.json",
+          "sha256": "3e7dca577e9f05368118548c2577c591ce366b230be587a618c84a8aa9c7e978",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-03.json",
+          "sha256": "2ba0532893f96ba147c631ad10455d073c908a3607ffc11f1dbab49481f9bfd6",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-04.json",
+          "sha256": "c523cba2c7e2b3e532900d0e0c7767619cd8e60c778c5b4816e1ec8ed2bb8667",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-05.json",
+          "sha256": "1062dfc53c4c2180c6db6dcbdf3ee4fc4906fda0abcb953682208dc6304cddcf",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-06.json",
+          "sha256": "7fc8d01683a687ce339c58c63f3c46ad9a11648bc99f1bec38db7a4b0fa2df33",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-07.json",
+          "sha256": "c57c273eb8e81f3143bb98d1031826914cc905fe014b582d8b526bb99a6a3564",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-08.json",
+          "sha256": "220ed516f2bb993b156c08f69efd0d8fbd2e926ec9de8e5ff7877a1d287a5bb4",
+          "host_ref": "e70129d1311ca81a57dc67cc56967dac45975000"
+        }
+      ],
+      "slowest_worker_seconds": 104.494,
+      "complete_observations_recompared": true,
+      "json_boolean_types_preserved": true
+    },
+    {
+      "host": "combined",
+      "head": "7607388218b2d08dd5835369dec104f894ecd942",
+      "src_tree": "f3284d939aba866975579e4ea0f85dff6bdac543",
+      "tests_tree": "9cd1bb00ab3758dc1becdf7191d49832425a3a8d",
+      "qualified_workers": 224,
+      "qualified_comparisons": 112,
+      "paired_rows": 175580,
+      "reports": [
+        {
+          "path": "tmp/native-sound-integration-qa/frozen-command-matrix.json",
+          "sha256": "86fae4068ac03d4046c4338babc5cc3418d36e8a307f042ad869b32aa46c5a13",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-01.json",
+          "sha256": "c540a3cf9722f43ed3ec07b430ea0657bd5696740fda6d5978acac662907a419",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-02.json",
+          "sha256": "a0ccaa7725bd4ce9d538ec1167ef06d37e2a78fe34aa85af8337afad05642beb",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-03.json",
+          "sha256": "138df3ba88dafe071896d18bfb2e3f543ece4a4848e7340fe538854f5cc69388",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-04.json",
+          "sha256": "8c65e60187a075de9b9fc2fa9972e6d6b086f2ed62f7dd70cca1f05a30813222",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-05.json",
+          "sha256": "cd802ef4b40a3c3da239b5e30fdce34dc6b37f734a824e3d65a690c3de6e5a2c",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-06.json",
+          "sha256": "fe291fb49b74957e69530e6024e6f913df8032807c1247c6811bd9472dae27c2",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-07.json",
+          "sha256": "625bb2183228779d2d1653c7c7b99ddeebde9917bf603a6e342ebe16b75aa008",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        },
+        {
+          "path": "tmp/native-sound-broad-qa/batch-08.json",
+          "sha256": "d2e3e092b1646500bd924cc4f520d5008d52a3ba7d87130fac928b865c6169de",
+          "host_ref": "7607388218b2d08dd5835369dec104f894ecd942"
+        }
+      ],
+      "slowest_worker_seconds": 68.7168,
+      "complete_observations_recompared": true,
+      "json_boolean_types_preserved": true
+    }
+  ],
+  "actual_host_regression": {
+    "checks": 110,
+    "path": "tmp/native-sound-lifecycle-qa/unit-entrypoints.log",
+    "sha256": "daaa1426d65b576814f511af554c27a5d8532aafb6c9719c89be9a39e0b856d5"
+  },
+  "protocol_regression": {
+    "checks": 154,
+    "path": "tmp/native-sound-lifecycle-qa/protocol18.log",
+    "sha256": "8bed4f864b85fdaefc464e830592f1ef28ecb2c245987b24440b65b4aac691e2"
+  },
+  "negative_controls": {
+    "owned_cases": {
+      "paired_cases": 20,
+      "different_cases": 16,
+      "all_four_workers_exit_zero": true,
+      "host_ref": "6fcea3bbfd3461b4c48f01f3aa21484f38ee771e",
+      "path": "tmp/native-sound-lifecycle-qa/roles-cloning-negative.json",
+      "sha256": "31f59bd41f2f2b95c365fb3b62b44c403419c873bbefa14c7c0fe03c62879ccb"
+    },
+    "actual_import": {
+      "exit": 1,
+      "reason": "actual same-player source must be replaced",
+      "sha256": "fa25f8d059d2c2b9b784e1b2892abbbbfeea8c5f9e3eb0b9c49c325cceb1a410",
+      "path": "tmp/native-lifecycle-baseline-qa/actual-audio-negative.log",
+      "host_ref": "62d1e451fad9dd992b6efbd912c09b6e873efba9"
+    }
+  },
+  "actual_imported_audio": [
+    {
+      "host": "feature",
+      "log": "tmp/native-sound-lifecycle-qa/actual-audio-import-mounted.log",
+      "sha256": "c33a11cd37f58d7e509c1e5a21b73e994635b3e0dc2e38838c651a4f14f46d0c",
+      "source_count": 10,
+      "rows": [
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 17641,
+          "channels": 2,
+          "version": "firered",
+          "active": [
+            141
+          ]
+        },
+        {
+          "id": 164,
+          "player": 1,
+          "samples": 59468,
+          "channels": 2,
+          "version": "firered",
+          "active": [
+            164
+          ]
+        },
+        {
+          "id": 5,
+          "player": 2,
+          "samples": 16906,
+          "channels": 2,
+          "version": "firered",
+          "active": [
+            5,
+            164
+          ]
+        },
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 17641,
+          "channels": 1,
+          "version": "firered",
+          "active": [
+            5,
+            141
+          ]
+        },
+        {
+          "id": 74,
+          "player": 3,
+          "samples": 47041,
+          "channels": 2,
+          "version": "firered",
+          "active": [
+            5,
+            74,
+            141
+          ]
+        },
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 24256,
+          "channels": 2,
+          "version": "emerald",
+          "active": [
+            141
+          ]
+        },
+        {
+          "id": 164,
+          "player": 1,
+          "samples": 92597,
+          "channels": 2,
+          "version": "emerald",
+          "active": [
+            164
+          ]
+        },
+        {
+          "id": 5,
+          "player": 2,
+          "samples": 16906,
+          "channels": 2,
+          "version": "emerald",
+          "active": [
+            5,
+            164
+          ]
+        },
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 24256,
+          "channels": 1,
+          "version": "emerald",
+          "active": [
+            5,
+            141
+          ]
+        },
+        {
+          "id": 81,
+          "player": 3,
+          "samples": 47041,
+          "channels": 2,
+          "version": "emerald",
+          "active": [
+            5,
+            81,
+            141
+          ]
+        }
+      ]
+    },
+    {
+      "host": "combined",
+      "log": "tmp/native-sound-integration-qa/actual-audio-import.log",
+      "sha256": "cfbe951d651ebd84c424f7ff7a7c66d2a6ba1c114e9fb43d5daacebf18fc6516",
+      "source_count": 10,
+      "rows": [
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 17641,
+          "channels": 2,
+          "active": [
+            141
+          ],
+          "version": "firered"
+        },
+        {
+          "id": 164,
+          "player": 1,
+          "samples": 59468,
+          "channels": 2,
+          "active": [
+            164
+          ],
+          "version": "firered"
+        },
+        {
+          "id": 5,
+          "player": 2,
+          "samples": 16906,
+          "channels": 2,
+          "active": [
+            5,
+            164
+          ],
+          "version": "firered"
+        },
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 17641,
+          "channels": 1,
+          "active": [
+            5,
+            141
+          ],
+          "version": "firered"
+        },
+        {
+          "id": 74,
+          "player": 3,
+          "samples": 47041,
+          "channels": 2,
+          "active": [
+            5,
+            74,
+            141
+          ],
+          "version": "firered"
+        },
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 24256,
+          "channels": 2,
+          "active": [
+            141
+          ],
+          "version": "emerald"
+        },
+        {
+          "id": 164,
+          "player": 1,
+          "samples": 92597,
+          "channels": 2,
+          "active": [
+            164
+          ],
+          "version": "emerald"
+        },
+        {
+          "id": 5,
+          "player": 2,
+          "samples": 16906,
+          "channels": 2,
+          "active": [
+            5,
+            164
+          ],
+          "version": "emerald"
+        },
+        {
+          "id": 141,
+          "player": 1,
+          "samples": 24256,
+          "channels": 1,
+          "active": [
+            5,
+            141
+          ],
+          "version": "emerald"
+        },
+        {
+          "id": 81,
+          "player": 3,
+          "samples": 47041,
+          "channels": 2,
+          "active": [
+            5,
+            81,
+            141
+          ],
+          "version": "emerald"
+        }
+      ]
+    }
+  ],
+  "actual_imported_public_mirror": [
+    {
+      "host": "feature",
+      "log": "tmp/native-sound-lifecycle-qa/frozen-imported.log",
+      "scenario_count": 24,
+      "turn_count": 48,
+      "move_used_events": 120,
+      "log_sha256": "9a5e3321dce8d754568814c7e69abd42c8062dcbfb6bda9facee6fcc1e5380b4"
+    },
+    {
+      "host": "combined",
+      "log": "tmp/native-sound-integration-qa/frozen-imported.log",
+      "scenario_count": 24,
+      "turn_count": 48,
+      "move_used_events": 120,
+      "log_sha256": "def532a4bae1b79e88e86e8d4009ef39bbc17069b2823ed8b37eaf67dfb2ac14"
+    }
+  ],
+  "metadata_audit": {
+    "all_equal": true,
+    "rows": [
+      {
+        "version": "firered",
+        "id": 5,
+        "player": 2,
+        "header": 7034656,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "firered",
+        "id": 141,
+        "player": 1,
+        "header": 7046236,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "firered",
+        "id": 148,
+        "player": 1,
+        "header": 7047012,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "firered",
+        "id": 164,
+        "player": 1,
+        "header": 7049052,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "firered",
+        "id": 171,
+        "player": 1,
+        "header": 7050084,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "firered",
+        "id": 74,
+        "player": 3,
+        "header": 7039116,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "firered",
+        "id": 75,
+        "player": 3,
+        "header": 7039180,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "firered",
+        "id": 76,
+        "player": 3,
+        "header": 7039240,
+        "rom_sha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc"
+      },
+      {
+        "version": "emerald",
+        "id": 5,
+        "player": 2,
+        "header": 9421084,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      },
+      {
+        "version": "emerald",
+        "id": 141,
+        "player": 1,
+        "header": 9432084,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      },
+      {
+        "version": "emerald",
+        "id": 148,
+        "player": 1,
+        "header": 9432952,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      },
+      {
+        "version": "emerald",
+        "id": 164,
+        "player": 1,
+        "header": 9435004,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      },
+      {
+        "version": "emerald",
+        "id": 171,
+        "player": 1,
+        "header": 9435768,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      },
+      {
+        "version": "emerald",
+        "id": 81,
+        "player": 3,
+        "header": 9425832,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      },
+      {
+        "version": "emerald",
+        "id": 82,
+        "player": 3,
+        "header": 9425896,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      },
+      {
+        "version": "emerald",
+        "id": 83,
+        "player": 3,
+        "header": 9425956,
+        "rom_sha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7"
+      }
+    ]
+  },
+  "retained_superseded_evidence": [
+    {
+      "path": "tmp/native-sound-lifecycle-qa/parent-negative.json",
+      "sha256": "2ce11cc0c361235b92588c882e685913d3d485ac7ff21feab3d0e9dfc8982407"
+    },
+    {
+      "path": "tmp/native-sound-lifecycle-qa/complete-inventory-negative.json",
+      "sha256": "0e879b34a0d49560acb5a86d50ca693a1298531d8f369336a6ba283caacc15a7"
+    },
+    {
+      "path": "tmp/native-sound-lifecycle-qa/unit-first.log",
+      "sha256": "138abb08dea0a91300764b2cbb8f0ccc38dce6437983395136e44011ad6b827c"
+    },
+    {
+      "path": "tmp/native-sound-lifecycle-qa/actual-audio-import-first.log",
+      "sha256": "90f6ccb98a587129e0e64b10ebdc6816caeafa9c0bcd5acbe678d1993bfb9619"
+    }
+  ],
+  "limits": [
+    "FireRed and Emerald player ownership; only admitted native profiles",
+    "Owned audio-controller cases do not advance playback time or assert synthesizer waveform equality",
+    "Actual M4A buffers are synthesized from existing private imports; speaker hardware is owned",
+    "No qualification of every public sound-event timing or complete GPU scenes",
+    "No arbitrary whole-mod or full-playthrough claim",
+    "No ROM/audio assets, normal cache writes or normal save writes",
+    "Feature keeps nine inherited failing suites visible; combined fork is fully passing",
+    "Hosted CI status must be checked separately after publication"
+  ]
+}

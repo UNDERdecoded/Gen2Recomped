@@ -613,6 +613,7 @@ function Game:update(dt)
     while self.audioAccum >= step do
       self.audioAccum = self.audioAccum - step
       require("src.core.Music").update(Data)
+      require("src.core.Sound").update()
     end
     close()
   end

@@ -1,0 +1,50 @@
+{
+  "schema_version": 1,
+  "source_ref": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "host_ref": "aaf44f4eed3bb49a910b8a77d11e73c2075d8396",
+  "paired_cases": 12,
+  "different_cases": [
+    {
+      "version": "firered",
+      "case": "native-player-one"
+    },
+    {
+      "version": "firered",
+      "case": "native-player-two"
+    },
+    {
+      "version": "firered",
+      "case": "special-player-three"
+    },
+    {
+      "version": "firered",
+      "case": "native-and-file-override"
+    },
+    {
+      "version": "emerald",
+      "case": "native-player-one"
+    },
+    {
+      "version": "emerald",
+      "case": "native-player-two"
+    },
+    {
+      "version": "emerald",
+      "case": "native-and-file-override"
+    }
+  ],
+  "workers": 4,
+  "all_workers_exit_zero": true,
+  "voices_and_queries_equal": true,
+  "raw_negative_path": "tmp/native-sound-script-waits-qa/frozen-negative.json",
+  "raw_negative_sha256": "cab9d8bbf9ca0086842223cc25c23b45f660806bd9ed24f130e56a4b5bc32f9f",
+  "runtime_unchanged_from": "e70129d1311ca81a57dc67cc56967dac45975000",
+  "status": "reproduced; implementation and qualification pending",
+  "next_required": [
+    "Preserve immediate completion for silence/override-only and Emerald player three",
+    "Preserve polling of current players after stops/replacements",
+    "Qualify the native 181-poll fallback and real Audio.update callback timing before choosing a timeout implementation",
+    "Cover imported-script lowering, actual runner, native script hooks and gameplay return path",
+    "Do not alter or publish the separate frozen sound-player ownership change until its existing gates finish"
+  ]
+}

@@ -674,6 +674,9 @@ function ChipAudio.newM4AEffect(data, def)
   if not song then return nil end
   local sd = synthFor("m4a").renderEffect(data, song)
   if not sd then return nil end
+  if def.nativePan ~= nil or def.nativeMono ~= nil then
+    sd = require("src.core.NativeSoundPan").apply(sd, def.nativePan, def.nativeMono)
+  end
   return love.audio.newSource(sd, "static")
 end
 
