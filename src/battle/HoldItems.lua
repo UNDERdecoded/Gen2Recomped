@@ -48,7 +48,8 @@ end
 -- The named effect and its parameter, or nil.  An effect the extractor had
 -- no name for comes back as a number and matches no rule below, which is
 -- the same silence an unknown ability gets.
-function HoldItems.effectOf(battler)
+local function nativeEffect(battler, native)
+  if type(native) == "table" then return native.effect, native.parameter, HoldItems.defOf(battler) end
   local def = HoldItems.defOf(battler)
   if not def then return nil end
   local effect,param=require('src.inventory.PolishedBerries').held(def,battler.mon)
@@ -56,6 +57,14 @@ function HoldItems.effectOf(battler)
   local effect = def.holdEffect
   if type(effect) ~= "string" then return nil end
   return effect, tonumber(def.holdEffectParam) or 0, def
+end
+
+function HoldItems.effectOf(battler, trigger, native)
+  local effect, param, def = nativeEffect(battler, native)
+  if not require("src.mods.Runtime").wantsHook("held_item.trigger") then return effect, param, def end
+  local definition = def or HoldItems.defOf(battler)
+  local chosen, amount = require("src.battle.HeldItemRead").read(battler, definition, effect, param or 0, trigger, 3)
+  return chosen, amount, def
 end
 
 HoldItems.effect = HoldItems.effectOf
@@ -109,7 +118,7 @@ local SOUL_DEW_SPECIES = { LATIAS = true, LATIOS = true }
 function HoldItems.attackMultiplier(attacker, move, special)
   local g5 = bw(attacker)
   if g5 then return g5.attackMultiplier(attacker, move, special) end
-  local effect = HoldItems.effectOf(attacker)
+  local effect = HoldItems.effectOf(attacker, "damage")
   if not effect then return 1, 1 end
   -- CHOICE BAND: half again as much, physical only
   if effect == "CHOICE_BAND" and not special then return 3, 2 end
@@ -129,7 +138,7 @@ end
 function HoldItems.defenceMultiplier(defender, move, special)
   local g5 = bw(defender)
   if g5 then return g5.defenceMultiplier(defender, move, special) end
-  local effect = HoldItems.effectOf(defender)
+  local effect = HoldItems.effectOf(defender, "damage")
   if not effect then return 1, 1 end
   local row = SPECIES_STAT[effect]
   if row and row.species[speciesOf(defender)] then
@@ -165,7 +174,7 @@ HoldItems.TYPE_POWER = TYPE_POWER
 -- Applied to the FINISHED damage, the way the cartridge applies it: as
 -- damage * (100 + param) / 100.
 function HoldItems.damageMultiplier(attacker, move)
-  local effect, param = HoldItems.effectOf(attacker)
+  local effect, param = HoldItems.effectOf(attacker, "damage")
   if not (effect and move) then return 1, 1 end
   local boostedType = TYPE_POWER[effect]
   if boostedType and boostedType == normalizeType(move.type) then
@@ -184,7 +193,7 @@ end
 function HoldItems.accuracyMultiplier(attacker, defender)
   local g5 = bw(attacker) or bw(defender)
   if g5 then return g5.accuracyMultiplier(attacker, defender) end
-  local effect, param = HoldItems.effectOf(defender)
+  local effect, param = HoldItems.effectOf(defender, "accuracy")
   if effect == "EVASION_UP" then return 100 - (param or 0) end
   return 100
 end
@@ -199,7 +208,7 @@ local CRIT_SPECIES = {
 function HoldItems.critStages(battler)
   local g5 = bw(battler)
   if g5 then return g5.critStages(battler) end
-  local effect = HoldItems.effectOf(battler)
+  local effect = HoldItems.effectOf(battler, "damage")
   if not effect then return 0 end
   if effect == "SCOPE_LENS" then return 1 end
   local list = CRIT_SPECIES[effect]
@@ -212,7 +221,7 @@ end
 function HoldItems.quickClawChance(battler)
   local g5 = bw(battler)
   if g5 then return g5.quickClawChance(battler) end
-  local effect, param = HoldItems.effectOf(battler)
+  local effect, param = HoldItems.effectOf(battler, "priority")
   if effect ~= "QUICK_CLAW" then return 0 end
   return param or 0
 end
@@ -223,7 +232,7 @@ end
 function HoldItems.flinchChance(attacker, move)
   local g5 = bw(attacker)
   if g5 then return g5.flinchChance(attacker, move) end
-  local effect, param = HoldItems.effectOf(attacker)
+  local effect, param = HoldItems.effectOf(attacker, "flinch")
   if effect ~= "FLINCH" then return 0 end
   if move and move.kingsRockAffected == false then return 0 end
   return param or 0
@@ -232,14 +241,14 @@ end
 -- FOCUS BAND: a `param` percent chance to be left standing on one HP by a
 -- hit that would otherwise knock the holder out.
 function HoldItems.focusBandChance(battler)
-  local effect, param = HoldItems.effectOf(battler)
+  local effect, param = HoldItems.effectOf(battler, "endure")
   if effect ~= "FOCUS_BAND" then return 0 end
   return param or 0
 end
 
 -- SHELL BELL: the attacker takes back a `param`th of the damage it dealt.
 function HoldItems.shellBellShare(attacker)
-  local effect, param = HoldItems.effectOf(attacker)
+  local effect, param = HoldItems.effectOf(attacker, "flinch")
   if effect ~= "SHELL_BELL" then return nil end
   if not param or param <= 0 then return nil end
   return param
@@ -306,11 +315,23 @@ end
 --   { kind = "critUp", delta = 2 }                    LANSAT BERRY
 --   { kind = "restoreStats" }                         WHITE HERB
 function HoldItems.trigger(battler, when)
-  local effect, param = HoldItems.effectOf(battler)
+  local gba = require("src.core.GameVersion").isGen3()
+  local effect, param = HoldItems.effectOf(battler, when == "entry" and "check" or "residual")
   if not effect then return nil end
   local mon = battler.mon
   if not mon or (mon.hp or 0) <= 0 then return nil end
   local max = maxHpOf(battler)
+  if when == "entry" then
+    if effect == "DOUBLE_PRIZE" then return { kind = "prize", consume = false } end
+    if effect ~= "RESTORE_STATS" then return nil end
+  end
+  -- MOVEEND_ITEM_EFFECTS_ALL is a selective cure/herb scan, not the normal
+  -- HP/PP/pinch check. In particular it must not add a fifth Berry grant
+  -- before the four after-action passes.
+  if when == "moveEnd" and not (CURE_STATUS[effect] or effect == "CURE_STATUS"
+      or effect == "CURE_CONFUSION" or effect == "CURE_ATTRACT" or effect == "RESTORE_STATS") then
+    return nil
+  end
 
   -- LEFTOVERS, the one that is never eaten.  Its parameter is 10 and it is
   -- NOT a percentage: ItemBattleEffects' LEFTOVERS arm reads maxHP / 16 and
@@ -329,7 +350,7 @@ function HoldItems.trigger(battler, when)
   if effect == "RESTORE_HP" then
     if mon.hp * 2 > max then return nil end
     if mon.hp >= max then return nil end
-    return { kind = "heal", effect = effect, amount = math.max(1, param),
+    return { kind = "heal", effect = effect, amount = math.max(gba and 0 or 1, param),
              consume = true }
   end
 
@@ -340,13 +361,15 @@ function HoldItems.trigger(battler, when)
     if mon.hp * 2 > max then return nil end
     if mon.hp >= max then return nil end
     return { kind = "heal", effect = effect,
-             amount = math.max(1, math.floor(max / (param > 0 and param or 8))),
-             confuse = HoldItems.dislikesFlavour(battler, flavourStat),
+             amount = math.max(1, math.floor(max / (gba and math.max(1, param) or (param > 0 and param or 8)))),
+             confuse = HoldItems.dislikesFlavour(battler, flavourStat)
+                       and (not gba or (require("src.battle.Abilities").of(battler) ~= "OWN_TEMPO"
+                       and not battler.confusedTurns)),
              consume = true }
   end
 
   if effect == "RESTORE_PP" then
-    if when ~= "turn" then return nil end
+    if when ~= "turn" and when ~= "action" then return nil end
     -- the caller finds the empty move; nil here means every move has PP
     local slot
     for i, m in ipairs(battler.curMoves or mon.moves or {}) do
@@ -354,10 +377,10 @@ function HoldItems.trigger(battler, when)
     end
     if not slot then return nil end
     return { kind = "restorePP", effect = effect, slot = slot,
-             amount = math.max(1, param), consume = true }
+             amount = math.max(gba and 0 or 1, param), consume = true }
   end
 
-  if when ~= "turn" then return nil end
+  if when ~= "turn" and when ~= "entry" and when ~= "action" and when ~= "moveEnd" then return nil end
 
   local cured = CURE_STATUS[effect]
   if cured then
@@ -389,18 +412,25 @@ function HoldItems.trigger(battler, when)
 
   -- the pinch berries, at a quarter of maximum HP or less
   local pinchStat = PINCH_STAT[effect]
-  local divisor = (param and param > 0) and param or 4
+  local divisor = gba and math.max(1, param) or ((param > 0) and param or 4)
   if pinchStat then
-    if mon.hp * divisor > max then return nil end
+    if mon.hp * divisor > max or (gba and ((battler.stages or {})[pinchStat] or 0) >= 6) then return nil end
     return { kind = "statUp", effect = effect, stat = pinchStat, delta = 1,
              consume = true }
   end
   if effect == "RANDOM_STAT_UP" then
     if mon.hp * divisor > max then return nil end
+    local eligible = false
+    for _, stat in ipairs(HoldItems.RANDOM_STATS) do
+      if ((battler.stages or {})[stat] or 0) < 6 then eligible = true break end
+    end
+    if gba and not eligible then return nil end
     return { kind = "statUp", effect = effect, stat = nil, delta = 2,
              consume = true }
   end
   if effect == "CRITICAL_UP" then
+    if require("src.core.GameVersion").isGen3()
+      and (battler.focusEnergy or battler.expFocusEnergy) then return nil end
     if mon.hp * divisor > max then return nil end
     return { kind = "critUp", effect = effect, delta = 2, consume = true }
   end
