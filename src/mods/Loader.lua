@@ -12,6 +12,7 @@ local Version = require("src.core.Version")
 local Assets = require("src.render.Assets")
 local ModUI = require("src.ui.ModUI")
 local AssetTransform = require("src.mods.AssetTransform")
+local FieldEffectRenderData = require("src.mods.FieldEffectRenderData")
 local Manifest = require("src.mods.Manifest")
 local Merge = require("src.mods.Merge")
 local Registry = require("src.mods.Registry")
@@ -1177,6 +1178,7 @@ function Loader:_loadMod(mod)
   -- mod is holding differs from the one the engine would build.
   self.apis = self.apis or {}
   self.apis[mod.manifest.id] = api
+  FieldEffectRenderData.install(api, self)
   local result = chunk(api)
   if type(result) == "function" then result(api) end
   -- a mod that replaced the table wholesale (mod.exports = {...}) still
