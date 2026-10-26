@@ -1,0 +1,68 @@
+name: Android runtime capacity candidates
+on:
+  pull_request:
+    paths:
+      - 'tools/mobile-runtime-check/**'
+      - 'tools/runtime-upvalue-check/check.lua'
+      - 'tools/runtime-upvalue-check/c_api.c'
+      - 'mobile/android/love/src/jni/LuaJIT-2.1/**'
+      - '.github/workflows/android-runtime-capacity.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-runtime-capacity-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        abi: [arm64-v8a, armeabi-v7a, x86, x86_64]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - name: Install host multilib and the pinned Android toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-multilib
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install 'ndk;25.2.9519653'
+      - name: Build stock and extended candidates with matching boundary probes
+        run: >-
+          python3 tools/mobile-runtime-check/build_android.py
+          --ndk "$ANDROID_HOME/ndk/25.2.9519653"
+          --abi '${{ matrix.abi }}'
+          --output '${{ runner.temp }}/android-runtime/candidate'
+      - name: Enable the owned emulator's KVM access
+        if: matrix.abi == 'x86_64'
+        run: sudo chmod a+rw /dev/kvm
+      - name: Execute the target VM and C API probes
+        if: matrix.abi == 'x86_64'
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          avd-name: gen2-runtime-qa
+          emulator-port: 5554
+          script: >-
+            python3 tools/mobile-runtime-check/check_android_target.py
+            --serial emulator-5554 --abi x86_64
+            --build '${{ runner.temp }}/android-runtime/candidate'
+            --output '${{ runner.temp }}/android-runtime-target/candidate'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-runtime-${{ matrix.abi }}
+          path: |
+            ${{ runner.temp }}/android-runtime/candidate/report.json
+            ${{ runner.temp }}/android-runtime/candidate/*.log
+            ${{ runner.temp }}/android-runtime/candidate/artifacts/
+            ${{ runner.temp }}/android-runtime-target/candidate/*.json
+            ${{ runner.temp }}/android-runtime-target/candidate/*.log
+          if-no-files-found: error
+          retention-days: 7

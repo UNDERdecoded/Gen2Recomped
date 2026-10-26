@@ -1,0 +1,70 @@
+name: Android LÖVE runtime host
+on:
+  pull_request:
+    paths:
+      - 'tools/mobile-runtime-check/**'
+      - 'tools/runtime-upvalue-check/**'
+      - 'mobile/android/**'
+      - '.github/workflows/android-love-runtime.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: android-love-runtime-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  actual-host:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install the pinned Android toolchain
+        run: >-
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install
+          'platforms;android-34' 'build-tools;34.0.0' 'ndk;25.2.9519653'
+      - name: Build matching x86-64 VM candidates
+        run: >-
+          python3 tools/mobile-runtime-check/build_android.py
+          --ndk "$ANDROID_HOME/ndk/25.2.9519653" --abi x86_64
+          --output '${{ runner.temp }}/android-vm/candidate'
+      - name: Build actual LÖVE apps in an owned source copy
+        run: >-
+          python3 tools/mobile-runtime-check/qualify_android_love.py build
+          --build '${{ runner.temp }}/android-vm/candidate'
+          --output '${{ runner.temp }}/android-love/candidate'
+      - name: Enable the owned emulator's KVM access
+        run: sudo chmod a+rw /dev/kvm
+      - name: Execute the actual JNI, LÖVE, thread and FFI host
+        uses: ReactiveCircus/android-emulator-runner@a421e43855164a8197daf9d8d40fe71c6996bb0d
+        with:
+          api-level: 30
+          arch: x86_64
+          target: default
+          avd-name: gen2-love-runtime-qa
+          emulator-port: 5554
+          script: >-
+            python3 tools/mobile-runtime-check/qualify_android_love.py run
+            --serial emulator-5554
+            --build '${{ runner.temp }}/android-love/candidate'
+            --output '${{ runner.temp }}/android-love-execution/candidate'
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: android-love-runtime-host
+          path: |
+            ${{ runner.temp }}/android-vm/candidate/report.json
+            ${{ runner.temp }}/android-vm/candidate/*.log
+            ${{ runner.temp }}/android-love/candidate/report.json
+            ${{ runner.temp }}/android-love/candidate/*.log
+            ${{ runner.temp }}/android-love/candidate/*.apk
+            ${{ runner.temp }}/android-love-execution/candidate/*.json
+            ${{ runner.temp }}/android-love-execution/candidate/*.log
+          if-no-files-found: warn
+          retention-days: 7
