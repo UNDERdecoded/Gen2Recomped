@@ -53,6 +53,8 @@ local TEXT_AREA_ROWS = { 112, 128 }
 local BattleState = {}
 BattleState.__index = BattleState
 BattleState.isOpaque = true
+-- Data readers can identify the shared Gen 1-5 battle without loading this module.
+BattleState.isBattleState = true
 
 -- pokered prints the battle lines itself (engine/battle/core.asm and the
 -- move-effect banks), and the importer extracts every one of them, so the

@@ -152,6 +152,15 @@ Three rules worth knowing:
 Returning `nil` from `drawWorld` is a normal answer meaning "not this
 frame"; the engine draws the vanilla world instead.
 
+## Read-only battle snapshots
+
+`mod.battle:snapshot()` returns a detached common battle view on Gen 1–5,
+including singles and doubles, or `nil, "no battle"`. It can be captured in
+an entry chunk before Game exists. See [Battle snapshot API](battle-snapshot-api.md)
+for records, revisions, prompt semantics and intentionally omitted previews.
+It reads state only; there is no `submit` method. When capability queries are
+installed, `mod:supports("battle", "snapshot")` reports this interface.
+
 ## Battle sprite scaling
 
 The enemy's front pic draws at 1x and the player's back pic at 2x, the way
