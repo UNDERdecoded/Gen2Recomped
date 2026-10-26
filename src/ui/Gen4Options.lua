@@ -50,6 +50,7 @@ local Theme = require("src.ui.Theme")
 local Gen4Options = {}
 Gen4Options.__index = Gen4Options
 Gen4Options.isOpaque = true
+Gen4Options.shaderPresetBypass = true
 
 local W, H = 256, 192
 

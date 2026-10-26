@@ -31,6 +31,7 @@ local Strings = require("src.core.Strings")
 local OptionsMenu = {}
 OptionsMenu.__index = OptionsMenu
 OptionsMenu.isOpaque = true
+OptionsMenu.shaderPresetBypass = true
 
 -- Opaque full-screen menu: own MEWMON so opening OPTION from the title
 -- (or over the overworld) does not inherit TitleState's LOGO1 band -- that
@@ -406,6 +407,14 @@ local function buildRows(game)
         o.gbcfx = wrapIndex((o.gbcfx or 0) + dir, 5)
         GBCFX.setLevel(o.gbcfx)
         return true
+      end },
+    { id = "shaderPreset", label = Strings("SHADER PRESET"),
+      value = function(g)
+        local presets = require("src.render.ShaderPresets")
+        return presets.entry and presets.entry.name:sub(1, 12) or "OFF"
+      end,
+      activate = function(g)
+        g.stack:push(require("src.ui.ShaderPresetMenu").new(g))
       end },
     { id = "zoom", label = Strings("ZOOM"),
       value = function(g)
