@@ -67,6 +67,7 @@ ModCompat.ALIASES = {
 
   -- save-side data
   ["src.core.gen2.Boxes"] = "src.pokemon.Boxes",
+  ["src.ui.gen2.MapRadio"] = "src.ui.Gen2MapRadio",
   ["src.core.gen2.BugContest"] = "src.world.BugContest",
   ["src.core.gen2.ItemEffects"] = "src.inventory.ItemEffects",
   ["src.core.gen2.Save"] = "src.core.SaveData",

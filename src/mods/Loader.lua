@@ -717,7 +717,7 @@ function Loader:_contentApi(mod, registry, deprecation)
     if apiLevel >= 2 then error(err, 0) end
     Logger.warn("[%s] %s", modId, err)
   end
-  return {
+  local api = {
     register = function(_, id, value)
       note()
       validate("register", id, value)
@@ -750,6 +750,10 @@ function Loader:_contentApi(mod, registry, deprecation)
       return registry:each()
     end,
   }
+  if registry.name == "radio_channels" then
+    return require("src.mods.RadioContent").api(loader,mod,api,loader:_generation())
+  end
+  return api
 end
 
 -- mod.commands is sugar over the commands registry; the engine's own verbs
@@ -1326,6 +1330,7 @@ function Loader:load(data)
       end
     end
   end
+  require("src.mods.RadioContent").prepare(self, data)
   -- vanilla content is registrations too, and they land before discovery so
   -- a mod's register collides with the engine's and has to say override
   require("src.mods.Builtins").install(self.content, data)

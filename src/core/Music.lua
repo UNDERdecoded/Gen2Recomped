@@ -380,6 +380,16 @@ function Music.current()
   return state.current
 end
 
+-- Original contribution by Roxas2712; see the offered PR's contribution
+-- permission. Radio ownership changes the restorable cue, not playback.
+function Music.mapSong()
+  return state.mapSong
+end
+
+function Music.setMapSong(song)
+  state.mapSong = song
+end
+
 function Music.stop()
   local previous = state.current
   stopSource(state.source)

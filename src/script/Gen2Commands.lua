@@ -4802,19 +4802,14 @@ function Commands.g2_magnet_train(ctx)
 end
 
 -- `special SnorlaxAwake` ($5F).  ROM checks wMapMusic == MUSIC_POKE_FLUTE_CHANNEL.
--- That channel is only unlocked with the EXPN Card from Lavender Radio Tower
--- (ENGINE_EXPN_CARD / event flag row $03).  Gen2 has no usable Poké Flute item
--- in normal play; matching ITEM_056 as "flute" was a false positive.
+-- The EXPN Card unlocks the tuner; owning it alone does not wake Snorlax.
+-- Admission reads actual playback and the native local cell, not stale save
+-- hints or globally rebased rendering coordinates.
 function Commands.g2_snorlax_awake(ctx)
-  local save = ctx.save
-  local flags = save.flags or {}
-  local Gen2Flags = require("src.script.Gen2Flags")
-  local expnKey = Gen2Flags.engineFlag(3) -- EVENT_GOT_EXPN_CARD
-  local hasExpn = flags[expnKey] == true
-    or flags.EVENT_GOT_EXPN_CARD == true
-    or flags.ENGINE_EXPN_CARD == true
-  ctx.lastCheck = hasExpn and true or false
-  ctx.g2Var = hasExpn and 1 or 0
+  local awake = require("src.world.Gen2RadioAudio").snorlaxAwake(
+    ctx.overworld and ctx.overworld.player)
+  ctx.lastCheck = awake
+  ctx.g2Var = awake and 1 or 0
 end
 
 -- ---------------------------------------------------------------------------
@@ -4970,7 +4965,14 @@ function Commands.g2_town_map(ctx)
 end
 
 function Commands.g2_map_radio(ctx)
-  ctx.lastCheck = true
+  local done=false
+  local radio=require("src.ui.Gen2MapRadio").new(ctx.game,{channel=ctx.g2Var or 0,onDone=function()
+    if done then return end
+    done=true;ctx.runner:resume()
+  end})
+  if not radio.station then return end
+  ctx.game.stack:push(radio)
+  ctx.runner:yield()
 end
 
 function Commands.g2_check_pokerus(ctx)
