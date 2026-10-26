@@ -125,7 +125,6 @@ local function visibleCards(save)
   return list
 end
 
-local KANTO_LANDMARK_FIRST = 0x2F
 local images = {}
 
 local function loadImage(path)
@@ -837,7 +836,7 @@ function PokegearMenu:drawMap()
   local landmark = def and def.landmark
   local entry = landmark and town.landmarks
     and (town.landmarks[landmark] or town.landmarks[tostring(landmark)])
-  local path = (landmark and landmark >= KANTO_LANDMARK_FIRST and town.kanto)
+  local path = (landmark and landmark >= require("src.world.Gen2Landmarks").kantoStart(game.data) and town.kanto)
     or town.johto
   local image = path and loadImage(path)
   if image then

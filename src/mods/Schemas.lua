@@ -1259,6 +1259,13 @@ R.text_pointers = {
 
 -- ------- persistence
 
+R.landmarks = {
+  semantics="record",generations="2",
+  fields={id=f.opt(f.str),name=f.str,x=f.int(0),y=f.int(0),index=f.int(0,255)},
+  example='mod.content.landmarks:patch("LANDMARK_ROUTE_29", {x=80})',
+  notes="Native Gen2 town-map records and script landmark names. Coordinates retain native OAM byte units, not tile cells. The index is the map-header byte. Native identities win index collisions; otherwise lexical ID order is deterministic. Imported identity metadata is independent of display names.",
+}
+
 -- compose, keyed by the owning mod id: the runner walks each owner's chain
 -- in semver order against the versions recorded in the save
 R.migrations = {

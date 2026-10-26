@@ -11418,7 +11418,10 @@ function RomExtractorGen2:gen2Landmarks()
   if not (sym and self.rom) then return nil end
   local charmap = self:readSourceTable("charmap")
   local out = {}
-  for id = 0, GEN2_LANDMARK_COUNT - 1 do
+  local order,why=require("src.world.Gen2Landmarks").order(self.version,self.manifest)
+  if why then return nil end
+  local count=#order>0 and #order or self:layout("townMapLandmarkCount",GEN2_LANDMARK_COUNT)
+  for id = 0, math.min(256,count) - 1 do
     pcall(function()
       local row = sym.address + id * GEN2_LANDMARK_BYTES
       local name = self:decodeGen2TextAt(sym.bank,
@@ -11426,6 +11429,7 @@ function RomExtractorGen2:gen2Landmarks()
       -- $1F is the landmark line break (TownMap_ConvertLineBreakCharacters)
       name = name:gsub("{BYTE:1F}", "\n")
       out[id] = {
+        id = order[id+1], index = id,
         x = self.rom:byte(sym.bank, row),
         y = self.rom:byte(sym.bank, row + 1),
         name = name ~= "" and name or nil,
@@ -11436,12 +11440,15 @@ function RomExtractorGen2:gen2Landmarks()
 end
 
 function RomExtractorGen2:gen2TownMap()
+  local landmarks = self:gen2Landmarks()
   local johto = self:gen2TownMapImage("JohtoMap", "ui/town_map_johto.png")
-  if not johto then return nil end
+  -- Native name scripts do not depend on a successfully decoded map picture.
+  if not johto and not landmarks then return nil end
   local out = {
     johto = johto,
     kanto = self:gen2TownMapImage("KantoMap", "ui/town_map_kanto.png"),
-    landmarks = self:gen2Landmarks(),
+    landmarks = landmarks,
+    landmarkOrder = require("src.world.Gen2Landmarks").order(self.version,self.manifest),
   }
   -- Player "you are here" icon: ChrisSpriteGFX facing-down (4 tiles = 16x16)
   -- tinted with PAL_OW_RED so it is not a greyscale silhouette on the map.
