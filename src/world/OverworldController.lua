@@ -15790,6 +15790,7 @@ function OverworldState:replaceBlocks(blocks)
     end
   end
   if changed == 0 then return false end
+  map:noteGridChange()
   map.blocksDirty = true
   if map.renderer then map.renderer:rebuild() end
   map.blocksDirty = nil

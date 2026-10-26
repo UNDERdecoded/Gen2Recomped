@@ -11,6 +11,16 @@ local Map = {}
 Map.__index = Map
 local GameVersion = require("src.core.GameVersion")
 
+-- A layout observes the same native writes, including ordinary script writes.
+function Map:noteGridChange()
+  self.gridRevision = (self.gridRevision or 0) + 1
+  if self._layoutProjection then self._layoutProjection:syncOverrides() end
+end
+
+function Map:gen3Layout()
+  return require("src.core.game3.layout_native").fromMap(self)
+end
+
 -- A GEN 3 LAYOUT KEEPS ITS METATILE GRID AS A PACKED BYTE STRING.
 --
 -- Emerald has 324,579 metatile cells across its 441 layouts and each one is a
@@ -36,7 +46,7 @@ local function blockArray(def)
   local blocks = def and def.blocks
   if type(blocks) ~= "string" then return blocks end
   local cached = def._blockArray
-  if cached then return cached end
+  if cached and def._blockArraySource == blocks then return cached end
   -- math.floor, not `//`: the game runs on LuaJIT (Lua 5.1), which has no
   -- integer-division operator. It parses under 5.3 and is a SYNTAX error in
   -- the build that matters, so the file does not load at all.
@@ -46,6 +56,7 @@ local function blockArray(def)
     out[i] = (lo + hi * 256) % 1024
   end
   def._blockArray = out
+  def._blockArraySource = blocks
   return out
 end
 
@@ -493,6 +504,7 @@ function Map.new(def, tilesetDef)
   -- first two only -- its rock platforms stay at the water's own elevation
   -- and are fenced off by collision instead.)
   self.elevationPatch = {}
+  self.gridRevision = 0
   -- ...and the same answer keyed by COORDINATE rather than by a computed
   -- index.  See Map:setBlock: the index form depends on writer and reader
   -- agreeing about def.width, and a cell a script shut must not be able to
@@ -608,6 +620,8 @@ function Map.isSmashable(objDef)
 end
 
 function Map:blockAt(bx, by)
+  local outside = self.layoutOutside and self.layoutOutside[bx .. ":" .. by]
+  if outside then return outside.mid end
   if bx < 0 or by < 0 or bx >= self.def.width or by >= self.def.height then
     return self.def.borderBlock
   end
@@ -757,6 +771,8 @@ end
 -- standing at -- and 15 is the "under a bridge" marker.  That is why the
 -- rule below is a mismatch test and not an equality test.
 function Map:cellElevation(cx, cy)
+  local outside = self.layoutOutside and self.layoutOutside[cx .. ":" .. cy]
+  if outside then return outside.elev end
   local cells = self.def.elevationCells
   if not cells then return nil end
   if cx < 0 or cy < 0 or cx >= self.widthCells or cy >= self.heightCells then
@@ -1040,6 +1056,7 @@ function Map:setBlock(bx, by, block, impassable)
     self.shutCells = self.shutCells or {}
     self.shutCells[bx .. ":" .. by] = impassable or nil
   end
+  self:noteGridChange()
 end
 
 -- ...and putting one back the way it was.  `setBlock` overwrites a cell for
@@ -1054,7 +1071,9 @@ function Map:clearBlock(bx, by)
   local i = by * self.def.width + bx + 1
   self.blockPatch[i] = nil
   if self.collisionPatch then self.collisionPatch[i] = nil end
+  if self.elevationPatch then self.elevationPatch[i] = nil end
   if self.shutCells then self.shutCells[bx .. ":" .. by] = nil end
+  self:noteGridChange()
   self.blocksDirty = true
 end
 
@@ -1073,11 +1092,14 @@ function Map:setCellShut(cx, cy, shut)
   self.collisionPatch = self.collisionPatch or {}
   self.shutCells[cx .. ":" .. cy] = shut and true or nil
   self.collisionPatch[cy * self.def.width + cx + 1] = shut and 1 or 0
+  self:noteGridChange()
   return true
 end
 
 -- What the collision bits say about a cell, with any runtime change applied.
 function Map:cellCollision(cx, cy)
+  local outside = self.layoutOutside and self.layoutOutside[cx .. ":" .. cy]
+  if outside then return outside.coll end
   local cells = self.def.collisionCells
   if cx < 0 or cy < 0 or cx >= self.def.width or cy >= self.def.height then
     return cells and 1 or 0
@@ -1095,13 +1117,18 @@ end
 
 -- Drop every runtime block change, so the map's callbacks re-establish it.
 function Map:clearBlockPatches()
-  if next(self.blockPatch) == nil and next(self.collisionPatch) == nil then
+  self.gen3LayoutOverride = nil
+  if next(self.blockPatch) == nil and next(self.collisionPatch) == nil
+      and next(self.elevationPatch) == nil and next(self.shutCells) == nil
+      and not (self.layoutOutside and next(self.layoutOutside)) then
     return false
   end
   self.blockPatch = {}
   self.collisionPatch = {}
   self.elevationPatch = {}
   self.shutCells = {}
+  self.layoutOutside = nil
+  self:noteGridChange()
   self.blocksDirty = nil
   return true
 end
@@ -1198,6 +1225,62 @@ end
 --
 -- Only differing cells are touched, so a map whose script names the layout it
 -- already has costs one comparison per cell and changes nothing.
+local function uint(value, maximum)
+  return type(value) == "number" and value >= 0 and value <= maximum and value % 1 == 0
+end
+
+-- Atomic native 16px grid writes: artwork, blocking bits and elevation share
+-- one owner. Validation finishes before changing any cell. Duplicate rows
+-- compose in input order and only the final changed cells count as changes.
+function Map:setGen3Cells(rows)
+  if self.blockCells ~= 1 or self.blockTiles ~= 2 then return nil, "not a 16px metatile grid" end
+  if type(rows) ~= "table" then return nil, "cell writes must be an array" end
+  local count, last = 0, 0
+  for k in pairs(rows) do
+    if not uint(k, 0x7fffffff) or k == 0 then return nil, "cell writes must be an array" end
+    count, last = count + 1, math.max(last, k)
+  end
+  if count ~= last then return nil, "cell writes must be a dense array" end
+  local pending, order = {}, {}
+  for _, row in ipairs(rows) do
+    if type(row) ~= "table" or not uint(row.x, self.def.width - 1)
+      or not uint(row.y, self.def.height - 1) then return nil, "cell write outside map" end
+    if row.mid == nil and row.coll == nil and row.elev == nil then return nil, "cell write has no fields" end
+    if row.mid ~= nil and not uint(row.mid, 1023) then return nil, "invalid metatile id" end
+    if row.coll ~= nil and not uint(row.coll, 3) then return nil, "invalid collision bits" end
+    if row.elev ~= nil and not uint(row.elev, 15) then return nil, "invalid elevation bits" end
+    -- A missing native elevation source is not an implicit elevation zero.
+    if row.elev ~= nil and not self.def.elevationCells then return nil, "map has no elevation source" end
+    local i = row.y * self.def.width + row.x + 1
+    local to = pending[i]
+    if not to then
+      to = { x = row.x, y = row.y, mid = self:blockAt(row.x, row.y),
+        coll = self:cellCollision(row.x, row.y), elev = self:cellElevation(row.x, row.y) }
+      pending[i] = to; order[#order + 1] = i
+    end
+    if row.mid ~= nil then to.mid = row.mid end
+    if row.coll ~= nil then to.coll = row.coll end
+    if row.elev ~= nil then to.elev = row.elev end
+  end
+  local changed = 0
+  for _, i in ipairs(order) do
+    local to = pending[i]
+    if to.mid ~= self:blockAt(to.x, to.y) or to.coll ~= self:cellCollision(to.x, to.y)
+      or to.elev ~= self:cellElevation(to.x, to.y) then
+      self.blockPatch[i] = to.mid
+      self.collisionPatch[i] = to.coll
+      if to.elev ~= nil then self.elevationPatch[i] = to.elev end
+      self.shutCells[to.x .. ":" .. to.y] = to.coll ~= 0 and true or nil
+      changed = changed + 1
+    end
+  end
+  if changed > 0 then
+    self:noteGridChange()
+    self.blocksDirty = true
+  end
+  return changed
+end
+
 function Map:applyGen3Layout(layout)
   if not (layout and self.def) then return 0 end
   local w, h = self.def.width or 0, self.def.height or 0
@@ -1206,28 +1289,31 @@ function Map:applyGen3Layout(layout)
       :format(tostring(layout.id), tostring(layout.width),
               tostring(layout.height), w, h)
   end
-  local want = Map.blockArray(layout)
-  local have = Map.blockArray(self.def)
-  if not (want and have) then return nil, "no block data" end
-  self.blockPatch = self.blockPatch or {}
-  self.collisionPatch = self.collisionPatch or {}
-  self.elevationPatch = self.elevationPatch or {}
-  local changed = 0
+  local source = layout.blocks
+  if type(source) ~= "table" and type(source) ~= "string" then return nil, "no block data" end
+  if type(source) == "string" and #source ~= w * h * 2 then return nil, "invalid packed layout length" end
+  if layout.collisionCells ~= nil and type(layout.collisionCells) ~= "table" then return nil, "invalid collision source" end
+  if layout.elevationCells ~= nil and type(layout.elevationCells) ~= "table" then return nil, "invalid elevation source" end
+  local rows = {}
   for i = 1, w * h do
-    local to = want[i]
-    if to ~= nil and to ~= have[i] then
-      self.blockPatch[i] = to
-      if layout.collisionCells then
-        self.collisionPatch[i] = layout.collisionCells[i] or 0
-      end
-      if layout.elevationCells and self.def.elevationCells then
-        self.elevationPatch[i] = layout.elevationCells[i] or 0
-      end
-      changed = changed + 1
+    local mid, coll, elev
+    if type(source) == "string" then
+      local lo, hi = source:byte(i * 2 - 1, i * 2)
+      local word = lo + hi * 256
+      mid, coll, elev = word % 1024, math.floor(word / 1024) % 4, math.floor(word / 4096)
+    else mid = source[i] end
+    if not uint(mid, 1023) then return nil, "invalid or missing metatile id" end
+    if layout.collisionCells then
+      coll = layout.collisionCells[i]
+      if not uint(coll, 3) then return nil, "invalid or missing collision bits" end
     end
+    if layout.elevationCells then
+      elev = layout.elevationCells[i]
+      if not uint(elev, 15) then return nil, "invalid or missing elevation bits" end
+    end
+    rows[i] = { x = (i - 1) % w, y = math.floor((i - 1) / w), mid = mid, coll = coll, elev = elev }
   end
-  if changed > 0 then self.blocksDirty = true end
-  return changed
+  return self:setGen3Cells(rows)
 end
 
 -- true if the cell's collision tile is a door tile
