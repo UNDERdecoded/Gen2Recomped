@@ -94,6 +94,11 @@ int w_syncHealthSteps(lua_State *L)
 {
 	return gr_callBridge(L, "GRHealthBridge", "syncStepsWithCommand:saveDir:", "sync");
 }
+int w_stepJournalVersion(lua_State *L)
+{
+	lua_pushinteger(L, objc_getClass("GRHealthBridge") != nullptr ? 1 : 0);
+	return 1;
+}
 #endif // LOVE_IOS
 // ---------------------------------------------------------------------------
 
@@ -103,6 +108,7 @@ WRAP_REGISTRATION = """#ifdef LOVE_IOS
 	{ "pickFile", w_pickFile },
 	{ "createFile", w_createFile },
 	{ "syncHealthSteps", w_syncHealthSteps },
+	{ "stepJournalVersion", w_stepJournalVersion },
 #endif
 """
 

@@ -134,3 +134,13 @@ Also: `scripts/build.sh ios` delegates here (`--release` is forwarded).
   compiles with `iOS … Platform Not Installed` even when the SDK name appears.
 - `love-src/` present (`--fetch`)
 - iOS libraries under `love-src/platform/xcode/ios/libraries/` and SDL3 under `love-src/platform/xcode/shared/Frameworks/`
+
+## Native step deliveries
+
+The HealthKit bridge publishes a versioned cumulative journal, with the total
+and query anchor committed together. Asynchronous queries are coalesced; a failed
+write retains the old anchor for retry. Legacy pending steps migrate before OS
+consent, and the native walker and permissioned mods receive independent deltas.
+The updated Swift source, LÖVE binding patch and Lua payload must be built together.
+See [the native step contract](../../docs/mod-native-steps.md) for APIs, checks
+and remaining physical-device acceptance.

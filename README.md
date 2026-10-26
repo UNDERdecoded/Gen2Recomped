@@ -639,3 +639,8 @@ pret disassemblies ship a licence file, so the palette tables in
 [data/](data) are reproduced with attribution rather than under this
 project's MIT grant, and will be removed on request from their authors.
 
+
+Contributions by **Roxas2712** — <https://github.com/Roxas2712>. Original native
+host service additions are offered under [the contribution terms](LICENSE-ROXAS2712.md),
+including permission for Cedric / UNDERdecoded with preserved credit. Existing
+licences and grants remain effective.

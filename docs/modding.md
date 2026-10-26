@@ -277,3 +277,8 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+## Native step deliveries
+
+The `steps` permission enables [native step deliveries](mod-native-steps.md),
+with independent persistent receipts for each mod on supported mobile hosts.

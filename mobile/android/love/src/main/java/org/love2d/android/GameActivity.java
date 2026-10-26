@@ -109,17 +109,12 @@ public class GameActivity extends SDLActivity {
     // basename as its body, so RomImporter:focus can say so in the launcher
     // instead of leaving the player on "No ROM imported" (issue #442).
     private static final String PICK_ERROR_FILENAME = "pick_error.flag";
-    // Step bridge (love.system.syncHealthSteps): pending-steps delivery
-    // consumed by the Pokéwalker mod, same contract as the iOS
-    // GRHealthBridge. Steps come from the hardware TYPE_STEP_COUNTER
-    // (cumulative since boot, counted by the OS whether or not any app is
-    // running), anchored in SharedPreferences so a walk is never credited
-    // twice.
-    private static final String PENDING_STEPS_FILENAME = "steps_pending.json";
+    // Native cumulative step journal; consumers retain independent receipts.
     private static final String STEP_PREFS = "pokewalker_steps";
     private static final String STEP_PREF_ANCHOR = "anchor";
     private static final String STEP_PREF_ANCHOR_WALLTIME = "anchor_walltime";
-    private static final long STEP_MAX_PER_SYNC = 50000;
+    private static final Object STEP_SENSOR_LOCK = new Object();
+    private static boolean stepSensorBusy = false;
     // Destination basename for the in-flight SAF pick (set by showFilePicker).
     // Saved/restored across instance state: the picker is a separate activity
     // and Android may destroy this one while it is up (memory pressure, or
@@ -1148,9 +1143,9 @@ public class GameActivity extends SDLActivity {
     /**
      * Step sync, called from Lua as love.system.syncHealthSteps()
      * (see modules/system/wrap_System.cpp). Asynchronous like the picker:
-     * returns whether a sync could be started; the result lands later as
-     * steps_pending.json in the save identity dir, where the Pokéwalker
-     * mod's poll consumes it.
+     * returns whether a sync could be started; the result is an atomic
+     * cumulative journal in the save identity. The engine and permissioned
+     * mods consume independent deltas without deleting the journal.
      *
      * Android 10+ gates the step counter behind the ACTIVITY_RECOGNITION
      * runtime permission; the first call shows the system prompt and a later
@@ -1253,6 +1248,7 @@ public class GameActivity extends SDLActivity {
     public static boolean syncHealthSteps() {
         final GameActivity self = (GameActivity) mSingleton;
         if (self == null) return false;
+        if (!self.prepareStepJournal()) return false;
         if (android.os.Build.VERSION.SDK_INT >= 29
                 && ActivityCompat.checkSelfPermission(self,
                     Manifest.permission.ACTIVITY_RECOGNITION)
@@ -1267,8 +1263,7 @@ public class GameActivity extends SDLActivity {
             });
             return true;
         }
-        self.startStepSensorRead();
-        return true;
+        return self.startStepSensorRead();
     }
 
     /**
@@ -1277,119 +1272,96 @@ public class GameActivity extends SDLActivity {
      * devices hold the event until the next physical step, so the listener
      * is given 20 seconds before being torn down (the next sync retries).
      */
-    private void startStepSensorRead() {
-        final SensorManager manager =
-            (SensorManager) getSystemService(Context.SENSOR_SERVICE);
-        if (manager == null) return;
-        Sensor counter = manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
-        if (counter == null) {
-            Log.d("GameActivity", "no step counter sensor on this device");
-            return;
+    private boolean startStepSensorRead() {
+        synchronized (STEP_SENSOR_LOCK) {
+            if (stepSensorBusy) return true;
+            stepSensorBusy = true;
         }
-        final SensorEventListener listener = new SensorEventListener() {
+        final SensorManager manager = (SensorManager) getSystemService(Context.SENSOR_SERVICE);
+        final Sensor counter = manager == null ? null : manager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER);
+        if (counter == null) {
+            synchronized (STEP_SENSOR_LOCK) { stepSensorBusy = false; }
+            return false;
+        }
+        class StepListener implements SensorEventListener {
             private boolean delivered = false;
-
-            @Override
-            public void onSensorChanged(SensorEvent event) {
-                if (delivered || event.values.length == 0) return;
-                delivered = true;
-                manager.unregisterListener(this);
-                deliverSteps((long) event.values[0]);
+            @Override public void onSensorChanged(SensorEvent event) {
+                synchronized (STEP_SENSOR_LOCK) {
+                    if (delivered || event.values.length == 0) return;
+                    delivered = true;
+                    try {
+                        manager.unregisterListener(this);
+                        float count = event.values[0];
+                        if (!Float.isNaN(count) && !Float.isInfinite(count) && count >= 0)
+                            deliverSteps((long) count);
+                    } finally { stepSensorBusy = false; }
+                }
             }
-
-            @Override
-            public void onAccuracyChanged(Sensor sensor, int accuracy) {
+            @Override public void onAccuracyChanged(Sensor sensor, int accuracy) {}
+            public void timeout() {
+                synchronized (STEP_SENSOR_LOCK) {
+                    if (delivered) return;
+                    delivered = true;
+                    try { manager.unregisterListener(this); }
+                    finally { stepSensorBusy = false; }
+                }
             }
-        };
-        if (!manager.registerListener(listener, counter,
-                SensorManager.SENSOR_DELAY_NORMAL)) {
-            Log.d("GameActivity", "step counter listener registration failed");
-            return;
+        }
+        final StepListener listener = new StepListener();
+        try {
+            if (!manager.registerListener(listener, counter, SensorManager.SENSOR_DELAY_NORMAL)) {
+                listener.timeout();
+                return false;
+            }
+        } catch (RuntimeException error) {
+            listener.timeout();
+            Log.d("GameActivity", "step registration failed: " + error);
+            return false;
         }
         new Handler(Looper.getMainLooper()).postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                // No-op if the listener already delivered and unregistered.
-                manager.unregisterListener(listener);
+            @Override public void run() {
+                synchronized (STEP_SENSOR_LOCK) {
+                    // Unregistering prevents a new event; the listener's own
+                    // terminal flag also declines an event already queued.
+                    listener.timeout();
+                }
             }
         }, 20000);
+        return true;
     }
 
-    /**
-     * Convert a cumulative counter reading into pending steps. The counter
-     * resets to zero on reboot: a reading below the stored anchor re-anchors
-     * without crediting (steps walked between the reboot and this sync are
-     * lost, which errs on the honest side).
-     */
+    private boolean prepareStepJournal() {
+        SharedPreferences prefs = getSharedPreferences(STEP_PREFS, MODE_PRIVATE);
+        File dir = saveIdentityDir();
+        String marker = "journal_initialized:" + dir.getAbsolutePath();
+        if (prefs.getBoolean(marker, false) && !new File(dir, StepJournal.NAME).exists()) {
+            Log.d("GameActivity", "initialized step journal missing; anchor preserved");
+            return false;
+        }
+        long now = System.currentTimeMillis();
+        try {
+            StepJournal.initialize(dir, prefs.getLong(STEP_PREF_ANCHOR, -1),
+                                   prefs.getLong(STEP_PREF_ANCHOR_WALLTIME, now));
+            prefs.edit().putBoolean(marker, true).apply();
+            return true;
+        } catch (Exception error) {
+            Log.d("GameActivity", "step journal initialization failed: " + error);
+            return false;
+        }
+    }
+
     private void deliverSteps(long counterNow) {
         SharedPreferences prefs = getSharedPreferences(STEP_PREFS, MODE_PRIVATE);
-        long anchor = prefs.getLong(STEP_PREF_ANCHOR, -1);
-        long now = System.currentTimeMillis();
-        if (anchor < 0 || counterNow < anchor) {
-            prefs.edit()
-                .putLong(STEP_PREF_ANCHOR, counterNow)
-                .putLong(STEP_PREF_ANCHOR_WALLTIME, now)
-                .apply();
-            Log.d("GameActivity", "step anchor set at " + counterNow);
-            return;
-        }
-        long steps = Math.min(counterNow - anchor, STEP_MAX_PER_SYNC);
-        long fromWalltime = prefs.getLong(STEP_PREF_ANCHOR_WALLTIME, now);
-        if (steps <= 0) return;
-        prefs.edit()
-            .putLong(STEP_PREF_ANCHOR, counterNow)
-            .putLong(STEP_PREF_ANCHOR_WALLTIME, now)
-            .apply();
-
         File dir = saveIdentityDir();
-        if (!dir.isDirectory() && !dir.mkdirs()) {
-            Log.d("GameActivity", "cannot create save dir for steps: " + dir);
-            return;
-        }
-        File pending = new File(dir, PENDING_STEPS_FILENAME);
-        long total = steps;
-        // Merge with an unconsumed earlier delivery so steps are never lost
-        // (same contract as the iOS bridge).
-        if (pending.isFile()) {
-            try {
-                byte[] raw = new byte[(int) Math.min(pending.length(), 4096)];
-                FileInputStream in = new FileInputStream(pending);
-                int read = in.read(raw);
-                in.close();
-                if (read > 0) {
-                    org.json.JSONObject old =
-                        new org.json.JSONObject(new String(raw, 0, read, "UTF-8"));
-                    total += Math.max(0, old.optLong("steps", 0));
-                }
-            } catch (Exception e) {
-                Log.d("GameActivity", "ignoring unreadable pending steps: " + e);
-            }
-        }
+        String marker = "journal_initialized:" + dir.getAbsolutePath();
+        long now = System.currentTimeMillis();
         try {
-            org.json.JSONObject payload = new org.json.JSONObject();
-            payload.put("steps", total);
-            payload.put("from", isoTime(fromWalltime));
-            payload.put("to", isoTime(now));
-            File tmp = new File(dir, PENDING_STEPS_FILENAME + ".tmp");
-            FileOutputStream out = new FileOutputStream(tmp);
-            out.write(payload.toString().getBytes("UTF-8"));
-            out.close();
-            if (!tmp.renameTo(pending)) {
-                tmp.delete();
-                Log.d("GameActivity", "could not publish pending steps");
-                return;
-            }
-            Log.d("GameActivity", total + " steps pending for the Pokewalker mod");
-        } catch (Exception e) {
-            Log.d("GameActivity", "could not write pending steps: " + e);
+            StepJournal.deliver(dir, counterNow, now, prefs.getLong(STEP_PREF_ANCHOR, -1),
+                                prefs.getLong(STEP_PREF_ANCHOR_WALLTIME, now));
+            prefs.edit().putBoolean(marker, true).apply();
+        } catch (Exception error) {
+            Log.d("GameActivity", "step journal write failed: " + error);
         }
-    }
-
-    private static String isoTime(long millis) {
-        java.text.SimpleDateFormat format =
-            new java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss'Z'", java.util.Locale.US);
-        format.setTimeZone(java.util.TimeZone.getTimeZone("UTC"));
-        return format.format(new java.util.Date(millis));
     }
 
     private boolean copyFileToUri(File source, Uri destUri) {

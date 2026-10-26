@@ -107,12 +107,13 @@ function W.save(st)
   if love and love.filesystem then
     local okS, Safety = pcall(require, "src.core.SaveSafety")
     if okS then
-      Safety.atomicWrite(love.filesystem, W.FILE, serializer().encode(st),
+      return Safety.atomicWrite(love.filesystem, W.FILE, serializer().encode(st),
         { bak = W.FILE .. ".bak", decode = Safety.decodeAny })
     else
-      love.filesystem.write(W.FILE, serializer().encode(st))
+      return love.filesystem.write(W.FILE, serializer().encode(st))
     end
   end
+  return false, 'walker storage unavailable'
 end
 
 -- the walker's own finds (Dowsing, the Poke Radar, a find): three of each, as

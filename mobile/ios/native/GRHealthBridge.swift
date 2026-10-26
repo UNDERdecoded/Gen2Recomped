@@ -1,121 +1,161 @@
-// gen1recomp iOS native bridge: Apple Health step sync (Pokéwalker mode).
-//
-// Reached from liblove's wrap_System.cpp through the Objective-C runtime as
-// love.system.syncHealthSteps() — see mobile/ios/patch_love_src.py. The Lua
-// side (mods/pokewalker) opts in, calls sync, and later consumes
-// steps_pending.json from the LÖVE save directory:
-//
-//   { "steps": 4312, "from": "<ISO8601>", "to": "<ISO8601>" }
-//
-// Steps are counted from a persisted anchor (last successful sync; first
-// run starts at midnight today) so the same walk is never credited twice.
-// An unconsumed pending file is merged, not overwritten, so steps survive
-// the player quitting before entering the overworld.
-
+// iOS native step journal. Existing HealthKit consent remains user controlled.
+// Original journal additions: Copyright (c) 2026 Roxas2712.
+// See LICENSE-ROXAS2712.md; existing contribution grants remain effective.
 import Foundation
-import HealthKit
+import CoreFoundation
 
+// Foundation-only storage is also exercised by the desktop fault tests.
+final class GRStepJournalStore {
+    static let name = "steps_journal.json"
+    static let maximum: Int64 = 9_007_199_254_740_991
+    enum Failure: Error { case invalidJournal, oversized, publication }
+    let directory: URL
+    init(_ directory: URL) { self.directory = directory }
+    private func validText(_ value: String) -> Bool {
+        value.utf8.count <= 64 && !value.unicodeScalars.contains { CharacterSet.controlCharacters.contains($0) }
+    }
+    private func read(_ url: URL) throws -> [String: Any] {
+        let size = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
+        guard size <= 8192 else { throw Failure.oversized }
+        let data = try Data(contentsOf: url)
+        guard data.count <= 8192,
+              let value = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { throw Failure.invalidJournal }
+        return value
+    }
+    func load(fallbackAnchor: Double) throws -> [String: Any] {
+        let url = directory.appendingPathComponent(Self.name)
+        if FileManager.default.fileExists(atPath: url.path) {
+            let state = try read(url)
+            guard let version = state["version"] as? NSNumber,
+                  CFGetTypeID(version) != CFBooleanGetTypeID(), version.doubleValue == 1,
+                  (state["source"] as? String) == "healthkit",
+                  let epoch = state["epoch"] as? String,
+                  epoch.range(of: "^[a-zA-Z0-9_-]{1,64}$", options: .regularExpression) != nil,
+                  let total = state["total"] as? NSNumber,
+                  CFGetTypeID(total) != CFBooleanGetTypeID(),
+                  total.doubleValue.isFinite, total.doubleValue >= 0,
+                  total.doubleValue <= Double(Self.maximum), total.doubleValue.rounded(.down) == total.doubleValue,
+                  let rawAnchor = state["anchor"] as? NSNumber,
+                  CFGetTypeID(rawAnchor) != CFBooleanGetTypeID(),
+                  rawAnchor.doubleValue.isFinite, rawAnchor.doubleValue >= 0,
+                  let from = state["from"] as? String, validText(from),
+                  let to = state["to"] as? String, validText(to)
+            else { throw Failure.invalidJournal }
+            return state
+        }
+        var total: Int64 = 0
+        var from = Self.iso(Date(timeIntervalSince1970: fallbackAnchor))
+        let legacy = directory.appendingPathComponent("steps_pending.json")
+        if FileManager.default.fileExists(atPath: legacy.path) {
+            let pending = try read(legacy)
+            guard let count = pending["steps"] as? NSNumber,
+                  CFGetTypeID(count) != CFBooleanGetTypeID(),
+                  count.doubleValue.isFinite, count.doubleValue >= 0,
+                  count.doubleValue <= Double(Self.maximum), count.doubleValue.rounded(.down) == count.doubleValue
+            else { throw Failure.invalidJournal }
+            total = count.int64Value
+            if let first = pending["from"] as? String, validText(first) { from = first }
+        }
+        return ["version": 1, "source": "healthkit",
+                "epoch": UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased(),
+                "total": total, "anchor": fallbackAnchor, "from": from, "to": from]
+    }
+    func commit(_ previous: [String: Any], steps: Int64, anchor: Double) throws {
+        guard steps >= 0, let old = previous["total"] as? NSNumber,
+              steps <= Self.maximum - old.int64Value, anchor.isFinite, anchor >= 0
+        else { throw Failure.invalidJournal }
+        var state = previous
+        state["total"] = old.int64Value + steps
+        state["anchor"] = anchor
+        state["to"] = Self.iso(Date(timeIntervalSince1970: anchor))
+        let data = try JSONSerialization.data(withJSONObject: state, options: [.sortedKeys])
+        guard data.count <= 8192 else { throw Failure.oversized }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let url = directory.appendingPathComponent(Self.name)
+        try data.write(to: url, options: .atomic)
+        guard try Data(contentsOf: url) == data else { throw Failure.publication }
+    }
+    static func iso(_ date: Date) -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: date)
+    }
+}
+
+#if os(iOS)
+import HealthKit
 @objc(GRHealthBridge)
 public final class GRHealthBridge: NSObject {
-
     private static let store = HKHealthStore()
+    private static let gate = NSLock()
+    private static var activeDirectory: String?
     private static let anchorKey = "GRHealthLastSyncDate"
-    private static let pendingName = "steps_pending.json"
-    // Sanity clamp per sync: guards against absurd backlogs (device clock
-    // changes, months-old anchors) turning into instant level-100 parties.
-    private static let maxStepsPerSync = 50_000
+    private static func finish() { gate.lock(); activeDirectory = nil; gate.unlock() }
 
-    /// love.system.syncHealthSteps() -> bool ("sync started").
-    /// Requests read authorization on first use (system sheet appears over
-    /// the game), then asynchronously writes the pending-steps file.
     @objc(syncStepsWithCommand:saveDir:)
-    public static func syncSteps(command: UnsafePointer<CChar>?,
-                                 saveDir: UnsafePointer<CChar>?) -> Bool {
-        guard HKHealthStore.isHealthDataAvailable(),
+    public static func syncSteps(command: UnsafePointer<CChar>?, saveDir: UnsafePointer<CChar>?) -> Bool {
+        guard let dir = saveDir.map({ String(cString: $0) }), !dir.isEmpty else { return false }
+        gate.lock()
+        if let active = activeDirectory { gate.unlock(); return active == dir }
+        activeDirectory = dir
+        gate.unlock()
+        guard prepareJournal(dir: dir), HKHealthStore.isHealthDataAvailable(),
               let stepType = HKQuantityType.quantityType(forIdentifier: .stepCount)
-        else { return false }
-        let dir = saveDir.map { String(cString: $0) } ?? ""
-        guard !dir.isEmpty else { return false }
-
+        else { finish(); return false }
         store.requestAuthorization(toShare: nil, read: [stepType]) { _, error in
-            if let error = error {
-                NSLog("GRHealthBridge: authorization error: \(error)")
-                return
-            }
-            // Read authorization is intentionally opaque (a denied query
-            // just returns no samples), so always run the query.
+            if let error = error { NSLog("GRHealthBridge: authorization error: \(error)"); finish(); return }
             runQuery(stepType: stepType, dir: dir)
         }
         return true
     }
-
-    // MARK: - Query
-
+    private static func prepareJournal(dir: String) -> Bool {
+        let defaults = UserDefaults.standard
+        let journal = GRStepJournalStore(URL(fileURLWithPath: dir, isDirectory: true))
+        let exists = FileManager.default.fileExists(atPath: journal.directory.appendingPathComponent(GRStepJournalStore.name).path)
+        let marker = "GRStepJournalInitialized:" + dir
+        if defaults.bool(forKey: marker) && !exists {
+            NSLog("GRHealthBridge: initialized journal missing; anchor preserved")
+            return false
+        }
+        do {
+            let fallback = (defaults.object(forKey: anchorKey) as? Date) ?? Calendar.current.startOfDay(for: Date())
+            let previous = try journal.load(fallbackAnchor: fallback.timeIntervalSince1970)
+            if !exists { try journal.commit(previous, steps: 0, anchor: previous["anchor"] as! Double) }
+            defaults.set(true, forKey: marker)
+            return true
+        } catch { NSLog("GRHealthBridge: journal initialization error: \(error)"); return false }
+    }
     private static func runQuery(stepType: HKQuantityType, dir: String) {
         let defaults = UserDefaults.standard
+        let journal = GRStepJournalStore(URL(fileURLWithPath: dir, isDirectory: true))
+        let marker = "GRStepJournalInitialized:" + dir
+        if defaults.bool(forKey: marker) && !FileManager.default.fileExists(
+            atPath: journal.directory.appendingPathComponent(GRStepJournalStore.name).path) {
+            NSLog("GRHealthBridge: initialized journal is missing; anchor preserved")
+            finish(); return
+        }
+        let previous: [String: Any]
+        do {
+            let fallback = (defaults.object(forKey: anchorKey) as? Date) ?? Calendar.current.startOfDay(for: Date())
+            previous = try journal.load(fallbackAnchor: fallback.timeIntervalSince1970)
+        } catch { NSLog("GRHealthBridge: journal read error: \(error)"); finish(); return }
         let now = Date()
-        let anchor = (defaults.object(forKey: anchorKey) as? Date)
-            ?? Calendar.current.startOfDay(for: now)
-        guard anchor < now else { return }
-
-        let predicate = HKQuery.predicateForSamples(withStart: anchor, end: now,
-                                                    options: .strictStartDate)
-        let query = HKStatisticsQuery(quantityType: stepType,
-                                      quantitySamplePredicate: predicate,
+        let anchor = Date(timeIntervalSince1970: previous["anchor"] as! Double)
+        guard anchor < now else { finish(); return }
+        let predicate = HKQuery.predicateForSamples(withStart: anchor, end: now, options: .strictStartDate)
+        let query = HKStatisticsQuery(quantityType: stepType, quantitySamplePredicate: predicate,
                                       options: .cumulativeSum) { _, stats, error in
-            if let error = error {
-                // Typical on first run before the user answers the sheet,
-                // or when access is denied; the anchor is left untouched so
-                // the next sync retries the same window.
-                NSLog("GRHealthBridge: step query error: \(error)")
-                return
-            }
-            let steps = Int(stats?.sumQuantity()?.doubleValue(for: .count()) ?? 0)
-            defaults.set(now, forKey: anchorKey)
-            deliver(steps: min(steps, maxStepsPerSync),
-                    from: anchor, to: now, dir: dir)
+            defer { finish() }
+            if let error = error { NSLog("GRHealthBridge: step query error: \(error)"); return }
+            let count = stats?.sumQuantity()?.doubleValue(for: .count()) ?? 0
+            guard count.isFinite, count >= 0, count <= Double(GRStepJournalStore.maximum) else { return }
+            do {
+                try journal.commit(previous, steps: Int64(count.rounded(.down)), anchor: now.timeIntervalSince1970)
+                defaults.set(true, forKey: marker)
+            } catch { NSLog("GRHealthBridge: journal write error: \(error)") }
         }
         store.execute(query)
     }
-
-    // MARK: - Pending file
-
-    private static func deliver(steps: Int, from: Date, to: Date, dir: String) {
-        let url = URL(fileURLWithPath: dir).appendingPathComponent(pendingName)
-
-        // Merge with an unconsumed earlier delivery so steps are never lost.
-        var total = steps
-        var fromDate = from
-        if let data = try? Data(contentsOf: url),
-           let old = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
-            total += (old["steps"] as? Int) ?? 0
-            if let oldFrom = old["from"] as? String,
-               let parsed = isoFormatter.date(from: oldFrom), parsed < fromDate {
-                fromDate = parsed
-            }
-        }
-        guard total > 0 else { return }
-
-        let payload: [String: Any] = [
-            "steps": total,
-            "from": isoFormatter.string(from: fromDate),
-            "to": isoFormatter.string(from: to),
-        ]
-        do {
-            try FileManager.default.createDirectory(
-                at: URL(fileURLWithPath: dir, isDirectory: true),
-                withIntermediateDirectories: true)
-            let data = try JSONSerialization.data(withJSONObject: payload)
-            try data.write(to: url, options: .atomic)
-            NSLog("GRHealthBridge: %d steps pending", total)
-        } catch {
-            NSLog("GRHealthBridge: could not write pending steps: \(error)")
-        }
-    }
-
-    private static let isoFormatter: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter()
-        f.formatOptions = [.withInternetDateTime]
-        return f
-    }()
 }
+#endif

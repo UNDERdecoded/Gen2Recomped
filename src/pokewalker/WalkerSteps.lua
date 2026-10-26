@@ -8,12 +8,10 @@
 --
 -- Android's bridge (love.system.syncHealthSteps -> GameActivity.syncHealthSteps,
 -- mobile/ANDROID.md "Step bridge") reads the hardware TYPE_STEP_COUNTER and
--- stages the steps walked since the last read as steps_pending.json in the
--- save directory: { "steps": n, "from": iso, "to": iso }. The counter runs
+-- publishes a cumulative steps_journal.json in the save directory. The counter runs
 -- while the app is closed, so a read on opening credits the whole walk.
--- This takes the file, credits the walker and deletes it -- so two readers
--- (the community Pokewalker mod, if installed) would split the steps between
--- them.
+-- The walker's cursor is saved with its credited steps. Mods retain separate
+-- receipts. Legacy native hosts keep their existing pending-file path.
 --
 -- STEP_DEBUG=n credits n steps once (desktop testing; no sensor there).
 
@@ -24,6 +22,8 @@ S.EVERY = 60          -- seconds between sensor reads while the app is up
 
 local last = -math.huge
 local debugDone = false
+local Journal = require('src.core.StepJournal')
+local unsaved = setmetatable({}, {__mode='k'})
 
 function S.available()
   return love and love.system and type(love.system.syncHealthSteps) == "function"
@@ -38,13 +38,24 @@ function S.request(force)
 end
 
 -- the staged steps, consumed; 0 when there are none
-function S.take()
+function S.take(st)
   local n = 0
   if not debugDone and os.getenv and tonumber(os.getenv("STEP_DEBUG") or "") then
     debugDone = true
     n = n + tonumber(os.getenv("STEP_DEBUG"))
   end
-  if love and love.filesystem and love.filesystem.getInfo(S.FILE) then
+  local fs=love and love.filesystem
+  if fs and fs.getInfo(Journal.FILE,'file') then
+    local snapshot,why=Journal.read(fs)
+    if not snapshot then return n,nil,why end
+    local delivery,cursor,err=Journal.next(snapshot,st and st.stepsJournal)
+    return n+(delivery and delivery.steps or 0),cursor,err
+  end
+  -- A versioned native producer migrates the legacy file into its first
+  -- snapshot before requesting OS consent. Consuming it here could race that
+  -- migration and credit the same legacy backlog again through the journal.
+  if Journal.available() then return n end
+  if fs and fs.getInfo(S.FILE) then
     local body = love.filesystem.read(S.FILE) or ""
     local ok, Json = pcall(require, "src.link.Json")
     local okD, doc = false, nil
@@ -59,11 +70,18 @@ end
 -- one tick: read when due, credit what arrived; returns the steps credited
 function S.pump(st, courses, force)
   S.request(force)
-  local n = S.take()
+  local n,cursor = S.take(st)
+  local W = require('src.pokewalker.Walker')
   if n > 0 then
-    local W = require("src.pokewalker.Walker")
     W.addSteps(st, n, courses)
-    W.save(st)
+    if cursor then st.stepsJournal=cursor end
+    unsaved[st]=true
+  end
+  if unsaved[st] then
+    local ok=W.save(st)
+    if ok then unsaved[st]=nil end
+  end
+  if n > 0 then
     -- the phone's background check measures from here now
     pcall(require("src.pokewalker.WalkerNotify").watch, st, courses)
   end

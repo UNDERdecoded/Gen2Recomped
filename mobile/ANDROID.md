@@ -119,21 +119,20 @@ python tools/verify_rom_data.py --manifest tools/rom_manifest_silver.json --vers
 scripts/build_android.sh --package-only
 ```
 
-### Step bridge (Pokéwalker mod)
+### Native step bridge
 
-`love.system.syncHealthSteps()` → `GameActivity.syncHealthSteps` (same
-JNI route as the picker: `common/android.cpp` →
-`modules/system/System.cpp` → `wrap_System.cpp`). The Java side does a
-one-shot read of the hardware `TYPE_STEP_COUNTER` sensor (cumulative
-since boot, counted by the OS whether or not any app runs), anchors the
-reading in `SharedPreferences` so a walk is never credited twice
-(a reading below the anchor means the phone rebooted → re-anchor without
-crediting), and stages the delta as `steps_pending.json` in the save
-identity dir — the same contract as the iOS `GRHealthBridge`. Nothing in
-the base game calls it; the consumer is the
-[Pokéwalker mod](https://github.com/mresnick67/Gen1ReComp-Pokewalker),
-installed as a mod `.zip` at runtime (its SYNC STEPS option defaults
-off).
+`love.system.syncHealthSteps()` requests the hardware `TYPE_STEP_COUNTER`
+through the existing JNI route. `love.system.stepJournalVersion()` advertises
+version 1 of the cumulative journal protocol. The native bridge publishes
+count and measurement anchor together, serializes sensor reads, preserves
+backlogs, and reanchors a reset hardware counter without inventing steps.
+
+The native walker and mods declaring the `steps` permission retain independent
+receipts. A failed journal publication preserves the previous anchor for retry.
+Legacy pending-file migration finishes before requesting consent or waiting for
+a sensor; Lua leaves that legacy file alone on versioned hosts. See
+[the step delivery contract](../docs/mod-native-steps.md) for restart behavior,
+bounds, migration and device verification limits.
 
 Android 10+ gates the sensor behind the `ACTIVITY_RECOGNITION` runtime
 permission (declared in `app/src/main/AndroidManifest.xml`; keep it out

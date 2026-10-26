@@ -1,0 +1,77 @@
+name: Native step journal
+on:
+  pull_request:
+    paths:
+      - 'src/core/StepJournal.lua'
+      - 'src/mods/Steps.lua'
+      - 'src/mods/Manifest.lua'
+      - 'src/mods/Loader.lua'
+      - 'src/pokewalker/Walker*.lua'
+      - 'mobile/ios/native/GRHealthBridge.swift'
+      - 'mobile/ios/patch_love_src.py'
+      - 'mobile/android/love/src/main/java/org/love2d/android/GameActivity.java'
+      - 'mobile/android/love/src/main/java/org/love2d/android/StepJournal.java'
+      - 'mobile/android/love/src/jni/love/src/modules/system/wrap_System.cpp'
+      - 'tests/engine/native_steps.lua'
+      - 'tests/native_steps_*/**'
+      - 'tools/qualify_native_steps.py'
+      - '.github/workflows/mod-step-journal.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-step-journal-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android-bridge-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install native Android build dependencies
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"'
+      - name: Compile the Android sensor bridge and native Lua binding
+        working-directory: mobile/android
+        run: bash ./gradlew --no-daemon :love:compileEmbedDebugJavaWithJavac :love:externalNativeBuildEmbedDebug
+  native-journals:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: brew install luajit
+      - name: Verify the official LÖVE test runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location https://github.com/love2d/love/releases/download/11.5/love-11.5-macos.zip -o "$RUNNER_TEMP/love-11.5-macos.zip"
+          printf '%s  %s\n' 6795bb3a1656af6a2fdfe741e150787b481886d3a280327a261a3fdded586913 "$RUNNER_TEMP/love-11.5-macos.zip" | shasum -a 256 -c -
+          ditto -x -k "$RUNNER_TEMP/love-11.5-macos.zip" "$RUNNER_TEMP/love-runtime"
+      - run: luajit tests/engine/native_steps.lua
+      - name: Verify the pinned host-test JSON dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o "$RUNNER_TEMP/json-20240303.jar"
+          printf '%s  %s\n' 3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed "$RUNNER_TEMP/json-20240303.jar" | shasum -a 256 -c -
+      - name: Exercise Swift, Java, Lua and real filesystem receipts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tools/qualify_native_steps.py --swiftc "$(xcrun --find swiftc)" --sdk "$(xcrun --sdk macosx --show-sdk-path)" --ios-sdk "$(xcrun --sdk iphoneos --show-sdk-path)" --java-home "$JAVA_HOME" --json-jar "$RUNNER_TEMP/json-20240303.jar" --lua "$(command -v luajit)" --love "$RUNNER_TEMP/love-runtime/love.app/Contents/MacOS/love" --output "$RUNNER_TEMP/native-steps"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-step-journal
+          path: |
+            ${{ runner.temp }}/native-steps/*.json
+            ${{ runner.temp }}/native-steps/*.log
+          if-no-files-found: warn
+          retention-days: 7

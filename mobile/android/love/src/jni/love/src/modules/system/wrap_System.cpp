@@ -212,6 +212,13 @@ int w_syncHealthSteps(lua_State *L)
 	return 1;
 }
 
+// Native step journal capability added by Roxas2712.
+int w_stepJournalVersion(lua_State *L)
+{
+	lua_pushinteger(L, 1);
+	return 1;
+}
+
 int w_restartApp(lua_State *L)
 {
 	// Does not return on success: GameActivity.restartApp exits the process
@@ -264,6 +271,7 @@ static const luaL_Reg functions[] =
 	{ "walkerNotify", w_walkerNotify },
 	{ "httpRequest", w_httpRequest },
 	{ "syncHealthSteps", w_syncHealthSteps },
+	{ "stepJournalVersion", w_stepJournalVersion },
 	{ "restartApp", w_restartApp },
 	{ "httpDownload", w_httpDownload },
 	{ "hasBackgroundMusic", w_hasBackgroundMusic },
