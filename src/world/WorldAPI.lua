@@ -7,16 +7,18 @@
 
 local Logger = require("src.core.Logger")
 local MapLoader = require("src.world.MapLoader")
+local MapIdentity = require("src.core.MapIdentity")
 local Gen3Elevation = require("src.world.Gen3Elevation")
 local Runtime = require("src.mods.Runtime")
+local Reads = require("src.mods.WorldReads")
 
 local WorldAPI = {}
 WorldAPI.__index = WorldAPI
 
 local NO_OVERWORLD = "no overworld"
 
-function WorldAPI.new(game, modId)
-  return setmetatable({ game = game, modId = modId }, WorldAPI)
+function WorldAPI.new(game, modId, readContext)
+  return setmetatable({ game = game, modId = modId, readContext = readContext }, WorldAPI)
 end
 
 -- the live overworld, or nil.  Game.overworld is the fast path; the stack
@@ -58,6 +60,28 @@ function WorldAPI:current()
                                          elevation) }
 end
 
+-- Detached common Pokemon records. This also works with a save at the title
+-- screen: reading the party does not need an active overworld.
+function WorldAPI:party()
+  return Reads.party(self.game, self.readContext)
+end
+
+-- Require the expected active map to reject stale requests after a warp.
+-- The second result describes block size/coordinates and the DS proxy grid.
+function WorldAPI:activeBlockAt(mapId, bx, by)
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return Reads.activeBlockAt(ow.map, MapIdentity.runtimeId(self.game.data, mapId), bx, by)
+end
+
+-- Loaded maps only, active first and with distinct placements. loadedMaps()
+-- retains its legacy shape/order; these records also describe block units.
+function WorldAPI:liveMaps()
+  local ow = self:overworld()
+  if not ow or not ow.map then return nil, NO_OVERWORLD end
+  return Reads.liveMaps(ow)
+end
+
 -- opts.arrive = "fly" | "teleport" picks the arrival FX; anything else
 -- lands the player without one, like a scripted warp.
 function WorldAPI:warpTo(mapId, x, y, facing, opts)
@@ -80,12 +104,13 @@ function WorldAPI:toggleObject(mapId, objName, visible)
   local save = self.game and self.game.save
   if not save then return nil, "no save" end
   save.objectToggles = save.objectToggles or {}
-  save.objectToggles[mapId] = save.objectToggles[mapId] or {}
-  save.objectToggles[mapId][objName] = visible and true or false
+  local native = MapIdentity.sourceId(self.game.data, mapId)
+  save.objectToggles[native] = save.objectToggles[native] or {}
+  save.objectToggles[native][objName] = visible and true or false
   Runtime.emit("world.object_toggled",
     { mapId = mapId, objName = objName, visible = visible and true or false })
   local ow = self:overworld()
-  if ow and ow.map and ow.map.id == mapId then
+  if ow and ow.map and MapIdentity.same(self.game.data, ow.map.id, mapId) then
     ow:setMap(mapId, ow.player.cellX, ow.player.cellY, ow.player.facing,
               { seamless = true, via = "reload", keepMusic = true })
   end
@@ -158,9 +183,9 @@ local NO_ELEVATION = "map carries no elevation"
 function WorldAPI:_mapNamed(mapId)
   local ow = self:overworld()
   if not ow or not ow.map then return nil, NO_OVERWORLD end
-  if mapId == nil or mapId == ow.map.id then return ow.map, ow, 0, 0 end
+  if mapId == nil or MapIdentity.same(self.game.data, mapId, ow.map.id) then return ow.map, ow, 0, 0 end
   for _, nb in ipairs(ow.neighbors or {}) do
-    if nb.map and nb.map.id == mapId then
+    if nb.map and MapIdentity.same(self.game.data, nb.map.id, mapId) then
       return nb.map, ow, nb.cx or 0, nb.cy or 0
     end
   end
@@ -365,7 +390,7 @@ end
 function WorldAPI:npc(mapId, indexOrName)
   local ow = self:overworld()
   if not ow then return nil, NO_OVERWORLD end
-  if ow.map and ow.map.id ~= mapId then return nil, "map is not active" end
+  if ow.map and not MapIdentity.same(self.game.data, ow.map.id, mapId) then return nil, "map is not active" end
   for _, npc in ipairs(ow.npcs or {}) do
     if npc.def.index == indexOrName or npc.def.name == indexOrName
        or npc.id == indexOrName then

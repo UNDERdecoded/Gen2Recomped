@@ -20,6 +20,7 @@ local Semver = require("src.mods.Semver")
 local Events = require("src.mods.Events")
 local Hooks = require("src.mods.Hooks")
 local ModStorage = require("src.mods.Storage")
+local WorldReads = require("src.mods.WorldReads")
 local Runtime = require("src.mods.Runtime")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
@@ -1125,6 +1126,16 @@ function Loader:_api(mod)
   -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
   -- namespace per mod for payloads too large to belong in a save file.
   local world, storage
+  local readContext = WorldReads.context(loader)
+  -- Capability queries are optional on older API-2 hosts. When present,
+  -- report the additive readers without constructing Game or the world.
+  if api.supports then
+    local supports = api.supports
+    function api:supports(surface, name)
+      if surface == "world" and WorldReads.supports(name) then return true end
+      return supports(self, surface, name)
+    end
+  end
   setmetatable(api, { __index = function(_, key)
     if key == "game" then return loader:_game() end
     if key == "storage" then
@@ -1139,7 +1150,7 @@ function Loader:_api(mod)
     local game = loader:_game()
     local module = game and engineRequire("src.world.WorldAPI")
     if not module then return nil end
-    world = module.new(game, modId)
+    world = module.new(game, modId, readContext)
     return world
   end })
   return api

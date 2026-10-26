@@ -70,6 +70,14 @@ is a normal answer rather than a failure, and telling it apart from
 per frame, and a directory walk over several hundred blobs per frame is not
 something a menu can afford.
 
+## Read-only world and party queries
+
+`mod.world:party()`, `activeBlockAt(mapId, bx, by)` and `liveMaps()` expose
+common Pokémon snapshots and current runtime map data across generations
+1–5. Reads return detached data and do not load maps or change gameplay.
+See [record fields, coordinate units and DS limitations](world-read-api.md).
+The existing `loadedMaps()` method retains its legacy shape.
+
 ## Editing maps in Tiled
 
 Maps are data, not assets, so they can be authored in a real map editor and
