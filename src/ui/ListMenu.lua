@@ -122,7 +122,7 @@ function ListMenu.new(game, title, items, opts)
   -- entry from row 2, which is seven of them.
   self.gen2Dex = opts.gen2Dex or nil
   if self.gen2Dex then self.rows = 7 end
-  return self
+  return require("src.ui.ClassicItemBox").attach(self)
 end
 
 local function moveIndex(self, delta)
