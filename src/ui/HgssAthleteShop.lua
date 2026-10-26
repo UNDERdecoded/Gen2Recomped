@@ -30,6 +30,7 @@
 -- (overlay 31's line for that case was not traced); a taken prize is drawn
 -- like any other (whether overlay 31 dims it was not read).
 
+local Strings = require("src.core.Strings")
 local T = require("src.import.Gen4Text")
 
 local M = {}
@@ -101,7 +102,7 @@ local function choose(self)
     return
   end
   self.mode, self.yesNo = "confirm", 1
-  self.message = bank(self, 46, "Would you like\n" .. (def.name or "") .. "?", def.name or "")
+  self.message = bank(self, 46, Strings("Would you like\n%s?", def.name or ""), def.name or "")
 end
 
 local function transact(self)
@@ -115,15 +116,15 @@ local function transact(self)
   if self.athlon.kind == "daily" then
     if isApricorn(id) then
       require("src.world.HgssApricorns").give(save, id - M.APRICORN_FIRST, 1)
-      self.message = bank(self, 49, "All right, here you go.\nCome back anytime!")
+      self.message = bank(self, 49, Strings("All right, here you go.\nCome back anytime!"))
     else
       require("src.inventory.Bag").add(save, id, 1, self.game.data)
-      self.message = self:line(6, "Here you are!\nThank you!", def.name or "", self:pocketName(def))
+      self.message = self:line(6, Strings("Here you are!\nThank you!"), def.name or "", self:pocketName(def))
     end
     S.takeDaily(save, self.cursor - 1)
   else
     S.giveCard(save, (tonumber(id) or 0) - M.DATA_CARD_01)
-    self.message = bank(self, 49, "All right, here you go.\nCome back anytime!")
+    self.message = bank(self, 49, Strings("All right, here you go.\nCome back anytime!"))
   end
   -- MartData_SubCurrency (PokeathlonSave_SubAthletePoints: not below 0) and
   -- GAME_STAT_CURRENCY_SPENT
