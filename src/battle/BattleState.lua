@@ -2482,6 +2482,10 @@ function BattleState:stepHPDrain()
         b.draining = nil
         b.drainHold = Timing.hpDrainClosingFrames(b.isPlayer == true) - 1
         busy = true
+      elseif b.drainHold == 0 then
+        -- The last closing frame was consumed above. Retire its marker only
+        -- on the same idle frame that already returned false before this fix.
+        b.drainHold = nil
       end
     end
   end
@@ -2728,10 +2732,16 @@ function BattleState:updateQueue()
   end
   if not self.current then
     local item = table.remove(self.queue, 1)
-    if not item then return false end
+    if not item then
+      -- A UI completion can insert rows outside an executing fn item too.
+      -- No insertion cursor survives the queue it belongs to.
+      self.nextInsert = nil
+      return false
+    end
     if item.fn then
       self.nextInsert = 0 -- sayNext inserts right after this item
       item.fn()
+      self.nextInsert = nil
       self.current = nil
       return true
     end
