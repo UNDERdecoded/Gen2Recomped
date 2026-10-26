@@ -212,6 +212,9 @@ local function confuse(battle, target, pierceSub)
   if target.confusedTurns or (target.substituteHP and not pierceSub) then
     return { Strings("But, it failed!") }
   end
+  if HeldItems.effect(battle.data, target, "confuse") == HeldItems.EFFECT.PREVENT_CONFUSE then
+    return { Strings("But, it failed!") }
+  end
   target.confusedTurns = battle.rng(2, 5)
   HeldItems.setConfusionCounter(battle, target, target.confusedTurns)
   local msgs = { Strings("%s\nbecame confused!", displayName(target)) }
@@ -278,6 +281,7 @@ MoveEffects.primary = {
       if t == "GRASS" then return { Strings("But, it failed!") } end
     end
     target.leechSeeded = true
+    if require("src.core.GameVersion").isGen3() then target.leechSeedSource = user end
     return { Strings("%s\nwas seeded!", displayName(target)) }
   end,
 
