@@ -16,6 +16,7 @@ local Manifest = require("src.mods.Manifest")
 local Merge = require("src.mods.Merge")
 local Registry = require("src.mods.Registry")
 local Schemas = require("src.mods.Schemas")
+local Capabilities = require("src.mods.Capabilities")
 local Semver = require("src.mods.Semver")
 local Events = require("src.mods.Events")
 local Hooks = require("src.mods.Hooks")
@@ -1119,6 +1120,11 @@ function Loader:_api(mod)
       end
       return data
     end)
+  -- Capture the host selected for this API, as with generation/gameVersion.
+  -- Probing must not instantiate mod.world/mod.game or register callbacks.
+  function api:supports(surface, name)
+    return Capabilities.supports(surface, name, hostId)
+  end
   -- mod.world / mod.game / mod.storage all materialize on first touch, for
   -- the same reason: a headless load must not drag the world stack in, and
   -- the Game the facade acts on is still being wired when the entry chunk

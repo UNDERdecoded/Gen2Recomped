@@ -18,6 +18,56 @@ Regenerate the reference straight into a wiki checkout:
 luajit tools/gen_registry_docs.lua ../gen1recomp.wiki
 ```
 
+## Feature queries (`mod:supports`)
+
+`mod:supports(surface, name)` returns `true` when the selected host exposes an
+existing API-2 capability, or `false, reason` when it does not. Unknown names,
+unknown surfaces and invalid names return `false` with an explanation. Check
+for the method itself when supporting older engine builds:
+
+```lua
+if mod.supports and mod:supports("hooks", "battle.damage") then
+  mod.hooks:wrap("battle.damage", function(next, ctx)
+    return next(ctx)
+  end)
+end
+
+local canFly = mod.supports and mod:supports("world", "flyTo") -- false here
+```
+
+The four surfaces are:
+
+| Surface | Meaning of `true` |
+| --- | --- |
+| `content` | An API-2 registry exists, e.g. `pokemon` or `render_pipelines`. |
+| `world` | A public `mod.world` method exists, e.g. `warpTo` or `terrainAt`. |
+| `hooks` | The engine has a native hook call site for this version. |
+| `events` | The engine has a native event call site for this version, or the name is a non-empty `mod.<id>.<event>` namespace. |
+
+Queries work in the entry chunk without an active overworld, save, graphics
+context or imported ROM. They do not subscribe, wrap hooks, load the Game or
+materialize `mod.world`. Answers are bound to the host selected when that mod
+API was built; changing the mod's copy of `gameVersion` or `host` cannot change
+them. Availability does not imply the current game state permits the action:
+`warpTo` can still return `nil, "no overworld"`, and elevation readers can
+return `nil, "map carries no elevation"`.
+
+Callback availability follows Gen2Recomped's actual implementation, rather
+than Gen1Recomp's newer catalog. For example, `core.logic_speed`, `item.use`
+and `egg.hatched` have no native call sites here; the hatch event here is
+`pokemon.egg_hatched` (Gen 2–5). `battle.status_hud_visible` is available on
+Gen 4–5, `battle.overlay` on Gen 1–3, and the normal start-menu, party-submenu
+and naming-grid hooks on Gen 1–3. `ui.pc.items` is available on Gen 1–2.
+Oak-speech callbacks apply to Gen 1–2 except Prism; Birch-speech events apply
+to Emerald. Other versions use their own intros. An event still needs its
+trigger to occur; custom events also need another mod to emit them.
+
+This is additive to Mod API 2: it neither normalizes content records, IDs or
+callback payloads across generations nor provides Gen1Recomp's unified API 3.
+Existing registration/subscription behavior remains unchanged. When adding a
+native callback or changing screen routing, update `src/mods/Capabilities.lua`
+and the capability tests in the same change.
+
 ## Bulk storage (`mod.storage`)
 
 `mod.save` is the right home for a handful of per-playthrough values: it lives
