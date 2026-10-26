@@ -13550,7 +13550,7 @@ function RomExtractorGen3:decodeScriptAt(start, queue)
     if not command then
       return lines, ("unknown opcode $%02X at %07X"):format(op, o)
     end
-    local name, spec = command[1], command[2]
+    local name, spec = command[1], Gen3ScriptOps.operandSpec(command, self.version)
     local at, args = o + 1, {}
     if spec == "*" then
       local kind = rom:u8(at)

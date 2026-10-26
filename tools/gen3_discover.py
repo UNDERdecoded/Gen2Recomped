@@ -278,7 +278,7 @@ SCRIPT_OPS = {
     0x92: ('checkmoney', 'db'),
     0x93: ('showmoneybox', 'bbb'),
     0x94: ('hidemoneybox', ''),
-    0x95: ('updatemoneybox', ''),
+    0x95: ('updatemoneybox', 'bbb'),
     0x96: ('getpokenewsactive', 'w'),
     0x97: ('fadescreen', 'b'),
     0x98: ('fadescreenspeed', 'bb'),
