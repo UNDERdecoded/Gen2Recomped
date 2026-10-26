@@ -1196,6 +1196,8 @@ end
 -- migration it took goes with them.  The journal only exists around an
 -- entry chunk; a later failure (script validation) purges every registry.
 function Loader:_rollback(modId)
+  -- Restore failed wrappers before any native registry/resource cleanup.
+  ModSeams.unwindOwner(modId)
   for name in pairs(self.journal or self.content) do
     self.content[name]:rollback(modId)
   end
@@ -1206,6 +1208,12 @@ function Loader:_rollback(modId)
   self.optionStatus[modId] = nil
   self.migrations[modId] = nil
   self.modSave[modId] = nil
+  local stream=package.loaded['src.core.game3.asset_stream']
+  if stream and stream.cancelOwner then pcall(stream.cancelOwner,modId)end
+  local space=package.loaded['src.core.game3.scripting.space']
+  if space and space.cancelOwner then pcall(space.cancelOwner,modId)end
+  local transition=package.loaded['src.core.game3.battle_transition']
+  if transition and transition.cancelOwner then pcall(transition.cancelOwner,modId)end
 end
 
 -- a mod that explicitly swears it stays link-compatible while writing into a
@@ -1309,12 +1317,26 @@ local function stampAudioOwners(data, name, registry)
   owners[key] = map
 end
 
+-- Optional sprite resources own no native game state. Do not load a
+-- compatibility module or Game just to retire a previous resource cohort.
+local function retireSpriteResources()
+  local sprites=package.loaded['src.core.game3.ow_sprites']
+  if sprites and type(sprites.release)=='function' then sprites.release()end
+  local space=package.loaded['src.core.game3.scripting.space']
+  if space and type(space.release)=='function'then space.release()end
+  local transition=package.loaded['src.core.game3.battle_transition']
+  if transition and type(transition.release)=='function'then transition.release()end
+  local effects=package.loaded['src.core.game3.field_effects']
+  if effects and type(effects.release)=='function'then effects.release()end
+end
+
 function Loader:load(data)
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
   -- wraps and flags the previous load put on engine tables come off first.
   ModSeams.unwindAll()
+  retireSpriteResources()
   self.baseData = data
   -- every registry folds against the pristine view of its Data target;
   -- resolution is lazy so optional namespaces may appear later
@@ -1471,7 +1493,6 @@ function Loader:load(data)
       Runtime.currentMod = nil
       if not success then
         self:_rollback(modId)
-        ModSeams.unwindOwner(modId)
       end
       self.journal = nil
       if success then
@@ -1654,6 +1675,7 @@ end
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
   local undone = select(1, ModSeams.unwindAll())
+  retireSpriteResources()
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
     Runtime.currentMod = nil
