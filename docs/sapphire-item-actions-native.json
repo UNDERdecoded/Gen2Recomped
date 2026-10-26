@@ -1,0 +1,74 @@
+{
+  "status": "pass",
+  "scope": "Fresh native import with mods disabled; actual RS bag action-table input and native consumption fixtures",
+  "verification": {
+    "identity": "gen2recomp-qa-sapphire-20261025074804538424",
+    "sourceCommit": "95a9e3bb3f48554f3c74a737b38130747890557d",
+    "engineArchiveSHA256": "bad7e0dd001e4751898b95c7433ded9a2a2489cf71bdf46020b35cd6a4b2af19",
+    "driverSHA256": "8413d29ca881994f653f357222a1399b0dafefe767ee2dd961e6eccf4067c2ae",
+    "cartridgeSHA1": "3ccbbd45f8553c36463f13b938e833f652b793e4",
+    "loveSHA256": "cb136e72f2f2639f889245c0a6fca355178da71f05e460a9f3d01d0fafcc1b0b",
+    "qaRenderer": "metal",
+    "physicalIOSDeviceTested": false,
+    "engineFilesUnchanged": 8978,
+    "frozenInputAllocation": {
+      "independentClonedFiles": 1716,
+      "clonedLogicalBytes": 345539761,
+      "mutableHardlinks": false
+    }
+  },
+  "result": {
+    "status": "pass",
+    "nativeNoMods": true,
+    "actualPocketActionGrids": {
+      "KEY_ITEM": [
+        "use",
+        "register",
+        "blank",
+        "cancel"
+      ],
+      "TM_HM": [
+        "use",
+        "give",
+        "blank",
+        "cancel"
+      ],
+      "BERRY": [
+        "checkTag",
+        "blank",
+        "use",
+        "give",
+        "toss",
+        "cancel"
+      ],
+      "ITEM": [
+        "use",
+        "give",
+        "toss",
+        "cancel"
+      ],
+      "BALL": [
+        "give",
+        "blank",
+        "toss",
+        "cancel"
+      ]
+    },
+    "nativeColumnMajorPositions": true,
+    "nativeDirectionalInput": true,
+    "nativeRegisterToggle": true,
+    "rsRegisterLabelPreserved": true,
+    "nativeQuantityCancel": true,
+    "nativeRepelUse": true,
+    "unchangedOtherItemsAndTeam": true,
+    "oldV3CacheRejected": true,
+    "freshV4CacheReady": true,
+    "fieldWindowPreserved": true,
+    "originalRSBagArtworkPorted": false,
+    "berryTagScreenImplemented": false,
+    "fullRSUI": false,
+    "fullStory": false,
+    "physicalIOSDeviceTested": false,
+    "edition": "sapphire"
+  }
+}

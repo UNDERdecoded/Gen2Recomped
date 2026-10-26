@@ -80,6 +80,8 @@ Gen3Save.MON_IS_EGG = 4
 -- So these are the fallback for a playthrough with nothing in it to ask, and
 -- the moment there is something to ask, they are not used at all.
 Gen3Save.LANGUAGE_ENGLISH = 2
+Gen3Save.MET_GAME_SAPPHIRE = 1
+Gen3Save.MET_GAME_RUBY = 2
 Gen3Save.MET_GAME_EMERALD = 3
 Gen3Save.MET_GAME_FIRE_RED = 4
 Gen3Save.MET_GAME_LEAF_GREEN = 5
@@ -142,6 +144,10 @@ function Gen3Save.setLayout(layout, orders, fields, gameVersion)
     Gen3Save.defaultMetGame = Gen3Save.MET_GAME_FIRE_RED
   elseif gameVersion == "leafgreen" then
     Gen3Save.defaultMetGame = Gen3Save.MET_GAME_LEAF_GREEN
+  elseif gameVersion == "ruby" then
+    Gen3Save.defaultMetGame = Gen3Save.MET_GAME_RUBY
+  elseif gameVersion == "sapphire" then
+    Gen3Save.defaultMetGame = Gen3Save.MET_GAME_SAPPHIRE
   else
     Gen3Save.defaultMetGame = Gen3Save.MET_GAME_EMERALD
   end
@@ -537,6 +543,7 @@ end
 
 function Gen3Save.encryptionKey(block2)
   local f = need("the encryption key")
+  if f.saveBlock2.encryptionKey == false then return 0 end -- RS stores plain values
   return u32(block2, f.saveBlock2.encryptionKey)
 end
 

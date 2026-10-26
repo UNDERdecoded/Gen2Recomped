@@ -1318,7 +1318,9 @@ function Data:seedDefaults()
       require("src.world.Gen3Weather").setCycles(cycles)
     end
 
-    local win = (self.constants or {}).gen3MessageWindow
+    -- RS field text and battle chrome use different native contracts.
+    local win = (self.constants or {}).gen3FieldMessageWindow
+                or (self.constants or {}).gen3MessageWindow
     if type(win) == "table" and win.width and win.height then
       self.field.theme = self.field.theme or {}
       if self.field.theme.textBox == nil then

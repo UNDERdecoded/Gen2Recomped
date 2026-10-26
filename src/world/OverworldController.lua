@@ -13511,8 +13511,9 @@ function OverworldState:onStepComplete()
   require("src.world.PikachuFollower").onStep(Game.save)
   require("src.world.HgssFollowMon").onStep(Game, self)
   -- Original Gen 2 friendship shares the egg step counter in stepEggs.
-  -- Keep the existing walking rule for other datasets.
-  if GameVersion.get()=="emerald" then
+  -- All Gen 3 editions use their own 128-step coin-flip rule, rather than
+  -- falling through to the generic +2/+2/+1 walking adjustment.
+  if GameVersion.isGen3() then
     require("src.pokemon.Gen3Friendship").step(Game.data,Game.save,self.map and self.map.def)
   elseif GameVersion.isGen4() or GameVersion.isGen5() then
     -- Platinum's own rule: a coin flip, Luxury Ball, egg location and Soothe
@@ -19099,7 +19100,7 @@ function OverworldState:drawBrailleBox()
   self.brailleQuads = self.brailleQuads or {}
   love.graphics.setColor(1, 1, 1, 1)
   for row, line in ipairs(wall.lines or {}) do
-    local y = wall.y * 8 + 8 + (row - 1) * lineHeight
+    local y = (wall.textY or (wall.y * 8 + 8)) + (row - 1) * lineHeight
     for col, value in ipairs(line) do
       local quad = self.brailleQuads[value]
       if not quad then
@@ -19109,7 +19110,7 @@ function OverworldState:drawBrailleBox()
                                      img:getWidth(), img:getHeight())
         self.brailleQuads[value] = quad
       end
-      love.graphics.draw(img, quad, wall.x * 8 + (col - 1) * advance, y)
+      love.graphics.draw(img, quad, (wall.textX or (wall.x * 8)) + (col - 1) * advance, y)
     end
   end
 end

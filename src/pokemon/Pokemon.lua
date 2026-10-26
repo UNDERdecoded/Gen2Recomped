@@ -224,7 +224,7 @@ function Pokemon.new(data, species, level, rng, form)
     -- (Black / White too: the same personal byte, the same rules)
     happiness = ((require("src.core.GameVersion").isGen4() or require("src.core.GameVersion").isGen5())
                  and (def.baseFriendship or def.friendship or 70))
-      or require("src.core.GameVersion").get()=="emerald" and (def.friendship or 70)
+      or require("src.core.GameVersion").isGen3() and (def.friendship or 70)
       or (require("src.core.GameVersion").isGen2()
       and require("src.pokemon.Evolution").BASE_HAPPINESS or nil),
     -- the Gen1 catch-rate byte freezes at catch time: evolution does NOT

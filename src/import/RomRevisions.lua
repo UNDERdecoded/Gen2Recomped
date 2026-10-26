@@ -83,6 +83,9 @@ RomRevisions.ACCEPTED = {
     { sha1 = "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc", code = "BPRE", revision = 0,
       label = "Pokemon FireRed (USA, Europe)" },
   },
+  sapphire = {
+    { sha1 = "3ccbbd45f8553c36463f13b938e833f652b793e4", code = "AXPE", revision = 0, label = "Pokemon Sapphire (USA)" },
+  },
   emerald = {
     { sha1 = "f3ae088181bf583e55daf962a92bb46f4f1d07b7", code = "BPEE", revision = 0,
       label = "Pokemon Emerald (USA, Europe)" },
