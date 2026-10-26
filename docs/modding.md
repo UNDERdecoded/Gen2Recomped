@@ -192,6 +192,14 @@ default** (1x front, 2x back).
   ball-to-pic grow multiplies your scale through each stage, so a rescaled
   mon still grows into place from the ball, grounded the whole way.
 
+## Unified hook and event records (opt-in)
+
+API-2 mods can select `"callback_format": "unified"` independently of their
+content format. Known Pokémon, battler, trainer-slot and encounter records
+then use common fields and symbolic IDs. Existing mods keep native payloads.
+See [the callback format and mutation contract](unified-mod-callbacks.md) for
+adapted arguments/results, native handles and validation rules.
+
 ## Developer console
 
 Boot with developer mode on to unlock the in-game console and hot-reload
