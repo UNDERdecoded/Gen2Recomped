@@ -4141,6 +4141,7 @@ function Commands.g2_name_rival(ctx)
   local presets = boot and boot.namePresets and boot.namePresets.rival
   game.stack:push(require("src.ui.NamingScreen").new(game, {
     title = Strings("RIVAL'S NAME?"),
+    kind = "rival",
     maxLen = 7, -- PLAYER_NAME_LENGTH - 1
     -- NamingScreen_InitNameEntry opens the grid blank and confirming nothing
     -- would leave the name empty, so fall back to the canonical one
@@ -4214,7 +4215,7 @@ function Commands.g2_name_rater(ctx)
     or Strings("All right. What\nname should we\vgive it, then?"))
   local chosen
   game.stack:push(require("src.ui.NamingScreen").new(game, {
-    title = Strings("%s's NICKNAME?", nickOf(picked)),
+    title = Strings("NICKNAME?"), kind = "mon", mon = picked,
     maxLen = 10,
     default = nickOf(picked),
     onDone = function(name) chosen = name runner:resume() end,

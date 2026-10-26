@@ -11,7 +11,6 @@ local Screens = {}
 -- ids whose builtin module is not under src/ui/
 local BUILTIN = {
   ManagerState = "src.mods.ManagerState",
-  Gen2StartMenu = "src.ui.StartMenu",
 }
 
 local cache = {}
@@ -400,6 +399,11 @@ end
 -- The id a push should really open, and the arguments it should open with.
 -- Public so the suite can state the rule without driving a whole game.
 function Screens.resolveId(game, id, arg)
+  -- GSC owns a native START state, including its live submenu parent.
+  if id == 'StartMenu' and require('src.core.GameVersion').isGen2() then
+    local screens = game and game.data and game.data.screens
+    if not (screens and screens[id]) then return 'Gen2StartMenu', arg end
+  end
   -- BLACK AND WHITE'S OWN SCREENS, ahead of everything (a Gen 5 cache is not
   -- a Gen 4 one, so the table below would hand it the Game Boy's): so far the
   -- evolution scene, positional like Platinum's

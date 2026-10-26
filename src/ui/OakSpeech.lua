@@ -690,8 +690,26 @@ function OakSpeech:runStep(step)
     presets = presets
       or namePresets(self.game, step.presetsWho or who,
                      step.presetsFallback or { "RED" })
+    if GameVersion.isGen2() and who == "player" and #presets > 0 then
+      local screen
+      local gender = self.game.save.player.gender
+      local pic, trueColor = self:formPic(gender)
+      screen = require("src.ui.Screens").push(self.game, "Gen2NamePick", {
+        gender = gender, presets = presets, pic = pic, picTrueColor = trueColor,
+        font = self.game.fontData, prompt = step.title, maxLength = step.maxLen or self.nameLen,
+        onDone = function(name)
+          if self.game.stack:top() ~= screen then return end
+          self.game.stack:pop()
+          self.game.save.player.name = name
+          self:recordAnswer(step, 1, name, name)
+          self:advance()
+        end,
+      })
+      return
+    end
     require("src.ui.Screens").push(self.game, "NamingScreen", {
       title = step.title or (who == "rival" and "HIS NAME?" or Strings("YOUR NAME?")),
+      kind = who == "rival" and "rival" or "player",
       presets = presets,
       maxLen = step.maxLen or self.nameLen,
       onDone = function(name)

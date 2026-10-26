@@ -15,8 +15,16 @@ function Events:on(name, callback, priority, owner)
   local list = self.listeners[name] or {}
   self.listeners[name] = list
   local entry = { callback = callback, priority = priority or 0, owner = owner }
-  list[#list + 1] = entry
-  table.sort(list, function(a, b) return a.priority > b.priority end)
+  -- Stable priority insertion: equally ranked listeners run in subscription
+  -- order. Re-sorting with a priority-only comparator permuted existing peers
+  -- whenever another listener joined, allowing an earlier generic decorator
+  -- to overwrite a later screen-specific one after a settled screen push.
+  local index = #list + 1
+  while index > 1 and list[index - 1].priority < entry.priority do
+    list[index] = list[index - 1]
+    index = index - 1
+  end
+  list[index] = entry
   return function()
     for i, candidate in ipairs(list) do
       if candidate == entry then table.remove(list, i) break end

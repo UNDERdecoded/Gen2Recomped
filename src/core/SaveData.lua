@@ -963,6 +963,30 @@ function SaveData.playSeconds(save)
          + ticks / 60
 end
 
+-- The native save owns a scalar play clock and an owned-species map. Expose
+-- the reference UI summary without requiring callers to reinterpret either
+-- representation, load a profile, or create a second save/time store.
+function SaveData.summary(save, data)
+  if type(save) ~= "table" then return nil end
+  local caught = 0
+  for _, has in pairs((save.pokedex and save.pokedex.owned) or {}) do
+    if has then caught = caught + 1 end
+  end
+  local seconds = SaveData.playSeconds(save)
+  if seconds ~= seconds or seconds == math.huge or seconds == -math.huge then seconds = 0 end
+  seconds = math.max(0, math.floor(seconds))
+  local spawn = save.spawn
+  return {
+    name = save.player and save.player.name or "?",
+    badges = Badges.count(data, save, save.version),
+    caught = caught,
+    hours = math.floor(seconds / 3600),
+    minutes = math.floor(seconds / 60) % 60,
+    map = save.player and save.player.map or (save.position and save.position.map)
+      or (type(spawn) == "table" and spawn.map or spawn),
+  }
+end
+
 function SaveData.slotSummary(save, version)
   if type(save) ~= "table" then return nil, nil end
   local name = save.player and save.player.name or nil

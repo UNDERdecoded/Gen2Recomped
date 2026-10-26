@@ -55,6 +55,8 @@ function TextBox.new(game, text, onDone, opts)
   self.choiceNoSound = opts.noSound
   self.auto = opts.auto
   self.stay = opts.stay
+  self.textSpeed = opts.textSpeed
+  self.allowTextAcceleration = opts.allowTextAcceleration ~= false
   -- A few cartridge screens print through the same text engine without using
   -- the field's framed dialogue window.  Teachy TV is one: teachy_tv.c gives
   -- it a 26x4 raw window at (2,15), fills it with palette colour $C and calls
@@ -559,9 +561,9 @@ function TextBox:update(dt)
   -- typewriter cadence: one character every N frames, N = the OPTION
   -- text speed (TextSpeedOptionData frame delays 1/3/5); holding A/B
   -- prints every frame like the original's held-button fast path
-  local delay = (self.game.save.options and self.game.save.options.textSpeed) or 3
+  local delay = self.textSpeed or (self.game.save.options and self.game.save.options.textSpeed) or 3
   if delay ~= 1 and delay ~= 3 and delay ~= 5 then delay = 3 end
-  if input:isDown("a") or input:isDown("b") then delay = 1 end
+  if self.allowTextAcceleration and (input:isDown("a") or input:isDown("b")) then delay = 1 end
   self.charTimer = (self.charTimer or 0) + 1
   while self.charTimer >= delay do
     self.charTimer = self.charTimer - delay

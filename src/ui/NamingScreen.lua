@@ -321,6 +321,9 @@ end
 
 function NamingScreen.new(game, opts)
   opts = opts or {}
+  if require("src.core.GameVersion").isGen2() then
+    return require("src.ui.Gen2NamingScreen").native(game, opts)
+  end
   local self = setmetatable({}, NamingScreen)
   self.game = game
   self.title = opts.title or Strings("YOUR NAME?")
