@@ -28,6 +28,7 @@ local Runtime = require("src.mods.Runtime")
 local Screens = require("src.ui.Screens")
 local ScriptRunner = require("src.script.ScriptRunner")
 local GameVersion = require("src.core.GameVersion")
+local Gen2Environment = require("src.core.Gen2Environment")
 local Tilt = require("src.render.Tilt")
 local TextBox = require("src.render.TextBox")
 local Transition = require("src.render.Transition")
@@ -1472,8 +1473,8 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     -- (09D344), clears $8AD, $8AE, $889, $8C1 and $880 and leaves $888 alone.
     -- So on Gen 3 the flag is the player's until they use FLASH again.
     if not GameVersion.isGen3()
-       and not (GameVersion.isGen2() and self.map.def.environment
-                and self.map.def.environment > 2) then
+       and not (GameVersion.isGen2()
+                and (Gen2Environment.id(self.map.def) or 0) > 2) then
       Game.save.flashLit = nil
     end
     self:setDark(false)
@@ -2116,7 +2117,7 @@ function OverworldState:updateMapNameSign(opts, fromHeader)
   local landmark = def and def.landmark
   -- .CheckNationalParkGate / the GATE environment test: a gate inherits no
   -- landmark, so walking through one never re-announces the route beyond it
-  if def and def.environment == MAP_NAME_SIGN_GATE then landmark = nil end
+  if def and Gen2Environment.id(def) == MAP_NAME_SIGN_GATE then landmark = nil end
   -- .CheckMovingWithinLandmark: same landmark, no sign (and no re-arm, so
   -- stepping out of a house does not re-announce the town)
   if landmark == self.signLandmark then return end
@@ -2615,7 +2616,7 @@ function OverworldState:bikeAllowed(mapId)
     -- Gen1's bike_riding_tilesets list names no Gen2 tileset, so consulting
     -- it here refused the bike on every map in the game.
     local def = Game.data.maps[mapId]
-    local env = def and def.environment
+    local env = Gen2Environment.id(def)
     return env == 1 or env == 2 or env == 4 or env == 6
   end
   -- ...AND EMERALD PUTS IT IN THE MAP HEADER.  IsBikingAllowedByMap is one
@@ -10434,7 +10435,7 @@ function OverworldState:gen2SweetScentEncounter(deferFailure)
   else
     eligible = not self:gen2IsIce(p.cellX, p.cellY)
       and (water or self.map:isGrassCell(p.cellX, p.cellY)
-        or CAVE_ENVIRONMENTS[self.map.def.environment])
+        or CAVE_ENVIRONMENTS[Gen2Environment.id(self.map.def)])
   end
   local encDef = Encounter.forMap(Game.data, self.map.def, self.map.id, nil, Game.save)
   local slots = encDef and Encounter.atTime(encDef.grass, self:timeOfDay())
@@ -13979,7 +13980,7 @@ function OverworldState:onStepComplete()
   if GameVersion.isGen5() and require("src.world.Gen5Phenomena").encounter(self, encDef) then return end
   local enc
   local indoor = Game.data.field.indoorEncounters
-  local env = self.map.def.environment
+  local env = Gen2Environment.id(self.map.def)
   -- Gen2 keeps a morn/day/nite slot set per map; the clock decides which
   local land = encDef and { grass = Encounter.atTime(encDef.grass, self:timeOfDay()) }
   -- BLACK / WHITE: dark grass rolls its own list (src/world/Gen5WildTables.lua)
@@ -15202,7 +15203,7 @@ function OverworldState:rememberDigWarp(fromMap, x, y, destMap)
     if not require("src.world.Gen3FieldRules").recordsEscape(from, dest) then return end
     -- UpdateEscapeWarp records the cell south of the entrance in Emerald.
     y = y + 1
-  elseif not (DIG_FROM[from.environment] and DIG_TO[dest.environment]) then return end
+  elseif not (DIG_FROM[Gen2Environment.id(from)] and DIG_TO[Gen2Environment.id(dest)]) then return end
   self.digWarp = { id = fromMap, x = x, y = y }
   Game.save.digWarp = self.digWarp
 end
@@ -15233,7 +15234,7 @@ function OverworldState:noteGen2Spawn(fromId)
   local pool = Game.data.map_scripts
   local spawns = pool and pool.spawns
   if not (spawns and spawns.centers and spawns.centers[fromId]) then return end
-  if not GEN2_SPAWN_ENVIRONMENTS[self.map.def.environment] then return end
+  if not GEN2_SPAWN_ENVIRONMENTS[Gen2Environment.id(self.map.def)] then return end
   local point = spawns.points and spawns.points[self.map.id]
   if not point then return end
   -- no `outdoor`: a Gen 2 spawn IS the town cell outside the centre door,

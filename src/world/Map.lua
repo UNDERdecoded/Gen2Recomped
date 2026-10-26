@@ -556,7 +556,9 @@ local OUTDOOR_ENVIRONMENTS = { [1] = true, [2] = true }  -- TOWN, ROUTE
 
 function Map.isOutdoor(def)
   if def.outdoor ~= nil then return def.outdoor end
-  if def.environment then return OUTDOOR_ENVIRONMENTS[def.environment] == true end
+  if def.environment ~= nil or def.environmentId ~= nil then
+    return OUTDOOR_ENVIRONMENTS[require("src.core.Gen2Environment").id(def)] == true
+  end
   return def.tileset == "OVERWORLD"
 end
 

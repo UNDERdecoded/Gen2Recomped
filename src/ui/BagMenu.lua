@@ -618,7 +618,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
       allowed = ow and ow.map and ow.map.def and ow.map.def.allowEscaping == true
     else
       allowed = ow and (ESCAPE_ROPE_TILESETS[ow.map.def.tileset]
-        or GEN2_ESCAPE_ROPE_ENVIRONMENTS[ow.map.def.environment])
+        or GEN2_ESCAPE_ROPE_ENVIRONMENTS[require("src.core.Gen2Environment").id(ow.map.def)])
     end
     -- Gen 2 does NOT share Gen 1's destination.  .DoDig copies wDigWarpNumber
     -- into wNextWarp, so the rope puts you back out through the entrance you

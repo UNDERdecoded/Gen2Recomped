@@ -1923,6 +1923,7 @@ function Data:seedDefaults()
   -- ids (REDS_HOUSE2_F, ROCK_TUNNEL_B1_F, ROUTE10_POKECENTER1_F, ...).  Add
   -- normalized aliases so every runtime map lookup can resolve the same room.
   aliasAllMaps(self.maps)
+  require("src.core.Gen2Environment").publish(self)
   if require("src.core.GameVersion").isGen2() then
     seedMapAliases(self.maps, GEN2_SCAFFOLD_MAP_ALIASES)
     -- Alias text_pointers by each map's camelCase label so resolveText finds

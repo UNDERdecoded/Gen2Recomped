@@ -2613,7 +2613,7 @@ function Commands.g2_readvar(ctx, var)
     -- wEnvironment (the map header's environment byte: 1 TOWN, 2 ROUTE,
     -- 3 INDOOR, 4 CAVE, 5 ENVIRONMENT_5, 6 GATE, 7 DUNGEON)
     local def = ctx.overworld and ctx.overworld.map and ctx.overworld.map.def
-    ctx.g2Var = tonumber(def and def.environment) or 0
+    ctx.g2Var = require("src.core.Gen2Environment").id(def) or 0
   elseif var == 18 or var == 19 then
     -- wXCoord / wYCoord: the player's cell within the map, 0-based, the same
     -- frame the warp_event and object_event tables are stored in.

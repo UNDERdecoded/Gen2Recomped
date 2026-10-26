@@ -856,7 +856,7 @@ function PartyMenu:update(dt)
               table.insert(items, { label = Strings("TELEPORT"), action = "escape" })
             elseif mv.id == "DIG" and ow.map.id ~= "AGATHAS_ROOM"
                and (DIG_TILESETS[ow.map.def.tileset]
-                    or (GEN2_DIG_ENVIRONMENTS[ow.map.def.environment]
+                    or (GEN2_DIG_ENVIRONMENTS[require("src.core.Gen2Environment").id(ow.map.def)]
                         and ow.escapePoint and ow:escapePoint())) then
               -- GEN 1: DIG runs ItemUseEscapeRope (.dig sets wCurItem =
               -- ESCAPE_ROPE): usable in the dungeon tilesets of
