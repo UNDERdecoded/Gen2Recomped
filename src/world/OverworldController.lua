@@ -4113,6 +4113,34 @@ function OverworldState:update(dt)
     UG.tickSparkles(Game, self)
   end
   -- every body on screen, home and foreign alike, in this map's cells
+  self:stepBody(scriptJustEnded)
+
+  self:followCamera()
+
+  -- pan_camera offset rides on top of the follow; the ramp resumes its
+  -- runner when it lands
+  local pan = self.cameraPan
+  if pan then
+    if pan.frames then
+      pan.t = pan.t + 1
+      local k = math.min(1, pan.t / pan.frames)
+      pan.ox = pan.fromX + (pan.toX - pan.fromX) * k
+      pan.oy = pan.fromY + (pan.toY - pan.fromY) * k
+      if pan.t >= pan.frames then
+        pan.frames = nil
+        local done = pan.onDone
+        pan.onDone = nil
+        if done then done() end
+      end
+    end
+    self.camera.x = self.camera.x + pan.ox
+    self.camera.y = self.camera.y + pan.oy
+  end
+end
+
+-- Native actor/input/player phase. Camera follow and scene clocks stay
+-- in update; both movement interfaces use the same native arrival owner.
+function OverworldState:stepBody(scriptJustEnded)
   self:updateCast()
   -- Gen 4 / BW movement types: is the field locked, who is a script walking
   require("src.world.Gen4MovementTypes").beginFrame(self)
@@ -4213,8 +4241,13 @@ function OverworldState:update(dt)
                or self.engaging or self.emote or self.teleportOut
                or self.whirlSpin or self.player.stairExit
   end
+  local compatibilityHandled = false
   if (not scripted and not self.transitioning) or gen2BootBedroom then
-    self:handleInput()
+    local avatar = GameVersion.isGen3() and package.loaded["src.core.game3.player"]
+    if playerStepped == nil and type(avatar) == "table" and type(avatar._dispatch) == "function" then
+      compatibilityHandled = avatar._dispatch(Game, self, Game.input)
+    end
+    if not compatibilityHandled then self:handleInput() end
     self.lockedFrames = nil
   else
     -- THE WATCHDOG, because "I could not walk" is the one bug report this
@@ -4296,8 +4329,14 @@ function OverworldState:update(dt)
   -- above carries its result down here instead of being stepped again, which
   -- would hand the player the one-frame advantage this fix took away from the
   -- NPCs.
+  if compatibilityHandled then return end
   local stepped = playerStepped
   if stepped == nil then stepped = self.player:update() end
+  self:finishPlayerStep(stepped, scripted)
+end
+
+-- Run synchronously when a compatibility wrapper submits its native arrival.
+function OverworldState:finishPlayerStep(stepped, scripted)
   -- the warp-arrival cell goes stale the instant the player's real cell
   -- leaves it, scripted walk-outs included -- pokered re-checks warps
   -- after simulated steps too (CheckWarpsNoCollision), so a forced
@@ -4365,27 +4404,6 @@ function OverworldState:update(dt)
     self:onStepComplete()
   end
 
-  self:followCamera()
-
-  -- pan_camera offset rides on top of the follow; the ramp resumes its
-  -- runner when it lands
-  local pan = self.cameraPan
-  if pan then
-    if pan.frames then
-      pan.t = pan.t + 1
-      local k = math.min(1, pan.t / pan.frames)
-      pan.ox = pan.fromX + (pan.toX - pan.fromX) * k
-      pan.oy = pan.fromY + (pan.toY - pan.fromY) * k
-      if pan.t >= pan.frames then
-        pan.frames = nil
-        local done = pan.onDone
-        pan.onDone = nil
-        if done then done() end
-      end
-    end
-    self.camera.x = self.camera.x + pan.ox
-    self.camera.y = self.camera.y + pan.oy
-  end
 end
 
 -- any direction currently held (hJoyHeld & PAD_CTRL_PAD)
@@ -6285,7 +6303,7 @@ function OverworldState:noteRunGate(why)
   return why
 end
 
-function OverworldState:runFrames()
+function OverworldState:runFrames(ignoreButton)
   local frames = FieldDefaults.world(Game.data, "runStepFrames")
   if type(frames) ~= "number" then
     self:noteRunGate("this dataset has no run speed at all")
@@ -6390,7 +6408,7 @@ function OverworldState:runFrames()
     return nil
   end
   if self.player and self.player.surfing then return nil end
-  if not (Game.input and Game.input:isDown("b")) then return nil end
+  if not ignoreButton and not (Game.input and Game.input:isDown("b")) then return nil end
   self:noteRunGate("running")
   -- playing AS a Pokemon is Prism's own refusal and does not apply to Hoenn
   if not gen3 then
