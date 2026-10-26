@@ -16,6 +16,7 @@ local TileRenderer = require("src.render.TileRenderer")
 
 local MapLoader = {}
 
+local checkpointLease
 local cache = {}
 -- mapId -> monotonic access stamp, for LRU eviction
 local lru = {}
@@ -115,8 +116,20 @@ function MapLoader.resolveBlocks(data, def)
   return def
 end
 
+local function checkpointCopy(value, seen)
+  if type(value) ~= "table" then return value end
+  seen = seen or {}
+  if seen[value] then return seen[value] end
+  local out = {}; seen[value] = out
+  for key, child in pairs(value) do out[checkpointCopy(key, seen)] = checkpointCopy(child, seen) end
+  return out
+end
+
 local function build(data, mapId)
   local def = data.maps[mapId]
+  -- Checkpoint reconstruction owns new maps and definitions until commit.
+  -- A failed build cannot rewrite or release the currently playable world.
+  if checkpointLease then def = checkpointCopy(def) end
   assert(def, "unknown map: " .. tostring(mapId) ..
          " (not in the maps registry)")
   MapLoader.resolveBlocks(data, def)
@@ -259,5 +272,23 @@ MapLoader.clearCache = MapLoader.invalidateAll
 -- that skipped this one would leave live SpriteBatches built from the old
 -- search path (14 cache-invalidation contract, rows 1 and 3)
 Assets.register(MapLoader.invalidateAll)
+
+-- Engine-private transaction. Tokens never enter a checkpoint payload.
+function MapLoader._checkpointBegin()
+  assert(not checkpointLease, "map checkpoint transaction already active")
+  local token = { cache=cache, aliases=aliases, lru=lru, accessSeq=accessSeq }
+  checkpointLease = token
+  cache, aliases, lru, accessSeq = {}, {}, {}, 0
+  return token
+end
+function MapLoader._checkpointRollback(token)
+  assert(checkpointLease == token, "invalid map checkpoint transaction")
+  cache, aliases, lru, accessSeq = token.cache, token.aliases, token.lru, token.accessSeq
+  checkpointLease = nil
+end
+function MapLoader._checkpointCommit(token)
+  assert(checkpointLease == token, "invalid map checkpoint transaction")
+  checkpointLease = nil
+end
 
 return MapLoader

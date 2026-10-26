@@ -17,6 +17,7 @@ local Strings = require("src.core.Strings")
 
 local unpack = table.unpack or unpack -- LuaJIT (LÖVE) compatibility
 
+local checkpointRuns = setmetatable({}, {__mode="k"})
 local ScriptRunner = {}
 ScriptRunner.__index = ScriptRunner
 
@@ -119,12 +120,15 @@ end
 function ScriptRunner:run(script, extra)
   assert(not self:isRunning(), "script already running")
   local ctx = self:makeContext(extra)
+  local checkpoint = checkpointRuns[self]
   self.ctx = ctx
-  if Runtime.wants("script.started") then
+  if not checkpoint and Runtime.wants("script.started") then
     Runtime.emit("script.started", { ctx = ctx })
   end
   self.co = coroutine.create(function()
-    self:exec(script, ctx)
+    if checkpoint then self:yield() end
+    self:exec(script, ctx, nil, checkpoint and checkpoint.pc)
+    if ctx.trainerPreparationCancelled then return end
     -- Commands can defer a game action until the script's own dialogue is
     -- done. start_battle uses this for win-path evolutions, which must not
     -- be covered by post-battle trainer text.
@@ -171,14 +175,33 @@ function ScriptRunner:run(script, extra)
   self:resume()
 end
 
+-- A data-only battle continuation primes a fresh runner at a suspended yield.
+-- The first command runs only when the reconstructed battle finishes.
+function ScriptRunner:_checkpointRun(script, extra, pc)
+  checkpointRuns[self] = {pc=pc}
+  local ok,why = pcall(self.run,self,script,extra)
+  checkpointRuns[self] = nil
+  if not ok then error(why,0) end
+end
+
 -- Execute a command list.  Supports labels via jump commands: a script is
 -- an array of rows; control commands return a new program counter, as a
 -- row number or a label name.
-function ScriptRunner:exec(script, ctx)
+function ScriptRunner:exec(script, ctx, admission, startRow)
+  local Decoded, trace, origin
+  local decodedHooks = Runtime.hooks._decodedHooks
+  if decodedHooks and decodedHooks.chains["script.command"] then
+    Decoded = require("src.script.DecodedScript")
+    local prepared
+    prepared, trace, origin = Decoded.prepare(script)
+    script = prepared or script
+  end
   local labels = ScriptRunner.scanLabels(script)
   local data = self.game and self.game.data
-  local pc = 1
-  while pc <= #script do
+  local pc = startRow or 1
+  local function step()
+    if pc > #script then return end
+    if trace and ctx.scriptCancelled then pc = math.huge; return end
     local row = script[pc]
     local name = row[1]
     -- THE ROW THE RUNNER IS STANDING ON, kept so a script that parks and
@@ -251,6 +274,10 @@ function ScriptRunner:exec(script, ctx)
         if ok then
           jump = result
         else
+          if result == require("src.battle.TrainerPreparation").CANCEL_SCRIPT then
+            self:cancelTrainerPreparation(ctx, self.co)
+            return
+          end
           Logger.error("script: command '%s' failed at row %d (skipped): %s",
                        tostring(name), pc, tostring(result))
           jump = nil
@@ -273,6 +300,84 @@ function ScriptRunner:exec(script, ctx)
       end
     end
   end
+  if not trace then
+    while pc <= #script do step() end
+    return
+  end
+  local overrides, visited = {}, {}
+  local dispatch
+  dispatch = function()
+    local candidates = trace and trace.starts[pc]
+    local command
+    for _, candidate in ipairs(candidates or {}) do
+      if not visited[candidate.key] then command = candidate; break end
+    end
+    if not command then
+      step()
+      visited = {}
+    else
+      visited[command.key] = true
+      local positive = command.after > command.pc
+      local ran, active, completed = false, true, false
+      local function vanilla(hctx, op, ir)
+        assert(active, "decoded next is only valid during its callback")
+        assert(not ran, "decoded command already executed")
+        assert(hctx == ctx, "decoded next must retain its native script context")
+        ran = true
+        if op ~= command.ir[1] or not Decoded.same(ir, command.ir) then
+          local copy = {}; for k, v in pairs(ir) do copy[k] = v end; copy[1] = op
+          script, trace, command = Decoded.rewrite(origin, trace, overrides, command, copy, ctx)
+          labels = ScriptRunner.scanLabels(script)
+          pc = command.pc
+        end
+        local first, after = command.pc, command.after
+        local nestedCall = origin.generation == 2 and (op == "scall" or op == "farscall")
+        local depth = nestedCall and #(ctx.g2Stack or {}) or 0
+        positive = after > first
+        while pc >= first and pc < after and pc <= #script do step() end
+        -- Gen-2 decoded calls are synchronous: their hook's post-next code
+        -- observes the completed subroutine, including any native suspension.
+        if nestedCall then
+          while pc <= #script and not ctx.scriptCancelled and #(ctx.g2Stack or {}) > depth do dispatch() end
+        end
+        completed = true
+      end
+      local copy = Decoded.copy(Decoded.source(origin, command))
+      local ok, err = pcall(decodedHooks.call, decodedHooks, "script.command", vanilla, ctx, copy[1], copy)
+      active = false
+      if not ok then error(err, 0) end
+      assert(not ran or completed, "decoded native command did not complete; downstream failure cannot be swallowed")
+      if not ran then
+        -- Suppress compile-time state as well (loadword/text fusion), once for
+        -- this visit. The next visit still offers the original source opcode.
+        script, trace, command = Decoded.rewrite(origin, trace, overrides, command, { "_decoded_skip" }, ctx)
+        labels = ScriptRunner.scanLabels(script)
+        pc = command.after
+        positive = command.after > command.pc
+      end
+      if positive then visited = {} end
+    end
+  end
+  while pc <= #script do
+    dispatch()
+    if ctx.scriptCancelled then return end
+  end
+end
+
+-- Retire only the coroutine that owns this admission; cancellation is not a
+-- native battle outcome and must never reach post-win script rows/callbacks.
+function ScriptRunner:cancelTrainerPreparation(ctx, co, silent)
+  if self.ctx ~= ctx or self.co ~= co or not co then return false end
+  ctx.trainerPreparationCancelled = true
+  ctx.lastCheck, ctx.lastBattleResult = false, "cancel"
+  self.co, self.waitingFrames, self.waitingCheck = nil, nil, nil
+  if silent then return true end
+  if ctx.g3Locked and Commands.g3_release then Commands.g3_release(ctx) end
+  if ctx.g4Locked and Commands.g4_release_all then Commands.g4_release_all(ctx) end
+  if ctx.g3FadedOut then require("src.script.Gen3Commands").restoreFade(ctx) end
+  if ctx.onDone then ctx.onDone() end
+  Runtime.emit("script.ended", { ctx = ctx, completed = false })
+  return true
 end
 
 -- Called by blocking commands from inside the coroutine.
@@ -294,6 +399,10 @@ function ScriptRunner:resume(...)
   end
   local ok, err = coroutine.resume(co, ...)
   if not ok then
+    if err == require("src.battle.TrainerPreparation").CANCEL_SCRIPT then
+      self:cancelTrainerPreparation(self.ctx, co)
+      return
+    end
     local source = self.ctx and self.ctx.source
     local where = source
       and Strings(" [%s %s.%s]", tostring(source.modId or "engine"),

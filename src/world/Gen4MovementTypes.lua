@@ -278,6 +278,13 @@ end
 -- (for probes) the context the last beginFrame built
 function M.frameState() return frame end
 
+-- Private checkpoint lease: frame contains live objects and never enters data.
+function M._checkpointSeed() return seed end
+function M._checkpointState() return { seed=seed, frame=frame } end
+function M._checkpointReset(value) seed,frame=value,nil end
+function M._checkpointRollback(token) seed,frame=token.seed,token.frame end
+
+
 -- ---------------------------------------------------------------------------
 -- which objects run here
 -- ---------------------------------------------------------------------------

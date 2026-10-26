@@ -21,6 +21,7 @@
 local SaveSerializer = require("src.core.SaveSerializer")
 local SaveData = require("src.core.SaveData")
 local GameVersion = require("src.core.GameVersion")
+local PlaythroughStorage = require("src.mods.PlaythroughStorage")
 
 local Storage = {}
 Storage.__index = Storage
@@ -82,6 +83,15 @@ function Storage.new(modId, fs)
     root = Storage.ROOT .. "/" .. id,
     fs = fsOr(fs),
   }, Storage)
+end
+
+-- Selected-playthrough reads are an additive service. Legacy read/write and
+-- byte methods keep their original per-mod root and signatures.
+function Storage:selected(game)
+  if not self._playthroughStorage then
+    self._playthroughStorage = PlaythroughStorage.new(self.modId, self.fs)
+  end
+  return self._playthroughStorage:selected(game)
 end
 
 -- Resolved once per call and cached back onto the instance, so the helpers

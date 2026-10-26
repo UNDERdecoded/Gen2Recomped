@@ -1,0 +1,401 @@
+{
+  "schema": 1,
+  "task": "M4 stationary native spinner continuation",
+  "date": "2026-10-26",
+  "reference": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "fork": {
+    "head": "69a10809374d1e0076f599a74285ddb5dfbd98be",
+    "exitCodes": {
+      "engine": 0,
+      "modkit": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    },
+    "engineSuites": {
+      "passed": 482,
+      "total": 482
+    },
+    "focusedCheckpointChecks": 1248,
+    "sdkSuites": 3,
+    "galleryChecks": 253,
+    "contractComparisons": 200,
+    "contractWorkers": 400,
+    "completeFixtures": 17
+  },
+  "public": {
+    "head": "74e51ca03badf1e451e91f99412012b81e063605",
+    "exitCodes": {
+      "engine": 1,
+      "modkit": 0,
+      "gallery": 0,
+      "api3": 0,
+      "fixtures": 0
+    },
+    "engineSuites": {
+      "passed": 152,
+      "total": 163
+    },
+    "baselineCommit": "87eb44c36e61f6b7d61bd7027ffff94120dd6e3c",
+    "inheritedFailingSuites": 11,
+    "inheritedFailLines": 29,
+    "failureCounterSha256": "2b0b06628e4c1dc11172510ebd8b3fcbdb36d9f9cc0333572614deca927a355b",
+    "failureCounterUnchanged": true,
+    "focusedCheckpointChecks": 1248,
+    "sdkSuites": 3,
+    "galleryChecks": 253,
+    "contractComparisons": 48,
+    "contractWorkers": 96,
+    "completeFixtures": 17
+  },
+  "nativeHosts": [
+    {
+      "tree": "fork",
+      "sourceCommit": "69a10809374d1e0076f599a74285ddb5dfbd98be",
+      "loveVersion": [
+        11,
+        5,
+        0,
+        "Mysterious Mysteries"
+      ],
+      "checks": 5088,
+      "cases": [
+        {
+          "spinnerPartialRollback": true,
+          "edition": "red",
+          "api": 1,
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "edition": "red",
+          "api": 2,
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "edition": "red",
+          "api": 3,
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "edition": "gold",
+          "api": 1,
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "edition": "gold",
+          "api": 2,
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "edition": "gold",
+          "api": 3,
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        }
+      ],
+      "graphicsSubstituted": true,
+      "reportSha256": "bf07723ade09cbe4ef1377a5fdc0bc450e2a9cbafaf1bba39643978779f8c13b"
+    },
+    {
+      "tree": "fork",
+      "sourceCommit": "69a10809374d1e0076f599a74285ddb5dfbd98be",
+      "loveVersion": [
+        12,
+        0,
+        0,
+        "Bestest Friend"
+      ],
+      "checks": 5088,
+      "cases": [
+        {
+          "spinnerFrames": 384,
+          "api": 1,
+          "spinnerPartialRollback": true,
+          "spinnerRngContinuation": true,
+          "edition": "red",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4
+        },
+        {
+          "spinnerFrames": 384,
+          "api": 2,
+          "spinnerPartialRollback": true,
+          "spinnerRngContinuation": true,
+          "edition": "red",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4
+        },
+        {
+          "spinnerFrames": 384,
+          "api": 3,
+          "spinnerPartialRollback": true,
+          "spinnerRngContinuation": true,
+          "edition": "red",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4
+        },
+        {
+          "spinnerFrames": 384,
+          "api": 1,
+          "spinnerPartialRollback": true,
+          "spinnerRngContinuation": true,
+          "edition": "gold",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4
+        },
+        {
+          "spinnerFrames": 384,
+          "api": 2,
+          "spinnerPartialRollback": true,
+          "spinnerRngContinuation": true,
+          "edition": "gold",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4
+        },
+        {
+          "spinnerFrames": 384,
+          "api": 3,
+          "spinnerPartialRollback": true,
+          "spinnerRngContinuation": true,
+          "edition": "gold",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4
+        }
+      ],
+      "graphicsSubstituted": true,
+      "reportSha256": "163392a3554b55d74c441c31f07c2055f73060888cfffb73c3be175382aee99d"
+    },
+    {
+      "tree": "public",
+      "sourceCommit": "74e51ca03badf1e451e91f99412012b81e063605",
+      "loveVersion": [
+        11,
+        5,
+        0,
+        "Mysterious Mysteries"
+      ],
+      "checks": 5088,
+      "cases": [
+        {
+          "spinnerPartialRollback": true,
+          "api": 1,
+          "edition": "red",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "api": 2,
+          "edition": "red",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "api": 3,
+          "edition": "red",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "api": 1,
+          "edition": "gold",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "api": 2,
+          "edition": "gold",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        },
+        {
+          "spinnerPartialRollback": true,
+          "api": 3,
+          "edition": "gold",
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "spinnerModes": 4,
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true
+        }
+      ],
+      "graphicsSubstituted": true,
+      "reportSha256": "5b441434d4db41052215f5194a780341737d8836a0ae6bc22414602340f16536"
+    },
+    {
+      "tree": "public",
+      "sourceCommit": "74e51ca03badf1e451e91f99412012b81e063605",
+      "loveVersion": [
+        12,
+        0,
+        0,
+        "Bestest Friend"
+      ],
+      "checks": 5088,
+      "cases": [
+        {
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "edition": "red",
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true,
+          "api": 1,
+          "spinnerPartialRollback": true,
+          "spinnerModes": 4
+        },
+        {
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "edition": "red",
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true,
+          "api": 2,
+          "spinnerPartialRollback": true,
+          "spinnerModes": 4
+        },
+        {
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "edition": "red",
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true,
+          "api": 3,
+          "spinnerPartialRollback": true,
+          "spinnerModes": 4
+        },
+        {
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "edition": "gold",
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true,
+          "api": 1,
+          "spinnerPartialRollback": true,
+          "spinnerModes": 4
+        },
+        {
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "edition": "gold",
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true,
+          "api": 2,
+          "spinnerPartialRollback": true,
+          "spinnerModes": 4
+        },
+        {
+          "continuation": true,
+          "rollback": true,
+          "invalidRngPreflight": true,
+          "edition": "gold",
+          "spinnerFrames": 384,
+          "spinnerRngContinuation": true,
+          "api": 3,
+          "spinnerPartialRollback": true,
+          "spinnerModes": 4
+        }
+      ],
+      "graphicsSubstituted": true,
+      "reportSha256": "68d1c5135b4998959cfe5b79c4e42bcd4a19bbb4ccd60664f6bf046e034483ae"
+    }
+  ],
+  "scope": {
+    "editions": [
+      "red",
+      "gold"
+    ],
+    "apiLevels": [
+      1,
+      2,
+      3
+    ],
+    "spinnerModes": [
+      "SPIN_CW",
+      "SPIN_CCW",
+      "SPIN_SLOW",
+      "SPIN_FAST"
+    ],
+    "continuationUpdatesPerCase": 384,
+    "partialApplyRollback": true,
+    "syntheticContent": true,
+    "fullStoryOrGameplayAcceptance": false,
+    "wanderingFollowersBattleLaterGenerationsQualified": false,
+    "frameProfileTiming": "not measured",
+    "armTiming": "not measured"
+  }
+}

@@ -535,6 +535,22 @@ function PaletteFX.gen2Tod() return gen2Tod end
 -- bgSet fetches it (LoadMapPals).  Neither reads or writes the live state, so
 -- calling them cannot disturb what the 2D atlas was baked with.
 
+-- Public RTC-only query used by Gen2 scene renderers (including train rides).
+-- It must not inherit the live map override, darkness, or atlas bake state.
+function PaletteFX.clockDaytime(hour)
+  hour = tonumber(hour)
+  if not hour and GameVersion.isGen2() then
+    local game = package.loaded["src.core.Game"]
+    hour = require("src.core.Gen2Clock").hour(game and game.save)
+  end
+  if not hour then hour = tonumber(os.date("%H")) end
+  hour = math.floor(hour or 12) % 24
+  if hour < 4 then return "NITE" end
+  if hour < 10 then return "MORN" end
+  if hour < 18 then return "DAY" end
+  return "NITE"
+end
+
 -- Which of MORN / DAY / NITE / DARK a map takes.
 --
 --   mapDef     a record out of data.maps; its `mapPalette` is map header

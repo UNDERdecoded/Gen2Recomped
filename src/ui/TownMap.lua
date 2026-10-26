@@ -37,18 +37,19 @@ end
 -- Gen2 town map.  field.townMap is a completely different shape from Gen1's:
 -- two full-screen pictures (johto/kanto) plus `landmarks`, a flat id -> {name,
 -- x, y} table whose coordinates are absolute screen pixels, and every map
--- record carries the landmark id it belongs to.  Landmarks from $2E up are
--- Kanto: `DEF KANTO_LANDMARK EQU const_value` sits immediately BEFORE
--- LANDMARK_PALLET_TOWN in constants/landmark_constants.asm, so Pallet is
--- the first of them, not Route 1.  A landmark short of it and Pallet read
--- as Johto -- flown to off the Johto picture with no cursor drawn on it.
-local GEN2_KANTO_FIRST = 0x2E
+-- record carries the landmark id it belongs to. Gold/Silver's fallback
+-- boundary is $2e; Crystal inserts the Battle Tower and starts Kanto at $2f.
+-- Prefer the active cartridge's imported Pallet header below.
 
 local function gen2Locations(game)
   local tm = (game.data.field or {}).townMap
   if type(tm) ~= "table" or type(tm.landmarks) ~= "table" or not tm.johto then
     return nil
   end
+  -- Crystal inserts the Battle Tower landmark before Silver Cave. The
+  -- native Pallet header is the first Kanto landmark on the active cartridge;
+  -- the old Gold-only $2e boundary misclassified Crystal's Silver Cave.
+  local kantoFirst = require("src.world.Gen2Landmarks").kantoStart(game.data)
   local byLandmark, locs = {}, {}
   for id, e in pairs(tm.landmarks) do
     local x, y = tonumber(e and e.x), tonumber(e and e.y)
@@ -62,7 +63,7 @@ local function gen2Locations(game)
         -- draws around -- taken raw, every nest sat 4px right and 12px
         -- below the town it belongs to.
         px = x - 4, py = y - 12, landmark = tonumber(id),
-        region = tonumber(id) >= GEN2_KANTO_FIRST and "kanto" or "johto",
+        region = tonumber(id) >= kantoFirst and "kanto" or "johto",
       }
       byLandmark[tonumber(id)] = loc
       locs[#locs + 1] = loc

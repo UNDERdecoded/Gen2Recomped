@@ -20,6 +20,7 @@ local Logger = require("src.core.Logger")
 local Probe = require("src.core.Probe")
 local Map = require("src.world.Map")
 local MapLoader = require("src.world.MapLoader")
+local LiveMaps = require("src.world.LiveMaps")
 local NPC = require("src.world.NPC")
 local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
@@ -28,6 +29,7 @@ local Runtime = require("src.mods.Runtime")
 local Screens = require("src.ui.Screens")
 local ScriptRunner = require("src.script.ScriptRunner")
 local GameVersion = require("src.core.GameVersion")
+local Gen2Clock = require("src.core.Gen2Clock")
 local Tilt = require("src.render.Tilt")
 local TextBox = require("src.render.TextBox")
 local Transition = require("src.render.Transition")
@@ -64,6 +66,7 @@ local function gen3Weather()
   return Gen3WeatherMod
 end
 
+local checkpointSetMap, checkpointQuiet
 local OverworldState = { isOpaque = true, isOverworld = true }
 
 local Game -- set on enter (avoids circular require at load time)
@@ -283,7 +286,7 @@ local function objectTodBit()
   local ow = Game and Game.overworld
   local bit = ow and tonumber(ow.objectTodBit)
   if bit then return bit end
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   if period and tonumber(period.bit) then return tonumber(period.bit) end
   return TOD_BITS[objectTimeOfDay()] or TOD_BITS.DAY
 end
@@ -951,7 +954,7 @@ local DATA_DERIVED = {
   "smokeImg", "emoteImg", "pikaPic",
 }
 
-function OverworldState:enter(mapId, x, y, facing)
+function OverworldState:enter(mapId, x, y, facing, opts)
   Game = require("src.core.Game")
   Game.overworld = self
   -- THE SAVED CAMERA TILT, taken up before the first map is built.
@@ -1028,14 +1031,18 @@ function OverworldState:enter(mapId, x, y, facing)
   self.lastOutdoor = Game.save.lastOutdoor
   -- GSC's wBackupWarp: the warp tile we last stepped through, on any map
   self.backupWarp = Game.save.backupWarp
+  if opts and opts.checkpoint then
+    checkpointSetMap(self, mapId, x, y, facing, {via="boot",checkpoint=true,keepMusic=true})
+  else
   self:setMap(mapId, x, y, facing, { via = "boot" })
+  end
   -- boot/load: derive the flag from the tile the save left us standing on,
   -- like MapEntryAfterBattle's IsPlayerStandingOnWarp, so a game saved on a
   -- door mat can still walk straight back out (issue #378)
   -- Gen2 daily resets also run here so a continued save whose calendar day
   -- already advanced while the game was closed still clears Kurt / trees /
   -- lottery on the first frame in the overworld.
-  if GameVersion.isGen2() and Game.save then
+  if not (opts and opts.checkpoint) and GameVersion.isGen2() and Game.save then
     require("src.script.Gen2Daily").poll(Game.save)
   end
   self:refreshStandingOnWarp()
@@ -1077,7 +1084,7 @@ function OverworldState:stampClosedDoors()
     end
   end
   if stamped then self.map.renderer:rebuild() end
-  if unlocked then require("src.core.Sound").play(Game.data, "Go_Inside") end
+  if unlocked and not checkpointQuiet then require("src.core.Sound").play(Game.data, "Go_Inside") end
 end
 
 function OverworldState:setMap(mapId, x, y, facing, opts)
@@ -1143,7 +1150,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   local fromMapId = self.map and self.map.id
   -- the header being left, for Platinum's area sign (which compares names)
   local fromHeader = self.map and self.map.def and self.map.def.header
-  if fromMapId then
+  if fromMapId and not (opts and opts.checkpoint) then
     Runtime.emit("map.exited", { mapId = fromMapId, toMapId = mapId })
   end
   -- ambient choreography is per-map: parallel runners die here, and the
@@ -1413,7 +1420,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- Wiping the flags on a palette or time-of-day rebuild would put the player
   -- on foot in the middle of the Cycling Road.
   if GameVersion.isGen2() then
-    if not (opts and opts.via == "reload") then
+    if not (opts and (opts.via == "reload" or opts.checkpoint)) then
       self:clearBikeFlags()
     end
   else
@@ -1517,7 +1524,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- clear after the spawn would leave the stale placement standing for one
   -- more visit -- which for this report is the visit the player is in.
   if GameVersion.isGen3() and Game and Game.save
-     and Game.save.gen3ObjectHomes
+     and Game.save.gen3ObjectHomes and not (opts and opts.checkpoint)
      and (fromMapId ~= mapId or (opts and opts.via == "boot")) then
     Game.save.gen3ObjectHomes[mapId] = nil
   end
@@ -1560,7 +1567,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- script had walked off stayed gone for the rest of the save.  An internal
   -- reload (a palette/tod atlas rebuild, a `refreshmap`) is not a map load and
   -- must not undo one.
-  if not (opts and opts.via == "reload") then
+  if not (opts and (opts.via == "reload" or opts.checkpoint)) then
     Game.save.g2ObjectToggles = nil
     -- ...and Gen 3's, which is the same idea for the same reason: a
     -- `removeobject` with no event flag behind it lasts as long as the map
@@ -1575,7 +1582,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- ...matched against the id THIS dataset files the two maps under, which is
   -- "ROUTE34" on a Gold/Silver/Crystal cache rather than "ROUTE_34" -- the
   -- literal below used to miss, so the callback never ran on Route 34 at all.
-  if GameVersion.isGen2() then
+  if GameVersion.isGen2() and not (opts and opts.checkpoint) then
     local DayCare = require("src.pokemon.DayCare")
     if mapId == DayCare.mapId(Game.data, "ROUTE_34")
        or mapId == DayCare.mapId(Game.data, "DAY_CARE") then
@@ -1595,6 +1602,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- zone's events -- a SetPosition from the last visit included)
   if (GameVersion.isGen4() or GameVersion.isGen5()) and Game and Game.save
      and not (self.gen4Continuing or self.gen5Continuing)
+     and not (opts and opts.checkpoint)
      and not (opts and opts.via == "reload") then
     Game.save.gen4Objects = nil
     -- ...and the templates a SetPosition moved last visit are the zone's own
@@ -1734,7 +1742,11 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   self:rebuildEntities()
   -- Yellow's companion Pikachu trails the player (never in
   -- self.entities: it does not block movement, pikachu_follow.asm)
+  if opts and opts.checkpoint then
+    require("src.world.PikachuFollower")._checkpointSpawn(Game, self, opts)
+  else
   require("src.world.PikachuFollower").onMapEntered(Game, self, opts)
+  end
   -- ...and Sinnoh's partner, who is a different animal: an escort character
   -- who trails the player AND CROSSES MAP SEAMS WITH THEM.  Barry is marked
   -- MAP_OBJ_STATUS_PERSISTENT on Route 201 and Verity Lakefront's arrival
@@ -1742,6 +1754,7 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- carries one signpost and nothing else.  This is where he is stood back up.
   -- After rebuildEntities, so the map's own cast is already there to be
   -- adopted when the map owns a real object for him.
+  if not (opts and opts.checkpoint) then
   require("src.world.Gen4Follower").onMapEntered(Game, self)
   -- HGSS's walking Pokemon (src/world/HgssFollowMon.lua)
   require("src.world.HgssFollowMon").onMapEntered(Game, self)
@@ -1765,6 +1778,8 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   if self.gen5Continuing and self.map and self.map.def and self.map.def.gen5DragonGym then
     pcall(function() require("src.world.Gen5DragonGym").apply(self, Game.save) end)
   end
+
+  end -- quiet checkpoint reconstruction skips native map-entry continuations
 
   -- opts.keepMusic: the Oak-escort warp keeps MUSIC_MEET_PROF_OAK
   -- playing into the lab (BIT_NO_MAP_MUSIC in wStatusFlags7);
@@ -1807,6 +1822,12 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   self.bridgeDown = nil
   -- ...and the log that was under, likewise
   self.logSunk = nil
+
+  if opts and opts.checkpoint then
+    self:followCamera()
+    self:rebuildNeighbors()
+    return
+  end
 
   -- forced bike/surf tiles fire the moment the player is placed on the
   -- map, like EnterMap's unconditional CheckForceBikeOrSurf farcall
@@ -2035,6 +2056,8 @@ end
 --
 -- Both halves were read out of the ROM and neither was ever looked at, so no
 -- map in Hoenn announced itself.
+checkpointSetMap = OverworldState.setMap
+
 function OverworldState:updateMapNameSignGen3()
   local previous = self.mapNameSign
   local def = self.map and self.map.def
@@ -2186,6 +2209,10 @@ function OverworldState:neighborReach()
   return rw, rh, vw, vh
 end
 
+function OverworldState:liveMaps()
+  return LiveMaps.snapshot(self)
+end
+
 function OverworldState:rebuildNeighbors()
   local mapId = self.map.id
   self.neighbors = {}
@@ -2202,11 +2229,13 @@ function OverworldState:rebuildNeighbors()
                                                      hops, reachW, reachH)) do
     keep[n.id] = true
     local m = MapLoader.load(Game.data, n.id)
-    table.insert(self.neighbors, { map = m, ox = n.ox, oy = n.oy })
+    table.insert(self.neighbors, { map = m, ox = n.ox, oy = n.oy, cx = n.ox / 16, cy = n.oy / 16 })
   end
   -- bound resident memory: drop maps behind us that are neither current nor
   -- a drawn neighbor, releasing their window batch / border image / atlas
   MapLoader.trim(keep)
+  if not checkpointQuiet then LiveMaps.preparing(self) end
+
 
   -- visual-only NPCs on connected maps (survey zoom): same spawn filter
   -- as a real map entry, but they never join self.entities -- no sight
@@ -2236,7 +2265,6 @@ function OverworldState:rebuildNeighbors()
     -- the seam offset in CELLS.  Everything in this engine steps on a 16px
     -- grid whatever the dataset's block size, and a connection offset is a
     -- whole number of blocks, so this is always exact.
-    nb.cx, nb.cy = nb.ox / 16, nb.oy / 16
     for _, obj in ipairs(nb.map.def.objects or {}) do
       if objectVisible(Game.save, nb.map.id, obj) and not offMap(nb.map.def, obj) then
         local npc = pooledNPC(self.npcPool, Game.data, nb.map.id, obj)
@@ -2248,6 +2276,7 @@ function OverworldState:rebuildNeighbors()
     end
   end
   self.cast = nil
+  if not checkpointQuiet then LiveMaps.updated(self) end
 end
 
 -- ONE CAST, IN EVERY LOADED MAP'S OWN CELLS.
@@ -2391,7 +2420,7 @@ local function sameTod(tod) return tod end
 -- < 4 NITE, < 10 MORN, < 18 DAY, else NITE.  Gen 1 has no clock at all, so
 -- only Gen 2 consults the host one.
 local function clockTimeOfDay()
-  local hour = tonumber(os.date("%H")) or 12
+  local hour = Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil)
   if hour < 4 then return "NITE" end
   if hour < 10 then return "MORNING" end
   if hour < 18 then return "DAY" end
@@ -2404,7 +2433,7 @@ OverworldState.clockTimeOfDay = clockTimeOfDay
 
 -- The cartridge's MAPOBJECT_TIMEOFDAY bit for the hour on the clock right now.
 function OverworldState.clockTimeOfDayBit()
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   return (period and tonumber(period.bit)) or TOD_BITS.DAY
 end
 
@@ -2427,6 +2456,7 @@ function OverworldState:syncGen2Tod(tod)
 end
 
 function OverworldState:timeOfDay()
+  if GameVersion.isGen2() then Gen2Clock.weekday(Game and Game.save) end
   local tod = GameVersion.isGen2() and clockTimeOfDay() or (self.tod or "DAY")
   if not Runtime.wantsHook("world.tod") then
     if tod ~= self.tod then
@@ -2462,6 +2492,12 @@ function OverworldState:timeOfDay()
   self:syncGen2Tod(self.tod)
   return self.tod
 end
+
+-- Legacy callers and native scripts read the same saved RTC offset. Both
+-- dot and colon calls are observational; no cached second clock on World.
+function OverworldState.hour() return Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.minute() return Gen2Clock.minute(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.weekday() return Gen2Clock.weekday(GameVersion.isGen2() and Game and Game.save or nil) end
 
 function OverworldState:paletteNameFor(map)
   local palettes = FieldDefaults.field(Game.data, "palettes")
@@ -2594,8 +2630,12 @@ function OverworldState:setDark(on)
   on = on and true or false
   self.dark = on
   if PaletteFX.setDarkWorld(on) and PaletteFX.bakesDarkness() and self.map then
-    MapLoader.invalidateAll()
-    self:reloadMap(self.map.id, "dark")
+    if checkpointQuiet then
+      self.map.renderer:rebuild()
+    else
+      MapLoader.invalidateAll()
+      self:reloadMap(self.map.id, "dark")
+    end
   end
 end
 
@@ -3424,6 +3464,34 @@ function OverworldState:checkSpecialPhoneCall()
   Game.save.g2CurCaller = caller
   self:queueScript(script, { phoneCaller = caller,
     onDone = function() Game.save.g2CurCaller = nil end })
+  Gen2Commands.announceIncomingCall(Game.data, caller, Game.save.g2SpecialCallActive)
+end
+
+-- A purchase is already committed at trainer reload. Its original phone
+-- program waits for the trainer's queued dialogue and overlays to finish.
+function OverworldState:checkMomShoppingCall()
+  local pending=self.g2MomCallPending
+  if not pending then return false end
+  if pending.save~=Game.save or pending.data~=Game.data then self.g2MomCallPending=nil;return false end
+  local top=Game.stack and Game.stack.top and Game.stack:top()
+  if top and top~=self then return false end
+  if self.player and(self.player.moving or self.player.targetX or self.player.stairExit or self.player.inputLocked)then return false end
+  if self.transitioning or self.runner:isRunning()or #(self.scriptMoves or{})>0 or self.engaging or self.emote or
+      self.teleportOut or self.whirlSpin or self.gen4Waterfall or self.flyAnim or self.fishing or
+      self.pendingScripts and self.pendingScripts[1]then return false end
+  self.g2MomCallPending=nil
+  local purchase=pending.purchase
+  Game.save.g2CurCaller=purchase.caller
+  pcall(function()require("src.core.Sound").play(Game.data,"Call")end)
+  self:queueScript(purchase.script,{phoneCaller=purchase.caller,onDone=function()
+    if Game.save~=pending.save or Game.data~=pending.data then return end
+    Game.save.g2CurCaller=nil
+    require("src.script.Gen2Commands").resetCallDelay(Game.save,math.floor(require("src.core.SaveData").playSeconds(Game.save)/60))
+    pcall(function()require("src.core.Sound").play(Game.data,"Hang_Up")end)
+  end})
+  local commands=require("src.script.Gen2Commands")
+  if commands.announceIncomingCall then commands.announceIncomingCall(Game.data,purchase.caller)end
+  return true
 end
 
 -- CheckPhoneCall (36:$4074): the random incoming call, rolled on every step
@@ -3459,6 +3527,7 @@ function OverworldState:checkIncomingPhoneCall()
     Game.save.g2CurCaller = nil
     pcall(function() require("src.core.Sound").play(Game.data, "Hang_Up") end)
   end })
+  Gen2Commands.announceIncomingCall(Game.data, id)
 end
 
 function OverworldState:update(dt)
@@ -3793,6 +3862,7 @@ function OverworldState:update(dt)
   -- not an event, and the check is two flag reads.
   self:applyForcedBike()
   self:checkSpecialPhoneCall()
+  self:checkMomShoppingCall()
   self:checkBugContestClock()
   -- world.tick: the per-frame seam for mods that simulate something in the
   -- overworld rather than draw it.
@@ -6755,6 +6825,7 @@ function OverworldState:castLine(enc)
         battle:makeSafari(Game.save.safari)
       end
       battle.onFinish = function(result) self:afterBattle(result, battle) end
+  require("src.core.CheckpointBattle").bind(battle, {kind="world"})
       self:pushBattle(battle)
     end))
   end))
@@ -7263,6 +7334,12 @@ function OverworldState:npcAtCell(cx, cy)
   return nil
 end
 
+-- The continuation receives the original opaque world and NPC handles.
+-- Keep it outside interact so an unhooked A press allocates no closure.
+local function vanillaTalk(world, target)
+  world:talkTo(target)
+end
+
 -- what the A press resolved to, for world.interacted's listeners
 -- A LINE THE CARTRIDGE ITSELF PRINTS, named by the import rather than typed
 -- here.  `constants.gen3<name>` holds a TEXT_ key and the text pool holds the
@@ -7470,7 +7547,7 @@ function OverworldState:interact()
       -- rules, answered mid-step like the Pikachu above
       if not npc.hidden then require("src.world.HgssFollowMon").talk(Game, self, npc) end
     elseif not npc.moving then
-      self:talkTo(npc)
+      Runtime.call("world.talk", vanillaTalk, self, npc)
     end
     interacted(self, fx, fy, "npc", npc)
     return
@@ -10480,6 +10557,7 @@ function OverworldState:gen2SweetScentEncounter(deferFailure)
     battle:makeSafari(Game.save.safari)
   end
   battle.onFinish = function(result) self:afterBattle(result, battle) end
+  require("src.core.CheckpointBattle").bind(battle, {kind="world"})
   self:pushBattle(battle)
   return true
 end
@@ -10510,6 +10588,7 @@ function OverworldState:gen4SweetScent()
   local battle=require('src.battle.BattleState').newWild(Game,enc.species,enc.level,
     {nature=enc.nature,gender=enc.gender})
   battle.onFinish=function(result) self:afterBattle(result,battle) end
+  require("src.core.CheckpointBattle").bind(battle,{kind="world"})
   self:pushBattle(battle)
 end
 
@@ -10721,6 +10800,7 @@ function OverworldState:gen2Headbutt(fx, fy)
     local battle = BattleState.newWild(Game, pick.species, pick.level,
       { tree = true, timeOfDay = self:timeOfDay() })
     battle.onFinish = function(result) self:afterBattle(result, battle) end
+  require("src.core.CheckpointBattle").bind(battle, {kind="world"})
     self:pushBattle(battle)
   end)
 end
@@ -11233,6 +11313,7 @@ function OverworldState:talkTo(npc)
   -- moved.
   if npc.facePlayer and not GameVersion.isGen4() then npc:facePlayer(self.player) end
   local unfreeze = function() npc.frozen = false end
+  require("src.core.CheckpointCallbacks").bind(unfreeze,{npc=npc.id})
   local d = npc.def
 
   -- hand-ported scripts always win -- except an undefeated ROM trainer,
@@ -11317,18 +11398,9 @@ function OverworldState:talkTo(npc)
     Game.stack:push(TextBox.new(Game, text, function()
       local battle = BattleState.newWild(Game, d.pokemon, d.level)
       battle.onFinish = function(result)
-        if result ~= "lose" and result ~= "run" then
-          Game.save.defeatedTrainers[npc.id] = true
-          for i, n in ipairs(self.npcs) do
-            if n == npc then table.remove(self.npcs, i) break end
-          end
-          for i, e in ipairs(self.entities) do
-            if e == npc then table.remove(self.entities, i) break end
-          end
-        end
-        self:afterBattle(result, battle)
-        unfreeze()
+        return self:_checkpointStaticFinished(battle,npc,unfreeze,result)
       end
+      require("src.core.CheckpointBattle").bind(battle,{kind="static",npc=npc.id,onDone=unfreeze})
       self:pushBattle(battle)
     end))
     return
@@ -11817,45 +11889,10 @@ function OverworldState:trainerDefeated(npc)
   return false
 end
 
--- Run the pre-battle text -> battle -> won text -> flags sequence.
-function OverworldState:engageTrainer(npc, onDone)
-  local d = npc.def
-  Runtime.emit("world.trainer_engaged", { npc = npc, trainerClass = d.trainerClass,
-                                          partyIndex = d.trainerParty })
-  local header = Game.data:trainerHeader(self.map.def.label, d.index)
-  local battleText = header and header.battle and Game.data.text[header.battle]
-  if not battleText then
-    battleText = select(1, Game.data:resolveText(self.map.def.label, d.text))
-                 or Strings("I like shorts!\nThey're comfy and\neasy to wear!")
-  end
-  local wonText = header and header.won and Game.data.text[header.won]
+OverworldState.prepareTrainerBattle = require("src.battle.TrainerPreparation").prepare
 
-  local BattleState = require("src.battle.BattleState")
-  Game.stack:push(TextBox.new(Game, battleText, function()
-    -- A TEAM THE AUTHOR BUILT WINS OVER AN INDEX INTO SOMEBODY ELSE'S.
-    --
-    -- `trainerParty` selects one of the parties the cartridge shipped for
-    -- `trainerClass`, which is right for a ported trainer and useless for an
-    -- NPC the editor invented -- there is no party for them, so they borrowed
-    -- one. `trainerTeam` is the party the author actually typed; when it is
-    -- there it is what they meant.
-    local battle
-    if type(d.trainerTeam) == "table" and #d.trainerTeam > 0 then
-      battle = BattleState.newEditorTrainer(Game, d.trainerTeam,
-                                            d.trainerClass, d.trainerName)
-    end
-    battle = battle or BattleState.newTrainer(Game, d.trainerClass,
-                                              d.trainerParty)
-    -- PrintEndBattleText (home/trainers.asm:341) is called from
-    -- TrainerBattleVictory (engine/battle/core.asm:942), i.e. ON the battle
-    -- screen once ScrollTrainerPicAfterBattle has brought the beaten trainer
-    -- back, and before MoneyForWinningText -- not in the overworld after the
-    -- battle screen has torn down.  Handing the line to the battle also
-    -- stops a post-battle evolution being sandwiched between two overworld
-    -- cuts (#282).  Substituted here because BattleState:say takes finished
-    -- text, while TextBox expanded the {PLAYER}/{RIVAL} tokens itself.
-    battle.endBattleText = wonText and TextBox.substitute(Game, wonText) or nil
-    battle.onFinish = function(result)
+-- Run the pre-battle text -> battle -> won text -> flags sequence.
+function OverworldState:_checkpointTrainerFinished(battle,npc,header,d,onDone,result)
       if result == "win" then
         Game.save.defeatedTrainers[npc.id] = true
         if header and header.event then
@@ -11872,8 +11909,93 @@ function OverworldState:engageTrainer(npc, onDone)
         self:afterBattle(result, battle)
         if onDone then onDone() end
       end
+end
+
+function OverworldState:_checkpointStaticFinished(battle,npc,unfreeze,result)
+        if result ~= "lose" and result ~= "run" then
+          Game.save.defeatedTrainers[npc.id] = true
+          for i, n in ipairs(self.npcs) do
+            if n == npc then table.remove(self.npcs, i) break end
+          end
+          for i, e in ipairs(self.entities) do
+            if e == npc then table.remove(self.entities, i) break end
+          end
+        end
+        self:afterBattle(result, battle)
+        unfreeze()
+end
+
+function OverworldState:engageTrainer(npc, onDone)
+  local d = npc.def
+  Runtime.emit("world.trainer_engaged", { npc = npc, trainerClass = d.trainerClass,
+                                          partyIndex = d.trainerParty })
+  local header = Game.data:trainerHeader(self.map.def.label, d.index)
+  local battleText = header and header.battle and Game.data.text[header.battle]
+  if not battleText then
+    battleText = select(1, Game.data:resolveText(self.map.def.label, d.text))
+                 or Strings("I like shorts!\nThey're comfy and\neasy to wear!")
+  end
+  local wonText = header and header.won and Game.data.text[header.won]
+
+  local BattleState = require("src.battle.BattleState")
+  local function startBattle(options)
+    -- A TEAM THE AUTHOR BUILT WINS OVER AN INDEX INTO SOMEBODY ELSE'S.
+    --
+    -- `trainerParty` selects one of the parties the cartridge shipped for
+    -- `trainerClass`, which is right for a ported trainer and useless for an
+    -- NPC the editor invented -- there is no party for them, so they borrowed
+    -- one. `trainerTeam` is the party the author actually typed; when it is
+    -- there it is what they meant.
+    local battle
+    if type(d.trainerTeam) == "table" and #d.trainerTeam > 0 then
+      battle = BattleState.newEditorTrainer(Game, d.trainerTeam,
+                                            d.trainerClass, d.trainerName, options)
     end
+    battle = battle or BattleState.newTrainer(Game, d.trainerClass,
+                                              d.trainerParty, options)
+    -- PrintEndBattleText (home/trainers.asm:341) is called from
+    -- TrainerBattleVictory (engine/battle/core.asm:942), i.e. ON the battle
+    -- screen once ScrollTrainerPicAfterBattle has brought the beaten trainer
+    -- back, and before MoneyForWinningText -- not in the overworld after the
+    -- battle screen has torn down.  Handing the line to the battle also
+    -- stops a post-battle evolution being sandwiched between two overworld
+    -- cuts (#282).  Substituted here because BattleState:say takes finished
+    -- text, while TextBox expanded the {PLAYER}/{RIVAL} tokens itself.
+    battle.endBattleText = wonText and TextBox.substitute(Game, wonText) or nil
+    battle.onFinish = function(result)
+      return self:_checkpointTrainerFinished(battle,npc,header,d,onDone,result)
+    end
+    require("src.core.CheckpointBattle").bind(battle,
+      {kind="trainer",npc=npc.id,event=header and header.event,onDone=onDone})
     self:pushBattle(battle)
+  end
+  Game.stack:push(TextBox.new(Game, battleText, function()
+    local liveGame, liveSave, liveData, liveStack, liveSession = Game, Game.save, Game.data, Game.stack, Game.sessionStartedAt
+    local map, def = self.map, npc.def
+    local class, party, npcId, team = d.trainerClass, d.trainerParty, npc.id, d.trainerTeam
+    local wasEngaging = self.engaging
+    self.engaging = true
+    OverworldState.prepareTrainerBattle(Game, {
+      trainerClass = class, partyIndex = party or 1, mapId = map.id, npcId = npc.id,
+    }, function(options)
+      self.engaging = wasEngaging
+      startBattle(options)
+    end, function()
+      self.engaging = wasEngaging
+      self.spotHush = { cellX = self.player.cellX, cellY = self.player.cellY, [npc] = true }
+      if onDone then onDone() end
+    end, function()
+      if Game ~= liveGame or self.map ~= map or npc.id ~= npcId or npc.def ~= def
+        or d.trainerTeam ~= team or def.trainerClass ~= class
+        or def.trainerParty ~= party then return false end
+      for _, actor in ipairs(self.npcs or {}) do if actor == npc then return true end end
+      return false
+    end, function()
+      if Game == liveGame and Game.save == liveSave and Game.data == liveData
+        and Game.stack == liveStack and Game.sessionStartedAt == liveSession and self.map == map then
+        self.engaging, npc.frozen = false, false
+      end
+    end)
   end))
 end
 
@@ -12539,10 +12661,10 @@ function OverworldState:startTrainerApproach(npc, dist, partner, vs2)
       self.engaging = false
       return
     end
-    self:engageTrainer(npc, function()
+    self:engageTrainer(npc, require("src.core.CheckpointCallbacks").bind(function()
       npc.frozen = false
       self.engaging = false
-    end)
+    end,{npc=npc.id,clearEngaging=true}))
   end
   -- the "!" bubble pause before the walk-up (EmotionBubble holds the
   -- world for 60 frames, engine/overworld/emotion_bubbles.asm)
@@ -13088,6 +13210,12 @@ function OverworldState:hatchEgg(hatched)
   elseif GameVersion.isGen3() and Game.save then
     require("src.pokemon.Gen3GameStats").increment(Game.save, 13)      -- GAME_STAT_HATCHED_EGGS
   end
+  local hatchObserver=GameVersion.isGen2() and Runtime.wants("egg.hatched")
+  local originalEgg,eggSlot
+  if hatchObserver then
+    originalEgg=require('src.mods.Merge').deepCopy(hatched)
+    for slot,mon in ipairs(Game.save.party or{})do if mon==hatched then eggSlot=slot;break end end
+  end
   local Pokemon = require("src.pokemon.Pokemon")
   local def = Game.data.pokemon[hatched.species]
   hatched.isEgg = nil
@@ -13119,6 +13247,10 @@ function OverworldState:hatchEgg(hatched)
   local name = def and def.name or hatched.species
   local function finished()
     Runtime.emit("pokemon.egg_hatched", { mon = hatched })
+    if hatchObserver then
+      Runtime.emit("egg.hatched",{mon=hatched,egg=originalEgg,slot=eggSlot,
+        species=originalEgg.species,nickname=hatched.nickname})
+    end
   end
   local hatchText = Strings("Huh?\f%s hatched\nfrom the EGG!", name)
   local askText = gen2 and Strings("Give a nickname to\n%s?", name) or nil
@@ -13945,6 +14077,7 @@ function OverworldState:onStepComplete()
       local battle = BattleState.newWild(Game, wild.species, wild.level)
       battle:makeBugContest()
       battle.onFinish = function(result) self:afterBattle(result, battle) end
+  require("src.core.CheckpointBattle").bind(battle, {kind="world"})
       self:pushBattle(battle)
     end
     return
@@ -14181,6 +14314,7 @@ function OverworldState:onStepComplete()
       if not self:gen4EscortWild(battle, onWater, land) then return end
     end
     battle.onFinish = function(result) self:afterBattle(result, battle) end
+  require("src.core.CheckpointBattle").bind(battle, {kind="world"})
     self:pushBattle(battle)
     return
   end
@@ -14807,6 +14941,7 @@ function OverworldState:gen4RadarEncounter(encDef)
     { shiny = enc.shiny, nature = enc.nature, gender = enc.gender })
   battle.gen4RadarBattle = true
   battle.onFinish = function(result) self:afterBattle(result, battle) end
+  require("src.core.CheckpointBattle").bind(battle, {kind="world"})
   self:pushBattle(battle)
   return true
 end
@@ -14827,6 +14962,19 @@ function OverworldState:gen4FieldResumed()
 end
 
 function OverworldState:afterBattle(result, battle)
+  if result=="win" and battle and battle.kind=="trainer" and not battle.linkBattle and not battle.battleTower and
+      not battle.g2MomHandled and require("src.world.Gen2MomShopping").stock()then
+    battle.g2MomHandled=true
+    if not self.g2MomCallPending then
+      local purchase=require("src.world.Gen2MomShopping").tryBuy(Game.data,Game.save,{
+        phoneService=require("src.world.Gen2PhoneService").available(self.map and self.map.def),
+        queued=self.pendingScripts and self.pendingScripts[1]~=nil,
+      })
+      if purchase then self.g2MomCallPending={save=Game.save,data=Game.data,purchase=purchase}end
+    end
+  end
+
+
   self.gen4EncounterAttempts = 0
   -- a battle a script did not start (a wild one, a trainer's sight) comes
   -- back to the field here; a scripted one already did in its onFinish
@@ -15374,7 +15522,7 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
   self.arriveWarp = nil
   local fromId = self.map.id
   local fromSection = self.map.def and self.map.def.regionMapSection
-  Game.stack:push(Transition.new(Game, function()
+  local transition = Transition.new(Game, function()
     self:setMap(mapId, x, y, facing or "down", opts)
     self:noteGen2Spawn(fromId)
     -- FIRERED'S SIDE STAIRS (ExitStairsMovement): you land ON the stair tile
@@ -15564,7 +15712,15 @@ function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
     -- side, which is what the scripts already do.
     if self.player then self.player.inputLocked = false end
     if onDone then onDone() end
-  end))
+  end)
+  -- API 3 exposes the Gen 3 no-fade option. Reuse the exact native midpoint
+  -- and completion path; ordinary/native callers keep their existing fade.
+  if opts and opts.fade == false then
+    transition.onMidpoint()
+    transition.onDone()
+  else
+    Game.stack:push(transition)
+  end
 end
 
 -- Re-read a map record after its data changed (WorldAPI:invalidateMap,
@@ -19273,6 +19429,21 @@ function OverworldState:captureSave(save)
     -- where they were then (setMap only reads this on a continue)
     save.gen4Objects = any and { [self.map.id] = here } or nil
   end
+end
+
+local checkpointEnter = OverworldState.enter
+function OverworldState:_checkpointRebuild(position)
+  assert(not checkpointQuiet, "nested checkpoint world reconstruction")
+  checkpointQuiet = true
+  -- New native actors/resources are built; old objects stay in the transaction
+  -- owner's private rollback snapshot rather than being mutated in place.
+  for _, key in ipairs(DATA_DERIVED) do self[key] = nil end
+  self.map, self.npcPool, self.tileAnimOverride = nil, nil, nil
+  self.follower, self.followerTrail, self.pikachuTrail, self.cast = nil, nil, nil, nil
+  local ok, why = pcall(checkpointEnter, self, position.map, position.x, position.y,
+                        position.facing, {checkpoint=true})
+  checkpointQuiet = nil
+  if not ok then error(why, 0) end
 end
 
 return OverworldState

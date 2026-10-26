@@ -635,7 +635,137 @@ function Commands.take_item(ctx, itemId, count)
 end
 
 -- start_battle "wild" species level | start_battle "trainer" OPP_CLASS partyIndex
+function Commands._checkpointBattleFinished(ctx, battle, kind, before, result)
+  local runner = ctx.runner
+  ctx.lastBattleResult = result
+  -- PLATINUM'S ESCORTS: a battle not lost with the partner beside you ends
+  -- with the party healed (encounter.c, Party_HealAllMembers)
+  if battle.ally and battle.ally.escort and result ~= "lose" then
+    require("src.script.Gen4Commands").healParty(ctx.save)
+  end
+  if before then
+    local Gen3 = require("src.script.Gen3Commands")
+    ctx.lastBattleFacts = Gen3.battleFacts(ctx.save, before,
+                                           ctx.game and ctx.game.data)
+  end
+
+  -- A GEN 3 TRAINER IS BEATEN WHEN THEIR OWN FLAG IS SET, and on the
+  -- cartridge it is the BATTLE SETUP that sets it -- not the script.
+  --
+  -- 566 scripts in Hoenn run `trainerbattle` and NOT ONE runs
+  -- `settrainerflag`; the four that touch a trainer flag CLEAR one, for a
+  -- rematch.  So nothing in this port ever marked a trainer beaten, and
+  -- trainerDefeated -- which is the whole test for whether they challenge
+  -- you -- answered no forever.  Every trainer in the region fought you
+  -- again the moment the battle ended, over and over.
+  --
+  -- Set here rather than in g3_trainer_battle because the flag depends on
+  -- the RESULT, and this is the only place the result arrives.
+  if result == "win" and kind ~= "wild" and ctx.g3Trainer then
+    require("src.script.Gen3Commands").markTrainerBeaten(ctx, ctx.g3Trainer)
+    -- ...AND THE SECOND TRAINER, WHEN TWO OF THEM WALKED UP.
+    --
+    -- Reported from play: "as soon as i step into this 2 dudes, a double
+    -- battle starts and after the double battle, i have to battle the top
+    -- guy again."
+    --
+    -- Two spotters are ONE battle against gTrainerBattleOpponent_A and _B,
+    -- and the cartridge closes it with SetBattledTrainersFlags -- PLURAL,
+    -- and the only caller of GetTrainerBFlag:
+    --
+    --     if (gTrainerBattleOpponent_B != 0) FlagSet(GetTrainerBFlag());
+    --     FlagSet(GetTrainerAFlag());
+    --
+    -- This port set A's flag alone, so the partner was never marked beaten
+    -- -- and since the sight scan skips a trainer only when their own flag
+    -- is set, the one who had just lost stood back up and challenged again.
+    --
+    -- Only the two-opponent case has a B.  A trainer whose own record is a
+    -- double (Amy and Liv: one trainer, one team of two) has no partner and
+    -- takes the single flag above, which is the `!= 0` test.
+    local partner = ctx.gen3PartnerTrainer
+    if partner then
+      require("src.script.Gen3Commands").markTrainerBeaten(ctx, partner)
+      -- gTrainerBattleOpponent_B is cleared once the battle it configured
+      -- is over; leaving it set would hand the next battle in the same
+      -- script a partner it never had.
+      ctx.gen3PartnerTrainer = nil
+    end
+    -- ...AND PUT THEM IN THE POKeNAV.  RegisterTrainerInMatchCall runs
+    -- off the same win the defeat flag does -- no script asks for it --
+    -- which is how a route trainer ends up on the MATCH CALL list.  It
+    -- refuses until the player has been given Match Call at all.
+    require("src.script.Gen3Commands")
+      .registerTrainerInMatchCall(ctx, ctx.g3Trainer)
+  end
+
+  -- BATTLETYPE_CANLOSE: the script is allowed to carry on after a loss and
+  -- branches on the result itself (the Cherrygrove rival).  Recorded so
+  -- `reloadmapafterbattle` can tell that case from a real whiteout.
+  ctx.lastBattleCanLose = battle.canLose and true or false
+  ctx.lastCheck = result == "win"
+  -- ...AND THE OUTCOME IS IN VAR_BATTLE_RESULT (0x4013) before they do:
+  -- Encounter_GetResult (encounter.c) writes BATTLE_OUTCOME_* there, and a
+  -- map's ON_LOAD reads it -- `StaticWildWonOrCaughtCheck <var>, 1`, which
+  -- is how Mahogany hideout B2F's generator Electrodes disappear once beaten
+  if ctx.save and require("src.core.GameVersion").isGen4() then
+    local OUTCOME = { win = 1, lose = 2, draw = 3, caught = 4, run = 5 }
+    require("src.script.Gen4Commands").setVar(ctx.save, 0x4013, OUTCOME[result] or 6)
+  end
+  -- THE FIELD COMES BACK BEFORE THE SCRIPT CARRIES ON (Gen 4): the map's
+  -- ON_LOAD / ON_RESUME scripts run now, as the cartridge's field init does
+  if ctx.overworld and ctx.overworld.gen4FieldResumed and not battle.g4FieldResumed then
+    battle.g4FieldResumed = true
+    pcall(ctx.overworld.gen4FieldResumed, ctx.overworld)
+  end
+  if ctx.overworld then
+    -- A map script often follows a trainer battle with its own text.
+    -- Keep a level evolution behind that text: otherwise afterBattle
+    -- pushes the evolution screen, then this runner resumes and pushes
+    -- the trainer's text on top of it.
+    if result == "win" then
+      ctx.afterScript = ctx.afterScript or {}
+      table.insert(ctx.afterScript, function()
+        ctx.overworld:afterBattle(result, battle)
+      end)
+    else
+      ctx.overworld:afterBattle(result, battle)
+    end
+  end
+  runner:resume()
+end
+
 function Commands.start_battle(ctx, kind, a, b, opts)
+  local skipPreparation = opts and (opts.link or opts.firstBattle or opts.firstBattleKind
+    or opts.oldManTutorial or opts.tutorialKind)
+  if kind ~= "wild" and not skipPreparation
+    and require("src.mods.Runtime").wantsHook("trainer.before_battle") then
+    local runner, co, map = ctx.runner, ctx.runner.co, ctx.overworld and ctx.overworld.map
+    local ready, waiting, cancelled, selected = false, false, false, nil
+    local function finish(options)
+      selected, ready = options, true
+      if waiting then runner:resume() end
+    end
+    require("src.battle.TrainerPreparation").prepare(ctx.game, {
+      trainerClass = a, partyIndex = b or 1,
+      mapId = map and map.id, npcId = ctx.npc and ctx.npc.id,
+    }, finish, function()
+      cancelled, ready = true, true
+      ctx.lastCheck, ctx.lastBattleResult = false, "cancel"
+      ctx.trainerPreparationCancelled = true
+      if waiting then runner:cancelTrainerPreparation(ctx, co) end
+    end, function()
+      return runner.co == co and runner.ctx == ctx and runner:isRunning()
+        and (not ctx.overworld or ctx.overworld.map == map)
+    end, function() runner:cancelTrainerPreparation(ctx, co, true) end)
+    if not ready then waiting = true; runner:yield(); waiting = false end
+    if cancelled then error(require("src.battle.TrainerPreparation").CANCEL_SCRIPT, 0) end
+    local original = opts
+    opts = {}
+    for key, value in pairs(original or {}) do opts[key] = value end
+    if type(selected) == "table" then opts.playerPartyIndices = selected.playerPartyIndices end
+  end
+
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
   local battle
@@ -665,7 +795,7 @@ function Commands.start_battle(ctx, kind, a, b, opts)
       battle.enemy.mon.fatefulEncounter = true
     end
   else
-    battle = BattleState.newTrainer(ctx.game, a, b)
+    battle = BattleState.newTrainer(ctx.game, a, b, opts)
     -- the beaten trainer's own line, printed on the battle screen before
     -- MoneyForWinningText rather than by the script afterwards
     battle.endBattleText = opts and opts.endBattleText or nil
@@ -717,103 +847,10 @@ function Commands.start_battle(ctx, kind, a, b, opts)
     if battle.sendOutSecondPair then battle:sendOutSecondPair() end
   end
   battle.onFinish = function(result)
-    ctx.lastBattleResult = result
-    -- PLATINUM'S ESCORTS: a battle not lost with the partner beside you ends
-    -- with the party healed (encounter.c, Party_HealAllMembers)
-    if battle.ally and battle.ally.escort and result ~= "lose" then
-      require("src.script.Gen4Commands").healParty(ctx.save)
-    end
-    if before then
-      local Gen3 = require("src.script.Gen3Commands")
-      ctx.lastBattleFacts = Gen3.battleFacts(ctx.save, before,
-                                             ctx.game and ctx.game.data)
-    end
-
-    -- A GEN 3 TRAINER IS BEATEN WHEN THEIR OWN FLAG IS SET, and on the
-    -- cartridge it is the BATTLE SETUP that sets it -- not the script.
-    --
-    -- 566 scripts in Hoenn run `trainerbattle` and NOT ONE runs
-    -- `settrainerflag`; the four that touch a trainer flag CLEAR one, for a
-    -- rematch.  So nothing in this port ever marked a trainer beaten, and
-    -- trainerDefeated -- which is the whole test for whether they challenge
-    -- you -- answered no forever.  Every trainer in the region fought you
-    -- again the moment the battle ended, over and over.
-    --
-    -- Set here rather than in g3_trainer_battle because the flag depends on
-    -- the RESULT, and this is the only place the result arrives.
-    if result == "win" and kind ~= "wild" and ctx.g3Trainer then
-      require("src.script.Gen3Commands").markTrainerBeaten(ctx, ctx.g3Trainer)
-      -- ...AND THE SECOND TRAINER, WHEN TWO OF THEM WALKED UP.
-      --
-      -- Reported from play: "as soon as i step into this 2 dudes, a double
-      -- battle starts and after the double battle, i have to battle the top
-      -- guy again."
-      --
-      -- Two spotters are ONE battle against gTrainerBattleOpponent_A and _B,
-      -- and the cartridge closes it with SetBattledTrainersFlags -- PLURAL,
-      -- and the only caller of GetTrainerBFlag:
-      --
-      --     if (gTrainerBattleOpponent_B != 0) FlagSet(GetTrainerBFlag());
-      --     FlagSet(GetTrainerAFlag());
-      --
-      -- This port set A's flag alone, so the partner was never marked beaten
-      -- -- and since the sight scan skips a trainer only when their own flag
-      -- is set, the one who had just lost stood back up and challenged again.
-      --
-      -- Only the two-opponent case has a B.  A trainer whose own record is a
-      -- double (Amy and Liv: one trainer, one team of two) has no partner and
-      -- takes the single flag above, which is the `!= 0` test.
-      local partner = ctx.gen3PartnerTrainer
-      if partner then
-        require("src.script.Gen3Commands").markTrainerBeaten(ctx, partner)
-        -- gTrainerBattleOpponent_B is cleared once the battle it configured
-        -- is over; leaving it set would hand the next battle in the same
-        -- script a partner it never had.
-        ctx.gen3PartnerTrainer = nil
-      end
-      -- ...AND PUT THEM IN THE POKeNAV.  RegisterTrainerInMatchCall runs
-      -- off the same win the defeat flag does -- no script asks for it --
-      -- which is how a route trainer ends up on the MATCH CALL list.  It
-      -- refuses until the player has been given Match Call at all.
-      require("src.script.Gen3Commands")
-        .registerTrainerInMatchCall(ctx, ctx.g3Trainer)
-    end
-
-    -- BATTLETYPE_CANLOSE: the script is allowed to carry on after a loss and
-    -- branches on the result itself (the Cherrygrove rival).  Recorded so
-    -- `reloadmapafterbattle` can tell that case from a real whiteout.
-    ctx.lastBattleCanLose = battle.canLose and true or false
-    ctx.lastCheck = result == "win"
-    -- ...AND THE OUTCOME IS IN VAR_BATTLE_RESULT (0x4013) before they do:
-    -- Encounter_GetResult (encounter.c) writes BATTLE_OUTCOME_* there, and a
-    -- map's ON_LOAD reads it -- `StaticWildWonOrCaughtCheck <var>, 1`, which
-    -- is how Mahogany hideout B2F's generator Electrodes disappear once beaten
-    if ctx.save and require("src.core.GameVersion").isGen4() then
-      local OUTCOME = { win = 1, lose = 2, draw = 3, caught = 4, run = 5 }
-      require("src.script.Gen4Commands").setVar(ctx.save, 0x4013, OUTCOME[result] or 6)
-    end
-    -- THE FIELD COMES BACK BEFORE THE SCRIPT CARRIES ON (Gen 4): the map's
-    -- ON_LOAD / ON_RESUME scripts run now, as the cartridge's field init does
-    if ctx.overworld and ctx.overworld.gen4FieldResumed and not battle.g4FieldResumed then
-      battle.g4FieldResumed = true
-      pcall(ctx.overworld.gen4FieldResumed, ctx.overworld)
-    end
-    if ctx.overworld then
-      -- A map script often follows a trainer battle with its own text.
-      -- Keep a level evolution behind that text: otherwise afterBattle
-      -- pushes the evolution screen, then this runner resumes and pushes
-      -- the trainer's text on top of it.
-      if result == "win" then
-        ctx.afterScript = ctx.afterScript or {}
-        table.insert(ctx.afterScript, function()
-          ctx.overworld:afterBattle(result, battle)
-        end)
-      else
-        ctx.overworld:afterBattle(result, battle)
-      end
-    end
-    runner:resume()
+    return Commands._checkpointBattleFinished(ctx, battle, kind, before, result)
   end
+  require("src.core.CheckpointBattle").bind(battle,
+    {kind="script",ctx=ctx,battleKind=kind,before=before},battle.onFinish)
   -- Every battle enters through the transition wipe, script-driven ones
   -- included: BattleTransition (engine/battle/battle_transitions.asm:1) runs
   -- from DoBattleTransitionAndInitBattleVariables for all of them, and
@@ -1285,7 +1322,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
   -- This is intentionally an event rather than a special-case starter hook:
   -- mods can use the same seam for story gifts, fossils, or custom scripts.
   local gift = { ctx = ctx, species = species, level = level }
-  if ctx.game.mods then
+  local giftEvents = ctx.game.mods and ctx.game.mods.events
+  if giftEvents and (not giftEvents.listeners or giftEvents.listeners["pokemon.before_give"]) then
     ctx.game.mods.events:emit("pokemon.before_give", gift)
     species, level = gift.species, gift.level
   end
@@ -1333,6 +1371,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     dex.seen[species] = true
     dex.owned[species] = true
   end
+  local Unown = require("src.pokemon.Gen2Unown")
+  if Unown.supported() then Unown.registerCatch(ctx.save, mon, ctx.game.data) end
   require('src.pokemon.Gen4Forms').record(ctx.game,species,mon)
   ctx.lastCheck = true
   ctx.addedToParty = addedToParty
@@ -2064,7 +2104,8 @@ for _, verb in ipairs({ "show_text", "ask", "choice", "start_battle", "warp",
 end
 
 -- module functions that are not script verbs
-local NOT_VERBS = { registerInto = true, resolve = true }
+local NOT_VERBS = {
+  _checkpointBattleFinished = true, registerInto = true, resolve = true }
 
 -- what the engine handed the registry, so resolve can tell a mod's
 -- override from the untouched self-registration

@@ -54,6 +54,8 @@ end
 -- only have the unownForms set, so fall back to alphabetical for those
 -- rather than showing an empty page.
 local function caughtLetters(save)
+  local Unown = require("src.pokemon.Gen2Unown")
+  if Unown.supported() then return Unown.letters(save) end
   local dex = save and save.pokedex
   if not dex then return {} end
   local ordered = dex.unownDex

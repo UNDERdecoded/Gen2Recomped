@@ -17,6 +17,7 @@
 
 local Collision = require("src.world.Collision")
 local GameVersion = require("src.core.GameVersion")
+local ModRuntime = require("src.mods.Runtime")
 
 local PikachuFollower = {}
 
@@ -132,12 +133,14 @@ local function shouldSpawn(game, ow)
   return false
 end
 
+local checkpointFollowers = setmetatable({}, {__mode="k"})
 local function makeFollower(game, ow, x, y, facing)
   local NPC = require("src.world.NPC")
   local npc = NPC.new(game.data, ow.map.id, {
     index = INDEX, name = "PIKACHU_FOLLOWER", sprite = "SPRITE_PIKACHU",
     movement = "STAY", range = "NONE", x = x, y = y,
   })
+  checkpointFollowers[npc] = true
   npc.pikachuFollower = true
   npc.passable = true -- never blocks a step (Collision.occupied)
   npc.facing = facing or "down"
@@ -166,6 +169,7 @@ local function remove(ow)
   for j, e in ipairs(ow.entities or {}) do
     if e == npc then table.remove(ow.entities, j) break end
   end
+  ow.cast = nil
 end
 
 -- spawn cell: directly behind the player's facing when that cell is
@@ -189,11 +193,16 @@ function PikachuFollower.current(ow)
 end
 
 function PikachuFollower.onMapEntered(game, ow, opts)
+  local generation = GameVersion.generation()
+  if generation == 2 or generation == 3 then
+    return require("src.world.OptionalFollower").onMapEntered(game, ow, opts, true)
+  end
+  if generation ~= 1 then return end
   -- Bill's House owns a short scripted scene that deliberately keeps
   -- Pikachu off the normal trailing loop.  A new map instance ends it.
   ow.pikachuBillsScene = nil
   remove(ow)
-  if not shouldSpawn(game, ow) then return end
+  if not ModRuntime.call("world.follower.spawn", shouldSpawn, game, ow) then return end
   -- opts.keepPikachu is the follower a connection crossing kept alive:
   -- LoadMapHeader's connection path sets wPikachuSpawnState = 2 and bit 4
   -- of wPikachuOverworldStateFlags, so SchedulePikachuSpawnForAfterText
@@ -205,6 +214,7 @@ function PikachuFollower.onMapEntered(game, ow, opts)
   if keep then
     table.insert(ow.npcs, keep)
     table.insert(ow.entities, keep)
+    ow.cast = nil
     return
   end
   local x, y = spawnCell(ow)
@@ -212,6 +222,7 @@ function PikachuFollower.onMapEntered(game, ow, opts)
   table.insert(ow.npcs, npc)
   -- entities is the draw list; passable keeps it out of collision
   table.insert(ow.entities, npc)
+  ow.cast = nil
   ow.pikachuTrail = { x = ow.player.cellX, y = ow.player.cellY }
 end
 
@@ -395,14 +406,19 @@ end
 -- one follow step per frame: chase the cell the player last vacated
 -- (pikachu_follow.asm keeps it one walk step behind)
 function PikachuFollower.update(game, ow)
+  local generation = GameVersion.generation()
+  if generation == 2 or generation == 3 then
+    return require("src.world.OptionalFollower").update(game, ow)
+  end
+  if generation ~= 1 then return end
   if ow.pikaHop then return end -- the counter hop owns the follower (#417)
   if ow.pikachuBillsScene then return end
   local npc = findFollower(ow)
   if not npc then
-    if shouldSpawn(game, ow) then PikachuFollower.onMapEntered(game, ow) end
+    if ModRuntime.call("world.follower.spawn", shouldSpawn, game, ow) then PikachuFollower.onMapEntered(game, ow) end
     return
   end
-  if not shouldSpawn(game, ow) then
+  if not ModRuntime.call("world.follower.spawn", shouldSpawn, game, ow) then
     remove(ow)
     return
   end
@@ -681,6 +697,7 @@ local function bubbleIndex(game, name)
 end
 
 function PikachuFollower.talk(game, ow, npc, done)
+  if GameVersion.generation() ~= 1 then return false end
   -- pikachu_follow.asm steps the follower on the player's own walk clock,
   -- so it is never mid-tile while the player stands and can always be
   -- addressed; this port's follow is a frame late, so land the step here
@@ -961,6 +978,14 @@ function PikachuFollower.at(ow, cx, cy)
     return npc
   end
   return nil
+end
+
+PikachuFollower._checkpointCreate = makeFollower
+function PikachuFollower._checkpointOwns(npc) return checkpointFollowers[npc] == true end
+
+local checkpointSpawn = PikachuFollower.onMapEntered
+function PikachuFollower._checkpointSpawn(game, world, opts)
+  return checkpointSpawn(game, world, opts)
 end
 
 return PikachuFollower

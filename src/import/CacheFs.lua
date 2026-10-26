@@ -716,6 +716,19 @@ function CacheFs.rawRemoveDir(rel)
   return true
 end
 
+-- Publish a completed, validated import within the current writable data root.
+-- Reuse the platform's atomic replacement used by native downloads, including
+-- Windows replacement without deleting the previously installed file first.
+function CacheFs.rawRename(from, to)
+  local root = rawRoot()
+  if not root then
+    local lfs = love and love.filesystem
+    root = lfs and lfs.getSaveDirectory and lfs.getSaveDirectory()
+  end
+  if not root then return nil,"no writable data root" end
+  return require("src.net.DownloadPublish")(realPath(root,from),realPath(root,to))
+end
+
 -- A love.filesystem-shaped File for a path under the live root.
 --
 -- Only WRITING needs this.  A read goes through love.filesystem, which can
@@ -844,6 +857,8 @@ function CacheFs.dataFs()
   dataFsCache = {
     -- reads and enumeration: every home at once
     getInfo = mounted(function(...) return love.filesystem.getInfo(...) end),
+    getRealDirectory = mounted(function(...) return love.filesystem.getRealDirectory(...) end),
+    getWriteRoot = function() return CacheFs.rootReport().path end,
     getDirectoryItems = mounted(function(...) return love.filesystem.getDirectoryItems(...) end),
     read = mounted(function(...) return love.filesystem.read(...) end),
     load = mounted(function(...) return love.filesystem.load(...) end),
@@ -853,6 +868,7 @@ function CacheFs.dataFs()
     write = function(rel, data) return CacheFs.rawWrite(rel, data) end,
     createDirectory = function(rel) return CacheFs.rawCreateDirectory(rel) end,
     remove = function(rel) return CacheFs.rawRemove(rel) end,
+    rename = function(from,to) return CacheFs.rawRename(from,to) end,
     removeDir = function(rel) return CacheFs.rawRemoveDir(rel) end,
     -- `mode` given means ALREADY OPEN, exactly as love.filesystem does it --
     -- see realFile.  Returning an unopened handle here reads as an empty file
