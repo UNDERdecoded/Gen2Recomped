@@ -679,6 +679,8 @@ end
 -- Running one script over one move
 -- ---------------------------------------------------------------------------
 
+require("src.battle.Gen3AIMoveKnowledge").install(Gen3AI)
+
 -- Every opcode a script can reach, followed through its branches.  Memoised
 -- on the program table: the answer depends only on the cartridge.
 function Gen3AI.reachable(program, entry)
@@ -835,6 +837,7 @@ function Gen3AI.chooseAction(battle, user, moves, foes)
   if not (moves and moves[1] and foes and foes[1]) then return nil end
   local best, tied, pairs_ = nil, {}, 0
   for _, foe in ipairs(foes) do
+    require("src.battle.Gen3AIMoveKnowledge").observe(battle, foe)
     local score = Gen3AI.scoreMoves(battle, user, foe, moves)
     if score then
       for i = 1, #moves do
@@ -861,6 +864,7 @@ end
 -- answer the caller already has and going through a second roll here would
 -- only spend a different random number on it.
 function Gen3AI.chooseMove(battle, user, target, moves)
+  require("src.battle.Gen3AIMoveKnowledge").observe(battle, target)
   local score = Gen3AI.scoreMoves(battle, user, target, moves)
   if not score then return nil end
   local best, spread = score[1], false
