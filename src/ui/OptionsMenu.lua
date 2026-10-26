@@ -14,6 +14,7 @@ local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
 local Tilt = require("src.render.Tilt")
 local GBCFX = require("src.render.GBCFX")
+local GbcColorCorrection = require("src.render.GbcColorCorrection")
 local Zoom = require("src.render.Zoom")
 local TileRenderer = require("src.render.TileRenderer")
 local GameSpeed = require("src.core.GameSpeed")
@@ -380,6 +381,17 @@ local function buildRows(game)
         PaletteFX.setMode(o.colors)
         return true
       end },
+    { id = "gbcColorCorrection", label = Strings("GBC COLOR"),
+      value = function(g)
+        return Strings(GbcColorCorrection.LABELS[
+          GbcColorCorrection.normalize(g.save.options.gbcColorCorrection)])
+      end,
+      step = function(g, dir)
+        local o = g.save.options
+        o.gbcColorCorrection = GbcColorCorrection.cycle(o.gbcColorCorrection, dir)
+        GbcColorCorrection.applyOptions(o)
+        return true
+      end },
     { id = "tilt", label = Strings("TILT"),
       value = function(g) return Tilt.levelLabel(g.save.options.tilt or 0) end,
       step = function(g, dir)
@@ -522,6 +534,14 @@ local function buildRows(game)
         return true
       end },
   }
+  -- GBC response curves do not describe the other generations' displays.
+  if not GameVersion.isGen2() then
+    local filtered = {}
+    for _, row in ipairs(rows) do
+      if row.id ~= "gbcColorCorrection" then filtered[#filtered + 1] = row end
+    end
+    rows = filtered
+  end
   -- issue #136: hide GBC FX on Android/iOS -- the present shader soft-bricks
   if not GBCFX.isSupported() then
     local filtered = {}
