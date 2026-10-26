@@ -64,8 +64,15 @@ local function makeCache(modId, fs)
   function cache:delete(key) return store:delete(nil, key) end
   function cache:list(prefix) return store:list(nil, prefix) end
 
-  -- size and kind without paying for the payload; see Storage:stat
-  function cache:info(key) return store:stat(nil, key) end
+  -- Gen1 cache consumers use LOVE's file-info shape. Storage owns a distinct
+  -- key/kind metadata contract; project the file boundary here, retaining its
+  -- fields/errors and never reading the payload just to answer an info query.
+  function cache:info(key)
+    local info, code, message = store:stat(nil, key)
+    if not info then return nil, code, message end
+    info.type = "file"
+    return info
+  end
 
   function cache:exists(key)
     return store:stat(nil, key) ~= nil
