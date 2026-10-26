@@ -148,6 +148,7 @@ function SummaryMenu.new(game, mon, opts)
   -- SaveData.validate has run over a loaded save, but this is the site the
   -- original recomputes at, and it also covers a mon handed in by a mod.
   Stats.ensure(game.data.pokemon[mon.species], mon)
+  require("src.pokemon.Pokemon").syncIdentity(game.data, mon)
   local self = setmetatable({
     game = game,
     mon = mon,
