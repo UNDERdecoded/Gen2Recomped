@@ -277,3 +277,24 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+
+## Capture nickname decision (Gen 1)
+
+`catch.nickname` receives `(next, mon, ctx)` after a caught Pokemon has been
+placed in the party or a PC box. `ctx` carries `battle`, `game` and the display
+`name`. Return `false` to skip naming, a string to supply a nickname directly,
+or `next(mon, ctx)` to keep the native question. Other return values also keep
+the native question. A supplied string uses the reference's first ten bytes;
+an empty string skips the question while retaining the existing name.
+
+The stored Pokemon keeps its original identity. Full PC storage does not
+invoke the decision. Native dex, capture events and subsequent queue completion
+remain in place. Gen 2 and later retain their current naming behavior and do
+not dispatch this Gen-1-only hook, matching reference availability.
+
+See `examples/portable_catch_nickname` and the ROM-free regression:
+`luajit tests/engine/catch_nickname.lua`. The shared probe is
+`tests/catch_nickname/contract.lua`, with fixture root, version, API number and
+callback format arguments. The standalone feature supports API 1/2 native;
+unified/API-3 modes require the earlier shared API layer in the composition.

@@ -9880,6 +9880,26 @@ function BattleState:ballMissMessage(shakes)
   return t._ItemUseBallText04 or self:romText("_ItemUseBallText04", "Shoot! It was so\nclose too!")
 end
 
+local function askNicknameByDefault() return true end
+
+-- Gen1's catch decision runs after successful party/PC placement. Keep the
+-- original mon reference so a supplied nickname reaches that exact recipient.
+function BattleState:offerNickname(mon, displayName)
+  if GameVersion.generation() == 1 and Runtime.wantsHook("catch.nickname") then
+    local verdict = Runtime.call("catch.nickname", askNicknameByDefault, mon,
+      { battle = self, name = displayName, game = self.game })
+    if verdict == false then return false end
+    if type(verdict) == "string" then
+      -- Match the reference hook's ten-byte Gen1 nickname limit.
+      verdict = verdict:sub(1, 10)
+      if #verdict > 0 then mon.nickname = verdict end
+      return false
+    end
+  end
+  self:uiNext(function() return self:askNicknameUI(mon, displayName) end)
+  return true
+end
+
 -- AskName (engine/menus/naming_screen.asm): ClearSprites, wild field blank,
 -- PrintText, YES/NO while text stays (TextBox opts.choice). Shared by party
 -- AddPartyMon and SendNewMonToBox (#172).
@@ -9966,11 +9986,7 @@ function BattleState:storeCaughtMon()
     end)
   end
   local function askCaughtNickname()
-    local caught = self.enemy.mon
-    local enemyName = self.enemy.name
-    self:uiNext(function()
-      return self:askNicknameUI(caught, enemyName)
-    end)
+    self:offerNickname(self.enemy.mon, self.enemy.name)
   end
   -- ...AND WHAT IT WAS CAUGHT IN, before it goes anywhere.
   --
