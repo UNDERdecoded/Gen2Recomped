@@ -1207,7 +1207,7 @@ function Game:zoomStep(delta)
   end
 end
 
-function Game:wheelmoved(_, dy)
+local function wheelmovedBody(self, dy)
   -- THE WHEEL ZOOMS THE FREE CAMERA when one owns the frame, and the
   -- window otherwise.
   --
@@ -1226,6 +1226,17 @@ function Game:wheelmoved(_, dy)
   elseif dy < 0 then
     self:zoomStep(-1)
   end
+end
+
+function Game:wheelmoved(_, dy)
+  if not ModRuntime.wantsHook("input.wheel") then
+    return wheelmovedBody(self, dy)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.wheel", function()
+    return wheelmovedBody(self, dy)
+  end, self, dy)
 end
 
 -- WHEN THE STACK IS EMPTIED AND NOBODY PUSHES ANYTHING BACK.
@@ -1359,7 +1370,7 @@ function Game:cycleGen4CameraTilt()
   return true
 end
 
-function Game:keypressed(key)
+local function keypressedBody(self, key)
   -- ...ahead of the delegation below, which is unconditional.
   if key == "f9" then return self:unstick() end
   if key == "f11" then return self:toggleFrameProfile() end
@@ -1492,6 +1503,17 @@ function Game:keypressed(key)
   Input:keypressed(key)
 end
 
+function Game:keypressed(key)
+  if not ModRuntime.wantsHook("input.key") then
+    return keypressedBody(self, key)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.key", function()
+    return keypressedBody(self, key)
+  end, self, { phase = "pressed", key = key })
+end
+
 function Game:textinput(text)
   local top = self.stack and self.stack:top()
   if top and top.onTextInput then
@@ -1519,19 +1541,31 @@ function Game:returnToLauncher()
   require("src.core.HostShell").toLauncher()
 end
 
--- Releases reach Input even while a top state captures raw input: a
+-- Unless an input.key wrapper swallows the event, releases reach Input
+-- even while a top state captures raw input: a
 -- swallowed key-up would strand a held-state flag for a key Input saw go
 -- down before the capture armed (the stuck-flag hazard Input:reset
 -- exists for).  The top state only OBSERVES the release afterwards,
 -- unlike onKeyPressed above which owns the press, so BindingsMenu can
 -- commit a capture on the key-up (#589).
-function Game:keyreleased(key)
+local function keyreleasedBody(self, key)
   Input:keyreleased(key)
   local top = self.stack and self.stack:top()
   if top and top.onKeyReleased then top:onKeyReleased(key) end
 end
 
-function Game:gamepadpressed(joystick, button)
+function Game:keyreleased(key)
+  if not ModRuntime.wantsHook("input.key") then
+    return keyreleasedBody(self, key)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.key", function()
+    return keyreleasedBody(self, key)
+  end, self, { phase = "released", key = key })
+end
+
+local function gamepadpressedBody(self, joystick, button)
   -- a controller is being used: the touch overlay steps aside until the
   -- next screen touch (mobile only; a no-op elsewhere)
   TouchControls:noteGamepad()
@@ -1544,14 +1578,36 @@ function Game:gamepadpressed(joystick, button)
   Input:gamepadpressed(joystick, button)
 end
 
-function Game:gamepadreleased(joystick, button)
+function Game:gamepadpressed(joystick, button)
+  if not ModRuntime.wantsHook("input.gamepad") then
+    return gamepadpressedBody(self, joystick, button)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.gamepad", function()
+    return gamepadpressedBody(self, joystick, button)
+  end, self, { phase = "pressed", joystick = joystick, button = button })
+end
+
+local function gamepadreleasedBody(self, joystick, button)
   -- same observe-after-Input contract as Game:keyreleased (#589)
   Input:gamepadreleased(joystick, button)
   local top = self.stack and self.stack:top()
   if top and top.onGamepadReleased then top:onGamepadReleased(button) end
 end
 
-function Game:gamepadaxis(joystick, axis, value)
+function Game:gamepadreleased(joystick, button)
+  if not ModRuntime.wantsHook("input.gamepad") then
+    return gamepadreleasedBody(self, joystick, button)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.gamepad", function()
+    return gamepadreleasedBody(self, joystick, button)
+  end, self, { phase = "released", joystick = joystick, button = button })
+end
+
+local function gamepadaxisBody(self, joystick, axis, value)
   -- past-deadzone only, so resting-stick drift can't hide the overlay
   if math.abs(value) > 0.5 then TouchControls:noteGamepad() end
   -- the triggers and the right stick as bindable pseudo-buttons (Input
@@ -1572,6 +1628,17 @@ function Game:gamepadaxis(joystick, axis, value)
     end
   end
   Input:gamepadaxis(joystick, axis, value)
+end
+
+function Game:gamepadaxis(joystick, axis, value)
+  if not ModRuntime.wantsHook("input.gamepad") then
+    return gamepadaxisBody(self, joystick, axis, value)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.gamepad", function()
+    return gamepadaxisBody(self, joystick, axis, value)
+  end, self, { phase = "axis", joystick = joystick, axis = axis, value = value })
 end
 
 -- conf.lua turns the mobile accelerometer-joystick off (#468), but guard the
