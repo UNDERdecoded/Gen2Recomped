@@ -277,3 +277,15 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+
+## Developer import diagnostics
+
+With `POKEPORT_DEV=1`, undeclared private engine or network imports made by
+mod entry code are reported as advisory permission warnings. Engine-owned
+API construction and lazy storage construction do not require a mod to declare
+`engine_internals`. Entry chunks and returned mod initializers retain their
+normal import attribution, including after an API-construction error. The
+supported-import list and manifest permission declarations are unchanged.
+
+ROM-free regression: `luajit tests/engine/mod_api_require_attribution.lua`.

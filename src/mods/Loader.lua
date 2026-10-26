@@ -119,6 +119,17 @@ local function engineRequire(name)
   return module
 end
 
+-- Native facade work stays outside the mod permission scanner, including
+-- nested lazy reads performed after mod initialization.
+local function engineCall(fn, ...)
+  local function pack(...) return { n = select("#", ...), ... } end
+  devShim.depth = devShim.depth + 1
+  local result = pack(pcall(fn, ...))
+  devShim.depth = devShim.depth - 1
+  if not result[1] then error(result[2], 0) end
+  return (table.unpack or unpack)(result, 2, result.n)
+end
+
 function Loader:_installDevShim()
   for id, mod in pairs(self.mods) do
     devShim.permissions[id] = mod.manifest.permissionSet
@@ -1131,7 +1142,7 @@ function Loader:_api(mod)
       -- Do not pass loader.fs when it is love.filesystem: that always writes
       -- the OS save directory and leaves modstorage/ on internal storage.
       -- Storage.fsOr routes the live LOVE fs through CacheFs.dataFs.
-      if not storage then storage = ModStorage.new(modId, loader.fs) end
+      if not storage then storage = engineCall(ModStorage.new, modId, loader.fs) end
       return storage
     end
     if key ~= "world" then return nil end
@@ -1165,7 +1176,9 @@ function Loader:_loadMod(mod)
         mod.manifest.id, tostring(row.entry.name), tostring(row.entry.file))
     end
   end
-  local api = self:_api(mod)
+  -- Only API construction is engine-owned. Entry code and returned mod
+  -- initializers still run at the normal permission-scanner depth.
+  local api = engineCall(self._api, self, mod)
   -- KEEP THE API OBJECT, not only its exports.
   --
   -- `self.exports[id]` has always been the mod's published surface, and that is
