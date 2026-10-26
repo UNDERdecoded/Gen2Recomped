@@ -5992,7 +5992,7 @@ function RomExtractorGen2:gen2ReadMapEvents(attrBank, attrAddress)
   local coords = section(self:layout("coordEventBytes", GEN2_COORD_EVENT_BYTES))
   local bgs = section(GEN2_BG_EVENT_BYTES)
   local objects = section(GEN2_OBJECT_EVENT_BYTES)
-  return { bank = bank, warps = warps, coords = coords, bgs = bgs, objects = objects }
+  return { bank = bank, address = address, warps = warps, coords = coords, bgs = bgs, objects = objects }
 end
 
 -- FruitTreeItems: one item id per berry tree, indexed by the `fruittree`
@@ -8679,7 +8679,11 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
             else
               -- a pointer below $4000 lives in the always-mapped home bank
               local pbank = self:gen2Home(bank, pointer)
-              if kind == self:layout("objectPokemonKind", -1) then
+              if pbank==events.bank and pointer==events.address then
+                -- Some unused retail NPCs point to their own map-event
+                -- table. Keep the object, but do not decode its data as code.
+                label = nil
+              elseif kind == self:layout("objectPokemonKind", -1) then
                 -- an overworld Pokemon's pointer is its dialogue; the
                 -- object pass registered it as text
                 label = nil
