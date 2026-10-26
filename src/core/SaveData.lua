@@ -2030,6 +2030,13 @@ local function scrubMonList(list, where, save, data, report, slots)
     if mon ~= nil
        and (type(mon) ~= "table" or not known(data.pokemon, mon.species)) then
       list[i] = nil
+      if where=="party" and GameVersion.isGen2() and type(mon)=="table"
+          and save.mail and save.mail.party and save.mail.party[i]
+          and require("src.pokemon.Gen2Mail").monHoldsMail(mon) then
+        -- Its letter moves to the mailbox/quarantine below; retaining a
+        -- second stationery on the quarantined carrier would duplicate it.
+        mon.item=nil
+      end
       ensureOrphaned(save)
       save.orphaned.mons[#save.orphaned.mons + 1] = mon
       report.lostMons[#report.lostMons + 1] =
@@ -2160,6 +2167,10 @@ function SaveData.validate(save, data)
     end
   end
   scrubMaps(save, data, report)
+  if GameVersion.isGen2() then
+    local Mail=require("src.pokemon.Gen2Mail")
+    Mail.load(data);Mail.validate(save,report)
+  end
   local dex = save.pokedex
   if type(dex) == "table" then
     for _, key in ipairs({ "seen", "owned" }) do
@@ -2228,7 +2239,8 @@ function SaveData.validate(save, data)
   -- an empty quarantine leaves no residue, so a vanilla save re-encodes
   -- byte-identically
   local orphaned = save.orphaned
-  if orphaned and #(orphaned.mons or {}) == 0 and #(orphaned.items or {}) == 0 then
+  if orphaned and #(orphaned.mons or {}) == 0 and #(orphaned.items or {}) == 0
+      and #(orphaned.mail or {})==0 then
     save.orphaned = nil
   end
   return report
@@ -2239,6 +2251,7 @@ function SaveData.emptyReport(report)
   -- restoreSave attaches one so a version bump alone still surfaces
   local diff = report.modsDiff
   return #report.lostMons == 0 and #report.lostItems == 0
+    and #(report.lostMail or {})==0 and #(report.restoredMail or {})==0
     and #report.remappedMaps == 0 and #report.restoredMons == 0
     and #report.restoredItems == 0 and not report.recovered
     and (not diff or (#diff.added == 0 and #diff.removed == 0 and #diff.changed == 0))

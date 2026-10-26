@@ -272,6 +272,9 @@ local function heldItemForm(mon, data)
 end
 
 function Bag.giveHeld(save, mon, id, data)
+  if require("src.core.GameVersion").isGen2() and require("src.pokemon.Gen2Mail").monHoldsMail(mon) then
+    return nil,"mail"
+  end
   local previous = mon.item
   mon.item = id
   Bag.remove(save, id, 1)
@@ -283,6 +286,9 @@ end
 -- TakeItem: nil when the mon holds nothing, or nil + "full" when the pack has
 -- no room for it (the mon keeps holding it).
 function Bag.takeHeld(save, mon, data)
+  if require("src.core.GameVersion").isGen2() and require("src.pokemon.Gen2Mail").monHoldsMail(mon) then
+    return nil,"mail"
+  end
   local id = mon.item
   if not id then return nil end
   if not Bag.add(save, id, 1, data) then return nil, "full" end

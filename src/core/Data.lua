@@ -1893,6 +1893,7 @@ function Data:seedDefaults()
     end
     seedMissingGen2Tilesets(self)
     self:publishGen2Palettes()
+    require("src.pokemon.Gen2Mail").load(self)
     ensureGen2WarpFallbacks(self)
     ensureGen2HomeTextFallbacks(self)
   end

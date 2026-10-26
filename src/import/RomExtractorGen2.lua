@@ -7705,6 +7705,35 @@ function RomExtractorGen2:gen2StoneTable(bank, address, pool)
   return ok and rows and #rows > 0 and rows or nil
 end
 
+-- Mail operands are raw charmap records, not dialogue streams or scripts.
+-- Both retail mail commands use a word in the current script bank.
+function RomExtractorGen2:gen2MailOperand(bank,address,gift)
+  if not self:gen2InRom(bank,address) then return nil end
+  bank=self:gen2Home(bank,address)
+  self._gen2MailCharmap=self._gen2MailCharmap or self:readSourceTable("charmap")
+  local limit=bank==0 and 0x4000 or 0x8000
+  local ok,result=pcall(function()
+    local item
+    if gift then
+      item=string.format("ITEM_%03d",self.rom:byte(bank,address));address=address+1
+    end
+    local out={}
+    for offset=0,31 do
+      if address+offset>=limit then return nil end
+      local byte=self.rom:byte(bank,address+offset)
+      if byte==0x50 then break end
+      if byte==0x4E or byte==0x4F then out[#out+1]="\n"
+      else
+        local ch=self._gen2MailCharmap[tostring(byte)]
+        if type(ch)~="string" or ch:sub(1,1)=="<" then return nil end
+        out[#out+1]=ch
+      end
+    end
+    return {item=item,message=table.concat(out)}
+  end)
+  return ok and result or nil
+end
+
 function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
   -- Crystal inserts farjumptext at $52 and shifts 88 commands after it, so
   -- the table has to be chosen per version -- decoding Crystal with Gold's
@@ -7754,7 +7783,11 @@ function RomExtractorGen2:gen2DecodeScript(bank, address, label, pool)
     for i = 1, #spec do
       local kind = spec:sub(i, i)
       local value
-      if kind == "b" then
+      if name=="givepokemail" or name=="checkpokemail" then
+        local from,at=bank,self.rom:word(bank,pc)
+        if kind=="T" then from,at=self.rom:byte(bank,pc),self.rom:word(bank,pc+1) end
+        value=self:gen2MailOperand(from,at,name=="givepokemail") or false
+      elseif kind == "b" then
         value = self.rom:byte(bank, pc)
       elseif kind == "w" or kind == "d" then
         value = self.rom:word(bank, pc)

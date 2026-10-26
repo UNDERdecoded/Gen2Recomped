@@ -261,11 +261,8 @@ L.phonecall = function(ir, s) emit(s, { "show_text", ir[2] }) end
 -- box closes itself.
 L.hangup = function() end
 
--- Script_checkpokemail (25:$7608): does the party hold this mail?  The port
--- has no mail model, so answer "no" rather than leaving the branch to fall
--- through on a stale flag.
-L.checkpokemail = function(_, s) emit(s, { "g2_false" }) end
-L.givepokemail = function() end
+L.checkpokemail = function(ir,s) emit(s,{"g2_check_poke_mail",ir[2]}) end
+L.givepokemail = function(ir,s) emit(s,{"g2_give_poke_mail",ir[2]}) end
 
 -- ------------------------------------------------------------------ no-ops
 -- Each of these was verified to touch only state the port does not model.

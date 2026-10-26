@@ -23,6 +23,30 @@ local Strings = require("src.core.Strings")
 
 local Gen2Commands = {}
 
+function Commands.g2_give_poke_mail(ctx,letter)
+  if type(letter)~="table" or type(letter.message)~="string" then
+    Logger.warn("givepokemail: unresolved native letter; import this cartridge again")
+    return
+  end
+  require("src.pokemon.Gen2Mail").give(ctx.save,letter.item,letter.message)
+end
+
+function Commands.g2_check_poke_mail(ctx,letter)
+  local Mail=require("src.pokemon.Gen2Mail")
+  local picked
+  require("src.ui.Screens").push(ctx.game,"PartyMenu",{
+    pickOnly=true,
+    onSwitch=function(mon) picked=mon;ctx.runner:resume() end,
+    onCancel=function() ctx.runner:resume() end,
+  })
+  ctx.runner:yield()
+  local slot
+  for i,mon in ipairs(ctx.save.party or {}) do if mon==picked then slot=i;break end end
+  local expected=type(letter)=="table" and letter.message or nil
+  local result=Mail.checkPokeMail(ctx.save,slot,expected)
+  ctx.g2Var,ctx.lastCheck=result,result~=0
+end
+
 local function scriptVar(ctx)
   return ctx.g2Var or 0
 end
@@ -3138,7 +3162,9 @@ function Commands.g2_return_nobus_aggron(ctx)
   end
   if not othersHealthy then return result(3) end
   for i, mon in ipairs(ctx.save.party) do
-    if mon == picked then table.remove(ctx.save.party, i) break end
+    if mon == picked then
+      table.remove(ctx.save.party,i);require("src.pokemon.Gen2Mail").removeSlot(ctx.save,i);break
+    end
   end
   result(2)
 end
@@ -3335,6 +3361,7 @@ function Commands.g2_delete_party_mon(ctx)
   local _, index = orphanChoice(ctx)
   if not index then return end
   table.remove(ctx.save.party, index)
+  require("src.pokemon.Gen2Mail").removeSlot(ctx.save,index)
   ctx.g2PartyMon = nil
 end
 
@@ -3724,6 +3751,7 @@ function Commands.g2_trade(ctx, index)
   -- reading at all -- so they all came over empty-handed.
   if trade.item then newMon.item = trade.item end
   table.remove(party, slot)
+  require("src.pokemon.Gen2Mail").removeSlot(ctx.save,slot)
   table.insert(party, newMon)
   local dex = ctx.save.pokedex
   if dex then
@@ -3783,7 +3811,9 @@ function Commands.g2_return_shuckie(ctx)
   if not othersHealthy then return result(4) end
   if (picked.happiness or 0) >= 150 then return result(3) end
   for i, mon in ipairs(ctx.save.party) do
-    if mon == picked then table.remove(ctx.save.party, i) break end
+    if mon == picked then
+      table.remove(ctx.save.party,i);require("src.pokemon.Gen2Mail").removeSlot(ctx.save,i);break
+    end
   end
   result(2)
 end
@@ -4290,7 +4320,7 @@ function Gen2Commands.dayCareDeposit(ctx, which, introText, leftText)
     return Commands.show_text(ctx, t._CantAcceptEggText
       or Strings("Sorry, but I can't\naccept an EGG."))
   end
-  if picked.mail then
+  if picked.mail or require("src.pokemon.Gen2Mail").monHoldsMail(picked) then
     return Commands.show_text(ctx, t._RemoveMailText
       or Strings("Remove the MAIL\nfrom that #MON."))
   end
@@ -4305,7 +4335,9 @@ function Gen2Commands.dayCareDeposit(ctx, which, introText, leftText)
   end
 
   for i, mon in ipairs(save.party) do
-    if mon == picked then table.remove(save.party, i) break end
+    if mon == picked then
+      table.remove(save.party,i);require("src.pokemon.Gen2Mail").removeSlot(save,i);break
+    end
   end
   DayCare.deposit(save, which, picked)
   game.stringBuffer = Gen2Commands.dayCareName(game, picked)

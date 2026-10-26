@@ -66,7 +66,9 @@ ModCompat.ALIASES = {
   ["src.world.gen2.Palettes"] = "src.render.PaletteFX",
 
   -- save-side data
-  ["src.core.gen2.Boxes"] = "src.pokemon.Boxes",
+  ["src.core.gen2.Boxes"] = "src.pokemon.Gen2Boxes",
+  ["src.core.gen2.Mail"] = "src.pokemon.Gen2Mail",
+  ["src.ui.gen2.BoxMenu"] = "src.ui.BoxMenu",
   ["src.core.gen2.BugContest"] = "src.world.BugContest",
   ["src.core.gen2.ItemEffects"] = "src.inventory.ItemEffects",
   ["src.core.gen2.Save"] = "src.core.SaveData",

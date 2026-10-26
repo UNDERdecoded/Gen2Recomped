@@ -37,7 +37,7 @@ Gen2ScriptOps.COMMANDS = {
   { "takecoins", "w" }, { "checkcoins", "w" }, { "addcellnum", "b" },
   { "delcellnum", "b" }, { "checkcellnum", "b" }, { "checktime", "b" },
   { "checkpoke", "b" }, { "givepoke", "bbbbbD" }, { "giveegg", "bb" },
-  { "givepokemail", "T" }, { "checkpokemail", "T" }, { "checkevent", "w" },
+  { "givepokemail", "d" }, { "checkpokemail", "d" }, { "checkevent", "w" },
   { "clearevent", "w" }, { "setevent", "w" }, { "checkflag", "w" },
   { "clearflag", "w" }, { "setflag", "w" }, { "wildon", "" },
   { "wildoff", "" }, { "xycompare", "d" }, { "warpmod", "bbb" },
@@ -95,7 +95,7 @@ Gen2ScriptOps.COMMANDS = {
 
 -- Crystal's ScriptCommandTable is NOT Gold's with entries appended.  It
 -- inserts `farjumptext` at $52, which shifts all 88 commands after it down by
--- one, and it changes the operand width of seven commands that kept their
+-- one, and it changes the operand width of several commands that kept their
 -- names.  Disassembling a Crystal ROM with the Gold table desyncs on the
 -- first shifted command and never recovers, so Crystal gets its own table.
 --
@@ -103,11 +103,9 @@ Gen2ScriptOps.COMMANDS = {
 -- <name>_command` run gives the order, and each MACRO body gives the operand
 -- widths.  Where a command kept both its name and its total width, Gold's
 -- spec letters are reused verbatim so the semantic distinctions (p vs t vs d)
--- carry over; the seven that changed width are listed below.
+-- carry over; the width differences are listed below.
 --
 --   $10 memcallasm    dba -> dw   (D -> d)
---   $2F givepokemail  dba -> dw   (T -> d)
---   $30 checkpokemail dba -> dw   (T -> d)
 --   $92 reloadend     0 args -> 1 ("" -> b)
 --   $98 phonecall     dba -> dw   (T -> w)
 --   $A0 swarm         +map_id     (bb -> bbb)
