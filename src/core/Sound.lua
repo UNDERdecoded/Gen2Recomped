@@ -630,7 +630,12 @@ function Sound.playCry(data, species, opts)
   end
   -- set every time rather than at build: the cached source outlives a change
   -- of game, and the scale is the loaded cartridge's
-  pcall(src.setVolume, src, volumeFor(key) * cryScale(data))
+  local scale=cryScale(data)
+  if opts and type(opts.volume)=='number'and opts.volume==opts.volume and opts.volume>=0 and opts.volume<=256 then
+    local unit=data.constants and data.constants.gen3Cry and tonumber(data.constants.gen3Cry.scale)or 256
+    if unit and unit>0 then scale=opts.volume/unit end
+  end
+  pcall(src.setVolume, src, volumeFor(key) * scale)
   -- Interactive Dex playback owns its source; loop/effect settings must never
   -- leak onto the cached cry used by battles, NPC scripts or other menus.
   if opts and opts.isolated and src.clone then
@@ -638,7 +643,7 @@ function Sound.playCry(data, species, opts)
     if ok and copy then src=copy end
   end
   if not restart(src) then return nil end
-  require("src.core.Music").duckForCry(data, src)
+  require("src.core.Music").duckForCry(data, src,opts and opts.noDuck==true)
   played("cry", species, species)
   return src
 end

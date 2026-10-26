@@ -116,6 +116,9 @@ function ModSeams.open(owner)
     local function require2(name, ...)
       local had = package.loaded[name]
       local result = real(name, ...)
+      if name=='src.core.game3.field_move_show_mon'and type(result)=='table'and result._observeMod then
+        result._observeMod(owner)
+      end
       if had == nil and type(name) == "string" and name:match("^src%.")
           and type(result) == "table" and not fresh[result] then
         fresh[result] = true

@@ -12034,6 +12034,14 @@ end
 
 function RomExtractorGen3:extractFieldEffects()
   self:beginStage("Gen3 field effects")
+  local ok,digest=pcall(require('src.import.RomVerification').sha1,self.rom.data)
+  local edition=type(self.version)=='table'and self.version.id or self.version
+  local artwork,why=require('src.import.Gen3FieldMoveArt').extract(self.rom,self.manifest,ok and digest or nil,edition,self.checkpoint)
+  local constants=self._constants or{}
+  constants.gen3FieldMovePresentation=artwork
+  self._constants=constants
+  if not artwork then Logger.warn('gen3 field move artwork unavailable: %s',tostring(why))end
+  self:write('constants',constants)
   local heal, howMany, distinct = self:fieldEffectRoles()
   if not heal or howMany ~= 1 then
     Logger.warn("gen3 field effects: %d of the region's %d effect ids sit in "

@@ -15,6 +15,7 @@ Usage:
 """
 import argparse
 import collections, hashlib, json, sys
+from gen3_field_move_profiles import field_move_profile
 
 BASE = 0x08000000
 NUM_SPECIES = 412      # named species slots, INCLUDING the 25 unused
@@ -5447,6 +5448,7 @@ def main():
         'generation': 3,
         'version': 'emerald',
         'romSha1': sha1,
+        'fieldMoveStreaks': field_move_profile(sha1),
         'romHeader': {'title': data[0xA0:0xAC].decode('ascii', 'replace'),
                       'gameCode': code, 'makerCode': data[0xB0:0xB2].decode('ascii'),
                       'revision': data[0xBC]},

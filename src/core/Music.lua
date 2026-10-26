@@ -136,7 +136,14 @@ end
 -- the jingle ends (see update()).
 -- Called by Sound.playCry: unlike a fanfare, the song keeps playing and is
 -- merely attenuated for as long as the cry sounds.
-function Music.duckForCry(data, src)
+function Music.duckForCry(data, src, noDuck)
+  if noDuck then
+    if cryDuck and cryDuck.src==src then
+      cryDuck=nil
+      if not state.fade then applyVolume(state.source);applyVolume(state.loopSource)end
+    end
+    return
+  end
   local c = data and data.constants and data.constants.gen3Cry
   local duck = c and tonumber(c.duckBgm)
   local scale = c and tonumber(c.scale)
