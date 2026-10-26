@@ -1,0 +1,34 @@
+name: native GBA AI Taunt predicates
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen3-ai-taunt-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: Roxas2712/gen1recomp-Mac-fix
+          ref: 10613015fc68d924915570bd1abee34b70d5bd01
+          path: .contract-reference/gen1
+      - name: Install runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check native Taunt predicates
+        run: luajit tests/engine/gen3_ai_taunt.lua
+      - name: Compare actual native AI interpreters
+        run: |
+          mkdir -p /tmp/gen3-ai-taunt
+          python3 tools/gen3-ai-taunt-contract-check/check.py --gen1 .contract-reference/gen1 --report /tmp/gen3-ai-taunt/records.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: gen3-ai-taunt
+          path: /tmp/gen3-ai-taunt
+          if-no-files-found: ignore
