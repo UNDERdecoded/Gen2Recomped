@@ -37,6 +37,7 @@ local Weather = require("src.battle.Weather")
 local WideBattle = require("src.battle.WideBattle")
 local Gen3Battle = require("src.battle.Gen3Battle")
 local Gen4Battle = require("src.battle.Gen4Battle")
+local Gen2BattleView = require("src.battle.Gen2BattleView")
 local GameVersion = require("src.core.GameVersion")
 
 -- FORWARD-DECLARED, because they are defined next to the other doubles
@@ -1164,12 +1165,9 @@ local function newBattle(game)
   local self = setmetatable({}, BattleState)
   self.game = game
   self.data = game.data
-  -- On this engine the battle screen IS the battle logic object: there is no
-  -- separate model that a screen points at. Publishing the self-reference makes
-  -- that explicit so anything holding "a thing with a .battle" (the party menu
-  -- during a switch, mods walking the state stack) can treat the battle screen
-  -- and the party menu uniformly instead of special-casing this one screen.
-  self.battle = self
+  -- Native combat keeps battler wrappers; the Gen2 screen contract exposes
+  -- the actual Pokemon through a live model view. No copied party/HP state.
+  if GameVersion.isGen2() then Gen2BattleView.bind(self) else self.battle = self end
   -- BLACK AND WHITE: their move effects named for this engine, their species'
   -- abilities and their ruleset, before the ruleset below is chosen
   -- (src/battle/Gen5MoveEffects.lua; sets self.bw on a BW cache only)
@@ -12962,5 +12960,12 @@ function BattleState:drawClassic()
     Runtime.call("battle.overlay", function() end, self)
   end
 end
+
+Gen2BattleView.install(BattleState, {
+  load = getImage,
+  palette = monPalette,
+  path = imagePathOf,
+  trueColor = function(image) local meta = imageMeta[image]; return meta and meta.trueColor or false end,
+})
 
 return BattleState
