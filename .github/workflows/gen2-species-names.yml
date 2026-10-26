@@ -1,0 +1,15 @@
+name: Native GSC species-name identity
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Native identity, real registry/loader and canonical save creation
+        run: luajit tests/engine/gen2_species_names.lua

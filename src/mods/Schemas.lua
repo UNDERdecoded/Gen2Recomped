@@ -409,6 +409,8 @@ Schemas.REGISTRIES = R
 
 R.pokemon = {
   semantics = "record", target = "pokemon",
+  canonicalId = require("src.core.Gen2SpeciesNames").registryId,
+  write = require("src.core.Gen2SpeciesNames").write,
   fields = {
     id = f.str, name = f.str, dex = f.int(1),
     index = f.opt(f.int(0, 255)),
