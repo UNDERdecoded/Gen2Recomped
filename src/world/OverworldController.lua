@@ -20,6 +20,7 @@ local Logger = require("src.core.Logger")
 local Probe = require("src.core.Probe")
 local Map = require("src.world.Map")
 local MapLoader = require("src.world.MapLoader")
+local MapIdentity = require("src.core.MapIdentity")
 local NPC = require("src.world.NPC")
 local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
@@ -301,7 +302,7 @@ local function objectVisible(save, mapId, obj)
   -- own: spawned, it stood frozen and walk-through beside the real one (the
   -- "duplicated" Pallet fat man, Route 9's cut tree seen from Cerulean).
   if obj.kind == 255 then return false end
-  local toggles = save.objectToggles and save.objectToggles[mapId] or {}
+  local toggleKeyValue = MapIdentity.savedValue(Game and Game.data, save.objectToggles, mapId, objectToggleKey(obj))
   local toggleKey = objectToggleKey(obj)
   -- constants/event_flags.asm, "Sprite visibility flags": when the event is
   -- cleared the sprite is visible, when set it is hidden.  obj.hidden already
@@ -312,8 +313,8 @@ local function objectVisible(save, mapId, obj)
   -- the override was what kept the DAY-CARE MAN OUTSIDE standing at the fence
   -- with no EGG to hand over.)
   local visible = not obj.hidden
-  if toggleKey and toggles[toggleKey] ~= nil then
-    visible = toggles[toggleKey]
+  if toggleKey and toggleKeyValue ~= nil then
+    visible = toggleKeyValue
   end
   -- Gen2's `disappear`/`appear` last only as long as the map is loaded.  They
   -- write the object struct, and every map load rebuilds those structs from
@@ -328,7 +329,7 @@ local function objectVisible(save, mapId, obj)
   -- and she has no event flag, so once she had shown you in she was gone from
   -- the lobby desk for the rest of the save.
   local session = save.g2ObjectToggles
-  if toggleKey and type(session) == "table" and session.mapId == mapId
+  if toggleKey and type(session) == "table" and MapIdentity.same(Game and Game.data, session.mapId, mapId)
      and session[toggleKey] ~= nil then
     visible = session[toggleKey]
   end
@@ -419,10 +420,10 @@ local function objectVisible(save, mapId, obj)
   -- A Gen2 berry tree hands out an item but is scenery: it stays rooted once
   -- picked, where an item ball vanishes.
   if obj.item and not obj.fruitTree and save.itemsTaken
-     and save.itemsTaken[mapId .. "_obj_" .. obj.index] then
+     and MapIdentity.savedFlag(Game and Game.data, save.itemsTaken, mapId, "_obj_" .. obj.index) then
     visible = false
   end
-  if obj.pokemon and save.defeatedTrainers[mapId .. "_obj_" .. obj.index] then
+  if obj.pokemon and MapIdentity.savedFlag(Game and Game.data, save.defeatedTrainers, mapId, "_obj_" .. obj.index) then
     visible = false
   end
   if visible and not objectInTimeOfDay(obj) then
@@ -692,6 +693,8 @@ end
 OverworldState.objectHome = objectHome -- exposed for tests
 
 local function pooledNPC(pool, data, mapId, obj)
+  local runtimeMapId = MapIdentity.runtimeId(data, mapId)
+  mapId = MapIdentity.sourceId(data, mapId)
   local key = mapId .. "_obj_" .. obj.index
   local npc = pool[key]
   -- ...AND A POOLED ONE WHOSE SPRITE HAS SINCE BEEN DECIDED IS STALE.
@@ -798,7 +801,7 @@ local function pooledNPC(pool, data, mapId, obj)
     pool[key] = npc
     if Runtime.wants("world.npc_spawned") then
       Runtime.emit("world.npc_spawned",
-        { mapId = mapId, npcId = key, runtime = obj.runtime == true })
+        { mapId = runtimeMapId, npcId = key, runtime = obj.runtime == true })
     end
   end
   return npc
@@ -857,6 +860,8 @@ local function blockPx(def)
 end
 
 function OverworldState.computeNeighbors(maps, rootId, hops, reachW, reachH)
+  local identities = { maps=maps }
+  rootId = MapIdentity.runtimeId(identities, rootId)
   local out = {}
   local rootDef = maps[rootId]
   local placed = { [rootId] = true }
@@ -883,9 +888,10 @@ function OverworldState.computeNeighbors(maps, rootId, hops, reachW, reachH)
     -- the cartridge's own connection list says to do.
     for dir, first in pairs(cur.def.connections or {}) do
     for _, conn in ipairs(first.list or { first }) do
-      local destDef = NEIGHBOUR_DIRS[dir] and maps[conn.map]
-      if destDef and not placed[conn.map] then
-        placed[conn.map] = true
+      local destId = MapIdentity.runtimeId(identities, conn.map)
+      local destDef = NEIGHBOUR_DIRS[dir] and maps[destId]
+      if destDef and not placed[destId] then
+        placed[destId] = true
         local ox, oy
         local cp, dp = blockPx(cur.def), blockPx(destDef)
         if dir == "north" then
@@ -899,7 +905,7 @@ function OverworldState.computeNeighbors(maps, rootId, hops, reachW, reachH)
         end
         ox, oy = cur.ox + ox, cur.oy + oy
         if cur.hops + 1 <= hops or inReach(destDef, ox, oy) then
-          table.insert(out, { id = conn.map, ox = ox, oy = oy })
+          table.insert(out, { id = destId, ox = ox, oy = oy })
           if cur.hops + 1 < hops or inReach(destDef, ox, oy) then
             table.insert(queue,
                          { def = destDef, ox = ox, oy = oy,
@@ -1056,7 +1062,7 @@ end
 function OverworldState:stampClosedDoors()
   local closedDoors = FieldDefaults.fieldValue(Game.data, "cardKeyDoors",
                                                "closedDoors")
-  local floorDoors = self.map and closedDoors and closedDoors[self.map.id]
+  local floorDoors = self.map and MapIdentity.lookup(Game.data, closedDoors, self.map.id)
   if not floorDoors then return end
   local stamped, unlocked = false, false
   for _, door in ipairs(floorDoors) do
@@ -1081,6 +1087,7 @@ function OverworldState:stampClosedDoors()
 end
 
 function OverworldState:setMap(mapId, x, y, facing, opts)
+  mapId = MapIdentity.runtimeId(Game and Game.data, mapId)
   -- BLACK / WHITE'S ARRIVAL GUARD: the warp you land on stays disarmed until
   -- you step off it (see checkGen4EntranceWarp's gen5 branch)
   self.gen5ArrivalMap, self.gen5ArrivalX, self.gen5ArrivalY = mapId, x, y
@@ -1479,9 +1486,9 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     self:setDark(false)
   end
   local flyWarps = (Game.data.field or {}).flyWarps or {}
-  if flyWarps[mapId] then
+  if MapIdentity.lookup(Game.data, flyWarps, mapId) then
     Game.save.visited = Game.save.visited or {}
-    Game.save.visited[mapId] = true
+    Game.save.visited[MapIdentity.sourceId(Game.data, mapId)] = true
   end
   -- ...AND SO DOES EVERY TEMPLATE A SCRIPT REWROTE, which is one line the
   -- cartridge runs FOUR INSTRUCTIONS EARLIER than the one below.
@@ -1577,8 +1584,8 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- literal below used to miss, so the callback never ran on Route 34 at all.
   if GameVersion.isGen2() then
     local DayCare = require("src.pokemon.DayCare")
-    if mapId == DayCare.mapId(Game.data, "ROUTE_34")
-       or mapId == DayCare.mapId(Game.data, "DAY_CARE") then
+    if MapIdentity.same(Game.data, mapId, DayCare.mapId(Game.data, "ROUTE_34"))
+       or MapIdentity.same(Game.data, mapId, DayCare.mapId(Game.data, "DAY_CARE")) then
       DayCare.syncObjects(Game.data, Game.save)
     end
   end
@@ -2374,7 +2381,8 @@ end
 -- the last-outdoor memory.
 local function paletteLookup(palettes, mapId, tileset)
   local byMap = palettes.byMap
-  if byMap and byMap[mapId] then return byMap[mapId] end
+  local byName = MapIdentity.lookup(Game and Game.data, byMap, mapId)
+  if byName ~= nil then return byName end
   local byTileset = palettes.byTileset
   if byTileset and tileset and byTileset[tileset] then return byTileset[tileset] end
   for _, row in ipairs(palettes.byPrefix or {}) do
@@ -2667,7 +2675,7 @@ function OverworldState:isDungeonTransitionMap()
   local dm = Game.data.field.dungeonTransitionMaps
   if not dm then return false end
   for _, m in ipairs(dm.maps) do
-    if m == self.map.id then return true end
+    if MapIdentity.same(Game.data, m, self.map.id) then return true end
   end
   local idx = self.map.def.index
   for _, r in ipairs(dm.ranges) do
@@ -4182,7 +4190,7 @@ function OverworldState:update(dt)
   -- Gen2 bootstrap can arrive with placeholder script state while map data
   -- is still converging; never softlock movement in the bedroom.
   local gen2BootBedroom = GameVersion.isGen2(Game.data)
-    and self.map and self.map.id == "PLAYERS_HOUSE2_F"
+    and self.map and MapIdentity.same(Game.data, self.map.id, "PLAYERS_HOUSE2_F")
   if gen2BootBedroom then
     self.player.inputLocked = false
   end
@@ -5484,7 +5492,7 @@ function OverworldState:handleInput()
       -- #230), which the map-edge path guards the same way.
       if result == "blocked" and self:canCollisionWarp() then
         local w = Warp.onCollision(self.map, Game.data.field.warpCarpets,
-                                   self.player.cellX, self.player.cellY, dir)
+                                   self.player.cellX, self.player.cellY, dir, Game.data)
         if w then
           self:takeWarp(w.def)
           return result
@@ -5576,7 +5584,7 @@ function OverworldState:handleInput()
             require("src.script.Gen2Flags").bikeFlag("downhill"))
     if not downhill and fm then
       for _, m in ipairs(fm.slopeMaps or {}) do
-        if m == self.map.id then downhill = true break end
+        if MapIdentity.same(Game.data, m, self.map.id) then downhill = true break end
       end
     end
     if downhill then
@@ -6214,7 +6222,7 @@ function OverworldState:crossConnection(dir, conn, scripted)
   local fromX, fromY = p.cellX, p.cellY
   self:setMap(conn.map, x, y, p.facing,
               { seamless = true, keepMusic = true, keepPikachu = pika })
-  self.pendingSeamMusic = conn.map
+  self.pendingSeamMusic = MapIdentity.runtimeId(Game.data, conn.map)
   -- place the player one cell before the seam (their old world spot,
   -- which the neighbor strip renders identically) and start the step
   -- into the new map RIGHT NOW so there is no one-frame stall at the
@@ -6671,7 +6679,7 @@ local function fishingPool(data, rod, mapId)
   if def.pool then return def.pool end
   if def.perMap then
     local groups = data.field[def.perMap]
-    return groups and groups[mapId]
+    return MapIdentity.lookup(data, groups, mapId)
   end
   return nil, def.always
 end
@@ -7009,7 +7017,7 @@ function OverworldState:flyTo(mapId, mon)
   -- `field` is absent on a Gen 3 cache imported before the heal-location
   -- stage existed, and indexing it was a crash rather than a refusal
   local flyWarps = (Game.data.field or {}).flyWarps or {}
-  local spot = flyWarps[mapId]
+  local spot = MapIdentity.lookup(Game.data, flyWarps, mapId)
   if not spot then return end
   require("src.core.Sound").play(Game.data, "Fly")
   Game.save.onBike = false
@@ -7341,7 +7349,12 @@ function OverworldState:tryPcTile(fx, fy)
   -- nothing at all in a Pokemon Center -- so every Gen2 PC was dead.
   if GameVersion.isGen2() and self.map:inBounds(fx, fy)
      and self.map:cellTile(fx, fy) == 0x93 then
-    self:openPC()
+    if MapIdentity.same(Game.data, self.map.id, "PLAYERS_HOUSE2_F") then
+      require("src.core.Sound").play(Game.data, "Turn_On_PC")
+      Screens.push(Game, "PlayerPC")
+    else
+      self:openPC()
+    end
     return true
   end
   -- ...AND EMERALD'S IS A METATILE TOO, with no object and no script behind
@@ -7394,8 +7407,8 @@ function OverworldState:tryPcTile(fx, fy)
   local extras = field and field.hiddenExtras
   if not extras then return false end
   local facing = self.player.facing
-  local mapId = self.map.id
-  local pcRows = extras.pcTiles and extras.pcTiles[mapId]
+  local mapId = MapIdentity.sourceId(Game.data, self.map.id)
+  local pcRows = MapIdentity.lookup(Game.data, extras.pcTiles, self.map.id)
   if not pcRows and GameVersion.isGen2() then
     if mapId == "MAP_G18_N07" then
       pcRows = extras.pcTiles and extras.pcTiles.PLAYERS_HOUSE2_F
@@ -7550,13 +7563,14 @@ function OverworldState:interact()
     if sign.item then
       local save = Game.save
       local flagKey = sign.eventFlag
-      local takenKey = self.map.id .. "_sign_" .. tostring(sign.x) .. "_" .. tostring(sign.y)
+      local takenSuffix = "_sign_" .. tostring(sign.x) .. "_" .. tostring(sign.y)
+      local takenKey = MapIdentity.sourceId(Game.data, self.map.id) .. takenSuffix
       save.hiddenTaken = save.hiddenTaken or {}
       -- ROM: event SET = already taken / not present.  InitializeEventsScript
       -- pre-sets EVENT_FOUND_MACHINE_PART so the gym water is empty until the
       -- Power Plant manager clears the flag.  clearevent stores false.
       local flagSet = flagKey and save.flags and save.flags[flagKey] == true
-      local already = flagSet or save.hiddenTaken[takenKey]
+      local already = flagSet or MapIdentity.savedFlag(Game.data, save.hiddenTaken, self.map.id, takenSuffix)
       if already then
         interacted(self, fx, fy, "sign", sign)
         return
@@ -7882,12 +7896,13 @@ end
 function OverworldState:tryHiddenObject(fx, fy)
   local field = Game.data.field
   local save = Game.save
-  local key = self.map.id .. "_" .. fx .. "_" .. fy
+  local suffix = "_" .. fx .. "_" .. fy
+  local key = MapIdentity.sourceId(Game.data, self.map.id) .. suffix
 
-  for _, h in ipairs(field.hiddenItems and field.hiddenItems[self.map.id] or {}) do
+  for _, h in ipairs(MapIdentity.lookup(Game.data, field.hiddenItems, self.map.id) or {}) do
     if h.x == fx and h.y == fy then
       save.hiddenTaken = save.hiddenTaken or {}
-      if save.hiddenTaken[key] then return false end
+      if MapIdentity.savedFlag(Game.data, save.hiddenTaken, self.map.id, suffix) then return false end
       if not require("src.inventory.Bag").add(save, h.item, 1, Game.data) then
         Game.stack:push(TextBox.new(Game, Strings("You can't carry\nany more items!")))
         return true
@@ -7902,10 +7917,10 @@ function OverworldState:tryHiddenObject(fx, fy)
     end
   end
 
-  for _, h in ipairs(field.hiddenCoins and field.hiddenCoins[self.map.id] or {}) do
+  for _, h in ipairs(MapIdentity.lookup(Game.data, field.hiddenCoins, self.map.id) or {}) do
     if h.x == fx and h.y == fy then
       save.hiddenTaken = save.hiddenTaken or {}
-      if save.hiddenTaken[key] then return false end
+      if MapIdentity.savedFlag(Game.data, save.hiddenTaken, self.map.id, suffix) then return false end
       if not save.inventory.COIN_CASE then return false end
       save.hiddenTaken[key] = true
       save.coins = math.min(9999, (save.coins or 0) + h.coins)
@@ -7919,7 +7934,7 @@ function OverworldState:tryHiddenObject(fx, fy)
   -- broken-machine and can't-play texts are pokered's exact strings
   -- (_GameCornerOutOfOrderText etc., data/text/text_2.asm)
   local txt = Game.data.text or {}
-  for seatIndex, h in ipairs(field.slotMachines and field.slotMachines[self.map.id] or {}) do
+  for seatIndex, h in ipairs(MapIdentity.lookup(Game.data, field.slotMachines, self.map.id) or {}) do
     if h.x == fx and h.y == fy then
       if h.state == "out_of_order" then
         Game.stack:push(TextBox.new(Game, txt._GameCornerOutOfOrderText
@@ -7971,7 +7986,7 @@ function OverworldState:tryHiddenObject(fx, fy)
   -- seats that store SPRITE_FACING_UP (Vermilion, Saffron, Fuchsia,
   -- Cinnabar): (0,4) is the bench wall cell and can only ever be faced from
   -- the right (#488).
-  for _, h in ipairs(extras.benchGuys and extras.benchGuys[self.map.id] or {}) do
+  for _, h in ipairs(MapIdentity.lookup(Game.data, extras.benchGuys, self.map.id) or {}) do
     local want = h.textFacing or h.facing
     if h.x == fx and h.y == fy and (not want or want == facing) then
       local text = OverworldState.benchGuyText(Game.data, save, h.text)
@@ -7985,7 +8000,7 @@ function OverworldState:tryHiddenObject(fx, fy)
   -- gym statues (engine/events/hidden_events/gym_statues.asm): show
   -- the gym plaque; the player's name joins the winners once the
   -- badge is earned
-  for _, h in ipairs(extras.gymStatues and extras.gymStatues[self.map.id] or {}) do
+  for _, h in ipairs(MapIdentity.lookup(Game.data, extras.gymStatues, self.map.id) or {}) do
     if h.x == fx and h.y == fy and facing == "up" then
       local gym = require("data.scripts.gyms")[self.map.id]
       if gym then
@@ -8001,7 +8016,7 @@ function OverworldState:tryHiddenObject(fx, fy)
   end
 
   -- PrintTrashText: SS Anne kitchen + Vermilion Gym non-puzzle can
-  for _, h in ipairs(extras.printTrash and extras.printTrash[self.map.id] or {}) do
+  for _, h in ipairs(MapIdentity.lookup(Game.data, extras.printTrash, self.map.id) or {}) do
     if h.x == fx and h.y == fy then
       Game.stack:push(TextBox.new(Game, txt._VermilionGymTrashText
         or Strings("Nope, there's\nonly trash here.")))
@@ -8030,7 +8045,7 @@ function OverworldState:tryCardKeyDoor(fx, fy)
   if not ck then return false end
   local onList = false
   for _, m in ipairs(ck.maps or {}) do
-    if m == self.map.id then onList = true break end
+    if MapIdentity.same(Game.data, m, self.map.id) then onList = true break end
   end
   if not onList or not self.map:inBounds(fx, fy) then return false end
   local tile = self.map:cellTile(fx, fy)
@@ -8056,7 +8071,7 @@ function OverworldState:tryCardKeyDoor(fx, fy)
   -- the floors' gate callbacks check, EVENT_SILPH_CO_n_UNLOCKED_DOOR*)
   local closedDoors = FieldDefaults.fieldValue(Game.data, "cardKeyDoors",
                                                "closedDoors")
-  for _, door in ipairs(closedDoors and closedDoors[self.map.id] or {}) do
+  for _, door in ipairs(MapIdentity.lookup(Game.data, closedDoors, self.map.id) or {}) do
     if door.bx == bx and door.by == by then
       Game.save.flags[door.event] = true
       break
@@ -8270,7 +8285,7 @@ end
 -- and coord <= player+4 (Y) / player+5 (X) -- the clamp excludes
 -- coordinate 0 whenever the player coordinate is <= 4, like the original)
 function OverworldState:hasHiddenItemLeft()
-  local list = Game.data.field.hiddenItems and Game.data.field.hiddenItems[self.map.id]
+  local list = MapIdentity.lookup(Game.data, Game.data.field.hiddenItems, self.map.id)
   if not list then return false end
   local taken = Game.save.hiddenTaken or {}
   local px, py = self.player.cellX, self.player.cellY
@@ -8278,7 +8293,7 @@ function OverworldState:hasHiddenItemLeft()
     return v > math.max(c - 5, 0) and v <= c + hiAdd
   end
   for _, h in ipairs(list) do
-    if not taken[self.map.id .. "_" .. h.x .. "_" .. h.y]
+    if not MapIdentity.savedFlag(Game.data, taken, self.map.id, "_" .. h.x .. "_" .. h.y)
        and near(py, h.y, 4) and near(px, h.x, 5) then
       return true
     end
@@ -8313,7 +8328,7 @@ end
 -- field.seafoam[map].surfBlocked: cells where SURF is refused until the
 -- listed events fire (IsSurfingAllowed's SEAFOAM_ISLANDS_B4F stairs case)
 function OverworldState:surfBlockedHere()
-  local blocked = FieldDefaults.fieldValue(Game.data, "seafoam", self.map.id,
+  local blocked = FieldDefaults.mapValue(Game.data, "seafoam", self.map.id,
                                            "surfBlocked")
   if not blocked then return false end
   local p = self.player
@@ -10441,7 +10456,7 @@ function OverworldState:gen2SweetScentEncounter(deferFailure)
   if water then slots = encDef and encDef.water end
   local BugContest = require("src.world.BugContest")
   local contest = BugContest.active(Game.save)
-    and self.map.id == BugContest.contestMap()
+    and MapIdentity.same(Game.data, self.map.id, BugContest.contestMap())
   local enc
   local roamer
   if eligible then
@@ -11781,7 +11796,9 @@ function OverworldState:trainerDefeated(npc)
   if npc.def and npc.def.pyramidTrainer then
     return require("src.script.Gen3BattlePyramid").trainerBeaten(Game.save, npc.def.localId)
   end
-  if Game.save.defeatedTrainers[npc.id] then return true end
+  if Game.save.defeatedTrainers[npc.id]
+     or (GameVersion.isGen2() and npc.def and npc.def.index
+       and MapIdentity.savedFlag(Game.data, Game.save.defeatedTrainers, self.map.id, "_obj_" .. npc.def.index)) then return true end
   -- A GEN 4 TRAINER IS BEATEN WHEN `settrainerflag` HAS NAMED THEM.
   --
   -- The shared trainer script ends `getapproachingtrainerid / setvarfromvar /
@@ -13882,7 +13899,7 @@ function OverworldState:onStepComplete()
       and self.map.speaksGen2Collision and self.map:speaksGen2Collision()
     if not w and not gen2Classes and (self:dirHeld() or self.forcedWarp) then
       w = Warp.onCollision(self.map, Game.data.field.warpCarpets,
-                           p.cellX, p.cellY, p.facing)
+                           p.cellX, p.cellY, p.facing, Game.data)
     end
     if w then
       self:takeWarp(w.def)
@@ -13937,7 +13954,7 @@ function OverworldState:onStepComplete()
   end
   local BugContest = require("src.world.BugContest")
   if BugContest.active(Game.save)
-     and self.map.id == BugContest.contestMap()
+     and MapIdentity.same(Game.data, self.map.id, BugContest.contestMap())
      and self.map:isGrassCell(p.cellX, p.cellY) then
     local wild = BugContest.tryEncounter(Game, self.map:cellTile(p.cellX, p.cellY))
     if wild then
@@ -14091,7 +14108,7 @@ function OverworldState:onStepComplete()
     end
   elseif enc and not onWater then
     local RoamMons = require("src.world.RoamMons")
-    local name, info = RoamMons.check(Game.save, self.map.id, onWater,
+    local name, info = RoamMons.check(Game.save, MapIdentity.sourceId(Game.data, self.map.id), onWater,
                                       love.math.random)
     if name then
       local beast = RoamMons.encounterFor(name, info)
@@ -14225,7 +14242,7 @@ end
 -- player along the extracted movement list; the landing cell may be
 -- another arrow, which chains.
 function OverworldState:checkSpinner()
-  local list = Game.data.field.spinners and Game.data.field.spinners[self.map.id]
+  local list = MapIdentity.lookup(Game.data, Game.data.field.spinners, self.map.id)
   if not list then return false end
   local p = self.player
   for _, sp in ipairs(list) do
@@ -14278,7 +14295,7 @@ end
 function OverworldState:syncLastMapRewrite()
   if not self.map then return end
   local rewrites = FieldDefaults.field(Game.data, "lastMapRewrites")
-  local rewrite = rewrites and rewrites[self.map.id]
+  local rewrite = MapIdentity.lookup(Game.data, rewrites, self.map.id)
   if not rewrite then return end
   local id = OverworldState.rewrittenLastMap(rewrite, self.player.cellX,
                                              self.player.cellY)
@@ -14293,13 +14310,13 @@ end
 -- `guards` the Route 23 ladder of per-row guards.
 function OverworldState:checkBadgeGate()
   local gates = Game.data.field.badgeGates
-  local g = gates and gates[self.map.id]
+  local g = MapIdentity.lookup(Game.data, gates, self.map.id)
   if not g then return false end
   local p = self.player
   local t = Game.data.text
 
   if g.coords then
-    local passedFlag = FieldDefaults.fieldValue(Game.data, "badgeGates",
+    local passedFlag = FieldDefaults.mapValue(Game.data, "badgeGates",
                                                 self.map.id, "passedFlag")
                        or ("PASSED_" .. self.map.id)
     for _, c in ipairs(g.coords) do
@@ -14364,7 +14381,7 @@ function OverworldState:checkForcedMovement()
   if not fm then return false end
   local p = self.player
   local forcedTiles = fm.tiles or {}
-  for _, tile in ipairs(forcedTiles[self.map.id] or {}) do
+  for _, tile in ipairs(MapIdentity.lookup(Game.data, forcedTiles, self.map.id) or {}) do
     if p.cellX == tile.x and p.cellY == tile.y then
       if tile.mode == "bike" then
         -- CheckForceBikeOrSurf (engine/overworld/player_state.asm) also
@@ -14408,7 +14425,7 @@ end
 -- drags the player along the extracted movement lists; the B4F pool
 -- edge pushes you back up until the B3F boulders fall.
 function OverworldState:checkSeafoamCurrent()
-  local sf = Game.data.field.seafoam and Game.data.field.seafoam[self.map.id]
+  local sf = MapIdentity.lookup(Game.data, Game.data.field.seafoam, self.map.id)
   if not sf then return false end
   local p = self.player
   local function allSet(events)
@@ -14447,7 +14464,7 @@ function OverworldState:checkSeafoamCurrent()
     if p.cellX == c.x and p.cellY == c.y then
       -- SeafoamIslandsB3F.asm sets BIT_FORCED_WARP before DecodeRLEList so
       -- the south-edge water stairs auto-warp when the current ends.
-      if FieldDefaults.fieldValue(Game.data, "seafoam", self.map.id,
+      if FieldDefaults.mapValue(Game.data, "seafoam", self.map.id,
                                   "setsForcedWarp") then
         self.forcedWarp = true
       end
@@ -14551,7 +14568,7 @@ function OverworldState:inSafariStepZone()
   -- because the mode is not a place
   if GameVersion.isGen3() then return Game.save.safari ~= nil end
   for _, m in ipairs(FieldDefaults.fieldValue(Game.data, "safari", "stepMaps") or {}) do
-    if m == self.map.id then return true end
+    if MapIdentity.same(Game.data, m, self.map.id) then return true end
   end
   return false
 end
@@ -15108,7 +15125,7 @@ function OverworldState:takeWarp(warpDef)
   -- through, and that -- not the last Pokemon Center -- is where Gen 2's Dig
   -- and Escape Rope put you back.
   self:rememberDigWarp(fromMap, self.player.cellX, self.player.cellY, destMap)
-  Runtime.emit("player.warped", { fromMap = fromMap, toMap = destMap,
+  Runtime.emit("player.warped", { fromMap = fromMap, toMap = MapIdentity.runtimeId(Game.data, destMap),
                                   x = x, y = y, warp = warpDef })
   -- facing carries across the warp (leaving a gate sideways keeps you
   -- walking sideways; house exit mats are stepped onto facing down)
@@ -15232,13 +15249,13 @@ local GEN2_SPAWN_ENVIRONMENTS = { [1] = true, [2] = true } -- TOWN, ROUTE
 function OverworldState:noteGen2Spawn(fromId)
   local pool = Game.data.map_scripts
   local spawns = pool and pool.spawns
-  if not (spawns and spawns.centers and spawns.centers[fromId]) then return end
+  if not (spawns and MapIdentity.lookup(Game.data, spawns.centers, fromId)) then return end
   if not GEN2_SPAWN_ENVIRONMENTS[self.map.def.environment] then return end
-  local point = spawns.points and spawns.points[self.map.id]
+  local point = MapIdentity.lookup(Game.data, spawns.points, self.map.id)
   if not point then return end
   -- no `outdoor`: a Gen 2 spawn IS the town cell outside the centre door,
   -- so LAST_MAP exits have nothing to re-point at
-  Game.save.lastHeal = { map = self.map.id, x = point.x, y = point.y }
+  Game.save.lastHeal = { map = MapIdentity.sourceId(Game.data, self.map.id), x = point.x, y = point.y }
 end
 
 -- Warp to the last heal point (blackout, ESCAPE ROPE, DIG/TELEPORT).
@@ -15356,6 +15373,7 @@ end
 -- PalletMovementScript_OakMoveLeft sets it; scripts/OaksLab.asm
 -- OaksLabFollowedOakScript clears it and calls PlayDefaultMusic).
 function OverworldState:startWarpTo(mapId, x, y, facing, onDone, opts)
+  mapId = MapIdentity.runtimeId(Game.data, mapId)
   -- ANY transition off an outdoor map remembers the outdoor side, so
   -- scripted warps (the Oak walk-in) keep LAST_MAP exits working.
   -- CheckIfInOutsideMap (home/overworld.asm) treats PLATEAU (Route 23 /
@@ -15581,6 +15599,7 @@ end
 -- not drop the route theme over the battle song (#484).  The out-of-bounds
 -- fallback below is a real map change and keeps its map music.
 function OverworldState:reloadMap(mapId, reason)
+  mapId = MapIdentity.runtimeId(Game and Game.data, mapId)
   MapLoader.invalidate(mapId)
   for _, nb in ipairs(self.neighbors or {}) do MapLoader.invalidate(nb.map.id) end
   if self.map and self.map.id == mapId then
@@ -15603,6 +15622,7 @@ end
 -- instantiate it through the shared pool so it crosses seams like an
 -- imported object.  Runtime objects are never serialized into map data.
 function OverworldState:addRuntimeObject(mapId, objDef, owner)
+  mapId = MapIdentity.runtimeId(Game.data, mapId)
   local def = Game.data.maps[mapId]
   if not def then return nil, "unknown map: " .. tostring(mapId) end
   def.objects = def.objects or {}
@@ -15614,7 +15634,7 @@ function OverworldState:addRuntimeObject(mapId, objDef, owner)
   objDef.runtime = true
   objDef.owner = owner
   table.insert(def.objects, objDef)
-  local npcId = mapId .. "_obj_" .. objDef.index
+  local npcId = MapIdentity.sourceId(Game.data, mapId) .. "_obj_" .. objDef.index
   if self.map and self.map.id == mapId and self.npcPool then
     local npc = pooledNPC(self.npcPool, Game.data, mapId, objDef)
     npc.frozen = false
@@ -15630,7 +15650,7 @@ end
 function OverworldState:removeRuntimeObject(npcId, owner)
   for mapId, def in pairs(Game.data.maps) do
     for i, obj in ipairs(def.objects or {}) do
-      if obj.runtime and mapId .. "_obj_" .. obj.index == npcId then
+      if obj.runtime and MapIdentity.sourceId(Game.data, mapId) .. "_obj_" .. obj.index == npcId then
         if owner ~= nil and obj.owner ~= owner then
           return nil, "not owned by " .. tostring(owner)
         end

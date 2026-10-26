@@ -1,0 +1,42 @@
+name: Native GBA map identities
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gba-map-identities.yml'
+      - 'src/**'
+      - 'tests/gba_maps/**'
+      - 'tests/engine/gen3_map_names.lua'
+      - 'tools/gba-map-check/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-map-names:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: gen2
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: gen1-reference
+          sparse-checkout: |
+            src
+            data
+            tests
+            assets/fonts
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Native map owner, registry, VM, cache and tombstones
+        working-directory: gen2
+        run: luajit tests/engine/gen3_map_names.lua
+      - name: All five metadata profiles on pinned native engines
+        run: python3 gen2/tools/gba-map-check/check.py --gen1 gen1-reference --gen2 gen2 --report "${{ runner.temp }}/gba-map-identities.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-gba-map-identities
+          path: ${{ runner.temp }}/gba-map-identities.json
+          if-no-files-found: error

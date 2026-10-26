@@ -157,7 +157,13 @@ end
 -- direction (IsWarpTileInFrontOfPlayer; SS_ANNE_BOW tests one hardcoded
 -- tile instead); everywhere else the player must face the map edge
 -- (IsPlayerFacingEdgeOfMap).  carpets = field.warpCarpets.
-function Warp.extraCheck(map, carpets, cx, cy, dir)
+function Warp.extraCheck(map, carpets, cx, cy, dir, data)
+  local function mapIn(list)
+    for _, id in ipairs(list or {}) do
+      if require("src.core.MapIdentity").same(data, map.id, id) then return true end
+    end
+    return false
+  end
   -- FIRERED'S DIRECTIONAL WARPS, which this is the whole trigger for.
   --
   -- TryArrowWarp takes the arrow panels, the interior exit mats and the side
@@ -187,9 +193,9 @@ function Warp.extraCheck(map, carpets, cx, cy, dir)
   if not carpets then return facingEdge end
   -- the map exceptions are tested before the tileset (ExtraWarpCheck)
   local useCarpet
-  if inList(carpets.edgeMaps, map.id) then
+  if mapIn(carpets.edgeMaps) then
     useCarpet = false
-  elseif inList(carpets.function2Maps, map.id) then
+  elseif mapIn(carpets.function2Maps) then
     useCarpet = true
   else
     useCarpet = inList(carpets.function2Tilesets, map.def.tileset)
@@ -197,7 +203,7 @@ function Warp.extraCheck(map, carpets, cx, cy, dir)
   if not useCarpet then return facingEdge end
   local tx, ty = Collision.target(cx, cy, dir)
   local front = map:cellTile(tx, ty)
-  if map.id == carpets.ssAnneBow.map then
+  if require("src.core.MapIdentity").same(data, map.id, carpets.ssAnneBow.map) then
     return front == carpets.ssAnneBow.tile
   end
   return inList(carpets.tiles[dir], front)
@@ -206,9 +212,9 @@ end
 -- Returns the warp entry when standing on (cx,cy) and the extra check
 -- passes toward dir (fired from a blocked step, or on arrival with the
 -- d-pad held).
-function Warp.onCollision(map, carpets, cx, cy, dir)
+function Warp.onCollision(map, carpets, cx, cy, dir, data)
   local w = map:warpAtCell(cx, cy)
-  if w and Warp.extraCheck(map, carpets, cx, cy, dir) then
+  if w and Warp.extraCheck(map, carpets, cx, cy, dir, data) then
     return w
   end
   return nil

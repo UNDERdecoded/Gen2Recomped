@@ -7,6 +7,7 @@
 -- Pure Lua, no love.*, so the headless loader and offline tools can require it.
 
 local FieldDefaults = {}
+local MapIdentity = require("src.core.MapIdentity")
 
 -- ------- data.field
 
@@ -273,6 +274,15 @@ function FieldDefaults.fieldValue(data, key, ...)
   local value = walk(data and data.field and data.field[key], n, ...)
   if value ~= nil then return value end
   return walk(FieldDefaults.FIELD[key], n, ...)
+end
+
+-- A map-keyed field table, with the same per-leaf stale-cache fallback.
+function FieldDefaults.mapValue(data, key, mapId, ...)
+  local n = select("#", ...)
+  local actual = data and data.field and data.field[key]
+  local value = walk(MapIdentity.lookup(data, actual, mapId), n, ...)
+  if value ~= nil then return value end
+  return walk(MapIdentity.lookup(data, FieldDefaults.FIELD[key], mapId), n, ...)
 end
 
 function FieldDefaults.constant(data, key)

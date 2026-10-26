@@ -7,6 +7,7 @@
 
 local Logger = require("src.core.Logger")
 local MapLoader = require("src.world.MapLoader")
+local MapIdentity = require("src.core.MapIdentity")
 local Gen3Elevation = require("src.world.Gen3Elevation")
 local Runtime = require("src.mods.Runtime")
 
@@ -80,12 +81,13 @@ function WorldAPI:toggleObject(mapId, objName, visible)
   local save = self.game and self.game.save
   if not save then return nil, "no save" end
   save.objectToggles = save.objectToggles or {}
-  save.objectToggles[mapId] = save.objectToggles[mapId] or {}
-  save.objectToggles[mapId][objName] = visible and true or false
+  local native = MapIdentity.sourceId(self.game.data, mapId)
+  save.objectToggles[native] = save.objectToggles[native] or {}
+  save.objectToggles[native][objName] = visible and true or false
   Runtime.emit("world.object_toggled",
     { mapId = mapId, objName = objName, visible = visible and true or false })
   local ow = self:overworld()
-  if ow and ow.map and ow.map.id == mapId then
+  if ow and ow.map and MapIdentity.same(self.game.data, ow.map.id, mapId) then
     ow:setMap(mapId, ow.player.cellX, ow.player.cellY, ow.player.facing,
               { seamless = true, via = "reload", keepMusic = true })
   end
@@ -365,7 +367,7 @@ end
 function WorldAPI:npc(mapId, indexOrName)
   local ow = self:overworld()
   if not ow then return nil, NO_OVERWORLD end
-  if ow.map and ow.map.id ~= mapId then return nil, "map is not active" end
+  if ow.map and not MapIdentity.same(self.game.data, ow.map.id, mapId) then return nil, "map is not active" end
   for _, npc in ipairs(ow.npcs or {}) do
     if npc.def.index == indexOrName or npc.def.name == indexOrName
        or npc.id == indexOrName then

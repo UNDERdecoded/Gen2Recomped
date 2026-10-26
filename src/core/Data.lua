@@ -516,30 +516,7 @@ local function copy(value)
   return out
 end
 
-local function normalizeMapId(mapId)
-  if type(mapId) ~= "string" then return mapId end
-  local id = mapId:gsub("([0-9]+)_([FB])$", "%1%2")
-  local out, i, len = {}, 1, #id
-  while i <= len do
-    local ch = id:sub(i, i)
-    if ch:match("%d") then
-      local j = i + 1
-      while j <= len and id:sub(j, j):match("%d") do
-        j = j + 1
-      end
-      local prev = i > 1 and id:sub(i - 1, i - 1) or ""
-      if prev:match("%a") and prev ~= "B" and out[#out] ~= "_" then
-        out[#out + 1] = "_"
-      end
-      out[#out + 1] = id:sub(i, j - 1)
-      i = j
-    else
-      out[#out + 1] = ch
-      i = i + 1
-    end
-  end
-  return table.concat(out)
-end
+local normalizeMapId = require("src.core.MapIdentity").normalize
 
 -- AN ALIAS REMEMBERS WHAT IT WAS MADE FROM.
 --
@@ -583,10 +560,14 @@ local function seedMapAliases(maps, aliases)
   -- aliases table: rawId → friendlyId; work both directions so either source can seed the other
   for rawId, friendlyId in pairs(aliases or {}) do
     if not maps[rawId] and maps[friendlyId] then
-      local mapped = copy(maps[friendlyId]); mapped.id = rawId; maps[rawId] = mapped
+      local mapped = copy(maps[friendlyId]); mapped.id = rawId
+      if require("src.core.GameVersion").isGen2() then mapped.sourceId = maps[friendlyId].sourceId or friendlyId end
+      maps[rawId] = mapped
     end
     if not maps[friendlyId] and maps[rawId] then
-      local mapped = copy(maps[rawId]); mapped.id = friendlyId; maps[friendlyId] = mapped
+      local mapped = copy(maps[rawId]); mapped.id = friendlyId
+      if require("src.core.GameVersion").isGen2() then mapped.sourceId = maps[rawId].sourceId or rawId end
+      maps[friendlyId] = mapped
     end
   end
 end
@@ -1925,13 +1906,14 @@ function Data:seedDefaults()
   aliasAllMaps(self.maps)
   if require("src.core.GameVersion").isGen2() then
     seedMapAliases(self.maps, GEN2_SCAFFOLD_MAP_ALIASES)
+    require("src.core.Gen2MapNames").publish(self, GEN2_SCAFFOLD_MAP_ALIASES)
     -- Alias text_pointers by each map's camelCase label so resolveText finds
     -- Gen2 entries (text_pointers uses uppercase ID, map.def.label is camelCase)
     local tp = self.text_pointers
     local th = self.trainer_headers
     for _, mapDef in pairs(self.maps) do
       if type(mapDef) == "table" then
-        local id = type(mapDef.id) == "string" and mapDef.id
+        local id = type(mapDef.id) == "string" and require("src.core.MapIdentity").sourceId(self, mapDef.id)
         local lbl = type(mapDef.label) == "string" and mapDef.label
         if id and lbl and id ~= lbl then
           if tp and tp[id] and not tp[lbl] then tp[lbl] = tp[id] end
@@ -1957,6 +1939,7 @@ function Data:seedDefaults()
     seedTrainerPartyAlias(self.trainers, "OPP_RIVAL3",
       { "TERRY_438", "TERRY_439", "TERRY_440" })
   end
+  if require("src.core.GameVersion").isGen3() then require("src.core.Gen3MapNames").publish(self) end
 end
 
 -- The Karate Master (FightingDojo.asm) is a text_asm object: his object has
@@ -2628,7 +2611,7 @@ function Data:textEntry(mapLabel, textConst)
   -- should always be here, but a bare index is a crash rather than a miss
   local pointers = self.text_pointers
   if not pointers then return nil end
-  local perMap = pointers[mapLabel]
+  local perMap = require("src.core.MapIdentity").lookup(self, pointers, mapLabel)
   if not perMap then return nil end
   local entry = perMap[textConst]
   if entry then return entry end
@@ -2658,7 +2641,7 @@ end
 function Data:trainerHeader(mapLabel, objIndex)
   local headers = self.trainer_headers
   if not headers then return nil end
-  local perMap = headers[mapLabel]
+  local perMap = require("src.core.MapIdentity").lookup(self, headers, mapLabel)
   return perMap and perMap[objIndex] or nil
 end
 
