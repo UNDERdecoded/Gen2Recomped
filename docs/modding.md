@@ -1,5 +1,29 @@
 # Native modding
 
+## Background HTTP GET
+
+A mod declaring `"network"` receives `mod.fetch:get(url, options)`, `:poll(handle)`,
+`:cancel(handle)`, `:release(handle)`, `:available()` and `:capabilities()`.
+Handles belong to their creating mod. Poll returns a detached table with
+`status` (`pending`, `ok`, `error` or `cancelled`), `body`, `err`,
+`receivedBytes` and, when known, `httpStatus`. Always release finished handles.
+Rollback and unload release a mod's requests automatically.
+
+GET transport runs in three LÖVE workers. The engine caps active/queued work at
+16 requests, with four pending requests per mod. `maxSeconds` defaults to 20
+and caps at 30, including queue time; `maxBytes` defaults to 4 MiB and caps at
+16 MiB. `boundedHttpsGet = 1` requires HTTPS throughout redirects. Desktop
+capabilities advertise this constraint. Desktop curl is required; mobile
+bridges are not yet supported by this API. Remote URLs and headers are passed
+through a private curl config file, outside shell syntax.
+
+Cancel discards the result immediately. A curl already executing may occupy
+its worker until its bounded timeout; releasing a handle cannot bypass the
+global worker limit. Shutdown waits for those bounded operations. This adds
+GET support; it does not implement POST, arbitrary requests or `mod.job`.
+The older download-to-file API still performs a synchronous first poll.
+
+
 The modding book lives on the
 [project wiki](https://github.com/bryanthaboi/gen1recomp/wiki).
 
