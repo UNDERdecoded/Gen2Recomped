@@ -17,6 +17,7 @@ local Abilities = require("src.battle.Abilities")
 -- nowhere else the weather is visible from here.  Every existing caller
 -- passes nothing and gets exactly the old answer.
 local function effectiveSpeed(battler, battle)
+  if require("src.core.GameVersion").isGen3() and battle then return require("src.battle.Gen3AIOrder").speed(battler, battle, true) end
   local spd = Stats.applyStage(battler.curStats.speed,
                                battler.stages and battler.stages.speed or 0)
   -- ApplyBadgeStatBoosts: the SOULBADGE boosts speed; the rows come from
@@ -59,6 +60,10 @@ local function effectiveSpeed(battler, battle)
   if battler.items or battler.bwBattle then
     spd = require("src.battle.Gen5HoldItems").speed(battler, spd)
   end
+  if require("src.core.GameVersion").isGen3()
+      and require("src.battle.HoldItems").effectOf(battler, "priority") == "MACHO_BRACE" then
+    spd = math.max(1, math.floor(spd / 2))
+  end
   return spd
 end
 
@@ -76,6 +81,14 @@ end
 -- who moves first.
 function TurnOrder.firstMover(a, aMove, b, bMove, rng, invertTie, battle, data)
   rng = rng or love.math.random
+  if require("src.core.GameVersion").isGen3() and battle then
+    local pa, pb = priority(aMove), priority(bMove)
+    local O, C = require("src.battle.Gen3AIOrder"), require("src.battle.Gen3OrderCore")
+    local sa, sb = O.speed(a, battle, true), O.speed(b, battle, true)
+    if pa ~= pb then return pa > pb end
+    if sa ~= sb then return sa > sb end
+    return (C.result(sa, sb, function() return rng(0, 1) end) == 0) ~= (invertTie == true)
+  end
   local pa, pb = priority(aMove), priority(bMove)
   if pa ~= pb then return pa > pb end
 
@@ -93,11 +106,13 @@ function TurnOrder.firstMover(a, aMove, b, bMove, rng, invertTie, battle, data)
   local first, second = a, b
   local firstIsA = true
   if invertTie then first, second, firstIsA = b, a, false end
-  if HeldItems.effect(data, first) == HeldItems.EFFECT.QUICK_CLAW then
-    if HeldItems.quickClaw(data, first, rng) then return firstIsA end
+  local firstEffect, firstParam = HeldItems.effect(data, first, "priority")
+  if firstEffect == HeldItems.EFFECT.QUICK_CLAW then
+    if rng(0, 255) < firstParam then return firstIsA end
   end
-  if HeldItems.effect(data, second) == HeldItems.EFFECT.QUICK_CLAW then
-    if HeldItems.quickClaw(data, second, rng) then return not firstIsA end
+  local secondEffect, secondParam = HeldItems.effect(data, second, "priority")
+  if secondEffect == HeldItems.EFFECT.QUICK_CLAW then
+    if rng(0, 255) < secondParam then return not firstIsA end
   end
 
   local sa, sb = effectiveSpeed(a, battle), effectiveSpeed(b, battle)
@@ -132,6 +147,26 @@ TurnOrder.effectiveSpeed = effectiveSpeed
 -- which is the order the cartridge fills its own array in, so equal-speed
 -- entries fall out the same way.
 function TurnOrder.order(entries, rng, battle)
+  if require("src.core.GameVersion").isGen3() and battle then
+    for i = 1, #entries - 1 do
+      for j = i + 1, #entries do
+        local a, b = entries[i], entries[j]
+        local function vanilla(first, firstMove, second, secondMove, ctx)
+          return TurnOrder.firstMover(first, firstMove, second, secondMove,
+            ctx.rng, ctx.invertTie, ctx.battle, ctx.data)
+        end
+        local Runtime = require("src.mods.Runtime")
+        local first
+        if Runtime.wantsHook("battle.turn_order") then
+          first = Runtime.call("battle.turn_order", vanilla, a.battler, a.move, b.battler, b.move,
+            { battle = battle, data = battle.data, rng = rng, firstId = a.battler.position,
+              secondId = b.battler.position, playerMove = a.move and a.move.id, enemyMove = b.move and b.move.id })
+        else first = TurnOrder.firstMover(a.battler, a.move, b.battler, b.move, rng, false, battle) end
+        if not first then entries[i], entries[j] = b, a end
+      end
+    end
+    return entries
+  end
   local n = #entries
   for pass = 1, n - 1 do
     local swapped = false

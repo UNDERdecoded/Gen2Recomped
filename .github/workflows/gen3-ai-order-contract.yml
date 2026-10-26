@@ -1,0 +1,41 @@
+name: native GBA AI order
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen3-ai-order-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: pret/pokefirered
+          ref: ce6406d8c2eaf46d543c8a2606de0c3cb1951982
+          path: .contract-reference/firered
+      - uses: actions/checkout@v7
+        with:
+          repository: pret/pokeemerald
+          ref: 731ad5bfd6e6f265508d0efcca0ba42f9dcf5881
+          path: .contract-reference/emerald
+      - name: Install runtime and compiler
+        run: sudo apt-get update && sudo apt-get install -y luajit build-essential
+      - name: Check real AI queries and battle planning
+        run: luajit tests/engine/gen3_ai_order.lua
+      - name: Compare actual VMs and sorting with original native C
+        run: |
+          python3 tools/gen3-ai-order-check/check.py \
+            --firered-main .contract-reference/firered/src/battle_main.c \
+            --emerald-main .contract-reference/emerald/src/battle_main.c \
+            --report /tmp/gen3-ai-order/records.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: gen3-ai-order
+          path: /tmp/gen3-ai-order
+          if-no-files-found: ignore

@@ -58,8 +58,8 @@ end
 function Catalog.events()
   if not events then
     eventSites = scan({ "src" }, {
-      'Runtime%.emit%("([%w%._]+)"',
-      'events:emit%("([%w%._]+)"',
+      'Runtime%.emit%(%s*"([%w%._]+)"',
+      'events:emit%(%s*"([%w%._]+)"',
     })
     events = sortedKeys(eventSites)
   end
@@ -69,8 +69,8 @@ end
 function Catalog.hooks()
   if not hooks then
     hookSites = scan({ "src" }, {
-      'Runtime%.call%("([%w%._]+)"',
-      'hooks:call%("([%w%._]+)"',
+      'Runtime%.call%(%s*"([%w%._]+)"',
+      'hooks:call%(%s*"([%w%._]+)"',
     })
     hooks = sortedKeys(hookSites)
   end
