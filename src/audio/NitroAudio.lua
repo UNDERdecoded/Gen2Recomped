@@ -1,5 +1,6 @@
 -- Nintendo DS SSEQ transport over the ROM's SBNK/SWAR instruments.
 -- PCM/ADPCM mixing is local; no replacement MIDI soundfont is used.
+local FrameProfile = require("src.core.FrameProfile")
 local Sdat=require('src.import.Gen4Sdat')
 local Audio={};local Player={};Player.__index=Player
 local archives,players={},setmetatable({}, {__mode="k"})
@@ -194,6 +195,7 @@ function Player:tick()
  for _,v in ipairs(self.voices) do v.ticks=v.ticks-1;if v.ticks<=0 and v.release==0 then v.release=math.floor(RATE*0.04) end end
 end
 function Player:render()
+ local closeRender=FrameProfile.section("  audio: Nitro render")
  local sound=love.sound.newSoundData(BLOCK,RATE,16,2)
  for i=0,BLOCK-1 do
   self.tickPhase=self.tickPhase+self.tempo*48/60/RATE
@@ -215,6 +217,7 @@ function Player:render()
   sound:setSample(i,1,math.max(-1,math.min(1,left)))
   sound:setSample(i,2,math.max(-1,math.min(1,right)))
  end
+ closeRender()
  return sound
 end
 function Player:update()
