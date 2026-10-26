@@ -255,6 +255,28 @@ without the engine knowing the layout.
 Developer mode also arms the mod loader's dev tripwire, which flags mods
 that reach outside their permission set.
 
+## Process quit decision
+
+`core.quit_to_launcher` receives `(next)` once from `love.quit()`, after any
+unsaved-editor veto. `next()` returns the engine's own decision: Gen2 normally
+returns `false` and exits the process. A wrapper can forward that decision,
+return `false` to explicitly exit, or return `true` to request the existing Lua
+launcher. The launcher path tears down the game mods and keeps process workers
+alive. An accepted editor quit continues through ordinary worker shutdown.
+
+This matches Gen1's hook signature while retaining each engine's default.
+Gen1 may return `true` by default during an interactive game. Cleanup code
+must return `next()` when it intends to preserve native behavior. The hook is
+a quit decision, not a general mod-unload event: an internal launcher command
+or loader teardown does not by itself dispatch it. See `examples/portable_quit`.
+
+ROM-free checks: `luajit tests/engine/quit_to_launcher.lua` and
+`luajit tests/engine/quit_to_launcher_routing.lua`. From either engine checkout,
+run `luajit /path/to/Gen2Recomped/tests/quit_to_launcher/contract.lua
+/path/to/Gen2Recomped red 2 native` (one command). The same probe supports API 1
+and API 2 native callbacks; integrations with the shared callback layer can
+also check API 2 unified and API 3 unified callbacks.
+
 ## Support link (`support`)
 
 A mod can add a link where players can thank its creator: a Ko-fi, Patreon or

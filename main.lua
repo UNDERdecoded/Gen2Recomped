@@ -1173,7 +1173,14 @@ end
 
 function love.quit()
   if editorMode and EditorApp.quit then
-    return EditorApp.quit() -- return true to abort quit
+    if EditorApp.quit() then return true end -- unsaved editor veto
+  end
+  -- next() retains Gen2's native process exit. A portable launcher mod may
+  -- override the decision; keep workers alive when returning to the launcher.
+  if require("src.core.PlatformHooks").quitToLauncher(function() return false end) then
+    editorMode, EditorApp, TouchEditor = false, nil, nil
+    returnToLauncher()
+    return true
   end
   walkerTick("quit")
   -- let go of the "save open in a running game" markers (SaveData.closeOpen),
