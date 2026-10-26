@@ -152,17 +152,23 @@ local function volStr(b)
   return table.concat(out, ",")
 end
 
-local function activeStr(b)
+local function toxicSignature(mon)
+  if not require("src.core.GameVersion").isGen3() then return "" end
+  return ":toxic=" .. tostring(mon.status == "PSN" and mon.toxic == true)
+    .. require("src.link.Gen3Party").signature(mon)
+end
+local function activeStr(b, role)
   return ("%s:%d:%s:%s:%s:%s"):format(b.mon.species, b.mon.hp,
                                       tostring(b.mon.status), tostring(b.mon.item),
-                                      stageStr(b), ppStr(b.mon))
+                                      stageStr(b), ppStr(b.mon)) .. toxicSignature(b.mon)
+    .. (require("src.core.GameVersion").isGen3() and require("src.battle.Gen3LockOn").signature(b, role) or "")
 end
 
 local function benchStr(party)
   local out = {}
   for i, mon in ipairs(party or {}) do
     out[i] = ("%s:%d:%s:%s"):format(tostring(mon.species), mon.hp or 0,
-                                    tostring(mon.status), tostring(mon.item))
+                                    tostring(mon.status), tostring(mon.item)) .. toxicSignature(mon)
   end
   return table.concat(out, "|")
 end
@@ -174,7 +180,7 @@ local function stateSig(self, role, myParty, theirParty)
   local hostParty = role == "host" and myParty or theirParty
   local guestParty = role == "host" and theirParty or myParty
   return {
-    actives = Fingerprint.digest(activeStr(host) .. "|" .. activeStr(guest)),
+    actives = Fingerprint.digest(activeStr(host, role) .. "|" .. activeStr(guest, role)),
     volatile = Fingerprint.digest(volStr(host) .. "|" .. volStr(guest)),
     bench = Fingerprint.digest(benchStr(hostParty) .. "|" .. benchStr(guestParty)),
   }
