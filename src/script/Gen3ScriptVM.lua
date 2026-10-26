@@ -36,6 +36,7 @@
 -- mis-frame most of the dialogue in Hoenn.
 
 local Logger = require("src.core.Logger")
+local Decoded = require("src.script.DecodedScript")
 local MapScripts = require("src.script.MapScripts")
 require("src.script.Gen3Commands")
 
@@ -80,7 +81,10 @@ Gen3ScriptVM.flagName = flagName
 
 local L = {}
 
-local function emit(s, row) s.out[#s.out + 1] = row end
+local function emit(s, row)
+  s.out[#s.out + 1] = row
+  if s._decoded then Decoded.emit(s._decoded, row) end
+end
 
 local droppedBranch = {}
 
@@ -803,19 +807,20 @@ end
 
 Gen3ScriptVM.store = store
 
-function Gen3ScriptVM.compile(data, entry)
+local function compile(data, entry, options)
   local pool = store(data)
   local scripts = pool and pool.scripts
   if not (scripts and type(entry) == "string" and scripts[entry]) then return nil end
 
   compiled[scripts] = compiled[scripts] or {}
   local hit = compiled[scripts][entry]
-  if hit ~= nil then return hit or nil end
+  if not options and hit ~= nil then return hit or nil end
 
   local out, queued, order = {}, { [entry] = true }, { entry }
   local counter = 0
   local state = {
     out = out,
+    _decoded = options and options.trace,
     has = function(label)
       return type(label) == "string" and scripts[label] ~= nil
     end,
@@ -827,31 +832,51 @@ function Gen3ScriptVM.compile(data, entry)
     end,
     newLabel = function()
       counter = counter + 1
-      return ("%s_r%d"):format(entry, counter)
+      local label = ("%s_r%d"):format(entry, counter)
+      if options then Decoded.returnLabel(options.trace, label) end
+      return label
     end,
   }
 
+  if options and options.keepLabels then
+    for label in pairs(options.keepLabels) do state.want(label) end
+  end
   local index = 1
   while index <= #order do
     local label = order[index]
     index = index + 1
+    if options then options.trace.current = nil end
     emit(state, { "label", label })
     -- lastText does NOT survive across script boundaries: a callstd at the
     -- top of one script must not print the line the previous one loaded
     state.lastText = nil
-    for _, ir in ipairs(scripts[label] or {}) do
+    for irIndex, ir in ipairs(scripts[label] or {}) do
+      if options then Decoded.begin(options.trace, label, irIndex, ir) end
       local lower = L[ir[1]]
       if lower then lower(ir, state) end
     end
     -- a script that ran off the end of its own bytecode still has to unwind
-    emit(state, { "g3_return" })
+    local finish = { "g3_return" }
+    if options then options.trace.current = nil; options.trace.labels[label] = finish end
+    emit(state, finish)
   end
 
   if #out == 0 then
     Logger.warn("gen3 script vm: '%s' compiled to zero rows (silent NPC)", entry)
   end
-  compiled[scripts][entry] = #out > 0 and out or false
+  if options then
+    Decoded.finish(out, options.trace)
+  else
+    Decoded.origin(out, data, entry, compile, 3)
+    compiled[scripts][entry] = #out > 0 and out or false
+  end
   return #out > 0 and out or nil
+end
+
+-- Keep the public compiler's original two-argument contract. Profile tracing
+-- uses its private compiler reference, including when a mod wraps compile().
+function Gen3ScriptVM.compile(data, entry)
+  return compile(data, entry)
 end
 
 -- ---------------------------------------------------------------------------

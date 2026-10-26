@@ -420,6 +420,44 @@ function TextBox:beginLine()
   table.insert(self.shown, {})
 end
 
+-- Only the manual input branches; typing, automatic text and holds still
+-- belong to update(), including the delay after a page/line advance.
+function TextBox:advance()
+  if (self.holdFrames or 0) > 0 or (self.preWait or 0) > 0 then
+    return
+  end
+  if self.done then
+    if self.stay or self.auto or self.choice then
+      return
+    end
+    require("src.core.Sound").play(self.game.data, "Press_AB")
+    self.game.stack:pop()
+    if self.onDone then
+      self.onDone()
+    end
+  elseif self.waiting then
+    require("src.core.Sound").play(self.game.data, "Press_AB")
+    self.waiting = false
+    if self.contAdvance then
+      -- ContText / ManualTextScroll: keep the box, scroll one line
+      self.contAdvance = false
+      self.lineIndex = self.lineIndex + 1
+      self:beginLine()
+      -- ScrollTextUpOneLine is 5 blocking frames and, as its own comment
+      -- says, is "always called twice in a row" (home/text.asm:280-305)
+      self.holdFrames = self.scrollHoldFrames or Timing.TEXT_SCROLL_PAIR
+    else
+      self.shown = {}
+      self.pageIndex = self.pageIndex + 1
+      self.lineIndex = 1
+      self:beginLine()
+      -- ClearScreenArea then DelayFrames 20: the box sits empty before the
+      -- next page starts typing (home/text.asm:236-240)
+      self.holdFrames = Timing.TEXT_PAGE_CLEAR
+    end
+  end
+end
+
 function TextBox:update(dt)
   local input = self.game.input
   self.blink = (self.blink + 1) % 60
@@ -519,9 +557,7 @@ function TextBox:update(dt)
       return
     end
     if input:wasPressed("a") or input:wasPressed("b") then
-      require("src.core.Sound").play(self.game.data, "Press_AB")
-      self.game.stack:pop()
-      if self.onDone then self.onDone() end
+      self:advance()
     end
     return
   end
@@ -534,25 +570,7 @@ function TextBox:update(dt)
       return
     end
     if input:wasPressed("a") or input:wasPressed("b") then
-      require("src.core.Sound").play(self.game.data, "Press_AB")
-      self.waiting = false
-      if self.contAdvance then
-        -- ContText / ManualTextScroll: keep the box, scroll one line
-        self.contAdvance = false
-        self.lineIndex = self.lineIndex + 1
-        self:beginLine()
-        -- ScrollTextUpOneLine is 5 blocking frames and, as its own comment
-        -- says, is "always called twice in a row" (home/text.asm:280-305)
-        self.holdFrames = self.scrollHoldFrames or Timing.TEXT_SCROLL_PAIR
-      else
-        self.shown = {}
-        self.pageIndex = self.pageIndex + 1
-        self.lineIndex = 1
-        self:beginLine()
-        -- ClearScreenArea then DelayFrames 20: the box sits empty before the
-        -- next page starts typing (home/text.asm:236-240)
-        self.holdFrames = Timing.TEXT_PAGE_CLEAR
-      end
+      self:advance()
     end
     return
   end

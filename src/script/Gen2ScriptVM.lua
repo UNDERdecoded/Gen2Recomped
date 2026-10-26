@@ -23,6 +23,7 @@
 -- behind the hand-ported data/scripts/ modules, which still win outright.
 
 local Logger = require("src.core.Logger")
+local Decoded = require("src.script.DecodedScript")
 local MapScripts = require("src.script.MapScripts")
 local Gen2Flags = require("src.script.Gen2Flags")
 require("src.script.Gen2Commands")
@@ -75,7 +76,10 @@ local function itemId(n) return string.format("ITEM_%03d", n) end
 
 local L = {}
 
-local function emit(s, row) s.out[#s.out + 1] = row end
+local function emit(s, row)
+  s.out[#s.out + 1] = row
+  if s._decoded then Decoded.emit(s._decoded, row) end
+end
 
 -- A pointer that fell outside the ROM, or a far script that failed to
 -- disassemble, is stored as "" by the extractor.  Branches to one lower to
@@ -2365,7 +2369,7 @@ function Gen2ScriptVM.lowered(op)
   return L[op] ~= nil
 end
 
-function Gen2ScriptVM.compile(data, entry)
+local function compile(data, entry, options)
   local pool = store(data)
   local scripts = pool and pool.scripts
   if not (scripts and type(entry) == "string" and scripts[entry]) then return nil end
@@ -2373,12 +2377,13 @@ function Gen2ScriptVM.compile(data, entry)
   local key = entry
   compiled[scripts] = compiled[scripts] or {}
   local hit = compiled[scripts][key]
-  if hit ~= nil then return hit or nil end
+  if not options and hit ~= nil then return hit or nil end
 
   local out, queued, order = {}, { [entry] = true }, { entry }
   local counter = 0
   local state = {
     out = out,
+    _decoded = options and options.trace,
     stds = pool.stds,
     has = function(label)
       return type(label) == "string" and scripts[label] ~= nil
@@ -2391,14 +2396,20 @@ function Gen2ScriptVM.compile(data, entry)
     end,
     newLabel = function()
       counter = counter + 1
-      return string.format("%s_r%d", entry, counter)
+      local label = string.format("%s_r%d", entry, counter)
+      if options then Decoded.returnLabel(options.trace, label) end
+      return label
     end,
   }
 
+  if options and options.keepLabels then
+    for label in pairs(options.keepLabels) do state.want(label) end
+  end
   local index = 1
   while index <= #order do
     local label = order[index]
     index = index + 1
+    if options then options.trace.current = nil end
     emit(state, { "label", label })
     state.lastText = nil
     state.lastTextRow = nil
@@ -2423,6 +2434,7 @@ function Gen2ScriptVM.compile(data, entry)
     local sifStack, guardLabel = {}, nil
     local rows = scripts[label] or {}
     for irIndex, ir in ipairs(rows) do
+      if options then Decoded.begin(options.trace, label, irIndex, ir) end
       local op = ir[1]
       if SIF_OPS[op] then
         local after = state.newLabel()
@@ -2488,7 +2500,9 @@ function Gen2ScriptVM.compile(data, entry)
     for i = #sifStack, 1, -1 do emit(state, { "label", sifStack[i] }) end
     if guardLabel then emit(state, { "label", guardLabel }) end
     -- a script that ran off the end of its own bytecode still has to unwind
-    emit(state, { "g2_return" })
+    local finish = { "g2_return" }
+    if options then options.trace.current = nil; options.trace.labels[label] = finish end
+    emit(state, finish)
   end
 
   -- A script that lowers to nothing is why an NPC can be walked up to,
@@ -2498,8 +2512,19 @@ function Gen2ScriptVM.compile(data, entry)
   if #out == 0 then
     Logger.warn("gen2 script vm: '%s' compiled to zero rows (silent NPC)", key)
   end
-  compiled[scripts][key] = #out > 0 and out or false
+  if options then
+    Decoded.finish(out, options.trace)
+  else
+    Decoded.origin(out, data, entry, compile, 2)
+    compiled[scripts][key] = #out > 0 and out or false
+  end
   return #out > 0 and out or nil
+end
+
+-- Keep the public compiler's original two-argument contract. Profile tracing
+-- uses its private compiler reference, including when a mod wraps compile().
+function Gen2ScriptVM.compile(data, entry)
+  return compile(data, entry)
 end
 
 -- Prism renamed a good deal of Crystal's script vocabulary without changing
