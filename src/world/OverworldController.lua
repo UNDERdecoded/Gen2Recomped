@@ -8547,7 +8547,6 @@ end
 -- any step that LANDS on one into STEP_ICE: the walk repeats in the same
 -- direction, ignoring the d-pad, until the player leaves the ice or the next
 -- cell is blocked.  Mahogany Gym's floor is the whole puzzle.
-local GEN2_ICE_TILES = { [0x23] = true, [0x2B] = true }
 
 -- THE SOOTOPOLIS GYM'S ICE, which is the whole of that gym.
 --
@@ -10288,7 +10287,7 @@ end
 
 function OverworldState:gen2IsIce(cx, cy)
   local tile = self.map and self.map:cellTile(cx, cy)
-  return tile ~= nil and GEN2_ICE_TILES[tile] == true
+  return Collision.isIce(tile)
 end
 
 -- ICE, WHOEVER'S IT IS.  Johto names it by a collision class and Hoenn by a
