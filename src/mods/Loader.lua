@@ -21,6 +21,7 @@ local Events = require("src.mods.Events")
 local Hooks = require("src.mods.Hooks")
 local ModStorage = require("src.mods.Storage")
 local Runtime = require("src.mods.Runtime")
+local BattleSnapshots = require("src.mods.BattleSnapshots")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
 -- Module-name aliases for mods written against the Gold port's per-generation
@@ -841,6 +842,8 @@ function Loader:_api(mod)
       if okN then hostInfo = info end
     end
   end
+  -- Capture pristine ID aliases before mod merges; the facade resolves Game only on a read.
+  local battle = BattleSnapshots.new(function() return loader:_game(true) end, loader)
   local engineVersion
   do
     local okE, V = pcall(require, "src.core.Version")
@@ -868,6 +871,7 @@ function Loader:_api(mod)
     -- returns the same module table the engine holds, so a mod that mutates
     -- one is changing the engine, exactly as it always was.
     engineRequire = engineRequire,
+    battle = battle,
     -- 1 to 5.  The one field worth reaching for before anything else.
     generation = hostGen,
     -- the version id the launcher started: "red", "crystal", "emerald",
@@ -1120,8 +1124,10 @@ function Loader:_api(mod)
       return data
     end)
   -- mod.world / mod.game / mod.storage all materialize on first touch, for
-  -- the same reason: a headless load must not drag the world stack in, and
-  -- the Game the facade acts on is still being wired when the entry chunk
+  -- the same reason: a headless load must not drag the world stack in.
+  -- Battle capability queries can also be installed before Game exists.
+  BattleSnapshots.withCapabilities(api)
+  -- The Game the facade acts on is still being wired when the entry chunk
   -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
   -- namespace per mod for payloads too large to belong in a save file.
   local world, storage
@@ -1148,8 +1154,14 @@ end
 -- the live Game.  An injected reference wins so a headless caller can hand
 -- over a stub; otherwise the boot singleton, whose stack and overworld fill
 -- in after this loader returns -- holding the table keeps the facade live.
-function Loader:_game()
-  return self.game or engineRequire("src.core.Game")
+function Loader:_game(loadedOnly)
+  if self.game then return self.game end
+  -- Observational facades must not bootstrap Game from an early/headless read.
+  if loadedOnly then
+    local game = package.loaded["src.core.Game"]
+    return type(game) == "table" and game or nil
+  end
+  return engineRequire("src.core.Game")
 end
 
 function Loader:_loadMod(mod)
