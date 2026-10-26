@@ -20,6 +20,7 @@
 -- (data/palettes_yellow.lua / ROM cgbBase).
 
 local GameVersion = require("src.core.GameVersion")
+local HotModules = require("src.core.HotModules")
 
 local PaletteFX = {}
 
@@ -309,7 +310,7 @@ end
 -- it), so the zone now covers it whatever generation is running.  On a Game
 -- Boy dataset those are 160x144 and this is the same rect it always was.
 function PaletteFX.whole(colors)
-  local ok, Renderer = pcall(require, "src.render.Renderer")
+  local ok, Renderer = HotModules.optional("src.render.Renderer")
   local w = ok and Renderer and (Renderer.uiWidth or Renderer.WIDTH) or 160
   local h = ok and Renderer and (Renderer.uiHeight or Renderer.HEIGHT) or 144
   -- zone() takes INCLUSIVE tile bounds, so the last tile index is size/8 - 1;

@@ -42,6 +42,17 @@
 
 local Performance = {}
 
+-- P2 is independently reversible. Tier rows can reduce the idle budget or
+-- tune the collector without changing the persisted presentation options.
+Performance.gcBudget = true
+-- P3: cache hot-path dependencies and reuse engine-private presentation data.
+Performance.hotPathHoist = true
+-- P4: independent world-draw closure, list and protection optimization.
+Performance.worldDrawHoist = true
+Performance.GC_PAUSE = 120
+Performance.GC_STEP_MUL = 300
+Performance.GC_BUDGET_SECONDS = 0.0005
+
 -- Option-row order (auto first, then most to least capable).
 Performance.TIERS = { "auto", "high", "balanced", "low" }
 
@@ -60,6 +71,11 @@ Performance.CAPS = {
   balanced = { tilt = false, gbcfx = false, survey = true,  fpsMax = false },
   low      = { tilt = false, gbcfx = false, survey = false, fpsMax = 60 },
 }
+for _, caps in pairs(Performance.CAPS) do
+  caps.gcPause = Performance.GC_PAUSE
+  caps.gcStepMul = Performance.GC_STEP_MUL
+  caps.gcBudgetSeconds = Performance.GC_BUDGET_SECONDS
+end
 
 -- Live resolved tier (never "auto"); Game:applyOptions sets it and the
 -- renderer / options row read it back.  Defaults to the unclamped tier so

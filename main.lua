@@ -1221,6 +1221,9 @@ end
 
 function love.run()
   BootTrace.mark("love.run enter")
+  local Performance = require("src.core.Performance")
+  local GCFrameBudget = require("src.core.GCFrameBudget")
+  GCFrameBudget.configure(Performance)
   if love.load then love.load(love.arg.parseGameArguments(arg), arg) end
   BootTrace.mark("love.load returned")
 
@@ -1258,6 +1261,7 @@ function love.run()
 
     -- update dt
     if love.timer then dt = love.timer.step() end
+    GCFrameBudget.beginFrame(Performance)
 
     -- call update and draw
     --
@@ -1274,12 +1278,14 @@ function love.run()
       closeU()
     end
 
+    local presented = false
     if love.graphics and love.graphics.isActive() then
       love.graphics.origin()
       love.graphics.clear(love.graphics.getBackgroundColor())
       if love.draw then love.draw() end
       local closeP = FrameProfile.section("present (GPU wait / vsync)")
       love.graphics.present()
+      presented = true
       closeP()
     end
     -- Counted after present, so a frame in the trace means a frame that was
@@ -1312,24 +1318,9 @@ function love.run()
 
     if love.timer then
       if paced then
-        -- Sleep out the remainder of the frame budget, measured from the
-        -- carried deadline, in small chunks so the OS timer stays
-        -- responsive.  vsync is untouched: when it already paces slower
-        -- than the cap the remainder is <= 0 and this rounds to a no-op.
-        local budget = 1 / FrameCap.current
-        nextFrame = nextFrame + budget
-        local now = love.timer.getTime()
-        -- A stall (alt-tab, a GC pause, a blocked import) can leave the
-        -- deadline more than a full budget in the past; re-anchor to now so
-        -- we pace the next frame rather than burst uncapped to catch up.
-        if now - nextFrame > budget then
-          nextFrame = now
-        end
-        while true do
-          local remaining = nextFrame - love.timer.getTime()
-          if remaining <= 0 then break end
-          love.timer.sleep(remaining < 0.001 and remaining or 0.001)
-        end
+        local closeSleep = FrameProfile.section("frame pacing: sleep")
+        nextFrame = FrameCap.pace(love.timer, love.window, presented, nextFrame, GCFrameBudget.idle)
+        closeSleep()
       else
         love.timer.sleep(0.001)
       end
