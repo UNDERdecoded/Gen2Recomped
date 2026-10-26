@@ -954,6 +954,7 @@ local DATA_DERIVED = {
 function OverworldState:enter(mapId, x, y, facing)
   Game = require("src.core.Game")
   Game.overworld = self
+  self.encounters = require("src.core.Gen2EncounterViews").forData(Game.data)
   -- THE SAVED CAMERA TILT, taken up before the first map is built.
   --
   -- `Gen4Camera` holds the choice in the module rather than reading the save,

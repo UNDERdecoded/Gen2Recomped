@@ -1925,6 +1925,7 @@ function Data:seedDefaults()
   aliasAllMaps(self.maps)
   if require("src.core.GameVersion").isGen2() then
     seedMapAliases(self.maps, GEN2_SCAFFOLD_MAP_ALIASES)
+    require("src.core.Gen2EncounterViews").publish(self)
     -- Alias text_pointers by each map's camelCase label so resolveText finds
     -- Gen2 entries (text_pointers uses uppercase ID, map.def.label is camelCase)
     local tp = self.text_pointers
