@@ -53,6 +53,10 @@ stub.graphics = {
     function batch:add(quad, x, y) table.insert(self.sprites, { quad, x, y }) end
     function batch:clear() self.sprites = {} end
     function batch:setTexture(tex) self.texture = tex end
+    function batch:getTexture() return self.texture or self.image end
+    function batch:getBufferSize() return size end
+    function batch:getCount() return #self.sprites end
+    function batch:release() self.released = true end
     return batch
   end,
   draw = noop, rectangle = noop, clear = noop,
