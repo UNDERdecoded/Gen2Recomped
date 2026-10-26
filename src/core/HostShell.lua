@@ -392,4 +392,101 @@ function HostShell.httpGet(url, userAgent, accept)
   return body
 end
 
+
+-- Worker-only GET. Curl arguments containing remote input live in a config
+-- file, never in shell syntax (also preserves percent-encoded Windows URLs).
+-- errorPath belongs to the engine's private per-job workspace, not the mod.
+local function httpBounded(url, opts, method, postBody)
+  opts = opts or {}
+  if not HostShell.canSpawnProcess() then return nil, "bounded HTTP requires desktop curl" end
+  if type(url) ~= "string" or #url > 8192 or url:find("[%z%c%s]")
+      or not url:lower():match("^https?://[^/?#]+") then return nil, "invalid HTTP URL" end
+  if opts.httpsOnly and not url:lower():match("^https://") then return nil, "HTTPS required" end
+  local function bounded(n, default, cap)
+    n = tonumber(n)
+    if not n or n ~= n then n = default end
+    return math.max(0.1, math.min(cap, n))
+  end
+  local seconds = bounded(opts.maxSeconds, 20, 30)
+  local bytes = math.floor(bounded(opts.maxBytes, 4 * 1024 * 1024, 16 * 1024 * 1024))
+  if bytes < 1 then return nil, "invalid byte limit" end
+  local path = opts.errorPath
+  if type(path) ~= "string" or path == "" or path:find("[%z%c]") then return nil, "missing worker path" end
+  local windows = love.system.getOS() == "Windows"
+  -- cmd expands these even inside quotes. Only the local config pathname is
+  -- shell-visible; refuse an unsupported local pathname rather than expand it.
+  if windows and path:find('[%%!"^]') then return nil, "unsupported characters in worker path" end
+  local configPath = path .. ".cfg"
+  local bodyPath = path .. ".body"
+  local function cleanup() os.remove(configPath);if postBody then os.remove(bodyPath) end end
+  local function quoted(value)
+    value = tostring(value)
+    if value:find("[%z%c]") then return nil end
+    return '"' .. value:gsub("\\", "\\\\"):gsub('"', '\\"') .. '"'
+  end
+  local ua, accept = quoted(opts.userAgent or "gen2recomp"), quoted(opts.accept or "*/*")
+  if not ua or not accept then return nil, "invalid HTTP header" end
+  local lines = {"silent", "show-error", "fail", "globoff",
+    "connect-timeout = " .. math.min(10, seconds), "max-time = " .. seconds,
+    "max-filesize = " .. bytes, "max-redirs = 5",
+    'proto = "=' .. (opts.httpsOnly and "https" or "http,https") .. '"',
+    'proto-redir = "=' .. (opts.httpsOnly and "https" or "http,https") .. '"',
+    "user-agent = " .. ua, "header = " .. quoted("Accept: " .. (opts.accept or "*/*")),
+    "stderr = " .. quoted(path), 'write-out = "\\n%{http_code}"', "url = " .. quoted(url)}
+  -- Schannel does not consistently consume this curl environment setting.
+  -- Put the caller's trusted CA bundle in the private config on every desktop.
+  local ca=os.getenv('CURL_CA_BUNDLE')
+  if ca and ca~='' then
+    local value=quoted(ca);if not value then return nil,'invalid CA bundle path' end
+    lines[#lines+1]='cacert = '..value
+  end
+  if method == "POST" then
+    if type(postBody) ~= "string" or #postBody > 512 * 1024 then return nil, "POST body exceeds byte limit" end
+    local contentType=opts.contentType or "text/plain; charset=utf-8"
+    if type(contentType)~="string" or #contentType>128 or not quoted(contentType) then return nil,"invalid Content-Type" end
+    local data,why=io.open(bodyPath,"wb");if not data then return nil,tostring(why) end
+    local wrote,err=data:write(postBody);local closed=data:close()
+    if not wrote or not closed then cleanup();return nil,tostring(err or "POST staging failed") end
+    lines[#lines+1]='request = "POST"'
+    lines[#lines+1]="header = "..quoted("Content-Type: "..contentType)
+    lines[#lines+1]="data-binary = "..quoted("@"..bodyPath)
+  else lines[#lines+1]="location" end
+  lines[#lines+1]=""
+  local config = table.concat(lines,"\n")
+  local f, err = io.open(configPath, "wb")
+  if not f then cleanup();return nil, tostring(err) end
+  local wrote, why = f:write(config); local closed = f:close()
+  if not wrote or not closed then cleanup(); return nil, tostring(why or "config write failed") end
+  local pipe = HostShell.popen("curl --disable --config " .. HostShell.quote(configPath), windows and "rb" or "r")
+  if not pipe then cleanup(); return nil, "could not start curl" end
+  local ok, body = pcall(pipe.read, pipe, bytes + 5)
+  local closeOk, done, _, code = pcall(pipe.close, pipe)
+  cleanup()
+  local ef = io.open(path, "rb")
+  local complaint
+  if ef then complaint = HostShell.curlComplaint(ef:read(4096)); ef:close() end
+  os.remove(path)
+  if not ok then return nil, "response read failed" end
+  body = body or ""
+  local status = tonumber(body:match("\n(%d%d%d)$"))
+  if status then body = body:sub(1, -5) end
+  if #body > bytes then return nil, "response exceeds byte limit" end
+  if complaint then
+    return nil, complaint, tonumber(complaint:match("returned error: (%d%d%d)")) or status
+  end
+  if not closeOk or done == nil or (type(code) == "number" and code ~= 0) then
+    return nil, "curl failed"
+  end
+  if not status or status < 200 or status >= 300 then return nil, "incomplete HTTP response", status end
+  return body, nil, status
+end
+
+function HostShell.httpGetBounded(url,opts)return httpBounded(url,opts,"GET")end
+function HostShell.httpPostBounded(url,body,opts)
+  opts=opts or {}
+  if type(url)~="string" or not url:lower():match("^https://") then return nil,"HTTPS required" end
+  local bounded={};for key,value in pairs(opts)do bounded[key]=value end
+  bounded.httpsOnly=true
+  return httpBounded(url,bounded,"POST",body)
+end
 return HostShell

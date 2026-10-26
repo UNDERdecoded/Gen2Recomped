@@ -8,6 +8,7 @@
 -- a single static SpriteBatch covering the map plus a border-block ring
 -- (the ring plays the role of the GB border blocks around small maps).
 
+local FrameProfile = require("src.core.FrameProfile")
 local Assets = require("src.render.Assets")
 local Logger = require("src.core.Logger")
 local Probe = require("src.core.Probe")
@@ -1809,6 +1810,7 @@ function TileRenderer:setWin(tx0, ty0, tx1, ty1)
 end
 
 function TileRenderer:ensureWindow(camX, camY, vw, vh)
+  local closeWindow = FrameProfile.section("    tiles: ensureWindow")
   local W, H = self.bodyTilesW, self.bodyTilesH
   vw = vw or W * 8 -- a nil view (headless draw) means the whole body
   vh = vh or H * 8
@@ -1860,6 +1862,7 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
   end
   if win and tx0 >= win.tx0 and ty0 >= win.ty0
      and tx1 <= win.tx1 and ty1 <= win.ty1 then
+    closeWindow()
     return -- still inside the last fill
   end
   -- refill with margin so the next few scrolled pixels stay covered
@@ -1936,6 +1939,7 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
                 cells, drew, W, H, tostring(self.gen3.slots))
     end
     self:setWin(tx0, ty0, tx1, ty1)
+    closeWindow()
     return
   end
 
@@ -1944,6 +1948,7 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
   -- player, and leave the reason in the log (gen3SheetsFor already logged it).
   if not self.image then
     self:setWin(tx0, ty0, tx1, ty1)
+    closeWindow()
     return
   end
   if not self.winBatch then
@@ -1986,6 +1991,7 @@ function TileRenderer:ensureWindow(camX, camY, vw, vh)
     end
   end
   self:setWin(tx0, ty0, tx1, ty1)
+  closeWindow()
 end
 
 -- draw the static tile window, then its animated overdraw, at the camera offset

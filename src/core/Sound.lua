@@ -9,9 +9,99 @@ local Assets = require("src.render.Assets")
 local Logger = require("src.core.Logger")
 local Runtime = require("src.mods.Runtime")
 
+local Performance = require("src.core.Performance")
+
 local Sound = {}
 
 local cache = {}
+-- Speculative sources share this cache, but remain revocable until first use.
+-- Public definitions and Source objects never acquire private cache fields.
+local warmed, pending = {}, {}
+local warmBytes, warmAudio, warmCursor, warmKind = 0, nil, nil, "sfx"
+local WARM_LIMIT = 16 * 1024 * 1024
+local ChipAudio
+local function chipAudio()
+  if not ChipAudio then
+    ChipAudio = require("src.core.ChipAudio")
+  end
+  return ChipAudio
+end
+local function copy(value, seen)
+  if type(value) ~= "table" then
+    assert(
+      type(value) == "nil" or type(value) == "string" or type(value) == "number" or type(value) == "boolean",
+      "custom audio definition requires synchronous fallback"
+    )
+    return value
+  end
+  assert(getmetatable(value) == nil, "custom audio definition requires synchronous fallback")
+  seen = seen or {}
+  assert(not seen[value], "cyclic audio definition requires synchronous fallback")
+  local out = {}
+  seen[value] = out
+  for k, v in pairs(value) do
+    out[k] = copy(v, seen)
+  end
+  seen[value] = nil
+  return out
+end
+local function same(a, b, seen)
+  if a == b then
+    return true
+  end
+  if type(a) ~= "table" or type(b) ~= "table" then
+    return false
+  end
+  seen = seen or {}
+  if seen[a] == b then
+    return true
+  end
+  seen[a] = b
+  for k, v in pairs(a) do
+    if not same(v, b[k], seen) then
+      return false
+    end
+  end
+  for k in pairs(b) do
+    if a[k] == nil then
+      return false
+    end
+  end
+  return true
+end
+local function forgetWarm(key, drop)
+  local row = warmed[key]
+  if not row then
+    return
+  end
+  warmed[key] = nil
+  warmBytes = warmBytes - row.bytes
+  if drop and cache[key] == row.source then
+    cache[key] = nil
+    if row.source.release then
+      pcall(row.source.release, row.source)
+    end
+  end
+end
+local function useWarm(data, key, kind, def, pitch, tempo)
+  local row = warmed[key]
+  if not row then
+    return
+  end
+  local spec = chipAudio().effectSpec(data, kind, def, pitch, tempo)
+  local valid = Performance.audioWorkerOptimization ~= false and same(row.spec, spec)
+  forgetWarm(key, not valid)
+end
+local function resetWarm()
+  for key in pairs(warmed) do
+    forgetWarm(key, true)
+  end
+  pending = {}
+  warmAudio, warmCursor, warmKind = nil, nil, "sfx"
+  if ChipAudio then
+    ChipAudio.cancelEffects()
+  end
+end
 -- port addition: 0-7 SFX volume from save.options.sfxVol (OptionsMenu),
 -- scaling the 0.8 base every source gets
 local BASE_VOLUME = 0.8
@@ -231,6 +321,7 @@ local function playPath(data, key, def, pitch, tempo)
   -- INTERRUPTION: building a Source now would fail and cache `false` below,
   -- permanently disabling this effect (see sessionSuspended, case 2)
   if sessionSuspended then return nil end
+  useWarm(data, key, "sfx", def, pitch, tempo)
   local src = cache[key]
   if src == false then return nil end -- known bad, already logged
   if not src then
@@ -394,7 +485,7 @@ function Sound.seDef(data, key)
   local direct = nativeDef(sfx[key])
   if direct or type(key) ~= "string" then return direct end
   local base, n = key:match("^(.-)_sseq_(%d+)$")
-  if not base then base = key:match("^(.-)_sseq$"); n = base and 0 end
+  if not base then base = key:match("^(.-)_sseq$")n = base and 0 end
   if not base then return nil end
   n = tonumber(n)
   local anchor = nativeDef(sfx[base])
@@ -539,6 +630,95 @@ local function resolveCry(data, def, depth)
   }
 end
 
+-- Poll and schedule one bounded job per frame. No prewarm operation plays a
+-- Source, ducks music, or emits sound.played. A changed def/mix is rechecked
+-- on first use, including in-place edits and derived cry chains.
+function Sound.update(data)
+  if sessionSuspended or not love.audio then
+    return
+  end
+  if Performance.audioWorkerOptimization == false then
+    if warmAudio then
+      resetWarm()
+    end
+    return
+  end
+  local audio = data and data.audio
+  if not audio then
+    return
+  end
+  if warmAudio ~= audio then
+    resetWarm()
+    warmAudio = audio
+  end
+  local chip = chipAudio()
+  local row = chip.pollEffect()
+  while row do
+    local job = pending[row.id]
+    pending[row.id] = nil
+    if job and row.sd and cache[job.key] == nil and warmBytes + row.sd:getSize() <= WARM_LIMIT then
+      local ok, source = pcall(love.audio.newSource, row.sd, "static")
+      if ok and source then
+        safeAudio("Source:setVolume", source.setVolume, source, volumeFor(job.key))
+        cache[job.key] = source
+        warmed[job.key] = { source = source, spec = job.spec, bytes = row.sd:getSize() }
+        warmBytes = warmBytes + row.sd:getSize()
+      end
+    end
+    row = chip.pollEffect()
+  end
+  local count = 0
+  for _ in pairs(pending) do
+    count = count + 1
+  end
+  if count >= 2 or warmBytes >= WARM_LIMIT or warmKind == "done" then
+    return
+  end
+  -- Skip a handful of unsupported/file/already-cached definitions without
+  -- walking an unbounded registry during a frame.
+  for _ = 1, 8 do
+    local defs = audio[warmKind] or {}
+    local ok, name, def = pcall(next, defs, warmCursor)
+    if not ok then
+      warmCursor = nil
+      return
+    end
+    warmCursor = name
+    if not name then
+      if warmKind == "sfx" then
+        warmKind = "cries"
+      else
+        warmKind = "done"
+        return
+      end
+    else
+      local kind = warmKind == "cries" and "cry" or "sfx"
+      local key = kind == "cry" and "cry:" .. tostring(name) or tostring(name)
+      local resolved = kind == "cry" and resolveCry(data, def, 0) or def
+      if
+        cache[key] == nil
+        and type(resolved) == "table"
+        and (kind == "cry" or isChipDef(resolved) or resolved.m4a)
+      then
+        local spec = chip.effectSpec(data, kind, resolved)
+        if spec then
+          local plain, frozen = pcall(copy, spec)
+          if plain then
+            local id = chip.requestEffect(frozen)
+            if id then
+              pending[id] = { key = key, spec = frozen }
+            else
+              -- No worker/capability: playback retains its logged cold path.
+              warmKind = "done"
+            end
+            return
+          end
+        end
+      end
+    end
+  end
+end
+
 local function newCrySource(data, species, def)
   -- A GEN 3 CRY names a recording rather than a chip program, so there is no
   -- base chain to resolve and no header to look up: the index IS the def.
@@ -614,6 +794,7 @@ function Sound.playCry(data, species, opts)
   end
   if not def then return nil end
   local key = "cry:" .. tostring(species)
+  useWarm(data, key, "cry", resolveCry(data, def, 0))
   local src = cache[key]
   if src == false then return nil end
   if not src then
@@ -686,9 +867,9 @@ end
 
 function Sound.anyPlaying(kind)
   for key,src in pairs(cache) do
-    local cry=tostring(key):sub(1,4)=='cry:'
-    if src and ((kind=='cry' and cry) or (kind=='sfx' and not cry)) then
-      local ok,playing=pcall(src.isPlaying,src);if ok and playing then return true end
+    local cry=tostring(key):sub(1,4)=="cry:"
+    if src and ((kind=="cry" and cry) or (kind=="sfx" and not cry)) then
+      local ok,playing=pcall(src.isPlaying,src)if ok and playing then return true end
     end
   end
   return false
@@ -781,6 +962,7 @@ end
 -- hot reload / jukebox A-B: drop one key's sources (its pitch-tempo
 -- variants included) or all of them, so the next play re-resolves the def
 function Sound.invalidate(name)
+  resetWarm()
   local function evict(store, key)
     local src = store[key]
     if src then pcall(src.stop, src) end
@@ -813,6 +995,7 @@ Assets.register(Sound.invalidate)
 function Sound.suspend()
   if sessionSuspended then return end
   sessionSuspended = true
+  resetWarm()
   -- A LOOPING source (the low-health siren, the link tournament theme) is the
   -- only kind that is still sounding when the call arrives.  Ask it to stop
   -- while the device may still take the call, and forget it, so its owner's

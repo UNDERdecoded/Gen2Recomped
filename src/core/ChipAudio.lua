@@ -13,9 +13,10 @@
 -- to start, music falls back to the original synchronous, amortized queue fill
 -- so behavior is unchanged -- see the `threaded` branch in each entry point.
 --
--- SFX and cries stay synchronous: they are short one-shots rendered once into
--- a static Source, not a per-frame streaming cost.
+-- SFX and cries are prewarmed by the same worker into Sound.lua's static
+-- source cache; a cold/unavailable path retains a logged synchronous fallback.
 
+local Performance = require("src.core.Performance")
 local Assets = require("src.render.Assets")
 local ChipSynth = require("src.core.ChipSynth")
 
@@ -157,6 +158,9 @@ end
 -- ---------------------------------------------------------------------------
 
 local worker, cmdCh, outCh
+, fxCh
+local fxGeneration, fxSerial, fxPending = 1, 0, 0
+local workerPerformance
 local workerReady -- nil = untried, true = running, false = unavailable
 
 local function ensureWorker()
@@ -179,12 +183,14 @@ local function ensureWorker()
   end
   cmdCh = love.thread.getChannel("chipaudio_cmd")
   outCh = love.thread.getChannel("chipaudio_out")
+  fxCh = love.thread.getChannel("chipaudio_fx")
   local started = pcall(function() thread:start() end)
   if not started then
     workerReady = false
     return false
   end
   worker = thread
+  workerPerformance = nil
   workerReady = true
   return true
 end
@@ -229,7 +235,7 @@ local function slimAudio(data)
   local audio = data.audio or {}
   return {
     programFile = audio.programFile,
-    programPrefix = require('src.core.WorkerFs').prefix(),
+    programPrefix = require("src.core.WorkerFs").prefix(),
     bankOrder = audio.bankOrder,
     waveBanks = audio.waveBanks,
     gen2Dialect = audio.gen2Dialect,
@@ -238,7 +244,98 @@ local function slimAudio(data)
     -- the Gen 3 synth reads its bytecode, voicegroups and sampled
     -- instruments out of one image beside the cache; this is where it is
     gen3 = audio.gen3,
+    gen3Cries = audio.gen3Cries,
   }
+end
+
+-- Private transport shared with NitroAudio; no second synthesis thread.
+function ChipAudio._nitroReady()
+  if Performance.audioWorkerOptimization==false or not ensureWorker() then return nil end
+  if not worker or worker:getError() then return nil end
+  return worker
+end
+function ChipAudio._nitroCommand(command)
+  if not ChipAudio._nitroReady() then return false end
+  command.cmd="nitro"
+  return pcall(cmdCh.push,cmdCh,command)
+end
+
+-- Private prewarm protocol: no Source, playback or public sound event in the
+-- worker. Sound.lua installs completed PCM into its ordinary source cache.
+function ChipAudio.effectSpec(data, kind, def, pitch, tempo)
+  local request = {
+    audio = slimAudio(data),
+    stereo = ChipSynth.getStereo(),
+    volumes = ChipSynth.getChannelVolumes(),
+    pitches = ChipSynth.getChannelPitches(),
+  }
+  if kind == "cry" then
+    if type(def) ~= "table" then
+      return nil
+    end
+    if def.m4a then
+      request.kind, request.index = "cry", def.m4a
+    elseif def.chip or def.header then
+      request.kind, request.header = "chip", def.chip and def or def.header
+      request.options = { frequencyOffset = def.pitch, cryLength = def.length }
+    else
+      return nil
+    end
+  elseif type(def) == "table" and def.m4a then
+    request.kind = "m4a"
+    request.header = data.audio.songs and data.audio.songs[("SONG_%03X"):format(def.m4a)]
+    if not request.header then
+      return nil
+    end
+  else
+    request.kind, request.header = "chip", def
+    request.options = { frequencyOffset = pitch or 0, frameTicks = 0x80 + (tempo or 0x80) }
+  end
+  return request
+end
+function ChipAudio.requestEffect(spec)
+  if Performance.audioWorkerOptimization == false or sessionSuspended or fxPending >= 2 or not ensureWorker() then
+    return nil
+  end
+  -- A failed worker is never asked to accept another speculative job.
+  if worker:getError() then
+    return nil
+  end
+  fxSerial = fxSerial + 1
+  local id = fxSerial
+  local ok = pcall(
+    cmdCh.push,
+    cmdCh,
+    { cmd = "fx", generation = fxGeneration, id = id, spec = spec, audioWorkerOptimization = true }
+  )
+  if not ok then
+    return nil
+  end
+  fxPending = fxPending + 1
+  return id
+end
+function ChipAudio.pollEffect()
+  if not fxCh then
+    return nil
+  end
+  local row = fxCh:pop()
+  while row and row.generation ~= fxGeneration do
+    row = fxCh:pop()
+  end
+  if row then
+    fxPending = math.max(0, fxPending - 1)
+  end
+  return row
+end
+function ChipAudio.cancelEffects()
+  fxGeneration = fxGeneration + 1
+  fxPending = 0
+  if fxCh then
+    fxCh:clear()
+  end
+  if workerReady and cmdCh then
+    cmdCh:push({ cmd = "fxCancel", generation = fxGeneration })
+  end
 end
 
 -- If the worker died (a malformed def that errors mid-synth), fall back to the
@@ -306,7 +403,8 @@ local function playMusicSync(data, header, allowLoops, synthName)
   ChipAudio.stopMusic()
   currentMusic = { source = source, engine = engine, threaded = false,
                    synth = synth, synthName = synthName,
-                   started = true, finished = false }
+                   started = true, finished = false ,
+  }
   fillSync(MUSIC_FILL_INITIAL)
   if not musicHeld then source:play() end
   return source
@@ -340,17 +438,20 @@ function ChipAudio.playMusic(data, header, allowLoops, synthName)
   musicGen = musicGen + 1
   local gen = musicGen
   cmdCh:push({ cmd = "play", gen = gen, header = header, synth = synthName,
-               allowLoops = allowLoops, audio = slimAudio(data),
+               audioWorkerOptimization = require("src.core.Performance").audioWorkerOptimization ~= false,
+    allowLoops = allowLoops, audio = slimAudio(data),
                channelVolumes = ChipSynth.getChannelVolumes(),
                stereo = ChipSynth.getStereo(),
-               channelPitches = ChipSynth.getChannelPitches() })
+               channelPitches = ChipSynth.getChannelPitches() ,
+  })
   currentMusic = { source = source, gen = gen, threaded = true,
                    synth = synth, synthName = synthName,
                    started = false, finished = false,
                    -- kept so a worker that dies before delivering its first
                    -- buffer can be recovered onto the sync path below
                    def = { data = data, header = header,
-                           allowLoops = allowLoops, synth = synthName } }
+                           allowLoops = allowLoops, synth = synthName } ,
+  }
   -- playback starts in update() once the first buffer arrives (~1 frame)
   return source
 end
@@ -360,7 +461,8 @@ local function pushChannelMix()
     cmdCh:push({ cmd = "channelMix",
                  volumes = ChipSynth.getChannelVolumes(),
                  stereo = ChipSynth.getStereo(),
-                 pitches = ChipSynth.getChannelPitches() })
+                 pitches = ChipSynth.getChannelPitches() ,
+    })
   end
 end
 
@@ -435,6 +537,10 @@ local function updateThreaded()
 end
 
 function ChipAudio.update()
+  local enabled=Performance.audioWorkerOptimization~=false
+  if workerReady and cmdCh and workerPerformance~=enabled then
+    cmdCh:push({cmd="performance",enabled=enabled});workerPerformance=enabled
+  end
   local m = currentMusic
   if not m then return end
   -- INTERRUPTION: nothing is fed to the device while the OS holds the session
@@ -573,6 +679,7 @@ end
 -- hot reload: the next play re-reads programs.bin (a mod may have swapped the
 -- file out from under the single-slot bank cache), on both threads
 function ChipAudio.invalidate()
+  ChipAudio.cancelEffects()
   ChipAudio.stopMusic()
   ChipSynth.invalidateBanks()
   if workerReady and cmdCh then cmdCh:push({ cmd = "invalidate" }) end
@@ -582,10 +689,11 @@ end
 -- process exits and the worker's command loop only returns on "quit", so
 -- skipping this leaves the process running after the window is gone (#339).
 function ChipAudio.shutdown()
+  ChipAudio.cancelEffects()
   ChipAudio.stopMusic()
   if workerReady and cmdCh then cmdCh:push({ cmd = "quit" }) end
   if worker then pcall(function() worker:wait() end) end
-  worker, cmdCh, outCh = nil, nil, nil
+  worker, cmdCh, outCh , fxCh = nil, nil, nil, nil
   workerReady = false
 end
 
@@ -645,10 +753,22 @@ end
 Assets.register(ChipAudio.invalidate)
 
 -- ---------------------------------------------------------------------------
--- one-shot effects (SFX, cries, low-health alarm): synchronous static Sources
+-- One-shot source constructors retain their synchronous fallback contract.
 -- ---------------------------------------------------------------------------
 
+local fallbackLogged = {}
+local function effectFallback(kind)
+  if fallbackLogged[kind] then
+    return
+  end
+  fallbackLogged[kind] = true
+  require("src.core.Logger").info(
+    "chip audio: %s synchronous fallback (cold cache, worker unavailable, or prewarm disabled)",
+    kind
+  )
+end
 local function renderEffect(data, header, options)
+  effectFallback("chip effect")
   local sd = ChipSynth.renderEffectData(data, header, options)
   if not sd then return nil end
   return love.audio.newSource(sd, "static")
@@ -668,6 +788,7 @@ end
 -- A Gen 3 sound effect: the same sequencer as the music, run once to its end
 -- and handed over as a static Source.
 function ChipAudio.newM4AEffect(data, def)
+  effectFallback("sampled effect")
   local songs = data.audio and data.audio.songs
   local song = songs and def and def.m4a ~= nil
                 and songs[("SONG_%03X"):format(def.m4a)]
@@ -684,6 +805,7 @@ function ChipAudio.newCry(data, species, resolved)
   -- names an index into the cartridge's cry table and is rendered by the
   -- sampler next door.  Same seam, same Source, different generation.
   if cry.m4a then
+    effectFallback("sampled cry")
     local sd = synthFor("m4a").renderCry(data, cry.m4a)
     if not sd then return nil end
     return love.audio.newSource(sd, "static")

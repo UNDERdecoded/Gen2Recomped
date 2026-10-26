@@ -6,6 +6,7 @@
 -- bank (Pt 357, HGSS 187). Black / White keep all three in one bank, 260.
 -- Each falls back to the engine's English when the cache lacks the line.
 
+local Strings = require("src.core.Strings")
 local Gen45Hatch = {}
 
 Gen45Hatch.LINES = {
@@ -37,9 +38,9 @@ end
 -- The three lines, with `name` (the species) filled in.
 function Gen45Hatch.lines(game, name)
   local rows = Gen45Hatch.LINES[family() or "platinum"]
-  return line(game, rows.oh, name, "Oh?"),
-    line(game, rows.hatched, name, ("%s hatched from the Egg!"):format(name)),
-    line(game, rows.ask, name, ("Would you like to nickname the newly\nhatched %s?"):format(name))
+  return line(game, rows.oh, name, Strings("Oh?")),
+    line(game, rows.hatched, name, Strings("%s hatched from the Egg!", name)),
+    line(game, rows.ask, name, Strings("Would you like to nickname the newly\nhatched %s?", name))
 end
 
 return Gen45Hatch

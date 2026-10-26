@@ -636,6 +636,36 @@ end
 
 -- start_battle "wild" species level | start_battle "trainer" OPP_CLASS partyIndex
 function Commands.start_battle(ctx, kind, a, b, opts)
+  local skipPreparation = opts and (opts.link or opts.firstBattle or opts.firstBattleKind
+    or opts.oldManTutorial or opts.tutorialKind)
+  if kind ~= "wild" and not skipPreparation
+    and require("src.mods.Runtime").wantsHook("trainer.before_battle") then
+    local runner, co, map = ctx.runner, ctx.runner.co, ctx.overworld and ctx.overworld.map
+    local ready, waiting, cancelled, selected = false, false, false, nil
+    local function finish(options)
+      selected, ready = options, true
+      if waiting then runner:resume() end
+    end
+    require("src.battle.TrainerPreparation").prepare(ctx.game, {
+      trainerClass = a, partyIndex = b or 1,
+      mapId = map and map.id, npcId = ctx.npc and ctx.npc.id,
+    }, finish, function()
+      cancelled, ready = true, true
+      ctx.lastCheck, ctx.lastBattleResult = false, "cancel"
+      ctx.trainerPreparationCancelled = true
+      if waiting then runner:cancelTrainerPreparation(ctx, co) end
+    end, function()
+      return runner.co == co and runner.ctx == ctx and runner:isRunning()
+        and (not ctx.overworld or ctx.overworld.map == map)
+    end, function() runner:cancelTrainerPreparation(ctx, co, true) end)
+    if not ready then waiting = true; runner:yield(); waiting = false end
+    if cancelled then error(require("src.battle.TrainerPreparation").CANCEL_SCRIPT, 0) end
+    local original = opts
+    opts = {}
+    for key, value in pairs(original or {}) do opts[key] = value end
+    if type(selected) == "table" then opts.playerPartyIndices = selected.playerPartyIndices end
+  end
+
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
   local battle
@@ -665,7 +695,7 @@ function Commands.start_battle(ctx, kind, a, b, opts)
       battle.enemy.mon.fatefulEncounter = true
     end
   else
-    battle = BattleState.newTrainer(ctx.game, a, b)
+    battle = BattleState.newTrainer(ctx.game, a, b, opts)
     -- the beaten trainer's own line, printed on the battle screen before
     -- MoneyForWinningText rather than by the script afterwards
     battle.endBattleText = opts and opts.endBattleText or nil
@@ -1285,7 +1315,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
   -- This is intentionally an event rather than a special-case starter hook:
   -- mods can use the same seam for story gifts, fossils, or custom scripts.
   local gift = { ctx = ctx, species = species, level = level }
-  if ctx.game.mods then
+  local giftEvents = ctx.game.mods and ctx.game.mods.events
+  if giftEvents and (not giftEvents.listeners or giftEvents.listeners["pokemon.before_give"]) then
     ctx.game.mods.events:emit("pokemon.before_give", gift)
     species, level = gift.species, gift.level
   end
@@ -1333,6 +1364,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     dex.seen[species] = true
     dex.owned[species] = true
   end
+  local Unown = require("src.pokemon.Gen2Unown")
+  if Unown.supported() then Unown.registerCatch(ctx.save, mon, ctx.game.data) end
   require('src.pokemon.Gen4Forms').record(ctx.game,species,mon)
   ctx.lastCheck = true
   ctx.addedToParty = addedToParty

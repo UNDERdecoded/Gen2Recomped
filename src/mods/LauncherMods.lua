@@ -125,11 +125,19 @@ function LauncherMods.deriveList(manifests, options)
     -- so a second Stadium 2 mod is simply ready.
     ModImports.adoptShared(m)
     local needs = ModImports.missing(m)
+    local missingAssets = require("src.mods.AssetPacks").missing(m)
+    if missingAssets then
+      local first=missingAssets[1]
+      status,detail="warn", "Needs asset pack "..first.importer.."/"..first.pack
+    end
     out[#out + 1] = {
       id = m.id,
       name = m.name or m.id,
       requiredImports = ModImports.of(m),
       missingImports = needs,
+      required_assets = m.required_assets,
+      optional_assets = m.optional_assets,
+      missingAssets = missingAssets,
       -- A DIFFERENT KIND OF MISSING. `missingImports` is a FILE the player has
       -- to hand over; this is a CARTRIDGE THEY HAVE TO HAVE IMPORTED, which
       -- needs nothing handed over and cannot be satisfied by dropping a file

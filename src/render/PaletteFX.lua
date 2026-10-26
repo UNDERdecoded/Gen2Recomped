@@ -20,6 +20,10 @@
 -- (data/palettes_yellow.lua / ROM cgbBase).
 
 local GameVersion = require("src.core.GameVersion")
+local HotModules = require("src.core.HotModules")
+local Performance = require("src.core.Performance")
+local nativeDraw = love and love.graphics and love.graphics.draw
+local nativeSetShader = love and love.graphics and love.graphics.setShader
 
 local PaletteFX = {}
 
@@ -309,7 +313,7 @@ end
 -- it), so the zone now covers it whatever generation is running.  On a Game
 -- Boy dataset those are 160x144 and this is the same rect it always was.
 function PaletteFX.whole(colors)
-  local ok, Renderer = pcall(require, "src.render.Renderer")
+  local ok, Renderer = HotModules.optional("src.render.Renderer")
   local w = ok and Renderer and (Renderer.uiWidth or Renderer.WIDTH) or 160
   local h = ok and Renderer and (Renderer.uiHeight or Renderer.HEIGHT) or 144
   -- zone() takes INCLUSIVE tile bounds, so the last tile index is size/8 - 1;
@@ -534,6 +538,22 @@ function PaletteFX.gen2Tod() return gen2Tod end
 -- daytimeFor picks the row (GetTimeOfDay + ReplaceTimeOfDayPals + .NeedsFlash),
 -- bgSet fetches it (LoadMapPals).  Neither reads or writes the live state, so
 -- calling them cannot disturb what the 2D atlas was baked with.
+
+-- Public RTC-only query used by Gen2 scene renderers (including train rides).
+-- It must not inherit the live map override, darkness, or atlas bake state.
+function PaletteFX.clockDaytime(hour)
+  hour = tonumber(hour)
+  if not hour and GameVersion.isGen2() then
+    local game = package.loaded["src.core.Game"]
+    hour = require("src.core.Gen2Clock").hour(game and game.save)
+  end
+  if not hour then hour = tonumber(os.date("%H")) end
+  hour = math.floor(hour or 12) % 24
+  if hour < 4 then return "NITE" end
+  if hour < 10 then return "MORN" end
+  if hour < 18 then return "DAY" end
+  return "NITE"
+end
 
 -- Which of MORN / DAY / NITE / DARK a map takes.
 --
@@ -1181,13 +1201,85 @@ end
 
 -- send a 4-color (0-255 RGB) palette to the shade-remap shader, after
 -- applying the active COLORS display mode
+local nativeEffectiveColors, nativePermute = PaletteFX.effectiveColors, PaletteFX.permute
+local _uniforms = setmetatable({}, {__mode="k"})
+local UNIFORM_NAMES = {"c0", "c1", "c2", "c3"}
+
+-- Native upload code resolves rows by index, never by a borrowed public palette.
+local function effectiveSource(c)
+  if PaletteFX.effectiveColors ~= nativeEffectiveColors or PaletteFX.permute ~= nativePermute then
+    return PaletteFX.effectiveColors(c), 1, 2, 3, 4
+  end
+  if not c then return nil end
+  local mode = gen2Native() and "gbc" or PaletteFX.mode or "gbc"
+  local reverse = mode == "og_inv" or mode == "gbc_inv"
+  if mode == "og" or mode == "og_inv" then c = PaletteFX.GRAYS
+  elseif mode == "classic" then c = PaletteFX.CLASSIC end
+  local a, b, d, e = 1, 2, 3, 4
+  if shadeMap then a,b,d,e = shadeMap[0]+1,shadeMap[1]+1,shadeMap[2]+1,shadeMap[3]+1 end
+  if reverse then a,b,d,e = 5-a,5-b,5-d,5-e end
+  return c, a, b, d, e
+end
+local function uniformState(shader)
+  local state = _uniforms[shader]
+  if not state then
+    state = {rows={{},{},{},{}}}
+    _uniforms[shader] = state
+  end
+  return state
+end
+local function uploadRow(shader, state, index, color, force)
+  local row = state.rows[index]
+  local r,g,b = color[1]/255,color[2]/255,color[3]/255
+  if force or not state.valid or row[1] ~= r or row[2] ~= g or row[3] ~= b then
+    row[1],row[2],row[3] = r,g,b
+    shader:send(UNIFORM_NAMES[index], row)
+  end
+end
+local function uploadColors(shader, c, state, force)
+  local source,a,b,d,e = effectiveSource(c)
+  if not source then return end
+  uploadRow(shader,state,1,source[a],force)
+  uploadRow(shader,state,2,source[b],force)
+  uploadRow(shader,state,3,source[d],force)
+  uploadRow(shader,state,4,source[e],force)
+  state.valid = true
+end
+local function nativeShader(shader)
+  return type(shader) == "userdata" and shader.typeOf and shader:typeOf("Shader")
+end
+
+-- A caller can write raw shader uniforms between public calls. Each public
+-- call therefore uploads unconditionally. Reused vectors stay inside LÖVE.
 function PaletteFX.sendColors(shader, c)
+  if Performance.paletteZoneCache and nativeShader(shader) then
+    return uploadColors(shader, c, uniformState(shader), true)
+  end
   c = PaletteFX.effectiveColors(c)
   if not c then return end
   shader:send("c0", { c[1][1] / 255, c[1][2] / 255, c[1][3] / 255 })
   shader:send("c1", { c[2][1] / 255, c[2][2] / 255, c[2][3] / 255 })
   shader:send("c2", { c[3][1] / 255, c[3][2] / 255, c[3][3] / 255 })
   shader:send("c3", { c[4][1] / 255, c[4][2] / 255, c[4][3] / 255 })
+end
+PaletteFX._nativeSendColors = PaletteFX.sendColors
+
+-- Cache validity is limited to one contiguous native blit. There are no mod
+-- callbacks between its zones; every later blit starts with a full upload.
+function PaletteFX._beginColorBatch(shader)
+  if not Performance.paletteZoneCache or not nativeShader(shader)
+     or PaletteFX.effectiveColors ~= nativeEffectiveColors or PaletteFX.permute ~= nativePermute
+     or love.graphics.draw ~= nativeDraw or love.graphics.setShader ~= nativeSetShader then return nil end
+  local state = uniformState(shader)
+  if state.busy then state = {rows={{},{},{},{}}} end
+  state.valid, state.busy = false, true
+  return state
+end
+function PaletteFX._sendColorsInBatch(shader, c, state)
+  return uploadColors(shader, c, state, false)
+end
+function PaletteFX._endColorBatch(state)
+  if state then state.busy = nil end
 end
 
 return PaletteFX

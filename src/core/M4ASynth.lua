@@ -962,6 +962,8 @@ function M4A.renderCry(data, index, options)
   -- OpenAL spatializes a mono Source at the listener and spreads it over
   -- every output the device has
   local result = love.sound.newSoundData(samples, SAMPLE_RATE, 16, 2)
+  local Pcm=require("src.core.AudioPcm")
+  local pointer=Pcm.pointer(result)
   local gain = (options.volume or 1) * CRY_GAIN
   local frame, left = 0, 0
   for i = 0, samples - 1 do
@@ -972,8 +974,12 @@ function M4A.renderCry(data, index, options)
     frame = frame - 1
     local value = voice:sample() * (voice.env / 255) * gain
     if value > 1 then value = 1 elseif value < -1 then value = -1 end
-    result:setSample(i, 1, value)
-    result:setSample(i, 2, value)
+    if pointer then
+      local sample=Pcm.sample(value);pointer[i*2],pointer[i*2+1]=sample,sample
+    else
+      result:setSample(i, 1, value)
+      result:setSample(i, 2, value)
+    end
     left = value
   end
   local _ = left
@@ -1016,28 +1022,13 @@ function M4A.renderEffect(data, def, options)
   -- and a Source that is mostly silence blocks a caller waiting on it
   local length = math.min(n, audible + math.floor(SAMPLE_RATE * 0.05))
   if length < 64 then return nil end
-  local result = love.sound.newSoundData(length, SAMPLE_RATE, 16, 2)
-  for i = 1, length do
-    result:setSample(i - 1, 1, left[i])
-    result:setSample(i - 1, 2, right[i])
-  end
-  return result
+  return require('src.core.AudioPcm').arrays(left,right,length,SAMPLE_RATE)
 end
 
 -- The same shape ChipSynth hands ChipAudio, so the queueing path does not
 -- have to know which generation it is filling buffers for.
 function M4A.soundData(engine, samples, channels)
-  local result = love.sound.newSoundData(samples, SAMPLE_RATE, 16, channels)
-  for index = 0, samples - 1 do
-    if channels == 2 then
-      local left, right = engine:sampleStereo()
-      result:setSample(index, 1, left)
-      result:setSample(index, 2, right)
-    else
-      result:setSample(index, engine:sample())
-    end
-  end
-  return result
+  return require('src.core.AudioPcm').render(engine,samples,channels,SAMPLE_RATE)
 end
 
 return M4A

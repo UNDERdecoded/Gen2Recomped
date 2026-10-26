@@ -202,6 +202,9 @@ local SHADER = [[
 #endif
 #ifdef PIXEL
   uniform Image sunMap;
+  uniform Image sunDynamicMap;
+  uniform float sunDynamicActive;
+  uniform vec2 sunDynamicTexel;
   uniform float sunDark;      // how far into black a shadow goes; 0 = off
   uniform float sunBias;
   uniform vec2 sunTexel;
@@ -209,6 +212,11 @@ local SHADER = [[
   // the two-channel pack ShadowMap writes: high byte, then low
   float sunDepth(vec2 uv) {
     vec4 c = Texel(sunMap, uv);
+    return c.r + c.g * (1.0 / 255.0);
+  }
+
+  float sunDynamicDepth(vec2 uv) {
+    vec4 c = Texel(sunDynamicMap, uv);
     return c.r + c.g * (1.0 / 255.0);
   }
 
@@ -235,6 +243,13 @@ local SHADER = [[
               + step(z, sunDepth(p.xy + sunTexel * vec2( 0.5, -0.5)))
               + step(z, sunDepth(p.xy + sunTexel * vec2(-0.5,  0.5)))
               + step(z, sunDepth(p.xy + sunTexel * vec2( 0.5,  0.5)));
+    if (sunDynamicActive > 0.5) {
+      float moving = step(z, sunDynamicDepth(p.xy + sunDynamicTexel * vec2(-0.5, -0.5)))
+                   + step(z, sunDynamicDepth(p.xy + sunDynamicTexel * vec2( 0.5, -0.5)))
+                   + step(z, sunDynamicDepth(p.xy + sunDynamicTexel * vec2(-0.5,  0.5)))
+                   + step(z, sunDynamicDepth(p.xy + sunDynamicTexel * vec2( 0.5,  0.5)));
+      lit = min(lit, moving);
+    }
     return 1.0 - sunDark * edge * (1.0 - lit * 0.25);
   }
 
@@ -1018,6 +1033,10 @@ function Voxel3D.beginScene(w, h, cx, cy, vw, vh, sky, slot)
   ShaderState.send(sh, "sunVP", "row", map and ShadowMap.uvVP or IDENTITY)
   local tex = ShadowMap.texture()
   if tex then ShaderState.send(sh, "sunMap", tex) end
+  local movingTex=ShadowMap.dynamicTexture()
+  if movingTex then ShaderState.send(sh,"sunDynamicMap",movingTex)end
+  ShaderState.send(sh,"sunDynamicActive",ShadowMap.dynamicActive()and 1 or 0)
+  ShaderState.send(sh,"sunDynamicTexel",{1/256,1/256})
   ShaderState.send(sh, "sunDark", map and Voxel3D.SHADOW_ALPHA or 0)
   ShaderState.send(sh, "sunBias", ShadowMap.bias)
   local texel = 1 / ShadowMap.res

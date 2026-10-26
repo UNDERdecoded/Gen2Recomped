@@ -1,0 +1,44 @@
+name: portable API-3 storage contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: storage-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 79ea62f45fb2ea8f65d081a109431e4eb1bbdb36
+          path: .contract-reference/gen1
+      - name: Install ROM-free runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Check Gen2 native storage, save lifecycle and legacy cache
+        run: |
+          luajit tests/engine/api3_storage_transactions.lua
+          luajit tests/engine/api3_playthrough_storage.lua
+          luajit tests/engine/save_slots.lua
+          luajit tests/mod_storage_tests.lua
+      - name: Validate pinned Gen1 storage and identity contracts
+        working-directory: .contract-reference/gen1
+        run: |
+          luajit tests/modkit/cases/storage.lua
+          luajit tests/engine/playthrough_identity.lua
+      - name: Compare unchanged storage consumer and native save lifecycle
+        run: |
+          mkdir -p /tmp/storage-contract
+          python3 tools/storage-contract-check/check.py --gen1 .contract-reference/gen1 \
+            --report /tmp/storage-contract/api3.json
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: storage-contract
+          path: /tmp/storage-contract
+          if-no-files-found: ignore

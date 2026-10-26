@@ -45,6 +45,8 @@ local mod = ...
 -- passed in as its vararg (`local V = ...`).
 
 local V = { mod = mod, path = mod.path }
+-- P7: independently reversible world-anchored static and 256px actor shadows.
+V.shadowWorldAnchor = true
 -- Repeated Gen 3 hulls share immutable GPU meshes where the driver can draw
 -- their offsets per instance. Other drivers keep the expanded vertex path.
 do

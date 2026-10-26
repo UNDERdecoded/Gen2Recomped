@@ -168,6 +168,8 @@ ShadowMap._source = function() return SHADER end   -- named for the suite
 
 local shader = nil            -- nil = untried, false = unavailable
 local canvas = nil            -- nil = untried, false = unavailable
+local dynamicCanvas, dynamicReady = nil, false
+local anchored = false
 local canvasRes = 0           -- the edge `canvas` was made at
 local blank = nil             -- 1x1 stand-in so the sampler is never unbound
 local drawing = false
@@ -353,20 +355,20 @@ end
 -- continuously with the camera reprojects every shadow edge a fraction of a
 -- texel every frame and the whole world's shadows crawl and shimmer while
 -- you walk.
-local function fit(cx, cy, vw, vh)
+function ShadowMap.groundBounds(cx,cy,vw,vh)
+  local reach=ShadowMap.HEIGHT*math.max(math.abs(ShadowMap.KX),math.abs(ShadowMap.KZ))+24
+  local north=groundReach(vh)
+  local spread=north*.5
+  return cx-vw/2-spread,cx+vw/2+spread+reach,cy-north,cy+vh/2+reach
+end
+local function fit(cx, cy, vw, vh, bounds)
   local f = sunDir()
   local view = Mat4.lookAt({ 0, 0, 0 }, f, { 0, 0, -1 })
-
-  local reach = ShadowMap.HEIGHT
-                * math.max(math.abs(ShadowMap.KX), math.abs(ShadowMap.KZ)) + 24
-  local north = groundReach(vh)
-  -- the view widens with distance, so the far ground spans more than the
-  -- near ground does; half the depth is a serviceable stand-in for the
-  -- frustum's true spread and costs a good deal less resolution
-  local spread = north * 0.5
-  local xs = { cx - vw / 2 - spread, cx + vw / 2 + spread + reach }
-  local ys = { -32, ShadowMap.HEIGHT }         -- -32 covers recessed water
-  local zs = { cy - north, cy + vh / 2 + reach }
+  local x0,x1,z0,z1=ShadowMap.groundBounds(cx,cy,vw,vh)
+  if bounds then x0,x1,z0,z1=bounds[1],bounds[2],bounds[3],bounds[4]end
+  local xs={x0,x1}
+  local ys={-32,ShadowMap.HEIGHT}
+  local zs={z0,z1}
 
   local l, r, b, t, zn, zf
   for _, x in ipairs(xs) do
@@ -428,6 +430,14 @@ local function fit(cx, cy, vw, vh)
 
   ShadowMap.clipVP = Mat4.mul(proj, view)
   ShadowMap.uvVP = Mat4.mul(TO_UNIT, ShadowMap.clipVP)
+  -- The LÖVE 12 Metal target rasterizes the canvas Y axis opposite to GL.
+  -- Correct the new anchored lookup, including water's static lookup; the
+  -- original four-argument pass keeps its existing conversion for rollback.
+  local major=love.getVersion and love.getVersion()or 11
+  local renderer=love.graphics.getRendererInfo and love.graphics.getRendererInfo()
+  if bounds and major>=12 and renderer=="Metal"then
+    ShadowMap.uvVP=Mat4.mul({1,0,0,0, 0,-1,0,1, 0,0,1,0, 0,0,0,1},ShadowMap.uvVP)
+  end
   -- what the frustum ended up covering, for probes: the lateral extent in
   -- world pixels divided by RES is how fine a shadow edge can land
   ShadowMap.extent = { r - l, t - b, far - near }
@@ -499,11 +509,11 @@ end
 
 -- Begin the sun pass. Returns false when it could not start, in which case
 -- the caller must not draw into it or call finish.
-function ShadowMap.begin(cx, cy, vw, vh)
+function ShadowMap.begin(cx, cy, vw, vh, bounds)
   local sh = getShader()
   if not sh then return false end
   -- fit first: it is what decides which resolution rung this view wants
-  fit(cx, cy, vw, vh)
+  fit(cx, cy, vw, vh, bounds)
   local c = getCanvas(ShadowMap.res)
   if not c then return false end
   local ok = pcall(love.graphics.setCanvas, { c, depth = true })
@@ -525,9 +535,58 @@ function ShadowMap.begin(cx, cy, vw, vh)
   -- the world until a cast pass says otherwise, reset per pass so one that
   -- forgot to put it back cannot leak into the next map's terrain
   ShaderState.send(sh, "sprite", 0)
+  anchored=bounds~=nil
+  dynamicReady=false
   drawing = true
   ready = false
   return true
+end
+
+-- Optional P7 layer. Both textures use the same world-to-light matrix;
+-- water keeps sampling only the static texture, as it already ignores actors.
+function ShadowMap.isAnchored()return anchored end
+function ShadowMap.useLegacy()
+  if anchored then ready=false end
+  anchored=false;dynamicReady=false
+end
+function ShadowMap.dynamicAvailable()
+  if dynamicCanvas==false then return false end
+  if dynamicCanvas then return true end
+  local ok,c=V.require("PixelCanvas").new(256,256)
+  if not(ok and c)then dynamicCanvas=false;return false end
+  c:setFilter("nearest","nearest");pcall(c.setWrap,c,"clamp","clamp")
+  dynamicCanvas=c
+  return true
+end
+function ShadowMap.dynamicActive()
+  return V.shadowWorldAnchor~=false and anchored and ready and dynamicReady and caps().shadows
+end
+function ShadowMap.dynamicTexture()
+  return ShadowMap.dynamicActive()and dynamicCanvas or getBlank()
+end
+function ShadowMap.beginDynamic()
+  if not(ready and anchored and ShadowMap.dynamicAvailable())then return false end
+  local ok=pcall(love.graphics.setCanvas,{dynamicCanvas,depth=true})
+  if not ok then
+    pcall(love.graphics.setCanvas)
+    if dynamicCanvas.release then pcall(dynamicCanvas.release,dynamicCanvas)end
+    dynamicCanvas=false;dynamicReady=false
+    return false
+  end
+  prevBlend,prevAlphaMode=love.graphics.getBlendMode()
+  love.graphics.clear(1,1,0,1,true,true)
+  love.graphics.setDepthMode("lequal",true);love.graphics.setMeshCullMode("none")
+  love.graphics.setBlendMode("replace","premultiplied")
+  love.graphics.setShader(getShader());love.graphics.setColor(1,1,1,1)
+  ShaderState.send(getShader(),"lightVP","row",ShadowMap.clipVP)
+  ShaderState.send(getShader(),"sprite",1)
+  drawing=true;dynamicReady=false
+  return true
+end
+function ShadowMap.finishDynamic()
+  if not drawing then return end
+  ShadowMap.finish(lastSig)
+  dynamicReady=true
 end
 
 -- Draw one caster. Same signature as Voxel3D.draw minus the camera-ward
@@ -593,6 +652,7 @@ end
 -- Drop the GPU objects (window resize, hot reload).
 function ShadowMap.invalidate()
   canvas, canvasRes, blank = nil, 0, nil
+  dynamicCanvas,dynamicReady,anchored=nil,false,false
   drawing, ready, lastSig = false, false, nil
 end
 

@@ -380,6 +380,16 @@ function Music.current()
   return state.current
 end
 
+-- Original contribution by Roxas2712; see the offered PR's contribution
+-- permission. Radio ownership changes the restorable cue, not playback.
+function Music.mapSong()
+  return state.mapSong
+end
+
+function Music.setMapSong(song)
+  state.mapSong = song
+end
+
 function Music.stop()
   local previous = state.current
   stopSource(state.source)
@@ -676,6 +686,7 @@ end
 
 -- call once per frame: chains a finished intro into its loop body and
 -- restores the map theme after a one-shot jingle
+local prewarmSound
 function Music.update(data)
   if data and data.audio and data.audio.ndsArchive then require("src.audio.NitroAudio").update() end
   -- INTERRUPTION: the OS holds the audio session (an incoming call), every
@@ -683,6 +694,8 @@ function Music.update(data)
   -- in here is worth doing against a device that is not there -- and the
   -- ChipAudio.update on the next line is the call that crashed.
   if sessionSuspended then return end
+  if not prewarmSound then prewarmSound=require("src.core.Sound") end
+  if prewarmSound.update then prewarmSound.update(data) end
   -- The other half of the same case: the re-cue in Music.resume can land
   -- before the OS has handed the audio device back, and nothing else re-cues
   -- a map theme that never stopped being the map theme.  So the retry is

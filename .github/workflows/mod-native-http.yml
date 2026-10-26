@@ -1,0 +1,71 @@
+name: Native bounded HTTP
+on:
+  pull_request:
+    paths:
+      - 'src/mods/LogReport.lua'
+      - 'src/mods/Net.lua'
+      - 'src/mods/Manifest.lua'
+      - 'src/mods/Loader.lua'
+      - 'src/net/**'
+      - 'src/core/HostShell.lua'
+      - 'mobile/ios/native/GRHTTPBridge.swift'
+      - 'mobile/ios/patch_love_src.py'
+      - 'mobile/android/love/src/main/java/org/love2d/android/BoundedHttp.java'
+      - 'mobile/android/love/src/main/java/org/love2d/android/GameActivity.java'
+      - 'mobile/android/love/src/jni/love/src/modules/system/wrap_System.cpp'
+      - 'tests/native_http/**'
+      - 'tests/engine/log_reporting.lua'
+      - 'tests/engine/bounded_http.lua'
+      - 'tools/qualify_native_http.py'
+      - '.github/workflows/mod-native-http.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: native-bounded-http-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  android-bridge-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Install native Android build dependencies
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "platforms;android-34" "build-tools;34.0.0" "ndk;25.2.9519653"'
+      - name: Compile the Android HTTP adapter and native Lua binding
+        working-directory: mobile/android
+        run: bash ./gradlew --no-daemon :love:compileEmbedDebugJavaWithJavac :love:externalNativeBuildEmbedDebug
+  native-protocols:
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - run: brew install luajit
+      - run: luajit tests/engine/log_reporting.lua && luajit tests/engine/async_get_queue.lua && luajit tests/engine/bounded_http.lua
+      - name: Verify the pinned host-test dependency
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --location https://repo.maven.apache.org/maven2/org/json/json/20240303/json-20240303.jar -o "$RUNNER_TEMP/json-20240303.jar"
+          printf '%s  %s\n' 3cf6cd6892e32e2b4c1c39e0f52f5248a2f5b37646fdfbb79a66b46b618414ed "$RUNNER_TEMP/json-20240303.jar" | shasum -a 256 -c -
+      - name: Exercise native adapter logic and typecheck iOS
+        shell: bash
+        run: |
+          python3 tools/qualify_native_http.py --swiftc "$(xcrun --find swiftc)" --sdk "$(xcrun --sdk macosx --show-sdk-path)" --ios-sdk "$(xcrun --sdk iphoneos --show-sdk-path)" --java-home "$JAVA_HOME" --json-jar "$RUNNER_TEMP/json-20240303.jar" --output "$RUNNER_TEMP/native-http"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-bounded-http
+          path: |
+            ${{ runner.temp }}/native-http/*.json
+            ${{ runner.temp }}/native-http/*.log
+          if-no-files-found: warn
+          retention-days: 7

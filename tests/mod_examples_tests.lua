@@ -141,25 +141,16 @@ for _, id in ipairs(IDS) do
   end
 end
 
--- the legacy entry keeps its v1 manifest and gains only a card
+-- API-1 manifest validation remains covered even when the old demonstration
+-- is not installed in the production mod directory. The pinned external
+-- fixture gate loads the untouched original separately.
 do
-  local cardChunk = loadfile("mods/example_mew_starter/mod.card")
-  if check(cardChunk ~= nil, "example_mew_starter: ships a mod.card") then
-    local ok, card = pcall(cardChunk)
-    check(ok and type(card) == "table", "example_mew_starter: the card parses")
-    check(ok and card.compat and card.compat.modApi == 1,
-      "example_mew_starter: the card declares api 1, not 2")
-  end
-  local body = io.open("mods/example_mew_starter/manifest.json", "rb")
-  if check(body ~= nil, "example_mew_starter: manifest is readable") then
-    local manifest = require("src.link.Json").decode(body:read("*a"))
-    body:close()
-    check(manifest.api == nil, "example_mew_starter: stays an api 1 manifest")
-    eq(manifest.category, "GAMEPLAY",
-      "example_mew_starter: keeps the legacy category value")
-    local ok = pcall(Manifest.validate, manifest, "mods/example_mew_starter")
-    check(ok, "example_mew_starter: the v1 manifest still validates")
-  end
+  local ok, manifest = pcall(Manifest.validate, {
+    id = "legacy_gallery_probe", name = "Legacy gallery probe", version = "1.0.0",
+    entry = "main.lua", category = "GAMEPLAY",
+  }, "tests/fixtures/upstream_mods/legacy_gallery_probe")
+  check(ok, "legacy api-1 manifest still validates")
+  eq(ok and manifest.api, 1, "omitted api selects legacy semantics")
 end
 
 -- ------- disabled by default
@@ -176,18 +167,13 @@ do
   for _, id in ipairs(IDS) do
     check(not top[id], id .. " is not discoverable at the mods/ root")
   end
-  check(top.example_mew_starter,
-    "the legacy example is still discovered at the mods/ root")
+  check(not top.example_mew_starter,
+    "external compatibility fixtures are not installed as player mods")
 end
 
 -- ------- the gallery loads
 
-local data = freshImported()
-if not data then
-  print("modkit: example gallery load skipped -- no imported dataset in "
-    .. "data/generated/ to fold the examples against")
-  return S.finish()
-end
+local data = freshImported() or require("tests.fixtures.upstream_mods.data").fresh()
 
 -- The transform in example_shiny_palette reads the imported cache and
 -- writes under save/mod-derived/.  The io-backed harness filesystem has no
