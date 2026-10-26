@@ -9909,6 +9909,17 @@ function BattleState:askNicknameUI(mon, displayName)
   })
 end
 
+local function useNativeCatchStorage() return false end
+
+-- Gen1 game modes can take custody of a catch before it reaches the PC.
+-- Preserve Lua truthiness and the original caught mon, as on the reference.
+function BattleState:partyFullDestination(mon)
+  if GameVersion.generation() ~= 1 or not Runtime.wantsHook("catch.party_full") then return "box" end
+  local claimed = Runtime.call("catch.party_full", useNativeCatchStorage,
+    { battle = self, mon = mon, name = self.enemy and self.enemy.name, game = self.game })
+  return claimed and "mod" or "box"
+end
+
 -- The caught mon joins the party or a PC box (ItemUseBall .captured,
 -- item_effects.asm:518-566): the caught text, then for a NEW species
 -- "New POKéDEX data will be added" + the dex entry page, then
@@ -9987,17 +9998,19 @@ function BattleState:storeCaughtMon()
     require('src.pokemon.Gen4PoketchState').remember(game, self.enemy.mon)
     askCaughtNickname()
   else
-    destination = "box"
-    local boxNum = require("src.pokemon.Boxes").deposit(game.save, self.enemy.mon)
-    if boxNum then
-      require('src.pokemon.Gen4PoketchState').remember(game, self.enemy.mon)
-      askCaughtNickname()
-      -- _ItemUseBallText07/08 keyed on EVENT_MET_BILL
-      local pc = (game.save.flags and game.save.flags.EVENT_MET_BILL)
-                 and "BILL's PC" or Strings("someone's PC")
-      self:sayNext(Strings("%s was\ntransferred to\n%s!", self.enemy.name, pc))
-    else
-      self:sayNext(Strings("But every BOX\nis full!"))
+    destination = self:partyFullDestination(self.enemy.mon)
+    if destination == "box" then
+      local boxNum = require("src.pokemon.Boxes").deposit(game.save, self.enemy.mon)
+      if boxNum then
+        require('src.pokemon.Gen4PoketchState').remember(game, self.enemy.mon)
+        askCaughtNickname()
+        -- _ItemUseBallText07/08 keyed on EVENT_MET_BILL
+        local pc = (game.save.flags and game.save.flags.EVENT_MET_BILL)
+                   and "BILL's PC" or Strings("someone's PC")
+        self:sayNext(Strings("%s was\ntransferred to\n%s!", self.enemy.name, pc))
+      else
+        self:sayNext(Strings("But every BOX\nis full!"))
+      end
     end
   end
   -- CatchMon copies the species name into wStringBuffer1, which is what the

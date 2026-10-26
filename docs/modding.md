@@ -277,3 +277,35 @@ The launcher hands the link to the operating system to open, so only `http://`
 and `https://` links are accepted. Any other value, such as a `file:` link or
 a custom scheme, is dropped with a warning. The mod itself still loads; it
 just gets no button.
+
+## Party-full catch custody (Gen1)
+
+For Red, Blue and Yellow, `catch.party_full` runs after a successful capture
+only when the party is full, before depositing the caught Pokémon in the PC.
+Its one argument is `{ battle, mon, name, game }`, containing the original
+caught Pokémon and its display name. The native default returns `false`.
+
+```lua
+mod.hooks:wrap("catch.party_full", function(next, ctx)
+  if myMode.active then
+    takeCustody(ctx.mon)
+    return true
+  end
+  return next(ctx)
+end)
+```
+
+Any Lua-truthy result (including `0` and `""`) skips the PC and the native
+nickname/transfer UI. The mod must take responsibility for that Pokémon;
+it is in neither the native party nor any native box. `pokemon.caught` still
+fires and reports `destination = "mod"`. Dex ownership and catch completion
+remain native. A false/nil result follows normal PC placement, including the
+full-storage message; a party with room bypasses the hook entirely. Other
+generations retain their native storage flow.
+
+The unchanged public consumer in `examples/portable_catch_party_full` and
+`tests/catch_party_full/contract.lua` can be exercised on either engine:
+`luajit /path/to/this/checkout/tests/catch_party_full/contract.lua /path/to/this/checkout red 2 native`.
+The test harness and fixtures come from the running engine; only the example
+and contract files are shared. This is a Gen1 capture hook, not a generic
+storage replacement for every generation.
