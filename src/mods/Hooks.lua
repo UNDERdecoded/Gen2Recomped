@@ -100,7 +100,13 @@ function Hooks:call(name, vanilla, ...)
       return unpack(downstream, 1, downstream.n)
     end
     local started = measuring and FrameProfile.now() or nil
-    local res = pack(pcall(entry.callback, nextFn, unpack(args, 1, args.n)))
+    local facade = package.loaded['src.core.Game3']
+    local res
+    if facade and facade._usesCallbacks and facade._usesCallbacks(entry.owner) then
+      res = pack(pcall(facade._invokeHook, entry.owner, entry.callback, nextFn, unpack(args, 1, args.n)))
+    else
+      res = pack(pcall(entry.callback, nextFn, unpack(args, 1, args.n)))
+    end
     if started then
       FrameProfile.add("      hook " .. tostring(name) .. " <- "
         .. siteOf(entry),

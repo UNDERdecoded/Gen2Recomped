@@ -233,59 +233,74 @@ end
 
 -- the title screen with its NEW GAME / CONTINUE wiring; used at boot
 -- and by the START-menu QUIT confirmation
-function Game:makeTitleState()
+function Game:newGame()
   local OverworldState = require("src.world.OverworldController")
+  while self.stack:top() do self.stack:pop() end
+  if self.overworld then self.overworld.fadeOverlay = nil end
+  -- New Game keeps the standalone options.lua preferences
+  self.save = SaveData.newGame(self:bootConfig())
+  -- no bucket carry-over: mod state from an abandoned session must
+  -- not leak into a fresh slot; mods seed via save.created instead
+  self:adoptSave(self.save)
+  ModRuntime.emit("save.created", { save = self.save })
+  self:applyOptions(self.save.options)
+  self.stack:push(OverworldState, self.save.player.map,
+                  self.save.player.x, self.save.player.y,
+                  self.save.player.facing)
+  local newGameScreen = bootScreens(self).newGame
+  if newGameScreen == nil and not require("src.core.GameVersion").isGen2() then
+    newGameScreen = "OakSpeech"
+  end
+  if newGameScreen then
+    Screens.push(self, newGameScreen, function() end)
+  else
+    -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
+    -- never appeared.  Data.lua sets boot.screens.newGame = false for any
+    -- dataset with no OakText* -- Prism writes its own introduction in
+    -- engine/intro_menu.asm rather than replaying the professor's -- so
+    -- OakSpeech does not run, and the `customize_player` step lives INSIDE
+    -- OakSpeech.  The step was correct and simply unreachable.
+    --
+    -- IntroductionSpeech calls PlayerCustomization before it asks the
+    -- player's name, and the name prompt on this path comes from the
+    -- intro map's own script, so pushing it here puts it in the same
+    -- place: after New Game, before the map runs.
+    -- pcall, not a bare require: a dataset can want this screen without
+    -- the build shipping it (that is exactly how NEW GAME on Prism went
+    -- from "no customisation menu" to "module not found" the moment the
+    -- branch became reachable).  A missing screen must cost the player
+    -- the customisation, not the save file they were starting.
+    local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
+    if okCust and type(Cust) == "table" and Cust.available(self) then
+      Screens.push(self, "PrismCustomization", function() end)
+    elseif not okCust then
+      require("src.core.Logger").error(
+        "player customisation screen unavailable: %s", tostring(Cust))
+    end
+  end
+end
+
+function Game:continueGame(loaded, recovered)
+  if not loaded then return self:newGame() end
+  return self:restoreSave(loaded, recovered)
+end
+
+function Game:makeTitleState()
   local factory = Screens.get(self, bootScreens(self).title or "TitleState")
   local title = factory.new(self, {
     onNewGame = function()
-      while self.stack:top() do self.stack:pop() end
-      if self.overworld then self.overworld.fadeOverlay = nil end
-      -- New Game keeps the standalone options.lua preferences
-      self.save = SaveData.newGame(self:bootConfig())
-      -- no bucket carry-over: mod state from an abandoned session must
-      -- not leak into a fresh slot; mods seed via save.created instead
-      self:adoptSave(self.save)
-      ModRuntime.emit("save.created", { save = self.save })
-      self:applyOptions(self.save.options)
-      self.stack:push(OverworldState, self.save.player.map,
-                      self.save.player.x, self.save.player.y,
-                      self.save.player.facing)
-      local newGameScreen = bootScreens(self).newGame
-      if newGameScreen == nil and not require("src.core.GameVersion").isGen2() then
-        newGameScreen = "OakSpeech"
-      end
-      if newGameScreen then
-        Screens.push(self, newGameScreen, function() end)
-      else
-        -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
-        -- never appeared.  Data.lua sets boot.screens.newGame = false for any
-        -- dataset with no OakText* -- Prism writes its own introduction in
-        -- engine/intro_menu.asm rather than replaying the professor's -- so
-        -- OakSpeech does not run, and the `customize_player` step lives INSIDE
-        -- OakSpeech.  The step was correct and simply unreachable.
-        --
-        -- IntroductionSpeech calls PlayerCustomization before it asks the
-        -- player's name, and the name prompt on this path comes from the
-        -- intro map's own script, so pushing it here puts it in the same
-        -- place: after New Game, before the map runs.
-        -- pcall, not a bare require: a dataset can want this screen without
-        -- the build shipping it (that is exactly how NEW GAME on Prism went
-        -- from "no customisation menu" to "module not found" the moment the
-        -- branch became reachable).  A missing screen must cost the player
-        -- the customisation, not the save file they were starting.
-        local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
-        if okCust and type(Cust) == "table" and Cust.available(self) then
-          Screens.push(self, "PrismCustomization", function() end)
-        elseif not okCust then
-          require("src.core.Logger").error(
-            "player customisation screen unavailable: %s", tostring(Cust))
-        end
-      end
+      local facade=package.loaded['src.core.Game3']
+      local run=function()return self:newGame()end
+      if facade and facade._bootAction then return facade._bootAction(self,{action='new_game'},run)end
+      return run()
     end,
     onContinue = function()
       local loaded, recovered = SaveData.load()
       if loaded then
-        self:restoreSave(loaded, recovered)
+        local facade=package.loaded['src.core.Game3']
+        local run=function()return self:continueGame(loaded,recovered)end
+        if facade and facade._bootAction then return facade._bootAction(self,{action='continue'},run)end
+        return run()
       end
     end,
   })
@@ -358,6 +373,11 @@ function Game:_step(dt)
   end
   -- AN EMPTY STACK IS NOT A GAME.
   if self:ensureStack() then return end
+  -- Source callbacks observe this native phase, after input promotion and
+  -- stack recovery. A wrapped runtime may hold it; no second loop is run.
+  local compatibility = package.loaded['src.core.game3.runtime']
+  if compatibility and compatibility._fixedBoundary
+      and compatibility._fixedBoundary(self, dt) == false then return end
   local closeStep = FrameProfile.section("  logic: stack:update")
   self.stack:update(dt)
   closeStep()
@@ -647,7 +667,8 @@ function Game:update(dt)
   -- assumed.
   if collectgarbage then
     local close = FrameProfile.section("  update: gc step")
-    collectgarbage("step", 1)
+    local facade=package.loaded['src.core.Game3']
+    if not(facade and facade._stepGC and facade._stepGC(self))then collectgarbage("step", 1)end
     close()
   end
 end
@@ -2043,6 +2064,25 @@ function Game:restoreSave(loaded, recovered)
   if ModRuntime.wants("save.loaded") then
     ModRuntime.emit("save.loaded",
       { save = loaded, meta = loaded.meta, modsDiff = modsDiff })
+  end
+end
+
+-- Require nothing on an ordinary boot. Source Game3 wrappers receive their
+-- distinct facade while the captured native method retains its own owner.
+for _, name in ipairs({ 'update', 'draw', '_step', 'keypressed', 'keyreleased',
+    'textinput', 'wheelmoved', 'touchpressed', 'touchmoved', 'touchreleased',
+    'gamepadpressed', 'gamepadreleased', 'gamepadaxis', 'joystickpressed',
+    'joystickreleased', 'joystickaxis', 'joystickhat', 'joystickremoved',
+    'focus', 'visible', 'returnToTitle', 'returnToLauncher', 'restartWithMods',
+    'writeOptions', 'applyOptions', 'writeSave', '_resolveLogicSpeed',
+    'logicSpeed', 'speedLocked', 'zoomStep' }) do
+  local key, native = name, Game[name]
+  if type(native) == 'function' then
+    Game[key] = function(self, ...)
+      local facade = package.loaded['src.core.Game3']
+      if facade and facade._dispatch then return facade._dispatch(key, self, native, ...) end
+      return native(self, ...)
+    end
   end
 end
 
