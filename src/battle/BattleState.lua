@@ -2604,6 +2604,37 @@ function BattleState:beginMsgLine()
   self.shown[#self.shown + 1] = {}
 end
 
+function BattleState:runQueueAction(item)
+  self.nextInsert=0
+  item.fn()
+  self.current=nil
+  local sequence=GameVersion.isGen3()and package.loaded['src.core.game3.battle.switch_seq']
+  if sequence then sequence._nativeFinish(self,item)end
+end
+
+function BattleState:stepGen3Ball(anim)
+  anim:update()
+  if anim.sound then
+    require("src.core.Sound").playId(self.data, anim.sound)
+  end
+  -- the trainer is gone by the time his Pokemon is out of the ball
+  -- ...unless the trainer's own walk-off is still running (#407): the
+  -- cartridge frees that sprite at the end of the fifty frames, not when
+  -- the ball opens, and cutting it short hides most of the throw
+  if anim.sendOut == "player" and self.showPlayerBack
+      and anim.phase ~= "throw"
+      and not (self.backWalkOff and self.backWalkOff > 0) then
+    self.showPlayerBack = false
+    self:slidePic("back")
+  end
+  if anim:isDone() then
+    self.gen3BallPlaying = false
+    -- a caught Pokemon leaves the ball resting on screen through the text,
+    -- exactly as the Game Boy chain does
+    if not anim.caught then self.gen3Ball = nil end
+  end
+end
+
 function BattleState:updateQueue()
   if self.waitingUI then
     if self.game.stack:top() ~= self then return true end
@@ -2637,28 +2668,12 @@ function BattleState:updateQueue()
   -- reason: its frames are counted where the hold is counted, or it would
   -- stand still for exactly as long as it is meant to be moving.
   if self.gen3BallPlaying and self.gen3Ball then
-    local anim = self.gen3Ball
-    anim:update()
-    if anim.sound then
-      require("src.core.Sound").playId(self.data, anim.sound)
-    end
-    -- the trainer is gone by the time his Pokemon is out of the ball
-    -- ...unless the trainer's own walk-off is still running (#407): the
-    -- cartridge frees that sprite at the end of the fifty frames, not when
-    -- the ball opens, and cutting it short hides most of the throw
-    if anim.sendOut == "player" and self.showPlayerBack
-        and anim.phase ~= "throw"
-        and not (self.backWalkOff and self.backWalkOff > 0) then
-      self.showPlayerBack = false
-      self:slidePic("back")
-    end
-    if anim:isDone() then
-      self.gen3BallPlaying = false
-      -- a caught Pokemon leaves the ball resting on screen through the text,
-      -- exactly as the Game Boy chain does
-      if not anim.caught then self.gen3Ball = nil end
-    end
+    local capture=GameVersion.isGen3()and package.loaded['src.core.game3.battle.catch_seq']
+    if capture then capture._nativeBallStep(self,self.gen3Ball,BattleState.stepGen3Ball)
+    else self:stepGen3Ball(self.gen3Ball)end
   end
+  local capture=GameVersion.isGen3()and package.loaded['src.core.game3.battle.catch_seq']
+  if capture and capture._holdsNativeQueue(self)then return true end
   -- a queued hold (faint slide, hit blink) counts down before the next row
   if self.waitFrames and self.waitFrames > 0 then
     self.waitFrames = self.waitFrames - 1
@@ -2730,9 +2745,19 @@ function BattleState:updateQueue()
     local item = table.remove(self.queue, 1)
     if not item then return false end
     if item.fn then
-      self.nextInsert = 0 -- sayNext inserts right after this item
-      item.fn()
-      self.current = nil
+      local sequence=GameVersion.isGen3()and package.loaded['src.core.game3.battle.switch_seq']
+      if item._sourceCatchStep and GameVersion.isGen3()then sequence=package.loaded['src.core.game3.battle.catch_seq']end
+      if sequence and(item._sourceSwitchStep or item._sourceCatchStep)then
+        local consumed=false
+        local ok,why=pcall(sequence._nativeStep,self,item,function()
+          consumed=true
+          self:runQueueAction(item)
+          return true
+        end)
+        -- A held or failing source callback cannot discard a native action.
+        if not consumed then table.insert(self.queue,1,item)end
+        if not ok then error(why,0)end
+      else self:runQueueAction(item)end
       return true
     end
     if item.ui then
@@ -3806,6 +3831,7 @@ function BattleState:enter()
       self.enemySendingOut = false
       self:startGrowIn(self.enemy)
     end)
+    if GameVersion.isGen3()then self.queue[#self.queue]._sourceIntroKind='opponent_sendout'end
     self:shinyAnimAppend(self.enemy, true)
     queueEnemyCry()
   elseif self.kind == "link" then
@@ -3819,6 +3845,7 @@ function BattleState:enter()
       self.enemySendingOut = false
       self:startGrowIn(self.enemy)
     end)
+    if GameVersion.isGen3()then self.queue[#self.queue]._sourceIntroKind='opponent_sendout'end
     self:shinyAnimAppend(self.enemy, true)
     queueEnemyCry()
   end
@@ -3858,6 +3885,7 @@ function BattleState:enter()
     -- then the POOF plays and the mon appears with its cry
     -- (SendOutMon: message -> AnimateSendingOutMon -> PlayCry)
     table.insert(self.queue, { anim = "POOF_ANIM", attackerIsPlayer = false })
+    if GameVersion.isGen3()then self.queue[#self.queue]._sourceIntroKind='player_throw'end
     self:shinyAnimAppend(self.player, false)
     self:act(function()
       self.sendingOut = false
@@ -3884,6 +3912,8 @@ function BattleState:enter()
       self:abilitySwitchIn(self.player)
     end })
   end
+  local intro=GameVersion.isGen3()and package.loaded['src.core.game3.battle.intro_seq']
+  if intro then intro._nativeBind(self)end
   Runtime.emit("battle.started", {
     battle = self, kind = self:battleKind(),
     trainerId = self.trainer and self.trainer.id,
@@ -3895,6 +3925,12 @@ end
 -- any pop (finish, script teardown) must silence the alarm loop
 -- (end_of_battle.asm clears wLowHealthAlarm when a battle ends)
 function BattleState:exit()
+  local intro=package.loaded['src.core.game3.battle.intro_seq']
+  if intro then intro._nativeRelease(self)end
+  local capture=package.loaded['src.core.game3.battle.catch_seq']
+  if capture then capture._nativeRelease(self)end
+  local sequence=package.loaded['src.core.game3.battle.switch_seq']
+  if sequence then sequence._nativeRelease(self)end
   -- Teachy TV temporarily replaces the player's party exactly like
   -- SavePlayerParty/LoadPlayerParty in teachy_tv.c.  finish() normally
   -- restores it before the pop, but exit is the safety net for a forced state
@@ -5941,6 +5977,7 @@ function BattleState:switchPlayerInto(pos, newMon)
   self:markParticipant()
   self.sendingOut = true
   self:sayNext(self:sendOutText(incoming.name))
+  local sendMessage=self.queue[self.nextInsert]
   self:animNext("POOF_ANIM", false)
   self:shinyAnim(incoming, false)
   self:actNext(function()
@@ -5950,9 +5987,12 @@ function BattleState:switchPlayerInto(pos, newMon)
     require("src.core.Sound").playCry(self.data, incoming.mon.species)
     HeldItems.onEntry(self, incoming)
   end)
+  local sendEntry=self.queue[self.nextInsert]
   -- ABILITYEFFECT_ON_SWITCHIN, after the send-out and its cry: an
   -- INTIMIDATE drops the foe's attack now, before the free move below
   self:actNext(function() self:abilitySwitchIn(incoming) end)
+  local sequence=GameVersion.isGen3()and package.loaded['src.core.game3.battle.switch_seq']
+  if sequence then sequence._nativeBind(self,pos,sendMessage,sendEntry,self.queue[self.nextInsert])end
   return incoming
 end
 
@@ -12961,6 +13001,14 @@ function BattleState:drawClassic()
   if Runtime.wantsHook("battle.overlay") then
     Runtime.call("battle.overlay", function() end, self)
   end
+end
+
+-- Source capture callbacks borrow the actual native request builder.
+local throwBallNative=BattleState.throwBall
+function BattleState:throwBall(ball)
+  local source=GameVersion.isGen3()and package.loaded['src.core.game3.battle.catch_seq']
+  if source then return source._nativeBegin(self,throwBallNative,ball)end
+  return throwBallNative(self,ball)
 end
 
 return BattleState
