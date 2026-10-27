@@ -1,4 +1,5 @@
 local Logger = require("src.core.Logger")
+local Runtime = require("src.mods.Runtime")
 local FrameProfile = require("src.core.FrameProfile")
 
 local Events = {}
@@ -61,8 +62,23 @@ function Events:emit(name, payload)
     local ok, err = pcall(entry.callback, payload)
     close()
     if not ok then
-      Logger.error("[%s] event %s: %s",
-        tostring(entry.owner or "?"), name, tostring(err))
+      local owner = entry.owner
+      local message = tostring(err)
+      -- The log alone is not the live diagnostics feed. Only this session's
+      -- installed bus may attribute a failure to its loader; an old bus must
+      -- not poison the next game's error list. A persistently failing frame
+      -- listener is reported once until it recovers or its message changes.
+      local feed = Runtime.events == self and Runtime.errors
+      local reportable = feed and owner ~= nil and owner ~= "base"
+      if not reportable or entry._failureFeed ~= feed or entry._failureMessage ~= message then
+        Logger.error("[%s] event %s: %s", tostring(owner or "?"), name, message)
+        if reportable then
+          Runtime.reportError(owner, "event " .. name .. ": " .. message)
+          entry._failureFeed, entry._failureMessage = feed, message
+        end
+      end
+    else
+      entry._failureFeed, entry._failureMessage = nil, nil
     end
   end
 end
