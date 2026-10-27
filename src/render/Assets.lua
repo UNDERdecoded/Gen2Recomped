@@ -12,6 +12,7 @@ local Assets = {}
 
 -- resolved path -> love Image
 local cache = {}
+local recoveries = {}
 -- downstream caches that must empty when the search path changes
 local invalidators = {}
 
@@ -21,6 +22,9 @@ local invalidators = {}
 Assets.loader = nil
 
 local GENERATED = "assets/generated/"
+local function canRecover(path)
+  return type(path)=='string' and path:sub(1,#GENERATED)==GENERATED
+end
 
 local function exists(path)
   local fs = love and love.filesystem
@@ -57,38 +61,44 @@ local function blank()
   return blankImage
 end
 
--- A missing asset must degrade to visibly-wrong art, never to a thrown error.
--- love.graphics.newImage raises on a path PhysFS cannot open, and this is the
--- single choke point every renderer loads sheets through -- an unguarded raise
--- here propagates out of SpriteRenderer.new -> NPC.new -> the map build and
--- takes the whole map load down.
-local function loadImage(resolved)
+-- Native generated sheets recover without aborting a map load. Optional
+-- images retain the Gen1 failure contract so pcall can select a real fallback.
+local function loadImage(resolved, recover)
   local ok, image = pcall(love.graphics.newImage, resolved)
-  if ok then return image end
+  if ok then return image, false end
+  if not recover then error(image,3) end
   local Logger = require("src.core.Logger")
   Logger.warn("assets: missing image '%s' (using placeholder)", tostring(resolved))
   local fellBack, placeholder = pcall(love.graphics.newImage, Assets.resolve(MISSING_IMAGE))
-  if fellBack then return placeholder end
-  return blank()
+  if fellBack then return placeholder, true end
+  return blank(), true
 end
 
 function Assets.image(path)
   local resolved = Assets.resolve(path)
   local image = cache[resolved]
-  if not image then
-    image = loadImage(resolved)
+  local recover=canRecover(path)
+  if not image or (not recover and recoveries[resolved]) then
+    local recovered
+    image,recovered=loadImage(resolved,recover)
     cache[resolved] = image
+    recoveries[resolved]=recovered or nil
   end
   return image
 end
 
 -- pixel-level reads (tile-shift variants, the spinner strip blit) resolve
 -- the same way but stay uncached: the caller keeps the derived product.
--- Same rule as Assets.image: a missing path degrades instead of raising.
+-- Generated native sheets retain their recovery pixels. Optional pixel
+-- inputs preserve the Gen1 decode failure so a caller can choose its native
+-- fallback instead of deriving masks/bounds from unrelated placeholder art.
 function Assets.imageData(path)
   local resolved = Assets.resolve(path)
   local ok, data = pcall(love.image.newImageData, resolved)
   if ok then return data end
+  if not canRecover(path) then
+    error(data,2)
+  end
   local Logger = require("src.core.Logger")
   Logger.warn("assets: missing image data '%s' (using placeholder)", tostring(resolved))
   local fellBack, placeholder = pcall(love.image.newImageData, Assets.resolve(MISSING_IMAGE))
@@ -110,6 +120,7 @@ function Assets.invalidate()
   local dropped = 0
   for _ in pairs(cache) do dropped = dropped + 1 end
   cache = {}
+  recoveries = {}
   for _, fn in ipairs(invalidators) do pcall(fn) end
   return dropped
 end
