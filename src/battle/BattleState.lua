@@ -38,6 +38,11 @@ local WideBattle = require("src.battle.WideBattle")
 local Gen3Battle = require("src.battle.Gen3Battle")
 local Gen4Battle = require("src.battle.Gen4Battle")
 local GameVersion = require("src.core.GameVersion")
+local Gen2BattleView = require('src.battle.Gen2BattleView')
+local Gen2Queue = require('src.battle.Gen2EventQueue')
+local BattleQueuePhase = require('src.battle.BattleQueuePhase')
+local MoveSelectionPhase = require('src.battle.MoveSelectionPhase')
+local Gen2Read = require('src.battle.Gen2BattleRead')
 
 -- FORWARD-DECLARED, because they are defined next to the other doubles
 -- helpers two thousand lines down but read from `stepHPDrain` up here.  A
@@ -981,7 +986,7 @@ end
 -- construction
 -- ---------------------------------------------------------------------
 
-local function makeBattler(data, mon, isPlayer, save)
+local function makeBattler(data, mon, isPlayer, save, battle)
   local def = require('src.pokemon.Gen4Forms').definition(data,mon)
   local badgeBoosts = data.constants and data.constants.badgeBoosts
   local badges = nil
@@ -993,7 +998,7 @@ local function makeBattler(data, mon, isPlayer, save)
       if save.inventory[row.badge] then badges[row.badge] = true end
     end
   end
-  return {
+  local battler = {
     mon = mon,
     def = def,
     name = mon.nickname or def.name,
@@ -1050,6 +1055,7 @@ local function makeBattler(data, mon, isPlayer, save)
     monAnim = (not isPlayer)
       and require("src.pokemon.MonAnim").new(data, mon.species) or nil,
   }
+  return Gen2Read.bind(battler, battle)
 end
 
 -- LinkBattle builds clamped copies with save=nil (no badge boosts); wild
@@ -1164,12 +1170,9 @@ local function newBattle(game)
   local self = setmetatable({}, BattleState)
   self.game = game
   self.data = game.data
-  -- On this engine the battle screen IS the battle logic object: there is no
-  -- separate model that a screen points at. Publishing the self-reference makes
-  -- that explicit so anything holding "a thing with a .battle" (the party menu
-  -- during a switch, mods walking the state stack) can treat the battle screen
-  -- and the party menu uniformly instead of special-casing this one screen.
-  self.battle = self
+  -- Gen2 exposes its actual party through a distinct live model; native
+  -- decisions, wrappers and presentation remain on this controller.
+  if GameVersion.isGen2() then Gen2BattleView.bind(self) else self.battle = self end
   -- BLACK AND WHITE: their move effects named for this engine, their species'
   -- abilities and their ruleset, before the ruleset below is chosen
   -- (src/battle/Gen5MoveEffects.lua; sets self.bw on a BW cache only)
@@ -1371,7 +1374,7 @@ function BattleState.newWild(game, species, level, opts)
     Logger.warn("wild battle with no healthy party; skipping")
     self.dead = true
   else
-    self.player = makeBattler(game.data, playerMon, true, game.save)
+    self.player = makeBattler(game.data, playerMon, true, game.save, self)
   end
   local form=opts and opts.form
   if form==nil and (game.data.constants or {}).gen==4 then
@@ -1428,7 +1431,7 @@ function BattleState.newWild(game, species, level, opts)
   if opts and opts.roamerSeed then
     Pokemon.applySeed(game.data, wild, opts.roamerSeed)
   end
-  self.enemy = makeBattler(game.data, wild, false)
+  self.enemy = makeBattler(game.data, wild, false, nil, self)
   require("src.battle.Gen2Wild").initialize(self, opts)
   if self.roamer then
     local kept = math.floor(tonumber(opts.roamerHP) or 0)
@@ -1552,9 +1555,9 @@ function BattleState.newPokedudeDemo(game, lesson)
   local self = newBattle(game)
   self.kind = "wild"
   self.noRun = true
-  self.player = makeBattler(game.data, party[1], true, game.save)
+  self.player = makeBattler(game.data, party[1], true, game.save, self)
   self.enemyParty = { pokedudeMon(game, def.enemy) }
-  self.enemy = makeBattler(game.data, self.enemyParty[1], false)
+  self.enemy = makeBattler(game.data, self.enemyParty[1], false, nil, self)
   self.introText = self:romText("_WildMonAppearedText", "Wild %s\nappeared!",
                                 self.enemy.name)
   self.demoName = "POKé DUDE"
@@ -1742,9 +1745,9 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
     Logger.warn("trainer battle with no healthy party; skipping")
     self.dead = true
   else
-    self.player = makeBattler(game.data, playerMon, true, game.save)
+    self.player = makeBattler(game.data, playerMon, true, game.save, self)
   end
-  self.enemy = makeBattler(game.data, self.enemyParty[1], false)
+  self.enemy = makeBattler(game.data, self.enemyParty[1], false, nil, self)
   self.aiUses = self:aiUsesFor() -- wAICount, reset per enemy mon
   markSeen(game, self.enemyParty[1].species, self.enemyParty[1])
 
@@ -1836,7 +1839,7 @@ function BattleState:sendOutSecondPair()
   if self:battlerAt(BattleState.POS.PLAYER_RIGHT) == nil and self.ally then
     local first = Party.firstHealthy(self.ally.party or {})
     if first then
-      local b = makeBattler(game.data, first, true, nil)
+      local b = makeBattler(game.data, first, true, nil, self)
       b.ally = true
       self:placeBattler(BattleState.POS.PLAYER_RIGHT, b)
     end
@@ -1847,7 +1850,7 @@ function BattleState:sendOutSecondPair()
     local second = Party.firstHealthy(game.save.party, lead)
     if second then
       self:placeBattler(BattleState.POS.PLAYER_RIGHT,
-                        makeBattler(game.data, second, true, game.save))
+                        makeBattler(game.data, second, true, game.save, self))
     elseif GameVersion.isGen4() then
       -- ...EXCEPT ON PLATINUM, where an escort makes it reachable: the
       -- partner flag forces hasTwoAliveMons, so a same-id double spots a
@@ -1874,7 +1877,7 @@ function BattleState:sendOutSecondPair()
     if party and party[2] then
       self.enemyIndexRight = 2
       self:placeBattler(BattleState.POS.OPPONENT_RIGHT,
-                        makeBattler(game.data, party[2], false))
+                        makeBattler(game.data, party[2], false, nil, self))
       markSeen(game, party[2].species, party[2])
     else
       -- a "double" trainer with one Pokemon fights alone on their side,
@@ -1932,7 +1935,7 @@ function BattleState:addOpponentTrainer(oppClass)
     -- the right-hand opponent is the SECOND trainer's lead, replacing
     -- whatever the first trainer's second Pokemon had been put there
     self:placeBattler(BattleState.POS.OPPONENT_RIGHT,
-                      makeBattler(self.game.data, self.enemyPartyB[1], false))
+                      makeBattler(self.game.data, self.enemyPartyB[1], false, nil, self))
     markSeen(self.game, self.enemyPartyB[1].species, self.enemyPartyB[1])
   end
   return true
@@ -2167,7 +2170,7 @@ function BattleState:makeOldManDemo(name)
   if not self.player then
     self.dead = false
     self.player = makeBattler(self.game.data,
-      Pokemon.new(self.game.data, self.enemy.mon.species, 5), true)
+      Pokemon.new(self.game.data, self.enemy.mon.species, 5), true, nil, self)
   end
 end
 
@@ -2246,6 +2249,7 @@ end
 -- ---------------------------------------------------------------------
 
 function BattleState:say(text)
+  if GameVersion.isGen2() then return self:push({kind='message',text=text}) end
   table.insert(self.queue, { text = text })
 end
 
@@ -2330,6 +2334,7 @@ end
 -- insert message right after the currently-executing queue item (the
 -- counter is reset by updateQueue before each fn item runs)
 function BattleState:sayNext(text)
+  if GameVersion.isGen2() then return Gen2Queue.afterCurrent(self,{kind='message',text=text}) end
   self.nextInsert = (self.nextInsert or 0) + 1
   table.insert(self.queue, self.nextInsert, { text = text })
 end
@@ -2447,6 +2452,7 @@ end
 --
 -- Returns true while animating.
 function BattleState:stepHPDrain()
+  if GameVersion.isGen2() then return require('src.battle.Gen2HpPresentation').drain(self) end
   local busy = false
   for _, b in activeBattlers(self) do
     if b and b.shownHP then
@@ -2559,8 +2565,27 @@ end
 -- keeps the control chars out of the glyph stream.  The box then types into
 -- a rolling 2-line window (self.shown) that scrolls when a 3rd line arrives
 -- instead of drawing it off-screen at y=144 (#216).
+function BattleState:stepHpAnim()
+  return require('src.battle.Gen2HpPresentation').step(self)
+end
+
+function BattleState:clearQueueMessage()
+  if GameVersion.isGen2() then self.message,self.messageTimer=nil,0 end
+end
+
+function BattleState:stepPresentationWait()
+  if self.waitFrames and self.waitFrames>0 then
+    self.waitFrames=self.waitFrames-1
+    return true
+  end
+  return false
+end
+
 function BattleState:startMessage(item)
   self.current = item
+  if GameVersion.isGen2() then
+    self.message,self.messageTimer=item.text or '',item.gen2Auto and 0 or 48
+  end
   self.lines = {}
   self.total = 0
   local text = item.text or ""
@@ -2604,11 +2629,8 @@ function BattleState:beginMsgLine()
   self.shown[#self.shown + 1] = {}
 end
 
-function BattleState:updateQueue()
-  if self.waitingUI then
-    if self.game.stack:top() ~= self then return true end
-    self.waitingUI = nil
-  end
+function BattleState:updateQueuePresentation(textOnly)
+  if textOnly then return self:stepPresentationWait() end
   -- HOENN'S PARTICLES TICK BEFORE THE QUEUE'S OWN HOLD, and the whole
   -- reason the animations looked broken is that they used to tick after it.
   --
@@ -2675,9 +2697,11 @@ function BattleState:updateQueue()
     -- "messages" with nothing on screen for good -- seen once in a long
     -- HGSS playthrough run, at the start of a double battle.
     self.waitingSoundT = (self.waitingSoundT or 0) + 1
-    if src and src.isPlaying and src:isPlaying() and self.waitingSoundT <= 240 then return true end
-    if self.waitingSoundT > 240 then
-      require("src.core.Logger").warn("battle: a sound never finished -- stopped waiting after 240 frames")
+    local maximum=type(src)=='table' and src.maxWait or 240
+    if src and src.isPlaying and src:isPlaying() and self.waitingSoundT <= maximum then return true end
+    if self.waitingSoundT > maximum then
+      if type(src)=='table' and src.onTimeout then src.onTimeout() end
+      require("src.core.Logger").warn("battle: a sound never finished -- stopped waiting after %d frames",maximum)
     end
     self.waitingSound, self.waitingSoundT = nil, nil
   end
@@ -2685,6 +2709,7 @@ function BattleState:updateQueue()
   if self.draining then
     if self:stepHPDrain() then return true end
     self.draining = nil
+    if GameVersion.isGen2() then require('src.battle.Gen2HpPresentation').retire(self) end
     if self.player then self.player.drainFloor = nil end
     if self.enemy then self.enemy.drainFloor = nil end
   end
@@ -2693,7 +2718,276 @@ function BattleState:updateQueue()
     if self:stepExpBar() then return true end
     self.expFilling = nil
   end
-  if self.animPlaying then
+  return false
+end
+
+local function completeQueue(self)
+  if self.afterQueue=='menu' then
+    self.phase='menu';self:clearQueueMessage()
+  elseif self.afterQueue=='moveSelect' then
+    self.phase=MoveSelectionPhase.name();self:clearQueueMessage()
+  elseif self.afterQueue=='finish' then self:finish() end
+end
+
+-- The actual dequeue boundary, after native presentation gates release it.
+function BattleState:advanceQueue()
+  local item = table.remove(self.queue, 1)
+  while item and item.nativeGen2Event do
+    item=Gen2Queue.activate(self,item)
+    if item==nil then return true end
+    if item==false then return self:advanceQueue() else break end
+  end
+  if not item then
+    self.nextInsert=nil
+    if GameVersion.isGen2() then completeQueue(self) end
+    return false
+  end
+  if item.fn then
+    self.nextInsert = 0 -- sayNext inserts right after this item
+    item.fn()
+    self.nextInsert=nil
+    self.current = nil
+    return true
+  end
+  if item.ui then
+    self.waitingUI = true
+    if GameVersion.isGen2() then self.phase='submenu' end
+    self.game.stack:push(item.ui())
+    return true
+  end
+  if item.drain then
+    self.draining = true
+    if GameVersion.isGen2() then self._gen2HpDrainBattler=item.battler end
+    if item.battler then item.battler.drainFloor = item.stopAt end
+    return true
+  end
+  if item.expBar then
+    self.expFilling = true
+    return true
+  end
+  if item.wait then
+    self.waitFrames = item.wait
+    return true
+  end
+  if item.waitSound then
+    -- the source is fetched now, not when the row was queued, so the
+    -- act() that started the sound has already run
+    self.waitingSound = item.waitSound()
+    return true
+  end
+  if item.mimicSelect then
+    -- pause the queue on Mimic's copy menu (MoveSelectionMenu with
+    -- wMoveMenuType = 1 lists the enemy's moves; cursor starts on 1)
+    local ctx = item.mimicSelect
+    local rows = {}
+    for i, m in ipairs(ctx.target.curMoves) do
+      if m.id and m.pp ~= nil then rows[#rows + 1] = { slot = i, id = m.id } end
+    end
+    self.mimicMoves = rows
+    self.mimicIndex = 1
+    self.mimicCtx = ctx
+    self.phase = "mimicSelect"
+    return true
+  end
+  -- animation queue rows: play the move sound and start the
+  -- subanimation (or just the coarse fx when animations are off).
+  -- item.hit carries the target's blink + damage sound, applied when
+  -- the animation ends (hitRow rows carry a hit with no animation --
+  -- thrash/rage continuation turns that skip the announcement).
+  if item.anim or item.hitRow then
+    -- PlayMoveAnimation writes wAnimationID, calls Delay3, and only then
+    -- jumps to MoveAnimation (core.asm:6635-6640), so three frames pass
+    -- between the move's announcement and the first frame of its
+    -- animation.  Put the row back and pay that first.
+    if item.anim and not item.animDelayed then
+      item.animDelayed = true
+      table.insert(self.queue, 1, item)
+      self.waitFrames = Timing.MOVE_ANIM_PRE
+      return true
+    end
+    local mdef = item.anim and self.data.moves[item.anim]
+    local anim = mdef and mdef.anim
+    if item.anim == "POOF_ANIM" then
+      -- the send-out poof plays SFX_BALL_POOF
+      require("src.core.Sound").play(self.data, "Ball_Poof")
+    elseif item.anim == "HIDEPIC_ANIM" then
+      self.enemyHidden = true    -- SE_HIDE_ENEMY_MON_PIC
+    elseif item.anim == "SHOWPIC_ANIM" then
+      self.enemyHidden = false   -- SE_SHOW_ENEMY_MON_PIC
+    end
+    -- ball/send-out anims ignore the OPTIONS toggle: PlayMoveAnimation
+    -- short-circuits to TossBallAnimation before its wOptions check
+    -- (engine/battle/animations.asm:415)
+    if item.anim and (self:animationsOn() or BALL_ANIMS[item.anim]) then
+      -- HOENN'S OWN ANIMATION, when the move has one.  It does not take the
+      -- animPlaying path: that one belongs to the Game Boy players, which
+      -- carry their own per-row sounds, and this one does not -- so the
+      -- single-sound fallback below still runs and the move both looks and
+      -- sounds like itself.  The queue is held with waitFrames instead, for
+      -- as long as the script's own delays plus the particles' life.
+      -- SINNOH FIRST, because `gen4Layout()` and `gen3Layout()` are
+      -- different questions and a Gen 4 battle must not fall into Emerald's
+      -- animator -- which would look up a Hoenn move index in a Hoenn table
+      -- and play whatever happened to be there.
+      -- BLACK AND WHITE'S player stands a double's attacker and defender
+      -- on their own slots (Gen5MoveAnimPlayer:setLayout)
+      if self.gen4Anim and self.gen4Anim.setLayout then
+        pcall(self.gen4Anim.setLayout, self.gen4Anim, self:isDouble() and "double" or "single",
+              item.attackerPosition, item.targetPosition)
+      end
+      if self:gen4Layout() and self.gen4Anim and item.anim
+         and self.gen4Anim:duration(item.anim, item.attackerIsPlayer) > 0 then
+        self.gen4AnimPlaying = true
+        -- WHICH SIDE IS ATTACKING, for the sound seam: a cry event names the side
+        -- and this is what turns that into a Pokemon. Set before the animation
+        -- runs, because `duration` above has already started it.
+        self.gen4AnimAttackerIsPlayer = item.attackerIsPlayer and true or false
+        -- `duration` RAN the program to measure this and then restarted it,
+        -- so the number is the program's own length rather than an estimate,
+        -- and the queue waits exactly that long.
+        self.waitFrames = math.max(self.waitFrames or 0,
+          self.gen4Anim:duration(item.anim, item.attackerIsPlayer))
+      -- MAIN'S WIDER GEN 3 SIGNATURE, kept: `has`/`start` now take the
+      -- animation context and both battler positions. The Gen 4 arm above is
+      -- unaffected -- it never reaches this call -- so the two merge by
+      -- keeping the branch from Platinum and the arguments from main.
+      elseif self.gen3Anim and self.gen3Anim:has(item.anim, item.animContext)
+         and self.gen3Anim:start(item.anim, item.attackerIsPlayer,
+                                 item.attackerPosition, item.targetPosition,
+                                 item.animContext, self) then
+        self.gen3AnimPlaying = true
+        self.waitFrames = math.max(self.waitFrames or 0,
+                                   self.gen3Anim.total or 0)
+      elseif self.animPlayer then
+        local ok, started = pcall(self.animPlayer.start, self.animPlayer,
+                         item.anim, item.attackerIsPlayer,
+                         (item.shakes or item.ball)
+                           and { shakes = item.shakes, ball = item.ball,
+                                 caught = item.caught,
+                                 -- Gen 2's toss script branches on the
+                                 -- ball's item index (wBattleAnimParam)
+                                 ballIndex = item.ball
+                                   and (self:itemDef(item.ball) or {}).index
+                                   or nil,
+                                 ballFlicker = item.ball
+                                   and self:ballFlicker(item.ball) or nil }
+                           or nil)
+        -- a player that reports no data for the move (Gen 2 returns
+        -- false) falls through to the single-sound path below
+        self.animPlaying = ok and started ~= false
+      end
+      self.fx = self.fx or {}
+      -- HOW LONG THE COARSE REACTION LASTS.
+      --
+      -- The reaction is a class this port chose; its LENGTH is the move's
+      -- own. Every one of these scripts still walks its delays, and the
+      -- import carries that total across (`anim.duration`), so EARTHQUAKE
+      -- heaves for as long as its script runs and HARDEN's flourish is over
+      -- in its own handful of frames. The old fixed 24 and 16 are what a
+      -- dataset imported before that stamp still gets.
+      local coarse = anim and tonumber(anim.duration) or nil
+      -- A REACTION HAS TO LAST LONG ENOUGH TO BE ONE.  Thirteen of the
+      -- twenty-five carry a length; the shortest of them is a single frame,
+      -- because everything that script does happens inside its task and the
+      -- delays it walks are almost none. One frame of shake is not a
+      -- reaction, it is a glitch, so below one visible beat the port's own
+      -- minimum stands.
+      if coarse and coarse < BattleState.COARSE_ANIM_MIN then coarse = nil end
+      -- THE HEAVE FIRST, because it is the cartridge's own numbers and
+      -- the wobble below is this port's.  EARTHQUAKE swings the field
+      -- thirteen pixels fifty times, every second frame; the coarse
+      -- fallback swung it two, for twenty-four frames.  The program is
+      -- the same one the SE-driven shakes already run.
+      if anim and anim.heave and not self.animPlaying then
+        local h = anim.heave
+        local amplitude = tonumber(h.amplitude) or 0
+        local every = math.max(1, tonumber(h.every) or 2)
+        local swings = math.max(1, tonumber(h.swings) or 1)
+        if amplitude > 0 then
+          local prog = {}
+          for i = 0, swings - 1 do
+            prog[#prog + 1] = { dx = (i % 2 == 0) and amplitude
+                                     or -amplitude, frames = every }
+          end
+          -- ...and back to where it started, as the task's own last act is
+          -- to put the register back
+          prog[#prog + 1] = { dx = 0, frames = every }
+          self.fx.shakeProg = prog
+          self.waitFrames = math.max(self.waitFrames or 0,
+                                     (swings + 1) * every)
+        end
+      end
+      if anim and anim.shake and not self.animPlaying then
+        self.fx.shake = coarse or 24
+      end
+      if anim and anim.flash and not self.animPlaying then
+        self.fx.flash = coarse or 16
+      end
+      -- IN HOENN the coarse reaction is the move's whole animation, not a
+      -- consolation for one that could not play: the moves that get it are
+      -- the ones whose every pixel is drawn by a task -- HARDEN, AGILITY,
+      -- EARTHQUAKE -- and there is nothing else coming.  So the queue waits
+      -- for it, the way it waits for the particles; on a Game Boy dataset
+      -- (no Gen 3 player at all) the timing is untouched.
+      if self.gen3Anim and not self.gen3AnimPlaying and anim
+         and (anim.shake or anim.flash) and not self.animPlaying then
+        self.waitFrames = math.max(self.waitFrames or 0,
+                                   coarse or (anim.shake and 24 or 16))
+      end
+    end
+    if self.animPlaying then
+      -- the animation rows carry their own sounds (PlayAnimation
+      -- plays each row's MoveSoundTable entry with its pitch/tempo
+      -- modifiers); which side the pic effects target follows the
+      -- attacker (hWhoseTurn)
+      self.animName = item.anim
+      self.animAttackerIsPlayer = item.attackerIsPlayer
+      self:resetPicFx()
+      for _, ev in ipairs(self.animPlayer:pollEffects()) do
+        self:applyAnimEffect(ev) -- frame-0 rows (first sound/effect)
+      end
+      self.pendingHit = item.hit
+    else
+      -- no subanimation player: keep the single-sound fallback (with
+      -- the move's pitch/tempo modifiers; GROWL/ROAR play the
+      -- attacker's cry -- GetMoveSound/IsCryMove)
+      if item.anim == "GROWL" or item.anim == "ROAR" then
+        local attacker = item.attackerPosition ~= nil
+                         and self:battlerAt(item.attackerPosition)
+                         or (item.attackerIsPlayer and self.player or self.enemy)
+        if attacker then
+          require("src.core.Sound").playMoveCry(self.data, attacker.mon.species,
+                                                 anim and anim.tempo)
+        end
+      elseif anim and anim.sound then
+        local Sound = require("src.core.Sound")
+        if Sound.playMove then
+          Sound.playMove(self.data, anim)
+        else
+          Sound.play(self.data, anim.sound)
+        end
+      end
+      if item.hit then
+        self:applyHitFx(item.hit)
+      end
+    end
+    self.current = nil
+    return true
+  end
+  self:startMessage(item)
+  return true
+end
+
+function BattleState:updateQueue()
+  if GameVersion.isGen2() and self.phase=='messages' then self.phase=BattleQueuePhase.name() end
+  if self.waitingUI then
+    if self.game.stack:top() ~= self then return true end
+    self.waitingUI = nil
+    if GameVersion.isGen2() and self.phase=='submenu' then self.phase=BattleQueuePhase.name() end
+  end
+  local typing=Gen2Queue.typing(self)
+  if self:updateQueuePresentation(typing) then return true end
+  if self.animPlaying and not typing then
     self.animPlayer:update()
     if self.animPlayer.pollEffects and self.applyAnimEffect then
       for _, ev in ipairs(self.animPlayer:pollEffects()) do
@@ -2717,248 +3011,28 @@ function BattleState:updateQueue()
       -- again.  Dig/Fly's charge hide and a genuinely invulnerable battler
       -- are the two that must survive, same as in resetPicFx.
       self:restoreHiddenPics()
+      if GameVersion.isGen2() and self:startPendingAfterAnim() then return true end
       -- the target's hit blink + damage sound follow the animation
       -- (pokered plays them after PlayMoveAnimation returns)
       if self.pendingHit then
-        self:applyHitFx(self.pendingHit)
+        if not (GameVersion.isGen2() and self.afterAnimPlayed) then
+          self:applyHitFx(self.pendingHit)
+        end
         self.pendingHit = nil
       end
+      if GameVersion.isGen2() and not Gen2Queue.isCurrent(self) then self.afterAnimPlayed=nil end
     end
     return true
   end
   if not self.current then
-    local item = table.remove(self.queue, 1)
-    if not item then return false end
-    if item.fn then
-      self.nextInsert = 0 -- sayNext inserts right after this item
-      item.fn()
-      self.current = nil
-      return true
+    -- Gen2 screen decorators may intentionally return no value. Other
+    -- generations keep their existing native queue completion result.
+    local hadEvent=self.queue[1]~=nil
+    local busy=self:advanceQueue()
+    if not self.current then
+      if GameVersion.isGen2() then return hadEvent end
+      return busy
     end
-    if item.ui then
-      self.waitingUI = true
-      self.game.stack:push(item.ui())
-      return true
-    end
-    if item.drain then
-      self.draining = true
-      if item.battler then item.battler.drainFloor = item.stopAt end
-      return true
-    end
-    if item.expBar then
-      self.expFilling = true
-      return true
-    end
-    if item.wait then
-      self.waitFrames = item.wait
-      return true
-    end
-    if item.waitSound then
-      -- the source is fetched now, not when the row was queued, so the
-      -- act() that started the sound has already run
-      self.waitingSound = item.waitSound()
-      return true
-    end
-    if item.mimicSelect then
-      -- pause the queue on Mimic's copy menu (MoveSelectionMenu with
-      -- wMoveMenuType = 1 lists the enemy's moves; cursor starts on 1)
-      local ctx = item.mimicSelect
-      local rows = {}
-      for i, m in ipairs(ctx.target.curMoves) do
-        if m.id and m.pp ~= nil then rows[#rows + 1] = { slot = i, id = m.id } end
-      end
-      self.mimicMoves = rows
-      self.mimicIndex = 1
-      self.mimicCtx = ctx
-      self.phase = "mimicSelect"
-      return true
-    end
-    -- animation queue rows: play the move sound and start the
-    -- subanimation (or just the coarse fx when animations are off).
-    -- item.hit carries the target's blink + damage sound, applied when
-    -- the animation ends (hitRow rows carry a hit with no animation --
-    -- thrash/rage continuation turns that skip the announcement).
-    if item.anim or item.hitRow then
-      -- PlayMoveAnimation writes wAnimationID, calls Delay3, and only then
-      -- jumps to MoveAnimation (core.asm:6635-6640), so three frames pass
-      -- between the move's announcement and the first frame of its
-      -- animation.  Put the row back and pay that first.
-      if item.anim and not item.animDelayed then
-        item.animDelayed = true
-        table.insert(self.queue, 1, item)
-        self.waitFrames = Timing.MOVE_ANIM_PRE
-        return true
-      end
-      local mdef = item.anim and self.data.moves[item.anim]
-      local anim = mdef and mdef.anim
-      if item.anim == "POOF_ANIM" then
-        -- the send-out poof plays SFX_BALL_POOF
-        require("src.core.Sound").play(self.data, "Ball_Poof")
-      elseif item.anim == "HIDEPIC_ANIM" then
-        self.enemyHidden = true    -- SE_HIDE_ENEMY_MON_PIC
-      elseif item.anim == "SHOWPIC_ANIM" then
-        self.enemyHidden = false   -- SE_SHOW_ENEMY_MON_PIC
-      end
-      -- ball/send-out anims ignore the OPTIONS toggle: PlayMoveAnimation
-      -- short-circuits to TossBallAnimation before its wOptions check
-      -- (engine/battle/animations.asm:415)
-      if item.anim and (self:animationsOn() or BALL_ANIMS[item.anim]) then
-        -- HOENN'S OWN ANIMATION, when the move has one.  It does not take the
-        -- animPlaying path: that one belongs to the Game Boy players, which
-        -- carry their own per-row sounds, and this one does not -- so the
-        -- single-sound fallback below still runs and the move both looks and
-        -- sounds like itself.  The queue is held with waitFrames instead, for
-        -- as long as the script's own delays plus the particles' life.
-        -- SINNOH FIRST, because `gen4Layout()` and `gen3Layout()` are
-        -- different questions and a Gen 4 battle must not fall into Emerald's
-        -- animator -- which would look up a Hoenn move index in a Hoenn table
-        -- and play whatever happened to be there.
-        -- BLACK AND WHITE'S player stands a double's attacker and defender
-        -- on their own slots (Gen5MoveAnimPlayer:setLayout)
-        if self.gen4Anim and self.gen4Anim.setLayout then
-          pcall(self.gen4Anim.setLayout, self.gen4Anim, self:isDouble() and "double" or "single",
-                item.attackerPosition, item.targetPosition)
-        end
-        if self:gen4Layout() and self.gen4Anim and item.anim
-           and self.gen4Anim:duration(item.anim, item.attackerIsPlayer) > 0 then
-          self.gen4AnimPlaying = true
-          -- WHICH SIDE IS ATTACKING, for the sound seam: a cry event names the side
-          -- and this is what turns that into a Pokemon. Set before the animation
-          -- runs, because `duration` above has already started it.
-          self.gen4AnimAttackerIsPlayer = item.attackerIsPlayer and true or false
-          -- `duration` RAN the program to measure this and then restarted it,
-          -- so the number is the program's own length rather than an estimate,
-          -- and the queue waits exactly that long.
-          self.waitFrames = math.max(self.waitFrames or 0,
-            self.gen4Anim:duration(item.anim, item.attackerIsPlayer))
-        -- MAIN'S WIDER GEN 3 SIGNATURE, kept: `has`/`start` now take the
-        -- animation context and both battler positions. The Gen 4 arm above is
-        -- unaffected -- it never reaches this call -- so the two merge by
-        -- keeping the branch from Platinum and the arguments from main.
-        elseif self.gen3Anim and self.gen3Anim:has(item.anim, item.animContext)
-           and self.gen3Anim:start(item.anim, item.attackerIsPlayer,
-                                   item.attackerPosition, item.targetPosition,
-                                   item.animContext, self) then
-          self.gen3AnimPlaying = true
-          self.waitFrames = math.max(self.waitFrames or 0,
-                                     self.gen3Anim.total or 0)
-        elseif self.animPlayer then
-          local ok, started = pcall(self.animPlayer.start, self.animPlayer,
-                           item.anim, item.attackerIsPlayer,
-                           (item.shakes or item.ball)
-                             and { shakes = item.shakes, ball = item.ball,
-                                   caught = item.caught,
-                                   -- Gen 2's toss script branches on the
-                                   -- ball's item index (wBattleAnimParam)
-                                   ballIndex = item.ball
-                                     and (self:itemDef(item.ball) or {}).index
-                                     or nil,
-                                   ballFlicker = item.ball
-                                     and self:ballFlicker(item.ball) or nil }
-                             or nil)
-          -- a player that reports no data for the move (Gen 2 returns
-          -- false) falls through to the single-sound path below
-          self.animPlaying = ok and started ~= false
-        end
-        self.fx = self.fx or {}
-        -- HOW LONG THE COARSE REACTION LASTS.
-        --
-        -- The reaction is a class this port chose; its LENGTH is the move's
-        -- own. Every one of these scripts still walks its delays, and the
-        -- import carries that total across (`anim.duration`), so EARTHQUAKE
-        -- heaves for as long as its script runs and HARDEN's flourish is over
-        -- in its own handful of frames. The old fixed 24 and 16 are what a
-        -- dataset imported before that stamp still gets.
-        local coarse = anim and tonumber(anim.duration) or nil
-        -- A REACTION HAS TO LAST LONG ENOUGH TO BE ONE.  Thirteen of the
-        -- twenty-five carry a length; the shortest of them is a single frame,
-        -- because everything that script does happens inside its task and the
-        -- delays it walks are almost none. One frame of shake is not a
-        -- reaction, it is a glitch, so below one visible beat the port's own
-        -- minimum stands.
-        if coarse and coarse < BattleState.COARSE_ANIM_MIN then coarse = nil end
-        -- THE HEAVE FIRST, because it is the cartridge's own numbers and
-        -- the wobble below is this port's.  EARTHQUAKE swings the field
-        -- thirteen pixels fifty times, every second frame; the coarse
-        -- fallback swung it two, for twenty-four frames.  The program is
-        -- the same one the SE-driven shakes already run.
-        if anim and anim.heave and not self.animPlaying then
-          local h = anim.heave
-          local amplitude = tonumber(h.amplitude) or 0
-          local every = math.max(1, tonumber(h.every) or 2)
-          local swings = math.max(1, tonumber(h.swings) or 1)
-          if amplitude > 0 then
-            local prog = {}
-            for i = 0, swings - 1 do
-              prog[#prog + 1] = { dx = (i % 2 == 0) and amplitude
-                                       or -amplitude, frames = every }
-            end
-            -- ...and back to where it started, as the task's own last act is
-            -- to put the register back
-            prog[#prog + 1] = { dx = 0, frames = every }
-            self.fx.shakeProg = prog
-            self.waitFrames = math.max(self.waitFrames or 0,
-                                       (swings + 1) * every)
-          end
-        end
-        if anim and anim.shake and not self.animPlaying then
-          self.fx.shake = coarse or 24
-        end
-        if anim and anim.flash and not self.animPlaying then
-          self.fx.flash = coarse or 16
-        end
-        -- IN HOENN the coarse reaction is the move's whole animation, not a
-        -- consolation for one that could not play: the moves that get it are
-        -- the ones whose every pixel is drawn by a task -- HARDEN, AGILITY,
-        -- EARTHQUAKE -- and there is nothing else coming.  So the queue waits
-        -- for it, the way it waits for the particles; on a Game Boy dataset
-        -- (no Gen 3 player at all) the timing is untouched.
-        if self.gen3Anim and not self.gen3AnimPlaying and anim
-           and (anim.shake or anim.flash) and not self.animPlaying then
-          self.waitFrames = math.max(self.waitFrames or 0,
-                                     coarse or (anim.shake and 24 or 16))
-        end
-      end
-      if self.animPlaying then
-        -- the animation rows carry their own sounds (PlayAnimation
-        -- plays each row's MoveSoundTable entry with its pitch/tempo
-        -- modifiers); which side the pic effects target follows the
-        -- attacker (hWhoseTurn)
-        self.animName = item.anim
-        self.animAttackerIsPlayer = item.attackerIsPlayer
-        self:resetPicFx()
-        for _, ev in ipairs(self.animPlayer:pollEffects()) do
-          self:applyAnimEffect(ev) -- frame-0 rows (first sound/effect)
-        end
-        self.pendingHit = item.hit
-      else
-        -- no subanimation player: keep the single-sound fallback (with
-        -- the move's pitch/tempo modifiers; GROWL/ROAR play the
-        -- attacker's cry -- GetMoveSound/IsCryMove)
-        if item.anim == "GROWL" or item.anim == "ROAR" then
-          local attacker = item.attackerPosition ~= nil
-                           and self:battlerAt(item.attackerPosition)
-                           or (item.attackerIsPlayer and self.player or self.enemy)
-          if attacker then
-            require("src.core.Sound").playMoveCry(self.data, attacker.mon.species,
-                                                   anim and anim.tempo)
-          end
-        elseif anim and anim.sound then
-          local Sound = require("src.core.Sound")
-          if Sound.playMove then
-            Sound.playMove(self.data, anim)
-          else
-            Sound.play(self.data, anim.sound)
-          end
-        end
-        if item.hit then
-          self:applyHitFx(item.hit)
-        end
-      end
-      self.current = nil
-      return true
-    end
-    self:startMessage(item)
   end
   local input = self.game.input
   -- a \v CONT wait holds the box until A/B, then scrolls the next line in
@@ -3012,6 +3086,13 @@ function BattleState:updateQueue()
     end
   else
     local item = self.current
+    if item and item.gen2Auto then
+      if item.gen2Pause and not item.gen2Paused then
+        item.gen2Paused=true;self.waitFrames=item.gen2Pause;return true
+      end
+      self.current=nil;self.msgPrompt=nil;self.messageTimer=0
+      return true
+    end
     -- TrainerAboutToUseText ends in `done` then DisplayTextBoxID: YES/NO
     -- overlays the still-visible "Will … change POKéMON?" page.
     if item and item.choice and not item.choiceOpen then
@@ -3022,6 +3103,7 @@ function BattleState:updateQueue()
       self.game.stack:push(ChoiceBox.new(self.game, function(yes)
         local fn = item.choice
         battle.current = nil
+        if GameVersion.isGen2() then battle.messageTimer=0 end
         fn(yes)
       end))
       return true
@@ -3047,6 +3129,7 @@ function BattleState:updateQueue()
       elseif input:wasPressed("a") or input:wasPressed("b") then
         self.msgPrompt = nil
         self.current = nil
+        if GameVersion.isGen2() then self.messageTimer=0 end
       end
     end
   end
@@ -3432,7 +3515,10 @@ end
 function BattleState:placeBattler(pos, battler)
   local side, flank = slotOf(pos)
   self.sides[side].battlers[flank] = battler
-  if battler then battler.position = pos end
+  if battler then
+    battler.position = pos
+    Gen2Read.bind(battler, self)
+  end
   if flank == 1 then
     if side == 1 then self.player = battler else self.enemy = battler end
   end
@@ -3552,6 +3638,9 @@ function BattleState:syncSides()
     if pr then pr.position = BattleState.POS.PLAYER_RIGHT end
     if orr then orr.position = BattleState.POS.OPPONENT_RIGHT end
   end
+  for _, battler in activeBattlers(self) do
+    Gen2Read.bind(battler, self)
+  end
 end
 
 -- IS THIS SIDE STILL ARRIVING?
@@ -3616,7 +3705,8 @@ function BattleState:enter()
     self.result = "lose"
     self.game.stack:pop()
     require("src.core.Music").restoreMap(self.data)
-    Runtime.emit("battle.ended", { battle = self, result = "lose", skipped = true })
+    if GameVersion.isGen2() then self.battle:endBattle('lose', {skipped=true})
+    else Runtime.emit("battle.ended", { battle = self, result = "lose", skipped = true }) end
     local onFinish = self.onFinish
     local function blackedOut()
       if onFinish then onFinish("lose") end
@@ -3869,7 +3959,7 @@ function BattleState:enter()
     end)
     self:markParticipant()
   end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:syncSides()
   -- THE FIRST SEND-OUT COUNTS TOO.  ABILITYEFFECT_ON_SWITCHIN runs the
@@ -4233,7 +4323,7 @@ function BattleState:touchpressed(_, px, py)
   if not (GameVersion.isGen4() or GameVersion.isGen5()) then return false end
   local over
   if self.phase == "menu" then over = "action"
-  elseif self.phase == "moveSelect" then over = "moves"
+  elseif MoveSelectionPhase.active(self) then over = "moves"
   elseif self.phase == "targetSelect" then over = "target"
   else return false end
 
@@ -4319,7 +4409,7 @@ function BattleState:update(dt)
   -- cartridges have no second screen and SecondScreen.mode answers "off" for
   -- them regardless, but the gate says so where a reader will look.
   if input and input:wasPressed("l") and self:gen4Layout()
-     and (self.phase == "menu" or self.phase == "moveSelect") then
+     and (self.phase == "menu" or MoveSelectionPhase.active(self)) then
     local okSS, SecondScreen = pcall(require, "src.ui.SecondScreen")
     if okSS and SecondScreen.mode(self.game) ~= "off" then
       SecondScreen.toggleStow(self.game)
@@ -4335,7 +4425,7 @@ function BattleState:update(dt)
   if self.gen4TouchPress then
     self.gen4TouchPress = nil
   elseif input and self:gen4Layout() and not self.gen4CursorActive
-     and (self.phase == "menu" or self.phase == "moveSelect" or self.phase == "targetSelect") then
+     and (self.phase == "menu" or MoveSelectionPhase.active(self) or self.phase == "targetSelect") then
     local presentation = Gen4Battle.menuPresentation(self, self.phase)
     if presentation == "bottom" then
       for _, k in ipairs({ "a", "b", "x", "y", "up", "down", "left", "right" }) do
@@ -4360,7 +4450,7 @@ function BattleState:update(dt)
     end
   end
 
-  if self.phase == "messages" then
+  if BattleQueuePhase.active(self) or (GameVersion.isGen2() and self.phase=="submenu") then
     -- Nothing queued starts until the silhouettes have finished sliding in:
     -- SlidePlayerAndEnemySilhouettesOnScreen ends with `jpfar
     -- PrintBeginningBattleText` (engine/battle/core.asm:100), so the enemy
@@ -4370,12 +4460,8 @@ function BattleState:update(dt)
     -- counts introSlide down, and a headless caller driving updateQueue on
     -- its own has no slide to wait for.
     if (self.introSlide or 0) > 0 then return end
-    if not self:updateQueue() then
-      if self.afterQueue == "menu" then
-        self.phase = "menu"
-      elseif self.afterQueue == "finish" then
-        self:finish()
-      end
+    if not self:updateQueue() and not GameVersion.isGen2() then
+      completeQueue(self)
     end
     return
   end
@@ -4404,7 +4490,7 @@ function BattleState:update(dt)
     self:updatePokedudeMenu()
     return
   end
-  if self.pokedudeDemo and self.phase == "moveSelect" then
+  if self.pokedudeDemo and MoveSelectionPhase.active(self) then
     self:updatePokedudeMoveSelect()
     return
   end
@@ -4448,7 +4534,7 @@ function BattleState:update(dt)
   if self.phase == "menu" and self.safari then
     if self.safari.balls <= 0 then
       self:say(Strings("PA: You're out of\nSAFARI BALLs!\nGame over!"))
-      self.phase = "messages"
+      self.phase = BattleQueuePhase.name()
       self.result = "run"
       self.afterQueue = "finish"
       return
@@ -4569,7 +4655,7 @@ function BattleState:update(dt)
       end
       if choice == "fight" and self.ghost then
         self:say(Strings("%s is too\nscared to move!", self.player.name))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
         self:act(function()
           self:executeAction(self.enemy, self.player, self:enemyAction())
@@ -4590,7 +4676,7 @@ function BattleState:update(dt)
           self:chooseAction({ id = "STRUGGLE", pp = 1, struggle = true })
           return
         end
-        self.phase = "moveSelect"
+        self.phase = MoveSelectionPhase.name()
         self.moveIndex = math.min(self.moveIndex, #who.curMoves)
         self.moveSwapIndex = nil
       elseif choice == "run" then
@@ -4604,7 +4690,7 @@ function BattleState:update(dt)
     return
   end
 
-  if self.phase == "moveSelect" then
+  if MoveSelectionPhase.active(self) then
     local chooser = self:menuBattler()
     local moves = chooser.curMoves
     -- The wide layouts lay the four slots out as a 2x2 grid, so all four
@@ -4637,7 +4723,7 @@ function BattleState:update(dt)
       local mvDef = mv and self.data.moves[mv.id]
       if chooser.disabledSlot == self.moveIndex then
         self:say(self:romText("_MoveDisabledText", "The move is\ndisabled!"))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       -- TAUNT and TORMENT refuse the move at SELECTION rather than after the
       -- fact, the way DISABLE already does, so the player is never told to
@@ -4645,26 +4731,26 @@ function BattleState:update(dt)
       elseif self.bw and require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true) then
         -- BLACK AND WHITE: the Choice lock, Imprison, Gravity, Heal Block
         self:say(require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif self:tauntBlocks(chooser, mvDef) then
         self:say(Strings("%s can't use\n%s after the\ntaunt!",
                          chooser.name, mvDef and mvDef.name or mv.id))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif self:tormentBlocks(chooser, mvDef) then
         self:say(Strings("%s can't use the\nsame move twice in\na row due to the\nTORMENT!",
                          chooser.name))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif self.g4fx and require("src.battle.Gen4MoveEffects").menuRefusal(self, chooser, mvDef) then
         -- PLATINUM / HGSS: Gravity and Heal Block (BattleSystem_CanUseMove)
         self:say(require("src.battle.Gen4MoveEffects").menuRefusal(self, chooser, mvDef))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif mv.pp <= 0 then
         self:say(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif Targeting.needsChoice(self, self:choosingBattler(), mvDef) then
         -- WHICH OF THE TWO, when the move takes one and there are two.
@@ -4691,7 +4777,7 @@ function BattleState:update(dt)
   if self.phase == "targetSelect" then
     local list = self.targetChoices or {}
     if #list <= 1 then
-      self.phase = "moveSelect"
+      self.phase = MoveSelectionPhase.name()
       return
     end
     if input:wasPressed("left") or input:wasPressed("up") then
@@ -4700,7 +4786,7 @@ function BattleState:update(dt)
       self.targetIndex = self.targetIndex < #list and self.targetIndex + 1 or 1
     elseif input:wasPressed("b") then
       self.pendingMove, self.targetChoices = nil, nil
-      self.phase = "moveSelect"
+      self.phase = MoveSelectionPhase.name()
     elseif input:wasPressed("a") then
       local mv = self.pendingMove
       local pick = list[self.targetIndex]
@@ -4732,7 +4818,7 @@ function BattleState:update(dt)
       local pick = moves[self.mimicIndex]
       local ctx = self.mimicCtx
       self.mimicMoves, self.mimicCtx = nil, nil
-      self.phase = "messages"
+      self.phase = BattleQueuePhase.name()
       self.nextInsert = 0 -- the copy's anim + text go to the queue head
       self:applyMimic(ctx.user, ctx.target, ctx.moveInst, pick.slot)
     end
@@ -4873,7 +4959,7 @@ function BattleState:gen3TutorialBag()
     return true
   end
   if require("src.core.GameVersion").isGen4() then
-    self.phase, self.afterQueue = "messages", "menu"
+    self.phase, self.afterQueue = BattleQueuePhase.name(), "menu"
     self:ui(function()
       local bag = require("src.ui.Gen4BagMenu").new(self.game, { pocket = "POKé BALLS" })
       bag.rows = { { id = 4, label = "POKé BALL", qty = 20 } }
@@ -4895,7 +4981,7 @@ function BattleState:gen3TutorialBag()
     return false
   end
   local game = self.game
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:ui(function()
     local bag
@@ -4922,7 +5008,7 @@ function BattleState:openOldManBag()
   if self:gen3TutorialBag() then return end
   local ListMenu = require("src.ui.ListMenu")
   local game = self.game
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:ui(function()
     local list
@@ -4956,7 +5042,7 @@ end
 -- because DisplayBattleMenu swapped wPlayerName (core.asm:2024-2037);
 -- no ball is consumed (.done returns early, :576-578).
 function BattleState:oldManThrow()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "finish"
   self.result = "run" -- nothing is kept; wBattleResult only ends the demo
   local DsDemo = require("src.battle.CatchTutorialDemo")
@@ -5002,7 +5088,7 @@ function BattleState:queuePokedudeVoices(indices)
   end
   if queued then
     pd.timer = 0
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     self.afterQueue = "menu"
   end
   return queued
@@ -5190,7 +5276,7 @@ function BattleState:updatePokedudeMenu()
     -- control to the player with the temporary party still installed.
     self.result = self.result or "run"
     self.afterQueue = "finish"
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     return
   end
 
@@ -5208,7 +5294,7 @@ function BattleState:updatePokedudeMenu()
     self.moveIndex = math.max(1, math.min(step.playerMove or 1,
                                           #self.player.curMoves))
     pd.selectingMove = true
-    self.phase = "moveSelect"
+    self.phase = MoveSelectionPhase.name()
   elseif step.action == "switch" then
     pd.awaiting = true
     self:openPokedudeTarget(step, true)
@@ -5365,7 +5451,7 @@ function BattleState:pokedudeUseAntidote(step)
   local pd = self.pokedudeDemo
   if not pd then return end
   pd.enemyMove = step.enemyMove
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:say(Strings("POKé DUDE used\nANTIDOTE!"))
   local result, messages = require("src.inventory.ItemEffects")
@@ -5782,7 +5868,7 @@ function BattleState:resolveTurn(playerAction)
     if entry[1] then self.turnActions[entry[1]] = entry[3] end
   end
 
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
 
   -- PLATINUM / HGSS: a TRICK ROOM used this turn resorts everyone still
@@ -5859,11 +5945,11 @@ function BattleState:resolveSwitch(newMon)
   if self.player and self.player.ingrained and self.player.mon.hp > 0 then
     self:say(Strings("%s anchored\nitself with its\nroots!",
                      displayName(self.player)))
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     self.afterQueue = "menu"
     return
   end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   -- BLACK AND WHITE: the foe chooses first, and a Pursuit catches the
   -- Pokemon leaving (src/battle/Gen5MoveRules.lua)
@@ -5904,7 +5990,7 @@ function BattleState:switchPlayerInto(pos, newMon)
   end
   local previous = self:battlerAt(pos)
   self:restoreMimicked(previous)      -- the battle copy leaves with it
-  local incoming = makeBattler(self.data, newMon, true, self.game.save)
+  local incoming = makeBattler(self.data, newMon, true, self.game.save, self)
   self:placeBattler(pos, incoming)
   -- BATON PASS: the stat stages and the volatiles go with the switch, which
   -- is the whole move.  Nothing else survives a switch, so a pass that was
@@ -6019,7 +6105,7 @@ function BattleState:abilitySwitchIn(battler)
   local side = self.sideOf and self:sideOf(battler)
   if side and side.spikes then
     local grounded = Abilities.of(battler) ~= "LEVITATE"
-    for _, t in ipairs(battler.curTypes or {}) do
+    for _, t in ipairs(Gen2Read.types(battler) or {}) do
       if t == "FLYING" then grounded = false end
     end
     -- PLATINUM / HGSS: subscript_hazards_check decides -- Magic Guard spares
@@ -6232,7 +6318,7 @@ function BattleState:abilityForecast(battler)
   if not (battler and battler.mon and battler.mon.hp > 0) then return false end
   local want = Abilities.forecastType(battler, Weather.current(self))
   if not want then return false end
-  local types = battler.curTypes
+  local types = Gen2Read.types(battler)
   if type(types) == "table" and #types == 1 and types[1] == want then
     return false
   end
@@ -7785,7 +7871,7 @@ function BattleState:executeAction(user, target, action)
       local previous = self.enemy
       local oldName = self.enemy.name
       self.enemyIndex = action.index
-      self.enemy = makeBattler(self.data, self.enemyParty[action.index], false)
+      self.enemy = makeBattler(self.data, self.enemyParty[action.index], false, nil, self)
       -- EnemySendOutFirstMon (core.asm:1314-1315): clears player's trap
       clearTrapping(self.player)
       self:syncSides()
@@ -8120,7 +8206,7 @@ function BattleState:applyGen3TransformVisual(user, target, whiteCoeff)
 end
 
 local function battlerHasType(battler, wanted)
-  for _, t in ipairs(battler and battler.curTypes or {}) do
+  for _, t in ipairs(Gen2Read.types(battler) or {}) do
     if t == wanted then return true end
   end
   return false
@@ -8247,7 +8333,11 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
 
   self.moveAnimRow = nil
   if not (user.thrashTurns and moveInst == user.thrashMove and user.thrashAnnounced) then
-    self:sayNext(self:romText("_ItemUseText001", "%s\nused %s!", displayName(user), move.name))
+    local text=self:romText("_ItemUseText001", "%s\nused %s!", displayName(user), move.name)
+    if GameVersion.isGen2() then
+      Gen2Queue.afterCurrent(self,{kind='move',text=text,move=move.id,
+        side=user.isPlayer and 'player' or 'enemy',deferAnim=true})
+    else self:sayNext(text) end
     -- the move's animation plays right after the announcement; the
     -- damage path attaches the target's hit blink to this row so the
     -- blink follows the animation (pokered's order).  Mimic is the
@@ -8786,7 +8876,7 @@ function BattleState:fillEmptySlots()
       if pick then
         local allySlot = isPlayer and self.ally and pos == BattleState.POS.PLAYER_RIGHT
         self:placeBattler(pos, makeBattler(self.data, pick, isPlayer,
-                                           (isPlayer and not allySlot) and self.game.save or nil))
+                                           (isPlayer and not allySlot) and self.game.save or nil, self))
         self:syncSides()
         if not isPlayer then markSeen(self.game, pick.species, pick) end
         local who = self:battlerAt(pos)
@@ -8828,7 +8918,7 @@ function BattleState:promptDoubleReplacement(pos, rest)
       end
     end
     done = true
-    self:placeBattler(pos, makeBattler(self.data, mon, true, game.save))
+    self:placeBattler(pos, makeBattler(self.data, mon, true, game.save, self))
     self:syncSides()
     local who = self:battlerAt(pos)
     self.nextInsert = 0
@@ -9125,7 +9215,7 @@ function BattleState:enemyMonFainted()
       end
       self:act(function()
         local previous = self.enemy
-        self.enemy = makeBattler(self.data, self.enemyParty[self.enemyIndex], false)
+        self.enemy = makeBattler(self.data, self.enemyParty[self.enemyIndex], false, nil, self)
         -- EnemySendOutFirstMon (core.asm:1314-1315): clears player's trap
         clearTrapping(self.player)
         self:syncSides()
@@ -9163,7 +9253,7 @@ function BattleState:enemyMonFainted()
         local mon = shiftSwitchMon
         if not mon then return end
         local previous = self.player
-        self.player = makeBattler(self.data, mon, true, self.game.save)
+        self.player = makeBattler(self.data, mon, true, self.game.save, self)
         clearTrapping(self.enemy)
         self:syncSides()
         Runtime.emit("battle.battler_switched", {
@@ -9523,7 +9613,7 @@ end
 -- out with no free enemy move.
 function BattleState:openReplacementMenu()
   local game = self.game
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   local function onSwitch(mon)
     if Party.isEgg(mon) then
@@ -9536,7 +9626,7 @@ function BattleState:openReplacementMenu()
     end
     self:restoreMimicked(self.player)
     local previous = self.player
-    self.player = makeBattler(self.data, mon, true, game.save)
+    self.player = makeBattler(self.data, mon, true, game.save, self)
     clearTrapping(self.enemy) -- SendOutMon clears foe trap
     self:syncSides()
     Runtime.emit("battle.battler_switched", {
@@ -9592,7 +9682,7 @@ end
 -- engine/items/item_effects.asm.
 function BattleState:safariAction(choice)
   if self.gen4Safari then return self:gen4SafariAction(choice) end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   local st = self.safari
   local playerName = self.game.save.player.name
@@ -9662,7 +9752,7 @@ function BattleState:gen4SafariAction(choice)
   end
   local playerName = self.game.save.player.name
   local foe = self.enemy.name
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
 
   if choice == "run" then
@@ -9764,7 +9854,7 @@ function BattleState:safariEnemyTurn()
     self:sayNext(self:romText("_SafariZoneAngryText", "Wild %s\nis angry!", self.enemy.name))
   end
   self:act(function()
-    local speed = self.enemy.curStats.speed % 256
+    local speed = Gen2Read.stats(self.enemy).speed % 256
     local fled = speed > 127
     local b = (speed * 2) % 256
     if not fled then
@@ -9864,7 +9954,7 @@ end
 
 -- Gen 1 escape formula (engine/battle/core.asm TryRunningFromBattle)
 function BattleState:tryRun()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   -- A wild battle the script says cannot be escaped.  There is exactly one in
   -- Emerald -- the first -- and the roll is skipped rather than rigged, so a
@@ -9943,7 +10033,7 @@ function BattleState:tryRun()
 end
 
 function BattleState:openItems()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   -- BATTLE_TYPE_FRONTIER (all but the Pyramid): "Items can't be used now."
   if self.noItems then
@@ -10581,12 +10671,12 @@ function BattleState:bugContestBall()
   -- kept throwing past twenty, so refuse here as well -- one guard for the
   -- last ball of a battle, one for the run.
   if BugContest.ballsLeft(save) <= 0 then
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     self.afterQueue = "menu"
     self:say(Strings("You have no\nPARK BALLs left!"))
     return
   end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   BugContest.useBall(save)
   self:say(self:romText("_ItemUseText001", "%s used\n%s!",
@@ -10673,7 +10763,7 @@ function BattleState:storeContestMon()
 end
 
 function BattleState:openParty()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:ui(function()
     return self:buildScreen(Gen4Battle.partyScreenId(self) or "PartyMenu", {
@@ -10800,6 +10890,7 @@ function BattleState:playVictoryMusic()
 end
 
 function BattleState:finish()
+  if self._gen2Complete then return end
   local pd = self.pokedudeDemo
   if pd and not pd.finalVoiceQueued then
     pd.finalVoiceQueued = true
@@ -10808,7 +10899,7 @@ function BattleState:finish()
     if type(text) == "string" and text ~= "" then
       pd.voiceDone[index] = true
       self:say(text)
-      self.phase = "messages"
+      self.phase = BattleQueuePhase.name()
       self.afterQueue = "finish"
       return
     end
@@ -10824,7 +10915,7 @@ function BattleState:finish()
       self.game.save.player.name, self.payDay))
     self.payDay = nil
     self.afterQueue = "finish"
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     return
   end
   -- Invariant: a battle can never hand the overworld a party with nothing
@@ -10860,8 +10951,10 @@ function BattleState:finish()
   -- like the overworld reload's PlayDefaultMusicFadeOutCurrent
   -- (home/overworld.asm:2343-2348)
   require("src.core.Music").restoreMap(self.data)
+  if GameVersion.isGen2() then self._gen2Complete = true end
   self.game.stack:pop()
-  Runtime.emit("battle.ended", { battle = self, result = self.result or "run" })
+  if GameVersion.isGen2() then self.battle:endBattle(self.result or 'run', {nativeNotification=true})
+  else Runtime.emit("battle.ended", { battle = self, result = self.result or "run" }) end
   -- Coming back from the battle screen is a fade, not a cut: EnterMap sees
   -- BIT_BATTLE_OVER_OR_BLACKOUT set and runs MapEntryAfterBattle
   -- (home/overworld.asm:22, :749-753) = GBFadeInFromWhite.  This is the one
@@ -12190,7 +12283,7 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
   local g = love.graphics
   local clipY = not skipMenuClip
                 and (self.phase == "mimicSelect" and 56
-                     or self.phase == "moveSelect" and 64)
+                     or MoveSelectionPhase.active(self) and 64)
                 or nil
   local clipped, cs1, cs2, cs3, cs4
   if clipY and g.getScissor and g.intersectScissor then
@@ -12648,7 +12741,7 @@ function BattleState:drawTextArea()
   -- The move list and Mimic's copy menu keep the solid paper (see
   -- WORLD_WINDOW_STYLE); everything else in here is the dialogue box and the
   -- battle menu, which are what goes to glass over a world backdrop.
-  local dense = self.phase == "moveSelect" or self.phase == "mimicSelect"
+  local dense = MoveSelectionPhase.active(self) or self.phase == "mimicSelect"
   Font.pushStyle(not dense and self:windowStyle() or nil)
   self:drawTextAreaInner()
   Font.popStyle()
@@ -12675,7 +12768,7 @@ end
 function BattleState:drawTextAreaInner()
   Font.drawBox(0, 12, 20, 6)
   love.graphics.setColor(0, 0, 0, 1)
-  if self.phase == "messages" and (self.current or self.animPlaying) then
+  if BattleQueuePhase.active(self) and (self.current or self.animPlaying) then
     -- during the move animation self.current is nil but shown still holds
     -- the "used X!" lines; keep drawing them like pokered, whose move
     -- animations only touch sprites and never the textbox tilemap (#296)
@@ -12758,7 +12851,7 @@ function BattleState:drawTextAreaInner()
       Font.draw(Strings("ITEM"), 80, 128); Font.draw(Strings("RUN"), 128, 128)
       Font.drawCode(0xED, (col == 0 and 72 or 120), 112 + row * 16)
     end
-  elseif self.phase == "moveSelect" then
+  elseif MoveSelectionPhase.active(self) then
     -- pokered MoveSelectionMenu: move list in a box at (4,12) 16x6,
     -- names at column 6 from row 13, cursor at column 5.  PrintMenuItem:
     -- the TYPE/PP box at (0,8) 11x5, with "TYPE/" at (1,9), the type at
@@ -12963,4 +13056,7 @@ function BattleState:drawClassic()
   end
 end
 
+require('src.battle.Gen2MovePresentation').install(BattleState)
+Gen2Queue.install(BattleState)
+Gen2BattleView.install(BattleState)
 return BattleState

@@ -3,6 +3,7 @@
 -- record's priority field; the id table below covers pre-existing
 -- imported caches (Gen 1 has only QUICK_ATTACK first and COUNTER last).
 
+local Gen2Read = require('src.battle.Gen2BattleRead')
 local Damage = require("src.battle.Damage")
 local Stats = require("src.pokemon.Stats")
 local Status = require("src.battle.Status")
@@ -17,7 +18,7 @@ local Abilities = require("src.battle.Abilities")
 -- nowhere else the weather is visible from here.  Every existing caller
 -- passes nothing and gets exactly the old answer.
 local function effectiveSpeed(battler, battle)
-  local spd = Stats.applyStage(battler.curStats.speed,
+  local spd = Stats.applyStage(Gen2Read.stats(battler).speed,
                                battler.stages and battler.stages.speed or 0)
   -- ApplyBadgeStatBoosts: the SOULBADGE boosts speed; the rows come from
   -- the battler's merged badgeBoosts with the vanilla list as fallback
