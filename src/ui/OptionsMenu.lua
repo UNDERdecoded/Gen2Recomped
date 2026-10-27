@@ -311,7 +311,10 @@ local function buildRows(game)
         -- DEFAULT is index 0 and the list is 1..#SHINY_ODDS, so the wrap is
         -- over #SHINY_ODDS + 1 values and lands back on DEFAULT past the end
         local i = (shinyOddsIndex(g) + (dir or 1)) % (#SHINY_ODDS + 1)
-        o.shinyOdds = i == 0 and nil or SHINY_ODDS[i]
+        -- Keep DEFAULT explicit in options.lua. Removing this key from the
+        -- live table leaves the previous stored rate in GenOptions.fold,
+        -- so reloading could turn the extra shiny roll back on.
+        o.shinyOdds = i == 0 and 0 or SHINY_ODDS[i]
         return true
       end },
     { id = "musicVol", label = Strings("MUSIC VOL"),
