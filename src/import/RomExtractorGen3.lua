@@ -36185,7 +36185,8 @@ function RomExtractorGen3:animScriptRead(entry, branchCtx, visualLife)
               if v >= 32768 then v = v - 65536 end
               args[i] = v
             end
-            local task = { fn = fn - 0x08000000, args = args, at = t, site = p }
+            local task = { fn = fn - 0x08000000, args = args, at = t, site = p,
+                           priority = rom:u8(p + 5), order = #tasks + 1 }
             tasks[#tasks + 1] = task
             visualStarted("task", task, t)
           end
@@ -39120,6 +39121,7 @@ function RomExtractorGen3:extractMoveAnimations()
       local one = {
         kind = kind, at = t.at or 0, selector = selector,
         task = taskFn(t),
+        visualTask = require('src.import.Gen3VisualTaskFacts').fromTask(kind,t),
         source = ("ROM:createvisualtask %07X (%s)")
                  :format(taskFn(t) or 0, kind),
       }
@@ -39404,9 +39406,15 @@ function RomExtractorGen3:extractMoveAnimations()
           local fn = t.fn and (t.fn - (t.fn % 2)) or -1
           if fn == (surfTask or S.TASK)
              or fn == (surfTask or S.TASK) + 0x08000000 then
-            local moveShape = self:surfWave(surfTask,
+            local decoded = self:surfWave(surfTask,
                                              t.args and (t.args[1] or 0) ~= 0)
-            if not moveShape then break end
+            if not decoded then break end
+            -- The decoder caches by function/palette. Script timestamps and
+            -- operands belong to this invocation, not that shared template.
+            local moveShape={}
+            for key,value in pairs(decoded)do moveShape[key]=value end
+            moveShape.at=t.at or 0
+            moveShape.visualTask=require('src.import.Gen3VisualTaskFacts').fromTask('surf',t)
             local record = row.record or {}
             record.surf = moveShape
             -- the coarse pass has already been past and given this move a
@@ -39414,7 +39422,7 @@ function RomExtractorGen3:extractMoveAnimations()
             -- consolation goes
             if record.shake or record.flash then coarse = coarse - 1 end
             record.shake, record.flash = nil, nil
-            record.duration = math.max(record.duration or 0, moveShape.life)
+            record.duration = math.max(record.duration or 0, moveShape.at+moveShape.life)
             row.def.anim = record
             row.record = record
             marked = marked + 1

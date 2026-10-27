@@ -918,7 +918,7 @@ function Gen3MoveAnim:start(moveId, attackerIsPlayer, attackerPosition, targetPo
   -- script's waitforvisualfinish ends at waitLife rather than paying the
   -- generic six-frame presentation tail used for particles.
   if self.surf and self.surf.waitLife then
-    self.total = math.max(duration, self.surf.waitLife)
+    self.total = math.max(duration, (self.surf.at or 0)+self.surf.waitLife)
   end
   -- ACID ARMOR's task lifetime and the one script-frame delay after clear are
   -- fully known, so do not append the generic particle presentation tail.
@@ -951,6 +951,8 @@ function Gen3MoveAnim:start(moveId, attackerIsPlayer, attackerPosition, targetPo
     self.total = math.max(anim.duration or 0,
                           self.camouflage.waitLife or 0)
   end
+  local tasks=package.loaded['src.core.game3.battle.anim_tasks']
+  if tasks then tasks._nativeStart(self,battle)end
   return true
 end
 
@@ -989,6 +991,8 @@ function Gen3MoveAnim:update()
       self._transformApplied = true
     end
   end
+  local tasks=package.loaded['src.core.game3.battle.anim_tasks']
+  if tasks then tasks._nativeTick(self)end
 end
 
 function Gen3MoveAnim:isDone()
@@ -1000,6 +1004,8 @@ function Gen3MoveAnim:isDone()
 end
 
 function Gen3MoveAnim:release()
+  local tasks=package.loaded['src.core.game3.battle.anim_tasks']
+  if tasks then tasks._nativeRelease(self)end
   self.events, self.total, self.frame, self.fan, self.oamRanks =
     nil, nil, 0, nil, nil
   self.oamGlobalTieResidual = nil
@@ -2394,7 +2400,7 @@ end
 function Gen3MoveAnim:surfLayer()
   local shape = self.surf
   if not shape then return nil end
-  local frame = self.frame or 0
+  local frame = (self.frame or 0)-(shape.at or 0)
   if frame < 0 or frame >= (shape.life or 134) then return nil end
   -- the task's two arms: which one is chosen is GetBattlerSide(attacker)
   local side = self.attackerIsPlayer and shape.player or shape.opponent
@@ -4414,17 +4420,8 @@ function Gen3MoveAnim:drawEvent(event, battle, Gen3Battle, Assets, pose,
   return true
 end
 
-function Gen3MoveAnim:draw(battle, skipEvents)
-  if not self.events or not battle then return end
-  local okG3, Gen3Battle = pcall(require, "src.battle.Gen3Battle")
-  local okA, Assets = pcall(require, "src.render.Assets")
-  if not (okG3 and okA) then return end
-  local g = love.graphics
-  local now = self.frame or 0
-
-  -- the wave first, and over everything: the cartridge gives its layer
-  -- priority 1 and the battlers' sprites priority 2, so it passes in FRONT of
-  -- the Pokemon it is breaking over
+function Gen3MoveAnim:drawSurfNative(battle,Gen3Battle,Assets)
+  local g=love.graphics
   local layer = self:surfLayer()
   if layer then
     local okImg, img = pcall(Assets.image, layer.image)
@@ -4450,6 +4447,23 @@ function Gen3MoveAnim:draw(battle, skipEvents)
       g.setScissor()
     end
   end
+
+end
+
+function Gen3MoveAnim:draw(battle, skipEvents)
+  if not self.events or not battle then return end
+  local okG3, Gen3Battle = pcall(require, "src.battle.Gen3Battle")
+  local okA, Assets = pcall(require, "src.render.Assets")
+  if not (okG3 and okA) then return end
+  local g = love.graphics
+  local now = self.frame or 0
+
+  -- the wave first, and over everything: the cartridge gives its layer
+  -- priority 1 and the battlers' sprites priority 2, so it passes in FRONT of
+  -- the Pokemon it is breaking over
+  local tasks=package.loaded['src.core.game3.battle.anim_tasks']
+  if tasks then tasks._nativeDraw(self,battle,Gen3MoveAnim.drawSurfNative,Gen3Battle,Assets)
+  else self:drawSurfNative(battle,Gen3Battle,Assets)end
 
   -- ...and the stat-up sparkle, which belongs to ONE Pokemon rather than to
   -- the screen: the cartridge centres its layer on the attacker's own sprite.
@@ -4486,6 +4500,20 @@ function Gen3MoveAnim:draw(battle, skipEvents)
       self:drawEvent(ordered.event, battle, Gen3Battle, Assets)
     end
   end
+end
+
+-- Source callbacks borrow these exact native phases. Direct source calls
+-- outside the controller cannot start or advance an independent script.
+local startNative,updateNative=Gen3MoveAnim.start,Gen3MoveAnim.update
+function Gen3MoveAnim:start(...)
+  local source=package.loaded['src.core.game3.battle.anim_vm']
+  if source then return source._nativeLaunch(self,startNative,...)end
+  return startNative(self,...)
+end
+function Gen3MoveAnim:update(...)
+  local source=package.loaded['src.core.game3.battle.anim_vm']
+  if source then return source._nativeUpdate(self,updateNative,...)end
+  return updateNative(self,...)
 end
 
 return Gen3MoveAnim

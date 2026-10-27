@@ -3895,6 +3895,8 @@ end
 -- any pop (finish, script teardown) must silence the alarm loop
 -- (end_of_battle.asm clears wLowHealthAlarm when a battle ends)
 function BattleState:exit()
+  local tasks=package.loaded['src.core.game3.battle.anim_tasks']
+  if tasks then tasks._nativeExit(self)end
   -- Teachy TV temporarily replaces the player's party exactly like
   -- SavePlayerParty/LoadPlayerParty in teachy_tv.c.  finish() normally
   -- restores it before the pop, but exit is the safety net for a forced state
