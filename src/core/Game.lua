@@ -247,15 +247,26 @@ function Game:makeTitleState()
       self:adoptSave(self.save)
       ModRuntime.emit("save.created", { save = self.save })
       self:applyOptions(self.save.options)
-      self.stack:push(OverworldState, self.save.player.map,
-                      self.save.player.x, self.save.player.y,
-                      self.save.player.facing)
+      local newSave, worldStarted = self.save, false
+      local function startWorld()
+        if worldStarted or self.save ~= newSave then return end
+        worldStarted = true
+        self.stack:push(OverworldState, newSave.player.map,
+                        newSave.player.x, newSave.player.y,
+                        newSave.player.facing)
+      end
       local newGameScreen = bootScreens(self).newGame
-      if newGameScreen == nil and not require("src.core.GameVersion").isGen2() then
+      local gen2 = require("src.core.GameVersion").isGen2()
+      if newGameScreen == nil and not gen2 then
         newGameScreen = "OakSpeech"
       end
+      -- GSC creates its world after clock/name selection. Publishing the
+      -- home map earlier can make a preparation cover wait for that map's
+      -- first draw while it still owns input over the introduction.
+      local deferWorld = gen2 and newGameScreen
+      if not deferWorld then startWorld() end
       if newGameScreen then
-        Screens.push(self, newGameScreen, function() end)
+        Screens.push(self, newGameScreen, deferWorld and startWorld or function() end)
       else
         -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
         -- never appeared.  Data.lua sets boot.screens.newGame = false for any
