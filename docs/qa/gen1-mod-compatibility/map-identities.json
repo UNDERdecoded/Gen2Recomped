@@ -1,0 +1,36 @@
+{
+  "gen1Commit": "37a49b31f458d51ea9e00b90f2a247272ad09cb8",
+  "checksPerHost": {
+    "firered": 5955,
+    "emerald": 8811
+  },
+  "consumerSha256": "1066f707e0a6f7d922aa628d47de662ead5a8b24edee66c9cb38f03eb9d7a3f7",
+  "nativeImports": [
+    {
+      "edition": "firered",
+      "matched": 425,
+      "unknown": 0,
+      "mapsSha256": "6a2713df9f1a97572a3a88edd8682aaa9e4547fe206a4d93a03e9f7818484d09"
+    },
+    {
+      "edition": "emerald",
+      "matched": 518,
+      "unknown": 0,
+      "mapsSha256": "f332ea7f1fe3505a71b72163dce80f7e80f8293fb8155cdbcc585eef3f1de907"
+    }
+  ],
+  "mapRecordsRenamed": false,
+  "playerSavesUsed": false,
+  "originalOrigamiLoads": false,
+  "fullLegacyMapContract": false,
+  "sourceSha256": {
+    "src/compat/gen1/MapIdentity.lua": "ee4985ed875161978cbad524c4c90a27318862c000bf72ce85881f92e43b71f3",
+    "src/compat/gen1/MapNames.lua": "f881aa9238715603a1fffb56a56e36091c272e2027460535bbfe3443d7b4cdc4",
+    "src/import/gba/map_catalog.lua": "97783c17580428ae5eecbdde7d47bf128a6d37f8b3d028781e97b7d096cb20d4",
+    "tests/engine/gen1_map_identity.lua": "bd4f0b92f9a713f7fb7aa19273cf40f982744df63b4fddc64622816333bfc84d",
+    "tools/gen1-map-compat/consumer.lua": "39ab1f716470e7647144e848e93c7bba82fa738b784dd5742a5104f24c318852",
+    "tools/gen1-map-compat/export.lua": "cf29c79cb719b08bcbba89e24f7d4a98838742d2d6434577140fcabdfc2d27fa",
+    "tools/gen1-map-compat/native.lua": "f349add9bdf1de39e6fee90b5a96cfa29e9b32abb76e12f3cc3b2de664371a3d",
+    "tools/gen1-map-compat/check.py": "9133f57d3734ef3064f912ba00a33a2f34c55a5383017d289695d95574f24f88"
+  }
+}
