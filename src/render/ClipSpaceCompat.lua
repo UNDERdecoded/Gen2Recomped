@@ -7,7 +7,7 @@ function C.shader(source)
  local count
  source,count=source:gsub("vec4%s+position%s*%(","vec4 legacyPosition(")
  if count==0 then return source end
- return source..[[
+ return "#define POKEPORT_NATIVE_CLIP_SPACE 1\n"..source..[[
 #ifdef VERTEX
 vec4 position(mat4 transform_projection, vec4 vertex_position) {
  vec4 clip=legacyPosition(transform_projection,vertex_position);
