@@ -859,6 +859,7 @@ end
 function OverworldState.computeNeighbors(maps, rootId, hops, reachW, reachH)
   local out = {}
   local rootDef = maps[rootId]
+  if not rootDef then return out end
   local placed = { [rootId] = true }
   local queue = { { def = rootDef, ox = 0, oy = 0, hops = 0 } }
   local qi = 1
@@ -883,23 +884,25 @@ function OverworldState.computeNeighbors(maps, rootId, hops, reachW, reachH)
     -- the cartridge's own connection list says to do.
     for dir, first in pairs(cur.def.connections or {}) do
     for _, conn in ipairs(first.list or { first }) do
-      local destDef = NEIGHBOUR_DIRS[dir] and maps[conn.map]
-      if destDef and not placed[conn.map] then
-        placed[conn.map] = true
+      local destId = Map.connectionTarget(conn)
+      local destDef = NEIGHBOUR_DIRS[dir] and maps[destId]
+      if destDef and not placed[destId] then
+        placed[destId] = true
         local ox, oy
         local cp, dp = blockPx(cur.def), blockPx(destDef)
+        local offset = tonumber(conn.offset) or 0
         if dir == "north" then
-          ox, oy = conn.offset * cp, -destDef.height * dp
+          ox, oy = offset * cp, -destDef.height * dp
         elseif dir == "south" then
-          ox, oy = conn.offset * cp, cur.def.height * cp
+          ox, oy = offset * cp, cur.def.height * cp
         elseif dir == "west" then
-          ox, oy = -destDef.width * dp, conn.offset * cp
+          ox, oy = -destDef.width * dp, offset * cp
         else
-          ox, oy = cur.def.width * cp, conn.offset * cp
+          ox, oy = cur.def.width * cp, offset * cp
         end
         ox, oy = cur.ox + ox, cur.oy + oy
         if cur.hops + 1 <= hops or inReach(destDef, ox, oy) then
-          table.insert(out, { id = conn.map, ox = ox, oy = oy })
+          table.insert(out, { id = destId, ox = ox, oy = oy })
           if cur.hops + 1 < hops or inReach(destDef, ox, oy) then
             table.insert(queue,
                          { def = destDef, ox = ox, oy = oy,
@@ -6103,7 +6106,7 @@ function OverworldState:connectionLanding(dir)
   local conn = self.map:connectionFor(COMPASS[dir], coord, srcMax, extentOf,
                                       srcCells)
   if not conn then return nil end
-  local dest = Game.data.maps[conn.map]
+  local dest = Game.data.maps[Map.connectionTarget(conn)]
   if not dest then return nil end
   -- The seam reads the NEIGHBOUR'S OWN COLLISION, which means the neighbour
   -- needs some.  A Gen 4 map that references a shared grid instead of carrying
@@ -6124,7 +6127,7 @@ function OverworldState:connectionLanding(dir)
   -- cells its blocks hold; a dataset that does not say keeps the Game Boy's.
   local cells = math.max(1, math.floor(tonumber(ts.blockCells) or 2))
   local destW, destH = dest.width * cells, dest.height * cells
-  local shift = conn.offset * cells
+  local shift = (tonumber(conn.offset) or 0) * cells
   local x, y
   if dir == "up" then
     x, y = p.cellX - shift, destH - 1
@@ -6164,7 +6167,7 @@ function OverworldState:crossConnection(dir, conn, scripted)
   -- it.  `landed` is the row the coordinates belong to.
   local dest, ts, x, y, landed = self:connectionLanding(dir)
   if not dest then
-    Logger.warn("connection to unknown map %s", tostring(conn and conn.map))
+    Logger.warn("connection to unknown map %s", tostring(Map.connectionTarget(conn)))
     return false
   end
   conn = landed or conn
@@ -6212,9 +6215,10 @@ function OverworldState:crossConnection(dir, conn, scripted)
     end
   end
   local fromX, fromY = p.cellX, p.cellY
-  self:setMap(conn.map, x, y, p.facing,
+  local destId = Map.connectionTarget(conn)
+  self:setMap(destId, x, y, p.facing,
               { seamless = true, keepMusic = true, keepPikachu = pika })
-  self.pendingSeamMusic = conn.map
+  self.pendingSeamMusic = destId
   -- place the player one cell before the seam (their old world spot,
   -- which the neighbor strip renders identically) and start the step
   -- into the new map RIGHT NOW so there is no one-frame stall at the

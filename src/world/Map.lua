@@ -1781,6 +1781,14 @@ function Map:signAtCell(cx, cy)
   return s
 end
 
+-- Native Gen2 records use a string mapId; map can remain numeric source
+-- metadata. Keep other generations on their existing shared map field.
+function Map.connectionTarget(row)
+  if not row then return nil end
+  if GameVersion.isGen2() and type(row.mapId) == "string" then return row.mapId end
+  return row.map
+end
+
 function Map:connection(dir)
   return self.def.connections and self.def.connections[dir]
 end
@@ -1825,10 +1833,10 @@ function Map:connectionFor(dir, coord, srcMax, extentOf, cells)
   local list = first.list or { first }
   for _, row in ipairs(list) do
     local offset = (tonumber(row.offset) or 0) * cells
-    local destMax = extentOf and extentOf(row.map)
+    local destMax = extentOf and extentOf(Map.connectionTarget(row))
     local lo = math.max(offset, 0)
     local hi = destMax and math.min(srcMax, destMax + offset) or srcMax
-    if coord >= lo and coord <= hi then return row end
+    if (not extentOf or destMax) and coord >= lo and coord <= hi then return row end
   end
   return nil
 end

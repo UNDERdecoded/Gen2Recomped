@@ -1,0 +1,19 @@
+name: native Gen2 connection targets
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen2-connection-targets-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install ROM-free runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Native destinations, residency and real seam controller
+        run: luajit tests/engine/gen2_connection_targets.lua
