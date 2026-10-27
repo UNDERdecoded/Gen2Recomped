@@ -2605,6 +2605,7 @@ function BattleState:beginMsgLine()
 end
 
 function BattleState:updateQueue()
+  if self._levelUpStreaks and require('src.battle.Gen3LevelUpStreaks').update(self)then return true end
   if self.waitingUI then
     if self.game.stack:top() ~= self then return true end
     self.waitingUI = nil
@@ -2728,6 +2729,10 @@ function BattleState:updateQueue()
   end
   if not self.current then
     local item = table.remove(self.queue, 1)
+    while item and item.gbaLevelUpStreaks do
+      if require('src.battle.Gen3LevelUpStreaks').start(self,item)then return true end
+      item=table.remove(self.queue,1)
+    end
     if not item then return false end
     if item.fn then
       self.nextInsert = 0 -- sayNext inserts right after this item
@@ -3895,6 +3900,7 @@ end
 -- any pop (finish, script teardown) must silence the alarm loop
 -- (end_of_battle.asm clears wLowHealthAlarm when a battle ends)
 function BattleState:exit()
+  require('src.battle.Gen3LevelUpStreaks').release(self)
   -- Teachy TV temporarily replaces the player's party exactly like
   -- SavePlayerParty/LoadPlayerParty in teachy_tv.c.  finish() normally
   -- restores it before the pop, but exit is the safety net for a forced state
@@ -8954,6 +8960,15 @@ function BattleState:awardExp(fallen)
         require("src.pokemon.Evolution").changeHappiness(mon, "LEVELUP")
       end
       self:sayNext(Strings("%s grew\nto level %d!", name, lv))
+      if GameVersion.isGen3() and self.data.constants.gen3LevelUpStreaks then
+        for position=0,3 do
+          local actor=self:battlerAt(position)
+          if actor and actor.mon==mon then
+            require('src.battle.Gen3LevelUpStreaks').queue(self,actor)
+            break
+          end
+        end
+      end
       self:uiNext(function()
         require("src.core.Sound").play(game.data, "Level_Up")
         return StatBox.new(game, mon)

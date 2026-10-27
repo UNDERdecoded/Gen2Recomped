@@ -54302,6 +54302,23 @@ RomExtractorGen3.BATTLE_TEXTBOX = {
   CURSOR_AT = { { 128, 120 }, { 184, 120 }, { 128, 136 }, { 184, 136 } },
 }
 
+function RomExtractorGen3:extractLevelUpStreaks()
+  local Art=require('src.import.Gen3LevelUpArt')
+  local edition=type(self.version)=='table'and self.version.id or self.version
+  if not Art.supports(edition)then return end
+  self:beginStage('Gen3 level-up streaks')
+  local record,why=Art.read(self)
+  assert(record,why)
+  local image=Art.image(record)
+  self:saveImage(image,'battle/level_up_streak.png')
+  image:release()
+  self._constants=self._constants or{}
+  self._constants.gen3LevelUpStreaks={image='assets/generated/battle/level_up_streak.png',
+    width=record.width,height=record.height,romSha1=record.romSha1,
+    gfxOffset=record.gfxOffset,paletteOffset=record.paletteOffset}
+  self:write('constants',self._constants)
+end
+
 function RomExtractorGen3:extractBattleTextbox()
   self:beginStage("Gen3 battle textbox")
   local T = RomExtractorGen3.BATTLE_TEXTBOX
@@ -58871,6 +58888,7 @@ RomExtractorGen3.ASSET_STAGES = {
   "extractItemIcons",
   "extractPokenav",
   "extractBattleTextbox",
+  "extractLevelUpStreaks",
   "extractPokedexScreen",
   "extractBallAnims",
   "extractSummaryWindows",

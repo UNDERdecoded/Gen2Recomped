@@ -3104,6 +3104,11 @@ function Gen3Battle.draw(battle)
   -- over them.  The methods dispatch back here (BattleState:drawHUDs and
   -- friends), so the implementation is still this file's; what changed is
   -- that there is now a door in front of it.
+  shaken(function()
+    local layer=package.loaded['src.core.game3.battle.level_up_streaks']
+    local draw=function()return require('src.battle.Gen3LevelUpStreaks').draw(battle)end
+    if layer then layer._nativeDraw(battle,draw)else draw()end
+  end)
   shaken(function() battle:drawHUDs(slide) end)
   -- the ball rides with the pics rather than with the windows: it is thrown
   -- across the field, and a screen shake moves the field

@@ -1323,6 +1323,10 @@ local function markerFor(version)
   if version == "red" or version == "blue" or version == "yellow" then
     revision = "gen1-trade-art-v1:"
   end
+  local levelArt=require('src.import.Gen3LevelUpArt')
+  if GameVersion.generation(version)==3 and levelArt.supports(version)then
+    revision=revision..'gba-levelup-streaks-v'..levelArt.REVISION..':'
+  end
   return CACHE_FORMAT .. revision .. GameVersion.info(version).sha1
 end
 
