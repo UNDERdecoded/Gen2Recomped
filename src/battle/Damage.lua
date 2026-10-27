@@ -6,6 +6,7 @@
 -- Battlers built by makeBattler also carry the merged badgeBoosts rows and
 -- statuses records; hand-built battlers fall back to the vanilla tables.
 
+local Gen2Read = require('src.battle.Gen2BattleRead')
 local Logger = require("src.core.Logger")
 local Runtime = require("src.mods.Runtime")
 local Stats = require("src.pokemon.Stats")
@@ -115,7 +116,7 @@ function Damage.critRoll(ruleset, attacker, moveId, rng, highCrit, data)
   local function shl(x) return math.min(255, x * 2) end
   local speed
   if ruleset.critUsesBaseSpeed == false then
-    speed = Stats.applyStage(attacker.curStats.speed,
+    speed = Stats.applyStage(Gen2Read.stats(attacker).speed,
               attacker.stages and attacker.stages.speed or 0)
   else
     speed = attacker.def.baseStats.speed
@@ -231,6 +232,8 @@ end
 -- self-hit reads the opponent's screens).
 -- Returns damage, {crit=bool, typeMult=x10}.
 function Damage.compute(ruleset, attacker, defender, move, opts)
+  local attackStats, defendStats = Gen2Read.stats(attacker), Gen2Read.stats(defender)
+  local attackTypes, defendTypes = Gen2Read.types(attacker), Gen2Read.types(defender)
   opts = opts or {}
   local rng = opts.rng or love.math.random
   -- ...and the same field again, because a STATUS move must not roll damage.
@@ -297,18 +300,18 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   -- Gen 2 kept the same type-based physical/special split but gave the
   -- attacker Sp.Atk and the defender Sp.Def.  A Gen 1 stat block has
   -- neither key, so it stays on the single `special`.
-  local split = special and attacker.curStats.spatk and defender.curStats.spdef
+  local split = special and attackStats.spatk and defendStats.spdef
   local atkStat = special and (split and "spatk" or "special") or "attack"
   local defStat = special and (split and "spdef" or "special") or "defense"
 
   local atk, dfn
   if crit and ruleset.critIgnoresStages then
-    atk = attacker.curStats[atkStat]
-    dfn = defender.curStats[defStat]
+    atk = attackStats[atkStat]
+    dfn = defendStats[defStat]
   else
-    atk = Stats.applyStage(attacker.curStats[atkStat],
+    atk = Stats.applyStage(attackStats[atkStat],
                            stageOf(attacker, atkStat))
-    dfn = Stats.applyStage(defender.curStats[defStat],
+    dfn = Stats.applyStage(defendStats[defStat],
                            stageOf(defender, defStat))
     -- badge boosts (x9/8), engine/battle/core.asm ApplyBadgeStatBoosts:
     -- Boulder -> attack, Thunder -> defense, Soul -> speed (TurnOrder),
@@ -464,7 +467,7 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   if not opts.typeless then
     -- STAB
     local stab = false
-    for _, t in ipairs(attacker.curTypes) do
+    for _, t in ipairs(attackTypes) do
       if t == move.type then stab = true break end
     end
     if stab then
@@ -474,7 +477,7 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     -- type effectiveness: each TypeEffects row is applied to the
     -- running damage separately with its own floor (0.5*0.5 lands on
     -- floor(floor(d/2)/2), not d*0.25)
-    mult = TypeChart.effectiveness(move.type, defender.curTypes)
+    mult = TypeChart.effectiveness(move.type, defendTypes)
     -- FORESIGHT / ODOR SLEUTH: a GHOST that has been identified stops being
     -- immune to NORMAL and FIGHTING.  It does not become weak to them --
     -- the immunity simply becomes neutral -- so this reads the chart's
@@ -489,7 +492,7 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
     if mult == 0 and bwLift then
       foresight = true
       mult = 10
-      for _, m in ipairs(TypeChart.rows(move.type, defender.curTypes)) do
+      for _, m in ipairs(TypeChart.rows(move.type, defendTypes)) do
         if m ~= 0 then mult = math.floor(mult * m / 10) end
       end
     end
@@ -504,7 +507,7 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
       return 0, { crit = false, typeMult = 0,
                   ability = Abilities.of(defender) }
     end
-    for _, m in ipairs(TypeChart.rows(move.type, defender.curTypes)) do
+    for _, m in ipairs(TypeChart.rows(move.type, defendTypes)) do
       -- the identified GHOST's zero row is the one skipped; every other
       -- row a dual-typed Pokemon carries still applies
       if not (foresight and m == 0) then d = math.floor(d * m / 10) end
