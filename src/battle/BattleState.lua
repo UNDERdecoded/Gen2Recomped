@@ -5248,6 +5248,7 @@ end
 -- ---------------------------------------------------------------------
 
 function BattleState:moveDef(moveInst)
+  if type(moveInst) ~= "table" then return self.data.moves[moveInst] end
   -- a BW battle's Struggle is the cartridge's own move 165
   return self.data.moves[moveInst.id]
          or (moveInst.struggle and self.bw and self.bw.struggle) or nil
