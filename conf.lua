@@ -4,6 +4,8 @@
 -- use it commercially. Cartridge-derived data is excluded and is not the
 -- copyright holder's to license.
 
+require('src.core.JitArena').configure()
+
 function love.conf(t)
   -- PhysFS ignores symlinks unless told otherwise, so a mod dev-linked into
   -- mods/ (ln -s, matching the mklink /J workflow on Windows) is invisible
