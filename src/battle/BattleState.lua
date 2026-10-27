@@ -1363,6 +1363,14 @@ function BattleState.giveWildHeldItem(data, mon, rng, compoundEyes)
   else mon.item = rare or nil end
 end
 
+-- Presentation reads the existing native identity owner, including DVs on
+-- older/restored Pokemon that do not carry a stamped gender field.
+function BattleState:genderSymbol(mon)
+  local gender = Pokemon.genderOf(self.data, mon)
+  if gender == "male" then return "\226\153\130" end
+  if gender == "female" then return "\226\153\128" end
+end
+
 function BattleState.newWild(game, species, level, opts)
   local self = newBattle(game)
   self.kind = "wild"
