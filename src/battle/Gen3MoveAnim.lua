@@ -754,6 +754,7 @@ function Gen3MoveAnim:start(moveId, attackerIsPlayer, attackerPosition, targetPo
                             branchCtx, battle)
   local anim = self:recordFor(moveId, branchCtx)
   if not hasVisual(anim) then return false end
+  self.presentationSerial = (self.presentationSerial or 0) + 1
   self.events = anim.events or {}
   self.shakes = anim.shakes
   self.blends = anim.blends

@@ -116,6 +116,16 @@ function ModSeams.open(owner)
     local function require2(name, ...)
       local had = package.loaded[name]
       local result = real(name, ...)
+      if name=='src.core.game3.battle' or type(name)=='string' and name:match('^src%.core%.game3%.battle%.') then
+        local facade=package.loaded['src.core.Game3'] or real('src.core.Game3')
+        if facade and facade._observeMod then facade._observeMod(owner)end
+        local watched=false
+        for _,entry in ipairs(snap)do if entry.t==facade then watched=true;break end end
+        if type(facade)=='table'and not watched and not fresh[facade]then
+          fresh[facade]=true
+          snap[#snap+1]={t=facade,label='src.core.Game3',before=copyOf(facade)}
+        end
+      end
       if had == nil and type(name) == "string" and name:match("^src%.")
           and type(result) == "table" and not fresh[result] then
         fresh[result] = true
