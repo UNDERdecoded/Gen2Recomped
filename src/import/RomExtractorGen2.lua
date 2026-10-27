@@ -677,8 +677,10 @@ function GEN2_PAL.twoVramBanks(tileCount)
   return tileCount == GEN2_PAL.tilesPerVramBank * 2
 end
 
--- Metatile byte -> index into the flattened 0..191 sheet.
-function GEN2_PAL.tileIndex(byte, tileCount)
+-- Metatile byte -> extracted atlas index. New split-bank sheets retain the
+-- source $80 bank boundary; compact legacy/other formats keep their path.
+function GEN2_PAL.tileIndex(byte, tileCount, bankStride)
+  if bankStride==128 then return require('src.import.Gen2VramLayout').tileIndex(byte) end
   if not GEN2_PAL.twoVramBanks(tileCount) then return byte end
   if byte < GEN2_PAL.tilesPerVramBank then return byte end
   if byte >= 0x80 then
@@ -16262,11 +16264,20 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       end
       blockCount = blockCount or 0x80
       blocksRaw = blocksRaw or self.rom:bytes(meta.bank, meta.address, blockCount * 16)
-      -- Flatten the two VRAM banks into one 0..191 range here, so every reader
-      -- downstream -- the atlas bake, the animated-tile overdraw, mods -- can
-      -- treat a metatile byte as a plain index into the extracted sheet.
-      -- See GEN2_PAL.tileIndex.
       local tileCount = (width / 8) * (height / 8)
+      -- The source address is part of a tile's identity: compacting bank 1
+      -- down to $60 changed the ids used by terrain/model readers. Reserve
+      -- the VRAM gap and keep the bytes, atlas and palette on the same grid.
+      -- Attribute-bank formats (Prism/Polished) keep their separate decoder.
+      local bankStride
+      if not preAttrRaw and GEN2_PAL.twoVramBanks(tileCount) then
+        pixels,bankStride=require('src.import.Gen2VramLayout').expand(pixels)
+        if bankStride then
+          width,height=inferTilesetDimensions(#pixels)
+          ImageWriter.save(ImageWriter.decode2bpp(pixels,width,height),imagePath)
+          tileCount=width*height/64
+        end
+      end
       local blocks = {}
       -- Prism splits its sheet the same way, at a different offset and by a
       -- different route.  LoadTileset (home/map.asm) zero-fills scratch to
@@ -16314,7 +16325,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
             index = flipped(index, attr)
             palMapFromAttr[index + 1] = attr % 8
           else
-            index = GEN2_PAL.tileIndex(blocksRaw[pos], tileCount)
+            index = GEN2_PAL.tileIndex(blocksRaw[pos], tileCount, bankStride)
           end
           block[#block + 1] = index
         end
@@ -16358,6 +16369,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
         imageWidth = width,
         imageHeight = height,
         tilesPerRow = width / 8,
+        gen2VramBankStride = bankStride,
         blocks = blocks,
         -- Set only where <Tileset>Attr supplied it (Prism).  The PalMap
         -- reader below sees this and leaves it alone rather than looking for
@@ -16408,7 +16420,8 @@ function RomExtractorGen2:extractRuntimeScaffolds()
       if palSym and not tilesets[id].palMap then
         -- How many tiles the sheet actually came out as decides both the
         -- palette map's length and whether it carries a VRAM-bank bit.
-        local twoBanks = GEN2_PAL.twoVramBanks(GEN2_PAL.sheetTiles(tilesets[id]))
+        local logicalBanks=tilesets[id].gen2VramBankStride==128
+        local twoBanks = logicalBanks or GEN2_PAL.twoVramBanks(GEN2_PAL.sheetTiles(tilesets[id]))
         local palOk, palRaw = pcall(function()
           return self.rom:bytes(palSym.bank, palSym.address,
             twoBanks and GEN2_PAL.palMapBytes or GEN2_PAL.palMapBytesOneBank)
@@ -16417,9 +16430,9 @@ function RomExtractorGen2:extractRuntimeScaffolds()
           -- Crystal's palette map is 224 nibbles -- one per metatile byte
           -- $00-$DF, each `vramBank << 3 | palette` -- not 96.  Reading only
           -- the first 96 stopped at the bank-0 half, so every second-bank tile
-          -- took a clamped, wrong palette.  Re-key it by the same flattened
-          -- 0..191 index GEN2_PAL.tileIndex produces and drop the bank bit, which
-          -- the block bytes now carry themselves.  Reading PAST the map would
+          -- took a clamped, wrong palette. Keep it aligned with the extracted
+          -- tile-address contract (logical or legacy compact), dropping the
+          -- bank bit from each palette nibble.  Reading PAST the map would
           -- run into the next tileset's, which is why the length is version-
           -- derived rather than fixed.
           local nibbles = {}
@@ -16428,7 +16441,9 @@ function RomExtractorGen2:extractRuntimeScaffolds()
             nibbles[#nibbles + 1] = math.floor(byte / 16)
           end
           local palMap = {}
-          if twoBanks then
+          if logicalBanks then
+            palMap=require('src.import.Gen2VramLayout').paletteMap(nibbles)
+          elseif twoBanks then
             for tile = 0, GEN2_PAL.tilesPerVramBank * 2 - 1 do
               local raw = tile < GEN2_PAL.tilesPerVramBank and tile
                 or (tile - GEN2_PAL.tilesPerVramBank + 0x80)
