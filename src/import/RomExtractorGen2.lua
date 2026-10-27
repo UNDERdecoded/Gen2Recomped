@@ -15175,6 +15175,7 @@ function RomExtractorGen2:gen2BattleAnims()
     -- (constants/move_constants.asm: ANIM_THROW_POKE_BALL $100,
     -- ANIM_SEND_OUT_MON $101, ANIM_IN_SANDSTORM $10b)
     misc = { throwPokeBall = 256, sendOutMon = 257, inSandstorm = 267 },
+    ids = require('src.battle.Gen2AnimationIds').install({gen2=true,scripts=scripts}).ids,
     move = {}, effects = {},
   }
 end
