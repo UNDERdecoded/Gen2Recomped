@@ -1,0 +1,92 @@
+{
+  "referenceCommit": "37a49b31f458d51ea9e00b90f2a247272ad09cb8",
+  "status": "pass",
+  "nativeHost": "real LOVE 12, CPU only; graphics/window/audio disabled",
+  "editions": {
+    "firered": {
+      "cells": 240512,
+      "maps": 425,
+      "different": [],
+      "missing": []
+    },
+    "leafgreen": {
+      "cells": 240512,
+      "maps": 425,
+      "different": [],
+      "missing": []
+    },
+    "emerald": {
+      "cells": 322688,
+      "maps": 518,
+      "different": [],
+      "missing": []
+    },
+    "ruby": {
+      "cells": 258200,
+      "maps": 394,
+      "different": [],
+      "missing": []
+    },
+    "sapphire": {
+      "cells": 258200,
+      "maps": 394,
+      "different": [],
+      "missing": []
+    }
+  },
+  "maps": 2156,
+  "paddedCells": 1320112,
+  "lifecycleChecks": 211,
+  "classifierChecks": 807,
+  "sourceFlagsChecks": 13,
+  "sourceLayoutChecks": 21,
+  "flagMetadataReproduced": [
+    "emerald",
+    "ruby",
+    "sapphire"
+  ],
+  "playerProfilesUsed": false,
+  "nativeGridModified": false,
+  "gpu": false,
+  "unchangedOriginalPackageAcceptance": false,
+  "fullCompatibility": false,
+  "minimumFreeGiB": 8,
+  "sourceSha256": {
+    "src/compat/gen1/MapViews.lua": "61f7f9aec22c735045bc2a39a3346e9c51b9bc94ce7f7f250b71bc3e27a81e55",
+    "src/compat/gen1/CollisionClass.lua": "5ab3ae9372aea359d9f0e017f2ff3c280dba3fc37f982e2d930857d9db13cd3c",
+    "src/import/Gen3SourceFlags.lua": "ff7ea9ce067cf888f9dee49027549223e6ea2ee34deaf42b65cba82826ab58f8",
+    "src/import/RomExtractorGen3.lua": "683fbd918786fef8720d143f7bcfd10596cec3de507e4da8ea79d105ab9a1a5d",
+    "src/import/RomImporter.lua": "4eed8598fb286ad01a80b62d1a500cf9361b271cba53d34564d574bb2c694849",
+    "tools/gen3_source_flags.py": "38f7dce1dc02a3642a18ca9979e05e0e1c37cd49da6902dc10da8ae74a811b9b",
+    "tests/engine/gen3_source_flags.lua": "4790d60bfa4d2f8cf892ad4d5a4b6c8d9fa27969f1e0364fc9dd697c40a5846d",
+    "tests/engine/gen3_source_map_layouts.lua": "bec844a2bee57e1e17f8135d5708aac20f472bb059d043fb6d4245bc5329e57b",
+    "tests/engine/compatibility_cell_semantics.lua": "db1c596cca3c8facfe25cadc2f24ded9f5e7306ffde3ed0d2c1961dcb891e9bc",
+    "tools/map-views/check.lua": "884615dd956f5333cb8bcb9ee46121bef713cd29ee2ce0369dc2a2b0f250cbfc",
+    "tools/map-views/oracle.lua": "cb413fc8a8655c462e48a6e4898f9446dc31fed5531dab7ee002d11cd9f9ac33",
+    "tools/map-views/fixture.lua": "04d5bd49fd4aaf426d7c037f604804a3a98a1b18b6c26092ee337fcb1650f167",
+    "tools/map-views/digest.lua": "570b740c8e4ff7546f9de6c0566f959bff96276203b34f8d06978df9643f19be",
+    "tools/map-views/rom-host/main.lua": "e2b774616123ff57e9a84f9c991181b75617f48687facffe2a38479b6f746f20",
+    "tools/map-views/rom-host/conf.lua": "aab859ae64d4165dd4b68b81174128c7883e0725bfd0f327ccfdab151224ec5d",
+    "tools/rom_manifest_firered.json": "17d094d51122455fded887e37865d8545c460266da1e651c31a2a5661c0c4a6c",
+    "tools/rom_manifest_leafgreen.json": "39371eaf56a59002949c1cab732feb8c9f0a014df3f31092643f851a73cef861",
+    "tools/rom_manifest_emerald.json": "0969978b8c13896f707333491ea96fbd2b88b90541451e7d710e03887323b710",
+    "tools/rom_manifest_ruby.json": "a26468a22baba62083a146bf5f280256859b918b02942db89dda0ae23fd276fb",
+    "tools/rom_manifest_sapphire.json": "5d860da0dc136e2b0419f837fa6c6eed736fdbd12eb3129c2f5f2122fdb17036"
+  },
+  "composedRegression": {
+    "commit": "e64a5b8d",
+    "engineSuitesPassed": 328,
+    "engineSuitesTotal": 328,
+    "sdkSuitesPassed": 3,
+    "sdkSuitesTotal": 3,
+    "dramaticShapeB30": "pass",
+    "firstAttempt": {
+      "engineSuitesPassed": 327,
+      "engineSuitesTotal": 328,
+      "failure": "synthetic palette cartridge inherited retail flag metadata without its original bytes/hash host",
+      "resolution": "scope synthetic fixture metadata to the bytes it generates; production flag checksum remains mandatory",
+      "retainedFailure": true
+    },
+    "syntheticPaletteFixtureSha256": "292c1e2363b331ff21d10c55aa55390b6d2216384204866e1e15ec11a9e092bb"
+  }
+}

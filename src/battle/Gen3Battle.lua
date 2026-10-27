@@ -493,7 +493,7 @@ function Gen3Battle.terrainFor(game)
   local cy = player and (player.cellY or player.y)
   local behaviour = Gen3Battle.behaviourUnder(game)
 
-  if GameVersion.get() == "firered" then
+  if GameVersion.isFRLG() then
     -- BattleSetup_GetTerrainId, in source order.
     if behaviour == "TALL_GRASS"
        or behaviour == "CYCLING_ROAD_PULL_DOWN_GRASS" then
@@ -900,7 +900,23 @@ local function levelAt(battle, battler, x, y, text)
   end
 end
 
-local function drawStatusPanel(battle, battler, x, y, player)
+-- Native imports carry tile 70 of the healthbox elements. Older caches use
+-- the existing Pokédex marker, the same fallback as the reference renderer.
+local function drawCaughtMarker(battle, battler, x, y)
+  if not require("src.battle.CaughtMarker").gbaVisible(battle, battler) then return end
+  local record = hudRecord(battle)
+  local path = record and record.images and record.images.caught
+  local function exists(p) return p and Assets.exists(Assets.resolve(p)) end
+  if not exists(path) then
+    path = require("src.core.GameVersion").isFRLG()
+      and "assets/generated/pokedex_frlg/caught.png" or "assets/generated/ui/pokedex/caught_ball.png"
+  end
+  if not exists(path) then return end
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(Assets.image(path), x + 8, y + 16)
+end
+
+local function drawStatusPanelBody(battle, battler, x, y, player)
   local record = hudRecord(battle)
   local images = record and record.images or {}
   local panel = hudImage(player and images.player or images.opponent)
@@ -913,6 +929,7 @@ local function drawStatusPanel(battle, battler, x, y, player)
     Font.drawBox(tx, ty, tw, th)
     love.graphics.setColor(0, 0, 0, 1)
     Font.draw(fitName(battler.name, 56), x + 8, y + 8)
+    if not player then drawCaughtMarker(battle, battler, x, y) end
     levelAt(battle, battler, x + tw * 8 - 40, y + 8)
     if player then
       Font.draw(("%3d/%3d"):format(shownHP(battler), battler.mon.stats.hp),
@@ -923,6 +940,7 @@ local function drawStatusPanel(battle, battler, x, y, player)
 
   love.graphics.setColor(1, 1, 1, 1)
   love.graphics.draw(panel, x, y)
+  if not player then drawCaughtMarker(battle, battler, x, y) end
 
   -- THE SMALL FACE, which is what the cartridge sets a healthbox in.
   --
@@ -1204,6 +1222,16 @@ end
 --
 -- AND THE FOE'S ROW IS A TRAINER'S ONLY.  A wild battle has no party to show,
 -- so BattleIntroDrawPartySummaryScreens raises the player's alone.
+-- Expose the same native painter to source healthbox captures.
+Gen3Battle.drawStatusPanel=drawStatusPanelBody
+local function drawStatusPanel(battle,battler,x,y,player)
+  local source=package.loaded['src.core.game3.battle.healthbox']
+  if source then return source._nativeDraw(battle,battler,x,y,player,function()
+    return drawStatusPanelBody(battle,battler,x,y,player)
+  end)end
+  return drawStatusPanelBody(battle,battler,x,y,player)
+end
+
 local function summaryRecord(battle)
   local record = hudRecord(battle)
   local summary = record and record.partySummary
@@ -1437,6 +1465,26 @@ local function healthboxAt(battle, key, panel, fx, fy)
     if okH and type(got) == "number" then h = got end
   end
   return Gen3Battle.hudPlace(constants, which, h, Gen3Battle.extra(battle))
+end
+
+-- Geometry comes from the same panel images and placement records as HUDs.
+function Gen3Battle.healthboxGeometry(battle,id)
+  local player=id%2==0
+  local record=hudRecord(battle);local images=record and record.images or{}
+  local key=player and 'player' or 'opponent'
+  if id>=2 then key=key..'Doubles' end
+  local image=hudImage(images[key]or images[player and 'player'or'opponent'])
+  local h=image and image:getHeight()or 32
+  if battle:isDouble()then
+    local keys={[0]='playerLeft','opponentLeft','playerRight','opponentRight'}
+    local c=battle.data.constants.gen3BattlerCoords
+    local pos=c and c.healthbox and c.healthbox[keys[id]]
+    if not pos then return nil,'native double healthbox placement unavailable'end
+    return pos.x-32+(player and Gen3Battle.extra(battle)or 0),pos.y-math.floor(h/2),h
+  end
+  if id>=2 then return nil,'absent single-battle slot'end
+  local x,y=healthboxAt(battle,player and 'singlesPlayer'or'singlesOpponent',image)
+  return x,y,h
 end
 
 local function drawHUDs(battle, slide)
@@ -1781,7 +1829,7 @@ end
 
 -- Draws the panel and answers whether it did, so a caller can fall back to
 -- its own drawn box on a cache that has none.
-local function drawPanel(battle, which)
+local function drawPanelBody(battle, which)
   local img, record = panelImage(battle, which)
   if not img then return false end
   love.graphics.setColor(1, 1, 1, 1)
@@ -1790,6 +1838,14 @@ local function drawPanel(battle, which)
     love.graphics.draw(img, 0, y)
   end
   return true
+end
+
+-- Source panel wrappers run inside this existing native drawing phase.
+Gen3Battle.drawPanel=drawPanelBody
+local function drawPanel(battle,which)
+  local source=package.loaded['src.ui.game3.battle_chrome']
+  if source then return source._panel(battle,which,function()return drawPanelBody(battle,which)end)end
+  return drawPanelBody(battle,which)
 end
 
 -- THE TEXT IS PRINTED TWICE.  Every string in a Gen 3 battle is a foreground
@@ -1806,6 +1862,8 @@ local function paintPair(battle, key)
   if not row then return nil, nil end
   return norm(row.foreground), norm(row.shadow)
 end
+
+Gen3Battle.textColors=paintPair
 
 -- ...ONCE, THROUGH THE PAGE'S OWN TWO TONES.
 --
@@ -1963,7 +2021,11 @@ local function drawCommandMenu(battle)
       local prompt = record and record.prompt
       local chooser = (battle.menuBattler and battle:menuBattler()) or battle.player
       local who = chooser and chooser.name or ""
-      if prompt and prompt[1] and prompt[2] then
+      local quick=package.loaded['src.mods.FeatureOptions']and require('src.battle.QuickItem').label(battle)
+      if quick then
+        Font.draw(fitName(quick,88),w.prompt.textX+dx,w.prompt.row1+dy)
+        Font.draw("L: NEXT R: THROW",w.prompt.textX+dx,w.prompt.row2+dy)
+      elseif prompt and prompt[1] and prompt[2] then
         Font.draw(prompt[1], w.prompt.textX + dx, w.prompt.row1 + dy)
         local second = tostring(prompt[2]):gsub("{MON}", fitName(who, 88))
         Font.draw(second, w.prompt.textX + dx, w.prompt.row2 + dy)

@@ -413,7 +413,7 @@ end
 -- absent from the inference table: completed runs stay at scene 0 and cannot
 -- resurrect a previous run's defeated Elite Four.
 function Gen3Commands.repairFireRedLeagueFlags(save)
-  if require("src.core.GameVersion").get() ~= "firered" then return false end
+  if not require("src.core.GameVersion").isFRLG() then return false end
   if type(save) ~= "table" or type(save.flags) ~= "table" then return false end
   local scene = math.floor(tonumber(getVar(save, 0x4068)) or 0)
   local changed = false
@@ -532,7 +532,7 @@ end
 
 function Commands.g3_set_flag(ctx, name)
   Commands.set_flag(ctx, name)
-  if require("src.core.GameVersion").get() ~= "firered" then return end
+  if not require("src.core.GameVersion").isFRLG() then return end
   if name == "FLAG_G3_04B8" then
     Commands.set_flag(ctx, "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0")
   elseif name == "FLAG_G3_04B9" then
@@ -549,7 +549,7 @@ end
 
 function Commands.g3_clear_flag(ctx, name)
   Commands.clear_flag(ctx, name)
-  if require("src.core.GameVersion").get() ~= "firered" then return end
+  if not require("src.core.GameVersion").isFRLG() then return end
   if name == "FLAG_G3_04B8" then
     Commands.clear_flag(ctx, "EVENT_BEAT_LORELEIS_ROOM_TRAINER_0")
   elseif name == "FLAG_G3_04B9" then
@@ -2022,7 +2022,7 @@ function Commands.g3_trainer_battle(ctx, kind, trainerId, winScript, cantText,
   -- A loss without it is an ordinary whiteout. Ending the script on a win,
   -- as the other modes do, skipped Oak's lab's EndRivalBattle -- the heal,
   -- Blue leaving and the scene var -- so the trigger fought him again.
-  if k == 9 and require("src.core.GameVersion").get() == "firered" then
+  if k == 9 and require("src.core.GameVersion").isFRLG() then
     -- FireRed's extractor puts sRivalBattleFlags in instruction ir[6], the
     -- same operand position used by intro text for other battle kinds.
     -- This early-rival command carries no shared intro/defeat text operands.
@@ -2066,7 +2066,7 @@ function Commands.g3_trainer_battle(ctx, kind, trainerId, winScript, cantText,
   -- only for the battle while leaving the script's normal text and flags in
   -- control. Types 5 and 7 are its single and double rematch records.
   local vsNpc, vsTrainer
-  if require("src.core.GameVersion").get() == "firered" and (k == 5 or k == 7) then
+  if require("src.core.GameVersion").isFRLG() and (k == 5 or k == 7) then
     vsNpc = ctx.npc
     vsTrainer = require("src.world.VsSeeker").rematchFor(ctx.save,
                                                             ctx.game.overworld, vsNpc)
@@ -3197,7 +3197,7 @@ function Commands.g3_play_fanfare(ctx, song, number)
     return
   end
   local frames
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     frames = Gen3Commands.FRLG_FANFARE_FRAMES[tonumber(number) or -1]
   end
   ctx.g3Fanfare = { started = (ctx.game.save and ctx.game.save.playTime) or 0,
@@ -4537,6 +4537,13 @@ Gen3Commands.MAUVILLE = {
   RED_V2 = 0x249,
 }
 
+-- RS has three switches at its own ROM coordinates; Emerald has four.
+-- Keep the default unchanged for existing imports without this metadata.
+function Gen3Commands.mauvilleProfile(ctx)
+  local constants = ctx.game and ctx.game.data and ctx.game.data.constants
+  return constants and constants.gen3MauvilleGym or Gen3Commands.MAUVILLE
+end
+
 -- metatile -> { metatile it becomes, impassable }
 local MAUVILLE_TOGGLE = {
   [0x220] = { 0x230, false }, [0x221] = { 0x231, false },   -- green H, on
@@ -4591,7 +4598,7 @@ end
 local function mauvilleSweep(ctx, table_, floorCase)
   local map = mauvilleMap(ctx, "the barrier sweep")
   if not map then return 0 end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   local changed = 0
   for y = M.Y0, M.Y1 do
     for x = M.X0, M.X1 do
@@ -4674,7 +4681,7 @@ Gen3Commands.MAUVILLE_SOLID = {
 function Gen3Commands.mauvilleAssert(ctx, why)
   local map = mauvilleMap(ctx, why)
   if not (map and map.setCellShut and map.cellCollision) then return 0 end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   local fixed, first = 0, nil
   for y = M.Y0, M.Y1 do
     for x = M.X0, M.X1 do
@@ -4701,7 +4708,7 @@ end
 function Gen3Commands.mauvilleReport(ctx, why)
   local map = ctx.overworld and ctx.overworld.map
   if not (map and map.blockAt and map.cellCollision) then return end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   Logger.debug("mauville gym: %s -- window x%d..%d y%d..%d",
                tostring(why), M.X0, M.X1, M.Y0, M.Y1)
   for y = M.Y0, M.Y1 do
@@ -4719,7 +4726,7 @@ end
 Gen3Commands.SPECIALS[143] = function(ctx)
   local map = mauvilleMap(ctx, "MauvilleGymPressSwitch")
   if not map then return end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   local pressed = tonumber(getVar(ctx.save, 0x8004))
   -- 0x8004 IS THE WHOLE ARGUMENT, and a nil one presses nothing: every
   -- switch comes up raised and the room looks untouched.  The four coord
@@ -4763,7 +4770,7 @@ end
 Gen3Commands.SPECIALS[147] = function(ctx)
   local map = mauvilleMap(ctx, "MauvilleGymDeactivatePuzzle")
   if not map then return end
-  local M = Gen3Commands.MAUVILLE
+  local M = Gen3Commands.mauvilleProfile(ctx)
   for _, at in ipairs(M.SWITCHES) do
     map:setBlock(at[1], at[2], M.PRESSED_SWITCH, false)
   end
@@ -8585,7 +8592,7 @@ local function currentTrainer(ctx)
 end
 
 Gen3Commands.SPECIALS[60] = function(ctx)
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     local data = ctx.game and ctx.game.data
     local id = currentTrainer(ctx)
     if not (data and id) then return 0 end
@@ -8607,7 +8614,7 @@ Gen3Commands.SPECIALS[60] = function(ctx)
 end
 
 Gen3Commands.SPECIALS[61] = function(ctx)
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     return require("src.world.VsSeeker").isReady(ctx.save,
       ctx.game and ctx.game.overworld, ctx.npc) and 1 or 0
   end

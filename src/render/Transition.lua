@@ -226,4 +226,11 @@ function BattleReturn:draw()
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- Scalar observations of the same native states, without advancing a fade.
+function Transition.describe(state)
+  local class=getmetatable(state)
+  if class==Transition then return state:alpha(),false,state.phase=='out'and 1 or -1,true,true end
+  if class==WhiteFlash then return 1,true,0,true,true end
+  if class==BattleReturn then return state:alpha(),true,-1,true,true end
+end
 return Transition

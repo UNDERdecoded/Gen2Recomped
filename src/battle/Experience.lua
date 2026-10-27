@@ -122,6 +122,15 @@ function Experience.apply(data, mon, defeatedDef, level, isTrainer,
   end
   -- Lucky Egg is a per-recipient x1.5 held-item boost in Generation II.
   gained = HeldItems.modifyExperience(data, mon, gained)
+  return Experience.add(data, mon, gained)
+end
+
+-- Shared absolute award: scripted rewards use native growth, stats and events.
+-- Defeat-only EVs, held boosts and exp.gain remain in apply above.
+function Experience.add(data, mon, gained)
+  assert(type(gained)=='number'and gained==gained and gained>=0 and gained%1==0,'invalid experience award')
+  local speciesDef=require('src.pokemon.Gen4Forms').definition(data,mon)
+  local consts=data.constants
   mon.exp = mon.exp + gained
 
   local cap = consts and consts.levelCap or 100

@@ -173,7 +173,7 @@ end
 -- The circle to cut, or nil when there is no darkness to draw.  `radius` is
 -- nil at level 0 and at any level whose radius covers the whole view, so the
 -- caller never draws a window it cannot see the edge of.
-function Gen3Flash.circle(game, viewW, viewH)
+function Gen3Flash.circle(game, viewW, viewH, centerX, centerY)
   local r = record(game and game.data)
   if not r then return nil end
   -- THE BATTLE PYRAMID'S DARK is its own radius (frontier.pyramidLightRadius),
@@ -183,8 +183,9 @@ function Gen3Flash.circle(game, viewW, viewH)
       return require("src.script.Gen3BattlePyramid").lightRadius(game)
     end)
     if ok and radius then
-      local w = (tonumber(viewW) or r.screen[1]) / 2
-      local h = (tonumber(viewH) or r.screen[2]) / 2
+      local width, height = tonumber(viewW) or r.screen[1], tonumber(viewH) or r.screen[2]
+      local cx, cy = centerX or width / 2, centerY or height / 2
+      local w, h = math.max(math.abs(cx), math.abs(width-cx)), math.max(math.abs(cy), math.abs(height-cy))
       if radius * radius >= w * w + h * h then return nil end
       return { radius = radius }
     end
@@ -200,10 +201,59 @@ function Gen3Flash.circle(game, viewW, viewH)
     return { radius = 0 }
   end
   -- bigger than the corner of the view is the same as no darkness
-  local w = (tonumber(viewW) or r.screen[1]) / 2
-  local h = (tonumber(viewH) or r.screen[2]) / 2
+  local width, height = tonumber(viewW) or r.screen[1], tonumber(viewH) or r.screen[2]
+  local cx, cy = centerX or width / 2, centerY or height / 2
+  local w, h = math.max(math.abs(cx), math.abs(width-cx)), math.max(math.abs(cy), math.abs(height-cy))
   if radius * radius >= w * w + h * h then return nil end
   return { radius = radius }
+end
+
+-- Integer window edges, including the scanline update order. A floating-point
+-- circle at pixel centres has different edge pixels. Keep geometry independent
+-- of the save and graphics backend; callers get fresh, mutable span records.
+function Gen3Flash.spans(radius, width, height, centerX, centerY)
+  local w, h = math.floor(width or 240), math.floor(height or 160)
+  local cx, cy = math.floor(centerX or w/2), math.floor(centerY or h/2)
+  radius = math.floor(radius)
+  assert(radius==radius and radius<math.huge, 'invalid Flash radius')
+  local lefts, rights, maxX = {}, {}, math.max(255, w)
+  local function put(y, left, right)
+    if y>=0 and y<h then
+      lefts[y] = math.max(0, math.min(maxX, left))
+      rights[y] = math.max(0, math.min(maxX, right))
+    end
+  end
+  local x, err, y = radius, radius, 0
+  while x>=y do
+    put(cy-y,cx-x,cx+x); put(cy+y,cx-x,cx+x)
+    put(cy-x,cx-y,cx+y); put(cy+x,cx-y,cx+y)
+    err=err-((y*2)-1); y=y+1
+    if err<0 then err=err+2*(x-1); x=x-1 end
+  end
+  local result, row = {}, 0
+  while row<h do
+    local left, right = lefts[row] or 0, rights[row] or 0
+    local stop = row+1
+    while stop<h and (lefts[stop] or 0)==left and (rights[stop] or 0)==right do stop=stop+1 end
+    result[#result+1]={y=row,height=stop-row,left=left,right=right}
+    row=stop
+  end
+  return result
+end
+
+-- Only this private geometry cache is reused by native drawing. Public span
+-- records cannot corrupt it, and it never retains a game, world or texture.
+local mask
+function Gen3Flash.drawMask(radius, w, h, cx, cy)
+  if not mask or mask.radius~=radius or mask.w~=w or mask.h~=h or mask.cx~=cx or mask.cy~=cy then
+    mask={radius=radius,w=w,h=h,cx=cx,cy=cy,spans=Gen3Flash.spans(radius,w,h,cx,cy)}
+  end
+  love.graphics.setColor(0,0,0,1)
+  for _,s in ipairs(mask.spans)do
+    if s.left>0 then love.graphics.rectangle('fill',0,s.y,math.min(s.left,w),s.height)end
+    if s.right<w then love.graphics.rectangle('fill',s.right,s.y,w-s.right,s.height)end
+  end
+  love.graphics.setColor(1,1,1,1)
 end
 
 return Gen3Flash

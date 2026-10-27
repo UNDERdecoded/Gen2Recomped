@@ -886,6 +886,9 @@ function Gen3PartyMenu:handOff(mon)
 end
 
 function Gen3PartyMenu:runAction(action, mon, row)
+  if action=='source_field_move'then
+    return require('src.ui.game3.party_menu')._fieldAction(self,mon,row)
+  end
   self.submenu = nil
   -- Handle hook-injected entries with onSelect callbacks
   if not action and row and row.onSelect then
@@ -1015,7 +1018,44 @@ function Gen3PartyMenu:animateTo(mon, fromHP, onDone)
   self.heal = { mon = mon, from = from, shown = from, onDone = onDone }
 end
 
+function Gen3PartyMenu:confirm()
+  if self.index > #self:party() then
+    if self.hpTransferFrom then
+      self.hpTransferFrom = nil
+      return
+    end
+    -- the CANCEL button VALIDATES when a team is being chosen; everywhere
+    -- else it is the way out
+    if self.chooseOrder then
+      return self:confirmOrder()
+    end
+    return self:close()
+  end
+  self:choose()
+end
+
+function Gen3PartyMenu:cancel()
+  if self.hpTransferFrom then
+    self.hpTransferFrom = nil
+    return
+  end
+  -- B drops a SWITCH that was half-made before it closes the screen
+  if self.switchFrom then
+    self.switchFrom = nil
+    return
+  end
+  if self.chooseOrder then
+    return self:handOrder(nil)
+  end
+  self:close()
+end
+
 function Gen3PartyMenu:update(dt)
+  local source=package.loaded['src.ui.game3.party_menu']
+  if source then return source._dispatch(self,dt,function()return self:_updateBody(dt)end)end
+  return self:_updateBody(dt)
+end
+function Gen3PartyMenu:_updateBody(dt)
   -- RECONSTRUCTED: every icon bounces, all the time, on the same beat.  On
   -- the cartridge each one is an OBJ with its own callback; here it is one
   -- clock, which is indistinguishable on screen and cannot drift.
@@ -1042,6 +1082,11 @@ function Gen3PartyMenu:update(dt)
   self.scriptTick = (self.scriptTick or 0) + 1
   if self.script then self.script(self) end
   if self.noInput then return end
+  local source=package.loaded['src.ui.game3.party_menu']
+  if source then return source._input(self,function()return self:_inputBody()end)end
+  return self:_inputBody()
+end
+function Gen3PartyMenu:_inputBody()
   local input = self.game.input
 
   -- the pick's own submenu takes the stick while it is up
@@ -1073,20 +1118,9 @@ function Gen3PartyMenu:update(dt)
       self.index = 1
     end
   elseif input:wasPressed("a") then
-    if self.index > #self:party() then
-      if self.hpTransferFrom then self.hpTransferFrom=nil;return end
-      -- the CANCEL button VALIDATES when a team is being chosen; everywhere
-      -- else it is the way out
-      if self.chooseOrder then return self:confirmOrder() end
-      return self:close()
-    end
-    self:choose()
+    self:confirm()
   elseif input:wasPressed("b") then
-    if self.hpTransferFrom then self.hpTransferFrom=nil;return end
-    -- B drops a SWITCH that was half-made before it closes the screen
-    if self.switchFrom then self.switchFrom = nil return end
-    if self.chooseOrder then return self:handOrder(nil) end
-    self:close()
+    self:cancel()
   end
 end
 
@@ -1433,7 +1467,7 @@ function Gen3PartyMenu:drawMember(mon, panel, selected, inset)
 
   -- (FireRed's DisplayPartyPokemonBarDetail prints every field in FONT_SMALL,
   -- the lead panel's name included)
-  local frlg = require("src.core.GameVersion").get() == "firered"
+  local frlg = require("src.core.GameVersion").isFRLG()
   local faced = (not panel.wide or frlg) and Font.pushFace("small") or nil
   love.graphics.setColor(0, 0, 0, 1)
 

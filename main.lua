@@ -241,6 +241,7 @@ local lastLogFlush = 0
 -- unrelated push overflows it and ends the process with a traceback pointing at
 -- innocent code.  See src/render/GraphicsStack.lua.
 local GraphicsStack = require("src.render.GraphicsStack")
+local PlatformHooks = require("src.core.PlatformHooks")
 -- Declared HERE rather than further down beside its first mark: bootGame below
 -- calls BootTrace.booted(), and a `local` declared after a function's body is
 -- not in scope inside it -- the name resolved to the nil GLOBAL instead and
@@ -701,7 +702,9 @@ function love.update(dt)
   -- unguarded dereference here is not a theoretical race -- it is
   -- "attempt to index upvalue 'Game' (a nil value)" a second after launch.
   if not Game then return end
-  Game:update(dt)
+  -- Only the interactive game frame is a core.update seam, as in Gen1.
+  -- Scripted act+step loops above retain their deterministic direct updates.
+  PlatformHooks.update(Game, dt)
 end
 
 -- THE LAUNCHER'S OWN BOTTOM SCREEN.
@@ -947,7 +950,7 @@ function love.wheelmoved(x, y)
   Game:wheelmoved(x, y)
 end
 
-function love.mousepressed(x, y, button, istouch)
+local function nativeMousePressed(x, y, button, istouch)
   if bootReport then return dismissBootReport() end
   if TouchEditor then
     -- Android primary touch already arrived via love.touchpressed; a second
@@ -971,7 +974,7 @@ function love.mousepressed(x, y, button, istouch)
   end
 end
 
-function love.mousereleased(x, y, button, istouch)
+local function nativeMouseReleased(x, y, button, istouch)
   if TouchEditor then
     if love.system.getOS() == "Android" then return end
     return TouchEditor.mousereleased(x, y, button)
@@ -998,7 +1001,7 @@ function love.mousereleased(x, y, button, istouch)
   end
 end
 
-function love.mousemoved(x, y, dx, dy, istouch)
+local function nativeMouseMoved(x, y, dx, dy, istouch)
   -- FREE-CAMERA LOOK FIRST, and only when one is up: `Game:cameraLook`
   -- answers false on every other map and camera, so the touch path below
   -- keeps every case it had. Warp back to centre after a real look so the
@@ -1027,6 +1030,34 @@ function love.mousemoved(x, y, dx, dy, istouch)
   if Game and not istouch and (mouseTouch or Game:hasPointerScreen()) and love.mouse.isDown(1) then
     Game:touchmoved("mouse", x, y)
   end
+end
+
+-- Source mouse wrappers see one desktop event. The native pointer path keeps
+-- its touch synthesis, without also reporting that synthesis as a second
+-- source touch event. Editors/importers and physical touch keep their owners.
+function love.mousepressed(x, y, button, istouch)
+  local facade=package.loaded['src.core.Game3']
+  if Game and not(bootReport or editorMode or Importer or TouchEditor or istouch)
+      and facade and facade._pointer then
+    return facade._pointer('mousepressed',Game,nativeMousePressed,x,y,button,istouch)
+  end
+  return nativeMousePressed(x,y,button,istouch)
+end
+function love.mousereleased(x, y, button, istouch)
+  local facade=package.loaded['src.core.Game3']
+  if Game and not(bootReport or editorMode or Importer or TouchEditor or istouch)
+      and facade and facade._pointer then
+    return facade._pointer('mousereleased',Game,nativeMouseReleased,x,y,button,istouch)
+  end
+  return nativeMouseReleased(x,y,button,istouch)
+end
+function love.mousemoved(x, y, dx, dy, istouch)
+  local facade=package.loaded['src.core.Game3']
+  if Game and not(bootReport or editorMode or Importer or TouchEditor or istouch or Game.lookWarping)
+      and facade and facade._pointer then
+    return facade._pointer('mousemoved',Game,nativeMouseMoved,x,y,dx,dy,istouch)
+  end
+  return nativeMouseMoved(x,y,dx,dy,istouch)
 end
 
 function love.textinput(text)
@@ -1203,6 +1234,9 @@ function love.quit()
   if package.loaded["src.translation.Service"] then
     pcall(package.loaded["src.translation.Service"].shutdown)
   end
+  if package.loaded["src.net.Fetch"] then
+    pcall(package.loaded["src.net.Fetch"].shutdown)
+  end
 end
 
 function love.filedropped(file)
@@ -1221,6 +1255,9 @@ end
 
 function love.run()
   BootTrace.mark("love.run enter")
+  local Performance = require("src.core.Performance")
+  local GCFrameBudget = require("src.core.GCFrameBudget")
+  GCFrameBudget.configure(Performance)
   if love.load then love.load(love.arg.parseGameArguments(arg), arg) end
   BootTrace.mark("love.load returned")
 
@@ -1258,6 +1295,7 @@ function love.run()
 
     -- update dt
     if love.timer then dt = love.timer.step() end
+    GCFrameBudget.beginFrame(Performance)
 
     -- call update and draw
     --
@@ -1274,12 +1312,14 @@ function love.run()
       closeU()
     end
 
+    local presented = false
     if love.graphics and love.graphics.isActive() then
       love.graphics.origin()
       love.graphics.clear(love.graphics.getBackgroundColor())
       if love.draw then love.draw() end
       local closeP = FrameProfile.section("present (GPU wait / vsync)")
       love.graphics.present()
+      presented = true
       closeP()
     end
     -- Counted after present, so a frame in the trace means a frame that was
@@ -1312,24 +1352,9 @@ function love.run()
 
     if love.timer then
       if paced then
-        -- Sleep out the remainder of the frame budget, measured from the
-        -- carried deadline, in small chunks so the OS timer stays
-        -- responsive.  vsync is untouched: when it already paces slower
-        -- than the cap the remainder is <= 0 and this rounds to a no-op.
-        local budget = 1 / FrameCap.current
-        nextFrame = nextFrame + budget
-        local now = love.timer.getTime()
-        -- A stall (alt-tab, a GC pause, a blocked import) can leave the
-        -- deadline more than a full budget in the past; re-anchor to now so
-        -- we pace the next frame rather than burst uncapped to catch up.
-        if now - nextFrame > budget then
-          nextFrame = now
-        end
-        while true do
-          local remaining = nextFrame - love.timer.getTime()
-          if remaining <= 0 then break end
-          love.timer.sleep(remaining < 0.001 and remaining or 0.001)
-        end
+        local closeSleep = FrameProfile.section("frame pacing: sleep")
+        nextFrame = FrameCap.pace(love.timer, love.window, presented, nextFrame, GCFrameBudget.idle)
+        closeSleep()
       else
         love.timer.sleep(0.001)
       end

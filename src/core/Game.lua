@@ -10,12 +10,25 @@ local Renderer = require("src.render.Renderer")
 local SaveData = require("src.core.SaveData")
 local StateStack = require("src.core.StateStack")
 local FrameProfile = require("src.core.FrameProfile")
+local Performance = require("src.core.Performance")
+local GCFrameBudget = require("src.core.GCFrameBudget")
+local HotModules = require("src.core.HotModules")
 local TouchControls = require("src.core.TouchControls")
 local ModLoader = require("src.mods.Loader")
 local ModRuntime = require("src.mods.Runtime")
 local Screens = require("src.ui.Screens")
 
 local Game = {}
+
+-- Legacy/tool stack doubles may not expose the optional visibility method.
+local function renderVisible(stack, state)
+  return state ~= nil and (not stack.renderVisible or stack:renderVisible(state))
+end
+
+-- The default must follow an explicit next(otherGame), not capture the caller.
+local function resolveLogicSpeedVanilla(game)
+  return game:_resolveLogicSpeed()
+end
 
 -- dev-mode gate for the F5/backtick hotkeys; false keeps every src/dev
 -- module unloaded, so a player boot never touches a byte of dev code
@@ -29,6 +42,7 @@ local function bootScreens(game)
 end
 
 function Game:load()
+  self.nativeStackReady = false
   self.pointerOwners={}
   self.secondScreenPointerOwner=nil
   self.secondScreenOverworldPoketch=nil
@@ -107,7 +121,10 @@ function Game:load()
   -- apply the persisted audio + display options before anything plays
   self:applyOptions(self.save.options)
 
-  FixedStep:init(function(step) self:step(step) end)
+  FixedStep:init(function(step)
+    self:step(step)
+    self:_speedLockEdge()
+  end)
   self.fixedStep = FixedStep
 
   local OverworldState = require("src.world.OverworldController")
@@ -132,6 +149,7 @@ function Game:load()
   -- its party-follower bridge reads `game.world` the same way.  The metatable
   -- costs nothing, keeps `payload.game` working for everyone who reads it the
   -- documented way, and adds no keys -- `pairs(payload)` is unchanged.
+  self.nativeStackReady = true
   ModRuntime.emit("game.ready",
     setmetatable({ game = self }, { __index = self }))
 
@@ -233,59 +251,74 @@ end
 
 -- the title screen with its NEW GAME / CONTINUE wiring; used at boot
 -- and by the START-menu QUIT confirmation
-function Game:makeTitleState()
+function Game:newGame()
   local OverworldState = require("src.world.OverworldController")
+  while self.stack:top() do self.stack:pop() end
+  if self.overworld then self.overworld.fadeOverlay = nil end
+  -- New Game keeps the standalone options.lua preferences
+  self.save = SaveData.newGame(self:bootConfig())
+  -- no bucket carry-over: mod state from an abandoned session must
+  -- not leak into a fresh slot; mods seed via save.created instead
+  self:adoptSave(self.save)
+  ModRuntime.emit("save.created", { save = self.save })
+  self:applyOptions(self.save.options)
+  self.stack:push(OverworldState, self.save.player.map,
+                  self.save.player.x, self.save.player.y,
+                  self.save.player.facing)
+  local newGameScreen = bootScreens(self).newGame
+  if newGameScreen == nil and not require("src.core.GameVersion").isGen2() then
+    newGameScreen = "OakSpeech"
+  end
+  if newGameScreen then
+    Screens.push(self, newGameScreen, function() end)
+  else
+    -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
+    -- never appeared.  Data.lua sets boot.screens.newGame = false for any
+    -- dataset with no OakText* -- Prism writes its own introduction in
+    -- engine/intro_menu.asm rather than replaying the professor's -- so
+    -- OakSpeech does not run, and the `customize_player` step lives INSIDE
+    -- OakSpeech.  The step was correct and simply unreachable.
+    --
+    -- IntroductionSpeech calls PlayerCustomization before it asks the
+    -- player's name, and the name prompt on this path comes from the
+    -- intro map's own script, so pushing it here puts it in the same
+    -- place: after New Game, before the map runs.
+    -- pcall, not a bare require: a dataset can want this screen without
+    -- the build shipping it (that is exactly how NEW GAME on Prism went
+    -- from "no customisation menu" to "module not found" the moment the
+    -- branch became reachable).  A missing screen must cost the player
+    -- the customisation, not the save file they were starting.
+    local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
+    if okCust and type(Cust) == "table" and Cust.available(self) then
+      Screens.push(self, "PrismCustomization", function() end)
+    elseif not okCust then
+      require("src.core.Logger").error(
+        "player customisation screen unavailable: %s", tostring(Cust))
+    end
+  end
+end
+
+function Game:continueGame(loaded, recovered)
+  if not loaded then return self:newGame() end
+  return self:restoreSave(loaded, recovered)
+end
+
+function Game:makeTitleState()
   local factory = Screens.get(self, bootScreens(self).title or "TitleState")
   local title = factory.new(self, {
     onNewGame = function()
-      while self.stack:top() do self.stack:pop() end
-      if self.overworld then self.overworld.fadeOverlay = nil end
-      -- New Game keeps the standalone options.lua preferences
-      self.save = SaveData.newGame(self:bootConfig())
-      -- no bucket carry-over: mod state from an abandoned session must
-      -- not leak into a fresh slot; mods seed via save.created instead
-      self:adoptSave(self.save)
-      ModRuntime.emit("save.created", { save = self.save })
-      self:applyOptions(self.save.options)
-      self.stack:push(OverworldState, self.save.player.map,
-                      self.save.player.x, self.save.player.y,
-                      self.save.player.facing)
-      local newGameScreen = bootScreens(self).newGame
-      if newGameScreen == nil and not require("src.core.GameVersion").isGen2() then
-        newGameScreen = "OakSpeech"
-      end
-      if newGameScreen then
-        Screens.push(self, newGameScreen, function() end)
-      else
-        -- PRISM HAS NO OAK SPEECH, and that is why its character customisation
-        -- never appeared.  Data.lua sets boot.screens.newGame = false for any
-        -- dataset with no OakText* -- Prism writes its own introduction in
-        -- engine/intro_menu.asm rather than replaying the professor's -- so
-        -- OakSpeech does not run, and the `customize_player` step lives INSIDE
-        -- OakSpeech.  The step was correct and simply unreachable.
-        --
-        -- IntroductionSpeech calls PlayerCustomization before it asks the
-        -- player's name, and the name prompt on this path comes from the
-        -- intro map's own script, so pushing it here puts it in the same
-        -- place: after New Game, before the map runs.
-        -- pcall, not a bare require: a dataset can want this screen without
-        -- the build shipping it (that is exactly how NEW GAME on Prism went
-        -- from "no customisation menu" to "module not found" the moment the
-        -- branch became reachable).  A missing screen must cost the player
-        -- the customisation, not the save file they were starting.
-        local okCust, Cust = pcall(require, "src.ui.PrismCustomization")
-        if okCust and type(Cust) == "table" and Cust.available(self) then
-          Screens.push(self, "PrismCustomization", function() end)
-        elseif not okCust then
-          require("src.core.Logger").error(
-            "player customisation screen unavailable: %s", tostring(Cust))
-        end
-      end
+      local facade=package.loaded['src.core.Game3']
+      local run=function()return self:newGame()end
+      if facade and facade._bootAction then return facade._bootAction(self,{action='new_game'},run)end
+      return run()
     end,
     onContinue = function()
       local loaded, recovered = SaveData.load()
       if loaded then
-        self:restoreSave(loaded, recovered)
+        local facade=package.loaded['src.core.Game3']
+        local run=function()return self:continueGame(loaded,recovered)end
+        if facade and facade._bootAction then return facade._bootAction(self,{action='continue'},run)end
+        return run()
       end
     end,
   })
@@ -358,6 +391,11 @@ function Game:_step(dt)
   end
   -- AN EMPTY STACK IS NOT A GAME.
   if self:ensureStack() then return end
+  -- Source callbacks observe this native phase, after input promotion and
+  -- stack recovery. A wrapped runtime may hold it; no second loop is run.
+  local compatibility = package.loaded['src.core.game3.runtime']
+  if compatibility and compatibility._fixedBoundary
+      and compatibility._fixedBoundary(self, dt) == false then return end
   local closeStep = FrameProfile.section("  logic: stack:update")
   self.stack:update(dt)
   closeStep()
@@ -377,24 +415,46 @@ function Game:_step(dt)
   -- it on its own real-time 60Hz accumulator instead.
 end
 
--- The logic multiplier for this frame. Read live rather than cached so the
--- Options row takes effect immediately; speedOverride is the --speed /
--- POKEPORT_SPEED run argument, which wins over the saved option so a bot
--- or screenshot run does not depend on whatever the player last chose.
-function Game:logicSpeed()
+-- Keep the native global option; the portable hook wraps resolution, not
+-- engine-specific category settings or the speed ladder.
+function Game:_resolveLogicSpeed()
   local GameSpeed = require("src.core.GameSpeed")
-  -- Link play is always 1X on both machines, and this wins over every other
-  -- source including POKEPORT_SPEED.  Fast-forward multiplies the logic
-  -- clock, so a peer at 10X burned a tournament shot clock ten times faster
-  -- than the opponent it is racing, and drove its own animation/message
-  -- queue at a different rate than the peer it is locked to.  Nothing about
-  -- a match should depend on what either player set this to.
-  if self.linkSession or (self.linkNet and not self.linkNet.closed) then
-    return 1
-  end
-  if self.speedOverride then return GameSpeed.clamp(self.speedOverride) end
   local opts = self.save and self.save.options
   return GameSpeed.clamp(opts and opts.speed or GameSpeed.DEFAULT)
+end
+
+function Game:speedLocked()
+  if self.linkSession or (self.linkNet and not self.linkNet.closed) then
+    return true, "link"
+  end
+  -- A menu on top must not hide a fixed-speed state underneath it.
+  local states = self.stack and self.stack.states or {}
+  for i = #states, 1, -1 do
+    local state = states[i]
+    if state and (state.isFixedSpeed or state.isMinigame) then
+      return true, "minigame"
+    end
+  end
+  return false
+end
+
+-- A link/fixed-speed state may start inside an accelerated logic step. Drop
+-- the remaining budget now instead of running that state at the old speed.
+function Game:_speedLockEdge()
+  if (self._frameSpeed or 1) > 1 and self:speedLocked() then
+    FixedStep:endFrame()
+  end
+end
+
+-- Read live on every resolution. Hard locks win over --speed/POKEPORT_SPEED,
+-- and those explicit overrides win over mods. Clamp the final hook result as
+-- well as the native default so invalid output cannot poison the accumulator.
+function Game:logicSpeed()
+  if self:speedLocked() then return 1 end
+  local GameSpeed = require("src.core.GameSpeed")
+  if self.speedOverride then return GameSpeed.clamp(self.speedOverride) end
+  if not ModRuntime.wantsHook("core.logic_speed") then return self:_resolveLogicSpeed() end
+  return GameSpeed.clamp(ModRuntime.call("core.logic_speed", resolveLogicSpeedVanilla, self))
 end
 
 -- THE FREE CAMERA, when one owns the frame -- otherwise nil.
@@ -586,7 +646,7 @@ function Game:updateCameraStick(dt)
 end
 
 function Game:update(dt)
-  require('src.pokemon.Gen4PoketchState').tick(self, dt)
+  HotModules.get('src.pokemon.Gen4PoketchState').tick(self, dt)
   local panel=self.secondScreenPointerOwner
   local top=self.stack and self.stack.top and self.stack:top()
   if panel and panel~=top and panel.updatePresentation then
@@ -597,6 +657,7 @@ function Game:update(dt)
   -- or the anti-spiral clamp quietly caps every level above ~15X.
   self:updateCameraStick(dt)
   local speed = self:logicSpeed()
+  self._frameSpeed = speed
   FixedStep.maxAccum = math.max(0.25, speed * FixedStep.STEP * 1.5)
   do
     local close = FrameProfile.section("  update: fixed steps")
@@ -612,7 +673,7 @@ function Game:update(dt)
     local close = FrameProfile.section("  update: music")
     while self.audioAccum >= step do
       self.audioAccum = self.audioAccum - step
-      require("src.core.Music").update(Data)
+      HotModules.get("src.core.Music").update(Data)
     end
     close()
   end
@@ -620,34 +681,34 @@ function Game:update(dt)
   -- frame dt (not the fixed logic step) for a smooth ~0.25s glide.
   do
     local close = FrameProfile.section("  update: tilt")
-    require("src.render.Tilt").update(dt)
+    HotModules.get("src.render.Tilt").update(dt)
     close()
   end
   -- mod render pipelines tween on the same real-frame clock, for the same
   -- reason: they are presentational, so fast-forward must not speed them up
   do
     local close = FrameProfile.section("  pipelines: update")
-    require("src.render.Pipelines").update(dt)
+    HotModules.get("src.render.Pipelines").update(dt)
     close()
   end
   do
     local close = FrameProfile.section("  update: discord")
-    pcall(function() require("src.core.DiscordPresence").update(dt) end)
+    if Performance.hotPathHoist then
+      local ok, Discord = HotModules.optional("src.core.DiscordPresence")
+      if ok and type(Discord) == "table" then pcall(Discord.update, dt) end
+    else
+      pcall(function() require("src.core.DiscordPresence").update(dt) end)
+    end
     close()
   end
-  -- Steady-state memory backstop: advance the incremental collector one
-  -- small step every rendered frame.  The heavy GPU objects are now freed
-  -- explicitly (map eviction, battle exit, canvas/renderer swaps), so this
-  -- only has to keep ordinary Lua-heap garbage (per-frame tables/closures)
-  -- from drifting upward over a long session, and to spread collection out
-  -- so the default lazy schedule never batches it into a visible pause.
-  -- ONE INCREMENTAL GC STEP PER FRAME.  Cheap on a small heap and not
-  -- obviously cheap under a mod that allocates a world's worth of geometry,
-  -- which is exactly the case being measured -- so it is named rather than
-  -- assumed.
+  -- Keep an already-loaded native GC delegation at its update boundary.
+  -- Ordinary engine collection moves to spare deadline time in love.run.
   if collectgarbage then
     local close = FrameProfile.section("  update: gc step")
-    collectgarbage("step", 1)
+    local facade = package.loaded["src.core.Game3"]
+    local handled = type(facade) == "table" and type(facade._stepGC) == "function" and facade._stepGC(self)
+    if handled then GCFrameBudget._facadeHandled() end
+    if not handled and not Performance.gcBudget then collectgarbage("step", 1) end
     close()
   end
 end
@@ -825,11 +886,11 @@ function Game.drawBaseInStack(stack, visibleBase)
   local states = stack and stack.states or {}
   for i = visibleBase - 1, 1, -1 do
     local state = states[i]
-    if state and state.bgMode and state:bgMode() == "world" then
+    if renderVisible(stack, state) and state.bgMode and state:bgMode() == "world" then
       -- restart the search from under the battle: the highest opaque state at
       -- or below it (the overworld), not the menu sitting over it
       for j = i, 1, -1 do
-        if states[j].isOpaque then return j end
+        if renderVisible(stack, states[j]) and states[j].isOpaque then return j end
       end
       return 1
     end
@@ -916,7 +977,7 @@ Game.centerClassicZones = centerClassicZones
 
 function Game:draw()
   local closeDraw = FrameProfile.section("draw: whole frame")
-  local screenLayout=require('src.ui.SecondScreen')
+  local screenLayout=HotModules.get('src.ui.SecondScreen')
   Renderer.splitViewport=nil
   if screenLayout.combined(self) then
     local w,h=love.graphics.getDimensions()
@@ -934,25 +995,25 @@ function Game:draw()
   -- Single-screen generations use the physical Android lower panel as a live
   -- save companion without changing the game's own screen mode.
   do
-    local okC, Companion = pcall(require, "src.ui.SaveCompanion")
+    local okC, Companion = HotModules.optional("src.ui.SaveCompanion")
     if okC and Companion and Companion.tick then pcall(Companion.tick, self) end
   end
 
   do
-    local okSS, SS = pcall(require, "src.ui.SecondScreen")
+    local okSS, SS = HotModules.optional("src.ui.SecondScreen")
     if okSS and SS.mode and (SS.mode(self) == "display" or SS.combined(self))
        and not self.secondScreenDrawnThisFrame then
-      local version = require("src.core.GameVersion").info()
+      local version = HotModules.get("src.core.GameVersion").info()
       local family = version and version.family
       -- THE WATCH ONLY ONCE IT IS ON THE WRIST: Platinum's lower screen shows
       -- the Pokétch after `enablepoketch` (Jubilife) and nothing before; Black
       -- and White's is the C-Gear, not Platinum's watch (not built yet), so
       -- theirs stays blank too
-      local poketchOn = require("src.pokemon.Gen4PoketchState").owned(self.save)
+      local poketchOn = HotModules.get("src.pokemon.Gen4PoketchState").owned(self.save)
       local panelModule = family == "hgss" and "src.ui.HgssFieldPanel"
         or (family ~= "bw" and poketchOn and "src.ui.Gen4Poketch") or nil
       local okP, Poketch = false, nil
-      if panelModule then okP, Poketch = pcall(require, panelModule) end
+      if panelModule then okP, Poketch = HotModules.optional(panelModule) end
       if not panelModule then
         pcall(SS.draw, self, function()
           love.graphics.setColor(0, 0, 0, 1)
@@ -991,7 +1052,7 @@ function Game:draw()
   -- has to get out, and because the GPU readback wants the drawing finished.
   -- A no-op in every other mode and on every machine with one screen.
   do
-    local okSS, SS = pcall(require, "src.ui.SecondScreen")
+    local okSS, SS = HotModules.optional("src.ui.SecondScreen")
     if okSS and SS.flush then pcall(SS.flush, self) end
   end
   FrameProfile.frame()
@@ -1004,16 +1065,26 @@ function Game:toggleFrameProfile()
   return FrameProfile.toggle()
 end
 
+local function viewportSnapshot(viewport)
+  return {
+    width=viewport.width,height=viewport.height,gameX=viewport.gameX,gameY=viewport.gameY,
+    gameWidth=viewport.gameWidth,gameHeight=viewport.gameHeight,scale=viewport.scale,
+    dpiX=viewport.dpiX,dpiY=viewport.dpiY,
+  }
+end
+
 function Game:_draw()
   -- the UI canvas clears transparent when the overworld's world pass
   -- shows through beneath it; opaque full-screen states get the classic
   -- white clear
   local base = self.stack:visibleBase()
   local worldBelow = self.stack.states[base] == self.overworld
+    and renderVisible(self.stack, self.overworld)
   -- a world-bg battle keeps the map drawing under whatever it opened, so the
   -- world pass can run for a frame whose CLEAR is still an opaque menu's
   local drawFrom = Game.drawBaseInStack(self.stack, base)
   local worldDrawn = self.stack.states[drawFrom] == self.overworld
+    and renderVisible(self.stack, self.overworld)
   -- A wide battle holds its 304px surface through every menu or prompt it
   -- opens. States that do not draw the wide battle composition are centred
   -- in that surface below, so their classic coordinates and hit testing stay
@@ -1095,7 +1166,7 @@ function Game:_draw()
       local ownsSurface = wideState
         or (native ~= nil and state == native)
         or Game.wantsThisSurface(state)
-      if state and state.draw then
+      if renderVisible(self.stack,state) and state.draw then
         -- ...and it is centred by ITS OWN size, not by the Game Boy's (see
         -- Game.homeOffset).  classicOffset still gates it: a surface that is
         -- the Game Boy's centres nothing, which is every frame outside a wide
@@ -1116,8 +1187,8 @@ function Game:_draw()
     end
   end
   local baseState = self.stack.states[drawFrom]
-  local SuperSample = require("src.render.SuperSample")
-  if not worldDrawn and baseState and require("src.core.GameVersion").isNds()
+  local SuperSample = HotModules.get("src.render.SuperSample")
+  if not worldDrawn and baseState and HotModules.get("src.core.GameVersion").isNds()
      and SuperSample.singleScreen(self) and not SuperSample.active then
     SuperSample.draw(self, self.stack:top(), drawStates)
   else
@@ -1129,7 +1200,7 @@ function Game:_draw()
   local zones, worldZones, zoneOwner
   for i = #self.stack.states, 1, -1 do
     local s = self.stack.states[i]
-    if s.sgbPalettes then
+    if renderVisible(self.stack, s) and s.sgbPalettes then
       zones = s:sgbPalettes(self)
       zoneOwner = s
       break
@@ -1183,11 +1254,18 @@ function Game:_draw()
   if worldDrawn and self.overworld.sgbWorldZones then
     worldZones = self.overworld:sgbWorldZones()
   end
-  local viewport = Renderer:endFrame(zones, worldZones)
+  local viewport, privateViewport
+  if Performance.hotPathHoist and Renderer.endFrame == Renderer._nativeEndFrame then
+    viewport = Renderer:_endFrameForEngine(zones, worldZones)
+    privateViewport = true
+  else
+    viewport = Renderer:endFrame(zones, worldZones)
+  end
   -- Persistent tool status is screen-space UI: draw it over the completed
   -- render pipeline with exact playfield/margin geometry, but below mobile
   -- controls. It never becomes an updating game state.
   if ModRuntime.wantsHook("render.hud") then
+    if privateViewport then viewport = viewportSnapshot(viewport) end
     ModRuntime.call("render.hud", function() end, self, viewport)
   end
   -- on-screen mobile controls: pure screen-space, over the finished frame
@@ -1207,7 +1285,7 @@ function Game:zoomStep(delta)
   end
 end
 
-function Game:wheelmoved(_, dy)
+local function wheelmovedBody(self, dy)
   -- THE WHEEL ZOOMS THE FREE CAMERA when one owns the frame, and the
   -- window otherwise.
   --
@@ -1226,6 +1304,17 @@ function Game:wheelmoved(_, dy)
   elseif dy < 0 then
     self:zoomStep(-1)
   end
+end
+
+function Game:wheelmoved(_, dy)
+  if not ModRuntime.wantsHook("input.wheel") then
+    return wheelmovedBody(self, dy)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.wheel", function()
+    return wheelmovedBody(self, dy)
+  end, self, dy)
 end
 
 -- WHEN THE STACK IS EMPTIED AND NOBODY PUSHES ANYTHING BACK.
@@ -1359,7 +1448,7 @@ function Game:cycleGen4CameraTilt()
   return true
 end
 
-function Game:keypressed(key)
+local function keypressedBody(self, key)
   -- ...ahead of the delegation below, which is unconditional.
   if key == "f9" then return self:unstick() end
   if key == "f11" then return self:toggleFrameProfile() end
@@ -1492,6 +1581,17 @@ function Game:keypressed(key)
   Input:keypressed(key)
 end
 
+function Game:keypressed(key)
+  if not ModRuntime.wantsHook("input.key") then
+    return keypressedBody(self, key)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.key", function()
+    return keypressedBody(self, key)
+  end, self, { phase = "pressed", key = key })
+end
+
 function Game:textinput(text)
   local top = self.stack and self.stack:top()
   if top and top.onTextInput then
@@ -1519,19 +1619,31 @@ function Game:returnToLauncher()
   require("src.core.HostShell").toLauncher()
 end
 
--- Releases reach Input even while a top state captures raw input: a
+-- Unless an input.key wrapper swallows the event, releases reach Input
+-- even while a top state captures raw input: a
 -- swallowed key-up would strand a held-state flag for a key Input saw go
 -- down before the capture armed (the stuck-flag hazard Input:reset
 -- exists for).  The top state only OBSERVES the release afterwards,
 -- unlike onKeyPressed above which owns the press, so BindingsMenu can
 -- commit a capture on the key-up (#589).
-function Game:keyreleased(key)
+local function keyreleasedBody(self, key)
   Input:keyreleased(key)
   local top = self.stack and self.stack:top()
   if top and top.onKeyReleased then top:onKeyReleased(key) end
 end
 
-function Game:gamepadpressed(joystick, button)
+function Game:keyreleased(key)
+  if not ModRuntime.wantsHook("input.key") then
+    return keyreleasedBody(self, key)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.key", function()
+    return keyreleasedBody(self, key)
+  end, self, { phase = "released", key = key })
+end
+
+local function gamepadpressedBody(self, joystick, button)
   -- a controller is being used: the touch overlay steps aside until the
   -- next screen touch (mobile only; a no-op elsewhere)
   TouchControls:noteGamepad()
@@ -1544,14 +1656,36 @@ function Game:gamepadpressed(joystick, button)
   Input:gamepadpressed(joystick, button)
 end
 
-function Game:gamepadreleased(joystick, button)
+function Game:gamepadpressed(joystick, button)
+  if not ModRuntime.wantsHook("input.gamepad") then
+    return gamepadpressedBody(self, joystick, button)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.gamepad", function()
+    return gamepadpressedBody(self, joystick, button)
+  end, self, { phase = "pressed", joystick = joystick, button = button })
+end
+
+local function gamepadreleasedBody(self, joystick, button)
   -- same observe-after-Input contract as Game:keyreleased (#589)
   Input:gamepadreleased(joystick, button)
   local top = self.stack and self.stack:top()
   if top and top.onGamepadReleased then top:onGamepadReleased(button) end
 end
 
-function Game:gamepadaxis(joystick, axis, value)
+function Game:gamepadreleased(joystick, button)
+  if not ModRuntime.wantsHook("input.gamepad") then
+    return gamepadreleasedBody(self, joystick, button)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.gamepad", function()
+    return gamepadreleasedBody(self, joystick, button)
+  end, self, { phase = "released", joystick = joystick, button = button })
+end
+
+local function gamepadaxisBody(self, joystick, axis, value)
   -- past-deadzone only, so resting-stick drift can't hide the overlay
   if math.abs(value) > 0.5 then TouchControls:noteGamepad() end
   -- the triggers and the right stick as bindable pseudo-buttons (Input
@@ -1572,6 +1706,17 @@ function Game:gamepadaxis(joystick, axis, value)
     end
   end
   Input:gamepadaxis(joystick, axis, value)
+end
+
+function Game:gamepadaxis(joystick, axis, value)
+  if not ModRuntime.wantsHook("input.gamepad") then
+    return gamepadaxisBody(self, joystick, axis, value)
+  end
+  -- Keep the native callback arguments even if a wrapper rewrites next(...),
+  -- matching Gen1. Omitting next suppresses the complete native body.
+  return ModRuntime.call("input.gamepad", function()
+    return gamepadaxisBody(self, joystick, axis, value)
+  end, self, { phase = "axis", joystick = joystick, axis = axis, value = value })
 end
 
 -- conf.lua turns the mobile accelerometer-joystick off (#468), but guard the
@@ -1929,7 +2074,7 @@ function Game:restoreSave(loaded, recovered)
   -- already partway through the Elite Four predate that bridge and may have
   -- only one side, leaving the next room sealed after an update.  Reconcile
   -- those run-scoped flags before the room's ON_LOAD script evaluates them.
-  if require("src.core.GameVersion").get() == "firered" then
+  if require("src.core.GameVersion").isFRLG() then
     local okG3, G3 = pcall(require, "src.script.Gen3Commands")
     if okG3 and G3 and G3.repairFireRedLeagueFlags
        and G3.repairFireRedLeagueFlags(loaded) then
@@ -2043,6 +2188,25 @@ function Game:restoreSave(loaded, recovered)
   if ModRuntime.wants("save.loaded") then
     ModRuntime.emit("save.loaded",
       { save = loaded, meta = loaded.meta, modsDiff = modsDiff })
+  end
+end
+
+-- Require nothing on an ordinary boot. Source Game3 wrappers receive their
+-- distinct facade while the captured native method retains its own owner.
+for _, name in ipairs({ 'update', 'draw', '_step', 'keypressed', 'keyreleased',
+    'textinput', 'wheelmoved', 'touchpressed', 'touchmoved', 'touchreleased',
+    'gamepadpressed', 'gamepadreleased', 'gamepadaxis', 'joystickpressed',
+    'joystickreleased', 'joystickaxis', 'joystickhat', 'joystickremoved',
+    'focus', 'visible', 'returnToTitle', 'returnToLauncher', 'restartWithMods',
+    'writeOptions', 'applyOptions', 'writeSave', '_resolveLogicSpeed',
+    'logicSpeed', 'speedLocked', 'zoomStep' }) do
+  local key, native = name, Game[name]
+  if type(native) == 'function' then
+    Game[key] = function(self, ...)
+      local facade = package.loaded['src.core.Game3']
+      if facade and facade._dispatch then return facade._dispatch(key, self, native, ...) end
+      return native(self, ...)
+    end
   end
 end
 

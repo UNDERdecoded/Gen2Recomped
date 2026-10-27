@@ -724,7 +724,18 @@ function Player:freeWalk(vx, vy, map, entities)
   return self.cellX ~= startX or self.cellY ~= startY
 end
 
+-- Gen3 render hooks may replace the native body draw. Keep its surf bob on
+-- the fixed update clock so repeated observations/draws cannot drive or stop it.
+local function advanceSurfBob(self)
+  if GameVersion.isGen3() and self.surfing
+     and not (self.hopFrames and self.hopFrames > 0)
+     and not (self.acroBike and self.acroTrick == "hop") then
+    self.bobTimer = ((self.bobTimer or 0) + 1) % 32
+  end
+end
+
 function Player:update()
+  local pose=package.loaded["src.compat.gen1.PlayerPose"];if pose then pose.tick(self)end
   -- A PENDING FREE-WALK IS THIS FRAME'S STEP.
   --
   -- Consumed here rather than driven from the input handler so that the
@@ -743,6 +754,7 @@ function Player:update()
     -- a ledge hopped in third or first person froze its arc mid-air and the
     -- player stood floating until the next grid step.
     if self.hopFrames and self.hopFrames > 0 then self.hopFrames = self.hopFrames - 1 end
+    advanceSurfBob(self)
     return self:freeWalk(free[1], free[2], free[3], free[4])
   end
   -- LEAVING FREE MODE PUTS THE BODY BACK ON THE GRID.
@@ -766,6 +778,7 @@ function Player:update()
   if self.hopFrames and self.hopFrames > 0 then
     self.hopFrames = self.hopFrames - 1
   end
+  advanceSurfBob(self)
   if self.turnTimer > 0 then
     self.turnTimer = self.turnTimer - 1
   end
@@ -866,7 +879,7 @@ function Player:walkPhase()
   -- moving, the land-frame after a completed step, or an active wall-bonk
   -- (issue #230) animate; a standing sprite otherwise
   if not self.moving and not self.stepLanded and not self.stairExit
-     and not self.freeWalking
+     and not self.freeWalking and not self.compatWalkInPlace
      and not (self.bumpFrames and self.bumpFrames > 0) then
     return 0
   end
@@ -885,7 +898,8 @@ local SPIN_ORDER = { "down", "left", "up", "right" }
 -- The last return says the player is mid-ledge-hop, which is what the 2D
 -- path draws the ground shadow from and a 3D path turns into vertical lift.
 --
--- This ADVANCES the surf-bob and spinner timers, so exactly one of pose()
+-- This advances legacy GB surf-bob and spinner timers (Gen3 surf bob is
+-- update-owned), so exactly one of pose()
 -- and draw() may run per frame -- and draw() is written in terms of pose()
 -- to keep that true by construction.  (hopFrames counts down in
 -- Player:update, on the fixed step, so it is safe to read here.)
@@ -906,6 +920,7 @@ end
 
 function Player:pose()
   local px, py = self.px, self.py
+  if GameVersion.isGen2() and self.fishingState then py=py-(self.spriteYOffset or 0) end
   local hopping = false
   -- ledge hops arc (set for 2 cells by the ledge handler); surfing bobs
   if self.hopFrames and self.hopFrames > 0 then
@@ -953,8 +968,8 @@ function Player:pose()
     end
     py = py - math.floor(4 * math.sin(self.hopClock / 8 * math.pi) + 0.5)
   elseif self.surfing then
-    self.bobTimer = ((self.bobTimer or 0) + 1) % 32
-    py = py + (self.bobTimer < 16 and 0 or 1)
+    if not GameVersion.isGen3() then self.bobTimer = ((self.bobTimer or 0) + 1) % 32 end
+    py = py + ((self.bobTimer or 0) < 16 and 0 or 1)
   end
   local facing = self.facing
   local phase = self:walkPhase()

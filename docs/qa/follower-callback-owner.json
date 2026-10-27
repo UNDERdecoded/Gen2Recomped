@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "date": "2026-10-26",
+  "forkCommit": "8e336d459619d26f7099825248a655f2d5385940",
+  "publicCandidateCommit": "b09178f0",
+  "publicScope": "Exact public Game3/ModSeams candidate files over the already offered native callback/rollback prerequisites; not a new standalone or full-package acceptance.",
+  "checks": {
+    "nativeFollowerOwner": 12,
+    "passed": true,
+    "unchangedEntrypoints": 17
+  },
+  "assertions": [
+    "native callback game/world identity retained",
+    "follower-only namespace owns its presentation",
+    "native sprite resource retained",
+    "successful/error callbacks restore owner context",
+    "rollback retires callback ownership and presentation"
+  ],
+  "publicCandidateSha256": {
+    "src/core/Game3.lua": "e95fab5c64933978a1830188bef14b18feb3d6a68a6d2460a074e6ac94476c9b",
+    "src/mods/ModSeams.lua": "18f75d4be62028c0907bd81f92413e5a356316f5d6882c2ec608e8ff62143d15"
+  }
+}

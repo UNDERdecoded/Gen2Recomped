@@ -1289,7 +1289,7 @@ local function markerFor(version)
   -- sequence's art (extractTradeScene, gen3_trade_art) -- without it special
   -- 257 falls back to the bare swap, so both Gen 3 caches re-import once
   if version == "emerald" then revision = "emerald-trade-scene-v3:" end
-  if version == "firered" then revision = "firered-trade-scene-v1:" end
+  if GameVersion.isFRLG(version) then revision = version .. "-trade-scene-v1:" end
   if version == "polishedcrystal" then revision = "polished-stored-unown-forms-v7:" end
   if version == "prism" then revision = "prism-events-art-v2:" end
   -- hgss-phone-call-v1: gen4_hgss_phone_call (Gen4HgssPhoneCall), the
@@ -1322,6 +1322,27 @@ local function markerFor(version)
   -- (Gen1TradeArt); without it the trade ran on drawn stand-ins.
   if version == "red" or version == "blue" or version == "yellow" then
     revision = "gen1-trade-art-v1:"
+  end
+  if GameVersion.generation(version)==3 then
+    revision=revision..'gba-field-move-art-v1:'
+    revision=revision.."gba-script-operands-v"..require("src.import.Gen3ScriptOps").CACHE_REVISION..":"
+    revision=revision.."original-script-interface-v"..require("src.import.Gen3ScriptInterface").SCHEMA..":"
+    revision=revision.."original-object-sheets-v"..require("src.import.Gen3ObjectSheets").SCHEMA..":"
+  end
+  if version=='ruby' or version=='sapphire' then
+    revision=revision..'rs-transition-classes-v1:'
+  end
+  -- RS now carries its own action tables as well as field geometry. Rebuild these
+  -- caches; retain the earlier 36-byte dex and item-effect corrections.
+  -- v6 adds the cartridge's two-lap MetallicShine task to HARDEN/IRON DEFENSE.
+  -- Keep the v5 ball-art corrections; only fresh native extraction supplies
+  -- the RS-owned flourish image and 64-frame record.
+  if version == "ruby" or version == "sapphire" then revision = revision .. "rs-item-menu-v4:rs-stat-flourish-v6:" end
+  -- Keep original behavior IDs alongside the existing native normalization.
+  -- Only GBA caches lack this additional source contract; saves are unchanged.
+  if GameVersion.isGen3(version) then revision = revision .. "source-metatile-attrs-v1:source-map-views-v1:" end
+  if version == "emerald" or version == "ruby" or version == "sapphire" then
+    revision = revision .. "source-behavior-flags-v1:"
   end
   return CACHE_FORMAT .. revision .. GameVersion.info(version).sha1
 end
@@ -1412,6 +1433,7 @@ local CREDITS = {
   },
 }
 RomImporter.CREDITS = CREDITS
+CREDITS.leafgreen = CREDITS.firered
 
 function RomImporter.creditFor(tab)
   return CREDITS[tab] or CREDITS.default
@@ -1523,6 +1545,10 @@ local REQUIRED_FILES_GEN3 = {
   -- Absent, NPC.resolveSpriteDef falls through to SPRITE_RED and the whole
   -- region is populated by Kanto -- which is what it was.
   "data/generated/sprites.lua",
+  -- Original object picture order, independent of normalized native poses.
+  -- Older GBA caches re-import automatically through the existing readiness
+  -- check; no mod package or player save needs conversion.
+  "data/generated/gen3_object_sheets.lua",
   -- THE PARTY MENU'S OWN ART, and required for the same reason as the font:
   -- Data no longer blocks `icons` on a Gen 3 cache, so a cache that does not
   -- carry its own resolves to RED'S and every Hoenn species wears a Kanto
@@ -1601,6 +1627,10 @@ local VERSION_REQUIRED_FILES = {
   -- and the shared Gen 3 required-file set is satisfied.  Requiring the one
   -- background this stage always writes upgrades only FireRed caches.
   firered = {
+    "assets/generated/ui/item_pc_frlg.png",
+    "assets/generated/ui/bag_male_item_pc.png",
+  },
+  leafgreen = {
     "assets/generated/ui/item_pc_frlg.png",
     "assets/generated/ui/bag_male_item_pc.png",
   },
@@ -4906,6 +4936,7 @@ function RomImporter:_pollPickedFiles(dt)
 end
 
 function RomImporter:update(dt)
+  self:_stepAssetPacks()
   local translation=require("src.translation.Service")
   translation.update()
   translation.setLauncher(self:_settings())
@@ -5452,6 +5483,7 @@ function RomImporter:_resetFrameRects()
   self.modRects = nil
   self.modDeleteRects = nil
   self.modImportRect = nil
+  self.modAssetPacksRect = nil
   self.modImportFileRects = nil
   self.modImportGameRects = nil
   -- Enable all / Disable all share that header and the same rule (#647): they
@@ -7155,6 +7187,9 @@ function RomImporter:mousepressed(x, y, button)
   -- conflict); Delete fires immediately; a toggle switch, which lives in the
   -- scrollable list, only ARMS a press so _updateSlotDrag can tell a click from
   -- a drag-scroll (Android, with no pointer polling, toggles on press).
+  if inside(self.modAssetPacksRect, x, y) then
+    self:installAssetPacks(); return
+  end
   if inside(self.modImportRect, x, y) then
     self:chooseMod(); return
   end
@@ -7764,6 +7799,9 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     { id = "firered", letter = "FR", top = PAL.chipFireRedTop,
       bot = PAL.chipFireRedBot, under = PAL.chipFireRedTop,
       label = Strings("FIRERED"), ink = PAL.chipInkSilver },
+    { id = "leafgreen", letter = "LG", top = PAL.chipEmeraldTop,
+      bot = PAL.chipEmeraldBot, under = PAL.chipEmeraldTop,
+      label = Strings("LEAFGREEN"), ink = PAL.chipInkSilver },
     -- FireRed and Emerald sit after Crystal because they are cartridges, and
     -- the row runs cartridges in generation order and then the hacks -- the same rule
     -- GameVersion.ORDER follows, and the one polished_crystal_registration_test
@@ -7773,6 +7811,12 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     -- what that costs: the game was hashed, recognised by setup, counted in
     -- "N of X ready" -- and had no way in.  The tab row showed eight tabs
     -- beside a counter that said nine.
+    { id = "ruby", letter = "R", top = PAL.chipFireRedTop,
+      bot = PAL.chipFireRedBot, under = PAL.chipFireRedTop,
+      label = Strings("RUBY"), ink = PAL.chipInkSilver },
+    { id = "sapphire", letter = "S", top = PAL.chipEmeraldTop,
+      bot = PAL.chipEmeraldBot, under = PAL.chipEmeraldTop,
+      label = Strings("SAPPHIRE"), ink = PAL.chipInkSilver },
     { id = "emerald", letter = "E", top = PAL.chipEmeraldTop,
       bot = PAL.chipEmeraldBot, under = PAL.chipEmeraldTop,
       label = Strings("EMERALD"), ink = PAL.chipInkSilver },
@@ -8091,6 +8135,7 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   elseif version == "silver" then accent = PAL.chipSilverTop
   elseif version == "crystal" then accent = PAL.chipCrystalTop
   elseif version == "firered" then accent = PAL.chipFireRedTop
+  elseif version == "leafgreen" then accent = PAL.chipEmeraldTop
   elseif version == "emerald" then accent = PAL.chipEmeraldTop
   elseif version == "platinum" then accent = PAL.chipPlatinumTop
   elseif version == "heartgold" then accent = PAL.chipHeartGoldTop
@@ -9880,6 +9925,36 @@ end
 -- same options.mods enable-state the loader persists).  Cheap enough to call on
 -- any toggle / install; the per-frame draw calls it lazily through _ensureMods
 -- so a still list costs nothing after the first paint.
+function RomImporter:installAssetPacks()
+  if self.workState=="working" or self._assetPackInstallJob then return end
+  self._assetPackInstallJob=require("src.import.PackInbox").start()
+  self.modNotice={ok=true,text=Strings("Reading asset pack inbox...")}
+end
+
+function RomImporter:_stepAssetPacks()
+  local co=self._assetPackInstallJob
+  if not co then return end
+  -- One bounded entry per frame, on phones and consoles as on desktop.
+  local ok,value=coroutine.resume(co)
+  if not ok then
+    self._assetPackInstallJob=nil
+    self.modNotice={ok=false,text=Strings("Asset pack installation failed: %s",tostring(value))}
+  elseif coroutine.status(co)=="dead" then
+    self._assetPackInstallJob=nil
+    if value.found==0 then
+      self.modNotice={ok=false,text=Strings("Copy extracted packs into %s/imports/asset_packs/<importer>/<pack>/, or supported cartridges into imports/asset_sources/.",
+        require("src.import.CacheFs").rootReport().path or love.filesystem.getSaveDirectory())}
+    elseif #value.failed>0 then
+      local first=value.failed[1]
+      self.modNotice={ok=false,text=Strings("Installed %d pack(s); %s/%s failed: %s",#value.installed,
+        first.importer,first.pack,first.error)}
+    else self.modNotice={ok=true,text=Strings("Installed %d asset pack(s).",#value.installed)} end
+    self:_refreshMods()
+  else
+    self.modNotice={ok=true,text=Strings("Installing %s/%s: %d/%d",value.importer,value.pack,value.done,value.total)}
+  end
+end
+
 function RomImporter:_refreshMods()
   local LauncherMods = require("src.mods.LauncherMods")
   -- Once per session, ahead of the first listing: pull in any mod the player
@@ -10402,6 +10477,10 @@ function RomImporter:_drawModsPanel(x, y, w, h, paged)
   end
 
   local top = y + headerH + 14 * s
+  self.modAssetPacksRect = self:_glassyButton(x, top, w, btnH,
+    self._assetPackInstallJob and Strings("Installing asset packs...") or Strings("Import asset packs from inbox"),
+    self.saveBtnFont, not self._assetPackInstallJob and self.workState~="working")
+  top = top + btnH + 8 * s
 
   -- Notice line: the last install/delete result, else the platform hint.
   --

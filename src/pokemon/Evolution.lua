@@ -330,7 +330,7 @@ function Evolution.createShedinja(game, mon, fromSpecies)
       local def = game.data.pokemon[row.species]
       if not def then return end
       local frlg = (game.data.constants or {}).gen3FRLGNaming
-        or require("src.core.GameVersion").get() == "firered"
+        or require("src.core.GameVersion").isFRLG()
       if frlg and ((game.save.inventory or {}).POKE_BALL or 0) < 1 then return end
       local function copy(value)
         if type(value) ~= "table" then return value end
@@ -413,14 +413,21 @@ function Evolution.learnEvolutionMoves(game, mon, onDone)
   -- movesLearnedAt uses entry.level == level (exact Gen1 rule); do NOT use
   -- Pokemon.movesAtLevel (<= level), which would over-grant older moves.
   local moves = Experience.movesLearnedAt(def, mon.level)
+  return Evolution.learnMoves(game,mon,moves,function()
+    local from=shedinjaPending[mon];shedinjaPending[mon]=nil
+    if from then Evolution.createShedinja(game,mon,from)end
+    if onDone then onDone()end
+  end)
+end
+
+-- The same free-slot/forget flow also serves explicit native reminders.
+function Evolution.learnMoves(game,mon,moves,onDone)
+  local def=game.data.pokemon[mon.species]
   local i = 0
   local function nextStep()
     i = i + 1
     local moveId = moves[i]
     if not moveId then
-      local from = shedinjaPending[mon]
-      shedinjaPending[mon] = nil
-      if from then Evolution.createShedinja(game, mon, from) end
       if onDone then onDone() end
       return
     end

@@ -1,0 +1,38 @@
+name: Async mod HTTP and file downloads
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  transport:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y love
+      - name: Exercise real worker requests against a local server
+        shell: python
+        run: |
+          import os, pathlib, shutil, subprocess, urllib.request, zipfile
+          host = os.environ['RUNNER_OS']
+          if host == 'Linux':
+              executable = shutil.which('love')
+          else:
+              suffix = 'macos' if host == 'macOS' else 'win64'
+              target = pathlib.Path(os.environ['RUNNER_TEMP']) / 'love-get-check'
+              target.mkdir()
+              archive = target / 'runtime.zip'
+              urllib.request.urlretrieve(f'https://github.com/love2d/love/releases/download/11.5/love-11.5-{suffix}.zip', archive)
+              with zipfile.ZipFile(archive) as z: z.extractall(target)
+              executable = next(target.rglob('love.app/Contents/MacOS/love')) if host == 'macOS' else next(target.rglob('lovec.exe'))
+              if host == 'macOS': executable.chmod(0o755)
+          subprocess.run(['python', 'tools/check_async_get.py', '--love', str(executable), '--tls'], check=True)

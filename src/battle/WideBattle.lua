@@ -162,7 +162,16 @@ local function drawGen2Panel(battle, battler, x, y, player, gray)
     end
     HudTiles.tile(0x6F, x, y + 32)
   else
-    Font.draw(fitName(battler.name, 80), nameX(x + 8, battler.name), y)
+    local nx = nameX(x + 8, battler.name)
+    local width = Font.draw(fitName(battler.name, 80), nx, y)
+    if require("src.battle.CaughtMarker").forBattle(battle, battler) then
+      if require("src.core.GameVersion").isGen2() then
+        HudTiles.tile(0x5d, x + 8, y + 8)
+      elseif battle.drawCaughtBall then
+        battle:drawCaughtBall(nx + width, y)
+      end
+      love.graphics.setColor(0, 0, 0, 1)
+    end
     levelAt(battle, battler, x + 32, y + 8)
     HudTiles.tile(0x73, x + 8, y + 16)
     HudTiles.drawHPBar(data, tx + 2, ty + 2, bar, nil, gray)

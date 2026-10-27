@@ -1,0 +1,29 @@
+{
+  "gen1Commit": "37a49b31f458d51ea9e00b90f2a247272ad09cb8",
+  "contracts": {
+    "decoded-layout": {
+      "checksPerHost": 245,
+      "consumerSha256": "584ac72235937e1574d3c6cfd520e001576d70bfa4e9d2b10588bf5552d9d9f0"
+    },
+    "connections": {
+      "checksPerHost": 12160,
+      "consumerSha256": "31c51257eebf99d435940c1513d4179403b8922ca7e1e5b94f564ff2a2f5fec3"
+    }
+  },
+  "sourceSha256": {
+    "src/core/game3/layout_native.lua": "48d1290f884f5651feb60e0982ac436873e236e73c97d8bc0bcd642780285b5e",
+    "src/core/game3/connections.lua": "bde29d7af7cec3add78c24126ac5f395a529a4a3798899b2105c66d0a3501854",
+    "tests/engine/gen1_layout_native.lua": "0cfc94f5ce71e02d64fddba00a1aaf316a2af636e35c4b368bf190303a2f2b01",
+    "tests/gba_layout/consumer.lua": "d0d001e426c87a988d4f070716aa2c8879e6f4f1d2ba25cdfbf87af03dafe799",
+    "tests/engine/gen1_connections.lua": "d52763f0ccf8e79ea373d8969c8074ec7fd973c8be8d99eef591a29c02311ed0",
+    "tests/gba_layout/connections.lua": "1941fe96ffb0bdda59238db75502fad8517552e5a1aee08f924cc1425a89f31f",
+    "tools/gen1-layout-compat/worker.lua": "6e1ad80137d964535e075bb4e79b10761483c95d496a3384dfd22e7e879ec965",
+    "tools/gen1-layout-compat/connections.lua": "9964235ccab2fbf27d8bc41476a2b66fd5b031b427881fec022e508f293c0f26",
+    "tools/gen1-layout-compat/check.py": "f3646f876023f88daeceef696c6699418d644d88fbf6bfba42c9913dfd67151e"
+  },
+  "nativeGridBridged": false,
+  "collisionOrSaveChanges": false,
+  "playerProfilesUsed": false,
+  "originalOrigamiLoads": false,
+  "fullLegacyMapContract": false
+}

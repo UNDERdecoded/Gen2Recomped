@@ -726,4 +726,17 @@ function Gen3StartMenu:draw()
   love.graphics.setColor(1, 1, 1, 1)
 end
 
+-- Source wrappers enter the same native update/draw phase and cannot run a
+-- second input clock by calling their base repeatedly.
+local nativeUpdate,nativeDraw=Gen3StartMenu.update,Gen3StartMenu.draw
+function Gen3StartMenu:update(dt)
+  local source=package.loaded['src.ui.game3.start_menu']
+  if source then return source._update(self,dt,nativeUpdate)end
+  return nativeUpdate(self,dt)
+end
+function Gen3StartMenu:draw()
+  local source=package.loaded['src.ui.game3.start_menu']
+  if source then return source._draw(self,nativeDraw)end
+  return nativeDraw(self)
+end
 return Gen3StartMenu

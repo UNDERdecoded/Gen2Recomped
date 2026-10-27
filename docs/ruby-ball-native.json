@@ -1,0 +1,145 @@
+{
+  "status": "pass",
+  "edition": "ruby",
+  "verification": {
+    "identity": "gen2recomp-qa-ruby-20261025144844471309",
+    "sourceCommit": "325c9ef74c964f814091f0247faf3c1ba7b37d9f",
+    "engineArchiveSHA256": "46a40bfd5679e0139982efc947e08618518bd396efc7f2d502e47fe9af01d6ef",
+    "frozenInputAllocation": {
+      "independentClonedFiles": 1718,
+      "clonedLogicalBytes": 345598908,
+      "mutableHardlinks": false
+    },
+    "cartridgeSHA1": "f28b6ffc97847e94a6c21a63cacf633ee5c8df1e",
+    "loveSHA256": "cb136e72f2f2639f889245c0a6fca355178da71f05e460a9f3d01d0fafcc1b0b",
+    "driverSHA256": "5c92b08f61bd72b8dda779b0c9a135a996ff61ee65de2468802c8f8c1ea61af5",
+    "qaRenderer": "metal",
+    "qaHostConfigChanged": true,
+    "physicalIOSDeviceTested": false,
+    "engineFilesUnchanged": 8993
+  },
+  "native": {
+    "ballSource": "ROM:matching RS sBallSpriteSheets 020A92C, palettes 020A98C, shared open 0D030D0, colors 040B4D4, particles 0D1A7F4; verified RS Thumb send-out and release sites",
+    "status": "pass",
+    "edition": "ruby",
+    "fullFeatureParity": false,
+    "physicalIOSDeviceTested": false,
+    "cases": [
+      {
+        "realNativeParticles": true,
+        "visibleBallNegative": true,
+        "visibleParticlesNegative": true,
+        "restoreExact": true,
+        "gender": "boy",
+        "modsDisabled": true,
+        "drawNoClockAdvance": true,
+        "nativeUltraSheet": 3,
+        "actualBallFrames": {
+          "enemy": 30,
+          "player": 39
+        }
+      },
+      {
+        "realNativeParticles": true,
+        "visibleBallNegative": true,
+        "visibleParticlesNegative": true,
+        "restoreExact": true,
+        "gender": "girl",
+        "modsDisabled": true,
+        "drawNoClockAdvance": true,
+        "nativeUltraSheet": 3,
+        "actualBallFrames": {
+          "enemy": 30,
+          "player": 39
+        }
+      }
+    ]
+  },
+  "independentPNGChecks": [
+    {
+      "gender": "boy",
+      "side": "enemy",
+      "changedPixels": {
+        "ball": 160,
+        "particles": 98
+      },
+      "restoreExact": true
+    },
+    {
+      "gender": "boy",
+      "side": "player",
+      "changedPixels": {
+        "ball": 160,
+        "particles": 189
+      },
+      "restoreExact": true
+    },
+    {
+      "gender": "girl",
+      "side": "enemy",
+      "changedPixels": {
+        "ball": 160,
+        "particles": 98
+      },
+      "restoreExact": true
+    },
+    {
+      "gender": "girl",
+      "side": "player",
+      "changedPixels": {
+        "ball": 160,
+        "particles": 189
+      },
+      "restoreExact": true
+    }
+  ],
+  "PNG_SHA256": {
+    "native-ball-boy-enemy-ball-negative.png": "2f0135d356b396ef38f0cf9ae57ea5446f3d82418a3fb2aac6f06126f88ad112",
+    "native-ball-boy-enemy-ball-restored.png": "397a99efd59d715834922df7ad2e9db4dc3546c1aae9a8dbefbf180c669e2eae",
+    "native-ball-boy-enemy-particles-negative.png": "2252b90c49d3ab17c0d139d19e742c7fbeb81690c4f5455920827c658ee63383",
+    "native-ball-boy-enemy-particles-restored.png": "397a99efd59d715834922df7ad2e9db4dc3546c1aae9a8dbefbf180c669e2eae",
+    "native-ball-boy-enemy.png": "397a99efd59d715834922df7ad2e9db4dc3546c1aae9a8dbefbf180c669e2eae",
+    "native-ball-boy-player-ball-negative.png": "a7ac10d94e54a1eec1b2f2c630b52057cbf6b249817516dc84c5f9a563d3bc5d",
+    "native-ball-boy-player-ball-restored.png": "a6a13e87f6e21f2ca023e478f8204d18305d5e19b577844d056cb10dd06da03c",
+    "native-ball-boy-player-particles-negative.png": "5654e210ad29c8be79f7d2ad89affc9eddcfe7c71066eb96ebda69aacaa3d746",
+    "native-ball-boy-player-particles-restored.png": "a6a13e87f6e21f2ca023e478f8204d18305d5e19b577844d056cb10dd06da03c",
+    "native-ball-boy-player.png": "a6a13e87f6e21f2ca023e478f8204d18305d5e19b577844d056cb10dd06da03c",
+    "native-ball-girl-enemy-ball-negative.png": "315ef9753ddfec2df15571e83fd2cbe942834d1cee6538f9c268f1e12e9f77e7",
+    "native-ball-girl-enemy-ball-restored.png": "4ae70001b7ef0f1e6b2ecd07a59b811b165f7c52395fe5751a473f9f53b6ed8f",
+    "native-ball-girl-enemy-particles-negative.png": "00af5d171c9de08701ebc8b5c3c45b6a459b303b678b91184874fb24746ef61e",
+    "native-ball-girl-enemy-particles-restored.png": "4ae70001b7ef0f1e6b2ecd07a59b811b165f7c52395fe5751a473f9f53b6ed8f",
+    "native-ball-girl-enemy.png": "4ae70001b7ef0f1e6b2ecd07a59b811b165f7c52395fe5751a473f9f53b6ed8f",
+    "native-ball-girl-player-ball-negative.png": "4f89925e908228a16a20960b868560376cfca5a2b5928a4365eda1c10ea861e7",
+    "native-ball-girl-player-ball-restored.png": "799cdcaf56885772a203caf19cf8b2b358944af1bbc124205848c83c939802b3",
+    "native-ball-girl-player-particles-negative.png": "b6057f9e7b194c3fc9ac73ad27f58964f1a48a49a7898d69d3aa20bb1ffca66b",
+    "native-ball-girl-player-particles-restored.png": "799cdcaf56885772a203caf19cf8b2b358944af1bbc124205848c83c939802b3",
+    "native-ball-girl-player.png": "799cdcaf56885772a203caf19cf8b2b358944af1bbc124205848c83c939802b3"
+  },
+  "romOrExtractedArtIncluded": false,
+  "fullFeatureParity": false,
+  "physicalIOSDeviceTested": false,
+  "independentRawCartridgePNGCheck": {
+    "status": "pass",
+    "edition": "ruby",
+    "identity": "gen2recomp-qa-ruby-20261025144844471309",
+    "cartridgeSHA1": "f28b6ffc97847e94a6c21a63cacf633ee5c8df1e",
+    "art": [
+      {
+        "file": "balls.png",
+        "sha256": "8d3bef7f1ef0c4192d66b7cfccd0d713688693d6af429bbb999ef3ebed0e1389",
+        "width": 48,
+        "height": 192,
+        "cartridgeDecodedRGBAExact": true,
+        "opaquePixels": 4632
+      },
+      {
+        "file": "ball_particles.png",
+        "sha256": "996e0ec6c032501bade50d92b79f8810dada1a57111bde78c20041f49cdc825a",
+        "width": 64,
+        "height": 8,
+        "cartridgeDecodedRGBAExact": true,
+        "opaquePixels": 160
+      }
+    ]
+  }
+}

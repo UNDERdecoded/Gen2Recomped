@@ -19,6 +19,7 @@ local HoldItems = require("src.battle.HoldItems")
 local Experience = require("src.battle.Experience")
 local HeldItems = require("src.battle.HeldItems")
 local Font = require("src.render.Font")
+local MenuAuxiliary = require("src.battle.MenuAuxiliary")
 local Logger = require("src.core.Logger")
 local MoveEffects = require("src.battle.MoveEffects")
 local Party = require("src.pokemon.Party")
@@ -38,6 +39,7 @@ local WideBattle = require("src.battle.WideBattle")
 local Gen3Battle = require("src.battle.Gen3Battle")
 local Gen4Battle = require("src.battle.Gen4Battle")
 local GameVersion = require("src.core.GameVersion")
+local BattleCommands = require("src.battle.BattleCommands")
 
 -- FORWARD-DECLARED, because they are defined next to the other doubles
 -- helpers two thousand lines down but read from `stepHPDrain` up here.  A
@@ -53,6 +55,10 @@ local TEXT_AREA_ROWS = { 112, 128 }
 local BattleState = {}
 BattleState.__index = BattleState
 BattleState.isOpaque = true
+-- Data readers can identify the shared Gen 1-5 battle without loading this module.
+BattleState.isBattleState = true
+-- Input and public intents share the exact same native command dispatch.
+for name, method in pairs(BattleCommands.methods) do BattleState[name] = method end
 
 -- pokered prints the battle lines itself (engine/battle/core.asm and the
 -- move-effect banks), and the importer extracts every one of them, so the
@@ -356,6 +362,26 @@ end
 -- its RIGHT.  Left and right then did nothing at all, because a vertical list
 -- has no use for them.  The fix is one clause, not new maths: the grid this
 -- layout already draws is the grid it should navigate.
+function BattleState:caughtMarkerVisible(battler)
+  return require("src.battle.CaughtMarker").visible(self, battler)
+end
+
+local caughtBallQuads = setmetatable({}, { __mode = "k" })
+function BattleState:drawCaughtBall(x, y)
+  local Assets = require("src.render.Assets")
+  local path = "assets/generated/battle/balls.png"
+  if not Assets.exists(Assets.resolve(path)) then return false end
+  local image = Assets.image(path)
+  local quad = caughtBallQuads[image]
+  if not quad then
+    quad = love.graphics.newQuad(0, 0, 8, 8, image:getDimensions())
+    caughtBallQuads[image] = quad
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+  love.graphics.draw(image, quad, x, y)
+  return true
+end
+
 function BattleState:moveGridNavigate(index, count, input)
   if not (self:isWideBattleLayout() or self:gen3Layout()
           or self:gen4Layout()) then
@@ -596,10 +622,7 @@ function BattleState:sgbPalettes()
   return nil
 end
 
-local Rulesets = {
-  gen1_faithful = require("src.battle.rulesets.gen1_faithful"),
-  modern_clean = require("src.battle.rulesets.modern_clean"),
-}
+local Rulesets = require('src.battle.Rulesets')
 
 -- the Poké Ball toss chain (TossBallAnimation) plays even with battle
 -- animations off: PlayMoveAnimation jumps to it before checking wOptions
@@ -1364,6 +1387,17 @@ function BattleState.giveWildHeldItem(data, mon, rng, compoundEyes)
 end
 
 function BattleState.newWild(game, species, level, opts)
+  local prepared
+  if opts and opts.nativeFishingMon then
+    assert(not opts.wildRecord, 'ambiguous native wild individual')
+    prepared=require('src.world.Gen2Fishing').takePrepared(game,opts.nativeFishingMon,species,level)
+  end
+  local authored
+  if opts and opts.wildRecord then
+    local why;authored,why=require('src.battle.WildRecord').validate(game.data,opts.wildRecord)
+    assert(authored,why)
+    assert(authored.species==species and authored.level==level,'encounter identity mismatch')
+  end
   local self = newBattle(game)
   self.kind = "wild"
   local playerMon = Party.firstHealthy(game.save.party)
@@ -1385,7 +1419,7 @@ function BattleState.newWild(game, species, level, opts)
      and game.data.pokemon[species] and game.data.pokemon[species].forms then
     form=require("src.pokemon.PolishedUnown").choose(game.save)
   end
-  local wild = Pokemon.new(game.data, species, level, nil, form)
+  local wild = prepared or Pokemon.new(game.data, species, level, nil, form)
   -- SYNCHRONIZE'S NATURE AND CUTE CHARM'S GENDER, decided with the slot (see
   -- src/world/Gen4WildLead.lua) and applied the cartridge's way: personality
   -- re-drawn until it carries them.
@@ -1399,7 +1433,7 @@ function BattleState.newWild(game, species, level, opts)
   -- without a third field.  147 species in Hoenn name something.
   local compoundEyes = (game.data.constants or {}).gen == 4
     and require("src.world.Gen4WildLead").lead(game.data, game.save).ability == "COMPOUND_EYES"
-  BattleState.giveWildHeldItem(game.data, wild, nil, compoundEyes)
+  if not prepared then BattleState.giveWildHeldItem(game.data, wild, nil, compoundEyes) end
   -- BATTLETYPE_SHINY (`loadvar 3, 7` before the loadwildmon) overwrites the
   -- rolled DVs with the fixed shiny pair; the Lake of Rage Gyarados is the
   -- only encounter in Gold that uses it.
@@ -1428,7 +1462,9 @@ function BattleState.newWild(game, species, level, opts)
   if opts and opts.roamerSeed then
     Pokemon.applySeed(game.data, wild, opts.roamerSeed)
   end
+  if authored then require('src.battle.WildRecord').apply(game.data,wild,authored)end
   self.enemy = makeBattler(game.data, wild, false)
+  self.caughtMark = require("src.battle.CaughtMarker").caught(game, wild.species)
   require("src.battle.Gen2Wild").initialize(self, opts)
   if self.roamer then
     local kept = math.floor(tonumber(opts.roamerHP) or 0)
@@ -2482,6 +2518,8 @@ function BattleState:stepHPDrain()
         b.draining = nil
         b.drainHold = Timing.hpDrainClosingFrames(b.isPlayer == true) - 1
         busy = true
+      elseif b.drainHold == 0 then
+        b.drainHold = nil -- the closing frame has already been consumed
       end
     end
   end
@@ -2604,11 +2642,9 @@ function BattleState:beginMsgLine()
   self.shown[#self.shown + 1] = {}
 end
 
-function BattleState:updateQueue()
-  if self.waitingUI then
-    if self.game.stack:top() ~= self then return true end
-    self.waitingUI = nil
-  end
+-- Only display controllers live here. Command holds, HP awards, turn rows
+-- and completion remain in updateQueue, even while a mod holds presentation.
+function BattleState:updateMovePresentation()
   -- HOENN'S PARTICLES TICK BEFORE THE QUEUE'S OWN HOLD, and the whole
   -- reason the animations looked broken is that they used to tick after it.
   --
@@ -2659,11 +2695,16 @@ function BattleState:updateQueue()
       if not anim.caught then self.gen3Ball = nil end
     end
   end
+end
+
+-- Display-only waits and bar completion. Returning idle grants no command;
+-- only updateQueue may consume a battle row after this gate.
+function BattleState:updateQueuePresentation()
+  self:updateMovePresentation()
+  local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle.anim']
+  if source and source._holdsNativeQueue(self) then return true end
   -- a queued hold (faint slide, hit blink) counts down before the next row
-  if self.waitFrames and self.waitFrames > 0 then
-    self.waitFrames = self.waitFrames - 1
-    return true
-  end
+  if self:stepPresentationWait() then return true end
   -- WaitForSoundToFinish (home/delay.asm:15-20) blocks until the sfx has
   -- actually stopped sounding, which is how the original gives a sound its
   -- own clear window instead of letting the next beat play over it
@@ -2693,6 +2734,15 @@ function BattleState:updateQueue()
     if self:stepExpBar() then return true end
     self.expFilling = nil
   end
+  return false
+end
+
+function BattleState:updateQueue()
+  if self.waitingUI then
+    if self.game.stack:top() ~= self then return true end
+    self.waitingUI = nil
+  end
+  if self:updateQueuePresentation() then return true end
   if self.animPlaying then
     self.animPlayer:update()
     if self.animPlayer.pollEffects and self.applyAnimEffect then
@@ -2728,10 +2778,11 @@ function BattleState:updateQueue()
   end
   if not self.current then
     local item = table.remove(self.queue, 1)
-    if not item then return false end
+    if not item then self.nextInsert = nil; return false end
     if item.fn then
       self.nextInsert = 0 -- sayNext inserts right after this item
       item.fn()
+      self.nextInsert = nil
       self.current = nil
       return true
     end
@@ -3251,7 +3302,7 @@ function BattleState:gen3MusicKind()
     local species = mon and mon.species
     local def = species and self.data.pokemon and self.data.pokemon[species]
     local table_ = GEN3_LEGEND_MUSIC
-    if require("src.core.GameVersion").get() == "firered" then
+    if require("src.core.GameVersion").isFRLG() then
       table_ = GEN3_LEGEND_MUSIC_FRLG
     end
     local kind = table_[tostring((def and (def.translationSourceName or def.name)) or species):upper()]
@@ -3654,7 +3705,7 @@ function BattleState:enter()
   -- FIRERED'S INTRO (battle_intro.c BattleIntroSlide1): the window opens out
   -- of the middle for 32 frames before anything moves, then both halves of
   -- the field and both battlers travel the whole 240 pixels at 2 a frame
-  if require("src.core.GameVersion").get() == "firered" and self:gen3Layout() then
+  if require("src.core.GameVersion").isFRLG() and self:gen3Layout() then
     self.introSlide = 120
     self.frlgIntro = { hold = 32, t = 0, light = nil }
   end
@@ -4287,17 +4338,39 @@ function BattleState:touchpressed(_, px, py)
   end
   return true
 end
+function BattleState:updateBattlerPresentation(dt)
+  for _, b in activeBattlers(self) do
+    if b and b.picAnim then b.picAnim:update(dt) end
+    if b and b.monAnim then b.monAnim:update(dt) end
+  end
+end
+
+function BattleState:stepPresentationWait()
+  if self.waitFrames and self.waitFrames > 0 then
+    self.waitFrames = self.waitFrames - 1
+    return true
+  end
+  return false
+end
+
+-- Advance an ending/pose hold without executing battle commands or input.
+function BattleState:updatePresentation(dt)
+  self:tickFx()
+  self:updateBattlerPresentation(dt)
+  self:updateQueuePresentation()
+end
+
 function BattleState:update(dt)
+  local shortcuts=package.loaded['src.mods.FeatureOptions']and require('src.battle.QuickItem')
+  local quick=shortcuts and shortcuts.request(self)
+  local auxiliary = MenuAuxiliary.request(self)
   self:tickFx()
   -- one sample a second into the fight, while it is still on screen
   self._stadiumReportTicks = (self._stadiumReportTicks or 0) + 1
   if self._stadiumReportTicks == 60 then self:reportStadiumBattle("mid") end
   -- Crystal pic animations run off the wall clock like every other battle
   -- pic effect; a Gold/Silver battler has no picAnim and this is a no-op.
-  for _, b in activeBattlers(self) do
-    if b and b.picAnim then b.picAnim:update(dt) end
-    if b and b.monAnim then b.monAnim:update(dt) end
-  end
+  self:updateBattlerPresentation(dt)
   local input = self.game.input
 
   -- L PUTS THE BOTTOM SCREEN AWAY, AND BRINGS IT BACK.
@@ -4440,7 +4513,7 @@ function BattleState:update(dt)
       if self.palPark then require("src.battle.Gen4PalParkBattle").skipRow(self, dir) end
     end
     if input:wasPressed("a") then
-      self:safariAction(({ "ball", "bait", "rock", "run" })[self.menuIndex])
+      self:chooseSafari(({ "ball", "bait", "rock", "run" })[self.menuIndex])
     end
     return
   end
@@ -4466,12 +4539,13 @@ function BattleState:update(dt)
     end
     self.menuIndex = row * 2 + col + 1
     if input:wasPressed("a") then
-      self:safariAction(({ "ball", "bait", "rock", "run" })[self.menuIndex])
+      self:chooseSafari(({ "ball", "bait", "rock", "run" })[self.menuIndex])
     end
     return
   end
 
   if self.phase == "menu" then
+    if quick and shortcuts.dispatch(self,quick)then return end
     -- WHO THIS MENU IS FOR, when the left flank is gone.
     --
     -- `self.player` is the left flank, and in a double battle that flank can
@@ -4507,6 +4581,9 @@ function BattleState:update(dt)
       self:resolveTurn(locked)
       return
     end
+    -- Capture eligibility before presentation catch-up can hide an unfinished
+    -- HP/status drain. Dispatch only at the ordinary player-decision boundary.
+    if auxiliary and MenuAuxiliary.dispatch(self, auxiliary) then return end
     -- PLATINUM'S ACTION MENU IS NOT A 2x2, and walking it as one is what a
     -- player feels as the cursor jumping about.
     --
@@ -4546,60 +4623,10 @@ function BattleState:update(dt)
     -- asked (fainted, or locked into a move it cannot choose).
     if input:wasPressed("b") and self:isDouble()
        and self:choosingSlotNow() == BattleState.POS.PLAYER_RIGHT then
-      local left = self:battlerAt(BattleState.POS.PLAYER_LEFT)
-      local pend = self.pendingActions and self.pendingActions[BattleState.POS.PLAYER_LEFT]
-      if left and not left.ally and (left.mon and left.mon.hp or 0) > 0 and pend
-         and not self:menuLockedAction(left) then
-        self.pendingActions[BattleState.POS.PLAYER_LEFT] = nil
-        if self.chosenTargets then self.chosenTargets[BattleState.POS.PLAYER_LEFT] = nil end
-        self.choosingSlot = BattleState.POS.PLAYER_LEFT
-        self.menuIndex, self.moveIndex = 1, 1
-        pcall(function() require("src.core.Sound").play(self.game.data, "SEQ_SE_DP_DECIDE") end)
-        return
-      end
+      if self:cancelMove() then return end
     end
     if input:wasPressed("a") then
-      local choice = self:menuActions()[self.menuIndex]
-      -- BattleMenu_Pack `.contest` (core.asm:4990): `ld a, PARK_BALL /
-      -- ld [wCurItem], a / call DoItemEffect`.  No pack, no submenu -- the
-      -- third slot IS the ball, so the item action becomes the throw.
-      if choice == "item" and self.bugContest then
-        self:bugContestBall()
-        return
-      end
-      if choice == "fight" and self.ghost then
-        self:say(Strings("%s is too\nscared to move!", self.player.name))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-        self:act(function()
-          self:executeAction(self.enemy, self.player, self:enemyAction())
-        end)
-        self:act(function() self:endOfTurn() end)
-      elseif choice == "fight" then
-        -- After the menu: own trapping/Bide or foe Wrap skips the move
-        -- list and forces the locked action (core.asm:320-329)
-        local fightLock = self:fightLockedAction(self.player)
-        if fightLock then
-          self:resolveTurn(fightLock)
-          return
-        end
-        local who = self:menuBattler()
-        if not self:playerHasPP(who) then
-          -- _NoMovesLeftText, then Struggle engages
-          self:say(Strings("%s has no\nmoves left!", who.name))
-          self:chooseAction({ id = "STRUGGLE", pp = 1, struggle = true })
-          return
-        end
-        self.phase = "moveSelect"
-        self.moveIndex = math.min(self.moveIndex, #who.curMoves)
-        self.moveSwapIndex = nil
-      elseif choice == "run" then
-        self:tryRun()
-      elseif choice == "item" then
-        self:openItems()
-      else
-        self:openParty()
-      end
+      self:chooseMenu(self:menuActions()[self.menuIndex])
     end
     return
   end
@@ -4625,63 +4652,14 @@ function BattleState:update(dt)
         self.moveSwapIndex = self.moveIndex
       end
     elseif input:wasPressed("b") then
-      self.moveSwapIndex = nil
-      self.phase = "menu"
+      self:cancelMove()
     elseif input:wasPressed("a") then
       if self.moveSwapIndex then
         self:swapMoves(self.moveSwapIndex, self.moveIndex)
         self.moveSwapIndex = nil
         return
       end
-      local mv = moves[self.moveIndex]
-      local mvDef = mv and self.data.moves[mv.id]
-      if chooser.disabledSlot == self.moveIndex then
-        self:say(self:romText("_MoveDisabledText", "The move is\ndisabled!"))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      -- TAUNT and TORMENT refuse the move at SELECTION rather than after the
-      -- fact, the way DISABLE already does, so the player is never told to
-      -- pick again for something the game was never going to allow.
-      elseif self.bw and require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true) then
-        -- BLACK AND WHITE: the Choice lock, Imprison, Gravity, Heal Block
-        self:say(require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif self:tauntBlocks(chooser, mvDef) then
-        self:say(Strings("%s can't use\n%s after the\ntaunt!",
-                         chooser.name, mvDef and mvDef.name or mv.id))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif self:tormentBlocks(chooser, mvDef) then
-        self:say(Strings("%s can't use the\nsame move twice in\na row due to the\nTORMENT!",
-                         chooser.name))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif self.g4fx and require("src.battle.Gen4MoveEffects").menuRefusal(self, chooser, mvDef) then
-        -- PLATINUM / HGSS: Gravity and Heal Block (BattleSystem_CanUseMove)
-        self:say(require("src.battle.Gen4MoveEffects").menuRefusal(self, chooser, mvDef))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif mv.pp <= 0 then
-        self:say(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
-        self.phase = "messages"
-        self.afterQueue = "menu"
-      elseif Targeting.needsChoice(self, self:choosingBattler(), mvDef) then
-        -- WHICH OF THE TWO, when the move takes one and there are two.
-        --
-        -- Emerald's selector cycles over the legal slots and names the
-        -- candidate; nothing else in the menu changes.  A single battle
-        -- never gets here, because needsChoice answers false whenever there
-        -- is only one thing to aim at -- and on the Game Boy cartridges the
-        -- moves carry no target byte at all, so it answers false for every
-        -- move in the game.
-        self.pendingMove = mv
-        self.targetChoices = Targeting.choices(self, self:menuBattler())
-        self.targetIndex = 1
-        self.phase = "targetSelect"
-      else
-        self:chooseAction(mv)
-      end
+      self:chooseMove(self.moveIndex)
     end
     return
   end
@@ -4699,16 +4677,9 @@ function BattleState:update(dt)
     elseif input:wasPressed("right") or input:wasPressed("down") then
       self.targetIndex = self.targetIndex < #list and self.targetIndex + 1 or 1
     elseif input:wasPressed("b") then
-      self.pendingMove, self.targetChoices = nil, nil
-      self.phase = "moveSelect"
+      self:cancelMove()
     elseif input:wasPressed("a") then
-      local mv = self.pendingMove
-      local pick = list[self.targetIndex]
-      self.pendingMove, self.targetChoices = nil, nil
-      self.chosenTargets = self.chosenTargets or {}
-      local who = self:menuBattler()
-      if who and who.position then self.chosenTargets[who.position] = pick end
-      self:chooseAction(mv)
+      self:chooseTarget(self.targetIndex)
     end
     return
   end
@@ -4729,12 +4700,7 @@ function BattleState:update(dt)
     elseif input:wasPressed("down") then
       self.mimicIndex = self.mimicIndex < #moves and self.mimicIndex + 1 or 1
     elseif input:wasPressed("a") then
-      local pick = moves[self.mimicIndex]
-      local ctx = self.mimicCtx
-      self.mimicMoves, self.mimicCtx = nil, nil
-      self.phase = "messages"
-      self.nextInsert = 0 -- the copy's anim + text go to the queue head
-      self:applyMimic(ctx.user, ctx.target, ctx.moveInst, pick.slot)
+      self:chooseMimic(self.mimicIndex)
     end
     return
   end
@@ -8317,7 +8283,7 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
   -- straight past `charge` while the sun is up and fires on the turn it was
   -- selected.  Every other charge move ignores the weather.
   if record and record.charge and not releasing and not skipCharge then
-    local branchAware = GameVersion.get() == "firered"
+    local branchAware = GameVersion.isFRLG()
                         and hasMoveTurnVariant(move.anim)
     if not branchAware then self:cancelMoveAnim() end
     user.charging = moveInst
@@ -12516,7 +12482,16 @@ function BattleState:drawHUDs(slide)
       love.graphics.translate(hudShake, 0)
     end
     love.graphics.setColor(0, 0, 0, 1)
-    Font.draw(self.enemy.name, nameX(1, self.enemy.name), 0)
+    local enemyNameX = nameX(1, self.enemy.name)
+    local enemyNameWidth = Font.draw(self.enemy.name, enemyNameX, 0)
+    if self:caughtMarkerVisible() then
+      if require("src.core.GameVersion").isGen2() then
+        hudTile(0x5d, 8, 8)
+      else
+        self:drawCaughtBall(enemyNameX + enemyNameWidth, 0)
+      end
+      love.graphics.setColor(0, 0, 0, 1)
+    end
     if self.enemy.shownStatus then
       Font.draw(self:statusLabel({ status = self.enemy.shownStatus }), 40, 8)
     else
@@ -12960,6 +12935,59 @@ function BattleState:drawClassic()
   -- the vanilla link is a no-op so an empty chain costs nothing.
   if Runtime.wantsHook("battle.overlay") then
     Runtime.call("battle.overlay", function() end, self)
+  end
+end
+
+-- Source wrappers observe the real GBA owner. Unrequested modules and other
+-- generations keep the direct native path; there is no additional clock.
+do
+  local update, draw, field, exit, enter = BattleState.update, BattleState.draw,
+    BattleState.drawBattleField, BattleState.exit, BattleState.enter
+  local Clock = require('src.battle.PresentationClock')
+  for _, name in ipairs{'tickFx','updateBattlerPresentation','updateMovePresentation',
+                        'stepHPDrain','stepExpBar','stepPresentationWait','updateQueuePresentation'} do
+    local body = BattleState[name]
+    BattleState[name] = function(self, ...)
+      return Clock.once(self, name, body, ...)
+    end
+  end
+  BattleState._drawNative = draw
+  local battlerDraw = BattleState.drawBattlerPic
+  function BattleState:drawBattlerPic(battler, ...)
+    local anim = GameVersion.isGen3() and package.loaded['src.core.game3.battle.anim']
+    if anim then return anim._drawBattler(self, battler, battlerDraw, ...) end
+    return battlerDraw(self, battler, ...)
+  end
+  function BattleState:enter()
+    enter(self)
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeEnter(self) end
+  end
+  function BattleState:update(dt)
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    local anim = source and package.loaded['src.core.game3.battle.anim']
+    if anim then
+      return Clock.run(self, dt, function()
+        return source._nativeUpdate(self, dt, update)
+      end)
+    end
+    if source then return source._nativeUpdate(self, dt, update) end
+    return update(self, dt)
+  end
+  function BattleState:draw()
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeDraw(self, draw) end
+    return draw(self)
+  end
+  function BattleState:drawBattleField()
+    local source = GameVersion.isGen3() and package.loaded['src.core.game3.battle']
+    if source then return source._nativeField(self, field) end
+    return field(self)
+  end
+  function BattleState:exit()
+    local source = package.loaded['src.core.game3.battle']
+    if source then source._nativeExit(self) end
+    return exit(self)
   end
 end
 

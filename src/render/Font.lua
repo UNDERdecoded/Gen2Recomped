@@ -404,6 +404,7 @@ end
 -- cartridge's own `{COLOR n}` does: swap the letter's colour and leave the
 -- shadow where it was.
 local twoToneShader, twoTonePrev, twoToneDepth = nil, nil, 0
+local twoToneColors={}
 
 local function twoTone()
   if twoToneShader == nil then
@@ -432,6 +433,7 @@ function Font.beginTwoTone(ink, shadow)
     love.graphics.setShader(sh)
   end
   twoToneDepth = twoToneDepth + 1
+  twoToneColors[twoToneDepth]={ink={ink[1]or 0,ink[2]or 0,ink[3]or 0,ink[4]or 1},shadow={shadow[1]or 0,shadow[2]or 0,shadow[3]or 0,shadow[4]or 1}}
   pcall(sh.send, sh, "inkColor",
         { ink[1] or 0, ink[2] or 0, ink[3] or 0, ink[4] or 1 })
   pcall(sh.send, sh, "shadowColor",
@@ -441,10 +443,15 @@ end
 
 function Font.endTwoTone()
   if not twoTone() or twoToneDepth == 0 then return end
+  twoToneColors[twoToneDepth]=nil
   twoToneDepth = twoToneDepth - 1
   if twoToneDepth == 0 then
     love.graphics.setShader(twoTonePrev)
     twoTonePrev = nil
+  else
+    local colors=twoToneColors[twoToneDepth]
+    pcall(twoToneShader.send,twoToneShader,'inkColor',colors.ink)
+    pcall(twoToneShader.send,twoToneShader,'shadowColor',colors.shadow)
   end
 end
 

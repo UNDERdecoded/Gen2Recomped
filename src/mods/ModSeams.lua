@@ -44,6 +44,9 @@
 -- still the mod's to guard; this takes away the common case, not the need.
 
 local ModSeams = {}
+-- Mutation journals must remain operable while an entry has temporarily
+-- replaced global iteration (including a wrapper that throws).
+local pairs,next=pairs,next
 
 -- every change, oldest first: { tbl, key, before, after, owner }
 local journal = {}
@@ -105,9 +108,10 @@ end
 -- open a window.  Returns a token for close().  Never throws.
 function ModSeams.open(owner)
   local ok, token = pcall(function()
-    local snap = {}
+    local snap, seen = {}, {}
     for _, entry in ipairs(watched()) do
       snap[#snap + 1] = { t = entry.t, label = entry.label, before = copyOf(entry.t) }
+      seen[entry.t] = true
     end
     -- an engine module required for the FIRST time inside this window is
     -- snapshotted the moment it loads, before the mod gets it back to wrap
@@ -116,6 +120,27 @@ function ModSeams.open(owner)
     local function require2(name, ...)
       local had = package.loaded[name]
       local result = real(name, ...)
+      if name=='src.core.game3.field_move_show_mon'and type(result)=='table'and result._observeMod then
+        result._observeMod(owner)
+      end
+      -- An imported native follower keeps native callback arguments, but its
+      -- presentation resources still need the importing mod's owner context.
+      if name=='src.world.game3.Follower' or name=='src.compat.game3.Follower' then
+        local facade=package.loaded['src.core.Game3'] or real('src.core.Game3')
+        if facade and facade._observeActorMod then facade._observeActorMod(owner) end
+      end
+      -- Importing the distinct GBA game/runtime namespace declares that
+      -- this owner's game-bearing callbacks use that facade. No manifest
+      -- rewrite or mod-id-specific conversion is needed.
+      if name == 'src.core.Game3' or name == 'src.core.game3.runtime' or name == 'src.core.game3.battle' or name == 'src.core.game3.battle_bridge'
+          or type(name)=='string' and name:match('^src%.core%.game3%.battle%.') then
+        local facade = package.loaded['src.core.Game3'] or real('src.core.Game3')
+        if facade and facade._observeMod then facade._observeMod(owner) end
+        if type(facade)=='table' and not seen[facade] and not fresh[facade] then
+          fresh[facade]=true
+          snap[#snap+1]={t=facade,label='src.core.Game3',before=copyOf(facade)}
+        end
+      end
       if had == nil and type(name) == "string" and name:match("^src%.")
           and type(result) == "table" and not fresh[result] then
         fresh[result] = true

@@ -1,0 +1,33 @@
+{
+  "referenceCommit": "37a49b31f458d51ea9e00b90f2a247272ad09cb8",
+  "comparison": {
+    "hashA": 1852260190,
+    "hashB": 556508393,
+    "checks": 517218
+  },
+  "nativeGridModified": false,
+  "playerProfilesUsed": false,
+  "nativeMapViewInstalled": false,
+  "fullCompatibility": false,
+  "sourceSha256": {
+    "src/compat/gen1/MetatileBehavior.lua": "b842b9f4dde1233e1ce14850fc0b887208a3a8e33d361e5d365b59ba3a3a83b5",
+    "src/compat/gen1/MetatileNames.lua": "5961db4e419b21e673caa268e3dca58b22e206cb58886b71712674bf8aeb00a4",
+    "src/compat/gen1/CollisionClass.lua": "5ab3ae9372aea359d9f0e017f2ff3c280dba3fc37f982e2d930857d9db13cd3c",
+    "tests/engine/compatibility_cell_semantics.lua": "db1c596cca3c8facfe25cadc2f24ded9f5e7306ffde3ed0d2c1961dcb891e9bc",
+    "tools/metatile-compat/benchmark.lua": "9aae9c28d705c5358a7160bec4bef4350b59fcea684181aaf6fc44543809168f",
+    "tools/metatile-compat/check.py": "06a8e698c1e86127fd97b2c21208cef57ec0db35262995694315d32db2b938e7",
+    "tools/metatile-compat/consumer.lua": "e729420eec2b1f1ae536e2860ed15944638527c7df38c8e5e7e639c4d67cc6c8",
+    "tools/metatile-compat/export.lua": "3326fbfdf518834b3a4dcbc7e00438c171813f1c628786618352ad1576c936b0",
+    "src/compat/gen1/MapViews.lua": "61f7f9aec22c735045bc2a39a3346e9c51b9bc94ce7f7f250b71bc3e27a81e55"
+  },
+  "isolatedClassifierChecks": 807,
+  "nativeMapViewBackendAvailable": true,
+  "companionIntegrationRequired": [
+    239,
+    240,
+    246
+  ],
+  "mapViewLifecycleChecks": 211,
+  "fiveEditionDataProof": "docs/qa/native-map-observations.json",
+  "nativeMapViewInstalledAsLegacyModule": false
+}

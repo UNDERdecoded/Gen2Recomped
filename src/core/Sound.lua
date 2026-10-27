@@ -264,14 +264,69 @@ end
 -- PlaySoundWaitForCurrent -> WaitForSoundToFinish can poll it
 -- Resolve a cartridge effect by its extracted native name, including effects
 -- that have no shared engine role in audio.sfx.
-function Sound.playNamedEffect(data,name)
-  for id,song in pairs(data and data.audio and data.audio.songs or {}) do
-    if type(song)=="table" and song.sfxName==name and tonumber(song.index) then
-      local src=playPath(data,id,{song=id,m4a=tonumber(song.index)})
-      if src then played("sfx",name) end
-      return src
+-- Native numeric/symbolic sequence aliases must resolve unambiguously.
+function Sound.sequenceKey(data, name)
+  if type(name) ~= "string" and type(name) ~= "number" then return nil end
+  local songs = data and data.audio and data.audio.songs or {}
+  if (type(name) == "string" or type(name) == "number") and (type(songs[name]) == "string" or type(songs[name]) == "table") then
+    return name, songs[name]
+  end
+  local key, found
+  for id, song in pairs(songs) do
+    if type(song) == "table" and (song.sfxName == name or song.musName == name
+       or type(name) == "number" and song.index == name) then
+      if found and found ~= song then return nil, "ambiguous native audio id" end
+      key, found = id, song
     end
   end
+  return key, found
+end
+
+function Sound.playNamedEffect(data, name)
+  local id, song = Sound.sequenceKey(data, name)
+  if not id then return nil end
+  local def = song
+  if type(song) == "table" and tonumber(song.index) and not song.file then
+    def = { song = id, m4a = tonumber(song.index) }
+  end
+  local src = playPath(data, id, def)
+  if src then played("sfx", name) end
+  return src
+end
+
+-- A source consumer's environmental voice must not share the cached Source
+-- of a world script, weather controller or another mod.
+function Sound.playOwnedEffect(data, name, owner)
+  assert(type(owner)=="string" and owner~="", "effect owner required")
+  local id,song=Sound.sequenceKey(data,name)
+  if not id then return nil end
+  local def=song
+  if type(song)=="table" and tonumber(song.index) and not song.file then
+    def={song=id,m4a=tonumber(song.index)}
+  end
+  local source=playPath(data,"source:"..#owner..":"..owner..":"..tostring(id),def)
+  if source then played("sfx",name) end
+  return source
+end
+function Sound.isSuspended()return sessionSuspended end
+
+-- Weather owns a separate native voice: an ambient stop must not cut off a
+-- mod or scripted one-shot of the same cartridge sequence.
+function Sound.playWeatherEffect(data, name, looping)
+  return Runtime.call("field.weather.sound", function(value)
+    local id, song = Sound.sequenceKey(data, value)
+    if not id then return nil end
+    local def = song
+    if type(song) == "table" and tonumber(song.index) and not song.file then
+      def = { song = id, m4a = tonumber(song.index) }
+    end
+    local src = playPath(data, "weather:" .. tostring(id), def)
+    if src then
+      safeAudio("Source:setLooping", src.setLooping, src, looping == true)
+      played("sfx", value)
+    end
+    return src
+  end, name)
 end
 
 function Sound.play(data, name)
@@ -630,7 +685,12 @@ function Sound.playCry(data, species, opts)
   end
   -- set every time rather than at build: the cached source outlives a change
   -- of game, and the scale is the loaded cartridge's
-  pcall(src.setVolume, src, volumeFor(key) * cryScale(data))
+  local scale=cryScale(data)
+  if opts and type(opts.volume)=='number'and opts.volume==opts.volume and opts.volume>=0 and opts.volume<=256 then
+    local unit=data.constants and data.constants.gen3Cry and tonumber(data.constants.gen3Cry.scale)or 256
+    if unit and unit>0 then scale=opts.volume/unit end
+  end
+  pcall(src.setVolume, src, volumeFor(key) * scale)
   -- Interactive Dex playback owns its source; loop/effect settings must never
   -- leak onto the cached cry used by battles, NPC scripts or other menus.
   if opts and opts.isolated and src.clone then
@@ -638,7 +698,7 @@ function Sound.playCry(data, species, opts)
     if ok and copy then src=copy end
   end
   if not restart(src) then return nil end
-  require("src.core.Music").duckForCry(data, src)
+  require("src.core.Music").duckForCry(data, src,opts and opts.noDuck==true)
   played("cry", species, species)
   return src
 end

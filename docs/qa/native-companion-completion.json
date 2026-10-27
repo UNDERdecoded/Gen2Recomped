@@ -1,0 +1,211 @@
+{
+  "publicRuntimeHead": "79c3705850aa4173f529bdee27e9e640ead1e863",
+  "upstreamBase": "8d5b4387420cc1fdcadf58ad4ca78a7d8596e41d",
+  "gates": {
+    "engine": {
+      "passed": 194,
+      "total": 194
+    },
+    "sdk": {
+      "passed": 3,
+      "total": 3
+    },
+    "exitCodes": {
+      "engine": 0,
+      "sdk": 0,
+      "gallery": 0,
+      "contract": 0,
+      "fixtures": 0
+    },
+    "externalEntrypoints": 14,
+    "api3Comparisons": 200,
+    "isolatedApi3LoaderRuns": 400
+  },
+  "gpu": [
+    {
+      "love": "12.0",
+      "passed": true,
+      "checks": 575,
+      "backend": "metal",
+      "renderer": "Metal",
+      "comparisons": 30,
+      "readbacks": 100
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "checks": 575,
+      "backend": "opengl",
+      "renderer": "OpenGL",
+      "comparisons": 30,
+      "readbacks": 100
+    },
+    {
+      "love": "11.5",
+      "passed": true,
+      "checks": 575,
+      "backend": "opengl",
+      "renderer": "OpenGL",
+      "comparisons": 30,
+      "readbacks": 100
+    }
+  ],
+  "stagedNativeFlows": [
+    {
+      "runtimeHead": "79c3705850aa4173f529bdee27e9e640ead1e863",
+      "edition": "firered",
+      "backend": "metal",
+      "romSha1": "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc",
+      "stagedSetup": true,
+      "passed": true,
+      "steps": [
+        "unchanged package initialized",
+        "native field admitted",
+        "resident party edits",
+        "native owned dialogue",
+        "imported field damage",
+        "native wild battle",
+        "native battle action",
+        "native battle return",
+        "owned unload"
+      ],
+      "rendererActiveAfterBattle": true
+    },
+    {
+      "runtimeHead": "df85f6d08d9ad738ea2125ec4c0bd38dc4bae930",
+      "edition": "emerald",
+      "backend": "metal",
+      "romSha1": "f3ae088181bf583e55daf962a92bb46f4f1d07b7",
+      "stagedSetup": true,
+      "passed": true,
+      "steps": [
+        "unchanged package initialized",
+        "native field admitted",
+        "resident party edits",
+        "native owned dialogue",
+        "imported field damage",
+        "native wild battle",
+        "native battle action",
+        "native battle return",
+        "owned unload"
+      ],
+      "rendererActiveAfterBattle": true
+    }
+  ],
+  "qualificationLimits": [
+    "Initialization probes do not prove a playthrough.",
+    "The optional alternate battle presentation contract is unavailable; native battle fallback remains active.",
+    "Door reads report missing native artwork/producers rather than inventing a task.",
+    "No private package source or game assets are included."
+  ],
+  "playerProfilesUsed": false,
+  "freeDiskReserveGiB": 20,
+  "unchangedPackageInitialization": [
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "firered",
+      "backend": "metal",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "leafgreen",
+      "backend": "metal",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "emerald",
+      "backend": "metal",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "ruby",
+      "backend": "metal",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "sapphire",
+      "backend": "metal",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "firered",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "leafgreen",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "emerald",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "ruby",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "12.0",
+      "passed": true,
+      "edition": "sapphire",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "11.5",
+      "passed": true,
+      "edition": "firered",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "11.5",
+      "passed": true,
+      "edition": "leafgreen",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "11.5",
+      "passed": true,
+      "edition": "emerald",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "11.5",
+      "passed": true,
+      "edition": "ruby",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    },
+    {
+      "love": "11.5",
+      "passed": true,
+      "edition": "sapphire",
+      "backend": "opengl",
+      "modVersion": "1.0.9"
+    }
+  ],
+  "unchangedPackageManifestSha256": "e579d25dc33b2de21bd0872812660719b43d56b0f88158bec5d609124e830e97"
+}

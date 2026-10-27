@@ -172,6 +172,21 @@ BagMenu.refreshCount = refreshCount
 -- the stack, so every exit that prints has to close it afterwards.  For
 -- every other item the picker popped itself first and closePicker's identity
 -- check makes it a no-op (#252).
+-- Shared with optional command shortcuts. Validate inventory and battle
+-- before consuming; the native throw owns animation, catch and the turn.
+function BagMenu.throwBall(game,battle,id,close)
+  local def=game.data.items[id]
+  if not battle or(game.save.inventory[id]or 0)<1 or not ItemEffects.isBall(id,def)then return false end
+  if battle.kind=='wild'and battle.wildFoesStanding and battle:wildFoesStanding()>1 then
+    showMessages(game,{(game.data.text and game.data.text.TEXT_B0002_00044)
+      or Strings("It's no good! It's impossible to aim\nwhen there are two POKéMON!")})
+    return false
+  end
+  consume(game,id)
+  if close then close()end
+  battle:throwBall(ItemEffects.alias(id,def))
+  return true
+end
 local function useOn(game, battle, id, target, list, moveIndex, picker)
   -- PLATINUM / HGSS: EMBARGO keeps the bag off a battler under it -- refused
   -- with its line, the item kept and the turn not spent (battle_bag.c
@@ -405,6 +420,19 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
   end
 
   if result == "fish" then
+    if require('src.core.GameVersion').isGen2() then
+      local ow=game.overworld
+      -- The upstream START menu exits before it opens this native bag.
+      -- Only this bag may waive its own overlay during preflight; SELECT
+      -- cannot steal a foreign screen's input ownership.
+      local ownBag=game.stack:top()==list
+      if ow and require('src.world.Gen2Fishing').canUse(ow,game,id,ownBag) then
+        list:close()
+        return ow:goFishing(id)
+      end
+      showMessages(game,{Strings("OAK: %s!\nThis isn't the\ntime to use that!",save_name(game))})
+      return
+    end
     list:close()
     local ow = game.overworld
     local p = ow and ow.player
@@ -425,16 +453,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
                               game.save.player.name) })
       return
     end
-    -- BattleBag's hasTwoOpponents: no ball while two wild Pokemon stand
-    if battle.kind == "wild" and battle.wildFoesStanding and battle:wildFoesStanding() > 1 then
-      showMessages(game, { (game.data.text and game.data.text.TEXT_B0002_00044)
-        or Strings("It's no good! It's impossible to aim\nwhen there are two POKéMON!") })
-      return
-    end
-    consume(game, id)
-    list:close()
-    -- Catching/AnimPlayer key off the Gen1 ball ids
-    battle:throwBall(ItemEffects.alias(id, game.data.items[id]))
+    BagMenu.throwBall(game,battle,id,function()list:close()end)
     return
   end
 
@@ -667,7 +686,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     -- runs PrintStatsBox, LearnMoveFromLevelUp and TryEvolvingMon)
     if extra and extra.leveledTo and target then
       local GameVersion = require("src.core.GameVersion")
-      local gen3Candy = GameVersion.get() == "firered" and picker ~= nil
+      local gen3Candy = GameVersion.isFRLG() and picker ~= nil
       -- FireRed keeps the item-target party screen underneath the level-up
       -- message and stat window.  Older generations keep their existing flow.
       if gen3Candy then refreshCount(game, list, id) else list:close() end
@@ -769,7 +788,7 @@ local function pickTargetAndUse(game, battle, id, list)
     -- first, which needs the picker already gone.
     keepOpen = (not battle) and (ItemEffects.healsHP(id)
       or (id == "RARE_CANDY"
-          and require("src.core.GameVersion").get() == "firered")),
+          and require("src.core.GameVersion").isFRLG())),
     onSwitch = function(mon, picker)
       if not wantsMove then
         useOn(game, battle, id, mon, list, nil, picker)
@@ -1244,11 +1263,14 @@ function BagMenu.new(game, opts)
         options[#options + 1] = { label = Strings("QUIT"), onSelect = function() end }
       end
       local th = #options * 2 + 1
-      game.stack:push(Menu.new(game, options, gen2
+      local actions = Menu.new(game, options, gen2
         and { tx = 0, ty = 12 - th, tw = 7, th = th }
-        or { tx = 13, ty = 10, tw = 7, th = th }))
+        or { tx = 13, ty = 10, tw = 7, th = th })
+      actions.publicUIKind = "bag_actions"
+      game.stack:push(actions)
     end,
   })
+  list.publicUIKind, list.publicUIBattle = "bag", battle
   if gen2 then list.sgbPalettes = packPalettes end
   return list
 end

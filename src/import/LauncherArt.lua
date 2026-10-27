@@ -29,6 +29,7 @@ A.TITLES = {
   silver = { "Pokemon - Silver Version (USA, Europe) (SGB Enhanced) (GB Compatible)" },
   crystal = { "Pokemon - Crystal Version (USA, Europe) (Rev 1)", "Pokemon - Crystal Version (USA, Europe)" },
   firered = { "Pokemon - FireRed Version (USA, Europe) (Rev 1)", "Pokemon - FireRed Version (USA)" },
+  leafgreen = { "Pokemon - LeafGreen Version (USA)", "Pokemon - LeafGreen Version (USA, Europe)" },
   emerald = { "Pokemon - Emerald Version (USA, Europe)" },
   platinum = { "Pokemon - Platinum Version (USA) (Rev 1)", "Pokemon - Platinum Version (USA)" },
   heartgold = { "Pokemon - HeartGold Version (USA)" },
@@ -40,7 +41,7 @@ A.TITLES = {
 A.WIKI = {
   red = "Pokémon_Red_and_Blue", blue = "Pokémon_Red_and_Blue", yellow = "Pokémon_Yellow",
   gold = "Pokémon_Gold_and_Silver", silver = "Pokémon_Gold_and_Silver", crystal = "Pokémon_Crystal",
-  firered = "Pokémon_FireRed_and_LeafGreen", emerald = "Pokémon_Emerald",
+  firered = "Pokémon_FireRed_and_LeafGreen", leafgreen = "Pokémon_FireRed_and_LeafGreen", emerald = "Pokémon_Emerald",
   platinum = "Pokémon_Platinum", heartgold = "Pokémon_HeartGold_and_SoulSilver",
   soulsilver = "Pokémon_HeartGold_and_SoulSilver", black = "Pokémon_Black_and_White",
   white = "Pokémon_Black_and_White",

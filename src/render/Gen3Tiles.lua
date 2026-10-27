@@ -119,9 +119,35 @@ function Gen3Tiles:tilePixels(index)
 end
 
 function Gen3Tiles:palette(index)
+  if self.paletteState then
+    local name = index < self.palettesInPrimary and "primary" or "secondary"
+    return self.paletteState[name][index + 1]
+  end
   local record = self:paletteBank(index)
   local pals = record and record.palettes
   return pals and pals[index + 1] or nil
+end
+
+-- Independent palette cadence; does not alter the tile animation picture.
+-- Missing legacy metadata retains the original base-palette rendering.
+function Gen3Tiles:setPaletteTicks(ticks)
+  local cycles = require("src.render.Gen3PaletteCycles")
+  if cycles.staticUnchanged(self, self, ticks, self.paletteState) then
+    self.paletteState.ticks = ticks
+    return false
+  end
+  local state, reason
+  if self.paletteSampler then
+    state, reason = self.paletteSampler:sample(self, self, ticks)
+  else
+    state, reason = cycles.sample(self, self, ticks)
+    if state and (#state.primaryFrames > 0 or #state.secondaryFrames > 0) then
+      self.paletteSampler = require("src.render.Gen3PaletteSamples").new(self, self, state)
+    end
+  end
+  local changed = (state and state.contentKey) ~= (self.paletteState and self.paletteState.contentKey)
+  self.paletteState = state
+  return changed, reason
 end
 
 -- The colour the backdrop shows where nothing is drawn: palette 0, colour 0.
@@ -159,6 +185,22 @@ function Gen3Tiles:attributes(metatile)
   if not (data and base + 2 <= #data) then return 0, 0 end
   local word = byte(data, base + 1) + byte(data, base + 2) * 256
   return word % 256, math.floor(word / 4096) % 16
+end
+
+-- Original cartridge behavior, distinct from attributes()' native numbering.
+-- Old normalized-only records cannot prove this value and must not guess it.
+function Gen3Tiles:sourceBehavior(metatile)
+  if type(metatile) ~= "number" or metatile < 0 or metatile % 1 ~= 0 then return nil end
+  if metatile >= self.metatilesInPrimary and not self.secondary then return nil end
+  local record, index = self:metatileBank(metatile)
+  local stride = record and record.sourceAttributeBytes
+  local mask = record and record.sourceBehaviorMask
+  if (stride ~= 2 and stride ~= 4) or type(mask) ~= "number"
+      or (mask ~= 255 and mask ~= 511) then return nil end
+  local data = stride == 4 and record.sourceAttributes or record.attributes
+  local base = index * stride
+  if type(data) ~= "string" or base + stride > #data then return nil end
+  return (byte(data, base + 1) + byte(data, base + 2) * 256) % (mask + 1)
 end
 
 -- Draw one metatile's layer into `plot(x, y, r, g, b)` at (ox, oy).  Layer 1
@@ -296,6 +338,34 @@ function Gen3Tiles:setAnimFrame(f)
     end
   end
   self.tileCache = {}
+end
+
+-- Observe independent VRAM animation clocks without pre-baking a combined
+-- cycle. A projection can keep fixed atlas slots even when animation periods
+-- have a large LCM. Only changed tile decodes are invalidated; native shared
+-- bank bytes and the renderer's legacy frame-selection API stay untouched.
+function Gen3Tiles:setAnimationTicks(ticks)
+  assert(type(ticks) == "number" and ticks >= 0 and ticks % 1 == 0
+    and ticks <= 9007199254740991, "invalid terrain animation ticks")
+  local nextOverrides = {}
+  for _, a in ipairs(self:animations()) do
+    local frame = a.frames[(math.floor(ticks / math.max(1, a.step)) % #a.frames) + 1]
+    if type(frame) == "string" then
+      for k = 0, a.count - 1 do
+        local at = k * 32
+        if at + 32 <= #frame then nextOverrides[a.tile + k] = frame:sub(at + 1, at + 32) end
+      end
+    end
+  end
+  local previous, dirty = self.tileOverride or {}, {}
+  for tile, bytes in pairs(nextOverrides) do
+    if previous[tile] ~= bytes then dirty[tile] = true; self.tileCache[tile] = nil end
+  end
+  for tile in pairs(previous) do
+    if nextOverrides[tile] == nil then dirty[tile] = true; self.tileCache[tile] = nil end
+  end
+  self.tileOverride, self.animationTicks = nextOverrides, ticks
+  return dirty
 end
 
 -- Which metatiles change when the frame does -- the only ones a sheet has to

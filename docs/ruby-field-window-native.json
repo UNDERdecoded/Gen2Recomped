@@ -1,0 +1,50 @@
+{
+  "status": "pass",
+  "run": "gen2recomp-qa-ruby-20261025064834912371",
+  "verification": {
+    "identity": "gen2recomp-qa-ruby-20261025064834912371",
+    "sourceCommit": "91c6aec649a9962f50daa979e96dba35dbc9c30a",
+    "engineArchiveSHA256": "06bb8e8ce8dbe5eb07a800cec07a187a9a85cf65b5e34244ae82f53fa5875f56",
+    "frozenInputAllocation": {
+      "independentClonedFiles": 1716,
+      "clonedLogicalBytes": 345532366,
+      "mutableHardlinks": false
+    },
+    "cartridgeSHA1": "f28b6ffc97847e94a6c21a63cacf633ee5c8df1e",
+    "loveSHA256": "cb136e72f2f2639f889245c0a6fca355178da71f05e460a9f3d01d0fafcc1b0b",
+    "driverSHA256": "083fb27d51dad2f2b6d6df81407872a8832f22ffd7ae16ccacc67d467d1bf45f",
+    "qaRenderer": "metal",
+    "qaHostConfigChanged": true,
+    "physicalIOSDeviceTested": false,
+    "engineFilesUnchanged": 8975
+  },
+  "nativeResult": {
+    "physicalIOSDeviceTested": false,
+    "nativeNoMods": true,
+    "fieldWindow": {
+      "ty": 14,
+      "width": 240,
+      "height": 160,
+      "maxCols": 26,
+      "th": 6,
+      "tw": 28,
+      "tx": 1
+    },
+    "nativeFontCharacters": 254,
+    "explicitWidthFixturePixels": 204,
+    "oldNarrowFixtureLines": 4,
+    "newFixtureLines": 2,
+    "actualDialogueInput": true,
+    "actualChoiceInput": true,
+    "oldCacheRevisionRejected": true,
+    "freshCacheReady": true,
+    "fieldMetadataSeparateFromBattle": true,
+    "originalRSDialogueFrameArtPorted": false,
+    "status": "pass",
+    "edition": "ruby",
+    "fullRSUI": false,
+    "fullStory": false
+  },
+  "nativeLogSHA256": "0788f13acf4f2e8ec9aa072cafeedba38fe91ef3523c78045a7ef15cf54ecbe2",
+  "scope": "Fresh native cartridge import with mods disabled; exact field geometry, native font and actual dialogue/choice input. Explicit width fixture, not story completion or original RS frame-art acceptance."
+}

@@ -1,0 +1,126 @@
+{
+  "native": {
+    "edition": "sapphire",
+    "status": "pass",
+    "physicalIOSTested": false,
+    "modsEnabled": false,
+    "cases": [
+      {
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "laps": 2,
+        "move": "HARDEN",
+        "restoreExact": true,
+        "visible": true,
+        "life": 64,
+        "player": true
+      },
+      {
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "laps": 2,
+        "move": "HARDEN",
+        "restoreExact": true,
+        "visible": true,
+        "life": 64,
+        "player": false
+      },
+      {
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "laps": 2,
+        "move": "IRON_DEFENSE",
+        "restoreExact": true,
+        "visible": true,
+        "life": 64,
+        "player": true
+      },
+      {
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "laps": 2,
+        "move": "IRON_DEFENSE",
+        "restoreExact": true,
+        "visible": true,
+        "life": 64,
+        "player": false
+      }
+    ]
+  },
+  "verification": {
+    "identity": "gen2recomp-qa-sapphire-20261025185823026577",
+    "sourceCommit": "14df1dd6f83a877ae89d9089181d16e1eec60277",
+    "engineArchiveSHA256": "b3f55ee99928a35c979104c8ebf5aeda9b1ebabd7a18ce1b06ba2684313af9c0",
+    "frozenInputAllocation": {
+      "independentClonedFiles": 1718,
+      "clonedLogicalBytes": 345600308,
+      "mutableHardlinks": false
+    },
+    "cartridgeSHA1": "3ccbbd45f8553c36463f13b938e833f652b793e4",
+    "loveSHA256": "cb136e72f2f2639f889245c0a6fca355178da71f05e460a9f3d01d0fafcc1b0b",
+    "driverSHA256": "79e484d44f74cfa6c2ee0b428b705e7e8bf1e8e4f544d121fb04541c69dfc487",
+    "qaRenderer": "metal",
+    "qaHostConfigChanged": true,
+    "physicalIOSDeviceTested": false,
+    "engineFilesUnchanged": 8999
+  },
+  "retailTask": {
+    "gameCode": "AXPE",
+    "revision": 0,
+    "romSHA1": "3ccbbd45f8553c36463f13b938e833f652b793e4",
+    "elfSHA256": "053c21460f4629394d38b5967972010f0812402c1219bc4f6aa4517e285d9260",
+    "functions": {
+      "sub_80E0CD0": {
+        "address": "080E0CD0",
+        "bytes": 340,
+        "sha256": "777edafd71c96112e2ffe5992297406c82ef24c2335ef8c17a0682c8c49e6365",
+        "retailExact": true
+      },
+      "sub_80E0A4C": {
+        "address": "080E0A4C",
+        "bytes": 644,
+        "sha256": "3f37b193e768c8b506384f04da9d187e409ed11c454de759cfa85d5af4a060fa",
+        "retailExact": true
+      }
+    },
+    "status": "pass",
+    "signature": {
+      "add4": 1,
+      "compare128": 1,
+      "add124": 1,
+      "compare2": 1
+    },
+    "taskFrames": 64,
+    "laps": 2,
+    "frame31": -124,
+    "frame32": 0,
+    "frame63": -124,
+    "frame64": 0
+  },
+  "pixels": [
+    {
+      "case": "stat-harden-player",
+      "rgbaSHA256": "9a177c5869211d2551a2d754acab7c3a8fe1079062e665ee60975e6169b2db97",
+      "negativeSHA256": "d9d035bb75e613c9b03193ec055615b2f8c330e2f4ef378fab292ede42618d74",
+      "changedBytes": 4472,
+      "restoreExact": true
+    },
+    {
+      "case": "stat-harden-enemy",
+      "rgbaSHA256": "6da083eb844e96ab990f427deea4bcc7a2c4483401254fdbb620d5218b6e526c",
+      "negativeSHA256": "d9d035bb75e613c9b03193ec055615b2f8c330e2f4ef378fab292ede42618d74",
+      "changedBytes": 7248,
+      "restoreExact": true
+    },
+    {
+      "case": "stat-iron_defense-player",
+      "rgbaSHA256": "9a177c5869211d2551a2d754acab7c3a8fe1079062e665ee60975e6169b2db97",
+      "negativeSHA256": "d9d035bb75e613c9b03193ec055615b2f8c330e2f4ef378fab292ede42618d74",
+      "changedBytes": 4472,
+      "restoreExact": true
+    },
+    {
+      "case": "stat-iron_defense-enemy",
+      "rgbaSHA256": "6da083eb844e96ab990f427deea4bcc7a2c4483401254fdbb620d5218b6e526c",
+      "negativeSHA256": "d9d035bb75e613c9b03193ec055615b2f8c330e2f4ef378fab292ede42618d74",
+      "changedBytes": 7248,
+      "restoreExact": true
+    }
+  ]
+}

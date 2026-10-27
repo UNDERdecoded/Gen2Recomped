@@ -988,11 +988,17 @@ function NPC:pose()
     end
     py, hopping = py - lift, true
   end
-  return self.sprite, self.px + (self.shiftPx or 0), py, self.facing,
+  local presentation=package.loaded["src.compat.gen1.SourceActors"]
+  local sprite,overridden
+  if presentation then sprite,overridden=presentation.renderer(self)end
+  if not overridden then sprite=self.sprite end
+  return sprite, self.px + (self.shiftPx or 0), py, self.facing,
          self.sliding and 0 or self:walkPhase(), self.stepFlip, hopping
 end
 
 function NPC:draw(camX, camY)
+  local presentation=package.loaded["src.compat.gen1.SourceActors"]
+  if presentation then local sprite,overridden=presentation.renderer(self);if overridden and not sprite then return end end
   local sprite, px, py, facing, phase, flip = self:pose()
   if self.fixedFrame then
     sprite:drawFixedFrame(px, py, camX, camY, self.fixedFrame)

@@ -616,7 +616,7 @@ function Gen3ShopMenu.sellItem(game, id, host)
           -- unlike sellPrice above this cannot be answered with one value
           -- in every slot; it has to know which cartridge it is.
           local soldVars
-          if require("src.core.GameVersion").get() == "firered" then
+          if require("src.core.GameVersion").isFRLG() then
             soldVars = { VAR1 = label, VAR3 = tostring(paid) }
           else
             soldVars = { VAR1 = tostring(paid), VAR2 = label }

@@ -897,6 +897,34 @@ GameVersion.VERSIONS = {
     hasRunning = true,
   },
 
+  leafgreen = {
+    id = "leafgreen",
+    generation = 3,
+    label = "LeafGreen",
+    displayName = "Pokemon LeafGreen",
+    launcherName = "LeafGreen",
+    sha1 = "574fa542ffebb14be69902d1d36f1ec0a4afd71e",
+    manifest = "tools/rom_manifest_leafgreen.json",
+    cachePrefix = "leafgreen/",
+    saveSuffix = "_leafgreen",
+    importable = true,
+    experimental = true,
+    experimentalLabel = "ALPHA",
+    hasRunning = true,
+  },
+  ruby = {
+    id = "ruby", generation = 3, label = "Ruby", displayName = "Pokemon Ruby",
+    launcherName = "Ruby", sha1 = "f28b6ffc97847e94a6c21a63cacf633ee5c8df1e",
+    manifest = "tools/rom_manifest_ruby.json", cachePrefix = "ruby/", saveSuffix = "_ruby",
+    importable=true,experimental=true,experimentalLabel="ALPHA",hasRunning=true,
+  },
+  sapphire = {
+    id = "sapphire", generation = 3, label = "Sapphire", displayName = "Pokemon Sapphire",
+    launcherName = "Sapphire", sha1 = "3ccbbd45f8553c36463f13b938e833f652b793e4",
+    manifest = "tools/rom_manifest_sapphire.json", cachePrefix = "sapphire/", saveSuffix = "_sapphire",
+    importable = true, experimental = true, experimentalLabel = "ALPHA", hasRunning = true,
+  },
+
   emerald = {
     id = "emerald",
     generation = 3,
@@ -1075,7 +1103,7 @@ GameVersion.VERSIONS = {
 -- put a Game Boy Advance game behind two Game Boy Color hacks, and broke the
 -- ordering rule tests/polished_crystal_registration_test.lua asserts.
 GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
-                      "firered", "emerald", "platinum",
+                      "firered", "leafgreen", "ruby", "sapphire", "emerald", "platinum",
                       "heartgold", "soulsilver", "black", "white",
                       "prism", "polishedcrystal" }
 
@@ -1112,12 +1140,32 @@ function GameVersion.isGen3(id)
   return GameVersion.generation(id) == 3
 end
 
+-- The paired Kanto games share field/script/UI contracts, while their ROM
+-- addresses, art, encounters, caches and saves remain cartridge-specific.
+function GameVersion.isFRLG(id)
+  id = id or GameVersion.get()
+  return id == "firered" or id == "leafgreen"
+end
+
 -- The fourth arm.  Same caveat the Gen 3 one carries and then some: a
 -- predicate is not support, and Gen 4 differs from everything above it in
 -- ways no amount of widening an `isGen2()` reaches -- a filesystem instead of
 -- a flat ROM, two screens instead of one, and a 3D field.  This exists so the
 -- Gen 4 work has a gate to hang itself on without touching the branches the
+-- Registered GBA family for source mod probes; cache/save ownership stays native.
+local gbaLayouts={firered='frlg',leafgreen='frlg',ruby='rse',sapphire='rse',emerald='rse'}
+function GameVersion.layout(id,versionId)
+  if id==GameVersion then id=versionId end
+  local info=GameVersion.info(id)
+  return info and(info.layout or gbaLayouts[info.id])or nil
+end
+
 -- other three generations take.
+function GameVersion.isFRLG(id)
+  id=id or GameVersion.get()
+  return id=="firered" or id=="leafgreen"
+end
+
 function GameVersion.isGen4(id)
   return GameVersion.generation(id) == 4
 end

@@ -1,0 +1,44 @@
+name: Native GBA modal ownership
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/gba-modal.yml'
+      - 'src/**'
+      - 'tests/gba_modal/**'
+      - 'tests/engine/gen3_modal*.lua'
+      - 'tools/gba-modal-check/**'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  native-modal:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          path: gen2
+      - uses: actions/checkout@v7
+        with:
+          repository: bryanthaboi/gen1recomp
+          ref: 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91
+          path: gen1-reference
+          sparse-checkout: |
+            src
+            data
+            tests
+            assets/fonts
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Native ownership, reload, input and visibility
+        working-directory: gen2
+        run: |
+          luajit tests/engine/gen3_modal_stack.lua
+          luajit tests/engine/gen3_modal_shared.lua
+      - name: Identical consumer on pinned native engines
+        run: python3 gen2/tools/gba-modal-check/check.py --gen1 gen1-reference --gen2 gen2 --report "${{ runner.temp }}/gba-modal.json"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: native-gba-modal-comparison
+          path: ${{ runner.temp }}/gba-modal.json
+          if-no-files-found: error

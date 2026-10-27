@@ -22,6 +22,8 @@
 -- Nothing here hardcodes an address; if the manifest lacks a symbol, the
 -- stage that needs it says so and is skipped rather than reading whatever
 -- happens to be at offset zero.
+-- Terrain palette callback classifications are a separately identified,
+-- source-pinned manifest profile, gated again on the actual full ROM digest.
 --
 -- The CONTRACT is the same as Gen 2's, because the runtime's is: `new` takes
 -- (romData, version, manifest, progress), `run` walks DATA_STAGES then
@@ -53,7 +55,7 @@ RomExtractorGen3.__index = RomExtractorGen3
 -- The progress denominator.  Kept honest with the two stage lists below: a
 -- mismatch does not break anything, it just makes the bar lie, which is the
 -- kind of small wrongness that survives for months.
-local STAGE_COUNT = 94
+local STAGE_COUNT = 95
 
 -- ---------------------------------------------------------------------------
 -- The stage tables below are keyed to Emerald's ROM.  A sibling cartridge
@@ -111,13 +113,25 @@ end
 -- rather than merely moved.  Applied after the address map, restored with it.
 function RomExtractorGen3.applyStageOverrides(overrides)
   if type(overrides) ~= "table" then return 0 end
+  -- JSON objects preserve mixed Lua records (numeric pose entries plus a
+  -- named species field), but their numeric keys arrive as strings.
+  local function decoded(value)
+    if type(value) ~= "table" then return value end
+    local out = {}
+    for k, v in pairs(value) do
+      local key = type(k) == "string" and k:match("^%d+$") and tonumber(k) or k
+      out[key] = decoded(v)
+    end
+    return out
+  end
   local n = 0
   for tableName, fields in pairs(overrides) do
     local t = RomExtractorGen3[tableName]
     if type(t) == "table" and type(fields) == "table" then
       for k, v in pairs(fields) do
+        k = type(k) == "string" and k:match("^%d+$") and tonumber(k) or k
         RomExtractorGen3._pristine[#RomExtractorGen3._pristine + 1] = { t, k, t[k] }
-        t[k] = v
+        t[k] = decoded(v)
         n = n + 1
       end
     end
@@ -2612,11 +2626,18 @@ function RomExtractorGen3:statFlourish()
   -- immediates independent of the compiler-selected low register.
   local drift = self:thumbImmCount(step, F.SCAN, 0x3000, 4) > 0 and 4 or nil
   local lap = self:thumbImmCount(step, F.SCAN, 0x2800, 128) > 0 and 128 or nil
-  local wrap = self:thumbImmCount(step, F.SCAN, 0x3000, 124) > 0 and 124 or nil
-  local laps = self:thumbImmCount(step, F.SCAN, 0x2800, 3) > 0 and 3 or nil
+  -- Ruby/Sapphire's sub_80E0CD0 finishes after TWO laps; the later task
+  -- runs THREE. Both compiled forms fuse the -4 scroll and +128 wrap as
+  -- ADD 124. Keep every existing motion/blob gate and select only the lap
+  -- count from the cartridge header, never the active application's version.
+  local gameCode = rom:u32(0xAC)
+  local rs = gameCode == 0x45565841 or gameCode == 0x45505841 -- AXVE / AXPE
+  local wrapValue, lapCount = 124, rs and 2 or 3
+  local wrap = self:thumbImmCount(step, F.SCAN, 0x3000, wrapValue) > 0 and wrapValue or nil
+  local laps = self:thumbImmCount(step, F.SCAN, 0x2800, lapCount) > 0 and lapCount or nil
   local cx, cy = 96, 32 -- source-defined placement after this exact task is proved
   if not (drift and lap and wrap and laps) then
-    return fail("the stat-up task's installed step does not carry its 4/128/124/3 motion")
+    return fail("the stat-up task's installed step does not carry its cartridge-specific scroll/lap motion")
   end
   -- ...and the wrap has to bring the lap back where it started, less one
   -- step: 128 out, 124 back, and the step itself is the 4 that is missing
@@ -3798,15 +3819,15 @@ function RomExtractorGen3:animCallbackFamily(callback)
   elseif hasArc and from == "attacker" then
     family = "arc_candidate"
   end
-  local isFireRed = self.version == "firered"
-                    or (type(self.version) == "table"
-                        and self.version.id == "firered")
+  local version = type(self.version) == "table" and self.version.id or self.version
+  local isFireRed = require("src.core.GameVersion").isFRLG(version)
   if isFireRed then
+    local canonical = (self.manifest.callbackAddressMap or {})[("%06X"):format(callback)] or callback
     if from == "target" then
-      local exact = RomExtractorGen3.FRLG_TARGET_LOCAL_LINEAR[callback]
+      local exact = RomExtractorGen3.FRLG_TARGET_LOCAL_LINEAR[canonical]
       if exact then family = exact end
     end
-    local exact = RomExtractorGen3.FRLG_CALLBACK_PATH[callback]
+    local exact = RomExtractorGen3.FRLG_CALLBACK_PATH[canonical]
     if exact then family = exact end
   end
   local rec = { family = family,
@@ -3902,6 +3923,7 @@ function RomExtractorGen3:extractConstants()
     self:layoutValue("abilityNameLength", 13), numAbilities, "constants")
 
   local constants = { source = "ROM:Emerald" }
+  constants.gen3MauvilleGym = self.manifest.mauvilleGym
 
   -- WHERE A NEW GAME STARTS, and it is not a constant anywhere on the
   -- cartridge -- it is the argument list of WarpToTruck, the only call to
@@ -4658,6 +4680,22 @@ function RomExtractorGen3:extractConstants()
                 window.width, window.height, window.left, window.top)
   end
 
+  -- RS positions the field printer in task code, not in Emerald's BG
+  -- WindowTemplate records. Keep it separate from the battle-window anchor.
+  local rsWindow = self.manifest.rsFieldMessageWindow
+  if type(rsWindow) == "table" and rsWindow.kind == "rs-field-code" then
+    assert(rsWindow.left == 2 and rsWindow.top == 15
+           and rsWindow.width == 26 and rsWindow.height == 4
+           and type(rsWindow.source) == "string", "Invalid RS field-window metadata")
+    constants.gen3FieldMessageWindow = {
+      left = rsWindow.left, top = rsWindow.top,
+      width = rsWindow.width, height = rsWindow.height,
+      source = rsWindow.source,
+    }
+    Logger.info("Gen3 RS field window: %d columns by %d rows at (%d,%d)",
+                rsWindow.width, rsWindow.height, rsWindow.left, rsWindow.top)
+  end
+
   -- THE ATTRACT SEQUENCE'S CAST.
   --
   -- Its backdrops come out of the scene pass; its choreography is task code
@@ -5171,7 +5209,8 @@ function RomExtractorGen3:extractConstants()
         underwater = trans.underwater,
         secretBaseOpponent = trans.secretBaseOpponent,
         secretBaseTransition = trans.championTransition,
-        trainerClasses = trans.trainerClasses,
+        trainerClasses = require('src.import.Gen3TransitionProfile').classes(
+          type(self.version)=='table' and self.version.id or self.version, trans.trainerClasses),
         eliteFour = trans.eliteFour,
         championTransition = trans.championTransition,
         aquaTransition = trans.aquaTransition,
@@ -5829,7 +5868,7 @@ function RomExtractorGen3:extractConstants()
     constants.types = {}
     constants.typeOrder = {}
     for i = 0, numTypes - 1 do
-      local id = slug(typeNames[i])
+      local id = (self.manifest.typeIds or {})[i + 1] or slug(typeNames[i])
       if id == "" then id = ("TYPE_%02d"):format(i) end
       -- ONE-BASED, unlike speciesOrder / moveOrder / itemOrder, which are
       -- keyed by the cartridge's own number.  It is not an accident and it
@@ -7368,6 +7407,17 @@ function RomExtractorGen3:extractFont()
       local srcRow = top + row
       local half = srcRow < 8 and 0 or 2       -- the top pair of tiles, or the bottom
       local line = {}
+      if font.bits == 4 then
+        -- RS's shadowed 8x16 Latin font is two raw 4bpp tiles. Its
+        -- ApplyColors_ShadowedFont maps nibble F to ink and E to shadow.
+        local word = self.rom:u32(base + srcRow * 4)
+        for px = 0, cellW - 1 do
+          local nibble = math.floor(word / 2 ^ (px * 4)) % 16
+          local role = nibble == 15 and 1 or (nibble == 14 and 2 or 0)
+          line[px + 1] = role
+          if role ~= 0 then any = true end
+        end
+      else
       for tile = 0, 1 do
         local word = self.rom:u16(base + (half + tile) * 16 + (srcRow % 8) * 2)
         for x = 0, 7 do
@@ -7379,6 +7429,7 @@ function RomExtractorGen3:extractFont()
             if role == 1 or role == 2 then any = true end
           end
         end
+      end
       end
       cell[row + 1] = line
     end
@@ -7654,12 +7705,21 @@ function RomExtractorGen3:extractFont()
       local across = math.floor(tonumber(face.tilesAcross) or 2)
       local stride = math.floor(tonumber(face.glyphBytes) or 0x40)
       for code = 0, count - 1 do
-        local base = face.glyphs + code * stride
+        local glyphCode = face.glyphMap and self.rom:u8(face.glyphMap
+          + code * (face.glyphMapStride or 1) + (face.glyphMapOffset or 0)) or code
+        local base = face.glyphs + glyphCode * stride
         local cell = {}
         for row = 0, fh - 1 do
           local srcRow = ftop + row
           local half = srcRow < 8 and 0 or across
           local line = {}
+          if face.bits == 4 then
+            local word = self.rom:u32(base + srcRow * 4)
+            for px = 0, fw - 1 do
+              local nibble = math.floor(word / 2 ^ (px * 4)) % 16
+              line[px + 1] = nibble == 15 and 1 or (nibble == 14 and 2 or 0)
+            end
+          else
           for tile = 0, across - 1 do
             local word = self.rom:u16(base + (half + tile) * 16
                                       + (srcRow % 8) * 2)
@@ -7670,10 +7730,11 @@ function RomExtractorGen3:extractFont()
               end
             end
           end
+          end
           cell[row + 1] = line
         end
         cells[code + 1] = cell
-        fadv[code + 1] = self.rom:u8(face.widths + code)
+        fadv[code + 1] = self.rom:u8(face.widths + glyphCode)
       end
       local okFace = pcall(function()
         local image = paintPage(cells, fw, fh)
@@ -7868,6 +7929,30 @@ RomExtractorGen3.BRAILLE_ALPHABET = {
 -- One 16x16 cell out of the sheet, as roles: 1 raised, 2 unraised, 3 paper.
 function RomExtractorGen3:brailleGlyph(base, value)
   local B = RomExtractorGen3.BRAILLE
+  local profile = self.manifest and self.manifest.braille
+  if profile and profile.bits == 1 then
+    local cell = {}
+    for row = 0, B.CELL - 1 do
+      local line = {}
+      for half = 0, 1 do
+        local code = value + half * profile.halfCodeOffset
+        local tile = self.rom:u8(profile.glyphMap + code * 2 + math.floor(row / 8))
+        local blank = self.rom:u8(profile.glyphMap
+          + half * profile.halfCodeOffset * 2 + math.floor(row / 8))
+        local word = self.rom:u8(base + tile * 8 + row % 8)
+        local paper = self.rom:u8(base + blank * 8 + row % 8)
+        for x = 0, 7 do
+          local ink = math.floor(word / 2 ^ (7 - x)) % 2 == 1
+          local unraised = math.floor(paper / 2 ^ (7 - x)) % 2 == 1
+          -- RS draws small dots even in the blank cell. Keep those as a
+          -- separate role so the six raised-dot masks can still be proved.
+          line[half * 8 + x + 1] = ink and (unraised and 2 or 1) or 3
+        end
+      end
+      cell[row + 1] = line
+    end
+    return cell
+  end
   local at = base + math.floor(value / B.PER_ROW) * B.ROW
               + (value % B.PER_ROW) * B.STRIDE
   local cell = {}
@@ -7921,6 +8006,7 @@ end
 function RomExtractorGen3:extractBraille()
   self:beginStage("Gen3 braille")
   local B = RomExtractorGen3.BRAILLE
+  local profile = self.manifest and self.manifest.braille
   local base = self:symbol("gFontBrailleLatinGlyphs")
   local pool = self._scriptPool
   if not base then
@@ -8021,7 +8107,7 @@ function RomExtractorGen3:extractBraille()
     local height = math.min(B.WINDOW.maxHeight,
                             B.WINDOW.baseHeight
                               + B.WINDOW.perLine * (#lines - 1))
-    return {
+    local wall = {
       at = at,
       format = format,
       lines = lines,
@@ -8031,6 +8117,15 @@ function RomExtractorGen3:extractBraille()
       x = math.floor((B.WINDOW.screenWidth - width) / 2),
       y = math.floor((B.WINDOW.screenHeight - height) / 2),
     }
+    if profile and profile.frameFromHeader then
+      -- RS's frame coordinates include the border, and its text origin is
+      -- independent of that frame. Preserve both from ScrCmd_braillemessage.
+      wall.x, wall.y = format[1] + 1, format[2] + 1
+      wall.width, wall.height = format[3] - format[1] - 1,
+                               format[4] - format[2] - 1
+      wall.textX, wall.textY = format[5] * 8, format[6] * 8
+    end
+    return wall
   end
 
   local messages, count, unreadable = {}, 0, 0
@@ -8064,7 +8159,7 @@ function RomExtractorGen3:extractBraille()
     perRow = B.PER_ROW,
     count = B.COUNT,
     advance = B.CELL,
-    lineHeight = B.CELL + B.LINE_SPACING,
+    lineHeight = profile and profile.lineHeight or (B.CELL + B.LINE_SPACING),
     window = B.WINDOW,
     messages = messages,
     source = ("ROM:gFontBrailleLatinGlyphs %07X (%d cells, %dx%d, %d per "
@@ -8074,7 +8169,8 @@ function RomExtractorGen3:extractBraille()
   }
 
   local okPage, pageErr = pcall(function()
-    local paint = { [1] = FONT_TEXT, [2] = FONT_SHADOW }
+    local paint = { [1] = FONT_TEXT,
+      [2] = profile and profile.bits == 1 and FONT_TEXT or FONT_SHADOW }
     local rows = math.ceil(B.COUNT / B.PER_ROW)
     local image = self:fontSheet(B.PER_ROW * B.CELL, rows * B.CELL)
     if not image then return end
@@ -9305,7 +9401,7 @@ function RomExtractorGen3:extractOverworldSprites()
 
       pixels[id] = { cells = cells, colors = colors,
                      width = width, height = frameHeight,
-                     runCells = runCells }
+                     runCells = runCells, originalOrder = order, originalRunOrder = runOrder }
 
       local key = ("SPRITE_G3_%03d"):format(id)
       out[key] = {
@@ -9828,6 +9924,35 @@ function RomExtractorGen3:extractOverworldSprites()
                    walkers = walkers, still = still, failed = failed,
                    sheets = drawn, substituted = substituted }
   self:write("sprites", out)
+  -- Keep original picture-table order and palette words as an additive
+  -- compact cache. Existing actor sheets and their frame numbers stay intact.
+  local edition = type(self.version) == "table" and self.version.id or self.version
+  local originalSheets = require("src.import.Gen3ObjectSheets").extract(self.rom, {
+    edition = edition, romSha1 = self.manifest.romSha1,
+    gfxTable = table_, count = count, paletteTable = palTable, paletteCount = palCount,
+    wideSubsprites = edition == "ruby" or edition == "sapphire",
+    reflectionProfile = edition == "emerald" and "raw" or "paired",
+    avatarTables = self.manifest.objectAvatars or require("src.import.gba.object_avatar_tables")[edition],
+    reflectionFor = function(info) return self:reflectionPaletteFor(info) end,
+    progress = function(current,total)
+      if self.checkpoint then self.checkpoint(("Decoding original object sheets %d/%d"):format(current,total)) end
+    end,
+  })
+  for id,cell in pairs(pixels) do
+    local record = originalSheets.objects[id]
+    if record then
+      local key = ("SPRITE_G3_%03d"):format(id)
+      record.native = { key=key, width=cell.width, height=cell.height, order=cell.originalOrder, walker=out[key] and out[key].walker,
+        image=out[key] and out[key].image, frames=out[key] and math.max(out[key].frames or 1,out[key].poseFrames or 1),
+        defaultWidth=out[key] and out[key].frameWidth, defaultHeight=out[key] and out[key].frameHeight,
+        runKey=out[key.."_RUN"] and key.."_RUN" or nil, runOrder=cell.originalRunOrder,
+        runImage=out[key.."_RUN"] and out[key.."_RUN"].image,
+        runFrames=out[key.."_RUN"] and math.max(out[key.."_RUN"].frames or 1,out[key.."_RUN"].poseFrames or 1),
+        runWidth=out[key.."_RUN"] and out[key.."_RUN"].frameWidth,runHeight=out[key.."_RUN"] and out[key.."_RUN"].frameHeight,
+        reflectionKey=out[key.."_REFLECT"] and key.."_REFLECT" or nil }
+    end
+  end
+  self:write("gen3_object_sheets", originalSheets)
   Logger.info("Gen3 overworld sprites: %d rows, %d that turn and walk, %d "
               .. "non-walkers, %d unreadable, %d sheets composed, %d "
               .. "run-time slots standing in",
@@ -9945,6 +10070,12 @@ function RomExtractorGen3:extractTrainerSprites()
     end)
     if not ok then Logger.warn("gen3 trainer pic %d failed", i) end
   end
+
+  -- Retain the native numeric portrait catalogue for presentation consumers.
+  local constants=self._constants or{}
+  constants.gen3TrainerFront=pathFor
+  self._constants=constants
+  self:write("constants",constants)
 
   -- ...AND THE PATH ONTO EVERY TRAINER ROW.
   --
@@ -12034,6 +12165,14 @@ end
 
 function RomExtractorGen3:extractFieldEffects()
   self:beginStage("Gen3 field effects")
+  local ok,digest=pcall(require('src.import.RomVerification').sha1,self.rom.data)
+  local edition=type(self.version)=='table'and self.version.id or self.version
+  local artwork,why=require('src.import.Gen3FieldMoveArt').extract(self.rom,self.manifest,ok and digest or nil,edition,self.checkpoint)
+  local constants=self._constants or{}
+  constants.gen3FieldMovePresentation=artwork
+  self._constants=constants
+  if not artwork then Logger.warn('gen3 field move artwork unavailable: %s',tostring(why))end
+  self:write('constants',constants)
   local heal, howMany, distinct = self:fieldEffectRoles()
   if not heal or howMany ~= 1 then
     Logger.warn("gen3 field effects: %d of the region's %d effect ids sit in "
@@ -12359,7 +12498,11 @@ function RomExtractorGen3:extractDexEntries()
     frontCoords = coordTable(front) or frontCoords
     backCoords = coordTable(back) or backCoords
   end
-  local stride, poseAt = frlg and 36 or 32, frlg and 26 or 22
+  -- Ruby/Sapphire also carry two description pointers. Their manifest
+  -- declares the same 36-byte structure without selecting FRLG UI rules.
+  local stride = (self.manifest or {}).pokedexEntrySize or (frlg and 36 or 32)
+  assert(stride == 32 or stride == 36, "Unsupported Gen3 Pokedex entry size")
+  local poseAt = stride == 36 and 26 or 22
   for _, def in pairs(self._pokemon) do
     local dex = def.dex
     if dex and dex > 0 and dex <= 386 then
@@ -12751,6 +12894,19 @@ function RomExtractorGen3:extractMapLayouts()
       if secondary then tilesets[secondary] = true end
       local blockPtr = self.rom:pointer(a + 12)
       local borderPtr = self.rom:pointer(a + 8)
+      local borderW, borderH = 2, 2
+      if (self.manifest.metatileAttributes or {}).bytes == 4 then
+        borderW, borderH = self.rom:u8(a + 24), self.rom:u8(a + 25)
+      end
+      local nativeBorder = borderPtr and self:layoutBlocks(borderPtr, 4) or nil
+      -- Unused layout records can declare a zero-sized source border. Keep
+      -- native extraction unchanged and report unavailable source metadata;
+      -- do not turn a compatibility observation into a native import failure.
+      local sourceBorder
+      if borderW > 0 and borderH > 0 and borderPtr and borderPtr + borderW * borderH * 2 <= self.rom.size then
+        sourceBorder = borderW * borderH == 4 and nativeBorder
+          or self:layoutBlocks(borderPtr, borderW * borderH)
+      end
       cells = cells + width * height
       -- COLLISION LIVES ON THE MAP CELL, not on the tileset.
       --
@@ -12784,7 +12940,10 @@ function RomExtractorGen3:extractMapLayouts()
         primaryTileset = primary,
         secondaryTileset = secondary,
         -- the border is always 2x2 metatiles in Emerald
-        border = borderPtr and self:layoutBlocks(borderPtr, 4) or nil,
+        border = nativeBorder,
+        sourceBorder = sourceBorder,
+        sourceBorderWidth = borderW,
+        sourceBorderHeight = borderH,
         blocks = blockPtr and self:layoutBlocks(blockPtr, width * height) or nil,
         source = ("ROM:gMapLayouts[%d]"):format(i),
       }
@@ -13413,7 +13572,7 @@ function RomExtractorGen3:extractMaps()
       local count = rom:u32(connAt)
       local at = rom:pointer(connAt + 4)
       if at and count > 0 and count <= 8 then
-        local byDir = {}
+        local byDir, sourceConnections = {}, {}
         local byDirRows, order = {}, {}
         local any = false
         for i = 0, count - 1 do
@@ -13441,6 +13600,7 @@ function RomExtractorGen3:extractMaps()
           -- way.  `list` carries all of them in ROM order, which is the
           -- order the cartridge searches.
           if dir and to then
+            sourceConnections[#sourceConnections + 1] = { dir = dir, map = to, offset = rom:s32(o + 4) }
             local rows = byDirRows[dir]
             if not rows then
               rows = {}
@@ -13471,6 +13631,7 @@ function RomExtractorGen3:extractMaps()
         end
         if any then
           def.connections = byDir
+          def.sourceConnections = sourceConnections
           connected = connected + 1
         end
       end
@@ -13489,6 +13650,8 @@ function RomExtractorGen3:extractMaps()
       def.collisionCells = layout.collisionCells
       def.elevationCells = layout.elevationCells
       def.border = layout.border
+      def.sourceBorder, def.sourceBorderWidth, def.sourceBorderHeight =
+        layout.sourceBorder, layout.sourceBorderWidth, layout.sourceBorderHeight
       -- Gen 3 has no single border BLOCK -- it has a 2x2 border patch -- so
       -- the def carries its top-left corner for the engine's border fill and
       -- the full patch beside it.
@@ -13550,7 +13713,7 @@ function RomExtractorGen3:decodeScriptAt(start, queue)
     if not command then
       return lines, ("unknown opcode $%02X at %07X"):format(op, o)
     end
-    local name, spec = command[1], command[2]
+    local name, spec = command[1], Gen3ScriptOps.operandSpec(command, self.version)
     local at, args = o + 1, {}
     if spec == "*" then
       local kind = rom:u8(at)
@@ -13655,6 +13818,10 @@ function RomExtractorGen3:decodeScriptAt(start, queue)
     -- `specialRemap`, 0-based, -1 for a FireRed-only one, which becomes
     -- 0x1000 + its own index so it can never land on an Emerald handler).
     local remap = self.manifest.specialRemap
+    local sourceSpecial
+    if name == "special" or name == "specialvar" then
+      sourceSpecial = args[name == "special" and 1 or 2]
+    end
     if remap and (name == "special" or name == "specialvar") then
       local slot = name == "special" and 1 or 2
       local raw = args[slot]
@@ -13663,7 +13830,8 @@ function RomExtractorGen3:decodeScriptAt(start, queue)
         args[slot] = (to >= 0) and to or (0x1000 + raw)
       end
     end
-    lines[#lines + 1] = { address = o, op = op, name = name, args = args }
+    lines[#lines + 1] = { address = o, op = op, name = name, args = args, sourceSpecial = sourceSpecial,
+      sourceBytes = rom:sub(o + 1, at - o - 1), sourceSpec = spec }
     o = at
     if Gen3ScriptOps.TERMINATORS[op] then return lines, nil end
     if op == 0x27 and previous and Gen3ScriptOps.WARP_YIELD[previous] then
@@ -13797,6 +13965,14 @@ RomExtractorGen3.FIELD_CALLS = {
 -- is what lets a stage read what a special DOES rather than take its name on
 -- trust.
 function RomExtractorGen3:specialAddress(index)
+  -- Stage readers name engine/Emerald specials; the RS cartridge numbers
+  -- the same functions differently. Unknown identities must not probe an
+  -- unrelated native function at the engine's numeric slot.
+  local indices = self.manifest.specialIndexMap
+  if indices then
+    index = indices[tostring(index)]
+    if index == nil then return nil end
+  end
   local base = self:symbol("gSpecials")
   if not base then return nil end
   local ptr = self.rom:u32(base + (tonumber(index) or 0) * 4)
@@ -18016,7 +18192,7 @@ function RomExtractorGen3:extractMapScripts()
       for i, line in ipairs(lines) do
         local row = { line.name }
         for k = 1, #line.args do row[k + 1] = line.args[k] end
-        rows[i] = row
+        rows[i] = require("src.import.Gen3ScriptInterface").row(line, row)
       end
       scripts[("S%07X"):format(start)] = rows
       if err then failures[#failures + 1] = err end
@@ -18175,6 +18351,8 @@ function RomExtractorGen3:extractMapScripts()
     source = "RomExtractorGen3",
     scripts = scripts,
     movements = movements,          -- filled by extractMovementScripts
+    sourceInterface = require("src.import.Gen3ScriptInterface").header(
+      type(self.version) == "table" and self.version.id or self.version, self.manifest.romSha1),
     -- local ids the map's own scripts spawn; see the note above
     spawned = spawned,
     -- ...and the ones an arrival callback puts BACK, which start on the map
@@ -27068,13 +27246,17 @@ function RomExtractorGen3:extractTilesets()
       local ok, err = pcall(function()
         local raw = compressed and rom:lz77(tilesAt)
                     or rom:bytes(tilesAt, 512 * 32)
-        local palettes = {}
+        local palettes, sourcePalettes = {}, {}
         for p = 0, 15 do
-          palettes[p + 1] = RomGba.palette(rom:bytes(palAt + p * 32, 32))
+          local rawPalette = rom:bytes(palAt + p * 32, 32)
+          palettes[p + 1] = RomGba.palette(rawPalette)
+          for _, value in ipairs(rawPalette) do sourcePalettes[#sourcePalettes + 1] = string.char(value) end
         end
         -- metatile composition and attributes, as byte strings for the same
         -- reason the blockdata is: 73 tilesets come to about 26,000 metatiles
-        local comp, attrs = {}, {}
+        local comp, attrs, sourceAttrs = {}, {}, {}
+        local A = self.manifest.metatileAttributes
+        local sourceBytes = A and A.bytes == 4 and 4 or 2
         for m = 0, metatiles - 1 do
           for t = 0, 7 do
             local v = rom:u16(metaAt + m * 16 + t * 2)
@@ -27085,10 +27267,12 @@ function RomExtractorGen3:extractTilesets()
           -- downstream reads Emerald's u16 (behaviour low byte, layer type
           -- bits 12-15) with Emerald's numbering, so the record is packed
           -- into that shape here, once (manifest `metatileAttributes`).
-          local A = self.manifest.metatileAttributes
           local av
           if A and A.bytes == 4 then
             local raw32 = rom:u32(attrAt + m * 4)
+            sourceAttrs[#sourceAttrs + 1] = string.char(raw32 % 256,
+              math.floor(raw32 / 256) % 256, math.floor(raw32 / 65536) % 256,
+              math.floor(raw32 / 16777216) % 256)
             local beh = raw32 % ((A.behaviorMask or 0x1FF) + 1)
             local own = RomExtractorGen3.FRLG_BEHAVIOUR_OVERRIDES[beh]
             local mapped = A.behaviorRemap and A.behaviorRemap[tostring(beh)]
@@ -27122,9 +27306,16 @@ function RomExtractorGen3:extractTilesets()
           -- owns its own bank.  Which half to read is the pair's business, not
           -- the tileset's -- see palettesInPrimary in the manifest.
           palettes = palettes,
+          sourcePaletteBytes = table.concat(sourcePalettes),
           tiles = table.concat(pixels),
           metatiles = table.concat(comp),
           attributes = table.concat(attrs),
+          -- Compatibility readers need the cartridge's own behavior IDs.
+          -- Native FRLG normalization is many-to-one and cannot be reversed.
+          -- A 16-bit source is already byte-exact in attributes: do not copy it.
+          sourceAttributes = sourceBytes == 4 and table.concat(sourceAttrs) or nil,
+          sourceAttributeBytes = sourceBytes,
+          sourceBehaviorMask = A and A.behaviorMask or (sourceBytes == 4 and 511 or 255),
           callback = rom:u32(a + (attrAt == rom:pointer(a + 16) and 20 or 16)),
           image = "assets/generated/tilesets/" .. key:lower() .. ".png",
           source = ("ROM:Tileset@%07X"):format(a),
@@ -27469,6 +27660,11 @@ function RomExtractorGen3:extractTilesets()
     palettesInPrimary = self:layoutValue("palettesInPrimary", 6),
     metatileLayers = self:layoutValue("metatileLayers", 2),
   }
+  if self.manifest.metatileBehaviorFlags then
+    local raw, why = require("src.import.Gen3SourceFlags").read(self.rom, self.manifest.metatileBehaviorFlags)
+    assert(raw, why)
+    constants.gen3SourceBehaviorFlags = { version = 1, raw = raw, romSha1 = self.manifest.romSha1 }
+  end
   self._constants = constants
   self:write("constants", constants)
   Logger.info("Gen3 tileset pairs: %d (the unit a metatile actually draws from)",
@@ -29019,6 +29215,8 @@ end
 function RomExtractorGen3:extractPlayerBackPic()
   self:beginStage("Gen3 player back pic")
   local rom = self.rom
+  local profile = self.manifest.trainerBack
+  local backCount = profile and profile.count or GEN3_BACK_COUNT
   if (self.manifest or {}).frlgItemMenu ~= nil then
     return self:extractPlayerBackPicFireRed()
   end
@@ -29033,7 +29231,7 @@ function RomExtractorGen3:extractPlayerBackPic()
 
   local function runAt(at)
     local recs = {}
-    for k = 0, GEN3_BACK_COUNT - 1 do
+    for k = 0, backCount - 1 do
       local r = recordAt(at + k * 8)
       if not r then return nil end
       if r.tag ~= k then return nil end
@@ -29049,13 +29247,28 @@ function RomExtractorGen3:extractPlayerBackPic()
   end
 
   local found, at = nil, 0
-  while at < rom.size - GEN3_BACK_COUNT * 8 do
+  if profile then
+    assert(backCount >= 1 and backCount <= 8, "invalid trainer back count")
+    local recs = {}
+    for k = 0, backCount - 1 do
+      local row = recordAt(profile.table + k * 8)
+      if not (row and row.tag == k and row.size > 0
+              and row.size % GEN3_BACK_FRAME_BYTES == 0
+              and row.size <= GEN3_BACK_FRAME_BYTES * GEN3_BACK_MAX_FRAMES) then
+        Logger.warn("gen3 player back pic: invalid native compressed row %d", k)
+        return
+      end
+      recs[k + 1] = row
+    end
+    found = { at = profile.table, recs = recs }
+  end
+  while not profile and at < rom.size - backCount * 8 do
     local recs = runAt(at)
     if recs then
       -- ...and the run has to STOP at eight, or it is some other table
-      local ninth = recordAt(at + GEN3_BACK_COUNT * 8)
+      local ninth = recordAt(at + backCount * 8)
       local last = recs[#recs]
-      if not (ninth and ninth.tag == GEN3_BACK_COUNT
+      if not (ninth and ninth.tag == backCount
               and ninth.at == last.at + last.size) then
         if found then
           Logger.warn("gen3 player back pic: %07X and %07X both look like the "
@@ -29071,14 +29284,14 @@ function RomExtractorGen3:extractPlayerBackPic()
   end
   if not found then
     Logger.warn("gen3 player back pic: no run of %d sheets is laid out end to "
-                  .. "end, so no back pic is written", GEN3_BACK_COUNT)
+                  .. "end, so no back pic is written", backCount)
     return
   end
 
   -- the palettes sit immediately after, one per sheet, in the same order
-  local palBase = found.at + GEN3_BACK_COUNT * 8
+  local palBase = profile and profile.palettes or (found.at + backCount * 8)
   local palettes = {}
-  for k = 0, GEN3_BACK_COUNT - 1 do
+  for k = 0, backCount - 1 do
     local ptr = rom:pointer(palBase + k * 8)
     local tag = rom:u16(palBase + k * 8 + 4)
     local ok, raw = RomExtractorGen3.lz77ok(rom, ptr or 0)
@@ -29086,7 +29299,7 @@ function RomExtractorGen3:extractPlayerBackPic()
             and #raw >= GEN3_BACK_PAL_BYTES) then
       Logger.warn("gen3 player back pic: the palette table after %07X does "
                     .. "not run 0..%d, so no back pic is written",
-                  found.at, GEN3_BACK_COUNT - 1)
+                  found.at, backCount - 1)
       return
     end
     palettes[k] = RomGba.palette(raw)
@@ -29177,7 +29390,7 @@ function RomExtractorGen3:extractPlayerBackPic()
   local mine = {}
   if wanted.boy and wanted.girl then
     local best = {}
-    for k = 0, GEN3_BACK_COUNT - 1 do
+    for k = 0, backCount - 1 do
       local b = shared(palettes[k], wanted.boy)
       local g = shared(palettes[k], wanted.girl)
       if b >= GEN3_BACK_PAL_MIN and b - g >= GEN3_BACK_PAL_MARGIN then
@@ -29194,7 +29407,7 @@ function RomExtractorGen3:extractPlayerBackPic()
   if not (mine.boy and mine.girl) then
     Logger.warn("gen3 player back pic: no two of the %d backs are drawn in "
                   .. "the same palettes as the player's own two front pics, "
-                  .. "so none is claimed", GEN3_BACK_COUNT)
+                  .. "so none is claimed", backCount)
   end
 
   -- ...and the same match for the two who borrow the player's side of the
@@ -29205,7 +29418,7 @@ function RomExtractorGen3:extractPlayerBackPic()
     local want = wanted[role]
     if want then
       local best, runnerUp
-      for k = 0, GEN3_BACK_COUNT - 1 do
+      for k = 0, backCount - 1 do
         local n = shared(palettes[k], want)
         if not best or n > best.score then
           runnerUp = best
@@ -29228,9 +29441,17 @@ function RomExtractorGen3:extractPlayerBackPic()
 
   -- ---- and write them -----------------------------------------------------
   local images, written = {}, 0
-  for k = 0, GEN3_BACK_COUNT - 1 do
+  for k = 0, backCount - 1 do
     local rec = found.recs[k + 1]
-    local raw = rom:bytes(rec.at, rec.size)
+    local raw
+    if profile and profile.compressed then
+      local ok, bytes = RomExtractorGen3.lz77ok(rom, rec.at)
+      if not ok or #bytes ~= rec.size then
+        Logger.warn("gen3 player back pic: compressed sheet %d has the wrong size", k)
+        return
+      end
+      raw = bytes
+    else raw = rom:bytes(rec.at, rec.size) end
     local frames = math.floor(rec.size / GEN3_BACK_FRAME_BYTES)
     local ok = pcall(function()
       -- frame 1 is the one a battle opens on; the rest are the throw
@@ -29346,7 +29567,7 @@ function RomExtractorGen3:extractPlayerBackPic()
     end
     local function arrayAt(a)
       local rows = {}
-      for k = 0, GEN3_BACK_COUNT - 1 do
+      for k = 0, backCount - 1 do
         local ptr = rom:pointer(a + k * 4)
         if not ptr then return nil end
         local rec = found.recs[k + 1]
@@ -29364,7 +29585,7 @@ function RomExtractorGen3:extractPlayerBackPic()
         throwsAt, anims = a, rows
         -- on the image rows too, where everything else about a back already
         -- is -- but the record below is what survives a headless import
-        for k = 0, GEN3_BACK_COUNT - 1 do
+        for k = 0, backCount - 1 do
           if images[k] then
             images[k].rest = rows[k].rest
             images[k].throw = rows[k].throw
@@ -29401,7 +29622,7 @@ function RomExtractorGen3:extractPlayerBackPic()
   local constants = self._constants or {}
   constants.gen3TrainerBack = {
     images = images,
-    count = GEN3_BACK_COUNT,
+    count = backCount,
     anims = anims,
     throwAnim = throwsAt and RomExtractorGen3.BACK_INTRO.THROW_ANIM or nil,
     intro = intro,
@@ -32119,8 +32340,46 @@ function RomExtractorGen3:itemMenuActionsFireRed(constants, M)
               table.concat(rows[3], ","), martFound)
 end
 
+-- RS has ten actions, fixed six-byte pocket rows and a column-major grid.
+-- The Emerald scanner expects a different action count/layout and must not
+-- infer this table from its repeated English labels.
+function RomExtractorGen3:itemMenuActionsRS(constants, M)
+  assert(M.actionCount == 10 and M.choiceStride == 6 and M.columns == 2
+         and M.sourceOrder == "column-major", "Invalid verified RS action layout")
+  local rom, labels, kinds, pockets = self.rom, {}, {}, {}
+  for i = 1, M.actionCount do
+    local offset = M.actions + (i - 1) * 8
+    local pointer = assert(rom:pointer(offset), "Missing RS item-action label")
+    labels[i] = self:readText(pointer, 20)
+    kinds[i] = assert(M.kinds[i], "Missing RS item-action handler kind")
+    assert((kinds[i] == "blank") == (rom:u32(offset + 4) == 0), "RS blank action handler mismatch")
+  end
+  assert(labels[M.blank] == "" and kinds[M.cancel] == "cancel"
+         and kinds[M.register] == "register", "RS item-action sentinels differ")
+  for key, spec in pairs(M.pockets) do
+    assert((spec.count == 4 or spec.count == 6) and spec.row >= 0 and spec.row < 5)
+    local raw = {}
+    for i = 1, spec.count do
+      raw[i] = rom:u8(M.choices + spec.row * M.choiceStride + i - 1) + 1
+      assert(kinds[raw[i]], "RS pocket references an unknown action")
+    end
+    assert(raw[#raw] == M.cancel, "RS pocket does not close on CANCEL")
+    local rows, list = spec.count / 2, {}
+    for row = 1, rows do
+      for col = 0, 1 do list[#list + 1] = raw[col * rows + row] end
+    end
+    pockets[key] = list
+  end
+  constants.gen3ItemMenu = {labels=labels,kinds=kinds,pockets=pockets,columns=2,
+    cancel=M.cancel,blank=M.blank,register=M.register,
+    source=("ROM:sItemPopupMenuActions %07X, sItemPopupMenuChoicesTable %07X; RS column-major to native row-major")
+      :format(M.actions,M.choices)}
+end
+
 function RomExtractorGen3:itemMenuActions(constants)
   local rom = self.rom
+  local rsMenu = (self.manifest or {}).rsItemMenu
+  if type(rsMenu) == "table" then return self:itemMenuActionsRS(constants, rsMenu) end
   local frlgMenu = (self.manifest or {}).frlgItemMenu
   if type(frlgMenu) == "table" then
     return self:itemMenuActionsFireRed(constants, frlgMenu)
@@ -32657,7 +32916,17 @@ function RomExtractorGen3:extractBattleWindows()
   end
 
   local constants = self._constants or {}
+  -- Keep additional genuine templates from the identified array. A terminator
+  -- or an invalid row stops the scan; absent windows are never fabricated.
+  local templates={}
+  for id=0,14 do
+    local r=rec(found[0].at+id*8)
+    if not r or r.bg>3 or r.pal>15 or r.left>31 or r.top>63
+       or r.w>30 or r.h>20 then break end
+    templates[id+1]=win(r)
+  end
   constants.gen3BattleWindows = {
+    templates=templates,
     message = win(found[0]),
     prompt = win(found[1]),
     action = win(found[2]),
@@ -40984,7 +41253,7 @@ RomExtractorGen3.DATA_STAGES = {
   "extractMoveAnimations",
   "extractStarterSelect",
   "extractNamingKeyboard", "extractBattleMenu", "extractSummaryText",
-  "extractHoennDex", "extractTilesetAnimations", "extractSafari",
+  "extractHoennDex", "extractTilesetAnimations", "extractTilesetPalettePrograms", "extractSafari",
   "extractTrainerMemo", "extractAbilityDescriptions",
   "extractMonAnims", "extractCries", "extractReflections", "extractElevation",
   "extractBattleWindows",
@@ -42517,6 +42786,29 @@ function RomExtractorGen3:thumbLength(fn, limit)
     end
   end
   return nil
+end
+
+function RomExtractorGen3:extractTilesetPalettePrograms()
+  self:beginStage("Gen3 tileset palette programs")
+  if type(self._tilesets)~="table" then
+    Logger.warn("gen3 palette programs: no tilesets -- run extractTilesets first")
+    return
+  end
+  -- Authenticate the actual bytes, not just the manifest/selected game label.
+  -- The application has verified these too, but a standalone stage must not
+  -- reinterpret another revision through a known program-address catalog.
+  local ok,digest=pcall(require("src.import.RomVerification").sha1,self.rom.data)
+  local report=require("src.import.Gen3PalettePrograms").extract(
+    self.rom,self._tilesets,self.manifest,ok and digest or nil)
+  self._tilesets._romInfo=self._tilesets._romInfo or {}
+  self._tilesets._romInfo.palettePrograms=report
+  self:write("map_tilesets",self._tilesets)
+  Logger.info("Gen3 palette programs: %d static, %d animated, %d unavailable",
+    report.static,report.animated,report.unavailable)
+  if report.unavailable>0 then
+    Logger.warn("gen3 palette programs: incomplete sources retain native base palettes; "
+      .. "check map_tilesets.paletteProgram diagnostics and the ROM revision")
+  end
 end
 
 function RomExtractorGen3:extractTilesetAnimations()
@@ -45303,6 +45595,7 @@ RomExtractorGen3.FRLG_TITLE = {
   BORDER = { PAL = 0xEAE094, TILES = 0x3BF58C, MAP = 0x3BF5A8 },
   FLAMES = { GFX = 0x3BF79C, PAL = 0x3BF77C, COLS = 2, ROWS = 2 },
   FLAME_X = 0x3BFBD4, -- sFlameXPositions, 15 u8
+  EFFECT = "flames", CRY = "CHARIZARD", STREAK = false, STREAK_Y = false,
 }
 
 -- A 30x20 screen from a 32-column tilemap, honouring flips.  `blink` swaps
@@ -45381,12 +45674,23 @@ function RomExtractorGen3:extractFireRedTitle()
                       size = 16 }
   end
   local flameX = {}
-  for i = 0, 14 do
-    flameX[#flameX + 1] = self.rom:u8(T.FLAME_X + i) or 0
+  if T.FLAME_X then
+    for i = 0, 14 do
+      flameX[#flameX + 1] = self.rom:u8(T.FLAME_X + i) or 0
+    end
+  end
+  local streakY = {}
+  if T.STREAK then
+    local img, frames = self:frlgIntroSpriteSheet(T.STREAK, "streak")
+    if img then
+      self:saveImage(img, "title_frlg/streak.png")
+      images.streak = { path = "assets/generated/title_frlg/streak.png", frames = frames }
+    end
+    for i = 0, 7 do streakY[#streakY + 1] = self.rom:u16(T.STREAK_Y + i * 2) end
   end
   local constants = self._constants or {}
   constants.gen3FRLGTitle = {
-    images = images, flameX = flameX,
+    images = images, flameX = flameX, effect = T.EFFECT, cry = T.CRY, streakY = streakY,
     backdrop = backdrop and { backdrop[1], backdrop[2], backdrop[3] } or nil,
     source = "ROM:gGraphics_TitleScreen_* and title_screen.c sBorderBg/sFlames",
   }
@@ -54807,7 +55111,7 @@ function RomExtractorGen3:extractBallAnims()
     sounds = B.SOUNDS,
     cases = B.CASES,
     particleFrames = B.PARTICLE_FRAMES,
-    source = ("ROM:gBallSpriteSheets %07X, palettes %07X, open frame %07X, "
+    source = B.SOURCE or ("ROM:gBallSpriteSheets %07X, palettes %07X, open frame %07X, "
               .. "sBallColors %07X, particles %07X; the send-out off "
               .. "SpriteCB_PlayerMonSendOut_1 %07X and "
               .. "SpriteCB_ReleaseMonFromBall %07X")
@@ -55332,15 +55636,17 @@ function RomExtractorGen3:slotPaylines()
   }
 end
 
-function RomExtractorGen3:extractFireRedSlotMachine()
-  local S = {
+RomExtractorGen3.FRLG_SLOTS = {
     REELS = 0x464926, PAYOUTS = 0x464966,
     REEL_PAL = 0x464974, REEL_TILES = 0x464A14,
     REEL_PAL_TAGS = 0x465608,
     DIGIT_PAL = 0x465524, DIGIT_TILES = 0x465544,
     BG_PAL = 0x465930, BG_TILES = 0x4659D0, BG_MAP = 0x4661D4,
     COUNT = 3, TAGS = 21, SYMBOLS = 7,
-  }
+}
+
+function RomExtractorGen3:extractFireRedSlotMachine()
+  local S = RomExtractorGen3.FRLG_SLOTS
   local reels = {}
   for reel = 0, S.COUNT - 1 do
     local row, seen = {}, {}

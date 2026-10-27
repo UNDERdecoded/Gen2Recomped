@@ -1,0 +1,126 @@
+{
+  "native": {
+    "modsEnabled": false,
+    "physicalIOSTested": false,
+    "cases": [
+      {
+        "player": true,
+        "laps": 2,
+        "life": 64,
+        "move": "HARDEN",
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "restoreExact": true,
+        "visible": true
+      },
+      {
+        "player": false,
+        "laps": 2,
+        "life": 64,
+        "move": "HARDEN",
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "restoreExact": true,
+        "visible": true
+      },
+      {
+        "player": true,
+        "laps": 2,
+        "life": 64,
+        "move": "IRON_DEFENSE",
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "restoreExact": true,
+        "visible": true
+      },
+      {
+        "player": false,
+        "laps": 2,
+        "life": 64,
+        "move": "IRON_DEFENSE",
+        "source": "ROM:the stat-up task at 00E0A4C, its step at 00E0CD0, tiles 0D1D410, tilemap 0D1D574 and palette 0D1D54C",
+        "restoreExact": true,
+        "visible": true
+      }
+    ],
+    "status": "pass",
+    "edition": "ruby"
+  },
+  "verification": {
+    "identity": "gen2recomp-qa-ruby-20261025185640609035",
+    "sourceCommit": "0fe4d5e5eb1a3aa153a3f28c12b83129b20fe4c0",
+    "engineArchiveSHA256": "d0052d70d705ef7451e7e90dde9843b5fc062b8cd80680a6e442c7548d135fca",
+    "frozenInputAllocation": {
+      "independentClonedFiles": 1718,
+      "clonedLogicalBytes": 345600252,
+      "mutableHardlinks": false
+    },
+    "cartridgeSHA1": "f28b6ffc97847e94a6c21a63cacf633ee5c8df1e",
+    "loveSHA256": "cb136e72f2f2639f889245c0a6fca355178da71f05e460a9f3d01d0fafcc1b0b",
+    "driverSHA256": "79e484d44f74cfa6c2ee0b428b705e7e8bf1e8e4f544d121fb04541c69dfc487",
+    "qaRenderer": "metal",
+    "qaHostConfigChanged": true,
+    "physicalIOSDeviceTested": false,
+    "engineFilesUnchanged": 8999
+  },
+  "retailTask": {
+    "gameCode": "AXVE",
+    "revision": 0,
+    "romSHA1": "f28b6ffc97847e94a6c21a63cacf633ee5c8df1e",
+    "elfSHA256": "0879e42c7b0dca3810cc652248a2e97e837c2c7ddd9c0a1c2704684ec7da2f13",
+    "functions": {
+      "sub_80E0CD0": {
+        "address": "080E0CD0",
+        "bytes": 340,
+        "sha256": "d89c92fa9c9c19e9f5263ef7a3396497332317db3fdfefd8457c5fc0a584dad8",
+        "retailExact": true
+      },
+      "sub_80E0A4C": {
+        "address": "080E0A4C",
+        "bytes": 644,
+        "sha256": "f095f351e79679543bffc5c33dad247f68f8b0c04f11ffeff621be9dc58d0c9c",
+        "retailExact": true
+      }
+    },
+    "status": "pass",
+    "signature": {
+      "add4": 1,
+      "compare128": 1,
+      "add124": 1,
+      "compare2": 1
+    },
+    "taskFrames": 64,
+    "laps": 2,
+    "frame31": -124,
+    "frame32": 0,
+    "frame63": -124,
+    "frame64": 0
+  },
+  "pixels": [
+    {
+      "case": "stat-harden-player",
+      "rgbaSHA256": "b7d3b604ad4410b7b7943213c23279be856a4f7483b0f7f05c7f495e396f507d",
+      "negativeSHA256": "c7f19f898cc49950c34fe08b022c1676756b7dc313b39ba67edca59cdb7951a5",
+      "changedBytes": 4472,
+      "restoreExact": true
+    },
+    {
+      "case": "stat-harden-enemy",
+      "rgbaSHA256": "add6c9d3d91a097ffa3158b3cadbf91c15d20fbf12824b385917584086faf4f6",
+      "negativeSHA256": "c7f19f898cc49950c34fe08b022c1676756b7dc313b39ba67edca59cdb7951a5",
+      "changedBytes": 7248,
+      "restoreExact": true
+    },
+    {
+      "case": "stat-iron_defense-player",
+      "rgbaSHA256": "b7d3b604ad4410b7b7943213c23279be856a4f7483b0f7f05c7f495e396f507d",
+      "negativeSHA256": "c7f19f898cc49950c34fe08b022c1676756b7dc313b39ba67edca59cdb7951a5",
+      "changedBytes": 4472,
+      "restoreExact": true
+    },
+    {
+      "case": "stat-iron_defense-enemy",
+      "rgbaSHA256": "add6c9d3d91a097ffa3158b3cadbf91c15d20fbf12824b385917584086faf4f6",
+      "negativeSHA256": "c7f19f898cc49950c34fe08b022c1676756b7dc313b39ba67edca59cdb7951a5",
+      "changedBytes": 7248,
+      "restoreExact": true
+    }
+  ]
+}

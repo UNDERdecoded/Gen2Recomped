@@ -1,0 +1,239 @@
+{
+  "reference": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "fixtures": [
+    {
+      "path": "example_mew_starter",
+      "files": {
+        "README.md": "7f2a710b80723aa71c1040d3c00bd2e5d153c0e8d75edcfe088f71da0b8a35de",
+        "assets/mew_back_inverted.png": "e860dc4ba66efdc3f8d8d1b8fe5c17cb008fdcb57fbd435f15c0e0a2d7b93ec8",
+        "assets/mew_back_inverted_64.png": "924f6f50eabab8cc2b405ae318b6b9beb033568c461c4bad82692467001201c3",
+        "assets/mew_front_inverted.png": "a785e64760bdcf790bf1fc6005524ed3352b9ced922275b68ce4a8944cb00e71",
+        "assets/mew_front_inverted_64.png": "4dedded623ade2ed07c3d9de3fb34d6b9456fc3a56aaeaf812afd55a877240a9",
+        "main.lua": "d3cda8d3f402e8b36d0546267d0008e071e40f9112847125957898dc85c198b4",
+        "manifest.json": "835590b79e2bb31fc3666f5e27469b67c7313f83037f284524a7f3f52b3dea0f",
+        "mod.card": "c342c8e59fb75e52091e7a19ed346c7048672c46414d61e34d828660806f7372"
+      }
+    },
+    {
+      "path": "example_lttp_overhaul",
+      "files": {
+        "main.lua": "c206fc886986a1ed8daf47a4c1f1ca01cb86ece7224dc5d1601ea84a8f14e1aa",
+        "manifest.json": "5d43ad9518455facebb3ec9c9230bd856cc9a6cb072a13c531306113bbb9cc69",
+        "town.lua": "a7688fce525725a65bd4cfccb545972ad87b29e4bc24608eee738a3496a165fb"
+      }
+    },
+    {
+      "path": "mystery_dungeon_follower",
+      "files": {
+        "README.md": "5e384571580ec21aecdc334d35671bbd45ae1ef77d7d47393d73c21a86343b4f",
+        "main.lua": "2009b76ba5bcfb7c459adc6de93ecc5a265216c0a45f49174cf4203bb55e65db",
+        "manifest.json": "15f24259f6f7ce963a34ccdc57c5f89b53ec685b4b9d3a95e7d45c2b5cc12f85"
+      }
+    },
+    {
+      "path": "examples/portable_api",
+      "files": {
+        "main.lua": "d7920469c0fc6e7908cd0aca84e93e2cc7187df75702d775fb8a86034764a8e8",
+        "manifest.json": "c054ede45667d98e47a5f1a311271089c291b08e17ac3a847db2653675da9550"
+      }
+    },
+    {
+      "path": "examples/gen5_battle_sprites",
+      "files": {
+        ".modkitignore": "08c5cc7829fa520a00e4a997e93e17ab886ea5a208b7d29087f6432af372ae81",
+        "CHANGELOG.md": "1f27fd3d6e9c713a9fe39f48b7c52955b5f1f0e17852ba314be769ae2734c84c",
+        "README.md": "c8cd82a339c7868401ca72a31cd73dc62ecb41f4cdc6f57870374e29545da4a9",
+        "main.lua": "1ef5a2d247ad080a424848da25e2049e5734ae3906f2c4aa600dc5e4ae840480",
+        "manifest.json": "ba05e72bc933548503a9ee4f6518239a467a6adb4843589365851db8da310e1c",
+        "mod.card": "bfafadaae24328f0f3aa4698377e0901160857d4c6e675f4348c4b893cc9ab6f",
+        "tests/provider_test.lua": "93a253b06437673b8e3b4d44e4acfd6956c310cdba4030eac10facd10a0cb608"
+      }
+    },
+    {
+      "path": "examples/example_balance_tweaks",
+      "files": {
+        "CHANGELOG.md": "c2bf004d49a2430aa4a1b2a2cb5775f4e0f5095c028b6873db11d07837a454a1",
+        "README.md": "2f08f7cd51a4f5ef07a2a7fa94dc6e487d776eca374260fba47cb82b9e6ce2a7",
+        "main.lua": "7965513d3b57938f048469f6335b62fdfd799662902813517a51d255eb8dfda1",
+        "manifest.json": "9950d8fdaf8322aa16cefad086ef37f6983a8d81ab555f90fe63664ade20c7bb",
+        "mod.card": "d4fed4416a71281e7ed8b7ddf4a27122c83a8e63d9cf11827afecbd8ab56df70",
+        "tests/example_balance_tweaks_test.lua": "3859fe203dc1774c4bff7e928edb604567a8707eb4336ddad629335737dcd1fe"
+      }
+    },
+    {
+      "path": "examples/example_dexnav",
+      "files": {
+        "CHANGELOG.md": "6ceadfb09065d86e07426d71dfb03e124b463272ba42ad364eed490774e9b843",
+        "README.md": "910bcca17506755696a21fb72c807a2b113a53e259332f1b9968eb48cbea3344",
+        "main.lua": "1ba6989142555077a65c6083f5cb691c2b350e4df3721dc710972a32b96290cb",
+        "manifest.json": "eb0f394097f5f767778521a02378557c283fbb678b932319ea1bb53fddde72df",
+        "mod.card": "d749d034ec5397b124bc96f7ec6e4a051dda49f03faf5fcad868aa73a97019fb",
+        "tests/example_dexnav_test.lua": "3f6cf884fcd27ce793153a30409d238fc60f2e6ffdefc5cfd4de6631cc6ca643"
+      }
+    },
+    {
+      "path": "examples/example_jukebox",
+      "files": {
+        "CHANGELOG.md": "c4e3f09e38ba72888140ee0a27b94453dfa138ab62f40026dbf9c42ceb0a6af3",
+        "README.md": "417a37a730f80d05b9948b22cb1d842e1e3ada4475fd32be98f7022ef2fa0307",
+        "main.lua": "d2f153f3aee094d154c6f223cb1c6efaf458de5b3714c642953868537c3711e6",
+        "manifest.json": "3691e9b41f51733c8449854187285fbc0aa94e836e01739858485b3181243d6c",
+        "mod.card": "3260bc14e18049ea0a1a4c299e1d80690a02bda8c0b1a292a591a39e82a8772f",
+        "song.lua": "9ace700345831a45f6a69f158ec21e518923a81cf533ddfca1a39c608e2085dc",
+        "tests/example_jukebox_test.lua": "e391cc36ab539ea19678f4a6a6d9296bcaf0c2d5de9c33e7bdaccc74a9fb1468"
+      }
+    },
+    {
+      "path": "examples/example_lost_parcel",
+      "files": {
+        "CHANGELOG.md": "874c37283a2966bf7cc8c84d188c3236923a3c9be1e34405804d5d4bed4e77e3",
+        "README.md": "03d5a96346f2eb0d4abf7d089993b13d072aedf808bf8efe2dd9c7e699f1c1ba",
+        "main.lua": "c12780da1f628393beffe164e8fd5b936c3097153a245a9b77b8a146b2d40b72",
+        "manifest.json": "fbce2a37050a22b8eba63c9b4d2b83ca858a2a3647181f3dc89776bcdee0e77b",
+        "mod.card": "de071623e46b7399dfc2b4806914800e98c9c87d1cb0e6fb8ec16d16b4268873",
+        "tests/example_lost_parcel_test.lua": "830c1b568ddb8fc8936c4ddccae0dbe570e84f132394c08bcec922520d627204"
+      }
+    },
+    {
+      "path": "examples/example_mini_conversion",
+      "files": {
+        "CHANGELOG.md": "5b2859552307c79a6c2c48a77adfa8428894fcc18c2a6d2028e39edad7aeb384",
+        "README.md": "b72557832443bf0e6a046c4a0f5e09b710051db46f88137ca8e5632dbfb916aa",
+        "assets/emberkit_back.png": "c43583aa7236ba089a584a17a823ee118d026168a2f924c8a1cfa35bb3156f2e",
+        "assets/emberkit_front.png": "615300dd5ae8adedffe0d291599d8f2e563cb4a618503590fd1ac7d8ed3b02a7",
+        "assets/emberkit_icon.png": "de25a5bc5d21c69a11c60302acb1ba80442024e2f524343d9921de6dc3d848ea",
+        "assets/mossling_back.png": "2c7318680d922f7d4e6faed28c7ada90d0fcc85b99959d4881c0e740d82b1c25",
+        "assets/mossling_front.png": "dc345925977760209798525e2803f8b8e026001e570b7eeb84ff1e30f55763ec",
+        "assets/mossling_icon.png": "4dce52410e5b363860c0cbdb89b551716a8edb27a3d884f57c63b6fdfe75ca4c",
+        "assets/tidepup_back.png": "62f9285c9140cfd4860edc9ac62c4def3a665b1ef71e0b798c7b300245995ca7",
+        "assets/tidepup_front.png": "d40b73febd54792fab4786ead1647d925e0d9485ccfab8264de0ba0119dc733c",
+        "assets/tidepup_icon.png": "c9f5fc63e6d6e1e44456e2fa3269baa91f7a6e5c4a7d6707fd58362fc44ff800",
+        "main.lua": "a6422be98ef0bd836256492f3db56f43320097b6112e843362b203a030f68e04",
+        "manifest.json": "db5243b57e3a644457499022e70b77f3812f01b9336fd81b8f742dce11d1dcfb",
+        "mod.card": "f78ab29616d631ea8035c5a755c48794b89443df427be418c1743955e6e966ef",
+        "tests/example_mini_conversion_test.lua": "141cca215c97b2dcc8daedcf5bc11b5e1ae0d5d5ce3e821b467441724c649b54",
+        "tools/make_assets.py": "e9ee0d9ce949ee52b2b141e2ac2c82a48f45247a2003b56672f8cd223ffc16ec"
+      }
+    },
+    {
+      "path": "examples/example_shiny_palette",
+      "files": {
+        "CHANGELOG.md": "bda0e3903af2e0cc65fa6866091da6c6f8625a4a8e42606f9e0f9f11a16d3461",
+        "README.md": "46bfda385d398fe3f81e655a92686913b1e54f43c820d2929960c3ab2844d650",
+        "assets/accent_sparkle.png": "bfbc34694108fa6501cc1b1bba1ddcacc5010d3d752290ae473fa33a888a23a2",
+        "main.lua": "9071e23785aa0c9fcd2fc87df303958573689bf4fa1be939e29b610437549a0e",
+        "manifest.json": "263f8626e8a875f502251d71edb3908fb8f6d8d833d6257e2c2c7fb66056ad9e",
+        "mod.card": "5b40433baaf4a5ba82b855f067f8e565ee75a3a9e67879973bc5a94dd97dec60",
+        "tests/example_shiny_palette_test.lua": "ffba892ce7390f8ec99fdb84fac3e31b797251dee86582933b2d03868b90944c",
+        "transforms.lua": "66bb07464003969402abe5c0b6fdfe43b20a93f578e06f48b96de75b2f2594eb"
+      }
+    },
+    {
+      "path": "examples/example_silly_oak",
+      "files": {
+        "CHANGELOG.md": "0077f49b1a8415edaf278e7da0f7ac924af886dbbba92795a22903d3150e9481",
+        "README.md": "5d3d65f536bd9b5bb195cfc3dda2b2fa7bf8ecac3ead1abd066a802d066b8df1",
+        "assets/toast_kid.png": "02963b7c5c55e1e80d7ec4eaf274776170dd924ae421f29af14020bc3f32bc7d",
+        "main.lua": "2f7fbc5c6555f6d20ffa27c20233f0532368cca165a0afa7d393afd75f23de48",
+        "manifest.json": "cac8e5d240261cca5e6c02ff9e9446a74162200c2534e44589549a29d4a92026",
+        "mod.card": "0affa0fb359320b5b043731458d59eb92de4330bd4d3913ce9c35496b7ef3539",
+        "tests/example_silly_oak_test.lua": "3be13592fc90452edcc8c8589ab7f14b5690a5a721b5617871d17d699eea6eeb"
+      }
+    },
+    {
+      "path": "examples/example_weather",
+      "files": {
+        "CHANGELOG.md": "82e88c93893ae5375a0151c9522cc8b082694bb53af5839f89cc55f9249acd37",
+        "README.md": "3c3490d87f38f37104ed46d22bdefa7aeed6815ecbb6a69834f9738a81fe7b13",
+        "main.lua": "469e663f3eaaaa9557253e2a7022e65d332731f438ef532a49a5715f354dd2eb",
+        "manifest.json": "7ddb5dd1f9c09b19b9cfbf61e37b1df48fa7321c93728495fbe778d00ab6f1d8",
+        "mod.card": "02a4949b455ccf12a3f00b33e39f8c0327f4544179de59c5c45108d3aae79e46",
+        "tests/example_weather_test.lua": "77fd2dd1fdc737b65511c6e89bca5b1077c0de27a2254168427f253aef3f0a1f"
+      }
+    }
+  ],
+  "hooks": [
+    "battle.accuracy",
+    "battle.bottom_ui_visible",
+    "battle.catch_exp",
+    "battle.caught_marker_visible",
+    "battle.charge_required",
+    "battle.crit",
+    "battle.damage",
+    "battle.enemy_action",
+    "battle.enemy_switch_or_item",
+    "battle.exp_award",
+    "battle.field_residual",
+    "battle.low_health_alarm",
+    "battle.menu_auxiliary",
+    "battle.move_grid_navigation",
+    "battle.overlay",
+    "battle.run",
+    "battle.status_hud_visible",
+    "battle.style",
+    "battle.turn_order",
+    "breeding.compatibility",
+    "catch.nickname",
+    "catch.party_full",
+    "catch.rate",
+    "core.logic_speed",
+    "core.quit_to_launcher",
+    "core.update",
+    "encounter.fishing",
+    "encounter.roll",
+    "encounter.species",
+    "encounter.table",
+    "evolution.check",
+    "exp.gain",
+    "fieldmove.eligibility",
+    "gender.roll",
+    "held_item.trigger",
+    "input.gamepad",
+    "input.key",
+    "input.pointer",
+    "input.step",
+    "input.wheel",
+    "intro.oak_speech.build",
+    "item.use",
+    "link.fingerprint",
+    "map.palette",
+    "movement.collision",
+    "movement.speed",
+    "music.select",
+    "music.volume",
+    "phone.contact_list",
+    "player.sprite",
+    "pokemon.icon",
+    "pokemon.level_visible",
+    "pokemon.sprite",
+    "render.compose",
+    "render.hud",
+    "render.letterbox",
+    "render.output",
+    "render.output_enabled",
+    "render.viewport",
+    "render.window",
+    "render.zones",
+    "save.new_game",
+    "save.write",
+    "screen.render_visible",
+    "script.command",
+    "shiny.roll",
+    "trainer.before_battle",
+    "trainer.party",
+    "transition.style",
+    "ui.list_menu",
+    "ui.naming.grid",
+    "ui.options.rows",
+    "ui.party.grid_navigation",
+    "ui.party.submenu",
+    "ui.pc.items",
+    "ui.start_menu.items",
+    "ui.title_menu.items",
+    "warp.destination",
+    "world.follower.spawn",
+    "world.talk",
+    "world.tod",
+    "zoom.range"
+  ]
+}

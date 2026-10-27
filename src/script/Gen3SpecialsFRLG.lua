@@ -953,7 +953,7 @@ return function(Gen3Commands)
   end
 
   S[477] = function(ctx)
-    if require("src.core.GameVersion").get() ~= "firered" then
+    if not require("src.core.GameVersion").isFRLG() then
       return emeraldChooseMonForMoveTutor and emeraldChooseMonForMoveTutor(ctx)
     end
     local game, runner = ctx.game, ctx.runner

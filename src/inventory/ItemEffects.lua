@@ -1550,6 +1550,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   if itemId == "REPEL" or itemId == "SUPER_REPEL" or itemId == "MAX_REPEL" then
     local steps = itemId == "REPEL" and 100 or itemId == "SUPER_REPEL" and 200 or 250
     save.repelSteps = steps
+    if package.loaded['src.mods.FeatureOptions']then require('src.ui.RepelPrompt').remember(save,itemId)end
     return "consumed", { Strings("%s used\n%s!", save.player.name, name) }
   end
 

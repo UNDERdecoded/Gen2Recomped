@@ -177,7 +177,7 @@ function Warp.extraCheck(map, carpets, cx, cy, dir)
   -- to ExtraWarpCheck made plain-floor script destinations live whenever they
   -- happened to sit at a map edge.
   local GameVersion = require("src.core.GameVersion")
-  if GameVersion.get() == "firered" then return false end
+  if GameVersion.isFRLG() then return false end
   local Collision = require("src.world.Collision")
   local facingEdge =
     (dir == "up" and cy == 0)
@@ -434,5 +434,9 @@ function Warp.destination(data, warpDef, lastMap, backupWarp, save)
   return Runtime.call("warp.destination", warped, destMap, x, y,
                       { warp = warpDef, lastMap = lastMap, data = data })
 end
+
+-- Read-only consumers can prepare the same destination without dispatching
+-- the gameplay warp decision hook or taking the transition.
+Warp.observeDestination=resolve
 
 return Warp
