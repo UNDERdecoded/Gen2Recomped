@@ -199,6 +199,18 @@ function MapLoader.cached(mapId)
   return m
 end
 
+-- A source renderer may attach a presentation-only Map to a neighbor record.
+-- Native drawing still belongs to the loader's resident map and renderer.
+function MapLoader.forNeighbor(neighbor, data)
+  if not neighbor then return nil end
+  local id = neighbor.id
+  local map = id and MapLoader.cached(id)
+  if not map and data and data.maps and data.maps[id] then
+    map = MapLoader.load(data, id)
+  end
+  return map or neighbor.map
+end
+
 -- evict one resident map, releasing its renderer's GPU objects.  Callers
 -- must ensure the map is not the current map and not drawn as a connected
 -- strip (nothing live may hold its renderer) -- MapLoader.trim guarantees

@@ -2187,6 +2187,10 @@ function OverworldState:neighborReach()
 end
 
 function OverworldState:rebuildNeighbors()
+  -- Source renderers inspect the same live map/tileset registries as the
+  -- native loader. Missing fields made an already resident connected world
+  -- appear empty to those readers. Rebind on every rebuild after data edits.
+  self.maps, self.tilesets = Game.data.maps, Game.data.tilesets
   local mapId = self.map.id
   self.neighbors = {}
   local hops = FieldDefaults.world(Game.data, "neighborHops") or NEIGHBOR_HOPS
@@ -2202,7 +2206,7 @@ function OverworldState:rebuildNeighbors()
                                                      hops, reachW, reachH)) do
     keep[n.id] = true
     local m = MapLoader.load(Game.data, n.id)
-    table.insert(self.neighbors, { map = m, ox = n.ox, oy = n.oy })
+    table.insert(self.neighbors, { id = m.id, map = m, ox = n.ox, oy = n.oy, cx = n.ox / 16, cy = n.oy / 16 })
   end
   -- bound resident memory: drop maps behind us that are neither current nor
   -- a drawn neighbor, releasing their window batch / border image / atlas
@@ -17289,7 +17293,7 @@ function OverworldState:drawWorld()
     self.map.renderer:drawBorderFill(cam.x, bgY, vw, vh)
     self.map.renderer:draw(cam.x, bgY, vw, vh)
     for _, nb in ipairs(self.neighbors) do
-      nb.map.renderer:drawMapOnly(cam.x - nb.ox, bgY - nb.oy, vw, vh)
+      MapLoader.forNeighbor(nb, Game.data).renderer:drawMapOnly(cam.x - nb.ox, bgY - nb.oy, vw, vh)
     end
     -- the Mirage Tower on BG0, under the sprites (src/world/Gen3MirageTower)
     if self.g3MirageTower then
@@ -18095,7 +18099,7 @@ function OverworldState:drawWorld()
       self.map.renderer:drawBorderFill(cam.x, bgY, vw, vh)
       self.map.renderer:draw(cam.x, bgY, vw, vh)
       for _, nb in ipairs(self.neighbors) do
-        nb.map.renderer:drawMapOnly(cam.x - nb.ox, bgY - nb.oy, vw, vh)
+        MapLoader.forNeighbor(nb, Game.data).renderer:drawMapOnly(cam.x - nb.ox, bgY - nb.oy, vw, vh)
       end
     end
   end
@@ -18585,10 +18589,11 @@ function OverworldState:drawWorld()
     self.map.renderer:drawAbove(cam.x, bgY, vw, vh)
     aim(self.map.renderer)
     for _, nb in ipairs(self.neighbors) do
-      if nb.map.renderer.drawAbove then
-        aim(nb.map.renderer, nb.ox, nb.oy)
-        nb.map.renderer:drawAbove(cam.x - nb.ox, bgY - nb.oy, vw, vh)
-        aim(nb.map.renderer)
+      local renderer = MapLoader.forNeighbor(nb, Game.data).renderer
+      if renderer.drawAbove then
+        aim(renderer, nb.ox, nb.oy)
+        renderer:drawAbove(cam.x - nb.ox, bgY - nb.oy, vw, vh)
+        aim(renderer)
       end
     end
     for _, e in ipairs(onTop or {}) do drawEntity(e) end
