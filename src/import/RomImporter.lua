@@ -5705,7 +5705,11 @@ function RomImporter:draw()
     if link.url==DONATE_URL then paypalLink=link
     else footerLinks[#footerLinks+1]=link end
   end
-  local creditH = self.hintFont:getHeight()
+  local creditText = "Created by " .. credit.by
+    .. "\nBased on the Pokemon Gen 1 Recompilation Project by BOIS CLUB GAMES, LLC"
+    .. "\n(https://github.com/bryanthaboi/gen1recomp)"
+  local _, creditLines = self.hintFont:getWrap(creditText, appW)
+  local creditH = math.max(1, #creditLines) * self.hintFont:getHeight()
   local donateH = self.hintFont:getHeight() + 10 * s
   local chipsH = (#footerLinks > 0) and (8 * s + donateH) or 0
   local footerH = 10 * s + bcgDH + 6 * s + warningH + 8 * s + creditH + chipsH + 12 * s
@@ -6240,7 +6244,7 @@ function RomImporter:draw()
     love.graphics.setFont(self.hintFont)
     local creditY = warningY + warningH + 8 * s
     col(PAL.warning)
-    love.graphics.printf("Created by " .. credit.by, appX, creditY, appW, "center")
+    love.graphics.printf(creditText, appX, creditY, appW, "center")
     self.donateButtons = {}
     self.donateButton = nil
     if #footerLinks > 0 then

@@ -1,0 +1,21 @@
+{
+  "repository": "https://github.com/bryanthaboi/gen1recomp",
+  "commit": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "files": {
+    "src/battle/gen2/BgEffects.lua": "e50650aa3315a2545cf0044fbf226076be0086a63b097ef5d682e2beefb5491e",
+    "src/battle/gen2/AnimObjects.lua": "7713be1ee3b88284a3399baeb9e81d5c0a98c421990336bec3ebb31e832982f6",
+    "src/ui/gen2/SpriteAnims.lua": "31c213a712edab13d03f925d3f4cd4f487b2cbd724ac50692f576cd04261ce65",
+    "tools/rom_manifest_gold.json": "ebfd906ef715c634c12ca168dbf711161385720f02c6e0a63d9481a815550a1e",
+    "tools/rom_manifest_silver.json": "7575919b843c2addf096ed3db7b37dedb9f4b9c8129d32eb0d9ed6c9e5333f52",
+    "tools/rom_manifest_crystal.json": "be373e361090d79f413ad4d1e57d28c5ac1aa00650d4fa361289a78ef8397b31",
+    "LICENSE.MD": "b369ce45656b3d87453541816fac6982b13e09ea0734ab9cfe61cf3faf5e95ed"
+  },
+  "scope": "BgEffects implementation, arithmetic subset and BG-effect identifier lists only. No launcher, game assets, ROM bytes or player state copied.",
+  "modifications": [
+    "BgEffects arithmetic dependency uses Gen2AnimMath instead of the full reference object pool.",
+    "A missing jump-table list resolves through edition-specific Gen2BgEffectIds for older native caches.",
+    "Existing Gen2AnimPlayer dispatches BG/palette commands and steps the pool from its current VM update; its legacy visual adapter resolves edition-specific IDs by names."
+  ],
+  "licence": "Gen1Recomp GPLv3 with its Additional Terms, retained in LICENSE.MD. Existing authors retain their rights; Roxas2712 integration changes in these derived files are offered on those applicable terms.",
+  "qualification": "CPU native pool, actual SDK entry and native VM clock integration tested. Scanline drawing and battler-picture OAM handoff are not integrated; no GPU/client/release acceptance."
+}

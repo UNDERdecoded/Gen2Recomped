@@ -35,6 +35,9 @@
 --   y' = fixY == $FF and 40 + y or fixY - y
 --   xOffset' = -xOffset
 
+local BgEffects = require('src.battle.gen2.BgEffects')
+local BgIds = require('src.battle.Gen2BgEffectIds')
+
 local Gen2AnimPlayer = {}
 Gen2AnimPlayer.__index = Gen2AnimPlayer
 
@@ -141,6 +144,7 @@ function Gen2AnimPlayer.new(data)
     warned = {},
     objects = {},
     effects = {},
+    bg = BgEffects.new(data and data.constants, {battleTurn=0}),
     -- WideBattle reads these two off the Gen 1 player; keep them defined
     steps = {},
     stepIndex = 1,
@@ -259,6 +263,11 @@ function Gen2AnimPlayer:start(moveId, attackerIsPlayer, opts)
     attackerIsPlayer = not attackerIsPlayer
   end
   self.enemySide = not attackerIsPlayer
+  -- Existing VM updates own this pool's time; a restart retires the old block.
+  self.bg = BgEffects.new(self.data and self.data.constants, {
+    battleTurn = self.enemySide and 1 or 0,
+    flying = opts and opts.flying or {},
+  })
   self.opts = opts
   self.moveId = moveId
   self.loops = {}
@@ -387,6 +396,19 @@ local BG_EFFECTS_END = {
   [0x33] = "SE_RESET_MON_POSITION",   -- WOBBLE_PLAYER
 }
 Gen2AnimPlayer.BG_EFFECTS_END = BG_EFFECTS_END
+
+-- The legacy visual adapter is keyed by the Gold/Silver table. Cartridge
+-- commands must resolve by NAME first: Crystal inserts BODY_SLAM at $25.
+-- Keep this adapter until the native register/scanline draw owner is wired;
+-- the actual pool below is authoritative for public BG state.
+local legacyBgIds = {}
+for index,name in ipairs(BgIds.forVersion('gold')) do legacyBgIds[name]=index-1 end
+local function legacyBgId(self,id)
+  local name=type(id)=='number'and self.bg.order[id+1]or id
+  if name=='BATTLE_BG_EFFECT_BODY_SLAM'then return 0x24 end
+  return legacyBgIds[name]
+end
+
 
 -- BGEffect_CheckBattleTurn: BG_EFFECT_STRUCT_BATTLE_TURN is 1 for the move's
 -- user and 0 for its target.  Anything else (the flash routines reuse the
@@ -681,17 +703,23 @@ function Gen2AnimPlayer:step(inst)
     -- side the queue entry was made with
     self.bgSides = self.bgSides or {}
     self.bgSides[id] = side
-    local se = BG_EFFECTS[id]
+    self.bg:queue(id, inst.args[2], inst.args[3], inst.args[4])
+    local se = BG_EFFECTS[legacyBgId(self,id)]
     if se then
       self.effects[#self.effects + 1] = { effect = se, side = side, gen2 = true }
     end
   elseif op == "incbgeffect" then
     local id = inst.args[1]
-    local se = BG_EFFECTS_END[id]
+    self.bg:incEffect(id)
+    local se = BG_EFFECTS_END[legacyBgId(self,id)]
     if se then
       local side = self.bgSides and self.bgSides[id] or "target"
       self.effects[#self.effects + 1] = { effect = se, side = side, gen2 = true }
     end
+  elseif op == 'bgp' or op == 'obp0' or op == 'obp1' then
+    self.bg[op] = (inst.args[1] or 0) % 256
+  elseif op == 'resetobp0' then
+    self.bg.obp0 = self.opts and self.opts.sgb and 0xf0 or 0xe0
   elseif op == "checkpokeball" then
     -- BattleAnimCmd_CheckPokeball calls GetPokeBallWobble and stores its `c`
     -- into wBattleAnimVar, which the toss script then compares against 1 and
@@ -826,6 +854,7 @@ function Gen2AnimPlayer:update()
   end
   if self.wait > 0 then
     self.wait = self.wait - 1
+    self.bg:playFrame()
     self:tickObjects()
     return
   end
@@ -836,6 +865,7 @@ function Gen2AnimPlayer:update()
   if self.ranFrames > 180 then
     self.done = true
     self.tail = TAIL_FRAMES
+    self.bg:playFrame()
     self:tickObjects()
     return
   end
@@ -850,6 +880,7 @@ function Gen2AnimPlayer:update()
     if self.done or self.wait > 0 then break end
   end
   if self.wait > 0 then self.wait = self.wait - 1 end
+  self.bg:playFrame()
   self:tickObjects()
 end
 
