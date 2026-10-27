@@ -445,7 +445,7 @@ function SaveData.defaultOptions()
     -- moves the screen furniture, so it is opt-in.
     -- See Game.dynamicUI, Renderer:setUIAnchor and Renderer:uiScale.
     uiLayout = "centered",
-    ruleset = "gen1_faithful",
+    ruleset = false, -- automatic cartridge default; explicit saved ids remain valid
     -- 0-7 like the GB's NR50 master volume
     musicVol = 7,
     sfxVol = 7,
@@ -961,6 +961,30 @@ function SaveData.playSeconds(save)
          + (tonumber(t.minutes) or tonumber(t.mins) or 0) * 60
          + (tonumber(t.seconds) or tonumber(t.secs) or 0)
          + ticks / 60
+end
+
+-- The native save owns a scalar play clock and an owned-species map. Expose
+-- the reference UI summary without requiring callers to reinterpret either
+-- representation, load a profile, or create a second save/time store.
+function SaveData.summary(save, data)
+  if type(save) ~= "table" then return nil end
+  local caught = 0
+  for _, has in pairs((save.pokedex and save.pokedex.owned) or {}) do
+    if has then caught = caught + 1 end
+  end
+  local seconds = SaveData.playSeconds(save)
+  if seconds ~= seconds or seconds == math.huge or seconds == -math.huge then seconds = 0 end
+  seconds = math.max(0, math.floor(seconds))
+  local spawn = save.spawn
+  return {
+    name = save.player and save.player.name or "?",
+    badges = Badges.count(data, save, save.version),
+    caught = caught,
+    hours = math.floor(seconds / 3600),
+    minutes = math.floor(seconds / 60) % 60,
+    map = save.player and save.player.map or (save.position and save.position.map)
+      or (type(spawn) == "table" and spawn.map or spawn),
+  }
 end
 
 function SaveData.slotSummary(save, version)
@@ -2030,6 +2054,13 @@ local function scrubMonList(list, where, save, data, report, slots)
     if mon ~= nil
        and (type(mon) ~= "table" or not known(data.pokemon, mon.species)) then
       list[i] = nil
+      if where=="party" and GameVersion.isGen2() and type(mon)=="table"
+          and save.mail and save.mail.party and save.mail.party[i]
+          and require("src.pokemon.Gen2Mail").monHoldsMail(mon) then
+        -- Its letter moves to the mailbox/quarantine below; retaining a
+        -- second stationery on the quarantined carrier would duplicate it.
+        mon.item=nil
+      end
       ensureOrphaned(save)
       save.orphaned.mons[#save.orphaned.mons + 1] = mon
       report.lostMons[#report.lostMons + 1] =
@@ -2160,6 +2191,10 @@ function SaveData.validate(save, data)
     end
   end
   scrubMaps(save, data, report)
+  if GameVersion.isGen2() then
+    local Mail=require("src.pokemon.Gen2Mail")
+    Mail.load(data);Mail.validate(save,report)
+  end
   local dex = save.pokedex
   if type(dex) == "table" then
     for _, key in ipairs({ "seen", "owned" }) do
@@ -2228,7 +2263,8 @@ function SaveData.validate(save, data)
   -- an empty quarantine leaves no residue, so a vanilla save re-encodes
   -- byte-identically
   local orphaned = save.orphaned
-  if orphaned and #(orphaned.mons or {}) == 0 and #(orphaned.items or {}) == 0 then
+  if orphaned and #(orphaned.mons or {}) == 0 and #(orphaned.items or {}) == 0
+      and #(orphaned.mail or {})==0 then
     save.orphaned = nil
   end
   return report
@@ -2239,6 +2275,7 @@ function SaveData.emptyReport(report)
   -- restoreSave attaches one so a version bump alone still surfaces
   local diff = report.modsDiff
   return #report.lostMons == 0 and #report.lostItems == 0
+    and #(report.lostMail or {})==0 and #(report.restoredMail or {})==0
     and #report.remappedMaps == 0 and #report.restoredMons == 0
     and #report.restoredItems == 0 and not report.recovered
     and (not diff or (#diff.added == 0 and #diff.removed == 0 and #diff.changed == 0))

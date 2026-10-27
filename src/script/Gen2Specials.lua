@@ -700,28 +700,25 @@ local function pcRows(ctx, finish)
 end
 
 function Commands.g2_pokemon_center_pc(ctx)
-  -- PC_CheckPartyForPokemon: a player with no party gets nothing at all
-  if #(ctx.save.party or {}) == 0 then return answer(ctx, 0) end
-  local runner = ctx.runner
-  local done
-  local function finish()
-    if done then return end
-    done = true
-    runner:resume()
-  end
-  require("src.ui.Screens").push(ctx.game, "Menu", pcRows(ctx, finish), {
-    tx = 0, ty = 0, tw = 16, noSound = true, onCancel = finish,
-  })
+  local runner, done = ctx.runner, false
+  require("src.ui.Screens").push(ctx.game, "Gen2CenterPcMenu", {onClose=function()
+    if done then return end;done=true
+    ctx.game.stack:pop();runner:resume()
+  end})
   runner:yield()
   answer(ctx, 0)
 end
 
--- PlayerPC is a Menu of its own, so it closes on its LOG OFF row and on B.
--- Neither reaches this script, so there is nothing to wait on: push it and
--- answer, exactly as g2_card_flip does.
+-- The house script branches on the accumulated decoration-change bit only
+-- after LOG OFF/B. Returning before the menu closes silently skips its reload.
 function Commands.g2_players_house_pc(ctx)
-  require("src.ui.Screens").push(ctx.game, "PlayerPC")
-  answer(ctx, 0)
+  local runner=ctx.runner
+  local done,changed=false,false
+  require("src.ui.Screens").push(ctx.game,"PlayerPC",{house=true,onDone=function(value)
+    if done then return end;done=true;changed=value==true;runner:resume()
+  end})
+  runner:yield()
+  answer(ctx,changed and 1 or 0)
 end
 
 -- ---------------------------------------------------------------------------

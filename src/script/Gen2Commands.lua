@@ -23,6 +23,30 @@ local Strings = require("src.core.Strings")
 
 local Gen2Commands = {}
 
+function Commands.g2_give_poke_mail(ctx,letter)
+  if type(letter)~="table" or type(letter.message)~="string" then
+    Logger.warn("givepokemail: unresolved native letter; import this cartridge again")
+    return
+  end
+  require("src.pokemon.Gen2Mail").give(ctx.save,letter.item,letter.message)
+end
+
+function Commands.g2_check_poke_mail(ctx,letter)
+  local Mail=require("src.pokemon.Gen2Mail")
+  local picked
+  require("src.ui.Screens").push(ctx.game,"PartyMenu",{
+    pickOnly=true,
+    onSwitch=function(mon) picked=mon;ctx.runner:resume() end,
+    onCancel=function() ctx.runner:resume() end,
+  })
+  ctx.runner:yield()
+  local slot
+  for i,mon in ipairs(ctx.save.party or {}) do if mon==picked then slot=i;break end end
+  local expected=type(letter)=="table" and letter.message or nil
+  local result=Mail.checkPokeMail(ctx.save,slot,expected)
+  ctx.g2Var,ctx.lastCheck=result,result~=0
+end
+
 local function scriptVar(ctx)
   return ctx.g2Var or 0
 end
@@ -894,6 +918,20 @@ function Gen2Commands.scriptVarValue(ctx, var)
     return tonumber(ctx.save.g2KurtApricorns) or 1
   end
   return 1
+end
+
+function Commands.g2_deco_visibility(ctx)
+  require('src.world.Gen2Decorations').visibility(ctx)
+end
+function Commands.g2_deco_tiles(ctx)
+  require('src.world.Gen2Decorations').tiles(ctx)
+end
+function Commands.g2_deco_description(ctx,kind,allowed)
+  local target,name=require('src.world.Gen2Decorations').description(ctx.game.data,ctx.save,kind)
+  if target and allowed and allowed[target]then
+    if name then setBuffer(ctx.game,3,name)end
+    return target
+  end
 end
 
 -- Script_loadmem (25:$7495): write an immediate byte to a WRAM address.  The
@@ -1779,6 +1817,19 @@ end
 -- ---------------------------------------------------------------------------
 
 function Commands.g2_warp(ctx, mapId, x, y, facing)
+  if mapId=="NONE" then
+    local ow=ctx.overworld
+    if ow and ow.map and type(ow.reloadMap)=="function"then
+      local map=ow.map.id
+      ctx.afterScript=ctx.afterScript or{}
+      ctx.afterScript[#ctx.afterScript+1]=function()
+        if ow.player and DIRS[facing]then ow.player.facing=DIRS[facing]end
+        ow:reloadMap(map,"native-script")
+      end
+      return math.huge
+    end
+    return
+  end
   if type(mapId) ~= "string" or mapId == "" then return end
   Commands.warp(ctx, mapId, x, y, facing)
 end
@@ -2290,16 +2341,18 @@ end
 
 function Commands.g2_bank_of_mom(ctx)
   local save = ctx.save
+  local Mom=require("src.world.Gen2MomShopping")
+  Mom.prepareBank(save)
   -- CheckIfBankInitialized: the first visit opens the account and asks
   if save.g2MomBankOpen == nil then
-    save.g2MomBankOpen = true
+    Mom.openBank(save)
     Commands.ask(ctx, momLine(ctx, "saveMoney",
       "Should I save money for you?"))
     if ctx.lastCheck then
-      save.g2MomSaving = true
+      Mom.setSaving(save,true)
       return momSay(ctx, "startSavingMoney", "OK, I'll save your money.")
     end
-    save.g2MomSaving = false
+    Mom.setSaving(save,false)
     return momSay(ctx, "justDoWhatYouCan", "Just do what you can.")
   end
 
@@ -2364,7 +2417,7 @@ function Commands.g2_bank_of_mom(ctx)
       momSay(ctx, "takenMoney", "Took ¥" .. amount .. ".")
     end)
   elseif choice == 3 then
-    save.g2MomSaving = not save.g2MomSaving
+    Mom.setSaving(save,not save.g2MomSaving)
     if save.g2MomSaving then
       momSay(ctx, "startSavingMoney", "OK, I'll save your money.")
     else
@@ -2628,12 +2681,9 @@ function Commands.g2_readvar(ctx, var)
   elseif var == 6 then
     ctx.g2Var = countKeys(ctx.save.pokedex and ctx.save.pokedex.seen)
   elseif var == 10 then
-    ctx.g2Var = tonumber(os.date("%H")) or 0
+    ctx.g2Var = require("src.core.Gen2Clock").hour(ctx.save)
   elseif var == 11 then
-    -- g2DayOffset is what mom's SetDayOfWeek picker answered, as a shift off
-    -- the host day, so Arthur still shows up on a real Thursday.
-    ctx.g2Var = ((tonumber(os.date("%w")) or 0)
-      + (ctx.save.g2DayOffset or 0)) % 7
+    ctx.g2Var = require("src.core.Gen2Clock").weekday(ctx.save)
   elseif var == 16 then
     -- BoxFreeSpace counts only the current box, not all available PC slots.
     local Boxes = require("src.pokemon.Boxes")
@@ -2882,44 +2932,21 @@ function Commands.g2_clear_dst(ctx)
   Commands.show_text(ctx, "InitialClearDSTFlag.Text")
 end
 
--- The ROM spins these with the d-pad on a graphical clock-set background;
--- a list menu is the port's equivalent and needs no ROM tiles.  The names
--- are engine text, not ROM strings: SetDayOfWeek.WeekdayStrings is raw
--- charmap data, and the extractor only harvests symbols matching "Text".
-local WEEKDAYS = {
-  "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY",
-}
-
--- `special SetDayOfWeek` ($25), the day picker in mom's clock talk.  The GB
--- has to ask because its RTC has no idea what day it started on; here
--- readvar 11 reads the host clock, which already knows.  So the answer is
--- kept as an OFFSET from the host day rather than as the day itself: the
--- cursor opens on today, a truthful answer stores 0 and changes nothing, and
--- either way the day still rolls over at real midnight instead of freezing.
+-- Native SetDayOfWeek shares the clock-setting screen and RTC owner with
+-- the introduction. The script remains suspended through both selection
+-- and confirmation; declining does not write the save or resume the script.
 function Commands.g2_set_day_of_week(ctx)
   local game, runner = ctx.game, ctx.runner
-  local host = tonumber(os.date("%w")) or 0
-  local picked
-  repeat
-    Commands.show_text(ctx, "SetDayOfWeek.OakTimeWhatDayIsItText")
-    local items = {}
-    for index, day in ipairs(WEEKDAYS) do
-      items[index] = {
-        label = Strings(day),
-        onSelect = function() picked = index - 1 runner:resume() end,
-      }
-    end
-    -- no cancel: the ROM's loop watches A only, and onCancel is the only
-    -- other path back to runner:resume()
-    local menu = require("src.ui.Menu").new(game, items, { cancelable = false })
-    menu.index = host + 1
-    menu:clampScroll()
-    game.stack:push(menu)
-    runner:yield()
-    Commands.ask(ctx, Strings(WEEKDAYS[picked + 1])
-      .. resolvedText(ctx, "SetDayOfWeek.OakTimeIsItText"))
-  until ctx.lastCheck
-  ctx.save.g2DayOffset = (picked - host) % 7
+  local screen
+  screen = require("src.ui.Gen2InitClock").new(game, { mode="day", save=ctx.save,
+    onDone=function()
+      if game.stack:top() == screen then game.stack:pop() end
+      ctx.lastCheck = true
+      runner:resume()
+    end,
+  })
+  game.stack:push(screen)
+  runner:yield()
 end
 
 -- UnownPuzzle (SpecialsPointers row 41).  The chamber scripts run
@@ -3138,7 +3165,9 @@ function Commands.g2_return_nobus_aggron(ctx)
   end
   if not othersHealthy then return result(3) end
   for i, mon in ipairs(ctx.save.party) do
-    if mon == picked then table.remove(ctx.save.party, i) break end
+    if mon == picked then
+      table.remove(ctx.save.party,i);require("src.pokemon.Gen2Mail").removeSlot(ctx.save,i);break
+    end
   end
   result(2)
 end
@@ -3335,6 +3364,7 @@ function Commands.g2_delete_party_mon(ctx)
   local _, index = orphanChoice(ctx)
   if not index then return end
   table.remove(ctx.save.party, index)
+  require("src.pokemon.Gen2Mail").removeSlot(ctx.save,index)
   ctx.g2PartyMon = nil
 end
 
@@ -3724,6 +3754,7 @@ function Commands.g2_trade(ctx, index)
   -- reading at all -- so they all came over empty-handed.
   if trade.item then newMon.item = trade.item end
   table.remove(party, slot)
+  require("src.pokemon.Gen2Mail").removeSlot(ctx.save,slot)
   table.insert(party, newMon)
   local dex = ctx.save.pokedex
   if dex then
@@ -3783,7 +3814,9 @@ function Commands.g2_return_shuckie(ctx)
   if not othersHealthy then return result(4) end
   if (picked.happiness or 0) >= 150 then return result(3) end
   for i, mon in ipairs(ctx.save.party) do
-    if mon == picked then table.remove(ctx.save.party, i) break end
+    if mon == picked then
+      table.remove(ctx.save.party,i);require("src.pokemon.Gen2Mail").removeSlot(ctx.save,i);break
+    end
   end
   result(2)
 end
@@ -4141,6 +4174,7 @@ function Commands.g2_name_rival(ctx)
   local presets = boot and boot.namePresets and boot.namePresets.rival
   game.stack:push(require("src.ui.NamingScreen").new(game, {
     title = Strings("RIVAL'S NAME?"),
+    kind = "rival",
     maxLen = 7, -- PLAYER_NAME_LENGTH - 1
     -- NamingScreen_InitNameEntry opens the grid blank and confirming nothing
     -- would leave the name empty, so fall back to the canonical one
@@ -4214,7 +4248,7 @@ function Commands.g2_name_rater(ctx)
     or Strings("All right. What\nname should we\vgive it, then?"))
   local chosen
   game.stack:push(require("src.ui.NamingScreen").new(game, {
-    title = Strings("%s's NICKNAME?", nickOf(picked)),
+    title = Strings("NICKNAME?"), kind = "mon", mon = picked,
     maxLen = 10,
     default = nickOf(picked),
     onDone = function(name) chosen = name runner:resume() end,
@@ -4290,7 +4324,7 @@ function Gen2Commands.dayCareDeposit(ctx, which, introText, leftText)
     return Commands.show_text(ctx, t._CantAcceptEggText
       or Strings("Sorry, but I can't\naccept an EGG."))
   end
-  if picked.mail then
+  if picked.mail or require("src.pokemon.Gen2Mail").monHoldsMail(picked) then
     return Commands.show_text(ctx, t._RemoveMailText
       or Strings("Remove the MAIL\nfrom that #MON."))
   end
@@ -4305,7 +4339,9 @@ function Gen2Commands.dayCareDeposit(ctx, which, introText, leftText)
   end
 
   for i, mon in ipairs(save.party) do
-    if mon == picked then table.remove(save.party, i) break end
+    if mon == picked then
+      table.remove(save.party,i);require("src.pokemon.Gen2Mail").removeSlot(save,i);break
+    end
   end
   DayCare.deposit(save, which, picked)
   game.stringBuffer = Gen2Commands.dayCareName(game, picked)
@@ -4384,7 +4420,7 @@ function Gen2Commands.dayCareWithdraw(ctx, which)
     mon.status = nil
     for _, move in ipairs(mon.moves or {}) do
       local moveDef = game.data.moves and game.data.moves[move.id]
-      if moveDef then move.pp = moveDef.pp + (move.ppUps or 0) * math.floor(moveDef.pp / 5) end
+      if moveDef then move.pp = Pokemon.maxPP(moveDef, move, 2) end
     end
   end
   table.insert(save.party, mon)

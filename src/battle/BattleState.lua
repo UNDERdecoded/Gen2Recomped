@@ -10,6 +10,7 @@
 -- bide, recharge, confusion, screens, substitute, transform, ...) is
 -- ported from engine/battle/core.asm; see docs/behavior-porting-notes.md.
 
+local BattleQueuePhase = require("src.battle.BattleQueuePhase")
 local Assets = require("src.render.Assets")
 local Catching = require("src.battle.Catching")
 local Damage = require("src.battle.Damage")
@@ -37,6 +38,7 @@ local Weather = require("src.battle.Weather")
 local WideBattle = require("src.battle.WideBattle")
 local Gen3Battle = require("src.battle.Gen3Battle")
 local Gen4Battle = require("src.battle.Gen4Battle")
+local Gen2BattleView = require("src.battle.Gen2BattleView")
 local GameVersion = require("src.core.GameVersion")
 
 -- FORWARD-DECLARED, because they are defined next to the other doubles
@@ -598,6 +600,9 @@ end
 
 local Rulesets = {
   gen1_faithful = require("src.battle.rulesets.gen1_faithful"),
+  gen2_finite_pp = require("src.battle.rulesets.gen2_finite_pp"),
+  gen3_emerald = require("src.battle.rulesets.gen3_emerald"),
+  gen4_platinum = require("src.battle.rulesets.gen4_platinum"),
   modern_clean = require("src.battle.rulesets.modern_clean"),
 }
 
@@ -639,7 +644,16 @@ local imageMeta = setmetatable({}, WEAK_KEYS)
 local function getImage(path, pal, trueColor, crop)
   if not path then return nil end
   if trueColor then pal = nil end
+  local sourcePal, displayKey = pal
+  if GameVersion.isGen2() and not trueColor and pal then
+    local display = require("src.render.PaletteFX")
+    displayKey = display.displayKey()
+    if not pal.displayResolved then
+      pal = {name=pal.name, colors=display.displayColors(pal.colors), displayResolved=true}
+    end
+  end
   local key = pal and (path .. "#" .. pal.name) or path
+  if displayKey then key = key .. "#display:" .. displayKey end
   if crop then key = key .. "@" .. crop.index end
   if not imageCache[key] then
     local img, pad, padL = nil, 0, 0
@@ -693,7 +707,7 @@ local function getImage(path, pal, trueColor, crop)
     -- crop rides along so fadeImage / grayImage / blackImage re-bake the
     -- SAME cell of the strip, not the whole strip
     imageMeta[img] = { path = path, pal = pal, trueColor = trueColor or nil,
-                       crop = crop }
+                       crop = crop, sourcePal = sourcePal, displayKey = displayKey }
   end
   return imageCache[key]
 end
@@ -820,7 +834,7 @@ local function fadeImage(img, bgp)
   local name = (meta.pal and meta.pal.name or "GB")
                .. "&" .. bgp[0] .. bgp[1] .. bgp[2] .. bgp[3]
   return getImage(meta.path,
-                  { name = name, colors = PaletteFX.permute(base, bgp) },
+                  { name = name, colors = PaletteFX.permute(base, bgp), displayResolved=GameVersion.isGen2() },
                   nil, meta.crop)
 end
 
@@ -848,8 +862,12 @@ local function blackImage(data, img)
   local pack = PaletteFX.pack(data)
   local colors = pack and pack.palettes and pack.palettes.BLACK
   if not colors then return img end
+  if GameVersion.isGen2() then
+    local ramp = PaletteFX.displayColors(colors)
+    colors = {ramp[4],ramp[4],ramp[4],ramp[4]}
+  end
   local name = PaletteFX.usesGbcPack() and "redpp:BLACK" or "BLACK"
-  return getImage(meta.path, { name = name, colors = colors }, nil, meta.crop)
+  return getImage(meta.path, { name = name, colors = colors, displayResolved=GameVersion.isGen2() }, nil, meta.crop)
     or img
 end
 
@@ -864,6 +882,15 @@ end
 -- the image a battler pic actually draws with this frame
 function BattleState:picImage(img)
   local PaletteFX = require("src.render.PaletteFX")
+  if GameVersion.isGen2() then
+    local meta = imageMeta[img]
+    -- Battlers retain image references across a live option change. Dropping
+    -- imageCache alone does not replace those pictures or animation cells.
+    if meta and not meta.trueColor and meta.sourcePal
+        and meta.displayKey ~= PaletteFX.displayKey() then
+      img = getImage(meta.path, meta.sourcePal, nil, meta.crop) or img
+    end
+  end
   -- #207: OG / OG INV / CLASSIC are forced-mono display modes.  A battle that
   -- exposes no SGB zones (sgbPalettes() == nil) has a whole-screen GRAYS zone
   -- invented by PaletteFX.ensureZones, so Renderer:endFrame re-thresholds the
@@ -878,7 +905,7 @@ function BattleState:picImage(img)
   -- set mirrors PaletteFX.ensureZones / effectiveColors -- keep them in sync.
   local mono = PaletteFX.mode == "og" or PaletteFX.mode == "og_inv"
                or PaletteFX.mode == "classic"
-  if self.grayPics or mono then return grayImage(img) end
+  if self.grayPics or (mono and not GameVersion.isGen2()) then return grayImage(img) end
   -- SET_PAL_BATTLE_BLACK covers every battle palette slot, so the pics go
   -- dark with the HP bars while the blackout text is up (#292).  The intro
   -- silhouette slide (SlidePlayerAndEnemySilhouettesOnScreen) darkens the
@@ -1169,7 +1196,7 @@ local function newBattle(game)
   -- that explicit so anything holding "a thing with a .battle" (the party menu
   -- during a switch, mods walking the state stack) can treat the battle screen
   -- and the party menu uniformly instead of special-casing this one screen.
-  self.battle = self
+  if GameVersion.isGen2() then Gen2BattleView.bind(self) else self.battle = self end
   -- BLACK AND WHITE: their move effects named for this engine, their species'
   -- abilities and their ruleset, before the ruleset below is chosen
   -- (src/battle/Gen5MoveEffects.lua; sets self.bw on a BW cache only)
@@ -1181,7 +1208,7 @@ local function newBattle(game)
   -- records on a mod-free boot); an unknown save value falls back to the
   -- default with a notice instead of silently switching behavior
   local rulesets = game.data.rulesets or Rulesets
-  local selected = game.save.options and game.save.options.ruleset
+  local selected = require("src.battle.RulesetDefaults").selection(game)
   -- THE FALLBACK IS THE CARTRIDGE'S, not Kanto's.  It used to read
   -- `constants.defaultRuleset or "gen1_faithful"`, and nothing has ever
   -- written that constant -- so Hoenn fought under Generation One's rules on
@@ -1324,6 +1351,7 @@ local function newBattle(game)
     end
   end
   self.queue = {}
+  if GameVersion.isGen2() then self.messageTimer = 0 end
   self.phase = "intro"
   self.menuIndex = 1
   self.moveIndex = 1
@@ -2447,6 +2475,8 @@ end
 --
 -- Returns true while animating.
 function BattleState:stepHPDrain()
+  -- GSC has its own short/long pixel loop and public display callback.
+  if GameVersion.isGen2() then return require('src.battle.Gen2HpPresentation').drain(self) end
   local busy = false
   for _, b in activeBattlers(self) do
     if b and b.shownHP then
@@ -2486,6 +2516,18 @@ function BattleState:stepHPDrain()
     end
   end
   return busy
+end
+
+function BattleState:stepHpAnim()
+  return require('src.battle.Gen2HpPresentation').step(self)
+end
+
+function BattleState:hudHp(mon, side)
+  return require('src.battle.Gen2HpPresentation').shown(self, mon, side)
+end
+
+function BattleState:hudHpPixels(mon, side)
+  return require('src.battle.Gen2HpPresentation').fill(self, mon, side)
 end
 
 -- AnimateExpBar (engine/battle/experience.asm) creeps the bar to its new
@@ -2550,6 +2592,11 @@ local function shownHP(b)
   return math.floor(shown)
 end
 
+-- Release native text at the decision owned by this queue.
+function BattleState:clearQueueMessage()
+  if GameVersion.isGen2() then self.message, self.messageTimer = nil, 0 end
+end
+
 -- Parse a battle message into its rendered lines.  The extractor marks
 -- \n = next line and \v = CONT (home/text.asm ContText: draw the blinking
 -- ▼, WaitForTextScrollButtonPress, then ScrollTextUpOneLine); the boosted /
@@ -2561,6 +2608,10 @@ end
 -- instead of drawing it off-screen at y=144 (#216).
 function BattleState:startMessage(item)
   self.current = item
+  if GameVersion.isGen2() then
+    -- The existing native typer/prompt owns this hold; no second clock.
+    self.message, self.messageTimer = item.text or "", 48
+  end
   self.lines = {}
   self.total = 0
   local text = item.text or ""
@@ -2604,11 +2655,9 @@ function BattleState:beginMsgLine()
   self.shown[#self.shown + 1] = {}
 end
 
-function BattleState:updateQueue()
-  if self.waitingUI then
-    if self.game.stack:top() ~= self then return true end
-    self.waitingUI = nil
-  end
+-- One display-only step of the existing native queue hold. It cannot consume
+-- commands; updateQueue remains the sole dispatcher after this gate.
+function BattleState:updateQueuePresentation()
   -- HOENN'S PARTICLES TICK BEFORE THE QUEUE'S OWN HOLD, and the whole
   -- reason the animations looked broken is that they used to tick after it.
   --
@@ -2685,6 +2734,7 @@ function BattleState:updateQueue()
   if self.draining then
     if self:stepHPDrain() then return true end
     self.draining = nil
+    if GameVersion.isGen2() then require('src.battle.Gen2HpPresentation').retire(self) end
     if self.player then self.player.drainFloor = nil end
     if self.enemy then self.enemy.drainFloor = nil end
   end
@@ -2693,6 +2743,25 @@ function BattleState:updateQueue()
     if self:stepExpBar() then return true end
     self.expFilling = nil
   end
+  return false
+end
+
+function BattleState:updateQueue()
+  -- Resume the earlier shared queue spelling at its actual native owner.
+  if GameVersion.isGen2() and self.phase == "messages" then
+    self.phase = BattleQueuePhase.name()
+    if self.current then
+      self.message, self.messageTimer = self.current.text or "", 48
+    end
+  end
+  if self.waitingUI then
+    if self.game.stack:top() ~= self then return true end
+    self.waitingUI = nil
+    if GameVersion.isGen2() and self.phase == "submenu" then
+      self.phase = BattleQueuePhase.name()
+    end
+  end
+  if self:updateQueuePresentation() then return true end
   if self.animPlaying then
     self.animPlayer:update()
     if self.animPlayer.pollEffects and self.applyAnimEffect then
@@ -2737,11 +2806,14 @@ function BattleState:updateQueue()
     end
     if item.ui then
       self.waitingUI = true
+      -- Publish native interactive context before constructing the child.
+      if GameVersion.isGen2() then self.phase = "submenu" end
       self.game.stack:push(item.ui())
       return true
     end
     if item.drain then
       self.draining = true
+      if GameVersion.isGen2() then self._gen2HpDrainBattler=item.battler end
       if item.battler then item.battler.drainFloor = item.stopAt end
       return true
     end
@@ -3022,6 +3094,7 @@ function BattleState:updateQueue()
       self.game.stack:push(ChoiceBox.new(self.game, function(yes)
         local fn = item.choice
         battle.current = nil
+        if GameVersion.isGen2() then battle.messageTimer = 0 end
         fn(yes)
       end))
       return true
@@ -3047,6 +3120,7 @@ function BattleState:updateQueue()
       elseif input:wasPressed("a") or input:wasPressed("b") then
         self.msgPrompt = nil
         self.current = nil
+        if GameVersion.isGen2() then self.messageTimer = 0 end
       end
     end
   end
@@ -3869,7 +3943,7 @@ function BattleState:enter()
     end)
     self:markParticipant()
   end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:syncSides()
   -- THE FIRST SEND-OUT COUNTS TOO.  ABILITYEFFECT_ON_SWITCHIN runs the
@@ -4360,7 +4434,7 @@ function BattleState:update(dt)
     end
   end
 
-  if self.phase == "messages" then
+  if BattleQueuePhase.active(self) or (GameVersion.isGen2() and self.phase == "submenu") then
     -- Nothing queued starts until the silhouettes have finished sliding in:
     -- SlidePlayerAndEnemySilhouettesOnScreen ends with `jpfar
     -- PrintBeginningBattleText` (engine/battle/core.asm:100), so the enemy
@@ -4373,6 +4447,7 @@ function BattleState:update(dt)
     if not self:updateQueue() then
       if self.afterQueue == "menu" then
         self.phase = "menu"
+        self:clearQueueMessage()
       elseif self.afterQueue == "finish" then
         self:finish()
       end
@@ -4448,7 +4523,7 @@ function BattleState:update(dt)
   if self.phase == "menu" and self.safari then
     if self.safari.balls <= 0 then
       self:say(Strings("PA: You're out of\nSAFARI BALLs!\nGame over!"))
-      self.phase = "messages"
+      self.phase = BattleQueuePhase.name()
       self.result = "run"
       self.afterQueue = "finish"
       return
@@ -4569,7 +4644,7 @@ function BattleState:update(dt)
       end
       if choice == "fight" and self.ghost then
         self:say(Strings("%s is too\nscared to move!", self.player.name))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
         self:act(function()
           self:executeAction(self.enemy, self.player, self:enemyAction())
@@ -4637,7 +4712,7 @@ function BattleState:update(dt)
       local mvDef = mv and self.data.moves[mv.id]
       if chooser.disabledSlot == self.moveIndex then
         self:say(self:romText("_MoveDisabledText", "The move is\ndisabled!"))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       -- TAUNT and TORMENT refuse the move at SELECTION rather than after the
       -- fact, the way DISABLE already does, so the player is never told to
@@ -4645,26 +4720,26 @@ function BattleState:update(dt)
       elseif self.bw and require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true) then
         -- BLACK AND WHITE: the Choice lock, Imprison, Gravity, Heal Block
         self:say(require("src.battle.Gen5MoveRules").moveBlocked(self, chooser, mvDef, true))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif self:tauntBlocks(chooser, mvDef) then
         self:say(Strings("%s can't use\n%s after the\ntaunt!",
                          chooser.name, mvDef and mvDef.name or mv.id))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif self:tormentBlocks(chooser, mvDef) then
         self:say(Strings("%s can't use the\nsame move twice in\na row due to the\nTORMENT!",
                          chooser.name))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif self.g4fx and require("src.battle.Gen4MoveEffects").menuRefusal(self, chooser, mvDef) then
         -- PLATINUM / HGSS: Gravity and Heal Block (BattleSystem_CanUseMove)
         self:say(require("src.battle.Gen4MoveEffects").menuRefusal(self, chooser, mvDef))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif mv.pp <= 0 then
         self:say(self:romText("_MoveNoPPText", "No PP left for\nthis move!"))
-        self.phase = "messages"
+        self.phase = BattleQueuePhase.name()
         self.afterQueue = "menu"
       elseif Targeting.needsChoice(self, self:choosingBattler(), mvDef) then
         -- WHICH OF THE TWO, when the move takes one and there are two.
@@ -4732,7 +4807,7 @@ function BattleState:update(dt)
       local pick = moves[self.mimicIndex]
       local ctx = self.mimicCtx
       self.mimicMoves, self.mimicCtx = nil, nil
-      self.phase = "messages"
+      self.phase = BattleQueuePhase.name()
       self.nextInsert = 0 -- the copy's anim + text go to the queue head
       self:applyMimic(ctx.user, ctx.target, ctx.moveInst, pick.slot)
     end
@@ -4873,7 +4948,7 @@ function BattleState:gen3TutorialBag()
     return true
   end
   if require("src.core.GameVersion").isGen4() then
-    self.phase, self.afterQueue = "messages", "menu"
+    self.phase, self.afterQueue = BattleQueuePhase.name(), "menu"
     self:ui(function()
       local bag = require("src.ui.Gen4BagMenu").new(self.game, { pocket = "POKé BALLS" })
       bag.rows = { { id = 4, label = "POKé BALL", qty = 20 } }
@@ -4895,7 +4970,7 @@ function BattleState:gen3TutorialBag()
     return false
   end
   local game = self.game
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:ui(function()
     local bag
@@ -4922,7 +4997,7 @@ function BattleState:openOldManBag()
   if self:gen3TutorialBag() then return end
   local ListMenu = require("src.ui.ListMenu")
   local game = self.game
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:ui(function()
     local list
@@ -4956,7 +5031,7 @@ end
 -- because DisplayBattleMenu swapped wPlayerName (core.asm:2024-2037);
 -- no ball is consumed (.done returns early, :576-578).
 function BattleState:oldManThrow()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "finish"
   self.result = "run" -- nothing is kept; wBattleResult only ends the demo
   local DsDemo = require("src.battle.CatchTutorialDemo")
@@ -5002,7 +5077,7 @@ function BattleState:queuePokedudeVoices(indices)
   end
   if queued then
     pd.timer = 0
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     self.afterQueue = "menu"
   end
   return queued
@@ -5190,7 +5265,7 @@ function BattleState:updatePokedudeMenu()
     -- control to the player with the temporary party still installed.
     self.result = self.result or "run"
     self.afterQueue = "finish"
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     return
   end
 
@@ -5365,7 +5440,7 @@ function BattleState:pokedudeUseAntidote(step)
   local pd = self.pokedudeDemo
   if not pd then return end
   pd.enemyMove = step.enemyMove
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:say(Strings("POKé DUDE used\nANTIDOTE!"))
   local result, messages = require("src.inventory.ItemEffects")
@@ -5782,7 +5857,7 @@ function BattleState:resolveTurn(playerAction)
     if entry[1] then self.turnActions[entry[1]] = entry[3] end
   end
 
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
 
   -- PLATINUM / HGSS: a TRICK ROOM used this turn resorts everyone still
@@ -5859,11 +5934,11 @@ function BattleState:resolveSwitch(newMon)
   if self.player and self.player.ingrained and self.player.mon.hp > 0 then
     self:say(Strings("%s anchored\nitself with its\nroots!",
                      displayName(self.player)))
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     self.afterQueue = "menu"
     return
   end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   -- BLACK AND WHITE: the foe chooses first, and a Pursuit catches the
   -- Pokemon leaving (src/battle/Gen5MoveRules.lua)
@@ -7316,7 +7391,7 @@ end
 function BattleState:lowHealthAlarmActive()
   local p = self.player
   if not p or self.safari or self.demo or self.result
-     or self.lowHealthAlarmDisabled then return false end
+     or self.lowHealthAlarmDisabled or self.partyItemHealing then return false end
   if self.showPlayerBack or (self.introSlide or 0) > 0 then return false end
   if p.fainted then return false end
   -- A siren that is ALREADY sounding follows the drawn bar, not the
@@ -9201,20 +9276,8 @@ function BattleState:enemyMonFainted()
       end)
       return
     end
-    -- ComputeTrainerReward (0E:58D4) sets wBattleReward = the class's base
-    -- reward byte (TrainerClassAttributes+2) times wCurPartyLevel, the level
-    -- of the LAST mon the party reader loaded.  That is only a QUARTER of the
-    -- payout though: WinTrainerBattle (0F:4F46) then runs `ld c, 4` and adds
-    -- wBattleReward once per iteration -- b of the four quarters through
-    -- .AddMoneyToMom, the remaining c through .AddMoneyToWallet -- so the
-    -- trainer is worth base * level * 4 in total.  b comes from
-    -- wMomSavingMoney & 7 (0 = you keep it all, 3 = she banks all four), and
-    -- is forced to 0 when Mom's account is already maxed.  Nothing here
-    -- models Mom's savings account, which is the `keep it all` branch, so all
-    -- four quarters land in the wallet -- Falkner pays 25 * 9 * 4 = 900 and a
-    -- Sprout Tower sage 8 * 3 * 4 = 96, instead of the 225 and 24 a single
-    -- quarter gives.  Gen1's TrainerBattleVictory has no such split, so the
-    -- multiplier stays on the Gen2 side of the fence.
+    -- Native GSC rewards are four quarters. Their destination is selected
+    -- by Mom's saving bits; Gen2MomShopping applies the per-account cap.
     -- THE LEVEL THE PRIZE IS COUNTED FROM.
     --
     -- Gen 1 and Gen 2 count from the mon that was out when the battle ended.
@@ -9262,7 +9325,9 @@ function BattleState:enemyMonFainted()
       prize = P.prize(self.data, self.trainer, opts)
       if self.trainerB then prize = prize + P.prize(self.data, self.trainerB, opts) end
     end
-    self.game.save.money = self.game.save.money + prize
+    local momAward=require("src.world.Gen2MomShopping").reward(self.game.save,prize)
+    if not momAward then self.game.save.money=self.game.save.money+prize end
+    self.g2MomAward=momAward
     -- Prism's Spurge Bank ATM (event/bank.asm) offers DIRECT DEPOSIT: with it
     -- enabled, a quarter of what you win in battle is routed to the account
     -- instead of the wallet.  The switch lives in the ATM special
@@ -9323,9 +9388,17 @@ function BattleState:enemyMonFainted()
     -- Platinum's font, so a Sinnoh win read "got 円 480". This default is
     -- only reached when the dataset has no `_MoneyForWinningText` of its own,
     -- which is every Gen 3 and Gen 4 cartridge.
-    self:sayNext(self:romText("_MoneyForWinningText",
-      "%s got " .. require("src.core.GameVersion").moneySign() .. "%d\nfor winning!",
-      self.game.save.player.name, prize))
+    local momPool=require("src.world.Gen2MomShopping").pool(self.data)
+    local moneyText=momAward and momPool and momPool.rewardTexts and momPool.rewardTexts[momAward.mode]
+    if moneyText and (self.data.text and self.data.text[moneyText])then
+      local text=self.data.text[moneyText]
+      text=text:gsub("{PLAYER}",function()return self.game.save.player.name end):gsub("{NUM}",tostring(prize))
+      self:sayNext(text)
+    else
+      self:sayNext(self:romText("_MoneyForWinningText",
+        "%s got " .. require("src.core.GameVersion").moneySign() .. "%d\nfor winning!",
+        self.game.save.player.name, prize))
+    end
   end
   self.result = "win"
   self.afterQueue = "finish"
@@ -9523,7 +9596,7 @@ end
 -- out with no free enemy move.
 function BattleState:openReplacementMenu()
   local game = self.game
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   local function onSwitch(mon)
     if Party.isEgg(mon) then
@@ -9592,7 +9665,7 @@ end
 -- engine/items/item_effects.asm.
 function BattleState:safariAction(choice)
   if self.gen4Safari then return self:gen4SafariAction(choice) end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   local st = self.safari
   local playerName = self.game.save.player.name
@@ -9662,7 +9735,7 @@ function BattleState:gen4SafariAction(choice)
   end
   local playerName = self.game.save.player.name
   local foe = self.enemy.name
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
 
   if choice == "run" then
@@ -9864,7 +9937,7 @@ end
 
 -- Gen 1 escape formula (engine/battle/core.asm TryRunningFromBattle)
 function BattleState:tryRun()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   -- A wild battle the script says cannot be escaped.  There is exactly one in
   -- Emerald -- the first -- and the roll is skipped rather than rigged, so a
@@ -9943,7 +10016,7 @@ function BattleState:tryRun()
 end
 
 function BattleState:openItems()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   -- BATTLE_TYPE_FRONTIER (all but the Pyramid): "Items can't be used now."
   if self.noItems then
@@ -9951,6 +10024,24 @@ function BattleState:openItems()
     return
   end
   self:ui(function()
+    if GameVersion.isGen2() then
+      -- Gen2's native PACK owns pockets, battle eligibility and cursor state.
+      -- It must not route through a generic list skin or a live field world.
+      local pack
+      pack = self:buildScreen("Gen2PackMenu", {
+        battle = true,
+        world = {},
+        onChoose = function(id)
+          -- Close BattlePack before target construction: the actual caller is
+          -- the battle model, not the PACK's boolean eligibility flag.
+          pack:close()
+          require("src.ui.BagMenu").useItem(self.game, self, id, pack, {
+            onCancel = function() self:openItems() end,
+          })
+        end,
+      })
+      return pack
+    end
     return self:buildScreen(Gen4Battle.bagScreenId(self) or "BagMenu", { battle = self })
   end)
 end
@@ -9960,6 +10051,27 @@ end
 -- (BagMenu's pickTargetAndUse asks), nil for the generation's party menu.
 function BattleState:gen4ItemTargetScreen()
   return Gen4Battle.partyScreenId(self)
+end
+
+-- Gen2's party item screen owns HealHP_SFX_GFX and its confirmation.
+-- These methods use the existing battlers and turn queue; the effect and
+-- inventory mutation have already happened exactly once in ItemEffects.
+function BattleState:beginPartyItemHeal()
+  self.partyItemHealing = true
+  self.lowHealthAlarmOn = false
+  require("src.core.Sound").stopLoop("Low_Health_Alarm")
+end
+
+function BattleState:finishPartyItemTurn(itemId, mon)
+  if mon and self.player and mon == self.player.mon then
+    self.player.shownHP = mon.hp
+    self.player.drainFloor = nil
+  end
+  self.partyItemHealing = nil
+  self:itemUsed({})
+  -- This producer commits the real item turn. Resume that queue explicitly
+  -- after the party owner closes, as the native Gen2 controller does.
+  self.phase = BattleQueuePhase.name()
 end
 
 -- called by BagMenu after an item is used in battle (consumes the turn)
@@ -10581,12 +10693,12 @@ function BattleState:bugContestBall()
   -- kept throwing past twenty, so refuse here as well -- one guard for the
   -- last ball of a battle, one for the run.
   if BugContest.ballsLeft(save) <= 0 then
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     self.afterQueue = "menu"
     self:say(Strings("You have no\nPARK BALLs left!"))
     return
   end
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   BugContest.useBall(save)
   self:say(self:romText("_ItemUseText001", "%s used\n%s!",
@@ -10673,7 +10785,7 @@ function BattleState:storeContestMon()
 end
 
 function BattleState:openParty()
-  self.phase = "messages"
+  self.phase = BattleQueuePhase.name()
   self.afterQueue = "menu"
   self:ui(function()
     return self:buildScreen(Gen4Battle.partyScreenId(self) or "PartyMenu", {
@@ -10808,7 +10920,7 @@ function BattleState:finish()
     if type(text) == "string" and text ~= "" then
       pd.voiceDone[index] = true
       self:say(text)
-      self.phase = "messages"
+      self.phase = BattleQueuePhase.name()
       self.afterQueue = "finish"
       return
     end
@@ -10824,7 +10936,7 @@ function BattleState:finish()
       self.game.save.player.name, self.payDay))
     self.payDay = nil
     self.afterQueue = "finish"
-    self.phase = "messages"
+    self.phase = BattleQueuePhase.name()
     return
   end
   -- Invariant: a battle can never hand the overworld a party with nothing
@@ -10888,6 +11000,16 @@ end
 local HudTiles = require("src.render.HudTiles")
 local hudTile = HudTiles.tile
 local drawHPBar = HudTiles.drawHPBar
+
+local function nativeHpPixels(screen, b, side)
+  if GameVersion.isGen2() then
+    -- The public GSC animation owns a 48-pixel bar. Respect a cartridge's
+    -- wider HUD geometry when writing its actual tile row.
+    local pixels = screen:hudHpPixels(b.mon, side)
+    return pixels > 0 and math.max(1, math.floor(pixels
+      * HudTiles.geometry().hpBarTiles / 6)) or 0
+  end
+end
 
 -- CenterMonName: 1-2 letter names print two tiles right, 3-4 one tile.
 -- Counted in glyphs, not bytes: a nickname carrying "é" or "♂" is one
@@ -11894,7 +12016,8 @@ function BattleState:sgbBattlePals()
   local function bar(b)
     if not b then return pals.GREENBAR end
     local hp = b.shownHP or b.mon.hp
-    return pals[PaletteFX.barPalName(hp, b.mon.stats.hp)] or pals.GREENBAR
+    return pals[PaletteFX.barPalName(hp, b.mon.stats.hp,
+      nativeHpPixels(self, b, b.isPlayer and 'player' or 'enemy'))] or pals.GREENBAR
   end
   local function mon(b, placeholder)
     if placeholder or not b then return pals.MEWMON or pals.GREENBAR end
@@ -12526,7 +12649,7 @@ function BattleState:drawHUDs(slide)
     hudTile(0x73, 8, 16)
     drawHPBar(barData, 2, 2,
               { hp = shownHP(self.enemy), stats = self.enemy.mon.stats },
-              nil, grayFill)
+              nil, grayFill, nil, nativeHpPixels(self, self.enemy, 'enemy'))
     hudTile(0x74, 8, 24)
     for i = 2, 9 do hudTile(0x76, i * 8, 24) end
     hudTile(0x78, 80, 24)
@@ -12607,7 +12730,7 @@ function BattleState:drawHUDs(slide)
     end
     drawHPBar(barData, 10, 9,
               { hp = shownHP(self.player), stats = self.player.mon.stats },
-              1, grayFill) -- wHPBarType 1: the $6D cap
+              1, grayFill, nil, nativeHpPixels(self, self.player, 'player')) -- wHPBarType 1: the $6D cap
     Font.draw(("%3d/%3d"):format(shownHP(self.player), self.player.mon.stats.hp), 88, 80)
     -- The block's right edge follows the HP bar: two label tiles from column
     -- 10, then the segments, then the cap -- column 18 with Crystal's
@@ -12675,7 +12798,7 @@ end
 function BattleState:drawTextAreaInner()
   Font.drawBox(0, 12, 20, 6)
   love.graphics.setColor(0, 0, 0, 1)
-  if self.phase == "messages" and (self.current or self.animPlaying) then
+  if BattleQueuePhase.active(self) and (self.current or self.animPlaying) then
     -- during the move animation self.current is nil but shown still holds
     -- the "used X!" lines; keep drawing them like pokered, whose move
     -- animations only touch sprites and never the textbox tilemap (#296)
@@ -12802,7 +12925,7 @@ function BattleState:drawTextAreaInner()
         -- the type record's display name (a mod type shows its name, and
         -- PSYCHIC_TYPE prints PSYCHIC like the original)
         Font.draw(def.type and TypeChart.displayName(def.type) or "", 16, 80)
-        local maxPP = def.pp + (sel.ppUps or 0) * math.floor(def.pp / 5)
+        local maxPP = require("src.pokemon.Pokemon").maxPP(def, sel)
         Font.draw(("%2d/%2d"):format(sel.pp, maxPP), 40, 88)
       end
     end
@@ -12850,6 +12973,7 @@ function BattleState:drawBattleField()
 end
 
 function BattleState:drawClassic()
+  if GameVersion.isGen2() then return self:drawScene() end
   -- AskName: ClearSprites + wild ClearScreenArea -- white field under the
   -- nickname TextBox / YES/NO (naming_screen.asm); overlays draw on top.
   if self.blankForAskName then
@@ -12962,5 +13086,14 @@ function BattleState:drawClassic()
     Runtime.call("battle.overlay", function() end, self)
   end
 end
+
+require('src.battle.Gen2BattleScene').install(BattleState)
+require('src.battle.Gen2BattleWindow').install(BattleState)
+Gen2BattleView.install(BattleState, {
+  load = getImage,
+  palette = monPalette,
+  path = imagePathOf,
+  trueColor = function(image) local meta = imageMeta[image]; return meta and meta.trueColor or false end,
+})
 
 return BattleState

@@ -45,6 +45,7 @@ local SPEEDS = { { 1, "FAST" }, { 3, "MEDIUM" }, { 5, "SLOW" } }
 -- no-loader fallback for the ruleset row, same pair BattleState keeps
 local Rulesets = {
   gen1_faithful = require("src.battle.rulesets.gen1_faithful"),
+  gen2_finite_pp = require("src.battle.rulesets.gen2_finite_pp"),
   modern_clean = require("src.battle.rulesets.modern_clean"),
 }
 local FILTERS = { "OFF", "1X", "2X", "3X" }
@@ -68,15 +69,12 @@ local function rulesetIds(game)
     if not record.hidden then ids[#ids + 1] = id end
   end
   table.sort(ids)
+  table.insert(ids, 1, false)
   return ids
 end
 
 local function rulesetIndex(game, ids)
-  -- The same fallback the battle uses, from the same place.  When these two
-  -- disagreed the row showed GEN 1 FAITHFUL on a cartridge that was about to
-  -- fight under it -- which was true, and was the bug rather than the display.
-  local cur = game.save.options.ruleset
-              or require("src.battle.RulesetDefaults").defaultFor(game)
+  local cur = require("src.battle.RulesetDefaults").selection(game) or false
   for i, id in ipairs(ids) do
     if id == cur then return i end
   end
@@ -86,7 +84,8 @@ end
 local function rulesetName(game)
   local rulesets = game.data and game.data.rulesets or Rulesets
   local ids = rulesetIds(game)
-  local id = ids[rulesetIndex(game, ids)] or game.save.options.ruleset
+  local id = ids[rulesetIndex(game, ids)]
+  if id == false then return Strings("AUTO") end
   local record = id and rulesets[id]
   return Strings(record and record.name or id or "----")
 end
@@ -104,8 +103,8 @@ local function stepVolume(v, dir)
 end
 
 local function colorIndex(opts)
-  local cur = opts.colors or "gbc"
-  for i, m in ipairs(PaletteFX.MODES) do
+  local cur = GameVersion.isGen2() and PaletteFX.mode or opts.colors or "gbc"
+  for i, m in ipairs(PaletteFX.colorModes()) do
     if m == cur then return i end
   end
   return 1
@@ -370,14 +369,17 @@ local function buildRows(game)
       end },
     { id = "colors", label = Strings("COLORS"),
       value = function(g)
-        return PaletteFX.modeLabel(g.save.options.colors or "gbc")
+        local mode = GameVersion.isGen2() and PaletteFX.mode or g.save.options.colors or "gbc"
+        return PaletteFX.modeLabel(mode)
       end,
       step = function(g, dir)
         local o = g.save.options
         local i = colorIndex(o)
-        i = wrapIndex(i - 1 + dir, #PaletteFX.MODES) + 1
-        o.colors = PaletteFX.MODES[i]
-        PaletteFX.setMode(o.colors)
+        local modes = PaletteFX.colorModes()
+        i = wrapIndex(i - 1 + dir, #modes) + 1
+        PaletteFX.writeColorOption(o, modes[i])
+        if GameVersion.isGen2() then PaletteFX.setDisplay(o.colors,nil)
+        else PaletteFX.setMode(o.colors) end
         return true
       end },
     { id = "tilt", label = Strings("TILT"),
@@ -824,9 +826,22 @@ function OptionsMenu:update(dt)
                                        #rows, cancelRow)
 end
 
-function OptionsMenu:draw()
+local function drawPanel(self)
   OptionRows.draw(self.game, self.rows, self.index, self.scroll or 0,
                   "CANCEL", #self.rows + 1)
+end
+
+function OptionsMenu:draw()
+  return drawPanel(self)
+end
+
+-- Expose the actual window-sized presentation seam for Gen2 providers,
+-- retaining the existing native panel as a DPI-aware fallback.
+function OptionsMenu:drawsWidescreen() return GameVersion.isGen2() end
+function OptionsMenu:wantsFillScale() return GameVersion.isGen2() end
+function OptionsMenu:drawWidescreen(width, height)
+  return require("src.ui.Gen2Chrome").withPanel(width, height, 1, 1, 1,
+    function() drawPanel(self) end)
 end
 
 -- see the note above buildRows: the Gen 3 OPTION screen appends these

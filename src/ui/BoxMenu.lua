@@ -12,6 +12,8 @@ local TextBox = require("src.render.TextBox")
 local Strings = require("src.core.Strings")
 
 local BoxMenu = {}
+local function gen2() return require("src.core.GameVersion").isGen2() end
+local Gen2Boxes = require("src.pokemon.Gen2Boxes")
 
 local function monLabel(game, mon)
   local def = game.data.pokemon[mon.species]
@@ -127,9 +129,14 @@ local function withdraw(game)
         -- reaches the party menu with mon.stats nil and the HP bar draw
         -- nil-indexes it (#304, same family as #233).  Already-shaped mons
         -- (everything the engine itself put in a box) pass through.
-        Stats.ensure(game.data.pokemon[mon.species], mon)
-        table.remove(box, index)
-        table.insert(game.save.party, mon)
+        if gen2() then
+          local ok,why=Gen2Boxes.withdraw(game.save,game.save.currentBox,index,game.data)
+          if not ok then list.footer=why;return end
+        else
+          Stats.ensure(game.data.pokemon[mon.species], mon)
+          table.remove(box, index)
+          table.insert(game.save.party, mon)
+        end
         local name = monName(game, mon)
         game.stringBuffer = name
         require("src.core.Sound").playCry(game.data, mon.species)
@@ -142,7 +149,7 @@ end
 
 local function deposit(game)
   local t = game.data.text
-  if #game.save.party <= 1 then
+  if not gen2() and #game.save.party <= 1 then
     game.stack:push(TextBox.new(game, t._CantDepositLastMonText
       or Strings("You can't deposit\nthe last POKéMON!")))
     return
@@ -167,7 +174,7 @@ local function deposit(game)
         local index = list.index
         local mon = game.save.party[index]
         if not mon then return end
-        if #game.save.party <= 1 then
+        if not gen2() and #game.save.party <= 1 then
           list.footer = Strings("You need at least\none POKéMON!")
           return
         end
@@ -176,8 +183,13 @@ local function deposit(game)
           list.footer = Strings("BOX %d is full!", game.save.currentBox)
           return
         end
-        table.remove(game.save.party, index)
-        table.insert(active, mon)
+        if gen2() then
+          local ok,why=Gen2Boxes.deposit(game.save,index,game.save.currentBox,game.data)
+          if not ok then list.footer=why;return end
+        else
+          table.remove(game.save.party, index)
+          table.insert(active, mon)
+        end
         -- PIKAHAPPY_DEPOSITED (engine/pokemon/bills_pc.asm:247)
         require("src.world.PikachuFollower")
           .modifyHappiness(game.save, "DEPOSITED", mon)
@@ -218,7 +230,10 @@ local function release(game)
         defaultNo = true, noSound = true,
         choice = function(yes)
           if not yes then return end
-          table.remove(box, list.index)
+          if gen2() then
+            local ok,why=Gen2Boxes.release(game.save,game.save.currentBox,list.index)
+            if not ok then list.footer=why;return end
+          else table.remove(box, list.index) end
           require("src.core.Sound").playCry(game.data, mon.species)
           game.stack:push(TextBox.new(game,
             Strings("%s was\nreleased outside.\fBye %s!", name, name)))
@@ -306,8 +321,16 @@ local function printBox(game)
     or Strings("Printer error!\n%s", tostring(err))))
 end
 
-function BoxMenu.new(game)
+function BoxMenu.new(game, opts)
+  opts=opts or {}
+  if opts.save and opts.save~=game.save then
+    game=setmetatable({save=opts.save,writeSave=false},{__index=game})
+  end
   Boxes.ensure(game.save)
+  if gen2() then
+    local ok,why=Gen2Boxes.canUsePc(game.save)
+    if not ok then return TextBox.new(game,why,opts.onClose or opts.onCancel or opts.onDone) end
+  end
   -- bills_pc.asm BillsPCMenu: TextBoxBorder at (0,0) with interior
   -- 12x10 → total 14x12.  "CHANGE BOX" / "WITHDRAW <PK><MN>" need the
   -- full interior (cursor col + label).  keepOpen so WITHDRAW/DEPOSIT/
@@ -329,11 +352,30 @@ function BoxMenu.new(game)
     items[#items + 1] = { label = Strings("PRINT BOX"), keepOpen = true,
       onSelect = function() printBox(game) end }
   end
-  items[#items + 1] = { label = Strings("SEE YA!") }
+  local callerCloses=gen2() and type(opts.onClose)=="function"
+  local closed=false
+  local function onClose()
+    if closed then return end
+    closed=true
+    local callback=opts.onClose or opts.onCancel or opts.onDone
+    if callback then callback() end
+  end
+  items[#items + 1] = { label = Strings("SEE YA!"),keepOpen=callerCloses,onSelect=onClose }
   local menu = Menu.new(game, items,
     -- Bill's PC runs silent end to end (BIT_NO_MENU_BUTTON_SOUND,
     -- engine/menus/pokemon_pc.asm)
-    { tx = 0, ty = 0, tw = 14, th = #items * 2 + 2, noSound = true })
+    { tx = 0, ty = 0, tw = 14, th = #items * 2 + 2, noSound = true,onCancel=onClose })
+  menu.save,menu.opts=game.save,opts
+  if callerCloses then
+    -- Legacy Gen2 callers own dismissal. Native callers keep Menu's
+    -- normal pop-before-callback contract.
+    local update=menu.update
+    function menu:update(dt)
+      if self.game.input:wasPressed("b") then onClose();return end
+      return update(self,dt)
+    end
+    function menu:cancel()onClose()end
+  end
   local baseDraw = menu.draw
   function menu:draw()
     baseDraw(self)

@@ -2,6 +2,7 @@
 -- opts.battle = BattleState when opened mid-battle (balls throwable,
 -- using an item consumes the turn).
 
+local BattleQueuePhase = require("src.battle.BattleQueuePhase")
 local ItemEffects = require("src.inventory.ItemEffects")
 local ListMenu = require("src.ui.ListMenu")
 local TextBox = require("src.render.TextBox")
@@ -253,7 +254,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
       battle.pokeDollEscape = true
       battle.result = "run"
       battle.afterQueue = "finish"
-      battle.phase = "messages"
+      battle.phase = BattleQueuePhase.name()
     end)
     return
   end
@@ -719,21 +720,30 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     end
     -- refresh counts on whichever screen asked
     refreshCount(game, list, id)
-    -- HP medicine: fill the bar in the still-open picker first, then print
-    -- and close, the order item_effects.asm .doneHealing runs in
-    -- (SFX_HEAL_HP -> UpdateHPBar2 -> RedrawPartyMenu prints the message).
-    -- Only a keepOpen picker is still on the stack to animate: every other
-    -- item, and every in-battle use, popped it in PartyMenu before onSwitch,
-    -- and takes the pop-then-print path below -- which is the path that
-    -- spends the battle turn.  #252, #379
-    -- ...AND ONLY A PICKER THAT CAN ANIMATE IS ASKED TO.
-    --
-    -- This screen is whichever party picker the generation opened, and it
-    -- took `animateTo` on faith: Hoenn's opens Gen3PartyMenu, which had no
-    -- such method, and every out-of-battle potion in the game crashed here.
-    -- Gen3PartyMenu has one now -- but the message must print either way, so
-    -- a picker that cannot animate falls through to the plain path rather
-    -- than taking the game down with it.
+    -- Native Gen2 keeps the party screen through HP fill, result text
+    -- and acknowledgment before the normal enemy action can be queued.
+    if battle and require("src.core.GameVersion").isGen2()
+        and picker and picker.keepOpen and type(picker.showItemResult) == "function" then
+      local slot
+      for i, mon in ipairs(picker.party or game.save.party) do
+        if mon == target then slot = i; break end
+      end
+      local before = extra and extra.healedFrom
+      local climbs = before ~= nil and target and before ~= target.hp
+      if climbs then battle:beginPartyItemHeal() end
+      picker:showItemResult(slot, {
+        fromHp = climbs and before or nil,
+        toHp = climbs and target.hp or nil,
+        -- ItemEffects already played Heal_HP (the imported Sfx_Potion alias).
+        -- Replaying it here would double the same native cue.
+        text = table.concat(payload or {}, "\n"),
+        onDone = function()
+          closePicker()
+          battle:finishPartyItemTurn(id, target)
+        end,
+      })
+      return
+    end
     if picker and picker.keepOpen and extra and extra.healedFrom and target
        and type(picker.animateTo) == "function" then
       picker:animateTo(target, extra.healedFrom, function()
@@ -743,7 +753,12 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     end
     if battle then
       list:close()
-      showMessages(game, payload, function() battle:itemUsed({}) end)
+      if require("src.core.GameVersion").isGen2() then
+        -- The native battle queue owns this message and its composition.
+        battle:itemUsed(payload)
+      else
+        showMessages(game, payload, function() battle:itemUsed({}) end)
+      end
     else
       showMessages(game, payload, closePicker)
     end
@@ -752,27 +767,48 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
 
   -- .healingItemNoEffect prints over the still-drawn party menu too, so the
   -- refusal closes the picker the same way (#252)
-  showMessages(game, payload, closePicker) -- failed
+  if battle and require("src.core.GameVersion").isGen2() then
+    closePicker()
+    list:close()
+    for _, message in ipairs(payload or {}) do battle:say(message) end
+  else
+    showMessages(game, payload, closePicker) -- failed
+  end
 end
 
-local function pickTargetAndUse(game, battle, id, list)
+local function pickTargetAndUse(game, battle, id, list, options)
   -- pick a target from the party
   -- the ETHERs and PP UP open the move menu after picking a mon
   -- (ItemUsePPRestore / ItemUsePPUp); the ELIXERs hit every move
   local def = game.data.items[id]
   local key = ItemEffects.alias(id, def)
   local wantsMove = key == "ETHER" or key == "MAX_ETHER" or key == "PP_UP"
+    or (key == "MYSTERYBERRY" and require("src.core.GameVersion").isGen2())
   local opts = {
     pickOnly = true,
-    -- HP medicine animates its bar with the picker still up (#252).  Only
-    -- out of battle: the in-battle tail closes the bag list underneath
-    -- first, which needs the picker already gone.
-    keepOpen = (not battle) and (ItemEffects.healsHP(id)
-      or (id == "RARE_CANDY"
-          and require("src.core.GameVersion").get() == "firered")),
+    battle = require("src.core.GameVersion").isGen2() and battle or nil,
+    onCancel = options and options.onCancel,
+    -- Native Gen2 keeps the same party owner through its result and
+    -- confirmation. Other editions retain their existing field flow.
+    keepOpen = ((battle or wantsMove) and require("src.core.GameVersion").isGen2())
+      or ((not battle) and (ItemEffects.healsHP(id)
+        or (id == "RARE_CANDY" and require("src.core.GameVersion").isFRLG()))),
     onSwitch = function(mon, picker)
       if not wantsMove then
         useOn(game, battle, id, mon, list, nil, picker)
+        return
+      end
+      if require("src.core.GameVersion").isGen2() then
+        -- RestorePPEffect uses ChooseMoveToDelete's real native four-slot
+        -- window. Cancel drops only this move list and preserves the party.
+        require("src.ui.Screens").push(game, "Gen2MoveDeleter", {
+          mon = mon, moves = game.data.moves,
+          onCancel = function() game.stack:pop() end,
+          onChoose = function(slot)
+            game.stack:pop()
+            useOn(game, battle, id, mon, list, slot, picker)
+          end,
+        })
         return
       end
       local rows = {}
@@ -814,7 +850,7 @@ local function pickTargetAndUse(game, battle, id, list)
       game.stack:push(ListMenu.new(game, "Which move?", rows, {
         onChoose = function(row, l)
           l:close()
-          useOn(game, battle, id, mon, list, row.value)
+          useOn(game, battle, id, mon, list, row.value, picker)
         end,
       }))
     end,
@@ -854,7 +890,7 @@ local BAG_TEXT_BOOTED_TM = 58
 local BAG_TEXT_BOOTED_HM = 59
 local BAG_TEXT_CONTAINED = 60
 
-local function useItem(game, battle, id, list)
+local function useItem(game, battle, id, list, options)
   -- HGSS: the Escape Rope / Water Stone at a Ruins of Alph chamber wall
   -- (src/world/HgssAlphChambers.lua) runs the chamber's script instead
   if not battle and game.data and game.data.isGen4Cache
@@ -937,7 +973,7 @@ local function useItem(game, battle, id, list)
           -- which is where "Teach {MOVE} to a POKeMON?" died.
           game.stack:push(TextBox2.new(game, asks, nil, {
             choice = function(yes)
-              if yes then pickTargetAndUse(game, battle, id, list) end
+              if yes then pickTargetAndUse(game, battle, id, list, options) end
             end,
           }))
         end
@@ -947,10 +983,10 @@ local function useItem(game, battle, id, list)
       local booted = def.machine.kind == "HM"
         and "Booted up an HM!" or Strings("Booted up a TM!")
       showMessages(game, { booted, Strings("It contained\n%s!", moveName) },
-        function() pickTargetAndUse(game, battle, id, list) end)
+        function() pickTargetAndUse(game, battle, id, list, options) end)
       return
     end
-    pickTargetAndUse(game, battle, id, list)
+    pickTargetAndUse(game, battle, id, list, options)
   else
     useOn(game, battle, id, nil, list)
   end
@@ -986,6 +1022,15 @@ local function handOver(game, mon, id, onChanged, opts)
     return
   end
   local held = mon.item
+  if require("src.core.GameVersion").isGen2() and require("src.pokemon.Gen2Mail").monHoldsMail(mon) then
+    showMessages(game,{Strings("Remove MAIL first.")});return
+  end
+  if require("src.core.GameVersion").isGen2() and require("src.pokemon.Gen2Mail").isMail(id) then
+    game.stack:push(require("src.ui.Gen2MailCompose").new(game,{mon=mon,item=id,onDone=function()
+      if onChanged then onChanged() end
+      showMessages(game,{Strings("%s is now holding\n%s.",monName,name)})
+    end}));return
+  end
   local function hand()
     local changed
     if opts and opts.giveHeld then

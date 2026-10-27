@@ -2,6 +2,7 @@
 
 local Growth = require("src.pokemon.Growth")
 local Stats = require("src.pokemon.Stats")
+local Gen2PP = require("src.pokemon.Gen2PP")
 
 local Pokemon = {}
 
@@ -450,7 +451,15 @@ end
 -- Pokémon Center / blackout heal (engine/events/heal_party.asm
 -- HealParty): full HP, status cleared, and every move's PP restored to
 -- its base plus the PP-Up bonus (RestoreBonusPP adds maxPP/5 per PP UP).
-function Pokemon.maxPP(def, slot)
+function Pokemon.ppUps(def, slot, generation)
+  generation = tonumber(generation) or require('src.core.GameVersion').generation()
+  if generation == 2 then return Gen2PP.ups(def, slot) end
+  return type(slot)=='table' and math.min(3,math.max(0,math.floor(tonumber(slot.ppUps) or 0))) or 0
+end
+
+function Pokemon.maxPP(def, slot, generation)
+  generation = tonumber(generation) or require('src.core.GameVersion').generation()
+  if generation == 2 then return Gen2PP.maximum(def, slot) end
   local base = math.max(0,tonumber(def and def.pp) or 0)
   local ups = type(slot)=='table' and math.min(3,math.max(0,math.floor(tonumber(slot.ppUps) or 0))) or 0
   return base + ups * math.floor(base / 5)

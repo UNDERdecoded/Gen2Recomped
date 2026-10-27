@@ -1118,7 +1118,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     local amount = itemId == "MYSTERYBERRY" and 5 or 10
     local function restore(mv)
       local mdef = data.moves[mv.id]
-      local maxPP = mdef and (mdef.pp + (mv.ppUps or 0) * math.floor(mdef.pp / 5))
+      local maxPP = mdef and require("src.pokemon.Pokemon").maxPP(mdef, mv)
       if maxPP and mv.pp < maxPP then
         mv.pp = full and maxPP or math.min(maxPP, mv.pp + amount)
         return true
@@ -1316,10 +1316,14 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     if not target then return "failed", { Strings("It won't have\nany effect.") } end
     local mv = target.moves[moveIndex or 1]
     local mdef = mv and data.moves[mv.id]
-    if mdef and (mv.ppUps or 0) < 3 then
-      mv.ppUps = (mv.ppUps or 0) + 1
-      -- each PP UP adds maxPP/5 uses on top of the base maximum
-      mv.pp = mv.pp + math.floor(mdef.pp / 5)
+    local gen2 = require("src.core.GameVersion").isGen2()
+    local ups = gen2 and require("src.pokemon.Gen2PP").ups(mdef, mv) or mv and (mv.ppUps or 0) or 0
+    if mdef and ups < 3 and not (gen2 and mv.id == "SKETCH") then
+      mv.ppUps = ups + 1
+      local bonus = math.floor(mdef.pp / 5)
+      if gen2 then bonus = require("src.pokemon.Gen2PP").bonus(mdef.pp) end
+      mv.pp = mv.pp + bonus
+      if gen2 then mv.maxPp = require("src.pokemon.Pokemon").maxPP(mdef, mv, 2) end
       return "consumed", { Strings("%s's PP\nincreased!", mdef.name) }
     end
     return "failed", { Strings("It won't have\nany effect.") }

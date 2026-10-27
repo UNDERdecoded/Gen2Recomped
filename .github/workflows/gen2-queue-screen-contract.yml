@@ -1,0 +1,47 @@
+name: native Gen2 queue screen contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen2-queue-screen-contract-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install ROM-free runtime
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Previous native source exposes the item-result regressions
+        shell: bash
+        run: |
+          git -c gc.auto=0 fetch --no-tags --depth=1 origin 2727365b0c38495717c688708d521cf8150cfec4
+          baseline="$RUNNER_TEMP/gen2-party-result-baseline"
+          mkdir -p "$baseline"
+          git archive 2727365b0c38495717c688708d521cf8150cfec4 src tests data tools | tar -x -C "$baseline"
+          cp src/render/NativeScreenOverlay.lua "$baseline/src/render/NativeScreenOverlay.lua"
+          cp src/ui/Gen2PartyItemResult.lua "$baseline/src/ui/Gen2PartyItemResult.lua"
+          cp src/ui/Gen2MoveDeleter.lua src/ui/Gen2ForgetMoveList.lua "$baseline/src/ui/"
+          cp src/pokemon/Gen2PP.lua "$baseline/src/pokemon/Gen2PP.lua"
+          cp src/battle/rulesets/gen2_finite_pp.lua "$baseline/src/battle/rulesets/gen2_finite_pp.lua"
+          cp tests/engine/gen2_pp_selection.lua tests/engine/gen2_pp_defaults.lua "$baseline/tests/engine/"
+          cp tests/engine/gen2_battle_pack.lua tests/engine/gen2_party_item_result.lua "$baseline/tests/engine/"
+          for suite in gen2_party_item_result gen2_battle_pack gen2_pp_selection; do
+            if (cd "$baseline" && luajit "tests/engine/$suite.lua") > "$RUNNER_TEMP/$suite-baseline.log" 2>&1; then
+              cat "$RUNNER_TEMP/$suite-baseline.log"
+              echo "Previous source unexpectedly passed $suite"
+              exit 1
+            fi
+            cat "$RUNNER_TEMP/$suite-baseline.log"
+            grep -q '^FAIL' "$RUNNER_TEMP/$suite-baseline.log"
+          done
+      - name: Native queue, screen and available menu owners
+        run: |
+          failed=0
+          for suite in gen2_battle_queue_view gen2_battle_window gen2_battle_scene wide_battle_layout wide_battle_shake_bug562 gen2_battle_pack gen2_party_item_result gen2_pp_selection gen2_pp_defaults screen_space_ui party_live_data gen2_battle_live_view gen2_battle_submenu gen2_summary_contract frlg_battle_gender; do
+            if ! luajit "tests/engine/$suite.lua"; then failed=1; fi
+          done
+          exit "$failed"

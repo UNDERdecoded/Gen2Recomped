@@ -1,0 +1,1076 @@
+-- Adapted from Gen1Recomp 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91.
+-- Existing project rights and Gen1Recomp provenance remain applicable; see LICENSE.MD.
+-- Bill's PC withdraw / deposit list (engine/pokemon/bills_pc.asm).
+--
+-- The screen is transcribed from the ASM's own coordinates rather than laid
+-- out by eye, because that is what makes it line up on the 8px grid:
+--
+--   BillsPC_BoxName        Textbox at (8,0), interior 10x1 -- the box name
+--   BillsPC_RefreshTextboxes
+--                          Textbox at (8,2), interior 10x10, then the two top
+--                          corners are overwritten with └ and ┘ so the list
+--                          box reads as hanging off the name box above it
+--   .PlaceNickname         five nicknames from (9,4), two rows apart
+--   PCMonInfo              clears (0,0) 8 wide x 15 tall for the left panel,
+--                          puts the front pic at (1,4) as 7x7 tiles, the level
+--                          at (1,12), the gender at (5,12) and the species
+--                          name at (1,14)
+--
+-- `mode` picks which list is being browsed: "withdraw" reads the current box,
+-- "deposit" reads the party, and "move" walks BOTH -- see below.
+--
+-- MOVE POKéMON W/O MAIL (_MovePKMNWithoutMail, engine/pokemon/bills_pc.asm:480)
+-- is not a one-press operation on the cart and must not be one here.  Its
+-- jumptable is .Init -> .Joypad -> .PrepSubmenu -> .MoveMonWOMailSubmenu ->
+-- .PrepInsertCursor -> .Joypad2, i.e.
+--
+--   1. "Choose a <PK><MN>." over a list that left/right walks across the PARTY
+--      (wBillsPC_LoadedBox == 0, BillsPC_BoxName's `.party` arm) and all
+--      fourteen boxes, wrapping at both ends (BillsPC_PressLeft/PressRight)
+--   2. A on a mon opens MOVE / STATS / CANCEL under "What's up?"
+--      (PCString_WhatsUp, .MoveMonWOMailSubmenu)
+--   3. MOVE backs the position up and asks "Move to where?"
+--      (PCString_MoveToWhere) with an insert cursor the player drives to the
+--      destination list AND the slot inside it
+--   4. A there is BillsPC_CheckSpaceInDestination then
+--      MovePKMNWithoutMail_InsertMon, which prints "Saving… Leave ON!" and
+--      writes the mon into its new home; B restores the backed-up position and
+--      goes back to step 1
+--
+-- Collapsing that into "A sends the mon to the next box with room" -- which is
+-- what this screen used to do -- reads as the PC EATING the mon: it vanishes
+-- from the list with no destination named and no line of text, and the player
+-- has fourteen boxes to search to find out it still exists.
+
+local Assets = require("src.render.Assets")
+local Boxes = require("src.pokemon.Gen2Boxes")
+local Chrome = require("src.ui.Gen2Chrome")
+local CommonText = require("src.core.Gen2CommonText")
+local Font = require("src.render.Font")
+local GameVersion = require("src.core.GameVersion")
+local GbcPalette = require("src.render.GbcPalette")
+local Mail = require("src.pokemon.Gen2Mail")
+local Palettes = require("src.render.PaletteFX")
+local Screens = require("src.ui.Screens")
+local Sound = require("src.core.Sound")
+local Sprites = require("src.pokemon.Sprites")
+local Strings = require("src.core.Strings")
+
+local BoxMenu = {}
+BoxMenu.__index = BoxMenu
+BoxMenu.isOpaque = true
+
+-- BillsPC_NumMonsOnScreen is 5 for the withdraw/deposit lists.
+local VISIBLE_ROWS = 5
+local LIST_X, LIST_Y = 9, 4
+local LIST_SPACING = 2
+local PIC_X, PIC_Y = 1, 4
+
+-- PadFrontpic pads a 5x5 or 6x6 pic into the 7x7 block, one blank column then
+-- 7-size blank tiles per column (engine/gfx/load_pics.asm:342-386).
+local PIC_PAD = { [7] = { 0, 0 }, [6] = { 1, 1 }, [5] = { 1, 2 } }
+
+-- gfx/pc/orange.pal
+local BILLS_PC_ORANGE = {
+  { 255, 123, 0 }, { 189, 99, 0 }, { 123, 58, 0 }, { 0, 0, 0 },
+}
+
+-- PCMonInfo prints the held-item icon at hlcoord 7, 12
+-- (engine/pokemon/bills_pc.asm:1093).
+local ICON_X, ICON_Y = 7, 12
+
+-- $5f at hlcoord 8, 1 and $5e at hlcoord 19, 1, off a PCMailGFX sheet that
+-- starts at $5c (engine/pokemon/bills_pc.asm:957-963).
+local ARROW_ROW = 1
+local ARROW_LEFT = { 3, 8 }
+local ARROW_RIGHT = { 2, 19 }
+
+-- wBillsPC_LoadedBox: 0 is the PARTY, 1..NUM_BOXES are the boxes.  Only the
+-- MOVE screen ever loads box 0; the withdraw and deposit lists are one list
+-- each (BillsPC_BoxName reads the same byte for all three).
+local PARTY_BOX = 0
+
+-- .MoveMonWOMailSubmenu's .MenuData, verbatim.  RELEASE is NOT one of these --
+-- it belongs to BillsPC_WithdrawMenu's four rows -- so nothing on this screen
+-- can destroy a mon.
+local MOVE_SUBMENU = {
+  Strings.source("MOVE"), Strings.source("STATS"), Strings.source("CANCEL"),
+}
+
+-- engine/pokemon/bills_pc.asm:472-478: BillsPC_Withdraw's menu rows.
+local WITHDRAW_SUBMENU = {
+  Strings.source("WITHDRAW"), Strings.source("STATS"),
+  Strings.source("RELEASE"), Strings.source("CANCEL"),
+}
+
+-- BillsPCDepositMenuHeader's .MenuData (engine/pokemon/bills_pc.asm:234-240).
+local DEPOSIT_SUBMENU = {
+  Strings.source("DEPOSIT"), Strings.source("STATS"),
+  Strings.source("RELEASE"), Strings.source("CANCEL"),
+}
+
+function BoxMenu:submenuRows()
+  if self.mode == "move" then return MOVE_SUBMENU end
+  if self.mode == "deposit" then return DEPOSIT_SUBMENU end
+  return WITHDRAW_SUBMENU
+end
+
+-- MovePKMNWithoutMail_InsertMon's .Saving_LeaveOn, printed for 20 frames while
+-- the mon is written into its new home.  It stays up here until a button
+-- clears it, because it is also the only confirmation the player gets that the
+-- mon moved and where it went.
+local SAVING_LEAVE_ON = Strings.source("Saving… Leave ON!")
+
+-- PCString_NoReleasingEGGS, printed by BillsPC_IsMonAnEgg with SFX_WRONG
+-- (engine/pokemon/bills_pc.asm:1615-1631, string at :2200).
+local NO_RELEASING_EGGS = Strings.source("No releasing EGGS!")
+local PARTY_TITLE = Strings.source("PARTY <PK><MN>")
+local DEFAULT_BOX_TITLE = Strings.source("BOX%d")
+local CHOOSE_PROMPT = Strings.source("Choose a <PK><MN>.")
+local WHATS_UP_PROMPT = Strings.source("What's up?")
+local MOVE_WHERE_PROMPT = Strings.source("Move to where?")
+local LAST_MON = Strings.source("It's your last <PK><MN>!")
+local NO_USABLE_MON = Strings.source("No more usable <PK><MN>!")
+local REMOVE_MAIL = Strings.source("Remove MAIL.")
+local NO_ROOM = Strings.source("There's no room!")
+local RELEASE_PROMPT = Strings.source("Release <PK><MN>?")
+local RELEASED = Strings.source("Released <PK><MN>.\fBye,\n%s!")
+local GOT_MON = Strings.source("Got %s!")
+local STORED_MON = Strings.source("Stored %s!")
+
+-- engine/pokemon/bills_pc.asm:1804 `ld c, 50 / call DelayFrames`
+local STORE_MESSAGE_FRAMES = 50
+
+-- Boxes.lua owns the storage mutation, so its finite refusals arrive here as
+-- return values.  Mark their complete text for the catalog and look them up
+-- when they cross this UI boundary.
+local BOX_FAILURE_SOURCES = {
+  Strings.source("No save."),
+  Strings.source("There is no POKéMON there."),
+  Strings.source("The BOX is full."),
+  Strings.source("You can't deposit\nthe last POKéMON!"),
+  Strings.source("You can't take\nany more POKéMON."),
+  Strings.source("It's already there."),
+  -- CommonText.pages() (below) only treats \n as the box's second row, not
+  -- a page break: a THIRD line needs \f (or \v) like every other multi-page
+  -- message in this file, not a second bare \n -- which used to just glue
+  -- this line onto the one above with no separator.
+  Strings.source("You'll need a\nPOKéMON to call\fwith."),
+}
+
+-- \v (scroll-continue) needs the same page-break handling CommonText.pages
+-- already gives every other Gen 2 screen (PackMenu/PrizeMenu route their
+-- messages through it); this used to split only on \n/\f, so a translated
+-- message that needed a \v scroll break rendered wrong here.
+local function messagePages(text)
+  return CommonText.pages(text) or {}
+end
+
+function BoxMenu:wantsFillScale() return true end
+function BoxMenu:drawsWidescreen() return true end
+
+-- opts: save, mode ("withdraw" | "deposit" | "move"), onClose()
+function BoxMenu.new(game, opts)
+  opts = opts or {}
+  local self = setmetatable({}, BoxMenu)
+  self.game = game
+  self.save = opts.save or (game and game.save)
+  if self.save ~= (game and game.save) then
+    self.game = setmetatable({save=self.save,writeSave=false},{__index=game})
+  end
+  self.mode = opts.mode or "withdraw"
+  self.onClose = opts.onClose or opts.onCancel or function() game.stack:pop() end
+  local data = game and game.data or {}
+  self.pokemon = opts.pokemon or data.pokemon
+  self.palettes = opts.palettes or data.gen2Palettes or data
+  -- EggPic has no data.pokemon row; it rides menu_gfx.eggHatch, and ICON_EGG
+  -- stands in for a cache built before the extractor learned it.
+  self.menuGfx = opts.menuGfx or data.gen2MenuGfx
+  self.icons = opts.icons or data.gen2Icons
+  self.boxIndex = self.save and self.save.currentBox or 1
+  self.index = 1
+  self.scroll = 0
+  self.picCache = {}
+  self.message = nil
+  self.messageFrames = nil
+  self.cryWait = nil
+  -- nil while the list is being browsed; "submenu" while MOVE/STATS/CANCEL is
+  -- up, "insert" while the insert cursor is picking a destination.  Only the
+  -- move screen has phases -- the other two lists act on A.
+  self.phase = nil
+  self.submenuIndex = 1
+  return self
+end
+
+-- The PARTY is box 0 on the move screen and nowhere else.
+function BoxMenu:isParty(index)
+  if index == nil then index = self.boxIndex end
+  return self.mode == "move" and index == PARTY_BOX
+end
+
+-- The mon list a given loaded box stands for.  Boxes.box hands back a live
+-- table (and creates it on demand), so an insert here lands on the save.
+function BoxMenu:listAt(index)
+  if self:isParty(index) then
+    self.save.party = self.save.party or {}
+    return self.save.party
+  end
+  return Boxes.box(self.save, index)
+end
+
+-- PARTY_LENGTH for box 0, MONS_PER_BOX for the rest
+-- (BillsPC_CheckSpaceInDestination's `.party` arm).
+function BoxMenu:capacityAt(index)
+  if self:isParty(index) then return Boxes.PARTY_SIZE end
+  return Boxes.MONS_PER_BOX
+end
+
+-- BillsPC_BoxName: the party's name is a string of its own, a box's comes out
+-- of wBoxNames.
+function BoxMenu:nameAt(index)
+  -- .PartyPKMN is "PARTY <PK><MN>@" -- eight tiles, because <PK> and <MN> are
+  -- one font glyph each.
+  if self:isParty(index) then return Strings(PARTY_TITLE) end
+  local names = self.save and self.save.boxNames
+  local custom = names and names[index]
+  if type(custom) == "string" and custom ~= "" then return custom end
+  return Strings(DEFAULT_BOX_TITLE, index)
+end
+
+-- Which list this mode browses.
+function BoxMenu:list()
+  if self.mode == "deposit" then return self.save.party or {} end
+  return self:listAt(self.boxIndex)
+end
+
+function BoxMenu:title()
+  if self.mode == "deposit" then return Strings(PARTY_TITLE) end
+  -- While the insert cursor is up the header names the DESTINATION: the whole
+  -- screen has moved there (.PrepInsertCursor calls the same
+  -- BillsPC_MoveMonWOMail_BoxNameAndArrows with the new wBillsPC_LoadedBox).
+  return self:nameAt(self.boxIndex)
+end
+
+-- The cart's own prompts (PCString_*): short, because the box they print in
+-- is one row of 18 columns.
+function BoxMenu:prompt()
+  -- engine/pokemon/bills_pc.asm:356-369: PrepSubmenu places PCString_WhatsUp.
+  if self.phase == "submenu" then return Strings(WHATS_UP_PROMPT) end
+  if self.mode == "move" then
+    -- .Init and .PrepInsertCursor each place their own string.
+    if self.phase == "insert" then return Strings(MOVE_WHERE_PROMPT) end
+    return Strings(CHOOSE_PROMPT)
+  end
+  -- PCString_ChooseaPKMN: _DepositPKMN.Init and BillsPC_Withdraw.Init both
+  -- place this exact string (engine/pokemon/bills_pc.asm:2185).
+  return Strings(CHOOSE_PROMPT)
+end
+
+function BoxMenu:total()
+  return #self:list() + 1 -- CANCEL
+end
+
+function BoxMenu:isCancel()
+  return self.index > #self:list()
+end
+
+function BoxMenu:selected()
+  return self:list()[self.index]
+end
+
+function BoxMenu:ensureVisible()
+  if self.index <= self.scroll then
+    self.scroll = self.index - 1
+  elseif self.index > self.scroll + VISIBLE_ROWS then
+    self.scroll = self.index - VISIBLE_ROWS
+  end
+  self.scroll = math.max(0, math.min(self.scroll,
+    math.max(0, self:total() - VISIBLE_ROWS)))
+end
+
+function BoxMenu:clampIndex()
+  local total = self:total()
+  if self.index > total then self.index = total end
+  if self.index < 1 then self.index = 1 end
+  self:ensureVisible()
+end
+
+function BoxMenu:act()
+  if self:isCancel() then
+    if self.onClose then self.onClose() end
+    return
+  end
+  -- engine/pokemon/bills_pc.asm:336-344: withdraw and move both PrepSubmenu,
+  -- and _DepositPKMN's .a_button steps to .WhatsUp the same way (:94-102).
+  if not self:selected() then return end
+  self.phase = "submenu"
+  -- `ld a, $1 / ld [wMenuCursorY], a`: the submenu always opens on its top row.
+  self.submenuIndex = 1
+end
+
+-- ------------------------------------------------------------ MOVE, step 2
+
+-- BillsPC_CheckMail_PreventBlackout (engine/pokemon/bills_pc.asm:1575), which
+-- .Move runs BEFORE it backs up the cursor: three refusals, all of them about
+-- the PARTY, so a boxed mon walks straight past.  Returns true, or false and
+-- the string the cart places.
+function BoxMenu:checkMailPreventBlackout()
+  -- `ld a, [wBillsPC_LoadedBox] / and a / jr nz, .Okay`; _DepositPKMN zeroes
+  -- that byte too, so its list is the party (bills_pc.asm:17-18).
+  if not (self:isParty() or self.mode == "deposit") then return true end
+  local party = self.save.party or {}
+  -- `cp $3 / jr c, .ItsYourLastPokemon`: a party of one or two may not send
+  -- one away at all, however healthy the rest of it is.
+  if #party < 3 then return false, LAST_MON end
+  -- CheckCurPartyMonFainted (engine/pokemon/bills_pc_top.asm:171) walks the
+  -- party skipping wCurPartyMon and answers carry when everything ELSE has
+  -- fainted -- taking this one out would white the player out on the next step.
+  local othersUsable = false
+  for i, mon in ipairs(party) do
+    if i ~= self.index and (mon.hp or 0) > 0 then othersUsable = true break end
+  end
+  if not othersUsable then return false, NO_USABLE_MON end
+  -- wBillsPC_MonHasMail, the byte PCMonInfo set while drawing the row.  The
+  -- top menu already refused to open this screen at all while any party mon
+  -- holds a letter (BillsPC_MovePKMNMenu's IsAnyMonHoldingMail,
+  -- src/ui/gen2/PcMenu.lua), so this is the second of two nets.
+  if Mail.monHoldsMail(party[self.index]) then
+    return false, REMOVE_MAIL
+  end
+  return true
+end
+
+-- .Move: back the position up (so B can restore it), keep the loaded box and
+-- step to $4, .PrepInsertCursor.
+function BoxMenu:beginMove()
+  local ok, reason = self:checkMailPreventBlackout()
+  if not ok then
+    -- BillsPC_PlaceString + SFX_WRONG + 50 frames, then `dec [hl]` drops back
+    -- to the submenu; here the message holds until a button clears it and the
+    -- list comes back, which is the same place the player ends up.
+    self.phase = nil
+    -- engine/pokemon/bills_pc.asm:1607
+    self:playRefusalSfx("Sfx_Wrong")
+    self.message = Strings(reason)
+    return
+  end
+  self.moveFrom = { box = self.boxIndex, slot = self.index }
+  self.backup = { box = self.boxIndex, index = self.index, scroll = self.scroll }
+  self.phase = "insert"
+  self:clampInsert()
+end
+
+-- BillsPC_StatsScreen: the stats screen over the selected mon, then back to
+-- the submenu (.Stats ends in PCMonInfo, not in a jumptable step).
+function BoxMenu:openStats()
+  local mon = self:selected()
+  local game = self.game
+  if not (mon and game and game.stack) then return end
+  if not pcall(Screens.get, game, "Gen2SummaryMenu") then return end
+  Screens.push(game, "Gen2SummaryMenu", {
+    mon = mon,
+    save = self.save,
+    onClose = function() game.stack:pop() end,
+  })
+end
+
+-- engine/pokemon/bills_pc.asm:1785-1787 ClearBox over the left panel, then the
+-- timed hold at :1804; .Init (:161) only runs after it.
+function BoxMenu:holdMessage(text)
+  self.message = text
+  self.messagePage = 1
+  self.messageFrames = STORE_MESSAGE_FRAMES
+  self.panelCleared = true
+end
+
+function BoxMenu:isCrystal()
+  local version = (self.save and self.save.version) or GameVersion.get()
+  return GameVersion.isCrystal(version)
+end
+
+-- ../pokecrystal/home/pokemon.asm:124-127; ../pokegold/home/pokemon.asm:101-107
+function BoxMenu:cryThenHold(src, mon, text)
+  if not (self:isCrystal() and src and src.isPlaying) then
+    return self:holdMessage(text)
+  end
+  self.cryWait = { src = src, mon = mon, text = text, t = 0 }
+end
+
+-- engine/pokemon/bills_pc.asm:397-411: failed withdraw stays on the submenu.
+function BoxMenu:doWithdraw()
+  local ok, result = Boxes.withdraw(self.save, self.boxIndex, self.index, self.game and self.game.data)
+  if not ok then
+    -- engine/pokemon/bills_pc.asm:1845
+    self:playRefusalSfx("Sfx_Wrong")
+    self.message = Strings(result)
+    return
+  end
+  -- engine/pokemon/bills_pc.asm:1817
+  local name = result.nickname or result.name or result.species or "?"
+  self:cryThenHold(self:playMonCry(result), result, Strings(GOT_MON, name))
+end
+
+-- engine/pokemon/bills_pc.asm:155 BillsPCDepositFuncDeposit
+function BoxMenu:doDeposit()
+  local mon = self:selected()
+  local name = mon and (mon.nickname or mon.name or mon.species) or "?"
+  local ok, result = Boxes.deposit(self.save, self.index, self.boxIndex,
+    self.game and self.game.data)
+  if not ok then
+    -- engine/pokemon/bills_pc.asm:1790
+    self:playRefusalSfx("Sfx_Wrong")
+    self.message = Strings(result)
+    return
+  end
+  -- engine/pokemon/bills_pc.asm:1762
+  self:cryThenHold(self:playMonCry(result), result, Strings(STORED_MON, name))
+end
+
+function BoxMenu:chooseSubmenu()
+  local row = self:submenuRows()[self.submenuIndex]
+  if row == "MOVE" then
+    self:beginMove()
+  elseif row == "DEPOSIT" then
+    self:doDeposit()
+  elseif row == "WITHDRAW" then
+    self:doWithdraw()
+  elseif row == "STATS" then
+    self:openStats()
+  elseif row == "RELEASE" then
+    self:askRelease()
+  else
+    -- .Cancel: `ld a, $0 / ld [wJumptableIndex], a`.
+    self.phase = nil
+  end
+end
+
+-- ------------------------------------------------------------ MOVE, step 3
+
+-- How many insert positions the destination offers.  BillsPC_PressDown stops
+-- at wBillsPC_NumMonsInBox - 1, so the cursor always sits ON a mon (or on row
+-- one of an empty list) and InsertSpeciesIntoBoxOrParty pushes the rest down.
+function BoxMenu:insertPositions()
+  return math.max(1, #self:listAt(self.boxIndex))
+end
+
+function BoxMenu:clampInsert()
+  self.index = math.max(1, math.min(self.index, self:insertPositions()))
+  self.scroll = math.max(0, math.min(self.scroll,
+    math.max(0, self:insertPositions() - VISIBLE_ROWS)))
+  if self.index <= self.scroll then
+    self.scroll = self.index - 1
+  elseif self.index > self.scroll + VISIBLE_ROWS then
+    self.scroll = self.index - VISIBLE_ROWS
+  end
+end
+
+-- BillsPC_CheckSpaceInDestination: a move inside one list is always allowed
+-- (`.same_box`), and a move into another one needs a free slot there.  The
+-- ASM compares against MONS_PER_BOX + 1 / PARTY_LENGTH + 1, which can never be
+-- reached -- the port refuses at the real capacity instead, because a 21st mon
+-- in a box is a mon the save cannot hold.
+function BoxMenu:checkSpaceInDestination()
+  local from = self.moveFrom
+  if from and from.box == self.boxIndex then return true end
+  if #self:listAt(self.boxIndex) >= self:capacityAt(self.boxIndex) then
+    return false, NO_ROOM
+  end
+  return true
+end
+
+-- MovePKMNWithoutMail_InsertMon's .Jumptable: .BoxToBox / .PartyToBox /
+-- .BoxToParty / .PartyToParty, all four of them .CopyFrom* (which is
+-- RemoveMonFromPartyOrBox) followed by .CopyTo* (InsertPokemonIntoBox or
+-- InsertPokemonIntoParty).  This port keeps a mon as one Lua table in exactly
+-- one list, so the four cases are one remove and one insert; what differs is
+-- WHICH list each end names, and the mail bookkeeping on the party end.
+function BoxMenu:insertMon()
+  local from = self.moveFrom
+  if not from then return end
+  local source = self:listAt(from.box)
+  local mon = source[from.slot]
+  if not mon then
+    self.phase = nil
+    self.moveFrom, self.backup = nil, nil
+    return
+  end
+  local destIndex = self.boxIndex
+  local target = math.min(self.index, self:insertPositions())
+  table.remove(source, from.slot)
+  -- sPartyMail is keyed by party SLOT, so a mon leaving the party drags every
+  -- letter behind it up one (RemoveMonFromPartyOrBox's "Mail time!" tail, the
+  -- same call Boxes.deposit makes).  No letter can actually be in the party
+  -- here -- IsAnyMonHoldingMail refused the whole screen -- so this keeps the
+  -- slots honest rather than moving anything.
+  if self:isParty(from.box) then Mail.removeSlot(self.save, from.slot) end
+  local dest = self:listAt(destIndex)
+  if from.box == destIndex and target > from.slot then
+    -- .CheckTrivialMove: the source was taken out first, so a destination slot
+    -- below it has already shuffled up one.
+    target = target - 1
+  end
+  table.insert(dest, math.max(1, math.min(target, #dest + 1)), mon)
+  -- .CopyToBox is InsertPokemonIntoBox, which tails into
+  -- RestorePPOfDepositedPokemon (engine/pokemon/move_mon_wo_mail.asm:35-37).
+  if not self:isParty(destIndex) then
+    Boxes.enterBox(mon, self.game and self.game.data)
+  end
+  self.phase = nil
+  self.moveFrom, self.backup = nil, nil
+  self.index, self.scroll = 1, 0
+  self:clampIndex()
+  self.message = Strings(SAVING_LEAVE_ON)
+end
+
+-- .b_button_2: the backed-up scroll, cursor and loaded box all go back, and
+-- the screen returns to step 1 with nothing moved.
+function BoxMenu:cancelMove()
+  local backup = self.backup
+  if backup then
+    self.boxIndex, self.index, self.scroll =
+      backup.box, backup.index, backup.scroll
+  end
+  self.phase = nil
+  self.moveFrom, self.backup = nil, nil
+  self:clampIndex()
+end
+
+-- BillsPC_PressLeft / BillsPC_PressRight, reached only from
+-- MoveMonWithoutMail_DPad: the move screen wraps through box 0 (the PARTY).
+function BoxMenu:stepBox(delta)
+  local low = self.mode == "move" and PARTY_BOX or 1
+  local span = Boxes.NUM_BOXES - low + 1
+  self.boxIndex = (self.boxIndex - low + delta) % span + low
+  -- .dpad / .dpad_2: both arms zero the cursor and the scroll.
+  self.index, self.scroll = 1, 0
+  if self.phase == "insert" then self:clampInsert() end
+end
+
+function BoxMenu:update(_dt)
+  local input = self.game and self.game.input
+  if not input then return end
+
+  if self.cryWait then
+    local w = self.cryWait
+    w.t = w.t + 1
+    local playing = w.src:isPlaying()
+    if w.t < 3 or (playing and w.t <= 180) then return end
+    self.cryWait = nil
+    self:holdMessage(w.text)
+    return
+  end
+
+  -- engine/pokemon/bills_pc.asm:1804 DelayFrames reads no joypad; :161 zeroes
+  -- wJumptableIndex / cursor / scroll only once it returns.
+  if self.messageFrames then
+    self.messageFrames = self.messageFrames - 1
+    if self.messageFrames > 0 then return end
+    self.messageFrames = nil
+    self.message, self.messagePage = nil, nil
+    self.panelCleared = nil
+    self.phase = nil
+    self.index, self.scroll = 1, 0
+    self:clampIndex()
+    return
+  end
+
+  if self.message then
+    if input:wasPressed("a") or input:wasPressed("b") then
+      local page = (self.messagePage or 1) + 1
+      if page <= #messagePages(self.message) then
+        self.messagePage = page
+      else
+        self.message, self.messagePage = nil, nil
+      end
+    end
+    return
+  end
+
+  -- .MoveMonWOMailSubmenu, a VerticalMenu: up/down, A picks, B is its carry.
+  if self.phase == "submenu" then
+    local submenu = self:submenuRows()
+    if input:wasPressed("up") then
+      self.submenuIndex = self.submenuIndex > 1 and self.submenuIndex - 1
+        or #submenu
+    elseif input:wasPressed("down") then
+      self.submenuIndex = self.submenuIndex < #submenu
+        and self.submenuIndex + 1 or 1
+    elseif input:wasPressed("a") then
+      -- home/menu.asm:345
+      self:playSfx("Sfx_ReadText2")
+      self:chooseSubmenu()
+    elseif input:wasPressed("b") then
+      self:playSfx("Sfx_ReadText2")
+      self.phase = nil
+    end
+    return
+  end
+
+  -- .Joypad2: the insert cursor.  Up/down walk the destination's slots,
+  -- left/right walk the destinations themselves, A inserts, B goes back.
+  if self.phase == "insert" then
+    local positions = self:insertPositions()
+    if input:wasPressed("up") then
+      self.index = self.index > 1 and self.index - 1 or positions
+      self:clampInsert()
+    elseif input:wasPressed("down") then
+      self.index = self.index < positions and self.index + 1 or 1
+      self:clampInsert()
+    elseif input:wasPressed("left") then
+      self:stepBox(-1)
+    elseif input:wasPressed("right") then
+      self:stepBox(1)
+    elseif input:wasPressed("a") then
+      local ok, reason = self:checkSpaceInDestination()
+      if not ok then
+        -- .no_space: `dec [hl]` puts the jumptable back on .PrepInsertCursor,
+        -- so the refusal leaves the cursor exactly where it was.
+        -- engine/pokemon/bills_pc.asm:1567
+        self:playRefusalSfx("Sfx_Wrong")
+        self.message = Strings(reason)
+      else
+        self:insertMon()
+      end
+    elseif input:wasPressed("b") then
+      self:cancelMove()
+    end
+    return
+  end
+
+  local total = self:total()
+  if input:wasPressed("up") then
+    self.index = self.index > 1 and self.index - 1 or total
+    self:ensureVisible()
+  elseif input:wasPressed("down") then
+    self.index = self.index < total and self.index + 1 or 1
+    self:ensureVisible()
+  -- Withdraw_UpDown reads PAD_UP and PAD_DOWN and nothing else; only
+  -- MoveMonWithoutMail_DPad walks the boxes (bills_pc.asm:806-820, :822-845).
+  elseif input:wasPressed("left") and self.mode == "move" then
+    self:stepBox(-1)
+  elseif input:wasPressed("right") and self.mode == "move" then
+    self:stepBox(1)
+  elseif input:wasPressed("a") then
+    self:act()
+  elseif input:wasPressed("b") then
+    if self.onClose then self.onClose() end
+  end
+end
+
+function BoxMenu:playSfx(name)
+  local data = self.game and self.game.data
+  local sfx = data and data.audio and data.audio.sfx
+  if sfx and sfx[name] then Sound.play(data, name) end
+end
+
+-- engine/pokemon/bills_pc.asm:1608
+function BoxMenu:playRefusalSfx(name)
+  self:playSfx(name)
+end
+
+-- PlayMonCry: `call GetCryIndex / jr c, .done` (home/pokemon.asm:113-114)
+function BoxMenu:playMonCry(mon)
+  local data = self.game and self.game.data
+  if not (data and mon and mon.species) or mon.isEgg then return end
+  local cries = data.audio and data.audio.cries
+  if cries and cries[mon.species] then
+    return Sound.playCry(data, mon.species)
+  end
+end
+
+function BoxMenu:askRelease()
+  if self:isCancel() then return end
+  local mon = self:selected()
+  if not mon then return end
+  -- BillsPCDepositFuncRelease runs the mail/blackout net BEFORE the egg check
+  -- (engine/pokemon/bills_pc.asm:183-187).
+  if self.mode == "deposit" then
+    local allowed, refusal = self:checkMailPreventBlackout()
+    if not allowed then
+      self.phase = nil
+      -- engine/pokemon/bills_pc.asm:1607
+      self:playRefusalSfx("Sfx_Wrong")
+      self.message = Strings(refusal)
+      return
+    end
+  end
+  -- Both release paths run BillsPC_IsMonAnEgg first, so the question is never
+  -- even asked over an egg (engine/pokemon/bills_pc.asm:186-187 and :427-428).
+  if mon.isEgg then
+    self.message = Strings(NO_RELEASING_EGGS)
+    self:playRefusalSfx("Sfx_Wrong")
+    return
+  end
+  local game = self.game
+  if not (game and game.stack) then return end
+  local ChoiceBox = require("src.ui.ChoiceBox")
+  local name = mon.nickname or mon.name or mon.species or "?"
+  self.message = Strings(RELEASE_PROMPT)
+  game.stack:push(ChoiceBox.new(game, function(yes)
+    self.message = nil
+    if not yes then return end
+    local ok, err
+    if self.mode == "deposit" then
+      ok, err = Boxes.releaseFromParty(self.save, self.index)
+    else
+      ok, err = Boxes.release(self.save, self.boxIndex, self.index)
+    end
+    if not ok then
+      self.message = Strings(err)
+      return
+    end
+    -- engine/pokemon/bills_pc.asm:1866
+    self:playMonCry(mon)
+    self.message = Strings(RELEASED, name)
+    self.phase = nil
+    self:clampIndex()
+  end, { defaultNo = true }))
+end
+
+function BoxMenu:image(path)
+  if not path then return nil end
+  local cached = self.picCache[path]
+  if cached == nil then
+    -- `and` truncates a multi-return, so the pcall has to stand alone.
+    local ok, image = pcall(Assets.image, path)
+    cached = (ok and image) or false
+    self.picCache[path] = cached
+  end
+  return cached or nil
+end
+
+-- The selected mon's front pic, cached per species.
+function BoxMenu:picFor(mon)
+  if not (mon and mon.species and self.pokemon) then return nil end
+  local data = self.game and self.game.data or {pokemon=self.pokemon}
+  local path, trueColor = Sprites.path(data, mon.species, "front", {mon=mon,kind="box"})
+  return self:image(path), trueColor
+end
+
+-- engine/gfx/cgb_layouts.asm:284-300, engine/pokemon/bills_pc.asm:356-369
+function BoxMenu:panelColors(speciesId, shiny)
+  if self.phase == "submenu" or self.phase == "insert" then
+    return self.palettes
+      and Palettes.monColors(self.palettes, speciesId, shiny)
+  end
+  local gfx = (self.menuGfx or {}).billsPc
+  return (gfx and gfx.orangePalette) or BILLS_PC_ORANGE
+end
+
+-- ClearBox runs before `cp -1 / ret z` (engine/pokemon/bills_pc.asm:1009-1021)
+function BoxMenu:fillPicBlock(colors)
+  local G = love.graphics
+  local blank = colors and GbcPalette.color(colors, 1) or { 255, 255, 255 }
+  G.setColor(blank[1] / 255, blank[2] / 255, blank[3] / 255, 1)
+  G.rectangle("fill", PIC_X * 8, PIC_Y * 8, 7 * 8, 7 * 8)
+  G.setColor(1, 1, 1, 1)
+end
+
+-- PCMonInfo lays the padded pic as one 7x7 block at hlcoord 1, 4
+-- (engine/pokemon/bills_pc.asm:1023-1042), the pad tiles at the palette's 0.
+function BoxMenu:drawPicBlock(image, colors, trueColor)
+  if not image then return end
+  local G = love.graphics
+  self:fillPicBlock(colors)
+
+  local pad = PIC_PAD[math.floor(image:getWidth() / 8)] or PIC_PAD[7]
+  G.setColor(1, 1, 1, 1)
+  local function body()
+    G.draw(image, (PIC_X + pad[1]) * 8, (PIC_Y + pad[2]) * 8)
+  end
+  if colors and not (trueColor and GbcPalette.mode == "gbc")
+     and GbcPalette.available() then
+    GbcPalette.with(colors, body)
+  else
+    body()
+  end
+  G.setColor(1, 1, 1, 1)
+end
+
+function BoxMenu:drawPic(mon)
+  -- _CGB_BillsPC hands wTempMonDVs to GetPlayerOrMonPalettePointer, so the box
+  -- pic takes the shiny row (engine/gfx/cgb_layouts.asm:292-293).
+  local colors = self:panelColors(mon.species, mon.shiny)
+  local image, trueColor = self:picFor(mon)
+  -- engine/pokemon/bills_pc.asm:1009-1011
+  if not image then return self:fillPicBlock(colors) end
+  self:drawPicBlock(image, colors, trueColor)
+end
+
+-- GetFrontpic's `cp EGG / jr nz, .not_egg` arm hands back EggPic, never the
+-- hatchling's pic (engine/gfx/load_pics.asm:88-91); it rides menu_gfx.eggHatch,
+-- with the party list's ICON_EGG standing in for a cache built before that.
+-- One reusable quad per role, re-aimed per draw rather than a new Quad a
+-- frame.  nil when the backend cannot make one (the old pcall's degrade).
+local function reusedQuad(self, slot, x, y, w, h, sw, sh)
+  local quads = self.reusedQuads
+  if not quads then
+    quads = {}
+    self.reusedQuads = quads
+  end
+  local quad = quads[slot]
+  if quad then
+    quad:setViewport(x, y, w, h, sw, sh)
+    return quad
+  end
+  local ok, made = pcall(love.graphics.newQuad, x, y, w, h, sw, sh)
+  if not ok then return nil end
+  quads[slot] = made
+  return made
+end
+
+-- GbcPalette.with without a closure: set `colors` (when there is a shader),
+-- returning what finishShade needs to put the caller's shader back.
+local function startShade(colors)
+  if not (colors and GbcPalette.available()) then return false end
+  local G = love.graphics
+  local previous = G.getShader and G.getShader() or nil
+  GbcPalette.use(colors)
+  return true, previous
+end
+
+local function finishShade(shaded, previous)
+  if shaded then love.graphics.setShader(previous) end
+end
+
+function BoxMenu:drawEggPic(mon)
+  local G = love.graphics
+  local colors = self:panelColors("EGG", mon and mon.shiny)
+  local gfx = (self.menuGfx or {}).eggHatch
+  local image = self:image(gfx and gfx.egg)
+  if image then return self:drawPicBlock(image, colors) end
+  self:fillPicBlock(colors)
+  local entry = self.icons and self.icons.icons and self.icons.icons.ICON_EGG
+  image = self:image(entry and entry.image)
+  if not image then return end
+  -- The ICON_EGG sheet stacks its frames; the first is the egg at rest.
+  local w = entry.width or 16
+  local h = math.min(entry.height or 16, image:getHeight())
+  if (entry.frames or 1) > 1 then h = math.floor(h / entry.frames) end
+  local quad = reusedQuad(self, "egg", 0, 0, w, h,
+    image:getWidth(), image:getHeight())
+  if not quad then return end
+  local x = PIC_X * 8 + math.floor((7 * 8 - w * 2) / 2)
+  local y = PIC_Y * 8 + math.floor((7 * 8 - h * 2) / 2)
+  G.setColor(1, 1, 1, 1)
+  local shaded, previous = startShade(colors)
+  G.draw(image, quad, x, y, 0, 2, 2)
+  finishShade(shaded, previous)
+  G.setColor(1, 1, 1, 1)
+end
+
+-- ItemIsMail picks $5c over $5d at hlcoord 7, 12
+-- (engine/pokemon/bills_pc.asm:1079-1094)
+function BoxMenu:drawHeldIcon(mon)
+  local row = mon and mon.item and (Mail.monHoldsMail(mon) and 0 or 1)
+  if not row then return end
+  local gfx = (self.menuGfx or {}).billsPc
+  local image = self:image(gfx and gfx.icons)
+  if not image then return end
+  local iw, ih = image:getDimensions()
+  local quad = reusedQuad(self, "held", row * 8, 0, 8, 8, iw, ih)
+  if not quad then return end
+  local G = love.graphics
+  G.setColor(1, 1, 1, 1)
+  local shaded, previous = startShade(gfx and gfx.palette)
+  G.draw(image, quad, ICON_X * 8, ICON_Y * 8)
+  finishShade(shaded, previous)
+  G.setColor(1, 1, 1, 1)
+end
+
+-- _MovePKMNWithoutMail only (engine/pokemon/bills_pc.asm:545, :698)
+function BoxMenu:drawBoxArrows()
+  if self.mode ~= "move" then return end
+  local gfx = (self.menuGfx or {}).billsPc
+  local image = self:image(gfx and gfx.icons)
+  if not image then return end
+  local G = love.graphics
+  local iw, ih = image:getDimensions()
+  local left = reusedQuad(self, "arrowLeft", ARROW_LEFT[1] * 8, 0, 8, 8, iw, ih)
+  if not left then return end
+  local right = reusedQuad(self, "arrowRight", ARROW_RIGHT[1] * 8, 0, 8, 8,
+    iw, ih)
+  if not right then return end
+  G.setColor(1, 1, 1, 1)
+  local shaded, previous = startShade(gfx and gfx.palette)
+  G.draw(image, left, ARROW_LEFT[2] * 8, ARROW_ROW * 8)
+  G.draw(image, right, ARROW_RIGHT[2] * 8, ARROW_ROW * 8)
+  finishShade(shaded, previous)
+  G.setColor(1, 1, 1, 1)
+end
+
+-- ../pokegold/engine/pokemon/bills_pc.asm:1439-1490
+-- ../pokecrystal/engine/pokemon/bills_pc.asm:1479-1503
+function BoxMenu:selectionFrameRect(row)
+  if self:isCrystal() then
+    return { x = 70, y = 29 + (row - 1) * 16, w = 83, h = 13, rounded = true }
+  end
+  return { x = 71, y = 25 + (row - 1) * 16, w = 80, h = 16, rounded = false }
+end
+
+function BoxMenu:drawSelectionFrame(row)
+  local G = love.graphics
+  local r = self:selectionFrameRect(row)
+  G.setColor(0, 0, 0, 1)
+  if not r.rounded then
+    G.setLineWidth(1)
+    G.rectangle("line", r.x + 0.5, r.y + 0.5, r.w - 1, r.h - 1)
+    G.setLineWidth(1)
+    return
+  end
+  local x, y = r.x, r.y
+  G.rectangle("fill", x + 2, y, r.w - 4, 1)
+  G.rectangle("fill", x + 2, y + r.h - 1, r.w - 4, 1)
+  G.rectangle("fill", x, y + 2, 1, r.h - 4)
+  G.rectangle("fill", x + r.w - 1, y + 2, 1, r.h - 4)
+  G.rectangle("fill", x + 1, y + 1, 1, 1)
+  G.rectangle("fill", x + r.w - 2, y + 1, 1, 1)
+  G.rectangle("fill", x + 1, y + r.h - 2, 1, 1)
+  G.rectangle("fill", x + r.w - 2, y + r.h - 2, 1, 1)
+end
+
+-- ../pokecrystal/engine/pokemon/bills_pc.asm:68, :117
+function BoxMenu:selectionFrameVisible()
+  return self.phase == nil and not self.message and not self.cryWait
+end
+
+-- BillsPC_UpdateInsertCursor lays a DIFFERENT sprite frame from the selection
+-- one -- a wedge between the rows rather than a box around one -- so the
+-- insert cursor is drawn as a rule along the top edge of the row the mon is
+-- going in front of.
+function BoxMenu:drawInsertCursor(row)
+  local G = love.graphics
+  local x, y = 71, 31 + (row - 1) * 16
+  G.setColor(0, 0, 0, 1)
+  G.rectangle("fill", x, y, 80, 2)
+end
+
+-- The mon the whole screen is about while the insert cursor is up: .PrepSubmenu
+-- ran PCMonInfo over it and .PrepInsertCursor does NOT run it again, so the
+-- left panel keeps showing the mon in flight.
+function BoxMenu:panelMon()
+  if self.cryWait then return self.cryWait.mon end
+  local from = self.moveFrom
+  if self.phase == "insert" and from then
+    return self:listAt(from.box)[from.slot]
+  end
+  return self:selected()
+end
+
+-- engine/pokemon/bills_pc.asm:962-970, :1791-1793
+function BoxMenu:messageBox(page)
+  if #page <= 1 then return { 0, 15, 20, 3 } end
+  return { 0, 12, 20, 6 }
+end
+
+function BoxMenu:drawPanel()
+  -- BillsPC_InitGFX loads FontsBattleExtra once for the whole screen and
+  -- never restores the standard font (engine/pokemon/bills_pc.asm:2169).
+  Chrome.clear()
+
+  -- engine/pokemon/bills_pc.asm:1220-1227
+  Chrome.box(8, 2, 12, 12)
+  -- engine/pokemon/bills_pc.asm:981-983
+  Chrome.box(8, 0, 12, 3)
+  Chrome.print(self:title(), 10, 1)
+  self:drawBoxArrows()
+
+  local list = self:list()
+  local inserting = self.phase == "insert"
+  local frameUp = self:selectionFrameVisible()
+  for row = 1, VISIBLE_ROWS do
+    local i = row + self.scroll
+    local ty = LIST_Y + (row - 1) * LIST_SPACING
+    if i <= #list then
+      local mon = list[i]
+      if i == self.index then
+        if inserting then
+          self:drawInsertCursor(row)
+        elseif frameUp then
+          self:drawSelectionFrame(row)
+        end
+      end
+      -- .PlaceNickname prints the stored nickname bytes verbatim, with no egg
+      -- check of its own (engine/pokemon/bills_pc.asm:1245-1356).
+      local label = mon.nickname or mon.name or mon.species or "?"
+      Chrome.print(label, LIST_X, ty)
+    elseif inserting then
+      -- An empty destination: the cursor is the only thing on the list.
+      if i == self.index then self:drawInsertCursor(row) end
+    elseif i == self:total() then
+      if i == self.index and frameUp then self:drawSelectionFrame(row) end
+      Chrome.print(Strings("CANCEL"), LIST_X, ty)
+    end
+  end
+
+  -- The left panel: pic, level, gender, species -- blank on CANCEL, the way
+  -- PCMonInfo clears it when the selection is not a mon.
+  local mon = not self.panelCleared and self:panelMon() or nil
+  if mon then
+    -- `cp EGG / ret z` right after the frontpic: no name, no level, no gender
+    -- (engine/pokemon/bills_pc.asm:1057-1058).
+    if mon.isEgg then
+      self:drawEggPic(mon)
+    else
+      self:drawPic(mon)
+      -- PrintLevel always writes the single bold glyph, not ":L"
+      -- (home/pokemon.asm:178-183).
+      Chrome.print("<LV>" .. tostring(mon.level or 1), PIC_X, 12)
+      if mon.gender == "male" then
+        Chrome.print("\xe2\x99\x82", 5, 12)
+      elseif mon.gender == "female" then
+        Chrome.print("\xe2\x99\x80", 5, 12)
+      end
+      Chrome.print(mon.name or mon.species or "?", PIC_X, 14)
+      self:drawHeldIcon(mon)
+    end
+  else
+    self:fillPicBlock(self:panelColors())
+  end
+
+  -- BillsPC_PlaceString: Textbox at (0,15) with a one-row interior, string at
+  -- (1,16).  A refusal is two lines on the cart, so those get a taller box of
+  -- their own rather than being cut to fit this one.
+  if self.message then
+    local page = messagePages(self.message)[self.messagePage or 1] or {}
+    local box = self:messageBox(page)
+    Chrome.box(box[1], box[2], box[3], box[4])
+    for i, part in ipairs(page) do
+      Chrome.print(part, 1, box[2] + 1 + (i - 1) * 2)
+    end
+  else
+    Chrome.box(0, 15, 20, 3)
+    Chrome.print(self:prompt(), 1, 16)
+  end
+
+  -- .MoveMonWOMailSubmenu's .MenuHeader is `menu_coords 9, 4, SCREEN_WIDTH - 1,
+  -- 13` -- it covers the nickname list, which is why the list is still drawn
+  -- underneath it and not instead of it.  STATICMENU_CURSOR with the default
+  -- top spacing puts MOVE at (11,6), one row per two tiles.
+  if self.phase == "submenu" then
+    Chrome.box(9, 4, 11, 10)
+    for i, label in ipairs(self:submenuRows()) do
+      local ty = 6 + (i - 1) * 2
+      if i == self.submenuIndex then Chrome.cursor(10, ty) end
+      Chrome.print(Strings(label), 11, ty)
+    end
+  end
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+function BoxMenu:draw()
+  self:drawPanel()
+end
+
+function BoxMenu:drawWidescreen(winW, winH)
+  local G = love.graphics
+  Chrome.letterbox(winW, winH, 1, 1, 1)
+  local scale = Chrome.fitScale(winW, winH)
+  G.push()
+  G.translate(Chrome.fitOrigin(winW, winH, scale))
+  G.scale(scale, scale)
+  self:drawPanel()
+  G.pop()
+end
+
+return BoxMenu

@@ -11,6 +11,7 @@
 -- with their status lower right, a full-width message window, a split
 -- prompt/command window, and a 2x2 move menu with an attached PP/type panel.
 
+local BattleQueuePhase = require("src.battle.BattleQueuePhase")
 local Font = require("src.render.Font")
 local HudTiles = require("src.render.HudTiles")
 local PaletteFX = require("src.render.PaletteFX")
@@ -325,7 +326,7 @@ local function drawMoveDetails(battle, move)
   if not move then return end
   local def = battle.data.moves[move.id]
   if not def then return end
-  local maxPP = def.pp + (move.ppUps or 0) * math.floor(def.pp / 5)
+  local maxPP = require("src.pokemon.Pokemon").maxPP(def, move)
   love.graphics.setColor(0, 0, 0, 1)
   Font.draw(("PP %2d/%2d"):format(move.pp or 0, maxPP), 232, 112)
   Font.draw(fitName(TypeChart.displayName(def.type), 64), 232, 128)
@@ -359,7 +360,7 @@ local function drawMoveMenu(battle)
 end
 
 local function drawTextArea(battle)
-  if battle.phase == "messages" and (battle.current or battle.animPlaying) then
+  if BattleQueuePhase.active(battle) and (battle.current or battle.animPlaying) then
     drawMessageBox(battle)
   elseif battle.phase == "menu" then
     drawCommandMenu(battle)
@@ -447,7 +448,7 @@ local function drawAnimationLayer(battle)
 end
 
 -- The whole 304x144 composition for one frame.
-function WideBattle.draw(battle)
+local function drawPanel(battle,withObjects)
   local g = love.graphics
   -- The field is the display mode's paper.  Under a forced-mono mode the
   -- whole surface is remapped downstream (WideBattle.zones), so the field
@@ -503,9 +504,20 @@ function WideBattle.draw(battle)
     g.pop()
   end
   shaken(function() drawHUDs(battle, slide) end)
-  drawAnimationLayer(battle)
+  if withObjects then drawAnimationLayer(battle) end
   shaken(function() drawTextArea(battle) end)
+end
 
+function WideBattle.draw(battle)
+  if require('src.core.GameVersion').isGen2() then
+    return battle:drawScene(function()
+      battle:drawSceneBody(function()drawPanel(battle,false)end,
+        function()drawAnimationLayer(battle)end,WideBattle.WIDTH,WideBattle.HEIGHT)
+    end)
+  end
+  drawPanel(battle,true)
+  if battle.blankForAskName then return end
+  local g,fx=love.graphics,battle.fx
   if fx and fx.flash and fx.flash > 0 and battle.frame % 4 < 2 then
     g.setColor(1, 1, 1, 0.85)
     g.rectangle("fill", 0, 0, WideBattle.WIDTH, WideBattle.HEIGHT)

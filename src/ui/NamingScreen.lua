@@ -321,6 +321,9 @@ end
 
 function NamingScreen.new(game, opts)
   opts = opts or {}
+  if require("src.core.GameVersion").isGen2() then
+    return require("src.ui.Gen2NamingScreen").native(game, opts)
+  end
   local self = setmetatable({}, NamingScreen)
   self.game = game
   self.title = opts.title or Strings("YOUR NAME?")
@@ -654,7 +657,9 @@ function NamingScreen:drawClassic()
   -- typed name with dashes for the empty slots, on the font's own pitch
   local slot = math.max(8, Font.width("W") + 2)
   for i = 1, self.maxLen do
-    Font.draw(self.glyphs[i] or "-", m.left + 40 + (i - 1) * slot, 26)
+    if self.mailMode then
+      Font.draw(self.glyphs[i] or "-",8+((i-1)%16)*8,24+math.floor((i-1)/16)*12)
+    else Font.draw(self.glyphs[i] or "-", m.left + 40 + (i - 1) * slot, 26) end
   end
   for r, row in ipairs(m.rows) do
     for c, cell in ipairs(row) do

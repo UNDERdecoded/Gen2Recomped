@@ -115,29 +115,9 @@ function SummaryMenu:sgbPalettes(game)
   return out
 end
 
-function SummaryMenu.new(game, mon, opts)
-  -- A FALLBACK MUST BE ABLE TO READ WHAT IT IS HANDED.
-  --
-  -- This screen is the end of the line for `Screens.push("SummaryMenu", ...)`:
-  -- when the Gen 3 or Gen 4 alias declines a push, the arguments arrive here
-  -- unchanged.  But those generations' screens take `(game, opts)` while this
-  -- one takes `(game, mon, opts)` POSITIONALLY, so a declined push arrives
-  -- with its options table sitting in `mon` -- `mon.species` nil,
-  -- `data.pokemon[nil]` nil, and the draw dies on "attempt to index local
-  -- 'def' (a nil value)" several frames later, miles from the cause.
-  --
-  -- That is exactly what the Gen 4 party menu's SUMMARY row did until the
-  -- alias learned `readOnlyMoves` (see src/ui/Screens.lua).  The routing bug
-  -- is fixed there; this is the other half, because the `choose` push still
-  -- falls through here BY DESIGN and a fallback that cannot read its argument
-  -- is not a fallback.
-  --
-  -- Unwrapped rather than refused: the options table carries the Pokemon in
-  -- `mon`, which is everything this screen needs.
-  if type(mon) == "table" and mon.species == nil and type(mon.mon) == "table" then
-    opts, mon = mon, mon.mon
-  end
-  opts = opts or {}
+local function loadMon(self)
+  local game, mon = self.game, self.mon
+  self.sprite, self.spriteTrueColor, self.picAnim = nil, nil, nil
   -- status_screen.asm:66-76: StatusScreen recalculates the stat block before
   -- it draws anything when the mon came from a box or the daycare ("mon is
   -- in a box or daycare" -> CalcStats), because box_struct carries none.
@@ -148,14 +128,6 @@ function SummaryMenu.new(game, mon, opts)
   -- SaveData.validate has run over a loaded save, but this is the site the
   -- original recomputes at, and it also covers a mon handed in by a mod.
   Stats.ensure(game.data.pokemon[mon.species], mon)
-  local self = setmetatable({
-    game = game,
-    mon = mon,
-    page = 1,
-    mons = opts.mons,
-    monIndex = opts.index,
-    onMonChange = opts.onMonChange,
-  }, SummaryMenu)
   self.isEgg = require("src.pokemon.Party").isEgg(mon) and true or false
   local Sprites = require("src.pokemon.Sprites")
   if self.isEgg then
@@ -189,6 +161,49 @@ function SummaryMenu.new(game, mon, opts)
   return self
 end
 
+function SummaryMenu.new(game, mon, opts)
+  -- Gen2's native constructor accepts a party/index or an isolated mon.
+  -- The positional shared signature remains valid for existing callers.
+  if isGen2() and type(mon) == "table" and mon.species == nil then
+    opts = mon
+    local save = opts.save or game.save
+    local party = opts.party or opts.mons or (save and save.party) or {}
+    if opts.mon and not (opts.party or opts.mons) then party = { opts.mon } end
+    local index = math.max(1, math.min(opts.index or 1, math.max(1, #party)))
+    mon = party[index]
+    opts = setmetatable({ mons = party, index = index }, { __index = opts })
+  elseif type(mon) == "table" and mon.species == nil and type(mon.mon) == "table" then
+    opts, mon = mon, mon.mon
+  end
+  opts = opts or {}
+  assert(type(mon) == "table" and mon.species, "summary requires an actual Pokemon")
+  local party = opts.mons or opts.party or { mon }
+  local index = opts.index
+  if not index then
+    for i, candidate in ipairs(party) do if candidate == mon then index = i; break end end
+  end
+  index = index or 1
+  local self = setmetatable({
+    game = game,
+    mon = mon,
+    page = isGen2() and math.max(1, math.min(3, opts.page or 1)) or 1,
+    mons = party,
+    party = party,
+    monIndex = index,
+    index = index,
+    save = opts.save or game.save,
+    pokemon = opts.pokemon or game.data.pokemon,
+    moves = opts.moves or game.data.moves,
+    items = opts.items or game.data.items,
+    onMonChange = opts.onMonChange,
+    onClose = opts.onClose or opts.onCancel,
+    moveScreen = isGen2() and opts.moveScreen == true,
+    moveDetail = isGen2() and opts.moveScreen == true,
+    moveIndex = 1,
+  }, SummaryMenu)
+  return loadMon(self)
+end
+
 local function sourceIndex(self)
   local mons = self.mons
   if type(mons) ~= "table" then return nil end
@@ -208,17 +223,11 @@ function SummaryMenu:moveMon(delta)
   local nextIndex = index + delta
   if nextIndex < 1 or nextIndex > #self.mons then return false end
 
-  local page, screenId = self.page, self.screenId
-  local fresh = SummaryMenu.new(self.game, self.mons[nextIndex], {
-    mons = self.mons,
-    index = nextIndex,
-    onMonChange = self.onMonChange,
-  })
-  fresh.page = page
-  fresh.screenId = screenId
-
-  for key in pairs(self) do self[key] = nil end
-  for key, value in pairs(fresh) do self[key] = value end
+  -- Refresh native Pokemon resources in place. Presentation methods and
+  -- callback ownership belong to this instance and must survive navigation.
+  self.mon, self.monIndex, self.index = self.mons[nextIndex], nextIndex, nextIndex
+  self.moveIndex = 1
+  loadMon(self)
 
   if self.onMonChange then self.onMonChange(nextIndex, self.mon) end
   return true
@@ -226,10 +235,12 @@ end
 
 function SummaryMenu:update(dt)
   local input = self.game.input
+  if isGen2() and self:tickRepeatSfx() then return end
+  if isGen2() and self.moveDetail then self:updateMoveDetail(input); return end
   if self.picAnim then self.picAnim:update(dt) end
   if self.isEgg then
     if input:wasPressed("a") or input:wasPressed("b") then
-      self.game.stack:pop()
+      self:close()
     elseif isGen2() and input:wasPressed("up") then
       self:moveMon(-1)
     elseif isGen2() and input:wasPressed("down") then
@@ -241,15 +252,19 @@ function SummaryMenu:update(dt)
     -- StatsScreen_JoypadAction: LEFT/RIGHT wrap through the three pages, A
     -- steps forward, B leaves.
     if input:wasPressed("b") then
-      self.game.stack:pop()
-    elseif input:wasPressed("right") or input:wasPressed("a") then
-      self.page = self.page % 3 + 1
+      self:close()
+    elseif input:wasPressed("a") then
+      if self.page == 3 then self:close() else self:turnPage(1) end
+    elseif input:wasPressed("right") then
+      self:turnPage(1)
     elseif input:wasPressed("left") then
-      self.page = (self.page + 1) % 3 + 1
+      self:turnPage(-1)
     elseif input:wasPressed("up") then
       self:moveMon(-1)
     elseif input:wasPressed("down") then
       self:moveMon(1)
+    elseif input:wasPressed("select") and self.page == 2 then
+      self.moveDetail, self.moveIndex = true, 1
     end
     return
   end
@@ -524,6 +539,7 @@ function SummaryMenu:drawGen2BluePage()
 end
 
 function SummaryMenu:drawGen2()
+  if self.moveDetail then return self:drawMoveDetail() end
   -- The stats pages are white on hardware: _CGB_StatsScreenHPPals wipes the
   -- attrmap to the HP palette and only the three page squares get a colour.
   -- There is no page title either -- the squares are the whole indicator.
@@ -670,5 +686,7 @@ function SummaryMenu:draw()
   end
   love.graphics.setColor(1, 1, 1, 1)
 end
+
+require("src.ui.Gen2SummaryView").install(SummaryMenu)
 
 return SummaryMenu

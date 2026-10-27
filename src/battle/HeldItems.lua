@@ -387,7 +387,7 @@ local function restorePP(data, holder)
       local def = data.moves and data.moves[move.id]
       local base = def and tonumber(def.pp)
       local maxPP = base
-      if base then maxPP = base + (tonumber(move.ppUps) or 0) * math.floor(base / 5) end
+      if base then maxPP = require("src.pokemon.Pokemon").maxPP(def,move,data.constants and data.constants.gen) end
       local amount = norm(move.id) == "SKETCH" and 1 or 5
       move.pp = maxPP and math.min(maxPP, amount) or amount
       if holder.curMoves and holder.curMoves ~= mon.moves and holder.curMoves[i] then

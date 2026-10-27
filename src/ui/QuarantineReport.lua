@@ -33,6 +33,15 @@ end
 -- recovered, modsDiff }
 local function buildLines(report, meta)
   local lines = {}
+  if #(report.lostMail or {})>0 then
+    lines[#lines+1]=Strings("MAIL repairs: %d",#report.lostMail)
+    for _,entry in ipairs(report.lostMail)do
+      lines[#lines+1]=clip(" "..tostring(entry.why or "Invalid letter"))
+    end
+  end
+  if #(report.restoredMail or {})>0 then
+    lines[#lines+1]=Strings("MAIL restored: %d",#report.restoredMail)
+  end
   if report.recovered then
     lines[#lines + 1] = "Save recovered from"
     lines[#lines + 1] = clip(" the ." .. tostring(report.recovered) .. " backup copy")

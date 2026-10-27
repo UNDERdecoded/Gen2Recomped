@@ -1257,6 +1257,13 @@ R.text_pointers = {
   example = 'mod.content.text_pointers:patch("PalletTown", { TEXT_PALLETTOWN_SIGN = { text = "_MySign" } })',
 }
 
+R.decorations = {
+  semantics="record",generations="2",
+  fields={type=f.int(1,6),name=f.str,action=f.opt(f.str),flag=f.int(0,65534),sprite=f.int(0,255)},
+  example='mod.content.decorations:patch("deco:2", {name="CUSTOM"})',
+  notes="Native imported GSC DECO bytes (deco:0..255), ownership event bits, room callbacks and house-PC selection. Action must be a known SET_UP_/PUT_AWAY_ native decoration action. No retail attribute catalogue is bundled. Requires a complete imported native attribute table.",
+}
+
 -- ------- persistence
 
 -- compose, keyed by the owning mod id: the runner walks each owner's chain

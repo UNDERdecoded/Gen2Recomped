@@ -11,7 +11,7 @@ local Screens = {}
 -- ids whose builtin module is not under src/ui/
 local BUILTIN = {
   ManagerState = "src.mods.ManagerState",
-  Gen2StartMenu = "src.ui.StartMenu",
+  Gen2SummaryMenu = "src.ui.SummaryMenu",
 }
 
 local cache = {}
@@ -400,6 +400,11 @@ end
 -- The id a push should really open, and the arguments it should open with.
 -- Public so the suite can state the rule without driving a whole game.
 function Screens.resolveId(game, id, arg)
+  -- GSC owns a native START state, including its live submenu parent.
+  if id == 'StartMenu' and require('src.core.GameVersion').isGen2() then
+    local screens = game and game.data and game.data.screens
+    if not (screens and screens[id]) then return 'Gen2StartMenu', arg end
+  end
   -- BLACK AND WHITE'S OWN SCREENS, ahead of everything (a Gen 5 cache is not
   -- a Gen 4 one, so the table below would hand it the Game Boy's): so far the
   -- evolution scene, positional like Platinum's
@@ -550,7 +555,7 @@ function Screens.get(game, id)
   return resolve(game, id)
 end
 
-local function pushWith(game, id, ...)
+local function buildWith(game, id, ...)
   local factory = resolve(game, id)
   local inst
   if factory.__modOwned then
@@ -577,24 +582,31 @@ local function pushWith(game, id, ...)
     inst = factory.new(game, ...)
   end
   inst.screenId = inst.screenId or id
-  game.stack:push(inst)
   return inst
 end
 
-function Screens.push(game, id, ...)
+function Screens.build(game, id, ...)
   -- A POSITIONAL alias keeps every argument, because its screen is not an
   -- options-table screen -- MoveLearnMenu takes (mon, moveId, onDone) and
   -- dropping the last two would open it with nothing to teach.
   if Screens.positionalAlias(id) then
     local resolvedId = Screens.resolveId(game, id, ...)
-    return pushWith(game, resolvedId, ...)
+    return buildWith(game, resolvedId, ...)
   end
   -- Otherwise only the FIRST argument decides: every other screen in the
   -- alias table takes one options table and nothing else, and a caller
   -- passing more is by that fact not talking to one of them.
   local resolvedId, resolvedArg = Screens.resolveId(game, id, ...)
-  if resolvedId ~= id then return pushWith(game, resolvedId, resolvedArg) end
-  return pushWith(game, id, ...)
+  if resolvedId ~= id then return buildWith(game, resolvedId, resolvedArg) end
+  return buildWith(game, id, ...)
+end
+
+-- Embedded screens use the identical factory/registry/error policy without
+-- changing stack ownership or emitting a premature screen.pushed event.
+function Screens.push(game, id, ...)
+  local inst = Screens.build(game, id, ...)
+  game.stack:push(inst)
+  return inst
 end
 
 function Screens.invalidate()

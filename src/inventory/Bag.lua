@@ -138,6 +138,28 @@ function Bag.order(save)
   return order
 end
 
+-- Move within one pocket while retaining the positions of every other
+-- pocket in the shared acquisition order. Never move counts or item stores.
+function Bag.move(save, id, pocket, targetIndex, data)
+  local order = Bag.order(save)
+  data = data or require("src.core.Data")
+  if pocketOf(id, data) ~= pocket then return false end
+  local positions, rows, from = {}, {}, nil
+  for i, item in ipairs(order) do
+    if pocketOf(item, data) == pocket then
+      positions[#positions+1], rows[#rows+1] = i, item
+      if item == id then from = #rows end
+    end
+  end
+  local n = tonumber(targetIndex)
+  if not from or not n or n ~= n or n == math.huge or n == -math.huge then return false end
+  local to = math.max(1, math.min(#rows, math.floor(n)))
+  if from == to then return false end
+  table.insert(rows, to, table.remove(rows, from))
+  for i, index in ipairs(positions) do order[index] = rows[i] end
+  return true
+end
+
 -- Add qty of an item; returns false (and adds nothing) when a new slot
 -- is needed and the pocket (Gen2) or bag (Gen1) is full, or when the
 -- stack would pass 99 (AddItemToInventory's per-slot quantity cap).
@@ -272,6 +294,9 @@ local function heldItemForm(mon, data)
 end
 
 function Bag.giveHeld(save, mon, id, data)
+  if require("src.core.GameVersion").isGen2() and require("src.pokemon.Gen2Mail").monHoldsMail(mon) then
+    return nil,"mail"
+  end
   local previous = mon.item
   mon.item = id
   Bag.remove(save, id, 1)
@@ -283,6 +308,9 @@ end
 -- TakeItem: nil when the mon holds nothing, or nil + "full" when the pack has
 -- no room for it (the mon keeps holding it).
 function Bag.takeHeld(save, mon, data)
+  if require("src.core.GameVersion").isGen2() and require("src.pokemon.Gen2Mail").monHoldsMail(mon) then
+    return nil,"mail"
+  end
   local id = mon.item
   if not id then return nil end
   if not Bag.add(save, id, 1, data) then return nil, "full" end

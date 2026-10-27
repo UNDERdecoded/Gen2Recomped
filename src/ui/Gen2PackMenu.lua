@@ -1,0 +1,1164 @@
+-- Adapted from Gen1Recomp 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91.
+-- Existing project rights and Gen1Recomp provenance remain applicable; see LICENSE.MD.
+-- Gen 2 PACK: four pockets instead of Gen 1's one bag.
+--
+-- constants/item_data_constants.asm orders them ITEM, KEY_ITEM, BALL, TM_HM,
+-- and each item's own ItemAttributes row says which pocket it lives in -- so
+-- the flat id->count inventory the engine already keeps is bucketed here at
+-- draw time rather than stored four ways.
+--
+-- Left/right switch pockets, up/down scroll the list, A selects, B closes.
+-- A TM/HM row shows the move it teaches (attributes carry `teaches`), which is
+-- the whole reason the TM pocket is readable at all -- the item names are just
+-- "TM01".."HM07".
+
+local Bag = require("src.inventory.Bag")
+local Chrome = require("src.ui.Gen2Chrome")
+local CommonText = require("src.core.Gen2CommonText")
+local GameVersion = require("src.core.GameVersion")
+local PackGfx = require("src.ui.Gen2PackGfx")
+local Screens = require("src.ui.Screens")
+local Sound = require("src.core.Sound")
+local Strings = require("src.core.Strings")
+local WaitPlaySFX = require("src.ui.Gen2WaitPlaySFX")
+local MenuRepeat = require("src.ui.MenuRepeat")
+
+-- constants/sfx_constants.asm:3, :28
+local SFX_DEX_FANFARE_50_79, SFX_WRONG = 0, 25
+
+local LIST_DIRS = { "up", "down" }
+
+local PackMenu = {}
+PackMenu.__index = PackMenu
+PackMenu.isOpaque = true
+
+-- ItemsPocketMenuHeader (engine/items/pack.asm): menu_coords 7, 1, 19, 11 --
+-- so the list body starts one row and one column inside that box, five rows of
+-- two, with the quantity on each entry's second line.
+local LIST_X = 8
+local LIST_Y = 2
+local LIST_SPACING = 2
+
+-- Display order and titles.  The cart shows the pocket name in a tab strip
+-- across the top; these are the strings it uses.
+local POCKETS = {
+  { id = "ITEM", label = Strings.source("ITEMS") },
+  { id = "BALL", label = Strings.source("POKé BALLS") },
+  { id = "KEY_ITEM", label = Strings.source("KEY ITEMS") },
+  { id = "TM_HM", label = Strings.source("TM/HM") },
+}
+
+-- Five item rows fit under the tab strip, two lines each.
+local VISIBLE_ROWS = 5
+
+-- The item submenu (.ItemBallsKey_LoadSubmenu, engine/items/pack.asm:243).
+-- A on a row does NOT use the item on the cart: it opens a menu whose rows are
+-- picked from the item's own ITEMATTR_PERMISSIONS bits and its field-menu
+-- nibble, and the six headers between MenuHeader_UsableKeyItem and
+-- MenuHeader_HoldableItem are every combination of them:
+--
+--   CAN toss + CAN select + usable      USE / GIVE / TOSS / SEL / QUIT
+--   CAN toss + CAN select + NOUSE             GIVE / TOSS / SEL / QUIT
+--   CAN toss + cant select + usable     USE / GIVE / TOSS / QUIT
+--   CAN toss + cant select + NOUSE            GIVE / TOSS / QUIT
+--   cant toss + cant select             USE / QUIT
+--   cant toss + CAN select              USE / SEL / QUIT
+--
+-- (the labels read backwards against the header names -- _CheckTossableItem
+-- and CheckSelectableItem both answer NON-zero for the item that CANNOT, so
+-- pack.asm's `.tossable` arm is the untossable one.)  The TM/HM pocket has a
+-- pair of its own, .MenuHeader1 / .MenuHeader2 at pack.asm:160.
+--
+-- Without this menu a TOSS is unreachable and the PACK is a one-verb screen,
+-- which is what "the pack only offers USE" is.
+local SUBMENU_LABEL = {
+  use = Strings.source("USE"), give = Strings.source("GIVE"),
+  toss = Strings.source("TOSS"), sel = Strings.source("SEL"),
+  quit = Strings.source("QUIT"),
+}
+
+-- _AskThrowAwayText / _AskQuantityThrowAwayText / _ThrewAwayText
+-- (data/text/common_2.asm), the three lines TossMenu prints in order.
+local TOSS_HOW_MANY = Strings.source("Throw away how\nmany?")
+
+-- _AskItemMoveText (data/text/common_2.asm:322), printed while wSwitchItem
+-- holds a row and the cursor is looking for its new home.
+local ASK_ITEM_MOVE = Strings.source("Where should this\nbe moved to?")
+
+-- _YouDontHaveAMonText and .AnEggCantHoldAnItemText, GiveItem's two refusals.
+local NO_POKEMON = Strings.source("You don't have a\n#MON!")
+local EGG_CANT_HOLD = Strings.source("An EGG can't hold\nan item.")
+
+-- _CGB_PackPals' .KrisPackPals arm, and the BATTLETYPE_TUTORIAL test above it
+-- that forces the DUDE's (../pokecrystal/engine/gfx/cgb_layouts.asm:770-786).
+local function packGfxFor(menuGfx, save, tutorial)
+  local pack = menuGfx and menuGfx.pack
+  if not (pack and pack.palettesFemale) then return menuGfx end
+  if tutorial or not (save and save.player and save.player.gender == "girl") then return menuGfx end
+  local female = {}
+  for key, value in pairs(pack) do female[key] = value end
+  female.palettes = pack.palettesFemale
+  local out = {}
+  for key, value in pairs(menuGfx) do out[key] = value end
+  out.pack = female
+  return out
+end
+
+-- The PACK's cursor bytes.  Every pocket menu restores its own cursor and
+-- scroll before ScrollingMenu and writes them back after -- `ld a,
+-- [wItemsPocketCursor] / ld [wMenuCursorPosition], a` ... `ld a, [wMenuCursorY]
+-- / ld [wItemsPocketCursor], a` (engine/items/pack.asm:76), and the same pair
+-- for wKeyItemsPocketCursor, wBallsPocketCursor and wTMHMPocketCursor -- while
+-- InitPackBuffers opens the PACK on wLastPocket, which Pack's own exit path
+-- stored.  They are WRAM, not save data: they last for the session and must not
+-- survive a reload, and CleanUpBattleRAM is the only thing that clears them
+-- (engine/battle/core.asm:7994, which pointedly leaves the TM/HM pair in place).
+local function cursorStore(game)
+  if not game then return nil end
+  local mem = game.packCursor
+  if not mem then
+    mem = { cursor = {}, scroll = {} }
+    game.packCursor = mem
+  end
+  return mem
+end
+
+-- home/text.asm:424
+local PAGE, SCROLL, LINE = "\f", "\v", "\n" -- strings: decoded text control bytes
+
+local function messageTokens(text)
+  if type(text) ~= "string" then return text end
+  local out, start = {}, 1
+  while start <= #text + 1 do
+    local marker = text:find("[\n\f\v]", start)
+    out[#out + 1] = text:sub(start, (marker or (#text + 1)) - 1)
+    if not marker then break end
+    local code = text:sub(marker, marker)
+    if code == PAGE then out[#out + 1] = PAGE
+    elseif code == SCROLL then out[#out + 1] = SCROLL end
+    start = marker + 1
+  end
+  return out
+end
+
+-- home/text.asm:397
+local function messagePages(lines)
+  if type(lines) == "string" then return CommonText.pages(lines) or {} end
+  local pages, rows = {}, {}
+  local function flush(scroll)
+    if #rows > 0 then pages[#pages + 1] = rows end
+    rows = scroll and { rows[#rows] or "" } or {}
+  end
+  for _, line in ipairs(lines or {}) do
+    if line == PAGE then flush(false)
+    elseif line == SCROLL then flush(true)
+    else rows[#rows + 1] = line end
+  end
+  flush(false)
+  return pages
+end
+
+-- data/text/common_2.asm:627
+local OAK_THIS_ISNT_THE_TIME = Strings.source(
+  "OAK: {PLAYER}!\nThis isn't the\vtime to use that!")
+
+-- RepelUsedEarlierIsStillInEffectText (data/text/common_3.asm): static, and
+-- names REPEL no matter which of the three repel items is the one actually
+-- still ticking down -- the cart never reads the active item back out to
+-- print it.
+-- ../pokecrystal/data/text/common_3.asm:1270 -- `cont` again, so two pages.
+local REPEL_STILL_ACTIVE = Strings.source(
+  "The REPEL used\nearlier is still\vin effect.")
+
+function PackMenu:wantsFillScale() return true end
+function PackMenu:drawsWidescreen() return true end
+
+-- opts: save, items (items.lua), onChoose(itemId, count), onClose(),
+-- pocket (starting pocket id), world (the overworld a field item acts on;
+-- defaults to game.world, which is where Game2 keeps it),
+-- give (DepositSellPack: the PACK is a CHOOSER, so selecting a row hands the
+-- id back instead of running the item's field effect),
+-- battle (BattlePack rather than the field Pack: a different jumptable, which
+-- dispatches on the item's BATTLE menu nibble and never runs a field effect)
+function PackMenu.new(game, opts)
+  opts = opts or {}
+  local self = setmetatable({}, PackMenu)
+  self.game = game
+  self.save = opts.save or (game and game.save)
+  if self.save ~= (game and game.save) then
+    self.game = setmetatable({save=self.save,writeSave=false},{__index=game})
+  end
+  self.items = opts.items or (game and game.data and game.data.items)
+  -- Bag.order / Bag.move read `.items` off an injectable data table, and the
+  -- one this screen draws from is not always the Data singleton.
+  self.bagData = setmetatable({ items = self.items }, {__index=game and game.data or {}})
+  self.world = opts.world or (self.save == (game and game.save) and game.overworld) or {}
+  self.onChoose = opts.onChoose
+  self.onClose = opts.onClose or opts.onCancel or function() game.stack:pop() end
+  -- DepositSellPack rather than the PACK's own UseItem: a chooser must not run
+  -- a rod or the ITEMFINDER on the way past (src/ui/gen2/HeldItemMenu.lua).
+  self.give = opts.give and true or false
+  self.battle = opts.battle and true or false
+  -- engine/items/pack.asm:1068 TutorialPack
+  self.tutorial = opts.tutorial and true or false
+  self.cursorStore = cursorStore(game)
+  -- engine/menus/scrolling_menu.asm:6
+  self.hold = MenuRepeat.new(MenuRepeat.GEN2_DELAY, MenuRepeat.GEN2_RATE)
+  self.pocketIndex = 1
+  -- wLastPocket, unless the caller names one: DepositSellInitPackBuffers writes
+  -- ITEM_POCKET over it, so an explicit pocket still wins.
+  local startPocket = opts.pocket
+    or (self.cursorStore and self.cursorStore.pocket)
+  if startPocket then
+    for i, p in ipairs(POCKETS) do
+      if p.id == startPocket then self.pocketIndex = i break end
+    end
+  end
+  self:restoreCursor()
+  -- The cart's own PACK tiles, when the cache has them.
+  self.gfx = PackGfx.new(packGfxFor(
+    game and game.data and game.data.gen2MenuGfx, self.save, opts.tutorial))
+  self:rebuild()
+  return self
+end
+
+function PackMenu:close()
+  self:storeCursor()
+  if self.closed then return end
+  self.closed = true
+  if self.onClose then self.onClose() end
+end
+
+function PackMenu:pocket()
+  return POCKETS[self.pocketIndex]
+end
+
+-- The pair of loads each pocket menu runs before ScrollingMenu.  rebuild()
+-- clamps the row afterwards, so a pocket that shrank while the PACK was closed
+-- lands on its last entry rather than past it.
+function PackMenu:restoreCursor()
+  local mem = self.cursorStore
+  local pocketId = self:pocket().id
+  self.index = (mem and mem.cursor[pocketId]) or 1
+  self.scroll = (mem and mem.scroll[pocketId]) or 0
+end
+
+-- And the pair of stores after it, plus Pack's `.done` writing wCurPocket into
+-- wLastPocket.
+function PackMenu:storeCursor()
+  local mem = self.cursorStore
+  if not mem then return end
+  local pocketId = self:pocket().id
+  mem.cursor[pocketId] = self.index
+  mem.scroll[pocketId] = self.scroll
+  mem.pocket = pocketId
+end
+
+-- Which pocket an item belongs to.  Items imported before attributes existed
+-- have no `pocket`; treat those as general items rather than dropping them,
+-- so an older cache still shows a full bag.
+function PackMenu:pocketOf(itemId)
+  local def = self.items and self.items[itemId]
+  return (def and def.pocket) or "ITEM"
+end
+
+-- engine/items/tmhm.asm:341
+function PackMenu:tmhmKey(itemId)
+  local def = self.items and self.items[itemId]
+  local n = def and tonumber(def.tmNumber or (def.machine and def.machine.number))
+  if n then return n + ((def.machine and def.machine.kind == "HM") and 100 or 0) end
+  return 1000 + ((def and tonumber(def.index)) or 0)
+end
+
+-- The name on the row.  An inventory key with no ItemAttributes row behind it
+-- (an older cache, a mod's own item, a driver seeding an id that is not in
+-- items.lua) still has to draw something a person can read, so the id stands
+-- in for the name with its underscores opened out.
+function PackMenu.label(itemId, def)
+  if def and def.name then return def.name end
+  return (tostring(itemId):gsub("_", " "))
+end
+
+-- TMHM_DisplayPocketItems (engine/items/tmhm.asm:381-385) places GetMoveName's
+-- string three tiles right of the row's number, so a TM/HM row reads as the
+-- MOVE's name and the TM's own item name is never printed.
+function PackMenu:moveLabel(moveId)
+  if not moveId then return nil end
+  local moves = self.game and self.game.data and self.game.data.moves
+  local def = moves and moves[moveId]
+  return (def and def.name) or (tostring(moveId):gsub("_", " "))
+end
+
+-- engine/items/tmhm.asm:357-375 -- the number a TM/HM row prints: a TM with
+-- PRINTNUM_LEADINGZEROS, an HM as 'H' and its own left-aligned ordinal.
+local function tmhmLabelFor(itemId, def)
+  local digits = tostring((def and def.tmLabel) or (def and def.name)
+    or itemId):match("(%d+)")
+  local n = tonumber(digits)
+  if not n then return nil end
+  if tostring(itemId):sub(1, 3) == "HM_" then return "H" .. n end
+  return ("%02d"):format(n)
+end
+
+function PackMenu:rebuild()
+  local pocket = self:pocket().id
+  local rows = {}
+  local save = self.save
+  local inventory = (save and save.inventory) or {}
+  -- Row order IS wBagItems' order, which is what SELECT rewrites.
+  local order = (save and save.inventory)
+    and Bag.order(save, self.bagData) or {}
+  for _, itemId in ipairs(order) do
+    local raw = inventory[itemId]
+    -- A count that is not a number at all (a hand-written save, a mod, an old
+    -- migration) counts as one rather than raising out of the draw.
+    local count = tonumber(raw) or (raw and 1) or 0
+    if count > 0 and self:pocketOf(itemId) == pocket then
+      local def = self.items and self.items[itemId]
+      rows[#rows + 1] = {
+        id = itemId,
+        count = count,
+        name = PackMenu.label(itemId, def),
+        teaches = self:moveLabel(self:moveOf(itemId)),
+        tmNumber = def and (def.tmNumber or (def.machine and def.machine.number)),
+        tmhmLabel = (pocket == "TM_HM" and tmhmLabelFor(itemId, def)) or nil,
+        -- A KEY_ITEM never shows one, and engine/items/tmhm.asm:390 skips the
+        -- count for an HM only -- a TM prints ×NN like any other stack.
+        showCount = pocket == "ITEM" or pocket == "BALL"
+          or (pocket == "TM_HM" and not (def and def.machine and def.machine.kind == "HM") and tostring(itemId):sub(1, 3) ~= "HM_"),
+      }
+    end
+  end
+  -- engine/items/tmhm.asm:341
+  if pocket == "TM_HM" then
+    table.sort(rows, function(a, b)
+      local ka, kb = self:tmhmKey(a.id), self:tmhmKey(b.id)
+      if ka ~= kb then return ka < kb end
+      return a.id < b.id
+    end)
+  end
+  self.rows = rows
+  self.index = math.min(self.index, #rows + 1)
+  if self.index < 1 then self.index = 1 end
+  self:ensureVisible()
+end
+
+function PackMenu:total()
+  return #self.rows + 1 -- CANCEL
+end
+
+function PackMenu:isCancel()
+  return self.index > #self.rows
+end
+
+-- home/menu.asm:746, :758
+function PackMenu:playSfx(name)
+  local data = self.game and self.game.data
+  local sfx = data and data.audio and data.audio.sfx
+  if sfx and sfx[name] then Sound.play(data, name) end
+end
+
+-- engine/items/pack.asm:1312, home/audio.asm:220
+function PackMenu:playSfxTwice(name)
+  self:playSfx(name)
+  self.repeatSfx = WaitPlaySFX.arm(name)
+end
+
+function PackMenu:tickRepeatSfx()
+  local pending = self.repeatSfx
+  if not pending then return false end
+  if WaitPlaySFX.waiting(pending, self.game) then return true end
+  self.repeatSfx = nil
+  self:playSfx(pending.name)
+  return false
+end
+
+function PackMenu:showMessage(lines)
+  lines = messageTokens(lines)
+  self.message, self.messagePage = lines, 1
+  self.pagesSource, self.pages = lines, messagePages(lines)
+end
+
+function PackMenu:pagesFor(lines)
+  if self.pagesSource ~= lines then
+    self.pagesSource, self.pages = lines, messagePages(lines)
+  end
+  return self.pages
+end
+
+function PackMenu:ensureVisible()
+  if self.index <= self.scroll then
+    self.scroll = self.index - 1
+  elseif self.index > self.scroll + VISIBLE_ROWS then
+    self.scroll = self.index - VISIBLE_ROWS
+  end
+  self.scroll = math.max(0, math.min(self.scroll,
+    math.max(0, self:total() - VISIBLE_ROWS)))
+end
+
+function PackMenu:switchPocket(delta)
+  -- The pocket being left keeps its own cursor and scroll; the one being
+  -- entered restores its own (pack.asm:76).
+  self:storeCursor()
+  self.pocketIndex = (self.pocketIndex - 1 + delta) % #POCKETS + 1
+  self:restoreCursor()
+  self:rebuild()
+  self:storeCursor()
+  -- engine/items/pack.asm:1268
+  self:playSfx("Sfx_SwitchPockets")
+end
+
+-- The player name OakThisIsntTheTimeText addresses, same fallback the SAVE
+-- screen uses when a driver runs without a named save.
+function PackMenu:playerName()
+  return (self.save and self.save.player and self.save.player.name) or "GOLD"
+end
+
+-- .Field (engine/items/pack.asm UseItem): a field-usable item runs its effect,
+-- and only a NON-ZERO wItemEffectSucceeded sets PACKSTATE_QUITRUNSCRIPT --
+-- which quits the PACK, and with it the START menu it was opened from, so the
+-- script the effect queued can run in the overworld.  A zero drops into .Oak
+-- instead, which prints inside the PACK and leaves it exactly where it was.
+function PackMenu:exitToField()
+  self:storeCursor()
+  local stack = self.game and self.game.stack
+  if stack and stack.pop and stack.top then
+    while stack:top() and stack:top() ~= self.game.overworld do stack:pop() end
+    -- ../pokecrystal/home/map.asm:1927-1940
+    local world = self.game.overworld
+    if world and world.exitMenusFade and not world.mapSetup then
+      world:exitMenusFade()
+    end
+  elseif self.onClose then
+    -- No clear on this stack (a test harness, or a screen pushed on its own):
+    -- at least give the pack back.
+    self.onClose()
+  end
+end
+
+-- Whether this pack is BattlePack (engine/items/pack.asm:627) rather than the
+-- field Pack.  The two are separate jumptables: nothing opened over a battle
+-- may reach a field effect, so the live overworld's own flag counts as well as
+-- the caller saying so.
+function PackMenu:inBattle()
+  if self.battle then return true end
+  return (self.world and self.world.battleActive) and true or false
+end
+
+-- A on a row.  A field item the world claims never reaches onChoose: the world
+-- has already run its effect, and all that is left is which of UseItem's two
+-- endings the PACK takes.
+function PackMenu:useSelected()
+  local row = self.rows[self.index]
+  if not row then return end
+  -- ScrollingMenu has returned by the time a row is acted on, so the pocket's
+  -- cursor bytes are already written back before the submenu opens.
+  self:storeCursor()
+  if self.give then
+    if self.onChoose then self.onChoose(row.id, row.count) end
+    return
+  end
+  -- BattlePack's .Use dispatches on the item's BATTLE menu nibble, and the
+  -- first four entries of its .ItemFunctionJumptable are all .Oak: a battle-
+  -- NOUSE item prints OakThisIsntTheTimeText inside the pack and goes nowhere.
+  -- Everything else is handed to the screen that opened this one
+  -- (src/ui/gen2/BattleState.lua), which owns the balls, the X items and the
+  -- party-target heals.  The FIELD jumptable is not on this path at all.
+  if self:inBattle() then
+    local def = self.items and self.items[row.id]
+    if def and def.battleMenu == "ITEMMENU_NOUSE" then
+      self:showMessage(Strings(OAK_THIS_ISNT_THE_TIME))
+      return
+    end
+    if self.onChoose then
+      self.staleRows = true
+      self.onChoose(row.id, row.count)
+    end
+    return
+  end
+  if self.world == (self.game and self.game.overworld) then
+    self.staleRows = true
+    local owner = self
+    return require("src.ui.BagMenu").useItem(self.game, nil, row.id, {
+      close=function() owner:close() end,
+      rebuild=function() owner:rebuild() end,
+      items={}, index=1,
+    })
+  end
+  local world = self.world
+  local result, extra = nil, nil
+  if world and world.useFieldItem then result, extra = world:useFieldItem(row.id) end
+  if result then
+    if result == "nowhere" then
+      self:showMessage(Strings(OAK_THIS_ISNT_THE_TIME))
+    elseif result == "coin_case" then
+      -- _CoinCaseCountText (data/text/common_3.asm:336): "Coins:" then the
+      -- count, text_decimal 4 digits with PRINTNUM_LEFTALIGN_F so no padding.
+      self:showMessage(Strings(Strings.source("Coins:\n%d"), extra or 0))
+    elseif result == "blue_card" then
+      -- _BlueCardBalanceText (../pokecrystal/data/text/common_3.asm:1297).
+      self:showMessage(Strings(Strings.source("You now have\n%d points."),
+        extra or 0))
+    elseif result == "repel_used" then
+      -- ItemUsedText (data/text/common_3.asm): "<PLAYER> used the\n<ITEM>."
+      -- World already wrote the counter and took the item out of the bag, so
+      -- the row list is rebuilt under the message the way a TOSS would.
+      self:showMessage(Strings(Strings.source("{PLAYER} used the\n%s."), row.name))
+      self:rebuild()
+    elseif result == "repel_active" then
+      self:showMessage(Strings(REPEL_STILL_ACTIVE))
+    elseif result == "trophy_sent" then
+      -- ../pokecrystal/data/text/common_3.asm:1338
+      if world.playSfxNamed then
+        world:playSfxNamed("Sfx_DexFanfare5079", SFX_DEX_FANFARE_50_79)
+      end
+      self:showMessage(Strings(Strings.source(
+        "There was a trophy\ninside!\f{PLAYER} sent the\ntrophy home.")))
+      self:rebuild()
+    else
+      self:exitToField()
+    end
+    return
+  end
+  -- UseItem's FIELD-pack tail (engine/items/tmhm.asm:73): a TM/HM row opens
+  -- the party to teach, and a field-NOUSE item -- an X ATTACK or a POKé DOLL
+  -- used from the field PACK -- prints OakThisIsntTheTimeText and goes
+  -- nowhere (UseItem's jumptable's first four entries are all .Oak).  Both
+  -- checks live behind `world.useFieldItem` on purpose: DepositSellPack (the
+  -- mart's SELL, the item PC's DEPOSIT) is a chooser whose jumptable is four
+  -- ScrollingMenus and never reaches tmhm.asm, so a TM picked there hands
+  -- its row to onChoose like every other item instead of opening the teach
+  -- party.  The battle pack returned above, and the catch tutorial's DUDE
+  -- pack carries a stub world with no useFieldItem at all -- its POKE BALL
+  -- is field-NOUSE and must still reach the throw.
+  if world and world.useFieldItem then
+    local def = self.items and self.items[row.id]
+    if def and def.teaches then
+      self:openTeachParty(row)
+      return
+    end
+    if def and def.fieldMenu == "ITEMMENU_NOUSE" then
+      self:showMessage(Strings(OAK_THIS_ISNT_THE_TIME))
+      return
+    end
+  end
+  if self.onChoose then
+    -- The .Party flow runs OVER this pack and UseDisposableItem spends the
+    -- item out from under the row list; rebuild on the first frame the pack
+    -- owns again, which is UseItem .Party's own Pack_InitGFX redraw.
+    self.staleRows = true
+    self.onChoose(row.id, row.count)
+  end
+end
+
+-- ------------------------------------------------------------- the submenu
+
+--
+--   DepositSellPack (pack.asm:931) -- the mart's SELL, the item PC's DEPOSIT
+--     and HeldItemMenu's GIVE.  Its jumptable is four ScrollingMenus and
+--     nothing else, which is why `give` and the empty-world callers answer
+--     their chooser directly.
+--   TutorialPack (pack.asm:1068) -- the DUDE's pack, same shape.
+--
+-- engine/items/pack.asm:627 BattlePack
+-- ItemPcMenu:enterDeposit both pass `world = {}` precisely so no field effect
+-- can fire, and Game2's START-menu PACK passes the real overworld.
+function PackMenu:hasSubmenu()
+  if self.give then return false end
+  if self.tutorial then return false end
+  if self:inBattle() then return true end
+  local world = self.world
+  return (world and (world == (self.game and self.game.overworld) or world.useFieldItem)) and true or false
+end
+
+-- ITEMATTR_PERMISSIONS' two bits and the field-menu nibble, as the cart reads
+-- them.  An id with no attributes row at all (an older cache, a mod's item)
+-- counts as tossable and unusable-for-SEL, which is the same lean the sell
+-- gate and ItemPcMenu:cantToss take.
+function PackMenu:submenuRows(itemId)
+  local def = self.items and self.items[itemId]
+  if self:inBattle() then
+    -- engine/items/pack.asm:783 ItemSubmenu, :745 .TMHMPocketMenu
+    local usable = not (def and def.battleMenu == "ITEMMENU_NOUSE")
+    if self:pocket().id == "TM_HM" then usable = false end
+    if usable then return { "use", "quit" } end
+    return { "quit" }
+  end
+  local canToss = not (def and (def.canToss == false or def.cantToss or def.keyItem
+    or (def.machine and def.machine.kind == "HM")))
+  local canSelect = def ~= nil and (def.canSelect == true or def.registerable == true)
+  local usable = not (def and def.fieldMenu == "ITEMMENU_NOUSE")
+  local rows = {}
+  local function add(id) rows[#rows + 1] = id end
+  if self:pocket().id == "TM_HM" then
+    -- .TMHMPocketMenu's own pair: an HM cannot be tossed and gets USE / QUIT,
+    -- a TM gets USE / GIVE / QUIT.  Neither has a TOSS row.
+    add("use")
+    if canToss then add("give") end
+    add("quit")
+    return rows
+  end
+  if not canToss then
+    -- MenuHeader_UnusableItem / MenuHeader_UnusableKeyItem: the untossable arm
+    -- never looks at the menu nibble, so a key item always offers USE.
+    add("use")
+    if canSelect then add("sel") end
+    add("quit")
+    return rows
+  end
+  if usable then add("use") end
+  add("give")
+  add("toss")
+  if canSelect then add("sel") end
+  add("quit")
+  return rows
+end
+
+function PackMenu:openSubmenu()
+  local row = self.rows[self.index]
+  if not row then return end
+  -- ScrollingMenu has returned by the time the submenu opens, so the pocket's
+  -- cursor bytes are written back first (pack.asm:76).
+  self:storeCursor()
+  self.submenu = {
+    row = row,
+    rows = self:submenuRows(row.id),
+    index = 1, -- `db 1 ; default option`
+  }
+end
+
+function PackMenu:closeSubmenu()
+  self.submenu = nil
+end
+
+function PackMenu:chooseSubmenu()
+  local menu = self.submenu
+  if not menu then return end
+  local id = menu.rows[menu.index]
+  local row = menu.row
+  if id == "quit" then
+    -- QuitItemSubmenu: a bare `ret`, back to the pocket list.
+    self:closeSubmenu()
+  elseif id == "use" then
+    self:closeSubmenu()
+    self:useSelected()
+  elseif id == "sel" then
+    self:closeSubmenu()
+    self:registerSelected()
+  elseif id == "toss" then
+    self:closeSubmenu()
+    self:tossItem(row)
+  elseif id == "give" then
+    self:closeSubmenu()
+    self:giveItem(row)
+  end
+end
+
+-- ------------------------------------------------------------------- TOSS
+
+-- BuySellToss_InterpretJoypad (engine/items/buy_sell_toss.asm): up and down
+-- wrap through the ends, left and right step by ten and clamp.  The same
+-- stepper src/ui/gen2/ItemPcMenu.lua uses, because it is the same loop.
+local function qtyStep(qty, max, delta)
+  local n = qty + delta
+  if delta == 1 then
+    if n > max then n = 1 end
+  elseif delta == -1 then
+    if n < 1 then n = max end
+  elseif delta > 0 then
+    if n > max then n = max end
+  else
+    if n <= 0 then n = 1 end
+  end
+  return n
+end
+
+-- TossMenu (engine/items/pack.asm:477): "Throw away how many?" over
+-- SelectQuantityToToss, then the count in a yes/no, then TossItem and
+-- "Threw away <ITEM>(S)."  Backing out of either question is `jr c, .finish`
+-- -- the item is untouched and the PACK is exactly where it was.
+function PackMenu:tossItem(row)
+  if not row then return end
+  self:showMessage(Strings(TOSS_HOW_MANY))
+  self.qtyState = {
+    row = row,
+    qty = 1,
+    max = row.count or 1,
+  }
+end
+
+function PackMenu:confirmToss()
+  local state = self.qtyState
+  if not state then return end
+  self.qtyState = nil
+  local row, qty = state.row, state.qty
+  self.confirm = {
+    prompt = messageTokens(Strings(Strings.source(
+      "Throw away %d\n%s(S)?"), qty, row.name)),
+    -- YesNoBox opens on YES; B and NO are the same `jr c, .finish`.
+    choice = 1,
+    onYes = function()
+      Bag.remove(self.save, row.id, qty)
+      self:rebuild()
+      self:showMessage(Strings(Strings.source("Threw away\n%s(S)."), row.name))
+    end,
+  }
+end
+
+-- ------------------------------------------------------------------- GIVE
+
+-- GiveItem (engine/items/pack.asm:562): the party list under
+-- PARTYMENUACTION_GIVE_ITEM ("To which <PK><MN>?"), an EGG refused with
+-- .AnEggCantHoldAnItemText, and everything else handed to
+-- TryGiveItemToPartymon -- which is exactly what the party's own GIVE row runs
+-- (src/ui/gen2/HeldItemMenu.lua), so the two doors share one routine rather
+-- than each growing a copy of the swap question and the mail keyboard.
+function PackMenu:giveItem(row)
+  self.staleRows = true
+  return require("src.ui.BagMenu").giveItem(self.game, row.id, function() self:rebuild() end)
+end
+
+function PackMenu:giveToSlot(slot, row)
+  local mon = self.save and self.save.party and self.save.party[slot]
+  if not mon then return false end
+  return require("src.ui.BagMenu").handOver(self.game, mon, row.id, function() self:rebuild() end)
+end
+
+function PackMenu:openTeachParty(row)
+  self.staleRows = true
+  local owner = self
+  return require("src.ui.BagMenu").useItem(self.game, nil, row.id, {
+    close=function() owner:close() end, rebuild=function() owner:rebuild() end,
+    items={}, index=1,
+  })
+end
+
+function PackMenu:update(_dt)
+  local input = self.game and self.game.input
+  if not input then return end
+  if self.staleRows then
+    self.staleRows = nil
+    self:rebuild()
+  end
+  -- engine/items/pack.asm:1312, home/audio.asm:225
+  if self:tickRepeatSfx() then return end
+  -- Pack_PrintTextNoScroll ends on a `prompt`, so the message holds the PACK
+  -- until a button clears it and the list is untouchable underneath.  The
+  -- quantity selector is the one thing drawn OVER a message rather than under
+  -- it: "Throw away how many?" is printed and SelectQuantityToToss runs on top
+  -- of it, so that pair is stepped before the message is cleared.
+  if self.qtyState then
+    self:updateQuantity(input)
+    return
+  end
+  -- engine/items/pack.asm:1237 Pack_InterpretJoypad .switching_item
+  if self.switching then
+    self:updateSwitch(input)
+    return
+  end
+  -- home/joypad.asm:383
+  if self.message then
+    if input:wasPressed("a") or input:wasPressed("b") then
+      local page = (self.messagePage or 1) + 1
+      if page <= #self:pagesFor(self.message) then
+        self.messagePage = page
+        self:playSfx("Sfx_ReadText2")
+      else
+        self.message, self.messagePage = nil, nil
+      end
+    end
+    return
+  end
+  if self.confirm then
+    self:updateConfirm(input)
+    return
+  end
+  if self.submenu then
+    self:updateSubmenu(input)
+    return
+  end
+  local dir, edge = MenuRepeat.direction(self.hold, input, LIST_DIRS)
+  if input:wasPressed("left") then
+    self:switchPocket(-1)
+    return
+  elseif input:wasPressed("right") then
+    self:switchPocket(1)
+    return
+  elseif dir == "up" then
+    self:stepCursor(-1, edge)
+    return
+  elseif dir == "down" then
+    self:stepCursor(1, edge)
+    return
+  elseif input:wasPressed("b") then
+    self:playSfx("Sfx_ReadText2")
+    self:storeCursor()
+    self:close()
+    return
+  elseif input:wasPressed("a") then
+    self:playSfx("Sfx_ReadText2")
+    if self:isCancel() then
+      self:storeCursor()
+      self:close()
+    elseif self:hasSubmenu() then
+      -- Pack_InterpretJoypad's A falls through to .ItemBallsKey_LoadSubmenu:
+      -- the row is chosen, not used.
+      self:openSubmenu()
+    else
+      self:useSelected()
+    end
+    return
+  elseif input:wasPressed("select") then
+    self:armSwitch()
+    return
+  end
+end
+
+-- engine/menus/scrolling_menu.asm
+function PackMenu:stepCursor(delta, edge)
+  local total = self:total()
+  local next = self.index + delta
+  if next < 1 then
+    next = edge and total or 1
+  elseif next > total then
+    next = edge and 1 or total
+  end
+  self.index = next
+  self:ensureVisible()
+end
+
+-- engine/items/pack.asm:1290 Pack_InterpretJoypad .select
+-- engine/items/tmhm.asm:207 -- the TM/HM pocket's joypad filter drops SELECT.
+function PackMenu:armSwitch()
+  if self:pocket().id == "TM_HM" then return end
+  if self:isCancel() then return end
+  if not self.rows[self.index] then return end
+  self.switching = self.index
+  self:showMessage(Strings(ASK_ITEM_MOVE))
+end
+
+-- `.switching_item` (engine/items/pack.asm:1297): A or SELECT places, B backs
+-- out, and left/right cannot leave the pocket mid-move.
+function PackMenu:updateSwitch(input)
+  local dir, edge = MenuRepeat.direction(self.hold, input, LIST_DIRS)
+  if dir == "up" then
+    self:stepCursor(-1, edge)
+  elseif dir == "down" then
+    self:stepCursor(1, edge)
+  elseif input:wasPressed("a") or input:wasPressed("select") then
+    self:placeSwitch()
+  elseif input:wasPressed("b") then
+    self:endSwitch()
+  end
+end
+
+-- engine/items/pack.asm:1307 .place_insert / .end_switch
+function PackMenu:placeSwitch()
+  local from = self.switching
+  local row = self.rows[from]
+  if row and not self:isCancel() and self.index ~= from then
+    Bag.move(self.save, row.id, self:pocket().id, self.index, self.bagData)
+    self:rebuild()
+    self:storeCursor()
+  end
+  -- engine/items/pack.asm:1309, :1311
+  self:playSfxTwice("Sfx_SwitchPokemon")
+  self:endSwitch()
+end
+
+function PackMenu:endSwitch()
+  self.switching = nil
+  self.message, self.messagePage = nil, nil
+end
+
+-- VerticalMenu over the submenu rows: up/down wrap, A picks, B is the carry
+-- that ExitMenu answers with (`ret c`), which is QUIT by another name.
+function PackMenu:updateSubmenu(input)
+  local menu = self.submenu
+  local total = #menu.rows
+  if input:wasPressed("up") then
+    menu.index = menu.index > 1 and menu.index - 1 or total
+  elseif input:wasPressed("down") then
+    menu.index = menu.index < total and menu.index + 1 or 1
+  elseif input:wasPressed("a") then
+    self:playSfx("Sfx_ReadText2")
+    self:chooseSubmenu()
+  elseif input:wasPressed("b") then
+    self:playSfx("Sfx_ReadText2")
+    self:closeSubmenu()
+  end
+end
+
+-- Toss_Sell_Loop: the count is stepped until A takes it or B backs out, and
+-- backing out is the whole toss cancelled.
+function PackMenu:updateQuantity(input)
+  local state = self.qtyState
+  if input:wasPressed("up") then
+    state.qty = qtyStep(state.qty, state.max, 1)
+  elseif input:wasPressed("down") then
+    state.qty = qtyStep(state.qty, state.max, -1)
+  elseif input:wasPressed("right") then
+    state.qty = qtyStep(state.qty, state.max, 10)
+  elseif input:wasPressed("left") then
+    state.qty = qtyStep(state.qty, state.max, -10)
+  elseif input:wasPressed("a") then
+    self:playSfx("Sfx_ReadText2")
+    self.message, self.messagePage = nil, nil
+    self:confirmToss()
+  elseif input:wasPressed("b") then
+    self:playSfx("Sfx_ReadText2")
+    self.qtyState = nil
+    self.message, self.messagePage = nil, nil
+  end
+end
+
+-- YesNoBox: up/down flip, A takes the highlighted row, B is NO.
+function PackMenu:updateConfirm(input)
+  local confirm = self.confirm
+  if input:wasPressed("up") or input:wasPressed("down") then
+    confirm.choice = confirm.choice == 1 and 2 or 1
+  elseif input:wasPressed("b") then
+    self:playSfx("Sfx_ReadText2")
+    self.confirm = nil
+    if confirm.onNo then confirm.onNo() end
+  elseif input:wasPressed("a") then
+    self:playSfx("Sfx_ReadText2")
+    local yes = confirm.choice == 1
+    self.confirm = nil
+    if yes then
+      if confirm.onYes then confirm.onYes() end
+    elseif confirm.onNo then
+      confirm.onNo()
+    end
+  end
+end
+
+-- RegisterItem (engine/items/pack.asm), the submenu's SEL row and its ONLY
+-- door -- the cart's SELECT is the bag's own item shuffle (see armSwitch).
+-- World:registerItem re-runs CheckSelectableItem's gate (TM/HM and anything
+-- CANT_SELECT_F refuses), so it cannot register what the cart would not.
+function PackMenu:registerSelected()
+  if self:isCancel() then return end
+  local row = self.rows[self.index]
+  if not row then return end
+  -- BattlePack shares Pack_InterpretJoypad, whose SELECT arm is the bag's own
+  -- item shuffle rather than the field pack's item submenu, so nothing over a
+  -- battle registers anything.
+  local world = not self:inBattle() and self.world or nil
+  local ok
+  if world == (self.game and self.game.overworld) then
+    ok = require("src.ui.BagMenu").canRegister(self.game, row.id)
+    if ok then self.save.registeredItem = row.id end
+  elseif world and world.registerItem then ok = world:registerItem(row.id) end
+  if ok then
+    -- engine/items/pack.asm:551
+    self:playSfx("Sfx_FullHeal")
+    -- RegisteredItemText: "Registered the\n<item>."
+    self:showMessage(Strings(Strings.source("Registered the\n%s."), row.name))
+  else
+    -- CantRegisterText: "You can't register\nthat item."
+    self:showMessage(Strings(Strings.source("You can't register\nthat item.")))
+  end
+end
+
+-- A TM or HM's `move` is what it teaches; the extractor carries it on the item
+-- record, and moves.lua carries that move's own description.
+function PackMenu:moveOf(itemId)
+  local def = itemId and self.items and self.items[itemId]
+  -- The extractor calls it `teaches`.
+  return def and (def.teaches or (def.machine and def.machine.move)) or nil
+end
+
+-- The description under the list.  A TM shows the MOVE's description rather
+-- than the item's -- which is what the cart's TM pocket does, and the whole
+-- reason move descriptions are worth extracting.
+function PackMenu:description()
+  if self:isCancel() then return nil end
+  local row = self.rows[self.index]
+  if not row then return nil end
+  local moveId = self:moveOf(row.id)
+  if moveId then
+    local moves = self.game and self.game.data and self.game.data.moves
+    local moveDef = moves and moves[moveId]
+    if moveDef and moveDef.description then return moveDef.description end
+  end
+  local def = self.items and self.items[row.id]
+  return def and def.description or nil
+end
+
+-- engine/gfx/cgb_layouts.asm:723-726 -- the cursor column (7,2) 1x9 takes
+-- palette $3, whose colour 3 is red (gfx/pack/pack.pal).
+function PackMenu:cursorAt(tx, ty, hollow)
+  local palette = self.gfx and self.gfx:available()
+    and self.gfx:colorsAt(tx, ty)
+  if palette then
+    Chrome.cursorThrough(tx, ty, palette, false, hollow)
+  else
+    Chrome.cursor(tx, ty, hollow)
+  end
+end
+
+-- The list, description and cursor, on top of whatever chrome was drawn.
+--
+-- ScrollingMenu_CallFunctions1and2 (engine/menus/scrolling_menu.asm:424-429)
+-- steps the coord on by the header's `db 5, 8` COLUMN count before
+-- PlaceMenuItemQuantity (engine/menus/menu_2.asm:19-25) adds SCREEN_WIDTH + 1,
+-- so the ×N sits at name + 9 on the row BELOW the name, flush right in every
+-- pocket (#1425, #1693).  Its `lb bc, 1, 2` is a TWO-digit field with the
+-- leading digit blanked.  engine/items/tmhm.asm:392-403 writes that same
+-- column for a TM.
+--
+-- ScrollingMenu_PlaceCursor (engine/menus/scrolling_menu.asm:438) marks the
+-- row SELECT armed with the hollow ▷ while the solid ▶ goes on looking.
+function PackMenu:drawList(listX, listY)
+  -- engine/menus/scrolling_menu.asm:86 .a_button -> home/menu.asm:50
+  -- engine/items/pack.asm:1301 .select
+  local picked = not self.switching
+    and (self.submenu or self.qtyState or self.confirm or self.message)
+    and true or false
+  for row = 1, VISIBLE_ROWS do
+    local i = row + self.scroll
+    local ty = listY + (row - 1) * LIST_SPACING
+    if i <= #self.rows then
+      local entry = self.rows[i]
+      -- engine/items/tmhm.asm:355-385 (#1695)
+      if entry.tmhmLabel then
+        Chrome.printThrough(entry.tmhmLabel, listX - 3, ty, Chrome.DEFAULT_BOX_PALETTE)
+      end
+      if i == self.index then
+        self:cursorAt(listX - 1, ty, picked)
+      elseif i == self.switching then
+        self:cursorAt(listX - 1, ty, true)
+      end
+      Chrome.printThrough((entry.tmhmLabel and entry.teaches) or entry.name,
+        listX, ty, Chrome.DEFAULT_BOX_PALETTE)
+      if entry.showCount then
+        Chrome.printThrough("\xc3\x97" .. Chrome.number(entry.count, 2),
+          listX + 9, ty + 1, Chrome.DEFAULT_BOX_PALETTE)
+      end
+    elseif i == self:total() then
+      if i == self.index then self:cursorAt(listX - 1, ty, picked) end
+      Chrome.printThrough(Strings("CANCEL"), listX, ty, Chrome.DEFAULT_BOX_PALETTE)
+    end
+  end
+end
+
+function PackMenu:drawDescription(ty)
+  -- Pack_PrintTextNoScroll writes over the same box the description lives in,
+  -- so while a message is up it IS the box's contents.  TossMenu's yes/no
+  -- (AskQuantityThrowAwayText through MenuTextbox) is the same box: the
+  -- question is printed there and the YES/NO window opens over the list.
+  local lines = self.message or (self.confirm and self.confirm.prompt)
+  if lines then
+    local name = self:playerName()
+    -- home/text.asm:397
+    local page = self:pagesFor(lines)[self.messagePage or 1] or {}
+    for i, line in ipairs(page) do
+      Chrome.printThrough((line:gsub("{PLAYER}", name)), 1, ty + (i - 1) * 2,
+        Chrome.DEFAULT_BOX_PALETTE)
+    end
+    return
+  end
+  local description = self:description()
+  if not description then return end
+  -- Item descriptions join their two lines with the '<NEXT>' the extractor
+  -- leaves in place, and $4e steps SCREEN_WIDTH * 2 from the line's own
+  -- start (home/text.asm NextLineChar) -- TWO rows, the same metric every
+  -- text box uses.  PrintItemDescription writes them from decoord 1, 14, so
+  -- the second line is row 16.  '\n' covers hand-written data.
+  local first, second = description:match("^(.-)<NEXT>(.*)$")
+  if not first then first, second = description:match("^(.-)" .. LINE .. "(.*)$") end
+  Chrome.printThrough(first or description, 1, ty, Chrome.DEFAULT_BOX_PALETTE)
+  if second then Chrome.printThrough(second, 1, ty + 2, Chrome.DEFAULT_BOX_PALETTE) end
+end
+
+-- ../pokecrystal/engine/items/pack.asm:162, :178, :313, :335, :355, :371,
+-- TEXTBOX_Y - 1`; ../pokegold/engine/items/pack.asm has the same ten at
+function PackMenu:submenuColumn()
+  local version = (self.save and self.save.version) or GameVersion.get()
+  return GameVersion.isCrystal(version) and 13 or 0
+end
+
+function PackMenu:drawSubmenu()
+  local menu = self.submenu
+  local count = #menu.rows
+  local x = self:submenuColumn()
+  -- ../pokegold/engine/items/pack.asm:313 ends on TEXTBOX_Y, pokecrystal:313
+  local bottom = (count >= 5 and x == 0) and 12 or 11
+  local top = bottom - count * 2
+  Chrome.box(x, top, 7, bottom - top + 1)
+  for i, id in ipairs(menu.rows) do
+    local ty = top + 1 + (i - 1) * 2
+    if i == menu.index then Chrome.cursorThrough(x + 1, ty, Chrome.DEFAULT_BOX_PALETTE) end
+    Chrome.printThrough(Strings(SUBMENU_LABEL[id] or id), x + 2, ty,
+      Chrome.DEFAULT_BOX_PALETTE)
+  end
+end
+
+-- engine/items/buy_sell_toss.asm:133 BuySellToss_UpdateQuantityDisplay
+function PackMenu:drawQuantity()
+  Chrome.box(15, 9, 5, 3)
+  Chrome.printThrough("\xc3\x97" .. Chrome.number(self.qtyState.qty, 2, true), 16, 10,
+    Chrome.DEFAULT_BOX_PALETTE)
+end
+
+-- YesNoBox's own coords, the same box every other Gen 2 screen here draws.
+function PackMenu:drawYesNo()
+  Chrome.box(14, 7, 6, 5)
+  Chrome.printThrough(Strings("YES"), 16, 8, Chrome.DEFAULT_BOX_PALETTE)
+  Chrome.printThrough(Strings("NO"), 16, 10, Chrome.DEFAULT_BOX_PALETTE)
+  Chrome.cursorThrough(15, self.confirm.choice == 1 and 8 or 10, Chrome.DEFAULT_BOX_PALETTE)
+end
+
+function PackMenu:drawOverlays()
+  if self.submenu then self:drawSubmenu() end
+  if self.qtyState then self:drawQuantity() end
+  if self.confirm then self:drawYesNo() end
+end
+
+function PackMenu:drawPanel()
+  if self.gfx:available() then
+    -- Pack_InitGFX's screen: the header strip, the patterned left column, the
+    -- bag picture for this pocket and the pocket plaque, then Textbox at
+    -- (0,12) for the item description.
+    self.gfx:draw(self:pocket().id)
+    Chrome.box(0, PackGfx.DESCRIPTION_Y, 20, 6)
+    self:drawList(LIST_X, LIST_Y)
+    self:drawDescription(PackGfx.DESCRIPTION_Y + 2)
+    self:drawOverlays()
+    love.graphics.setColor(1, 1, 1, 1)
+    return
+  end
+
+  -- No pack tiles in the cache (an import from before the pack stage): plain
+  -- boxes, the layout this screen shipped with.
+  Chrome.clear()
+  Chrome.box(0, 0, 20, 3)
+  Chrome.printThrough(Strings(self:pocket().label), 2, 1,
+    Chrome.DEFAULT_BOX_PALETTE)
+  Chrome.box(0, 3, 20, 12)
+  self:drawList(5, 4)
+  Chrome.box(0, 12, 20, 6)
+  self:drawDescription(14)
+  self:drawOverlays()
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+function PackMenu:draw()
+  self:drawPanel()
+end
+
+function PackMenu:drawWidescreen(winW, winH)
+  local G = love.graphics
+  Chrome.letterbox(winW, winH, 1, 1, 1)
+  local scale = Chrome.fitScale(winW, winH)
+  G.push()
+  G.translate(Chrome.fitOrigin(winW, winH, scale))
+  G.scale(scale, scale)
+  self:drawPanel()
+  G.pop()
+end
+
+PackMenu.POCKETS = POCKETS
+
+return PackMenu

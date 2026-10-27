@@ -51,18 +51,24 @@ local RulesetDefaults = {}
 -- is not.  Everything else matched.  A player on the old default was therefore
 -- playing something very close to right, and wrong in every double battle.
 --
--- GEN 2 IS STILL ON GEN 1'S, and stays there until somebody does to Johto
--- what this change did to Sinnoh.  There is no Gen 2 ruleset in this repo, and
--- handing Johto one written for another region would trade a known wrong
--- answer for an unknown one.
+-- Gen2's compatibility default tracks enemy PP, matching the native Gold
+-- battle loop. All other previous host rule fields remain unchanged; this
+-- is not a claim of complete Gen2 battle-rule parity.
 RulesetDefaults.DEFAULT_BY_GENERATION = {
   [1] = "gen1_faithful",
-  [2] = "gen1_faithful",
+  [2] = "gen2_finite_pp",
   [3] = "gen3_emerald",
   [4] = "gen4_platinum",
 }
 
 RulesetDefaults.FALLBACK = "gen1_faithful"
+
+RulesetDefaults.AUTO = false
+function RulesetDefaults.selection(game)
+  local selected = game and game.save and game.save.options and game.save.options.ruleset
+  if selected == RulesetDefaults.AUTO then return nil end
+  return selected
+end
 
 -- The id this cartridge should use when the save has no choice of its own.
 function RulesetDefaults.defaultFor(game)

@@ -72,6 +72,12 @@ local HUD_DEFAULTS = {
   hpBarYellowPixels = 10,
   expBarTiles = 8,
 }
+local GSC_DEFAULTS = {
+  hpBarTiles = 6,
+  hpBarGreenPixels = 24,
+  hpBarYellowPixels = 10,
+  expBarTiles = 8,
+}
 
 -- ASKED SIX TIMES A ROW.  drawHPBar alone calls this twice per bar, and a
 -- party screen draws six of them a frame -- so this built the same nine-field
@@ -79,18 +85,19 @@ local HUD_DEFAULTS = {
 -- answer that only changes when the font record is reloaded.  It is memoised
 -- on the record it was built from, so a reload rebuilds it and HudTiles.
 -- invalidate (already registered with Assets) clears it outright.
-local geoCache, geoFrom
+local geoCache, geoFrom, geoDefaults
 local function hudGeometry()
+  local defaults = require('src.core.GameVersion').isGen2() and GSC_DEFAULTS or HUD_DEFAULTS
   local font = require("src.core.Data").font
   local hud = type(font) == "table" and font.hud or nil
-  if type(hud) ~= "table" then return HUD_DEFAULTS end
-  if geoCache and geoFrom == hud then return geoCache end
-  geoFrom = hud
+  if type(hud) ~= "table" then return defaults end
+  if geoCache and geoFrom == hud and geoDefaults == defaults then return geoCache end
+  geoFrom, geoDefaults = hud, defaults
   geoCache = {
-    hpBarTiles = hud.hpBarTiles or HUD_DEFAULTS.hpBarTiles,
-    hpBarGreenPixels = hud.hpBarGreenPixels or HUD_DEFAULTS.hpBarGreenPixels,
-    hpBarYellowPixels = hud.hpBarYellowPixels or HUD_DEFAULTS.hpBarYellowPixels,
-    expBarTiles = hud.expBarTiles or HUD_DEFAULTS.expBarTiles,
+    hpBarTiles = hud.hpBarTiles or defaults.hpBarTiles,
+    hpBarGreenPixels = hud.hpBarGreenPixels or defaults.hpBarGreenPixels,
+    hpBarYellowPixels = hud.hpBarYellowPixels or defaults.hpBarYellowPixels,
+    expBarTiles = hud.expBarTiles or defaults.expBarTiles,
     expBarEmptyTile = hud.expBarEmptyTile,
     -- the stats screen's page-tile block, and the two tiles in it that close
     -- the exp bar on that screen (RomExtractorGen2:gen2StatsExpCaps)
@@ -250,6 +257,16 @@ function HudTiles.capTile(barType)
   return barType == 1 and 0x6D or 0x6C
 end
 
+function HudTiles.hpPixels(hp, maximum, segments)
+  if maximum <= 0 or hp <= 0 then return 0 end
+  segments = segments or hudGeometry().hpBarTiles
+  if require('src.core.GameVersion').isGen2() then
+    return math.max(1, math.floor(require('src.battle.Gen2HpPresentation').pixels(hp, maximum)
+      * segments / 6))
+  end
+  return math.max(1, math.floor(hp * segments * 8 / maximum))
+end
+
 -- Tile HP bar (home/pokemon.asm DrawHPBar): "HP" ($71) + ":[" ($62),
 -- six 8px segments ($63 empty, +n partial, $6B full), then the
 -- wHPBarType right cap.  A nonzero HP always shows at least a
@@ -271,15 +288,15 @@ end
 -- Tinting first would double-apply the color: GREENBAR's fill {0,189,0} has
 -- red channel 0, so the tint zeroes the whole bar's red and the zone's
 -- red-channel-keyed shade shader then maps every pixel to color 3 = black.
-function HudTiles.drawHPBar(data, tx, ty, mon, barType, grayFill, segments)
+function HudTiles.drawHPBar(data, tx, ty, mon, barType, grayFill, segments, pixels)
   local x, y = tx * 8, ty * 8
   segments = math.max(1, math.floor(segments or hudGeometry().hpBarTiles))
   HudTiles.tile(0x71, x, y)
   HudTiles.tile(0x62, x + 8, y)
-  local px = 0
-  if mon.stats.hp > 0 and mon.hp > 0 then
-    px = math.max(1, math.floor(mon.hp * segments * 8 / mon.stats.hp))
-  end
+  -- A short GSC loop moves pixels while its displayed HP number can repeat.
+  -- Recomputing the fill from that number would hide those animation beats.
+  local px = pixels ~= nil and math.max(0, math.min(segments * 8, math.floor(pixels)))
+    or HudTiles.hpPixels(mon.hp, mon.stats.hp, segments)
   local paint
   if not grayFill then
     local PaletteFX = require("src.render.PaletteFX")

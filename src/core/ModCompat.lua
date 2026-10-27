@@ -32,8 +32,6 @@
 --                               hook, not one module
 --   src.world.gen2.Follower     PikachuFollower is Yellow's, not a general
 --                               party follower
---   src.ui.gen2.Chrome          no shared window-chrome module
---   src.ui.gen2.SaveMenu        the save flow is part of StartMenu here
 --   src.ui.gen2.BattleAnimView  Gen2AnimPlayer is a player, not a view
 --   src.battle.UIVisibility     no equivalent
 --   src.ui.PartyPanel           no equivalent
@@ -66,7 +64,15 @@ ModCompat.ALIASES = {
   ["src.world.gen2.Palettes"] = "src.render.PaletteFX",
 
   -- save-side data
-  ["src.core.gen2.Boxes"] = "src.pokemon.Boxes",
+  ["src.core.gen2.Boxes"] = "src.pokemon.Gen2Boxes",
+  ["src.core.gen2.Mail"] = "src.pokemon.Gen2Mail",
+  ["src.ui.gen2.BoxMenu"] = "src.ui.Gen2BoxMenu",
+  ["src.ui.gen2.NamingScreen"] = "src.ui.Gen2NamingScreen",
+  ["src.ui.gen2.NamePick"] = "src.ui.Gen2NamePick",
+  ["src.ui.gen2.SaveMenu"] = "src.ui.Gen2SaveMenu",
+  ["src.core.gen2.Decorations"] = "src.compat.gen2.Decorations",
+  ["src.core.gen2.Clock"] = "src.core.Gen2Clock",
+  ["src.ui.gen2.InitClock"] = "src.ui.Gen2InitClock",
   ["src.core.gen2.BugContest"] = "src.world.BugContest",
   ["src.core.gen2.ItemEffects"] = "src.inventory.ItemEffects",
   ["src.core.gen2.Save"] = "src.core.SaveData",
@@ -80,24 +86,32 @@ ModCompat.ALIASES = {
   ["src.battle.gen2.Effects"] = "src.battle.MoveEffects",
   ["src.battle.gen2.Mon"] = "src.pokemon.Pokemon",
   ["src.ui.gen2.BattleState"] = "src.battle.BattleState",
+  ["src.ui.gen2.Chrome"] = "src.ui.Gen2Chrome",
 
   -- menus.  The Gold port names two of these differently rather than
   -- namespacing them, so both spellings land on the one implementation.
-  ["src.ui.gen2.StartMenu"] = "src.ui.StartMenu",
+  ["src.ui.gen2.PcMenu"] = "src.ui.Gen2PcMenu",
+  ["src.ui.gen2.CenterPcMenu"] = "src.ui.Gen2CenterPcMenu",
+  ["src.ui.gen2.ItemPcMenu"] = "src.ui.Gen2ItemPcMenu",
+  ["src.ui.gen2.MailboxMenu"] = "src.ui.Gen2MailboxMenu",
+  ["src.ui.gen2.DecorationMenu"] = "src.ui.Gen2DecorationMenu",
+  ["src.ui.gen2.MailRead"] = "src.ui.Gen2MailRead",
+  ["src.ui.gen2.StartMenu"] = "src.ui.Gen2StartMenu",
   ["src.ui.gen2.OptionsMenu"] = "src.ui.OptionsMenu",
   ["src.ui.gen2.PartyMenu"] = "src.ui.PartyMenu",
   ["src.ui.gen2.PokedexMenu"] = "src.ui.PokedexMenu",
   ["src.ui.gen2.SummaryMenu"] = "src.ui.SummaryMenu",
   ["src.ui.gen2.TrainerCard"] = "src.ui.TrainerCard",
   ["src.ui.gen2.Pokegear"] = "src.ui.PokegearMenu",
-  ["src.ui.gen2.PackMenu"] = "src.ui.BagMenu",
+  ["src.ui.gen2.PackMenu"] = "src.ui.Gen2PackMenu",
   ["src.menu.PartyMenu"] = "src.ui.PartyMenu",
   ["src.ui.PartyScreen"] = "src.ui.PartyMenu",
   ["src.ui.party.PartyScreen"] = "src.ui.PartyMenu",
 
   -- the Gold port splits its Game class per generation; this one does not
   ["src.core.Game2"] = "src.core.Game",
-  ["src.render.GbcPalette"] = "src.render.GBCFX",
+  -- Indexed image palettes and LCD screen effects are different contracts.
+  ["src.render.GbcPalette"] = "src.render.Gen2PaletteDraw",
 }
 
 local seen = {}

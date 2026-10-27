@@ -1,0 +1,326 @@
+-- Adapted from Gen1Recomp 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91.
+-- Existing project rights and Gen1Recomp provenance remain applicable; see LICENSE.MD.
+-- The bedroom PC's DECORATION option: _PlayerDecorationMenu
+-- (engine/overworld/decorations.asm), reached from PLAYERSPCITEM_DECORATION in
+-- the PLAYERSPC_HOUSE list (engine/events/pokecenter_pc.asm).
+--
+-- Two menus stacked, plus one question:
+--
+--   .MenuHeader           the categories the player owns something in, at
+--                         menu_coords 5, 0, 19, 17, with EXIT always last
+--   .NonscrollingMenuHeader / .ScrollingMenuHeader
+--                         that category's decorations, then its PUT IT AWAY
+--                         row, then CANCEL.  The cart swaps to the scrolling
+--                         menu past eight rows; one list that scrolls covers
+--                         both, since the rows are identical either way
+--   DecoSideMenuHeader    RIGHT SIDE / LEFT SIDE / CANCEL, for the two
+--                         ornament slots
+--
+-- Nothing here touches the map.  wChangedDecorations is carried back through
+-- onDone so the PC can answer TRUE to `special PlayersHousePC`, whose script
+-- then does `warp NONE, 0, 0` -- the map reload that runs the two callbacks
+-- and is the only thing that makes a placement visible.
+
+local Native = require("src.world.Gen2Decorations")
+local Runner = require("src.script.ScriptRunner")
+local Menu = require("src.ui.Menu")
+local Chrome = require("src.ui.Gen2Chrome")
+local Decorations = require("src.compat.gen2.Decorations")
+local Strings = require("src.core.Strings")
+local Typer = require("src.ui.Gen2Typer")
+
+local DecorationMenu = {}
+DecorationMenu.__index = DecorationMenu
+-- ../pokecrystal/engine/overworld/decorations.asm:8
+DecorationMenu.isOpaque = false
+
+-- .category_pointers' eighth row, which is not a category and is always shown.
+local EXIT = Strings.source("EXIT")
+-- DecoSideMenuHeader's three items, in its order.
+local SIDES = {
+  { id = "right", label = Strings.source("RIGHT SIDE") },
+  { id = "left", label = Strings.source("LEFT SIDE") },
+  { id = nil, label = Strings.source("CANCEL") },
+}
+
+-- The scrolling list shows eight rows (.ScrollingMenuData's `db 8, 0`).
+local VISIBLE = 8
+
+function DecorationMenu:wantsFillScale() return true end
+
+-- opts: save, events (the wEventFlags bitfield), onDone(changed)
+function DecorationMenu.new(game, opts)
+  opts = opts or {}
+  local self = setmetatable({}, DecorationMenu)
+  self.game = game
+  self.save = opts.save or (game and game.save)
+  self.events = opts.events or Decorations.events(self.save)
+  self.onDone = opts.onDone or function() game.stack:pop() end
+  self.state = Native.state(game and game.data, self.save)
+  -- wChangedDecorations, cleared once on the way in.
+  self.changed = false
+  self.mode = "category"
+  self.index = 1
+  self.scroll = 0
+  self.pages = nil
+  self:buildCategories()
+  return self
+end
+
+function DecorationMenu:buildCategories()
+  self.categories = {}
+  for _, category in ipairs(Native.categories(self.game.data)) do
+    for _, id in ipairs(category.members) do
+      if Native.owns(self.game.data, self.save, id) then
+        self.categories[#self.categories+1] = category;break
+      end
+    end
+  end
+  self.index = math.min(self.index, #self.categories + 1)
+end
+
+function DecorationMenu:finish()
+  if self.done then return end
+  self.done = true
+  if self.onDone then self.onDone(self.changed) end
+end
+
+-- The name of one row of the item list.  Row 0 is CANCEL and the category's
+-- own row is PUT IT AWAY; both are plain DecorationAttributes rows, so they
+-- spell themselves.
+function DecorationMenu:rowName(decoId)
+  return Native.name(self.game.data, decoId)
+end
+
+function DecorationMenu:openCategory(category)
+  local rows = {}
+  for _,id in ipairs(category.members or {}) do
+    if Native.owns(self.game.data, self.save, id) then rows[#rows+1]=id end
+  end
+  if #rows>0 then
+    for _,id in ipairs(category.headers or {}) do rows[#rows+1]=id end
+    rows[#rows+1]=0
+  end
+  if #rows == 0 then
+    -- PopulateDecoCategoryMenu .empty.  Cannot happen from the filtered
+    -- category list, but the routine is reachable from a driver that sets a
+    -- flag by hand, and the cart answers rather than opening an empty menu.
+    self:say(Native.feedbackPages(self.game.data,{role="noChoice",buffers={}}))
+    return
+  end
+  self.category = category
+  self.rows = rows
+  self.mode = "items"
+  self.index = 1
+  self.scroll = 0
+end
+
+function DecorationMenu:say(pages)
+  if not pages or #pages == 0 then return end
+  self.pages = pages
+  self.pageIndex = 1
+  -- ../pokecrystal/home/menu.asm:328 MenuTextboxBackup
+  self.typer = Typer.new(self.game)
+  self.typer:start(pages[1])
+end
+
+-- MenuTextboxBackup returns to whatever menu was underneath, so a message is
+-- not a mode of its own: it sits over the list it was printed from.
+function DecorationMenu:advanceMessage()
+  self.pageIndex = self.pageIndex + 1
+  if self.pageIndex <= #self.pages then
+    if self.typer then self.typer:start(self.pages[self.pageIndex]) end
+    return
+  end
+  self.pages = nil
+  self.typer = nil
+end
+
+-- One row of the item list chosen: DoDecorationAction2.  An ornament row asks
+-- which side first, and only then applies.
+function DecorationMenu:chooseRow(decoId)
+  local attr = Native.attributes(self.game.data, decoId)
+  local action = attr and attr.action and Native.action(attr.action)
+  if not action then
+    -- DecoAction_nothing sets carry, which drops the player back to the
+    -- category list without a word.
+    self.mode = "category"
+    self:buildCategories()
+    return
+  end
+  if action.ornament then
+    local selected, question
+    local function close(side)
+      selected = side
+      if question then self.game.stack:pop();question:resume()
+      elseif side then self:applyRow(decoId, side) end
+    end
+    local function sides()
+      local rows={}
+      for _,side in ipairs(SIDES) do
+        local value=side.id
+        rows[#rows+1]={label=Strings(side.label),onSelect=function()close(value)end}
+      end
+      self.game.stack:push(Menu.new(self.game,rows,{tx=6,ty=6,tw=14,th=8,
+        noSound=true,onCancel=function()close()end}))
+    end
+    local programs=Native.pool(self.game.data)
+    local texts=programs and programs.decorationPrograms and programs.decorationPrograms.texts or {}
+    local id=texts[action.put and 'sidePut' or 'sideSetup']
+    if id then
+      question=Runner.new(self.game,self.game.overworld)
+      question:run({{'show_text',id,nil,{stay={onShown=sides}}}}, {onDone=function()
+        if selected then self:applyRow(decoId,selected) end
+      end})
+    else sides() end
+    return
+  end
+  self:applyRow(decoId, nil)
+end
+
+function DecorationMenu:applyRow(decoId, side)
+  local row=Native.attributes(self.game.data,decoId)
+  local action=row and Native.action(row.action)
+  if not action or (not action.put and not Native.owns(self.game.data,self.save,decoId)) then return end
+  local placement=Native.placement(self.game.data,self.state,decoId,side)
+  if not placement then return end
+  self.game.stringBuffers=self.game.stringBuffers or {}
+  for n,name in pairs(placement.buffers) do self.game.stringBuffers[n]=name end
+  local function commit()
+    self.changed=Native.choose(self.game.data,self.save,decoId,side) or self.changed
+  end
+  local programs=Native.pool(self.game.data)
+  local texts=programs and programs.decorationPrograms and programs.decorationPrograms.texts or {}
+  if texts[placement.role] then
+    local runner=Runner.new(self.game,self.game.overworld)
+    runner:run({{'show_text',texts[placement.role]}},{onDone=commit})
+  else commit() end
+end
+
+function DecorationMenu:update(_dt)
+  local input = self.game and self.game.input
+  if not (input and not self.done) then return end
+
+  if self.pages then
+    Typer.step(self)
+    if Typer.typing(self) then return end
+    if input:wasPressed("a") or input:wasPressed("b") then
+      self:advanceMessage()
+    end
+    return
+  end
+
+  if self.mode == "side" then
+    if input:wasPressed("up") then
+      self.sideIndex = self.sideIndex > 1 and self.sideIndex - 1 or #SIDES
+    elseif input:wasPressed("down") then
+      self.sideIndex = self.sideIndex < #SIDES and self.sideIndex + 1 or 1
+    elseif input:wasPressed("a") then
+      local pick = SIDES[self.sideIndex]
+      self.mode = "items"
+      -- .nope: CANCEL and B are the same arm, and neither prints anything.
+      self:applyRow(self.pendingDeco, pick and pick.id)
+      self.pendingDeco = nil
+    elseif input:wasPressed("b") then
+      self.mode = "items"
+      self.pendingDeco = nil
+    end
+    return
+  end
+
+  if self.mode == "items" then
+    local total = #self.rows
+    if input:wasPressed("up") then
+      self.index = self.index > 1 and self.index - 1 or total
+    elseif input:wasPressed("down") then
+      self.index = self.index < total and self.index + 1 or 1
+    elseif input:wasPressed("a") then
+      self:chooseRow(self.rows[self.index])
+    elseif input:wasPressed("b") then
+      self.mode = "category"
+      self:buildCategories()
+    end
+    self.scroll = math.max(0,
+      math.min(self.scroll, math.max(0, total - VISIBLE)))
+    if self.index - 1 < self.scroll then self.scroll = self.index - 1 end
+    if self.index > self.scroll + VISIBLE then
+      self.scroll = self.index - VISIBLE
+    end
+    return
+  end
+
+  local total = #self.categories + 1
+  if input:wasPressed("up") then
+    self.index = self.index > 1 and self.index - 1 or total
+  elseif input:wasPressed("down") then
+    self.index = self.index < total and self.index + 1 or 1
+  elseif input:wasPressed("a") then
+    local category = self.categories[self.index]
+    if category then
+      self:openCategory(category)
+    else
+      self:finish() -- DecoExitMenu: `scf`, which leaves the whole menu
+    end
+  elseif input:wasPressed("b") then
+    self:finish()
+  end
+end
+
+function DecorationMenu:drawList(x, y, w, h, labels, index, scroll)
+  Chrome.box(x, y, w, h)
+  -- GetMenuTextStartCoord: the first label sits one row inside the border and
+  -- one more down for STATICMENU_CURSOR, and rows are two apart -- the same
+  -- spacing every other Gold list menu in this port draws with.
+  for row = 1, math.min(#labels - scroll, VISIBLE) do
+    local i = row + scroll
+    local ty = y + row * 2
+    if i == index then Chrome.cursor(x + 1, ty) end
+    Chrome.print(labels[i], x + 2, ty)
+  end
+end
+
+function DecorationMenu:drawPanel()
+  if self.mode == "category" then
+    local labels = {}
+    for i, category in ipairs(self.categories) do labels[i] = category.label end
+    labels[#labels + 1] = Strings(EXIT)
+    -- menu_coords 5, 0, 19, 17: the list hugs the right edge and the room
+    -- stays visible down the left, which is the whole point of the offset.
+    self:drawList(5, 0, 15, 18, labels, self.index, 0)
+  elseif self.mode == "items" then
+    local labels = {}
+    for i, decoId in ipairs(self.rows) do labels[i] = self:rowName(decoId) end
+    self:drawList(0, 0, 20, 18, labels, self.index, self.scroll)
+  end
+
+  if self.mode == "side" then
+    local labels = {}
+    for i, side in ipairs(SIDES) do labels[i] = Strings(side.label) end
+    -- menu_coords 0, 0, 12, 7
+    self:drawList(0, 0, 13, 8, labels, self.sideIndex, 0)
+  end
+
+  if self.pages then
+    Chrome.box(0, 12, 20, 6)
+    local line = 14
+    local shown = self.typer and self.typer:lines()
+    if not shown then
+      shown = {}
+      for part in ((self.pages[self.pageIndex] or "") .. "\n"):gmatch("(.-)\n") do
+        shown[#shown + 1] = part
+      end
+    end
+    for _, part in ipairs(shown) do
+      Chrome.print(part, 1, line)
+      line = line + 2
+    end
+  end
+
+  love.graphics.setColor(1, 1, 1, 1)
+end
+
+function DecorationMenu:draw()
+  self:drawPanel()
+end
+
+return DecorationMenu

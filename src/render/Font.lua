@@ -194,6 +194,16 @@ function Font.load(data)
     end
   end
 
+  -- Legacy screen cells spell ligatures with angle brackets. Bind only
+  -- to a sequence the active font actually owns, so relocated hack glyphs
+  -- and explicitly authored bracket spellings retain their authority.
+  for token, native in pairs({["<PK>"]="PK",["<MN>"]="MN",["<DOT>"]="."}) do
+    if not seqCode(token) then
+      local code=seqCode(native)
+      if code then bucket({seq=token,code=code})end
+    end
+  end
+
   for _, entries in pairs(state.byFirstByte) do
     table.sort(entries, function(a, b) return #a.seq > #b.seq end)
   end

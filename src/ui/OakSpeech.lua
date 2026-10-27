@@ -281,7 +281,7 @@ end
 -- over a Gen2 save.  The keys are the ROM's own text labels, so textOr finds
 -- them in data.text instead of falling through.
 function OakSpeech.gen2Steps()
-  return {
+  local steps = {
     {
       id = "oak_welcome",
       kind = "say",
@@ -384,6 +384,11 @@ function OakSpeech.gen2Steps()
       kind = "shrink",
     },
   }
+  local version = GameVersion.get()
+  if version == "gold" or version == "silver" or version == "crystal" then
+    table.insert(steps, 1, { id="init_clock", kind="initclock" })
+  end
+  return steps
 end
 
 -- list helpers for intro.oak_speech.build wrappers (also on ModUI)
@@ -489,10 +494,16 @@ function OakSpeech:buildSteps()
 end
 
 function OakSpeech:enter()
-  -- MUSIC_ROUTES2 plays under the whole speech (oak_speech.asm:43-48)
-  Music.play(self.game.data, self.cfg.music or "Music_Routes2")
+  local version = GameVersion.get()
+  local clockIntro = version == "gold" or version == "silver" or version == "crystal"
+  -- Other introductions retain their original music-before-build ordering.
+  if not clockIntro then Music.play(self.game.data, self.cfg.music or "Music_Routes2") end
   self.answers = {}
   self.steps = self:buildSteps()
+  -- The retail clock comes before the professor and his music.
+  if clockIntro and not (self.steps[1] and self.steps[1].kind == "initclock") then
+    Music.play(self.game.data, self.cfg.music or "Music_Routes2")
+  end
   if Runtime.wants("intro.oak_speech.started") then
     Runtime.emit("intro.oak_speech.started", { speech = self, steps = self.steps })
   end
@@ -660,7 +671,17 @@ end
 
 function OakSpeech:runStep(step)
   local kind = step.kind or "say"
-  if kind == "say" then
+  if kind == "initclock" then
+    local screen
+    screen = require("src.ui.Screens").push(self.game, "Gen2InitClock", {
+      save=self.game.save, fades=true,
+      onDone=function()
+        if self.game.stack:top() == screen then self.game.stack:pop() end
+        Music.play(self.game.data, self.cfg.music or "Music_Routes2")
+        self:advance()
+      end,
+    })
+  elseif kind == "say" then
     self:applyPic(step)
     self:afterReveal(step, function()
       self:runCry(step)
@@ -690,8 +711,26 @@ function OakSpeech:runStep(step)
     presets = presets
       or namePresets(self.game, step.presetsWho or who,
                      step.presetsFallback or { "RED" })
+    if GameVersion.isGen2() and who == "player" and #presets > 0 then
+      local screen
+      local gender = self.game.save.player.gender
+      local pic, trueColor = self:formPic(gender)
+      screen = require("src.ui.Screens").push(self.game, "Gen2NamePick", {
+        gender = gender, presets = presets, pic = pic, picTrueColor = trueColor,
+        font = self.game.fontData, prompt = step.title, maxLength = step.maxLen or self.nameLen,
+        onDone = function(name)
+          if self.game.stack:top() ~= screen then return end
+          self.game.stack:pop()
+          self.game.save.player.name = name
+          self:recordAnswer(step, 1, name, name)
+          self:advance()
+        end,
+      })
+      return
+    end
     require("src.ui.Screens").push(self.game, "NamingScreen", {
       title = step.title or (who == "rival" and "HIS NAME?" or Strings("YOUR NAME?")),
+      kind = who == "rival" and "rival" or "player",
       presets = presets,
       maxLen = step.maxLen or self.nameLen,
       onDone = function(name)
