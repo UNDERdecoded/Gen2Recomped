@@ -186,12 +186,10 @@ end
 function closeEditor()
   local version = editorVersion
   editorMode = false
-  if EditorApp and EditorApp.unload then EditorApp.unload() end
+  require("src.core.SessionLifecycle").endEditorSession({
+    app = EditorApp, version = version,
+  })
   EditorApp = nil
-  if version then
-    require("src.import.CacheFs").unmountVersion(version)
-    require("src.core.Data"):unloadGenerated()
-  end
   editorVersion = nil
   restoreWindow()
   Importer = editorHost
@@ -1173,7 +1171,7 @@ end
 
 function love.quit()
   if editorMode and EditorApp.quit then
-    return EditorApp.quit() -- return true to abort quit
+    if EditorApp.quit() then return true end -- unsaved editor veto
   end
   walkerTick("quit")
   -- let go of the "save open in a running game" markers (SaveData.closeOpen),
@@ -1194,15 +1192,7 @@ function love.quit()
   -- background workers idle in a loop that only a "quit" command breaks, so
   -- without this the process outlived the window and the next launch re-entered
   -- the dead one instead of starting fresh (#339)
-  if package.loaded["src.core.ChipAudio"] then
-    pcall(package.loaded["src.core.ChipAudio"].shutdown)
-  end
-  if package.loaded["src.update.Check"] then
-    pcall(package.loaded["src.update.Check"].shutdown)
-  end
-  if package.loaded["src.translation.Service"] then
-    pcall(package.loaded["src.translation.Service"].shutdown)
-  end
+  require("src.core.SessionLifecycle").endProcess()
 end
 
 function love.filedropped(file)
