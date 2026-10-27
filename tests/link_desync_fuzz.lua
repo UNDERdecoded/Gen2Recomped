@@ -188,7 +188,7 @@ local function runOne(seed)
     local bt = side.bt
     if bt.result then return end
     if bt.phase ~= "menu" then side.menuFrames = 0 end
-    if bt.phase == "moveSelect" then
+    if bt.phase == "moveSelect" or bt.phase == "moves" then
       local usable = {}
       for i, mv in ipairs(bt.player.curMoves) do
         if (mv.pp or 0) > 0 and bt.player.disabledSlot ~= i then usable[#usable + 1] = i end

@@ -1207,7 +1207,7 @@ function WD.fightBattleBody(limit)
       elseif battleMenuTo(battle, 1) then
         press("a")
       end
-    elseif phase == "moveSelect" then
+    elseif phase == "moveSelect" or phase == "moves" then
       local want = bestMoveIndex(battle)
       for _ = 1, 8 do
         if battle.moveIndex == want then break end
@@ -2986,7 +2986,7 @@ function healInBattle(battle, where)
   for _ = 1, 150 do
     if not (inBattle() or replacementMenu()) then break end
     local b = G.stack:top()
-    if b and (b.phase == "menu" or b.phase == "moveSelect") then break end
+    if b and (b.phase == "menu" or b.phase == "moveSelect" or b.phase == "moves") then break end
     if not (driveLearnMenu and driveLearnMenu()) then press("a") end
     U.wait(4)
   end
