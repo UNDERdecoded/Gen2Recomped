@@ -14,6 +14,7 @@
 -- Weather.start and every other entry point is a nil check on
 -- battle.field.weather.
 
+local Gen2Read = require('src.battle.Gen2BattleRead')
 local Strings = require("src.core.Strings")
 
 local Weather = {}
@@ -296,7 +297,7 @@ local function weatherDamage(battle, battler, weather)
     return
   end
   local immune = WEATHER_IMMUNE[weather] or {}
-  for _, t in ipairs(battler.curTypes or {}) do
+  for _, t in ipairs(Gen2Read.types(battler) or {}) do
     if immune[t] then return end
   end
   battle:animNext(weather == Weather.HAIL and "inHail" or "inSandstorm",
