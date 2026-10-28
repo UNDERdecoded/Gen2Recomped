@@ -15338,6 +15338,7 @@ function RomExtractorGen2:extractFontSheets()
         end
       end
     end
+    require('src.import.Gen2FontExtras').patchExtra(self, extra)
     self:saveImage(extra, "fonts/font_extra.png")
   end))
 end
@@ -16669,6 +16670,7 @@ function RomExtractorGen2:extractRuntimeScaffolds()
   self:write("sprites", sprites)
 
   local fontFromRom = self:extractFontSheets()
+  local fontExtras = fontFromRom and require('src.import.Gen2FontExtras').extract(self) or {}
   self:extractBattleHudSheets()
   self:extractTrainerCardBadges()
   self:extractUnownPuzzle()
@@ -16688,6 +16690,11 @@ function RomExtractorGen2:extractRuntimeScaffolds()
     source = fontFromRom and self:gen2FontSource() or "Gen2 scaffold",
     image = "assets/generated/fonts/font.png",
     imageExtra = "assets/generated/fonts/font_extra.png",
+    imageBattleExtra = fontExtras.imageBattleExtra,
+    imageFrames = fontExtras.imageFrames,
+    frameBase = fontExtras.frameBase,
+    frameTiles = fontExtras.frameTiles,
+    frameCount = fontExtras.frameCount,
     mainBase = 0x80,
     extraBase = 0x60,
     glyphsPerRow = 16,

@@ -605,6 +605,10 @@ platform, renderer, and tooling are theirs; the Generation II import, script
 VM, world, and battle work are this fork's. See [LICENSE.MD](LICENSE.MD) for
 the full copyright split.
 
+The bundled "Plain Pixel Font" by Douglas Vautour (Burpy Fresh) is licensed
+under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/), independently
+of the engine code. See its [source and version notice](assets/fonts/plainpixel/README.md).
+
 ## Licence in one paragraph
 
 Two parts. **Everything inherited from Gen1Recomp, and every shared engine

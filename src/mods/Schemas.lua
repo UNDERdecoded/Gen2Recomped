@@ -74,7 +74,7 @@ function f.map(key, value)
     desc = ("map of %s -> %s"):format(key.desc, value.desc) }
 end
 
-function f.rec(fields)
+function f.rec(fields, opts)
   local names = {}
   for name in pairs(fields) do names[#names + 1] = name end
   table.sort(names)
@@ -83,7 +83,7 @@ function f.rec(fields)
     local ft = fields[name]
     parts[#parts + 1] = name .. (ft.kind == "opt" and "?" or "")
   end
-  return { kind = "rec", fields = fields,
+  return { kind = "rec", fields = fields, strict = opts and opts.strict or nil,
     desc = "{" .. table.concat(parts, ", ") .. "}" }
 end
 
@@ -175,7 +175,7 @@ checkValue = function(t, value, path, patchMode, errors, top)
         -- unknown keys are preserved unless they read as a typo of a known
         -- field.  Nested recs stay strict, that is where typos hide.
         local hint = suggest(t.fields, key)
-        if hint or not top then
+        if hint or not top or t.strict then
           errors[#errors + 1] = ("%s.%s: unknown field%s"):format(path, tostring(key),
             hint and (' (did you mean "' .. hint .. '"?)') or "")
         end
@@ -1096,13 +1096,20 @@ local function fontIsCharmap(id)
   return tostring(id):match("^charmap:.+$") ~= nil
 end
 
+-- Every TTF field is optional. Close this union branch so it cannot make
+-- arbitrary malformed font pages valid just by accepting an empty record.
+local fontTtf = f.rec({file=f.opt(f.path), size=f.opt(f.int(1)),
+  spacing=f.opt(f.num), yOffset=f.opt(f.num), bold=f.opt(f.bool),
+  tiles=f.opt(f.union{f.str, f.list(f.str)})}, {strict=true})
+
 R.font = {
   semantics = "record", target = "font",
   value = f.union{
     f.rec{ image = f.path, base = f.int(0), glyphsPerRow = f.opt(f.int(1)),
-           advance = f.opt(f.int(1)),
+           advance = f.opt(f.int(1)), inactive = f.opt(f.bool),
            charmap = f.opt(f.list(f.rec{ code = f.int(0), seq = f.str })) },
     f.rec{ seq = f.str, code = f.int(0) },
+    fontTtf,
   },
   extra = function(id, value)
     if fontIsCharmap(id) then
@@ -1112,12 +1119,16 @@ R.font = {
       if type(value.code) ~= "number" then
         return "a charmap: entry needs a code"
       end
+    elseif tostring(id) == "ttf" then
+      local ok, problem = Schemas.check({value=fontTtf}, 'font', id, value, 'register')
+      if not ok then return problem end
     elseif value.image == nil or value.base == nil then
       return "a font page needs an image and a base"
     end
   end,
   baseAt = function(base, id)
     if fontIsCharmap(id) then return nil end
+    if tostring(id) == "ttf" then return base.ttf end
     return base.pages and base.pages[id] or nil
   end,
   baseIds = function(base)
@@ -1128,6 +1139,8 @@ R.font = {
   write = function(target, registry)
     local pages = target.pages or {}
     target.pages = pages
+    -- Like authored charmap rows, the opt-in disappears on mod removal.
+    target.ttf = nil
     -- the extractor's rows have no id and stay put; the registry's own are
     -- rebuilt every merge so a re-merge replaces them instead of stacking
     local rows = {}
@@ -1140,6 +1153,8 @@ R.font = {
         if value ~= nil then
           rows[#rows + 1] = { id = id, seq = value.seq, code = value.code }
         end
+      elseif tostring(id) == "ttf" then
+        target.ttf = value
       else
         pages[id] = value
       end

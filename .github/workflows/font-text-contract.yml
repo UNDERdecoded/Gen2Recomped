@@ -1,0 +1,20 @@
+name: Font text contract
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  font:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y luajit
+      - run: |
+          luajit tests/engine/font_text_contract.lua
+          luajit tests/engine/font_text_macros.lua
+          luajit tests/engine/font_ttf_contract.lua
+          luajit tests/engine/gen2_font_selection.lua
+          luajit tests/engine/gen2_font_import.lua
+          luajit tests/engine/gen2_font_options.lua

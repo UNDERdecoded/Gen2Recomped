@@ -8,14 +8,18 @@
 -- UTF-8 chars and ligature glyphs like 'd 'l 's map to single glyphs.
 
 local Assets = require("src.render.Assets")
+local TTF = require("src.render.FontTTF")
 
 local Font = {}
+Font.TTF_BASE, Font.PLAINPIXEL, Font.PLAINPIXEL_SIZE = TTF.BASE, TTF.FILE, TTF.SIZE
 
 local GLYPH = 8
 local FALLBACK = { enabled = false, font = nil }
 
 local state
 local loadedFrom
+local resetTextCache
+local currentFrame = 1
 
 -- the two vanilla pages as the legacy def spells them, so a cache that
 -- predates the pages table still loads and a mod that registers only one
@@ -30,6 +34,11 @@ local function pagesOf(def)
     pages.extra = { image = def.imageExtra, base = def.extraBase or 0x60,
                     glyphsPerRow = def.glyphsPerRow or 16 }
   end
+  if def.imageBattleExtra then
+    pages.battleExtra = { image = def.imageBattleExtra,
+      base = def.extraBase or 0x60, glyphsPerRow = def.glyphsPerRow or 16,
+      inactive = true }
+  end
   for id, page in pairs(def.pages or {}) do
     if type(page) == "table" and page.image then pages[id] = page end
   end
@@ -37,20 +46,21 @@ local function pagesOf(def)
 end
 
 function Font.load(data)
+  if resetTextCache then resetTextCache() end
   loadedFrom = data
   -- A CACHE MAY CARRY NO FONT AT ALL, and that has to degrade rather than
   -- stop the boot: `data.font` is nil for any dataset whose extractor does
   -- not write one, and reading `def.source` off nil took the whole game down
   -- before the title screen -- from a module the loader itself calls optional.
   local def = data.font or {}
-  state = { def = def, pages = {}, order = {}, byFirstByte = {} }
+  state = { def = def, pages = {}, order = {}, byFirstByte = {}, ttf = TTF.open(def.ttf) }
   FALLBACK.enabled = false
   FALLBACK.font = nil
 
   -- Gen2 scaffold fonts are placeholder assets, not real glyph atlases.
   -- Use the built-in raster font so dialogue remains readable while
   -- extraction is incomplete.
-  if type(def.source) == "string" and def.source:find("Gen2 scaffold", 1, true) then
+  if not state.ttf and type(def.source) == "string" and def.source:find("Gen2 scaffold", 1, true) then
     FALLBACK.enabled = true
     FALLBACK.font = love.graphics.newFont(GLYPH)
   end
@@ -91,7 +101,7 @@ function Font.load(data)
     local ok, img = pcall(Assets.image, page.image)
     if ok then
       local iw, ih = img:getDimensions()
-      local minHeight = id == "extra" and 16 or 64
+      local minHeight = (id == "extra" or id == "battleExtra") and 16 or 64
       if iw < 128 or ih < minHeight or iw % cw ~= 0 or ih % ch ~= 0 then
         ok = false
       end
@@ -134,11 +144,33 @@ function Font.load(data)
         state.faces[faceName] = entry
       else
         state.pages[id] = entry
-        state.order[#state.order + 1] = entry
+        if not page.inactive then state.order[#state.order + 1] = entry end
       end
     end
   end
-  if #state.order == 0 then
+  -- GSC LoadFrame replaces six tiles after either extra font is loaded.
+  -- This narrow sheet is separate from GBA's nine-tile box frames below.
+  state.frameBase, state.frameTiles = def.frameBase or 0x79, def.frameTiles or 6
+  if def.imageFrames then
+    local ok, img = pcall(Assets.image, def.imageFrames)
+    if ok and img then
+      local iw, ih = img:getDimensions()
+      if iw >= state.frameTiles * GLYPH and ih >= GLYPH
+          and ih % GLYPH == 0 then
+        state.framePages = {}
+        for row = 0, ih / GLYPH - 1 do
+          local quads = {}
+          for tile = 0, state.frameTiles - 1 do
+            quads[tile] = love.graphics.newQuad(tile * GLYPH, row * GLYPH,
+              GLYPH, GLYPH, iw, ih)
+          end
+          state.framePages[row + 1] = { image = img, quads = quads,
+            base = state.frameBase, advance = GLYPH }
+        end
+      end
+    end
+  end
+  if #state.order == 0 and not state.ttf then
     FALLBACK.enabled = true
     FALLBACK.font = love.graphics.newFont(GLYPH)
   end
@@ -202,7 +234,7 @@ function Font.load(data)
   -- which is one page and draws its frame rather than tiling it -- is not
   -- half-loaded, so demanding both would have dropped a font that is entirely
   -- there onto LOVE's built-in raster.
-  if def.image and def.imageExtra
+  if not state.ttf and def.image and def.imageExtra
      and not (state.pages.main and state.pages.extra) then
     FALLBACK.enabled = true
     FALLBACK.font = love.graphics.newFont(GLYPH)
@@ -213,6 +245,10 @@ function Font.load(data)
   for key, code in pairs(def.border or {}) do Font.BORDER[key] = code end
 end
 
+function Font.ttfActive()
+  return state ~= nil and state.ttf ~= nil
+end
+
 -- re-run load against the data it last saw, so hot reload picks up an
 -- edited sheet or a newly merged page
 function Font.invalidate()
@@ -220,6 +256,27 @@ function Font.invalidate()
 end
 
 Assets.register(Font.invalidate)
+
+-- Gen1's public GSC font controls. A caller can restore the prior battle
+-- sheet after its own draw; loading a new dataset resets that sheet choice.
+function Font.useBattleExtra(on)
+  if not state then return false end
+  local previous = state.battleExtra or false
+  state.battleExtra = on and true or false
+  return previous
+end
+
+function Font.battleExtraActive()
+  return state ~= nil and state.battleExtra == true
+end
+
+-- applyOptions can precede Font.load. Keep the selection across a reload;
+-- a missing/out-of-range row still falls through to the ordinary extra page.
+function Font.setFrame(index)
+  currentFrame = math.floor(tonumber(index) or 1)
+end
+
+function Font.frameIndex() return currentFrame end
 
 -- the page a glyph code draws from, or nil when nothing covers it
 -- THE FACE IN FORCE.
@@ -258,6 +315,14 @@ local function pageFor(code)
   if not state then return nil end
   local face = faceStack[#faceStack]
   if face and face.quads[code - face.base] then return face end
+  local frames = state.framePages
+  if frames and code >= state.frameBase and code < state.frameBase + state.frameTiles then
+    if frames[currentFrame] then return frames[currentFrame] end
+  end
+  local battle = state.battleExtra and state.pages.battleExtra
+  -- LoadFontsBattleExtra copies 25 tiles ($60-$78), then restores the
+  -- frame at $79-$7e. The blank at $7f must not turn into a battle glyph.
+  if battle and code >= battle.base and code < battle.base + 25 then return battle end
   for _, page in ipairs(state.order) do
     if code >= page.base then return page end
   end
@@ -279,40 +344,64 @@ local SPACE = 0x7F
 --
 -- Safe before Font.load: with no charmap it falls back to UTF-8 lead-byte
 -- boundaries, which is all a headless paginate needs.
+-- Gen1's # text command writes POKé rather than one font tile. Keep the
+-- original byte range on each expanded glyph so a typewriter/paginator can
+-- consume the command without cutting its source bytes apart. An authored
+-- charmap beginning with # retains authority over this fallback command.
+local MACRO_TEXT = { ["#"] = "POK\xc3\xa9" }
 function Font.split(text)
   local spans = {}
+  local ttf = state and state.ttf
   local i, n = 1, #text
   while i <= n do
-    local span
-    local candidates = state and state.byFirstByte[text:byte(i)]
-    if candidates then
-      for _, entry in ipairs(candidates) do
-        local len = #entry.seq
-        if text:sub(i, i + len - 1) == entry.seq then
-          span = { from = i, to = i + len - 1, code = entry.code }
-          break
+    local macro = not FALLBACK.enabled
+      and not (state and state.byFirstByte[text:byte(i)])
+      and MACRO_TEXT[text:sub(i,i)]
+    if macro then
+      for _, sub in ipairs(Font.split(macro)) do
+        spans[#spans+1] = {from=i,to=i,code=sub.code}
+      end
+      i = i+1
+    else
+      local span
+      local candidates = state and state.byFirstByte[text:byte(i)]
+      if candidates then
+        for _, entry in ipairs(candidates) do
+          local len = #entry.seq
+          if text:sub(i, i + len - 1) == entry.seq then
+            if ttf and not ttf.tiles[entry.seq] then
+              local cp, last = TTF.decode(entry.seq, 1)
+              if cp and last == len then break end
+            end
+            span = { from = i, to = i + len - 1, code = entry.code }
+            break
+          end
         end
       end
-    end
-    if not span then
-      -- Nothing matched.  Still keep a UTF-8 sequence whole, so a cut never
-      -- lands mid-character even for a glyph we cannot draw.
-      local last = i
-      if text:byte(i) >= 0xC0 then
-        local k = i + 1
-        while k <= n do
-          local b = text:byte(k)
-          if b < 0x80 or b > 0xBF then break end
-          last, k = k, k + 1
+      if not span and ttf then
+        local cp, last = TTF.decode(text, i)
+        if cp and cp >= 32 then span = {from=i, to=last, code=TTF.BASE + cp} end
+      end
+      if not span then
+        -- Nothing matched. Still keep a UTF-8 sequence whole, so a cut never
+        -- lands mid-character even for a glyph we cannot draw.
+        local last = i
+        if text:byte(i) >= 0xC0 then
+          local k = i + 1
+          while k <= n do
+            local b = text:byte(k)
+            if b < 0x80 or b > 0xBF then break end
+            last, k = k, k + 1
+          end
+        end
+        span = { from = i, to = last }
+        if text:byte(i)>=128 then
+          span.code=require("src.translation.UnicodeFont").code(text:sub(i,last))
         end
       end
-      span = { from = i, to = last }
-      if text:byte(i)>=128 then
-        span.code=require("src.translation.UnicodeFont").code(text:sub(i,last))
-      end
+      spans[#spans + 1] = span
+      i = span.to + 1
     end
-    spans[#spans + 1] = span
-    i = span.to + 1
   end
   return spans
 end
@@ -332,7 +421,7 @@ end
 -- Convert a text string into a list of glyph codes.  Unknown characters
 -- render as space (and are reported once).
 local reported = {}
-function Font.encode(text)
+local function encodeUncached(text)
   if FALLBACK.enabled then
     local codes = {}
     local i, n = 1, #text
@@ -370,6 +459,48 @@ function Font.encode(text)
     codes[#codes + 1] = code
   end
   return codes
+end
+
+-- Match Gen1's public text contract without sharing mutable typewriter
+-- arrays. Only glyph selection is cached: advances still use the current
+-- native face/widths, styles and translation font on every measurement.
+local CACHE_MAX = 4096
+local encodeCache, encodeCount = {}, 0
+local stockSplit = Font.split
+local unicodePath
+Font.revision = 0
+resetTextCache = function()
+  encodeCache, encodeCount = {}, 0
+  Font.revision = Font.revision + 1
+end
+local function cachedCodes(text)
+  -- UnicodeFont can change without Font.load (translation activation or
+  -- removal); previously unmapped glyphs must not retain their old codes.
+  local unicode = package.loaded['src.translation.UnicodeFont']
+  local path = unicode and unicode.path
+  if path ~= unicodePath then
+    unicodePath = path
+    resetTextCache()
+  end
+  -- A mod replacing the splitter owns selection, including its side effects.
+  if Font.split ~= stockSplit then return encodeUncached(text) end
+  local codes = encodeCache[text]
+  if codes then return codes end
+  codes = encodeUncached(text)
+  if encodeCount >= CACHE_MAX then encodeCache, encodeCount = {}, 0 end
+  encodeCache[text], encodeCount = codes, encodeCount + 1
+  return codes
+end
+
+function Font.encode(text)
+  local source, copy = cachedCodes(text), {}
+  for i = 1, #source do copy[i] = source[i] end
+  return copy
+end
+local stockEncode = Font.encode
+
+function Font.glyphCount(text)
+  return #cachedCodes(text)
 end
 
 -- The glyph atlas is black pixels on a transparent field, so setColor can
@@ -549,6 +680,9 @@ end
 
 -- the unstyled blit; Font.drawCode below is this plus the active style
 local function blitCode(code, x, y)
+  if state and state.ttf and code and code >= TTF.BASE then
+    return TTF.draw(state.ttf, code, x, y)
+  end
   if FALLBACK.enabled then
     love.graphics.setFont(FALLBACK.font)
     local ch
@@ -612,7 +746,7 @@ function Font.drawCode(code, x, y)
   -- Font.beginTwoTone.  Only a pre-tinted page has two tones to tell apart,
   -- so anything else falls through to the flat tint it always took.
   local shadow = (not borderPaint) and style and style.shadow
-  local page = shadow and pageFor(code)
+  local page = shadow and not (state and state.ttf and code and code >= TTF.BASE) and pageFor(code)
   if shadow and page and page.preTinted then
     local pr, pg, pb, pa = love.graphics.getColor()
     if Font.beginTwoTone(paint, shadow) then
@@ -683,6 +817,9 @@ end
 -- TextBox's own wrapping via spansFitting -- so one answer keeps the layout
 -- and the drawing agreeing.  A page with no width table is unchanged.
 function Font.advanceOf(code)
+  if state and state.ttf and code and code >= TTF.BASE then
+    return TTF.advance(state.ttf, code)
+  end
   if FALLBACK.enabled and code and code>=32 and code<=126
       and require("src.translation.UnicodeFont").active() then
     return require("src.translation.UnicodeFont").width(
@@ -717,7 +854,8 @@ Font.localize = localize
 function Font.width(text)
   text = localize(text)
   local w = 0
-  for _, code in ipairs(Font.encode(text)) do
+  local codes = Font.encode == stockEncode and cachedCodes(text) or Font.encode(text)
+  for _, code in ipairs(codes) do
     w = w + Font.advanceOf(code)
   end
   return w
@@ -735,9 +873,36 @@ function Font.fit(text, pixels)
   local spans = Font.split(text or "")
   local n = Font.spansFitting(spans, pixels)
   if n >= #spans then return text or "" end
+  -- The ellipsis is another glyph, not necessarily as wide as the last
+  -- retained character. Budget its actual advance for TTF and GBA faces.
+  local dotWidth = Font.width(".")
+  if dotWidth > pixels then return "" end
+  n = Font.spansFitting(spans, pixels - dotWidth)
   local out = {}
-  for i = 1, math.max(0, n - 1) do
-    out[#out + 1] = (text or ""):sub(spans[i].from, spans[i].to)
+  local i,last = 1,n
+  while i<=last do
+    local span=spans[i]
+    local raw=(text or ""):sub(span.from,span.to)
+    local macro=Font.split==stockSplit and not FALLBACK.enabled
+      and not(state and state.byFirstByte[raw:byte(1)]) and MACRO_TEXT[raw]
+    if macro then
+      local after=i+1
+      while spans[after] and spans[after].from==span.from
+          and spans[after].to==span.to do after=after+1 end
+      if after-1<=last then
+        -- A complete command stays intact, including its glyph boundaries.
+        out[#out+1]=raw
+      else
+        local parts=Font.split(macro)
+        for part=1,last-i+1 do
+          out[#out+1]=macro:sub(parts[part].from,parts[part].to)
+        end
+      end
+      i=after
+    else
+      out[#out+1]=raw
+      i=i+1
+    end
   end
   return table.concat(out) .. "."
 end
@@ -749,9 +914,9 @@ function Font.draw(text, x, y)
   if FALLBACK.enabled and not require("src.translation.UnicodeFont").active() then
     love.graphics.setFont(FALLBACK.font)
     love.graphics.print(text, x, y)
-    return #text * GLYPH
+    return #cachedCodes(text) * GLYPH
   end
-  local codes = Font.encode(text)
+  local codes = Font.encode == stockEncode and cachedCodes(text) or Font.encode(text)
   local pen = x
   for _, code in ipairs(codes) do
     Font.drawCode(code, pen, y)

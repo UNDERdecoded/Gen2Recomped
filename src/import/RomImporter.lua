@@ -1323,6 +1323,9 @@ local function markerFor(version)
   if version == "red" or version == "blue" or version == "yellow" then
     revision = "gen1-trade-art-v1:"
   end
+  if GameVersion.generation(version)==2 then
+    revision=revision..'gen2-font-extras-v'..require('src.import.Gen2FontExtras').REVISION..':'
+  end
   return CACHE_FORMAT .. revision .. GameVersion.info(version).sha1
 end
 
