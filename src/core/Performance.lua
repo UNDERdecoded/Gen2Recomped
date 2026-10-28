@@ -41,6 +41,8 @@
 -- tests, the same way src/core/GameVersion.lua does.
 
 local Performance = {}
+-- Bounded Metal branch specialization; original programs own every fallback.
+Performance.shaderBranchSpecialization = true
 
 -- Option-row order (auto first, then most to least capable).
 Performance.TIERS = { "auto", "high", "balanced", "low" }
