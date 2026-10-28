@@ -34,7 +34,6 @@
 --                               party follower
 --   src.ui.gen2.Chrome          no shared window-chrome module
 --   src.ui.gen2.SaveMenu        the save flow is part of StartMenu here
---   src.ui.gen2.BattleAnimView  Gen2AnimPlayer is a player, not a view
 --   src.battle.UIVisibility     no equivalent
 --   src.ui.PartyPanel           no equivalent
 --   src.battle.gen2.Battle      AMBIGUOUS, which is the same as absent here.
@@ -62,11 +61,14 @@ ModCompat.ALIASES = {
   ["src.world.gen2.Player"] = "src.world.Player",
   ["src.world.gen2.World"] = "src.world.OverworldController",
   ["src.world.gen2.Map"] = "src.world.Map",
+  ["src.ui.gen2.BattleAnimView"] = "src.battle.Gen2AnimView",
   ["src.world.gen2.Permissions"] = "src.world.Collision",
   ["src.world.gen2.Palettes"] = "src.render.PaletteFX",
 
   -- save-side data
   ["src.core.gen2.Boxes"] = "src.pokemon.Boxes",
+  ["src.core.gen2.Clock"] = "src.core.Gen2Clock",
+  ["src.ui.gen2.InitClock"] = "src.ui.Gen2InitClock",
   ["src.core.gen2.BugContest"] = "src.world.BugContest",
   ["src.core.gen2.ItemEffects"] = "src.inventory.ItemEffects",
   ["src.core.gen2.Save"] = "src.core.SaveData",
@@ -97,7 +99,8 @@ ModCompat.ALIASES = {
 
   -- the Gold port splits its Game class per generation; this one does not
   ["src.core.Game2"] = "src.core.Game",
-  ["src.render.GbcPalette"] = "src.render.GBCFX",
+  -- Indexed image palettes and LCD screen effects are different contracts.
+  ["src.render.GbcPalette"] = "src.render.Gen2PaletteDraw",
 }
 
 local seen = {}
