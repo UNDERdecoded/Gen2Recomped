@@ -261,7 +261,9 @@ function Gen4PartyMenu:drawAt(key, x, y)
   return true
 end
 
-function Gen4PartyMenu:party() return self.game.save.party or {} end
+function Gen4PartyMenu:party()
+  return (self.battle and self.battle.playerParty) or self.game.save.party or {}
+end
 
 -- Slots 1..#party, then CANCEL.
 function Gen4PartyMenu:count() return #self:party() + (self.select and 2 or 1) end

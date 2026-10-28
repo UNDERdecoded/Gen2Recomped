@@ -438,7 +438,7 @@ function PartyMenu.new(game, opts)
   self.tmhm = opts.tmhm
   self.forceSwitch = opts.forceSwitch
   self.battle = opts.battle
-  self.party = opts.party -- link battles pass their clamped copies
+  self.party = opts.party or (opts.battle and opts.battle.playerParty) -- link copies or trainer selection
   self.swapFrom = nil
   self.submenu = nil
   self.subIndex = 1
