@@ -12,6 +12,7 @@ local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
 local PixelCanvas = require("src.render.PixelCanvas")
 local Runtime = require("src.mods.Runtime")
+local Gen2Presentation = require("src.render.Gen2Presentation")
 
 -- RESOLVED ONCE, NOT EVERY FRAME.  These three were `require`d from inside
 -- beginFrame and endFrame -- three string hashes into package.loaded on every
@@ -109,6 +110,7 @@ local function displayMetrics()
 end
 
 function Renderer:init()
+  Gen2Presentation.reset()
   -- 160x144 real pixels, never DPI-scaled: see src/render/PixelCanvas.lua
   -- (#208).  Every canvas below is sized in framebuffer pixels for the same
   -- reason -- worldViewSize() already works in drawable pixels.
@@ -320,6 +322,8 @@ end
 
 -- transparent: the world pass shows through (UI pass draws overlays only)
 function Renderer:beginFrame(transparent)
+  self.gen2FrameManaged, self.gen2FrameGame, self.gen2FrameZones = nil, nil, nil
+  self.gen2WindowDraw = nil
   -- a frame that ends early -- a state that returns before endFrame, an error
   -- caught upstream -- must not leak a queued native-resolution draw into the
   -- next frame's composite
@@ -715,6 +719,10 @@ function Renderer:blitCanvas(canvas, sx, sy, zoneList, zoneSx, zoneSy,
   love.graphics.setShader()
 end
 
+function Renderer:blitZones(canvas,zones,w,h)
+  return Gen2Presentation.blit(canvas,zones,w,h)
+end
+
 -- THE BARS, FILLED WITH THE EDGE THEY FRAME.
 --
 -- Asked for directly: "for all gen3 menus take the outside border 1px and
@@ -892,7 +900,7 @@ function Renderer:endFrame(zones, worldZones)
   -- stacked Game Boy screens, or driving one onto a second physical display.
   -- The mod returns true to take over the whole window; anything else (or no
   -- mod wrapping the hook) falls through to the normal composite below.
-  if Runtime.wantsHook("render.compose") then
+  if not self.gen2FrameManaged and Runtime.wantsHook("render.compose") then
     local ctx = {
       renderer = self,
       worldCanvas = self.worldCanvas, uiCanvas = self.canvas,
@@ -949,6 +957,9 @@ function Renderer:endFrame(zones, worldZones)
                             and self.battleWipe.screenDraw
   local needPresent = GBCFX.active() or Pipelines.wantsPresent()
                       or battleNeedsSource
+                      or (self.gen2FrameManaged and (self.gen2WindowDraw
+                        or (type(self.gen2FrameZones)=="table" and self.gen2FrameZones[1])
+                        or Runtime.wantsHook("render.compose")))
   local present = nil
   if needPresent then
     if not self.presentCanvas or self.presentCanvas:getWidth() ~= ww
@@ -1389,6 +1400,10 @@ function Renderer:endFrame(zones, worldZones)
   -- over the finished composite rather than under the UI blit.  On hardware
   -- it is the tilemap being overwritten -- there is nothing it does not cover.
   local battleSource = nil
+  if self.gen2FrameManaged and self.gen2WindowDraw then
+    self.gen2WindowDraw({width=ww,height=wh,gameX=ox,gameY=oy,gameWidth=vpw,gameHeight=vph,scale=Sp,dpiX=dpiX,dpiY=dpiY})
+  end
+
   if battleNeedsSource and present then
     -- Snapshot the untouched finished frame into a second screen-sized canvas.
     -- `present` is the current render target here, so sampling it directly in
@@ -1432,21 +1447,25 @@ function Renderer:endFrame(zones, worldZones)
 
   if present then
     love.graphics.setCanvas()
-    -- Post-process pipelines run over the finished composite -- world, UI
-    -- and all -- and before GBC FX, so a blur or colour grade is what the
-    -- LCD grid is then drawn over rather than something that smears the
-    -- grid itself.  Each pass hands back a canvas; with none registered
-    -- this returns `present` unchanged and the frame is byte-identical.
-    local composed = Pipelines.present(present,
-      { width = ww, height = wh, scale = Sp, dpi = dpiY, dpiX = dpiX, dpiY = dpiY }) or present
-    if GBCFX.active() then
-      -- shader grid/shadow math is in framebuffer pixels
-      GBCFX.present(composed, Sp)
-    else
-      -- the present canvas only existed for the post-process, so put the
-      -- result on the screen at the same 1:1 unit mapping it was built at
-      love.graphics.setColor(1, 1, 1, 1)
-      love.graphics.draw(composed, 0, 0)
+    local compositionHandled=false
+    if self.gen2FrameManaged and Runtime.wantsHook("render.compose") then
+      local ctx={renderer=self,game=self.gen2FrameGame,worldCanvas=present,uiCanvas=present,sceneCanvas=present,
+        worldActive=self.worldActive and true or false,generation=2,zones=self.gen2FrameZones,worldZones=nil,
+        ww=ww,wh=wh,pw=pw,ph=ph,ox=ox,oy=oy,vpw=vpw,vph=vph,uiw=uiw,uih=uih,
+        scale=Sp,Sx=Sx,Sy=Sy,dpiX=dpiX,dpiY=dpiY,secondScreen=require("src.render.SecondScreen")}
+      love.graphics.push("all")
+      local ok,value=xpcall(function()
+        return Runtime.call("render.compose",function()return false end,self,ctx)==true
+      end,debug.traceback)
+      love.graphics.pop()
+      if not ok then error(value,0)end
+      compositionHandled=value
+    end
+    if not compositionHandled then
+      local source=self.gen2FrameManaged and Gen2Presentation.apply(present,self.gen2FrameZones,ww,wh)or present
+      local composed=Pipelines.present(source,{width=ww,height=wh,scale=Sp,dpi=dpiY,dpiX=dpiX,dpiY=dpiY})or source
+      if GBCFX.active()then GBCFX.present(composed,Sp)
+      else love.graphics.setColor(1,1,1,1);love.graphics.draw(composed,0,0)end
     end
   end
   self.worldActive = false

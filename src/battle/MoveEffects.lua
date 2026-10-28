@@ -360,6 +360,7 @@ MoveEffects.primary = {
       return { Strings("Too weak to make\na SUBSTITUTE!") }
     end
     user.mon.hp = user.mon.hp - cost
+    if GameVersion.isGen2() then require('src.battle.Gen2PicturePresentation').substitute(battle,user) end
     user.substituteHP = cost + 1
     -- _SubstituteText
     return { Strings("It created a\nSUBSTITUTE!") }
@@ -386,7 +387,9 @@ MoveEffects.primary = {
     -- mosaic and HandleSpeciesGfxDataChange performs it at callback 46.
     -- Gen3MoveAnim owns that visual midpoint, so changing the FireRed sprite
     -- here would expose the copied species for the first 45 callbacks.
-    if GameVersion.get() ~= "firered" then
+    if GameVersion.isGen2() then
+      require('src.battle.Gen2PicturePresentation').transform(battle,user,target)
+    elseif GameVersion.get() ~= "firered" then
       user.sprite = battle:speciesSprite(target.mon.species, user.isPlayer)
                     or user.sprite
       -- Black / White draw a live animation over `sprite`, so their picture
