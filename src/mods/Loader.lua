@@ -1309,12 +1309,23 @@ local function stampAudioOwners(data, name, registry)
   owners[key] = map
 end
 
+-- Release only already-loaded compatibility resources, after mod wrappers
+-- unwind. These scopes own their buffers and never borrow native sheets.
+local function retireCompatibilityAtlases()
+  for _, name in ipairs({"src.core.game3.warm", "src.core.game3.asset_stream",
+      "src.core.game3.tileset_native", "src.core.game3.tileset_anim"}) do
+    local module = package.loaded[name]
+    if type(module) == "table" and type(module.release) == "function" then module.release() end
+  end
+end
+
 function Loader:load(data)
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
   -- wraps and flags the previous load put on engine tables come off first.
   ModSeams.unwindAll()
+  retireCompatibilityAtlases()
   self.baseData = data
   -- every registry folds against the pristine view of its Data target;
   -- resolution is lazy so optional namespaces may appear later
@@ -1654,6 +1665,7 @@ end
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
   local undone = select(1, ModSeams.unwindAll())
+  retireCompatibilityAtlases()
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
     Runtime.currentMod = nil
