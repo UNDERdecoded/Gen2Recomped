@@ -38,6 +38,7 @@ local WideBattle = require("src.battle.WideBattle")
 local Gen3Battle = require("src.battle.Gen3Battle")
 local Gen4Battle = require("src.battle.Gen4Battle")
 local GameVersion = require("src.core.GameVersion")
+local Gen2Vanish = require('src.battle.Gen2VanishPresentation')
 
 -- FORWARD-DECLARED, because they are defined next to the other doubles
 -- helpers two thousand lines down but read from `stepHPDrain` up here.  A
@@ -639,7 +640,16 @@ local imageMeta = setmetatable({}, WEAK_KEYS)
 local function getImage(path, pal, trueColor, crop)
   if not path then return nil end
   if trueColor then pal = nil end
+  local sourcePal, displayKey = pal
+  if GameVersion.isGen2() and not trueColor and pal then
+    local display = require("src.render.PaletteFX")
+    displayKey = display.displayKey()
+    if not pal.displayResolved then
+      pal = {name=pal.name, colors=display.displayColors(pal.colors), displayResolved=true}
+    end
+  end
   local key = pal and (path .. "#" .. pal.name) or path
+  if displayKey then key = key .. "#display:" .. displayKey end
   if crop then key = key .. "@" .. crop.index end
   if not imageCache[key] then
     local img, pad, padL = nil, 0, 0
@@ -693,7 +703,7 @@ local function getImage(path, pal, trueColor, crop)
     -- crop rides along so fadeImage / grayImage / blackImage re-bake the
     -- SAME cell of the strip, not the whole strip
     imageMeta[img] = { path = path, pal = pal, trueColor = trueColor or nil,
-                       crop = crop }
+                       crop = crop, sourcePal = sourcePal, displayKey = displayKey }
   end
   return imageCache[key]
 end
@@ -820,7 +830,7 @@ local function fadeImage(img, bgp)
   local name = (meta.pal and meta.pal.name or "GB")
                .. "&" .. bgp[0] .. bgp[1] .. bgp[2] .. bgp[3]
   return getImage(meta.path,
-                  { name = name, colors = PaletteFX.permute(base, bgp) },
+                  { name = name, colors = PaletteFX.permute(base, bgp), displayResolved=GameVersion.isGen2() },
                   nil, meta.crop)
 end
 
@@ -848,8 +858,12 @@ local function blackImage(data, img)
   local pack = PaletteFX.pack(data)
   local colors = pack and pack.palettes and pack.palettes.BLACK
   if not colors then return img end
+  if GameVersion.isGen2() then
+    local ramp = PaletteFX.displayColors(colors)
+    colors = {ramp[4],ramp[4],ramp[4],ramp[4]}
+  end
   local name = PaletteFX.usesGbcPack() and "redpp:BLACK" or "BLACK"
-  return getImage(meta.path, { name = name, colors = colors }, nil, meta.crop)
+  return getImage(meta.path, { name = name, colors = colors, displayResolved=GameVersion.isGen2() }, nil, meta.crop)
     or img
 end
 
@@ -862,8 +876,21 @@ local function imagePathOf(img)
 end
 
 -- the image a battler pic actually draws with this frame
+-- The native image cache keeps static display bakes separate from transient
+-- hardware BGP. Resolve that byte at the actual battle picture draw boundary.
+-- At most 256 immutable index maps; no per-picture register-map allocation.
+local gen2PicRegisterMaps={}
 function BattleState:picImage(img)
   local PaletteFX = require("src.render.PaletteFX")
+  if GameVersion.isGen2() then
+    local meta = imageMeta[img]
+    -- Battlers retain image references across a live option change. Dropping
+    -- imageCache alone does not replace those pictures or animation cells.
+    if meta and not meta.trueColor and meta.sourcePal
+        and meta.displayKey ~= PaletteFX.displayKey() then
+      img = getImage(meta.path, meta.sourcePal, nil, meta.crop) or img
+    end
+  end
   -- #207: OG / OG INV / CLASSIC are forced-mono display modes.  A battle that
   -- exposes no SGB zones (sgbPalettes() == nil) has a whole-screen GRAYS zone
   -- invented by PaletteFX.ensureZones, so Renderer:endFrame re-thresholds the
@@ -878,7 +905,7 @@ function BattleState:picImage(img)
   -- set mirrors PaletteFX.ensureZones / effectiveColors -- keep them in sync.
   local mono = PaletteFX.mode == "og" or PaletteFX.mode == "og_inv"
                or PaletteFX.mode == "classic"
-  if self.grayPics or mono then return grayImage(img) end
+  if self.grayPics or (mono and not GameVersion.isGen2()) then return grayImage(img) end
   -- SET_PAL_BATTLE_BLACK covers every battle palette slot, so the pics go
   -- dark with the HP bars while the blackout text is up (#292).  The intro
   -- silhouette slide (SlidePlayerAndEnemySilhouettesOnScreen) darkens the
@@ -891,7 +918,20 @@ function BattleState:picImage(img)
   if self.blackedOut or (self.introSlide or 0) > 0 then
     return blackImage(self.data, img)
   end
-  return fadeImage(img, self:activeBgp())
+  img=fadeImage(img,self:activeBgp())
+  if GameVersion.isGen2()then
+    local byte=PaletteFX.bgp()
+    if byte then
+      local map=gen2PicRegisterMaps[byte]
+      if not map then
+        local shades=PaletteFX.bgpShades(byte)
+        map={[0]=shades[1],shades[2],shades[3],shades[4]}
+        gen2PicRegisterMaps[byte]=map
+      end
+      img=fadeImage(img,map)
+    end
+  end
+  return img
 end
 
 -- Gen 1 trainer Pokémon have fixed DVs (engine/battle/core.asm);
@@ -1215,10 +1255,14 @@ local function newBattle(game)
   -- rather than Gen 1's subanimation/frame-block tables), so they get
   -- their own player.
   if game.data.battle_anims then
-    if game.data.battle_anims.gen2 then
+    if require('src.battle.Gen2AnimData').isGen2(game.data.battle_anims) then
       local ok, Gen2AnimPlayer = pcall(require, "src.battle.Gen2AnimPlayer")
       if ok then
         self.animPlayer = Gen2AnimPlayer.new(game.data)
+        self.animPlayer.battle = self.battle
+        self.animPlayer.screen = self
+        self.animView = self.animPlayer.view
+        self.anims = self.animPlayer.anims
       end
     else
       local ok, AnimPlayer = pcall(require, "src.battle.AnimPlayer")
@@ -2299,7 +2343,7 @@ end
 -- `isPlayer` follows the poof's convention (Gen2AnimPlayer flips it): false
 -- for the player's own mon, true for the foe's.
 function BattleState:shinyAnim(battler, isPlayer)
-  if not (self.data and self.data.battle_anims and self.data.battle_anims.gen2) then
+  if not (self.data and require('src.battle.Gen2AnimData').isGen2(self.data.battle_anims)) then
     return false
   end
   local mon = battler and battler.mon
@@ -2312,7 +2356,7 @@ end
 -- before the queue starts running, where animNext's insert point does not
 -- apply.
 function BattleState:shinyAnimAppend(battler, isPlayer)
-  if not (self.data and self.data.battle_anims and self.data.battle_anims.gen2) then
+  if not (self.data and require('src.battle.Gen2AnimData').isGen2(self.data.battle_anims)) then
     return false
   end
   local mon = battler and battler.mon
@@ -2695,6 +2739,10 @@ function BattleState:updateQueue()
   end
   if self.animPlaying then
     self.animPlayer:update()
+    if GameVersion.isGen2() then
+      require('src.battle.Gen2PicturePresentation').sync(self)
+      Gen2Vanish.sync(self)
+    end
     if self.animPlayer.pollEffects and self.applyAnimEffect then
       for _, ev in ipairs(self.animPlayer:pollEffects()) do
         self:applyAnimEffect(ev)
@@ -2717,16 +2765,27 @@ function BattleState:updateQueue()
       -- again.  Dig/Fly's charge hide and a genuinely invulnerable battler
       -- are the two that must survive, same as in resetPicFx.
       self:restoreHiddenPics()
+      if GameVersion.isGen2() then
+        if self:startPendingAfterAnim() then return true end
+        if not self.animPlayer.keepSprites then self.anim = nil end
+      end
       -- the target's hit blink + damage sound follow the animation
       -- (pokered plays them after PlayMoveAnimation returns)
       if self.pendingHit then
-        self:applyHitFx(self.pendingHit)
+        if not (GameVersion.isGen2() and self.afterAnimPlayed) then
+          self:applyHitFx(self.pendingHit)
+        end
         self.pendingHit = nil
       end
+      if GameVersion.isGen2() then self.afterAnimPlayed = nil end
     end
     return true
   end
   if not self.current then
+    if GameVersion.isGen2() then
+      require('src.battle.Gen2PicturePresentation').sync(self)
+      Gen2Vanish.sync(self)
+    end
     local item = table.remove(self.queue, 1)
     if not item then return false end
     if item.fn then
@@ -2802,7 +2861,10 @@ function BattleState:updateQueue()
       -- ball/send-out anims ignore the OPTIONS toggle: PlayMoveAnimation
       -- short-circuits to TossBallAnimation before its wOptions check
       -- (engine/battle/animations.asm:415)
-      if item.anim and (self:animationsOn() or BALL_ANIMS[item.anim]) then
+      local gen2Ids=GameVersion.isGen2() and self.animPlayer and self.animPlayer.anims
+        and self.animPlayer.anims.ids
+      local gen2Misc=gen2Ids and gen2Ids[item.anim] and not mdef
+      if item.anim and (self:animationsOn() or BALL_ANIMS[item.anim] or gen2Misc) then
         -- HOENN'S OWN ANIMATION, when the move has one.  It does not take the
         -- animPlaying path: that one belongs to the Game Boy players, which
         -- carry their own per-row sounds, and this one does not -- so the
@@ -2843,9 +2905,7 @@ function BattleState:updateQueue()
           self.waitFrames = math.max(self.waitFrames or 0,
                                      self.gen3Anim.total or 0)
         elseif self.animPlayer then
-          local ok, started = pcall(self.animPlayer.start, self.animPlayer,
-                           item.anim, item.attackerIsPlayer,
-                           (item.shakes or item.ball)
+          local opts = (item.shakes or item.ball)
                              and { shakes = item.shakes, ball = item.ball,
                                    caught = item.caught,
                                    -- Gen 2's toss script branches on the
@@ -2853,9 +2913,29 @@ function BattleState:updateQueue()
                                    ballIndex = item.ball
                                      and (self:itemDef(item.ball) or {}).index
                                      or nil,
+                                   ballPalette = GameVersion.isGen2() and item.ball
+                                     and self:ballPalette((self:itemDef(item.ball) or {}).key or item.ball)
+                                     or nil,
                                    ballFlicker = item.ball
                                      and self:ballFlicker(item.ball) or nil }
-                             or nil)
+                             or nil
+          local ok, started
+          if GameVersion.isGen2() then
+            if mdef and not BALL_ANIMS[item.anim] then
+              ok, started = pcall(self.animForMove, self, item.anim,
+                item.attackerIsPlayer and 'player' or 'enemy',
+                item.animParam, item.effectiveness, item.afterAnim)
+            elseif gen2Misc and not opts then
+              ok,started=pcall(self.animForId,self,item.anim,
+                item.attackerIsPlayer and 'player' or 'enemy',item.animParam)
+            else
+              ok, started = pcall(require('src.battle.Gen2MovePresentation').start,
+                self, item.anim, item.attackerIsPlayer, opts)
+            end
+          else
+            ok, started = pcall(self.animPlayer.start, self.animPlayer,
+              item.anim, item.attackerIsPlayer, opts)
+          end
           -- a player that reports no data for the move (Gen 2 returns
           -- false) falls through to the single-sound path below
           self.animPlaying = ok and started ~= false
@@ -2924,11 +3004,13 @@ function BattleState:updateQueue()
         -- plays each row's MoveSoundTable entry with its pitch/tempo
         -- modifiers); which side the pic effects target follows the
         -- attacker (hWhoseTurn)
-        self.animName = item.anim
-        self.animAttackerIsPlayer = item.attackerIsPlayer
-        self:resetPicFx()
-        for _, ev in ipairs(self.animPlayer:pollEffects()) do
-          self:applyAnimEffect(ev) -- frame-0 rows (first sound/effect)
+        if not GameVersion.isGen2() then
+          self.animName = item.anim
+          self.animAttackerIsPlayer = item.attackerIsPlayer
+          self:resetPicFx()
+          for _, ev in ipairs(self.animPlayer:pollEffects()) do
+            self:applyAnimEffect(ev) -- frame-0 rows (first sound/effect)
+          end
         end
         self.pendingHit = item.hit
       else
@@ -2954,6 +3036,11 @@ function BattleState:updateQueue()
         if item.hit then
           self:applyHitFx(item.hit)
         end
+      end
+      if GameVersion.isGen2() then
+        Gen2Vanish.admitted(self,item,self.animPlaying and self.animPlayer.runtime or nil)
+        require('src.battle.Gen2PicturePresentation').admitted(self,item,
+          self.animPlaying and self.animPlayer.runtime or nil)
       end
       self.current = nil
       return true
@@ -4109,6 +4196,18 @@ end
 -- frame if one is up, otherwise the still.  Placement is always measured off
 -- the still (same dimensions, same ground padding), so only the texture
 -- changes -- see drawBattlerPic and the enemy branch of drawPics.
+function BattleState:pictureSprite(battler)
+  return battler.sprite
+end
+
+function BattleState:pictureScalePath(battler, path)
+  return path
+end
+
+function BattleState:pictureStill(battler)
+  return self:picImage(self:pictureSprite(battler))
+end
+
 function BattleState:battlerPic(battler)
   local still = self:picImage(battler.sprite)
   local anim = battler and battler.picAnim
@@ -6756,6 +6855,21 @@ function BattleState:animationsOn()
   return not o or o.animations ~= false
 end
 
+-- GetBallAnimPal / BallColors. Native item IDs retain their registry key;
+-- the public item spelling selects the palette on the actual queued throw.
+-- Names/order follow Gen1Recomp's Gen2 BattleState and cartridge BallColors.
+local GEN2_BALL_PALETTES = {
+  MASTER_BALL='PAL_BATTLE_OB_GREEN', ULTRA_BALL='PAL_BATTLE_OB_YELLOW',
+  GREAT_BALL='PAL_BATTLE_OB_BLUE', POKE_BALL='PAL_BATTLE_OB_RED',
+  HEAVY_BALL='PAL_BATTLE_OB_GRAY', LEVEL_BALL='PAL_BATTLE_OB_BROWN',
+  LURE_BALL='PAL_BATTLE_OB_BLUE', FAST_BALL='PAL_BATTLE_OB_BLUE',
+  FRIEND_BALL='PAL_BATTLE_OB_YELLOW', MOON_BALL='PAL_BATTLE_OB_GRAY',
+  LOVE_BALL='PAL_BATTLE_OB_RED',
+}
+function BattleState:ballPalette(itemId)
+  return GEN2_BALL_PALETTES[itemId] or 'PAL_BATTLE_OB_GRAY'
+end
+
 -- Drop the announcement-time move-anim row.  Gen 1 queues PlayMoveAnimation
 -- only after MoveHitTest / the effect lands (HandleIfPlayerMoveMissed skips
 -- it on a miss unless EXPLODE_EFFECT); we insert early for blink attachment
@@ -7824,8 +7938,9 @@ function BattleState:executeAction(user, target, action)
     if action.special == "recharge" then
       -- only reaching .HyperBeamCheck consumes the flag (core.asm:3384-
       -- 3392): sleep/freeze/held/flinch keep the mon recharging next turn
-      if self:preRechargeChecks(user, target) then return end
+      if not GameVersion.isGen2() and self:preRechargeChecks(user, target) then return end
       user.mustRecharge = nil
+      if GameVersion.isGen2()then require('src.battle.Gen2Sleep').cancel(user,action)end
       self:sayNext(self:romText("_MustRechargeText", "%s\nmust recharge!", displayName(user)))
       return
     end
@@ -7850,7 +7965,7 @@ function BattleState:executeAction(user, target, action)
       return
     end
 
-    if self:statusInterrupt(user, target) then return end
+    if self:statusInterrupt(user, target, action) then return end
     -- PLATINUM / HGSS: Gravity and Heal Block refuse a move outright
     if self.g4fx and require("src.battle.Gen4MoveEffects").beforeMove(self, user, target, action) then
       return
@@ -7904,17 +8019,19 @@ end
 -- (core.asm): side-specific SLP_*/CONF_* anims, not the Rest/Amnesia
 -- move rows.  Player sleep plays the anim before FastAsleepText;
 -- enemy sleep and both confusion sides print the text first.
-function BattleState:statusOnomatopoeia(user, kind)
+function BattleState:statusOnomatopoeia(user, kind, caption)
   local isPlayer = user.isPlayer
   local anim
-  if kind == "sleep" then
+  if GameVersion.isGen2() then
+    anim=kind=='sleep' and 'ANIM_SLP' or 'ANIM_CONFUSED'
+  elseif kind == "sleep" then
     anim = isPlayer and "SLP_PLAYER_ANIM" or "SLP_ANIM"
   else
     anim = isPlayer and "CONF_PLAYER_ANIM" or "CONF_ANIM"
   end
-  local text = kind == "sleep"
+  local text = caption or (kind == "sleep"
     and self:romText("_FastAsleepText", "%s\nis fast asleep!", displayName(user))
-    or self:romText("_IsConfusedText", "%s\nis confused!", displayName(user))
+    or self:romText("_IsConfusedText", "%s\nis confused!", displayName(user)))
   if kind == "sleep" and isPlayer then
     self:animNext(anim, isPlayer)
     self:sayNext(text)
@@ -7924,14 +8041,12 @@ function BattleState:statusOnomatopoeia(user, kind)
   end
 end
 
--- Queue status text (+ sleep/confusion FX when the line matches).
+-- Queue status text and the effect belonging to this actual status event.
 -- Wake / snap-out / flinch / etc. stay text-only.
-function BattleState:sayStatusMsg(user, msg)
+function BattleState:sayStatusMsg(user, msg, kind)
   local text = prefixEnemy(msg, user)
-  if msg:find("is fast asleep!", 1, true) then
-    self:statusOnomatopoeia(user, "sleep")
-  elseif msg:find("is confused!", 1, true) then
-    self:statusOnomatopoeia(user, "confused")
+  if kind then
+    self:statusOnomatopoeia(user, kind, text)
   else
     self:sayNext(text)
   end
@@ -7992,7 +8107,7 @@ end
 
 -- Runs Status.beforeMove plus the shared interruption bookkeeping;
 -- returns true when the user's action is interrupted.
-function BattleState:statusInterrupt(user, target)
+function BattleState:statusInterrupt(user, target, move)
   -- TRUANT, before the conditions.  SLAKING and SLAKOTH move every OTHER
   -- turn: the cartridge sets a flag after a move and reads it before the
   -- next one, which is why this is a toggle rather than "every second turn
@@ -8006,8 +8121,10 @@ function BattleState:statusInterrupt(user, target)
     end
     user.truantLoafing = true
   end
-  local canMove, msgs, selfHit = Status.beforeMove(user, self.rng, self)
-  for _, m in ipairs(msgs) do self:sayStatusMsg(user, m) end
+  local canMove,msgs,selfHit,reason,presentation=Status.beforeMove(user,self.rng,self,move)
+  for i,m in ipairs(msgs)do
+    self:sayStatusMsg(user,m,presentation and presentation.index==i and presentation.kind or nil)
+  end
   if selfHit then
     -- confusion self-hit (core.asm:3428-3434): clears everything in
     -- status1 except CONFUSED, then HandleSelfConfusionDamage deals a
@@ -8028,8 +8145,7 @@ function BattleState:statusInterrupt(user, target)
     -- full paralysis (core.asm:3459-3464) clears bide/thrash/charge/
     -- trapping; sleep, freeze, flinch and held-in-place leave every
     -- volatile in place (a sleeping wrapper keeps its victim held)
-    if user.mon.status == "PAR" and msgs[#msgs]
-       and msgs[#msgs]:find("fully paralyzed", 1, true) then
+    if presentation and presentation.blockedStatus=='PAR' then
       self:clearVolatiles(user, false)
     end
     return true
@@ -8182,6 +8298,7 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
   -- charge release?
   local releasing = user.charging == moveInst and user.chargeReady
   if releasing then
+    Gen2Vanish.releasing(self,user)
     user.charging, user.chargeReady, user.invulnerable = nil, nil, nil
     user.hiddenAs = nil
   end
@@ -8259,6 +8376,7 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
                            attackerPosition = user.position,
                            targetPosition = target and target.position,
                            animContext = animContext }
+      if GameVersion.isGen2() and releasing then Gen2Vanish.releaseRow(self,user,self.moveAnimRow) end
       table.insert(self.queue, self.nextInsert, self.moveAnimRow)
     end
   end
@@ -8317,7 +8435,7 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
   -- straight past `charge` while the sun is up and fires on the turn it was
   -- selected.  Every other charge move ignores the weather.
   if record and record.charge and not releasing and not skipCharge then
-    local branchAware = GameVersion.get() == "firered"
+    local branchAware = GameVersion.isGen2() or GameVersion.get() == "firered"
                         and hasMoveTurnVariant(move.anim)
     if not branchAware then self:cancelMoveAnim() end
     user.charging = moveInst
@@ -8333,6 +8451,12 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
       -- the other, each for double damage.
       -- (a BW record names its own place: underwater, underground, vanished)
       user.hiddenAs = move.hiddenAs or ((move.id == "DIG") and "underground" or "air")
+    end
+    if GameVersion.isGen2() then
+      -- BattleCommand_Charge runs this move's own param-1 program before
+      -- DisappearUser; Gen1's TELEPORT/SLIDE_DOWN substitutes do not apply.
+      if self.moveAnimRow then self.moveAnimRow.animParam=1 end
+      Gen2Vanish.charge(self,user,self.moveAnimRow)
     end
     if not branchAware then
       local chargeAnim = record.charge.anim
@@ -10288,7 +10412,7 @@ end
 function BattleState:gen3ShinyBurst(battler)
   if not battler then return false end
   if not self:gen3ThrowsSendOut() then return false end
-  if self.data and self.data.battle_anims and self.data.battle_anims.gen2 then
+  if self.data and require('src.battle.Gen2AnimData').isGen2(self.data.battle_anims) then
     return false -- Johto has its own SHINY_ANIM; this is the Gen 3 dataset
   end
   local mon = battler.mon
@@ -10432,7 +10556,7 @@ function BattleState:ballChain(tossAnim, caught, shakes, ball)
   -- (anim_checkpokeball -> GetPokeBallWobble) and finally the click or the
   -- break-out, all from one script.  Replaying Gen 1's POOF/HIDEPIC/SHAKE
   -- rows on top of it would only double up pieces of what it just did.
-  if self.data and self.data.battle_anims and self.data.battle_anims.gen2 then
+  if self.data and require('src.battle.Gen2AnimData').isGen2(self.data.battle_anims) then
     self:animNext(tossAnim, true, shakes, ball, caught)
     if caught then
       self:actNext(function()
@@ -11613,6 +11737,10 @@ function BattleState:drawBattlerPic(battler, x, y, scale)
   if not ok then error(err) end
 end
 
+function BattleState:substituteVisible(battler)
+  return battler and battler.substituteHP
+end
+
 function BattleState:drawBattlerPicAt(battler, x, y, scale)
   local shakeX, shakeY = self:gen3AnimShake(battler)
   x, y = x + shakeX, y + shakeY
@@ -11648,7 +11776,8 @@ function BattleState:drawBattlerPicAt(battler, x, y, scale)
     end
   end
   local img = self:battlerPic(battler)
-  if battler.substituteHP and not self:fxFaintActive(battler)
+  local replacement=GameVersion.isGen2() and require('src.battle.Gen2PictureArt').replacement(self,battler)~=nil
+  if not replacement and self:substituteVisible(battler) and not self:fxFaintActive(battler)
      and not battler.fainted then
     self:drawSubstituteDoll(battler)
     return
@@ -11701,7 +11830,7 @@ function BattleState:drawBattlerPicAt(battler, x, y, scale)
       end
       return
     end
-    if not battler.gen3Transformed
+    if not replacement and not battler.gen3Transformed
        and self:drawStadiumBattlerPic(battler, img, x, y, scale) then return end
     local tr, tg, tb, tc = self:gen3AnimTint(battler)
     if tc then
@@ -12149,6 +12278,10 @@ end
 -- top-left x, y and the scale (slide/shake offsets are added by the
 -- caller).  Feet stay at 96 for every scale: y + (h - pad) * scale == 96.
 function BattleState.backPlacement(w, h, pad, padL, scale)
+  if GameVersion.isGen2() then
+    return 16 + math.max(0, math.floor((48-w)/2)) + math.floor(w*(1-scale)/2),
+      96-h + math.floor(h*(1-scale)), scale
+  end
   return 8 - padL * scale, 96 - (h - pad) * scale, scale
 end
 
@@ -12259,11 +12392,11 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
      -- ball's timeline: it shrinks into the ball and comes back out of it,
      -- and once it is inside there is nothing to draw at all.
      and not ((self:gen3BallFor(self.enemy) or {}).monHidden) then
-    local img = self:picImage(self.enemy.sprite)
+    local img = self:pictureStill(self.enemy)
     love.graphics.setColor(1, 1, 1, 1)
     local ex, ey = enemyPicXY(img, slide, sx, sy)
     local s = BattleState.resolveBattleScale(self.data, "front",
-      imagePathOf(img), self.enemy.mon and self.enemy.mon.species)
+      self:pictureScalePath(self.enemy,imagePathOf(img)), self.enemy.mon and self.enemy.mon.species)
     -- EMERALD PLACES ITS POKEMON ON A PLATFORM, and the 7x7 tile slot above
     -- is the Game Boy's rule for a 160x144 letterbox that has none.  On the
     -- Gen 3 field it left the foe up in the corner well clear of the ground
@@ -12386,13 +12519,14 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
      -- air there is no Pokemon on that side to draw; without this it stood
      -- there at full size waiting for its own ball to arrive.
      and not ((self:gen3BallFor(self.player) or {}).monHidden) then
-    local img = self:picImage(self.player.sprite)
+    local img = self:pictureStill(self.player)
     love.graphics.setColor(1, 1, 1, 1)
     -- feet flush on the text box top (y=96), ignoring baked-in padding
-    local pad = imagePadBottom[self.player.sprite] or 0
-    local padL = imagePadLeft[self.player.sprite] or 0
+    local handle = self:pictureSprite(self.player)
+    local pad = imagePadBottom[handle] or 0
+    local padL = imagePadLeft[handle] or 0
     local s = BattleState.resolveBattleScale(self.data, "back",
-      imagePathOf(self.player.sprite),
+      self:pictureScalePath(self.player,imagePathOf(handle)),
       self.player.mon and self.player.mon.species)
     local gs = self:growInScale(self.player)
     local ballOut = self:gen3BallFor(self.player)
@@ -12403,9 +12537,14 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
       -- pinned, mod scale composed with the grow stage
       local eff = s * gs
       if eff > 0 then
-        love.graphics.draw(img,
-          8 - padL * s + img:getWidth() * s * (1 - gs) / 2 + sx,
-          96 - (img:getHeight() - pad) * eff + sy, 0, eff, eff)
+        if GameVersion.isGen2() then
+          local dx,dy=BattleState.backPlacement(img:getWidth(),img:getHeight(),pad,padL,eff)
+          love.graphics.draw(img,dx+sx,dy+sy,0,eff,eff)
+        else
+          love.graphics.draw(img,
+            8 - padL * s + img:getWidth() * s * (1 - gs) / 2 + sx,
+            96 - (img:getHeight() - pad) * eff + sy, 0, eff, eff)
+        end
       end
     elseif ballOut then
       -- COMING OUT OF THE BALL, which is the absorb run backwards: the pic
@@ -12415,7 +12554,7 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
       local dx, dy
       if self:gen3Layout() then
         dx, dy = Gen3Battle.picPlacement(self, self.player, img,
-                                         imagePathOf(self.player.sprite), s)
+                                         imagePathOf(handle), s)
       else
         dx, dy = BattleState.backPlacement(img:getWidth(), img:getHeight(),
                                            pad, padL, s)
@@ -12435,7 +12574,7 @@ function BattleState:drawPicsLayer(slide, sx, sy, onlySide, skipMenuClip)
       love.graphics.setColor(1, 1, 1, 1)
     elseif self:gen3Layout() then
       local dx, dy = Gen3Battle.picPlacement(self, self.player, img,
-                                             imagePathOf(self.player.sprite), s)
+                                             imagePathOf(handle), s)
       self:drawBattlerPic(self.player, dx + sx, dy + sy, s)
     else
       local dx, dy = BattleState.backPlacement(img:getWidth(),
@@ -12850,6 +12989,7 @@ function BattleState:drawBattleField()
 end
 
 function BattleState:drawClassic()
+  if GameVersion.isGen2() then return self:drawScene() end
   -- AskName: ClearSprites + wild ClearScreenArea -- white field under the
   -- nickname TextBox / YES/NO (naming_screen.asm); overlays draw on top.
   if self.blankForAskName then
@@ -12962,5 +13102,15 @@ function BattleState:drawClassic()
     Runtime.call("battle.overlay", function() end, self)
   end
 end
+
+require('src.battle.Gen2MovePresentation').install(BattleState)
+require('src.battle.Gen2BattleScene').install(BattleState)
+
+-- Compose after native/source view installers, retaining their real draw owners.
+require('src.battle.Gen2BgPictures').install(BattleState)
+require('src.battle.Gen2PicturePresentation').install(BattleState)
+require('src.battle.Gen2PictureArt').install(BattleState,{load=getImage,palette=monPalette,path=imagePathOf,
+  source=function(image)return imageMeta[image]end})
+Gen2Vanish.install(BattleState)
 
 return BattleState

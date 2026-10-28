@@ -370,6 +370,25 @@ function PokegearMenu:current()
   return self.cards[self.index]
 end
 
+-- Public clock presentation, shared by the native card and source renderers.
+-- Keep the native save/world as the owner; weekday is one-based for UI lists.
+function PokegearMenu:clockParts()
+  if type(self.clock) == "table" then
+    return self.clock.hour or 0, self.clock.minute or 0, self.clock.weekday or 1
+  end
+  local game = self.game
+  local world = game and (game.overworld or game.world)
+  if world and type(world.hour) == "function" and type(world.minute) == "function"
+      and type(world.weekday) == "function" then
+    return world:hour(), world:minute(), world:weekday() % 7 + 1
+  end
+  local save = game and game.save or self.save
+  local Clock = require("src.core.Gen2Clock")
+  local minutes = Clock.minutes(save)
+  return math.floor(minutes / 60), minutes % 60, Clock.weekday(save) + 1
+end
+
+
 -- The registered phone numbers, newest id last.
 --
 -- Gen2 keeps two halves of this and the card used to read neither: which ids
@@ -689,11 +708,8 @@ function PokegearMenu:drawClock()
   self:drawStrip()
   self:text("SWITCH", 13, 1)
 
-  local save = self.game.save
-  local t = math.floor(require("src.core.SaveData").playSeconds(save))
-  local hour = math.floor(t / 3600) % 24
-  local minute = math.floor(t / 60) % 60
-  local day = DAYS[(math.floor(t / 86400) % 7) + 1]
+  local hour, minute, weekday = self:clockParts()
+  local day = require("src.core.Gen2Clock").weekdayName(weekday)
   local display = hour % 12
   if display == 0 then display = 12 end
   self:text(day, 6, 6)
