@@ -104,8 +104,8 @@ local function stepVolume(v, dir)
 end
 
 local function colorIndex(opts)
-  local cur = opts.colors or "gbc"
-  for i, m in ipairs(PaletteFX.MODES) do
+  local cur = GameVersion.isGen2() and PaletteFX.mode or opts.colors or "gbc"
+  for i, m in ipairs(PaletteFX.colorModes()) do
     if m == cur then return i end
   end
   return 1
@@ -370,14 +370,17 @@ local function buildRows(game)
       end },
     { id = "colors", label = Strings("COLORS"),
       value = function(g)
-        return PaletteFX.modeLabel(g.save.options.colors or "gbc")
+        local mode = GameVersion.isGen2() and PaletteFX.mode or g.save.options.colors or "gbc"
+        return PaletteFX.modeLabel(mode)
       end,
       step = function(g, dir)
         local o = g.save.options
         local i = colorIndex(o)
-        i = wrapIndex(i - 1 + dir, #PaletteFX.MODES) + 1
-        o.colors = PaletteFX.MODES[i]
-        PaletteFX.setMode(o.colors)
+        local modes = PaletteFX.colorModes()
+        i = wrapIndex(i - 1 + dir, #modes) + 1
+        PaletteFX.writeColorOption(o, modes[i])
+        if GameVersion.isGen2() then PaletteFX.setDisplay(o.colors,nil)
+        else PaletteFX.setMode(o.colors) end
         return true
       end },
     { id = "tilt", label = Strings("TILT"),

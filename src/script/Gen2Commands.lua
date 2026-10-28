@@ -2628,12 +2628,9 @@ function Commands.g2_readvar(ctx, var)
   elseif var == 6 then
     ctx.g2Var = countKeys(ctx.save.pokedex and ctx.save.pokedex.seen)
   elseif var == 10 then
-    ctx.g2Var = tonumber(os.date("%H")) or 0
+    ctx.g2Var = require("src.core.Gen2Clock").hour(ctx.save)
   elseif var == 11 then
-    -- g2DayOffset is what mom's SetDayOfWeek picker answered, as a shift off
-    -- the host day, so Arthur still shows up on a real Thursday.
-    ctx.g2Var = ((tonumber(os.date("%w")) or 0)
-      + (ctx.save.g2DayOffset or 0)) % 7
+    ctx.g2Var = require("src.core.Gen2Clock").weekday(ctx.save)
   elseif var == 16 then
     -- BoxFreeSpace counts only the current box, not all available PC slots.
     local Boxes = require("src.pokemon.Boxes")
@@ -2882,44 +2879,21 @@ function Commands.g2_clear_dst(ctx)
   Commands.show_text(ctx, "InitialClearDSTFlag.Text")
 end
 
--- The ROM spins these with the d-pad on a graphical clock-set background;
--- a list menu is the port's equivalent and needs no ROM tiles.  The names
--- are engine text, not ROM strings: SetDayOfWeek.WeekdayStrings is raw
--- charmap data, and the extractor only harvests symbols matching "Text".
-local WEEKDAYS = {
-  "SUNDAY", "MONDAY", "TUESDAY", "WEDNESDAY", "THURSDAY", "FRIDAY", "SATURDAY",
-}
-
--- `special SetDayOfWeek` ($25), the day picker in mom's clock talk.  The GB
--- has to ask because its RTC has no idea what day it started on; here
--- readvar 11 reads the host clock, which already knows.  So the answer is
--- kept as an OFFSET from the host day rather than as the day itself: the
--- cursor opens on today, a truthful answer stores 0 and changes nothing, and
--- either way the day still rolls over at real midnight instead of freezing.
+-- Native SetDayOfWeek shares the clock-setting screen and RTC owner with
+-- the introduction. The script remains suspended through both selection
+-- and confirmation; declining does not write the save or resume the script.
 function Commands.g2_set_day_of_week(ctx)
   local game, runner = ctx.game, ctx.runner
-  local host = tonumber(os.date("%w")) or 0
-  local picked
-  repeat
-    Commands.show_text(ctx, "SetDayOfWeek.OakTimeWhatDayIsItText")
-    local items = {}
-    for index, day in ipairs(WEEKDAYS) do
-      items[index] = {
-        label = Strings(day),
-        onSelect = function() picked = index - 1 runner:resume() end,
-      }
-    end
-    -- no cancel: the ROM's loop watches A only, and onCancel is the only
-    -- other path back to runner:resume()
-    local menu = require("src.ui.Menu").new(game, items, { cancelable = false })
-    menu.index = host + 1
-    menu:clampScroll()
-    game.stack:push(menu)
-    runner:yield()
-    Commands.ask(ctx, Strings(WEEKDAYS[picked + 1])
-      .. resolvedText(ctx, "SetDayOfWeek.OakTimeIsItText"))
-  until ctx.lastCheck
-  ctx.save.g2DayOffset = (picked - host) % 7
+  local screen
+  screen = require("src.ui.Gen2InitClock").new(game, { mode="day", save=ctx.save,
+    onDone=function()
+      if game.stack:top() == screen then game.stack:pop() end
+      ctx.lastCheck = true
+      runner:resume()
+    end,
+  })
+  game.stack:push(screen)
+  runner:yield()
 end
 
 -- UnownPuzzle (SpecialsPointers row 41).  The chamber scripts run

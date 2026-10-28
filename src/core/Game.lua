@@ -1013,6 +1013,13 @@ function Game:_draw()
   -- a world-bg battle keeps the map drawing under whatever it opened, so the
   -- world pass can run for a frame whose CLEAR is still an opaque menu's
   local drawFrom = Game.drawBaseInStack(self.stack, base)
+  local ScreenSpaceUI=require('src.render.ScreenSpaceUI')
+  local scene=self.stack
+  local windowUI,windowUIIndex=ScreenSpaceUI.select(self.stack,scene,drawFrom)
+  local windowUIOverlay=false
+  local nativeWindowOverlays=windowUI and require('src.core.GameVersion').isGen2()
+  local nativeWindowStack=not windowUI and require('src.core.GameVersion').isGen2()
+    and ScreenSpaceUI.hasNativeStack(self.stack,scene,drawFrom,self.overworld)
   local worldDrawn = self.stack.states[drawFrom] == self.overworld
   -- A wide battle holds its 304px surface through every menu or prompt it
   -- opens. States that do not draw the wide battle composition are centred
@@ -1095,7 +1102,13 @@ function Game:_draw()
       local ownsSurface = wideState
         or (native ~= nil and state == native)
         or Game.wantsThisSurface(state)
-      if state and state.draw then
+      if nativeWindowOverlays and windowUIIndex and i>windowUIIndex then
+        if state and state.draw then windowUIOverlay=true end
+      elseif nativeWindowStack and state~=self.overworld then
+        -- Native controllers draw once on the full output surface below.
+      elseif state==windowUI then
+        love.graphics.clear(0,0,0,0)
+      elseif state and state.draw then
         -- ...and it is centred by ITS OWN size, not by the Game Boy's (see
         -- Game.homeOffset).  classicOffset still gates it: a surface that is
         -- the Game Boy's centres nothing, which is every frame outside a wide
@@ -1117,7 +1130,7 @@ function Game:_draw()
   end
   local baseState = self.stack.states[drawFrom]
   local SuperSample = require("src.render.SuperSample")
-  if not worldDrawn and baseState and require("src.core.GameVersion").isNds()
+  if not windowUI and not worldDrawn and baseState and require("src.core.GameVersion").isNds()
      and SuperSample.singleScreen(self) and not SuperSample.active then
     SuperSample.draw(self, self.stack:top(), drawStates)
   else
@@ -1171,7 +1184,11 @@ function Game:_draw()
   end
   -- 14's render.zones: weather/lighting overlays and custom colorization
   -- recolor or add zones before the blit
-  if ModRuntime.wantsHook("render.zones") then
+  if require("src.core.GameVersion").isGen2() then
+    Renderer.gen2FrameManaged = true
+    Renderer.gen2FrameGame = self
+    Renderer.gen2FrameZones = require("src.render.Gen2Presentation").zones(self)
+  elseif ModRuntime.wantsHook("render.zones") then
     zones = ModRuntime.call("render.zones", sameZones, self, zones)
   end
   -- Keyed to whether the map actually DREW, not to whether it is the clear's
@@ -1183,7 +1200,20 @@ function Game:_draw()
   if worldDrawn and self.overworld.sgbWorldZones then
     worldZones = self.overworld:sgbWorldZones()
   end
+  if Renderer.gen2FrameManaged and (windowUI or nativeWindowStack) then
+    Renderer.gen2WindowDraw=function(viewport)
+      if windowUI then
+        ScreenSpaceUI.draw(windowUI,Renderer,viewport,zones,false)
+        if windowUIOverlay then ScreenSpaceUI.drawNativeStack(self.stack,scene,windowUIIndex+1,
+          self.overworld,Renderer,viewport,false)end
+      else ScreenSpaceUI.drawNativeStack(self.stack,scene,drawFrom,self.overworld,
+        Renderer,viewport,not worldDrawn)end
+    end
+  end
   local viewport = Renderer:endFrame(zones, worldZones)
+  if windowUI and not Renderer.gen2FrameManaged then
+    ScreenSpaceUI.draw(windowUI,Renderer,viewport,zones,windowUIOverlay)
+  end
   -- Persistent tool status is screen-space UI: draw it over the completed
   -- render pipeline with exact playfield/margin geometry, but below mobile
   -- controls. It never becomes an updating game state.
@@ -1408,7 +1438,7 @@ function Game:keypressed(key)
         or ow.engaging or ow.emote)))
     if not busy then
       local PaletteFX = require("src.render.PaletteFX")
-      self.save.options.colors = PaletteFX.cycleMode()
+      PaletteFX.writeColorOption(self.save.options, PaletteFX.cycleMode())
       self:writeOptions()
     end
     return
