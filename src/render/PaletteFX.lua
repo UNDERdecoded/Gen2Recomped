@@ -44,6 +44,31 @@ PaletteFX.MODE_LABELS = {
 }
 PaletteFX.mode = "gbc"
 
+-- Copyright (c) 2026 Roxas2712. See contribution permission:
+-- https://github.com/Roxas2712/Gen2Recomped/blob/7867399c753186778bd4b8816ba37573357e4b40/LICENSE-ROXAS2712.md
+PaletteFX.GEN2_MODES = {"gbc", "og", "classic"}
+local customRamp, customKey = nil, ""
+function PaletteFX.customRamp() return customRamp end
+function PaletteFX.displayKey() return tostring(PaletteFX.mode) .. customKey end
+function PaletteFX.colorModes()
+  return GameVersion.isGen2() and PaletteFX.GEN2_MODES or PaletteFX.MODES
+end
+local function rampKey(ramp)
+  if ramp == nil then return "" end
+  if type(ramp) ~= "table" then return nil end
+  local out = {}
+  for i = 1, 4 do
+    local row = ramp[i]
+    if type(row) ~= "table" then return nil end
+    for c = 1, 3 do
+      local n = row[c]
+      if type(n) ~= "number" or n ~= n or n < 0 or n > 255 then return nil end
+      out[#out + 1] = ("%.17g"):format(n)
+    end
+  end
+  return "#ramp:" .. table.concat(out, ",")
+end
+
 -- ------- dark-cave state (wMapPalOffset)
 --
 -- Unlike the per-frame shadeMap further down, this outlives a frame: ADVANCED
@@ -421,6 +446,7 @@ local GEN2_SHADE_MODES = {
 }
 
 function PaletteFX.usesGen2ObjPal(mode)
+  if GameVersion.isGen2() then return true end
   mode = mode or PaletteFX.mode
   return not GEN2_SHADE_MODES[mode]
 end
@@ -467,6 +493,10 @@ local gen2ClockTod = "DAY"   -- what the clock alone says
 local gen2MapPalette = 0     -- PALETTE_* from the current map's header
 -- OverworldState:timeOfDay answers "MORNING"/"NITE"; a mod's world.tod hook may
 -- answer "NIGHT".  Normalise to the four row names the importer writes.
+-- Public ROM row order, shared with native Gen2 atlas consumers.
+PaletteFX.DAYTIMES = { "MORN", "DAY", "NITE", "DARK" }
+PaletteFX.DAYTIME_ID = { MORN = 1, DAY = 2, NITE = 3, DARK = 4 }
+
 local GEN2_TOD_ALIAS = {
   MORN = "MORN", MORNING = "MORN", DAY = "DAY", DAYTIME = "DAY",
   NITE = "NITE", NIGHT = "NITE", EVE = "NITE", EVENING = "NITE",
@@ -485,6 +515,29 @@ local GEN2_TOD_ALIAS = {
 local GEN2_MAP_PALETTE_ROW = {
   [1] = "DAY", [2] = "NITE", [3] = "MORN", [4] = "NITE",
 }
+local gen2FlashUsed=false
+local gen2CurrentDef
+function PaletteFX.clearGen2Context()gen2CurrentDef=nil;gen2FlashUsed=false end
+function PaletteFX.bindGen2Context(def,flashUsed)
+  gen2CurrentDef=type(def)=='table'and def or nil;gen2FlashUsed=flashUsed==true
+end
+function PaletteFX.setGen2FlashUsed(on)gen2FlashUsed=on==true end
+function PaletteFX.effectiveGen2Tod()return darkWorld and 'DARK'or gen2Tod end
+-- AUTO neighbours share the entered AUTO scene's presentation override.
+-- A pinned current room/cave has no outdoor clock presentation to share:
+-- neighbouring AUTO maps read the saved RTC instead of its unused hook row.
+local function gen2NeighbourClock()
+  local id=require('src.render.Gen2PaletteContext').id(gen2CurrentDef)
+  if GEN2_MAP_PALETTE_ROW[id] then return PaletteFX.clockDaytime() end
+  return gen2ClockTod
+end
+function PaletteFX.gen2RowFor(def)
+  if def~=nil and def==gen2CurrentDef then return PaletteFX.effectiveGen2Tod()end
+  local id=require('src.render.Gen2PaletteContext').id(def)
+  if id==nil then return PaletteFX.effectiveGen2Tod() end
+  if id==4 then return gen2FlashUsed and 'NITE'or 'DARK'end
+  return GEN2_MAP_PALETTE_ROW[id]or gen2NeighbourClock()
+end
 
 local function gen2RecomputeTod()
   local key = GEN2_MAP_PALETTE_ROW[gen2MapPalette] or gen2ClockTod
@@ -502,7 +555,8 @@ end
 
 -- Called on every map change with the map's PALETTE_* byte (0 = AUTO).
 -- Same contract as setGen2Tod: true means the atlases are stale.
-function PaletteFX.setGen2MapPalette(palette)
+function PaletteFX.setGen2MapPalette(palette, mapDef)
+  gen2CurrentDef=type(mapDef)=='table'and mapDef or nil
   local value = tonumber(palette) or 0
   if value < 0 or value > 7 then value = 0 end
   -- PALETTE_5..7 are unused slots that ReplaceTimeOfDayPals maps to $E4, the
@@ -535,6 +589,22 @@ function PaletteFX.gen2Tod() return gen2Tod end
 -- bgSet fetches it (LoadMapPals).  Neither reads or writes the live state, so
 -- calling them cannot disturb what the 2D atlas was baked with.
 
+-- Public RTC-only query used by Gen2 scene renderers (including train rides).
+-- It must not inherit the live map override, darkness, or atlas bake state.
+function PaletteFX.clockDaytime(hour)
+  hour = tonumber(hour)
+  if not hour and GameVersion.isGen2() then
+    local game = package.loaded["src.core.Game"]
+    hour = require("src.core.Gen2Clock").hour(game and game.save)
+  end
+  if not hour then hour = tonumber(os.date("%H")) end
+  hour = math.floor(hour or 12) % 24
+  if hour < 4 then return "NITE" end
+  if hour < 10 then return "MORN" end
+  if hour < 18 then return "DAY" end
+  return "NITE"
+end
+
 -- Which of MORN / DAY / NITE / DARK a map takes.
 --
 --   mapDef     a record out of data.maps; its `mapPalette` is map header
@@ -546,6 +616,11 @@ function PaletteFX.gen2Tod() return gen2Tod end
 --              a caller that has no flash flag to offer gets the engine's own
 --              darkWorld state, which already folds in save.flashLit.
 function PaletteFX.daytimeFor(mapDef, hour, flashUsed)
+  local id=require('src.render.Gen2PaletteContext').id(mapDef)
+  if id~=nil then
+    if id==4 then return flashUsed==true and 'NITE'or 'DARK'end
+    return GEN2_MAP_PALETTE_ROW[id]or(hour==nil and gen2CurrentDef and gen2NeighbourClock())or PaletteFX.clockDaytime(hour)
+  end
   -- Darkness wins outright and the clock stops mattering, which is what
   -- .NeedsFlash does: an unlit cave is the DARKNESS row at noon.
   if flashUsed ~= true and darkWorld then return "DARK" end
@@ -559,13 +634,7 @@ function PaletteFX.daytimeFor(mapDef, hour, flashUsed)
   if override then return override end
 
   -- AUTO: GetTimeOfDay's own table (5:$4032 .TimeOfDayTable).
-  hour = tonumber(hour)
-  if not hour then hour = tonumber(os.date("%H")) end
-  hour = math.floor(hour or 12) % 24
-  if hour < 4 then return "NITE" end
-  if hour < 10 then return "MORN" end
-  if hour < 18 then return "DAY" end
-  return "NITE"
+  return PaletteFX.clockDaytime(hour)
 end
 
 -- The eight BG palettes a map wears on a given row.
@@ -596,9 +665,18 @@ function PaletteFX.bgSet(data, mapDef, daytime)
   end
   if type(rows) ~= "table" then return nil end
 
-  local row = GEN2_TOD_ALIAS[tostring(daytime or ""):upper()] or gen2Tod
+  local row = GEN2_TOD_ALIAS[tostring(daytime or ""):upper()] or PaletteFX.gen2RowFor(mapDef)
   local set = rows[row] or rows.DAY
   if type(set) ~= "table" or set[1] == nil then return nil end
+  local context=require('src.render.Gen2PaletteContext')
+  local owner,bound=context.owner(data)
+  if bound and not owner then return nil end
+  if owner then
+    local _,special=context.special(owner,mapDef,tilesetId,row)
+    if special then set=special end
+    local tileset=owner.tilesets and owner.tilesets[tilesetId]
+    set=context.withRoof(set,context.roof(owner,mapDef,tileset,row))
+  end
   return set, row
 end
 
@@ -787,6 +865,10 @@ function PaletteFX.monPal(data, species, transformed, shiny)
     return p.palettes.GRAYMON
         or (data and data.palettes and data.palettes.palettes.GRAYMON)
   end
+  if GameVersion.isGen2() then
+    local native = require("src.render.Gen2PokemonPalettes").native(data, species, shiny)
+    if native then return native end
+  end
   local def = data and data.pokemon and data.pokemon[species]
   if shiny and def and def.shinyPalette then
     local pal = p.palettes[def.shinyPalette]
@@ -826,6 +908,12 @@ function PaletteFX.monPal(data, species, transformed, shiny)
     end
   end
   return nil
+end
+
+-- Legacy external Gen2 consumers ask the published palette view directly.
+-- Resolve the same native row as monPal and return fresh RGB values.
+function PaletteFX.monColors(data, species, shiny)
+  return require("src.render.Gen2PokemonPalettes").colors(data, species, shiny)
 end
 
 -- palette name a species currently resolves to (for image-cache keys)
@@ -1067,54 +1155,124 @@ function PaletteFX.shadeMap()
   return shadeMap
 end
 
-function PaletteFX.setMode(mode)
-  local prev = PaletteFX.mode
-  local ok = false
-  for _, m in ipairs(PaletteFX.MODES) do
-    if m == mode then
-      PaletteFX.mode = mode
-      ok = true
-      break
-    end
+-- Copyright (c) 2026 Roxas2712. See contribution permission:
+-- https://github.com/Roxas2712/Gen2Recomped/blob/7867399c753186778bd4b8816ba37573357e4b40/LICENSE-ROXAS2712.md
+-- Public byte-register access and native frame drawing share one state.
+-- Renderer.beginFrame's existing reset therefore also clears a mod's BGP;
+-- a byte cannot silently survive a menu, map or battle frame.
+PaletteFX.BGP_IDENTITY = 0xe4
+function PaletteFX.bgpShades(byte)
+  byte = byte or PaletteFX.BGP_IDENTITY
+  local out = {}
+  for i = 0, 3 do out[i + 1] = math.floor(byte / 4 ^ i) % 4 end
+  return out
+end
+function PaletteFX.bgp()
+  if not shadeMap then return nil end
+  local byte = 0
+  for i = 0, 3 do byte = byte + shadeMap[i] * 4 ^ i end
+  return byte ~= PaletteFX.BGP_IDENTITY and byte or nil
+end
+function PaletteFX.setBgp(byte)
+  local previous = PaletteFX.bgp()
+  if byte == nil or byte == PaletteFX.BGP_IDENTITY then
+    PaletteFX.setShadeMap(nil)
+  else
+    local shades = PaletteFX.bgpShades(byte)
+    PaletteFX.setShadeMap({[0]=shades[1], shades[2], shades[3], shades[4]})
   end
-  if not ok then PaletteFX.mode = "gbc" end
-  -- battle pics and overworld sprites bake the active pack into ImageData;
-  -- drop those caches when the pack (or any COLORS mode) changes so the
-  -- next draw re-tints
-  if prev ~= PaletteFX.mode then
-    pcall(function() require("src.battle.BattleState").invalidate() end)
-    pcall(function() require("src.render.SpriteRenderer").invalidate() end)
-    -- RED++'s baked tileset atlas (TileRenderer.getGbcAtlas) is built once
-    -- per loaded map, so a mode toggle needs every cached Map/TileRenderer
-    -- dropped and the currently-visible one rebuilt in place -- otherwise
-    -- the on-screen map keeps its stale (wrong-mode) atlas until the next
-    -- map transition happens to reload it.
-    pcall(function()
-      require("src.world.MapLoader").invalidateAll()
-      local Game = require("src.core.Game")
-      if Game.overworld and Game.overworld.map and Game.overworld.reloadMap then
-        Game.overworld:reloadMap(Game.overworld.map.id, "colors")
-      end
-    end)
-  end
+  return previous
+end
+function PaletteFX.remap(colors, byte)
+  if not colors or not byte or byte == PaletteFX.BGP_IDENTITY then return colors end
+  local shades, out = PaletteFX.bgpShades(byte), {}
+  for i = 1, 4 do out[i] = colors[shades[i] + 1] or colors[4] end
+  return out
 end
 
-function PaletteFX.cycleMode()
+local function invalidateDisplay()
+  -- Register native producers before the shared flush. External producers
+  -- subscribe to the same Assets.register bus; private cache calls alone
+  -- leave their atlases stale when a second ramp keeps the same mode ID.
+  for _, name in ipairs({"src.battle.BattleState","src.render.SpriteRenderer",
+                         "src.render.TileRenderer","src.world.MapLoader"}) do
+    pcall(require, name)
+  end
+  require("src.render.Assets").invalidate()
+  pcall(function()
+    local Game = require("src.core.Game")
+    if Game.overworld and Game.overworld.map and Game.overworld.reloadMap then
+      Game.overworld:reloadMap(Game.overworld.map.id, "colors")
+    end
+  end)
+end
+local function normalizeMode(mode)
+  if GameVersion.isGen2() then
+    if mode == "dmg" then return "og" end
+    if mode == "custom" then return mode end
+  end
+  for _, m in ipairs(PaletteFX.MODES) do
+    if m == mode then return mode end
+  end
+  return "gbc"
+end
+-- Set a complete selection atomically: applying persisted mode + ramp must
+-- rebuild the entered map once, never briefly in the previous custom ramp.
+function PaletteFX.setDisplay(mode, ramp)
+  local key = rampKey(ramp)
+  if key == nil then ramp, key = nil, "" end
+  mode = normalizeMode(mode)
+  local changed = mode ~= PaletteFX.mode or ramp ~= customRamp or key ~= customKey
+  PaletteFX.mode, customRamp, customKey = mode, ramp, key
+  if changed then invalidateDisplay() end
+  return mode
+end
+function PaletteFX.setMode(mode)
+  return PaletteFX.setDisplay(mode, customRamp)
+end
+function PaletteFX.setCustomRamp(ramp)
+  PaletteFX.setDisplay(PaletteFX.mode, ramp)
+  return customRamp
+end
+
+function PaletteFX.cycleMode(delta)
   local cur = PaletteFX.mode or "gbc"
+  if GameVersion.isGen2() and cur == "og_inv" then cur = "og" end
+  local modes = PaletteFX.colorModes()
   local idx = 1
-  for i, m in ipairs(PaletteFX.MODES) do
+  for i, m in ipairs(modes) do
     if m == cur then idx = i; break end
   end
-  PaletteFX.setMode(PaletteFX.MODES[idx % #PaletteFX.MODES + 1])
+  local nextMode = modes[(idx - 1 + (delta or 1)) % #modes + 1]
+  local ramp = customRamp
+  if GameVersion.isGen2() then ramp = nil end
+  PaletteFX.setDisplay(nextMode, ramp)
   return PaletteFX.mode
 end
 
 function PaletteFX.applyOptions(opts)
-  PaletteFX.setMode(opts and opts.colors or "gbc")
+  if GameVersion.isGen2() then
+    local ramp = opts and opts.palette and require("src.render.Palette").ramp(opts.palette)
+    return PaletteFX.setDisplay(opts and (opts.color or opts.colors) or "gbc", ramp)
+  end
+  return PaletteFX.setMode(opts and opts.colors or "gbc")
+end
+function PaletteFX.writeColorOption(opts, mode)
+  opts.colors = mode
+  if GameVersion.isGen2() then
+    opts.color = mode == "og" and "dmg" or mode
+    opts.palette = nil
+  end
+end
+function PaletteFX.presentColors()
+  if GameVersion.isGen2() and PaletteFX.mode == "classic" then return PaletteFX.CLASSIC end
 end
 
 function PaletteFX.modeLabel(mode)
   mode = mode or PaletteFX.mode
+  if GameVersion.isGen2() then
+    return ({gbc="GEN 2", og="DMG", dmg="DMG", classic="CLASSIC", custom="CUSTOM"})[mode] or "GEN 2"
+  end
   -- The GBC hardware mode wears the running game's name: OG RED / OG BLUE
   -- (boot-ROM auto-palette) or OG YELLOW (pokeyellow CGBBasePalettes).
   if mode == "ogred" and GameVersion.isBlue() then return "OG BLUE" end
@@ -1155,27 +1313,48 @@ function PaletteFX.paperShade(data)
   return c[1] / 255, c[2] / 255, c[3] / 255
 end
 
-function PaletteFX.effectiveColors(c)
+function PaletteFX.displayColors(c)
   if not c then return nil end
   local mode = PaletteFX.mode or "gbc"
   local out = c
-  if gen2Native() then
+  if GameVersion.isGen3() then
     mode = "gbc"
   end
-  if mode == "og" then
+  if GameVersion.isGen2() and customRamp then return customRamp end
+  if mode == "og" or (GameVersion.isGen2() and mode == "custom") then
     out = PaletteFX.GRAYS
   elseif mode == "og_inv" then
     out = PaletteFX.permute(PaletteFX.GRAYS, INV_MAP)
   elseif mode == "classic" then
-    out = PaletteFX.CLASSIC
+    out = GameVersion.isGen2() and PaletteFX.GRAYS or PaletteFX.CLASSIC
   elseif mode == "gbc_inv" then
     out = PaletteFX.permute(c, INV_MAP)
   end
+  return out
+end
+-- Static native BG/OBJ bakes resolve the display without a transient BGP.
+-- DARK rows lose their darkness if replaced by a mono/custom ramp; fold the
+-- world shift explicitly only for such replacements. Menus stay independent.
+function PaletteFX.gen2BakeColors(c, dark)
+  local out = PaletteFX.displayColors(c)
+  local mono = PaletteFX.mode == "og" or PaletteFX.mode == "og_inv" or PaletteFX.mode == "classic" or PaletteFX.mode == "custom"
+  if GameVersion.isGen2() and dark and (mono or customRamp) then
+    out = PaletteFX.permute(out, PaletteFX.DARK_BGP)
+  end
+  return out
+end
+function PaletteFX.effectiveColors(c, invert)
+  local out = PaletteFX.displayColors(c)
+  if not out then return nil end
   -- The shade map goes on LAST: rBGP is a hardware register write, so it
   -- composes on top of whatever colors the display mode settled on -- a dark
   -- cave has to read dark in CLASSIC's pea greens and in plain DMG grays too
   -- (#322).  permute() is the identity (and returns `out` itself, which the
   -- mod-graphics parity check leans on) while nothing has armed one.
+  -- An inverted font page reverses its settled display ramp before the
+  -- hardware shade register permutes it. Keep this on the native path so
+  -- Gen2 menu chrome cannot carry a second palette mode/register state.
+  if invert then out = { out[4], out[3], out[2], out[1] } end
   return PaletteFX.permute(out, shadeMap)
 end
 

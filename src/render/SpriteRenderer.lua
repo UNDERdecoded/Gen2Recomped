@@ -5,6 +5,7 @@
 
 local Assets = require("src.render.Assets")
 local PaletteFX = require("src.render.PaletteFX")
+local GameVersion = require("src.core.GameVersion")
 
 local SpriteRenderer = {}
 SpriteRenderer.__index = SpriteRenderer
@@ -46,6 +47,10 @@ end
 local obpCache = {}
 
 local function getObpImage(path, colors, group)
+  if GameVersion.isGen2() then
+    colors = PaletteFX.gen2BakeColors(colors, PaletteFX.darkWorld())
+    group = tostring(group) .. "#" .. PaletteFX.displayKey() .. PaletteFX.darkKey()
+  end
   local key = path .. "#obp" .. group
   if not obpCache[key] then
     local img
