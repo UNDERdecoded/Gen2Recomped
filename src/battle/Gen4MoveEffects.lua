@@ -509,9 +509,13 @@ F.REMOVE_PROTECT = {
 local FLAVOR_STAT = { [11] = "attack", [12] = "spatk", [13] = "speed", [14] = "spdef", [15] = "defense" }
 local STAT_UP = { [16] = "attack", [17] = "defense", [18] = "speed", [19] = "spatk", [20] = "spdef" }
 local CURE = { [1] = "PAR", [2] = "SLP", [3] = "PSN", [4] = "BRN", [5] = "FRZ" }
-local CURE_TEXT = { PAR = "%s was\ncured of paralysis!", SLP = "%s woke up!",
-                    PSN = "%s was\ncured of poisoning!", BRN = "%s's\nburn was healed!",
-                    FRZ = "%s thawed out!" }
+local CURE_TEXT = {
+  PAR = Strings.source("%s was\ncured of paralysis!"),
+  SLP = Strings.source("%s woke up!"),
+  PSN = Strings.source("%s was\ncured of poisoning!"),
+  BRN = Strings.source("%s's\nburn was healed!"),
+  FRZ = Strings.source("%s thawed out!"),
+}
 
 local function eat(battle, eater, effect, param, def, out)
   local max = maxHp(eater)
