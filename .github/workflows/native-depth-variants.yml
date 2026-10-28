@@ -1,0 +1,29 @@
+name: Native depth shader variants
+on:
+  pull_request:
+    paths:
+      - 'main.lua'
+      - 'src/render/AlphaDepthCompat.lua'
+      - 'src/render/ShaderSpecialization.lua'
+      - 'src/render/ShaderSamplerGuard.lua'
+      - 'tests/engine/alpha_depth_compat.lua'
+      - 'tests/engine/shader_sampler_guard.lua'
+      - 'tests/engine/shader_specialization_policy.lua'
+      - 'tests/native_shader/**'
+      - '.github/workflows/native-depth-variants.yml'
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Native source guards and target ownership
+        run: |
+          luajit tests/engine/alpha_depth_compat.lua
+          luajit tests/engine/shader_sampler_guard.lua
+          luajit tests/engine/shader_branches.lua
+          luajit tests/engine/shader_specialization_policy.lua

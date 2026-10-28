@@ -499,6 +499,8 @@ end
 function love.load(args)
   BootTrace.mark("love.load enter")
   GraphicsStack.install()
+  require("src.render.AlphaDepthCompat").install()
+  require("src.render.ShaderSpecialization").install()
   pcall(function() require('src.core.SwitchAudioCheck').run() end)
 
   -- Teach SDL about the pads its built-in database misses (Switch Pro over
