@@ -37,17 +37,10 @@
 --   src.ui.gen2.BattleAnimView  Gen2AnimPlayer is a player, not a view
 --   src.battle.UIVisibility     no equivalent
 --   src.ui.PartyPanel           no equivalent
---   src.battle.gen2.Battle      AMBIGUOUS, which is the same as absent here.
---                               src.ui.gen2.BattleState is already mapped to
---                               src.battle.BattleState below; a port that
---                               spells BOTH names is not spelling one thing
---                               twice, it is naming the battle CONTROLLER and
---                               the battle STATE.  This engine has one object
---                               for both, so whichever of the two a mod meant
---                               it would get -- and the half of the contract
---                               it did not mean would be missing, somewhere
---                               far away from the require.  It goes in when a
---                               mod that wants it says what it calls on it.
+--
+-- src.battle.gen2.Battle is a real live model module, not an alias. Its native
+-- reads/completion are attached by Gen2BattleView and Gen2BattleRead. Unsupported
+-- constructors and turn APIs are not guessed from similarly named screens.
 --
 -- Each of those turns one optional feature off in the mod and says so in the
 -- log, which is the outcome we want.

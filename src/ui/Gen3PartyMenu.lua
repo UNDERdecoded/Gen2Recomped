@@ -168,7 +168,9 @@ function Gen3PartyMenu.new(game, opts)
   return self
 end
 
-function Gen3PartyMenu:party() return self.game.save.party or {} end
+function Gen3PartyMenu:party()
+  return (self.battle and self.battle.playerParty) or self.game.save.party or {}
+end
 
 -- slots 1..6, then the CANCEL button as slot #party+1
 function Gen3PartyMenu:slots() return #self:party() + 1 end
