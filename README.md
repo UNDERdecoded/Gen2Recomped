@@ -1,3 +1,9 @@
+Based on the Pokemon Gen 1 Recompilation Project by BOIS CLUB GAMES, LLC
+(https://github.com/bryanthaboi/gen1recomp).
+
+GSC BG-effect source provenance and its retained licence are recorded in
+[compat/gen1-gsc/provenance.json](compat/gen1-gsc/provenance.json).
+
 # gen2recomp
 
 <p align="center"><img src="./assets/logo/gen2logo.png"></p>

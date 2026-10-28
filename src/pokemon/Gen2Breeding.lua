@@ -41,7 +41,7 @@ function Breeding.hatch(game, mon)
   game.save.pokedex=dex
   dex.seen,dex.owned=dex.seen or {},dex.owned or {}
   dex.seen[mon.species],dex.owned[mon.species]=true,true
-  if mon.species=="SPECIES_175" then
+  if require('src.core.Gen2SpeciesNames').same(game.data,mon.species,'SPECIES_175')then
     game.save.flags=game.save.flags or {}
     game.save.flags[require("src.script.Gen2Flags").eventFlag(0x54)]=true
   end

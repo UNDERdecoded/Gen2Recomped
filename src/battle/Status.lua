@@ -132,17 +132,22 @@ Status.RECORDS = {
     id = "SLP", label = "SLP", hudLabel = "SLP",
     catchBonus = 25, shakeBonus = 10,
     beforeMovePriority = 40,
-    beforeMove = function(battler)
+    beforeMove = function(battler,rng,battle,move)
+      if require('src.core.GameVersion').isGen2()then
+        return require('src.battle.Gen2Sleep').beforeMove(battler,rng,battle,move)
+      end
       battler.sleepTurns = (battler.sleepTurns or 1) - 1
       if battler.sleepTurns <= 0 then
         battler.mon.status = nil
         return false, { Strings("%s\nwoke up!", name(battler)) } -- wakes, loses the turn
       end
-      return false, { Strings("%s\nis fast asleep!", name(battler)) }
+      return false, { Strings("%s\nis fast asleep!", name(battler)) }, nil, nil, "sleep"
     end,
     onInflict = function(battle, target, opts, display)
-      target.sleepTurns = battle.rng(rule(battle, "sleepTurnsMin"),
-                                     rule(battle, "sleepTurnsMax"))
+      local low,high=rule(battle,'sleepTurnsMin'),rule(battle,'sleepTurnsMax')
+      if require('src.core.GameVersion').isGen2()then
+        require('src.battle.Gen2Sleep').inflict(battle,target,low,high)
+      else target.sleepTurns=battle.rng(low,high)end
       return { Strings("%s\nfell asleep!", display) }
     end,
   },
@@ -239,11 +244,13 @@ local function battleStatuses(battle)
   return battle and battle.data and battle.data.statuses
 end
 
--- Returns canMove, messages, selfHit (true -> hurt itself in confusion).
+-- Existing decision/messages/selfHit keep their native owners. Optional
+-- registered reason/kind is retained in slot four; slot five describes the
+-- actual presentation kind, message index and blocking status, never text.
 -- The active status record's beforeMove runs at its priority slot: above
 -- VOLATILE_PRIORITY before the held/disable/confusion block (sleep,
 -- freeze), at or below after it (paralysis) -- the original's order.
-function Status.beforeMove(battler, rng, battle)
+function Status.beforeMove(battler, rng, battle, move)
   local mon = battler.mon
   -- Haze curing this mon's sleep/freeze forfeits its pending move for
   -- the turn, silently (haze.asm writes $ff/CANNOT_MOVE to the selected
@@ -252,7 +259,8 @@ function Status.beforeMove(battler, rng, battle)
     battler.skipMove = nil
     return false, {}
   end
-  if battler.flinched then
+  local gsc=require('src.core.GameVersion').isGen2()
+  if battler.flinched and not gsc then
     battler.flinched = false
     return false, { Strings("%s\nflinched!", name(battler)) }
   end
@@ -260,20 +268,37 @@ function Status.beforeMove(battler, rng, battle)
   local handler = record and record.beforeMove
   local priority = handler and (record.beforeMovePriority or 0)
   local msgs = {}
+  local presentation
+  local function describe(kind,index,blocked)
+    if not (kind or blocked)then return end
+    presentation=presentation or {}
+    if kind then presentation.kind,presentation.index=kind,index end
+    if blocked then presentation.blockedStatus=blocked end
+  end
   local function runStatus()
-    local canMove, statusMsgs, selfHit = handler(battler, rng, battle)
-    for _, m in ipairs(statusMsgs or {}) do msgs[#msgs + 1] = m end
-    return canMove, selfHit
+    local statusId=mon.status
+    local canMove,statusMsgs,selfHit,reason,kind=handler(battler,rng,battle,move)
+    for _,m in ipairs(statusMsgs or {})do msgs[#msgs+1]=m end
+    if kind==nil and (reason=='sleep' or reason=='confused')then kind=reason end
+    if statusMsgs and #statusMsgs>0 and (kind=='sleep' or kind=='confused')then describe(kind,#msgs)end
+    if not canMove then describe(nil,nil,record.id or statusId)end
+    return canMove,selfHit,reason
   end
   if handler and priority > VOLATILE_PRIORITY then
-    local canMove, selfHit = runStatus()
-    if not canMove or selfHit then return canMove, msgs, selfHit end
+    local canMove,selfHit,reason=runStatus()
+    if not canMove or selfHit then return canMove,msgs,selfHit,reason,presentation end
     handler = nil
+  end
+  if gsc and battler.flinched then
+    battler.flinched=false
+    msgs[#msgs+1]=Strings('%s\nflinched!',name(battler))
+    require('src.battle.Gen2Sleep').cancel(battler,move)
+    return false,msgs,false,nil,presentation
   end
   if battler.boundTurns and battler.boundTurns > 0 then
     battler.boundTurns = battler.boundTurns - 1
     msgs[#msgs + 1] = Strings("%s\ncan't move!", name(battler))
-    return false, msgs
+    return false,msgs,nil,nil,presentation
   end
   if battler.disabledTurns then
     battler.disabledTurns = battler.disabledTurns - 1
@@ -291,17 +316,18 @@ function Status.beforeMove(battler, rng, battle)
       table.insert(msgs, Strings("%s\nsnapped out of\nconfusion!", name(battler)))
     else
       table.insert(msgs, Strings("%s\nis confused!", name(battler)))
+      describe('confused',#msgs)
       -- cp 50 percent + 1 / jr c: hurt itself on rand >= 128 (128/256)
       if rng(0, 255) < 128 then
-        return false, msgs, true -- hurt itself
+        return false,msgs,true,nil,presentation -- hurt itself
       end
     end
   end
   if handler then
-    local canMove, selfHit = runStatus()
-    if not canMove or selfHit then return canMove, msgs, selfHit end
+    local canMove,selfHit,reason=runStatus()
+    if not canMove or selfHit then return canMove,msgs,selfHit,reason,presentation end
   end
-  return true, msgs
+  return true,msgs,nil,nil,presentation
 end
 
 -- End-of-turn residual damage; opponent is needed for Leech Seed.

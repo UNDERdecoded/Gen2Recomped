@@ -174,6 +174,7 @@ function Pokemon.applySeed(data, mon, seed)
 end
 
 function Pokemon.new(data, species, level, rng, form)
+  species=require("src.core.Gen2SpeciesNames").registryId(data.pokemon,species)
   local nativeForm=(data.constants or {}).gen==4 and (form or 0) or nil
   local speciesDef=(data.pokemon or {})[species]
   if require("src.core.GameVersion").get()=="polishedcrystal" and speciesDef and speciesDef.forms then

@@ -28,11 +28,17 @@ function Registry.new(name, spec)
   }, Registry)
 end
 
+local function canonicalId(self,id)
+  if self.spec.canonicalId then return self.spec.canonicalId(self.base and self.base(),id)end
+  return id
+end
+
 local function append(self, id, op, value, owner)
   if self.frozen then
     error(self.name .. ": content is frozen after load")
   end
   assert(type(id) == "string" and id ~= "", self.name .. " id is required")
+  id=canonicalId(self,id)
   local list = self.ops[id]
   if not list then
     list = {}
@@ -134,6 +140,7 @@ function Registry:remove(id, owner)
 end
 
 function Registry:get(id)
+  id=canonicalId(self,id)
   if self.spec.semantics == "compose" then
     -- chain() sorts top priority first, so the head is the effective value
     local chain = self:chain(id)
@@ -161,6 +168,7 @@ end
 -- Owner-less ops are left out. They are the engine's own contributions and
 -- nobody is choosing between them and a mod.
 function Registry:claimants(id)
+  id=canonicalId(self,id)
   local seen, out = {}, {}
   for _, entry in ipairs(self.ops[id] or {}) do
     local owner = entry.owner
@@ -197,6 +205,7 @@ end
 -- ops are untouched and only the reading of them changes.
 function Registry:preferOwner(id, owner)
   assert(type(id) == "string" and id ~= "", self.name .. " id is required")
+  id=canonicalId(self,id)
   self.prefer = self.prefer or {}
   self.prefer[id] = owner
   self.cache[id] = nil
@@ -204,6 +213,7 @@ function Registry:preferOwner(id, owner)
 end
 
 function Registry:preferredOwner(id)
+  id=canonicalId(self,id)
   return self.prefer and self.prefer[id] or nil
 end
 
@@ -243,6 +253,7 @@ end
 
 -- compose only: the ordered value list for an id
 function Registry:chain(id)
+  id=canonicalId(self,id)
   assert(self.spec.semantics == "compose",
     self.name .. ": chain is compose-only")
   local entries = composed(self, id)
@@ -255,6 +266,7 @@ end
 -- attribute dispatch (map_scripts runner sources) read both sides of the
 -- same fold
 function Registry:chainOwners(id)
+  id=canonicalId(self,id)
   assert(self.spec.semantics == "compose",
     self.name .. ": chainOwners is compose-only")
   local entries = composed(self, id)
@@ -267,6 +279,7 @@ end
 -- consumer that keeps its own base contribution outside the registry
 -- (MapScripts' engine scripts) knows the total conversion excluded it
 function Registry:chainReplacesBase(id)
+  id=canonicalId(self,id)
   assert(self.spec.semantics == "compose",
     self.name .. ": chainReplacesBase is compose-only")
   local _, replacesBase = composed(self, id)

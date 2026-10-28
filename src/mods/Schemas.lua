@@ -408,6 +408,8 @@ local R = {}
 Schemas.REGISTRIES = R
 
 R.pokemon = {
+  canonicalId=require("src.core.Gen2SpeciesNames").registryId,
+  write=require("src.core.Gen2SpeciesNames").write,
   semantics = "record", target = "pokemon",
   fields = {
     id = f.str, name = f.str, dex = f.int(1),

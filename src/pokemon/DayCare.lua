@@ -226,6 +226,7 @@ end
 -- ---------------------------------------------------------------------------
 
 local DITTO = "SPECIES_132"
+local Species=require('src.core.Gen2SpeciesNames')
 
 -- GetGender (03:$50C6).  The base_stats byte is the threshold the attack DV
 -- is compared against, scaled by 16: below it the mon is female.
@@ -279,7 +280,7 @@ function DayCare.pair(data, save)
   local a, b = DayCare.mon(save, DayCare.MAN), DayCare.mon(save, DayCare.LADY)
   if not (a and b) then return nil end
   if a.isEgg or b.isEgg then return nil end
-  local ditto = (a.species == DITTO and 1 or 0) + (b.species == DITTO and 1 or 0)
+  local ditto = (Species.same(data,a.species,DITTO) and 1 or 0) + (Species.same(data,b.species,DITTO) and 1 or 0)
   if ditto == 2 then return nil end              -- .ditto_and_ditto
   local ga, gb = eggGroupsOf(data, a), eggGroupsOf(data, b)
   if not (breeds(ga) and breeds(gb)) then return nil end
@@ -404,18 +405,18 @@ function DayCare.eggSpecies(data, save)
   local a, b = DayCare.pair(data, save)
   if not a then return nil end
   local mother = b
-  if b.species == DITTO then
+  if Species.same(data,b.species,DITTO) then
     mother = a
-  elseif a.species ~= DITTO then
+  elseif not Species.same(data,a.species,DITTO) then
     if DayCare.gender(data, a) == "female" then mother = a end
   end
   local species = baseForm(data, mother.species)
   if require("src.core.GameVersion").get()=="emerald" then
     species=require("src.pokemon.Gen3Breeding").species(species,a,b)
   end
-  if species == "SPECIES_029" and require("src.pokemon.Gen2Breeding").isVanilla() then
+  if Species.same(data,species,'SPECIES_029')and require("src.pokemon.Gen2Breeding").isVanilla() then
     -- InitBreeding: random byte < 128 gives Nidoran F, otherwise Nidoran M.
-    return math.random(0,255) < 128 and species or "SPECIES_032"
+    return math.random(0,255) < 128 and species or Species.fromNumber(data,32)
   end
   return species
 end
@@ -453,8 +454,8 @@ function DayCare.parents(data, save)
     if DayCare.gender(data, other) == "female" then return other, ditto end
     return ditto, other
   end
-  if a.species == DITTO then return withDitto(b, a) end
-  if b.species == DITTO then return withDitto(a, b) end
+  if Species.same(data,a.species,DITTO) then return withDitto(b, a) end
+  if Species.same(data,b.species,DITTO) then return withDitto(a, b) end
   if DayCare.gender(data, a) == "female" then return a, b end
   if DayCare.gender(data, b) == "female" then return b, a end
   -- no gender data at all (a Gen 1 import): the LADY's slot stands in as the

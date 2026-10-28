@@ -44,7 +44,15 @@ stub.graphics = {
     local w, h = pngSize(path)
     return setmetatable({ w = w, h = h, path = path }, Image)
   end,
-  newQuad = function(x, y, w, h) return { x = x, y = y, w = w, h = h } end,
+  newQuad = function(x,y,w,h,sw,sh)
+    local quad={x=x,y=y,w=w,h=h,sw=sw,sh=sh}
+    function quad:setViewport(a,b,c,d,e,f)
+      self.x,self.y,self.w,self.h=a,b,c,d
+      self.sw,self.sh=e or self.sw,f or self.sh
+    end
+    function quad:getViewport()return self.x,self.y,self.w,self.h end
+    return quad
+  end,
   newCanvas = function(w, h)
     return setmetatable({ w = w, h = h, setFilter = noop }, Image)
   end,

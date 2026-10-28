@@ -14787,11 +14787,13 @@ GEN2_ANIM.BY_HANDLER = {
   IncObj = { "incobj", 1 },
   SetObj = { "setobj", 2 },
   IncBGEffect = { "incbgeffect", 1 },
-  BattlerGFX_1Row = { "battlergfx_1row" },
-  BattlerGFX_2Row = { "battlergfx_2row" },
+  -- Macro names cross the cartridge handler names: D9's 2row macro
+  -- dispatches to _1Row. Preserve the decoded macro contract.
+  BattlerGFX_1Row = { "battlergfx_2row" },
+  BattlerGFX_2Row = { "battlergfx_1row" },
   -- Prism's names for the same two slots
-  EnemyFeetObj = { "battlergfx_1row" },
-  PlayerHeadObj = { "battlergfx_2row" },
+  EnemyFeetObj = { "battlergfx_2row" },
+  PlayerHeadObj = { "battlergfx_1row" },
   CheckPokeball = { "checkpokeball" },
   Transform = { "transform" },
   RaiseSub = { "raisesub" },
@@ -14959,7 +14961,8 @@ function RomExtractorGen2:gen2AnimScript(bank, entry)
     end
   end
   if not labels[entry] then return nil end
-  return { entry = labels[entry], code = code }
+  return { entry = labels[entry], code = code, bank=bank,
+    entryAddress=entry, addresses=addresses }
 end
 
 function RomExtractorGen2:gen2AnimObjects()
@@ -15110,7 +15113,7 @@ end
 
 -- Name each object `function` slot from DoBattleAnimFrame's jumptable.  The
 -- routines themselves are hand-written asm and cannot be ported as data, but
--- the names tell the player which motion to approximate.
+-- the names resolve the imported IDs to the genuine GSC object routines.
 function RomExtractorGen2:gen2AnimFunctions()
   local out = {}
   -- Resolved from the routine that dispatches through it, never hardcoded:
@@ -15149,7 +15152,7 @@ function RomExtractorGen2:gen2BattleAnims()
   local ok, first = pcall(self.rom.word, self.rom, sym.bank, sym.address)
   if ok then
     local count = math.floor((first - sym.address) / 2)
-    for id = 1, count - 1 do
+    for id = 0, count - 1 do
       pcall(function()
         local entry = self.rom:word(sym.bank, sym.address + id * 2)
         scripts[id] = self:gen2AnimScript(sym.bank, entry)
@@ -15161,8 +15164,11 @@ function RomExtractorGen2:gen2BattleAnims()
   for index, move in ipairs(order) do
     if scripts[index] then moveAnims[move] = index end
   end
-  return {
+  local imported = {
     gen2 = true,
+    bank = sym.bank,
+    commandFormat = "gsc-macro-v1",
+    pictureArt = require('src.import.Gen2BattlePictureArt').extract(self),
     scripts = scripts,
     moveAnims = moveAnims,
     objects = self:gen2AnimObjects(),
@@ -15175,8 +15181,10 @@ function RomExtractorGen2:gen2BattleAnims()
     -- (constants/move_constants.asm: ANIM_THROW_POKE_BALL $100,
     -- ANIM_SEND_OUT_MON $101, ANIM_IN_SANDSTORM $10b)
     misc = { throwPokeBall = 256, sendOutMon = 257, inSandstorm = 267 },
+    ids = require('src.battle.Gen2AnimationIds').install({gen2=true,scripts=scripts}).ids,
     move = {}, effects = {},
   }
+  return require('src.battle.Gen2AnimCatalog').compile(imported,self:constants(),self.version)
 end
 
 -- Sequences the ROM never emits but hand-written port text does.
