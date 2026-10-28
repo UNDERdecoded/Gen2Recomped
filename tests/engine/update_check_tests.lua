@@ -13,22 +13,36 @@ local Json = require("src.link.Json")
 
 -- releaseUrl is the fixed public landing page the UI links on needs_full
 eq(Check.releaseUrl(),
-   "https://github.com/bryanthaboi/gen1recomp/releases/latest",
+   "https://github.com/UNDERdecoded/Gen2Recomped/releases/latest",
    "releaseUrl points at the repo's latest release")
 
 -- parseRelease: a well-formed release with the .love payload and its sums
 local body = Json.encode({
   tag_name = "v1.4.2",
   assets = {
-    { name = "gen1recomp-1.4.2-macos.zip", browser_download_url = "http://x/mac", size = 10 },
-    { name = "gen1recomp-1.4.2.love", browser_download_url = "http://x/love", size = 12345 },
+    { name = "Gen2Recomped-1.4.2-macos.zip", browser_download_url = "http://x/mac", size = 10 },
+    { name = "Gen2Recomped-1.4.2.love", browser_download_url = "http://x/love", size = 12345 },
     { name = "sha256sums.txt", browser_download_url = "http://x/sums", size = 99 },
   },
 })
+-- A same-version Gen1 payload is not a fallback for a missing Gen2 asset.
+local foreign = Check.parseRelease(Json.encode({tag_name="v1.4.2", assets={
+  {name="gen1recomp-1.4.2.love",browser_download_url="http://x/foreign",size=88},
+  {name="Gen2Recomped-1.4.2-macos.zip",browser_download_url="http://x/zip",size=99},
+}}))
+check(foreign ~= nil, "a release without a matching game payload still parses")
+eq(foreign.payload,nil,"Gen1 and platform archives never substitute for the Gen2 payload")
+local competing = Check.parseRelease(Json.encode({tag_name="v1.4.2", assets={
+  {name="gen1recomp-1.4.2.love",browser_download_url="http://x/foreign",size=88},
+  {name="Gen2Recomped-1.4.2.love",browser_download_url="http://x/correct",size=123},
+}}))
+check(competing.payload ~= nil,"exact Gen2 payload wins among same-version assets")
+eq(competing.payload and competing.payload.url,"http://x/correct","foreign game asset is ignored even when listed first")
+
 local rel = Check.parseRelease(body)
 check(rel ~= nil, "parseRelease accepts a valid release")
 eq(rel.version, "1.4.2", "leading v stripped from tag_name")
-eq(rel.payloadName, "gen1recomp-1.4.2.love", "payload name derived from version")
+eq(rel.payloadName, "Gen2Recomped-1.4.2.love", "payload name derived from version")
 eq(rel.payload.url, "http://x/love", "payload asset url picked")
 eq(rel.payload.size, 12345, "payload asset size picked")
 eq(rel.sums.url, "http://x/sums", "sums asset url picked")
@@ -50,13 +64,13 @@ eq(Check.parseRelease(Json.encode({ foo = 1 })), nil, "missing tag_name rejected
 -- parseSums: shasum -a 256 format, tolerating the '*' binary marker, a './'
 -- prefix and CRLF line endings; unrelated lines are skipped
 local sums =
-  "aaaa1111  gen1recomp-1.4.2.love\n" ..
+  "aaaa1111  Gen2Recomped-1.4.2.love\n" ..
   "BBBB2222 *./sha256sums.txt\r\n" ..
   "not a checksum line\n"
 local map = Check.parseSums(sums)
-eq(map["gen1recomp-1.4.2.love"], "aaaa1111", "bare-name sum parsed")
+eq(map["Gen2Recomped-1.4.2.love"], "aaaa1111", "bare-name sum parsed")
 eq(map["sha256sums.txt"], "bbbb2222", "* marker and ./ prefix stripped, lowered")
-eq(Check.parseSums(sums, "gen1recomp-1.4.2.love"), "aaaa1111", "targeted lookup returns the hash")
+eq(Check.parseSums(sums, "Gen2Recomped-1.4.2.love"), "aaaa1111", "targeted lookup returns the hash")
 eq(Check.parseSums(sums, "missing.love"), nil, "targeted lookup misses cleanly")
 
 -- pickAsset guards a non-table assets field

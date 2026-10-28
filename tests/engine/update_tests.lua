@@ -193,11 +193,11 @@ end
 -- ---------------------------------------------------------------------------
 
 local assets = {
-  { name = "gen1recomp-1.4.2-macos.zip", browser_download_url = "http://x/mac", size = 10 },
-  { name = "gen1recomp-1.4.2.love",      browser_download_url = "http://x/love", size = 12345 },
+  { name = "Gen2Recomped-1.4.2-macos.zip", browser_download_url = "http://x/mac", size = 10 },
+  { name = "Gen2Recomped-1.4.2.love",      browser_download_url = "http://x/love", size = 12345 },
   { name = "sha256sums.txt",             browser_download_url = "http://x/sums", size = 99 },
 }
-local picked = Check.pickAsset(assets, "gen1recomp-1.4.2.love")
+local picked = Check.pickAsset(assets, "Gen2Recomped-1.4.2.love")
 check(picked ~= nil, "pickAsset finds an asset by exact name")
 eq(picked.url, "http://x/love", "pickAsset returns the download url")
 eq(picked.size, 12345, "pickAsset returns the numeric size")
@@ -223,10 +223,24 @@ local body = Json.encode({
   tag_name = "v1.4.2",
   assets = assets,
 })
+-- A same-version Gen1 payload is not a fallback for a missing Gen2 asset.
+local foreign = Check.parseRelease(Json.encode({tag_name="v1.4.2", assets={
+  {name="gen1recomp-1.4.2.love",browser_download_url="http://x/foreign",size=88},
+  {name="Gen2Recomped-1.4.2-macos.zip",browser_download_url="http://x/zip",size=99},
+}}))
+check(foreign ~= nil, "a release without a matching game payload still parses")
+eq(foreign.payload,nil,"Gen1 and platform archives never substitute for the Gen2 payload")
+local competing = Check.parseRelease(Json.encode({tag_name="v1.4.2", assets={
+  {name="gen1recomp-1.4.2.love",browser_download_url="http://x/foreign",size=88},
+  {name="Gen2Recomped-1.4.2.love",browser_download_url="http://x/correct",size=123},
+}}))
+check(competing.payload ~= nil,"exact Gen2 payload wins among same-version assets")
+eq(competing.payload and competing.payload.url,"http://x/correct","foreign game asset is ignored even when listed first")
+
 local rel = Check.parseRelease(body)
 check(rel ~= nil, "parseRelease accepts a valid release")
 eq(rel.version, "1.4.2", "parseRelease strips the leading v from tag_name")
-eq(rel.payloadName, "gen1recomp-1.4.2.love", "parseRelease derives the payload name from the version")
+eq(rel.payloadName, "Gen2Recomped-1.4.2.love", "parseRelease derives the payload name from the version")
 eq(rel.payload.url, "http://x/love", "parseRelease picks the payload asset url")
 eq(rel.payload.size, 12345, "parseRelease picks the payload asset size")
 eq(rel.sums.url, "http://x/sums", "parseRelease picks the sums asset url")
@@ -268,18 +282,18 @@ eq(literal, nil, "parseRelease returns nil on a non-object JSON literal")
 -- standard "<hex>  <file>" lines, the '*' binary marker, a './' prefix, CRLF
 -- endings and mixed hash case; junk lines are skipped
 local sums =
-  "aaaa1111  gen1recomp-1.4.2.love\n" ..
+  "aaaa1111  Gen2Recomped-1.4.2.love\n" ..
   "BBBB2222 *./sha256sums.txt\r\n" ..
   "deadBEEF  ./nested.love\n" ..
   "not a checksum line at all\n"
 local map = Check.parseSums(sums)
-eq(map["gen1recomp-1.4.2.love"], "aaaa1111", "parseSums reads a bare-name line")
+eq(map["Gen2Recomped-1.4.2.love"], "aaaa1111", "parseSums reads a bare-name line")
 eq(map["sha256sums.txt"], "bbbb2222", "parseSums strips the * marker and ./ prefix and lowercases")
 eq(map["nested.love"], "deadbeef", "parseSums lowercases a mixed-case hash and strips ./")
 eq(map["not a checksum line at all"], nil, "parseSums skips lines that are not checksums")
 
 -- the target form returns just that file's hash (hit / miss)
-eq(Check.parseSums(sums, "gen1recomp-1.4.2.love"), "aaaa1111", "parseSums(target) returns the matching hash")
+eq(Check.parseSums(sums, "Gen2Recomped-1.4.2.love"), "aaaa1111", "parseSums(target) returns the matching hash")
 eq(Check.parseSums(sums, "missing.love"), nil, "parseSums(target) misses cleanly on an unknown file")
 
 -- degenerate inputs: empty text yields an empty map, a targeted miss is nil,
@@ -294,7 +308,7 @@ eq(Check.parseSums(nil, "anything"), nil, "parseSums(nil, target) returns nil wi
 -- ---------------------------------------------------------------------------
 
 eq(Check.releaseUrl(),
-   "https://github.com/bryanthaboi/gen1recomp/releases/latest",
+   "https://github.com/UNDERdecoded/Gen2Recomped/releases/latest",
    "releaseUrl points at the repo's latest release")
 
 T.finish("update")
