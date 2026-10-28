@@ -58,7 +58,13 @@ function Events:emit(name, payload)
     -- lumping them together names the seam instead of the culprit.
     local close = FrameProfile.section(
       "  mod " .. tostring(entry.owner or "?") .. ": " .. tostring(name))
-    local ok, err = pcall(entry.callback, payload)
+    local facade = package.loaded['src.core.Game3']
+    local ok, err
+    if facade and facade._usesCallbacks and facade._usesCallbacks(entry.owner) then
+      ok, err = pcall(facade._invokeEvent, entry.owner, name, entry.callback, payload)
+    else
+      ok, err = pcall(entry.callback, payload)
+    end
     close()
     if not ok then
       Logger.error("[%s] event %s: %s",
