@@ -284,6 +284,10 @@ end
 -- else, so a spammed PROTECT fails the way the cartridge makes it fail.
 local function protection(field, text)
   return function(battle, user)
+    if require("src.core.GameVersion").isGen2() then
+      if not require("src.battle.Gen2Protection").apply(battle, user, field) then return { Strings("But, it failed!") } end
+      return { Strings(text, displayName(user)) }
+    end
     local run = user.protectRun or 0
     -- 1/1, then 1/2, 1/4, 1/8...  A run of four is already a coin flip
     -- three times over, which is what stops it being a stall lock.
