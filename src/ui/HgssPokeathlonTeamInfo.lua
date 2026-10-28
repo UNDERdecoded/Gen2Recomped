@@ -48,6 +48,7 @@
 --   * the OBJ set's sequence 5 (a sparkle, created hidden at the Medals and
 --     never shown by ov97) and 6 are not drawn
 
+local Strings = require("src.core.Strings")
 local Font = require("src.render.Font")
 local T = require("src.import.Gen4Text")
 
@@ -199,7 +200,7 @@ function M.draw(game, opts)
     elseif r.gender == "female" then text(game, line(game, 3, "♀"), 76, 120, 3, 4) end
     for _, l in ipairs(M.LABELS) do text(game, line(game, l[1], ""), 104, l[2]) end
     local sp = speciesName(game, mon)
-    text(game, line(game, 9, "Medals won by\n" .. sp, sp), 8, 152)
+    text(game, line(game, 9, Strings("Medals won by\n%s", sp), sp), 8, 152)
     -- the OBJs: the picture, the stars and arrows, the Medals
     local pic = picture(game, mon)
     if pic then

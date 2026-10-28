@@ -1,5 +1,6 @@
 local Logger = require("src.core.Logger")
 local FrameProfile = require("src.core.FrameProfile")
+local Runtime = require("src.mods.Runtime")
 
 local Events = {}
 Events.__index = Events
@@ -58,11 +59,39 @@ function Events:emit(name, payload)
     -- lumping them together names the seam instead of the culprit.
     local close = FrameProfile.section(
       "  mod " .. tostring(entry.owner or "?") .. ": " .. tostring(name))
-    local ok, err = pcall(entry.callback, payload)
+    local facade = package.loaded['src.core.Game3']
+    local ok, err
+    -- Native lifecycle/UI option changes are synchronous transactions. Capture only
+    -- the current bus's real subscriber; preserve coroutine callback ABI by
+    -- leaving non-main dispatch on its existing path. Frame events stay lean.
+    local lifecycle=name=='mods.loaded'or name=='game.ready'
+    local options=(lifecycle or name=='mod.options_changed'or name=='mod.option_action')
+      and Runtime.events==self and(lifecycle or entry.owner~=nil and entry.owner~='base')
+    if options then local co,main=coroutine.running();options=not co or main end
+    local seams=options and package.loaded['src.mods.ModSeams']
+    local seamOwner=entry.owner
+    if seams and(entry.owner==nil or entry.owner=='base')then seamOwner='lifecycle:'..name end
+    if facade and facade._usesCallbacks and facade._usesCallbacks(entry.owner) then
+      if seams then ok,err=seams.run(seamOwner,facade._invokeEvent,entry.owner,name,entry.callback,payload)
+      else ok,err=pcall(facade._invokeEvent,entry.owner,name,entry.callback,payload)end
+    else
+      if seams then ok,err=seams.run(seamOwner,entry.callback,payload)
+      else ok,err=pcall(entry.callback,payload)end
+    end
     close()
     if not ok then
-      Logger.error("[%s] event %s: %s",
-        tostring(entry.owner or "?"), name, tostring(err))
+      local message=tostring(err)
+      local feed=Runtime.events==self and Runtime.errors
+      local reportable=feed and entry.owner~=nil and entry.owner~='base'
+      if not reportable or entry._failureFeed~=feed or entry._failureMessage~=message then
+        Logger.error("[%s] event %s: %s",tostring(entry.owner or "?"),name,message)
+        if reportable then
+          Runtime.reportError(entry.owner,'event '..name..': '..message)
+          entry._failureFeed,entry._failureMessage=feed,message
+        end
+      end
+    else
+      entry._failureFeed,entry._failureMessage=nil,nil
     end
   end
 end
