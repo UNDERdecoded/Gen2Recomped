@@ -1,0 +1,117 @@
+package.path='./?.lua;./?/init.lua;'..package.path
+local T=require('tests.harness')
+local B=require('src.compat.gen1.ScriptBoundary')
+local function pack(...)return {n=select('#',...),...}end
+local function resume(co,...)
+  local result=pack(coroutine.resume(co,...))
+  T.eq(result[1],true,'owned coroutine resumes without a native error')
+  return unpack(result,2,result.n)
+end
+local calls=0
+local result=pack(B.dispatch('once',function()calls=calls+1;return nil,'native',nil end,function()
+  T.same(pack(B.invoke('once')),{n=3,[2]='native'},'native nil tuple survives first consumption')
+  return B.invoke('once')
+end))
+T.same(result,{n=3,[2]='native'},'dispatch preserves source return arity')
+T.eq(calls,1,'repeated base calls execute the native body once')
+T.eq(B.active('once'),false,'return retires the native phase')
+
+local child,innerCalls= nil,0
+B.dispatch('parent',function()calls=calls+1;return 42 end,function()
+  child=coroutine.create(function()
+    T.eq(B.invoke('parent'),42,'a directly resumed child borrows its active parent body')
+    return B.dispatch('child',function()innerCalls=innerCalls+1 end,function()
+      coroutine.yield('held')
+      T.eq(B.invoke('replacement'),nil,'retired child cannot consume a newer native phase')
+      T.raises(function()B.dispatch('revived',function()end,function()error('must not run')end)end,
+        'retired','retired child cannot open a new attributed callback')
+      B.invoke('child')
+    end)
+  end)
+  T.eq(resume(child),'held')
+  T.eq(B.active('child'),false,'suspended child scope is invisible on its parent thread')
+  T.eq(B.invoke('child'),nil,'parent cannot consume a suspended child body')
+  resume(coroutine.create(function()
+    T.eq(B.active('child'),false,'another child cannot borrow the suspended sibling')
+    T.eq(B.invoke('parent'),42,'another direct child shares the same consumed parent tuple')
+  end))
+end)
+T.eq(innerCalls,0,'returning parent never executes a held nested body')
+local ok,why
+B.dispatch('replacement',function()return 'new native body'end,function()
+    ok,why=coroutine.resume(child)
+    T.eq(B.invoke('replacement'),'new native body','new native phase remains available to its actual caller')
+end)
+T.eq(ok,false,'resuming a retired nested dispatch fails closed')
+T.check(tostring(why):find('retired',1,true)~=nil,'retirement is reported explicitly')
+T.eq(innerCalls,0,'retired nested body cannot execute after resume')
+T.eq(B.active('parent'),false);T.eq(B.active('child'),false)
+
+local borrowed,borrowedCalls
+borrowedCalls=0
+B.dispatch('borrowed-body',function()
+  borrowedCalls=borrowedCalls+1
+  coroutine.yield('body held')
+  return 'old result'
+end,function()
+  borrowed=coroutine.create(function()
+    local consumed,errorValue=pcall(B.invoke,'borrowed-body')
+    T.eq(consumed,false,'a borrowed native body cannot publish after its parent retired')
+    T.check(tostring(errorValue):find('retired',1,true)~=nil)
+    T.eq(B.invoke('replacement-body'),nil,'catching retirement cannot consume a new native body')
+  end)
+  T.eq(resume(borrowed),'body held')
+end)
+B.dispatch('replacement-body',function()return 'fresh'end,function()
+  resume(borrowed)
+  T.eq(B.invoke('replacement-body'),'fresh','retired native body cannot consume replacement phase')
+end)
+T.eq(borrowedCalls,1,'retirement never retries a borrowed native body')
+
+local first=coroutine.create(function()
+  return B.dispatch('separate',function()return 'first' end,function()
+    coroutine.yield('old root')
+    T.eq(B.invoke('separate'),'first','resumed root consumes its own body, not a newer caller')
+  end)
+end)
+T.eq(resume(first),'old root')
+T.eq(B.active('separate'),false,'an independently suspended root is invisible')
+B.dispatch('separate',function()return 'second' end,function()
+  resume(first)
+  T.eq(B.invoke('separate'),'second','old root cleanup retains the newer root')
+end)
+T.eq(B.active('separate'),false,'neither root resurrects after completion')
+
+local ambiguous=coroutine.create(function()
+  return B.dispatch('ambiguous',function()error('old native body must not run')end,function()
+    coroutine.yield()
+    resume(coroutine.create(function()
+      T.eq(B.invoke('ambiguous'),nil,'independent resumer roots cannot lend an ambiguous phase')
+    end))
+  end)
+end)
+resume(ambiguous)
+B.dispatch('ambiguous',function()error('new native body must not run')end,function()resume(ambiguous)end)
+
+local failures=0
+ok,why=pcall(B.dispatch,'failed',function()failures=failures+1;error('owned native failure')end,function()
+  pcall(B.invoke,'failed');pcall(B.invoke,'failed')
+end)
+T.eq(ok,false);T.check(tostring(why):find('owned native failure',1,true)~=nil)
+T.eq(failures,1,'swallowing an exception cannot replay the native body')
+ok,why=pcall(B.dispatch,'false failure',function()error(false)end,function()pcall(B.invoke,'false failure')end)
+T.eq(ok,false,'false-valued native errors also cannot be swallowed');T.eq(why,false)
+
+-- Weak scope heads must not keep an abandoned independent coroutine alive.
+local weak=setmetatable({},{__mode='v'})
+do
+  local co=coroutine.create(function()
+    B.dispatch('abandoned',function()end,function()coroutine.yield()end)
+  end)
+  weak[1]=co;resume(co)
+end
+collectgarbage('collect');collectgarbage('collect')
+T.eq(weak[1],nil,'abandoned native scope does not pin its coroutine')
+T.eq(B.active('abandoned'),false)
+
+T.finish('Native coroutine phase borrowing, retirement and once-only native bodies')

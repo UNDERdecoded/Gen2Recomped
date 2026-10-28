@@ -895,6 +895,14 @@ local ON_LOAD, ON_TRANSITION, ON_RESUME = 1, 3, 5
 -- warp-into rows, which do not need to.
 local ON_FRAME_TABLE, ON_WARP_INTO_MAP_TABLE = 2, 4
 
+local function fieldPhase(name, game, overworld, mapId, body)
+  local space = package.loaded['src.core.game3.scripting.space']
+  if space and type(space._nativePhase) == 'function' then
+    return space._nativePhase(name, game, overworld, mapId, body)
+  end
+  return body()
+end
+
 local function contributionFor(data, mapId, entry, mapDef)
   local contribution = {}
 
@@ -945,6 +953,7 @@ local function contributionFor(data, mapId, entry, mapDef)
   if #onEnter > 0 or #onWarpIn > 0 or #onFrame > 0 then
     local Gen3Commands = require("src.script.Gen3Commands")
     contribution.onEnter = function(game, overworld)
+      return fieldPhase('runEnterScripts', game, overworld, mapId, function()
       -- a fresh visit re-arms the frame table: these closures outlive the
       -- map, and a save loaded into the same map has to be asked again
       for _, g in ipairs(onFrame) do g.armed = nil end
@@ -957,6 +966,7 @@ local function contributionFor(data, mapId, entry, mapDef)
           break
         end
       end
+      end)
     end
   end
 
@@ -977,6 +987,7 @@ local function contributionFor(data, mapId, entry, mapDef)
   if #onFrame > 0 then
     local Gen3Commands = require("src.script.Gen3Commands")
     contribution.onFrame = function(game, overworld)
+      return fieldPhase('runOnFrame', game, overworld, mapId, function()
       for _, g in ipairs(onFrame) do
         local now = Gen3Commands.getVar(game.save, g.var)
         if now ~= g.value then
@@ -988,6 +999,7 @@ local function contributionFor(data, mapId, entry, mapDef)
         end
       end
       return false
+      end)
     end
   end
 

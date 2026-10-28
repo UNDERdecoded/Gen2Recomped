@@ -70,7 +70,15 @@
 --                                                        (usually a pointer)
 --   *  variable length; see TRAINER_BATTLE_LENGTH
 
-local Gen3ScriptOps = {}
+local Gen3ScriptOps = { CACHE_REVISION = 1 }
+
+-- The RS handler reads x/y; the later games removed those reads. Keep
+-- edition semantics here instead of mutating the shared command table.
+function Gen3ScriptOps.operandSpec(command, version)
+  local edition = type(version) == 'table' and version.id or version
+  if command[1] == 'hidemoneybox' and (edition == 'ruby' or edition == 'sapphire') then return 'bb' end
+  return command[2]
+end
 
 Gen3ScriptOps.COMMANDS = {
   { "nop", "" }, { "nop1", "" }, { "end", "" }, { "return", "" }, { "call", "d" },
@@ -119,7 +127,7 @@ Gen3ScriptOps.COMMANDS = {
   { "choosecontestmon", "" }, { "startcontest", "" }, { "showcontestresults", "" },
   { "contestlinktransfer", "" }, { "random", "w" }, { "addmoney", "db" },
   { "removemoney", "db" }, { "checkmoney", "db" }, { "showmoneybox", "bbb" },
-  { "hidemoneybox", "" }, { "updatemoneybox", "" }, { "getpokenewsactive", "w" },
+  { "hidemoneybox", "" }, { "updatemoneybox", "bbb" }, { "getpokenewsactive", "w" },
   { "fadescreen", "b" }, { "fadescreenspeed", "bb" }, { "setflashlevel", "w" },
   { "animateflash", "b" }, { "messageautoscroll", "d" }, { "dofieldeffect", "w" },
   { "setfieldeffectargument", "bw" }, { "waitfieldeffect", "w" }, { "setrespawn", "w" },
