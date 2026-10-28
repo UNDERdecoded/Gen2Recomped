@@ -11,6 +11,10 @@ local function pack(...) return { n = select("#", ...), ... } end
 -- attributed to a mod link or retried; they ride out wrapped under this key
 -- so every guard re-raises instead of skipping
 local PASS = {}
+local function live()
+  local scopes=package.loaded['src.compat.gen1.CoroutineScopes']
+  assert(not(scopes and scopes.retired()),'native hook coroutine retired')
+end
 
 function Hooks.new()
   return setmetatable({ chains = {} }, Hooks)
@@ -65,14 +69,17 @@ local function siteOf(entry)
 end
 
 function Hooks:call(name, vanilla, ...)
+  live()
   local chain = self.chains[name]
   if not chain or #chain == 0 then return vanilla(...) end
   local args = pack(...)
   local ranVanilla = false
   local function run(index)
+    live()
     if index > #chain then
       ranVanilla = true
       local res = pack(pcall(vanilla, unpack(args, 1, args.n)))
+      live()
       if res[1] then return unpack(res, 2, res.n) end
       error({ [PASS] = res[2] }, 0)
     end
@@ -100,12 +107,19 @@ function Hooks:call(name, vanilla, ...)
       return unpack(downstream, 1, downstream.n)
     end
     local started = measuring and FrameProfile.now() or nil
-    local res = pack(pcall(entry.callback, nextFn, unpack(args, 1, args.n)))
+    local facade = package.loaded['src.core.Game3']
+    local res
+    if facade and facade._usesCallbacks and facade._usesCallbacks(entry.owner) then
+      res = pack(pcall(facade._invokeHook, entry.owner, entry.callback, nextFn, unpack(args, 1, args.n)))
+    else
+      res = pack(pcall(entry.callback, nextFn, unpack(args, 1, args.n)))
+    end
     if started then
       FrameProfile.add("      hook " .. tostring(name) .. " <- "
         .. siteOf(entry),
         (FrameProfile.now() - started) - below)
     end
+    live()
     if res[1] then return unpack(res, 2, res.n) end
     local err = res[2]
     if type(err) == "table" and err[PASS] ~= nil then error(err, 0) end
