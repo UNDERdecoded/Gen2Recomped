@@ -18,6 +18,9 @@
 local Gen2Flags = require("src.script.Gen2Flags")
 
 local Gen2Daily = {}
+-- Native RTC/calendar integration by Roxas2712; see contribution permission:
+-- https://github.com/Roxas2712/Gen2Recomped/blob/7867399c753186778bd4b8816ba37573357e4b40/LICENSE-ROXAS2712.md.
+local Clock = require("src.core.Gen2Clock")
 
 local ENGINE_LUCKY_NUMBER_SHOW = 77
 local GameVersion = require("src.core.GameVersion")
@@ -39,19 +42,15 @@ local INITIAL_HIDDEN_EVENTS = {
   1915, -- EVENT_INDIGO_PLATEAU_POKECENTER_RIVAL
 }
 
-local function todayKey(now)
-  return os.date("%Y-%m-%d", now)
-end
-
 local function nextFriday(save, now)
-  local date = os.date("*t", now)
-  local weekday = (date.wday - 1 + (tonumber(save.g2DayOffset) or 0)) % 7
+  local date = Clock.calendarDate(save, now)
+  local weekday = Clock.weekday(save, now)
   local days = (5 - weekday) % 7 -- Match the weekday chosen at Mom's clock.
   if days == 0 then days = 7 end
   -- Calendar arithmetic, rather than seconds, also handles daylight saving.
   date.day, date.hour, date.min, date.sec = date.day + days, 12, 0, 0
   date.isdst = nil
-  return todayKey(os.time(date))
+  return os.date("%Y-%m-%d", os.time(date))
 end
 
 function Gen2Daily.lotteryExpired(save, now)
@@ -59,7 +58,7 @@ function Gen2Daily.lotteryExpired(save, now)
     -- Old saves already have a drawn ID; retain it when adding the timer.
     save.g2LuckyNextFriday = nextFriday(save, now)
   end
-  return todayKey(now) >= save.g2LuckyNextFriday
+  return Clock.dateKey(save, now) >= save.g2LuckyNextFriday
 end
 
 function Gen2Daily.resetLottery(save, now)
@@ -121,7 +120,7 @@ function Gen2Daily.poll(save, now)
   Gen2Daily.ensureRoam(save, nil)
   if not save then return end
   Gen2Daily.seedInitialObjectFlags(save)
-  local today = todayKey(now)
+  local today = Clock.dateKey(save, now)
   if save.g2DailyDay == today then return end
   save.g2DailyDay = today
   Gen2Daily.onNewDay(save)
