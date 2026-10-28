@@ -54,8 +54,12 @@ local function settleChoice(state)
   for _ = 1, Timing.YES_NO_ANSWER do state:update(1 / 60) end
 end
 
--- rows are BindingsMenu's BUTTONS order
-local ROW_A, ROW_B, ROW_SELECT = 5, 6, 8
+local function row(menu, action)
+  for i, item in ipairs(menu.items) do
+    if item.button and item.button.id == action then return i end
+  end
+  error("missing controls row: " .. action)
+end
 
 -- ---- (a) pad capture swaps with the row that owns the button --------------
 
@@ -64,9 +68,9 @@ local game = newGame()
 local bm = BindingsMenu.new(game)
 game.stack:push(bm)
 
-bm.index = ROW_A
+bm.index = row(bm, "a")
 press(bm, "a")
-eq(bm.capture, bm.items[ROW_A], "A arms the A row")
+eq(bm.capture, bm.items[row(bm, "a")], "A arms the A row")
 bm:onGamepadPressed("b")
 check(game.save.options.bindings == nil,
       "a pad capture holds its press; nothing stores before the release")
@@ -75,8 +79,8 @@ local bindings = game.save.options.bindings
 eq(bindings.a.pad, "b", "releasing pad B stores it on the A row")
 eq(bindings.b.pad, "a",
    "and the B row, which owned pad B, inherits the A row's old pad (#589)")
-eq(bm.items[ROW_A].right, "Z/B", "the A row redraws with the new pad")
-eq(bm.items[ROW_B].right, "X/A", "so does the B row")
+eq(bm.items[row(bm, "a")].right, "Z/B", "the A row redraws with the new pad")
+eq(bm.items[row(bm, "b")].right, "X/A", "so does the B row")
 
 -- after applying, every row's effective pad is unique and none is lost
 Input:applyBindings(bindings)
@@ -89,13 +93,21 @@ for button, action in pairs(Input.padBindings) do
   seen[action] = button
   actions[#actions + 1] = action
 end
-eq(#actions, 8, "all eight actions still have exactly one pad button")
+eq(#actions, 12, "all twelve actions still have exactly one pad button")
+local unchanged = {
+  up = "dpup", down = "dpdown", left = "dpleft", right = "dpright",
+  x = "y", y = "x", start = "start", select = "back",
+  l = "leftshoulder", r = "rightshoulder",
+}
+for action, button in pairs(unchanged) do
+  eq(seen[action], button, "A/B swap preserves the binding for " .. action)
+end
 Input:init()
 
 -- ---- (b) a second input while the first is held cancels -------------------
 
 -- key then key: the straggling release of the first press writes nothing
-bm.index = ROW_SELECT
+bm.index = row(bm, "select")
 press(bm, "a")
 bm:onKeyPressed("q")
 bm:onKeyPressed("w")
@@ -121,17 +133,17 @@ check(bindings.select == nil, "press alone commits nothing (#589)")
 eq(game.wroteOptions, writesAfterSwap, "and touches nothing on disk")
 bm:onKeyReleased("q")
 eq(bindings.select.key, "q", "the release is the commit")
-eq(bm.items[ROW_SELECT].right, "Q/BACK", "the row shows the new key")
+eq(bm.items[row(bm, "select")].right, "Q/BACK", "the row shows the new key")
 
 -- ---- (d) SELECT on a row forgets its rebind -------------------------------
 
 press(bm, "select")
 check(bindings.select == nil, "SELECT drops the row's overlay entry (#589)")
-eq(bm.items[ROW_SELECT].right, "TAB/BACK", "the row falls back to the default")
+eq(bm.items[row(bm, "select")].right, "TAB/BACK", "the row falls back to the default")
 -- the swapped B row clears the same way; a second SELECT on the now
 -- default row is a no-op, not a write
 local writes = game.wroteOptions
-bm.index = ROW_B
+bm.index = row(bm, "b")
 press(bm, "select")
 eq(game.wroteOptions, writes + 1, "clearing the swapped B row writes once")
 check(game.save.options.bindings.b == nil, "and drops its overlay entry")
@@ -141,7 +153,7 @@ eq(game.wroteOptions, writes + 1, "clearing an already-default row writes nothin
 -- ---- (e) START confirms, then drops the whole overlay ---------------------
 
 -- rebuild a dirty overlay to reset
-bm.index = ROW_A
+bm.index = row(bm, "a")
 press(bm, "a")
 bm:onKeyPressed("p")
 bm:onKeyReleased("p")
@@ -158,7 +170,7 @@ press(box, "a")
 settleChoice(box)
 eq(game.stack:top(), bm, "answering pops the box")
 check(game.save.options.bindings ~= nil, "NO keeps the bindings (defaultNo)")
-eq(bm.items[ROW_A].right, "P/B", "and the rows keep showing them")
+eq(bm.items[row(bm, "a")].right, "P/B", "and the rows keep showing them")
 
 -- again, flip to YES: the overlay goes away and every row reads default
 press(bm, "start")
@@ -167,8 +179,8 @@ press(box, "up")
 press(box, "a")
 settleChoice(box)
 check(game.save.options.bindings == nil, "YES clears options.bindings (#589)")
-eq(bm.items[ROW_A].right, "Z/A", "the A row reads its default again")
-eq(bm.items[ROW_B].right, "X/B", "so does the B row the swap had touched")
+eq(bm.items[row(bm, "a")].right, "Z/A", "the A row reads its default again")
+eq(bm.items[row(bm, "b")].right, "X/B", "so does the B row the swap had touched")
 
 -- closing after the reset leaves the live map at the defaults
 press(bm, "b")

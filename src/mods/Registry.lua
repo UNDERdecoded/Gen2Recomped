@@ -28,11 +28,16 @@ function Registry.new(name, spec)
   }, Registry)
 end
 
+local function validId(self, id)
+  return type(id) == "string" and id ~= ""
+    or self.numericIds and type(id) == "number" and id >= 1 and id < math.huge and id % 1 == 0
+end
+
 local function append(self, id, op, value, owner)
   if self.frozen then
     error(self.name .. ": content is frozen after load")
   end
-  assert(type(id) == "string" and id ~= "", self.name .. " id is required")
+  assert(validId(self, id), self.name .. " id is required")
   local list = self.ops[id]
   if not list then
     list = {}
@@ -94,6 +99,14 @@ local function fold(self, value, opList, id)
       if type(entry.value) == "table" then
         value = Merge.deepMerge(Merge.deepCopy(value == nil and {} or value),
           entry.value, self.spec.semantics)
+        -- Adapter-produced list patches include empty replacements. Native
+        -- patch semantics keep {} as a dictionary/no-op, so this internal
+        -- path list explicitly distinguishes clearing a list from omitting it.
+        for _, path in ipairs(entry.replaceLists or {}) do
+          local into, from = value, entry.value
+          for i = 1, #path - 1 do into, from = into[path[i]], from[path[i]] end
+          into[path[#path]] = Merge.deepCopy(from[path[#path]])
+        end
       else
         value = entry.value
       end
@@ -120,12 +133,14 @@ function Registry:override(id, value, owner)
   return append(self, id, "override", value, owner)
 end
 
-function Registry:patch(id, partial, owner)
+function Registry:patch(id, partial, owner, replaceLists)
   assert(partial ~= nil, self.name .. " patch value is required for " .. tostring(id))
   if self.spec.semantics == "compose" then
     error(self.name .. ": patch is not supported on compose registries")
   end
-  return append(self, id, "patch", partial, owner)
+  local result = append(self, id, "patch", partial, owner)
+  if replaceLists then self.ops[id][#self.ops[id]].replaceLists = Merge.deepCopy(replaceLists) end
+  return result
 end
 
 -- tombstone: consumers treat the id as absent after the merge
@@ -196,7 +211,7 @@ end
 -- Works after the loader has frozen content, because it appends nothing -- the
 -- ops are untouched and only the reading of them changes.
 function Registry:preferOwner(id, owner)
-  assert(type(id) == "string" and id ~= "", self.name .. " id is required")
+  assert(validId(self, id), self.name .. " id is required")
   self.prefer = self.prefer or {}
   self.prefer[id] = owner
   self.cache[id] = nil
