@@ -89,7 +89,7 @@ Evolution.METHODS = {
         return false
       end
       if not evo.timeOfDay then return true end
-      local night = Evolution.isNight()
+      local night = Evolution.isNight(game.save)
       if evo.timeOfDay == "NITE" then return night end
       return not night   -- TR_MORNDAY: morn or day
     end,
@@ -223,10 +223,11 @@ Evolution.HAPPINESS_TO_EVOLVE = 220
 Evolution.BASE_HAPPINESS = 70
 
 -- GSC time-of-day bands (constants/time_constants.asm): MORN 4-9, DAY
--- 10-17, NITE 18-3.  The port has no in-game clock, so the wall clock is
--- what GSC's RTC would have been.
-function Evolution.isNight()
-  local hour = tonumber(os.date("%H")) or 12
+-- 10-17, NITE 18-3. GSC reads the shared saved RTC offset; other editions
+-- retain their existing host-clock behavior.
+function Evolution.isNight(save)
+  local hour = require("src.core.GameVersion").isGen2()
+    and require("src.core.Gen2Clock").hour(save) or tonumber(os.date("%H")) or 12
   return hour >= 18 or hour < 4
 end
 
