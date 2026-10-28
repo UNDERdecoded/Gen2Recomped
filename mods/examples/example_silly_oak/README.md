@@ -35,8 +35,8 @@ SHOT_DIR=/tmp/silly_oak POKEPORT_IDENTITY=silly_oak_driver_test \
 
 | Seam | Where |
 |---|---|
-| `hooks:wrap("intro.oak_speech.build")` | `main.lua` — reshape the step list |
-| `mod.ui.insertStepAfter` / `insertStepBefore` | `main.lua` — anchored on vanilla step ids |
+| `hooks:wrap("intro.oak_speech.build")` | `main.lua` -- reshape the step list |
+| `mod.ui.insertStepAfter` / `insertStepBefore` | `main.lua` -- anchored on vanilla step ids |
 | step kinds `say` / `yesno` / `choice` | `main.lua` |
 | pics: `"oak"`, `"rival"`, `"player"`, pokemon, custom image | `main.lua` |
 | `events:on("intro.oak_speech.answered")` | `main.lua` → `mod.save` |
