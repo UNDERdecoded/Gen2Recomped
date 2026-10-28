@@ -1201,17 +1201,7 @@ end
 -- gets a different half of the memo, and that is the point of the block --
 -- your game did not watch it be caught and does not claim it did.
 function Gen3SummaryMenu:memoOwnMon()
-  local mon, save = self.mon, self.game and self.game.save
-  local player = save and save.player
-  if not (mon and player) then return true end
-  if mon.ot == nil and mon.otId == nil then return true end
-  if mon.ot ~= nil and player.name ~= nil and mon.ot ~= player.name then
-    return false
-  end
-  if mon.otId ~= nil and player.id ~= nil and mon.otId ~= player.id then
-    return false
-  end
-  return true
+  return require('src.pokemon.Gen3Ownership').owns(self.mon,(self.game and self.game.save or{}).player)
 end
 
 -- Which of the eight the cartridge would choose, from the same facts

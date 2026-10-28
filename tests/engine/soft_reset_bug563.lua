@@ -106,8 +106,9 @@ check(stepChord(), "reaching 16 again from the restart")
 -- before stack:update, so it fires from a battle, a menu or a cutscene and
 -- not just from the overworld (#563).
 local function fakeGame()
-  local game = { input = Input, save = {}, returned = 0 }
+  local game = setmetatable({ input = Input, save = {}, returned = 0 }, { __index = Game })
   game.stack = {
+    states = { {} }, -- a live state, so the real empty-stack guard does not recover
     updates = 0,
     update = function(self) self.updates = self.updates + 1 end,
   }
@@ -117,7 +118,23 @@ end
 
 local game = fakeGame()
 holdKeys("z", "x", "escape", "tab")
+-- Observe the real profiling wrapper as well as its real _step body. A reset
+-- returns early from _step, but must still close the outer profiling scope.
+local FrameProfile = require("src.core.FrameProfile")
+local savedSection = FrameProfile.section
+local opened, closed = 0, 0
+FrameProfile.section = function(name)
+  local close = savedSection(name)
+  if name == "  step: whole" then opened = opened + 1 end
+  return function()
+    if name == "  step: whole" then closed = closed + 1 end
+    close()
+  end
+end
 for _ = 1, HOLD_STEPS do Game.step(game, 1 / 60) end
+FrameProfile.section = savedSection
+eq(opened, HOLD_STEPS, "every logic step enters the real profiling wrapper")
+eq(closed, HOLD_STEPS, "the reset early return closes its profiling scope")
 eq(game.returned, 1, "Game:step falls back to the title on the 16th step")
 eq(game.stack.updates, HOLD_STEPS - 1,
    "and the state on top never gets that step, whatever it was")
@@ -131,16 +148,17 @@ local bare = fakeGame()
 bare.input = { step = function() end, isDown = function() return false end }
 for _ = 1, HOLD_STEPS * 2 do Game.step(bare, 1 / 60) end
 eq(bare.returned, 0, "an input with no chord bookkeeping never resets")
+eq(bare.stack.updates, HOLD_STEPS * 2, "an input stand-in still updates the real state stack")
 
 -- ---- the on-screen overlay ---------------------------------------------
 
 -- Force the overlay live the way a phone would have it.  img is only ever
--- tested for truthiness on the input path (drawing is what reads it), so a
--- placeholder keeps this suite off love.graphics.newImage.
+-- checked per button on the input path. Provide each available control
+-- without asking love.graphics to load actual image assets.
 Input:init()
 TouchControls:init()
 TouchControls.active, TouchControls.enabled = true, true
-TouchControls.img = { stub = true }
+TouchControls.img = { a = {}, b = {}, start = {}, select = {}, dpad = {} }
 local L = TouchControls:layout()
 
 -- One finger, one control: touchpressed returns on its first hit, so no

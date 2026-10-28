@@ -1323,6 +1323,13 @@ local function markerFor(version)
   if version == "red" or version == "blue" or version == "yellow" then
     revision = "gen1-trade-art-v1:"
   end
+  if GameVersion.generation(version)==3 then
+    revision=revision..'gba-door-metadata-v'..require('src.import.Gen3DoorMetadata').REVISION..':'
+  end
+  -- Rebuild generated FR/LG ball timing only; saved game formats do not change.
+  if GameVersion.isFRLG(version)then
+    revision=revision..'frlg-ball-sendout-v'..require('src.import.Gen3BallSendOutProfile').REVISION..':'
+  end
   return CACHE_FORMAT .. revision .. GameVersion.info(version).sha1
 end
 

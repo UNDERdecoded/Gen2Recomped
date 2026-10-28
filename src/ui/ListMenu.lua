@@ -172,6 +172,25 @@ local function navPressed(self, dir)
   return true
 end
 
+function ListMenu:choose()
+  if #self.items == 0 then
+    return self:cancel()
+  end
+  beep(self)
+  local item = self.items[self.index]
+  if self.onChoose then
+    self.onChoose(item, self)
+  end
+end
+
+function ListMenu:cancel()
+  beep(self)
+  self.game.stack:pop()
+  if self.onCancel then
+    self.onCancel()
+  end
+end
+
 function ListMenu:update(dt)
   if self.script then
     self.script(self)
@@ -211,16 +230,10 @@ function ListMenu:update(dt)
   elseif self.onSelectKey and input:wasPressed("select") then
     self.onSelectKey(self.items[self.index], self)
   elseif input:wasPressed("b") then
-    beep(self)
-    self.game.stack:pop()
-    if self.onCancel then self.onCancel() end
+    self:cancel()
     return
   elseif input:wasPressed("a") then
-    beep(self)
-    local item = self.items[self.index]
-    if self.onChoose then
-      self.onChoose(item, self)
-    end
+    self:choose()
     return
   end
 
