@@ -2905,7 +2905,7 @@ local function ballSheet(battle, key)
   return (ok and img) or nil
 end
 
-function Gen3Battle.drawBall(battle)
+local function drawNativeBall(battle, effectsOnly)
   local record, anim = Gen3Battle.ballRecord(battle)
   if not anim then return end
   local g = love.graphics
@@ -2944,20 +2944,24 @@ function Gen3Battle.drawBall(battle)
     g.setColor(1, 1, 1, 1)
   end
 
-  -- the ball
-  local sheet = ballSheet(battle, "balls")
-  local bx = anim.x - size / 2 + (anim.shakeOffset or 0)
-  local by = anim.y - size / 2
-  g.setColor(1, 1, 1, 1 - (anim.whiteout or 0))
-  if sheet then
-    local iw, ih = sheet:getDimensions()
-    local f = math.max(1, math.min(frames, anim.ballFrame or 1)) - 1
-    local q = love.graphics.newQuad(f * size, anim.ball * size, size, size,
-                                    iw, ih)
-    g.draw(sheet, q, bx, by)
-  else
-    g.setColor(0.9, 0.2, 0.2, 1 - (anim.whiteout or 0))
-    g.rectangle("fill", bx + 2, by + 2, size - 4, size - 4)
+  -- A source renderer already draws its fitted ball cell. Its opening-effect
+  -- pass borrows the same native effects without painting that cell again.
+  if not effectsOnly then
+    -- the ball
+    local sheet = ballSheet(battle, "balls")
+    local bx = anim.x - size / 2 + (anim.shakeOffset or 0)
+    local by = anim.y - size / 2
+    g.setColor(1, 1, 1, 1 - (anim.whiteout or 0))
+    if sheet then
+      local iw, ih = sheet:getDimensions()
+      local f = math.max(1, math.min(frames, anim.ballFrame or 1)) - 1
+      local q = love.graphics.newQuad(f * size, anim.ball * size, size, size,
+                                      iw, ih)
+      g.draw(sheet, q, bx, by)
+    else
+      g.setColor(0.9, 0.2, 0.2, 1 - (anim.whiteout or 0))
+      g.rectangle("fill", bx + 2, by + 2, size - 4, size - 4)
+    end
   end
 
   -- ...THE SHINY SPARKLE, which is not the capture's stars.
@@ -3011,6 +3015,17 @@ function Gen3Battle.drawBall(battle)
     end
   end
   g.setColor(1, 1, 1, 1)
+end
+
+-- Separate paint components share the actual native timeline; neither ticks it.
+function Gen3Battle.drawBallEffects(battle)
+  return drawNativeBall(battle, true)
+end
+
+function Gen3Battle.drawBall(battle)
+  local source=package.loaded['src.core.game3.battle.ball_open']
+  if source then return source._nativeDraw(battle,drawNativeBall) end
+  return drawNativeBall(battle)
 end
 
 function Gen3Battle.draw(battle)

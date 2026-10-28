@@ -54760,6 +54760,12 @@ function RomExtractorGen3:extractBallAnims()
   -- than the grow-in the port already had, and the screen falls back to that
   -- when this is absent.
   local S = B.SEND
+  -- Explicit caller/manifest profiles keep precedence. Default FR/LG imports
+  -- share their verified code profile rather than reading Emerald's sites.
+  local overrides = self.manifest and self.manifest.stageOverrides
+  if not config and not (overrides and overrides.BALL_ANIM and overrides.BALL_ANIM.SEND) then
+    S = require("src.import.Gen3BallSendOutProfile").forSha1(self.manifest and self.manifest.romSha1) or S
+  end
   local timing = {}
   for k, v in pairs(B.TIMING) do timing[k] = v end
   do
@@ -54771,7 +54777,10 @@ function RomExtractorGen3:extractBallAnims()
     local arc = self:thumbLiteral(S.AT_ARC)
     local rise = self:thumbLiteral(S.AT_RISE)
     local send = {
-      from = { x = imm(S.AT_HAND_X, S.MOV_R0), y = imm(S.AT_HAND_Y, S.MOV_R0) },
+      -- FR/LG keeps its normal and POKeDUDE hand coordinates in r5/r4;
+      -- Emerald and RS use r0. Validate the selected register as well as site.
+      from = { x = imm(S.AT_HAND_X, S.MOV_HAND_X or S.MOV_R0),
+               y = imm(S.AT_HAND_Y, S.MOV_HAND_Y or S.MOV_R0) },
       frames = imm(S.AT_FRAMES, S.MOV_R0),
       targetOffsetY = imm(S.AT_TARGET_DY, S.ADD_R0),
       foeOffsetY = imm(S.AT_FOE_DY, S.ADD_R0),
@@ -54784,15 +54793,23 @@ function RomExtractorGen3:extractBallAnims()
                                    and (rise - 0x100000000) or rise) or nil,
       arc = arc and (arc >= 0x8000 and (arc - 0x10000) or arc) or nil,
     }
-    local ok = send.from.x and send.from.y and send.frames
+    if S.AT_DEMO_X or S.AT_DEMO_Y then
+      send.fromPokedude = {
+        x = S.AT_DEMO_X and imm(S.AT_DEMO_X, S.MOV_HAND_X or S.MOV_R0),
+        y = S.AT_DEMO_Y and imm(S.AT_DEMO_Y, S.MOV_HAND_Y or S.MOV_R0),
+      }
+    end
+    local demoValid = not send.fromPokedude
+      or send.fromPokedude.x ~= nil and send.fromPokedude.y ~= nil
+    local ok = demoValid and send.from.x and send.from.y and send.frames
                and send.targetOffsetY and send.foeOffsetY and send.fadeFrames
                and send.arc and send.riseStep and send.foeWait > 0
                and send.targetOffsetY == send.foeOffsetY
     if ok then
       timing.sendOut = send
     else
-      Logger.warn("gen3 ball animation: the send-out numbers do not read "
-                  .. "back off 0761B4/075D14 -- the screen keeps its "
+      Logger.warn("gen3 ball animation: the selected cartridge send-out "
+                  .. "instructions did not validate -- the screen keeps its "
                   .. "grow-in rather than throwing a ball to the wrong place")
     end
   end
