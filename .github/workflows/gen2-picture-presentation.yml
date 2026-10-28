@@ -1,0 +1,26 @@
+name: Native GSC picture and animation owners
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: gen2-picture-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  picture-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install LuaJIT
+        run: sudo apt-get update && sudo apt-get install -y luajit
+      - name: Native picture commands and emitted images
+        run: |
+          luajit tests/engine/gen2_picture_presentation.lua
+          luajit tests/engine/gen2_picture_pixels.lua
+      - name: Existing command, object and background owners
+        run: |
+          luajit tests/engine/gen2_object_runtime.lua
+          luajit tests/engine/gen2_object_motion_pixels.lua
+          luajit tests/engine/gen2_bg_presenter.lua
