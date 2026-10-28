@@ -11,18 +11,25 @@ local Data = require("src.core.Data")
 local Version = require("src.core.Version")
 local Assets = require("src.render.Assets")
 local ModUI = require("src.ui.ModUI")
+local PortableScripts = require("src.mods.PortableScripts")
 local AssetTransform = require("src.mods.AssetTransform")
 local Manifest = require("src.mods.Manifest")
 local Merge = require("src.mods.Merge")
 local Registry = require("src.mods.Registry")
 local Schemas = require("src.mods.Schemas")
+local Capabilities = require("src.mods.Capabilities")
 local Semver = require("src.mods.Semver")
 local Events = require("src.mods.Events")
 local Hooks = require("src.mods.Hooks")
 local ModStorage = require("src.mods.Storage")
+local WorldReads = require("src.mods.WorldReads")
 local Runtime = require("src.mods.Runtime")
+local BattleSnapshots = require("src.mods.BattleSnapshots")
+local UIActions = require("src.mods.UIActions")
 local ModGens = require("src.mods.ModGens")
 local ModSeams = require("src.mods.ModSeams")
+local WorldActions = require("src.world.WorldActions")
+local WorldOverview = require("src.mods.WorldOverview")
 -- Module-name aliases for mods written against the Gold port's per-generation
 -- layout (src.world.gen2.Player and friends).  Installed here because this is
 -- the module that loads mods: the searcher has to be in place before the
@@ -831,7 +838,7 @@ function Loader:_api(mod)
   -- new game and a new load.
   local hostGen, hostId, hostInfo = 1, nil, nil
   do
-    local okV, GameVersion = pcall(require, "src.core.GameVersion")
+    local okV, GameVersion = pcall(engineRequire, "src.core.GameVersion")
     if okV and GameVersion then
       local okG, g = pcall(GameVersion.generation)
       if okG and tonumber(g) then hostGen = tonumber(g) end
@@ -841,9 +848,11 @@ function Loader:_api(mod)
       if okN then hostInfo = info end
     end
   end
+  -- Capture pristine ID aliases before mod merges; the facade resolves Game only on a read.
+  local battle = BattleSnapshots.new(function() return loader:_game(true) end, loader)
   local engineVersion
   do
-    local okE, V = pcall(require, "src.core.Version")
+    local okE, V = pcall(engineRequire, "src.core.Version")
     engineVersion = okE and V and V.engine or nil
   end
   local api = {
@@ -868,6 +877,7 @@ function Loader:_api(mod)
     -- returns the same module table the engine holds, so a mod that mutates
     -- one is changing the engine, exactly as it always was.
     engineRequire = engineRequire,
+    battle = battle,
     -- 1 to 5.  The one field worth reaching for before anything else.
     generation = hostGen,
     -- the version id the launcher started: "red", "crystal", "emerald",
@@ -884,13 +894,14 @@ function Loader:_api(mod)
       label = hostInfo and hostInfo.label or hostId,
       engine = engineVersion,
       modApi = (function()
-        local okE, V = pcall(require, "src.core.Version")
+        local okE, V = pcall(engineRequire, "src.core.Version")
         return okE and V and V.modApi or nil
       end)(),
       developer = loader.dev == true,
     },
     -- a deep copy: what a mod does to its own view never reaches the loader
     manifest = Merge.deepCopy(mod.manifest),
+    callbackFormat = mod.manifest.callback_format or "native",
     content = {},
     exports = {},
     DELETE = Registry.DELETE,
@@ -914,9 +925,9 @@ function Loader:_api(mod)
     hooks = { wrap = function(_, name, callback, priority)
       return loader.hooks:wrap(name, callback, priority, modId)
     end },
-    -- the widget toolkit facade (12 4.5) is one shared surface, not
-    -- per-mod state; each widget inside it loads on first touch
-    ui = ModUI,
+    -- Per-mod action/revision state, with the existing lazy widget builders.
+    -- Reading the facade early must not construct Game or a native screen.
+    ui = UIActions.new(function() return loader:_game(true) end, loader, ModUI),
     -- namespaced per mod; M11 backs these with save.modData /
     -- options.modOptions, the shape mods compile against is already final
     save = {
@@ -999,6 +1010,9 @@ function Loader:_api(mod)
     },
   }
   self.exports[modId] = api.exports
+  if api.callbackFormat == "unified" then
+    engineRequire("src.mods.UnifiedCallbacks").install(loader, api, modId, hostGen)
+  end
   -- a handle, not the mod object: {id, version, exports} or nil when the
   -- other mod is absent, disabled, failed, or has not run yet.  Tolerates
   -- mod:find(id) as well as the documented mod.find(id).
@@ -1019,6 +1033,10 @@ function Loader:_api(mod)
   for alias, canonical in pairs(Schemas.ALIASES) do
     api.content[alias] = self:_contentApi(mod, self.content[canonical],
       ("the %s registry is deprecated; use %s"):format(alias, canonical))
+  end
+  api.contentFormat = mod.manifest.content_format or "native"
+  if api.contentFormat == "unified" then
+    api.content = engineRequire("src.mods.UnifiedContent").new(loader, mod, api.content, hostGen)
   end
   -- assets keeps the v1 alias to the content accessors and adds the file
   -- helpers on top, so mod.assets.pokemon and mod.assets:image both resolve
@@ -1119,13 +1137,41 @@ function Loader:_api(mod)
       end
       return data
     end)
+  -- Capture the host selected for this API, as with generation/gameVersion.
+  -- Probing must not instantiate mod.world/mod.game or register callbacks.
+  function api:supports(surface, name)
+    return Capabilities.supports(surface, name, hostId)
+  end
   -- mod.world / mod.game / mod.storage all materialize on first touch, for
-  -- the same reason: a headless load must not drag the world stack in, and
-  -- the Game the facade acts on is still being wired when the entry chunk
+  -- the same reason: a headless load must not drag the world stack in.
+  -- Battle capability queries can also be installed before Game exists.
+  BattleSnapshots.withCapabilities(api)
+  UIActions.withCapabilities(api)
+  -- The Game the facade acts on is still being wired when the entry chunk
   -- runs.  mod.storage is the bulk counterpart to mod.save -- one sandboxed
   -- namespace per mod for payloads too large to belong in a save file.
+  -- When capability queries are installed, these additive methods exist on
+  -- every host; individual actions still validate native version and state.
+  if api.supports then
+    local supports = api.supports
+    function api:supports(surface, name)
+      if surface == "world" and WorldActions.supports(name) then return true end
+      return supports(self, surface, name)
+    end
+  end
   local world, storage
-  setmetatable(api, { __index = function(_, key)
+  local overviewContext = WorldOverview.install(api, loader)
+  local readContext = WorldReads.context(loader)
+  -- Capability queries are optional on older API-2 hosts. When present,
+  -- report the additive readers without constructing Game or the world.
+  if api.supports then
+    local supports = api.supports
+    function api:supports(surface, name)
+      if surface == "world" and WorldReads.supports(name) then return true end
+      return supports(self, surface, name)
+    end
+  end
+  setmetatable(api, PortableScripts.wrap({ __index = function(_, key)
     if key == "game" then return loader:_game() end
     if key == "storage" then
       -- Do not pass loader.fs when it is love.filesystem: that always writes
@@ -1139,17 +1185,37 @@ function Loader:_api(mod)
     local game = loader:_game()
     local module = game and engineRequire("src.world.WorldAPI")
     if not module then return nil end
-    world = module.new(game, modId)
+    world = module.new(game, modId, readContext)
+    world.overviewContext = overviewContext
     return world
-  end })
+  end }, api, loader, mod.manifest))
+  -- When capability queries are installed, report the selected content
+  -- format's actual availability. Other surfaces retain their host query.
+  if api.contentFormat == "unified" and api.supports then
+    local supports, content = api.supports, api.content
+    api.supports = function(self, surface, name)
+      local handle = type(name) == "string" and content[name]
+      if surface == "content" and handle and handle.supports then return handle:supports() end
+      return supports(self, surface, name)
+    end
+  end
+  if (mod.manifest.api or 1) >= 3 then
+    engineRequire("src.mods.Api3").install(api, loader, readContext, overviewContext, engineRequire)
+  end
   return api
 end
 
 -- the live Game.  An injected reference wins so a headless caller can hand
 -- over a stub; otherwise the boot singleton, whose stack and overworld fill
 -- in after this loader returns -- holding the table keeps the facade live.
-function Loader:_game()
-  return self.game or engineRequire("src.core.Game")
+function Loader:_game(loadedOnly)
+  if self.game then return self.game end
+  -- Observational facades must not bootstrap Game from an early/headless read.
+  if loadedOnly then
+    local game = package.loaded["src.core.Game"]
+    return type(game) == "table" and game or nil
+  end
+  return engineRequire("src.core.Game")
 end
 
 function Loader:_loadMod(mod)
@@ -1196,6 +1262,7 @@ end
 -- migration it took goes with them.  The journal only exists around an
 -- entry chunk; a later failure (script validation) purges every registry.
 function Loader:_rollback(modId)
+  PortableScripts.cancelAll(self, modId, "mod rolled back")
   for name in pairs(self.journal or self.content) do
     self.content[name]:rollback(modId)
   end
@@ -1310,6 +1377,7 @@ local function stampAudioOwners(data, name, registry)
 end
 
 function Loader:load(data)
+  PortableScripts.cancelAll(nil, nil, "mods reloaded")
   -- A SECOND LOAD IN ONE PROCESS STARTS FROM THE ENGINE, NOT FROM THE LAST
   -- LOAD'S MODS.  EXIT GAME -> launcher -> Play runs every mod's main.lua
   -- again (and the launcher backdrop boots the plain game in between); the
@@ -1436,6 +1504,10 @@ function Loader:load(data)
     local LIFECYCLE = { ["mods.loaded"] = true, ["game.ready"] = true }
     events.emit = function(bus, name, payload)
       if not LIFECYCLE[name] then return emit0(bus, name, payload) end
+      -- The native bus attributes synchronous subscribers individually. Keep
+      -- the legacy aggregate for coroutine callers without changing their ABI.
+      local co,main=coroutine.running()
+      if not co or main then return emit0(bus,name,payload)end
       local token = ModSeams.open("lifecycle:" .. tostring(name))
       local ok, err = pcall(emit0, bus, name, payload)
       ModSeams.close(token)
@@ -1653,6 +1725,7 @@ end
 -- boots) ran on a modded engine whose mod instance nothing drives any more,
 -- and the next Play loaded every mod on top of what the last one left.
 function Loader.teardown()
+  PortableScripts.cancelAll(nil, nil, "mods unloaded")
   local undone = select(1, ModSeams.unwindAll())
   pcall(function()
     Runtime.install(Events.new(), Hooks.new(), nil)
