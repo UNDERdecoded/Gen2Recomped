@@ -28,6 +28,7 @@ local Runtime = require("src.mods.Runtime")
 local Screens = require("src.ui.Screens")
 local ScriptRunner = require("src.script.ScriptRunner")
 local GameVersion = require("src.core.GameVersion")
+local Gen2Clock = require("src.core.Gen2Clock")
 local Tilt = require("src.render.Tilt")
 local TextBox = require("src.render.TextBox")
 local Transition = require("src.render.Transition")
@@ -67,6 +68,13 @@ end
 local OverworldState = { isOpaque = true, isOverworld = true }
 
 local Game -- set on enter (avoids circular require at load time)
+-- Read the active native bake/Flash fields rather than copying another world.
+setmetatable(OverworldState,{__index=function(world,key)
+  if(key=='daytime'or key=='flashUsed')and GameVersion.isGen2()and world.map then
+    if key=='daytime'then return PaletteFX.effectiveGen2Tod()end
+    return Game and Game.save and Game.save.flashLit==true or false
+  end
+end})
 
 -- AN EMPTY PLOT DRAWS NOTHING, asked once per entity per frame.  Written
 -- with `pcall(function() ... require(...) ... end)` this was a closure, a
@@ -167,6 +175,8 @@ local function isDarkMap(mapId)
     -- ReplaceTimeOfDayPals sends down .NeedsFlash.  Reading Gen1's pokered
     -- list here matched nothing, so Dark Cave and the Whirl Islands were lit.
     local def = Game.data.maps[mapId]
+    local palette=require('src.render.Gen2PaletteContext').id(def)
+    if palette~=nil then return palette==4 end
     local dark = Game.data.field.gen2DarkMaps
     if (def and dark and dark[def.label]) == true then return true end
     -- Fallback when gen2DarkMaps was not extracted (stale cache): maps
@@ -283,7 +293,7 @@ local function objectTodBit()
   local ow = Game and Game.overworld
   local bit = ow and tonumber(ow.objectTodBit)
   if bit then return bit end
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   if period and tonumber(period.bit) then return tonumber(period.bit) end
   return TOD_BITS[objectTimeOfDay()] or TOD_BITS.DAY
 end
@@ -1226,7 +1236,8 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- and the Ruins of Alph chambers taking the NITE row after 6pm.
   if GameVersion.isGen2() then
     local paletteDef = Game.data.maps[mapId]
-    if PaletteFX.setGen2MapPalette(paletteDef and paletteDef.mapPalette or 0)
+    PaletteFX.setGen2FlashUsed(Game.save.flashLit == true)
+    if PaletteFX.setGen2MapPalette(require('src.render.Gen2PaletteContext').id(paletteDef) or 0,paletteDef)
        and PaletteFX.usesGen2BgPal() then
       MapLoader.invalidateAll()
     end
@@ -2391,7 +2402,7 @@ local function sameTod(tod) return tod end
 -- < 4 NITE, < 10 MORN, < 18 DAY, else NITE.  Gen 1 has no clock at all, so
 -- only Gen 2 consults the host one.
 local function clockTimeOfDay()
-  local hour = tonumber(os.date("%H")) or 12
+  local hour = Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil)
   if hour < 4 then return "NITE" end
   if hour < 10 then return "MORNING" end
   if hour < 18 then return "DAY" end
@@ -2404,7 +2415,7 @@ OverworldState.clockTimeOfDay = clockTimeOfDay
 
 -- The cartridge's MAPOBJECT_TIMEOFDAY bit for the hour on the clock right now.
 function OverworldState.clockTimeOfDayBit()
-  local period = todPeriodAt(tonumber(os.date("%H")) or 12)
+  local period = todPeriodAt(Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil))
   return (period and tonumber(period.bit)) or TOD_BITS.DAY
 end
 
@@ -2418,6 +2429,9 @@ end
 -- modes that do not use the ROM's palettes at all.
 function OverworldState:syncGen2Tod(tod)
   local PaletteFX = require("src.render.PaletteFX")
+  if GameVersion.isGen2() then
+    PaletteFX.bindGen2Context(self.map and self.map.def,Game and Game.save and Game.save.flashLit == true)
+  end
   if not PaletteFX.setGen2Tod(tod) then return end
   if not (GameVersion.isGen2() and PaletteFX.usesGen2BgPal()) then return end
   pcall(function()
@@ -2427,6 +2441,7 @@ function OverworldState:syncGen2Tod(tod)
 end
 
 function OverworldState:timeOfDay()
+  if GameVersion.isGen2() then Gen2Clock.weekday(Game and Game.save) end
   local tod = GameVersion.isGen2() and clockTimeOfDay() or (self.tod or "DAY")
   if not Runtime.wantsHook("world.tod") then
     if tod ~= self.tod then
@@ -2463,9 +2478,17 @@ function OverworldState:timeOfDay()
   return self.tod
 end
 
+-- Shared native saved RTC views; no second clock state on World.
+function OverworldState.hour() return Gen2Clock.hour(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.minute() return Gen2Clock.minute(GameVersion.isGen2() and Game and Game.save or nil) end
+function OverworldState.weekday() return Gen2Clock.weekday(GameVersion.isGen2() and Game and Game.save or nil) end
+
 function OverworldState:paletteNameFor(map)
   local palettes = FieldDefaults.field(Game.data, "palettes")
-  local name = map.def.palette or paletteLookup(palettes, map.id, map.def.tileset)
+  -- Gen2's PALETTE_* identity is not a Gen1/SGB colour-pack name.
+  local authored = map.def.palette
+  if GameVersion.isGen2() and type(authored)=='string'and authored:match('^PALETTE_')then authored=nil end
+  local name = authored or paletteLookup(palettes, map.id, map.def.tileset)
   if not name then
     -- Interiors inherit the outdoor map they sit in. Before the player has
     -- been outdoors at all, that is wLastMap's zero-fill -- map 0,
@@ -2593,6 +2616,7 @@ end
 function OverworldState:setDark(on)
   on = on and true or false
   self.dark = on
+  if GameVersion.isGen2() then PaletteFX.setGen2FlashUsed(Game and Game.save and Game.save.flashLit == true) end
   if PaletteFX.setDarkWorld(on) and PaletteFX.bakesDarkness() and self.map then
     MapLoader.invalidateAll()
     self:reloadMap(self.map.id, "dark")
@@ -13113,7 +13137,7 @@ function OverworldState:hatchEgg(hatched)
   -- ElmPhoneCalleeScript tests (`checkevent $2D / iffalse .next / checkevent
   -- $54 / iftrue .egghatched`), so without it ringing Elm after the EGG
   -- hatched could never reach ElmPhoneEggHatchedText.
-  if GameVersion.isGen2() and hatched.species == "SPECIES_175" and Game.save.flags then
+  if GameVersion.isGen2() and require('src.core.Gen2SpeciesNames').same(Game.data,hatched.species,'SPECIES_175') and Game.save.flags then
     Game.save.flags[require("src.script.Gen2Flags").eventFlag(0x54)] = true
   end
   local name = def and def.name or hatched.species

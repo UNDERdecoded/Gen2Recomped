@@ -574,7 +574,7 @@ L.getmonname = function(ir, s)
   if (ir[2] or 0) == 0 then
     emit(s, { "g2_getmonname_var", ir[3] })
   else
-    emit(s, { "g2_getmonname", string.format("SPECIES_%03d", ir[2]), ir[3] })
+    emit(s, { "g2_getmonname", require('src.core.Gen2SpeciesNames').fromNumber(s.data,ir[2]), ir[3] })
   end
 end
 L.takeitem = function(ir, s) emit(s, { "take_item", itemId(ir[2]), ir[3] }) end
@@ -604,13 +604,13 @@ L.checkmoney = function(ir, s) emit(s, { "g2_check_money", ir[3] }) end
 -- verbosegiveitem already handled, so only the bag-full test carries weight
 L.pocketisfull = function(_, s) emit(s, { "g2_pocket_full" }) end
 L.checkpoke = function(ir, s)
-  emit(s, { "g2_check_poke", string.format("SPECIES_%03d", ir[2] or 0) })
+  emit(s, { "g2_check_poke", require('src.core.Gen2SpeciesNames').fromNumber(s.data,ir[2]or 0) })
 end
 -- `giveegg species, level`: an EGG party member.  Elm's aide hands one over
 -- outside the Violet gym and the script `iftrue`s on the carry, so a missing
 -- lowering left the whole delivery scene dead.
 L.giveegg = function(ir, s)
-  emit(s, { "g2_give_egg", string.format("SPECIES_%03d", ir[2] or 0), ir[3] })
+  emit(s, { "g2_give_egg", require('src.core.Gen2SpeciesNames').fromNumber(s.data,ir[2]or 0), ir[3] })
 end
 L.givepoke = function(ir, s)
   emit(s, { "g2_give_poke", ir[2], ir[3], ir[4] })
@@ -625,7 +625,7 @@ L.cry = function(ir, s)
   -- zero operand, which is how one starter script cries six different mons.
   -- Lowered literally it asked for SPECIES_000 and nothing sounded.
   emit(s, { "g2_cry",
-            (ir[2] or 0) ~= 0 and string.format("SPECIES_%03d", ir[2]) or nil })
+            (ir[2] or 0) ~= 0 and require('src.core.Gen2SpeciesNames').fromNumber(s.data,ir[2]) or nil })
 end
 
 -- `pokepic <species>` opens the framed front pic and keeps running;
@@ -636,7 +636,7 @@ L.pokepic = function(ir, s)
   local species = ir[2]
   emit(s, { "g2_pokepic",
             (species and species > 0)
-              and string.format("SPECIES_%03d", species) or nil })
+              and require('src.core.Gen2SpeciesNames').fromNumber(s.data,species) or nil })
 end
 L.closepokepic = function(_, s) emit(s, { "g2_close_pokepic" }) end
 
@@ -693,7 +693,7 @@ L.loadtrainer = function(ir, s) emit(s, { "g2_load_trainer", ir[2], ir[3] }) end
 -- Sharing loadtrainer's lowering meant Sudowoodo and the Red Gyarados asked
 -- for trainer class 185, found nothing, and silently skipped the battle.
 L.loadwildmon = function(ir, s)
-  emit(s, { "g2_load_wild", string.format("SPECIES_%03d", ir[2] or 0), ir[3] })
+  emit(s, { "g2_load_wild", require('src.core.Gen2SpeciesNames').fromNumber(s.data,ir[2]or 0), ir[3] })
 end
 L.winlosstext = function(ir, s) emit(s, { "g2_winloss", ir[2], ir[3] }) end
 L.startbattle = function(_, s) emit(s, { "g2_start_battle" }) end
@@ -1796,7 +1796,7 @@ end
 L.showcrytext = function(ir, s)
   local species = ir[3]
   emit(s, { "g2_cry", (species and species > 0)
-    and string.format("SPECIES_%03d", species) or nil })
+    and require('src.core.Gen2SpeciesNames').fromNumber(s.data,species) or nil })
   s.lastText = ir[2]
   showText(s, ir[2])
   s.lastTextRow = #s.out
@@ -2378,6 +2378,7 @@ function Gen2ScriptVM.compile(data, entry)
   local out, queued, order = {}, { [entry] = true }, { entry }
   local counter = 0
   local state = {
+    data = data,
     out = out,
     stds = pool.stds,
     has = function(label)

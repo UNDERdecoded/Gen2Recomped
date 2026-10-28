@@ -691,6 +691,9 @@ local function gen2PaletteRows(tileset)
 end
 
 function Data:publishGen2Palettes()
+  if require('src.core.GameVersion').isGen2()then
+    for _,def in pairs(self.maps or{})do require('src.render.Gen2PaletteContext').publish(def)end
+  end
   local tilesets = self.tilesets
   if type(tilesets) ~= "table" then return false end
 
@@ -741,6 +744,7 @@ function Data:publishGen2Palettes()
   self.gen2Palettes = setmetatable({}, {
     __index = function(_, id) return gen2PaletteRows(tilesets[id]) end,
   })
+  require('src.render.Gen2PaletteContext').bind(self.gen2Palettes,self)
   return true
 end
 
@@ -1893,6 +1897,8 @@ function Data:seedDefaults()
     end
     seedMissingGen2Tilesets(self)
     self:publishGen2Palettes()
+    require("src.core.Gen2SpeciesNames").canonicalize(self)
+    require("src.core.Gen2SpeciesNames").publish(self)
     ensureGen2WarpFallbacks(self)
     ensureGen2HomeTextFallbacks(self)
   end
