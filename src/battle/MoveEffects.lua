@@ -15,6 +15,7 @@ local Logger = require("src.core.Logger")
 local StatusRegistry = require("src.battle.StatusRegistry")
 local TurnOrder = require("src.battle.TurnOrder")
 local TypeChart = require("src.battle.TypeChart")
+local Gen2Read = require('src.battle.Gen2BattleRead')
 local Strings = require("src.core.Strings")
 local HeldItems = require("src.battle.HeldItems")
 local Weather = require("src.battle.Weather")
@@ -274,7 +275,7 @@ MoveEffects.primary = {
     if target.leechSeeded then
       return { Strings("But, it failed!") }
     end
-    for _, t in ipairs(target.curTypes) do
+    for _, t in ipairs(Gen2Read.types(target)) do
       if t == "GRASS" then return { Strings("But, it failed!") } end
     end
     target.leechSeeded = true
@@ -370,7 +371,8 @@ MoveEffects.primary = {
     if target.invulnerable then
       return { Strings("But, it failed!") }
     end
-    user.curTypes = { target.curTypes[1], target.curTypes[2] }
+    local types = Gen2Read.types(target)
+    user.curTypes = { types[1], types[2] }
     -- _ConvertedTypeText
     return { Strings("Converted type to\n%s's!", displayName(target)) }
   end,
@@ -394,13 +396,15 @@ MoveEffects.primary = {
       local okT, T = pcall(require, "src.battle.Gen5Transform")
       if okT then T.apply(battle, user, target) end
     end
+    local stats = Gen2Read.stats(target)
     user.curStats = {
       hp = user.mon.stats.hp, -- HP is kept
-      attack = target.curStats.attack, defense = target.curStats.defense,
-      speed = target.curStats.speed, special = target.curStats.special,
-      spatk = target.curStats.spatk, spdef = target.curStats.spdef,
+      attack = stats.attack, defense = stats.defense,
+      speed = stats.speed, special = stats.special,
+      spatk = stats.spatk, spdef = stats.spdef,
     }
-    user.curTypes = { target.curTypes[1], target.curTypes[2] }
+    local types = Gen2Read.types(target)
+    user.curTypes = { types[1], types[2] }
     -- transform.asm:130-132 copies the target's stat MODS into the user
     -- (wEnemyMonStatMods -> wPlayerMonStatMods), it does NOT clear them;
     -- deep copy so later stage changes on either mon stay independent
@@ -566,7 +570,7 @@ end
 -- effectiveness step.  So in Gen 1 NIGHT_SHADE hits Normal-types and
 -- SUPER_FANG hits Ghosts, and only OHKO_EFFECT calls this (#616).
 local function immuneMsg(ctx)
-  if TypeChart.effectiveness(ctx.move.type, ctx.target.curTypes) == 0 then
+  if TypeChart.effectiveness(ctx.move.type, Gen2Read.types(ctx.target)) == 0 then
     return Strings("It doesn't affect\n%s!", displayName(ctx.target))
   end
   return nil

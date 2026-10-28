@@ -5,6 +5,7 @@
 -- and residual sweep.  Callers without a battle (pure-module tests) fall
 -- back to the vanilla records, which is bit-identical behavior.
 
+local Gen2Read = require('src.battle.Gen2BattleRead')
 local Strings = require("src.core.Strings")
 local HeldItems = require("src.battle.HeldItems")
 
@@ -24,7 +25,7 @@ end
 local VOLATILE_PRIORITY = 20
 
 local function hasType(battler, wanted)
-  for _, t in ipairs(battler.curTypes or {}) do
+  for _, t in ipairs(Gen2Read.types(battler) or {}) do
     if t == wanted then return true end
   end
   return false
