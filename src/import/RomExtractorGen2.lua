@@ -14787,11 +14787,13 @@ GEN2_ANIM.BY_HANDLER = {
   IncObj = { "incobj", 1 },
   SetObj = { "setobj", 2 },
   IncBGEffect = { "incbgeffect", 1 },
-  BattlerGFX_1Row = { "battlergfx_1row" },
-  BattlerGFX_2Row = { "battlergfx_2row" },
+  -- Macro names cross the cartridge handler names: D9's 2row macro
+  -- dispatches to _1Row. Preserve the decoded macro contract.
+  BattlerGFX_1Row = { "battlergfx_2row" },
+  BattlerGFX_2Row = { "battlergfx_1row" },
   -- Prism's names for the same two slots
-  EnemyFeetObj = { "battlergfx_1row" },
-  PlayerHeadObj = { "battlergfx_2row" },
+  EnemyFeetObj = { "battlergfx_2row" },
+  PlayerHeadObj = { "battlergfx_1row" },
   CheckPokeball = { "checkpokeball" },
   Transform = { "transform" },
   RaiseSub = { "raisesub" },
@@ -15110,7 +15112,7 @@ end
 
 -- Name each object `function` slot from DoBattleAnimFrame's jumptable.  The
 -- routines themselves are hand-written asm and cannot be ported as data, but
--- the names tell the player which motion to approximate.
+-- the names resolve the imported IDs to the genuine GSC object routines.
 function RomExtractorGen2:gen2AnimFunctions()
   local out = {}
   -- Resolved from the routine that dispatches through it, never hardcoded:
@@ -15163,6 +15165,7 @@ function RomExtractorGen2:gen2BattleAnims()
   end
   return {
     gen2 = true,
+    commandFormat = "gsc-macro-v1",
     scripts = scripts,
     moveAnims = moveAnims,
     objects = self:gen2AnimObjects(),
@@ -15175,6 +15178,7 @@ function RomExtractorGen2:gen2BattleAnims()
     -- (constants/move_constants.asm: ANIM_THROW_POKE_BALL $100,
     -- ANIM_SEND_OUT_MON $101, ANIM_IN_SANDSTORM $10b)
     misc = { throwPokeBall = 256, sendOutMon = 257, inSandstorm = 267 },
+    ids = require('src.battle.Gen2AnimationIds').install({gen2=true,scripts=scripts}).ids,
     move = {}, effects = {},
   }
 end

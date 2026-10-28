@@ -1082,7 +1082,14 @@ GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
 GameVersion.current = "red"
 
 function GameVersion.set(id)
+  local previous=GameVersion.current
   GameVersion.current = GameVersion.VERSIONS[id] and id or "red"
+  if previous~=GameVersion.current then
+    local palette=package.loaded['src.render.PaletteFX']
+    if palette and palette.clearGen2Context then palette.clearGen2Context()end
+    local clock = package.loaded["src.core.Gen2Clock"]
+    if clock then clock.resetObservations() end
+  end
   return GameVersion.current
 end
 

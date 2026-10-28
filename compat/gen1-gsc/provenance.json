@@ -1,0 +1,31 @@
+{
+  "repository": "https://github.com/bryanthaboi/gen1recomp",
+  "commit": "535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91",
+  "files": {
+    "src/battle/gen2/BgEffects.lua": "e50650aa3315a2545cf0044fbf226076be0086a63b097ef5d682e2beefb5491e",
+    "src/battle/gen2/AnimObjects.lua": "7713be1ee3b88284a3399baeb9e81d5c0a98c421990336bec3ebb31e832982f6",
+    "src/ui/gen2/SpriteAnims.lua": "31c213a712edab13d03f925d3f4cd4f487b2cbd724ac50692f576cd04261ce65",
+    "tools/rom_manifest_gold.json": "ebfd906ef715c634c12ca168dbf711161385720f02c6e0a63d9481a815550a1e",
+    "tools/rom_manifest_silver.json": "7575919b843c2addf096ed3db7b37dedb9f4b9c8129d32eb0d9ed6c9e5333f52",
+    "tools/rom_manifest_crystal.json": "be373e361090d79f413ad4d1e57d28c5ac1aa00650d4fa361289a78ef8397b31",
+    "LICENSE.MD": "b369ce45656b3d87453541816fac6982b13e09ea0734ab9cfe61cf3faf5e95ed",
+    "src/ui/gen2/BattleAnimView.lua": "c67613148f14987bdc76d01ace2cd90e89f7d742e4c4a0e95889707f5a9d0e61",
+    "src/ui/gen2/BattleState.lua": "6789c83e5124701d7ebfb1bdc74389102fa85c02f5ecdb812baf0905bded723c",
+    "src/ui/gen2/Chrome.lua": "a81231beac5334eae58df0936fed1f4fec90b3d986e8caf8b31b5e522180dc52",
+    "src/battle/gen2/AnimRunner.lua": "4f31c23a94e14d5796a125237ab205342e6b3b63134915cda67373005536ce71"
+  },
+  "scope": "GSC BG and object state machines, command VM, BG presenter, arithmetic and identifier orders. No launcher, game assets, ROM bytes or player state copied.",
+  "modifications": [
+    "BgEffects arithmetic dependency uses Gen2AnimMath instead of the full reference object pool.",
+    "A missing jump-table list resolves through edition-specific Gen2BgEffectIds for older native caches.",
+    "Existing Gen2AnimPlayer dispatches BG/palette commands and steps the pool from its current VM update. Native scene and picture owners consume these registers directly, replacing the legacy SE approximations.",
+    "BG presenter uses native palette/chrome/canvas owners, supports the real wide surface, preserves transparency and restores graphics state on supplied-panel errors.",
+    "Battler resize, hide, palette and lifted-row drawing remain attached to native image owners. The genuine object pool and command VM now drive native OAM; complete send-out event sequencing remains separate work.",
+    "The BG-only paper and clipping subset uses the native indexed palette owner, without requiring the full menu Chrome module on older engines.",
+    "Full object pool uses the already pinned native Gen2AnimMath sine/cosine subset. Native imported numeric animation tables are converted without inventing ROM programs or changing their operands.",
+    "Existing native animation player now uses the complete command interpreter and object pool as its sole clock. The native view consumes emitted OAM through the actual loaded GFX dictionary; no interpolated motion, 48-frame age cap or 16-frame drain remains.",
+    "The native importer preserves the crossed battler-row macro/handler names. A Gen2-only cache revision rejects old generated commands and preserves game saves."
+  ],
+  "licence": "Gen1Recomp GPLv3 with its Additional Terms, retained in LICENSE.MD. Existing authors retain their rights; Roxas2712 integration changes in these derived files are offered on those applicable terms.",
+  "qualification": "Actual Crystal ROM command/object/BG/OAM comparison against pinned Gen1Recomp535a5ec0: 251 moves and 23 extra programs, both sides, five parameters plus ball/shake/catch cases, 2804 cases and355718 compared frames, no mismatch or observation-limit case. Source e96a8edc; later publication changes only comments, provenance and cache-gate fixture access. Fork a0474fcd passes7893 checks in19 ROM-free groups; independent upstream7ea2eff1 passes5313 in14. These are CPU observations; the old ce12c485 Metal battle predates this VM. New unchanged-client GPU, all picture-override rendering, full send-out/event integration, Windows and packaged release qualification remain open."
+}
