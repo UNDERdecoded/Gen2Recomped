@@ -165,6 +165,7 @@ local function adjustIndividual(game,mon,key,delta)
     syncHpDv(mon.dvs)
   end
   recalc(game,mon)
+  Pokemon.syncIdentity(game.data,mon)
 end
 local function cycleMove(game,mon,slot,delta)
   ensureCatalog(game)
@@ -208,6 +209,7 @@ local function applySpecies(game, picker, id)
     mon.species=id
     mon.exp=Growth.expForLevel(def.growthRate,mon.level or 1)
     recalc(game,mon)
+    Pokemon.syncIdentity(game.data,mon)
     state.speciesPicker=nil
     return
   end

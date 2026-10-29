@@ -1323,6 +1323,10 @@ local function markerFor(version)
   if version == "red" or version == "blue" or version == "yellow" then
     revision = "gen1-trade-art-v1:"
   end
+  -- Reimport generated animation commands; keep saves and unrelated caches.
+  if GameVersion.generation(version)==2 then
+    revision=revision..'gen2-anim-object-v'..require('src.battle.Gen2AnimData').CACHE_REVISION..':'
+  end
   return CACHE_FORMAT .. revision .. GameVersion.info(version).sha1
 end
 
@@ -1688,6 +1692,24 @@ local function requiredFiles(version)
   if gen == 3 then return REQUIRED_FILES_GEN3 end
   if gen == 2 then return REQUIRED_FILES_GEN2 end
   return REQUIRED_FILES_GEN1
+end
+
+-- Read-only metadata inspection shares the importer's exact format/hash gate.
+-- This descriptor does not read files, mount caches or touch active prefixes.
+function RomImporter.datasetContract(version)
+  local info = GameVersion.info(version)
+  if not info or info.generation > 3 then return nil end
+  local modules, seen = {}, {}
+  for _, path in ipairs(requiredFiles(version)) do
+    local name = path:match("^data/generated/(.+)%.lua$")
+    if name and not seen[name] then modules[#modules + 1] = name; seen[name] = true end
+  end
+  for _, name in ipairs({ "constants", "pokemon", "moves", "items", "maps",
+      "trainers", "encounters", "type_chart" }) do
+    if not seen[name] then modules[#modules + 1] = name; seen[name] = true end
+  end
+  table.sort(modules)
+  return { marker = markerFor(version), modules = modules }
 end
 
 local function gen2TilesetRegistryLooksValid(version)
@@ -5705,7 +5727,13 @@ function RomImporter:draw()
     if link.url==DONATE_URL then paypalLink=link
     else footerLinks[#footerLinks+1]=link end
   end
-  local creditH = self.hintFont:getHeight()
+  local creditText = 'Created by '..credit.by
+    ..'\nBased on the Pokemon Gen 1 Recompilation Project by BOIS CLUB GAMES, LLC'
+    ..'\n(https://github.com/bryanthaboi/gen1recomp)'
+    ..'\nContributions by Roxas2712 — https://github.com/Roxas2712'
+  local creditWidth = math.max(1, appW - 2 * padH)
+  local _, creditLines = self.hintFont:getWrap(creditText, creditWidth)
+  local creditH = #creditLines * self.hintFont:getHeight()
   local donateH = self.hintFont:getHeight() + 10 * s
   local chipsH = (#footerLinks > 0) and (8 * s + donateH) or 0
   local footerH = 10 * s + bcgDH + 6 * s + warningH + 8 * s + creditH + chipsH + 12 * s
@@ -6240,7 +6268,7 @@ function RomImporter:draw()
     love.graphics.setFont(self.hintFont)
     local creditY = warningY + warningH + 8 * s
     col(PAL.warning)
-    love.graphics.printf("Created by " .. credit.by, appX, creditY, appW, "center")
+    love.graphics.printf(creditText, appX + padH, creditY, creditWidth, "center")
     self.donateButtons = {}
     self.donateButton = nil
     if #footerLinks > 0 then
