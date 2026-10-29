@@ -20,6 +20,7 @@ local GameSpeed = require("src.core.GameSpeed")
 local GameVersion = require("src.core.GameVersion")
 local VideoMode = require("src.core.VideoMode")
 local FaithfulRes = require("src.core.FaithfulRes")
+local ScreenPosition = require("src.core.ScreenPosition")
 local FrameCap = require("src.core.FrameCap")
 local Performance = require("src.core.Performance")
 local Logger = require("src.core.Logger")
@@ -104,8 +105,8 @@ local function stepVolume(v, dir)
 end
 
 local function colorIndex(opts)
-  local cur = opts.colors or "gbc"
-  for i, m in ipairs(PaletteFX.MODES) do
+  local cur = GameVersion.isGen2() and PaletteFX.mode or opts.colors or "gbc"
+  for i, m in ipairs(PaletteFX.colorModes()) do
     if m == cur then return i end
   end
   return 1
@@ -370,14 +371,17 @@ local function buildRows(game)
       end },
     { id = "colors", label = Strings("COLORS"),
       value = function(g)
-        return PaletteFX.modeLabel(g.save.options.colors or "gbc")
+        local mode = GameVersion.isGen2() and PaletteFX.mode or g.save.options.colors or "gbc"
+        return PaletteFX.modeLabel(mode)
       end,
       step = function(g, dir)
         local o = g.save.options
         local i = colorIndex(o)
-        i = wrapIndex(i - 1 + dir, #PaletteFX.MODES) + 1
-        o.colors = PaletteFX.MODES[i]
-        PaletteFX.setMode(o.colors)
+        local modes = PaletteFX.colorModes()
+        i = wrapIndex(i - 1 + dir, #modes) + 1
+        PaletteFX.writeColorOption(o, modes[i])
+        if GameVersion.isGen2() then PaletteFX.setDisplay(o.colors,nil)
+        else PaletteFX.setMode(o.colors) end
         return true
       end },
     { id = "tilt", label = Strings("TILT"),
@@ -462,6 +466,16 @@ local function buildRows(game)
         FaithfulRes.apply(o.faithfulRes)
         return true
       end },
+    { id = "screenPos", label = Strings("SCREEN POS"),
+      value = function(g)
+        return Strings(ScreenPosition.label(g.save.options.screenPos))
+      end,
+      step = function(g, dir)
+        local o = g.save.options
+        o.screenPos = ScreenPosition.cycle(o.screenPos, dir)
+        ScreenPosition.setMode(o.screenPos)
+        return true
+      end },
     -- hard render cap (issue #88): bounds the present rate so a
     -- driver-forced vsync-off run cannot spin at thousands of FPS.  Logic
     -- is fixed-step off dt, so this touches presentation only.
@@ -522,6 +536,41 @@ local function buildRows(game)
         return true
       end },
   }
+  do
+    local osName = love.system and love.system.getOS and love.system.getOS()
+    if osName == 'Android' or osName == 'iOS' or os.getenv('POKEPORT_TOUCH') == '1' then
+      rows[#rows + 1] = { id = 'haptics', label = Strings('HAPTICS'),
+        value = function(g) return require('src.core.TouchControls').hapticLabel(g.save.options.haptics) end,
+        step = function(g, dir)
+          local Controls = require('src.core.TouchControls')
+          g.save.options.haptics = Controls.cycleHaptics(g.save.options.haptics, dir or 1)
+          Controls:applyOptions(g.save.options)
+          Controls.buzz(g.save.options.haptics)
+          return true
+        end }
+    end
+  end
+  -- The same installed library is usable as mobile controls or a desktop bezel.
+  local skins = require('src.core.TouchSkin').list()
+  if #skins > 0 then
+    rows[#rows + 1] = { id = 'touchSkin', label = Strings('TOUCH SKIN'),
+      value = function(g)
+        local tc = g.save.options.touchControls
+        return type(tc) == 'table' and tc.skin or Strings('DEFAULT')
+      end,
+      step = function(g, dir)
+        local tc = g.save.options.touchControls
+        tc = type(tc) == 'table' and tc or {}
+        local index = 0
+        for i, skin in ipairs(skins) do if skin.id == tc.skin then index = i; break end end
+        index = (index + (dir or 1)) % (#skins + 1)
+        tc.skin = index > 0 and skins[index].id or nil
+        if tc.skin then tc.enabled = true end
+        g.save.options.touchControls = tc
+        require('src.core.TouchControls'):applyOptions(g.save.options)
+        return true
+      end }
+  end
   -- issue #136: hide GBC FX on Android/iOS -- the present shader soft-bricks
   if not GBCFX.isSupported() then
     local filtered = {}

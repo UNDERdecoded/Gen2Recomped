@@ -600,9 +600,14 @@ end
 -- `res BADLY_POISONED`); the raw w*ToxicCounter is NOT reset by item
 -- cures in Gen 1, so battle.sideToxic is deliberately left alone.
 local function cureActiveToxic(battle, target)
+  local gscSleep=require('src.core.GameVersion').isGen2()and target and target.status~='SLP'
+  if gscSleep then target.sleepTurns=nil end
   if not battle then return end
   for _, b in ipairs({ battle.player, battle.enemy }) do
-    if b and b.mon == target then b.toxicCounter = nil end
+    if b and b.mon == target then
+      b.toxicCounter = nil
+      if gscSleep then b.sleepTurns=nil end
+    end
   end
 end
 
@@ -1028,6 +1033,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     local function wake(mon)
       if mon and mon.status == "SLP" then
         mon.status = nil
+        cureActiveToxic(battle,mon)
         woke = true
       end
     end
@@ -1212,6 +1218,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
       return "failed", { Strings("It won't have\nany effect.") }
     end
     target.status = nil
+    cureActiveToxic(battle,target)
     target.hp = itemId == "REVIVE" and math.floor(target.stats.hp / 2) or target.stats.hp
     require("src.core.Sound").play(data, "Heal_HP")
     -- a revive takes the same .healHP -> .doneHealing route, animating up

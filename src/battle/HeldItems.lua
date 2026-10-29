@@ -338,6 +338,7 @@ local function curePersistent(holder, wanted)
   if not status then return false end
   if wanted and norm(status) ~= wanted then return false end
   mon.status = nil
+  if require('src.core.GameVersion').isGen2()then mon.sleepTurns=nil end
   holder.sleepTurns, holder.toxicCounter = nil, nil
   return true
 end

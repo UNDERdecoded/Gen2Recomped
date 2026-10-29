@@ -10,6 +10,7 @@
 local Fingerprint = require("src.link.Fingerprint")
 local Schemas = require("src.mods.Schemas")
 local Version = require("src.core.Version")
+local Strings = require("src.core.Strings")
 
 local Handshake = {}
 
@@ -158,6 +159,7 @@ function Handshake.hello(game, mode)
     engineVersion = Version.engine,
     apiVersion = Version.modApi,
     fingerprint = Fingerprint.compute(game and game.data, mods),
+    nativeBattleRevision = Fingerprint.nativeBattleRevision(),
     linkModified = Handshake.linkModified(game),
     mods = mods,
   }
@@ -174,6 +176,7 @@ end
 function Handshake.checkCompat(localHello, remoteHello)
   localHello = localHello or {}
   if not remoteHello or not remoteHello.protocol then
+    if localHello.nativeBattleRevision then return "refused", "native_rules_required" end
     if localHello.linkModified then
       return "refused", "peer_v1_modified"
     end
@@ -182,6 +185,7 @@ function Handshake.checkCompat(localHello, remoteHello)
   if major(remoteHello.engineVersion) ~= major(localHello.engineVersion) then
     return "refused", "engine_mismatch"
   end
+  if localHello.nativeBattleRevision ~= remoteHello.nativeBattleRevision then return "subset", "native_rules_mismatch" end
   if remoteHello.fingerprint == localHello.fingerprint then
     return "full", nil
   end
@@ -264,6 +268,11 @@ end
 function Handshake.describe(localHello, remoteHello, verdict, mode)
   local lines = {}
   local peer = (remoteHello and remoteHello.name) or "THEY"
+  if (localHello and localHello.nativeBattleRevision) ~= (remoteHello and remoteHello.nativeBattleRevision) then
+    wrap(lines, Strings("The native battle rules differ."))
+    wrap(lines, Strings("Use matching engine builds for link battles."))
+    return lines
+  end
   if verdict == "refused" then
     if not (remoteHello and remoteHello.protocol) then
       wrap(lines, "The other game is")

@@ -4,6 +4,22 @@
 -- The HP DV is derived from the low bits of the other four DVs.
 
 local Stats = {}
+-- Live native wrappers share party stats until Transform replaces their own
+-- block. Weak keys retain neither finished battles nor Pokemon datasets.
+local statOwners=setmetatable({}, {__mode='k'})
+function Stats.trackBattler(battler)
+  statOwners[battler]=true
+  return battler
+end
+function Stats.replace(mon, stats)
+  local previous=mon.stats
+  mon.stats=stats
+  for owner in pairs(statOwners)do
+    if owner.mon==mon and owner.curStats==previous then owner.curStats=stats end
+  end
+  return stats
+end
+
 
 local ORDER = { "hp", "attack", "defense", "speed", "special" }
 Stats.ORDER = ORDER
@@ -50,6 +66,15 @@ function Stats.isGen3(speciesDef)
      and speciesDef.baseStats.spdef ~= nil
 end
 
+-- GSC stores only the four genes. A stale saved HP DV must not override
+-- their low bits when a mod/editor changes a gene and refreshes the stats.
+function Stats.hpDV(dvs, special)
+  dvs=dvs or {}
+  if special==nil then special=dvs.special end
+  return ((dvs.attack or 0)%2)*8+((dvs.defense or 0)%2)*4
+    +((dvs.speed or 0)%2)*2+(special or 0)%2
+end
+
 function Stats.randomDVs(rng)
   rng = rng or love.math.random
   local dvs = {
@@ -58,8 +83,7 @@ function Stats.randomDVs(rng)
     speed = rng(0, 15),
     special = rng(0, 15),
   }
-  dvs.hp = (dvs.attack % 2) * 8 + (dvs.defense % 2) * 4 +
-           (dvs.speed % 2) * 2 + (dvs.special % 2)
+  dvs.hp = Stats.hpDV(dvs)
   return dvs
 end
 
@@ -123,6 +147,28 @@ function Stats.calcGen3(speciesDef, level, ivs, evs, nature)
   return out
 end
 
+-- One actual GSC formula for native recalculation and the public source
+-- Mon.stats API. Accept source split names at this input boundary, but keep
+-- native canonical output fields and live source aliases on that same table.
+function Stats.calcGen2(base, dvs, level, statExp)
+  base,dvs,statExp=base or {},dvs or {},statExp or {}
+  local special=dvs.special
+  if special==nil then special=dvs.specialAttack or dvs.specialDefense end
+  local function value(stat,dv,effort,hp)
+    return calcOne(stat or 1,dv or 0,math.max(0,effort or 0),level,hp)
+  end
+  local out={
+    hp=value(base.hp,Stats.hpDV(dvs,special),statExp.hp,true),
+    attack=value(base.attack,dvs.attack,statExp.attack),
+    defense=value(base.defense,dvs.defense,statExp.defense),
+    speed=value(base.speed,dvs.speed,statExp.speed),
+    spatk=value(base.spatk or base.specialAttack,special,statExp.special or statExp.specialAttack),
+    spdef=value(base.spdef or base.specialDefense,special,statExp.special or statExp.specialDefense),
+  }
+  out.special=out.spatk
+  return require('src.pokemon.Gen2MonFields').stats(out)
+end
+
 function Stats.calc(speciesDef, level, dvs, statExp, evs, nature)
   if Stats.isGen3(speciesDef) then
     -- a Gen 3 mon carries ivs/evs; the dvs/statExp parameters are what the
@@ -131,21 +177,13 @@ function Stats.calc(speciesDef, level, dvs, statExp, evs, nature)
   end
   statExp = statExp or {}
   local base = speciesDef.baseStats
+  if (base.spatk and base.spdef) or (base.specialAttack and base.specialDefense) then
+    return Stats.calcGen2(base,dvs,level,statExp)
+  end
   local out = {}
   for _, key in ipairs(ORDER) do
     out[key] = calcOne(base[key], dvs[key] or 0,
                        statExp[key], level, key == "hp")
-  end
-  -- Gen 2 split Special into two base stats but kept ONE Special DV and
-  -- ONE Special stat-exp slot (CalcMonStats runs the same CalcStat over
-  -- six base values, reading wDVs' low nibble for both).  A Gen 1 species
-  -- record has no spatk/spdef, so it keeps the single `special`.
-  if base.spatk and base.spdef then
-    out.spatk = calcOne(base.spatk, dvs.special or 0,
-                        statExp.special, level, false)
-    out.spdef = calcOne(base.spdef, dvs.special or 0,
-                        statExp.special, level, false)
-    out.special = out.spatk
   end
   return out
 end
@@ -181,6 +219,9 @@ function Stats.ensure(speciesDef, mon)
       local full = Stats.calc(speciesDef, mon.level or 1, mon.dvs or {},
                               mon.statExp)
       mon.stats.spatk, mon.stats.spdef = full.spatk, full.spdef
+    end
+    if base.spatk and base.spdef then
+      require('src.pokemon.Gen2MonFields').stats(mon.stats)
     end
     return mon
   end

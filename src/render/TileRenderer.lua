@@ -568,19 +568,27 @@ end
 -- palColorsByTod is what the Gen2 importer now writes; palColors alone is the
 -- older single-row shape, kept working so a dataset extracted before this
 -- change still renders instead of falling back to grey.
-local function gen2PalColors(tileset)
+local function gen2PalColors(tileset, row)
   local byTod = tileset.palColorsByTod
   if type(byTod) ~= "table" then return tileset.palColors end
-  if PaletteFX.darkWorld() then return byTod.DARK or tileset.palColors end
-  return byTod[PaletteFX.gen2Tod()] or byTod.DAY or tileset.palColors
+  row=row or PaletteFX.effectiveGen2Tod()
+  if row=='DARK'then return byTod.DARK or tileset.palColors end
+  return byTod[row] or byTod.DAY or tileset.palColors
+end
+
+local function gen2DisplayRows(rows, row)
+  if not (rows and require("src.core.GameVersion").isGen2()) then return rows end
+  local out = {}
+  for i, colors in ipairs(rows) do out[i] = PaletteFX.gen2BakeColors(colors, row == "DARK") end
+  return out
 end
 
 -- One atlas per (tileset image, COLORS mode, time of day).  Leaving the mode
 -- out of this key is why switching COLORS did nothing out in the Gen2
 -- overworld: the first bake won and every later mode kept being handed it.
-local function gen2AtlasKey(imagePath, roof, special)
-  return imagePath .. "#gen2pal:" .. tostring(PaletteFX.mode) .. ":"
-    .. (PaletteFX.darkWorld() and "DARK" or tostring(PaletteFX.gen2Tod()))
+local function gen2AtlasKey(imagePath, roof, special, row)
+  return imagePath .. "#gen2pal:" .. PaletteFX.displayKey() .. ":"
+    .. tostring(row or PaletteFX.effectiveGen2Tod())
     -- TWO MAPS ON ONE TILESET ARE TWO DIFFERENT PICTURES once the roof is in
     -- it.  Violet and Azalea share TilesetJohto1 and wear different roofs, so
     -- leaving the roof out of the key would hand the second town the first
@@ -601,36 +609,10 @@ end
 --
 -- Skipped outright while the world is dark, which keeps the ROM's ordering:
 -- the darkness row is the first row in that table and beats every other.
-local function gen2SpecialPalette(map, data)
-  if PaletteFX.darkWorld() then return nil end
-  local special = data and data.field and data.field.gen2MapPalettes
-  if type(special) ~= "table" or type(special.rules) ~= "table" then return nil end
-  local def = data.maps and map.id and data.maps[map.id]
-  if type(def) ~= "table" then return nil end
-  local tileset = map.tileset and map.tileset.id
-  for _, rule in ipairs(special.rules) do
-    local hit
-    if rule.kind == "map" then
-      hit = rule.group == def.group and rule.number == def.number
-    elseif rule.kind == "landmark" then
-      hit = rule.landmark == def.landmark
-    elseif rule.kind == "tileset" then
-      hit = rule.tileset == tileset
-    end
-    -- RegionCheck, as PokeCenterSpecialCase applies it
-    if hit and rule.landmarkMin then
-      hit = type(def.landmark) == "number" and def.landmark >= rule.landmarkMin
-    end
-    if hit and rule.landmarkEq then hit = def.landmark == rule.landmarkEq end
-    if hit then
-      local set = special.sets and special.sets[rule.set]
-      local rows = set and (set.ALL
-        or set[PaletteFX.gen2Tod()] or set.DAY)
-      if rows and #rows > 0 then return "#pal:" .. tostring(rule.set), rows end
-      return nil
-    end
-  end
-  return nil
+local function gen2SpecialPalette(map, data, row)
+  local def=data.maps and map.id and data.maps[map.id] or map.def
+  return require('src.render.Gen2PaletteContext').special(data,def,
+    map.tileset and map.tileset.id,row or PaletteFX.effectiveGen2Tod())
 end
 
 -- THE ROOF A MAP WEARS, or nil when it wears none.
@@ -639,33 +621,10 @@ end
 -- tileset (see RomExtractorGen2:gen2Roofs for the cartridge routines).  The
 -- art is a nine-tile strip on disk and the colour is a PAIR -- colours 1 and 2
 -- of the roof palette row, which is all LoadMapPals ever writes.
-local function gen2RoofFor(map, data)
-  local roofs = data and data.field and data.field.gen2Roofs
-  if type(roofs) ~= "table" then return nil end
-  local tileset = map and map.tileset
-  if not (tileset and type(roofs.tilesets) == "table"
-          and roofs.tilesets[tileset.id]) then
-    return nil
-  end
-  local def = data.maps and map.id and data.maps[map.id]
-  local group = (def and def.group) or map.group
-  local id = group ~= nil and type(roofs.byGroup) == "table"
-    and roofs.byGroup[group] or nil
-  if id == nil then return nil end
-  local image = type(roofs.images) == "table" and roofs.images[id] or nil
-  if not image then return nil end
-  local byTod = type(roofs.colors) == "table" and roofs.colors[group] or nil
-  local pair = byTod and (PaletteFX.darkWorld() and byTod.DARK
-    or byTod[PaletteFX.gen2Tod()] or byTod.DAY) or nil
-  return {
-    image = image,
-    pair = pair,
-    slot = roofs.slot or 10,
-    count = roofs.count or 9,
-    palIndex = roofs.palIndex or 6,
-    variants = tileset.tileVariants,
-    key = "#roof:" .. tostring(id) .. "." .. tostring(group),
-  }
+local function gen2RoofFor(map, data, row)
+  local def=data.maps and map.id and data.maps[map.id] or map.def or map
+  return require('src.render.Gen2PaletteContext').roof(data,def,map.tileset,
+    row or PaletteFX.effectiveGen2Tod())
 end
 
 local gen2AtlasCache = {}
@@ -792,6 +751,7 @@ function TileRenderer.gen2AtlasFor(tileset)
   if not (tileset.palMap and #tileset.palMap > 0) then return nil end
   if not PaletteFX.usesGen2BgPal() then return nil end
   local colors = gen2PalColors(tileset)
+  colors = gen2DisplayRows(colors, PaletteFX.effectiveGen2Tod())
   if not (colors and #colors > 0) then return nil end
   local perRow = tileset.tilesPerRow
   if not perRow or perRow < 1 then return nil end
@@ -1368,14 +1328,17 @@ function TileRenderer.new(map, data)
   -- "show me the hardware", and the DMG/SGB-flavoured modes have to fall
   -- through to the raw sheet and their own shade treatment.  Unconditional, it
   -- made COLORS a no-op for every Gen2 tile on screen.
-  local gen2Colors = PaletteFX.usesGen2BgPal() and gen2PalColors(map.tileset)
+  local gen2Def=data and data.maps and map.id and data.maps[map.id] or map.def
+  local gen2Enabled=PaletteFX.usesGen2BgPal()
+  local gen2Row=gen2Enabled and PaletteFX.gen2RowFor(gen2Def)
+  local gen2Colors = gen2Enabled and gen2PalColors(map.tileset,gen2Row)
   -- ...and this map's own seven, where the cartridge gives it seven of its
   -- own.  Before the roof swap below, because the ROM does it in that order:
   -- LoadMapPals picks the palettes, special or environment, and only then
   -- writes the map group's roof pair into whichever set it ended up with.
   local specialKey
   if gen2Colors then
-    local key, rows = gen2SpecialPalette(map, data)
+    local key, rows = gen2SpecialPalette(map, data,gen2Row)
     if rows then gen2Colors, specialKey = rows, key end
   end
   if not self.gbcAtlas and map.tileset.palMap and #map.tileset.palMap > 0
@@ -1386,18 +1349,10 @@ function TileRenderer.new(map, data)
     -- list with just that pair replaced is the whole of it.  A copy, because
     -- `gen2Colors` is the tileset def's own table and two groups sharing a
     -- tileset would otherwise overwrite each other's roof.
-    local roof = gen2RoofFor(map, data)
-    if roof and roof.pair then
-      local swapped = {}
-      for i = 1, #gen2Colors do swapped[i] = gen2Colors[i] end
-      local row = swapped[roof.palIndex + 1]
-      if row then
-        swapped[roof.palIndex + 1] =
-          { row[1], roof.pair[1], roof.pair[2], row[4] }
-      end
-      gen2Colors = swapped
-    end
-    local key = gen2AtlasKey(map.tileset.image, roof, specialKey)
+    local roof = gen2RoofFor(map, data,gen2Row)
+    gen2Colors=require('src.render.Gen2PaletteContext').withRoof(gen2Colors,roof)
+    gen2Colors=gen2DisplayRows(gen2Colors,gen2Row)
+    local key = gen2AtlasKey(map.tileset.image, roof, specialKey,gen2Row)
     local gen2img = getGen2Atlas(key, map.tileset.image, map.tileset.tilesPerRow,
                                  map.tileset.palMap, gen2Colors,
                                  TileRenderer.borrowStart(map.tileset), roof)
