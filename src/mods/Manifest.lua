@@ -240,6 +240,16 @@ function Manifest.validate(raw, path)
     end
   end
 
+  local logUrl=raw.log_url
+  if logUrl~=nil then
+    local bad=type(logUrl)~="string" or #logUrl>8192 or logUrl:find("[%z%c%s]")
+      or not logUrl:lower():match("^https://[^/?#]+")
+    if bad or not permissionSet.network then
+      violation(strict,raw.id,bad and "log_url requires a valid HTTPS URL" or 'log_url requires the "network" permission')
+      logUrl=nil
+    end
+  end
+
   local gameVersionOk, gameVersionErr = Semver.validRange(raw.game_version)
   assert(gameVersionOk, ("malformed game_version %q: %s")
     :format(tostring(raw.game_version), tostring(gameVersionErr)))
@@ -325,6 +335,7 @@ function Manifest.validate(raw, path)
     affects_link = affectsLink,
     permissions = permissions,
     permissionSet = permissionSet,
+    log_url = logUrl,
     options_schema = optionalFile(raw.options_schema, "options_schema"),
     -- Base files the mod needs but cannot ship -- a Stadium 2 cartridge, a
     -- second game's ROM.  Declared here, satisfied by the launcher, read by

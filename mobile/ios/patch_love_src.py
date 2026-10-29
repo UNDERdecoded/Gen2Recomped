@@ -29,7 +29,7 @@ WRAP_SYSTEM = LOVE_SRC / "src" / "modules" / "system" / "wrap_System.cpp"
 PBXPROJ = LOVE_SRC / "platform" / "xcode" / "love.xcodeproj" / "project.pbxproj"
 ENTITLEMENTS_SRC = IOS_DIR / "overlays" / "love-ios.entitlements"
 
-NATIVE_FILES = ("GRPickerBridge.swift", "GRHealthBridge.swift", "GRBootstrap.m")
+NATIVE_FILES = ("GRPickerBridge.swift", "GRHealthBridge.swift", "GRHTTPBridge.swift", "GRBootstrap.m")
 
 MARKER = "gen1recomp iOS picker bridge"
 
@@ -40,6 +40,7 @@ WRAP_INCLUDES = """
 #include <objc/runtime.h>
 #include <objc/message.h>
 #include <string>
+#include <cstring>
 #include "filesystem/Filesystem.h"
 #endif
 """ % MARKER
@@ -94,6 +95,32 @@ int w_syncHealthSteps(lua_State *L)
 {
 	return gr_callBridge(L, "GRHealthBridge", "syncStepsWithCommand:saveDir:", "sync");
 }
+int w_boundedHttpVersion(lua_State *L)
+{
+	lua_pushinteger(L, objc_getClass("GRHTTPBridge") != nullptr ? 1 : 0);
+	return 1;
+}
+int w_httpRequestBounded(lua_State *L)
+{
+	size_t size = 0;
+	const char *json = luaL_checklstring(L, 1, &size);
+	Class cls = objc_getClass("GRHTTPBridge");
+	if (cls == nullptr || size > 1024 * 1024 || std::memchr(json, 0, size) != nullptr)
+	{
+		lua_pushliteral(L, "{\\\"error\\\":\\\"invalid bounded request\\\"}");
+		return 1;
+	}
+	typedef id (*GRNew)(Class, SEL);
+	typedef id (*GRRequest)(Class, SEL, const char *);
+	typedef const char *(*GRUTF8)(id, SEL);
+	typedef void (*GRDrain)(id, SEL);
+	id pool = ((GRNew)objc_msgSend)(objc_getClass("NSAutoreleasePool"), sel_registerName("new"));
+	id result = ((GRRequest)objc_msgSend)(cls, sel_registerName("requestWithJSON:"), json);
+	const char *text = result == nullptr ? nullptr : ((GRUTF8)objc_msgSend)(result, sel_registerName("UTF8String"));
+	lua_pushstring(L, text == nullptr ? "{\\\"error\\\":\\\"bounded request failed\\\"}" : text);
+	((GRDrain)objc_msgSend)(pool, sel_registerName("drain"));
+	return 1;
+}
 #endif // LOVE_IOS
 // ---------------------------------------------------------------------------
 
@@ -103,6 +130,8 @@ WRAP_REGISTRATION = """#ifdef LOVE_IOS
 	{ "pickFile", w_pickFile },
 	{ "createFile", w_createFile },
 	{ "syncHealthSteps", w_syncHealthSteps },
+	{ "httpRequestBounded", w_httpRequestBounded },
+	{ "boundedHttpVersion", w_boundedHttpVersion },
 #endif
 """
 
@@ -114,6 +143,8 @@ ID_FILE_HEALTH = "6E1AC0DE0001000000000003"
 ID_BUILD_PICKER = "6E1AC0DE0002000000000001"
 ID_BUILD_OBJC = "6E1AC0DE0002000000000002"
 ID_BUILD_HEALTH = "6E1AC0DE0002000000000003"
+ID_FILE_HTTP = "6E1AC0DE0001000000000004"
+ID_BUILD_HTTP = "6E1AC0DE0002000000000004"
 SOURCES_PHASE_ID = "FA0B7F021A95AAF3000E1D17"  # love-ios Sources phase
 IOS_APP_CONFIG_IDS = (
     "FA0B7F261A95AAF4000E1D17",  # Debug
@@ -124,6 +155,7 @@ IOS_APP_CONFIG_IDS = (
 PBX_SOURCES = (
     ("GRPickerBridge.swift", ID_FILE_PICKER, ID_BUILD_PICKER, "sourcecode.swift"),
     ("GRHealthBridge.swift", ID_FILE_HEALTH, ID_BUILD_HEALTH, "sourcecode.swift"),
+    ("GRHTTPBridge.swift", ID_FILE_HTTP, ID_BUILD_HTTP, "sourcecode.swift"),
     ("GRBootstrap.m", ID_FILE_OBJC, ID_BUILD_OBJC, "sourcecode.c.objc"),
 )
 
