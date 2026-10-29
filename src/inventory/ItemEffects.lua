@@ -600,9 +600,14 @@ end
 -- `res BADLY_POISONED`); the raw w*ToxicCounter is NOT reset by item
 -- cures in Gen 1, so battle.sideToxic is deliberately left alone.
 local function cureActiveToxic(battle, target)
+  local gscSleep=require('src.core.GameVersion').isGen2()and target and target.status~='SLP'
+  if gscSleep then target.sleepTurns=nil end
   if not battle then return end
   for _, b in ipairs({ battle.player, battle.enemy }) do
-    if b and b.mon == target then b.toxicCounter = nil end
+    if b and b.mon == target then
+      b.toxicCounter = nil
+      if gscSleep then b.sleepTurns=nil end
+    end
   end
 end
 
@@ -1028,6 +1033,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     local function wake(mon)
       if mon and mon.status == "SLP" then
         mon.status = nil
+        cureActiveToxic(battle,mon)
         woke = true
       end
     end
@@ -1118,7 +1124,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     local amount = itemId == "MYSTERYBERRY" and 5 or 10
     local function restore(mv)
       local mdef = data.moves[mv.id]
-      local maxPP = mdef and (mdef.pp + (mv.ppUps or 0) * math.floor(mdef.pp / 5))
+      local maxPP = mdef and require("src.pokemon.Pokemon").maxPP(mdef, mv)
       if maxPP and mv.pp < maxPP then
         mv.pp = full and maxPP or math.min(maxPP, mv.pp + amount)
         return true
@@ -1212,6 +1218,7 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
       return "failed", { Strings("It won't have\nany effect.") }
     end
     target.status = nil
+    cureActiveToxic(battle,target)
     target.hp = itemId == "REVIVE" and math.floor(target.stats.hp / 2) or target.stats.hp
     require("src.core.Sound").play(data, "Heal_HP")
     -- a revive takes the same .healHP -> .doneHealing route, animating up
@@ -1316,10 +1323,14 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     if not target then return "failed", { Strings("It won't have\nany effect.") } end
     local mv = target.moves[moveIndex or 1]
     local mdef = mv and data.moves[mv.id]
-    if mdef and (mv.ppUps or 0) < 3 then
-      mv.ppUps = (mv.ppUps or 0) + 1
-      -- each PP UP adds maxPP/5 uses on top of the base maximum
-      mv.pp = mv.pp + math.floor(mdef.pp / 5)
+    local gen2 = require("src.core.GameVersion").isGen2()
+    local ups = gen2 and require("src.pokemon.Gen2PP").ups(mdef, mv) or mv and (mv.ppUps or 0) or 0
+    if mdef and ups < 3 and not (gen2 and mv.id == "SKETCH") then
+      mv.ppUps = ups + 1
+      local bonus = math.floor(mdef.pp / 5)
+      if gen2 then bonus = require("src.pokemon.Gen2PP").bonus(mdef.pp) end
+      mv.pp = mv.pp + bonus
+      if gen2 then mv.maxPp = require("src.pokemon.Pokemon").maxPP(mdef, mv, 2) end
       return "consumed", { Strings("%s's PP\nincreased!", mdef.name) }
     end
     return "failed", { Strings("It won't have\nany effect.") }

@@ -1,4 +1,18 @@
+Based on the Pokemon Gen 1 Recompilation Project by BOIS CLUB GAMES, LLC
+(https://github.com/bryanthaboi/gen1recomp).
+
+GSC BG-effect source provenance and its retained licence are recorded in
+[compat/gen1-gsc/provenance.json](compat/gen1-gsc/provenance.json).
+
 # gen2recomp
+
+Based on the Pokemon Gen 1 Recompilation Project by BOIS CLUB GAMES, LLC
+(https://github.com/bryanthaboi/gen1recomp).
+
+Contributions by Roxas2712 — https://github.com/Roxas2712.
+Newly adapted touch-skin/studio code retains the original GPLv3/Section7
+terms in `licenses/GEN1RECOMP-TOUCH-SKINS.md`. Existing author rights and
+earlier grants remain effective; see `NOTICE.md` and `LICENSE-ROXAS2712.md`.
 
 <p align="center"><img src="./assets/logo/gen2logo.png"></p>
 

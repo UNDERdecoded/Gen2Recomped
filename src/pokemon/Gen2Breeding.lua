@@ -6,25 +6,31 @@ function Breeding.isVanilla()
   return version == "gold" or version == "silver" or version == "crystal"
 end
 
-function Breeding.inheritDVs(data, save, egg)
+-- Finalize the owned birth genes before Pokemon.new publishes appearance.
+function Breeding.inheritedDVs(data, save, species, dvs)
   local DC = require("src.pokemon.DayCare")
   local a, b = DC.mon(save,1), DC.mon(save,2)
-  if not (a and b and egg.dvs) then return false end
+  if not (a and b and dvs) then return false end
   local parent
   if DC.isDitto(data,a) then parent=a
   elseif DC.isDitto(data,b) then parent=b
   else
     local mother, father = DC.parents(data,save)
-    local gender = DC.gender(data,egg)
+    local gender = DC.gender(data,{species=species,dvs=dvs})
     if gender == "male" then parent=mother
     elseif gender == "female" then parent=father end
   end
   if not (parent and parent.dvs and parent.dvs.defense and parent.dvs.special) then return false end
-  local dvs = egg.dvs
   dvs.defense = parent.dvs.defense
   dvs.special = math.floor(dvs.special / 8) * 8 + parent.dvs.special % 8
   dvs.hp = dvs.attack % 2 * 8 + dvs.defense % 2 * 4 + dvs.speed % 2 * 2 + dvs.special % 2
-  egg.stats = require("src.pokemon.Stats").calc(data.pokemon[egg.species],egg.level,dvs,egg.statExp)
+  return true
+end
+
+function Breeding.inheritDVs(data, save, egg)
+  if not Breeding.inheritedDVs(data,save,egg.species,egg.dvs) then return false end
+  egg.stats = require("src.pokemon.Stats").calc(data.pokemon[egg.species],egg.level,egg.dvs,egg.statExp)
+  require('src.pokemon.Pokemon').syncIdentity(data,egg)
   return true
 end
 
@@ -37,11 +43,12 @@ function Breeding.hatch(game, mon)
   Breeding.setOwner(game.save,mon)
   local def=game.data.pokemon[mon.species]
   if def then mon.stats=require("src.pokemon.Stats").calc(def,mon.level,mon.dvs,mon.statExp) end
+  require('src.pokemon.Pokemon').syncIdentity(game.data,mon)
   local dex=game.save.pokedex or {}
   game.save.pokedex=dex
   dex.seen,dex.owned=dex.seen or {},dex.owned or {}
   dex.seen[mon.species],dex.owned[mon.species]=true,true
-  if mon.species=="SPECIES_175" then
+  if require('src.core.Gen2SpeciesNames').same(game.data,mon.species,'SPECIES_175')then
     game.save.flags=game.save.flags or {}
     game.save.flags[require("src.script.Gen2Flags").eventFlag(0x54)]=true
   end

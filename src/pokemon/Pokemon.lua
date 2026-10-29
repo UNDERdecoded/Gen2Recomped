@@ -2,6 +2,7 @@
 
 local Growth = require("src.pokemon.Growth")
 local Stats = require("src.pokemon.Stats")
+local Gen2PP = require("src.pokemon.Gen2PP")
 
 local Pokemon = {}
 
@@ -173,7 +174,9 @@ function Pokemon.applySeed(data, mon, seed)
   return true
 end
 
-function Pokemon.new(data, species, level, rng, form)
+function Pokemon.new(data, species, level, rng, form, opts)
+  species=require("src.core.Gen2SpeciesNames").registryId(data.pokemon,species)
+  local generation=require("src.core.GameVersion").generation()
   local nativeForm=(data.constants or {}).gen==4 and (form or 0) or nil
   local speciesDef=(data.pokemon or {})[species]
   if require("src.core.GameVersion").get()=="polishedcrystal" and speciesDef and speciesDef.forms then
@@ -182,7 +185,20 @@ function Pokemon.new(data, species, level, rng, form)
   local def = require('src.pokemon.Gen4Forms').definition(data,
     {species=species,form=nativeForm})
   assert(def, "unknown species " .. tostring(species))
-  local dvs = Stats.randomDVs(rng)
+  local dvs
+  if generation == 2 and opts and type(opts.dvs) == "table" then
+    -- Trainer/trade/egg genes are already decided. Own a copy before any
+    -- identity hook can edit it; do not spend a random birth roll first.
+    dvs = {}
+    for _,key in ipairs({'attack','defense','speed','special'})do
+      local n=opts.dvs[key]
+      assert(type(n)=='number'and n%1==0 and n>=0 and n<=15,'invalid native Gen2 DV: '..key)
+      dvs[key]=n
+    end
+    dvs.hp=dvs.attack%2*8+dvs.defense%2*4+dvs.speed%2*2+dvs.special%2
+  else
+    dvs = Stats.randomDVs(rng)
+  end
   local seed = Stats.isGen3(def) and gen3Seed(data, def, rng) or nil
   local stats = seed
     and Stats.calc(def, level, seed.ivs, nil, seed.evs, seed.nature)
@@ -242,7 +258,75 @@ function Pokemon.new(data, species, level, rng, form)
   -- meaning "in tall grass only".  At the default setting shinyOddsOf answers
   -- nil and this returns immediately, leaving the cartridge's own 1/8192
   -- exactly as it was.
-  Pokemon.rollShiny(data, nil, mon, rng)
+  if generation==2 and opts and opts.shiny then mon.shiny=true
+  else Pokemon.rollShiny(data, nil, mon, rng) end
+  if generation==2 then
+    local Rolls=require('src.pokemon.IdentityRolls')
+    mon.shiny=mon.shiny or Rolls.gen2Shiny(mon,def)
+    mon.gender=Rolls.gender(data,mon,2,level)
+  end
+  if generation==2 then require('src.pokemon.Gen2MonFields').bind(data,mon) end
+  return mon
+end
+
+-- Old native saves predate the public appearance fields. Populate only absent
+-- fields at validation, on the actual Pokemon, without a random re-roll or
+-- replacing explicit saved identity. Normal refresh remains the owner below.
+function Pokemon.ensureIdentity(data,mon)
+  if require('src.core.GameVersion').isGen2() then require('src.pokemon.Gen2MonFields').bind(data,mon)end
+  if type(mon)~='table'or type(mon.dvs)~='table'
+      or require('src.core.GameVersion').generation()~=2 then return mon end
+  local def=data and data.pokemon and data.pokemon[mon.species]
+  if not def then return mon end
+  local Rolls=require('src.pokemon.IdentityRolls')
+  if mon.gender==nil then mon.gender=Rolls.gender(data,mon,2,mon.level)end
+  if mon.shiny==nil then mon.shiny=Rolls.gen2Shiny(mon,def)end
+  return mon
+end
+
+-- Gen 2 refreshes identity at its summary/stat-refresh boundary. A true
+-- shiny stays authoritative; a cached false and gender are read again.
+function Pokemon.syncIdentity(data, mon)
+  local Version=require('src.core.GameVersion')
+  if Version.generation()~=2 or type(mon)~='table' then return mon end
+  require('src.pokemon.Gen2MonFields').bind(data,mon)
+  local def = data and data.pokemon and data.pokemon[mon.species]
+  if not def then return mon end
+  -- Derived native names/types stay unstored. An older explicitly stored
+  -- display copy must be refreshed too, as on the source summary boundary.
+  if rawget(mon,'name')~=nil then mon.name=def.name or mon.species end
+  if def.types and rawget(mon,'types')~=nil then mon.types=def.types end
+  if type(mon.dvs)~='table' then return mon end
+  local Rolls = require('src.pokemon.IdentityRolls')
+  mon.gender = Rolls.gender(data, mon, 2, mon.level)
+  mon.shiny = mon.shiny or Rolls.gen2Shiny(mon, def)
+  local Unown=require('src.pokemon.Gen2Unown')
+  if Unown.supported() then
+    mon.unownLetter=def==Unown.definition(data) and Unown.letterFromDVs(mon.dvs) or nil
+  end
+  return mon
+end
+
+-- GSC summary/stat refresh recalculates an existing block; Stats.ensure is
+-- deliberately different (it preserves an already loaded party stat block).
+-- No current-HP refill, identity re-roll at birth or second Pokemon is made.
+function Pokemon.refreshStats(data, mon)
+  if require('src.core.GameVersion').generation()~=2 or type(mon)~='table' then return mon end
+  local def=data and data.pokemon and data.pokemon[mon.species]
+  if not(def and def.baseStats) then return mon end
+  Pokemon.syncIdentity(data,mon)
+  local calculated
+  if Stats.isGen3(def) then
+    -- A GSC-hosted extension can explicitly use the native later stat model.
+    -- Preserve that structural owner, its six IVs, EVs and nature too.
+    calculated=Stats.calc(def,mon.level or 1,mon.ivs or mon.dvs,mon.statExp,mon.evs,mon.nature)
+  else
+    calculated=Stats.calcGen2(def.baseStats,mon.dvs,mon.level or 1,mon.statExp)
+  end
+  Stats.replace(mon,calculated)
+  require('src.pokemon.Gen2MonFields').bind(data,mon)
+  mon.maxHp=mon.stats.hp
+  if mon.hp==nil or mon.hp>mon.stats.hp then mon.hp=mon.stats.hp end
   return mon
 end
 
@@ -310,6 +394,7 @@ function Pokemon.forceShiny(data, mon, rng, otId)
     mon.hp = (full and mon.hp and mon.hp < full) and math.min(mon.hp, mon.stats.hp)
              or mon.stats.hp
   end
+  Pokemon.syncIdentity(data,mon)
   return mon
 end
 
@@ -395,6 +480,9 @@ function Pokemon.isShiny(mon)
     -- before its OT was stamped
     return mon.shiny == true
   end
+  if require('src.core.GameVersion').generation()==2 and mon.shiny~=nil then
+    return mon.shiny==true
+  end
   if type(mon.dvs) == "table" then return Stats.isShiny(mon.dvs) end
   return mon.shiny == true
 end
@@ -450,7 +538,15 @@ end
 -- Pokémon Center / blackout heal (engine/events/heal_party.asm
 -- HealParty): full HP, status cleared, and every move's PP restored to
 -- its base plus the PP-Up bonus (RestoreBonusPP adds maxPP/5 per PP UP).
-function Pokemon.maxPP(def, slot)
+function Pokemon.ppUps(def, slot, generation)
+  generation = tonumber(generation) or require('src.core.GameVersion').generation()
+  if generation == 2 then return Gen2PP.ups(def, slot) end
+  return type(slot)=='table' and math.min(3,math.max(0,math.floor(tonumber(slot.ppUps) or 0))) or 0
+end
+
+function Pokemon.maxPP(def, slot, generation)
+  generation = tonumber(generation) or require('src.core.GameVersion').generation()
+  if generation == 2 then return Gen2PP.maximum(def, slot) end
   local base = math.max(0,tonumber(def and def.pp) or 0)
   local ups = type(slot)=='table' and math.min(3,math.max(0,math.floor(tonumber(slot.ppUps) or 0))) or 0
   return base + ups * math.floor(base / 5)
@@ -458,6 +554,9 @@ end
 
 function Pokemon.restorePP(mon, moves)
   moves = moves or require("src.core.Data").moves
+  if require('src.core.GameVersion').isGen2() then
+    return Gen2PP.restore(mon,moves)
+  end
   if moves then
     for _, mv in ipairs(mon.moves or {}) do
       local mdef = moves[mv.id]
@@ -468,10 +567,10 @@ function Pokemon.restorePP(mon, moves)
   end
 end
 
-function Pokemon.heal(mon)
+function Pokemon.heal(mon, moves)
   mon.hp = mon.stats.hp
   mon.status = nil
-  Pokemon.restorePP(mon)
+  Pokemon.restorePP(mon, moves)
 end
 
 function Pokemon.isFainted(mon)

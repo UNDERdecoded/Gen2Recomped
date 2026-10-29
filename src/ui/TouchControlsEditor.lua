@@ -72,6 +72,7 @@ local function persist()
   -- dropped once the player saves under the new shape
   opts.touchControls = {
     enabled = cfg.enabled,
+    skin = cfg.skin,
     layouts = cfg.layouts,
   }
   SaveData.saveOptions(opts)

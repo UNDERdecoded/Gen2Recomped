@@ -17,6 +17,10 @@
 local Runtime = require("src.mods.Runtime")
 
 local Fingerprint = {}
+-- Command/RNG compatibility is independent of byte-identical ROM data.
+function Fingerprint.nativeBattleRevision()
+  return require('src.core.GameVersion').isGen2() and 'gsc-1' or nil
+end
 
 -- ------- FNV-1a, two lanes
 
@@ -238,6 +242,8 @@ local function surface(data, mods)
   writeSection(out, data, "move_effects")
   writeConstants(out, data)
   writeLinkFields(out, data)
+  local revision=Fingerprint.nativeBattleRevision()
+  if revision then out[#out+1]='[native_gsc_commands]'..revision end
   out[#out + 1] = "[mods]" .. modKey(mods)
   return table.concat(out)
 end
@@ -247,7 +253,7 @@ Fingerprint.surface = surface
 -- mods: { { id, version, affectsLink } } -- the hello's mod array
 function Fingerprint.compute(data, mods)
   if not data then return digest("") end
-  local key = modKey(mods)
+  local key = modKey(mods).."|native_commands:"..tostring(Fingerprint.nativeBattleRevision())
   local hit = cache[data]
   if hit and hit.key == key then return hit.value end
   local value = Runtime.call("link.fingerprint", function(d, m)

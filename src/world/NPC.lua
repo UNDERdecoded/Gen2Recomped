@@ -231,7 +231,7 @@ local function resolveBreedSprite(sprites, spriteId)
   local save = require("src.core.Game").save
   local mon = require("src.pokemon.DayCare").mon(save, tonumber(slot))
     or (save and save.daycare and save.daycare.mon)
-  local species = mon and tonumber(tostring(mon.species):match("(%d+)$"))
+  local species = mon and require('src.core.Gen2SpeciesNames').number(require('src.core.Game').data,mon)
   return (species and sprites[string.format("SPRITE_MON_%03d", species)])
     or spriteByIndex(sprites, 1)
 end
