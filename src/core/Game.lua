@@ -7,6 +7,7 @@ local Input = require("src.core.Input")
 local Logger = require("src.core.Logger")
 local Platform = require("src.core.Platform")
 local Renderer = require("src.render.Renderer")
+local GameViewport = require("src.render.GameViewport")
 local SaveData = require("src.core.SaveData")
 local StateStack = require("src.core.StateStack")
 local FrameProfile = require("src.core.FrameProfile")
@@ -30,6 +31,7 @@ end
 
 function Game:load()
   self.pointerOwners={}
+  self.modPointers={}
   self.secondScreenPointerOwner=nil
   self.secondScreenOverworldPoketch=nil
   self.data = Data
@@ -84,6 +86,9 @@ function Game:load()
 
   self.touchControls = TouchControls
   TouchControls:init()
+  TouchControls:setHotkeyHandler(function(action, pressed)
+    self:touchSkinHotkey(action, pressed)
+  end)
 
   self.renderer = Renderer
   Renderer:init()
@@ -308,6 +313,36 @@ function Game:returnToTitle()
   self.stack:push(self:makeTitleState())
 end
 
+-- Skin actions use the same native speed/title/options owners as keyboard input.
+Game.SKIN_FAST_FORWARD = 4
+function Game:touchSkinHotkey(action, pressed)
+  if action == "fast_forward_hold" then
+    if pressed then
+      self.skinSpeedSaved = self.speedOverride
+      self.speedOverride = Game.SKIN_FAST_FORWARD
+    else
+      self.speedOverride = self.skinSpeedSaved
+      self.skinSpeedSaved = nil
+    end
+  elseif action == "fast_forward_toggle" and pressed then
+    if self:speedLocked() or not (self.save and self.save.options) then return end
+    local Speed = require("src.core.GameSpeed")
+    self.save.options.speed = Speed.cycle(self.save.options.speed, 1)
+    self.speedOverride = nil
+    self:writeOptions()
+  elseif action == "soft_reset" and pressed then
+    Input:reset()
+    TouchControls:reset()
+    self:returnToTitle()
+  elseif action == "menu" and pressed then
+    local top = self.stack and self.stack:top()
+    if top and not top.isTouchSkinMenu then
+      local state = require("src.ui.Screens").build(self, "OptionsMenu")
+      if state then state.isTouchSkinMenu = true; self.stack:push(state) end
+    end
+  end
+end
+
 function Game:step(dt)
   -- THE WHOLE LOGIC STEP, because `stack:update` alone accounted for under
   -- 2 ms of a 43 ms update and everything else in here was invisible.  Run 4
@@ -381,6 +416,20 @@ end
 -- Options row takes effect immediately; speedOverride is the --speed /
 -- POKEPORT_SPEED run argument, which wins over the saved option so a bot
 -- or screenshot run does not depend on whatever the player last chose.
+function Game:speedLocked()
+  if self.linkSession or (self.linkNet and not self.linkNet.closed) then
+    return true, 'link'
+  end
+  local states = self.stack and self.stack.states or {}
+  for i = #states, 1, -1 do
+    local state = states[i]
+    if state and (state.isFixedSpeed or state.isMinigame) then
+      return true, 'minigame'
+    end
+  end
+  return false
+end
+
 function Game:logicSpeed()
   local GameSpeed = require("src.core.GameSpeed")
   -- Link play is always 1X on both machines, and this wins over every other
@@ -389,7 +438,7 @@ function Game:logicSpeed()
   -- than the opponent it is racing, and drove its own animation/message
   -- queue at a different rate than the peer it is locked to.  Nothing about
   -- a match should depend on what either player set this to.
-  if self.linkSession or (self.linkNet and not self.linkNet.closed) then
+  if self:speedLocked() then
     return 1
   end
   if self.speedOverride then return GameSpeed.clamp(self.speedOverride) end
@@ -917,6 +966,8 @@ Game.centerClassicZones = centerClassicZones
 function Game:draw()
   local closeDraw = FrameProfile.section("draw: whole frame")
   local screenLayout=require('src.ui.SecondScreen')
+  local generation = require('src.core.GameVersion').generation()
+  GameViewport.begin(generation, generation <= 3 and not screenLayout.combined(self))
   Renderer.splitViewport=nil
   if screenLayout.combined(self) then
     local w,h=love.graphics.getDimensions()
@@ -979,8 +1030,9 @@ function Game:draw()
 
   if screenLayout.combined(self) then
     screenLayout.composeWindow(self)
-    TouchControls:draw()
   end
+  GameViewport.finish(self)
+  TouchControls:draw()
   closeDraw()
   -- THE SECOND PANEL'S FRAME LEAVES LAST.
   --
@@ -1004,6 +1056,45 @@ function Game:toggleFrameProfile()
   return FrameProfile.toggle()
 end
 
+-- Source Game2 queries use the native Gen2 chrome's coordinate contract.
+-- These are observations only: do not resize a canvas or change the active
+-- compositor, skin rectangle, renderer scale or cartridge on a query.
+function Game:frameFit(w, h)
+  local window = love and love.window
+  local dpi = window and window.getDPIScale and tonumber(window.getDPIScale()) or 1
+  local pw, ph = GameViewport.pixelDimensions()
+  local ww, wh = GameViewport.dimensions()
+  -- Source battle scenes query their actual drawable size, whereas menus
+  -- query LOVE-unit dimensions. Do not multiply a framebuffer query by DPI
+  -- a second time. Share the compositor's integer-pixel policy and origin.
+  if w == pw and h == ph and (pw ~= ww or ph ~= wh) then
+    local fit = require('src.render.PixelFit')
+    local surfaceW, surfaceH = Renderer:uiSize()
+    local scale = surfaceW == 160 and surfaceH == 144 and Renderer:fitScale()
+      or fit.scale(pw, ph, 160, 144)
+    local x, y = fit.origin(pw, ph, 160, 144, scale)
+    if not Renderer.splitViewport then
+      y = y - require('src.core.ScreenPosition').pixelLift(ww, wh, ph,
+        144 * scale, wh > 0 and ph / wh or dpi)
+    end
+    return scale, x, y, dpi, pw, ph
+  end
+  local chrome = require('src.ui.Gen2Chrome')
+  local scale = chrome.fitScale(w, h)
+  local x, y = chrome.fitOrigin(w, h, scale)
+  return scale, x, y, dpi, pw, ph
+end
+
+function Game:viewport(w, h)
+  local scale, x, y, dpi = self:frameFit(w, h)
+  return {
+    width=w, height=h, gameX=x, gameY=y,
+    gameWidth=160*scale, gameHeight=144*scale,
+    scale=scale, dpiX=dpi, dpiY=dpi,
+  }
+end
+
+
 function Game:_draw()
   -- the UI canvas clears transparent when the overworld's world pass
   -- shows through beneath it; opaque full-screen states get the classic
@@ -1013,6 +1104,13 @@ function Game:_draw()
   -- a world-bg battle keeps the map drawing under whatever it opened, so the
   -- world pass can run for a frame whose CLEAR is still an opaque menu's
   local drawFrom = Game.drawBaseInStack(self.stack, base)
+  local ScreenSpaceUI=require('src.render.ScreenSpaceUI')
+  local scene=self.stack
+  local windowUI,windowUIIndex=ScreenSpaceUI.select(self.stack,scene,drawFrom)
+  local windowUIOverlay=false
+  local nativeWindowOverlays=windowUI and require('src.core.GameVersion').isGen2()
+  local nativeWindowStack=not windowUI and require('src.core.GameVersion').isGen2()
+    and ScreenSpaceUI.hasNativeStack(self.stack,scene,drawFrom,self.overworld)
   local worldDrawn = self.stack.states[drawFrom] == self.overworld
   -- A wide battle holds its 304px surface through every menu or prompt it
   -- opens. States that do not draw the wide battle composition are centred
@@ -1095,7 +1193,13 @@ function Game:_draw()
       local ownsSurface = wideState
         or (native ~= nil and state == native)
         or Game.wantsThisSurface(state)
-      if state and state.draw then
+      if nativeWindowOverlays and windowUIIndex and i>windowUIIndex then
+        if state and state.draw then windowUIOverlay=true end
+      elseif nativeWindowStack and state~=self.overworld then
+        -- Native controllers draw once on the full output surface below.
+      elseif state==windowUI then
+        love.graphics.clear(0,0,0,0)
+      elseif state and state.draw then
         -- ...and it is centred by ITS OWN size, not by the Game Boy's (see
         -- Game.homeOffset).  classicOffset still gates it: a surface that is
         -- the Game Boy's centres nothing, which is every frame outside a wide
@@ -1117,7 +1221,7 @@ function Game:_draw()
   end
   local baseState = self.stack.states[drawFrom]
   local SuperSample = require("src.render.SuperSample")
-  if not worldDrawn and baseState and require("src.core.GameVersion").isNds()
+  if not windowUI and not worldDrawn and baseState and require("src.core.GameVersion").isNds()
      and SuperSample.singleScreen(self) and not SuperSample.active then
     SuperSample.draw(self, self.stack:top(), drawStates)
   else
@@ -1171,7 +1275,11 @@ function Game:_draw()
   end
   -- 14's render.zones: weather/lighting overlays and custom colorization
   -- recolor or add zones before the blit
-  if ModRuntime.wantsHook("render.zones") then
+  if require("src.core.GameVersion").isGen2() then
+    Renderer.gen2FrameManaged = true
+    Renderer.gen2FrameGame = self
+    Renderer.gen2FrameZones = require("src.render.Gen2Presentation").zones(self)
+  elseif ModRuntime.wantsHook("render.zones") then
     zones = ModRuntime.call("render.zones", sameZones, self, zones)
   end
   -- Keyed to whether the map actually DREW, not to whether it is the clear's
@@ -1183,7 +1291,20 @@ function Game:_draw()
   if worldDrawn and self.overworld.sgbWorldZones then
     worldZones = self.overworld:sgbWorldZones()
   end
+  if Renderer.gen2FrameManaged and (windowUI or nativeWindowStack) then
+    Renderer.gen2WindowDraw=function(viewport)
+      if windowUI then
+        ScreenSpaceUI.draw(windowUI,Renderer,viewport,zones,false)
+        if windowUIOverlay then ScreenSpaceUI.drawNativeStack(self.stack,scene,windowUIIndex+1,
+          self.overworld,Renderer,viewport,false)end
+      else ScreenSpaceUI.drawNativeStack(self.stack,scene,drawFrom,self.overworld,
+        Renderer,viewport,not worldDrawn)end
+    end
+  end
   local viewport = Renderer:endFrame(zones, worldZones)
+  if windowUI and not Renderer.gen2FrameManaged then
+    ScreenSpaceUI.draw(windowUI,Renderer,viewport,zones,windowUIOverlay)
+  end
   -- Persistent tool status is screen-space UI: draw it over the completed
   -- render pipeline with exact playfield/margin geometry, but below mobile
   -- controls. It never becomes an updating game state.
@@ -1191,7 +1312,7 @@ function Game:_draw()
     ModRuntime.call("render.hud", function() end, self, viewport)
   end
   -- on-screen mobile controls: pure screen-space, over the finished frame
-  if not Renderer.splitViewport then TouchControls:draw() end
+  -- OS-window controls draw after GameViewport.finish in Game:draw.
 end
 
 -- overworld survey zoom: wheel up / '=' zooms in, wheel down / '-' out
@@ -1408,7 +1529,7 @@ function Game:keypressed(key)
         or ow.engaging or ow.emote)))
     if not busy then
       local PaletteFX = require("src.render.PaletteFX")
-      self.save.options.colors = PaletteFX.cycleMode()
+      PaletteFX.writeColorOption(self.save.options, PaletteFX.cycleMode())
       self:writeOptions()
     end
     return
@@ -1725,9 +1846,13 @@ end
 local function offerPointer(self, method, id, x, y)
   self.pointerOwners=self.pointerOwners or {}
   local captured=self.pointerOwners[id]
+  local gameX, gameY, inside = GameViewport.toLocal(x, y)
+  local panel = self.secondScreenPointerOwner
   local function offer(screen)
     if not (screen and type(screen[method])=='function') then return false end
-    local ok,claimed=pcall(screen[method],screen,id,x,y)
+    local ok,claimed=pcall(screen[method],screen,id,
+      (self.secondScreenInjecting or screen == panel) and x or gameX,
+      (self.secondScreenInjecting or screen == panel) and y or gameY)
     if not ok then
       require('src.core.Logger').warn('%s raised in a touch handler: %s',
         tostring(screen.name or 'a screen'),tostring(claimed))
@@ -1742,21 +1867,50 @@ local function offerPointer(self, method, id, x, y)
     return true
   end
   local top = self.stack and self.stack.top and self.stack:top()
-  if offer(top) then return true end
+  if (inside or self.secondScreenInjecting) and offer(top) then return true end
   -- The always-present Android lower-panel watch is drawn outside the stack.
   -- Its coordinate mapper rejects main-window input in display mode.
-  local panel=self.secondScreenPointerOwner
   return panel~=top and offer(panel) or false
 end
 
-function Game:touchpressed(id, x, y)
+-- Window-space pointer metadata plus coordinates local to the game rectangle.
+local function pointerUnclaimed() return false end
+function Game:pointerEvent(phase, source, id, x, y, dx, dy, pressure, button)
+  local gameX, gameY, inside = GameViewport.toLocal(x, y)
+  return ModRuntime.call("input.pointer", pointerUnclaimed, self, {
+    phase = phase, source = source, id = id, x = x, y = y,
+    gameX = gameX, gameY = gameY, insideGame = inside,
+    dx = dx or 0, dy = dy or 0, pressure = pressure, button = button,
+  }) == true
+end
+local function modPointer(self, phase, id, x, y, dx, dy, pressure)
+  if self.secondScreenInjecting then return false end
+  local p = self.modPointers and self.modPointers[id]
+  if phase == "pressed" then
+    if not ModRuntime.wantsHook("input.pointer") then return false end
+    self.modPointers = self.modPointers or {}
+    p = { source = id == "mouse" and "mouse" or "touch", x = x, y = y }
+    self.modPointers[id] = p
+  elseif not p then return false end
+  dx, dy = dx or (x - p.x), dy or (y - p.y)
+  p.x, p.y = x, y
+  if pressure ~= nil then p.pressure = pressure end
+  local nativeOwner = self.pointerOwners and self.pointerOwners[id]
+  local claimed = self:pointerEvent(phase, p.source, id, x, y, dx, dy, p.pressure, id == "mouse" and 1 or nil)
+  if not nativeOwner and claimed then p.claimed = true end
+  if phase == "released" and self.modPointers then self.modPointers[id] = nil end
+  return not nativeOwner and p.claimed == true
+end
+
+function Game:touchpressed(id, x, y, dx, dy, pressure)
   -- Visible virtual controls own their complete gesture, even when pressing
   -- one opens a different screen before the finger is lifted.
   if not self.secondScreenInjecting and TouchControls.visible and TouchControls:visible()
      and TouchControls:hitTest(x,y) then
-    TouchControls:touchpressed(id,x,y)
-    return
+    if TouchControls:touchpressed(id,x,y)
+       or (TouchControls.touches and TouchControls.touches[id]) then return end
   end
+  if modPointer(self, "pressed", id, x, y, dx, dy, pressure) then return end
   if offerPointer(self, "touchpressed", id, x, y) then return end
   if self.secondScreenInjecting then return end
   TouchControls:touchpressed(id, x, y)
@@ -1771,21 +1925,23 @@ function Game:hasPointerScreen()
   return top and type(top.touchpressed)=='function' or false
 end
 
-function Game:touchmoved(id, x, y)
+function Game:touchmoved(id, x, y, dx, dy, pressure)
   if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
     TouchControls:touchmoved(id,x,y)
     return
   end
+  if modPointer(self, "moved", id, x, y, dx, dy, pressure) then return end
   if offerPointer(self, "touchmoved", id, x, y) then return end
   if self.secondScreenInjecting then return end
   TouchControls:touchmoved(id, x, y)
 end
 
-function Game:touchreleased(id, x, y)
+function Game:touchreleased(id, x, y, dx, dy, pressure)
   if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
     TouchControls:touchreleased(id,x,y)
     return
   end
+  if modPointer(self, "released", id, x, y, dx, dy, pressure) then return end
   if offerPointer(self, "touchreleased", id, x, y) then return end
   if self.secondScreenInjecting then return end
   TouchControls:touchreleased(id, x, y)
@@ -1882,6 +2038,7 @@ function Game:applyOptions(opts)
   -- after VideoMode: a faithful-resolution lock is an exact window size, so
   -- it has to be the last word on the window (it drops fullscreen to hold)
   require("src.core.FaithfulRes").applyOptions(opts)
+  require("src.core.ScreenPosition").applyOptions(opts)
   -- normalizes a nil/garbage cap to the 60 default, so old saves with no
   -- fpsCap key pace at the standard rate (issue #88)
   require("src.core.FrameCap").applyOptions(opts)

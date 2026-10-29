@@ -114,7 +114,7 @@ function Protocol.unpackMon(data, packed, opts)
     local mdef = data.moves[mv.id]
     if mdef and #moves < 4 then
       local ppUps = math.max(0, math.min(3, math.floor(mv.ppUps or 0)))
-      local maxPP = mdef.pp + ppUps * math.floor(mdef.pp / 5)
+      local maxPP = require("src.pokemon.Pokemon").maxPP(mdef, { ppUps=ppUps }, data.constants and data.constants.gen)
       local entry = { id = mv.id,
                       pp = math.max(0, math.min(maxPP, math.floor(mv.pp or 0))) }
       if mv.ppUps ~= nil then entry.ppUps = ppUps end

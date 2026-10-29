@@ -28,11 +28,21 @@ function Registry.new(name, spec)
   }, Registry)
 end
 
+local function validId(self,id)
+  return type(id)=='string' and id~=''
+    or self.numericIds and type(id)=='number' and id>=1 and id<math.huge and id%1==0
+end
+local function canonicalId(self,id)
+  if self.spec.canonicalId then return self.spec.canonicalId(self.base and self.base(),id)end
+  return id
+end
+
 local function append(self, id, op, value, owner)
   if self.frozen then
     error(self.name .. ": content is frozen after load")
   end
-  assert(type(id) == "string" and id ~= "", self.name .. " id is required")
+  assert(validId(self,id),self.name..": id is required")
+  id=canonicalId(self,id)
   local list = self.ops[id]
   if not list then
     list = {}
@@ -94,6 +104,14 @@ local function fold(self, value, opList, id)
       if type(entry.value) == "table" then
         value = Merge.deepMerge(Merge.deepCopy(value == nil and {} or value),
           entry.value, self.spec.semantics)
+        -- Adapter-produced list patches include empty replacements. Native
+        -- patch semantics keep {} as a dictionary/no-op, so this internal
+        -- path list explicitly distinguishes clearing a list from omitting it.
+        for _, path in ipairs(entry.replaceLists or {}) do
+          local into, from = value, entry.value
+          for i = 1, #path - 1 do into, from = into[path[i]], from[path[i]] end
+          into[path[#path]] = Merge.deepCopy(from[path[#path]])
+        end
       else
         value = entry.value
       end
@@ -120,12 +138,14 @@ function Registry:override(id, value, owner)
   return append(self, id, "override", value, owner)
 end
 
-function Registry:patch(id, partial, owner)
+function Registry:patch(id, partial, owner, replaceLists)
   assert(partial ~= nil, self.name .. " patch value is required for " .. tostring(id))
   if self.spec.semantics == "compose" then
     error(self.name .. ": patch is not supported on compose registries")
   end
-  return append(self, id, "patch", partial, owner)
+  local result = append(self, id, "patch", partial, owner)
+  if replaceLists then self.ops[id][#self.ops[id]].replaceLists = Merge.deepCopy(replaceLists) end
+  return result
 end
 
 -- tombstone: consumers treat the id as absent after the merge
@@ -134,6 +154,7 @@ function Registry:remove(id, owner)
 end
 
 function Registry:get(id)
+  id=canonicalId(self,id)
   if self.spec.semantics == "compose" then
     -- chain() sorts top priority first, so the head is the effective value
     local chain = self:chain(id)
@@ -161,6 +182,7 @@ end
 -- Owner-less ops are left out. They are the engine's own contributions and
 -- nobody is choosing between them and a mod.
 function Registry:claimants(id)
+  id=canonicalId(self,id)
   local seen, out = {}, {}
   for _, entry in ipairs(self.ops[id] or {}) do
     local owner = entry.owner
@@ -196,7 +218,8 @@ end
 -- Works after the loader has frozen content, because it appends nothing -- the
 -- ops are untouched and only the reading of them changes.
 function Registry:preferOwner(id, owner)
-  assert(type(id) == "string" and id ~= "", self.name .. " id is required")
+  assert(validId(self,id),self.name..": id is required")
+  id=canonicalId(self,id)
   self.prefer = self.prefer or {}
   self.prefer[id] = owner
   self.cache[id] = nil
@@ -204,6 +227,7 @@ function Registry:preferOwner(id, owner)
 end
 
 function Registry:preferredOwner(id)
+  id=canonicalId(self,id)
   return self.prefer and self.prefer[id] or nil
 end
 
@@ -243,6 +267,7 @@ end
 
 -- compose only: the ordered value list for an id
 function Registry:chain(id)
+  id=canonicalId(self,id)
   assert(self.spec.semantics == "compose",
     self.name .. ": chain is compose-only")
   local entries = composed(self, id)
@@ -255,6 +280,7 @@ end
 -- attribute dispatch (map_scripts runner sources) read both sides of the
 -- same fold
 function Registry:chainOwners(id)
+  id=canonicalId(self,id)
   assert(self.spec.semantics == "compose",
     self.name .. ": chainOwners is compose-only")
   local entries = composed(self, id)
@@ -267,6 +293,7 @@ end
 -- consumer that keeps its own base contribution outside the registry
 -- (MapScripts' engine scripts) knows the total conversion excluded it
 function Registry:chainReplacesBase(id)
+  id=canonicalId(self,id)
   assert(self.spec.semantics == "compose",
     self.name .. ": chainReplacesBase is compose-only")
   local _, replacesBase = composed(self, id)

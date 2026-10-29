@@ -147,7 +147,8 @@ function SummaryMenu.new(game, mon, opts)
   -- which crashed the HP bar draw below (#233).  Redundant once
   -- SaveData.validate has run over a loaded save, but this is the site the
   -- original recomputes at, and it also covers a mon handed in by a mod.
-  Stats.ensure(game.data.pokemon[mon.species], mon)
+  if isGen2() then require('src.pokemon.Pokemon').refreshStats(game.data,mon)
+  else Stats.ensure(game.data.pokemon[mon.species],mon)end
   local self = setmetatable({
     game = game,
     mon = mon,

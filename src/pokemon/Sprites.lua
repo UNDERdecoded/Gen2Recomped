@@ -14,9 +14,6 @@ local Sprites = {}
 
 local function samePath(path) return path end
 
--- (dv & 6) >> 1 -- the middle two bits GetUnownLetter (20:$5749) keeps
-local function mid2(dv) return math.floor((dv or 0) / 2) % 4 end
-
 -- GetUnownLetter packs the middle two bits of the atk/def/spd/spc DVs into
 -- one byte and divides by 10, giving letter 1..26.  A species record only
 -- carries `forms` when the ROM has per-form pics (UNOWN).
@@ -28,10 +25,9 @@ function Sprites.formIndex(def, mon)
     return mon.form
   end
   local dvs = mon.dvs
-  if type(dvs) ~= "table" then return nil end
-  local packed = mid2(dvs.attack) * 64 + mid2(dvs.defense) * 16
-    + mid2(dvs.speed) * 4 + mid2(dvs.special)
-  local index = math.floor(packed / 10) + 1
+  local Unown = require("src.pokemon.Gen2Unown")
+  local index = (Unown.supported() and Unown.index(mon.unownLetter)) or Unown.letterFromDVs(dvs)
+  if not index then return nil end
   if not forms[index] then return nil end
   return index
 end

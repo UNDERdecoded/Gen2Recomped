@@ -178,3 +178,6 @@ mobile/ios/bundle_id.local
 # secrets as public -- but GitHub's secret scanning flags it, so it is kept out
 # of the repository and injected into release builds instead.
 /cloud_clients.lua
+
+# Owned memory-only custom-skin fixture.
+!/tests/skin_fs_fixture.lua

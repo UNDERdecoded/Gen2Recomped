@@ -39,14 +39,13 @@ local function answer(ctx, value)
   -- restarts the script), so even `return answer(...)` must return nil.
 end
 
-local function speciesKey(n)
-  return string.format("SPECIES_%03d", math.floor(n or 0) % 256)
+local function speciesKey(ctx,n)
+  return require('src.core.Gen2SpeciesNames').fromNumber(ctx.game.data,math.floor(n or 0)%256)
 end
 
-local function speciesNumber(mon)
+local function speciesNumber(ctx,mon)
   if not mon then return 0 end
-  if type(mon.species) == "number" then return mon.species end
-  return tonumber(tostring(mon.species or ""):match("(%d+)$")) or 0
+  return require('src.core.Gen2SpeciesNames').number(ctx.game.data,mon)
 end
 
 local function speciesName(ctx, species)
@@ -155,7 +154,7 @@ local function ownsAnywhere(ctx, key)
   local Party = require("src.pokemon.Party")
   local player = save.player or {}
   local function match(mon)
-    if not mon or mon.species ~= key then return false end
+    if not mon or not require('src.core.Gen2SpeciesNames').same(ctx.game.data,mon.species,key)then return false end
     if Party.isEgg(mon) then return false end
     local ownName = mon.ot == nil or mon.ot == player.name
     local ownId = mon.otId == nil or mon.otId == player.id
@@ -210,7 +209,7 @@ end
 -- in wScriptVar, anywhere, raised themselves?  Seven call sites, all of them
 -- NPCs who react to a particular mon.
 function Commands.g2_mon_check(ctx)
-  answer(ctx, ownsAnywhere(ctx, speciesKey(ctx.g2Var)) and 1 or 0)
+  answer(ctx, ownsAnywhere(ctx, speciesKey(ctx,ctx.g2Var)) and 1 or 0)
 end
 
 -- BeastsCheck: Raikou, Entei AND Suicune, all three, same ownership rule.
@@ -307,9 +306,10 @@ end
 -- already has that as g2_find_party_species_own.
 function Commands.g2_find_party_species(ctx)
   local Party = require("src.pokemon.Party")
-  local want = speciesKey(ctx.g2Var)
+  local want = speciesKey(ctx,ctx.g2Var)
   for _, mon in ipairs(ctx.save.party or {}) do
-    if mon.species == want and not Party.isEgg(mon) then return answer(ctx, 1) end
+    if require('src.core.Gen2SpeciesNames').same(ctx.game.data,mon.species,want)
+        and not Party.isEgg(mon)then return answer(ctx, 1)end
   end
   answer(ctx, 0)
 end
@@ -341,7 +341,7 @@ end
 -- the mon is already in the party, so the dex marks are the point.
 -- Fifteen call sites -- every prize in both game corners.
 function Commands.g2_prize_mon_dex(ctx)
-  local key = speciesKey(ctx.g2Var)
+  local key = speciesKey(ctx,ctx.g2Var)
   local dex = ctx.save.pokedex
   if not dex then return end
   dex.seen, dex.owned = dex.seen or {}, dex.owned or {}
@@ -437,7 +437,7 @@ function Commands.g2_give_dratini(ctx)
   local moves = ctx.game.data.moves or {}
   for index = #(ctx.save.party or {}), 1, -1 do
     local mon = ctx.save.party[index]
-    if mon and speciesNumber(mon) == 147 then -- DRATINI
+    if mon and speciesNumber(ctx,mon) == 147 then -- DRATINI
       mon.moves = {}
       for _, id in ipairs(set) do
         local def = moves[id]
@@ -525,7 +525,7 @@ end
 function Commands.g2_magikarp_length(ctx)
   local picked = pickMon(ctx)
   if not picked then return answer(ctx, 1) end
-  if speciesNumber(picked) ~= 129 then return answer(ctx, 0) end
+  if speciesNumber(ctx,picked) ~= 129 then return answer(ctx, 0) end
   local feet, inches = magikarpLength(picked,
     picked.otId or (ctx.save.player and ctx.save.player.id) or 0)
   local shown = lengthText(feet, inches)
@@ -870,7 +870,7 @@ function Commands.g2_happiness_tutor(ctx)
   if (picked.happiness or 0) < 200 then
     return say(ctx, nil, Strings("%s doesn't\nlike you enough\nyet.", monName(ctx, picked)))
   end
-  local name = HAPPINESS_MOVES[speciesNumber(picked)]
+  local name = HAPPINESS_MOVES[speciesNumber(ctx,picked)]
   local id = name and moveKey(ctx.game.data, name)
   if not id then
     return say(ctx, nil, Strings("There's nothing I\ncan teach it."))
