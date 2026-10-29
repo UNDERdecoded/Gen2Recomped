@@ -29,6 +29,10 @@ local Experience = {}
 -- the defaults.
 function Experience.gainFor(defeatedDef, level, isTrainer, numParticipants,
                             traded, consts)
+  if consts and consts.gen==2 and not consts.gen3Bag then
+    return require('src.pokemon.Gen2Progression').award(defeatedDef,level,numParticipants,
+      isTrainer,{traded=traded},consts.exp)
+  end
   local divisor, tradedMult, trainerMult = 7, nil, nil
   local tuning = consts and consts.exp
   if tuning then
@@ -84,8 +88,10 @@ end
 -- exp delta (wExpAmountGained, printed by _ExpPointsText -- captured
 -- before the max-level cap, experience.asm:92-100).
 function Experience.apply(data, mon, defeatedDef, level, isTrainer,
-                          numParticipants, traded)
+                          numParticipants, traded, opts)
+  opts=opts or{}
   local speciesDef = require('src.pokemon.Gen4Forms').definition(data,mon)
+  local gsc=require('src.core.GameVersion').isGen2()and not (data.constants and data.constants.gen3Bag)
   if Stats.isGen3(speciesDef) then
     -- GEN 3 DOES NOT AWARD STAT EXPERIENCE, it awards EFFORT VALUES, and the
     -- two are not the same thing wearing a different name: stat exp is the
@@ -99,7 +105,7 @@ function Experience.apply(data, mon, defeatedDef, level, isTrainer,
     -- the difference between a raised Pokemon and a wild one at every level
     -- before that.
     Experience.awardEVs(mon, defeatedDef.evYield)
-  else
+  elseif not gsc then
     -- stat exp is divided among participants too
     -- (DivideExpDataByNumMonsGainingExp divides wEnemyMonBaseStats)
     local statShare = math.max(1, numParticipants or 1)
@@ -110,18 +116,50 @@ function Experience.apply(data, mon, defeatedDef, level, isTrainer,
   end
   local consts = data.constants
   local gained
+  local lucky=gsc and HeldItems.itemKey(data,mon)=='LUCKY_EGG'
+  local function gain(c)
+    if gsc then
+      return require('src.pokemon.Gen2Progression').award(c.defeatedDef,c.level,c.participants,c.isTrainer,
+        {traded=c.traded,halved=c.halved,luckyEgg=c.luckyEgg},consts and consts.exp)
+    end
+    return Experience.gainFor(c.defeatedDef,c.level,c.isTrainer,c.participants,c.traded,consts)
+  end
   if Runtime.wantsHook("exp.gain") then
-    gained = Runtime.call("exp.gain", function(c)
-      return Experience.gainFor(c.defeatedDef, c.level, c.isTrainer,
-                                c.participants, c.traded, consts)
-    end, { defeatedDef = defeatedDef, level = level, isTrainer = isTrainer,
-           participants = numParticipants, traded = traded, mon = mon })
+    local context={defeatedDef=defeatedDef,level=level,isTrainer=isTrainer,
+      participants=numParticipants,traded=traded,mon=mon}
+    if gsc then
+      context.halved=opts.halved or false;context.luckyEgg=lucky
+      context.battle,context.loser=opts.battle,opts.loser
+    end
+    gained = Runtime.call("exp.gain",gain,context)
   else
-    gained = Experience.gainFor(defeatedDef, level, isTrainer,
-                                numParticipants, traded, consts)
+    gained=gain{defeatedDef=defeatedDef,level=level,isTrainer=isTrainer,participants=numParticipants,
+      traded=traded,halved=opts.halved,luckyEgg=lucky}
   end
   -- Lucky Egg is a per-recipient x1.5 held-item boost in Generation II.
-  gained = HeldItems.modifyExperience(data, mon, gained)
+  if not gsc then gained = HeldItems.modifyExperience(data, mon, gained)end
+  if gsc and not Stats.isGen3(speciesDef)then
+    -- Source GiveExperiencePass resolves exp.gain first, then awards effort
+    -- before the level/stat recalculation. Hook edits must be visible here.
+    require('src.pokemon.Gen2Progression').nativeStatExp(mon,defeatedDef,numParticipants,
+      require('src.pokemon.Gen2PokerusByte').doublesStatExp(mon),opts.halved)
+  end
+  return Experience.add(data, mon, gained)
+end
+
+-- Shared absolute award: scripted rewards use native growth, stats and events.
+-- Defeat-only EVs, held boosts and exp.gain remain in apply above.
+function Experience.add(data, mon, gained)
+  assert(type(gained)=='number'and gained==gained and gained>=0 and gained%1==0,'invalid experience award')
+  local speciesDef=require('src.pokemon.Gen4Forms').definition(data,mon)
+  local consts=data.constants
+  if require('src.core.GameVersion').isGen2()and not Stats.isGen3(speciesDef)
+      and not (consts and consts.gen3Bag)then
+    local result=require('src.pokemon.Gen2Progression').gainExperience(mon,gained,data,
+      {native=true,cap=consts and consts.levelCap or 100})
+    local levels={};for level=(result.from or 0)+1,result.to or 0 do levels[#levels+1]=level end
+    return levels,gained
+  end
   mon.exp = mon.exp + gained
 
   local cap = consts and consts.levelCap or 100

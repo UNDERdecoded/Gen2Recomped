@@ -52,6 +52,7 @@ local pikaScale = 1
 --     Sound.resume drops the cache so sources built against the OLD session
 --     are re-rendered the next time they are asked for.
 local sessionSuspended = false
+local gen2SfxMono = false
 
 -- See sessionSuspended: logged at debug rather than swallowed, so a raise
 -- from one of these on desktop (where there is no session to lose) still
@@ -264,20 +265,40 @@ end
 -- PlaySoundWaitForCurrent -> WaitForSoundToFinish can poll it
 -- Resolve a cartridge effect by its extracted native name, including effects
 -- that have no shared engine role in audio.sfx.
-function Sound.playNamedEffect(data,name)
-  for id,song in pairs(data and data.audio and data.audio.songs or {}) do
-    if type(song)=="table" and song.sfxName==name and tonumber(song.index) then
-      local src=playPath(data,id,{song=id,m4a=tonumber(song.index)})
-      if src then played("sfx",name) end
-      return src
+-- Native numeric/symbolic sequence aliases must resolve unambiguously.
+function Sound.sequenceKey(data, name)
+  if type(name) ~= "string" and type(name) ~= "number" then return nil end
+  local songs = data and data.audio and data.audio.songs or {}
+  if (type(name) == "string" or type(name) == "number") and (type(songs[name]) == "string" or type(songs[name]) == "table") then
+    return name, songs[name]
+  end
+  local key, found
+  for id, song in pairs(songs) do
+    if type(song) == "table" and (song.sfxName == name or song.musName == name
+       or type(name) == "number" and song.index == name) then
+      if found and found ~= song then return nil, "ambiguous native audio id" end
+      key, found = id, song
     end
   end
+  return key, found
 end
 
-function Sound.play(data, name)
-  local sfx = data.audio and data.audio.sfx
-  local def = sfx and sfx[name]
-  local src = playPath(data, name, def)
+function Sound.playNamedEffect(data, name)
+  local id, song = Sound.sequenceKey(data, name)
+  if not id then return nil end
+  local def = song
+  if type(song) == "table" and tonumber(song.index) and not song.file then
+    def = { song = id, m4a = tonumber(song.index) }
+  end
+  local src = playPath(data, id, def)
+  if src then played("sfx", name) end
+  return src
+end
+
+local gen2Sfx=require('src.audio.Gen2Sfx').new(function(src)
+  safeAudio('Source:stop',src.stop,src)
+end)
+local function finishSfx(data,name,def,src)
   if not src then return end
   if ducks(data, name, def) then
     require("src.core.Music").duckForFanfare(src)
@@ -285,6 +306,25 @@ function Sound.play(data, name)
   played("sfx", name)
   return src
 end
+
+function Sound.play(data,name)
+  if sessionSuspended or not love.audio then return end
+  local sfx=data.audio and data.audio.sfx
+  local def=sfx and sfx[name]
+  local src=gen2Sfx:play(data,name,def,false,false,function()return playPath(data,name,def)end)
+  return finishSfx(data,name,def,src)
+end
+
+-- GSC anim_sound bypasses normal PlaySFX priority without changing wCurSFX.
+-- Commit Source ownership before public sound.played observers can reenter.
+function Sound.playStereo(data,name)
+  if sessionSuspended or not love.audio then return end
+  local sfx=data.audio and data.audio.sfx
+  local def=sfx and sfx[name]
+  local src=gen2Sfx:play(data,name,def,true,gen2SfxMono,function()return playPath(data,name,def)end)
+  return finishSfx(data,name,def,src)
+end
+function Sound.sfxChannelsOff()gen2Sfx:clear()end
 
 -- PLAY A CARTRIDGE SOUND BY ITS NUMBER.
 --
@@ -781,6 +821,7 @@ end
 -- hot reload / jukebox A-B: drop one key's sources (its pitch-tempo
 -- variants included) or all of them, so the next play re-resolves the def
 function Sound.invalidate(name)
+  gen2Sfx:forget(name)
   local function evict(store, key)
     local src = store[key]
     if src then pcall(src.stop, src) end
@@ -813,6 +854,7 @@ Assets.register(Sound.invalidate)
 function Sound.suspend()
   if sessionSuspended then return end
   sessionSuspended = true
+  gen2Sfx:reset()
   -- A LOOPING source (the low-health siren, the link tournament theme) is the
   -- only kind that is still sounding when the call arrives.  Ask it to stop
   -- while the device may still take the call, and forget it, so its owner's
@@ -840,6 +882,7 @@ end
 -- re-apply persisted audio options (Game calls this on boot and after
 -- loading a save)
 function Sound.applyOptions(opts)
+  gen2SfxMono = opts and opts.stereo == false or false
   Sound.setVolumeLevel(opts and opts.sfxVol or 7)
   Sound.setPikaVolumeLevel(opts and opts.pikaVol or 7)
 end

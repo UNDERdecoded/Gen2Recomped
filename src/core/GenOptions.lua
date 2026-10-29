@@ -51,6 +51,7 @@ GenOptions.SHARED_ONLY = {
   modUpdateCache = true,
   saveSlots = true,
   touchControls = true,
+  haptics = true,
   tutorials = true,
   perGeneration = true,
   dataDir = true,

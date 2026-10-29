@@ -7,6 +7,34 @@ local Logger = require("src.core.Logger")
 
 local Growth = {}
 
+-- Source GSC records and native registries share these evaluations. ROM
+-- coefficients remain data; an explicitly registered callback wins.
+function Growth.record(data, id)
+  if not id then return nil end
+  return data and data.growth_rates and data.growth_rates[id]
+    or data and data.pokemon and data.pokemon.growthRates and data.pokemon.growthRates[id]
+end
+function Growth.evaluate(record, level)
+  if record and record.expForLevel then
+    return math.max(0, math.floor(record.expForLevel(level) or 0))
+  end
+  if not record then return level*level*level end
+  return math.max(0, math.floor((record.numerator or 1)*level^3/(record.denominator or 1))
+    +(record.squared or 0)*level^2+(record.linear or 0)*level-(record.constant or 0))
+end
+function Growth.sourceLevel(record, experience)
+  local level=1
+  while level<100 and experience>=Growth.evaluate(record,level+1)do level=level+1 end
+  return level
+end
+function Growth.registerCoefficients(registry,data,owner)
+  local rows=data and data.pokemon and data.pokemon.growthRates
+  if type(rows)~='table'then return end
+  for id,row in pairs(rows)do
+    registry:register(id,{expForLevel=function(level)return Growth.evaluate(row,level)end},owner)
+  end
+end
+
 local CURVES = {
   MEDIUM_FAST = function(n) return n * n * n end,
   SLIGHTLY_FAST = function(n) return math.floor((3 * n * n * n) / 4) + 10 * n * n - 30 end,
@@ -83,16 +111,21 @@ end
 
 -- one record per curve, each closing over the same clamped evaluation the
 -- engine calls, so a registry lookup and Growth.expForLevel cannot diverge
-function Growth.registerInto(registry, _, owner)
+function Growth.registerInto(registry, data, owner)
   -- a cartridge curve with no formula (ERRATIC, FLUCTUATING) still has to
   -- appear in the registry, or a mod asking for it gets nothing
   local ids = {}
   for id in pairs(CURVES) do ids[id] = true end
   for id in pairs(tables or {}) do ids[id] = true end
+  local rows=require('src.core.GameVersion').isGen2()
+    and data and data.pokemon and data.pokemon.growthRates or {}
+  for id in pairs(rows)do ids[id]=true end
   for id in pairs(ids) do
-    registry:register(id, { expForLevel = function(level)
-      return Growth.expForLevel(id, level)
-    end }, owner)
+    local row=rows[id]
+    registry:register(id,{expForLevel=function(level)
+      if row then return Growth.evaluate(row,level)end
+      return Growth.expForLevel(id,level)
+    end},owner)
   end
 end
 

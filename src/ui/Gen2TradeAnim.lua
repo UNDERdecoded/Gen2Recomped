@@ -775,11 +775,11 @@ end
 -- the player hands over, and the trade's own for the NPC's
 function Gen2TradeAnim:playerGenderMark(mon)
   if not self.variant.otGender then return nil end
-  local data = mon and tonumber(mon.caughtData)
-  if data then
-    local low = data % 256
-    if low % 128 == 0 then return " " end
-    return low >= 128 and "♀" or "♂"
+  local caught=require('src.pokemon.Gen2CaughtData')
+  if mon and (caught.hasFields(mon)or mon.caughtData~=nil)then
+    local gender=caught.playerGender(mon)
+    if not gender then return " " end
+    return gender=='girl'and "♀"or "♂"
   end
   local player = self.game.save.player or {}
   return player.gender == "girl" and "♀" or "♂"

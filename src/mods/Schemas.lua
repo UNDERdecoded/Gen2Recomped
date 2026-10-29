@@ -268,13 +268,14 @@ end
 
 -- ------- cross-reference pass
 
+local NUMERIC_REFS = { pokemon = true, moves = true, items = true, trainers = true }
 local collectRefs
 collectRefs = function(t, value, path, out)
   if value == nil or value == Merge.DELETE then return end
   local kind = t.kind
   if kind == "opt" then return collectRefs(t.inner, value, path, out) end
   if kind == "id" then
-    if type(value) == "string" then
+    if type(value) == "string" or NUMERIC_REFS[t.registry] and type(value) == "number" and value > 0 then
       out[#out + 1] = { registry = t.registry, ref = value, path = path }
     end
     return
@@ -353,7 +354,7 @@ function Schemas.crossValidate(loader, data)
     end
   end
   for name, registry in pairs(loader.content) do
-    local spec = registry.spec
+    local spec = registry.referenceSpec or registry.spec
     for id in pairs(registry.ops) do
       local value = registry:get(id)
       if value ~= nil and registry.owners[id] ~= Schemas.ENGINE then
@@ -408,6 +409,8 @@ local R = {}
 Schemas.REGISTRIES = R
 
 R.pokemon = {
+  canonicalId=require("src.core.Gen2SpeciesNames").registryId,
+  write=require("src.core.Gen2SpeciesNames").write,
   semantics = "record", target = "pokemon",
   fields = {
     id = f.str, name = f.str, dex = f.int(1),
@@ -415,7 +418,10 @@ R.pokemon = {
     types = f.list(f.id("type_chart")),
     baseStats = f.rec{ hp = f.int(1, 255), attack = f.int(1, 255),
                        defense = f.int(1, 255), speed = f.int(1, 255),
-                       special = f.int(1, 255) },
+                       special = f.int(1, 255),
+                       -- Native GSC/GBA split stats are valid registry fields.
+                       spatk = f.opt(f.int(1, 255)),
+                       spdef = f.opt(f.int(1, 255)) },
     catchRate = f.int(0, 255), baseExp = f.int(0, 255),
     level1Moves = f.list(f.id("moves")),
     growthRate = f.id("growth_rates"),

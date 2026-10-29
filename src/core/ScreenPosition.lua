@@ -1,0 +1,84 @@
+-- Adapted from Gen1Recomp 535a5ec088c1ae1bf4d91dd3e35a56f64cf46d91.
+-- Copyright (C) 2026 BOIS CLUB GAMES, LLC.
+-- GPLv3 with Section 7 terms retained in licenses/GEN1RECOMP-TOUCH-SKINS.md.
+-- Native viewport/pixel integration by Roxas2712 under the same terms.
+local ScreenPosition = {}
+
+ScreenPosition.MODES = { "center", "upper", "top" }
+ScreenPosition.DEFAULT = "center"
+ScreenPosition.mode = ScreenPosition.DEFAULT
+
+local LABELS = { center = "CENTER", upper = "UPPER", top = "TOP" }
+
+function ScreenPosition.normalize(v)
+  if LABELS[v] then return v end
+  return ScreenPosition.DEFAULT
+end
+
+function ScreenPosition.label(v)
+  if ScreenPosition.skinActive() then return "SKIN" end
+  return LABELS[ScreenPosition.normalize(v)]
+end
+
+function ScreenPosition.cycle(v, dir)
+  if ScreenPosition.skinActive() then return ScreenPosition.normalize(v) end
+  v = ScreenPosition.normalize(v)
+  local modes = ScreenPosition.MODES
+  local cur = 1
+  for i, mode in ipairs(modes) do
+    if mode == v then cur = i break end
+  end
+  return modes[(cur - 1 + (dir or 1)) % #modes + 1]
+end
+
+function ScreenPosition.setMode(v)
+  ScreenPosition.mode = ScreenPosition.normalize(v)
+end
+
+function ScreenPosition.applyOptions(opts)
+  ScreenPosition.setMode(opts and opts.screenPos)
+end
+
+function ScreenPosition.safeTop()
+  local ok, SafeArea = pcall(require, "src.core.SafeArea")
+  if not ok then return 0 end
+  local okr, _, y = pcall(SafeArea.rect)
+  if not okr then return 0 end
+  return math.max(0, tonumber(y) or 0)
+end
+
+function ScreenPosition.skinActive(w, h)
+  local ok, TouchSkin = pcall(require, "src.core.TouchSkin")
+  if not ok or type(TouchSkin.viewport) ~= "function" then return false end
+  if (not w or not h) and love and love.graphics and love.graphics.getDimensions then
+    w, h = love.graphics.getDimensions()
+  end
+  local okv, x = pcall(TouchSkin.viewport, w, h)
+  return okv and x ~= nil
+end
+
+function ScreenPosition.lift(viewH, contentH, safeTop)
+  if ScreenPosition.mode == "center" then return 0 end
+  viewH = tonumber(viewH) or 0
+  contentH = tonumber(contentH) or 0
+  local slack = viewH - contentH
+  if slack <= 0 then return 0 end
+  local centered = math.floor(slack / 2)
+  local target = ScreenPosition.mode == "top" and 0 or math.floor(slack / 4)
+  safeTop = math.floor(tonumber(safeTop) or 0)
+  if safeTop > 0 and target < safeTop then
+    target = math.min(safeTop, centered)
+  end
+  return centered - target
+end
+
+-- The native compositor measures physical pixels; safe-area ownership stays
+-- with the current logical viewport. Skin/split layouts keep their own origin.
+function ScreenPosition.pixelLift(windowW, windowH, pixelH, contentH, dpiY)
+  if ScreenPosition.mode == "center" then return 0 end
+  local Viewport = require("src.render.GameViewport")
+  if Viewport.active() or ScreenPosition.skinActive(windowW, windowH) then return 0 end
+  return ScreenPosition.lift(pixelH, contentH, ScreenPosition.safeTop() * dpiY)
+end
+
+return ScreenPosition

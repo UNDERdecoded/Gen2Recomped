@@ -11,7 +11,12 @@ local Tilt = require("src.render.Tilt")
 local PaletteFX = require("src.render.PaletteFX")
 local Pipelines = require("src.render.Pipelines")
 local PixelCanvas = require("src.render.PixelCanvas")
+local PixelFit = require("src.render.PixelFit")
+local ScreenPosition = require("src.core.ScreenPosition")
 local Runtime = require("src.mods.Runtime")
+local Output = require("src.render.Output")
+local GameViewport = require("src.render.GameViewport")
+local Gen2Presentation = require("src.render.Gen2Presentation")
 
 -- RESOLVED ONCE, NOT EVERY FRAME.  These three were `require`d from inside
 -- beginFrame and endFrame -- three string hashes into package.loaded on every
@@ -85,10 +90,10 @@ Renderer.UPRIGHT_MARGIN = 160
 -- Keep separate dpiX/dpiY so each GB pixel covers fitScale() physical pixels
 -- on BOTH axes (square).
 local function displayMetrics()
-  local ww, wh = love.graphics.getDimensions()
+  local ww, wh = GameViewport.dimensions()
   local pw, ph = ww, wh
   if love.graphics.getPixelDimensions then
-    pw, ph = love.graphics.getPixelDimensions()
+    pw, ph = GameViewport.pixelDimensions()
   end
   local dpiX, dpiY = 1, 1
   if ww > 0 and pw > 0 then dpiX = pw / ww end
@@ -109,6 +114,8 @@ local function displayMetrics()
 end
 
 function Renderer:init()
+  GameViewport.reset()
+  Gen2Presentation.reset()
   -- 160x144 real pixels, never DPI-scaled: see src/render/PixelCanvas.lua
   -- (#208).  Every canvas below is sized in framebuffer pixels for the same
   -- reason -- worldViewSize() already works in drawable pixels.
@@ -147,7 +154,7 @@ end
 function Renderer:fitScale()
   local _, _, pw, ph = displayMetrics()
   local w, h = self:uiSize()
-  return math.max(1, math.floor(math.min(pw / w, ph / h)))
+  return PixelFit.scale(pw, ph, w, h)
 end
 
 -- Integer framebuffer pixels per GB pixel for the UI pass.
@@ -274,9 +281,15 @@ function Renderer:setWorldBounds(w, h)
 end
 
 function Renderer:worldViewSize()
-  local _, _, pw, ph = displayMetrics()
-  local sp = Zoom.scale(self:fitScale())
+  local ww, wh, pw, ph, _, dpiY = displayMetrics()
+  local fitted = self:fitScale()
+  local sp = Zoom.scale(fitted)
   local vw, vh = math.ceil(pw / sp), math.ceil(ph / sp)
+  local _, uih = self:uiSize()
+  local lift = not self.splitViewport and ScreenPosition.pixelLift(ww, wh, ph,
+    uih * fitted, dpiY) or 0
+  -- Preserve full world coverage below the raised camera.
+  if lift > 0 then vh = vh + 2 * math.ceil(lift / sp) end
   -- Even sizes keep Camera:follow on integer pixels (viewW/2 is integral),
   -- so unfloored FX/sprite math cannot phase-shimmer against the tile layer.
   if vw % 2 ~= 0 then vw = vw + 1 end
@@ -320,6 +333,8 @@ end
 
 -- transparent: the world pass shows through (UI pass draws overlays only)
 function Renderer:beginFrame(transparent)
+  self.gen2FrameManaged, self.gen2FrameGame, self.gen2FrameZones = nil, nil, nil
+  self.gen2WindowDraw = nil
   -- a frame that ends early -- a state that returns before endFrame, an error
   -- caught upstream -- must not leak a queued native-resolution draw into the
   -- next frame's composite
@@ -715,6 +730,10 @@ function Renderer:blitCanvas(canvas, sx, sy, zoneList, zoneSx, zoneSy,
   love.graphics.setShader()
 end
 
+function Renderer:blitZones(canvas,zones,w,h)
+  return Gen2Presentation.blit(canvas,zones,w,h)
+end
+
 -- THE BARS, FILLED WITH THE EDGE THEY FRAME.
 --
 -- Asked for directly: "for all gen3 menus take the outside border 1px and
@@ -845,7 +864,7 @@ end
 -- When GBC FX is active the composite is drawn into presentCanvas and
 -- presented through the GBC FX shader as a final pass.
 function Renderer:endFrame(zones, worldZones)
-  love.graphics.setCanvas()
+  GameViewport.setTarget()
   local ww, wh, pw, ph, dpiX, dpiY = displayMetrics()
   -- Sp = integer framebuffer pixels per GB pixel;
   -- Sx/Sy = LOVE-unit draw scales (may differ when dpiX ≠ dpiY).
@@ -854,8 +873,11 @@ function Renderer:endFrame(zones, worldZones)
   local uiw, uih = self:uiSize()
   local vpw, vph = uiw * Sx, uih * Sy
   -- Snap the letterbox origin to a framebuffer pixel, then convert to units.
-  local ox = math.floor((pw - uiw * Sp) / 2) / dpiX
-  local oy = math.floor((ph - uih * Sp) / 2) / dpiY
+  local pixelX, pixelY = PixelFit.origin(pw, ph, uiw, uih, Sp)
+  local lift = not self.splitViewport and ScreenPosition.pixelLift(ww, wh, ph,
+    uih * Sp, dpiY) or 0
+  pixelY = pixelY - lift
+  local ox, oy = pixelX / dpiX, pixelY / dpiY
   -- The UI has its own scale: it steps down as the survey zoom goes out (see
   -- uiScale), so it can be smaller than the world letterbox.  Un-zoomed these
   -- are identical to Sp/ox/oy and every rect below is what it always was.
@@ -866,13 +888,14 @@ function Renderer:endFrame(zones, worldZones)
   -- GB pixel stops being a whole number of screen pixels, which is the trade
   -- the setting exists to offer.  Clamped on the horizontal too, so a narrow
   -- window scales to fit instead of overflowing off both sides.
-  if self.uiFill or self.splitViewport then
+  if self.uiFill or self.splitViewport or GameViewport.skinFill then
     Up = math.min(ph / uih, pw / uiw)
   end
   local Ux, Uy = Up / dpiX, Up / dpiY
   local uvpw, uvph = uiw * Ux, uih * Uy
-  local uox = math.floor((pw - uiw * Up) / 2) / dpiX
-  local uoy = math.floor((ph - uih * Up) / 2) / dpiY
+  local uiPixelX, uiPixelY = PixelFit.origin(pw, ph, uiw, uih, Up)
+  if lift > 0 then uiPixelY = math.max(0, uiPixelY - lift) end
+  local uox, uoy = uiPixelX / dpiX, uiPixelY / dpiY
   self.uiPresentation = {x=uox,y=uoy,w=uvpw,h=uvph,scaleX=Ux,scaleY=Uy}
   local GBCFX = gbcFX()
   -- Forced mono/Classic modes still need a whole-screen zone when a state
@@ -892,7 +915,7 @@ function Renderer:endFrame(zones, worldZones)
   -- stacked Game Boy screens, or driving one onto a second physical display.
   -- The mod returns true to take over the whole window; anything else (or no
   -- mod wrapping the hook) falls through to the normal composite below.
-  if Runtime.wantsHook("render.compose") then
+  if not self.gen2FrameManaged and Runtime.wantsHook("render.compose") then
     local ctx = {
       renderer = self,
       worldCanvas = self.worldCanvas, uiCanvas = self.canvas,
@@ -947,8 +970,12 @@ function Renderer:endFrame(zones, worldZones)
                             and (self.battleWipe.style == "frlg_swirl"
                                  or self.battleWipe.needsSource)
                             and self.battleWipe.screenDraw
+  local hasOutputHook = Output.enabled()
   local needPresent = GBCFX.active() or Pipelines.wantsPresent()
-                      or battleNeedsSource
+                      or battleNeedsSource or hasOutputHook
+                      or (self.gen2FrameManaged and (self.gen2WindowDraw
+                        or (type(self.gen2FrameZones)=="table" and self.gen2FrameZones[1])
+                        or Runtime.wantsHook("render.compose")))
   local present = nil
   if needPresent then
     if not self.presentCanvas or self.presentCanvas:getWidth() ~= ww
@@ -961,6 +988,7 @@ function Renderer:endFrame(zones, worldZones)
       -- what remains here is the dpiX vs dpiY truncation gap (well under 1%,
       -- one seam across the window) that a single scalar dpiscale cannot
       -- express.
+      if self.presentCanvas and self.presentCanvas.release then self.presentCanvas:release() end
       self.presentCanvas = love.graphics.newCanvas(ww, wh)
       -- NEAREST, like every other surface in this pipeline.
       --
@@ -1131,7 +1159,7 @@ function Renderer:endFrame(zones, worldZones)
     sp = self:worldPresentationScale(sp, pw, ph, wvw, wvh)
     sx, sy = sp / dpiX, sp / dpiY
     local wox = math.floor((pw - wvw * sp) / 2) / dpiX
-    local woy = math.floor((ph - wvh * sp) / 2) / dpiY
+    local woy = (math.floor((ph - wvh * sp) / 2) - lift) / dpiY
     -- Tilt mode projects the ground world pass through the perspective mesh
     -- (SGB zones baked in beforehand -- see drawTiltedWorld -- so no zone
     -- scissoring here).  drawTiltedWorld returns false when tilt is off or
@@ -1389,6 +1417,10 @@ function Renderer:endFrame(zones, worldZones)
   -- over the finished composite rather than under the UI blit.  On hardware
   -- it is the tilemap being overwritten -- there is nothing it does not cover.
   local battleSource = nil
+  if self.gen2FrameManaged and self.gen2WindowDraw then
+    self.gen2WindowDraw({width=ww,height=wh,gameX=ox,gameY=oy,gameWidth=vpw,gameHeight=vph,scale=Sp,dpiX=dpiX,dpiY=dpiY})
+  end
+
   if battleNeedsSource and present then
     -- Snapshot the untouched finished frame into a second screen-sized canvas.
     -- `present` is the current render target here, so sampling it directly in
@@ -1431,22 +1463,32 @@ function Renderer:endFrame(zones, worldZones)
   end
 
   if present then
-    love.graphics.setCanvas()
-    -- Post-process pipelines run over the finished composite -- world, UI
-    -- and all -- and before GBC FX, so a blur or colour grade is what the
-    -- LCD grid is then drawn over rather than something that smears the
-    -- grid itself.  Each pass hands back a canvas; with none registered
-    -- this returns `present` unchanged and the frame is byte-identical.
-    local composed = Pipelines.present(present,
-      { width = ww, height = wh, scale = Sp, dpi = dpiY, dpiX = dpiX, dpiY = dpiY }) or present
-    if GBCFX.active() then
-      -- shader grid/shadow math is in framebuffer pixels
-      GBCFX.present(composed, Sp)
-    else
-      -- the present canvas only existed for the post-process, so put the
-      -- result on the screen at the same 1:1 unit mapping it was built at
-      love.graphics.setColor(1, 1, 1, 1)
-      love.graphics.draw(composed, 0, 0)
+    GameViewport.setTarget()
+    local compositionHandled=false
+    if self.gen2FrameManaged and Runtime.wantsHook("render.compose") then
+      local ctx={renderer=self,game=self.gen2FrameGame,worldCanvas=present,uiCanvas=present,sceneCanvas=present,
+        worldActive=self.worldActive and true or false,generation=2,zones=self.gen2FrameZones,worldZones=nil,
+        ww=ww,wh=wh,pw=pw,ph=ph,ox=ox,oy=oy,vpw=vpw,vph=vph,uiw=uiw,uih=uih,
+        scale=Sp,Sx=Sx,Sy=Sy,dpiX=dpiX,dpiY=dpiY,secondScreen=require("src.render.SecondScreen")}
+      love.graphics.push("all")
+      local ok,value=xpcall(function()
+        return Runtime.call("render.compose",function()return false end,self,ctx)==true
+      end,debug.traceback)
+      love.graphics.pop()
+      if not ok then error(value,0)end
+      compositionHandled=value
+    end
+    if not compositionHandled then
+      local source=self.gen2FrameManaged and Gen2Presentation.apply(present,self.gen2FrameZones,ww,wh)or present
+      local composed=Pipelines.present(source,{width=ww,height=wh,scale=Sp,dpi=dpiY,dpiX=dpiX,dpiY=dpiY})or source
+      local outputHandled=hasOutputHook and Output.draw({
+        canvas=composed,width=ww,height=wh,gameX=ox,gameY=oy,gameWidth=vpw,gameHeight=vph,
+        scale=Sp,dpiX=dpiX,dpiY=dpiY,generation=require("src.core.GameVersion").generation(),
+      })
+      if not outputHandled then
+        if GBCFX.active()then GBCFX.present(composed,Sp)
+        else love.graphics.setColor(1,1,1,1);love.graphics.draw(composed,0,0)end
+      end
     end
   end
   self.worldActive = false

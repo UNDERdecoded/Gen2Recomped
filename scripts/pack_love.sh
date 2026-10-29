@@ -155,6 +155,18 @@ for licence in LICENSE LICENSE.MD LICENSE.md; do
   [ -f "$ROOT/$licence" ] && cp "$ROOT/$licence" "$STAGE/" && break
 done
 
+for notice in NOTICE.md LICENSE-ROXAS2712.md; do
+  if [ -f "$ROOT/$notice" ]; then cp "$ROOT/$notice" "$STAGE/"; fi
+done
+
+# Preserve the original licence alongside the actual derived skin runtime.
+if [ -f "$ROOT/src/core/TouchSkin.lua" ]; then
+  skin_licence="licenses/GEN1RECOMP-TOUCH-SKINS.md"
+  [ -f "$ROOT/$skin_licence" ] || fail "missing Gen1 touch-skin licence"
+  mkdir -p "$STAGE/licenses"
+  cp "$ROOT/$skin_licence" "$STAGE/$skin_licence"
+fi
+
 # ---------------------------------------------------------------- excludes
 # Pruned from the STAGE rather than passed to zip as -x patterns: the two
 # forms disagree on how they anchor a leading directory, and a silent
