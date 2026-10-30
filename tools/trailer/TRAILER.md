@@ -38,7 +38,7 @@ End-card text:
 - Red · Blue · Yellow · Gold · Silver · Crystal · FireRed · Emerald · Platinum
 - Windows · macOS · Linux · Steam Deck · Android · Switch · iOS
 - "Rip packs with us on Tilt Rips — tiltrips.com/r/GEN2RECOMP" (Tilt Rips is a pack-opening site)
-- discord.gg/4VXnEnePT
+- discord.gg/VswK7HpYab
 
 Not captured by the harness yet:
 - **Gen I (Red/Blue/Yellow):** import a Red ROM first, then add a `red` block to `capture.lua`.

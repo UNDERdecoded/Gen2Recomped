@@ -3,7 +3,7 @@
 <p align="center"><img src="./assets/logo/gen2logo.png"></p>
 
 <p align="center"><img src="./assets/logo/UD.png" width="220"></p>
-<a href="https://discord.gg/gb8TuPKJv">Gen2Recomp Discord!</a>  
+<a href="https://discord.gg/VswK7HpYab">Gen2Recomp Discord!</a>  
 <p align="center"><b>by UNDERdecodedHD</b><br>
 a fork of <a href="https://github.com/bryanthaboi/gen1recomp">Gen1Recomp</a> by
 <a href="https://github.com/bryanthaboi">bryanthaboi</a> and
