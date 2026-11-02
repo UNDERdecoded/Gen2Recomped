@@ -303,6 +303,10 @@ function Gen4FishingTask:finish()
   if stack.states and stack.states[#stack.states] == self then stack:pop() end
   local save = game.save
   save.gen4Records = save.gen4Records or {}
+  -- Platinum's What's Fishing segment (fishing.c; src/script/PtTvRecords.lua)
+  if self.caught or self.gotAway then
+    pcall(function() require('src.script.PtTvRecords').fishing(save, self.rod, self.caught and self.enc or nil) end)
+  end
   if self.caught then
     -- RECORD_CAUGHT_FISH / GAME_STAT_FISH_LANDED
     save.gen4Records.fishLanded = (save.gen4Records.fishLanded or 0) + 1

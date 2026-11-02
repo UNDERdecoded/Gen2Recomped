@@ -1329,6 +1329,7 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
     end
   end
   local dex = ctx.save.pokedex
+  pcall(function() require('src.pokemon.Gen4UnownOrder').record(ctx.game,species,mon) end)
   if dex then
     dex.seen[species] = true
     dex.owned[species] = true

@@ -338,6 +338,14 @@ function Gen4Ground.forMap(map, data)
     self.grid, self.altitudes =
       require("src.world.HgssSafariZone").grid(def, self.grid, self.altitudes, save)
     grid = self.grid
+  elseif def.gen5 then
+    -- BLACK / WHITE'S MAP REPLACEMENTS: winter's chunks, White's pieces, the
+    -- story's swaps (src/world/Gen5MapVariants.lua, ov10 0x02159CC4)
+    local okG, Game = pcall(require, "src.core.Game")
+    local save = okG and type(Game) == "table" and Game.save or nil
+    self.grid, self.altitudes = require("src.world.Gen5MapVariants")
+      .grid(data, save, def.layout, terrain, self.grid, self.altitudes)
+    grid = self.grid
   end
   self.set = set
   -- HGSS's water is TERRAIN, moved by the area's own texture animation
@@ -451,6 +459,9 @@ function Gen4Ground.forMap(map, data)
   -- Absent from Platinum's cache, so its maps keep the door-id set and names.
   local interiorField = ((data.gen4_models or {}).sets or {}).interiorField
   if interiorField and interior and self.buildingSet == interior then field = interiorField end
+  -- BLACK / WHITE: a building pack carries its own buildings' animations
+  -- (src/import/Gen5BuildingAnim.lua), claimed by record id
+  if self.buildingSet and self.buildingSet.bw and self.buildingSet.animations then field = self.buildingSet end
   self.scriptedMembers = field and field.scripted or nil
   self.claimsOnly = field and field.claimsOnly or nil
   for _, record in ipairs((field or {}).animations or {}) do
@@ -799,6 +810,11 @@ end
 -- origin.
 function Gen4Ground:oneShotPose(object, building)
   if not (object and building) then return nil end
+  -- a BW building a script is animating (src/world/Gen5BuildingAnim.lua)
+  if self.bwBuildingAnim then
+    local bw = require("src.world.Gen5BuildingAnim").pose(self, object, building)
+    if bw then return bw end
+  end
   -- no one-shot running: a prop whose joints loop on the clock (HGSS's
   -- windmill, Gen4PropClock) -- nil, the rest pose, for every Platinum prop
   local slots = self.oneShots
@@ -874,6 +890,10 @@ function Gen4Ground:oneShotProps()
   for _, record in pairs(self.animsByMember or {}) do
     -- (`bca`: an HGSS joint animation, decoded on first draw by Gen4PropClock)
     if (record.tracks or record.bca) and record.props then
+      for _, index in ipairs(record.props) do set[index] = true end
+    end
+    -- a BW script-driven texture animation (Gen5BuildingAnim) moves too
+    if record.bwScripted and record.props then
       for _, index in ipairs(record.props) do set[index] = true end
     end
     -- A TEXTURE-PATTERN ONE-SHOT IS STILL A ONE-SHOT, and `tracks` alone
@@ -965,7 +985,9 @@ function Gen4Ground:propMaterials(object, frame)
     mats = require("src.render.Gen4PropControl").materials(self, object.model, records,
       require("src.render.Gen4PropClock").fieldFrame(frame), images) or mats
   end
-  if object.archive == "fldeff" then return mats end
+  -- a BW building a script is animating (src/world/Gen5BuildingAnim.lua)
+  if self.bwBuildingAnim then mats = require("src.world.Gen5BuildingAnim").materials(self, object, mats) end
+  if object.archive == "fldeff" or object.archive == "bwZone" then return mats end
   local slots = self.oneShots
   if not slots then return mats end
   local okO, OneShot = pcall(require, "src.world.Gen4PropOneShot")
@@ -1060,6 +1082,7 @@ end
 -- animation evaluated twice into the same material.
 function Gen4Ground:animationsFor(index, archive)
   if archive == "fldeff" then return nil end
+  if archive == "bwZone" then return require("src.world.Gen5ZoneModels").animations(self, index) end
   local set = self.buildingSet
   local packed = set and set.models and set.models[index + 1]
   if not packed then return nil end
@@ -1106,6 +1129,13 @@ function Gen4Ground:building(index, archive)
     self.fieldModels = self.fieldModels or {}
     cache = self.fieldModels
   end
+  -- BW's zone overlay models (script 0x135, src/world/Gen5ZoneModels.lua):
+  -- their own archive, their own cache
+  local zoneModel = archive == "bwZone"
+  if zoneModel then
+    self.bwZoneModels = self.bwZoneModels or {}
+    cache = self.bwZoneModels
+  end
   if cache[index] ~= nil then return cache[index] or nil end
   local packed
   if field then
@@ -1118,6 +1148,8 @@ function Gen4Ground:building(index, archive)
     local set = self.fldeffSet
     local at = set and set.byMember and set.byMember[index]
     packed = at and set.models and set.models[at]
+  elseif zoneModel then
+    packed = require("src.world.Gen5ZoneModels").packed(self, index)
   else
     local set = self.buildingSet
     packed = set and set.models and set.models[index + 1]
@@ -1148,6 +1180,14 @@ function Gen4Ground:building(index, archive)
       image = s.image,
       -- out of a fogged map's fog (Gen4ModelPack): Morty's candle lights
       noFog = s.noFog,
+      -- the material's light mask (Gen4ModelPack `lights`, Gen4Shade)
+      lights = s.lights,
+      -- A FIELD EFFECT WITH NO NORMALS IS UNLIT (Gen4ModelPack `unlit`): the
+      -- Underground's drill and smoke (fldeff 91 / 58) issue no NORMAL, so
+      -- the DS draws their white vertex colour as it is; dropped here, the
+      -- decoder's resting normal lit them by the map's light at about half
+      -- brightness. (Buildings keep deciding from their vertex colours.)
+      unlit = field and s.unlit or nil,
     }
   end
   if #shapes == 0 then
@@ -1197,7 +1237,7 @@ function Gen4Ground:building(index, archive)
                                 -- (not under a Distortion World prop: the
                                 -- waterfall's was cut from its unposed planes
                                 -- and lay across B5F as a 43-tile sheet)
-                                groundShadow = (self.outdoors == false) and not distProp
+                                groundShadow = (self.outdoors == false) and not distProp and not zoneModel
                                                and self:shadowTexture() or nil,
                                 -- CLOSE THE MISSING BACK.  The cartridge never
                                 -- modelled it because its camera never looks
@@ -1220,8 +1260,10 @@ function Gen4Ground:building(index, archive)
                                 -- generated by copying a face, which is right
                                 -- for a house with an unmodelled north side and
                                 -- wrong for a board that is MEANT to be thin.
-                                capBack = (not field)
+                                capBack = (not field) and not zoneModel
                                           and (self.outdoors ~= false) or false })
+  -- (translucent sheets: drawn with their texels' own alpha)
+  if zoneModel and model then require("src.world.Gen5ZoneModels").soft(model) end
   cache[index] = model or false
   return model
 end
@@ -1251,8 +1293,15 @@ function Gen4Ground:signpostsFor(land)
     local grid = self.grid
     local originX = math.floor(self.offsetX / 16)
     local originY = math.floor(self.offsetY / 16)
+    -- PLATINUM'S SNOWBALLS (gfx 0x76, Snowpoint Gym) are an fldeff model as
+    -- well, though not a row of the model table: their render context 13
+    -- (ov5_021F23D0 / ov5_021F2438) loads snowpoint_gym_snowball.nsbmd,
+    -- fldeff.narc member 78. They break (Gen4IceSlide), so each keeps its
+    -- object and is left out once that object is hidden (objectsFor).
+    local platinum = require("src.core.GameVersion").family() == "platinum"
     for _, object in ipairs((self.def and self.def.objects) or {}) do
-      local member = object.fldeffModel
+      local snowball = platinum and object.graphicsId == 118 and not object.fldeffModel
+      local member = object.fldeffModel or (snowball and 78) or nil
       -- `x`/`y` on a map object are MAP-LOCAL TILES; a chunk prop's are units
       -- from its own centre.  The two spaces are why this conversion exists.
       local tx, ty = object.x, object.y
@@ -1276,6 +1325,7 @@ function Gen4Ground:signpostsFor(land)
               -- fixed height would sink into every slope in the game.
               y = self:heightAt(tx, ty) or 0,
               scaleX = 1, scaleY = 1, scaleZ = 1,
+              owner = snowball and object or nil,
             }
           end
         end
@@ -1288,19 +1338,43 @@ end
 
 -- The chunk's own props PLUS this map's signposts standing on it.  One function
 -- so the three draws below cannot disagree about what is on a chunk.
-function Gen4Ground:objectsFor(land, record)
+function Gen4Ground:objectsFor(land, record, cx, cy)
   local own = (record and record.objects) or {}
+  -- HGSS's Safari Zone: an area cell's props are its slot's placed objects
+  -- (src/world/HgssSafariProps.lua, MapPropManager_LoadFromSafariZone)
+  if self.def and self.def.layout == 212 and self.def.cameraFamily == "hgss" then
+    local okS, safari = pcall(function()
+      return require("src.world.HgssSafariProps").objectsFor(self, land, cx, cy)
+    end)
+    if okS and safari then own = safari end
+  end
   local edits=self.def.gen4ModelEdits
   if edits and edits[tostring(land)] then own=edits[tostring(land)] end
   local mine = self:signpostsFor(land)
   local heal = self.healingProps and self.healingProps[land]
   local placed = self:runtimePropsFor(land)
-  if (not mine or #mine == 0) and not heal and not placed then return own end
+  -- BW: the doors the buildings stand beside (src/world/Gen5BuildingAnim.lua)
+  local doors = self.buildingSet and self.buildingSet.bw
+                and require("src.world.Gen5BuildingAnim").doorsFor(self, land, own) or nil
+  if (not mine or #mine == 0) and not heal and not placed and not doors then return own end
   local all = {}
   for _, o in ipairs(own) do all[#all + 1] = o end
-  for _, o in ipairs(mine or {}) do all[#all + 1] = o end
+  local hiddenOwner
+  for _, o in ipairs(mine or {}) do
+    if o.owner and not hiddenOwner then
+      -- (a broken snowball: its object is hidden on the live map)
+      hiddenOwner = {}
+      local G = package.loaded["src.core.Game"]
+      local ow = G and G.overworld
+      for _, n in ipairs((ow and (ow.npcs or ow.entities)) or {}) do
+        if n.def and n.hidden then hiddenOwner[n.def] = true end
+      end
+    end
+    if not (o.owner and hiddenOwner[o.owner]) then all[#all + 1] = o end
+  end
   for _, o in ipairs(heal or {}) do all[#all + 1] = o end
   for _, o in ipairs(placed or {}) do all[#all + 1] = o end
+  for _, o in ipairs(doors or {}) do all[#all + 1] = o end
   return all
 end
 
@@ -1398,6 +1472,12 @@ end
 -- A SCALE OF ZERO IS NOT A SCALE.  Some records leave the three scale fields
 -- empty, and reading those as zero collapses the model to a point -- which
 -- draws nothing and looks exactly like a missing building.  Absent means one.
+-- a BW building a script has hidden (0x12D, src/world/Gen5BuildingAnim.lua)
+local function bwHidden(self, object)
+  local st = self.bwBuildingAnim
+  return st and st.hidden and st.hidden[object] and not st.byObject[object] or false
+end
+
 local function placement(object)
   -- DWSKIPMODEL=n: a debugging switch that drops one model number
   if os.getenv and os.getenv("DWSKIPMODEL") and tonumber(os.getenv("DWSKIPMODEL")) == tonumber(object.model) then
@@ -1546,6 +1626,8 @@ function Gen4Ground:modelFor(land)
         -- run 0..255, and guessed "lightmapped" from them it drew as black
         -- pits across the mountain. See Gen4Model's `lightKnown`.
         unlit = s.unlit,
+        -- the material's light mask (Gen4ModelPack `lights`, Gen4Shade)
+        lights = s.lights,
       }
     end
   end
@@ -2042,8 +2124,8 @@ function Gen4Ground:livePass(camX, camY, vw, vh, yCut)
           end
           drawn = drawn + 1
           local record = self.terrain.chunks[land]
-          for _, object in ipairs(self:objectsFor(land, record)) do
-            local building = self:building(object.model, object.archive)
+          for _, object in ipairs(self:objectsFor(land, record, cx, cy)) do
+            local building = not bwHidden(self, object) and self:building(object.model, object.archive)
             if building then
               -- A MOVING PROP RUNS HERE NOW, on the frame clock, instead of
               -- needing a canvas of its own re-baked whenever it ticked.
@@ -2118,6 +2200,9 @@ function Gen4Ground:livePass(camX, camY, vw, vh, yCut)
   if not yCut then
     local HF = package.loaded["src.world.HgssHideoutFx"]
     if HF and HF.trap then pcall(HF.drawLive, self, left, top, vw, vh) end
+    -- the Mystri Stage's three models (HgssSinjohStage)
+    local SJ = package.loaded["src.world.HgssSinjohStage"]
+    if SJ and (SJ.objects or SJ.cut) then pcall(SJ.drawLive, self, left, top, vw, vh) end
   end
   -- PLATINUM'S SURF MOUNT (Gen4SurfMount), in with the ground and under the
   -- sprites -- not in the canopy pass, which paints over them
@@ -2605,8 +2690,8 @@ function Gen4Ground:drawFree(vw, vh)
                      nil, nil)
           drawn = drawn + 1
           local record = self.terrain.chunks[land]
-          for _, object in ipairs(self:objectsFor(land, record)) do
-            local building = self:building(object.model, object.archive)
+          for _, object in ipairs(self:objectsFor(land, record, cx, cy)) do
+            local building = not bwHidden(self, object) and self:building(object.model, object.archive)
             if building then
               local mats = self:propMaterials(object, self.clock)
               if os.getenv and tonumber(os.getenv("DWBOUNDS") or "") == tonumber(object.model) and not self.dwBoundsShown then
@@ -2655,6 +2740,8 @@ function Gen4Ground:drawFree(vw, vh)
   do
     local HF = package.loaded["src.world.HgssHideoutFx"]
     if HF and HF.trap then pcall(HF.drawFree, self, vp) end
+    local SJ = package.loaded["src.world.HgssSinjohStage"]
+    if SJ and (SJ.objects or SJ.cut) then pcall(SJ.drawFree, self, vp) end
   end
   -- HGSS'S OBSTACLE ANIMATIONS (Gen4FieldFx), with the world's depth
   do
@@ -3597,7 +3684,7 @@ function Gen4Ground:bake(land)
     -- number written down, because a prop drawn twice or not at all is a worse
     -- failure than a chunk re-baking.
     if self:shouldBake(object) then
-      local building = self:building(object.model, object.archive)
+      local building = not bwHidden(self, object) and self:building(object.model, object.archive)
       if building then
         building:draw(Gen4Model.multiply(view, placement(object)))
         placed = placed + 1
@@ -3709,7 +3796,7 @@ function Gen4Ground:bakeCanopy(land, cut)
 
   local drawn = 0
   for _, object in ipairs(objects) do
-    local building = self:building(object.model)
+    local building = not bwHidden(self, object) and self:building(object.model)
     if building then
       -- The cut is stated in WORLD units and the shader tests MODEL ones, so
       -- the object's own lift and scale come back off before it is sent.
@@ -4002,7 +4089,7 @@ function Gen4Ground:bakeAnimated(land, frame)
     -- selection above: `building(index)` with no archive resolves a BUILDING
     -- for a fldeff index.  Zero fldeff props are placed in chunks today, so
     -- this has never mattered; passing it keeps the three sites consistent.
-    local building = self:building(item.object.model, item.object.archive)
+    local building = not bwHidden(self, item.object) and self:building(item.object.model, item.object.archive)
     if building then
       building:draw(Gen4Model.multiply(view, placement(item.object)),
                     self:oneShotPose(item.object, building),

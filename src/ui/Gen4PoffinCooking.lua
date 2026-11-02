@@ -362,6 +362,10 @@ function Cook:result()
   end
   self.made = self.made + given
   self.poffin = poffin
+  -- ov83 sub_0206CFCC: a Poffin cooked alone is the Poffin Corner interview's pending state
+  if cooks == 1 then
+    pcall(function() require('src.script.PtTvRecords').poffinCooked(game.save, poffin.type) end)
+  end
   local frames = self.stir.frames
   local mins = math.floor(frames / 1800)
   local secs = math.floor((frames - mins * 1800) / 30)

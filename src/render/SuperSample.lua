@@ -66,7 +66,10 @@ function SS.draw(game, owner, fn)
   local canvas = SS.canvas
   if not canvas or SS.key ~= key then
     if canvas and canvas.release then canvas:release() end
-    canvas = g.newCanvas(w * R, h * R)
+    -- dpiscale 1: R already IS the window's pixels per screen pixel (from
+    -- pixelSize); a canvas left at the window's density multiplied that
+    -- again -- 3072x2304 (27 MB, nine times the fill) on a 3x phone
+    canvas = g.newCanvas(w * R, h * R, { dpiscale = 1 })
     canvas:setFilter("linear", "linear")
     SS.canvas, SS.key = canvas, key
   end

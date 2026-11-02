@@ -1980,9 +1980,28 @@ function Gen4Model.new(record)
         if (r and r < 255) or (g and g < 255) or (b and b < 255) then unlit = true; break end
       end
     end
+    -- ONE byte() CALL A VERTEX, and the light worked out once per distinct
+    -- normal. A terrain chunk is thousands of vertices, built as the map
+    -- first draws: nine string reads and a light sum each made a new area
+    -- cost most of a second interpreted (love-android runs LuaJIT with the
+    -- JIT off). `sv` / `sn` answer exactly what `s16` / `s8` do.
+    local function sv(lo, hi)
+      if not hi then return 0 end
+      local value = lo + hi * 256
+      if value >= 32768 then value = value - 65536 end
+      return value
+    end
+    local function sn(v)
+      if not v then return nil end
+      if v >= 128 then v = v - 256 end
+      return v / 127
+    end
+    local vbytes = shape.vertices
+    local lightOf = {}
     for i = 0, count - 1 do
       local at = i * stride
-      local r, g, b = shape.vertices:byte(at + 11, at + 13)
+      local x1, x2, y1, y2, z1, z2, u1, u2, v1, v2, r, g, b, n1, n2, n3 =
+        vbytes:byte(at + 1, at + 16)
       r, g, b = r or 255, g or 255, b or 255
       if litByNormal and shade and lit then r, g, b = 255, 255, 255 end
       -- ...not on a shape with no NORMALs (Gen4ModelPack `unlit`):
@@ -1992,22 +2011,27 @@ function Gen4Model.new(record)
         -- imported before the stride changed, and `s8` answers nil there --
         -- which leaves the colour alone rather than multiplying it by a
         -- normal that is really the first two bytes of the next vertex.
-        local nx, ny, nz = s8(shape.vertices, at + 13),
-                           s8(shape.vertices, at + 14),
-                           s8(shape.vertices, at + 15)
+        local nx, ny, nz = sn(n1), sn(n2), sn(n3)
         if nx and ny and nz then
-          local lr, lg, lb = shade(nx, ny, nz)
-          r = r * (lr or 1)
-          g = g * (lg or 1)
-          b = b * (lb or 1)
+          -- (keyed by the material's light mask too: Gen4Shade per material)
+          local key = n1 * 65536 + n2 * 256 + n3 + (tonumber(shape.lights) or 16) * 16777216
+          local l = lightOf[key]
+          if not l then
+            local lr, lg, lb = shade(nx, ny, nz, shape.lights)
+            l = { lr or 1, lg or 1, lb or 1 }
+            lightOf[key] = l
+          end
+          r = r * l[1]
+          g = g * l[2]
+          b = b * l[3]
         end
       end
       if fog and not shape.noFog then
         r, g, b = (fog[1] or 0) * 255, (fog[2] or 0) * 255, (fog[3] or 0) * 255
       end
-      local x = s16(shape.vertices, at) / FX16 * self.posScale
-      local y = s16(shape.vertices, at + 2) / FX16 * self.posScale
-      local z = s16(shape.vertices, at + 4) / FX16 * self.posScale
+      local x = sv(x1, x2) / FX16 * self.posScale
+      local y = sv(y1, y2) / FX16 * self.posScale
+      local z = sv(z1, z2) / FX16 * self.posScale
       if x < lo[1] then lo[1] = x end
       if y < lo[2] then lo[2] = y end
       if z < lo[3] then lo[3] = z end
@@ -2016,8 +2040,8 @@ function Gen4Model.new(record)
       if z > hi[3] then hi[3] = z end
       vertices[i + 1] = {
         x, y, z,
-        s16(shape.vertices, at + 6) / UV_UNITS / tw,
-        s16(shape.vertices, at + 8) / UV_UNITS / th,
+        sv(u1, u2) / UV_UNITS / tw,
+        sv(v1, v2) / UV_UNITS / th,
         -- ...and back to the 0..1 the float attribute wants.
         r / 255, g / 255, b / 255, 1,
         -- filled in below, once the triangles say which vertices are cards
@@ -2026,12 +2050,12 @@ function Gen4Model.new(record)
       if positions then
         -- the TEXEL coordinate, not the 0..1 one: the strip test compares it
         -- against the texture's own width, so it has to be in texture units.
-        local texel = s16(shape.vertices, at + 6) / UV_UNITS
+        local texel = sv(u1, u2) / UV_UNITS
         -- ...AND THE TEXEL V, which the back wall's band needs.  Kept beside
         -- the u rather than derived later because this is the only place the
         -- raw vertex is still in hand.
         positions[i + 1] = { x, y, z, texel,
-                             s16(shape.vertices, at + 8) / UV_UNITS }
+                             sv(v1, v2) / UV_UNITS }
         if texel < uLo then uLo = texel end
         if texel > uHi then uHi = texel end
       end

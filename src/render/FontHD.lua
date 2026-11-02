@@ -136,13 +136,19 @@ end
 -- Black / White main menu in single-screen play, so on a phone pressing A
 -- on the title froze the game there. Without the JIT the glyphs stay the
 -- cartridge's own 1-pixel ones (Font falls back when this answers nil).
+-- Answered once: Font asks for every letter of a supersampled screen, and a
+-- require + jit.status + getOS per glyph is real time interpreted.
+local availableAnswer
 function H.available()
   if H.forced ~= nil then return H.forced end
+  if availableAnswer ~= nil then return availableAnswer end
+  availableAnswer = false
   local okJ, jitLib = pcall(require, "jit")
   if not (okJ and type(jitLib) == "table" and jitLib.status) then return false end
   if not jitLib.status() then return false end
   local os = love.system and love.system.getOS and love.system.getOS()
   if os == "Android" or os == "iOS" then return false end
+  availableAnswer = true
   return true
 end
 

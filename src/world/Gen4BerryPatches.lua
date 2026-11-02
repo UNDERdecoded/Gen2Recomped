@@ -90,6 +90,8 @@ end
 function B.harvest(game,p)
   if not p or p.stage~=5 or (p.yield or 0)<1 then return false end
   if not require('src.inventory.Bag').add(game.save,p.item,p.yield,game.data) then return false end
+  -- Platinum's Planting and Watering Show (BerryPatches_HarvestBerry)
+  pcall(function() require('src.script.PtTvRecords').harvested(game.save,p.item,p.rating,p.yield) end)
   clear(p); return true
 end
 function B.observe(game)

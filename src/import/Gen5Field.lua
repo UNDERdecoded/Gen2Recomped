@@ -168,7 +168,7 @@ end
 -- BUILDINGS. A WB chunk's third section places them: u32 count, then per
 -- building fx32 x, y, z, a u16 rotation (0 / 0x4000 / 0x8000 / 0xC000 --
 -- the four quarter turns, nothing else occurs in 2,320 placements) and a u16
--- whose high byte is the building's id. The id is not an index into one
+-- that is the building's id, big-endian (F.placements). The id is not an index into one
 -- archive: it names a building IN THE AREA'S PACK, /a/2/2/9 outdoors (52
 -- packs, "AB") and /a/2/3/0 indoors (64). A pack is a table of entries: the
 -- first half are each building's record, opening with its id, and the second
@@ -212,7 +212,11 @@ function F.placements(raw)
     -- floor spans z -250..-72, the pieces 120..232) and Striaton's gym a
     -- block away from its door; negated, both sit where the doors and walls
     -- say. The rotation is used as stored.
-    out[i + 1] = { model = raw:byte(o + 16), x = s32(o) / 4096, y = s32(o + 4) / 4096, z = -s32(o + 8) / 4096,
+    -- THE ID IS BIG-ENDIAN over bytes 14..15 (READ FROM CODE, ov21
+    -- 0x0218B974 / 0x0218BA04: `b[0xE] << 8 | b[0xF]`): 92 of Black's 2,584
+    -- placements name a record past 255 (byte 14 = 1), which byte 15 alone
+    -- turned into another building
+    out[i + 1] = { model = raw:byte(o + 15) * 256 + raw:byte(o + 16), x = s32(o) / 4096, y = s32(o + 4) / 4096, z = -s32(o + 8) / 4096,
                    rotY = rot / 65536 * 360, gen5 = true }
   end
   return out
@@ -281,6 +285,9 @@ function F.buildingPacks(rom, kind, save)
         models = models + 1
       end
     end
+    -- ...and the buildings' animations, out of the same records
+    -- (src/import/Gen5BuildingAnim.lua)
+    pcall(require("src.import.Gen5BuildingAnim").attach, set, packs:get(p), textures, tb, save, kind, p)
     out[p] = set
   end
   return out, models, shapes

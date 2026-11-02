@@ -23,16 +23,18 @@ M.SE = "SEQ_SE_DP_UG_023"
 -- WALK_SLOW against the walker's normal step (OverworldState:scriptMove's rate)
 M.RATE = 2
 
--- Platinum (not HGSS, whose push is not checked against pokeheartgold here,
--- and not Black / White)
+-- Platinum AND HeartGold / SoulSilver (not Black / White). HGSS's push task
+-- is the same one: pokeheartgold ov01_021F1ECC gives the boulder held
+-- movement 8 + dir (WalkSlow), the player 0x20 + dir (WalkOnSpotNormal) and
+-- plays SEQ_SE_DP_UG_023 -- no dust, no second sound. Left out, an HGSS push
+-- played Gold / Silver's Push_Boulder, puff and SFX_CUT.
 function M.platinum()
   local G = package.loaded["src.core.Game"]
   local data = G and G.data
   if not (data and data.isGen4Cache) then return false end
   local okV, GV = pcall(require, "src.core.GameVersion")
   if okV and GV.isGen5 and GV.isGen5() then return false end
-  local v = data.gen4_version
-  return not (v and v.family == "hgss")
+  return true
 end
 
 -- the sound and the player's step on the spot, as the push starts

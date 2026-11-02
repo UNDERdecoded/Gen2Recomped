@@ -87,6 +87,27 @@ function Call.choose(data, caller, kind, id)
   return { kind = "simple", script = id }
 end
 
+-- the incoming plan: a route trainer's eight incoming rows of
+-- sGenericPhoneCallHeaders, every other contact its handler's incoming branch
+function Call.incomingPlan(game, call)
+  local pc = (game.data or {}).gen4_hgss_phone_call or {}
+  local entry = (pc.book or {})[call.caller]
+  if not entry then return { kind = "unsupported" } end
+  local headerId = call.headerId
+  if headerId == nil then
+    local okR, Ring = pcall(require, "src.world.HgssPhoneRing")
+    if okR then headerId = Ring.headerId(game) end
+  end
+  if entry.type == 0 then
+    local Out = require("src.ui.HgssPhoneOutgoing")
+    return Out.generic(game, call.caller, entry, nil, 8) or { kind = "generic", scriptType = 0, script = 0 }
+  end
+  local okS, Scripts = pcall(require, "src.ui.HgssPhoneScripts")
+  local plan = okS and Scripts.plan(game, call.caller,
+    { incoming = true, scripted = call.kind, predefined = call.id, headerId = headerId })
+  return plan or { kind = "unsupported" }
+end
+
 function Call.new(game, call, onDone, ctx)
   local self = setmetatable({ game = game, call = call, onDone = onDone, ctx = ctx,
     cache = {}, t = 0, phase = "fadein", queue = {}, lines = {}, menuIndex = 1, scroll = 0 }, Call)
@@ -105,6 +126,11 @@ function Call.new(game, call, onDone, ctx)
     self.plan = require("src.ui.HgssPhoneOutgoing").choose(game, call.caller, call.header, call.headerId)
     if self.plan.kind ~= "outofarea" then self.phase = "ring" end
   end
+  -- A CALL THE RING MANAGER PUT THROUGH (src/world/HgssPhoneRing.lua): a
+  -- random call (isScriptedCall 0) or a trigger's (3), connected when the
+  -- player opened the Pokegear while it rang, or forced through scr_seq_0003
+  -- 047; the handler's incoming branch picks the script
+  if call.ring then self.plan = Call.incomingPlan(game, call) end
   if call.gear then
     self.gear = call.gear
   else
@@ -148,6 +174,11 @@ function Call:script()
     self.queue[#self.queue + 1] = { say = (pc.texts and pc.texts[37]) or self:message(271, 37) }
     return
   end
+  if plan.kind == "custom" then
+    -- a handler of src/ui/HgssPhoneScripts.lua queues its own lines and menus
+    plan.build(self)
+    return
+  end
   if plan.kind == "unsupported" then
     Logger.warn("hgss phone: calling contact %s is not ported yet (its handler picks the script)",
       tostring(self.call.caller))
@@ -161,6 +192,12 @@ function Call:script()
     local saving = (self.game.save.flags or {})[("FLAG_G4_%04X"):format(FLAG_SYS_MOMS_SAVINGS)] == true
     self.extraBuffers = { [11] = tostring(balance) }
     self:say(self.bank, 7 + (tonumber(plan.intro) or 0))
+    -- state 1: her gift queue full (MomGiftQueue_IsFull) -- 21, and the call ends
+    local q = self.game.save.hgssMomGifts
+    if type(q) == "table" and #q >= 5 then
+      self:say(self.bank, 21)
+      return
+    end
     self:say(self.bank, saving and (balance ~= 0 and 23 or 27) or (balance ~= 0 and 24 or 28))
     self.queue[#self.queue + 1] = { menu = { pc.texts and pc.texts[8] or "", pc.texts and pc.texts[9] or "" },
       choose = function(i)
@@ -220,7 +257,8 @@ end
 -- 3 a rematch the contact now seeks, 4 a gift they now hold (a Cheri Berry
 -- is any of the ten berries, a Poke Ball any of three balls from the Ultra
 -- Ball), 5 a word from their bank into slot 4 -- the rematch / gift kept in
--- save.hgssPhoneState (the field does not act on them yet)
+-- save.hgssPhoneState (the field reads them: GetPhoneBookRematch, the trainer
+-- script's GetPhoneContactGiftItem)
 function Call:sideEffect(def)
   local caller = self.call.caller
   if def.kind == 1 or def.kind == 2 then
@@ -381,11 +419,15 @@ function Call:update(dt)
     if self:printing() then self:next() end
   elseif self.phase == "menu" then
     local item = self.queue[self.at]
-    if input:wasPressed("up") or input:wasPressed("down") then
-      self.menuIndex = 3 - self.menuIndex
+    -- TouchscreenListMenu: wraps round; B is the last row (Quit / No)
+    local n = #(self.menu or {})
+    if input:wasPressed("up") then
+      self.menuIndex = (self.menuIndex - 2) % n + 1
+    elseif input:wasPressed("down") then
+      self.menuIndex = self.menuIndex % n + 1
     elseif input:wasPressed("a") or input:wasPressed("b") then
       require("src.core.Sound").play(self.game.data, SE_SELECT)
-      local pick = input:wasPressed("a") and self.menuIndex or 2
+      local pick = input:wasPressed("a") and self.menuIndex or n
       self.menu = nil
       item.choose(pick)
       self:next()
@@ -417,6 +459,7 @@ function Call:next()
     self.phase = "hangupwait"
     return
   end
+  if item.lazy then item.say = item.lazy(self); item.lazy = nil end
   if item.say then
     self.phase = "say"
     self:begin(item.say)

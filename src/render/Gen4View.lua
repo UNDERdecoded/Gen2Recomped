@@ -367,8 +367,9 @@ function Gen4View:follow(x, z, facing, baseY)
     local e = rad(tonumber(scripted.pitch) or 45)
     local o = scripted.offset or { 0, 0, 0 }
     local tx, ty, tz = x + (o[1] or 0), baseY + (o[2] or 0), z + (o[3] or 0)
-    self.yaw = 0
-    self.x, self.y, self.z = tx, ty + sin(e) * d, tz + cos(e) * d
+    -- (and a yaw, which only BW's door camera records give: Gen5BuildingAnim)
+    self.yaw = -rad(tonumber(scripted.yaw) or 0)
+    self.x, self.y, self.z = tx - sin(self.yaw) * cos(e) * d, ty + sin(e) * d, tz + cos(self.yaw) * cos(e) * d
     self.pitch = deg(e)
     return
   end

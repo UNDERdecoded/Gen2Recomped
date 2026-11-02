@@ -131,13 +131,23 @@ ok(Ops.size(0x289) == 16, "0x289 (givepoffin) is a fixed 16 bytes, got %s", tost
 -- nine stages.)
 ok(Ops.sizeAt(0x23E, u16(0x23E) .. u16(1) .. u16(0x40ED), 1) == 6,
    "0x23E (mysterygiftgive) stage 1 is 6 bytes")
-for _, op in ipairs({ 0x21D, 0x235, 0x237, 0x27C }) do
-  ok(Ops.VARIABLE_SPEC[op] == nil,
-     "0x%03X (%s) has gained a width rule; if that is real, add it to this "
-     .. "list's counterpart and move it", op, Ops.name(op))
-  ok(Ops.sizeAt(op, u16(op) .. string.char(1), 1) == nil,
-     "0x%03X resolved a width it has no rule for", op)
+-- (0x21D, 0x235, 0x237, 0x27C left as well, 2026-11-01: their widths are the
+-- DoGroupConnectionAction / CallTVBroadcast / CallTVInterview / ScrCmd_27C
+-- macros' in scrcmd.inc. Sub-call by sub-call, opcode included:)
+for _, row in ipairs({
+  { 0x235, 0, 6 }, { 0x235, 1, 10 }, { 0x235, 2, 4 }, { 0x235, 3, 10 },
+  { 0x235, 4, 8 }, { 0x235, 5, 10 }, { 0x235, 6, 6 },
+  { 0x237, 0, 10 }, { 0x237, 1, 10 }, { 0x27C, 0, 6 }, { 0x27C, 2, 6 },
+  { 0x21D, 0, 8 }, { 0x21D, 3, 8 }, { 0x21D, 4, 6 }, { 0x21D, 5, 6 }, { 0x21D, 6, 4 },
+}) do
+  local op, sub, size = row[1], row[2], row[3]
+  ok(Ops.sizeAt(op, u16(op) .. u16(sub), 1) == size,
+     "0x%03X (%s) sub-call %d: %s bytes, expected %d", op, Ops.name(op), sub,
+     tostring(Ops.sizeAt(op, u16(op) .. u16(sub), 1)), size)
 end
+-- ...and a sub-call the cartridge does not define still has no width
+ok(Ops.sizeAt(0x235, u16(0x235) .. u16(7), 1) == nil, "0x235 sub-call 7 was given a width")
+ok(Ops.sizeAt(0x21D, u16(0x21D) .. u16(7), 1) == nil, "0x21D action 7 was given a width")
 
 -- ---------------------------------------------------------------------------
 section("2. a mixed stream decodes through, and a bad one still stops")
@@ -194,8 +204,8 @@ ok(VMprobe.lowered("playhmcutin") == true,
 ok(VMprobe.lowered("getberrygrowthstage") == true,
    "`lowered` does not recognise getberrygrowthstage -- it is assigned inside a "
    .. "loop, and a source-pattern detector misses exactly that")
-ok(VMprobe.lowered("dogroupconnectionaction") == false,
-   "`lowered` claims dogroupconnectionaction is lowered; it is not, and a "
+ok(VMprobe.lowered("0a5") == false,
+   "`lowered` claims 0a5 is lowered; it is not (dogroupconnectionaction, the old canary, is lowered now in PtMiscCommands), and a "
    .. "detector that says yes to everything reports no holes anywhere")
 ok(VMprobe.lowered("no_such_command_at_all") == false,
    "`lowered` claims a command that does not exist is lowered")
@@ -363,7 +373,7 @@ if PP then
       -- Gen4ScriptOps records the cost of. The other two (`showshardcost`,
       -- `closeshardcostwindow`) need `sTeachableMoves`' four shard costs,
       -- which are not in the cache and want their own extraction stage.
-      local EXPECTED_HOLES = { common_scripts = 7 }
+      local EXPECTED_HOLES = { common_scripts = 3 }
       local offenders = {}
       for _, b in ipairs(Bands.BANDS) do
         local band, file = b[2], b[3]

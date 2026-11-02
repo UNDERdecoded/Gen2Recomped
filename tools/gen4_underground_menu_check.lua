@@ -192,7 +192,7 @@ local function fixture(remembered)
     save = { playerName = "CEDRIC",
              gen4SpecialLocation = remembered
                and { map = "C01", x = 12, y = 7, facing = "up" } or nil },
-    stack = { pop = function() popped = popped + 1 end },
+    stack = { pop = function() popped = popped + 1 end, push = function() end },
     overworld = ow,
   }
   return game, warps, function() return popped end
@@ -210,7 +210,12 @@ do
   ok(menu.rows[6].label == "GO UP", "row six reads %q",
      tostring(menu.rows[6].label))
 
-  local went = menu:activate(6)
+  -- (pt_underground) GO UP asks first: common 52 and YES / NO
+  -- (UndergroundMenu_GoUpCallback, menus.c 1337-1375); YES is goUp
+  local asked = menu:activate(6)
+  ok(asked == true and menu.confirm ~= nil, "GO UP did not ask before leaving")
+  ok(#warps == 0, "GO UP warped before the answer")
+  local went = menu:goUp()
   ok(went == true, "GO UP refused on a save that remembers: %s",
      tostring(menu.message))
   ok(#warps == 1, "GO UP started %d warps", #warps)
@@ -237,7 +242,9 @@ do
   ok(handled == true, "a tap on GO UP was not taken by the menu")
   ok(menu.index == 6, "a tap on row six left the cursor on row %s",
      tostring(menu.index))
-  ok(#warps == 1, "a tap on GO UP started %d warps", #warps)
+  ok(menu.confirm ~= nil, "a tap on GO UP did not ask")
+  menu:goUp()
+  ok(#warps == 1, "a tap on GO UP and YES started %d warps", #warps)
   -- A MISS IS STILL OURS: this panel is modal, and a press falling through
   -- would walk the player around underneath it.
   local missed = menu:touchpressed(1, 4, 4)
@@ -248,7 +255,8 @@ end
 do
   local game, warps = fixture(false)
   local menu = Menu.new(game, {})
-  local went = menu:activate(6)
+  menu:activate(6)
+  local went = menu:goUp()
   ok(went == false, "GO UP claimed success with nothing remembered")
   ok(#warps == 0, "GO UP warped with nothing remembered")
   ok(type(menu.message) == "string" and #menu.message > 0,
@@ -256,42 +264,32 @@ do
 end
 
 -- ---------------------------------------------------------------------------
-section("5. the four unserved rows refuse by name, and CLOSE closes")
+section("5. the pockets and the trainer card open, CLOSE closes")
 -- ---------------------------------------------------------------------------
 do
   local game, warps, popped = fixture(true)
+  local pushed = {}
+  game.stack.push = function(_, st) pushed[#pushed + 1] = st end
   local menu = Menu.new(game, {})
-  local refused = 0
   for i, row in ipairs(menu.rows) do
-    if row.id ~= "go_up" and row.id ~= "close" then
-      menu.message = nil
+    if Menu.POCKETS[row.id] then
       local acted = menu:activate(i)
-      ok(acted == false, "%s reported success and has no subsystem", row.id)
-      ok(type(menu.message) == "string" and #menu.message > 0,
-         "%s refused with no message, which is indistinguishable from a "
-           .. "broken row", row.id)
-      refused = refused + 1
+      ok(acted == true, "%s did not open its pocket", row.id)
+      ok(pushed[#pushed] and pushed[#pushed].kind == row.id, "%s pushed no %s pocket", row.id, row.id)
+    elseif row.id == "trainer" then
+      -- the TRAINER record card (records.c 125-233) -- pt_underground round 2
+      local before = #pushed
+      local okT = pcall(menu.activate, menu, i)
+      ok(okT and #pushed == before + 1, "TRAINER did not open the record card")
     end
   end
-  ok(refused == 5, "%d rows were exercised as unserved, not five", refused)
-  ok(#warps == 0, "an unserved row started a warp")
-  -- CLOSE
+  ok(#warps == 0, "a pocket row started a warp")
   menu:activate(7)
   ok(popped() == 1, "CLOSE popped %d times", popped())
 end
--- THE UNSERVED LIST MUST NOT GO STALE. When one of these is built, its entry
--- comes out of the table and this number comes down -- which is the line that
--- says so.
 local unserved = 0
 for _ in pairs(Menu.UNSERVED or {}) do unserved = unserved + 1 end
-ok(unserved == 5,
-   "%d rows are listed unserved and five were recorded -- if one was built, "
-     .. "take it out of UNSERVED and lower this", unserved)
-for _, id in ipairs({ "traps", "spheres", "goods", "treasures", "trainer" }) do
-  local why = (Menu.UNSERVED or {})[id]
-  ok(type(why) == "string" and #why > 8,
-     "%s has no reason written against it; one word is not a reason", id)
-end
+ok(unserved == 0, "%d rows are listed unserved; every row is built now", unserved)
 ok((Menu.UNSERVED or {}).go_up == nil and (Menu.UNSERVED or {}).close == nil,
    "GO UP or CLOSE is listed as unserved, which would make the menu a dead end")
 

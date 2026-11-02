@@ -63,10 +63,14 @@ local resumeRetry -- { song, wait, left } while a resume re-cue is still owed
 -- player's volume, which `setplayervolume` sets and which outlives songs
 -- (NNS_SndPlayerSetPlayerVolume). Both multiply the option volume.
 local dsLevel, dsPlayer, dsFade = 1, 1, nil
+-- THE BGM HANDLE'S OWN VOLUME (GF_SndHandleMoveVolume(0, v, frames)): HGSS's
+-- soundplates dip the field music under an ambient sound and lift it back
+-- (src/world/HgssSoundplates.lua); 0..1, ramped in Music.update
+local handleLevel, handleRamp = 1, nil
 
 local function applyVolume(src)
   if not src then return end
-  local vol = VOLUME * volumeScale * dsLevel * dsPlayer
+  local vol = VOLUME * volumeScale * dsLevel * dsPlayer * handleLevel
   if cryDuck then vol = vol * cryDuck.scale end
   if Runtime.wantsHook("music.volume") then
     local ctx = {
@@ -538,6 +542,19 @@ function Music.oneShotPlaying()
   return state.pendingRestore == true
 end
 
+-- is the current song still sounding? (SndRadio_CountPlayingSeq: the
+-- Pokegear radio waits on its one-shot jingle.) An intro with its loop body
+-- still queued counts as sounding.
+function Music.sounding()
+  if not state.current then return false end
+  if state.loopSource then return true end
+  if chipAwaitingFirstBuffer() then return true end
+  local src = state.source
+  if not src then return false end
+  local ok, playing = pcall(src.isPlaying, src)
+  return ok and playing == true
+end
+
 function Music.restoreMap(data)
   state.current = nil
   state.pendingRestore = nil
@@ -557,6 +574,17 @@ function Music.dsFade(to, frames, from)
   applyVolume(state.loopSource)
 end
 function Music.dsFading() return dsFade ~= nil end
+-- GF_SndHandleMoveVolume on the BGM handle: to `to` (0..1) over `frames`
+-- 60 Hz frames (the cartridge counts 30 Hz field frames; callers double)
+function Music.moveHandleVolume(to, frames)
+  to = math.max(0, math.min(1, tonumber(to) or 1))
+  frames = math.max(0, math.floor(tonumber(frames) or 0))
+  if frames == 0 then handleLevel, handleRamp = to, nil
+  else handleRamp = { from = handleLevel, to = to, frames = frames, left = frames } end
+  applyVolume(state.source)
+  applyVolume(state.loopSource)
+end
+function Music.handleLevel() return handleLevel end
 function Music.setPlayerLevel(level)
   dsPlayer = math.max(0, math.min(1, tonumber(level) or 1))
   applyVolume(state.source)
@@ -714,6 +742,13 @@ function Music.update(data)
   -- distance / indoor muffling mods re-apply volume every frame while
   -- subscribed; otherwise applyVolume only runs on song/option changes
   if Runtime.wantsHook("music.volume") and not state.fade then
+    applyVolume(state.source)
+    applyVolume(state.loopSource)
+  end
+  if handleRamp then
+    handleRamp.left = handleRamp.left - 1
+    if handleRamp.left <= 0 then handleLevel, handleRamp = handleRamp.to, nil
+    else handleLevel = handleRamp.to + (handleRamp.from - handleRamp.to) * handleRamp.left / handleRamp.frames end
     applyVolume(state.source)
     applyVolume(state.loopSource)
   end

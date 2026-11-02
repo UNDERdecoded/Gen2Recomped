@@ -171,6 +171,12 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         "gen4_cellactors",
                         -- HGSS scripted Pokegear calls (Gen4HgssPhoneCall)
                         "gen4_hgss_phone_call",
+                        -- HGSS's UNOWN Report key item (Gen4HgssUnownReportArt)
+                        "gen4_hgss_unown_report",
+                        -- HGSS's ambient soundplates (Gen4HgssSoundplates)
+                        "gen4_hgss_soundplates",
+                        -- HGSS's Safari Zone apps (Gen4HgssSafariAppArt)
+                        "gen4_hgss_safari_apps",
                         -- HGSS's Cut / Rock Smash / Headbutt obstacle
                         -- animations (Gen4HgssFieldFx, /a/1/3/4)
                         "gen4_hgss_field_fx",
@@ -185,6 +191,14 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         "gen4_library_tv",
                         -- the Spear Pillar cinematic (Gen4SpearPillarArt)
                         "gen4_spear_pillar",
+                        -- the ferry crossings (Gen4BoatCutsceneArt)
+                        "gen4_boat_cutscene",
+                        -- Platinum's TV timetable (Gen4PtTvSchedule)
+                        "gen4_pt_tv",
+                        -- the Game Corner slot app art (Gen4PtSlotArt)
+                        "gen4_pt_slot_art",
+                        -- the Ball Capsule app art (Gen4PtCapsuleArt)
+                        "gen4_pt_capsule_art",
                         -- the gyms' field-effect flipbooks (Gen4GymFxArt)
                         "gen4_gym_fx",
                         -- the name -> archive member hop for `var_0`..`var_f`;
@@ -266,6 +280,10 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         -- (Gen4MiningArt) and the menus' cursor and
                         -- Underground icons (Gen4MenuArt).
                         "gen4_mining_art", "gen4_menu_art",
+                        -- the Underground's trap effects (Gen4UgTrapArt)
+                        "gen4_ug_trap_art",
+                        -- the Underground's top screen, map and markers (Gen4UgTopArt)
+                        "gen4_ug_top_art",
                         -- the party screen's panels, sprites and colours (Gen4PartyArt).
                         "gen4_party_art", "gen4_party_ink",
                         -- the battle's cursor, party balls and party gauge

@@ -613,6 +613,11 @@ function Game:update(dt)
     while self.audioAccum >= step do
       self.audioAccum = self.audioAccum - step
       require("src.core.Music").update(Data)
+      -- Black / White's layered field themes fade with the sound system, text
+      -- boxes or not (src/world/Gen5MusicParts.lua)
+      if Data and Data.constants and Data.constants.gen5MusicParts then
+        require("src.world.Gen5MusicParts").audioTick(self)
+      end
     end
     close()
   end
@@ -951,9 +956,20 @@ function Game:draw()
       local poketchOn = require("src.pokemon.Gen4PoketchState").owned(self.save)
       local panelModule = family == "hgss" and "src.ui.HgssFieldPanel"
         or (family ~= "bw" and poketchOn and "src.ui.Gen4Poketch") or nil
+      -- PLATINUM'S UNDERGROUND: the other screen is the passages' map with the
+      -- radar (top_screen.c), not the watch (src/ui/Gen4UgTopScreen.lua)
+      local ugDrawn = false
+      if version and version.id == "platinum" then
+        local okU, UgTop = pcall(require, "src.ui.Gen4UgTopScreen")
+        if okU and UgTop.active(self) then
+          panelModule = nil
+          pcall(SS.draw, self, function() UgTop.draw(self) end)
+          ugDrawn = true
+        end
+      end
       local okP, Poketch = false, nil
       if panelModule then okP, Poketch = pcall(require, panelModule) end
-      if not panelModule then
+      if not panelModule and not ugDrawn then
         pcall(SS.draw, self, function()
           love.graphics.setColor(0, 0, 0, 1)
           love.graphics.rectangle("fill", 0, 0, 256, 192)

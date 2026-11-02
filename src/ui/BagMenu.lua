@@ -326,6 +326,18 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     game.stack:push(MailView.new(game, extra.mailType))
     return
   end
+  -- HGSS UNOWN Report: the book over the bag, back to the bag when it closes
+  -- (Task_ReturnToMenuFromAppItem); from the registered button, back to the
+  -- field (src/ui/HgssUnownReport.lua). Nothing is used up.
+  if result == "hgss_unown_report" then
+    local Report = require("src.ui.HgssUnownReport")
+    if Report.available(game) then
+      game.stack:push(Report.new(game))
+    else
+      require("src.core.Logger").warn("UNOWN Report: gen4_hgss_unown_report is not in this cache -- re-import the ROM")
+    end
+    return
+  end
   -- HGSS Dowsing MCHN: the touch-screen dowsing mode (src/world/HgssDowsing.lua)
   if result == "hgss_dowsing" then
     list:close()
@@ -985,6 +997,9 @@ local function handOver(game, mon, id, onChanged, opts)
     showMessages(game, { Strings("%s can't be\nheld.", name) })
     return
   end
+  -- HGSS MAIL (src/ui/HgssMailParty.lua): a Mail is written before it is
+  -- held, and a mon holding one takes nothing else
+  if require("src.ui.HgssMailParty").handOver(game, mon, id, onChanged) then return end
   local held = mon.item
   local function hand()
     local changed

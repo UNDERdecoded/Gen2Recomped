@@ -19,9 +19,11 @@
 --   * NO STEP LIMIT: HGSS never counts Safari steps (field_control.c
 --     FieldSystem_UpdateSafari checks the balls only).
 --
--- Blocks (Baoba's arrangement app) are not placeable yet, so every area's
--- block levels are zero and the bonus slots stay locked -- exactly a fresh
--- cartridge's Safari Zone.
+-- The objects, area levels and Baoba's timed calls are
+-- src/world/HgssSafariObjects.lua; placing them is HgssSafariPlace and the
+-- decoration app (src/ui/HgssSafariDecoration.lua), the area customizer is
+-- src/ui/HgssSafariCustomizer.lua, and their props / collision on this map
+-- are src/world/HgssSafariProps.lua.
 
 local M = {}
 
@@ -97,7 +99,11 @@ function M.key(save)
   if not set then return "none" end
   local parts = {}
   for i = 1, 6 do parts[i] = tostring(set.areas[i] and set.areas[i].area or 0) end
-  return table.concat(parts, ",")
+  -- ...and the placed objects, whose footprints are collision
+  -- (src/world/HgssSafariProps.lua)
+  local okP, P = pcall(require, "src.world.HgssSafariProps")
+  local objects = okP and P.objectsKey(save) or ""
+  return table.concat(parts, ",") .. "|" .. objects
 end
 
 -- the terrain grid (Gen4Ground): the six cells' land swapped in
@@ -156,6 +162,14 @@ function M.applyToDef(data, def, save)
         end
       end
     end
+    -- MapPropManager_LoadFromSafariZone: 0x8023 under every placed object
+    local okP, P = pcall(require, "src.world.HgssSafariProps")
+    if okP then
+      for i in pairs(P.collisionCells(def, save)) do
+        cells[i] = string.char(P.BLOCKED % 256, math.floor(P.BLOCKED / 256))
+        bytes[i] = string.char(P.BEHAVIOUR)
+      end
+    end
     blocks, behav = table.concat(cells), table.concat(bytes)
   end
   def.blocks, def.behaviorCells = blocks, behav
@@ -174,16 +188,17 @@ function M.areaAt(def, lx, ly)
   return idx
 end
 
--- SafariZoneAreaSet_GetObjectsInArea: the block levels an area's placed
--- objects add up to. No objects can be placed yet, so these are zero.
+-- SafariZoneAreaSet_GetObjectsInArea: the type levels an area's placed
+-- objects add up to (src/world/HgssSafariObjects.lua)
 local function objectLevels(set, idx)
-  return { 0, 0, 0, 0 }
+  return require("src.world.HgssSafariObjects").levelsInArea(set, idx)
 end
 
 -- the ten slots of one area for one encounter type (0 land, 1 surf, 2..4
--- the rods) at one time of day (0 morning, 1 day, 2 night)
-function M.slots(data, save, idx, kind, tod)
-  local set = M.activeSet(save)
+-- the rods) at one time of day (0 morning, 1 day, 2 night); `setOverride`
+-- reads another area set than the one in play (the day check reads set 0)
+function M.slots(data, save, idx, kind, tod, setOverride)
+  local set = setOverride or M.activeSet(save)
   local enc = data and data.gen4_hgss_safari
   local out = {}
   for i = 1, 10 do
@@ -242,6 +257,8 @@ function M.action(save, action, set)
     if save.safari then save.gen4SafariLastCaught = save.safari.caught or 0 end
     save.safari = nil
     st.active = 1
+    -- the days banked in the zone level while the game was on
+    pcall(function() require("src.world.HgssSafariObjects").gameEnded(save) end)
   end
 end
 

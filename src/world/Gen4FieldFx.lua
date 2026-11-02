@@ -39,7 +39,10 @@ local function art()
   -- ...or Platinum's (src/import/Gen4PtFieldFx.lua: /graphic/hiden_effect.narc,
   -- ScrCmd_StartDestroyObstacleAnimation kinds 0 cut, 1 / 2 rock smash -- the
   -- same members, sounds and placement as HGSS's kinds 0..2)
-  return G and G.data and (G.data.gen4_hgss_field_fx or G.data.gen4_pt_field_fx)
+  -- ...or Black / White's scripted objects, Zorua's illusion and N's Castle's
+  -- (src/import/Gen5IllusionFx.lua, played by src/world/Gen5IllusionFx.lua)
+  return G and G.data and (G.data.gen4_hgss_field_fx or G.data.gen4_pt_field_fx
+    or (G.data.constants and G.data.constants.gen5FieldFx))
 end
 
 local models = {}
@@ -122,9 +125,11 @@ function M.clear(ow, tag)
 end
 
 -- every engine tick (OverworldState:update)
-function M.tick(ow)
+-- (`objectsOnly`: from OverworldState:animate, the field under a message --
+-- the objects play on, the Rock Climb ride does not)
+function M.tick(ow, objectsOnly)
   -- Platinum's Rock Climb places its debris from here (Gen4RockClimbRide)
-  if ow and ow.gen4RockClimb then require("src.world.Gen4RockClimbRide").tick(ow) end
+  if ow and ow.gen4RockClimb and not objectsOnly then require("src.world.Gen4RockClimbRide").tick(ow) end
   local fxs = ow and ow.gen4FieldFx
   if not fxs then return end
   local shake
@@ -134,7 +139,11 @@ function M.tick(ow)
     -- the sound with the first frame the field draws it (a cut-in still on
     -- screen holds the field, and so the object, back)
     if e.tick == 1 and e.se then playSe(e.se) end
-    if e.tick % M.TICKS_PER_FRAME == 0 then e.frame = e.frame + 1 end
+    if e.tick % M.TICKS_PER_FRAME == 0 then
+      e.frame = e.frame + 1
+      -- an owner's per-frame move (BW's 0x255 carry, Gen5IllusionFx)
+      if e.onFrame then pcall(e.onFrame, e) end
+    end
     if e.shake and M.shakeOn(e.frame) then shake = e.shake end
     if e.frame >= e.frames then
       table.remove(fxs, i)

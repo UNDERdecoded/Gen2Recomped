@@ -415,7 +415,67 @@ function X:extractConstants()
     constants.gen4NewGame = derived and Link.newGame(scriptArc, derived.widths, self._scriptBands) or nil
     -- 0x232's table: Nimbasa's park visitor, by season x 2 + badges
     constants.gen5ParkVisitors = derived and require("src.import.Gen5ScriptOps").handlerTable(self.rom, derived, 0x232, 16) or nil
+    -- Passerby Analytics' requests / questions / answers, overlay 10
+    -- through 0x214's handler (src/import/Gen5Passerby.lua)
+    local okPass, passerby = pcall(require("src.import.Gen5Passerby").build, self, derived)
+    constants.gen5Passerby = okPass and passerby or nil
   end
+  -- the gates' electronic boards, /a/1/7/4 + ov48 (src/import/Gen5GateBoards.lua)
+  local okBoards, boards = pcall(require("src.import.Gen5GateBoards").build, self)
+  constants.gen5GateBoards = okBoards and boards or nil
+  -- ...and the cutscene camera's presets, /a/1/6/3 (src/import/Gen5CameraPresets.lua)
+  local okPresets, presets = pcall(require("src.import.Gen5CameraPresets").build, self)
+  constants.gen5CameraPresets = okPresets and presets or nil
+  -- ...and the door camera's zone records, /a/1/7/9 (src/import/Gen5DoorCameras.lua)
+  local okDoorCams, doorCams = pcall(require("src.import.Gen5DoorCameras").build, self)
+  constants.gen5DoorCameras = okDoorCams and doorCams or nil
+  -- ...and the layered field themes' parts, /a/1/4/7 (src/import/Gen5MusicParts.lua)
+  local okParts, parts = pcall(require("src.import.Gen5MusicParts").build, self)
+  constants.gen5MusicParts = okParts and parts or nil
+  -- ...and N's portrait, /a/1/8/7 (src/import/Gen5NPortrait.lua)
+  local okN, nPortrait = pcall(require("src.import.Gen5NPortrait").build, self)
+  constants.gen5NPortrait = okN and nPortrait or nil
+  if not okN then print("Gen5NPortrait failed: " .. tostring(nPortrait)) end
+  -- ...and Black City / White Forest's residents, /a/1/5/4 (src/import/Gen5BlackCity.lua)
+  local okCity, city = pcall(require("src.import.Gen5BlackCity").build, self)
+  constants.gen5BlackCity = okCity and city or nil
+  -- ...and the field weather: the zones' own and the day calendar, /a/0/1/2 +
+  -- /a/0/9/7 (src/import/Gen5Weather.lua)
+  local okWeather, weather = pcall(require("src.import.Gen5Weather").build, self)
+  constants.gen5Weather = okWeather and weather or nil
+  -- ...and the season splash's pictures, /a/1/5/1 (src/import/Gen5SeasonArt.lua)
+  local okSeason, seasonArt = pcall(require("src.import.Gen5SeasonArt").build, self)
+  constants.gen5SeasonArt = okSeason and seasonArt or nil
+  -- ...and the map replacements, /a/0/1/0 (src/import/Gen5MapVariants.lua)
+  local okVariants, variants = pcall(require("src.import.Gen5MapVariants").build, self)
+  constants.gen5MapVariants = okVariants and variants or nil
+  -- ...and the Abyssal Ruins' overlay models, /a/1/9/0 for script 0x135
+  -- (src/import/Gen5ZoneModels.lua, ov57)
+  local okZoneModels, zoneModels = pcall(require("src.import.Gen5ZoneModels").build, self)
+  constants.gen5ZoneModels = okZoneModels and zoneModels or nil
+  if not okZoneModels then print("Gen5ZoneModels failed: " .. tostring(zoneModels)) end
+  -- ...and the field weather's sprites and sheets, /a/0/5/6 (src/import/Gen5WeatherArt.lua)
+  local okWeatherArt, weatherArt = pcall(require("src.import.Gen5WeatherArt").build, self)
+  constants.gen5WeatherArt = okWeatherArt and weatherArt or nil
+  if not okWeatherArt then print("Gen5WeatherArt failed: " .. tostring(weatherArt)) end
+  -- ...and the street crowds, /a/1/8/6 (src/import/Gen5Walkers.lua)
+  local okWalkers, walkers = pcall(require("src.import.Gen5Walkers").build, self)
+  constants.gen5Walkers = okWalkers and walkers or nil
+  if not okWalkers then print("Gen5Walkers failed: " .. tostring(walkers)) end
+  -- ...and the scripted field objects: Zorua's illusion /a/2/0/4, N's Castle
+  -- /a/2/1/9 (src/import/Gen5IllusionFx.lua)
+  local okIllusion, illusion = pcall(require("src.import.Gen5IllusionFx").build, self)
+  constants.gen5FieldFx = okIllusion and illusion or nil
+  if not okIllusion then print("Gen5IllusionFx failed: " .. tostring(illusion)) end
+  -- ...and the flight paths 0x15D flies an object along (/a/2/0/3,
+  -- src/import/Gen5FlightPaths.lua)
+  local okPaths, paths = pcall(require("src.import.Gen5FlightPaths").build, self)
+  constants.gen5FlightPaths = okPaths and paths or nil
+  if not okPaths then print("Gen5FlightPaths failed: " .. tostring(paths)) end
+  -- ...and every field camera record, for 0x1A3 (src/import/Gen5FieldCameras.lua)
+  local okCams, cams = pcall(require("src.import.Gen5FieldCameras").build, self)
+  constants.gen5Cameras = okCams and cams or nil
+  if not okCams then print("Gen5FieldCameras failed: " .. tostring(cams)) end
   -- the in-game trades, /a/1/6/5 + system bank 35 (src/import/Gen5Trades.lua)
   local okTrades, trades = pcall(require("src.import.Gen5Trades").build, self)
   if okTrades then constants.gen5Trades = trades end

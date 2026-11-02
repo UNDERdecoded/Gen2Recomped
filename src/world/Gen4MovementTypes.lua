@@ -152,13 +152,12 @@
 --   * The LCRNG is the cartridge's formula on a state of its own, seeded once
 --     from love.math.random: the cartridge's global state is advanced by
 --     everything else on the field, which this engine does not reproduce.
---   * A pause lets a step that is under way land (the engine has no half-tile
---     resting place); the cartridge freezes it where it is.
---   * "Paused" is: a foreground script is running, a trainer is engaging, a
---     map transition is under way, the object is talked to (`frozen`) or is
---     walking a scripted movement (queued in `scriptMoves`). Gen 4's scripts
---     open with LockAll / LockLastTalked almost without exception, so "a
---     script runs" is "the field is locked".
+--   * "Paused" is: the object is held by a script's lock (`gen4Paused`,
+--     LockAll / LockObject -- src/world/Gen4ObjectLock.lua, which also holds a
+--     step under way where it is, as the cartridge does), a trainer is
+--     engaging, a map transition is under way, the object is talked to
+--     (`frozen`) or is walking a scripted movement (queued in `scriptMoves`).
+--     A script that takes no lock (a sign) leaves the walkers walking.
 --   * The running-look's height layer (sub_020630DC) is read as the two
 --     bodies standing within one step height of each other (Gen4HeightRule).
 --   * A moving trainer is not asked to spot (checkTrainerSight skips
@@ -266,12 +265,21 @@ function M.beginFrame(ow)
     if mv.entity then claimed = claimed or {} ; claimed[mv.entity] = true end
   end
   local runner = ow.runner
+  local running = runner and runner.isRunning and runner:isRunning() or false
+  -- A LOCK, NOT A RUNNING SCRIPT, IS WHAT STOPS A MOVEMENT TYPE: the
+  -- cartridge's MapObject_Move skips it only while the object's movement is
+  -- paused (LockAll / LockObject, src/world/Gen4ObjectLock.lua), so a sign
+  -- or any script that takes no lock leaves the walkers walking.  A lock left
+  -- held by a script that ended without its ReleaseAll is let go once nothing
+  -- is running or walking (the cartridge keeps it until the next map load).
+  if ow.gen4Lock and not running and #(ow.scriptMoves or {}) == 0 and not ow.transitioning then
+    require("src.world.Gen4ObjectLock").releaseAll(ow)
+  end
   frame = {
     ow = ow,
     player = ow.player,
     claimed = claimed,
-    paused = (runner and runner.isRunning and runner:isRunning()) or ow.engaging
-             or ow.transitioning or false,
+    paused = ow.engaging or ow.transitioning or false,
   }
 end
 
@@ -610,6 +618,8 @@ function M.update(npc, map, entities)
   if npc.hidden and not npc.buried then return true end
   local f = frame
   if f and (f.paused or (f.claimed and f.claimed[npc])) then return true end
+  -- paused by a script's lock (MapObject_IsMovementPaused)
+  if npc.gen4Paused then return true end
   -- one field frame every TICKS_PER_FRAME engine ticks
   st.sub = (st.sub + 1) % M.TICKS_PER_FRAME
   if st.sub ~= 0 then return true end

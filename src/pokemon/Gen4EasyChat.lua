@@ -24,6 +24,25 @@ Gen4EasyChat.BANKS = { 412, 648, 624, 611, 439, 440, 441, 442, 443, 444, 445 }
 Gen4EasyChat.GROUP_BANK = 436
 Gen4EasyChat.WORD_NONE = 0xFFFF
 
+-- HEARTGOLD / SOULSILVER: the same eleven groups in the same order, out of
+-- other banks (pokeheartgold src/easy_chat.c sNarcMsgBanks: msg_0237 species,
+-- 0751 moves, 0735 types, 0721 abilities, 0285..0291 trainer .. union); the
+-- group names are msg_0282 (POKeMON, POKeMON 2, MOVE, ... -- the same rows
+-- as Platinum's 436)
+Gen4EasyChat.HGSS_BANKS = { 237, 751, 735, 721, 285, 286, 287, 288, 289, 290, 291 }
+Gen4EasyChat.HGSS_GROUP_BANK = 282
+
+local function hgss(data)
+  local v = data and data.gen4_version
+  return type(v) == "table" and v.family == "hgss"
+end
+function Gen4EasyChat.banks(data)
+  return hgss(data) and Gen4EasyChat.HGSS_BANKS or Gen4EasyChat.BANKS
+end
+function Gen4EasyChat.groupBank(data)
+  return hgss(data) and Gen4EasyChat.HGSS_GROUP_BANK or Gen4EasyChat.GROUP_BANK
+end
+
 local SPECIES, MOVES, TYPES, ABILITIES = 1, 2, 3, 4
 local TOUGH = 10
 
@@ -36,7 +55,7 @@ function Gen4EasyChat.counts(data)
   if c then return c end
   local T = require("src.import.Gen4Text")
   c = {}
-  for i, bank in ipairs(Gen4EasyChat.BANKS) do
+  for i, bank in ipairs(Gen4EasyChat.banks(data)) do
     local n = 0
     while text[T.label(bank, n)] ~= nil do n = n + 1 end
     c[i] = n
@@ -58,7 +77,7 @@ function Gen4EasyChat.split(data, word)
   word = tonumber(word)
   if not word or word == Gen4EasyChat.WORD_NONE then return nil end
   local c = Gen4EasyChat.counts(data)
-  for i = 1, #Gen4EasyChat.BANKS do
+  for i = 1, #Gen4EasyChat.banks(data) do
     local n = c[i] or 0
     if word < n then return i, word end
     word = word - n
@@ -71,7 +90,7 @@ function Gen4EasyChat.toString(data, word)
   local i, entry = Gen4EasyChat.split(data, word)
   if not i then return "" end
   local T = require("src.import.Gen4Text")
-  return (data.text[T.label(Gen4EasyChat.BANKS[i], entry)] or ""):gsub("\n", " ")
+  return (data.text[T.label(Gen4EasyChat.banks(data)[i], entry)] or ""):gsub("\n", " ")
 end
 
 local function wordsOf(data, bankIndex, keep)
@@ -81,7 +100,7 @@ local function wordsOf(data, bankIndex, keep)
   -- entry 0 of the species, move and ability banks is the "-----" placeholder
   local first = (bankIndex == SPECIES or bankIndex == MOVES or bankIndex == ABILITIES) and 1 or 0
   for e = first, n - 1 do
-    local s = data.text[T.label(Gen4EasyChat.BANKS[bankIndex], e)]
+    local s = data.text[T.label(Gen4EasyChat.banks(data)[bankIndex], e)]
     if type(s) == "string" and s ~= "" and (not keep or keep(e)) then
       out[#out + 1] = { label = s:gsub("\n", " "), word = Gen4EasyChat.word(data, bankIndex, e) }
     end
@@ -93,7 +112,7 @@ end
 function Gen4EasyChat.groups(data, save)
   local T = require("src.import.Gen4Text")
   local function name(i, fallback)
-    local s = data.text and data.text[T.label(Gen4EasyChat.GROUP_BANK, i)]
+    local s = data.text and data.text[T.label(Gen4EasyChat.groupBank(data), i)]
     return type(s) == "string" and s or fallback
   end
   local seen = {}

@@ -42,7 +42,11 @@
 local Gen4PropAnim = {}
 -- bm_anime_list flags=3: PC on/off and healing displays are loaded by
 -- interactions, not by the ambient animation clock.
-Gen4PropAnim.INTERACTION_ANIMATIONS={31,32,41,42}
+-- 35/36 (`ev_o01_up` / `ev_o01_down`, prop 498 elevator_lights, flags 3) are
+-- the lifts' lights, played only by PlayElevatorAnimation
+-- (src/script/Gen4LiftCommands.lua); on the clock every lift's panel scrolled
+-- both ways at once, for ever.
+Gen4PropAnim.INTERACTION_ANIMATIONS={31,32,41,42,35,36}
 
 -- ---------------------------------------------------------------------------
 -- the record

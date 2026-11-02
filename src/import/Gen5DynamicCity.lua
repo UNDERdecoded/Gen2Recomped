@@ -133,7 +133,7 @@ local function piecePlacements(buildings, tx, tz)
     local o = 4 + i * 16
     if #buildings < o + 16 then break end
     local rot = u16(buildings, o + 12)
-    out[#out + 1] = { model = buildings:byte(o + 16), x = s32(buildings, o) / 4096 + tx * 16,
+    out[#out + 1] = { model = buildings:byte(o + 15) * 256 + buildings:byte(o + 16), x = s32(buildings, o) / 4096 + tx * 16,
       y = s32(buildings, o + 4) / 4096, z = -s32(buildings, o + 8) / 4096 + tz * 16,
       rotY = rot / 65536 * 360, gen5 = true, gen5Piece = true }
   end

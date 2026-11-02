@@ -265,7 +265,16 @@ Gen4Save.PANEL_TILES_H = 10
 
 -- (the lookup moved to `Gen4Text.resolve` when the bag needed the same three
 -- steps for its own bank; this is the one caller's name for it.)
+-- HEARTGOLD / SOULSILVER: Field_SaveStatsPrinter (overlay 1 0x021F41C0)
+-- reads msg_0423 (0x1A7), whose PLAYER: / BADGES: / POKeDEX: / TIME: are
+-- entries 5..8 -- Platinum's 1..4 plus four
+Gen4Save.HGSS_INFO_BANK, Gen4Save.HGSS_INFO_SHIFT = 423, 4
 local function bankText(game, index)
+  local v = game and game.data and game.data.gen4_version
+  if type(v) == "table" and v.family == "hgss" then
+    return require("src.import.Gen4Text")
+             .resolve(game.data, Gen4Save.HGSS_INFO_BANK, index + Gen4Save.HGSS_INFO_SHIFT, game)
+  end
   return require("src.import.Gen4Text")
            .resolve(game and game.data, Gen4Save.INFO_BANK, index, game)
 end

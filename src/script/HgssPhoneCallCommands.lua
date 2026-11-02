@@ -70,7 +70,18 @@ function Commands.g4_hgss_unset_phone_trigger(ctx, id)
   save.hgssPhoneCallTriggers[math.floor(tonumber(id) or 0)] = nil
 end
 
+-- ScrCmd_148 <trigger, bump> (sub_02092E14): sets one of the ring manager's
+-- call triggers (src/world/HgssPhoneRing.lua); Elm's Pokerus call
+function Commands.g4_hgss_set_phone_trigger(ctx, id, bump)
+  local game = ctx.game
+  if not game then return end
+  require("src.world.HgssPhoneRing").setTrigger(game, math.floor(tonumber(id) or 0), (tonumber(bump) or 0) ~= 0)
+end
+
 function M.install(L)
+  L.scrcmd_148 = function(ins, s)
+    s.out[#s.out + 1] = { "g4_hgss_set_phone_trigger", ins.args[1], ins.args[2] }
+  end
   L.setphonecall = function(ins, s)
     s.out[#s.out + 1] = { "g4_hgss_set_phone_call", ins.args[1], ins.args[2], ins.args[3] }
   end

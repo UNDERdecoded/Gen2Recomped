@@ -154,6 +154,11 @@ end
 MapLoader.currentSave = currentSave
 
 function MapLoader.applyHiddenPaths(data, def)
+  -- Black / White's season / version / story chunk swaps take the same road
+  -- (src/world/Gen5MapVariants.lua)
+  if def and def.gen5 then
+    return require("src.world.Gen5MapVariants").applyToDef(data, def, currentSave())
+  end
   local Gen4HiddenPaths = require("src.world.Gen4HiddenPaths")
   return Gen4HiddenPaths.applyToDef(data, def, currentSave())
 end

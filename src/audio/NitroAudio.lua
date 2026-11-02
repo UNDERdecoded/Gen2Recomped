@@ -35,7 +35,7 @@ function Audio.new(data,def)
  local start=assert(u32(bytes,24),'truncated sequence')
  local self=setmetatable({arc=arc,seq=seq,bytes=bytes,start=start,tracks={[0]=track(start)},
   voices={},samples={},tempo=120,tickPhase=0,master=(seq.volume or 127)/127,
-  queue=love.audio.newQueueableSource(RATE,16,2,4),looping=true,running=false},Player)
+  queue=love.audio.newQueueableSource(RATE,16,2,4),looping=true,running=false,nds=def.nds},Player)
  players[self]=true
  return self
 end
@@ -98,7 +98,7 @@ function Player:note(t,note,velocity,duration)
  local pan=math.max(0,math.min(127,t.pan+ins.pan-64))/127
  self.voices[#self.voices+1]={sample=sample,pos=0,step=sample.rate/RATE*2^((note-root+t.bend*t.bendRange/128)/12),
   ticks=math.max(1,duration),gain=velocity/127*t.volume/127*t.expression/127*self.master*0.35,
-  left=math.sqrt(1-pan),right=math.sqrt(pan),release=0}
+  left=math.sqrt(1-pan),right=math.sqrt(pan),release=0,track=t.id or 0}
 end
 function Player:events(t)
  local b=self.bytes
@@ -140,7 +140,7 @@ function Player:events(t)
    end
   elseif op==128 then local v=parameter(variable);if run then t.wait=v end
   elseif op==129 then local v=parameter(variable);if run then t.program=v%128 end
-  elseif op==147 then local id=read();local dest=address();if run then self.tracks[id]=track(dest) end
+  elseif op==147 then local id=read();local dest=address();if run then local nt=track(dest);nt.id=id;self.tracks[id]=nt end
   elseif op==148 then local dest=address();if run then if not self.looping and dest<t.at then t.done=true else t.at=dest end end
   elseif op==149 then local dest=address();if run then assert(#t.calls<16,'sequence call overflow');t.calls[#t.calls+1]=t.at;t.at=dest end
   elseif op>=176 and op<=189 then
@@ -191,7 +191,14 @@ function Player:tick()
   if not t.done then t.wait=math.max(0,t.wait-1);self:events(t);live=live or not t.done end
  end
  self.ended=not live
- for _,v in ipairs(self.voices) do v.ticks=v.ticks-1;if v.ticks<=0 and v.release==0 then v.release=math.floor(RATE*0.04) end end
+ -- every track has reached FIN: the DS releases the channels a finished
+ -- track still holds, so a note longer than its sequence (a looped sample
+ -- under a long length) fades out instead of ringing on -- PINPON after a
+ -- lift ride kept the script's "wait for the chime" waiting seconds
+ for _,v in ipairs(self.voices) do
+  v.ticks=v.ticks-1
+  if (v.ticks<=0 or self.ended) and v.release==0 then v.release=math.floor(RATE*0.04) end
+ end
 end
 function Player:render()
  local sound=love.sound.newSoundData(BLOCK,RATE,16,2)
@@ -207,6 +214,7 @@ function Player:render()
    end
    if v then
     local index=math.floor(v.pos)+1;local gain=v.gain
+    if self.trackGain then gain=gain*(self.trackGain[v.track] or 1) end
     if v.release>0 then gain=gain*v.release/(RATE*0.04);v.release=v.release-1;if v.release==0 then table.remove(self.voices,n) end end
     local value=(pcm[index] or 0)*gain
     left=left+value*v.left;right=right+value*v.right;v.pos=v.pos+v.step*(self.pitch or 1)
@@ -225,6 +233,23 @@ function Player:update()
  end
  while self.queue:getFreeBufferCount()>0 do self.queue:queue(self:render());if self.ended and #self.voices==0 then break end end
  if not self.queue:isPlaying() then self.queue:play() end
+end
+-- PER-TRACK VOLUME (NNS_SndPlayerSetTrackVolume: a u16 track bit mask and a
+-- 0..127 volume, applied to the notes already sounding as well). Black /
+-- White's layered field themes fade whole bands of a sequence in and out
+-- this way (src/world/Gen5MusicParts.lua). Unused, a player has no table and
+-- mixes exactly as before.
+function Player:setTrackVolume(mask,volume)
+ local g=math.max(0,math.min(127,tonumber(volume) or 127))/127
+ self.trackGain=self.trackGain or {}
+ mask=math.floor(tonumber(mask) or 0)
+ for i=0,15 do if math.floor(mask/2^i)%2==1 then self.trackGain[i]=g end end
+end
+-- the running players of SDAT sequence <nds> (the BGM a script asks after)
+function Audio.playing(nds)
+ local out={}
+ for p in pairs(players) do if p.running and p.nds==nds then out[#out+1]=p end end
+ return out
 end
 function Audio.update()
  for p in pairs(players) do

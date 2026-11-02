@@ -1074,6 +1074,10 @@ end
 
 function LauncherMods.installZip(source, opts)
   local ok, result, err, version = pcall(LauncherMods._installZipInner, source, opts)
+  -- the archive's bytes (string, FileData) are garbage now; a phone should
+  -- not carry them into the next install or the next picker trip
+  collectgarbage("collect")
+  collectgarbage("collect")
   if not ok then return nil, "import failed: " .. tostring(result) end
   return result, err, version
 end
@@ -1107,7 +1111,8 @@ function LauncherMods.installMany(sources, opts)
       or (source.getFilename and source:getFilename()) or "archive"
     local okOne, name, err = pcall(LauncherMods.installZip, source, opts)
     if okOne and name then
-      out.installed[#out.installed + 1] = tostring(name)
+      -- installZip answers true, id, version: the id is the second value
+      out.installed[#out.installed + 1] = tostring(type(name) == "string" and name or err or label)
     else
       local why = tostring((okOne and err) or name or "import failed")
       -- "a mod named 'x' is already installed" is the one refusal that means
@@ -1192,36 +1197,61 @@ function LauncherMods._installZipInner(source, opts)
     return nil, "mod install needs LOVE"
   end
   local fs = love.filesystem
-  local data, readErr = readArchive(source)
-  if not data then return nil, readErr end
+  local mount = "mod_import_mount"
+  local tmp, mountKey = nil, nil
+  local mounted = false
+
+  -- A PHONE PICK IS MOUNTED WHERE IT LIES.  The picker bridges copy the file
+  -- into the save directory (picked_mod.zip, imports/mods/), and reading it
+  -- into a Lua string only to copy it again into a FileData held the archive
+  -- twice over -- tens of MB for a renderer mod, on the devices that can least
+  -- spare it.  Phones only: elsewhere the in-memory route below stays the one
+  -- every platform (the Switch above all) has been tested on.
+  local osName = love.system and love.system.getOS and love.system.getOS()
+  if type(source) == "string" and (osName == "Android" or osName == "iOS") then
+    pcall(function()
+      local real = fs.getInfo(source, "file") and fs.getRealDirectory
+        and fs.getRealDirectory(source)
+      if real and real == fs.getSaveDirectory() then
+        local head = fs.read(source, 4)
+        if type(head) == "string" and head:sub(1, 2) == "PK" and fs.mount(source, mount) then
+          mounted, mountKey = true, source
+        end
+      end
+    end)
+  end
+
+  local data, readErr
+  if not mounted then
+    data, readErr = readArchive(source)
+    if not data then return nil, readErr end
+  end
 
   -- Cheap magic-byte check before anything is staged.  Every real zip starts
   -- "PK"; a Mac MTP copy leaves "._name.zip" resource forks that do not, and
   -- without this they reach the mount and fail as "could not be opened",
   -- which reads like a corrupt mod rather than a file to ignore.
-  if not (type(data) == "string" and #data >= 4 and data:sub(1, 2) == "PK") then
+  if not mounted and not (type(data) == "string" and #data >= 4 and data:sub(1, 2) == "PK") then
     local label = type(source) == "string" and (source:match("[^/\\]+$") or source)
       or "archive"
     return nil, "not a zip file: " .. tostring(label)
       .. " (need a real .zip; skip Mac ._ files from MTP)"
   end
 
-  local mount = "mod_import_mount"
-  local tmp, mountKey = nil, nil
-  local mounted = false
-
   -- In-memory mount first (PHYSFS_mountMemory, via FileData).  The staged
   -- write-then-mount path below reopens a file it has just written, which
   -- Horizon refuses -- the Switch answers "file already open" and the whole
   -- import failed as "that .zip could not be opened".  Mounting the bytes
   -- never touches the filesystem twice, so it works there and everywhere.
-  if fs.newFileData then
+  if not mounted and fs.newFileData then
     local archiveName = ("mod_import_%d_%d.zip"):format(
       os.time(), math.random(0, 999999))
     local okFd, fd = pcall(fs.newFileData, data, archiveName)
     if okFd and fd and fs.mount(fd, mount) then
       mounted = true
       mountKey = fd
+      -- the FileData holds its own copy now: let the string go
+      data = nil
     end
   end
 
@@ -1229,6 +1259,7 @@ function LauncherMods._installZipInner(source, opts)
     -- Fallback: stage into a save-dir temp so a path mount can reach it.
     tmp = ("mod_import_%d_%d.zip"):format(os.time(), math.random(0, 999999))
     local okw, writeErr = fs.write(tmp, data)
+    data = nil
     if not okw then
       return nil, "could not stage the .zip: " .. tostring(writeErr)
     end
@@ -1526,6 +1557,7 @@ local function folderDeclares(fs, path, id)
 end
 
 function LauncherMods.folderFor(id)
+  if type(id) ~= "string" or id == "" then return nil end
   local fs = love and love.filesystem
   if not (fs and fs.getInfo and fs.getDirectoryItems) then return nil end
   -- the portable game folder has to be on the read path before either the

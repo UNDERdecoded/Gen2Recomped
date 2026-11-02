@@ -8,7 +8,11 @@
 -- the player's ROM into four files (buildings, relief, regions, signposts);
 -- bake/bake.py runs them unchanged and drops the files in generated/ -- a folder name
 -- scripts/pack_love.sh prunes from every build, so the ROM-derived files
--- never leave the player's own machine.  This mod
+-- never leave the player's own machine.  A release has no Python and no
+-- generated/: there the same generators, ported to Lua (lib/bake), run in a
+-- background thread the first time E3DS 3D is switched on, from the ROM the
+-- player gives the mod once (lib/BakeJob.lua), into the save folder's
+-- e3ds_voxel/.  This mod
 -- reads those files and draws them the way the 3DS does -- see lib/Render.lua
 -- for the frame and lib/Builder.lua for the geometry.
 --
@@ -45,6 +49,8 @@ _G.__EMERALD_3DS_VOXEL_V = V
 local Data = V.require("Data")
 local Render = V.require("Render")
 local Battle = V.require("Battle")
+local BakeJob = V.require("BakeJob")
+local BakeUI = V.require("BakeUI")
 
 local function isEmerald()
   local ok, GameVersion = pcall(require, "src.core.GameVersion")
@@ -57,10 +63,33 @@ local function ready()
   local ok, why = Data.load()
   if not ok and not warned then
     warned = true
-    V.log("voxel data not baked (%s) -- run bake/bake.py with your Emerald ROM", tostring(why))
+    V.log("voxel data not baked yet (%s) -- it is built in-game from your Emerald ROM", tostring(why))
   end
   return ok
 end
+
+-- ------------------------------------------------------- the in-game bake --
+-- (lib/BakeJob.lua).  A finished bake swaps the new files in: everything
+-- parsed or built from the old ones is dropped, and since the row is on the
+-- voxels simply appear on the next frame.
+BakeJob.onDone = function()
+  Data.reset()
+  Render.drop()
+  Render.invalidate()
+  V.require("Trees").reset()
+  warned = false
+end
+
+-- Bake if the data calls for it.  `force` re-bakes a folder that is fine
+-- (the options row); otherwise only missing or stale data starts one.
+local function bakeIfNeeded(force)
+  if BakeJob.running() then return end
+  if not force and not BakeJob.wanted() then return end
+  BakeJob.start()
+end
+
+-- the level the row had last tick: switching it on is what starts a bake
+local lastLevel = nil
 
 local frameDt = 1 / 60
 
@@ -84,10 +113,17 @@ mod.content.render_pipelines:register("e3ds_voxel", {
         Battle.installed = true
         if not ok then V.log("battle seams not installed: %s", tostring(err)) end
       end
-      if level and level > 0 then ready() end
+      BakeJob.poll()
+      local on = level and level > 0
+      if on and not (lastLevel and lastLevel > 0) then bakeIfNeeded(false) end
+      lastLevel = level
+      if on then ready() end
       Battle.quietDramaticShape()
       Battle.update()
+    elseif BakeJob.running() then
+      BakeJob.poll()
     end
+    BakeUI.updateRow()
   end,
   drawWorld = function(ctx)
     if not ready() then return nil end
@@ -118,5 +154,66 @@ mod.content.render_pipelines:register("e3ds_voxel", {
 -- framing: the metrics of the frame just finished.
 mod.hooks:wrap("render.hud", function(next, game, viewport, ...)
   Battle.viewport = viewport
-  return next(game, viewport, ...)
+  local result = next(game, viewport, ...)
+  -- the bake's progress box, over the finished frame
+  if BakeJob.state ~= "idle" and isEmerald() then
+    local okP, Pipelines = pcall(require, "src.render.Pipelines")
+    local level = okP and Pipelines.level and Pipelines.level("e3ds_voxel") or 0
+    pcall(BakeUI.draw, viewport, level)
+  end
+  return result
 end)
+
+-- ------------------------------------------------- options and ROM import --
+-- One row in the mod's own options: build (or rebuild) the voxels now.  Its
+-- value is the job's state.  The EMERALD ROM row beside it is the engine's
+-- (manifest.json `required_imports`); when a ROM lands there the bake starts.
+local MOD_ID = (mod.manifest and mod.manifest.id) or "EMERALD_3DS_VOXEL"
+
+if mod.options and mod.options.define then
+  mod.options:define({
+    { key = "bake", type = "action", label = "3DS VOXELS", action = "BUILD",
+      description = "Build Emerald 3DS's voxel models from your Emerald ROM now "
+        .. "(a few minutes, in the background). Needs the EMERALD ROM row below "
+        .. "and a network connection the first time." },
+  })
+  local seen, seenAt = nil, -1
+  mod.options:status("bake", function()
+    local s = BakeJob.state
+    if s == "running" then return ("%d%%"):format(math.floor((BakeJob.progress or 0) * 100)) end
+    if s == "failed" then return "FAILED" end
+    if s == "need_rom" then return "NEEDS ROM" end
+    -- the folder's state, asked at most once a second (the row redraws
+    -- every frame the menu is open)
+    local t = love.timer.getTime()
+    if t - seenAt > 1 then seen, seenAt = BakeJob.dataState(), t end
+    if seen == "dev" or seen == "fresh" or seen == "unstamped" then return "REBUILD" end
+    return "BUILD"
+  end)
+end
+
+if mod.events and mod.events.on then
+  mod.events:on("mod.option_action", function(payload)
+    if not (type(payload) == "table" and payload.mod == MOD_ID and payload.key == "bake") then return end
+    if BakeJob.running() then return end
+    -- no ROM yet: this press is the "choose your ROM" step
+    if not BakeJob.findRom() then
+      local ok, message = BakeJob.pickRom()
+      if ok == true then
+        bakeIfNeeded(true)
+      elseif ok == false then
+        BakeJob.needRom(message)
+      end
+      -- nil: a phone's picker is open; BakeJob.poll consumes the pick and
+      -- the imports.ready below starts the bake
+      return
+    end
+    bakeIfNeeded(true)
+  end)
+  -- the ROM arrived through the engine's import row (or the row was pressed
+  -- with it already there): build if the data calls for it
+  mod.events:on("imports.ready", function(payload)
+    if not (type(payload) == "table" and payload.mod == MOD_ID) then return end
+    bakeIfNeeded(BakeJob.state == "need_rom" or BakeJob.state == "failed")
+  end)
+end

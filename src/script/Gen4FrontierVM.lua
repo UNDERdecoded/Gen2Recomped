@@ -108,9 +108,12 @@ L["3f"] = function(ins, s) emit(s, { "fr_battle_transition", ins.args[1] }) end
 -- background effect task, link handshakes, the battle recorder, TV
 local SILENT = { "initparticlesystem", "createparticlesystememitter", "waitforparticlesystememitters",
   "freeparticlesystem", "4e", "syncconnectedplayers", "clearreceivedtempdataallplayers",
-  "initnewbattlerecording", "freebattlerecording", "c7", "c8", "c9", "playfrontierbrainencountereffect",
+  "initnewbattlerecording", "freebattlerecording", "c8", "c9", "playfrontierbrainencountereffect",
   "4c" }
 for _, n in ipairs(SILENT) do L[n] = function() end end
+-- C7: the Battle Hall's TV note (FrontierScrCmd_C7 -> sub_0206D048): the
+-- Frontline News interview's pending state (src/script/PtTvRecords.lua)
+L["c7"] = function(_, s) emit(s, { "fr_hall_tv" }) end
 -- 70 / 71: the battle recorder's checks, answered "nothing recorded"
 L["70"] = function(ins, s) emit(s, { "fr_set", ins.args[1], 0 }) end
 L["71"] = function(ins, s) emit(s, { "fr_set", ins.args[1], 0 }) end

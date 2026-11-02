@@ -791,6 +791,9 @@ function NPC:update(map, entities)
   local stepLen = self.scriptStepLen or self.stepFrames or STEP_FRAMES
   local span = self.hopStep and 2 or 1
   if self.moving then
+    -- A GEN 4 / BW LOCK HOLDS A WALKER WHERE IT STANDS, between tiles if
+    -- that is where LockAll caught it (src/world/Gen4ObjectLock.lua)
+    if self.gen4Paused and require("src.world.Gen4ObjectLock").holds(self) then return end
     self.progress = self.progress + 1
     -- NPC_CHANGE_FACING: animate the walk cycle in place, no translation
     -- (movement.asm ChangeFacingDirection zeroes the delta); px/py stay
@@ -820,6 +823,7 @@ function NPC:update(map, entities)
       self.hopStep = nil
       self.stepFlip = not self.stepFlip
       self:updateElevation(map)
+      if self.gen4Paused then require("src.world.Gen4ObjectLock").landed(self) end
     end
     return
   end

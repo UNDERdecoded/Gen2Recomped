@@ -111,7 +111,8 @@ local function sheetFor(data, here, graphicsId)
       if o.graphicsId == graphicsId and o.sprite then return o.sprite, o.spriteName end
     end
   end
-  return nil
+  -- (an id no map places: the sprite table itself)
+  return require("src.script.Gen4Commands").bwSpriteFromTable(data, graphicsId)
 end
 
 -- the template at position `slot` (0-based) of the loaded zone

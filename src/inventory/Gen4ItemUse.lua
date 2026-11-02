@@ -141,6 +141,8 @@ function G.useHgss(data, save, id, itemDef, target, battle)
   local f = tonumber(itemDef.fieldUseFunc) or 0
   if f == 14 then return "honey", nil, { item = n } end
   if f == 23 then return "hgss_apricorn_box", nil, { item = n } end
+  -- the UNOWN Report (ItemMenuUseFunc_UnownReport -> overlay 113)
+  if f == 25 then return "hgss_unown_report", nil, { item = n } end
   if f == 26 then return "hgss_dowsing", nil, { item = n } end
   return nil
 end

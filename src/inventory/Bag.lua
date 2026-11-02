@@ -71,8 +71,30 @@ function Bag.gen4Pockets(data)
   return constants.gen4Bag and constants.gen4Bag.pockets or GEN4_POCKET_CAP
  end
 end
+-- BLACK / WHITE'S FIVE POCKETS, by the item's own `bwPocket` -- READ FROM
+-- CODE, arm9 0x02007D00 (each pocket's start in the bag block and its
+-- size): 0 items 310, 1 medicine 48, 2 TMs & HMs 109, 3 berries 64, 4 key
+-- items 83. Without it a BW bag fell to the Gen 1 limit of twenty DISTINCT
+-- items in all, and the twenty-first gift was refused ("Too bad! There is no
+-- more room for ...", Castelia's painter's berries).
+Bag.GEN5_POCKET_CAP = { [0] = 310, 48, 109, 64, 83 }
+function Bag.gen5Pockets(data)
+ data=data or require('src.core.Data')
+ local constants=data and data.constants
+ if constants and constants.gen==5 then return Bag.GEN5_POCKET_CAP end
+end
+local function bwPocketOf(id,data)
+ local items=data and data.items
+ local def=items and items[id]
+ return def and tonumber(def.bwPocket) or 0
+end
 function Bag.stackLimit(id,data)
  data=data or require('src.core.Data')
+ -- BW, READ FROM CODE: the add check (arm9 0x02007DF8) passes 0x02007D94 a
+ -- most of 999 a stack and of ONE in the TM & HM pocket (pocket 2, from
+ -- 0x02007D6C) -- BW's TMs are not used up; arm9 0x0200823C says the same
+ -- per item (1 for items 328..425 and 618..620, 0x02021288; else 999)
+ if Bag.gen5Pockets(data) then return bwPocketOf(id,data)==2 and 1 or 999 end
  if Bag.gen4Pockets(data) and pocketOf(id,data)~='TM_HM' then return 999 end
  return 99
 end
@@ -169,7 +191,15 @@ function Bag.add(save, id, qty, data)
     -- 186 slots of empty pockets behind it.
     local gen3 = Bag.gen3Pockets(data)
     local gen4=Bag.gen4Pockets(data)
-    if gen4 then
+    local gen5=Bag.gen5Pockets(data)
+    if gen5 then
+      local pocket=bwPocketOf(id,data)
+      local n=0
+      for other in pairs(inv) do
+        if not isBadge(other) and bwPocketOf(other,data)==pocket then n=n+1 end
+      end
+      if n>=(gen5[pocket] or gen5[0]) then return false end
+    elseif gen4 then
       local pocket=pocketOf(id,data)
       local cap=gen4[pocket] or gen4.ITEMS
       if Bag.pocketSlots(save,pocket,data)>=cap then return false end

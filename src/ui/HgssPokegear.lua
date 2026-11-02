@@ -98,6 +98,12 @@ function Gear.new(game, opts)
   self.zoneIndex = self:buttonIndex(app)
   -- Pokegear_Init plays no sound effect of its own (the menu's press did)
   self.fade = { kind = "open", n = 0 }
+  -- FieldSystem_InitPokegearArgs: opened from the field menu while the phone
+  -- rings (src/world/HgssPhoneRing.lua), the Pokegear launches on the call
+  if opts.app == nil and not opts.silent and not opts.call then
+    local okR, Ring = pcall(require, "src.world.HgssPhoneRing")
+    if okR then self.ringCall = Ring.answer(game) end
+  end
   return self
 end
 
@@ -356,6 +362,16 @@ end
 -- ----------------------------------------------------------------- update
 
 function Gear:update(dt)
+  if self.ringCall then
+    local call = self.ringCall
+    self.ringCall = nil
+    local okC, Call = pcall(require, "src.ui.HgssPhoneCall")
+    if okC and Call.available(self.game) then
+      self.game.stack:pop()
+      self.game.stack:push(Call.new(self.game, call, self.onCancel))
+      return
+    end
+  end
   self.t = self.t + 1
   local fade = self.fade
   if fade then

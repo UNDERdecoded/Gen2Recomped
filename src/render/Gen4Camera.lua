@@ -618,7 +618,12 @@ Gen4Camera.DISTORTION_WORLD_GIRATINA = {
 function Gen4Camera.forMap(def)
   -- Black / White carry their camera record on the def (Gen5Field: the
   -- zone's index into /a/0/6/0, decoded at import)
-  local config = def and def.gen5Camera
+  -- (a script's own record for this map, BW 0x1A3; dropped once another
+  -- map asks)
+  local over = Gen4Camera.gen5Override
+  local here = def and (def.header or def.id)
+  if over and (here == nil or over.key ~= here) then Gen4Camera.gen5Override, over = nil, nil end
+  local config = (over and over.config) or def and def.gen5Camera
                  or (def and def.gen4DistWorld == "giratina" and Gen4Camera.DISTORTION_WORLD_GIRATINA)
                  or (def and def.gen4DistWorld and Gen4Camera.DISTORTION_WORLD)
                  or Gen4Camera.forType(def and def.cameraType, def and def.cameraFamily)

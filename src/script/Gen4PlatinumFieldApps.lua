@@ -12,7 +12,8 @@
 --                              layout, which this port's menu sizes itself
 --   SaveTVSegmentHomeAndManor  a Villa purchase recorded for a TV programme
 --                              (no TV broadcasts here)
---   SetDressUpPhotoTitle       the gallery's photo title (no photos here)
+--   SetDressUpPhotoTitle       the gallery's photo title -- superseded by
+--                              src/script/Gen4PhotoCommands.lua (installed later)
 --   2B2                        FieldSystem_SaveObjects -- the port's objects
 --                              live in the save already
 

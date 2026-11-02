@@ -169,6 +169,11 @@ function Gen4Daily.onDays(save, daysPassed)
     local full = (lo + hi + 12345) % 4294967296
     C.setVar(save, 0x403C, math.floor(full / 65536))
   end
+  -- ...and the Safari Zone's area levels and Baoba's new-Pokemon call
+  -- (SaveData_SafariZone_CheckAreasWithUpdatedEncounters, src/world/HgssSafariObjects.lua)
+  if family == "hgss" and (tonumber(daysPassed) or 0) > 0 then
+    pcall(function() require("src.world.HgssSafariObjects").onDays(save, daysPassed) end)
+  end
   return left
 end
 

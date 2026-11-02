@@ -209,6 +209,9 @@ function Gen4MiningScreen.new(game, opts)
   local save = game.save or {}
   local ug = save.underground or {}
   save.underground = ug
+  -- Mining_StartGameTask: SystemFlag_SetDiggingForFossils (mining.c 1735),
+  -- the Underground Man's second mission
+  if game.save then require("src.world.Gen4UgWorld").setFlag(game.save, require("src.world.Gen4UgWorld").FLAG_DUG) end
 
   -- The two questions the weights turn on.  `trainerId` is the player's public
   -- id and the cartridge takes its LOW BIT, so this is `% 2` and not a compare.
@@ -376,37 +379,102 @@ end
 -- On a win that is all of them; on a collapse the cartridge still prints and
 -- adds the ones already dug out (MINING_STATE_PRINT_COLLAPSE_MESSAGE runs on
 -- into MINING_STATE_PRINT_DUG_UP_ITEM), so `onlyOut` asks for those alone.
+--
+-- WHERE THEY GO (pt_underground round, READ, mining.c 2515-2565 / 2627-2660):
+-- NOT the Bag. A sphere goes to the Underground's sphere pocket with the size
+-- Mining_GenerateSizeOfMinedSphere gives it -- Rand32(4)+1 (Prism and Pale:
+-- Rand32(1)+1), +10 for a large one, + integrity / (196 / 5), +5 when the
+-- wall still stands; anything else goes to the TREASURES pocket (40 slots),
+-- which the Underground menu's PUT IN BAG later moves into the Bag
+-- (Underground_ConvertTreasureToBagItem). A full pocket prints 65 "Too bad!
+-- Your Bag is full!" and that one is lost.
+function Gen4MiningScreen:sphereSize(id)
+  local Dig = require("src.world.Gen4MiningDig")
+  local rand = self.rand or function(n) return math.random(0, n - 1) end
+  local size
+  if id == 6 or id == 7 or id == 1 or id == 2 then size = rand(1) + 1 else size = rand(4) + 1 end
+  if id >= 6 and id <= 10 then size = size + 10 end
+  local integrity = self.state and self.state.integrity or 0
+  size = size + math.floor(integrity / math.floor(Dig.INITIAL_WALL_INTEGRITY / 5))
+  if integrity ~= 0 then size = size + 5 end
+  return size
+end
+
 function Gen4MiningScreen:award(onlyOut)
   local save = self.game.save
   if not save then return end
   local ug = save.underground or {}
   save.underground = ug
   ug.hasMined = true                       -- Underground_SetHasMined
+  local UG = require("src.world.Gen4Underground")
+  local W = require("src.world.Gen4UgWorld")
   local out = onlyOut and Dig.treasuresOut(self.state) or nil
+  self.awardLines = self.awardLines or {}
   for i, placed in ipairs(MiningWall.treasures(self.wall)) do
     if not out or out[i] then
+      local id = placed.obj.id
       local constant = Mining.bagItem(placed.obj)
-      local id = constant and self:itemIdFor(constant)
-      if id then
-        Bag.add(save, id, 1, self.game.data)
-        self.found[#self.found + 1] = constant
-        self.foundIds[#self.foundIds + 1] = placed.obj.id
-      end
-      -- A plate is once per save (Underground_HasPlateNeverBeenMined), so the bit
-      -- is set here rather than when it is buried -- burying one you then fail to
-      -- dig out must not lock it away.
-      if Mining.isPlate(placed.obj.id) then
-        ug.minedPlates = ug.minedPlates or {}
-        ug.minedPlates[placed.obj.id] = true
+      -- the record (mining.c 2627-2650): spheres, fossils (Helix .. Rare
+      -- Bone, Armor, Skull -- the cartridge's own range), the rest
+      local rec = require("src.world.Gen4UgBase").record(save)
+      if id <= 10 then rec.spheresDug = rec.spheresDug + 1
+      elseif (id >= 23 and id <= 28) or id == 36 or id == 37 then rec.fossilsDug = rec.fossilsDug + 1
+      else rec.nonFossilsDug = rec.nonFossilsDug + 1 end
+      if id <= 10 then
+        local sphereType = id > 5 and id - 5 or id
+        local size = self:sphereSize(id)
+        if UG.sphereCount(save) < UG.MAX_SPHERE_SLOTS then
+          W.addSphere(save, sphereType, size)
+          self.found[#self.found + 1] = constant or placed.obj.name
+          self.foundIds[#self.foundIds + 1] = id
+          self.foundSizes = self.foundSizes or {}
+          self.foundSizes[#self.found] = math.min(99, size)
+        else
+          self.found[#self.found + 1] = false
+          self.foundIds[#self.foundIds + 1] = id
+        end
+      else
+        if W.addTreasure(save, id) then
+          self.found[#self.found + 1] = constant or placed.obj.name
+          self.foundIds[#self.foundIds + 1] = id
+          -- A plate is once per save (Underground_SetPlateMined, set as it is
+          -- added: mining.c Mining_AddItem)
+          if Mining.isPlate(id) then
+            ug.minedPlates = ug.minedPlates or {}
+            ug.minedPlates[id] = true
+          end
+        else
+          self.found[#self.found + 1] = false
+          self.foundIds[#self.foundIds + 1] = id
+        end
       end
     end
   end
 end
 
+-- "You obtained a Red Sphere, size 12!" (common 69) for a sphere
+function Gen4MiningScreen:sphereLine(objId, size)
+  local T = require("src.import.Gen4Text")
+  local data = (self.game or {}).data
+  local name = T.resolve(data, Gen4MiningScreen.ITEM_ARTICLE_BANK, objId, self.game) or "?"
+  Gen4MiningScreen.buffer(self.game, "", ("%d"):format(size or 0), name)
+  return T.resolve(data, Gen4MiningScreen.BANK, 69, self.game) or (name .. " " .. tostring(size))
+end
+
 -- one "<item> was obtained." per treasure taken, in the cartridge's order
 function Gen4MiningScreen:obtainedMessages(list)
   for i, constant in ipairs(self.found) do
-    list[#list + 1] = { text = self:obtainedLine(self.foundIds[i], constant), hold = 60 }
+    local id = self.foundIds[i]
+    local text
+    if constant == false then
+      local T = require("src.import.Gen4Text")
+      text = T.resolve((self.game or {}).data, Gen4MiningScreen.BANK, 65, self.game) or "Too bad! Your Bag is full!"
+    elseif id and id <= 10 then
+      text = self:sphereLine(id, self.foundSizes and self.foundSizes[i])
+    else
+      text = self:obtainedLine(id, constant)
+    end
+    list[#list + 1] = { text = text, hold = 60 }
   end
   return list
 end

@@ -45,6 +45,8 @@
 -- unnamed stretch between the player's hand-out animation and the Distortion
 -- World's jumps.  `action()` answers nil for them and the executor skips the
 -- step, which is the one honest thing to do with an animation nobody decoded.
+-- (All four are decoded now from pokeplatinum's step tables -- 106 / 107 the
+-- Distortion World wall walks, 117 its jump, 153 the "!" -- see below.)
 
 local Gen4Movement = {}
 
@@ -84,7 +86,12 @@ local ACTIONS = {}
 local RATE = {
   slower = 4.0, slow = 2.0, normal = 1.0,
   slightlyFast = 0.75, fast = 0.5, slightlyFaster = 0.375,
-  faster = 0.25, fastest = 0.125, run = 0.25,
+  -- RUN is FOUR frames a cell, not two: MovementAction_RunNorth_Step0
+  -- (pokeplatinum src/unk_020655F4.c) is InitWalk(FX32_CONST(4), 4,
+  -- MAP_OBJ_UNK_A0_09) and HGSS's MapObjectMovementCmd088_Step0
+  -- (asm/unk_02062108.s) passes 0x4000 x 4 -- the fast walk's pace on the
+  -- running animation (Black's 0x58 is 4 frames too, Gen5Movement)
+  faster = 0.25, fastest = 0.125, run = 0.5,
 }
 
 local function span(first, last, kind, tiles, rate)
@@ -112,9 +119,18 @@ span(28, 31, "spot", nil, RATE.slow)
 span(32, 35, "spot", nil, RATE.normal)
 span(36, 39, "spot", nil, RATE.fast)
 span(40, 43, "spot", nil, RATE.faster)
-span(44, 51, "spot")           -- jump on the spot
-span(52, 55, "walk", 1)        -- jump to the near tile
-span(56, 59, "walk", 2)        -- jump two tiles
+-- THE JUMPS ARE JUMPS, not walks: read as "walk" they slid the actor along
+-- the ground with no hop, so the rival's shove outside Elm's lab (New Bark,
+-- scr_seq_0842_T20 _0288: LockDir, two steps back, JumpFarSouth) and every
+-- ledge-like scripted leap lost its arc. Frames per cell, field frames,
+-- from the shared movement engine (Black's 0x219852C, the same actions --
+-- src/import/Gen5Movement.lua): on the spot in 16 (slow) and 8 (fast), the
+-- near jump one cell in 8, the far jump two cells at 8 each. `rate` is the
+-- step's speed against a normal 8-frame walk, as the walks carry it.
+span(44, 47, "hop", nil, 2)    -- jump on the spot, slow (16 frames)
+span(48, 51, "hop", nil, 1)    -- jump on the spot, fast (8 frames)
+span(52, 55, "jump", 1, 1)     -- jump to the near tile
+span(56, 59, "jump", 2, 1)     -- jump two tiles
 ACTIONS[60] = { kind = "wait", frames = 1 }
 ACTIONS[61] = { kind = "wait", frames = 2 }
 ACTIONS[62] = { kind = "wait", frames = 4 }
@@ -137,39 +153,144 @@ ACTIONS[70] = { kind = "show" }
 -- Hyper Beam (LockDir, WalkFasterEast 2) turned round and walked away.
 ACTIONS[71] = { kind = "lock" }   -- lock facing
 ACTIONS[72] = { kind = "unlock" } -- unlock facing
-ACTIONS[73] = { kind = "none" }   -- pause animation
-ACTIONS[74] = { kind = "none" }   -- resume animation
+-- PauseAnimation / ResumeAnimation: MAP_OBJ_STATUS_PAUSE_ANIMATION on and off
+-- (MovementAction_PauseAnimation_Step0), which holds the sprite's frame --
+-- the object GLIDES through the walks in between. Platinum's Old Chateau
+-- leavers (the twin, the old man), HGSS D39R0101 _021C and scr_seq_0163.
+-- The executor sets `sliding`, the hold NPC:pose / Player:pose read.
+ACTIONS[73] = { kind = "pauseAnim" }
+ACTIONS[74] = { kind = "resumeAnim" }
 ACTIONS[75] = { kind = "emote", emote = "exclamation" }
 -- 76 WALK_SLIGHTLY_FAST, 80 WALK_SLIGHTLY_FASTER, 84 WALK_FASTEST, 88 RUN.
 span(76, 79, "walk", 1, RATE.slightlyFast)
 span(80, 83, "walk", 1, RATE.slightlyFaster)
 span(84, 87, "walk", 1, RATE.fastest)
 span(88, 91, "walk", 1, RATE.run)
-ACTIONS[92] = { kind = "walk", dir = "left",  tiles = 1 }   -- jump near slow
-ACTIONS[93] = { kind = "walk", dir = "right", tiles = 1 }
-ACTIONS[94] = { kind = "walk", dir = "left",  tiles = 2 }   -- jump farther
-ACTIONS[95] = { kind = "walk", dir = "right", tiles = 2 }
+-- sideways jumps (Black 0x5C-0x5F, the same actions): one cell in 16
+-- frames, and the farther jump three cells at 4 frames each
+ACTIONS[92] = { kind = "jump", dir = "left",  tiles = 1, rate = 2 }   -- jump near slow
+ACTIONS[93] = { kind = "jump", dir = "right", tiles = 1, rate = 2 }
+ACTIONS[94] = { kind = "jump", dir = "left",  tiles = 3, rate = 0.5 } -- jump farther
+ACTIONS[95] = { kind = "jump", dir = "right", tiles = 3, rate = 0.5 }
 -- 96 WALK_EVER_SO_SLIGHTLY_FAST -- between normal and slightly fast.
 span(96, 99, "walk", 1, 0.875)
-ACTIONS[100] = { kind = "none" }  -- the nurse's bow
-ACTIONS[101] = { kind = "none" }  -- a trainer standing up
-ACTIONS[102] = { kind = "none" }  -- the player holding something out
+-- 100..104, the same five step tables in both games (pokeplatinum
+-- src/unk_020655F4.c; HGSS MapObjectMovementCmd100..104, asm/unk_02062108.s):
+--   100 POKECENTER_NURSE_BOW: the bow pose (anim 9) for 8 frames, then
+--       MapObject_TryFace(SOUTH) -- every heal's "We hope to see you again!"
+--   101 REVEAL_TRAINER: a disguised trainer springing up -- a hop on the spot
+--       on JUMP_HEIGHT_HIGH at two table rows a frame, so 8 frames, and no
+--       take-off sound (it is not InitJump)
+--   102 PLAYER_GIVE / 104 PLAYER_RECEIVE: anim 0 / 1 held for 21 frames
+--       (PlayerGiveReceive_Step1, `++timer < 21`) -- the hand-over at the
+--       Pokemon Center counter, which ran in no time at all
+--   103 the emote of kind 1: fldeff `saisen_ef`, the "!!" (HGSS loads member
+--       0x7D = 125 for it in ov01_022002AC -- the decomp's name
+--       EmoteQuestionMark is a misnomer; it is the same "!!" as Platinum's
+--       EMOTE_DOUBLE_EXCLAMATION_MARK)
+ACTIONS[100] = { kind = "bow", frames = 8, dir = "down" }
+ACTIONS[101] = { kind = "hop", rate = 1, silent = true, noLanding = true }
+ACTIONS[102] = { kind = "wait", frames = 21 }
 ACTIONS[103] = { kind = "emote", emote = "double_exclamation" }
-ACTIONS[104] = { kind = "none" }  -- the player taking something
--- the Distortion World's jumps, MOVEMENT_ACTION_JUMP_DISTORTION_WORLD_
--- NORTH..EAST = 117..120 (generated/movement_actions.txt: 116 is the
--- unnamed MOVEMENT_ACTION_116 before them).  This read 118..121: north was
--- skipped as unknown -- Cynthia's jump into the Giratina room went nowhere
--- -- and south / west / east each played as the direction before it.
-span(117, 120, "walk", 1)
+ACTIONS[104] = { kind = "wait", frames = 21 }
+-- PLATINUM'S 105..116 AND 121..152: the Distortion World's walks along a
+-- wall or a ceiling (sub_02066824 + sub_020668EC, src/unk_020655F4.c): one
+-- cell along the world axis `axis` (x east, z south, y up), `frames` frames,
+-- the sprite facing `dir`. A move along x or z is a walk in the port's grid;
+-- one along y has no cell to change and plays as a beat with the facing.
+-- 133..144 are the same along an axis with a low hop (sub_02066F88: 8
+-- frames, JUMP_HEIGHT_LOW, SUTYA2 on landing). Scripts use only 106 and 107
+-- (Distortion World B2F, Cynthia), the rest are the field's own.
+local AXIS_DIR = { x = { "left", "right" }, z = { "up", "down" } }
+local FACE = { [0] = "up", [1] = "down", [2] = "left", [3] = "right" }
+local function axisWalk(id, axis, sign, frames, face, kind)
+  local dir = AXIS_DIR[axis] and AXIS_DIR[axis][sign > 0 and 2 or 1]
+  ACTIONS[id] = { kind = kind or "axis", axis = axis, sign = sign, frames = frames,
+                  face = FACE[face], dir = dir, tiles = dir and 1 or nil,
+                  rate = frames / 8 }
+end
+for id, r in pairs({
+  [105] = { "y", 1, 8, 2 },  [106] = { "y", -1, 8, 3 }, [107] = { "z", 1, 8, 1 },
+  [108] = { "z", -1, 8, 0 }, [109] = { "y", 1, 8, 3 },  [110] = { "y", -1, 8, 2 },
+  [111] = { "z", -1, 8, 0 }, [112] = { "z", 1, 8, 1 },  [113] = { "z", 1, 8, 1 },
+  [114] = { "z", -1, 8, 0 }, [115] = { "x", -1, 8, 3 }, [116] = { "x", 1, 8, 2 },
+  [121] = { "y", 1, 4, 2 },  [122] = { "y", -1, 4, 3 }, [123] = { "z", 1, 4, 1 },
+  [124] = { "z", -1, 4, 0 }, [125] = { "y", 1, 4, 3 },  [126] = { "y", -1, 4, 2 },
+  [127] = { "z", -1, 4, 0 }, [128] = { "z", 1, 4, 1 },  [129] = { "z", 1, 4, 1 },
+  [130] = { "z", -1, 4, 0 }, [131] = { "x", -1, 4, 3 }, [132] = { "x", 1, 4, 2 },
+  [145] = { "z", 1, 4, 1 },  [146] = { "z", -1, 4, 0 }, [147] = { "x", -1, 4, 3 },
+  [148] = { "x", 1, 4, 2 },  [149] = { "z", 1, 2, 1 },  [150] = { "z", -1, 2, 0 },
+  [151] = { "x", -1, 2, 3 }, [152] = { "x", 1, 2, 2 },
+}) do axisWalk(id, r[1], r[2], r[3], r[4]) end
+for id, r in pairs({
+  [133] = { "y", 1, 2 },  [134] = { "y", -1, 3 }, [135] = { "z", 1, 1 },
+  [136] = { "z", -1, 0 }, [137] = { "y", 1, 3 },  [138] = { "y", -1, 2 },
+  [139] = { "z", -1, 0 }, [140] = { "z", 1, 1 },  [141] = { "z", 1, 1 },
+  [142] = { "z", -1, 0 }, [143] = { "x", -1, 3 }, [144] = { "x", 1, 2 },
+}) do axisWalk(id, r[1], r[2], 8, r[3], "axisJump") end
+-- THE DISTORTION WORLD'S JUMPS, 117..120 (MOVEMENT_ACTION_JUMP_DISTORTION_
+-- WORLD_NORTH..EAST): InitJumpCustomSound(dir, FX32_CONST(2), 8 * 3, ...,
+-- JUMP_HEIGHT_HIGH, 0xA0, SEQ_NONE) -- THREE cells in 24 frames under one
+-- arc, silent at take-off and SUTYA2 on landing (the platforms' own hop is
+-- three cells too, Gen4DistPlatforms `hop[1] * 3`). Read as a one-cell walk,
+-- Cynthia's leap off B1F and the Giratina room's two leaps covered a third
+-- of the distance, on the ground.
+span(117, 120, "jump", 3, 1)
+for a = 117, 120 do ACTIONS[a].silent = true end
+-- 153: the "!" again (MovementAction_153_Step0 is sub_020664A0(mapObj, 0, 1):
+-- kind 0, on the anim manager that follows its owner) -- Cheryl noticing
+-- the player in Eterna Forest, three sites, skipped as unknown until now
+ACTIONS[153] = { kind = "emote", emote = "exclamation" }
+
+-- HEARTGOLD / SOULSILVER STOP AT 112 (gMovementCmdTable, asm/unk_data_
+-- 020FCBD8.s, 113 entries), and their 105..112 are not Platinum's: they are
+-- the legendary beasts' bounding exits -- MapObjectMovementCmd105..112
+-- (asm/unk_020632B0.s), each a chain of LEAPS. sub_020632B0(obj, dx, dy,
+-- dz, dir, frames, anim) carries the object (dx, dz) cells, dy height units,
+-- straight-line over `frames` frames under 16 units of sine arc
+-- (MapObjectMovementCmd108_Step1: GF_SinDeg(180 / frames * i) << 4), facing
+-- `dir`, with SEQ_SE_DP_DANSA at take-off when visible. Burned Tower B1F
+-- (scr_seq_0024 _0224.._0278: Raikou 105, Entei 106, Suicune 107..110),
+-- Cianwood's Suicune (T24 _02F4 111, _0300 112), Route 42 / Ecruteak (112).
+-- Each leap is { dx, dy, dz, dir, frames }.
+local HGSS = {}
+local function leaps(list) return { kind = "leaps", leaps = list } end
+HGSS[105] = leaps({ { 0, 1, 5, 1, 15 }, { 4, 0, 0, 3, 12 }, { 0, 0, -5, 0, 15 },
+                    { -2, 0, -3, 0, 9 }, { -4, 1, -4, 2, 12 } })
+HGSS[106] = leaps({ { 2, 1, 0, 3, 6 }, { -1, 0, 5, 1, 12 }, { -3, 0, 0, 2, 6 },
+                    { -3, 0, 0, 2, 9 } })
+local L107 = { { 3, 1, -1, 3, 6 }, { 0, 0, 4, 1, 9 }, { -4, 0, 0, 2, 12 },
+               { 0, -1, -4, 0, 6 }, { 1, 1, -3, 0, 9 }, { 3, 0, 0, 3, 9 } }
+local function with(list, last)
+  local out = {}
+  for i, v in ipairs(list) do out[i] = v end
+  out[#out + 1] = last
+  return out
+end
+HGSS[107] = leaps(with(L107, { 0, 0, 4, 1, 12 }))
+HGSS[108] = leaps({ { 2, 1, 5, 1, 9 }, { 1, 0, 5, 1, 12 } })
+HGSS[109] = leaps(with(L107, { 0, 0, 5, 1, 12 }))
+HGSS[110] = leaps({ { 2, 1, 4, 1, 9 }, { 1, 0, 5, 1, 12 } })
+HGSS[111] = leaps({ { 0, 0, 2, 1, 6 }, { 2, 0, 0, 3, 6 }, { 3, 0, 0, 3, 9 },
+                    { 0, 0, 2, 1, 6 }, { 0, 0, 2, 1, 6 }, { -3, 0, 0, 2, 9 },
+                    { -3, 0, 0, 2, 9 }, { 0, 0, -2, 0, 6 }, { 0, 0, -3, 0, 9 },
+                    { 3, 0, 1, 1, 9 } })
+HGSS[112] = leaps({ { 4, 0, 0, 3, 9 }, { 4, 0, 0, 3, 9 }, { 4, 0, 0, 3, 9 } })
+for id = 0, 104 do HGSS[id] = ACTIONS[id] end
+Gen4Movement.HGSS_ACTIONS = HGSS
 
 Gen4Movement.ACTIONS = ACTIONS
 
 -- What one action does, or nil when it is one this port has no name for.
 -- Unknown is answered rather than guessed: a movement list with an action
 -- nobody decoded should skip that step, not invent a walk.
-function Gen4Movement.action(id)
-  return ACTIONS[tonumber(id) or -1]
+--
+-- `family` picks the table: "hgss" reads HeartGold / SoulSilver's own
+-- (HGSS_ACTIONS, which ends at 112 and has the beasts' leaps where Platinum
+-- has its wall walks); anything else, Platinum's.
+function Gen4Movement.action(id, family)
+  local t = family == "hgss" and HGSS or ACTIONS
+  return t[tonumber(id) or -1]
 end
 
 -- ---------------------------------------------------------------------------

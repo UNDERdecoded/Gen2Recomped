@@ -142,7 +142,7 @@ L.ALIASES = {
   [0x057] = { "bufferspeciesnamefromvar", "bw" },
   [0x1AE] = { "noop", "" }, [0x1AF] = { "noop", "" },
   [0x14A] = { "noop", "" }, [0x14B] = { "noop", "" },
-  [0x21C] = { "noop", "ww" },
+  [0x21C] = { "bwpasserbyanswer", "ww" },
   -- AFTER THE BEDROOM BATTLES:
   --   0x101 <dest, slot>  1 when the slot's HP is full or it is an Egg
   --        (GetMonData 0xA0 against 0xA1, then 0x4C) -- before Cheren's
@@ -159,8 +159,10 @@ L.ALIASES = {
   [0x101] = { "bwmonhpfull", "ww" },
   [0x104] = { "healparty", "" },
   [0x053] = { "bufferpartymonspecies", "bw" }, [0x054] = { "bufferpartymonnickname", "bw" },
-  [0x127] = { "noop", "wwww" }, [0x129] = { "noop", "ww" },
-  [0x12A] = { "noop", "w" }, [0x128] = { "noop", "w" },
+  -- (READ FROM CODE since: they are the building animations, ov21
+  -- 0x021B2D34.. -- src/world/Gen5BuildingAnim.lua)
+  [0x127] = { "bwbuildinginstance", "wwww" }, [0x129] = { "bwbuildingplay", "ww" },
+  [0x12A] = { "bwbuildingwait", "w" }, [0x128] = { "bwbuildingfree", "w" },
   -- THE BAG, in Platinum's order and shapes (consecutive handlers in overlay
   -- 10, each <item, quantity, dest> into one bag routine): 0xB5 adds (the
   -- give-item script, member 862, runs it before the fanfare), 0xB6 takes,
@@ -208,7 +210,8 @@ L.ALIASES = {
   -- me" outside Striaton's gym: `0C2 9 7 10 0`, into her lab)
   [0x0C2] = { "warp", "wwww", { 1, 1, 2, 3, 4 } },
   -- THE NURSE (shared band 2100, member 855, every Pokemon Center):
-  --   0x0CE <var>  the time of day, picking "Good morning!" or "Hello"
+  --   0x0CE <var>  the Trainer Card level (see 0x0CD below: the time of
+  --        day that picks "Good morning!" or "Hello" is 0x0CD)
   --   0x0D0 <month, day> today, 0x0D4 <month, day> the DS profile's
   --        birthday: equal, and she asks "Hey! Is today your birthday?"
   --        (bank 346 #3). Unread, both were 0 = 0 and she asked every time
@@ -217,7 +220,7 @@ L.ALIASES = {
   --   0x075 <u16> / 0x23A <u16, u16> / 0x103 <var, u16> / 0x12F <var>  her
   --        bow, a record counter and the healing machine's balls -- nothing
   --        reads them back (0x103's var only feeds 0x12F)
-  [0x0CE] = { "gettimeofday", "w" },
+  [0x0CE] = { "bwcardlevel", "w" },
   [0x0D0] = { "bwgetdate", "ww" }, [0x0D4] = { "bwgetbirthday", "ww" },
   [0x100] = { "checkpartypokerus", "w" },
   [0x075] = { "noop", "w" }, [0x23A] = { "noop", "ww" },
@@ -286,12 +289,17 @@ L.ALIASES = {
   -- 0x11E <badge>: the party recorded against the badge just won (its
   -- handler copies six slots) -- the trainer card's history, nothing the
   -- story reads; 0x01D closes a common script's work just before its end
-  [0x11E] = { "noop", "w" }, [0x01D] = { "noop", "" },
+  [0x11E] = { "bwbadgeteam", "w" }, [0x01D] = { "noop", "" },
   -- 0x098 <sequence> / 0x09E: a cutscene's own music and the return to the
   -- map's (Z038's Plasma theft: `98 0443` as Iris runs in, `9E` once she
-  -- has gone). BW's sequence ids are not the engine's music keys, so the
-  -- map's music plays on -- presentation only.
-  [0x098] = { "noop", "w" }, [0x09E] = { "noop", "" },
+  -- has gone). READ FROM CODE (ov21 0x021AEDE0 / 0x021AEFD8): 0x098 reads a
+  -- u16 and parks the script on arm9 0x02029984's task (sound queue 2, the
+  -- old BGM out in 6 frames, then 7 <sequence>); 0x09E asks 0x02029DF4 for
+  -- the current zone's BGM and fades to it (0x020298A0, 0x5A / 0x3C). The
+  -- ids are the SDAT's own sequence numbers (0x443 SEQ_BGM_E_PLASMA), the
+  -- same numbers the zone headers' music uses, so they play as they are
+  -- (src/script/Gen5MusicCommands.lua)
+  [0x098] = { "bweventmusic", "w" }, [0x09E] = { "bwmapmusic", "" },
   -- 0x06B <object>: addobject, 0x6C's partner -- Z031 clears flag 797 and
   -- then 6B's objects 6 and 7, Iris and Bianca, who carry that flag (139
   -- sites)
@@ -355,7 +363,12 @@ L.ALIASES = {
   -- <n> and 0x1D3 <three> / 0x1D4 a picture window round one line --
   -- presentation only
   [0x078] = { "setvar", "w" }, [0x253] = { "noop", "ww" }, [0x154] = { "noop", "ww" },
-  [0x254] = { "noop", "w" }, [0x1D3] = { "noop", "www" }, [0x1D4] = { "noop", "" },
+  [0x254] = { "noop", "w" },
+  -- ...except 0x1D3 / 0x1D4 / 0x1D5, N's full-screen portrait round his lines
+  -- (READ FROM CODE, ov10 0x02164910 / 0x02164994 / 0x02164978 -> overlay 82;
+  -- src/world/Gen5NPortrait.lua): <mode, u16, close>, its close, "talk"
+  [0x1D3] = { "bwnportraitopen", "www" }, [0x1D4] = { "bwnportraitclose", "" },
+  [0x1D5] = { "bwnportraittalk", "" },
   -- NIMBASA GYM: 0x17F <a, b> records two trainer flags in the gym's save
   -- block (its overlay only stores them); 0x180 <n> turns coaster track n's
   -- switch over (Gen5Field's gen5Coaster, ridden from OverworldController)
@@ -365,8 +378,26 @@ L.ALIASES = {
   -- identified, so it reads as a fresh save's 0
   [0x022] = { "setvar", "w" },
   -- 0x09F <sequence>: another cutscene music start (Route 5's Elesa scene
-  -- opens with `9F 043F`), presentation like 0x098
-  [0x09F] = { "noop", "w" },
+  -- opens with `9F 043F`; Pinwheel's Plasma grunts' `9F 0467`,
+  -- SEQ_BGM_EYE_PLASMA). READ FROM CODE (ov21 0x021AF0BC): a var-or-value,
+  -- then arm9 0x02029AF4's task -- queue 3 (the old BGM paused, 6 frames)
+  -- and 7 <sequence>, where 0x098 stops it (queue 2)
+  [0x09F] = { "bweventmusic", "w" },
+  -- 0x0A1 <frames> / 0x0A2 <u16, frames>: READ FROM CODE (ov21 0x021AF0F8 /
+  -- 0x021AF130) the field BGM paused over <frames> (arm9 0x020295A4, queue
+  -- 3) and resumed over the second operand's (0x02029620, queue 4) -- the
+  -- Musical's dress-up (`A1 0006` ... `A2 0000 003C`) and N's Castle
+  -- 0x25F: READ FROM CODE (ov21 0x021AF1B0) clears bit 2 of the sound
+  -- state that 0x098 / 0x09E set and clear -- the bit that stops the
+  -- field's ambient sound loops (arm9 0x02028BA0 stops the handles at
+  -- +0xAC when it is first set); this port plays no such loops
+  [0x0A1] = { "bwpausemusic", "w" }, [0x0A2] = { "bwresumemusic", "ww" },
+  [0x25F] = { "noop", "" },
+  -- 0x1EA <sign, x, level, z>: READ FROM CODE (ov10 0x0215B214 ->
+  -- 0x02162A74) a sign record of the loaded zone moved to a new cell --
+  -- Nacrene Gym's bookshelves following the bookcase
+  -- (src/script/Gen5FieldEventCommands.lua)
+  [0x1EA] = { "bwsetsignpos", "wwww" },
   -- 0x0C4 <zone, x, height, z, dir>: the warp with an elevation word --
   -- Driftveil Gym's lobby lift drops the player into Clay's mine (zone 97,
   -- `C4 0061 0011 0032 0019 0000`: tile (17, 25), 50 units up). The height
@@ -588,9 +619,14 @@ L.ALIASES = {
   -- knows {VAR1}." -- 0x1B2 is 434, Draco Meteor; `051 1 8021` fills the
   -- {VAR2} of "Want me to teach {VAR2} to {VAR1}?"
   [0x051] = { "buffermovename", "bw" },
-  -- 0x0CD <dest>: the Trainer Card level (ov10 0x0215AB18: var pointer, then
-  -- a getter over the game data); the nurse checks it for her card line
-  [0x0CD] = { "bwcardlevel", "w" },
+  -- 0x0CD <dest>: THE TIME OF DAY, and 0x0CE <dest> the Trainer Card level --
+  -- READ FROM CODE, the other way round from the first reading: 0x0CD (ov10
+  -- 0x0215AB18 -> 0x021690B4) is arm9 0x0209DF24[season * 24 + hour], 0
+  -- morning .. 4 late night (the nurse's "Good morning!" on 0, "Hello" on 1,
+  -- the evening line on 2..4; the Royal Unova's clerk sails only on 2), and
+  -- 0x0CE (0x0215AAF4 -> 0x0216F830) counts five card conditions (the
+  -- nurse's "Great to see you" regular on 4 or more)
+  [0x0CD] = { "bwtimeperiod", "w" },
   -- THE EYE-CONTACT PATH of the shared trainer script (member 863): 0x07F
   -- <which, dest> the spotting trainer's id (0 the first, 1 the second;
   -- ov21 0x021AE9F0 reads the record's +0x10) -- Platinum's
@@ -680,6 +716,136 @@ L.ALIASES = {
   -- THE MOVE TUTORS (member 860; src/script/Gen5FieldCommands.lua)
   [0x1E4] = { "bwtutorparty", "ww" }, [0x1E5] = { "bwtutormon", "www" },
   [0x1E6] = { "bwtutormove", "www" }, [0x1E7] = { "bwtutorpick", "www" },
+  -- THE ROYAL UNOVA (member 104; src/world/Gen5RoyalUnova.lua). READ FROM
+  -- CODE: 0x1A5 / 0x1A6 make and free the cruise's work (ov21 0x021C881C /
+  -- 0x021C8848); 0x1A7 <kind, dest> a count off it (0x021C8738); 0x1A8
+  -- <units, toEnd> time passing (0x021C86E8); 0x1A9 <room, kind, b, dest>
+  -- a cabin's sprite / kind / trainer / line / beaten (ov10 0x02166734 --
+  -- kind 6 is the trainer `85 8027 0` fights); 0x1AA <room, kind, u16,
+  -- value> marks a cabin beaten (0x021C88EC); 0x1AB <dest> the deck's
+  -- scenery app (ov10 0x021667E0); 0x1AC stops the clock (0x021C8960)
+  [0x1A5] = { "bwshipinit", "" }, [0x1A6] = { "bwshipfree", "" },
+  [0x1A7] = { "bwshipcount", "ww" }, [0x1A8] = { "bwshipadvance", "ww" },
+  [0x1A9] = { "bwshiproom", "wwww" }, [0x1AA] = { "bwshipset", "wwww" },
+  [0x1AB] = { "bwshipdeck", "w" }, [0x1AC] = { "bwshipstop", "" },
+  -- 0x17E <frames>: a gate's electronic board -- SE 0x547, the camera to the
+  -- board and back, B or a direction between (READ FROM CODE, ov48
+  -- 0x021F4650; src/world/Gen5GateBoard.lua)
+  [0x17E] = { "bwgateboard", "w" },
+  -- 0x146 <preset, frames>: the cutscene camera to /a/1/6/3[preset] over
+  -- frames (READ FROM CODE, ov21 0x021B542C; src/script/Gen5CameraCommands.lua)
+  [0x146] = { "bwcamerapreset", "ww" },
+  -- 0x12B <model, x, z> a building shown at its open pose (the badge gates'
+  -- on-load scripts), 0x12E <model, x, z> its slot 0 looping, 0x12C <handle>
+  -- an instance held where it is (READ FROM CODE, ov21 0x021B2C08 /
+  -- 0x021B2C5C / 0x021B2E3C; src/world/Gen5BuildingAnim.lua)
+  [0x12B] = { "bwbuildingholdopen", "www" }, [0x12E] = { "bwbuildingloop", "www" },
+  [0x12C] = { "bwbuildingstop", "w" },
+  -- 0x12D <model, x, z, flag> a placed building hidden (0) or shown (1)
+  -- (READ FROM CODE, ov21 0x021B2CA0 -> 0x0218C54C)
+  [0x12D] = { "bwbuildingshow", "wwww" },
+  -- THE LAYERED FIELD THEMES (Village Bridge, Accumula): 0x0A3 <part> fades a
+  -- band of the sequence in, 0x0A4 <part> out, 0x0A5 <dest, part> asks (READ
+  -- FROM CODE, ov21 0x021AF458 / 0x021AF484 / 0x021AF4B0 -> arm9 0x0202C0D0..;
+  -- src/world/Gen5MusicParts.lua)
+  [0x0A3] = { "bwmusicparton", "w" }, [0x0A4] = { "bwmusicpartoff", "w" },
+  [0x0A5] = { "bwmusicpartquery", "ww" },
+  -- save reads of link data this port never has (src/script/Gen5LinkStubCommands.lua):
+  -- 0x1BD <index, dest> the roamer's state (ov10 0x0216BF38), 0x1EE / 0x1EF
+  -- <mode, dest> the Dream World Pokemon / Dream Remnants (ov21 0x021B6BDC,
+  -- ov10 0x0215E1C0)
+  [0x1BD] = { "bwroamerstate", "ww" }, [0x1EE] = { "bwdreamworld", "ww" },
+  -- 0x1BC <slot> releases a roamer (ov21 0x021B5154; src/world/Gen5Roamers.lua)
+  [0x1BC] = { "bwroamerrelease", "w" },
+  [0x1EF] = { "bwdreamworld", "ww" },
+  -- PASSERBY ANALYTICS (Castelia, member 84; src/world/Gen5Passerby.lua):
+  -- READ FROM CODE, ov10 0x0216B504..0x0216B86C / ov21 0x021AFB90..
+  [0x063] = { "bwanswername", "bw" },
+  [0x210] = { "bwpasserbystart", "wwww" }, [0x211] = { "bwpasserbyend", "" },
+  [0x212] = { "bwpasserbyrequest", "w" }, [0x213] = { "bwpasserbyquestions", "www" },
+  [0x214] = { "bwpasserbytopanswer", "ww" }, [0x215] = { "bwpasserbystatus", "ww" },
+  [0x216] = { "bwpasserbyremaining", "w" }, [0x217] = { "bwpasserbyelapsed", "w" },
+  [0x218] = { "bwpasserbyword", "w" }, [0x219] = { "bwpasserbyword", "w" },
+  [0x21A] = { "bwpasserbytally1c", "b" }, [0x21B] = { "bwpasserbytally18", "b" },
+  [0x21D] = { "noop", "" },
+  [0x21E] = { "bwpasserbyrank", "w" }, [0x21F] = { "bwpasserbyrankup", "" },
+  -- BLACK CITY'S RESIDENTS (member 0 / 10; src/world/Gen5BlackCity.lua):
+  -- READ FROM CODE, ov20 0x02186BE4 / 0x02186C44 / 0x02186D48 / 0x02186E94 /
+  -- 0x02187000
+  [0x1C2] = { "bwcitystop", "" }, [0x1C3] = { "bwcitybattled", "" },
+  [0x1C4] = { "bwcityquery", "ww" }, [0x1C7] = { "bwcitygoalup", "" },
+  [0x1C9] = { "bwcityline", "ww" },
+  [0x1C5] = { "bwcityname", "w" }, [0x1C6] = { "bwcityforestcatch", "www" },
+  [0x1C8] = { "bwcitygate", "" },
+  -- ABYSSAL RUINS (src/script/Gen5DiveCommands.lua): 0x0DC <zone, warp, x,
+  -- y, z> the special location (ov10 0x0215ADCC), 0x0C8 <mode> the dive /
+  -- surfacing to it (ov21 0x021C46A4); presentation only, READ FROM CODE:
+  -- 0x252 the zone camera again (0x021B2FB0), 0x033 <flag> a field byte and
+  -- script bit 9 (0x021B15C8), 0x076 <dir, frames, units, sign> a camera
+  -- slide (0x021B1D64)
+  [0x0DC] = { "bwspeciallocation", "wwwww" }, [0x0C8] = { "bwdive", "w" },
+  [0x252] = { "noop", "" }, [0x033] = { "noop", "w" }, [0x076] = { "noop", "wwww" },
+  -- 0x1A4 <room> the Elite Four rooms' ambient sound (ov21 0x021B568C ->
+  -- overlay 56; src/world/Gen5ZoneSounds.lua)
+  [0x1A4] = { "bwzonesound", "w" },
+  -- 0x135 the Abyssal Ruins' overlay models (ov21 0x021CFA58 -> overlay 57;
+  -- src/world/Gen5ZoneModels.lua)
+  [0x135] = { "bwzonemodels", "" },
+  -- 0x134 the street crowds (ov21 0x021B69B0 -> overlay 55;
+  -- src/world/Gen5Walkers.lua)
+  [0x134] = { "bwcrowd", "" },
+  -- the party checks behind the Effort Ribbon and the Hidden Power reader
+  -- (src/script/Gen5PartyChecks.lua): 0x112 <dest, slot> ov10 0x0215B5BC,
+  -- 0x236 <dest, slot> ov21 0x021B62C8
+  [0x112] = { "bweffortsum", "ww" }, [0x236] = { "bwhiddenpower", "ww" },
+  -- side quests (src/script/Gen5SideCommands.lua): the Hip Waders' catch of
+  -- the day 0x231 / met date 0x11A, the move man 0x238, the feature bits
+  -- 0x0E6..0x0E8, the Relocator's word entry 0x1ED / passwords 0x20C, Unity
+  -- Tower 0x1DA / 0x1DD..0x1E1 / 0x1E3
+  [0x231] = { "bwcatchofday", "w" }, [0x11A] = { "bwmetdate", "wwww" },
+  [0x238] = { "bwmachinemove", "w" },
+  [0x0E6] = { "bwfeaturelow", "ww" }, [0x0E7] = { "bwfeatureset", "w" }, [0x0E8] = { "bwfeaturefull", "ww" },
+  [0x1ED] = { "bwwordentry", "wwww" }, [0x20C] = { "bwpassword", "wwww" },
+  [0x1DD] = { "bwunityfloor", "ww" }, [0x1DE] = { "bwunity2", "ww" }, [0x1DF] = { "bwunity3", "www" },
+  [0x1DA] = { "bwunity2", "ww" }, [0x1E0] = { "bwunitymenu", "wwww" },
+  [0x1E1] = { "bwunity1", "w" }, [0x1E3] = { "bwunity1", "w" },
+  [0x229] = { "bweventitem", "ww" },
+  -- party / bag / save checks for offline side events
+  -- (src/script/Gen5FieldChecks.lua); 0x11E (above) keeps each badge's team
+  [0x0BD] = { "bwitemkind", "ww" }, [0x10E] = { "bwgivemonball", "wwwwwwwww" },
+  [0x10F] = { "bwgiveegg", "www" }, [0x11B] = { "bwmontypes", "www" },
+  [0x11F] = { "bwbadgeteamnames", "ww" }, [0x20D] = { "bwbirthdaywords", "wwww" },
+  [0x05A] = { "bwbufferword", "bw" }, [0x0E9] = { "bwsaveblock1c", "w" },
+  -- 0x1E2 <value> (ov21 0x021D0014) writes the value into the Global Link
+  -- guest block (0x02009618) and nothing else: no block here, a no-op
+  [0x1E2] = { "noop", "w" },
+  -- Zorua's illusion puff (ov59; src/world/Gen5IllusionFx.lua)
+  [0x221] = { "bwillusionend", "wwwwww" }, [0x222] = { "bwillusionplace", "wwww" },
+  [0x223] = { "bwillusionwait", "w" }, [0x224] = { "bwillusionstart", "w" },
+  -- N's Castle's objects (ov64; src/world/Gen5IllusionFx.lua)
+  [0x23F] = { "bwcastleplayer", "" }, [0x255] = { "bwcastlecarry", "wwwwww" },
+  [0x256] = { "bwcastlepuff", "www" }, [0x257] = { "bwcastlewait", "" }, [0x258] = { "bwcastlewait", "" },
+  -- 0x136 <weather, instant> a script's field weather (src/world/Gen5Weather.lua)
+  [0x136] = { "bwsetweather", "ww" },
+  -- an object flown along a baked path round the player (ov21; Tornadus /
+  -- Thundurus at Z337 and Z376; src/world/Gen5FlightPath.lua)
+  [0x15B] = { "bwflightattach", "w" }, [0x15C] = { "bwflightdetach", "" },
+  [0x15D] = { "bwflightplay", "w" }, [0x15E] = { "bwflightwait", "" },
+  -- an object raised / lowered in place and Meloetta's dance (ov10;
+  -- src/world/Gen5ObjectMotion.lua)
+  [0x225] = { "bwobjectheight", "www" }, [0x226] = { "bwobjectdance", "w" },
+  -- the Zorua story's picture and the movie event Pokemon used up
+  -- (src/script/Gen5EventMonCommands.lua)
+  [0x0DE] = { "bwdexmarkseen", "ww" }, [0x227] = { "bwshowmonpicture", "wwww" }, [0x228] = { "bweventmonused", "ww" },
+  -- 0x24B <frames> (ov21 0x021AF044): the zone's own BGM back (0x02029DF4,
+  -- as 0x09E) through sound queue 5 faded over `frames` (0x020298A0 ->
+  -- 0x020289F8), the event-BGM bit cleared (0x02028BDC); not a save
+  [0x24B] = { "bwmapmusic", "w" },
+  -- a trade record's nickname, the wireless wait, a save word, the C-Gear
+  -- off (src/script/Gen5MiscFieldOps.lua)
+  [0x242] = { "bwbuffertradedname", "ww" }, [0x139] = { "bwwirelessend", "w" },
+  [0x23C] = { "bwsaveblock34", "" }, [0x25E] = { "bwcgearoff", "" },
+  [0x1A3] = { "bwroomcamera", "w" },
 }
 
 -- THE STACK FORM. Most of BW's conditional jumps are an expression on the

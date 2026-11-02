@@ -15,10 +15,10 @@
 -- Names come from bank 12 (TEXT_BANK_BALL_SEAL_NAMES) and its plural bank 13,
 -- entry = nameIndex.
 --
--- Runtime: save.gen4Seals = { [id] = count }, the case's loose seals. No
--- capsules are modelled, so "in use" is always zero and
--- SealCase_CountSealOccurrenceAnywhere is the case count. A type caps at 99
--- (MAX_SEALS_PER_TYPE).
+-- Runtime: save.gen4Seals = { [id] = count }, the case's loose seals; the
+-- seals stuck on the twelve Ball Capsules are src/pokemon/Gen4SealCase.lua's,
+-- and SealCase_CountSealOccurrenceAnywhere (`count`) is both. A type caps at
+-- 99 (MAX_SEALS_PER_TYPE) counting both.
 
 local Gen4Seals = {}
 
@@ -92,15 +92,20 @@ end
 
 -- -------------------------------------------------------------- runtime --
 
-function Gen4Seals.count(save, id)
+-- SealCase_CountSealOccurrenceAnywhere: the case's loose seals and the ones
+-- on the Ball Capsules (src/pokemon/Gen4SealCase.lua)
+function Gen4Seals.caseCount(save, id)
   return tonumber(save and save.gen4Seals and save.gen4Seals[tonumber(id)]) or 0
+end
+function Gen4Seals.count(save, id)
+  return Gen4Seals.caseCount(save, id) + require("src.pokemon.Gen4SealCase").inUse(save, tonumber(id))
 end
 
 -- SealCase_CheckSealCount
+-- SealCase_CheckSealCount: a take checks the loose count, a give the total
 function Gen4Seals.canChange(save, id, quantity)
-  local have = Gen4Seals.count(save, id)
-  if quantity < 0 then return have + quantity >= 0 end
-  return have + quantity <= Gen4Seals.MAX_PER_TYPE
+  if quantity < 0 then return Gen4Seals.caseCount(save, id) + quantity >= 0 end
+  return Gen4Seals.count(save, id) + quantity <= Gen4Seals.MAX_PER_TYPE
 end
 
 -- GiveOrTakeSeal: refused (false) rather than clamped.
@@ -109,7 +114,7 @@ function Gen4Seals.change(save, id, quantity)
   if not id or id < 1 or id >= Gen4Seals.COUNT then return false end
   if not Gen4Seals.canChange(save, id, quantity) then return false end
   save.gen4Seals = save.gen4Seals or {}
-  save.gen4Seals[id] = Gen4Seals.count(save, id) + quantity
+  save.gen4Seals[id] = Gen4Seals.caseCount(save, id) + quantity   -- GiveOrTakeSeal
   return true
 end
 

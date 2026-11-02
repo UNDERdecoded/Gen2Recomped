@@ -143,13 +143,120 @@ end
 -- is `Gen4AreaLight.activeAt` rather than a copy of it -- the rule is subtle
 -- (`>` and not `>=`, falling back to index 0 to wrap midnight) and two
 -- spellings of it is how the two drift.
+-- THE BAND'S OVERALL LEVEL -- the part the ground-plane anchor above cannot
+-- see. Reported: no map gets darker at night. The DS lights a vertex as
+--
+--     emission + sum over lights of (diffuse * colour * max(0, -N.L)
+--                                    + ambient * colour)
+--
+-- clamped to 31 per channel (G3_MaterialColor / G3_LightColor, the template's
+-- rows 5..8 and its lights). Taken for the UP normal, band by band, and
+-- divided by the member's BRIGHTEST band, it is 1 at the brightest hour and
+-- the cartridge's own ratio otherwise -- HeartGold's member 0 runs 0.69 at
+-- midnight, 1.0 at noon and 0.65 at dusk, with the night's blue from its
+-- 11,11,16 sun. Where the sum saturates in every band (Platinum's member 0
+-- reaches 31 on most of them, the indoor members on all) the ratio is 1 and
+-- nothing changes. Only shapes lit by NORMAL take it, as only those take the
+-- light on the DS.
+--
+-- WHICH LIGHTS, ON PLATINUM: the ones the MATERIAL enables. A model's
+-- polygon attribute bits 0..3 (NNSG3dResMat polyAttr, kept by the map
+-- models -- AreaLight_UseGlobalModelAttributes takes the template's light
+-- and material colours global, NOT its polygon attributes) say which of the
+-- four lights reach it. MEASURED over land_data.narc's 666 chunks: of 7,346
+-- terrain materials 4,300 enable light 0 alone, 2,955 none (the unlit
+-- ones), 48 lights 0 + 1, 43 light 3 (+0). Platinum's templates keep lights
+-- 2 and 3 at full white for the people and props, and summed in they pin
+-- every band to 31 -- which is why its nights stayed as bright as noon. So
+-- Platinum's level takes light 0 only (LIT_MASK_PLATINUM); HeartGold /
+-- SoulSilver keep every light, as tuned.
+Gen4Shade.LIT_MASK_PLATINUM = 1
+local levelCache = setmetatable({}, { __mode = "k" })
+local function absoluteUp(template, mask)
+  local tot = { 0, 0, 0 }
+  local dif, amb, emi = template.diffuse or {}, template.ambient or {}, template.emission or {}
+  for _, L in pairs(template.lights or {}) do
+    local u, c = L.unit, L.colour
+    local bit = 2 ^ (tonumber(L.index) or 0)
+    if mask and math.floor(mask / bit) % 2 == 0 then u = nil end
+    if u and c then
+      local v = math.max(0, -(u[2] or 0))
+      for i = 1, 3 do
+        local lc = (c[i] or 0) / CHANNEL_MAX
+        tot[i] = tot[i] + (dif[i] or 0) / CHANNEL_MAX * lc * v + (amb[i] or 0) / CHANNEL_MAX * lc
+      end
+    end
+  end
+  for i = 1, 3 do tot[i] = math.min(1, tot[i] + (emi[i] or 0) / CHANNEL_MAX) end
+  return tot
+end
+function Gen4Shade.levelFor(templates, template, mask)
+  if type(templates) ~= "table" or type(template) ~= "table" then return 1, 1, 1 end
+  local cache = levelCache[templates]
+  if not cache then cache = {}; levelCache[templates] = cache end
+  local ref = cache[mask or "all"]
+  if ref == nil then
+    local best, bestSum = nil, -1
+    for _, t in ipairs(templates) do
+      local a = absoluteUp(t, mask)
+      local s = a[1] + a[2] + a[3]
+      if s > bestSum then best, bestSum = a, s end
+    end
+    ref = best or false
+    cache[mask or "all"] = ref
+  end
+  if not ref then return 1, 1, 1 end
+  local a = absoluteUp(template, mask)
+  local function ratio(i) if (ref[i] or 0) <= 0 then return 1 end return math.min(1, a[i] / ref[i]) end
+  return ratio(1), ratio(2), ratio(3)
+end
+
 function Gen4Shade.forMap(arealight, member, hour, minute)
   local members = arealight and arealight.members
   local templates = members and member and members[member]
   if not templates then return nil end
   local template, index = Gen4AreaLight.activeAtClock(templates, hour, minute)
   if not template then return nil end
-  return Gen4Shade.forTemplate(template), template, index
+  local inner = Gen4Shade.forTemplate(template)
+  if not inner then return nil, template, index end
+  -- THE DEFAULT MASK, for a shape whose cache carries no `lights` (imported
+  -- before gen4-light-mask-v1): light 0 on Platinum (the 4,300 of 7,346
+  -- measured above), every light on HeartGold / SoulSilver, as tuned
+  local default
+  pcall(function()
+    local GV = require("src.core.GameVersion")
+    if GV.family(GV.get()) == "platinum" then default = Gen4Shade.LIT_MASK_PLATINUM end
+  end)
+  -- PER MATERIAL: `shade(nx, ny, nz, lights)` takes the shape's own light
+  -- mask (polyAttr bits 0..3, Gen4ModelPack `lights`). A mask of 0 -- no
+  -- light reaches the material -- is NOT LIT AT ALL: the geometry engine
+  -- computes a NORMAL's colour only from the lights POLYGON_ATTR enables, and
+  -- with none the vertex keeps its COLOR (or the diffuse-as-vertex-colour
+  -- bit, which AreaLight_UseGlobalModelAttributes leaves off: Platinum's
+  -- ModelAttributes_SetDiffuseReflection(.., FALSE, ..)). So 1, 1, 1 -- no
+  -- form, no night (the DS hardware rule, GBATEK "DS 3D Polygon Light
+  -- Parameters"; the area-light side READ FROM CODE)
+  local levels = {}
+  local function level(m)
+    local key = m or "default"
+    local l = levels[key]
+    if not l then
+      local mask = m
+      if mask == nil then mask = default end
+      if mask == 0 then mask = default end
+      local lr, lg, lb = Gen4Shade.levelFor(templates, template, mask)
+      l = { lr, lg, lb }
+      levels[key] = l
+    end
+    return l
+  end
+  local shade = function(nx, ny, nz, lights)
+    if tonumber(lights) == 0 then return 1, 1, 1 end
+    local r, g, b = inner(nx, ny, nz)
+    local l = level(tonumber(lights))
+    return r * l[1], g * l[2], b * l[3]
+  end
+  return shade, template, index
 end
 
 -- Which band a member is in, without building a tint for it.  This is what

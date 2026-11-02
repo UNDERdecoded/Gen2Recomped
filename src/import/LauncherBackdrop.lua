@@ -164,6 +164,33 @@ local function startGame(version)
   return true
 end
 
+-- A NATIVE FILE PICKER IS ABOUT TO OPEN (RomImporter's pickFile / pickFolder /
+-- createFile). On a phone it is another activity, and Android reclaims the
+-- memory of the one behind it: a launcher holding a running game's menu
+-- (over 100 MB of Lua heap with a DS title) is the first thing killed, and the
+-- app then simply closes instead of installing the pick. So the game goes,
+-- with everything rebuildable it left behind, and does not come back until the
+-- picker has returned (releaseHold, from RomImporter:focus) or `seconds` have
+-- passed (an in-process iOS sheet that was cancelled raises nothing).
+function B.holdForPicker(seconds)
+  state.holdUntil = (love.timer and love.timer.getTime() or 0) + (seconds or 120)
+  if state.current then B.stop() end
+  -- the backdrop game's supersampled screen and smoothed glyph pages
+  pcall(function()
+    local SS = package.loaded["src.render.SuperSample"]
+    if SS and SS.canvas then
+      if SS.canvas.release then SS.canvas:release() end
+      SS.canvas, SS.key = nil, nil
+    end
+  end)
+end
+function B.releaseHold()
+  if state.holdUntil then
+    state.holdUntil = nil
+    state.wantSince = love.timer and love.timer.getTime() or 0
+  end
+end
+
 function B.update(dt, busy)
   -- an import owns the cache paths while it runs
   if busy then
@@ -172,6 +199,10 @@ function B.update(dt, busy)
   end
   if state.paused then return end
   local now = love.timer and love.timer.getTime() or 0
+  if state.holdUntil then
+    if now < state.holdUntil then return end
+    state.holdUntil = nil
+  end
   if state.want ~= state.current and (now - state.wantSince) >= B.SETTLE then
     B.stop()
     local want = state.want

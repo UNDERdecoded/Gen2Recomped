@@ -160,6 +160,10 @@ function Gen4HiddenPaths.applyToDef(data, def, save)
   -- carry generation 4 and an overworld matrix 0 of their own, and the
   -- patches walled off Route 1's way into Accumula
   if def.gen5 then return false end
+  -- ...and HeartGold / SoulSilver's matrix 0 is Johto: the ground already
+  -- skips the patches there (Gen4Ground), so the collision must too, or the
+  -- chunks at those cells walk as a Platinum land's permissions
+  if def.cameraFamily == "hgss" then return false end
   if type(def.blocks) ~= "string" or type(def.behaviorCells) ~= "string" then return false end
   local key = Gen4HiddenPaths.key(save)
   if def.gen4HiddenKey == key then return false end
@@ -172,10 +176,40 @@ function Gen4HiddenPaths.applyToDef(data, def, save)
   local ox, oy = def.originX or 0, def.originY or 0
   local list = Gen4HiddenPaths.patches(save)
   if #list > 0 and perms then
-    local cells, bytes = {}, {}
-    for i = 1, w * h do
-      cells[i] = blocks:sub(i * 2 - 1, i * 2)
-      bytes[i] = behav:sub(i, i)
+    -- ONLY THE ROWS A PATCH REACHES are split into cells; the rest of the
+    -- map is carried over as whole rows. The overworld is a million cells,
+    -- and splitting every one of them on the first outdoor step cost a
+    -- visible hitch interpreted (love-android runs with the JIT off).
+    local rowCells, rowBytes = {}, {}
+    local cells, bytes = setmetatable({}, { __newindex = function(_, i, v)
+      local my = math.floor((i - 1) / w)
+      local row = rowCells[my]
+      if not row then
+        row = {}
+        local base = my * w
+        for x = 1, w do row[x] = blocks:sub((base + x) * 2 - 1, (base + x) * 2) end
+        rowCells[my] = row
+      end
+      row[i - my * w] = v
+    end }), setmetatable({}, { __newindex = function(_, i, v)
+      local my = math.floor((i - 1) / w)
+      local row = rowBytes[my]
+      if not row then
+        row = {}
+        local base = my * w
+        for x = 1, w do row[x] = behav:sub(base + x, base + x) end
+        rowBytes[my] = row
+      end
+      row[i - my * w] = v
+    end })
+    local function joined(rows, whole, size)
+      local out = {}
+      for my = 0, h - 1 do
+        local row = rows[my]
+        out[my + 1] = row and table.concat(row)
+          or whole:sub(my * w * size + 1, (my + 1) * w * size)
+      end
+      return table.concat(out)
     end
     local touched = false
     for _, p in ipairs(list) do
@@ -199,7 +233,7 @@ function Gen4HiddenPaths.applyToDef(data, def, save)
       end
     end
     if touched then
-      blocks, behav = table.concat(cells), table.concat(bytes)
+      blocks, behav = joined(rowCells, blocks, 2), joined(rowBytes, behav, 1)
     end
   end
   def.blocks, def.behaviorCells = blocks, behav

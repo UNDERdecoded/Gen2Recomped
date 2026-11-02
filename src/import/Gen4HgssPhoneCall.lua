@@ -47,6 +47,8 @@ function P.book(bytes)
       trainerId = u16(bytes, o + 4), mapId = u16(bytes, o + 6), gift = u16(bytes, o + 8),
       localScript = u16(bytes, o + 10), greeting = bytes:byte(o + 13),
       rematchWeekday = bytes:byte(o + 14), rematchTimeOfDay = bytes:byte(o + 15),
+      -- unkF: the random-call group (ov02_02251FDC picks 0 / 1 / 2 at 50 / 30 / 20 %)
+      callGroup = bytes:byte(o + 16),
     }
   end
   return out
@@ -116,7 +118,7 @@ function P.read(rom, str)
     texts = {},
   }
   if str then
-    for _, i in ipairs({ 8, 9, 30, 31, 32, 33, 34, 35, 37 }) do out.texts[i] = str(271, i) end
+    for _, i in ipairs({ 8, 9, 10, 11, 12, 13, 14, 15, 16, 18, 19, 30, 31, 32, 33, 34, 35, 37 }) do out.texts[i] = str(271, i) end
   end
   return out
 end

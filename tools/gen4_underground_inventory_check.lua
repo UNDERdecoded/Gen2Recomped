@@ -483,9 +483,9 @@ section("3. the lowerings, and nothing lowered to the wrong thing")
 ok(VM.lowered("message") == true,
    "the detector says `message` is not lowered, so it is not reading the real "
    .. "table and every assertion in this section is vacuous")
-ok(VM.lowered("showshardcost") == false,
-   "the detector says `showshardcost` IS lowered; it is one of the seven this "
-   .. "pass deliberately left, so the detector is answering yes to everything")
+ok(VM.lowered("0a5") == false,
+   "the detector says `0a5` IS lowered; it is one of the three still left, "
+   .. "so the detector is answering yes to everything")
 
 local THIS_PASS = {
   "givetrap", "givesphere",
@@ -787,12 +787,13 @@ end
 -- ---------------------------------------------------------------------------
 section("7. the ceiling, from the other side")
 -- ---------------------------------------------------------------------------
--- `gen4_field_moves_check` owns the ceiling (7). This owns the LIST, so a
--- later pass cannot lower one of the seven and leave the ceiling at seven --
--- which would hide a new hole behind a fixed one.
+-- `gen4_field_moves_check` owns the ceiling (3). This owns the LIST, so a
+-- later pass cannot lower one of them and leave the ceiling where it was --
+-- which would hide a new hole behind a fixed one. (Four of the original seven
+-- have since been lowered elsewhere: 0b3 and 2f6 in PtMiscCommands, the shard
+-- cost window in Gen4RankingsMachine.)
 do
-  local REMAIN = { "0a5", "0b3", "1b3", "205", "2f6",
-                   "showshardcost", "closeshardcostwindow" }
+  local REMAIN = { "0a5", "1b3", "205" }
   local stillOpen = 0
   for _, name in ipairs(REMAIN) do
     if VM.lowered(name) == false then stillOpen = stillOpen + 1 end

@@ -374,6 +374,13 @@ local function tickBird(st, ow)
     if e then
       e.spriteOffset = e.spriteOffset or {}
       e.spriteOffset.lift = b.yDelta
+      -- ...and SHOWN: the script's MakeObjectVisible hid the bird's picture
+      -- (that command sets the hide bit -- see ScrCmd_374 in Gen4ScriptVM),
+      -- and this state's MapObject_SetVisible(mapObject, FALSE) is what
+      -- clears it (legend_cutscene_camera.c, CORRECT_POS). Without it Ho-Oh
+      -- and Lugia flew in and stood on their perch unseen, talkable but
+      -- never drawn.
+      require("src.world.HgssModelObjects").setInvisible(ow, e, false)
     end
     b.delay, b.flapGap = 0, 0
     b.state = "flap"

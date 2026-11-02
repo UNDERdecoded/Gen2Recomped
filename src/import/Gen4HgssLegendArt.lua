@@ -43,6 +43,26 @@ A.PARTS = {
   trapThunder      = { model = 10, anims = { 11 } },
   trapPoison       = { model = 3, anims = { 4, 5 } },
   trapRock         = { model = 6, anims = { 7, 8, 9 } },
+  -- ScrCmd_459 (overlay 2 0x02245B80, ov02_02245D18): the Olivine
+  -- Lighthouse's lamp coming back on -- model 0, animations 1 and 2, looped
+  -- (src/world/HgssLighthouse.lua)
+  lighthouse       = { model = 0, anims = { 1, 2 } },
+  -- the Mystri Stage gymmick (src/field/gymmick/sinjoh.c
+  -- SinjohGymmick_Load3dGraphics): three models 101 / 104 / 107, each with
+  -- two animations (src/world/HgssSinjohStage.lua)
+  sinjoh1          = { model = 101, anims = { 102, 103 } },
+  sinjoh2          = { model = 104, anims = { 105, 106 } },
+  sinjoh3          = { model = 107, anims = { 108, 109 } },
+  -- the Sinjoh cutscenes (src/field/event_cutscene_sinjoh.c): UnownCircle's
+  -- two Unown rings (79 + 80/81, 82 + 83/84) and its light (85 + 86/87);
+  -- ScrCmd_817's egg, one per legend (88 / 92 / 96, each with 100 and its
+  -- own BTA / BMA / BTP)
+  sinjohUnown1     = { model = 79, anims = { 80, 81 } },
+  sinjohUnown2     = { model = 82, anims = { 83, 84 } },
+  sinjohLight      = { model = 85, anims = { 86, 87 } },
+  sinjohEgg0       = { model = 88, anims = { 100, 90, 91, 89 } },
+  sinjohEgg1       = { model = 92, anims = { 100, 94, 95, 93 } },
+  sinjohEgg2       = { model = 96, anims = { 100, 98, 99, 97 } },
 }
 -- ScrCmd_709 (overlay 2 0x022462E8, ov02_02246398): the Persian statues'
 -- alarm, palette 12 (0x20 bytes into BG palette 0), character data 13 and

@@ -364,4 +364,12 @@ function Data.load()
   return Data.ready, Data.why
 end
 
+-- Forget everything loaded, so the next Data.load reads the files again
+-- (lib/BakeJob.lua, once an in-game bake has written e3ds_voxel/).
+function Data.reset()
+  Data.ready, Data.why = nil, nil
+  Data.regions, Data.signs, Data.relief, Data.buildings, Data.layouts = nil, nil, nil, nil, nil
+  pageImages = {}
+end
+
 return Data

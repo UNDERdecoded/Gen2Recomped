@@ -222,6 +222,12 @@ function Gen4ModelPack.pack(model)
       -- whole room to black and its candle spots (`dun_spot`) shine through.
       noFog = (material and material.polyAttr
                and math.floor(material.polyAttr / 0x8000) % 2 == 0) or nil,
+      -- WHICH LIGHTS REACH IT: polyAttr bits 0..3 (the four GX lights). The
+      -- area light's templates set the lights and the colours globally and
+      -- leave this to the material (AreaLight_UseGlobalModelAttributes; and
+      -- map_prop.c ApplyToModel passes no MODEL_LIGHT_ENABLE_FLAGS), so the
+      -- night is however dark its own lights make it (Gen4Shade)
+      lights = (material and material.polyAttr) and (material.polyAttr % 16) or nil,
     }
   end
 

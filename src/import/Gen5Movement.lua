@@ -44,9 +44,11 @@
 -- per repetition for everything else.
 --
 -- NOT PLAYED: 0x43 / 0x44 (warp up / down; no script in Black uses them),
--- 0x69-0x74 0x79-0x98 (walks with a second direction; none used), 0x9A and
--- 0xAB-0xB4 0xBC (one-off animations, a handful of uses) -- `action` answers
--- nil for them and the executor skips the step, as it does on Platinum.
+-- 0x69-0x74 0x79-0x98 (walks with a second direction; none used), 0x65
+-- (one use, the trainer-eye script M0863 S0CBC; the approach itself is
+-- Gen4Commands' g4_start_approach) and 0xAB-0xB4 0xBC (one-off animations,
+-- one or two uses each) -- `action` answers nil for them and the executor
+-- skips the step, as it does on Platinum.
 
 local M = {}
 
@@ -93,8 +95,13 @@ A[0x45] = { kind = "hide" }
 A[0x46] = { kind = "show" }
 A[0x47] = { kind = "lock" }
 A[0x48] = { kind = "unlock" }
-A[0x49] = { kind = "none" }
-A[0x4A] = { kind = "none" }
+-- 0x49 / 0x4A set / clear object flag 0x10 (READ FROM CODE: 0x216D548 /
+-- 0x216D550 with r1 = 0x10, as 0x45-0x48 do 4 and 8): the character's
+-- animation held, so a walk after it glides on the standing frame (N's
+-- Castle, M0556 S1211: `3F 49 0D*10`). That 0x10 is the animation pause is
+-- the earlier reading of the field's flag word, not a decompiled name
+A[0x49] = { kind = "animpause" }
+A[0x4A] = { kind = "animresume" }
 -- emotes
 local EMOTES = { [0x4B] = "exclamation", [0x67] = "exclamation", [0x99] = "exclamation",
                  [0x9F] = "question", [0xA0] = "note", [0xA1] = "ellipsis" }
@@ -121,6 +128,16 @@ four(0x75, { kind = "jump", tiles = 3, frames = 8 })
 for _, id in ipairs({ 0x64, 0xB5, 0xB6, 0xB7, 0xB8, 0xB9, 0xBA, 0xBB }) do
   A[id] = { kind = "anim", frames = 16, approximate = true }
 end
+-- 0xB8 / 0xB9 play sound 0x7B7 as they start (READ FROM CODE: ov21
+-- 0x02198E98 / 0x02198EB0 call 0x020061E4(0x7B7) before 0x64's / 0xB6's
+-- init) -- 43 steps in Black (M0508, Z254)
+A[0xB8].se, A[0xB9].se = 0x7B7, 0x7B7
+-- 0x9A: animation 1 for 20 frames (READ FROM CODE: init 0x021990B8 sets
+-- animation 1, update 0x021990D4 counts to 0x14), lifting the character by
+-- a 10-entry table (0x021D4C1C: 0 0 0 0 0 4 4 3 1 0 units) -- the hop the
+-- player gives on the item-gift scripts (M0862 S0592, M0864 S23E3). The
+-- 20 frames are played; the 4-unit lift is not drawn
+A[0x9A] = { kind = "anim", frames = 20 }
 A[0x66] = { kind = "anim", frames = 40 }
 A[0x68] = { kind = "anim", frames = 40 }
 A[0xA2] = { kind = "anim", frames = 12 }

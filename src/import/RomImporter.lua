@@ -30,9 +30,26 @@ RomImporter.__index = RomImporter
 -- these three were not. Every caller here treats `false` as "no picker
 -- available" and shows its own notice, so a missing bridge now degrades to
 -- exactly the path a picker-less Android device has always taken.
+--
+-- BEFORE ANY OF THEM OPENS, the launcher lets go of what it can rebuild
+-- (releaseForPicker): the picker is a separate activity, and Android reclaims
+-- the memory of the one behind it -- a launcher still holding a running game
+-- menu behind its panels was killed outright, and "the app just closes when I
+-- add a mod" was the result. (A launcher killed anyway still installs the
+-- pick on its next start: new() arms the pick poll on every mobile launch.)
+local function releaseForPicker()
+  pcall(function()
+    local B = package.loaded["src.import.LauncherBackdrop"]
+    if B and B.holdForPicker then B.holdForPicker() end
+  end)
+  collectgarbage("collect")
+  collectgarbage("collect")
+end
+
 local function pickFile(...)
   local fn = love.system.pickFile
   if not fn then return false end
+  releaseForPicker()
   return fn(...) and true or false
 end
 
@@ -42,6 +59,7 @@ end
 local function pickFolder()
   local fn = love.system.pickFolder
   if not fn then return false end
+  releaseForPicker()
   return fn() and true or false
 end
 
@@ -1252,8 +1270,28 @@ local function markerFor(version)
   -- hgss-special-marts-v1 (Gen4HgssSpecialMarts lists), hgss-tmhm-v1 (the
   -- HGSS sTMHMMoves search -> per-species tmhm), gen5-npc-ranges-v1 (NPC
   -- wander box at +20/+22), gen5-script-link-v2 (0x08B/0x080/0x081/0x083
-  -- and the gym ops 0x185/0x187-0x189 keep their operands)
-  local revision = version == "platinum" and "platinum-gym-fx-v1:platinum-scratch-off-v1:platinum-poke-motion-v1:platinum-egg-hatch-v1:platinum-geometry-v17:platinum-field-fx-v1:platinum-library-tv-v1:platinum-spear-pillar-v1:platinum-effect-pal-v1:ds-back-throw-v1:pal-park-v1:" or ""
+  -- and the gym ops 0x185/0x187-0x189 keep their operands; v3: the music
+  -- commands 0x098/0x09E/0x09F/0x0A1/0x0A2, 0x25F and 0x1EA; v4: the Royal
+  -- Unova 0x1A5..0x1AC, the gate boards 0x17E, the camera preset 0x146, and
+  -- 0x0CD / 0x0CE read the right way round (time of day / card level), plus
+  -- constants.gen5GateBoards and constants.gen5CameraPresets)
+  -- 2026-11-01 (pt_cmd audit): platinum-tv-script-v1 -- map_scripts decodes
+  -- CallTVBroadcast / CallTVInterview / ScrCmd_27C / DoGroupConnectionAction
+  -- through (Gen4ScriptOps.VARIABLE_SPEC; every TV and three Amity Square
+  -- scripts stopped there), and gen4_pt_tv, the /arc/tv.narc timetable
+  -- (Gen4PtTvSchedule) PtTvBroadcast reads
+  -- 2026-11-02 (pt slots): platinum-slot-app-v1 -- gen4_pt_slot_art, the
+  -- Game Corner slot machine app's art from /data/slot.narc (Gen4PtSlotArt;
+  -- overlay 101, played by src/ui/PtSlotMachineApp.lua)
+  -- 2026-11-02 (pt capsules): platinum-capsule-app-v1 -- gen4_pt_capsule_art,
+  -- the Ball Capsule app's art from cb_data.narc (Gen4PtCapsuleArt;
+  -- capsule_menu, played by src/ui/PtCapsuleMenu.lua)
+  -- gen4-light-mask-v1 (both Gen 4 families): gen4_terrain / gen4_models
+  -- shapes carry their material's light mask, polyAttr bits 0..3
+  -- (Gen4ModelPack `lights`), which Gen4Shade lights per material -- what
+  -- darkens Platinum's nights; gen4_pt_capsule_art gains `trainerCapsules`
+  -- (pl_cb_data.narc / gs_cb_data) for the trainers' Ball Capsules
+  local revision = version == "platinum" and "platinum-ug-cursor-v1:platinum-ug-top-v1:platinum-ug-fx-v1:platinum-ug-trap-art-v1:platinum-dressup-photo-v2:gen4-light-mask-v1:platinum-capsule-app-v1:platinum-slot-app-v1:platinum-tv-script-v1:platinum-boat-cutscene-v1:platinum-gym-fx-v1:platinum-scratch-off-v1:platinum-poke-motion-v1:platinum-egg-hatch-v1:platinum-geometry-v17:platinum-field-fx-v1:platinum-library-tv-v1:platinum-spear-pillar-v1:platinum-effect-pal-v1:ds-back-throw-v1:pal-park-v1:" or ""
   -- gen5-trades-v5: constants.gen5Trades, gen5_trade_art and the trade
   -- commands' operands in map_scripts (Gen5Trades / Gen5TradeArt)
   -- gen5-starter-v6: gen5_starter_art, the gift box app (Gen5StarterArt)
@@ -1284,7 +1322,51 @@ local function markerFor(version)
   -- gen5-windows-v1: the font record's `frames` (the menu window, /a/0/0/5 tileset 9
   -- palette 3) and the menu cursor glyph (`symbols`, src/import/Gen5Cursor.lua)
   -- gen5-gym-fx-v1: gen5_gym_fx (Gen5GymFxArt), the gym gimmicks' models
-  if version == "black" or version == "white" then revision = "gen5-npc-ranges-v1:gen5-script-link-v2:gen5-gym-fx-v1:gen5-starter-v6:gen5-moveanim-v2:gen5-facilities-v1:gen5-field-fx-v1:gen5-title-v1:gen5-naming-v1:gen5-maps-v1:gen5-battle-bag-v1:gen5-town-map-v2:gen5-xtransceiver-v1:gen5-shop-art-v1:gen5-windows-v1:ds-back-throw-v1:gen5-encounter-fx-v4:gen5-floor-layers-v2:gen5-money-v12:gen5-egg-moves-v1:gen5-buyer-v1:gen5-egg-hatch-v1:" end
+  -- gen5-building-anim-v1: the building packs' animations (Gen5BuildingAnim:
+  -- set.animations / set.bw / BTP0 frames) and the 0x127..0x12E link names
+  -- gen5-door-camera-v1: constants.gen5DoorCameras, the door camera's zone
+  -- records from /a/1/7/9 (Gen5DoorCameras)
+  -- gen5-field-parts-v1: constants.gen5MusicParts (/a/1/4/7, Gen5MusicParts),
+  -- gen5NPortrait + bw_nportrait/*.png (/a/1/8/7, Gen5NPortrait),
+  -- gen5Passerby (ov10's survey tables, Gen5Passerby) and gen5BlackCity
+  -- (/a/1/5/4, Gen5BlackCity); gen5-script-link-v5: the link names for
+  -- 0x0A3..0x0A5, 0x1D3..0x1D5, 0x1BD, 0x1EE / 0x1EF, 0x063, 0x210..0x21F and
+  -- 0x1C2..0x1C9 (Gen5ScriptLink)
+  -- gen5-field-parts-v2: gen5BlackCity's types carry White Forest's species /
+  -- +0x24; gen5-script-link-v6: 0x1BC, 0x1C5 / 0x1C6 / 0x1C8, 0x21C, 0x0DC /
+  -- 0x0C8 and the named no-ops 0x252 / 0x033 / 0x076
+  -- gen5-field-parts-v3: constants.gen5Weather (Gen5Weather: the zones'
+  -- weather and the day calendar); gen5-script-link-v7: 0x1A4 (Gen5ZoneSounds)
+  -- gen5-field-parts-v4: constants.gen5SeasonArt + bw_season/*.png (Gen5SeasonArt)
+  -- gen5-field-parts-v5: constants.gen5MapVariants (/a/0/1/0, Gen5MapVariants)
+  -- gen5-field-parts-v6: gen5MapVariants.chunks (the swapped-in chunks' own
+  -- heights), constants.gen5ZoneModels + bw_zone_models/*.png (/a/1/9/0, the
+  -- Abyssal Ruins' overlay models, Gen5ZoneModels), constants.gen5WeatherArt
+  -- + bw_weather/*.png (/a/0/5/6 and ov25's snow sway, Gen5WeatherArt);
+  -- gen5-script-link-v8: 0x135 (Gen5ZoneModels)
+  -- gen5-field-parts-v7: constants.gen5Walkers (/a/1/8/6, the street crowds,
+  -- Gen5Walkers); gen5-script-link-v9: 0x134 (Gen5Walkers)
+  -- gen5-field-parts-v8: gen5WeatherArt.lights (/a/0/6/2, the weathers' fog
+  -- colours); gen5-script-link-v10: 0x112 / 0x236 (Gen5PartyChecks)
+  -- gen5-script-link-v11: 0x231 / 0x11A / 0x238 / 0x0E6..0x0E8 / 0x1ED /
+  -- 0x20C / Unity Tower 0x1DA..0x1E3 (Gen5SideCommands)
+  -- gen5-script-link-v12: 0x229 the event key items (Gen5SideCommands); 0x1ED
+  -- is the easy-chat word entry (src/pokemon/Gen5EasyChat.lua)
+  -- gen5-script-link-v13: 0x0BD / 0x10E / 0x10F / 0x11B / 0x11E / 0x11F /
+  -- 0x20D / 0x05A / 0x0E9 (Gen5FieldChecks)
+  -- gen5-field-parts-v9: constants.gen5FieldFx + bw_illusion/*.png and
+  -- bw_castle/*.png (/a/2/0/4 + /a/2/1/9, Gen5IllusionFx);
+  -- gen5-script-link-v14: 0x221..0x224, 0x23F, 0x255..0x258, 0x136
+  -- gen5-field-parts-v10: constants.gen5FlightPaths (/a/2/0/3, the paths
+  -- 0x15D flies an object along); gen5-script-link-v15: 0x15B..0x15E
+  -- gen5-script-link-v16: 0x225 / 0x226 (an object raised in place,
+  -- Meloetta's dance)
+  -- gen5-script-link-v17: 0x227 / 0x228 (the Zorua story), 0x24B (the zone's
+  -- music back), 0x242 / 0x139 / 0x23C / 0x25E
+  -- gen5-field-parts-v11: constants.gen5Cameras (every /a/0/6/0 record);
+  -- gen5-script-link-v18: 0x1A3 (an Elite Four room's camera)
+  -- gen5-script-link-v19: 0x0DE (a species registered as seen)
+  if version == "black" or version == "white" then revision = "gen5-field-parts-v11:gen5-script-link-v19:gen5-door-camera-v1:gen5-building-anim-v1:gen5-npc-ranges-v1:gen5-gym-fx-v1:gen5-starter-v6:gen5-moveanim-v2:gen5-facilities-v1:gen5-field-fx-v1:gen5-title-v1:gen5-naming-v1:gen5-maps-v1:gen5-battle-bag-v1:gen5-town-map-v2:gen5-xtransceiver-v1:gen5-shop-art-v1:gen5-windows-v1:ds-back-throw-v1:gen5-encounter-fx-v4:gen5-floor-layers-v2:gen5-money-v12:gen5-egg-moves-v1:gen5-buyer-v1:gen5-egg-hatch-v1:" end
   -- emerald-trade-scene-v3 / firered-trade-scene-v1: the in-game trade
   -- sequence's art (extractTradeScene, gen3_trade_art) -- without it special
   -- 257 falls back to the bare swap, so both Gen 3 caches re-import once
@@ -1311,7 +1393,33 @@ local function markerFor(version)
   -- table (Gen4HgssBattle.EFFECT_BG_MEMBERS) -- 84 pictures, not 22
   -- hgss-field-fx-v1: gen4_hgss_field_fx (Cut / Rock Smash / Headbutt, /a/1/3/4)
   -- and gen4_hgss_mart_art again (installs updated stage by stage never got it)
-  if version == "heartgold" or version == "soulsilver" then revision = "hgss-special-marts-v1:hgss-tmhm-v1:hgss-athlon-rooms-v1:hgss-athlon-team-v1:hgss-athlon-common-v1:hgss-disc-catch-v1:hgss-lamp-jump-v1:hgss-ring-drop-v1:hgss-snow-throw-v1:hgss-goal-roll-v1:hgss-circle-push-v1:hgss-pennant-v1:hgss-relay-run-v1:hgss-block-smash-v1:hgss-athlon-rivals-v1:hgss-hurdle-dash-v1:hgss-athlon-courses-v1:hgss-athlon-perf-v1:hgss-fly-map-v1:hgss-scratch-off-v1:hgss-legend-wing-v1:hgss-hideout-fx-v1:hgss-alph-panel-v1:hgss-poke-motion-v1:hgss-egg-hatch-v1:hgss-egg-moves-v1:hgss-gear-dex-v1:hgss-summary-v2:hgss-effect-bg-v1:hgss-field-fx-v1:hgss-pc-anim-v1:ds-back-throw-v1:pal-park-v1:hgss-enc-effects-v1:hgss-frontier-v2:" end
+  -- hgss-safari-apps-v1: gen4_hgss_safari_apps (Gen4HgssSafariAppArt), the
+  -- Safari Zone's area customizer / decoration app art (overlay 108)
+  -- hgss-lighthouse-v1: gen4_legend_art's `lighthouse` part (/a/1/7/4 0..2)
+  -- and the Mystri Stage's three (`sinjoh1..3`, 101..109)
+  -- and gen4_arealight from HGSS's own loose light files (0..4; the narc is
+  -- Platinum's), member 4 the lit lighthouse, for ScrCmd_459
+  -- hgss-soundplates-v1: gen4_hgss_soundplates (Gen4HgssSoundplates), the
+  -- land chunks' ambient-sound plates
+  -- hgss-mail-v1: gen4_mail_gra for HGSS (Gen4MailGra.build, /a/0/7/9), the
+  -- mail stationery the mail screen / mailbox / bag CHECK draw on
+  -- hgss-capsule-app-v1: gen4_pt_capsule_art for HGSS (Gen4PtCapsuleArt's
+  -- HGSS layout, /a/0/8/7, overlay 57), the Ball Capsule app's art
+  -- platinum-ug-cursor-v1: gen4_ug_top_art gains `cursor`, the base
+  -- decoration cursor model /data/ug_base_cur.nsbmd and its picture
+  -- platinum-ug-top-v1: gen4_ug_top_art (Gen4UgTopArt), the Underground's
+  -- top screen -- its map and the radar / player / base markers by sequence
+  -- platinum-ug-fx-v1: gen4_gym_fx gains the Digger Drill and its smoke
+  -- (fldeff 91 + 163, 58 + 162: Gen4GymFxArt.MODELS), played by Gen4UgBase
+  -- platinum-ug-trap-art-v1: gen4_ug_trap_art (Gen4UgTrapArt), the
+  -- Underground's trap effects drawn in the palettes traps.c loads them with
+  -- (the generic underground/*.png pass paired the smoke and flames wrongly)
+  -- hgss-dressup-photo-v1 / platinum-dressup-photo-v1: gen4_dressup gains the
+  -- photo studio's screens and the 18 backdrops (Gen4DressUp; HGSS reads the
+  -- same archive as /a/0/2/6, overlay 41) for the dress-up photos; v2 adds
+  -- the overlay's sprites (buttons, Accessory hearts, the viewer's name
+  -- plate, the backdrop icons) and the other screen's BG 224..226
+  if version == "heartgold" or version == "soulsilver" then revision = "hgss-dressup-photo-v2:gen4-light-mask-v1:hgss-capsule-app-v1:hgss-lighthouse-v1:hgss-soundplates-v1:hgss-mail-v1:hgss-safari-apps-v1:hgss-phone-ring-v1:hgss-unown-report-v1:hgss-special-marts-v1:hgss-tmhm-v1:hgss-athlon-rooms-v1:hgss-athlon-team-v1:hgss-athlon-common-v1:hgss-disc-catch-v1:hgss-lamp-jump-v1:hgss-ring-drop-v1:hgss-snow-throw-v1:hgss-goal-roll-v1:hgss-circle-push-v1:hgss-pennant-v1:hgss-relay-run-v1:hgss-block-smash-v1:hgss-athlon-rivals-v1:hgss-hurdle-dash-v1:hgss-athlon-courses-v1:hgss-athlon-perf-v1:hgss-fly-map-v1:hgss-scratch-off-v1:hgss-legend-wing-v1:hgss-hideout-fx-v1:hgss-alph-panel-v1:hgss-poke-motion-v1:hgss-egg-hatch-v1:hgss-egg-moves-v1:hgss-gear-dex-v1:hgss-summary-v2:hgss-effect-bg-v1:hgss-field-fx-v1:hgss-pc-anim-v1:ds-back-throw-v1:pal-park-v1:hgss-enc-effects-v1:hgss-frontier-v2:" end
   -- Include version-specific field encounters, sleep, swarm and rate tables.
   -- Only these three caches need rebuilding; other markers remain stable.
   -- v8: field.gen2TradeAnim, GSC's own trade movie art (Gen2TradeArt).
@@ -3146,6 +3254,13 @@ end
 -- _pollPickedFiles must stay armed so it consumes the file when it lands
 -- moments later (it clears pickPending itself once something is found).
 function RomImporter:focus(f)
+  -- back from a picker (releaseForPicker): the background game may return
+  if f then
+    pcall(function()
+      local B = package.loaded["src.import.LauncherBackdrop"]
+      if B and B.releaseHold then B.releaseHold() end
+    end)
+  end
   if f and love.filesystem.getInfo('pick_done.flag','file') then
     local picked=love.filesystem.read('pick_done.flag')
     love.filesystem.remove('pick_done.flag')
@@ -4691,6 +4806,7 @@ function RomImporter:exportSave(version)
       return
     end
     self.androidPendingExportVersion = version
+    if love.system.createFile then releaseForPicker() end
     if love.system.createFile and love.system.createFile(suggested, love.filesystem.getSaveDirectory()) then
       self.pickPending = true
       self.pickTimer = 0

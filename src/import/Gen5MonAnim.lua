@@ -735,6 +735,53 @@ function M.align(set, state, rasters)
   local bcx, bcy = centroid(big, C)
   local scx, scy = centroid(still, S)
   local guesses = { { bx0 - sx0, by0 - sy0 }, { bcx - scx, bcy - scy } }
+  -- THE SAME SCORE, WITHOUT VISITING EVERY PIXEL OF EVERY OFFSET. Walking
+  -- all 96 x 96 pixels at each of up to 578 offsets is ~5M steps: instant
+  -- compiled, but this runs as a Black / White battle opens (Gen5MonAnimPlayer)
+  -- and love-android has the JIT off -- 2.7s interpreted on a desktop per
+  -- Pokemon, far longer on a phone. With A = the still's opaque pixels, V =
+  -- the big canvas's inside the window (a summed-area table, O(1) each), B =
+  -- positions holding both and M = positions holding both equal:
+  --   same = M, diff = |A| + |V| - B - M, same - diff = 2M + B - |A| - |V|
+  -- so only the still's own pixels are visited, and an offset whose best case
+  -- (M = B = min(|A|, |V|)) cannot beat the best so far is skipped. Same
+  -- answer, same order, same tie-break.
+  local stOff, stVal, nA = {}, {}, 0
+  for i, a in pairs(still) do
+    nA = nA + 1
+    stOff[nA] = floor(i / S) * C + i % S
+    stVal[nA] = a
+  end
+  local x0w, y0w, x1w, y1w
+  for _, g in ipairs(guesses) do
+    x0w = (not x0w or g[1] - 8 < x0w) and g[1] - 8 or x0w
+    y0w = (not y0w or g[2] - 8 < y0w) and g[2] - 8 or y0w
+    x1w = (not x1w or g[1] + 8 > x1w) and g[1] + 8 or x1w
+    y1w = (not y1w or g[2] + 8 > y1w) and g[2] + 8 or y1w
+  end
+  -- every window inside the canvas (always, around a centred Pokemon); a
+  -- window over an edge reads wrapped rows, which only the plain walk repeats
+  local inside = x0w >= 0 and y0w >= 0 and x1w + S <= C and y1w + S <= C
+  local RW, RH = x1w + S - x0w, y1w + S - y0w
+  local sat
+  if inside then
+    local occ = {}
+    for i in pairs(big) do
+      local x, y = i % C - x0w, floor(i / C) - y0w
+      if x >= 0 and y >= 0 and x < RW and y < RH then occ[y * RW + x] = 1 end
+    end
+    sat = {}
+    local W1 = RW + 1
+    for x = 0, RW do sat[x] = 0 end
+    for y = 1, RH do
+      local run, row, prev, src = 0, y * W1, (y - 1) * W1, (y - 1) * RW - 1
+      sat[row] = 0
+      for x = 1, RW do
+        run = run + (occ[src + x] or 0)
+        sat[row + x] = sat[prev + x] + run
+      end
+    end
+  end
   local tried = {}
   local best, bestX, bestY, bestSame, bestDiff
   for _, g in ipairs(guesses) do
@@ -745,18 +792,38 @@ function M.align(set, state, rasters)
         local key = wx * 4096 + wy
         if not tried[key] then
           tried[key] = true
-          local same, diff = 0, 0
-          for y = 0, S - 1 do
-            local row, brow = y * S, (wy + y) * C + wx
-            for x = 0, S - 1 do
-              local a = still[row + x]
-              local v = big[brow + x]
-              if a or v then
-                if a == v then same = same + 1 else diff = diff + 1 end
+          local same, diff
+          if sat then
+            local W1 = RW + 1
+            local ax, ay = wx - x0w, wy - y0w
+            local nV = sat[(ay + S) * W1 + ax + S] - sat[ay * W1 + ax + S]
+              - sat[(ay + S) * W1 + ax] + sat[ay * W1 + ax]
+            local lo = nA < nV and nA or nV
+            if not best or 3 * lo - nA - nV > best then
+              local m, b, base = 0, 0, wy * C + wx
+              for k = 1, nA do
+                local v = big[base + stOff[k]]
+                if v ~= nil then
+                  b = b + 1
+                  if v == stVal[k] then m = m + 1 end
+                end
+              end
+              same, diff = m, nA + nV - b - m
+            end
+          else
+            same, diff = 0, 0
+            for y = 0, S - 1 do
+              local row, brow = y * S, (wy + y) * C + wx
+              for x = 0, S - 1 do
+                local a = still[row + x]
+                local v = big[brow + x]
+                if a or v then
+                  if a == v then same = same + 1 else diff = diff + 1 end
+                end
               end
             end
           end
-          if not best or same - diff > best then
+          if same and (not best or same - diff > best) then
             best, bestX, bestY, bestSame, bestDiff = same - diff, wx, wy, same, diff
           end
         end

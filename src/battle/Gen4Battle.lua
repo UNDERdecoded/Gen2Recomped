@@ -831,7 +831,10 @@ function Gen4Battle.feetRow(img)
   if feetRows[img] ~= nil then return feetRows[img] end
   local row = img:getHeight() - 1
   local ok = pcall(function()
-    local c = love.graphics.newCanvas(img:getWidth(), img:getHeight())
+    -- dpiscale 1: at the window's density (3x on a phone) the read-back
+    -- rows were 3x the picture's, so the feet landed far below it, and the
+    -- scan below walked 9x the pixels
+    local c = love.graphics.newCanvas(img:getWidth(), img:getHeight(), { dpiscale = 1 })
     love.graphics.push("all")
     love.graphics.setCanvas(c)
     love.graphics.clear(0, 0, 0, 0)
@@ -1002,6 +1005,9 @@ function Gen4Battle.drawBattlers(battle)
   -- honoured -- `System:draw` sorts by z, farthest first -- so a burst that
   -- layers over itself still layers correctly.
   Gen4Battle.drawParticles(battle)
+  -- ...the Ball Capsule's seals on a send-out (src/battle/Gen4SealEffect.lua)
+  local sealFx = battle and battle.gen4SealFx
+  if sealFx and sealFx.wait <= 0 and sealFx.fx then pcall(sealFx.fx.draw, sealFx.fx, sealFx.x, sealFx.y) end
   -- ...AND THE FLAT 2D SPRITES, on top of the particles. 32 of the 501 programs
   -- build one out of four separate archives and until now they drew nothing.
   Gen4Battle.drawCellActors(battle)

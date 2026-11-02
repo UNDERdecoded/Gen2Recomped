@@ -64,12 +64,29 @@ end
 
 M.pack = pack
 
+-- digits by byte: read as the into-battle effect first plays, and a sub() +
+-- tonumber() per value cost most of a frame interpreted (love-android runs
+-- with the JIT off); `pack` writes only lowercase hex, four digits a value
+local HEX = {}
+for c = 0, 255 do HEX[c] = 0 end
+for d = 0, 9 do HEX[48 + d] = d end
+for d = 0, 5 do HEX[65 + d] = 10 + d; HEX[97 + d] = 10 + d end
+local byte = string.byte
+
 local function unpackList(text, scale)
-  local out = {}
-  for i = 1, #text, 4 do
-    local n = tonumber(text:sub(i, i + 3), 16) or 0
+  local out, k = {}, 0
+  local len = #text
+  for i = 1, len, 4 do
+    local n
+    if i + 3 <= len then
+      local a, b, c, d = byte(text, i, i + 3)
+      n = HEX[a] * 4096 + HEX[b] * 256 + HEX[c] * 16 + HEX[d]
+    else
+      n = tonumber(text:sub(i, i + 3), 16) or 0
+    end
     if n >= 32768 then n = n - 65536 end
-    out[#out + 1] = n / scale
+    k = k + 1
+    out[k] = n / scale
   end
   return out
 end

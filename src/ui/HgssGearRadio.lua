@@ -38,12 +38,15 @@
 --     on a Sunday without the GB Sounds) and its track -- March (Mon, Wed,
 --     Fri, Sun), Lullaby (Tue, Thu, Sat), Hoenn / Sinnoh with the National Dex;
 --     POKe FLUTE plays SEQ_GS_HUE, UNOWN SEQ_GS_RADIO_UNKNOWN
--- NOT DONE: the talk shows' scripts (Oak's Pokemon Talk, Trainer Profiles,
--- That Town, Search Party, the drama, Buena's Password, the commercials, the
--- Rocket broadcasts) -- the station's title and host show, the script window
--- stays empty; the static mixed into the text; the GB Sounds track list.
+--   * THE SHOWS THEMSELVES -- every show's lines, its SEQ, the segment loop
+--     (show, jingle, commercial, show), the line printer's timing and the
+--     static on a weak signal -- are src/ui/HgssRadioShows.lua (the
+--     RadioShow core, overlay_101_021F57B8.c, and radio/shows/*.c); this
+--     module tunes it: Radio_OpenStation / _CloseStation /
+--     RadioShow_SetStaticLevel / Radio_Run.
 
 local Font = require("src.render.Font")
+local Shows = require("src.ui.HgssRadioShows")
 
 local Radio = {}
 Radio.__index = Radio
@@ -67,13 +70,6 @@ local ALPH_MAPS = { [315] = true, [323] = true, [490] = true, [491] = true, [492
 local MAHOGANY_MAPS = { [87] = true, [133] = true, [140] = true, [396] = true, [397] = true, [246] = true,
   [368] = true, [116] = true, [247] = true, [248] = true, [249] = true, [45] = true, [142] = true,
   [245] = true, [88] = true, [294] = true, [295] = true }
--- RADIO_STATION_*: bank, music
-local SHOW = {
-  [0] = { 416 }, { 414 }, { 419 }, { 413 }, { 411 }, { 420 }, { 415 },
-  { 417, "SEQ_GS_HUE" }, { 410, "SEQ_GS_RADIO_UNKNOWN" }, { 418 }, { 409 }, { 412 },
-}
-local MUSIC = { [0] = "SEQ_GS_RADIO_MARCH", "SEQ_GS_RADIO_KOMORIUTA", "SEQ_GS_RADIO_R_101", "SEQ_GS_RADIO_R_201" }
-
 local function flag(save, id) return ((save or {}).flags or {})[("FLAG_G4_%04X"):format(id)] == true end
 
 function Radio.new(gear)
@@ -82,6 +78,24 @@ function Radio.new(gear)
   self.x, self.y = tonumber(pg.radioX) or 128, tonumber(pg.radioY) or 128
   if not self:inArea(self.x, self.y) then self.x, self.y = 128, 128 end
   self.set = self:availableSet()
+  self.lines = {}
+  -- RadioShow_Create: the shows' state lives as long as the radio app
+  -- (lastEpisodeID, the commercial trigger); regionNo is the map's
+  local header = gear:header()
+  self.rs = Shows.new({
+    game = self.game,
+    regionNo = header and (tonumber(header.region) or 0) ~= 0 and 1 or 0,
+    music = function(song, loop) self:music(song, loop) end,
+    fade = function(frames)
+      local ok, Music = pcall(require, "src.core.Music")
+      if ok and Music.dsFade then pcall(Music.dsFade, 0, frames) end
+    end,
+    sounding = function()
+      local ok, Music = pcall(require, "src.core.Music")
+      if not (ok and Music.sounding and Music.current) then return false end
+      return Music.current() == self.song and Music.sounding()
+    end,
+  })
   return self
 end
 
@@ -124,61 +138,49 @@ function Radio:tuned(x, y)
   return nil, 0
 end
 
--- RadioShow_TranslateStationID
+-- RadioShow_TranslateStationID (the show a station plays now)
 function Radio:showFor(station)
-  local hour = tonumber(os.date("%H")) or 0
-  if station == 0 then return 0 end
-  if station == 1 then return 1 end
-  if station == 2 then return 5 + hour % 2 end
-  if station == 3 then return 2 + hour % 3 end
-  if station == 4 then return 7 end
-  if station == 5 then return 8 end
-  if station == 6 then return 9 end
-  if station == 7 then return 10 end
-  return 0
+  return self.rs:translate(station)
 end
 
-function Radio:music(song)
+-- SndRadio_StartSeq / SndRadio_StopSeq: a show's sequence starts from its
+-- beginning (StopBGM first), `loop` false for the one-shot jingle
+function Radio:music(song, loop)
   self.song = song
   local ok, Music = pcall(require, "src.core.Music")
   if not ok then return end
-  if song then pcall(Music.play, self.game.data, song)
-  else pcall(Music.stop) end
+  pcall(Music.stop)
+  if song then pcall(Music.play, self.game.data, song, loop) end
 end
 
+-- Radio_OpenStation: RadioShow_BeginSegment, static unless the signal is
+-- clear (signal 2)
 function Radio:open(station)
-  local show = self:showFor(station)
-  local def = SHOW[show] or {}
-  self.show = show
-  self.title = def[1] and self.gear:text(def[1], 0) or ""
-  self.host = def[1] and (show ~= 7 and show ~= 8 and show ~= 10 and show ~= 11) and self.gear:text(def[1], 1) or ""
-  self.lines = {}
-  self.script = nil
-  if show == 0 then
-    -- Pokemon Music: the intro, then the day's line and track
-    local wday = (tonumber(os.date("%w")) or 0)
-    local national = ((self.game.save or {}).pokedex or {}).national and true or false
-    local track, msg = 0, 3 + wday
-    if wday == 0 then
-      local inv = (self.game.save or {}).inventory or {}
-      if (tonumber(inv.ITEM_GB_SOUNDS) or 0) > 0 then track = 0 else msg = 12 end
-    elseif wday == 1 or wday == 5 then track = 0
-    elseif wday == 3 then if national then track, msg = 2, 10 end
-    elseif wday == 2 or wday == 6 then track = 1
-    elseif wday == 4 then if national then track, msg = 3, 11 else track = 1 end end
-    self.script = { self.gear:text(416, 2) or "", self.gear:text(416, msg) or "" }
-    self:music(MUSIC[track])
-  else
-    self:music(def[2])
-  end
-  self.scriptAt, self.scriptT = 1, 0
+  self.rs:beginSegment(station, self.signal ~= 2)
+  self:mirror()
 end
 
-function Radio:close()
+-- what the show has put in its windows, for drawing and the harnesses
+function Radio:mirror()
+  local rs = self.rs
+  self.show = rs.curStation
+  self.title, self.host = rs.title, rs.host
+  local lines = {}
+  local rows = {}
+  for _, e in ipairs(rs:window()) do rows[#rows + 1] = e end
+  table.sort(rows, function(a, b) return a.y < b.y end)
+  for _, e in ipairs(rows) do if e.y > -16 and e.y < 32 then lines[#lines + 1] = e.text end end
+  self.lines = lines
+end
+
+-- Radio_CloseStation (RadioShow_EndSegment); StopBGM when the dial leaves
+-- every station
+function Radio:close(keepMusic)
   if self.station ~= nil then
     self.station, self.signal = nil, 0
-    self.title, self.host, self.lines, self.script = nil, nil, {}, nil
-    self:music(nil)
+    self.rs:endSegment()
+    self.title, self.host, self.lines, self.show = nil, nil, {}, nil
+    if not keepMusic then self:music(nil) end
   end
 end
 
@@ -186,15 +188,25 @@ end
 function Radio:retune()
   local station, signal = self:tuned(self.x, self.y)
   if station == nil then return self:close() end
-  if station == self.station then self.signal = signal; return end
-  self:close()
+  if station == self.station then
+    if signal ~= self.signal then
+      self.rs:setStatic(signal ~= 2)
+      self.signal = signal
+    end
+    return
+  end
+  self:close(true)
   self.station, self.signal = station, signal
   self:open(station)
 end
 
 function Radio:enter()
   self.set = self:availableSet()
-  -- Radio_Start (as the app fades in): the field's music stops
+  -- Radio_Start (as the app fades in): the field's music stops. The radio
+  -- overlay is built anew each time the app opens, its RadioShow with it.
+  local rs = self.rs
+  rs.curStation, rs.lastStation, rs.nextStation, rs.lastEpisodeID = 0, 0, 0, 0
+  rs.triggerCommercials, rs.active, rs.buf = false, false, {}
   self.station = nil
   self:music(nil)
   self:retune()
@@ -207,10 +219,13 @@ function Radio:leave()
   -- (src/world/HgssRadioMusic.lua); the map's music comes back only for an
   -- untuned dial
   local Field = require("src.world.HgssRadioMusic")
-  if self.station ~= nil and self.song then
+  -- ...and so does the jingle or a commercial (isPlayingJingle,
+  -- curStation == RADIO_STATION_COMMERCIALS)
+  local rs = self.rs
+  local between = rs.active and (rs.isPlayingJingle or rs.curStation == Shows.COMMERCIALS)
+  if self.station ~= nil and self.song and not between then
     Field.keep(self.game, self.song)
-    self.station, self.signal = nil, 0
-    self.title, self.host, self.lines, self.script = nil, nil, {}, nil
+    self:close(true)
     return
   end
   Field.clear(self.game)
@@ -290,17 +305,10 @@ function Radio:reselect() end
 function Radio:update()
   self.t = self.t + 1
   if not self.entered and not self.gear.fade then self.entered = true; self:enter() end
-  -- the script window: a line at a time, 45 frames apart (RadioShow delay)
-  if self.script then
-    self.scriptT = self.scriptT + 1
-    if self.scriptT == 1 or self.scriptT % 90 == 0 then
-      local line = self.script[self.scriptAt]
-      if line then
-        self.lines = {}
-        for l in (line .. "\n"):gmatch("([^\n]*)\n") do self.lines[#self.lines + 1] = l end
-        self.scriptAt = self.scriptAt + 1
-      end
-    end
+  -- Radio_Run: RadioShow_Main once a frame while a station is open
+  if self.station ~= nil and self.rs.active then
+    self.rs:main()
+    self:mirror()
   end
 end
 
@@ -331,9 +339,37 @@ function Radio:drawTop()
   gear:picture("radio_bottom")
   Font.pushStyle({ text = gear:ink("radioSub", 1, { 1, 1, 1 }), shadow = gear:ink("radioSub", 2, { 0.3, 0.3, 0.3 }) })
   if self.host and self.host ~= "" then Font.draw(self.host, 32, 128) end
-  for i = 1, 2 do
-    local line = self.lines and self.lines[#self.lines - 2 + i]
-    if line then Font.draw(line, 16, 152 + (i - 1) * 16) end
+  -- the script window, SUB_2 (2, 19) 28 x 4 tiles: two 16 px rows that
+  -- scroll up 2 px a step; a line printed over another hides it up to its
+  -- own width; a line with static is drawn glyph code by glyph code
+  if self.station ~= nil then
+    local WX, WY, WW, WH = 16, 152, 224, 32
+    local sx, sy, sw, sh = love.graphics.getScissor()
+    for _, e in ipairs(self.rs:window()) do
+      local x0 = WX + (e.clip or 0)
+      if x0 < WX + WW then
+        -- the scissor is in canvas pixels, past whatever transform is on;
+        -- inside a supersampled pass (src/render/SuperSample.lua) the
+        -- scissor calls are wrapped to multiply by its R themselves
+        local ax, ay = love.graphics.transformPoint(x0, WY)
+        local bx, by = love.graphics.transformPoint(WX + WW, WY + WH)
+        local SSok, SS = pcall(require, "src.render.SuperSample")
+        local R = SSok and SS.active and tonumber(tostring(SS.key or ""):match("x(%d+)$")) or 1
+        ax, ay, bx, by = ax / R, ay / R, bx / R, by / R
+        love.graphics.intersectScissor(math.min(ax, bx), math.min(ay, by),
+          math.max(0, math.abs(bx - ax)), math.max(0, math.abs(by - ay)))
+        if e.codes then
+          local pen = WX
+          for _, code in ipairs(e.codes) do
+            Font.drawCode(code, pen, WY + e.y)
+            pen = pen + Font.advanceOf(code)
+          end
+        else
+          Font.draw(e.text, WX, WY + e.y)
+        end
+        if sx then love.graphics.setScissor(sx, sy, sw, sh) else love.graphics.setScissor() end
+      end
+    end
   end
   Font.popStyle()
 end

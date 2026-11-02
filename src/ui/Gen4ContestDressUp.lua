@@ -18,7 +18,9 @@
 --     (ov17_02252A70 -> Gen4Contest.dressScore).
 -- Accessories are not used up.
 --
--- THE SCREEN: the dressing room (imageclip.narc 224/225/226) with the
+-- THE SCREEN: the dressing room (imageclip.narc 121/133/122 -- 224/225/226
+-- is the other screen's, see D:draw; the old 224 picture stays the fallback
+-- on a cache without the photo studio's art) with the
 -- Accessories in your case down the left (as line 47 says) and the Pokemon
 -- on the right at the overlay's x 192. The words are bank 385's.
 --
@@ -36,7 +38,8 @@ D.BANK = 385
 D.TIME = 60
 D.KEEP = 20
 D.MON_X, D.MON_FOOT = 192, 145
-D.CASE = { x = 4, y = 20, cols = 3, rows = 4, cell = 36 }
+-- the case's window in the dressing room BG is (10..117, 18..140)
+D.CASE = { x = 10, y = 18, cols = 3, rows = 3, cell = 36 }
 D.DONE = { x = 200, y = 4, w = 52, h = 14 }
 
 function D.cap(rank, link)
@@ -398,7 +401,33 @@ function D:draw()
     if room and room.path then ok, img = pcall(require("src.render.Assets").image, room.path) end
     self.room = ok and img or false
   end
-  local bg = self.room
+  -- THE ROOM IS IMAGECLIP 121 / 133 / 122, as in the photo studio:
+  -- VisualCompetition_Init calls the same ov22_02256948(v0, 0) as
+  -- ov22_02255D44 (pokeplatinum ov22_02255D44.c 455); 224 / 225 / 226 is the
+  -- OTHER screen's BG (ov22_02256BF4 -> ov22_0225A428 flag 2,
+  -- ov22_0225A6E0, BG_LAYER_SUB). Behind its windows: backdrop 0
+  -- (ov22_02256790 -> ov22_02257C88(.., 0, ..)) and the case's BG 129/130.
+  local photo = self.data.gen4_dressup and self.data.gen4_dressup.photo
+  if self.photoRoom == nil then
+    local function load(rec)
+      local ok, img = false, nil
+      if rec and rec.path then ok, img = pcall(require("src.render.Assets").image, rec.path) end
+      if ok and img then img:setFilter("nearest", "nearest") end
+      return ok and img or false
+    end
+    local bds = self.data.gen4_dressup and self.data.gen4_dressup.backdrops
+    self.photoRoom = load(photo and photo.photo_room)
+    self.photoCase = load(photo and photo.photo_case_acc)
+    self.photoBackdrop = load(bds and bds[0])
+    self.photoFill = self.data.gen4_dressup and self.data.gen4_dressup.photoFill
+  end
+  local bg = self.photoRoom or self.room
+  if self.photoRoom then
+    local f = self.photoFill
+    if f then g.setColor(f[1] / 255, f[2] / 255, f[3] / 255, 1); g.rectangle("fill", 0, 0, 256, 192); g.setColor(1, 1, 1, 1) end
+    if self.photoBackdrop then g.draw(self.photoBackdrop, 136, 16) end
+    if self.photoCase then g.draw(self.photoCase, 8, 16) end
+  end
   if bg then g.draw(bg, 0, 0) else g.setColor(0.95, 0.6, 0.8, 1); g.rectangle("fill", 0, 0, 256, 192); g.setColor(1, 1, 1, 1) end
   -- the Pokemon
   local m = self:monImage()
@@ -406,8 +435,10 @@ function D:draw()
   if m.image then g.draw(m.image, mx, my) end
   for _, p in ipairs(self.placed) do self:drawAccessory(p) end
   -- the case
-  g.setColor(1, 1, 1, 0.75)
-  g.rectangle("fill", D.CASE.x - 2, D.CASE.y - 2, D.CASE.cols * D.CASE.cell + 4, D.CASE.rows * D.CASE.cell + 4)
+  if not self.photoRoom then
+    g.setColor(1, 1, 1, 0.75)
+    g.rectangle("fill", D.CASE.x - 2, D.CASE.y - 2, D.CASE.cols * D.CASE.cell + 4, D.CASE.rows * D.CASE.cell + 4)
+  end
   for k, v in ipairs(self:visibleOwned()) do
     local cx, cy = self:cellAt(k)
     g.setColor(1, 1, 1, 1)

@@ -76,13 +76,10 @@ Gen4UndergroundMenu.OPTIONS = {
 -- WHAT EACH UNSERVED ROW IS WAITING FOR, named rather than lumped under one
 -- "not implemented".  Four different subsystems, and saying which keeps the
 -- refusal useful to whoever reads the log.
-Gen4UndergroundMenu.UNSERVED = {
-  traps     = "the trap inventory is not built",
-  spheres   = "the sphere inventory is not built",
-  goods     = "the goods inventory is not built",
-  treasures = "the treasure inventory is not built",
-  trainer   = "the Underground's trainer records are not built",
-}
+Gen4UndergroundMenu.UNSERVED = {}
+-- (pt_underground round) the four pockets open src/ui/Gen4UgPockets.lua
+Gen4UndergroundMenu.POCKETS = { traps = true, spheres = true, goods = true, treasures = true }
+Gen4UndergroundMenu.isUndergroundMenu = true
 
 -- THE CARTRIDGE'S OWN GEOMETRY, out of the `Window_Add` call in `menus.c`:
 --
@@ -194,19 +191,26 @@ function Gen4UndergroundMenu:activate(i)
     self:close()
     return true
   end
-  if row.id == "go_up" then
-    local ow = self.game and self.game.overworld
-    local ok, why = Gen4Underground.leave(self.game, ow)
-    if ok then
-      -- the warp is already running; the menu must not sit over the trip
-      self.game.stack:pop()
-      return true
-    end
-    -- A refusal here is worth showing: "nothing remembers where you came down"
-    -- is a save that cannot climb out, and silence would read as a dead button.
-    self.message = tostring(why or "cannot go up from here")
-    Logger.warn("gen4 underground menu: go up refused -- %s", self.message)
+  if row.id == "trainer" then
+    -- UndergroundMenu_OpenTrainerRecords (records.c 125-233)
+    require("src.ui.Gen4UgBaseUI").trainerCard(self.game)
+    return true
+  end
+  if row.id == "go_up" and require("src.world.Gen4UgBase").inRoom(self.game and self.game.overworld) then
+    -- menus.c 1342: common 66 "You can't return to the surface from a Secret Base."
+    self.message = Gen4Text.resolve(self.game and self.game.data, Gen4UndergroundMenu.BANK, 66, self.game)
     return false
+  end
+  if row.id == "go_up" then
+    -- UndergroundMenu_GoUpCallback (menus.c 1337-1375): common 52 "Would you
+    -- like to return to the surface from where you entered?" and YES / NO
+    self.confirm = { yes = 1 }
+    self.message = Gen4Text.resolve(self.game and self.game.data, Gen4UndergroundMenu.BANK, 52, self.game)
+    return true
+  end
+  if Gen4UndergroundMenu.POCKETS[row.id] then
+    self.game.stack:push(require("src.ui.Gen4UgPockets").new(self.game, { kind = row.id, mode = "menu" }))
+    return true
   end
   local waiting = Gen4UndergroundMenu.UNSERVED[row.id]
   if waiting then
@@ -218,9 +222,43 @@ function Gen4UndergroundMenu:activate(i)
   return false
 end
 
+-- YES on the return prompt: the menu leaves the stack FIRST, then the warp
+-- starts -- popping after `leave` popped the warp's own transition instead
+-- (found by the pt_underground scenario), and the player stayed down there
+function Gen4UndergroundMenu:goUp()
+  self.confirm = nil
+  local st = self.game.stack
+  local ow = self.game and self.game.overworld
+  local can = Gen4Underground.isUnderground(ow) and self.game.save and self.game.save.gen4SpecialLocation
+  if not can then
+    local _, why = Gen4Underground.leave(self.game, ow)
+    self.message = tostring(why or "cannot go up from here")
+    Logger.warn("gen4 underground menu: go up refused -- %s", self.message)
+    return false
+  end
+  if not st.top or st:top() == self then st:pop() end
+  local ok, why = Gen4Underground.leave(self.game, ow)
+  if not ok then
+    self.message = tostring(why or "cannot go up from here")
+    Logger.warn("gen4 underground menu: go up refused -- %s", self.message)
+    if st.push then st:push(self) end
+  end
+  return ok
+end
+
 function Gen4UndergroundMenu:update()
   local input = self.game and self.game.input
   if not input then return end
+  if self.confirm then
+    if input:wasPressed("up") or input:wasPressed("down") then self.confirm.yes = 3 - self.confirm.yes end
+    if input:wasPressed("a") then
+      if self.confirm.yes == 1 then return self:goUp() end
+      self.confirm, self.message = nil, nil
+    elseif input:wasPressed("b") then
+      self.confirm, self.message = nil, nil
+    end
+    return
+  end
   local count = #self.rows
   if count == 0 then return self:close() end
   if input:wasPressed("up") then
@@ -320,8 +358,16 @@ function Gen4UndergroundMenu:draw()
   end
 
   if self.message then
-    Font.drawBox(1, 20, 30, 4)
-    Font.draw(self.message, 16, 168)
+    Font.drawBox(1, 18, 30, 6)
+    local y = 152
+    local msg = tostring(self.message):gsub("[\v\f\r]", "\n")
+    for l in (msg .. "\n"):gmatch("([^\n]*)\n") do Font.draw(l, 16, y); y = y + 16 end
+  end
+  if self.confirm then
+    local Strings = require("src.core.Strings")
+    Font.drawBox(1, 11, 7, 6)
+    Font.draw(Strings("YES"), 26, 96); Font.draw(Strings("NO"), 26, 112)
+    Font.drawCode(require("src.ui.Theme").cursor, 16, self.confirm.yes == 1 and 96 or 112)
   end
 end
 

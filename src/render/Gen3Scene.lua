@@ -37,42 +37,76 @@ local function build(scene, opaque)
   local rows = math.floor(tonumber(scene.mapHeight) or 32)
   if cols < 1 or rows < 1 then return nil end
   local width, height = cols * 8, rows * 8
-  local image = love.image.newImageData(width, height)
   local backdrop = palettes[1]
   local cells = math.floor(#map / 2)
-  for cell = 0, math.min(cells, cols * rows) - 1 do
-    local lo, hi = map:byte(cell * 2 + 1), map:byte(cell * 2 + 2)
-    local entry = lo + hi * 256
-    local tileId = entry % 1024
-    local flipX = math.floor(entry / 1024) % 2 == 1
-    local flipY = math.floor(entry / 2048) % 2 == 1
-    local bank = math.floor(entry / 4096) % 16
-    local cx, cy = (cell % cols) * 8, math.floor(cell / cols) * 8
-    local base = tileId * 32
-    for y = 0, 7 do
-      local sy = flipY and (7 - y) or y
-      for x = 0, 7 do
-        local sx = flipX and (7 - x) or x
-        local byte = tiles:byte(base + sy * 4 + math.floor(sx / 2) + 1)
-        local index = 0
-        if byte then
-          -- the LOW nibble is the LEFT pixel; this cartridge is consistent
-          -- about that everywhere except its font
-          index = (sx % 2 == 0) and (byte % 16) or math.floor(byte / 16)
+  -- BUILT AS BYTES, EIGHT PIXELS AT A TIME, and handed to LOVE in one call.
+  -- A setPixel per pixel made the title and Birch's platform cost most of a
+  -- second each interpreted, and love-android runs LuaJIT with the JIT off.
+  -- Each tile row is made once per (map entry, row) and the same strings are
+  -- reused wherever the tile repeats; the bytes are what setPixel stored.
+  local char, floor = string.char, math.floor
+  local function rgba(c, a)
+    local function q(v)
+      v = (tonumber(v) or 0) / 255
+      if v < 0 then v = 0 elseif v > 1 then v = 1 end
+      return floor(v * 255 + 0.5)
+    end
+    return char(q(c[1]), q(c[2]), q(c[3]), a)
+  end
+  local clear = char(0, 0, 0, 0)
+  local back = (opaque and backdrop) and rgba(backdrop, 255) or clear
+  local slotBytes, rowSeg = {}, {}
+  local blank = clear:rep(8)
+  local out = {}
+  for y = 0, height - 1 do out[y] = {} end
+  local used = math.min(cells, cols * rows)
+  for cell = 0, cols * rows - 1 do
+    local col, cy = cell % cols, floor(cell / cols) * 8
+    if cell < used then
+      local lo, hi = map:byte(cell * 2 + 1), map:byte(cell * 2 + 2)
+      local entry = lo + hi * 256
+      local tileId = entry % 1024
+      local flipX = floor(entry / 1024) % 2 == 1
+      local flipY = floor(entry / 2048) % 2 == 1
+      local bank = floor(entry / 4096) % 16
+      local base = tileId * 32
+      for y = 0, 7 do
+        local key = entry * 8 + y
+        local seg = rowSeg[key]
+        if not seg then
+          local sy = flipY and (7 - y) or y
+          local parts = {}
+          for x = 0, 7 do
+            local sx = flipX and (7 - x) or x
+            local byte = tiles:byte(base + sy * 4 + floor(sx / 2) + 1)
+            local index = 0
+            if byte then
+              -- the LOW nibble is the LEFT pixel; this cartridge is consistent
+              -- about that everywhere except its font
+              index = (sx % 2 == 0) and (byte % 16) or floor(byte / 16)
+            end
+            local slot = bank * 16 + index + 1
+            local colour = index ~= 0 and palettes[slot] or nil
+            if colour then
+              local b = slotBytes[slot]
+              if not b then b = rgba(colour, 255); slotBytes[slot] = b end
+              parts[x + 1] = b
+            else
+              parts[x + 1] = back
+            end
+          end
+          seg = table.concat(parts)
+          rowSeg[key] = seg
         end
-        local colour = index ~= 0 and palettes[bank * 16 + index + 1] or nil
-        if colour then
-          image:setPixel(cx + x, cy + y,
-                         colour[1] / 255, colour[2] / 255, colour[3] / 255, 1)
-        elseif opaque and backdrop then
-          image:setPixel(cx + x, cy + y, backdrop[1] / 255, backdrop[2] / 255,
-                         backdrop[3] / 255, 1)
-        else
-          image:setPixel(cx + x, cy + y, 0, 0, 0, 0)
-        end
+        out[cy + y][col + 1] = seg
       end
+    else
+      for y = 0, 7 do out[cy + y][col + 1] = blank end
     end
   end
+  local lines = {}
+  for y = 0, height - 1 do lines[y + 1] = table.concat(out[y]) end
+  local image = love.image.newImageData(width, height, "rgba8", table.concat(lines))
   return love.graphics.newImage(image), image
 end
 

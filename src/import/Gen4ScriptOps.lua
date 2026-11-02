@@ -1024,11 +1024,43 @@ local function mysteryGiftSpec(data, pc)
   return "w" .. ("w"):rep(args)
 end
 
+-- THE TV COMMANDS AND THE GROUP-CONNECTION COMMAND, read from pokeplatinum's
+-- asm/macros/scrcmd.inc (2026-11-01, pt_cmd audit). Unsized, they cut short
+-- every TV in Sinnoh (TVBroadcast_Interact stopped at its first
+-- CheckBroadcastStatus) and three Amity Square scripts (at ScrCmd_27C).
+--
+--   CallTVBroadcast callID, ...: a u16 callID, then one word for 0 / 6
+--     (CHECK_STATUS, GET_NEXT_SEGMENT_ID), three for 1 / 3 / 5
+--     (LOAD_FRAMING_MESSAGE, LOAD_SEGMENT, UNUSED), two for 4
+--     (LOAD_COMMERCIAL), none for 2 (FINISH_PROGRAM).
+--   CallTVInterview callID, segment, arg2, arg3: always four words.
+--   ScrCmd_27C arg0, arg1: always two words (each switch arm reads one var).
+--   DoGroupConnectionAction action, ...: a u16 action, then two words for
+--     0..3 (CHECK_IS_ENTRY_VALID / _OVERRIDE, BUFFER_GROUP_NAME /
+--     _LEADER_NAME), one for 4 / 5 (OPEN_GROUP_NAMING_SCREEN, JOIN_GROUP),
+--     none for 6 (MAKE_NEW_GROUP).
+Gen4ScriptOps.TV_BROADCAST_CALL_ARGS = { [0] = 1, 3, 0, 3, 2, 3, 1 }
+Gen4ScriptOps.GROUP_CONNECTION_ACTION_ARGS = { [0] = 2, 2, 2, 2, 1, 1, 0 }
+local function subcallSpec(argsBySub)
+  return function(data, pc)
+    local lo, hi = data:byte(pc + Gen4ScriptOps.OPCODE_BYTES, pc + Gen4ScriptOps.OPCODE_BYTES + 1)
+    if not (lo and hi) then return nil end
+    local args = argsBySub[lo + hi * 256]
+    if not args then return nil end
+    return "w" .. ("w"):rep(args)
+  end
+end
+local function fixedSpec(spec) return function() return spec end end
+
 Gen4ScriptOps.VARIABLE_SPEC = {
   [0x23E] = mysteryGiftSpec,    -- mysterygiftgive
   [0x1CF] = fieldMoveFuncSpec,  -- dostrengthfunc
   [0x1D0] = fieldMoveFuncSpec,  -- doflashfunc
   [0x1D1] = fieldMoveFuncSpec,  -- dodefogfunc
+  [0x235] = subcallSpec(Gen4ScriptOps.TV_BROADCAST_CALL_ARGS),        -- calltvbroadcast
+  [0x237] = fixedSpec("wwww"),  -- calltvinterview
+  [0x27C] = fixedSpec("ww"),    -- 27c
+  [0x21D] = subcallSpec(Gen4ScriptOps.GROUP_CONNECTION_ACTION_ARGS),  -- dogroupconnectionaction
 }
 
 -- The spec for the instruction at `pc`, resolving a `*` command when its rule

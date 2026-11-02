@@ -374,7 +374,7 @@ function Gen4PartyMenu:touchpressed(_, px, py)
     local m=self:menuRect(#actions)
     if x>=m.x and x<m.x+m.w and y>=m.firstRow and y<m.firstRow+#actions*MENU.row then
       self:runAction(actions[math.floor((y-m.firstRow)/MENU.row)+1])
-    else self.submenu=nil;self.itemMenu=nil end
+    else self.submenu=nil;self.itemMenu=nil;self.mailMenu=nil end
     return true
   end
   if self.select and x>=CONFIRM.x and x<CONFIRM.x+CONFIRM.w and y>=CONFIRM.y and y<CONFIRM.y+CONFIRM.h then
@@ -450,10 +450,20 @@ function Gen4PartyMenu:runAction(action)
   if action == 'cancel' and self.itemMenu then
     self.itemMenu=nil;self.submenu=1;return
   end
+  -- HGSS: a mon holding Mail has MAIL > READ / TAKE (src/ui/HgssMailParty.lua)
+  if action == 'cancel' and self.mailMenu then
+    self.mailMenu=nil;self.submenu=1;return
+  end
+  if action == 'mail' then
+    self.mailMenu = true;self.submenu = 1;return
+  end
   if action == 'item' then
     self.itemMenu = true;self.submenu = 1;return
   end
   self.itemMenu = nil
+  self.mailMenu = nil
+  if action == 'readMail' and mon then return require('src.ui.HgssMailParty').read(self.game, mon) end
+  if action == 'takeMail' and mon then return require('src.ui.HgssMailParty').take(self.game, mon) end
   local field=action:match('^field:(.+)$')
   if field and mon then return self:useFieldMove(mon,field) end
   if action == 'enter' then return self:enterSlot(self.index) end
@@ -511,6 +521,7 @@ Gen4PartyMenu.BATTLE_ACTIONS = { "send", "summary", "cancel" }
 -- moves in the order the Pokemon KNOWS them, SWITCH, ITEM (or MAIL), CANCEL;
 -- an egg gets SUMMARY, SWITCH and CANCEL.
 function Gen4PartyMenu:actions()
+  if self.mailMenu then return {'readMail','takeMail','cancel'} end
   if self.itemMenu then return {'give','take','cancel'} end
   if self.battle then return Gen4PartyMenu.BATTLE_ACTIONS end
   if self.select then
@@ -539,7 +550,11 @@ function Gen4PartyMenu:actions()
     end
   end
   rows[#rows+1]='switch'
-  if not egg then rows[#rows+1]='item' end
+  if not egg then
+    local mailRow=require('src.ui.HgssMailParty').enabled(self.game) and mon
+      and require('src.pokemon.Gen4Mail').isMailItem(mon.item)
+    rows[#rows+1]=mailRow and 'mail' or 'item'
+  end
   rows[#rows+1]='cancel';return rows
 end
 
@@ -868,6 +883,9 @@ function Gen4PartyMenu:actionLabel(action)
   if action == 'item' then return self:word('item','ITEM') end
   if action == 'give' then return self:word('give','GIVE') end
   if action == 'take' then return self:word('take','TAKE') end
+  if action == 'mail' then return require('src.ui.HgssMailParty').partyText(self.game, 131, 'MAIL') end
+  if action == 'readMail' then return require('src.ui.HgssMailParty').partyText(self.game, 132, 'READ') end
+  if action == 'takeMail' then return require('src.ui.HgssMailParty').partyText(self.game, 133, 'TAKE') end
   return self:word('cancel','CANCEL')
 end
 
@@ -906,6 +924,7 @@ function Gen4PartyMenu:update(dt)
       self:runAction(actions[self.submenu])
     elseif input:wasPressed("b") then
       if self.itemMenu then self.itemMenu=nil;self.submenu=1
+      elseif self.mailMenu then self.mailMenu=nil;self.submenu=1
       else self.submenu = nil end
     end
     return
@@ -1252,7 +1271,9 @@ function Gen4PartyMenu:drawMessage()
     messageBox(MEDIUM_BOX)
     local mon = self:party()[self.index]
     local text
-    if self.itemMenu then
+    if self.mailMenu then
+      text = require('src.ui.HgssMailParty').partyText(self.game, 40, "Do what with\nthe Mail?")
+    elseif self.itemMenu then
       text = self:word("promptItem", Strings.source("Do what with\nan item?"))
     else
       local said = self.words.promptPokemon

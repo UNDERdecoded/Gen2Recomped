@@ -399,6 +399,8 @@ end
 
 L.lockall = function(_, s) emit(s, { "g4_lock_all" }) end
 L.releaseall = function(_, s) emit(s, { "g4_release_all" }) end
+-- LockLastTalked (0x2B4; HGSS 0x245) is LockAll's talked-to branch on its own
+L.locklasttalked = function(_, s) emit(s, { "g4_lock_all" }) end
 -- `lockobject` / `releaseobject`, which is what the decoder calls 0x62 and
 -- 0x63.  These were written as `lock` and `release`, which are not opcode
 -- names, so neither ever fired.
@@ -1041,7 +1043,28 @@ local function contributionFor(data, mapId, entry)
   -- file needs to learn a fourth generation's spelling.
   local onEnter, onResume = {}, {}
   local transitions = {}
-  for _, callback in ipairs(entry.callbacks or {}) do
+  -- ...BUT BY KIND, NOT BY TABLE ROW, on Platinum / HGSS: ON_TRANSITION runs
+  -- in the warp task (field_warp_tasks.c TryStartMapScriptByType
+  -- INIT_SCRIPT_ON_TRANSITION), ON_LOAD then ON_RESUME later from the field's
+  -- own init (fieldmap.c), and GetMapLoadScriptId finds each by its type
+  -- wherever it sits in the header. The Whirl Islands' B2F (D40R0104) lists
+  -- its ON_RESUME (the sage stands aside when VAR_TEMP_x4003 is 111) before
+  -- the ON_TRANSITION that sets 111: read front to back, the sage never moved
+  -- and blocked the way to Lugia for good.
+  local callbacks = entry.callbacks or {}
+  if not require("src.core.GameVersion").isGen5() then
+    local RANK = { [2] = 1, [4] = 2, [3] = 3 }
+    local sorted = {}
+    for i, callback in ipairs(callbacks) do sorted[i] = { callback, i } end
+    table.sort(sorted, function(a, b)
+      local ra, rb = RANK[a[1].type] or 4, RANK[b[1].type] or 4
+      if ra ~= rb then return ra < rb end
+      return a[2] < b[2]
+    end)
+    callbacks = {}
+    for i, pair in ipairs(sorted) do callbacks[i] = pair[1] end
+  end
+  for _, callback in ipairs(callbacks) do
     -- ...AND ON_LOAD / ON_RESUME AGAIN EVERY TIME THE FIELD COMES BACK
     -- (fieldmap.c runs both from the field's init, which a battle's end
     -- rebuilds): the Lake of Rage's ON_LOAD shows Lance after the red
@@ -1673,8 +1696,8 @@ end
 L.mysterygift = function(ins, s) return L.mysterygiftgive(ins, s) end
 -- MomGiftCheck <destVar> (scrcmd_12.c): whether Mom's gift queue (filled when
 -- she shops with the player's savings, PhoneCallPersistentState) has an item
--- for the mart's deliveryman; the queue is save.hgssMomGifts, empty until
--- the phone's Mom calls are built
+-- for the mart's deliveryman; the queue is save.hgssMomGifts, filled after
+-- battles by src/world/HgssMomSavings.lua
 L.momgiftcheck = function(ins, s) emit(s, { "g4_mom_gift_check", ins.args[1] }) end
 -- ScrCmd_840 <mapId, destVar> (scrcmd_c.c 2247): 1 for a Pokemon Center
 -- (map_header.c sPokemonCenterMaps), 2 for the League's entrance (300)
@@ -2023,9 +2046,7 @@ L.scrcmd_403 = function(ins, s) emit(s, { "g4_add_accessory", ins.args[1], ins.a
 L.scrcmd_405 = function(ins, s) emit(s, { "g4_has_accessories", ins.args[1], ins.args[2], ins.args[3] }) end
 L.scrcmd_406 = function(ins, s) emit(s, { "g4_add_backdrop", ins.args[1] }) end
 L.scrcmd_407 = function(ins, s) emit(s, { "g4_check_backdrop", ins.args[1], ins.args[2] }) end
-L.scrcmd_154 = function(ins, s) emit(s, { "g4_no_feature", ins.args[2], "the dress-up portrait studio" }) end
-L.scrcmd_255 = function(ins, s) emit(s, { "g4_set_var", ins.args[2], 0 }) end
-L.scrcmd_155 = function(ins, s) emit(s, { "g4_set_var", ins.args[2], 1 }) end
+-- (ScrCmd_154 / 155 / 255 / 256, the photo studio: src/script/Gen4PhotoCommands.lua)
 -- the rest of HGSS's field-move script (scr_seq_0146): Surf / Waterfall /
 -- RockClimb are Platinum's tasks; Whirlpool carries the player across the
 -- whirlpool's run (TILE_BEHAVIOR_WHIRLPOOL 0x11) the same way;
@@ -4357,6 +4378,14 @@ require("src.script.HgssPhoneNumbers").install(L)
 -- HGSS's small var-answering field queries (fossils, gender, Kenya, the
 -- radio's Poke Flute, Shiny Leaves...): src/script/HgssFieldQueries.lua
 require("src.script.HgssFieldQueries").install(L)
+-- HGSS's ScrCmd_344 (object facing), 546 (the Enigma Stone var check),
+-- 811 / 812 (Mom's gift queue): src/script/HgssMiscCommands.lua
+require("src.script.HgssMiscCommands").install(L)
+-- HGSS's mailbox (376 / 377) and KenyaCheckPartyOrMailbox: src/script/HgssMailCommands.lua
+require("src.script.HgssMailCommands").install(L)
+-- HGSS's Move Reminder check (466), Unown-font message (527), GBA slot (528),
+-- trendy words (538 / 540), sound-bank load (805): src/script/HgssFieldLeftovers.lua
+require("src.script.HgssFieldLeftovers").install(L)
 -- Black / White field commands with no Platinum row: src/script/Gen5FieldCommands.lua
 require("src.script.Gen5FieldCommands").install(L)
 -- Platinum's Jubilife TV rankings machines: src/script/Gen4RankingsMachine.lua
@@ -4378,5 +4407,19 @@ require("src.script.HgssPokeathlonCommands").install(L)
 require("src.script.HgssPokeathlonShops").install(L)
 -- Black / White's gym animations (0x185, 0x187-0x189): src/script/Gen5GymFxCommands.lua
 require("src.script.Gen5GymFxCommands").install(L)
+-- the lifts' ride and current-floor window (Platinum PlayElevatorAnimation /
+-- ShowCurrentFloor, HGSS ElevatorAnim / ElevatorCurFloorBox):
+-- src/script/Gen4LiftCommands.lua
+require("src.script.Gen4LiftCommands").install(L)
+-- Platinum's ferry (PlayBoatCutscene): src/script/Gen4BoatCutscene.lua
+require("src.script.Gen4BoatCutscene").install(L)
+-- Platinum's TV (CallTVBroadcast / CallTVInterview / 27C), the 29F quake, the
+-- Global Terminal's Wi-Fi gates and other rows the pt_cmd audit found
+-- missing or no-op: src/script/PtMiscCommands.lua
+require("src.script.PtMiscCommands").install(L)
+-- the dress-up photos (Platinum 0A6 / ShowDressUpPhoto / 0A8 / *PhotoHasData /
+-- SetDressUpPhotoTitle, HGSS ScrCmd_154 / 155 / 255 / 256), replacing the
+-- "no photos" rows above: src/script/Gen4PhotoCommands.lua
+require("src.script.Gen4PhotoCommands").install(L)
 
 return Gen4ScriptVM

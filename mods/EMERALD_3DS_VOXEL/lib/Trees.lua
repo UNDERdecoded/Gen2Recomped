@@ -54,4 +54,9 @@ function Trees.image()
   return image or nil
 end
 
+-- build the sheet again on next use (an in-game bake fetched the art)
+function Trees.reset()
+  image = nil
+end
+
 return Trees

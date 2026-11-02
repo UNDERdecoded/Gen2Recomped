@@ -30,17 +30,17 @@
 --     generic: their Pokemon and a wild one, 2 generic2: one of eleven)
 --   * the rematch / gift state those rows read is kept in
 --     save.hgssPhoneState (the cartridge's PhoneCallPersistentState)
--- NOT DONE (answered "unsupported", which rings and hangs up): Oak's Pokedex
--- rating, Bill's box count, Kurt's balls, the Day-Care couple, Buena, Ethan /
--- Lyra, the gym leaders, Kenji, Irwin, Baoba's Safari report. Nor does the
--- field act on a rematch or a gift a call sets up.
+-- The other contacts (Oak, Bill, Kurt, the Day-Care couple, Buena, Ethan /
+-- Lyra, the gym leaders, Kenji, Irwin, Baoba) are src/ui/HgssPhoneScripts.lua.
 
 local Out = {}
 
-local TYPE = { GENERIC = 0, MOM = 1, ELM = 2, OAK = 3, BIKE_SHOP = 4, BILL = 5, DAYCARE_LADY = 6,
-  DAYCARE_MAN = 7, BUENA = 8, ETHAN_LYRA = 9, KURT = 10, GYMLEADER = 11, KENJI = 12, BAOBA = 13, IRWIN = 14 }
+-- PhoneCallType (phone_internal.h)
+local TYPE = { GENERIC = 0, MOM = 1, ELM = 2, OAK = 3, KURT = 4, BIKE_SHOP = 5, KENJI = 6, BILL = 7,
+  DAYCARE_MAN = 8, DAYCARE_LADY = 9, BUENA = 10, ETHAN_LYRA = 11, GYMLEADER = 12, BAOBA = 13, IRWIN = 14 }
 Out.TYPE = TYPE
-local LOCAL = { [1] = 23, [2] = 1, [3] = 68, [4] = 84, [5] = 92, [10] = 83, [13] = 140 }
+local LOCAL = { [TYPE.MOM] = 23, [TYPE.ELM] = 1, [TYPE.OAK] = 68, [TYPE.KURT] = 83, [TYPE.BIKE_SHOP] = 84,
+  [TYPE.BILL] = 92, [TYPE.BAOBA] = 140 }
 
 local function flag(save, id)
   return ((save or {}).flags or {})[("FLAG_G4_%04X"):format(id)] == true
@@ -97,7 +97,8 @@ function Out.state(save)
 end
 
 -- PhoneCall_GetScriptId_Generic / PhoneScriptGeneric_GetScriptIdInternal
-function Out.generic(game, caller, entry, rnd)
+-- `base` 8 reads the contact's eight INCOMING rows (PhoneCall_GetScriptId_Generic)
+function Out.generic(game, caller, entry, rnd, base)
   rnd = rnd or math.random
   local save = game.save
   local data = game.data or {}
@@ -111,7 +112,7 @@ function Out.generic(game, caller, entry, rnd)
   local function roll(chance) return (rnd(100) - 1) <= chance end
   local last
   for k = 0, 7 do
-    local h = rows[k]
+    local h = rows[k + (base or 0)]
     if not h or h.type == 0 or h.type == 255 then break end
     local ok
     if h.type == 2 then
@@ -163,7 +164,10 @@ function Out.choose(game, caller, header, headerId)
   if t == TYPE.ELM then return { kind = "simple", script = Out.elm(save) } end
   if t == TYPE.BIKE_SHOP then return { kind = "simple", script = 85 } end
   if t == TYPE.GENERIC then return Out.generic(game, caller, entry) or { kind = "unsupported" } end
-  return { kind = "unsupported" }
+  -- the other contacts' handlers: src/ui/HgssPhoneScripts.lua
+  local okS, Scripts = pcall(require, "src.ui.HgssPhoneScripts")
+  local plan = okS and Scripts.plan(game, caller, { headerId = headerId, header = header })
+  return plan or { kind = "unsupported" }
 end
 
 return Out

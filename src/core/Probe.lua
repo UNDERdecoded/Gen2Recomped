@@ -40,6 +40,12 @@ function Probe.say(tag, fmt, ...)
   pcall(f.append or f.write, PATH, "[" .. tag .. "] " .. line .. "\n")
 end
 
+-- Would a line under this tag still be written? For a caller whose line costs
+-- real work to build (a decode, a pixel count), so it stops once the cap is hit.
+function Probe.wants(tag)
+  return (Probe.counts[tag] or 0) < PER_TAG and Probe.total < TOTAL
+end
+
 -- Say something once, ever, under this tag.
 function Probe.once(tag, fmt, ...)
   if Probe.counts[tag] then return end

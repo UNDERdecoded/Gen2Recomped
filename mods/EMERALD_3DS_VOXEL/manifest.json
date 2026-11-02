@@ -12,8 +12,21 @@
   "optional_dependencies": [],
   "conflicts": [],
   "permissions": [
-    "engine_internals"
+    "engine_internals",
+    "network"
+  ],
+  "required_imports": [
+    {
+      "id": "emerald_rom",
+      "name": "Emerald ROM",
+      "description": "Your Pokemon Emerald (USA, Europe) ROM, the same one you imported into the game. The 3DS voxel models are built from it, on this device; it stays in the save folder (e3ds_voxel/emerald.gba) so a newer version of the mod can build them again.",
+      "file": "e3ds_voxel/emerald.gba",
+      "root": "save",
+      "format": "gba",
+      "size": 16777216,
+      "md5": "605b89b67018abcea91e693a4dd25be3"
+    }
   ],
   "affects_link": false,
-  "description": "Emerald only. Zallax's Emerald 3DS voxel overworld (github.com/ZallaxDev/emerald-3ds, used with permission, MIT), ported by Ceedrack: buildings and rooms modelled from their own drawing, terrain relief, pixel-voxel signposts and its tilted-plane trees, under the original's camera and baked sunlight, and its 3D battles over the world. No ROM data ships with it: the models are generated from your own ROM with bake/bake.py. Registers one render pipeline, E3DS 3D (OFF and the five 3D ANGLE rungs), on hotkey 0. Presentational only."
+  "description": "Emerald only. Zallax's Emerald 3DS voxel overworld (github.com/ZallaxDev/emerald-3ds, used with permission, MIT), ported by Ceedrack: buildings and rooms modelled from their own drawing, terrain relief, pixel-voxel signposts and its tilted-plane trees, under the original's camera and baked sunlight, and its 3D battles over the world. No ROM data ships with it: the models are built from your own Emerald ROM, in the background, the first time you switch E3DS 3D on (give the mod your ROM once with its EMERALD ROM row; the first build also downloads Emerald 3DS's tree art and generator data, under 1 MB). Registers one render pipeline, E3DS 3D (OFF and the five 3D ANGLE rungs), on hotkey 0. Presentational only."
 }

@@ -1128,6 +1128,12 @@ local function stampOT(save, mon, met)
   if met then
     if mon.metLevel == nil then mon.metLevel = met.level end
     if mon.metLocation == nil then mon.metLocation = met.location end
+    -- BLACK / WHITE keep the met DATE too (PKM fields 0x92..0x94, read by
+    -- script 0x11A: the Hip Waders' catch of the day must be caught today)
+    if mon.metDate == nil and require("src.core.GameVersion").isGen5() then
+      local t = os.date("*t")
+      mon.metDate = { year = t.year, month = t.month, day = t.day }
+    end
   end
 end
 BattleState.stampOT = stampOT
@@ -1681,6 +1687,18 @@ local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
       end
     end
     mon.hp = mon.stats.hp
+    -- A TRAINER'S BALL CAPSULE: Pokemon_SetBallSeal(trmon.cbSeal) -- capsule
+    -- cbSeal - 1 of pl_cb_data.narc (HeartGold / SoulSilver: /a/1/8/5), as
+    -- capsule id 1 (Gen4PtCapsuleArt `trainerCapsules`)
+    local cb = tonumber(slot.cbSeal) or 0
+    if cb > 0 then
+      local art = game.data and game.data.gen4_pt_capsule_art
+      local cap = art and art.trainerCapsules and art.trainerCapsules[cb]
+      if type(cap) == "table" then
+        mon.ballCapsule = 1
+        mon.ballCapsuleSeals = require("src.pokemon.Gen4SealCase").copy(cap)
+      end
+    end
     table.insert(out, mon)
     end
     ::continue::
@@ -3632,6 +3650,9 @@ function BattleState:enter()
       .. Strings("%s blacked\nout!", name), blackedOut))
     return
   end
+  -- HGSS: the wallet as the battle begins and BattleSetup.momsSavingsActive
+  -- (src/world/HgssMomSavings.lua, battle_setup.c)
+  pcall(function() require("src.world.HgssMomSavings").battleEntered(self) end)
   local Music = require("src.core.Music")
   self.musicKind = self:computeMusicKind()
   if self.isGymLeader then
@@ -7252,6 +7273,20 @@ function BattleState:gen4SendOut(battler)
       side = "player",
       to = { x = pos.x, y = pos.y },
     })
+    -- A BALL CAPSULE'S SEALS spray as the ball opens (BallCapsuleSealEffect,
+    -- src/battle/Gen4SealEffect.lua): the capsule copy on the Pokemon, from
+    -- battler type 0 (or 2 on a double's left flank)
+    self.gen4SealFx = nil
+    local cap = mon and (tonumber(mon.ballCapsule) or 0) > 0 and mon.ballCapsuleSeals
+    if type(cap) == "table" then
+      local okE, fx = pcall(function()
+        return require("src.battle.Gen4SealEffect").new(self.data, cap, slot)
+      end)
+      if okE and fx then
+        local arc = self.gen4Ball and self.gen4Ball.throw and tonumber(self.gen4Ball.throw.frames) or 0
+        self.gen4SealFx = { fx = fx, wait = arc, x = pos.x, y = pos.y }
+      end
+    end
   end
   -- THE DS TRAINER THROWS IT FIRST: the back plays its send-out (wind-up,
   -- throw, follow-through) and the ball leaves at the throw's release; the back
@@ -7284,6 +7319,39 @@ function BattleState:startGrowIn(battler)
   -- Sinnoh first, for the same reason the ball chain asks Gen 4 first: relying
   -- on a Gen 3 gate to decline a Gen 4 cache is a coincidence, not a rule.
   if self:gen4SendOut(battler) then return end
+  -- A TRAINER'S FOE COMES OUT OF ITS BALL (both Gen 4 games): the
+  -- BallThrow for an enemy battler type (ov12_022378A0 cases 0..5) is PLACED
+  -- -- it appears at the battler's spot + 38 (ov12_02237B14), does not
+  -- travel, and opens after 12 frames (Gen4BallAnim's `placed`); the seals of
+  -- its Ball Capsule (BallCapsuleSealEffect, battler type 1, or 3 on a
+  -- double's flank: ov12_02236520) burst as it opens. A wild Pokemon has no
+  -- ball (it is already there), so only trainer battles throw.
+  if battler and battler == self.enemy and self:gen4Layout() then
+    local mon = battler.mon
+    local slot = (self:isDouble() and self.battlerAt) and 3 or 1
+    local pos = Gen4Battle.battlerPos and Gen4Battle.battlerPos(self, slot)
+                or (Gen4Battle.BATTLER_POS and Gen4Battle.BATTLER_POS[slot])
+    local wait = 0
+    if self.trainer and pos and not self.gen4Ball then
+      local okB, anim = pcall(function()
+        return require("src.battle.Gen4BallAnim").new({
+          ball = Gen4Battle.ballThrowFor(mon and (mon.ball or mon.pokeball)),
+          mode = "release", side = "enemy", to = { x = pos.x, y = pos.y },
+        })
+      end)
+      if okB and anim then
+        self.gen4Ball = anim
+        wait = anim.throw and tonumber(anim.throw.frames) or 0
+        self.nextInsert = (self.nextInsert or 0) + 1
+        table.insert(self.queue, self.nextInsert, { wait = anim:estimate() })
+      end
+    end
+    local cap = mon and (tonumber(mon.ballCapsule) or 0) > 0 and mon.ballCapsuleSeals
+    if type(cap) == "table" and pos then
+      local okE, fx = pcall(function() return require("src.battle.Gen4SealEffect").new(self.data, cap, slot) end)
+      if okE and fx then self.gen4SealFx = { fx = fx, wait = wait, x = pos.x, y = pos.y } end
+    end
+  end
   -- ...and on Hoenn the ball is thrown instead; see gen3SendOut.  This is the
   -- one place every send-out in the file goes through, which is why the
   -- switch lives here rather than at each of the seven callers.
@@ -7481,6 +7549,12 @@ end
 
 function BattleState:updateFx()
   self:updateGen4Ball()
+  -- the capsule's seals, from the ball's opening on (Gen4SealEffect)
+  local seal = self.gen4SealFx
+  if seal then
+    if seal.wait > 0 then seal.wait = seal.wait - 1
+    elseif not seal.fx:update() then self.gen4SealFx = nil end
+  end
   local fi = self.frlgIntro
   if fi then
     fi.t = fi.t + 1
@@ -9323,9 +9397,14 @@ function BattleState:enemyMonFainted()
     -- Platinum's font, so a Sinnoh win read "got 円 480". This default is
     -- only reached when the dataset has no `_MoneyForWinningText` of its own,
     -- which is every Gen 3 and Gen 4 cartridge.
+    -- HGSS with Mom saving: msg_0197_01275 (src/world/HgssMomSavings.lua)
+    local momLine = nil
+    pcall(function() momLine = require("src.world.HgssMomSavings").prizeLine(self, prize) end)
+    if momLine then self:sayNext(momLine) else
     self:sayNext(self:romText("_MoneyForWinningText",
       "%s got " .. require("src.core.GameVersion").moneySign() .. "%d\nfor winning!",
       self.game.save.player.name, prize))
+    end
   end
   self.result = "win"
   self.afterQueue = "finish"
@@ -10038,6 +10117,9 @@ function BattleState:storeCaughtMon()
   local species = self.enemy.mon.species
   local isNew = dex ~= nil and not dex.owned[species]
   local destination = "party"
+  -- Gen 4: the Unown letter joins the catch order (Pokedex_SetMonCaughtFlag),
+  -- asked before markOwned so an old save's fallback seed reads "owned before"
+  pcall(function() require("src.pokemon.Gen4UnownOrder").record(game, species, self.enemy.mon) end)
   markOwned(game, species)
   -- BATTLERESULT_CAUGHT_CELEBI (wBattleResult bit 6).  The Ilex shrine script
   -- reads it back through `special CheckCaughtCelebi` to decide whether Kurt's
@@ -10478,6 +10560,10 @@ end
 
 -- called by BagMenu when a ball is thrown
 function BattleState:throwBall(ball)
+  -- Platinum's Catch That Pokemon Show counts the balls a wild battle threw
+  -- (CaptureAttempt.ballsThrown; src/script/PtTvRecords.lua)
+  self.ptBallsThrown = (self.ptBallsThrown or 0) + 1
+  self.ptLastBallItem = (pcall(self.ballItemId, self, ball)) and self:ballItemId(ball) or nil
   -- ItemUseBall branches to ThrowBallAtTrainerMon on wIsInBattle != 1
   -- (item_effects.asm:109-113) BEFORE it reaches `ld hl, ItemUseText00 /
   -- call PrintText` (:146-147), so a trainer battle never shows the
@@ -10859,6 +10945,8 @@ function BattleState:finish()
   -- the battle screen closes; leaving battle brings back the map theme,
   -- like the overworld reload's PlayDefaultMusicFadeOutCurrent
   -- (home/overworld.asm:2343-2348)
+  -- HGSS: Mom's quarter of what the battle earned (battle_setup.c sub_0205230C)
+  pcall(function() require("src.world.HgssMomSavings").battleFinished(self) end)
   require("src.core.Music").restoreMap(self.data)
   self.game.stack:pop()
   Runtime.emit("battle.ended", { battle = self, result = self.result or "run" })
@@ -10869,6 +10957,8 @@ function BattleState:finish()
   -- passes through on its way out, so the fade is guaranteed here rather
   -- than depending on each caller having wrapped onFinish correctly.
   local result = self.result or "run"
+  -- Platinum's recorded TV episodes (FieldSystem_SaveTVSegment_CatchThatPokemonShow)
+  pcall(function() require("src.script.PtTvRecords").battleEnded(self, result) end)
   local onFinish = self.onFinish
   if result == "lose" then
     -- the blackout path warps to the heal point with its own transition

@@ -3,6 +3,7 @@
 local Decoder=require("src.import.Gen5MonAnim")
 local Assets=require("src.render.Assets")
 local Player={};Player.__index=Player
+Player.aligned={}
 function Player.new(data,species,mon,side)
  local def=data.pokemon and data.pokemon[species]
  local record=def and def.gen5Animation
@@ -18,7 +19,13 @@ function Player.new(data,species,mon,side)
  local machine=Decoder.machine(set,0)
  if not machine then return nil end
  local rasters={}
- local ox,oy=Decoder.align(set,machine.state(),rasters)
+ -- the alignment is a search (Decoder.align); the same Pokemon in the next
+ -- battle lines up the same way, so it is worked out once a session
+ local alignKey=record.path.."|"..tostring(record.species).."|"..tostring(side or "front").."|"..tostring(shiny and true).."|"..tostring(female)
+ local at=Player.aligned[alignKey]
+ local ox,oy
+ if at then ox,oy=at[1],at[2]
+ else ox,oy=Decoder.align(set,machine.state(),rasters);Player.aligned[alignKey]={ox,oy} end
  local self=setmetatable({liveMultiCell=true,set=set,machine=machine,paused=true,clock=0,cells={},
    ox=ox or Decoder.ORIGIN[1],oy=oy or Decoder.ORIGIN[2],dirty=true},Player)
  for id,cell in pairs(set.cells.cells)do

@@ -285,6 +285,8 @@ if os.getenv("BW_RELINK") then
       -- ...and the import-time constants a relinked command may read
       self.constants = self.constants or {}
       self.constants.gen5Marts = self.constants.gen5Marts or require("src.import.Gen5Marts").build(x)
+      self.constants.gen5GateBoards = self.constants.gen5GateBoards or require("src.import.Gen5GateBoards").build(x)
+      self.constants.gen5CameraPresets = self.constants.gen5CameraPresets or require("src.import.Gen5CameraPresets").build(x)
       x.rom:close()
     end)
     if not ok then print("[relink] FAILED " .. tostring(err)) end

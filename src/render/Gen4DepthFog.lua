@@ -63,6 +63,14 @@ end
 function F.current()
   local force = os.getenv and tonumber(os.getenv("G4FOG") or "")
   if force then return F.WEATHERS[force] end
+  -- BLACK / WHITE: the weather programs' own fog (src/world/Gen5WeatherFx.lua)
+  do
+    local okV, GV = pcall(require, "src.core.GameVersion")
+    if okV and GV.isGen5() then
+      local WX = package.loaded["src.world.Gen5WeatherFx"]
+      return WX and WX.depthRow and WX.depthRow() or nil
+    end
+  end
   if not platinum() then return nil end
   -- A GYM'S OWN FOG (`def.gen4DepthFog`, set by its DynamicMapFeaturesInit:
   -- Hearthome's black room, Canalave's depth fog -- src/world/Gen4GymFx.lua)

@@ -391,6 +391,11 @@ function Shop:transact()
       -- the till (Shop_SelectConfirmPurchase, on YES)
       se(self, "SEQ_SE_DP_REGI")
       self.purchases = bump(self.purchases, self.qty)
+      -- Platinum's Sinnoh Shopping Champ Corner (Shop_ConfirmItemPurchase,
+      -- MART_TYPE_NORMAL: 10 or more at once; src/script/PtTvRecords.lua)
+      if not self.frontier then
+        pcall(function() require('src.script.PtTvRecords').shopping(save, self:def(self.item) or self.item, self.qty) end)
+      end
       local def = self:def(self.item) or {}
       local pockets = ((self.game.data.gen4_menus or {}).bag or {}).pockets or {}
       local pocket = pockets[(tonumber(def.fieldPocket) or 0) + 1] or ''

@@ -180,11 +180,19 @@ function Gen4TileScripts.hgssFieldMoveRow(ow, behaviour, facing, data, save)
         return row("WATER", 4)
       end
     end
-    return Gen4TileScripts.hgssTreeRow(ow)
+    return Gen4TileScripts.hgssSafariRow(ow, behaviour) or Gen4TileScripts.hgssTreeRow(ow)
   end
   if behaviour == H.WATERFALL then return row("WATERFALL", 5) end
   if behaviour == H.WHIRLPOOL then return row("WHIRLPOOL", 16) end
-  return Gen4TileScripts.hgssTreeRow(ow)
+  return Gen4TileScripts.hgssSafariRow(ow, behaviour) or Gen4TileScripts.hgssTreeRow(ow)
+end
+
+-- ...then the Safari Zone's place / remove rows (std_safari_place_object
+-- 8800 / std_safari_remove_object 8801; src/world/HgssSafariPlace.lua)
+function Gen4TileScripts.hgssSafariRow(ow, behaviour)
+  local okS, r = pcall(function() return require("src.world.HgssSafariPlace").fieldRow(ow, behaviour) end)
+  if okS then return r end
+  return nil
 end
 
 -- ...and after every metatile script, the forest itself: a facing tile in a

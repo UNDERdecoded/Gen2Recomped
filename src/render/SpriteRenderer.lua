@@ -527,8 +527,13 @@ function SpriteRenderer:reflectionImage()
   -- opaque pixels in the first frame settles "is the art there at all"
   -- without another round of guessing at it.
   local opaque = nil
-  local okData, data = pcall(require("src.render.Assets").imageData,
-                             def and def.image or nil)
+  -- only while the probe still writes the line: past its cap this decoded
+  -- the sheet again and counted pixels for nothing, per reflecting sprite
+  local okData, data = false, nil
+  if require("src.core.Probe").wants("reflectsheet") then
+    okData, data = pcall(require("src.render.Assets").imageData,
+                         def and def.image or nil)
+  end
   if okData and data then
     local dw, dh = data:getDimensions()
     opaque = 0

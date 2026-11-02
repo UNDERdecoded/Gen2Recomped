@@ -301,6 +301,16 @@ function Player:refreshForm(data)
     local id = okO and OW.gen4SpriteFor and OW.gen4SpriteFor(data, girl and 259 or 258)
     if id and data.sprites and data.sprites[id] then walkId, bikeId = id, id end
   end
+  -- PLATINUM'S POKEMON CENTER POSE (PLAYER_AVATAR_HEAL): SetPlayerState
+  -- PLAYER_TRANSITION_HEALING + ChangePlayerState put the player in
+  -- OBJ_EVENT_GFX_PLAYER_M/F_POKECENTER_HEAL (200 / 201, player_avatar.c)
+  -- while the nurse heals; WALKING takes it off (src/script/PtMiscCommands.lua)
+  if save and save.gen4PlayerHeal then
+    local okO, OW = pcall(require, "src.world.OverworldController")
+    local girl = save.player and save.player.gender == "girl"
+    local id = okO and OW.gen4SpriteFor and OW.gen4SpriteFor(data, girl and 201 or 200)
+    if id and data.sprites and data.sprites[id] then walkId = id end
+  end
   -- The pose follows the character, so it is refreshed even when the walking
   -- sheets did not change (a rip that only produced Kris's fish art).
   self:refreshFishTiles(data)
@@ -958,6 +968,9 @@ function Player:pose()
   end
   local facing = self.facing
   local phase = self:walkPhase()
+  -- a held animation (Gen 4's PauseAnimation movement action, NPC:pose's
+  -- `sliding`): the standing frame through the walk
+  if self.sliding then phase = 0 end
   -- alternate walk cycles mirror the up/down frame; derived from the
   -- fixed-rate animation clock so the bike's shorter steps don't double
   -- the leg cadence

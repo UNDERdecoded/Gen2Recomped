@@ -32,6 +32,11 @@ local A = { PATH = "/data/mmodel/fldeff.narc" }
 A.MODELS = {
   { model = 111, anims = { 166, 167 } },
   { model = 112, anims = { 168 } },
+  -- the Underground's Digger Drill and its smoke (platinum-ug-fx-v1):
+  -- 91 ug_ef_drill + 163 ug_ef_drill.nsbtp (ov5_021F5894.c) and
+  -- 58 ug_ef_smoke + 162 ug_ef_smoke.nsbtp (ov5_021F55CC.c)
+  { model = 91, anims = { 163 } },
+  { model = 58, anims = { 162 } },
 }
 
 function A.build(x)

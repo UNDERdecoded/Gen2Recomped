@@ -243,9 +243,9 @@ end
 -- exists on this trip, kept on the save so walking away from one and coming back
 -- finds it where you left it.
 --
--- A FRESH SET PER DESCENT, which is the cartridge's shape rather than a
--- convenience: Mining_SpawnMiningSpotsAndTraps runs when the Underground is set
--- up, not once per save.  Cleared on the way out so the next trip re-rolls.
+-- (pt_underground round: READ, mining.c 745-768) the set is SAVED and
+-- reloaded on every trip; a new one is spawned only on a new save or after a
+-- day has passed -- src/world/Gen4UgWorld.lua.
 Gen4Underground.SPARKLE_PERIOD = 90
 Gen4Underground.SPARKLE_RANGE = 14
 
@@ -263,38 +263,22 @@ end
 function Gen4Underground.ensureSpots(Game, ow, rand)
   if not GameVersion.isGen4() then return false end
   if not Gen4Underground.isUnderground(ow) then
-    -- Left the cave: drop the set rather than carry it into the overworld,
-    -- where its coordinates mean a different place entirely.
-    local ug = Game and Game.save and Game.save.underground
-    if ug then ug.spots = nil end
+    -- (pt_underground round) THE SPOTS STAY in the save when the player
+    -- leaves: the cartridge reloads them on the next trip
+    -- (Mining_LoadSavedMiningSpots) unless a day has passed
+    -- (Underground_HandleDailyEvents) -- see src/world/Gen4UgWorld.lua
+    ow.ugArrived = nil
     return false
   end
-  local ug = Game.save.underground or {}
-  Game.save.underground = ug
-  if ug.spots then return false end
-
-  local Spots = require("src.world.Gen4MiningSpots")
-  local def = ow.map.def or {}
-  local cluster, why = Spots.spawnCluster(ow.map, rand or function(n)
-    if n <= 0 then return 0 end
-    return love.math.random(0, n - 1)
-  end, {
-    -- The cartridge reads these off the live matrix; a Gen 4 map def carries
-    -- its size in cells, and a chunk is 32 of them.
-    matrixWidth = math.floor((def.width or 480) / Gen4Underground.CHUNK),
-    matrixHeight = math.floor((def.height or 480) / Gen4Underground.CHUNK),
-  })
-  if not cluster then
-    require("src.core.Logger").warn(
-      "gen4 underground: no dig spots placed -- %s", tostring(why))
-    ug.spots = {}
+  if ow.ugArrived == ow.map then return false end
+  ow.ugArrived = ow.map
+  -- UndergroundMan_Init / MiningEnv_Init: the flag, the daily check, and a
+  -- spawn of spots and traps only when one is owed (Gen4UgWorld.arrive)
+  local ok, err = pcall(require("src.world.Gen4UgWorld").arrive, Game, ow)
+  if not ok then
+    require("src.core.Logger").warn("gen4 underground: arrival failed -- %s", tostring(err))
     return false
   end
-  ug.spots = cluster.spots
-  ug.spotCentre = cluster.centre
-  require("src.core.Logger").info(
-    "gen4 underground: %d dig spots around %d,%d",
-    #cluster.spots, cluster.centre.x, cluster.centre.z)
   return true
 end
 

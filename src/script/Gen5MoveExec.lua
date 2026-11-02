@@ -72,9 +72,9 @@ local function armEmote(ctx, ow, entity, kind, onDone)
   else
     ow.emote = bubble
   end
-  pcall(function()
-    require("src.core.Sound").play(ctx.game and ctx.game.data, "SEQ_SE_DP_DECIDE")
-  end)
+  -- no sound: BW's emote effect (0x021BB528, its task list 0x021D9A7C)
+  -- plays none -- the scripts play their own first (`A6 0559`, then the
+  -- 0x4B list, then `A8`)
 end
 
 -- run(ctx, entity, id, steps): queue `steps` (the decoded list) on `entity`
@@ -157,7 +157,22 @@ function X.run(ctx, entity, id, steps)
       end
       return one()
     elseif kind == "wait" or kind == "anim" then
+      if a.se then
+        pcall(function() require("src.script.Commands").play_sound(ctx, a.se) end)
+      end
       ow:scriptPause(entity, Movement.ticks(a) * count, nextStep)
+    elseif kind == "animpause" then
+      -- a held animation glides (NPC:pose draws the standing frame)
+      if not entity.g5AnimHeld then
+        entity.g5AnimHeld, entity.g5SlidingBefore = true, entity.sliding
+      end
+      entity.sliding = true
+      return beat()
+    elseif kind == "animresume" then
+      if entity.g5AnimHeld then
+        entity.sliding, entity.g5AnimHeld, entity.g5SlidingBefore = entity.g5SlidingBefore, nil, nil
+      end
+      return beat()
     elseif kind == "hide" then
       entity.hidden = true
       return beat()

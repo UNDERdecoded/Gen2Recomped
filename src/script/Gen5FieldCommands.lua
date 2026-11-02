@@ -36,6 +36,25 @@ end
 -- 0x021AEA3C); 0x07F is the same record's trainer id. The port runs a
 -- spotting trainer through its own talk rows (ctx.npc), so the first is that
 -- object and the second has none here
+-- bwtimeperiod <dest>  0x0CD (ov10 0x0215AB18 -> 0x021690B4): arm9's table
+-- 0x0209DF24, one byte per hour for each season -- 0 morning, 1 day, 2
+-- evening, 3 night, 4 late night (READ FROM CODE; the season is the field's
+-- +0x1C4, the month's place in the four-month cycle, as 0x0D2 reads it)
+Commands.BW_TIME_PERIODS = {
+  [0] = { [0] = 4, 4, 4, 4, 4, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3 },
+  { [0] = 4, 4, 4, 4, 0, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3 },
+  { [0] = 4, 4, 4, 4, 4, 4, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3 },
+  { [0] = 4, 4, 4, 4, 4, 4, 4, 0, 0, 0, 0, 1, 1, 1, 1, 1, 1, 2, 2, 3, 3, 3, 3, 3 },
+}
+function Commands.g5_time_period(ctx, destVar)
+  local C = require("src.script.Gen4Commands")
+  local okS, St = pcall(require, "src.script.Gen5Stadium")
+  local t = okS and St.clock and St.clock() or os.date("*t")
+  local season = ((tonumber(os.date("%m")) or 1) - 1) % 4
+  local row = Commands.BW_TIME_PERIODS[season]
+  C.setVar(ctx.save, destVar, row[(tonumber(t.hour) or 12) % 24] or 1)
+end
+
 function Commands.g4_bw_approach_object(ctx, which, destVar)
   local C = require("src.script.Gen4Commands")
   local npc = ctx.npc
@@ -450,7 +469,22 @@ function M.install(L)
   L.bwdaycareprice = function(ins, s) emit(s, { "g4_daycare_price", ins.args[1], ins.args[2] }) end
   L.bwdaycarename = function(ins, s) emit(s, { "g4_bw_daycare_name", ins.args[1], ins.args[2] }) end
   L.bwcry = function(ins, s) emit(s, { "g4_play_cry", ins.args[1] }) end
-  L.bwcardlevel = L.bwcardlevel or function(ins, s) emit(s, { "g4_bw_card_level", ins.args[1] }) end
+  -- 0x0CD is the time of day and 0x0CE the card level (Gen5ScriptLink); a
+  -- cache linked before that was read has the two names the other way round,
+  -- which the op number undoes
+  L.bwtimeperiod = L.bwtimeperiod or function(ins, s) emit(s, { "g5_time_period", ins.args[1] }) end
+  L.bwcardlevel = L.bwcardlevel or function(ins, s)
+    if ins.op == 0x0CD then emit(s, { "g5_time_period", ins.args[1] }) return end
+    emit(s, { "g4_bw_card_level", ins.args[1] })
+  end
+  local timeOfDay = L.gettimeofday
+  L.gettimeofday = function(ins, s)
+    if ins.op == 0x0CE and require("src.core.GameVersion").isGen5() then
+      emit(s, { "g4_bw_card_level", ins.args[1] })
+    elseif timeOfDay then
+      timeOfDay(ins, s)
+    end
+  end
   -- THE EYE SCRIPT'S APPROACH OPS IN A CACHE IMPORTED BEFORE THEY WERE NAMED
   -- (Gen5ScriptLink 0x080 / 0x081 / 0x083): such a cache keeps them as
   -- `bw_080` / `bw_081` / `bw_083` WITHOUT their operands. They occur only in
@@ -462,6 +496,62 @@ function M.install(L)
   L.bw_083 = L.bw_083 or function(_, s) emit(s, { "g4_approach_type", 0x8010 }) end
   L.bw_080 = L.bw_080 or function(_, s) emit(s, { "g4_start_approach" }) end
   L.bw_081 = L.bw_081 or function() end
+  -- Black / White's cutscene music (0x098 / 0x09F / 0x09E / 0x0A1 / 0x0A2):
+  -- src/script/Gen5MusicCommands.lua
+  require("src.script.Gen5MusicCommands").install(L)
+  -- ...and the commands that edit the loaded zone's event records (0x1EA):
+  -- src/script/Gen5FieldEventCommands.lua
+  require("src.script.Gen5FieldEventCommands").install(L)
+  -- ...and the Royal Unova's cruise (0x1A5..0x1AC): src/world/Gen5RoyalUnova.lua
+  require("src.world.Gen5RoyalUnova").install(L)
+  -- ...and the gates' electronic boards (0x17E): src/world/Gen5GateBoard.lua
+  require("src.world.Gen5GateBoard").install(L)
+  -- ...and the cutscene camera's presets (0x146): src/script/Gen5CameraCommands.lua
+  require("src.script.Gen5CameraCommands").install(L)
+  -- ...and the building animations (0x127..0x12C, 0x12E): src/world/Gen5BuildingAnim.lua
+  require("src.world.Gen5BuildingAnim").install(L)
+  -- ...and the layered field themes (0x0A3..0x0A5): src/world/Gen5MusicParts.lua
+  require("src.world.Gen5MusicParts").install(L)
+  -- ...and N's portrait (0x1D3..0x1D5): src/world/Gen5NPortrait.lua
+  require("src.world.Gen5NPortrait").install(L)
+  -- ...and the roamer / Dream World reads (0x1BD, 0x1EE, 0x1EF):
+  -- src/script/Gen5LinkStubCommands.lua
+  require("src.script.Gen5LinkStubCommands").install(L)
+  -- ...and Passerby Analytics (0x063, 0x210..0x21F): src/world/Gen5Passerby.lua
+  require("src.world.Gen5Passerby").install(L)
+  -- ...and Black City's residents (0x1C2..0x1C9): src/world/Gen5BlackCity.lua
+  require("src.world.Gen5BlackCity").install(L)
+  -- ...and the roaming legendaries (0x1BC, the game clear): src/world/Gen5Roamers.lua
+  require("src.world.Gen5Roamers").install(L)
+  -- ...and Abyssal Ruins' surfacing (0x0DC, 0x0C8): src/script/Gen5DiveCommands.lua
+  require("src.script.Gen5DiveCommands").install(L)
+  -- ...and the Elite Four rooms' ambient sound (0x1A4): src/world/Gen5ZoneSounds.lua
+  require("src.world.Gen5ZoneSounds").install(L)
+  -- ...and the Abyssal Ruins' overlay models (0x135): src/world/Gen5ZoneModels.lua
+  require("src.world.Gen5ZoneModels").install(L)
+  -- ...and the street crowds (0x134): src/world/Gen5Walkers.lua
+  require("src.world.Gen5Walkers").install(L)
+  -- ...and the party checks (0x112, 0x236): src/script/Gen5PartyChecks.lua
+  require("src.script.Gen5PartyChecks").install(L)
+  -- ...and the side quests' commands: src/script/Gen5SideCommands.lua
+  require("src.script.Gen5SideCommands").install(L)
+  -- ...and the party / bag / save checks: src/script/Gen5FieldChecks.lua
+  require("src.script.Gen5FieldChecks").install(L)
+  -- ...and Zorua's illusion (0x221..0x224): src/world/Gen5IllusionFx.lua
+  require("src.world.Gen5IllusionFx").install(L)
+  -- ...and a script's weather (0x136): src/world/Gen5Weather.lua
+  require("src.world.Gen5Weather").install(L)
+  -- ...and an object's flight round the player (0x15B..0x15E):
+  -- src/world/Gen5FlightPath.lua
+  require("src.world.Gen5FlightPath").install(L)
+  -- ...and objects raised in place / danced round (0x225, 0x226):
+  -- src/world/Gen5ObjectMotion.lua
+  require("src.world.Gen5ObjectMotion").install(L)
+  -- ...and the Zorua story's picture / event Pokemon (0x227, 0x228):
+  -- src/script/Gen5EventMonCommands.lua
+  require("src.script.Gen5EventMonCommands").install(L)
+  -- ...and 0x242 / 0x139 / 0x23C / 0x25E: src/script/Gen5MiscFieldOps.lua
+  require("src.script.Gen5MiscFieldOps").install(L)
 end
 
 return M

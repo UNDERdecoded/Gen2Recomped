@@ -201,6 +201,8 @@ function Gen4Terrain.append(state, chunk)
       unlit = shape.unlit,
       -- out of the map's fog (Gen4ModelPack): polyAttr bit 15 clear
       noFog = shape.noFog,
+      -- the material's light mask (Gen4ModelPack `lights`)
+      lights = shape.lights,
     }
   end
 

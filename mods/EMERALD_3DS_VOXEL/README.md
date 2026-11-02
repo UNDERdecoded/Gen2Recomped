@@ -36,10 +36,42 @@ Which maps are modelled, and how completely, is Emerald 3DS's own progress:
 see its `docs/VOXEL_STATUS.md`. Anything it has not modelled yet is drawn
 flat, as on the 3DS.
 
-## Baking the models from your ROM
+## Building the models in the game
 
-The models are made of the cartridge's art, so they are not shipped. They
-are generated from your own ROM by Emerald 3DS's builder, unchanged:
+The models are made of the cartridge's art, so they are not shipped. The
+game builds them from your own ROM, on your device, the first time you
+switch **E3DS 3D** on (OPTIONS, or press **0**):
+
+1. **Give the mod your Emerald ROM once.** The mod's **EMERALD ROM** row
+   (the launcher's MODS panel, or Mods in the game's menu) takes the same
+   Pokémon Emerald (USA, Europe) ROM you imported the game from: a file
+   dialog on desktop, the file picker on Android and iOS, or copy it into
+   the save folder's `imports/` (consoles). It is checked by MD5 and kept as
+   `e3ds_voxel/emerald.gba` in the save folder. A ROM already sitting in
+   `imports/` or the save folder is picked up without asking.
+2. **Switch E3DS 3D on.** A small box in the corner reads *Building Emerald
+   3DS voxels… 42%* and the row reads *E3DS 3D (BUILDING)*; the game stays
+   playable, drawn flat. When it finishes the voxels switch on by themselves.
+   It takes a few minutes on a desktop (longer on a phone).
+3. The first build downloads Emerald 3DS's own tree art and two generator
+   files (under 1 MB, from its GitHub repository at a pinned commit; cached
+   in `e3ds_voxel/cache/`, so a rebuild needs no network).
+
+The results land in the save folder's `e3ds_voxel/` with a stamp naming the
+bake's version, the ROM's SHA-1 and the pinned commits; a newer mod whose
+bake differs builds again on its own. **3DS VOXELS** in the mod's options
+builds (or rebuilds) on demand and shows how far it is. A failure (no
+network, a ROM that does not match) is said on screen and on that row.
+
+The in-game build is the generators ported to Lua (`lib/bake/`, see
+`lib/bake/ARCHITECTURE.md`); its output is byte-identical to the Python
+bake below.
+
+## Baking the models with Python (developers)
+
+`generated/`, when it holds a complete bake, wins over `e3ds_voxel/` and is
+never rebuilt in game. The models can be generated there from your own ROM
+by Emerald 3DS's builder, unchanged:
 
 ```
 python bake/bake.py "Pokemon - Emerald Version (USA, Europe).gba"
@@ -80,8 +112,8 @@ These files are made of the cartridge's art and must never be shared.
 `generated/` is git-ignored, and `scripts/pack_love.sh` deletes every mod
 folder named `generated` (and `tools`) from the builds it makes, so a game
 built from this working folder carries none of it either. The game also
-looks in `e3ds_voxel/` inside the save folder. Restart the game after
-baking.
+looks in `e3ds_voxel/` inside the save folder (where the in-game build
+writes). Restart the game after baking with Python.
 
 ## Using it
 
@@ -160,7 +192,11 @@ this mod's own modelling, not Emerald 3DS's, and is replaced by Emerald
 | `lib/Render.lua` | the camera, the shader, the seams between maps and the frame |
 | `lib/Generic.lua` | this mod's own modelling of the maps Emerald 3DS has not done |
 | `lib/Battle.lua` | the 3D battle: stage search, battle camera and glide |
-| `lib/Trees.lua` | the tree sheet (Emerald 3DS's tree art, fetched by the bake into `generated/trees/`) |
+| `lib/Trees.lua` | the tree sheet (Emerald 3DS's tree art, fetched by the bake into `generated/trees/` or `e3ds_voxel/trees/`) |
+| `lib/BakeJob.lua` | the in-game build: finding the ROM, the stamp, starting and watching the bake thread |
+| `lib/BakeThread.lua` | the bake thread: asset fetch through the engine's HTTP, `lib/bake` Bake.run, the writes |
+| `lib/BakeUI.lua` | the progress box and the E3DS 3D row's BUILDING label |
+| `lib/bake/` | Emerald 3DS's generators ported to Lua (ships; `ARCHITECTURE.md`) |
 | `lib/Bin.lua` | little-endian reads and the PICA texture de-swizzle |
 | `bake/bake.py` | ROM → `generated/` (ships with the mod) |
 | `tools/shots.lua` | screenshot driver (`POKEPORT_DRIVER`) |

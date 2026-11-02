@@ -16,7 +16,10 @@ local function upscaled(image)
   if c ~= nil then return c or nil end
   local g = love.graphics
   local f = SmoothScale.FACTOR
-  local ok, canvas = pcall(g.newCanvas, image:getWidth() * f, image:getHeight() * f)
+  -- dpiscale 1: a canvas otherwise takes the window's density, and on a
+  -- high-DPI phone (3x) the 4x logo became a 3072x3072 texture -- 36 MB of
+  -- VRAM for one title picture, drawn back down to the same size anyway
+  local ok, canvas = pcall(g.newCanvas, image:getWidth() * f, image:getHeight() * f, { dpiscale = 1 })
   if not ok or not canvas then cache[image] = false return nil end
   local filterMin, filterMag = image:getFilter()
   image:setFilter("nearest", "nearest")

@@ -5890,6 +5890,9 @@ function RomExtractorGen4:extractTerrain(names)
     pcall(self.encounterEffects, self)
     -- the egg moves (/a/2/2/9 here, see Gen4EggMoves.extract)
     pcall(self.eggMoves, self)
+    -- the Goldenrod Tunnel photo studio: Platinum's imageclip archive as
+    -- /a/0/2/6 (Gen4DressUp, rev hgss-dressup-photo-v1)
+    pcall(self.dressUpArt, self)
     self.terrainReport = { chunks = packed, refused = refused, sets = setsBuilt,
       pairedShapes = pairedShapes, undecoded = undecoded, maps = attributed,
       noArea = noArea, geometry = #geometry, heights = #heights }
@@ -5913,6 +5916,14 @@ function RomExtractorGen4:extractTerrain(names)
     if okSp and sp then self:write("gen4_spear_pillar", sp)
     else print("gen4_spear_pillar failed: " .. tostring(sp)) end
   end
+  -- the ferry crossings PlayBoatCutscene plays (Gen4BoatCutsceneArt)
+  self:boatCutsceneArt()
+  -- the TV timetable CallTVBroadcast reads (Gen4PtTvSchedule)
+  self:ptTvSchedule()
+  -- the Game Corner slot machine app's art, data/slot.narc (Gen4PtSlotArt)
+  self:ptSlotArt()
+  -- the Ball Capsule app's art, cb_data.narc (Gen4PtCapsuleArt)
+  self:ptCapsuleArt()
   -- the gyms' field-effect flipbooks: Eterna's fountains, Veilstone's
   -- toppled tires (Gen4GymFxArt)
   self:gymFxArt()
@@ -6162,6 +6173,10 @@ function RomExtractorGen4:dressUpArt()
   end
   for _, acc in pairs(record.accessories) do acc.path = paths[acc.key] end
   if record.room then record.room = { path = paths.room } end
+  -- the photo studio's screens and backdrops (Gen4DressUp, rev *-dressup-photo-v1)
+  for key in pairs(record.photo or {}) do record.photo[key] = { path = paths[key] } end
+  for _, bd in pairs(record.backdrops or {}) do bd.path = paths[bd.key] end
+  for _, sp in pairs(record.sprites or {}) do sp.path = paths[sp.key] end
   self:write("gen4_dressup", record)
 end
 
@@ -6331,6 +6346,31 @@ function RomExtractorGen4:miningArt()
   end
   local mining = index("src.import.Gen4MiningArt", "mining")
   if mining then self:write("gen4_mining_art", mining) end
+  -- the Underground's trap effects in their own palettes (Gen4UgTrapArt,
+  -- rev platinum-ug-trap-art-v1)
+  do
+    local okT, images, rec = pcall(function() return require("src.import.Gen4UgTrapArt").build(self) end)
+    if okT and images and rec then
+      for key, image in pairs(images) do
+        local e = self:saveImage("ug_trap/" .. key, image)
+        if rec.sprites[key] then rec.sprites[key].path = e and e.path end
+      end
+      self:write("gen4_ug_trap_art", rec)
+    end
+  end
+  -- the Underground's top screen: its map and markers (Gen4UgTopArt, rev
+  -- platinum-ug-top-v1)
+  do
+    local okU, images, rec = pcall(function() return require("src.import.Gen4UgTopArt").build(self) end)
+    if okU and images and rec then
+      for key, image in pairs(images) do
+        local e = self:saveImage("ug_top/" .. key, image)
+        local r = rec.sprites[key] or (key == "background" and rec.background)
+        if r then r.path = e and e.path end
+      end
+      self:write("gen4_ug_top_art", rec)
+    end
+  end
   local menu = index("src.import.Gen4MenuArt", "menu_art")
   if menu then self:write("gen4_menu_art", menu) end
 end
@@ -6547,6 +6587,22 @@ function RomExtractorGen4:areaLights(mapsByName)
   local templates, parsed = Gen4AreaLight.all(arc)
   for m = 0, arc.count - 1 do
     out.members[m] = templates[m]
+  end
+  -- HEARTGOLD / SOULSILVER DO NOT READ THE NARC: AreaLightManager_New
+  -- (overlay 1 0x021EA220) loads id 0..4 from a table of LOOSE files
+  -- (ov01_02206450): data/area00light.txt, area01, area02, dun20_01 (the
+  -- Olivine Lighthouse) and dun20_02 (the lighthouse lit, ScrCmd_459 --
+  -- src/world/HgssLighthouse.lua). /data/arealight.narc is Platinum's leftover
+  -- (only its member 1 equals area01; member 0 is not area00).
+  if require("src.import.Gen4Versions").family(self.version) == "hgss" then
+    local LOOSE = { [0] = "/data/area00light.txt", "/data/area01light.txt", "/data/area02light.txt",
+                    "/data/dun20_01light.txt", "/data/dun20_02light.txt" }
+    for id = 0, 4 do
+      local loose = self.rom:read(LOOSE[id])
+      local parsedL = loose and Gen4AreaLight.parse(loose)
+      if parsedL then out.members[id] = parsedL end
+    end
+    out.path = "/data/areaNNlight.txt (ov01_02206450)"
   end
 
   -- ...and which of the four each map actually asks for, so a check can prove the
@@ -7181,6 +7237,42 @@ function RomExtractorGen4:gymFxArt()
   else print("gen4_gym_fx failed: " .. tostring(fx)) end
 end
 
+-- Platinum's ferry crossings, the 3D apps PlayBoatCutscene runs between the
+-- harbours (Gen4BoatCutsceneArt): run from the terrain stage's Platinum tail,
+-- and alone as STAGE_ONLY=boat_cutscene
+function RomExtractorGen4:boatCutsceneArt()
+  local okB, boat = pcall(require("src.import.Gen4BoatCutsceneArt").build, self)
+  if okB and boat then self:write("gen4_boat_cutscene", boat)
+  else print("gen4_boat_cutscene failed: " .. tostring(boat)) end
+  return okB and boat or nil
+end
+
+-- Platinum's TV timetable, /arc/tv.narc (Gen4PtTvSchedule): from the terrain
+-- stage's Platinum tail, and alone as STAGE_ONLY=pt_tv
+function RomExtractorGen4:ptTvSchedule()
+  local ok, tv, err = pcall(require("src.import.Gen4PtTvSchedule").build, self)
+  if ok and tv then self:write("gen4_pt_tv", tv)
+  else print("gen4_pt_tv failed: " .. tostring(ok and err or tv)) end
+end
+
+-- Platinum's Ball Capsule app art, cb_data.narc (Gen4PtCapsuleArt,
+-- capsule_menu): from the terrain stage's Platinum tail, and alone as
+-- STAGE_ONLY=pt_capsule
+function RomExtractorGen4:ptCapsuleArt()
+  local ok, art, err = pcall(require("src.import.Gen4PtCapsuleArt").build, self)
+  if ok and art then self:write("gen4_pt_capsule_art", art)
+  else print("gen4_pt_capsule_art failed: " .. tostring(ok and err or art)) end
+end
+
+-- Platinum's Game Corner slot machine app art, /data/slot.narc (Gen4PtSlotArt,
+-- overlay 101): from the terrain stage's Platinum tail, and alone as
+-- STAGE_ONLY=pt_slot
+function RomExtractorGen4:ptSlotArt()
+  local ok, art, err = pcall(require("src.import.Gen4PtSlotArt").build, self)
+  if ok and art then self:write("gen4_pt_slot_art", art)
+  else print("gen4_pt_slot_art failed: " .. tostring(ok and err or art)) end
+end
+
 -- The stages a version runs, by name (Gen4Versions.STAGES). Platinum runs
 -- every one below; HeartGold and SoulSilver run those whose formats have been
 -- checked against their cartridge, and the rest are written to the report as
@@ -7192,12 +7284,26 @@ RomExtractorGen4.STAGE_METHODS = {
 }
 -- the stages that hand each other what they found, as run() chains them
 RomExtractorGen4.STAGE_CHAIN = {
+  -- HGSS's Safari Zone apps alone (Gen4HgssSafariAppArt), for a scratch root
+  safari_apps = function(self)
+    local ok, art = pcall(require("src.import.Gen4HgssSafariAppArt").build, self)
+    if ok and art then self:write("gen4_hgss_safari_apps", art)
+    else print("gen4_hgss_safari_apps failed: " .. tostring(art)) end
+  end,
   maps = function(self) self._stageHeaders, self._stageNames = self:extractMaps() end,
   events = function(self) self._stageEvents = self:extractEvents() end,
   regions = function(self) self:extractRegions(self._stageEvents, self._stageNames) end,
   link = function(self) self:linkScripts(self._stageHeaders, self._stageEvents, self._stageNames) end,
   terrain = function(self) self:extractTerrain(self._stageNames) end,
   models = function(self) self:extractModels() end,
+  -- Platinum's ferry crossing apps (Gen4BoatCutsceneArt)
+  boat_cutscene = function(self) self:boatCutsceneArt() end,
+  -- Platinum's TV timetable (Gen4PtTvSchedule)
+  pt_tv = function(self) self:ptTvSchedule() end,
+  -- Platinum's slot machine app art (Gen4PtSlotArt)
+  pt_slot = function(self) self:ptSlotArt() end,
+  -- Platinum's Ball Capsule app art (Gen4PtCapsuleArt)
+  pt_capsule = function(self) self:ptCapsuleArt() end,
   overworld = function(self) self:extractOverworld() end,
   field = function(self) self:extractField() end,
   -- the frames before the fonts: writeFontDef carries `self._winFrames`
@@ -7315,6 +7421,11 @@ RomExtractorGen4.STAGE_CHAIN = {
                              { "src.import.Gen4HgssFieldFx", "gen4_hgss_field_fx" },
                              -- ShowCertificate's three diplomas
                              { "src.import.Gen4HgssCertificates", "gen4_hgss_certificates" },
+                             -- the UNOWN Report key item (overlay 113)
+                             { "src.import.Gen4HgssUnownReportArt", "gen4_hgss_unown_report" },
+                             -- the Safari Zone's area customizer / decoration
+                             -- apps (overlay 108)
+                             { "src.import.Gen4HgssSafariAppArt", "gen4_hgss_safari_apps" },
                              -- the Pokegear's scripted calls: phonebook, script
                              -- defs, Elm's map scripts, call-window ink
                              { "src.import.Gen4HgssPhoneCall", "gen4_hgss_phone_call" },
@@ -7335,7 +7446,13 @@ RomExtractorGen4.STAGE_CHAIN = {
                              -- the team-choosing screen's panel (overlay 97)
                              { "src.import.Gen4HgssPokeathlonTeamArt", "gen4_hgss_athlon_team" },
                              -- the dome's side-room screens (overlay 99)
-                             { "src.import.Gen4HgssPokeathlonRoomArt", "gen4_hgss_athlon_rooms" } }) do
+                             { "src.import.Gen4HgssPokeathlonRoomArt", "gen4_hgss_athlon_rooms" },
+                             -- the mail stationery (overlay 56, /a/0/7/9)
+                             { "src.import.Gen4MailGra", "gen4_mail_gra" },
+                             -- the Ball Capsule app (overlay 57, /a/0/8/7)
+                             { "src.import.Gen4PtCapsuleArt", "gen4_pt_capsule_art" },
+                             -- the land chunks' ambient soundplates
+                             { "src.import.Gen4HgssSoundplates", "gen4_hgss_soundplates" } }) do
       local okM, M = pcall(require, entry[1])
       if okM and type(M) == "table" and M.build then
         local okB, built = pcall(M.build, self)

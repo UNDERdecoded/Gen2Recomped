@@ -481,8 +481,20 @@ function BT.endStreak(bt)
   local r = bt.rec
   if bt.mode == BT.MODE_5 then return end
   local i = bt.mode * 2
-  BT.setIfBetter(r, i, BT.streak(bt))
+  local before = r.stats[i] or 0
+  local best = BT.setIfBetter(r, i, BT.streak(bt))
+  -- ...and sub_0204A5A0: a single / double best of 2 or more, new or a
+  -- multiple of 7 met again, is a TV record (src/script/PtTvRecords.lua)
+  if best > 1 and (before < best or (before == best and best % 7 == 0))
+     and (bt.mode == BT.SINGLE or bt.mode == BT.DOUBLE) then
+    pcall(function()
+      require("src.script.PtTvRecords").towerRecord(bt.save, best,
+        (bt.save.party or {})[(bt.slots[0] or 0) + 1], bt.mode == BT.SINGLE)
+    end)
+  end
   BT.setStat(r, i + 1, BT.streak(bt))
+  -- sub_0204A5EC: the Battle Tower Corner's pending outcome, lost at streak + 1
+  pcall(function() require("src.script.PtTvRecords").towerOutcome(bt.save, false, BT.streak(bt) + 1, bt.mode) end)
   BT.flag(r, 8 + bt.mode, 2)
   r.victories = (r.victories or 0) + bt.defeated
   BT.room(r, bt.mode, 2)
@@ -499,6 +511,8 @@ function BT.winRound(bt)
   if bt.mode == BT.MODE_5 then return end
   local i = bt.mode * 2
   local cur = BT.setStat(r, i + 1, BT.streak(bt))
+  -- sub_0204A5EC: the Battle Tower Corner's pending outcome, a round won
+  pcall(function() require("src.script.PtTvRecords").towerOutcome(bt.save, true, cur, bt.mode) end)
   BT.flag(r, 8 + bt.mode, 1)
   BT.setIfBetter(r, i, cur)
   r.victories = (r.victories or 0) + 7
@@ -571,7 +585,10 @@ function BT.giveRibbon(bt, key)
     local mon = party[(bt.slots[i] or 0) + 1]
     if mon then
       mon.ribbons = mon.ribbons or {}
-      if not mon.ribbons[key] then mon.ribbons[key] = true; any = true end
+      if not mon.ribbons[key] then
+        mon.ribbons[key] = true; any = true
+        pcall(function() require("src.script.PtTvRecords").ribbonGiven(bt.save, mon, key) end)
+      end
     end
   end
   return any and 1 or 0

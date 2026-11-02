@@ -548,7 +548,10 @@ local gfxVarReported = {}
 -- zero, pins the normalise-only count at two and names them, so a third
 -- spelling is a failure rather than another invisible NPC.
 local function normaliseGfxName(name)
-  return (name:gsub("%.%w+$", ""):gsub("[_%s]", ""):lower())
+  -- (the cartridge's own archive spells the Wi-Fi Plaza attendants
+  -- "attentant"; Platinum's gfx 235 is set into a graphics var by the
+  -- Wi-Fi Plaza desk, M0368, and found no sheet under the right spelling)
+  return (name:gsub("%.%w+$", ""):gsub("[_%s]", ""):lower():gsub("attentant", "attendant"))
 end
 
 local gen4NormalisedNames = nil
@@ -632,6 +635,14 @@ local function resolveGraphicsVar(save, obj)
           return copy
         end
       end
+    end
+    -- (an id no map places: the BW sprite table, as a spawn's)
+    local key, name = require("src.script.Gen4Commands").bwSpriteFromTable(data, want)
+    if key then
+      local copy = {}
+      for k, v in pairs(obj) do copy[k] = v end
+      copy.graphicsId, copy.sprite, copy.spriteName, copy.noSprite = want, key, name, nil
+      return copy
     end
     return obj
   end
@@ -1232,6 +1243,9 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     end
   end
   self.map = MapLoader.load(Game.data, mapId)
+  -- a warp rebuilds BW's building animation manager (src/world/Gen5BuildingAnim.lua);
+  -- walking over a seam of the same matrix does not
+  if self.bwBuildingAnim and not (opts and opts.seamless) then self.bwBuildingAnim = nil end
   if GameVersion.isGen3() then
     require("src.world.Gen3SecretBase").restoreEntrance(Game.data, Game.save, self.map)
   end
@@ -1601,6 +1615,11 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     -- again (Field_InitMapObjectsFromZoneEventData reads them from ROM)
     require("src.script.Gen4Commands").restorePlacedObjects(self.map.def)
   end
+  -- Black City's residents are the save's, not the zone's events
+  -- (src/world/Gen5BlackCity.lua)
+  if GameVersion.isGen5() then
+    require("src.world.Gen5BlackCity").injectObjects(self.map.def, Game.save, Game.data)
+  end
   for _, obj in ipairs(self.map.def.objects or {}) do
     if objectVisible(Game.save, mapId, obj) then
       local npc = pooledNPC(self.npcPool, Game.data, mapId, obj)
@@ -1745,6 +1764,10 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   require("src.world.Gen4Follower").onMapEntered(Game, self)
   -- HGSS's walking Pokemon (src/world/HgssFollowMon.lua)
   require("src.world.HgssFollowMon").onMapEntered(Game, self)
+  -- HGSS's ambient soundplates, on map load (src/world/HgssSoundplates.lua)
+  pcall(require("src.world.HgssSoundplates").process, Game, self, true)
+  -- HGSS's Mystri Stage gymmick (src/world/HgssSinjohStage.lua)
+  pcall(require("src.world.HgssSinjohStage").onMapEntered, Game, self)
   -- Canalave Gym's floors: each body drawn on its own (src/world/Gen4CanalaveGym.lua)
   if GameVersion.isGen4() then require("src.world.Gen4CanalaveGym").onMapEntered(Game, self) end
   -- A CONTINUE builds the gym (or Platinum's map feature) from the save, as
@@ -1969,6 +1992,12 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- The RECENT-ROUTE memory is updated on both, because the cartridge does:
   -- that is the "do not hop onto the map the player just left" list, and a
   -- door counts as having left.
+  -- Black / White's roamers move on every zone change (ov10 0x02164478 ->
+  -- 0x0215E364; src/world/Gen5Roamers.lua)
+  if GameVersion.isGen5() and Game and Game.save and Game.save.gen5Roamer
+     and fromMapId ~= mapId and not (opts and opts.via == "reload") then
+    pcall(require("src.world.Gen5Roamers").moveAll, Game.save)
+  end
   if GameVersion.isGen4() and Game and Game.save then
     local via = (opts and opts.via)
                 or (opts and opts.seamless and "connection")
@@ -3069,7 +3098,7 @@ function OverworldState:drainPendingScripts()
     -- still fired.
     if not self.runner:isRunning() and (GameVersion.isGen2() or GameVersion.isGen3()) then
       self:syncObjectVisibility()
-    elseif not self.runner:isRunning() and GameVersion.isGen4() then
+    elseif not self.runner:isRunning() and GameVersion.isNds() then
       self:refreshGen4VarSprites()
     end
   end
@@ -3156,14 +3185,26 @@ end
 -- map stays exactly as built. HGSS's friend is the case that showed it --
 -- Route 29's `GetFriendSprite VAR_OBJ_1` dresses Lyra, who stood invisible
 -- through her own catching demonstration.
+-- BLACK / WHITE'S sixteen var sprites (162..177, see resolveGraphicsVar) are
+-- refreshed whatever they last resolved to: the Royal Unova's transition
+-- script (M0104 S009C) dresses its fifteen cabins from the cruise, and a
+-- warp between its cabins is a transition on one map that reuses the NPCs
+-- built while the vars still held the no-cruise default
 function OverworldState:refreshGen4VarSprites()
-  if not (self.map and self.map.def and GameVersion.isGen4()) then return end
+  if not (self.map and self.map.def and (GameVersion.isGen4() or GameVersion.isGen5())) then return end
   local mapId = self.map.id
   for i, npc in ipairs(self.npcs or {}) do
     local def = npc.def
-    if def and (def.noSprite == "runtime_variable" or def.apricornTree ~= nil) then
-      local obj
+    local obj
+    if def and def.gen5 then
       for _, o in ipairs(self.map.def.objects or {}) do
+        if o.index == def.index then obj = o break end
+      end
+      local id = obj and tonumber(obj.graphicsId)
+      if not (id and id >= 162 and id <= 177) then obj = nil end
+    end
+    if def and (obj or def.noSprite == "runtime_variable" or def.apricornTree ~= nil) then
+      for _, o in ipairs(obj and {} or self.map.def.objects or {}) do
         if o.index == def.index then obj = o break end
       end
       local resolved = obj and objectHome(nil, mapId, obj)
@@ -3461,6 +3502,27 @@ function OverworldState:checkIncomingPhoneCall()
   end })
 end
 
+-- THE FIELD UNDER A MESSAGE (StateStack:update calls `animate` on the visible
+-- states below its top): on a Gen 4 / BW map the objects keep their frame
+-- while a message box is up, as the cartridge's field does -- a script's lock,
+-- not the box, is what holds them (src/world/Gen4ObjectLock.lua)
+function OverworldState:animate(dt)
+  if not Game then return end
+  require("src.world.Gen4ObjectLock").fieldTick(self)
+  -- ...and the field objects a script placed (Gen4FieldFx: Cut, Rock Smash,
+  -- BW's illusion / N's Castle effects): field tasks, which the cartridge
+  -- keeps running under a message box
+  if self.gen4FieldFx then require("src.world.Gen4FieldFx").tick(self, true) end
+  -- ...and BW's object on a flight path (0x15D, Gen5FlightPath)
+  if self.gen5Flight then require("src.world.Gen5FlightPath").tick(self) end
+  if self.gen5Motions then require("src.world.Gen5ObjectMotion").tick(self) end
+  -- Platinum's Underground under its own menus: the base's props and the top
+  -- screen keep going (src/world/Gen4UgWorld.lua `animate`)
+  if GameVersion.isGen4() and require("src.world.Gen4Underground").isUnderground(self) then
+    require("src.world.Gen4UgWorld").animate(Game, self)
+  end
+end
+
 function OverworldState:update(dt)
   -- `earthquake <n>` (Script_earthquake -> EarthquakeMovement 25:$725D):
   -- the BG jolts while the sprites stay put, which is exactly what bgShakeY
@@ -3492,6 +3554,9 @@ function OverworldState:update(dt)
   if self.gen4Waterfall then require("src.world.Gen4WaterfallRide").tick(self) end
   -- ...and HGSS's obstacle animations (Gen4FieldFx: Cut, Rock Smash, Headbutt)
   if self.gen4FieldFx or self.gen4FieldFxShake then require("src.world.Gen4FieldFx").tick(self) end
+  -- ...and BW's object on a flight path (0x15D, Gen5FlightPath)
+  if self.gen5Flight then require("src.world.Gen5FlightPath").tick(self) end
+  if self.gen5Motions then require("src.world.Gen5ObjectMotion").tick(self) end
   -- ...and Platinum's honey tree shaking while a Pokemon waits in it (Gen4HoneyTrees)
   if Game.save and Game.save.gen4HoneyTrees and GameVersion.isGen4() then
     pcall(require("src.world.Gen4HoneyTrees").shakeTick, self)
@@ -3523,12 +3588,29 @@ function OverworldState:update(dt)
       Logger.warn("hgss bug contest: %s", tostring(errB))
     end
   end
+  -- ...and HeartGold / SoulSilver's Pokegear ring manager: random, timed
+  -- and trigger calls (src/world/HgssPhoneRing)
+  if Game.save and Game.data and Game.data.gen4_hgss_phone_call then
+    local okR, errR = pcall(require("src.world.HgssPhoneRing").tick, self)
+    if not okR and not self.hgssRingWarned then
+      self.hgssRingWarned = true
+      Logger.warn("hgss phone ring: %s", tostring(errR))
+    end
+  end
   -- ...and Black/White's queued arrival script (op 0x021)
   if self.gen5QueuedEntry then
     local okQ, errQ = pcall(require("src.world.Gen5PostWarp").update, self)
     if not okQ then
       Logger.warn("gen5 queued entry: %s", tostring(errQ))
       self.gen5QueuedEntry = nil
+    end
+  end
+  -- ...and the Royal Unova's cruise clock (Gen5RoyalUnova), while one sails
+  if Game.gen5RoyalUnova then
+    local okR, errR = pcall(require("src.world.Gen5RoyalUnova").update, self, dt)
+    if not okR then
+      Logger.warn("royal unova: %s", tostring(errR))
+      Game.gen5RoyalUnova = nil
     end
   end
   -- ...and Platinum's snow (Gen4Snow -> Gen4SnowView)
@@ -3755,7 +3837,7 @@ function OverworldState:update(dt)
   -- ENTRY -- after this engine has already built the NPC list. So every
   -- object that a Hoenn map's own entry script hides stayed on screen for the
   -- whole visit, and only went away if the player left and came back.
-  if scriptWasRunning and not self.runner:isRunning() and GameVersion.isGen4() then
+  if scriptWasRunning and not self.runner:isRunning() and GameVersion.isNds() then
     self:refreshGen4VarSprites()
   end
   if scriptWasRunning and not self.runner:isRunning()
@@ -3841,6 +3923,22 @@ function OverworldState:update(dt)
     -- and should not grow one.  A plain field, pushed once a frame.
     local ground = self.map and self.map.renderer and self.map.renderer.gen4Ground
     if ground then ground.oneShots = OneShot.all(self) end
+  end
+  -- Black / White's scripted building animations, on the field clock
+  -- (src/world/Gen5BuildingAnim.lua)
+  if GameVersion.isGen5() then require("src.world.Gen5BuildingAnim").update(self, dt) end
+  -- ...the layered field themes (src/world/Gen5MusicParts.lua) and N's
+  -- portrait (src/world/Gen5NPortrait.lua)
+  if GameVersion.isGen5() then
+    require("src.world.Gen5MusicParts").update(self, dt)
+    require("src.world.Gen5NPortrait").update(self, dt)
+    require("src.world.Gen5ZoneSounds").update(self)
+    -- the field weather's own programs (src/world/Gen5WeatherFx.lua)
+    require("src.world.Gen5WeatherFx").update(self, dt)
+    -- ...and the street crowds (src/world/Gen5Walkers.lua)
+    require("src.world.Gen5Walkers").update(self, dt)
+    -- the season's change: its splash and Deerling's form (src/world/Gen5Season.lua)
+    require("src.world.Gen5Season").update(self)
   end
   self:updateParallel()
   -- keep the player sprite in sync with the bike state (the drawer
@@ -4111,6 +4209,7 @@ function OverworldState:update(dt)
     local UG = require("src.world.Gen4Underground")
     UG.ensureSpots(Game, self)
     UG.tickSparkles(Game, self)
+    if UG.isUnderground(self) then require("src.world.Gen4UgWorld").tick(Game, self) end
   end
   -- every body on screen, home and foreign alike, in this map's cells
   self:updateCast()
@@ -4123,6 +4222,7 @@ function OverworldState:update(dt)
   require("src.world.PikachuFollower").update(Game, self)
   require("src.world.Gen4Follower").update(Game, self)
   require("src.world.HgssFollowMon").update(Game, self)
+  do local SJ = package.loaded["src.world.HgssSinjohStage"]; if SJ and SJ.objects then pcall(SJ.update, Game, self) end end
   -- HGSS's model objects (the tunnel's gates, the warehouse's crates) wear
   -- a field-effect model that follows them, not a billboard
   require("src.world.HgssModelObjects").update(Game, self)
@@ -4598,7 +4698,11 @@ function OverworldState:checkGen4EntranceWarp(dir)
     -- a press along the strip is still inside the doorway, not into it
     local same = here and ahead and here.def and ahead.def
                  and (here.def.extentOf or here.def.index) == (ahead.def.extentOf or ahead.def.index)
-    if ahead and not same then self:takeWarp(ahead.def) return true end
+    if ahead and not same then
+      -- ...through its door, which opens first (src/world/Gen5BuildingAnim.lua)
+      if not require("src.world.Gen5BuildingAnim").enterDoor(self, ahead.def, tx, ty) then self:takeWarp(ahead.def) end
+      return true
+    end
     -- A DOORWAY A TILE TO THE SIDE OF THE PRESS. 63 of Black's 271 kind-2
     -- warps have no walkable cell beside them at all -- the Champion's room
     -- (Z144) puts the way into N's Castle at (14, 0), the corner above a
@@ -5490,6 +5594,13 @@ function OverworldState:handleInput()
           return result
         end
       end
+      -- the Underground's secret base: walking into its entrance or onto the
+      -- room's exit tile (src/world/Gen4UgBase.lua)
+      if result == "blocked" and GameVersion.isGen4()
+         and require("src.world.Gen4Underground").isUnderground(self)
+         and require("src.world.Gen4UgBase").bumped(Game, self, dir) then
+        return result
+      end
       -- ...and the stairs, which the cartridge also asks about only after
       -- the plain step has been refused (see checkGen2Stairs).
       if result == "blocked" and why ~= "entity"
@@ -5600,6 +5711,9 @@ function OverworldState:checkBoulderPush(dir)
     self.runner:run({ { "g4_veilstone_hit", dir } }, { mapId = self.map.id })
     return true
   end
+  -- ...and HGSS'S ICE BLOCKS (Seafoam B3F) are shoved by walking into them
+  -- from the ice (src/world/HgssIceBlocks.lua)
+  if GameVersion.isGen4() and require("src.world.HgssIceBlocks").tryPush(self, dir) then return true end
   local fx, fy = Collision.target(p.cellX, p.cellY, dir)
   local npc = self:npcAtCell(fx, fy)
   -- FireRed's boulder is OBJ_EVENT_GFX_PUSHABLE_BOULDER (97), and the push is
@@ -5688,6 +5802,8 @@ function OverworldState:checkBoulderPush(dir)
     end
     if self:gen2BoulderIntoPit(npc) then return end
     if self:boulderIntoHole(npc) then return end
+    -- HGSS: Ice Path B1F's four holes (src/world/HgssBoulderHoles.lua)
+    if require("src.world.HgssBoulderHoles").fell(self, npc) then return end
     if dwFall and require("src.world.Gen4DistPlatforms").boulderFell(self, npc) then return end
     Runtime.emit("world.boulder_moved", { mapId = self.map.id, npcId = npc.id,
                                           x = npc.cellX, y = npc.cellY })
@@ -7420,6 +7536,11 @@ function OverworldState:interact()
   local p = self.player
   local fx, fy = p:facingCell()
 
+  -- BLACK / WHITE'S DIVE SPOTS: A over Undella Bay's deep water offers Dive
+  -- (src/world/Gen5Dive.lua, ov21 0x02189EF4) when nothing in front answers
+  if GameVersion.isGen5() and not self:npcAtCell(fx, fy)
+     and require("src.world.Gen5Dive").tryInteract(self) then return end
+
   if GameVersion.isGen4() and p.facing=='up' then
     local H=require('src.world.Gen4HoneyTrees')
     local ground=self.map.renderer and self.map.renderer.gen4Ground
@@ -7431,6 +7552,14 @@ function OverworldState:interact()
       local rows=require('src.world.Gen4TileScripts').compile(Game.data,'common_scripts',8)
       if rows then self.runner:run(rows,{mapId=self.map.id});interacted(self,fx,fy,'honey-tree');return end
     end
+  end
+
+  -- THE UNDERGROUND'S OWN A (src/world/Gen4UgWorld.lua, manager.c 595-706): a
+  -- trap to disengage, a vendor's shop, a buried sphere
+  if GameVersion.isGen4() and require("src.world.Gen4Underground").isUnderground(self)
+     and require("src.world.Gen4UgWorld").interact(Game, self, fx, fy) then
+    interacted(self, fx, fy, "underground")
+    return
   end
 
   local npc = self:npcAtCell(fx, fy)
@@ -7470,6 +7599,15 @@ function OverworldState:interact()
       -- rules, answered mid-step like the Pikachu above
       if not npc.hidden then require("src.world.HgssFollowMon").talk(Game, self, npc) end
     elseif not npc.moving then
+      self:talkTo(npc)
+    elseif GameVersion.isGen4() and npc.targetX == fx and npc.targetY == fy then
+      -- GEN 4 TALKS TO A WALKER mid-step: a map object's x / z move to the
+      -- step's destination as the step STARTS, and FieldSystem_GetFacingObject
+      -- (HGSS sub_0203DC64; Platinum's twin) compares those -- so one walking
+      -- INTO the faced cell answers (it lands, then the talk's LockAll holds
+      -- it), one walking out of it does not. With no talk while moving, the
+      -- Lavender Radio Tower director (T05R0701, WALK_BACK_AND_FORTH, never
+      -- still) could not be spoken to at all, and his EXPN Card never given.
       self:talkTo(npc)
     end
     interacted(self, fx, fy, "npc", npc)
@@ -9184,6 +9322,9 @@ function OverworldState:fieldWeather()
     end
     return look or nil
   end
+  -- BLACK / WHITE: the zone's weather (src/world/Gen5Weather.lua, arm9
+  -- 0x0202C794), drawn with the same procedural looks
+  if GameVersion.isGen5() then return require("src.world.Gen5Weather").look(self) end
   if not GameVersion.isGen3() then return nil end
   return self:weatherName(Game.save.gen3WeatherActive)
 end
@@ -9361,6 +9502,18 @@ function OverworldState:drawFieldWeather()
       return FD.draw(w, h)
     end
   end
+  -- BLACK / WHITE: the weather overlays' own programs, when the cache
+  -- carries their sprites (src/world/Gen5WeatherFx.lua)
+  if GameVersion.isGen5() then
+    local WX = require("src.world.Gen5WeatherFx")
+    if WX.active(self) then
+      self.gen5WeatherDraw = self.gen5WeatherDraw or function(w, h) return WX.draw(self, w, h) end
+      local r = Game.renderer
+      if r then r.screenWeather = self.gen5WeatherDraw return true end
+      local w, h = self:uiSize()
+      return WX.draw(self, w, h)
+    end
+  end
   local name = self:fieldWeather()
   if not name then return false end
   local Gen3Weather = gen3Weather()
@@ -9409,6 +9562,9 @@ function OverworldState:battleWeather()
     return require("src.world.Gen3Weather")
              .forBattle(look, Game.data.constants)
   end
+  -- BLACK / WHITE: rain, sandstorm or hail from the field's weather (ov21
+  -- 0x021AA69C; src/world/Gen5Weather.lua)
+  if GameVersion.isGen5() then return require("src.world.Gen5Weather").battle(self) end
   if not GameVersion.isGen3() then return nil end
   local name = self:weatherName(Game.save.gen3WeatherActive)
   if not name then return nil end
@@ -10326,6 +10482,8 @@ function OverworldState:checkGen2Ice()
   local allowed = Collision.canMove(self.map, self.cast or self.entities, p, dir)
   if not allowed then
     self.iceSlide = nil
+    -- HGSS: a slide that ends against an ice block shoves it on (sub_0205D0A8)
+    if GameVersion.isGen4() and require("src.world.HgssIceBlocks").tryPush(self, dir) then return true end
     return false
   end
   self.iceSlide = dir
@@ -13104,6 +13262,10 @@ function OverworldState:hatchEgg(hatched)
   hatched.metLevel = 0
   hatched.metLocation = require("src.battle.BattleState").metHere(Game)
   require('src.pokemon.Gen4Origin').stamp(Game,hatched,'hatch',hatched.metLocation)
+  -- Platinum's Happy Happy Egg Club (FieldSystem_SaveTVSegment_HappyHappyEggClub)
+  if GameVersion.isGen4() then
+    pcall(function() require('src.script.PtTvRecords').hatched(Game.save, hatched, self.map and self.map.def) end)
+  end
   local gen2 = require("src.pokemon.Gen2Breeding").isVanilla()
   if gen2 then require("src.pokemon.Gen2Breeding").hatch(Game,hatched) end
   Pokemon.heal(hatched)
@@ -13358,6 +13520,11 @@ end
 function OverworldState:gen4CountAmityStep()
   local map = self.map
   if (map and map.def and map.def.generation) ~= 4 then return end
+  -- (not on Black / White's maps, which are generation 4 in shape: there
+  -- 0x403A is a work var of BW's own -- the map-swap condition 12 of ov10
+  -- 0x02170FB0 compares it with 0x1028, which the count reached at step
+  -- 4,136; src/world/Gen5MapVariants.lua)
+  if map.def.gen5 then return end
   local G = Game or require("src.core.Game")
   local save = G and G.save
   if not save then return end
@@ -13430,6 +13597,8 @@ function OverworldState:onStepComplete()
     if not (Game and Game.save) then return end
     if GameVersion.isGen4() then
       require("src.pokemon.Gen4GameRecords").increment(Game.save, 0)
+      -- HGSS's GAME_STAT_STEPS_BIKED and the Bike Shop's call (src/world/HgssBikeShopCall.lua)
+      pcall(function() require("src.world.HgssBikeShopCall").step(Game) end)
       -- THE TOWN MAP'S HISTORY DOTS: overworld_map_history.c pushes on every
       -- matrix-cell change outside, and `remember` only pushes when the cell
       -- differs from the last entry, so calling it per step costs a compare
@@ -13447,6 +13616,8 @@ function OverworldState:onStepComplete()
     Game.save.poketch.steps = (Game.save.poketch.steps or 0) + 1
   end
   self:gen4CountAmityStep()
+  -- the Abyssal Ruins' rising water (src/world/Gen5RuinsTimer.lua)
+  if GameVersion.isGen5() and Game.save then require("src.world.Gen5RuinsTimer").onStep(self, Game.save) end
   -- THE REMATCH STEP COUNTER.
   --
   -- IncrementRematchStepCounter (0x080B215C) runs once per step and only
@@ -13510,6 +13681,12 @@ function OverworldState:onStepComplete()
   -- UpdatePikachuHappinessAndMood rides the step counter (poison.asm)
   require("src.world.PikachuFollower").onStep(Game.save)
   require("src.world.HgssFollowMon").onStep(Game, self)
+  pcall(require("src.world.HgssSoundplates").process, Game, self, false)
+  -- an Underground step: a trap underfoot, the reversed d-pad's count
+  -- (src/world/Gen4UgWorld.lua)
+  if GameVersion.isGen4() and require("src.world.Gen4Underground").isUnderground(self) then
+    pcall(require("src.world.Gen4UgWorld").stepped, Game, self)
+  end
   -- Original Gen 2 friendship shares the egg step counter in stepEggs.
   -- Keep the existing walking rule for other datasets.
   if GameVersion.get()=="emerald" then
@@ -14088,6 +14265,15 @@ function OverworldState:onStepComplete()
         enc, roamer = one, "gen4"
         self.gen4RoamerSlot = slot
       end
+    end
+  elseif enc and GameVersion.isGen5() then
+    -- BLACK / WHITE: Thundurus / Tornadus on this zone take the encounter
+    -- half the time (src/world/Gen5Roamers.lua, ov21 0x021A957C)
+    local Roam5 = require("src.world.Gen5Roamers")
+    local slot, it = Roam5.check(Game.save, self.map.id, love.math.random)
+    if slot and it then
+      enc, roamer = Roam5.encounterFor(slot, it), "gen5"
+      self.gen5RoamerSlot = slot
     end
   elseif enc and not onWater then
     local RoamMons = require("src.world.RoamMons")
@@ -14939,7 +15125,16 @@ function OverworldState:afterBattle(result, battle)
       end
     end)
   end
-  if battle and battle.roamer and battle.roamer ~= "gen4" then
+  -- Black / White's after-battle pass, on the way out of ANY wild battle
+  -- (src/world/Gen5Roamers.lua, ov10 0x0215E5B0)
+  if GameVersion.isGen5() and Game and Game.save and battle and battle.kind == "wild" then
+    local slot = (battle.roamer == "gen5") and self.gen5RoamerSlot or nil
+    local enemy = battle.enemy
+    self.gen5RoamerSlot = nil
+    pcall(require("src.world.Gen5Roamers").afterBattle, Game.save, slot, result,
+          enemy and enemy.mon and enemy.mon.hp or 0, enemy and enemy.mon and enemy.mon.status)
+  end
+  if battle and battle.roamer and battle.roamer ~= "gen4" and battle.roamer ~= "gen5" then
     local enemy = battle.enemy
     local hp = enemy and enemy.mon and enemy.mon.hp or 0
     local gone = result == "caught" or result == "win" or hp <= 0
@@ -15071,6 +15266,8 @@ function OverworldState:healPoint(whiteout)
 end
 
 function OverworldState:takeWarp(warpDef)
+  -- the warp taken, for its door camera record on the far side (Gen5BuildingAnim)
+  self.bwLastWarp = warpDef
   local last = self.lastOutdoor
   if warpDef.destMap == "LAST_MAP" and not last then
     -- old saves / unexpected states: never crash on an exit mat, fall
@@ -18870,6 +19067,9 @@ function OverworldState:drawUI()
   -- the text box, and a rain that fell in front of the dialogue would be
   -- the one thing on screen that could not be read through.
   self:drawFieldWeather()
+  -- N's full-screen portrait, over the field and under the text box
+  -- (src/world/Gen5NPortrait.lua)
+  if self.gen5NPortrait then require("src.world.Gen5NPortrait").draw(self) end
 
   -- The map-name sign rides the window layer over the top four rows
   -- (HDMATransfer_OnlyTopFourRows), so it sits above the map but under the
@@ -18943,6 +19143,11 @@ function OverworldState:drawUI()
   -- ...and the Game Corner's coin window (`showcoins` / `hidecoins`).
   if self.gen4CoinWindow then
     require("src.ui.Gen4MoneyWindow").drawCoins(self.gen4CoinWindow)
+  end
+  -- ...and a lift's "Current Floor" window, which closes itself the frame
+  -- its var reads 0xFFFF (src/ui/Gen4FloorWindow.lua)
+  if self.gen4FloorWindow then
+    require("src.ui.Gen4FloorWindow").drawOn(self, Game.save)
   end
 
   -- TalkToPikachu's picture box (engine/pikachu/pikachu_pic_animation.asm
