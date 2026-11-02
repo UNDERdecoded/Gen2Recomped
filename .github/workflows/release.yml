@@ -1087,10 +1087,21 @@ jobs:
       # scripts/build_xbox_uwp.sh refuses to run anywhere but Git Bash, which
       # is exactly what `shell: bash` is on a Windows runner (uname reports
       # MINGW64_NT, and cygpath / powershell.exe / unzip are all on PATH).
+      # Xbox Device Portal refuses an unsigned MSIX.  With the signing secret
+      # set, the package is signed with that PFX (a stable certificate across
+      # releases); without it, build_xbox_uwp.sh signs with a throwaway
+      # self-signed one, which Dev Mode accepts since it never checks trust.
       - name: Build UWP package
         shell: bash
+        env:
+          XBOX_UWP_SIGNING_CERTIFICATE: ${{ secrets.XBOX_UWP_SIGNING_CERTIFICATE }}
+          XBOX_UWP_SIGNING_PASSWORD: ${{ secrets.XBOX_UWP_SIGNING_PASSWORD }}
         run: |
           set -euo pipefail
+          if [ -n "${XBOX_UWP_SIGNING_CERTIFICATE:-}" ]; then
+            export XBOX_UWP_SIGNING_CERT_PATH="$RUNNER_TEMP/xbox-uwp-signing.pfx"
+            printf '%s' "$XBOX_UWP_SIGNING_CERTIFICATE" | tr -d '[:space:]' | base64 -d > "$XBOX_UWP_SIGNING_CERT_PATH"
+          fi
           bash scripts/build_xbox_uwp.sh --release \
             --version "${{ needs.version.outputs.version }}" \
             --game-love .bazinga/work/game.love \

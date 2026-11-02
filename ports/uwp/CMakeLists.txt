@@ -89,6 +89,9 @@ set_target_properties(${PROJECT_NAME} PROPERTIES
     CXX_STANDARD_REQUIRED YES
     VS_GLOBAL_DefaultLanguage "en-US"
     VS_SDK_REFERENCES "Microsoft.VCLibs, Version=14.0"
+    # scripts/xbox-uwp/stage_release.ps1 signs the MSIX afterwards, with the
+    # release PFX or a self-signed certificate matching the publisher
+    VS_GLOBAL_AppxPackageSigningEnabled "false"
 )
 target_include_directories(${PROJECT_NAME} PRIVATE "${SDL2_ROOT}/include/SDL2")
 target_link_libraries(${PROJECT_NAME} PRIVATE

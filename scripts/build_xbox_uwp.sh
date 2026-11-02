@@ -100,6 +100,19 @@ cmake --preset "$PRESET" -S "$(windows_path "$UWP_ROOT")" \
 say "building Xbox UWP ($CONFIGURATION)"
 (cd "$UWP_ROOT" && cmake --build --preset "$PRESET")
 
+# Xbox Device Portal will not install an unsigned MSIX.  Sign with the PFX in
+# XBOX_UWP_SIGNING_CERT_PATH (password in XBOX_UWP_SIGNING_PASSWORD) when one
+# is given, otherwise with a throwaway self-signed certificate: Dev Mode does
+# not need the certificate to be trusted, only present and matching.
+sign_args=()
+if [ -n "${XBOX_UWP_SIGNING_CERT_PATH:-}" ]; then
+  sign_args+=(-CertificatePath "$(windows_path "$XBOX_UWP_SIGNING_CERT_PATH")")
+  if [ -n "${XBOX_UWP_SIGNING_PASSWORD:-}" ]; then
+    sign_args+=(-CertificatePassword "$XBOX_UWP_SIGNING_PASSWORD")
+  fi
+else
+  sign_args+=(-MakeCert)
+fi
 build_info="$WORK/xbox-uwp-build-info.json"
 bash "$SCRIPT_DIR/xbox-uwp/write_build_info.sh" \
   "$build_info" "$VERSION" "$CONFIGURATION"
@@ -107,6 +120,7 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File \
   "$(windows_path "$SCRIPT_DIR/xbox-uwp/stage_release.ps1")" \
   -Version "$VERSION" \
   -Configuration "$CONFIGURATION" \
-  -BuildInfo "$(windows_path "$build_info")"
+  -BuildInfo "$(windows_path "$build_info")" \
+  "${sign_args[@]}"
 
 say "done. See dist/xbox-uwp/"
