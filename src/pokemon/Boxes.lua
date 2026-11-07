@@ -178,6 +178,13 @@ function Boxes.deposit(save, mon)
     local slot = Boxes.firstFree(boxes[i])
     if slot then
       boxes[i][slot] = mon
+      -- PCBoxes_TryStoreBoxMon: a Sky Forme Shaymin is stored as Land Forme
+      -- (Gen 4 / 5; src/pokemon/Gen45FormData.lua)
+      pcall(function()
+        local G = package.loaded["src.core.Game"]
+        local g = G and G.data and (G.data.constants or {}).gen
+        if g == 4 or g == 5 then require("src.pokemon.Gen45FormData").landAll(G.data, { mon }) end
+      end)
       -- the cartridge counts boxes from zero and its scripts read them that
       -- way, so what is recorded is the index, not this port's number
       recordGen3Send(save, i - 1, slot - 1)

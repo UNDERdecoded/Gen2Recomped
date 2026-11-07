@@ -315,6 +315,9 @@ function Gen4FishingTask:finish()
     local battle = BattleState.newWild(game, enc.species, enc.level,
       { hooked = true, nature = enc.nature, gender = enc.gender })
     if ow:inSafariGame() then battle:makeSafari(save.safari) end
+    if enc.onePerfectIV and enc.gender == nil and battle.enemy and battle.enemy.mon then
+      require("src.world.Gen45EncounterRate").onePerfectIV(game.data, battle.enemy.mon)
+    end
     battle.onFinish = function(result) ow:afterBattle(result, battle) end
     ow:pushBattle(battle)
   elseif self.gotAway then

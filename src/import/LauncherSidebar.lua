@@ -35,6 +35,9 @@ Sidebar.SECTIONS = {
   { id = "news",     label = "News" },
   { id = "games",    label = "Games" },
   { id = "walker",   label = "Monster Walker" },
+  -- the Link Hub in the launcher, HOST WITH FRIENDS / JOIN FRIEND
+  -- (src/ui/online/LauncherHubScreen.lua, src/online/LauncherHub.lua)
+  { id = "hub",      label = "Online Hub" },
   { id = "mods",     label = "Mods" },
   { id = "tools",    label = "Tools" },
   { id = "settings", label = "Settings" },
@@ -361,6 +364,9 @@ function Sidebar.install(RI)
     -- an interrupted import belongs on its game page, where its recovery is
     if self.interruptedImport and GameVersion.VERSIONS[self.tab] then self:_sbOpenGame(self.tab) end
     self:_sbEnsureNews()
+    -- the in-launcher Link Hub: "Start hub when launcher opens", and games
+    -- launched from here pointed at it (src/online/LauncherHub.lua)
+    pcall(function() require("src.online.LauncherHub").launcherOpened() end)
     return self
   end
 
@@ -381,6 +387,14 @@ function Sidebar.install(RI)
     if section == "tools" then self.toolFlow = nil end
     if section == "walker" then
       self.walker = self.walker or require("src.ui.PokewalkerScreen").new(self)
+    end
+    if section == "hub" then
+      local okH, scr = pcall(function()
+        return self.hubScreen or require("src.ui.online.LauncherHubScreen").new(self)
+      end)
+      if okH then self.hubScreen = scr; scr:go(scr.page or "home") end
+    elseif self.hubScreen then
+      pcall(self.hubScreen.close, self.hubScreen)
     end
     if section == "mods" and self.tab ~= "mods" and self.tab ~= "find" then self:_selectTab("mods") end
     if section == "news" then self:_sbEnsureNews() end
@@ -449,6 +463,14 @@ function Sidebar.install(RI)
       g.ellipse("fill", cx + r * 0.38, cy - r * 0.28, r * 0.24, r * 0.36)
       g.circle("fill", cx - r * 0.38, cy - r * 0.22, r * 0.1)
       g.circle("fill", cx + r * 0.38, cy - r * 0.78, r * 0.1)
+    elseif kind == "hub" then
+      -- a hub with three spokes
+      g.circle("line", cx, cy, r * 0.32)
+      for i = 0, 2 do
+        local a = -math.pi / 2 + i * 2 * math.pi / 3
+        g.line(cx + math.cos(a) * r * 0.32, cy + math.sin(a) * r * 0.32, cx + math.cos(a) * r * 0.8, cy + math.sin(a) * r * 0.8)
+        g.circle("fill", cx + math.cos(a) * r * 0.85, cy + math.sin(a) * r * 0.85, r * 0.17)
+      end
     elseif kind == "mods" then
       local q = r * 0.85
       g.rectangle("line", cx - q, cy - q, q * 0.9, q * 0.9); g.rectangle("line", cx + q * 0.1, cy - q, q * 0.9, q * 0.9)
@@ -1411,7 +1433,7 @@ function Sidebar.install(RI)
   -- the existing panels: the game page, the mod list, Find Mods)
   function RI:_sbOwns()
     if self.section == "news" or self.section == "tools" or self.section == "settings"
-       or self.section == "walker" then return true end
+       or self.section == "walker" or self.section == "hub" then return true end
     if self.section == "games" and self.gamesView ~= "game" then return true end
     return false
   end
@@ -1428,6 +1450,11 @@ function Sidebar.install(RI)
         body = self.detailFont, small = self.hintFont })
     end
     if self.section == "tools" then return self:_sbTools(x, y, w, h) end
+    if self.section == "hub" and self.hubScreen then
+      return self.hubScreen:draw(x, y, w, h, {
+        title = self.gameNameFont, head = self.stateFont or self.detailFont,
+        body = self.detailFont, small = self.hintFont, palette = PAL(), s = self._s or 1 })
+    end
     return 0
   end
 
@@ -1441,6 +1468,7 @@ function Sidebar.install(RI)
     end
     if inside(sb.back, x, y) then self:_sbBack(); return true end
     if self.section == "walker" and self.walker and self.walker:mousepressed(x, y) then return true end
+    if self.section == "hub" and self.hubScreen and self.hubScreen:mousepressed(x, y) then return true end
     if inside(sb.fav, x, y) then
       local opts = options(self)
       Sidebar.toggleFavorite(opts, sb.fav.version); saveOptions(self, opts)
@@ -1555,6 +1583,7 @@ function Sidebar.install(RI)
 
   local origText = RI.textinput
   RI.textinput = function(self, text, ...)
+    if self.sidebarMode and self.section == "hub" and self.hubScreen and self.hubScreen:textinput(text) then return end
     if self.sidebarMode and self._modSearchFocus then
       local q = (self.modSearch or "") .. text
       if #q <= MAX_SEARCH then self.modSearch = q end
@@ -1567,6 +1596,7 @@ function Sidebar.install(RI)
   local origKey = RI.keypressed
   RI.keypressed = function(self, key, ...)
     if self.sidebarMode and self.section == "walker" and self.walker and self.walker:keypressed(key) then return end
+    if self.sidebarMode and self.section == "hub" and self.hubScreen and self.hubScreen:keypressed(key) then return end
     if self.sidebarMode and self._modSearchFocus then
       if key == "backspace" then
         local q = self.modSearch or ""
@@ -1657,13 +1687,19 @@ function Sidebar.install(RI)
       end
     end
     require('src.cloud.Task').reap()
+    -- the Link Hub thread's status, and the Online Hub page when it is up
+    if self.hubScreen and self.section == "hub" then pcall(self.hubScreen.update, self.hubScreen, dt)
+    elseif package.loaded["src.online.LauncherHub"] then pcall(package.loaded["src.online.LauncherHub"].poll) end
     if self._cloudFlow then
       local ok,why=pcall(self._sbCloudPoll,self)
       if not ok then self:_sbCloudCancel();self.settingsNotice=Strings('Sign-in failed: ')..tostring(why) end
     end
     if self.sidebarMode and not self._handedOff then
-      -- held still while Settings is open (Backdrop.setPaused)
-      Backdrop.setPaused(self.section == "settings" or self.settingsOpen == true)
+      -- held still while Settings is open (Backdrop.setPaused), and while
+      -- the Monster Walker is: its full-screen app over a ticking game was
+      -- laggy on Android, and the walker never shows the game anyway
+      Backdrop.setPaused(self.section == "settings" or self.settingsOpen == true
+        or self.section == "walker")
       Backdrop.request(self:_sbBackdropWant(), self:_sbMusicOn())
       pcall(Backdrop.update, dt, self.workState == "working")
     elseif Backdrop.current() then

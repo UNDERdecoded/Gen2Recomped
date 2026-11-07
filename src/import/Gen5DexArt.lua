@@ -43,15 +43,61 @@
 -- Every OBJ / button entry carries `bx, by` -- its opaque box's corner in the
 -- saved image -- so the screen places it by the box the captures measured.
 --
+--   area_<n>        c28 on g15, p5 (READ: ov208 0x021C0214..0x021C025A loads them
+--                   as the AREA page's markers), cell n = the shape ov208 picks by a
+--                   place's town-map cursor shape (anim 45: sequence s -> cell
+--                   AREA_SEQ_CELL[s])
+--   area            the AREA data, /a/1/7/8 (narc 178, READ: ov208 0x021C1F28 reads
+--                   member species - 1, 249 bytes): byte 0 nonzero = one block for
+--                   every season (0x021C1B08), else four 62-byte blocks at 1 + 62 s
+--                   by the season; a block's byte 0 = area unknown (bank 234 #128),
+--                   bytes 1..61 = the places in the order of ov208's zone table
+--                   0x021C8670 (= the town map's own record order, /a/0/8/6),
+--                   value 1..4 (what each value means: NOT READ). Kept as
+--                   area[species] = { same = bool, [s] = { unknown = bool,
+--                   places = { place = value } } }, s 1..4, place 1..61
+--   areaZones       0x021C8670's 61 zones (READ), matched to gen5_town_map's
+--                   locations by zone as 0x021C0048 does
 -- NOT DONE: the footprint (the box is drawn empty), the English type-label
 -- sheet (G18-23 are FR/DE/IT/JP/KR/ES; the screen uses the BW type badges of
--- /a/1/2/4 instead), the AREA / CRY / FORMS pages, the search screen (group C),
+-- /a/1/2/4 instead), the CRY / FORMS pages, the search screen (group C),
 -- the foot's black gradient (not found in this archive; drawn by the screen
 -- from the capture's measured rows).
 
 local A = {}
 
 A.PATH = "/a/1/5/9"
+A.AREA_PATH = "/a/1/7/8"
+A.AREA_SEQ_CELL = { [0] = 0, 1, 2, 3, 4, 5, 9, 10, 12, 13, 14, 6, 7, 8, 11, 15 }
+A.AREA_ZONES = { 389, 397, 6, 16, 28, 62, 96, 107, 113, 120, 136, 406, 412, 418, 0,
+  147, 279, 381, 152, 154, 157, 160, 191, 194, 198, 205, 214, 230, 235, 238, 324, 333,
+  352, 338, 346, 376, 240, 385, 317, 319, 321, 326, 329, 331, 337, 345, 348, 355, 365,
+  368, 370, 374, 378, 383, 423, 387, 249, 253, 254, 255, 263 }
+
+-- the AREA records of /a/1/7/8 (see the header)
+function A.areaData(raw)
+  local Narc = require("src.import.NarcArchive")
+  local arc = raw and Narc.parse(raw)
+  if not arc then return nil end
+  local out = {}
+  for sp = 1, 649 do
+    local b = arc:get(sp - 1)
+    if b and #b >= 249 then
+      local rec = { same = b:byte(1) ~= 0 }
+      for s = 1, rec.same and 1 or 4 do
+        local base = 1 + 62 * (s - 1)
+        local block = { unknown = b:byte(base + 1) ~= 0, places = {} }
+        for p = 1, 61 do
+          local v = b:byte(base + 1 + p)
+          if v ~= 0 then block.places[p] = v end
+        end
+        rec[s] = block
+      end
+      out[sp] = rec
+    end
+  end
+  return out
+end
 A.SHARED = "/a/0/8/3"
 
 local char, byte, floor = string.char, string.byte, math.floor
@@ -256,6 +302,10 @@ function A.build(x)
   end
   obj("page", 13, 27, 3, { [1] = true, [2] = true, [3] = true, [4] = true, [5] = true, [6] = true, [7] = true, [8] = true })
   obj("obj", 55, 61, 51, { [0] = true, [2] = true, [3] = true, [6] = true })
+  obj("area", 15, 28, 5)
+  index.area = A.areaData(x.rom:read(A.AREA_PATH))
+  index.areaZones = A.AREA_ZONES
+  index.areaSeqCell = A.AREA_SEQ_CELL
   local shared = Narc.parse(x.rom:read(A.SHARED) or "")
   if shared then
     obj("button", 20, 21, 19, { [0] = true, [1] = true, [2] = true, [3] = true, [4] = true, [5] = true, [6] = true },

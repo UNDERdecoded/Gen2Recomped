@@ -88,8 +88,26 @@ function M.build(x)
   for id = 0, #ptrs - 1 - (M.FIRST + M.SPECIALTY) do
     specialty[id] = list(M.FIRST + M.SPECIALTY + id)
   end
+  -- the BP counters (shop 0xFE / 0xFD): lists 0 / 1 of the same table, but
+  -- 8-byte entries { u16 item, u16 0, u32 BP }, their lengths a byte table
+  -- of their own; 0x021B39C4's literal pool holds the two side by side
+  -- (table address, then the lengths' address)
+  local bp = {}
+  local tableAddr = base + endAt - #ptrs * 4
+  local lens
+  for o = 0, #b - 8, 4 do
+    if u32(b, o) == tableAddr and inOv(u32(b, o + 4)) then lens = u32(b, o + 4) - base break end
+  end
+  for k, shop in pairs(M.BP_LIST) do
+    local p, n = ptrs[k + 1], lens and b:byte(lens + k + 1)
+    if p and n and n > 0 and n < 128 then
+      local items = {}
+      for i = 0, n - 1 do items[#items + 1] = { item = u16(b, p + i * 8), price = u32(b, p + i * 8 + 4) } end
+      bp[shop] = items
+    end
+  end
   return {
-    tiers = tiers, regular = regular, specialty = specialty, buyers = M.buyers(rom),
+    tiers = tiers, regular = regular, specialty = specialty, buyers = M.buyers(rom), bp = bp,
     source = ("ROM:ov21 ptr table @%X (%d lists), counts @%X%s"):format(
       endAt - #ptrs * 4, #ptrs, countsAt, tierAt and (", tiers @%X"):format(tierAt - 1) or ", tiers fallback"),
   }
@@ -117,6 +135,34 @@ function M.buyers(rom)
     out[kind] = list
   end
   return out
+end
+
+-- THE EXCHANGE SERVICE CORNER (the Battle Subway platforms' clerks, scripts
+-- 0x8000 = 0xFE / 0xFD into shared script 871, bank 424 #8): 0x149's handler
+-- (ov21 0x021B2FD8) does not open the Poke Mart for these two; the shop task
+-- (0x021B3258) hands 0xFE to 0x021B39C4 with list 0 and 0xFD with list 1 of
+-- the table at 0x021DE164 (counts 0x021D9430), entries { u16 item, u16 0,
+-- u32 BP }. READ from Black; caches imported before gen5-marts-bp-v1 have
+-- no `bp`, so the same lists are kept here
+M.BP_LIST = { [0] = 0xFE, [1] = 0xFD }
+local function bpRows(t)
+  local out = {}
+  for i = 1, #t, 2 do out[#out + 1] = { item = t[i], price = t[i + 1] } end
+  return out
+end
+M.BP_FALLBACK = {
+  [0xFE] = bpRows({ 46, 1, 49, 1, 47, 1, 52, 1, 48, 1, 45, 1,
+    289, 16, 290, 16, 291, 16, 292, 16, 293, 16, 294, 16, 272, 16, 273, 16,
+    214, 32, 271, 32, 545, 32, 546, 32, 542, 32, 547, 32,
+    267, 48, 297, 48, 232, 48, 276, 48, 265, 48, 266, 48, 230, 48, 220, 48, 287, 48,
+    275, 48, 326, 48, 327, 48, 213, 48, 270, 48, 278, 48, 541, 48, 544, 48, 50, 48 }),
+  [0xFD] = bpRows({ 350, 36, 375, 36, 414, 36, 415, 36,
+    361, 48, 378, 48, 386, 48, 387, 48, 391, 48, 404, 48 }),
+}
+function M.bpStock(marts, shop)
+  shop = tonumber(shop)
+  local t = type(marts) == "table" and type(marts.bp) == "table" and marts.bp[shop]
+  return t or M.BP_FALLBACK[shop]
 end
 
 -- The stock for one 0x149 call: shop 255 is the regular counter by badges.

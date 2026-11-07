@@ -203,7 +203,7 @@ end
 
 function Gen3StartMenu:refreshHelpRow()
   local row = self.rows[self.index]
-  self.helpRowKey = isFireRed(self.game) and row and row.slot
+  self.helpRowKey = isFireRed(self.game) and row and (row.slot or row.help)
     and not self.seenHelp[row.key] and row.key or nil
 end
 
@@ -290,9 +290,14 @@ function Gen3StartMenu:buildRows(game, labels, playerName)
     end
   end
 
-  local frlg = ((game.data.constants or {}).gen3StartMenu or {}).layout == "frlg"
-  if #((game.save or {}).party or {}) > 0 and not frlg then
-    insertBeforeExit({ label = Strings("LINK"), key = "link" })
+  -- FIRERED / LEAFGREEN TOO.  The FireRed layout pass (bbba9d5) dropped the
+  -- row with `not frlg`, a side effect rather than a decision
+  -- (docs/online-design.md 1.6): Kanto's link is the same session.  Its
+  -- help-bar line is the port's own (the cartridge has no LINK row to
+  -- describe), in the same voice as the cartridge's.
+  if #((game.save or {}).party or {}) > 0 then
+    insertBeforeExit({ label = Strings("LINK"), key = "link",
+                       help = Strings("Trade or battle\nwith a friend, by code or on your network.") })
   end
   -- FireRed's help bar describes each row; remember which cartridge row
   -- each one is
@@ -650,7 +655,7 @@ function Gen3StartMenu:drawFireRed(record)
   -- the box lands on top of its right-hand end, where the bar has no text
   -- anyway, and no row is ever hidden by it.
   local row = self.rows[self.index]
-  local desc = row and row.slot and (record.descriptions or {})[row.slot]
+  local desc = row and ((row.slot and (record.descriptions or {})[row.slot]) or row.help)
   if desc and self.helpRowKey == row.key then
     local ok, bar = false, nil
     if record.helpBar then
@@ -680,7 +685,11 @@ function Gen3StartMenu:drawFireRed(record)
   end
 
   local n = #self.rows
-  local innerH = math.ceil((n * 15) / 8) + 1
+  -- 15-pixel rows while they fit the 20-tile screen (nine do); a tenth
+  -- (MODS on top of LINK and QUIT GAME) closes them up instead of running
+  -- the window off the bottom
+  local pitch = n > 9 and math.floor(136 / n) or 15
+  local innerH = math.ceil((n * pitch) / 8) + 1
   local left = 22
   local width = 7
   -- widen for the port's own rows (MODS, QUIT GAME) so nothing spills
@@ -691,7 +700,7 @@ function Gen3StartMenu:drawFireRed(record)
   Font.drawBox(left - 1, 0, width + 2, innerH + 2)
   g.setColor(0, 0, 0, 1)
   for i, r in ipairs(self.rows) do
-    local y = 8 + (i - 1) * 15
+    local y = 8 + (i - 1) * pitch
     Font.draw(r.label, left * 8 + 8, y)
     if i == self.index then Font.drawCode(Theme.cursor, left * 8, y) end
   end

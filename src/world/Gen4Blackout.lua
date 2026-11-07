@@ -137,6 +137,17 @@ end
 function M.spawnFor(data, mapId, def)
   if not (data and mapId) then return nil end
   if GameVersion.isGen5() then
+    -- READ, ov20 0x02185862 -> ov10 0x02159FE0: a map load into a zone that
+    -- is some warp row's whiteout zone (mode bit 0 set) makes that row the
+    -- whiteout point -- the Centers, and the house's ground floor (Z390, the
+    -- game's "home"); src/script/Gen5StorySwaps.lua WARP_ROWS
+    local Swaps = require("src.script.Gen5StorySwaps")
+    for id, row in ipairs(Swaps.WARP_ROWS) do
+      if id ~= 14 and id ~= 17 and ("Z%03d"):format(row[1]) == mapId then
+        local h = Swaps.healFor(id)
+        return { map = h.map, x = h.x, y = h.y, facing = h.facing, home = h.home }
+      end
+    end
     local nurse = nurseOf(def or (data.maps and data.maps[mapId]))
     if nurse then return { map = mapId, x = nurse.x, y = nurse.y + 2, facing = "up" } end
     return nil

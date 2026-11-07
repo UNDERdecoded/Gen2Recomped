@@ -53,6 +53,10 @@ function Gen5StartMenu.new(game, opts)
   -- Gen4StartMenu.modsRow) is a half-height tab of its own in the strip
   -- under it, left of the (x), and always the last row
   self.gridCount = #rows
+  -- LINK (Gen4StartMenu.linkRow) is a half-height tab in the same strip,
+  -- left of MODS; with both there the two share the strip's width
+  local link = Gen4StartMenu.linkRow(game, self)
+  if link then rows[#rows + 1] = link end
   local mods = Gen4StartMenu.modsRow(game)
   if mods then rows[#rows + 1] = mods end
   self.rows = rows
@@ -80,8 +84,16 @@ local MODS_RECT = { 167, 189, 3, 125 }
 -- one cartridge tab in buttons_N (and the cyan cursor's height), squeezed to it
 local TAB_SRC = { 0, 24, 128, 43 }
 
+-- the strip's tabs when LINK and MODS are both there
+local STRIP_RECTS = { { 167, 189, 3, 105 }, { 167, 189, 109, 211 } }
+
 function Gen5StartMenu:rect(i)
-  if self.rows[i] and self.rows[i].id == "mods" then return MODS_RECT end
+  local grid = self.gridCount or #self.rows
+  if i > grid and self.rows[i] then
+    local extras = #self.rows - grid
+    if extras <= 1 then return MODS_RECT end
+    return STRIP_RECTS[i - grid]
+  end
   local col, row = COLS[(i - 1) % 2 + 1], ROWS[floor((i - 1) / 2) + 1]
   return row and { row[1], row[2], col[1], col[2] }
 end
@@ -129,9 +141,11 @@ function Gen5StartMenu:update()
       self.index = grid + 1
     end
   elseif input:wasPressed("left") then
-    if i < grid and i % 2 == 1 then self.index = self.index - 1 end
+    if i < grid and i % 2 == 1 then self.index = self.index - 1
+    elseif i > grid then self.index = self.index - 1 end
   elseif input:wasPressed("right") then
-    if i % 2 == 0 and i + 1 < grid then self.index = self.index + 1 end
+    if i < grid and i % 2 == 0 and i + 1 < grid then self.index = self.index + 1
+    elseif i >= grid and i + 1 < count then self.index = self.index + 1 end
   elseif input:wasPressed("a") then
     self:se("SEQ_SE_DP_SELECT")
     return self:select()
@@ -186,11 +200,13 @@ function Gen5StartMenu:drawModsTab(row, r, selected)
   local w, h = r[4] - r[3], r[2] - r[1] + 1
   local tabs = self:bwImg("buttons_6")
   local sy = h / TAB_SRC[4]
+  -- a narrower tab when LINK and MODS share the strip
+  local sx = (w + 6) / TAB_SRC[3]
   if tabs then
     self.modsTabQuad = self.modsTabQuad or g.newQuad(TAB_SRC[1], TAB_SRC[2],
       TAB_SRC[3], TAB_SRC[4], tabs:getDimensions())
     g.setColor(1, 1, 1, 1)
-    g.draw(tabs, self.modsTabQuad, r[3] - 3, r[1], 0, 1, sy)
+    g.draw(tabs, self.modsTabQuad, r[3] - 3, r[1], 0, sx, sy)
   else
     g.setColor(0.15, 0.15, 0.15, 1)
     g.rectangle("fill", r[3], r[1], w, h)
@@ -200,7 +216,7 @@ function Gen5StartMenu:drawModsTab(row, r, selected)
     if cur then
       local cw, ch = cur:getDimensions()
       g.setColor(1, 1, 1, 1)
-      g.draw(cur, floor((r[3] + r[4]) / 2) + 1 - cw / 2, r[1] + (h - ch * sy) / 2, 0, 1, sy)
+      g.draw(cur, floor((r[3] + r[4]) / 2) + 1 - cw * sx / 2, r[1] + (h - ch * sy) / 2, 0, sx, sy)
     end
   end
   g.setColor(1, 1, 1, 1)
@@ -224,7 +240,7 @@ function Gen5StartMenu:drawPanel(whole)
   Font.pushStyle({ text = INK[1], shadow = INK[2] })
   for i, row in ipairs(self.rows) do
     local r = self:rect(i)
-    if r and row.id == "mods" then
+    if r and i > (self.gridCount or count) then
       self:drawModsTab(row, r, i == self.index)
     elseif r then
       if not tabs or count < 4 then

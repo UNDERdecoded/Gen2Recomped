@@ -39,7 +39,11 @@ function Gen4Friendship.step(data, save, mapDef, rng)
     if mon.species and not Party.isEgg(mon) and rng(0, 1) == 0 then
       local def = data.pokemon and data.pokemon[mon.species]
       if mon.happiness == nil then mon.happiness = def and def.friendship or 70 end
+      -- Black / White's walk row is +2/+2/+1 (src/pokemon/Gen45Friendship.lua
+      -- BW_TABLE, read from arm9 0x0209E45C row 3)
       local gain = 1
+      local GV = require("src.core.GameVersion")
+      if GV.isGen5 and GV.isGen5() then gain = (mon.happiness >= 200) and 1 or 2 end
       if tonumber(mon.ball) == Gen4Friendship.LUXURY_BALL or mon.ball == "LUXURY_BALL" then
         gain = gain + 1
       end

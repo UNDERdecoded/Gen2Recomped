@@ -174,4 +174,47 @@ function Gen4Otherpoke.key(row)
   return ("%03d_%s_%s"):format(row.species, row.name, row.form)
 end
 
+-- HEARTGOLD / SOULSILVER'S OTHERPOKE (/a/1/1/4) IS NOT PLATINUM'S LAYOUT.
+-- READ FROM pokeheartgold files/poketool/pokegra/otherpoke/*/meson.build:
+-- the sheets 0..153 are the same, then Pichu's four (154 normal back, 155
+-- normal front, 156 Spiky-eared back, 157 Spiky-eared front); so every
+-- palette moves up by four (Deoxys 158/159 where Platinum has 154/155,
+-- Castform 162.., Giratina-Origin 250/251), Pichu's palettes are 252..255
+-- (normal / shiny of each form), the Substitute doll 256 back, 257 front,
+-- 258 palette, and the shadows 259 / 260. Reading Platinum's numbers out of
+-- it took NCGRs for palettes: no Unown letter or Deoxys forme was written
+-- and Castform, Burmy, Rotom & co. came out in other forms' colours.
+-- (revision tag hgss-otherpoke-v1)
+Gen4Otherpoke.HGSS_PICHU = {
+  { species = 172, name = "pichu", form = "base", back = 154, front = 155, palette = 252, shiny = 253 },
+  { species = 172, name = "pichu", form = "spiky", back = 156, front = 157, palette = 254, shiny = 255 },
+}
+
+-- layout(family) -> rows, substitute, shadows for that cartridge family
+function Gen4Otherpoke.layout(family)
+  if family ~= "hgss" then
+    return Gen4Otherpoke.FORMS, Gen4Otherpoke.SUBSTITUTE, Gen4Otherpoke.SHADOWS
+  end
+  local rows = {}
+  for _, row in ipairs(Gen4Otherpoke.FORMS) do
+    local r = {}
+    for k, v in pairs(row) do r[k] = v end
+    if r.palette then r.palette = r.palette + 4 end
+    if r.shiny then r.shiny = r.shiny + 4 end
+    rows[#rows + 1] = r
+  end
+  for _, row in ipairs(Gen4Otherpoke.HGSS_PICHU) do rows[#rows + 1] = row end
+  return rows, { back = 256, front = 257, palette = 258 }, { sheet = 259, palette = 260 }
+end
+
+-- palettesIn(rows, row): palettes() over a layout's own rows
+function Gen4Otherpoke.palettesIn(rows, row)
+  if not row then return nil end
+  if row.palette then return row.palette, row.shiny, false end
+  for _, b in ipairs(rows) do
+    if b.name == row.name and b.form == "base" then return b.palette, b.shiny, true end
+  end
+  return nil
+end
+
 return Gen4Otherpoke

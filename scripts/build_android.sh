@@ -403,6 +403,21 @@ for perm in (
         text,
     )
 text = re.sub(r'\s*android:usesCleartextTraffic="true"', "", text)
+# Online play needs these two (docs/online-design.md 2.10): sockets at all
+# (INTERNET, issue #287) and the multicast lock for the LAN beacon
+# (CHANGE_WIFI_MULTICAST_STATE).  Re-added if a refreshed love-android tree
+# lost them, right after <manifest ...>.
+for perm in (
+    "android.permission.INTERNET",
+    "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+):
+    if f'android:name="{perm}"' not in text:
+        text = re.sub(
+            r"(<manifest\b[^>]*>)",
+            lambda m: m.group(1) + f'\n  <uses-permission android:name="{perm}" />',
+            text,
+            count=1,
+        )
 path.write_text(text)
 PY
   else
@@ -450,6 +465,21 @@ for perm in (
         text,
     )
 text = re.sub(r'\s*android:usesCleartextTraffic="true"', "", text)
+# Online play needs these two (docs/online-design.md 2.10): sockets at all
+# (INTERNET, issue #287) and the multicast lock for the LAN beacon
+# (CHANGE_WIFI_MULTICAST_STATE).  Re-added if a refreshed love-android tree
+# lost them, right after <manifest ...>.
+for perm in (
+    "android.permission.INTERNET",
+    "android.permission.CHANGE_WIFI_MULTICAST_STATE",
+):
+    if f'android:name="{perm}"' not in text:
+        text = re.sub(
+            r"(<manifest\b[^>]*>)",
+            lambda m: m.group(1) + f'\n  <uses-permission android:name="{perm}" />',
+            text,
+            count=1,
+        )
 path.write_text(text)
 PY
   fi

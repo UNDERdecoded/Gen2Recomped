@@ -104,8 +104,12 @@ function Gen4WildLead.choose(data, save, slots, kind, rod, rng)
   if kind == "grass" then
     index = typeSlot(lead, data, slots, "STEEL", "MAGNET_PULL", rng)
       or typeSlot(lead, data, slots, "ELECTRIC", "STATIC", rng)
+      -- HGSS Safari Zone: any of the ten, evenly (FieldSystem_GenerateSafariEncounter)
+      or (rod == "uniform" and rng(1, #slots))
       or pick(GROUND, rng)
-    if not lead.egg and HIGHER[lead.ability or ""] and rng(0, 1) ~= 0 then
+    -- "radar": CreateWildMon_FromRadarNoChain -- Magnet Pull / Static and the
+    -- ground slot only, no higher-level slot and no Keen Eye turn-away
+    if rod ~= "radar" and not lead.egg and HIGHER[lead.ability or ""] and rng(0, 1) ~= 0 then
       local best = index
       for i, s in ipairs(slots) do
         if s.species == slots[best].species
@@ -137,11 +141,18 @@ function Gen4WildLead.choose(data, save, slots, kind, rod, rng)
   end
   local slot = slots[index] or slots[1]
 
-  if not lead.egg and (lead.ability == "KEEN_EYE" or lead.ability == "INTIMIDATE")
+  -- "scent": Sweet Scent's ignoreAbilityBlock / isSweetScent
+  if rod ~= "radar" and rod ~= "scent" and not lead.egg and (lead.ability == "KEEN_EYE" or lead.ability == "INTIMIDATE")
      and lead.level > 5 and level <= lead.level - 5 and rng(0, 1) == 0 then
     return nil, "turned away"
   end
 
+  -- HGSS EncounterGen_CanGenerateUnownEncounter: no puzzle solved, no Unown
+  local Encounter = require("src.world.Encounter")
+  if Encounter.isHgss() and require("src.pokemon.Gen4Forms").species(slot.species) == 201
+     and not Encounter.hgssUnownAllowed(save) then
+    return nil, "no unown"
+  end
   local enc = { species = slot.species, level = level, slot = index }
   if not lead.egg and lead.ability == "SYNCHRONIZE" and rng(0, 1) == 0 then
     enc.nature = (tonumber(lead.mon.personality) or 0) % 25
@@ -167,6 +178,17 @@ end
 function Gen4WildLead.apply(data, mon, nature, gender, rng)
   if type(mon) ~= "table" or (nature == nil and gender == nil) then return mon end
   rng = rng or love.math.random
+  -- Black / White: the nature is its own field, set outright; only a Cute
+  -- Charm gender still moves the personality (INFERRED, Gen 5)
+  if nature ~= nil and require("src.pokemon.Pokemon").natureIsOwnField() then
+    local order = data.constants and data.constants.natureOrder
+    if order and order[nature + 1] then mon.nature = order[nature + 1] end
+    nature = nil
+    if gender == nil then
+      require("src.pokemon.Pokemon").applySeed(data, mon, { ivs = mon.ivs })
+      return mon
+    end
+  end
   local DayCare = require("src.pokemon.DayCare")
   for _ = 1, 20000 do
     local p = rng(0, 65535) * 65536 + rng(0, 65535)

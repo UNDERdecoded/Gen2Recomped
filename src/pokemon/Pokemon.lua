@@ -72,6 +72,38 @@ end
 -- stat was rolled out of half its range -- and with no nature at all, which
 -- means nothing in the game ever got the ten percent its nature is supposed
 -- to move.  The summary screen's nature line was blank for the same reason.
+-- WHICH OF THE TWO ABILITIES. Gen 3 / 4 read personality bit 0; Black /
+-- White read bit 16 (INFERRED, standard Gen 5 rule). Slot 3 is Black /
+-- White's Hidden Ability, which no personality picks: a Pokemon that has it
+-- keeps it. Black / White records carry numbers (abilityIds) until battle
+-- names them, so either list counts.
+-- Black / White (a stubbed GameVersion without isGen5 answers no)
+function Pokemon.natureIsOwnField()
+  local GV = require("src.core.GameVersion")
+  return GV.isGen5 ~= nil and GV.isGen5() or false
+end
+
+function Pokemon.abilitySlotFor(def, personality, current)
+  if tonumber(current) == 3 then return 3 end
+  -- Black / White keep the ability itself in the Pokemon (the egg builder
+  -- writes it from a slot chosen apart from the personality, ov21
+  -- 0x21C3DE4), so a slot already set stays on a re-seed
+  if tonumber(current) and Pokemon.natureIsOwnField() then return tonumber(current) end
+  local list = def and def.abilities
+  local second = type(list) == "table" and list[2] ~= nil
+  if not second and type(def and def.abilityIds) == "table" then
+    second = (tonumber(def.abilityIds[2]) or 0) ~= 0
+  end
+  local hasFirst = (type(list) == "table" and list[1] ~= nil)
+    or (type(def and def.abilityIds) == "table" and (tonumber(def.abilityIds[1]) or 0) ~= 0)
+  if not hasFirst then return nil end
+  if not (second and personality) then return 1 end
+  local p = tonumber(personality) or 0
+  local GV = require("src.core.GameVersion")
+  if GV.isGen5 and GV.isGen5() then p = math.floor(p / 65536) end
+  return (p % 2) + 1
+end
+
 local function gen3Seed(data, def, rng)
   rng = rng or love.math.random
   -- two halves, because love.math.random cannot span 32 bits
@@ -86,12 +118,7 @@ local function gen3Seed(data, def, rng)
   -- personality % 25
   local order = data.constants and data.constants.natureOrder
   if order then seed.nature = order[(personality % 25) + 1] or order[1] end
-  local abilities = def.abilities
-  if type(abilities) == "table" and abilities[2] then
-    seed.abilitySlot = (personality % 2) + 1
-  elseif type(abilities) == "table" and abilities[1] then
-    seed.abilitySlot = 1
-  end
+  seed.abilitySlot = Pokemon.abilitySlotFor(def, personality)
   return seed
 end
 
@@ -152,13 +179,16 @@ function Pokemon.applySeed(data, mon, seed)
   mon.ivs = seed.ivs or mon.ivs
   if mon.personality then
     local order = data.constants and data.constants.natureOrder
-    if order then
+    -- BLACK / WHITE STORE THE NATURE APART FROM THE PERSONALITY (INFERRED,
+    -- standard Gen 5 rule; Gen5TradeCommands already writes it on its own),
+    -- so re-seeding a Pokemon there keeps the one it has; a seed may name one
+    if seed.nature ~= nil then
+      mon.nature = seed.nature
+    elseif order and not (mon.nature ~= nil and Pokemon.natureIsOwnField()) then
       mon.nature = order[(mon.personality % 25) + 1] or order[1]
     end
-    local abilities = def.abilities
-    if type(abilities) == "table" and abilities[2] then
-      mon.abilitySlot = (mon.personality % 2) + 1
-    end
+    local slot = Pokemon.abilitySlotFor(def, mon.personality, mon.abilitySlot)
+    if slot then mon.abilitySlot = slot end
   end
   if mon.ivs then
     local full = mon.hp ~= nil and mon.stats ~= nil
@@ -175,6 +205,9 @@ end
 
 function Pokemon.new(data, species, level, rng, form)
   local nativeForm=(data.constants or {}).gen==4 and (form or 0) or nil
+  -- Black / White keep an asked-for form (a wild Basculin's stripes, a
+  -- season's Deerling) for the picture (gen5_form_sprites, Sprites.path)
+  if nativeForm==nil and (data.constants or {}).gen==5 and tonumber(form) and form>0 then nativeForm=form end
   local speciesDef=(data.pokemon or {})[species]
   if require("src.core.GameVersion").get()=="polishedcrystal" and speciesDef and speciesDef.forms then
     nativeForm=form or require("src.pokemon.PolishedUnown").choose(nil,rng)
@@ -243,6 +276,8 @@ function Pokemon.new(data, species, level, rng, form)
   -- nil and this returns immediately, leaving the cartridge's own 1/8192
   -- exactly as it was.
   Pokemon.rollShiny(data, nil, mon, rng)
+  -- Gen 4 / 5: MON_DATA_LANGUAGE, the game's (src/pokemon/Gen45Language.lua)
+  require("src.pokemon.Gen45Language").stamp(mon)
   return mon
 end
 
@@ -286,10 +321,8 @@ function Pokemon.forceShiny(data, mon, rng, otId)
       if order then
         mon.nature = order[(mon.personality % 25) + 1] or mon.nature
       end
-      local abilities = def.abilities
-      if type(abilities) == "table" and abilities[2] then
-        mon.abilitySlot = (mon.personality % 2) + 1
-      end
+      local slot = Pokemon.abilitySlotFor(def, mon.personality, mon.abilitySlot)
+      if slot then mon.abilitySlot = slot end
       local full = mon.stats and mon.stats.hp
       mon.stats = Stats.calc(def, mon.level or 1, mon.ivs, nil, mon.evs,
                              mon.nature)

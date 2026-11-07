@@ -49,10 +49,13 @@ function Native.drawWorld(state) return Native.supports(state) end
 -- The terrain uses a native camera; actors retain Platinum's battle layout.
 function Native.installBattles(enabled,controls)
  battleEnabled,battleCamera=enabled,controls
+ -- the surface these battles draw on takes the window's shape (NativeWide)
+ V.require('NativeWide').install(enabled,Native.supports)
  local Battle=require('src.battle.Gen4Battle')
  local View=require('src.render.Gen4View')
  local Ground=require('src.render.Gen4Ground')
  local fullDraw=Battle.draw
+ local rawSetScissor,rawInterScissor,rawGetScissor=love.graphics.setScissor,love.graphics.intersectScissor,love.graphics.getScissor
  function Battle.draw(battle)
   local scale=Ground.syncRenderScale(battle.game)
   if not enabled() or not Native.supports(battle.game and battle.game.overworld) or scale<=1 then return fullDraw(battle) end
@@ -65,12 +68,30 @@ function Native.installBattles(enabled,controls)
   -- pop('all') puts the caller's canvas back WITH its depth attachment; a
   -- setCanvas(getCanvas()) after it would drop the depth and is not needed
   g.push('all');g.setCanvas(canvas);g.clear(0,0,0,0);g.origin();g.scale(scale)
+  -- the scissor is in this canvas's pixels and the transform does not reach it
+  -- (the panel's backdrop and the battlers' clips were cut to a third of themselves)
+  local setS,interS,getS=g.setScissor,g.intersectScissor,g.getScissor
+  g.setScissor=function(x,y,sw,sh)
+   if x then return rawSetScissor(x*scale,y*scale,sw*scale,sh*scale) end
+   return rawSetScissor()
+  end
+  g.intersectScissor=function(x,y,sw,sh) return rawInterScissor(x*scale,y*scale,sw*scale,sh*scale) end
+  g.getScissor=function()
+   local x,y,sw,sh=rawGetScissor()
+   if not x then return nil end
+   return x/scale,y/scale,sw/scale,sh/scale
+  end
+  rawSetScissor()
   local ok,err=pcall(fullDraw,battle)
+  g.setScissor,g.intersectScissor,g.getScissor=setS,interS,getS
   g.pop()
   if not ok then error(err,0) end
   g.setColor(1,1,1,1);g.draw(canvas,0,0,0,1/scale,1/scale)
   local renderer=battle.game.renderer
-  if renderer then renderer.uiOverride=canvas end
+  -- only while nothing is over it: the big canvas holds the battle alone, and
+  -- a prompt drawn after it went to the ordinary one, unseen
+  local stack=battle.game.stack
+  if renderer and (not stack or stack:top()==battle) then renderer.uiOverride=canvas end
  end
  local field,position=Battle.drawField,Battle.battlerPos
  local actors,trainer=Battle.drawBattlers,Battle.drawTrainerBack
@@ -223,7 +244,7 @@ function Native.installBattles(enabled,controls)
    if available then G5V.available=available end
    battle.drawBattlerPic=own
    if not okActors then error(actorError,0) end
-   if depths[0] and feet[0] and battle.showPlayerBack and battle.playerBackPic then
+   if depths[0] and feet[0] and battle.playerBackPic and (battle.showPlayerBack or battle.dsBackLeave) then
     ground:withFreeDepth(depths[0],function()
      local image=battle.picImage and battle:picImage(battle.playerBackPic) or battle.playerBackPic
      if image and image.getDimensions then
@@ -231,7 +252,18 @@ function Native.installBattles(enabled,controls)
       local k=ppus[0]*16*Stage.TRAINER_FRAME_TILES/math.max(1,ih)
       love.graphics.setColor(1,1,1,1)
       love.graphics.push();love.graphics.origin();love.graphics.scale(Ground.renderScale())
-      love.graphics.draw(image,ft.x,ft.y,0,k,k,iw/2,ih)
+      -- THE DS BACK IS AN ANIMATED STRIP (Gen4Battle.dsBackFrame): the still is
+      -- only its measure. Black and White's still is cell 0 and has no throwing
+      -- arm at all, so drawing it left the figure armless through the throw.
+      -- The strip's dx, dy run from the still's centre to the strip's corner, so
+      -- the still's foot (where the stage stands it) is at (-dx, ih/2 - dy).
+      local sheet,quad,rec,off
+      if Battle.dsBackFrame then sheet,quad,rec,off=Battle.dsBackFrame(battle) end
+      if sheet then
+       love.graphics.draw(sheet,quad,ft.x+off,ft.y,0,k,k,-rec.dx,ih/2-rec.dy)
+      elseif battle.showPlayerBack then
+       love.graphics.draw(image,ft.x,ft.y,0,k,k,iw/2,ih)
+      end
       love.graphics.pop()
      end
     end)

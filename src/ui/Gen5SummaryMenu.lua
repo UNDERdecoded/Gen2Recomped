@@ -363,7 +363,7 @@ function Gen5SummaryMenu:drawSkillsTop()
   end
   self:put("value", self:w(116, "Ability"), ABILITY_LABEL[1], ABILITY_LABEL[2])
   local mon, def = self.mon, self:speciesDef()
-  local ability = mon.ability or (def and def.abilityIds and def.abilityIds[1]) or (def and def.abilities and def.abilities[1])
+  local ability = require("src.pokemon.AbilityOf").pick(mon, def and def.abilityIds) or require("src.pokemon.AbilityOf").pick(mon, def and def.abilities)
   local id = tonumber(ability)
   local text = self.game.data.text or {}
   local name = id and text[("TEXT_G5S_0182_%05d"):format(id)] or (ability and tostring(ability))

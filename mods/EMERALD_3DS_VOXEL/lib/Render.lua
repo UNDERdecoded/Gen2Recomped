@@ -116,6 +116,9 @@ vec4 effect(vec4 color, Image tex, vec2 uv, vec2 screen) {
 local function compat(source)
   local major = love.getVersion and love.getVersion() or 11
   if major < 12 then return source end
+  -- the engine's answer knows the backend (Metal has no flip to cancel)
+  local okCore, core = pcall(require, "src.render.ClipSpaceCompat")
+  if okCore and core and core.shader then return core.shader(source) end
   local count
   source, count = source:gsub("vec4%s+position%s*%(", "vec4 legacyPosition(")
   if count == 0 then return source end

@@ -96,6 +96,11 @@ Status.rule = rule
 local function damageOverTime(template)
   return function(battler, _, battle)
     local mon = battler.mon
+    -- POISON HEAL (Platinum on): an eighth back instead of the bite
+    if mon.status == "PSN" then
+      local healed = require("src.battle.Gen45Abilities").poisonHeal(battler)
+      if healed then return healed end
+    end
     local dmg
     if battler.toxicCounter then
       -- the BAD poison keeps its own divisor: sixteenths, multiplied by the

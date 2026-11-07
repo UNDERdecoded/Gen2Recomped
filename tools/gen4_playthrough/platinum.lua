@@ -547,8 +547,11 @@ B[#B + 1] = { name = "maylene", budget = 60000,
 -- Looker follows and the player is warped inside: the warehouse's frame
 -- table (VAR_VEILSTONE_CITY_GALACTIC_WAREHOUSE_STATE 0x411F == 1) sets 2
 -- (and VAR_PASTORIA_CITY_STATE 0x407C = 1)
+-- Ice Beam, not Surf: the warehouse grunt's Croagunk has DRY SKIN (battle
+-- parity pass, 2026-11-02 -- it absorbs Water now; a lone Turtwig surfing it
+-- confused itself to death under Swagger)
 B[#B + 1] = { name = "veilstone: the galactic warehouse",
-  steps = { { "do", trainUp }, { "warpto", "C07" }, { "until", varGe(0x411A, 2), 20000 },
+  steps = { { "do", trainUpWith(58) }, { "warpto", "C07" }, { "until", varGe(0x411A, 2), 20000 },
             { "walkto", 23, 20 }, { "face", "right" }, { "press", "a" },
             { "until", varGe(0x411F, 2), 60000 } },
   expect = function(r) return r:var(0x411F) >= 2 and r:var(0x407C) >= 1 end, why = "0x411F >= 2, 0x407C >= 1",
@@ -582,7 +585,11 @@ local PASTORIA_WAY = {
   { 21, 16 }, { 21, 31 }, { 23, 31, 0 }, { 23, 7 }, { 7, 7 }, { 7, 16 }, { 5, 16 }, { 5, 9 },
   { 4, 9 }, { 4, 6 }, { 3, 6, 64 }, { 3, 9 }, { 13, 9 }, { 13, 5 },
 }
-local wake = { { "do", trainUpWith(412, 80) }, { "teleport", "C06GYM0101", 13, 41, "up" } }
+-- (A TEST-BOT CHOICE: the lead kept its own species -- a level-80 Turtwig
+-- (387, 185 HP) with Energy Ball -- and lost to Wake once the Gen 4 battle
+-- parity landed. Ludicolo at 100, Energy Ball first: 4x on Quagsire, 2x on
+-- Floatzel, neutral on Gyarados, and nothing of Wake's hits it hard)
+local wake = { { "do", trainUpWith(412, 100, 272) }, { "teleport", "C06GYM0101", 13, 41, "up" } }
 for _, m in ipairs(PASTORIA_WAY) do
   wake[#wake + 1] = { "walkto", m[1], m[2] }
   if m[3] then
@@ -623,8 +630,9 @@ B[#B + 1] = { name = "route 213: the grunt",
 -- Valor Lakefront (L02): the grunt (person 5) runs north
 -- (FLAG_TALKED_TO_VALOR_LAKEFRONT_GRUNT_M 0x106); talked to again he
 -- battles, then Cynthia hands over the SecretPotion -- 0x407C = 6
+-- Ice Beam: Galactic grunts' Croagunk have DRY SKIN (battle parity pass)
 B[#B + 1] = { name = "valor lakefront: the secretpotion",
-  steps = { { "do", trainUp }, { "teleport", "L02", 47, 57, "up" }, { "talk", 5 },
+  steps = { { "do", trainUpWith(58) }, { "teleport", "L02", 47, 57, "up" }, { "talk", 5 },
             { "until", flag(0x106), 20000 }, { "talk", 5, retarget = true },
             { "until", varGe(0x407C, 6), 60000 } },
   expect = varGe(0x407C, 6), why = "0x407C >= 6 (SecretPotion)", expectBudget = 8000 }
@@ -638,8 +646,9 @@ B[#B + 1] = { name = "route 210: the psyduck",
 
 -- CELESTIC (T05): the grunt (person 2) at the cave door, beaten; the elder
 -- takes the Old Charm (FLAG_DELIVERED_OLD_CHARM 0xA6)
+-- Ice Beam: Galactic grunts' Croagunk have DRY SKIN (battle parity pass)
 B[#B + 1] = { name = "celestic: the grunt",
-  steps = { { "do", trainUp }, { "teleport", "T05", 15, 13, "up" }, { "talk", 2 },
+  steps = { { "do", trainUpWith(58) }, { "teleport", "T05", 15, 13, "up" }, { "talk", 2 },
             { "until", flag(0xA6), 60000 } },
   expect = flag(0xA6), why = "flag 0xA6 (Old Charm delivered)", expectBudget = 8000 }
 
@@ -869,7 +878,12 @@ local function climbTo(dir, done)
   return { "face", dir }, { "press", "a" }, { "mash", 120 },
          { "until", function(r) return done(r) and not r:busy() end, 3000 }
 end
-local coronet = { { "do", strong() }, { "do", hmMoves({ [2] = 70, [3] = 249, [4] = 431 }) },
+-- Ice Beam, not Surf: a grunt's Croagunk has DRY SKIN, which absorbs Water
+-- (battle parity pass, 2026-11-02 -- before it Dry Skin did nothing), and in
+-- their double a Surf only ever hit the other Mewtwo. Not Thunderbolt: the
+-- climb is full of Graveler. Nothing on the way is immune to Ice. The whole
+-- team: the grunts' double sends out the second Mewtwo too.
+local coronet = { { "do", fullTeam(58) }, { "do", hmMoves({ [2] = 70, [3] = 249, [4] = 431 }) },
   { "teleport", "D05R0101", 25, 4, "up" }, { "warpto", "D05R0102" },
   { "walkto", 14, 44 }, { "hold", "down", 6 }, { "mash", 40 },
   { "until", function(r) return r.ow.strengthActive and not r:busy() end, 3000 },
@@ -888,7 +902,8 @@ for _, s in ipairs({ climbTo("up", function(r) local _, y = r:pos() return y <= 
 for _, s in ipairs({ { "warpto", "D05R0104" }, { "walkto", 45, 22 } }) do coronet[#coronet + 1] = s end
 for _, s in ipairs({ climbTo("left", function(r) local x = r:pos() return x <= 39 end) }) do coronet[#coronet + 1] = s end
 for _, s in ipairs({ { "warpto", "D05R0107" }, { "warpto", "D05R0108" }, { "warpto", "D05R0109" },
-                     { "warpto", "D05R0114" }, { "do", fullTeam(57) }, { "walkto", 31, 51 }, { "activecoord" },
+                     -- Ice Beam: the double's Croagunk absorbs Surf (Dry Skin)
+                     { "warpto", "D05R0114" }, { "do", fullTeam(58) }, { "walkto", 31, 51 }, { "activecoord" },
                      { "until", varGe(0x4098, 1), 60000 } }) do coronet[#coronet + 1] = s end
 B[#B + 1] = { name = "spear pillar: the grunts", budget = 120000,
   steps = coronet,

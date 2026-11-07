@@ -39,8 +39,20 @@ function M.isNight(hour)
   hour = tonumber(hour) or tonumber(os.date("%H")) or 12
   return hour >= 20 or hour < 4
 end
+-- Pokemon_GetEvolutionTargetSpecies: the Everstone stops every evolution
+-- but an item's -- except KADABRA's ("bypasses Everstone", both decomps)
+local KADABRA = 64
+-- ITEM_EVERSTONE is 229 in all three games; Black / White's item records
+-- carry the hold effect as a number, which holdsEverstone cannot read
+local EVERSTONE = 229
+local function everstoneBlocks(game, mon)
+  local held = tonumber(mon.item) or tonumber(tostring(mon.item or ""):match("(%d+)%s*$"))
+  local stone = held == EVERSTONE or E().holdsEverstone(game, mon)
+  return stone and (tonumber(mon.species) or 0) ~= KADABRA
+end
+M.everstoneBlocks = everstoneBlocks
 local function levelUp(game, mon, trigger)
-  return trigger.kind == "levelup" and not E().holdsEverstone(game, mon)
+  return trigger.kind == "levelup" and not everstoneBlocks(game, mon)
 end
 local function gender(game, mon)
   if mon.gender == "male" or mon.gender == 0 then return "male" end
@@ -71,11 +83,27 @@ end
 -- the map the player stands on, by its label: Mt. Coronet / Chargestone Cave
 -- for the magnetic field, Eterna Forest / Pinwheel Forest for the Moss Rock,
 -- Route 217 / Twist Mountain for the Ice Rock (the cartridges test the map)
+--
+-- PLATINUM tests the MAP HEADER, not the name (map_header.c
+-- MapHeader_GetMapEvolutionMethod): Route 217 (385) only -- not its houses;
+-- Eterna Forest (203) only -- not the outside map (202); Mt. Coronet
+-- 207..219, Spear Pillar 220/221/584/585 and the Hall of Origin 510/511 --
+-- not the Iceberg Ruins (589), though it is labelled Mt. Coronet.
+-- HEARTGOLD / SOULSILVER have none (MapHeader_GetMapEvolutionMethod returns
+-- EVO_NONE: "Leftover from D/P/Pl."). Black / White keep the label match
+-- (INFERRED).
 M.PLACES = {
   magnetic = { "Mt. Coronet", "Chargestone Cave" },
   moss = { "Eterna Forest", "Pinwheel Forest" },
   ice = { "Route 217", "Twist Mountain" },
 }
+M.PT_HEADERS = { [385] = "ice", [203] = "moss", [220] = "magnetic", [221] = "magnetic",
+  [510] = "magnetic", [511] = "magnetic", [584] = "magnetic", [585] = "magnetic" }
+for h = 207, 219 do M.PT_HEADERS[h] = "magnetic" end
+local function family()
+  local ok, GV = pcall(require, "src.core.GameVersion")
+  return ok and GV.family and GV.family() or nil
+end
 local function placeIs(game, kind)
   local ow
   for i = #((game.stack and game.stack.states) or {}), 1, -1 do
@@ -83,6 +111,11 @@ local function placeIs(game, kind)
     if type(st) == "table" and st.player and st.map then ow = st break end
   end
   local def = ow and ow.map and ow.map.def
+  local fam = family()
+  if fam == "hgss" then return false end
+  if fam == "platinum" then
+    return def ~= nil and M.PT_HEADERS[tonumber(def.header) or -1] == kind
+  end
   local label = def and (def.label or def.name)
   if type(label) ~= "string" then return false end
   for _, name in ipairs(M.PLACES[kind] or {}) do
@@ -110,7 +143,7 @@ M.BY_NAME = {
     return levelUp(game, mon, t) and friendship(game, mon) >= 220 and M.isNight()
   end, function() return "Friendship (night)" end),
   trade = rec(function(game, mon, evo, t)
-    return t.kind == "trade" and not E().holdsEverstone(game, mon)
+    return t.kind == "trade" and not everstoneBlocks(game, mon)
   end, function() return "Trade" end),
   tradeWithItem = rec(function(game, mon, evo, t)
     return t.kind == "trade" and holds(game, mon, evo.param)
@@ -119,7 +152,7 @@ M.BY_NAME = {
   -- each traded for the other
   tradeForSpecies = rec(function(game, mon, evo, t)
     local partner = M.TRADE_PAIR[speciesNum(mon.species)]
-    return t.kind == "trade" and not E().holdsEverstone(game, mon)
+    return t.kind == "trade" and not everstoneBlocks(game, mon)
       and partner ~= nil and speciesNum(t.partnerSpecies) == partner
   end, function() return "Trade for a particular Pokemon" end),
   useItem = rec(function(game, mon, evo, t) return itemIs(t, evo.param) end,
@@ -194,10 +227,31 @@ M.BW = {
 -- into Evolution.METHODS: the names (kept where already defined). The
 -- methods registry takes string ids only, so Black / White's NUMBERS are not
 -- registered: Evolution.pendingFor asks M.nameOf for them at lookup
+-- HGSS: "Spiky-ear Pichu cannot evolve" (pokeheartgold GetMonEvolutionInternal)
+function M.blocked(game, mon)
+  return (tonumber(mon.species) or 0) == 172 and (tonumber(mon.form) or 0) == 1
+end
+for _, r in pairs(M.BY_NAME) do
+  local check = r.check
+  r.check = function(game, mon, evo, t)
+    if M.blocked(game, mon) then return false end
+    return check(game, mon, evo, t)
+  end
+end
 function M.install(methods)
   for name, r in pairs(M.BY_NAME) do
     if methods[name] == nil then methods[name] = r end
   end
+end
+-- an evolution the player cannot stop with B (Gen 4 / 5 only)
+M.FORCED = { trade = true, tradeWithItem = true, tradeForSpecies = true, useItem = true,
+  useItemMale = true, useItemFemale = true }
+function M.forced(via)
+  local ok, GV = pcall(require, "src.core.GameVersion")
+  if not (ok and (GV.isGen4() or GV.isGen5())) then return false end
+  if via == nil then return true end
+  local name = (type(via) == "number") and M.BW[via] or via
+  return M.FORCED[name] == true
 end
 function M.nameOf(method)
   return type(method) == "number" and M.BW[method] or nil
@@ -241,6 +295,9 @@ function M.afterApply(game, mon, fromSpecies, evo)
   local extra = copy(mon)
   extra.species, extra.nickname, extra.item, extra.heldItem, extra.mail = target, nil, nil, nil, nil
   extra.status, extra.ribbons = nil, {}
+  -- Evolution_ProcessEvolutionEffects: in a Poke Ball, no markings, the
+  -- ability recalculated (Shedinja has one)
+  extra.ball, extra.markings, extra.abilitySlot = M.POKE_BALL, 0, 1
   local Stats = require("src.pokemon.Stats")
   extra.stats = Stats.calc(def, extra.level, extra.ivs, nil, extra.evs, extra.nature)
   extra.hp = extra.stats.hp

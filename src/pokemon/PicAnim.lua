@@ -117,6 +117,22 @@ function PicAnim.new(data, species, mon, side)
  end
   local anim = PicAnim.record(data, species, mon)
   if not anim then return nil end
+  -- A FEMALE WITH HER OWN ART animates her own strip (picAnim.femaleSheet /
+  -- femaleShinySheet, gen4-female-sprites-v1: the female pokegra sheet's two
+  -- frames in each palette). An import from before those strips holds her
+  -- still rather than flicking to the male frames while it plays.
+  if def and def.spriteFrontFemale and side ~= "back" and type(mon) == "table"
+     and (mon.gender ~= nil or mon.personality ~= nil) then
+    local okG, g = pcall(require("src.pokemon.Pokemon").genderOf, data, mon)
+    if okG and g == "female" then
+      local shiny = require("src.pokemon.Pokemon").isShiny(mon)
+      if not anim.femaleSheet or (shiny and not anim.femaleShinySheet) then return nil end
+      local copy = {}
+      for k, v in pairs(anim) do copy[k] = v end
+      copy.sheet, copy.shinySheet = anim.femaleSheet, anim.femaleShinySheet
+      anim = copy
+    end
+  end
   local self = setmetatable({ anim = anim, paused = true }, PicAnim)
   self:restart("play")
   return self

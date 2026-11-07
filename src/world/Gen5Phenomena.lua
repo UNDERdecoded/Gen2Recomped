@@ -198,22 +198,16 @@ function P.encounter(ow, encDef)
                      or v.raw and v.raw.rustling)
   if not (tbl and tbl[1] and (tonumber(tbl[1].species) or 0) > 0) then return true end
   local G = Game()
-  local enc = require("src.world.Gen4WildLead").choose(G.data, G.save, tbl, water and "surf" or "grass",
-                                                       nil, love.math.random)
+  -- 0x021AA9EA runs the walking check in mode 1: a forced encounter (flag
+  -- 0x8), so neither Repel nor Keen Eye / Intimidate refuses it (0x021A996C);
+  -- the lead's other rules apply (src/world/Gen5WildLead.lua)
+  local enc = require("src.world.Gen5WildLead").choose(G.data, G.save, tbl, love.math.random,
+                                                       { forced = true })
   if not (enc and enc.species) then return true end
-  -- the encounter's own build refuses under a Repel when the Pokemon is below
-  -- the lead's level (0x21A954C), and the spot is spent with no battle
-  if (tonumber(G.save.repelSteps) or 0) > 0 then
-    for _, m in ipairs(G.save.party or {}) do
-      if not (m.isEgg or m.egg) and (tonumber(m.hp) or 1) > 0 then
-        if (tonumber(enc.level) or 0) < (tonumber(m.level) or 0) then return true end
-        break
-      end
-    end
-  end
   local BattleState = require("src.battle.BattleState")
   local battle = BattleState.newWild(G, enc.species, enc.level,
     { nature = enc.nature, gender = enc.gender })
+  ow.gen5EncSteps = 0       -- mode 1 runs 0x021A9F40, which zeroes the step counter
   battle.onFinish = function(result) ow:afterBattle(result, battle) end
   ow:pushBattle(battle)
   return true

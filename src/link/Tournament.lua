@@ -36,6 +36,7 @@ local ANY = "ANY" -- sentinel: a leading *nil* array entry breaks ipairs
 local LEVEL_STEPS = { ANY, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65,
                        70, 75, 80, 85, 90, 95, 100 }
 local SETTINGS_ROWS = 6 -- POKEMON, MIN LV, MAX LV, TIMER, LEVELS, PLAYING
+                        -- (+ FORMAT, Gen 3 on: Tournament:settingsRows)
 -- LEVELS cycles through this: ANY (real levels) or a fixed level every
 -- match normalizes to, regardless of each side's real party
 local FORCE_LEVEL_STEPS = { ANY, 50, 100 }
@@ -132,9 +133,44 @@ end
 -- host / join
 -- -------------------------------------------------------------------
 
+-- Where the brackets are run: POKEPORT_RELAY_ADDR when set (tests,
+-- operators), else the player's own Link Hub (SETTINGS hubAddress, WS9:
+-- its TCP port speaks this protocol), else the default relay.
+function Tournament.relayAddress(game)
+  local env = os.getenv("POKEPORT_RELAY_ADDR")
+  if env and env ~= "" then return env end
+  local ok, LinkState = pcall(require, "src.link.LinkState")
+  if ok and type(LinkState) == "table" and LinkState.settings then
+    local okS, s = pcall(LinkState.settings, game)
+    if okS and type(s) == "table" and s.hubAddress then return s.hubAddress end
+  end
+  return Net.defaultRelayAddress()
+end
+
+-- the rules a match is played under (WS5's BattleRules): the 0.7.x level
+-- picker as a forced level, the format when one is set
+
+-- Gen 3 on has double battles (WS5's BattleRules): one more rules row, which
+-- needs two Pokemon a side
+function Tournament:settingsRows()
+  local okV, GameVersion = pcall(require, "src.core.GameVersion")
+  local gen = okV and tonumber(GameVersion.generation()) or 1
+  return (gen or 1) >= 3 and SETTINGS_ROWS + 1 or SETTINGS_ROWS
+end
+
+function Tournament:matchRules()
+  local okR, BattleRules = pcall(require, "src.online.BattleRules")
+  if not okR then return nil end
+  local okV, GameVersion = pcall(require, "src.core.GameVersion")
+  local gen = okV and tonumber(GameVersion.generation()) or 1
+  local rules = BattleRules.fromForceLevel(levelForWire(self.settings.forceLevel), gen)
+  if self.settings.format == "double" then rules.format = "double" end
+  return BattleRules.sanitize(rules, gen)
+end
+
 function Tournament:startHosting()
   self.net = Net.new()
-  if not self.net:connectTCP(Net.defaultRelayAddress()) then
+  if not self.net:connectTCP(Tournament.relayAddress(self.game)) then
     self:exitWith(Strings("Link error:\n%s", self.net.error or "?"))
     return
   end
@@ -149,6 +185,7 @@ function Tournament:startHosting()
     maxLevel = levelForWire(self.settings.maxLevel),
     forceLevel = levelForWire(self.settings.forceLevel),
     participating = self.settings.participating,
+    format = self.settings.format,
     name = self.game.save.player.name,
     partySize = size, partyMinLevel = minL, partyMaxLevel = maxL,
   })
@@ -157,7 +194,7 @@ end
 
 function Tournament:startJoining(code)
   self.net = Net.new()
-  if not self.net:connectTCP(Net.defaultRelayAddress()) then
+  if not self.net:connectTCP(Tournament.relayAddress(self.game)) then
     self:exitWith(Strings("Link error:\n%s", self.net.error or "?"))
     return
   end
@@ -222,6 +259,7 @@ function Tournament:handleMessage(msg)
     self.spectatorRoster = msg.spectators or {}
     self.settings.turnLimit = msg.turnLimit
     self.settings.requiredPartySize = msg.requiredPartySize
+    self.settings.format = msg.format == "double" and "double" or nil
     self.settings.minLevel = msg.minLevel == nil and ANY or msg.minLevel
     self.settings.maxLevel = msg.maxLevel == nil and ANY or msg.maxLevel
     self.settings.forceLevel = msg.forceLevel == nil and ANY or msg.forceLevel
@@ -234,6 +272,15 @@ function Tournament:handleMessage(msg)
     self.bracket = msg.tournament
     self.code = self.bracket.code
     if self.stage == "registering" then self.stage = "bracket" end
+  elseif msg.type == "hello" then
+    -- the opponent's hello can beat our match_start (same batch, or it
+    -- lands while we are still spectating the previous match and comes back
+    -- through pendingTournamentMessages): keep it for enterMatch
+    if self.stage == "matchHello" and not self.peerHello then
+      self.peerHello = msg
+    else
+      self.pendingHello = msg
+    end
   elseif msg.type == "match_start" then
     self:enterMatch(msg)
   elseif msg.type == "match_start_spectate" then
@@ -277,7 +324,9 @@ function Tournament:enterMatch(msg)
   self.opponentName = msg.opponent
   self.matchRound = msg.round
   self.matchTurnLimit = msg.turnLimit
-  self.peerHello = nil
+  -- a hello queued before this match_start is this opponent's
+  self.peerHello = self.pendingHello
+  self.pendingHello = nil
   self:sendHello(self.isHost and "battle" or nil)
   self.stage = "matchHello"
 end
@@ -300,14 +349,18 @@ function Tournament:beginMatchBattle()
     strict = Handshake.strict(verdict),
     turnLimit = self.matchTurnLimit,
     forceLevel = levelForWire(self.settings.forceLevel),
+    rules = self.isHost and self:matchRules() or nil,
     keepNetOpen = true, -- this is the tournament's own connection, not a
                         -- dedicated match socket -- don't let finish() close it
   }
   self.stage = "matchWaitParty"
   self.pendingBattleOpts = opts
+  -- the host deals the rules in its party message, as LinkState does; the
+  -- server's spectate wrap carries them to everyone watching
   self.net:send({ type = "party",
                   mons = Protocol.packParty(self.game.save.party),
-                  seed = self.linkSeed })
+                  seed = self.linkSeed,
+                  rules = opts.rules })
 end
 
 -- -------------------------------------------------------------------
@@ -383,6 +436,7 @@ function Tournament:update(dt)
           self.pendingBattleOpts.seed = self.pendingBattleOpts.seed or self.linkSeed
         else
           self.pendingBattleOpts.seed = msg.seed
+          if msg.rules ~= nil then self.pendingBattleOpts.rules = msg.rules end
         end
         -- Split rather than `cond and newHost() or newGuest()`: the and/or
         -- idiom truncates a call to its first result, so the second return
@@ -421,6 +475,7 @@ function Tournament:update(dt)
         if msg.side == "host" then
           self.spectate.hostParty = inner.mons
           self.spectate.seed = inner.seed
+          self.spectate.rules = inner.rules
         else
           self.spectate.guestParty = inner.mons
         end
@@ -430,6 +485,9 @@ function Tournament:update(dt)
             hostName = self.spectate.hostName, guestName = self.spectate.guestName,
             seed = self.spectate.seed,
             forceLevel = levelForWire(self.settings.forceLevel),
+            rules = self.spectate.rules,
+            doubles = type(self.spectate.rules) == "table"
+                      and self.spectate.rules.format == "double" or nil,
           })
           if not battle then
             self:exitWith(why or Strings("Can't watch this\nmatch."))
@@ -474,15 +532,16 @@ function Tournament:update(dt)
       self.stage = "menu"
       self.index = 1
     elseif input:wasPressed("up") then
-      self.settingsIndex = self.settingsIndex == 1 and SETTINGS_ROWS or self.settingsIndex - 1
+      self.settingsIndex = self.settingsIndex == 1 and self:settingsRows() or self.settingsIndex - 1
     elseif input:wasPressed("down") then
-      self.settingsIndex = self.settingsIndex % SETTINGS_ROWS + 1
+      self.settingsIndex = self.settingsIndex % self:settingsRows() + 1
     elseif input:wasPressed("left") or input:wasPressed("right") then
       local delta = input:wasPressed("right") and 1 or -1
       if self.settingsIndex == 1 then
         local i = indexOf(PARTY_SIZES, self.settings.requiredPartySize)
         i = ((i - 1 + delta) % #PARTY_SIZES) + 1
         self.settings.requiredPartySize = PARTY_SIZES[i]
+        if self.settings.requiredPartySize < 2 then self.settings.format = nil end
       elseif self.settingsIndex == 2 then
         local i = indexOf(LEVEL_STEPS, self.settings.minLevel)
         i = ((i - 1 + delta) % #LEVEL_STEPS) + 1
@@ -501,6 +560,13 @@ function Tournament:update(dt)
         self.settings.forceLevel = FORCE_LEVEL_STEPS[i]
       elseif self.settingsIndex == 6 then
         self.settings.participating = not self.settings.participating
+      elseif self.settingsIndex == 7 then
+        if self.settings.format == "double" then
+          self.settings.format = nil
+        else
+          self.settings.format = "double"
+          self.settings.requiredPartySize = math.max(2, self.settings.requiredPartySize)
+        end
       end
     elseif input:wasPressed("a") or input:wasPressed("start") then
       self:startHosting()
@@ -569,8 +635,14 @@ function Tournament:draw()
       forceLevelLabel(self.settings.forceLevel),
       self.settings.participating and "YES" or "NO",
     }
-    for i, label in ipairs(SETTINGS_LABELS) do
-      local y = 32 + (i - 1) * 16
+    local rows = self:settingsRows()
+    local step = rows > SETTINGS_ROWS and 14 or 16
+    if rows > SETTINGS_ROWS then
+      values[7] = self.settings.format == "double" and Strings("DOUBLE") or Strings("SINGLE")
+    end
+    for i = 1, rows do
+      local label = SETTINGS_LABELS[i] or Strings("FORMAT")
+      local y = 32 + (i - 1) * step
       Font.draw(label, 16, y)
       Font.draw(values[i], 96, y)
       if i == self.settingsIndex then Font.drawCode(CURSOR, 8, y) end

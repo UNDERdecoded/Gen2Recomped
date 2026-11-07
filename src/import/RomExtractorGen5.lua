@@ -149,9 +149,18 @@ function X:extractSpecies()
       out[id] = p
     end
   end
-  -- the extra forms past the species, by index (Gen 5's form table)
+  -- the extra forms past the species, by index (Gen 5's form table): the
+  -- species record's +0x1C names the first, arm9 0x0201AFD4 adds form - 1.
+  -- Each row's level-up moves sit at the same index in /a/0/1/8
+  -- (gen5-form-personal-v1; src/pokemon/Gen45FormData.lua)
   local forms = {}
-  for id = X.SPECIES_COUNT + 1, personal.count - 1 do forms[id] = D.personal(personal:get(id)) end
+  for id = X.SPECIES_COUNT + 1, personal.count - 1 do
+    forms[id] = D.personal(personal:get(id))
+    if forms[id] and id < learn.count then
+      local okL, moves = pcall(D.learnset, learn:get(id))
+      if okL and type(moves) == "table" and #moves > 0 then forms[id].learnset = moves end
+    end
+  end
   self:write("pokemon", out)
   self:write("gen5_forms", forms)
   self._pokemon = out
@@ -780,7 +789,8 @@ function X:extractBattleSprites()
   -- (each optional until its module exists): the Pokedex, the PC
   for _, entry in ipairs({ { "src.import.Gen5DexArt", "gen5_dex_art" },
                            { "src.import.Gen5BoxArt", "gen5_box_art" },
-                           { "src.import.Gen5TradeArt", "gen5_trade_art" } }) do
+                           { "src.import.Gen5TradeArt", "gen5_trade_art" },
+                           { "src.import.Gen5CGearArt", "gen5_cgear_art" } }) do
     local okM, M = pcall(require, entry[1])
     if okM and type(M) == "table" and M.build then
       local okB, built = pcall(M.build, self)

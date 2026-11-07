@@ -141,9 +141,12 @@ function Gen4Fishing.roll(data, save, mapDef, mapId, rod, tx, tz, rng)
     if ow then lx, ly = require("src.world.Gen5FishingLure").tile(ow) end
     local tbl, onSpot = require("src.world.Gen5Phenomena").fishTable(ow, view, lx, ly)
     if not tbl or (tonumber(tbl.rate) or 0) <= 0 then return nil end
-    if not onSpot and rng(0, 99) > tonumber(tbl.rate) then return nil end
+    -- off a spot: Suction Cups / Sticky Hold double the rate (0x021A94B0)
+    if not onSpot and not require("src.world.Gen45EncounterRate").bwFishBite(data, save, tonumber(tbl.rate), rng) then return nil end
     if ow then ow.gen5FishOnSpot = onSpot end
-    return require("src.world.Gen4WildLead").choose(data, save, tbl.slots, "rod", "super", rng)
+    -- the lead's rules (Gen5WildLead): Repel never refuses a rod; a rippling
+    -- spot is a forced encounter (mode 1), so Keen Eye cannot either
+    return require("src.world.Gen5WildLead").choose(data, save, tbl, rng, { fishing = true, forced = onSpot })
   end
   local table_ = view and view[rod .. "Rod"]
   if not table_ or (tonumber(table_.rate) or 0) <= 0 then return nil end
@@ -156,7 +159,9 @@ function Gen4Fishing.roll(data, save, mapDef, mapId, rod, tx, tz, rng)
     if view.safariKey then
       local slots = table_.slots or {}
       if #slots == 0 then return nil end
-      return require("src.world.Gen4WildLead").choose(data, save, slots, "rod", "uniform", rng)
+      local e = require("src.world.Gen4WildLead").choose(data, save, slots, "rod", "uniform", rng)
+      if e then e.onePerfectIV = true end       -- forceOnePerfectIV
+      return e
     end
     return require("src.world.Gen4WildLead").choose(data, save, table_.slots, "rod", "hgss", rng)
   end

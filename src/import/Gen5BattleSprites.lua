@@ -14,6 +14,23 @@
 -- = 144 tiles, which is what every member decodes to. Read row-major instead
 -- the picture comes out as the four blocks laid in a strip.
 --
+-- THE OTHER FORMS (gen5-form-sprites-v1). After species 649 the archive keeps
+-- one more 20-member slot per alternate-form picture: slot 652 + k (650 / 651
+-- are the Eggs). READ: the
+-- personal record's +0x1E (`formSpriteIndex`) is the species' first k and
+-- +0x20 (`formCount`) its form count (Black: Unown 0 x 27, Castform 27,
+-- Deoxys 30, Burmy 33, Wormadam 35, Cherrim 37, Shellos 38, Gastrodon 39,
+-- Rotom 40, Giratina 45, Shaymin 46, Basculin 47, Darmanitan 48, Deerling 49,
+-- Sawsbuck 52, Meloetta 55 = slots 652..707), so form f (1..count-1) is slot
+-- 652 + index + f - 1. Index 0 belongs to Unown alone (Arceus also reads 0
+-- with 17 forms: its types are palettes, not pictures -- see below.
+-- Genesect's Drives (index 56) are ordinary slots 708-711: the same picture
+-- with the Douse / Shock / Burn / Chill palettes, written by the loop).
+-- Each form is written like a species
+-- (front / back / shiny pair, its MCSS animation bundle) as
+-- rec.forms[f] / def.gen5FormSprites[f], read by Sprites.path and
+-- Gen5MonAnimPlayer through the mon's `form`.
+--
 -- Written under the same keys Platinum's species stage stamps on a species
 -- row (spriteFront, spriteBack, spriteShiny, spriteShinyBack, plus the female
 -- pair), so the battle screen and every other reader of Sprites.path draw a
@@ -25,6 +42,10 @@ B.PATH = "/a/0/0/4"
 B.STRIDE = 20
 B.SPECIES = 649
 B.SIZE = 96
+-- the first alternate-form slot: 650 and 651 hold the two Eggs (checked by
+-- composing slots 650.. against each species' own pictures)
+B.FORM_SLOT = 652
+B.ARCEUS, B.ARCEUS_PALETTES = 493, 14253
 B.BLOCKS = { { 0, 0, 8, 8 }, { 8, 0, 4, 8 }, { 0, 8, 8, 4 }, { 8, 8, 4, 4 } }
 
 local function cellsFor()
@@ -122,6 +143,63 @@ function B.build(x)
         index.counts.animationErrors=index.counts.animationErrors+1
         rec.animationError=frontError or backError
       end
+    end
+    -- the other forms (see the header)
+    if def and (tonumber(def.formCount) or 0) > 1 and ((tonumber(def.formSpriteIndex) or 0) > 0 or id == 201) then
+      rec.forms = {}
+      for f = 1, def.formCount - 1 do
+        local slot = B.FORM_SLOT + def.formSpriteIndex + f - 1
+        local sb = slot * B.STRIDE
+        if member(sb + 0) then
+          local fn, fs = G.palette(member(sb + 18)), G.palette(member(sb + 19))
+          local fname = ("%s_f%d"):format(name, f)
+          local fr = { feet = {} }
+          fr.front, fr.feet.front = save("front/" .. fname, member(sb + 0), fn)
+          fr.back, fr.feet.back = save("back/" .. fname, member(sb + 9), fn)
+          fr.shiny_front = save("shiny_front/" .. fname, member(sb + 0), fs)
+          fr.shiny_back = save("shiny_back/" .. fname, member(sb + 9), fs)
+          if Anim.load(arc, slot, "front") and Anim.load(arc, slot, "back") then
+            local path = x:saveBinary(("battle/mcss/%03d_f%d.bin"):format(id, f), Anim.pack(arc, slot))
+            fr.animation = { path = path, species = slot }
+          end
+          rec.forms[f] = fr
+          index.counts.forms = (index.counts.forms or 0) + 1
+        end
+      end
+      def.gen5FormSprites = rec.forms
+    end
+    -- ARCEUS's types are palettes, not pictures: the base sheets in the pair
+    -- at B.ARCEUS_PALETTES + 2 (f - 1) (normal) / + 1 (shiny), f = 1..16 the
+    -- forms after Normal (INFERRED from the colours: Fighting's browns first,
+    -- then Flying's blues; the archive's last 32 members)
+    if id == B.ARCEUS and def then
+      rec.forms = {}
+      for f = 1, 16 do
+        local pn = member(B.ARCEUS_PALETTES + 2 * (f - 1))
+        local ps = member(B.ARCEUS_PALETTES + 2 * (f - 1) + 1)
+        local fn, fs = pn and G.palette(pn), ps and G.palette(ps)
+        if fn and fs then
+          local fname = ("%s_f%d"):format(name, f)
+          local fr = { feet = {} }
+          fr.front, fr.feet.front = save("front/" .. fname, member(base + 0), fn)
+          fr.back, fr.feet.back = save("back/" .. fname, member(base + 9), fn)
+          fr.shiny_front = save("shiny_front/" .. fname, member(base + 0), fs)
+          fr.shiny_back = save("shiny_back/" .. fname, member(base + 9), fs)
+          if rec.animation then
+            -- the species' own bundle with this form's two palettes
+            local shim = { count = arc.count, get = function(_, i)
+              if i == base + 18 then return arc:get(B.ARCEUS_PALETTES + 2 * (f - 1)) end
+              if i == base + 19 then return arc:get(B.ARCEUS_PALETTES + 2 * (f - 1) + 1) end
+              return arc:get(i)
+            end }
+            local path = x:saveBinary(("battle/mcss/%03d_f%d.bin"):format(id, f), Anim.pack(shim, id))
+            fr.animation = { path = path, species = id }
+          end
+          rec.forms[f] = fr
+          index.counts.forms = (index.counts.forms or 0) + 1
+        end
+      end
+      def.gen5FormSprites = rec.forms
     end
     if x.tick then x:tick("battle_sprites", id, B.SPECIES) end
   end

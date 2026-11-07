@@ -51,7 +51,9 @@ function Get-SignTool {
     return $tool.FullName
 }
 
+$selfSignedUsed = $false
 if (-not $CertificatePath -and $MakeCert) {
+    $selfSignedUsed = $true
     Add-Type -AssemblyName System.IO.Compression
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     $probe = [System.IO.Compression.ZipFile]::OpenRead($package)
@@ -112,8 +114,22 @@ if ($CertificatePath) {
     $signArguments += $package
     & $signTool @signArguments
     if ($LASTEXITCODE -ne 0) { throw "SignTool failed with exit code $LASTEXITCODE." }
-    & $signTool verify /pa $package
-    if ($LASTEXITCODE -ne 0) { throw "Signature verification failed with exit code $LASTEXITCODE." }
+    if ($selfSignedUsed) {
+        # A throwaway certificate never chains to a trusted root on the build
+        # machine, so `verify /pa` always fails on it; Xbox Dev Mode does not
+        # check trust. Confirm the package carries its signature instead.
+        $signed = [System.IO.Compression.ZipFile]::OpenRead($package)
+        try {
+            if (-not $signed.GetEntry('AppxSignature.p7x')) {
+                throw 'The MSIX has no AppxSignature.p7x after signing.'
+            }
+        } finally {
+            $signed.Dispose()
+        }
+    } else {
+        & $signTool verify /pa $package
+        if ($LASTEXITCODE -ne 0) { throw "Signature verification failed with exit code $LASTEXITCODE." }
+    }
 }
 
 New-Item -ItemType Directory -Path $OutputRoot -Force | Out-Null

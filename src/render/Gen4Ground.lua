@@ -1894,10 +1894,17 @@ function Gen4Ground.syncRenderScale(game)
   return Gen4Ground.renderScale(), Gen4Ground.renderScaleIndex
 end
 
-function Gen4Ground:liveTargetFor(vw, vh)
-  if self.liveW == vw and self.liveH == vh and self.liveColour then
-    return self.liveColour, self.liveDepthBuf
-  end
+-- THE GROUNDS HOLDING A LIVE TARGET (weak), so a new one can free the targets
+-- of maps no longer drawn.  MapLoader keeps up to 32 maps resident, and each
+-- ground kept its view-sized colour + depth pair for as long as it stayed
+-- cached: at a phone's DPI 3 that is ~3.5 MB a map, ~110 MB of GPU memory for
+-- maps behind the player (measured under phone emulation, Black beats 56..69:
+-- canvases 26 -> 81, texture memory 65 -> 160 MB).  A ground that draws again
+-- just allocates a new one.
+local liveHolders = setmetatable({}, { __mode = "k" })
+Gen4Ground.LIVE_IDLE_SECONDS = 2
+
+local function dropLiveTarget(self)
   -- RETRACTED BEFORE IT IS FREED, because it may still be published.
   --
   -- `endFree` hands this canvas to `Renderer:setWorldOverride` above 1x, and
@@ -1927,6 +1934,23 @@ function Gen4Ground:liveTargetFor(vw, vh)
   end
   if self.liveColour and self.liveColour.release then pcall(self.liveColour.release, self.liveColour) end
   if self.liveDepthBuf and self.liveDepthBuf.release then pcall(self.liveDepthBuf.release, self.liveDepthBuf) end
+  self.liveColour, self.liveDepthBuf, self.liveW, self.liveH = nil, nil, nil, nil
+  liveHolders[self] = nil
+end
+
+function Gen4Ground:liveTargetFor(vw, vh)
+  local now = love.timer and love.timer.getTime and love.timer.getTime() or 0
+  self.liveAt = now
+  if self.liveW == vw and self.liveH == vh and self.liveColour then
+    return self.liveColour, self.liveDepthBuf
+  end
+  dropLiveTarget(self)
+  -- the other maps' targets, when they have not drawn for a while
+  for other in pairs(liveHolders) do
+    if other ~= self and now - (other.liveAt or 0) > Gen4Ground.LIVE_IDLE_SECONDS then
+      dropLiveTarget(other)
+    end
+  end
   self.liveColour, self.liveDepthBuf = Gen4Model.newTarget(vw, vh)
   if not self.liveColour then
     -- Same latch as the bake path's, and said for the same reason: a ground
@@ -1940,6 +1964,7 @@ function Gen4Ground:liveTargetFor(vw, vh)
     return nil
   end
   self.liveW, self.liveH = vw, vh
+  liveHolders[self] = true
   return self.liveColour, self.liveDepthBuf
 end
 
@@ -3051,6 +3076,18 @@ function Gen4Ground:billboardPlane(x, y, z, vw, vh)
   local ddx = (da * by - db * ay) / det
   local ddy = (db * ax - da * bx) / det
   return { x0, y0, ddx, ddy, d0 }
+end
+
+-- shownFacing(facing, mapX, mapY) -> facing
+--
+-- Which of its four frames a character standing at this map position shows the
+-- camera now drawing (Gen4View:worldToScreen), anchored as `freeEntity` anchors
+-- the feet. The world facing itself with no 3D camera, or on a tilt rung.
+function Gen4Ground:shownFacing(facing, mapX, mapY)
+  local view = self.view3d
+  if not (view and view.worldToScreen) then return facing end
+  return view:worldToScreen(facing, (mapX or 0) + FEET_X + (self.offsetX or 0),
+                            (mapY or 0) + FEET_X + (self.offsetY or 0))
 end
 
 -- `fogged`: the field's depth fog on it (Gen4DepthFog.spriteAt), for the

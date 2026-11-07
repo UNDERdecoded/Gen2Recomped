@@ -211,6 +211,20 @@ function R.pickTrigger(game, headerId)
   return list[rand(#list) + 1]
 end
 
+-- THE CALL GROUP OF EACH CONTACT (PhoneBookEntry unkF), for a cache imported
+-- before the importer kept it: `tel/pmtel_book.dat` byte 15 of each 20-byte
+-- row, the same in HeartGold and SoulSilver (pokeheartgold files/tel/
+-- pmtel_book.json `unkF`, checked against both ROMs' books -- scratch
+-- enc_parity/phone_groups.lua). Without it every contact read as group 0, so
+-- the 30% / 20% rolls for groups 1 and 2 never rang anyone.
+R.CALL_GROUPS = { [0] = 0, 0, 1, 0, 0, 1, 0, 0, 1, 2, 1, 0, 0, 2, 0, 1, 0, 2, 2, 0, 0, 0, 0, 0, 1, 0, 2, 2,
+  2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0, 2, 2, 1, 1, 2, 2,
+  2, 2, 2, 2, 1, 0, 0, 2, 2, 2, 1 }
+function R.callGroup(e, id)
+  if e and e.callGroup ~= nil then return tonumber(e.callGroup) or 0 end
+  return R.CALL_GROUPS[tonumber(id) or -1] or 0
+end
+
 -- ov02_02251FDC: a random caller
 function R.pickRandom(game, headerId)
   local pc = game.data.gen4_hgss_phone_call
@@ -220,7 +234,7 @@ function R.pickRandom(game, headerId)
   local pool = {}
   for _, id in ipairs(R.contacts(save)) do
     local e = pc.book[id]
-    if e and (tonumber(e.callGroup) or 0) == group and R.CALLING_TYPES[e.type] then pool[#pool + 1] = id end
+    if e and R.callGroup(e, id) == group and R.CALLING_TYPES[e.type] then pool[#pool + 1] = id end
   end
   if #pool == 0 then return 0 end
   local st = state(save)

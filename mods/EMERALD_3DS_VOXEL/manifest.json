@@ -28,5 +28,6 @@
     }
   ],
   "affects_link": false,
+  "default_enabled": false,
   "description": "Emerald only. Zallax's Emerald 3DS voxel overworld (github.com/ZallaxDev/emerald-3ds, used with permission, MIT), ported by Ceedrack: buildings and rooms modelled from their own drawing, terrain relief, pixel-voxel signposts and its tilted-plane trees, under the original's camera and baked sunlight, and its 3D battles over the world. No ROM data ships with it: the models are built from your own Emerald ROM, in the background, the first time you switch E3DS 3D on (give the mod your ROM once with its EMERALD ROM row; the first build also downloads Emerald 3DS's tree art and generator data, under 1 MB). Registers one render pipeline, E3DS 3D (OFF and the five 3D ANGLE rungs), on hotkey 0. Presentational only."
 }

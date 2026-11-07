@@ -30,6 +30,7 @@ local Font = require("src.render.Font")
 local Logger = require("src.core.Logger")
 local Screens = require("src.ui.Screens")
 local SecondScreen = require("src.ui.SecondScreen")
+local Strings = require("src.core.Strings")
 
 local HgssStartMenu = setmetatable({}, { __index = Gen4StartMenu })
 HgssStartMenu.__index = HgssStartMenu
@@ -124,8 +125,20 @@ function HgssStartMenu.new(game, opts)
   -- An ordinary field menu has seven entries and eight buttons; with RETIRE
   -- up (Safari, Bug-Catching Contest) all eight are the cartridge's and MODS
   -- waits until the game is over.
+  -- LINK (the port's, Gen4StartMenu.linkRow: a party, and not in the
+  -- Safari, the contest or Pal Park) takes the next free button as well.
+  -- When LINK and MODS will not both fit, they share one PORT button that
+  -- opens a two-row list (docs/online-design.md 2.6).
   local mods = Gen4StartMenu.modsRow(game)
-  if mods and #rows < #SLOTS then rows[#rows + 1] = mods end
+  local link = Gen4StartMenu.linkRow(game, self)
+  local extras = {}
+  if link then extras[#extras + 1] = link end
+  if mods then extras[#extras + 1] = mods end
+  if #rows + #extras <= #SLOTS then
+    for _, row in ipairs(extras) do rows[#rows + 1] = row end
+  elseif #extras > 1 and #rows < #SLOTS then
+    rows[#rows + 1] = { id = "port", label = Strings("PORT"), sub = extras }
+  end
   self.rows = rows
   self.index = 1
   for i, row in ipairs(rows) do if row.id == game.gen4StartMenuCursor then self.index = i end end
@@ -157,6 +170,16 @@ end
 
 function HgssStartMenu:select()
   local row = self.rows[self.index]
+  if row and row.id == "port" then
+    -- LINK and MODS behind one button: a two-row list over the panel
+    self.portIndex = 1
+    return
+  end
+  if row and row.id == "link" then
+    self.game.stack:pop()
+    Gen4StartMenu.openLink(self.game)
+    return
+  end
   if row and row.id == "pokegear" then
     -- the Pokegear (src/ui/HgssPokegear.lua) once its art is in the cache;
     -- until then the button says so and stays put
@@ -175,8 +198,33 @@ function HgssStartMenu:select()
   return Gen4StartMenu.select(self)
 end
 
+-- the PORT list (LINK / MODS) while it is open
+function HgssStartMenu:updatePort(input)
+  local row = self.rows[self.index]
+  local sub = row and row.sub or {}
+  if not input or #sub == 0 then self.portIndex = nil return end
+  if input:wasPressed("up") or input:wasPressed("down") then
+    self.portIndex = self.portIndex % #sub + 1
+    se(self, "SEQ_SE_DP_SELECT")
+  elseif input:wasPressed("a") then
+    se(self, "SEQ_SE_DP_SELECT")
+    local pick = sub[self.portIndex]
+    self.portIndex = nil
+    if pick.id == "link" then
+      self.game.stack:pop()
+      Gen4StartMenu.openLink(self.game)
+    else
+      Screens.push(self.game, "ManagerState")
+    end
+  elseif input:wasPressed("b") or input:wasPressed("x") then
+    se(self, "SEQ_SE_GS_GEARCANCEL")
+    self.portIndex = nil
+  end
+end
+
 function HgssStartMenu:update()
   local input = self.game.input
+  if self.portIndex then return self:updatePort(input) end
   local count = #self.rows
   -- an empty panel (a new game before Mom's gifts) still opens and closes
   -- like the cartridge's: the header, B, X or START
@@ -262,7 +310,7 @@ end
 -- frame (grey rim, red when selected) with its picture covered by its own
 -- blank face -- a 6-pixel strip from left of the picture, stretched across --
 -- and four small tiles in the picture's ink where the picture was.
-function HgssStartMenu:drawModsButton(slot, selected)
+function HgssStartMenu:drawModsButton(slot, selected, glyph)
   local g = love.graphics
   local icon, rec = self:menuImg(("icon_36_%d"):format(selected and 1 or 0))
   local x, y = slot[1] + ((rec or {}).originX or 0), slot[2] + ((rec or {}).originY or 0)
@@ -278,8 +326,24 @@ function HgssStartMenu:drawModsButton(slot, selected)
   self.modsFaceQuad = self.modsFaceQuad or g.newQuad(4, 2, 6, 22, iw, ih)
   g.draw(icon, self.modsFaceQuad, x + 8, y + 2, 0, 26 / 6, 1)
   g.setColor(0.33, 0.33, 0.33, 1)
-  for k = 0, 3 do
-    g.rectangle("fill", x + 13 + (k % 2) * 8, y + 5 + floor(k / 2) * 8, 6, 6)
+  if glyph == "link" then
+    -- two linked rings: the cable
+    g.setLineWidth(2)
+    g.rectangle("line", x + 11, y + 8, 10, 8)
+    g.rectangle("line", x + 18, y + 11, 10, 8)
+    g.setLineWidth(1)
+  elseif glyph == "port" then
+    -- the LINK rings beside two of the MODS tiles
+    g.setLineWidth(2)
+    g.rectangle("line", x + 10, y + 6, 8, 6)
+    g.rectangle("line", x + 14, y + 10, 8, 6)
+    g.setLineWidth(1)
+    g.rectangle("fill", x + 25, y + 6, 5, 5)
+    g.rectangle("fill", x + 25, y + 13, 5, 5)
+  else
+    for k = 0, 3 do
+      g.rectangle("fill", x + 13 + (k % 2) * 8, y + 5 + floor(k / 2) * 8, 6, 6)
+    end
   end
   g.setColor(1, 1, 1, 1)
 end
@@ -307,8 +371,8 @@ function HgssStartMenu:drawPanel(whole)
     local slot, lab = SLOTS[i], LABELS[i]
     if slot then
       g.setColor(1, 1, 1, 1)
-      if row.id == "mods" then
-        self:drawModsButton(slot, i == self.index)
+      if row.id == "mods" or row.id == "link" or row.id == "port" then
+        self:drawModsButton(slot, i == self.index, row.id)
       else
         local icon, rec = self:menuImg(("icon_%d_%d"):format(row.hgssIcon, i == self.index and 1 or 0))
         if icon then g.draw(icon, slot[1] + (rec.originX or 0), slot[2] + (rec.originY or 0)) end
@@ -319,6 +383,25 @@ function HgssStartMenu:drawPanel(whole)
   end
   Font.popStyle()
   g.setColor(1, 1, 1, 1)
+  -- the PORT list, in the game's own window beside its button
+  local row = self.rows[self.index]
+  if self.portIndex and row and row.sub then
+    local slot = SLOTS[self.index] or SLOTS[#SLOTS]
+    local tx = floor(slot[1] / 8) + (slot[1] < 80 and 8 or -1)
+    local ty = math.max(0, math.min(floor(slot[2] / 8), 24 - (#row.sub * 2 + 2)))
+    if tx + 9 > 32 then tx = 32 - 9 end
+    Font.drawBox(tx, ty, 9, #row.sub * 2 + 2)
+    g.setColor(0, 0, 0, 1)
+    for k, r in ipairs(row.sub) do
+      local y = (ty + 1) * 8 + (k - 1) * 16
+      Font.draw(r.label, (tx + 1) * 8 + 8, y)
+      if k == self.portIndex then
+        local okT, Theme = pcall(require, "src.ui.Theme")
+        Font.drawCode((okT and Theme.cursor) or 0xED, (tx + 1) * 8, y)
+      end
+    end
+    g.setColor(1, 1, 1, 1)
+  end
 end
 
 function HgssStartMenu:draw()

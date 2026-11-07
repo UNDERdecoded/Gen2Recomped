@@ -337,7 +337,7 @@ function HG:drawTop()
   local nat = mon.nature or (mon.personality and natures[mon.personality % 25 + 1])
   if nat then put(tostring(nat):sub(1, 1):upper() .. tostring(nat):sub(2):lower(), 8, 105) end
   put(self:label("ABILITY"), 8, 121, INK.light)
-  local ability = mon.ability or (def and def.abilities and def.abilities[1])
+  local ability = require("src.pokemon.AbilityOf").pick(mon, def and def.abilities)
   if ability then
     local id = tonumber(ability)
     local name = id and (data.text or {})[("TEXT_B0720_%05d"):format(id)] or tostring(ability)

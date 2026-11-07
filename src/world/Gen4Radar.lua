@@ -48,7 +48,8 @@ local RNG = function(n) return love.math.random(0, n - 1) end
 -- RadarChain_Clear
 function Gen4Radar.newChain()
   return { count = 0, shakeType = Gen4Radar.SOFT, species = 0, level = 0,
-           active = false, fresh = true, radarBattle = false, patches = {} }
+           active = false, fresh = true, radarBattle = false, patches = {},
+           recordSlot = false }
 end
 
 -- The (dx, dy) of cell `pick` of ring `ring` (RadarSpawnPatches' arithmetic),
@@ -128,20 +129,65 @@ local function bump(chain)
   chain.count = math.min(Gen4Radar.CAP, chain.count + 1)
 end
 
--- The three best chains, best first.
-function Gen4Radar.record(save, chain)
-  if not (save and chain and chain.species ~= 0) then return end
-  save.gen4RadarRecords = save.gen4RadarRecords or {}
+-- THE THREE CHAIN RECORDS, the cartridge's way (pokeplatinum pokeradar.c,
+-- radar_chain_records.c): three fixed slots { species, count } (species 0 =
+-- empty, which the Poketch skips). A chain takes its slot when it starts
+-- (GetLowestChainRecordSlot: the first empty slot, else the lowest count with
+-- its exact tie rules) and, each time it grows, TryReplaceLowestChainRecord
+-- writes it there only when that slot's count is STRICTLY lower, sorts the
+-- three (SortChainRecords' branch order, so equal counts keep their order),
+-- and follows the chain to the LAST slot holding its count.
+local function records(save)
   local recs = save.gen4RadarRecords
-  for _, r in ipairs(recs) do
-    if r.id == chain.recordId then r.count = math.max(r.count, chain.count) goto sort end
+  if type(recs) ~= "table" then recs = {} save.gen4RadarRecords = recs end
+  for i = 1, 3 do
+    local r = recs[i]
+    if type(r) ~= "table" then recs[i] = { species = 0, count = 0 }
+    else r.species, r.count, r.id = tonumber(r.species) or r.species or 0, tonumber(r.count) or 0, nil end
   end
-  chain.recordId = (save.gen4RadarRecordSerial or 0) + 1
-  save.gen4RadarRecordSerial = chain.recordId
-  recs[#recs + 1] = { id = chain.recordId, species = chain.species, count = chain.count }
-  ::sort::
-  table.sort(recs, function(a, b) return a.count > b.count end)
   while #recs > 3 do table.remove(recs) end
+  return recs
+end
+Gen4Radar.records = records
+
+function Gen4Radar.lowestSlot(save)
+  local r = records(save)
+  for i = 1, 3 do if (r[i].species or 0) == 0 then return i end end
+  local slot = (r[1].count < r[2].count) and 1 or 2
+  if not (r[slot].count < r[3].count) then slot = 3 end
+  return slot
+end
+
+local function sortRecords(r)
+  local a, b, c = r[1], r[2], r[3]
+  local o
+  if a.count < b.count then
+    if b.count < c.count then o = { c, b, a }
+    elseif a.count < c.count then o = { b, c, a }
+    else o = { b, a, c } end
+  else
+    if a.count < c.count then o = { c, a, b }
+    elseif b.count < c.count then o = { a, c, b }
+    else o = { a, b, c } end
+  end
+  r[1], r[2], r[3] = o[1], o[2], o[3]
+end
+Gen4Radar.sortRecords = sortRecords
+
+function Gen4Radar.record(save, chain)
+  if not (save and chain) then return end
+  local r = records(save)
+  local slot = chain.recordSlot or Gen4Radar.lowestSlot(save)
+  chain.recordSlot = slot
+  if r[slot].count < chain.count then
+    r[slot] = { species = chain.species, count = chain.count }
+    sortRecords(r)
+    if r[slot].count <= chain.count then
+      for k = 3, 1, -1 do
+        if r[k].count == chain.count then chain.recordSlot = k return end
+      end
+    end
+  end
 end
 
 -- PokeRadar_ShouldDoRadarEncounter + TryGenerateGrassEncounter_WithRadar.
@@ -159,6 +205,8 @@ function Gen4Radar.encounter(chain, patch, slots, radarSpecies, roll, save)
     end
   else
     chain.fresh = false
+    -- (unk_14) the first patch of a chain picks the record slot it will use
+    chain.recordSlot = save and Gen4Radar.lowestSlot(save) or false
   end
   if not keep then chain.shakeType = patch.shakeType end
   if keep then
@@ -204,17 +252,58 @@ function Gen4Radar.afterBattle(chain, result)
     for k, v in pairs(fresh) do chain[k] = v end
     return false
   end
-  chain.radarBattle = false
+  -- (kept: the cartridge's unk_18 stays set until RadarChain_Clear)
   return true
 end
 
 -- PokeRadar_ClearIfAllOutOfView: a patch more than a screen away is gone, and
 -- with all four gone the chain is. Answers whether the chain lives on.
-function Gen4Radar.trimOutOfView(chain, px, py)
+-- PokeRadar_ClearIfAllOutOfView: GFXBoxTest_IsBoxAtPositionInView on a
+-- 16 x 8 x 16 box (RadarChain_Init) at the patch's position (16 x tile, the
+-- tile's corner, at its terrain height) against the cartridge's field camera
+-- -- the map header's camera type, aimed at the player, on the DS's 4:3
+-- screen with the type's own fov, near and far -- every frame no field task
+-- runs. `view` = { cfg, tx, ty, tz } (the target in world units); without it
+-- the old box (8 x 6 cells) stands in.
+local function inView(view, x, y, z)
+  local cfg = view.cfg
+  local pr = math.rad(cfg.pitch or 59)
+  local d = cfg.distance or 667
+  local sp, cp = math.sin(pr), math.cos(pr)
+  -- the eye: south of and above the target; forward (0, -sin, -cos), up (0, cos, -sin)
+  local vx, vy, vz = x - view.tx, y - (view.ty + d * sp), z - (view.tz + d * cp)
+  local depth = -vy * sp - vz * cp
+  local up = vy * cp - vz * sp
+  local th = math.tan(math.rad(cfg.halfFov or 8))
+  local hy, hx
+  if cfg.projection == "orthographic" then hy = th * d else hy = th * depth end
+  hx = hy * 256 / 192
+  return depth >= (cfg.near or 0) and depth <= (cfg.far or 1e9)
+         and math.abs(up) <= hy and math.abs(vx) <= hx
+end
+function Gen4Radar.patchInView(view, p)
+  local x0, y0, z0 = p.x * 16, p.h or view.ty, p.y * 16
+  for i = 0, 7 do
+    local x = x0 + ((i % 2 == 1) and 16 or 0)
+    local y = y0 + ((math.floor(i / 2) % 2 == 1) and 8 or 0)
+    local z = z0 + ((i >= 4) and 16 or 0)
+    if inView(view, x, y, z) then return true end
+  end
+  return false
+end
+
+function Gen4Radar.trimOutOfView(chain, px, py, view)
   if not (chain and chain.active) then return false end
   local live = 0
   for _, p in ipairs(chain.patches) do
-    if p.active and (math.abs(p.x - px) > 8 or math.abs(p.y - py) > 6) then p.active = false end
+    if p.active then
+      if view and view.cfg then
+        if p.h == nil then p.h = view.ty end
+        if not Gen4Radar.patchInView(view, p) then p.active = false end
+      elseif math.abs(p.x - px) > 8 or math.abs(p.y - py) > 6 then
+        p.active = false
+      end
+    end
     if p.active then live = live + 1 end
   end
   if live == 0 then

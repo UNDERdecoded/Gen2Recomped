@@ -39,6 +39,27 @@ function AllyAI.choose(battle, battler, rng)
     if battler.disabledSlot ~= i and (mv.pp or 0) > 0 then usable[#usable + 1] = mv end
   end
   if #usable == 0 then return { id = "STRUGGLE", pp = 1, struggle = true } end
+  -- PLATINUM / HGSS: the partner runs the cartridge's trainer AI with its own
+  -- trainer's aiMask (TrainerAI_PickCommand, then TrainerAI_Main doubles)
+  local okG4, Gen4AI = pcall(require, "src.battle.Gen4AI")
+  if okG4 and Gen4AI.applies(battle) then
+    local okC, act = pcall(Gen4AI.command, battle, battler)
+    if okC and act then return act end
+    if Gen4AI.program(battle) then
+      local okP, move, target = pcall(Gen4AI.choose, battle, battler, usable)
+      if okP and move then
+        for _, u in ipairs(usable) do
+          if u == move then
+            if battler.position and target then
+              battle.chosenTargets = battle.chosenTargets or {}
+              battle.chosenTargets[battler.position] = target
+            end
+            return move
+          end
+        end
+      end
+    end
+  end
   local foes = battle.foesOf and battle:foesOf(battler) or {}
   local best, bestMove, bestFoe = 0, nil, nil
   for _, mv in ipairs(usable) do

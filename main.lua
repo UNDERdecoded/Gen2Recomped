@@ -1190,12 +1190,23 @@ function love.quit()
   pcall(function()
     require("src.core.DiscordPresence").shutdown()
   end)
+  -- give the router back any port a link session asked it to open (UPnP /
+  -- NAT-PMP / PCP, src/online/net/PortMap.lua); bounded, and only when a
+  -- session ever loaded the module
+  if package.loaded["src.online.net.PortMap"] then
+    pcall(package.loaded["src.online.net.PortMap"].releaseAll, 1.5)
+  end
   -- LOVE waits for every live love.thread before the process exits, and both
   -- background workers idle in a loop that only a "quit" command breaks, so
   -- without this the process outlived the window and the next launch re-entered
   -- the dead one instead of starting fresh (#339)
   if package.loaded["src.core.ChipAudio"] then
     pcall(package.loaded["src.core.ChipAudio"].shutdown)
+  end
+  -- the launcher's Link Hub thread (src/online/LauncherHub.lua): stop it and
+  -- give the router its ports back
+  if package.loaded["src.online.LauncherHub"] then
+    pcall(package.loaded["src.online.LauncherHub"].shutdown, 2.5)
   end
   if package.loaded["src.update.Check"] then
     pcall(package.loaded["src.update.Check"].shutdown)

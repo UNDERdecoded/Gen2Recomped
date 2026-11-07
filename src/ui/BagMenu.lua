@@ -698,7 +698,7 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
                                                      { kind = "levelup" })
               if gen3Candy and picker then picker:close() end
               if evoTo then
-                Evolution.evolve(game, target, evoTo, nil, evo and evo.method)
+                Evolution.evolve(game, target, evoTo, nil, evo and evo.method, evo)
               end
               return
             end
@@ -755,6 +755,9 @@ local function useOn(game, battle, id, target, list, moveIndex, picker)
     end
     if battle then
       list:close()
+      -- HGSS: an X item / Guard Spec. / Dire Hit used in battle lifts the
+      -- walking Pokemon's mood +10 (battle_system.c ApplyItemEffectOnMonMood)
+      pcall(require("src.pokemon.Gen45Friendship").battleItemMood, battle, target, id)
       showMessages(game, payload, function() battle:itemUsed({}) end)
     else
       showMessages(game, payload, closePicker)

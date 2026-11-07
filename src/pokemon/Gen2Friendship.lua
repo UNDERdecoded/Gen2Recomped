@@ -16,6 +16,14 @@ function Friendship.isVanilla()
 end
 
 function Friendship.change(mon, reason)
+  -- Gen 4 / 5: the TM / HM teach (+1/+1/0, src/pokemon/Gen45Friendship.lua);
+  -- every other reason answers "not Gen 2's" so the caller's own path (the
+  -- level-up's Evolution.changeHappiness) runs it
+  local G45 = require("src.pokemon.Gen45Friendship")
+  if G45.applies() then
+    if reason == "LEARNMOVE" and mon then G45.update(nil, mon, reason) return true end
+    return false
+  end
   if not Friendship.isVanilla() then return false end
   if not mon or require("src.pokemon.Party").isEgg(mon) then return true end
   local row = changes[reason]
@@ -61,6 +69,12 @@ function Friendship.gymBattle(save)
 end
 
 function Friendship.faint(mon, enemyLevel)
+  -- Gen 4 / 5 (BattleScript_UpdateFriendship, src/pokemon/Gen45Friendship.lua)
+  local G45 = require("src.pokemon.Gen45Friendship")
+  if G45.applies() then
+    if mon and not require("src.pokemon.Party").isEgg(mon) then G45.faint(nil, mon, enemyLevel) end
+    return true
+  end
   -- The cartridge compares against (level + 30) as an eight-bit value.
   local threshold = ((mon.level or 0) + 30) % 256
   return Friendship.change(mon, (enemyLevel or 0) >= threshold and "STRONGFOE" or "FAINT")

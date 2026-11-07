@@ -135,6 +135,20 @@ bool syncHealthSteps();
 bool walkerNotify(const char *json);
 
 /**
+ * The system share sheet with `text` (GameActivity.shareText, an ACTION_SEND
+ * chooser): a Link Hub code to a chat app. Returns whether it was asked for.
+ */
+bool shareText(const char *text);
+
+/**
+ * Hold / release a WifiManager.MulticastLock (GameActivity): Android drops
+ * broadcast packets for an app without one, which hides nearby games from the
+ * JOIN list (src/online/net/LanBeacon.lua).
+ */
+bool acquireMulticastLock();
+bool releaseMulticastLock();
+
+/**
  * One HTTP request for the cloud saves (GameActivity.httpRequest): `json` is
  * {"method","url","headers":{...},"body"}; the answer is {"status","body"} or
  * {"error"} as a JSON string ("" when the bridge itself is missing).

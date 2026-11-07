@@ -1311,6 +1311,14 @@ local SPECIALS_NOOP = {
   ShowTMHMIcon = true,
 }
 
+-- THE LINK ROOMS (docs/online-design.md WS6a).  The cable club's rows that
+-- reach real link play now (src/script/Gen2LinkRooms.lua through
+-- src/online/LinkRooms.lua) replace the "unavailable" / no-op answers above.
+for name, cmd in pairs(require("src.script.Gen2LinkRooms").SPECIALS) do
+  SPECIALS[name] = cmd
+  SPECIALS_NOOP[name] = nil
+end
+
 -- Specials that print their own prompt and are immediately followed by a
 -- `yesorno` confirming it.  Emitting the last box as a show_text row lets
 -- L.yesorno fold it exactly as it folds a real writetext.

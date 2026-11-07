@@ -164,7 +164,9 @@ function G.use(data, save, id, itemDef, target, battle)
     -- on a Pokemon: a berry that heals or cures is medicine (ItemEffects);
     -- any other is "It won't have any effect."
     local r = require("src.inventory.ItemEffects").recordFor(id)
-    if target and not (r and (r.heal or r.cures or r.cureAll or r.pp or r.confusion)) then
+    -- (the EV-lowering berries -- Pomeg, Kelpsy, Qualot, Hondew, Grepa,
+    -- Tamato -- are medicine too: item_use_pokemon.c's EV / friendship arm)
+    if target and not (r and (r.heal or r.cures or r.cureAll or r.pp or r.confusion or r.ev)) then
       return "failed", { "It won't have any effect." }
     end
     return nil
@@ -216,11 +218,11 @@ function G.use(data, save, id, itemDef, target, battle)
     return nil
   elseif f == 24 then
     -- the party menu's Gracidea: Shaymin's Land Forme to Sky Forme
+    -- Pokemon_CanShayminSkyForm (Land, HP > 0, not frozen, 04:00-19:59),
+    -- then Pokemon_SetShayminForm recalculates (Gen45FormData)
     if target and tonumber(target.species) == G.SHAYMIN and (tonumber(target.form) or 0) == 0 then
-      local hour = tonumber(os.date("%H")) or 12
-      local frozen = target.status == "FRZ" or target.status == "freeze"
-      if hour >= 4 and hour < 20 and not frozen then
-        target.form = 1
+      if require("src.pokemon.Gen45FormData").canSky(target) then
+        require("src.pokemon.Gen4Forms").setForm(data, target, 1)
         return "kept", { ("%s changed Forme!"):format(target.nickname or "Shaymin") }
       end
     end

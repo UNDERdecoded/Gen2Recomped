@@ -261,7 +261,8 @@ function Loader:_saveState()
   local gen = self:_generation()
   for id, mod in pairs(self.mods) do
     local want = not self.disabled[id]
-    local experimental = mod.manifest and mod.manifest.experimental
+    local experimental = mod.manifest
+      and (mod.manifest.experimental or mod.manifest.defaultOff)
     if ModGens.resolve(options.mods[id], gen, experimental) ~= want then
       options.mods[id] = want
         and ModGens.withGen(options.mods[id], gen, true)
@@ -1356,7 +1357,8 @@ function Loader:load(data)
         tostring(id or "?"))
     end
     for id, mod in pairs(self.mods) do
-      if not self.disabled[id] and mod.manifest.experimental
+      if not self.disabled[id]
+          and (mod.manifest.experimental or mod.manifest.defaultOff)
           and ModGens.active(modsOpt[id], gen) ~= true then
         self.disabled[id] = true
       end

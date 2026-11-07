@@ -254,7 +254,8 @@ local function prepareSpecies(data)
   for _, def in pairs(data.pokemon or {}) do
     if type(def) == "table" and def.abilities == nil and type(def.abilityIds) == "table" then
       local a, b = nameOf(def.abilityIds[1]), nameOf(def.abilityIds[2])
-      if a then def.abilities = { a, b or a } end
+      -- the third is the Hidden Ability (abilitySlot 3: Day Care inheritance)
+      if a then def.abilities = { a, b or a, nameOf(def.abilityIds[3]) } end
     end
   end
 end
@@ -1544,8 +1545,7 @@ end })
 
 DEF.BW_BEAT_UP = F({
   hitCount = function(ctx)
-    local party = ctx.user.isPlayer and ctx.battle.game and ctx.battle.game.save
-                  and ctx.battle.game.save.party or ctx.battle.enemyParty
+    local party = G5.sideParty(ctx.battle, ctx.user)
     local n = 0
     for _, mon in ipairs(party or {}) do
       if (mon.hp or 0) > 0 and not mon.status then n = n + 1 end
@@ -1705,10 +1705,23 @@ end })
 
 -- --- switching ---------------------------------------------------------------
 
+-- THE PARTY A BATTLER'S SLOT BELONGS TO.  The player's and the foe's in an
+-- ordinary battle; a tag partner's own (battle.ally), the second trainer's
+-- (enemyPartyB) and, in a 4-player multi link battle (battle.linkMulti),
+-- each player's own -- all of which BattleState:benchFor answers per place.
+function G5.sideParty(battle, b)
+  if battle.benchFor and b and (battle.ally or battle.enemyPartyB or battle.linkMulti) then
+    local ok, list = pcall(battle.benchFor, battle, b.isPlayer, b.position)
+    if ok and type(list) == "table" then return list end
+  end
+  if b and b.isPlayer then return battle.game and battle.game.save and battle.game.save.party or {} end
+  return battle.enemyParty or {}
+end
+
 local function benchOf(battle, b)
   local out = {}
   if b.isPlayer then
-    local party = battle.game and battle.game.save and battle.game.save.party or {}
+    local party = G5.sideParty(battle, b)
     for _, mon in ipairs(party) do
       if mon ~= b.mon and (mon.hp or 0) > 0 and not mon.isEgg and not mon.egg then
         local onField = false
@@ -1717,7 +1730,7 @@ local function benchOf(battle, b)
       end
     end
   else
-    for i, mon in ipairs(battle.enemyParty or {}) do
+    for i, mon in ipairs(G5.sideParty(battle, b)) do
       if mon ~= b.mon and (mon.hp or 0) > 0 then
         local onField = false
         for _, a in ipairs(activeList(battle)) do if a.mon == mon then onField = true end end
@@ -1735,6 +1748,9 @@ local function switchEnemy(battle, index, dragged, carry)
   local before = #battle.queue
   local mark = {}
   for i, item in ipairs(battle.queue) do mark[item] = true end
+  -- the battle copy of a MIMICked move leaves with the Pokemon, as the
+  -- player's switch path (switchPlayerInto) already does
+  if battle.enemy and battle.restoreMimicked then battle:restoreMimicked(battle.enemy) end
   battle:executeAction(battle.enemy, battle.player, { special = "aiSwitch", index = index })
   local incoming = battle.enemy
   if carry and incoming then
@@ -1742,6 +1758,8 @@ local function switchEnemy(battle, index, dragged, carry)
     incoming.confusedTurns = carry.confusedTurns
     incoming.substituteHP = carry.substituteHP
     incoming.leechSeeded = carry.leechSeeded
+    -- ...and Perish Song's count, which the player's side carries too
+    incoming.perishTurns = carry.perishTurns
   end
   if dragged then
     for i = #battle.queue, 1, -1 do
@@ -2105,8 +2123,7 @@ DEF.BW_REFRESH = P({ run = enginePrimary("REFRESH_EFFECT") })
 DEF.BW_HEAL_BELL = P({ run = function(ctx)
   local battle, user = ctx.battle, ctx.user
   user.mon.status, user.toxicCounter = nil, nil
-  local party = user.isPlayer and battle.game and battle.game.save and battle.game.save.party
-                or battle.enemyParty
+  local party = G5.sideParty(battle, user)
   for _, mon in ipairs(party or {}) do mon.status = nil end
   return { T.std(battle, ctx.move.id == 312 and "aroma" or "bell") }
 end })
@@ -2490,7 +2507,7 @@ DEF.BW_METRONOME = F({ callsMove = function(ctx)
 end })
 DEF.BW_ASSIST = F({ callsMove = function(ctx)
   local battle, u = ctx.battle, ctx.user
-  local party = u.isPlayer and battle.game and battle.game.save and battle.game.save.party or battle.enemyParty
+  local party = G5.sideParty(battle, u)
   local pool = {}
   for _, mon in ipairs(party or {}) do
     if mon ~= u.mon then
@@ -2666,5 +2683,7 @@ end
 
 -- the turn-level rules and the records they complete (src/battle/Gen5MoveRules.lua)
 require("src.battle.Gen5MoveRules").install(G5)
+-- Judgment / Techno Blast (effect 268): the Plate's / Drive's type
+require("src.battle.Gen45FormBattle").installG5(G5)
 
 return G5

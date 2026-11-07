@@ -445,6 +445,8 @@ function PC:runAction(action)
  elseif action=='TAKE' and mon then
   local item=mon.heldItem or mon.item
   if item and item~=0 and Bag.add(self.game.save,item,1,self.game.data) then mon.heldItem=nil;mon.item=nil end
+  -- Giratina's Orb / Arceus's Plate (Gen45FormData.heldItem)
+  pcall(require('src.pokemon.Gen45FormData').heldItem,self.game.data,mon)
  elseif action=='GIVE' and mon then
   Screens.push(self.game,'BagMenu',{pick=true,onPick=function(id)
    local item=self.game.data.items[id]
@@ -453,6 +455,7 @@ function PC:runAction(action)
    local old=mon.heldItem or mon.item
    if old and old~=0 and not Bag.add(self.game.save,old,1,self.game.data) then return end
    Bag.remove(self.game.save,id,1);mon.heldItem=id;mon.item=nil
+   pcall(require('src.pokemon.Gen45FormData').heldItem,self.game.data,mon)
   end})
  end
 end
@@ -1179,7 +1182,7 @@ function PC:rotatorLines(mon)
   nature=((data.constants or {}).natureOrder or {})[mon.personality%25+1]
  end
  if type(nature)=='string' then lines[#lines+1]={text=nature} end
- local ability=mon.ability or (def and def.abilities and def.abilities[1])
+ local ability=require("src.pokemon.AbilityOf").pick(mon,def and def.abilities)
  local rec=ability and data.abilities and data.abilities[ability]
  local name=(rec and rec.name) or (type(ability)=='string' and ability) or nil
  if name then lines[#lines+1]={text=name} end

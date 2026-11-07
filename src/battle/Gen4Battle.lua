@@ -772,39 +772,62 @@ end
 -- Placed by the same `corner` the battlers use, on the player's own slot, so
 -- the trainer stands where the Pokemon it is about to send out will stand
 -- rather than at a second set of coordinates that could drift from it.
+--
+-- THE DS THROW: the cartridge's own back, its first picture while standing
+-- (Black / White's with both arms -- cell 0 alone has no throwing arm), the
+-- send-out playing through it (BattleState.dsThrow), and then the walk off
+-- (BattleState.dsBackLeave: Task_SlideTrainerOut's 5 pixels a frame to the left,
+-- holding the throw's last pose). Everything that draws the back asks here --
+-- the native layout below and any stage a mod puts it on -- so the pose cannot
+-- differ between them. -> sheet, quad, rec, x offset; nil when the cache has no
+-- strip for this back or the back is not up.
+function Gen4Battle.dsBackFrame(battle)
+  local leave = battle and battle.dsBackLeave
+  local rec = leave and leave.rec or (battle and battle.showPlayerBack and battle.dsBackThrowRec)
+  if not rec then return nil end
+  local okA, sheet = pcall(require("src.render.Assets").image, rec.path)
+  if not (okA and sheet) then return nil end
+  local frame = 1
+  local play = rec.play or {}
+  -- a sequence whose last entry is its first picture again (the 2 frames it
+  -- wraps on, Platinum's and HeartGold's) ends on the pose before that: the
+  -- trainer does not stand up straight for two frames and then walk off leaning
+  local n = #play
+  if n > 1 and play[n].frame == play[1].frame then n = n - 1 end
+  if leave then
+    frame = leave.frame or (play[n] and play[n].frame) or 1
+  elseif battle.dsThrow then
+    local t = battle.dsThrow.tick
+    for i = 1, n do
+      frame = play[i].frame
+      if t < play[i].dur then break end
+      t = t - play[i].dur
+    end
+  end
+  battle._dsThrowQuads = battle._dsThrowQuads or {}
+  local q = battle._dsThrowQuads[frame]
+  if not q then
+    q = love.graphics.newQuad((frame - 1) * rec.width, 0, rec.width, rec.height, sheet:getDimensions())
+    battle._dsThrowQuads[frame] = q
+  end
+  return sheet, q, rec, leave and leave.x or 0
+end
+
 function Gen4Battle.drawTrainerBack(battle)
   if hideNativeScene(battle) then return false end
-  if not (battle and battle.showPlayerBack and battle.playerBackPic) then
+  if not (battle and (battle.dsBackLeave or (battle.showPlayerBack and battle.playerBackPic))) then
     return false
   end
-  -- THE DS THROW: the cartridge's own back, its first picture while standing
-  -- (Black / White's with both arms -- cell 0 alone has no throwing arm) and
-  -- the send-out playing through it (BattleState.dsThrow)
-  local rec = battle.dsBackThrowRec
-  if rec then
-    local okA, sheet = pcall(require("src.render.Assets").image, rec.path)
-    local pos = okA and sheet and Gen4Battle.battlerPos(battle, 0)
+  local sheet, q, rec, off = Gen4Battle.dsBackFrame(battle)
+  if sheet then
+    local pos = Gen4Battle.battlerPos(battle, 0)
     if pos then
-      local frame = 1
-      local t = battle.dsThrow and battle.dsThrow.tick
-      if t then
-        for _, p in ipairs(rec.play or {}) do
-          frame = p.frame
-          if t < p.dur then break end
-          t = t - p.dur
-        end
-      end
-      battle._dsThrowQuads = battle._dsThrowQuads or {}
-      local q = battle._dsThrowQuads[frame]
-      if not q then
-        q = love.graphics.newQuad((frame - 1) * rec.width, 0, rec.width, rec.height, sheet:getDimensions())
-        battle._dsThrowQuads[frame] = q
-      end
       love.graphics.setColor(1, 1, 1, 1)
-      love.graphics.draw(sheet, q, math.floor(pos.x + rec.dx + 0.5), math.floor(pos.y + rec.dy + 0.5))
+      love.graphics.draw(sheet, q, math.floor(pos.x + rec.dx + off + 0.5), math.floor(pos.y + rec.dy + 0.5))
       return true
     end
   end
+  if not (battle.playerBackPic and battle.showPlayerBack) then return false end
   local img = battle.picImage and battle:picImage(battle.playerBackPic)
              or battle.playerBackPic
   if not (img and img.getWidth) then return false end

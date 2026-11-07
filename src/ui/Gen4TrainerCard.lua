@@ -754,6 +754,14 @@ end
 -- not mistaken for "not earned".
 function Gen4TrainerCard:cardLevel()
   local save = self.game.save or {}
+  -- Platinum / HGSS: all five conditions, src/ui/Gen4CardLevel.lua (READ)
+  local okV, V = pcall(require, "src.core.GameVersion")
+  local family = okV and V.info and (V.info() or {}).family
+  do
+    local L = require("src.ui.Gen4CardLevel")
+    local n = (family == "hgss" and L.hgss(save)) or (family == "bw" and L.bw(save)) or L.platinum(save)
+    return n
+  end
   local level = 0
   local hof = save.hallOfFame
   if type(hof) == "table" and #hof > 0 then level = level + 1 end

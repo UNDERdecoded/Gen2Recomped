@@ -35,6 +35,8 @@ local Forms = require("src.pokemon.Gen4Forms")
 local SecondScreen = require("src.ui.SecondScreen")
 local Strings = require("src.core.Strings")
 local Search = require('src.ui.Gen4DexSearch')
+-- the AREA page's map out of zukan_enc (when the cache carries it)
+local AreaMap = require('src.ui.Gen4DexAreaMap')
 
 local Gen4Pokedex = {}
 Gen4Pokedex.__index = Gen4Pokedex
@@ -482,6 +484,8 @@ function Gen4Pokedex:update(dt)
   end
 
   if self.page == "entry" then
+    -- the AREA page's slider focus / time steps (Gen4DexAreaMap)
+    if self.tab == 2 and AreaMap.available(self.game) and AreaMap.update(self, input) then return end
     if input:wasPressed("l") then self:cycleTab(-1)
     elseif input:wasPressed("r") or input:wasPressed("select") then self:cycleTab(1)
     elseif input:wasPressed("up") then self.scroll = math.max(0, self.scroll - 1)
@@ -540,6 +544,7 @@ function Gen4Pokedex:touchpressed(id,px,py)
           -- LOOP (crysub.c:667)
           self.cryLoop=not self.cryLoop;self.cryPointer=id;se(self,"SEQ_SE_DP_DECIDE")
         end
+      elseif self.tab==2 and AreaMap.available(self.game) then AreaMap.touch(self,x,y)
       elseif self.tab==4 and y>=128 then self:toggleSize()
       elseif self.tab==5 and y>=128 then self:nextForm() end
       return true
@@ -908,7 +913,11 @@ end
 function Gen4Pokedex:displayMon()
   -- InfoMain uses PokedexSort_DefaultForm: the first form encountered, even
   -- when that was an alternate form rather than form zero.
-  return { species = self:species(), form = Forms.seen(self.game.save.pokedex, self:species())[1] or 0 }
+  -- and Pokedex_DisplayedGender: the first gender seen picks the picture
+  -- (female art where the species has its own)
+  local g = require('src.pokemon.Gen45DexRecord').displayGender(self.game, self:species(), 0)
+  return { species = self:species(), form = Forms.seen(self.game.save.pokedex, self:species())[1] or 0,
+    gender = (g == 'female' or g == 'male') and g or nil }
 end
 function Gen4Pokedex:forms()
   local species = self:species()
@@ -983,8 +992,11 @@ function Gen4Pokedex:drawDetails()
   local key = self.tab==2 and 'pokedex/area_map' or self.tab==3 and 'pokedex/cry_button'
     or self.tab==4 and (self.sizeWeight and 'pokedex/weight_check_main' or 'pokedex/height_check_main') or 'pokedex/forms_sub'
   local bg=self:screenArt(key);if bg then g.draw(bg,0,0) end
-  local def=self:def();Font.draw((def and def.name) or '?',8,8)
-  if self.tab==2 then
+  local def=self:def()
+  if not (self.tab==2 and AreaMap.available(self.game)) then Font.draw((def and def.name) or '?',8,8) end
+  if self.tab==2 and AreaMap.available(self.game) then
+    AreaMap.draw(self,Font,Search)
+  elseif self.tab==2 then
     local locations=self:areas()
     self.scroll=math.min(self.scroll,math.max(0,#locations-8))
     if #locations==0 then Font.draw('AREA UNKNOWN',48,80) end
@@ -1142,6 +1154,7 @@ function Gen4Pokedex:drawBottom()
   local mode=self.national and 'national' or 'sinnoh'
   local bg=self:screenArt('dex/panel_'..mode)
   if bg then g.draw(bg,0,0) end
+  if self.tab==2 and AreaMap.available(self.game) then AreaMap.drawBottom(self) end
   if self.tab==3 then
     local wheel=self:screenArt('dex/cry_wheel');if wheel then g.draw(wheel,0,0) end
     local panel=self:screenArt('dex/cry_panel');if panel then g.draw(panel,0,0) end

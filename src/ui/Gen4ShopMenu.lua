@@ -406,6 +406,14 @@ function Shop:transact()
         local line = info and info.family == 'hgss' and T.resolve(self.game.data, 10, 120 + (tonumber(def.fieldPocket) or 0), self.game)
         pocket = line and line:match('^(.-) Pocket') or ''
       end
+      -- BLACK / WHITE: the mart's line (bank 423 #9 "... in the {VAR2}
+      -- Case.") takes BufferPocketName (arm9 0x0201F14C: system bank 55,
+      -- ITEMS .. KEY ITEMS) of the item's pocket field (param 5 = bwPocket),
+      -- ov21 0x021B4714
+      if pocket == '' and require('src.core.GameVersion').isGen5() then
+        local label = require('src.import.Gen5Text').label('system', 55, tonumber(def.bwPocket) or 0)
+        pocket = (self.game.data.text or {})[label] or ''
+      end
       self.message = self:line(6, 'Thank you!', def.name or '', pocket)
       -- Platinum awards one Premier Ball per purchase of at least ten Poke Balls.
       if self.item == 4 and self.qty >= 10 and self.game.data.items[12] then

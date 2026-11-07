@@ -297,12 +297,15 @@ MoveEffects.primary = {
   end,
 
   LIGHT_SCREEN_EFFECT = function(battle, user)
+    -- HOENN / SINNOH: a five-turn side condition (Gen4MoveEffectsExtra)
+    if require("src.battle.Gen4MoveEffectsExtra").gen34() then return require("src.battle.Gen4MoveEffectsExtra").screen(battle, user, "lightScreen") end
     if user.lightScreen then return { Strings("But, it failed!") } end
     user.lightScreen = true
     return { Strings("%s's\nprotected against\nspecial attacks!", displayName(user)) }
   end,
 
   REFLECT_EFFECT = function(battle, user)
+    if require("src.battle.Gen4MoveEffectsExtra").gen34() then return require("src.battle.Gen4MoveEffectsExtra").screen(battle, user, "reflect") end
     if user.reflect then return { Strings("But, it failed!") } end
     user.reflect = true
     return { Strings("%s\ngained armor!", displayName(user)) }
@@ -668,12 +671,16 @@ MoveEffects.full = {
     -- Hyper Beam recharge, even if the trapping move then misses
     -- (effects.asm:1091-1092 ClearHyperBeam)
     beforeAccuracy = function(ctx)
+      if require("src.battle.Gen4MoveEffectsExtra").gen34() then return end
       if not ctx.user.trappingTurns then
         ctx.target.mustRecharge = nil
       end
     end,
     afterDamage = function(ctx)
       local user = ctx.user
+      -- HOENN / SINNOH: the TARGET is bound, 3..6 turns, 1/16 a turn; the
+      -- user is not locked in (Gen4MoveEffectsExtra.bind)
+      if require("src.battle.Gen4MoveEffectsExtra").gen34() then return require("src.battle.Gen4MoveEffectsExtra").bind(ctx) end
       if not user.trappingTurns then
         -- TrappingEffect (effects.asm:1080-1103) rolls wNumAttacksLeft
         -- as 1-4 (weights 3/8 3/8 1/8 1/8): that many CONTINUATION
@@ -1288,18 +1295,25 @@ end
 -- Dance in rain simply refreshes the 5-turn count.  Only Sandstorm has a
 -- failure branch, and only against a sandstorm that is already up.
 
-MoveEffects.primary.RAIN_DANCE_EFFECT = function(battle)
+MoveEffects.primary.RAIN_DANCE_EFFECT = function(battle, user)
+  -- PLATINUM / HGSS: fails in rain; the Damp Rock (Gen4MoveEffectsExtra)
+  local g4 = require("src.battle.Gen4MoveEffectsExtra").weatherMove(battle, user, Weather.RAIN)
+  if g4 then return g4 end
   Weather.start(battle, Weather.RAIN)
   return { Strings(Weather.STARTED_TEXT.RAIN) }
 end
 
-MoveEffects.primary.SUNNY_DAY_EFFECT = function(battle)
+MoveEffects.primary.SUNNY_DAY_EFFECT = function(battle, user)
+  local g4 = require("src.battle.Gen4MoveEffectsExtra").weatherMove(battle, user, Weather.SUN)
+  if g4 then return g4 end
   Weather.start(battle, Weather.SUN)
   return { Strings(Weather.STARTED_TEXT.SUN) }
 end
 
 -- BattleCommand_StartSandstorm: `cp WEATHER_SANDSTORM / jr z, .failed`
-MoveEffects.primary.SANDSTORM_EFFECT = function(battle)
+MoveEffects.primary.SANDSTORM_EFFECT = function(battle, user)
+  local g4 = require("src.battle.Gen4MoveEffectsExtra").weatherMove(battle, user, Weather.SANDSTORM)
+  if g4 then return g4 end
   if Weather.current(battle) == Weather.SANDSTORM then
     return { Strings("But, it failed!") }
   end

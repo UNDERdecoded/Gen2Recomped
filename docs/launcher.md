@@ -439,3 +439,43 @@ one.
 ### Settings page
 
 In the sidebar layout, the Settings page fills the whole content area and is drawn over the footer. While Settings is open, the live background is paused (`LauncherBackdrop.setPaused`): the game doesn't update, its music is suspended, and no switch happens. This is why stepping through the BACKGROUND list no longer boots a cartridge at each step. That list only offers games that are imported, importable, and haven't failed to boot.
+
+## Online Hub
+
+Sidebar section "Online Hub" (`src/ui/online/LauncherHubScreen.lua`, wired by
+anchored hooks in `LauncherSidebar.lua`). The Link Hub
+(docs/online-design.md 2.9, `src/online/hub/`) runs inside the launcher in a
+`love.thread` (`src/online/hub/HubThread.lua`), driven by
+`src/online/LauncherHub.lua`.
+
+* **HOST WITH FRIENDS**: asks once (remembered, changeable in HUB SETTINGS):
+  *keep a hub running* (starts the hub, shows ONE share code with COPY, SHARE,
+  TEXT MESSAGE, EMAIL and a QR code) or *just play now* (pick a game; it opens
+  LINK > HOST and shows a direct code). SHARE uses `love.system.shareText` when
+  a build provides that bridge, otherwise copies.
+* **JOIN FRIEND**: a code field (typing, PASTE, Ctrl+V; a code already on the
+  clipboard is filled in when the page opens), the hubs and games heard on this
+  Wi-Fi (LAN beacon; iOS cannot listen and says so), and guidance when a hub
+  can't be reached (same Wi-Fi, router mapping, swap who hosts, ask for a
+  direct code). A friend's hub code is probed (`hub_ping`) and saved as this
+  player's hub; a game, short or world code asks which game to open and the
+  game joins as soon as its map is up.
+* **Share code**: an InviteCode of kind "hub" with ticket 0 (no rendezvous
+  ticket is ever 0) carrying the hub's router address (when mapped) and its
+  LAN address.
+* **Games launched from here** use the hub when their own LINK HUB setting is
+  empty: `LauncherHub.patchLinkState` wraps `LinkState.settings` (127.0.0.1
+  for the host's own games, the friend's hub otherwise) and
+  `LinkState.hubEndpoint` (the host's HUB codes carry the router / LAN
+  address, not 127.0.0.1). `Game:load` calls `LauncherHub.installGame` (one
+  pcall line).
+* **Lifetime**: the thread survives the hand-over to a game and back;
+  `love.quit` stops it (and unmaps the router ports). A mods restart is a new
+  process: the hub stops, and "Start hub when launcher opens" brings it back.
+* **Config** (save dir `online_hub/config.json`): name, port (TCP+UDP, default
+  7780), router mapping, LAN visibility, autostart, "use the hub in my
+  games", relay (short codes), tournaments, GTS with the imported games that
+  back each pool, the always-on world (game, name, size, port, open to
+  strangers, GTS inside), caps, log file / level / IP masking / days kept, and
+  the generated admin key. Data: `online_hub/data/`.
+

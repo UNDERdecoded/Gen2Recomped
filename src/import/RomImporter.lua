@@ -1263,6 +1263,9 @@ local function markerFor(version)
   -- platinum-effect-pal-v1: move-effect palettes loaded sequentially (Gen4Graphics.palette
   -- `sequential`), as NNS_G2dLoadPalette does; hgss-pc-anim-v1: HGSS scriptProps PC
   -- monitor frames (members 102/103) for g4_pc_animation
+  -- platinum-back-throw-v1: ds-back-throw-v1 only ever imported on HGSS and BW;
+  -- Platinum's backs (trbgra, class 0 / 1, the winter outfits) and their throw
+  -- now import too, and field.playerForms.*.back points at them
   -- ds-back-throw-v1 (Platinum, HGSS, Black / White): gen4_trainer_sprites.backThrows,
   -- the player's send-out throw (Gen4BackThrow / Gen5TrainerPics.backThrow); BW's
   -- back also gains the throwing arm cell 0 never had
@@ -1291,7 +1294,22 @@ local function markerFor(version)
   -- (Gen4ModelPack `lights`), which Gen4Shade lights per material -- what
   -- darkens Platinum's nights; gen4_pt_capsule_art gains `trainerCapsules`
   -- (pl_cb_data.narc / gs_cb_data) for the trainers' Ball Capsules
-  local revision = version == "platinum" and "platinum-ug-cursor-v1:platinum-ug-top-v1:platinum-ug-fx-v1:platinum-ug-trap-art-v1:platinum-dressup-photo-v2:gen4-light-mask-v1:platinum-capsule-app-v1:platinum-slot-app-v1:platinum-tv-script-v1:platinum-boat-cutscene-v1:platinum-gym-fx-v1:platinum-scratch-off-v1:platinum-poke-motion-v1:platinum-egg-hatch-v1:platinum-geometry-v17:platinum-field-fx-v1:platinum-library-tv-v1:platinum-spear-pillar-v1:platinum-effect-pal-v1:ds-back-throw-v1:pal-park-v1:" or ""
+  -- 2026-11-02 (menu parity): gen4-female-sprites-v1 (Platinum and HGSS) --
+  -- species_sprites also writes the female sheet in the shiny palette
+  -- (spriteFrontFemaleShiny / spriteBackFemaleShiny) and the female two-frame
+  -- strips (picAnim.femaleSheet / femaleShinySheet), so females animate and
+  -- shiny females are right (Sprites.path, PicAnim.sheetFor)
+  -- hgss-otherpoke-v1 (HGSS): the form pictures read /a/1/1/4 with its own
+  -- numbering (Gen4Otherpoke.layout: palettes +4, Pichu 154..157 / 252..255,
+  -- Substitute 256..258, shadows 259/260) -- Unown letters and Deoxys formes
+  -- were missing and Castform / Burmy / Rotom etc. wore the wrong colours;
+  -- adds the Spiky-eared Pichu (def.forms.spiky)
+  -- 2026-11-03 (menu parity): platinum-zukan-enc-v1 / hgss-zukan-enc-v1 --
+  -- gen4_zukan_enc (Gen4ZukanEnc): the Pokedex AREA map's places per species
+  -- and time of day out of zukan_enc (Platinum zukan_enc_platinum.narc, HGSS
+  -- /a/1/3/3) with the map's pieces and markers, drawn by Gen4DexAreaMap /
+  -- HgssDexDetails in place of the encounter-table scan
+  local revision = version == "platinum" and "platinum-back-throw-v1:gen4-trainer-ai-v1:platinum-zukan-enc-v1:gen4-female-sprites-v1:platinum-ug-cursor-v1:platinum-ug-top-v1:platinum-ug-fx-v1:platinum-ug-trap-art-v1:platinum-dressup-photo-v2:gen4-light-mask-v1:platinum-capsule-app-v1:platinum-slot-app-v1:platinum-tv-script-v1:platinum-boat-cutscene-v1:platinum-gym-fx-v1:platinum-scratch-off-v1:platinum-poke-motion-v1:platinum-egg-hatch-v1:platinum-geometry-v17:platinum-field-fx-v1:platinum-library-tv-v1:platinum-spear-pillar-v1:platinum-effect-pal-v1:ds-back-throw-v1:pal-park-v1:" or ""
   -- gen5-trades-v5: constants.gen5Trades, gen5_trade_art and the trade
   -- commands' operands in map_scripts (Gen5Trades / Gen5TradeArt)
   -- gen5-starter-v6: gen5_starter_art, the gift box app (Gen5StarterArt)
@@ -1301,6 +1319,11 @@ local function markerFor(version)
   -- the prop pictures (Gen5Subway, Gen5Facilities, Gen5MusicalData), the
   -- facility commands' operands in map_scripts (0x15A, 0x1F3-0x1F8, 0x25C,
   -- 0x167-0x16E, 0x05D now four bytes wide)
+  -- gen5-musical-v2 (2026-11-02, the Musical's pass): constants.gen5Musical
+  -- gains `poses` (each species' standing pose from the Musical's own MCSS
+  -- archive /a/0/5/2, its picture bw_musical/poke_NNN.png and its nine prop
+  -- points from member +8's anchor records) and each show's `script` (member
+  -- 2 of /a/1/1/x, the stage's choreography threads) -- Gen5MusicalData
   -- gen5-field-fx-v1: gen4_emotes / gen5_field_effects / the fldeff set from
   -- /a/0/7/5 (Gen5FieldEffects), the bike / surf / rod player forms, the
   -- zones' field flags (gen5Flags) and the wild tables' phenomenon byte
@@ -1366,12 +1389,39 @@ local function markerFor(version)
   -- gen5-field-parts-v11: constants.gen5Cameras (every /a/0/6/0 record);
   -- gen5-script-link-v18: 0x1A3 (an Elite Four room's camera)
   -- gen5-script-link-v19: 0x0DE (a species registered as seen)
-  if version == "black" or version == "white" then revision = "gen5-field-parts-v11:gen5-script-link-v19:gen5-door-camera-v1:gen5-building-anim-v1:gen5-npc-ranges-v1:gen5-gym-fx-v1:gen5-starter-v6:gen5-moveanim-v2:gen5-facilities-v1:gen5-field-fx-v1:gen5-title-v1:gen5-naming-v1:gen5-maps-v1:gen5-battle-bag-v1:gen5-town-map-v2:gen5-xtransceiver-v1:gen5-shop-art-v1:gen5-windows-v1:ds-back-throw-v1:gen5-encounter-fx-v4:gen5-floor-layers-v2:gen5-money-v12:gen5-egg-moves-v1:gen5-buyer-v1:gen5-egg-hatch-v1:" end
+  -- gen5-script-link-v20: 0x0E1 is the player's gender (`getplayergender`,
+  -- not a badge count); 0x0D7 the badge count (`bwcountbadges`)
+  -- gen5-marts-bp-v1: constants.gen5Marts.bp, the Battle Subway's BP
+  -- Exchange Service Corner lists (shops 0xFE / 0xFD, Gen5Marts)
+  -- gen5-script-link-v21: 0x0DA the story swaps (`bwstoryswap`, was a noop
+  -- without operands), 0x0D9 `bwwarpid`, 0x0E4 `bwclearbits` (Gen5StorySwaps)
+  -- gen5-cgear-v1: gen5_cgear_art (Gen5CGearArt, /a/0/3/0: the C-Gear's frame,
+  -- top bar, honeycomb cells, message screen and OBJ cells per gender and skin,
+  -- drawn on the lower screen by src/ui/Gen5CGear.lua); gen5-script-link-v22:
+  -- 0x19B `bwcgearon`, the C-Gear given and turned on (Gen5MiscFieldOps)
+  -- gen5-script-link-v23: 0x103 `partycountnotegg` keeps its mode operand
+  -- (was `{ 1 }`, the var only): mode 4 is the link counters' "how many can't
+  -- be taken in", answered 0 by Gen45LinkRooms (src/script)
+  -- and 0x01D is `end` (was a no-op: the counters' 2105 / 2106 walks ran twice)
+  -- gen5-dex-area-v1: gen5_dex_art's AREA page -- the markers (area_<n>, c28 /
+  -- g15 / p5 of /a/1/5/9), the /a/1/7/8 records (`area`), ov208's zone order
+  -- (`areaZones`) and anim -> cell table (`areaSeqCell`) (Gen5DexArt)
+  -- gen5-form-sprites-v1: gen4_species_sprites .forms / def.gen5FormSprites --
+  -- the alternate forms' pictures, shiny pairs and animation bundles from
+  -- /a/0/0/4 slots 652 + formSpriteIndex, Arceus's types as palettes
+  -- (Gen5BattleSprites); read by Sprites.path / Gen5MonAnimPlayer by `form`
+  -- gen5-form-personal-v1: gen5_forms rows (personal 650+, reached through
+  -- the species record's +0x1C, arm9 0x0201AFD4) carry their own learnsets
+  -- from /a/0/1/8; read by Gen45FormData through Gen4Forms.definition
+  if version == "black" or version == "white" then revision = "gen5-form-personal-v1:gen5-form-sprites-v1:gen5-dex-area-v1:gen5-cgear-v1:gen5-field-parts-v11:gen5-script-link-v23:gen5-marts-bp-v1:gen5-door-camera-v1:gen5-building-anim-v1:gen5-npc-ranges-v1:gen5-gym-fx-v1:gen5-starter-v6:gen5-moveanim-v2:gen5-facilities-v1:gen5-musical-v2:gen5-field-fx-v1:gen5-title-v1:gen5-naming-v1:gen5-maps-v1:gen5-battle-bag-v1:gen5-town-map-v2:gen5-xtransceiver-v1:gen5-shop-art-v1:gen5-windows-v1:ds-back-throw-v1:gen5-encounter-fx-v4:gen5-floor-layers-v2:gen5-money-v12:gen5-egg-moves-v1:gen5-buyer-v1:gen5-egg-hatch-v1:" end
   -- emerald-trade-scene-v3 / firered-trade-scene-v1: the in-game trade
   -- sequence's art (extractTradeScene, gen3_trade_art) -- without it special
   -- 257 falls back to the bare swap, so both Gen 3 caches re-import once
   if version == "emerald" then revision = "emerald-trade-scene-v3:" end
-  if version == "firered" then revision = "firered-trade-scene-v1:" end
+  -- firered-multichoice-v2: constants.gen3Multichoice runs past FireRed's
+  -- unreadable MULTICHOICE_48 (65 lists, was 48): the Direct Corner's TRADE /
+  -- COLOSSEUM (50) and JOIN / LEAD (63) lists, the Seagallop ferries
+  if version == "firered" then revision = "firered-trade-scene-v1:firered-multichoice-v2:" end
   if version == "polishedcrystal" then revision = "polished-stored-unown-forms-v7:" end
   if version == "prism" then revision = "prism-events-art-v2:" end
   -- hgss-phone-call-v1: gen4_hgss_phone_call (Gen4HgssPhoneCall), the
@@ -1419,7 +1469,13 @@ local function markerFor(version)
   -- same archive as /a/0/2/6, overlay 41) for the dress-up photos; v2 adds
   -- the overlay's sprites (buttons, Accessory hearts, the viewer's name
   -- plate, the backdrop icons) and the other screen's BG 224..226
-  if version == "heartgold" or version == "soulsilver" then revision = "hgss-dressup-photo-v2:gen4-light-mask-v1:hgss-capsule-app-v1:hgss-lighthouse-v1:hgss-soundplates-v1:hgss-mail-v1:hgss-safari-apps-v1:hgss-phone-ring-v1:hgss-unown-report-v1:hgss-special-marts-v1:hgss-tmhm-v1:hgss-athlon-rooms-v1:hgss-athlon-team-v1:hgss-athlon-common-v1:hgss-disc-catch-v1:hgss-lamp-jump-v1:hgss-ring-drop-v1:hgss-snow-throw-v1:hgss-goal-roll-v1:hgss-circle-push-v1:hgss-pennant-v1:hgss-relay-run-v1:hgss-block-smash-v1:hgss-athlon-rivals-v1:hgss-hurdle-dash-v1:hgss-athlon-courses-v1:hgss-athlon-perf-v1:hgss-fly-map-v1:hgss-scratch-off-v1:hgss-legend-wing-v1:hgss-hideout-fx-v1:hgss-alph-panel-v1:hgss-poke-motion-v1:hgss-egg-hatch-v1:hgss-egg-moves-v1:hgss-gear-dex-v1:hgss-summary-v2:hgss-effect-bg-v1:hgss-field-fx-v1:hgss-pc-anim-v1:ds-back-throw-v1:pal-park-v1:hgss-enc-effects-v1:hgss-frontier-v2:" end
+  -- hgss-gear-markings-v1: gen4_hgss_pokegear_art gains map_marks_<skin> /
+  -- map_marks_bg_<skin>, the Pokegear map's markings panel (pgmap NSCR 38 /
+  -- 44 + skin over char 26 + skin; Gen4HgssPokegearExtra, HgssGearMarkings)
+  if version == "heartgold" or version == "soulsilver" then revision = "gen4-trainer-ai-v1:hgss-gear-markings-v1:hgss-zukan-enc-v1:hgss-otherpoke-v1:gen4-female-sprites-v1:hgss-dressup-photo-v2:gen4-light-mask-v1:hgss-capsule-app-v1:hgss-lighthouse-v1:hgss-soundplates-v1:hgss-mail-v1:hgss-safari-apps-v1:hgss-phone-ring-v1:hgss-unown-report-v1:hgss-special-marts-v1:hgss-tmhm-v1:hgss-athlon-rooms-v1:hgss-athlon-team-v1:hgss-athlon-common-v1:hgss-disc-catch-v1:hgss-lamp-jump-v1:hgss-ring-drop-v1:hgss-snow-throw-v1:hgss-goal-roll-v1:hgss-circle-push-v1:hgss-pennant-v1:hgss-relay-run-v1:hgss-block-smash-v1:hgss-athlon-rivals-v1:hgss-hurdle-dash-v1:hgss-athlon-courses-v1:hgss-athlon-perf-v1:hgss-fly-map-v1:hgss-scratch-off-v1:hgss-legend-wing-v1:hgss-hideout-fx-v1:hgss-alph-panel-v1:hgss-poke-motion-v1:hgss-egg-hatch-v1:hgss-egg-moves-v1:hgss-gear-dex-v1:hgss-summary-v2:hgss-effect-bg-v1:hgss-field-fx-v1:hgss-pc-anim-v1:ds-back-throw-v1:pal-park-v1:hgss-enc-effects-v1:hgss-frontier-v2:hgss-phone-groups-v1:" end
+  -- hgss-phone-groups-v1: gen4_hgss_phone_call's book carries callGroup
+  -- (pmtel_book unkF); caches imported before it rang group 0 only
+  -- (HgssPhoneRing.CALL_GROUPS is the runtime fallback for them)
   -- Include version-specific field encounters, sleep, swarm and rate tables.
   -- Only these three caches need rebuilding; other markers remain stable.
   -- v8: field.gen2TradeAnim, GSC's own trade movie art (Gen2TradeArt).
@@ -8861,6 +8917,46 @@ function RomImporter:_launcherSettingsRows()
   add({kind="action",label="TRANSLATE IMPORTED GAMES",value="START",action="translateAll"})
   add({kind="progress",label="TRANSLATION STATUS"})
 
+  -- ------- online (docs/online-design.md WS10).  The same save.options.online
+  -- every game's OPTIONS > ONLINE screen edits (src/ui/online/OnlineSettings);
+  -- the switches and numbers are here, the typed fields are shown and edited
+  -- in game, because this drawer has no text editor.
+  do
+    local okOS, OnlineSettings = pcall(require, "src.ui.online.OnlineSettings")
+    if okOS then
+      local okP, info = pcall(function() return require("src.core.Platform").online() end)
+      info = okP and info or {}
+      local status = info.available and "READY" or (info.relayOnly and "RELAY ONLY" or "OFF")
+      add({ kind = "section", label = "ONLINE",
+            note = "Linking, worlds and codes. Hub, address and name are set in a game: OPTIONS, ONLINE." })
+      add({ kind = "action", label = "THIS DEVICE", value = status, action = "none",
+            note = info.reason })
+      local onOff = { false, true }
+      local onOffLabels = { [false] = "OFF", [true] = "ON" }
+      add({ kind = "option", scope = "online", label = "PORT",
+            row = { id = "port", type = "number", min = OnlineSettings.Model.PORT_MIN,
+                    max = OnlineSettings.Model.PORT_MAX, default = 7777 } })
+      add({ kind = "option", scope = "online", label = "ROUTER PORT OPENING",
+            row = { id = "portMap", values = onOff, labels = onOffLabels } })
+      add({ kind = "option", scope = "online", label = "RELAY FOR SHORT CODES",
+            row = { id = "allowRelay", values = onOff, labels = onOffLabels } })
+      add({ kind = "option", scope = "online", label = "ADDRESS FINDER (STUN)",
+            row = { id = "stun", values = onOff, labels = onOffLabels } })
+      add({ kind = "option", scope = "online", label = "LIST ON THIS NETWORK",
+            row = { id = "lanBeacon", values = onOff, labels = onOffLabels } })
+      add({ kind = "option", scope = "online", label = "WORLD PLAYERS",
+            row = { id = "worldCap", type = "number", min = OnlineSettings.Model.CAP_MIN,
+                    max = OnlineSettings.Model.CAP_MAX, default = 8 } })
+      local s = OnlineSettings.Model.read(self:_settings())
+      add({ kind = "action", label = "LINK HUB", value = s.hubAddress or "DEFAULT RELAY", action = "none" })
+      add({ kind = "action", label = "MY PUBLIC ADDRESS", value = s.manualAddress or "AUTO", action = "none" })
+      add({ kind = "action", label = "DISPLAY NAME", value = s.displayName or "TRAINER NAME", action = "none",
+            note = OnlineSettings.Model.codesShowIp(s)
+              and "Direct codes can show your internet address to whoever you give them to."
+              or "Direct codes stay on your own network (router and finder off, no address)." })
+    end
+  end
+
   -- ------- where games are installed
   add({ kind = "section", label = "GAME DATA FOLDER",
         note = self:_dataDirNote() })
@@ -9069,6 +9165,9 @@ end
 -- The current value of one entry, whichever scope it lives in.
 function RomImporter:_settingValue(entry)
   local opts = self:_settings()
+  if entry.scope == "online" then -- save.options.online (OnlineSettings.Model)
+    return require("src.ui.online.OnlineSettings").Model.read(opts)[entry.row.id]
+  end
   if entry.scope=="translation" then
     local per=opts.translationPerGame and opts.translationPerGame[entry.version] or {}
     return per[entry.row.id] or (entry.row.id=="target" and "inherit" or opts.translationSource or "en")
@@ -9105,6 +9204,14 @@ end
 
 function RomImporter:_setSettingValue(entry, value)
   local opts = self:_settings()
+  if entry.scope == "online" then
+    local Model = require("src.ui.online.OnlineSettings").Model
+    local s = Model.read(opts)
+    s[entry.row.id] = value
+    Model.write(opts, s)
+    self._settingsRowCache = nil
+    return
+  end
   if entry.scope=="launcher" and entry.row.id=="launcherLanguage"then
     opts.launcherLanguage=value
     require("src.translation.Service").setLauncher(opts)

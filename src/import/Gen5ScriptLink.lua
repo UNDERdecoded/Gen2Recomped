@@ -100,9 +100,16 @@ L.ALIASES = {
   [0x85] = { "starttrainerbattle", "ww" },
   [0x8E] = { "returntofield", "" }, [0x8C] = { "blackoutfrombattle", "" },
   --   0xD6 <badge>  sets that bit of the badge mask (and stamps the time);
-  --   0xE1 <var>    counts the mask's bits into var
+  --   0xD7 <var>    counts the mask's bits into var (ov10 0x0215ACA8 ->
+  --        arm9 0x0200C258, a popcount of the mask)
+  --   0xE1 <var>    the PLAYER'S GENDER, 0 boy / 1 girl (ov10 0x0215AC1C:
+  --        one byte, MyStatus +0x1D -- not a count; 55 of its 56 sites
+  --        compare it with 0, the Multi Train picks Hilbert or Hilda by it).
+  --        Caches linked before gen5-script-link-v20 carry it as
+  --        `countbadgesacquired`, which Gen4ScriptVM reads as the gender on BW
   [0xD5] = { "checkbadgeacquired", "ww", { 2, 1 } },
-  [0xD6] = { "givebadge", "w" }, [0xE1] = { "countbadgesacquired", "w" },
+  [0xD6] = { "givebadge", "w" }, [0xD7] = { "bwcountbadges", "w" },
+  [0xE1] = { "getplayergender", "w" },
   --   0x38 / 0x4A <message, style byte>  two more message boxes (0x38's
   --        handler is a tail-jump stub, see Gen5ScriptOps); 0x39 closes them
   --        (`38 0025 02, 32, 39`) and 0x4B waits on the box like 0x32
@@ -228,7 +235,12 @@ L.ALIASES = {
   -- 855 @817) counts the party into the var with 0x103, runs 0x12F on it,
   -- then heals (0x104). It is Platinum's playpokecenterhealinganimation:
   -- the balls going in one by one and the Pokemon Center jingle.
-  [0x103] = { "partycountnotegg", "ww", { 1 } },
+  -- 0x103 keeps its MODE (gen5-script-link-v23): 4 is "how many can't be
+  -- taken in" at the link counters (`0x103 v, 4; compare v, 0; if == goto`,
+  -- the Global Terminal and Wi-Fi Club, M0869/M0870 S007F, Z041's M0082),
+  -- answered by Gen45LinkRooms; every other mode (0, 1, 2, 5) stays the
+  -- party's non-egg count. Before v23 the link table kept only the var.
+  [0x103] = { "partycountnotegg", "ww" },
   [0x12F] = { "playpokecenterhealinganimation", "w" },
   -- THE FLOATING WINDOWS: 0x03A <message, x, y, window> prints a line in a
   -- small window of its own at a tile position -- the crowd's murmurs
@@ -288,8 +300,16 @@ L.ALIASES = {
   [0x18D] = { "noop", "w" }, [0x18E] = { "noop", "w" },
   -- 0x11E <badge>: the party recorded against the badge just won (its
   -- handler copies six slots) -- the trainer card's history, nothing the
-  -- story reads; 0x01D closes a common script's work just before its end
-  [0x11E] = { "bwbadgeteam", "w" }, [0x01D] = { "noop", "" },
+  -- story reads
+  [0x11E] = { "bwbadgeteam", "w" },
+  -- 0x01D IS AN END (gen5-script-link-v23): its handler (ov10 0x2159645)
+  -- stops the script through the same call as 0x002's (0x2011290). A common
+  -- script's entry is often `call <body>; 0x01D` with the next entry's code
+  -- right after it -- the Pokemon Center counters' walk behind the desk
+  -- (2105 = M0855 S06CA, 2106 / 2107 = S07C3 / S07D1): taken as a no-op, the
+  -- body ran twice and the player walked four cells up past the counter and
+  -- eight back down. In a shared member it becomes `return` like every end.
+  [0x01D] = { "end", "" },
   -- 0x098 <sequence> / 0x09E: a cutscene's own music and the return to the
   -- map's (Z038's Plasma theft: `98 0443` as Iris runs in, `9E` once she
   -- has gone). READ FROM CODE (ov21 0x021AEDE0 / 0x021AEFD8): 0x098 reads a
@@ -497,10 +517,14 @@ L.ALIASES = {
   -- animation, 0x077 the ride's preamble
   [0x195] = { "bwrailride", "w" }, [0x193] = { "noop", "w" }, [0x194] = { "noop", "w" },
   [0x077] = { "noop", "" },
-  -- 0x0DA <a, b, c>: three var-or-values into a save record after a
-  -- leader's win (Brycen's `DA 4 1 1`, 17 sites) -- bookkeeping nothing on
-  -- the story's path reads back
-  [0x0DA] = { "noop", "www" },
+  -- 0x0DA <id, on, apply>: THE STORY SWAPS -- var 0x4031 + id (the row's
+  -- value or 0), the map replacements rebuilt when `apply` (READ, ov10
+  -- 0x0215AE34; src/script/Gen5StorySwaps.lua). Brycen's `DA 4 1 1` is one
+  -- of ten sites; an earlier reading took it for bookkeeping
+  -- 0x0D9 <id> the save's warp id (1..17, ov10 0x0215AD50); 0x0E4 <n> a
+  -- clear bit (1 / 2, ov10 0x0215B084) -- both script 9601's
+  [0x0DA] = { "bwstoryswap", "www" },
+  [0x0D9] = { "bwwarpid", "w" }, [0x0E4] = { "bwclearbits", "w" },
   -- 0x148 <eight> right after a sound (Dragonspiral's 1F: the tower
   -- shaking) and 0x1EC <five> in map-load callbacks (a model's set-up) --
   -- presentation only
@@ -845,6 +869,8 @@ L.ALIASES = {
   -- off (src/script/Gen5MiscFieldOps.lua)
   [0x242] = { "bwbuffertradedname", "ww" }, [0x139] = { "bwwirelessend", "w" },
   [0x23C] = { "bwsaveblock34", "" }, [0x25E] = { "bwcgearoff", "" },
+  -- the C-Gear given and turned on (src/script/Gen5MiscFieldOps.lua)
+  [0x19B] = { "bwcgearon", "w" },
   [0x1A3] = { "bwroomcamera", "w" },
 }
 

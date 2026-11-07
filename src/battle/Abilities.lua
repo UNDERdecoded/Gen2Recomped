@@ -686,4 +686,9 @@ end
 
 Abilities.FORECAST_TYPE = FORECAST_TYPE
 
+-- PLATINUM / HGSS / BLACK / WHITE: the abilities Hoenn did not have, wrapped
+-- around the questions above and gated on the cartridge's generation
+-- (src/battle/Gen45Abilities.lua)
+require("src.battle.Gen45Abilities").install(Abilities)
+
 return Abilities

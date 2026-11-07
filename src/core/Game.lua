@@ -116,6 +116,18 @@ function Game:load()
   -- Discord Rich Presence: map name / battle status on the player's profile.
   -- Soft-fail: missing Discord / IPC errors must never block boot.
   pcall(function() require("src.core.DiscordPresence").init(self) end)
+  -- The online screens' platform gate (src/ui/online/OnlineGate.lua): a
+  -- device that cannot go online says so when LINK / a world / the GTS
+  -- opens, the Switch asks about homebrew risk once, Windows gets a one-time
+  -- firewall tip on the first host code.  Soft-fail like presence above.
+  pcall(function() require("src.ui.online.OnlineGate").install(self) end)
+  -- The GTS counters' channel (src/online/HubGts.lua): the world's GTS, else
+  -- the player's Link Hub.  Soft-fail too.
+  pcall(function() require("src.online.HubGts").install() end)
+  -- The launcher's Link Hub (src/online/LauncherHub.lua): this game uses it
+  -- when its own LINK HUB setting is empty, and a HOST / JOIN picked in the
+  -- launcher runs once the map is up.  Soft-fail too.
+  pcall(function() require("src.online.LauncherHub").installGame(self) end)
 
   -- Every service is up but nothing is on the stack yet; this payload is the
   -- sanctioned way for a mod to obtain the Game object.
@@ -906,12 +918,19 @@ end
 -- in.  A state with no uiSize -- every Game Boy screen, and every state on a
 -- Gen 1, Gen 2 or Prism cartridge -- answers 160x144 and gets the arithmetic
 -- it always got, to the pixel.
+-- This frame's held DS battle panel, in rows (BattleState:heldPanelRows): the
+-- bottom of the surface is the panel and the rest is the top screen, and what
+-- the battle opens is centred on the TOP SCREEN -- which puts the DS's own text
+-- box and YES/NO exactly over the battle's box, where they belong.
+local heldPanelRows = 0
+
 local function homeOffset(state, uw, uh)
   local sw, sh = Renderer.WIDTH, Renderer.HEIGHT
   if state and state.uiSize then
     local ok, w, h = pcall(state.uiSize, state)
     if ok and type(w) == "number" and type(h) == "number" then sw, sh = w, h end
   end
+  if heldPanelRows > 0 and sh <= uh - heldPanelRows then uh = uh - heldPanelRows end
   return math.floor((uw - sw) / 2), math.floor((uh - sh) / 2)
 end
 
@@ -951,11 +970,14 @@ function Game:draw()
       local family = version and version.family
       -- THE WATCH ONLY ONCE IT IS ON THE WRIST: Platinum's lower screen shows
       -- the Pokétch after `enablepoketch` (Jubilife) and nothing before; Black
-      -- and White's is the C-Gear, not Platinum's watch (not built yet), so
-      -- theirs stays blank too
+      -- and White's is the C-Gear once script 0x19B gives it
+      -- (src/ui/Gen5CGear.lua), blank before
       local poketchOn = require("src.pokemon.Gen4PoketchState").owned(self.save)
       local panelModule = family == "hgss" and "src.ui.HgssFieldPanel"
         or (family ~= "bw" and poketchOn and "src.ui.Gen4Poketch") or nil
+      if family == "bw" and require("src.ui.Gen5CGear").owned(self.save) then
+        panelModule = "src.ui.Gen5CGear"
+      end
       -- PLATINUM'S UNDERGROUND: the other screen is the passages' map with the
       -- radar (top_screen.c), not the watch (src/ui/Gen4UgTopScreen.lua)
       local ugDrawn = false
@@ -1039,6 +1061,7 @@ function Game:_draw()
   -- ...and a Gen 3 battle that widened its own screen holds it the same way,
   -- ahead of the topmost-uiSize pick (see Game.heldSurfaceInStack).
   local held = not wideBattle and Game.heldSurfaceInStack(self.stack) or nil
+  heldPanelRows = held and held.heldPanelRows and held:heldPanelRows() or 0
   local native = not wideBattle
     and (held or Game.nativeSurfaceInStack(self.stack)) or nil
   local classicOffset, classicOffsetY = 0, 0
@@ -1135,7 +1158,7 @@ function Game:_draw()
   local SuperSample = require("src.render.SuperSample")
   if not worldDrawn and baseState and require("src.core.GameVersion").isNds()
      and SuperSample.singleScreen(self) and not SuperSample.active then
-    SuperSample.draw(self, self.stack:top(), drawStates)
+    SuperSample.draw(self, self.stack:top(), drawStates, surfW, surfH)
   else
     drawStates()
   end

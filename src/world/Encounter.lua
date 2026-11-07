@@ -44,7 +44,10 @@ function Encounter.fromSlot(slot, rng)
     if hi < lo then lo, hi = hi, lo end
     level = (hi > lo) and (rng or love.math.random)(lo, hi) or lo
   end
-  return { species = slot.species, level = level }
+  -- Black / White's slots carry the form in the species word's top 5 bits
+  -- (Basculin's blue stripes, a season's Deerling): kept for the battle
+  local form = tonumber(slot.form)
+  return { species = slot.species, level = level, form = (form and form > 0) and form or nil }
 end
 
 -- ONE TABLE, ROLLED.  Grass is not the only list a map carries: Emerald's
@@ -159,7 +162,8 @@ function Encounter.hgssStepAllowed(state, cycling, veryTallGrass, rng)
     state.gen4EncounterAttempts = steps
   end
   -- a reset (map load, battle) since the last check: the turn frames go too
-  if steps < (state.hgssLastSteps or 0) or steps <= 1 then state.hgssTurnFrames, state.hgssLastFacing = 0, nil end
+  -- (reverseTurnFrameSteps only: lastFacingDirection survives the reset)
+  if steps < (state.hgssLastSteps or 0) or steps <= 1 then state.hgssTurnFrames = 0 end
   state.hgssLastSteps = steps
   if steps <= 3 then return false end
   local p = state.player or {}
@@ -278,9 +282,59 @@ local UNOWN_FORMS = {
   [0]={0,1,2,6,7,9,10,11,12,14,15,16,18,19,20,21,22,23,24,25},
   [1]={5},[2]={17},[3]={8},[4]={13},[5]={4},[6]={3},[7]={26,27},
 }
+-- HEARTGOLD / SOULSILVER'S UNOWN (pokeheartgold src/field/encounter_check.c):
+--   EncounterGenState_Init reads the four Ruins of Alph puzzle flags
+--   (Save_VarsFlags_CheckAlphPuzzleFlag: 0x977 Kabuto, 0x978 Aerodactyl,
+--   0x979 Omanyte, 0x97A Ho-Oh) and whether the map is the Sinjoh event hall
+--   (MAP_RUINS_OF_ALPH_HALL_ENTRANCE_SINJOH_EVENT, D24R0217).
+--   EncounterGen_CanGenerateUnownEncounter: an Unown slot with no puzzle
+--   solved is no encounter at all.
+--   EncounterGen_ChooseUnownForm: Sinjoh -> ! or ? evenly; otherwise the
+--   solved puzzles' letters (Kabuto A-J, Aerodactyl R-V, Omanyte K-Q, Ho-Oh
+--   W-Z), and with the radio's Unown station playing, 50% one not yet caught.
+Encounter.HGSS_UNOWN_FLAGS = { 0x977, 0x978, 0x979, 0x97A }
+Encounter.HGSS_UNOWN_LETTERS = {
+  { 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 }, { 17, 18, 19, 20, 21 },
+  { 10, 11, 12, 13, 14, 15, 16 }, { 22, 23, 24, 25 },
+}
+Encounter.HGSS_SINJOH_MAP = "D24R0217"
+local function puzzleSolved(save, i)
+  return ((save or {}).flags or {})[("FLAG_G4_%04X"):format(Encounter.HGSS_UNOWN_FLAGS[i])] == true
+end
+function Encounter.hgssUnownAllowed(save)
+  for i = 1, 4 do if puzzleSolved(save, i) then return true end end
+  return false
+end
+function Encounter.hgssUnownForm(save, mapCode, rng)
+  rng = rng or love.math.random
+  if mapCode == Encounter.HGSS_SINJOH_MAP then return 26 + rng(0, 1) end
+  local avail, uncaught = {}, {}
+  local caught = {}
+  for _, f in ipairs(require("src.pokemon.Gen4UnownOrder").caught(save)) do caught[f] = true end
+  for i = 1, 4 do
+    if puzzleSolved(save, i) then
+      for _, f in ipairs(Encounter.HGSS_UNOWN_LETTERS[i]) do
+        avail[#avail + 1] = f
+        if not caught[f] then uncaught[#uncaught + 1] = f end
+      end
+    end
+  end
+  if #avail == 0 then return 0 end
+  local radio = require("src.world.HgssRadioMusic")
+  local G = package.loaded["src.core.Game"]
+  local unownSounds = G and radio.current(G) == radio.UNOWN
+  if unownSounds and #uncaught > 0 and rng(0, 99) < 50 then return uncaught[rng(1, #uncaught)] end
+  return avail[rng(1, #avail)]
+end
+
 function Encounter.gen4Form(def, species, rng)
   if not def then return nil end
   local id=require('src.pokemon.Gen4Forms').species(species)
+  if id==201 and Encounter.isHgss() then
+    local G=package.loaded["src.core.Game"]
+    local ow=G and G.overworld
+    return Encounter.hgssUnownForm(G and G.save, ow and ow.map and ow.map.id, rng)
+  end
   if id==422 or id==423 then
     local selector=(def.formRates or {})[id==422 and 1 or 2]
     if selector==nil then return nil end
@@ -362,11 +416,14 @@ function Encounter.forMap(data, mapDef, mapId, hour, save)
       view.safariKey = key
       view.safariGrass = Safari.slots(data, save, area, 0, tod)
       view.grass = Encounter.gen4Table(view.safariGrass, def.grassRate)
+      if view.grass then view.grass.safari = true end
       local function water(kind, base)
         if not base then return nil end
         local slots = Safari.slots(data, save, area, kind, tod)
         view["safariSlots" .. kind] = slots
-        return Encounter.gen4Table(slots, base.rate)
+        local t = Encounter.gen4Table(slots, base.rate)
+        if t then t.safari = true end
+        return t
       end
       view.water = water(1, def.surf)
       view.oldRod = water(2, def.oldRod)

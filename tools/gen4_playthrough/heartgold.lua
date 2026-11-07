@@ -356,7 +356,14 @@ B[#B + 1] = { name = "rocket hideout: the murkrow",
   expect = at(8), why = "0x40AC >= 8", expectBudget = 12000, budget = 160000 }
 
 B[#B + 1] = { name = "rocket hideout: ariana and the electrodes",
+  -- the three Electrodes are wild battles one after another, with no heal
+  -- between: an Electrode that Self-Destructs first takes a lone lead with
+  -- it, and the next battle starts with no healthy party (a blackout to
+  -- Mahogany's Center, the beat lost). A TEST-BOT CHOICE, said as one: a
+  -- Ghost lead (Gengar, Shadow Ball first) for them, which Explosion and
+  -- Self-Destruct cannot touch
   steps = { { "do", trainUp }, { "activecoord" }, { "until", at(9), 60000 },
+            { "do", trainUpWith(247, 75, 94) },
             { "talk", 9 }, { "talk", 10 }, { "talk", 11 }, { "until", at(10), 60000 } },
   expect = at(10), why = "0x40AC >= 10 (the generator stopped)", expectBudget = 12000, budget = 160000 }
 

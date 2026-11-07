@@ -166,6 +166,14 @@ public:
 	virtual bool walkerNotify(const char *json) const;
 
 	/**
+	 * The share sheet and the multicast lock (GameActivity). Android-only;
+	 * false elsewhere.
+	 */
+	virtual bool shareText(const char *text) const;
+	virtual bool acquireMulticastLock() const;
+	virtual bool releaseMulticastLock() const;
+
+	/**
 	 * Cloud saves: one HTTP request (see android.h httpRequest). Android-only;
 	 * empty elsewhere.
 	 */

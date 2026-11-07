@@ -165,7 +165,7 @@ local GEN4_MODULES = {
 local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         "gen4_naming", "gen4_dex", "gen4_models",
                         "gen4_terrain", "gen4_distortion_world",
-                        "gen4_weather_sys", "gen4_mail_gra", "gen4_voltorb_flip", "gen4_follow_mon", "gen5_battle_ui", "gen5_battle_bag", "gen5_town_map", "gen5_xtransceiver", "gen5_encounter_effects", "gen5_battle_scene", "gen5_evolution", "gen5_egg_hatch", "gen4_hgss_menu_art", "gen4_hgss_bag_art", "gen4_hgss_summary_art", "gen5_menu_art", "gen5_bag_art", "gen5_summary_art", "gen4_hgss_dex_art", "gen4_hgss_box_art", "gen5_dex_art", "gen5_box_art", "gen4_hgss_pokegear_art", "gen4_legend_art", "gen4_hgss_safari", "gen4_pal_park", "gen4_alph_puzzle", "gen4_hgss_field_moves", "gen4_hgss_certificates",
+                        "gen4_weather_sys", "gen4_mail_gra", "gen4_voltorb_flip", "gen4_follow_mon", "gen5_battle_ui", "gen5_battle_bag", "gen5_town_map", "gen5_xtransceiver", "gen5_encounter_effects", "gen5_battle_scene", "gen5_evolution", "gen5_egg_hatch", "gen4_hgss_menu_art", "gen4_hgss_bag_art", "gen4_hgss_summary_art", "gen5_menu_art", "gen5_bag_art", "gen5_summary_art", "gen4_hgss_dex_art", "gen4_hgss_box_art", "gen5_dex_art", "gen5_cgear_art", "gen5_box_art", "gen4_hgss_pokegear_art", "gen4_legend_art", "gen4_hgss_safari", "gen4_pal_park", "gen4_alph_puzzle", "gen4_hgss_field_moves", "gen4_hgss_certificates",
                         "gen4_species_sprites", "gen4_hgss_starter_art", "gen4_hgss_oak_art", "gen4_hgss_boot_art", "gen4_hgss_title_art", "gen5_boot_art", "gen5_main_menu_art", "gen5_juniper_art", "gen5_naming_art", "gen5_opening",
                         "gen4_move_anims", "gen4_particles",
                         "gen4_cellactors",
@@ -199,6 +199,8 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         "gen4_pt_slot_art",
                         -- the Ball Capsule app art (Gen4PtCapsuleArt)
                         "gen4_pt_capsule_art",
+                        -- the Pokedex AREA map, zukan_enc (Gen4ZukanEnc)
+                        "gen4_zukan_enc",
                         -- the gyms' field-effect flipbooks (Gen4GymFxArt)
                         "gen4_gym_fx",
                         -- the name -> archive member hop for `var_0`..`var_f`;
@@ -328,6 +330,9 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         "gen4_trade_art",
                         -- Black / White's NPC trade demo (Gen5TradeArt)
                         "gen5_trade_art",
+                        -- Black / White's form personal rows past 649, read
+                        -- through the record's +0x1C (Gen45FormData)
+                        "gen5_forms",
                         -- Black / White's gift box starter app (Gen5StarterArt)
                         "gen5_starter_art",
                         -- Black / White's move animations: the effect VM's
@@ -341,6 +346,9 @@ local GEN4_PREFIXED = { "gen4_menus", "gen4_graphics", "gen4_intro",
                         "gen4_start_menu_art", "gen4_start_menu_ink",
                         -- each trainer class's prize multiplier (Gen4TrainerPrize).
                         "gen4_trainer_prize",
+                        -- the trainer AI's scripts (Gen4TrainerAI; run by
+                        -- src/battle/Gen4AI.lua)
+                        "gen4_trainer_ai",
                         -- each trainer class's front picture (the Hall of Fame's player).
                         "gen4_trainer_sprites",
                         -- `/data/arealight.narc`: four members of fifteen

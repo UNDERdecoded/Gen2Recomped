@@ -85,6 +85,11 @@ end
 -- before the max-level cap, experience.asm:92-100).
 function Experience.apply(data, mon, defeatedDef, level, isTrainer,
                           numParticipants, traded)
+  -- Gen 4 / 5 hand over their own share record (src/battle/Gen45Experience.lua)
+  if type(numParticipants) == "table" and numParticipants.gen45 then
+    return require("src.battle.Gen45Experience").apply(data, mon, defeatedDef, level,
+                                                       isTrainer, numParticipants)
+  end
   local speciesDef = require('src.pokemon.Gen4Forms').definition(data,mon)
   if Stats.isGen3(speciesDef) then
     -- GEN 3 DOES NOT AWARD STAT EXPERIENCE, it awards EFFORT VALUES, and the

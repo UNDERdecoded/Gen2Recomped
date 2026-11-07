@@ -1225,6 +1225,64 @@ public class GameActivity extends SDLActivity {
         return out.toString();
     }
 
+    /**
+     * Link Hub codes (src/ui/online/LauncherHubScreen.lua through
+     * love.system.shareText): the system share sheet with one line of text.
+     */
+    @Keep
+    public static boolean shareText(final String text) {
+        final GameActivity self = (GameActivity) mSingleton;
+        if (self == null || text == null) return false;
+        self.runOnUiThread(new Runnable() {
+            @Override
+            public void run() {
+                Intent send = new Intent(Intent.ACTION_SEND);
+                send.setType("text/plain");
+                send.putExtra(Intent.EXTRA_TEXT, text);
+                self.startActivity(Intent.createChooser(send, null));
+            }
+        });
+        return true;
+    }
+
+    private static android.net.wifi.WifiManager.MulticastLock sMulticastLock;
+
+    /**
+     * Nearby games (src/online/net/LanBeacon.lua): Android drops broadcast
+     * packets unless the app holds this lock. Permission
+     * CHANGE_WIFI_MULTICAST_STATE is in the manifest.
+     */
+    @Keep
+    public static boolean acquireMulticastLock() {
+        final GameActivity self = (GameActivity) mSingleton;
+        if (self == null) return false;
+        try {
+            if (sMulticastLock == null) {
+                android.net.wifi.WifiManager wifi = (android.net.wifi.WifiManager)
+                    self.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
+                if (wifi == null) return false;
+                sMulticastLock = wifi.createMulticastLock("gen2recomped-link");
+                sMulticastLock.setReferenceCounted(false);
+            }
+            sMulticastLock.acquire();
+            return true;
+        } catch (RuntimeException e) {
+            Log.w("GameActivity", "multicast lock: " + e);
+            return false;
+        }
+    }
+
+    @Keep
+    public static boolean releaseMulticastLock() {
+        try {
+            if (sMulticastLock != null && sMulticastLock.isHeld()) sMulticastLock.release();
+            return true;
+        } catch (RuntimeException e) {
+            Log.w("GameActivity", "multicast lock: " + e);
+            return false;
+        }
+    }
+
     @Keep
     public static boolean walkerNotify(final String json) {
         final GameActivity self = (GameActivity) mSingleton;

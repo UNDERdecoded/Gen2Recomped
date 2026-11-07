@@ -4282,9 +4282,12 @@ function RomExtractorGen4:extractFormSprites(index, mons)
   end
 
   local written, borrowed = 0, 0
+  -- HGSS's archive has its own numbering (Gen4Otherpoke.layout, hgss-otherpoke-v1)
+  local rows, SUBST, SHADOWS = Gen4Otherpoke.layout(
+    require("src.import.Gen4Versions").family(self.version))
 
-  for _, row in ipairs(Gen4Otherpoke.FORMS) do
-    local normalMember, shinyMember, didBorrow = Gen4Otherpoke.palettes(row)
+  for _, row in ipairs(rows) do
+    local normalMember, shinyMember, didBorrow = Gen4Otherpoke.palettesIn(rows, row)
     if didBorrow then borrowed = borrowed + 1 end
     local normal = normalMember and Gen4Graphics.palette(arc:get(normalMember))
     local shiny = shinyMember and Gen4Graphics.palette(arc:get(shinyMember))
@@ -4352,11 +4355,11 @@ function RomExtractorGen4:extractFormSprites(index, mons)
   -- THE SUBSTITUTE DOLL AND THE SHADOWS, which are not a Pokemon and would
   -- have no row to sit on.  Both are wanted by any battle that runs: the doll
   -- the moment something uses Substitute, the shadow under every battler.
-  local subSheet = sheetAt(Gen4Otherpoke.SUBSTITUTE.front)
-  local subBack = sheetAt(Gen4Otherpoke.SUBSTITUTE.back)
-  local subPalette = Gen4Graphics.palette(arc:get(Gen4Otherpoke.SUBSTITUTE.palette))
-  local shadowSheet = sheetAt(Gen4Otherpoke.SHADOWS.sheet)
-  local shadowPalette = Gen4Graphics.palette(arc:get(Gen4Otherpoke.SHADOWS.palette))
+  local subSheet = sheetAt(SUBST.front)
+  local subBack = sheetAt(SUBST.back)
+  local subPalette = Gen4Graphics.palette(arc:get(SUBST.palette))
+  local shadowSheet = sheetAt(SHADOWS.sheet)
+  local shadowPalette = Gen4Graphics.palette(arc:get(SHADOWS.palette))
 
   index.extras = {}
   local function extra(name, sheet, palette)
@@ -4372,7 +4375,7 @@ function RomExtractorGen4:extractFormSprites(index, mons)
   extra("shadows", shadowSheet, shadowPalette)
 
   index.counts.formImages = written
-  index.counts.forms = #Gen4Otherpoke.FORMS
+  index.counts.forms = #rows
   index.counts.borrowedPalettes = borrowed
 end
 
@@ -4455,11 +4458,14 @@ function RomExtractorGen4:extractTrainerSprites()
   -- it is for a species.  An animation stage can read this back.
   index.counts.twoFrame = animated
   index.counts.stamped = stamped
-  if dpOrder then
-    local backs = self:archive("trainerBack")
+  -- (HGSS names the archive by number; Platinum's is /poketool/trgra/trbgra.narc,
+  -- the same five members a class: 0 the player's Pt outfit, 1 hers, 2 Barry, 3-7
+  -- the five stat trainers, 8-10 the Diamond / Pearl outfits for a link partner)
+  if dpOrder or self.version == "platinum" then
+    local backs = self:archive("trainerBack") or self:archiveAt(Gen4Trgra.BACK_PATH)
     index.backs = {}
     for class = 0, Gen4Trgra.classCount(backs) - 1 do
-      local sheet = Gen4Trgra.sheet(backs, Gen4Graphics, class, true)
+      local sheet = Gen4Trgra.sheet(backs, Gen4Graphics, class, dpOrder)
       local pal = Gen4Trgra.palette(backs, Gen4Graphics, class)
       local image = sheet and pal and Gen4Trgra.frame(sheet, pal, 1)
       if image then
@@ -4594,6 +4600,31 @@ function RomExtractorGen4:extractSpeciesSprites()
             end
             femaleSheets = femaleSheets + 1
             written = written + 1
+          end
+          -- THE FEMALE SHEET IN THE SHINY PALETTE, AND (front) BOTH STRIPS.
+          -- The cartridge draws a female through the species' one normal /
+          -- shiny palette pair like any other (pokegra member +4 / +5), and
+          -- animates her own two frames (Gen4Pokegra.strip, the same cut as
+          -- the male strip above). Without these a shiny female showed the
+          -- male shiny art and a female held still in battle.
+          -- (revision tag gen4-female-sprites-v1, RomImporter)
+          local shinyImage = femaleSheet and Gen4Pokegra.frame(femaleSheet, shiny, 1)
+          local shinyEntry = shinyImage and self:saveImage(
+            ("battle/female_shiny_%s/%s"):format(face, slug), shinyImage,
+            { species = species, face = face })
+          if shinyEntry then
+            written = written + 1
+            if def then
+              def[(face == "front") and "spriteFrontFemaleShiny" or "spriteBackFemaleShiny"] = shinyEntry.path
+            end
+          end
+          if face == "front" and femaleSheet and def and def.picAnim then
+            local strip = Gen4Pokegra.strip(femaleSheet, normal)
+            local se = strip and self:saveImage(("battle/anim/female/%s"):format(slug), strip, { species = species })
+            if se then def.picAnim.femaleSheet = se.path end
+            local sstrip = Gen4Pokegra.strip(femaleSheet, shiny)
+            local sse = sstrip and self:saveImage(("battle/anim/female_shiny/%s"):format(slug), sstrip, { species = species })
+            if sse then def.picAnim.femaleShinySheet = sse.path end
           end
         end
       end
@@ -5664,9 +5695,13 @@ function RomExtractorGen4:playerSheets()
   -- names are the evidence: pokeplatinum was searched for a gender-to-index
   -- constant and has none to find.
   --
-  -- Frame 00 of five.  The other four are the throw, which nothing plays yet.
-  local function backPic(art)
-    return ("assets/generated/gen4/battle/trainer_backs_%s_00.png"):format(art)
+  -- ...BUT THOSE ARE THE DIAMOND / PEARL OUTFITS, the back a link partner on
+  -- those games shows. Platinum's own player is trbgra class 0 / 1
+  -- (SpriteSystem_TrainerClassBackSpriteIndex leaves the two player classes as
+  -- they are), the winter coat, and that is the art the throw is made of
+  -- (extractTrainerSprites: battle/trainer_back + backThrows, keyed by this path).
+  local function backPic(class)
+    return ("assets/generated/gen4/battle/trainer_back/%03d.png"):format(class)
   end
 
   local function formFor(prefix, label, backArt)
@@ -5682,8 +5717,8 @@ function RomExtractorGen4:playerSheets()
     return form.walk and form or nil
   end
 
-  local boy = formFor("player_m", "BOY", "lucas_dp")
-  local girl = formFor("player_f", "GIRL", "dawn_dp")
+  local boy = formFor("player_m", "BOY", 0)
+  local girl = formFor("player_f", "GIRL", 1)
   if not (boy or girl) then return nil, nil end
 
   local default = boy or girl
@@ -5924,6 +5959,12 @@ function RomExtractorGen4:extractTerrain(names)
   self:ptSlotArt()
   -- the Ball Capsule app's art, cb_data.narc (Gen4PtCapsuleArt)
   self:ptCapsuleArt()
+  -- the Pokedex AREA map's places and art, zukan_enc (Gen4ZukanEnc)
+  do
+    local okZ, zukan = pcall(require("src.import.Gen4ZukanEnc").build, self)
+    if okZ and zukan then self:write("gen4_zukan_enc", zukan)
+    else print("gen4_zukan_enc failed: " .. tostring(zukan)) end
+  end
   -- the gyms' field-effect flipbooks: Eterna's fountains, Veilstone's
   -- toppled tires (Gen4GymFxArt)
   self:gymFxArt()
@@ -6485,6 +6526,13 @@ function RomExtractorGen4:trainerMusic()
     local P = require("src.import.Gen4TrainerPrize")
     local prize = P.parseHgss(self.rom:overlay(P.HGSS_OVERLAY))
     if prize then self:write("gen4_trainer_prize", prize) end
+  end
+  -- the trainer AI's scripts, gTrainerAITable in the trainer AI overlay
+  -- (src/import/Gen4TrainerAI.lua; run by src/battle/Gen4AI.lua)
+  if self.rom then
+    local okA, ai = pcall(require("src.import.Gen4TrainerAI").extract, self.rom)
+    if okA and ai then self:write("gen4_trainer_ai", ai)
+    elseif not okA then print("Gen4TrainerAI failed: " .. tostring(ai)) end
   end
 end
 
@@ -7304,6 +7352,12 @@ RomExtractorGen4.STAGE_CHAIN = {
   pt_slot = function(self) self:ptSlotArt() end,
   -- Platinum's Ball Capsule app art (Gen4PtCapsuleArt)
   pt_capsule = function(self) self:ptCapsuleArt() end,
+  -- the Pokedex AREA map's data and art alone (Gen4ZukanEnc), both families
+  zukan_enc = function(self)
+    local ok, z = pcall(require("src.import.Gen4ZukanEnc").build, self)
+    if ok and z then self:write("gen4_zukan_enc", z)
+    else print("gen4_zukan_enc failed: " .. tostring(z)) end
+  end,
   overworld = function(self) self:extractOverworld() end,
   field = function(self) self:extractField() end,
   -- the frames before the fonts: writeFontDef carries `self._winFrames`
@@ -7401,6 +7455,8 @@ RomExtractorGen4.STAGE_CHAIN = {
     -- ...and the screens whose importers follow the `build(x) -> index`
     -- shape (each optional until its module exists): the Pokedex, the PC
     for _, entry in ipairs({ { "src.import.Gen4HgssDexArt", "gen4_hgss_dex_art" },
+                             -- the Pokedex AREA map's places, zukan_enc /a/1/3/3
+                             { "src.import.Gen4ZukanEnc", "gen4_zukan_enc" },
                              { "src.import.Gen4HgssStarterArt", "gen4_hgss_starter_art" },
                              { "src.import.Gen4HgssOakArt", "gen4_hgss_oak_art" },
                              { "src.import.Gen4HgssTitleArt", "gen4_hgss_title_art" },

@@ -1296,6 +1296,10 @@ function Commands.g4_bw_game_clear(ctx, kind)
   if ctx.save then
     ctx.save.gen5GameClear = true
     if k == 1 then ctx.save.gen5ChampionClear = true end
+    -- (flag 0x960, the post-game gate, is set by script 9601, which the
+    -- clear's task runs after this: Gen4ScriptVM's `bwgameclear` lowering;
+    -- the marker tells src/world/Gen5ClearReplay.lua this save needs no replay)
+    ctx.save.gen5Clear9601 = true
   end
   Logger.info("gen5 game clear (kind %d)", k)
   if k == 0 then
@@ -3032,7 +3036,11 @@ end
 -- table that could disagree with it.
 function Commands.g4_get_map_id(ctx, destVar)
   local data = ctx.game and ctx.game.data
-  local mapId = ctx.save and ctx.save.player and ctx.save.player.map
+  -- the map the player stands on NOW (fieldSystem->location->mapId): the
+  -- save's position is only as fresh as the last save, and the Wi-Fi Plaza's
+  -- way back (Warp VAR_UNK_4056) is this var
+  local live = ctx.overworld and ctx.overworld.map and ctx.overworld.map.id
+  local mapId = live or (ctx.save and ctx.save.player and ctx.save.player.map)
   local def = mapId and data and data.maps and data.maps[mapId]
   setVar(ctx.save, destVar, tonumber(def and def.header) or 0)
 end
@@ -3864,6 +3872,8 @@ function Commands.g4_give_loan_mon(ctx, trade, level, mapno)
   if not (ok and type(mon) == "table") then return end
   mon.nickname, mon.ot, mon.otId, mon.otGender = row.nickname, row.otName, row.otId, row.otGender
   mon.traded = true
+  -- npc_trade.c: the record's language (src/pokemon/Gen45Language.lua)
+  if tonumber(row.language) then mon.language = tonumber(row.language) end
   mon.loanTrade = id
   mon.metLocation = tonumber(mapno)
   if row.item and row.item ~= 0 then mon.item = row.item end
@@ -5782,6 +5792,8 @@ function Commands.g4_trade_start(ctx, slotArg)
   mon.ot = row.otName
   mon.otId = row.otId
   mon.otGender = row.otGender
+  -- npc_trade.c: the record's language -- Foppa's Magikarp is German
+  if tonumber(row.language) then mon.language = tonumber(row.language) end
   -- boosted exp, and the Name Rater refuses to touch it -- the same flag the
   -- Hoenn trades set, so the two generations' traded Pokemon behave alike.
   mon.traded = true
@@ -7063,6 +7075,8 @@ function Commands.g4_use_surf(ctx, slot)
   local p = ow and ow.player
   if not p then return end
   if ptRideCutInFirst(ctx, slot, Commands.g4_use_surf) then return end
+  -- ScrCmd_UseSurf clears the Poke Radar chain (scrcmd.c)
+  if ow.gen4Radar and ow.gen4Radar.active and ow.gen4RadarEnd then pcall(ow.gen4RadarEnd, ow) end
   -- on a Distortion World surface the water ahead is the platform's own
   if ow.dwSurface then
     require("src.world.Gen4DistSurface").surfMount(ow)
@@ -7620,7 +7634,11 @@ function Commands.g4_honey_stop(ctx)
 end
 function Commands.g4_honey_battle(ctx)
  local species,level=require('src.world.Gen4HoneyTrees').consume(ctx.game.data,ctx.save,honeyId(ctx))
- if species then Commands.start_battle(ctx,'wild',species,level) end
+ -- CreateWildMon_HoneyTree -> CreateWildMon: the lead's Synchronize / Cute Charm
+ local L=species and require('src.world.Gen4WildLead').choose(ctx.game.data,ctx.save,
+   {{species=species,level=level}},'grass','radar',love.math.random)
+ if species then Commands.start_battle(ctx,'wild',species,level,
+   L and (L.nature or L.gender) and {nature=L.nature,gender=L.gender} or nil) end
 end
 Commands.meta.g4_storage = { foreground = true, blocking = true }
 
@@ -8037,6 +8055,12 @@ function Commands.g4_release_roamer(ctx, slot)
   -- because the cartridge's own `notUsed`-style state is the slot's `active`
   -- flag and a caught Mesprit does not come back.
   local existing = (ctx.save and ctx.save.gen4Roamers or {})[id]
+  -- HGSS's CreateRoamer always rebuilds: the Hall of Fame re-creates a
+  -- knocked-out beast (T10R0701, VAR_ROAMER_*_STATUS == 2) over its retired record
+  if type(existing) == "table" and not existing.active
+     and require("src.core.GameVersion").family() == "hgss" then
+    existing = nil
+  end
   if type(existing) == "table" then
     Logger.info("gen4 roamer: slot %d (%s) is already %s -- left alone",
                 id, def.name, existing.active and "roaming" or "retired")
@@ -9442,7 +9466,9 @@ function Commands.g4_hgss_rock_smash(ctx, followUsed, foundVar, itemVar)
   -- ApplyAbilityEffectToEncounterRate on the rate, then the regular
   -- generator (lead abilities; Repel does not apply)
   local FE = require("src.script.Gen4FieldEncounters")
-  local rate = FE.rockSmashRate(ctx, rs and tonumber(rs.rate) or 0)
+  -- the save's weather: Snow Cloak halves it in WEATHER_SNOW (5)
+  local rate = FE.rockSmashRate(ctx, rs and tonumber(rs.rate) or 0,
+    (tonumber(ctx.save and ctx.save.gen4WeatherActive) == 5) and "snow" or nil)
   if rate > 0 and lcrng(100) < rate then
     local smash = FE.rockSmash(ctx, rs.slots, rollLevel)
     if smash then

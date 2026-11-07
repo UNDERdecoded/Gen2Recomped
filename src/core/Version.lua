@@ -17,7 +17,11 @@ local Version = {
                           -- refuses to chainload a payload whose minShell
                           -- exceeds the shell it provides.
   modApi = 2,             -- mod API major (manifest `api`)
-  linkProtocol = 2,       -- link handshake wire version (Handshake.PROTOCOL)
+  linkProtocol = 3,       -- link handshake wire version (Handshake.PROTOCOL);
+                          -- 3 adds gen/game/family and MonCodec v3
+                          -- (docs/online-design.md 2.4).  A v2 peer still
+                          -- links on Gen 1/2.
+  linkMonWire = 3,        -- MonCodec wire version (hello.wire.mon)
   saveFormat = 4,         -- save.meta.format
   cache = "rom-cache-v5", -- ROM import cache generation (RomImporter marker)
 }

@@ -571,10 +571,32 @@ end
 --
 -- Turning the input one way and the artwork the other is not a coincidence:
 -- they are inverses because the camera sits between them.
-function Gen4View:worldToScreen(dir)
+--
+-- FROM WHERE THE EYE ACTUALLY STANDS, when the caller says where the character
+-- is (`wx`, `wz`, in this camera's absolute coordinates): the bearing from the
+-- eye to THEM, not the way the eye is looking. Reported from play: *"many of the
+-- NPCs aren't facing the right directions, especially in first and third person
+-- when looking at them from the left or right side"*. A south-facing NPC beside a
+-- north-looking eye is a profile however the head is turned; the camera's yaw
+-- only agrees with that for whoever is dead ahead. And NOT only while orbiting: a
+-- camera that kept a heading (`recentre`, a look carried in) looks that way
+-- without an orbit, and the eye's position has no such state to fall out of step.
+--
+-- The field camera is exempt: the cartridge's own frame is the world facing,
+-- whatever a tilt rung, a script's or the Distortion World's yaw does.
+function Gen4View:worldToScreen(dir, wx, wz)
   if self.mode == "field3d" then return dir end
-  if not (self.orbiting and CLOCK_INDEX[dir]) then return dir end
-  local quarters = math.floor((self.yaw or 0) / (math.pi / 2) + 0.5) % 4
+  if not CLOCK_INDEX[dir] then return dir end
+  local bearing = self.yaw or 0
+  if wx and wz and self.x and self.z then
+    -- x east, z south; 0 north, growing clockwise, as yaw is. Nobody is ever
+    -- ahead of an eye they are standing on, so that one case keeps the yaw.
+    local dx, dz = wx - self.x, wz - self.z
+    if dx * dx + dz * dz > 1 then bearing = atan2(dx, -dz) end
+  elseif not self.orbiting then
+    return dir
+  end
+  local quarters = math.floor(bearing / (math.pi / 2) + 0.5) % 4
   return CLOCKWISE[((CLOCK_INDEX[dir] - 1 - quarters) % 4) + 1]
 end
 

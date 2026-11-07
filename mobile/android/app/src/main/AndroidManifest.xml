@@ -17,6 +17,14 @@
        the link screen shows as "(Operation not permitted)" (issue #287).
        scripts/build_android.sh must not strip this again. -->
   <uses-permission android:name="android.permission.INTERNET" />
+  <!-- Online LAN discovery (docs/online-design.md 2.10, src/online/net/
+       LanBeacon.lua): Android drops broadcast and multicast packets for an app
+       that does not hold a WifiManager.MulticastLock, and taking the lock
+       needs this permission (normal protection level, no prompt).  SSDP
+       (UPnP) replies are unicast and work without it.  Nothing takes the lock
+       yet; Platform.online().canBroadcast stays false until a bridge does.
+       scripts/build_android.sh re-adds it if a refreshed tree drops it. -->
+  <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
   <!-- In-app updates: hand a downloaded release APK to Android's installer
        (GameActivity.installApk). Android asks the player once to allow it. -->
   <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />

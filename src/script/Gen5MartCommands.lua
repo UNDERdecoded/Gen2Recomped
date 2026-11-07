@@ -53,8 +53,27 @@ function Commands.g4_bw_mart(ctx, shopVar, dest, sell)
   local runner = ctx.runner
   local Screens = require("src.ui.Screens")
   local stock = {}
+  -- the Battle Subway's Exchange Service Corner (shop 0xFE / 0xFD): items
+  -- for BP, src/import/Gen5Marts.lua's bpStock (ov21 0x021B39C4)
+  local shop = valueOf(ctx, shopVar)
+  if not sell and (shop == 0xFE or shop == 0xFD) then
+    local marts = game.data and game.data.constants and game.data.constants.gen5Marts
+    local price = {}
+    for _, row in ipairs(require("src.import.Gen5Marts").bpStock(marts, shop) or {}) do
+      if game.data.items and game.data.items[row.item] then
+        stock[#stock + 1] = row.item
+        price[row.item] = row.price
+      end
+    end
+    Screens.push(game, "ShopMenu", stock, function()
+      setResult(ctx, dest, 0)
+      if runner then runner:resume() end
+    end, nil, { direct = true, frontier = { price = function(id) return price[id] or 0 end } })
+    if runner then runner:yield() end
+    return
+  end
   if not sell then
-    stock = M.stock(game, valueOf(ctx, shopVar))
+    stock = M.stock(game, shop)
     if not stock[1] then
       require("src.core.Logger").warn("bw shop: no stock for shop %s -- re-import the ROM",
         tostring(valueOf(ctx, shopVar)))

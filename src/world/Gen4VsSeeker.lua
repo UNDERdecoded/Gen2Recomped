@@ -323,6 +323,14 @@ function V.battery(save) return tonumber(C().getVar(save, V.BATTERY_VAR)) or 0 e
 function V.step(game, ow)
   local save = game and game.save
   if not save then return end
+  -- "armed" is the object's movement type on the cartridge, and a warp
+  -- rebuilds every object from the header (field_map_change.c): leaving the
+  -- map disarms everyone (the used flag and step count stay)
+  local here = ow and ow.map and ow.map.id
+  if here ~= nil and save.vsSeeker and save.vsSeeker.map ~= here then
+    if save.vsSeeker.map ~= nil then save.vsSeeker.rematches = {} end
+    save.vsSeeker.map = here
+  end
   local battery = V.battery(save)
   if owns(save) and battery < V.MAX_BATTERY then C().setVar(save, V.BATTERY_VAR, battery + 1) end
   if flag(save, V.USED_FLAG) then

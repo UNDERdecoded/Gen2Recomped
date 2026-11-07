@@ -107,5 +107,15 @@
 	     in-game mod manager) and converts them to Pokémon EXP. -->
 	<key>NSHealthShareUsageDescription</key>
 	<string>The Pokéwalker mod reads your step count to give your Pokémon party experience points for real-world walking.</string>
+	<!-- Online play (docs/online-design.md 2.10): iOS 14+ blocks traffic to
+	     devices on the local network until the player allows it, and asks with
+	     this sentence.  Without the key the request is never shown and LAN
+	     links and NAT-PMP/PCP port mapping fail silently.  No NSBonjourServices:
+	     the game uses plain UDP sockets, not Bonjour.  UPnP discovery and the LAN
+	     beacon would need the com.apple.developer.networking.multicast
+	     entitlement, which sideload builds do not carry, so Platform.online()
+	     reports canBroadcast = false on iOS. -->
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>Link trades, battles and worlds connect to friends' games on your network, and ask your router to open a port for players elsewhere.</string>
 </dict>
 </plist>

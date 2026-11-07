@@ -46,7 +46,14 @@ check(S.arngNext(0) == 1, 'ARNG_Next(0) is 1')
 -- ============================ 2. the day turns the swarm over
 local save = {}
 check(not S.enabled(save), 'a new save has swarms off')
-check(S.header(save) == 342, 'and before the first day turns over, swarmDaily is 0 -- Route 201')
+-- SpecialEncounter_Init: swarmDaily = MTRNG_Next() (and marshDaily a second
+-- draw) -- a random day-one swarm, not always Route 201
+do
+  local hdr = S.header(save)
+  local inTable = false
+  for _, h in ipairs(S.HEADERS) do if h == hdr then inTable = true end end
+  check(inTable and save.gen4Swarm.marshDaily ~= nil, 'before the first day turns over, the swarm is a random one of the 22 and the marsh has its own value')
+end
 local before = save.gen4Swarm.rand
 S.onDays(save, 3)
 check(save.gen4Swarm.daily == exact(exact(exact(before))),

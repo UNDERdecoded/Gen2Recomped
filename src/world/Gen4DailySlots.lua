@@ -99,7 +99,7 @@ function Gen4DailySlots.slotsFor(data, save, mapDef)
   if area >= 0 and area < Gen4DailySlots.MARSH_AREAS then
     if not (type(save) == "table" and save.safari) then return nil end
     local swarm = type(save.gen4Swarm) == "table" and save.gen4Swarm
-    local daily = swarm and tonumber(swarm.daily) or 0
+    local daily = swarm and tonumber(swarm.marshDaily or swarm.daily) or 0
     local index = math.floor(daily / (2 ^ (5 * area))) % 32
     local list = nationalDex(save) and L.greatMarsh.natdex or L.greatMarsh.regional
     local sp = list and list[index + 1]

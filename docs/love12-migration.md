@@ -40,6 +40,13 @@ and `src/render/ClipSpaceCompat.lua` cancel the additional Y transform for
 those custom shaders, preserving LÖVE's Vulkan/Metal depth conversion.
 Ordinary 2D projection shaders keep LÖVE's normal transform.
 
+Metal is the exception: LÖVE sets no Y flip there, so `love_ClipSpaceParams.x`
+is always 1 and multiplying by it changes nothing, which leaves these shaders
+upside down. `ClipSpaceCompat` negates Y outright when the renderer is Metal,
+the first renderer tried on iOS. The mods' compat modules call it. There is
+no presentation flip in `Renderer`; canvases reach it upright on every backend.
+Metal itself is checked by simulation on OpenGL only, not on an Apple device.
+
 Desktop 12 builds prefer OpenGL. On the tested RTX 3060, OpenGL 4.3 matches
 the 11.5 terrain, shadow and reflection pixels exactly. Vulkan's primary
 CPU/GPU terrain screenshots agree with one another, but an expanded versus

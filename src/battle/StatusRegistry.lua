@@ -31,7 +31,18 @@ function StatusRegistry.inflict(battle, target, status, opts)
   -- FreezeBurnParalyzeEffect: a secondary status never lands when the
   -- move's type matches either of the target's types (Body Slam can't
   -- paralyze Normals, Fire can't burn Fire, Ice can't freeze Ice)
-  if opts.secondary and status ~= "PSN" then
+  -- HOENN ON: that is Gen 1's rule. subscript_burn / subscript_freeze (and
+  -- pokeemerald's SetMoveEffect)
+  -- test the TARGET's type (a Fire type is never burned, an Ice type never
+  -- frozen, by anything) and subscript_paralyze tests no type at all -- a
+  -- Body Slam paralyses a Snorlax (battle parity pass)
+  local gen = require("src.battle.Gen45Abilities").gen()
+  if gen >= 3 then
+    local immune = ({ BRN = "FIRE", FRZ = "ICE" })[status]
+    for _, t in ipairs(target.curTypes or {}) do
+      if immune and t == immune then return {} end
+    end
+  elseif opts.secondary and status ~= "PSN" then
     for _, t in ipairs(target.curTypes or {}) do
       if opts.moveType == t then return {} end
     end

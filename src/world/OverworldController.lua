@@ -1254,6 +1254,10 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
     require("src.script.Gen3BattlePyramid").syncBag(Game.save, mapId)
   end
   self.gen4EncounterAttempts = 0
+  -- the flute factor ends with the map (FieldSystem_InitFlagsOnMapChange /
+  -- HGSS sub_02067A88); BW's encounter step counter restarts on a warp
+  if GameVersion.isGen4() and Game.save then Game.save.gen4Flute = nil end
+  if not (opts and opts.seamless) then self.gen5EncSteps = 0 end
   -- THE VIEW IS TOLD HOW MUCH WORLD THERE IS, because on a map smaller than
   -- the window the rest of the window is border -- and a border is not always
   -- scenery. Petalburg Gym's is metatile 0x208, which is pure black in all 256
@@ -1619,6 +1623,11 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
   -- (src/world/Gen5BlackCity.lua)
   if GameVersion.isGen5() then
     require("src.world.Gen5BlackCity").injectObjects(self.map.def, Game.save, Game.data)
+    -- a save cleared before the clear ran script 9601 (Gen4ScriptVM
+    -- `bwgameclear`) gets 9601's post-game layout once, before the objects
+    -- below are built from the flags (src/world/Gen5ClearReplay.lua)
+    -- ...and, first, the story swaps an old save never ran (same module)
+    require("src.world.Gen5ClearReplay").onMapLoad(Game.save)
   end
   for _, obj in ipairs(self.map.def.objects or {}) do
     if objectVisible(Game.save, mapId, obj) then
@@ -2012,7 +2021,13 @@ function OverworldState:setMap(mapId, x, y, facing, opts)
         Roamers.randomizeAll(Game.data, Game.save)
         return
       end
+      -- (sub_02067A88 / FieldSystem_InitFlagsOnMapChange: not during a
+      -- Safari Game -- neither the history nor the hop)
+      if via == "connection" and self.inSafariGame and self:inSafariGame() then return end
       Roamers.noteMap(Game.save, mapId)
+      -- HGSS: Fly scatters them (sub_02053908 -> sub_02067B88 ->
+      -- Save_RandomizeRoamersLocation)
+      if via == "fly" and Encounter.isHgss() then Roamers.randomizeAll(Game.data, Game.save) end
       if via == "connection" then
         local moved = Roamers.moveAll(Game.data, Game.save)
         if moved > 0 then
@@ -3557,6 +3572,8 @@ function OverworldState:update(dt)
   -- ...and BW's object on a flight path (0x15D, Gen5FlightPath)
   if self.gen5Flight then require("src.world.Gen5FlightPath").tick(self) end
   if self.gen5Motions then require("src.world.Gen5ObjectMotion").tick(self) end
+  -- ...and the Poke Radar's patches leaving the cartridge camera's view
+  if self.gen4Radar and self.gen4Radar.active and GameVersion.isGen4() then self:gen4RadarViewTick() end
   -- ...and Platinum's honey tree shaking while a Pokemon waits in it (Gen4HoneyTrees)
   if Game.save and Game.save.gen4HoneyTrees and GameVersion.isGen4() then
     pcall(require("src.world.Gen4HoneyTrees").shakeTick, self)
@@ -3597,8 +3614,9 @@ function OverworldState:update(dt)
       Logger.warn("hgss phone ring: %s", tostring(errR))
     end
   end
-  -- ...and Black/White's queued arrival script (op 0x021)
-  if self.gen5QueuedEntry then
+  -- ...and Black/White's queued arrival script (op 0x021), and the
+  -- Musical's backstage waiting on its review (Gen5MusicalBackstage)
+  if self.gen5QueuedEntry or (Game.gen5Musical and Game.gen5Musical.backstage) then
     local okQ, errQ = pcall(require("src.world.Gen5PostWarp").update, self)
     if not okQ then
       Logger.warn("gen5 queued entry: %s", tostring(errQ))
@@ -3906,6 +3924,10 @@ function OverworldState:update(dt)
   -- Press deadline loses the number of days that actually passed, so the
   -- Gen 4 arm needs its own module (see Gen4Daily for why a day-turned flag
   -- is not enough).  Same lazy require for the same reason.
+  -- ...and Black / White's daily flag clear (src/script/Gen5Daily.lua)
+  if GameVersion.isGen5() and Game and Game.save then
+    require("src.script.Gen5Daily").poll(Game.save)
+  end
   if GameVersion.isGen4() and Game and Game.save then
     require("src.script.Gen4Daily").poll(Game.save)
     -- ...AND THE ONE-SHOT PROP ANIMATIONS, on the frame clock.
@@ -5397,14 +5419,16 @@ function OverworldState:handleInput()
     local SecondScreen = require("src.ui.SecondScreen")
     local family = (GameVersion.info() or {}).family
     local poketchOn = require("src.pokemon.Gen4PoketchState").owned(Game.save)
-    -- the watch only once it is given (see Game:draw); BW's C-Gear is not built
-    if SecondScreen.available(Game) and (family == "hgss" or (family ~= "bw" and poketchOn)) then
+    -- the watch only once it is given (see Game:draw); BW's C-Gear once 0x19B
+    -- gives it (src/ui/Gen5CGear.lua)
+    local cgear = family == "bw" and require("src.ui.Gen5CGear").owned(Game.save)
+    if SecondScreen.available(Game) and (family == "hgss" or cgear or (family ~= "bw" and poketchOn)) then
       Game.secondScreenUp = true
       -- By its own id, not through an alias: there is no Game Boy Poketch for
       -- `GEN4_ALIASES` to stand in front of, so an alias would be a redirect
       -- from a screen that does not exist.
       local version = GameVersion.info()
-      Screens.push(Game, version and version.family == "hgss" and "StartMenu" or "Gen4Poketch", {
+      Screens.push(Game, version and version.family == "hgss" and "StartMenu" or (cgear and "Gen5CGear") or "Gen4Poketch", {
         onCancel = function() Game.secondScreenUp = false end,
       })
       return
@@ -7535,6 +7559,15 @@ end
 function OverworldState:interact()
   local p = self.player
   local fx, fy = p:facingCell()
+
+  -- ONLINE WORLDS (src/online/world/Presence.lua, docs/online-design.md 2.8):
+  -- another player standing in front answers A with TRADE / BATTLE / CANCEL.
+  -- Their ghosts live in `entities` only (never `npcs`), are `passable`, and
+  -- carry no localId or script, so collision, trainers, scripted movement and
+  -- captureSave never see them; this seam is set only while a world is open,
+  -- so single-player never takes the branch.
+  local remoteSeam = OverworldState.remotePlayerSeam
+  if remoteSeam and remoteSeam(self, fx, fy) then return end
 
   -- BLACK / WHITE'S DIVE SPOTS: A over Undella Bay's deep water offers Dive
   -- (src/world/Gen5Dive.lua, ov21 0x02189EF4) when nothing in front answers
@@ -10644,6 +10677,7 @@ end
 
 -- Sweet Scent chooses a native slot directly, bypassing walking grace/rate rolls.
 function OverworldState:gen4SweetScent()
+  if GameVersion.isGen5() then return self:gen5SweetScent() end
   local encDef=Encounter.forMap(Game.data,self.map.def,self.map.id,nil,Game.save)
   local slots=encDef and (self.player.surfing and encDef.water or encDef.grass)
   -- FieldSystem_PerformSweetScentEncounterCheck reads the player's OWN tile
@@ -10651,9 +10685,44 @@ function OverworldState:gen4SweetScent()
   -- scent finds nothing, whatever the map's table holds
   local p=self.player
   if slots and not p.surfing and not self.map:isEncounterCell(p.cellX,p.cellY) then slots=nil end
+  -- WildEncounters_TrySweetScentEncounter / FieldSystem_PerformSweetScentEncounterCheck:
+  -- a roamer on this map first (50%, Repel not asked), then the Bug Contest's
+  -- or the Safari's own generator; Keen Eye / Intimidate cannot turn it away
+  if slots and not self:gen4Escorted() then
+    local Roamers=require('src.world.Gen4Roamers')
+    local slot,it=Roamers.check(Game.data,Game.save,self.map.id,love.math.random)
+    local one=slot and Roamers.encounterFor(slot,it)
+    if one and one.species then
+      self.gen4RoamerSlot=slot
+      local battle=require('src.battle.BattleState').newWild(Game,one.species,one.level,
+        {battleType='roaming',roamer='gen4',roamerHP=one.roamerHP,roamerStatus=one.roamerStatus,roamerSeed=one.roamerSeed})
+      battle.onFinish=function(result) self:afterBattle(result,battle) end
+      self:pushBattle(battle);return
+    end
+  end
+  local HBC=require('src.world.HgssBugContest')
+  if slots and not p.surfing and HBC.running(Game.save) and self.map.id==HBC.CONTEST_MAP then
+    local e=HBC.roll(Game.save)
+    if e then
+      local battle=require('src.battle.BattleState').newWild(Game,e.species,e.level)
+      battle:makeBugContest(); battle.contestBallName='SPORT BALL'
+      battle.onFinish=function(result)
+        local s=HBC.state(Game.save); if s then s.afterBattle=result end
+        self:afterBattle(result,battle)
+      end
+      self:pushBattle(battle);return
+    end
+  end
+  local hgss=Encounter.isHgss()
   local enc=slots and Encounter.rollTable(slots,nil,nil,slots.rateMax or 100,function(tbl,rng)
-    return require('src.world.Gen4WildLead').choose(Game.data,Game.save,tbl.slots,
-      self.player.surfing and 'water' or 'grass',nil,rng)
+    local WL=require('src.world.Gen4WildLead')
+    if hgss and tbl.safari then
+      local e=WL.choose(Game.data,Game.save,tbl.slots,self.player.surfing and 'water' or 'grass','uniform',rng)
+      if e then e.onePerfectIV=true end
+      return e
+    end
+    return WL.choose(Game.data,Game.save,tbl.slots,
+      self.player.surfing and 'water' or 'grass','scent',rng)
   end)
   if not enc then
     -- HGSS: the field task queues std script 2018, msg_0040_00057 "There
@@ -10667,7 +10736,70 @@ function OverworldState:gen4SweetScent()
   end
   local battle=require('src.battle.BattleState').newWild(Game,enc.species,enc.level,
     {nature=enc.nature,gender=enc.gender})
+  if self:inSafariGame() then battle:makeSafari(Game.save.safari) end
+  if enc.onePerfectIV and enc.gender==nil and battle.enemy and battle.enemy.mon then
+    require('src.world.Gen45EncounterRate').onePerfectIV(Game.data,battle.enemy.mon)
+  end
   battle.onFinish=function(result) self:afterBattle(result,battle) end
+  self:pushBattle(battle)
+end
+
+-- BLACK / WHITE'S SWEET SCENT: the walking check in mode 2 (ov21 0x021C6184
+-- -> 0x021A9F40): no rate roll, the tile's own kind (surf / dark grass /
+-- grass; nothing off an encounter tile), the roamers' 50% asked, the day's
+-- outbreak on ordinary grass, and a forced encounter (flag 0x8): neither
+-- Repel nor Keen Eye / Intimidate refuses it (src/world/Gen5WildLead.lua)
+function OverworldState:gen5SweetScent()
+  -- the field-move task (ov21 0x021C6160): any weather (0x021A1BF4 != 0) and
+  -- the scent fails with common script 10132 -- "The sweet scent faded for
+  -- some reason..." (story bank 263 #2); no encounter runs 10131 -- "There
+  -- appears to be nothing here..." (#1). Scripts 10130..10132 are bank 263
+  -- #0..#2, as the Repel's 10130 is #0
+  local U = require("src.inventory.Gen5ItemUse")
+  if require("src.world.Gen45EncounterRate").weather(self, Game.save) ~= 0 then
+    Game.stack:push(TextBox.new(Game, U.storyLine(Game.data, 263, 2, nil,
+      "The sweet scent faded for some reason...")))
+    return
+  end
+  local encDef = Encounter.forMap(Game.data, self.map.def, self.map.id, nil, Game.save)
+  local p = self.player
+  local Rules = require("src.world.Gen5FieldRules")
+  local tbl, water, dark
+  if encDef and p.surfing and self.map:isWaterCell(p.cellX, p.cellY) then
+    tbl, water = encDef.water, true
+  elseif encDef and Rules.isLandEncounter(self.map, p.cellX, p.cellY) then
+    dark = encDef.darkGrass and Rules.isDarkGrass(self.map, p.cellX, p.cellY) or false
+    tbl = dark and encDef.darkGrass or encDef.grass
+  end
+  local enc
+  if tbl and (tonumber(tbl.rate) or 0) > 0 then
+    local Roam5 = require("src.world.Gen5Roamers")
+    local slot, it = Roam5.check(Game.save, self.map.id, love.math.random)
+    if slot and it then
+      self.gen5RoamerSlot = slot
+      local one = Roam5.encounterFor(slot, it)
+      local battle = require("src.battle.BattleState").newWild(Game, one.species, one.level,
+        { battleType = "roaming", roamer = "gen5", roamerHP = one.roamerHP,
+          roamerStatus = one.roamerStatus, roamerSeed = one.roamerSeed })
+      battle.onFinish = function(result) self:afterBattle(result, battle) end
+      self:pushBattle(battle)
+      return
+    end
+    if not water and not dark then
+      tbl = require("src.world.Gen5Swarms").tableFor(Game.save, self.map.def and self.map.def.header) or tbl
+    end
+    enc = require("src.world.Gen5WildLead").choose(Game.data, Game.save, tbl, love.math.random, { forced = true })
+  end
+  if not (enc and enc.species) then
+    Game.stack:push(TextBox.new(Game, U.storyLine(Game.data, 263, 1, nil,
+      "There appears to be nothing here...")))
+    return
+  end
+  local battle = require("src.battle.BattleState").newWild(Game, enc.species, enc.level,
+    (enc.nature or enc.gender or enc.form) and { nature = enc.nature, gender = enc.gender, form = enc.form } or nil)
+  require("src.world.Gen5WildTables").prepareBattle(self, battle, encDef, dark, water)
+  self.gen5EncSteps = 0     -- 0x021A9F40 mode 2 ends at 0x021AA6F8 too
+  battle.onFinish = function(result) self:afterBattle(result, battle) end
   self:pushBattle(battle)
 end
 
@@ -11921,9 +12053,17 @@ function OverworldState:cableClubReceptionist(onDone)
       end
       Game:writeSave()
       require("src.core.Sound").play(Game.data, "Save")
-      local ok, LinkState = pcall(require, "src.link.LinkState")
-      if ok and LinkState then
-        Game.stack:push(LinkState.new(Game))
+      -- the shared link-room door (src/online/LinkRooms.lua, WS6a): the
+      -- LINK screen's HOST / JOIN, the host picking TRADE CENTER or
+      -- COLOSSEUM as the cartridge's own link menu does
+      local ok, LinkRooms = pcall(require, "src.online.LinkRooms")
+      if ok and LinkRooms then
+        LinkRooms.open(Game, "any", {}, function(result)
+          if result == "noconnect" then
+            Game.stack:push(TextBox.new(Game,
+              t._CableClubNPCPleaseComeAgainText or Strings("Please come\nagain!")))
+          end
+        end)
       end
       if onDone then onDone() end
     end }))
@@ -13139,14 +13279,13 @@ function OverworldState:rollEncounter(encDef, terrain)
   -- and the ability scales what comes out.
   local rateOverride
   local grass = encDef and encDef.grass
-  if GameVersion.isGen4() and grass then
-    local rate = grass.rate
-    if rateMod then rate = math.min(100, math.floor(rate * rateMod[1] / rateMod[2])) end
-    local p = self.player
-    local behavior = self.map:cellBehaviour(p.cellX, p.cellY)
-    if not Encounter.gen4StepAllowed(self, rate, Game.save.onBike, behavior == 3) then return nil end
-  end
-  if grass then
+  -- PLATINUM / HGSS / BLACK-WHITE: the cartridge's own rate (ability, flute,
+  -- the lead's Cleanse Tag, the step rolls) -- src/world/Gen45EncounterRate.lua.
+  -- The table roll below is then forced (rate = its max).
+  if (GameVersion.isGen4() or GameVersion.isGen5()) and grass then
+    if not require("src.world.Gen45EncounterRate").walking(self, Game.data, Game.save, grass) then return nil end
+    rateMod, rateOverride = nil, tonumber(grass.rateMax) or 100
+  elseif grass then
     rateOverride = require("src.world.Gen2EncounterRules").rate(
       Game.data, Game.save, grass.rate, require("src.core.Music").current())
     if rateOverride == grass.rate then rateOverride = nil end
@@ -13157,8 +13296,27 @@ function OverworldState:rollEncounter(encDef, terrain)
     local chooser
     if GameVersion.isGen4() then
       chooser = function(tbl, rng)
-        return require("src.world.Gen4WildLead").choose(Game.data, Game.save,
-          tbl.slots, terrain == "water" and "water" or "grass", nil, rng)
+        local WL = require("src.world.Gen4WildLead")
+        local hgss = Encounter.isHgss()
+        -- HGSS: FieldSystem_GenerateSafariEncounter is `LCRandom() % 10`
+        -- (Hustle only on land); surfing keeps Magnet Pull (`!a && !b`)
+        if hgss and tbl.safari then
+          local e = WL.choose(Game.data, Game.save, tbl.slots, terrain == "water" and "water" or "grass", "uniform", rng)
+          if e then e.onePerfectIV = true end
+          return e
+        end
+        return WL.choose(Game.data, Game.save, tbl.slots,
+          terrain == "water" and "water" or "grass", (hgss and terrain == "water") and WL.WATER or nil, rng)
+      end
+    elseif GameVersion.isGen5() then
+      -- Black / White's lead abilities (src/world/Gen5WildLead.lua, INFERRED)
+      chooser = function(tbl, rng)
+        -- the day's mass outbreak takes 40% of ordinary grass (src/world/Gen5Swarms.lua)
+        if terrain ~= "water" and not tbl.dark then
+          local zone = self.map and self.map.def and self.map.def.header
+          tbl = require("src.world.Gen5Swarms").tableFor(Game.save, zone, rng) or tbl
+        end
+        return require("src.world.Gen5WildLead").choose(Game.data, Game.save, tbl, rng)
       end
     end
     local enc = Encounter.roll(encDef, nil, rateMod, rateOverride, chooser)
@@ -13586,10 +13744,13 @@ function OverworldState:onStepComplete()
   if GameVersion.isGen4() and Encounter.isHgss() then
     -- zeroed since the last step (a warp, a battle): reverseTurnFrameSteps
     -- is cleared by the same resets
-    if (self.gen4EncounterAttempts or 0) == 0 then self.hgssTurnFrames, self.hgssLastFacing = 0, nil end
+    if (self.gen4EncounterAttempts or 0) == 0 then self.hgssTurnFrames = 0 end
     self.gen4EncounterAttempts = math.min(0xFFFF, (self.gen4EncounterAttempts or 0) + 1)
     self.hgssStepsCounted = true
   end
+  -- BLACK / WHITE: ov21 0x021AA728 counts moved steps (to 0xA000) for the
+  -- walking rate (src/world/Gen45EncounterRate.lua)
+  if GameVersion.isGen5() then self.gen5EncSteps = math.min(0xA000, (self.gen5EncSteps or 0) + 1) end
   -- Gen 4's elevated-bridge bit (Gen4CyclingRoad: the Cycling Road roll)
   if GameVersion.isGen4() then pcall(require("src.world.Gen4CyclingRoad").stepEnded, self) end
   -- THE STEP COUNTS: Platinum's RECORD_STEPS, Emerald's GAME_STAT_STEPS
@@ -13613,7 +13774,16 @@ function OverworldState:onStepComplete()
   -- is not meant to reset it.
   if require("src.ui.SecondScreen").available(Game) and Game.save then
     Game.save.poketch = Game.save.poketch or {}
-    Game.save.poketch.steps = (Game.save.poketch.steps or 0) + 1
+    -- POKETCH_EVENT_PEDOMETER (poketch_system.c): Poketch_SetStepCount only
+    -- writes once the PEDOMETER app (id 3) is registered (pedometerEnabled,
+    -- Poketch_RegisterApp), and the count wraps to 0 past 99999
+    -- (POKETCH_PEDOMETER_MAX). A save with no registry keeps counting.
+    local reg = Game.save.poketch.registered
+    if type(reg) ~= "table" or reg[3] == true or reg[3] == 1 then
+      local n = (Game.save.poketch.steps or 0) + 1
+      if n > 99999 then n = 0 end
+      Game.save.poketch.steps = n
+    end
   end
   self:gen4CountAmityStep()
   -- the Abyssal Ruins' rising water (src/world/Gen5RuinsTimer.lua)
@@ -13697,6 +13867,10 @@ function OverworldState:onStepComplete()
     -- 128-step cycle
     require("src.pokemon.Gen4Friendship").step(Game.data, Game.save, self.map and self.map.def,
       love.math.random)
+    -- Pokerus days (src/pokemon/Gen45Pokerus.lua)
+    pcall(require("src.pokemon.Gen45Pokerus").poll, Game.save)
+    -- Shaymin's Sky Forme ends at 20:00 / 04:00 and in a box (Gen45FormData)
+    pcall(require("src.pokemon.Gen45FormData").poll, Game)
   elseif not require("src.pokemon.Gen2Friendship").isVanilla() and self.todSteps % 128 == 0 then
     local Evolution = require("src.pokemon.Evolution")
     for _, mon in ipairs(Game.save.party or {}) do
@@ -14155,6 +14329,7 @@ function OverworldState:onStepComplete()
   -- BLACK / WHITE: a phenomenon underfoot is its own guaranteed encounter
   if GameVersion.isGen5() and require("src.world.Gen5Phenomena").encounter(self, encDef) then return end
   local enc
+  self.gen45RollPassed = nil   -- set by Gen45EncounterRate.walking
   local indoor = Game.data.field.indoorEncounters
   local env = self.map.def.environment
   -- Gen2 keeps a morn/day/nite slot set per map; the clock decides which
@@ -14237,7 +14412,9 @@ function OverworldState:onStepComplete()
         enc, roamer = one, "gen3"
       end
     end
-  elseif enc and GameVersion.isGen4() and not self:gen4Escorted() then
+  -- (Sinnoh / Johto ask for the roamer once the rate rolls pass, BEFORE the
+  -- slot -- so a Keen Eye turn-away does not cost the roamer its chance)
+  elseif (enc or self.gen45RollPassed) and GameVersion.isGen4() and not self:gen4Escorted() then
     -- (and not at all with a partner beside you: TryEncounterRoamer is only
     -- asked `if (!withPartner ...)` -- roamers never join a double)
     --
@@ -14318,6 +14495,16 @@ function OverworldState:onStepComplete()
        and lead and lead.level and enc.level < lead.level then
       return
     end
+    -- TryGenerateGrassEncounter_WithRadar: an ordinary grass encounter that
+    -- is generated clears the Poke Radar chain (surf and the rods do not);
+    -- so does a roamer (WildEncounters_TryWildEncounter's roamer arm)
+    if (roamer or not onWater) and GameVersion.isGen4()
+       and self.gen4Radar and self.gen4Radar.active then
+      self:gen4RadarEnd()
+    end
+    -- BLACK / WHITE: a walking encounter that starts zeroes the step counter
+    -- (ov21 0x021AA084 -> 0x021AA6F8); a rod or a trainer does not
+    if GameVersion.isGen5() then self.gen5EncSteps = 0 end
     local BattleState = require("src.battle.BattleState")
     -- BATTLETYPE_ROAMING: Music_SuicuneBattle, the one-turn flee, and the
     -- HP that carries between meetings all hang off this.
@@ -14337,6 +14524,10 @@ function OverworldState:onStepComplete()
     -- Safari game encounters use the BALL/BAIT/ROCK/RUN menu
     if self:inSafariGame() then
       battle:makeSafari(Game.save.safari)
+    end
+    -- HGSS Safari: forceOnePerfectIV (not with a Cute Charm gender)
+    if enc.onePerfectIV and enc.gender == nil and battle.enemy and battle.enemy.mon then
+      require("src.world.Gen45EncounterRate").onePerfectIV(Game.data, battle.enemy.mon)
     end
     if pyramidWild then
       Pyramid.prepareWild(battle, enc)
@@ -14912,9 +15103,22 @@ function OverworldState:gen4RadarEnd()
 end
 
 local function radarGrass(self)
+  -- CheckTileIsGrass (pokeradar.c): tall grass whose terrain height
+  -- (TerrainCollisionManager_GetHeight from 0: the lowest plate) is the
+  -- player's own; the bounds stand in for the map-header test
+  local HR = require("src.world.Gen4HeightRule")
+  local py = self.player and self.player.gen4Height
   return function(x, y)
     if not self.map:inBounds(x, y) then return false end
-    return self.map:cellBehaviour(x, y) == 2      -- TILE_BEHAVIOR_TALL_GRASS
+    if self.map:cellBehaviour(x, y) ~= 2 then return false end    -- TILE_BEHAVIOR_TALL_GRASS
+    if py then
+      local ok, list = pcall(HR.surfaces, self.map, x, y)
+      if ok and type(list) == "table" and #list > 0 then
+        local h = HR.nearest(list, 0)
+        if h and math.abs(h - py) > 0.5 then return false end
+      end
+    end
+    return true
   end
 end
 
@@ -14956,7 +15160,26 @@ function OverworldState:gen4RadarStep()
   if not (chain and chain.active) then return end
   -- PlayerAvatar_SetTransitionState(CYCLING): getting on the bike ends it
   if Game.save.onBike then return self:gen4RadarEnd() end
-  if not R.trimOutOfView(chain, self.player.cellX, self.player.cellY) then
+end
+
+-- the cartridge's field camera for the radar's view test: the map header's
+-- camera TYPE (not the player's chosen tilt), aimed at the player
+function OverworldState:gen4RadarView()
+  local def = self.map and self.map.def
+  local p = self.player
+  if not (def and p and p.px) then return nil end
+  local cfg = require("src.render.Gen4Camera").forType(def.cameraType, def.cameraFamily)
+  if not cfg then return nil end
+  return { cfg = cfg, tx = p.px + 8, ty = tonumber(p.gen4Height) or 0, tz = p.py + 8 }
+end
+
+-- PokeRadar_ClearIfAllOutOfView, every frame no field task runs (fieldmap.c)
+function OverworldState:gen4RadarViewTick()
+  local chain = self.gen4Radar
+  if not (chain and chain.active) or Game.stack:top() ~= self then return end
+  if self.runner and self.runner.isRunning and self.runner:isRunning() then return end
+  local R = require("src.world.Gen4Radar")
+  if not R.trimOutOfView(chain, self.player.cellX, self.player.cellY, self:gen4RadarView()) then
     self:gen4RadarEnd()
   end
 end
@@ -14974,9 +15197,16 @@ function OverworldState:gen4RadarEncounter(encDef)
     local built = Encounter.gen4Table(tbl, 100)
     if not built then return nil end
     return require("src.world.Gen4WildLead").choose(Game.data, Game.save, tbl, "grass",
-                                                     nil, love.math.random)
+                                                     "radar", love.math.random)
   end
   local enc = R.encounter(chain, patch, slots, encDef and encDef.radar, roll, Game.save)
+  -- CreateWildMon_FromRadarKeepChain still runs CreateWildMon's Synchronize /
+  -- Cute Charm (the shiny path's own re-draw is not modelled: shiny keeps its PID)
+  if enc and enc.species and enc.nature == nil and not enc.shiny then
+    local lead = require("src.world.Gen4WildLead").choose(Game.data, Game.save,
+      { { species = enc.species, level = enc.level } }, "grass", "radar", love.math.random)
+    if lead then enc.nature, enc.gender = lead.nature, lead.gender end
+  end
   if not enc or not enc.species then
     self:gen4RadarEnd()
     return false
@@ -14991,6 +15221,38 @@ function OverworldState:gen4RadarEncounter(encDef)
   local BattleState = require("src.battle.BattleState")
   local battle = BattleState.newWild(Game, enc.species, enc.level,
     { shiny = enc.shiny, nature = enc.nature, gender = enc.gender })
+  -- CreateWildMonShinyWithGenderOrNature: a shiny continuation still takes the
+  -- lead's Synchronize (50%) or Cute Charm (2/3, gendered species) -- shiny
+  -- personalities are redrawn until the nature / the opposite gender fits
+  local mon = enc.shiny and battle.enemy and battle.enemy.mon
+  if mon and mon.otId ~= nil then
+    pcall(function()
+      local WL = require("src.world.Gen4WildLead")
+      local Pokemon = require("src.pokemon.Pokemon")
+      local L = WL.lead(Game.data, Game.save)
+      if L.egg or not L.mon then return end
+      local rng = love.math.random
+      local wantNature, avoidGender
+      if L.ability == "CUTE_CHARM" then
+        local def = Game.data.pokemon and Game.data.pokemon[enc.species]
+        local ratio = def and tonumber(def.genderRatio)
+        if ratio and ratio ~= 0 and ratio ~= 254 and ratio ~= 255 and rng(0, 2) > 0 then
+          avoidGender = Pokemon.genderOf(Game.data, L.mon)
+        end
+      elseif L.ability == "SYNCHRONIZE" and rng(0, 1) == 0 then
+        wantNature = (tonumber(L.mon.personality) or 0) % 25
+      end
+      if wantNature == nil and avoidGender == nil then return end
+      for _ = 1, 4000 do
+        mon.gender = nil          -- read off the personality
+        local p = tonumber(mon.personality) or 0
+        if (wantNature == nil or p % 25 == wantNature)
+           and (avoidGender == nil or Pokemon.genderOf(Game.data, mon) ~= avoidGender) then return end
+        mon.personality = rng(0, 65535) * 65536 + rng(0, 65535)
+        Pokemon.forceShiny(Game.data, mon, nil, mon.otId)
+      end
+    end)
+  end
   battle.gen4RadarBattle = true
   battle.onFinish = function(result) self:afterBattle(result, battle) end
   self:pushBattle(battle)
@@ -15044,11 +15306,18 @@ function OverworldState:afterBattle(result, battle)
   -- encounter.c: a radar battle that ends in a win or a catch keeps the chain
   -- and sets its new patches up; anything else -- or any other wild battle --
   -- ends it
+  -- Encounter_NewVsTrainer clears the chain too (encounter.c)
+  if GameVersion.isGen4() and self.gen4Radar and self.gen4Radar.active
+     and battle and battle.kind ~= "wild" then
+    self:gen4RadarEnd()
+  end
   if GameVersion.isGen4() and self.gen4Radar and self.gen4Radar.active
      and battle and battle.kind == "wild" then
     local R = require("src.world.Gen4Radar")
     local chain = self.gen4Radar
-    if not battle.gen4RadarBattle then chain.radarBattle = false end
+    -- the radar flag (unk_18) is sticky for the chain's life: a won surf or
+    -- rod battle mid-chain keeps it and re-rolls the patches (encounter.c);
+    -- an ordinary GRASS encounter ends it when generated (step code)
     if R.afterBattle(chain, result) then
       R.setup(chain, result == "caught")
     else
@@ -15114,6 +15383,13 @@ function OverworldState:afterBattle(result, battle)
     local status = enemy and enemy.mon and enemy.mon.status
     local gone = result == "caught" or result == "win" or hp <= 0
     self.gen4RoamerSlot = nil
+    -- HGSS (overlay_02 0x0224B9F0, sub_02066BE8): a roamer knocked out sets
+    -- VAR_ROAMER_*_STATUS (0x4045 + slot) to 2, caught to 1 -- the Hall of
+    -- Fame (T10R0701) re-creates the ones at 2
+    if slot and Encounter.isHgss() and slot >= 0 and slot <= 3 then
+      local v = (result == "caught") and 1 or ((result == "win" and hp <= 0) and 2 or nil)
+      if v then pcall(require("src.script.Gen4Commands").setVar, Game.save, 0x4045 + slot, v) end
+    end
     pcall(function()
       local Roamers = require("src.world.Gen4Roamers")
       local left, how = Roamers.afterBattle(Game.data, Game.save,
@@ -15464,6 +15740,12 @@ function OverworldState:warpToHealPoint(onDone, opts)
   local teleport = opts and opts.arrive == "teleport"
   if teleport then
     self.arriveWarp = "teleport"
+    -- HGSS: Teleport's special-spawn warp is mode 2 (FieldMoveTask_Create-
+    -- TeleportEnvironment), whose landing runs sub_02067BA4 ->
+    -- Save_RandomizeRoamersLocation; Escape Rope (0) and Dig (1) do not
+    if Encounter.isHgss() and not (opts and opts.whiteout) and Game.save then
+      pcall(function() require("src.world.Gen4Roamers").randomizeAll(Game.data, Game.save) end)
+    end
     -- Dig/Teleport/Escape Rope land OUTSIDE at the last Pokemon Center TOWN
     -- door, like Fly (#196) -- NOT the interior heal cell a blackout returns
     -- to.  pret routes escape-warp and blackout both through wLastBlackoutMap
@@ -18406,7 +18688,12 @@ function OverworldState:drawWorld()
         drawn = freeGround:freeEntity((g.npc.px or 0) + g.ox,
                                       (g.npc.py or 0) + g.oy, cam.x, cam.y, 0,
                                       function()
+                                        -- (its frame from this eye, as drawEntity's)
+                                        local saved = g.npc.facing
+                                        g.npc.facing = freeGround:shownFacing(saved,
+                                          (g.npc.px or 0) + g.ox, (g.npc.py or 0) + g.oy)
                                         g.npc:draw(cam.x - g.ox, cam.y - g.oy)
+                                        g.npc.facing = saved
                                       end)
       end
       if not drawn then g.npc:draw(cam.x - g.ox, cam.y - g.oy) end
@@ -18472,10 +18759,12 @@ function OverworldState:drawWorld()
             -- Set and restored around the draw rather than threaded through,
             -- because `facing` is what every pose, animation and follower path
             -- in the entity reads, and none of them should learn about cameras.
-            local view, saved = freeGround.view3d, e.facing
-            if view and view.worldToScreen then
-              e.facing = view:worldToScreen(saved)
-            end
+            --
+            -- FROM WHERE THE EYE STANDS (Gen4View:worldToScreen): the bearing to
+            -- this character, so one standing beside a first-person eye shows
+            -- the side the eye can see.
+            local saved = e.facing
+            e.facing = freeGround:shownFacing(saved, e.px, e.py)
             -- ...IN THE FIELD'S FOG, as the live pass tints them (gymFog):
             -- the gyms' and the weathers' depth fog at the character's depth
             -- on this camera, but not a model the fog leaves out (Hearthome's

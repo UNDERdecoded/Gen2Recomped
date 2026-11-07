@@ -5,3 +5,6 @@
 # A bundled mod's development material (tests/, tools/, oxr/, *.zip,
 # CHANGELOG.md, *_PLAN.md, .git) is never packed.
 DRAMATIC_SHAPE
+# Zallax's Emerald 3DS Voxels: its in-game bake (lib/bake) builds the voxels
+# from the player's own ROM, so it ships without generated/ or tools/.
+EMERALD_3DS_VOXEL

@@ -27,11 +27,60 @@
 --             personality, u16 name, u16 the points the player needs before
 --             they appear, then eight props { u16 prop (0x1FE / 0x1FF none),
 --             u8 position, pad }. The songs are SEQ_BGM_MSL_01 .. 04.
---   /a/0/4/8  member 0: one 28-byte row per species / form (799): u16
+--             member 2: THE SHOW'S SCRIPT (sta_act_script.c, ov132): 14
+--             u32 offsets, one script thread each (0x021FAD0C starts thread k
+--             at base + [k * 4]); thread 0 the stage (lights, curtain, song),
+--             2..5 the four performers (-1 in a command = the thread's own,
+--             0x021FB1F4), the rest share thread 0's. A command is a u16
+--             opcode (54 of them, table 0x021FDD14, VM arm9 0x0201121C) and
+--             u32 arguments, each read by arm9 0x0201134C (M.SCRIPT_ARGS: the
+--             count of those reads in each handler). READ: 0 end, 1 <n> wait
+--             n frames (+0x14), 3 <n> yield one frame (a pause point), 47 <n>
+--             a label (reads and runs on). By the ov112 sta_act_poke calls
+--             they make (READ): 11 <who, ?, x, y, z, ?> sets the position
+--             (0x021F8054, work +0x18, fx32), 12 <who, frames, dx, dy, dz, ?>
+--             moves it from the current one (0x021F8044 / 8054), 10 <who,
+--             0 / 1> the mirror flag (0x021F812C, +0x54), 13 / 14 <who> stop /
+--             start its animation (0x021F80B0 / 80A0), 39 <who, hand> the
+--             held prop's appeal flag (0x021F8140 for each in the mask),
+--             16 <who, frames, hops, height, wait> hops of `frames` each
+--             (task 0x021FB8CC, sin offset), 38 <who, frames, start, delta,
+--             wait> a turn in degrees to start + delta (task 0x021FBA14), 28
+--             <light, kind> / 29 <light> a spotlight made / removed, 30
+--             <light, frames, x, y, z> moved to a point, 31 <light, who,
+--             frames, x, y, z> riding a performer at that offset; a last
+--             `wait` of 1 (12 / 16 / 38) holds the thread for the move.
+--   /a/0/4/8  (kept as `species`, no longer used for eligibility: field code
+--             reads it, ov10 0x0216E280 opens arc 0x30 -- see Gen5Musical.eligible)
+--             member 0: one 28-byte row per species / form (799): u16
 --             species, u8 1 when it can play Dress Up (Koffing's row is 0).
 --   arm9 0x0200A544: the save's new-game props (15 of them).
 --   ov10 0x0216FF14: the fans' thresholds (ten u16, 12000 down to 0) and
 --             0x0216FF28 the props fans give, 40 for each of 7 shows.
+--
+--   /a/0/5/2  THE MUSICAL'S OWN POKEMON (musical_mcss.c, ov112): the battle
+--             sprites' layout, 20 members a species (Gen5MonAnim reads it:
+--             +2 parts, +4 cells, +5 / +7 animations, +6 multi-cells, +18
+--             palette), READ: ov112 0x021F5550 stores arc 0x34 before the
+--             seven file-id getters (arm9 0x0202D09C ..). Its +8 member is
+--             { u32 n; n x 0x38-byte part records; then 20-byte ANCHOR
+--             records to the end: s32 OAM (the n-th OAM of the cell bank,
+--             counted cell by cell), s32 id, s32 x, s32 y, s32 rot }. READ:
+--             the draw loop 0x021F5C80.. hands each record's id (+4) to the
+--             poke draw's callback 0x021F546C with the OAM's transformed
+--             position and its rotation plus rot << 11 (a u16 angle: rot / 32
+--             of a turn); ids 7..15 fill the nine equip points (id - 7, 0x38
+--             bytes each from work +0x14 -- the outfit's nine positions,
+--             ears / ears / head / eyes / face / body / waist / hand / hand,
+--             that order INFERRED from Pikachu: 7 / 8 ride its ears' cells,
+--             14 / 15 its arms'), id 4 / 5 two more points (work +0x20C /
+--             +0x218; on the one-OAM cells the multi-cell's base / centre
+--             nodes show: 4 the feet, 5 the middle). The anchors here are taken in the first frame of
+--             multi-cell animation 0 (the Dress Up's standing pose).
+--   (NOT /a/0/4/8 +16 -> /a/0/4/9: that archive's members are 4x4-compressed
+--             BTX0 strips -- "t4x4hero", "t4x4flip", 32 frames -- with six
+--             BMD0 rocks / bones / grass first, not the Musical's; INFERRED
+--             a field / Entralink sprite table, not read further.)
 --
 -- build(x) -> the record constants.gen5Musical (merged by Gen5Facilities).
 
@@ -149,6 +198,216 @@ function M.images(rom, saveImage)
   return out
 end
 
+-- ------------------------------------------------- the show's script --
+
+-- (1-based byte readers)
+local function rawU16(d, at) return (d:byte(at) or 0) + (d:byte(at + 1) or 0) * 256 end
+local function rawU32(d, at) return rawU16(d, at) + rawU16(d, at + 2) * 65536 end
+local function rawS32(d, at) local v = rawU32(d, at) if v >= 2147483648 then v = v - 4294967296 end return v end
+
+M.SCRIPT_ARGS = { [0] = 0, 1, 1, 1, 1, 1, 3, 3, 1, 2, 2, 6, 6, 1, 1, 2, 5, 4, 2, 1, 1, 1, 5, 2, 1, 5, 2, 10, 2, 1,
+                  5, 6, 5, 2, 0, 3, 1, 0, 5, 2, 2, 1, 1, 0, 0, 0, 2, 1, 1, 0, 2, 2, 3, 1 }
+M.SCRIPT_THREADS = 14
+
+function M.decodeScript(d)
+  if type(d) ~= "string" or #d < M.SCRIPT_THREADS * 4 then return nil end
+  local out = { threads = {}, frames = 0 }
+  local starts = {}
+  for k = 0, M.SCRIPT_THREADS - 1 do starts[k] = rawU32(d, k * 4 + 1) end
+  local cache = {}
+  for k = 0, M.SCRIPT_THREADS - 1 do
+    local at = starts[k]
+    if not cache[at] then
+      local list, p = {}, at
+      while p + 2 <= #d do
+        local op = rawU16(d, p + 1)
+        local n = M.SCRIPT_ARGS[op]
+        if not n then break end
+        local cmd = { op }
+        for i = 1, n do cmd[i + 1] = rawS32(d, p + 3 + (i - 1) * 4) end
+        list[#list + 1] = cmd
+        p = p + 2 + 4 * n
+        if op == 0 then break end
+      end
+      cache[at] = list
+    end
+    out.threads[k] = cache[at]
+  end
+  for _, cmd in ipairs(out.threads[0] or {}) do
+    if cmd[1] == 1 then out.frames = out.frames + cmd[2] elseif cmd[1] == 3 then out.frames = out.frames + 1 end
+  end
+  return out
+end
+
+function M.choreography(rom, path)
+  return M.decodeScript((member(rom, path, 2)))
+end
+
+-- ------------------------------------------------------- the poses --
+
+M.PATH.poses = "/a/0/5/2"
+M.POSE_CANVAS, M.POSE_OX, M.POSE_OY = 160, 80, 120
+
+
+-- the cell bank's OAMs counted cell by cell -> { [global] = { cell, j } }:
+-- the drawn ones only (Gen5MonAnim.parseCells drops the hidden), the count
+-- the records keep -- Pikachu's, Bulbasaur's and Mewtwo's base / centre
+-- records land on their one-OAM cross cells only so
+local function oamIndex(cells)
+  if not cells then return nil end
+  local out, g = {}, 0
+  for i = 0, (cells.count or 0) - 1 do
+    for j = 1, #(cells.cells[i] and cells.cells[i].oam or {}) do out[g] = { cell = i, j = j } g = g + 1 end
+  end
+  return out
+end
+
+-- the anchor records at the end of member +8
+function M.anchorRecords(bytes)
+  if type(bytes) ~= "string" or #bytes < 4 then return nil end
+  local n = rawU32(bytes, 1)
+  local at = 4 + n * 0x38
+  if n > 64 or at > #bytes then return nil end
+  local out = {}
+  while at + 20 <= #bytes do
+    out[#out + 1] = { oam = rawS32(bytes, at + 1), id = rawS32(bytes, at + 5), x = rawS32(bytes, at + 9),
+                      y = rawS32(bytes, at + 13), rot = rawS32(bytes, at + 17) }
+    at = at + 20
+  end
+  return out
+end
+
+-- one species' pose, ANIMATED: multi-cell animation 0 played through its
+-- loop (Gen5MonAnim.machine; at most M.POSE_TICKS ticks), each distinct
+-- frame drawn once with its own nine points -- a prop rides its body part as
+-- the part moves (READ: the callback 0x021F546C refreshes the points from
+-- the drawn OAMs every frame). Fields: ox / oy / width / height (one frame's
+-- box, the origin in it), image + anchors / base / centre (frame 1),
+-- frames[i].anchors (/ base / centre), runs = { { f, ticks } .. } the
+-- loop's order, loop (its length), strip (the frames in a grid of
+-- `cols` columns, when there is more than one)
+M.POSE_TICKS = 1200
+function M.pose(arc, species, saveImage)
+  local A = require("src.import.Gen5MonAnim")
+  local set = A.load(arc, species, "front")
+  if not set then return nil end
+  local base = species * A.STRIDE
+  local okR, recs = pcall(M.anchorRecords, A.inflate(arc:get(base + 8)))
+  local oams = oamIndex(set.cells)
+  local machine = A.machine(set, 0)
+  if not (machine and okR and recs and oams) then return nil end
+  local C, OX, OY = M.POSE_CANVAS, M.POSE_OX, M.POSE_OY
+  -- the base / centre markers (the one-OAM cells ids 4 / 5 name, a cross)
+  -- are points, not drawn (INFERRED: the musical never shows them)
+  local marker = {}
+  for _, r in ipairs(recs) do
+    local where = oams[r.oam]
+    if where and (r.id == 4 or r.id == 5) then marker[where.cell] = true end
+  end
+  -- where an OAM of a cell sits: the part showing that cell, its node offset
+  -- and its rotation (the record's x / y are cell space: they repeat the
+  -- centre of the marker OAM it names, a plain 16 x 16 one)
+  local function points(state)
+    local out = { anchors = {} }
+    local function place(cellIndex, lx, ly)
+      for _, s in ipairs(state) do
+        if s.cell == cellIndex then
+          local c, sn = math.cos(s.rot), math.sin(s.rot)
+          local t = s.top
+          return c * s.sx * lx - sn * s.sy * ly + s.tx + t.tx, sn * s.sx * lx + c * s.sy * ly + s.ty + t.ty, s.rot
+        end
+      end
+    end
+    for _, r in ipairs(recs) do
+      local where = oams[r.oam]
+      if where and r.id >= 4 and r.id <= 15 then
+        local x, y, rot = place(where.cell, r.x, r.y)
+        if x then
+          local p = { x = x, y = y, rot = (rot or 0) + r.rot / 32 * 2 * math.pi }
+          if r.id >= 7 then out.anchors[r.id - 7] = out.anchors[r.id - 7] or p
+          elseif r.id == 4 then out.base = out.base or p
+          elseif r.id == 5 then out.centre = out.centre or p end
+        end
+      end
+    end
+    return out
+  end
+  local ticks = machine.loops and math.max(1, math.min(machine.loopTicks or 1, M.POSE_TICKS)) or 1
+  local frames, byKey, runs, rasters = {}, {}, {}, {}
+  local x0, y0, x1, y1
+  for _ = 1, ticks do
+    local state = machine.state()
+    local key = {}
+    for i, st in ipairs(state) do
+      key[i] = ("%d,%.4f,%.4f,%.4f,%d,%d,%d,%d"):format(st.cell, st.rot, st.sx, st.sy, st.tx, st.ty, st.top.tx, st.top.ty)
+    end
+    key = table.concat(key, ";")
+    local f = byKey[key]
+    if not f then
+      local shown = {}
+      for _, st in ipairs(state) do if not marker[st.cell] then shown[#shown + 1] = st end end
+      local px = A.render(set, shown, C, C, OX, OY, rasters)
+      for i, v in pairs(px) do
+        if v % 16 ~= 0 then
+          local x, y = i % C, math.floor(i / C)
+          x0 = (not x0 or x < x0) and x or x0; x1 = (not x1 or x > x1) and x or x1
+          y0 = (not y0 or y < y0) and y or y0; y1 = (not y1 or y > y1) and y or y1
+        end
+      end
+      local pt = points(state)
+      pt.px = px
+      frames[#frames + 1] = pt
+      f = #frames
+      byKey[key] = f
+    end
+    local last = runs[#runs]
+    if last and last[1] == f then last[2] = last[2] + 1 else runs[#runs + 1] = { f, 1 } end
+    machine.tick()
+  end
+  if not x0 then return nil end
+  local W, H = x1 - x0 + 1, y1 - y0 + 1
+  local pose = { ox = OX - x0, oy = OY - y0, width = W, height = H, anchors = frames[1].anchors,
+                 base = frames[1].base, centre = frames[1].centre, frames = {}, runs = runs, loop = ticks }
+  for i, fr in ipairs(frames) do pose.frames[i] = { anchors = fr.anchors, base = fr.base, centre = fr.centre } end
+  if saveImage then
+    local pal = set.normalPalette or set.palette
+    local function crop(px, out, ox, oy, stride)
+      for y = 0, H - 1 do
+        for x = 0, W - 1 do out[(y + oy) * stride + x + ox] = px[(y + y0) * C + (x + x0)] end
+      end
+    end
+    local one = {}
+    crop(frames[1].px, one, 0, 0, W)
+    pose.image = saveImage(("bw_musical/poke_%03d"):format(species),
+      { width = W, height = H, rgba = A.rgba(one, W, H, pal) }, { ox = pose.ox, oy = pose.oy })
+    if #frames > 1 then
+      local cols = math.min(#frames, 16)
+      local rows = math.ceil(#frames / cols)
+      local sw, sh = cols * W, rows * H
+      local grid = {}
+      for i, fr in ipairs(frames) do crop(fr.px, grid, ((i - 1) % cols) * W, math.floor((i - 1) / cols) * H, sw) end
+      pose.cols = cols
+      pose.strip = saveImage(("bw_musical/poke_%03d_anim"):format(species),
+        { width = sw, height = sh, rgba = A.rgba(grid, sw, sh, pal) }, { frames = #frames })
+    end
+  end
+  return pose
+end
+
+function M.poses(rom, saveImage, eligible)
+  local bytes = rom:read(M.PATH.poses)
+  local arc = bytes and Narc.parse(bytes)
+  if not arc then return nil end
+  local out, n = {}, 0
+  for sp = 1, 649 do
+    if not eligible or eligible[sp] ~= false then
+      local ok, pose = pcall(M.pose, arc, sp, saveImage)
+      if ok and pose then out[sp] = pose n = n + 1 end
+    end
+  end
+  return out, n
+end
+
 function M.build(x)
   local rom = x.rom
   local names, namesA, words = {}, {}, {}
@@ -167,11 +426,15 @@ function M.build(x)
     shows = {}, species = M.species(rom),
   }
   for i = 0, M.PROP_COUNT - 1 do props[i].nameA = namesA[i + 3] end
-  for i, path in ipairs(M.PATH.shows) do rec.shows[i - 1] = M.show(rom, path, i - 1) end
+  for i, path in ipairs(M.PATH.shows) do
+    rec.shows[i - 1] = M.show(rom, path, i - 1)
+    if rec.shows[i - 1] then rec.shows[i - 1].script = M.choreography(rom, path) end
+  end
   local fans = M.fanTables(rom)
   if fans then rec.fanThresholds, rec.fanGifts = fans.thresholds, fans.gifts end
   local saveImage = x.saveImage and function(rel, image, extra) return x:saveImage(rel, image, extra) end
   rec.images = M.images(rom, saveImage)
+  rec.poses = M.poses(rom, saveImage)
   return rec
 end
 

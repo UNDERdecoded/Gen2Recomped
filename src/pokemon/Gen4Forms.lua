@@ -7,6 +7,11 @@ for _, row in ipairs(require('src.import.Gen4Otherpoke').FORMS) do
     table.insert(order[row.species], row.form)
   end
 end
+-- HGSS's Pichu (MON_DATA_FORM 0 base, 1 Spiky-eared; Gen4Otherpoke.HGSS_PICHU)
+for _, row in ipairs(require('src.import.Gen4Otherpoke').HGSS_PICHU or {}) do
+  order[row.species] = order[row.species] or {}
+  table.insert(order[row.species], row.form)
+end
 local tracked = {[201]=true,[386]=true,[412]=true,[413]=true,[422]=true,
                  [423]=true,[479]=true,[487]=true,[492]=true}
 function Forms.species(species)
@@ -75,6 +80,8 @@ function Forms.definition(data, mon)
   return view
 end
 function Forms.record(game, species, mon)
+  -- the genders / Spinda / BW shiny sightings (Pokedex_Encounter's other half)
+  pcall(function() require('src.pokemon.Gen45DexRecord').record(game, species, mon) end)
   if not (game and game.data and (game.data.constants or {}).gen==4 and mon) then return end
   local id=Forms.species(species)
   if not tracked[id] or require('src.pokemon.Party').isEgg(mon) then return end
@@ -135,5 +142,13 @@ end
 
 function Forms.seen(dex, species)
   return ((dex and dex.gen4FormsSeen) or {})[Forms.species(species)] or {}
+end
+-- Black / White's form rows (personal +0x1C, gen5_forms) and Arceus's Plate
+-- type (Multitype) on top of the lookup above: src/pokemon/Gen45FormData.lua
+do
+  local plain = Forms.definition
+  function Forms.definition(data, mon)
+    return require('src.pokemon.Gen45FormData').definition(data, mon, plain)
+  end
 end
 return Forms

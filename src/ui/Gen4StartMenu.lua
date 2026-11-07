@@ -152,6 +152,15 @@ function Gen4StartMenu.new(game, opts)
   -- GBA menus (src/ui/StartMenu.lua, Gen3StartMenu:buildRows) -- shown only
   -- when at least one mod is installed, and placed before EXIT so the
   -- cartridge's rows keep their order.  No icon: the panel draws the word.
+  -- LINK, the port's too (docs/online-design.md 2.6): the same terms, the
+  -- same place, drawn as a word like MODS -- and never during the Safari
+  -- Game, the Bug-Catching Contest or Pal Park's Catching Show
+  local link = Gen4StartMenu.linkRow(game, self)
+  if link then
+    local at = #self.rows + 1
+    if self.rows[#self.rows] and self.rows[#self.rows].id == "exit" then at = #self.rows end
+    table.insert(self.rows, at, link)
+  end
   local mods = Gen4StartMenu.modsRow(game)
   if mods then
     local at = #self.rows + 1
@@ -184,6 +193,28 @@ function Gen4StartMenu.modsRow(game)
   local status = game and game.modStatus
   if not (status and #(status.available or {}) > 0) then return nil end
   return { id = "mods", label = Strings("MODS") }
+end
+
+-- The LINK row, or nil: link play needs a party, and the cartridge's
+-- minigames (`menu` carries safari / bugContest / palPark as new() worked
+-- them out) keep their own menus.  Shared with HgssStartMenu and
+-- Gen5StartMenu.
+function Gen4StartMenu.linkRow(game, menu)
+  if #((game and game.save or {}).party or {}) == 0 then return nil end
+  if menu and (menu.safari or menu.bugContest or menu.palPark) then return nil end
+  return { id = "link", label = Strings("LINK") }
+end
+
+-- the link screen is a state of its own (it owns the socket and outlives
+-- the menu); shared with the HGSS and BW menus
+function Gen4StartMenu.openLink(game)
+  local ok, LinkState = pcall(require, "src.link.LinkState")
+  if not ok then
+    Logger.warn("start menu: link play is not available (%s)", tostring(LinkState))
+    return false
+  end
+  game.stack:push(LinkState.new(game))
+  return true
 end
 
 -- Whether a row belongs on the menu at all.  See the header: Platinum's own
@@ -283,6 +314,10 @@ function Gen4StartMenu:select()
     return Screens.push(self.game, "ManagerState")
   end
   self.game.stack:pop()
+  if id == "link" then
+    Gen4StartMenu.openLink(self.game)
+    return
+  end
   if id == "retire" and self.bugContest then
     require("src.world.HgssBugContest").runStd(self.game.overworld, 10404)
     if self.onCancel then self.onCancel() end

@@ -106,6 +106,9 @@ local function hitCount(ctx, record)
   local dist = ctx.move.multiHit
   if dist == nil then return 1 end
   if type(dist) == "number" then return dist end
+  -- SKILL LINK: always the most (src/battle/Gen45Abilities.lua)
+  local most = require("src.battle.Gen45Abilities").skillLink(ctx.user, dist)
+  if most then return most end
   local r = ctx.rng(0, #dist - 1)
   return dist[r + 1]
 end

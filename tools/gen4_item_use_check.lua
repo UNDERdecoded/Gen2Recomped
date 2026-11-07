@@ -132,8 +132,8 @@ local WANT = {
   { "Rare Candy",   { levelUp = true } },
   -- effort values, signed, at bytes 7..12
   { "HP Up",        { ev = "hp" } },
-  { "Protein",      { ev = "atk" } },
-  { "Iron",         { ev = "def" } },
+  { "Protein",      { ev = "attack" } },
+  { "Iron",         { ev = "defense" } },
   { "Carbos",       { ev = "speed" } },
   { "Calcium",      { ev = "spatk" } },
   { "Zinc",         { ev = "spdef" } },

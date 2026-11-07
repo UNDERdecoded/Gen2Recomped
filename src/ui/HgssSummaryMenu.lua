@@ -496,7 +496,7 @@ end
 
 function HgssSummaryMenu:ability()
   local mon, def = self.mon, self:speciesDef()
-  local ability = mon.ability or (def and def.abilities and def.abilities[1])
+  local ability = require("src.pokemon.AbilityOf").pick(mon, def and def.abilities)
   if not ability then return nil end
   local id = tonumber(ability)
   if not id then

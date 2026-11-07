@@ -110,14 +110,15 @@ function M.propCount(save)
   return n
 end
 
--- may this Pokemon play Dress Up? (not an egg, and its musical row says so:
--- /a/0/4/8 byte 2, 0 for the 40 species the musical has no poses for)
+-- may this Pokemon play Dress Up? Any that is not an egg. READ: 0x16E
+-- (ov10 0x0215A168) opens the party list (overlay 91, pokelist.c) in mode
+-- 0x19; that mode's plate check (ov91 0x021B8392) asks ov112 0x021F6744,
+-- which is `PP_Get(pp, 0xAA) != 1` and nothing else (0xAA taken as the egg
+-- flag, INFERRED from the use). /a/0/4/8 is not the Musical's: field code
+-- reads it (ov10 0x0216E280 opens arc 0x30); every species has a pose.
 function M.eligible(data, mon)
   if not mon then return false end
-  if require("src.pokemon.Party").isEgg(mon) then return false end
-  local rec = M.rec(data)
-  local row = rec and rec.species and rec.species[tonumber(mon.species) or 0]
-  return row ~= false
+  return not require("src.pokemon.Party").isEgg(mon)
 end
 
 -- ---------------------------------------------------------- the program --
@@ -329,8 +330,9 @@ function Commands.g5_musical_word(ctx, kind, buffer, value)
     for k = 1, 3 do setBuffer(ctx, k - 1, word(data, w[k])) end
   elseif kind == 0 then setBuffer(ctx, buffer, "")   -- a downloaded show's title: none here
   else
-    -- 2 / 5 / 6: the lounge's performers (wireless): nobody
-    setBuffer(ctx, buffer, "")
+    -- 2 the show's name, 5 / 6 a performer's trainer / Pokemon (backstage;
+    -- src/script/Gen5MusicalBackstage.lua) -- nobody outside a show
+    setBuffer(ctx, buffer, require("src.script.Gen5MusicalBackstage").word(ctx, kind, v) or "")
   end
 end
 
@@ -418,10 +420,34 @@ Q[0x20] = function(ctx)
 end
 Q[0x21] = function(ctx, a) local w = work(ctx) local pf = w and w.performers and w.performers[(tonumber(a) or 0) + 1] return pf and M.total(pf) or 0 end
 Q[0x23] = function(ctx, a) local w = work(ctx) return w and w.lineup and w.lineup[tonumber(a) or 0] or 0 end
+Q[0x22] = function() return nil end   -- 0x0215D7CE: nothing stored
 Q[0x24] = function(ctx) local w = work(ctx) return w and w.prog and M.programType(w.prog) or 0 end
-Q[0x25] = function() return 0 end
-Q[0x26] = function() return 0 end
-Q[0x27] = function() return 0 end
+-- READ, ov10 0x0215D504 -> 0x0215699C / 0x021569A4 (the work's byte
+-- +0x48 + a; a performer's four u16 at +0x4C). 0x25 <k>: the performer the
+-- owner's review (Z078, member 156 S0707) speaks of k-th, counting 3 down
+-- to 0 -- taken as the k-th place of the ranking (INFERRED: the writer of
+-- +0x48 is not read). 0x26 <a>: performer a's type worn most, 4 on a tie
+-- for the top
+Q[0x25] = function(ctx, a)
+  local w = work(ctx)
+  local order = w and w.performers and M.rank(w.performers)
+  return order and order[(tonumber(a) or 0) + 1] and order[(tonumber(a) or 0) + 1] - 1 or 0
+end
+Q[0x26] = function(ctx, a)
+  local w = work(ctx)
+  local pf = w and w.performers and w.performers[(tonumber(a) or 0) + 1]
+  local c = pf and pf.counts
+  if not c then return 4 end
+  -- as written: a new top keeps the OLD top in the tie word, so "1" there
+  -- (a tie, or a top of 1 overtaken) answers 4
+  local best, at, flag = 0, 0, 0
+  for t = 0, 3 do
+    local n = c[t] or 0
+    if best < n then flag, best, at = best, n, t elseif best == n then flag = 1 end
+  end
+  return flag == 1 and 4 or at
+end
+Q[0x27] = function(ctx, a) return require("src.script.Gen5MusicalBackstage").sprite(ctx, a) end
 
 function Commands.g5_musical_query(ctx, fn, arg, dest)
   fn = tonumber(fn) or 0
@@ -500,10 +526,12 @@ function Commands.g5_musical_event(ctx, fn, a, b, dest)
   if fn == 0x00 then ctx.game.gen5Musical = ctx.game.gen5Musical or {}
   elseif fn == 0x01 then ctx.game.gen5Musical = nil
   elseif fn == 0x12 then
-    -- the Musical Photo of the show just played (proc 0x021BB6A4): kept
-    local w = ctx.game.gen5Musical
-    if w and w.photo then M.save(ctx.save).photo = w.photo end
+    -- the lobby asks it (M0892 S06AA / S06F4, arg 0 / 1) and reads 5 / 6:
+    -- the wireless lounge's state -- nobody here (the photo is kept by
+    -- g5_musical_show)
     v = 0
+  elseif fn == 0x0E or fn == 0x11 then
+    require("src.script.Gen5MusicalBackstage").event(ctx, fn, valueOf(ctx, a))
   elseif fn == 0x13 or fn == 0x14 then v = 0   -- the wireless lounge: nobody
   elseif fn == 0x15 then v = 0
   end
@@ -513,6 +541,9 @@ end
 
 -- the screens, pushed and waited for
 local function runScreen(ctx, screen)
+  return M.runScreen(ctx, screen)
+end
+function M.runScreen(ctx, screen)
   local runner = ctx.runner
   local done = false
   local onDone = screen.onDone
@@ -556,6 +587,26 @@ function M.afterShow(ctx)
   if ow and ow.syncObjectVisibility then pcall(ow.syncObjectVisibility, ow) end
 end
 
+-- the musical app's photo prompt (system bank 78 #3, YES / NO)
+function M.askPhoto(ctx, photo)
+  local s = M.save(ctx.save)
+  if os.getenv and os.getenv("BW_MUSICAL_PHOTO") then
+    if os.getenv("BW_MUSICAL_PHOTO") ~= "no" then s.photo = photo end
+    return
+  end
+  local game, runner = ctx.game, ctx.runner
+  local text = game and game.data and game.data.text
+    and game.data.text[require("src.import.Gen5Text").label("system", 78, 3)]
+  if not (game and game.stack and type(text) == "string") then s.photo = photo return end
+  local done = false
+  game.stack:push(require("src.render.TextBox").new(game, text, nil, { choice = function(yes)
+    if yes then s.photo = photo end
+    done = true
+    if runner then runner:resume() end
+  end }))
+  if runner and not done then runner:yield() end
+end
+
 -- 0x167 <slot var, mode>
 function Commands.g5_musical_show(ctx, slotVar, mode)
   mode = tonumber(mode) or 0
@@ -578,10 +629,9 @@ function Commands.g5_musical_show(ctx, slotVar, mode)
   local w = ctx.game.gen5Musical or {}
   ctx.game.gen5Musical = w
   w.prog = prog
-  local D = require("src.ui.Gen5MusicalDressUp")
-  local outfit
-  runScreen(ctx, D.new(ctx.game, { mon = mon, show = prog.show, onDone = function(o) outfit = o end }))
-  local performers = M.performers(data, prog, mon, outfit or {})
+  -- READ (ov10 0x02155A98, the event's work): the program and the lineup are
+  -- made before anything is shown; the Dress Up comes later, backstage
+  local performers = M.performers(data, prog, mon, {})
   -- the lineup: the four in a random order (ov10 0x02155BA2)
   local lineup = { 1, 2, 3, 4 }
   for _ = 1, 10 do
@@ -594,15 +644,51 @@ function Commands.g5_musical_show(ctx, slotVar, mode)
     w.lineup[k - 1] = k - 1
     if ordered[k].player then w.playerIndex = k - 1 end
   end
+  -- BACKSTAGE (zone 78; src/script/Gen5MusicalBackstage.lua, the event's
+  -- states READ): the welcome, the Dress Up, the call to the stage, the
+  -- stage, the review, back to the lobby -- when the cache has Z078's scripts
+  if require("src.script.Gen5MusicalBackstage").start(ctx, w) then return end
+  local D = require("src.ui.Gen5MusicalDressUp")
+  local outfit
+  runScreen(ctx, D.new(ctx.game, { mon = mon, show = prog.show, onDone = function(o) outfit = o end }))
+  M.dress(w, outfit)
   M.score(data, prog, ordered)
   local St = require("src.ui.Gen5MusicalStage")
   runScreen(ctx, St.new(ctx.game, { prog = prog, performers = ordered }))
+  M.finishShow(ctx, w)
+end
+
+-- the Dress Up's outfit onto the player's performer
+function M.dress(w, outfit)
+  for _, pf in ipairs(w.performers or {}) do
+    if pf.player then pf.props, pf.used = outfit or {}, {} end
+  end
+end
+
+-- after the stage: the fans, the record, the photo (both ways of getting
+-- there: straight from 0x167, or from the backstage's 0x16B 0x11)
+function M.finishShow(ctx, w)
+  local data, save = ctx.game.data, ctx.save
+  local s = M.save(save)
+  local prog, ordered = w.prog, w.performers
   local order = M.rank(ordered)
   local player = ordered[(w.playerIndex or 0) + 1]
   local top = ordered[order[1]]
   M.makeFans(data, save, prog, player)
   M.record(data, save, player, top)
   w.photo = { show = prog.index, species = player.species, outfit = s.outfit, score = M.total(player) }
+  -- the photo frame by the lobby's door (sign 1, M0154 S0359: 0x169 7, then
+  -- 0x167 mode 2) shows "the Musical Photo saved from last time". No
+  -- script stores one -- the lobby's only 0x16B 0x12 calls read the
+  -- wireless lounge (5 / 6) -- so the musical app asks, in its own system
+  -- bank 78: #3 "Do you want to display your Musical Photo in the Musical
+  -- Theater?" #4 YES / #5 NO. READ: overlay 112 opens bank 78 (0x021F46F4),
+  -- prints #3 in state 1 when its work +0xC is 1 (0x021F438A). +0xC is the
+  -- app's first launch parameter (init 0x021F4284 from 0x021F391E): mode 1
+  -- asks, any other mode only shows the photo (the lobby frame); which
+  -- launcher passes 1 is not traced -- taken as the show's end. YES copies the
+  -- 0x1B0-byte photo into the save (0x021F43D0); NO keeps the old one
+  M.askPhoto(ctx, w.photo)
   M.afterShow(ctx)
   local parts = {}
   for k, pf in ipairs(ordered) do parts[k] = ("%s%d:%d+%d"):format(pf.player and "*" or "", pf.species, pf.points or 0, pf.bonus or 0) end
@@ -614,7 +700,7 @@ function Commands.g5_musical_show(ctx, slotVar, mode)
   end
 end
 
-for _, name in ipairs({ "g5_musical_show", "g5_musical_dressup", "g5_musical_pick" }) do
+for _, name in ipairs({ "g5_musical_show", "g5_musical_dressup", "g5_musical_pick", "g5_musical_event" }) do
   Commands.meta = Commands.meta or {}
   Commands.meta[name] = { foreground = true, blocking = true }
 end

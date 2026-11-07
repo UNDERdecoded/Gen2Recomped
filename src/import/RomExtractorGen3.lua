@@ -11350,11 +11350,30 @@ function RomExtractorGen3:multichoiceTable()
     end
     return good >= 1 and good >= count - 1
   end
+  -- FIRERED'S TABLE HAS A HOLE: MULTICHOICE_48 (three options whose labels
+  -- this charmap can't read as menu text), and a run that stopped there lost
+  -- lists 49..64 -- the Direct Corner's TRADE / COLOSSEUM (50), its JOIN /
+  -- LEAD (63), the Seagallop ferries.  A record of the table's shape (a
+  -- pointer, a count in range) is carried when a real record follows it.
+  local function empty(at2)
+    if at2 % 4 ~= 0 or at2 + M.STRIDE > rom.size then return false end
+    local count = rom:u8(at2 + M.COUNT)
+    if count == 0 then return true end
+    return count <= M.MAX_OPTIONS and rom:pointer(at2) ~= nil
+  end
+  local function runFrom(at2)
+    local n = 0
+    while true do
+      if record(at2 + n * M.STRIDE) then n = n + 1
+      elseif empty(at2 + n * M.STRIDE) and record(at2 + (n + 1) * M.STRIDE) then n = n + 1
+      else break end
+    end
+    return n
+  end
   local best, bestN, at = nil, 0, 0
   while at <= rom.size - M.STRIDE do
     if record(at) then
-      local n = 0
-      while record(at + n * M.STRIDE) do n = n + 1 end
+      local n = runFrom(at)
       if n > bestN then best, bestN = at, n end
       at = at + math.max(n, 1) * M.STRIDE
     else
@@ -11379,6 +11398,7 @@ function RomExtractorGen3:extractMultichoice()
     local o = at + i * M.STRIDE
     local list, n = rom:pointer(o), rom:u8(o + M.COUNT)
     local row = {}
+    if not list then n = 0 end
     for k = 0, n - 1 do
       local text = rom:pointer(list + k * M.ACTION)
       row[k + 1] = (text and self:multichoiceText(text)) or ""

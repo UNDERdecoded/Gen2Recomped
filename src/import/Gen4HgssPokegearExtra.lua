@@ -22,6 +22,10 @@
 --                      the 8bpp char 10 (ov101_021EAF40 copies 47 x 20 of it)
 --   map_ui_<skin>      pgmap NSCR 32 + skin whole (320 rows: the Y / X
 --                      buttons' states below the frame), char 26 + skin
+--   map_marks_<skin>   pgmap NSCR 38 + skin whole (the markings panel; the
+--                      trash can's two states at (14 / 22, 16) 8 x 5, BACK
+--                      pressed at (7, 16) 6 x 5), map_marks_bg_<skin> NSCR
+--                      44 + skin, both over char 26 + skin
 --   map_info_<skin>    pgmap NSCR 56 + skin (top-screen panel + its copy
 --                      blocks), char 50 + skin, sub palette 14 + skin
 --   map_landmarks      pgmap NSCR 13 over char 12 (SUB_3, 7 x 7 pictures in
@@ -184,6 +188,12 @@ function X.images(rom)
     local mapTop = paletteWith(core, map, 20, skin, false)
     out["map_full_" .. skin] = composeWhole(map, 11, 10, mapTop, 8, 64)
     out["map_ui_" .. skin] = composeWhole(map, 32 + skin, 26 + skin, mapTop)
+    -- the markings mode's panel (MAIN_2: NSCR 38 + skin, rows 0-13 plus the
+    -- trash can / back states it copies from rows 16-20) and its backdrop
+    -- (MAIN_3: NSCR 44 + skin), both over char 26 + skin in 16 colours
+    -- (PokegearMap_SetBgParam_MarkingsMode; hgss-gear-markings-v1)
+    out["map_marks_" .. skin] = composeWhole(map, 38 + skin, 26 + skin, mapTop)
+    out["map_marks_bg_" .. skin] = composeWhole(map, 44 + skin, 26 + skin, mapTop)
     local mapSub = paletteWith(core, map, 14, skin, true)
     out["map_info_" .. skin] = composeWhole(map, 56 + skin, 50 + skin, mapSub)
     if skin == 0 then out.map_landmarks = composeWhole(map, 13, 12, mapSub) end

@@ -615,7 +615,11 @@ local function main()
     b:resolveSwitch(Game.save.party[2])
     drain(b)
     local took = 999 - leaving.mon.hp
-    return b.player ~= leaving and took >= base * 2 - 2, ("took %d, single hit %d"):format(took, base or -1)
+    -- double POWER is not double damage: base = floor((X + 2) * k), the
+    -- doubled hit floor((2X + 2) * k) with k = 2 * 85/100 here (crit, low
+    -- roll), so it can sit up to 4 under twice the single hit; -2 flaked on
+    -- the random IVs Pokemon.new rolls (battle parity pass, 2026-11-02)
+    return b.player ~= leaving and took >= base * 2 - 4, ("took %d, single hit %d"):format(took, base or -1)
   end)
   rule("Pursuit goes before a trainer's switch (the turn order)", function()
     local b = fresh(495, 506)

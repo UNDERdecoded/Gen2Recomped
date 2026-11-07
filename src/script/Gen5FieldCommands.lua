@@ -23,12 +23,13 @@ end
 -- bwcardlevel <dest>  0x0CD: the Trainer Card's level (its colour) -- the
 -- Pokemon Center nurse's "Th-that Trainer Card! That wonderful shade!" on
 -- anything above 0 (member 855). The same count the card screen paints
--- (Gen4TrainerCard:cardLevel): the port keeps the Hall of Fame entry and
--- none of the other conditions, so 0 before it and 1 after
+-- (Gen4TrainerCard:cardLevel): ov10 0x0216F830's five points, READ, in
+-- src/ui/Gen4CardLevel.lua (L.bw)
 function Commands.g4_bw_card_level(ctx, destVar)
   local C = require("src.script.Gen4Commands")
-  local hof = ctx.save and ctx.save.hallOfFame
-  C.setVar(ctx.save, destVar, (type(hof) == "table" and #hof > 0) and 1 or 0)
+  -- the five points ov10 0x0216F830 counts (src/ui/Gen4CardLevel.lua)
+  local n = require("src.ui.Gen4CardLevel").bw(ctx.save or {})
+  C.setVar(ctx.save, destVar, n)
 end
 
 -- bwapproachobject <which, dest>  0x082: the object of the trainer who

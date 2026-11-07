@@ -13,6 +13,22 @@
 local V = {}
 
 V.CAMERA = { distance = 30, pitch = math.rad(-18), fov = math.rad(45), target = { 0, 2, 0 } }
+-- A DOUBLE PULLS THE CAMERA BACK.  The doubles homes (Gen5BattleLayout.HOME,
+-- the cartridge's own) stand the player's pair either side of the singles
+-- spot; through the singles camera the left one's back sprite, drawn about
+-- twice size, sat almost wholly off the left edge (a Hydreigon showed only a
+-- wing).  BW's doubles camera is further out; its values are not known, so
+-- this factor is the port's, set by eye like the camera above (INFERRED).
+V.DOUBLE_DISTANCE = 1.35
+V.cam = V.CAMERA
+function V.cameraFor(battle)
+  local okL, L = pcall(require, "src.battle.Gen5BattleLayout")
+  if okL and L.rule(battle) == "double" then
+    local c = V.CAMERA
+    return { distance = c.distance * V.DOUBLE_DISTANCE, pitch = c.pitch, fov = c.fov, target = c.target }
+  end
+  return V.CAMERA
+end
 V.ENEMY = { 11, 0.2, -8 }
 V.PLAYER = { -6, 0.2, 12 }
 V.W, V.H = 256, 192
@@ -87,6 +103,8 @@ function V.render(battle)
     if not target.colour then target.failed = true end
   end
   V.curW = w
+  -- the camera this battle's rule uses; project / standPoint read the same
+  V.cam = V.cameraFor(battle)
   if target.failed then return nil end
   local bgName, stageName = V.pick(battle)
   local bg, stage = model(s, bgName), model(s, stageName)
@@ -98,7 +116,7 @@ function V.render(battle)
   g.push("all")
   g.setCanvas({ target.colour, depthstencil = target.depth })
   g.clear(0, 0, 0, 1, true, true)
-  local c = V.CAMERA
+  local c = V.cam or V.CAMERA
   local vp = M.multiply(FLIP_Y, M.multiply(M.perspective(c.fov, V.curW / V.H, 4, 4000),
                                            M.orbit(c.target, c.distance, 0, c.pitch)))
   bg:draw(vp)
@@ -113,7 +131,7 @@ end
 
 local function viewProjection()
   local M = require("src.render.Gen4Model")
-  local c = V.CAMERA
+  local c = V.cam or V.CAMERA
   return M.multiply(FLIP_Y, M.multiply(M.perspective(c.fov, V.curW / V.H, 4, 4000),
                                        M.orbit(c.target, c.distance, 0, c.pitch)))
 end

@@ -209,8 +209,10 @@ local GEN4_CURE = { [0] = "SLP", [1] = "PSN", [2] = "BRN", [3] = "FRZ",
 -- one names, in the order the struct declares them
 local GEN4_EV_BITS = {
   { byte = 5, bit = 3, stat = "hp",    at = 7 },
-  { byte = 5, bit = 4, stat = "atk",   at = 8 },
-  { byte = 5, bit = 5, stat = "def",   at = 9 },
+  -- the mon's own EV keys (attack / defense): "atk" / "def" put Protein's
+  -- and Iron's EVs, and Kelpy's / Qualot's cuts, under keys no stat reads
+  { byte = 5, bit = 4, stat = "attack",  at = 8 },
+  { byte = 5, bit = 5, stat = "defense", at = 9 },
   { byte = 5, bit = 6, stat = "speed", at = 10 },
   { byte = 5, bit = 7, stat = "spatk", at = 11 },
   { byte = 6, bit = 0, stat = "spdef", at = 12 },
@@ -262,11 +264,19 @@ function ItemEffects.gen4RecordFor(id, data)
   local r = { source = "cartridge:ItemData.partyUseParam" }
 
   -- ---- the friendship steps, which every medicine may carry --------------
-  local friendship = {}
+  -- kept BY TIER: an absent step is 0, not the next tier's value moved down
+  local friendship, any = {}, false
   for i, at in ipairs({ 15, 16, 17 }) do
-    if bit(6, i) then friendship[#friendship + 1] = signed8(b[at]) end
+    if bit(6, i) then friendship[i] = signed8(b[at]); any = true else friendship[i] = 0 end
   end
-  if #friendship > 0 then r.friendship = friendship end
+  -- Black / White flag one step fewer than they carry (HP Up flags two of
+  -- its 5/3/2, the EV berries two of 10/5/2): the three bytes are read as
+  -- they stand there (INFERRED from the records, not from code)
+  if (any or bit(6, 4)) and require("src.core.GameVersion").isGen5() then
+    for i, at in ipairs({ 15, 16, 17 }) do friendship[i] = signed8(b[at]) end
+    any = true
+  end
+  if any then r.friendship = friendship end
 
   -- ---- A RARE CANDY IS NOT A REVIVE, whatever the bits say ---------------
   --
@@ -683,6 +693,13 @@ local function gen3Friendship(target, deltas)
   local band = (now < 100) and 1 or ((now < 200) and 2 or 3)
   local delta = deltas[math.min(band, #deltas)]
   if not delta then return end
+  -- Gen 4 / 5 (item_use_pokemon.c UpdatePokemonFriendship): a gain is
+  -- boosted by the Soothe Bell, then +1 Luxury Ball, +1 egg location
+  local G45 = require("src.pokemon.Gen45Friendship")
+  if G45.applies() then
+    target.happiness = G45.itemDelta(nil, target, delta, now)
+    return
+  end
   target.happiness = math.max(0, math.min(255, now + delta))
 end
 
@@ -876,16 +893,28 @@ local function gen3Use(data, save, itemId, target, battle, moveIndex)
     local now = math.floor(tonumber(target.evs[r.ev]) or 0)
     local by = math.floor(tonumber(r.amount) or 0)
     local want
+    -- Gen 4 / 5 (item_use_pokemon.c CalculateEVUpdate): a vitamin stops at
+    -- 100 (MAX_EV_VITAMIN), and an EV-lowering berry clamps the result to
+    -- 100 too -- 252 Attack and a Kelpsy Berry leave 100, not 242
+    local nds = require("src.core.GameVersion").isNds()
+    -- ...and Gen 3's too: pokeemerald ExecuteTableBasedItemEffect stops a
+    -- vitamin at EV_ITEM_RAISE_LIMIT (100), FireRed the same code. Only the
+    -- Gen 3 and Gen 4 / 5 records raise EVs here (Polished's berries only
+    -- lower them), so the limit is every record's
+    local cap = 100
     if by >= 0 then
       -- the two ceilings: 255 in one stat and 510 across the six
-      local room = math.min(GEN3_EV_MAX - now,
+      local room = math.min(cap - now,
                             GEN3_EV_TOTAL - gen3EvTotal(target.evs))
       want = now + math.max(0, math.min(by, room))
     else
       want = math.max(0, now + by)
+      if nds and want > cap then want = cap end
     end
     if want == now then
-      if r.friendshipOnly and (tonumber(target.happiness) or 0)<255 then
+      -- Gen 4 / 5: an EV berry on a zero EV still works when it can raise
+      -- friendship (CHECK_EV_ITEM_EFFECT -> CheckFriendshipItemEffect)
+      if (r.friendshipOnly or (nds and by < 0 and r.friendship)) and (tonumber(target.happiness) or 0)<255 then
         gen3Friendship(target,r.friendship)
         return "consumed",{Strings("%s became\nfriendlier!",monName(data,target))}
       end
@@ -1000,8 +1029,15 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
   -- HOENN'S OWN ANSWER FIRST, when the cartridge gave one.  Everything below
   -- is Gen 1's and Gen 2's, keyed by a name Emerald's items do not carry.
   do
+    local before = target and target.happiness
     local kind, msgs, extra = gen3Use(data, save, rawItemId, target, battle,
                                       moveIndex)
+    -- HGSS: the walking Pokemon's mood moves with a friendship item
+    if kind == "consumed" and target then
+      local rec = gen3Record(data, rawItemId)
+      pcall(require("src.pokemon.Gen45Friendship").itemMood, data, target,
+            tonumber(rawItemId) or itemDef and itemDef.id, before, rec and rec.friendship)
+    end
     if kind then return kind, msgs, extra end
   end
 
@@ -1247,6 +1283,16 @@ function ItemEffects.use(data, save, itemId, target, battle, moveIndex, ow)
     require("src.world.PikachuFollower")
       .modifyHappiness(save, "LEVELUP", target)
     gen2Friendship.levelUp(data,save,target)
+    -- Gen 4 / 5: the candy's own friendship steps (5/3/2), by the ITEM order
+    -- -- Soothe Bell first, then the Luxury Ball and egg-location +1s
+    -- (item_use_pokemon.c UpdatePokemonFriendship), not the battle level-up's
+    if require("src.core.GameVersion").isNds() then
+      local rec = ItemEffects.gen4RecordFor(itemDef, data)
+      local before = target.happiness
+      gen3Friendship(target, (rec and rec.friendship) or { 5, 3, 2 })
+      pcall(require("src.pokemon.Gen45Friendship").itemMood, data, target, 50, before,
+            (rec and rec.friendship) or { 5, 3, 2 })
+    end
     return "consumed", { Strings("%s grew\nto level %d!", monName(data, target), target.level) },
            { leveledTo = target.level, beforeStats = old,
              afterStats = target.stats }

@@ -283,9 +283,53 @@ function Fingerprint.records(data, kind)
   return out
 end
 
+-- ------- battle fingerprint (handshake v3, docs/online-design.md 2.4)
+
+-- The slice a LOCKSTEP BATTLE reads, and nothing a trade alone reads: no
+-- evolutions, growth curves or base exp (link battles award no exp), but the
+-- abilities Gen 3+ battles turn on.  Two games of one family whose battle
+-- digests agree can lockstep even when their trade surfaces differ; when
+-- they disagree the battle falls to the host-authoritative mode (WS5).
+-- `compute` above is untouched, so a v2 peer's digest still compares.
+local BATTLE_SPECIES_FIELDS = { "baseStats", "types", "abilities", "abilityIds" }
+
+Fingerprint.BATTLE_SPECIES_FIELDS = BATTLE_SPECIES_FIELDS
+
+local function battleSurface(data, mods)
+  local out = {}
+  local saved = RECORD_FIELDS.pokemon
+  RECORD_FIELDS.pokemon = BATTLE_SPECIES_FIELDS
+  local ok, err = pcall(writeSection, out, data, "pokemon")
+  RECORD_FIELDS.pokemon = saved
+  if not ok then error(err, 0) end
+  writeSection(out, data, "moves")
+  writeTypeChart(out, data)
+  writeSection(out, data, "statuses")
+  writeSection(out, data, "move_effects")
+  writeConstants(out, data)
+  writeLinkFields(out, data)
+  out[#out + 1] = "[mods]" .. modKey(mods)
+  return table.concat(out)
+end
+
+Fingerprint.battleSurface = battleSurface
+
+local battleCache = setmetatable({}, { __mode = "k" })
+
+function Fingerprint.battle(data, mods)
+  if not data then return digest("") end
+  local key = modKey(mods)
+  local hit = battleCache[data]
+  if hit and hit.key == key then return hit.value end
+  local value = digest(battleSurface(data, mods))
+  battleCache[data] = { key = key, value = value }
+  return value
+end
+
 function Fingerprint.forget(data)
   cache[data] = nil
   recordCache[data] = nil
+  battleCache[data] = nil
 end
 
 return Fingerprint

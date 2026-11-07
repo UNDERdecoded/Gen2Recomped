@@ -210,7 +210,10 @@ local function estimate(vm, index)
     if ok and Damage and Damage.compute then
       local okDmg, dmg = pcall(Damage.compute, vm.battle.ruleset, vm.user,
         vm.target, def, { rng = function(_, hi) return hi end,
-                          forceCrit = false, data = vm.battle.data })
+                          forceCrit = false, data = vm.battle.data,
+                          -- an estimate: no berry eaten, no gem spent
+                          -- (src/battle/Gen4Damage.lua)
+                          dryRun = true })
       if okDmg then out = tonumber(dmg) or 0 end
     end
     -- the AI's own roll, one per move, held for the whole pass

@@ -231,10 +231,13 @@ function Gen4DayCare.rollPersonality(data, save)
   local dittos = 0
   for i = 1, 2 do if mons[i] and speciesOf(mons[i]) == DITTO then dittos = dittos + 1; slot = i end end
   if dittos == 2 then slot = rand(0, 65535) >= 0x7FFF and 1 or 2 end
-  local inherit = slot and heldItem(mons[slot]) == ITEM_EVERSTONE and rand(0, 65535) < 0x7FFF
+  -- HGSS takes either parent's Everstone, Platinum / BW the mother's or
+  -- Ditto's (src/pokemon/Gen45Breeding.lua)
+  local from = require("src.pokemon.Gen45Breeding").everstoneParent(mons, slot)
+  local inherit = from ~= nil
   local p
   if inherit then
-    local nature = natureOf(mons[slot].personality)
+    local nature = natureOf(mons[from].personality)
     for _ = 1, 2401 do
       p = rand32()
       if natureOf(p) == nature and p ~= 0 then break end
@@ -243,6 +246,9 @@ function Gen4DayCare.rollPersonality(data, save)
     p = rand32()
   end
   dc.personality = (p ~= 0) and p or 1
+  -- Black / White keep the nature apart from the personality: the
+  -- Everstone's is carried to the egg as it is
+  dc.bwNature = (inherit and require("src.pokemon.Pokemon").natureIsOwnField()) and mons[from].nature or nil
   return dc.personality
 end
 
@@ -349,21 +355,16 @@ function Gen4DayCare.giveEgg(game, save)
   local key = reg[species] and species or ("SPECIES_%03d"):format(species)
   local ok, egg = pcall(Pokemon.new, data, key, 1, nil, form ~= 0 and form or nil)
   if not ok then egg = Pokemon.new(data, key, 1) end
-  Pokemon.applySeed(data, egg, { personality = dc.personality })
-  -- Egg_InheritIVs: three different stats, each from either parent
-  local stats = { "hp", "attack", "defense", "speed", "spatk", "spdef" }
   local parents = { Gen4DayCare.slot(save, 0).mon, Gen4DayCare.slot(save, 1).mon }
-  local pool = { 1, 2, 3, 4, 5, 6 }
-  local picked = {}
-  for i = 1, 3 do picked[i] = table.remove(pool, rand(0, 65535) % (6 - i + 1) + 1) end
-  egg.ivs = egg.ivs or {}
-  for i = 1, 3 do
-    local from = parents[rand(0, 65535) % 2 + 1]
-    local key2 = stats[picked[i]]
-    local iv = from and from.ivs and from.ivs[key2]
-    if iv then egg.ivs[key2] = iv end
-  end
-  Pokemon.applySeed(data, egg, {})
+  -- the Masuda method: parents of two languages re-roll for a shiny
+  local Breeding = require("src.pokemon.Gen45Breeding")
+  local otId = save.player and save.player.id
+  Pokemon.applySeed(data, egg, { personality = Breeding.masuda(save, parents, dc.personality, otId) })
+  -- Egg_InheritIVs / InheritIVs: Platinum's position bug, HGSS / BW's Power
+  -- items (src/pokemon/Gen45Breeding.lua)
+  Breeding.inheritIVs(egg, parents)
+  Pokemon.applySeed(data, egg, dc.bwNature ~= nil and { nature = dc.bwNature } or {})
+  Breeding.hiddenAbility(data, egg, mother, father, parents)
   Gen4DayCare.buildMoves(data, egg, father, mother)
   if species == PICHU and (heldItem(parents[1]) == ITEM_LIGHT_BALL or heldItem(parents[2]) == ITEM_LIGHT_BALL) then
     addMove(data, egg, MOVE_VOLT_TACKLE)
@@ -378,7 +379,7 @@ function Gen4DayCare.giveEgg(game, save)
   require("src.pokemon.Gen4Origin").stamp(game, egg, "egg", "Day-Care Couple")
   save.party = save.party or {}
   save.party[#save.party + 1] = egg
-  dc.personality, dc.counter = 0, 0
+  dc.personality, dc.counter, dc.bwNature = 0, 0, nil
   return egg
 end
 
@@ -404,6 +405,15 @@ function Gen4DayCare.cyclesToSubtract(data, party)
         return require("src.battle.Abilities").of({ mon = mon, def = def })
       end)
       if ok and (ability == "FLAME_BODY" or ability == "MAGMA_ARMOR") then return 2 end
+      -- Black / White records carry ability NUMBERS (abilityIds): Magma
+      -- Armor 40, Flame Body 49
+      local ids = def and def.abilityIds
+      if ids then
+        local slot = tonumber(mon.abilitySlot) or 1
+        local id = tonumber(ids[slot]) or 0
+        if id == 0 then id = tonumber(ids[1]) or 0 end
+        if id == 40 or id == 49 then return 2 end
+      end
     end
   end
   return 1

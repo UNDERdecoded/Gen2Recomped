@@ -638,6 +638,15 @@ local function handleJoinRequest(secret)
   local kindTag, code = secret:match("^(%a):(.+)$")
   if not kindTag then kindTag, code = "m", secret end -- older/plain secret: assume match
   Runtime.emit("discord.join_requested", { code = code, kind = kindTag })
+  -- a friend's Link Hub code (the launcher's share code) is a hub to use,
+  -- not a session to dial (src/online/LauncherHub.lua)
+  do
+    local okH, LH = pcall(require, "src.online.LauncherHub")
+    if okH and LH.handleJoinSecret then
+      local okJ, handled = pcall(LH.handleJoinSecret, game, code)
+      if okJ and handled then return end
+    end
+  end
   if kindTag == "t" then
     local ok, Tournament = pcall(require, "src.link.Tournament")
     if ok and Tournament.newJoinOnline then

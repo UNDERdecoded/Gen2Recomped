@@ -146,10 +146,22 @@ function Handshake.onlineAllowed(game)
   return #Handshake.onlineBlockers(game) == 0
 end
 
+-- the link features this build offers; a hello's list is intersected with
+-- the peer's (Handshake.features), so a client without `world` still trades
+Handshake.FEATURES = { "trade", "battle" }
+
 -- mode is nil on the guest: it pairs and announces itself before the host
 -- has picked, and compatibility is decided from the two hellos, not the mode
-function Handshake.hello(game, mode)
+--
+-- v3 (docs/online-design.md 2.4) adds, all additively: gen, game, family,
+-- nationalDex (the FR/LG gate reads it), wire = { mon = MonCodec version },
+-- features, battleFingerprint, and the invite's nonce / a world's mapSet
+-- when opts carries them.  A v2 peer ignores every one of them.
+function Handshake.hello(game, mode, opts)
   local mods = Handshake.mods(game)
+  local info = require("src.online.CompatRules").info(game)
+  local features = {}
+  for i, f in ipairs(Handshake.FEATURES) do features[i] = f end
   return {
     type = "hello",
     protocol = Handshake.PROTOCOL,
@@ -160,7 +172,45 @@ function Handshake.hello(game, mode)
     fingerprint = Fingerprint.compute(game and game.data, mods),
     linkModified = Handshake.linkModified(game),
     mods = mods,
+    gen = info.gen,
+    game = info.game,
+    family = info.family,
+    nationalDex = info.nationalDex,
+    wire = { mon = Version.linkMonWire or 3 },
+    features = features,
+    battleFingerprint = Fingerprint.battle(game and game.data, mods),
+    nonce = opts and opts.nonce or nil,
+    mapSet = opts and opts.mapSet or nil,
   }
+end
+
+-- the features both hellos list (a v2 hello lists none: trade and battle,
+-- the only two it knew)
+function Handshake.features(localHello, remoteHello)
+  local function set(h)
+    local s = {}
+    local list = h and h.features
+    if type(list) ~= "table" then list = { "trade", "battle" } end
+    for _, f in ipairs(list) do s[f] = true end
+    return s
+  end
+  local a, b = set(localHello), set(remoteHello)
+  local out = {}
+  for _, f in ipairs(Handshake.FEATURES) do
+    if a[f] and b[f] then out[#out + 1] = f end
+  end
+  for f in pairs(a) do
+    local known = false
+    for _, g in ipairs(Handshake.FEATURES) do if g == f then known = true end end
+    if not known and b[f] then out[#out + 1] = f end
+  end
+  return out
+end
+
+-- the MonCodec version a hello speaks (nil: a v1/v2 peer, v2 packets)
+function Handshake.monWire(hello)
+  local w = type(hello) == "table" and type(hello.wire) == "table" and hello.wire.mon
+  return tonumber(w)
 end
 
 local function major(semver)
@@ -169,37 +219,99 @@ end
 
 -- full        identical link surfaces: nothing to negotiate, lockstep is safe
 -- vanilla_peer  an old build, and we are unmodified, so it is right about us
--- subset      both v2 but the surfaces differ: negotiated trade, no battle
--- refused     an old build we would silently corrupt, or a different engine
-function Handshake.checkCompat(localHello, remoteHello)
-  localHello = localHello or {}
+-- subset      both v2 (or v3 Gen 1/2) but the surfaces differ: negotiated
+--             trade, no battle
+-- family      v3, two games of one Gen 3+ family (E/FRLG, Pt/HGSS) or one
+--             game with different data: trade with MonCodec v3 under the
+--             CompatRules gates; battle only host-authoritative (WS5)
+-- timecapsule v3, Gen 1 <-> Gen 2: trade only, Time Capsule rules
+-- transfer    v3, Gen 3 -> 4 (Pal Park) or Gen 4 -> 5 (Poke Transfer): a
+--             one-way gift from the older game to the newer one
+--             (src/online/Transfer.lua TransferSession), never a swap
+-- refused     an old build we would silently corrupt, a different engine,
+--             a v2 peer on a Gen 3+ game, or two games that cannot link
+local function decide(localHello, remoteHello)
   if not remoteHello or not remoteHello.protocol then
     if localHello.linkModified then
       return "refused", "peer_v1_modified"
+    end
+    -- a v1 peer predates every Gen 3+ game; its packets carry Gen 1/2 only
+    if (tonumber(localHello.gen) or 1) >= 3 then
+      return "refused", "peer_v2"
     end
     return "vanilla_peer", nil
   end
   if major(remoteHello.engineVersion) ~= major(localHello.engineVersion) then
     return "refused", "engine_mismatch"
   end
-  if remoteHello.fingerprint == localHello.fingerprint then
-    return "full", nil
+  if (tonumber(remoteHello.protocol) or 0) < 3 then
+    -- v2 loses a Gen 3+ mon's personality, IVs, EVs and nature: refuse
+    -- rather than corrupt it.  Gen 1/2 keep the v2 path verbatim.
+    if (tonumber(localHello.gen) or 1) >= 3 then
+      return "refused", "peer_v2"
+    end
+    if remoteHello.fingerprint == localHello.fingerprint then
+      return "full", nil
+    end
+    return "subset", "fingerprint_mismatch"
   end
-  return "subset", "fingerprint_mismatch"
+  local pair = require("src.online.CompatRules").pair(localHello, remoteHello)
+  if pair.transfer then
+    -- one way upward: Pal Park (Gen 3 -> 4) or Poke Transfer (4 -> 5)
+    return "transfer", pair.transfer.route, pair
+  end
+  if not pair.trade then
+    return "refused", pair.reason, pair
+  end
+  if pair.timeCapsule then
+    return "timecapsule", "time_capsule", pair
+  end
+  if remoteHello.fingerprint == localHello.fingerprint then
+    return "full", nil, pair
+  end
+  if (tonumber(localHello.gen) or 1) <= 2 then
+    return "subset", "fingerprint_mismatch", pair
+  end
+  return "family", "fingerprint_mismatch", pair
+end
+
+-- The last decision, for the code that has no other way to learn it: the
+-- current LinkState builds its TradeSession from the verdict alone, so
+-- Protocol reads the peer's hello here (the per-mon gates, the MonCodec
+-- version to speak).  Callers that hold both hellos pass them explicitly.
+Handshake.session = nil
+
+-- returns verdict, reason, pair (CompatRules.pair for v3 peers)
+function Handshake.checkCompat(localHello, remoteHello)
+  localHello = localHello or {}
+  local verdict, reason, pair = decide(localHello, remoteHello)
+  Handshake.session = { mine = localHello, theirs = remoteHello,
+                        verdict = verdict, reason = reason, pair = pair }
+  return verdict, reason, pair
 end
 
 -- only two v2 peers that agreed on a verdict may reject a mon outright; a v1
 -- peer keeps the old substitute-a-move behaviour it was built against
 function Handshake.strict(verdict)
-  return verdict == "full" or verdict == "subset"
+  return verdict == "full" or verdict == "subset" or verdict == "family"
+    or verdict == "timecapsule" or verdict == "transfer"
 end
 
+-- `family` (two games of one Gen 3+ family with different data) battles
+-- host-authoritatively (WS5, src/online/LinkBattleModern.lua; the mode comes
+-- from LinkBattle.modeFor)
 function Handshake.battleAllowed(verdict)
-  return verdict == "full" or verdict == "vanilla_peer" or verdict == nil
+  return verdict == "full" or verdict == "vanilla_peer" or verdict == "family"
+    or verdict == nil
 end
 
+-- a transfer link is a one-way gift, not a trade
 function Handshake.tradeAllowed(verdict)
-  return verdict ~= "refused"
+  return verdict ~= "refused" and verdict ~= "transfer"
+end
+
+function Handshake.transferAllowed(verdict)
+  return verdict == "transfer"
 end
 
 -- ------- incompatibility report
@@ -264,6 +376,72 @@ end
 function Handshake.describe(localHello, remoteHello, verdict, mode)
   local lines = {}
   local peer = (remoteHello and remoteHello.name) or "THEY"
+  local _, reason = decide(localHello or {}, remoteHello)
+  if verdict == "refused" and reason == "peer_v2" then
+    -- v3: a Gen 3+ game against an older build
+    wrap(lines, "The other game is")
+    wrap(lines, "an older version.")
+    wrap(lines, "Update the other")
+    wrap(lines, "game to trade.")
+    return lines
+  end
+  if verdict == "refused" and (reason == "cross_generation"
+      or reason == "cross_family" or reason == "no_family") then
+    wrap(lines, "These two games")
+    wrap(lines, "can't link.")
+    local theirs = remoteHello and remoteHello.game
+    if type(theirs) == "string" and #theirs > 0 then
+      wrap(lines, ("The other game is %s."):format(theirs:upper():sub(1, 12)))
+    end
+    return lines
+  end
+  if verdict == "refused" and reason == "needs_national_dex" then
+    wrap(lines, "PAL PARK needs")
+    wrap(lines, "the NATIONAL DEX")
+    wrap(lines, "in the DS game.")
+    return lines
+  end
+  if verdict == "transfer" then
+    local palPark = reason == "palpark"
+    wrap(lines, palPark and "PAL PARK" or "POKé TRANSFER")
+    wrap(lines, "One way only, to")
+    wrap(lines, palPark and "the DS game." or "BLACK or WHITE.")
+    wrap(lines, "It can't come back.")
+    if mode == "battle" then
+      wrap(lines, "Link battle isn't")
+      wrap(lines, "possible here.")
+    end
+    return lines
+  end
+  if verdict == "timecapsule" then
+    wrap(lines, "TIME CAPSULE")
+    if mode == "battle" then
+      wrap(lines, "Link battle isn't")
+      wrap(lines, "possible through")
+      wrap(lines, "the TIME CAPSULE.")
+    else
+      wrap(lines, "Only POKéMON and")
+      wrap(lines, "moves both games")
+      wrap(lines, "know can be")
+      wrap(lines, "traded.")
+    end
+    return lines
+  end
+  if verdict == "family" and remoteHello and remoteHello.game ~= nil
+     and localHello and remoteHello.game ~= localHello.game then
+    wrap(lines, "A different game")
+    wrap(lines, "of the same")
+    wrap(lines, "series.")
+    if mode == "battle" then
+      -- a family battle runs host-authoritatively (WS5, LinkBattleModern)
+      wrap(lines, "Link battle works:")
+      wrap(lines, "the host's game")
+      wrap(lines, "runs the battle.")
+    else
+      wrap(lines, "Trading works.")
+    end
+    return lines
+  end
   if verdict == "refused" then
     if not (remoteHello and remoteHello.protocol) then
       wrap(lines, "The other game is")
@@ -291,7 +469,12 @@ function Handshake.describe(localHello, remoteHello, verdict, mode)
     wrap(lines, "The game data is")
     wrap(lines, "not the same.")
   end
-  if mode == "battle" then
+  if mode == "battle" and verdict == "family" then
+    -- same family, different data: host-authoritative (WS5)
+    wrap(lines, "Link battle works:")
+    wrap(lines, "the host's game")
+    wrap(lines, "runs the battle.")
+  elseif mode == "battle" then
     wrap(lines, "Link battle needs")
     wrap(lines, "the same mods.")
   else

@@ -17,6 +17,9 @@ local HoldItems = require("src.battle.HoldItems")
 local Abilities = require("src.battle.Abilities")
 
 local Damage = {}
+Damage.gen4OldDamage = os.getenv("GEN4_OLD_DAMAGE") ~= nil
+Damage.gen5OldDamage = os.getenv("GEN5_OLD_DAMAGE") ~= nil
+Damage.gen3OldDamage = os.getenv("GEN3_OLD_DAMAGE") ~= nil
 
 -- Moves with a boosted critical-hit rate (engine/battle/core.asm
 -- CriticalHitTest checks these move ids explicitly).  The move-record
@@ -240,6 +243,22 @@ function Damage.compute(ruleset, attacker, defender, move, opts)
   -- thing being asserted.
   if move.power == 0 or move.category == "status" or move.class == "status" then
     return 0, { crit = false, typeMult = 10 }
+  end
+  -- PLATINUM / HGSS: the cartridge's own formula, in its own order
+  -- (src/battle/Gen4Damage.lua; GEN4_OLD_DAMAGE=1 keeps the shared one)
+  if ruleset and ruleset.name == "gen4_platinum" and not Damage.gen4OldDamage then
+    return require("src.battle.Gen4Damage").compute(ruleset, attacker, defender, move, opts)
+  end
+  -- HOENN (Ruby / Sapphire / Emerald / FireRed / LeafGreen): pokeemerald's
+  -- CalculateBaseDamage order (src/battle/Gen4Damage.lua computeGen3;
+  -- GEN3_OLD_DAMAGE=1 keeps the shared one)
+  if ruleset and ruleset.name == "gen3_emerald" and not Damage.gen3OldDamage then
+    return require("src.battle.Gen4Damage").computeGen3(ruleset, attacker, defender, move, opts)
+  end
+  -- BLACK / WHITE: the Gen 5 formula (INFERRED, src/battle/Gen4Damage.lua
+  -- computeGen5; GEN5_OLD_DAMAGE=1 keeps the shared one)
+  if ruleset and ruleset.name == "gen5_bw" and not Damage.gen5OldDamage then
+    return require("src.battle.Gen4Damage").computeGen5(ruleset, attacker, defender, move, opts)
   end
 
   -- THE MOVES AN ABILITY SIMPLY DOES NOT FEEL: a BALTOY's LEVITATE and an

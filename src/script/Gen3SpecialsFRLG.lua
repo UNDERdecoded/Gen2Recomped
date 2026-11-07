@@ -521,7 +521,17 @@ return function(Gen3Commands)
     ctx.save.frlgChampionSaveWarp = true
   end)
   def(421, function() end)                      -- DoCredits (run by the ceremony)
-  def(93, function(ctx) return 0 end)           -- Field_AskSaveTheGame
+  -- Field_AskSaveTheGame (start_menu.c task50_save_game): VAR_RESULT TRUE once
+  -- the file is written -- the cable club and the Direct Corner branch on it
+  -- (`call EventScript_AskSaveGame; goto_if_eq VAR_RESULT, 0, AbortLink`).
+  -- Answered by Emerald's SaveGame (96): the engine's own write. Left
+  -- unanswered, VAR_RESULT kept the battle-mode menu's 0 (SINGLE) and every
+  -- wireless single battle aborted with "Please do visit again."
+  def(93, function(ctx)
+    if S[96] then return S[96](ctx) end
+    setVar(ctx.save, VAR_RESULT, 1)
+    return 1
+  end)
 
   local function buffer(ctx, n, text)
     local game = ctx.game
@@ -541,15 +551,19 @@ return function(Gen3Commands)
 
   -- ---- links, wireless, e-Reader: nothing to connect to --------------------
   -- The cable club and the wireless club answer "the link failed" rather than
-  -- walking the player into a colosseum with nobody in it.
+  -- walking the player into a colosseum with nobody in it.  28 / 29 are now
+  -- the real linkups (src/script/Gen3LinkRooms.lua); this is only the fallback.
   local LINKUP_FAILED = 5
   for _, i in ipairs({ 28, 29 }) do          -- TryBattleLinkup / TryTradeLinkup (Emerald slots)
     if not S[i] then
       S[i] = function(ctx) setVar(ctx.save, VAR_RESULT, LINKUP_FAILED) return LINKUP_FAILED end
     end
   end
-  def(32, function() end)                    -- EnterColosseumPlayerSpot
-  def(33, function() end)                    -- EnterTradeSeat
+  -- EnterColosseumPlayerSpot / EnterTradeSeat: the seat resumes the held
+  -- link (src/script/Gen3LinkRooms.lua, installed by Gen3Commands)
+  local seat = require("src.script.Gen3LinkRooms").seat or function() end
+  def(32, seat)                              -- EnterColosseumPlayerSpot
+  def(33, seat)                              -- EnterTradeSeat
   def(248, function() end)                   -- ReducePlayerPartyToThree (link battles)
   def(235, function() end)                   -- BufferEReaderTrainerGreeting
   def(96, function() end)                    -- ShowEasyChatMessage (link record corner)

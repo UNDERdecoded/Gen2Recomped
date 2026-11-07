@@ -341,7 +341,7 @@ eq(revlessGame.data.link_fields, nil, "and leaves no residue")
 
 local helloA = Handshake.hello(fakeGame(vanilla, "RED"), "trade")
 local helloB = Handshake.hello(fakeGame(cloneData(Data), "BLUE"), nil)
-eq(helloA.protocol, 2, "hello announces the protocol revision")
+eq(helloA.protocol, require("src.core.Version").linkProtocol, "hello announces the protocol revision")
 eq(helloA.apiVersion, require("src.core.Version").modApi, "hello carries the api version")
 eq(helloA.linkModified, false, "no mods means an unmodified link surface")
 eq(helloA.fingerprint, helloB.fingerprint, "identical data fingerprints alike")
@@ -535,7 +535,7 @@ local host, guest = pairStates(gameHost, gameGuest)
 pump(host, guest, gameHost, gameGuest, 2)
 eq(host.stage, "modeSelect", "the host reaches mode select")
 eq(guest.stage, "waitMode", "the guest waits for the mode")
-check(guest.myHello ~= nil and guest.myHello.protocol == 2,
+check(guest.myHello ~= nil and guest.myHello.protocol == require("src.core.Version").linkProtocol,
       "the guest announces itself the moment it pairs")
 check(host.peerHello ~= nil, "the host has the peer hello before it picks")
 

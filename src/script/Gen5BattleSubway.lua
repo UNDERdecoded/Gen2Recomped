@@ -806,8 +806,58 @@ end
 
 -- 0x13B <var>: wireless play on? Never here -- except the Poke Transfer Lab,
 -- whose transfer is local in this port (src/world/Gen5PokeTransfer.lua)
+--
+-- THE MULTI PLATFORMS (Z071 Multi, Z072 Super Multi): the receptionist's
+-- "with a friend" choice (file 882, S05E0 at 1504) asks this first.  The
+-- port runs the friend's train there and then (src/online/SubwayMulti.lua:
+-- leader / join, the code, two Pokemon each, car after car, each player's
+-- streak and BP), answers 0, and steps over the "wireless is off" line the
+-- script would say next, so the counter's own farewell closes it.
+M.MULTI_ZONES = { Z071 = false, Z072 = true }   -- zone -> Super line
+
+local function skipWirelessOffLine(ctx)
+  local sc, pc = ctx.script, ctx.pc
+  if type(sc) ~= "table" or not pc then return nil end
+  local r1, r2 = sc[pc + 1], sc[pc + 2]
+  if not (type(r1) == "table" and r1[1] == "g4_compare_var_value" and tonumber(r1[3]) == 0
+          and type(r2) == "table" and r2[1] == "g4_jump_if") then return nil end
+  for k = pc + 3, math.min(#sc, pc + 6) do
+    local r = sc[k]
+    if type(r) == "table" and r[1] == "g4_common" then return k + 1 end
+    if type(r) == "table" and r[1] == "g4_call" and type(sc[k + 1]) == "table" and sc[k + 1][1] == "jump"
+       and type(sc[k + 2]) == "table" and sc[k + 2][1] == "label" then
+      return k + 2
+    end
+  end
+  return nil
+end
+
+function M.friendTrain(ctx, super)
+  local okL, LinkRooms = pcall(require, "src.online.LinkRooms")
+  if not (okL and ctx.game and ctx.game.stack and LinkRooms.available()) then return nil end
+  local MultiBattle = require("src.online.MultiBattle")
+  local o = MultiBattle.withDefaults({ super = super, askRole = true })
+  local summary
+  LinkRooms.await(ctx, function(done)
+    local lobby = require("src.online.SubwayMulti").run(ctx.game, nil, o, function(sum)
+      summary = sum
+      done(sum)
+    end)
+    if MultiBattle.onLobby then pcall(MultiBattle.onLobby, lobby) end
+  end)
+  M.lastFriendTrain = summary
+  return summary
+end
+
 function Commands.g5_subway_wireless(ctx, dest)
   local here = ctx.overworld and ctx.overworld.map and ctx.overworld.map.id
+  if here and M.MULTI_ZONES[here] ~= nil then
+    local summary = M.friendTrain(ctx, M.MULTI_ZONES[here])
+    if summary then
+      store(ctx, dest, 0)
+      return skipWirelessOffLine(ctx)
+    end
+  end
   local okT, T = pcall(require, "src.world.Gen5PokeTransfer")
   store(ctx, dest, (okT and T.isLab(here)) and 1 or 0)
 end

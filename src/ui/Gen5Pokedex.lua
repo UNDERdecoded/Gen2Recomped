@@ -42,7 +42,9 @@
 -- Chosen: the cursor kept on row 2 (the capture's position) while the list
 -- scrolls; the name centred on x 195 and the category on 187 (each capture
 -- shows one Pokemon); a seen-only Pokemon's page showing the "?" words of entry
--- 0 and no entry text. NOT DONE: AREA, FORMS, the search screen, the
+-- 0 and no entry text. AREA / FORMS: see drawAreaTop / drawFormsTop (a BW
+-- alternate form's own picture is not imported, so it shows the base one).
+-- NOT DONE: the search screen, the
 -- footprint, the scroll animation, the list's scanner sweep, sounds beyond the
 -- shared select / decide.
 
@@ -192,6 +194,13 @@ end
 
 function Gen5Pokedex:front(id)
   local def = ((self.game.data or {}).pokemon or {})[id] or {}
+  -- the first gender seen picks the picture, as Platinum's / HGSS's dex
+  -- (Pokedex_DisplayedGender; INFERRED for Black / White): the female sheet
+  -- where the species has its own (Gen5BattleSprites +1)
+  local okR, Rec = pcall(require, "src.pokemon.Gen45DexRecord")
+  if okR and def.spriteFemaleFront and Rec.displayGender(self.game, id, 0) == "female" then
+    return self:image(def.spriteFemaleFront)
+  end
   return self:image(def.spriteFront)
 end
 
@@ -301,6 +310,14 @@ function Gen5Pokedex:update(dt)
   else
     if self:held(input, "up") then self:step(-1)
     elseif self:held(input, "down") then self:step(1)
+    elseif input:wasPressed("left") or input:wasPressed("right") then
+      -- INFO -> AREA -> FORMS (INFERRED keys; the cartridge's tabs are touched)
+      local order = { "info", "area", "forms" }
+      local at = 1
+      for i, m in ipairs(order) do if m == self.mode then at = i end end
+      at = (at - 1 + (input:wasPressed("right") and 1 or -1)) % 3 + 1
+      self.mode = order[at]
+      self:sound("SEQ_SE_SELECT1")
     elseif input:wasPressed("a") then self:cry(self.entries[self.cursor])
     elseif input:wasPressed("b") then self.mode = "list"; self:sound("SEQ_SE_CANCEL1")
     end
@@ -311,7 +328,7 @@ function Gen5Pokedex:touch(x, y)
   -- the foot's shared (x) and back
   if inBox(x, y, 211, 170, 228, 189) then return self:close() end
   if inBox(x, y, 235, 170, 252, 189) then
-    if self.mode == "info" then self.mode = "list"; self:sound("SEQ_SE_CANCEL1"); return end
+    if self.mode ~= "list" then self.mode = "list"; self:sound("SEQ_SE_CANCEL1"); return end
     return self:close()
   end
   if self.mode == "list" then
@@ -334,6 +351,9 @@ function Gen5Pokedex:touch(x, y)
     if inBox(x, y, 3, 169, 20, 189) then return self:step(-1) end
     if inBox(x, y, 27, 169, 44, 189) then return self:step(1) end
     if inBox(x, y, 112, 170, 142, 190) then return self:cry(self.entries[self.cursor]) end
+    if inBox(x, y, 48, 170, 79, 190) and self.mode ~= "info" then self.mode = "info"; return self:sound("SEQ_SE_SELECT1") end
+    if inBox(x, y, 80, 170, 111, 190) and self.mode ~= "area" then self.mode = "area"; return self:sound("SEQ_SE_SELECT1") end
+    if inBox(x, y, 144, 170, 175, 190) and self.mode ~= "forms" then self.mode = "forms"; return self:sound("SEQ_SE_SELECT1") end
   end
 end
 
@@ -372,7 +392,9 @@ function Gen5Pokedex:drawFoot()
     self:put("button_3", 5, 171)
     self:put("button_2", 29, 172)
     for i = 0, 3 do
-      self:put(("page_%d"):format(i * 2 + (i == 0 and 2 or 1)), 48 + i * 32, 170)
+      local on = (i == 0 and self.mode == "info") or (i == 1 and self.mode == "area")
+        or (i == 3 and self.mode == "forms")
+      self:put(("page_%d"):format(i * 2 + (on and 2 or 1)), 48 + i * 32, 170)
     end
     self:put("button_6", 184, 172)
   end
@@ -510,12 +532,171 @@ function Gen5Pokedex:drawInfoTop()
   ink(INK.entry, self:text(234, 178) or "INFO", 25, 7)
 end
 
+-- THE AREA PAGE (top screen; the touch screen keeps the INFO panel, its AREA
+-- tab lit). READ (ov208): the region and roads are the Town Map's own
+-- (/a/0/8/5 palette 0, chars 5 / 7, screens 17 / 16 -- 0x021C0090; here
+-- gen5_town_map's composed image); one marker per place (0x021C0450): the
+-- dex's cell bank 28 in the anim the place's town-map cursor shape names, at
+-- the cursor's x, y (record u16 24 / 25 / 26); the AREA record of /a/1/7/8
+-- for the season (src/import/Gen5DexArt.lua: one block for all, else the
+-- current season's); "Area Unknown" (bank 234 #128) when the block says so.
+-- A place's value is three bit groups (READ: ov208 0x021C2238 lights three
+-- 4 x 3-tile boxes of the touch screen's BG3 at tiles (7 / 14 / 21, 28),
+-- palette [5,2] / [6,0] / [7,4] off / on, from value & 0x07, & 0x18, & 0x60
+-- of the place under the cursor); INFERRED: the groups are walking / surfing /
+-- fishing (Gen5Pokedex.areaKinds). NOT DONE: that place cursor and the three
+-- boxes. INFERRED: every place with a non-zero value marked the same way, no blink, the title "{name}'s AREA"
+-- (bank 234 #189) in the INFO header strip, the unknown box's placement.
+function Gen5Pokedex:areaLocation(place)
+  local r = (self.game.data or {}).gen5_town_map
+  local zones = self.bw.areaZones
+  if not (r and r.locations and zones) then return nil end
+  self.areaLocs = self.areaLocs or {}
+  if self.areaLocs[place] == nil then
+    local found = false
+    for _, loc in ipairs(r.locations) do
+      if loc.zone == zones[place] then found = loc break end
+    end
+    self.areaLocs[place] = found
+  end
+  return self.areaLocs[place] or nil
+end
+
+-- a place value's three groups (READ masks, INFERRED names)
+function Gen5Pokedex.areaKinds(v)
+  local b = require("bit")
+  return { walk = b.band(v, 0x07) ~= 0, surf = b.band(v, 0x18) ~= 0, fish = b.band(v, 0x60) ~= 0 }
+end
+
+function Gen5Pokedex:areaBlock(id)
+  local rec = self.bw.area and self.bw.area[id]
+  if not rec then return nil end
+  if rec.same then return rec[1] end
+  local Rules = require("src.world.Gen5FieldRules")
+  return rec[Rules.season(self.game.save) + 1] or rec[1]
+end
+
+function Gen5Pokedex:drawAreaTop()
+  lg.setColor(0, 0, 0, 1)
+  lg.rectangle("fill", 0, 0, W, H)
+  lg.setColor(1, 1, 1, 1)
+  local r = (self.game.data or {}).gen5_town_map
+  local map = r and r.image and self:image(r.image.path)
+  if map then lg.draw(map, 0, 0) end
+  local id = self.entries[self.cursor]
+  local block = id and self:areaBlock(id)
+  local any = false
+  if block and not block.unknown then
+    local cells = self.bw.areaSeqCell or {}
+    for place in pairs(block.places or {}) do
+      local loc = self:areaLocation(place)
+      local cell = loc and cells[loc.cursorShape or 0]
+      local img, rec = self:bwImg(("area_%d"):format(cell or 0))
+      if loc and img and loc.cursor then
+        lg.draw(img, loc.cursor[1] + (rec.originX or 0), loc.cursor[2] + (rec.originY or 0))
+        any = true
+      end
+    end
+  end
+  local header = self:bwImg("info_header")
+  if header then lg.draw(header, 0, 0) end
+  local raw = id and ((self.game.data or {}).text or {})[("TEXT_G5S_%04d_%05d"):format(234, 189)]
+  local title = self:text(234, 179) or "AREA"
+  if type(raw) == "string" and raw ~= "" then
+    title = (raw:gsub("{VAR1}", self:name(id)):gsub("{[^}]*}", ""))
+  end
+  ink(INK.entry, title, 25, 7)
+  -- a record kept per season names the season (bank 234 #190..193; READ:
+  -- ov208 0x021C1B2E picks the block by the season when byte 0 is clear)
+  local rec = id and self.bw.area and self.bw.area[id]
+  if rec and not rec.same then
+    local Rules = require("src.world.Gen5FieldRules")
+    local s = Rules.season(self.game.save)
+    inkRight(INK.entry, self:text(234, 190 + s) or Rules.SEASONS[s], 247, 7)
+  end
+  if not any then
+    local word = self:text(234, 128) or "Area Unknown"
+    lg.setColor(0, 0, 0, 0.7)
+    lg.rectangle("fill", 48, 84, 160, 24)
+    lg.setColor(1, 1, 1, 1)
+    inkCentre(INK.entry, word, 128, 90)
+  end
+  lg.setColor(1, 1, 1, 1)
+end
+
+-- THE FORMS PAGE (top screen; the touch screen keeps the INFO panel, its
+-- FORMS tab lit). READ: the words -- bank 234 #184 FORMS SEEN, #185 SHINY
+-- SEEN, #114 / #115 Male / Female, #188 (Shiny). The record: the genders seen
+-- in first-seen order (Gen45DexRecord.gendersSeen), the forms seen
+-- (dex.gen5FormsSeen, INFERRED layout), the shiny bits of dex.gen5Seen
+-- (2 male, 3 female). INFERRED: the layout (three pictures a row, the label
+-- under each), a form other than 0 labelled by its def.forms name or number.
+function Gen5Pokedex:formEntries(id)
+  local out = {}
+  local dex = (self.game.save or {}).pokedex or {}
+  local Rec = require("src.pokemon.Gen45DexRecord")
+  local def = ((self.game.data or {}).pokemon or {})[id] or {}
+  local function word(g)
+    if g == "female" then return self:text(234, 115) or "Female" end
+    if g == "male" then return self:text(234, 114) or "Male" end
+    return ""
+  end
+  local genders = Rec.gendersSeen(self.game, id)
+  if #genders == 0 then genders = { "none" } end
+  for _, g in ipairs(genders) do
+    out[#out + 1] = { mon = { species = id, form = 0, gender = g ~= "none" and g or nil }, label = word(g) }
+  end
+  for _, fi in ipairs((dex.gen5FormsSeen or {})[id] or {}) do
+    if fi ~= 0 then
+      local f = type(def.forms) == "table" and def.forms[fi] or nil
+      local name = type(f) == "table" and (f.name or f.formName) or tostring(fi)
+      out[#out + 1] = { mon = { species = id, form = fi }, label = tostring(name) }
+    end
+  end
+  local bits = tonumber((dex.gen5Seen or {})[id]) or 0
+  for k, g in ipairs({ "male", "female" }) do
+    if math.floor(bits / 2 ^ (k + 1)) % 2 == 1 then
+      out[#out + 1] = { mon = { species = id, form = 0, gender = g, shiny = true },
+                        label = (self:text(234, 188) or "(Shiny)"), shiny = true }
+    end
+  end
+  return out
+end
+
+function Gen5Pokedex:drawFormsTop()
+  lg.setColor(1, 1, 1, 1)
+  local back = self:bwImg("info_top")
+  if back then lg.draw(back, 0, 0) else lg.setColor(0.1, 0.1, 0.1, 1); lg.rectangle("fill", 0, 0, W, H); lg.setColor(1, 1, 1, 1) end
+  local header = self:bwImg("info_header")
+  if header then lg.draw(header, 0, 0) end
+  ink(INK.entry, self:text(234, 184) or "FORMS SEEN", 25, 7)
+  local id = self.entries[self.cursor]
+  if not id then return end
+  local S = require("src.pokemon.Sprites")
+  for i, e in ipairs(self:formEntries(id)) do
+    if i > 6 then break end
+    local cx = 43 + ((i - 1) % 3) * 85
+    local y = 26 + math.floor((i - 1) / 3) * 82
+    local ok, path = pcall(S.path, self.game.data, id, "front", { mon = e.mon })
+    local img = ok and self:image(path) or nil
+    if img then
+      local w, h = img:getDimensions()
+      local s = math.min(1, 64 / math.max(w, h))
+      lg.draw(img, cx - floor(w * s / 2), y, 0, s, s)
+    end
+    inkCentre(INK.entry, e.label, cx, y + 66)
+  end
+end
+
 function Gen5Pokedex:drawTouch()
-  if self.mode == "info" then self:drawInfoTouch() else self:drawListTouch() end
+  if self.mode ~= "list" then self:drawInfoTouch() else self:drawListTouch() end
 end
 
 function Gen5Pokedex:drawTop()
-  if self.mode == "info" then self:drawInfoTop() else self:drawListTop() end
+  if self.mode == "info" then self:drawInfoTop()
+  elseif self.mode == "area" then self:drawAreaTop()
+  elseif self.mode == "forms" then self:drawFormsTop()
+  else self:drawListTop() end
 end
 
 function Gen5Pokedex:draw()

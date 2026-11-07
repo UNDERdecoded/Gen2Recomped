@@ -168,7 +168,7 @@ end
 function M.wildMon(data, species, level)
   local Pokemon = require("src.pokemon.Pokemon")
   local mon
-  for _ = 1, 5 do
+  for _ = 1, 4 do      -- generateWildNonShinyAndAddToParty: `i < 4`
     mon = Pokemon.new(data, species, level)
     local iv = mon.ivs or mon.dvs or {}
     for _, v in pairs(iv) do if tonumber(v) == 31 then return mon end end
@@ -207,11 +207,16 @@ function M.judge(save)
   local all = {}
   for i = 1, 5 do all[i] = s.contestants[i] end
   all[6] = { id = 5, player = true, species = s.caught and tonumber(s.caught.species) or 0, score = M.score(save) }
+  -- overlay_bug_contest.c 79-92 as written: one swap per place, with the
+  -- LAST entrant at or above the running best (swapping at every hit, as
+  -- this did, shuffles the tied ones below it differently)
   local order = { 1, 2, 3, 4, 5, 6 }
   for i = 1, 5 do
+    local best, at = all[order[i]].score, i
     for j = i + 1, 6 do
-      if all[order[j]].score >= all[order[i]].score then order[i], order[j] = order[j], order[i] end
+      if all[order[j]].score >= best then best, at = all[order[j]].score, j end
     end
+    order[i], order[at] = order[at], order[i]
   end
   s.ranking, s.all = order, all
   s.placement = 3
@@ -333,11 +338,25 @@ function M.encounter(ow)
   if not (M.running(save) and ow.map and ow.map.id == M.CONTEST_MAP) then return nil end
   local p = ow.player
   if not (ow.map.isGrassCell and ow.map:isGrassCell(p.cellX, p.cellY)) then return nil end
-  if rand(100) >= math.floor(M.LAND_RATE * 100 / 256 + 0.5) then return nil end
+  -- the park's ordinary walking check (FieldSystem_PerformLandOrSurfEncounterCheck:
+  -- inhibit steps, the movement roll, ability / flute / Cleanse Tag) against
+  -- its grassRate, 25 of 100 (src/world/Gen45EncounterRate.lua)
+  if not require("src.world.Gen45EncounterRate").walking(ow, G.data, save, { rate = M.LAND_RATE }) then return nil end
   local e = M.roll(save)
   if not e then return nil end
+  -- GenerateBugContestEncounter_Internal: Repel turns away a Pokemon below
+  -- the first healthy party member's level
+  if (tonumber(save.repelSteps) or 0) > 0 then
+    local Party = require("src.pokemon.Party")
+    local lead = Party.firstHealthy(save.party or {})
+    if lead and (tonumber(lead.level) or 0) > (tonumber(e.level) or 0) then return nil end
+  end
+  -- generateWildNonShinyAndAddToParty: Synchronize / Cute Charm
+  local L = require("src.world.Gen4WildLead").choose(G.data, save,
+    { { species = e.species, level = e.level } }, "grass", "radar", love.math.random)
   local BattleState = require("src.battle.BattleState")
-  local battle = BattleState.newWild(G, e.species, e.level)
+  local battle = BattleState.newWild(G, e.species, e.level,
+    L and (L.nature or L.gender) and { nature = L.nature, gender = L.gender } or nil)
   local mon = M.wildMon(G.data, e.species, e.level)
   if mon and battle.enemy then battle.enemy.mon.ivs = mon.ivs or battle.enemy.mon.ivs end
   battle:makeBugContest()

@@ -69,6 +69,11 @@ function EvolutionState.new(game, mon, newSpecies, onDone, via, evo)
   -- cancelled either.  Only level-up and rare-candy evolutions run with
   -- wForceEvolution clear and so honour B (#290, #213).
   self.cancelable = (via ~= "TRADE" and via ~= "ITEM")
+  -- Gen 4 / 5: only a level-up evolution takes B (Evolution_Begin flag 0x1);
+  -- a stone (no method passed) or a trade cannot be stopped
+  if self.cancelable and require("src.pokemon.Gen45Evolution").forced(via) then
+    self.cancelable = false
+  end
   self.oldName = mon.nickname or game.data.pokemon[mon.species].name
   self.oldSprite, self.oldSpriteTrueColor = frontSprite(game, mon.species, mon)
   self.newSprite, self.newSpriteTrueColor = frontSprite(game, newSpecies, mon)

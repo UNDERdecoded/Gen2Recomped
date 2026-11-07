@@ -12292,6 +12292,10 @@ Gen3Commands.LINK_SILENT = {
   517,  -- LoadLinkContestPlayerPalettes
 }
 
+-- THE LINK ROOMS (docs/online-design.md WS6a): the cable club's linkups and
+-- seats reach real link play through src/online/LinkRooms.lua.  Installed
+-- first, so the silent answers below no longer claim 32 / 33 / 34.
+require("src.script.Gen3LinkRooms").install(Gen3Commands)
 Gen3Commands.installLinkAnswers()
 
 -- ---------------------------------------------------------------------------
@@ -12315,6 +12319,15 @@ Gen3Commands.installLinkAnswers()
 -- doing nothing is right rather than warping the player a second time.
 Gen3Commands.SPECIALS[1] = function(ctx)
   local save = ctx.save
+  -- where the player stands NOW (the link room's return, WS6a): the live
+  -- field first, the save's last-written position only without one
+  local ow = ctx.overworld
+  local p = ow and ow.player
+  if save and ow and ow.map and p and p.cellX then
+    save.gen3CableClubReturn = { map = ow.map.id, x = p.cellX, y = p.cellY }
+    require("src.script.Gen3LinkRooms").afterCableClubWarp(ctx)
+    return
+  end
   local player = save and save.player
   if not (player and player.map) then return end
   save.gen3CableClubReturn = { map = player.map, x = player.x, y = player.y }

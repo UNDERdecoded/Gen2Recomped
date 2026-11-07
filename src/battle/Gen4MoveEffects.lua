@@ -1554,6 +1554,11 @@ function G4.beforeMove(battle, user, target, action)
     battle:sayNext(Strings("%s can't use\n%s because\nof HEAL BLOCK!", displayName(user), d.name or "it"))
     return true
   end
+  -- IMPRISON (src/battle/Gen4MoveEffectsExtra.lua)
+  if G4.extra.sealedBy(battle, user, id) then
+    battle:sayNext(G4.extra.sealedLine(user, d))
+    return true
+  end
   return false
 end
 
@@ -1575,7 +1580,9 @@ function G4.menuRefusal(battle, b, d)
   if healBlocked(b, d.id) then
     return Strings("%s can't use\n%s because\nof HEAL BLOCK!", displayName(b), d.name or "it")
   end
-  return nil
+  if G4.extra.sealedBy(battle, b, d.id) then return G4.extra.sealedLine(b, d) end
+  -- the Choice lock (CHECK_INVALID_CHOICE_ITEM)
+  return G4.extra.choiceRefusal(battle, b, d)
 end
 
 -- accuracyRoll.  Returns hit (or nil to let the ordinary roll decide) and the
@@ -1617,7 +1624,13 @@ function G4.damageOpts(battle, user, target, move, opts)
     if (side.luckyChant or 0) > 0 then opts.forceCrit = false end
   end
   if user and user.g4MeFirst then
-    opts.powerMultiplier = (opts.powerMultiplier or 1) * 1.5
+    -- src/battle/Gen4Damage.lua applies it where the cartridge does, on the
+    -- damage after the crit; the shared formula (GEN4_OLD_DAMAGE) on the power
+    if require("src.battle.Damage").gen4OldDamage then
+      opts.powerMultiplier = (opts.powerMultiplier or 1) * 1.5
+    else
+      opts.meFirst = true
+    end
   end
   return opts
 end
@@ -1676,6 +1689,7 @@ function G4.onSwitchIn(battle, b, phase)
   -- the slot's action this turn is over once something has been sent into it
   b.actedTurn = turnOf(battle)
   local side = s.sides[b.isPlayer and true or false]
+  G4.extra.syncScreens(battle)
   if phase == "pre" then
     applyTailwind(battle)
     if abilityOf(b) == "MAGIC_GUARD" then return end
@@ -1736,6 +1750,8 @@ local function sayNow(battle, text) battle:sayNext(text) end
 function G4.endOfTurn(battle)
   local s = battle.g4fx
   if not s then return end
+  -- binding, Reflect / Light Screen (src/battle/Gen4MoveEffectsExtra.lua)
+  G4.extra.endOfTurn(battle)
   -- Roost's turn is over: the Flying type comes back
   for _, b in ipairs(active(battle)) do
     if b.g4Roost then
@@ -1811,5 +1827,14 @@ function G4.endOfTurn(battle)
     end
   end
 end
+
+
+-- Helping Hand, Follow Me, Imprison, Magic Coat, Snatch, Assist, Nature Power,
+-- Secret Power (src/battle/Gen4MoveEffectsExtra.lua), with this file's helpers
+G4.extra = require("src.battle.Gen4MoveEffectsExtra")
+G4.extra.install(G4, {
+  INVOKER = INVOKER, moveDef = moveDef, canBeCalled = canBeCalled,
+  activates = activates, inflict = inflict, flinch = flinch, stage = stage,
+})
 
 return Gen4MoveEffects

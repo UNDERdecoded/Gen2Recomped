@@ -68,6 +68,14 @@ function Commands.g5_cgear_off(ctx)
   if ctx.save then ctx.save.gen5CGearOn = false end
 end
 
+-- 0x19B <w> (ov21 0x021B4F1C, READ): the C-Gear's save block (0x02009210)
+-- +0x27 set to 1 (0x020090D8) and ov10's task 0x02168BBC started, which turns
+-- it on (0x02168B21 -> 0x02012158, the bit 0x25E clears) -- the C-Gear given.
+-- The operand goes to the task (not read here). src/ui/Gen5CGear.lua draws it
+function Commands.g5_cgear_on(ctx)
+  if ctx.save then ctx.save.gen5CGearOwned = true; ctx.save.gen5CGearOn = true end
+end
+
 M.ROOM_CAMERA = { 0x1C, 0x1D, 0x1E, 0x1F }
 function Commands.g5_room_camera(ctx, n)
   local idx = M.ROOM_CAMERA[val(ctx, n)]
@@ -87,6 +95,9 @@ function M.install(L)
   L.bwwirelessend = L.bwwirelessend or function(ins, s) emit(s, { "g5_wireless_end", ins.args[1] }) end
   L.bwsaveblock34 = L.bwsaveblock34 or function(_, s) emit(s, { "g5_save_block34" }) end
   L.bwcgearoff = L.bwcgearoff or function(_, s) emit(s, { "g5_cgear_off" }) end
+  L.bwcgearon = L.bwcgearon or function(_, s) emit(s, { "g5_cgear_on" }) end
+  -- a cache linked before the name keeps the op as bw_19B
+  L.bw_19B = L.bw_19B or function(_, s) emit(s, { "g5_cgear_on" }) end
   L.bwroomcamera = L.bwroomcamera or function(ins, s) emit(s, { "g5_room_camera", ins.args[1] }) end
 end
 

@@ -294,10 +294,13 @@ end
 -- A held item can change a Gen 4 form: Giratina is Origin Forme exactly while
 -- it holds the Griseous Orb (`Pokemon_SetGiratinaFormByHeldItem`, which the
 -- cartridge's party menu calls after every give and take).
+-- Arceus's Plate (BoxPokemon_SetArceusForm) and BW's Giratina / Genesect's
+-- Drive follow the held item the same way (src/pokemon/Gen45FormData.lua).
 local function heldItemForm(mon, data)
-  if not (data and (data.constants or {}).gen == 4) then return end
+  local g = data and (data.constants or {}).gen
+  if g ~= 4 and g ~= 5 then return end
   pcall(function()
-    require("src.pokemon.Gen4Forms").giratinaByHeldItem(data, mon)
+    require("src.pokemon.Gen45FormData").heldItem(data, mon)
   end)
 end
 

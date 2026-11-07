@@ -165,6 +165,33 @@ public final class GRPickerBridge: NSObject {
         }
     }
 
+    // love.system.shareText(text): the system share sheet (a Link Hub code to a
+    // chat app). saveDir is the bridge call's second argument; unused here.
+    @objc(shareText:saveDir:)
+    public static func shareText(text: UnsafePointer<CChar>?,
+                                 saveDir: UnsafePointer<CChar>?) -> Bool {
+        guard let text = text.map({ String(cString: $0) }), !text.isEmpty else { return false }
+        let doPresent = { () -> Bool in
+            guard var top = UIApplication.shared.windows
+                .first(where: { $0.isKeyWindow })?.rootViewController
+            else { return false }
+            while let presented = top.presentedViewController { top = presented }
+            let sheet = UIActivityViewController(activityItems: [text], applicationActivities: nil)
+            // an iPad shows the sheet as a popover, which needs an anchor
+            if let pop = sheet.popoverPresentationController {
+                pop.sourceView = top.view
+                pop.sourceRect = CGRect(x: top.view.bounds.midX, y: top.view.bounds.midY, width: 0, height: 0)
+                pop.permittedArrowDirections = []
+            }
+            top.present(sheet, animated: true)
+            return true
+        }
+        if Thread.isMainThread { return doPresent() }
+        var ok = false
+        DispatchQueue.main.sync { ok = doPresent() }
+        return ok
+    }
+
     private static func present(_ picker: UIDocumentPickerViewController,
                                 with delegate: PickerDelegate) -> Bool {
         let doPresent = { () -> Bool in

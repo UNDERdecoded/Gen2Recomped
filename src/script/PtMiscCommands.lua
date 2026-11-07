@@ -428,6 +428,10 @@ function M.install(L)
   L.trystartgtsapp = L.trystartgtsapp or nofeature(2, "the GTS")
   L["2f7"] = L["2f7"] or noop("a Wi-Fi Plaza call (no login)")
   L["30e"] = L["30e"] or nofeature(1, "the Union Room greeting editor")
+  -- THE LINK ROOMS (docs/online-design.md WS6b): the GTS, the Wi-Fi Club,
+  -- the colosseum and the Union Room of Platinum, HGSS and Black / White
+  -- replace the no-login answers above (src/script/Gen45LinkRooms.lua)
+  require("src.script.Gen45LinkRooms").install(L)
 
   L.tryrecordchatotcry = L.tryrecordchatotcry or nofeature(1, "a microphone")
   L.stoprecordingchatotcry = L.stoprecordingchatotcry or noop("the Chatot cry recording")

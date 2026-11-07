@@ -256,6 +256,13 @@ local HAPPINESS_CHANGES = {
 
 function Evolution.changeHappiness(mon, reason)
   if not mon then return end
+  -- Gen 4 / 5: Pokemon_UpdateFriendship's table with the Luxury Ball, egg
+  -- location and Soothe Bell bonuses (src/pokemon/Gen45Friendship.lua)
+  local G45 = require("src.pokemon.Gen45Friendship")
+  if G45.applies() and G45.TABLE[G45.ALIAS[reason] or reason] then
+    G45.update(nil, mon, reason)
+    return
+  end
   local row = HAPPINESS_CHANGES[reason]
   if not row then return end
   local h = mon.happiness
@@ -378,6 +385,11 @@ function Evolution.apply(game, mon, newSpecies, via, evo)
     newDef=require('src.pokemon.Gen4Forms').definition(game.data,mon)
     mon.stats=Stats.calc(newDef,mon.level,mon.ivs,nil,mon.evs,mon.nature)
   elseif Stats.isGen3(newDef) then
+    -- Black / White: the evolved FORM's personal row (Burmy -> Wormadam's
+    -- cloaks, gen5_forms via Gen45FormData)
+    if (game.data.constants or {}).gen==5 then
+      newDef=require('src.pokemon.Gen4Forms').definition(game.data,mon) or newDef
+    end
     mon.stats = Stats.calcGen3(newDef, mon.level, mon.ivs, mon.evs, mon.nature)
     shedinjaPending[mon] = fromSpecies
   else
@@ -410,6 +422,10 @@ end
 function Evolution.learnEvolutionMoves(game, mon, onDone)
   local Experience = require("src.battle.Experience")
   local def = game.data.pokemon[mon.species]
+  -- Gen 4 / 5: the evolved FORM's learnset (Burmy -> Wormadam's three cloaks)
+  if require("src.core.GameVersion").isNds() then
+    def = require("src.pokemon.Gen4Forms").definition(game.data, mon) or def
+  end
   -- movesLearnedAt uses entry.level == level (exact Gen1 rule); do NOT use
   -- Pokemon.movesAtLevel (<= level), which would over-grant older moves.
   local moves = Experience.movesLearnedAt(def, mon.level)
@@ -495,7 +511,7 @@ function Evolution.checkParty(game, onDone, leveledUp)
       if leveledUp[mon] then
         local target, evo = Evolution.pendingFor(game, mon, { kind = "levelup" })
         if target then
-          table.insert(pending, { mon = mon, to = target, via = evo and evo.method })
+          table.insert(pending, { mon = mon, to = target, via = evo and evo.method, evo = evo })
         end
       end
     end
@@ -508,7 +524,8 @@ function Evolution.checkParty(game, onDone, leveledUp)
       if onDone then onDone() end
       return
     end
-    Evolution.evolve(game, p.mon, p.to, nextOne, p.via)
+    -- the row too: a held-item method eats its item, Nincada makes Shedinja
+    Evolution.evolve(game, p.mon, p.to, nextOne, p.via, p.evo)
   end
   nextOne()
   return #pending

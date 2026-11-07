@@ -304,6 +304,9 @@ local function weatherDamage(battle, battler, weather)
   -- GetEighthMaxHP is GetQuarterMaxHP followed by one more shift, each step
   -- floored at 1: floor(floor(maxHP / 4) / 2), minimum 1
   local eighth = math.max(1, math.floor(math.floor(maxHpOf(battler) / 4) / 2))
+  -- Platinum / HGSS (and BW): BattleSystem_Divide(maxHP, 16)
+  local div = require("src.battle.Gen45Abilities").weatherDivisor(battle)
+  if div then eighth = math.max(1, math.floor(maxHpOf(battler) / div)) end
   battle:applyDamage(battler, eighth)
   battle:sayNext(weather == Weather.HAIL
                  and Strings("%s is\npelted by HAIL!", displayName(battler))

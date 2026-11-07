@@ -21,6 +21,9 @@ local function busy(ow)
 end
 
 function M.update(ow)
+  -- the Musical's backstage: back to the lobby once its review has run
+  -- (src/script/Gen5MusicalBackstage.lua)
+  if Game() and Game().gen5Musical then pcall(require("src.script.Gen5MusicalBackstage").tick, ow) end
   -- a field return lasts as long as the script that asked for it
   if ow.gen5FieldReturn and not busy(ow) and not ow.gen5QueuedEntry then ow.gen5FieldReturn = nil end
   local q = ow.gen5QueuedEntry

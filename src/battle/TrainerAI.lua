@@ -341,7 +341,9 @@ function TrainerAI.chooseMove(battler, rng, battle)
   local g4 = battle and battle.g4fx and require("src.battle.Gen4MoveEffects")
   for i, mv in ipairs(battler.curMoves) do
     if battler.disabledSlot ~= i and (unlimited or mv.pp > 0)
-       and not (g4 and g4.menuRefusal(battle, battler, battle.data.moves[mv.id])) then
+       and not (g4 and g4.menuRefusal(battle, battler, battle.data.moves[mv.id]))
+       and not (battle and battle.g3x
+                and require("src.battle.Gen4MoveEffectsExtra").menuRefusal(battle, battler, battle.data.moves[mv.id])) then
       table.insert(usable, mv)
     end
   end
@@ -363,6 +365,29 @@ function TrainerAI.chooseMove(battler, rng, battle)
   -- trainer the cartridge gave no flags, for a build with no decoded program,
   -- and for a script this engine cannot run end to end yet -- and nil means
   -- "no opinion", so everything below is exactly what it was.
+  -- PLATINUM / HGSS: TrainerAI_Main over the cartridge's own script
+  -- (src/battle/Gen4AI.lua).  Every trainer runs it -- an aiMask of 0 still
+  -- scores (all moves 100, ties a roll), which is the cartridge's answer.
+  if battle and battle.kind == "trainer" then
+    local okG4, Gen4AI = pcall(require, "src.battle.Gen4AI")
+    if okG4 and Gen4AI.applies(battle) and Gen4AI.program(battle) then
+      local okPick, move, target = pcall(Gen4AI.choose, battle, battler, usable)
+      if okPick and move then
+        local ok = false
+        for _, u in ipairs(usable) do if u == move then ok = true end end
+        if ok then
+          if target and battler.position and battle:isDouble() then
+            battle.chosenTargets = battle.chosenTargets or {}
+            battle.chosenTargets[battler.position] = target
+          end
+          return move
+        end
+      elseif not okPick then
+        require("src.core.Logger").warn("gen4 AI: %s", tostring(move))
+      end
+    end
+  end
+
   if battle then
     local okAI, Gen3AI = pcall(require, "src.battle.Gen3AI")
     if okAI and type(Gen3AI) == "table" then

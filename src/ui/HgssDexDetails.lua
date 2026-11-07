@@ -39,10 +39,12 @@
 --   * the SIZE figures: zukan_data's per-species scales (256 / scale) and
 --     y offsets, the trainer's figure by gender (OBJ 111 / 114, the icons
 --     105 / 109)
--- NOT DONE / APPROXIMATED: the area map's location markers and their
--- blinking (zukan_enc is not imported -- the AREA list comes from scanning
--- data.encounters by map name and time of day; Johto / Kanto by the map's
--- name), the places' cartridge order (alphabetical here), the page fades,
+-- THE AREA LIST AND MARKERS come from zukan_enc when the cache carries
+-- `gen4_zukan_enc` (hgss-zukan-enc-v1; HgssDexData.encAreas / encMarker,
+-- READ FROM CODE); an older cache still lists places by scanning
+-- data.encounters by map name and time of day (Johto / Kanto by the name).
+-- NOT DONE / APPROXIMATED: the markers' blend (drawn as plain alpha over the
+-- map, INFERRED from G2S_SetBlendAlpha), the page fades,
 -- the scroll bars (drawn plainly), the SIZE figures' exact placement, the
 -- forms the port does not track per gender (both genders listed when the
 -- species has both).
@@ -99,6 +101,13 @@ function P:se(name) self.dex:se(name) end
 function P:def() return ((self.game.data or {}).pokemon or {})[self.species] or {} end
 
 function P:areaList()
+  -- the cartridge's list out of zukan_enc (HgssDexData.encAreas): row 0 the
+  -- whole region, then the places
+  if D.encAvailable(self.game) then
+    local k = self.time .. ":" .. self.region
+    if self.encKey ~= k then self.encRows = D.encAreas(self.game, self.species, self.time, self.region); self.encKey = k end
+    return self.encRows
+  end
   local want, out = TIME_NAMES[self.time + 1], {}
   for _, rec in ipairs(self.allAreas) do
     if (rec.kanto and 1 or 0) == self.region and rec.times[want] then out[#out + 1] = rec end
@@ -390,10 +399,47 @@ function P:drawAreaTop()
   local def = self:def()
   ui.putCentre("dark", def.name or "", 4, 68, 24)
   dex:icon(self.species, 36, 116, 1, floor(self.t / 8))
-  if #self:areaList() == 0 then
+  self:drawMarkers()
+  local rows = self:areaList()
+  if #rows == 0 or (rows[1].all and #rows == 1) then
     if not dex:bg("area_unknown", 80, 88) then box(R(88, 119, 80, 239)) end
     ui.putCentre("dark", self:words(128, "Area Unknown"), 104, 216, 96)
   end
+end
+
+-- the map's markers (HgssDexData.encMarker): row 0 shows them all, another
+-- row its own; the shown set swaps each blink between the timed places
+-- (palette 4) and the special ones (palette 5), fading 15 frames in and 15
+-- out (ov18_021EE26C, the OBJ blended over SUB0)
+function P:drawMarkers()
+  if not D.encAvailable(self.game) then return end
+  local enc = self.game.data.gen4_zukan_enc
+  local rows = self:areaList()
+  local toggle = floor(self.t / 30) % 2
+  local k = self.t % 30
+  local c = k <= 15 and k or 30 - k
+  local want = toggle == 0 and 1 or 2
+  local g = love.graphics
+  g.setColor(1, 1, 1, math.min(1, c / 15))
+  local function put(anim, x, y)
+    local rec = enc.art and enc.art[(toggle == 0 and "hg_marker_t_" or "hg_marker_s_") .. anim]
+    local img = rec and self.dex:image(rec.path)
+    if img then g.draw(img, x + (tonumber(rec.originX) or 0), y + (tonumber(rec.originY) or 0)) end
+  end
+  local extras = 0
+  for i, rec in ipairs(rows) do
+    if not rec.all and (self.scroll == 0 or i == self.scroll + 1) then
+      local m, extra = D.encMarker(self.game, rec, self.region)
+      if m and math.floor(rec.flags / want) % 2 == 1 then
+        put(m.anim, m.x, m.y)
+        if extra > 0 and math.floor(extras / extra) % 2 == 0 then extras = extras + extra end
+      end
+    end
+  end
+  for bitv, spots in pairs(D.ENC_EXTRA) do
+    if math.floor(extras / bitv) % 2 == 1 then for _, p in ipairs(spots) do put(0, p[1], p[2]) end end
+  end
+  reset()
 end
 
 function P:sizeOf(key)

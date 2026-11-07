@@ -2,7 +2,7 @@
 -- state machine (pure logic, headless-testable).
 --
 -- Message types exchanged after pairing:
---   {type="hello", ...}                 handshake v2 (src/link/Handshake.lua)
+--   {type="hello", ...}                 handshake v3 (src/link/Handshake.lua)
 --   {type="records", pokemon=, moves=}  subset trade: per-record hashes
 --   {type="party", mons=[...]}          party (both directions)
 --   {type="pick", index}                trade: chosen slot in the sent list
@@ -49,7 +49,30 @@ Protocol.plainCopy = plainCopy
 -- and the receiver keeps them verbatim -- a differing OT/ID is what marks a
 -- mon as traded (boosted EXP, high-level disobedience).  Omitting them made
 -- a received mon show the receiver as its OT (#215).
-function Protocol.packMon(mon)
+--
+-- WIRE v3 (src/online/MonCodec.lua, docs/online-design.md 2.5).  A Gen 3+
+-- game always speaks it -- the v2 shape below loses the personality, IVs,
+-- EVs, nature and ability -- and a Gen 1/2 game speaks it to a peer whose
+-- hello says it reads it.  A v2 peer on Gen 1/2 gets the v2 shape verbatim.
+-- opts: { wire = 2|3, data = merged data, peerHello = hello }
+local function localData(opts)
+  return (opts and opts.data) or package.loaded["src.core.Data"]
+end
+
+function Protocol.wireFor(opts)
+  if opts and tonumber(opts.wire) then return tonumber(opts.wire) end
+  local MonCodec = require("src.online.MonCodec")
+  if MonCodec.genOf(localData(opts)) >= 3 then return MonCodec.WIRE end
+  local peer = opts and opts.peerHello
+  if peer == nil and Handshake.session then peer = Handshake.session.theirs end
+  if (Handshake.monWire(peer) or 0) >= MonCodec.WIRE then return MonCodec.WIRE end
+  return 2
+end
+
+function Protocol.packMon(mon, opts)
+  if Protocol.wireFor(opts) >= 3 then
+    return require("src.online.MonCodec").pack(localData(opts), mon)
+  end
   local moves = {}
   for _, mv in ipairs(mon.moves) do
     table.insert(moves, { id = mv.id, pp = mv.pp, ppUps = mv.ppUps })
@@ -76,6 +99,11 @@ end
 -- peers have agreed on a verdict: a mon that cannot be rebuilt identically
 -- is rejected by name instead of quietly mutated into something else.
 function Protocol.unpackMon(data, packed, opts)
+  -- a v3 packet is rebuilt by MonCodec, whatever the session: the packet
+  -- says what it is, and a v2 reading of it would drop the Gen 3+ half
+  if type(packed) == "table" and (tonumber(packed.wire) or 0) >= 3 then
+    return require("src.online.MonCodec").unpack(data, packed, opts)
+  end
   local Stats = require("src.pokemon.Stats")
   local Growth = require("src.pokemon.Growth")
   local strict = opts and opts.strict
@@ -164,16 +192,16 @@ function Protocol.unpackMon(data, packed, opts)
   }
 end
 
-function Protocol.packParty(party, indices)
+function Protocol.packParty(party, indices, opts)
   local mons = {}
   if indices then
     for _, i in ipairs(indices) do
-      table.insert(mons, Protocol.packMon(party[i]))
+      table.insert(mons, Protocol.packMon(party[i], opts))
     end
     return mons
   end
   for _, mon in ipairs(party) do
-    table.insert(mons, Protocol.packMon(mon))
+    table.insert(mons, Protocol.packMon(mon, opts))
   end
   return mons
 end
@@ -238,6 +266,9 @@ local TradeSession = {}
 TradeSession.__index = TradeSession
 Protocol.TradeSession = TradeSession
 
+-- the one-way upward gift (Pal Park / Poke Transfer across a link)
+Protocol.TransferSession = require("src.online.Transfer").TransferSession
+
 -- opts: { subset, strict, peerName } -- all absent on the v1 path
 function TradeSession.new(data, party, opts)
   opts = opts or {}
@@ -257,12 +288,59 @@ function TradeSession.new(data, party, opts)
     myConfirm = nil,
     theirConfirm = nil,
   }, TradeSession)
+  -- v3: the two hellos decide the per-mon gates (CompatRules: the Time
+  -- Capsule, FR/LG's National Dex, HG/SS-only items).  The current LinkState
+  -- passes only the verdict, so a strict session falls back to the hellos
+  -- Handshake.checkCompat just compared.
+  local session = opts.strict and Handshake.session or nil
+  -- a transfer link is a one-way gift (Protocol.TransferSession), never a
+  -- swap: a trade session opened on one ends at once, with the reason
+  local verdict = opts.verdict or (session and session.verdict)
+  if verdict == "transfer" then
+    self.stage = "cancelled"
+    self.error = "this link is a one-way transfer"
+    return self
+  end
+  self.myHello = opts.myHello or (session and session.mine) or nil
+  self.peerHello = opts.peerHello or (session and session.theirs) or nil
+  self.wire = Protocol.wireFor({ wire = opts.wire, data = data,
+                                 peerHello = self.peerHello or false })
   if not self.subset then
     local all = {}
     for i = 1, #party do all[i] = i end
     self.sendIndices = all
+    self:_gate()
   end
   return self
+end
+
+-- the CompatRules per-mon gate over this side's party, applied on top of
+-- whatever the record negotiation left: a mon the peer's game cannot take
+-- is greyed here and never sent, and the peer runs the same rule over what
+-- arrives, so both sides agree on the list
+function TradeSession:_gate()
+  if self.wire < 3 or type(self.peerHello) ~= "table"
+     or not self.peerHello.family then
+    return
+  end
+  local CompatRules = require("src.online.CompatRules")
+  local mine = self.myHello or {}
+  local keep = {}
+  for _, i in ipairs(self.sendIndices or {}) do
+    local packed = Protocol.packMon(self.party[i], { wire = 3, data = self.data })
+    local ok, why = CompatRules.canSend(packed, mine, self.peerHello)
+    if ok then
+      keep[#keep + 1] = i
+    else
+      self.eligible = self.eligible or {}
+      self.eligible[i] = false
+      self.reasons[i] = why
+    end
+  end
+  if self.eligible then
+    for _, i in ipairs(keep) do self.eligible[i] = true end
+  end
+  self.sendIndices = keep
 end
 
 -- the first message on the wire: a subset trade has to agree on which mons
@@ -276,7 +354,8 @@ end
 
 function TradeSession:partyMessage()
   return { type = "party",
-           mons = Protocol.packParty(self.party, self.sendIndices) }
+           mons = Protocol.packParty(self.party, self.sendIndices,
+                                     { wire = self.wire, data = self.data }) }
 end
 
 function TradeSession:_negotiate(theirRecords)
@@ -289,6 +368,7 @@ function TradeSession:_negotiate(theirRecords)
     if self.eligible[i] then indices[#indices + 1] = i end
   end
   self.sendIndices = indices
+  self:_gate()
 end
 
 -- the UI greys what the other game would rebuild differently
@@ -307,9 +387,28 @@ function TradeSession:handle(msg)
     return self:partyMessage()
   elseif msg.type == "party" then
     self.theirParty = {}
+    local CompatRules = require("src.online.CompatRules")
+    local MonCodec = require("src.online.MonCodec")
+    local myGen = MonCodec.genOf(self.data)
     for _, packed in ipairs(msg.mons or {}) do
-      local mon, why = Protocol.unpackMon(self.data, packed,
-                                          { strict = self.strict })
+      local mon, why
+      if type(packed) == "table" and (tonumber(packed.wire) or 0) >= 3
+         and type(self.peerHello) == "table" and self.peerHello.family then
+        -- the same gate the sender ran: a sender that skipped it is refused
+        local ok, gateWhy = CompatRules.canReceive(packed, self.myHello or {},
+                                                   self.peerHello)
+        if not ok then why = gateWhy end
+        if ok and tonumber(packed.gen) and tonumber(packed.gen) ~= myGen then
+          -- a cross-generation arrival: item-gated trade evolutions cannot
+          -- fire through the Time Capsule (Evolution.pendingFor)
+          self.timeCapsule = true
+        end
+        if ok then
+          mon, why = Protocol.unpackMon(self.data, packed, { strict = self.strict })
+        end
+      else
+        mon, why = Protocol.unpackMon(self.data, packed, { strict = self.strict })
+      end
       if mon then
         table.insert(self.theirParty, mon)
       elseif self.strict then

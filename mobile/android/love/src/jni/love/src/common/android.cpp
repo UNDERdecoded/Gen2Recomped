@@ -429,6 +429,23 @@ bool walkerNotify(const char *json)
 	return callStaticBool("walkerNotify", "(Ljava/lang/String;)Z", json);
 }
 
+bool shareText(const char *text)
+{
+	if (text == nullptr)
+		return false;
+	return callStaticBool("shareText", "(Ljava/lang/String;)Z", text);
+}
+
+bool acquireMulticastLock()
+{
+	return callStaticBool("acquireMulticastLock", "()Z", nullptr);
+}
+
+bool releaseMulticastLock()
+{
+	return callStaticBool("releaseMulticastLock", "()Z", nullptr);
+}
+
 bool mkdirsReal(const char *path)
 {
 	if (path == nullptr || path[0] == '\0')

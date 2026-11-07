@@ -106,7 +106,8 @@ function M.release(data, save, slot, rng)
   local mon = Pokemon.new(data, M.SPECIES[slot], M.LEVEL)
   s[slot] = { species = M.SPECIES[slot], level = M.LEVEL, loc = M.NOWHERE,
               hp = mon and mon.hp, status = mon and mon.status,
-              personality = mon and mon.personality, ivs = mon and mon.ivs }
+              personality = mon and mon.personality, ivs = mon and mon.ivs,
+              nature = mon and mon.nature }
   M.move(save, slot, M.RELEASE_EXCLUDE, rng)
   s.state[slot] = 1
   return true
@@ -133,7 +134,7 @@ end
 function M.encounterFor(slot, r)
   return { species = r.species, level = r.level or M.LEVEL, roamerHP = r.hp,
            roamerStatus = r.status,
-           roamerSeed = r.personality and { personality = r.personality, ivs = r.ivs } or nil,
+           roamerSeed = r.personality and { personality = r.personality, ivs = r.ivs, nature = r.nature } or nil,
            roamerSlot = slot }
 end
 

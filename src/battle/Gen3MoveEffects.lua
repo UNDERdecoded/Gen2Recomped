@@ -255,8 +255,11 @@ end
 P.HEAL_BELL_EFFECT = function(battle, user)
   user.mon.status = nil
   user.toxicCounter = nil
-  local party = user.isPlayer and battle.game and battle.game.save
-                and battle.game.save.party
+  -- the USER's party, either side (the foe's bell cured nothing but itself,
+  -- which split a link battle the turn it rang)
+  -- (a tag partner's, a second trainer's or a multi player's own party:
+  -- Gen5MoveEffects.sideParty)
+  local party = require("src.battle.Gen5MoveEffects").sideParty(battle, user)
   for _, mon in ipairs(party or {}) do mon.status = nil end
   return { Strings("A bell chimed!") }
 end
@@ -381,6 +384,21 @@ P.BATON_PASS_EFFECT = function(battle, user)
   if require("src.core.GameVersion").isGen4() then
     return require("src.battle.Gen4MoveEffects").batonPass(battle, user)
   end
+  -- A SINGLE BATTLE SWITCHES NOW.  The record alone (below) was all this
+  -- ever did, and nothing read `wantsSwitch`: the user stayed in, and the
+  -- carry rode on until whatever switch came next -- a later faint
+  -- replacement on the player's side inherited stages it never earned,
+  -- while the foe's switch path ignored it (which split a link battle).
+  -- The switch is the shared one Sinnoh uses (Gen5MoveEffects.switchOut):
+  -- the party list for the player, the first able Pokemon for the foe;
+  -- nobody to send in and it fails (pokeemerald JumpIfCantSwitch).
+  if not (battle.isDouble and battle:isDouble()) then
+    local G5 = require("src.battle.Gen5MoveEffects")
+    if #G5.benchOf(battle, user) == 0 then return { Strings("But, it failed!") } end
+    battle:sayNext(Strings("%s\npassed the baton!", displayName(user)))
+    G5.switchOut({ battle = battle, user = user }, true)
+    return {}
+  end
   user.batonPass = {
     stages = user.stages,
     confusedTurns = user.confusedTurns,
@@ -398,7 +416,10 @@ end
 
 -- HAIL is the fourth weather and the only one Hoenn added.  Weather.lua
 -- carries its text and its damage rule alongside the other three.
-P.HAIL_EFFECT = function(battle)
+P.HAIL_EFFECT = function(battle, user)
+  -- PLATINUM / HGSS: fails in hail; the Icy Rock (Gen4MoveEffectsExtra)
+  local g4 = require("src.battle.Gen4MoveEffectsExtra").weatherMove(battle, user, Weather.HAIL)
+  if g4 then return g4 end
   Weather.start(battle, Weather.HAIL)
   return { Strings(Weather.STARTED_TEXT[Weather.HAIL] or "It started to hail!") }
 end
@@ -1023,8 +1044,9 @@ F.FUTURE_SIGHT_EFFECT = {
 -- BEAT UP strikes once per healthy party member.
 F.BEAT_UP_EFFECT = {
   hitCount = function(ctx)
-    local party = ctx.user.isPlayer and ctx.battle.game
-                  and ctx.battle.game.save and ctx.battle.game.save.party
+    -- the user's own party (the foe strikes once per its own members; a
+    -- tag partner or a multi player per theirs: Gen5MoveEffects.sideParty)
+    local party = require("src.battle.Gen5MoveEffects").sideParty(ctx.battle, ctx.user)
     if not party then return 1 end
     local n = 0
     for _, mon in ipairs(party) do

@@ -181,9 +181,115 @@ function Platform.canFetchRemote()
   return Platform.detect().canFetchRemote
 end
 
+-- ---------------------------------------------------------------------------
+-- CAN THIS BUILD GO ONLINE?  (docs/online-design.md 2.10, workstream WS10)
+-- ---------------------------------------------------------------------------
+--
+-- Measured, like canHostPayload: the answer is whether `require("enet")` and
+-- `require("socket")` work in THIS binary, not a list of platforms.  The OS
+-- only adds what a library cannot tell us:
+--
+--   * Web (love.js): no UDP at all, whatever the module table says.
+--   * iOS: sending to a multicast or broadcast address needs Apple's
+--     com.apple.developer.networking.multicast entitlement, which the
+--     sideload builds do not carry -- so no UPnP (SSDP M-SEARCH) and no LAN
+--     beacon.  NAT-PMP/PCP are unicast to the gateway and still work, so
+--     port mapping stays on.  LAN traffic needs NSLocalNetworkUsageDescription
+--     (mobile/ios/overlays/love-ios.plist), which iOS asks about once.
+--   * Android: receiving broadcasts needs a held WifiManager.MulticastLock
+--     (permission CHANGE_WIFI_MULTICAST_STATE, in the manifest).  The APK's
+--     love.system.acquireMulticastLock bridge takes it (GameActivity.java,
+--     LanBeacon holds it while a listener is open); a build without the bridge
+--     reports the beacon off.
+--   * Xbox (UWP): the bundled love.dll (ports/uwp/third_party/love) carries
+--     lua-enet and LuaSocket 3.0-rc1; the package declares internetClient,
+--     internetClientServer and privateNetworkClientServer.  Not yet tried on
+--     a console, so `validated` is false.  UWP blocks loopback between apps.
+--   * Switch (love-nx): whether this homebrew runtime was built with enet and
+--     luasocket is decided by the probe; `consent` asks the player to accept
+--     the ban risk before going online (OnlineGate).
+--
+-- Returns (memoized; _resetForTests clears it):
+--   { available, reason, canHost, canPortMap, canBroadcast,
+--     hasEnet, hasSocket, relayOnly, validated, consent, os }
+-- `available` is "direct codes and worlds work" (both need lua-enet).
+-- `relayOnly` is the narrower case of LuaSocket without enet: short codes
+-- and tournaments over the relay (plain TCP) still work.  `reason` is a
+-- sentence for the player, nil when there is nothing to say.
+
+local onlineCached
+
+-- swapped by tests: name -> module | nil
+Platform.requireProbe = function(name)
+  local ok, mod = pcall(require, name)
+  if ok and mod then return mod end
+  return nil
+end
+
+local function computeOnline()
+  local d = Platform.detect()
+  local osName = d.os
+  local hasEnet = Platform.requireProbe("enet") ~= nil
+  local hasSocket = Platform.requireProbe("socket") ~= nil
+  local r = {
+    os = osName, hasEnet = hasEnet, hasSocket = hasSocket,
+    available = false, relayOnly = false, canHost = false,
+    canPortMap = false, canBroadcast = false,
+    validated = not d.nx and not d.uwp,
+    consent = d.nx and "homebrew" or nil,
+  }
+  if osName == "Web" then
+    r.hasEnet, r.hasSocket = false, false
+    r.reason = "The web version cannot use the network. Play the desktop or phone version to link."
+    return r
+  end
+  if not hasEnet and not hasSocket then
+    r.reason = "This build has no network library (lua-enet and LuaSocket are missing), so online play is off."
+    return r
+  end
+  if not hasEnet then
+    r.relayOnly = true
+    r.reason = "This build has no lua-enet. Direct codes and worlds are off; short codes and tournaments over the relay still work."
+    return r
+  end
+  r.available = true
+  r.canHost = true
+  -- port mapping and the beacon are luasocket UDP (src/online/net)
+  r.canPortMap = hasSocket
+  r.canBroadcast = hasSocket and osName ~= "iOS"
+  if osName == "Android" then
+    local sys = love and love.system
+    r.canBroadcast = hasSocket and sys ~= nil
+      and type(sys.acquireMulticastLock) == "function"
+  end
+  if not hasSocket then
+    r.reason = "This build has no LuaSocket: codes work on the same network only, and the router cannot be asked to open a port."
+  elseif d.nx then
+    r.reason = "Online play on the Switch is untested. Going online with homebrew can get a console banned by Nintendo."
+  elseif d.uwp then
+    r.reason = "Online play on Xbox is untested on hardware. Two apps on one console cannot link to each other."
+  end
+  return r
+end
+
+function Platform.online()
+  if not onlineCached then onlineCached = computeOnline() end
+  return onlineCached
+end
+
+-- the two questions docs/online-design.md 2.10 and WS10 name
+function Platform.canHostOnline()
+  return Platform.online().canHost
+end
+
+function Platform.canPortMap()
+  return Platform.online().canPortMap
+end
+
 -- Tests may swap love.system between cases.
 function Platform._resetForTests()
   cached = nil
+  onlineCached = nil
   payloadHost = nil
   if HostShell._resetTransportForTests then
     HostShell._resetTransportForTests()

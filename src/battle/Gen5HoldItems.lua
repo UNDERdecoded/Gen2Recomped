@@ -45,9 +45,38 @@
 -- Claw's line are answered at the bottom of this file and used by
 -- src/battle/Gen5MoveRules.lua (the turn, the menu, the moves).
 
-local T = require("src.battle.Gen5BattleText")
-
 local G = {}
+
+-- PLATINUM / HGSS RIDE THIS FILE TOO (battle parity pass, 2026-11-02).
+-- A Gen 4 item keeps its hold effect as pokeplatinum's NAME
+-- (src/import/Gen4HoldEffects.lua) and only 33 of the 146 had an engine rule:
+-- Sitrus, Life Orb, Choice Specs / Scarf, Focus Sash, Expert Belt, King's
+-- Rock, Quick Claw, the resist berries, half the type items and every plate
+-- did nothing. The numbering above IS Platinum's, so a Gen 4 name is turned
+-- back into its number (gen4Number) and the same rules answer; Gen 4's own
+-- numbers where they differ from Gen V (Life Orb x130/100 before the roll,
+-- Metronome +10% a use, type items on the power) are applied by
+-- src/battle/Gen4Damage.lua, which is Gen 4's damage formula. Gen 4 has no
+-- BW text banks, so the lines fall back to the English in Gen4ItemText.
+local T = require("src.battle.Gen4ItemText").wrap(require("src.battle.Gen5BattleText"))
+G.T = T
+
+local G4NUM
+function G.gen4Number(name)
+  if type(name) ~= "string" then return nil end
+  if not G4NUM then
+    G4NUM = {}
+    local H = require("src.import.Gen4HoldEffects")
+    for i, n in ipairs(H.PRET) do G4NUM[n] = i end
+    for id, row in pairs(H.ENGINE) do G4NUM[row[1]] = id end
+  end
+  return G4NUM[name]
+end
+
+-- a Platinum / HGSS battle (any battle on a Gen 4 cartridge)
+function G.gen4()
+  return require("src.core.GameVersion").isGen4() == true
+end
 
 local floor = math.floor
 local function ME() return require("src.battle.MoveEffects") end
@@ -124,7 +153,11 @@ function G.defOf(b)
   if id == nil or id == 0 or id == false then return nil end
   local items = itemsOf(b)
   local def = items and items[id]
-  if type(def) ~= "table" or def.bwPocket == nil then return nil end
+  if type(def) ~= "table" then return nil end
+  if def.bwPocket == nil then
+    -- a Gen 4 record: its pret name must resolve to a Platinum number
+    if not (G.gen4() and G.gen4Number(def.holdEffect)) then return nil end
+  end
   return def, id
 end
 
@@ -134,12 +167,12 @@ function G.owns(b) return G.defOf(b) ~= nil end
 local function held(b)
   local def, id = G.defOf(b)
   if not def then return nil end
-  local he = tonumber(def.holdEffect) or 0
+  local he = tonumber(def.holdEffect) or G.gen4Number(def.holdEffect) or 0
   if he == 0 then return nil end
   -- Embargo on the holder, Magic Room on the field (the battle may not have
   -- been stamped on the battler yet: G.current answers then)
   local room = b.bwBattle or G.current
-  if b.bwEmbargo or (room and room.bw and room.bw.field and (room.bw.field.magicRoom or 0) > 0) then
+  if b.bwEmbargo or (tonumber(b.g4Embargo) or 0) > 0 or (room and room.bw and room.bw.field and (room.bw.field.magicRoom or 0) > 0) then
     return nil
   end
   if Abil().of(b) == "KLUTZ" then return nil end
@@ -267,7 +300,8 @@ end
 function G.speed(b, spd)
   local he = held(b)
   if not he then return spd end
-  if he == HE.LAGGING_TAIL then return 0 end
+  -- (LAGGING TAIL is an ORDER rule, not a speed: TurnOrder.firstMover via
+  -- Gen4MoveEffectsExtra.lagging -- the old speed 0 inverted under Trick Room)
   if he == HE.CHOICE_SCARF then return floor(spd * 3 / 2) end
   if he == HE.IRON_BALL or (he >= 117 and he <= 122) then return math.max(1, floor(spd / 2)) end
   if he == HE.QUICK_POWDER and species(b) == DITTO and not b.transformed then return spd * 2 end
@@ -315,9 +349,20 @@ function G.modifyDamage(attacker, defender, move, mult, d, special)
       say(battle, T.std(battle, 182, { itemName(adef), move.name }))
     end
   end
-  if dhe and G.RESIST[dhe] and G.RESIST[dhe] == mtype
-     and ((mult or 10) > 10 or dhe == 35) and not defender.substituteHP then
+  return G.resistBerry(attacker, defender, move, mult, d)
+end
+
+-- the resist berries (WEAKEN_SE_*) and Chilan: half a super-effective hit
+-- of their type (any Normal one for Chilan), then eaten. Also asked by
+-- src/battle/Gen4Damage.lua's Gen 4 path.
+function G.resistBerry(attacker, defender, move, mult, d, dry)
+  local dhe, _, ddef = held(defender)
+  if not (dhe and G.RESIST[dhe]) then return d end
+  local mtype = norm(move.type)
+  if G.RESIST[dhe] == mtype and ((mult or 10) > 10 or dhe == 35) and not defender.substituteHP then
+    local battle = battleOf(defender) or battleOf(attacker)
     d = math.max(1, floor(d / 2))
+    if dry then return d end   -- an estimate (the trainer AI): nothing eaten
     consume(defender)
     say(battle, T.set(battle, 219, defender, { nil, itemName(ddef) }))
   end

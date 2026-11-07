@@ -103,7 +103,7 @@ function LauncherMods.deriveList(manifests, options)
     -- know which game the player is about to start -- which it does not.
     -- The chips are carried alongside so the row can draw them.
     local on = ModGens.active(mods[m.id], nil)
-    if on == nil then on = not m.experimental end
+    if on == nil then on = not (m.experimental or m.defaultOff) end
     if on then enabledSet[m.id] = true end
     genSet[m.id] = ModGens.gensOf(mods[m.id])
     forceSet[m.id] = ModGens.forcedOf(mods[m.id])
@@ -620,7 +620,7 @@ end
 
 local function isOn(options, m)
   local on = ModGens.active(options.mods and options.mods[m.id], nil)
-  if on == nil then on = not m.experimental end
+  if on == nil then on = not (m.experimental or m.defaultOff) end
   return on == true
 end
 

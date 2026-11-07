@@ -114,7 +114,7 @@ function M.rematchFor(id, beaten, unlocked)
     local t = set[i + 1]
     if t == 0 then rung = i - 1; break end
     if t ~= 0xFFFF and not beaten(t) then rung = i; break end
-    if i == 5 then rung = 4 end
+    -- (all five beaten: GetIndexOfFirstUnbeatenRematch returns 5, the default)
   end
   -- CheckUnlockedRematchGroup / GetPreviousRematchIndexForTrainer
   if rung ~= 0 and not unlocked(rung) then

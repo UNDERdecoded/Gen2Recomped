@@ -7,6 +7,14 @@ Player.aligned={}
 function Player.new(data,species,mon,side)
  local def=data.pokemon and data.pokemon[species]
  local record=def and def.gen5Animation
+ -- Black / White's other forms play their own bundle (gen5-form-sprites-v1);
+ -- a form without one is drawn still rather than as the base form
+ local form=type(mon)=="table" and tonumber(mon.form) or 0
+ if form>0 and def and def.gen5FormSprites then
+  local fr=def.gen5FormSprites[form]
+  if fr then record=fr.animation end
+  if fr and not record then return nil end
+ end
  if not record or not record.path then return nil end
  if require("src.pokemon.Sprites").formIndex(def,mon)then return nil end
  local bytes=love.filesystem.read(Assets.resolve(record.path))

@@ -197,10 +197,44 @@ local FATAL_PART = { actives = true, bench = true }
 -- "host"/"guest", seed, verdict, strict }.  Returns nil plus a reason when
 -- the handshake says the two link surfaces don't match: a lockstep
 -- simulation of two different rulebooks can only end in a bogus draw.
+-- Which battle a verdict allows: "lockstep" (both machines run one
+-- simulation and compare hashes), "host" (two games of one family whose
+-- data differ: the host is the authority, WS5), or nil.  opts.mode, when a
+-- caller already knows (CompatRules.pair's `battle`), wins.
+function LinkBattle.modeFor(verdict, pair)
+  if type(pair) == "table" and (pair.battle == "lockstep" or pair.battle == "host") then
+    if verdict == "refused" or verdict == "timecapsule" or verdict == "subset" then return nil end
+    return pair.battle
+  end
+  if verdict == "family" then return "host" end
+  if Handshake.battleAllowed(verdict) then return "lockstep" end
+  return nil
+end
+
+-- Gen 3+ data (the battle runs src/online/LinkBattleModern.lua)
+function LinkBattle.isModern(data)
+  local ok, gen = pcall(function() return require("src.online.MonCodec").genOf(data) end)
+  return ok and (tonumber(gen) or 1) >= 3
+end
+
 function LinkBattle.new(game, net, opts)
   local BattleState = require("src.battle.BattleState")
   local role = opts.role
   local theirName = opts.theirName or "FOE"
+
+  -- GEN 3 / 4 / 5: lockstep on the engine's own turn, or host-authoritative
+  -- between two games of one family (src/online/LinkBattleModern.lua).
+  -- Gen 1/2 keep the turn below exactly as 0.7.x peers run it.
+  if LinkBattle.isModern(game.data) then
+    local mode = opts.mode or LinkBattle.modeFor(opts.verdict, opts.pair)
+    if not mode then
+      return nil, Strings("Link battle needs\nthe same mods on\nboth games.")
+    end
+    local o = {}
+    for k, v in pairs(opts) do o[k] = v end
+    o.mode = mode
+    return require("src.online.LinkBattleModern").new(game, net, o)
+  end
 
   if not Handshake.battleAllowed(opts.verdict) then
     return nil, Strings("Link battle needs\nthe same mods on\nboth games.")
@@ -693,6 +727,15 @@ function LinkBattle.newSpectator(game, net, opts)
   local BattleState = require("src.battle.BattleState")
   local hostName = opts.hostName or "HOST"
   local guestName = opts.guestName or "GUEST"
+
+  -- GEN 3 / 4 / 5: the host's machine rebuilt from the relayed traffic
+  -- (src/online/LinkBattleModern.lua M.newSpectator)
+  if LinkBattle.isModern(game.data) then
+    local o = {}
+    for k, v in pairs(opts) do o[k] = v end
+    o.mode = o.mode or LinkBattle.modeFor(opts.verdict, opts.pair) or "lockstep"
+    return require("src.online.LinkBattleModern").newSpectator(game, net, o)
+  end
 
   if not Handshake.battleAllowed(opts.verdict) then
     return nil, Strings("Link battle needs\nthe same mods on\nboth games.")

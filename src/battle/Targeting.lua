@@ -186,6 +186,14 @@ function Targeting.resolve(battle, user, move, chosen)
     local center = require("src.battle.Gen5MoveRules").centerOfAttention(battle, user, move)
     if center then return { center } end
   end
+  -- PLATINUM / HGSS: Follow Me; Lightning Rod / Storm Drain (and BW's, INFERRED)
+  -- draw a single-target move (src/battle/Gen4MoveEffectsExtra.lua)
+  if (k == Targeting.SELECTED or k == Targeting.RANDOM) and battle.isDouble and battle:isDouble() then
+    local X = require("src.battle.Gen4MoveEffectsExtra")
+    local drawn
+    if battle.bw then drawn = X.abilityRedirect(battle, user, move) else drawn = X.redirect(battle, user, move) end
+    if drawn then return { drawn } end
+  end
 
   if k == Targeting.USER then return { user } end
 

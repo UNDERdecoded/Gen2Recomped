@@ -2146,7 +2146,27 @@ L.bwpartyable = function(ins, s) emit(s, { "g4_bw_party_able", ins.args[1] }) en
 L.bw_1C0 = function(_, s) require("src.script.Gen5PokeTransferCommands"); emit(s, { "g4_bw_poke_transfer" }) end
 L.bw_1C1 = function(_, s) require("src.script.Gen5PokeTransferCommands"); emit(s, { "g4_bw_poke_transfer_result" }) end
 L.bwbattleok = function(ins, s) emit(s, { "g4_bw_battle_ok", ins.args[1] }) end
-L.bwgameclear = function(ins, s) emit(s, { "g4_bw_game_clear", ins.args[1] }) end
+-- BLACK / WHITE 0x0DA / 0x0D9 / 0x0E4 (src/script/Gen5StorySwaps.lua)
+L.bwstoryswap = function(ins, s)
+  require("src.script.Gen5StorySwaps")
+  emit(s, { "g5_story_swap", ins.args[1], ins.args[2], ins.args[3] })
+end
+L.bwwarpid = function(ins, s) require("src.script.Gen5StorySwaps"); emit(s, { "g5_warp_id", ins.args[1] }) end
+L.bwclearbits = function(ins, s) require("src.script.Gen5StorySwaps"); emit(s, { "g5_clear_bits", ins.args[1] }) end
+L.bwgameclear = function(ins, s)
+  emit(s, { "g4_bw_game_clear", ins.args[1] })
+  -- ...and the clear's task then runs script 9601 (ov10 0x0215F734 step 10
+  -- -> 0x02158A20, literal 0x2581, both kinds): member 866 S02DF, which on
+  -- the first clear sets flag 0x960 and lays out the post-game (S0444),
+  -- then heals the party. Called like `callcommonscript 9601`
+  local label = s.bandLabel and s.bandLabel(9601)
+  if not label then return end
+  if s.want then s.want(label) end
+  local ret = s.newLabel()
+  emit(s, { "g4_call", ret })
+  emit(s, { "jump", label })
+  emit(s, { "label", ret })
+end
 L.bwlegend = function(ins, s) emit(s, { "g4_bw_legend", ins.args[1], ins.args[2] }) end
 -- BLACK / WHITE: Nimbasa Gym's coaster switch
 L.bwcoasterswitch = function(ins, s) emit(s, { "g4_bw_coaster_switch", ins.args[1] }) end
@@ -2259,8 +2279,15 @@ L.openpartymenufortrade = function(_, s) emit(s, { "g4_open_party_for_trade" }) 
 L.giverunningshoes = function(_, s) emit(s, { "g4_running_shoes" }) end
 L.gettimeofday = function(ins, s) emit(s, { "g4_time_of_day", ins.args[1] }) end
 L.countbadgesacquired = function(ins, s)
+  -- BLACK / WHITE: a cache linked before gen5-script-link-v20 names op 0x0E1
+  -- this, and 0x0E1 is the player's GENDER (ov10 0x0215AC1C reads MyStatus
+  -- +0x1D; see Gen5ScriptLink). BW's own count is 0x0D7, `bwcountbadges`
+  if require("src.core.GameVersion").isGen5() then
+    return emit(s, { "g4_player_gender", ins.args[1] })
+  end
   emit(s, { "g4_count_badges", ins.args[1] })
 end
+L.bwcountbadges = function(ins, s) emit(s, { "g4_count_badges", ins.args[1] }) end
 -- `ScrCmd_CheckRunningShoesAcquired`: `*destVar = PlayerData_HasRunningShoes()`.
 --
 -- 0x159 was in the opcode table and had no lowering, which for a command that

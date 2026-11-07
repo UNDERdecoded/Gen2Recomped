@@ -115,8 +115,11 @@ function StartMenu.new(game)
     Screens.push(game, "OptionsMenu", { onCancel = reopen })
   end })
 
-  -- LINK needs a party
-  if #game.save.party > 0 and not inContest then
+  -- LINK needs a party, and is not offered while a minigame owns the menu:
+  -- the Bug-Catching Contest or a Safari Game (save.safari is set from the
+  -- gate's ticket until the game ends), as on the DS menus
+  -- (Gen4StartMenu.linkRow)
+  if #game.save.party > 0 and not inContest and not game.save.safari then
     table.insert(items, { label = Strings("LINK"), onSelect = function()
       local LinkState = require("src.link.LinkState")
       game.stack:push(LinkState.new(game))

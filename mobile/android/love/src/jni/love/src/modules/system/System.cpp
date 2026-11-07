@@ -300,6 +300,34 @@ bool System::walkerNotify(const char *json) const
 #endif
 }
 
+bool System::shareText(const char *text) const
+{
+#ifdef LOVE_ANDROID
+	return love::android::shareText(text);
+#else
+	LOVE_UNUSED(text);
+	return false;
+#endif
+}
+
+bool System::acquireMulticastLock() const
+{
+#ifdef LOVE_ANDROID
+	return love::android::acquireMulticastLock();
+#else
+	return false;
+#endif
+}
+
+bool System::releaseMulticastLock() const
+{
+#ifdef LOVE_ANDROID
+	return love::android::releaseMulticastLock();
+#else
+	return false;
+#endif
+}
+
 bool System::syncHealthSteps() const
 {
 #ifdef LOVE_ANDROID

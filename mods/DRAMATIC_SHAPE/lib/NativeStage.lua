@@ -69,6 +69,10 @@ NativeStage.DEPTH_PULL = 14
 -- the solve's targets, as fractions of the battle surface: how far apart the
 -- two feet are on screen, and where the middle of them lands
 NativeStage.SPAN = 0.42
+-- ...of a surface no wider than this: a window-wide battle (NativeWide) shows
+-- more of the map either side of the pair, not the same share of a screen
+-- that grew only sideways, which blew the pair up past the rows it has
+NativeStage.SPAN_WIDTH = 320
 NativeStage.MID_X = 0.52
 NativeStage.MID_Y = 0.55
 
@@ -236,6 +240,10 @@ function NativeStage.plan(map, cx, cy, facing, opts)
   stage.cells[0], stage.cells[1] = P, E
   -- DOUBLES: the partner on the next cell to the side when that cell is
   -- open, else the two share the cell, half a cell either side of its middle
+  -- ...and half a cell further apart than the cells say: the swung camera
+  -- foreshortens this axis, and a neighbouring cell left a big mon (a Charizard's
+  -- whole frame) standing square in front of its partner
+  local SPREAD = NativeStage.CELL / 2
   local r = best.r
   local function pair(c, ok, leftSlot, rightSlot)
     local rx, ry = c[1] + r[1], c[2] + r[2]
@@ -245,8 +253,12 @@ function NativeStage.plan(map, cx, cy, facing, opts)
     -- nearer the lens and low enough to go under the text box
     if ok(lx, ly) then
       stage.cells[leftSlot], stage.cells[rightSlot] = { lx, ly }, c
+      stage.world[leftSlot] = { -r[1] * SPREAD, -r[2] * SPREAD }
+      stage.world[rightSlot] = { r[1] * SPREAD, r[2] * SPREAD }
     elseif ok(rx, ry) then
       stage.cells[leftSlot], stage.cells[rightSlot] = c, { rx, ry }
+      stage.world[leftSlot] = { -r[1] * SPREAD, -r[2] * SPREAD }
+      stage.world[rightSlot] = { r[1] * SPREAD, r[2] * SPREAD }
     else
       stage.cells[leftSlot], stage.cells[rightSlot] = c, c
       stage.world[leftSlot] = { -r[1] * 5, -r[2] * 5 }
@@ -330,7 +342,7 @@ function NativeStage.solve(stage, view, View, ground, w, h)
       -- same WORLD scale (two cells apart is closer together on screen, not
       -- a closer camera making everything bigger)
       local gapWorld = math.sqrt((ex - px) ^ 2 + (ez - pz) ^ 2)
-      local want = NativeStage.SPAN * w * math.max(0.4, gapWorld / (3 * NativeStage.CELL))
+      local want = NativeStage.SPAN * math.min(w, NativeStage.SPAN_WIDTH) * math.max(0.4, gapWorld / (3 * NativeStage.CELL))
       if span > 1e-3 then
         zoom = zoom * span / want
       end

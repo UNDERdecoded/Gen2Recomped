@@ -27,12 +27,12 @@
 -- swapped cells. INFERRED: the matrix swaps keep the zone's own size (both
 -- matrices are read as the same grid).
 
--- THE STORY CONDITIONS (3..12) ARE NOT REACHED IN PLAY. READ: no script of
--- Black's or White's /a/0/5/7 names vars 0x4031..0x403A, and the only data
--- naming them is ov10's own table 0x02170FB0; their values read as dates
--- (0x1220, 0x0224 ...). So Nacrene's museum (matrix 52 -> 181, whose chunk
--- wears textures its area does not carry) never swaps in normal play. The
--- port must not write those vars itself (OverworldState:gen4CountAmityStep
+-- THE STORY CONDITIONS (3..12): no script names vars 0x4031..0x403A
+-- directly -- op 0x0DA <id, on, apply> writes them by the row of ov10's
+-- table 0x02170FB0 (READ, 0x0215AE34; src/script/Gen5StorySwaps.lua), at ten
+-- sites (the bedroom after the first battle, the castle rising at the
+-- League, ...). An earlier reading missed that op and called these
+-- unreachable. Nothing else may write them (OverworldState:gen4CountAmityStep
 -- used to count 0x403A on BW maps).
 local M = {}
 

@@ -1094,19 +1094,12 @@ function Renderer:endFrame(zones, worldZones)
     local ow, oh = self.worldOverride:getDimensions()
     local osx = (ow and ow > 0) and (ww / ow) or (1 / dpiX)
     local osy = (oh and oh > 0) and (wh / oh) or (1 / dpiY)
-    -- iOS still needs the historical presentation flip for the older
-    -- generations. Gen 4 is the exception: its 3D worldOverride already
-    -- reaches this point in the correct orientation, so applying the same
-    -- iOS flip a second time turns Platinum upside down while its UI remains
-    -- upright.
-    local loveMajor = love.getVersion()
-    local gen = require("src.core.GameVersion").generation()
-    if love.system and love.system.getOS
-       and love.system.getOS() == "iOS"
-       and loveMajor >= 12
-       and gen ~= 4 then
-      love.graphics.draw(self.worldOverride, 0, wh, 0, osx, -osy)
-    elseif wobble then
+    -- ONE PRESENTATION PATH ON EVERY PLATFORM. iOS used to flip this blit, for
+    -- every generation but 4, to undo the mods' shaders coming out upside down
+    -- on Metal. Those shaders are right at the source now (ClipSpaceCompat), so
+    -- the flip would only turn their picture over again, and it never was right
+    -- for Black and White at a render scale above 1x, or for Gen 4 below it.
+    if wobble then
       -- a DS pixel is a UI pixel here (Ux, Uy); the bands from the UI's top
       wobbleBands(uoy, 10 * Uy, wh, function(dir, y, h)
         love.graphics.setScissor(0, math.max(0, y), ww, h + math.min(0, y))

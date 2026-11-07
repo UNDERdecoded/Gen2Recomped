@@ -70,6 +70,7 @@ function Gen4Poketch.new(game, opts)
                 .. "re-import to get the app list")
     self.apps = {}
   end
+  self.apps = Gen4Poketch.cartridgeOrder(self.apps)
   self.border = record and record.border or "poketch/poketch_border"
   self.unavailable = record and record.unavailable or "poketch/unavailable"
 
@@ -81,6 +82,40 @@ function Gen4Poketch.new(game, opts)
   if not self:isRegistered(self.index) then self:cycle(1) end
   self.flash = 0
   return self
+end
+
+-- THE CARTRIDGE'S APP IDS (pokeplatinum generated/poketch_apps.txt, READ):
+-- POKETCH_APPID_* 0 DIGITALWATCH .. 24 ALARMCLOCK. `registerpoketchapp`,
+-- `checkpoketchapp`, the save's appRegistry and the bezel's
+-- Poketch_IncrementAppID / DecrementAppID all use these. The cache's
+-- `apps[].id` is the Poketch Co. description bank's order instead (1 is the
+-- Analog Watch there, the Calculator here), so a registered PEDOMETER (3)
+-- used to unlock the Stopwatch. The list is re-ordered by the cartridge id
+-- and each app carries it as `cartId`.
+Gen4Poketch.APP_IDS = {
+  ["Digital Watch"] = 0, ["Calculator"] = 1, ["Memo Pad"] = 2, ["Pedometer"] = 3,
+  ["Pokémon List"] = 4, ["Friendship Checker"] = 5, ["Dowsing Machine"] = 6,
+  ["Berry Searcher"] = 7, ["Day-Care Checker"] = 8, ["Pokémon History"] = 9,
+  ["Counter"] = 10, ["Analog Watch"] = 11, ["Marking Map"] = 12,
+  ["Link Searcher"] = 13, ["Coin Toss"] = 14, ["Move Tester"] = 15,
+  ["Calendar"] = 16, ["Dot Artist"] = 17, ["Roulette"] = 18,
+  ["Trainer Counter"] = 19, ["Kitchen Timer"] = 20, ["Color Changer"] = 21,
+  ["Matchup Checker"] = 22, ["Stopwatch"] = 23, ["Alarm Clock"] = 24,
+}
+function Gen4Poketch.cartridgeOrder(apps)
+  local out = {}
+  for i, app in ipairs(apps or {}) do
+    local copy = {}
+    for k, v in pairs(app) do copy[k] = v end
+    copy.cartId = Gen4Poketch.APP_IDS[app.name]
+    copy.order = i
+    out[#out + 1] = copy
+  end
+  table.sort(out, function(a, b)
+    local x, y = a.cartId or (100 + a.order), b.cartId or (100 + b.order)
+    return x < y
+  end)
+  return out
 end
 
 -- The Poketch's own corner of the save.  Created on demand so a save from
@@ -245,7 +280,7 @@ function Gen4Poketch:isRegistered(index)
   -- Older runtime saves didn't retain the registry. Keep their app access
   -- until story scripts supply one, without inventing acquisition flags.
   if type(registry)~='table' then return true end
-  local id=tonumber(app.id) or index-1
+  local id=app.cartId or tonumber(app.id) or index-1
   return registry[id]==true or registry[id]==1
 end
 
@@ -498,6 +533,8 @@ function Gen4Poketch:touchpressed(id, px, py)
     self:rouletteTouch(x, y)
   elseif name == 'Coin Toss' then
     self:activate()
+  elseif name == 'Link Searcher' then
+    require("src.ui.Gen4PoketchLinkSearcher").touch(self)
   elseif name == 'Friendship Checker' then
     local fc = self:friendshipState()
     fc.tapped = true
@@ -2079,6 +2116,7 @@ function Gen4Poketch:updateApp()
   elseif name == 'Friendship Checker' then if tick30 then self:updateFriendship() end
   elseif name == 'Roulette' then if tick30 then self:updateRoulette() end
   elseif name == 'Matchup Checker' then if tick30 then self:updateMatchup() end
+  elseif name == 'Link Searcher' then if tick30 then require("src.ui.Gen4PoketchLinkSearcher").update(self) end
   elseif name == 'Kitchen Timer' then
     -- Task_BeatHands: SEQ_SE_DP_DENSI11 with each beat, every 8 ticks
     if self:timerMode() == 'sounding' and (self.ticks or 0) % 16 == 0 then appSe(self, "SEQ_SE_DP_DENSI11") end
@@ -2119,6 +2157,7 @@ local DRAW = {
   ["Pokémon History"] = Gen4Poketch.drawHistory,
   ["Color Changer"] = Gen4Poketch.drawColorChanger,
   ["Trainer Counter"] = Gen4Poketch.drawTrainerCounter,
+  ["Link Searcher"] = function(self) require("src.ui.Gen4PoketchLinkSearcher").draw(self) end,
 }
 
 -- What sits BEHIND an app's own BG2 (a BG3 window the board frames).
@@ -2270,7 +2309,8 @@ function Gen4Poketch:drawWatch()
   -- the app number while the shutter is shut (TASK_LOAD_APP_COUNTER: two
   -- digits at (176, 40) in the theme's row with 1/4 and 8/15 swapped)
   if self.shutter and phase == 'shut' then
-    local n = (tonumber(((self.apps[self.index] or {}).id)) or (self.index - 1)) + 1
+    local cur = self.apps[self.index] or {}
+    local n = (cur.cartId or tonumber(cur.id) or (self.index - 1)) + 1
     local digits = { math.floor(n / 10) % 10, n % 10 }
     for i, d in ipairs(digits) do self:drawCell('digits_inverse', d, 176 + 16 * (i - 1), 40) end
   end

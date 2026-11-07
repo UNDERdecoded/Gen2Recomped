@@ -22,8 +22,7 @@
 -- Here the camera looks at the board's cell with the player's own camera
 -- mode, and the lines scroll across an LED band while it does.
 -- NOT PORTED (inferred or missing): the post-game Hall of Fame variant and
--- the event variant (/a/1/6/6), the outbreak line (no Unova outbreaks run
--- here), daily / event weather overrides (the zone header's weather is used),
+-- the event variant (/a/1/6/6), daily / event weather overrides (the zone header's weather is used),
 -- the month's word (English names stand in) and the board model's own
 -- marquee texture and scroll speed.
 
@@ -71,6 +70,18 @@ function M.compose(data, rec, t)
   local c = okS and St.clock and St.clock()
   local wday = ((c and c.wday or t.wday or 1) - 1) % 7
   local out = {}
+  -- the outbreak line (ov48 0x021F4058, READ): today's outbreak zone
+  -- (0x021A9810, src/world/Gen5Swarms.lua) -- none, or zone 345 in winter
+  -- (season 3), and no line; else the record's +0x20 line with the zone's
+  -- place name in word 0
+  do
+    local G = Game()
+    local today = G and G.save and rec.outbreak and require("src.world.Gen5Swarms").today(G.save)
+    local winter = require("src.world.Gen5FieldRules").season(G and G.save) == 3
+    if today and not (today[1] == 345 and winter) then
+      out[#out + 1] = line(data, rec.outbreak, { placeName(data, today[1]) })
+    end
+  end
   -- the date: "{VAR1} {CMD 0201 1}, 20{CMD 0201 2}"
   local key = ("TEXT_G5S_%04d_%05d"):format(M.BANK, rec.date)
   local raw = data and data.text and data.text[key] or "{VAR1} {CMD 0201 1}, 20{CMD 0201 2}"

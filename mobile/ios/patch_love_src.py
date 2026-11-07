@@ -94,6 +94,13 @@ int w_syncHealthSteps(lua_State *L)
 {
 	return gr_callBridge(L, "GRHealthBridge", "syncStepsWithCommand:saveDir:", "sync");
 }
+
+int w_shareText(lua_State *L)
+{
+	// shareText(text [, subject]): the sheet needs only the text
+	const char *text = luaL_checkstring(L, 1);
+	return gr_callBridge(L, "GRPickerBridge", "shareText:saveDir:", text);
+}
 #endif // LOVE_IOS
 // ---------------------------------------------------------------------------
 
@@ -103,6 +110,7 @@ WRAP_REGISTRATION = """#ifdef LOVE_IOS
 	{ "pickFile", w_pickFile },
 	{ "createFile", w_createFile },
 	{ "syncHealthSteps", w_syncHealthSteps },
+	{ "shareText", w_shareText },
 #endif
 """
 

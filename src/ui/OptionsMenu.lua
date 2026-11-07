@@ -502,6 +502,20 @@ local function buildRows(game)
       activate = function(g)
         require("src.ui.Screens").push(g, "BindingsMenu")
       end },
+    -- ONLINE SETTINGS (docs/online-design.md WS10): port, router, relay,
+    -- hub, address, world size, name.  One row here reaches every
+    -- generation, because Gen3Options and Gen4Options (Gen 4 and 5) append
+    -- these same rows.  The value is what this device can do.
+    { id = "online", label = Strings("ONLINE"),
+      value = function()
+        local ok, info = pcall(function() return require("src.core.Platform").online() end)
+        if not ok or not info then return "" end
+        if info.available then return Strings("SETTINGS") end
+        return info.relayOnly and Strings("RELAY ONLY") or Strings("OFF")
+      end,
+      activate = function(g)
+        require("src.ui.online.OnlineSettings").open(g)
+      end },
     -- permanent on-screen pad toggle (#327); layout editing stays in the
     -- launcher.  Hidden where the overlay never appears (desktop without
     -- POKEPORT_TOUCH), so the row costs a non-mobile install nothing.

@@ -33,12 +33,21 @@
 --     block - 1 in a 4-wide grid of 7 x 7) at (24, 11) (ov101_021EAA0C);
 --     Sinjoh / the S.S. Aqua hidden unless the player is there, Kanto's
 --     specs hidden before the Kanto map (except Mt. Silver at 25, 10)
--- NOT DONE: the markings mode (Y: icons and Easy Chat words per location),
--- the map-marking indicator sprites, the roaming legendaries' icons, the
+--   * the roaming legendaries (ov101_021E9270.c "Roamer icons", sprites
+--     from template 4 = set B anim 2, frame = roamer index: Raikou 0, Entei
+--     1, Latias 2, Latios 3): each active roamer (GetRoamerIsActiveByIndex)
+--     at its met location's spec (PokegearMap_GetLocationSpecByMapID):
+--     ((x - left) * grid + 8 + grid / 2 + objXoffset * (zoomed + 1), same
+--     for y) (Map:drawRoamers)
+--   * the markings mode (Y on a markable place) is src/ui/HgssGearMarkings
+--     (icons and Easy Chat words per place, the top screen's strip, the
+--     map's has-markings sprites: set B anim 4 at the place's sprite spot)
+-- NOT DONE: the
 -- rematch / gift icon, greying the towns not yet visited, the zoom's affine
 -- slide animation (the view changes at once).
 
 local Font = require("src.render.Font")
+local Markings = require("src.ui.HgssGearMarkings")
 
 local Map = {}
 Map.__index = Map
@@ -150,13 +159,13 @@ end
 
 function Map:markings()
   if not self:markable() then return end
-  -- the markings mode is not ported: the button answers, nothing opens
   self.gear:se("SEQ_SE_GS_GEARDECIDE")
   self.yPressed = 8
-  print("[pokegear] the map's markings mode is not ported yet")
+  self.mark = Markings.new(self)
 end
 
 function Map:keys(input)
+  if self.mark then return self.mark:keys(input) end
   if input:wasPressed("b") then return self.gear:toBar() end
   if input:wasPressed("x") then return self:toggleZoom() end
   if input:wasPressed("y") then return self:markings() end
@@ -190,6 +199,11 @@ function Map:cellAt(x, y)
 end
 
 function Map:touch(x, y)
+  if self.mark then
+    self.mark:touch(x, y)
+    self.busy = self.mark ~= nil and self.mark.busy or false
+    return true
+  end
   if y >= 16 and y < 64 and x >= 216 and x < 248 then self:markings(); return true end
   if y >= 88 and y < 152 and x >= 216 and x < 248 then self:toggleZoom(); return true end
   if x >= 8 and x < 200 and y >= 8 and y < 152 then
@@ -207,6 +221,7 @@ end
 
 -- FlyMap_HandleTouchInput_DraggingMap: the map follows the stylus
 function Map:touchMove(x, y)
+  if self.mark then return self.mark:touchMove(x, y) end
   local d = self.drag
   if not d then return end
   local g = self:grid()
@@ -217,9 +232,17 @@ function Map:touchMove(x, y)
   self.top = math.max(0, math.min(MAX_Y - h + 1, top))
 end
 
-function Map:touchUp() self.drag, self.busy = nil, false end
+function Map:touchUp()
+  if self.mark then self.mark:touchUp() end
+  self.drag, self.busy = nil, false
+end
 
 function Map:busyUpdate()
+  if self.mark then
+    self.mark:busyUpdate()
+    self.busy = self.mark ~= nil and self.mark.busy or false
+    return
+  end
   if not self.gear.touchHeld then self.drag, self.busy = nil, false end
 end
 
@@ -227,6 +250,7 @@ function Map:reselect() end
 
 function Map:update()
   self.t = self.t + 1
+  if self.mark then self.mark:update() end
   if self.step > 0 then self.step = self.step - 1 end
   if self.yPressed then
     self.yPressed = self.yPressed - 1
@@ -237,6 +261,7 @@ end
 -- ------------------------------------------------------------------- draw
 
 function Map:drawTouch()
+  if self.mark then return self.mark:drawTouch() end
   local g = love.graphics
   local gear = self.gear
   local full = gear:img("map_full")
@@ -267,6 +292,8 @@ function Map:drawTouch()
   else
     gear:picture("map_top")
   end
+  self:drawMarked()
+  self:drawRoamers()
   -- the player and the cursor
   local half = grid / 2
   local function at(cx, cy) return CENTER + (cx - self.left) * grid + half, CENTER + (cy - self.top) * grid + half end
@@ -281,6 +308,53 @@ function Map:drawTouch()
       g.setColor(1, 0.2, 0.2, 1)
       g.rectangle("line", x - half + 0.5, y - half + 0.5, grid - 1, grid - 1)
       g.setColor(1, 1, 1, 1)
+    end
+  end
+end
+
+-- The active roamers' map headers by roamer index (save.gen4Roamers, routes
+-- through Gen4Roamers' HGSS table): { [slot] = header }.
+function Map:roamerHeaders()
+  local out = {}
+  local okR, R = pcall(require, "src.world.Gen4Roamers")
+  if not okR then return out end
+  if R.useFamily then pcall(R.useFamily) end
+  for slot, roamer in pairs((self.game.save or {}).gen4Roamers or {}) do
+    local route = type(roamer) == "table" and roamer.active and R.ROUTES and R.ROUTES[tonumber(roamer.route) or -1]
+    if route and route.header then out[tonumber(slot) or slot] = route.header end
+  end
+  return out
+end
+
+-- the places carrying markings (set B anim 4 at the place's sprite spot)
+function Map:drawMarked()
+  local list = (self.gear:save() or {}).markings
+  if not list or #list == 0 then return end
+  local grid = self:grid()
+  local scale = self.zoomed and 2 or 1
+  for _, s in ipairs(self.gear:art().locations or {}) do
+    if Markings.get(self.gear:save(), s.mapId) and not self:hidden(s.mapId) then
+      local x = (s.x - self.left) * grid + CENTER + grid / 2 + (s.objX or 0) * scale
+      local y = (s.y - self.top) * grid + CENTER + grid / 2 + (s.objY or 0) * scale
+      if x > 0 and x < 208 and y > 0 and y < 160 then self.gear:obj("mapB", 4, 0, x, y) end
+    end
+  end
+end
+
+function Map:drawRoamers()
+  local grid = self:grid()
+  local scale = self.zoomed and 2 or 1
+  local specs = self.gear:art().locations or {}
+  for slot, header in pairs(self:roamerHeaders()) do
+    for _, s in ipairs(specs) do
+      if s.mapId == header then
+        local x = (s.x - self.left) * grid + CENTER + grid / 2 + (s.objX or 0) * scale
+        local y = (s.y - self.top) * grid + CENTER + grid / 2 + (s.objY or 0) * scale
+        if x > 0 and x < 208 and y > 0 and y < 160 then
+          self.gear:obj("mapB", 2, tonumber(slot) or 0, x, y)
+        end
+        break
+      end
     end
   end
 end
@@ -306,6 +380,7 @@ function Map:drawTop()
     local b = s.block - 1
     if pics then gear:tiles(pics, (b % 4) * 7, floor(b / 4) * 7, 7, 7, 24, 11) end
   end
+  Markings.drawTop(self, s)
 end
 
 return Map

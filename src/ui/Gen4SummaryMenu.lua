@@ -1187,7 +1187,7 @@ function Gen4SummaryMenu:drawSkills()
   -- ability label (14,18), name (21,18), description (14,20) w18 h4
   self:say('white',self:word("ability", Strings("Ability")),112,144,48)
   local def = self:speciesDef()
-  local ability = mon.ability or (def and def.abilities and def.abilities[1])
+  local ability = require("src.pokemon.AbilityOf").pick(mon, def and def.abilities)
   if ability then
     local list = self.game.data.abilities
     local record = list and list[ability]

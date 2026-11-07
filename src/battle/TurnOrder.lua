@@ -77,6 +77,9 @@ end
 function TurnOrder.firstMover(a, aMove, b, bMove, rng, invertTie, battle, data)
   rng = rng or love.math.random
   local pa, pb = priority(aMove), priority(bMove)
+  -- PRANKSTER (BW, src/battle/Gen45Abilities.lua)
+  local G45 = require("src.battle.Gen45Abilities")
+  pa, pb = pa + G45.priorityBonus(a, aMove), pb + G45.priorityBonus(b, bMove)
   if pa ~= pb then return pa > pb end
 
   -- BattleCommand_CheckTurn/Quick Claw: priority classes are resolved first.
@@ -100,6 +103,21 @@ function TurnOrder.firstMover(a, aMove, b, bMove, rng, invertTie, battle, data)
     if HeldItems.quickClaw(data, second, rng) then return not firstIsA end
   end
 
+  -- LAGGING TAIL / FULL INCENSE, then STALL (Platinum on;
+  -- BattleSystem_CompareBattlerSpeed): last in the bracket; two holders, the
+  -- slower first; then the ordinary comparison
+  if require("src.battle.Gen45Abilities").gen() >= 4 then
+    local X = require("src.battle.Gen4MoveEffectsExtra")
+    local la, lb = X.lagging(a), X.lagging(b)
+    if la ~= lb then return lb end
+    if la and lb then
+      local sa0, sb0 = effectiveSpeed(a, battle), effectiveSpeed(b, battle)
+      if sa0 ~= sb0 then return sa0 < sb0 end
+    else
+      local st = X.stallOrder(a, b)
+      if st ~= nil then return st end
+    end
+  end
   local sa, sb = effectiveSpeed(a, battle), effectiveSpeed(b, battle)
   -- TRICK ROOM (FIELD_CONDITION_TRICK_ROOM): within a priority bracket the
   -- slower moves first. Only the speed comparison flips -- priority, Quick Claw

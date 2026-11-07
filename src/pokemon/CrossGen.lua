@@ -84,10 +84,44 @@ function CG.itemId(data, src, key)
   return nil
 end
 
+-- the destination's spelling of a source Pokemon's nature: its own name
+-- matched without regard to case (the caches spell them LONELY / Lonely), a
+-- cartridge number, or the personality's (Gen IV's nature IS personality % 25)
+function CG.natureFor(data, raw)
+  local order = data and data.constants and data.constants.natureOrder
+  if type(order) ~= "table" then return nil end
+  if type(raw.nature) == "string" then
+    local want = norm(raw.nature)
+    for _, n in ipairs(order) do if norm(n) == want then return n end end
+  end
+  local n = tonumber(raw.nature) or tonumber(raw.ndsNature)
+  if n and n >= 0 and n <= 24 then return order[math.floor(n) + 1] end
+  if tonumber(raw.personality) then return order[(tonumber(raw.personality) % 25) + 1] end
+  return nil
+end
+
 local function finish(data, mon, raw)
   local Pokemon = require("src.pokemon.Pokemon")
-  if raw.personality or raw.ivs then
-    Pokemon.applySeed(data, mon, { personality = raw.personality, ivs = raw.ivs })
+  local seed = { personality = raw.personality, ivs = raw.ivs }
+  if (data.constants or {}).gen == 5 then
+    -- POKE TRANSFER KEEPS THE NATURE AND THE ABILITY.  Black / White store
+    -- both apart from the personality, and Pokemon.new above already rolled
+    -- a B/W nature and ability slot that applySeed would keep
+    -- (Pokemon.natureIsOwnField) -- re-rolling 37 of 40 natures in a
+    -- Platinum -> Black check.  The Gen IV nature and slot are put back;
+    -- applySeed then recomputes the stats from them.
+    seed.nature = CG.natureFor(data, raw)
+    local slot = tonumber(raw.abilitySlot)
+    if slot ~= 1 and slot ~= 2 then
+      local def = require("src.pokemon.Gen4Forms").definition(data, mon)
+      local list = def and (def.abilityIds or def.abilities)
+      local two = type(list) == "table" and list[2] ~= nil and list[2] ~= 0
+      slot = (two and tonumber(raw.personality)) and (tonumber(raw.personality) % 2) + 1 or 1
+    end
+    mon.abilitySlot = slot
+  end
+  if raw.personality or raw.ivs or seed.nature then
+    Pokemon.applySeed(data, mon, seed)
   end
   mon.hp = mon.stats and mon.stats.hp or mon.hp
   return mon

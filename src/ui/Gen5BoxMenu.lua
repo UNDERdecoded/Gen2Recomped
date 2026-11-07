@@ -87,8 +87,21 @@ function BW:runAction(action)
   if action == "WALLPAPER" then
     self:closeMenu()
     local rows = {}
+    -- THE PAGES (READ, overlay 170 0x021E8A74, lists at 0x021EF928..9F8, bank 9
+    -- words): the categories SCENERY 1-3 / MISC. (#35-38), and SPECIAL (#57)
+    -- only once bit 1 of the clear byte is set (script op 0x0E4; arm9
+    -- 0x02007A80; save.gen5ClearBits); four papers a page, #41-56 the
+    -- sixteen plain ones; SPECIAL's page RESHIRAM, ZEKROM, MONOCHROME, TEAM
+    -- PLASMA (#58-61), its NEXT (#68) to MUNNA, ZOROARK, SUBWAY, MUSICAL
+    -- (#62-65) only once bit 2 is set. So papers 16-19 wait on bit 1, 20-23
+    -- on bit 2, and paper 16 + k is word 58 + k (#57 is the category's name)
+    local bits = tonumber(self.game and self.game.save and self.game.save.gen5ClearBits) or 0
     for id = 0, 23 do
-      rows[#rows + 1] = { label = self:text(9, WALLPAPER_NAME + id) or ("WALLPAPER " .. id), key = function() self:setWallpaper(id) end }
+      local need = (id >= 20 and 2) or (id >= 16 and 1) or nil
+      if not need or math.floor(bits / need) % 2 == 1 then
+        local word = id < 16 and (WALLPAPER_NAME + id) or (WALLPAPER_NAME + 1 + id)
+        rows[#rows + 1] = { label = self:text(9, word) or ("WALLPAPER " .. id), key = function() self:setWallpaper(id) end }
+      end
     end
     rows[#rows + 1] = { label = self:label("CANCEL"), key = "CANCEL" }
     return self:openMenu(rows, self:say(10, "Pick the wallpaper."))
@@ -256,7 +269,7 @@ function BW:drawTop()
   local nat = mon.nature or (mon.personality and natures[mon.personality % 25 + 1])
   if nat then put(tostring(nat):sub(1, 1):upper() .. tostring(nat):sub(2):lower(), 15, 112) end
   put(self:label("ABILITY"), 8, 128)
-  local ability = mon.ability or (def and def.abilityIds and def.abilityIds[1])
+  local ability = require("src.pokemon.AbilityOf").pick(mon, def and def.abilityIds)
   local aid = tonumber(ability)
   local aname = aid and (data.text or {})[("TEXT_G5S_0182_%05d"):format(aid)] or (ability and tostring(ability))
   if aname then put(aname, 15, 144) end

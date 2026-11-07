@@ -2,12 +2,14 @@
 --
 -- The props' pictures are the cartridge's own textures (/a/0/4/5 members
 -- 0..99, constants.gen5Musical.images) and their x / y offsets the prop
--- table's (bytes 4 / 5). WHERE ON THE POKEMON each position sits is NOT the
--- cartridge's: Black / White place props on per-species points of the
--- Musical's own MCSS poses (/a/0/4/8 points at them), which this port does
--- not decode yet. Here a position is a point on the front sprite's opaque
--- box -- ears at its top corners, the head at its top, eyes / face in its
--- upper middle, body / waist lower down, the hands at its sides.
+-- table's (bytes 4 / 5). WHERE ON THE POKEMON each position sits is the
+-- cartridge's: Black / White draw the Musical's Pokemon from their own MCSS
+-- archive (/a/0/5/2) and put each prop on a per-species point of it; the
+-- import decodes the standing pose and its nine points
+-- (constants.gen5Musical.poses, Gen5MusicalData.pose) and drawMon uses them.
+-- A cache without them falls back to a point on the front battle sprite's
+-- opaque box -- ears at its top corners, the head at its top, eyes / face in
+-- its upper middle, body / waist lower down, the hands at its sides.
 
 local Assets = require("src.render.Assets")
 
@@ -77,31 +79,110 @@ function M.anchor(box, slot)
   return box.x1 - w * 0.05, top + h * 0.62
 end
 
--- draw `species` at (x, y) = the sprite's bottom centre, scaled, wearing
--- `outfit` ({ [slot] = { id = prop } })
+-- the Musical's own pose of `species` (constants.gen5Musical.poses, from
+-- /a/0/5/2: Gen5MusicalData.pose) -- its picture, origin and nine points
+function M.pose(data, species)
+  local rec = data and data.constants and data.constants.gen5Musical
+  local pose = rec and rec.poses and rec.poses[tonumber(species) or -1]
+  return pose
+end
+
+-- may a prop go on `slot` of this species? (the pose has the point; a
+-- species with no pose decoded takes any)
+function M.hasPoint(data, species, slot)
+  local pose = M.pose(data, species)
+  if not pose then return true end
+  return pose.anchors and pose.anchors[slot] ~= nil
+end
+
+-- draw `species` at (x, y) = its feet (the multi-cell's origin), scaled,
+-- wearing `outfit` ({ [slot] = { id = prop } }). With the Musical's pose
+-- the props sit on its decoded points, turned by the point's angle, the
+-- prop's own x / y offset (bytes 4 / 5) turned with it -- READ: ov112
+-- 0x021F49CE.. rotates the offset by the point's angle, negating it when the
+-- prop is drawn mirrored. Props are drawn at the pose's own pixel scale and
+-- the right-hand ear / hand mirrored (both INFERRED).
+-- the pose's frame at `tick` (its runs looped) -> frame index, or 1
+local frameCache = setmetatable({}, { __mode = "k" })
+function M.frameAt(pose, tick)
+  if not (pose and pose.runs and pose.frames and tick) then return 1 end
+  local map = frameCache[pose]
+  if not map then
+    map = {}
+    for _, r in ipairs(pose.runs) do for _ = 1, r[2] do map[#map + 1] = r[1] end end
+    frameCache[pose] = map
+  end
+  if #map == 0 then return 1 end
+  return map[(math.floor(tick) % #map) + 1] or 1
+end
+
+-- the pose's current anchors (opts.tick animates; Gen5MusicalData.pose)
+function M.anchorsAt(pose, tick)
+  local f = M.frameAt(pose, tick)
+  local fr = pose and pose.frames and pose.frames[f]
+  return (fr and fr.anchors) or (pose and pose.anchors) or {}, f
+end
+
+local quadCache = setmetatable({}, { __mode = "k" })
 function M.drawMon(data, species, outfit, x, y, scale, opts)
   if not lg then return end
   scale = scale or 1
   local rec = data and data.constants and data.constants.gen5Musical
-  local path = M.front(data, species)
-  local img = M.image(path)
-  local box = M.box(path)
-  local w, h = 96, 96
-  if img then w, h = img:getDimensions() end
-  box = box or { x0 = 16, y0 = 16, x1 = w - 16, y1 = h - 4, w = w, h = h }
-  local ox = x - (box.x0 + box.x1) / 2 * scale
-  local oy = y - (box.y1 + 1) * scale
+  local pose = M.pose(data, species)
+  local poseImg = pose and pose.image and M.image(pose.image)
+  local img, box, ox, oy, propScale, quad
+  local anchors = pose and pose.anchors
+  if poseImg then
+    img, propScale = poseImg, 1
+    ox, oy = x - (pose.ox or 0) * scale, y - (pose.oy or 0) * scale
+    -- animated: the frame of opts.tick out of the strip, its own points
+    local strip = opts and opts.tick and pose.strip and M.image(pose.strip)
+    if strip then
+      local f
+      anchors, f = M.anchorsAt(pose, opts.tick)
+      local cols = pose.cols or 1
+      quadCache[strip] = quadCache[strip] or {}
+      quad = quadCache[strip][f]
+      if not quad then
+        local sw, sh = strip:getDimensions()
+        quad = lg.newQuad(((f - 1) % cols) * pose.width, math.floor((f - 1) / cols) * pose.height,
+          pose.width, pose.height, sw, sh)
+        quadCache[strip][f] = quad
+      end
+      img = strip
+    end
+  else
+    local path = M.front(data, species)
+    img = M.image(path)
+    box = M.box(path)
+    local w, h = 96, 96
+    if img then w, h = img:getDimensions() end
+    box = box or { x0 = 16, y0 = 16, x1 = w - 16, y1 = h - 4, w = w, h = h }
+    ox = x - (box.x0 + box.x1) / 2 * scale
+    oy = y - (box.y1 + 1) * scale
+    propScale = 0.75
+  end
   local function prop(slot, item)
     local p = rec and rec.props and rec.props[item.id]
     local pic = rec and rec.images and M.image(rec.images[item.id])
     if not (p and pic) then return end
-    local ax, ay = M.anchor(box, slot)
+    local ax, ay, rot
+    if poseImg then
+      local a = anchors and anchors[slot]
+      if not a then return end
+      ax, ay, rot = x + a.x * scale, y + a.y * scale, a.rot or 0
+    else
+      local bx, by = M.anchor(box, slot)
+      ax, ay, rot = ox + bx * scale, oy + by * scale, 0
+    end
     local pw, ph = pic:getDimensions()
     local flip = (slot == 1 or slot == 8) and -1 or 1
     -- the prop's own offset (y up on the DS stage, so it is subtracted)
-    local px = ox + (ax + (p.dx or 0) * flip) * scale
-    local py = oy + (ay - (p.dy or 0)) * scale
-    lg.draw(pic, px, py, 0, scale * flip * 0.75, scale * 0.75, pw / 2, ph / 2)
+    local dx, dy = (p.dx or 0) * flip, -(p.dy or 0)
+    local c, sn = math.cos(rot), math.sin(rot)
+    local px = ax + (c * dx - sn * dy) * scale
+    local py = ay + (sn * dx + c * dy) * scale
+    lg.draw(pic, px, py, rot, scale * flip * propScale, scale * propScale, pw / 2, ph / 2)
   end
   -- what goes behind (capes and wings, mask bit 7) first
   for slot, item in pairs(outfit or {}) do
@@ -110,7 +191,7 @@ function M.drawMon(data, species, outfit, x, y, scale, opts)
   end
   if img then
     lg.setColor(1, 1, 1, (opts and opts.alpha) or 1)
-    lg.draw(img, ox, oy, 0, scale, scale)
+    if quad then lg.draw(img, quad, ox, oy, 0, scale, scale) else lg.draw(img, ox, oy, 0, scale, scale) end
   end
   for slot = 0, 8 do
     local item = outfit and outfit[slot]

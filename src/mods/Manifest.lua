@@ -255,6 +255,12 @@ function Manifest.validate(raw, path)
   assert(raw.experimental == nil or type(raw.experimental) == "boolean",
     "experimental must be a boolean")
   local experimental = raw.experimental == true
+  -- default_enabled: false ships a mod switched OFF until the player turns
+  -- it on, without the experimental badge and warning (a bundled mod that
+  -- only some players want, e.g. EMERALD_3DS_VOXEL)
+  assert(raw.default_enabled == nil or type(raw.default_enabled) == "boolean",
+    "default_enabled must be a boolean")
+  local defaultOff = experimental or raw.default_enabled == false
 
   -- #501: a translation declares itself here.  Neither the ROM's dialogue
   -- nor the engine's own strings are hashed into the link surface
@@ -320,6 +326,7 @@ function Manifest.validate(raw, path)
     support = support,
     updateCheck = updateCheck,
     experimental = experimental,
+    defaultOff = defaultOff,
     profile = profile,
     language = language,
     affects_link = affectsLink,

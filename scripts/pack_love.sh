@@ -238,6 +238,9 @@ for required in main.lua conf.lua src/core/Version.lua \
                 tools/map-editor/MapEdits.lua \
                 tools/map-editor/ModExport.lua \
                 tools/map-editor/panels/Preview.lua \
+                src/online/hub/Hub.lua \
+                src/online/hub/HubThread.lua \
+                src/online/LauncherHub.lua \
                 mods/DRAMATIC_SHAPE/manifest.json \
                 mods/DRAMATIC_SHAPE/main.lua \
                 mods/EMERALD_3DS_VOXEL/manifest.json \

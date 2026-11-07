@@ -54,6 +54,11 @@ function Sprites.path(data, species, side, opts)
     path = (side == "back" and (form.spriteBack or form.back)
                             or (form.spriteFront or form.front)) or path
   end
+  -- BLACK / WHITE'S OTHER FORMS (gen5-form-sprites-v1, Gen5BattleSprites):
+  -- the mon's `form` picks its own picture and shiny pair
+  local bwForm = def.gen5FormSprites and type(opts.mon) == "table" and tonumber(opts.mon.form)
+  local bwRec = bwForm and bwForm > 0 and def.gen5FormSprites[bwForm] or nil
+  if bwRec then path = (side == "back" and bwRec.back or bwRec.front) or path end
   -- A GEN 3 SHINY IS A WHOLE SECOND PICTURE, not a palette swap.
   --
   -- gMonShinyPaletteTable is its own table and the importer decodes the front
@@ -67,15 +72,47 @@ function Sprites.path(data, species, side, opts)
   -- BOTH SIDES.  gMonShinyPaletteTable is one palette per species and the
   -- cartridge applies it to whichever sheet is on screen -- the back pic
   -- included, which is the one the player looks at for the whole battle.
+  -- GEN 4 / 5 FEMALE ART. The importers write the distinct female sheet
+  -- (pokegra slots +0 back female / +2 front female, Gen4Pokegra; BW members
+  -- +1 / +10, Gen5BattleSprites) only where it differs from the male one, and nothing read it:
+  -- a female Pikachu showed the male tail everywhere. Base form only. A shiny
+  -- female takes the female sheet in the shiny palette: Gen 4
+  -- spriteFrontFemaleShiny / spriteBackFemaleShiny (gen4-female-sprites-v1),
+  -- BW the species index's female_shiny_front / _back; an older import
+  -- without one keeps the male shiny picture.
+  local mon = opts.mon
+  local femaleShiny
+  if not formIndex and not bwRec and type(mon) == "table" and (mon.gender ~= nil or mon.personality ~= nil) then
+    local femalePath
+    if side == "back" then femalePath = def.spriteBackFemale or def.spriteFemaleBack
+    else femalePath = def.spriteFrontFemale or def.spriteFemaleFront end
+    if femalePath then
+      local okG, g = pcall(require("src.pokemon.Pokemon").genderOf, data, mon)
+      if okG and g == "female" then
+        path = femalePath
+        if side == "back" then femaleShiny = def.spriteBackFemaleShiny
+        else femaleShiny = def.spriteFrontFemaleShiny end
+        if not femaleShiny then
+          local idx = data.gen4_species_sprites and data.gen4_species_sprites.species
+          local rec = idx and idx[tonumber(species) or species]
+          femaleShiny = rec and (side == "back" and rec.female_shiny_back or rec.female_shiny_front)
+        end
+        femaleShiny = femaleShiny or false
+      end
+    end
+  end
   local shinyPath = (side == "back") and def.spriteShinyBack or def.spriteShiny
   if formIndex then
     local form = def.forms[formIndex]
     shinyPath = (side == 'back' and (form.spriteShinyBack or form.shiny_back)
                               or (form.spriteShiny or form.shiny_front)) or shinyPath
   end
+  if bwRec then
+    shinyPath = (side == "back" and bwRec.shiny_back or bwRec.shiny_front) or shinyPath
+  end
   if shinyPath and opts.mon
      and require("src.pokemon.Pokemon").isShiny(opts.mon) then
-    path = shinyPath
+    path = femaleShiny or shinyPath
   end
   local ctx = {
     species = species,

@@ -50,9 +50,14 @@ local function state(save)
   local s = save.gen4Swarm
   if type(s) ~= "table" then
     -- `RecordMixedRNG_SetEntrySeed(.., MTRNG_Next())` at game start, and
-    -- `swarmDaily` cleared to 0 until the first day turns over.
+    -- SpecialEncounter_Init's `swarmDaily = MTRNG_Next()` / `marshDaily =
+    -- MTRNG_Next()` (HGSS Save_Roamers_Init: rand[1] = MTRandom()): two
+    -- independent random values until the first day turns over
     local seed = math.floor((os.time() * 2654435761) % TWO32)
-    s = { enabled = false, daily = 0, rand = Gen4Swarms.arngNext(seed) }
+    local rnd = (love and love.math and love.math.random) or math.random
+    s = { enabled = false, rand = Gen4Swarms.arngNext(seed),
+          daily = rnd(0, 65535) * 65536 + rnd(0, 65535),
+          marshDaily = rnd(0, 65535) * 65536 + rnd(0, 65535) }
     save.gen4Swarm = s
   end
   return s
@@ -75,7 +80,7 @@ function Gen4Swarms.onDays(save, daysPassed)
   if not s or daysPassed <= 0 then return end
   local r = s.rand or 0
   for _ = 1, daysPassed do r = Gen4Swarms.arngNext(r) end
-  s.rand, s.daily = r, r
+  s.rand, s.daily, s.marshDaily = r, r, r
 end
 
 function Gen4Swarms.header(save)

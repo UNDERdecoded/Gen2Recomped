@@ -268,6 +268,136 @@ function D.areaFlags(game, search, species)
   return flags
 end
 
+-- ------------------------------------------- the areas, from zukan_enc --
+-- When the cache carries `gen4_zukan_enc` (src/import/Gen4ZukanEnc.lua) the
+-- AREA list and its map markers are the cartridge's. READ FROM CODE
+-- (pokeheartgold ov18_021E5C40.c ov18_021E8528 .. ov18_021E8B78, asm
+-- overlay_18 ov18_021F04C0 / 41C4 / 42E4 / 463C / 47C0 / 47F8 / 48AC):
+--   * the lists: overworld methods 3 + time (bit 0) and 7 (bit 1), then
+--     dungeon methods time (bit 0) and 6 (bit 1); a place's x picks its
+--     region (x < 22 Johto); Kanto folds Route 2 East into Route 2 and
+--     Route 16 East into Route 16; row 0 is the whole region (bank 802 134
+--     Johto / 135 Kanto), the rest are sorted by sMapIDs_Alphabetical with
+--     the cartridge's own swap loop and named by their map section
+--   * the markers: an overworld {x, y, w, h} -> anim by size (w 1: h 1 -> 0,
+--     2 -> 6, 3 -> 7, 4 -> 8, 5 -> 9; w 2: h 1 -> 1 else 10; w 3: h 1 -> 2
+--     else 11; w 4 -> 3, 5 -> 4, 6 -> 5) at ((x - 22 * region) * 8 + w * 4 +
+--     64, y * 8 + h * 4 + 40); Route 2 / 2 East {32, 4, 1, 3}, Route 10
+--     w 1 h 2, Route 16 / 16 East {35, 8, 2, 1}; a dungeon at ((x - 22 *
+--     region) * 8 + 68, y * 8 + 44), anim 0, Victory Road anim 6 y + 4,
+--     National Park x + 4 y + 4, the Ruins of Alph anim 6 y + 4; Diglett's
+--     Cave, Ice Path and Dark Cave add their other mouths (47C0 / 47F8)
+--   * row 0 shows every marker, another row only its own; the shown set
+--     swaps each blink between the timed places (palette 4) and the special
+--     ones (palette 5): 15 frames in, 15 out (ov18_021EE26C)
+local function encMapId(Z, rec)
+  if rec.dungeon then return Z.HG_DUNGEONS[rec.idx + 1] end
+  return Z.HG_OVERWORLDS[rec.idx + 1]
+end
+
+function D.encAvailable(game)
+  local enc = game and game.data and game.data.gen4_zukan_enc
+  return enc and enc.family == "hgss" and enc.methods ~= nil or false
+end
+
+function D.encAreas(game, species, time, region)
+  local enc = game.data.gen4_zukan_enc
+  local Z = require("src.import.Gen4ZukanEnc")
+  local function list(m) return ((enc.methods or {})[m] or {})[species] or {} end
+  local rows = { { all = true, flags = 0 } }
+  local function owIndexOf(mapId)
+    for i = 1, #Z.HG_OVERWORLDS do if Z.HG_OVERWORLDS[i] == mapId then return i - 1 end end
+    return 1
+  end
+  local function inRegion(x) return (region == 0 and x < 22) or (region ~= 0 and x >= 22) end
+  local function addOw(lst, b)
+    for _, idx in ipairs(lst) do
+      local ow = (enc.overworlds or {})[idx]
+      if inRegion(ow and ow.x or 0) then
+        local id = idx
+        if region ~= 0 then
+          local mid = Z.HG_OVERWORLDS[idx + 1]
+          if mid == 10 or mid == 414 then id = owIndexOf(10)
+          elseif mid == 24 or mid == 422 then id = owIndexOf(24) end
+        end
+        local found
+        for _, r in ipairs(rows) do if not r.all and not r.dungeon and r.idx == id then found = r end end
+        if found then found.flags = bor(found.flags, bit.lshift(1, b))
+        else rows[#rows + 1] = { idx = id, flags = bit.lshift(1, b) } end
+      end
+    end
+  end
+  local function addDg(lst, b)
+    for _, idx in ipairs(lst) do
+      local dg = (enc.dungeons or {})[idx]
+      if inRegion(dg and dg.x or 0) then
+        local found
+        for _, r in ipairs(rows) do if r.dungeon and r.idx == idx then found = r end end
+        if found then found.flags = bor(found.flags, bit.lshift(1, b))
+        else rows[#rows + 1] = { idx = idx, dungeon = true, flags = bit.lshift(1, b) } end
+      end
+    end
+  end
+  addOw(list(3 + time), 0); addOw(list(7), 1)
+  addDg(list(time), 0); addDg(list(6), 1)
+  -- ov18_021E8A00, swaps and all
+  local alpha = {}
+  for i, id in ipairs(Z.HG_ALPHABETICAL) do if alpha[id] == nil then alpha[id] = i - 1 end end
+  local function key(r) return alpha[encMapId(Z, r)] or 0 end
+  for i = 2, #rows - 1 do
+    local ki = key(rows[i])
+    for j = i + 1, #rows do
+      local kj = key(rows[j])
+      if ki > kj then rows[i], rows[j] = rows[j], rows[i]; ki = kj end
+    end
+  end
+  local headers = require("src.ui.HgssPokegear").headers(game.data)
+  for _, r in ipairs(rows) do
+    if r.all then
+      r.label = text(game, 802, region == 0 and 134 or 135) or (region == 0 and "Johto" or "Kanto")
+    else
+      r.mapId = encMapId(Z, r)
+      local h = headers and headers[r.mapId]
+      r.label = (h and h.label) or ("MAP " .. tostring(r.mapId))
+    end
+  end
+  return rows
+end
+
+-- ov18_021F41C4 / 42E4: a row's marker {anim, x, y} and its extra mouths
+D.ENC_EXTRA = { [1] = { { 0x94, 0x4c } }, [2] = { { 0xec, 0x4c } }, [4] = { { 0xe4, 0x5c }, { 0xdc, 0x7c } } }
+function D.encMarker(game, rec, region)
+  local enc = game.data.gen4_zukan_enc
+  local Z = require("src.import.Gen4ZukanEnc")
+  if rec.all then return nil, 0 end
+  if not rec.dungeon then
+    local mid = Z.HG_OVERWORLDS[rec.idx + 1]
+    local ow = (enc.overworlds or {})[rec.idx] or { x = 0, y = 0, w = 1, h = 1 }
+    local x0, y0, w, h = ow.x, ow.y, ow.w, ow.h
+    if mid == 10 or mid == 414 then x0, y0, w, h = 0x20, 4, 1, 3
+    elseif mid == 18 then w, h = 1, 2
+    elseif mid == 24 or mid == 422 then x0, y0, w, h = 0x23, 8, 2, 1 end
+    local anim = 0
+    if w == 1 then anim = ({ [1] = 0, [2] = 6, [3] = 7, [4] = 8, [5] = 9 })[h] or 0
+    elseif w == 2 then anim = h == 1 and 1 or 10
+    elseif w == 3 then anim = h == 1 and 2 or 11
+    elseif w == 4 then anim = 3 elseif w == 5 then anim = 4 elseif w == 6 then anim = 5 end
+    return { anim = anim, x = (x0 - 22 * region) * 8 + math.floor(w * 8 / 2) + 0x40,
+      y = y0 * 8 + math.floor(h * 8 / 2) + 0x28 }, 0
+  end
+  local dg = (enc.dungeons or {})[rec.idx] or { x = 0, y = 0 }
+  local m = { anim = 0, x = (dg.x - 22 * region) * 8 + 0x44, y = dg.y * 8 + 0x2c }
+  local mid = Z.HG_DUNGEONS[rec.idx + 1] or 0
+  if mid == 0x7c or mid == 0xb2 or mid == 0xb3 then m.anim = 6; m.y = m.y + 4
+  elseif mid == 0x60 or mid == 0x1e7 then m.x = m.x + 4; m.y = m.y + 4
+  elseif mid == 0x71 or mid == 0x13b or (mid >= 0x1ea and mid <= 0x1ec) then m.anim = 6; m.y = m.y + 4 end
+  local extra = 0
+  if mid == 0x6a then extra = 1
+  elseif mid == 0x78 or (mid >= 0xed and mid <= 0xef) then extra = 2
+  elseif mid == 0x7b or mid == 0xb0 then extra = 4 end
+  return m, extra
+end
+
 -- ------------------------------------------------------------ the search --
 
 local function filter(list, keep)
@@ -382,6 +512,21 @@ function D.forms(game, species)
     end
     return out
   end
+  -- Pichu: male / female / Spiky-eared in the order seen (Gen45DexRecord;
+  -- ov18_021E8254 lists it with the tracked-form species; 802 #166
+  -- "Spiky-eared"). Its picture is def.forms.spiky (hgss-otherpoke-v1); an
+  -- older import shows the base one.
+  local pichu = id == 172 and ((game.save or {}).pokedex or {}).hgssPichuForms
+  if pichu and #pichu > 0 then
+    for _, v in ipairs(pichu) do
+      if v == 2 then
+        local has = def.forms and def.forms.spiky
+        out[#out + 1] = { key = has and "spiky" or "base", label = text(game, 802, 166) or "Spiky-eared", spiky = true }
+      elseif v == 1 then out[#out + 1] = { key = "base", label = text(game, 802, 115) or "Female", female = true }
+      else out[#out + 1] = { key = "base", label = text(game, 802, 114) or "Male" } end
+    end
+    return out
+  end
   if labels then
     local seen = Forms.seen((game.save or {}).pokedex, id)
     for _, key in ipairs(seen) do
@@ -390,8 +535,18 @@ function D.forms(game, species)
     if #out == 0 then out[1] = { key = "base", label = label("base") } end
     return out
   end
-  -- every other species: the genders seen (the port keeps no per-gender
-  -- sightings, so a species with both genders lists both)
+  -- every other species: the genders seen, first-seen first
+  -- (ov18_021E8254 default case, from Gen45DexRecord); a save from before
+  -- the genders were kept lists every gender the species has
+  local seenG = require("src.pokemon.Gen45DexRecord").gendersSeen(game, id)
+  if #seenG > 0 then
+    for _, g in ipairs(seenG) do
+      if g == "none" then out[#out + 1] = { key = "base", label = text(game, 802, 121) or "One form" }
+      elseif g == "female" then out[#out + 1] = { key = "base", label = text(game, 802, 115) or "Female", female = true }
+      else out[#out + 1] = { key = "base", label = text(game, 802, 114) or "Male" } end
+    end
+    return out
+  end
   local ratio = tonumber(def.genderRatio)
   if ratio == 255 or ratio == nil then
     out[1] = { key = "base", label = text(game, 802, 121) or "One form" }

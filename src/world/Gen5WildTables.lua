@@ -35,6 +35,7 @@ function W.view(def, save)
   view.grassRate = t.grassRate
   view.grass = tbl(t.grass, t.grassRate)
   view.darkGrass = tbl(t.darkGrass, t.darkGrassRate)
+  if view.darkGrass then view.darkGrass.dark = true end     -- kind 1 (no outbreak)
   view.rustling = tbl(t.rustling, t.rustlingRate)
   view.water = t.surf and tbl(t.surf.slots, t.surf.rate) or nil
   view.ripplingWater = t.ripplingSurf and tbl(t.ripplingSurf.slots, t.ripplingSurf.rate) or nil
@@ -91,7 +92,10 @@ function W.prepareBattle(state, battle, view, dark, onWater, rng)
   local save = Game.save
   if ableCount(save and save.party) < 2 or rng(0, 99) >= W.DOUBLE_PERCENT then return end
   local Encounter = require("src.world.Encounter")
-  local enc2 = view and view.darkGrass and Encounter.chooseTable(view.darkGrass, rng)
+  -- the second draw shares the first's lead decision and refusals (0x021A9508)
+  local WL = require("src.world.Gen5WildLead")
+  local enc2 = view and view.darkGrass and WL.draw(Game.data, save, view.darkGrass,
+    WL.last or WL.flags(Game.data, save, rng), rng)
   if not (enc2 and enc2.species) then return end
   local BattleState = require("src.battle.BattleState")
   local tmp = BattleState.newWild(Game, enc2.species, enc2.level,
