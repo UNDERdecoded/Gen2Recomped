@@ -29,6 +29,11 @@ executes the installer. Its download mirror is nightly.link; its bytes must
 match GitHub's pinned digest. CI artifacts expire: an expired download needs
 a reviewed new pin, not an automatic move to an unverified latest build.
 
+The iOS build compiles LÖVE from source and pins the same commit in
+`scripts/build_ios.sh`. It used to follow upstream `main`, so a release could
+pick up an untested engine change. Move the pin deliberately and check the DS
+field on a device when you do.
+
 Sources: [upstream changes](https://github.com/love2d/love/blob/b7daef0f7c1dc5888090f5d5b22d4eaf4ffd1d87/changes.txt),
 [artifact metadata](https://api.github.com/repos/love2d/love/actions/artifacts/10607357662).
 

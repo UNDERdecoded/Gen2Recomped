@@ -619,6 +619,72 @@ do
   ok(Platform.canHostPayload() == true,
      "Android cannot host a payload, yet its save directory took the probe")
 end
+
+-- iOS: LOVE's lua-https is the transport, and the banner must offer a real
+-- download rather than "Cannot check for updates on this build".  The module
+-- is faked, so what is graded is everything this side of NSURLSession: the
+-- headers, the status rule, and where the bytes land.
+do
+  local calls = {}
+  local reply = { 200, "payload-bytes" }
+  package.loaded["https"] = {
+    request = function(url, opts)
+      calls[#calls + 1] = { url = url, opts = opts }
+      return reply[1], reply[2]
+    end,
+  }
+  stubHost("iOS", {})
+  HostShell._resetTransportForTests()
+  local kind = HostShell.transport()
+  ok(kind == "https", "iOS resolved transport %q, not \"https\"", tostring(kind))
+  ok(HostShell.canFetch() == true, "iOS reports no transport at all")
+  ok(Check.capability().mode == "self-update",
+     "iOS has lua-https and a writable save directory, yet its mode is %q: the "
+     .. "player is sent to the GitHub releases page by hand",
+     tostring(Check.capability().mode))
+  ok(Check.advice() == "download", "iOS advice is %q, not \"download\"",
+     tostring(Check.advice()))
+
+  local body = HostShell.httpGet("https://example.invalid/a", "agent", "text/x")
+  ok(body == "payload-bytes", "iOS httpGet did not return the response body")
+  ok(calls[1] and calls[1].opts.headers["User-Agent"] == "agent"
+     and calls[1].opts.headers["Accept"] == "text/x",
+     "iOS httpGet dropped the User-Agent or Accept header; GitHub's API refuses "
+     .. "a request with no User-Agent")
+
+  local path = os.tmpname()
+  ok(HostShell.httpDownload("https://example.invalid/b", path, "agent") == true,
+     "iOS httpDownload reported failure on a 200")
+  local f = io.open(path, "rb")
+  local wrote = f and f:read("*a")
+  if f then f:close() end
+  ok(wrote == "payload-bytes", "iOS httpDownload did not write the body to the path")
+
+  for _, bad in ipairs({ { 404, "not found" }, { 0, "offline" }, { nil, "boom" } }) do
+    reply = bad
+    os.remove(path)
+    local done, why = HostShell.httpDownload("https://example.invalid/c", path, "agent")
+    ok(done == nil and type(why) == "string" and why ~= "",
+       "iOS httpDownload accepted status %s", tostring(bad[1]))
+    local left = io.open(path, "rb")
+    ok(left == nil, "iOS httpDownload wrote a file for status %s", tostring(bad[1]))
+    if left then left:close() end
+    ok(HostShell.httpGet("https://example.invalid/c", "agent") == nil,
+       "iOS httpGet returned a body for status %s", tostring(bad[1]))
+  end
+  os.remove(path)
+
+  -- A https module may load elsewhere too, but only iOS is trusted with it.
+  for _, osName in ipairs({ "NX", "UWP" }) do
+    stubHost(osName, {})
+    HostShell._resetTransportForTests()
+    ok(HostShell.transport() == nil,
+       "%s resolved a transport because a https module was loadable", osName)
+  end
+  package.loaded["https"] = nil
+  HostShell._resetTransportForTests()
+end
+
 stubHost("NX", {})
 do
   local kind, why = HostShell.transport()

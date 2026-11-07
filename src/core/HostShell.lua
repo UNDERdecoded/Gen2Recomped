@@ -236,6 +236,43 @@ local function haveBridge()
   return love.system.getOS and love.system.getOS() == "Android"
 end
 
+-- iOS: LOVE 12's own lua-https (require "https", NSURLSession underneath).  It
+-- is compiled into every iOS build of the engine, so this needs no native
+-- bridge at all, and NSURLSession follows GitHub's redirect from a release
+-- asset to its storage host by itself.  It blocks only the thread that calls
+-- it and is safe on a love.thread, unlike the Android JNI bridge.  Gated on the
+-- OS because the desktops have curl and the Android bridge has its own rules;
+-- src/cloud/Http.lua draws the same line.
+local httpsMod
+local function luaHttps()
+  if not (love and love.system and love.system.getOS
+      and love.system.getOS() == "iOS") then
+    return nil
+  end
+  if httpsMod == nil then
+    local ok, m = pcall(require, "https")
+    httpsMod = (ok and type(m) == "table" and type(m.request) == "function")
+      and m or false
+  end
+  return httpsMod or nil
+end
+
+-- A whole GET through lua-https: the body, or nil + the reason.  A status of 0
+-- is lua-https reporting a failed transfer, with the reason in the body.
+local function httpsGet(url, userAgent, accept)
+  local https = luaHttps()
+  if not https then return nil, "no network transport on this platform" end
+  local headers = { ["User-Agent"] = userAgent }
+  if accept then headers["Accept"] = accept end
+  local ok, code, body = pcall(https.request, url, { method = "GET", headers = headers })
+  if not ok then return nil, tostring(code) end
+  if code == nil then return nil, tostring(body or "the request failed") end
+  code = tonumber(code) or 0
+  if code == 0 then return nil, tostring(body or "no response") end
+  if code < 200 or code >= 300 then return nil, ("HTTP %d"):format(code) end
+  return body or ""
+end
+
 -- WHICH TRANSPORT, AND WHY NOT.  The one answer; canFetch() is its boolean.
 --
 -- src/update/check_worker.lua used to carry its own byte-for-byte copy of
@@ -246,6 +283,7 @@ end
 -- Returns transport, reason:
 --   "curl", nil                     a curl we actually ran --version on
 --   "bridge", nil                   love.system.httpDownload (Android, #597)
+--   "https", nil                    LOVE's lua-https (iOS)
 --   nil, "<why>"                    no transport, in words a log can print
 --
 -- Memoized: the curl probe is a process spawn, and the answer cannot change
@@ -259,14 +297,17 @@ function HostShell.transport()
     transportKind = "curl"
   elseif haveBridge() then
     transportKind = "bridge"
+  elseif luaHttps() then
+    transportKind = "https"
   else
     local osName = (love and love.system and love.system.getOS
       and love.system.getOS()) or "?"
     if not HostShell.canSpawnProcess() then
       -- The honest sentence for the Switch and for an Xbox UWP container: it
       -- is not that the package is read-only, it is that there is no HTTPS
-      -- client reachable from Lua.  io.popen cannot start curl, and the JNI
-      -- download bridge only exists in our Android liblove.
+      -- client reachable from Lua.  io.popen cannot start curl, the JNI
+      -- download bridge only exists in our Android liblove, and lua-https is
+      -- only trusted on iOS.
       transportWhy = ("no HTTPS client on %s: this host cannot spawn curl and "
         .. "exports no download bridge"):format(osName)
     else
@@ -284,6 +325,7 @@ end
 -- Tests swap love.system between cases.
 function HostShell._resetTransportForTests()
   transportKind, transportWhy, transportResolved = nil, nil, nil
+  httpsMod = nil
 end
 
 -- Download url to an absolute host path.  Returns true, or nil plus an error.
@@ -341,6 +383,16 @@ function HostShell.httpDownload(url, absPath, userAgent, accept)
     end
     return true
   end
+  if luaHttps() then
+    local body, why = httpsGet(url, userAgent, accept)
+    if not body then return nil, why end
+    local file, openErr = io.open(absPath, "wb")
+    if not file then return nil, tostring(openErr) end
+    local wrote, writeErr = file:write(body)
+    file:close()
+    if not wrote then return nil, tostring(writeErr) end
+    return true
+  end
   if not haveBridge() then
     return nil, "no network transport on this platform"
   end
@@ -369,6 +421,12 @@ function HostShell.httpGet(url, userAgent, accept)
     if not readOk then return nil, "fetch failed: " .. tostring(out) end
     if not out or out == "" then return nil, "empty response from " .. url end
     return out
+  end
+  if luaHttps() then
+    local body, why = httpsGet(url, userAgent, accept)
+    if not body then return nil, why end
+    if body == "" then return nil, "empty response from " .. url end
+    return body
   end
   if not haveBridge() then
     return nil, "no network transport on this platform"

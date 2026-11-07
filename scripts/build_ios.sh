@@ -55,8 +55,12 @@ if [ -z "$BUNDLE_ID" ] && [ -f "$IOS_DIR/bundle_id.local" ]; then
   BUNDLE_ID="$(tr -d '[:space:]' < "$IOS_DIR/bundle_id.local")"
 fi
 LOVE_VERSION="$(tr -d '[:space:]' < "$IOS_DIR/LOVE_VERSION" 2>/dev/null || echo 12.0)"
-LOVE_SOURCE_REF="${LOVE_SOURCE_REF:-main}"
-APPLE_DEPENDENCIES_REF="${APPLE_DEPENDENCIES_REF:-main}"
+# PINNED, NOT "main". LOVE 12 is still in development, so an unpinned fetch made
+# every release build whatever upstream merged that week, untested. Move these
+# on purpose, after checking the DS field on a device. love matches the commit in
+# scripts/love12-runtime.json, which the desktop preview was tested against.
+LOVE_SOURCE_REF="${LOVE_SOURCE_REF:-b7daef0f7c1dc5888090f5d5b22d4eaf4ffd1d87}"
+APPLE_DEPENDENCIES_REF="${APPLE_DEPENDENCIES_REF:-a5522634f1e581a1ebab73bf3ab4bd7a853b7a3e}"
 LOVE_SOURCE_REPO="https://github.com/love2d/love.git"
 APPLE_DEPENDENCIES_REPO="https://github.com/love2d/love-apple-dependencies.git"
 
@@ -158,15 +162,24 @@ if ! $PACKAGE_ONLY; then
 fi
 
 # --------------------------------------------------------------- fetch love-src
+# git clone --branch cannot take a commit, and a pin is a commit.
+fetch_git_ref() {
+  local repo="$1" ref="$2" dest="$3"
+  git init -q "$dest" \
+    && git -C "$dest" remote add origin "$repo" \
+    && git -C "$dest" fetch -q --depth 1 origin "$ref" \
+    && git -C "$dest" checkout -q FETCH_HEAD
+}
+
 fetch_love_ios() {
   mkdir -p "$CACHE"
   local tmp
   tmp="$(mktemp -d "$CACHE/extract.XXXXXX")"
   say "fetching LÖVE $LOVE_VERSION sources ($LOVE_SOURCE_REF)"
-  git clone --depth 1 --branch "$LOVE_SOURCE_REF" "$LOVE_SOURCE_REPO" "$tmp/love" \
+  fetch_git_ref "$LOVE_SOURCE_REPO" "$LOVE_SOURCE_REF" "$tmp/love" \
     || fail "failed to fetch LÖVE sources from $LOVE_SOURCE_REPO"
   say "fetching Apple dependencies ($APPLE_DEPENDENCIES_REF)"
-  git clone --depth 1 --branch "$APPLE_DEPENDENCIES_REF" "$APPLE_DEPENDENCIES_REPO" "$tmp/dependencies" \
+  fetch_git_ref "$APPLE_DEPENDENCIES_REPO" "$APPLE_DEPENDENCIES_REF" "$tmp/dependencies" \
     || fail "failed to fetch Apple dependencies from $APPLE_DEPENDENCIES_REPO"
   rm -rf "$LOVE_SRC"
   mv "$tmp/love" "$LOVE_SRC"

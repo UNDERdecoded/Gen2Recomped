@@ -80,6 +80,27 @@ transport and behaved differently from one that does not. `HostShell.popen`
 now refuses outright on a host that is not one of the three desktops, so every
 Android device takes the same bridge path.
 
+### iOS — no transport, while the engine had one all along
+
+iOS cannot spawn curl and has no JNI bridge, so `HostShell.transport()` answered
+`nil` and every install showed "Cannot check for updates on this build" with a
+button to the GitHub releases page. LÖVE 12 compiles `lua-https` into its iOS
+targets (`NSURLClient.mm`, an `NSURLSession` data task), and `src/cloud/Http.lua`
+already used it for Google Drive and OneDrive; the updater never asked.
+
+`HostShell.transport()` now returns `"https"` on iOS when `require("https")`
+loads. No native code changed. The worker runs the transfer on its own thread,
+so unlike Android the launcher keeps drawing, and `NSURLSession` follows GitHub's
+redirect to the asset host by itself. There is no progress fill, because the
+module returns a whole response. The mod index, mod updates and launcher art gate
+on the same `HostShell.canFetch()`, so they start working on iOS too.
+
+An installed build cannot learn this from an update it cannot fetch: players
+install one IPA by hand to get this code, and update in place after that. A
+payload only replaces Lua, so anything that needs new native code, including a
+new iOS bridge, still takes a new IPA, and iOS has no equivalent of Android's
+in-app APK install.
+
 ### Switch — the stated blocker is not the blocker
 
 The old gate read:

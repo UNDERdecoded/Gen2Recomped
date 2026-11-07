@@ -139,8 +139,9 @@ end
 --
 --   Platform.canHostPayload()  write a byte into the save directory and read
 --                              it back; mount/unmount must exist.
---   HostShell.transport()      curl we actually ran --version on, or the
---                              Android JNI download bridge, or nil + a reason.
+--   HostShell.transport()      curl we actually ran --version on, the Android
+--                              JNI download bridge, LOVE's lua-https on iOS,
+--                              or nil + a reason.
 --
 -- The notify-only FALLBACK is kept for the case that is now named precisely:
 -- a shell that can host a payload and cannot fetch one (NX, UWP).  There the
