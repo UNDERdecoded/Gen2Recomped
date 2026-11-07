@@ -3232,10 +3232,10 @@ The permission grid was validated by drawing it and recognising Sinnoh. The
 meshes were validated the same way, and the second picture is the one that
 settles the whole chain at once.
 
-`docs/images/gen4-sinnoh-mesh.png` is the entire 30×30 overworld matrix —
+The first picture (rendered from a ROM, so not kept in the repo) is the entire 30×30 overworld matrix —
 900 chunks, one pixel a tile — rasterised top-down from the decoded geometry,
 with every texture sampled through the interpolated UVs and a depth test
-keeping whatever is highest. `docs/images/gen4-town-mesh.png` is three chunks of
+keeping whatever is highest. The second is three chunks of
 one town at eight pixels a tile, with its buildings placed from the chunk's own
 object records.
 
