@@ -129,6 +129,9 @@ mobile/ios/bundle_id.local
 !/tests/firered_launcher_driver.lua
 /mods/*
 /Claude outputs/*
+# Screenshots rendered from a ROM are never committed.
+/docs/images/
+/tools/gen2_contest_ui_harness/*.png
 # ...EXCEPT THE ONES THAT SHIP WITH THE LAUNCHER.
 #
 # `/mods/*` above keeps a developer's working folder out of the repo -- the
