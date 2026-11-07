@@ -236,6 +236,19 @@ local function haveBridge()
   return love.system.getOS and love.system.getOS() == "Android"
 end
 
+-- Xbox: the bundled UWP love.dll exports love.system.httpDownload too (a WinRT
+-- HttpClient, ports/uwp/third_party/love's src/modules/system/uwp/HttpDownload).
+-- It starts with RoInitialize(RO_INIT_MULTITHREADED), which FAILS on the game's
+-- main thread, because SDL runs that on the app's single-threaded view thread,
+-- and it then returns false. So on this host it only works from a love.thread,
+-- the updater's worker being the one that needs it. See HostShell.canFetch.
+local function haveUwpBridge()
+  if not (love and love.system and type(love.system.httpDownload) == "function") then
+    return false
+  end
+  return love.system.getOS and love.system.getOS() == "UWP"
+end
+
 -- iOS: LOVE 12's own lua-https (require "https", NSURLSession underneath).  It
 -- is compiled into every iOS build of the engine, so this needs no native
 -- bridge at all, and NSURLSession follows GitHub's redirect from a release
@@ -284,6 +297,8 @@ end
 --   "curl", nil                     a curl we actually ran --version on
 --   "bridge", nil                   love.system.httpDownload (Android, #597)
 --   "https", nil                    LOVE's lua-https (iOS)
+--   "uwp", nil                      the UWP love.dll's httpDownload, worker
+--                                   threads only (Xbox)
 --   nil, "<why>"                    no transport, in words a log can print
 --
 -- Memoized: the curl probe is a process spawn, and the answer cannot change
@@ -299,6 +314,8 @@ function HostShell.transport()
     transportKind = "bridge"
   elseif luaHttps() then
     transportKind = "https"
+  elseif haveUwpBridge() then
+    transportKind = "uwp"
   else
     local osName = (love and love.system and love.system.getOS
       and love.system.getOS()) or "?"
@@ -318,8 +335,12 @@ function HostShell.transport()
 end
 
 -- Is any transport available at all?  Callers gate on this, never on curl.
+--
+-- "uwp" does not count. Everything that asks this fetches on the main thread,
+-- where that bridge can only refuse; the updater asks transport() instead.
 function HostShell.canFetch()
-  return (HostShell.transport()) ~= nil
+  local kind = HostShell.transport()
+  return kind ~= nil and kind ~= "uwp"
 end
 
 -- Tests swap love.system between cases.
@@ -393,7 +414,7 @@ function HostShell.httpDownload(url, absPath, userAgent, accept)
     if not wrote then return nil, tostring(writeErr) end
     return true
   end
-  if not haveBridge() then
+  if not (haveBridge() or haveUwpBridge()) then
     return nil, "no network transport on this platform"
   end
   local ok, done = pcall(love.system.httpDownload, url, absPath, userAgent, accept)
@@ -428,7 +449,7 @@ function HostShell.httpGet(url, userAgent, accept)
     if body == "" then return nil, "empty response from " .. url end
     return body
   end
-  if not haveBridge() then
+  if not (haveBridge() or haveUwpBridge()) then
     return nil, "no network transport on this platform"
   end
   if not (love.filesystem and love.filesystem.getSaveDirectory) then

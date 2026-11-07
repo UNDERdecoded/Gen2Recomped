@@ -101,6 +101,19 @@ payload only replaces Lua, so anything that needs new native code, including a
 new iOS bridge, still takes a new IPA, and iOS has no equivalent of Android's
 in-app APK install.
 
+### Xbox — the engine had a download call nobody used
+
+The bundled UWP `love.dll` exports `love.system.httpDownload`, a WinRT
+`HttpClient`, built in the `love-xbox-uwp` fork. `HostShell` only trusted that
+name on Android, so Xbox reported no transport. `HostShell.transport()` now
+returns `"uwp"` there and the updater self-updates, with no native change.
+
+The call starts with `RoInitialize(RO_INIT_MULTITHREADED)`, which fails on SDL's
+single-threaded view thread and returns false, so it runs on the updater's worker
+thread. `HostShell.canFetch()` answers false for `"uwp"`, because its callers
+fetch on the main thread. So the mod catalog and launcher art stay as they were
+on Xbox. An installed package needs one last manual install to get this code.
+
 ### Switch — the stated blocker is not the blocker
 
 The old gate read:

@@ -118,6 +118,10 @@ for clean Red, Blue, and Yellow ROMs. Compatible files are offered on their
 launcher tabs and remain in `baseroms` after import. The file picker remains
 available when no compatible ROM is found.
 
+The ROM picker is in `app/main.cpp`, because the one in the bundled `love.dll`
+only offers `.gb` and `.gbc`. `src/import/XboxPicker.lua` drives it through files
+in LocalState. Mods and saves use the `love.dll` picker.
+
 LuaJIT requires the `codeGeneration` capability. `removableStorage` exposes
 external media to the Xbox picker. The network capabilities support relay play
 and direct hosting. The package does not request full trust or broad filesystem

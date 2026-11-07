@@ -685,6 +685,31 @@ do
   HostShell._resetTransportForTests()
 end
 
+-- Xbox: the UWP love.dll's bridge reaches the updater, and only the updater. On
+-- the main thread it can only refuse, so the main-thread callers must not see it.
+stubHost("UWP", { bridge = true })
+HostShell._resetTransportForTests()
+do
+  local kind = HostShell.transport()
+  ok(kind == "uwp", "UWP resolved transport %q, not \"uwp\"", tostring(kind))
+  ok(HostShell.canFetch() == false,
+     "UWP's canFetch is true, so main-thread callers would use a bridge that "
+     .. "refuses every call made from the main thread")
+  ok(Check.capability().mode == "self-update",
+     "UWP has the bridge and a writable save directory, yet its mode is %q",
+     tostring(Check.capability().mode))
+  ok(Check.advice() == "download", "UWP advice is %q, not \"download\"",
+     tostring(Check.advice()))
+end
+stubHost("UWP", { saveDir = "C:\\Users\\p\\AppData\\Local\\Packages\\G2R_x\\LocalState\\pokemon-love2d" })
+HostShell._resetTransportForTests()
+do
+  ok(HostShell.transport() == nil, "UWP with no bridge resolved a transport")
+  ok(Check.advice() == "package", "an older UWP package's advice is %q, not \"package\"",
+     tostring(Check.advice()))
+end
+HostShell._resetTransportForTests()
+
 stubHost("NX", {})
 do
   local kind, why = HostShell.transport()

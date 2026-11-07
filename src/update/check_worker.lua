@@ -7,8 +7,9 @@
 --
 -- Transport is whichever one HostShell.transport() resolves: curl shelled out
 -- through HostShell.popen (macOS, Windows 10+, desktop Linux), the Android JNI
--- download bridge serviced by the main thread, or LOVE's lua-https on iOS, which
--- runs right here on this thread.  Everything is wrapped so a
+-- download bridge serviced by the main thread, or LOVE's lua-https on iOS or the
+-- UWP love.dll's download call on Xbox, both of which run right here on this
+-- thread.  Everything is wrapped so a
 -- missing curl, an HTTP error, or a hung download degrades to an
 -- "error"/"needs_full" state rather than blocking or crashing the game.  A
 -- host with neither (the Switch, an Xbox UWP container) is the notify-only
@@ -149,7 +150,7 @@ local bridgeResCh = love.thread.getChannel(BRIDGE_RES)
 -- not return nil but RAISES), so the console ports no longer pay for a
 -- throw-and-catch to learn what the OS name already said.
 --
--- "curl" | "bridge" | "https" | false, resolved once.  curl wins where both exist so
+-- "curl" | "bridge" | "https" | "uwp" | false, resolved once.  curl wins where both exist so
 -- desktop behaviour is bit-for-bit what it was.
 local transportAnnounced
 local function resolveTransport()
@@ -206,7 +207,7 @@ local function curlCapture(url)
     if type(body) ~= "string" or body == "" then return nil end
     return body
   end
-  if how == "https" then
+  if how == "https" or how == "uwp" then
     local body = HostShell.httpGet(url, "Gen2Recomped-updater",
       "application/vnd.github+json")
     return body
@@ -534,10 +535,10 @@ local function doDownload()
       post({ status = "error", error = "the host download bridge refused the transfer" })
       return
     end
-  elseif how == "https" then
-    -- THE iOS PATH.  One whole-file transfer on this thread, so the launcher
-    -- keeps drawing.  lua-https deals in whole responses, so like the bridge
-    -- there is no progress to report; the checksum below is the real gate.
+  elseif how == "https" or how == "uwp" then
+    -- THE iOS AND XBOX PATH.  One whole-file transfer on this thread, so the
+    -- launcher keeps drawing.  Like the Android bridge these deal in whole
+    -- files, so there is no progress to report; the checksum below is the gate.
     local okFetch, whyNot = HostShell.httpDownload(rel.payload.url, partAbs,
       "Gen2Recomped-updater")
     if not okFetch then

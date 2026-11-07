@@ -1732,10 +1732,17 @@ function Sidebar.install(RI)
   -- the top bar, drawn last so the footer does not sit over it
   local origDraw = RI.draw
   RI.draw = function(self, ...)
+    -- the gamepad pointer waits, or this page would be painted over it
+    local onSettings = self.sidebarMode and self.section == "settings"
+      and self.settingsOpen and self._sbContentRect
+    self._padCursorDeferred = onSettings and true or false
     local r = origDraw(self, ...)
-    if not (self.sidebarMode and self.section == "settings" and self.settingsOpen) then return r end
+    self._padCursorDeferred = false
     local area = self._sbContentRect
-    if not area then return r end
+    if not (onSettings and area) then
+      if onSettings then self:_drawPadCursor() end
+      return r
+    end
     local s, g = self._s or 1, love.graphics
     local pad = 16 * s
     local dx, dy, dw, dh = area.x, area.y, area.w, area.h
@@ -1761,6 +1768,7 @@ function Sidebar.install(RI)
       end
     end
     self._settingsMax = math.max(0, natural + 2 * pad - dh)
+    self:_drawPadCursor()
     return r
   end
 

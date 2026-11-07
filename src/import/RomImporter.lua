@@ -3041,7 +3041,14 @@ function RomImporter.new(onComplete, opts)
     -- so every one of them leaned entirely on the romImportMode fallback
     -- beside it; naming the platform once makes those reads mean something.
     isNX = require("src.core.Platform").isNX(),
-    ios = mobileOS == "iOS",
+    -- THE PICKER THAT ANSWERS BY POLLING, not only iOS: Xbox's works the same
+    -- way (love.system.getPickedFile, one file a trip), and every read of this
+    -- field is about that flow. Xbox never reached its picker before this,
+    -- because nothing polled for the answer and the launcher said to copy files.
+    ios = mobileOS == "iOS" or (mobileOS == "UWP"
+      and require("src.import.XboxPicker").install() ~= nil
+      and type(love.system.pickFile) == "function"
+      and type(love.system.getPickedFile) == "function"),
     -- love-nx reports "NX".  Nothing in this tree knew that string, so the
     -- Switch fell through every platform branch to the desktop one and was
     -- told to use a file picker it does not have.
@@ -6903,7 +6910,13 @@ function RomImporter:draw()
   end
 
   -- Gamepad virtual cursor (drawn last so it sits above the CRT overlay).
-  if self._padCursorActive then
+  self:_drawPadCursor()
+end
+
+-- The sidebar paints its settings page after draw() returns, so while that page
+-- is up it sets _padCursorDeferred and draws the pointer itself, on top.
+function RomImporter:_drawPadCursor()
+  if self._padCursorActive and not self._padCursorDeferred then
     local x, y = self._padCursor.x, self._padCursor.y
     local hot = self._anyHover
     love.graphics.push("all")

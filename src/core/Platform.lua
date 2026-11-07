@@ -45,9 +45,8 @@ local function compute()
     -- had been conflated, so Xbox lost the mod catalog for the updater's
     -- reason.  Desktop answers it with curl through HostShell; the mobile and
     -- console ports answer it with the native love.system.httpDownload bridge
-    -- (#597).  The UWP LOVE backend does not export that bridge yet, so this
-    -- still resolves false on Xbox and the launcher still says so, but the
-    -- day the backend grows one, nothing here or in RomImporter has to change.
+    -- (#597).  The UWP LOVE backend exports that bridge as well, but it only
+    -- works from a love.thread there (see HostShell.haveUwpBridge).
     canFetchRemote = (not nx and not uwp) or nativeHttp,
   }
 end
