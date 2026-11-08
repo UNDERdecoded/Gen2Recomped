@@ -9026,6 +9026,21 @@ function RomImporter:_launcherSettingsRows()
               .. "app's own storage." })
   end
 
+  -- ------- a second display: the Thor's lower panel, or a TV being cast to.
+  -- The same choice as every game's OPTIONS > TV / CAST (src/ui/CastDisplay
+  -- .lua), and only where an Android host that reads it is running.
+  do
+    local okCast, CastDisplay = pcall(require, "src.ui.CastDisplay")
+    if okCast and CastDisplay.supported() then
+      local labels = {}
+      for _, m in ipairs(CastDisplay.MODES) do labels[m] = CastDisplay.LABELS[m] end
+      add({ kind = "section", label = "TV / CAST", note = CastDisplay.note() })
+      add({ kind = "option", scope = "cast", label = CastDisplay.ROW_LABEL,
+            row = { id = "castDisplay", values = CastDisplay.MODES,
+                    labels = labels } })
+    end
+  end
+
   -- ------- how the launcher looks
   add({ kind = "section", label = "APPEARANCE",
         note = "Chip colours stay as they are: they are how you tell the "
@@ -9177,6 +9192,10 @@ end
 
 -- The current value of one entry, whichever scope it lives in.
 function RomImporter:_settingValue(entry)
+  -- TV / CAST lives beside the Android host, not in the options file
+  if entry.scope == "cast" then
+    return require("src.ui.CastDisplay").effective()
+  end
   local opts = self:_settings()
   if entry.scope == "online" then -- save.options.online (OnlineSettings.Model)
     return require("src.ui.online.OnlineSettings").Model.read(opts)[entry.row.id]
@@ -9216,6 +9235,12 @@ function RomImporter:_settingValue(entry)
 end
 
 function RomImporter:_setSettingValue(entry, value)
+  if entry.scope == "cast" then
+    require("src.ui.CastDisplay").set(value)
+    -- the section's note names the display that was found; re-lay it
+    self._settingsRowCache = nil
+    return
+  end
   local opts = self:_settings()
   if entry.scope == "online" then
     local Model = require("src.ui.online.OnlineSettings").Model
@@ -9379,6 +9404,9 @@ function RomImporter:_stepSetting(entry, dir)
   -- options file, where a future build would have to decide what a stale one
   -- means.
   if entry.scope == "settingsGen" then return end
+  -- second_display/mode.txt was written by the set above; nothing of this
+  -- row is in the options file
+  if entry.scope == "cast" then return end
   local opts = self:_settings()
   local ok = pcall(function()
     require("src.core.SaveData").saveOptions(opts)

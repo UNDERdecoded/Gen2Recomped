@@ -146,11 +146,45 @@ end
 -- Whether a real second panel is attached RIGHT NOW.  Asked on every `mode`
 -- call rather than probed once at boot, because a display can be plugged in or
 -- pulled out mid-session and the fallback has to follow it.
+-- ...AND THAT IT IS FOR THE BOTTOM SCREEN.  Reported from play: casting a
+-- phone to a TV over Wi-Fi showed the DS bottom screen on the TV.  Android
+-- hands a cast sink to apps as a presentation display, the same thing the
+-- Thor's lower panel is, so "a second display is attached" is not enough:
+-- the player's TV / CAST choice (src/ui/CastDisplay.lua) decides whether it
+-- gets the bottom screen (BOTTOM), the main picture (TOP), or nothing at all
+-- (MIRROR -- the host never even reports it).  Only BOTTOM is a panel in the
+-- sense every caller of this means; TOP is `castTop` below.
 function SecondScreen.deviceReady()
   local T = transport()
   if not (T and T.available) then return false end
   local ok, ready = pcall(T.available)
-  return (ok and ready) and true or false
+  if not (ok and ready) then return false end
+  return SecondScreen.panelRole() == "bottom"
+end
+
+-- What the attached panel is for, from the transport: "bottom", "top" or nil.
+-- A transport that predates casting (and the check tools' stand-ins) only
+-- ever meant the bottom screen.
+function SecondScreen.panelRole()
+  local T = transport()
+  if not T then return nil end
+  if not T.panelRole then return "bottom" end
+  local ok, role = pcall(T.panelRole)
+  if not ok then return nil end
+  return role
+end
+
+-- TV / CAST = TOP is live: the attached display shows the MAIN picture
+-- (src/render/CastTop.lua sends it) and the phone's own window shows the
+-- bottom screen.  For a dual-screen game that is `display` mode with the two
+-- surfaces swapped at the very end of the frame, so `mode` answers `display`
+-- and every screen keeps drawing its lower half exactly where it already does.
+function SecondScreen.castTop()
+  local T = transport()
+  if not (T and T.available) then return false end
+  local ok, ready = pcall(T.available)
+  if not (ok and ready) then return false end
+  return SecondScreen.panelRole() == "top"
 end
 
 local function options(game)
@@ -179,6 +213,13 @@ end
 
 function SecondScreen.mode(game)
   if not SecondScreen.available(game) then return "off" end
+  -- TV / CAST = TOP overrides the layout row: the phone IS the bottom screen
+  -- for as long as it lasts, whatever was picked for one screen.  The launcher's
+  -- own panel host is excluded -- in TOP the launcher stays whole on the phone
+  -- (and on the TV), so its settings stay in reach to switch back.
+  if not (game and game.secondScreenAlways) and SecondScreen.castTop() then
+    return "display"
+  end
   local mode = options(game).secondScreenMode
   -- A DEVICE WITH TWO SCREENS USES BOTH, WITHOUT BEING ASKED FIRST.
   --
@@ -475,6 +516,10 @@ function SecondScreen.pumpInput(game)
   if not (T and T.pollTouch) then return 0 end
   local okPoll, events = pcall(T.pollTouch)
   if not (okPoll and type(events) == "table") then return 0 end
+  -- In TOP the display shows the main picture; anything it recorded is not a
+  -- bottom-screen tap.  Drained, never injected (the phone's own touches
+  -- reach the bottom screen through src/render/CastTop.lua instead).
+  if SecondScreen.castTop() then return 0 end
   local taken = 0
   for _, e in ipairs(events) do
     local method = TOUCH_METHOD[e.kind]
@@ -488,6 +533,9 @@ end
 function SecondScreen.flush(game)
   if not game or SecondScreen.mode(game) ~= "display" then return false end
   SecondScreen.pumpInput(game)
+  -- TOP: the display gets the main picture (CastTop), never this canvas --
+  -- which goes to the phone's own window at the end of the frame instead.
+  if SecondScreen.castTop() then return false end
   if not game.secondScreenDirty then return false end
   local canvas = SecondScreen.canvas(game)
   if not canvas then return false end

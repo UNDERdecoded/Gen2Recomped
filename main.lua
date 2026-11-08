@@ -729,10 +729,21 @@ function love.draw()
   if bootReport then return drawBootReport() end
   if editorMode then EditorApp.draw() return drawSecondPanel() end
   if TouchEditor then TouchEditor.draw() return drawSecondPanel() end
-  if Importer then Importer:draw() return drawSecondPanel() end
+  -- TV / CAST = TOP: the frame is drawn into a canvas, a copy goes to the
+  -- cast display, and the phone gets its own picture (src/render/CastTop.lua).
+  -- Inert -- one cached boolean -- unless TOP is live.
+  local okCast, CastTop = pcall(require, "src.render.CastTop")
+  if Importer then
+    local cast = okCast and CastTop.begin(nil)
+    Importer:draw()
+    if cast then CastTop.finish(nil, cast) end
+    return drawSecondPanel()
+  end
 
   if not Game then return drawSecondPanel() end
+  local cast = okCast and CastTop.begin(Game)
   Game:draw()
+  if cast then CastTop.finish(Game, cast) end
   -- frame capture requested by a driver
   if Game.capturePath then
     local path = Game.capturePath

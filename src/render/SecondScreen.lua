@@ -71,6 +71,30 @@ end
 --                             One event per line: `down|move|up id x y`, with
 --                             x and y already in the panel's own 256x192.
 --
+-- CASTING, added later and WITHOUT a protocol bump (PROTOCOL stays 1 so an
+-- old APK with this Lua, or this APK with an old Lua, still pair up):
+--
+--   host.txt gains two optional fields after the four:
+--                             `<kind> <mode>`.  kind = none | builtin |
+--                             external: whether the display the host found is
+--                             a panel of the device's own (AYN Thor) or a
+--                             cast / HDMI sink.  mode = mirror | bottom | top:
+--                             what the host is doing with it (auto when there
+--                             is no display).  A four-field host is the old
+--                             one: a built-in panel, the bottom screen, and no
+--                             mode.txt.  An old Lua reads four fields and
+--                             never sees these.
+--   second_display/mode.txt   written by LUA: the player's TV / CAST choice,
+--                             one word -- mirror | bottom | top -- or `auto`.
+--                             The host reads it every heartbeat.  auto: a
+--                             built-in panel gets bottom, an external one
+--                             mirror.  mirror: the host puts NO Presentation
+--                             up and reports displays 1, so Android's own
+--                             mirroring shows the phone and nothing here
+--                             treats the TV as a panel.  top: the host shows
+--                             what Lua pushes -- the MAIN picture, downscaled
+--                             (src/render/CastTop.lua) -- and forwards no taps.
+--
 -- EVERYTHING IS IN THE SAVE DIRECTORY because that is the one place LOVE can
 -- write on Android without a permission, and the host can find it: it is under
 -- the app's own files directory, which is the one path an Android app always
@@ -80,6 +104,9 @@ SecondScreen.DIR = "second_display"
 SecondScreen.HOST = SecondScreen.DIR .. "/host.txt"
 SecondScreen.FRAME = SecondScreen.DIR .. "/frame.bin"
 SecondScreen.TOUCH = SecondScreen.DIR .. "/touch.txt"
+SecondScreen.MODE_FILE = SecondScreen.DIR .. "/mode.txt"
+SecondScreen.CAST_MODES = { "mirror", "bottom", "top" }
+SecondScreen.CAST_KINDS = { "none", "builtin", "external" }
 SecondScreen.PROTOCOL = 1
 SecondScreen.MAGIC = "G2SD"
 -- How long a host may go quiet before it is treated as gone.  Two seconds is
@@ -128,12 +155,21 @@ function SecondScreen.readHost(now)
   local stamp = tonumber(info.modtime)
   local body = f.read(SecondScreen.HOST)
   if type(body) ~= "string" then fileHost = false return nil end
-  local version, displays, w, h =
-    body:match("^%s*(%d+)%s+(%d+)%s+(%d+)%s+(%d+)")
+  local version, displays, w, h, rest =
+    body:match("^%s*(%d+)%s+(%d+)%s+(%d+)%s+(%d+)([^\r\n]*)")
   if not version then fileHost = false return nil end
+  -- The cast fields, both or neither: a host that wrote one word of garbage
+  -- after the four is treated as the old four-field host, not half a new one.
+  local kind, mode = (rest or ""):match("^%s+(%a+)%s+(%a+)")
+  local KIND = { none = true, builtin = true, external = true }
+  local MODE = { mirror = true, bottom = true, top = true, auto = true }
+  if not (kind and mode and KIND[kind] and MODE[mode]) then
+    kind, mode = nil, nil
+  end
   fileHost = {
     version = tonumber(version), displays = tonumber(displays),
     width = tonumber(w), height = tonumber(h), stamp = stamp, seenAt = now,
+    kind = kind, mode = mode,
   }
   return fileHost
 end
@@ -151,7 +187,7 @@ end
 -- Cached on the same interval as the native probe. A panel that appears or
 -- goes away is noticed within PROBE_INTERVAL either way, which is what the
 -- host's once-a-second heartbeat is already paced for.
-local fileProbedAt, fileProbed = nil, false
+local fileProbedAt, fileProbed, fileProbedHost = nil, false, nil
 
 function SecondScreen.fileAvailable(now)
   local at = tonumber(now) or clock()
@@ -163,6 +199,7 @@ function SecondScreen.fileAvailable(now)
     return fileProbed
   end
   local h = SecondScreen.readHost(now)
+  fileProbedHost = (h and h.version == SecondScreen.PROTOCOL) and h or nil
   fileProbed = (h and h.version == SecondScreen.PROTOCOL
                 and (h.displays or 0) >= 2) and true or false
   fileProbedAt = at or fileProbedAt or 0
@@ -171,7 +208,88 @@ end
 
 -- Drop the cached answer so the next ask goes back to the file.
 function SecondScreen.forgetFileProbe()
-  fileProbedAt, fileProbed = nil, false
+  fileProbedAt, fileProbed, fileProbedHost = nil, false, nil
+end
+
+-- ---------------------------------------------------------------------------
+-- CASTING: what the host says it found, and what it is doing with it.
+-- Every answer rides the same cached probe as `fileAvailable`, so asking
+-- these per frame costs what asking that does.
+-- ---------------------------------------------------------------------------
+
+-- The parsed host.txt of a host speaking this protocol, or nil.
+function SecondScreen.hostInfo(now)
+  SecondScreen.fileAvailable(now)
+  return fileProbedHost
+end
+
+-- Whether the host understands mode.txt: only one that writes the two cast
+-- fields does.  An old APK would ignore the file, so the TV / CAST option is
+-- not offered against it.
+function SecondScreen.castSupported(now)
+  local h = SecondScreen.hostInfo(now)
+  return (h and h.mode ~= nil) and true or false
+end
+
+-- none | builtin | external.  A four-field host only ever reported the AYN
+-- Thor's lower panel, so one with a display is `builtin`.
+function SecondScreen.hostKind(now)
+  local h = SecondScreen.hostInfo(now)
+  if not h then return "none" end
+  if h.kind then return h.kind end
+  return (h.displays or 0) >= 2 and "builtin" or "none"
+end
+
+-- WHAT THE ATTACHED PANEL IS FOR: "bottom" (it shows the DS bottom screen and
+-- sends taps), "top" (it shows the main picture), or nil (no panel).  The
+-- host's own word is the truth -- it is what the TV is actually showing --
+-- so a mode the player has just picked takes effect here when the host has
+-- followed it, within one heartbeat.
+function SecondScreen.panelRole()
+  if SecondScreen.fileAvailable() then
+    local h = fileProbedHost
+    if h and h.mode then
+      if h.mode == "top" or h.mode == "bottom" then return h.mode end
+      -- displays >= 2 alongside mirror/auto is a host contradicting itself;
+      -- no panel is the answer that cannot put a picture on the wrong screen
+      return nil
+    end
+    return "bottom"
+  end
+  -- the FFI bridge predates casting and only ever drove a bottom screen
+  if C ~= nil and SecondScreen.available() then return "bottom" end
+  return nil
+end
+
+-- The player's TV / CAST choice as stored in mode.txt: mirror | bottom | top,
+-- or nil for auto (missing, `auto`, or anything unreadable).
+function SecondScreen.readCastMode()
+  local f = fs()
+  if not (f and f.getInfo and f.read) then return nil end
+  if not f.getInfo(SecondScreen.MODE_FILE) then return nil end
+  local body = f.read(SecondScreen.MODE_FILE)
+  if type(body) ~= "string" then return nil end
+  local word = body:match("^%s*(%a+)")
+  word = word and word:lower()
+  for _, m in ipairs(SecondScreen.CAST_MODES) do
+    if word == m then return m end
+  end
+  return nil
+end
+
+-- Store the choice for the host.  nil writes `auto`.  The probe is dropped so
+-- the next question re-reads host.txt rather than a half-second-old answer.
+function SecondScreen.writeCastMode(mode)
+  local f = fs()
+  if not (f and f.write) then return false end
+  local word = "auto"
+  for _, m in ipairs(SecondScreen.CAST_MODES) do
+    if mode == m then word = m end
+  end
+  if f.createDirectory then pcall(f.createDirectory, SecondScreen.DIR) end
+  local ok, wrote = pcall(f.write, SecondScreen.MODE_FILE, word .. "\n")
+  SecondScreen.forgetFileProbe()
+  return ok and wrote ~= false
 end
 
 -- Hand the host a frame.  `imageData` is LOVE's own, and its string is the
@@ -203,6 +321,16 @@ function SecondScreen.filePush(imageData, w, h)
   -- LOVE filesystem.write normally returns true. Treat an explicit false as
   -- failure so SecondScreen.flush keeps the frame dirty and retries.
   return ok and wrote ~= false
+end
+
+-- The twelve bytes `filePush` puts in front of a frame, with the next sequence
+-- number, for a writer that sends the pixels from somewhere else (CastTop's
+-- writer thread).  Same layout, same counter, so the host cannot tell them
+-- apart.
+function SecondScreen.frameHeader(w, h)
+  fileSeq = (fileSeq + 1) % 65536
+  return SecondScreen.MAGIC .. u16(SecondScreen.PROTOCOL)
+    .. u16(w) .. u16(h) .. u16(fileSeq)
 end
 
 -- Everything the host has recorded since the last call, in order, and the file

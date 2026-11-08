@@ -761,6 +761,26 @@ local function buildRows(game)
       end }
   end
 
+  -- TV / CAST: what a second display -- the Thor's lower panel, or a TV the
+  -- phone is casting to -- is for: MIRROR, BOTTOM or TOP (src/ui/CastDisplay
+  -- .lua).  Every generation, because a cast carries the whole app; only
+  -- where an Android host that reads the choice is running, so a desktop or
+  -- an older APK gains no row that does nothing.  Stored beside the host in
+  -- second_display/, not in options.lua, so it never follows a save onto
+  -- another device -- hence `false` (nothing for writeOptions to flush).
+  do
+    local okCast, CastDisplay = pcall(require, "src.ui.CastDisplay")
+    if okCast and CastDisplay.supported() then
+      rows[#rows + 1] = { id = "castDisplay",
+        label = Strings(CastDisplay.ROW_LABEL),
+        value = function() return Strings(CastDisplay.label()) end,
+        step = function(_, dir)
+          CastDisplay.step(dir)
+          return false
+        end }
+    end
+  end
+
   local pipelineRows = Pipelines.rows(game)
   if pipelineRows[1] then
     local merged = {}

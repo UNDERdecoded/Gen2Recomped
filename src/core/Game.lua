@@ -1788,7 +1788,19 @@ local function offerPointer(self, method, id, x, y)
   return panel~=top and offer(panel) or false
 end
 
+-- TV / CAST = TOP shows the bottom screen in the phone's window; a tap on it
+-- is mapped into 256x192 and injected (src/render/CastTop.lua).  False -- and
+-- nothing else happens -- in every other mode.
+local function castTopTouch(self, method, id, x, y)
+  if self.secondScreenInjecting then return false end
+  local CastTop = package.loaded["src.render.CastTop"]
+  if not (CastTop and CastTop.routeTouch) then return false end
+  local ok, taken = pcall(CastTop.routeTouch, self, method, id, x, y)
+  return ok and taken or false
+end
+
 function Game:touchpressed(id, x, y)
+  if castTopTouch(self, "touchpressed", id, x, y) then return end
   -- Visible virtual controls own their complete gesture, even when pressing
   -- one opens a different screen before the finger is lifted.
   if not self.secondScreenInjecting and TouchControls.visible and TouchControls:visible()
@@ -1811,6 +1823,7 @@ function Game:hasPointerScreen()
 end
 
 function Game:touchmoved(id, x, y)
+  if castTopTouch(self, "touchmoved", id, x, y) then return end
   if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
     TouchControls:touchmoved(id,x,y)
     return
@@ -1821,6 +1834,7 @@ function Game:touchmoved(id, x, y)
 end
 
 function Game:touchreleased(id, x, y)
+  if castTopTouch(self, "touchreleased", id, x, y) then return end
   if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
     TouchControls:touchreleased(id,x,y)
     return

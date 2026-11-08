@@ -8,7 +8,7 @@
  * display; LOVE does not, and teaching LOVE would mean patching and rebuilding
  * the engine's NDK tree for every release. This is the other way round: an
  * ordinary Java class in the app module, no native code, talking to Lua
- * through three files in the save directory.
+ * through four small files in the save directory.
  *
  * It deliberately lives at mobile/second-display/ rather than inside
  * mobile/android/, because mobile/android/ is a vendored love-android checkout
@@ -27,14 +27,36 @@
  * reads both files and fails if they drift.
  *
  *   second_display/host.txt   written HERE, once a second:
- *                             "<version> <displays> <width> <height>"
+ *                             "<version> <displays> <width> <height> <kind> <mode>"
  *                             Lua offers `display` mode only while this says
  *                             a matching version and displays >= 2.
+ *                             displays is 2 only while a Presentation is up
+ *                             and taking frames. <kind> and <mode> were added
+ *                             for casting WITHOUT a version bump: a Lua that
+ *                             predates them reads the first four fields and
+ *                             ignores the rest, and a Lua that knows them
+ *                             treats a four-field host as the old one
+ *                             (built-in panel, bottom screen, no mode.txt).
+ *                             <kind>  none | builtin | external  (see kindOf)
+ *                             <mode>  mirror | bottom | top -- what this host
+ *                                     is doing with that display -- or auto
+ *                                     when there is no display to do it with.
+ *   second_display/mode.txt   written by LUA, read HERE every heartbeat: the
+ *                             player's TV / CAST choice, one word, mirror |
+ *                             bottom | top. Missing or anything else = auto:
+ *                             a built-in panel gets bottom, an external one
+ *                             (Miracast, Smart View, Chromecast, HDMI) mirror.
+ *                             mirror = no Presentation at all, so Android's
+ *                             own mirroring of the phone shows through.
+ *                             top = the Presentation shows whatever Lua sends
+ *                             (the main picture, downscaled) and its touches
+ *                             are not forwarded.
  *   second_display/frame.bin  written by LUA: "G2SD", then version, width,
  *                             height, sequence as little-endian u16 -- twelve
  *                             bytes -- then width*height*4 bytes of RGBA.
  *   second_display/touch.txt  appended HERE, read and truncated by Lua:
- *                             "<down|move|up> <id> <x> <y>" a line.
+ *                             "<down|move|up> <id> <x> <y>" a line. Only in
+ *                             bottom mode.
  */
 
 package org.love2d.android;
@@ -80,6 +102,14 @@ public class SecondDisplayHost extends ContentProvider {
   public static final String HOST_FILE = "host.txt";
   public static final String FRAME_FILE = "frame.bin";
   public static final String TOUCH_FILE = "touch.txt";
+  public static final String MODE_FILE = "mode.txt";
+  public static final String KIND_NONE = "none";
+  public static final String KIND_BUILTIN = "builtin";
+  public static final String KIND_EXTERNAL = "external";
+  public static final String MODE_MIRROR = "mirror";
+  public static final String MODE_BOTTOM = "bottom";
+  public static final String MODE_TOP = "top";
+  public static final String MODE_AUTO = "auto";
   /* conf.lua pins the Android identity to "pokemon-love2d" and sets
    * t.externalstorage, so LOVE's save directory is
    * getExternalFilesDir(null)/save/pokemon-love2d. The internal path is
@@ -101,6 +131,11 @@ public class SecondDisplayHost extends ContentProvider {
 
   private volatile int lastSeq = -1;
   private volatile int frameW = 0, frameH = 0;
+  /* What host.txt's last two fields say; set by reconcile() on the UI thread,
+   * written out by the pump. */
+  private volatile String hostKind = KIND_NONE;
+  private volatile String hostMode = MODE_AUTO;
+  private String lastDisplayList = "";
 
   /* ------------------------------------------------------------------ *
    * Provider plumbing: exists to be constructed early, serves nothing.
@@ -167,6 +202,92 @@ public class SecondDisplayHost extends ContentProvider {
     @Override public void onActivityDestroyed(Activity a) { }
   }
 
+  /* ------------------------------------------------------------------ *
+   * BUILT-IN PANEL OR CAST DISPLAY.
+   *
+   * Reported from play: casting the phone to a TV over Wi-Fi showed the DS
+   * bottom screen on the TV instead of the game. Android hands a Miracast /
+   * Smart View / Chromecast screen-mirroring sink to apps as a PRESENTATION
+   * display -- exactly what the AYN Thor's lower panel is -- and a
+   * Presentation on it replaces the mirror. So the host has to know which
+   * of the two it found, and Lua's TV / CAST option decides what to do with
+   * it (mode.txt).
+   *
+   * Android has no public "is this the device's own panel" call, so this
+   * asks in the order of how much each answer can be trusted:
+   *   1. Display.getType(), through reflection. Hidden, but annotated
+   *      @UnsupportedAppUsage with no SDK ceiling, i.e. on the greylist an
+   *      app may still call (it logs a warning). TYPE_INTERNAL (1) is a panel
+   *      wired to the device; EXTERNAL (HDMI/USB-C, 2), WIFI (Miracast, 3),
+   *      OVERLAY (4) and VIRTUAL (5 -- Cast mirroring, screen recorders) are
+   *      not.
+   *   2. Display.toString(), which is public and has printed the same
+   *      DisplayInfo -- including "type INTERNAL" / "type WIFI" ... -- since
+   *      the Display API appeared (4.2). Covers a release that locks (1).
+   *   3. FLAG_PRIVATE: only virtual displays are private.
+   *   4. Otherwise BUILT-IN. Not a guess about the hardware but about the
+   *      cost of being wrong: every second display got the bottom screen
+   *      before this change, so an undecidable panel keeps exactly that, and
+   *      the player still has TV / CAST to say otherwise. Wi-Fi and virtual
+   *      displays have always been typed, so (1) or (2) catches a cast.
+   * FLAG_PRESENTATION is deliberately NOT used: the Thor's own lower panel
+   * carries it too (it is found through DISPLAY_CATEGORY_PRESENTATION), so
+   * it says nothing about where the panel is. Neither is the display's name,
+   * which for a cast is the TV's own and for a panel is whatever the vendor
+   * typed.
+   * ------------------------------------------------------------------ */
+
+  /** Display.TYPE_* (hidden) to a kind, or null for a value this does not
+   *  know. Public and static so the protocol check can run it. */
+  public static String kindFromType(int type) {
+    if (type == 1) return KIND_BUILTIN;               // TYPE_INTERNAL
+    if (type >= 2 && type <= 5) return KIND_EXTERNAL; // EXTERNAL WIFI OVERLAY VIRTUAL
+    return null;
+  }
+
+  /** The kind, read out of Display.toString()'s DisplayInfo, or null. */
+  public static String kindFromDescription(String text) {
+    if (text == null) return null;
+    if (text.contains("type INTERNAL")) return KIND_BUILTIN;
+    if (text.contains("type EXTERNAL") || text.contains("type WIFI")
+        || text.contains("type OVERLAY") || text.contains("type VIRTUAL")) {
+      return KIND_EXTERNAL;
+    }
+    return null;
+  }
+
+  /** The player's mode.txt word, or null for auto / missing / garbage. */
+  public static String parseMode(String text) {
+    if (text == null) return null;
+    String t = text.trim().toLowerCase(java.util.Locale.ROOT);
+    if (MODE_MIRROR.equals(t) || MODE_BOTTOM.equals(t) || MODE_TOP.equals(t)) return t;
+    return null;
+  }
+
+  /** What to do with a display of this kind. Never auto. */
+  public static String effectiveMode(String requested, String kind) {
+    if (requested != null) return requested;
+    return KIND_EXTERNAL.equals(kind) ? MODE_MIRROR : MODE_BOTTOM;
+  }
+
+  static String kindOf(Display d) {
+    if (d == null) return KIND_NONE;
+    try {
+      java.lang.reflect.Method m = Display.class.getMethod("getType");
+      Object t = m.invoke(d);
+      if (t instanceof Integer) {
+        String k = kindFromType((Integer) t);
+        if (k != null) return k;
+      }
+    } catch (Throwable ignored) { }
+    String k = kindFromDescription(String.valueOf(d));
+    if (k != null) return k;
+    try {
+      if ((d.getFlags() & Display.FLAG_PRIVATE) != 0) return KIND_EXTERNAL;
+    } catch (Throwable ignored) { }
+    return KIND_BUILTIN;
+  }
+
   private Display secondaryDisplay() {
     DisplayManager dm =
         (DisplayManager) appContext.getSystemService(Context.DISPLAY_SERVICE);
@@ -175,62 +296,131 @@ public class SecondDisplayHost extends ContentProvider {
       return null;
     }
     Display[] all = dm.getDisplays();
+    // Logged when the set changes, not every heartbeat: this runs once a
+    // second for as long as a cast is being mirrored.
+    StringBuilder list = new StringBuilder();
     if (all != null) {
       for (Display d : all) {
-        Log.d(TAG, "display id=" + d.getDisplayId()
-            + " name=" + d.getName()
-            + " flags=" + d.getFlags()
-            + " state=" + d.getState());
+        list.append("display id=").append(d.getDisplayId())
+            .append(" name=").append(d.getName())
+            .append(" flags=").append(d.getFlags())
+            .append(" kind=").append(kindOf(d)).append('\n');
       }
     }
+    String now = list.toString();
+    if (!now.equals(lastDisplayList)) {
+      lastDisplayList = now;
+      Log.i(TAG, "displays:\n" + now);
+    }
+    java.util.ArrayList<Display> candidates = new java.util.ArrayList<Display>();
     Display[] ds = dm.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION);
-    if (ds != null && ds.length > 0) return ds[0];
+    if (ds != null) for (Display d : ds) candidates.add(d);
     if (all != null) {
       for (Display d : all) {
-        if (d.getDisplayId() != Display.DEFAULT_DISPLAY) return d;
+        if (d.getDisplayId() != Display.DEFAULT_DISPLAY && !candidates.contains(d)) {
+          candidates.add(d);
+        }
       }
     }
-    return null;
+    // A BUILT-IN PANEL WINS over a cast: on a Thor that is also casting, the
+    // lower panel keeps the bottom screen and the TV gets Android's mirror.
+    for (Display d : candidates) {
+      if (KIND_BUILTIN.equals(kindOf(d))) return d;
+    }
+    return candidates.isEmpty() ? null : candidates.get(0);
   }
 
   private void attach(Activity activity) {
     activeActivity = activity;
     if (!running) startPump();
-    ensurePresentation();
+    reconcile();
   }
 
-  private void ensurePresentation() {
+  /** The newest mode.txt across the save roots, parsed; null = auto. */
+  private String readRequestedMode() {
+    File newest = null;
+    for (File root : roots) {
+      File f = new File(root, MODE_FILE);
+      if (!f.isFile()) continue;
+      if (newest == null || f.lastModified() > newest.lastModified()) newest = f;
+    }
+    if (newest == null) return null;
+    java.io.FileInputStream in = null;
+    try {
+      in = new java.io.FileInputStream(newest);
+      byte[] buf = new byte[32];
+      int n = in.read(buf);
+      if (n <= 0) return null;
+      return parseMode(new String(buf, 0, n, Charset.forName("UTF-8")));
+    } catch (Throwable t) {
+      return null;
+    } finally {
+      if (in != null) try { in.close(); } catch (Throwable ignored) { }
+    }
+  }
+
+  /** Make the Presentation match the display and the player's mode: attach
+   *  it, keep it, or take it down so Android's mirror shows. Runs on the UI
+   *  thread, on resume and then once a heartbeat. */
+  private void reconcile() {
     if (Looper.myLooper() != Looper.getMainLooper()) {
       ui.post(new Runnable() {
-        @Override public void run() { ensurePresentation(); }
+        @Override public void run() { reconcile(); }
       });
       return;
     }
-    if (!running || presentation != null) return;
-    Activity activity = activeActivity;
-    if (activity == null || activity.isFinishing()) return;
-
-    Display d = secondaryDisplay();
+    if (!running) return;
+    PanelPresentation p = presentation;
+    // A cast that ended took its display, and the system dismissed the
+    // Presentation with it.
+    if (p != null && !p.isShowing()) {
+      presentation = null;
+      p = null;
+      Log.i(TAG, "presentation gone (display removed)");
+    }
+    String requested = readRequestedMode();
+    Display d = p != null ? p.getDisplay() : secondaryDisplay();
     if (d == null) {
-      writeHost(1, 0, 0);
+      hostKind = KIND_NONE;
+      hostMode = requested != null ? requested : MODE_AUTO;
       return;
     }
+    String kind = kindOf(d);
+    String mode = effectiveMode(requested, kind);
+    hostKind = kind;
+    if (MODE_MIRROR.equals(mode)) {
+      hostMode = mode;
+      if (p != null) {
+        presentation = null;
+        try { p.dismiss(); } catch (Throwable ignored) { }
+        Log.i(TAG, "presentation dismissed: mirror mode on " + kind + " display");
+      }
+      return;
+    }
+    if (p != null) {
+      hostMode = mode;
+      return;
+    }
+    Activity activity = activeActivity;
+    if (activity == null || activity.isFinishing()) return;
 
     android.graphics.Point size = new android.graphics.Point();
     d.getSize(size);
     Log.i(TAG, "using secondary display id=" + d.getDisplayId()
-        + " name=" + d.getName() + " size=" + size.x + "x" + size.y);
-    PanelPresentation p = new PanelPresentation(activity, d);
+        + " name=" + d.getName() + " kind=" + kind + " mode=" + mode
+        + " size=" + size.x + "x" + size.y);
+    hostMode = mode;
+    PanelPresentation np = new PanelPresentation(activity, d);
     try {
-      p.show();
-      presentation = p;
+      np.show();
+      presentation = np;
       lastSeq = -1;
       writeHost(2, size.x, size.y);
       Log.i(TAG, "Presentation.show succeeded");
       Log.i(TAG, "second display attached: " + size.x + "x" + size.y);
     } catch (Throwable t) {
       Log.e(TAG, "presentation refused", t);
-      try { p.dismiss(); } catch (Throwable ignored) { }
+      try { np.dismiss(); } catch (Throwable ignored) { }
       presentation = null;
       writeHost(1, 0, 0);
     }
@@ -251,8 +441,16 @@ public class SecondDisplayHost extends ContentProvider {
    * The handshake, and the frames.
    * ------------------------------------------------------------------ */
 
+  /** host.txt's line. Static so the protocol check can parse what this end
+   *  actually writes with the Lua end's own reader. */
+  public static String hostLine(int displays, int w, int h, String kind, String mode) {
+    return PROTOCOL + " " + displays + " " + w + " " + h + " "
+        + (kind == null ? KIND_NONE : kind) + " "
+        + (mode == null ? MODE_AUTO : mode) + "\n";
+  }
+
   private void writeHost(int displays, int w, int h) {
-    byte[] line = (PROTOCOL + " " + displays + " " + w + " " + h + "\n")
+    byte[] line = hostLine(displays, w, h, hostKind, hostMode)
         .getBytes(Charset.forName("UTF-8"));
     for (File dir : roots) {
       FileOutputStream os = null;
@@ -276,10 +474,12 @@ public class SecondDisplayHost extends ContentProvider {
           long now = android.os.SystemClock.uptimeMillis();
           PanelPresentation panel = presentation;
 
-          if (panel == null && now - lastDiscovery >= HOST_INTERVAL_MS) {
+          // Every heartbeat, attached or not: the player can switch TV / CAST
+          // to mirror while a Presentation is up, and a cast can end.
+          if (now - lastDiscovery >= HOST_INTERVAL_MS) {
             lastDiscovery = now;
             ui.post(new Runnable() {
-              @Override public void run() { ensurePresentation(); }
+              @Override public void run() { reconcile(); }
             });
           }
 
@@ -491,6 +691,7 @@ public class SecondDisplayHost extends ContentProvider {
     private final Paint paint = new Paint(Paint.FILTER_BITMAP_FLAG);
     private final Rect dst = new Rect();
     private int srcW = 0, srcH = 0;
+    private int[] pixelBuf;
 
     PanelView(Context c) {
       super(c);
@@ -589,8 +790,12 @@ public class SecondDisplayHost extends ContentProvider {
 
       // LOVE's ImageData string is packed RGBA. Convert explicitly instead of
       // relying on Bitmap's native raw-buffer byte order.
+      // The int buffer is kept between frames (UI thread only): in TOP mode
+      // a 640x360 frame arrives up to twenty times a second, and a fresh
+      // 900 KB array each time is garbage the phone does not need.
       int count = w * h;
-      int[] pixels = new int[count];
+      if (pixelBuf == null || pixelBuf.length != count) pixelBuf = new int[count];
+      int[] pixels = pixelBuf;
       for (int p = 0, off = 0; p < count; p++, off += 4) {
         int r = rgba[off] & 0xff;
         int g = rgba[off + 1] & 0xff;
@@ -619,6 +824,9 @@ public class SecondDisplayHost extends ContentProvider {
 
     @Override public boolean onTouchEvent(MotionEvent e) {
       if (srcW <= 0 || srcH <= 0 || dst.width() <= 0) return false;
+      // TOP mode shows the MAIN picture here; a tap on it is not a tap on the
+      // bottom screen (which is on the phone, taking its own touches).
+      if (!MODE_BOTTOM.equals(hostMode)) return true;
       int action = e.getActionMasked();
       String kind;
       switch (action) {
