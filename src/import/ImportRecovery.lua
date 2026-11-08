@@ -4,7 +4,12 @@ local Recovery={PATH='rom-import.pending'}
 local current
 local function persist()
   if current and love and love.filesystem then
-    local ok,err=love.filesystem.write(Recovery.PATH,Serializer.encode(current))
+    -- Inside the worker this is the same unsynced write as the cache: the note
+    -- is for an app that got killed, and being killed does not lose it.
+    local CacheFs=package.loaded['src.import.CacheFs']
+    local encoded=Serializer.encode(current)
+    if CacheFs and CacheFs.bulkWriteSave and CacheFs.bulkWriteSave(Recovery.PATH,encoded) then return end
+    local ok,err=love.filesystem.write(Recovery.PATH,encoded)
     if not ok then require('src.core.Logger').warn('import recovery: %s',tostring(err)) end
   end
 end

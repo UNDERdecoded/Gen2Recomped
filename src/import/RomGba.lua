@@ -43,21 +43,34 @@ end
 -- out-of-range read is an error rather than a zero: a bad pointer that reads
 -- as zeros produces a plausible-looking empty table instead of a stack trace,
 -- and that is the failure mode that costs a day.
+-- THESE FOUR ARE A THIRD OF A GEN 3 IMPORT WITHOUT THE JIT: the extractor scans
+-- the cartridge a byte at a time, tens of millions of reads.  So one string.byte
+-- per read rather than a method lookup through the string metatable, and one
+-- call for a whole u16 or u32 rather than a call per byte.  A read that runs off
+-- the end drops to the byte-at-a-time spelling, which raises what it always did.
+local stringByte = string.byte
+
 function RomGba:u8(off)
-  local b = self.data:byte(off + 1)
+  local b = stringByte(self.data, off + 1)
   if not b then error(("GBA read past the end of the ROM: %08X"):format(off)) end
   return b
 end
 
 function RomGba:u16(off)
-  return self:u8(off) + self:u8(off + 1) * 256
+  local a, b = stringByte(self.data, off + 1, off + 2)
+  if not b then return self:u8(off) + self:u8(off + 1) * 256 end
+  return a + b * 256
 end
 
 function RomGba:u32(off)
   -- built as a float, not with lshift: bit.lshift is 32-bit SIGNED in LuaJIT,
   -- so a pointer with bit 31 set would come back negative
-  return self:u8(off) + self:u8(off + 1) * 256
-       + self:u8(off + 2) * 65536 + self:u8(off + 3) * 16777216
+  local a, b, c, d = stringByte(self.data, off + 1, off + 4)
+  if not d then
+    return self:u8(off) + self:u8(off + 1) * 256
+         + self:u8(off + 2) * 65536 + self:u8(off + 3) * 16777216
+  end
+  return a + b * 256 + c * 65536 + d * 16777216
 end
 
 function RomGba:s8(off)
@@ -82,13 +95,18 @@ end
 -- cartridge pointer at all.  Every table walk goes through this.
 function RomGba:pointer(off)
   local v = self:u32(off)
-  if v < RomGba.BASE or v >= RomGba.BASE + self.size then return nil end
-  return v - RomGba.BASE
+  if v < 0x08000000 or v >= 0x08000000 + self.size then return nil end
+  return v - 0x08000000
 end
 
 function RomGba:bytes(off, length)
   local out = {}
-  for i = 0, length - 1 do out[i + 1] = self:u8(off + i) end
+  local data = self.data
+  for i = 0, length - 1 do
+    local b = stringByte(data, off + i + 1)
+    if not b then b = self:u8(off + i) end
+    out[i + 1] = b
+  end
   return out
 end
 

@@ -133,22 +133,30 @@ local function paint(sheet, colours, x0, x1)
   local out, n = {}, 0
   local blank = char(0, 0, 0, 0)
   local pixels = sheet.pixels
+  local byte = string.byte
+  -- at most 16 colours, in thousands of pixels: each made into bytes once
+  local painted, transparent = {}, Gen4Pokegra.TRANSPARENT
   for y = 0, h - 1 do
     local row = y * w
     for x = x0, x1 do
       local linear = row + x
-      local b = pixels:byte(floor(linear / 2) + 1)
+      local b = byte(pixels, floor(linear / 2) + 1)
       local index
       if not b then index = 0
       elseif linear % 2 == 0 then index = b % 16
       else index = floor(b / 16) end
-      local colour = colours and colours[index + 1]
-      n = n + 1
-      if index == Gen4Pokegra.TRANSPARENT or not colour then
-        out[n] = blank
-      else
-        out[n] = char(colour[1], colour[2], colour[3], 255)
+      local pixel = painted[index]
+      if not pixel then
+        local colour = colours and colours[index + 1]
+        if index == transparent or not colour then
+          pixel = blank
+        else
+          pixel = char(colour[1], colour[2], colour[3], 255)
+        end
+        painted[index] = pixel
       end
+      n = n + 1
+      out[n] = pixel
     end
   end
   return { width = outWidth, height = h, rgba = concat(out) }

@@ -48,6 +48,15 @@ end
 function Oak:finish()
   if self.done then return end
   self.done=true;self.game.stack:pop()
+  -- SEQ_GS_STARTING2 is the speech's own song: the field that starts next
+  -- plays the bedroom's header BGM (FieldBGM_GetEffective -> SEQ_GS_T_WAKABA).
+  -- The overworld cued it on its push, under this screen, so cue it again.
+  local ow=self.game.overworld
+  local mapId=(ow and ow.map and ow.map.id) or (self.game.save.player or {}).map
+  if mapId then
+    pcall(require('src.core.Music').playMap,self.game.data,mapId,self.game.save.onBike,
+      ow and ow.player and ow.player.surfing)
+  end
   if self.onDone then self.onDone() end
 end
 function Oak:greeting()

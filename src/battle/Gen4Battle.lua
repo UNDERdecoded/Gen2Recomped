@@ -50,17 +50,27 @@ Gen4Battle.WIDTH, Gen4Battle.HEIGHT = 256, 192
 -- Widescreen keeps Platinum's 192-pixel-tall composition and only grows the
 -- horizontal surface. The extractor's battle backdrop is already 512 pixels
 -- wide, so this reveals real cartridge art instead of stretching 256 pixels.
-function Gen4Battle.surfaceWidth(pw, ph, fill, maxWidth)
+--
+-- `height` is the surface's WHOLE height -- 192, plus PANEL_H when the
+-- single-screen panel hangs under the top screen. Reported from play on a
+-- phone (SoulSilver, landscape): "wide screen battles ... not filling full
+-- screen". The width was worked out for a 192-row surface and then laid on a
+-- 248-row one, so the surface came out 248/192 too narrow for the window and
+-- the fit left a bar down each side. Past 512 the backdrop wraps, as the DS's
+-- 512-wide BG layer does (drawField), so the cap is the renderer's.
+function Gen4Battle.surfaceWidth(pw, ph, fill, maxWidth, height)
   local least = Gen4Battle.WIDTH
   local most = math.floor(tonumber(maxWidth) or 512)
   if most < least then most = least end
+  height = tonumber(height) or Gen4Battle.HEIGHT
+  if height < Gen4Battle.HEIGHT then height = Gen4Battle.HEIGHT end
   pw, ph = tonumber(pw), tonumber(ph)
   if not (pw and ph and pw > 0 and ph > 0) then return least end
   local want
   if fill then
-    want = math.floor(Gen4Battle.HEIGHT * pw / ph / 8 + 0.5) * 8
+    want = math.floor(height * pw / ph / 8 + 0.5) * 8
   else
-    local s = math.max(1, math.floor(ph / Gen4Battle.HEIGHT))
+    local s = math.max(1, math.floor(ph / height))
     want = math.floor(pw / s / 8) * 8
   end
   return math.max(least, math.min(most, want))
@@ -614,17 +624,25 @@ function Gen4Battle.drawField(battle)
     -- `shakebg` aimed at the effect layer with no switch up moves THIS, because
     -- outside a switch the effect layer is where the backdrop lives. Wrapped, for
     -- the same reason the switched layer is.
+    -- ...and WRAPPED ACROSS, because the BG layer it sits on is 512 wide and
+    -- the hardware wraps it: a widescreen surface wider than the picture shows
+    -- its left edge again, as the intro scroll does
     local sx, sy = Gen4Battle.backdropOffset(battle)
+    local gw, gh = ground:getWidth(), ground:getHeight()
+    local W = Gen4Battle.width(battle)
     if sx == 0 and sy == 0 then
-      g.draw(ground, 0, 0)
+      local dx = 0
+      repeat
+        g.draw(ground, dx, 0)
+        dx = dx + gw
+      until gw <= 0 or dx >= W
     else
-      local gw, gh = ground:getWidth(), ground:getHeight()
       local ox, oy = -(sx % gw), -(sy % gh)
-      for _, dx in ipairs({ 0, gw }) do
-        for _, dy in ipairs({ 0, gh }) do
-          if ox + dx < Gen4Battle.width(battle) and oy + dy < Gen4Battle.HEIGHT then
-            g.draw(ground, ox + dx, oy + dy)
-          end
+      for _, dy in ipairs({ 0, gh }) do
+        local dx = 0
+        while gw > 0 and ox + dx < W do
+          if oy + dy < Gen4Battle.HEIGHT then g.draw(ground, ox + dx, oy + dy) end
+          dx = dx + gw
         end
       end
     end
@@ -1263,8 +1281,11 @@ function Gen4Battle.drawEffectBackgroundState(battle, st)
       local sy = ((st.offsetY or 0) + y) % h
       quad:setViewport(0, sy, w, 1, w, h)
       local ox = -(rx % w)
-      g.draw(art, quad, ox, y)
-      if ox + w < sw then g.draw(art, quad, ox + w, y) end
+      -- as many repeats as the (possibly widened) surface needs
+      while w > 0 and ox < sw do
+        g.draw(art, quad, ox, y)
+        ox = ox + w
+      end
     end
     quad:release()
     if st.blend then g.setBlendMode("alpha", "alphamultiply") end
@@ -1280,12 +1301,14 @@ function Gen4Battle.drawEffectBackgroundState(battle, st)
   -- THE LAYER WRAPS, because the hardware's offset registers do: a background is a
   -- torus and a scroll of 300 shows the left of the picture again. Two draws a axis
   -- is enough while the picture is at least as big as the screen, and every one of
-  -- the 81 is 256 or 512 wide by 256 tall.
-  for _, dx in ipairs({ 0, w }) do
-    for _, dy in ipairs({ 0, h }) do
-      if ox + dx < Gen4Battle.width(battle) and oy + dy < Gen4Battle.HEIGHT then
-        g.draw(art, ox + dx, oy + dy)
-      end
+  -- the 81 is 256 or 512 wide by 256 tall. ACROSS, a widened surface can be
+  -- wider than two of the 256-wide ones, so that axis repeats until covered.
+  local sw = Gen4Battle.width(battle)
+  for _, dy in ipairs({ 0, h }) do
+    local dx = 0
+    while w > 0 and ox + dx < sw do
+      if oy + dy < Gen4Battle.HEIGHT then g.draw(art, ox + dx, oy + dy) end
+      dx = dx + w
     end
   end
   if st.blend then g.setBlendMode("alpha", "alphamultiply") end
@@ -3227,6 +3250,70 @@ function Gen4Battle.drawMoveFace(battle, i, colX, nameTop, infoTop, small)
   g.setColor(1, 1, 1, 1)
 end
 
+-- The button's words on ONE line, at the cartridge's own size, for a tile wide
+-- enough to hold them (a widened single-screen panel): the name centred in the
+-- tile's left part, then the type icon, "PP" and the count against its right
+-- edge -- the same fonts, colours and gaps as drawMoveFace, unscaled, each
+-- centred on the tile's height so nothing sits on the button's frame. Answers
+-- false, drawing nothing, when they would not fit; true for an empty slot.
+Gen4Battle.ROW_FACE_PAD = 10
+Gen4Battle.ROW_FACE_GAP = 12
+function Gen4Battle.drawMoveFaceRow(battle, i, x, y, w, h)
+  local Font = require("src.render.Font")
+  if not Font.width then return false end
+  local slot = Gen4Battle.moveSlot(battle, i)
+  if not slot then return true end
+  local Sub = require("src.import.Gen4MoveButtons")
+  local rec = moveButtons(battle)
+  local text = rec and rec.text
+  local g = love.graphics
+  local name = slot.def and slot.def.name or tostring(slot.move.id)
+  local typeName = slot.def and slot.def.type and tostring(slot.def.type):lower()
+  local icon = typeName and image("assets/generated/gen4/battle/type_icons_" .. typeName .. ".png")
+  local count = ("%2d/%2d"):format(slot.pp, slot.maxPP)
+  -- measure
+  local faced = Font.pushFace("subscreen")
+  local nameW = Font.width(name)
+  local nameH = Font.glyphHeight and Font.glyphHeight() or 16
+  if faced then Font.popFace() end
+  faced = Font.pushFace("system")
+  local ppW, cW = Font.width("PP"), Font.width(count)
+  local sysH = Font.glyphHeight and Font.glyphHeight() or 16
+  if faced then Font.popFace() end
+  local iconW = icon and icon:getWidth() or 0
+  local iconH = icon and icon:getHeight() or 0
+  -- the pad clears the button's coloured side bands, which the nine-slice
+  -- stretches with the tile (about 10 of the art's 124 columns)
+  local pad = math.max(Gen4Battle.ROW_FACE_PAD, math.ceil(Gen4Battle.ROW_FACE_PAD * w / 124))
+  local gap = Gen4Battle.ROW_FACE_GAP
+  local infoW = iconW + 4 + ppW + 3 + cW
+  if pad + nameW + gap + infoW + pad > w or nameH > h then return false end
+  -- the name, centred in what the info leaves
+  local infoX = x + w - pad - infoW
+  local nameX = math.floor(x + pad + (infoX - gap - (x + pad) - nameW) / 2)
+  faced = Font.pushFace("subscreen")
+  local tone = text and Font.beginTwoTone(rgb01(text.name[8]), rgb01(text.name[9]))
+  if not tone then g.setColor(0, 0, 0, 1) end
+  Font.draw(name, nameX, math.floor(y + (h - nameH) / 2))
+  if tone then Font.endTwoTone() end
+  if faced then Font.popFace() end
+  -- the icon, "PP" and the count, in the PP colour (`GetPPTextColor`)
+  g.setColor(1, 1, 1, 1)
+  infoX = math.floor(infoX)
+  if icon then g.draw(icon, infoX, math.floor(y + (h - iconH) / 2)) end
+  local ink, shadow = Sub.ppColour(slot.pp, slot.maxPP)
+  faced = Font.pushFace("system")
+  tone = text and Font.beginTwoTone(rgb01(text.pp[ink + 1]), rgb01(text.pp[shadow + 1]))
+  if not tone then g.setColor(0, 0, 0, 1) end
+  local ty = math.floor(y + (h - sysH) / 2)
+  Font.draw("PP", infoX + iconW + 4, ty)
+  Font.draw(count, infoX + iconW + 4 + ppW + 3, ty)
+  if tone then Font.endTwoTone() end
+  if faced then Font.popFace() end
+  g.setColor(1, 1, 1, 1)
+  return true
+end
+
 -- The compact MOVE list: the four buttons along the bottom of the screen, each
 -- carrying its own type colours, type icon and PP (see MOVE_STRIP).
 function Gen4Battle.drawCompactMoves(battle)
@@ -3258,10 +3345,19 @@ function Gen4Battle.drawCompactMoves(battle)
       love.graphics.setColor(1, 1, 1, 1)
     end
     if full then
-      -- The column's left edge, so the cartridge's x offsets land as they do on
-      -- its 128-wide half of the screen; the two rows squeezed into the tile.
-      local colX = ((i - 1) % 2) * 128
-      Gen4Battle.drawMoveFace(battle, i, colX, y, y + h - 14, true)
+      -- A TILE WIDE ENOUGH TAKES THE BUTTON'S WORDS AT THE CARTRIDGE'S OWN
+      -- SIZE, on one line. Reported from play (SoulSilver, wide battles on a
+      -- phone): the move panel's "text is bugged". The tile is 28 rows -- half
+      -- the DS button's 55 -- so the name and the shrunken PP row were stacked
+      -- into it, the name over the button's top frame and highlight band; and
+      -- the column was fixed at 128 * col, so on a widened panel (tiles 270+
+      -- wide) the second move's words were printed inside the FIRST tile.
+      if not Gen4Battle.drawMoveFaceRow(battle, i, x, y, w, h) then
+        -- ...otherwise the two rows squeezed into the tile, the cartridge's
+        -- 128-wide column centred on it so its x offsets land inside it
+        local colX = math.floor(x + w / 2 - 64)
+        Gen4Battle.drawMoveFace(battle, i, colX, y, y + h - 14, true)
+      end
     else
       local mv = chooser.curMoves and chooser.curMoves[i]
       local def = mv and battle.data.moves[mv.id]

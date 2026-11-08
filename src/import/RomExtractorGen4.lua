@@ -4155,6 +4155,10 @@ function RomExtractorGen4:extractOverworld()
     local key = RomExtractorGen4.spriteKey(entry.member)
     local facings, facingSource
     local seqName, how = Gen4Facings.sequenceFor(label, entry.frames)
+    if hgssSeq and not seqName then
+      seqName = require("src.import.Gen4HgssFacings").BY_MEMBER[entry.member]
+      how = seqName and "name" or nil
+    end
     local seq = seqName and sequences[seqName] or nil
     if seq then
       local built, why = Gen4Facings.facings(seq, entry.frames)

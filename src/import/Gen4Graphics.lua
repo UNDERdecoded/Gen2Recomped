@@ -190,6 +190,26 @@ end
 -- exactly the published LCG -- and the four that disagreed are the ones whose
 -- first tile is not blank, so the "keystream" read from them included
 -- picture.  Solving beats searching when the unknown is small.
+-- XOR of two 16-bit values.  The `bit` library when there is one, which is every
+-- game build and needs no JIT; arithmetic otherwise, see Gen4Text.xor16.
+local xor16
+do
+  local okBit, bitlib = pcall(require, "bit")
+  if okBit and type(bitlib) == "table" and bitlib.bxor then
+    xor16 = bitlib.bxor
+  else
+    xor16 = function(a, b)
+      local r, place = 0, 1
+      for _ = 1, 16 do
+        local x, y = a % 2, b % 2
+        if x ~= y then r = r + place end
+        a, b, place = floor(a / 2), floor(b / 2), place * 2
+      end
+      return r
+    end
+  end
+end
+
 function Gen4Graphics.decryptSprite(pixels)
   if type(pixels) ~= "string" or #pixels < 2 then return pixels end
   local key = byte(pixels, 1) + byte(pixels, 2) * 256
@@ -197,14 +217,7 @@ function Gen4Graphics.decryptSprite(pixels)
   for i = 1, #pixels - 1, 2 do
     local lo, hi = byte(pixels, i, i + 1)
     local v = lo + hi * 256
-    -- XOR of two 16-bit values, arithmetically: see Gen4Text.xor16 for why
-    -- this is not the `bit` library.
-    local r, place, a, b = 0, 1, v, key
-    for _ = 1, 16 do
-      local x, y = a % 2, b % 2
-      if x ~= y then r = r + place end
-      a, b, place = floor(a / 2), floor(b / 2), place * 2
-    end
+    local r = xor16(v, key)
     n = n + 1
     out[n] = string.char(r % 256, floor(r / 256))
     key = (key * 0x41C64E6D + 0x6073) % 65536
@@ -226,12 +239,7 @@ function Gen4Graphics.decryptSpriteDP(pixels)
   for i = count, 1, -1 do
     local lo, hi = byte(pixels, i * 2 - 1, i * 2)
     local v = lo + hi * 256
-    local r, place, a, b = 0, 1, v, key
-    for _ = 1, 16 do
-      local x, y = a % 2, b % 2
-      if x ~= y then r = r + place end
-      a, b, place = floor(a / 2), floor(b / 2), place * 2
-    end
+    local r = xor16(v, key)
     out[i] = string.char(r % 256, floor(r / 256))
     key = (key * 0x41C64E6D + 0x6073) % 65536
   end
@@ -853,6 +861,12 @@ function Gen4Graphics.compose(map, sheet, palette, firstTile)
   local blank = char(0, 0, 0, 0)
   for i = 1, w * h do out[i] = blank end
 
+  -- A SCREEN SAYS THE SAME THINGS OVER AND OVER: most of its cells are the blank
+  -- tile, and the rest repeat a few dozen tiles in a few palette rows.  Each tile
+  -- is unpacked once and each palette slot made into its four bytes once, where
+  -- this used to redo both for each of 49,152 pixels.
+  local tileValues, tileBlank, slotPixel = {}, {}, {}
+
   for index = 1, #map.cells do
     local cell = map.cells[index]
     local cx, cy
@@ -875,23 +889,42 @@ function Gen4Graphics.compose(map, sheet, palette, firstTile)
       -- precedes.
       if base >= 0 and base + perTile <= #data then
         local shift = four and (cell.palette * 16) or 0
-        for y = 0, 7 do
-          local sy = cell.flipY and (7 - y) or y
-          for x = 0, 7 do
-            local sx = cell.flipX and (7 - x) or x
-            local value
-            if four then
-              local at = base + sy * 4 + floor(sx / 2)
-              local pair = byte(data, at + 1) or 0
-              if sx % 2 == 0 then value = pair % 16 else value = floor(pair / 16) end
-            else
-              value = byte(data, base + sy * 8 + sx + 1) or 0
+        local values = tileValues[base]
+        if not values then
+          values = {}
+          local allZero = true
+          for sy = 0, 7 do
+            for sx = 0, 7 do
+              local value
+              if four then
+                local at = base + sy * 4 + floor(sx / 2)
+                local pair = byte(data, at + 1) or 0
+                if sx % 2 == 0 then value = pair % 16 else value = floor(pair / 16) end
+              else
+                value = byte(data, base + sy * 8 + sx + 1) or 0
+              end
+              values[sy * 8 + sx] = value
+              if value ~= 0 then allZero = false end
             end
-            if value ~= 0 then
-              local colour = colours[shift + value + 1]
-              if colour then
-                out[(cy + y) * w + cx + x + 1] =
-                  char(colour[1], colour[2], colour[3], 255)
+          end
+          tileValues[base], tileBlank[base] = values, allZero
+        end
+        if not tileBlank[base] then
+          for y = 0, 7 do
+            local sy = cell.flipY and (7 - y) or y
+            local rowAt = (cy + y) * w + cx + 1
+            for x = 0, 7 do
+              local sx = cell.flipX and (7 - x) or x
+              local value = values[sy * 8 + sx]
+              if value ~= 0 then
+                local slot = shift + value + 1
+                local pixel = slotPixel[slot]
+                if pixel == nil then
+                  local colour = colours[slot]
+                  pixel = colour and char(colour[1], colour[2], colour[3], 255) or false
+                  slotPixel[slot] = pixel
+                end
+                if pixel then out[rowAt + x] = pixel end
               end
             end
           end

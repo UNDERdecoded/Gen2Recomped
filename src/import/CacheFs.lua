@@ -529,15 +529,117 @@ function CacheFs.mkdirReal(path)
   return true
 end
 
+-- FOLDERS ALREADY MADE, because an import writes 18,000 files into 900 folders.
+-- Asking for every level of every file's path again is half a dozen syscalls
+-- per file, and on Android each of those can be a JNI call as well.  A folder
+-- that vanished behind this (a clear, another Lua state) only costs a failed
+-- open, and every writer below retries that once with the memory dropped.
+local madeDirs = {}
+local function forgetMadeDirs() madeDirs = {} end
+
 local function ensureParents(root, rel)
-  local parts = {}
-  for part in rel:gmatch("[^/]+") do parts[#parts + 1] = part end
+  local parent = rel:match("^(.*)/[^/]+$")
+  local key = root .. "\0" .. (parent or "")
+  if madeDirs[key] then return end
   local cur = root
-  tryMkdirs(root)
-  for i = 1, #parts - 1 do
-    cur = cur .. SEP .. parts[i]
+  if not madeDirs[cur] then
     tryMkdirs(cur)
+    madeDirs[cur] = true
   end
+  if parent then
+    for part in parent:gmatch("[^/]+") do
+      cur = cur .. SEP .. part
+      if not madeDirs[cur] then
+        tryMkdirs(cur)
+        madeDirs[cur] = true
+      end
+    end
+  end
+  madeDirs[key] = true
+end
+
+-- ...and the open that goes with it: one retry when the folder memory was stale.
+local function openUnder(root, rel)
+  ensureParents(root, rel)
+  local path = realPath(root, rel)
+  local f, err = io.open(path, "wb")
+  if f then return f end
+  forgetMadeDirs()
+  ensureParents(root, rel)
+  f, err = io.open(path, "wb")
+  return f, err
+end
+
+-- A WRITE THROUGH love.filesystem IS A DISK SYNC.  PhysFS flushes on close, and
+-- its flush is fsync (FlushFileBuffers on Windows): measured on a hard disk, 66 ms
+-- a file against 0.4 ms for fopen/fwrite/fclose on the same disk.  A Gen 4 import is
+-- 18,000 files, so by default -- nobody chose a folder, the cache lives in the
+-- save directory -- an import spent most of its life waiting for the disk to
+-- promise each sprite was safe, on every platform including phones.
+--
+-- So while `CacheFs.bulkWrites` is on (the import worker turns it on, for its
+-- own Lua state, and writes the completion marker outside it) a cache file goes
+-- to the same place with plain io.*.  That is what portable and custom-folder
+-- installs have always done.  Nothing is lost to an app being killed: the bytes
+-- are with the OS.  Only a power cut in the seconds after an import can tell the
+-- difference, and the marker's own sync, the last write, closes most of that.
+--
+-- NOT TAKEN ON TRUST.  The save directory's name is a string from LOVE, and
+-- whether io.* reaches it is the platform's business (a non-ASCII profile path
+-- on Windows, a sandboxed console).  The first file is read back through
+-- love.filesystem; if it is not there, or not whole, this stays off for the rest
+-- of the run and everything takes the slow road it always took.
+CacheFs.bulkWrites = false
+local bulkDir = nil      -- nil: not tried, false: does not work, string: proven
+local bulkMade = {}
+
+local function bulkParent(rel)
+  local parent = rel:match("^(.*)/[^/]+$")
+  if not parent or bulkMade[parent] then return true end
+  if not love.filesystem.createDirectory(parent) then return false end
+  bulkMade[parent] = true
+  return true
+end
+
+-- Returns true when the bytes are in place, false to use love.filesystem.
+local function bulkWrite(rel, data)
+  if bulkDir == false then return false end
+  local dir = bulkDir
+  if not dir then
+    dir = love.filesystem.getSaveDirectory and love.filesystem.getSaveDirectory()
+    if type(dir) ~= "string" or dir == "" then
+      bulkDir = false
+      return false
+    end
+  end
+  if not bulkParent(rel) then return false end
+  local path = dir .. "/" .. rel
+  local f = io.open(path, "wb")
+  if not f then
+    bulkMade = {}
+    if not bulkParent(rel) then return false end
+    f = io.open(path, "wb")
+    if not f then return false end
+  end
+  local written = f:write(data)
+  local closed = f:close()
+  if not (written and closed) then return false end
+  if not bulkDir then
+    local info = love.filesystem.getInfo(rel, "file")
+    if not (info and info.size == #data) then
+      bulkDir = false
+      os.remove(path)
+      return false
+    end
+    bulkDir = dir
+  end
+  return true
+end
+
+-- The same road for a file that is not under the cache prefix.  Returns true
+-- when it was used; only ever true while bulkWrites is on.
+function CacheFs.bulkWriteSave(rel, data)
+  return CacheFs.bulkWrites and bulkWrite(rel, data) or false
 end
 
 -- write cache-relative `rel` (forward-slash path) with the given bytes;
@@ -546,8 +648,7 @@ function CacheFs.write(rel, data)
   rel = withPrefix(rel)
   local root = CacheFs.root()
   if root then
-    ensureParents(root, rel)
-    local f, err = io.open(realPath(root, rel), "wb")
+    local f, err = openUnder(root, rel)
     if not f then return false, err end
     local written, writeError = f:write(data)
     local closed, closeError = f:close()
@@ -555,6 +656,7 @@ function CacheFs.write(rel, data)
     if not closed then return false, closeError end
     return true
   end
+  if CacheFs.bulkWrites and bulkWrite(rel, data) then return true end
   local parent = rel:match("^(.*)/[^/]+$")
   if parent and not love.filesystem.createDirectory(parent) then
     local info = love.filesystem.getInfo(parent)
@@ -610,6 +712,8 @@ end
 -- (issue #74: os.execute would flash a console window per call).  Used by the
 -- mod installer so an uninstall leaves nothing behind (#330).
 function CacheFs.removeDir(rel)
+  forgetMadeDirs()
+  bulkMade = {}
   rel = withPrefix(rel)
   local root = CacheFs.root()
   if root then
@@ -628,6 +732,8 @@ end
 -- love.filesystem.remove never reaches outside the save directory, so without
 -- a real rmdir an uninstall could empty a mod's folders and never remove them.
 function CacheFs.rmdirReal(path)
+  forgetMadeDirs()
+  bulkMade = {}
   if type(path) ~= "string" or path == "" then return end
   local rmdir = resolveRmdir()
   if rmdir then rmdir(path) end
@@ -669,8 +775,7 @@ local function rawRoot() return CacheFs.root() end
 function CacheFs.rawWrite(rel, data)
   local root = rawRoot()
   if root then
-    ensureParents(root, rel)
-    local f, err = io.open(realPath(root, rel), "wb")
+    local f, err = openUnder(root, rel)
     if not f then return false, err end
     f:write(data)
     f:close()
@@ -707,6 +812,8 @@ function CacheFs.rawRemove(rel)
 end
 
 function CacheFs.rawRemoveDir(rel)
+  forgetMadeDirs()
+  bulkMade = {}
   local root = rawRoot()
   if root then
     local rmdir = resolveRmdir()
@@ -781,7 +888,14 @@ local function realFile(rel)
       return true
     end
     ensureParents(root, rel)
-    local f, err = io.open(realPath(root, rel), mode == "a" and "ab" or "wb")
+    local ioMode = mode == "a" and "ab" or "wb"
+    local f, err = io.open(realPath(root, rel), ioMode)
+    if not f then
+      -- The folder memory can be stale, as in openUnder.
+      forgetMadeDirs()
+      ensureParents(root, rel)
+      f, err = io.open(realPath(root, rel), ioMode)
+    end
     if not f then return false, err end
     handle, kind = f, "io"
     return true
@@ -879,6 +993,8 @@ CacheFs.SEP = SEP
 -- love.filesystem (the game folder is mounted) and the real files deleted
 -- with os.remove; empty directories are harmless and left in place.
 function CacheFs.removeTree(rel)
+  forgetMadeDirs()
+  bulkMade = {}
   rel = withPrefix(rel)
   local root = CacheFs.root()
   if not root then return end

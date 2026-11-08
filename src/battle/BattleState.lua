@@ -267,11 +267,16 @@ function BattleState:gen4SurfaceWidth()
     if ok and type(a) == "number" and type(b) == "number" then pw, ph = a, b end
   end
   local fill = self:wantsFillScale()
-  local key = pw .. "x" .. ph .. (fill and "/fill" or "/fixed")
+  -- the WHOLE surface's height: the single-screen panel under the top screen
+  -- counts (uiSize below), or the width comes out for a shorter surface than
+  -- the one drawn and the fit leaves a bar down each side
+  local height = Gen4Battle.HEIGHT
+    + (Gen4Battle.singlePanel(self) and Gen4Battle.PANEL_H or 0)
+  local key = pw .. "x" .. ph .. "x" .. height .. (fill and "/fill" or "/fixed")
   if self._gen4SurfaceKey ~= key then
     self._gen4SurfaceKey = key
     self._gen4SurfaceW = Gen4Battle.surfaceWidth(pw, ph, fill,
-                                                 math.min(Renderer.MAX_UI_WIDTH or 512, 512))
+                                                 Renderer.MAX_UI_WIDTH or 512, height)
   end
   return self._gen4SurfaceW
 end

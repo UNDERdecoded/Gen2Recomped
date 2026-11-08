@@ -26,6 +26,16 @@ F.NAMES = {
   [296] = "hgss_296",
 }
 
+-- WHICH SHEET USES A SEQUENCE THE TEXTURE COUNT CANNOT NAME. Platinum tells the
+-- nurse apart by her sheet's label (Gen4Facings BY_NAME); HGSS's sheets are
+-- unnamed, so the 17-texture nurse matched nothing and kept the renderer's
+-- classic slots -- slot 0, "standing south", is her BACK, and every Johto
+-- Pokemon Center nurse faced the wall. The cartridge's sprite table
+-- (overlay 1, pret overlay_01_sprite_data.s) gives SPRITE_PCWOMAN1 /
+-- MMODEL_PCWOMAN1 = member 133 her own animation, the only object that uses
+-- it; it is the table byte-identical to Platinum's `pokecenter_nurse`.
+F.BY_MEMBER = { [133] = "pokecenter_nurse" }
+
 -- read(arc) -> byName, report: the same shape as Gen4Facings.read
 function F.read(arc)
   local byName, report = {}, { found = 0 }

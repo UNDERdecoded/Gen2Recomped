@@ -392,6 +392,7 @@ function Music.stop()
   state.current, state.source, state.loopSource, state.fade = nil, nil, nil, nil
   state.chip = false
   state.pendingRestore = nil
+  state.onceResume = nil
   -- An explicit stop outranks a pending resume re-cue: whoever called this
   -- wants silence, and the retry in Music.update fires on a nil state.current
   resumeRetry = nil
@@ -518,13 +519,17 @@ end
 
 -- one-shot jingle (PkmnHealed, Jigglypuff's song): the map theme
 -- resumes when it ends, via update()
-function Music.playOnce(data, song)
+-- `resume` (optional): the song to come back to instead of the map theme --
+-- a DS PlayFanfare pauses whatever BGM is playing, a scripted TempBGM
+-- included, and the fanfare's end resumes THAT (Gen4Commands.g4_fanfare)
+function Music.playOnce(data, song, resume)
   if not songDef(data, song) then return false end
   Music.play(data, song, false, { reason = "once" })
   -- play() can no-op (hook silence, failed def); only arm restore when
   -- the jingle actually became current
   if state.current ~= song then return false end
   state.pendingRestore = true
+  state.onceResume = (resume ~= nil and resume ~= song) and { once = song, song = resume } or nil
   return true
 end
 
@@ -556,6 +561,17 @@ function Music.sounding()
 end
 
 function Music.restoreMap(data)
+  -- a jingle that was asked to come back to another song (playOnce's
+  -- `resume`), and is still the one sounding, hands back to that song
+  local back = state.onceResume
+  state.onceResume = nil
+  if back and state.pendingRestore and state.current == back.once
+     and songDef(data, back.song) then
+    state.current = nil
+    state.pendingRestore = nil
+    Music.play(data, back.song, nil, { reason = "resume" })
+    return
+  end
   state.current = nil
   state.pendingRestore = nil
   local play = effectiveMapSong(data, state.mapSong)

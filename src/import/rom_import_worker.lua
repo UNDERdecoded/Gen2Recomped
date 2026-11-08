@@ -93,6 +93,9 @@ local ok,err=xpcall(function()
   love.filesystem.remove(CacheFs.prefix..'rom-cache.complete')
   CacheFs.remove('rom-cache.complete')
  end
+ -- This state only writes the cache; the launcher writes the marker afterwards,
+ -- through the ordinary synced path (see CacheFs.bulkWrites).
+ CacheFs.bulkWrites=true
  local lastStage,lastAt=nil,0
  local function progress(value,total,stage,current,stageTotal)
   local now=love.timer.getTime()

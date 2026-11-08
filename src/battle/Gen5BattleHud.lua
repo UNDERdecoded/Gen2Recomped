@@ -325,9 +325,13 @@ function H.drawCompactMoves(battle)
         local q = love.graphics.newQuad(r.x, r.y, r.w, r.h, moves:getDimensions())
         g.draw(moves, q, x, y, 0, w / r.w, h / r.h)
       end
-      Font.draw(name, x + 8, y + 3)
+      -- clear of the hexagon's points, which widen with the stretch (about
+      -- 12 of the art's 124 columns): on a widened panel the words at x+8
+      -- sat on the left point and the PP on the right one
+      local inset = 8 + math.max(0, math.floor(12 * (w / r.w - 1)))
+      Font.draw(name, x + inset, y + 3)
       local s = ("%d/%d"):format(pp or 0, maxPP or 0)
-      Font.draw(s, x + w - 8 - Font.width(s), y + 14)
+      Font.draw(s, x + w - inset - Font.width(s), y + 14)
     end
     if (battle.moveIndex or 1) == i then outline(x, y, w, h) end
   end

@@ -3003,6 +3003,16 @@ local function xor16(a, b)
   end
   return r
 end
+-- ...and under LuaJIT, which is every game build, the `bit` library is one call
+-- instead of sixteen turns of that loop per character of every string in the
+-- game, and it needs no JIT.
+do
+  local okBit, bitlib = pcall(require, "bit")
+  if okBit and type(bitlib) == "table" and bitlib.bxor then
+    local bxor, band = bitlib.bxor, bitlib.band
+    xor16 = function(a, b) return band(bxor(a, b), 0xFFFF) end
+  end
+end
 Gen4Text.xor16 = xor16
 
 -- A trainer name is packed NINE bits per character into FIFTEEN usable bits

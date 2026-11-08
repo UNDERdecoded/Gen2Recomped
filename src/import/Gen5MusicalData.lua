@@ -373,9 +373,15 @@ function M.pose(arc, species, saveImage)
     local pal = set.normalPalette or set.palette
     local function crop(px, out, ox, oy, stride)
       for y = 0, H - 1 do
-        for x = 0, W - 1 do out[(y + oy) * stride + x + ox] = px[(y + y0) * C + (x + x0)] end
+        local from, to = (y + y0) * C + x0, (y + oy) * stride + ox
+        for x = 0, W - 1 do out[to + x] = px[from + x] end
       end
     end
+    -- THE GRID IS ALLOCATED UP FRONT: filled a frame at a time it is out of
+    -- order, so a plain table rehashes its way up to a few million slots, once
+    -- per species -- which was 15% of a Black import without the JIT.
+    local okNew, newTable = pcall(require, "table.new")
+    local function canvas(size) return okNew and newTable(size, 1) or {} end
     local one = {}
     crop(frames[1].px, one, 0, 0, W)
     pose.image = saveImage(("bw_musical/poke_%03d"):format(species),
@@ -384,7 +390,7 @@ function M.pose(arc, species, saveImage)
       local cols = math.min(#frames, 16)
       local rows = math.ceil(#frames / cols)
       local sw, sh = cols * W, rows * H
-      local grid = {}
+      local grid = canvas(sw * sh)
       for i, fr in ipairs(frames) do crop(fr.px, grid, ((i - 1) % cols) * W, math.floor((i - 1) / cols) * H, sw) end
       pose.cols = cols
       pose.strip = saveImage(("bw_musical/poke_%03d_anim"):format(species),

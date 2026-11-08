@@ -2283,8 +2283,22 @@ function Commands.g4_return_to_field(ctx)
 end
 Commands.g4_menu_close = noop
 
+-- PlayFanfare (pokeheartgold unk_02005D10.s 0x02006B24; Platinum's twin)
+-- PAUSES the BGM's player and plays the fanfare on its own; the fanfare's end
+-- resumes the paused BGM.  So the song a script put on with TempBGM / PlayBGM
+-- comes back afterwards, not the map header's: New Bark's Mom scene keeps
+-- SEQ_GS_E_TSURETEKE1 under her four SEQ_SE_PL_KIRAKIRA sparkles, where the
+-- map-theme restore cut to SEQ_GS_T_WAKABA after the first one.
 function Commands.g4_fanfare(ctx, songId)
-  Commands.play_once(ctx, songId)
+  local Music = require("src.core.Music")
+  local before = Music.current()
+  local data = ctx.game and ctx.game.data
+  if not Music.playOnce(data, songId, before) then return end
+  local runner = ctx.runner
+  runner.waitingCheck = function()
+    return not Music.oneShotPlaying()
+  end
+  runner:yield()
 end
 
 -- !! THIS READ THE WRONG OPERAND, AND EVERY FADE IN SINNOH WENT ONE WAY.

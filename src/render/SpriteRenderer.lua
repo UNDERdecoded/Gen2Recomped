@@ -124,9 +124,22 @@ local function correctOldBwFacings(def)
   end
 end
 
+-- A HEARTGOLD / SOULSILVER NURSE FROM A CACHE IMPORTED BEFORE THE IMPORTER
+-- KNEW HER SHEET (Gen4HgssFacings.BY_MEMBER): member 133, 17 textures, no
+-- facings, so the classic slots showed her back at rest. These are the frames
+-- the cartridge's `pokecenter_nurse` sequence gives a 17-texture sheet (the
+-- same table Platinum's nurse is imported with). No re-import needed.
+local function correctOldHgssNurse(def)
+  if def.facings or tonumber(def.frames) ~= 17 then return end
+  if def.source ~= "ROM:mmodel.narc[133]" then return end
+  def.facings = { up = { 0, 9, 11 }, down = { 12, 13, 15 }, left = { 16, 1, 3 }, right = { 4, 5, 7 } }
+  def.facingSource = "pokecenter_nurse (SpriteRenderer correctOldHgssNurse)"
+end
+
 function SpriteRenderer.new(spriteDef, seed)
   local self = setmetatable({}, SpriteRenderer)
   correctOldBwFacings(spriteDef)
+  correctOldHgssNurse(spriteDef)
   self.def = spriteDef
   self.seed = seed
   local source = type(spriteDef.source) == "string" and spriteDef.source or ""
