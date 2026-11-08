@@ -12,6 +12,22 @@
 -- "voxel_reveal" shot that starts flat and switches the voxels on mid-walk.
 -- tools/trailer/capture_all.ps1 runs every game.
 --
+-- THE DS GAMES (Platinum, HeartGold, SoulSilver, Black, White) are natively
+-- 3D: their towns are strolls on the cartridge camera (CAM TILT rung 1), and
+-- first / third person (rungs 10 / 9) steer the free camera's kept look
+-- (Gen4View.look) along a planned path, so the view turns as the player
+-- walks. The second trailer (TRAILER_ONLINE.md) records them with
+--
+--   powershell -ExecutionPolicy Bypass -File tools/trailer/capture_all.ps1 `
+--     -Identity trailer2_cap -ImportRom `
+--     -SnapshotDir G:\Gen2Recomped\scratch_claude\playthrough `
+--     -Versions heartgold,soulsilver,black,white,platinum
+--
+-- SNAPSHOT_DIR: a folder of playthrough snapshots (<game>_<n>.lua, from
+-- tools/gen4_playthrough); the newest one for the game's family is the save
+-- the shots play on, so no story scene starts in a town mid-shot. SNAPSHOT
+-- names one file instead.
+--
 -- CAMERA CRAFT: strolls keep to open ground (no tree line between the lens
 -- and the player), voxel cameras settle before the first frame, and first /
 -- third person steer the free camera's look along a planned path, easing
@@ -56,73 +72,62 @@ return function(game)
     return realDate(fmt, t)
   end
 
-  -- THE FRAME CLOCK: one 1/60 tick per logic step, whatever the wall says
-  local realGetTime = love.timer.getTime
-  local clock = realGetTime()
-  local realUpdate = love.update
-  love.update = function(dt) clock = clock + 1 / 60; return realUpdate(dt) end
-  love.timer.getTime = function() return clock end
-
-  -- THE WRITER: captureScreenshot hands the frame to a channel and ONE worker
-  -- thread streams it, raw RGBA, into an ffmpeg process per shot -- an MP4
-  -- comes out, no PNGs touch the disk, and ffmpeg's own threads do the
-  -- encoding. FORMAT=png keeps the old image-sequence output instead.
+  -- THE FRAME CLOCK AND THE WRITER (tools/trailer/recorder.lua): one 1/60
+  -- tick per logic step, whatever the wall says; captureScreenshot hands each
+  -- frame to a worker thread that streams it, raw RGBA, into an ffmpeg
+  -- process per shot -- an MP4 comes out and no PNGs touch the disk.
+  -- FORMAT=png keeps the old image-sequence output instead.
   local FORMAT = os.getenv("FORMAT") or "mp4"
-  local FFMPEG = os.getenv("FFMPEG") or "ffmpeg"
-  local CRF = os.getenv("CRF") or "14"
-  local WRITER = [[
-    local ch, format, ffmpeg, crf, fps = ...
-    require("love.image")
-    local pipe, current
-    local function close()
-      if pipe then pipe:close(); pipe = nil end
-      current = nil
-    end
-    while true do
-      local job = ch:demand()
-      if job == "stop" then close(); return end
-      if format == "png" then
-        local fd = job.img:encode("png")
-        local f = io.open(("%s/%05d.png"):format(job.dir, job.n), "wb")
-        if f then f:write(fd:getString()); f:close() end
-      else
-        if job.dir ~= current then
-          close()
-          local w, h = job.img:getDimensions()
-          local cmd = ('"%s" -y -loglevel error -f rawvideo -pix_fmt rgba -s %dx%d -r %d -i - '
-            .. '-c:v libx264 -preset slow -crf %s -pix_fmt yuv420p -movflags +faststart "%s.mp4"')
-            :format(ffmpeg, w, h, fps, crf, job.dir)
-          if package.config:sub(1, 1) == "\\" then cmd = '"' .. cmd .. '"' end
-          pipe = io.popen(cmd, "wb")
-          current = job.dir
-        end
-        if pipe then pipe:write(job.img:getString()) end
-      end
-      job.img:release()
-    end
-  ]]
-  local queue = love.thread.getChannel("trailer_frames")
-  local writers = {}
-  for i = 1, (FORMAT == "png") and (tonumber(os.getenv("WRITERS") or "4") or 4) or 1 do
-    writers[i] = love.thread.newThread(WRITER)
-    writers[i]:start(queue, FORMAT, FFMPEG, CRF, math.floor(60 / STEP))
-  end
-  local function capture(dir, n)
-    -- back-pressure: 1080p frames are 8 MB each in the queue
-    while queue:getCount() > 24 do realGetTime(); love.timer.sleep(0.004) end
-    love.graphics.captureScreenshot(function(img) queue:push({ dir = dir, n = n, img = img }) end)
-  end
+  local Rec = dofile("tools/trailer/recorder.lua")({
+    out = OUT, ffmpeg = os.getenv("FFMPEG") or "ffmpeg", crf = os.getenv("CRF") or "14",
+    step = STEP, format = FORMAT, writers = tonumber(os.getenv("WRITERS") or "4") or 4,
+  })
+  local function capture(dir, n) Rec.capture(dir, n) end
+
+  local DS = { platinum = true, heartgold = true, soulsilver = true, black = true, white = true }
+  local isDS = DS[version] or false
+  -- no wild battle cuts a stroll short
+  require("src.world.OverworldController").rollEncounter = function() return nil end
 
   -- the fit zoom, not whatever survey zoom the player's options hold
   local Zoom = require("src.render.Zoom")
 
-  -- the save: a fresh one with the player's own options kept
+  -- the save: a fresh one with the player's own options kept -- or a
+  -- playthrough snapshot (SNAPSHOT / SNAPSHOT_DIR, see the header)
+  local function snapshotSave()
+    local file = os.getenv("SNAPSHOT")
+    local dir = os.getenv("SNAPSHOT_DIR")
+    local family = ({ heartgold = "heartgold", soulsilver = "heartgold", black = "black",
+                      white = "black", platinum = "platinum" })[version]
+    if (not file or file == "") and dir and dir ~= "" and family then
+      for n = 200, 1, -1 do
+        local p = ("%s/%s_%d.lua"):format(dir:gsub("\\", "/"), family, n)
+        local f = io.open(p, "rb")
+        if f then f:close(); file = p; break end
+      end
+    end
+    if not file or file == "" then return nil end
+    local okL, snap = pcall(dofile, file)
+    if not (okL and type(snap) == "table") then U.log("snapshot unreadable: " .. file); return nil end
+    local okD, save = pcall(require("src.core.SaveData").decode, snap.save)
+    if not (okD and type(save) == "table") then U.log("snapshot did not decode: " .. file); return nil end
+    U.log("save from snapshot " .. file)
+    return save
+  end
   local kept = game.save and game.save.options
-  U.freshSave(game)
+  local snapped = snapshotSave()
+  if snapped then
+    game.save = snapped
+    game.save.version = version
+  else
+    U.freshSave(game)
+  end
   if kept then game.save.options = kept end
   game.save.options.zoom = 0
   Zoom.offset = 0
-  game.save.player.name = (version == "platinum") and "LUCAS" or "GOLD"
+  if not snapped then
+    game.save.player.name = (version == "platinum") and "LUCAS" or "GOLD"
+  end
 
   local function speciesByName(name)
     for id, def in pairs(game.data.pokemon or {}) do
@@ -134,22 +139,23 @@ return function(game)
     local id = speciesByName(name)
     return id and Pokemon.new(game.data, id, level) or nil
   end
-  local party = {}
-  for _, pick in ipairs({ { "TYPHLOSION", 40 }, { "CHARIZARD", 42 }, { "INFERNAPE", 40 }, { "PIKACHU", 30 } }) do
-    local m = mon(pick[1], pick[2])
-    if m then party[#party + 1] = m end
-    if #party >= 2 then break end
+  if not snapped then
+    local party = {}
+    for _, pick in ipairs({ { "TYPHLOSION", 40 }, { "CHARIZARD", 42 }, { "INFERNAPE", 40 }, { "PIKACHU", 30 } }) do
+      local m = mon(pick[1], pick[2])
+      if m then party[#party + 1] = m end
+      if #party >= 2 then break end
+    end
+    game.save.party = party
   end
-  game.save.party = party
 
   -- where a shot goes: <OUT>/<version>_<shot>.mp4, or a folder of PNGs
+  -- (the recorder makes the folder)
+  -- (the Emerald 3DS shots keep the names the edit asks for)
+  local NAMES = { e3ds_reveal = "emerald3ds_reveal", e3ds_town = "emerald3ds_town",
+                  e3ds_battle = "emerald3ds_battle" }
   local function newShotDir(shot)
-    local dir = OUT .. "/" .. version .. "_" .. shot
-    if FORMAT == "png" then
-      if love._os == "Windows" then os.execute('mkdir "' .. dir:gsub("/", "\\") .. '" 2>nul')
-      else os.execute('mkdir -p "' .. dir .. '"') end
-    end
-    return dir
+    return OUT .. "/" .. (NAMES[shot] or (version .. "_" .. shot))
   end
 
   -- one frame of footage every STEP frames
@@ -238,17 +244,45 @@ return function(game)
   local function tiltshift(level) pcall(Pipelines.setLevel, "tiltshift", level) end
   local DIRS = { up = { 0, -1 }, down = { 0, 1 }, left = { -1, 0 }, right = { 1, 0 } }
   local Collision = require("src.world.Collision")
+  -- the map's warp cells (doors, mats, stairs): a stroll never steps on one
+  local warpCells, warpMap = {}, nil
+  local function warpAt(cx, cy)
+    local map = game.overworld and game.overworld.map
+    if not map then return false end
+    if warpMap ~= map then
+      warpMap, warpCells = map, {}
+      local def = map.def or {}
+      for _, w in ipairs(def.warps or {}) do
+        local wx, wy = tonumber(w.x), tonumber(w.y or w.z)
+        if wx and wy then warpCells[wx .. "," .. wy] = true end
+      end
+    end
+    return warpCells[cx .. "," .. cy] == true
+  end
   local function free(cx, cy)
     local ow = game.overworld
     local map = ow and ow.map
     if not (map and map:inBounds(cx, cy) and map:isWalkableCell(cx, cy)) then return false end
+    if warpAt(cx, cy) then return false end
     local okO, occ = pcall(Collision.occupied, ow.entities or ow.npcs or {}, cx, cy, ow.player)
     return not (okO and occ)
   end
   -- strict: 0 anywhere, a number = that much open ground in front, "wide" =
-  -- all four neighbours walkable too (a free camera's eye clears the walls)
+  -- all four neighbours walkable too (a free camera's eye clears the walls),
+  -- { clear = r } = every cell within r walkable (a DS free camera's room)
   local function cellOK(cx, cy)
     if strict == 0 then return true end
+    if type(strict) == "table" then
+      local map = game.overworld.map
+      local r = strict.clear or 1
+      for dy = -r, r do
+        for dx = -r, r do
+          local x, y = cx + dx, cy + dy
+          if not (map:inBounds(x, y) and map:isWalkableCell(x, y)) or warpAt(x, y) then return false end
+        end
+      end
+      return true
+    end
     if strict == "wide" then
       local map = game.overworld.map
       for _, v in pairs(DIRS) do
@@ -465,7 +499,132 @@ return function(game)
   end
   local WALK = 420
 
-  local function battleShot(shot, species, level, opts, extraFrames)
+  -- THE DS CAMERA: the CAM TILT ladder (Gen4Camera.TILTS) -- 1 the
+  -- cartridge's own, 9 third person, 10 first person. OverworldState:enter
+  -- syncs it from the save, so the option is written as well as set.
+  local Gen4Camera = isDS and require("src.render.Gen4Camera") or nil
+  local function rung(i)
+    if not Gen4Camera then return end
+    game.save.options.gen4CameraTilt = i
+    pcall(Gen4Camera.setTilt, i)
+  end
+
+  -- DS FIRST / THIRD PERSON. Unorbited, the free camera keeps one heading
+  -- whichever way the player walks; orbited (Gen4View.look.orbiting) it
+  -- looks along look.yaw and "up" walks that way (forward = sin yaw, -cos
+  -- yaw on the map). So plan a route with corners, ease look.yaw toward the
+  -- next corner each frame and hold "up" -- the view turns the way a person
+  -- turns their head, and the walk follows it.
+  local function dsFreeRecord(shot, frames, mode, opts)
+    opts = opts or {}
+    local GV = require("src.render.Gen4View")
+    local look = GV.look
+    local p = game.overworld.player
+    local function plan(r)
+      strict = { clear = r }
+      local dist, prev = bfs(p.cellX, p.cellY)
+      local t1 = pickTarget(dist, p.cellX, p.cellY, opts.leg1 or 14)
+      local cells = {}
+      if t1 then
+        local cx, cy = p.cellX, p.cellY
+        for _, d in ipairs(pathTo(prev, cx, cy, t1[1], t1[2])) do
+          cx, cy = cx + DIRS[d][1], cy + DIRS[d][2]
+          cells[#cells + 1] = { cx, cy }
+        end
+        local _, prev2 = bfs(cx, cy)
+        local dist2 = bfs(cx, cy)
+        local t2 = pickTarget(dist2, cx, cy, opts.leg2 or 12, { p.cellX, p.cellY })
+        if t2 then
+          for _, d in ipairs(pathTo(prev2, cx, cy, t2[1], t2[2])) do
+            cx, cy = cx + DIRS[d][1], cy + DIRS[d][2]
+            cells[#cells + 1] = { cx, cy }
+          end
+        end
+      end
+      return cells
+    end
+    -- the most room the map can give the eye: three cells clear, then two, one
+    local cells = {}
+    for r = opts.clear or (mode == "third" and 4 or 3), 1, -1 do
+      cells = plan(r)
+      if #cells >= 16 then break end
+    end
+    strict = 7
+    -- the corners only: a straight run is one waypoint
+    local wps = {}
+    for i, c in ipairs(cells) do
+      local nx = cells[i + 1]
+      local pv = cells[i - 1] or { p.cellX, p.cellY }
+      if not nx or (nx[1] - c[1]) ~= (c[1] - pv[1]) or (nx[2] - c[2]) ~= (c[2] - pv[2]) then
+        wps[#wps + 1] = { c[1] * 16 + 8, c[2] * 16 + 8 }
+      end
+    end
+    -- whoever stands within three cells of the route would wander between
+    -- the lens and the player (or into the eye), so they sit this shot out
+    -- (hidden from the first frame, put back after); everyone further off
+    -- stays
+    local hiddenNpcs = {}
+    if opts.keepNpcs ~= true then
+      local follower = nil
+      pcall(function() follower = require("src.world.HgssFollowMon").current(game.overworld) end)
+      for _, npc in ipairs(game.overworld.npcs or {}) do
+        if npc ~= follower and not npc.hidden and npc.cellX and npc.cellY then
+          local near = math.abs(npc.cellX - p.cellX) <= 3 and math.abs(npc.cellY - p.cellY) <= 3
+          for _, c in ipairs(cells) do
+            if near then break end
+            near = math.abs(npc.cellX - c[1]) <= 3 and math.abs(npc.cellY - c[2]) <= 3
+          end
+          if near then npc.hidden = true; hiddenNpcs[#hiddenNpcs + 1] = npc end
+        end
+      end
+    end
+    local function wrap(a) return (a + math.pi) % (2 * math.pi) - math.pi end
+    local function bearing(w, x, z) return math.atan2(w[1] - x, -(w[2] - z)) end
+    -- third person a little higher than its rest, so it looks over whoever
+    -- walks between the lens and the player
+    look.orbiting = true
+    look.zoom = opts.zoom or (mode == "third" and 0.65 or nil)
+    look.rise = opts.rise or (mode == "third" and 12 or 0)
+    look.yaw = wps[1] and bearing(wps[1], p.px + 8, p.py + 8) or 0
+    rung(mode == "first" and 10 or 9)
+    U.wait(opts.preroll or 90)
+    -- a lead-in: the first steps off the start cell (often against a wall)
+    -- are walked before the first frame
+    local lead = opts.lead or 45
+    rec.dir, rec.f, rec.n = nil, 0, 0
+    local wi, stuck, lastX, lastZ = 1, 0, nil, nil
+    while rec.f < frames + lead do
+      if not rec.dir and rec.f >= lead then rec.dir, rec.n = newShotDir(shot), 0 end
+      local x, z = p.px + 8, p.py + 8
+      local w = wps[wi]
+      if w and math.abs(w[1] - x) + math.abs(w[2] - z) < 6 then wi = wi + 1; w = wps[wi] end
+      local walking = false
+      if w then
+        local diff = wrap(bearing(w, x, z) - (look.yaw or 0))
+        local turn = diff * 0.08
+        local maxTurn = (opts.turn or 2.0) / 60
+        if turn > maxTurn then turn = maxTurn elseif turn < -maxTurn then turn = -maxTurn end
+        look.yaw = wrap((look.yaw or 0) + turn)
+        walking = math.abs(diff) < 0.5     -- a corner turns first, then goes
+        if lastX and math.abs(x - lastX) + math.abs(z - lastZ) < 0.05 and walking then stuck = stuck + 1 else stuck = 0 end
+        if stuck > 45 then wi = wi + 1; stuck = 0 end
+      end
+      lastX, lastZ = x, z
+      game.input.state.up = walking
+      if walking then table.insert(game.input.pressQueue, "up") end
+      tick()
+    end
+    game.input.state.up = false
+    U.log(("recorded %s: %d frames (%d corners, map %s) -> %s"):format(shot, rec.n, #wps,
+      tostring(game.overworld.map and game.overworld.map.id), rec.dir))
+    rec.dir = nil
+    look.orbiting, look.yaw, look.rise, look.zoom = nil, nil, nil, nil
+    for _, npc in ipairs(hiddenNpcs) do npc.hidden = false end
+    rung(1)
+  end
+
+  -- `skip`: frames played before the first one is kept (the wipe)
+  local function battleShot(shot, species, level, opts, extraFrames, skip)
     local id = speciesByName(species) or species
     local ok, battle = pcall(BattleState.newWild, game, id, level, opts)
     if not ok or not battle then U.log("battle failed: " .. tostring(battle)); return end
@@ -476,7 +635,7 @@ return function(game)
     local n = 0
     for f = 1, extraFrames or 900 do
       if f > 200 and f % 40 == 0 then table.insert(game.input.pressQueue, "a") end
-      if f % STEP == 0 then
+      if f > (skip or 0) and f % STEP == 0 then
         n = n + 1
         capture(dir, n)
       end
@@ -493,8 +652,11 @@ return function(game)
   local SHOTS = {}
   local function shot(name, fn) SHOTS[#SHOTS + 1] = { name = name, fn = fn } end
 
-  -- flat for the first half, then the voxels switch on mid-walk
-  local function revealRecord(shotName, frames)
+  -- flat for the first half, then the voxels switch on mid-walk (`on` /
+  -- `off` switch another pipeline instead: the Emerald 3DS reveal)
+  local function revealRecord(shotName, frames, on, off)
+    local voxel = voxel
+    if on then voxel = function(level) if level == 0 then off() else on() end end end
     voxel(0)
     rec.dir, rec.f, rec.n = newShotDir(shotName), 0, 0
     local p = game.overworld.player
@@ -518,11 +680,13 @@ return function(game)
     rec.dir = nil
   end
   -- every ordinary shot: voxels on at the chosen level, then the stroll
+  -- (a DS town waits out the place-name banner before the first frame)
   local function town(name, mapId, x, y, hour, level)
     shot(name, function()
       pinnedHour = hour or 12
+      rung(1)
       goTo(mapId, x, y)
-      if version ~= "platinum" then voxel(level or VOX); U.wait(150) end
+      if not isDS then voxel(level or VOX); U.wait(150) else U.wait(150) end
       strollRecord(name, WALK)
     end)
   end
@@ -530,9 +694,34 @@ return function(game)
     shot(name, function()
       pinnedHour = hour or 12
       goTo(mapId)
-      if version ~= "platinum" then voxel(VOX); U.wait(150) end
+      if not isDS then voxel(VOX); U.wait(150) end
       battleShot(name, species, level, opts, frames)
     end)
+  end
+  -- DS first / third person: the free camera, steered (dsFreeRecord)
+  local function dsPerson(name, mapId, mode, hour, x, y, opts)
+    shot(name, function()
+      pinnedHour = hour or 12
+      rung(1)
+      -- HGSS's walking Pokemon follows between the lens and the player in
+      -- third person: recalled into its ball for the shot (HgssFollowMon)
+      local wasRecalled = game.save.hgssFollowMon and game.save.hgssFollowMon.recalled
+      goTo(mapId, x, y)
+      -- (after the warp: a map change clears the recall)
+      if mode == "third" then
+        game.save.hgssFollowMon = game.save.hgssFollowMon or {}
+        game.save.hgssFollowMon.recalled = true
+      end
+      U.wait(120)
+      dsFreeRecord(name, (opts and opts.frames) or 360, mode, opts)
+      if mode == "third" and game.save.hgssFollowMon then game.save.hgssFollowMon.recalled = wasRecalled end
+    end)
+  end
+  if isDS then
+    -- natively 3D; single screen, the bottom screen off
+    game.save.options.secondScreenMode = "off"
+    pcall(function() game:applyOptions() end)
+    rung(1)
   end
   local function person(name, mapId, level, hour)
     shot(name, function()
@@ -561,6 +750,34 @@ return function(game)
     town("cerulean", "MAP_G03_N03")
     fight("battle", "MAP_G03_N00", "PIDGEY", 12, nil, 1000)
     person("third_person", "MAP_G03_N03", 7)
+  elseif version == "emerald" and os.getenv("E3DS") == "1" then
+    -- ZALLAX'S EMERALD 3DS VOXELS (mods/EMERALD_3DS_VOXEL, pipeline
+    -- e3ds_voxel, rung 3 = its default 40 degrees; E3DS_RUNG overrides):
+    --   E3DS=1 ... capture_all.ps1 -Identity trailer2_cap -Versions emerald
+    -- writes emerald3ds_reveal / _town / _battle
+    local E3 = tonumber(os.getenv("E3DS_RUNG") or "3") or 3
+    local function e3(level) pcall(Pipelines.setLevel, "e3ds_voxel", level) end
+    shot("e3ds_reveal", function()
+      pinnedHour = 12
+      goTo("MAP_G00_N09")                                   -- Littleroot Town
+      e3(0); U.wait(120)
+      revealRecord("e3ds_reveal", 480, function() e3(E3) end, function() e3(0) end)
+      e3(0)
+    end)
+    shot("e3ds_town", function()
+      pinnedHour = 12
+      goTo("MAP_G00_N01")                                   -- Slateport City
+      e3(E3); U.wait(150)
+      strollRecord("e3ds_town", WALK)
+      e3(0)
+    end)
+    shot("e3ds_battle", function()
+      pinnedHour = 12
+      goTo("MAP_G00_N16")                                   -- Route 101's grass
+      e3(E3); U.wait(150)
+      battleShot("e3ds_battle", "ZIGZAGOON", 8, nil, 640, 160)
+      e3(0)
+    end)
   elseif version == "emerald" then
     town("littleroot", "MAP_G00_N09")
     town("slateport", "MAP_G00_N01")
@@ -568,20 +785,43 @@ return function(game)
     fight("battle", "MAP_G00_N09", "ZIGZAGOON", 10, nil, 1000)
     person("first_person", "MAP_G00_N05", 6)
   elseif version == "platinum" then
-    -- natively 3D; single screen, the bottom screen off
-    game.save.options.secondScreenMode = "off"
-    pcall(function() game:applyOptions() end)
     -- the camera rung: 1 is the cartridge's own; 9 third person, 10 first
-    local Gen4Camera = require("src.render.Gen4Camera")
-    local function rung(i) game.save.options.gen4CameraTilt = i; pcall(Gen4Camera.setTilt, i) end
-    rung(1)
-    shot("third_person", function() goTo("C01"); rung(9); U.wait(60); strollRecord("third_person", WALK); rung(1) end)
+    dsPerson("third_person", "C01", "third")
+    dsPerson("first_person", "C05", "first")
     town("twinleaf", "T01")
     town("jubilife", "C01")
     town("snowpoint", "C09")
     town("eterna", "C04")
     town("hearthome", "C05")
     fight("battle", "R201", "STARLY", 8, nil, 1100)
+  elseif version == "heartgold" then
+    -- Johto on the DS engine (map ids: gen4_map_headers internalName)
+    town("newbark", "T20")                        -- New Bark Town
+    town("goldenrod", "T25", nil, nil, 14)        -- Goldenrod City
+    dsPerson("first_person", "T25", "first")
+  elseif version == "soulsilver" then
+    town("ecruteak", "T27", nil, nil, 16)         -- Ecruteak City
+    dsPerson("third_person", "T27", "third", 16) -- Ecruteak City
+  elseif version == "black" then
+    -- Unova (zone ids: tools/gen4_playthrough/black.lua)
+    town("nuvema", "Z389")                        -- Nuvema Town
+    town("castelia", "Z037")                      -- Castelia, the piers
+    dsPerson("first_person", "Z062", "first")    -- Nimbasa City
+  elseif version == "white" then
+    town("nimbasa", "Z062")                       -- Nimbasa City
+  end
+
+  -- PROBE="map[:x:y],...": scouting instead of the shot list -- a short
+  -- stroll at each place, <version>_probe_<n>.mp4, to look for a spot
+  if (os.getenv("PROBE") or "") ~= "" then
+    SHOTS, ONLY = {}, {}
+    local i = 0
+    for spec in os.getenv("PROBE"):gmatch("[^,]+") do
+      i = i + 1
+      local id, x, y = spec:match("^([^:]+):?(%d*):?(%d*)$")
+      town("probe_" .. i, id, tonumber(x), tonumber(y))
+    end
+    WALK = tonumber(os.getenv("PROBE_FRAMES") or "180") or 180
   end
 
   for _, s in ipairs(SHOTS) do
@@ -592,11 +832,9 @@ return function(game)
     end
   end
   os.date = realDate
-  love.timer.getTime, love.update = realGetTime, realUpdate
-  -- let the last screenshots land, then drain the writers
+  -- let the last screenshots land, then drain the writer
   U.wait(4)
-  for _ in ipairs(writers) do queue:push("stop") end
-  for _, t in ipairs(writers) do t:wait() end
+  Rec.finish()
   U.log("done")
   love.event.quit()
 end

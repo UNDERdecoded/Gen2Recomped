@@ -3,7 +3,8 @@
   "private": true,
   "scripts": {
     "studio": "remotion studio src/index.ts",
-    "render": "remotion render src/index.ts Trailer out/trailer.mp4 --crf 16 --pixel-format yuv420p"
+    "render": "remotion render src/index.ts Trailer out/trailer.mp4 --crf 16 --pixel-format yuv420p",
+    "render:online": "remotion render src/index.ts OnlineTrailer out/online_trailer.mp4 --crf 16 --pixel-format yuv420p"
   },
   "dependencies": {
     "@remotion/cli": "^4.0.534",
