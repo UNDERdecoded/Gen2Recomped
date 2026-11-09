@@ -36,6 +36,16 @@ So this checks them against each other, in two tiers:
                    writes are parsed by the Java end.
                    Skipped, loudly, when either tool is missing.
 
+  TIER 3 (iOS, a Lua)  mobile/ios/native/GRCastBridge.swift is the same host
+                   for AirPlay / HDMI on iOS. No Swift toolchain runs here,
+                   so its constants, its host.txt template and its frame
+                   header offsets are read out of the source: host lines
+                   rendered from the Swift template are parsed by the real
+                   Lua reader, and a frame the real Lua wrote is decoded with
+                   the offsets the Swift reads. patch_love_src.py must wire
+                   the bridge (and GRSceneGuard.m) into the build and
+                   register love.system.castHostStart.
+
 Usage: python3 tools/second_display_protocol_check.py
 """
 
@@ -44,6 +54,9 @@ import json, os, re, shutil, subprocess, sys, tempfile
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LUA = os.path.join(ROOT, "src", "render", "SecondScreen.lua")
 JAVA = os.path.join(ROOT, "mobile", "second-display", "SecondDisplayHost.java")
+SWIFT = os.path.join(ROOT, "mobile", "ios", "native", "GRCastBridge.swift")
+GUARD = os.path.join(ROOT, "mobile", "ios", "native", "GRSceneGuard.m")
+IOS_PATCH = os.path.join(ROOT, "mobile", "ios", "patch_love_src.py")
 
 FAILS = []
 CHECKS = [0]
@@ -551,7 +564,170 @@ def tier2():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+# ---------------------------------------------------------------------------
+# TIER 3 -- the iOS host (GRCastBridge.swift), by its source
+# ---------------------------------------------------------------------------
+def tier3():
+    print("-- tier 3: the iOS host's source against the Lua end")
+    for path in (SWIFT, GUARD, IOS_PATCH):
+        if not os.path.isfile(path):
+            ok(False, "%s is missing" % os.path.relpath(path, ROOT))
+            return
+    lua, swift = read(LUA), read(SWIFT)
+    guard, patch = read(GUARD), read(IOS_PATCH)
+
+    def lua_const(name):
+        m = re.search(r"SecondScreen\.%s\s*=\s*(.+)" % name, lua)
+        return m.group(1).strip() if m else None
+
+    def lua_leaf(name):
+        m = re.search(r'"([^"]+)"', lua_const(name) or "")
+        return m.group(1).lstrip("/") if m else None
+
+    def swift_const(name):
+        m = re.search(r"static let %s(?:\s*:\s*\w+)?\s*=\s*(.+)" % name, swift)
+        return m.group(1).strip().strip('"') if m else None
+
+    ok(swift_const("protocolVersion") == (lua_const("PROTOCOL") or "?"),
+       "protocol version: Lua says %s, the iOS host %s"
+       % (lua_const("PROTOCOL"), swift_const("protocolVersion")))
+    ok(swift_const("dirName") == (lua_const("DIR") or "").strip('"'),
+       "the iOS host's directory is %s, Lua's %s"
+       % (swift_const("dirName"), lua_const("DIR")))
+    for lname, sname in (("HOST", "hostFile"), ("FRAME", "frameFile"),
+                         ("MODE_FILE", "modeFile")):
+        ok(swift_const(sname) and swift_const(sname) == lua_leaf(lname),
+           "%s: Lua's leaf is %s, the iOS host's %s"
+           % (lname, lua_leaf(lname), swift_const(sname)))
+
+    def lua_words(name):
+        m = re.search(r"SecondScreen\.%s\s*=\s*\{([^}]*)\}" % name, lua)
+        return set(re.findall(r'"(\w+)"', m.group(1))) if m else set()
+
+    modes = {swift_const(n) for n in ("modeMirror", "modeBottom", "modeTop")}
+    kinds = {swift_const(n) for n in ("kindNone", "kindExternal")}
+    ok(modes == lua_words("CAST_MODES"),
+       "the iOS host's modes %s, Lua's %s" % (sorted(modes), sorted(lua_words("CAST_MODES"))))
+    ok(kinds <= lua_words("CAST_KINDS") and "builtin" not in kinds,
+       "the iOS host's kinds %s are not Lua's minus builtin" % sorted(kinds))
+    ok(swift_const("modeAuto") == "auto", "the iOS host's never-set word is %s"
+       % swift_const("modeAuto"))
+    ok("requested ?? modeMirror" in swift,
+       "the iOS host's never-set mode on a TV is not mirror")
+    ok("touch" not in re.sub(r"//[^\n]*", "", swift),
+       "the iOS host's code touches touch.txt; a TV routes no taps")
+
+    # the host.txt template, rendered, through the REAL Lua reader
+    m = re.search(r"static func hostLine\(.*?\{\s*return \"(.*?)\"\s*\}", swift, re.S)
+    ok(m is not None, "GRCastBridge.hostLine's template was not found")
+    runner = lua_runner()
+    if m and runner:
+        template = m.group(1)
+
+        def render(displays, w, h, kind, mode):
+            s = template
+            for k, v in (("protocolVersion", swift_const("protocolVersion")),
+                         ("displays", displays), ("width", w), ("height", h),
+                         ("kind", kind), ("mode", mode)):
+                s = s.replace("\\(%s)" % k, str(v))
+            return s.replace("\\n", "\n")
+
+        cases = [(1, 0, 0, "none", "auto"), (1, 0, 0, "none", "top"),
+                 (1, 0, 0, "external", "mirror"), (2, 640, 360, "external", "bottom"),
+                 (2, 640, 360, "external", "top")]
+        tmp = tempfile.mkdtemp(prefix="g2sd-ios-")
+        try:
+            lines = os.path.join(tmp, "hostlines")
+            with open(lines, "w", newline="") as fh:
+                for c in cases:
+                    line = render(*c)
+                    ok("\\(" not in line and line.endswith("\n"),
+                       "the Swift template rendered as %r" % line)
+                    fh.write("%s %s|%s" % (c[3], c[4], line))
+            parse = os.path.join(tmp, "parse_host.lua")
+            with open(parse, "w") as fh:
+                fh.write(LUA_PARSE.replace("__ROOT__", ROOT.replace("\\", "/")))
+            r = subprocess.run(runner + [parse, lines], capture_output=True, text=True)
+            parsed = re.search(r"lua parsed (\d+)", r.stdout)
+            ok(parsed and int(parsed.group(1)) == len(cases),
+               "the Lua end parsed %s of the iOS host's %d lines: %s"
+               % (parsed.group(1) if parsed else "none", len(cases),
+                  (r.stderr or r.stdout).strip()[:200]))
+            for line in r.stdout.splitlines():
+                ok(not line.startswith("FAIL"), line[6:].replace("Java", "iOS"))
+
+            # a frame the real Lua wrote, decoded with the Swift's offsets
+            magic = re.findall(r"bytes\[(\d)\] == 0x([0-9A-Fa-f]{2})", swift)
+            mword = "".join(chr(int(b, 16)) for _, b in sorted(magic))
+            ok(mword == (lua_const("MAGIC") or "").strip('"'),
+               "the iOS host checks the magic %r, Lua writes %s"
+               % (mword, lua_const("MAGIC")))
+            hb = swift_const("headerBytes")
+            ok(hb == "12", "the iOS host's header is %s bytes, not 12" % hb)
+            off = {}
+            for name, pat in (("version", r"guard u16\((\d+)\) == GRCastBridge\.protocolVersion"),
+                              ("width", r"let w = u16\((\d+)\)"),
+                              ("height", r"h = u16\((\d+)\)"),
+                              ("seq", r"seq: u16\((\d+)\)")):
+                mm = re.search(pat, swift)
+                off[name] = int(mm.group(1)) if mm else None
+                ok(mm is not None, "the iOS host's %s offset was not found" % name)
+            gen = os.path.join(tmp, "gen_frame.lua")
+            with open(gen, "w") as fh:
+                fh.write(GEN_FRAME.replace("__ROOT__", ROOT.replace("\\", "/")))
+            frame = os.path.join(tmp, "frame.bin")
+            W, H, PUSHES = 64, 48, 3
+            subprocess.run(runner + [gen, str(W), str(H), str(PUSHES), frame],
+                           capture_output=True, text=True)
+            if os.path.isfile(frame) and None not in off.values():
+                with open(frame, "rb") as fh:
+                    b = fh.read()
+
+                def u16(at):
+                    return b[at] | (b[at + 1] << 8)
+                ok(u16(off["version"]) == int(swift_const("protocolVersion") or -1),
+                   "the iOS host reads version %d" % u16(off["version"]))
+                ok(u16(off["width"]) == W and u16(off["height"]) == H,
+                   "the iOS host reads %dx%d, Lua wrote %dx%d"
+                   % (u16(off["width"]), u16(off["height"]), W, H))
+                ok(u16(off["seq"]) == PUSHES,
+                   "the iOS host reads sequence %d after %d pushes"
+                   % (u16(off["seq"]), PUSHES))
+                ok(len(b) == 12 + W * H * 4,
+                   "a Lua frame is %d bytes; the iOS host wants %d"
+                   % (len(b), 12 + W * H * 4))
+            else:
+                ok(False, "no Lua frame to decode with the iOS host's offsets")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+    elif not runner:
+        print("SKIPPED: no Lua, so the iOS host lines were not parsed.")
+
+    # the build: both files compiled, the Lua entry point registered
+    for name in ("GRCastBridge.swift", "GRSceneGuard.m"):
+        ok(patch.count('"%s"' % name) >= 2,
+           "patch_love_src.py does not copy and compile %s" % name)
+    ok('{ "castHostStart", w_castHostStart }' in patch,
+       "patch_love_src.py does not register love.system.castHostStart")
+    ok('"GRCastBridge", "startWithCommand:saveDir:"' in patch
+       and "@objc(startWithCommand:saveDir:)" in swift
+       and "@objc(GRCastBridge)" in swift,
+       "wrap_System's castHostStart does not reach GRCastBridge.start")
+    ok("love.system.castHostStart" in lua and 'os == "iOS"' not in lua
+       and 'name == "iOS"' in lua,
+       "the Lua end does not start the iOS host itself")
+    # the scene guard: SDL must leave AirPlay scenes to iOS
+    for needle in ("SDLUIKitSceneDelegate", "scene:willConnectToSession:options:",
+                   "UIWindowSceneSessionRoleExternalDisplayNonInteractive",
+                   "UIWindowSceneSessionRoleExternalDisplay]",
+                   "sceneDidBecomeActive:", "sceneWillResignActive:",
+                   "sceneWillEnterForeground:", "sceneDidEnterBackground:",
+                   "__attribute__((constructor))"):
+        ok(needle in guard, "GRSceneGuard.m lacks %s" % needle)
+
+
 tier1()
 tier2()
+tier3()
 print("\n%d checks, %d failed" % (CHECKS[0], len(FAILS)))
 sys.exit(1 if FAILS else 0)

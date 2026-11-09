@@ -1067,6 +1067,62 @@ GameVersion.VERSIONS = {
     hasRunning = true,
     dualScreen = true,
   },
+
+  -- -------------------------------------------------------------------------
+  -- THE LEGEND OF ZELDA: the first games in this registry that are NOT Pokemon.
+  --
+  -- `engine = "zelda"` is the marker every Pokemon-only path checks
+  -- (GameVersion.isZelda / GameVersion.engine): these never boot Game.lua,
+  -- never mount a Pokemon cache, never reach the Pokemon importers, link
+  -- battles, trades, the Monster Walker, the save editor or the map editor.
+  -- They play through src/zelda/ZeldaRuntime.lua, import through the game
+  -- module's own `extract` (src/zelda/<dir>/init.lua) and go online through
+  -- src/online/zelda. See docs/zelda/CONTRACT.md.
+  --
+  -- `generation = 3` is the CARTRIDGE generation (a Game Boy Advance ROM:
+  -- size checks, console, picker paths), not a Pokemon generation; nothing
+  -- that asks a Pokemon question should reach a Zelda id without checking
+  -- `engine` first. The SHA-1s are the USA dumps (No-Intro); the player
+  -- imports their own cartridge, as with every other game here.
+  alttp = {
+    id = "alttp",
+    generation = 3,
+    engine = "zelda",
+    series = "zelda",
+    console = "gba",
+    module = "alttp",              -- src/zelda/alttp/init.lua
+    label = "A Link to the Past",
+    displayName = "The Legend of Zelda: A Link to the Past & Four Swords",
+    launcherName = "A Link to the Past & Four Swords",
+    sha1 = "a272055abbbf6c26b0cd54c87395d01699589161",   -- AZLE, USA
+    gameCode = "AZLE",
+    cachePrefix = "alttp/",
+    saveSuffix = "_alttp",
+    importable = true,
+    experimental = true,
+    experimentalLabel = "PRE-ALPHA",
+    -- Four Swords is the cartridge's own 2-4 player mode
+    onlinePlayers = { min = 2, max = 4 },
+  },
+  minishcap = {
+    id = "minishcap",
+    generation = 3,
+    engine = "zelda",
+    series = "zelda",
+    console = "gba",
+    module = "tmc",                -- src/zelda/tmc/init.lua
+    label = "The Minish Cap",
+    displayName = "The Legend of Zelda: The Minish Cap",
+    launcherName = "The Minish Cap",
+    sha1 = "b4bd50e4131b027c334547b4524e2dbbd4227130",   -- BZME, USA
+    gameCode = "BZME",
+    cachePrefix = "minishcap/",
+    saveSuffix = "_minishcap",
+    importable = true,
+    experimental = true,
+    experimentalLabel = "PRE-ALPHA",
+    onlinePlayers = { min = 2, max = 4 },
+  },
 }
 
 -- Launcher column order: the CARTRIDGES in generation order, then the ROM
@@ -1077,6 +1133,7 @@ GameVersion.VERSIONS = {
 GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
                       "firered", "emerald", "platinum",
                       "heartgold", "soulsilver", "black", "white",
+                      "alttp", "minishcap",
                       "prism", "polishedcrystal" }
 
 GameVersion.current = "red"
@@ -1135,6 +1192,36 @@ end
 -- TWO SCREENS: `GameVersion.isDualScreen` below. src/ui/SecondScreen.lua
 -- offers every second-screen mode (OFF among them -- the single-screen
 -- layout) wherever it is true: Platinum, HeartGold, SoulSilver, Black, White.
+
+-- WHICH ENGINE RUNS THIS VERSION: "pokemon" (Game.lua and everything under it)
+-- or "zelda" (src/zelda/ZeldaRuntime.lua). Every path that only makes sense
+-- for a Pokemon game -- link battles and trades, the Monster Walker, save
+-- converters, trainer cards, the map and save editors, the launcher backdrop
+-- that boots a game's main menu -- asks this (or isZelda) first.
+function GameVersion.engine(id)
+  local info = GameVersion.info(id)
+  return info and info.engine or "pokemon"
+end
+
+function GameVersion.isZelda(id)
+  local info = GameVersion.info(id)
+  return (info and info.engine) == "zelda"
+end
+
+function GameVersion.isPokemon(id)
+  local info = GameVersion.info(id)
+  return info ~= nil and (info.engine or "pokemon") == "pokemon"
+end
+
+-- ORDER without the non-Pokemon games, for the loops that would otherwise
+-- offer a Zelda cartridge a Pokemon feature.
+function GameVersion.pokemonOrder()
+  local out = {}
+  for _, id in ipairs(GameVersion.ORDER) do
+    if GameVersion.isPokemon(id) then out[#out + 1] = id end
+  end
+  return out
+end
 
 -- The game's family within its generation ("platinum", "hgss", "bw").
 function GameVersion.family(id)

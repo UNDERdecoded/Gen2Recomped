@@ -1061,7 +1061,9 @@ function P:pickGame(x, y, w, h, f)
   local list = {}
   for _, v in ipairs(GameVersion.ORDER) do
     -- the Watt Shop (pickFor): only games with a save to deliver to
-    if self.host and self.host.ready and self.host.ready[v] and (not self.pickFor or self:hasSaves(v)) then list[#list + 1] = v end
+    -- (a Zelda cartridge has no Pokemon to send on a walk)
+    if self.host and self.host.ready and self.host.ready[v] and not GameVersion.isZelda(v)
+       and (not self.pickFor or self:hasSaves(v)) then list[#list + 1] = v end
   end
   local cols = math.max(1, math.floor(w / 260))
   local cw = (w - (cols - 1) * 14) / cols

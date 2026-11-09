@@ -35,6 +35,9 @@ A.TITLES = {
   soulsilver = { "Pokemon - SoulSilver Version (USA)" },
   black = { "Pokemon - Black Version (USA, Europe) (NDSi Enhanced)" },
   white = { "Pokemon - White Version (USA, Europe) (NDSi Enhanced)" },
+  alttp = { "Legend of Zelda, The - A Link to the Past & Four Swords (USA)",
+            "Legend of Zelda, The - A Link to the Past & Four Swords (USA, Australia)" },
+  minishcap = { "Legend of Zelda, The - The Minish Cap (USA)" },
 }
 
 A.WIKI = {
@@ -44,6 +47,8 @@ A.WIKI = {
   platinum = "Pokémon_Platinum", heartgold = "Pokémon_HeartGold_and_SoulSilver",
   soulsilver = "Pokémon_HeartGold_and_SoulSilver", black = "Pokémon_Black_and_White",
   white = "Pokémon_Black_and_White",
+  alttp = "The_Legend_of_Zelda:_A_Link_to_the_Past_and_Four_Swords",
+  minishcap = "The_Legend_of_Zelda:_The_Minish_Cap",
 }
 
 local function urlencode(s)

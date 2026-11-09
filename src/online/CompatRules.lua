@@ -114,6 +114,8 @@ local REASON_TEXT = {
   no_family = "The other game is not known.",
   cross_generation = "These two games can't link.",
   cross_family = "These two games can't link.",
+  -- a Zelda game (src/online/zelda) and a Pokemon game: different series
+  cross_series = "That is a game from another series; it can't link with this one.",
 }
 
 CompatRules.REASON_TEXT = REASON_TEXT
@@ -129,6 +131,11 @@ end
 --     kind = "same"|"family"|"timecapsule", reason = code, reasons = {...} }
 function CompatRules.pair(localHello, remoteHello)
   localHello, remoteHello = localHello or {}, remoteHello or {}
+  -- SERIES FIRST: a Zelda hello (ZeldaSession.hello, series "zelda") never
+  -- pairs with a Pokemon one, whatever else the two have in common
+  if (localHello.series or "pokemon") ~= (remoteHello.series or "pokemon") then
+    return refuse("cross_series")
+  end
   local mine = localHello.family or CompatRules.familyOf(localHello.game)
   local theirs = remoteHello.family or CompatRules.familyOf(remoteHello.game)
   if not remoteHello.gen and not theirs then

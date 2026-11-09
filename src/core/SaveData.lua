@@ -965,6 +965,10 @@ end
 
 function SaveData.slotSummary(save, version)
   if type(save) ~= "table" then return nil, nil end
+  -- a Zelda save has no badges or Pokedex: its own one-line summary
+  if GameVersion.isZelda and GameVersion.isZelda(version) then
+    return require("src.zelda.ZeldaSaves").summary(save, version)
+  end
   local name = save.player and save.player.name or nil
   local dexCount = 0
   for _ in pairs((save.pokedex and save.pokedex.owned) or {}) do

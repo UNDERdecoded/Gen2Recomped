@@ -72,7 +72,9 @@ end
 -- a decoded table that is a save, not merely a table: an empty or foreign
 -- table must never stand in for a playthrough
 function S.looksLikeSave(t)
-  return type(t) == "table" and (type(t.player) == "table" or type(t.party) == "table")
+  -- `zelda` is the stamp src/zelda/ZeldaSaves.lua puts on a Zelda save
+  return type(t) == "table" and (type(t.player) == "table" or type(t.party) == "table"
+    or type(t.zelda) == "table")
 end
 
 function S.decodeSave(bytes)

@@ -56,13 +56,19 @@ Sidebar.CONSOLES = {
 -- The game TYPE a version belongs to. Every registered game is a Pokemon game;
 -- the two community hacks are kept apart so the official games read as a set.
 Sidebar.HACKS = { prism = true, polishedcrystal = true }
+-- Zelda sits right after Pokemon, so a console that has both (the GBA) shows
+-- the Zelda card next to the Pokemon one. A version names its own series and
+-- console (`info.series`, `info.console`); the generation is only the
+-- fallback for the Pokemon registry, which predates those fields.
 Sidebar.SERIES = {
   { id = "pokemon", name = "Pokemon" },
+  { id = "zelda",   name = "Zelda" },
   { id = "hacks",   name = "Pokemon ROM hacks" },
 }
 
 function Sidebar.consoleOf(version)
   local info = GameVersion.info(version)
+  if info and info.console then return info.console end
   local gen = info and tonumber(info.generation) or 1
   if gen >= 4 then return "nds" end
   if gen == 3 then return "gba" end
@@ -71,6 +77,8 @@ function Sidebar.consoleOf(version)
 end
 
 function Sidebar.seriesOf(version)
+  local info = GameVersion.info(version)
+  if info and info.series then return info.series end
   return Sidebar.HACKS[version] and "hacks" or "pokemon"
 end
 
@@ -88,6 +96,7 @@ end
 -- a save slot's summary line, as the SAVE SLOT panel words it
 local function metaText(meta)
   if type(meta) ~= "table" then return tostring(meta or "") end
+  if meta.line then return tostring(meta.line) end   -- Zelda slots
   return Strings("%d badges - %s - %d caught", meta.badges or 0, meta.timeText or "0:00", meta.dexCount or 0)
 end
 Sidebar.metaText = metaText
@@ -996,6 +1005,11 @@ function Sidebar.install(RI)
   function RI:_sbToolUsable(tool, version)
     local info = GameVersion.info(version)
     if not info then return false, "unknown game" end
+    -- Pokemon tools on a Zelda cartridge: there is nothing for them to open
+    if info.engine == "zelda" and (tool.id == "map" or tool.id == "save" or tool.id == "translate"
+        or tool.id == "saveImport" or tool.id == "saveExport") then
+      return false, Strings("not for this game")
+    end
     if tool.needsReady or tool.id == "translate" or tool.id == "saveExport" then
       if not self.ready[version] then return false, Strings("import this game first") end
     end
@@ -1065,7 +1079,7 @@ function Sidebar.install(RI)
   function RI:_sbScrapeAll()
     local arts, descs, tried = 0, 0, 0
     for _, v in ipairs(GameVersion.ORDER or {}) do
-      if self.ready[v] and Sidebar.seriesOf(v) == "pokemon" then
+      if self.ready[v] and Sidebar.seriesOf(v) ~= "hacks" then
         tried = tried + 1
         local a, d = self:_sbScrape(v)
         if a then arts = arts + 1 end
@@ -1633,13 +1647,19 @@ function Sidebar.install(RI)
     local mode = opts.launcherBackground or "game"
     if mode == "off" then return nil end
     if mode == "video" then return "video" end
+    -- the backdrop boots a POKEMON game's main menu; a Zelda one has none
+    if GameVersion.isZelda(mode) then return nil end
     if GameVersion.VERSIONS[mode] then return self.ready[mode] and mode or nil end
     if mode == "game" and self.section == "games" and self.gamesView == "game"
-       and self.ready[self.tab] then
+       and self.ready[self.tab] and not GameVersion.isZelda(self.tab) then
       return self.tab
     end
-    for _, r in ipairs(Sidebar.recent(opts)) do if self.ready[r.v] then return r.v end end
-    return self:_sbLastSaved()
+    for _, r in ipairs(Sidebar.recent(opts)) do
+      if self.ready[r.v] and not GameVersion.isZelda(r.v) then return r.v end
+    end
+    local last = self:_sbLastSaved()
+    if last and GameVersion.isZelda(last) then return nil end
+    return last
   end
 
   function RI:_sbMusicOn()
@@ -1823,7 +1843,8 @@ function Sidebar.install(RI)
     -- only games that are imported and can actually run their menu
     for _, v in ipairs(GameVersion.ORDER) do
       local info = GameVersion.info(v)
-      if self.ready[v] == true and info and info.importable ~= false and not Backdrop.failedFor(v) then
+      if self.ready[v] == true and info and info.importable ~= false and info.engine ~= "zelda"
+         and not Backdrop.failedFor(v) then
         bgValues[#bgValues + 1] = v; bgLabels[v] = nameOf(v)
       end
     end

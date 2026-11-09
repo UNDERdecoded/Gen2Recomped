@@ -7,11 +7,15 @@ just works on the next build, no manual restore needed.
 
 What it does:
   1. Copies mobile/ios/native/ (GRPickerBridge.swift, GRHealthBridge.swift,
-     GRBootstrap.m) and the HealthKit entitlements into the LÖVE tree.
+     GRCastBridge.swift, GRBootstrap.m, GRSceneGuard.m) and the HealthKit
+     entitlements into the LÖVE tree.
   2. Patches liblove's wrap_System.cpp to expose love.system.pickFile,
-     love.system.createFile, and love.system.syncHealthSteps on iOS (each
-     calls a GR*Bridge Swift class through the Objective-C runtime, so
-     liblove never links against Swift directly).
+     love.system.createFile, love.system.syncHealthSteps, shareText and
+     castHostStart on iOS (each calls a GR*Bridge Swift class through the
+     Objective-C runtime, so liblove never links against Swift directly).
+     GRSceneGuard.m needs no call: it wraps SDL's scene delegate from a
+     constructor so AirPlay / external-display scenes are left to iOS
+     (mirroring) instead of getting SDL's white launch window.
   3. Patches love.xcodeproj so the love-ios app target compiles the native
      files (Swift 5, iOS 14 deployment for UTType/forExporting APIs).
 """
@@ -29,7 +33,8 @@ WRAP_SYSTEM = LOVE_SRC / "src" / "modules" / "system" / "wrap_System.cpp"
 PBXPROJ = LOVE_SRC / "platform" / "xcode" / "love.xcodeproj" / "project.pbxproj"
 ENTITLEMENTS_SRC = IOS_DIR / "overlays" / "love-ios.entitlements"
 
-NATIVE_FILES = ("GRPickerBridge.swift", "GRHealthBridge.swift", "GRBootstrap.m")
+NATIVE_FILES = ("GRPickerBridge.swift", "GRHealthBridge.swift", "GRBootstrap.m",
+                "GRCastBridge.swift", "GRSceneGuard.m")
 
 MARKER = "gen1recomp iOS picker bridge"
 
@@ -101,6 +106,13 @@ int w_shareText(lua_State *L)
 	const char *text = luaL_checkstring(L, 1);
 	return gr_callBridge(L, "GRPickerBridge", "shareText:saveDir:", text);
 }
+
+int w_castHostStart(lua_State *L)
+{
+	// TV / CAST host (AirPlay, HDMI): starts GRCastBridge's heartbeat in
+	// <saveDir>/second_display, the Android SecondDisplayHost protocol.
+	return gr_callBridge(L, "GRCastBridge", "startWithCommand:saveDir:", "start");
+}
 #endif // LOVE_IOS
 // ---------------------------------------------------------------------------
 
@@ -111,6 +123,7 @@ WRAP_REGISTRATION = """#ifdef LOVE_IOS
 	{ "createFile", w_createFile },
 	{ "syncHealthSteps", w_syncHealthSteps },
 	{ "shareText", w_shareText },
+	{ "castHostStart", w_castHostStart },
 #endif
 """
 
@@ -119,9 +132,13 @@ WRAP_REGISTRATION = """#ifdef LOVE_IOS
 ID_FILE_PICKER = "6E1AC0DE0001000000000001"
 ID_FILE_OBJC = "6E1AC0DE0001000000000002"
 ID_FILE_HEALTH = "6E1AC0DE0001000000000003"
+ID_FILE_CAST = "6E1AC0DE0001000000000004"
+ID_FILE_SCENES = "6E1AC0DE0001000000000005"
 ID_BUILD_PICKER = "6E1AC0DE0002000000000001"
 ID_BUILD_OBJC = "6E1AC0DE0002000000000002"
 ID_BUILD_HEALTH = "6E1AC0DE0002000000000003"
+ID_BUILD_CAST = "6E1AC0DE0002000000000004"
+ID_BUILD_SCENES = "6E1AC0DE0002000000000005"
 SOURCES_PHASE_ID = "FA0B7F021A95AAF3000E1D17"  # love-ios Sources phase
 IOS_APP_CONFIG_IDS = (
     "FA0B7F261A95AAF4000E1D17",  # Debug
@@ -133,6 +150,8 @@ PBX_SOURCES = (
     ("GRPickerBridge.swift", ID_FILE_PICKER, ID_BUILD_PICKER, "sourcecode.swift"),
     ("GRHealthBridge.swift", ID_FILE_HEALTH, ID_BUILD_HEALTH, "sourcecode.swift"),
     ("GRBootstrap.m", ID_FILE_OBJC, ID_BUILD_OBJC, "sourcecode.c.objc"),
+    ("GRCastBridge.swift", ID_FILE_CAST, ID_BUILD_CAST, "sourcecode.swift"),
+    ("GRSceneGuard.m", ID_FILE_SCENES, ID_BUILD_SCENES, "sourcecode.c.objc"),
 )
 
 
@@ -189,7 +208,7 @@ def patch_wrap_system():
     text = text.replace(reg_anchor, reg_anchor + WRAP_REGISTRATION, 1)
     WRAP_SYSTEM.write_text(text)
     print("patch_love_src: wrap_System.cpp patched "
-          "(pickFile/createFile/syncHealthSteps)")
+          "(pickFile/createFile/syncHealthSteps/shareText/castHostStart)")
 
 
 def patch_pbxproj():

@@ -131,6 +131,49 @@ local function fs()
   return love and love.filesystem
 end
 
+-- ---------------------------------------------------------------------------
+-- iOS: THE HOST LIVES INSIDE THE APP.  mobile/ios/native/GRCastBridge.swift
+-- speaks this same protocol for AirPlay and HDMI adapters (kind `external`,
+-- never `builtin`), and it is started from here, through
+-- love.system.castHostStart(), which the patched liblove of a new IPA has and
+-- an older IPA does not.  Until that call has answered true in THIS session,
+-- host.txt is not trusted on iOS: a file left behind by a newer IPA (or by a
+-- run that crashed) must not show an option that nothing is listening to.
+-- Off iOS this answers true without asking anything -- the Android host is a
+-- separate component that is either writing host.txt or not.
+-- ---------------------------------------------------------------------------
+local nativeHost = nil     -- nil: not asked yet
+
+local function isIOS()
+  local sys = love and love.system
+  if not (sys and sys.getOS) then return false end
+  local ok, name = pcall(sys.getOS)
+  return ok and name == "iOS"
+end
+
+function SecondScreen.nativeHostReady()
+  if nativeHost ~= nil then return nativeHost end
+  if not isIOS() then
+    nativeHost = true
+    return true
+  end
+  local start = love.system.castHostStart
+  if type(start) ~= "function" then
+    nativeHost = false
+    log("iOS build has no castHostStart (older IPA); TV / CAST not offered")
+    return false
+  end
+  local ok, started = pcall(start)
+  nativeHost = (ok and started) and true or false
+  log(("iOS cast host started: %s"):format(tostring(nativeHost)))
+  return nativeHost
+end
+
+-- For the check tool: forget the answer so a different `love.system` is asked.
+function SecondScreen._resetNativeHost()
+  nativeHost = nil
+end
+
 -- u16, little-endian, as two characters
 local function u16(v)
   v = math.floor(tonumber(v) or 0) % 65536
@@ -142,6 +185,7 @@ end
 function SecondScreen.readHost(now)
   local f = fs()
   if not (f and f.getInfo) then return nil end
+  if not SecondScreen.nativeHostReady() then fileHost = false return nil end
   local info = f.getInfo(SecondScreen.HOST)
   if not info then fileHost = false return nil end
   now = tonumber(now)

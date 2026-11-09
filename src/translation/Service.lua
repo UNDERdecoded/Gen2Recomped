@@ -21,6 +21,8 @@ local function stringsIn(data) return require("src.translation.Sources").collect
 Service.stringsIn=stringsIn
 function Service.enqueue(version,options)
  if not version or not require("src.core.GameVersion").info(version) then return end
+ -- the translator reads a Pokemon cache's text banks; a Zelda game has none
+ if require("src.core.GameVersion").isZelda(version) then return end
  Service.notBefore=(love and love.timer and love.timer.getTime and love.timer.getTime() or 0)+0.8
  local target,source=Languages.resolve(options,version)
  if target=="original" then return end

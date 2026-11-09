@@ -109,6 +109,15 @@ RomRevisions.ACCEPTED = {
     { sha1 = "bc696a0dfb448c7b3a8a206f0f8214411a039208", code = "IRAO", revision = 0,
       label = "Pokemon White (USA, Europe)" },
   },
+  -- Zelda (engine "zelda", docs/zelda/CONTRACT.md): the USA dumps only
+  alttp = {
+    { sha1 = "a272055abbbf6c26b0cd54c87395d01699589161", code = "AZLE", revision = 0,
+      label = "The Legend of Zelda: A Link to the Past & Four Swords (USA)" },
+  },
+  minishcap = {
+    { sha1 = "b4bd50e4131b027c334547b4524e2dbbd4227130", code = "BZME", revision = 0,
+      label = "The Legend of Zelda: The Minish Cap (USA)" },
+  },
 }
 
 -- ---------------------------------------------------------------------------
@@ -173,6 +182,8 @@ local GAME_NAMES = {
   heartgold = "Pokemon HeartGold", soulsilver = "Pokemon SoulSilver",
   black = "Pokemon Black", white = "Pokemon White",
   black2 = "Pokemon Black 2", white2 = "Pokemon White 2",
+  alttp = "The Legend of Zelda: A Link to the Past & Four Swords",
+  minishcap = "The Legend of Zelda: The Minish Cap",
 }
 RomRevisions.GAME_NAMES = GAME_NAMES
 
@@ -183,6 +194,7 @@ local CODE_GAMES = {
   ADA = "diamond", APA = "pearl", CPU = "platinum",
   IPK = "heartgold", IPG = "soulsilver",
   IRB = "black", IRA = "white", IRE = "black2", IRD = "white2",
+  AZL = "alttp", BZM = "minishcap",
 }
 
 -- Gen 2 manufacturer codes (header 0x13F), first three letters.

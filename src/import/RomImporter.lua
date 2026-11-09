@@ -1258,6 +1258,10 @@ local MARKER_PATH = "rom-cache.complete"
 -- The marker a finished import writes for a version: the generation tag plus
 -- that version's ROM hash, so both a format bump and a swapped ROM invalidate.
 local function markerFor(version)
+  -- Zelda (engine "zelda"): the game module's own cacheVersion + ROM hash
+  if GameVersion.isZelda and GameVersion.isZelda(version) then
+    return require("src.zelda.ZeldaImport").markerLine(version)
+  end
   -- platinum-field-fx-v1: gen4_pt_field_fx (Gen4PtFieldFx), the Cut / Rock
   -- Smash obstacle animations and the HM cut-in's art
   -- platinum-effect-pal-v1: move-effect palettes loaded sequentially (Gen4Graphics.palette
@@ -1833,6 +1837,8 @@ local REQUIRED_FILES_GEN4 = {
 }
 
 local function requiredFiles(version)
+  -- a Zelda cache is judged by its module's isReady (readyReport), not a list
+  if GameVersion.isZelda and GameVersion.isZelda(version) then return {} end
   local gen = GameVersion.generation(version)
   if gen == 4 then
     -- HeartGold / SoulSilver open with HgssOakIntro (gen4_hgss_oak_art); their
@@ -2169,6 +2175,10 @@ function RomImporter.readyReport(version)
                why = "the tileset registry does not look like a Gen 2 one" }
     end
   end
+  if GameVersion.isZelda and GameVersion.isZelda(version) then
+    local zok, zwhy = require("src.zelda.ZeldaImport").moduleReady(version)
+    if not zok then return { ok = false, missing = {}, why = zwhy } end
+  end
   return { ok = true, missing = {}, gaps = gaps }
 end
 
@@ -2223,6 +2233,11 @@ end
 
 local function blockedImportReason(version, manifest)
   local info = GameVersion.info(version)
+  -- Zelda: no game module in this build yet (src/zelda/<dir>/init.lua)
+  if info and info.engine == "zelda" then
+    local why = require("src.zelda.ZeldaImport").blockedReason(version)
+    if why then return why end
+  end
   if info and info.importable == false and not unlockedByEnv(version) then
     return (info.launcherName or info.displayName or version)
       .. " is not ready to play yet"
@@ -3557,7 +3572,8 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     end
     self:setError(("Unsupported ROM (SHA-1 %s). This needs a clean US Pokemon "
       .. "Red, Blue, Yellow, Gold, Silver, Crystal, FireRed, Emerald, "
-      .. "Platinum, HeartGold, SoulSilver, Black or White dump; patched or "
+      .. "Platinum, HeartGold, SoulSilver, Black or White dump, or Zelda: A "
+      .. "Link to the Past & Four Swords or The Minish Cap (USA); patched or "
       .. "\"fixed\" dumps "
       .. "(tagged [b] or [BF]) never verify."):format(actualHash))
     return
@@ -3604,7 +3620,9 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     self.status = "Preparing private game data"
     coroutine.yield()
 
-    local manifest = decodeManifest(version)
+    local zeldaImport = GameVersion.isZelda and GameVersion.isZelda(version)
+    local manifest = zeldaImport and { zelda = true, romPath = self.romPath }
+      or decodeManifest(version)
     local blocked = blockedImportReason(version, manifest)
     if blocked then
       self:setError(blocked, version)
@@ -3615,7 +3633,7 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     local modules={[1]='src.import.RomExtractor',[2]='src.import.RomExtractorGen2',
       [3]='src.import.RomExtractorGen3',[4]='src.import.RomExtractorGen4',[5]='src.import.RomExtractorGen5'}
     local task=require('src.import.RomImportTask').new({action='extract',version=version,
-      generation=info.generation,module=modules[info.generation],manifest=manifest,
+      generation=info.generation,module=zeldaImport and 'src.zelda.ZeldaImport' or modules[info.generation],manifest=manifest,
       prefix=info.cachePrefix,root=CacheFs.root(),path=self.romPath,bytes=info.generation<4 and self.romData or nil,clear=true,recovery=self.importRecovery})
     if task then
       self.romData=nil
@@ -3674,6 +3692,9 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
               takesPath = true },
     }
     local choice = EXTRACTORS[info.generation]
+    if zeldaImport then
+      choice = { module = "src.zelda.ZeldaImport", takesVersion = true }
+    end
     if not choice then
       error(("no extractor for %s (generation %s)")
             :format(tostring(version), tostring(info.generation)))
@@ -4752,6 +4773,7 @@ end
 -- Android mirrors ROM / mod import via love.system.pickFile("sav").
 function RomImporter:chooseSaveImport(version)
   if self.workState == "working" then return end
+  if GameVersion.isZelda(version) then return end
   if self.ios and love.system.getPickedFile then
     self.iosPendingKind = "sav"
     self.iosPendingVersion = version
@@ -4848,6 +4870,7 @@ end
 
 function RomImporter:exportSave(version)
   if self.workState == "working" then return end
+  if GameVersion.isZelda(version) then return end
   local ok, res = require("src.import.SaveFileIO").exportActiveSlot(version)
   if not ok then
     self.saveNotice[version] = { ok = false, text = tostring(res) }
@@ -7986,6 +8009,13 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
     { id = "white", letter = "W", top = PAL.chipWhiteTop,
       bot = PAL.chipWhiteBot, under = PAL.chipWhiteTop,
       label = Strings("WHITE"), ink = PAL.chipInkSilver },
+    -- Zelda (engine "zelda"): cartridges, so before the hacks, as in ORDER
+    { id = "alttp", letter = "LP", top = PAL.chipEmeraldTop,
+      bot = PAL.chipEmeraldBot, under = PAL.chipEmeraldTop,
+      label = Strings("ZELDA LTTP"), ink = PAL.chipInkSilver },
+    { id = "minishcap", letter = "MC", top = PAL.chipEmeraldTop,
+      bot = PAL.chipEmeraldBot, under = PAL.chipEmeraldTop,
+      label = Strings("MINISH CAP"), ink = PAL.chipInkSilver },
     -- Prism sits after Crystal: it is a Crystal romhack, so it belongs at the
     -- end of the Gen 2 run rather than beside the official carts.
     { id = "prism", letter = "P", top = PAL.chipPrismTop, bot = PAL.chipPrismBot,
@@ -8205,6 +8235,13 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- disabled and the pill still reads COMING SOON.
   local withheld = info ~= nil and info.importable == false
                    and not unlockedByEnv(version)
+  -- ZELDA: Pokemon-only tools (map editor, save editor, translate, .sav
+  -- import/export) stay off its page, and a build with no game module for it
+  -- says COMING SOON here rather than after the player picks a ROM
+  local zelda = info ~= nil and info.engine == "zelda"
+  if zelda and not withheld and not self.ready[version] then
+    withheld = not require("src.zelda.ZeldaRegistry").supported(version)
+  end
   local locked = info == nil or withheld
   local partial = withheld
   -- A VERSION THAT IMPORTS BUT HAS NOT BEEN PROVEN.
@@ -8383,6 +8420,7 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
     for _, sl in ipairs(self.slots[version] or {}) do
       if sl.id == activeId and sl.exists then sfExportEnabled = true; break end
     end
+    if zelda then sfImportEnabled, sfExportEnabled = false, false end
   end
   local sfNotice = (not locked) and self.saveNotice[version] or nil
   local sfHintText, sfHintCol
@@ -8390,6 +8428,8 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
     sfHintText, sfHintCol = sfNotice.text, (sfNotice.ok and PAL.green or PAL.red)
   elseif locked then
     sfHintText, sfHintCol = "Not available yet.", PAL.warning
+  elseif zelda then
+    sfHintText, sfHintCol = "Saves for this game live in the save slots.", PAL.warning
   elseif self.android then
     sfHintText, sfHintCol =
       "Import or export a .sav with the system file picker.", PAL.warning
@@ -8423,7 +8463,7 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- The precondition itself has not moved: with no imported cache the editor
   -- opens on an empty map list, which looks broken rather than absent.
   local canMapEdit = (ready and not locked) and true or false
-  local showMapBtn = self.onEditMaps and true or false
+  local showMapBtn = (self.onEditMaps and not zelda) and true or false
   -- The row is reserved when EITHER button wants it. Keying the height off
   -- onEditTouchControls alone left touchY equal to playY on a build without
   -- it, which drew the map button straight over Play.
@@ -8526,6 +8566,7 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- Map Editor beside it when this game is imported: the two share the row,
   -- each taking half, so adding the second button did not push Play down.
   local tools={{rect="translateGameRect",label="Translate",enabled=true}}
+  if zelda then tools={} end
   if self.onEditTouchControls then table.insert(tools,1,{rect="touchControlsRect",label="Touch Controls",enabled=true})end
   if showMapBtn then table.insert(tools,#tools,{rect="mapEditorRect",label=MAP_EDITOR_LABEL,enabled=canMapEdit})end
   local toolW=(colW-(#tools-1)*10*s)/#tools
@@ -10013,7 +10054,7 @@ function RomImporter:_drawSaveSlotPanel(version, x, y, w, h, paged)
         -- this slot's file. Only when the host supplied onEditSave and the
         -- slot actually holds a save.
         local erect = nil
-        if self.onEditSave and slot.exists then
+        if self.onEditSave and slot.exists and not GameVersion.isZelda(version) then
           local edW = self.hintFont:getWidth("Edit") + 24 * s
           local edX = delX - btnGap - edW
           erect = self:_chipButton(edX, delY, "Edit", {
@@ -10077,6 +10118,8 @@ function RomImporter:_drawSaveSlotPanel(version, x, y, w, h, paged)
           -- files are there but none decodes: NOT an empty slot (a click on
           -- Play must not read as "start over here")
           metaTxt = Strings("unreadable - Restore picks a backup")
+        elseif slot.exists and slot.meta and slot.meta.line then
+          metaTxt = slot.meta.line
         elseif slot.exists and slot.meta then
           metaTxt = Strings("%d badges - %s - %d caught", slot.meta.badges or 0, slot.meta.timeText or "0:00",
             slot.meta.dexCount or 0)

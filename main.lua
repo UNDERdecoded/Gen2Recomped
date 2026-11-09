@@ -258,6 +258,23 @@ local function bootGame(version)
   local GameVersion = require("src.core.GameVersion")
   GameVersion.set(version or os.getenv("POKEPORT_VERSION") or "red")
 
+  -- ZELDA (engine "zelda") does not run on Game.lua: src/zelda/ZeldaRuntime
+  -- stands in for `Game` and main.lua forwards the same callbacks to it. The
+  -- last Pokemon game's cache overlay and generated modules come off first,
+  -- so a Pokemon boot after this one starts as clean as after a restart.
+  if GameVersion.isZelda(GameVersion.get()) then
+    local zv = GameVersion.get()
+    if bootedVersion then
+      pcall(function() require("src.import.CacheFs").unmountVersion(bootedVersion) end)
+      bootedVersion = nil
+    end
+    pcall(function() require("src.core.Data"):unloadGenerated() end)
+    pcall(function() require("src.render.Assets").invalidate() end)
+    Game = require("src.zelda.ZeldaRuntime").boot(zv)
+    BootTrace.booted()
+    return
+  end
+
   -- ONE PROCESS CAN BOOT TWO GAMES, AND `require` REMEMBERS THE FIRST.
   --
   -- Every version loads its data under the SAME module names -- Data:load

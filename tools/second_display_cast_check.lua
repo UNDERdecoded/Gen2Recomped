@@ -385,5 +385,125 @@ do
   CastTop._state.rect = nil
 end
 
+-- ---------------------------------------------------------------------------
+section("6. iOS: the host inside the app (GRCastBridge)")
+-- ---------------------------------------------------------------------------
+-- On iOS host.txt is only believed once love.system.castHostStart() -- which
+-- only a new IPA's patched liblove has -- has answered true this session.
+do
+  local savedSystem = love.system
+  local starts = 0
+  local function ios(startFn)
+    love.system = { getOS = function() return "iOS" end, castHostStart = startFn }
+    T._resetNativeHost()
+    fresh()
+  end
+  local function bridge(line)
+    return function()
+      starts = starts + 1
+      -- what GRCastBridge.start does before it returns: host.txt, synchronously
+      if line then love.filesystem.write(T.HOST, line .. "\n") end
+      return true
+    end
+  end
+
+  -- a new Lua on an OLD IPA: no castHostStart, and a stale host.txt left over
+  -- from somewhere must not bring the option back
+  love.filesystem.write(T.HOST, "1 2 640 360 external bottom\n")
+  ios(nil)
+  ok(T.nativeHostReady() == false, "an IPA without castHostStart reads as a host")
+  ok(not CastDisplay.supported(), "an old IPA was offered TV / CAST")
+  ok(T.panelRole() == nil and not T.available(),
+     "an old IPA's stale host.txt was taken for a panel")
+  ok(UI.deviceReady() == false, "an old IPA's stale host.txt made deviceReady")
+
+  -- castHostStart that fails (no save dir) is the same as none
+  ios(function() starts = starts + 1 return false end)
+  ok(not CastDisplay.supported(), "a failed castHostStart offered the option")
+  -- ... or that raises
+  ios(function() error("bridge exploded") end)
+  ok(T.nativeHostReady() == false and not CastDisplay.supported(),
+     "a castHostStart that raised was believed")
+
+  -- a new IPA, nothing plugged in: the option is offered and reads MIRROR
+  starts = 0
+  FS.files[T.HOST] = nil
+  setMode(nil)
+  ios(bridge("1 1 0 0 none auto"))
+  ok(CastDisplay.supported(), "a new IPA's bridge does not offer TV / CAST")
+  ok(starts == 1, "castHostStart ran %d times on the first probe", starts)
+  ok(CastDisplay.kind() == "none" and CastDisplay.effective() == "mirror",
+     "an iPhone with no TV reads %s / %s", CastDisplay.kind(), CastDisplay.effective())
+  ok(T.panelRole() == nil and UI.deviceReady() == false,
+     "no TV but a panel role %s", tostring(T.panelRole()))
+  for _ = 1, 5 do fresh(); T.castSupported() end
+  ok(starts == 1, "castHostStart is asked again on every probe (%d)", starts)
+
+  -- AirPlay / HDMI, never set: MIRROR, nothing on the TV but iOS's mirror
+  host("1 1 0 0 external mirror")
+  ok(CastDisplay.kind() == "external" and CastDisplay.effective() == "mirror",
+     "an AirPlay display reads %s / %s", CastDisplay.kind(), CastDisplay.effective())
+  ok(T.panelRole() == nil and UI.deviceReady() == false and UI.castTop() == false,
+     "MIRROR on iOS still treats the TV as a panel")
+  -- BOTTOM: the bridge has a window up (displays 2, capped size)
+  setMode("bottom")
+  host("1 2 640 360 external bottom")
+  ok(T.panelRole() == "bottom" and UI.deviceReady() == true,
+     "iOS BOTTOM: role %s, deviceReady %s", tostring(T.panelRole()),
+     tostring(UI.deviceReady()))
+  ok(UI.mode(gen4({ secondScreenMode = "display" })) == "display",
+     "a Gen 4 game does not draw its lower screen for the TV in iOS BOTTOM")
+  -- TOP: the main picture goes to the TV, the bottom screen stays on the phone
+  setMode("top")
+  host("1 2 640 360 external top")
+  ok(T.panelRole() == "top" and UI.castTop() == true and UI.deviceReady() == false,
+     "iOS TOP: role %s castTop %s", tostring(T.panelRole()), tostring(UI.castTop()))
+  -- the TV unplugged mid-game: back to no display, the choice kept
+  host("1 1 0 0 none top")
+  ok(T.panelRole() == nil and UI.castTop() == false and UI.deviceReady() == false,
+     "an unplugged TV still has a role")
+  ok(CastDisplay.setting() == "top", "unplugging forgot the player's choice")
+  setMode(nil)
+
+  love.system = savedSystem
+  T._resetNativeHost()
+  clearHost()
+  ok(T.nativeHostReady() == true, "off iOS the file host is not trusted as-is")
+end
+
+-- the iOS bridge's source holds the same vocabulary as this end
+do
+  local swift = src("mobile/ios/native/GRCastBridge.swift")
+  ok(swift ~= "", "mobile/ios/native/GRCastBridge.swift is missing")
+  for _, word in ipairs({ '"second_display"', '"host.txt"', '"frame.bin"',
+                          '"mode.txt"', '"none"', '"external"', '"mirror"',
+                          '"bottom"', '"top"', '"auto"' }) do
+    ok(swift:find(word, 1, true) ~= nil, "GRCastBridge.swift does not say %s", word)
+  end
+  ok(swift:find("requested ?? modeMirror", 1, true) ~= nil,
+     "GRCastBridge's never-set mode on a TV is not MIRROR")
+  ok(swift:find("touch.txt is never written", 1, true) ~= nil
+     and not swift:find('appendingPathComponent("touch', 1, true),
+     "GRCastBridge writes touch.txt (a TV routes no taps)")
+  local patch = src("mobile/ios/patch_love_src.py")
+  ok(patch:find('{ "castHostStart", w_castHostStart }', 1, true) ~= nil,
+     "patch_love_src.py does not register love.system.castHostStart")
+  ok(patch:find('"GRCastBridge", "startWithCommand:saveDir:"', 1, true) ~= nil
+     and swift:find("@objc(startWithCommand:saveDir:)", 1, true) ~= nil,
+     "the castHostStart selector differs between wrap_System and the bridge")
+  for _, f in ipairs({ "GRCastBridge.swift", "GRSceneGuard.m" }) do
+    local n = 0
+    for _ in patch:gmatch((f:gsub("%.", "%%."))) do n = n + 1 end
+    ok(n >= 2, "patch_love_src.py does not build %s", f)
+  end
+  local guard = src("mobile/ios/native/GRSceneGuard.m")
+  ok(guard:find("UIWindowSceneSessionRoleExternalDisplayNonInteractive", 1, true)
+     and guard:find("UIWindowSceneSessionRoleExternalDisplay]", 1, true)
+     and guard:find("SDLUIKitSceneDelegate", 1, true)
+     and guard:find("sceneWillResignActive:", 1, true)
+     and guard:find("sceneDidEnterBackground:", 1, true),
+     "GRSceneGuard.m does not keep SDL off external-display scenes")
+end
+
 io.write(("\n%d checks, %d failed\n"):format(checks, fails))
 if fails > 0 then error(("%d check(s) failed"):format(fails), 0) end

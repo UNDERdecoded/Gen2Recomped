@@ -1,5 +1,50 @@
 # iOS build (LÖVE 12.0)
 
+> **TV / CAST (AirPlay, HDMI) -- needs a NEW IPA.** Two native pieces, both
+> wired in by `patch_love_src.py`; a Lua-only update cannot deliver them.
+>
+> - `native/GRSceneGuard.m` fixes the **white TV screen** under AirPlay
+>   mirroring. SDL 3.4.10 (the SDL3 in love-apple-dependencies `a552263`) is
+>   scene-based, and its `SDLUIKitSceneDelegate` treated the TV's
+>   external-display scene as the main one: a white launch window
+>   (`Launch Screen.xib`) on the TV, `main` scheduled a second time, and the
+>   TV scene's resign/background callbacks pausing the game. Upstream SDL
+>   fixed it after 3.4.10 (libsdl-org/SDL `6f34ce4d`, "Don't re-launch the
+>   application for external display scenes on iOS"); the guard applies the
+>   same rule at run time by wrapping those delegate methods from a
+>   constructor. Drop it once the pinned SDL carries `6f34ce4d` (harmless
+>   until then: the checks are identical).
+> - `native/GRCastBridge.swift` is the iOS end of the Android second-display
+>   file protocol (`second_display/host.txt`, `mode.txt`, `frame.bin`; see
+>   `src/render/SecondScreen.lua`). Lua starts it with
+>   `love.system.castHostStart()`; an older IPA has no such function, so the
+>   TV / CAST row stays hidden there even if a stale `host.txt` exists.
+>   MIRROR (the default) creates nothing, so iOS mirrors the phone. BOTTOM /
+>   TOP put one window on the TV's scene showing `frame.bin` (letterboxed,
+>   size reported to Lua capped at 640x360); no taps are routed from a TV.
+>
+> Checked on Windows only (`tools/second_display_cast_check.lua` section 6,
+> `tools/second_display_protocol_check.py` tier 3, `patch_love_src.py` run
+> against a scratch copy of the pinned LÖVE source). **No Swift/Objective-C
+> compiler has seen these files.** On a device with the new IPA, test:
+>
+> 1. Build: `GRCastBridge.swift` and `GRSceneGuard.m` compile; the log shows
+>    `GRSceneGuard: installed on SDLUIKitSceneDelegate`.
+> 2. AirPlay **screen mirroring** to an Apple TV, and to an AirPlay smart TV
+>    (Samsung/LG/Roku): the TV shows the phone's picture, not white, both when
+>    mirroring is started before launch and mid-game; the phone keeps running
+>    (no pause, no second game boot).
+> 3. OPTIONS > TV / CAST and launcher Settings > TV / CAST appear on iOS.
+>    MIRROR: TV mirrors. BOTTOM (Gen 4/5 game): DS bottom screen on the TV,
+>    top screen on the phone. TOP: game picture on the TV, bottom screen on
+>    the phone with working taps. Launcher in BOTTOM: launcher panel on TV.
+> 4. Switching BOTTOM/TOP -> MIRROR mid-game: the window leaves the TV and
+>    mirroring resumes (if the TV stays black, iOS did not resume mirroring
+>    when our window was hidden -- report it).
+> 5. Unplug / stop AirPlay mid-game in each mode, then reconnect: no crash,
+>    the game returns to the single-screen layout, and the chosen mode comes
+>    back with the TV. Also a Lightning/USB-C HDMI adapter if available.
+
 > **Native ROM/mod/save import.** The iOS build ships a Swift
 > document-picker bridge (`native/GRPickerBridge.swift` + `GRBootstrap.m`)
 > that `patch_love_src.py` wires into the LÖVE tree on every build:

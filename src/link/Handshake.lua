@@ -395,6 +395,13 @@ function Handshake.describe(localHello, remoteHello, verdict, mode)
     end
     return lines
   end
+  if verdict == "refused" and reason == "cross_series" then
+    wrap(lines, "That code is for")
+    wrap(lines, "a game from another")
+    wrap(lines, "series. It can't")
+    wrap(lines, "link with POKéMON.")
+    return lines
+  end
   if verdict == "refused" and reason == "needs_national_dex" then
     wrap(lines, "PAL PARK needs")
     wrap(lines, "the NATIONAL DEX")

@@ -66,9 +66,11 @@ function CastDisplay.forget()
   cached, cachedRead = nil, false
 end
 
--- Does the host here understand the option?  Only an Android host that
--- writes the cast fields reads mode.txt; everywhere else (desktop, iOS, an
--- older APK) there is nothing for the row to change, so it is not shown.
+-- Does the host here understand the option?  Only a host that writes the
+-- cast fields reads mode.txt: the Android SecondDisplayHost, or on iOS the
+-- GRCastBridge of a new IPA (started by SecondScreen.nativeHostReady).
+-- Everywhere else (desktop, an older APK or IPA) there is nothing for the
+-- row to change, so it is not shown.
 function CastDisplay.supported()
   local T = CastDisplay._transport
   local ok, yes = pcall(function() return T.castSupported and T.castSupported() end)
