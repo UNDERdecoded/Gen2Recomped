@@ -66,10 +66,18 @@ function WorldMenu:rows()
     local recent = self.recent
     return {
       { label = "HOST A WORLD", go = "hostSetup" },
-      { label = "JOIN A WORLD", go = "join" },
+      { label = "JOIN A WORLD", go = "joinPick" },
       { label = "RECENT WORLDS", go = "recent", disabled = #recent == 0 },
+      { label = "MY LOOK", act = "look" },
       { label = "BACK", back = true },
     }
+  elseif st == "joinPick" then
+    -- a friend's world code, or the official server's world for this game
+    local rows = { { label = "ENTER A CODE", go = "join" } }
+    local okO, OH = pcall(require, "src.online.OfficialHub")
+    if okO and OH.enabled() then rows[#rows + 1] = { label = OH.NAME, act = "official" } end
+    rows[#rows + 1] = { label = "BACK", go = "root" }
+    return rows
   elseif st == "hostSetup" then
     return {
       { label = "NAME", value = self.hostName, act = "name" },
@@ -95,6 +103,7 @@ function WorldMenu:rows()
       { label = "CHAT", act = "chat" },
       { label = "EMOTE", go = "emote" },
       { label = "PLAYERS", go = "players" },
+      { label = "MY LOOK", act = "look" },
     }
     if s.host then
       rows[#rows + 1] = { label = "BANS", go = "bans" }
@@ -160,6 +169,22 @@ function WorldMenu:startHosting(spec)
   self:go("opening")
 end
 
+-- WHO CAN USE THIS CODE.  A world code with no internet address (the router
+-- opening failed and MY ADDRESS is empty) only works for players on the
+-- host's own network; a friend elsewhere then sees "Local network: no answer
+-- from 192.168.x.x".  Say so on the code screen instead of letting the host
+-- share a code that cannot work.
+function WorldMenu.reachNote(fields)
+  if type(fields) ~= "table" then return nil end
+  if fields.hub ~= nil then return nil end
+  local port = tonumber(fields.port) or 7777
+  if not fields.public then
+    return ("LOCAL NETWORK ONLY. For friends elsewhere: forward UDP %d, then set MY ADDRESS in SETTINGS."):format(port)
+  end
+  -- never print the address itself: hosts stream and screenshot this screen
+  return ("Internet: ready (UDP port %d)."):format(tonumber(fields.publicPort) or port)
+end
+
 function WorldMenu:showCode()
   local W = world()
   local code, warning = W.inviteCode()
@@ -169,14 +194,18 @@ function WorldMenu:showCode()
   end
   local menu = self
   local ShowCode = require("src.ui.online.ShowCode")
+  local s0 = W.current()
+  local okN, note = pcall(function() return WorldMenu.reachNote(s0 and s0.host and s0.host:inviteFields()) end)
+  note = okN and note or nil
   ShowCode.open(self.game, {
     code = code, title = "WORLD CODE",
-    status = "Share this code to invite players.",
+    status = "Share this code to invite players." .. (note and (" " .. note) or ""),
     onUpdate = function(screen, dt)
       W.tick(dt)
       local s = W.current()
       if not s then screen:close() return end
-      screen:setStatus(("%d/%d in %s"):format(s.host:count(), s.world.cap, s.world.name))
+      screen:setStatus(("%d/%d in %s"):format(s.host:count(), s.world.cap, s.world.name)
+                       .. (note and (". " .. note) or ""))
     end,
     onCancel = function() menu:go("inworld") end,
   })
@@ -190,14 +219,50 @@ function WorldMenu:join()
     onDone = function(invite)
       local s, why = world().joinWorld(menu.game, invite)
       if not s then
-        menu:go("root")
+        menu:go("joinPick")
         menu.notice = tostring(why)
         return
       end
       menu:go("joining")
     end,
-    onCancel = function() menu:go("root") end,
+    onCancel = function() menu:go("joinPick") end,
   })
+end
+
+-- THE OFFICIAL SERVER'S WORLD: ping the hub (LauncherHub.probe), then join
+-- the world it runs for this game (hub config `worlds`, LH.worldFor)
+function WorldMenu:joinOfficial()
+  local okO, OH = pcall(require, "src.online.OfficialHub")
+  local okL, LH = pcall(require, "src.online.LauncherHub")
+  if not (okO and okL) then self.notice = "The official server isn't available." return end
+  local okP, err = pcall(LH.probe, OH.invite())
+  if not okP then self.notice = OH.mask(tostring(err)) return end
+  self:go("officialProbe")
+end
+
+function WorldMenu:pollOfficial()
+  local LH = require("src.online.LauncherHub")
+  local OH = require("src.online.OfficialHub")
+  LH.pollProbe()
+  local p = LH.probeState()
+  if p and p.phase == "ok" and p.pong then
+    local code = LH.worldFor(p.pong, LH.currentVersion())
+    if not code then
+      self:go("joinPick", 2)
+      self.notice = "The official server has no world for this game yet."
+      return
+    end
+    local s, why = world().joinWorld(self.game, code)
+    if not s then
+      self:go("joinPick", 2)
+      self.notice = OH.mask(tostring(why))
+      return
+    end
+    self:go("joining")
+  elseif not p or p.phase == "failed" then
+    self:go("joinPick", 2)
+    self.notice = "Couldn't reach the official server. Try again later."
+  end
 end
 
 function WorldMenu:activate(row)
@@ -229,6 +294,10 @@ function WorldMenu:activate(row)
     return
   end
   local act = row.act
+  if act == "official" then
+    self:joinOfficial()
+    return
+  end
   if act == "name" then
     self.editing = not self.editing
   elseif act == "cap" then
@@ -254,6 +323,9 @@ function WorldMenu:activate(row)
                         gts = self.hostGts, filter = self.hostFilter })
   elseif act == "chat" then
     require("src.ui.online.ChatOverlay").open(self.game)
+  elseif act == "look" then
+    -- the sheet + colour other players see (src/ui/online/AvatarScreen.lua)
+    require("src.ui.online.AvatarScreen").open(self.game)
   elseif act == "code" then
     self:showCode()
   elseif act == "gts" then
@@ -298,9 +370,15 @@ function WorldMenu:update(dt)
   local s = W.current()
   local c = s and s.client
   local input = self.game.input
-  if self.stage ~= "root" and self.stage ~= "hostSetup" and self.stage ~= "recent" and not s then
+  if self.stage ~= "root" and self.stage ~= "hostSetup" and self.stage ~= "recent"
+     and self.stage ~= "joinPick" and self.stage ~= "officialProbe" and not s then
     self:go("root")
     if W.lastEnded and W.lastEnded.text then self.notice = W.lastEnded.text end
+  end
+  if self.stage == "officialProbe" then
+    if input and input:wasPressed("b") then self:go("joinPick", 2) return end
+    self:pollOfficial()
+    return
   end
   if self.stage == "opening" then
     if s and s.host then
@@ -339,7 +417,7 @@ function WorldMenu:update(dt)
   elseif input:wasPressed("b") then
     if self.stage == "root" or self.stage == "inworld" then self:close()
     elseif self.stage == "member" then self:go("players")
-    elseif self.stage == "hostSetup" or self.stage == "recent" then self:go("root")
+    elseif self.stage == "hostSetup" or self.stage == "recent" or self.stage == "joinPick" then self:go("root")
     else self:go("inworld") end
   end
 end
@@ -368,7 +446,7 @@ end
 -- ------------------------------------------------------------ draw
 
 local TITLES = {
-  root = "WORLDS", hostSetup = "HOST A WORLD", recent = "RECENT WORLDS",
+  root = "WORLDS", hostSetup = "HOST A WORLD", recent = "RECENT WORLDS", joinPick = "JOIN A WORLD",
   emote = "EMOTE", players = "PLAYERS", member = "PLAYER", bans = "BANS",
   confirmLeave = "LEAVE THE WORLD?",
 }
@@ -379,6 +457,10 @@ function WorldMenu:draw()
   st:clear(W, H)
   local s = world().current()
   local c = s and s.client
+  if self.stage == "officialProbe" then
+    WorldUi.drawText(st, 4, 4, W - 8, "Calling the official server... (B: cancel)")
+    return
+  end
   if self.stage == "opening" or self.stage == "joining" then
     local text
     if self.stage == "opening" then

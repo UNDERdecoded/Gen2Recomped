@@ -803,7 +803,8 @@ function Gen4Battle.dsBackFrame(battle)
   local leave = battle and battle.dsBackLeave
   local rec = leave and leave.rec or (battle and battle.showPlayerBack and battle.dsBackThrowRec)
   if not rec then return nil end
-  local okA, sheet = pcall(require("src.render.Assets").image, rec.path)
+  -- (painted with the online look when BattleLook registered it)
+  local okA, sheet = pcall(require("src.online.BattleLook").image, rec.path)
   if not (okA and sheet) then return nil end
   local frame = 1
   local play = rec.play or {}

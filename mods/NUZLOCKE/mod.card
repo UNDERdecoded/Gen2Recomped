@@ -1,0 +1,26 @@
+-- Sharing metadata (25-community-and-ecosystem.md 3.2).  Read by tooling
+-- and the manager detail pane; never by the loader's merge.
+return {
+  summary = "Nuzlocke and Soul Link rules for every Pokemon game, chosen per save at NEW GAME.",
+  author = "Gen2Recomped",
+  tags = { "ruleset", "hardcore", "online" },
+  differences = {
+    changed = {
+      "a Nuzlocke save: only the first wild POKéMON per area can be caught",
+      "a Nuzlocke save: a POKéMON that faints moves to the run's graveyard",
+    },
+    added = {
+      "RUN OVER screen: keep playing with the rules off (every POKéMON back) or end the run",
+      "NUZLOCKE / SOUL LINK RECORD (OPTIONS -> RUN MODES)",
+      "Soul Link pairing over an online world's soullink relay",
+    },
+    known = {
+      "statics (scripted single battles) never use up an area and may be caught",
+      "an encounter counts only once the bag holds a POKé BALL",
+      "Soul Link across two different games pairs by encounter order (areas differ)",
+      "fixed ROM dialogue naming a starter keeps the original name",
+    },
+  },
+  credits = {},
+  compat = { engine = ">=0.7.0 <3.0.0", modApi = 2 },
+}

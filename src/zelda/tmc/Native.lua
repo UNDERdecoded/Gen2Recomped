@@ -66,7 +66,9 @@ N[0x0807F244] = function(f, e, ctx)                      -- EquipItem: item | sl
   f:equip(slot == 0 and "a" or "b", item)
 end
 N[0x0807F29C] = function() end                            -- SetPlayerMacro (input recordings: not ported)
-N[0x0807F2A8] = function(f, e, ctx, a) keepGoing(a) end   -- WaitForPlayerMacro: no macro runs
+-- SetPlayerMacro / WaitForPlayerMacro (round 5: PlayerMacro.lua)
+N[0x0807F29C] = function(f, e, ctx) require("src.zelda.tmc.PlayerMacro").init(f, ctx.intVariable) end
+N[0x0807F2A8] = function(f, e, ctx, a) if f.playerMacro then stay(a) else keepGoing(a) end end
 N[0x0807F2D4] = function(f, e, ctx, a)                   -- WaitForAnimDone
   if e.anim and e.anim.done then keepGoing(a) else stay(a) end
 end
@@ -140,6 +142,10 @@ end
 N[0x080791BC] = function(f)                              -- SetPlayerActionNormal
   f.player.state = "normal"
   f.player.scriptAnim = nil
+  -- round 10: the player script only runs in PLAYER_SLEEP (StartPlayerScript
+  -- queues it); action PLAYER_NORMAL ends it (the Minish Woods look-around
+  -- loop, script_PlayerAtFirstLookAtEzlo, is ended this way)
+  if f.playerScript then f.playerScript.stopped = true end
 end
 N[0x080791D0] = N[0x080791BC]                             -- ResetPlayerAnimationAndAction
 N[0x080787B4] = function(f, e) e.talkable = true end      -- AddInteractableCheckableObject
@@ -179,11 +185,23 @@ N[0x08066274] = function() end                            -- Smith_ChangeInterac
 N[0x080A2124] = function() end                            -- Windcrest_ChangeInteractableHitbox
 
 -- the Field's host entry point
+local extLoaded = false
 function Native.call(field, fn, e, ctx, active)
+  if not extLoaded then -- round 6: modules that register ports
+    extLoaded = true
+    require("src.zelda.tmc.Crenel")
+    require("src.zelda.tmc.ZeldaFollower")
+    require("src.zelda.tmc.Drops")    -- round 9: Disable/EnableRandomDrops
+    require("src.zelda.tmc.Ceremony") -- round 9: the castle scenes' helpers
+    require("src.zelda.tmc.RouteNatives") -- round 10: Minish Woods / Village scenes
+    require("src.zelda.tmc.R27A").natives() -- round 27A: overworld story natives (R27A.lua)
+    require("src.zelda.tmc.R26").mods() -- round 27b: the dungeon modules register their natives (R27B.lua)
+  end
   local port = N[band(fn, 0xFFFFFFFE)]
   if not port then return false end
   port(field, e, ctx, active)
   return true
 end
 
+Native.N = N -- round 5: modules register their ports (Crenel.lua)
 return Native

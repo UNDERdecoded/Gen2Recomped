@@ -4166,7 +4166,7 @@ Gen3Commands.SPECIALS[160] = function(ctx)
   -- shows: Wally's borrowed ZIGZAGOON (special 303) is out on the field.
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
-  local battle = BattleState.newWild(game, species, 5)
+  local battle = require("src.runmodes.RunHooks").quiet(BattleState.newWild, game, species, 5)
   battle:makeDudeDemo(Gen3Commands.wallyName(data))
   -- Like CatchTutorial's wPlayerName swap: anything that still reads the
   -- save mid-battle has to say WALLY too, and the real name goes back on
@@ -5483,7 +5483,8 @@ function Gen3Commands.relearnableMoves(ctx, mon)
       out[#out + 1] = id
     end
   end
-  return out
+  -- RUN MODES: MOVE RELEARNER (src/runmodes/RunHooks.lua relearnable)
+  return require("src.runmodes.RunHooks").relearnable(mon, out, ctx.game)
 end
 
 -- A BLOCKING list of labels, answered with the 1-based row, or nil for B and

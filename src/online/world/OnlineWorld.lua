@@ -430,6 +430,8 @@ end
 -- this game hosts can carry a multi lobby between its members (the Union
 -- Room's MULTI row, MultiBattle.open with { world = true })
 OnlineWorld.serviceFactories.multi = function() return require("src.online.MultiNet").relayService() end
+-- RUN MODES: the Soul Link partners' relay (src/online/SoulLinkService.lua)
+OnlineWorld.serviceFactories.soullink = function() return require("src.online.SoulLinkService").new() end
 
 -- a member's GTS channel (paired once the host answers); the shape
 -- GtsClient.setProvider wants

@@ -38,7 +38,13 @@ function S.new(host)
   return self
 end
 
-function S:say(text, secs) self.toast = { text = tostring(text), till = self.t + (secs or 3) } end
+-- (OfficialHub.mask: the official server's address never reaches the screen)
+local function hideOfficial(t)
+  local okO, OH = pcall(require, "src.online.OfficialHub")
+  return okO and OH.mask(t) or t
+end
+
+function S:say(text, secs) self.toast = { text = hideOfficial(tostring(text)), till = self.t + (secs or 3) } end
 
 ---------------------------------------------------------------- pages
 
@@ -195,6 +201,7 @@ end
 function S:pal() return self.P or FALLBACK end
 
 function S:button(x, y, w, h, label, fn, kind, font)
+  label = hideOfficial(label)
   local g, P = love.graphics, self:pal()
   local mx, my = love.mouse.getPosition()
   local hot = mx >= x and mx <= x + w and my >= y and my <= y + h
@@ -231,7 +238,7 @@ function S:text(text, x, y, w, font, color, align)
   font = font or self.f.body
   g.setFont(font)
   setc(color or self:pal().ink)
-  local t = Strings(tostring(text))
+  local t = hideOfficial(Strings(tostring(text)))
   local _, lines = font:getWrap(t, w)
   g.printf(t, x, y, w, align or "left")
   return #lines * font:getHeight()
@@ -239,7 +246,7 @@ end
 
 function S:textHeight(text, w, font)
   font = font or self.f.body
-  local _, lines = font:getWrap(Strings(tostring(text)), w)
+  local _, lines = font:getWrap(hideOfficial(Strings(tostring(text))), w)
   return #lines * font:getHeight()
 end
 
@@ -742,11 +749,19 @@ function S:readyGames(filterGame)
   local GameVersion = require("src.core.GameVersion")
   local list = {}
   local ready = self.host and self.host.ready or {}
-  local fam = filterGame and GameVersion.family and GameVersion.family(filterGame) or nil
+  -- filterGame: one game, or a list (a hub with a world per game)
+  local fams = nil
+  if filterGame and GameVersion.family then
+    fams = {}
+    for _, g in ipairs(type(filterGame) == "table" and filterGame or { filterGame }) do
+      local f = GameVersion.family(g)
+      if f then fams[f] = true end
+    end
+  end
   for _, v in ipairs(GameVersion.ORDER) do
     local info = GameVersion.VERSIONS[v]
     if info and ready[v] then
-      if not fam or GameVersion.family(v) == fam then list[#list + 1] = v end
+      if not fams or fams[GameVersion.family(v)] then list[#list + 1] = v end
     end
   end
   return list
@@ -800,6 +815,14 @@ end
 function S:examine(autoProbe)
   self.examined = nil
   if not self.code:match("%S") then return end
+  local okO, OH = pcall(require, "src.online.OfficialHub")
+  if okO and OH.enabled() and self.code == OH.NAME then
+    local p = LH.probeState()
+    local inv = (p and p.invite and p.invite.official) and p.invite or OH.invite()
+    self.examined = { invite = inv, what = "hub" }
+    if autoProbe ~= false and inv ~= (p and p.invite) then LH.probe(inv) end
+    return
+  end
   local inv, what = LH.classify(self.code)
   if not inv then
     self.examined = { bad = what }
@@ -885,6 +908,17 @@ function S:drawJoin(x, y, w, h)
   end
   y = y + self:text("This app can't use the camera. To scan a friend's QR, use your phone's own camera or a QR app, copy the code it shows, then tap PASTE.",
                     x, y, w, self.f.small, P.warning) + 12 * s
+  -- the official server: one tap, no code
+  local okO, OH = pcall(require, "src.online.OfficialHub")
+  if okO and OH.enabled() then
+    self:button(x, y, math.min(w, 420 * s), bh, "OFFICIAL SERVER", function()
+      local inv = OH.invite()
+      self.code = OH.NAME
+      self.examined = { invite = inv, what = "hub" }
+      LH.probe(inv)
+    end, "accent", self.f.head)
+    y = y + bh + 12 * s
+  end
   y = y + self:drawJoinResult(x, y, w)
   y = y + self:drawNearby(x, y, w)
   return y - top
@@ -917,12 +951,18 @@ function S:drawJoinResult(x, y, w)
         y = y + self:text("Services: " .. table.concat(pong.services, ", "), x, y, w, self.f.small, P.warning) + 8 * s
       end
       local bw = math.min(300 * s, w)
-      if pong.worldCode then
-        self:button(x, y, bw, 56 * s, "JOIN THEIR WORLD", function()
-          self:pickGame("Join their world with", function(v)
-            LH.setPending({ kind = "world", code = pong.worldCode })
+      local worlds = LH.hubWorlds(pong)
+      if #worlds > 0 then
+        -- one world per game on the hub: pick a game, join that game's
+        local games = {}
+        for _, wd in ipairs(worlds) do if wd.game then games[#games + 1] = wd.game end end
+        self:button(x, y, bw, 56 * s, #worlds > 1 and "JOIN A WORLD" or "JOIN THEIR WORLD", function()
+          self:pickGame("Join the world with", function(v)
+            local code = LH.worldFor(pong, v)
+            if not code then self:say("No world for that game on this hub", 3) return end
+            LH.setPending({ kind = "world", code = code })
             self:launch(v)
-          end, pong.worldGame)
+          end, #games > 0 and games or nil)
         end, "accent")
         y = y + 56 * s + 10 * s
       end

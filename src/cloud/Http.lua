@@ -15,6 +15,8 @@
 --            answers {"status": n, "body": "..."} (HttpURLConnection).
 --   iOS      LOVE 12's built-in lua-https (require "https"), also the
 --            fallback wherever curl cannot be run.
+--   Xbox     (UWP) the package's native Windows.Web.Http bridge, through
+--            files in LocalState (src/cloud/XboxHttp.lua, ports/uwp/app/main.cpp).
 --
 -- Bodies here are text (JSON, form data, Lua save files); nothing binary.
 
@@ -96,8 +98,12 @@ end
 
 local function isIOS() return love and love.system and love.system.getOS and love.system.getOS() == "iOS" end
 
+-- Xbox (UWP): no curl, no lua-https; the package's native bridge does it
+local XboxHttp = require("src.cloud.XboxHttp")
+
 function H.available()
   if love and love.system and type(love.system.httpRequest) == "function" then return true end
+  if XboxHttp.isUWP() then return XboxHttp.available() end
   if isIOS() and luaHttps() then return true end
   local ok, HostShell = pcall(require, "src.core.HostShell")
   return ok and HostShell.haveCurl and HostShell.haveCurl() or false
@@ -113,6 +119,11 @@ function H.request(method, url, opts)
     return viaBridge(method, url, opts)
   end
   if isIOS() and luaHttps() then return viaLuaHttps(method, url, opts) end
+  if XboxHttp.isUWP() then
+    if XboxHttp.available() then return XboxHttp.request(method, url, opts) end
+    if luaHttps() then return viaLuaHttps(method, url, opts) end
+    return nil, "cloud saves need a newer Xbox package (no network bridge in this one)"
+  end
   local status, body = viaCurl(method, url, opts)
   if not status and luaHttps() then return viaLuaHttps(method, url, opts) end
   return status, body

@@ -83,7 +83,36 @@ function H.words(ui, st)
   else
     put(at.keys, 0x90 + (st.keys % 10))
   end
+  -- r19: the item box (Hud_RefreshIcon; the GBA's box at 0x0200B1F8): the
+  -- chosen item's 2x2 icon words, the item menu's own word table + level * 8
+  -- (st.itemIcon, from Hud.itemIcon); no item leaves the template's box empty
+  if st.itemIcon and at.itemBox then
+    local ic = st.itemIcon
+    put(at.itemBox, ic[1]); put(at.itemBox + 1, ic[2])
+    put(at.itemBox + 32, ic[3]); put(at.itemBox + 33, ic[4])
+  end
   return w
+end
+
+-- r19: the HUD item box's 4 words for the game's chosen item (the menu's
+-- slot tables, RomMap.menu.gridTab / bottleTab, level = the inventory byte;
+-- bombs draw level 1 while there are any), or nil
+function H.itemIcon(game)
+  local data = game.data
+  local t = data and data.menus
+  if not t or not game.yItem then return nil end
+  local R = require("src.zelda.alttp.RomMap")
+  local _, s = game:yItem()
+  if not s or s < 1 then return nil end
+  local inv = require("src.zelda.alttp.Menu").inventory(game)
+  local v = inv[0x1F + s] or 0
+  if v == 0 then return nil end
+  local m = R.menu
+  local tab = m.bottleSlots[s] and m.bottleTab or m.gridTab[s]
+  if not tab then return nil end
+  if s == m.bombsSlot then v = 1 end
+  local a = tab + v * 8
+  return { t:u16(a), t:u16(a + 2), t:u16(a + 4), t:u16(a + 6) }
 end
 
 -- 256-colour BG palette of the HUD layer: palettes 0/1 from the blob
@@ -116,15 +145,24 @@ local function tilePixels(chr, t, cache)
 end
 H.tilePixels = tilePixels
 
--- words (cols x rows, 1-based) -> flat 0-based colour indices (0 = clear)
-function H.decode(chr, words, cols, rows, cache)
+-- words (cols x rows, 1-based) -> flat 0-based colour indices (0 = clear).
+-- chrHi (optional, round 8): tiles 0x180-0x1FF (the item menu's language
+-- block the GBA loads to 0x06007000)
+function H.decode(chr, words, cols, rows, cache, chrHi)
   cache = cache or {}
   local W = cols * 8
   local out = {}
   for ty = 0, rows - 1 do
     for tx = 0, cols - 1 do
       local wd = words[ty * cols + tx + 1] or H.BLANK
-      local px = tilePixels(chr, band(wd, 0x3FF) % 0x180, cache)
+      local tn = band(wd, 0x3FF)
+      local px
+      if chrHi and tn >= 0x180 and tn < 0x200 then
+        cache.hi = cache.hi or {}
+        px = tilePixels(chrHi, tn - 0x180, cache.hi)
+      else
+        px = tilePixels(chr, tn % 0x180, cache)
+      end
       local hf, vf = band(wd, 0x400) ~= 0, band(wd, 0x800) ~= 0
       local pal = rshift(wd, 12) * 16
       for y = 0, 7 do

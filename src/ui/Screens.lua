@@ -399,7 +399,7 @@ end
 
 -- The id a push should really open, and the arguments it should open with.
 -- Public so the suite can state the rule without driving a whole game.
-function Screens.resolveId(game, id, arg)
+local function resolveIdOwn(game, id, arg)
   -- BLACK AND WHITE'S OWN SCREENS, ahead of everything (a Gen 5 cache is not
   -- a Gen 4 one, so the table below would hand it the Game Boy's): so far the
   -- evolution scene, positional like Platinum's
@@ -529,6 +529,20 @@ function Screens.resolveId(game, id, arg)
   return alias.id, arg
 end
 
+-- ...and MENU STYLE has the last word: a DS game set (OPTIONS -> MENU STYLE)
+-- to another imported game's menus opens that family's screen for each slot
+-- the donor's art covers (src/ui/MenuStyle.lua). OWN -- the default -- and
+-- every non-DS game come back exactly as resolveIdOwn answered.
+function Screens.resolveId(game, id, arg)
+  local to, a = resolveIdOwn(game, id, arg)
+  local ok, MenuStyle = pcall(require, "src.ui.MenuStyle")
+  if ok and type(to) == "string" and MenuStyle.isMenuScreen(to) then
+    local okR, routed = pcall(MenuStyle.route, game, to)
+    if okR and type(routed) == "string" then to = routed end
+  end
+  return to, a
+end
+
 local function resolve(game, id)
   local hit = cache[id]
   if hit then return hit end
@@ -541,6 +555,16 @@ local function resolve(game, id)
     factory.__modOwned = true
   else
     factory = builtinFor(id)
+    -- a menu screen MENU STYLE can borrow is built with the game it hands
+    -- back (the real one unless that slot borrows; MenuStyle.gameFor)
+    local okMS, MenuStyle = pcall(require, "src.ui.MenuStyle")
+    if okMS and MenuStyle.isMenuScreen(id) and type(factory) == "table"
+       and type(factory.new) == "function" then
+      local module = factory
+      factory = setmetatable({ new = function(g, ...)
+        return module.new(MenuStyle.gameFor(g, id), ...)
+      end }, { __index = module })
+    end
   end
   cache[id] = factory
   return factory

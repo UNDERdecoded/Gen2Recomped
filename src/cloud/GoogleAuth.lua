@@ -39,7 +39,9 @@ function G.client()
   if isAndroid() or (love and love.system and love.system.getOS() == "iOS") then
     local c = Clients.googleDevice()
     if c then return c, "device" end
+    local why = Clients.why and Clients.why()
     return nil, "Google sign-in on phones needs the TV / limited-input client (cloud_clients.lua)"
+      .. (why and (" -- " .. why) or "")
   end
   local c = Clients.googleDesktop()
   if c then return c, "browser" end

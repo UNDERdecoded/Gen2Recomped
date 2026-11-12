@@ -3539,6 +3539,10 @@ function OverworldState:animate(dt)
 end
 
 function OverworldState:update(dt)
+  -- RUN MODES: the Nuzlocke rules' frame (no-op on a normal save)
+  if Game and Game.save and (Game.save.runModes or (package.loaded["src.runmodes.RandomData"] or {}).applied) then
+    require("src.runmodes.RunHooks").tick(Game)
+  end
   -- `earthquake <n>` (Script_earthquake -> EarthquakeMovement 25:$725D):
   -- the BG jolts while the sprites stay put, which is exactly what bgShakeY
   -- already feeds into draw().

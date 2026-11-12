@@ -113,6 +113,15 @@ function Input:applyBindings(overlay)
   -- Resolved per call, not cached at load: GamepadMap picks the NX tables
   -- when love reports that OS, and applyBindings runs after love is up.
   for button, action in pairs(GamepadMap.gamepadBindings()) do pads[button] = action end
+  -- CHAT / ZOOM IN / ZOOM OUT (src/core/HotActions.lua): T, LT, R3, L3.
+  -- Laid under the overlay like every default, so a rebind wins the input.
+  local HotActions = require("src.core.HotActions")
+  for key, action in pairs(HotActions.KEY_DEFAULTS) do
+    if keys[key] == nil then keys[key] = action end
+  end
+  for button, action in pairs(HotActions.PAD_DEFAULTS) do
+    if pads[button] == nil then pads[button] = action end
+  end
   for index, action in pairs(GamepadMap.rawBindings()) do joys[index] = action end
   for actionId, binding in pairs(overlay or {}) do
     if type(binding) == "table" then
@@ -166,6 +175,10 @@ local function press(self, btn, source)
   if not sources[source] then
     sources[source] = true
     table.insert(self.pressQueue, btn)
+    -- which device said it last (HotActions: T opens the typed chat line,
+    -- a pad or touch the quick list)
+    self.lastSource = self.lastSource or {}
+    self.lastSource[btn] = source
   end
   self.state[btn] = true
 end

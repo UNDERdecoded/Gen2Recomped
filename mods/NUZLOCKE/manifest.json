@@ -1,0 +1,20 @@
+{
+  "id": "NUZLOCKE",
+  "name": "Nuzlocke & Soul Link",
+  "version": "1.0.0",
+  "api": 2,
+  "entry": "main.lua",
+  "profile": "content",
+  "category": "MECHANIC",
+  "game_version": "0.0.0-dev || >=0.7.0 <3.0.0",
+  "priority": 100,
+  "dependencies": [],
+  "optional_dependencies": [],
+  "conflicts": [],
+  "permissions": [
+    "engine_internals"
+  ],
+  "affects_link": false,
+  "run_rules": true,
+  "description": "The Nuzlocke and Soul Link rules for every Pokemon game: Red/Blue/Yellow, Gold/Silver/Crystal, Emerald/FireRed/LeafGreen, Platinum, HeartGold/SoulSilver and Black/White. A save opts in at NEW GAME (RUN MODES); every other save is untouched. Only the first POKéMON met in each area may be caught, a fainted POKéMON is gone for good (kept in the run's record, never deleted), and the run ends when the whole party is gone. Soul Link pairs your encounters with a friend's over an online world: when one dies, its partner dies too. Read the record from OPTIONS -> NUZLOCKE. (The randomizer is a game setting, not part of this mod.)"
+}

@@ -158,6 +158,24 @@ end
 
 local function buildRows(game)
   local rows = {
+    -- MY LOOK, first: your character's sheet and colours (skin / hair /
+    -- outfit / accent), worn offline in your own game and shown to other
+    -- players online -- one look for both (src/ui/online/AvatarScreen.lua,
+    -- options.looks[<game>]).  `top`: the Gen 3 / Gen 4-5 OPTION screens put
+    -- it above the cartridge's own rows too.
+    { id = "myLook", label = Strings("MY LOOK"), top = true,
+      value = function(g)
+        local ok, saved = pcall(function()
+          return require("src.online.world.Avatar").saved(g)
+        end)
+        return (ok and saved) and Strings("CUSTOM") or Strings("ORIGINAL")
+      end,
+      activate = function(g)
+        local ok, err = pcall(function()
+          require("src.ui.online.AvatarScreen").open(g)
+        end)
+        if not ok then Logger.warn("my look: %s", tostring(err)) end
+      end },
     { id = "stereo", label = Strings("SOUND"),
       value = function(g) return Strings(g.save.options.stereo == false and "MONO" or "STEREO") end,
       step = function(g)
@@ -761,6 +779,17 @@ local function buildRows(game)
       end }
   end
 
+  -- MENU STYLE: a DS game's start menu, bag, summary, dex, card and PC drawn
+  -- with ANOTHER imported DS game's menus (Platinum with Black's, ...), per
+  -- game (options.menuStyle[<version>]); OWN by default.  No row on Gen 1-3
+  -- or with no other DS game imported (src/ui/MenuStyle.lua).
+  do
+    local okMS, MenuStyle = pcall(require, "src.ui.MenuStyle")
+    local okRow, row = false, nil
+    if okMS then okRow, row = pcall(MenuStyle.optionRow, game, Strings) end
+    if okRow and row then rows[#rows + 1] = row end
+  end
+
   -- TV / CAST: what a second display -- the Thor's lower panel, or a TV the
   -- phone is casting to -- is for: MIRROR, BOTTOM or TOP (src/ui/CastDisplay
   -- .lua).  Every generation, because a cast carries the whole app; only
@@ -778,6 +807,47 @@ local function buildRows(game)
           CastDisplay.step(dir)
           return false
         end }
+    end
+  end
+
+  -- THE RANDOMIZER, a game setting of the engine's own (no mod involved):
+  -- RANDOM WILD / RANDOM STARTERS, per save (save.runModes, seeded once --
+  -- src/runmodes/Randomizer.lua).  Every family's options screen appends
+  -- these rows.  RANDOM STARTERS only matters before the starter is given.
+  if game and game.save and game.stack then
+    local function randomRow(id, key, label)
+      return { id = id, label = Strings(label),
+        value = function(g)
+          return require("src.runmodes.RunModes").on(g.save, key) and Strings("ON") or Strings("OFF")
+        end,
+        step = function(g)
+          local RunModes = require("src.runmodes.RunModes")
+          RunModes.setRandom(g.save, key, not RunModes.on(g.save, key))
+          return true
+        end }
+    end
+    rows[#rows + 1] = randomRow("randomWild", "randomWild", "RANDOM WILD")
+    rows[#rows + 1] = randomRow("randomStarters", "randomStarters", "RANDOM STARTERS")
+    -- the full randomizer (movesets, moves, types, marts, ... and FULL):
+    -- its own screen, src/ui/RandomizerSetup.lua
+    rows[#rows + 1] = { id = "randomizer", label = Strings("RANDOMIZER"),
+      value = function(g)
+        local RandomOptions = require("src.runmodes.RandomOptions")
+        local rm = require("src.runmodes.RunModes").get(g.save)
+        if RandomOptions.isFull(rm) then return Strings("FULL") end
+        local n = RandomOptions.count(rm)
+        return n > 0 and (n .. " " .. Strings("ON")) or Strings("OFF")
+      end,
+      step = function() return false end,
+      activate = function(g) require("src.ui.RandomizerSetup").openView(g) end }
+    -- a Nuzlocke / Soul Link save: its record (the NUZLOCKE mod's rules)
+    if require("src.runmodes.RunModes").nuzlocke(game.save) then
+      rows[#rows + 1] = { id = "runModes", label = Strings("NUZLOCKE"),
+        value = function(g)
+          return require("src.runmodes.RunModes").soulLink(g) and Strings("SOUL LINK") or Strings("ON")
+        end,
+        step = function() return false end,
+        activate = function(g) require("src.ui.RunSetup").openView(g) end }
     end
   end
 

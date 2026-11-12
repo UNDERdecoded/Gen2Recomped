@@ -24,12 +24,12 @@ local DEFAULTS = {
     burstBytes = 262144,
     queueBytes = 1048576,    -- a pair further behind than this is cut
     roomTtl = 1800,          -- seconds a hosted code waits for its guest
-    maxRooms = 500,
+    maxRooms = 1000,         -- relayed pairs (2 players each)
     preQueue = 64,           -- messages a host may send before its guest arrives
   },
   rendezvous = {
     enabled = true,
-    maxTickets = 2000,
+    maxTickets = 4000,
     ticketTtl = 7200,
     ticketsPerIp = 8,
     introductionsPerTicket = 64,
@@ -55,14 +55,19 @@ local DEFAULTS = {
     name = "HUB WORLD",
     game = nil,              -- "platinum", "emerald", ...
     data = nil,              -- that game's <install>/data/generated
-    cap = 16,                -- 2..16
+    cap = 16,                -- 2..1000 (a server/VPS hub; player-hosted worlds stay at 16)
     public = true,           -- unmodded games only, chat filter on
     filter = nil,            -- chat filter override (nil: on when public)
     gts = true,              -- members reach the hub GTS from inside the world
   },
+  -- MORE WORLDS, one per game (a world's maps are its game's): each entry
+  -- is a `world` table with its own game, data and UDP port, e.g.
+  --   worlds = { { game = "emerald", data = "/srv/emerald", port = 7781 }, ... }
+  -- Unset keys come from `world` (name: "<GAME> WORLD").
+  worlds = {},
   caps = {
-    tcpConnections = 512,
-    enetPeers = 256,
+    tcpConnections = 1100,   -- up to ~1000 players at once (a VPS hub)
+    enetPeers = 1100,        -- ENet allows up to 4095
     perIp = 16,              -- connections from one address (TCP + UDP)
     messagesPerSecond = 30,  -- control messages per connection
     messageBurst = 120,
@@ -104,7 +109,7 @@ local function merge(base, over, path, problems)
   for k, v in pairs(over) do
     local here = path and (path .. "." .. tostring(k)) or tostring(k)
     local d = base[k]
-    if here == "gts.pools" then
+    if here == "gts.pools" or here == "worlds" then
       if type(v) == "table" then base[k] = copy(v)
       else problems[#problems + 1] = "gts.pools: expected a table" end
     elseif type(d) == "table" and type(v) == "table" then
@@ -137,7 +142,7 @@ function Config.validate(cfg)
     if type(cfg.world.game) ~= "string" or type(cfg.world.data) ~= "string" then
       fatal[#fatal + 1] = "world.game and world.data are needed when the world is on"
     end
-    cfg.world.cap = math.max(2, math.min(16, math.floor(tonumber(cfg.world.cap) or 16)))
+    cfg.world.cap = math.max(2, math.min(1000, math.floor(tonumber(cfg.world.cap) or 16)))
   end
   if cfg.gts.enabled then
     local n = 0
@@ -158,6 +163,36 @@ function Config.validate(cfg)
       fatal[#fatal + 1] = "gts.dataMode is \"lean\" or \"full\""
     end
   end
+  -- the extra worlds: fill from `world`, check ports and data
+  local list, used = {}, { [cfg.udpPort] = "udpPort" }
+  if cfg.world.enabled then used[cfg.world.port] = "world.port" end
+  if type(cfg.worlds) ~= "table" then cfg.worlds = {} end
+  for i, w in ipairs(cfg.worlds) do
+    local here = ("worlds[%d]"):format(i)
+    if type(w) ~= "table" then
+      fatal[#fatal + 1] = here .. " must be a table"
+    else
+      local e = {}
+      for k, v in pairs(cfg.world) do e[k] = v end
+      for k, v in pairs(w) do e[k] = v end
+      e.enabled = w.enabled ~= false
+      if type(e.game) ~= "string" or type(e.data) ~= "string" then
+        fatal[#fatal + 1] = here .. ": game and data are needed"
+      end
+      e.port = tonumber(w.port)
+      if not portOk(e.port) then
+        fatal[#fatal + 1] = here .. ": port must be 1..65535 (each world has its own)"
+      elseif used[e.port] then
+        fatal[#fatal + 1] = ("%s: port %d is already %s"):format(here, e.port, used[e.port])
+      else
+        used[e.port] = here
+      end
+      if w.name == nil then e.name = (tostring(e.game or "HUB")):upper() .. " WORLD" end
+      e.cap = math.max(2, math.min(1000, math.floor(tonumber(e.cap) or 16)))
+      if e.enabled then list[#list + 1] = e end
+    end
+  end
+  cfg.worlds = list
   local key = cfg.admin.key
   if type(key) ~= "string" then key = "" cfg.admin.key = "" end
   if key ~= "" and #key < 12 then
@@ -170,7 +205,7 @@ function Config.validate(cfg)
     fatal[#fatal + 1] = "publicAddress is a string"
   end
   if not (cfg.relay.enabled or cfg.rendezvous.enabled or cfg.tournaments.enabled
-          or cfg.gts.enabled or cfg.world.enabled) then
+          or cfg.gts.enabled or cfg.world.enabled or #cfg.worlds > 0) then
     warn[#warn + 1] = "every service is off; the hub will do nothing"
   end
   return fatal, warn

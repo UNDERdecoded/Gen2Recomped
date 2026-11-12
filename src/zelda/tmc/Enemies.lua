@@ -17,7 +17,9 @@
 --     CreateRandomItemDrop with DeathFx_EnemyDroptables[id].
 --
 -- BEHAVIOURS ported from src/enemy/*.c: Octorok (full: idle / walk /
--- turn / spit a rock when facing Link).  ChuChu, Sluggula, Pesto,
+-- turn / spit a rock when facing Link).  Round 12: Puffstool, Sluggula and
+-- Mulldozer run their decomp code in EnemyDeepwood.lua (the old models
+-- below for them are no longer called).  ChuChu, Sluggula, Pesto,
 -- Puffstool, Mulldozer and Rope use a shared "hop / wander / charge"
 -- model tuned to each one's speed and health -- simplified, see
 -- docs/zelda/minishcap.md.
@@ -80,8 +82,11 @@ function Enemies:spawn(dat)
   -- ids from $60 are boss parts and helpers (TREE_ITEM, GYORG_*...): not
   -- ported here.  (A definition with draw 0 is an enemy that appears later,
   -- like a ChuChu rising from its puddle.)
+  do local x = require("src.zelda.tmc.R26").spawnEnemy(self, dat, self:def(dat.id, dat.paramA)) if x ~= nil then return x or nil end end -- round 26b: dungeon enemies / boss parts (R26.lua)
+  do local x = require("src.zelda.tmc.R27A").spawnEnemy(self, dat, self:def(dat.id, dat.paramA)) if x ~= nil then return x or nil end end -- round 27A (R27A.lua)
   if dat.id >= 0x60 then return nil end
   local d = self:def(dat.id, dat.paramA)
+  do local x = require("src.zelda.tmc.Crenel").spawnEnemy(self, dat, d) if x ~= nil then return x or nil end end -- round 5 (Crenel.lua)
   if dat.id == Boss.MADDERPILLAR or dat.id == Boss.CHUCHU_BOSS then return self.boss:spawn(dat, d) end
   if not d then return nil end
   local e = {
@@ -101,6 +106,11 @@ function Enemies:spawn(dat)
   e.homeY = rshift(dat.paramC, 16) ~= 0 and rshift(dat.paramC, 16) or math.max(0, e.y - 4 * ry)
   e.rangeW, e.rangeH = 8 * rx, 8 * ry
   self:setAnim(e, 0)
+  -- round 7: HANGING_SEED (hangingSeed.c) hangs with frameIndex = type and
+  -- only waits to be cut
+  if dat.id == 0x06 then e.staticFrame = dat.paramA or 0; e.inert = true end
+  require("src.zelda.tmc.EnemyTraps").init(self, e, dat) -- round 17: blade / sensor traps, wall masters, torch traps
+  e.spawnB, e.spawnC = dat.paramB or 0, dat.paramC or 0 -- round 24: EntityData paramB (type2, timer) / paramC for EnemyCoF2
   return e
 end
 
@@ -295,14 +305,16 @@ function Enemies:chuchu(e)
     e.timer = e.timer - 1
     if e.timer <= 0 then
       if playerNear(self, e, 0x38) then
-        e.action = 4; e.zv = 2.0; e.dir = toward(self, e); self:setAnim(e, 3)
+        -- round 11: chuchu.c sub_0801F1B0: hitType 90 while it jumps (it
+        -- hurts Link, Minish too), 92 again once down (contact only pushes)
+        e.action = 4; e.zv = 2.0; e.dir = toward(self, e); self:setAnim(e, 3); e.chuBase = e.chuBase or e.hitType; e.hitType = 90
       elseif playerNear(self, e, 0x48) then e.timer = rnd(4) + 12
       else e.action = 6; self:setAnim(e, 5) end
     end
   elseif a == 4 then
     self:move(e, e.dir, 0x100)
     e.z = e.z + e.zv; e.zv = e.zv - 0.25
-    if e.z <= 0 then e.z, e.zv = 0, 0; e.action, e.timer = 5, 60; self:setAnim(e, 2) end
+    if e.z <= 0 then e.z, e.zv = 0, 0; e.action, e.timer = 5, 60; self:setAnim(e, 2); e.hitType = e.chuBase or e.hitType end
   elseif a == 5 then
     self:move(e, e.dir, 0x20)
     e.anim:update(1)
@@ -449,10 +461,11 @@ end
 
 -- the hit rules those state machines add
 function Enemies:hitAllowed(e)
+  if e.noHit then return false end -- round 25: COLLISION_OFF (EnemyCoF3)
   if e.id == ID.CHUCHU and (e.action == 1 or e.hidden) then return false end
-  if e.id == ID.SLUGGULA and e.action >= 10 then return false end
-  if e.id == ID.PEAHAT and not e.grounded then return false end
-  if e.id == ID.PUFFSTOOL and not e.bare then return false end
+  if e.id == ID.SLUGGULA and e.form == 0 and (e.action or 0) < 3 then return false end -- round 12: still hanging / falling
+  -- round 20: no Peahat rule -- the matrix decides (hitType $70 flying vs the sword: no damage, knocked back $18 frames; $71 on the ground: hurt; bombs hurt it flying)
+  if e.id == ID.PUFFSTOOL and not e.puffInit and not e.bare then return false end -- round 12: puffstool.c uses the matrix ($82 / $83)
   return true
 end
 
@@ -520,7 +533,8 @@ function Enemies:update(e)
     end
     return
   end
-  if e.boss then return self.boss:update(e) end
+  if e.boss then return (e.impl or self.boss):update(e) end
+  if e.jarSub and require("src.zelda.tmc.GustJar").grabbedUpdate(self, e) then return end -- round 13: in the Gust Jar's pull
   if e.iframes > 0 then e.iframes = e.iframes - 1 end
   if e.kbt > 0 then
     e.kbt = e.kbt - 1
@@ -528,27 +542,50 @@ function Enemies:update(e)
     if not f.room:isSolid(nx, ny, 1) then e.x, e.y = nx, ny end
   elseif e.stunned and e.stunned > 0 then
     e.stunned = e.stunned - 1
+  elseif e.inert then -- round 7: HangingSeed_Hang does nothing
   elseif e.id == ID.OCTOROK then self:octorok(e)
   elseif e.id == ID.KEESE then self:keese(e)
   elseif e.id == ID.CHUCHU and e.form == 0 then self:chuchu(e)
-  elseif e.id == ID.SLUGGULA then self:sluggula(e)
+  elseif e.id == ID.SLUGGULA then require("src.zelda.tmc.EnemyDeepwood").slug.update(self, e) -- round 12: sluggula.c
   elseif e.id == ID.ROPE then self:rope(e)
-  elseif e.id == ID.PEAHAT then self:peahat(e)
-  elseif e.id == ID.MULLDOZER then self:mulldozer(e)
-  elseif e.id == ID.PUFFSTOOL then self:puffstool(e)
+  elseif e.id == ID.PEAHAT then require("src.zelda.tmc.EnemyCrenel").peahat(self, e) -- round 20: peahat.c (the older model: Enemies:peahat)
+  elseif e.id == ID.MULLDOZER then require("src.zelda.tmc.EnemyDeepwood").mull.update(self, e) -- round 12: mulldozer.c
+  elseif e.id == ID.PUFFSTOOL then require("src.zelda.tmc.EnemyDeepwood").puff.update(self, e) -- round 12: puffstool.c
+  elseif require("src.zelda.tmc.EnemyTraps").handles(e) then require("src.zelda.tmc.EnemyTraps").update(self, e) -- round 17
+  elseif require("src.zelda.tmc.EnemyCrenel").handles(e) then require("src.zelda.tmc.EnemyCrenel").update(self, e) -- round 19: tektite.c, fallingBoulder.c, smallPesto.c
+  elseif require("src.zelda.tmc.EnemyCoF").handles(e) then require("src.zelda.tmc.EnemyCoF").update(self, e) -- round 23: spikedBeetle.c, helmasaur.c
+  elseif require("src.zelda.tmc.EnemyCoF2").handles(e) then require("src.zelda.tmc.EnemyCoF2").update(self, e) -- round 24: spinyChuchu.c, chaser.c, rupeeLike.c
+  elseif require("src.zelda.tmc.EnemyCoF3").handles(e) then require("src.zelda.tmc.EnemyCoF3").update(self, e) -- round 25: rupeeLike.c, chuchu.c type 1
+  elseif require("src.zelda.tmc.R26").handles(e) then require("src.zelda.tmc.R26").update(self, e) -- round 26b: dungeon enemies (R26.lua)
+  elseif require("src.zelda.tmc.EnemyField").handles(e) then require("src.zelda.tmc.EnemyField").update(self, e) -- round 26A: overworld enemies (EnemyField1/2.lua)
+  elseif require("src.zelda.tmc.R27A").handles(e) then require("src.zelda.tmc.R27A").update(self, e) -- round 27A: leftover overworld enemies (R27A.lua)
   else
     self:generic(e)
   end
   -- touching Link
   local p = f.player
-  if p.state ~= "dead" and p.invuln == 0 and (e.z or 0) < 8 and not e.hidden and (e.def.collision ~= 0 or e.action >= 2) then
+  if p.state ~= "dead" and p.invuln == 0 and (e.z or 0) < 8 and not e.hidden and not e.inert and not e.noTouch and (e.def.collision ~= 0 or e.action >= 2 or e.collideOn) then -- round 25: collideOn = an Init's COLLISION_ON (EnemyCoF3)
     local hb = e.hitbox
-    if math.abs((e.x + hb.x) - p.x) < hb.w + 5 and math.abs((e.y + hb.y) - (p.y - 3)) < hb.h + 6 then
+    -- round 11: Link's own hitbox and hurtType (0, Minish 1) from the ROM
+    -- (Hitboxes.lua); CollisionNoOp entries (handler 1 / 2) let him pass,
+    -- handler 16 (sub_08018228) only pushes him out
+    local HBm = require("src.zelda.tmc.Hitboxes")
+    local touch = HBm.touches(f, p, e)
+    local handler = HBm.data(f) and HBm.handler(self.mtx, e.hitType or 0, HBm.hurtType(p))
+    if touch == nil then
+      touch = math.abs((e.x + hb.x) - p.x) < hb.w + 5 and math.abs((e.y + hb.y) - (p.y - 3)) < hb.h + 6
+    end
+    if touch and (handler == 1 or handler == 2) then touch = false end
+    if touch and handler == 16 then HBm.pushOut(f, e, hb); touch = false end
+    if touch then
       if p:blocksFrom(e.x, e.y) then
         f:sound(0x118)
         self:knock(e, p.x, p.y, 24, 8)
+        if e.id == ID.MULLDOZER then e.mullShield = true end -- round 12: Mulldozer_OnCollision case 2/3
+        if e.onCollision and require("src.zelda.tmc.EnemyCoF").handles(e) then e.onCollision(self, e, 0x80 + 2) end -- round 23: the shield's contact (hurtType 2): Spiked Beetle flip, Helmasaur recoil
       else
-        local s = self:settings(e.hitType, HURT_PLAYER) or DEFAULT_TOUCH
+        local s = self:settings(e.hitType, HBm.data(f) and HBm.hurtType(p) or HURT_PLAYER) or DEFAULT_TOUCH
+        if e.onCollision then e.onCollision(self, e, 0x80 + HBm.hurtType(p)) end -- round 21: contactFlags = Link's hurtType | $80
         if s.tgtDmg > 0 or s.orgKbDur > 0 then
           if p:hurt(math.max(s.tgtDmg, 1), e.x, e.y) then
             p.invuln = math.max(s.orgIfr, 30)
@@ -574,15 +611,34 @@ end
 
 -- a hit from Link's item (hurtType: 4 sword); returns true when it landed
 function Enemies:hit(e, hurtType, fromX, fromY, extraDamage)
-  if e.dying or e.iframes > 0 or e.projectile then return false end
+  if e.dying or e.iframes > 0 or e.projectile or e.mask then return false end -- round 23: + the Helmasaur's mask
+  if e.r26hit then local r = e.r26hit(self, e, hurtType, fromX, fromY, extraDamage) if r ~= nil then return r end end -- round 26b: per-enemy hit handlers (EnemyDHC: Dark Nut shield, slash parry, door mimic death)
   if not self:hitAllowed(e) then self.field:sound(0x118) return false end
   local s = self:settings(e.hitType, hurtType) or DEFAULT_SWORD
+  -- round 23: handler 10 (collision.c sub_080180E8, the masked Helmasaur): an
+  -- enemy moving within +-$C of straight at the attacker blocks (both knocked
+  -- back 12 frames, iframes 16); otherwise row $352 (hitType $19) applies
+  if self.mtx ~= "" and require("src.zelda.tmc.Hitboxes").handler(self.mtx, e.hitType or 0, hurtType) == 10 then
+    local v3 = band(dirTo(fromX or e.x, fromY or e.y, e.x, e.y) + 0x10 - 0xC, 0x1F)
+    if band((e.dir or 0) - v3, 0x1F) <= 0x18 then
+      self.field:sound(0x118)
+      self:knock(e, fromX or e.x, fromY or e.y, 48, 12)
+      e.iframes = 16 -- (Link's own 12-frame push back is not ported)
+      return false
+    end
+    s = self:settings(0x19, hurtType) or DEFAULT_SWORD
+  end
+  -- round 12: a spored Puffstool ($82) shrugs the sword off (no damage)
+  if e.id == ID.PUFFSTOOL and e.puffInit and e.hitType == 0x82 then extraDamage = 0; require("src.zelda.tmc.EnemyDeepwood").puff.shrug(self, e) end
   local dmg = (s.orgDmg or 0) + (extraDamage or 0)
-  if dmg <= 0 and (s.tgtKbDur or 0) <= 0 then return false end
+  -- round 21: the enemy's OnCollision sees contactFlags = hurtType | $80 (after the matrix's iframes)
+  if dmg <= 0 and (s.tgtKbDur or 0) <= 0 then if e.onCollision then e.onCollision(self, e, 0x80 + hurtType) end return false end
   e.health = e.health - dmg
   e.iframes = (s.tgtIfr and s.tgtIfr > 0) and s.tgtIfr or 12
   self:knock(e, fromX, fromY, s.tgtKbSpd or 24, s.tgtKbDur or 12)
+  if e.onCollision and e.health > 0 then e.onCollision(self, e, 0x80 + hurtType) end
   self.field:sound(SFX_HIT)
+  if e.id == ID.MULLDOZER then e.mullHit = true end -- round 12: Mulldozer_OnCollision default
   if e.health <= 0 then self:kill(e) end
   return true
 end
@@ -613,7 +669,7 @@ function Enemies:swordHits(box)
   local p = self.field.player
   for _, e in ipairs(self.field.entities) do
     if e.boss and not e.dying then
-      if self.boss:swordHit(e, box) then hits = hits + 1 end
+      if (e.impl or self.boss):swordHit(e, box) then hits = hits + 1 end
     elseif e.enemy and not e.dying then
       local hb = e.hitbox
       if math.abs((e.x + hb.x) - box.x) < hb.w + box.w and math.abs((e.y + hb.y) - box.y) < hb.h + box.h then
@@ -630,7 +686,10 @@ local GUSTABLE = { [ID.CHUCHU] = false, [ID.SLUGGULA] = true, [ID.PESTO] = true,
 function Enemies:gustPull(p, cx, cy, reach)
   local caught
   for _, e in ipairs(self.field.entities) do
-    if e.enemy and not e.dying and math.abs(e.x - cx) < reach and math.abs(e.y - cy) < reach then
+    if e.enemy and not e.dying and e.id == ID.PUFFSTOOL and e.puffInit and math.abs(e.x - cx) < reach and math.abs(e.y - cy) < reach then
+      -- round 12: Puffstool_OnGrabbed: held in the gust, its spores drain
+      e.gusted = true; e.gustDir = (p.animationState or 0) * 4
+    elseif e.enemy and not e.dying and math.abs(e.x - cx) < reach and math.abs(e.y - cy) < reach then
       local dx, dy = p.x - e.x, (p.y - 4) - e.y
       local d = math.max(0.01, math.sqrt(dx * dx + dy * dy))
       e.stunned = 30

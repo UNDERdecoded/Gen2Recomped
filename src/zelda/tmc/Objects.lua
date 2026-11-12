@@ -83,80 +83,41 @@ function Objects:groundItem(item, param, x, y, opts)
     local ev = self.m.kinstones and self.m.kinstones.events[param or 0]
     if ev then e.palette = self.A:objPalette(ev.objPalette) end
   end
-  if opts.drop then
-    e.zv = 1.875 -- Q_16_16(1.875)
-    e.z = 0.01
+  -- round 9: ItemOnGround (src/object/itemOnGround.c).  A drop (kind 0,
+  -- CreateItemDrop) is Kindx: action 1 rises (zVelocity 1.875, gravity
+  -- 40/256) to its apex, then action 2 bounces (BounceUpdate) with its
+  -- collision on and counts 600 frames down, blinking under 90.  z is kept
+  -- as the cartridge's Q16 (negative = up) in e.cz / e.czv.
+  e.life = nil
+  local k = opts.drop and 0 or opts.kind
+  if k == 0 or k == 5 or k == 6 or k == 10 then
+    e.act, e.cz, e.czv = 1, 0, math.floor((opts.zVelocity or 1.875) * 65536)
+    e.t6c, e.bounced = (k == 10) and 120 or 600, false
+    e.noDespawn = (k == 5)
+    if opts.direction then e.dir, e.spd = band(opts.direction, 0x1F), opts.speed or 0x100 end
+    e.drop = true
   else
-    e.life = nil -- placed items stay
+    e.act = 2; e.static = true -- kinds 4 / 5 and the rest: they stay
   end
   e.key = opts.key
   self.field.entities[#self.field.entities + 1] = e
   return e
 end
 
--- CreateItemDrop: the gates, then a ground item
+-- round 9: CreateItemDrop / CreateRandomItemDrop / the area table are the
+-- cartridge's own (Drops.lua); these keep the old entry points
 function Objects:createItemDrop(src, item, param)
-  local f = self.field
-  if item == ITEM.ENEMY_BEETLE then return nil end -- spawns a Beetle on the cartridge
-  if item == ITEM.BOMBS5 and f:inventory(ITEM.BOMBBAG) == 0 then return nil end
-  if item == ITEM.ARROWS5 and f:inventory(ITEM.BOW) == 0 then return nil end
-  if item == ITEM.SHELLS then
-    if f:inventory(ITEM.EARTH_ELEMENT) == 0 then return nil end
-    if (param or 0) == 0 then param = 1 end
-  end
-  if item == ITEM.KINSTONE or (item >= ITEM.KINSTONE_RED and item <= ITEM.KINSTONE_GREEN) then
-    if f:inventory(ITEM.KINSTONE_BAG) == 0 then return nil end
-    if item ~= ITEM.KINSTONE then
-      local row = self.m.drops and self.m.drops.kinstonePieces and self.m.drops.kinstonePieces[item - ITEM.KINSTONE_RED]
-      param = row and row[math.random(0, 0x3F)] or 0
-      if param == 0 then return nil end
-      item = ITEM.KINSTONE
-    end
-  end
-  return self:groundItem(item, param, src.x, src.y, { drop = true })
+  local id = require("src.zelda.tmc.Drops").createItemDrop(self.field, src, item, param, self)
+  return id ~= 0 and id or nil
 end
 
--- CreateRandomItemDrop(src, table): 1-12 enemy tables, 15 the area's
 function Objects:randomDrop(src, tableIndex)
-  local D = self.m.drops
-  if not D or self.field.dropsDisabled then return nil end
-  local base
-  if tableIndex >= 1 and tableIndex <= 12 then base = D.enemy[tableIndex]
-  elseif tableIndex == 15 then base = self:areaDroptable() end
-  if not base then return nil end
-  local s = self.field.save.stats
-  local t = {}
-  for k = 0, 15 do t[k] = base[k] or 0 end
-  if (s.health or 0) <= 8 then t[4] = t[4] + 5 end
-  if (s.bombCount or 0) == 0 then t[6] = t[6] + 3 end
-  if (s.arrowCount or 0) == 0 then t[7] = t[7] + 3 end
-  if (s.rupees or 0) <= 10 then t[2] = t[2] + 1 end
-  local sum = 0
-  for k = 0, 15 do
-    if t[k] < 0 then t[k] = 0 end
-    sum = sum + t[k]
-  end
-  if sum <= 0 then return nil end
-  local item = math.random(0, 15)
-  local r = math.random(0, sum - 1)
-  local acc = 0
-  for _ = 0, 15 do
-    acc = acc + t[item]
-    if acc > r then break end
-    item = (item + 1) % 16
-  end
-  local id = D.slotItems[item]
-  if id and id ~= 0 then return self:createItemDrop(src, id, 0) end
-  return nil
+  local id = require("src.zelda.tmc.Drops").randomDrop(self.field, src, tableIndex, self)
+  return id ~= 0 and id or nil
 end
 
--- gRoomVars.currentAreaDroptable: gAreaDroptables[gUnk_080FE1C6[location]]
 function Objects:areaDroptable()
-  local D = self.m.drops
-  local loc = self.field.room.areaInfo and self.field.room.areaInfo.location or 0
-  if loc > 0x16 then loc = 0 end
-  local idx = D.areaSelect and D.areaSelect[loc] or 0
-  return D.area and D.area[idx]
+  return self.field.areaDroptable
 end
 
 -- collect: rupees, hearts and pieces at once; everything else through the
@@ -169,40 +130,113 @@ function Objects:collect(e)
   if e.flagSpec then f:dungeon():set(e.flagSpec) end
   if RUPEES[item] then f:modStat("rupees", RUPEES[item]); f:sound(SFX.RUPEE); return end
   if item == ITEM.HEART then f:modStat("health", 8); f:sound(SFX.HEART); return end
-  if item == ITEM.FAIRY then f:modStat("health", 8 * 6); f:sound(SFX.HEART); return end
+  if item == ITEM.FAIRY then f:modStat("health", 0x20); f:sound(SFX.HEART); return end -- round 20: gItemMetaData[ITEM_FAIRY] ModHealth($20) (was 6 hearts)
   if item == ITEM.KINSTONE then f.kinstone:addPiece(e.param); f:sound(SFX.RUPEE); return end
   if item == ITEM.SHELLS then f:modStat("shells", math.max(1, e.param or 1)); f:sound(SFX.RUPEE); return end
-  if item == ITEM.BOMBS5 then f:modStat("bombCount", 5); return end
+  if item == ITEM.BOMBS5 then require("src.zelda.tmc.Bombs").mod(f, 5); return end -- round 20: ModBombs caps at the bag (19 of 10 were seen)
   if item == ITEM.ARROWS5 then f:modStat("arrowCount", 5); return end
   f:giveItem(item, e.param)
 end
 
 function Objects:updateGround(e)
   local f = self.field
-  if e.zv ~= 0 or (e.z or 0) > 0 then
-    e.z = (e.z or 0) + e.zv
-    e.zv = e.zv - 40 / 256
-    if e.z <= 0 then e.z = 0; e.zv = 0 end
+  -- round 9: ItemOnGround_Burried_Action2: shown (kind 0) once the tile
+  -- under it changes (dug); a sunken item waits for a dive (not ported)
+  if e.buried then
+    if e.buried == 7 and f.room:tileType(1, math.floor(e.x / 16), math.floor(e.y / 16)) ~= e.originalTile then
+      e.buried, e.hidden = nil, nil
+    else
+      e.hidden = true
+      return
+    end
   end
-  if e.life then
-    e.life = e.life - 1
-    e.hidden = e.life < 90 and e.life % 4 < 2
-    if e.life <= 0 then e.deleted = true return end
+  local G40 = 40 * 256 -- Q_8_8(40.0) in Q16
+  if e.act == 4 then
+    -- the pickup hop over Link's head (ItemOnGround_Action4), 14 frames
+    e.timer = e.timer - 1
+    if e.timer <= 0 then e.deleted = true return end
+    e.x, e.y = f.player.x, f.player.y
+    local nz = e.cz - e.czv
+    if nz >= 0 then e.cz, e.czv = 0, 0 else e.cz, e.czv = nz, e.czv - G40 end
+    e.z = -e.cz / 65536
+    return
   end
+  if e.act == 1 then
+    -- ItemOnGround_Action1: ProcessMovement2, GravityUpdate until the apex
+    if e.dir then self:moveDrop(e) end
+    local nz = e.cz - e.czv
+    if nz >= 0 then e.cz, e.czv = 0, 0 else e.cz, e.czv = nz, e.czv - G40 end
+    if e.czv <= 0 then e.act = 2; e.t6c = 600 end
+  elseif e.act == 2 and not e.static then
+    -- Kindx_Action2: sub_08081500 (BounceUpdate) then sub_080814C0
+    if not e.bounced then
+      local nz = e.cz - e.czv
+      if nz < 0 then
+        e.cz, e.czv = nz, e.czv - G40
+        if e.dir then self:moveDrop(e) end
+      else
+        e.cz = 1
+        local v = math.floor(-(e.czv - G40) / 2)
+        v = v + math.floor(v / 4)
+        if math.floor(v / 4096) >= 0xC then
+          e.czv = v
+          local sfx = self.m.drops and self.m.drops.itemSfx and self.m.drops.itemSfx[e.item]
+          if sfx and sfx ~= 0 then f:sound(sfx) end
+          if e.dir then self:moveDrop(e) end
+        else
+          e.czv, e.bounced = 0, true
+        end
+      end
+    end
+    if not e.noDespawn and not (f.textbox or f.playerScript or f:inputLocked()) then -- AnyPrioritySet
+      e.t6c = e.t6c - 1
+      if e.t6c <= 0 then e.deleted = true return end
+      if e.t6c < 90 then e.hidden = not e.hidden end
+    end
+  end
+  e.z = -(e.cz or 0) / 65536
+  if e.act ~= 2 then return end
+  -- contact: the item's hitbox (0, -3, 2x2) against Link's (0, -3, 6x6),
+  -- depth 5 + 5 (IsColliding)
   local p = f.player
-  if (e.z or 0) <= 2 and p.state ~= "dead" and math.abs(p.x - e.x) < 9 and math.abs(p.y - e.y) < 9 then
+  -- round 18: whole pixels (x.HALF.HI), as the cartridge compares them
+  if p.state ~= "dead" and math.abs(math.floor(p.x) - e.x) <= 8 and math.abs(math.floor(p.y) - e.y) <= 8
+     and math.abs((p.z or 0) - e.z) <= 10 then
     self:collect(e)
+    -- sub_08081598: the hop over Link's head (action 4); items with an
+    -- item-get scene go straight to it
+    local it = e.item
+    if not (RUPEES[it] or it == ITEM.HEART or it == ITEM.KINSTONE or it == ITEM.SHELLS
+            or it == ITEM.BOMBS5 or it == ITEM.ARROWS5) then return end
+    e.deleted = nil
+    e.act, e.timer, e.cz, e.czv, e.hidden = 4, 14, -math.floor(((p.z or 0) + 4) * 65536), 2 * 65536, false
+    e.pickedUp = true
   end
+end
+
+-- ProcessMovement2 for a drop launched forward (direction | $80, speed):
+-- a step that would land in a wall is dropped
+function Objects:moveDrop(e)
+  local a = e.dir * 8 / 256 * 2 * math.pi
+  local s = (e.spd or 0x100) / 256
+  local nx, ny = e.x + math.sin(a) * s, e.y - math.cos(a) * s
+  if not self.field.room:isSolid(nx, ny, 1) then e.x, e.y = nx, ny end
 end
 
 -- the item icon (held up, in menus): its ground sprite's first frame
 function Objects:drawItemIcon(item, x, y)
-  local d = self:def(OBJ.GROUND_ITEM, item)
-  if not d then return end
-  local s = self.A:sprite(d.sprite)
-  local keys = s and s.anims and s.anims[item]
-  local frame = keys and keys[1] and keys[1][1]
-  if not frame then return end
+  -- round 19: LINK_HOLDING_ITEM ($0B) and FOUR_ELEMENTS ($AC) also show an
+  -- item by sub_08080CB4 (animation = the item); the elements have no
+  -- GROUND_ITEM frames, so Link held nothing up for them
+  local d, frame
+  for _, id in ipairs({ OBJ.GROUND_ITEM, 0x0B, 0xAC }) do
+    local dd = self:def(id, item)
+    local s = dd and dd.sprite and self.A:sprite(dd.sprite)
+    local keys = s and s.anims and s.anims[item]
+    local fr = keys and keys[1] and keys[1][1]
+    if fr and fr ~= 0xFF then d, frame = dd, fr break end
+  end
+  if not d or not frame then return end
   local img, ox, oy = self.A:spriteFrame(d.sprite, frame, self.A:objPalette(d.palette), "icon", Assets.gfxSource(d.gfxType, d.gfx))
   if img then love.graphics.draw(img, math.floor(x + ox), math.floor(y + oy)) end
 end
@@ -260,9 +294,9 @@ function Objects:tileEntityAt(tx, ty, ttype)
   return nil
 end
 
-function Objects:tryAction(p)
+function Objects:tryAction(p, interactOnly)
   local f = self.field
-  if self:tryPortal(p) then return true end
+  if not interactOnly and self:tryPortal(p) then return true end
   if p.minish then return false end
   local px, py = p:probe()
   local r = f.room
@@ -284,9 +318,11 @@ function Objects:tryAction(p)
     f:message(msg)
     return true
   end
+  if interactOnly then return false end -- bug round: A interacts, R lifts
   -- lift: a liftable tile (filter 6) or a pot object in front
   for _, e in ipairs(f.entities) do
     if e.liftable and not e.deleted and math.abs(e.x - px) < 10 and math.abs(e.y - (py + 3)) < 10 then
+      if e.carryHook then return e.carryHook(f, p, e) end -- round 21: an entity that stays itself while carried (Rollobite)
       e.deleted = true
       return self:lift(p, { obj = e.id, form = e.form, def = e.def })
     end
@@ -336,6 +372,7 @@ function Objects:lift(p, what)
 end
 
 function Objects:drawCarried(c, x, y)
+  if c.bomb then return end -- round 20: a carried bomb draws itself (Bombs.drawBomb, over Link's head)
   local d = c.def
   if not d then
     love.graphics.setColor(0.35, 0.55, 0.85, 1)
@@ -354,6 +391,8 @@ end
 
 function Objects:throwCarried(p)
   local c = p.carried
+  if c and c.bomb then return require("src.zelda.tmc.Bombs").throw(self.field, p) end -- round 20
+  if c and c.hook then return c.hook.throw(self.field, p, c) end -- round 21 (EnemyBeetle: Rollobite)
   p.carried = nil
   if not c then return end
   local s = p.animationState
@@ -367,17 +406,27 @@ function Objects:throwCarried(p)
 end
 
 function Objects:dropCarried(p)
+  if p.carried and p.carried.bomb then return require("src.zelda.tmc.Bombs").drop(self.field, p) end -- round 20
+  if p.carried and p.carried.hook then return p.carried.hook.drop(self.field, p, p.carried) end -- round 21
   if p.carried then
     local c = p.carried
     p.carried = nil
-    self:shatter({ x = p.x, y = p.y })
-    local _ = c
+    self:breakThrown({ x = p.x, y = p.y, id = c.obj or OBJ.POT, form = c.form })
   end
 end
 
-function Objects:shatter(e)
+-- round 9: BreakPot / sub_0808288C (src/object/pot.c): form 0 makes
+-- FX_POT_SHATTER with type2 $80 (its drop table, 19 = object table 3 +
+-- the area table); another form leaves that item (param e.potParam);
+-- $FF nothing
+function Objects:shatter(e, form, param)
   self.field:sound(0x11C) -- the pot / bush break
-  self:randomDrop(e, 15)
+  form = form or 0
+  if form == 0 then
+    require("src.zelda.tmc.Drops").fxDrop(self.field, e, 0x05, self) -- FX_POT_SHATTER
+  elseif form ~= 0xFF then
+    self:groundItem(form, param or 0, e.x, e.y, { drop = true })
+  end
 end
 
 function Objects:updateThrown(e)
@@ -385,12 +434,33 @@ function Objects:updateThrown(e)
   e.x = e.x + e.vx
   e.y = e.y + e.vy
   e.z = e.z + e.zv
-  e.zv = e.zv - 0.25
-  local hit = f.room:isSolid(e.x, e.y, 1)
+  e.zv = e.zv - (e.grav or 0.25)
+  if e.potFlip and e.zv < 0 then e.flipY = true end -- round 10: Pot_Action5
+  local hit = not e.potFlip and f.room:isSolid(e.x, e.y, 1)
   if not hit then hit = f:enemies():hitByObject(e) end
   if e.z <= 0 or hit then
     e.deleted = true
-    self:shatter(e)
+    self:breakThrown(e)
+  end
+end
+
+-- round 9: what breaks where a thrown object lands: a pot (BreakPot, by
+-- its form), a bush (Bush_Action2SubAction5: CreateFx(FX_BUSH-type, $80),
+-- the bush variant and its drop roll)
+function Objects:breakThrown(e)
+  if e.id == 0x7D then -- round 21: OBJECT_ON_BEETLE thrown: sub_080989C0, CreateFx(FX_BUSH + type)
+    self.field:sound(0x11C)
+    self.field:addFx(e.x, e.y, OBJ.SPECIAL_FX, 3 + (e.form or 0))
+    return
+  end
+  if e.id == OBJ.BUSH then
+    local Drops = require("src.zelda.tmc.Drops")
+    local t = Drops.fxVariant(self.field, 0x03)
+    self.field:sound(0x11C)
+    self.field:addFx(e.x, e.y, OBJ.SPECIAL_FX, t)
+    Drops.fxDrop(self.field, e, t, self)
+  else
+    self:shatter(e, e.form or 0, e.potParam)
   end
 end
 
@@ -400,10 +470,20 @@ end
 function Objects:cut(x, y, layer)
   local entry, cx, cy = self:tileInteraction(0, x, y, layer)
   if entry then
-    -- grass / bush cut: FX, sometimes a drop from the area table
-    self.field:addFx(cx, cy, entry.obj, entry.objType)
-    if entry.obj == OBJ.SPECIAL_FX or entry.obj == OBJ.BUSH then
-      self:randomDrop({ x = cx, y = cy }, 15)
+    -- round 9: DoTileInteraction (asm/src/player.s): the entry's object
+    -- at the tile's centre; a SPECIAL_FX gets type2 $80, so its init picks
+    -- the FX variant (FX_BUSH / FX_GRASS_CUT: Random() & 3) and rolls
+    -- CreateRandomItemDrop(gUnk_0811F960[type].droptable): grass 16, bush
+    -- 17 (object table + area table).  Object $FF makes nothing.
+    local Drops = require("src.zelda.tmc.Drops")
+    if entry.obj == OBJ.SPECIAL_FX then
+      local t = Drops.fxVariant(self.field, entry.objType)
+      self.field:addFx(cx, cy, entry.obj, t)
+      Drops.fxDrop(self.field, { x = cx, y = cy }, t, self)
+    elseif entry.obj == OBJ.GROUND_ITEM then
+      self:groundItem(entry.objType, 0, x, y, { drop = true })
+    elseif entry.obj ~= 0xFF then
+      self.field:addFx(cx, cy, entry.obj, entry.objType)
     end
     self.field:sound(0x14C) -- SFX_14C: the cut
     return true
@@ -427,8 +507,13 @@ function Objects:addPortal(d)
 end
 
 function Objects:portalNear(pl)
+  -- round 10: Minish Link uses a portal from anywhere in the manager's
+  -- 64x64 box (minishPortalManager.c CheckPlayerProximity(x - $20, y - $20,
+  -- $40, $40) + PortalReadyForMinish: portal_mode 3); full-size Link has to
+  -- stand on it (PortalJump.lua: portal_mode 2)
+  local r = pl.minish and 0x20 or 10
   for _, p in ipairs(self.field.portals or {}) do
-    if math.abs(pl.x - p.x) <= 10 and math.abs(pl.y - p.y) <= 10 then return p end
+    if math.abs(pl.x - p.x) <= r and math.abs(pl.y - p.y) <= r then return p end
   end
   return nil
 end
@@ -457,12 +542,20 @@ end
 function Objects:portalDone(pl)
   local p = pl.portal
   pl.portal = nil
+  require("src.zelda.tmc.PortalJump").clear(pl) -- round 10
   pl.state = "normal"
   pl.animId = -1
   if pl.minish then
     pl.minish = false
     pl.x, pl.y = p.x, p.y + 8
     pl.animationState = 4
+    -- round 10: a portal on a stump (ACT_TILE_61 under it): Link stays on
+    -- top of it, as on the cartridge, and hops off with the d-pad
+    local r = self.field.room
+    local tt = r:tileType(pl.layer or 1, math.floor(p.x / 16), math.floor(p.y / 16))
+    if tt and tt < 0x4000 and self.field.assets.actTile[tt] == 0x3D then
+      require("src.zelda.tmc.PortalJump").standOn(pl, p)
+    end
   else
     pl.minish = true
     local o = EXIT_OFF[p.exit] or EXIT_OFF[2]

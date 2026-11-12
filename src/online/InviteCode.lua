@@ -616,7 +616,12 @@ function InviteCode.describe(invite)
   if type(invite) ~= "table" then return "" end
   if invite.type == "short" then return "Room " .. tostring(invite.room) end
   local parts = {}
-  if invite.kind == "hub" then parts[#parts + 1] = "Hub " .. tostring(invite.hub and invite.hub.ip) end
+  if invite.kind == "hub" then
+    local ip = invite.hub and invite.hub.ip
+    local okO, OH = pcall(require, "src.online.OfficialHub")
+    if okO and OH.isOfficial(ip) then return OH.NAME end
+    parts[#parts + 1] = "Hub " .. tostring(ip)
+  end
   if invite.kind ~= "hub" and invite.lan then parts[#parts + 1] = "LAN " .. invite.lan end
   if invite.kind ~= "hub" and invite.public then parts[#parts + 1] = "internet " .. invite.public end
   local s = table.concat(parts, " + ")

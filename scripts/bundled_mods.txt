@@ -8,3 +8,6 @@ DRAMATIC_SHAPE
 # Zallax's Emerald 3DS Voxels: its in-game bake (lib/bake) builds the voxels
 # from the player's own ROM, so it ships without generated/ or tools/.
 EMERALD_3DS_VOXEL
+# Nuzlocke / Soul Link rules for every Pokemon game: on by default, it does
+# nothing unless a save chose a Nuzlocke run at NEW GAME.  tests/ stays home.
+NUZLOCKE

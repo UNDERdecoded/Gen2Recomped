@@ -53,12 +53,12 @@ OnlineSettings.Model = Model
 -- the shape LinkState.settings reads (src/link/LinkState.lua SETTING_DEFAULTS),
 -- plus displayName, which WS8's worlds and the link hello may show
 Model.DEFAULTS = {
-  port = 7777, allowRelay = true, portMap = true, stun = false,
+  port = 7777, allowRelay = true, portMap = true, stun = true,
   manualAddress = nil, hubAddress = nil, worldCap = 8, lanBeacon = true,
   displayName = nil,
 }
 Model.KEYS = { "port", "allowRelay", "portMap", "stun", "manualAddress",
-               "hubAddress", "worldCap", "lanBeacon", "displayName" }
+               "hubAddress", "worldCap", "lanBeacon", "displayName", "stunChosen" }
 Model.PORT_MIN, Model.PORT_MAX = 1024, 65535
 Model.CAP_MIN, Model.CAP_MAX = 2, 16
 Model.NAME_MAX = 12      -- WorldProtocol.NAME_MAX
@@ -130,7 +130,10 @@ function Model.read(options)
   s.port = port
   s.allowRelay = s.allowRelay ~= false
   s.portMap = s.portMap ~= false
-  s.stun = s.stun == true
+  -- saves written before STUN went on by default hold stun = false that
+  -- nobody chose: only an OFF the player set themselves (stunChosen) counts
+  s.stun = s.stun ~= false or s.stunChosen ~= true
+  s.stunChosen = s.stunChosen == true or nil
   s.lanBeacon = s.lanBeacon ~= false
   s.manualAddress = trim(s.manualAddress)
   s.hubAddress = trim(s.hubAddress)
@@ -197,7 +200,7 @@ local ROWS = {
   { id = "allowRelay", label = "RELAY", long = "RELAY (SHORT CODES)", kind = "toggle", key = "allowRelay",
     help = "Short 6-letter codes and tournaments go through the relay, or your hub. Direct codes never use it." },
   { id = "stun", label = "ADDR FINDER", long = "ADDRESS FINDER (STUN)", kind = "toggle", key = "stun",
-    help = "Ask a public STUN server for your internet address. Off by default: it contacts a third party." },
+    help = "Ask a public STUN server for your internet address, so friends can reach you when the router won't open the port. Off: only router opening or a forwarded port." },
   { id = "lanBeacon", label = "LAN LIST", long = "LIST ON THIS NETWORK", kind = "toggle", key = "lanBeacon",
     help = "While you host, tell games on the same network, so their JOIN lists yours. Nothing leaves your network." },
   { id = "hubAddress", label = "LINK HUB", kind = "text", key = "hubAddress", charset = "address",
@@ -212,6 +215,8 @@ local ROWS = {
   { id = "displayName", label = "NAME", long = "DISPLAY NAME", kind = "text", key = "displayName", charset = "name",
     max = Model.NAME_MAX, empty = "TRAINER",
     help = "The name other players see. Empty: your trainer's name." },
+  { id = "look", label = "MY LOOK", long = "MY ONLINE LOOK", kind = "action",
+    help = "The character and colour other players see you as in worlds and link rooms." },
   { id = "connTest", label = "CONN TEST", long = "CONNECTION TEST", kind = "action",
     help = "Ask your router to open the port, then say whether friends should reach you. Talks to the router only." },
   { id = "privacy", label = "PRIVACY", long = "MY IP IN CODES", kind = "info",
@@ -373,7 +378,12 @@ function OnlineSettings:valueText(row)
   local s = self.s
   if row.kind == "toggle" then return s[row.key] and "ON" or "OFF" end
   if row.kind == "number" then return tostring(s[row.key]) end
-  if row.kind == "text" then return s[row.key] or row.empty end
+  if row.kind == "text" then
+    local v = s[row.key]
+    local okO, OH = pcall(require, "src.online.OfficialHub")
+    if okO and v then v = OH.mask(v) end
+    return v or row.empty
+  end
   if row.id == "privacy" then return Model.codesShowIp(s) and "IN CODES" or "LAN ONLY" end
   if row.id == "status" then return self:statusWord() end
   return ""
@@ -417,6 +427,7 @@ function OnlineSettings:step(row, dir)
   if row.kind == "toggle" then
     if self:rowDisabled(row) then playSound(self.game, "Wrong") return false end
     s[row.key] = not s[row.key]
+    if row.key == "stun" then s.stunChosen = true end
   elseif row.kind == "number" then
     local v = (tonumber(s[row.key]) or row.min) + dir
     if v > row.max then v = row.min elseif v < row.min then v = row.max end
@@ -431,7 +442,14 @@ end
 function OnlineSettings:activate(row)
   if row.kind == "toggle" then return self:step(row, 1) end
   if row.kind == "number" or row.kind == "text" then return self:beginEdit(row) end
-  if row.id == "connTest" then
+  if row.id == "look" then
+    local game = self.game
+    if not (game and game.data and game.data.sprites and game.stack) then
+      return self:showInfo("MY LOOK", "Open a game first: the characters come from its own ROM.")
+    end
+    require("src.ui.online.AvatarScreen").open(game)
+    return
+  elseif row.id == "connTest" then
     return self:startConnTest()
   elseif row.id == "privacy" then
     return self:showInfo("MY IP IN CODES", PRIVACY_NOTE)

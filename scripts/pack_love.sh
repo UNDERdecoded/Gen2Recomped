@@ -249,7 +249,13 @@ for required in main.lua conf.lua src/core/Version.lua \
                 mods/EMERALD_3DS_VOXEL/lib/BakeJob.lua \
                 mods/EMERALD_3DS_VOXEL/lib/BakeThread.lua \
                 mods/EMERALD_3DS_VOXEL/lib/bake/Bake.lua \
-                mods/EMERALD_3DS_VOXEL/lib/bake/recipes/BPEE.vtree; do
+                mods/EMERALD_3DS_VOXEL/lib/bake/recipes/BPEE.vtree \
+                mods/NUZLOCKE/manifest.json \
+                mods/NUZLOCKE/main.lua \
+                mods/NUZLOCKE/lib/Rules.lua \
+                mods/NUZLOCKE/lib/SoulLink.lua \
+                src/runmodes/RunModes.lua \
+                src/ui/RunSetup.lua; do
   [ -e "$STAGE/$required" ] || fail "payload is missing $required"
 done
 

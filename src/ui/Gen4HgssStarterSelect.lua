@@ -334,6 +334,8 @@ function Screen:drawPreview()
   -- createOneMonRender places the 80x80 sprite at (128,96) on this screen.
   if self.state == "inspect" or self.state == "confirm" then
     local species = self.species[self.selection + 1]
+    -- RUN MODES: a randomized-starters save shows the mon it will get
+    if species then species = require("src.runmodes.RunHooks").shownStarter(self.game, species) end
     local pic = species and self:image(Sprites.path(self.game.data, species, "front", { kind = "summary" }))
     if pic then
       local pw, ph = pic:getDimensions()

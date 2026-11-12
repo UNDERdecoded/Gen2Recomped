@@ -146,6 +146,7 @@ function LH.normalize(c)
                    services = type(c.friend.services) == "table" and c.friend.services or nil,
                    worldCode = type(c.friend.worldCode) == "string" and c.friend.worldCode or nil,
                    worldGame = type(c.friend.worldGame) == "string" and c.friend.worldGame or nil,
+                   worlds = type(c.friend.worlds) == "table" and c.friend.worlds or nil,
                    code = type(c.friend.code) == "string" and c.friend.code or nil }
   end
   return out
@@ -499,7 +500,9 @@ function LH.probe(invite)
       end
       tried[#tried + 1] = ("%s (%s)"):format(addr, e.path == "hub-lan" and "same Wi-Fi" or "internet")
     end
-    return nil, "no answer from " .. table.concat(tried, ", ")
+    local msg = "no answer from " .. table.concat(tried, ", ")
+    local okO, OH = pcall(require, "src.online.OfficialHub")
+    return nil, okO and OH.mask(msg) or msg
   end)
   state.probe = { job = job, invite = invite, phase = "trying" }
   return job
@@ -572,6 +575,41 @@ end
 
 function LH.probeState() return state.probe end
 
+-- A HUB WITH A WORLD PER GAME (hub config `worlds`): the one a game joins.
+-- pong.worlds = { { game, code, name }, ... } (older hubs: worldCode /
+-- worldGame only).  The same game first, then the same family.
+function LH.hubWorlds(pong)
+  if type(pong) ~= "table" then return {} end
+  if type(pong.worlds) == "table" and #pong.worlds > 0 then return pong.worlds end
+  if pong.worldCode then return { { game = pong.worldGame, code = pong.worldCode } } end
+  return {}
+end
+
+function LH.worldFor(pong, version)
+  local list = LH.hubWorlds(pong)
+  if #list == 0 then return nil end
+  if not version then return list[1].code, list[1] end
+  for _, w in ipairs(list) do if w.game == version then return w.code, w end end
+  local okV, GameVersion = pcall(require, "src.core.GameVersion")
+  local fam = okV and GameVersion.family and GameVersion.family(version) or nil
+  if fam then
+    for _, w in ipairs(list) do
+      if w.game and GameVersion.family(w.game) == fam then return w.code, w end
+    end
+  end
+  -- an old hub that did not say its game: offer it
+  if #list == 1 and not list[1].game then return list[1].code, list[1] end
+  return nil
+end
+
+-- the version id the running game is
+function LH.currentVersion()
+  local okV, GameVersion = pcall(require, "src.core.GameVersion")
+  if not okV then return nil end
+  local ok, id = pcall(GameVersion.get)
+  return ok and id or nil
+end
+
 function LH.pollProbe()
   local p = state.probe
   if not (p and p.job and p.phase == "trying") then return end
@@ -581,7 +619,7 @@ function LH.pollProbe()
     p.phase, p.pong = "ok", pong
     local cfg = LH.config()
     cfg.friend = { address = pong.address, name = pong.name, services = pong.services,
-                   worldCode = pong.worldCode, worldGame = pong.worldGame,
+                   worldCode = pong.worldCode, worldGame = pong.worldGame, worlds = pong.worlds,
                    code = p.invite and p.invite.display or nil }
     LH.save(cfg)
   elseif p.job.state == "failed" then
@@ -628,9 +666,11 @@ function LH.patchLinkState()
   local origSettings, origEndpoint = LinkState.settings, LinkState.hubEndpoint
   LinkState.settings = function(game, ...)
     local s = origSettings(game, ...)
-    if type(s) == "table" and not s.hubAddress then
+    -- (the official server is only a fallback: the launcher's own or a
+    -- friend's hub replaces it)
+    if type(s) == "table" and (not s.hubAddress or s.hubOfficial) then
       local okA, addr = pcall(LH.gameHubAddress)
-      if okA and addr then s.hubAddress, s.hubFromLauncher = addr, true end
+      if okA and addr then s.hubAddress, s.hubFromLauncher, s.hubOfficial = addr, true, nil end
     end
     return s
   end
@@ -731,8 +771,9 @@ function LH.handleJoinSecret(game, code)
   local p = state.probe
   local okT, TextBox = pcall(require, "src.ui.TextBox")
   if p and p.phase == "ok" then
-    if p.pong.worldCode and game then
-      LH.setPending({ kind = "world", code = p.pong.worldCode })
+    local wcode = game and LH.worldFor(p.pong, LH.currentVersion()) or nil
+    if wcode and game then
+      LH.setPending({ kind = "world", code = wcode })
       LH.runPending(game)
     elseif okT and game then
       game.stack:push(TextBox.new(game, ("Now using %s's\nLink Hub."):format(tostring(p.pong.name or "a friend"))))

@@ -36,22 +36,50 @@ local BUTTONS = {
   -- src/core/Input.lua), and this is where they are bound.
   { id = "l", label = "L", key = "q", pad = "leftshoulder" },
   { id = "r", label = "R", key = "e", pad = "rightshoulder" },
+  -- NOT CARTRIDGE BUTTONS: src/core/HotActions.lua reads these on the field.
+  -- CHAT does nothing outside an online world or link room.  The zoom rows
+  -- are pad-only: the mouse wheel and '-' / '=' already zoom, and a keyboard
+  -- capture on them is ignored (ESC still cancels).
+  { id = "chat", label = "CHAT", key = "t", pad = "triggerleft", hot = true },
+  { id = "zoomin", label = "ZOOM IN", pad = "rightstick", hot = true, padOnly = true, keyLabel = "WHEEL" },
+  { id = "zoomout", label = "ZOOM OUT", pad = "leftstick", hot = true, padOnly = true, keyLabel = "WHEEL" },
 }
+BindingsMenu.BUTTONS = BUTTONS
+
+-- a hot row's DEFAULT input is laid under the overlay (Input:applyBindings),
+-- so another row's rebind onto it takes it away: show that honestly
+local function claimedByOther(overlay, def, slot, value)
+  if not (overlay and value) then return false end
+  for id, b in pairs(overlay) do
+    if id ~= def.id then
+      if slot == "key" and (b == value or (type(b) == "table" and b.key == value)) then return true end
+      if slot == "pad" and type(b) == "table" and b.pad == value then return true end
+    end
+  end
+  return false
+end
 
 -- a binding is a plain key string or { key, pad }; absent = the fixed
 -- map, so a vanilla save renders today's keys byte-identically
 local function boundKey(overlay, def)
   local b = overlay and overlay[def.id]
-  if type(b) == "table" then return b.key or def.key end
+  if type(b) == "table" and b.key then return b.key end
   if type(b) == "string" then return b end
+  if def.hot and claimedByOther(overlay, def, "key", def.key) then return nil end
   return def.key
 end
 
 local function boundPad(overlay, def)
   local b = overlay and overlay[def.id]
   if type(b) == "table" and b.pad then return b.pad end
+  if def.hot then
+    if claimedByOther(overlay, def, "pad", def.pad) then return nil end
+    return def.pad
+  end
   return GamepadMap.defaultPadForAction(def.id) or def.pad
 end
+BindingsMenu.boundKey = boundKey
+BindingsMenu.boundPad = boundPad
 
 -- The right column is KEY/PAD (e.g. "Z/A").  The row is 20 tiles and the
 -- widest label ("SELECT") ends at x=64, so each half is clamped to 5
@@ -81,15 +109,18 @@ end
 -- Right column for every row: effective key and pad together, so a
 -- controller player can read the whole map without a second legend (#589).
 local function boundRight(overlay, def)
-  local key = shortName(boundKey(overlay, def), KEY_SHORT)
+  local rawKey = boundKey(overlay, def)
+  local key = rawKey and shortName(rawKey, KEY_SHORT) or def.keyLabel or "-"
   local pad = boundPad(overlay, def)
   if pad then
     local label = shortName(pad, PAD_SHORT)
     if pad=='a' or pad=='b' or pad=='x' or pad=='y' then label=GamepadMap.buttonLabel(pad) end
     return key .. "/" .. label
   end
+  if def.hot then return key .. "/-" end
   return key
 end
+BindingsMenu.boundRight = boundRight
 
 function BindingsMenu.new(game)
   local overlay = game.save and game.save.options
@@ -168,6 +199,8 @@ end
 -- which no rebind removes, so reserving it costs the player nothing.
 function BindingsMenu:captureKey(key)
   if key == "escape" or self.pending then return self:endCapture() end
+  -- the zoom rows take a pad input only; the keyboard already has the wheel
+  if self.capture and self.capture.button and self.capture.button.padOnly then return end
   self.pending = { slot = "key", value = key }
 end
 

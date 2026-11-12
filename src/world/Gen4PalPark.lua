@@ -197,7 +197,7 @@ function P.battle(ow, index)
   local mon = st.transfer[index]
   if not mon then return false end
   local BattleState = require("src.battle.BattleState")
-  local battle = BattleState.newWild(G, mon.species, mon.level or 1)
+  local battle = require("src.runmodes.RunHooks").quiet(BattleState.newWild, G, mon.species, mon.level or 1)
   battle.enemy = BattleState.makeBattler(G.data, copy(mon), false)
   battle:makeSafari({ balls = P.parkBalls(G.save), palPark = true })
   battle.palPark = { index = index }

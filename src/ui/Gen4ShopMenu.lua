@@ -133,6 +133,11 @@ end
 -- Shop_GetCurrentMoney, Shop_TakeMoney), YES / NO for BUY / SEE YA!, and
 -- bank 543's BP lines (32-38) where the money ones were
 function Shop.new(game, stock, onQuit, goods, opts)
+  -- RUN MODES: MART ITEMS (src/runmodes/RunHooks.lua martStock); not the
+  -- BP corners, the decoration counters or a buyer's own list
+  if not goods and not (opts and (opts.frontier or opts.buyList)) then
+    stock = require("src.runmodes.RunHooks").martStock(game, stock)
+  end
   local self = setmetatable({ game = game, stock = stock or {}, onQuit = onQuit, goods = goods,
     frontier = opts and opts.frontier or nil,
     mode = 'menu', cursor = 1, scroll = 0, camStep = 0, camAcc = 0, yesNo = 1 }, Shop)

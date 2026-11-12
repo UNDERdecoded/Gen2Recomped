@@ -755,6 +755,8 @@ end
 -- playthrough).
 function Commands.g4_give_item(ctx, item, count, destVar)
   local id = itemKey(ctx.game and ctx.game.data, valueOf(ctx, item))
+  -- RUN MODES: FIELD ITEMS & GIFTS (src/runmodes/RunHooks.lua giftItem)
+  id = require("src.runmodes.RunHooks").giftItem(ctx.game, id)
   local n = math.max(valueOf(ctx, count), 1)
   pcall(function() require("src.core.Probe").say("item", "give %s x%s", tostring(id), tostring(n)) end)
   local ok = ctx.save and require("src.inventory.Bag").add(ctx.save, id, n, ctx.game and ctx.game.data) and true or false
@@ -8645,7 +8647,8 @@ function Gen4Commands.reminderMoves(data, mon)
       out[#out + 1] = e.move
     end
   end
-  return out
+  -- RUN MODES: MOVE RELEARNER (src/runmodes/RunHooks.lua relearnable)
+  return require("src.runmodes.RunHooks").relearnable(mon, out)
 end
 
 local function learnMoveName(data, id)

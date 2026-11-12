@@ -48,7 +48,9 @@ Player.ANIM = ANIM
 
 -- animations that do not add the facing
 local NO_FACING = { [0x2E0] = true, [0x45E] = true, [0x2C3] = true, [0x738] = true, [0x73C] = true,
-                    [0x736] = true, [0x737] = true, [0x73A] = true, [0x73B] = true }
+                    [0x736] = true, [0x737] = true, [0x73A] = true, [0x73B] = true,
+                    [0x1B8] = true, [0x1BA] = true, [0x458] = true } -- round 11: ANIM_FALL (+ Minish, no cap)
+NO_FACING[0x1B9], NO_FACING[0x45B], NO_FACING[0x45F] = true, true, true -- round 22: ANIM_GET_ITEM_BIG (+ no cap), _SWORD
 
 function Player:animFor(kind)
   if self.minish then return ANIM[kind .. "Minish"] or ANIM.walkMinish end
@@ -80,7 +82,14 @@ function Player:setAnim(id, force)
   local base = id
   local sprite = rshift(base, 8)
   local index = band(base, 0xFF)
-  if not NO_FACING[base] then index = index + rshift(self.animationState, 1) end
+  if not NO_FACING[base] then
+    index = index + rshift(self.animationState, 1)
+    -- bug round: sub_08079064 also sets the entity's spriteSettings.flipX
+    -- for a facing animation (animationState >= 5, i.e. left); the drawer
+    -- XORs it with the keyframe's flip. Without it Link faced right when
+    -- walking, standing or swinging left.
+    self.entFlip = self.animationState >= 5
+  end
   local full = sprite * 256 + index
   if full == self.animId and not force then return end
   self.animId = full
@@ -93,9 +102,19 @@ function Player:blocked(x, y)
   local room = self.field.room
   local hw, top, bottom = HW, TOP, BOTTOM
   if self.minish then hw, top, bottom = HW_MINISH, TOP_MINISH, BOTTOM_MINISH end
-  if room:isSolid(x - hw, y + top, self.layer) or room:isSolid(x + hw - 1, y + top, self.layer)
-     or room:isSolid(x - hw, y + bottom, self.layer) or room:isSolid(x + hw - 1, y + bottom, self.layer) then
-    return true
+  -- round 9: Link's own collision tables (sub_080085CC picks one by state)
+  local tab = 0
+  if self.swimming then tab = self.minish and 2 or 3
+  elseif (self.z or 0) > 0 or self.jumping then tab = 4
+  elseif self.minish then tab = 1
+  elseif self.carried or self.gusting then tab = 5 end
+  local sw = self.swimming and true or false
+  local function solid(px, py) return room:isSolidPlayer(px, py, self.layer, tab, sw) end
+  if solid(x - hw, y + top) or solid(x + hw - 1, y + top)
+     or solid(x - hw, y + bottom) or solid(x + hw - 1, y + bottom) then
+    -- round 8: ladder tiles are solid in the collision data; Link walks
+    -- into them lined up with the ladder (Climb.lua)
+    if not (not self.minish and require("src.zelda.tmc.Climb").enterable(self.field, x, y)) then return true end
   end
   return self.field:entityBlocks(self, x, y)
 end
@@ -103,11 +122,50 @@ end
 -- one axis at a time, with the cartridge's corner nudge: if only one front
 -- corner is caught, slide sideways around it (src/movement.c MoveNorth's
 -- COL_NORTH_WEST / COL_NORTH_EAST cases)
+-- round 10: a blocked step still ends flush with the wall (the cartridge
+-- works in whole pixels: x.HALF.HI): Link moves to the last free whole pixel
+-- before the obstacle, so a sub-pixel remainder (e.g. y 524.75 at a south
+-- border lane) never keeps him a pixel short of an edge or a door
+local function snapTo(self, cur, new, axis)
+  local t = new > cur and math.floor(new) or math.ceil(new)
+  local step = new > cur and -1 or 1
+  while (new > cur and t > cur) or (new < cur and t < cur) do
+    local free
+    if axis == "x" then free = not self:blocked(t, self.y) else free = not self:blocked(self.x, t) end
+    if free then return t end
+    t = t + step
+  end
+  return nil
+end
+
+-- round 11: the cartridge probes only the leading edge of a move
+-- (movement.c MoveNorth/East/...): when Link stands embedded in something
+-- solid (a pushed statue settling against him, an object pushing him out)
+-- he can still step away as long as the side he moves toward is free
+function Player:leadFree(nx, ny, dx, dy)
+  local room = self.field.room
+  local hw, top, bottom = HW, TOP, BOTTOM
+  if self.minish then hw, top, bottom = HW_MINISH, TOP_MINISH, BOTTOM_MINISH end
+  local tab = self.minish and 1 or 0
+  local function solid(px, py) return room:isSolidPlayer(px, py, self.layer, tab, self.swimming and true or false) end
+  if dx > 0 then return not (solid(nx + hw - 1, ny + top) or solid(nx + hw - 1, ny + bottom)) end
+  if dx < 0 then return not (solid(nx - hw, ny + top) or solid(nx - hw, ny + bottom)) end
+  if dy > 0 then return not (solid(nx - hw, ny + bottom) or solid(nx + hw - 1, ny + bottom)) end
+  if dy < 0 then return not (solid(nx - hw, ny + top) or solid(nx + hw - 1, ny + top)) end
+  return true
+end
+
 function Player:moveBy(dx, dy)
+  -- round 18: Minish doors / log tunnels (MinishTunnel.lua)
+  if self.tunnel then local tm = require("src.zelda.tmc.MinishTunnel").move(self, dx, dy); if tm ~= nil then return tm end end
   local moved = false
+  local embedded = (dx ~= 0 or dy ~= 0) and self:blocked(self.x, self.y)
   if dx ~= 0 then
     local nx = self.x + dx
-    if not self:blocked(nx, self.y) then self.x = nx; moved = true
+    local sx = self:blocked(nx, self.y) and snapTo(self, self.x, nx, "x")
+    if sx and sx ~= self.x then self.x = sx; moved = true
+    elseif not self:blocked(nx, self.y) then self.x = nx; moved = true
+    elseif embedded and self:leadFree(nx, self.y, dx, 0) then self.x = nx; moved = true
     elseif dy == 0 then
       for _, n in ipairs({ -1, 1 }) do
         if not self:blocked(nx, self.y + n * 4) and not self:blocked(self.x, self.y + n) then
@@ -118,7 +176,10 @@ function Player:moveBy(dx, dy)
   end
   if dy ~= 0 then
     local ny = self.y + dy
-    if not self:blocked(self.x, ny) then self.y = ny; moved = true
+    local sy = self:blocked(self.x, ny) and snapTo(self, self.y, ny, "y")
+    if sy and sy ~= self.y then self.y = sy; moved = true
+    elseif not self:blocked(self.x, ny) then self.y = ny; moved = true
+    elseif embedded and self:leadFree(self.x, ny, 0, dy) then self.y = ny; moved = true
     elseif dx == 0 then
       for _, n in ipairs({ -1, 1 }) do
         if not self:blocked(self.x + n * 4, ny) and not self:blocked(self.x + n, self.y) then
@@ -127,6 +188,7 @@ function Player:moveBy(dx, dy)
       end
     end
   end
+  if self.minish and moved then require("src.zelda.tmc.MinishTunnel").surface(self) end -- round 18
   return moved
 end
 
@@ -186,6 +248,11 @@ end
 -- hurt: knockback away from (sx, sy), damage in save units (8 = a heart)
 function Player:hurt(damage, sx, sy)
   if self.invuln > 0 or self.state == "dead" or self.state == "itemget" then return false end
+  if self.inCart then return false end -- round 7: in a mine cart (hurtType 30)
+  -- round 23: the mushroom fling (PLAYER_08072C9C) runs with COLLISION_OFF from
+  -- sub_08072CC0 until it lands (sub_08072D54's COLLISION_ON) -- a hit mid-flight
+  -- used to end the fling and leave Link at z > 0 (no lifting afterwards)
+  if self.fling and (self.fling.phase or 0) < 3 then return false end
   local f = self.field
   f:modStat("health", -damage)
   f:sound(0x7A) -- SFX_PLY_VO7-ish grunt (named SFX in sound.h are sparse)
@@ -195,6 +262,8 @@ function Player:hurt(damage, sx, sy)
   self.kbx, self.kby = dx / d * 2, dy / d * 2
   self.invuln = 60
   if self.state == "carry" then f:objects():dropCarried(self) end
+  -- round 20: hit while gliding (PlayerParachute: iframes -> the fall, still in the air)
+  if (self.para or self.fall) and require("src.zelda.tmc.Whirlwind").hurt(self) then return true end
   self.state = "hurt"
   self.timer = 12
   if (f.save.stats.health or 0) <= 0 then
@@ -245,19 +314,25 @@ function Player:useItem(item, button, input)
     f:items():gustStart(self)
     return true
   end
+  do local x = require("src.zelda.tmc.Crenel").useItem(self, item, button, input) if x then return true end end -- round 5
   return false
 end
 
 function Player:update(input)
   local f = self.field
   if self.invuln > 0 then self.invuln = self.invuln - 1 end
+  require("src.zelda.tmc.Layers").surface(f, self) -- round 23: sub_0807A8D8 (every frame): the tile-type flags pick the layer
   local walkAnim = self:animFor("walk")
   local idleAnim = self:animFor("idle")
   local st = self.state
 
+  do local x = require("src.zelda.tmc.ItemsR26").frame(self, input) if x then return end end -- round 26A: item states (sword charge/spin, swimming...; ItemsR26.lua)
+  do local x = require("src.zelda.tmc.R27B").playerFrame(self, input) if x then return end end -- round 27b: frozen Link etc. (R27B.lua)
+  if st == "ext" then return self.extUpdate(self, input) end -- round 5 (Crenel.lua: cane, spring jump)
   if st == "dead" then
     self.timer = self.timer - 1
     self.anim:update(1)
+    if self.timer <= 0 and require("src.zelda.tmc.CrenelPath").fairyRevive(self) then return end -- round 22: a bottled fairy
     if self.timer <= 0 then f:onPlayerDied() end
     return
   elseif st == "hurt" then
@@ -267,11 +342,7 @@ function Player:update(input)
     if self.timer <= 0 then self.state = "normal" end
     return
   elseif st == "itemget" then
-    self.anim:update(1)
-    if not f:messageActive() then
-      self.itemGetHold = (self.itemGetHold or 0) + 1
-      if self.itemGetHold > 4 then self.state = "normal"; self.heldItem = nil; self.itemGetHold = nil end
-    end
+    require("src.zelda.tmc.ItemGet").update(f, self) -- round 22: PLAYER_ITEMGET (ItemGet.lua)
     return
   elseif st == "portal" then
     self.anim:update(1)
@@ -313,6 +384,7 @@ function Player:update(input)
   end
 
   local locked = not self.control or f:inputLocked()
+  if f.macroInput then locked = false end -- a player macro drives Link in cutscenes
   local dx, dy = 0, 0
   if not locked then dx, dy = dirInput(input) end
 
@@ -340,10 +412,13 @@ function Player:update(input)
   elseif st == "gust" then
     if locked or not input.down(self.itemButton or "a") then
       f:items():gustRelease(self)
-      self.state = "normal"
+      -- round 13: GustJar.release puts Link in the blow state (ext)
+      if self.state == "gust" then self.state = "normal" end
+      if self.state ~= "normal" then return end
     else
       self.lockFacing = true
-      if self:walk(dx, dy, Player.GUST_SPEED, ANIM.gustWalk, ANIM.gust) then self.anim:update(1) end
+      if self.jar and self.jar.state == "pullout" then self.anim:update(1)
+      elseif self:walk(dx, dy, Player.GUST_SPEED, ANIM.gustWalk, ANIM.gust) then self.anim:update(1) end
       self.lockFacing = nil
       f:items():gustFrame(self)
       return
@@ -351,6 +426,8 @@ function Player:update(input)
   end
 
   if not locked then
+    -- bug round: A talks / reads / opens before it uses the A item
+    if input.pressed("a") and f:tryInteractA(self) then return end
     for _, b in ipairs({ "b", "a" }) do
       if input.pressed(b) and not self.minish then
         local item = f:equipped(b)
@@ -361,7 +438,7 @@ function Player:update(input)
       -- Minish Link only swings the sword
       for _, b in ipairs({ "b", "a" }) do
         local item = f:equipped(b)
-        if input.pressed(b) and item and item >= 1 and item <= 6 then
+        if input.pressed(b) and item and ((item >= 1 and item <= 6) or (item >= 0x1C and item <= 0x1F)) then -- round 8: bottles too
           if self:useItem(item, b, input) then return end
         end
       end
@@ -378,15 +455,59 @@ function Player:update(input)
     end
   end
 
+  local x0, y0 = self.x, self.y
+  do local pa = require("src.zelda.tmc.PushAnim").anim(self) if pa then walkAnim, idleAnim = pa, pa end end -- round 12: ANIM_PUSH
+  do local lw, li = require("src.zelda.tmc.ItemLantern").walkAnims(self) if lw then walkAnim, idleAnim = lw, li end end -- round 26A: walking with the lit lantern (ANIM_LANTERN $608 / ON $604)
   if self:walk(dx, dy, Player.WALK_SPEED, walkAnim, idleAnim) then
     self.anim:update(1)
   elseif not self.minish then
     self.anim:update(1)
   end
+  require("src.zelda.tmc.Climb").surface(self) -- round 8: ladders, climb walls
+  require("src.zelda.tmc.PortalJump").check(self, dx, dy, x0, y0) -- round 10: onto a portal stump
+  require("src.zelda.tmc.Ledge").check(self, dx, dy) -- round 12: jumping off a ledge
+  require("src.zelda.tmc.PushAnim").update(self, dx, dy, x0, y0) -- round 12: the push animation's frame flag
+  if self.x ~= x0 or self.y ~= y0 then require("src.zelda.tmc.Layers").update(f, self) end -- round 11: CheckOnLayerTransition
+end
+
+-- Bug round (user report: "no sword animation or sprite"): the blade is
+-- not part of Link's frames. The cartridge draws it as the PLAYER_ITEM_SWORD
+-- entity attached to Link (playerItemSword.c): its sprite is the sword
+-- level's (gPlayerItemDefinition_0: SPRITE_14 Smith's, SPRITE_15 White /
+-- Red / Blue, SPRITE_16 Four Sword; OBJ palette 1), its frame is Link's
+-- frameIndex - $6A (sub_080A78B8), flipped as Link's entity flipX, one more
+-- time when Link faces sideways (no keyframe flip of its own), at Link's
+-- position; Link's frame byte unk_1
+-- picks the extra-sprite slot (sub_08078E84): 1 (set) over Link, 3 behind.
+local SWORD_SPRITE = { [1] = 14, [2] = 15, [3] = 15, [4] = 15, [5] = 15, [6] = 16 }
+-- the drawn flip: the keyframe's flip XOR the entity's flipX (above)
+function Player:hflip() return self.anim:hflip() ~= (self.entFlip or false) end
+
+function Player:swordPart(frame)
+  if self.state ~= "sword" or self.minish then return nil end
+  local item = self.field:equipped(self.swordButton or "b")
+  local si = SWORD_SPRITE[item or 1] or 14
+  local sf = (frame or 0) - 0x6A
+  if sf < 0 or sf > 0x8A then return nil end
+  local A = self.field.assets
+  local link = A:sprite(self:sprite())
+  local lf = link and link.frames and link.frames[frame]
+  local front = not (lf and (lf[2] or 0) == 0)
+  return si, sf, front
+end
+
+function Player:drawSword(x, y, si, sf)
+  local A = self.field.assets
+  local img, ox, oy = A:spriteFrame(si, sf, A:objPalette(1), "sword")
+  if not img then return end
+  local flip = self.entFlip or false
+  if band(self.animationState or 0, 2) ~= 0 then flip = not flip end
+  if flip then love.graphics.draw(img, x - ox, y + oy, 0, -1, 1)
+  else love.graphics.draw(img, x + ox, y + oy) end
 end
 
 function Player:draw(camX, camY, palette)
-  if self.hidden then return end
+  if self.hidden or self.tunnel then return end -- round 18: tunnel = hidden in a Minish door / log
   if self.invuln > 0 and self.invuln % 4 < 2 and self.state ~= "itemget" then return end
   local A = self.field.assets
   local sprite = self:sprite()
@@ -396,14 +517,22 @@ function Player:draw(camX, camY, palette)
   if not img then return end
   local x = math.floor(self.x - camX)
   local y = math.floor(self.y - camY - (self.z or 0))
-  if self.anim:hflip() then
+  if self.spriteOY and self.spriteOYFrame == self.field.frame then y = y + self.spriteOY end -- round 25: gPlayerState.spriteOffsetY (lava platforms, Gleerok's neck), set each frame it applies
+  -- round 7: a cart under him (Minecart.lua), the cane over him (Pacci.lua)
+  if self.drawUnder then self.drawUnder(self, x, math.floor(self.y - camY)) end
+  local si, sf, front = self:swordPart(frame)
+  if si and not front then self:drawSword(x, y, si, sf) end
+  if self:hflip() then
     love.graphics.draw(img, x - ox, y + oy, 0, -1, 1)
   else
     love.graphics.draw(img, x + ox, y + oy)
   end
+  if si and front then self:drawSword(x, y, si, sf) end
+  if self.drawOver then self.drawOver(self, x, y) end
+  require("src.zelda.tmc.ItemsR26").draw(self, x, y) -- round 26A: item parts drawn over Link (ItemsR26.lua)
   -- the item held up during an item get, and the carried pot / bush
   if self.state == "itemget" and self.heldItem then
-    self.field:objects():drawItemIcon(self.heldItem, x, y - 22)
+    require("src.zelda.tmc.ItemGet").drawHeld(self, x, y) -- round 22: LINK_HOLDING_ITEM's place
   elseif self.carried then
     self.field:objects():drawCarried(self.carried, x, y - 14)
   end

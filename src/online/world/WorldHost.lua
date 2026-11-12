@@ -128,7 +128,8 @@ function WorldHost.new(opts)
   self.clock = opts.clock or Util.time
   self.store = opts.store
   self.world = opts.world or { id = "local", name = "WORLD", cap = P.DEFAULT_CAP, public = false }
-  self.world.cap = P.clampCap(self.world.cap)
+  -- opts.serverCap: a dedicated hub (WorldEmbed) may go past 16
+  self.world.cap = P.clampCap(self.world.cap, opts.serverCap and P.SERVER_MAX_CAP or nil)
   -- the chat filter (ChatFilter): the world's own setting, else on exactly
   -- when the world is public
   if opts.filterChat ~= nil then
@@ -439,6 +440,19 @@ function WorldHost:onPos(member, msg)
       end
     end
   else
+    -- crowd throttle: past P.CROWD players on one map, a walker's steps
+    -- go out at POS_RATE * CROWD / n (a stop always goes, so ghosts end
+    -- where the player stands)
+    local n = 0
+    for _, m in pairs(self.members) do
+      if m ~= member and m.pos and m.pos.m == pos.m then n = n + 1 end
+    end
+    if n > P.CROWD and pos.mv and pos.mv ~= 0 then
+      local now = self.clock()
+      local gap = (n / P.CROWD) / P.POS_RATE
+      if member.lastFwd and now - member.lastFwd < gap then return end
+      member.lastFwd = now
+    end
     -- interest filter: only the players standing on that map, and not
     -- while they sit in a trade or battle screen
     self:broadcast(out, 1, member, function(m)

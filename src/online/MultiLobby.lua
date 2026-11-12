@@ -320,7 +320,9 @@ function MultiLobby:hostMaybeStart()
   local Handshake = require("src.link.Handshake")
   local strict = true
   for _, m in ipairs(self.members) do
-    seats[m.seat] = { name = m.name, party = m.team }
+    -- `look`: the player's online look from their hello (optional; an older
+    -- build sends none and its seat shows the default front)
+    seats[m.seat] = { name = m.name, party = m.team, look = m.hello and m.hello.look or nil }
     if m.verdict and not Handshake.strict(m.verdict) then strict = false end
   end
   for seat, s in pairs((self.coop and self.coop.seats) or {}) do

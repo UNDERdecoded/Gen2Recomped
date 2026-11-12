@@ -104,6 +104,20 @@ function Assets:loadCollision()
     end
     for i = 0, 0x5F do self.shapeLookup[i] = raw:byte(c.shapeLookup + i + 1) or 1 end
   end
+  -- round 9: Link's own masks and state tables (Room:isSolidPlayer)
+  if c.playerMasks and c.playerShapes then
+    self.playerMasks, self.playerShapes = {}, {}
+    for s = 0, 39 do
+      local rows = {}
+      for r = 0, 15 do rows[r] = u16(raw, c.playerMasks + s * 32 + r * 2) end
+      self.playerMasks[s] = rows
+    end
+    for t = 0, 6 do
+      local tab = {}
+      for i = 0, 0x5F do tab[i] = raw:byte(c.playerShapes + t * 0x60 + i + 1) or 15 end
+      self.playerShapes[t] = tab
+    end
+  end
 end
 
 -- ---------------------------------------------------------------------------
@@ -147,10 +161,28 @@ function Assets:areaPalettes(area, ts)
   local buf = self:emptyPalettes()
   self:applyPaletteGroup(buf, 11)
   self:applyPaletteGroup(buf, 12)
+  -- round 15: LoadGfxGroups ends with SetColor(0, 0): the backdrop is
+  -- black unless a tileset group loads BG palette 0 again
+  do local p0 = {}; for c = 1, 15 do p0[c] = buf[0][c] end; p0[0] = { 0, 0, 0 }; buf[0] = p0 end
   local tsInfo = info and info.tilesets and info.tilesets[ts]
   if tsInfo then
-    for _, g in ipairs(tsInfo.paletteGroups or {}) do self:applyPaletteGroup(buf, g) end
+    for _, g in ipairs(tsInfo.paletteGroups or {}) do
+      self:applyPaletteGroup(buf, g)
+      -- round 13: LoadMapData follows every palette group with
+      -- sub_080533CC: OBJ palette 2's colours 0-4 into BG palette 2
+      local p2, o2 = {}, buf[18]
+      for c = 0, 15 do p2[c] = (c <= 4) and { o2[c][1], o2[c][2], o2[c][3] } or buf[2][c] end
+      buf[2] = p2
+    end
   end
+  -- round 13: LoadRoomTileSet copies BG palette 3 into OBJ palette 5
+  -- (MemCopy(&gPaletteBuffer[0x30], &gPaletteBuffer[0x150], 0x20)): the
+  -- fixed slot objects with objPaletteId 5 use (statues, ...)
+  local p5 = {}
+  for c = 0, 15 do p5[c] = { buf[3][c][1], buf[3][c][2], buf[3][c][3] } end
+  buf[21] = p5
+  self.bgSerial = (self.bgSerial or 0) + 1
+  buf.serial = self.bgSerial
   return buf
 end
 
@@ -254,8 +286,16 @@ function Assets:buildBgAnims(area, vbytes, tiles, pr, pg, pb)
         lo = math.min(lo, pch[1]); hi = math.max(hi, pch[1] + pch[3])
       end
     end
-    if hi > lo then
-      local anim = { timers = {}, layers = {} }
+    -- palette frames (BG_ANIM_PALETTE, LoadPalettes into BG banks 0-15):
+    -- the metatiles drawn with those banks are redrawn per frame too
+    local banks = {}
+    for _, fr in ipairs(frames) do
+      for _, pl in ipairs(fr.palettes or {}) do
+        for b = pl[1], pl[1] + pl[3] - 1 do if b < 16 then banks[b] = true end end
+      end
+    end
+    if hi > lo or next(banks) then
+      local anim = { timers = {}, layers = {}, palette = next(banks) ~= nil }
       for layer = 0, 1 do
         local subBase, charBase = layer * 0x4000, layer * 0x4000
         local slots, order = {}, {}
@@ -263,7 +303,7 @@ function Assets:buildBgAnims(area, vbytes, tiles, pr, pg, pb)
           for q = 0, 3 do
             local tile = band(u16(tiles, subBase + (m * 4 + q) * 2), 0x3FF)
             local b = charBase + tile * 32
-            if b + 32 > lo and b < hi then
+            if (b + 32 > lo and b < hi) or banks[rshift(u16(tiles, subBase + (m * 4 + q) * 2), 12)] then
               if not slots[m] then order[#order + 1] = m; slots[m] = #order - 1 end
               break
             end
@@ -277,6 +317,20 @@ function Assets:buildBgAnims(area, vbytes, tiles, pr, pg, pb)
             for _, pch in ipairs(fr.patches) do
               local bytes = { blob:byte(pch[2] + 1, pch[2] + pch[3]) }
               for k = 1, #bytes do vb[pch[1] + k] = bytes[k] end
+            end
+            local pr, pg, pb = pr, pg, pb
+            if fr.palettes and #fr.palettes > 0 then
+              local r2, g2, b2 = setmetatable({}, { __index = pr }), setmetatable({}, { __index = pg }), setmetatable({}, { __index = pb })
+              for _, pl in ipairs(fr.palettes) do
+                for c = 0, pl[3] * 16 - 1 do
+                  local k = pl[1] * 16 + c
+                  if k < 256 then
+                    local lo8, hi8 = blob:byte(pl[2] + 2 * c + 1), blob:byte(pl[2] + 2 * c + 2)
+                    if lo8 and hi8 then r2[k], g2[k], b2[k] = bgr555(lo8 + 256 * hi8) end
+                  end
+                end
+              end
+              pr, pg, pb = r2, g2, b2
             end
             local img, ptr = newPixels(512, rows * 16)
             for s, m in ipairs(order) do
@@ -401,6 +455,17 @@ end
 -- palette of the current area (`bg` = that area's palette buffer), 0x16+
 -- come from the object palette table.
 function Assets:objPalette(id, bg)
+  -- round 13: the room's palette buffer when the caller has none (the
+  -- field sets curBg with the room); palettes that depend on the room
+  -- carry `pkey` so sprite images cached for one area are not reused in
+  -- another (Assets:spriteFrame)
+  bg = bg or self.curBg
+  if id == 5 and bg and bg[21] then
+    -- OBJ palette 5 is BG palette 3 (LoadRoomTileSet)
+    local p = bg[21]
+    p.pkey = p.pkey or ("b5." .. tostring(bg.serial))
+    return p
+  end
   if id <= 5 then
     if not self.fieldObj then
       local buf = self:emptyPalettes()
@@ -410,18 +475,39 @@ function Assets:objPalette(id, bg)
     end
     return self.fieldObj[16 + id]
   elseif id < 0x15 then
-    return bg and bg[id - 6] or self:emptyPalettes()[0]
+    local p = bg and bg[id - 6]
+    if not p then return self:emptyPalettes()[0] end
+    p.pkey = p.pkey or ("b" .. (id - 6) .. "." .. tostring(bg.serial))
+    return p
   elseif id == 0x15 then
-    return self:emptyPalettes()[0]
+    -- MemFill16(gPaletteBuffer[0x3C]): every colour is BG palette 3's 12th
+    if not bg then return self:emptyPalettes()[0] end
+    if not bg.fill15 then
+      local c, p = bg[3][12], { pkey = "f15." .. tostring(bg.serial) }
+      for i = 0, 15 do p[i] = { c[1], c[2], c[3] } end
+      bg.fill15 = p
+    end
+    return bg.fill15
   end
   local e = self.manifest.objPalettes and self.manifest.objPalettes[id]
   if not e then return self:emptyPalettes()[0] end
   self.objPalRaw = self.objPalRaw or self.store:read("objpal.bin") or ""
-  local out = {}
-  for i = 0, 15 do
-    local o = e[1] + i * 2 + 1
-    local lo, hi = self.objPalRaw:byte(o), self.objPalRaw:byte(o + 1)
-    out[i] = lo and { bgr555(lo + hi * 256) } or { 0, 0, 0 }
+  local function one(at)
+    local out = {}
+    for i = 0, 15 do
+      local o = at + i * 2 + 1
+      local lo, hi = self.objPalRaw:byte(o), self.objPalRaw:byte(o + 1)
+      out[i] = lo and { bgr555(lo + hi * 256) } or { 0, 0, 0 }
+    end
+    return out
+  end
+  local out = one(e[1])
+  -- round 7: a multi-slot palette (count in bits 24-27) loads into
+  -- consecutive slots; an OAM piece's attr2 high nibble (frame obj byte 4
+  -- bits 4-7) adds to the slot, so piece palette +k is the k-th next one
+  if (e[2] or 1) > 1 then
+    out.next = {}
+    for k = 1, e[2] - 1 do out.next[k] = one(e[1] + k * 32) end
   end
   return out
 end
@@ -445,8 +531,10 @@ function Assets.gfxSource(gfxType, gfx)
   return gfx
 end
 function Assets:spriteFrame(index, frame, palette, cacheKey, gfxSrc)
-  local srcKey = type(gfxSrc) == "table" and ("v" .. tostring(gfxSrc.vram)) or tostring(gfxSrc)
+  local srcKey = type(gfxSrc) == "table" and (gfxSrc.raw and ("r" .. tostring(gfxSrc.key)) or gfxSrc.fixed and ("f" .. gfxSrc.fixed .. "+" .. tostring(gfxSrc.first))
+    or ("v" .. tostring(gfxSrc.vram))) or tostring(gfxSrc)
   local key = index .. ":" .. frame .. ":" .. tostring(cacheKey or "") .. ":" .. srcKey
+  if type(palette) == "table" and palette.pkey then key = key .. ":" .. palette.pkey end -- round 13
   local c = self.spriteImages[key]
   if c ~= nil then
     if c then return c.image, c.ox, c.oy end
@@ -455,7 +543,13 @@ function Assets:spriteFrame(index, frame, palette, cacheKey, gfxSrc)
   local s = self:sprite(index)
   local objs = s and s.objs[frame]
   local first, gfx = 0, nil
-  if s and type(gfxSrc) == "table" then
+  if s and type(gfxSrc) == "table" and gfxSrc.raw then
+    -- round 7: tiles the caller assembled (the fusion bubble's two slots)
+    gfx, first = gfxSrc.raw, gfxSrc.first or 0
+  elseif s and type(gfxSrc) == "table" and gfxSrc.fixed then
+    -- round 7: a fixed block from a tile on (an NPC part's tile offset)
+    gfx, first = self:fixedGfx(gfxSrc.fixed), gfxSrc.first or 0
+  elseif s and type(gfxSrc) == "table" then
     -- common OBJ VRAM (gfx groups 16/23/25/27): tiles start at the
     -- entity's spriteVramOffset
     self.objVram = self.objVram or self.store:read("objvram.bin") or ""
@@ -481,11 +575,20 @@ function Assets:spriteFrame(index, frame, palette, cacheKey, gfxSrc)
   local w, h = maxx - minx, maxy - miny
   if w <= 0 or h <= 0 or w > 256 or h > 256 then self.spriteImages[key] = false; return nil end
   local img, ptr = newPixels(w, h)
-  for _, o in ipairs(objs) do
+  -- the pieces go to consecutive OAM slots and a lower slot is drawn on
+  -- top (the THOUGHT_BUBBLE's mark is its first piece, over the bubble):
+  -- paint them last to first
+  for oi = #objs, 1, -1 do
+    local o = objs[oi]
     local shape, size = rshift(o[3], 6), band(rshift(o[3], 4), 3)
     local dims = OBJ_SIZES[shape] and OBJ_SIZES[shape][size + 1] or { 8, 8 }
     local hf, vf = band(o[3], 0x04) ~= 0, band(o[3], 0x08) ~= 0
     local tile0 = o[4] + band(o[5], 0x03) * 256
+    local pk = rshift(o[5], 4)
+    local pal = pk ~= 0 and palette.next and palette.next[pk] or palette
+    -- frame obj bitfield bit 0 clears the entity's palette: the piece uses
+    -- OBJ slot (hi >> 4) itself, one of the fixed field palettes 0-5
+    if band(o[3], 1) ~= 0 and pk <= 5 then pal = self:objPalette(pk) end
     local tw, th = dims[1] / 8, dims[2] / 8
     for ty = 0, th - 1 do
       for tx = 0, tw - 1 do
@@ -499,7 +602,7 @@ function Assets:spriteFrame(index, frame, palette, cacheKey, gfxSrc)
               local lx, ly = tx * 8 + px, ty * 8 + py
               if hf then lx = dims[1] - 1 - lx end
               if vf then ly = dims[2] - 1 - ly end
-              local col = palette[ci] or { 255, 0, 255 }
+              local col = pal[ci] or { 255, 0, 255 }
               putPixel(img, ptr, w, o[1] - minx + lx, o[2] - miny + ly, col[1], col[2], col[3], 255)
             end
           end

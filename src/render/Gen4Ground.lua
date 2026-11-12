@@ -2664,6 +2664,14 @@ function Gen4Ground:drawFree(vw, vh)
   self.freeW, self.freeH = tw, th
   local camCx = math.floor(view.x / px)
   local camCy = math.floor(view.z / px)
+  -- a FIELD camera's chunks are the ones around what it looks at: zoomed
+  -- out, its eye sits chunks south of the player and the town went black
+  if view.mode == "field3d" and view.targetX and not Gen4View.scripted then
+    camCx, camCy = math.floor(view.targetX / px), math.floor(view.targetZ / px)
+  end
+  -- the supersample, so a field camera's fov/ortho box stays in logical rows
+  -- (every projection this frame is asked at `tw`/`th`; see Gen4View)
+  view.pixelScale = scale
   local vp = view:matrix(tw, th)
   -- THE DS'S DEPTH FOG (Gen4DepthFog), on this pass's own projection
   do

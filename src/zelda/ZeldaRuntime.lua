@@ -417,10 +417,31 @@ local function touchUI()
   return okT and TC.visible and TC:visible()
 end
 
+-- [alttp round 14] OPTIONAL GAME HOOKS for a zoomed play field: a game with
+-- viewSize(scale) returns the play field's size in game pixels (240 x 160 =
+-- the normal picture); any other size is drawn into its own canvas over the
+-- same window area, then drawOverlay() draws the game's HUD into the normal
+-- 240 x 160 canvas (transparent) on top at the normal scale.
+function Host:_zoomView(scale)
+  if self.error or not (self.game and self.game.viewSize and self.game.drawOverlay) then return nil end
+  local ok, w, h = pcall(self.game.viewSize, self.game, scale)
+  if not (ok and tonumber(w) and tonumber(h)) then return nil end
+  w, h = math.floor(w), math.floor(h)
+  if (w == R.W and h == R.H) or w < 16 or h < 16 or w > 4096 or h > 4096 then return nil end
+  if not (self.zoomCanvas and self.zoomCanvas:getWidth() == w and self.zoomCanvas:getHeight() == h) then
+    if self.zoomCanvas then pcall(self.zoomCanvas.release, self.zoomCanvas) end
+    self.zoomCanvas = love.graphics.newCanvas(w, h)
+    self.zoomCanvas:setFilter("nearest", "nearest")
+  end
+  return self.zoomCanvas, w, h
+end
+
 function Host:draw()
   local g = love.graphics
+  local x, y, scale = self:viewport()
+  local zc, zw, zh = self:_zoomView(scale)
   g.push("all")
-  g.setCanvas(self.canvas)
+  g.setCanvas(zc or self.canvas)
   g.clear(0, 0, 0, 1)
   g.origin()
   g.setColor(1, 1, 1, 1)
@@ -429,12 +450,20 @@ function Host:draw()
       debug.traceback)
     if not ok then self:_fail("draw", err) end
   end
+  if zc and not self.error then
+    g.setCanvas(self.canvas)
+    g.clear(0, 0, 0, 0)
+    g.origin()
+    g.setColor(1, 1, 1, 1)
+    local ok, err = xpcall(function() self.game:drawOverlay() end, debug.traceback)
+    if not ok then self:_fail("drawOverlay", err) end
+  end
   g.pop()
   g.push("all")
   g.origin()
   g.clear(0, 0, 0, 1)
-  local x, y, scale = self:viewport()
   g.setColor(1, 1, 1, 1)
+  if zc then g.draw(zc, x, y, 0, scale * R.W / zw, scale * R.H / zh) end
   g.draw(self.canvas, x, y, 0, scale, scale)
   if self.touch and not self.error then pcall(self.touch.draw, self.touch) end
   if touchUI() and not self.menu and not self.link then
@@ -493,6 +522,14 @@ function Host:_menuRows()
   if okC and Cast.supported() then
     rows[#rows + 1] = { id = "cast", label = Cast.ROW_LABEL, value = Cast.label() }
   end
+  -- [alttp round 14] the game's own option rows: game:menuOptions() ->
+  -- { { id, label, value } ... }; left / right / A call game:menuOption(id, dir)
+  if self.game and self.game.menuOptions and not self.error then
+    local okO, list = pcall(self.game.menuOptions, self.game)
+    for _, r in ipairs(okO and type(list) == "table" and list or {}) do
+      rows[#rows + 1] = { id = "game:" .. tostring(r.id), label = tostring(r.label), value = r.value and tostring(r.value) or nil, gameId = r.id }
+    end
+  end
   rows[#rows + 1] = { id = "quit", label = "QUIT TO LAUNCHER" }
   return rows
 end
@@ -523,6 +560,8 @@ function Host:_menuStep(row, dir)
     self.gameOpts.options.musicVol = self:volume("music")
     self.gameOpts.options.sfxVol = self:volume("sfx")
     self:_call("optionsChanged", self.gameOpts.options)
+  elseif row.gameId ~= nil then
+    self:_call("menuOption", row.gameId, dir or 1)
   elseif row.id == "cast" then
     pcall(function() require("src.ui.CastDisplay").step(dir or 1) end)
   end
@@ -701,7 +740,24 @@ function Host:touchreleased(id, x, y)
   self:_call("touchreleased", id, x, y)
 end
 
-function Host:wheelmoved() end
+-- [alttp round 14] the mouse wheel goes to the game (zoom)
+function Host:wheelmoved(x, y)
+  if self.menu or self.link or self.error then return end
+  self:_call("wheelmoved", x, y)
+end
+-- [alttp round 14] a small persistent option of this game (options.zelda.game[version][key]);
+-- value nil reads it
+function Host:gameOption(key, value)
+  local all = type(self.zopts.game) == "table" and self.zopts.game or {}
+  self.zopts.game = all
+  local mine = type(all[self.version]) == "table" and all[self.version] or {}
+  all[self.version] = mine
+  if value == nil then return mine[key] end
+  mine[key] = value
+  self.options.zelda = self.zopts
+  saveOptions(self.options)
+  return value
+end
 function Host:hasPointerScreen() return self.menu ~= nil or self.link ~= nil or self.error ~= nil end
 function Host:mousereleased() end
 function Host:restartWithMods() end

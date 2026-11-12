@@ -177,11 +177,17 @@ function Gen3Options.new(game, opts)
     return hooked
   end)
   if okRows and type(extra) == "table" then
+    local topAt = 0
     for _, row in ipairs(extra) do
       if row.label and not covered[row.id] then
-        self.rows[#self.rows + 1] = {
-          key = row.id, label = row.label, engine = row,
-        }
+        local entry = { key = row.id, label = row.label, engine = row }
+        if row.top then
+          -- MY LOOK: above the cartridge's rows (OptionsMenu `top`)
+          topAt = topAt + 1
+          table.insert(self.rows, topAt, entry)
+        else
+          self.rows[#self.rows + 1] = entry
+        end
       end
     end
   else

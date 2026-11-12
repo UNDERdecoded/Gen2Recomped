@@ -59,8 +59,7 @@ function Game.new(opts)
   if opts.skipTitle then
     self:startGame(self.saveData or Game.newSave(opts.name))
   else
-    self.state = "title"
-    if self.audio then self.audio:playBgm(Game.BGM_TITLE_SCREEN) end
+    self:toTitle()
   end
   return self
 end
@@ -101,7 +100,20 @@ function Game:areaName(area) return AREA_NAMES[area] end
 function Game:toTitle()
   self.field = nil
   self.state = "title"
-  if self.audio then self.audio:playBgm(Game.BGM_TITLE_SCREEN) end
+  self.title = require("src.zelda.tmc.Title").new(self) -- round 5: title.c on Ppu.lua
+end
+
+-- the file select (FileSelect.lua, fileselect.c on Ppu.lua)
+function Game:toFiles()
+  local ok, FS = pcall(require, "src.zelda.tmc.FileSelect")
+  if ok then
+    self.files = FS.new(self)
+    self.state = "fileselect"
+  else
+    self.state = "files"
+    self.cursor = self.saveData and 1 or 2
+    if self.audio then self.audio:playBgm(Game.BGM_FILE_SELECT) end
+  end
 end
 
 function Game:startGame(save)
@@ -125,7 +137,14 @@ function Game:update(dt)
   self.frame = self.frame + 1
   if self.audio then self.audio:update() end
   local inp = self.input
-  if self.state == "title" then
+  if self.state == "title" and self.title then
+    if self.title:update(inp) == "files" then
+      self.title = nil
+      self:toFiles()
+    end
+  elseif self.state == "fileselect" then
+    if self.files:update(inp) == "start" then self.files = nil end
+  elseif self.state == "title" then
     if inp.pressed("start") or inp.pressed("a") then
       self.state = "files"
       self.cursor = self.saveData and 1 or 2
@@ -146,6 +165,7 @@ function Game:update(dt)
     if self.saveData then self.saveData.playTime = (self.saveData.playTime or 0) + (dt or 1 / 60) end
     if self.net and inp.pressed("select") then self.net:emote(self.field, (self.frame % 4) + 1) end
     self.field:update(inp)
+    require("src.zelda.tmc.View").input(self) -- round 14: R3 / L3 zoom
   end
 end
 
@@ -213,10 +233,49 @@ function Game:drawFiles()
   g.setColor(1, 1, 1, 1)
 end
 
+-- round 14 (View.lua): the runtime's zoomed play-field hooks (added to
+-- ZeldaRuntime by the ALttP agent): viewSize(scale) = the play field in
+-- game pixels (240x160 = the cartridge picture); a bigger / smaller field
+-- is drawn by draw() into its own canvas, then drawOverlay() draws the
+-- HUD, text and fades into the normal 240x160 canvas at the normal scale
+function Game:viewSize()
+  local z = 1
+  if self.state == "field" and self.field then z = require("src.zelda.tmc.View").factor(self) end
+  self._zoomed = z ~= 1
+  self.windowHook = true
+  if z == 1 then return 240, 160 end
+  return math.floor(240 / z + 0.5), math.floor(160 / z + 0.5)
+end
+
+function Game:drawOverlay()
+  if self.state == "field" and self.field then self.field:draw(self.font, "overlay") end
+end
+
+-- round 14: the runtime's menu rows for this game (options it keeps)
+function Game:menuOptions()
+  return { { id = "carttrans", label = "CARTRIDGE TRANSITIONS",
+             value = require("src.zelda.tmc.Seamless").cartridge(self) and "ON" or "OFF" } }
+end
+
+function Game:menuOption(id, dir)
+  if id == "carttrans" then
+    local S = require("src.zelda.tmc.Seamless")
+    S.setCartridge(self, not S.cartridge(self))
+  end
+end
+
+-- round 14: the mouse wheel zooms (the runtime forwards love.wheelmoved)
+function Game:wheelmoved(_, dy)
+  if self.state ~= "field" or not dy or dy == 0 then return end
+  require("src.zelda.tmc.View").step(self, dy > 0 and 1 or -1)
+end
+
 function Game:draw()
-  if self.state == "title" then self:drawTitle()
+  if self.state == "title" and self.title then self.title:draw()
+  elseif self.state == "fileselect" and self.files then self.files:draw()
+  elseif self.state == "title" then self:drawTitle()
   elseif self.state == "files" then self:drawFiles()
-  elseif self.field then self.field:draw(self.font) end
+  elseif self.field then self.field:draw(self.font, self._zoomed and "world" or nil) end
 end
 
 -- ---------------------------------------------------------------------------

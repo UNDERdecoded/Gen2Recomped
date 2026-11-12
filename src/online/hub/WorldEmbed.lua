@@ -66,6 +66,10 @@ function WorldEmbed.new(opts)
     world = store:create({ id = ident.id, name = cfg.name, cap = cfg.cap, public = cfg.public,
                            filter = cfg.filter })
   end
+  -- the store keeps a player-hosted world's 16; a server hub may hold up to
+  -- WorldProtocol.SERVER_MAX_CAP (config world.cap)
+  local WP = require("src.online.world.WorldProtocol")
+  world.cap = WP.clampCap(cfg.cap, WP.SERVER_MAX_CAP)
   local t = opts.transport
   if not t then
     t = Transport.new({ port = cfg.port, bind = opts.bind, maxPeers = world.cap,
@@ -76,13 +80,17 @@ function WorldEmbed.new(opts)
   local hello = WorldEmbed.hello(data, game, world.name)
   GameData.use(game)
   local host = WorldHost.new({ world = world, store = store, hello = hello, data = data,
-                               transport = t, connector = false, ownsTransport = true })
+                               transport = t, connector = false, ownsTransport = true,
+                               serverCap = true })
   local self = setmetatable({ host = host, transport = t, data = data, game = game, log = log,
                               world = world, nonce = tonumber(ident.nonce), cfg = cfg,
                               dataDir = opts.dataDir }, WorldEmbed)
   -- the 4-player multi's relay, as every world a game hosts has it
   local okM, MultiNet = pcall(require, "src.online.MultiNet")
   if okM then host:registerService("multi", MultiNet.relayService()) end
+  -- RUN MODES: Soul Link partners can pair through the hub's world too
+  local okS, SoulLinkService = pcall(require, "src.online.SoulLinkService")
+  if okS then host:registerService(SoulLinkService.NAME, SoulLinkService.new()) end
   if cfg.gts and opts.gts then
     host:registerService("gts", opts.gts:worldService())
     log:info("world: the hub GTS is open to members")

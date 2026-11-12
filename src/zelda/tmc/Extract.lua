@@ -30,7 +30,7 @@ local Store = require("src.zelda.tmc.Store")
 
 local Extract = {}
 
-Extract.CACHE_VERSION = 4
+Extract.CACHE_VERSION = 22 -- round 28: manifest.r26b gains the Ending ranges (staffEN/staffGfx/outroSparks); 21: round 27b: manifest.r26b gains the R27B modules' ranges (VaatiScripts/SanctuaryScripts); 20: round 27A: manifest.r27a (ExtractR27A.lua, the overworld modules' ROM_RANGES); 19: round 26b: manifest.r26b (ExtractR26.lua, the dungeon modules' ROM_RANGES); 18: round 25: manifest.r25 (ExtractR25.lua, the Gleerok tables); 17: round 23: manifest.r23 (ExtractR23.lua, the tile-type flags); 16: round 15: tileset defs laid in load order (overlaps), tshi_*.bin (BG3 maps), swap_oracle.bin; 14: round 13: manifest.r13 (ExtractR13.lua); 13: round 12: manifest.r12 (ExtractR12.lua); 12: round 11: manifest.r11 (ExtractR11.lua); 11: round 10: manifest.r10 (ExtractR10.lua); 10: round 9 coll.bin, drop tables
 Extract.MARKER = "complete.txt"
 
 local function hex2(n) return string.format("%02x", n) end
@@ -83,10 +83,20 @@ local function extractCollision(rom, store, manifest)
   blob = blob .. rom:str(Layout.COLLISION_MASKS, 8 * 32)
   local lookupAt = #blob
   blob = blob .. rom:str(Layout.COLLISION_SHAPE_LOOKUP, Layout.COLLISION_SHAPE_TYPES * 0x60)
+  -- round 9: Link's masks (dereferenced) and his seven state tables
+  local pmAt = #blob
+  local pm = {}
+  for i = 0, Layout.PLAYER_COLL_MASKS - 1 do
+    pm[#pm + 1] = rom:str(rom:u32(Layout.PLAYER_COLL_MASK_PTRS + 4 * i), 32)
+  end
+  blob = blob .. table.concat(pm)
+  local psAt = #blob
+  blob = blob .. rom:str(Layout.PLAYER_COLL_SHAPES, Layout.PLAYER_COLL_TABLES * 0x60)
   manifest.collision = {
     typeCollision = 0, actTile = Layout.TILE_TYPE_COUNT,
     special = 2 * Layout.TILE_TYPE_COUNT, count = Layout.TILE_TYPE_COUNT,
     masks = masksAt, shapeLookup = lookupAt,
+    playerMasks = pmAt, playerShapes = psAt,
   }
   assert(store:write("coll.bin", blob))
 end
@@ -123,6 +133,23 @@ function Extract.looksLikeEntityList(rom, p)
     if not KINDS[band(k, 0x0F)] then return false end
   end
   return false
+end
+
+-- round 15: lay {offset, bytes} loads into `size` bytes of VRAM starting at
+-- `base`, in load order (a later load overwrites an earlier one, as
+-- LoadMapData's copies do); returns the bytes and whether any load landed
+function Extract.layVram(loads, base, size)
+  local mem, any = string.rep("\0", size), false
+  for _, v in ipairs(loads) do
+    local off, data = v[1] - base, v[2]
+    if off < 0 then data = data:sub(1 - off); off = 0 end
+    if off < size and #data > 0 then
+      data = data:sub(1, size - off)
+      mem = mem:sub(1, off) .. data .. mem:sub(off + #data + 1)
+      any = true
+    end
+  end
+  return mem, any
 end
 
 -- ---------------------------------------------------------------------------
@@ -174,22 +201,23 @@ local function extractArea(rom, store, area, bottomBase, topBase)
             end
           end
         end
-        -- assemble 48 KiB of character memory
-        table.sort(vram, function(a, b) return a[1] < b[1] end)
-        local parts, at = {}, 0
-        for _, v in ipairs(vram) do
-          local off, data = v[1], v[2]
-          if off >= Layout.VRAM_BG_SIZE then break end
-          if off > at then parts[#parts + 1] = string.rep("\0", off - at); at = off end
-          if off < at then data = data:sub(at - off + 1); off = at end
-          data = data:sub(1, Layout.VRAM_BG_SIZE - off)
-          parts[#parts + 1] = data
-          at = off + #data
-        end
-        if at < Layout.VRAM_BG_SIZE then parts[#parts + 1] = string.rep("\0", Layout.VRAM_BG_SIZE - at) end
+        -- assemble 48 KiB of character memory.  Round 15: in load order, a
+        -- later def overwriting an earlier one (LoadMapData copies each in
+        -- turn: the dig caves' and the Outer Fortress' tilesets lay $2000
+        -- bytes at $1000 / $9000 over the area's base graphics; the old
+        -- sorted assembly kept the base bytes and scrambled those rooms)
+        local mem = Extract.layVram(vram, 0, Layout.VRAM_BG_SIZE)
         local name = "ts_" .. hex2(area) .. "_" .. t .. ".bin"
-        assert(store:write(name, table.concat(parts)))
+        assert(store:write(name, mem))
         info.tilesets[t] = { file = name, paletteGroups = palGroups }
+        -- round 15: defs past the BG1 / BG2 characters ($C000-$FFFF: BG3's
+        -- screen map at screenblock 30, $F000) for Bg3.lua
+        local hi, any = Extract.layVram(vram, Layout.VRAM_BG_SIZE, 0x4000)
+        if any then
+          local hn = "tshi_" .. hex2(area) .. "_" .. t .. ".bin"
+          assert(store:write(hn, hi))
+          info.tilesets[t].hiFile = hn
+        end
       end
     end
   end
@@ -313,6 +341,33 @@ end
 -- ---------------------------------------------------------------------------
 -- Sprites
 -- ---------------------------------------------------------------------------
+-- round 7: how many frames gFrameObjLists holds for sprite i. The per-sprite
+-- offset tables sit one after another, so a table runs up to the next one
+-- (multi-part NPC sprites, the townspeople's heads, are only ever named by
+-- their _Head code, never by an animation of their own)
+local frameCountCache = setmetatable({}, { __mode = "k" })
+local function frameCount(rom, i)
+  local offs = frameCountCache[rom]
+  if not offs then
+    offs = {}
+    for k = 0, Layout.OAM_SPRITE_LAST do
+      local o = rom:u32(Layout.gFrameObjLists + 4 * k)
+      if o < 0x200000 then offs[#offs + 1] = o end
+    end
+    table.sort(offs)
+    frameCountCache[rom] = offs
+  end
+  local mine = rom:u32(Layout.gFrameObjLists + 4 * i)
+  for _, o in ipairs(offs) do
+    if o > mine then
+      local n = (o - mine) / 4
+      if n >= 1 and n <= 256 then return math.floor(n) end
+      return nil
+    end
+  end
+  return nil
+end
+
 local function extractSprite(rom, store, i, minFrames)
   local p = Layout.gSpritePtrs + 16 * i
   local animTable = rom:ptr(p)
@@ -349,6 +404,8 @@ local function extractSprite(rom, store, i, minFrames)
   -- the HUD and menus draw frames no animation names (sprite 322's button
   -- labels at $92 + text, digits, quest art)
   if minFrames and maxFrame < minFrames then maxFrame = minFrames end
+  local nFrames = frameCount(rom, i)
+  if nFrames and nFrames - 1 > maxFrame then maxFrame = nFrames - 1 end
   -- frame obj lists: gFrameObjLists + u32[sprite] -> u32[frame] offsets
   local base = Layout.gFrameObjLists
   local tabOff = rom:u32(base + 4 * i)
@@ -526,6 +583,13 @@ local function extractTileSwaps(rom, store, manifest)
     assert(store:write(file, table.concat(parts)))
     out[def.area * 256 + def.room] = { file = file, slots = slots, groups = groups, palettes = pals }
   end
+  -- round 15: HyruleTownTileSetManager_BuildSecondOracleHouse loads
+  -- gUnk_086E8460 ($800 bytes) to BG_SCREEN_ADDR(3) = VRAM $1800 once the
+  -- red house is built (TATEKAKE_HOUSE)
+  if out[0x0200] then
+    assert(store:write("swap_oracle.bin", rom:str(0x086E8460, 0x800)))
+    out[0x0200].oracle = { file = "swap_oracle.bin", vram = 0x1800 }
+  end
   manifest.tileSwaps = out
 end
 
@@ -692,48 +756,8 @@ local function extractProjectiles(rom, manifest)
 end
 
 local function extractBgAnims(rom, store, manifest)
-  local parts, at, out = {}, 0, {}
-  for area = 0, 0x8F do
-    local lp = rom:ptr(Layout.gUnk_080B755C + 4 * area)
-    if lp then
-      local list = {}
-      for i = 0, 7 do
-        local idx = rom:u16(lp + 2 * i)
-        if idx == 0xFFFF then break end
-        local fp = rom:ptr(Layout.gUnk_080B7278 + 4 * idx)
-        if not fp then break end
-        local frames = {}
-        for k = 0, 31 do
-          local q = fp + 8 * k
-          local gp = rom:u32(q)
-          local timer = rom:u32(q + 4)
-          if gp == 0 then frames.loop = band(timer, 0xFF) break end
-          local g = rom:ptr(q)
-          if not g then break end
-          local patches = {}
-          for n = 0, 7 do
-            local e = g + 8 * n
-            local vram, size, fl = rom:u16(e), rom:u8(e + 2), rom:u8(e + 3)
-            local src = Layout.gGlobalGfxAndPalettes + rom:u32(e + 4)
-            if band(fl, 0x10) == 0 and size > 0 then
-              local bytes = rom:str(src, size * 32)
-              patches[#patches + 1] = { vram, at, #bytes }
-              parts[#parts + 1] = bytes
-              at = at + #bytes
-            else
-              patches.palette = true
-            end
-            if band(fl, 0x80) == 0 then break end
-          end
-          frames[#frames + 1] = { timer = math.max(1, band(timer, 0xFF)), patches = patches }
-        end
-        list[#list + 1] = frames
-      end
-      if #list > 0 then out[area] = list end
-    end
-  end
-  assert(store:write("bganim.bin", table.concat(parts)))
-  manifest.bgAnims = out
+  -- round 5: gfx and palette frames (ExtractFx.lua)
+  require("src.zelda.tmc.ExtractFx").bgAnims(rom, store, manifest)
 end
 
 -- Menus and screens (Ppu.lua): every gfx group as LoadGfxGroup would load
@@ -796,6 +820,10 @@ local function extractMenus(rom, store, manifest)
   -- sprite 322 (items, button labels): its whole frame table
   local ok, name = pcall(extractSprite, rom, store, 0x142, 0xBF)
   if ok and name then manifest.sprites[0x142] = name end
+  -- round 5 importer modules (Layout.R5_EXTRACT)
+  for _, mod in ipairs(Layout.R5_EXTRACT or {}) do
+    require(mod).extract(rom, store, manifest)
+  end
 end
 Extract.extractMenus = extractMenus
 
@@ -894,8 +922,18 @@ local function extractUi(rom, store, manifest)
   local ranges = {}
   for i = 0, Layout.ENEMY_COUNT - 1 do ranges[i] = { rom:u8(Layout.gUnk_080D3D94 + 2 * i), rom:u8(Layout.gUnk_080D3D94 + 2 * i + 1) } end
   manifest.enemyRanges = ranges
+  -- round 9: object tables, the health tables, the modifiers, the FX and
+  -- ground-item tables the drop sources read
+  local fxTable, fxVar, itemSfx = {}, {}, {}
+  for t = 0, 0x57 do fxTable[t] = rom:u8(Layout.gUnk_0811F960 + 4 * t + 1) end
+  for i = 0, 7 do fxVar[i] = rom:u8(Layout.gUnk_0811FAC8 + i) end
+  for i = 0, 117 do itemSfx[i] = rom:u16(Layout.gUnk_0811E84C + 8 * i + 2) end
   manifest.drops = { kinstonePieces = pieces, enemy = droptables(rom, Layout.gEnemyDroptables, 18),
                      area = droptables(rom, Layout.gAreaDroptables, 19),
+                     object = droptables(rom, Layout.gObjectDroptables, 8),
+                     health = droptables(rom, Layout.gUnk_0800191C, 2),
+                     modifiers = droptables(rom, Layout.gDroptableModifiers, 3),
+                     fxTable = fxTable, fxVariants = fxVar, itemSfx = itemSfx,
                      enemyMap = map, slotItems = slotItems, areaSelect = areaSel }
 end
 
@@ -1094,6 +1132,16 @@ function Extract.run(romPath, root, progress, opts)
   if not steps.text then extractText(rom, store, manifest); done("text") end
   tick("Minish Cap: text")
   if not steps.audio then extractAudio(rom, store, manifest); done("audio") end
+  -- round 10: small tables for the route's scenes / Cave of Flames
+  if not steps.r10 then require("src.zelda.tmc.ExtractR10").run(rom, manifest); done("r10") end
+  if not steps.r11 then require("src.zelda.tmc.ExtractR11").run(rom, manifest); done("r11") end -- round 11
+  if not steps.r12 then require("src.zelda.tmc.ExtractR12").run(rom, manifest); done("r12") end -- round 12
+  if not steps.r13 then require("src.zelda.tmc.ExtractR13").run(rom, manifest); done("r13") end -- round 13
+  if not steps.r15 then require("src.zelda.tmc.ExtractR15").run(rom, manifest); done("r15") end -- round 15
+  if not steps.r23 then require("src.zelda.tmc.ExtractR23").run(rom, manifest); done("r23") end -- round 23: tile-type flags (sub_080B1B84)
+  if not steps.r25 then require("src.zelda.tmc.ExtractR25").run(rom, manifest); done("r25") end -- round 25: Gleerok tables (gleerok.s)
+  if not steps.r26b then require("src.zelda.tmc.ExtractR26").run(rom, manifest); done("r26b") end -- round 26b: dungeon tables (ExtractR26.lua)
+  if not steps.r27a then require("src.zelda.tmc.ExtractR27A").run(rom, manifest); done("r27a") end -- round 27A: overworld tables (ExtractR27A.lua)
   tick("Minish Cap: music")
   if not steps.entities then
     manifest.entityRegion = { base = Layout.ENTITY_LO, size = Layout.ENTITY_HI - Layout.ENTITY_LO }

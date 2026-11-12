@@ -41,7 +41,8 @@ function Handshake.mods(game)
   for _, manifest in ipairs(status.loaded or {}) do
     mods[#mods + 1] = { id = manifest.id, version = manifest.version,
                         affectsLink = manifest.affects_link ~= false,
-                        language = manifest.language == true }
+                        language = manifest.language == true,
+                        runRules = manifest.run_rules == true }
   end
   table.sort(mods, function(a, b) return tostring(a.id) < tostring(b.id) end)
   return mods
@@ -118,6 +119,42 @@ local function translationOnly(mod, id)
   return true
 end
 
+-- RUN RULES (the bundled NUZLOCKE mod): a mod whose manifest says
+-- `"run_rules": true` judges a save's own run -- which encounter may be
+-- caught, which mon has died -- and never the shared simulation.  Like a
+-- translation the claim is checked: it may write no registry at all, and
+-- every hook it wraps / event it hears must be a run-rules seam (the
+-- `runmodes.*` family, the menus, `pokemon.received`), none of which runs
+-- inside a link battle.
+local RULE_SEAMS = {
+  ["pokemon.received"] = true, ["ui.start_menu.items"] = true,
+  ["save.new_game"] = true, ["save.loaded"] = true,
+}
+local function ruleSeam(name)
+  return RULE_SEAMS[name] or tostring(name):match("^runmodes%.") ~= nil
+end
+local function rulesOnly(mod, id)
+  for _, registry in pairs(mod.content or {}) do
+    for _, list in pairs(registry.ops or {}) do
+      for _, entry in ipairs(list) do
+        if entry.owner == id then return false end
+      end
+    end
+  end
+  for name, chain in pairs((mod.hooks and mod.hooks.chains) or {}) do
+    for _, entry in ipairs(chain) do
+      if entry.owner == id and not ruleSeam(name) then return false end
+    end
+  end
+  for name, list in pairs((mod.events and mod.events.listeners) or {}) do
+    for _, entry in ipairs(list) do
+      if entry.owner == id and not ruleSeam(name) then return false end
+    end
+  end
+  return true
+end
+Handshake._rulesOnly = function(mod, id) return rulesOnly(mod, id) end
+
 -- the enabled mods that keep this install out of online play, in the
 -- id order Handshake.mods sorts: everything except verified translations.
 -- LinkState:offerVanillaRestart names these and switches off exactly these.
@@ -127,6 +164,9 @@ function Handshake.onlineBlockers(game)
   for _, entry in ipairs(Handshake.mods(game)) do
     local allowed = entry.language and not entry.affectsLink
       and mod ~= nil and translationOnly(mod, entry.id)
+    if not allowed and entry.runRules and not entry.affectsLink and mod ~= nil then
+      allowed = rulesOnly(mod, entry.id)
+    end
     if not allowed then blockers[#blockers + 1] = entry end
   end
   return blockers
@@ -181,7 +221,24 @@ function Handshake.hello(game, mode, opts)
     battleFingerprint = Fingerprint.battle(game and game.data, mods),
     nonce = opts and opts.nonce or nil,
     mapSet = opts and opts.mapSet or nil,
+    -- RUN MODES (src/runmodes/RunModes.lua): what kind of run the peer is
+    -- playing (Nuzlocke / Soul Link / randomizer); nil on a normal save
+    runModes = require("src.runmodes.RunModes").summary(game),
+    -- the online look (src/online/world/Avatar.lua): gender + `av`, so a link
+    -- battle can show this player's own front pic in their colours.  Older
+    -- builds ignore the key.
+    look = Handshake.look(game),
   }
+end
+
+function Handshake.look(game)
+  local ok, look = pcall(function()
+    local g = game and game.save and game.save.player and game.save.player.gender
+    local out = { gender = (g == "girl" or g == "boy") and g or nil }
+    out.av = require("src.online.world.Avatar").wire(game)
+    return out
+  end)
+  return ok and look or nil
 end
 
 -- the features both hellos list (a v2 hello lists none: trade and battle,

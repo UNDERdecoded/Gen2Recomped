@@ -121,11 +121,16 @@ local function moveTowards(ent, ctx)
   ctx.unk19 = ctx.unk19 - 1
   if ctx.unk19 <= 0 then
     ctx.unk19 = 8
-    ent.angle = angleTo(ctx.tx - ent.x, ctx.ty - ent.y)
+    ent.angle = angleTo(math.floor(ctx.tx) - math.floor(ent.x), math.floor(ctx.ty) - math.floor(ent.y))
   end
-  local bx, by = ent.x - ctx.tx, ent.y - ctx.ty
+  -- round 9: ScriptCommand_MoveTowardsTarget compares x.HALF.HI / y.HALF.HI
+  -- (whole pixels): on an axis Link already shares with the target the
+  -- product is 0 and counts as arrived; with sub-pixels a player MoveTo
+  -- could circle the spot forever (the festival's script_PlayerIntro4)
+  local fl = math.floor
+  local bx, by = fl(ent.x) - fl(ctx.tx), fl(ent.y) - fl(ctx.ty)
   moveAngle(ent, ent.speed or 0x100, ent.angle or 0)
-  if bx * (ent.x - ctx.tx) <= 0 and by * (ent.y - ctx.ty) <= 0 then
+  if bx * (fl(ent.x) - fl(ctx.tx)) <= 0 and by * (fl(ent.y) - fl(ctx.ty)) <= 0 then
     ent.x, ent.y = ctx.tx, ctx.ty
     ctx.condition = 1
   else
@@ -282,7 +287,7 @@ end
 C[0x36] = function(e, ctx, host) if host.scrolling then stay() else keepGoing() end end
 C[0x37] = function(e, ctx, host) if host:fadeActive() then stay() end end
 -- fades: SetFade4..7 = FADE_INSTANT (in), | IN_OUT (out), | BLACK_WHITE
--- (white); iris fades as plain ones; all at the SetFadeTime speed
+-- (white); 0x40 / 0x41 are the iris fades; all at the SetFadeTime speed
 C[0x38] = function(e, ctx, host) host.fadeSpeed = arg(ctx, 1) end
 C[0x39] = function() end
 C[0x3A] = function(e, ctx, host) host:fade("invert", nil, host.fadeSpeed) end
@@ -291,8 +296,13 @@ C[0x3C] = function(e, ctx, host) host:fade("in", false, host.fadeSpeed) end
 C[0x3D] = function(e, ctx, host) host:fade("out", false, host.fadeSpeed) end
 C[0x3E] = function(e, ctx, host) host:fade("in", true, host.fadeSpeed) end
 C[0x3F] = function(e, ctx, host) host:fade("out", true, host.fadeSpeed) end
-C[0x40] = function(e, ctx, host) host:fade("in", false, host.fadeSpeed) end
-C[0x41] = function(e, ctx, host) host:fade("out", false, host.fadeSpeed) end
+-- SetFadeIris / SetFadeIrisInOut: the circle around the camera target
+C[0x40] = function(e, ctx, host)
+  if host.fadeIris then host:fadeIris(false, host.fadeSpeed) else host:fade("in", false, host.fadeSpeed) end
+end
+C[0x41] = function(e, ctx, host)
+  if host.fadeIris then host:fadeIris(true, host.fadeSpeed) else host:fade("out", false, host.fadeSpeed) end
+end
 C[0x42] = function() end
 C[0x43] = function(e, ctx, host) host.player.control = false; host.player.moving = false end
 C[0x44] = function(e, ctx, host) host.player.control = true end
@@ -308,7 +318,12 @@ C[0x4C] = function(e, ctx, host) host.player.animationState = 6 end
 C[0x4D] = function(e, ctx) e.action = arg(ctx, 1); e.subAction = 0 end
 C[0x4E] = function(e, ctx) ctx.intVariable = word(ctx) end
 C[0x4F] = function(e, ctx) ctx.intVariable = e.frameFlags or 0; e.frameFlags = 0 end
-C[0x50] = function(e, ctx) e.field80 = arg(ctx, 1); e.forceAnim = arg(ctx, 1) end
+C[0x50] = function(e, ctx)
+  e.field80 = arg(ctx, 1); e.forceAnim = arg(ctx, 1)
+  -- round 10: InitAnimationForceUpdate on any entity: a dressed object
+  -- (objAnim, e.g. the Octoroks bullying Ezlo) changes its animation too
+  if e.literalAnim and e.objAnim ~= nil then e.objAnim = arg(ctx, 1); e.animIndex = nil end
+end
 C[0x51] = function(e, ctx)
   if (e.interactType or 0) ~= 0 then e.interactType = 0; keepGoing() else stay() end
 end
@@ -331,13 +346,21 @@ C[0x53] = function(e) e.talkable = true end
 C[0x54] = function(e) e.talkable = false end
 C[0x55] = function(e, ctx) e.talkable = true; e.fuser = arg(ctx, 1) end
 C[0x56] = function(e, ctx, host)
-  local st = host.fusionState and host:fusionState() or 2
+  -- UpdateFusion: PerformFuseAction (KinstoneMenu.lua) once a fusion began
+  local st
+  if host.fuseInfo then st = require("src.zelda.tmc.KinstoneMenu").performFuse(host)
+  else st = host.fusionState and host:fusionState() or 2 end
   if st == 2 then ctx.condition = 1
   elseif st == 1 then ctx.condition = 0
   else stay() end
 end
+-- ScriptCommand_0807EA4C: INTERACTION_FUSE starts InitializeFuseInfo(e, 0, 0, 0)
 C[0x57] = function(e, ctx, host)
-  if e.interactType == 2 then e.interactType = 0; keepGoing() else stay() end
+  if e.interactType == 2 then
+    e.interactType = 0
+    if host.kinstone and host.message then require("src.zelda.tmc.KinstoneMenu").initFuse(host, e, 0, 0, 0) end
+    keepGoing()
+  else stay() end
 end
 C[0x58] = function(e, ctx) e.talkable = true; e.fuser = arg(ctx, 1) end
 C[0x59] = function(e, ctx, host) if host:messageActive() then stay() end end

@@ -38,6 +38,14 @@ function Boss:make(dat, def, health)
 end
 
 function Boss:spawn(dat, def)
+  -- round 5: madderpillar.c ported whole (BossMadderpillar.lua)
+  if dat.id == Boss.MADDERPILLAR and not Boss.simple then
+    return require("src.zelda.tmc.BossMadderpillar").new(self.field, self.en):spawn(dat, def)
+  end
+  -- round 16: chuchuBoss.c ported whole (BossChuchu.lua)
+  if dat.id == Boss.CHUCHU_BOSS and not Boss.simple and not Boss.simpleChuchu then
+    return require("src.zelda.tmc.BossChuchu").new(self.field, self.en):spawn(dat, def)
+  end
   if dat.id == Boss.MADDERPILLAR then
     local e = self:make(dat, def, 8)
     e.trail = {}

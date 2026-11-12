@@ -1,6 +1,8 @@
 package.path='./?.lua;'..package.path
 local View=require('src.render.Gen4View')
-for _,mode in ipairs({'third','field3d'}) do
+-- third person dollies; a FIELD camera (tilt rungs, BW) zooms by LENS so its
+-- eye -- and every building's proportions -- stay put (gen4_camera_stretch_test)
+for _,mode in ipairs({'third'}) do
  View.look={zoom=1,orbiting=true,yaw=0,rise=0}
  local view=View.new(mode);view.config={distance=512};view.fieldPitch=59
  view:follow(0,0,0,0);local far=math.sqrt(view.x^2+view.z^2);local fov=view.fovY
@@ -8,6 +10,15 @@ for _,mode in ipairs({'third','field3d'}) do
  view:follow(0,0,0,0);local close=math.sqrt(view.x^2+view.z^2)
  assert(close<far*.1,'camera must move toward player at close stop')
  assert(view.fovY==fov,'zoom must not change lens FOV')
+end
+do
+ View.look={zoom=1,orbiting=false,yaw=0,rise=0}
+ local view=View.new('field3d');view.config={distance=512};view.fieldPitch=59
+ view:follow(0,0,0,0);local far=math.sqrt(view.x^2+view.y^2+view.z^2);local fov=view:effectiveFovY(192)
+ for i=1,40 do view:zoomBy(-1) end
+ view:follow(0,0,0,0);local close=math.sqrt(view.x^2+view.y^2+view.z^2)
+ assert(math.abs(close-far)<1e-6,'field camera must not dolly in')
+ assert(view:effectiveFovY(192)<fov*0.2,'field camera zooms in by lens')
 end
 -- Orthographic headers are common indoors. Eye distance has no effect on
 -- their projected size; terrain and sprite projection must share zoom scale.

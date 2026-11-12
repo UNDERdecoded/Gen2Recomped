@@ -177,6 +177,8 @@ function TransferSession.new(data, party, opts)
     for i, mon in ipairs(party or {}) do
       local packed = MonCodec.pack(data, mon)
       local why = Transfer.refusal(packed, self.route)
+      local runWhy = require("src.runmodes.RunModes").tradeBlock(mon)
+      if runWhy and not why then why = require("src.runmodes.RunModes").BLOCK_TEXT[runWhy] end
       self.eligible[i] = why == nil
       self.reasons[i] = why and (Transfer.REFUSAL_TEXT[why] or why) or nil
       if not why then self.sendIndices[#self.sendIndices + 1] = i end

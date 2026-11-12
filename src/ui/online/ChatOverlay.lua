@@ -25,9 +25,12 @@ ChatOverlay.HUD_SECONDS = 9
 
 local function world() return require("src.online.world.OnlineWorld") end
 
-function ChatOverlay.open(game)
+-- opts.client: another chat surface with WorldClient's shape (state, log,
+-- say, now) -- a link room's (LinkRoomPeer.chat); default: the world's
+function ChatOverlay.open(game, opts)
   local self = setmetatable({}, ChatOverlay)
   self.game = game
+  self.chatClient = opts and opts.client or nil
   self.text = ""
   self.index = 0          -- 0: the typed line; 1..n: Chat.PHRASES
   self.width, self.height = WorldUi.surface()
@@ -42,6 +45,10 @@ end
 
 function ChatOverlay:uiSize() return self.width, self.height end
 
+function ChatOverlay:client()
+  return self.chatClient or world().client()
+end
+
 function ChatOverlay:close()
   if self.softKeyboard and love and love.keyboard and love.keyboard.setTextInput then
     pcall(love.keyboard.setTextInput, false)
@@ -55,7 +62,7 @@ function ChatOverlay:current()
 end
 
 function ChatOverlay:send()
-  local c = world().client()
+  local c = self:client()
   local line = self:current()
   if not c or not line or line == "" then return end
   local ok = c:say(line)
@@ -68,7 +75,7 @@ end
 
 function ChatOverlay:update(dt)
   world().tick(dt)
-  local c = world().client()
+  local c = self:client()
   if not (c and c.state == "in") then self:close() return end
   local input = self.game.input
   if not input then return end
@@ -111,7 +118,7 @@ function ChatOverlay:draw()
   local W, H = self.width, self.height
   local lh = st:lineHeight()
   local C = require("src.ui.online.CodeStyle").colors
-  local c = world().client()
+  local c = self:client()
   st:clear(W, H)
   -- the log
   local lines = {}

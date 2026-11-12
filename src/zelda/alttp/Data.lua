@@ -53,6 +53,22 @@ function D.load(cache)
   local okX, text = pcall(readBin, cache, U.FILES.text)
   local okF, font = pcall(readBin, cache, U.FILES.font)
   if okX and okF and self.ui then self.text, self.font = text, font end
+  -- round 13: the front end's screens; absent in an older cache
+  local FX = require("src.zelda.alttp.FrontExtract")
+  local okFf, ffile = pcall(readBin, cache, FX.FILES.file)
+  local okFg, fgame = pcall(readBin, cache, FX.FILES.game)
+  local okFi, finfo = pcall(readLua, cache, FX.FILES.info)
+  if okFf and okFg and okFi then self.front = { file = ffile, game = fgame, info = finfo } end
+  -- sprite sheets and draw tables (round 7); absent in an older cache
+  local SX = require("src.zelda.alttp.SprExtract")
+  local okSp, spr = pcall(readBin, cache, SX.FILES.sheets)
+  local okSi, sprInfo = pcall(readLua, cache, SX.FILES.info)
+  if okSp and okSi then self.spr, self.sprInfo = spr, sprInfo end
+  -- the menu screens (round 8); absent in an older cache
+  local MX = require("src.zelda.alttp.MenuExtract")
+  local okMb, mblob = pcall(readBin, cache, MX.FILES.blob)
+  local okMi, minfo = pcall(readLua, cache, MX.FILES.info)
+  if okMb and okMi and mblob and minfo then self.menus = MX.open(mblob, minfo) end
   return self
 end
 
@@ -71,6 +87,9 @@ end
 
 -- word i (0..4095) of overworld map number n
 function D:mapWord(n, i)
+  -- round 6: tiles changed at run time (cut bushes) override the map
+  local p = self.mapPatch and self.mapPatch[n]
+  if p and p[i] then return p[i] end
   local o = n * E.MAP_BYTES + i * 2
   local a, b = sbyte(self.maps, o + 1, o + 2)
   return a + b * 256

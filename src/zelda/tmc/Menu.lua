@@ -117,6 +117,12 @@ function Menu:setScreen(n)
   if n == 1 then self:itemsInit()
   elseif n == 2 then self:questInit()
   elseif n == 7 then self:kinstoneInit()
+  elseif n >= 8 and n <= 11 then -- round 5: sword techniques, sleep, save (SaveMenu.lua)
+    require('src.zelda.tmc.SaveMenu').init(self, n)
+  elseif n >= 4 and n <= 6 then -- round 5: the map pages (MapMenu.lua)
+    self.keys = { 14, 1, 2, 0 }
+    self.ui:layout({ 0xFF, 0xD8, 0, 0xFF, 0xD8, 0, 0xFF, 0xD8, 0, elements = {} })
+    require('src.zelda.tmc.MapMenu').init(self, n)
   else
     self.keys = { 14, 1, 2, 0 }
     self.ui:layout({ 0xFF, 0xD8, 0, 0xFF, 0xD8, 0, 0xFF, 0xD8, 0, elements = {} })
@@ -196,8 +202,9 @@ function Menu:itemsUpdate(input)
   local slot = self.cursor
   local e = self:itemEntry(slot)
   if input.pressed("a") and slot == SLOT_SAVE then
+    -- sub_080A4E84($B): the save screen (SaveMenu.lua, screen 11)
     f:sound(0x6A)
-    if f.game.opts.host and f.game.opts.host.requestSave then f.game.opts.host:requestSave() end
+    self.nextScreen, self.state = 11, 3
   elseif (input.pressed("a") or input.pressed("b")) and self.items[slot] then
     f:equip(input.pressed("a") and "a" or "b", self.items[slot])
     f:sound(0x6A) -- SFX_TEXTBOX_SELECT
@@ -465,7 +472,9 @@ function Menu:update(input)
     end
   end
   if self.screen == 1 then self:itemsUpdate(input)
-  elseif self.screen == 2 then self:questUpdate(input) end
+  elseif self.screen == 2 then self:questUpdate(input)
+  elseif self.screen >= 4 and self.screen <= 6 then require('src.zelda.tmc.MapMenu').update(self, input)
+  elseif self.screen >= 8 and self.screen <= 11 then require('src.zelda.tmc.SaveMenu').update(self, input) end
 end
 
 function Menu:inDungeon()
@@ -496,7 +505,9 @@ function Menu:draw(font)
   p:flush()
   if self.screen == 1 then self:itemsDraw()
   elseif self.screen == 2 then self:questDraw()
-  elseif self.screen == 7 then self:kinstoneDraw() end
+  elseif self.screen == 7 then self:kinstoneDraw()
+  elseif self.screen >= 4 and self.screen <= 6 then require('src.zelda.tmc.MapMenu').draw(self)
+  elseif self.screen >= 8 and self.screen <= 11 then require('src.zelda.tmc.SaveMenu').draw(self) end
   self:drawTabs()
   self.ui:draw()
   love.graphics.setColor(1, 1, 1, 1)
@@ -510,9 +521,12 @@ function Menu:draw(font)
     love.graphics.setColor(1, 1, 1, (16 - self.fade) / 16)
     love.graphics.draw(p:render(), 0, 0)
     love.graphics.setColor(1, 1, 1, 1)
+  elseif self.screen >= 4 and self.screen <= 6 then
+    require('src.zelda.tmc.MapMenu').compose(self)
   else
     love.graphics.draw(p:render(), 0, 0)
   end
+  if self.screen == 9 then require('src.zelda.tmc.SaveMenu').overlay(self) end
 end
 
 return Menu

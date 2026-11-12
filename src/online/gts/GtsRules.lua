@@ -201,6 +201,9 @@ end
 function GtsRules.depositBlocker(save, data, mon, index)
   if type(mon) ~= "table" then return "Nothing there." end
   if mon.isEgg then return "An EGG can't be traded." end
+  -- RUN MODES: dead Nuzlocke mons / Soul Link pairs stay home
+  local runBlock = require("src.runmodes.RunModes").tradeBlock(mon, save)
+  if runBlock then return require("src.runmodes.RunModes").BLOCK_TEXT[runBlock] end
   local held = mon.item or mon.heldItem
   if held ~= nil and itemName(data, held):upper():find("MAIL") then
     return "Remove the MAIL first."

@@ -184,6 +184,21 @@ function M.newBattle(game, net, opts)
   self.enemyIndex = 1
   self.playerParty = myParty
   self.ally = { party = partyAt(partnerSlot), name = names[partnerSeat], linkPartner = true }
+  -- EACH PLAYER'S ONLINE LOOK (the seats' optional `look`): both opponents'
+  -- front pics in the intro, in their own colours (src/online/BattleLook.lua)
+  do
+    local okP, P = pcall(require, "src.online.world.WorldProtocol")
+    local looks = {}
+    for c = 0, 3 do
+      local seat = opts.seats and opts.seats[c]
+      if okP and type(seat) == "table" and type(seat.look) == "table" and not seat.ai then
+        looks[c] = P.cleanLook(seat.look)
+      end
+    end
+    self.multiLooks = looks
+    self.multiAi = ai
+    self.multiFoeSeats = { cp(POS.OPPONENT_LEFT), cp(POS.OPPONENT_RIGHT) }
+  end
   self.awardExp = function() end
   self.linkCorrections = 0
   self.hostStates = {}

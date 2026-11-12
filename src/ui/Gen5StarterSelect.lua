@@ -89,7 +89,7 @@ end
 
 function Screen:line(entry)
   local s = self.text[("TEXT_B%04d_%05d"):format(BANK, entry)] or ""
-  local def = (self.game.data.pokemon or {})[self.species[self.index]]
+  local def = (self.game.data.pokemon or {})[require("src.runmodes.RunHooks").shownStarter(self.game, self.species[self.index])]
   s = s:gsub("{CMD %x+}", ""):gsub("{VAR2}", def and def.name or "")
   return (s:gsub("%s+$", ""))
 end
@@ -438,7 +438,7 @@ function Screen:drawPlain()
     g.circle("fill", cx, 90, 10)
     g.setColor(1, 1, 1, 1)
     g.arc("fill", cx, 90, 10, 0, math.pi)
-    local pic = i == self.index and self:picture(species)
+    local pic = i == self.index and self:picture(require("src.runmodes.RunHooks").shownStarter(self.game, species))
     if pic then
       local pw, ph = pic:getDimensions()
       local s = 64 / math.max(pw, ph)

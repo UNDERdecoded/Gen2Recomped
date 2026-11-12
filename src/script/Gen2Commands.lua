@@ -1658,7 +1658,7 @@ function Commands.g2_catch_tutorial(ctx)
   ctx.g2Wild = nil
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
-  local battle = BattleState.newWild(ctx.game, wild.species, wild.level)
+  local battle = require("src.runmodes.RunHooks").quiet(BattleState.newWild, ctx.game, wild.species, wild.level)
   battle:makeDudeDemo()
   -- CatchTutorial swaps wPlayerName for the duration (the "DUDE used POKe
   -- BALL!" line reads it) and copies the real one back on the way out.  The
@@ -1832,6 +1832,10 @@ end
 function Commands.g2_pokepic(ctx, species)
   local ow = ctx.overworld
   if not (ow and ctx.game) then return end
+  -- RUN MODES: Elm's balls show the randomized starter
+  if species ~= nil and ctx.game.save and ctx.game.save.runModes then
+    species = require("src.runmodes.RunHooks").introShown(ctx.game, species)
+  end
   -- `pokepic 0` reads wScriptVar instead of a literal
   if species == nil and type(ctx.g2Var) == "number" and ctx.g2Var > 0 then
     species = string.format("SPECIES_%03d", ctx.g2Var)
@@ -1952,6 +1956,8 @@ end
 -- (MrPokemon's MYSTERY EGG, Elm's aide and her POKe BALLs).
 function Commands.g2_giveitem(ctx, itemId, count)
   local game = ctx.game
+  -- RUN MODES: FIELD ITEMS & GIFTS (src/runmodes/RunHooks.lua giftItem)
+  itemId = require("src.runmodes.RunHooks").giftItem(game, itemId)
   local ok = require("src.inventory.Bag").add(
     ctx.save, itemId, count or 1, game.data)
   if ok then Commands.g2_getitemname(ctx, itemId) end
@@ -1971,6 +1977,9 @@ function Commands.g2_getitemname(ctx, itemId, buffer)
 end
 
 function Commands.g2_getmonname(ctx, species, buffer)
+  if ctx.game.save and ctx.game.save.runModes then
+    species = require("src.runmodes.RunHooks").introShown(ctx.game, species)
+  end
   local def = ctx.game.data.pokemon[species]
   setBuffer(ctx.game, bufferSlot(buffer), def and def.name or species)
 end

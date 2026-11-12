@@ -352,6 +352,9 @@ function Tournament:beginMatchBattle()
     rules = self.isHost and self:matchRules() or nil,
     keepNetOpen = true, -- this is the tournament's own connection, not a
                         -- dedicated match socket -- don't let finish() close it
+    -- the opponent's hello: its optional `look` puts their own front pic in
+    -- the battle intro (src/online/BattleLook.lua)
+    peerHello = self.peerHello,
   }
   self.stage = "matchWaitParty"
   self.pendingBattleOpts = opts

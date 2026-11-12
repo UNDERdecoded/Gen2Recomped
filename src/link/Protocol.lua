@@ -201,7 +201,10 @@ function Protocol.packParty(party, indices, opts)
     return mons
   end
   for _, mon in ipairs(party) do
-    table.insert(mons, Protocol.packMon(mon, opts))
+    -- RUN MODES: a Nuzlocke mon that fainted for good never goes on the wire
+    if not (type(mon) == "table" and mon.nuzDead == true) then
+      table.insert(mons, Protocol.packMon(mon, opts))
+    end
   end
   return mons
 end
@@ -310,8 +313,36 @@ function TradeSession.new(data, party, opts)
     for i = 1, #party do all[i] = i end
     self.sendIndices = all
     self:_gate()
+    self:_runGate()
   end
   return self
+end
+
+-- RUN MODES (src/runmodes/RunModes.lua): a dead Nuzlocke mon, or a Soul
+-- Link mon bound to its partner, is greyed and never offered.  Runs on every
+-- wire version: the rule is this save's, not the peer's.
+function TradeSession:_runGate()
+  local RunModes = require("src.runmodes.RunModes")
+  local keep, blocked = {}, false
+  for _, i in ipairs(self.sendIndices or {}) do
+    local why = RunModes.tradeBlock(self.party[i])
+    if why then
+      blocked = true
+      self.eligible = self.eligible or {}
+      self.eligible[i] = false
+      self.reasons[i] = RunModes.BLOCK_TEXT[why] or why
+    else
+      keep[#keep + 1] = i
+    end
+  end
+  if not blocked then return end
+  for _, i in ipairs(keep) do
+    if self.eligible[i] == nil then self.eligible[i] = true end
+  end
+  for i = 1, #(self.party or {}) do
+    if self.eligible[i] == nil then self.eligible[i] = false end
+  end
+  self.sendIndices = keep
 end
 
 -- the CompatRules per-mon gate over this side's party, applied on top of
@@ -369,6 +400,7 @@ function TradeSession:_negotiate(theirRecords)
   end
   self.sendIndices = indices
   self:_gate()
+  self:_runGate()
 end
 
 -- the UI greys what the other game would rebuild differently

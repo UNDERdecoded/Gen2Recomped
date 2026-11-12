@@ -93,7 +93,10 @@ function Kinstone:fuse(id, piece)
     bag[piece] = bag[piece] - 1
     if bag[piece] <= 0 then bag[piece] = nil end
   end
-  if id and id >= 1 and id <= 100 then self:fusedSet()[id] = true end
+  if id and id >= 1 and id <= 100 then
+    self:fusedSet()[id] = true
+    require("src.zelda.tmc.Fusers").notifyDone(self.field, id) -- round 6
+  end
   local we = self.data.events[id] and self.data.world[self.data.events[id].worldEvent]
   return we
 end
@@ -141,7 +144,7 @@ function Kinstone:applyWorldEvents()
         local l = f:entityListAt(fused and 0x080FEE58 or 0x080FEE48)
         if l and l[1] then f:spawn(l[1]) end
       elseif t == 17 and fused then
-        f:setFlag("bank", 124, true, 0x100) -- SOUGEN_05_BOMB_00
+        f:setFlag("bank", 0x79, true, 0x100) -- SOUGEN_05_BOMB_00 (round 9: USA id)
         f:loadEntityList(0x080FEE38)
       end
     end
@@ -168,23 +171,49 @@ function Kinstone:openFuse()
   if friend then
     self.active = true
     self.ui = { mode = "offer", cursor = 1, friend = friend }
+    -- round 5: the cartridge's fusion window (KinstoneMenu.lua); our piece
+    -- goes to the friend, whose game decides
+    local KM = require("src.zelda.tmc.KinstoneMenu")
+    if self:useWindow() then self.window = KM.new(f, { name = friend.name or "", entity = nil,
+      onPick = function(piece)
+        self.ui.mine = piece
+        self.ui.mode = "wait"
+        f.game.net:send({ t = "fuse_offer", piece = piece, fused = self:fusedList() }, friend.peer)
+      end,
+      record = function(id, piece) self:fuse(id, piece) end,
+      onDone = function() self:close() end }) end
     return
   end
-  -- a fuser NPC in front of us?
+  -- a fuser in front of us? (round 6: the nearest interactable, as
+  -- gPossibleInteraction.currentObject; Fusers.lua runs native fusers)
   local fx, fy = p:frontPoint(10)
+  local best, bestD
   for _, e in ipairs(f.entities) do
-    if e.fuser and math.abs(e.x - fx) + math.abs(e.y - fy) < 18 then
-      e.interactType = 2
-      return
+    if e.talkable and not e.hidden and not e.deleted then
+      local d = math.abs(e.x - fx) + math.abs(e.y - fy)
+      if d < 18 and (not bestD or d < bestD) then best, bestD = e, d end
     end
   end
+  if best and require("src.zelda.tmc.Fusers").tryFuse(f, best) then return end
   self.active = true
   self.ui = { mode = "bag", cursor = 1 }
+  -- round 5: the fusion window with nothing on offer (browse the bag)
+  if self:useWindow() then
+    self.window = require("src.zelda.tmc.KinstoneMenu").new(f, { onDone = function() self:close() end })
+  end
+end
+
+-- the window needs the real field (assets, inventory) and LÖVE; headless
+-- logic tests keep the plain flow
+function Kinstone:useWindow()
+  local f = self.field
+  return rawget(_G, "love") ~= nil and love.graphics ~= nil and f.inventory ~= nil and f.assets ~= nil
 end
 
 function Kinstone:close()
   self.active = false
   self.ui = nil
+  self.window = nil
 end
 
 -- a friend asked us to fuse (net event)
@@ -197,10 +226,49 @@ function Kinstone:onOffer(peer, ev)
   end
   self.active = true
   self.ui = { mode = "answer", cursor = 1, peer = peer, offer = ev }
+  -- round 5: the friend's half is the one on offer in the fusion window
+  local f = self.field
+  local net = f.game.net
+  if not self:useWindow() then return end
+  local KM = require("src.zelda.tmc.KinstoneMenu")
+  local win
+  win = KM.new(f, { target = ev.piece, name = ev.name or "",
+    onPick = function(piece)
+      local ok, id, why = self:answer(piece, ev)
+      if net then net:send({ t = "fuse_result", ok = ok, id = id, piece = ev.piece, why = why }, peer) end
+      self.ui.mine = piece
+      win:resolve(ok, id)
+    end,
+    record = function(id, piece) self:fuse(id, piece) end,
+    onDone = function(state)
+      if state ~= 6 and net and not self.ui.mine then
+        net:send({ t = "fuse_result", ok = false, why = "Your friend declined." }, peer)
+      end
+      self:close()
+    end })
+  self.window = win
+end
+
+-- the answering side's rule: the shapes fit, then GetRandomSharedFusion
+-- among ids neither side has fused (of that shape first)
+function Kinstone:answer(piece, offer)
+  if not self:fits(piece, offer.piece) then return false, nil, "The Kinstones did not fit." end
+  local other = {}
+  for _, x in ipairs(offer.fused or {}) do other[x] = true end
+  local start = math.random(0, 17)
+  local id = self:sharedFusionFor(self:shape(piece), other, start) or self:sharedFusionFor(nil, other, start)
+  if id then return true, id end
+  return false, nil, "These halves have nothing left to unlock."
 end
 
 function Kinstone:onResult(peer, ev)
   local f = self.field
+  -- round 5: the offering side's window plays the fusion (or the bounce)
+  if self.window and self.window.waiting then
+    self.window:resolve(ev.ok, ev.id)
+    if not ev.ok then f:showToast(ev.why or "The Kinstones did not fit.", 120); self.ui.mode = "offer" end
+    return
+  end
   if ev.ok and ev.id then
     local piece = self.ui and self.ui.mine or ev.piece
     local we = self:fuse(ev.id, piece)
@@ -222,6 +290,13 @@ function Kinstone:resultText(id, we)
 end
 
 function Kinstone:update(input)
+  if self.npcFuse and not self.window then return end -- round 6: a native fuser's messages
+  if self.window then
+    -- R in the offer window still gives the friend 10 shells (round 3)
+    if not (self.ui and self.ui.mode == "offer" and input.pressed("r")) then
+      return self.window:update(input)
+    end
+  end
   local ui = self.ui
   if not ui then self.active = false return end
   local list = self:pieces()
@@ -276,6 +351,7 @@ function Kinstone:update(input)
 end
 
 function Kinstone:draw(font)
+  if self.window then return self.window:draw() end
   local ui = self.ui
   if not ui then return end
   local g = love.graphics

@@ -108,7 +108,10 @@ local PRE_CONNECT_STAGES = { menu = true, lanMenu = true, onlineMenu = true,
 --   allowRelay    the relay for short codes and tournaments (on: decision
 --                 1 of the design keeps it as an opt-out fallback)
 --   portMap       ask the router to open the port (UPnP / NAT-PMP / PCP)
---   stun          the public address finder (a third party; off)
+--   stun          the public address finder (a third party; ON by default
+--                 since the user's request: without it a code carries no
+--                 internet address when the router won't open the port, so
+--                 the both-enter-codes hole punch had nothing to dial)
 --   manualAddress a forwarded port's public IP or name (nil)
 --   hubAddress    the player's Link Hub "host:port"; short codes and
 --                 tournaments use it in place of the default relay (nil)
@@ -119,7 +122,7 @@ local PRE_CONNECT_STAGES = { menu = true, lanMenu = true, onlineMenu = true,
 -- tests on 127.0.0.1 and are not shown anywhere.
 -- -------------------------------------------------------------------
 LinkState.SETTING_DEFAULTS = {
-  port = 7777, allowRelay = true, portMap = true, stun = false,
+  port = 7777, allowRelay = true, portMap = true, stun = true,
   manualAddress = nil, hubAddress = nil, worldCap = 8, lanBeacon = true,
 }
 LinkState.WORLD_CAP_MAX = 16
@@ -141,10 +144,19 @@ function LinkState.settings(game)
   s.port = port
   s.allowRelay = s.allowRelay ~= false
   s.portMap = s.portMap ~= false
-  s.stun = s.stun == true
+  -- (an old save's stun = false counts only if the player chose it:
+  -- OnlineSettings writes stunChosen when the toggle is flipped)
+  s.stun = s.stun ~= false or s.stunChosen ~= true
   s.lanBeacon = s.lanBeacon ~= false
   s.manualAddress = nonEmpty(s.manualAddress)
   s.hubAddress = nonEmpty(s.hubAddress)
+  -- no hub of the player's own: the official server (src/online/OfficialHub)
+  -- -- not for a loopback-bound test game
+  if not s.hubAddress and not (type(s.bind) == "string" and s.bind:match("^127%.")) then
+    local okO, OH = pcall(require, "src.online.OfficialHub")
+    local addr = okO and OH.address() or nil
+    if addr then s.hubAddress, s.hubOfficial = addr, true end
+  end
   s.displayName = nonEmpty(s.displayName)
   local cap = math.floor(tonumber(s.worldCap) or 8)
   s.worldCap = math.max(2, math.min(LinkState.WORLD_CAP_MAX, cap))
@@ -154,7 +166,9 @@ end
 -- what Connector.host is given for a DIRECT code: never the relay
 function LinkState.hostOptions(s)
   return { port = s.port, bind = s.bind, lanIp = s.lanIp, portMap = s.portMap,
-           stun = s.stun, stunServer = s.stunServer, manualAddress = s.manualAddress,
+           -- (no STUN for a loopback-bound test host: it would ask the internet)
+           stun = s.stun and not (type(s.bind) == "string" and s.bind:match("^127%.") ~= nil),
+           stunServer = s.stunServer, manualAddress = s.manualAddress,
            portMapOpts = s.portMapOpts, allowRelay = false, relayHost = false,
            lanBeacon = s.lanBeacon, beaconTargets = s.beaconTargets,
            beaconPort = s.beaconPort,
@@ -681,6 +695,8 @@ function LinkState:update(dt)
       local item = items[self.index]
       if item.id == "code" then
         self:openJoinEntry()
+      elseif item.id == "official" then
+        self:startJoin(require("src.online.OfficialHub").invite())
       elseif item.host and item.host.compatible then
         local invite = require("src.online.net.LanBeacon").toInvite(item.host)
         invite.type, invite.kind = "direct", "session"
@@ -713,7 +729,8 @@ function LinkState:update(dt)
     elseif input:wasPressed("a") then
       local id = items[self.index].id
       if id == "world" then
-        local game, code = self.game, self.hubDoor.pong.worldCode
+        local LH = require("src.online.LauncherHub")
+        local game, code = self.game, LH.worldFor(self.hubDoor.pong, LH.currentVersion())
         self:exitWith(nil)
         local OnlineWorld = require("src.online.world.OnlineWorld")
         local okJ, why = OnlineWorld.joinWorld(game, code)
@@ -1359,6 +1376,9 @@ end
 
 function LinkState:joinListItems()
   local items = { { id = "code", label = Strings("ENTER A CODE") } }
+  -- the official server, always listed: no code to type
+  local okO, OH = pcall(require, "src.online.OfficialHub")
+  if okO and OH.enabled() then items[#items + 1] = { id = "official", label = Strings(OH.NAME) } end
   local l = self.lanListener
   for _, host in ipairs(l and l:hosts() or {}) do
     local label = tostring(host.name or host.ip or "?")
@@ -1398,7 +1418,12 @@ function LinkState:hubDoorReady(pong)
   if save then
     save.options = save.options or {}
     save.options.online = save.options.online or {}
-    save.options.online.hubAddress = pong.address
+    -- (the official server is the default anyway: its address is not
+    -- written into the save, where SETTINGS would show it)
+    local okO, OH = pcall(require, "src.online.OfficialHub")
+    if not (okO and OH.isOfficial(pong.address)) then
+      save.options.online.hubAddress = pong.address
+    end
   end
   self.settings = LinkState.settings(self.game)
   self.hubDoor = { pong = pong }
@@ -1409,7 +1434,11 @@ end
 function LinkState:hubDoorItems()
   local pong = self.hubDoor and self.hubDoor.pong or {}
   local items = {}
-  if pong.worldCode then items[#items + 1] = { id = "world", label = Strings("JOIN THEIR WORLD") } end
+  -- (a hub with a world per game: this game's own)
+  local okL, LH = pcall(require, "src.online.LauncherHub")
+  if okL and LH.worldFor(pong, LH.currentVersion()) then
+    items[#items + 1] = { id = "world", label = Strings("JOIN THEIR WORLD") }
+  end
   items[#items + 1] = { id = "host", label = Strings("HOST") }
   items[#items + 1] = { id = "back", label = Strings("BACK") }
   return items
@@ -1991,7 +2020,8 @@ function LinkState:draw()
     local labels = {}
     for i, item in ipairs(self:hubDoorItems()) do labels[i] = item.label end
     local lines
-    if pong.worldCode then
+    local okL, LH = pcall(require, "src.online.LauncherHub")
+    if okL and LH.worldFor(pong, LH.currentVersion()) then
       lines = { { Strings("Hub saved. %s has a world open.", tostring(pong.name or "Your friend")), C.dim } }
     else
       lines = { { Strings("Hub saved: now HOST to get a code friends can join through it."), C.dim } }

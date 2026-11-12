@@ -38,7 +38,9 @@ local Net = {}
 Net.__index = Net
 
 Net.DEFAULT_PORT = 7777
-Net.DEFAULT_RELAY_ADDRESS = "147.182.215.255:7778"
+-- the official Link Hub (src/online/OfficialHub.lua) also speaks the old
+-- relay protocol on its TCP port
+Net.DEFAULT_RELAY_ADDRESS = "157.173.197.32:7778"
 
 function Net.available()
   return enet ~= nil

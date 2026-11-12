@@ -295,6 +295,8 @@ function ShopMenu.coverWith(game, screen)
 end
 
 function ShopMenu.new(game, stock, onQuit)
+  -- RUN MODES: MART ITEMS (src/runmodes/RunHooks.lua martStock)
+  stock = require("src.runmodes.RunHooks").martStock(game, stock)
   local counter = gen3Counter(game)
   if counter then
     local fireRed = require("src.core.GameVersion").get() == "firered"

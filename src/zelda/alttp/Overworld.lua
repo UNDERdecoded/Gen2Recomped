@@ -81,7 +81,11 @@ end
 -- a VRAM: 512 tiles, each a string of 64 palette-index bytes (row major)
 function O:vramFor(screen)
   local sheets = self:sheets(screen)
-  local key = table.concat(sheets, ",")
+  -- r15: VRAM tiles 0x1C0-0x1DF hold the animated tiles (AnimTiles.lua),
+  -- frame 0 here; the area's animation sheet is part of the key
+  local AT = require("src.zelda.alttp.AnimTiles")
+  local parent = self:parent(screen)
+  local key = table.concat(sheets, ",") .. "/" .. AT.owSheet(parent)
   local v = self.vram[key]
   if v then return v end
   v = {}
@@ -98,6 +102,8 @@ function O:vramFor(screen)
       v[slot * 64 + t] = px
     end
   end
+  local fr = AT.owFrames(self.data, parent)
+  for k = 0, AT.COUNT - 1 do v[AT.OW_BASE + k] = fr[0][k] end
   self.vram[key] = v
   return v
 end
@@ -111,7 +117,9 @@ O.cellIndex = cellIndex
 
 -- Decode one layer of a screen into a flat 0-based array of 512*512 colour
 -- indices (0 = transparent; else palette*16 + colour).
-function O:decodeLayer(screen, layer)
+-- r15: `cells` (optional) collects the cells drawn with animated tiles as
+-- flat { tx, ty, word } triples (AnimTiles.register)
+function O:decodeLayer(screen, layer, cells)
   local n = self.data:mapNumber(layer, screen)
   local vram = self:vramFor(screen)
   local out = {}
@@ -119,6 +127,9 @@ function O:decodeLayer(screen, layer)
     for tx = 0, 63 do
       local w = self.data:mapWord(n, cellIndex(tx, ty))
       local tile = band(w, 0x3FF)
+      if cells and tile >= 0x1C0 and tile < 0x1E0 then
+        cells[#cells + 1] = tx; cells[#cells + 1] = ty; cells[#cells + 1] = w
+      end
       local hf = band(w, 0x400) ~= 0
       local vf = band(w, 0x800) ~= 0
       local pal = rshift(w, 12) * 16

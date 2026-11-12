@@ -683,10 +683,16 @@ local function getImage(path, pal, trueColor, crop)
   if trueColor then pal = nil end
   local key = pal and (path .. "#" .. pal.name) or path
   if crop then key = key .. "@" .. crop.index end
+  -- THE ONLINE LOOK (src/online/BattleLook.lua): a pic registered for this
+  -- battle -- your back, a link opponent's front -- loads recoloured, under
+  -- its own cache key; every other pic is exactly as before
+  local BattleLook = package.loaded["src.online.BattleLook"]
+  local lookPaint = BattleLook and BattleLook.forPath(path)
+  if lookPaint then key = key .. "|look:" .. require("src.online.world.Avatar").paintSig(lookPaint) end
   if not imageCache[key] then
     local img, pad, padL = nil, 0, 0
     if love.image and love.image.newImageData then
-      local id = Assets.imageData(path)
+      local id = (lookPaint and BattleLook.imageData(path, _G.Game and _G.Game.data)) or Assets.imageData(path)
       if crop then
         local strip = id
         id = love.image.newImageData(crop.width, strip:getHeight())
@@ -1431,6 +1437,8 @@ function BattleState.giveWildHeldItem(data, mon, rng, compoundEyes)
 end
 
 function BattleState.newWild(game, species, level, opts)
+  -- RUN MODES: the save's randomizer (src/runmodes/RunHooks.lua)
+  species, opts = require("src.runmodes.RunHooks").wildSpecies(game, species, opts)
   local self = newBattle(game)
   self.kind = "wild"
   local playerMon = Party.firstHealthy(game.save.party)
@@ -1521,6 +1529,8 @@ function BattleState.newWild(game, species, level, opts)
   else
     self.introText = self:romText("_WildMonAppearedText", "Wild %s\nappeared!", self.enemy.name)
   end
+  -- RUN MODES: may the Nuzlocke rules let this one be caught?
+  require("src.runmodes.RunHooks").wildStart(game, self, species, opts)
   return self
 end
 
@@ -1819,6 +1829,10 @@ function BattleState.newTrainer(game, oppClass, partyIndex)
     end, oppClass, partyIndex or 1, partyDef) or partyDef
   end
   self.enemyParty = buildTrainerParty(game, oppClass, partyIndex or 1, partyDef)
+  -- RUN MODES: randomized starters reach the rival's (and any) starter line
+  if game.save and game.save.runModes then
+    self.enemyParty = require("src.runmodes.RunHooks").trainerParty(game, self.enemyParty, oppClass, partyIndex or 1)
+  end
   self.enemyIndex = 1
   local playerMon = Party.firstHealthy(game.save.party)
   if not playerMon then
@@ -2010,6 +2024,9 @@ function BattleState:addOpponentTrainer(oppClass)
     BattleState.trainerPalette(self.game.data, def),
     def.trueColor)
   self.enemyPartyB = buildTrainerParty(self.game, oppClass, 1, partyDef)
+  if self.game.save and self.game.save.runModes then
+    self.enemyPartyB = require("src.runmodes.RunHooks").trainerParty(self.game, self.enemyPartyB, oppClass, 1)
+  end
   self.enemyIndexB = 1
   if self.enemyPartyB[1] then
     -- the right-hand opponent is the SECOND trainer's lead, replacing
@@ -3752,7 +3769,10 @@ function BattleState:enter()
     self.introSlide = 120
     self.frlgIntro = { hold = 32, t = 0, light = nil }
   end
-  self.showEnemyTrainer = self.kind == "trainer" and self.trainerPic ~= nil
+  -- a Gen 3+ link battle shows the other player's own trainer front first
+  if self.kind == "link" then pcall(require("src.online.BattleLook").linkFront, self, getImage) end
+  self.showEnemyTrainer = (self.kind == "trainer" or (self.kind == "link" and self.linkFrontPic))
+                          and self.trainerPic ~= nil
   -- DrawAllPokeballs (common_text.asm:27) puts the party ball rows AND the
   -- HUD corner/underline tiles under them (PlacePlayerHUDTiles /
   -- PlaceEnemyHUDTiles, draw_hud_pokeball_gfx.asm:119-165) on screen with
@@ -3779,6 +3799,8 @@ function BattleState:enter()
   -- Reported from play: "in the dawn catching tutorial ... its showing the
   -- old man placeholder sprite rather than dawns sprite".
   local counterpart = self.counterpartBack and true or false
+  -- online: the MY LOOK colours on your back pic (src/online/BattleLook.lua)
+  pcall(require("src.online.BattleLook").begin, self)
   local backPath, backTrueColor =
     require("src.pokemon.Sprites").playerPath(self.data, "back",
       { kind = "battle", demo = self.demo and not counterpart, oakDemo = self.oakDemo,
@@ -3788,6 +3810,10 @@ function BattleState:enter()
   -- ...OR ONE THE DEMO NAMES OUTRIGHT: Black and White's Juniper is no player
   -- form, so Gen4Commands hands her ROM back pic in (src/battle/CatchTutorialDemo.lua)
   if self.demoBackPath then backPath, backTrueColor = self.demoBackPath, true end
+  do
+    local okL, p2, t2 = pcall(require("src.online.BattleLook").backPath, self, backPath, backTrueColor)
+    if okL and p2 then backPath, backTrueColor = p2, t2 end
+  end
   local backPalette=namedPalette(self.data,"MEWMON")
   if not self.demo and not backTrueColor then
     local colors,key=require('src.render.PlayerPalette').of(self.data,self.game.save,
@@ -3906,6 +3932,13 @@ function BattleState:enter()
     -- Colosseum has no foe trainer pic, but the enemy mon still grows
     -- out of the ball after "X sent out Y!" (not the wild "already there"
     -- intro that LinkBattle previously inherited from newWild).
+    -- (Gen 3+: the other player's front pic, BattleLook.linkFront, walks off
+    -- first, as a trainer's does)
+    if self.showEnemyTrainer then
+      self:act(function() self:slidePic("foe", 0, 64, 4) end)
+      table.insert(self.queue, { wait = 16 })
+      self:act(function() self.showEnemyTrainer = false self:slidePic("foe") end)
+    end
     self.enemySendingOut = true
     self:say(Strings("%s sent\nout %s!", self.opponentName or "FOE",
                                           self.enemy.name))
@@ -8867,6 +8900,7 @@ function BattleState:onFaint(battler)
     self.participants[battler.mon] = nil
   end
   Runtime.emit("battle.fainted", { battle = self, battler = battler })
+  require("src.runmodes.RunHooks").fainted(self, battler)
   if battler.isPlayer then
     -- HandlePlayerMonFainted (core.asm:1070-1085): the companion loses
     -- happiness on its own faint; an enemy 30+ levels above it makes
@@ -10425,6 +10459,7 @@ function BattleState:storeCaughtMon()
     battle = self, mon = self.enemy.mon, species = species, isNew = isNew,
     ball = self.lastBall, destination = destination, game = game,
   })
+  require("src.runmodes.RunHooks").caught(self, self.enemy.mon)
   self.result = "caught"
   self.afterQueue = "finish"
 end
@@ -10841,7 +10876,7 @@ function BattleState:throwBall(ball)
       -- so it is not a ghost battle any more (#444)
       self:animNext(self:tossAnimFor(ball), true, nil, ball)
       self:sayNext(Strings("It dodged the\nthrown BALL!"))
-      self:sayNext(Strings("This POKéMON\ncan't be caught!"))
+      self:sayNext(self.runNoCatch or Strings("This POKéMON\ncan't be caught!"))
       self:act(function()
         self:executeAction(self.enemy, self.player, self:enemyAction())
       end)
@@ -11185,6 +11220,7 @@ function BattleState:finish()
   require("src.core.Music").restoreMap(self.data)
   self.game.stack:pop()
   Runtime.emit("battle.ended", { battle = self, result = self.result or "run" })
+  require("src.runmodes.RunHooks").battleEnd(self, self.result or "run")
   -- Coming back from the battle screen is a fade, not a cut: EnterMap sees
   -- BIT_BATTLE_OVER_OR_BLACKOUT set and runs MapEntryAfterBattle
   -- (home/overworld.asm:22, :749-753) = GBFadeInFromWhite.  This is the one

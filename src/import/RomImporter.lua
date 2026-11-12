@@ -2107,7 +2107,8 @@ local function purgeSaveDirCache()
   for _, version in ipairs(GameVersion.ORDER) do
     local prefix = GameVersion.cachePrefix(version)
     if saveDirHas(prefix .. MARKER_PATH)
-        or saveDirHas(prefix .. requiredFiles(version)[1]) then
+        -- a Zelda cache has no required-file list (requiredFiles -> {})
+        or (requiredFiles(version)[1] and saveDirHas(prefix .. requiredFiles(version)[1])) then
       removeTree(prefix .. "data/generated")
       removeTree(prefix .. "assets/generated")
       love.filesystem.remove(prefix .. MARKER_PATH)
@@ -9002,7 +9003,9 @@ function RomImporter:_launcherSettingsRows()
             row = { id = "worldCap", type = "number", min = OnlineSettings.Model.CAP_MIN,
                     max = OnlineSettings.Model.CAP_MAX, default = 8 } })
       local s = OnlineSettings.Model.read(self:_settings())
-      add({ kind = "action", label = "LINK HUB", value = s.hubAddress or "DEFAULT RELAY", action = "none" })
+      local okOH, OH = pcall(require, "src.online.OfficialHub")
+      add({ kind = "action", label = "LINK HUB", value = (okOH and s.hubAddress and OH.mask(s.hubAddress))
+              or s.hubAddress or (okOH and OH.enabled() and OH.NAME) or "DEFAULT RELAY", action = "none" })
       add({ kind = "action", label = "MY PUBLIC ADDRESS", value = s.manualAddress or "AUTO", action = "none" })
       add({ kind = "action", label = "DISPLAY NAME", value = s.displayName or "TRAINER NAME", action = "none",
             note = OnlineSettings.Model.codesShowIp(s)

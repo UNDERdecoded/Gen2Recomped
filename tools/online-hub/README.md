@@ -127,8 +127,8 @@ port = 7778                -- TCP: short codes, tournaments, 0.7.x clients
 dataDir = "hub-data"       -- relative to this file; GTS store, world, logs, bans
 
 relay = { enabled = true, bytesPerSecond = 65536, burstBytes = 262144,
-          queueBytes = 1048576, roomTtl = 1800, maxRooms = 500 }
-rendezvous = { enabled = true, maxTickets = 2000, ticketTtl = 7200,
+          queueBytes = 1048576, roomTtl = 1800, maxRooms = 1000 }
+rendezvous = { enabled = true, maxTickets = 4000, ticketTtl = 7200,
                ticketsPerIp = 8, introductionsPerTicket = 64 }
 tournaments = { enabled = true, max = 32, maxPlayers = 32, resultTimeout = 90,
                 lobbyTtl = 3600 }
@@ -154,12 +154,12 @@ world = {
   name = "HUB WORLD",
   game = "platinum",       -- one game per world (maps must match the members')
   data = "/srv/games/platinum/data/generated",
-  cap = 16,                -- 2..16
+  cap = 16,                -- 2..1000 on a server hub (player-hosted worlds stay at 16)
   public = true,           -- unmodded games only, chat filter on
   gts = true,              -- members can open the hub GTS from inside the world
 }
 
-caps = { tcpConnections = 512, enetPeers = 256, perIp = 16,
+caps = { tcpConnections = 1100, enetPeers = 1100, perIp = 16,
          messagesPerSecond = 30, messageBurst = 120, idleSeconds = 60 }
 admin = { key = "", localOnly = true }   -- key: 12+ characters; empty = admin off
 log = { level = "info", file = true, keepDays = 14, addresses = false }

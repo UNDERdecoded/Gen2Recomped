@@ -47,7 +47,9 @@
 --   w_kicked  { reason, ban }
 --
 -- A member record on the wire:
---   { pid, name, tid, look = { walk, bike, surf, gender }, pos = {...},
+--   { pid, name, tid, look = { walk, bike, surf, gender, av }, pos = {...},
+--   (`av`, the chosen sheet + colour, since 2026-11: Avatar.lua; optional,
+--   older builds strip it in cleanLook and draw the default sheet)
 --     host = bool, busy = bool }
 
 local P = {}
@@ -57,6 +59,12 @@ P.VERSION = 1
 -- world player cap: the user's decision (docs 2.13 #4)
 P.DEFAULT_CAP = 8
 P.MAX_CAP = 16
+-- a dedicated Link Hub on a server (VPS) may hold far more: only the hub's
+-- own world uses this (hub config world.cap); player-hosted worlds keep 16
+P.SERVER_MAX_CAP = 1000
+-- above this many players on one map, their steps are forwarded less often
+-- (WorldHost:onPos) so a crowd can't flood the server's single core
+P.CROWD = 24
 P.MIN_CAP = 2
 
 P.HOST_PID = 1
@@ -146,10 +154,11 @@ function P.cleanText(s, max)
   return text
 end
 
-function P.clampCap(cap)
+function P.clampCap(cap, max)
   cap = math.floor(tonumber(cap) or P.DEFAULT_CAP)
+  max = max or P.MAX_CAP
   if cap < P.MIN_CAP then cap = P.MIN_CAP end
-  if cap > P.MAX_CAP then cap = P.MAX_CAP end
+  if cap > max then cap = max end
   return cap
 end
 
@@ -182,6 +191,11 @@ function P.cleanLook(l)
     if shortString(l[k], 64) and l[k]:match("^[%w_%-:]+$") then out[k] = l[k] end
   end
   if l.gender == "boy" or l.gender == "girl" then out.gender = l.gender end
+  -- the chosen online look (src/online/world/Avatar.lua): sheet + colour.
+  -- Builds before it drop this key here, which is the whole of the
+  -- back-compat story: an old viewer or host just never sees it.
+  local av = require("src.online.world.Avatar").clean(l.av)
+  if av then out.av = av end
   return out
 end
 

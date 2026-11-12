@@ -380,7 +380,18 @@ function Gen4View:follow(x, z, facing, baseY)
     -- third-person camera, and a tilt rung is asking for the map's framing at
     -- a different angle, not for a different framing.
     local cfg = self.config
-    local d = ((cfg and tonumber(cfg.distance)) or 512)*(self.zoom or 1)
+    -- ZOOMING IN IS A LENS, NEVER A DOLLY (see `effectiveFovY`): the eye
+    -- stays at the row's own distance. Dollying in by `zoom` put the eye a
+    -- few tiles off the roof, so a 75-unit building drew 2-4x its height
+    -- (the "stretched buildings" reports; scratch_claude/cam_stretch).
+    -- Zooming OUT still backs the eye off, which only flattens perspective
+    -- -- a lens that wide would splay the screen's edges instead.
+    -- (An orthographic room zooms by its box alone: backing its eye off only
+    -- pushed the room past the far plane and drew it black.)
+    local ortho = cfg and cfg.projection == "orthographic"
+    local d = ((cfg and tonumber(cfg.distance)) or 512) * (ortho and 1 or max(self.zoom or 1, 1))
+    -- what it looks at, which is what `drawFree` picks chunks around
+    self.targetX, self.targetZ = x, z
     local e = rad(self.fieldPitch or 60)
     local horizontal = cos(e) * d
     -- FIXED HEADING.  The cartridge's field camera does not turn, and a tilt
@@ -505,7 +516,7 @@ function Gen4View:matrix(vw, vh)
   if cfg and cfg.projection == "orthographic" then
     -- Dolly alone cannot magnify an orthographic map. Keep its visible box
     -- in step with the dolly so tilted indoor views zoom like outdoor views.
-    proj = Gen4Model.orthographic(vh / 2 * (self.zoom or 1), vw / vh,
+    proj = Gen4Model.orthographic(vh / (self.pixelScale or 1) / 2 * (self.zoom or 1), vw / vh,
                                   tonumber(cfg.near) or Gen4View.NEAR,
                                   tonumber(cfg.far) or Gen4View.FAR)
   else
@@ -649,7 +660,7 @@ function Gen4View:project(x, y, z, vw, vh)
          -- One world unit is one screen pixel under the orthographic box this
          -- view builds, at every distance -- which is the whole difference
          -- between the two projections and the number a billboard needs.
-         ortho and 1 / (self.zoom or 1) or self:pixelsPerUnitAt(w, vh),
+         ortho and (self.pixelScale or 1) / (self.zoom or 1) or self:pixelsPerUnitAt(w, vh),
          cz / w
 end
 
@@ -679,7 +690,11 @@ function Gen4View:effectiveFovY(vh)
   local cfg = self.config
   local d = cfg and tonumber(cfg.distance)
   if self.mode == "field3d" and d and d > 1e-6 then
-    return deg(2 * math.atan((max(tonumber(vh) or 1, 1) / 2) / d))
+    -- In LOGICAL rows (`pixelScale` is the 3D RES supersample, set by
+    -- `Gen4Ground:drawFree`), and narrowed by zooming in: a lens zoom keeps
+    -- the eye, and so every proportion, where the rung put it.
+    local half = (max(tonumber(vh) or 1, 1) / (self.pixelScale or 1) / 2) * min(self.zoom or 1, 1)
+    return deg(2 * math.atan(half / d))
   end
   return self.fovY
 end

@@ -238,6 +238,10 @@ function Gen3ShopMenu.new(game, opts)
   self.kind = (opts.kind == "decoration") and "decoration" or "item"
   self.shopMode = tonumber(opts.shopMode) or 1
   self.stock = opts.stock or {}
+  -- RUN MODES: MART ITEMS (src/runmodes/RunHooks.lua martStock)
+  if self.kind == "item" and self.mode == "buy" then
+    self.stock = require("src.runmodes.RunHooks").martStock(game, self.stock)
+  end
   self.onQuit = opts.onQuit
   -- the counter box this list was opened from, hidden while it is up
   self.under = opts.under

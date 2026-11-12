@@ -329,6 +329,8 @@ function Manifest.validate(raw, path)
     defaultOff = defaultOff,
     profile = profile,
     language = language,
+    -- a run-rules mod (Nuzlocke): judged by Handshake's rulesOnly check
+    run_rules = raw.run_rules == true,
     affects_link = affectsLink,
     permissions = permissions,
     permissionSet = permissionSet,

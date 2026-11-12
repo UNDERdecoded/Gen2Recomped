@@ -21,6 +21,22 @@ local SHAPE_HALF = { [0] = { 6, 6 }, { 6, 14 }, { 14, 6 }, { 22, 6 } }
 function Room.load(assets, area, room)
   local maps = assets:roomMaps(area, room)
   if not maps then return nil, "no room " .. area .. ":" .. room end
+  -- round 15: every load starts from the ROM's map, as LoadRoomGfx does
+  -- (gMapBottom / gMapTop are reloaded on each room entry).  The cached
+  -- tables were edited in place by setTile, so a cut bush stayed cut, and
+  -- a special tile ($4000+, drawn from the room's keepGfx) came back
+  -- without its graphic on the next visit or in a neighbour (View.lua):
+  -- a hole in the floor.
+  do
+    local c = {}
+    for k, v in pairs(maps) do c[k] = v end
+    for _, name in ipairs({ "bottom", "top" }) do
+      local t = {}
+      for i, v in pairs(maps[name] or {}) do t[i] = v end
+      c[name] = t
+    end
+    maps = c
+  end
   local h = maps.header
   local self = setmetatable({
     assets = assets, area = area, room = room,
@@ -65,6 +81,13 @@ end
 function Room:setTile(layer, tx, ty, metatile)
   local name = layer == 2 and "top" or "bottom"
   local i = ty * self.tw + tx
+  -- round 8: a special tile ($4000+) changes the tile's type only; the
+  -- cell keeps the graphic it had
+  local old = self.maps[name][i]
+  if metatile >= 0x4000 and old and old < 0x4000 then
+    self.keepGfx = self.keepGfx or {}
+    self.keepGfx[name .. i] = old
+  end
   self.maps[name][i] = metatile
   local t = self.atlas and self.atlas.types[name] or {}
   local v
@@ -87,7 +110,7 @@ end
 function Room:isSolid(x, y, layer)
   x, y = math.floor(x), math.floor(y)
   if x < 0 or y < 0 or x >= self.width or y >= self.height then return true end
-  local c = self.coll[layer or 1]
+  local c = self.coll[layer or 1] or self.coll[1] -- round 23: a room without a top collision map
   local v = c[rshift(y, 4) * self.tw + rshift(x, 4)] or 0
   if v == 0 then return false end
   if v < 0x10 then
@@ -108,11 +131,41 @@ function Room:isSolid(x, y, layer)
   return band(rshift(mask[band(y, 15)] or 0, band(x, 15)), 1) ~= 0
 end
 
+-- round 9: Link's tile test (asm/src/player.s sub_080086D8).  `tab` is the
+-- state table (0 normal .. 6, Layout.PLAYER_COLL_SHAPES); `swim` makes
+-- every partial value (< $10) count as full, as while swimming.  Falls back
+-- to isSolid when the cache has no player tables.
+function Room:isSolidPlayer(x, y, layer, tab, swim)
+  local A = self.assets
+  if not A.playerShapes then return self:isSolid(x, y, layer) end
+  x, y = math.floor(x), math.floor(y)
+  if x < 0 or y < 0 or x >= self.width or y >= self.height then return true end
+  local c = self.coll[layer == 2 and 2 or 1]
+  local v = c[rshift(y, 4) * self.tw + rshift(x, 4)] or 0
+  if v < 0x10 then
+    if v == 0 then return false end
+    if swim then v = 0x0F end
+    local q = v
+    if band(y, 8) == 0 then q = rshift(q, 2) end
+    if band(x, 8) == 0 then q = rshift(q, 1) end
+    return band(q, 1) ~= 0
+  end
+  if v == 0xFF then return true end
+  local shape = (A.playerShapes[tab or 0] or A.playerShapes[0])[v - 0x10]
+  local rows = shape and A.playerMasks[shape]
+  if not rows then return true end
+  return band(rshift(rows[band(y, 15)] or 0, 15 - band(x, 15)), 1) ~= 0
+end
+
 -- ---------------------------------------------------------------------------
 -- drawing: one SpriteBatch per layer
 -- ---------------------------------------------------------------------------
 function Room:buildBatches()
   self.batches = {}
+  if self.maps.special and not self.specialImg then -- round 10: SpecialBg.lua
+    local ok, img = pcall(require("src.zelda.tmc.SpecialBg").build, self)
+    self.specialImg = ok and img or false
+  end
   if not self.atlas or self.maps.special then return end
   for _, name in ipairs({ "bottom", "top" }) do
     local img = self.atlas[name]
@@ -126,6 +179,7 @@ function Room:buildBatches()
     for ty = 0, self.th - 1 do
       for tx = 0, self.tw - 1 do
         local t = m[ty * self.tw + tx] or 0
+        if t >= 0x4000 and self.keepGfx then t = self.keepGfx[name .. (ty * self.tw + tx)] or 0 end -- round 8
         if t > 0 and t < 0x800 then
           local q = quads[t]
           if not q then
@@ -197,6 +251,7 @@ function Room:drawLayer(name, camX, camY)
   if self.dirty then self:buildBatches() end
   local b = self.batches[name]
   if b then love.graphics.draw(b, -math.floor(camX), -math.floor(camY)) end
+  if name == (self.specialTop and "top" or "bottom") and self.specialImg then love.graphics.draw(self.specialImg, -math.floor(camX), -math.floor(camY)) end
   for _, ab in ipairs(self.animBatches or {}) do
     if ab.layer == name then love.graphics.draw(ab.batch, -math.floor(camX), -math.floor(camY)) end
   end

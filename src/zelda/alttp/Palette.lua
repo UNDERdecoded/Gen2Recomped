@@ -49,12 +49,14 @@ P._rows = rows
 function P.selection(data, screen, phase)
   local t = data.t
   phase = math.max(0, math.min(3, phase or 0))
-  local bg
-  if screen < 64 then
-    bg = t.owBgPalLW[phase + 1][screen + 1]
-  else
-    bg = t.owBgPalDW[screen - 64 + 1]
-  end
+  -- r15: the BG set is the cartridge's static per-screen table 0x14C8E8
+  -- (SNES kOverworldBgPalettes; cached as t.owSprPalettes, a misnomer): the
+  -- GBA calls Overworld_LoadPalettes (0x0813084C) with r0 = the per-phase
+  -- RAM table 0x02002DC0 (SPRITE palette, kOwSprPalInfo) and r1 = 0x14C8E8
+  -- (BG, kOwBgPalInfo) -- see 0x08073BB0. Before r15 the per-phase sprite
+  -- table was read here, so every area (worst: the Dark World) had the
+  -- wrong colours. `phase` no longer changes the BG.
+  local bg = t.owSprPalettes[band(screen, 0x7F) + 1] or 0
   local sc = band(screen, 0x3F)
   local mode = ((sc == 3 or sc == 5 or sc == 7) and 2 or 0) + (band(screen, 0x40) ~= 0 and 1 or 0)
   local info = t.owBgPalInfo[bg + 1]

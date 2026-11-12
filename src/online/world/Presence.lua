@@ -85,6 +85,9 @@ function Presence.localLook(game, ow)
   local save = game and game.save
   local g = save and save.player and save.player.gender
   if g == "girl" or g == "boy" then look.gender = g end
+  -- the chosen online look, when there is one (src/online/world/Avatar.lua)
+  local okA, av = pcall(function() return require("src.online.world.Avatar").wire(game) end)
+  if okA and av then look.av = av end
   return P.cleanLook(look)
 end
 
@@ -93,6 +96,11 @@ end
 local function spriteKey(data, look, mv)
   local sprites = (data and data.sprites) or {}
   look = look or {}
+  -- a peer that chose a look: its sheet, or this game's closest one
+  if look.av then
+    local okA, k = pcall(require("src.online.world.Avatar").resolve, data, look, mv)
+    if okA and k and sprites[k] then return k end
+  end
   local want = (mv == "bike" and look.bike) or (mv == "surf" and look.surf) or look.walk
   if want and sprites[want] then return want end
   if look.walk and sprites[look.walk] then return look.walk end
@@ -206,6 +214,7 @@ local function makeGhost(game, ow, pid, member)
   })
   if not ok or not npc then return nil end
   npc.id = "remote_player_" .. tostring(pid)
+  Presence.dress(npc, member.look)
   npc.remote = true
   npc.remotePlayer = pid
   npc.passable = true
@@ -213,7 +222,8 @@ local function makeGhost(game, ow, pid, member)
   npc.facing = pos.f or "down"
   npc.moving = false
   npc.progress = 0
-  local ghost = { pid = pid, npc = npc, member = member, key = key, queue = {} }
+  local ghost = { pid = pid, npc = npc, member = member, key = key, queue = {},
+                  tint = Presence.tintSig(member.look) }
   -- the overhead art rides the sprite's own draw (and so its transform)
   local baseDraw = NPC.draw
   npc.draw = function(self, camX, camY)
@@ -339,12 +349,15 @@ end
 
 local function refreshSprite(game, g, mv)
   local key = spriteKey(game.data, g.member.look, mv)
-  if key ~= g.key then
+  local tint = Presence.tintSig(g.member.look)
+  if key ~= g.key or tint ~= g.tint then
     local okS, SpriteRenderer = pcall(require, "src.render.SpriteRenderer")
     local def = game.data.sprites and game.data.sprites[key]
     if okS and def then
       g.npc.sprite = SpriteRenderer.new(def, g.npc.id)
+      Presence.dress(g.npc, g.member.look)
       g.key = key
+      g.tint = tint
     end
   end
 end
@@ -367,6 +380,7 @@ function Presence.update(client, game)
   if pos then client:setPosition(pos) end
   local look = Presence.localLook(game, ow)
   local lk = (look.walk or "") .. "|" .. (look.bike or "") .. "|" .. (look.surf or "")
+             .. "|" .. require("src.online.world.Avatar").signature(look.av)
   if Presence.lastLook ~= lk then
     if Presence.lastLook ~= nil then client:setLook(look) end
     Presence.lastLook = lk
@@ -435,6 +449,24 @@ function Presence.seam(ow, fx, fy)
   end
   return true
 end
+
+-- the chosen colour on a ghost's sheet (Avatar.dress: an instance copy, no
+-- shader, so the Gen 4/5 billboard depth pass is untouched)
+function Presence.tintSig(look)
+  local Avatar = require("src.online.world.Avatar")
+  return Avatar.paintSig(Avatar.tintOf(look))
+end
+
+function Presence.dress(npc, look)
+  local t = require("src.online.world.Avatar").tintOf(look)
+  if not (t and npc and npc.sprite) then return end
+  local ok, err = pcall(require("src.online.world.Avatar").dress, npc.sprite, t)
+  if not ok and not Presence.warnedTint then
+    Presence.warnedTint = true
+    require("src.core.Logger").warn("world: tint failed: %s", tostring(err))
+  end
+end
+Presence.refreshGhostSprite = refreshSprite
 
 -- the same ghost for a link room's other player (src/online/LinkRoomPeer.lua):
 -- no world, one member; never in Presence.ghosts, so no world seam answers it

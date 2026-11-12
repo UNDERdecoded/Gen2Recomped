@@ -274,8 +274,8 @@ function LinkBattle.new(game, net, opts)
   -- The RATTATA scaffold is unreachable on the negotiated path: an empty or
   -- unrebuildable party is refused above, so it only ever covers a caller
   -- that skipped the handshake.
-  local self = BattleState.newWild(game, theirParty[1] and theirParty[1].species
-                                         or "RATTATA", 5)
+  local self = require("src.runmodes.RunHooks").quiet(BattleState.newWild, game,
+    theirParty[1] and theirParty[1].species or "RATTATA", 5)
   self.kind = "link"
   self.linkRole = role
   self.net = net
@@ -292,6 +292,13 @@ function LinkBattle.new(game, net, opts)
   self.enemyParty = theirParty
   self.playerParty = myParty -- intro ball row uses the clamped copies
   self.opponentName = theirName
+  -- the other player's online look (Handshake.hello `look`): their front pic
+  -- in the intro (src/online/BattleLook.lua); an older peer sends none
+  do
+    local ph = opts.peerHello
+    local okP, P = pcall(require, "src.online.world.WorldProtocol")
+    if okP and type(ph) == "table" and type(ph.look) == "table" then self.peerLook = P.cleanLook(ph.look) end
+  end
   self.introText = Strings("%s wants\nto battle!", theirName)
   self.remoteHashes = {}
   self.localHashes = {}
@@ -754,8 +761,8 @@ function LinkBattle.newSpectator(game, net, opts)
     Logger.warn("link: empty party on one side (spectator)")
   end
 
-  local self = BattleState.newWild(game, guestParty[1] and guestParty[1].species
-                                         or "RATTATA", 5)
+  local self = require("src.runmodes.RunHooks").quiet(BattleState.newWild, game,
+    guestParty[1] and guestParty[1].species or "RATTATA", 5)
   self.kind = "link" -- exact same visual treatment as a real link battle
   self.spectating = true -- Tournament.lua's marker: don't report a result for this one
   self.net = net

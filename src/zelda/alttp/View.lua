@@ -59,16 +59,32 @@ end
 -- { bg2 = Image, bg1 = Image } for a screen
 function V:screen(s)
   local hit = self.screens[s]
-  if hit then return hit end
+  -- bug round: least recently USED goes first (a screen on view stays), and
+  -- a screen dropped from outside (a cut bush: screens[s] = nil) leaves no
+  -- stale entry in `order` that would later evict its reloaded pictures
+  local order = self.order
+  for i = #order, 1, -1 do
+    if order[i] == s then
+      if hit and i == #order then return hit end
+      table.remove(order, i)
+      break
+    end
+  end
+  if hit then order[#order + 1] = s return hit end
   local pal = self.ow:palette(s, self.phase)
   local out = {}
+  local AT = require("src.zelda.alttp.AnimTiles")
   for _, layer in ipairs({ "bg2", "bg1" }) do
-    local idx = self.ow:decodeLayer(s, layer)
+    local cells = {}
+    local idx = self.ow:decodeLayer(s, layer, cells)
     local img = love.image.newImageData(512, 512)
     fill(img, 512, 512, idx, pal, layer == "bg2" and pal[0] or nil)
     local im = love.graphics.newImage(img)
     im:setFilter("nearest", "nearest")
     out[layer] = im
+    -- r15: the animated tiles (water...) step with AnimTiles.tick
+    AT.register(im, img, cells, AT.owFrames(self.data, self.ow:parent(s)), AT.OW_BASE, pal,
+                layer == "bg2" and pal[0] or nil)
   end
   self.screens[s] = out
   self.order[#self.order + 1] = s
@@ -84,14 +100,14 @@ function V:screen(s)
 end
 
 -- an Image of HUD-charblock map words (cols x rows), cached by content
-function V:hudImage(words, cols, rows, pal)
+function V:hudImage(words, cols, rows, pal, chrHi)
   local Hud = require("src.zelda.alttp.Hud")
   local key = table.concat(words, ",")
   self.hudCache = self.hudCache or {}
   local hit = self.hudCache[key]
   if hit then return hit end
   self.hudTiles = self.hudTiles or {}
-  local idx, w, h = Hud.decode(self.data.uiChr, words, cols, rows, self.hudTiles)
+  local idx, w, h = Hud.decode(self.data.uiChr, words, cols, rows, self.hudTiles, chrHi)
   local img = love.image.newImageData(w, h)
   fill(img, w, h, idx, pal)
   local im = love.graphics.newImage(img)

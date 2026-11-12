@@ -131,6 +131,20 @@ function Hub:start()
     if not w then return false, why end
     self.world = w
   end
+  -- one more world per game (cfg.worlds; each keeps its own identity under
+  -- <dataDir>/worlds/<game>)
+  self.worlds = {}
+  if self.world then self.worlds[1] = self.world end
+  for _, wc in ipairs(cfg.worlds or {}) do
+    local WorldEmbed = require("src.online.hub.WorldEmbed")
+    local dir = cfg.dataDir .. "/worlds/" .. tostring(wc.game)
+    local w, why = WorldEmbed.new({ cfg = wc, log = log, dataDir = dir, bind = cfg.bind,
+                                    gts = self.gts, publicAddress = cfg.publicAddress,
+                                    lanAddress = cfg.lanAddress })
+    if not w then return false, ("%s: %s"):format(tostring(wc.game), tostring(why)) end
+    self.worlds[#self.worlds + 1] = w
+    if not self.world then self.world = w end
+  end
   if cfg.admin.key == "" then log:info("admin commands are off (no admin.key)") end
   self:writeStatus()
   return true
@@ -140,7 +154,7 @@ function Hub:stop(reason)
   if self.stopped then return end
   self.stopped = true
   self.log:info("stopping (%s)", tostring(reason or "asked"))
-  if self.world then pcall(self.world.close, self.world) end
+  for _, w in ipairs(self.worlds or { self.world }) do pcall(w.close, w) end
   if self.tcp then self.tcp:close() end
   if self.enet then
     for _, conn in pairs(self.enetConns or {}) do
@@ -267,7 +281,21 @@ function Hub:pong()
   return { type = "hub_pong", name = self.cfg.name, version = Hub.VERSION, services = self:services(),
            gtsPools = self.gts and self.gts.pools or nil,
            worldCode = self.world and self.world.code or nil,
-           worldGame = self.world and self.world.game or nil }
+           worldGame = self.world and self.world.game or nil,
+           -- every world, one per game: a game picks its own (LinkState /
+           -- LauncherHub hubWorldFor)
+           worlds = self:worldList() }
+end
+
+function Hub:worldList()
+  local out = {}
+  for _, w in ipairs(self.worlds or {}) do
+    if w.code then
+      out[#out + 1] = { game = w.game, code = w.code, name = w.world and w.world.name or nil,
+                        members = w.host:count(), cap = w.world and w.world.cap or nil }
+    end
+  end
+  return #out > 0 and out or nil
 end
 
 ---------------------------------------------------------------- admin
@@ -399,9 +427,9 @@ function Hub:update()
     local ok, err = pcall(self.gts.update, self.gts)
     if not ok then self.log:error("gts: %s", tostring(err)) end
   end
-  if self.world then
-    local ok, err = pcall(self.world.update, self.world)
-    if not ok then self.log:error("world: %s", tostring(err)) end
+  for _, w in ipairs(self.worlds or { self.world }) do
+    local ok, err = pcall(w.update, w)
+    if not ok then self.log:error("world %s: %s", tostring(w.game), tostring(err)) end
   end
   if self.tcp then self.tcp:update() end -- flush what this tick produced
   if now - self.lastSweep > 5 then
@@ -443,6 +471,7 @@ function Hub:status()
     gts = self.gts and self.gts:snapshot() or nil,
     world = self.world and { members = self.world.host:count(), cap = self.world.world.cap,
                              code = self.world.code, game = self.world.game } or nil,
+    worlds = self:worldList(),
   }
   return s
 end

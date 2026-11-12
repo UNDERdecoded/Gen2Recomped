@@ -10,15 +10,24 @@
 -- RenderText_Draw_MessageCharacters): letters at the current speed, line
 -- commands, scroll, wait, wait-for-key, end. The renderer draws `box.glyphs`.
 --
--- Not ported: the choice cursors (Choose/Choose2/Choose3/Item draw their
--- text but pick nothing), the scroll animation (lines move up at once),
--- sound effects, the cartridge's name entry (the name is the save's).
+-- Not ported: the item chooser (Item draws its text but picks nothing),
+-- the scroll animation (lines move up at once), sound effects, the
+-- cartridge's name entry (the name is the save's).
+-- Round 22: the choice cursors (RenderText_Draw_Choose2LowOr3 / Choose2HiOr3
+-- / Choose3 / Choose1Or2, commands 0x68 / 0x6F / 0x71 / 0x72): the box waits
+-- on the command; up / down load the cursor message (1-2 / 11-12 / 6-8 /
+-- 9-10: the arrow and blanks on the option lines, ending on the same
+-- command) over the text; a confirm closes the box with `box.choice`
+-- (choice_in_multiselect_box, 0 = the first option).
 
 local bit = require("bit")
 local band = bit.band
 
 local T = {}
 
+-- r22: the choice commands -> { first cursor message, options, wraps }
+local CHOOSE = { [0x68] = { 1, 2 }, [0x6F] = { 11, 2 }, [0x71] = { 6, 3, true }, [0x72] = { 9, 2 } }
+T.CHOOSE = CHOOSE
 local CMD = { name = 0x6A, window = 0x6B, number = 0x6C, position = 0x6D,
               scroll = 0x73, line1 = 0x74, line2 = 0x75, line3 = 0x76,
               color = 0x77, wait = 0x78, sound = 0x79, speed = 0x7A,
@@ -33,8 +42,13 @@ function T.bmgIndex(snesIndex)
 end
 
 -- the symbol glyphs the {kind 1} command names: the GBA font's button row
--- (0x0C R, 0x0D B, 0x0E L, 0x0F A) for the SNES button codes 0x5B-0x5E
-local BUTTON = { [0x5B] = 0x0F, [0x5C] = 0x0D, [0x5D] = 0x0E, [0x5E] = 0x0C }
+-- (round 18, read from the font: tile 0x0B R, 0x0C B, 0x0D L, 0x0E A; 0x0F
+-- is blank) for the message codes 0x5B (R: lift / open / talk / dash), 0x5C
+-- (B: the sword), 0x5D (L: the map), 0x5E (A: the item); SELECT + L + R
+-- leaves sleep mode (message 394)
+-- r22: 0x44 is the choice cursor, the font's right-pointing triangle (tile
+-- 0x00, by its shape; it drew as "D" from the font's first half before)
+local BUTTON = { [0x5B] = 0x0B, [0x5C] = 0x0C, [0x5D] = 0x0D, [0x5E] = 0x0E, [0x44] = 0x00 }
 
 -- tokens of message n (BMG index)
 function T.parse(data, n)
@@ -110,8 +124,19 @@ function Box:put(c)
     self.line = math.min(self.line + 1, 2)
     self.x = 0
   end
+  -- r22: a glyph overwrites the columns it covers (the VWF renderer
+  -- masks them; the cursor messages blank the old arrow with spaces)
+  local w = glyphWidth(self.data, c)
+  local n = #self.glyphs
+  if n > 0 then
+    local keep, cut = {}, false
+    for _, g in ipairs(self.glyphs) do
+      if g.line == self.line and g.x >= self.x and g.x < self.x + w then cut = true else keep[#keep + 1] = g end
+    end
+    if cut then self.glyphs = keep end
+  end
   self.glyphs[#self.glyphs + 1] = { line = self.line, x = self.x, c = c }
-  self.x = self.x + glyphWidth(self.data, c)
+  self.x = self.x + w
   self.version = self.version + 1
 end
 
@@ -125,15 +150,43 @@ function Box:scroll()
   self.version = self.version + 1
 end
 
--- one frame. confirm = A or B pressed this frame.
-function Box:update(confirm)
+-- one frame. confirm = A or B pressed this frame; up / down (r22) move a
+-- choice cursor
+function Box:update(confirm, up, down)
   if self.done then return end
   if self.waitKey then
     if confirm then
       self.waitKey = false
+      self.cd2 = 28   -- text_wait_countdown2 (RenderText_Draw_PauseForInput)
       if self.closing then self.done = true end
     end
     return
+  end
+  -- r22: waiting on a choice command
+  local ch = self.choosing
+  if ch then
+    if (self.cd2 or 0) > 0 then self.cd2 = self.cd2 - 1 return end
+    if confirm then
+      self.choosing, self.done = nil, true
+      return
+    end
+    if up or down then
+      local c = self.choice or 0
+      if ch[3] then
+        if up then c = (c == 0) and ch[2] - 1 or c - 1 else c = (c == ch[2] - 1) and 0 or c + 1 end
+      else
+        c = up and 0 or 1
+      end
+      if c == (self.choice or 0) and not ch[3] then return end
+      self.choice = c
+      self.choiceMoves = (self.choiceMoves or 0) + 1
+      -- Text_LoadCharacterBuffer + Text_InitVwfState: the cursor message
+      self.choosing = nil
+      self.toks, self.i = T.parse(self.data, T.bmgIndex(ch[1] + c)), 1
+      self.pendingNl = false
+    else
+      return
+    end
   end
   if self.wait > 0 then
     self.wait = self.wait - 1
@@ -185,6 +238,12 @@ function Box:update(confirm)
         return
       elseif c == CMD.finish then
         self.closing, self.waitKey = true, true
+        return
+      elseif CHOOSE[c] then
+        -- r22: stay on the command (the read position does not move)
+        self.i = self.i - 1
+        self.choosing = CHOOSE[c]
+        self.choice = self.choice or 0
         return
       elseif c == CMD.clear then
         self.glyphs, self.line, self.x = {}, 0, 0

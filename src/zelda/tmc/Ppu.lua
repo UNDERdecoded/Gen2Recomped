@@ -46,9 +46,12 @@ function Ppu.new(assets)
   self.dispcnt = 0x1F40
   self.oam = {}
   self.texts = {}
-  self.data = love.image.newImageData(W, H)
-  self.image = love.graphics.newImage(self.data)
-  self.image:setFilter("nearest", "nearest")
+  -- (headless tests: no picture, the state still works)
+  if love and love.image and love.graphics then
+    self.data = love.image.newImageData(W, H)
+    self.image = love.graphics.newImage(self.data)
+    self.image:setFilter("nearest", "nearest")
+  end
   self.groupBlob = nil
   return self
 end
@@ -215,7 +218,44 @@ end
 -- ---------------------------------------------------------------------------
 -- compose
 -- ---------------------------------------------------------------------------
+-- an affine BG (mode 1 BG2, mode 2 BG2 / BG3): 256 colours, one map byte
+-- a tile, (128 << size) pixels square, wrap with control bit 13.
+-- b.affine = {pa, pb, pc, pd, x, y}: 8.8 steps and the 24.8 origin
+-- (BgAffineSet's output, title.c UpdateSwordBgAffineData)
+local function affineLayer(self, n, prio)
+  local b = self.bg[n]
+  local c = b.control
+  local charBase = band(rshift(c, 2), 3) * 0x4000
+  local screenBase = band(rshift(c, 8), 0x1F) * 0x800
+  local size = lshift(128, rshift(c, 14))
+  local tilesW = size / 8
+  local wrap = band(c, 0x2000) ~= 0
+  local af = b.affine or { 256, 0, 0, 256, 0, 0 }
+  local pa, pb, pc, pd, ox, oy = af[1], af[2], af[3], af[4], af[5], af[6]
+  local vram, idx, pr = self.vram, self.idx, self.prio
+  local en, nbit = self.winEn, lshift(1, n)
+  local lines = b.affineLines -- round 6: an HBlank DMA of one BgAffineSet a line
+  for sy = 0, H - 1 do
+    local rx, ry = ox + pb * sy, oy + pd * sy
+    local ln = lines and lines[sy]
+    if ln then pa, pb, pc, pd, rx, ry = ln[1], ln[2], ln[3], ln[4], ln[5], ln[6] end
+    for sx = 0, W - 1 do
+      local tx, ty = math.floor((rx + pa * sx) / 256), math.floor((ry + pc * sx) / 256)
+      if wrap then tx, ty = tx % size, ty % size end
+      if tx >= 0 and tx < size and ty >= 0 and ty < size then
+        local tile = vram[screenBase + rshift(ty, 3) * tilesW + rshift(tx, 3)]
+        local a = charBase + tile * 64 + band(ty, 7) * 8 + band(tx, 7)
+        local ci = a < 0x10000 and vram[a] or 0
+        local o = sy * W + sx
+        if ci ~= 0 and (not en or band(en[o], nbit) ~= 0) then idx[o] = ci; pr[o] = prio end
+      end
+    end
+  end
+end
+
 local function bgLayer(self, n, prio)
+  local mode = band(self.dispcnt, 7)
+  if (mode == 1 and n == 2) or (mode == 2 and n >= 2) then return affineLayer(self, n, prio) end
   local b = self.bg[n]
   local c = b.control
   local charBase = band(rshift(c, 2), 3) * 0x4000
@@ -226,6 +266,7 @@ local function bgLayer(self, n, prio)
   local hpx = (sz == 2 or sz == 3) and 512 or 256
   local vram, idx, pr = self.vram, self.idx, self.prio
   local hofs, vofs = b.x, b.y
+  local en, nbit = self.winEn, lshift(1, n) -- OBJ window (WINOUT) enables
   for sy = 0, H - 1 do
     local y = (sy + vofs) % hpx
     local blockY = rshift(y, 8)
@@ -244,16 +285,16 @@ local function bgLayer(self, n, prio)
       if is8 then
         local a = charBase + tile * 64 + yy * 8 + px
         ci = a < 0x10000 and vram[a] or 0
-        if ci ~= 0 then
-          local o = sy * W + sx
+        local o = sy * W + sx
+        if ci ~= 0 and (not en or band(en[o], nbit) ~= 0) then
           idx[o] = ci; pr[o] = prio
         end
       else
         local a = charBase + tile * 32 + yy * 4 + rshift(px, 1)
         local byte = a < 0x10000 and vram[a] or 0
         ci = band(px, 1) == 0 and band(byte, 15) or rshift(byte, 4)
-        if ci ~= 0 then
-          local o = sy * W + sx
+        local o = sy * W + sx
+        if ci ~= 0 and (not en or band(en[o], nbit) ~= 0) then
           idx[o] = rshift(e, 12) * 16 + ci; pr[o] = prio
         end
       end
@@ -261,12 +302,56 @@ local function bgLayer(self, n, prio)
   end
 end
 
+-- the OBJ window (DISPCNT bit 15): OBJs in mode 2 draw nothing, their
+-- opaque pixels select WINOUT's high byte of layer enables, every other
+-- pixel the low byte.  Returns a per-pixel enable mask (bits 0-3 BG, 4 OBJ).
+local function objWindow(self)
+  local en = self.winEnBuf or ffi.new("uint8_t[?]", W * H)
+  self.winEnBuf = en
+  local lo, hi = band(self.winout, 0x3F), band(rshift(self.winout, 8), 0x3F)
+  ffi.fill(en, W * H, lo)
+  local vram = self.vram
+  for _, o in ipairs(self.oam) do
+    local a0, a1, a2 = o[1], o[2], o[3]
+    if band(a0, 0x300) ~= 0x200 and band(a0, 0xC00) == 0x800 then
+      local dims = OBJ_DIMS[rshift(a0, 14)] and OBJ_DIMS[rshift(a0, 14)][rshift(a1, 14) + 1]
+      if dims then
+        local w, h = dims[1], dims[2]
+        local x, y = band(a1, 0x1FF), band(a0, 0xFF)
+        if x >= 256 then x = x - 512 end
+        if y >= 160 then y = y - 256 end
+        local hf = band(a0, 0x100) == 0 and band(a1, 0x1000) ~= 0
+        local vf = band(a0, 0x100) == 0 and band(a1, 0x2000) ~= 0
+        local tile, tw = band(a2, 0x3FF), w / 8
+        for ly = 0, h - 1 do
+          local sy = y + ly
+          if sy >= 0 and sy < H then
+            local ry = vf and (h - 1 - ly) or ly
+            for lx = 0, w - 1 do
+              local sx = x + lx
+              if sx >= 0 and sx < W then
+                local rx = hf and (w - 1 - lx) or lx
+                local a = 0x10000 + (tile + rshift(ry, 3) * tw + rshift(rx, 3)) * 32 + band(ry, 7) * 4 + rshift(band(rx, 7), 1)
+                local byte = a < 0x18000 and vram[a] or 0
+                local ci = band(rx, 1) == 0 and band(byte, 15) or rshift(byte, 4)
+                if ci ~= 0 then en[sy * W + sx] = hi end
+              end
+            end
+          end
+        end
+      end
+    end
+  end
+  return en
+end
+
 local function objLayer(self, prio)
   local vram, idx = self.vram, self.idx
+  local en = self.winEn
   local oam = self.oam
   for i = #oam, 1, -1 do
     local a0, a1, a2 = oam[i][1], oam[i][2], oam[i][3]
-    if band(rshift(a2, 10), 3) == prio and band(a0, 0x300) ~= 0x200 then
+    if band(rshift(a2, 10), 3) == prio and band(a0, 0x300) ~= 0x200 and band(a0, 0xC00) ~= 0x800 then
       local shape, size = rshift(a0, 14), rshift(a1, 14)
       local dims = OBJ_DIMS[shape] and OBJ_DIMS[shape][size + 1]
       if dims then
@@ -279,6 +364,9 @@ local function objLayer(self, prio)
         local is8 = band(a0, 0x2000) ~= 0
         local tile = band(a2, 0x3FF)
         local bank = rshift(a2, 12)
+        -- affine OBJs (attr0 bit 8): matrix (attr1 >> 9) & 31 from
+        -- self.affine[n] = {pa, pb, pc, pd} (8.8), about the OBJ's centre
+        local aff = band(a0, 0x100) ~= 0 and (self.affine and self.affine[band(rshift(a1, 9), 0x1F)] or { 256, 0, 0, 256 })
         local tw = w / 8
         for ly = 0, h - 1 do
           local sy = y + ly
@@ -286,19 +374,27 @@ local function objLayer(self, prio)
             local ry = vf and (h - 1 - ly) or ly
             for lx = 0, w - 1 do
               local sx = x + lx
+              local rx = hf and (w - 1 - lx) or lx
+              if aff then
+                local ry0 = ry
+                local dx, dy = lx - w / 2, ly - h / 2
+                rx = math.floor((aff[1] * dx + aff[2] * dy) / 256) + w / 2
+                ry = math.floor((aff[3] * dx + aff[4] * dy) / 256) + h / 2
+                if rx < 0 or rx >= w or ry < 0 or ry >= h then sx = -1 end
+                if sx < 0 then ry = ry0 end
+              end
               if sx >= 0 and sx < W then
-                local rx = hf and (w - 1 - lx) or lx
                 local t = rshift(ry, 3) * tw + rshift(rx, 3)
                 local ci
                 if is8 then
                   local a = 0x10000 + (tile + t * 2) * 32 + band(ry, 7) * 8 + band(rx, 7)
                   ci = a < 0x18000 and vram[a] or 0
-                  if ci ~= 0 then idx[sy * W + sx] = 256 + ci end
+                  if ci ~= 0 and (not en or band(en[sy * W + sx], 16) ~= 0) then idx[sy * W + sx] = 256 + ci end
                 else
                   local a = 0x10000 + (tile + t) * 32 + band(ry, 7) * 4 + rshift(band(rx, 7), 1)
                   local byte = a < 0x18000 and vram[a] or 0
                   ci = band(rx, 1) == 0 and band(byte, 15) or rshift(byte, 4)
-                  if ci ~= 0 then idx[sy * W + sx] = 256 + bank * 16 + ci end
+                  if ci ~= 0 and (not en or band(en[sy * W + sx], 16) ~= 0) then idx[sy * W + sx] = 256 + bank * 16 + ci end
                 end
               end
             end
@@ -377,26 +473,65 @@ function Ppu:render(slot)
   for i, o in ipairs(self.oam) do key[i] = o[1] .. "," .. o[2] .. "," .. o[3] end
   for _, t in ipairs(self.texts) do key[#key + 1] = t.str .. t.x .. "," .. t.y end
   for n = 0, 3 do if self.bg[n].updated then self.dirty = true end end
-  key = table.concat(key, ";") .. "|" .. self.dispcnt
+  key = table.concat(key, ";") .. "|" .. self.dispcnt .. "|" .. tostring(self.winout)
+  if self.blend then key = key .. "|b" .. (self.blend.t1 or 0) .. "," .. (self.blend.eva or 0) .. "," .. (self.blend.evb or 0) end
+  for n = 2, 3 do
+    local af = self.bg[n].affine
+    if af then key = key .. "|a" .. n .. ":" .. table.concat(af, ",") end
+  end
   if not self.dirty and key == self.lastKey then return self.image end
   self.lastKey, self.dirty = key, false
   self:vblank()
   local idx = self.idx
-  ffi.fill(idx, W * H * 2, 0)
-  ffi.fill(self.prio, W * H, 4)
   local dc = self.dispcnt
-  for prio = 3, 0, -1 do
-    for n = 3, 0, -1 do
-      if band(dc, lshift(0x100, n)) ~= 0 and band(self.bg[n].control, 3) == prio then bgLayer(self, n, prio) end
+  local function composeIdx(d)
+    ffi.fill(idx, W * H * 2, 0)
+    ffi.fill(self.prio, W * H, 4)
+    self.winEn = (self.winout and band(d, 0x8000) ~= 0) and objWindow(self) or nil
+    for prio = 3, 0, -1 do
+      for n = 3, 0, -1 do
+        if band(d, lshift(0x100, n)) ~= 0 and band(self.bg[n].control, 3) == prio then bgLayer(self, n, prio) end
+      end
+      if prio == 0 then textLayer(self, 0) end
+      if band(d, 0x1000) ~= 0 then objLayer(self, prio) end
+      if prio ~= 0 then textLayer(self, prio) end
     end
-    if prio == 0 then textLayer(self, 0) end
-    if band(dc, 0x1000) ~= 0 then objLayer(self, prio) end
-    if prio ~= 0 then textLayer(self, prio) end
   end
+  -- colour special effects (BLDCNT alpha blend): self.blend = {t1 = BG
+  -- mask (bit 4 OBJ), eva, evb}.  The first-target layers' pixel, when it
+  -- is the top one, mixes eva/16 of itself with evb/16 of what is under it.
+  local bl = self.blend
+  local topA, under
+  if bl then
+    local t1 = band(bl.t1 or 0, 0x1F)
+    composeIdx(bor(band(dc, 0x80FF), lshift(t1, 8)))
+    topA = ffi.new("uint16_t[?]", W * H); ffi.copy(topA, idx, W * H * 2)
+    composeIdx(band(dc, bit.bnot(lshift(t1, 8))))
+    under = ffi.new("uint16_t[?]", W * H); ffi.copy(under, idx, W * H * 2)
+  end
+  composeIdx(dc)
   local ptr = ffi.cast("uint8_t*", self.data:getFFIPointer())
   local pal = self.pal
   local clear = self.transparent
+  if bl then
+    local eva, evb = bl.eva or 16, bl.evb or 0
+    for i = 0, W * H - 1 do
+      local a = topA[i]
+      if a ~= 0 and a == idx[i] then
+        local c1, c2 = pal[a], pal[under[i]]
+        local r = math.min(31, rshift(band(c1, 31) * eva + band(c2, 31) * evb, 4))
+        local g = math.min(31, rshift(band(rshift(c1, 5), 31) * eva + band(rshift(c2, 5), 31) * evb, 4))
+        local b = math.min(31, rshift(band(rshift(c1, 10), 31) * eva + band(rshift(c2, 10), 31) * evb, 4))
+        ptr[i * 4] = lshift(r, 3) + rshift(r, 2)
+        ptr[i * 4 + 1] = lshift(g, 3) + rshift(g, 2)
+        ptr[i * 4 + 2] = lshift(b, 3) + rshift(b, 2)
+        ptr[i * 4 + 3] = 255
+        idx[i] = 0xFFFF -- done
+      end
+    end
+  end
   for i = 0, W * H - 1 do
+    if idx[i] == 0xFFFF then goto nextPixel end
     local c = pal[idx[i]]
     if clear and idx[i] == 0 then ptr[i * 4 + 3] = 0 goto nextPixel end
     local r, g, b = band(c, 31), band(rshift(c, 5), 31), band(rshift(c, 10), 31)
@@ -549,12 +684,15 @@ end
 -- glyphs into an 8x16-cell canvas (sub_0805F820 / sub_080026C4): `chars`
 -- is a list of {code, colour or nil}; columns from `col`, at most `limit`
 -- columns; returns the next column
-function Ppu:drawGlyphs(buf, bufLen, chars, col, limit, fill, charColor, stylized)
+-- `fixed` (WStruct.unk1 = 1, sub_0805F820): every glyph 8 columns from
+-- its left edge, no proportional width
+function Ppu:drawGlyphs(buf, bufLen, chars, col, limit, fill, charColor, stylized, fixed)
   local blob = glyphBlob(self)
   local colours = self:table("textColors")
   for _, ch in ipairs(chars) do
     if ch[2] and ch[2] < 0xE then charColor = ch[2] end
     local lead, w = glyphWidth(blob, ch[1])
+    if fixed then lead, w = 0, 8 end
     local goff, wide = glyphOffset(ch[1])
     w = math.min(w, limit - col)
     local tab = colours.base + fill * 0xC0 + charColor * 32

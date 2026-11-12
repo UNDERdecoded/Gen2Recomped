@@ -267,6 +267,8 @@ local function hooksFor(session)
       lr_pos = function(m) RoomPeer.take(session, m) end,
       lr_ready = function(m) RoomPeer.take(session, m) end,
       lr_leave = function(m) RoomPeer.take(session, m) end,
+      lr_chat = function(m) RoomPeer.take(session, m) end,
+      lr_emote = function(m) RoomPeer.take(session, m) end,
     },
     -- a guest whose host picked the other mode: the rooms differ
     expectMode = session.mode,

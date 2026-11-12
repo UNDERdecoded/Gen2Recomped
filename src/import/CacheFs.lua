@@ -1307,6 +1307,54 @@ function CacheFs.activePrefixShim()
   return shimPrefix
 end
 
+-- Take back every recorded mount whose source lies inside `<base>/<sub>` (or
+-- is the save-dir-relative `<sub>...`).  Returns true when one came off.
+-- A mount PhysFS refuses (a file still open in it -- a streamed Source the
+-- collector has not closed yet) gets one collection and a retry; one that is
+-- no longer on the path at all is dropped from the record either way.
+local function normMountPath(p)
+  return (tostring(p or ""):gsub("\\", "/"):gsub("/+$", ""):lower())
+end
+function CacheFs._unmountRecorded(base, sub)
+  local home = base and normMountPath(base .. "/" .. sub) or nil
+  local rel = normMountPath(sub)
+  local function inside(d, top)
+    return top ~= nil and top ~= "" and (d == top or d:sub(1, #top + 1) == top .. "/")
+  end
+  local unmount, mountedAt = resolveUnmount(), resolveMountPoint()
+  local function takeOff(m)
+    if m.how == "ffi" and unmount then return unmount(m.dir) end
+    if m.how == "love" and love and love.filesystem and love.filesystem.unmount then
+      local ok, res = pcall(love.filesystem.unmount, m.dir)
+      return ok and res and true or false
+    end
+    return false
+  end
+  local keep, any = {}, false
+  for _, m in ipairs(ourMounts) do
+    local d = normMountPath(m.dir)
+    if inside(d, home) or inside(d, rel) then
+      local off = takeOff(m)
+      if not off then
+        collectgarbage("collect"); collectgarbage("collect")
+        off = takeOff(m)
+      end
+      if off then
+        any = true
+      elseif m.how == "ffi" and mountedAt and not mountedAt(m.dir) then
+        -- recorded twice (PhysFS answers success for a dir already mounted)
+        -- and already off: nothing left to undo
+      else
+        keep[#keep + 1] = m
+      end
+    else
+      keep[#keep + 1] = m
+    end
+  end
+  ourMounts = keep
+  return any
+end
+
 -- Undo mountVersion.  A process normally mounts exactly one version and then
 -- boots it, but the launcher can open the save editor on a Blue/Yellow save,
 -- close it, and press Play on Red: with that version's subtree still
@@ -1334,6 +1382,19 @@ function CacheFs.unmountVersion(version)
     CacheFs.clearPrefixShim()
     done = true
   end
+  -- EVERY MOUNT mountVersion RECORDED FOR THIS VERSION, by the exact string
+  -- it was mounted with.  The two calls below only ever matched step 2 (the
+  -- folder by `base .. SEP .. sub`): step 3 mounts the generated trees by an
+  -- absolute, backslashed path under a portable or chosen root, and
+  -- love.filesystem.unmount of the relative name never matches that.  So the
+  -- previous game's data/generated stayed prepended under the next one, and
+  -- every module the next game does not write itself resolved to the old
+  -- game's -- Platinum after the launcher previewed Black loaded gen5_menu_art
+  -- and opened Black's start menu, bag, summary, dex and PC (reported: "i
+  -- opened pokemon black, then closed the app ... platinum ... is showing
+  -- black and whites art"); Black after HeartGold even read HeartGold's
+  -- gen4_version and took the HGSS script family.  tests/menu_art_mount_test.
+  done = CacheFs._unmountRecorded(base, sub) or done
   local fn = resolveUnmount()
   if fn and base then
     done = fn(base .. SEP .. sub) or done

@@ -2574,6 +2574,9 @@ function SaveData.newGame(boot)
   --
   -- Callers that ARE starting a playthrough pass nothing and are unaffected.
   if boot.noHooks then return save end
+  -- RUN MODES: the NEW GAME screen's choice (src/runmodes/RunModes.lua);
+  -- nothing pending = a normal save, byte-for-byte what it was before
+  require("src.runmodes.RunModes").consumePending(save)
   return Runtime.call("save.new_game", function(s) return s end, save)
 end
 

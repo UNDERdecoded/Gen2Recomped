@@ -917,6 +917,8 @@ function Commands.g2_move_relearner(ctx)
       rows[#rows + 1] = id
     end
   end
+  -- RUN MODES: MOVE RELEARNER (src/runmodes/RunHooks.lua relearnable)
+  rows = require("src.runmodes.RunHooks").relearnable(picked, rows, ctx.game)
   if #rows == 0 then
     return say(ctx, nil, Strings("%s has no\nmoves to remember.", monName(ctx, picked)))
   end

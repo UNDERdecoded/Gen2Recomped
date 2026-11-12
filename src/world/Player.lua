@@ -1007,7 +1007,9 @@ function Player:pose()
   -- used from the water still shows the character holding the ball out, and
   -- the blob under them is drawn by drawSurfBlob either way.
   local sprite = (self.fieldMove and self.fieldMoveSprite)
-                 or (self.fishing and self.sprite)
+                 -- (an online look swaps self.sprite; fishing keeps the
+                 -- game's own sheet: src/online/world/SelfLook.lua)
+                 or (self.fishing and ((self._look and self._look.orig.sprite) or self.sprite))
                  -- UNDERWATER BEATS EVERYTHING.  A dive leaves `surfing`
                  -- false and the seafloor is walked, not ridden, so without
                  -- this the wetsuit would never be reached; asked FIRST

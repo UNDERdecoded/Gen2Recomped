@@ -22,9 +22,11 @@ local COLORS = {
 local KEYS = { [0] = "A", "B", "L", "R", "+", "+", "+", "+", "+", "SELECT", "START" }
 
 -- bytes -> lines of runs {text, color}; choice slots recorded
-function TextBox.parse(bytes, playerName)
+function TextBox.parse(bytes, playerName, opts)
   local lines, line, color = {}, {}, 0
   local choices = {}
+  local slots05 = {} -- round 8: $05 choice markers (used when no $06 slot is)
+  opts = opts or {}
   local i, n = 1, #bytes
   local function put(s)
     local last = line[#line]
@@ -44,6 +46,14 @@ function TextBox.parse(bytes, playerName)
     elseif c == 0x01 or c == 0x09 or c == 0x0F then
       if c == 0x0F then put("*") end
       i = i + 1
+    elseif c == 0x07 and opts.continue then
+      -- round 8: $07 hi lo goes on with message (hi << 8 | lo) in a new window
+      local nb = opts.continue((bytes:byte(i) or 0) * 256 + (bytes:byte(i + 1) or 0))
+      i = i + 2
+      if nb then
+        newline(); newline()
+        bytes, i, n = nb, 1, #nb
+      end
     elseif c == 0x03 or c == 0x07 then i = i + 2
     elseif c == 0x04 then
       local a = bytes:byte(i) or 0
@@ -52,10 +62,15 @@ function TextBox.parse(bytes, playerName)
       local a = bytes:byte(i) or 0
       i = i + (a == 0xFF and 1 or 2)
       choices.present = true
+      local run = { text = "  ", color = color, slot = #slots05 + 1 }
+      line[#line + 1] = run
+      slots05[#slots05 + 1] = run
     elseif c == 0x06 then
       local v = bytes:byte(i) or 0
       i = i + 1
       if v == 0 then put(playerName or "Link")
+      elseif opts.numbers and opts.numbers[v] then put(tostring(opts.numbers[v])) -- round 27A: gMessage.rupees / field_0x14 by the code's number (SideQuests27.messageNumbers)
+      elseif opts.number then put(tostring(opts.number)) -- round 8: gMessage.rupees
       else
         local run = { text = "  ", color = color, slot = v }
         line[#line + 1] = run
@@ -72,6 +87,12 @@ function TextBox.parse(bytes, playerName)
     end
   end
   newline()
+  if #choices == 0 and #slots05 >= 2 then
+    for k, r in ipairs(slots05) do choices[k] = r end
+    choices.present = true
+  else
+    for _, r in ipairs(slots05) do r.text = ""; r.slot = nil end
+  end
   return lines, choices
 end
 
@@ -94,7 +115,7 @@ end
 
 function TextBox.new(bytes, opts)
   opts = opts or {}
-  local lines, choices = TextBox.parse(bytes or "", opts.playerName)
+  local lines, choices = TextBox.parse(bytes or "", opts.playerName, opts)
   local self = setmetatable({
     pages = paginate(lines), page = 1, shown = 0, done = false,
     choices = choices, cursor = 1, result = 0,

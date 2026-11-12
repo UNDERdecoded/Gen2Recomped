@@ -179,6 +179,8 @@ function Gen3StarterSelect.new(game, species, onChoose)
 
   self.pics = {}
   for i, id in ipairs(species) do
+    -- RUN MODES: a randomized-starters save shows the mon it will get
+    id = require("src.runmodes.RunHooks").shownStarter(game, id)
     local ok, path = pcall(function()
       return (require("src.pokemon.Sprites").path(game.data, id, "front"))
     end)
@@ -340,8 +342,9 @@ function Gen3StarterSelect:draw()
     -- species name, each centred across the window's 13 tiles
     local lx, ly = self:labelAt(i)
     if lx and ly then
-      local def = self.game.data.pokemon and self.game.data.pokemon[self.species[i]]
-      local name = (def and def.name) or tostring(self.species[i])
+      local shown = require("src.runmodes.RunHooks").shownStarter(self.game, self.species[i])
+      local def = self.game.data.pokemon and self.game.data.pokemon[shown]
+      local name = (def and def.name) or tostring(shown)
       local rows = def and def.category and { def.category, name } or { name }
       local tx = math.floor(lx / 8) - 1
       local ty = math.floor(ly / 8) - 1

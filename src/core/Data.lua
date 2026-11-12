@@ -2273,6 +2273,7 @@ function Data:load()
     -- gen4_version with family "hgss"; its script ids dispatch through HGSS's
     -- own bands and its menus read HGSS's bank (Gen4ScriptBands.setFamily).
     -- Platinum's cache has no such file and keeps Platinum's tables.
+    local cacheFamily
     do
       local okV, ver = loadModule(dir, "gen4_version")
       self.gen4_version = okV and ver or nil
@@ -2283,11 +2284,48 @@ function Data:load()
         local ok5, v5 = loadModule(dir, "gen5_version")
         if ok5 and type(v5) == "table" and v5.family == "bw" then family, rows = "bw", v5.scriptBands end
       end
+      -- ANOTHER GAME'S MARKER. When the launcher booted a known DS version
+      -- and the cache answers a different family, the answer came from a
+      -- previous game's tree left on the read path (CacheFs.unmountVersion):
+      -- Black after HeartGold read HeartGold's gen4_version. The booted
+      -- version's own family wins; its own markers are reloaded for it.
+      do
+        local okG, GV = pcall(require, "src.core.GameVersion")
+        local cur = okG and GV.info and GV.info(GV.get and GV.get() or nil) or nil
+        if cur and (cur.generation or 0) >= 4 and cur.engine == nil then
+          local want = GV.family(cur.id)
+          if want ~= "hgss" and want ~= "bw" then want = "platinum" end
+          if want ~= family then
+            Logger.warn("gen4 cache: %s booted but the cache reads as '%s' -- "
+                        .. "another game's files are on the read path; using '%s'",
+                        tostring(cur.id), tostring(family), want)
+            if want ~= "hgss" then self.gen4_version = nil end
+            rows = nil
+            if want == "bw" then
+              local ok5, v5 = loadModule(dir, "gen5_version")
+              rows = ok5 and type(v5) == "table" and v5.scriptBands or nil
+            end
+            family = want
+          end
+        end
+      end
+      cacheFamily = family
       local okB, Bands = pcall(require, "src.import.Gen4ScriptBands")
       if okB then Bands.setFamily(family, rows) end
     end
     for _, name in ipairs(GEN4_PREFIXED) do
-      local ok, mod = loadModule(dir, name)
+      local ok, mod
+      -- A FAMILY'S OWN MODULES ONLY. Black/White write gen5_*, HeartGold/
+      -- SoulSilver gen4_hgss_*, and each screen router asks only "is this
+      -- art here?" -- so one of another family's, served by a stale mount,
+      -- turns that family's menus on (Platinum drawing Black's start menu,
+      -- bag, summary, dex and PC). Never read them for another family.
+      if (name:sub(1, 5) == "gen5_" and cacheFamily ~= "bw")
+         or (name:sub(1, 10) == "gen4_hgss_" and cacheFamily ~= "hgss") then
+        ok, mod = false, "belongs to another family's cache"
+      else
+        ok, mod = loadModule(dir, name)
+      end
       self[name] = ok and mod or nil
       if not ok then
         Logger.warn("gen4 cache: '%s' is missing (%s) -- the screens that "

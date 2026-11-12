@@ -126,6 +126,8 @@ mobile/ios/bundle_id.local
 !/tests/frlg_hall_of_fame_driver.lua
 !/tests/frlg_sevii_progression_driver.lua
 !/tests/console_textinput_driver.lua
+# run modes (Nuzlocke / Soul Link / randomizer): docs/run-modes.md
+!/tests/runmodes_test.lua
 !/tests/firered_launcher_driver.lua
 /mods/*
 /Claude outputs/*
@@ -170,6 +172,11 @@ mobile/ios/bundle_id.local
 !/mods/EMERALD_3DS_VOXEL/
 /mods/EMERALD_3DS_VOXEL/generated/
 /mods/EMERALD_3DS_VOXEL/tools/
+
+# The NUZLOCKE mod (Nuzlocke / Soul Link rules) ships with every release
+# (scripts/bundled_mods.txt); its tests stay in the repo but out of packages.
+!/mods/NUZLOCKE/
+!/mods/NUZLOCKE/.modkitignore
 
 # The offline translator helper (rom-translate / rom-translate.exe, ~65 MB),
 # built by tools/translation/build_desktop.py. The release workflow builds it

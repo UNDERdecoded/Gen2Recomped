@@ -620,6 +620,8 @@ function Gen4StarterSelect:draw()
   if self.phase == "offering" then
     local row = self.rows[self.index]
     local species = row and row.species
+    -- RUN MODES: a randomized-starters save shows the mon it will get
+    if species then species = require("src.runmodes.RunHooks").shownStarter(self.game, species) end
     local picture = species and self:image(
       Sprites.path(self.game.data, species, "front", { kind = "summary" }))
     if picture then

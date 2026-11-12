@@ -248,8 +248,22 @@ end
 function Game:makeTitleState()
   local OverworldState = require("src.world.OverworldController")
   local factory = Screens.get(self, bootScreens(self).title or "TitleState")
+  local startNewGame
   local title = factory.new(self, {
+    -- RUN MODES: NEW GAME first asks Nuzlocke / Soul Link / randomizer
+    -- (src/ui/RunSetup.lua); the choice rides RunModes.pending into
+    -- SaveData.newGame.  B on that screen goes back to the title.
     onNewGame = function()
+      require("src.runmodes.NewGameGate").run(self, function() startNewGame() end)
+    end,
+    onContinue = function()
+      local loaded, recovered = SaveData.load()
+      if loaded then
+        self:restoreSave(loaded, recovered)
+      end
+    end,
+  })
+  startNewGame = function()
       while self.stack:top() do self.stack:pop() end
       if self.overworld then self.overworld.fadeOverlay = nil end
       -- New Game keeps the standalone options.lua preferences
@@ -293,14 +307,7 @@ function Game:makeTitleState()
             "player customisation screen unavailable: %s", tostring(Cust))
         end
       end
-    end,
-    onContinue = function()
-      local loaded, recovered = SaveData.load()
-      if loaded then
-        self:restoreSave(loaded, recovered)
-      end
-    end,
-  })
+  end
   title.screenId = title.screenId or "TitleState"
   return title
 end
@@ -370,6 +377,15 @@ function Game:_step(dt)
   end
   -- AN EMPTY STACK IS NOT A GAME.
   if self:ensureStack() then return end
+  -- CHAT / ZOOM IN / ZOOM OUT (src/core/HotActions.lua): read off this step's
+  -- edges before the stack sees them, so a window it opens is the top screen
+  do
+    local okH, errH = pcall(require("src.core.HotActions").step, self)
+    if not okH then Logger.warn("hot actions: %s", tostring(errH)) end
+    -- online: your own character in your MY LOOK (src/online/world/SelfLook.lua)
+    local okL, errL = pcall(require("src.online.world.SelfLook").step, self)
+    if not okL then Logger.warn("self look: %s", tostring(errL)) end
+  end
   local closeStep = FrameProfile.section("  logic: stack:update")
   self.stack:update(dt)
   closeStep()
@@ -1231,12 +1247,26 @@ function Game:_draw()
   end
   -- on-screen mobile controls: pure screen-space, over the finished frame
   if not Renderer.splitViewport then TouchControls:draw() end
+  -- ...and the online CHAT button beside them (only while a world can hear it)
+  if not Renderer.splitViewport then pcall(require("src.ui.online.ChatTouch").draw, self) end
 end
 
 -- overworld survey zoom: wheel up / '=' zooms in, wheel down / '-' out
+-- THE 3D CAMERA'S ZOOM SURVIVES A RESTART: Gen4View keeps it across maps
+-- (Gen4View.look), and this keeps it across sessions as options.camZoom3d,
+-- loaded back in applyOptions.  Same state, written where the survey zoom's
+-- options.zoom is.
+function Game:rememberViewZoom(view)
+  local o = self.save and self.save.options
+  if not (o and view) then return end
+  local z = tonumber(view.zoom)
+  o.camZoom3d = (z and math.abs(z - 1) > 1e-3) and z or nil
+  if self.writeOptions then self:writeOptions() end
+end
+
 function Game:zoomStep(delta)
   local view=self:zoomView()
-  if view and self.stack:top()==self.overworld then view:zoomBy(-delta);return end
+  if view and self.stack:top()==self.overworld then view:zoomBy(-delta);self:rememberViewZoom(view);return end
   local Zoom = require("src.render.Zoom")
   if not Zoom.gateOK(self.stack:top(), self.overworld) then return end
   local offset = Zoom.step(delta, Renderer:fitScale())
@@ -1258,6 +1288,7 @@ function Game:wheelmoved(_, dy)
   local view = self:zoomView()
   if view and view.zoomBy then
     view:zoomBy(dy > 0 and -1 or 1)
+    self:rememberViewZoom(view)
     return
   end
   if dy > 0 then
@@ -1801,6 +1832,11 @@ end
 
 function Game:touchpressed(id, x, y)
   if castTopTouch(self, "touchpressed", id, x, y) then return end
+  -- the online CHAT button (src/ui/online/ChatTouch.lua) sits over the field
+  if not self.secondScreenInjecting then
+    local okC, took = pcall(require("src.ui.online.ChatTouch").touchpressed, self, id, x, y)
+    if okC and took then return end
+  end
   -- Visible virtual controls own their complete gesture, even when pressing
   -- one opens a different screen before the finger is lifted.
   if not self.secondScreenInjecting and TouchControls.visible and TouchControls:visible()
@@ -1835,6 +1871,10 @@ end
 
 function Game:touchreleased(id, x, y)
   if castTopTouch(self, "touchreleased", id, x, y) then return end
+  do
+    local okC, took = pcall(require("src.ui.online.ChatTouch").touchreleased, self, id, x, y)
+    if okC and took then return end
+  end
   if not self.secondScreenInjecting and TouchControls.touches and TouchControls.touches[id] then
     TouchControls:touchreleased(id,x,y)
     return
@@ -1928,6 +1968,14 @@ function Game:applyOptions(opts)
   -- just restored back off (the two are mutually exclusive)
   require("src.render.Pipelines").applyOptions(opts)
   require("src.render.Zoom").applyOptions(opts)
+  -- the 3D camera's dolly (Game:rememberViewZoom); nil = the rung's own
+  do
+    local z = tonumber(opts and opts.camZoom3d)
+    local okV, Gen4View = pcall(require, "src.render.Gen4View")
+    if okV and Gen4View.look and (z == nil or (z >= Gen4View.ZOOM_MIN and z <= Gen4View.ZOOM_MAX)) then
+      Gen4View.look.zoom = z
+    end
+  end
   require("src.render.TileRenderer").applyOptions(opts)
   -- returns true when a persisted GBC FX level was cleared on mobile
   local gbcCleared = require("src.render.GBCFX").applyOptions(opts)

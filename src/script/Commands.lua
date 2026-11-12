@@ -222,6 +222,18 @@ end
 Commands.gen4Markup = gen4Markup
 
 function Commands.show_text(ctx, textId, subs, extraOpts)
+  -- RUN MODES: "received CHARMANDER" names the randomized starter
+  if type(subs) == "table" and subs.RAM ~= nil and ctx.game and ctx.game.save
+     and ctx.game.save.runModes and ctx.game.data.pokemon
+     and ctx.game.data.pokemon[subs.RAM] ~= nil then
+    local shown = require("src.runmodes.RunHooks").introShown(ctx.game, subs.RAM)
+    if shown ~= subs.RAM then
+      local copy = {}
+      for k, v in pairs(subs) do copy[k] = v end
+      copy.RAM = shown
+      subs = copy
+    end
+  end
   -- `msgbox gStringVarN` on a buffer nothing filled (a Frontier function that
   -- is not ported) is no box at all, not an empty one
   if type(textId) == "string" and require("src.core.GameVersion").isGen3() then
@@ -556,6 +568,8 @@ end
 -- text (label or literal; {RAM:wStringBuffer} becomes the item name);
 -- pass false when the script shows its own received-text row.
 function Commands.give_item(ctx, itemId, count, gotText)
+  -- RUN MODES: FIELD ITEMS & GIFTS (src/runmodes/RunHooks.lua giftItem)
+  itemId = require("src.runmodes.RunHooks").giftItem(ctx.game, itemId)
   -- Every gift, once per item, somewhere that survives the session.  When a
   -- script plays its whole "here you go" sequence and the bag stays empty,
   -- this is the line that says which half is at fault: present means the
@@ -652,7 +666,8 @@ function Commands.start_battle(ctx, kind, a, b, opts)
     before = require("src.script.Gen3Commands").battleSnapshot(ctx.save)
   end
   if kind == "wild" then
-    battle = BattleState.newWild(ctx.game, a, b, opts)
+    -- RUN MODES: a scripted wild battle is a static: never randomized
+    battle = require("src.runmodes.RunHooks").static(BattleState.newWild, ctx.game, a, b, opts)
     if a == "SNORLAX" then
       require("src.core.Sound").play(ctx.game and ctx.game.data, "Pokeflute")
     end
@@ -1284,6 +1299,8 @@ function Commands.give_pokemon(ctx, species, level, skipNickname, opts)
   -- Native mods can transform a gift before the Pokémon object is created.
   -- This is intentionally an event rather than a special-case starter hook:
   -- mods can use the same seam for story gifts, fossils, or custom scripts.
+  -- RUN MODES: a randomized-starters save's first mon (src/runmodes/RunHooks.lua)
+  species = require("src.runmodes.RunHooks").giftSpecies(ctx.game, species, opts)
   local gift = { ctx = ctx, species = species, level = level }
   if ctx.game.mods then
     ctx.game.mods.events:emit("pokemon.before_give", gift)
@@ -1452,7 +1469,7 @@ function Commands.old_man_demo(ctx)
   local BattleState = require("src.battle.BattleState")
   local runner = ctx.runner
   local om = ctx.game.data.field.oldManBattle or { species = "WEEDLE", level = 5 }
-  local battle = BattleState.newWild(ctx.game, om.species, om.level)
+  local battle = require("src.runmodes.RunHooks").quiet(BattleState.newWild, ctx.game, om.species, om.level)
   battle:makeOldManDemo()
   battle.onFinish = function() runner:resume() end
   -- InitWildBattle calls DoBattleTransitionAndInitBattleVariables
@@ -1786,6 +1803,17 @@ end
 -- push_screen <screenId> [args]: instantiate through the screens
 -- registry and block until the screen pops itself
 function Commands.push_screen(ctx, screenId, args)
+  -- RUN MODES: Oak's StarterDex shows the randomized starter
+  if screenId == "DexEntryMenu" and type(args) == "table" and args.forceOwned
+     and ctx.game.save and ctx.game.save.runModes then
+    local shown = require("src.runmodes.RunHooks").introShown(ctx.game, args.species)
+    if shown ~= args.species then
+      local copy = {}
+      for k, v in pairs(args) do copy[k] = v end
+      copy.species = shown
+      args = copy
+    end
+  end
   local screens = ctx.game.data.screens
   local known = screens and screens[screenId] ~= nil
   if not known then

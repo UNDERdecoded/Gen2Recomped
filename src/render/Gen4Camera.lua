@@ -384,6 +384,17 @@ end
 -- And "3" CYCLES the ladder, so those two were the first two things a player
 -- saw on pressing it, which is exactly when it was reported.
 --
+-- FOURTH REPORT (2026-11-11, BW Pokemon Center, "sometimes but not others"):
+-- the real cause was never the angle. Two inputs reached the `field3d` camera
+-- (every numeric rung, and BW's cartridge rung) that first/third person and
+-- the oblique Pt/HGSS cartridge rung never see: the ZOOM dollied the eye in to
+-- zoom x distance (0.66 drew a BW building 1.2-1.6x too tall, 0.08 put the eye
+-- inside it), and 3D RES 2X-4X widened its fov 2-4x (fov came from the
+-- supersampled target's rows). Both depend on saved settings, hence
+-- "sometimes". Gen4View now zooms that camera by LENS (eye fixed; zooming out
+-- backs off) and reads the fov in logical rows; tests/gen4_camera_stretch_test
+-- pins every rung x zoom x 3D RES against an independent pinhole camera.
+--
 -- The RANGE is the ROM's, read off the rows rather than written out again. The
 -- even spacing between the ends is the ladder's own, because a ladder should
 -- step evenly -- so every rung lies inside a range the cartridge uses and the

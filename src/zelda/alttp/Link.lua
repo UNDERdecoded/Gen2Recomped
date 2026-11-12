@@ -21,8 +21,8 @@
 --     16x16 cell (kLinkDmaSources1/2) and kLinkSpriteBodys their offset and
 --     flips. All four tables come from the ROM.
 --
--- Not ported yet (documented in docs/zelda/alttp.md): corner nudging around
--- walls, diagonal ledge hops, sword/items, swimming, damage and knockback.
+-- Round 10: corner nudging (L:nudge). Not ported yet (docs/zelda/alttp.md):
+-- diagonal ledge hops, sword/items, swimming, damage and knockback.
 
 local bit = require("bit")
 local band = bit.band
@@ -103,6 +103,7 @@ function L:update(input, attrFn)
   local r0 = self.speedSetting + ((dx ~= 0 and dy ~= 0) and 1 or 0)
   local vel = t.speedMod[r0 + 1]
 
+  local ox0 = self.x
   if dx ~= 0 then
     local nx, ns = moveAxis(self.x, self.subX, dx * vel)
     local dir = dx < 0 and L.LEFT or L.RIGHT
@@ -111,6 +112,8 @@ function L:update(input, attrFn)
       return self:startHop(dir, attrFn)
     elseif not blocked then
       self.x, self.subX = nx, ns
+    else
+      self:snapTo(attrFn, dir, "x", nx)
     end
   end
   if dy ~= 0 then
@@ -121,7 +124,16 @@ function L:update(input, attrFn)
       return self:startHop(dir, attrFn)
     elseif not blocked then
       self.y, self.subY = ny, ns
+    else
+      if not self:snapTo(attrFn, dir, "y", ny) and dx == 0 then
+        self:nudge(attrFn, dir, self.x, ny, "x")
+      end
     end
+  end
+  if dx ~= 0 and dy == 0 and self.x == ox0 then
+    local nx = moveAxis(self.x, self.subX, dx * vel)
+    local dir = dx < 0 and L.LEFT or L.RIGHT
+    if self:probe(attrFn, dir, nx, self.y) then self:nudge(attrFn, dir, nx, self.y, "y") end
   end
 
   -- walk cycle (steps 1..8, each animTab3[step] frames)
@@ -132,6 +144,52 @@ function L:update(input, attrFn)
     self.steps = self.steps + 1
     if self.steps == 9 then self.steps = 1 end
   end
+end
+
+-- Round 10: corner nudging (SNES HandlePushingBonkingSnaps_Y/_X +
+-- HandleNudging): walking straight into a wall that only one outer probe
+-- touches (the middle probe free, not both outer ones), Link slides 1 px a
+-- frame towards the free side while his other coordinate is off the 8 px
+-- grid; the slide is undone when the cell beside him is solid. (x, y) is
+-- the blocked target; `axis` the coordinate that slides.
+function L:nudge(attrFn, dir, x, y, axis)
+  local O = require("src.zelda.alttp.Overworld")
+  local bits, ps = 0, PROBES[dir]
+  for i, p in ipairs(ps) do
+    local a = attrFn(self.world, x + p[1], y + p[2])
+    if O.isSolid(a) or O.LEDGE[a] then bits = bits + 2 ^ (i - 1) end
+  end
+  if bits ~= 1 and bits ~= 4 then return false end
+  local cur = self[axis]
+  if cur % 8 == 0 then return false end
+  local r = (bits == 1) and 1 or -1
+  local nx, ny = self.x, self.y
+  if axis == "x" then nx = nx + r else ny = ny + r end
+  -- HandleNudging: the two cells on the side Link slides towards must be free
+  local side = (axis == "x") and ((r > 0) and L.RIGHT or L.LEFT) or ((r > 0) and L.DOWN or L.UP)
+  if self:probe(attrFn, side, nx, ny) then return false end
+  self.x, self.y = nx, ny
+  self.nudged = (self.nudged or 0) + 1
+  return true
+end
+
+-- Round 11: a move the wall stops still brings Link up against it (the
+-- SNES collision snaps him to the wall: HandlePushingBonkingSnaps_*); here
+-- the whole pixels short of the blocked target are walked one by one.
+-- Returns true when he moved.
+function L:snapTo(attrFn, dir, axis, target)
+  local cur = self[axis]
+  local sgn = (target > cur) and 1 or -1
+  local moved = false
+  for _ = 1, math.abs(target - cur) - 1 do
+    local nx, ny = self.x, self.y
+    if axis == "x" then nx = nx + sgn else ny = ny + sgn end
+    if self:probe(attrFn, dir, nx, ny) then break end
+    self.x, self.y = nx, ny
+    moved = true
+  end
+  if moved then if axis == "x" then self.subX = 0 else self.subY = 0 end end
+  return moved
 end
 
 -- LinkHop: hop off a ledge to the first tile past it Link can stand on
@@ -168,11 +226,14 @@ function L:updateHop()
 end
 
 -- The sprite pose: two 16x16 cells. Returns
--- { { cell = byteOffsetInLinkSheet, dx, dy, hflip, vflip }, ... }
-function L.pose(data, facing, steps)
+-- { { cell = byteOffsetInLinkSheet, dx, dy, hflip, vflip }, ... }, the DMA
+-- index j and the pose index r2. yt is the SNES pose table row
+-- (value_computed_for_player_oam: 0 walking, 0x27 sword swing, 0x0D carry,
+-- 0x0E throw, 0x10 lift; Weapon.lua), default 0.
+function L.pose(data, facing, steps, yt)
   local t = data.t
   local dir = math.floor(facing / 2)
-  local r2 = t.playerOamOffs[dir * 40 + 0 + 1] + (steps or 0)
+  local r2 = t.playerOamOffs[dir * 40 + (yt or 0) + 1] + (steps or 0)
   local j = t.linkGfxIndices[r2 + 1]
   local body = t.linkSpriteBodys[j + 1]
   local by, bx, tile = body[1], body[2], body[3]
@@ -187,7 +248,7 @@ function L.pose(data, facing, steps)
     parts[#parts + 1] = { cell = t.linkDmaSrc2[j + 1] - 0x8000, dx = 0, dy = 8,
                           hflip = band(lo, 4) ~= 0, vflip = band(lo, 8) ~= 0 }
   end
-  return parts, j
+  return parts, j, r2
 end
 
 function L:snapshot()

@@ -17,6 +17,10 @@
 --   lr_pos   { x, y, f, d, look }    this player's cell in the room
 --   lr_ready { round }               back in the room after round - 1
 --   lr_leave {}                      gone from the room, the link is ending
+--   lr_chat  { text }                a chat line (v >= 3 peers only)
+--   lr_emote { e }                   an emote (v >= 3 peers only)
+-- `look` may carry `av` (the chosen sheet + colour, Avatar.lua); a v2 peer
+-- runs no cleanLook on it and its Presence ignores the key.
 --
 -- A peer that does not speak it (a LINK-menu player, not in a room; an older
 -- build, v = 1) gets none of these messages and the session ends after one
@@ -31,7 +35,9 @@
 
 local RoomPeer = {}
 
-RoomPeer.VERSION = 2
+RoomPeer.VERSION = 3        -- what this build says in lr_room
+RoomPeer.MIN_VERSION = 2    -- the oldest peer that walks in the room
+RoomPeer.CHAT_VERSION = 3   -- the oldest peer that hears lr_chat / lr_emote
 RoomPeer.PID = 990          -- synthetic: Presence.INDEX + this is the ghost's object index
 RoomPeer.HEARTBEAT = 1.0    -- seconds between repeats of an unchanged position
 RoomPeer.GONE_TEXT = "%s has left\nthe room."
@@ -43,7 +49,53 @@ local function send(s, msg)
 end
 
 local function speaks(s)
-  return (tonumber(s.peerV) or 1) >= RoomPeer.VERSION
+  return (tonumber(s.peerV) or 1) >= RoomPeer.MIN_VERSION
+end
+
+-- ------------------------------------------------------------ room chat
+--
+-- The same surface WorldClient gives ChatOverlay / QuickChat (state, log,
+-- say, emote, now), over the held session.  Lines are cleaned and capped by
+-- WorldProtocol, rate-limited by the same bucket; both sides log locally.
+function RoomPeer.chatAvailable(s)
+  return s ~= nil and s.roomMap ~= nil and not s.peerLeft
+     and (tonumber(s.peerV) or 1) >= RoomPeer.CHAT_VERSION
+end
+
+function RoomPeer.chat(s)
+  if s.chatClient then return s.chatClient end
+  local P = require("src.online.world.WorldProtocol")
+  local Chat = require("src.online.world.Chat")
+  local Util = require("src.online.net.Util")
+  local c = { log = Chat.log(30), chatBucket = Chat.bucket(), emoteCd = Chat.cooldown(P.EMOTE_COOLDOWN),
+              members = {}, room = true }
+  function c:now() return Util.time() end
+  c.state = "in"
+  local function myName()
+    local okW, W = pcall(require, "src.online.world.OnlineWorld")
+    return okW and W.playerName and W.playerName(s.game) or "YOU"
+  end
+  function c:say(text)
+    text = P.cleanText(text, P.CHAT_MAX)
+    if not text or not RoomPeer.chatAvailable(s) then return false, "nothing to say" end
+    local ok, wait = self.chatBucket:take(self:now())
+    if not ok then
+      local line = ("Slow down! (%ds)"):format(math.ceil(wait))
+      self.log:add({ kind = "notice", text = line, t = self:now() })
+      return false, line
+    end
+    send(s, { type = "lr_chat", text = text })
+    self.log:add({ kind = "chat", pid = 0, name = myName(), text = text, t = self:now() })
+    return true
+  end
+  function c:emote(e)
+    if not (P.EMOTE_SET[e] and RoomPeer.chatAvailable(s)) then return false end
+    if not self.emoteCd:take(self:now()) then return false end
+    send(s, { type = "lr_emote", e = e })
+    return true
+  end
+  s.chatClient = c
+  return c
 end
 
 -- the exchange said "same room" at the counter
@@ -64,7 +116,23 @@ function RoomPeer.take(s, msg)
   if msg.type == "lr_pos" then
     s.peerPos = { m = "@room", x = tonumber(msg.x) or 0, y = tonumber(msg.y) or 0,
                   f = msg.f, d = tonumber(msg.d) or 16, mv = "walk" }
-    if type(msg.look) == "table" then s.peerLook = msg.look end
+    if type(msg.look) == "table" then
+      s.peerLook = require("src.online.world.WorldProtocol").cleanLook(msg.look)
+    end
+  elseif msg.type == "lr_chat" then
+    local P = require("src.online.world.WorldProtocol")
+    local text = P.cleanText(msg.text, P.CHAT_MAX)
+    if text then
+      local c = RoomPeer.chat(s)
+      local name = s.ls and s.ls.peerName or "?"
+      local e = c.log:add({ kind = "chat", pid = RoomPeer.PID, name = name, text = text, t = c:now() })
+      s.peerSaid = { text = text, at = c:now(), seq = (e and e.seq) or 0 }
+    end
+  elseif msg.type == "lr_emote" then
+    local P = require("src.online.world.WorldProtocol")
+    if P.EMOTE_SET[msg.e] then
+      s.peerEmote = { e = msg.e, at = require("src.online.net.Util").time() }
+    end
   elseif msg.type == "lr_ready" then
     s.peerRound = math.max(tonumber(s.peerRound) or 0, tonumber(msg.round) or 0)
   elseif msg.type == "lr_leave" then
@@ -84,7 +152,8 @@ function RoomPeer.drain(s)
   if not inbox then return end
   for i = 1, #inbox do
     local m = inbox[i]
-    if type(m) == "table" and (m.type == "lr_pos" or m.type == "lr_ready" or m.type == "lr_leave") then
+    if type(m) == "table" and (m.type == "lr_pos" or m.type == "lr_ready" or m.type == "lr_leave"
+                               or m.type == "lr_chat" or m.type == "lr_emote") then
       RoomPeer.take(s, m)
       inbox[i] = false
     elseif type(m) == "table" and RoomPeer.LEFTOVER[m.type]
@@ -136,7 +205,8 @@ function RoomPeer.updateGhost(s, game, ow)
   local g = s.ghost
   if g and g.ow ~= ow then RoomPeer.clear(s); g = nil end
   if g and g.mapId ~= ow.map.id then RoomPeer.clear(s); g = nil end
-  local member = { pos = pos, look = s.peerLook, name = s.ls and s.ls.peerName or "?" }
+  local member = { pos = pos, look = s.peerLook, name = s.ls and s.ls.peerName or "?",
+                   emote = s.peerEmote }
   if not g then
     g = Presence.makeRoomGhost(game, ow, RoomPeer.PID, member)
     if not g then return end
@@ -144,6 +214,8 @@ function RoomPeer.updateGhost(s, game, ow)
     s.ghost = g
   end
   g.member = member
+  if s.peerSaid then g.said = s.peerSaid end
+  pcall(Presence.refreshGhostSprite, game, g, pos.mv)
   local t = require("src.online.net.Util").time()
   Presence.steerGhost(g, pos, t)
   Presence.animateGhost(g, t)

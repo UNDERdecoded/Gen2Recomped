@@ -12,6 +12,14 @@
 #include <winrt/Windows.Storage.h>
 #include <winrt/Windows.Storage.Pickers.h>
 #include <winrt/Windows.UI.Core.h>
+#include <winrt/Windows.Storage.Streams.h>
+#include <winrt/Windows.Web.Http.h>
+#include <winrt/Windows.Web.Http.Filters.h>
+#include <winrt/Windows.Web.Http.Headers.h>
+#include <cctype>
+#include <filesystem>
+#include <sstream>
+#include <vector>
 
 extern "C" int SDL_main(int argc, char **argv);
 
@@ -149,6 +157,182 @@ void watchPickRequests(std::wstring root)
     }
 }
 
+// THE HTTP BRIDGE, for cloud saves. A UWP app cannot start curl, and the
+// bundled LOVE 11.5 has no lua-https, so src/cloud/XboxHttp.lua hands its
+// requests to this thread through files in LocalState\gr_http:
+//
+//   gr_http_ready      written at startup: this package has the bridge
+//   gr_http\<id>.req   one request, renamed into place when complete:
+//                        GRHTTP1\n METHOD\n URL\n <header count>\n
+//                        "Name: value\n" per header, <body bytes>\n <body>
+//   gr_http\<id>.res   the answer, renamed into place when complete:
+//                        <status>\n <body>   (status 0: body is the error)
+//
+// Windows.Web.Http does the TLS, redirects and proxy settings. Bodies are
+// text (JSON, form data, Lua save files), as on every other platform.
+
+std::string readWholeFile(const std::wstring &path)
+{
+    std::ifstream input(path, std::ios::binary);
+    std::ostringstream text;
+    text << input.rdbuf();
+    return text.str();
+}
+
+bool takeLine(const std::string &text, size_t &at, std::string &line)
+{
+    size_t end = text.find('\n', at);
+    if (end == std::string::npos)
+        return false;
+    line = text.substr(at, end - at);
+    if (!line.empty() && line.back() == '\r')
+        line.pop_back();
+    at = end + 1;
+    return true;
+}
+
+void answerHttp(const std::wstring &dir, const std::wstring &id, int status, const std::string &body)
+{
+    const std::wstring tmp = dir + L"\\" + id + L".res.tmp";
+    const std::wstring done = dir + L"\\" + id + L".res";
+    writeTextFile(tmp, std::to_string(status) + "\n" + body);
+    std::error_code ignored;
+    std::filesystem::rename(tmp, done, ignored);
+}
+
+void serveHttp(std::wstring dir, std::wstring id)
+{
+    namespace Http = winrt::Windows::Web::Http;
+    namespace Filters = winrt::Windows::Web::Http::Filters;
+    namespace Streams = winrt::Windows::Storage::Streams;
+    try
+    {
+        winrt::init_apartment(winrt::apartment_type::multi_threaded);
+    }
+    catch (...)
+    {
+    }
+    const std::wstring work = dir + L"\\" + id + L".work";
+    try
+    {
+        const std::string text = readWholeFile(work);
+        std::error_code ignored;
+        std::filesystem::remove(work, ignored);
+        size_t at = 0;
+        std::string magic, method, url, countLine;
+        if (!takeLine(text, at, magic) || magic != "GRHTTP1" || !takeLine(text, at, method) ||
+            !takeLine(text, at, url) || !takeLine(text, at, countLine))
+        {
+            answerHttp(dir, id, 0, "bad request file");
+            return;
+        }
+        const int count = std::stoi(countLine);
+        std::vector<std::pair<std::string, std::string>> headers;
+        std::string contentType = "application/octet-stream";
+        for (int i = 0; i < count; ++i)
+        {
+            std::string line;
+            if (!takeLine(text, at, line))
+            {
+                answerHttp(dir, id, 0, "bad request headers");
+                return;
+            }
+            const size_t colon = line.find(':');
+            if (colon == std::string::npos)
+                continue;
+            std::string name = line.substr(0, colon);
+            std::string value = line.substr(colon + 1);
+            while (!value.empty() && value.front() == ' ')
+                value.erase(value.begin());
+            std::string lower = name;
+            for (auto &c : lower)
+                c = static_cast<char>(tolower(static_cast<unsigned char>(c)));
+            if (lower == "content-type")
+                contentType = value;
+            else if (lower != "content-length")
+                headers.emplace_back(name, value);
+        }
+        std::string lengthLine;
+        if (!takeLine(text, at, lengthLine))
+        {
+            answerHttp(dir, id, 0, "bad request body length");
+            return;
+        }
+        const size_t length = static_cast<size_t>(std::stoull(lengthLine));
+        const std::string body = text.substr(at, length);
+
+        Filters::HttpBaseProtocolFilter filter;
+        filter.CacheControl().ReadBehavior(Filters::HttpCacheReadBehavior::NoCache);
+        filter.CacheControl().WriteBehavior(Filters::HttpCacheWriteBehavior::NoCache);
+        Http::HttpClient client(filter);
+        Http::HttpRequestMessage request(Http::HttpMethod(winrt::to_hstring(method)),
+            winrt::Windows::Foundation::Uri(winrt::to_hstring(url)));
+        for (const auto &header : headers)
+            request.Headers().TryAppendWithoutValidation(winrt::to_hstring(header.first),
+                winrt::to_hstring(header.second));
+        if (length > 0 || method == "POST" || method == "PUT" || method == "PATCH")
+        {
+            Http::HttpStringContent content(winrt::to_hstring(body), Streams::UnicodeEncoding::Utf8);
+            content.Headers().ContentType(
+                Http::Headers::HttpMediaTypeHeaderValue::Parse(winrt::to_hstring(contentType)));
+            request.Content(content);
+        }
+        auto response = client.SendRequestAsync(request).get();
+        const int status = static_cast<int>(response.StatusCode());
+        const std::string reply = winrt::to_string(response.Content().ReadAsStringAsync().get());
+        answerHttp(dir, id, status, reply);
+    }
+    catch (const winrt::hresult_error &e)
+    {
+        answerHttp(dir, id, 0, winrt::to_string(e.message()));
+    }
+    catch (const std::exception &e)
+    {
+        answerHttp(dir, id, 0, e.what());
+    }
+    catch (...)
+    {
+        answerHttp(dir, id, 0, "unknown network error");
+    }
+}
+
+void watchHttpRequests(std::wstring root)
+{
+    try
+    {
+        namespace fs = std::filesystem;
+        const std::wstring dir = root + L"\\gr_http";
+        std::error_code ec;
+        fs::create_directories(dir, ec);
+        writeTextFile(root + L"\\gr_http_ready", "1\n");
+        for (;;)
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            std::vector<std::wstring> ids;
+            std::error_code listed;
+            for (fs::directory_iterator it(dir, listed), end; !listed && it != end; it.increment(listed))
+            {
+                const fs::path path = it->path();
+                if (path.extension() == L".req")
+                    ids.push_back(path.stem().wstring());
+            }
+            for (const auto &id : ids)
+            {
+                // Claim it first, so the next scan does not serve it twice.
+                std::error_code moved;
+                fs::rename(dir + L"\\" + id + L".req", dir + L"\\" + id + L".work", moved);
+                if (moved)
+                    continue;
+                std::thread(serveHttp, dir, id).detach();
+            }
+        }
+    }
+    catch (...)
+    {
+        // Without gr_http_ready, Lua reports cloud saves as unavailable.
+    }
+}
+
 int runLove(int, char **)
 {
     std::wstring packagePath = winrt::Windows::ApplicationModel::Package::Current()
@@ -158,6 +342,7 @@ int runLove(int, char **)
     std::wstring localState = winrt::Windows::Storage::ApplicationData::Current()
         .LocalFolder().Path().c_str();
     std::thread(watchPickRequests, localState).detach();
+    std::thread(watchHttpRequests, localState).detach();
 
     char executable[] = "Gen2RecompedUWP";
     char fused[] = "--fused";

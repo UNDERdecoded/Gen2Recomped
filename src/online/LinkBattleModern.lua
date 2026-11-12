@@ -483,6 +483,13 @@ function M.new(game, net, opts)
   self.enemyIndex = 1
   self.playerParty = myParty
   self.opponentName = theirName
+  -- the other player's online look (Handshake.hello `look`): their front pic
+  -- in the intro (src/online/BattleLook.lua); an older peer sends none
+  do
+    local ph = opts and opts.peerHello
+    local okP, P = pcall(require, "src.online.world.WorldProtocol")
+    if okP and type(ph) == "table" and type(ph.look) == "table" then self.peerLook = P.cleanLook(ph.look) end
+  end
   self.introText = Strings("%s wants\nto battle!", theirName)
   self.trainerLabel_ = function() return theirName end
   self.remoteHashes, self.localHashes = {}, {}

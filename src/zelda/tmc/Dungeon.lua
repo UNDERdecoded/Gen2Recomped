@@ -48,6 +48,9 @@ local SFX = { DOOR = 0x10B, SECRET = 0x72, BUTTON = 0x10C, BOSS_DOOR = 0x185, CH
 
 -- door art per area (lockedDoor.c sub_080837B0: gUnk_0811F690[area - $40])
 local DOOR_GFX = { [0x48] = 0x15, [0x49] = 0x15 }
+-- round 24: the whole gUnk_0811F690 (areas $40-$8F, 8 areas per value); Cave of Flames ($50) = $52
+for a = 0x40, 0x8F do DOOR_GFX[a] = ({ [0] = 0x0A, 0x15, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59 })[rshift(a - 0x40, 3)] end
+Dungeon.DOOR_GFX = DOOR_GFX
 
 function Dungeon.new(field)
   local self = setmetatable({ field = field, A = field.assets, m = field.assets.manifest }, Dungeon)
@@ -58,6 +61,8 @@ end
 function Dungeon:reset()
   self.objs, self.mgrs, self.blocks = {}, {}, {}
   self.safe = nil
+  self.barrel = nil
+  self.holeMgrs = nil -- round 13: Holes.lua
 end
 
 -- ---------------------------------------------------------------------------
@@ -164,12 +169,17 @@ function Dungeon:spawnObject(d)
               x = d.x, y = d.y, z = 0, animationState = 0, field80 = 0, field82 = 0, interactType = 0,
               flags = band(d.paramC, 0xFFFF), flag = rshift(d.paramC, 16), dungeon = true, data = d,
               layer = (band(rshift(d.collision or 0, 0), 3) == 2) and 2 or 1 }
+  -- round 12: no layer in the kind byte -> ResolveCollisionLayer (the west
+  -- alcove's statue in Deepwood room $06 stands on the raised floor)
+  if band(d.collision or 0, 3) == 0 then e.layer = require("src.zelda.tmc.Layers").resolve(self.field, e) end
   if id == OBJ.LOCKED_DOOR then return self:doorInit(e)
   elseif id == OBJ.BOSS_DOOR then return self:bossDoorInit(e)
   elseif id == OBJ.BUTTON then return self:buttonInit(e)
   elseif id == OBJ.CHEST_SPAWNER then return self:chestInit(e)
   elseif id == OBJ.PUSHABLE_STATUE then return self:statueInit(e)
   elseif id == OBJ.LILYPAD then return self:lilyInit(e)
+  elseif id == 0x25 then return require("src.zelda.tmc.Barrel").spawnBig(self, e) or false -- BIG_BARREL (round 6)
+  elseif id == 0x19 then return require("src.zelda.tmc.HouseDoor").spawn(self, e) -- HOUSE_DOOR_EXT (round 15)
   elseif id == OBJ.HEART_CONTAINER then
     -- heartContainer.c: gone once its flag is set; appears when flag2 is
     -- set; touching it is the ITEM_HEART_CONTAINER item get
@@ -185,8 +195,11 @@ function Dungeon:spawnObject(d)
     -- fourElements.c: comes down from z = 192, touching it gives the
     -- element (item = its type), then room flag 0 is set
     local def = self.field:objects():def(OBJ.FOUR_ELEMENTS, e.form)
-    if def then self.field:objects():dress(e, def, 0) end
-    e.objAnim = 0
+    -- round 17: sub_08080CB4 (FourElements calls it every frame) plays the
+    -- animation numbered by the type ($40 Earth...): animation 0 drew
+    -- nothing, the element was invisible
+    if def then self.field:objects():dress(e, def, e.form) end
+    e.objAnim = e.form
     e.element = true
     e.z = 192
     self:track(e)
@@ -198,15 +211,31 @@ function Dungeon:spawnObject(d)
     e.objAnim = 0
     e.warp = true
     e.hidden = not self:check(e.flag)
+    -- round 16: warpPoint.c for every type with a destination in its data
+    -- (type 2 too: Deepwood's goes to $4A:00 at (120, 120), not WARP_OUT's)
+    if e.form ~= 2 or (e.data and (e.data.paramB or 0) ~= 0) then require("src.zelda.tmc.WarpPoint").init(self, e) end
     self:track(e)
     return e
   end
+  do local x = require("src.zelda.tmc.Mushroom").spawn(self, e) if x ~= nil then return x end end -- round 11: PULLABLE_MUSHROOM
+  do local x = require("src.zelda.tmc.Bollard").spawn(self, e) if x ~= nil then return x end end -- round 16: BOLLARD
+  do local x = require("src.zelda.tmc.PushableRock").spawn(self, e) if x ~= nil then return x end end -- round 22: PUSHABLE_ROCK
+  do local x = require("src.zelda.tmc.LightableSwitch").spawn(self, e) if x ~= nil then return x end end -- round 22: LIGHTABLE_SWITCH
+  do local x = require("src.zelda.tmc.Whirlwind").spawn(self, e) if x ~= nil then return x end end -- round 20: WHIRLWIND (whirlwind.c)
+  do local x = require("src.zelda.tmc.ObjBlank17").spawn(self, e) if x ~= nil then return x end end -- round 17: FAIRY, LADDER_HOLE
+  do local x = require("src.zelda.tmc.Lever").spawn(self, e) if x ~= nil then return x end end -- round 11: PULLABLE_LEVER
+  do local x = require("src.zelda.tmc.CoFRails").spawn(self, e) if x ~= nil then return x end end -- round 24: MINECART_DOOR, RAILTRACK, HITTABLE_LEVER
+  do local x = require("src.zelda.tmc.CoFObjects").spawn(self, e) if x ~= nil then return x end end -- round 25: LAVA_PLATFORM, OBJECT_ON_PILLAR, MINISH_PORTAL_STONE
+  do local x = require("src.zelda.tmc.R26").spawnObject(self, e) if x ~= nil then return x end end -- round 26b: dungeon objects (R26.lua)
+  do local x = require("src.zelda.tmc.R27A").spawnObject(self, e) if x ~= nil then return x end end -- round 27A (R27A.lua)
+  do local x = require("src.zelda.tmc.Crenel").spawnObject(self, e) if x ~= nil then return x end end -- round 5
   return false
 end
 
 -- where a dungeon's warp point (type 2, after the boss) leads: the area
 -- outside its entrance (Deepwood Shrine -> Deepwood Shrine Entry)
-local WARP_OUT = { [0x49] = { area = 0x4A, room = 0, x = 120, y = 136 } }
+local WARP_OUT = { [0x49] = { area = 0x4A, room = 0, x = 120, y = 136 },
+                   [0x51] = { area = 0x06, room = 0x02, x = 104, y = 136 } } -- Cave of Flames -> Mt. Crenel
 
 function Dungeon:updateSpecial(e)
   local f = self.field
@@ -219,16 +248,44 @@ function Dungeon:updateSpecial(e)
       f:giveItem(0x62, 0)
     end
   elseif e.element then
+    -- round 16: fourElements.c -- Action1 down by 1 a frame from z 192 to 8
+    -- (SFX_178 every $40 frames), Action2 the bob (gUnk_081248B4: 7..11
+    -- px, a step each 8 frames); touched: hidden, SFX_F8 / SFX_148,
+    -- BGM_ELEMENT_GET, the item get; Action3 45 frames, Action5 $1A4 more,
+    -- then the item's text (Action6) and room flag 0 when it closes.
+    -- Round 17: ELEMENTS_BACKGROUND and the white flash (ElementFx.lua);
+    -- Action4 waits for the 128-frame fade before Action5's $1A4.
+    local EFX = require("src.zelda.tmc.ElementFx")
+    if not e.got then EFX.attach(self, e) end
+    e.sfxT = (e.sfxT or 0x40) - 1
+    if e.sfxT <= 0 and not e.got then e.sfxT = 0x40; f:sound(0x178) end
     if e.z > 8 then e.z = e.z - 1 return end
+    if not e.got then
+      e.bob = (e.bob or 0) + 1
+      e.z = ({ [0] = 7, 8, 9, 10, 11, 10, 9, 8 })[band(rshift(e.bob, 3), 7)]
+    end
     if not e.got and math.abs(p.x - e.x) < 12 and math.abs(p.y - e.y) < 14 then
       e.got = true
       e.hidden = true
-      f:sound(0xF8)
-      f:giveItem(e.form, 0)
+      e.wait = math.max(45, EFX.FADE_FRAMES) + 0x1A4
+      EFX.touched(self, e)
+      f:sound(0xF8); f:sound(0x148)
+      f:bgm(0x05) -- BGM_ELEMENT_GET
+      f.save.items[e.form] = math.max(1, f.save.items[e.form] or 0)
+      require("src.zelda.tmc.ItemGet").start(f, e.form, 0, 1) -- round 22: InitItemGetSequence(type, 0, 1): no message here
+    elseif e.got and e.wait and e.wait > 0 then
+      e.wait = e.wait - 1
+      -- round 22: Action5's MessageNoOverlap(the item's text), not a second item get
+      if e.wait == 0 then
+        local m = f.assets.manifest.itemMeta and f.assets.manifest.itemMeta[e.form]
+        if m and m.text ~= 0 then f:message(m.text, e) end
+      end
     elseif e.got and not f:messageActive() then
       f:setFlag("room", 0, true)
       e.deleted = true
     end
+  elseif e.warp and e.waction then
+    require("src.zelda.tmc.WarpPoint").update(self, e) -- round 16: types 0 / 1
   elseif e.warp then
     if e.hidden and self:check(e.flag) then e.hidden = false end
     if not e.hidden and math.abs(p.x - e.x) < 8 and math.abs(p.y - e.y) < 8 and p.state == "normal" then
@@ -241,11 +298,19 @@ function Dungeon:updateSpecial(e)
 end
 
 function Dungeon:spawnProjectile(d)
+  do local x = require("src.zelda.tmc.R26").spawnProjectile(self, d) if x ~= nil then return x end end -- round 26b (R26.lua)
+  do local x = require("src.zelda.tmc.R27A").spawnProjectile(self, d) if x ~= nil then return x end end -- round 27A (R27A.lua)
   if d.id ~= PROJ.WEB and d.id ~= PROJ.DUST then return false end
   local def = self.m.projectileDefs and self.m.projectileDefs[d.id]
   if def and def.multi then def = def.forms[d.paramA] or def.forms[0] end
   local e = { kind = 4, id = d.id, form = d.paramA, x = d.x, y = d.y, z = 0, flag = rshift(d.paramC, 16),
               animationState = 0, field82 = 0, interactType = 0, dungeon = true, layer = 1 }
+  if d.id == PROJ.DUST then -- round 19: removableDust.c (the Minish rock's tiles, its portal)
+    if def then self:dress(e, def.sprite, def.palette, Assets.gfxSource("enemy", def.gfx), d.paramA) end
+    local de = require("src.zelda.tmc.RemovableDust").spawn(self, e)
+    if de then self:track(de) end
+    return de
+  end
   if self:check(e.flag) then return nil end
   if def then self:dress(e, def.sprite, def.palette, Assets.gfxSource("enemy", def.gfx), d.paramA) end
   e.web = d.id == PROJ.WEB
@@ -262,6 +327,14 @@ function Dungeon:spawnManager(d)
   local m = { id = id, type = d.paramA, type2 = band(d.paramB, 0xFF), b1 = band(rshift(d.paramB, 8), 0xFF),
               b16 = band(d.paramB, 0xFFFF), b32 = rshift(d.paramB, 16), x = d.x, y = d.y,
               c0 = band(d.paramC, 0xFFFF), c1 = rshift(d.paramC, 16), action = 0, timer = 0 }
+  if id == 0x1A then return require("src.zelda.tmc.Holes").spawn(self, m) end -- round 13: HOLE_MANAGER
+  if id == 0x1F then return require("src.zelda.tmc.CoFRails").spawnIntersection(self, m) end -- round 24: RAIL_INTERSECTION_MANAGER
+  if id == 0x24 then return require("src.zelda.tmc.Bombs").wallManager(self.field, m) end -- round 18: BOMBABLE_WALL_MANAGER from a list
+  if id == 0x1D or id == 0x19 or id == 0x1B then return require("src.zelda.tmc.Bg3").spawn(self.field, m) end -- round 15: BG3 backgrounds
+  if id == 0x0C then -- ROLLING_BARREL_MANAGER (round 6: Barrel.lua)
+    self.barrel = require("src.zelda.tmc.Barrel").new(self.field)
+    return true
+  end
   if id == MGR.REGION or id == MGR.FIGHT or id == MGR.TILE_CHANGE or id == MGR.BRIDGE or id == MGR.FLAG_AND
      or id == MGR.SECRET or id == MGR.ENTITY_SPAWN or id == MGR.FALLING_ITEM or id == MGR.CAMERA
      or id == MGR.EZLO_HINT then
@@ -271,15 +344,20 @@ function Dungeon:spawnManager(d)
   if id == MGR.MOVEABLE then
     -- MoveableObjectManager: object b1 at its moved place when the flag
     -- (paramC high) is set, else at x, y
+    -- round 16: and its collision layer (unk_37 >> 4, or unk_3c >> 12 moved)
     local x, y = d.x, d.y
+    local layer = rshift(band(rshift(m.b32, 8), 0xFF), 4)
     if self:check(m.c1) then
       x = bor(band(m.b32, 0xFF), band(rshift(m.b32, 8), 0xF) * 256)
       y = band(m.c0, 0xFFF)
+      layer = rshift(m.c0, 12)
     end
     self.field:spawn({ kind = 6, id = m.b1, paramA = m.type, paramB = m.type2, paramC = m.c1 * 65536,
-                       pool = 0x0F, x = x, y = y, collision = 1 })
+                       pool = 0x0F, x = x, y = y, collision = (layer == 2 or layer == 3) and layer or 1 })
     return true
   end
+  do local x = require("src.zelda.tmc.R26").spawnManager(self, m, d) if x ~= nil then return x end end -- round 26b: dungeon managers (R26.lua)
+  do local x = require("src.zelda.tmc.R27A").spawnManager(self, m, d) if x ~= nil then return x end end -- round 27A (R27A.lua)
   if false then
     self.mgrs[#self.mgrs + 1] = m
     return true
@@ -358,7 +436,13 @@ function Dungeon:updateDoor(e)
   end
   if e.keyLock then return end
   if e.kind2 == 0 then
-    if e.closed and self:check(e.flag) then self:doorOpen(e) end
+    if e.closed and self:check(e.flag) then self:doorOpen(e)
+    elseif not e.closed and band(e.form, 0x80) ~= 0 and not self:check(e.flag) then
+      -- round 13: type $80 (LockedDoor_Action2 -> sub_08083638, Action7):
+      -- once its flag clears again it shuts as soon as Link is inside
+      -- (Action3 / Action4, then Action6 waits for the flag again)
+      e.waitPass = true
+    end
   elseif e.kind2 == 1 then
     if not e.closed and self:check(e.flag) and passed(e, p) then self:doorClose(e) end
   end
@@ -430,6 +514,7 @@ function Dungeon:somethingOn(tx, ty, who)
   if not p.minish and (p.z or 0) == 0 and math.abs(p.x - (tx * 16 + 8)) <= 5 + 4 and math.abs(p.y - (ty * 16 + 9)) <= 6 + 2 then
     return true
   end
+  if self.field.playerClones and require("src.zelda.tmc.DHCObjects").cloneOn(self, tx, ty) then return true end -- round 26b: Four Sword clones on buttons (DHCObjects)
   for _, o in ipairs(self.objs) do
     if o ~= who and o.statue and not o.deleted then
       local ox, oy = tileOf(o.x, o.y)
@@ -545,6 +630,14 @@ end
 function Dungeon:statueInit(e)
   local def = self.field:objects():def(OBJ.PUSHABLE_STATUE, 0)
   if def then self.field:objects():dress(e, def, 0) end
+  -- round 12: pushableStatue.c sub_0808965C: LoadFixedGFX by area (233
+  -- below AREA_40, else gUnk_08120CCC[area - $40]); the definition's gfx 0
+  -- drew nothing
+  local r12 = self.field.assets.manifest.r12
+  if r12 and r12.statueGfx then
+    local a = self.field.room.area or 0
+    e.gfx = a < 0x40 and 233 or r12.statueGfx[a - 0x40]
+  end
   e.objAnim = 0
   e.statue = true
   e.tx, e.ty = tileOf(e.x, e.y)
@@ -557,10 +650,14 @@ end
 function Dungeon:updateStatue(e, input)
   local p = self.field.player
   if e.moving then
-    local step = 1
+    -- round 11: pushableStatue.c: speed $80 for $20 frames (sub_080895C0),
+    -- pushing Link out of its hitbox each frame (sub_0800445C)
+    local r11 = self.field.assets.manifest.r11
+    local step = (r11 and r11.statueHitbox) and 0.5 or 1
     e.x = e.x + e.mdx * step
     e.y = e.y + e.mdy * step
     e.moving = e.moving - 1
+    if r11 and r11.statueHitbox then require("src.zelda.tmc.Hitboxes").pushOut(self.field, e, r11.statueHitbox) end
     if e.moving <= 0 then
       e.moving = nil
       e.tx, e.ty = tileOf(e.x, e.y)
@@ -568,20 +665,24 @@ function Dungeon:updateStatue(e, input)
     end
     return
   end
+  -- round 12: R grabs it, pulling away slides it toward Link (StatuePull.lua)
+  if require("src.zelda.tmc.StatuePull").update(self, e, input) then e.push = 0 return end
   local fx, fy = p:frontPoint(8)
   local ftx, fty = tileOf(fx, fy)
   local s = p.animationState
   local held = (s == 0 and input.down("up")) or (s == 4 and input.down("down")) or (s == 2 and input.down("right")) or (s == 6 and input.down("left"))
   if ftx == e.tx and fty == e.ty and held and not p.minish then
     e.push = e.push + 1
-    if e.push >= 16 then
+    -- round 12: on the push animation's frame flag (sub_0801A4F8)
+    if (p.pushFrame == nil and e.push >= 16) or p.pushFrame then
       e.push = 0
       local dx = (s == 2 and 1) or (s == 6 and -1) or 0
       local dy = (s == 4 and 1) or (s == 0 and -1) or 0
       local r = self.field.room
       self:block(e.tx, e.ty, e.layer, false)
       if not r:isSolid((e.tx + dx) * 16 + 8, (e.ty + dy) * 16 + 8, e.layer) then
-        e.mdx, e.mdy, e.moving = dx, dy, 16
+        local r11 = self.field.assets.manifest.r11
+        e.mdx, e.mdy, e.moving = dx, dy, (r11 and r11.statueHitbox) and 32 or 16
         self.field:sound(0x11E)
       else
         self:block(e.tx, e.ty, e.layer, true)
@@ -593,19 +694,48 @@ function Dungeon:updateStatue(e, input)
 end
 
 -- ---------------------------------------------------------------------------
--- LILYPAD_LARGE: Link rides it; the Gust Jar blowing from it pushes it the
--- other way across water (lilypadLarge.c, simplified)
+-- LILYPAD_LARGE (lilypadLarge.c, round 6): Link rides it.  The Gust Jar's
+-- release frame (PL_JAR_3) kicks it against Link's facing by the jar's
+-- charge (gUnk_08120620, read from the ROM: Layout.MENU_DATA lilyKick;
+-- 16.16 px per frame);
+-- each axis is clamped to 1 px per frame, slows by $80 per frame, and a
+-- side that hits the bank bounces back at a quarter.  A current tile
+-- (ACT_TILE_17) under its front edge takes it over: it slides to the
+-- channel's middle and down at 2 px per frame, then drops $40 px
+-- (SFX_12D) with Link on it (Action2).
 -- ---------------------------------------------------------------------------
+local function lilyKick(A, charge)
+  local e = A.manifest.menuData and A.manifest.menuData.lilyKick
+  if not e then return 0 end
+  A.menuBlob = A.menuBlob or A.store:read("menudata.bin") or ""
+  local o = e[2] + 4 * (charge - 1)
+  local b1, b2, b3, b4 = A.menuBlob:byte(o + 1, o + 4)
+  return (b1 or 0) + (b2 or 0) * 256 + (b3 or 0) * 65536 + (b4 or 0) * 16777216
+end
+local ACT_CURRENT = 0x11 -- ACT_TILE_17 (round 14: was $17; the enum is decimal)
 function Dungeon:lilyInit(e)
-  self:dress(e, 167, 2, 13, 0)
+  if not require("src.zelda.tmc.LilyRide").init(self, e) then return nil end -- round 16: type $FF / Action5
+  self:dress(e, 167, 2, 13, 9) -- InitializeAnimation(super, 9)
   e.lily = true
+  e.spritePriority = 6 -- round 14: LilypadLarge_Init spritePriority.b0 = 6 (under Link)
+  e.vx, e.vy = 0, 0
+  -- unk_78 (affine scale, 8.8 in the high half) and unk_7c (angle)
+  e.lilyScale, e.lilyRot, e.lilyTimer, e.lilySub = 0x1000000, 0x1000, 0, 0
+  e.affine = { s = 1, r = 0x1000 }
   self:track(e)
   return e
 end
 
+-- round 14: sub_0806FC80(pad, player, $18): Link counts as on the pad when
+-- within 24 px of its centre (CalcDistance), so a pad drawn against the
+-- bank takes Link standing on the rim; when it moves, it carries him
+-- (sub_08085F1C sets his position, no collision) over the rim
 function Dungeon:onLily(p)
   for _, e in ipairs(self.objs) do
-    if e.lily and not e.deleted and math.abs(p.x - e.x) <= 14 and math.abs(p.y - e.y) <= 12 then return e end
+    if e.lily and not e.deleted then
+      local dx, dy = math.floor(p.x) - math.floor(e.x), math.floor(p.y) - math.floor(e.y)
+      if dx * dx + dy * dy <= 24 * 24 then return e end
+    end
   end
   return nil
 end
@@ -618,19 +748,161 @@ function Dungeon:actAt(x, y, layer)
   return self.A.actTile[t]
 end
 
+function Dungeon:lilyFloats(x, y, layer)
+  -- round 13: on the pad's own collision layer (B1's pools are on BG1)
+  -- round 16: a solid tile an object put there (a bollard's SPECIAL_TILE_11)
+  do
+    local r = self.field.room
+    local tx, ty = tileOf(x, y)
+    if self.blocks[(layer or 1) * 65536 + ty * r.tw + tx] then return false end
+  end
+  local a = self:actAt(x, y, layer or 1)
+  return a == ACT_WATER or a == ACT_CURRENT
+end
+
+local function quarterBack(v)
+  local t = v < 0 and v + 3 or v
+  return -(t >= 0 and math.floor(t / 4) or -math.floor(-t / 4))
+end
+
 function Dungeon:updateLily(e)
   local p = self.field.player
-  if p.state == "gust" and self:onLily(p) == e then
-    local s = p.animationState
-    local dx = (s == 2 and -1) or (s == 6 and 1) or 0
-    local dy = (s == 4 and -1) or (s == 0 and 1) or 0
-    local nx, ny = e.x + dx * 0.75, e.y + dy * 0.75
-    local a = self:actAt(nx + dx * 12, ny + dy * 12)
-    if a == ACT_WATER then
-      e.x, e.y = nx, ny
-      p.x, p.y = p.x + dx * 0.75, p.y + dy * 0.75
+  if e.drop then return self:lilyDrop(e, p) end
+  if e.lilyWait then return end -- round 16: Action5 (LilyRide.lua)
+  if e.ride then return require("src.zelda.tmc.LilyRide").update(self, e, p) end -- round 16: Action3
+  local on = (p.z or 0) == 0 and p.state ~= "dead" and self:onLily(p) == e
+  if on then
+    -- sub_08004542 (a pad not on layer 1): Link on layer 2; a layer-1
+    -- pad: ResetCollisionLayer ($0800455E: layer 1)
+    p.layer = (e.layer == 2) and 2 or 1
+  end
+  if on and e.lilySub == 0 then
+    -- Link steps on: the ripple burst and the squash (timer |= $80)
+    e.lilySub = 1
+    e.lilyTimer = bor(e.lilyTimer, 0x80)
+    e.vx, e.vy = 0, 0
+    self.field:sound(0x83) -- SFX_WATER_WALK
+  elseif not on and e.lilySub ~= 0 then
+    e.lilySub = 0
+  end
+  if on then
+    -- round 13: PL_JAR_3 (the release frame) with the jar's charge
+    -- (GustJar.release sets p.jarKick)
+    if p.jarKick then
+      local k = lilyKick(self.A, p.jarKick)
+      p.jarKick = false
+      local s = band(p.animationState, 6)
+      if s == 4 then e.vy = e.vy - k elseif s == 0 then e.vy = e.vy + k
+      elseif s == 2 then e.vx = e.vx - k else e.vx = e.vx + k end
+    end
+  elseif p.jar and require("src.zelda.tmc.GustJar").touching(self.field, e.x, e.y, 16, 16) then
+    -- round 13: sucked from the bank (contactFlags $13): toward the jar's
+    -- mouth by $200 / $300 / $400 x the charge's sine a frame
+    local GJ = require("src.zelda.tmc.GustJar")
+    local mx, my = GJ.mouth(p)
+    local dx, dy = mx - e.x, my - e.y
+    local d = math.max(0.01, math.sqrt(dx * dx + dy * dy))
+    local tmp = ({ 0x200, 0x300, 0x400 })[p.jar.charge] or 0x200
+    e.vx, e.vy = e.vx + tmp * dx / d, e.vy + tmp * dy / d
+  end
+  e.vx = math.max(-0x10000, math.min(0x10000, e.vx))
+  e.vy = math.max(-0x10000, math.min(0x10000, e.vy))
+  if e.vx ~= 0 or e.vy ~= 0 then
+    -- sub_08085EFC / sub_08085F1C: whole-pixel offsets (x.HALF.HI), so
+    -- the carried Link keeps the same distance (and stays on the pad)
+    local ox, oy = math.floor(p.x) - math.floor(e.x), math.floor(p.y) - math.floor(e.y)
+    local dx, dy = e.vx / 65536, e.vy / 65536
+    if dx ~= 0 then
+      local edge = e.x + dx + (dx > 0 and 16 or -16)
+      if self:lilyFloats(edge, e.y - 10, e.layer) and self:lilyFloats(edge, e.y + 10, e.layer) then e.x = e.x + dx
+      else e.vx = quarterBack(e.vx) end
+    end
+    if dy ~= 0 then
+      local edge = e.y + dy + (dy > 0 and 16 or -16)
+      if self:lilyFloats(e.x - 10, edge, e.layer) and self:lilyFloats(e.x + 10, edge, e.layer) then e.y = e.y + dy
+      else e.vy = quarterBack(e.vy) end
+    end
+    if on then p.x, p.y = math.floor(e.x) + ox, math.floor(e.y) + oy end
+    -- round 16: sub_08085D60 (the room's edge ahead: the pad goes along)
+    if on and require("src.zelda.tmc.LilyRide").check(self, e, p) then return end
+    if e.vx < 0 then e.vx = e.vx > -0x80 and 0 or e.vx + 0x80 elseif e.vx > 0 then e.vx = e.vx < 0x80 and 0 or e.vx - 0x80 end
+    if e.vy < 0 then e.vy = e.vy > -0x80 and 0 or e.vy + 0x80 elseif e.vy > 0 then e.vy = e.vy < 0x80 and 0 or e.vy - 0x80 end
+  end
+  self:lilyBob(e, on)
+  -- sub_08085D28: a current under the front edge takes the pad
+  if on and self:actAt(e.x, e.y + 0x18, e.layer) == ACT_CURRENT then
+    e.drop = { phase = 0, ox = p.x - e.x, oy = p.y - e.y }
+    e.vx, e.vy = 0, 0
+    p.state, p.extUpdate = "ext", function() end -- PausePlayer
+  end
+end
+
+-- sub_08085F48: the pad's bob (scale steps by Link's weight) and its turn
+-- while it drifts (unk_7c += speed * $1000)
+function Dungeon:lilyBob(e, on)
+  local s, t = e.lilyScale, e.lilyTimer
+  if band(t, 0x80) ~= 0 then
+    if s < 0x1280000 then s = s + 0x80000 else t = 0 end
+  elseif on then
+    if t ~= 0 then
+      if s < 0x1200000 then s = s + 0x8000 else t = 0x80 end
+    else
+      if s > 0x1100000 then s = s - 0x8000 else t = 1 end
+    end
+  else
+    if t ~= 0 then
+      if s < 0x1100000 then s = s + 0x4000 else t = 0 end
+    else
+      if s > 0x1060000 then s = s - 0x4000 else t = 1 end
     end
   end
+  e.lilyScale, e.lilyTimer = s, t
+  -- the swing between -$1000 and $1000 while it moves (type2 picks the way)
+  local sp = math.floor(math.max(math.abs(e.vx), math.abs(e.vy)) / 256)
+  if sp > 0 then
+    if (e.lilyWob or 0) ~= 0 then
+      if e.lilyRot < 0x1000 then e.lilyRot = e.lilyRot + sp / 16 else e.lilyWob = 0 end
+    else
+      if e.lilyRot > -0x1000 then e.lilyRot = e.lilyRot - sp / 16 else e.lilyWob = 1 end
+    end
+  end
+  -- the BIOS matrix maps screen to texture: a bigger value draws smaller
+  e.affine.s = 0x100 / math.floor(s / 0x10000)
+  e.affine.r = e.lilyRot
+end
+
+-- LilypadLarge_Action2: sub_08085A44 (to the channel's middle), sub_08085A98
+-- (down the current), sub_08085B40 (the drop)
+function Dungeon:lilyDrop(e, p)
+  local d = e.drop
+  if d.phase == 0 then
+    if self:actAt(e.x + 0x10, e.y + 0x18, e.layer) ~= ACT_CURRENT then e.x = e.x - 2
+    elseif self:actAt(e.x - 0x10, e.y + 0x18, e.layer) ~= ACT_CURRENT then e.x = e.x + 2
+    else d.phase = 1 end
+  elseif d.phase == 1 then
+    e.y = e.y + 2
+    if self:actAt(e.x, e.y + 0x18, e.layer) ~= ACT_CURRENT then
+      d.phase = 2
+      e.y, e.z, e.zv, d.hold = e.y + 0x40, 0x40, 0, 15 -- (z is height here)
+      self.field:sound(0x12D) -- SFX_12D
+    end
+  else
+    if (e.z or 0) > 0 then
+      e.zv = (e.zv or 0) + 32 / 256
+      e.z = math.max(0, e.z - e.zv)
+    end
+    if d.hold > 0 then d.hold = d.hold - 1
+    elseif e.z == 0 then
+      e.drop = nil
+      e.zv = nil
+      p.state, p.extUpdate = "normal", nil
+      -- round 14: sub_08085B40: ResetCollisionLayer ($0800455E: layer 1,
+      -- OBJ priority 2) on the pad and on Link once down
+      e.layer, p.layer = 1, 1
+    end
+  end
+  p.x, p.y = e.x + d.ox, e.y + d.oy
+  p.z = d.phase == 2 and math.max(0, e.z or 0) or 0
 end
 
 -- ---------------------------------------------------------------------------
@@ -644,9 +916,12 @@ function Dungeon:removeBlocker(e)
 end
 
 function Dungeon:updateBlocker(e)
+  if e.dust then return require("src.zelda.tmc.RemovableDust").update(self, e) end -- round 19
   local p = self.field.player
-  local reach = e.grab and 48 or 28
-  local near = math.abs(p.x - e.x) < reach and math.abs(p.y - e.y) < reach
+  -- round 13: the jar's gust boxes must touch it (GustJar.touching:
+  -- contactFlags $93); once grabbed it holds while the jar sucks
+  local near = require("src.zelda.tmc.GustJar").touching(self.field, e.x, e.y, 8, 8)
+    or (e.grab and math.abs(p.x - e.x) < 48 and math.abs(p.y - e.y) < 48)
   if p.state ~= "gust" or not near then
     if e.grab then e.grab = nil end
     e.suck = 0
@@ -675,16 +950,27 @@ function Dungeon:checkFall()
   local p = f.player
   if p.state ~= "normal" and p.state ~= "gust" and p.state ~= "shield" then return end
   if (p.z or 0) > 0 or self:onLily(p) then return end
+  if f.bossSupport and f.bossSupport(p.x, p.y) then return end -- round 8: on Gleerok's neck (not a safe spot to come back to)
   local a = self:actAt(p.x, p.y - 1, p.layer)
+  if a ~= 0x5A and not f.room.hideTop and self:actAt(p.x, p.y - 1, 2) == 0x5A then a = 0x5A end -- round 8: lava on BG1
+  -- round 22: ACT_TILE_13 -> SURFACE_PIT (SurfaceAction_Pit): PLAYER_FALL
+  -- once sub_08079C30 sees the pit at (0, -1), (+2, 0) and (-2, 0) too
+  -- (the Crenel caves' gaps); handled as a hole fall
+  if a == 0x0D and self:actAt(p.x + 2, p.y, p.layer) == 0x0D and self:actAt(p.x - 2, p.y, p.layer) == 0x0D then a = ACT_HOLE end
   -- no safe spot yet (just arrived): the arrival point counts as one
   if not self.safe then self.safe = { x = p.x, y = p.y } return end
-  if a == ACT_HOLE or (a == ACT_WATER and f:inventory(0x10) == 0 and not p.minish) then -- ITEM_FLIPPERS
+  if a == ACT_HOLE and require("src.zelda.tmc.Crenel").holeLaunch(self, p) then return end -- round 5: the cane's spring
+  if a == ACT_HOLE and require("src.zelda.tmc.PlayerFall").start(self, p, require("src.zelda.tmc.Holes").exitFor(self, p)) then return end -- round 11: PlayerFall (round 13: a HOLE_MANAGER pit leads on)
+  if a == ACT_WATER and require("src.zelda.tmc.ItemsR26").water(self, p, a) then return end -- round 26A: swimming with the Flippers (Swim.lua)
+  if a == ACT_HOLE or a == 0x5A or (a == ACT_WATER and f:inventory(0x46) == 0 and not p.minish) then -- ITEM_FLIPPERS ($46; round 16: was $10, the lit lantern); round 8: ACT_TILE_90 lava
+    if a == 0x5A then f:addFx(p.x, p.y, 0x0F, 0x0C) end -- FX_LAVA_SPLASH
     f:sound(a == ACT_HOLE and 0x82 or 0x24)
     f:modStat("health", -2)
     -- back to the last tile he stood on safely (RespawnPlayer)
     local st = self.safe or f.entry
     p.x, p.y = st.x, st.y
     p.invuln = 60
+    f.playerRespawned = true -- round 10: the Zelda follower re-joins (ZeldaFollower.lua)
   else
     self.safe = { x = p.x, y = p.y }
   end
@@ -882,6 +1168,7 @@ end
 -- frame
 -- ---------------------------------------------------------------------------
 function Dungeon:update(input)
+  if self.barrel then self.barrel:update() end -- round 6: Barrel.lua
   for _, m in ipairs(self.mgrs) do self:updateManager(m) end
   for _, e in ipairs(self.objs) do
     if not e.deleted then
@@ -891,9 +1178,11 @@ function Dungeon:update(input)
       elseif e.statue then self:updateStatue(e, input)
       elseif e.lily then self:updateLily(e)
       elseif e.web or e.dust then self:updateBlocker(e)
-      elseif e.heart or e.element or e.warp then self:updateSpecial(e) end
+      elseif e.heart or e.element or e.warp then self:updateSpecial(e)
+      elseif e.extUpdate then e.extUpdate(self, e, input) end
     end
   end
+  require("src.zelda.tmc.PushBlock").check(self, input) -- round 11: ACT_TILE_112 blocks
   self:checkFall()
 end
 

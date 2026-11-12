@@ -47,6 +47,16 @@ Layout.PTR_TYPE_COLLISION    = 0x0800021C -- -> gMapTileTypeToCollisionData
 Layout.COLLISION_MASKS = 0x08133918
 Layout.COLLISION_SHAPE_LOOKUP = 0x08133A67
 Layout.COLLISION_SHAPE_TYPES = 13
+-- round 9: Link's own tile test (asm/src/player.s sub_080085CC /
+-- sub_080086D8): gUnk_0800823C = 40 pointers to 16-row u16 masks (bit
+-- 15 - (x & 15) of row y & 15), then seven 0x60-byte value -> mask tables
+-- picked by Link's state: $082DC normal, $0833C Minish, $0839C Minish
+-- swimming, $083FC swimming, $0845C jumping / parachute, $084BC gust jar or
+-- carrying, $0851C beetles attached
+Layout.PLAYER_COLL_MASK_PTRS = 0x0800823C
+Layout.PLAYER_COLL_MASKS = 40
+Layout.PLAYER_COLL_SHAPES = 0x080082DC
+Layout.PLAYER_COLL_TABLES = 7
 Layout.TILE_TYPE_COUNT = 0x800
 Layout.SPECIAL_TILE_COUNT = 0x80
 
@@ -115,6 +125,14 @@ Layout.gAreaDroptables = 0x080015BC       -- [19]
 Layout.DeathFx_EnemyDroptables = 0x0811EC64 -- u8 per enemy id
 Layout.gUnk_080FE1B4 = 0x080FE1B4          -- droptable slot -> item id (16)
 Layout.gUnk_080FE1C6 = 0x080FE1C6          -- location -> area droptable (23)
+-- round 9: the rest of CreateRandomItemDrop's tables (src/droptables.c,
+-- USA layout checked against the ROM) and the drop sources' own tables
+Layout.gObjectDroptables = 0x0800181C       -- [8]: CreateRandomItemDrop 16..23
+Layout.gUnk_0800191C = 0x0800191C           -- [2]: 24 / 25 (by needHealthDrop)
+Layout.gDroptableModifiers = 0x08001A1C     -- [3]: none / no shells / no kinstones
+Layout.gUnk_0811F960 = 0x0811F960           -- SpecialFx {flags, droptable, sfx u16} x $58
+Layout.gUnk_0811FAC8 = 0x0811FAC8           -- FX_BUSH variants (4), then FX_GRASS_CUT's (4)
+Layout.gUnk_0811E84C = 0x0811E84C           -- ItemOnGround {?, ?, bounce sfx u16, gustJarFlags, ...} x 118
 
 -- tile interactions (asm/src/player.s DoTileInteraction) and the sword
 Layout.gUnk_080046A4 = 0x080046A4          -- {u16 tileType, u16 index} until key 0
@@ -166,6 +184,61 @@ Layout.MENU_DATA = {
   -- the map and figurine tables: screens, item / quest layouts, KeyButtonLayouts
   pauseData = { 0x08128A38, 0x08128F38 - 0x08128A38 },
   ammoDigits = { 0x085C4620, 20 * 0x20 },  -- gUnk_085C4620: tens then ones digit tiles
+  -- round 5 (one anchor per screen family; add entries under your own)
+  -- [r5 maps]
+  overworldLocs = { 0x08127F94, 0x100 },     -- gOverworldLocations {minX, minY, maxX, maxY, windcrestId, pad, textIndex}
+  dungeonFloors = { 0x080C9C6C, 0x40 },      -- gDungeonFloorMetadatas {numFloors, highestFloor, unk_2, pad}
+  pauseData2 = { 0x08128F38, 0x0812901C - 0x08128F38 }, -- map hint table, map fonts, gDungeonNames
+  -- [r5 title]
+  titleAlpha = { 0x08107C30, 16 },           -- title.c sLightRaysAlphaBlends
+  titleObjs = { 0x08125014, 5 * 8 },         -- titleScreenObject.c gUnk_08125014
+  fileSparkle = { 0x080FC8DE, 30 },          -- fileselect.c gUnk_080FC8DE
+  -- [r5 kinstone]
+  kinstoneMenu = { 0x081280DC, 0x60 },       -- kinstoneMenu.c gUnk_081280DC .. gUnk_08128120
+  -- GetFuserId's lists (code_08001A7C.s: enemy list at +6, NPC list at
+  -- 0x08002348; 6-byte {id, type, type2, fuserId, name text}) and the
+  -- NPCData pointers gUnk_08001A7C (InitializeNPCFusion's three texts)
+  fusers = { 0x08001A7C, 0x08002632 - 0x08001A7C },
+  -- [r5 sword-save]
+  -- CreateDialogBox (fileselect.c): Font gUnk_080FC844 + gUnk_080FC85C
+  -- {palette, text, sfx} x 12
+  dialogBox = { 0x080FC844, 0x18 + 12 * 6 },
+  -- [r5 fx]
+  -- [r5 misc]
+  madderHitbox = { 0x080FD298, 8 },          -- madderpillar.c gUnk_080FD298 (the open tail)
+  madderTables = { 0x080CCDA0, 0x3C },       -- madderpillar.c gUnk_080CCDA0 / gUnk_080CCDC8 / gUnk_080CCDD4
+  fileObjTables = { 0x08121CD4, 0x150 },     -- fileScreenObjects.c gUnk_08121CD4 .. gUnk_08121D54[26]
+  keyboardTables = { 0x080FC970, 0x40 },     -- fileselect.c gUnk_080FC970 / gUnk_080FC980 / gUnk_080FC9A0
+  -- [r6]
+  barrelTables = { 0x08108228, 0xE0 },       -- rollingBarrelManager.c gUnk_08108228..gUnk_081082B8 (4 x 6 exit boxes), gUnk_081082E8 (exits), gUnk_08108300 (start)
+  lilyKick = { 0x08120620, 12 },             -- lilypadLarge.c gUnk_08120620 (the jar's kick per charge)
+  -- [r7] multi-part NPCs (NpcParts.lua): the NPC code's const tables
+  -- (SpriteLoadData lists, head frame tables; data/const/npc and the npc/*.c
+  -- consts, gUnk_0810A348 .. gUnk_081146D0) and gExtraFrameOffsets
+  npcData = { 0x0810A300, 0x08114800 - 0x0810A300 },
+  extraFrameOffsets = { 0x089FB770, 0xF60 },
+  fuseBubble = { 0x085CA6A0, 0x960 },        -- gGlobalGfxAndPalettes + $027820: the fusion bubble and its icons (cameraTarget.c)
+  fuseBubbleIcons = { 0x0811F744, 16 },      -- cameraTarget.c gUnk_0811F744 (icon offsets)
+  minecartData = { 0x080FCAF8, 32 },         -- gameUtils.c sMinecartData (sub_080530B0)
+  furnitureCfg = { 0x08121EF8, 0x08122218 - 0x08121EF8 }, -- furniture.c gUnk_08121EF8 + the nine sCfgTable tables
+  -- round 8
+  scrubTables = { 0x080CC954, 0xC0 },        -- businessScrub.c gUnk_080CC954 (sales), kinstoneTypes, gUnk_080CCA04 (animations)
+}
+
+-- round 5: extra importer modules (each returns { extract = function(rom,
+-- store, manifest) }), run at the end of the menus step (Extract.lua)
+Layout.R5_EXTRACT = {
+  -- [r5x maps]
+  "src.zelda.tmc.ExtractMaps",
+  -- [r5x title]
+  -- [r5x kinstone]
+  -- [r5x sword-save]
+  -- [r5x fx]
+  "src.zelda.tmc.ExtractFx",
+  -- [r5x boss]
+  -- [r5x crenel]
+  -- [r5x misc]
+  "src.zelda.tmc.PlayerMacro",
 }
 
 -- text (src/text.c): the USA build has one translation table
