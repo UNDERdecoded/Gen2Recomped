@@ -7,9 +7,11 @@
 --   { template, { arg ids }, { ["sides"] = entry } }
 -- sides: one letter per pokemon placeholder, a ally / w wild / f foe.
 return {
+  { "The poison spikes disappeared from around the foe's team's feet!", {  }, { [""] = 1066 }, {  } },
   { "Poison spikes were scattered all around the foe's team's feet!", {  }, { [""] = 1064 }, {  } },
   { "%s can't use the same move twice in a row due to the TORMENT!", { "1.0" }, { ["a"] = 612 }, {  } },
   { "The Lucky Chant shielded the foe's team from critical hits!", {  }, { [""] = 1242 }, {  } },
+  { "The poison spikes disappeared from around your team's feet!", {  }, { [""] = 1065 }, {  } },
   { "Poison spikes were scattered all around your team's feet!", {  }, { [""] = 1063 }, {  } },
   { "Pointed stones float in the air around the foe's team!", {  }, { [""] = 1078 }, {  } },
   { "The Lucky Chant shielded your team from critical hits!", {  }, { [""] = 1241 }, {  } },
@@ -26,6 +28,7 @@ return {
   { "The tailwind blew from behind your team!", {  }, { [""] = 1230 }, {  } },
   { "The foe's team's tailwind petered out!", {  }, { [""] = 1233 }, {  } },
   { "The foe's team's Lucky Chant wore off!", {  }, { [""] = 1086 }, {  } },
+  { "%s swapped abilities with its opponent!", { "1.0" }, { ["a"] = 559, ["w"] = 560 }, {  } },
   { "%s's %s was bounced back by MAGIC COAT!", { "1.0", "6.1" }, { ["a"] = 574, ["f"] = 576, ["w"] = 575 }, {  } },
   { "REFLECT raised your team's DEFENSE!", {  }, { [""] = 194 }, { fixed = { ["6.0"] = "move:115" } } },
   { "%s switched items with its opponent!", { "1.0" }, { ["a"] = 510, ["f"] = 512, ["w"] = 511 }, {  } },
@@ -67,6 +70,7 @@ return {
   { "Darn! The %s broke free!", { "-" }, { [""] = 863 }, {  } },
   { "%s is protected by MIST!", { "1.0" }, { ["a"] = 273, ["f"] = 275, ["w"] = 274 }, {  } },
   { "Your team's %s wore off!", { "6.0" }, { [""] = 288 }, {  } },
+  { "%s's %s made %s ineffective!", { "1.0", "5.1", "6.2" }, { ["a"] = 714, ["f"] = 716, ["w"] = 715 }, {  } },
   { "Hit the enemy %s times!", { "50.0" }, { [""] = 46 }, {  } },
   { "%s's hurt by the burn!", { "1.0" }, { ["a"] = 95, ["f"] = 97, ["w"] = 96 }, {  } },
   { "%s is hit with recoil!", { "1.0" }, { ["a"] = 279, ["f"] = 281, ["w"] = 280 }, {  } },
@@ -79,6 +83,7 @@ return {
   { "The SANDSTORM rages.", {  }, { [""] = 805 }, {  } },
   { "%s's shrouded in mist!", { "side" }, { ["a"] = 271, ["f"] = 272 }, {  } },
   { "%s's SUBSTITUTE broke!", { "1.0" }, { ["a"] = 357, ["f"] = 359, ["w"] = 358 }, {  } },
+  { "%s's %s prevents escape!", { "1.0", "5.1" }, { ["a"] = 39, ["f"] = 41, ["w"] = 40 }, {  } },
   { "%s got $%s for winning!", { "3.0", "54.1" }, { [""] = 33 }, {  } },
   { "It doesn't affect %s!", { "1.0" }, { ["a"] = 27, ["f"] = 29, ["w"] = 28 }, {  } },
   { "%s's fully paralyzed!", { "1.0" }, { ["a"] = 130, ["f"] = 132, ["w"] = 131 }, {  } },
@@ -111,6 +116,7 @@ return {
   { "%s STOCKPILED %s!", { "1.0", "50.1" }, { ["a"] = 317, ["f"] = 319, ["w"] = 318 }, {  } },
   { "%s, come back!", { "1.0" }, { ["a"] = 985 }, {  } },
   { "%s TRACED %s's %s!", { "1.0", "1.1", "5.2" }, { ["aa"] = 679, ["fa"] = 684, ["wa"] = 682 }, {  } },
+  { "%s maxed its %s!", { "1.0", "13.2" }, { ["a"] = 1093, ["f"] = 1095, ["w"] = 1094 }, { fixed = { ["5.1"] = "ability:ANGER POINT" } } },
   { "%s defeated %s!", { "-", "3.0" }, { [""] = 785 }, {  } },
   { "%s went back!", { "1.0" }, { ["a"] = 985 }, {  } },
   { "Hit %s times!", { "50.0" }, { [""] = 46 }, {  } },
