@@ -181,6 +181,8 @@ end
 -- suspect, and the caller recovers).
 -- the last stack changes and the keys pressed with them: what a failure needs
 -- to be replayed by hand
+local battles = 0            -- battles taken off the stack (and answered as wins)
+local BattleStateClass       -- set in installStubs; tick() reads it
 local RING = 240
 local ring, ringAt, lastStack = {}, 0, ""
 local function ringNote(line)
@@ -231,9 +233,15 @@ local function tick()
      and (getmetatable(t) == BattleStateClass or tostring(describeTop()):find("BattleState", 1, true)) then
     battles = battles + 1
     Game.stack:pop()
-    local okB, errB = xpcall(OW.afterBattle, debug.traceback, OW, "win", t)
+    -- onFinish is whoever started the fight: a script resumes its runner, a wild
+    -- encounter or a trainer's sight hands back to the field
+    local okB, errB
+    if type(t.onFinish) == "function" then
+      okB, errB = xpcall(t.onFinish, debug.traceback, "win")
+    else
+      okB, errB = xpcall(OW.afterBattle, debug.traceback, OW, "win", t)
+    end
     if not okB then fail("after_battle_error", errB) end
-    OW.engaging = false
   end
   if not ok then
     fail("update_error", err)
@@ -283,8 +291,6 @@ end
 
 -- --------------------------------------------------------------- the stubs ---
 
-local battles = 0
-local BattleStateClass
 local pushCount = 0          -- every state push: a script that re-asks its question is cycling, not hung
 
 local function installStubs()
