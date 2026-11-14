@@ -125,7 +125,7 @@ authored.
 - Jubilife: the Pokétch clowns' quizzes are removed (persons 24 and 25 are
   parked at 0,0 without a script); the president gives the Pokétch himself.
 - Evolutions: 40 records change (trade evolutions gain a level, Eevee uses
-  Sun/Moon/Ice/Leaf stones, and 12 trade-with-item species can also evolve by
+  Sun/Moon/Ice/Leaf stones, and about a dozen trade-with-item species can also evolve by
   using the item, whose records the hack flags as party items); the cache
   matches the cartridge's `evo.narc` record for record, and
   `Gen45Evolution.itemTarget` evolves Poliwhirl with King's Rock, Rhydon with
