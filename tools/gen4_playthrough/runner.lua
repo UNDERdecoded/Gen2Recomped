@@ -934,6 +934,20 @@ function R:tick(i, game, ow, planStep)
   end
   local b = self:currentBeat()
   self.beatT = self.beatT + 1
+  -- PT_BATTLELOG=1: every line a battle's box types, as the player reads it
+  -- (a story battle that is lost: what each side did)
+  if os.getenv("PT_BATTLELOG") then
+    local top = self:top()
+    if top and top.battle and top.startMessage and not top.__ptLogged then
+      top.__ptLogged = true
+      local orig = top.startMessage
+      top.startMessage = function(selfB, item)
+        local t = tostring(item and item.text)
+        print(("[pt %6d] [bmsg] %s"):format(self.t, (t:gsub("\n", " / "):gsub("\v", " "))))
+        return orig(selfB, item)
+      end
+    end
+  end
   if os.getenv("PT_DEBUG") and i % 500 == 0 then
     local x, y = self:pos()
     local busy, why = self:busy()
