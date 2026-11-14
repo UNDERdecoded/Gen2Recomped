@@ -2156,3 +2156,22 @@ pokeplatinum.
   and places her on the arrival floor at the world tile she rode on (B7F: she
   then walks to exactly the tile B7F's own table gives her at progress 8).
   Check: `tools/gen4_dist_surface_check.lua <cache>/data/generated` (53).
+- **The playthrough now goes past the credits** (91 beats, all passing in one
+  unbroken run on USA Rev 1). New beats: Eterna Forest with Cheryl as the
+  partner (her two-on-two trainers, the Soothe Bell); the Elite Four and the
+  Champion walked room to room — out by the door each win removes, up each
+  lift room's `TriggerPlatformLift`, walked in by the next room's frame
+  script — instead of teleported into; the credits to the title and a
+  CONTINUE at the house 2F (Mom's post-game scene); the National Dex at
+  Rowan's lab (a cheat, said as one: the Sinnoh dex marked seen); the
+  S.S. Spiral (Cynthia's send-off) to the Fight Area; Barry, Palmer and Buck
+  there; Route 227 (Crasher Wake and Barry, Buck's patrol request); Stark
+  Mountain — the grunts, Mars and Jupiter, Buck as the partner through room 2
+  (Rock Smash at (41,15), the Strength boulder at (29,12) pushed to (48,12),
+  his multi battles), Charon's arrest and Looker outside; the Battleground's
+  Buck; Heatran. Trainer-defeated flags are read from `save.gen4TrainerFlags`
+  (where the port keeps TRAINER_DEFEATED_FLAGS_START + id), not `save.flags`.
+- **`PT_CONTINUE=1`** (tools/gen4_playthrough/runner.lua): save and continue
+  between every two beats — the field's `captureSave`, the save through the
+  codec, and `Game:restoreSave` as the title's CONTINUE — so each beat runs on
+  what a reload brings back. Off by default; shared by every game's beats.
