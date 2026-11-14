@@ -44,6 +44,32 @@ local function norm(s)
 end
 RandomData._norm = norm
 
+-- THE ENGLISH NAME OF A GEN IV MOVE / ITEM, BY ITS ID.
+-- The protected / banned lists below are written as English names.  A Gen IV
+-- cache in another language (German Platinum) names everything in that
+-- language, so before a pass reads a name it `prime`s the dataset: every
+-- Gen IV move and item record is mapped to its English name through the
+-- cartridge id (src/pokemon/Gen4EnglishRef.lua).  Other datasets keep the
+-- names they have.
+local ENGLISH = setmetatable({}, { __mode = "k" })
+local primed = setmetatable({}, { __mode = "k" })
+local function prime(data)
+  if type(data) ~= "table" or primed[data] then return end
+  primed[data] = true
+  local Ref = require("src.pokemon.Gen4EnglishRef")
+  if not Ref.isGen4(data) then return end
+  for _, kind in ipairs({ "moves", "items" }) do
+    for key, def in pairs(data[kind] or {}) do
+      local n = type(def) == "table" and (tonumber(key) or tonumber(tostring(key):match("^ITEM_(%d+)$")))
+      local english = n and Ref.englishName(kind, n)
+      if english then ENGLISH[def] = english end
+    end
+  end
+end
+RandomData._prime = prime
+local function englishOf(def, id) return ENGLISH[def] or norm(type(def) == "table" and def.name or id) end
+RandomData._english = englishOf
+
 local function sortedKeys(t)
   local ks = {}
   for k in pairs(t) do ks[#ks + 1] = k end
@@ -134,7 +160,7 @@ local function validMove(id, m)
   if type(m) ~= "table" then return false end
   if id == 0 or id == "0" or id == "NO_MOVE" or id == "NONE" then return false end
   if (tonumber(m.pp) or 0) <= 0 then return false end
-  local n = norm(m.name or id)
+  local n = englishOf(m, id)
   if n == "" or n == "STRUGGLE" then return false end
   return true
 end
@@ -153,6 +179,7 @@ RandomData.isDamaging = isDamaging
 -- never move a move between the damaging and status sets)
 local moveCache = setmetatable({}, { __mode = "k" })
 function RandomData.moveInfo(data)
+  prime(data)
   local moves = data and data.moves
   if type(moves) ~= "table" then return { all = {}, attacks = {}, good = {}, damaging = {} } end
   local hit = moveCache[moves]
@@ -166,7 +193,7 @@ function RandomData.moveInfo(data)
         info.damaging[id] = true
         info.attacks[#info.attacks + 1] = id
         local acc = tonumber(m.accuracy) or 100
-        if not BAD_ATTACK[norm(m.name or id)] and (acc == 0 or acc >= 50) then
+        if not BAD_ATTACK[englishOf(m, id)] and (acc == 0 or acc >= 50) then
           info.good[#info.good + 1] = id
         end
       end
@@ -210,7 +237,7 @@ local PROTECT = { "FRESHWATER", "SODAPOP", "LEMONADE", "FOSSIL", "AMBER", "PARCE
   "MASTERBALL", "RARECANDY" }
 local PROTECT_EXACT = { MOONSTONE = false }
 
-local function itemName(it, id) return norm(type(it) == "table" and it.name or id) end
+local function itemName(it, id) return englishOf(it, id) end
 
 local function isMachine(it, kind)
   local m = type(it) == "table" and it.machine
@@ -232,6 +259,7 @@ end
 
 -- an item the randomizer never replaces (and never hands out)
 function RandomData.protectedItem(data, id)
+  prime(data)
   local it = data and data.items and data.items[id]
   if not it then return true end
   if isKey(it) or isMachine(it, "HM") then return true end
@@ -276,6 +304,7 @@ end
 local itemCache = setmetatable({}, { __mode = "k" })
 -- { general = {ids}, tms = {ids}, held = {ids}, balls = {[id]=true} }
 function RandomData.itemInfo(data)
+  prime(data)
   local items = data and data.items
   if type(items) ~= "table" then return { general = {}, tms = {}, held = {}, balls = {} } end
   local hit = itemCache[items]
@@ -382,7 +411,7 @@ local function movesPass(data, rm, opt, report)
     local m = moves[id]
     if validMove(id, m) and not done[m] then
       done[m] = true
-      local name = norm(m.name or id)
+      local name = englishOf(m, id)
       local rng = Rng(rm.seed, "move", tostring(id))
       local dmg = isDamaging(m)
       local power = tonumber(m.power) or 0
@@ -848,6 +877,25 @@ local function keepClass(className)
   return false
 end
 
+-- PLATINUM'S TRAINER CLASSES THE RANDOMIZER KEEPS, BY CLASS ID (the Leaders,
+-- Elite Four, Champion, Galactic admins and boss, Tower Tycoon, Factory Head,
+-- the Ace Trainers and the Scientist -- what KEEP_CLASS's words pick out of
+-- the English class names).  A class id is the same on every cartridge
+-- language; the name is not ("Arenaleiter").
+local KEEP_CLASS_ID_PLATINUM = {}
+for _, id in ipairs({ 0, 24, 25, 41, 53, 54, 62, 63, 64, 65, 66, 67, 68, 69, 72, 73, 74, 75,
+  76, 77, 78, 79, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 100 }) do
+  KEEP_CLASS_ID_PLATINUM[id] = true
+end
+
+local function keepTrainer(data, t)
+  local c = data.constants
+  if type(c) == "table" and c.gen == 4 and data.gen4_version == nil and tonumber(t.class) then
+    return KEEP_CLASS_ID_PLATINUM[tonumber(t.class)] == true
+  end
+  return keepClass(t.className)
+end
+
 local function trainerNamesPass(data, rm, report)
   local trainers = data.trainers
   if type(trainers) ~= "table" then return end
@@ -856,7 +904,7 @@ local function trainerNamesPass(data, rm, report)
   local groups = {}
   for _, id in ipairs(sortedKeys(trainers)) do
     local t = trainers[id]
-    if type(t) == "table" and type(t.name) == "string" and t.className ~= nil and not keepClass(t.className) then
+    if type(t) == "table" and type(t.name) == "string" and t.className ~= nil and not keepTrainer(data, t) then
       local nm = norm(t.name)
       if nm ~= "" and #t.name > 1 then
         local key = tostring(t.className)
@@ -953,6 +1001,7 @@ end
 -- apply every data-side option of runModes `rm` to `data` (from the
 -- original values: restore first)
 function RandomData.apply(data, rm)
+  prime(data)
   local report = {}
   if type(data) ~= "table" or type(rm) ~= "table" or rm.seed == nil then return report end
   local opt = {}
