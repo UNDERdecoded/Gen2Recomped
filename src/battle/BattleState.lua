@@ -5006,7 +5006,7 @@ function BattleState:gen3TutorialBag()
   if require("src.core.GameVersion").isGen4() then
     self.phase, self.afterQueue = "messages", "menu"
     self:ui(function()
-      local bag = require("src.ui.Gen4BagMenu").new(self.game, { pocket = "POKé BALLS" })
+      local bag = require("src.ui.Gen4BagMenu").new(self.game, { pocket = "POKE_BALLS" })
       bag.rows = { { id = 4, label = "POKé BALL", qty = 20 } }
       bag.update = function(b)
         b.scriptTimer = (b.scriptTimer or 0) + 1

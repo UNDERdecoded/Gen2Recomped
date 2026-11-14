@@ -5948,6 +5948,10 @@ function Gen4Commands.plateRange(data)
       if not high or n > high then high = n end
     end
   end
+  -- A cartridge that does not spell them "... Plate" (German Platinum's are
+  -- "...tafel") falls back to the cartridge's own pair, ITEM_FLAME_PLATE (298)
+  -- .. ITEM_IRON_PLATE (313), the same ids on Platinum, HGSS and the US scan.
+  if not low then low, high = 298, 313 end
   Gen4Commands._plateLow = low or 0
   Gen4Commands._plateHigh = high or -1
   return Gen4Commands._plateLow, Gen4Commands._plateHigh
@@ -6001,9 +6005,12 @@ function Gen4Commands.tmhmRange(data)
     local n = tonumber(id) or tonumber(def and def.id)
     local name = def and def.name
     -- `^TM%d` and `^HM%d` rather than the pocket, so this stays the id-range
-    -- test the cartridge performs even if an item is ever re-pocketed.
+    -- test the cartridge performs even if an item is ever re-pocketed -- OR the
+    -- TM_HM pocket, because the names are the cartridge's language: German
+    -- Platinum's HMs are "VM01".."VM08", and the names alone would end the
+    -- run at TM92.  On the US cache both select the same 100 rows.
     if n and type(name) == "string"
-       and (name:match("^TM%d") or name:match("^HM%d")) then
+       and (name:match("^TM%d") or name:match("^HM%d") or def.pocket == "TM_HM") then
       if not low or n < low then low = n end
       if not high or n > high then high = n end
     end
@@ -6039,7 +6046,9 @@ function Commands.g4_try_set_collected_orb_flag(ctx, item)
   local def = data and data.items and data.items[itemKey(data, id)]
   local name = def and def.name
   if type(name) ~= "string" then return end
-  if name == "Adamant Orb" or name == "Lustrous Orb" then
+  -- by name on an English cache, else by the cartridge's ids (ITEM_ADAMANT_ORB
+  -- 135, ITEM_LUSTROUS_ORB 136): a German cache spells them its own way
+  if name == "Adamant Orb" or name == "Lustrous Orb" or id == 135 or id == 136 then
     local ug = ctx.save and ctx.save.underground
     if not ug and ctx.save then ug = {}; ctx.save.underground = ug end
     if ug then ug.collectedOrb = true end
