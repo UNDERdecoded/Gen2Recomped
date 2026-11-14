@@ -13,6 +13,13 @@ local PASS, FAIL = 0, 0
 local function check(c, l) if c then PASS = PASS + 1 else FAIL = FAIL + 1 print('FAIL: ' .. l) end end
 local dir = (arg and arg[1] or ''):gsub('[/\\]$', '')
 local function load(n) local f = loadfile(dir .. '/' .. n .. '.lua') return f and f() end
+-- a non-English cache: lookups asserted to come from the bank, not as English words
+local LANG = load('gen4_language')
+local function named(actual, english, label)
+  if not LANG then check(actual == english, label) return end
+  check(type(actual) == 'string' and actual ~= '' and not actual:find('{', 1, true),
+    label .. ' [' .. tostring(LANG.language) .. ': read from the bank]')
+end
 local rec = load('gen4_contest')
 check(rec, 'the cache must carry gen4_contest')
 if not rec then print(('%d checks, %d failed'):format(PASS + FAIL, FAIL)) os.exit(1) end
@@ -28,7 +35,8 @@ local function pick(rank, ty) local s, l = D.pick(rank, ty) return s .. ',' .. l
 check(pick(C.NORMAL, C.CUTE) == '0,0' and pick(C.GREAT, C.COOL) == '1,0', 'Normal plays song 0, Great song 1')
 check(pick(C.ULTRA, C.COOL) == '2,1' and pick(C.MASTER, C.BEAUTY) == '3,1' and pick(C.MASTER, C.TOUGH) == '6,0',
       'Ultra / Master by type: Cool {2,1}, Beauty {3,1}, Tough {6,0}')
-check(text[T.label(206, 0)] == 'JUMP' and text[T.label(206, 5)] ~= nil, 'bank 206: the pad\'s JUMP, the verdicts')
+named(text[T.label(206, 0)], 'JUMP', 'bank 206: the pad\'s JUMP')
+check(text[T.label(206, 5)] ~= nil, 'bank 206: the verdicts')
 
 local c = C.new({ data = data, rank = C.NORMAL, type = C.COOL, competition = C.OFFICIAL, seed = 11,
   mon = { species = 25, contest = { cool = 40 } }, playerName = 'LUCAS', partySlot = 0 })

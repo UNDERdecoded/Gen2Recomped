@@ -14,6 +14,13 @@ local PASS, FAIL = 0, 0
 local function check(c, l) if c then PASS = PASS + 1 else FAIL = FAIL + 1 print('FAIL: ' .. l) end end
 local dir = (arg and arg[1] or ''):gsub('[/\\]$', '')
 local function load(n) local f = loadfile(dir .. '/' .. n .. '.lua') return f and f() end
+-- a non-English cache: lookups are asserted to come from the bank, not as English words
+local LANG = load('gen4_language')
+local function named(actual, english, label)
+  if not LANG then check(actual == english, label) return end
+  check(type(actual) == 'string' and actual ~= '' and not actual:find('{', 1, true),
+    label .. ' [' .. tostring(LANG.language) .. ': read from the bank]')
+end
 local text, items = load('text'), load('items')
 local data = { text = text, items = items, gen4_dex = load('gen4_dex') }
 
@@ -23,10 +30,11 @@ local c = EC.counts(data)
 check(c[1] == 496 and c[2] == 468 and c[3] == 18 and c[4] == 124 and c[11] == 23,
       'the eleven banks\' sizes are the ROM\'s (496 species, 468 moves, 18 types, 124 abilities ... 23 union)')
 check(EC.toString(data, 25) == 'PIKACHU', 'word 25 is PIKACHU')
-check(EC.toString(data, EC.word(data, 2, 1)) == 'POUND', 'the move bank follows the species: POUND')
+named(EC.toString(data, EC.word(data, 2, 1)), 'POUND', 'the move bank follows the species: POUND')
 local w = EC.word(data, 9, 1)
 local bi, e = EC.split(data, w)
-check(bi == 9 and e == 1 and EC.toString(data, w) == 'DELIGHT', 'feelings entry 1 round-trips: DELIGHT')
+check(bi == 9 and e == 1, 'feelings entry 1 round-trips through word / split')
+named(EC.toString(data, w), 'DELIGHT', 'feelings entry 1 is DELIGHT')
 check(EC.toString(data, 0xFFFF) == '', 'WORD_NONE prints nothing')
 local groups = EC.groups(data, { pokedex = { seen = { [25] = true, ['SPECIES_387'] = true } } })
 check(groups[1].label == 'POKéMON' and #groups[1].words == 2, 'POKéMON lists only seen species')
@@ -63,7 +71,7 @@ check(var(0x800C) == 0 and var(0x8000) == 0xFFFF, 'backing out: result 0, word 0
 
 -- ribbons
 C.g4_buffer_ribbon_name(ctx, 3, 65)
-check(game.stringBuffers[4] == 'Smile Ribbon', 'bufferribbonname 65: Smile Ribbon, got ' .. tostring(game.stringBuffers[4]))
+named(game.stringBuffers[4], 'Smile Ribbon', 'bufferribbonname 65: Smile Ribbon, got ' .. tostring(game.stringBuffers[4]))
 
 -- fossils: every item id is the ROM's
 local names = { [103] = 'Old Amber', [101] = 'Helix Fossil', [102] = 'Dome Fossil', [99] = 'Root Fossil',
@@ -71,7 +79,10 @@ local names = { [103] = 'Old Amber', [101] = 'Helix Fossil', [102] = 'Dome Fossi
 local allNamed = true
 for _, f in ipairs(G.FOSSILS) do
   local d = items[f.item] or items[('ITEM_%03d'):format(f.item)]
-  if not (d and d.name == names[f.item]) then allNamed = false end
+  -- on a non-English cache the ROM table names the item in its own language
+  if not (d and ((not LANG and d.name == names[f.item]) or (LANG and type(d.name) == 'string' and d.name ~= ''))) then
+    allNamed = false
+  end
 end
 check(allNamed and #G.FOSSILS == 7, 'the seven fossil items name themselves in the ROM item table')
 save.inventory = { [101] = 1, [105] = 2 }

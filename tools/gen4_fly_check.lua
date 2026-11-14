@@ -40,8 +40,16 @@ check(#Fly.destinations(data, save) == 0, 'nothing is open on a new game')
 local twin = Fly.onEnter(data, save, 411)
 check(twin and save.flags.FLAG_G4_09B1, 'entering Twinleaf (header 411) opens it')
 local d = Fly.destinations(data, save)
-check(#d == 1 and d[1].map == 'T01' and d[1].label == 'Twinleaf Town',
-      'and it is the one destination, by its own name')
+-- on a non-English cache the destination carries the cache's own name for the town
+local LANG = loadfile(cacheDir .. '/gen4_language.lua')
+LANG = LANG and LANG()
+check(#d == 1 and d[1].map == 'T01', 'and it is the one destination')
+if LANG then
+  check(type(d[1].label) == 'string' and d[1].label ~= '' and not d[1].label:find('{', 1, true),
+    'named by its own label from the ' .. tostring(LANG.language) .. ' cache')
+else
+  check(d[1].label == 'Twinleaf Town', 'named by its own label: Twinleaf Town')
+end
 check(type(d[1].x) == 'number' and type(d[1].y) == 'number', 'with the cartridge\'s landing spot')
 
 -- a row that is not unlockOnMapEntry is left to its script
