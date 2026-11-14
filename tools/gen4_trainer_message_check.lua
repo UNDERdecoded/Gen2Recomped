@@ -401,11 +401,31 @@ else
            :format(trainers, pairsCount, maxType))
   -- EXACT, not floors: these are structural counts of one cartridge, and a
   -- re-extract that changes any of them has changed the walk, not the data.
-  ok(trainers == 836,
-     "%d trainers carry messages, expected exactly 836 of 928", trainers)
-  ok(pairsCount == 2497,
-     "%d (trainer, type) pairs, expected exactly 2497 -- the record count of "
-     .. "trtbl and the entry count of bank 617 are the same number", pairsCount)
+  -- Renegade Platinum rewrites 136 trtbl records in place for trainers
+  -- 928..1065 but leaves trtblofs at 928 entries, so its rows are the
+  -- cartridge's walk (all but the retagged records) plus the scan the
+  -- extractor adds past the offset table (Gen4TrainerMessages.scanUncovered).
+  local cf = io.open(CACHE .. "/../../rom-cache.complete", "rb")
+  local marker = cf and cf:read("*a") or ""
+  if cf then cf:close() end
+  local renegade = marker:match(":(%x+)%s*$") == "381f9eef44564602a5f6469ee8c390fbb8ebac3a"
+  if renegade then
+    local high = 0
+    for id in pairs(rows) do if id >= 928 then high = high + 1 end end
+    ok(trainers == 930,
+       "%d trainers carry messages, expected exactly 930 on Renegade", trainers)
+    ok(pairsCount == 2493,
+       "%d (trainer, type) pairs, expected exactly 2493 on Renegade", pairsCount)
+    ok(high == 135 and rows[928] and rows[928][1] and rows[1065] and rows[1065][1],
+       "trainers past the offset table (928..1065) must carry their authored "
+       .. "lines, found %d", high)
+  else
+    ok(trainers == 836,
+       "%d trainers carry messages, expected exactly 836 of 928", trainers)
+    ok(pairsCount == 2497,
+       "%d (trainer, type) pairs, expected exactly 2497 -- the record count of "
+       .. "trtbl and the entry count of bank 617 are the same number", pairsCount)
+  end
   ok(dupes == 0,
      "%d entry index(es) are claimed by more than one (trainer, type); each "
      .. "record is reachable from exactly one trainer", dupes)
@@ -447,8 +467,8 @@ else
     ok(#missing == 0,
        "%d index(es) name a line this cache does not hold: %s",
        #missing, table.concat(missing, "; "))
-    ok(resolved == 2497,
-       "only %d of 2497 indices resolved; the index and the text bank have "
+    ok(resolved == (renegade and 2493 or 2497),
+       "only %d of the expected indices resolved; the index and the text bank have "
        .. "drifted apart", resolved)
     ok(empty == 0, "%d resolved line(s) are the empty string", empty)
   end
