@@ -21,6 +21,7 @@ do
   check(f ~= nil, "Renderer source is readable")
   local src = f and f:read("*a") or ""
   if f then f:close() end
+  src = src:gsub(string.char(13) .. string.char(10), string.char(10))  -- a Windows checkout has CRLF
   local body = src:match("\nlocal function scissorClamped.-\nend\n")
   check(body ~= nil, "scissorClamped is still a single local function")
   local fakeLove = { graphics = { setScissor = function(x, y, w, h)

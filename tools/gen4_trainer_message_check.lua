@@ -223,6 +223,18 @@ do
     end
   end
 end
+-- ...and the modules the VM itself loads on demand when it lowers a command
+-- (Pal Park's Catching Show rows, the Black/White transfer lab rows): their
+-- handlers register as a side effect of that require.
+do
+  local seen = {}
+  for mod in vm:gmatch('require%("src%.script%.([%w_]+)"%)') do
+    if mod ~= "Gen4Commands" and not seen[mod] then
+      seen[mod] = true
+      cmds = cmds .. "\n" .. (slurp("src/script/" .. mod .. ".lua") or "")
+    end
+  end
+end
 ok(#vm > 0, "src/script/Gen4ScriptVM.lua did not open")
 ok(#cmds > 0, "src/script/Gen4Commands.lua did not open")
 -- The six `scripts_battles.s` commands this pass lowered.  `getmovementtype`

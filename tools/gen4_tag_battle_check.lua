@@ -61,7 +61,7 @@ check(src('src/script/Commands.lua'):find('if opts and opts.ally then battle:set
 -- WildEncounters_TryWildEncounter's withPartner arm: BATTLE_TYPE_AI_PARTNER,
 -- two wild Pokemon in the grass, no roamers, and the party healed after
 local ow = src('src/world/OverworldController.lua')
-check(ow:find('elseif enc and GameVersion.isGen4() and not self:gen4Escorted() then', 1, true),
+check(ow:find('elseif (enc or self.gen45RollPassed) and GameVersion.isGen4() and not self:gen4Escorted() then', 1, true),
   'no roamer joins a partner battle (TryEncounterRoamer is asked only without one)')
 check(ow:find('function OverworldState:gen4EscortWild(battle, onWater, land)', 1, true)
   and ow:find('battle:makeWildDouble(second, ally)', 1, true), 'a step with a partner: the partner and two wild Pokemon')

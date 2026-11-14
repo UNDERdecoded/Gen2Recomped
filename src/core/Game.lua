@@ -624,6 +624,10 @@ function Game:update(dt)
   -- Give the accumulator room for one full frame at the current speed,
   -- or the anti-spiral clamp quietly caps every level above ~15X.
   self:updateCameraStick(dt)
+  do
+    local PP = package.loaded["src.core.PadPointer"]
+    if PP and PP.active then PP.update(self, dt) end
+  end
   local speed = self:logicSpeed()
   FixedStep.maxAccum = math.max(0.25, speed * FixedStep.STEP * 1.5)
   do
@@ -969,7 +973,12 @@ function Game:draw()
   -- claims it, a Gen 4 overworld still needs Platinum's always-present Poketch.
   self.secondScreenDrawnThisFrame = false
   self.secondScreenPointerOwner = nil
+  self.padPointerDrawn = false
   self:_draw()
+  do
+    local PP = package.loaded["src.core.PadPointer"]
+    if PP and PP.active then pcall(PP.drawFallback, self) end
+  end
 
   -- Single-screen generations use the physical Android lower panel as a live
   -- save companion without changing the game's own screen mode.
@@ -997,7 +1006,7 @@ function Game:draw()
       -- PLATINUM'S UNDERGROUND: the other screen is the passages' map with the
       -- radar (top_screen.c), not the watch (src/ui/Gen4UgTopScreen.lua)
       local ugDrawn = false
-      if version and version.id == "platinum" then
+      if version and require("src.core.GameVersion").isPlatinumFamily(version.id) then
         local okU, UgTop = pcall(require, "src.ui.Gen4UgTopScreen")
         if okU and UgTop.active(self) then
           panelModule = nil
@@ -1611,12 +1620,17 @@ function Game:gamepadpressed(joystick, button)
     top:onGamepadPressed(button)
     return
   end
+  -- the lower-screen cursor (TOUCH action / virtual finger) sees it first
+  if require("src.core.PadPointer").gamepadpressed(self, joystick, button) then
+    return
+  end
   Input:gamepadpressed(joystick, button)
 end
 
 function Game:gamepadreleased(joystick, button)
   -- same observe-after-Input contract as Game:keyreleased (#589)
   Input:gamepadreleased(joystick, button)
+  require("src.core.PadPointer").gamepadreleased(self, joystick, button)
   local top = self.stack and self.stack:top()
   if top and top.onGamepadReleased then top:onGamepadReleased(button) end
 end
@@ -1628,19 +1642,23 @@ function Game:gamepadaxis(joystick, axis, value)
   -- AXIS_BUTTONS): a press goes to BindingsMenu's capture when one is armed,
   -- the same routing as a real pad button
   local top = self.stack and self.stack:top()
+  local PadPointer = require("src.core.PadPointer")
   for _, t in ipairs(Input:axisTransitions(axis, value)) do
     local name, down = t[1], t[2]
     if down then
       if top and top.onGamepadPressed then
         top:onGamepadPressed(name)
-      else
+      elseif not PadPointer.gamepadpressed(self, joystick, name) then
         Input:padButton(name, true)
       end
     else
       Input:padButton(name, false)
+      PadPointer.gamepadreleased(self, joystick, name)
       if top and top.onGamepadReleased then top:onGamepadReleased(name) end
     end
   end
+  -- the cursor owns the left stick while it is up
+  if PadPointer.gamepadaxis(self, joystick, axis, value) then return end
   Input:gamepadaxis(joystick, axis, value)
 end
 
@@ -1772,7 +1790,17 @@ end
 -- flags it owned.
 function Game:joystickremoved(joystick)
   Input:reset()
+  require("src.core.PadPointer").padRemoved(self)
   TouchControls:joystickremoved()
+end
+
+-- A controller plugged in (or back in) mid-game.  LOVE has already opened it
+-- and will deliver its gamepad* events; all that is left is to let the touch
+-- overlay step aside (Game:joystickremoved already cleared the old pad's state).  SDL mappings were registered at boot, which covers
+-- every pad it knows by GUID, Xbox included.
+function Game:joystickadded(joystick)
+  if isAccelerometer(joystick) then return end
+  TouchControls:noteGamepad()
 end
 
 -- A POINTER GOES TO THE SCREEN FIRST, AND TO THE PAD ONLY IF NOBODY WANTED IT.
@@ -2089,7 +2117,7 @@ function Game:restoreSave(loaded, recovered)
   -- ...which is a WALK IN there, not a continue: SystemFlag_CheckCommunicationClubAccessible
   -- takes FieldMapChange_UpdateGameData + CreateObjects (ON_TRANSITION and all)
   local specialLocation = false
-  if require("src.core.GameVersion").get() == "platinum" then
+  if require("src.core.GameVersion").isPlatinumFamily() then
     specialLocation = require("src.script.Gen4BattleTowerCommands").applySpecialLocation(loaded) and true or false
   end
   -- ...and HeartGold / SoulSilver's: FLAG_UNK_966 (the communication club's
@@ -2116,7 +2144,7 @@ function Game:restoreSave(loaded, recovered)
                   loaded.player.x, loaded.player.y, loaded.player.facing)
   -- Platinum's Journal (FieldTask_LoadSavedGameMap): opened first when two
   -- days or more have gone by, then today's page is taken and titled here
-  if require("src.core.GameVersion").get() == "platinum" then
+  if require("src.core.GameVersion").isPlatinumFamily() then
     local J = require("src.pokemon.Gen4Journal")
     if J.openOnContinue(loaded) then
       -- the pages as they were: today's is not added until after it closes

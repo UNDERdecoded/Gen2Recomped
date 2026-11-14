@@ -33,11 +33,14 @@ CompatRules.FAMILY = {
   heartgold = "hgss", soulsilver = "hgss",
   black = "bw", white = "bw",
   prism = "prism", polishedcrystal = "polishedcrystal",
+  -- Renegade Platinum rewrites species, moves and the type chart (Fairy): it
+  -- pairs only with itself, like the Gen 2 hacks
+  renegadeplatinum = "renegadeplatinum",
 }
 
 CompatRules.GEN = {
   rby = 1, gsc = 2, prism = 2, polishedcrystal = 2,
-  rse = 3, frlg = 3, dppt = 4, hgss = 4, bw = 5,
+  rse = 3, frlg = 3, dppt = 4, hgss = 4, bw = 5, renegadeplatinum = 4,
 }
 
 -- family -> family -> link kind
@@ -46,6 +49,7 @@ local LINKS = {
   gsc = { gsc = "same", rby = "timecapsule" },
   prism = { prism = "same" },
   polishedcrystal = { polishedcrystal = "same" },
+  renegadeplatinum = { renegadeplatinum = "same" },
   rse = { rse = "same", frlg = "family" },
   frlg = { frlg = "same", rse = "family" },
   dppt = { dppt = "same", hgss = "family" },

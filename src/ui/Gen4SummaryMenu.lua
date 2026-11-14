@@ -475,6 +475,8 @@ function Gen4SummaryMenu:memoLines()
       :gsub('{STRVAR_1 51 0 0}',('%02d'):format(year%100))
   end
   local function locationName(location)
+    -- a place-name index, the cartridge's own record (Gen4Origin.placeName)
+    if type(location)=='number' then return require('src.pokemon.Gen4Origin').placeName(data,location) end
     if type(location)~='string' then return nil end
     local map=(data.maps or {})[location]
     return map and (map.name or map.displayName) or location

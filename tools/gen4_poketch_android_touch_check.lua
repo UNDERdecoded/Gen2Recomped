@@ -17,6 +17,9 @@ local events={}
 SS._setTransport({available=function() return true end,pollTouch=function() local out=events;events={};return out end})
 local Game=require('src.core.Game')
 local Watch=require('src.ui.Gen4Poketch')
+-- The stub lists its apps in the order these steps index them; the engine's own
+-- cartridge re-ordering (Gen4Poketch.cartridgeOrder) is exercised elsewhere.
+Watch.cartridgeOrder=function(apps) return apps end
 local apps={{name='Counter'},{name='Memo Pad'},{name='Coin Toss'}}
 local top={}
 local game=setmetatable({data={isGen4Cache=true,gen4_menus={poketch={apps=apps}}},

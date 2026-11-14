@@ -46,7 +46,7 @@ summary:touchpressed('finger',10+180*2,20+40*2)
 assert(summary.swapMove==1)
 summary:touchpressed('finger',10+180*2,20+72*2)
 assert(not summary.swapMove and summary.mon.moves[1]==first)
-game.data.text=assert(loadfile('G:/Gen2Recomped/platinum/data/generated/text.lua'))()
+game.data.text=assert(loadfile(((os.getenv('GEN4_DATA') or (os.getenv('APPDATA') and os.getenv('APPDATA')..'/LOVE/Gen2Recomp/platinum/data/generated') or 'data/generated')..'/text.lua')))()
 local keys={'hp','attack','defense','speed','spAttack','spDefense'}
 for stat,key in ipairs(keys) do
   for remainder=0,4 do

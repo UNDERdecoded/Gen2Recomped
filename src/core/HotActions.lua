@@ -25,15 +25,20 @@
 --             Both clicks together reset the zoom (HotActions.resetZoom);
 --             the OPTIONS ZOOM row resets the flat survey zoom too.
 --
+--   TOUCH     pad RT (the right trigger, an axis edge like LT): the lower-
+--             screen cursor of src/core/PadPointer.lua, handled at event time
+--             in Game:gamepadpressed / gamepadaxis rather than per step, so
+--             it works over every menu.  Dual-screen games only.
+--
 -- Defaults are layered by Input:applyBindings UNDER the player's overlay, so
 -- a rebind of any other row onto LT / L3 / R3 wins that button.
 
 local HotActions = {}
 
-HotActions.ACTIONS = { "chat", "zoomin", "zoomout" }
-HotActions.IS_ACTION = { chat = true, zoomin = true, zoomout = true }
+HotActions.ACTIONS = { "chat", "zoomin", "zoomout", "touch" }
+HotActions.IS_ACTION = { chat = true, zoomin = true, zoomout = true, touch = true }
 HotActions.KEY_DEFAULTS = { t = "chat" }
-HotActions.PAD_DEFAULTS = { triggerleft = "chat", rightstick = "zoomin", leftstick = "zoomout" }
+HotActions.PAD_DEFAULTS = { triggerleft = "chat", rightstick = "zoomin", leftstick = "zoomout", triggerright = "touch" }
 
 -- where a chat would go right now: (client, "world"|"room") or nil
 function HotActions.chatTarget(game)

@@ -55,7 +55,7 @@ Sidebar.CONSOLES = {
 
 -- The game TYPE a version belongs to. Every registered game is a Pokemon game;
 -- the two community hacks are kept apart so the official games read as a set.
-Sidebar.HACKS = { prism = true, polishedcrystal = true }
+Sidebar.HACKS = { prism = true, polishedcrystal = true, renegadeplatinum = true }
 -- Zelda sits right after Pokemon, so a console that has both (the GBA) shows
 -- the Zelda card next to the Pokemon one. A version names its own series and
 -- console (`info.series`, `info.console`); the generation is only the

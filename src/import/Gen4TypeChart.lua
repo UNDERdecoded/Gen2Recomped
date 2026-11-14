@@ -64,6 +64,18 @@ Gen4TypeChart.TYPES = {
   "BUG", "GHOST", "STEEL", "MYSTERY", "FIRE", "WATER", "GRASS",
   "ELECTRIC", "PSYCHIC", "ICE", "DRAGON", "DARK",
 }
+local DEFAULT_NAMES = {}
+for i = 0, #Gen4TypeChart.TYPES do DEFAULT_NAMES[i] = Gen4TypeChart.TYPES[i] end
+
+-- setSlotNames({ [id] = NAME }) -- a cartridge that renames a type slot
+-- (Renegade Platinum's slot 9 is FAIRY; Gen4Versions.TYPE_SLOTS). Edits
+-- TYPES IN PLACE, because Gen4Species.TYPES and Gen4Moves read this very
+-- table; nil puts Platinum's names back, so the next extractor in the same
+-- process starts clean.
+function Gen4TypeChart.setSlotNames(slots)
+  for i = 0, #DEFAULT_NAMES do Gen4TypeChart.TYPES[i] = DEFAULT_NAMES[i] end
+  for i, name in pairs(slots or {}) do Gen4TypeChart.TYPES[i] = name end
+end
 
 -- The physical/special split BY TYPE, which Gen 4 does not use and the engine
 -- still asks for. Platinum decides it per MOVE (`class` on the move record,
@@ -88,12 +100,14 @@ local VALID_MULTIPLIER = {
   [0] = true, [5] = true, [20] = true,
 }
 
-local function looksLikeRow(data, at)
+-- `dense`: also accept 10 (1x). Platinum's chart lists only the exceptions;
+-- Renegade Platinum's replacement lists every pair, neutral ones included.
+local function looksLikeRow(data, at, dense)
   local a, b, m = byte(data, at, at + 2)
   if not m then return false end
   if a >= Gen4TypeChart.TYPE_COUNT then return false end
   if b >= Gen4TypeChart.TYPE_COUNT then return false end
-  return VALID_MULTIPLIER[m] == true
+  return VALID_MULTIPLIER[m] == true or (dense == true and m == 10)
 end
 
 -- find(overlay, minimumRows) -> offset (0-based) of the first row, or nil.
@@ -155,22 +169,22 @@ end
 -- `foresightFrom` is the 1-based index of the first row past the 0xFE marker:
 -- those are the matchups Foresight and Scrappy remove, and a caller that wants
 -- the ordinary chart stops there while the damage routine does not.
-function Gen4TypeChart.parse(data, at)
+function Gen4TypeChart.parse(data, at, dense)
   if not at then at = Gen4TypeChart.find(data) end
   if not at then return nil, "no type chart in this binary" end
 
-  local rows, foresightFrom, sections = {}, nil, 1
+  local rows, foresightFrom, sections, ended = {}, nil, 1, false
   local p = at + 1
   while p + 2 <= #data do
     local a = byte(data, p)
-    if a == Gen4TypeChart.END then break end
+    if a == Gen4TypeChart.END then ended = true break end
     if a == Gen4TypeChart.FORESIGHT_MARKER then
       foresightFrom = #rows + 1
       sections = sections + 1
       p = p + 3
     else
       local b, m = byte(data, p + 1, p + 2)
-      if not looksLikeRow(data, p) then break end
+      if not looksLikeRow(data, p, dense) then break end
       rows[#rows + 1] = { a, b, m }
       p = p + 3
     end
@@ -178,6 +192,8 @@ function Gen4TypeChart.parse(data, at)
   end
 
   return {
+    ended = ended,
+    dense = dense == true or nil,
     rows = rows,
     foresightFrom = foresightFrom,
     sections = sections,
@@ -225,7 +241,8 @@ function Gen4TypeChart.chart(parsed)
 
   for i, row in ipairs(parsed.rows) do
     local attacker, defender, multiplier = names[row[1]], names[row[2]], row[3]
-    if attacker and defender then
+    -- a dense chart's 1x rows say nothing an absent pair does not
+    if attacker and defender and multiplier ~= 10 then
       out.matchups[#out.matchups + 1] = {
         attacker = attacker, defender = defender, multiplier = multiplier,
       }
@@ -241,6 +258,71 @@ function Gen4TypeChart.chart(parsed)
   out.source = ("ROM: overlay %s, %d rows"):format(
     tostring(parsed.overlay), #out.matchups)
   return out
+end
+
+-- follow(rom, data, info, at) -> the chart the battle code ACTUALLY reads,
+-- when that is not the one `find` located, else nil.
+--
+-- The battle overlay reaches its chart through literal-pool words, and it
+-- loads the three columns separately: `&chart[0]`, `&chart[1]`, `&chart[2]`,
+-- three consecutive words X, X+1, X+2. Platinum's point at the table `find`
+-- returns. A hack that rewrites the chart can leave the old table where it is
+-- and repoint those words -- Renegade Platinum does exactly that: overlay 16
+-- keeps the vanilla 110 rows at 0x33B94, every reference to them now reads
+-- 0x021E9F80, and that is a dense 18x18 chart (Fairy row and column
+-- included) appended to the end of overlay 21. Read the old one and Fairy
+-- does neutral damage to everything.
+--
+-- So: if the overlay still holds a pointer to the table found, it is the live
+-- one and this returns nil (every retail cartridge). Otherwise each X, X+1,
+-- X+2 triple is resolved into whichever overlay (or the ARM9) loads at X and
+-- parsed there, dense rows allowed; the first that parses to a whole chart
+-- (90+ rows, closed by 0xFF) wins.
+local function u32(s, i)
+  local a, b, c, d = byte(s, i, i + 3)
+  if not d then return nil end
+  return a + b * 256 + c * 65536 + d * 16777216
+end
+function Gen4TypeChart.follow(rom, data, info, at)
+  if not (rom and type(data) == "string" and info and info.ram and at) then return nil end
+  local live = info.ram + at
+  local triples = {}
+  for p = 1, #data - 11, 4 do
+    local x = u32(data, p)
+    if x == live then return nil end
+    if x and x >= 0x02000000 and x < 0x02400000
+       and u32(data, p + 4) == x + 1 and u32(data, p + 8) == x + 2 then
+      triples[#triples + 1] = x
+    end
+  end
+  local images = {}
+  local n = 0
+  while true do
+    local ok, bytes, oi = pcall(rom.overlay, rom, n)
+    if not ok or not bytes then break end
+    images[#images + 1] = { overlay = n, bytes = bytes, ram = oi and oi.ram }
+    n = n + 1
+  end
+  local okA, arm9 = pcall(rom.arm9, rom)
+  local okH, header = pcall(rom.header, rom)
+  if okA and arm9 then
+    images[#images + 1] = { overlay = "arm9", bytes = arm9,
+                            ram = okH and header and header.arm9 and header.arm9.ram or 0x02000000 }
+  end
+  for _, x in ipairs(triples) do
+    for _, image in ipairs(images) do
+      local off = image.ram and (x - image.ram)
+      if off and off >= 0 and off + 3 <= #image.bytes then
+        local parsed = Gen4TypeChart.parse(image.bytes, off, true)
+        if parsed and parsed.ended and #parsed.rows >= 90 then
+          parsed.overlay = image.overlay
+          parsed.ram = x
+          return parsed
+        end
+      end
+    end
+  end
+  return nil
 end
 
 return Gen4TypeChart

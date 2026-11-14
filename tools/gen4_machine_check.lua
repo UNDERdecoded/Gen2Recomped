@@ -706,6 +706,14 @@ do
     -- player is typing INSIDE the screen, before there is a game to buffer
     -- them on, and it draws its own pages rather than handing text to a box.
     ["src/ui/Gen4RowanIntro.lua"] = 1,
+    -- The mail's sentence is not a text-box line: MailMsg_GetExpandedString
+    -- fills only the kind-28 easy-chat blanks, from the words buffered up to
+    -- the first EC_WORD_NULL, and an unfilled blank reads as the caller's own
+    -- `blank` glyph rather than being dropped as gen4Markup would.
+    ["src/pokemon/Gen4Mail.lua"] = 1,
+    -- The Unown report prints its own pages; its tokens use the comma spelling
+    -- `{STRVAR_1 kind, slot, 0}` that gen4Markup does not read.
+    ["src/ui/HgssUnownReport.lua"] = 1,
   }
   local found, scanned = {}, 0
   local function sweep(dir)

@@ -116,6 +116,9 @@ function HoF:metLine(mon)
   -- the place name the area sign would show: the map's header, its row in
   -- the popup table, and that row's bank 433 entry
   local function place(loc)
+    -- the cartridge's own record: a place-name index (Gen4Origin.placeName)
+    local named = require("src.pokemon.Gen4Origin").placeName(self.data, loc)
+    if named then return named end
     local map = type(loc) == "string" and (self.data.maps or {})[loc]
     local rows = (self.data.gen4_area_popup or {}).headers or {}
     local row = map and rows[tonumber(map.header) or -1]

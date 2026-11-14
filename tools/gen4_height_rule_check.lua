@@ -344,6 +344,43 @@ for _, dir in ipairs(caches) do
         if not unionB[L.map][key] then
           for k in pairs((walkLifted(b, L.x, L.y, true))) do unionB[L.map][k] = true end
         end
+        -- PASTORIA'S GYM MOVES ITS FLOOR: the water plate stands at 0, 32 or 64
+        -- by the button last pressed (Gen4PastoriaGym.apply), so what the
+        -- player can reach is the union over the three levels, not the bare
+        -- BDHC the walk above sees.
+        if L.map == 'C06GYM0101' then
+          local DMF = require('src.world.Gen4DynamicMapFeatures')
+          local def = b.def
+          -- The buttons are pressed from anywhere reached, so each level's walk
+          -- also starts from every cell an earlier level reached, until nothing
+          -- new turns up.
+          local levelSeen = { [0] = {}, [32] = {}, [64] = {} }
+          local grew = true
+          while grew do
+            grew = false
+            for _, height in ipairs({ 0, 32, 64 }) do
+              def.gen4DynamicPlate = { x = DMF.PASTORIA_PLATE_X, y = DMF.PASTORIA_PLATE_Z,
+                                       w = DMF.PASTORIA_PLATE_W, h = DMF.PASTORIA_PLATE_H, height = height }
+              def.gen4PastoriaGates = DMF.PASTORIA_GATE_OPENS_AT
+              local seen = levelSeen[height]
+              local starts = { [L.x * 4096 + L.y] = true }
+              for k in pairs(unionB[L.map]) do starts[k] = true end
+              for k in pairs(starts) do
+                if not seen[k] then
+                  local sx, sy = math.floor(k / 4096), k % 4096
+                  if b:isWalkableCell(sx, sy) then
+                    for c in pairs((walkLifted(b, sx, sy, true))) do
+                      seen[c] = true
+                      if not unionB[L.map][c] then unionB[L.map][c] = true; grew = true end
+                    end
+                  end
+                  seen[k] = true
+                end
+              end
+            end
+          end
+          def.gen4DynamicPlate, def.gen4PastoriaGates = nil, nil
+        end
         -- the OTHER warps each walk reaches (on the cell or beside it)
         local function warps(seen, m)
           local n = 0
