@@ -43,6 +43,8 @@ local BUTTONS = {
   { id = "chat", label = "CHAT", key = "t", pad = "triggerleft", hot = true },
   { id = "zoomin", label = "ZOOM IN", pad = "rightstick", hot = true, padOnly = true, keyLabel = "WHEEL" },
   { id = "zoomout", label = "ZOOM OUT", pad = "leftstick", hot = true, padOnly = true, keyLabel = "WHEEL" },
+  -- the DS lower screen's virtual finger (src/core/PadPointer.lua)
+  { id = "touch", label = "TOUCH", pad = "triggerright", hot = true, padOnly = true, keyLabel = "-" },
 }
 BindingsMenu.BUTTONS = BUTTONS
 

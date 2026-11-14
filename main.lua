@@ -884,6 +884,12 @@ function love.joystickhat(joystick, hat, direction)
   Game:joystickhat(joystick, hat, direction)
 end
 
+function love.joystickadded(joystick)
+  if editorMode or TouchEditor or Importer then return end
+  if not Game then return end
+  if Game.joystickadded then Game:joystickadded(joystick) end
+end
+
 function love.joystickremoved(joystick)
   if editorMode or TouchEditor then return end
   if Importer then return end
