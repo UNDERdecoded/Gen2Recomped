@@ -1020,7 +1020,10 @@ function Gen4Pokedex:drawDetails()
 end
 local TYPE_ANIM = { NORMAL=0, FIRE=1, GRASS=2, WATER=3, ELECTRIC=4,
   ROCK=5, FIGHTING=6, GHOST=7, MYSTERY=7, GROUND=8, STEEL=9, POISON=10,
-  BUG=11, DARK=12, ICE=13, FLYING=14, PSYCHIC=15, DRAGON=16 }
+  BUG=11, DARK=12, ICE=13, FLYING=14, PSYCHIC=15, DRAGON=16,
+  -- Renegade Platinum appends a 19th sequence to zukan's type_icons and its
+  -- overlay 21 switch sends type 9 (FAIRY there) to it
+  FAIRY=18 }
 function Gen4Pokedex:drawType(name, x, y)
   local sequence = TYPE_ANIM[tostring(name):upper()]
   if sequence == nil then return end

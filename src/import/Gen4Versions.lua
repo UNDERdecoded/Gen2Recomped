@@ -39,7 +39,20 @@ local Files = require("src.import.Gen4HgssFiles")
 
 local V = {}
 
-V.FAMILY = { platinum = "platinum", heartgold = "hgss", soulsilver = "hgss" }
+V.FAMILY = { platinum = "platinum", heartgold = "hgss", soulsilver = "hgss",
+             -- Drayano's hack of Platinum keeps Platinum's paths and banks
+             renegadeplatinum = "platinum" }
+
+-- TYPE SLOTS a cartridge renames. Renegade Platinum turns the unused "???"
+-- type (slot 9) into FAIRY: its type-name bank (624) says FAIRY there, 20
+-- species and its Fairy moves carry id 9, and its battle chart has a Fairy
+-- row and column. Every Gen 4 table speaks type NAMES through
+-- Gen4TypeChart.TYPES (species types, move types, the chart's matchups), and
+-- the engine matches on those names -- left as MYSTERY, a Fairy move would be
+-- the typeless "???" and Gen4Damage deals it no damage.
+V.TYPE_SLOTS = {
+  renegadeplatinum = { [9] = "FAIRY" },
+}
 
 local hgssPaths = {
   text = Files.byName.msgdata_msg,
@@ -170,6 +183,8 @@ function V.apply(version, PATH, BANK)
   saved = { path = {}, bank = {} }
   -- the script dispatcher's bands follow the cartridge too
   require("src.import.Gen4ScriptBands").setFamily(V.family(version))
+  -- ...and the type names (Platinum's put back first, as with PATH and BANK)
+  require("src.import.Gen4TypeChart").setSlotNames(V.TYPE_SLOTS[version])
   -- ...and the member names HGSS's numbered archives are looked up by
   if V.family(version) == "hgss" then
     local Archives = require("src.import.Gen4Archives")

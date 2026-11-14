@@ -264,6 +264,17 @@ function RomExtractorGen4:close()
   self.rom = nil
 end
 
+-- The cartridge's text language (src/import/Gen4Regions.lua): German
+-- Platinum is CPUD.  Only checks that compare against a US spelling and the
+-- human-readable part of a file name ask; every table is keyed by id.
+function RomExtractorGen4:isEnglish()
+  if self._english == nil then
+    local code = self.rom and self.rom:header().gameCode
+    self._english = require("src.import.Gen4Regions").isEnglish(code)
+  end
+  return self._english
+end
+
 function RomExtractorGen4:beginStage(name)
   self.stage = self.stage + 1
   if self.progress then self.progress(self.stage - 1, #STAGES, name, 0, 1) end
@@ -2344,28 +2355,38 @@ function RomExtractorGen4:extractGraphics()
             tiles = group.NCGR, palette = palette,
             cell = bankAt, tilesWide = family.tilesWide,
           }
-          local name = group.base:gsub("/", "_")
+          local base = group.base:gsub("/", "_")
+          -- A RENAMED TYPE SLOT keeps the cartridge's member name: Renegade
+          -- Platinum redraws type_icons/mystery as its Fairy icon, and every
+          -- screen asks for type_icons_<type name>. So the sheet is saved
+          -- under the slot's name as well (Gen4TypeChart.setSlotNames).
+          local savedAs = { base }
+          if group.base == "type_icons/mystery" and Gen4TypeChart.TYPES[9] ~= "MYSTERY" then
+            savedAs[2] = "type_icons_" .. tostring(Gen4TypeChart.TYPES[9]):lower()
+          end
           -- `local a, b = x and f()` keeps only f()'s FIRST return value, so
           -- this cannot be folded into the guard -- the palette would always
           -- arrive nil and every sheet would silently take the fallback path.
           local sheet, pal
           if palette then sheet, pal = self:partsFor(objArc, job) end
           local frames = sheet and pal and self:assembleCells(objArc, job, sheet, pal)
-          if frames then
-            for _, frame in ipairs(frames) do
-              local entry = self:saveImage(
-                "battle/" .. name .. frame.suffix, frame.image, {
-                  family = family.label, cellBank = bankName,
-                  cellMatch = bankHow, cell = frame.cellIndex,
-                })
-              if entry then index.battleObjects[name .. frame.suffix] = entry end
+          for _, name in ipairs(savedAs) do
+            if frames then
+              for _, frame in ipairs(frames) do
+                local entry = self:saveImage(
+                  "battle/" .. name .. frame.suffix, frame.image, {
+                    family = family.label, cellBank = bankName,
+                    cellMatch = bankHow, cell = frame.cellIndex,
+                  })
+                if entry then index.battleObjects[name .. frame.suffix] = entry end
+              end
+            else
+              local image = palette and self:composeJob(objArc, job)
+              local entry = self:saveImage("battle/" .. name, image, {
+                family = family.label, provisionalLayout = true,
+              })
+              if entry then index.battleObjects[name] = entry end
             end
-          else
-            local image = palette and self:composeJob(objArc, job)
-            local entry = self:saveImage("battle/" .. name, image, {
-              family = family.label, provisionalLayout = true,
-            })
-            if entry then index.battleObjects[name] = entry end
           end
         end
       end
@@ -2647,14 +2668,15 @@ function RomExtractorGen4:extractMonIcons()
   -- NarcArchive keeps its member count as a plain field, so the sheet run is
   -- however many members follow the six cell and animation banks.
   local sheets = (tonumber(arc.count) or 547) - Gen4Icons.FIRST_SHEET
-  local at, entropy = Gen4Icons.findPaletteTable(arm9, sheets)
+  local anchors = Gen4Icons.anchorsFor(self.version)
+  local at, entropy = Gen4Icons.findPaletteTable(arm9, sheets, anchors)
   if not at then return nil end
 
   -- A WRONG TABLE DOES NOT FAIL, IT MIS-COLOURS -- which reads as a palette
   -- bug rather than as "the scan found the wrong array". So the seven values
   -- the render was checked against are asserted here, and the whole stage
   -- declines rather than writing a party list in the wrong colours.
-  local okTable, wrong = Gen4Icons.verify(arm9, at)
+  local okTable, wrong = Gen4Icons.verify(arm9, at, anchors)
   if not okTable then
     require("src.core.Logger").warn(
       "gen4 icons: the palette table found at 0x%X disagrees with the verified "
@@ -3342,13 +3364,16 @@ function RomExtractorGen4:extractConstants()
   -- Normal do neutral damage to Ghost.
   local chart, parsed
   for overlay = 0, 130 do
-    local ok, bytes = pcall(function() return self.rom:overlay(overlay) end)
+    local ok, bytes, info = pcall(function() return self.rom:overlay(overlay) end)
     if ok and bytes and #bytes > 0 then
       local at = Gen4TypeChart.find(bytes)
       if at then
         parsed = Gen4TypeChart.parse(bytes, at)
         if parsed then
           parsed.overlay = overlay
+          -- a hack can repoint the battle code at a chart of its own and
+          -- leave this one behind (Renegade Platinum); read the live one
+          parsed = Gen4TypeChart.follow(self.rom, bytes, info, at) or parsed
           chart = Gen4TypeChart.chart(parsed)
           break
         end
@@ -3758,6 +3783,16 @@ function RomExtractorGen4:extractConstants()
   self.tradeReport = { trades = trades and #trades or 0 }
 
   self:write("constants", {
+    -- Pokemon_IsPersonalityShiny's threshold: `(otId ^ pid halves) < N`,
+    -- found by its own instruction run (eors r0,r3; lsrs r2,#16; eors r0,r1;
+    -- eors r0,r2; cmp r0,#N; bcs; movs r0,#1). 8 on Platinum (1/8192);
+    -- Renegade Platinum patches the cmp to 128 (1/512). Stats.setShinyUnder.
+    shinyUnder = (function()
+      local ok, arm9 = pcall(function() return self.rom:arm9() end)
+      if not (ok and type(arm9) == "string") then return nil end
+      local at = arm9:find("X@\18\12H@P@.%(\1\210\1 ")
+      return at and arm9:byte(at + 8) or nil
+    end)(),
     gen4HoneyEncounters = require('src.world.Gen4HoneyTrees').tables(self.rom),
     experienceTables = experienceTables,
     tmhmMoves = tmhmMoves,
@@ -3887,7 +3922,12 @@ function RomExtractorGen4:extractConstants()
     speciesOrder = order(508),
     moveOrder = order(471),
     itemOrder = order(446),
-    trainerOrder = order(928),
+    -- 928 on Platinum (and kept as the floor); Renegade Platinum's trdata
+    -- has 1066
+    trainerOrder = order((function()
+      local arc = self:archive("trainerData")
+      return math.max(928, arc and tonumber(arc.count) or 0)
+    end)()),
     world = {
       -- A Gen 4 cell is sixteen pixels, and the map defs say so too.
       blockPx = 16,
@@ -4253,6 +4293,10 @@ end
 -- halves are needed.  Everything outside [a-z0-9] folds to an underscore and
 -- runs collapse, so the two Nidoran, Mr. Mime, Farfetch'd, Ho-Oh and the
 -- Porygon numerals all produce a path a filesystem will take.
+--
+-- A NON-ENGLISH CARTRIDGE GETS THE ID ALONE ("001"): its names would fold to
+-- something else ("003_g_re" for Göre), so a German cache would neither match
+-- a US one path for path nor read any better.  The caller passes no `def`.
 function RomExtractorGen4.speciesSlug(species, def)
   local name = def and def.name
   if type(name) ~= "string" or name == "" then
@@ -4433,7 +4477,7 @@ function RomExtractorGen4:extractTrainerSprites()
       if frames > 1 then animated = animated + 1 end
       local image = Gen4Trgra.frame(sheet, palette, 1)
       local entry = image and self:saveImage(
-        ("battle/trainer/%s"):format(Gen4Trgra.slug(class, name)), image,
+        ("battle/trainer/%s"):format(Gen4Trgra.slug(class, self:isEnglish() and name or nil)), image,
         { class = class, name = name, frames = frames })
       if entry then
         written = written + 1
@@ -4465,7 +4509,7 @@ function RomExtractorGen4:extractTrainerSprites()
   -- (HGSS names the archive by number; Platinum's is /poketool/trgra/trbgra.narc,
   -- the same five members a class: 0 the player's Pt outfit, 1 hers, 2 Barry, 3-7
   -- the five stat trainers, 8-10 the Diamond / Pearl outfits for a link partner)
-  if dpOrder or self.version == "platinum" then
+  if dpOrder or require("src.import.Gen4Versions").family(self.version) == "platinum" then
     local backs = self:archive("trainerBack") or self:archiveAt(Gen4Trgra.BACK_PATH)
     index.backs = {}
     for class = 0, Gen4Trgra.classCount(backs) - 1 do
@@ -4523,7 +4567,7 @@ function RomExtractorGen4:extractSpeciesSprites()
     local shiny = Gen4Graphics.palette(arc:get(species * 6 + Gen4Pokegra.SLOT.shinyPalette))
     local def = mons and mons[species]
     local record = { id = species }
-    local slug = RomExtractorGen4.speciesSlug(species, def)
+    local slug = RomExtractorGen4.speciesSlug(species, self:isEnglish() and def or nil)
 
     for _, face in ipairs({ "front", "back" }) do
       local sheet, slot = Gen4Pokegra.sheet(arc, Gen4Graphics, species, face)
@@ -4954,14 +4998,21 @@ function RomExtractorGen4:extractMenus()
   -- own wording.
   out.newGameWarning = self:string(BANK.mainMenuAlert, Gen4Menus.ALERT_NEW_GAME)
 
-  -- THE POKETCH.  The order is one bank's and the names are another's, and
-  -- the pairing is checked rather than assumed: every coloured name must open
-  -- exactly one description in the ordered bank.
-  local names = {}
+  -- THE POKETCH.  The order is one bank's and the names are another's.  The
+  -- names are taken by POSITION (Gen4Menus.POKETCH_NAME_ORDER, bank 213 ->
+  -- app id), which holds on every language; the text pairing below is the
+  -- cross-check, and `unpaired` lists the apps where it found a DIFFERENT
+  -- name than the position says (or no name exists) -- empty on the US,
+  -- European and German cartridges.
+  local names, nameById = {}, {}
   for i = 0, Gen4Menus.POKETCH_COUNT - 1 do
     local text = self:string(BANK.poketchName, Gen4Menus.POKETCH_NAME_FIRST + i)
     local name = Gen4Menus.poketchName(text)
-    if name then names[#names + 1] = name end
+    if name then
+      names[#names + 1] = name
+      local id = Gen4Menus.POKETCH_NAME_ORDER[i]
+      if id then nameById[id] = name end
+    end
   end
   out.poketch = {
     descBank = BANK.poketchDesc, nameBank = BANK.poketchName,
@@ -4976,10 +5027,9 @@ function RomExtractorGen4:extractMenus()
   -- twenty-five and left the Calendar out, because its description is the one
   -- that does not begin that way: "Use the monthly Calendar to make a note of
   -- important dates."  Matching anywhere instead needs LONGEST, because
-  -- "Counter" occurs inside "Trainer Counter" -- and then the twenty-five
-  -- assignments have to be a permutation, which is the check that says the
-  -- looser match did not fold two apps onto one name.
-  local used = {}
+  -- "Counter" occurs inside "Trainer Counter".  German prose leaves two apps
+  -- with no match at all ("Monatskalender", "Historie der Pokemon"), which is
+  -- why the position decides and the match only checks.
   for i = 0, Gen4Menus.POKETCH_COUNT - 1 do
     local description = self:string(BANK.poketchDesc, Gen4Menus.POKETCH_DESC_FIRST + i)
     local found = nil
@@ -4988,16 +5038,16 @@ function RomExtractorGen4:extractMenus()
         if not found or #name > #found then found = name end
       end
     end
-    if not found or used[found] then
+    local name = nameById[i]
+    if not name or (found and found ~= name) then
       out.poketch.unpaired[#out.poketch.unpaired + 1] = i
     end
-    if found then used[found] = true end
     out.poketch.apps[i + 1] = {
       id = i,
-      name = found,
+      name = name,
       description = description,
-      art = found and Gen4Menus.POKETCH_ART[found] or nil,
-      live = found and Gen4Menus.POKETCH_LIVE[found] or nil,
+      art = Gen4Menus.POKETCH_ART[i],
+      live = Gen4Menus.POKETCH_LIVE[i],
     }
   end
 
@@ -5097,7 +5147,9 @@ function RomExtractorGen4:extractMenus()
       -- cartridge's own source says this slot holds.  Nothing should ever read
       -- it; it exists so that if the three lists ever drift, the drift is in
       -- the data rather than in somebody's memory.
-      mismatch = (name ~= row.expect) and
+      -- `expect` is the US spelling, so only an English cartridge is held to
+      -- it; the species id is what picks the Pokemon either way.
+      mismatch = self:isEnglish() and (name ~= row.expect) and
         ("expected %s, species %d is %s"):format(row.expect, row.species,
                                                  tostring(name)) or nil,
     }
@@ -5522,6 +5574,15 @@ function RomExtractorGen4:extractIntro()
 
   out.script = Gen4IntroScene.SCRIPT
   out.role = Gen4IntroScene.ROLE
+
+  -- The Pokemon Rowan releases (Buneary on retail, Eevee on Renegade).
+  do
+    local ok, ov = pcall(function() return self.rom:overlay(Gen4IntroScene.OVERLAY) end)
+    local species = ok and Gen4IntroScene.monSpecies(ov) or nil
+    -- Written only when it differs from the screen's built-in Buneary, so a
+    -- retail cache stays byte-identical to the one made before this existed.
+    if species and species ~= 427 then out.monSpecies = species end
+  end
 
   -- ------------------------------------------------------------ television --
   local tvArc = self:archive("introTv")
@@ -6571,7 +6632,7 @@ function RomExtractorGen4:moveTutor()
 end
 
 function RomExtractorGen4:areaPopup()
-  local out = self.rom and require("src.import.Gen4AreaPopup").extract(self.rom)
+  local out = self.rom and require("src.import.Gen4AreaPopup").extract(self.rom, self._mapHeaders)
   if out then self:write("gen4_area_popup", out) end
 end
 
@@ -7562,6 +7623,14 @@ end
 
 function RomExtractorGen4:run()
   local V = require("src.import.Gen4Versions")
+  -- THE CARTRIDGE'S TEXT LANGUAGE, for what has to know it (the translation
+  -- layer must not treat German ROM text as English).  Only a non-English
+  -- cartridge writes it, so an English cache is unchanged.
+  if not self:isEnglish() then
+    local Regions = require("src.import.Gen4Regions")
+    local code = self.rom and self.rom:header().gameCode
+    self:write("gen4_language", { language = Regions.language(code), gameCode = code })
+  end
   local only = V.STAGES[V.family(self.version)]
   if only then return self:runStages(only) end
   self:extractText()

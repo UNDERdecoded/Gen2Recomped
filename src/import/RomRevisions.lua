@@ -24,10 +24,12 @@
 --                   Rev 1, Switch Online build                 NOT YET
 --   Emerald         one release, (USA, Europe)                 accepted
 --   Platinum        Rev 0, Rev 1 (USA)                         both accepted
---                   (Europe) CPUP                              NOT YET
+--                   (Europe) CPUE rev 10, (Germany) CPUD       accepted
+--                   other European languages (CPUF/CPUI/CPUS)  NOT YET
 --   HeartGold       (USA) IPKE; SoulSilver (USA, Australia)    accepted
 --                   (Europe) IPKP / IPGP                       NOT YET
 --   Black / White   (USA, Europe) IRBO / IRAO                  accepted
+--   Renegade Plat.  the hack over Platinum (USA) Rev 1 (CPUE)   accepted
 --
 -- The KNOWN hashes below come from pret's own per-build `.sha1` files
 -- (pokefirered firered_rev1.sha1 / firered_switch.sha1 / leafgreen*.sha1,
@@ -79,6 +81,12 @@ RomRevisions.ACCEPTED = {
     { sha1 = "6930b48af5844d373e3c9130f26d6dd1084cf4ed", code = "PKPC", release = true,
       label = "Polished Crystal 3.2.3" },
   },
+  -- Drayano's hack of Platinum (USA) Rev 1: the trimmed patched file. Its
+  -- header still says CPUE revision 1, so the hack is told apart by hash only
+  renegadeplatinum = {
+    { sha1 = "381f9eef44564602a5f6469ee8c390fbb8ebac3a", code = "CPUE", release = true,
+      label = "Renegade Platinum (over Pokemon Platinum (USA) (Rev 1))" },
+  },
   firered = {
     { sha1 = "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc", code = "BPRE", revision = 0,
       label = "Pokemon FireRed (USA, Europe)" },
@@ -92,6 +100,12 @@ RomRevisions.ACCEPTED = {
       label = "Pokemon Platinum (USA)" },
     { sha1 = "0862ec35b24de5c7e2dcb88c9eea0873110d755c", code = "CPUE", revision = 1,
       label = "Pokemon Platinum (USA) (Rev 1)" },
+    -- the English European cartridge keeps the US game code; its header
+    -- revision byte is 10 (docs/rom-revisions.md)
+    { sha1 = "8d15cd443d4e83e20493c79d3f9dc408c4f51ae0", code = "CPUE", revision = 10,
+      label = "Pokemon Platinum (Europe)" },
+    { sha1 = "5d009a175c77d4387cde26d34efb71aee825a938", code = "CPUD", revision = 0,
+      label = "Pokemon Platin Edition (Germany)" },
   },
   heartgold = {
     { sha1 = "4fcded0e2713dc03929845de631d0932ea2b5a37", code = "IPKE", revision = 0,
@@ -174,6 +188,7 @@ local GAME_NAMES = {
   green = "Pokemon Green",
   gold = "Pokemon Gold", silver = "Pokemon Silver", crystal = "Pokemon Crystal",
   prism = "Pokemon Prism", polishedcrystal = "Polished Crystal",
+  renegadeplatinum = "Renegade Platinum",
   ruby = "Pokemon Ruby", sapphire = "Pokemon Sapphire",
   firered = "Pokemon FireRed", leafgreen = "Pokemon LeafGreen",
   emerald = "Pokemon Emerald",

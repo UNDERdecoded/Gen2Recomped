@@ -234,11 +234,15 @@ end
 
 -- BattleFactory_AddSelectedRentalsToParty
 function B.takeRentals(f)
+  -- a challenge resumed from a save that carries no rental list (a save the
+  -- factory never wrote, or one older than it) has nothing to take from: the
+  -- team already in `playerEntries` stays, rather than raising out of the script
+  local pool, sets = f.rentals or f.playerEntries or {}, f.rentalSets or f.playerSets or {}
   f.playerEntries, f.playerSets = {}, {}
   for i = 1, B.partySize(f.challengeType) do
     local slot = (f.selected[i - 1] or (i - 1)) + 1
-    f.playerEntries[i] = f.rentals[slot]
-    f.playerSets[i] = f.rentalSets[slot]
+    f.playerEntries[i] = pool[slot]
+    f.playerSets[i] = sets[slot]
   end
   f.opponentParty = f.opponentEntries
 end
@@ -306,7 +310,10 @@ function B.commonType(game, f)
     if t2 and t2 ~= t1 then counts[t2] = (counts[t2] or 0) + 1 end
   end
   local best = 0
-  for t = 0, 17 do
+  -- every slot the cartridge names (18 on retail Platinum and on Renegade,
+  -- where slot 9 is FAIRY), not a literal 17
+  local slots = (game.data.constants and tonumber(game.data.constants.typeCount)) or 18
+  for t = 0, slots - 1 do
     if (counts[best] or 0) < (counts[t] or 0) then best = t end
   end
   return ((counts[best] or 0) <= 1) and 0xFF or best
@@ -315,6 +322,13 @@ function B.typeNumber(data, t)
   if type(t) == "number" then return t end
   local order = data.constants and data.constants.typeOrder
   for i, name in ipairs(order or {}) do if name == t then return i - 1 end end
+  -- the cache's own type names (slot 9: MYSTERY on retail, FAIRY on Renegade)
+  local named = data.constants and data.constants.types
+  if type(named) == "table" and type(t) == "string" then
+    for i = 0, 63 do
+      if type(named[i]) == "string" and named[i]:upper() == t:upper() then return i end
+    end
+  end
   local T = { NORMAL = 0, FIGHTING = 1, FLYING = 2, POISON = 3, GROUND = 4, ROCK = 5, BUG = 6, GHOST = 7,
     STEEL = 8, MYSTERY = 9, FIRE = 10, WATER = 11, GRASS = 12, ELECTRIC = 13, PSYCHIC = 14, ICE = 15,
     DRAGON = 16, DARK = 17 }

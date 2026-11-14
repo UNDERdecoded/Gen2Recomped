@@ -37,8 +37,18 @@ check(AllyAI.choose(fainted, status, function(a) return a end).id == 45, 'nothin
 
 -- -------------------------------------------------------------- the team --
 local trainers = load('trainers')
-check(trainers and trainers[613] and trainers[613].name == 'Lucas', 'trainer 613 is Lucas (Jubilife\'s partner)')
-check(trainers and trainers[608] and trainers[608].name == 'Cheryl', 'trainer 608 is Cheryl (Eterna Forest)')
+-- a non-English cache (gen4_language.lua) names the partners in its own language;
+-- the records are still the same two (613 / 608), so it asserts the name is a real
+-- one, and that the two differ
+local langChunk = loadfile(dir .. '/gen4_language.lua')
+if langChunk and langChunk() then
+  local a, b = trainers and trainers[613] and trainers[613].name, trainers and trainers[608] and trainers[608].name
+  check(type(a) == 'string' and a ~= '' and not a:find('{', 1, true), 'trainer 613 is Jubilife\'s partner, named in the cartridge language')
+  check(type(b) == 'string' and b ~= '' and a ~= b, 'trainer 608 is the Eterna Forest partner, named in the cartridge language')
+else
+  check(trainers and trainers[613] and trainers[613].name == 'Lucas', 'trainer 613 is Lucas (Jubilife\'s partner)')
+  check(trainers and trainers[608] and trainers[608].name == 'Cheryl', 'trainer 608 is Cheryl (Eterna Forest)')
+end
 
 -- ------------------------------------------------------------ the wiring --
 local bs = src('src/battle/BattleState.lua')
@@ -61,7 +71,7 @@ check(src('src/script/Commands.lua'):find('if opts and opts.ally then battle:set
 -- WildEncounters_TryWildEncounter's withPartner arm: BATTLE_TYPE_AI_PARTNER,
 -- two wild Pokemon in the grass, no roamers, and the party healed after
 local ow = src('src/world/OverworldController.lua')
-check(ow:find('elseif enc and GameVersion.isGen4() and not self:gen4Escorted() then', 1, true),
+check(ow:find('elseif (enc or self.gen45RollPassed) and GameVersion.isGen4() and not self:gen4Escorted() then', 1, true),
   'no roamer joins a partner battle (TryEncounterRoamer is asked only without one)')
 check(ow:find('function OverworldState:gen4EscortWild(battle, onWater, land)', 1, true)
   and ow:find('battle:makeWildDouble(second, ally)', 1, true), 'a step with a partner: the partner and two wild Pokemon')

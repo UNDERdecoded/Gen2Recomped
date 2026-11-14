@@ -10692,7 +10692,7 @@ function OverworldState:gen4SweetScent()
   -- WildEncounters_TrySweetScentEncounter / FieldSystem_PerformSweetScentEncounterCheck:
   -- a roamer on this map first (50%, Repel not asked), then the Bug Contest's
   -- or the Safari's own generator; Keen Eye / Intimidate cannot turn it away
-  if slots and not self:gen4Escorted() then
+  if slots and GameVersion.isGen4() and not self:gen4Escorted() then
     local Roamers=require('src.world.Gen4Roamers')
     local slot,it=Roamers.check(Game.data,Game.save,self.map.id,love.math.random)
     local one=slot and Roamers.encounterFor(slot,it)
@@ -12804,7 +12804,7 @@ function OverworldState:startTrainerApproach(npc, dist, partner, vs2)
                           and partner.def.gen3TrainerId or nil
         -- VS2: the eye script, the pair's slots, approach type 2
         if vs2 and vs2.rows then rows = vs2.rows end
-        self.runner:run(rows, { npc = npc, mapId = self.map.id,
+        local extra = { npc = npc, mapId = self.map.id,
                                 gen3PartnerTrainer = partnerId,
                                 gen4ApproachingTrainers = {
                                   type(npc.def.trainer) == "table" and npc.def.trainer.id or 0,
@@ -12833,7 +12833,18 @@ function OverworldState:startTrainerApproach(npc, dist, partner, vs2)
                                     if other then hush[other] = true end
                                     self.spotHush = hush
                                   end
-                                end })
+                                end }
+        -- A MAP SCRIPT CAN BE RUNNING WHEN THE WALK-UP ENDS (a coordinate
+        -- event the player was standing on as the trainer spotted them: Route
+        -- 207's slope scene).  `ScriptRunner:run` asserts on a second script,
+        -- which raised out of the field's update -- the game was over.  Queue
+        -- the fight behind it instead; the queue drains once the world is idle
+        -- (drainPendingScripts), and the trainer stays frozen meanwhile.
+        if self.runner:isRunning() then
+          self:queueScript(rows, extra)
+        else
+          self.runner:run(rows, extra)
+        end
         return
       end
       npc.frozen = false
@@ -14456,7 +14467,7 @@ function OverworldState:onStepComplete()
       enc, roamer = Roam5.encounterFor(slot, it), "gen5"
       self.gen5RoamerSlot = slot
     end
-  elseif enc and not onWater then
+  elseif enc and not onWater and not GameVersion.isGen4() then
     local RoamMons = require("src.world.RoamMons")
     local name, info = RoamMons.check(Game.save, self.map.id, onWater,
                                       love.math.random)
@@ -15747,7 +15758,7 @@ function OverworldState:warpToHealPoint(onDone, opts)
     -- HGSS: Teleport's special-spawn warp is mode 2 (FieldMoveTask_Create-
     -- TeleportEnvironment), whose landing runs sub_02067BA4 ->
     -- Save_RandomizeRoamersLocation; Escape Rope (0) and Dig (1) do not
-    if Encounter.isHgss() and not (opts and opts.whiteout) and Game.save then
+    if GameVersion.isGen4() and Encounter.isHgss() and not (opts and opts.whiteout) and Game.save then
       pcall(function() require("src.world.Gen4Roamers").randomizeAll(Game.data, Game.save) end)
     end
     -- Dig/Teleport/Escape Rope land OUTSIDE at the last Pokemon Center TOWN

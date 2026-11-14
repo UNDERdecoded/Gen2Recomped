@@ -892,6 +892,19 @@ function R:snapshot()
     tostring(self:map()), x or 0, y or 0, tostring(p and p.facing or "down"), body))
   f:close()
 end
+function R:continueGame()
+  local SaveData = require("src.core.SaveData")
+  local game, ow = self.game, self.ow
+  if ow and ow.captureSave then ow:captureSave(game.save) end
+  local okE, body = pcall(SaveData.encode, game.save)
+  if not okE then self:say("  (continue: encode failed: %s)", tostring(body)) return end
+  local okD, loaded = pcall(SaveData.decode, body)
+  if not (okD and type(loaded) == "table") then self:say("  (continue: decode failed)") return end
+  local okR, err = pcall(game.restoreSave, game, loaded)
+  if not okR then self:fail("continue: " .. tostring(err)) return end
+  local x, y = self:pos()
+  self:say("  saved and continued at %s (%s,%s)", tostring(self:map()), tostring(x), tostring(y))
+end
 function R:resume(n)
   local path = self:snapshotPath(n)
   local okL, snap = pcall(dofile, path)
@@ -921,6 +934,20 @@ function R:tick(i, game, ow, planStep)
   end
   local b = self:currentBeat()
   self.beatT = self.beatT + 1
+  -- PT_BATTLELOG=1: every line a battle's box types, as the player reads it
+  -- (a story battle that is lost: what each side did)
+  if os.getenv("PT_BATTLELOG") then
+    local top = self:top()
+    if top and top.battle and top.startMessage and not top.__ptLogged then
+      top.__ptLogged = true
+      local orig = top.startMessage
+      top.startMessage = function(selfB, item)
+        local t = tostring(item and item.text)
+        print(("[pt %6d] [bmsg] %s"):format(self.t, (t:gsub("\n", " / "):gsub("\v", " "))))
+        return orig(selfB, item)
+      end
+    end
+  end
   if os.getenv("PT_DEBUG") and i % 500 == 0 then
     local x, y = self:pos()
     local busy, why = self:busy()
@@ -963,6 +990,15 @@ function R:tick(i, game, ow, planStep)
       local x, y = self:pos()
       self:say("PASS %s (%d ticks) at %s (%s,%s)", b.name, self.beatT, tostring(self:map()), tostring(x), tostring(y))
       self:snapshot()
+      -- PT_CONTINUE=1: SAVE AND CONTINUE between every two beats, the way a
+      -- player stops for the night -- the field's own capture, the save
+      -- through the codec, and the title's CONTINUE (Game:restoreSave) on
+      -- it -- so the next beat runs on what a reload brings back, not on
+      -- the live tables (a var, a flag or an object the save loses fails it)
+      if os.getenv("PT_CONTINUE") and not self:busy() then
+        self:continueGame()
+        if self.done then return nil, nil end
+      end
       self:nextBeat()
       return nil, nil
     end

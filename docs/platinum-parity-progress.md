@@ -2135,3 +2135,58 @@ it is the clock exclusion); nothing animating that is not on those lists, since
 the union only ever adds; no prop drawn twice, since twelve models have just
 changed pass; and a stutter check on a waterfall route or in Canalave, for the
 14 extra chunks today and 41 after the flipbooks land.
+
+## Story playthrough pass (November 2026)
+
+The automated playthrough (`tools/gen4_playthrough/platinum.lua`, 78 beats from
+the bedroom to the Hall of Fame) passed every beat on a USA Rev 1 cache before
+this pass. The fixes below come from what the log showed while the beats still
+passed — scenes that played to missing actors, no-op commands, stalls — and
+from the beats added past the credits. Each is checked against pret's
+pokeplatinum.
+
+- **Cynthia rides the Distortion World lifts.** 1F's lift (progress 2) and
+  B6F's (progress 7) carry Cynthia down with the player
+  (`DistWorldElevatorPlatform_BeginMovement` / `_ChangeMaps`): the same map
+  object, renumbered for the next floor (B1F 128; B7F 128 with script 6). The
+  next floor's object table has no Cynthia for that moment, so B1F's and B7F's
+  first-entry scenes moved a local id that was not there ("no object with
+  localId 128") and played to an empty platform. `Gen4DistPlatforms` now
+  takes the passenger at the start of the ride, lifts her with the platform,
+  and places her on the arrival floor at the world tile she rode on (B7F: she
+  then walks to exactly the tile B7F's own table gives her at progress 8).
+  Check: `tools/gen4_dist_surface_check.lua <cache>/data/generated` (53).
+- **The playthrough now goes past the credits** (91 beats, all passing in one
+  unbroken run on USA Rev 1). New beats: Eterna Forest with Cheryl as the
+  partner (her two-on-two trainers, the Soothe Bell); the Elite Four and the
+  Champion walked room to room — out by the door each win removes, up each
+  lift room's `TriggerPlatformLift`, walked in by the next room's frame
+  script — instead of teleported into; the credits to the title and a
+  CONTINUE at the house 2F (Mom's post-game scene); the National Dex at
+  Rowan's lab (a cheat, said as one: the Sinnoh dex marked seen); the
+  S.S. Spiral (Cynthia's send-off) to the Fight Area; Barry, Palmer and Buck
+  there; Route 227 (Crasher Wake and Barry, Buck's patrol request); Stark
+  Mountain — the grunts, Mars and Jupiter, Buck as the partner through room 2
+  (Rock Smash at (41,15), the Strength boulder at (29,12) pushed to (48,12),
+  his multi battles), Charon's arrest and Looker outside; the Battleground's
+  Buck; Heatran. Trainer-defeated flags are read from `save.gen4TrainerFlags`
+  (where the port keeps TRAINER_DEFEATED_FLAGS_START + id), not `save.flags`.
+- **`PT_CONTINUE=1`** (tools/gen4_playthrough/runner.lua): save and continue
+  between every two beats — the field's `captureSave`, the save through the
+  codec, and `Game:restoreSave` as the title's CONTINUE — so each beat runs on
+  what a reload brings back. Off by default; shared by every game's beats.
+- **Platinum Pokémon have a met location again.** The cartridge stamps a
+  caught, given or hatched Pokémon with the map's label
+  (`MapHeader_GetMapLabelTextID`, a place-name bank 433 index; egg_hatch.c,
+  field_battle_data_transfer.c). The port passed `BattleState.metHere`, a
+  Gen 3 region-map section that is nil on every Gen 4 map, so every Platinum
+  Pokémon was met nowhere: the Hall of Fame at the end of the story printed
+  "Met at ." and the summary left the line out. `Gen4Origin.stamp` now takes
+  the label of the map the player is on (the live field map — `save.player.map`
+  is only written by a save, so it named wherever the last save was: the
+  starter came out "met in Twinleaf Town"), and the Hall of Fame and the
+  summary name a numeric location from bank 433 (which also names the
+  locations NDS-imported Pokémon carry). HeartGold/SoulSilver, whose place
+  names are another bank, are left as they were. The starter now reads
+  "Route 201, Lv. 5". Check: `tools/gen4_met_location_check.lua
+  [<cache>/data/generated]` (13).

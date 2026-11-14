@@ -319,9 +319,13 @@ function love.load()
       end
     end
     local ticks = tonumber(os.getenv("TICKS") or "30")
+    -- SLOT=n: the move the presses pick (the cursor held on slot n), so a
+    -- matchup can be fought rather than whatever sits in slot 1
+    local slot = tonumber(os.getenv("SLOT") or "")
     for i = 1, ticks do
       if os.getenv("PARITY_ROM") and battle.phase=="menu" then break end
       pressed = press > 0 and (i % press == 0)
+      if slot then battle.moveIndex = slot end
       local okU, errU = pcall(battle.update, battle, 1 / 60)
       if not okU then
         print(("update raised on tick %d: %s"):format(i, tostring(errU)))
@@ -347,6 +351,25 @@ function love.load()
           tostring(battle.waitingSound), tostring(battle.draining), tostring(battle.animPlaying),
           tostring(battle.current and (battle.current.text or battle.current.kind or "item")),
           tostring(battle.introSlide)))
+      end
+    end
+
+    -- SAY=<text> (\n for a line break; several lines separated by |): put these
+    -- messages into the box after the ticks above and let them type -- how a
+    -- status, weather or item line looks on this cartridge's language
+    if os.getenv("SAY") then
+      pressed = false
+      battle.queue = {}
+      battle.nextInsert = 0
+      for piece in (os.getenv("SAY") .. "|"):gmatch("(.-)|") do
+        -- {move:<id>} / {item:<id>}: the cache's own name (no non-ASCII on the command line)
+        piece = piece:gsub("{move:(%d+)}", function(n) local d = Data.moves[tonumber(n)] return d and d.name or "?" end)
+        piece = piece:gsub("{item:(%d+)}", function(n) local d = Data.items and Data.items[tonumber(n)] return d and d.name or "?" end)
+        battle:say((piece:gsub("\\n", "\n")))
+      end
+      for _ = 1, tonumber(os.getenv("SAYTICKS") or "90") do
+        local okU, errU = pcall(battle.update, battle, 1 / 60)
+        if not okU then print("update raised: " .. tostring(errU)) break end
       end
     end
 

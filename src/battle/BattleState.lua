@@ -1192,7 +1192,11 @@ BattleState.stampOT = stampOT
 -- internal id of whichever screen the ball happened to land on.
 function BattleState.metHere(game)
   local save = game and game.save
-  local mapId = save and save.player and save.player.map
+  -- THE MAP THE PLAYER IS ON, not the one last saved: save.player.map is only
+  -- written by OverworldState:captureSave, so it named wherever the last save
+  -- happened.  Falls back to it when no overworld is live (tools, tests).
+  local ow = game and game.overworld
+  local mapId = (ow and ow.map and ow.map.id) or (save and save.player and save.player.map)
   local def = mapId and game.data and game.data.maps and game.data.maps[mapId]
   return def and def.regionMapSection or nil
 end
@@ -1741,6 +1745,10 @@ local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
     -- other trainer in the game is unchanged.
     local dvs = slot.dvs or trainerDvs
     mon.dvs = dvs
+    -- GEN 4 (Platinum family): TrainerData_BuildParty's own personality, so
+    -- nature / ability slot / gender are the cartridge's, not rolled
+    local cartridgePid = require("src.battle.Gen4TrainerPersonality").apply(
+      game, game.data.trainers and game.data.trainers[oppClass], slot, mon)
     if slot.statExp then mon.statExp = slot.statExp end
     if slot.happiness then mon.happiness = slot.happiness end
     if slot.stats then
@@ -1753,7 +1761,7 @@ local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
     else
       local def=require('src.pokemon.Gen4Forms').definition(game.data,mon)
       if (game.data.constants or {}).gen==4 then
-        mon.ivs=slot.dvs or mon.ivs
+        if not cartridgePid then mon.ivs=slot.dvs or mon.ivs end
         mon.stats=require('src.pokemon.Stats').calc(
           def,slot.level,mon.ivs,nil,mon.evs,mon.nature)
       else
@@ -2667,6 +2675,11 @@ function BattleState:startMessage(item)
   -- BLACK AND WHITE print the cartridge's own battle lines (Gen5BattleText)
   if self.bw and text ~= "" then
     text = require("src.battle.Gen5BattleText").translate(self, text)
+  end
+  -- A NON-ENGLISH GEN 4 CARTRIDGE (German Platinum) prints its own battle
+  -- lines (text bank 368 / 0) in place of the engine's English
+  if self.data and self.data.gen4_language and not self.bw and text ~= "" then
+    text = require("src.battle.Gen4BattleText").translate(self, text)
   end
   local pos, cont = 1, false
   while true do
@@ -4137,6 +4150,11 @@ function BattleState:fightLockedAction(battler)
   if battler.encoreTurns and battler.encoreMove then
     for _, m in ipairs(battler.curMoves or battler.mon.moves or {}) do
       if m.id == battler.encoreMove and (m.pp or 0) > 0 then
+        -- PLATINUM / HGSS: the move itself, which is what every other
+        -- chosen action is.  The `{ move = m }` wrapper has no `id`, so
+        -- performMove logged "unknown move instance nil" and an Encored
+        -- Pokemon lost its turn.
+        if self.g4fx and not self.bw then return m end
         return { move = m }
       end
     end
@@ -4181,6 +4199,16 @@ function BattleState:menuBattler()
   return self:choosingBattler() or self.player
 end
 
+-- PLATINUM / HGSS: CHECK_INVALID_ALL also counts the TAUNTED and TORMENTED
+-- slots (BattleSystem_CheckInvalidMoves), and Struggle is forced when every
+-- slot is invalid, so a Torment on a Pokemon whose only usable move was just
+-- used -- or a Taunt on one that knows nothing but status moves -- is a
+-- Struggle turn.  Without this the move menu refused every pick for ever.
+function BattleState:g4StatusBlocksMove(who, mvDef)
+  if not (self.g4fx and not self.bw) then return false end
+  return self:tauntBlocks(who, mvDef) or self:tormentBlocks(who, mvDef)
+end
+
 function BattleState:playerHasPP(who)
   who = who or self:menuBattler()
   if not (who and who.curMoves) then return false end
@@ -4188,6 +4216,7 @@ function BattleState:playerHasPP(who)
     -- (PLATINUM / HGSS: a move Gravity or Heal Block refuses is no more a
     -- choice than a disabled one -- CHECK_INVALID_ALL)
     if mv.pp > 0 and who.disabledSlot ~= i
+       and not self:g4StatusBlocksMove(who, self.data.moves[mv.id])
        and not (self.g4fx and require("src.battle.Gen4MoveEffects")
                   .menuRefusal(self, who, self.data.moves[mv.id]))
        and not (self.g3x and require("src.battle.Gen4MoveEffectsExtra").menuRefusal(self, who, self.data.moves[mv.id])) then
@@ -4611,7 +4640,12 @@ function BattleState:update(dt)
     -- activeOn answers the question this menu actually means: somebody on the
     -- player's side, left flank first.  A single battle and an ordinary
     -- double both get exactly what they got before.
-    local acting = self.player or self:activeOn(1)
+    -- PLATINUM / HGSS DOUBLES: the slot being asked, not always the left one.
+    -- A locked move (Bide, a charge, recharge, Rage, a thrash) belongs to ITS
+    -- Pokemon; reading the left flank here handed the left's Bide to the
+    -- right-hand slot, which crashed continueBide (`bideTurns` nil).
+    local acting = (self.g4fx and self:isDouble() and self:choosingBattler())
+                   or self.player or self:activeOn(1)
     if not (acting and acting.mon) then
       -- nobody left on this side at all: that is the faint flow's business,
       -- not the menu's, and it is already running.  Returning is what keeps
@@ -4632,7 +4666,8 @@ function BattleState:update(dt)
     -- victims (and wrappers) still get FIGHT/PKMN/ITEM/RUN (core.asm:312)
     local locked = self:menuLockedAction(acting)
     if locked then
-      self:resolveTurn(locked)
+      -- (a double files it under its own slot and goes on to ask the other)
+      if self.g4fx and self:isDouble() then self:chooseAction(locked) else self:resolveTurn(locked) end
       return
     end
     -- PLATINUM'S ACTION MENU IS NOT A 2x2, and walking it as one is what a
@@ -4706,9 +4741,10 @@ function BattleState:update(dt)
       elseif choice == "fight" then
         -- After the menu: own trapping/Bide or foe Wrap skips the move
         -- list and forces the locked action (core.asm:320-329)
-        local fightLock = self:fightLockedAction(self.player)
+        local g4Double = self.g4fx and self:isDouble()
+        local fightLock = self:fightLockedAction(g4Double and self:menuBattler() or self.player)
         if fightLock then
-          self:resolveTurn(fightLock)
+          if g4Double then self:chooseAction(fightLock) else self:resolveTurn(fightLock) end
           return
         end
         local who = self:menuBattler()
@@ -5006,7 +5042,7 @@ function BattleState:gen3TutorialBag()
   if require("src.core.GameVersion").isGen4() then
     self.phase, self.afterQueue = "messages", "menu"
     self:ui(function()
-      local bag = require("src.ui.Gen4BagMenu").new(self.game, { pocket = "POKé BALLS" })
+      local bag = require("src.ui.Gen4BagMenu").new(self.game, { pocket = "POKE_BALLS" })
       bag.rows = { { id = 4, label = "POKé BALL", qty = 20 } }
       bag.update = function(b)
         b.scriptTimer = (b.scriptTimer or 0) + 1
@@ -5914,7 +5950,7 @@ function BattleState:resolveTurn(playerAction)
     local switches, moves = {}, {}
     for _, e in ipairs(entries) do
       local sp = e.action and e.action.special
-      if sp == "playerSwitch" or sp == "aiSwitch" then
+      if sp == "playerSwitch" or sp == "aiSwitch" or sp == "playerItem" then
         switches[#switches + 1] = e
       else
         moves[#moves + 1] = e
@@ -6804,7 +6840,20 @@ function BattleState:endOfTurn()
   -- faint on the first action and its partner still take the third.  Does
   -- nothing at all in a single battle, where the faint path fills the slot
   -- itself and there is nothing pending.
-  self:fillEmptySlots()
+  --
+  -- PLATINUM / HGSS DOUBLES: ...BUT AFTER THE FAINTS THIS SWEEP QUEUED.  A
+  -- burn / poison / sandstorm / Leech Seed faint inside the residual above
+  -- queues its `doubleFaint` with actNext, which lands AFTER this running
+  -- queue item; filling right here ran first, found the slot still occupied,
+  -- and left the replacement pending until the NEXT turn's end -- with both
+  -- slots empty (a living bench mon, e.g. a Revived one) the battle sat in
+  -- an unanswerable command menu forever.  Queueing the fill behind the
+  -- faints is HandleFaintedMonActions' order.
+  if self.g4fx and not self.bw and self:isDouble() then
+    self:actNext(function() self:fillEmptySlots() end)
+  else
+    self:fillEmptySlots()
+  end
   -- BATTLE PALACE: the first time a Pokemon is at half HP or below (and
   -- awake), its nature shows (VARIOUS_PALACE_FLAVOR_TEXT)
   if self.palace then
@@ -8003,6 +8052,7 @@ function BattleState:executeAction(user, target, action)
   -- resolve it to.
   local isSwitch = action.special == "playerSwitch"
                    or action.special == "aiSwitch"
+                   or action.special == "playerItem"
   if not isSwitch and not (target and target.mon and target.mon.hp > 0) then
     return
   end
@@ -8103,6 +8153,11 @@ function BattleState:executeAction(user, target, action)
     -- actions rather than the whole turn.  A single battle never reaches
     -- here: resolveSwitch does the send-out itself and gives the foe its
     -- free move, which is the cartridge's single-battle flow.
+    if action.special == "playerItem" then
+      for _, m in ipairs(action.messages or {}) do self:sayNext(m) end
+      self:drainNext() -- potions animate the bar
+      return
+    end
     if action.special == "playerSwitch" then
       if action.mon and action.mon.hp and action.mon.hp > 0 then
         self:switchPlayerInto(user.position or BattleState.POS.PLAYER_LEFT,
@@ -8182,11 +8237,15 @@ function BattleState:executeAction(user, target, action)
       end
     end
     local animationPlayed = false
+    local announced = false
     for i, one in ipairs(list) do
       if one and one.mon and (one.mon.hp or 0) > 0 then
         -- only the first announces; the rest are the same move landing again
+        -- (Platinum / HGSS print the line once, not once per target)
         self:performMove(user, one, action, i > 1,
-                         spreadAnimation and animationPlayed)
+                         spreadAnimation and animationPlayed,
+                         (self.g4fx and announced) or nil)
+        announced = true
         -- FireRed's Cmd_attackanimation increments animTargetsHit only when an
         -- animation actually survives the no-effect/failure path.  If the
         -- first target cancels it, a later spread target is still allowed to
@@ -8469,7 +8528,11 @@ local WEATHER_BALL_ANIM = {
   SUN = 1, RAIN = 2, SANDSTORM = 3, HAIL = 4,
 }
 
-function BattleState:performMove(user, target, moveInst, isCalled, suppressAnimation)
+-- `suppressAnnounce` (PLATINUM / HGSS, a spread move's later targets): the
+-- "X used Y!" line belongs to the move, not to each target -- the cartridge
+-- shows it once (SYSCTL_ATTACK_MESSAGE_SHOWN) and loops the hit over the other
+-- battlers (BattleControllerPlayer_MoveEnd's RANGE_ALL_ADJACENT arm).
+function BattleState:performMove(user, target, moveInst, isCalled, suppressAnimation, suppressAnnounce)
   local move = self:moveDef(moveInst)
   if not move then
     Logger.warn("unknown move instance %s", tostring(moveInst.id))
@@ -8548,7 +8611,9 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
 
   self.moveAnimRow = nil
   if not (user.thrashTurns and moveInst == user.thrashMove and user.thrashAnnounced) then
-    self:sayNext(self:romText("_ItemUseText001", "%s\nused %s!", displayName(user), move.name))
+    if not suppressAnnounce then
+      self:sayNext(self:romText("_ItemUseText001", "%s\nused %s!", displayName(user), move.name))
+    end
     -- the move's animation plays right after the announcement; the
     -- damage path attaches the target's hit blink to this row so the
     -- blink follows the animation (pokered's order).  Mimic is the
@@ -8644,6 +8709,14 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
       end
       if chargeAnim then
         self:animNext(chargeAnim, user.isPlayer)
+      end
+    end
+    -- a non-English Gen 4 cartridge has the charge line of each move itself
+    if self.data and self.data.gen4_language and not self.bw then
+      local own = require("src.battle.Gen4BattleText").chargeLine(self, move, user)
+      if own then
+        self:sayNext(own)
+        return
       end
     end
     local chargeText = move.chargeText or CHARGE_TEXT[move.id]
@@ -9184,6 +9257,18 @@ end
 -- before the first one has played would queue the whole thing again.
 function BattleState:checkSideBeaten()
   if self.sideBeaten then return end
+  -- PLATINUM / HGSS: BOTH SIDES OUT AT ONCE IS A DRAW, AND A DRAW IS PLAYED AS
+  -- A LOSS.  CheckBattleOver ORs BATTLE_RESULT_WIN and _LOSE when every
+  -- battler's party is empty (Explosion taking the last Pokemon of both
+  -- sides), and BattleControllerPlayer_HandleResult runs subscript_battle_lost
+  -- for LOSE and DRAW alike.  Checking the foes first made it a win -- paid
+  -- out, then forced to a blackout by finish() with a warning.
+  if self.g4fx and not self.bw and not self:sideCanContinue(false)
+     and not self:sideCanContinue(true) then
+    self.sideBeaten = "player"
+    self:act(function() self:playerMonFainted() end)
+    return
+  end
   if not self:sideCanContinue(false) then
     self.sideBeaten = "enemy"
     self:act(function() self:enemyMonFainted() end)
@@ -9292,7 +9377,13 @@ function BattleState:awardExp(fallen)
       -- new current HP (house convention: potions drain the bar too, see
       -- itemUsed) so the bar grows instead.  Only the active player battler
       -- shares its table with the HUD; other party mons (EXP.ALL) have no bar.
-      if mon == self.player.mon then self:drainNext() end
+      -- (`self.player` is the LEFT flank and is nil in a double between its
+      -- faint and the replacement -- the exp is paid right then)
+      local onField = self.player and mon == self.player.mon
+      for _, b in activeBattlers(self) do
+        if b and b.isPlayer and b.mon == mon then onField = true end
+      end
+      if onField then self:drainNext() end
       for _, moveId in ipairs(Experience.movesLearnedAt(
           self.data.pokemon[mon.species], lv)) do
         self:learnMove(mon, moveId)
@@ -9665,6 +9756,13 @@ function BattleState:enemyMonFainted()
     end
   end
   self.result = "win"
+  -- PLATINUM / HGSS: the last foe going down in the same breath as the last
+  -- of the player's own Pokemon (recoil, Explosion, a sandstorm tick) is a
+  -- DRAW, and the cartridge plays a draw as a loss (HandleResult).  playerMonFainted
+  -- queues the blackout; the result has to agree with it.
+  if self.g4fx and not self.bw and not self.ally and not Party.firstHealthy(self.game.save.party) then
+    self.result = "lose"
+  end
   self.afterQueue = "finish"
 end
 
@@ -10308,6 +10406,17 @@ function BattleState:itemUsed(messages)
   -- bag cures clear mon.status before the message UI; refresh the HUD
   -- once control returns (pokered DrawHUDsAndHPBars after item use)
   self:syncShownStatus()
+  -- PLATINUM / HGSS DOUBLES: an item is one of the four actions, not the whole
+  -- turn.  It is filed under the slot that used it and run with the switches
+  -- (BattleControllerPlayer_CalcTurnOrder: items and party first, fights
+  -- after), while the other three slots still choose and move.  Running it as
+  -- a turn of its own lost the partner's move and the right foe's, and left
+  -- the half-collected `pendingActions` behind for the NEXT turn to execute
+  -- (a stale Bide on a Pokemon that never used it crashed continueBide).
+  if self.g4fx and not self.bw and self:isDouble() then
+    self:chooseAction({ special = "playerItem", messages = messages or {} })
+    return
+  end
   for _, m in ipairs(messages or {}) do self:say(m) end
   table.insert(self.queue, { drain = true }) -- potions animate the bar
   self:act(function()

@@ -111,6 +111,8 @@ local FLASH_MAX = 16
 -- PokemonSpriteTemplate for SPECIES_BUNEARY, FACE_FRONT, so the picture is the
 -- species' own front sprite out of pl_pokegra rather than anything stored in
 -- the intro archive -- which is why this needs no new art.
+-- (the extractor reads the real one from overlay 73 into `gen4_intro.monSpecies`;
+-- 427 is the fallback for a cache imported before it did)
 local MON_SPECIES = 427
 
 -- Where it sits: `Bg_LoadToTilemapRect(..., 11, 9, 10, 10)`, a 10x10-tile
@@ -342,7 +344,7 @@ function Gen4RowanIntro:askName()
   local boot = self.game.data.field and self.game.data.field.boot
   local presets = (boot and boot.namePresets and boot.namePresets.player) or nil
   if not presets or #presets == 0 then
-    presets = { self.answers.gender == "girl" and "Dawn" or "Lucas" }
+    presets = { require("src.script.Gen4DefaultNames").hero(self.game.data, self.answers.gender == "girl") }
   end
   local maxLen = (self.game.data.constants or {}).playerNameLength or 7
   Screens.push(self.game, "NamingScreen", {
@@ -533,7 +535,8 @@ end
 -- has no sprite for it, which costs the picture and not the sequence.
 function Gen4RowanIntro:monImage()
   if self.monImageCache ~= nil then return self.monImageCache or nil end
-  local path = Sprites.path(self.game.data, MON_SPECIES, "front",
+  local species = (self.rec and tonumber(self.rec.monSpecies)) or MON_SPECIES
+  local path = Sprites.path(self.game.data, species, "front",
                             { kind = "intro" })
   self.monImageCache = path and self:img(path) or false
   return self.monImageCache or nil

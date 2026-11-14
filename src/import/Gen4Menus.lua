@@ -532,55 +532,60 @@ function Gen4Menus.poketchName(text)
   return text:match("{COLOR %d+}(.-){COLOR %d+}")
 end
 
--- Which picture each app wears.  Twenty-two of the twenty-five have a face of
--- their own in `/graphic/poketch.narc`; the Friendship Checker, the Pokémon
--- History and the Dot Artist do not, and they fall back to the cartridge's own
--- `unavailable` screen rather than to a blank one this port drew.
+-- BANK 213'S ORDER, BY POSITION, as app ids.  It was found by the text
+-- pairing the comment above describes -- every coloured name opening exactly
+-- one bank-29 description -- and it is a property of the bank, not of the
+-- language: the German cartridge pairs 23 of its 25 names to the same app ids
+-- at the same positions, and the other two ("Kalender" inside
+-- "Monatskalender", "Pokémon-Historie" against "Historie der Pokémon") are
+-- the ones prose cannot pair.  So the pairing is this table, and the text
+-- match is only the cross-check that reports a cartridge where it disagrees.
+Gen4Menus.POKETCH_NAME_ORDER = { [0] = 0, 6, 13, 19, 7, 8, 20, 12, 9, 11, 21, 1, 16, 23, 18, 24,
+  5, 14, 17, 22, 4, 15, 10, 3, 2 }
+
+-- Which picture each app wears, by APP ID (the bank-29 order; pokeplatinum
+-- generated/poketch_apps.txt).  Twenty-two of the twenty-five have a face of
+-- their own in `/graphic/poketch.narc`; the Friendship Checker (8), the
+-- Pokémon History (11) and the Dot Artist (14) do not, and they fall back to
+-- the cartridge's own `unavailable` screen rather than to a blank one this
+-- port drew.  Keyed by id rather than by the app's English name so a German
+-- cartridge's "Digitaluhr" wears the same face as "Digital Watch".
 Gen4Menus.POKETCH_ART = {
-  ["Digital Watch"] = "poketch/digital_watch",
-  ["Analog Watch"] = "poketch/analog_watch",
-  ["Alarm Clock"] = "poketch/alarm_clock",
-  ["Stopwatch"] = "poketch/stopwatch",
-  ["Kitchen Timer"] = "poketch/kitchen_timer",
-  ["Calendar"] = "poketch/calendar",
-  ["Calculator"] = "poketch/calculator",
-  ["Pokémon List"] = "poketch/party_status",
-  ["Day-Care Checker"] = "poketch/daycare_checker",
-  ["Matchup Checker"] = "poketch/matchup_checker",
-  ["Berry Searcher"] = "poketch/berry_searcher",
-  ["Memo Pad"] = "poketch/memo_pad",
-  ["Color Changer"] = "poketch/color_changer",
-  ["Marking Map"] = "poketch/marking_map",
-  ["Roulette"] = "poketch/roulette",
-  ["Coin Toss"] = "poketch/coin_toss",
-  ["Pedometer"] = "poketch/pedometer",
-  ["Dowsing Machine"] = "poketch/dowsing_machine",
-  ["Counter"] = "poketch/counter",
-  ["Trainer Counter"] = "poketch/trainer_counter",
-  ["Link Searcher"] = "poketch/link_searcher",
-  ["Move Tester"] = "poketch/move_tester",
+  [0] = "poketch/digital_watch",
+  [1] = "poketch/analog_watch",
+  [2] = "poketch/alarm_clock",
+  [3] = "poketch/stopwatch",
+  [4] = "poketch/kitchen_timer",
+  [5] = "poketch/calendar",
+  [6] = "poketch/calculator",
+  [7] = "poketch/party_status",
+  [9] = "poketch/daycare_checker",
+  [10] = "poketch/matchup_checker",
+  [12] = "poketch/berry_searcher",
+  [13] = "poketch/memo_pad",
+  [15] = "poketch/color_changer",
+  [16] = "poketch/marking_map",
+  [17] = "poketch/roulette",
+  [18] = "poketch/coin_toss",
+  [19] = "poketch/pedometer",
+  [20] = "poketch/dowsing_machine",
+  [21] = "poketch/counter",
+  [22] = "poketch/trainer_counter",
+  [23] = "poketch/link_searcher",
+  [24] = "poketch/move_tester",
 }
 
 Gen4Menus.POKETCH_BORDER = "poketch/poketch_border"
 Gen4Menus.POKETCH_UNAVAILABLE = "poketch/unavailable"
 Gen4Menus.POKETCH_DIGITS = "poketch/digital_watch_digits"
 
--- Which apps this port DOES something with, as opposed to drawing.  An app
--- that is not here still appears and still shows its own face; it simply has
--- no behaviour yet, which is visible on screen rather than hidden.
-Gen4Menus.POKETCH_LIVE = {
-  ["Digital Watch"] = true, ["Analog Watch"] = true, ["Calendar"] = true,
-  ["Counter"] = true, ["Coin Toss"] = true, ["Pedometer"] = true,
-  ["Pokémon List"] = true,
-  ["Calculator"] = true, ["Stopwatch"] = true, ["Kitchen Timer"] = true,
-  ["Memo Pad"] = true, ["Dot Artist"] = true, ["Marking Map"] = true,
-  ["Roulette"] = true, ["Friendship Checker"] = true,
-  ["Day-Care Checker"] = true,
-  ["Alarm Clock"] = true, ["Dowsing Machine"] = true,
-  ["Move Tester"] = true,
-  ["Color Changer"] = true,
-  ["Matchup Checker"] = true, ["Pokémon History"] = true,
-  ["Berry Searcher"] = true,
-}
+-- Which apps this port DOES something with, as opposed to drawing, by app id.
+-- An app that is not here still appears and still shows its own face; it
+-- simply has no behaviour yet, which is visible on screen rather than hidden.
+-- Everything but the Trainer Counter (22) and the Link Searcher (23).
+Gen4Menus.POKETCH_LIVE = {}
+for id = 0, 24 do
+  if id ~= 22 and id ~= 23 then Gen4Menus.POKETCH_LIVE[id] = true end
+end
 
 return Gen4Menus

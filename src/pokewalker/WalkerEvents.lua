@@ -465,7 +465,9 @@ end
 Ev.speciesKey = speciesKey
 
 local function itemKey(data, name, gen)
-  return findKey(data.items, name, gen >= 4 or nil)
+  -- a Gen IV cache in another language: the English name's cartridge id
+  return require("src.pokemon.Gen4EnglishRef").itemKey(data, name)
+    or findKey(data.items, name, gen >= 4 or nil)
 end
 
 -- names a dataset spells the older way (Gen 3-5 cartridges say "Faint
@@ -476,7 +478,8 @@ local MOVE_ALIAS = { ["Feint Attack"] = "Faint Attack", ["Hi Jump Kick"] = "High
 local function moveList(data, names, gen)
   local out = {}
   for _, n in ipairs(names or {}) do
-    local k = findKey(data.moves, n, gen >= 4 or nil)
+    local k = require("src.pokemon.Gen4EnglishRef").moveKey(data, n)
+      or findKey(data.moves, n, gen >= 4 or nil)
       or (MOVE_ALIAS[n] and findKey(data.moves, MOVE_ALIAS[n], gen >= 4 or nil))
     local def = k and data.moves[k]
     if def then out[#out + 1] = { id = k, pp = def.pp or 0 } end

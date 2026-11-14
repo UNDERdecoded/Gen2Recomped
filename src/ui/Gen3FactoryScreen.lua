@@ -89,6 +89,13 @@ function S:update()
   if not input then return end
   local list = self:list()
   local n = #list
+  -- A LIST TOO SHORT TO FINISH FROM must not hold the player in the screen:
+  -- SELECT only ends with three picks and SWAP with a pair, so an empty (or
+  -- short) offer -- a Factory challenge resumed with no rentals on the save --
+  -- had no way out at all.  Hand back "nothing chosen" and the caller falls
+  -- back to its defaults (fr_bf_app reads a missing result as slots 1..n).
+  if n == 0 then return self:finish(nil) end
+  local needed = (self.mode == "select") and math.min(3, n) or 1
   if input:wasPressed("up") then
     self.index = (self.index - 2) % math.max(1, n) + 1
     Sound.play(self.data, "Press_AB")
@@ -100,9 +107,9 @@ function S:update()
     if self.mode == "select" then
       local at = self:pickedAt(self.index)
       if at then table.remove(self.picks, at)
-      elseif list[self.index] and #self.picks < 3 then
+      elseif list[self.index] and #self.picks < needed then
         self.picks[#self.picks + 1] = self.index
-        if #self.picks == 3 then self:confirmNow() end
+        if #self.picks == needed then self:confirmNow() end
       end
     elseif self.phase == "give" then
       if list[self.index] then self.give = self.index; self.phase = "take"; self.index = 1 end

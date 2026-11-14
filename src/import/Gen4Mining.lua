@@ -488,6 +488,26 @@ Gen4Mining.TREASURE_ITEMS = {
   [48] = "ITEM_IRON_PLATE",
 }
 
+-- ...and each constant's item id (pokeplatinum include/constants/items.h,
+-- checked against a US cache by name), because the bag has to find the item
+-- by id: the names are the cartridge's language, and a German cache has no
+-- "Oval Stone" to match ITEM_OVAL_STONE against.
+Gen4Mining.TREASURE_ITEM_IDS = {
+  ITEM_OVAL_STONE = 110, ITEM_ODD_KEYSTONE = 111, ITEM_SUN_STONE = 80, ITEM_STAR_PIECE = 91,
+  ITEM_MOON_STONE = 81, ITEM_HARD_STONE = 238, ITEM_THUNDERSTONE = 83, ITEM_EVERSTONE = 229,
+  ITEM_FIRE_STONE = 82, ITEM_WATER_STONE = 84, ITEM_LEAF_STONE = 85, ITEM_NUGGET = 92,
+  ITEM_HELIX_FOSSIL = 101, ITEM_DOME_FOSSIL = 102, ITEM_CLAW_FOSSIL = 100, ITEM_ROOT_FOSSIL = 99,
+  ITEM_OLD_AMBER = 103, ITEM_RARE_BONE = 106, ITEM_REVIVE = 28, ITEM_MAX_REVIVE = 29,
+  ITEM_RED_SHARD = 72, ITEM_BLUE_SHARD = 73, ITEM_YELLOW_SHARD = 74, ITEM_GREEN_SHARD = 75,
+  ITEM_HEART_SCALE = 93, ITEM_ARMOR_FOSSIL = 104, ITEM_SKULL_FOSSIL = 105, ITEM_LIGHT_CLAY = 269,
+  ITEM_IRON_BALL = 278, ITEM_ICY_ROCK = 282, ITEM_SMOOTH_ROCK = 283, ITEM_HEAT_ROCK = 284,
+  ITEM_DAMP_ROCK = 285, ITEM_FLAME_PLATE = 298, ITEM_SPLASH_PLATE = 299, ITEM_ZAP_PLATE = 300,
+  ITEM_MEADOW_PLATE = 301, ITEM_ICICLE_PLATE = 302, ITEM_FIST_PLATE = 303, ITEM_TOXIC_PLATE = 304,
+  ITEM_EARTH_PLATE = 305, ITEM_SKY_PLATE = 306, ITEM_MIND_PLATE = 307, ITEM_INSECT_PLATE = 308,
+  ITEM_STONE_PLATE = 309, ITEM_SPOOKY_PLATE = 310, ITEM_DRACO_PLATE = 311, ITEM_DREAD_PLATE = 312,
+  ITEM_IRON_PLATE = 313,
+}
+
 -- Is this cell of an object solid?  `Mining_AreCoordinatesWithinObjectShape`,
 -- with the flat read already baked into `occ` above, so this is a lookup.
 -- x and y are 0-based CELL offsets within the object.

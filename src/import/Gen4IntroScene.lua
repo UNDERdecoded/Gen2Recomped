@@ -240,4 +240,45 @@ Gen4IntroScene.SCRIPT = {
   { text = "ending",          figure = "rowan", backdrop = "speech" },
 }
 
+-- THE POKEMON ROWAN RELEASES, read from overlay 73 rather than assumed.
+--
+-- Overlay 73 is the opening's own code (`RowanIntro_LoadBunearySprite` and the
+-- cry played as the ball opens).  Retail Platinum names Buneary (427) in both
+-- places as an instruction literal; Renegade Platinum edits exactly those two
+-- literals to Eevee (133) and touches nothing else in the overlay, which is
+-- how this was found: it is the intro's Pokemon, not Amity Square's walkers.
+--
+-- The sprite loader is a fixed Thumb sequence --
+--     ldr  r1, [pc, #n]      ; the species literal
+--     str  r2, [sp, #8]      ; 0x9202
+--     add  r0, sp, #0x10     ; 0xA804
+--     movs r3, #2            ; 0x2302  (FACE_FRONT)
+--     bl   <sprite template builder>
+-- -- so the species is the literal that `ldr r1` loads there.  Returns nil when
+-- the sequence is absent (another build of the overlay), and the screen keeps
+-- Buneary.
+Gen4IntroScene.OVERLAY = 73
+function Gen4IntroScene.monSpecies(overlay, maxSpecies)
+  if type(overlay) ~= "string" then return nil end
+  local function h16(at)
+    local a, b = overlay:byte(at + 1, at + 2)
+    if not b then return nil end
+    return a + b * 256
+  end
+  for at = 0, #overlay - 12, 2 do
+    local w = h16(at)
+    if w and w >= 0x4900 and w < 0x4A00
+       and h16(at + 2) == 0x9202 and h16(at + 4) == 0xA804
+       and h16(at + 6) == 0x2302 then
+      local target = math.floor((at + 4) / 4) * 4 + (w % 256) * 4
+      local a, b, c, d = overlay:byte(target + 1, target + 4)
+      if d then
+        local value = a + b * 256 + c * 65536 + d * 16777216
+        if value >= 1 and value <= (tonumber(maxSpecies) or 493) then return value end
+      end
+    end
+  end
+  return nil
+end
+
 return Gen4IntroScene

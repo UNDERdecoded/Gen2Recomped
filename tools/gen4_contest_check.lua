@@ -12,6 +12,16 @@ local PASS, FAIL = 0, 0
 local function check(c, l) if c then PASS = PASS + 1 else FAIL = FAIL + 1 print('FAIL: ' .. l) end end
 local dir = (arg and arg[1] or ''):gsub('[/\\]$', '')
 local function load(n) local f = loadfile(dir .. '/' .. n .. '.lua') return f and f() end
+-- A NON-ENGLISH CACHE (gen4_language.lua, written by a German import) carries the
+-- same entries in its own language: those lookups are asserted to come from the
+-- bank (a real, non-empty line without control codes), never against the English
+-- words.  An English cache asserts exactly the English it always did.
+local LANG = load('gen4_language')
+local function named(actual, english, label)
+  if not LANG then check(actual == english, label) return end
+  check(type(actual) == 'string' and actual ~= '' and not actual:find('{', 1, true),
+    label .. ' [' .. tostring(LANG.language) .. ': read from the bank]')
+end
 local rec = load('gen4_contest')
 check(rec, 'the cache must carry gen4_contest (run tools/gen4_contest_extract.lua)')
 if not rec then print(('%d checks, %d failed'):format(PASS + FAIL, FAIL)) os.exit(1) end
@@ -22,7 +32,7 @@ local T = require('src.import.Gen4Text')
 
 -- the data
 check(#rec.opponents == 95 and rec.opponents[0].species == 25, '96 contestants; the first a Pikachu')
-check(text[T.label(205, rec.opponents[0].nameId)] == 'Sparky', 'named Sparky (bank 205)')
+named(text[T.label(205, rec.opponents[0].nameId)], 'Sparky', 'named Sparky (bank 205)')
 check(#rec.judges == 11 and #rec.dressups == 95, '12 judges, 96 dress-ups')
 local themeOK = true
 for t = 0, 11 do if not rec.themes[t] or rec.themes[t][0] == nil then themeOK = false end end
@@ -93,7 +103,13 @@ Cm.g4_new_contest(ctx, 0, 0, C.OFFICIAL, 0)
 check(game.gen4Contest and game.gen4Contest.contestants[0].mon == save.party[1], 'newcontest builds the contest on the game')
 Cm.g4_contest_buffer(ctx, 'rank', 0)
 Cm.g4_contest_buffer(ctx, 'type', 1)
-check(game.stringBuffers[1] == 'NORMAL RANK' and game.stringBuffers[2] == 'COOL CONTEST', 'rank and type names from bank 204')
+if LANG then
+  named(game.stringBuffers[1], nil, 'rank name from bank 204')
+  named(game.stringBuffers[2], nil, 'contest type name from bank 204')
+  check(game.stringBuffers[1] ~= game.stringBuffers[2], 'and the two are different lines')
+else
+  check(game.stringBuffers[1] == 'NORMAL RANK' and game.stringBuffers[2] == 'COOL CONTEST', 'rank and type names from bank 204')
+end
 Cm.g4_contest_query(ctx, 'entry', 0x800C)
 check(var(0x800C) == 3, 'the player is entry 3')
 Cm.g4_contest_buffer(ctx, 'trainer', 3, 0)

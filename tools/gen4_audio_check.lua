@@ -1,7 +1,7 @@
 package.path='./?.lua;'..package.path
 local R=assert(require('src.import.NdsRom').open('Pokemon - Platinum Version (USA) (Rev 1).nds'))
 local S=require('src.import.Gen4Sdat');local raw=R:read(S.PATH);local arc=assert(S.open(raw))
-local catalogue=require('src.import.Gen4Audio').catalogue(arc,assert(loadfile('G:/Gen2Recomped/platinum/data/generated/gen4_map_headers.lua'))())
+local catalogue=require('src.import.Gen4Audio').catalogue(arc,assert(loadfile(((os.getenv('GEN4_DATA') or (os.getenv('APPDATA') and os.getenv('APPDATA')..'/LOVE/Gen2Recomp/platinum/data/generated') or 'data/generated')..'/gen4_map_headers.lua')))())
 local blocks,energy=0,0
 local function queue() return {setVolume=function() end,getVolume=function() return 1 end,setFilter=function() end,stop=function() end,pause=function() end,play=function() end,isPlaying=function() return true end,getFreeBufferCount=function() return 0 end,queue=function() end} end
 love={filesystem={read=function() return raw end},audio={newQueueableSource=queue},sound={newSoundData=function() return {setSample=function(_,i,c,v) blocks=blocks+1;energy=energy+math.abs(v) end} end}}

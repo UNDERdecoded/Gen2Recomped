@@ -102,12 +102,25 @@ Gen4Poketch.APP_IDS = {
   ["Trainer Counter"] = 19, ["Kitchen Timer"] = 20, ["Color Changer"] = 21,
   ["Matchup Checker"] = 22, ["Stopwatch"] = 23, ["Alarm Clock"] = 24,
 }
+-- THE KEY THIS SCREEN DISPATCHES ON, by the cache's `apps[].id` (the
+-- description bank's order, the same on every language): `app.name` is the
+-- cartridge's own spelling -- "Digitaluhr" on a German Platinum -- so it is
+-- shown, never compared.  These strings are this file's identifiers for the
+-- apps (APP_IDS, DRAW, UNDER, NO_FACE), not text read from a cartridge.
+Gen4Poketch.KEY_BY_DESC_ID = {
+  [0] = "Digital Watch", "Analog Watch", "Alarm Clock", "Stopwatch", "Kitchen Timer",
+  "Calendar", "Calculator", "Pokémon List", "Friendship Checker", "Day-Care Checker",
+  "Matchup Checker", "Pokémon History", "Berry Searcher", "Memo Pad", "Dot Artist",
+  "Color Changer", "Marking Map", "Roulette", "Coin Toss", "Pedometer",
+  "Dowsing Machine", "Counter", "Trainer Counter", "Link Searcher", "Move Tester",
+}
 function Gen4Poketch.cartridgeOrder(apps)
   local out = {}
   for i, app in ipairs(apps or {}) do
     local copy = {}
     for k, v in pairs(app) do copy[k] = v end
-    copy.cartId = Gen4Poketch.APP_IDS[app.name]
+    copy.key = (app.id ~= nil and Gen4Poketch.KEY_BY_DESC_ID[tonumber(app.id)]) or app.name
+    copy.cartId = Gen4Poketch.APP_IDS[copy.key]
     copy.order = i
     out[#out + 1] = copy
   end
@@ -375,7 +388,7 @@ function Gen4Poketch:update(dt)
   end
 
   local app = self:app()
-  local name = app and app.name
+  local name = app and app.key
   if not app then return end
 
   if input:wasPressed("a") then
@@ -392,7 +405,7 @@ end
 -- The keyboard's stand-in for the app's main touch target.
 function Gen4Poketch:activate()
   local app, s = self:app(), self:store()
-  local name = app and app.name
+  local name = app and app.key
   if name == "Counter" then
     s.counter = ((s.counter or 0) + 1) % 10000
     appSe(self, "SEQ_SE_DP_POKETCH_010")
@@ -466,7 +479,7 @@ function Gen4Poketch:touchpressed(id, px, py)
   if x < FACE.x or x >= FACE.x + FACE.w or y < FACE.y or y >= FACE.y + FACE.h then return true end
   -- POKETCH_SYSTEM_MAIN_BUTTON_SCREEN: a touch while the app is changing beeps
   if self.shutter then se(self, "SEQ_SE_DP_BEEP") end
-  local name = (self:app() or {}).name
+  local name = (self:app() or {}).key
   local s = self:store()
   if name == 'Calculator' then
     for i, r in ipairs(CALC_RECTS) do
@@ -574,7 +587,7 @@ end
 
 function Gen4Poketch:doodle(x, y)
   if x < FACE.x or x >= FACE.x + FACE.w or y < FACE.y or y >= FACE.y + FACE.h then return end
-  local s = self:store(); local name = (self:app() or {}).name
+  local s = self:store(); local name = (self:app() or {}).key
   local dot = name == 'Dot Artist'
   local key = dot and 'dots' or 'memo'
   s[key] = s[key] or {}
@@ -605,7 +618,7 @@ end
 function Gen4Poketch:touchmoved(id, px, py)
   if self.pointer ~= id then return false end
   local x, y = SecondScreen.toLocal(self.game, px, py)
-  local name = (self:app() or {}).name
+  local name = (self:app() or {}).key
   if x and self.held then
     if math.abs(x - self.held.x) > 2 or math.abs(y - self.held.y) > 2 then self.held.moved = true end
     self.held.x, self.held.y = x, y
@@ -636,7 +649,7 @@ end
 
 function Gen4Poketch:touchreleased(id)
   if self.pointer ~= id then return false end
-  local name = (self:app() or {}).name
+  local name = (self:app() or {}).key
   if self.held then
     if name == 'Stopwatch' then self:stopwatchRelease() end
     if name == 'Kitchen Timer' then self:timerRelease() end
@@ -1213,7 +1226,7 @@ function Gen4Poketch:drawDotArtist()
 end
 
 function Gen4Poketch:drawDoodle()
-  if (self:app() or {}).name == 'Dot Artist' then return self:drawDotArtist() end
+  if (self:app() or {}).key == 'Dot Artist' then return self:drawDotArtist() end
   return self:drawMemoPad()
 end
 
@@ -2110,7 +2123,7 @@ end
 -- ------------------------------------------------------- per-frame logic --
 
 function Gen4Poketch:updateApp()
-  local name = (self:app() or {}).name
+  local name = (self:app() or {}).key
   local tick30 = (self.ticks or 0) % 2 == 0
   if name == 'Stopwatch' then self:updateStopwatch(tick30)
   elseif name == 'Friendship Checker' then if tick30 then self:updateFriendship() end
@@ -2220,20 +2233,20 @@ function Gen4Poketch:drawLCD(app)
   lcd(4)
   g.rectangle('fill', FACE.x, FACE.y, FACE.w, FACE.h)
   g.setColor(1, 1, 1, 1)
-  local under = app and UNDER[app.name]
+  local under = app and UNDER[app.key]
   if under then under(self) end
-  local face = app and not NO_FACE[app.name] and app.art and self:img(app.art)
+  local face = app and not NO_FACE[app.key] and app.art and self:img(app.art)
   if face then
     g.setColor(1, 1, 1, 1)
     g.draw(face, 0, 0)
-  elseif not (app and DRAW[app.name]) then
+  elseif not (app and DRAW[app.key]) then
     -- Only apps which genuinely have no composed face use the cartridge's
     -- unavailable screen.
     local blank = self:img(self.unavailable)
     if blank then g.setColor(1, 1, 1, 1); g.draw(blank, 0, 0) end
   end
   if app then
-    local body = app.name and DRAW[app.name]
+    local body = app.key and DRAW[app.key]
     if body then
       body(self)
     elseif not face then
@@ -2258,7 +2271,7 @@ function Gen4Poketch:drawWatch()
   -- in theme 0 (their icons and text through shaders of their own), and the
   -- colour changer's theme -- and the watches' backlight -- is applied to the
   -- finished LCD, the way the hardware loads one palette under everything.
-  local backlight = self.backlight and app and (app.name == 'Digital Watch' or app.name == 'Analog Watch')
+  local backlight = self.backlight and app and (app.key == 'Digital Watch' or app.key == 'Analog Watch')
   local shown = app
   local phase = self:shutterCover()
   if self.shutter and phase == 'close' then shown = self.apps[self.shutter.from] or app end
