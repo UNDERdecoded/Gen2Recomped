@@ -45,6 +45,10 @@
 --   TRACE=1               print each phase as it starts
 --   OUT=<file>            also append the SWEEP_* lines to this file
 --
+-- Fixed bugs each have a probe in regress/ (PROBE=<file> runs it inside the
+-- booted harness); `python tools/gen4_field_sweep.py --install <cache> --regress`
+-- runs them all and fails if any comes back.
+--
 -- Output: one line per finding, `SWEEP_FAIL|<map>|<phase>|<kind>|<detail>`, and
 -- one per map, `SWEEP_MAP|<map>|<ok|fail>|...`, and a final `SWEEP_DONE|...`.
 
@@ -288,6 +292,12 @@ local function fieldHolds()
   if OW.whirlSpin then why[#why + 1] = "whirlSpin" end
   if OW.gen4Waterfall then why[#why + 1] = "waterfall" end
   if OW.player and OW.player.stairExit then why[#why + 1] = "stairExit" end
+  -- the Distortion World's own tasks (a platform ride, a lift, an event)
+  local dw = OW.map and OW.map.def and OW.map.def.gen4DistWorld and package.loaded["src.world.Gen4DistPlatforms"]
+  if dw and dw.fieldTask then
+    local okT, name = pcall(dw.fieldTask, OW)
+    if okT and name then why[#why + 1] = "distWorld:" .. tostring(name) end
+  end
   if OW.player and OW.player.moving then why[#why + 1] = "moving" end
   return why
 end
