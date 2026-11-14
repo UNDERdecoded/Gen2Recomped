@@ -28,6 +28,7 @@
 --   HeartGold       (USA) IPKE; SoulSilver (USA, Australia)    accepted
 --                   (Europe) IPKP / IPGP                       NOT YET
 --   Black / White   (USA, Europe) IRBO / IRAO                  accepted
+--   Renegade Plat.  the hack over Platinum (USA) Rev 1 (CPUE)   accepted
 --
 -- The KNOWN hashes below come from pret's own per-build `.sha1` files
 -- (pokefirered firered_rev1.sha1 / firered_switch.sha1 / leafgreen*.sha1,
@@ -78,6 +79,12 @@ RomRevisions.ACCEPTED = {
   polishedcrystal = {
     { sha1 = "6930b48af5844d373e3c9130f26d6dd1084cf4ed", code = "PKPC", release = true,
       label = "Polished Crystal 3.2.3" },
+  },
+  -- Drayano's hack of Platinum (USA) Rev 1: the trimmed patched file. Its
+  -- header still says CPUE revision 1, so the hack is told apart by hash only
+  renegadeplatinum = {
+    { sha1 = "381f9eef44564602a5f6469ee8c390fbb8ebac3a", code = "CPUE", release = true,
+      label = "Renegade Platinum (over Pokemon Platinum (USA) (Rev 1))" },
   },
   firered = {
     { sha1 = "41cb23d8dccc8ebd7c649cd8fbb58eeace6e2fdc", code = "BPRE", revision = 0,
@@ -174,6 +181,7 @@ local GAME_NAMES = {
   green = "Pokemon Green",
   gold = "Pokemon Gold", silver = "Pokemon Silver", crystal = "Pokemon Crystal",
   prism = "Pokemon Prism", polishedcrystal = "Polished Crystal",
+  renegadeplatinum = "Renegade Platinum",
   ruby = "Pokemon Ruby", sapphire = "Pokemon Sapphire",
   firered = "Pokemon FireRed", leafgreen = "Pokemon LeafGreen",
   emerald = "Pokemon Emerald",

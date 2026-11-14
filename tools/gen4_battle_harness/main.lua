@@ -319,9 +319,13 @@ function love.load()
       end
     end
     local ticks = tonumber(os.getenv("TICKS") or "30")
+    -- SLOT=n: the move the presses pick (the cursor held on slot n), so a
+    -- matchup can be fought rather than whatever sits in slot 1
+    local slot = tonumber(os.getenv("SLOT") or "")
     for i = 1, ticks do
       if os.getenv("PARITY_ROM") and battle.phase=="menu" then break end
       pressed = press > 0 and (i % press == 0)
+      if slot then battle.moveIndex = slot end
       local okU, errU = pcall(battle.update, battle, 1 / 60)
       if not okU then
         print(("update raised on tick %d: %s"):format(i, tostring(errU)))

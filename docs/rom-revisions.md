@@ -30,6 +30,7 @@ other revisions.
 | Crystal | Rev 0 (USA) `f4cd194b`, Rev 1 (USA, Europe) `f2f52230` | (Australia) BYTU `a0fc810f` | It is built with `_CRYSTAL_AU`, which rewrites the Celadon/Goldenrod Game Corner and Buena scripts (15 sites in 5 files). The map-script banks then no longer match `pokecrystal11.sym`, and no AU symbol table has been built. |
 | Prism | the one mapped release `75207669` | other Prism releases | Romhack tables were found one by one for this file |
 | Polished Crystal | 3.2.3 `6930b48a` | other releases | Same reason as Prism |
+| Renegade Platinum | the trimmed patched Rev 1 file `381f9eef` (header CPUE rev 1) | other builds of the hack | Measured against this one file ([renegade-platinum.md](renegade-platinum.md)); a different build reads as a modified Platinum dump |
 | FireRed | Rev 0 (USA, Europe) `41cb23d8` | Rev 1 `dd5945db`, Switch Online build (header rev 10) `baa452d0` | See below |
 | Emerald | (USA, Europe) `f3ae0881` | none (one release) | n/a |
 | Platinum | Rev 0 `ce81046e`, Rev 1 `0862ec35` (USA) | (Europe) CPUP | No dump or symbols to map it against |

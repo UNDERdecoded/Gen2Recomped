@@ -67,6 +67,9 @@ local TYPE = { NORMAL = 0, FIGHTING = 1, FLYING = 2, POISON = 3, GROUND = 4, ROC
   ELECTRIC = 13, PSYCHIC = 14, ICE = 15, DRAGON = 16, DARK = 17 }
 local TYPE_NAME = {}
 for k, v in pairs(TYPE) do TYPE_NAME[v] = k end
+-- Renegade Platinum names slot 9 FAIRY (its species, moves and chart say so);
+-- an alias by name only, so TYPE_NAME[9] stays Platinum's
+TYPE.FAIRY = 9
 G.TYPE, G.TYPE_NAME = TYPE, TYPE_NAME
 
 local MOVE = { NATURAL_GIFT = 363, JUDGMENT = 449, HIDDEN_POWER = 237, GYRO_BALL = 360,

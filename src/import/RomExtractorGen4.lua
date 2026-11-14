@@ -2344,28 +2344,38 @@ function RomExtractorGen4:extractGraphics()
             tiles = group.NCGR, palette = palette,
             cell = bankAt, tilesWide = family.tilesWide,
           }
-          local name = group.base:gsub("/", "_")
+          local base = group.base:gsub("/", "_")
+          -- A RENAMED TYPE SLOT keeps the cartridge's member name: Renegade
+          -- Platinum redraws type_icons/mystery as its Fairy icon, and every
+          -- screen asks for type_icons_<type name>. So the sheet is saved
+          -- under the slot's name as well (Gen4TypeChart.setSlotNames).
+          local savedAs = { base }
+          if group.base == "type_icons/mystery" and Gen4TypeChart.TYPES[9] ~= "MYSTERY" then
+            savedAs[2] = "type_icons_" .. tostring(Gen4TypeChart.TYPES[9]):lower()
+          end
           -- `local a, b = x and f()` keeps only f()'s FIRST return value, so
           -- this cannot be folded into the guard -- the palette would always
           -- arrive nil and every sheet would silently take the fallback path.
           local sheet, pal
           if palette then sheet, pal = self:partsFor(objArc, job) end
           local frames = sheet and pal and self:assembleCells(objArc, job, sheet, pal)
-          if frames then
-            for _, frame in ipairs(frames) do
-              local entry = self:saveImage(
-                "battle/" .. name .. frame.suffix, frame.image, {
-                  family = family.label, cellBank = bankName,
-                  cellMatch = bankHow, cell = frame.cellIndex,
-                })
-              if entry then index.battleObjects[name .. frame.suffix] = entry end
+          for _, name in ipairs(savedAs) do
+            if frames then
+              for _, frame in ipairs(frames) do
+                local entry = self:saveImage(
+                  "battle/" .. name .. frame.suffix, frame.image, {
+                    family = family.label, cellBank = bankName,
+                    cellMatch = bankHow, cell = frame.cellIndex,
+                  })
+                if entry then index.battleObjects[name .. frame.suffix] = entry end
+              end
+            else
+              local image = palette and self:composeJob(objArc, job)
+              local entry = self:saveImage("battle/" .. name, image, {
+                family = family.label, provisionalLayout = true,
+              })
+              if entry then index.battleObjects[name] = entry end
             end
-          else
-            local image = palette and self:composeJob(objArc, job)
-            local entry = self:saveImage("battle/" .. name, image, {
-              family = family.label, provisionalLayout = true,
-            })
-            if entry then index.battleObjects[name] = entry end
           end
         end
       end
@@ -2647,14 +2657,15 @@ function RomExtractorGen4:extractMonIcons()
   -- NarcArchive keeps its member count as a plain field, so the sheet run is
   -- however many members follow the six cell and animation banks.
   local sheets = (tonumber(arc.count) or 547) - Gen4Icons.FIRST_SHEET
-  local at, entropy = Gen4Icons.findPaletteTable(arm9, sheets)
+  local anchors = Gen4Icons.anchorsFor(self.version)
+  local at, entropy = Gen4Icons.findPaletteTable(arm9, sheets, anchors)
   if not at then return nil end
 
   -- A WRONG TABLE DOES NOT FAIL, IT MIS-COLOURS -- which reads as a palette
   -- bug rather than as "the scan found the wrong array". So the seven values
   -- the render was checked against are asserted here, and the whole stage
   -- declines rather than writing a party list in the wrong colours.
-  local okTable, wrong = Gen4Icons.verify(arm9, at)
+  local okTable, wrong = Gen4Icons.verify(arm9, at, anchors)
   if not okTable then
     require("src.core.Logger").warn(
       "gen4 icons: the palette table found at 0x%X disagrees with the verified "
@@ -3342,13 +3353,16 @@ function RomExtractorGen4:extractConstants()
   -- Normal do neutral damage to Ghost.
   local chart, parsed
   for overlay = 0, 130 do
-    local ok, bytes = pcall(function() return self.rom:overlay(overlay) end)
+    local ok, bytes, info = pcall(function() return self.rom:overlay(overlay) end)
     if ok and bytes and #bytes > 0 then
       local at = Gen4TypeChart.find(bytes)
       if at then
         parsed = Gen4TypeChart.parse(bytes, at)
         if parsed then
           parsed.overlay = overlay
+          -- a hack can repoint the battle code at a chart of its own and
+          -- leave this one behind (Renegade Platinum); read the live one
+          parsed = Gen4TypeChart.follow(self.rom, bytes, info, at) or parsed
           chart = Gen4TypeChart.chart(parsed)
           break
         end
@@ -3758,6 +3772,16 @@ function RomExtractorGen4:extractConstants()
   self.tradeReport = { trades = trades and #trades or 0 }
 
   self:write("constants", {
+    -- Pokemon_IsPersonalityShiny's threshold: `(otId ^ pid halves) < N`,
+    -- found by its own instruction run (eors r0,r3; lsrs r2,#16; eors r0,r1;
+    -- eors r0,r2; cmp r0,#N; bcs; movs r0,#1). 8 on Platinum (1/8192);
+    -- Renegade Platinum patches the cmp to 128 (1/512). Stats.setShinyUnder.
+    shinyUnder = (function()
+      local ok, arm9 = pcall(function() return self.rom:arm9() end)
+      if not (ok and type(arm9) == "string") then return nil end
+      local at = arm9:find("X@\18\12H@P@.%(\1\210\1 ")
+      return at and arm9:byte(at + 8) or nil
+    end)(),
     gen4HoneyEncounters = require('src.world.Gen4HoneyTrees').tables(self.rom),
     experienceTables = experienceTables,
     tmhmMoves = tmhmMoves,
@@ -3887,7 +3911,12 @@ function RomExtractorGen4:extractConstants()
     speciesOrder = order(508),
     moveOrder = order(471),
     itemOrder = order(446),
-    trainerOrder = order(928),
+    -- 928 on Platinum (and kept as the floor); Renegade Platinum's trdata
+    -- has 1066
+    trainerOrder = order((function()
+      local arc = self:archive("trainerData")
+      return math.max(928, arc and tonumber(arc.count) or 0)
+    end)()),
     world = {
       -- A Gen 4 cell is sixteen pixels, and the map defs say so too.
       blockPx = 16,
@@ -4465,7 +4494,7 @@ function RomExtractorGen4:extractTrainerSprites()
   -- (HGSS names the archive by number; Platinum's is /poketool/trgra/trbgra.narc,
   -- the same five members a class: 0 the player's Pt outfit, 1 hers, 2 Barry, 3-7
   -- the five stat trainers, 8-10 the Diamond / Pearl outfits for a link partner)
-  if dpOrder or self.version == "platinum" then
+  if dpOrder or require("src.import.Gen4Versions").family(self.version) == "platinum" then
     local backs = self:archive("trainerBack") or self:archiveAt(Gen4Trgra.BACK_PATH)
     index.backs = {}
     for class = 0, Gen4Trgra.classCount(backs) - 1 do

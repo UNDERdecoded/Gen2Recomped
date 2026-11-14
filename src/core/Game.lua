@@ -1006,7 +1006,7 @@ function Game:draw()
       -- PLATINUM'S UNDERGROUND: the other screen is the passages' map with the
       -- radar (top_screen.c), not the watch (src/ui/Gen4UgTopScreen.lua)
       local ugDrawn = false
-      if version and version.id == "platinum" then
+      if version and require("src.core.GameVersion").isPlatinumFamily(version.id) then
         local okU, UgTop = pcall(require, "src.ui.Gen4UgTopScreen")
         if okU and UgTop.active(self) then
           panelModule = nil
@@ -2117,7 +2117,7 @@ function Game:restoreSave(loaded, recovered)
   -- ...which is a WALK IN there, not a continue: SystemFlag_CheckCommunicationClubAccessible
   -- takes FieldMapChange_UpdateGameData + CreateObjects (ON_TRANSITION and all)
   local specialLocation = false
-  if require("src.core.GameVersion").get() == "platinum" then
+  if require("src.core.GameVersion").isPlatinumFamily() then
     specialLocation = require("src.script.Gen4BattleTowerCommands").applySpecialLocation(loaded) and true or false
   end
   -- ...and HeartGold / SoulSilver's: FLAG_UNK_966 (the communication club's
@@ -2144,7 +2144,7 @@ function Game:restoreSave(loaded, recovered)
                   loaded.player.x, loaded.player.y, loaded.player.facing)
   -- Platinum's Journal (FieldTask_LoadSavedGameMap): opened first when two
   -- days or more have gone by, then today's page is taken and titled here
-  if require("src.core.GameVersion").get() == "platinum" then
+  if require("src.core.GameVersion").isPlatinumFamily() then
     local J = require("src.pokemon.Gen4Journal")
     if J.openOnContinue(loaded) then
       -- the pages as they were: today's is not added until after it closes
