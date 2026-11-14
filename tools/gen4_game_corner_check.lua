@@ -93,7 +93,8 @@ local ok, kind, lines = pcall(IE.use, { items = items, text = text, constants = 
 check(ok and kind == 'failed' and lines and lines[1] == 'Your Coins: 1234',
       'the Coin Case says "Your Coins: 1234", got ' .. tostring(ok and lines and lines[1] or kind))
 
--- every Game Corner script lowers, the slot machine as its named gap
+-- every Game Corner script lowers, the slot machine as its real session row
+-- (PtSlotMachine.install; it was a named g4_noop gap before the app was built)
 local VM = require('src.script.Gen4ScriptVM')
 local sdata = { constants = { gen = 4 }, maps = load('maps'), map_scripts = load('map_scripts'), text = text }
 local bad, slots = {}, 0
@@ -101,12 +102,13 @@ for label in pairs(sdata.map_scripts.scripts) do
   if label:sub(1, 5) == 'M0141' or label:sub(1, 5) == 'M0150' then
     for _, row in ipairs(VM.compile(sdata, label) or {}) do
       local n = row[1]
-      if n == 'g4_noop' and row[2] == 'the slot machine' then slots = slots + 1
+      if n == 'pt_slot_machine' and C.pt_slot_machine then slots = slots + 1
+      elseif n == 'g4_noop' and row[2] == 'the slot machine' then bad[#bad + 1] = label .. ':slot machine is still the named gap'
       elseif type(n) == 'string' and (not C[n] or n == 'g4_unimplemented') then bad[#bad + 1] = label .. ':' .. tostring(row[2]) end
     end
   end
 end
 check(#bad == 0, 'every Game Corner script lowers: ' .. table.concat(bad, ', '))
-check(slots > 0, 'and the slot machine is a named gap, not an unknown')
+check(slots > 0, 'and the slot machine lowers to its session row (pt_slot_machine)')
 print(('%d checks, %d failed'):format(PASS + FAIL, FAIL))
 if FAIL > 0 then os.exit(1) end
