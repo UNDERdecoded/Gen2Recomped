@@ -42,6 +42,34 @@ def run_harness(love, env, timeout):
     return [ln for ln in text.splitlines() if ln.startswith("SWEEP_")], timed_out
 
 
+def run_regressions(args, env):
+    """Each regress/*.lua is a PROBE: it runs inside the booted harness and prints
+    REGRESS_OK <name> or REGRESS_FAIL <name>: <why>."""
+    folder = os.path.join(ROOT, "tools", "gen4_field_sweep_harness", "regress")
+    failed = 0
+    for name in sorted(os.listdir(folder)):
+        if not name.endswith(".lua"):
+            continue
+        penv = dict(env, PROBE=os.path.join("tools", "gen4_field_sweep_harness", "regress", name))
+        cmd = [args.love, os.path.join("tools", "gen4_hgss_overworld_harness")]
+        try:
+            proc = subprocess.run(cmd, cwd=ROOT, env=penv, stdout=subprocess.PIPE,
+                                  stderr=subprocess.STDOUT, timeout=args.timeout)
+            text = proc.stdout.decode("utf-8", errors="replace")
+        except subprocess.TimeoutExpired:
+            text = ""
+        lines = [ln for ln in text.splitlines() if ln.startswith(("REGRESS_", "PROBE FAILED"))]
+        ok = any(ln.startswith("REGRESS_OK") for ln in lines) and not any(
+            ln.startswith(("REGRESS_FAIL", "PROBE FAILED")) for ln in lines)
+        print(("ok   " if ok else "FAIL ") + name)
+        if not ok:
+            failed += 1
+            for ln in lines or ["(no result: the probe hung or died)"]:
+                print("     " + ln)
+    print(f"{failed} regression(s) failed")
+    return 1 if failed else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--install", required=True, help="the imported version folder (e.g. .../Gen2Recomp/platinum)")
@@ -58,6 +86,9 @@ def main():
     ap.add_argument("--seed", default="1")
     ap.add_argument("--env", action="append", default=[], help="extra K=V for the harness")
     ap.add_argument("--out", default="field_sweep_report.txt")
+    ap.add_argument("--regress", action="store_true",
+                    help="run the probes in tools/gen4_field_sweep_harness/regress/ (one fixed bug each) "
+                         "instead of a sweep; exit status 1 if any fails")
     args = ap.parse_args()
 
     env = dict(os.environ)
@@ -74,6 +105,9 @@ def main():
     for kv in args.env:
         k, _, v = kv.partition("=")
         env[k] = v
+
+    if args.regress:
+        return run_regressions(args, env)
 
     # the map list, from the harness itself so it always matches the engine's view
     list_env = dict(env, LIST="1")

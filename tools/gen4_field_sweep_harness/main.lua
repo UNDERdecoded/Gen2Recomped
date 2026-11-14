@@ -1411,7 +1411,10 @@ function love.load()
     end
     newSave()
 
-    _G.__sweep = { Game = Game, OW = OW, Data = Data, enterMap = enterMap, run = run, press = press }
+    _G.__sweep = { Game = Game, OW = OW, Data = Data, enterMap = enterMap, run = run, press = press,
+      idle = idle, top = top, drain = drain, settle = settle, placePlayer = placePlayer,
+      standCells = standCells, stackDepth = stackDepth, describeTop = describeTop,
+      fails = function() return totals.fails end }
     -- PROBE=<file.lua>: run a scratch script against the booted game and quit
     if getenv("PROBE") then
       local okP, errP = xpcall(dofile, debug.traceback, getenv("PROBE"))
