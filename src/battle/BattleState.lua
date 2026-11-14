@@ -2672,6 +2672,11 @@ function BattleState:startMessage(item)
   if self.bw and text ~= "" then
     text = require("src.battle.Gen5BattleText").translate(self, text)
   end
+  -- A NON-ENGLISH GEN 4 CARTRIDGE (German Platinum) prints its own battle
+  -- lines (text bank 368 / 0) in place of the engine's English
+  if self.data and self.data.gen4_language and not self.bw and text ~= "" then
+    text = require("src.battle.Gen4BattleText").translate(self, text)
+  end
   local pos, cont = 1, false
   while true do
     local npos = text:find("[\n\v]", pos)

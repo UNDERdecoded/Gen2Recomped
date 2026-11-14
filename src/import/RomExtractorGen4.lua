@@ -7616,6 +7616,13 @@ function RomExtractorGen4:runStages(list)
     if not listed then skipped[#skipped + 1] = name end
   end
   self.notPorted = skipped
+  self:write("gen4_version", { version = self.version, family = require("src.import.Gen4Versions").family(self.version),
+    stages = list, notPorted = skipped })
+  return self.wrote
+end
+
+function RomExtractorGen4:run()
+  local V = require("src.import.Gen4Versions")
   -- THE CARTRIDGE'S TEXT LANGUAGE, for what has to know it (the translation
   -- layer must not treat German ROM text as English).  Only a non-English
   -- cartridge writes it, so an English cache is unchanged.
@@ -7624,13 +7631,6 @@ function RomExtractorGen4:runStages(list)
     local code = self.rom and self.rom:header().gameCode
     self:write("gen4_language", { language = Regions.language(code), gameCode = code })
   end
-  self:write("gen4_version", { version = self.version, family = require("src.import.Gen4Versions").family(self.version),
-    stages = list, notPorted = skipped })
-  return self.wrote
-end
-
-function RomExtractorGen4:run()
-  local V = require("src.import.Gen4Versions")
   local only = V.STAGES[V.family(self.version)]
   if only then return self:runStages(only) end
   self:extractText()

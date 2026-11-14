@@ -380,7 +380,12 @@ function Gen4BagMenu:rebuild()
       rows[#rows + 1] = row
     end
   end
-  rows[#rows + 1] = { close = true, label = Strings("CLOSE BAG") }
+  -- the cartridge's own row on Platinum (text bank 7 #41: "CLOSE BAG" /
+  -- "BEENDEN"), else the engine's
+  local gdata = self.game and self.game.data
+  local closeText = gdata and gdata.gen4_version == nil and gdata.text and gdata.text.TEXT_B0007_00041
+  rows[#rows + 1] = { close = true,
+    label = (type(closeText) == "string" and closeText:find("%S") and closeText) or Strings("CLOSE BAG") }
   rows[#rows + 1] = { header = true }
   self.rows = rows
 

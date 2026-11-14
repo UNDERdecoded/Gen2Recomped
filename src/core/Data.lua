@@ -2274,6 +2274,13 @@ function Data:load()
     -- own bands and its menus read HGSS's bank (Gen4ScriptBands.setFamily).
     -- Platinum's cache has no such file and keeps Platinum's tables.
     local cacheFamily
+    -- THE CARTRIDGE'S TEXT LANGUAGE, written only by a non-English import
+    -- (German Platinum): { language = "de", gameCode = "CPUD" }.  nil means
+    -- English, which the engine's own English battle lines are written for.
+    do
+      local okL, lang = loadModule(dir, "gen4_language")
+      self.gen4_language = okL and type(lang) == "table" and lang or nil
+    end
     do
       local okV, ver = loadModule(dir, "gen4_version")
       self.gen4_version = okV and ver or nil
