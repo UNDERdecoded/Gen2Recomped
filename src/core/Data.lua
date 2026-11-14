@@ -2489,6 +2489,9 @@ function Data:load()
   if constants.natures then
     require("src.pokemon.Stats").setNatures(constants.natures)
   end
+  -- the cartridge's shiny threshold (Renegade Platinum raises it to 128);
+  -- nil, every other cache, puts the retail 8 back
+  require("src.pokemon.Stats").setShinyUnder(constants.shinyUnder)
 
   -- before the mod loader runs: the deep registries fold over these
   self:seedDefaults()

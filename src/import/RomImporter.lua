@@ -1313,7 +1313,7 @@ local function markerFor(version)
   -- and time of day out of zukan_enc (Platinum zukan_enc_platinum.narc, HGSS
   -- /a/1/3/3) with the map's pieces and markers, drawn by Gen4DexAreaMap /
   -- HgssDexDetails in place of the encounter-table scan
-  local revision = version == "platinum" and "platinum-back-throw-v1:gen4-trainer-ai-v1:platinum-zukan-enc-v1:gen4-female-sprites-v1:platinum-ug-cursor-v1:platinum-ug-top-v1:platinum-ug-fx-v1:platinum-ug-trap-art-v1:platinum-dressup-photo-v2:gen4-light-mask-v1:platinum-capsule-app-v1:platinum-slot-app-v1:platinum-tv-script-v1:platinum-boat-cutscene-v1:platinum-gym-fx-v1:platinum-scratch-off-v1:platinum-poke-motion-v1:platinum-egg-hatch-v1:platinum-geometry-v17:platinum-field-fx-v1:platinum-library-tv-v1:platinum-spear-pillar-v1:platinum-effect-pal-v1:ds-back-throw-v1:pal-park-v1:" or ""
+  local revision = GameVersion.isPlatinumFamily(version) and "platinum-back-throw-v1:gen4-trainer-ai-v1:platinum-zukan-enc-v1:gen4-female-sprites-v1:platinum-ug-cursor-v1:platinum-ug-top-v1:platinum-ug-fx-v1:platinum-ug-trap-art-v1:platinum-dressup-photo-v2:gen4-light-mask-v1:platinum-capsule-app-v1:platinum-slot-app-v1:platinum-tv-script-v1:platinum-boat-cutscene-v1:platinum-gym-fx-v1:platinum-scratch-off-v1:platinum-poke-motion-v1:platinum-egg-hatch-v1:platinum-geometry-v17:platinum-field-fx-v1:platinum-library-tv-v1:platinum-spear-pillar-v1:platinum-effect-pal-v1:ds-back-throw-v1:pal-park-v1:" or ""
   -- gen5-trades-v5: constants.gen5Trades, gen5_trade_art and the trade
   -- commands' operands in map_scripts (Gen5Trades / Gen5TradeArt)
   -- gen5-starter-v6: gen5_starter_art, the gift box app (Gen5StarterArt)
@@ -1969,6 +1969,10 @@ local PAL = {
   -- glance rather than by reading their labels.
   chipPolishedTop = { 186, 148, 252 }, -- #ba94fc  Polished Crystal
   chipPolishedBot = { 92, 56, 168 },   -- #5c38a8
+  -- Renegade Platinum: Giratina's red over Platinum's slate, so the hack
+  -- reads as Platinum's and still not as Platinum
+  chipRenegadeTop = { 214, 92, 92 },   -- #d65c5c  Renegade Platinum
+  chipRenegadeBot = { 74, 82, 134 },   -- #4a5286
   chipModTop  = { 61, 74, 109 },   -- #3d4a6d
   chipModBot  = { 32, 42, 69 },    -- #202a45
   chipInkGold = { 58, 44, 0 },     -- #3a2c00
@@ -8034,6 +8038,11 @@ function RomImporter:_drawTabBar(x, y, w, h, chip)
       top = PAL.chipPolishedTop, bot = PAL.chipPolishedBot,
       under = PAL.chipPolishedTop, label = Strings("POLISHED"),
       ink = PAL.chipInkSilver },
+    -- Renegade Platinum, a Platinum hack, after the Gen 2 hacks ("RP")
+    { id = "renegadeplatinum", letter = "RP",
+      top = PAL.chipRenegadeTop, bot = PAL.chipRenegadeBot,
+      under = PAL.chipRenegadeTop, label = Strings("RENEGADE"),
+      ink = PAL.chipInkSilver },
     { id = "mods",   mods = true,  top = PAL.chipModTop,  bot = PAL.chipModBot,
       under = PAL.modDot, label = Strings("MODS") },
     -- Browsing a community index sits beside the installed list rather than
@@ -8324,6 +8333,7 @@ function RomImporter:_drawGamePanel(version, x, y, w, h, paged)
   -- Without a branch here the panel silently falls back to PAL.blue, which
   -- reads as a rendering bug rather than a missing case.
   elseif version == "polishedcrystal" then accent = PAL.chipPolishedTop
+  elseif version == "renegadeplatinum" then accent = PAL.chipRenegadeTop
   end
   local romState, romDetail, romBtnLabel, romBtnEnabled, romProgress
   if locked then
