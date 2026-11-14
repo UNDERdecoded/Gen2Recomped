@@ -431,6 +431,12 @@ local function popAll()
   -- the overworld outlives the stack (Game:returnToTitle clears this too): a
   -- fade overlay it still names would be reused by the next script's fade
   OW.fadeOverlay = nil
+  -- ...and so does whatever a popped screen was in the middle of (a warp's
+  -- transition leaves `transitioning` up; a scene its queue)
+  OW.transitioning = false
+  OW.scriptMoves = {}
+  OW.pendingScripts = {}
+  if OW.runner then OW.runner.co = nil; OW.runner.waitingFrames = nil; OW.runner.waitingCheck = nil end
 end
 
 -- Enter `id` the way a continue does (a fresh stack and a fresh save), so each
