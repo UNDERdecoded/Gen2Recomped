@@ -38,8 +38,17 @@ check(T.headerAt(game, 3, 27) == 411, 'matrix cell (3, 27) is Twinleaf (header 4
 local tw = rec.flyLocations[1]
 check(tw.x == 3 * 7 and tw.y == 27 * 7, 'and its block is at 7x, 7z before the grid offset')
 local s = T.new(game, {})
-check(s:nameAt(3, 27) == 'Twinleaf Town', 'the bar names it')
-check(s:nameAt(11, 20) and s:nameAt(11, 20):find('Coronet'), 'off-matrix cells name Mt. Coronet')
+-- a non-English cache (gen4_language.lua) names the places in its own language: the
+-- bar then shows the map header's own label, a real name that is not the English one
+local langChunk = loadfile((arg and arg[1] or ''):gsub('[/\\]$', '') .. '/gen4_language.lua')
+if langChunk and langChunk() then
+  local tw, mt = s:nameAt(3, 27), s:nameAt(11, 20)
+  check(type(tw) == 'string' and tw ~= '' and tw ~= 'Twinleaf Town' and tw == s:labelFor(411), 'the bar names it (the header\'s own label)')
+  check(type(mt) == 'string' and mt ~= '' and not mt:find('Coronet') and mt ~= tw, 'off-matrix cells name the mountain from the header table')
+else
+  check(s:nameAt(3, 27) == 'Twinleaf Town', 'the bar names it')
+  check(s:nameAt(11, 20) and s:nameAt(11, 20):find('Coronet'), 'off-matrix cells name Mt. Coronet')
+end
 check(s:blockAt(3, 27) ~= nil, 'and it has a name block')
 
 -- unlocking

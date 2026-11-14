@@ -15,6 +15,10 @@ local PASS, FAIL = 0, 0
 local function check(c, l) if c then PASS = PASS + 1 else FAIL = FAIL + 1 print('FAIL: ' .. l) end end
 local dir = (arg and arg[1] or ''):gsub('[/\\]$', '')
 local function load(n) local f = loadfile(dir .. '/' .. n .. '.lua') return f and f() end
+-- a non-English cache (gen4_language.lua): names and messages are asserted to be
+-- real lines of that cartridge's banks, not the English words (English as ever)
+local LANG = load('gen4_language')
+local function real(v) return type(v) == 'string' and v ~= '' and not v:find('{', 1, true) end
 local rec = load('gen4_seals')
 check(rec, 'the cache must carry gen4_seals (run tools/gen4_seals_extract.lua)')
 if not rec then print(('%d checks, %d failed'):format(PASS + FAIL, FAIL)) os.exit(1) end
@@ -32,8 +36,14 @@ check(rec.seals[50].alphabet and not rec.seals[49].alphabet and rec.seals[50].pr
 check(#rec.stocks == 7, 'seven days')
 check(table.concat(rec.stocks[1], ',') == '1,8,29,43,15,22,36', 'Monday: Heart A, Star B, Fire A, Song A, Line C, Ele B, Party D')
 check(table.concat(rec.stocks[7], ',') == '7,49,28,42,14,21,35', 'Sunday: Star A, Song G, Foamy D ...')
-check(S.name(data, 1) == 'Heart Seal A' and S.name(data, 1, true) == 'Heart Seal As', 'names from banks 12 / 13')
-check(S.name(data, 29) == 'Fire Seal A', 'seal 29 is Fire Seal A by its name index')
+if LANG then
+  check(real(S.name(data, 1)) and real(S.name(data, 1, true)) and S.name(data, 1) ~= 'Heart Seal A', 'names from banks 12 / 13')
+  check(real(S.name(data, 29)) and S.name(data, 29) ~= S.name(data, 1) and S.name(data, 29) ~= 'Fire Seal A',
+        'seal 29 is named by its name index')
+else
+  check(S.name(data, 1) == 'Heart Seal A' and S.name(data, 1, true) == 'Heart Seal As', 'names from banks 12 / 13')
+  check(S.name(data, 29) == 'Fire Seal A', 'seal 29 is Fire Seal A by its name index')
+end
 
 -- GiveOrTakeSeal
 local save = { gen4Vars = {}, money = 10000, party = {} }
@@ -75,13 +85,17 @@ pushed.qty = 4; pushed:choose(); pushed:choose()
 check(S.count(save, 29) == 4 and save.money == 10000 - 200, 'four bought, 200 paid')
 pushed.mode = 'buy'; pushed.cursor = 1; pushed:choose()   -- Heart Seal A, already 99
 pushed:choose(); pushed:choose()
-check(S.count(save, 1) == 99 and save.money == 9800 and pushed.message and pushed.message:find('Seal Case is full'),
+check(S.count(save, 1) == 99 and save.money == 9800 and pushed.message
+      and (LANG and real(pushed.message) and not pushed.message:find('Seal Case is full', 1, true)
+           or (not LANG and pushed.message:find('Seal Case is full'))),
       'a full kind: the ROM\'s "The Seal Case is full." and no charge')
 
 -- the Seal Case from the bag
 local IE = require('src.inventory.ItemEffects')
 local ok, kind, lines = pcall(IE.use, data, save, 434)
-check(ok and kind == 'failed' and lines and lines[1] == 'Seals: ' .. S.total(save), 'the Seal Case says "Seals: n"')
+check(ok and kind == 'failed' and lines and
+      (LANG and real(lines[1]) and lines[1]:find(tostring(S.total(save)), 1, true) and lines[1] ~= 'Seals: ' .. S.total(save)
+       or (not LANG and lines[1] == 'Seals: ' .. S.total(save))), 'the Seal Case says "Seals: n"')
 
 -- the Unown-seal girl and the shop lower fully
 local VM = require('src.script.Gen4ScriptVM')
