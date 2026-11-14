@@ -130,6 +130,9 @@ def main():
     while pending:
         batch = pending[: args.batch]
         benv = dict(env, MAPS=",".join(batch))
+        # the list was cut once, by the listing run; a batch is an explicit list
+        for key in ("SHARD", "SKIP", "LIMIT", "MAP_PREFIX"):
+            benv.pop(key, None)
         if args.menus == "once":
             benv["MENUS"] = "once" if menus_pending else "off"
         lines, timed_out = run_harness(args.love, benv, args.timeout)

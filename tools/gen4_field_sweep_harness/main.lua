@@ -181,15 +181,16 @@ end
 -- suspect, and the caller recovers).
 -- the last stack changes and the keys pressed with them: what a failure needs
 -- to be replayed by hand
+local RING = 240
 local ring, ringAt, lastStack = {}, 0, ""
 local function ringNote(line)
-  ringAt = ringAt % 40 + 1
+  ringAt = ringAt % RING + 1
   ring[ringAt] = line
 end
 local function ringDump(n)
   local out = {}
   for i = 1, math.min(n or 14, #ring) do
-    local at = (ringAt - i) % 40 + 1
+    local at = (ringAt - i) % RING + 1
     if ring[at] then table.insert(out, 1, ring[at]) end
   end
   return table.concat(out, " ;; ")
@@ -226,7 +227,8 @@ local function tick()
   -- script's) is the battle agent's: take it off and let the field finish the
   -- way a win would, which is the field's half of every battle
   local t = ok and top()
-  if t and t ~= OW and BattleStateClass and getmetatable(t) == BattleStateClass then
+  if t and t ~= OW and BattleStateClass
+     and (getmetatable(t) == BattleStateClass or tostring(describeTop()):find("BattleState", 1, true)) then
     battles = battles + 1
     Game.stack:pop()
     local okB, errB = xpcall(OW.afterBattle, debug.traceback, OW, "win", t)
@@ -512,6 +514,12 @@ local function shallow(t)
   end
   table.sort(sets)
   if #sets > 0 then parts[#parts + 1] = "{" .. table.concat(sets, ",", 1, math.min(#sets, 30)) .. "}" end
+  -- a text box: the words it is on, and whether it is asking something
+  if type(t.pages) == "table" and t.pageIndex and t.pages[t.pageIndex] then
+    local page = t.pages[t.pageIndex]
+    local words = type(page) == "table" and table.concat(page, " / ") or tostring(page)
+    parts[#parts + 1] = ("text=%q choice=%s auto=%s"):format(words:sub(1, 60), tostring(t.choice ~= nil), tostring(t.auto ~= nil))
+  end
   return table.concat(parts, ",")
 end
 
@@ -884,9 +892,11 @@ local function closeScreens(label, floorDepth)
     elseif i <= 300 then
       if i % 5 == 0 then press("a") end
     else
-      local m = i % 6
-      if m == 0 then press("b") elseif m == 2 then press("a")
-      elseif m == 4 then press(({ "up", "down", "left", "right" })[rnd(4)]) end
+      -- not a fixed cycle: B-then-A in lockstep can answer NO to a yes/no
+      -- every time (the move-learn prompt re-asks on NO)
+      if i % 3 == 0 then
+        press(({ "a", "a", "b", "up", "down", "left", "right", "a", "b" })[rnd(9)])
+      end
     end
   end, function() return stackDepth() <= floorDepth end)
   if not ok then return false end
@@ -897,7 +907,7 @@ local function closeScreens(label, floorDepth)
       names[#names + 1] = okD and tostring(d) or "?"
     end
     fail("softlock", ("%s: B did not close the screens | top=%s depth=%d | stack=%s | top fields: %s | recent: %s"):format(label,
-      describeTop(), stackDepth(), table.concat(names, " > "), shallow(top()), ringDump(16)))
+      describeTop(), stackDepth(), table.concat(names, " > "), shallow(top()), ringDump(tonumber(getenv('RING_DUMP') or '') or 16)))
     while stackDepth() > floorDepth do Game.stack:pop() end
     return false
   end
@@ -944,7 +954,13 @@ local function menuPass()
   -- a map that opens on a scene: read it out (A / B) before the menu is asked for
   if not idle() then
     local r = drain("menu arrival scene")
-    if r ~= true then recover(OW.map.id, OW.player.cellX, OW.player.cellY) end
+    if r ~= true then
+      -- a cutscene longer than the budget: the menus are not reachable until it
+      -- ends, which is the game working -- say so and move on
+      emit(("SWEEP_INFO|%s|menu_skipped|the arrival scene outlasted the budget (%s)"):format(cur.map, tostring(r)))
+      recover(OW.map.id, OW.player.cellX, OW.player.cellY)
+      return false
+    end
   end
   local floor = openMenu("start menu")
   if not floor then return end
@@ -1159,7 +1175,7 @@ end
 
 local function menusFull()
   tally = { party = 0, bag = 0 }
-  menuPass()
+  if menuPass() == false then return end
   if not idle() then drain("menus") end
   if idle() then partyPass() end
   if idle() then bagPass() end
@@ -1274,6 +1290,9 @@ local function sweepMap(id, menusHere)
   for i = 1, #id do h = (h * 31 + id:byte(i)) % 2147483647 end
   rngState = h
   cur.hash = h
+  -- the game's own randomness (encounters, wild natures, NPC wandering) too
+  math.randomseed(h)
+  if love.math and love.math.setRandomSeed then pcall(love.math.setRandomSeed, h) end
   local def = Data.maps[id]
   if not def then
     fail("unknown_map", "no such map in the cache")
