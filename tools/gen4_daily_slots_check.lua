@@ -24,6 +24,14 @@ local function load(name)
   return f and f()
 end
 
+-- a non-English cache: map names are asserted to come from the cache, not as English
+local LANG = load('gen4_language')
+local function named(actual, english, label)
+  if not LANG then check(actual == english, label) return end
+  check(type(actual) == 'string' and actual ~= '' and not actual:find('{', 1, true),
+    label .. ' [' .. tostring(LANG.language) .. ': read from the cache]')
+end
+
 local special = load('gen4_special_encounters')
 check(special, 'the cache must carry gen4_special_encounters '
       .. '(run tools/gen4_special_encounters_extract.lua on an older cache)')
@@ -60,7 +68,8 @@ for id, def in pairs(data.maps or {}) do
   if def.header == 287 then garden = def end
   if def.header == 506 then marsh = def end
 end
-check(garden and garden.label == 'Trophy Garden', 'header 287 is the Trophy Garden')
+check(garden ~= nil, 'header 287 is a map')
+named(garden and garden.label, 'Trophy Garden', 'header 287 is the Trophy Garden')
 local s = garden and D.slotsFor(data, save, garden)
 check(s and s[7] == 35 and s[8] == 133, 'slot 7 is the newest (Clefairy), slot 8 the one before (Eevee)')
 check(D.slotsFor(data, { pokedex = {}, gen4TrophyGarden = save.gen4TrophyGarden }, garden) == nil,

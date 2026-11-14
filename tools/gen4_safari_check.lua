@@ -90,10 +90,24 @@ s6.escapeCount = 0
 check(S.flees(s6, 120, 30) and not S.flees(s6, 120, 31), 'and at stage 0 it is 120 x 10/40 = 30')
 
 local data = { text = assert(loadfile(cacheDir .. '/text.lua'))() }
-check(S.text(data, S.TEXT.bait, 'LUCAS', 'Bidoof') == 'LUCAS threw some Bait\nat the Bidoof!',
-      'the cartridge\'s own line, slots filled')
-check(S.text(data, S.TEXT.labelMud) == 'MUD' and S.text(data, S.TEXT.labelBall) == 'BALL',
-      'and its menu words')
+-- a non-English cache (gen4_language.lua) carries the same entries in its own
+-- language: the line is asserted to be that cartridge's, with the slots filled
+local langChunk = loadfile(cacheDir .. '/gen4_language.lua')
+local LANG = langChunk and langChunk()
+if LANG then
+  local bait = S.text(data, S.TEXT.bait, 'LUCAS', 'Bidoof')
+  check(type(bait) == 'string' and bait:find('LUCAS', 1, true) and bait:find('Bidoof', 1, true)
+        and not bait:find('{', 1, true) and bait ~= 'LUCAS threw some Bait\nat the Bidoof!',
+        'the cartridge\'s own line (' .. tostring(LANG.language) .. '), slots filled')
+  local mud, ball = S.text(data, S.TEXT.labelMud), S.text(data, S.TEXT.labelBall)
+  check(type(mud) == 'string' and mud ~= '' and type(ball) == 'string' and ball ~= '' and mud ~= ball
+        and not mud:find('{', 1, true), 'and its menu words')
+else
+  check(S.text(data, S.TEXT.bait, 'LUCAS', 'Bidoof') == 'LUCAS threw some Bait\nat the Bidoof!',
+        'the cartridge\'s own line, slots filled')
+  check(S.text(data, S.TEXT.labelMud) == 'MUD' and S.text(data, S.TEXT.labelBall) == 'BALL',
+        'and its menu words')
+end
 
 -- ============================ 3. the wiring
 local function src(p) return io.open(p):read('a') end

@@ -354,6 +354,25 @@ function love.load()
       end
     end
 
+    -- SAY=<text> (\n for a line break; several lines separated by |): put these
+    -- messages into the box after the ticks above and let them type -- how a
+    -- status, weather or item line looks on this cartridge's language
+    if os.getenv("SAY") then
+      pressed = false
+      battle.queue = {}
+      battle.nextInsert = 0
+      for piece in (os.getenv("SAY") .. "|"):gmatch("(.-)|") do
+        -- {move:<id>} / {item:<id>}: the cache's own name (no non-ASCII on the command line)
+        piece = piece:gsub("{move:(%d+)}", function(n) local d = Data.moves[tonumber(n)] return d and d.name or "?" end)
+        piece = piece:gsub("{item:(%d+)}", function(n) local d = Data.items and Data.items[tonumber(n)] return d and d.name or "?" end)
+        battle:say((piece:gsub("\\n", "\n")))
+      end
+      for _ = 1, tonumber(os.getenv("SAYTICKS") or "90") do
+        local okU, errU = pcall(battle.update, battle, 1 / 60)
+        if not okU then print("update raised: " .. tostring(errU)) break end
+      end
+    end
+
     -- WHERE THE HP ENDED, which is the only thing that settles a healing test.
     -- A message saying an item fired is not the same claim as the number
     -- moving, and the two have disagreed here before.
