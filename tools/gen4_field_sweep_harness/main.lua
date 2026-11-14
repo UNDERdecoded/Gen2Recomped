@@ -18,6 +18,7 @@
 -- Environment (all optional):
 --   MAPS=T01,R201|all     which maps (default all, in sorted order)
 --   MAP_PREFIX=D          only maps whose id starts with this
+--   DEDUPE=0              keep the second id the cache gives every header (C_01 for C01)
 --   SHARD=i/n             every n-th map starting at i (1-based) of the list
 --   SKIP=n  LIMIT=n       skip the first n / stop after n maps of the list
 --   SEED=n                the random seed (walks, menu fuzz); default 1
@@ -38,6 +39,9 @@
 --   ENTRIES=n             how many arrival cells per map (default 1)
 --   MAP_SECS=n            wall-clock allowance per map before it is failed as a
 --                         hang (default 120)
+--   ENCOUNTERS=1          leave wild encounters on (every grass step may roll one)
+--   CAM=off|n             camera rung for the walk phase (default: one per map,
+--                         by hash, over the whole ladder; off keeps the player's)
 --   TRACE=1               print each phase as it starts
 --   OUT=<file>            also append the SWEEP_* lines to this file
 --
@@ -175,17 +179,60 @@ end
 
 -- One logic tick. Returns false when the update raised (the state is then
 -- suspect, and the caller recovers).
+-- the last stack changes and the keys pressed with them: what a failure needs
+-- to be replayed by hand
+local ring, ringAt, lastStack = {}, 0, ""
+local function ringNote(line)
+  ringAt = ringAt % 40 + 1
+  ring[ringAt] = line
+end
+local function ringDump(n)
+  local out = {}
+  for i = 1, math.min(n or 14, #ring) do
+    local at = (ringAt - i) % 40 + 1
+    if ring[at] then table.insert(out, 1, ring[at]) end
+  end
+  return table.concat(out, " ;; ")
+end
+
 local deadline = math.huge
 local function tick()
   frames = frames + 1
   -- a map that has run past its wall-clock allowance is a hang of some kind
   -- (a frame loop that never ends); the error unwinds to sweepMap's xpcall
   if os.clock() > deadline then error("MAP_TIMEOUT", 0) end
+  local keys = next(keysPressed) and (function()
+    local k = {}
+    for name in pairs(keysPressed) do k[#k + 1] = name end
+    table.sort(k)
+    return table.concat(k, "+")
+  end)() or nil
   local ok, err = xpcall(Game.stack.update, debug.traceback, Game.stack, 1 / 60)
   keysPressed = {}
+  do
+    local okS, now = pcall(Game.stack.describeAll, Game.stack)
+    now = okS and now or "?"
+    if now ~= lastStack then
+      lastStack = now
+      ringNote(("f%d%s %s"):format(frames, keys and (" [" .. keys .. "]") or "", now))
+    elseif keys then
+      ringNote(("f%d [%s]"):format(frames, keys))
+    end
+  end
   -- Game:update advances the music clock on its own accumulator; scripts wait
   -- on its fades (fadeoutbgm), so it has to run here or they never finish
   if ok then pcall(Music.update, Game.data) end
+  -- a battle that came onto the stack (a trainer's sight, a wild encounter, a
+  -- script's) is the battle agent's: take it off and let the field finish the
+  -- way a win would, which is the field's half of every battle
+  local t = ok and top()
+  if t and t ~= OW and BattleStateClass and getmetatable(t) == BattleStateClass then
+    battles = battles + 1
+    Game.stack:pop()
+    local okB, errB = xpcall(OW.afterBattle, debug.traceback, OW, "win", t)
+    if not okB then fail("after_battle_error", errB) end
+    OW.engaging = false
+  end
   if not ok then
     fail("update_error", err)
     return false
@@ -235,9 +282,17 @@ end
 -- --------------------------------------------------------------- the stubs ---
 
 local battles = 0
+local BattleStateClass
 local pushCount = 0          -- every state push: a script that re-asks its question is cycling, not hung
 
 local function installStubs()
+  BattleStateClass = require("src.battle.BattleState")
+  -- ENCOUNTERS=1: wild encounters stay on and every grass step may roll one, so
+  -- the field's side of a battle (the wipe, the battle on the stack, the way
+  -- back) is walked; the sweep pops the battle itself and calls afterBattle
+  if getenv("ENCOUNTERS") then
+    require("src.world.Encounter").gen4StepAllowed = function() return true end
+  end
   -- the LINK row is the port's online "Play Together" screen: a network client,
   -- not the field -- the start menu is built without it
   pcall(function() require("src.ui.Gen4StartMenu").linkRow = function() return nil end end)
@@ -290,7 +345,9 @@ local function richSave(save)
     if ok and mon then party[#party + 1] = mon end
   end
   -- the field moves, spread over the party so the party menu offers them all
-  local hm = { { 15, 19, 57, 70 }, { 249, 127, 431, 432 }, { 148, 100, 91, 230 }, { 208, 156, 29, 15 } }
+  -- (three each and a plain Tackle, so a move-learn prompt has a move to forget)
+  local hm = { { 15, 19, 57, 33 }, { 70, 249, 127, 33 }, { 431, 432, 148, 33 }, { 100, 91, 230, 33 },
+    { 208, 156, 29, 33 } }
   for i, ids in ipairs(hm) do
     if party[i] then
       party[i].moves = {}
@@ -354,7 +411,9 @@ local function newSave()
   local save = SaveData.newGame(Game:bootConfig())
   Game.save = save
   if Game.adoptSave then pcall(Game.adoptSave, Game, save, true) end
-  save.repelSteps = 99999          -- wild battles are the battle agent's, not this sweep's
+  if not getenv("ENCOUNTERS") then
+    save.repelSteps = 99999        -- wild battles are the battle agent's, not this sweep's
+  end
   local okS, errS = pcall(storyState, save)
   if not okS then fail("profile_error", errS) end
   if PROFILE == "rich" then
@@ -537,12 +596,6 @@ local function drain(kind, budget)
     end
   end, function(i)
     local t = top()
-    -- a battle that came onto the stack is the battle agent's: pop it
-    if t and t ~= OW and t.enemy and t.player and t.battle ~= nil then
-      battles = battles + 1
-      Game.stack:pop()
-      pcall(OW.afterBattle, OW, "win", t)
-    end
     if i % 6 == 0 then
       local fp = fingerprint()
       if fp == lastFp then sameFor = sameFor + 6 else sameFor = 0; lastFp = fp end
@@ -585,6 +638,19 @@ end
 
 local function randomWalk(mapId, ox, oy)
   cur.phase = "walk"
+  if (cur.hash or 0) % 3 == 0 and Game.save then Game.save.onBike = true end
+  -- every map's walk uses one rung of the camera ladder (cartridge, fixed
+  -- angles, third and first person -- the last two walk OFF the grid)
+  if getenv("CAM") ~= "off" then
+    pcall(function()
+      local Gen4Camera = require("src.render.Gen4Camera")
+      local want = tonumber(getenv("CAM") or "") or ((cur.hash or 0) % #Gen4Camera.TILTS + 1)
+      local _, index = Gen4Camera.setTilt(want)
+      Game.save.options = Game.save.options or {}
+      Game.save.options.gen4CameraTilt = index
+      cur.camera = index
+    end)
+  end
   local dir, hold = nil, 0
   local lastCell, still = nil, 0
   local moved = {}
@@ -606,7 +672,8 @@ local function randomWalk(mapId, ox, oy)
       still = 0
     end
     hold = hold - 1
-    keysDown = { [dir] = true }
+    -- hold B (run) a third of the time, and ride the bicycle on a third of maps
+    keysDown = { [dir] = true, b = (math.floor(i / 40) % 3 == 0) or nil }
     if top() ~= OW then keysDown = {}; if i % 9 == 0 then press("b") end end
   end, nil, DRAW_EVERY)
   keysDown = {}
@@ -823,8 +890,8 @@ local function closeScreens(label, floorDepth)
       local okD, d = pcall(StateStack.describe, st)
       names[#names + 1] = okD and tostring(d) or "?"
     end
-    fail("softlock", ("%s: B did not close the screens | top=%s depth=%d | stack=%s | top fields: %s"):format(label,
-      describeTop(), stackDepth(), table.concat(names, " > "), shallow(top())))
+    fail("softlock", ("%s: B did not close the screens | top=%s depth=%d | stack=%s | top fields: %s | recent: %s"):format(label,
+      describeTop(), stackDepth(), table.concat(names, " > "), shallow(top()), ringDump(16)))
     while stackDepth() > floorDepth do Game.stack:pop() end
     return false
   end
@@ -1108,6 +1175,17 @@ local function pickMaps()
     for id in want:gmatch("[^,%s]+") do out[#out + 1] = id end
     ids = out
   end
+  -- the cache carries every Sinnoh map under two ids (C01 and C_01: the same
+  -- header twice); sweeping both doubles the run and finds nothing new.
+  -- DEDUPE=0 keeps the aliases.
+  if getenv("DEDUPE") ~= "0" and not (want and want ~= "all") then
+    local seen, out = {}, {}
+    for _, id in ipairs(ids) do
+      local h = Data.maps[id] and Data.maps[id].header
+      if h == nil or not seen[h] then out[#out + 1] = id; if h ~= nil then seen[h] = true end end
+    end
+    ids = out
+  end
   local prefix = getenv("MAP_PREFIX")
   if prefix then
     local out = {}
@@ -1128,13 +1206,51 @@ local function pickMaps()
   return out
 end
 
--- an arrival cell for the map: one of its own warps' cells (what a warp in
--- lands on), else any reachable cell
+-- where a warp INTO each map lands (the destination warp's own cell, which is
+-- what Warp.destination hands the player), found by reading every map's warps
+local incoming
+local function buildIncoming()
+  incoming = {}
+  for fromId, def in pairs(Data.maps) do
+    if type(fromId) == "string" and type(def) == "table" and def.id == fromId then
+      for _, w in ipairs(def.warps or {}) do
+        local dest = w.destMap and Data.maps[w.destMap]
+        local dw = dest and dest.warps and dest.warps[w.destWarp]
+        if dw and dw.x and dw.y then
+          local list = incoming[w.destMap]
+          if not list then list = {}; incoming[w.destMap] = list end
+          list[#list + 1] = { dw.x, dw.y, from = fromId }
+        end
+      end
+    end
+  end
+  for _, list in pairs(incoming) do
+    table.sort(list, function(a, b)
+      if a.from ~= b.from then return a.from < b.from end
+      if a[1] ~= b[1] then return a[1] < b[1] end
+      return a[2] < b[2]
+    end)
+  end
+end
+
+-- an arrival cell for the map: where a real warp lands (a map nothing warps to
+-- gets one of its own warps' cells), else the middle of it
 local function landings(id, def)
-  local out = {}
-  for _, w in ipairs(def.warps or {}) do
-    if w.x and w.y then out[#out + 1] = { w.x, w.y } end
+  if not incoming then buildIncoming() end
+  local out, seen = {}, {}
+  for _, l in ipairs(incoming[id] or {}) do
+    local key = l[1] * 4096 + l[2]
+    if not seen[key] then
+      seen[key] = true
+      out[#out + 1] = { l[1], l[2], via = l.from }
+    end
     if #out >= ENTRIES then break end
+  end
+  if #out == 0 then
+    for _, w in ipairs(def.warps or {}) do
+      if w.x and w.y then out[#out + 1] = { w.x, w.y } end
+      if #out >= ENTRIES then break end
+    end
   end
   if #out == 0 then
     -- no warps at all: the middle of the map, nudged until the engine agrees it is floor
@@ -1153,6 +1269,11 @@ local function sweepMap(id, menusHere)
   rngState = h
   cur.hash = h
   local def = Data.maps[id]
+  if not def then
+    fail("unknown_map", "no such map in the cache")
+    emit(("SWEEP_MAP|%s|fail|unknown"):format(id))
+    return
+  end
   local t0 = os.clock()
   deadline = t0 + envn("MAP_SECS", 120)
   local f0 = frames
@@ -1217,7 +1338,8 @@ local function sweepMap(id, menusHere)
   -- an arrival the player cannot walk away from (a cutscene room, or a map
   -- whose spawn is boxed in): informational, the scripted ones are legitimate
   if PHASES.walk and info.walked <= 2 and #(def.warps or {}) > 0 then
-    emit(("SWEEP_INFO|%s|boxed_arrival|walked %d cell(s) from %d,%d"):format(id, info.walked, landing[1], landing[2]))
+    emit(("SWEEP_INFO|%s|boxed_arrival|walked %d cell(s) from %d,%d (arrival of a warp from %s)"):format(id, info.walked,
+      landing[1], landing[2], tostring(landing.via or "none -- own warp cell")))
   end
   local failed = totals.fails - failsBefore
   emit(("SWEEP_MAP|%s|%s|frames=%d secs=%.1f npcs=%d signs=%d warps=%d/%d talked=%d silent=%d stuck=%d walked=%d"):format(
@@ -1309,7 +1431,7 @@ function love.load()
     local t0 = os.clock()
     local failedMaps = 0
     for i, id in ipairs(ids) do
-      local menusHere = (MENUS == "map") or (MENUS == "once" and not menusDone)
+      local menusHere = (MENUS == "map") or (MENUS == "once" and (not menusDone or id == "UG"))
       local fb = totals.fails
       sweepMap(id, menusHere)
       if menusHere then menusDone = true end
