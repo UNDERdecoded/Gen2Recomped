@@ -842,8 +842,10 @@ B[#B + 1] = { name = "canalave: rowan's orders",
 -- THE LAKES. Lake Valor, drained (D28R0101) -> Valor Cavern (D28R0103):
 -- Saturn (person 1) -- FLAG_DEFEATED_COMMANDER_SATURN_VALOR_CAVERN 0x13E.
 -- Golbat/Bronzor/Toxicroak: Psychic.
+-- (RENEGADE's Toxicroak may roll DRY SKIN, which drinks the default Surf
+-- for the whole battle: Psychic there, as the line above says)
 B[#B + 1] = { name = "saturn at lake valor",
-  steps = { { "do", strong() }, { "teleport", "D28R0103", 14, 23, "up" }, { "talk", 1 },
+  steps = { { "do", strong(renegade and 94 or nil) }, { "teleport", "D28R0103", 14, 23, "up" }, { "talk", 1 },
             { "until", flag(0x13E), 60000 } },
   expect = flag(0x13E), why = "flag 0x13E (Saturn beaten)", expectBudget = 12000 }
 

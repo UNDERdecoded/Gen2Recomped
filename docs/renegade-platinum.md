@@ -200,6 +200,14 @@ Piplup in both.
   Mewtwo team, healed between Victory Road's legs). Optional content the
   hack adds (gift Pokémon, the Battleground's leaders, new item balls) is
   not walked.
+- Trainer Pokémon abilities. The hack reorders some ability pairs (Toxicroak
+  is DRY_SKIN first). The cartridge builds a trainer mon's personality from
+  a seed (`TrainerData_BuildParty`: dv + level + species + trainer id, the
+  LCRNG run `class` times, `<< 8` plus 0x88 / 0x78), so its low bit, and
+  with it the ability slot, is always 0: every trainer Toxicroak has Dry
+  Skin. The port's `buildTrainerParty` (BattleState) still rolls a random
+  personality (nature, ability, gender) for both games, so half the time it
+  gets Anticipation. Not fixed here; it changes retail's battles too.
 - Whether the real hack prints the lines of trainers 928..1065 (see above).
 - Pickup, Pokemart common stock and the Frontier were not diffed at the data
   level, only shown unchanged by the ARM9/overlay survey.
