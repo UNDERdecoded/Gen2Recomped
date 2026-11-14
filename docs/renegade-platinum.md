@@ -124,6 +124,43 @@ authored.
   loses and blacks out. The playthrough beat trains the lead up first.
 - Jubilife: the Pokétch clowns' quizzes are removed (persons 24 and 25 are
   parked at 0,0 without a script); the president gives the Pokétch himself.
+
+## The story, as the hack changes it
+
+All of these are script and event-data edits; the port runs them with no
+engine change. `tools/gen4_playthrough/platinum.lua` walks each one when
+`VERSION=renegadeplatinum` (retail's beats are untouched).
+
+- Sandgem: Rowan's first lab scene enables the **National Dex** at once
+  (`getsetnationaldexenabled 1`), so Mom's post-game scene takes its National
+  Dex branch (flag 0x15C, not 0x15D).
+- Floaroma Meadow: the two grunts are one double battle (296 + 297) that
+  checks `getpartycount` and pushes a party of one back.
+- Pastoria: the Gym Guide (person 29, flag 0xA08) stands on Barry's coord
+  cell in front of the gym; Crasher Wake sings on Route 212 south (R212B
+  coord (10..13,5), 0x406E): meeting him sets 0xA08 and clears the way.
+- Route 218 gate: the Pokédex-upgrade scientist is gone; a thirsty
+  policeman's coord trigger ((2,5..9), 0x406C) turns the player back unless
+  the bag holds the **Tea** (item 456, the old S.S. Ticket slot). The Tea is
+  Pal Park's: talk to Prof. Oak (flag 0xA0B), then Darach battles the player
+  (trainer 969) and Caitlin hands it over (flag 0xA0C).
+- Iron Island: Riley at the entrance battles the player (trainer 970);
+  HM04 Strength comes after his tag battle inside (D24R0105, 0x4092 = 2).
+- Mt. Coronet 2F, Victory Road 2F and Stark Mountain's second room: the
+  Strength boulders and Rock Smash rocks are parked at (999,999).
+- Victory Road 1F: a collector and a coord trigger ((37..39,18), 0x403E)
+  hold the way north until the counterpart is beaten on **Route 224**, which
+  is open before the League (talk twice, battle 975..977 by starter; flag
+  0xA12). The hack also puts two nurses inside Victory Road.
+- Route 227: Buck moved to (22,1); his trigger ((22,2..4), 0x403D) wants the
+  six **Battle Zone leaders**' unofficial badges first (Heather R225 0x8C9,
+  Wyver W226 0x8CA, Slythe R227 0x8CB, Shade R228 0x908, Gene R229 0x909,
+  Luna W230 0x8CE), then he battles (trainer 1023) and leaves (flag 0xA18).
+  Retail's patrol question (0x4119) is unreferenced.
+- Battleground: the room holds the gym leaders; its frame table sets
+  FLAG_TALKED_TO_BATTLEGROUND_BUCK (0x125) as the player walks in.
+- Trainers are much stronger throughout (full level-appropriate teams with
+  coverage, e.g. Volkner's two Rotom, Jupiter's Sableye).
 - Evolutions: 40 records change (trade evolutions gain a level, Eevee uses
   Sun/Moon/Ice/Leaf stones, and about a dozen trade-with-item species can also evolve by
   using the item, whose records the hack flags as party items); the cache
@@ -158,8 +195,11 @@ Piplup in both.
 
 ## Not verified yet
 
-- The playthrough runs 19 beats (the first battle, Jubilife, Roark's gym) on
-  this cache and stops there by tick budget; later story edits are not walked.
+- The playthrough walks the whole story to Heatran (100 beats, retail's 91
+  plus the hack's nine) with the runner's training cheat (a level-100
+  Mewtwo team, healed between Victory Road's legs). Optional content the
+  hack adds (gift Pokémon, the Battleground's leaders, new item balls) is
+  not walked.
 - Whether the real hack prints the lines of trainers 928..1065 (see above).
 - Pickup, Pokemart common stock and the Frontier were not diffed at the data
   level, only shown unchanged by the ARM9/overlay survey.

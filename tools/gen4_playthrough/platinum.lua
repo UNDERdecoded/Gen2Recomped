@@ -86,7 +86,9 @@ local function trainUpWith(move, level, species)
     table.insert(mon.moves, 1, { id = move or 94, pp = 64 })
     while #mon.moves > 4 do table.remove(mon.moves) end
     party[1] = mon
-    if renegade and #party < 2 then
+    -- (rebuilt each time with the same first move, so a double battle's
+    -- partner does not keep the last beat's -- Surf into Dry Skin)
+    if renegade and (#party < 2 or party[2].species == mon.species) then
       local second = Pokemon.new(r.game.data, species or lead.species, level or 75)
       second.otName, second.otId = lead.otName, lead.otId
       second.moves = second.moves or {}
@@ -398,8 +400,10 @@ B[#B + 1] = { name = "route 205: the little girl",
 -- Floaroma Meadow (D13R0101) coord 1 (12..13,48 while
 -- VAR_FLOAROMA_MEADOW_STATE 0x40E9 == 0): the two grunts' double battle,
 -- the Works Key (FLAG_OBTAINED_FLOAROMA_MEADOW_WORKS_KEY 0x9F)
+-- (RENEGADE's pair brings a Croagunk, whose Dry Skin drinks Surf, and Surf
+-- also hits the partner in a double: Psychic there)
 B[#B + 1] = { name = "floaroma meadow grunts",
-  steps = { { "do", trainUp }, { "teleport", "D13R0101", 12, 52, "up" }, { "activecoord" },
+  steps = { { "do", renegade and trainUpWith(94) or trainUp }, { "teleport", "D13R0101", 12, 52, "up" }, { "activecoord" },
             { "until", flag(0x9F), 60000 } },
   expect = function(r) return r:flag(0x9F) and r:var(0x40E9) >= 1 end, why = "flag 0x9F (Works Key), 0x40E9 >= 1",
   expectBudget = 8000 }
@@ -1228,8 +1232,11 @@ B[#B + 1] = { name = "sunyshore: volkner at the lighthouse",
 -- and west hubs, room 2 its bottom hub three times and both top (reverse)
 -- hubs, room 3 a bottom (double) hub twice -- in by the door, out by the far
 -- one, to Volkner.
+-- RENEGADE's Volkner leads two Rotom (Electric/Ghost, Levitate): Earthquake
+-- never touches them, so there the team leads with Psychic (STAB, neutral
+-- on his whole team and the gym's)
 B[#B + 1] = { name = "volkner", budget = 60000,
-  steps = { { "do", fullTeam(89) }, battleStyle("set"), routeSteps(), { "teleport", "C08GYM0101", 8, 14, "up" },
+  steps = { { "do", fullTeam(renegade and 94 or 89) }, battleStyle("set"), routeSteps(), { "teleport", "C08GYM0101", 8, 14, "up" },
             { "route", { "U6R5D3L5U3L5R5U5" } }, { "warpto", "C08GYM0102" },
             { "route", { "U5L3U3LRUDR5D7L8U4LU12R3DRD3R5D5R3DRU11L6" } }, { "warpto", "C08GYM0103" },
             { "route", { "U7R5D3L5U3L5D6L3U3LU17R9" } }, { "face", "up" }, { "press", "a" },
@@ -1244,6 +1251,23 @@ B[#B + 1] = { name = "sunyshore: jasmine's waterfall",
             { "until", flag(0x9A), 30000 } },
   expect = function(r) return r:flag(0x9A) and r:var(0x407E) >= 3 end, why = "flag 0x9A (HM07), 0x407E >= 3",
   expectBudget = 8000 }
+
+-- RENEGADE PLATINUM: Victory Road 1F's north part is held by a collector
+-- (D09R0101 person 12 at (38,18), shown while flag 0xA12 is clear) and a
+-- coord trigger across the column ((37..39,18) while 0x403E == 0) -- "you're
+-- not quite ready yet. Have you been to Route 224?" -- and Route 224 is
+-- open before the League: the counterpart (R224 person 23, by the stone
+-- tablet) talks once (flag 0x8B5), then offers a battle (YES; trainers
+-- 975..977 by the starter, six level-69s, Psychic hits them all), and on a
+-- win leaves: flag 0xA12, 0x403E = 1.
+if renegade then
+  B[#B + 1] = { name = "route 224: the counterpart", budget = 90000,
+    steps = { { "do", fullTeam(94) }, { "teleport", "R224", 44, 14, "up" },
+              { "talk", 23 }, { "until", function(r) return r:flag(0x8B5) and not r:busy() end, 20000 },
+              { "talk", 23 }, { "until", flag(0xA12), 60000 } },
+    expect = function(r) return r:flag(0xA12) and r:var(0x403E) >= 1 end,
+    why = "flag 0xA12, 0x403E >= 1 (the counterpart beaten on Route 224)", expectBudget = 8000 }
+end
 
 -- ROUTE 223, SURFED: from Sunyshore's north shore (21,1), three seas joined
 -- by SHALLOW_WATER shoals -- ashore at (17,49), down the shoal to (10,49) and
@@ -1289,13 +1313,17 @@ add({ { "do", fullTeam(58) }, { "do", function(r)
         r.game.save.repelSteps = 250
       end }, battleStyle("set"), routeSteps(), { "walkto", 15, 77 },
       { "route", { "U15R16UR2U13R3" } }, { "act", "down", 36, 53 }, { "route", { "DL11D2L12U13L4U6L4" } },
-      { "warpto", "D09R0102", 4, 37 },
-      { "route", { "DL3DL" } }, { "smash", "down", 16, 19 }, { "route", { "D3RD6" } }, { "push", "down", 17, 29 },
+      { "warpto", "D09R0102", 4, 37 } })
+-- (RENEGADE PLATINUM clears 2F: every rock and boulder is parked at
+-- (999,999), so the stairs are simply walked to)
+if not renegade then
+  add({ { "route", { "DL3DL" } }, { "smash", "down", 16, 19 }, { "route", { "D3RD6" } }, { "push", "down", 17, 29 },
       { "route", { "D" } }, { "push", "left", 15, 28 }, { "route", { "L" } }, { "push", "down", 16, 30 },
       { "route", { "DLD2L10" } }, { "push", "down", 5, 33 }, { "route", { "DL2D2R" } }, { "smash", "right", 5, 34 },
       { "route", { "R" } }, { "push", "up", 5, 32 }, { "route", { "UR4D2" } }, { "smash", "down", 9, 36 },
-      { "route", { "D2R2UR10DR" } }, { "push", "right", 24, 37 }, { "route", { "RU7LU4" } },
-      { "warpto", "D09R0101", 23, 26 },
+      { "route", { "D2R2UR10DR" } }, { "push", "right", 24, 37 }, { "route", { "RU7LU4" } } })
+end
+add({ { "warpto", "D09R0101", 23, 26 },
       { "route", { "DR15" } }, { "act", "down", 22, 53 }, { "route", { "L5U11R14UR10" } },
       { "warpto", "D09R0103", 42, 41 },
       { "route", { "UR11U3" } }, { "act", "up", 15, 34 }, { "route", { "U4R3U" } }, { "act", "up", 18, 28 },
@@ -1311,11 +1339,29 @@ add({ { "do", fullTeam(58) }, { "do", function(r)
       { "swimto", 15, 26 }, { "face", "up" }, { "press", "a" }, { "mash", 200 },
       { "until", function(r) local _, y = r:pos() return y <= 24 and not r:busy() end, 4000 },
       { "swimto", 15, 20 }, { "step", "up", 1 }, battleStyle(nil) })
-add({ { "do", fullTeam(57) }, { "warpto", "C10R0101" }, { "walkto", 11, 7 }, { "face", "up" }, { "activecoord" },
+-- (RENEGADE's Barry brings Azumarill, Breloom and Empoleon, who all resist
+-- Surf: Psychic there)
+add({ { "do", fullTeam(renegade and 94 or 57) }, { "warpto", "C10R0101" }, { "walkto", 11, 7 }, { "face", "up" }, { "activecoord" },
 
       { "until", varGe(0x40EF, 1), 60000 },
       { "talk", 0 }, { "until", flag(0xAF), 20000 } })
-B[#B + 1] = { name = "the league: barry", budget = 100000,
+-- RENEGADE's Route 223 and Victory Road trainers (level 60-70 full teams,
+-- one after another) wear the six Mewtwo down before Barry. The hack puts
+-- nurses inside Victory Road for that; here the party is healed, a CHEAT
+-- said as one, before every leg of the walk (each route / warp / field move)
+if renegade then
+  local heal = { "do", function(r)
+    local Pokemon = require("src.pokemon.Pokemon")
+    for _, mon in ipairs(r:party()) do Pokemon.heal(mon) end
+  end }
+  local out = {}
+  for _, s in ipairs(league) do
+    if s[1] == "route" or s[1] == "warpto" or s[1] == "act" then out[#out + 1] = heal end
+    out[#out + 1] = s
+  end
+  league = out
+end
+B[#B + 1] = { name = "the league: barry", budget = renegade and 200000 or 100000,
   steps = league,
   expect = function(r) return r:var(0x40EF) >= 1 and r:flag(0xAF) end, why = "0x40EF >= 1, flag 0xAF",
   expectBudget = 12000 }
@@ -1378,8 +1424,12 @@ B[#B + 1] = { name = "after the credits: home",
             { "until", function(r) return r:map() == "T01R0202" and not r:busy() end, 6000 },
             { "warpto", "T01R0201" },
             { "until", varGe(0x410F, 2), 6000 } },
-  expect = function(r) return r:var(0x410F) >= 2 and r:flag(0x15D) end,
-  why = "0x410F >= 2, flag 0x15D (Mom's post-game scene)", budget = 80000 }
+  -- RENEGADE PLATINUM enables the National Dex in Rowan's first lab scene
+  -- (GetSetNationalDexEnabled 1 there), so Mom takes the scene's other
+  -- branch: FLAG_TALKED_TO_MOM_ABOUT_NATIONAL_DEX 0x15C, not 0x15D
+  expect = function(r) return r:var(0x410F) >= 2 and r:flag(renegade and 0x15C or 0x15D) end,
+  why = renegade and "0x410F >= 2, flag 0x15C (Mom's post-game scene, National Dex)"
+    or "0x410F >= 2, flag 0x15D (Mom's post-game scene)", budget = 80000 }
 
 -- A CHEAT, said as one: every Sinnoh Pokédex species marked seen (the
 -- encounters are not under test here), which is what Rowan asks for
@@ -1439,10 +1489,50 @@ B[#B + 1] = { name = "route 227: wake and barry",
 
 -- coord 2 ((22,21) while VAR_ROUTE_227_BUCK_STATE 0x4119 == 0): Buck asks the
 -- player to patrol Stark Mountain (YES), 0x4119 = 1
+--
+-- RENEGADE PLATINUM moves Buck (person 11) up to (22,1) and the trigger to
+-- (22,2..4) while 0x403D == 0: he BATTLES the player (trainer 1023: Torkoal,
+-- Shuckle, Umbreon, Dusknoir, Cloyster, Claydol -- Surf), heals the party
+-- and leaves (flag 0xA18, 0x403D = 1). Retail's patrol question is left
+-- unreferenced, so 0x4119 stays 0 there (nothing in the hack reads it).
+-- His trigger also checks SIX FLAGS first and, short of any, sends the
+-- player back south ("did you manage to beat all six of the Battle Zone
+-- leaders? ... Nope"): the hack's Battle Zone leaders, one per route, each
+-- talked to, YES, beaten for an unofficial badge. They come first, each
+-- with the move that its team cannot shrug off.
+if renegade then
+  local LEADERS = {
+    -- route, leader (person), stand at, flag, move: Heather's flyers
+    -- (Thunderbolt), Wyver's dragons (Ice Beam), Slythe's poisons
+    -- (Psychic), Shade's darks (Thunderbolt: nothing immune, unlike
+    -- Psychic and Aura Sphere), Gene's normals (Aura Sphere), Luna's
+    -- fairies (Flash Cannon; the hack's chart has Steel 2x on Fairy)
+    { "R225", 31, 9, 81, 0x8C9, 85, "Heather (Wind)" },
+    { "W226", 16, 44, 26, 0x8CA, 58, "Wyver (Fang)" },
+    { "R227", 13, 12, 25, 0x8CB, 94, "Slythe (Acid)" },
+    -- (Shade's only open side is the east one, (23,84): faced from there)
+    { "R228", 27, 23, 84, 0x908, 85, "Shade (Shadow)", face = "left" },
+    { "R229", 19, 59, 23, 0x909, 396, "Gene (General)" },
+    { "W230", 19, 56, 16, 0x8CE, 430, "Luna (Moon)" },
+  }
+  for _, l in ipairs(LEADERS) do
+    B[#B + 1] = { name = "battle zone: " .. l[7], budget = 60000,
+      steps = { { "do", fullTeam(l[6]) }, { "teleport", l[1], l[3], l[4], l.face or "up" },
+                l.face and { "press", "a" } or { "talk", l[2], retarget = true },
+                { "until", flag(l[5]), 50000 } },
+      expect = flag(l[5]), why = ("flag 0x%X (%s's badge)"):format(l[5], l[7]), expectBudget = 8000 }
+  end
+  B[#B + 1] = { name = "route 227: buck",
+    steps = { { "do", fullTeam(57) }, { "teleport", "R227", 19, 7, "up" }, { "coord", 2 },
+              { "until", varGe(0x403D, 1), 60000 } },
+    expect = function(r) return r:var(0x403D) >= 1 and r:flag(0xA18) end, why = "0x403D >= 1, flag 0xA18 (Buck beaten)",
+    expectBudget = 8000 }
+else
 B[#B + 1] = { name = "route 227: buck",
   steps = { { "teleport", "R227", 22, 24, "up" }, { "answers", { 1 } }, { "coord", 2 },
             { "until", varGe(0x4119, 1), 20000 } },
   expect = varGe(0x4119, 1), why = "0x4119 >= 1", expectBudget = 8000 }
+end
 
 -- STARK MOUNTAIN (D16): coord 1 ((16,11) while VAR_STARK_MOUNTAIN_OUTSIDE_STATE
 -- 0x40A0 == 0): two grunts run inside, 0x40A0 = 1
@@ -1454,8 +1544,10 @@ B[#B + 1] = { name = "stark mountain: the grunts",
 -- the first room's frame table (VAR_STARK_MOUNTAIN_ROOM_1_STATE 0x40AD == 0):
 -- Mars, then Jupiter (FLAG_DEFEATED_TRAINER_COMMANDER_JUPITER_STARK_MOUNTAIN
 -- 0x8EF), Charon leaves with them; 0x40AD = 1
+-- (RENEGADE's Jupiter brings Sableye, immune to Psychic, and Skuntank:
+-- Flamethrower there, which nothing on either team is immune to)
 B[#B + 1] = { name = "stark mountain: mars and jupiter", budget = 60000,
-  steps = { { "do", fullTeam(94) }, { "warpto", "D16R0101" },
+  steps = { { "do", fullTeam(renegade and 53 or 94) }, { "warpto", "D16R0101" },
             { "until", varGe(0x40AD, 1), 50000 } },
   expect = function(r) return r:var(0x40AD) >= 1 and trainerFlag(0x8EF)(r) end,
   why = "0x40AD >= 1, trainer flag 0x8EF (Jupiter)",
@@ -1477,6 +1569,11 @@ local starkRoom2 = { routeSteps(), { "do", hmMoves({ [3] = 70, [4] = 249 }) },
   { "until", function(r) return r:var(0x4094) >= 1 and not r:busy() end, 20000 },
   { "walkto", 42, 15 }, { "smash", "left", 41, 15 }, { "walkto", 28, 12 } }
 for _, st in ipairs(starkPushes) do starkRoom2[#starkRoom2 + 1] = st end
+-- RENEGADE PLATINUM parks the room's rocks and boulders at (999,999): the
+-- far door is simply walked to
+if renegade then
+  for _ = 1, 3 + #starkPushes do table.remove(starkRoom2, 6) end
+end
 starkRoom2[#starkRoom2 + 1] = { "coord", 3 }
 starkRoom2[#starkRoom2 + 1] = { "until", varGe(0x4094, 2), 20000 }
 B[#B + 1] = { name = "stark mountain: buck follows", budget = 150000,
@@ -1499,11 +1596,18 @@ B[#B + 1] = { name = "stark mountain: charon",
 -- inside (T06R0101) he is person 1 (FLAG_HIDE_BATTLEGROUND_BUCK cleared by the
 -- arrest too), and talking to him is FLAG_TALKED_TO_BATTLEGROUND_BUCK 0x125,
 -- which wakes Heatran
-B[#B + 1] = { name = "battleground: buck",
-  steps = { { "teleport", "T06", 12, 21, "up" }, { "talk", 8 },
+--
+-- RENEGADE PLATINUM fills the Battleground with the gym leaders (person 1
+-- is Marley, Buck is person 5) and moves the flag to the door: the room's
+-- frame table (0x40C1 == 0) has the receptionist (person 0) meet the player
+-- and sets 0x125 itself, so nobody is talked to inside
+local battleground = { { "teleport", "T06", 12, 21, "up" }, { "talk", 8 },
             { "until", function(r) return not r:busy() and r:personAt(8):find("shown") == nil end, 8000 },
             { "warpto", "T06R0101" }, { "talk", 1 },
-            { "until", flag(0x125), 20000 } },
+            { "until", flag(0x125), 20000 } }
+if renegade then table.remove(battleground, 5) end
+B[#B + 1] = { name = "battleground: buck",
+  steps = battleground,
   expect = flag(0x125), why = "flag 0x125", expectBudget = 8000 }
 
 -- back in the third room (0x409E == 1, the game completed, the National Dex,
