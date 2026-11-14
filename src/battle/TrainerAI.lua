@@ -341,6 +341,7 @@ function TrainerAI.chooseMove(battler, rng, battle)
   local g4 = battle and battle.g4fx and require("src.battle.Gen4MoveEffects")
   for i, mv in ipairs(battler.curMoves) do
     if battler.disabledSlot ~= i and (unlimited or mv.pp > 0)
+       and not (g4 and battle.g4StatusBlocksMove and battle:g4StatusBlocksMove(battler, battle.data.moves[mv.id]))
        and not (g4 and g4.menuRefusal(battle, battler, battle.data.moves[mv.id]))
        and not (battle and battle.g3x
                 and require("src.battle.Gen4MoveEffectsExtra").menuRefusal(battle, battler, battle.data.moves[mv.id])) then
