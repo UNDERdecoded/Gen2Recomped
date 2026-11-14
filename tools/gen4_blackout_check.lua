@@ -74,8 +74,18 @@ if not pt then SKIP = SKIP + 1; print("skip: platinum") else
   check(B.whiteoutLabel(pt, false) == "M0211/S103B", "Pt: the Center's whiteout script")
   check(B.whiteoutLabel(pt, true) == "M0211/S0FCB", "Pt: the house's whiteout script")
   local lines = B.lossLines(pt, "LUCAS", 40, false)
-  check(lines and #lines == 4 and lines[2]:find("dropped %$40"), "Pt: the loss lines are bank 368's")
-  check(B.scurryLine(pt, "LUCAS", false):find("^LUCAS scurried to"), "Pt: the Center line")
+  -- the cartridge's language: the English words are asserted on an English
+  -- cache; any other language asserts the structure (four lines, the money
+  -- and the name in them)
+  local english = (pt.text.TEXT_B0213_00043 or ""):find("^First") ~= nil
+  if english then
+    check(lines and #lines == 4 and lines[2]:find("dropped %$40"), "Pt: the loss lines are bank 368's")
+    check(B.scurryLine(pt, "LUCAS", false):find("^LUCAS scurried to"), "Pt: the Center line")
+  else
+    check(lines and #lines == 4 and lines[2]:find("40") and lines[4]:find("LUCAS"), "Pt (non-English): the loss lines are bank 368's, with the money and the name")
+    local sc = B.scurryLine(pt, "LUCAS", false)
+    check(sc and sc:find("LUCAS", 1, true), "Pt (non-English): the Center line names the player")
+  end
   local n = 0
   for _, row in ipairs(pt.field.healLocations or {}) do
     if row.blackOut and B.spawnFor(pt, row.blackOut.map) then n = n + 1 end
