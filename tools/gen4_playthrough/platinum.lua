@@ -1233,13 +1233,21 @@ B[#B + 1] = { name = "the league: barry", budget = 100000,
 -- at (8,5); FLAG_DEFEATED_AARON 0xB0, BERTHA 0xB1, FLINT 0xB2, LUCIAN 0xB3.
 -- Six Mewtwo at 100, leading with Flamethrower for Aaron's bugs, Surf for
 -- Bertha's ground and Flint's fire, Shadow Ball for Lucian's psychics.
-local E4 = { { "aaron", "C10R0103", 0xB0, 53 }, { "bertha", "C10R0105", 0xB1, 57 },
-             { "flint", "C10R0107", 0xB2, 57 }, { "lucian", "C10R0109", 0xB3, 247 } }
+-- WALKED, room to room, as a player goes: out of the previous room by the
+-- door its member's win removed (RemoveObject LOCALID_EXIT_DOOR), up the
+-- lift room between (C10R0102/0104/0106/0108: the coord at (4,11) is
+-- TriggerPlatformLift), into the next room (its frame table walks the player
+-- in and shuts the door behind)
+local E4 = { { "aaron", "C10R0102", "C10R0103", 0xB0, 53 }, { "bertha", "C10R0104", "C10R0105", 0xB1, 57 },
+             { "flint", "C10R0106", "C10R0107", 0xB2, 57 }, { "lucian", "C10R0108", "C10R0109", 0xB3, 247 } }
 for _, e in ipairs(E4) do
-  local f = e[3]
+  local f = e[4]
   B[#B + 1] = { name = "elite four " .. e[1],
-    steps = { { "do", fullTeam(e[4]) }, { "teleport", e[2], 8, 9, "up" }, { "talk", 0 },
-              { "until", flag(f), 60000 } },
+    steps = { { "do", fullTeam(e[5]) }, { "warpto", e[2] }, { "coord", 1 },
+              { "until", function(r) return not r:busy() end, 3000 },
+              { "mash", 60 }, { "warpto", e[3] },
+              { "until", function(r) return r:map() == e[3] and not r:busy() end, 6000 },
+              { "talk", 0 }, { "until", flag(f), 60000 } },
     expect = flag(f), why = ("flag 0x%X"):format(f), expectBudget = 12000 }
 end
 
@@ -1248,7 +1256,9 @@ end
 -- the Hall of Fame (C10R0113): ClearGame sets FLAG_GAME_COMPLETED 0x964 and
 -- the credits roll. Ice Beam for her Garchomp.
 B[#B + 1] = { name = "champion cynthia",
-  steps = { { "do", fullTeam(58) }, { "teleport", "C10R0111", 8, 16, "up" },
+  steps = { { "do", fullTeam(58) }, { "warpto", "C10R0110" }, { "coord", 1 },
+            { "until", function(r) return not r:busy() end, 3000 }, { "mash", 60 },
+            { "warpto", "C10R0111" },
             { "until", flag(0xB4), 80000 },
             { "until", flag(0x964), 120000 } },
   expect = function(r) return r:flag(0xB4) and r:flag(0x964) end, why = "flags 0xB4 (Cynthia), 0x964 (game completed)",
