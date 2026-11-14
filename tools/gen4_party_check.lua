@@ -38,6 +38,7 @@ table.insert(package.searchers, 1, function(name)
   if name == "src.ui.Screens" then return nil end
   if name == "src.import.Gen4Menus" then return nil end
   if name == "src.import.Gen4Trades" then return nil end
+  if name == "src.ui.MenuStyle" then return nil end   -- resolveId calls its real isMenuScreen
   if name:sub(1, 7) == "src.ui." then return function() return screenStub end end
   if name:sub(1, 4) ~= "src." then return nil end
   return function() return inert end
