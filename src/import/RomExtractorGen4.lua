@@ -5552,6 +5552,15 @@ function RomExtractorGen4:extractIntro()
   out.script = Gen4IntroScene.SCRIPT
   out.role = Gen4IntroScene.ROLE
 
+  -- The Pokemon Rowan releases (Buneary on retail, Eevee on Renegade).
+  do
+    local ok, ov = pcall(function() return self.rom:overlay(Gen4IntroScene.OVERLAY) end)
+    local species = ok and Gen4IntroScene.monSpecies(ov) or nil
+    -- Written only when it differs from the screen's built-in Buneary, so a
+    -- retail cache stays byte-identical to the one made before this existed.
+    if species and species ~= 427 then out.monSpecies = species end
+  end
+
   -- ------------------------------------------------------------ television --
   local tvArc = self:archive("introTv")
   if tvArc then

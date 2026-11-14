@@ -251,9 +251,44 @@ function Gen4TrainerMessages.forTrainer(tableBytes, offsetBytes, trainerId)
   return out, n
 end
 
+-- TRAINERS THE OFFSET TABLE DOES NOT COVER (ROM hacks that add trainers).
+--
+-- Renegade Platinum grows trdata to 1,066 trainers and rewrites 136 records
+-- of trtbl IN PLACE -- blank placeholder lines of dummy trainers become the
+-- new trainers' real lines, retagged with ids 928..1065 -- but leaves
+-- trtblofs at its 928 entries.  The cartridge's walk reads the offset of
+-- trainer 928 from past the end of that file (zero padding), starts at record
+-- 0 (trainer 247's), and breaks at once: by the letter of the walk those
+-- trainers are silent and their authored lines unreachable.
+--
+-- The records of one trainer are always contiguous (that is what makes the
+-- walk work), so for ids PAST the offset table the run can be found by
+-- scanning the table.  It is applied only there: a trainer the offset table
+-- covers keeps the cartridge's answer, so a retail cartridge (offset table
+-- length == trainer count) never reaches this path and extracts the same
+-- bytes as before.
+function Gen4TrainerMessages.scanUncovered(tableBytes, firstId)
+  local out, n = {}, 0
+  local size = type(tableBytes) == "string" and #tableBytes or 0
+  local stride = Gen4TrainerMessages.RECORD_BYTES
+  local offset = 0
+  while offset + stride <= size do
+    local t, mt = u16(tableBytes, offset), u16(tableBytes, offset + 2)
+    if t >= firstId then
+      local row = out[t]
+      if not row then row = {}; out[t] = row end
+      if row[mt] == nil then row[mt] = floor(offset / stride); n = n + 1 end
+    end
+    offset = offset + stride
+  end
+  return out, n
+end
+
 -- Every trainer, plus a report whose numbers are the controls described in the
 -- header: `records` and `reached` must be equal, and both must equal the entry
--- count of bank 617.
+-- count of bank 617.  On a hack with trainers past the offset table the walk
+-- alone reaches fewer (`unreachable`), and `scanned` counts the records
+-- recovered by `scanUncovered` for them.
 function Gen4TrainerMessages.all(tableBytes, offsetBytes)
   local out = {}
   local trainers = Gen4TrainerMessages.trainerCount(offsetBytes)
@@ -273,7 +308,21 @@ function Gen4TrainerMessages.all(tableBytes, offsetBytes)
       end
     end
   end
+  local scanned, scannedTrainers = 0, 0
+  local extra = Gen4TrainerMessages.scanUncovered(tableBytes, trainers)
+  for id, row in pairs(extra) do
+    if out[id] == nil then
+      out[id] = row
+      scannedTrainers = scannedTrainers + 1
+      for _, index in pairs(row) do
+        scanned = scanned + 1
+        if not seen[index] then seen[index] = true; reached = reached + 1 end
+      end
+    end
+  end
   return out, {
+    scanned = scanned,
+    scannedTrainers = scannedTrainers,
     trainers = trainers,
     withMessages = withMessages,
     withoutMessages = trainers - withMessages,
