@@ -12804,7 +12804,7 @@ function OverworldState:startTrainerApproach(npc, dist, partner, vs2)
                           and partner.def.gen3TrainerId or nil
         -- VS2: the eye script, the pair's slots, approach type 2
         if vs2 and vs2.rows then rows = vs2.rows end
-        self.runner:run(rows, { npc = npc, mapId = self.map.id,
+        local extra = { npc = npc, mapId = self.map.id,
                                 gen3PartnerTrainer = partnerId,
                                 gen4ApproachingTrainers = {
                                   type(npc.def.trainer) == "table" and npc.def.trainer.id or 0,
@@ -12833,7 +12833,18 @@ function OverworldState:startTrainerApproach(npc, dist, partner, vs2)
                                     if other then hush[other] = true end
                                     self.spotHush = hush
                                   end
-                                end })
+                                end }
+        -- A MAP SCRIPT CAN BE RUNNING WHEN THE WALK-UP ENDS (a coordinate
+        -- event the player was standing on as the trainer spotted them: Route
+        -- 207's slope scene).  `ScriptRunner:run` asserts on a second script,
+        -- which raised out of the field's update -- the game was over.  Queue
+        -- the fight behind it instead; the queue drains once the world is idle
+        -- (drainPendingScripts), and the trainer stays frozen meanwhile.
+        if self.runner:isRunning() then
+          self:queueScript(rows, extra)
+        else
+          self.runner:run(rows, extra)
+        end
         return
       end
       npc.frozen = false

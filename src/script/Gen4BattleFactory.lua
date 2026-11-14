@@ -234,11 +234,15 @@ end
 
 -- BattleFactory_AddSelectedRentalsToParty
 function B.takeRentals(f)
+  -- a challenge resumed from a save that carries no rental list (a save the
+  -- factory never wrote, or one older than it) has nothing to take from: the
+  -- team already in `playerEntries` stays, rather than raising out of the script
+  local pool, sets = f.rentals or f.playerEntries or {}, f.rentalSets or f.playerSets or {}
   f.playerEntries, f.playerSets = {}, {}
   for i = 1, B.partySize(f.challengeType) do
     local slot = (f.selected[i - 1] or (i - 1)) + 1
-    f.playerEntries[i] = f.rentals[slot]
-    f.playerSets[i] = f.rentalSets[slot]
+    f.playerEntries[i] = pool[slot]
+    f.playerSets[i] = sets[slot]
   end
   f.opponentParty = f.opponentEntries
 end
