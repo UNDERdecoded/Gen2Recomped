@@ -432,7 +432,7 @@ function EndCard({ dur }: { dur: number }) {
           Rip packs with us on Tilt Rips:
         </div>
         <div style={{ fontFamily: PIXEL, fontSize: 30, color: GOLD, marginTop: 18 }}>tiltrips.com/r/GEN2RECOMP</div>
-        <div style={{ fontFamily: SANS, fontSize: 28, color: "#b9c6ff", marginTop: 40 }}>discord.gg/4VXnEnePT</div>
+        <div style={{ fontFamily: SANS, fontSize: 28, color: "#b9c6ff", marginTop: 40 }}>discord.gg/VswK7HpYab</div>
       </div>
     </Card>
   );

@@ -2,7 +2,7 @@
 
 Fill in `[DOWNLOAD LINK]` before posting. Every post ends with the same two links:
 - Tilt Rips (pack opening): https://tiltrips.com/r/GEN2RECOMP/
-- Discord: https://discord.gg/4VXnEnePT
+- Discord: https://discord.gg/VswK7HpYab
 
 > **Disclaimer** (add it to every YouTube description; include it in X/TikTok bios or pinned replies where space allows):
 > RetroRecomped is a non-commercial fan project. It is not affiliated with or endorsed by Nintendo, Game Freak, Creatures or The Pokémon Company. No game files are included; you import your own legally obtained ROMs.
@@ -25,7 +25,7 @@ You remember it like this. Now walk back in.
 RetroRecomped is a recompiled engine for the classic Pokémon games. Import your own ROM and play it natively, then make it new: 3D voxel dioramas, first and third person, battles fought on the map itself, a real day/night cycle, and a full mod system.
 
 ▶ Download: [DOWNLOAD LINK]
-▶ Discord: https://discord.gg/4VXnEnePT
+▶ Discord: https://discord.gg/VswK7HpYab
 ▶ Rip packs with us on Tilt Rips: https://tiltrips.com/r/GEN2RECOMP/
 
 SUPPORTED GAMES
@@ -95,7 +95,7 @@ Built to be modded: voxel mods, map packs, sprite sets, your own mods, and a ful
 
 Windows · macOS · Linux · Steam Deck · Android · Switch · iOS
 
-Discord: https://discord.gg/4VXnEnePT
+Discord: https://discord.gg/VswK7HpYab
 ```
 **Reply 2:**
 ```
@@ -114,7 +114,7 @@ RetroRecomped rebuilds Red through Platinum in 3D voxels: first and third person
 HeartGold, SoulSilver, Black & White coming soon.
 
 ▶ [DOWNLOAD LINK]
-💬 https://discord.gg/4VXnEnePT
+💬 https://discord.gg/VswK7HpYab
 ```
 
 ### TikTok / YouTube Shorts / Instagram Reels
@@ -161,7 +161,7 @@ Adjust the bullet list once the recording is final, so it only names features sh
 A tour of the RetroRecomped map editor: editing Pokémon Crystal maps live, then placing, swapping and moving real 3D models on a Platinum (Gen 4) map.
 
 ▶ Download: [DOWNLOAD LINK]
-▶ Discord (share your maps!): https://discord.gg/4VXnEnePT
+▶ Discord (share your maps!): https://discord.gg/VswK7HpYab
 ▶ Rip packs with us on Tilt Rips: https://tiltrips.com/r/GEN2RECOMP/
 
 IN THIS VIDEO
@@ -193,7 +193,7 @@ The RetroRecomped map editor 🛠️
 
 Paint Crystal's maps live, then drop real Gen 4 3D models into Platinum, swap them out and move them around.
 
-Share your maps as mods 👉 https://discord.gg/4VXnEnePT
+Share your maps as mods 👉 https://discord.gg/VswK7HpYab
 [YOUTUBE LINK]
 ```
 **Reply:** `Rip packs with us on Tilt Rips: https://tiltrips.com/r/GEN2RECOMP/`
@@ -202,7 +202,7 @@ Share your maps as mods 👉 https://discord.gg/4VXnEnePT
 ```
 Map editor showcase 🛠️ Edit Pokémon Crystal maps live, then place and swap real 3D models in Platinum, all inside RetroRecomped.
 ▶ [YOUTUBE LINK]
-💬 https://discord.gg/4VXnEnePT
+💬 https://discord.gg/VswK7HpYab
 ```
 
 ### TikTok / Shorts / Reels
