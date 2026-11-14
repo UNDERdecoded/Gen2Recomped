@@ -1,7 +1,7 @@
 package.path='./?.lua;'..package.path
 love={math={random=math.random}}
 package.loaded['src.core.GameVersion']={isGen4=function() return true end,
- isGen2=function() return false end,isGen3=function() return false end,isYellow=function() return false end,get=function() return 'platinum' end}
+ isGen2=function() return false end,isGen3=function() return false end,isYellow=function() return false end,isNds=function() return true end,isGen5=function() return false end,get=function() return 'platinum' end}
 local Forms=require('src.pokemon.Gen4Forms')
 local E=require('src.world.Encounter')
 local Pokemon=require('src.pokemon.Pokemon')

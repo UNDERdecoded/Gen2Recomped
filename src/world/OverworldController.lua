@@ -10692,7 +10692,7 @@ function OverworldState:gen4SweetScent()
   -- WildEncounters_TrySweetScentEncounter / FieldSystem_PerformSweetScentEncounterCheck:
   -- a roamer on this map first (50%, Repel not asked), then the Bug Contest's
   -- or the Safari's own generator; Keen Eye / Intimidate cannot turn it away
-  if slots and not self:gen4Escorted() then
+  if slots and GameVersion.isGen4() and not self:gen4Escorted() then
     local Roamers=require('src.world.Gen4Roamers')
     local slot,it=Roamers.check(Game.data,Game.save,self.map.id,love.math.random)
     local one=slot and Roamers.encounterFor(slot,it)
@@ -14456,7 +14456,7 @@ function OverworldState:onStepComplete()
       enc, roamer = Roam5.encounterFor(slot, it), "gen5"
       self.gen5RoamerSlot = slot
     end
-  elseif enc and not onWater then
+  elseif enc and not onWater and not GameVersion.isGen4() then
     local RoamMons = require("src.world.RoamMons")
     local name, info = RoamMons.check(Game.save, self.map.id, onWater,
                                       love.math.random)
@@ -15747,7 +15747,7 @@ function OverworldState:warpToHealPoint(onDone, opts)
     -- HGSS: Teleport's special-spawn warp is mode 2 (FieldMoveTask_Create-
     -- TeleportEnvironment), whose landing runs sub_02067BA4 ->
     -- Save_RandomizeRoamersLocation; Escape Rope (0) and Dig (1) do not
-    if Encounter.isHgss() and not (opts and opts.whiteout) and Game.save then
+    if GameVersion.isGen4() and Encounter.isHgss() and not (opts and opts.whiteout) and Game.save then
       pcall(function() require("src.world.Gen4Roamers").randomizeAll(Game.data, Game.save) end)
     end
     -- Dig/Teleport/Escape Rope land OUTSIDE at the last Pokemon Center TOWN
