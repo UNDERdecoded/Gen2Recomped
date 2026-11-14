@@ -476,7 +476,9 @@ local function defaultName(data, kind)
   local presets = boot and boot.namePresets and boot.namePresets.player
   local first = presets and presets[1]
   if type(first) == "table" then first = first.label end
-  return (type(first) == "string" and first ~= "") and first or nil
+  if type(first) == "string" and first ~= "" then return first end
+  -- the cartridge's own default (boy's entry; the player's gender is not known here)
+  return require("src.script.Gen4DefaultNames").hero(data, false)
 end
 
 -- FORWARD-DECLARED, and the reason is a crash this file shipped with.
@@ -3327,7 +3329,7 @@ function Commands.g4_catching_tutorial(ctx)
   local save = {}
   for k, v in pairs(game.save) do save[k] = v end
   local female = game.save.player and game.save.player.gender == "girl"
-  save.player = { name = female and "Lucas" or "Dawn", gender = female and "boy" or "girl" }
+  save.player = { name = require("src.script.Gen4DefaultNames").hero(game.data, not female), gender = female and "boy" or "girl" }
   save.party = { require("src.pokemon.Pokemon").new(game.data,
     counterpartStarter(playerStarter(game.save)), 5) }
   save.pokedex = { seen = {}, owned = {} }

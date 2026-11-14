@@ -8873,7 +8873,7 @@ function RomImporter:_settingsRows()
   -- No ROM TEXT LANGUAGE row: the ROM's language is known (Languages.romLanguage),
   -- and a row offering it let French -> French jobs leave the text in English.
   add({kind="section",label="THIS GAME: TEXT TRANSLATION",
-    note="Applies to "..tostring(translationVersion)..". The ROM's text is English. Play after translation finishes; ORIGINAL ROM TEXT restores the imported wording."})
+    note="Applies to "..tostring(translationVersion)..". The ROM's text is "..(function() local c=languages.romLanguage(translationVersion);for _,v in ipairs(languages)do if v[1]==c then return v[2] end end;return "English" end)()..". Play after translation finishes; ORIGINAL ROM TEXT restores the imported wording."})
   add({kind="option",scope="translation",version=translationVersion,label="LANGUAGE",
     row={id="target",values=values,labels=labels}})
   add({kind="action",label="TRANSLATE THIS GAME",value="START",action="translateGame",version=translationVersion})
