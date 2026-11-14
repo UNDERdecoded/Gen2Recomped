@@ -24,7 +24,8 @@
 --                   Rev 1, Switch Online build                 NOT YET
 --   Emerald         one release, (USA, Europe)                 accepted
 --   Platinum        Rev 0, Rev 1 (USA)                         both accepted
---                   (Europe) CPUP                              NOT YET
+--                   (Europe) CPUE rev 10, (Germany) CPUD       accepted
+--                   other European languages (CPUF/CPUI/CPUS)  NOT YET
 --   HeartGold       (USA) IPKE; SoulSilver (USA, Australia)    accepted
 --                   (Europe) IPKP / IPGP                       NOT YET
 --   Black / White   (USA, Europe) IRBO / IRAO                  accepted
@@ -92,6 +93,12 @@ RomRevisions.ACCEPTED = {
       label = "Pokemon Platinum (USA)" },
     { sha1 = "0862ec35b24de5c7e2dcb88c9eea0873110d755c", code = "CPUE", revision = 1,
       label = "Pokemon Platinum (USA) (Rev 1)" },
+    -- the English European cartridge keeps the US game code; its header
+    -- revision byte is 10 (docs/rom-revisions.md)
+    { sha1 = "8d15cd443d4e83e20493c79d3f9dc408c4f51ae0", code = "CPUE", revision = 10,
+      label = "Pokemon Platinum (Europe)" },
+    { sha1 = "5d009a175c77d4387cde26d34efb71aee825a938", code = "CPUD", revision = 0,
+      label = "Pokemon Platin Edition (Germany)" },
   },
   heartgold = {
     { sha1 = "4fcded0e2713dc03929845de631d0932ea2b5a37", code = "IPKE", revision = 0,

@@ -3,7 +3,9 @@
   "generation": 4,
   "romSha1": "0862ec35b24de5c7e2dcb88c9eea0873110d755c",
   "romSha1Alt": [
-    "ce81046eda7d232513069519cb2085349896dec7"
+    "ce81046eda7d232513069519cb2085349896dec7",
+    "8d15cd443d4e83e20493c79d3f9dc408c4f51ae0",
+    "5d009a175c77d4387cde26d34efb71aee825a938"
   ],
   "notes": [
     "WHY THIS FILE IS A THOUSAND TIMES SMALLER THAN CRYSTAL'S.",
