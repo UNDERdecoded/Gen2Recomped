@@ -388,6 +388,20 @@ B[#B + 1] = { name = "mars at the windworks",
   expect = function(r) return r:var(0x4089) >= 2 and r:var(0x40CF) >= 2 end, why = "0x4089 >= 2, 0x40CF >= 2 (Mars beaten)",
   expectBudget = 12000 }
 
+-- ETERNA FOREST (D03R0101; scripts_eterna_forest.s), in from Route 205's
+-- north end. Coord 1 ((28..29,85) while VAR_ETERNA_FOREST_FOLLOWER_CHERYL_STATE
+-- 0x40B1 == 0) is Cheryl joining as the partner (SetHasPartner, FOLLOW_PLAYER,
+-- 0x40B1 = 1, FLAG_TALKED_TO_ETERNA_FOREST_CHERYL 0x8B); the forest walked with
+-- her (its trainers fight two on two); coord 3 at the east exit ((82,34..39),
+-- 0x40B1 == 1) is her Soothe Bell and goodbye: FLAG_TRAVELED_WITH_CHERYL 0xE3,
+-- 0x40B1 = 2
+B[#B + 1] = { name = "eterna forest: cheryl", budget = 120000,
+  steps = { { "teleport", "R205A", 14, 7, "up" }, { "warpto", "D03R0101" }, { "coord", 1 },
+            { "until", function(r) return r:var(0x40B1) >= 1 and not r:busy() end, 20000 },
+            { "coord", 3 }, { "until", varGe(0x40B1, 2), 30000 } },
+  expect = function(r) return r:var(0x40B1) >= 2 and r:flag(0xE3) and r:flag(0x8B) end,
+  why = "0x40B1 >= 2, flags 0xE3, 0x8B", expectBudget = 8000 }
+
 -- ETERNA (scripts_eterna_city.s). Coord 1 (15,11..14 while
 -- VAR_ETERNA_CITY_STATE 0x407A == 0): Barry, 0x407A = 1; coords 4/7 (while
 -- 0x407A == 1): Cynthia gives HM01 Cut, 0x407A = 2

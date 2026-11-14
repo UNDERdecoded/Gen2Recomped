@@ -1113,9 +1113,11 @@ function P.spawnCast(ow, def, m)
     end
   end
   -- the lift's passenger arriving with the player (ElevatorPlatform_ChangeMaps)
+  -- (the next floor built is the ride's own; any other means the ride never
+  -- landed, and she is not carried anywhere else)
   local pas = ow.dwPassenger
+  ow.dwPassenger = nil
   if pas and tonumber(pas.destHeader) == tonumber(def.header) then
-    ow.dwPassenger = nil
     local c = {}
     for k, v in pairs(pas.cast) do c[k] = v end
     c.localId, c.x, c.z, c.y = pas.localId, pas.wx, pas.wz, nil
