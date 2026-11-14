@@ -1192,7 +1192,11 @@ BattleState.stampOT = stampOT
 -- internal id of whichever screen the ball happened to land on.
 function BattleState.metHere(game)
   local save = game and game.save
-  local mapId = save and save.player and save.player.map
+  -- THE MAP THE PLAYER IS ON, not the one last saved: save.player.map is only
+  -- written by OverworldState:captureSave, so it named wherever the last save
+  -- happened.  Falls back to it when no overworld is live (tools, tests).
+  local ow = game and game.overworld
+  local mapId = (ow and ow.map and ow.map.id) or (save and save.player and save.player.map)
   local def = mapId and game.data and game.data.maps and game.data.maps[mapId]
   return def and def.regionMapSection or nil
 end
