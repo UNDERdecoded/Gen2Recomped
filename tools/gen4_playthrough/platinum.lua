@@ -1240,4 +1240,164 @@ B[#B + 1] = { name = "champion cynthia",
   expect = function(r) return r:flag(0xB4) and r:flag(0x964) end, why = "flags 0xB4 (Cynthia), 0x964 (game completed)",
   expectBudget = 12000, budget = 220000, passBusy = true }
 
+-- ---------------------------------------------------------------------------
+-- AFTER THE CREDITS. ClearGame ends in OS_ResetSystem: the title, and a
+-- CONTINUE that walks in at the special location (the house 2F, (4,6) facing
+-- up; clear_game.c). Here the credits run to the title on A (they cannot be
+-- skipped the first time), and the continue is Game:restoreSave on the save
+-- the Hall of Fame wrote, as the title's CONTINUE does with the file.
+local function onTitle(r)
+  local top = r:top()
+  return top ~= nil and top.screenId == "TitleState"
+end
+local function continueGame(r)
+  local SaveData = require("src.core.SaveData")
+  r.game:restoreSave(SaveData.decode(SaveData.encode(r.game.save)))
+end
+
+-- the house 1F's frame table (VAR_PLAYER_HOUSE_POSTGAME_STATE 0x410F == 1,
+-- set by the Hall of Fame's script) is Mom's post-game scene:
+-- 0x410F = 2 and FLAG_TALKED_TO_MOM_ABOUT_NATIONAL_DEX_PROGRESS 0x15D
+B[#B + 1] = { name = "after the credits: home",
+  steps = { { "until", onTitle, 60000 }, { "do", continueGame },
+            { "until", function(r) return r:map() == "T01R0202" and not r:busy() end, 6000 },
+            { "warpto", "T01R0201" },
+            { "until", varGe(0x410F, 2), 6000 } },
+  expect = function(r) return r:var(0x410F) >= 2 and r:flag(0x15D) end,
+  why = "0x410F >= 2, flag 0x15D (Mom's post-game scene)", budget = 80000 }
+
+-- A CHEAT, said as one: every Sinnoh Pokédex species marked seen (the
+-- encounters are not under test here), which is what Rowan asks for
+local function seeSinnohDex(r)
+  local save = r.game.save
+  save.pokedex = save.pokedex or {}
+  save.pokedex.seen = save.pokedex.seen or {}
+  local orders = r.game.data.gen4_dex and r.game.data.gen4_dex.orders
+  for _, id in ipairs(orders and orders.sinnoh or {}) do
+    id = tonumber(id)
+    if id and id > 0 then save.pokedex.seen[id] = true end
+  end
+end
+-- a FLAG_DEFEATED_TRAINER_* (TRAINER_DEFEATED_FLAGS_START 0x550 + the trainer
+-- id): the port keeps that bank as save.gen4TrainerFlags[id], which
+-- Check/SetTrainerFlag and the trainers' sight read -- not save.flags
+local function trainerFlag(flagId)
+  return function(r)
+    local t = (r.game.save or {}).gen4TrainerFlags or {}
+    return t[flagId - 0x550] == true
+  end
+end
+local function nationalDex(r) return ((r.game.save or {}).pokedex or {}).national == true end
+
+-- Rowan's lab (T02R0101, Rowan person 0 at (7,14) since the Distortion World):
+-- the local dex complete, his talk script rates it, Oak arrives and the
+-- Pokédex gets its National mode (GetSetNationalDexEnabled 1), the Poké Radar
+B[#B + 1] = { name = "sandgem lab: the national dex",
+  steps = { { "do", seeSinnohDex }, { "teleport", "T02", 8, 12, "up" }, { "warpto", "T02R0101" },
+            { "talk", 0 }, { "until", nationalDex, 30000 } },
+  expect = nationalDex, why = "the National Dex", expectBudget = 8000 }
+
+-- Snowpoint's harbour (C09): the S.S. Spiral's sailor (person 8) sails to the
+-- Battle Zone once the game is completed -- Cynthia sees the player off the
+-- first time (FLAG_SAILED_TO_BATTLE_ZONE 0x157) -- PlayBoatCutscene to the
+-- Fight Area (C11)
+B[#B + 1] = { name = "snowpoint: the s.s. spiral",
+  steps = { { "teleport", "C09", 13, 53, "left" }, { "talk", 8 },
+            { "until", function(r) return r:map() == "C11" end, 30000 } },
+  expect = function(r) return r:flag(0x157) and r:map() == "C11" end, why = "flag 0x157, on C11",
+  expectBudget = 8000 }
+
+-- the Fight Area's frame table (VAR_FIGHT_AREA_STATE 0x4081 == 0): Barry, the
+-- Tower Tycoon his father, Buck; the blockade lifts with the National Dex
+-- (FLAG_HIDE_FIGHT_AREA_BLOCKADE 0x294); 0x4081 = 2
+B[#B + 1] = { name = "fight area: barry and buck",
+  steps = { { "until", varGe(0x4081, 2), 30000 } },
+  expect = function(r) return r:var(0x4081) >= 2 and r:flag(0x294) end, why = "0x4081 >= 2, flag 0x294",
+  expectBudget = 8000 }
+
+-- ROUTE 227 (R227; scripts_route_227.s). Coord 1 ((2..3,50) while
+-- VAR_ROUTE_227_WAKE_RIVAL_STATE 0x408B == 0): Crasher Wake and Barry, 0x408B = 1
+B[#B + 1] = { name = "route 227: wake and barry",
+  steps = { { "teleport", "R227", 3, 53, "up" }, { "coord", 1 },
+            { "until", varGe(0x408B, 1), 20000 } },
+  expect = varGe(0x408B, 1), why = "0x408B >= 1", expectBudget = 8000 }
+
+-- coord 2 ((22,21) while VAR_ROUTE_227_BUCK_STATE 0x4119 == 0): Buck asks the
+-- player to patrol Stark Mountain (YES), 0x4119 = 1
+B[#B + 1] = { name = "route 227: buck",
+  steps = { { "teleport", "R227", 22, 24, "up" }, { "answers", { 1 } }, { "coord", 2 },
+            { "until", varGe(0x4119, 1), 20000 } },
+  expect = varGe(0x4119, 1), why = "0x4119 >= 1", expectBudget = 8000 }
+
+-- STARK MOUNTAIN (D16): coord 1 ((16,11) while VAR_STARK_MOUNTAIN_OUTSIDE_STATE
+-- 0x40A0 == 0): two grunts run inside, 0x40A0 = 1
+B[#B + 1] = { name = "stark mountain: the grunts",
+  steps = { { "teleport", "D16", 16, 14, "up" }, { "coord", 1 },
+            { "until", varGe(0x40A0, 1), 20000 } },
+  expect = varGe(0x40A0, 1), why = "0x40A0 >= 1", expectBudget = 8000 }
+
+-- the first room's frame table (VAR_STARK_MOUNTAIN_ROOM_1_STATE 0x40AD == 0):
+-- Mars, then Jupiter (FLAG_DEFEATED_TRAINER_COMMANDER_JUPITER_STARK_MOUNTAIN
+-- 0x8EF), Charon leaves with them; 0x40AD = 1
+B[#B + 1] = { name = "stark mountain: mars and jupiter", budget = 60000,
+  steps = { { "do", fullTeam(94) }, { "warpto", "D16R0101" },
+            { "until", varGe(0x40AD, 1), 50000 } },
+  expect = function(r) return r:var(0x40AD) >= 1 and trainerFlag(0x8EF)(r) end,
+  why = "0x40AD >= 1, trainer flag 0x8EF (Jupiter)",
+  expectBudget = 8000 }
+
+-- the second room (D16R0102): coord 1 ((42,69) while
+-- VAR_STARK_MOUNTAIN_ROOM_2_FOLLOWER_BUCK_STATE 0x4094 == 0) is Buck joining as
+-- the partner (0x4094 = 1, FLAG_TALKED_TO_STARK_MOUNTAIN_ROOM_2_BUCK 0xDD);
+-- coord 3 at the far door ((47,3), 0x4094 == 1) is his "here we are", 0x4094 = 2
+-- THE WAY UP, walked with Buck trailing (found by an offline search over the
+-- room's collision): east round to row 15, Rock Smash the rock at (41,15)
+-- from its east side, west and up the left corridor to row 3, down column 23
+-- to row 12, the Strength boulder at (29,12) pushed east along row 12 to
+-- (48,12), and up column 47 to the far door
+local starkPushes = {}
+for bx = 30, 48 do starkPushes[#starkPushes + 1] = { "push", "right", bx, 12 } end
+local starkRoom2 = { routeSteps(), { "do", hmMoves({ [3] = 70, [4] = 249 }) },
+  { "teleport", "D16R0102", 42, 72, "up" }, { "coord", 1 },
+  { "until", function(r) return r:var(0x4094) >= 1 and not r:busy() end, 20000 },
+  { "walkto", 42, 15 }, { "smash", "left", 41, 15 }, { "walkto", 28, 12 } }
+for _, st in ipairs(starkPushes) do starkRoom2[#starkRoom2 + 1] = st end
+starkRoom2[#starkRoom2 + 1] = { "coord", 3 }
+starkRoom2[#starkRoom2 + 1] = { "until", varGe(0x4094, 2), 20000 }
+B[#B + 1] = { name = "stark mountain: buck follows", budget = 150000,
+  steps = starkRoom2,
+  expect = function(r) return r:var(0x4094) >= 2 and r:flag(0xDD) end, why = "0x4094 >= 2, flag 0xDD",
+  expectBudget = 8000 }
+
+-- the third room's frame table (VAR_STARK_MOUNTAIN_ROOM_3_STATE 0x409E == 0):
+-- Charon takes the Magma Stone, Looker and the police arrest him
+-- (FLAG_ARRESTED_CHARON_STARK_MOUNTAIN 0xD6), 0x409E = 1, the warp outside;
+-- outside, the frame table (VAR_STARK_MOUNTAIN_OUTSIDE_STATE 0x40A0 == 2) is
+-- Looker and Buck's goodbye, 0x40A0 = 3
+B[#B + 1] = { name = "stark mountain: charon",
+  steps = { { "warpto", "D16R0103" }, { "until", varGe(0x40A0, 3), 40000 } },
+  expect = function(r) return r:flag(0xD6) and r:var(0x409E) >= 1 and r:var(0x40A0) >= 3 end,
+  why = "flag 0xD6, 0x409E >= 1, 0x40A0 >= 3", expectBudget = 8000 }
+
+-- the Survival Area (T06): Buck (person 8, back since Charon's arrest) stands
+-- at the Battleground's door and goes in when talked to (SurvivalArea_Buck);
+-- inside (T06R0101) he is person 1 (FLAG_HIDE_BATTLEGROUND_BUCK cleared by the
+-- arrest too), and talking to him is FLAG_TALKED_TO_BATTLEGROUND_BUCK 0x125,
+-- which wakes Heatran
+B[#B + 1] = { name = "battleground: buck",
+  steps = { { "teleport", "T06", 12, 21, "up" }, { "talk", 8 },
+            { "until", function(r) return not r:busy() and r:personAt(8):find("shown") == nil end, 8000 },
+            { "warpto", "T06R0101" }, { "talk", 1 },
+            { "until", flag(0x125), 20000 } },
+  expect = flag(0x125), why = "flag 0x125", expectBudget = 8000 }
+
+-- back in the third room (0x409E == 1, the game completed, the National Dex,
+-- Buck talked to): Heatran (person 1, StartLegendaryBattle SPECIES_HEATRAN 50);
+-- FLAG_BATTLED_STARK_MOUNTAIN_ROOM_3_HEATRAN 0xD7, 0x409E = 2
+B[#B + 1] = { name = "stark mountain: heatran", budget = 60000,
+  steps = { { "do", fullTeam(57) }, { "teleport", "D16R0103", 7, 15, "up" }, { "talk", 1 },
+            { "until", function(r) return r:flag(0xD7) and r:var(0x409E) >= 2 and not r:busy() end, 50000 } },
+  expect = function(r) return r:flag(0xD7) and r:var(0x409E) >= 2 end, why = "flag 0xD7, 0x409E >= 2",
+  expectBudget = 8000 }
+
 return B
