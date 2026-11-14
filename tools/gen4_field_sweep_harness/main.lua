@@ -243,6 +243,13 @@ local function tick()
     end
     if not okB then fail("after_battle_error", errB) end
   end
+  if getenv("WATCH") and frames % tonumber(getenv("WATCH")) == 0 and OW.player then
+    local mv = OW.scriptMoves and OW.scriptMoves[1]
+    print(("[watch] f%d %s cell=%s,%s moving=%s target=%s,%s moves=%d rem=%s row=%s top=%s keys=%s"):format(frames,
+      tostring(OW.map and OW.map.id), tostring(OW.player.cellX), tostring(OW.player.cellY), tostring(OW.player.moving),
+      tostring(OW.player.targetX), tostring(OW.player.targetY), #(OW.scriptMoves or {}), tostring(mv and mv.remaining),
+      tostring(OW.runner and OW.runner.lastRow), describeTop(), tostring(keys)))
+  end
   if not ok then
     fail("update_error", err)
     return false
@@ -888,6 +895,7 @@ end
 -- Close what is above `floorDepth` with B (and START, which closes the pause
 -- menu) -- a screen the pad cannot leave is a softlock.
 local function closeScreens(label, floorDepth)
+  local pushesAtStart = pushCount
   -- B alone (every screen should back out), then A alone (a "really?" that
   -- defaults to NO has to be answered), then a random mix with the d-pad (a
   -- cursor parked on the wrong row of a yes/no)
@@ -912,8 +920,15 @@ local function closeScreens(label, floorDepth)
       local okD, d = pcall(StateStack.describe, st)
       names[#names + 1] = okD and tostring(d) or "?"
     end
-    fail("softlock", ("%s: B did not close the screens | top=%s depth=%d | stack=%s | top fields: %s | recent: %s"):format(label,
-      describeTop(), stackDepth(), table.concat(names, " > "), shallow(top()), ringDump(tonumber(getenv('RING_DUMP') or '') or 16)))
+    local detail = ("%s: B did not close the screens | top=%s depth=%d | stack=%s | top fields: %s | recent: %s"):format(label,
+      describeTop(), stackDepth(), table.concat(names, " > "), shallow(top()), ringDump(tonumber(getenv('RING_DUMP') or '') or 16))
+    if pushCount - pushesAtStart >= 20 then
+      -- states kept being pushed: a prompt that re-asks (the move-learn "abandon?"
+      -- loop answers NO to itself under B) -- cycling, not hung
+      emit(("SWEEP_LOOP|%s|%s|close|%d pushes while closing | %s"):format(cur.map, cur.phase, pushCount - pushesAtStart, oneLine(detail, 700)))
+    else
+      fail("softlock", detail)
+    end
     while stackDepth() > floorDepth do Game.stack:pop() end
     return false
   end
@@ -936,17 +951,26 @@ end
 
 local function openMenu(label)
   local floor = stackDepth()
-  press("start")
-  local ok = run(20)
-  if not ok then return nil end
-  if stackDepth() <= floor then
-    fail("menu_unopened", label .. ": START did not open a menu | " .. stuckDetail(
-      ("map=%s moving=%s locked=%s cell=%s,%s surf=%s emote=%s engaging=%s"):format(tostring(OW.map and OW.map.id),
-        tostring(OW.player.moving), tostring(OW.lockedFrames), tostring(OW.player.cellX), tostring(OW.player.cellY),
-        tostring(OW.player.surfing), tostring(OW.emote ~= nil), tostring(OW.engaging))))
-    return nil
+  -- START is only read on an idle field: a scene can start a frame after the
+  -- last one ended (an arrival script queued behind the map's), so ask again
+  -- after reading it out rather than calling the first miss a bug
+  for attempt = 1, 4 do
+    if not idle() then
+      local r = drain(label .. " before the menu")
+      if r ~= true then
+        emit(("SWEEP_INFO|%s|menu_skipped|%s: the field did not come back from a scene (%s)"):format(cur.map, label, tostring(r)))
+        return nil
+      end
+    end
+    press("start")
+    if not run(20) then return nil end
+    if stackDepth() > floor then return floor end
   end
-  return floor
+  fail("menu_unopened", label .. ": START did not open a menu | " .. stuckDetail(
+    ("map=%s moving=%s locked=%s cell=%s,%s surf=%s emote=%s engaging=%s"):format(tostring(OW.map and OW.map.id),
+      tostring(OW.player.moving), tostring(OW.lockedFrames), tostring(OW.player.cellX), tostring(OW.player.cellY),
+      tostring(OW.player.surfing), tostring(OW.emote ~= nil), tostring(OW.engaging))))
+  return nil
 end
 
 local MENU_SKIP = {}
@@ -1445,7 +1469,7 @@ function love.load()
     _G.__sweep = { Game = Game, OW = OW, Data = Data, enterMap = enterMap, run = run, press = press,
       idle = idle, top = top, drain = drain, settle = settle, placePlayer = placePlayer,
       standCells = standCells, stackDepth = stackDepth, describeTop = describeTop,
-      fails = function() return totals.fails end }
+      drawFrame = drawFrame, fails = function() return totals.fails end }
     -- PROBE=<file.lua>: run a scratch script against the booted game and quit
     if getenv("PROBE") then
       local okP, errP = xpcall(dofile, debug.traceback, getenv("PROBE"))
