@@ -2175,3 +2175,18 @@ pokeplatinum.
   between every two beats — the field's `captureSave`, the save through the
   codec, and `Game:restoreSave` as the title's CONTINUE — so each beat runs on
   what a reload brings back. Off by default; shared by every game's beats.
+- **Platinum Pokémon have a met location again.** The cartridge stamps a
+  caught, given or hatched Pokémon with the map's label
+  (`MapHeader_GetMapLabelTextID`, a place-name bank 433 index; egg_hatch.c,
+  field_battle_data_transfer.c). The port passed `BattleState.metHere`, a
+  Gen 3 region-map section that is nil on every Gen 4 map, so every Platinum
+  Pokémon was met nowhere: the Hall of Fame at the end of the story printed
+  "Met at ." and the summary left the line out. `Gen4Origin.stamp` now takes
+  the label of the map the player is on (the live field map — `save.player.map`
+  is only written by a save, so it named wherever the last save was: the
+  starter came out "met in Twinleaf Town"), and the Hall of Fame and the
+  summary name a numeric location from bank 433 (which also names the
+  locations NDS-imported Pokémon carry). HeartGold/SoulSilver, whose place
+  names are another bank, are left as they were. The starter now reads
+  "Route 201, Lv. 5". Check: `tools/gen4_met_location_check.lua
+  [<cache>/data/generated]` (13).
