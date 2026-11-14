@@ -8694,6 +8694,14 @@ function BattleState:performMove(user, target, moveInst, isCalled, suppressAnima
         self:animNext(chargeAnim, user.isPlayer)
       end
     end
+    -- a non-English Gen 4 cartridge has the charge line of each move itself
+    if self.data and self.data.gen4_language and not self.bw then
+      local own = require("src.battle.Gen4BattleText").chargeLine(self, move, user)
+      if own then
+        self:sayNext(own)
+        return
+      end
+    end
     local chargeText = move.chargeText or CHARGE_TEXT[move.id]
                        or Strings.source("%s\nis charging up!")
     -- the template is a source string (a move record may supply its own),

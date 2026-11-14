@@ -36,7 +36,8 @@
 --   --max-turns N    turns before a battle is counted as a stall       [300]
 --   --hang-frames N  frames without a turn or item use before a hang   [6000]
 --   --verbose        one line per battle
---   --trace          print every message the battle prints
+--   --trace [de]     print every message the battle prints; `--trace de` also
+--                    prints it as Gen4BattleText renders it (non-English cache)
 --   --stop-on-fail   stop at the first failure
 --
 -- Exit status is 1 when any error / hang / invalid failure was found.
@@ -716,6 +717,11 @@ local function runOne(spec, seed, cfg)
     local orig = battle.startMessage
     battle.startMessage = function(self, item)
       out("   [msg] %s", (tostring(item and item.text):gsub("[\n\v]", " / ")))
+      if cfg.trace == "de" and self.data and self.data.gen4_language then
+        -- the line as a non-English cartridge prints it (Gen4BattleText)
+        local T = require("src.battle.Gen4BattleText")
+        out("   [txt] %s", (tostring(T.translate(self, item and item.text or "")):gsub("[\n\v]", " / ")))
+      end
       return orig(self, item)
     end
   end
@@ -891,7 +897,7 @@ function love.load(argv)
       maxTurns = opt("max-turns", 300),
       hangFrames = opt("hang-frames", 6000),
       verbose = ARGS.verbose ~= nil,
-      trace = ARGS.trace ~= nil,
+      trace = ARGS.trace ~= nil and ARGS.trace or false,
       trainer = ARGS.trainer and tonumber(ARGS.trainer) or nil,
       species = ARGS.species and tonumber(ARGS.species) or nil,
       wildDouble = ARGS["wild-double"] ~= nil,
