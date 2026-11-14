@@ -58,10 +58,23 @@ local function badges(r)
   return n
 end
 
+-- RENEGADE PLATINUM (VERSION=renegadeplatinum) edits the story in places;
+-- each beat that differs says so where it does. Retail's path is untouched.
+local renegade = os.getenv("VERSION") == "renegadeplatinum"
+
 -- A CHEAT, said as one (heartgold.lua's): the lead is rebuilt at level 75,
 -- healed, with `move` first, so the runner's A-mashing (the first move, every
 -- turn) wins the story battles. The story is under test here, not the battles.
+--
+-- RENEGADE turns several story fights into DOUBLE battles that refuse a
+-- party of one (Floaroma Meadow's grunts: `getpartycount`, "you only have
+-- one Pokémon?", pushed back), so there the cheat also keeps a second able
+-- Pokémon behind the lead -- a copy of it -- when the party has only one.
+-- And its trainers are far stronger (Maylene's gym: full level-35 teams with
+-- coverage, no heal between the three fights), so there the lead is the
+-- Mewtwo at 100 that retail only needs from Canalave on.
 local function trainUpWith(move, level, species)
+  if renegade then species, level = species or 150, math.max(level or 75, 100) end
   return function(r)
     local party = r:party()
     local lead = party[1]
@@ -73,6 +86,14 @@ local function trainUpWith(move, level, species)
     table.insert(mon.moves, 1, { id = move or 94, pp = 64 })
     while #mon.moves > 4 do table.remove(mon.moves) end
     party[1] = mon
+    if renegade and #party < 2 then
+      local second = Pokemon.new(r.game.data, species or lead.species, level or 75)
+      second.otName, second.otId = lead.otName, lead.otId
+      second.moves = second.moves or {}
+      table.insert(second.moves, 1, { id = move or 94, pp = 64 })
+      while #second.moves > 4 do table.remove(second.moves) end
+      party[2] = second
+    end
   end
 end
 -- Surf by default: it hits both foes of a double battle (Floaroma Meadow's
@@ -261,7 +282,6 @@ B[#B + 1] = { name = "the parcel",
 -- level-5 starter to meet it), so a lone starter loses and blacks out. The
 -- lead is trained up first there, as every later beat does; retail keeps the
 -- demo and no cheat.
-local renegade = os.getenv("VERSION") == "renegadeplatinum"
 local tutorialSteps = { { "teleport", "R202", 21, 27, "left" }, { "activecoord" },
                         { "until", varGe(0x4087, 1), 30000 } }
 if renegade then table.insert(tutorialSteps, 1, { "do", trainUpWith(57) }) end
@@ -594,9 +614,22 @@ B[#B + 1] = { name = "hm02 fly",
 -- PASTORIA (scripts_pastoria_city.s). Coord 2 (13,28 while
 -- VAR_PASTORIA_CITY_STATE 0x407C == 1), in front of the gym door: Barry's
 -- battle, 0x407C = 2
+--
+-- RENEGADE PLATINUM puts the Gym Guide ON that cell (C06 person 29, shown
+-- while flag 0xA08 is clear: "Wake ... was heading out west to Route 212")
+-- and Crasher Wake on Route 212 south (R212B person 44): its coord trigger
+-- ((10..13,5) while 0x406E == 0) is his song, he heads back, flag 0xA08 set
+-- (the guide steps aside), 0x406E = 1. So he is met there first.
+local pastoriaBarry = { { "do", trainUp }, { "teleport", "C06", 13, 30, "up" }, { "activecoord" },
+                        { "until", varGe(0x407C, 2), 60000 } }
+if renegade then
+  for i, s in ipairs({ { "teleport", "R212B", 11, 7, "up" }, { "coord", 1 },
+                       { "until", flag(0xA08), 20000 } }) do
+    table.insert(pastoriaBarry, 1 + i, s)
+  end
+end
 B[#B + 1] = { name = "pastoria: barry",
-  steps = { { "do", trainUp }, { "teleport", "C06", 13, 30, "up" }, { "activecoord" },
-            { "until", varGe(0x407C, 2), 60000 } },
+  steps = pastoriaBarry,
   expect = varGe(0x407C, 2), why = "0x407C >= 2 (Barry beaten)", expectBudget = 8000 }
 
 -- PASTORIA GYM, WALKED (src/world/Gen4PastoriaGym.lua): the water floor
@@ -700,10 +733,31 @@ B[#B + 1] = { name = "celestic: cynthia",
 -- CANALAVE. The gate (R218R0201) coord 1 (7,5..9 while
 -- VAR_ROUTE_218_GATE_TO_CANALAVE_CITY_STATE 0x4105 == 0): the Pokédex
 -- upgrade, 0x4105 = 1
+--
+-- RENEGADE PLATINUM drops the scientist and closes the gate: a thirsty
+-- policeman (person 0) and a new coord trigger ((2,5..9) while 0x406C == 0)
+-- that pushes the player back unless the bag holds the TEA (item 456, the
+-- S.S. Ticket's slot); with it he drinks it and 0x406C = 1. The Tea is
+-- Pal Park's (R221R0101, as his "take a look at that fancy Pal Park" says):
+-- Prof. Oak (person 6) first (flag 0xA0B, he leaves), then Darach (person 5)
+-- asks for a battle (trainer 969, six level-48s: Thunderbolt hits them all
+-- at least neutrally) and Lady Caitlin hands over the Tea (flag 0xA0C).
+if renegade then
+  B[#B + 1] = { name = "pal park: the tea", budget = 90000,
+    steps = { { "do", trainUpWith(85) }, { "teleport", "R221R0101", 7, 17, "up" },
+              { "talk", 6 }, { "until", flag(0xA0B), 20000 },
+              { "talk", 5 }, { "until", flag(0xA0C), 60000 } },
+    expect = flag(0xA0C), why = "flag 0xA0C (Darach beaten, the Tea)", expectBudget = 8000 }
+  B[#B + 1] = { name = "canalave gate: the policeman's tea",
+    steps = { { "teleport", "R218R0201", 9, 7, "left" }, { "activecoord" },
+              { "until", varGe(0x406C, 1), 30000 } },
+    expect = varGe(0x406C, 1), why = "0x406C >= 1 (the Tea drunk, the gate open)", expectBudget = 8000 }
+else
 B[#B + 1] = { name = "canalave gate: the scientist",
   steps = { { "teleport", "R218R0201", 9, 7, "left" }, { "activecoord" },
             { "until", varGe(0x4105, 1), 30000 } },
   expect = varGe(0x4105, 1), why = "0x4105 >= 1", expectBudget = 8000 }
+end
 
 -- Canalave coord 1 (15,19..22 while VAR_CANALAVE_CITY_STATE 0x4078 == 0) on
 -- the bridge: Barry's battle, 0x4078 = 1
@@ -747,6 +801,22 @@ B[#B + 1] = { name = "iron island: riley",
   steps = { { "teleport", "D24", 21, 13, "up" }, { "talk", 1 },
             { "until", flag(0x214), 30000 } },
   expect = flag(0x214), why = "flag 0x214 (Riley gave HM04)", expectBudget = 8000 }
+
+-- RENEGADE PLATINUM: Riley at the entrance BATTLES the player instead
+-- (trainer 970) and keeps the HM. HM04 is his thanks after the tag battle
+-- deep in the island (D24R0105, as retail's egg scene): coord 1 ((35,2..3)
+-- while 0x4092 == 0) has him join as the partner (0x4092 = 1), coord 4
+-- ((21,40..41) while 0x4092 == 1) is the two grunts (trainers 835, 836:
+-- Golbat, Houndoom, Muk, Purugly, Toxicroak, Skuntank -- Thunderbolt), then
+-- HM04 and 0x4092 = 2. (Coord 2, east of him at x 36, turns a partnered
+-- player back, so the walk starts west of it.)
+if renegade then
+  B[#B + 1] = { name = "iron island: riley's tag battle", budget = 90000,
+    steps = { { "do", trainUpWith(85) }, { "teleport", "D24R0105", 36, 3, "left" }, { "coord", 1 },
+              { "until", function(r) return r:var(0x4092) >= 1 and not r:busy() end, 20000 },
+              { "coord", 4 }, { "until", varGe(0x4092, 2), 60000 } },
+    expect = varGe(0x4092, 2), why = "0x4092 >= 2 (the grunts beaten, HM04)", expectBudget = 8000 }
+end
 
 -- Barry at the library door (C02 person 18) lets the player by once HM04 is
 -- in the bag and goes in (FLAG_HIDE_CANALAVE_CITY_RIVAL_LIBRARY 0x2CC); 3F's
@@ -924,6 +994,13 @@ local coronet = { { "do", fullTeam(58) }, { "do", hmMoves({ [2] = 70, [3] = 249,
   { "hold", "down", 900, ["until"] = function(r) local _, y = r:pos() return y >= 49 end },
   { "activecoord" }, { "until", varGe(0x40A9, 2), 20000 },
   { "panel", 7, 23 }, { "warpto", "D05R0103", 11, 4 }, { "warpto", "D05R0105" }, { "walkto", 31, 23 } }
+-- RENEGADE PLATINUM takes 2F's boulder out (person 8 is gone): the column
+-- is walked, nothing pushed
+if renegade then
+  -- steps 5..13: the walk up to it, the push and the three holds
+  for _ = 5, 13 do table.remove(coronet, 5) end
+  assert(coronet[5][1] == "activecoord")
+end
 for _, s in ipairs({ climbTo("up", function(r) local _, y = r:pos() return y <= 19 end) }) do coronet[#coronet + 1] = s end
 for _, s in ipairs({ { "warpto", "D05R0106" }, { "walkto", 7, 17 } }) do coronet[#coronet + 1] = s end
 for _, s in ipairs({ climbTo("up", function(r) local _, y = r:pos() return y <= 12 end) }) do coronet[#coronet + 1] = s end
