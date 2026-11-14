@@ -182,6 +182,8 @@ function P.arrive(map, w)
   local dy = (first.deltaY or 0) / 4096
   if dy == 0 then dy = (first.changeMapsY or 0) < 0 and -4 or 4 end
   ow.dwRide = {
+    -- Cynthia riding down with the player (BeginMovement's passenger)
+    passenger = t.elevatorDir == 1 and P.passengerFor(ow, def, m, w.def.destHeader) or nil,
     phase = "vibrate", t = 0, live = live, warp = w.def,
     stopY = (first.changeMapsY or 0) * 16, dy = dy, y = 0,
     flagToSet = last.flagToSet, flagToClear = last.flagToClear,
@@ -231,21 +233,30 @@ local function tickRide(ow, def)
     live.dy = v
     poseAt(ow, (r.base or standY(ow)) + v)
     r.base = r.base or standY(ow)
+    if r.passenger then P.sprite(ow, r.passenger.fromId, { lift = v }) end
   elseif r.phase == "move" then
     r.y = r.y + r.dy
     local done = (r.dy < 0 and r.y <= r.stopY) or (r.dy > 0 and r.y >= r.stopY)
     if done then r.y = r.stopY end
     live.dy = r.y
     poseAt(ow, r.base + r.y)
+    if r.passenger then P.sprite(ow, r.passenger.fromId, { lift = r.y }) end
     if done then
       -- DistWorldElevatorPlatform_ChangeMaps
       if r.flagToSet then setFlag(r.flagToSet, true) end
       if r.flagToClear then setFlag(r.flagToClear, false) end
+      -- the passenger changes maps with the platform: off this floor, onto
+      -- the next one as its own local id (P.spawnCast places it there)
+      if r.passenger then
+        P.castDelete(ow, r.passenger.fromId)
+        if ow.dwSprites then ow.dwSprites[r.passenger.fromId] = nil end
+        ow.dwPassenger = r.passenger
+      end
       live.dy = nil
       ow.dwRide = nil
       ow.player.inputLocked = false
       ow.dwArrive = { from = r.arriveFrom, wx = r.wx, wz = r.wz, header = r.destHeader, t = 0,
-                      dy = math.abs(r.dy) }
+                      dy = math.abs(r.dy), passengerId = r.passenger and r.passenger.localId }
       local okW, err = pcall(ow.takeWarp, ow, r.warp)
       if not okW then print("[dwplatforms] lift warp: " .. tostring(err)) end
     end
@@ -272,6 +283,10 @@ local function tickArrive(ow, def, m)
   if a.y > 0 then a.y = math.max(0, a.y - step) elseif a.y < 0 then a.y = math.min(0, a.y + step) end
   live.dy = a.y ~= 0 and a.y or nil
   poseAt(ow, a.base + a.y)
+  if a.passengerId then
+    if a.y ~= 0 then P.sprite(ow, a.passengerId, { lift = a.y })
+    elseif ow.dwSprites then ow.dwSprites[a.passengerId] = nil end
+  end
   if a.y == 0 then
     ow.dwArrive = nil
     ow.player.inputLocked = false
@@ -1095,6 +1110,47 @@ function P.spawnCast(ow, def, m)
        and P.condition(c.flagCond, c.flagCondVal) then
       placed[c.localId] = true
       placeCast(ow, def, m, c)
+    end
+  end
+  -- the lift's passenger arriving with the player (ElevatorPlatform_ChangeMaps)
+  local pas = ow.dwPassenger
+  if pas and tonumber(pas.destHeader) == tonumber(def.header) then
+    ow.dwPassenger = nil
+    local c = {}
+    for k, v in pairs(pas.cast) do c[k] = v end
+    c.localId, c.x, c.z, c.y = pas.localId, pas.wx, pas.wz, nil
+    c.flagCond, c.flagCondVal = P.COND_MANUAL, 0
+    if pas.script then c.script = pas.script end
+    placeCast(ow, def, m, c)
+  end
+end
+
+-- THE LIFT'S PASSENGER.  Two lifts carry Cynthia down with the player
+-- (DistWorldElevatorPlatform_BeginMovement): 1F's while the progress is
+-- JUMPED_ON_1F_ELEVATOR (2), her local id 129 there, and B6F's while it is
+-- FINISHED_BOULDER_PUZZLE (7), local id 134.  She is not in the next floor's
+-- object table for that moment -- B1F's has only Mesprit, and B7F's first
+-- Cynthia wants ENTERED_B7F (8), which the first-entry script itself sets --
+-- so ChangeMaps keeps the same map object, renumbered: B1F_CYNTHIA_ELEVATOR
+-- (128), or B7F_CYNTHIA (128) with script 6.  Without her both floors'
+-- first-entry scripts moved a local id that was not there ("no object with
+-- localId 128"): the scene played to an empty platform.  Her tile stays the
+-- one she stood on (the floors share world coordinates).
+P.HEADER_1F, P.HEADER_B1F, P.HEADER_B6F = 573, 574, 580
+function P.passengerFor(ow, def, m, destHeader)
+  local h = tonumber(def and def.header)
+  local progress = getVar(P.VAR_PROGRESS)
+  local fromId
+  if h == P.HEADER_1F and progress == 2 then fromId = 129
+  elseif h == P.HEADER_B6F and progress == 7 then fromId = 134 end
+  if not fromId then return nil end
+  for _, n in ipairs(ow.npcs or {}) do
+    local d = n.def
+    if d and d.gen4DistCast and d.localId == fromId and not n.hidden then
+      local dest = tonumber(destHeader)
+      return { fromId = fromId, localId = 128, cast = d.gen4DistCast, destHeader = dest,
+               script = dest ~= P.HEADER_B1F and 6 or nil,
+               wx = (n.cellX or d.x or 0) + (m.offsetX or 0), wz = (n.cellY or d.y or 0) + (m.offsetZ or 0) }
     end
   end
 end

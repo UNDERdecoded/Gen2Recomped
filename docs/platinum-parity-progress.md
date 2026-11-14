@@ -2135,3 +2135,24 @@ it is the clock exclusion); nothing animating that is not on those lists, since
 the union only ever adds; no prop drawn twice, since twelve models have just
 changed pass; and a stutter check on a waterfall route or in Canalave, for the
 14 extra chunks today and 41 after the flipbooks land.
+
+## Story playthrough pass (November 2026)
+
+The automated playthrough (`tools/gen4_playthrough/platinum.lua`, 78 beats from
+the bedroom to the Hall of Fame) passed every beat on a USA Rev 1 cache before
+this pass. The fixes below come from what the log showed while the beats still
+passed — scenes that played to missing actors, no-op commands, stalls — and
+from the beats added past the credits. Each is checked against pret's
+pokeplatinum.
+
+- **Cynthia rides the Distortion World lifts.** 1F's lift (progress 2) and
+  B6F's (progress 7) carry Cynthia down with the player
+  (`DistWorldElevatorPlatform_BeginMovement` / `_ChangeMaps`): the same map
+  object, renumbered for the next floor (B1F 128; B7F 128 with script 6). The
+  next floor's object table has no Cynthia for that moment, so B1F's and B7F's
+  first-entry scenes moved a local id that was not there ("no object with
+  localId 128") and played to an empty platform. `Gen4DistPlatforms` now
+  takes the passenger at the start of the ride, lifts her with the platform,
+  and places her on the arrival floor at the world tile she rode on (B7F: she
+  then walks to exactly the tile B7F's own table gives her at progress 8).
+  Check: `tools/gen4_dist_surface_check.lua <cache>/data/generated` (53).
