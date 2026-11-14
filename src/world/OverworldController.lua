@@ -14456,7 +14456,7 @@ function OverworldState:onStepComplete()
       enc, roamer = Roam5.encounterFor(slot, it), "gen5"
       self.gen5RoamerSlot = slot
     end
-  elseif enc and not onWater then
+  elseif enc and not onWater and not GameVersion.isGen4() then
     local RoamMons = require("src.world.RoamMons")
     local name, info = RoamMons.check(Game.save, self.map.id, onWater,
                                       love.math.random)
