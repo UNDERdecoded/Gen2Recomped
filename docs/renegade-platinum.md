@@ -96,20 +96,73 @@ effective", and Dragon Pulse against Clefairy "doesn't affect" it.
 | Overlay 16 | the chart pointers, nothing else | handled (above) |
 | Overlay 21 | the appended chart, the Pokedex type-icon switch | handled (above) |
 | Overlay 11 | the Fairy move-button palette | read by type id |
-| Overlay 73 | two literals change species 427 (Buneary) to 133 (Eevee) | **not handled**: probably Amity Square's walking partners; `PtMiscCommands.AMITY_POOL_OF` is still Platinum's list |
+| Overlay 73 | two literals change species 427 (Buneary) to 133 (Eevee) | the opening's own Pokemon (Rowan's Poke Ball), NOT Amity Square: `Gen4IntroScene.monSpecies` reads it into `gen4_intro.monSpecies` (written only when it is not Buneary) |
+
+## Trainers past the offset table
+
+The hack grows trdata to 1,066 trainers and rewrites 136 `trtbl` records IN
+PLACE (blank placeholder lines of dummy trainers become real lines, retagged
+with ids 928..1065), but `trtblofs` keeps its 928 entries (the file is
+byte-identical to Platinum's). The cartridge's walk reads the offset of
+trainer 928 from past the end of that file (zero padding), starts at record 0
+and stops at once, so by the letter of the walk those trainers are silent.
+`Gen4TrainerMessages.all` therefore also scans the table for the runs of ids
+PAST the offset table (`scanUncovered`; records of one trainer are
+contiguous). A retail cartridge has no such ids and is unchanged. 135
+trainers get lines (e.g. the counterpart's Route 202 battle, trainers
+928..933: "Wow! You're that strong already?"). A trainer with no line has no
+row: `g4_print_trainer_dialogue` returns without printing, so neither a script
+nor a battle end waits on it. It is not known whether the real hack shows
+these lines (it reads the same padding); the cache carries what the hack
+authored.
+
+## Other differences the survey found
+
+- Route 202: the catching tutorial (`startcatchingtutorial`) is gone. The
+  coordinate trigger runs a real trainer battle against the counterpart
+  (trainers 928..933, level 9 against a level-5 starter), so a lone starter
+  loses and blacks out. The playthrough beat trains the lead up first.
+- Jubilife: the Pokétch clowns' quizzes are removed (persons 24 and 25 are
+  parked at 0,0 without a script); the president gives the Pokétch himself.
+- Evolutions: 40 records change (trade evolutions gain a level, Eevee uses
+  Sun/Moon/Ice/Leaf stones, and 12 trade-with-item species can also evolve by
+  using the item, whose records the hack flags as party items); the cache
+  matches the cartridge's `evo.narc` record for record, and
+  `Gen45Evolution.itemTarget` evolves Poliwhirl with King's Rock, Rhydon with
+  the Protector, Eevee with the Sun/Moon/Ice/Leaf stone.
+- Amity Square's accessory pools are ARM9 data (six 10-entry u16 pools at
+  `0x020EBF84` on Platinum) and are byte-identical in the hack, so the
+  hard-coded `PtMiscCommands.AMITY_POOLS` is right for both.
+- Type logic that lives in code the hack leaves alone behaves as retail: the
+  Battle Hall's grid and opponent-type table (overlay 104 is identical),
+  Hidden Power (never Fairy), Judgment / Natural Gift (no item carries
+  Natural Gift type 9; there is no Pixie Plate), Camouflage, Weather Ball,
+  the Pokedex search type list and the Pokétch move tester (their overlays
+  are identical apart from the icon switch). Natural Gift's type name,
+  the Battle Factory's type counts and the Battle Hall's slot-9 cell
+  now read slot 9's name from the cache instead of assuming "???".
+
+## ARM9 and overlay differences, all accounted for
+
+The ARM9 differs in 136 runs; every one is inside a table the extractor finds
+by content. Map headers `0x020E6BA0..0x020E9468` (weather / flags), the mart
+specialty lists `0x020EBA19`, `0x020EBA66` (Veilstone floors), the Game
+Corner prize table `0x020EC018` (first prize replaced, TM prizes replaced and
+re-priced), the icon palette table `0x020F079D..0x020F096D`, the TM/HM list
+`0x020F0C6C..0x020F0CAA`, and the shiny comparison `0x02075E50`. Overlays 11
+(Fairy move-button palette), 16 (chart pointers), 21 (appended chart, Pokedex
+type-icon switch) and 73 (the intro Pokemon); no other overlay differs, so
+overlay-resident tables (move tutors, starters, the Frontier, Pickup, Amity,
+trainer prize money) read as in Platinum. Starters are Turtwig, Chimchar and
+Piplup in both.
 
 ## Not verified yet
 
-- Nothing has been played past the first battles. Scripts, events and the
-  1066 trainers import, and the overworld harness boots Twinleaf. The
-  hack's own story edits (rewritten scripts and new trainers 928..1065)
-  have not been walked.
-- Overlay 73 (above).
-- Trainer dialogue: `trtblofs` was not extended. Trainers 928..1065 have no
-  dialogue records, and the hack's scripts may give them lines another way.
-- Data that is not read from these tables was not checked against the hack.
-  This covers hardcoded vanilla tables in the engine, for example the Battle
-  Hall's type grid, which still has no slot-9 column.
+- The playthrough runs 19 beats (the first battle, Jubilife, Roark's gym) on
+  this cache and stops there by tick budget; later story edits are not walked.
+- Whether the real hack prints the lines of trainers 928..1065 (see above).
+- Pickup, Pokemart common stock and the Frontier were not diffed at the data
+  level, only shown unchanged by the ARM9/overlay survey.
 
 ## Checking it
 

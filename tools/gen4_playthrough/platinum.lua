@@ -255,9 +255,18 @@ B[#B + 1] = { name = "the parcel",
 
 -- Route 202 (coord 1, x 20 y 25..29 while VAR_ROUTE_202_STATE 0x4087 == 0,
 -- FLAG_RECEIVED_PARCEL set): the catching tutorial, the Poké Balls (0x4087 = 1)
+--
+-- RENEGADE PLATINUM replaces the demo (`startcatchingtutorial`) with a REAL
+-- trainer battle against the counterpart (trainers 928..933, level 9 with a
+-- level-5 starter to meet it), so a lone starter loses and blacks out. The
+-- lead is trained up first there, as every later beat does; retail keeps the
+-- demo and no cheat.
+local renegade = os.getenv("VERSION") == "renegadeplatinum"
+local tutorialSteps = { { "teleport", "R202", 21, 27, "left" }, { "activecoord" },
+                        { "until", varGe(0x4087, 1), 30000 } }
+if renegade then table.insert(tutorialSteps, 1, { "do", trainUpWith(57) }) end
 B[#B + 1] = { name = "route 202 catching tutorial",
-  steps = { { "teleport", "R202", 21, 27, "left" }, { "activecoord" },
-            { "until", varGe(0x4087, 1), 30000 } },
+  steps = tutorialSteps,
   expect = varGe(0x4087, 1), why = "0x4087 >= 1 (the tutorial)", expectBudget = 8000 }
 
 -- JUBILIFE (scripts_jubilife_city.s). Coord 1 (45..48,60 while
@@ -299,9 +308,14 @@ local poketch = { { "warpto", "C01" }, { "walkto", 44, 42 },
                   -- the list, which is Looker's strip (coord 3, 0x4077 == 1) --
                   -- his "have you not obtained a Pokétch?" pushes back forever
                   { "coord", 5 }, { "until", varGe(0x40E7, 2), 20000 } }
-talkUntil(poketch, 24, flag(0xED))
-talkUntil(poketch, 25, flag(0xEE))
-talkUntil(poketch, 27, flag(0xEF))
+-- RENEGADE PLATINUM removes the clowns' quizzes (persons 24, 25 are parked at
+-- 0,0 with no script, 27 is another sprite): the president hands the Pokétch
+-- over on his own after the pitch, so only he is talked to there
+if not renegade then
+  talkUntil(poketch, 24, flag(0xED))
+  talkUntil(poketch, 25, flag(0xEE))
+  talkUntil(poketch, 27, flag(0xEF))
+end
 talkUntil(poketch, 23, flag(0xF3))
 B[#B + 1] = { name = "jubilife: the poketch",
   steps = poketch,

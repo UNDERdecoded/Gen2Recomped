@@ -166,6 +166,23 @@ ok(srep.duplicates == 0, "synthetic: %d duplicate entry indices", srep.duplicate
 ok(srep.pairs == 6, "synthetic: %d pairs, expected 6", srep.pairs)
 ok(sall[7] ~= nil and sall[3] ~= nil and sall[9] ~= nil and sall[0] == nil,
    "synthetic: the wrong set of trainers came back")
+-- A hack that adds trainers past the offset table (Renegade Platinum's 928..):
+-- the walk cannot reach them (offsetFor is nil), so `all` scans for their runs,
+-- and ONLY for ids past the table: trainer 7's run is untouched.
+local XTBL = TBL .. rec(12, 1) .. rec(12, 2) .. rec(11, 0)
+local xall, xrep = M.all(XTBL, OFS)
+ok(xall[12] ~= nil and xall[12][1] == 6 and xall[12][2] == 7,
+   "scan: trainer 12 (past the offset table) did not get its run at records 6, 7")
+ok(xall[11] ~= nil and xall[11][0] == 8, "scan: trainer 11 did not get record 8")
+ok(xall[7] ~= nil and xall[7][0] == 0 and xall[0] == nil,
+   "scan: a covered trainer's answer changed, or trainer 0 grew a row")
+ok(xrep.scanned == 3 and xrep.scannedTrainers == 2 and xrep.reached == xrep.records,
+   "scan: report says %s scanned / %s trainers, reached %s of %s records",
+   tostring(xrep.scanned), tostring(xrep.scannedTrainers), tostring(xrep.reached),
+   tostring(xrep.records))
+ok(srep.scanned == 0, "scan: a table with no uncovered trainers scanned %s records",
+   tostring(srep.scanned))
+
 -- Out of range reads nothing rather than reading off the end.
 ok(M.offsetFor(OFS, 10) == nil, "trainer 10 is past the offset table and resolved")
 ok(M.find(TBL, OFS, 10, 0) == nil, "trainer 10 found a message")

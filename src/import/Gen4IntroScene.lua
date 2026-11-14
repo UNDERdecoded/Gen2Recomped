@@ -274,7 +274,7 @@ function Gen4IntroScene.monSpecies(overlay, maxSpecies)
       local a, b, c, d = overlay:byte(target + 1, target + 4)
       if d then
         local value = a + b * 256 + c * 65536 + d * 16777216
-        if value >= 1 and value <= (maxSpecies or 493) then return value end
+        if value >= 1 and value <= (tonumber(maxSpecies) or 493) then return value end
       end
     end
   end
