@@ -922,7 +922,7 @@ local function closeScreens(label, floorDepth)
     end
     local detail = ("%s: B did not close the screens | top=%s depth=%d | stack=%s | top fields: %s | recent: %s"):format(label,
       describeTop(), stackDepth(), table.concat(names, " > "), shallow(top()), ringDump(tonumber(getenv('RING_DUMP') or '') or 16))
-    if pushCount - pushesAtStart >= 20 then
+    if pushCount - pushesAtStart >= 6 then
       -- states kept being pushed: a prompt that re-asks (the move-learn "abandon?"
       -- loop answers NO to itself under B) -- cycling, not hung
       emit(("SWEEP_LOOP|%s|%s|close|%d pushes while closing | %s"):format(cur.map, cur.phase, pushCount - pushesAtStart, oneLine(detail, 700)))
