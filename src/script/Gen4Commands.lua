@@ -5756,6 +5756,13 @@ function Commands.g4_open_party_for_trade(ctx)
       end
       if runner then runner:resume() end
     end,
+    -- B / CANCEL on the picker: the slot stays PARTY_SLOT_NONE (set above) and
+    -- the script carries on. Without this the runner parked on the yield for
+    -- good -- the tutor / trade NPC's script never ended and the player was
+    -- left locked in the field behind a fade.
+    onCancel = function()
+      if runner then runner:resume() end
+    end,
   })
   if runner then runner:yield() end
 end
