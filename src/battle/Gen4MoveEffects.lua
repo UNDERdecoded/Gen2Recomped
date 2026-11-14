@@ -269,6 +269,22 @@ G4.TYPES = { [0] = "NORMAL", "FIGHTING", "FLYING", "POISON", "GROUND", "ROCK", "
              "GHOST", "STEEL", "MYSTERY", "FIRE", "WATER", "GRASS", "ELECTRIC",
              "PSYCHIC", "ICE", "DRAGON", "DARK" }
 
+-- Slot 9 is the cartridge's own to name: "???" (MYSTERY) on Platinum, FAIRY
+-- on Renegade Platinum.  The import writes the type-name bank as
+-- `constants.types`, so a number is named from the cache rather than from the
+-- retail list above; every other slot keeps the list's spelling.
+function G4.typeName(data, id)
+  id = tonumber(id) or 0
+  if id == 9 then
+    local list = data and data.constants and data.constants.types
+    local text = list and list[9]
+    if type(text) == "string" and text ~= "" and text ~= "???" then
+      return text:upper()
+    end
+  end
+  return G4.TYPES[id]
+end
+
 -- the bench a TryReplaceFaintedMon / U-turn draws from
 local function bench(battle, b)
   local G5 = require("src.battle.Gen5MoveEffects")
@@ -469,7 +485,7 @@ F.NATURAL_GIFT = {
       return false, Strings(FAILED)
     end
     ctx.g4Gift = { power = tonumber(def.naturalGiftPower),
-                   type = G4.TYPES[tonumber(def.naturalGiftType) or 0] or "NORMAL" }
+                   type = G4.typeName(ctx.battle.data, def.naturalGiftType) or "NORMAL" }
     return true
   end,
   beforeAccuracy = function(ctx)

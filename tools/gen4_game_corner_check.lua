@@ -16,11 +16,41 @@ local rec = load('gen4_game_corner')
 check(rec, 'the cache must carry gen4_game_corner (run tools/gen4_game_corner_extract.lua)')
 if not rec then print(('%d checks, %d failed'):format(PASS + FAIL, FAIL)) os.exit(1) end
 
+-- Which cartridge made this cache: the SHA-1 that ends `rom-cache.complete`,
+-- two directories above `data/generated`.  Renegade Platinum re-prices and
+-- replaces prizes (its first row is item 275, not the Silk Scarf), so the
+-- retail asserts below hold for every cache EXCEPT a Renegade one, and the
+-- Renegade branch asserts what the hack's ARM9 actually holds.
+local RENEGADE_SHA1 = '381f9eef44564602a5f6469ee8c390fbb8ebac3a'
+local function cacheSha1()
+  local f = io.open(dir .. '/../../rom-cache.complete', 'rb')
+  local raw = f and f:read('*a')
+  if f then f:close() end
+  return raw and raw:match(':(%x+)%s*$')
+end
+local renegade = cacheSha1() == RENEGADE_SHA1
+
 -- the table, against scrcmd_game_corner_prize.c
 check(#rec.prizes == 19, 'nineteen prizes')
-check(rec.prizes[1].item == 251 and rec.prizes[1].price == 1000, 'Silk Scarf for 1000 first')
-check(rec.prizes[5].item == 417 and rec.prizes[5].price == 2000, 'TM90 (Substitute) for 2000')
-check(rec.prizes[19].item == 395 and rec.prizes[19].price == 20000, 'TM68 (Giga Impact) for 20000 last')
+local lastPrize = rec.prizes[19]
+if not renegade then
+  check(rec.prizes[1].item == 251 and rec.prizes[1].price == 1000, 'Silk Scarf for 1000 first')
+  check(rec.prizes[5].item == 417 and rec.prizes[5].price == 2000, 'TM90 (Substitute) for 2000')
+  check(lastPrize.item == 395 and lastPrize.price == 20000, 'TM68 (Giga Impact) for 20000 last')
+else
+  -- Renegade's table, as its ARM9 holds it (sGameCornerPrizeData, first row
+  -- replaced and the TM rows re-priced): shape plus the rows the hack changed
+  local itemsData = load('items')
+  for i, row in ipairs(rec.prizes) do
+    check(row.item > 0 and row.price > 0 and row.price % 10 == 0 and row.price <= 50000,
+          'prize ' .. i .. ' is an item and a price in coins')
+    check(itemsData and itemsData[row.item], 'prize ' .. i .. ' names an item the cache knows')
+  end
+  check(rec.prizes[1].item == 275 and rec.prizes[1].price == 1000,
+        'Renegade: item 275 for 1000 replaces the Silk Scarf first')
+  check(rec.prizes[2].item == 265 and rec.prizes[3].item == 276,
+        'Renegade: rows 2 and 3 follow the replaced first row')
+end
 
 -- coins.c
 local GC = require('src.import.Gen4GameCorner')
@@ -57,7 +87,11 @@ C.g4_get_coins(ctx, 0x800C)
 check(var(0x800C) == 50, 'getcoinsamount')
 save.gen4Vars[0x8008] = 18
 C.g4_prize_data(ctx, 0x8008, 0x8000, 0x8001)
-check(var(0x8000) == 395 and var(0x8001) == 20000, 'getgamecornerprizedata 18: TM68, 20000')
+check(var(0x8000) == lastPrize.item and var(0x8001) == lastPrize.price,
+      'getgamecornerprizedata 18: the last row of the table')
+if not renegade then
+  check(var(0x8000) == 395 and var(0x8001) == 20000, 'getgamecornerprizedata 18: TM68, 20000')
+end
 
 -- the window: "   50 Coins", right-aligned, and buffer 0 left alone
 game.stringBuffers[1] = 'KEEP'
