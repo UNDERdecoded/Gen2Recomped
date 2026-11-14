@@ -70,6 +70,14 @@ local Theme = require("src.ui.Theme")
 
 local Gen4BagMenu = {}
 Gen4BagMenu.__index = Gen4BagMenu
+
+-- An engine pocket key -> its position in the bag (fieldPocket + 1), so a
+-- caller names a pocket without spelling it in the cartridge's language.
+Gen4BagMenu.POCKET_INDEX = {
+  ITEMS = 1, MEDICINE = 2, POKE_BALLS = 3, ["POKé_BALLS"] = 3, BALLS = 3,
+  TM_HM = 4, TMS_HMS = 4, BERRIES = 5, MAIL = 6,
+  BATTLE_ITEMS = 7, KEY_ITEMS = 8,
+}
 Gen4BagMenu.isOpaque = true
 
 local W, H = 256, 192
@@ -261,9 +269,17 @@ function Gen4BagMenu.new(game, opts)
   -- cartridge's berry-planting and Poffin bags do: one icon, one button, no
   -- arrows.  AN EXACT NAME BEATS A CONTAINING ONE, because "ITEMS" is inside
   -- "BATTLE ITEMS" and "KEY ITEMS" too.
+  --
+  -- THE NAMES ARE THE CARTRIDGE'S, so a caller asking for "BERRIES" on a
+  -- German cache ("BEEREN") would get the ITEMS pocket.  The pockets are in
+  -- `fieldPocket` order (Gen4Items: ITEMS, MEDICINE, POKE_BALLS, TM_HM,
+  -- BERRIES, MAIL, BATTLE_ITEMS, KEY_ITEMS), so an engine pocket key, or a
+  -- number, picks by position first and only an unknown word is matched.
   self.pocket = 1
   if opts.pocket then
     local wanted = tostring(opts.pocket):upper()
+    local byKey = Gen4BagMenu.POCKET_INDEX[wanted:gsub("[%s&]+", "_")]
+    local index = tonumber(opts.pocket) or (#self.pockets == 8 and byKey) or nil
     local exact, loose
     for i, name in ipairs(self.pockets) do
       local upper = tostring(name):upper()
@@ -273,7 +289,7 @@ function Gen4BagMenu.new(game, opts)
         loose = loose or i
       end
     end
-    self.pocket = exact or loose or 1
+    self.pocket = (index and self.pockets[index] and index) or exact or loose or 1
     self.lockPocket = true
   end
 

@@ -264,6 +264,17 @@ function RomExtractorGen4:close()
   self.rom = nil
 end
 
+-- The cartridge's text language (src/import/Gen4Regions.lua): German
+-- Platinum is CPUD.  Only checks that compare against a US spelling and the
+-- human-readable part of a file name ask; every table is keyed by id.
+function RomExtractorGen4:isEnglish()
+  if self._english == nil then
+    local code = self.rom and self.rom:header().gameCode
+    self._english = require("src.import.Gen4Regions").isEnglish(code)
+  end
+  return self._english
+end
+
 function RomExtractorGen4:beginStage(name)
   self.stage = self.stage + 1
   if self.progress then self.progress(self.stage - 1, #STAGES, name, 0, 1) end
@@ -4282,6 +4293,10 @@ end
 -- halves are needed.  Everything outside [a-z0-9] folds to an underscore and
 -- runs collapse, so the two Nidoran, Mr. Mime, Farfetch'd, Ho-Oh and the
 -- Porygon numerals all produce a path a filesystem will take.
+--
+-- A NON-ENGLISH CARTRIDGE GETS THE ID ALONE ("001"): its names would fold to
+-- something else ("003_g_re" for Göre), so a German cache would neither match
+-- a US one path for path nor read any better.  The caller passes no `def`.
 function RomExtractorGen4.speciesSlug(species, def)
   local name = def and def.name
   if type(name) ~= "string" or name == "" then
@@ -4462,7 +4477,7 @@ function RomExtractorGen4:extractTrainerSprites()
       if frames > 1 then animated = animated + 1 end
       local image = Gen4Trgra.frame(sheet, palette, 1)
       local entry = image and self:saveImage(
-        ("battle/trainer/%s"):format(Gen4Trgra.slug(class, name)), image,
+        ("battle/trainer/%s"):format(Gen4Trgra.slug(class, self:isEnglish() and name or nil)), image,
         { class = class, name = name, frames = frames })
       if entry then
         written = written + 1
@@ -4552,7 +4567,7 @@ function RomExtractorGen4:extractSpeciesSprites()
     local shiny = Gen4Graphics.palette(arc:get(species * 6 + Gen4Pokegra.SLOT.shinyPalette))
     local def = mons and mons[species]
     local record = { id = species }
-    local slug = RomExtractorGen4.speciesSlug(species, def)
+    local slug = RomExtractorGen4.speciesSlug(species, self:isEnglish() and def or nil)
 
     for _, face in ipairs({ "front", "back" }) do
       local sheet, slot = Gen4Pokegra.sheet(arc, Gen4Graphics, species, face)
@@ -4983,14 +4998,21 @@ function RomExtractorGen4:extractMenus()
   -- own wording.
   out.newGameWarning = self:string(BANK.mainMenuAlert, Gen4Menus.ALERT_NEW_GAME)
 
-  -- THE POKETCH.  The order is one bank's and the names are another's, and
-  -- the pairing is checked rather than assumed: every coloured name must open
-  -- exactly one description in the ordered bank.
-  local names = {}
+  -- THE POKETCH.  The order is one bank's and the names are another's.  The
+  -- names are taken by POSITION (Gen4Menus.POKETCH_NAME_ORDER, bank 213 ->
+  -- app id), which holds on every language; the text pairing below is the
+  -- cross-check, and `unpaired` lists the apps where it found a DIFFERENT
+  -- name than the position says (or no name exists) -- empty on the US,
+  -- European and German cartridges.
+  local names, nameById = {}, {}
   for i = 0, Gen4Menus.POKETCH_COUNT - 1 do
     local text = self:string(BANK.poketchName, Gen4Menus.POKETCH_NAME_FIRST + i)
     local name = Gen4Menus.poketchName(text)
-    if name then names[#names + 1] = name end
+    if name then
+      names[#names + 1] = name
+      local id = Gen4Menus.POKETCH_NAME_ORDER[i]
+      if id then nameById[id] = name end
+    end
   end
   out.poketch = {
     descBank = BANK.poketchDesc, nameBank = BANK.poketchName,
@@ -5005,10 +5027,9 @@ function RomExtractorGen4:extractMenus()
   -- twenty-five and left the Calendar out, because its description is the one
   -- that does not begin that way: "Use the monthly Calendar to make a note of
   -- important dates."  Matching anywhere instead needs LONGEST, because
-  -- "Counter" occurs inside "Trainer Counter" -- and then the twenty-five
-  -- assignments have to be a permutation, which is the check that says the
-  -- looser match did not fold two apps onto one name.
-  local used = {}
+  -- "Counter" occurs inside "Trainer Counter".  German prose leaves two apps
+  -- with no match at all ("Monatskalender", "Historie der Pokemon"), which is
+  -- why the position decides and the match only checks.
   for i = 0, Gen4Menus.POKETCH_COUNT - 1 do
     local description = self:string(BANK.poketchDesc, Gen4Menus.POKETCH_DESC_FIRST + i)
     local found = nil
@@ -5017,16 +5038,16 @@ function RomExtractorGen4:extractMenus()
         if not found or #name > #found then found = name end
       end
     end
-    if not found or used[found] then
+    local name = nameById[i]
+    if not name or (found and found ~= name) then
       out.poketch.unpaired[#out.poketch.unpaired + 1] = i
     end
-    if found then used[found] = true end
     out.poketch.apps[i + 1] = {
       id = i,
-      name = found,
+      name = name,
       description = description,
-      art = found and Gen4Menus.POKETCH_ART[found] or nil,
-      live = found and Gen4Menus.POKETCH_LIVE[found] or nil,
+      art = Gen4Menus.POKETCH_ART[i],
+      live = Gen4Menus.POKETCH_LIVE[i],
     }
   end
 
@@ -5126,7 +5147,9 @@ function RomExtractorGen4:extractMenus()
       -- cartridge's own source says this slot holds.  Nothing should ever read
       -- it; it exists so that if the three lists ever drift, the drift is in
       -- the data rather than in somebody's memory.
-      mismatch = (name ~= row.expect) and
+      -- `expect` is the US spelling, so only an English cartridge is held to
+      -- it; the species id is what picks the Pokemon either way.
+      mismatch = self:isEnglish() and (name ~= row.expect) and
         ("expected %s, species %d is %s"):format(row.expect, row.species,
                                                  tostring(name)) or nil,
     }
@@ -6609,7 +6632,7 @@ function RomExtractorGen4:moveTutor()
 end
 
 function RomExtractorGen4:areaPopup()
-  local out = self.rom and require("src.import.Gen4AreaPopup").extract(self.rom)
+  local out = self.rom and require("src.import.Gen4AreaPopup").extract(self.rom, self._mapHeaders)
   if out then self:write("gen4_area_popup", out) end
 end
 

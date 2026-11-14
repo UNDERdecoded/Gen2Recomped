@@ -223,6 +223,9 @@ function Game:bootConfig()
     local items = self.data and self.data.items
     if type(items) == "table" then
       local id = items.POTION and "POTION" or nil
+      -- A GEN 4 CACHE NAMES IT BY ID: item 17 is the Potion on Platinum and
+      -- HGSS whatever the cartridge's language calls it ("Trank" in German)
+      if not id and self.data.isGen4Cache and items.ITEM_017 then id = "ITEM_017" end
       if not id then
         -- STRING KEYS ONLY: Gen 4's table carries every item under ITEM_nnn
         -- AND its bare number, and a bag is keyed by the string.  Taking the

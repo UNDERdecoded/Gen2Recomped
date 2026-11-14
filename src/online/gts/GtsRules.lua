@@ -205,7 +205,11 @@ function GtsRules.depositBlocker(save, data, mon, index)
   local runBlock = require("src.runmodes.RunModes").tradeBlock(mon, save)
   if runBlock then return require("src.runmodes.RunModes").BLOCK_TEXT[runBlock] end
   local held = mon.item or mon.heldItem
-  if held ~= nil and itemName(data, held):upper():find("MAIL") then
+  -- the item's own pocket first (Gen 4: "MAIL"), the name only where a cache
+  -- has no pocket -- a German cache's mail is "...brief"
+  local heldDef = data and data.items and data.items[held]
+  if held ~= nil and ((type(heldDef) == "table" and heldDef.pocket == "MAIL")
+                      or itemName(data, held):upper():find("MAIL")) then
     return "Remove the MAIL first."
   end
   local CompatRules = require("src.online.CompatRules")

@@ -969,7 +969,13 @@ GameVersion.VERSIONS = {
     -- than needing a second entry -- the filesystem layout is what the
     -- extractor reads and both revisions carry the same one.
     sha1 = "0862ec35b24de5c7e2dcb88c9eea0873110d755c",
-    sha1Alt = { "ce81046eda7d232513069519cb2085349896dec7" },
+    sha1Alt = { "ce81046eda7d232513069519cb2085349896dec7",
+                -- (Europe), English: header CPUE rev 10 -- the US code and
+                -- overlays byte for byte, five files differ (docs/rom-revisions.md)
+                "8d15cd443d4e83e20493c79d3f9dc408c4f51ae0",
+                -- (Germany) "Platin Edition", CPUD: its own ARM9/overlay build
+                -- and German resources, read through src/import/Gen4Regions.lua
+                "5d009a175c77d4387cde26d34efb71aee825a938" },
     manifest = "tools/rom_manifest_platinum.json",
     cachePrefix = "platinum/",
     saveSuffix = "_platinum",

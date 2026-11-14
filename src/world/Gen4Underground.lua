@@ -123,7 +123,25 @@ end
 -- LocationNames_Text_MysteryZone`. Two headers carry it -- `NOTHING` (1) and
 -- the Underground itself (2) -- and both should refuse, which is why this is
 -- the label test and not `id ~= "UG"`.
+--
+-- THE TEXT ID, NOT THE STRING: the label is the cartridge's language ("Mystery
+-- Zone" is not what a German Platinum calls it), so the test is the header's
+-- label text id -- LocationNames_Text_MysteryZone is entry 0 of the location
+-- bank -- read from `gen4_area_popup.headers` (Gen4AreaPopup).  A cache
+-- without that table compares against the Underground map's own label, and
+-- only a cache with neither falls back to the US spelling.
 local MYSTERY_ZONE = "Mystery Zone"
+local MYSTERY_ZONE_TEXT = 0
+local function isMysteryZone(def, data)
+  if not def then return false end
+  local popup = data and data.gen4_area_popup
+  local h = popup and popup.headers and def.header and popup.headers[def.header]
+  if h and h.text ~= nil then return h.text == MYSTERY_ZONE_TEXT end
+  local ug = data and data.maps and data.maps[Gen4Underground.MAP_ID]
+  if def.label == MYSTERY_ZONE then return true end
+  return ug ~= nil and ug.label ~= nil and def.label == ug.label
+end
+Gen4Underground.isMysteryZone = isMysteryZone
 
 -- CAN THE KIT BE USED HERE?  CanUseExplorerKit (item_use_functions.c), in its
 -- own order, returning the first refusal.
@@ -139,7 +157,7 @@ function Gen4Underground.canUse(Game, ow)
   if not GameVersion.isGen4() then return false, "not Gen 4" end
   if not (Game and ow and ow.map) then return false, "no overworld" end
   local def = ow.map.def
-  if def and def.label == MYSTERY_ZONE then
+  if def and isMysteryZone(def, Game.data) then
     return false, "already underground"
   end
   if not onMainMatrix(def) then return false, "not on the main matrix" end
@@ -218,7 +236,7 @@ end
 -- behind it.
 function Gen4Underground.leave(Game, ow)
   if not (Game and ow and ow.map) then return false, "no overworld" end
-  if ow.map.def and ow.map.def.label ~= MYSTERY_ZONE then
+  if ow.map.def and not isMysteryZone(ow.map.def, Game.data) then
     return false, "not underground"
   end
   local spot = Game.save and Game.save.gen4SpecialLocation
@@ -232,7 +250,8 @@ end
 -- Is the player in the Underground right now?
 function Gen4Underground.isUnderground(ow)
   local def = ow and ow.map and ow.map.def
-  return def ~= nil and def.label == MYSTERY_ZONE
+  local game = ow and (ow.game or ow.Game)
+  return def ~= nil and isMysteryZone(def, game and game.data)
          and ow.map.id == Gen4Underground.MAP_ID
 end
 -- ---------------------------------------------------------------------------

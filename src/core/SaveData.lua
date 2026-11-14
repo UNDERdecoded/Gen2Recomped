@@ -1989,6 +1989,23 @@ local function scrubKnownMon(mon, data)
     for stat, v in pairs(mon.statExp) do mon.statExp[stat] = clamp(v, 0, 65535, 0) end
   end
   mon.level = clamp(mon.level, 1, 100, 1)
+  -- THE NATURE IS STORED BY NAME, in the language of the cache that made the
+  -- mon.  One `platinum` save serves the US, European and German cartridges
+  -- (src/import/Gen4Regions.lua), so a mon caught under one and loaded under
+  -- another carries a name the loaded cache does not know -- and Stats would
+  -- then apply no modifiers at all.  Where the nature rides on the
+  -- personality (Gen 3 and 4), the loaded cache's own name for it is
+  -- personality % 25, so an unknown name is put back that way.
+  if type(mon.nature) == "string" and tonumber(mon.personality)
+     and not Stats.natureFor(mon.nature) then
+    local order = data.constants and data.constants.natureOrder
+    local name = type(order) == "table" and order[(tonumber(mon.personality) % 25) + 1]
+    local Pokemon = package.loaded["src.pokemon.Pokemon"]
+    local ownField = Pokemon and Pokemon.natureIsOwnField and Pokemon.natureIsOwnField()
+    if type(name) == "string" and Stats.natureFor(name) and not ownField then
+      mon.nature = name
+    end
+  end
   -- Box mons imported from a real .sav carry NO stat block: box_struct stops
   -- before MON_LEVEL/MON_STATS, so src/save_convert/GenSave.lua decodeMon
   -- only fills `stats` for party slots.  Every HP-bar draw then nil-indexes
