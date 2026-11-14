@@ -370,7 +370,9 @@ function P.fromGen3(game, version, src, raw)
     if key == nil then return nil end
     local d = srcItems[key]
     local name = (d and d.name) or tostring(key):gsub("^ITEM_", ""):gsub("_", " ")
-    return items[norm(name)]
+    -- Gen IV ids by the English name (Gen4EnglishRef), so a German Platinum
+    -- keeps the held item; an English cache matches by its own names as before
+    return require("src.pokemon.CrossGen").itemByName(data, name) or items[norm(name)]
   end
   mon.item = itemId(raw.item)
   mon.ball = itemId(raw.ball) or itemId("POKE_BALL")

@@ -43,6 +43,9 @@ local function bagKey(data,id)
 end
 
 local function itemId(data, name)
+  -- a Gen IV cache in another language: the English name's cartridge id
+  local refKey = require("src.pokemon.Gen4EnglishRef").itemKey(data, name)
+  if refKey then return bagKey(data, refKey) end
   local want = norm(name)
   local fallback
   for id, def in pairs(data.items or {}) do
@@ -57,6 +60,16 @@ local function itemId(data, name)
     for id, def in pairs(data.items or {}) do
       if type(def) == "table" and norm(def.name) == "POKEBALL" then return bagKey(data,id) end
     end
+  end
+  -- (a Gen IV cache in another language has no English names to find them by)
+  local R = require("src.pokemon.Gen4EnglishRef")
+  if want:find("BALL") then
+    local k = R.itemKey(data, "POKE BALL")
+    if k then return bagKey(data, k) end
+  end
+  if not fallback then
+    local k = R.itemKey(data, "POTION")
+    if k then fallback = bagKey(data, k) end
   end
   return fallback
 end

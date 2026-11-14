@@ -16,11 +16,26 @@ local CG = {}
 local function norm(s) return (tostring(s or ""):upper():gsub("[^%w]", "")) end
 CG.norm = norm
 
+-- A Gen IV destination may be in any language: its ids are the cartridge's,
+-- so an ENGLISH name (a Walker prize, a Gen III item) is carried to its id
+-- through src/pokemon/Gen4EnglishRef.lua instead of the destination's own
+-- (German) names.  Other destinations still match by name.
+local function Ref() return require("src.pokemon.Gen4EnglishRef") end
+local function itemByName(data, name)
+  return Ref().itemKey(data, name) or CG.byName(data.items)[norm(name)]
+end
+local function moveByName(data, name)
+  return Ref().moveKey(data, name) or CG.byName(data.moves)[norm(name)]
+end
+CG.itemByName, CG.moveByName = itemByName, moveByName
+
 -- a source game's records, off its own cache (WalkerDelivery's way)
 function CG.sourceData(version)
   local Art = require("src.pokewalker.WalkerArt")
   local prefix = require("src.core.GameVersion").cachePrefix(version)
   local out = {}
+  -- a Gen IV cartridge's item ids are language-free (Gen4EnglishRef)
+  out.gen4 = require("src.import.Gen4Versions").FAMILY[version] ~= nil or nil
   for _, name in ipairs({ "pokemon", "items", "moves" }) do
     local src = Art._read(prefix, "data/generated/" .. name .. ".lua")
     local chunk = src and (loadstring or load)(src, "=" .. version .. "/" .. name)
@@ -62,6 +77,9 @@ end
 function CG.moveId(data, src, id)
   local n, name = CG.moveRef(src, id)
   local moves = data.moves or {}
+  -- Gen IV keeps Gen III's move index, so on a Gen IV destination the index
+  -- is the answer in any language
+  if n and moves[n] and Ref().isGen4(data) then return n end
   if name then
     local byName = CG.byName(moves)
     local hit = byName[norm(name)]
@@ -76,8 +94,10 @@ function CG.itemId(data, src, key)
   if key == nil or key == 0 then return nil end
   local d = src and src.items and src.items[key]
   local name = (d and d.name) or (type(key) == "string" and key:gsub("^ITEM_", ""):gsub("_", " ")) or nil
+  -- a Gen IV source names its items in its own language: the id is the key
+  if src and src.gen4 then name = Ref().englishName("items", key) or name end
   if name then
-    local hit = CG.byName(data.items)[norm(name)]
+    local hit = itemByName(data, name)
     if hit then return hit end
   end
   if type(key) == "number" and src == nil and data.items and data.items[key] then return key end
@@ -155,7 +175,7 @@ function CG.convert(game, version, src, raw)
   mon.origin = raw.origin or version
   mon.metLevel = level
   mon.item = CG.itemId(data, src, raw.item)
-  mon.ball = CG.itemId(data, src, raw.ball) or CG.byName(data.items)[norm("POKE BALL")]
+  mon.ball = CG.itemId(data, src, raw.ball) or itemByName(data, "POKE BALL")
   local moves = {}
   for _, m in ipairs(raw.moves or {}) do
     local id = CG.moveId(data, src, m.id)
@@ -179,13 +199,13 @@ function CG.fromWalker(game, entry)
   local mon = Pokemon.new(data, dex, math.max(1, math.min(100, tonumber(entry.level) or 5)))
   local moves = {}
   for _, name in ipairs(entry.moves or {}) do
-    local id = CG.byName(data.moves)[norm(type(name) == "table" and name.name or name)]
+    local id = moveByName(data, type(name) == "table" and name.name or name)
     if id then moves[#moves + 1] = { id = id, pp = data.moves[id].pp or 0 } end
   end
   if #moves > 0 then mon.moves = moves end
   if entry.shiny then Pokemon.forceShiny(data, mon) end
   mon.origin = "walker"
-  mon.ball = CG.byName(data.items)[norm("POKE BALL")]
+  mon.ball = itemByName(data, "POKE BALL")
   return mon
 end
 
