@@ -433,6 +433,13 @@ function SecondScreen.canvas(game)
   return game and game.secondScreenCanvas or nil
 end
 
+-- the controller's lower-screen cursor, in this screen's own space (see
+-- src/core/PadPointer.lua); a single table lookup when it is off
+local function padCursor(game)
+  local PP = package.loaded["src.core.PadPointer"]
+  if PP and PP.active then PP.drawLocal(game) end
+end
+
 function SecondScreen.draw(game, body)
   if game then game.secondScreenDrawnThisFrame = true end
   local g = love.graphics
@@ -466,6 +473,7 @@ function SecondScreen.draw(game, body)
         g.scale(sw / lw, sh / lh)
       end
       local ok, err = pcall(body)
+      if ok then pcall(padCursor, game) end
       g.pop()
       game.secondScreenDirty = true
       if not ok then error(err, 0) end
@@ -480,6 +488,7 @@ function SecondScreen.draw(game, body)
   g.translate(x, y)
   g.scale(scale, scale)
   local ok, err = pcall(body)
+  if ok then pcall(padCursor, game) end
   g.pop()
   if not ok then error(err, 0) end
 end
@@ -618,10 +627,12 @@ end
 -- sets the flag `toLocal` looks for, so every existing caller -- the battle, the
 -- mining screen, the Poketch -- keeps asking exactly the question it already
 -- asks and none of them learns a second coordinate space.
-function SecondScreen.injectTouch(game, method, id, x, y)
+function SecondScreen.injectTouch(game, method, id, x, y, logical)
   if not game or SecondScreen.mode(game) ~= "display" then return false end
   local lw, lh = logicalSize(game)
-  if game.secondScreenNativePanel and x and y then
+  -- `logical`: the point is already in 256x192 space (the pad cursor), not a
+  -- native panel pixel, so the panel rescale below must not touch it
+  if game.secondScreenNativePanel and x and y and not logical then
     local sw, sh = surfaceSize(game)
     x, y = x * lw / sw, y * lh / sh
   end
@@ -664,6 +675,28 @@ function SecondScreen.toLocal(game, px, py)
   local lx, ly = (px - x) / scale, (py - y) / scale
   if lx < 0 or ly < 0 or lx >= W or ly >= H then return nil end
   return lx, ly
+end
+
+-- The inverse of toLocal: a point in the bottom screen's 256x192 space to the
+-- window pixel that toLocal would map back to it.  Nil in `display` mode,
+-- where the bottom screen is not in the window (use injectTouch with
+-- `logical` there).  This is what lets a controller's cursor press exactly
+-- the pixels a mouse click would.
+function SecondScreen.fromLocal(game, lx, ly)
+  if SecondScreen.combined(game) then
+    local x, y, s = SecondScreen.windowRect(game)
+    return x + lx * s, y + ly * s
+  end
+  if SecondScreen.mode(game) == "display" then return nil end
+  local x, y, scale = SecondScreen.rect(game)
+  if not x then x, y, scale = 0, 0, 1 end
+  local px, py = x + lx * scale, y + ly * scale
+  local renderer = package.loaded['src.render.Renderer']
+  local rect = renderer and renderer.uiPresentation
+  if type(rect) == 'table' then
+    px, py = rect.x + px * rect.scaleX, rect.y + py * rect.scaleY
+  end
+  return px, py
 end
 
 function SecondScreen.contains(game, px, py)

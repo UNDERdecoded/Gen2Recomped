@@ -158,6 +158,7 @@ function Input:reset()
   self.pressed = {}
   self.sources = {}
   self.stickAxis = { x = 0, y = 0 }
+  self.stickAxes = {}
   self.stickDir = nil
   self.hatDirs = {}
 end
@@ -201,6 +202,7 @@ end
 function Input:keypressed(key)
   local btn = self.keyBindings[key]
   if btn then
+    self.lastDevice = "key"
     press(self, btn, "key:" .. key)
   end
 end
@@ -250,17 +252,55 @@ function Input:overlayReleased(btn)
   release(self, btn, "touch:" .. btn)
 end
 
+-- WHICH PHYSICAL PAD said it.  Two controllers holding the same button used
+-- to share one source name, so the first to let go released a button the
+-- second still held.  An identified joystick gets its own source; a stub or
+-- raw event with no joystick keeps the plain name.
+local function padKey(joystick)
+  if joystick and type(joystick) ~= "string" and joystick.getID then
+    local ok, id = pcall(joystick.getID, joystick)
+    if ok and id ~= nil then return ":" .. tostring(id) end
+  end
+  return ""
+end
+Input._padKey = padKey
+
 function Input:gamepadpressed(joystick, button)
   local btn = self.padBindings[button]
   if btn then
-    press(self, btn, "pad:" .. button)
+    self.lastDevice = "pad"
+    press(self, btn, "pad:" .. button .. padKey(joystick))
   end
 end
 
 function Input:gamepadreleased(joystick, button)
   local btn = self.padBindings[button]
   if btn then
-    release(self, btn, "pad:" .. button)
+    release(self, btn, "pad:" .. button .. padKey(joystick))
+  end
+end
+
+-- Drop every held direction a pad owns (D-pad and stick).  Used when the
+-- lower-screen cursor takes the directions over, so a walk that was in
+-- progress does not keep going under the cursor.
+function Input:releasePadDirections()
+  for _, name in ipairs({ "dpup", "dpdown", "dpleft", "dpright" }) do
+    local btn = self.padBindings[name]
+    local sources = btn and self.sources[btn]
+    if sources then
+      for src in pairs(sources) do
+        if src:sub(1, #name + 4) == "pad:" .. name
+           and (#src == #name + 4 or src:sub(#name + 5, #name + 5) == ":") then
+          release(self, btn, src)
+        end
+      end
+    end
+  end
+  self.stickAxes = {}
+  self.stickAxis.x, self.stickAxis.y = 0, 0
+  if self.stickDir then
+    release(self, self.stickDir, "stick")
+    self.stickDir = nil
   end
 end
 
@@ -340,22 +380,43 @@ function Input:padButton(name, down)
   if down then press(self, btn, "pad:" .. name) else release(self, btn, "pad:" .. name) end
 end
 
--- left stick treated as a continuous held direction, same 4-way rule as
--- the touch swipe d-pad: whichever axis has the larger magnitude wins.
-function Input:gamepadaxis(joystick, axis, value)
-  if axis == "leftx" then
-    self.stickAxis.x = value
-  elseif axis == "lefty" then
-    self.stickAxis.y = value
-  else
-    return
-  end
+-- left stick treated as a continuous held direction.  Eight-way analog input
+-- becomes the four directions the cartridge knows, with two guards against
+-- diagonal jitter: a direction already held keeps its axis until the OTHER
+-- axis is clearly stronger (DIAGONAL_BIAS), and between STICK_OFF and
+-- STICK_ON nothing changes (hysteresis).  With several pads attached the one
+-- deflected furthest wins, so a resting second pad cannot cancel the first.
+local DIAGONAL_BIAS = 1.3
+Input.DIAGONAL_BIAS = DIAGONAL_BIAS
 
-  local x, y = self.stickAxis.x, self.stickAxis.y
+function Input:gamepadaxis(joystick, axis, value)
+  if axis ~= "leftx" and axis ~= "lefty" then return end
+  self.stickAxes = self.stickAxes or {}
+  local key = padKey(joystick)
+  local st = self.stickAxes[key]
+  if not st then st = { x = 0, y = 0 }; self.stickAxes[key] = st end
+  if axis == "leftx" then st.x = value else st.y = value end
+
+  local bx, by, bm = 0, 0, -1
+  for _, p in pairs(self.stickAxes) do
+    local m = math.max(math.abs(p.x), math.abs(p.y))
+    if m > bm then bx, by, bm = p.x, p.y, m end
+  end
+  self.stickAxis.x, self.stickAxis.y = bx, by
+
+  local x, y = bx, by
   local ax, ay = math.abs(x), math.abs(y)
   local newDir = self.stickDir
   if ax > STICK_ON or ay > STICK_ON then
-    if ax >= ay then
+    local horizontal
+    if self.stickDir == "left" or self.stickDir == "right" then
+      horizontal = not (ay > ax * DIAGONAL_BIAS)
+    elseif self.stickDir == "up" or self.stickDir == "down" then
+      horizontal = ax > ay * DIAGONAL_BIAS
+    else
+      horizontal = ax >= ay
+    end
+    if horizontal then
       newDir = x > 0 and "right" or "left"
     else
       newDir = y > 0 and "down" or "up"
@@ -369,6 +430,7 @@ function Input:gamepadaxis(joystick, axis, value)
       release(self, self.stickDir, "stick")
     end
     if newDir then
+      self.lastDevice = "pad"
       press(self, newDir, "stick")
     end
     self.stickDir = newDir
