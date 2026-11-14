@@ -1745,6 +1745,10 @@ local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
     -- other trainer in the game is unchanged.
     local dvs = slot.dvs or trainerDvs
     mon.dvs = dvs
+    -- GEN 4 (Platinum family): TrainerData_BuildParty's own personality, so
+    -- nature / ability slot / gender are the cartridge's, not rolled
+    local cartridgePid = require("src.battle.Gen4TrainerPersonality").apply(
+      game, game.data.trainers and game.data.trainers[oppClass], slot, mon)
     if slot.statExp then mon.statExp = slot.statExp end
     if slot.happiness then mon.happiness = slot.happiness end
     if slot.stats then
@@ -1757,7 +1761,7 @@ local function buildTrainerParty(game, oppClass, partyIndex, partyDef)
     else
       local def=require('src.pokemon.Gen4Forms').definition(game.data,mon)
       if (game.data.constants or {}).gen==4 then
-        mon.ivs=slot.dvs or mon.ivs
+        if not cartridgePid then mon.ivs=slot.dvs or mon.ivs end
         mon.stats=require('src.pokemon.Stats').calc(
           def,slot.level,mon.ivs,nil,mon.evs,mon.nature)
       else
