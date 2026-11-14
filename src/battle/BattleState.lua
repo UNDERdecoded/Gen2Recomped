@@ -6840,7 +6840,20 @@ function BattleState:endOfTurn()
   -- faint on the first action and its partner still take the third.  Does
   -- nothing at all in a single battle, where the faint path fills the slot
   -- itself and there is nothing pending.
-  self:fillEmptySlots()
+  --
+  -- PLATINUM / HGSS DOUBLES: ...BUT AFTER THE FAINTS THIS SWEEP QUEUED.  A
+  -- burn / poison / sandstorm / Leech Seed faint inside the residual above
+  -- queues its `doubleFaint` with actNext, which lands AFTER this running
+  -- queue item; filling right here ran first, found the slot still occupied,
+  -- and left the replacement pending until the NEXT turn's end -- with both
+  -- slots empty (a living bench mon, e.g. a Revived one) the battle sat in
+  -- an unanswerable command menu forever.  Queueing the fill behind the
+  -- faints is HandleFaintedMonActions' order.
+  if self.g4fx and not self.bw and self:isDouble() then
+    self:actNext(function() self:fillEmptySlots() end)
+  else
+    self:fillEmptySlots()
+  end
   -- BATTLE PALACE: the first time a Pokemon is at half HP or below (and
   -- awake), its nature shows (VARIOUS_PALACE_FLAVOR_TEXT)
   if self.palace then
