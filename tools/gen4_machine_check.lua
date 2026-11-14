@@ -211,7 +211,21 @@ else
     return { items = t, constants = { tmhmMoves = list }, moves = moves,
              text = texts }
   end
+  -- THE HM PREFIX IS THE CARTRIDGE'S OWN ("HM" in English, "VM" in German):
+  -- read off the first HM of the machine run (the 8th from its end), so the
+  -- English asserts stay "HM01" and a German cache asserts "VM01".
+  local HMP = "HM"
+  do
+    local lo
+    for k, def in pairs(items) do
+      if tonumber(k) and type(def) == "table" and def.fieldUseFunc == ItemEffects.ITEM_USE_FUNC_TM_HM
+         and (not lo or tonumber(k) < lo) then lo = tonumber(k) end
+    end
+    local first = lo and items[lo + #tmhm - 8]
+    HMP = first and tostring(first.name):match("^(%a+)%d+$") or "HM"
+  end
   local function byName(data, name)
+    name = name:gsub("^HM(%d)", HMP .. "%1")
     for k, def in pairs(data.items) do
       if tonumber(k) and type(def) == "table" and def.name == name then
         return def, tonumber(k)
@@ -301,11 +315,11 @@ else
     local hm01b = byName(before, "HM01")
     ok(hm01b ~= nil, "HM01 is not in this cache")
     if hm01b then
-      ok(not ItemEffects.needsTarget("HM01", hm01b),
+      ok(not ItemEffects.needsTarget(hm01b.name, hm01b),
          "HM01 asks for a target BEFORE the record is stamped, so this check "
          .. "cannot tell whether the record is what opens the party picker")
       ItemEffects.markGen4Machines(before)
-      ok(ItemEffects.needsTarget("HM01", hm01b) and true or false,
+      ok(ItemEffects.needsTarget(hm01b.name, hm01b) and true or false,
          "HM01 still answers no target needed after the record is stamped -- "
          .. "which is the bag saying \"This isn't the time to use that!\"")
     end

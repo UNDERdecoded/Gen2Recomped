@@ -78,10 +78,20 @@ if dir and dir ~= '' then
   end
   local _, r201 = at('R201')
   check(r201 == 'Route 201', 'the cache: Route 201 (' .. tostring(r201) .. ')')
+  -- the cartridge's language: item 1's name (Master Ball / Meisterball).
+  -- The expected place names are per language; English stays exact.
+  local items = assert(loadfile(dir .. '/items.lua'))()
+  local ball = items[1] and items[1].name
+  local lang = (ball == 'Master Ball') and 'en' or 'de'
+  local expectBy = {
+    en = { verity = 'Verity Lakefront', stark = 'Stark Mountain' },
+    de = { verity = 'Wahrheitsufer', stark = 'Kahlberg' },
+  }
+  local expect = expectBy[lang]
   local _, verity = at('L01')
-  check(verity == 'Verity Lakefront', 'the cache: Verity Lakefront (' .. tostring(verity) .. ')')
+  check(verity == expect.verity, 'the cache (' .. lang .. '): ' .. expect.verity .. ' (' .. tostring(verity) .. ')')
   local _, stark = at('D16R0103')
-  check(stark == 'Stark Mountain', 'the cache: Stark Mountain (' .. tostring(stark) .. ')')
+  check(stark == expect.stark, 'the cache (' .. lang .. '): ' .. expect.stark .. ' (' .. tostring(stark) .. ')')
 end
 
 print(('%d checks, %d failed'):format(PASS + FAIL, FAIL))

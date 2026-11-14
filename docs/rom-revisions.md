@@ -143,21 +143,35 @@ The art with baked-in text is German as well. That covers the summary, Pokedex,
 party, box, bag, trainer card, naming, contest and touch screens, the type
 icons, the "KP" healthbox, and one map texture set (21, its `m_depanel` signs).
 
+**Fixed since (runtime on a German cache):**
+
+- Pal Park, Poke Transfer and the Monster Walker reach Gen IV items and moves
+  by cartridge id through `src/pokemon/Gen4EnglishRef.lua` (the table is
+  `Gen4EnglishNames.lua`, written by `tools/gen4_english_ref_gen.lua` from an
+  English import). Held items survive a Gen 3 migration.
+- The whiteout's nurse/Mom scripts, the loss bank and the scurry line are found
+  by shape when the English words are absent.
+- The randomizer's protected move/item lists read English names through the
+  same reference, and the kept trainer classes are class ids.
+- The hero's default names come from the cartridge's name bank (text bank 427).
+- A non-English Gen 4 import writes `gen4_language.lua`; the translation layer
+  reads it, so German ROM text is not sent for translation as English.
+- The battle prints the cartridge's own lines (`src/battle/Gen4BattleText.lua`,
+  bank 368 and bank 0) for the common ones: wild/trainer intro, "Go!", move
+  use, fainted, effectiveness, critical hit, misses, EXP and level-up, stat
+  changes, catch, escape.
+
 **Still English on a German cartridge:**
 
-- the engine's own strings ("Enemy …", menus the port draws itself)
-- the English default player and rival name presets
-- the scurry line on a whiteout (the nurse/Mom text is located by its English
-  content)
-- Pal Park and cross-generation transfers. They map Gen 3 items and walker
-  moves by English name, so held items are dropped from Gen 3 migrants.
-- the randomizer's protected-item and protected-class lists, which are name
-  based.
+- the engine's own strings that are not mapped above (the less common battle
+  lines: statuses, weather, abilities, items; some menu words the port draws)
+- the translation layer's engine-string catalog is English-keyed
 
-None of these blocks play. Some existing checks assert English strings
-(`gen4_item_use_check`, `gen4_area_popup_check` "Twinleaf Town",
-`gen4_underground_check`, `gen4_machine_check` "HM01",
-`gen4_mining_screen_check`), so they fail on a German cache by design.
+Checks that assert English text now take the language from the cache
+(`gen4_item_use_check`, `gen4_area_popup_check`, `gen4_underground_check`,
+`gen4_machine_check`, `gen4_mining_screen_check`, `gen4_met_location_check`,
+`gen4_blackout_check`). Others still assert English (contest, safari, seals,
+journal, tablet, tag battle, town map, field queries, fly, daily slots).
 
 ## Evidence for the revisions already accepted as alternates
 

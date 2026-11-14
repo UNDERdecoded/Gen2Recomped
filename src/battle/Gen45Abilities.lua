@@ -610,7 +610,10 @@ function M.unovaAfterHit(battle, attacker, target, move, contact)
   end
 end
 
-local function isBerry(def) return def and type(def.name) == "string" and def.name:find("Berry", 1, true) ~= nil end
+local function isBerry(def)
+  -- the Berries pocket is the cartridge's own answer in any language; the name is the older test
+  return def and (def.pocket == "BERRIES" or (type(def.name) == "string" and def.name:find("Berry", 1, true) ~= nil)) or false
+end
 
 -- ZEN MODE: Darmanitan below half HP is Fire / Psychic with its Zen stats,
 -- and in its Zen picture (form 1, gen5-form-sprites-v1) -- shown through a

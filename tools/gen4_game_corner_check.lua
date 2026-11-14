@@ -123,7 +123,7 @@ check(game.stringBuffers[1] == 'DARK', 'buffertypename reads bank 624')
 local items = load('items')
 local IE = require('src.inventory.ItemEffects')
 save.coins = 1234
-local ok, kind, lines = pcall(IE.use, { items = items, text = text, constants = { gen = 4 } }, save, 444)
+local ok, kind, lines = pcall(IE.use, { items = items, text = text, constants = { gen = 4 }, isGen4Cache = true }, save, 444)
 check(ok and kind == 'failed' and lines and lines[1] == 'Your Coins: 1234',
       'the Coin Case says "Your Coins: 1234", got ' .. tostring(ok and lines and lines[1] or kind))
 

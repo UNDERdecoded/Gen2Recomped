@@ -344,7 +344,7 @@ function Gen4RowanIntro:askName()
   local boot = self.game.data.field and self.game.data.field.boot
   local presets = (boot and boot.namePresets and boot.namePresets.player) or nil
   if not presets or #presets == 0 then
-    presets = { self.answers.gender == "girl" and "Dawn" or "Lucas" }
+    presets = { require("src.script.Gen4DefaultNames").hero(self.game.data, self.answers.gender == "girl") }
   end
   local maxLen = (self.game.data.constants or {}).playerNameLength or 7
   Screens.push(self.game, "NamingScreen", {
