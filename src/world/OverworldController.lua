@@ -2493,15 +2493,17 @@ function OverworldState:timeOfDay()
     steps = self.todSteps or 0,
   })
   if type(nextTod) ~= "string" or nextTod == "" then nextTod = tod end
-  if nextTod ~= tod then
-    self.tod = nextTod
-    if Runtime.wants("world.tod_changed") then
-      Runtime.emit("world.tod_changed", {
-        tod = nextTod, previous = tod, mapId = map and map.id,
-      })
-    end
-  else
-    self.tod = nextTod
+  -- Compare with the period this state last reported, not with the raw
+  -- clock: a hook that keeps returning a period other than the clock's (for
+  -- example EVENING while the clock says DAY) would otherwise re-announce the
+  -- same change on every call, i.e. every frame. Same rule as the unhooked
+  -- path above: a first assignment (previous == nil) is not a change.
+  local previous = self.tod
+  self.tod = nextTod
+  if nextTod ~= previous and previous and Runtime.wants("world.tod_changed") then
+    Runtime.emit("world.tod_changed", {
+      tod = nextTod, previous = previous, mapId = map and map.id,
+    })
   end
   self:syncGen2Tod(self.tod)
   return self.tod
