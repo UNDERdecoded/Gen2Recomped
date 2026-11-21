@@ -78,24 +78,48 @@ local ok,err=xpcall(function()
  assert(written,'Data folder is not writable: '..tostring(writeError))
  assert(CacheFs.read(probe)=='import write check','Could not read back from the selected data folder.')
  CacheFs.remove(probe)
+ local removed=0
  local function removeSaveTree(path)
   local info=love.filesystem.getInfo(path)
   if not info then return end
   if info.type=='directory' then
    for _,name in ipairs(love.filesystem.getDirectoryItems(path)) do removeSaveTree(path..'/'..name) end
   end
-  love.filesystem.remove(path)
+  if love.filesystem.remove(path) then removed=removed+1 end
  end
  if job.clear then
+  local clearStarted=love.timer.getTime()
+  -- The marker goes FIRST: from here until the launcher writes a new one, a
+  -- killed import must read as "not imported", whatever is left on disk.
+  love.filesystem.remove(CacheFs.prefix..'rom-cache.complete')
+  CacheFs.remove('rom-cache.complete')
+  -- The old pack as well as the loose trees, whichever kind this import
+  -- writes: a pack left behind a loose import would go on answering for every
+  -- file the new one does not produce.  The launcher unmounted it before
+  -- starting this worker; a pack that still cannot be deleted is still open
+  -- somewhere, and replacing the cache under it is not possible.
+  local cleared,clearError=CacheFs.clearPack()
+  assert(cleared,'Could not remove the previous game data: '..tostring(clearError))
   for _,rel in ipairs({'data/generated','assets/generated'}) do
    removeSaveTree(CacheFs.prefix..rel);CacheFs.removeTree(rel)
   end
-  love.filesystem.remove(CacheFs.prefix..'rom-cache.complete')
-  CacheFs.remove('rom-cache.complete')
+  -- Measured because the first packed import on a console that still holds a
+  -- loose cache deletes ~18,000 files one slow syscall at a time.
+  channel:push({kind='log',message=('import %s: old cache cleared in %.1f s (%d save-directory entries removed)')
+   :format(tostring(job.version),love.timer.getTime()-clearStarted,removed)})
  end
  -- This state only writes the cache; the launcher writes the marker afterwards,
  -- through the ordinary synced path (see CacheFs.bulkWrites).
  CacheFs.bulkWrites=true
+ -- ONE ARCHIVE INSTEAD OF ~18,000 FILES where file creation is the cost (the
+ -- PS5; see CacheFs "THE PACKED CACHE").  Begun after the probe and the clear,
+ -- so both of those stay ordinary loose operations.
+ if job.packed then
+  local packed,packWhy=CacheFs.beginPack()
+  if not packed then
+   channel:push({kind='log',level='warn',message='import '..tostring(job.version)..': packed cache unavailable, writing loose files: '..tostring(packWhy)})
+  end
+ end
  local lastStage,lastAt=nil,0
  local function progress(value,total,stage,current,stageTotal)
   local now=love.timer.getTime()
@@ -114,9 +138,25 @@ local ok,err=xpcall(function()
  extractor.checkpoint=function(operation) Recovery.stage(lastStage,operation) end
  extractor:run()
  if extractor.close then extractor:close();extractor=nil end
+ -- The pack becomes a pack here -- central directory written, `.part`
+ -- renamed -- and only then is the launcher told the import is complete, so
+ -- the marker it writes next can never vouch for an archive that is not whole.
+ if CacheFs.packActive and CacheFs.packActive() then
+  Recovery.stage(lastStage,'Finishing packed game data')
+  local packStarted=love.timer.getTime()
+  local finished,stats=CacheFs.finishPack()
+  assert(finished,'Could not finish the packed game data: '..tostring(stats))
+  channel:push({kind='log',message=('import %s: packed %d files (%.1f MB) into %s in %.1f s; %d rewritten, %d left loose (archive full)')
+   :format(tostring(job.version),stats.entries,stats.bytes/1048576,tostring(stats.path),
+    love.timer.getTime()-packStarted,stats.duplicates,stats.overflow),
+   level=stats.overflow>0 and 'warn' or nil})
+ end
  channel:push({kind='complete'})
 end,debug.traceback)
 if not ok then
+ -- a half-written pack is deleted, never left to look like a cache
+ local CacheFs=package.loaded['src.import.CacheFs']
+ if CacheFs and CacheFs.abortPack then pcall(CacheFs.abortPack) end
  if extractor and extractor.close then pcall(extractor.close,extractor) end
  channel:push({kind='error',error=tostring(err)})
 end

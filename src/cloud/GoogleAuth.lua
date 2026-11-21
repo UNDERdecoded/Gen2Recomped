@@ -36,7 +36,9 @@ local function isAndroid() return love and love.system and love.system.getOS() =
 function G.client()
   -- iOS too: Safari suspends the app, so the loopback listener the desktop
   -- flow waits on never hears Google either; the code popup is the way in
-  if isAndroid() or (love and love.system and love.system.getOS() == "iOS") then
+  -- ...and the PS5, which has no browser and cannot run a loopback listener
+  if isAndroid() or (love and love.system and love.system.getOS() == "iOS")
+      or (love and love.system and love.system.getOS() == "PS5") then
     local c = Clients.googleDevice()
     if c then return c, "device" end
     local why = Clients.why and Clients.why()

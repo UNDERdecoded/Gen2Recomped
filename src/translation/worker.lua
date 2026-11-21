@@ -39,8 +39,14 @@ local ok,err=xpcall(function()
   else
   for _,name in ipairs(require("src.translation.Sources").MODULES)do
    local file=io.open(job.dataDirectory..name..".lua","rb")
-   if file then
-    local chunk=loadstring(file:read("*a"),"translation source "..name);file:close()
+   local bytes=nil
+   if file then bytes=file:read("*a");file:close()
+   elseif job.packedDirectory then
+    -- packed cache: no loose file, so read it through the archive's mount
+    bytes=love.filesystem.read(job.packedDirectory..name..".lua")
+   end
+   if bytes then
+    local chunk=loadstring(bytes,"translation source "..name)
     if chunk then setfenv(chunk,{});local valid,table_=pcall(chunk);if valid and type(table_)=="table"then data[name]=table_ end end
    end
   end

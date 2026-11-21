@@ -1,0 +1,25 @@
+--- a/src/libraries/physfs/physfs_platform_posix.c
++++ b/src/libraries/physfs/physfs_platform_posix.c
+@@ -149,8 +149,12 @@
+ 
+ int __PHYSFS_platformMkDir(const char *path)
+ {
+-    const int rc = mkdir(path, S_IRWXU);
++    /* PS5: the title runs as its own user and ftpsrv as another, and players
++       copy ROMs into (and saves out of) these folders over FTP, so they are
++       created open to everyone, whatever the umask. */
++    const int rc = mkdir(path, 0777);
+     BAIL_IF(rc == -1, errcodeFromErrno(), 0);
++    chmod(path, 0777);
+     return 1;
+ } /* __PHYSFS_platformMkDir */
+ 
+@@ -182,7 +186,7 @@
+ #endif
+ 
+     do {
+-        fd = open(filename, mode, S_IRUSR | S_IWUSR);
++        fd = open(filename, mode, 0666);  /* PS5: see __PHYSFS_platformMkDir */
+     } while ((fd < 0) && (errno == EINTR));
+     BAIL_IF(fd < 0, errcodeFromErrno(), NULL);
+ 

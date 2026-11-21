@@ -138,10 +138,19 @@ function Service.update()
  local info=require("src.core.GameVersion").info(job.version) or {}
  local root=require("src.import.CacheFs").root() or love.filesystem.getSaveDirectory()
  local directory=root.."/"..(info.cachePrefix or "").."data/generated/"
+ local packedDirectory=nil
  if job.version~="launcher"then
   local textFile=io.open(directory.."text.lua","rb")
-  if not textFile then return end
-  textFile:close()
+  if textFile then textFile:close()
+  else
+   -- a packed cache (the PS5's rom-cache.zip) has no loose text.lua on disk;
+   -- its prefixed mount serves the same files through love.filesystem, which
+   -- the worker thread shares, so the worker reads them from there instead
+   local prefix=info.cachePrefix or ""
+   if prefix=="" or not require("src.import.CacheFs").mountPack(prefix)
+     or not love.filesystem.getInfo(prefix.."data/generated/text.lua","file") then return end
+   packedDirectory=prefix.."data/generated/"
+  end
  end
  love.filesystem.createDirectory("translations/fonts")
  local font,url=Languages.font(target)
@@ -155,7 +164,7 @@ function Service.update()
  -- app has them is asked here, on the main thread
  local android=love.system.getOS()=="Android"
  Service.thread=love.thread.newThread("src/translation/worker.lua")
- Service.thread:start(Json.encode({source=source,target=target,dataDirectory=directory,launcher=job.version=="launcher",
+ Service.thread:start(Json.encode({source=source,target=target,dataDirectory=directory,packedDirectory=packedDirectory,launcher=job.version=="launcher",
    hardware=job.options.translationHardware or "auto",
    android=android,bridge=android and type(love.system.translateOffline)=="function",
    cachePath=path(job.version,source,target),font=font,fontUrl=url,

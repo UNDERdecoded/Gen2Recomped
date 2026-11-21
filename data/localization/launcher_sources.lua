@@ -146,6 +146,7 @@ return {
 "An update is available",
 "Update from the OTA launcher (gen2recomp.nro)",
 "Install the newer package to update",
+"Copy the new release to your PS5 to update",
 "Cannot check for updates on this build",
 "A new version needs a fresh download",
 "Open releases",

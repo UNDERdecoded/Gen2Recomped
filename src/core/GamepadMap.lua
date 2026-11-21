@@ -79,6 +79,12 @@ local function nxActive()
   return false
 end
 
+local function ps5Active()
+  if love and love._os == "PS5" then return true end
+  if love and love.system and love.system.getOS and love.system.getOS() == "PS5" then return true end
+  return false
+end
+
 function GamepadMap.gamepadBindings()
   if nxActive() then return GamepadMap.NX_GAMEPAD_BINDINGS end
   return GamepadMap.DEFAULT_GAMEPAD_BINDINGS
@@ -95,6 +101,12 @@ end
 function GamepadMap.buttonLabel(button)
   if nxActive() then
     local labels = {a='B',b='A',x='Y',y='X'}
+    if labels[button] then return labels[button] end
+  end
+  -- PS5: a DualSense reports SDL's Xbox-position names with Cross as "a"
+  -- (confirm, same as the default table), so only the labels differ.
+  if ps5Active() then
+    local labels = {a='CROSS',b='CIRCLE',x='SQUARE',y='TRIANGLE'}
     if labels[button] then return labels[button] end
   end
   return button:upper()
