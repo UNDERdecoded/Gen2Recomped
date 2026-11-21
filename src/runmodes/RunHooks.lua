@@ -474,7 +474,7 @@ function RunHooks.martStock(game, stock)
   for i, id in ipairs(stock) do
     local it = data.items and data.items[id]
     local keep = type(id) == "table" or not it or RandomData.protectedItem(data, id)
-      or ESSENTIAL[RandomData._norm(it.name or id)]
+      or ESSENTIAL[RandomData._english(it, id)]
     local new = id
     if not keep then
       for try = 1, 8 do

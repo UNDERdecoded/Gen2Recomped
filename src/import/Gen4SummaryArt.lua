@@ -233,6 +233,10 @@ function Gen4SummaryArt.images(rom)
     end
     if pal and cell then
       for name, r in pairs(Gen4SummaryArt.TYPE_ROW) do out["type_" .. name] = icon(name, r) end
+      -- a renamed slot 9 (Renegade Platinum's FAIRY) is drawn by the
+      -- cartridge's mystery member, in mystery's palette row
+      local slot9 = tostring(require("src.import.Gen4TypeChart").TYPES[9] or "MYSTERY"):lower()
+      if slot9 ~= "mystery" then out["type_" .. slot9] = out.type_mystery end
       for name, r in pairs(Gen4SummaryArt.CATEGORY_ROW) do out["category_" .. name] = icon(name, r) end
     end
   end

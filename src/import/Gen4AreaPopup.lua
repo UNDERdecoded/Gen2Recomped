@@ -47,10 +47,9 @@ local function hexTiles(G, sheet, palette)
   return { w = w, h = h, idx = table.concat(out) }
 end
 
-function Gen4AreaPopup.extract(rom)
+function Gen4AreaPopup.extract(rom, headers)
   local Narc = require("src.import.NarcArchive")
   local G = require("src.import.Gen4Graphics")
-  local H = require("src.import.Gen4MapHeaders")
   local raw = rom:read(Gen4AreaPopup.PATH)
   local arc = raw and Narc.parse(raw)
   if not arc then return nil, "no " .. Gen4AreaPopup.PATH end
@@ -71,16 +70,40 @@ function Gen4AreaPopup.extract(rom)
       out.windows[i - 1] = win
     end
   end
-  local arm9 = rom:arm9()
-  local at = H.KNOWN_OFFSET
-  for id = 0, 592 do
-    local o = at + id * H.RECORD_BYTES
-    local h = arm9 and H.parse(arm9:sub(o + 1, o + H.RECORD_BYTES))
-    if h then
-      out.headers[id] = { text = h.labelText, window = h.labelWindow, mapType = h.mapType }
-    end
+  -- THE HEADERS THE MAPS STAGE FOUND, not a fixed address: the table sits at
+  -- arm9+0xE601C on the US cartridge and 0x58 bytes later on the German one,
+  -- and 24-byte records read from the wrong place still parse -- every map
+  -- came out "no sign" until this took the located table.
+  if type(headers) ~= "table" then headers = Gen4AreaPopup.locate(rom) end
+  for id, h in pairs(headers or {}) do
+    out.headers[id] = { text = h.labelText, window = h.labelWindow, mapType = h.mapType }
   end
   return out
+end
+
+-- Standalone (no maps stage before it): the known offset when it holds a
+-- full table on this cartridge, else the structural search with the bounds
+-- the Platinum archives give.
+function Gen4AreaPopup.locate(rom)
+  local H = require("src.import.Gen4MapHeaders")
+  local Narc = require("src.import.NarcArchive")
+  local arm9 = rom and rom:arm9()
+  if not arm9 then return nil end
+  local function count(path)
+    local raw = rom:read(path)
+    local arc = raw and Narc.parse(raw)
+    return arc and arc.count or 0
+  end
+  local limits = {
+    matrix = count("/fielddata/mapmatrix/map_matrix.narc"),
+    scripts = count("/fielddata/script/scr_seq.narc"),
+    messages = count("/msgdata/pl_msg.narc"),
+    encounters = count("/fielddata/encountdata/pl_enc_data.narc"),
+    events = count("/fielddata/eventdata/zone_event.narc"),
+    names = 593,
+  }
+  local at, n = H.find(arm9, limits)
+  return at and H.all(arm9, at, n) or nil
 end
 
 return Gen4AreaPopup

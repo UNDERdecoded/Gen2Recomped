@@ -166,6 +166,23 @@ ok(srep.duplicates == 0, "synthetic: %d duplicate entry indices", srep.duplicate
 ok(srep.pairs == 6, "synthetic: %d pairs, expected 6", srep.pairs)
 ok(sall[7] ~= nil and sall[3] ~= nil and sall[9] ~= nil and sall[0] == nil,
    "synthetic: the wrong set of trainers came back")
+-- A hack that adds trainers past the offset table (Renegade Platinum's 928..):
+-- the walk cannot reach them (offsetFor is nil), so `all` scans for their runs,
+-- and ONLY for ids past the table: trainer 7's run is untouched.
+local XTBL = TBL .. rec(12, 1) .. rec(12, 2) .. rec(11, 0)
+local xall, xrep = M.all(XTBL, OFS)
+ok(xall[12] ~= nil and xall[12][1] == 6 and xall[12][2] == 7,
+   "scan: trainer 12 (past the offset table) did not get its run at records 6, 7")
+ok(xall[11] ~= nil and xall[11][0] == 8, "scan: trainer 11 did not get record 8")
+ok(xall[7] ~= nil and xall[7][0] == 0 and xall[0] == nil,
+   "scan: a covered trainer's answer changed, or trainer 0 grew a row")
+ok(xrep.scanned == 3 and xrep.scannedTrainers == 2 and xrep.reached == xrep.records,
+   "scan: report says %s scanned / %s trainers, reached %s of %s records",
+   tostring(xrep.scanned), tostring(xrep.scannedTrainers), tostring(xrep.reached),
+   tostring(xrep.records))
+ok(srep.scanned == 0, "scan: a table with no uncovered trainers scanned %s records",
+   tostring(srep.scanned))
+
 -- Out of range reads nothing rather than reading off the end.
 ok(M.offsetFor(OFS, 10) == nil, "trainer 10 is past the offset table and resolved")
 ok(M.find(TBL, OFS, 10, 0) == nil, "trainer 10 found a message")
@@ -219,6 +236,18 @@ do
   for mod in cmds:gmatch('\nrequire%("src%.script%.([%w_]+)"%)') do
     if mod ~= "Gen4BattleTowerCommands" and not extra[mod] then
       extra[mod] = true
+      cmds = cmds .. "\n" .. (slurp("src/script/" .. mod .. ".lua") or "")
+    end
+  end
+end
+-- ...and the modules the VM itself loads on demand when it lowers a command
+-- (Pal Park's Catching Show rows, the Black/White transfer lab rows): their
+-- handlers register as a side effect of that require.
+do
+  local seen = {}
+  for mod in vm:gmatch('require%("src%.script%.([%w_]+)"%)') do
+    if mod ~= "Gen4Commands" and not seen[mod] then
+      seen[mod] = true
       cmds = cmds .. "\n" .. (slurp("src/script/" .. mod .. ".lua") or "")
     end
   end
@@ -389,11 +418,31 @@ else
            :format(trainers, pairsCount, maxType))
   -- EXACT, not floors: these are structural counts of one cartridge, and a
   -- re-extract that changes any of them has changed the walk, not the data.
-  ok(trainers == 836,
-     "%d trainers carry messages, expected exactly 836 of 928", trainers)
-  ok(pairsCount == 2497,
-     "%d (trainer, type) pairs, expected exactly 2497 -- the record count of "
-     .. "trtbl and the entry count of bank 617 are the same number", pairsCount)
+  -- Renegade Platinum rewrites 136 trtbl records in place for trainers
+  -- 928..1065 but leaves trtblofs at 928 entries, so its rows are the
+  -- cartridge's walk (all but the retagged records) plus the scan the
+  -- extractor adds past the offset table (Gen4TrainerMessages.scanUncovered).
+  local cf = io.open(CACHE .. "/../../rom-cache.complete", "rb")
+  local marker = cf and cf:read("*a") or ""
+  if cf then cf:close() end
+  local renegade = marker:match(":(%x+)%s*$") == "381f9eef44564602a5f6469ee8c390fbb8ebac3a"
+  if renegade then
+    local high = 0
+    for id in pairs(rows) do if id >= 928 then high = high + 1 end end
+    ok(trainers == 930,
+       "%d trainers carry messages, expected exactly 930 on Renegade", trainers)
+    ok(pairsCount == 2493,
+       "%d (trainer, type) pairs, expected exactly 2493 on Renegade", pairsCount)
+    ok(high == 135 and rows[928] and rows[928][1] and rows[1065] and rows[1065][1],
+       "trainers past the offset table (928..1065) must carry their authored "
+       .. "lines, found %d", high)
+  else
+    ok(trainers == 836,
+       "%d trainers carry messages, expected exactly 836 of 928", trainers)
+    ok(pairsCount == 2497,
+       "%d (trainer, type) pairs, expected exactly 2497 -- the record count of "
+       .. "trtbl and the entry count of bank 617 are the same number", pairsCount)
+  end
   ok(dupes == 0,
      "%d entry index(es) are claimed by more than one (trainer, type); each "
      .. "record is reachable from exactly one trainer", dupes)
@@ -435,8 +484,8 @@ else
     ok(#missing == 0,
        "%d index(es) name a line this cache does not hold: %s",
        #missing, table.concat(missing, "; "))
-    ok(resolved == 2497,
-       "only %d of 2497 indices resolved; the index and the text bank have "
+    ok(resolved == (renegade and 2493 or 2497),
+       "only %d of the expected indices resolved; the index and the text bank have "
        .. "drifted apart", resolved)
     ok(empty == 0, "%d resolved line(s) are the empty string", empty)
   end

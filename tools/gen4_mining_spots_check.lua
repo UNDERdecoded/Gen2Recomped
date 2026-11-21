@@ -258,17 +258,31 @@ ok(offWall == 0, "%d placed spots are not on a diggable wall", offWall)
 ok(placed >= 60 * 6, "only %d spots across 60 descents; 6 is the minimum each",
    placed)
 
-section("8. leaving the cave drops the set, and other cartridges never get one")
+section("8. leaving the cave keeps the set until a day passes, and other cartridges never get one")
 do
+  local World = require("src.world.Gen4UgWorld")
   local G, ow = fakeGame(), (fakeOw())
   UG.ensureSpots(G, ow, lcg(11))
-  ok(#UG.spots(G) > 0, "nothing was placed to test the clear with")
-  -- the same call with an overworld map: the coordinates mean a different place
-  -- there, so carrying them would put dig walls in Jubilife
+  local first = #UG.spots(G)
+  ok(first > 0, "nothing was placed to test the clear with")
+  -- THE CARTRIDGE KEEPS THEM: Mining_LoadSavedMiningSpots reloads the saved
+  -- set on the next trip; only Underground_HandleDailyEvents (a day has
+  -- passed) re-rolls it. So walking out must not drop the spots...
   ow.map.def.label = "Jubilife City"
   ow.map.id = "C01"
+  ok(UG.ensureSpots(G, ow, lcg(11)) == false, "an overworld map placed dig walls")
+  ok(#UG.spots(G) == first, "leaving the Underground changed the saved spots (%d -> %d)",
+     first, #UG.spots(G))
+  -- ...coming back the same day reloads them rather than re-rolling...
+  ow.map.def.label, ow.map.id = "Mystery Zone", "UG"
+  local saved = UG.spots(G)
+  UG.ensureSpots(G, ow, lcg(99))
+  ok(UG.spots(G) == saved and #UG.spots(G) == first, "same-day return re-rolled the spots")
+  -- ...and a day passing marks the set for a fresh spawn on the next arrival
+  ow.map.id = "C01"; ow.map.def.label = "Jubilife City"
   UG.ensureSpots(G, ow, lcg(11))
-  ok(#UG.spots(G) == 0, "leaving the Underground kept %d spots", #UG.spots(G))
+  World.checkDay(G.save, os.time() + 2 * 86400)
+  ok(World.ug(G.save).shouldSpawn == true, "a day passing did not owe a new spawn")
 end
 do
   GameVersion.set("crystal")

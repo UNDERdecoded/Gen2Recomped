@@ -244,6 +244,10 @@ end
 -- same answer and had been getting three different ones: the save codec, the
 -- battle, and the menus.
 local SHINY_GEN3_UNDER = 8
+-- ...unless the cartridge says otherwise: Renegade Platinum patches
+-- Pokemon_IsPersonalityShiny to compare against 128 (1/512). Data:load hands
+-- in constants.shinyUnder; nil restores the retail eight.
+local shinyUnder = SHINY_GEN3_UNDER
 
 local function xor16(a, b)
   if bit then return bit.band(bit.bxor(a, b), 0xFFFF) end
@@ -267,9 +271,15 @@ function Stats.shinyValue(personality, otId)
   return xor16(xor16(lo(otId), hi(otId)), xor16(lo(personality), hi(personality)))
 end
 
+function Stats.setShinyUnder(n)
+  n = tonumber(n)
+  shinyUnder = (n and n >= 1 and n <= 65536) and math.floor(n) or SHINY_GEN3_UNDER
+end
+function Stats.shinyUnder() return shinyUnder end
+
 function Stats.isShinyGen3(personality, otId)
   if personality == nil or otId == nil then return false end
-  return Stats.shinyValue(personality, otId) < SHINY_GEN3_UNDER
+  return Stats.shinyValue(personality, otId) < shinyUnder
 end
 
 -- The personality that makes THIS trainer's Pokemon shiny while changing as
@@ -299,7 +309,7 @@ function Stats.shinyPersonality(personality, otId, rng)
   local otFold = xor16(otId % 65536, math.floor(otId / 65536) % 65536)
   local wantNature = personality % 25
   local candidates = {}
-  for want = 0, SHINY_GEN3_UNDER - 1 do
+  for want = 0, shinyUnder - 1 do
     local hi = xor16(xor16(otFold, lo), want)
     local pid = hi * 65536 + lo
     if pid % 25 == wantNature then return pid end

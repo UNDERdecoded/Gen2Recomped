@@ -8,7 +8,7 @@ local expected={up={8,9,12},down={13,14,16},left={17,18,20},right={21,23,25}}
 local full=assert(F.cycles(sequence,64))
 local Sprite=require('src.render.SpriteRenderer')
 for _,sex in ipairs({'090','091'}) do
- local sprites=assert(loadfile('G:/Gen2Recomped/platinum/data/generated/sprites.lua'))()
+ local sprites=assert(loadfile(((os.getenv('GEN4_DATA') or (os.getenv('APPDATA') and os.getenv('APPDATA')..'/LOVE/Gen2Recomp/platinum/data/generated') or 'data/generated')..'/sprites.lua')))()
  local walk=sprites['SPRITE_G4_'..sex]
  assert(walk.frames==32 and walk.facingSource:find('walk_and_run',1,true))
  for facing,frames in pairs(expected) do
@@ -31,6 +31,7 @@ for clock=0,15 do
 end
 runner.running=false
 assert(runner:pose()==runner.sprite,'walking must restore the walking sheet')
-assert(loadfile('src/world/Player.lua'));assert(loadfile('src/import/RomExtractorGen4.lua'))
+local function repoFile(p) local f=io.open(p,'rb') if f then f:close() return p end local root=((arg and arg[0]) or ''):gsub(string.char(92),'/'):gsub('[^/]*/[^/]*$','') return root..p end
+assert(loadfile(repoFile('src/world/Player.lua')));assert(loadfile(repoFile('src/import/RomExtractorGen4.lua')))
 rom:close()
 print('Both Platinum protagonists: ROM run cycles, four facings, both stride poses and existing-cache compatibility passed')

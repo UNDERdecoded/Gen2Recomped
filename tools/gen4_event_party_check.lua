@@ -38,9 +38,10 @@ Origin.stamp(game,mon,'met','Different location',{year=2027,month=1,day=1})
 assert(mon.metDate.year==2026 and mon.metLocation=='Route 209','receiving again cannot replace provenance')
 local old={};Origin.stamp({data={constants={gen=3}}},old,'met','Route 1',{year=2026,month=10,day=1})
 assert(next(old)==nil,'Gen3 origin behavior must remain unchanged')
-for _,file in ipairs({'src/script/Commands.lua','src/battle/BattleState.lua','src/pokemon/DayCare.lua','src/world/OverworldController.lua'}) do assert(loadfile(file),file) end
+local function repoFile(p) local f=io.open(p,'rb') if f then f:close() return p end local root=((arg and arg[0]) or ''):gsub(string.char(92),'/'):gsub('[^/]*/[^/]*$','') return root..p end
+for _,file in ipairs({'src/script/Commands.lua','src/battle/BattleState.lua','src/pokemon/DayCare.lua','src/world/OverworldController.lua'}) do assert(loadfile(repoFile(file)),file) end
 print('Gen4 origin checks passed: egg receipt, hatch history, retained dates and other-generation isolation')
-local dexData=assert(loadfile('G:/Gen2Recomped/platinum/data/generated/gen4_dex.lua'))()
+local dexData=assert(loadfile(((os.getenv('GEN4_DATA') or (os.getenv('APPDATA') and os.getenv('APPDATA')..'/LOVE/Gen2Recomp/platinum/data/generated') or 'data/generated')..'/gen4_dex.lua')))()
 ctx.game={data={gen4_dex=dexData}}
 ctx.save.pokedex={seen={},owned={}}
 for _,id in ipairs(dexData.orders.sinnoh) do ctx.save.pokedex.seen[id]=true end

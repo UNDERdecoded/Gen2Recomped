@@ -106,6 +106,12 @@ Rev 0 (`ce81046eda7d232513069519cb2085349896dec7`) is registered as an
 alternate hash. pokeplatinum builds both and the filesystem layout is the same
 in each, which is what the extractor reads.
 
+The English European cartridge (`8d15cd44…`, CPUE rev 10) and the German
+Platin Edition (`5d009a17…`, CPUD) are alternates too. The German build moves
+its 32 language archives under `/resource/ger/`, which
+`src/import/Gen4Regions.lua` answers at the filesystem. See
+[rom-revisions.md](rom-revisions.md#platinum-europe-and-germany).
+
 ### Files that will matter
 
 | Path | Bytes | What |

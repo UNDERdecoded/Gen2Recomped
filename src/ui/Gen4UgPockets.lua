@@ -185,6 +185,14 @@ function P:doOption(opt, slot)
 end
 
 function P:bagItemId(constant)
+  local inv = self.game.save.inventory or {}
+  -- by id first (Gen4Mining.TREASURE_ITEM_IDS): the names below are English
+  local known = require("src.import.Gen4Mining").TREASURE_ITEM_IDS[constant]
+  local items = self.game.data.items or {}
+  if known and (items[known] or items[("ITEM_%03d"):format(known)]) then
+    if inv[("ITEM_%03d"):format(known)] ~= nil or not items[known] then return ("ITEM_%03d"):format(known) end
+    return known
+  end
   local want = (constant:gsub("^ITEM_", ""):gsub("_", " ")):upper()
   for id, def in pairs(self.game.data.items or {}) do
     if type(def) == "table" and ((def.translationSourceName or def.name) or ""):upper() == want then

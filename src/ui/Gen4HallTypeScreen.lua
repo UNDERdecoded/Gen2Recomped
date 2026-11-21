@@ -59,7 +59,8 @@ local function fill(game, n, fallback, ...)
   return ok and plain or fallback
 end
 function S:typeName(t)
-  return Gen4Text.resolve(self.data, S.TYPE_NAMES, t, self.game) or tostring(t)
+  return Gen4Text.resolve(self.data, S.TYPE_NAMES, t, self.game)
+    or (t == 9 and "???" or tostring(t))
 end
 -- GetCursorPos: cells past 16 read the ??? rank slot
 function S:rankAt(cell)
@@ -181,7 +182,8 @@ function S:draw()
         Font.draw(tostring(math.min(self:rankAt(cell) + 1, 10)), x + 18, y + 4)
         Font.draw(self:typeName(t), x + 1, y + 16)
       else
-        Font.draw("???", x + 18, y + 12)
+        -- slot 9's own name: "???" on retail, FAIRY on Renegade (bank 624)
+        Font.draw(self:typeName(9), x + 18, y + 12)
       end
     end
   end

@@ -94,6 +94,48 @@ check(b7 and b7.entries and b7.entries[2] == 'M0388/S001F', "B7F's script 2 (the
 local cast = dw.cast[581]
 check(cast and #cast == 5 and cast[1].graphicsId == 138, "B7F's cast: Cynthia and Cyrus by progress")
 
+-- THE LIFT'S PASSENGER (BeginMovement / ChangeMaps): Cynthia rides 1F's lift
+-- down at progress 2 and B6F's at progress 7, renumbered for the next floor;
+-- neither next floor has her in its own table for that moment
+do
+  local game = { data = { gen4_distortion_world = dw }, save = { gen4Vars = { [0x4055] = 2 }, flags = {} } }
+  package.loaded['src.core.Game'] = game
+  local hadOW = package.loaded['src.world.OverworldController']
+  package.loaded['src.world.OverworldController'] = hadOW or {}
+  local function castOf(h, id, val)
+    for _, c in ipairs(dw.cast[h]) do
+      if c.localId == id and (val == nil or c.flagCondVal == val) then return c end
+    end
+  end
+  local function standing(h, c)
+    local m = dw.maps[h]
+    local x, y = c.x - (m.offsetX or 0), c.z - (m.offsetZ or 0)
+    return { def = { localId = c.localId, gen4DistCast = c, x = x, y = y }, cellX = x, cellY = y }
+  end
+  local c129 = castOf(573, 129)
+  local ow = { npcs = { standing(573, c129) } }
+  local pas = P.passengerFor(ow, { header = 573 }, dw.maps[573], 574)
+  check(pas and pas.fromId == 129 and pas.localId == 128 and pas.script == nil,
+        '1F lift at progress 2 carries Cynthia (1F 129 -> B1F 128)')
+  local b1 = { header = 574, objects = {} }
+  ow.dwPassenger = pas
+  P.spawnCast(ow, b1, dw.maps[574])
+  local got
+  for _, o in ipairs(b1.objects) do if o.localId == 128 then got = o end end
+  check(got and got.x == c129.x - dw.maps[574].offsetX and got.y == c129.z - dw.maps[574].offsetZ
+        and ow.dwPassenger == nil, "...and B1F's first-entry scene finds her, on the world tile she rode on")
+  game.save.gen4Vars[0x4055] = 3
+  check(P.passengerFor(ow, { header = 573 }, dw.maps[573], 574) == nil, 'no passenger once the progress moved on')
+  game.save.gen4Vars[0x4055] = 7
+  local c134 = castOf(580, 134, 7)
+  local ow6 = { npcs = { standing(580, c134) } }
+  local pas6 = P.passengerFor(ow6, { header = 580 }, dw.maps[580], 581)
+  check(pas6 and pas6.fromId == 134 and pas6.localId == 128 and pas6.script == 6,
+        "B6F lift at progress 7 carries her to B7F as B7F_CYNTHIA, script 6")
+  package.loaded['src.world.OverworldController'] = hadOW
+  package.loaded['src.core.Game'] = nil
+end
+
 -- the story's events: every command's arguments decoded
 local gr = dw.events[582]
 check(gr and gr[3].params[1].scriptId == 7 and gr[3].params[3].progress == 11,

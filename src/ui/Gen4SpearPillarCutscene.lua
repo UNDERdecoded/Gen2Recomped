@@ -432,10 +432,13 @@ function S:messageText(id)
   local key = ("TEXT_B%04d_%05d"):format(S.TEXT_BANK, id)
   local s = ((self.data or {}).text or {})[key] or ""
   local name = self.playerName or ""
-  s = s:gsub("{STRVAR_1 %d+ 0 %d+}", function() return name end)
+  -- the name goes in string buffer 0 and gen4Markup does the filling
+  local buffers = {}
+  for k, v in pairs((self.game or {}).stringBuffers or {}) do buffers[k] = v end
+  buffers[1] = name
   local okC, Commands = pcall(require, "src.script.Commands")
   if okC and Commands and Commands.gen4Markup then
-    local ok, plain = pcall(Commands.gen4Markup, s, self.game)
+    local ok, plain = pcall(Commands.gen4Markup, s, { stringBuffers = buffers })
     if ok and type(plain) == "string" then s = plain end
   end
   return s

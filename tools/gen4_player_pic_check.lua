@@ -71,12 +71,12 @@ if okRun and type(field) == "table" then
     ok(withBack >= 2, "only %d form(s) carry a back pic; Sinnoh has two",
        withBack)
     ok(forms.boy and forms.boy.back
-       and forms.boy.back:find("trainer_backs", 1, true) ~= nil,
-       "the boy's back pic is %s, which is not a Gen 4 trainer back",
+       and forms.boy.back == "assets/generated/gen4/battle/trainer_back/000.png",
+       "the boy's back pic is %s, not Platinum's own player back (trbgra class 0, Lucas's winter coat)",
        tostring(forms.boy and forms.boy.back))
     ok(forms.girl and forms.girl.back
-       and forms.girl.back:find("trainer_backs", 1, true) ~= nil,
-       "the girl's back pic is %s", tostring(forms.girl and forms.girl.back))
+       and forms.girl.back == "assets/generated/gen4/battle/trainer_back/001.png",
+       "the girl's back pic is %s, not trbgra class 1 (Dawn's winter coat)", tostring(forms.girl and forms.girl.back))
 
     -- ...AND AFTER THE LIFT.
     local marked = Sprites.markFormsTrueColor(field)

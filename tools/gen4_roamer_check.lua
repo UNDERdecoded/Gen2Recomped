@@ -448,7 +448,7 @@ ok(resolved == 29, "mapOf resolves all 29 through the cache's headers",
 
 io.write("\nGold, Crystal, Prism and Emerald, which share the same three hooks\n")
 
--- ALL THREE GEN 4 ROAMER CALL SITES ARE IN SHARED CODE: the map-change step,
+-- ALL FIVE GEN 4 ROAMER CALL SITES ARE IN SHARED CODE: the map-change step,
 -- the encounter roll and the after-battle pass all live in
 -- OverworldController.lua beside Johto's and Hoenn's. The cheap way for this
 -- work to break the older games is for one of them to run unguarded -- Gen 2's
@@ -488,7 +488,7 @@ else
                         or "no generation guard")) end
     end
   end
-  ok(sites == 3, "three Gen 4 roamer call sites, as written", sites, 3)
+  ok(sites == 5, "five Gen 4 roamer call sites, as written", sites, 5)
   ok(guarded == sites and sites > 0,
      "...and every one of them is behind GameVersion.isGen4()",
      guarded .. "/" .. sites, sites .. "/" .. sites)

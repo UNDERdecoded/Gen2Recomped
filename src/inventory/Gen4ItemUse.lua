@@ -47,6 +47,8 @@ local function isPlatinum(data)
   return data and data.isGen4Cache and not (v and v.family == "hgss")
 end
 
+G.isPlatinum = isPlatinum
+
 local function game() return package.loaded["src.core.Game"] end
 
 -- the berry patch the player faces, and its state (BERRY_PATCH_FLAG_*)
@@ -205,14 +207,16 @@ function G.use(data, save, id, itemDef, target, battle)
   elseif f == 19 then
     -- BagContext_FormatUsageMessage's cases (the Repels and Flutes are
     -- ItemEffects' own, from the name)
-    if name == "Point Card" then
+    -- by the cartridge's ids (Point Card 432, Fashion Case 435, Coin Case 444),
+    -- not the names: a German cache spells all three its own way
+    if n == 432 then
       return "failed", { bagLine(data, 97, Strings("Saved Battle Points\n%d BP", save.battlePoints or 0), tostring(save.battlePoints or 0)) }
-    elseif name == "Fashion Case" then
+    elseif n == 435 then
       local acc, bd = 0, 0
       for _, c in pairs((save.gen4Accessories or {})) do acc = acc + (tonumber(c) or 0) end
       for _ in pairs((save.gen4Backdrops or {})) do bd = bd + 1 end
       return "failed", { bagLine(data, 93, Strings("Accessories: %d\nBackdrops: %d", acc, bd), tostring(acc), tostring(bd)) }
-    elseif name == "Coin Case" then
+    elseif n == 444 then
       return "failed", { bagLine(data, 57, ("Your Coins: %d"):format(save.coins or 0), tostring(save.coins or 0)) }
     end
     return nil

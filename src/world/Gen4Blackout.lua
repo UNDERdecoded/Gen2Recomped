@@ -86,6 +86,16 @@ function M.lossBank(data)
                dots = gen4Key(bank, 38), blackedOut = gen4Key(bank, 37) }
     end
   end
+  -- ANOTHER LANGUAGE: the English words are not there, so the bank is told
+  -- by its shape -- entry 37 (the blackout line) is followed by the three
+  -- dots at 38, which is the same in every language
+  for _, bank in ipairs({ 368, 197 }) do
+    local last, dots = textOf(data, gen4Key(bank, 37)), textOf(data, gen4Key(bank, 38))
+    if last and last:find("{STRVAR", 1, true) and dots and dots:find("^%.%.%. %.%.%.") then
+      return { out = gen4Key(bank, 36), panic = gen4Key(bank, 34), paid = gen4Key(bank, 35),
+               dots = gen4Key(bank, 38), blackedOut = gen4Key(bank, 37) }
+    end
+  end
   local s = textOf(data, gen5SysKey(15, 57))
   if s and s:find("blacked out") then
     return { out = gen5SysKey(15, 54), panic = gen5SysKey(15, 55), paid = gen5SysKey(15, 56),
@@ -118,6 +128,13 @@ function M.scurryLine(data, name, home)
   if not (s and s:find("scurried")) then s = textOf(data, gen4Key(373, home and 4 or 3)) end -- Platinum
   if not (s and s:find("scurried")) then s = textOf(data, gen5SysKey(37, home and 3 or 2)) end -- BW
   if not (s and s:find("scurried")) then
+    -- another language: the version's own bank, by number
+    local fam = (not GameVersion.isGen5()) and require("src.import.Gen4Versions").family(GameVersion.get()) or nil
+    local bank = (fam == "hgss" and 203) or (fam == "platinum" and 373) or nil
+    local l = bank and textOf(data, gen4Key(bank, home and 4 or 3))
+    if l and l:find("{STRVAR", 1, true) then s = l end
+  end
+  if not (s and (s:find("scurried") or s:find("{STRVAR", 1, true))) then
     s = home and "{PLAYER} scurried back home, protecting the exhausted and fainted Pokémon from further harm..."
             or "{PLAYER} scurried to a Pokémon Center, protecting the exhausted and fainted Pokémon from further harm..."
   end
@@ -206,6 +223,22 @@ function M.whiteoutLabel(data, home)
     local s = textOf(data, gen4Key(bank, i))
     if s and s:find("^First, let.-s restore your Pok") then nurseIndex = i break end
   end
+  local englishNurse = nurseIndex ~= nil
+  -- ANOTHER LANGUAGE: the nurse's line cannot be found by its English words,
+  -- so find it by shape.  The house's script is the common-band entry that
+  -- heals the party after a message (Mom's), and the Center's first line is
+  -- the one three after Mom's -- the same relation the English search uses.
+  if not nurseIndex then
+    for _, label in ipairs(band.entries) do
+      local s = scripts[label]
+      local first, healed
+      for _, ins in ipairs((s and s.instructions) or {}) do
+        if ins.name == "message" and ins.args and first == nil then first = ins.args[1] end
+        if ins.name == "healparty" then healed = true end
+      end
+      if healed and tonumber(first) then nurseIndex = tonumber(first) + 3 break end
+    end
+  end
   if not nurseIndex then return nil end
   local function has(label, index, needHeal)
     local s = scripts[label]
@@ -219,7 +252,8 @@ function M.whiteoutLabel(data, home)
   for _, label in ipairs(band.entries) do
     if home then
       local mom = textOf(data, gen4Key(bank, nurseIndex - 3))
-      if mom and mom:find("^Mom") and has(label, nurseIndex - 3, true) then return label end
+      -- (English: the line starts "Mom"; another language: the heal in it says so)
+      if mom and (mom:find("^Mom") or not englishNurse) and has(label, nurseIndex - 3, true) then return label end
     elseif has(label, nurseIndex) then
       return label
     end

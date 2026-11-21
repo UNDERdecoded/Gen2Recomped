@@ -111,6 +111,8 @@ local function fakeGame()
     updates = 0,
     update = function(self) self.updates = self.updates + 1 end,
   }
+  game._step = Game._step   -- Game:step is a profiling wrapper around it
+  game.ensureStack = Game.ensureStack
   function game:returnToTitle() self.returned = self.returned + 1 end
   return game
 end
@@ -140,7 +142,8 @@ eq(bare.returned, 0, "an input with no chord bookkeeping never resets")
 Input:init()
 TouchControls:init()
 TouchControls.active, TouchControls.enabled = true, true
-TouchControls.img = { stub = true }
+TouchControls.img = { stub = true, a = true, b = true, start = true, select = true,
+  dpad = true, x = true, y = true }
 local L = TouchControls:layout()
 
 -- One finger, one control: touchpressed returns on its first hit, so no

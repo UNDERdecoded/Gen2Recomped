@@ -969,7 +969,13 @@ GameVersion.VERSIONS = {
     -- than needing a second entry -- the filesystem layout is what the
     -- extractor reads and both revisions carry the same one.
     sha1 = "0862ec35b24de5c7e2dcb88c9eea0873110d755c",
-    sha1Alt = { "ce81046eda7d232513069519cb2085349896dec7" },
+    sha1Alt = { "ce81046eda7d232513069519cb2085349896dec7",
+                -- (Europe), English: header CPUE rev 10 -- the US code and
+                -- overlays byte for byte, five files differ (docs/rom-revisions.md)
+                "8d15cd443d4e83e20493c79d3f9dc408c4f51ae0",
+                -- (Germany) "Platin Edition", CPUD: its own ARM9/overlay build
+                -- and German resources, read through src/import/Gen4Regions.lua
+                "5d009a175c77d4387cde26d34efb71aee825a938" },
     manifest = "tools/rom_manifest_platinum.json",
     cachePrefix = "platinum/",
     saveSuffix = "_platinum",
@@ -1067,6 +1073,47 @@ GameVersion.VERSIONS = {
     hasRunning = true,
     dualScreen = true,
   },
+  -- RENEGADE PLATINUM, Drayano's hack of Platinum (USA) Rev 1: a ROM hack, so
+  -- it sorts after the cartridges with Prism and Polished Crystal, and it runs
+  -- on PLATINUM'S engine -- `family = "platinum"` is what every Gen 4 check
+  -- that means "the Platinum code path" asks (GameVersion.family /
+  -- GameVersion.isPlatinumFamily), so nothing below needs a second branch.
+  --
+  -- Measured against Platinum USA Rev 1 rather than taken from the hack's
+  -- notes: the filesystem keeps every path (one DP leftover,
+  -- /poketool/personal/personal.narc, is gone, and nothing reads it), the
+  -- ARM9 differs in 266 bytes, and the data NARCs carry the hack --
+  -- personal (507 of 508 records), learnsets, evolutions, moves (117),
+  -- items (108), encounters (118 of 183), trainers (928 -> 1066, 698 parties
+  -- rewritten), scripts (215), events (163) and 222 text banks.
+  --
+  -- FAIRY replaces the unused "???" type in slot 9: the type-name bank says
+  -- FAIRY there, 20 species carry it (Clefairy line, Gardevoir line, Mawile,
+  -- Togekiss, Azumarill...), pl_batt_obj's type_icons/mystery is redrawn as
+  -- the Fairy icon, and the battle overlay's chart pointer is redirected to a
+  -- dense 18x18 chart the hack appended to overlay 21 (Gen4TypeChart.follow).
+  -- The extractor names slot 9 from the cartridge (Gen4Versions.TYPE_SLOTS).
+  renegadeplatinum = {
+    id = "renegadeplatinum",
+    generation = 4,
+    family = "platinum",
+    romhack = true,
+    label = "Renegade Platinum",
+    displayName = "Pokemon Renegade Platinum",
+    launcherName = "Renegade Platinum",
+    -- the patched Rev 1 cartridge, trimmed (104,922,516 bytes); its header
+    -- still says CPUE revision 1
+    sha1 = "381f9eef44564602a5f6469ee8c390fbb8ebac3a",
+    gameCode = "CPUE",
+    manifest = "tools/rom_manifest_renegadeplatinum.json",
+    cachePrefix = "renegadeplatinum/",
+    saveSuffix = "_renegadeplatinum",
+    importable = true,
+    experimental = true,
+    experimentalLabel = "PRE-ALPHA",
+    hasRunning = true,
+    dualScreen = true,
+  },
 
   -- -------------------------------------------------------------------------
   -- THE LEGEND OF ZELDA: the first games in this registry that are NOT Pokemon.
@@ -1134,7 +1181,7 @@ GameVersion.ORDER = { "red", "blue", "yellow", "gold", "silver", "crystal",
                       "firered", "emerald", "platinum",
                       "heartgold", "soulsilver", "black", "white",
                       "alttp", "minishcap",
-                      "prism", "polishedcrystal" }
+                      "prism", "polishedcrystal", "renegadeplatinum" }
 
 GameVersion.current = "red"
 
@@ -1227,6 +1274,13 @@ end
 function GameVersion.family(id)
   local info = GameVersion.info(id)
   return info and (info.family or info.id) or nil
+end
+
+-- Platinum or a ROM hack running on Platinum's engine (Renegade Platinum).
+-- The question a `get() == "platinum"` check almost always means: "is this
+-- the Platinum code path", not "is this exactly the retail cartridge".
+function GameVersion.isPlatinumFamily(id)
+  return GameVersion.generation(id) == 4 and GameVersion.family(id) == "platinum"
 end
 
 -- THE MONEY SIGN THIS CARTRIDGE'S FONT DRAWS, which is a different character

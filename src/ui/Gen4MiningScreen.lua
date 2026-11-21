@@ -363,6 +363,10 @@ end
 -- on the display name -- checked to resolve for all forty-nine.
 function Gen4MiningScreen:itemIdFor(constant)
   if not constant then return nil end
+  -- by id first: the names below are the cartridge's language
+  local known = require("src.import.Gen4Mining").TREASURE_ITEM_IDS[constant]
+  local items = (self.game.data or {}).items or {}
+  if known and items[known] then return known end
   if not self.itemsByName then
     local out = {}
     for id, def in pairs((self.game.data or {}).items or {}) do
