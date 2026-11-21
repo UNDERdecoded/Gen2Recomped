@@ -1,0 +1,43 @@
+# libc functions that ffi.C can reach in the PS5 title, besides every PHYSFS_*
+# function (added automatically). One name per line; '#' starts a comment.
+# Used by the game today: mkdir, chmod, getpid, setenv, unsetenv, and the
+# socket calls of src/core/DiscordPresence.lua (which fail harmlessly).
+mkdir
+rmdir
+chmod
+getpid
+getenv
+setenv
+unsetenv
+remove
+rename
+time
+usleep
+socket
+connect
+close
+send
+recv
+setsockopt
+strlen
+memcpy
+memmove
+memset
+memcmp
+malloc
+calloc
+realloc
+free
+pow
+atan2
+asin
+acos
+sin
+cos
+tan
+sqrt
+floor
+ceil
+fmod
+exp
+log

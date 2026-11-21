@@ -235,6 +235,7 @@ payload in the same run. Grab the row that matches your device.
 | Android | `Gen2Recomped-<ver>-android.apk` | Allow unknown sources, install |
 | Nintendo Switch | `Gen2Recomped-<ver>-switch.zip` | See [Switch](#nintendo-switch) below |
 | Xbox (Dev Mode) | `Gen2Recomped-<ver>-xbox-uwp.zip` | See [Xbox](#xbox-dev-mode) below |
+| PlayStation 5 (experimental) | _in progress — no release asset yet_ | See [PlayStation 5](#playstation-5-experimental) below |
 | Anbernic RG34XXSP | `Gen2Recomped-<ver>-rg34xxsp-stockos64-mod.zip` | See [Handhelds](#handhelds) below |
 | iOS | `Gen2Recomped-<ver>-ios.ipa` | Sideload — see [iOS](#ios) below |
 | Already have LÖVE 11.5 | `Gen2Recomped-<ver>.love` | `love Gen2Recomped-<ver>.love` |
@@ -305,6 +306,36 @@ Needs Developer Mode on the console — a retail Xbox cannot install this.
 Xbox Device Portal in your browser, or `Add-AppxPackage` it from a paired PC.
 Build notes are in [ports/uwp/BUILD.md](ports/uwp/BUILD.md).
 
+### PlayStation 5 (experimental)
+
+**In progress.** The PS5 port is a homebrew title for a jailbroken console,
+loaded with ShadowMountPlus (title ID `PPSA42002`). It needs a native LÖVE
+runtime for the console that is still being brought up, so expect rough edges
+and no published release asset yet. The game's own code treats it like the
+other TV consoles: a DualSense only, no mouse, keyboard or file picker, and no
+self-update.
+
+Your dump goes in the game's save folder, which you reach over FTP:
+
+```
+/data/gen2recomp/Gen2Recomp/imports/     put your cartridge dump here
+/data/gen2recomp/Gen2Recomp/exports/     battery saves come back out here
+```
+
+Then:
+
+1. Copy a legal `.gb` / `.gbc` / `.gba` / `.nds` into `/data/gen2recomp/Gen2Recomp/imports/`.
+   Dumps are matched by SHA-1, so the filename does not matter.
+2. Launch the title from the home screen.
+3. Press **Import** in the launcher — it scans that folder.
+
+Launcher controls: left stick or D-pad moves the pointer, **Cross** clicks and
+confirms, **Circle** cancels, **L1**/**R1** change tabs.
+
+Updating: copy the new release over the old one and keep the `Gen2Recomp/`
+folder — that is where your saves, imported ROMs, mods and options live. The
+launcher tells you when a newer release exists but does not replace itself.
+
 ### Handhelds
 
 `Gen2Recomped-<ver>-rg34xxsp-stockos64-mod.zip` targets the **Anbernic
@@ -336,8 +367,8 @@ from source on a Mac, see [docs/ios-install.md](docs/ios-install.md).
 Desktop and mobile builds check GitHub Releases and can update themselves.
 Console builds tell you a release exists but will not replace themselves — a
 packaged console app cannot rewrite its own files — so update those the same
-way you installed them. The Switch is the exception: its OTA launcher replaces
-both NROs in place. See [docs/updater.md](docs/updater.md).
+way you installed them (on the PS5, copy the new release over FTP). The Switch
+is the exception: its OTA launcher replaces both NROs in place. See [docs/updater.md](docs/updater.md).
 
 ## Controls
 

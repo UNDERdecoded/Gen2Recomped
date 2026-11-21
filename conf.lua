@@ -90,7 +90,21 @@ function love.conf(t)
   local osName = love._os
   local mobile = osName == "Android" or osName == "iOS"
   local nx = osName == "NX"
-  if nx then
+  local ps5 = osName == "PS5"
+  if ps5 then
+    -- PlayStation 5 homebrew (native LOVE runtime).  The output is the TV:
+    -- 1920x1080, or 3840x2160 where the runtime selects it.  It is always a
+    -- full-screen, non-resizable window -- nothing will ever resize it -- and
+    -- the 160x144 viewport letterboxes into whatever the display is, so the
+    -- size here is only a starting point.  No highdpi.
+    t.window.width = 1920
+    t.window.height = 1080
+    t.window.fullscreen = true
+    t.window.fullscreentype = "desktop"
+    t.window.resizable = false
+    t.window.borderless = true
+    t.window.highdpi = false
+  elseif nx then
     -- Switch (love-nx).  Handheld is 720p and docked is 1080p, and SDL only
     -- follows the dock/undock transition when the window is resizable and NOT
     -- exclusive fullscreen -- a fullscreen window keeps the boot mode and the

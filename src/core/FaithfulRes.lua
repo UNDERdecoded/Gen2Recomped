@@ -88,6 +88,8 @@ end
 -- locked afterwards.
 function FaithfulRes.apply(v)
   if FaithfulRes.isMobile() then return false end
+  -- a console's window is the fixed TV output; resizing it would only break it
+  if require("src.core.Platform").isPS5() then return false end
   if not love or not love.window or not love.window.setMode
      or not love.window.getMode then
     return false
