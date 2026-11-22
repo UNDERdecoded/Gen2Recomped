@@ -46,6 +46,14 @@ LUAJIT_REV=f9140a622a0c44a99efb391cc1c2358bc8098ab7
 LOVE_URL=https://github.com/love2d/love/releases/download/11.5/love-11.5-linux-src.tar.gz
 LOVE_SHA256=066e0843f71aa9fd28b8eaf27d41abb74bfaef7556153ac2e3cf08eafc874c39
 
+# Mozilla's CA certificates as curl.se extracts them (cacert-<date>.pem; the
+# sha256 is the one curl.se publishes beside it). Compiled into the title for
+# love.system.httpDownload (ports/ps5/launcher/http.c): PacBrew's libcurl
+# looks for /user/homebrew/etc/ca-bundle.crt, which a player's console lacks.
+# Bump the date and hash together to take newer roots.
+CACERT_URL=https://curl.se/ca/cacert-2026-11-05.pem
+CACERT_SHA256=427c064216761a1e72a8b30f0d954d08cb6e4435a82091fb865afd20c8497285
+
 ps5_say() { printf 'ps5: %s\n' "$*"; }
 ps5_die() { printf 'ps5: error: %s\n' "$*" >&2; exit 1; }
 
@@ -137,4 +145,7 @@ ps5_fetch_all() {
 
     # ---- LOVE
     ps5_fetch_archive "$LOVE_URL" "$LOVE_SHA256" "$dl/love-11.5-linux-src.tar.gz"
+
+    # ---- CA certificates (a plain file; the archive fetcher checks any file)
+    ps5_fetch_archive "$CACERT_URL" "$CACERT_SHA256" "$dl/$(basename "$CACERT_URL")"
 }

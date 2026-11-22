@@ -64,6 +64,12 @@ so no texconv is needed.
 `love.system.getOS()` and `love._os` are `"PS5"` (from the start: `conf.lua`
 already sees it). `love.system.openURL` returns false and does nothing.
 
+`love.system.httpDownload(url, absPath [, userAgent [, accept]])` is the
+title's HTTPS client (below): a blocking GET into a file that returns `true`,
+or `nil, reason` (`"HTTP 404"`, a TLS or DNS error). It exists in every Lua
+state, `love.thread` workers included. A failed download also logs an
+`httpDownload: <url>: <reason>` line to `love.log`.
+
 Leaving the game (`love.event.quit()`) closes the title through
 `sceSystemServiceLoadExec("exit")`; a title must never `exit()`. The PS
 button/"Close application" works as for any title.
@@ -107,7 +113,8 @@ above reads the frame back through LOVE instead.
 | [SDL (ps5-payload-dev fork)](https://github.com/ps5-payload-dev/SDL) | `8c56053` (2.30.12) | events, threads, PS5 pad (ScePad) and audio (SceAudioOut) backends; its OSMesa video driver is replaced by ps5-opengl's SDL2 "G19" driver (`integration/SDL2` in the SDK's sources) with `ports/ps5/sdl/g19-love.patch` |
 | [LuaJIT](https://github.com/LuaJIT/LuaJIT) | `f9140a6` (PacBrew's) | FFI on (`__PROSPERO__` hidden, as PacBrew does), `LUAJIT_USE_SYSMALLOC` |
 | [LOVE](https://github.com/love2d/love/releases/tag/11.5) | 11.5, sha256 `066e0843…` | autotools, static, `ports/ps5/love/0001-love-11.5-ps5.patch` |
-| [PacBrew](https://github.com/ps5-payload-dev/pacbrew-repo/releases/tag/v0.40.2) | v0.40.2, sha256 `a85f65de…` | prebuilt freetype, openal-soft 1.24.3 (SDL2 backend), vorbis, ogg, theora, modplug, mpg123, libpng, zlib, bzip2 |
+| [PacBrew](https://github.com/ps5-payload-dev/pacbrew-repo/releases/tag/v0.40.2) | v0.40.2, sha256 `a85f65de…` | prebuilt freetype, openal-soft 1.24.3 (SDL2 backend), vorbis, ogg, theora, modplug, mpg123, libpng, zlib, bzip2; curl 8.18.0 (OpenSSL), libpsl, zstd for `httpDownload` |
+| [Mozilla CA bundle](https://curl.se/docs/caextract.html) | `cacert-2026-11-05.pem`, sha256 `427c0642…` | the certificates `httpDownload` trusts, compiled into the eboot |
 
 All pins live in `scripts/ps5/deps.sh`.
 
@@ -135,6 +142,20 @@ loaded with dlopen, which is a payload design.
 - **Launcher** (`ports/ps5/launcher/main.cpp`): data root, log, environment,
   JIT decision, splash, frame dump hook, LOVE's own run loop (with
   restart), title exit.
+- **HTTPS** (`ports/ps5/launcher/http.c`,
+  `ports/ps5/love/0003-love-system-httpdownload.patch`): a title cannot spawn
+  curl, so `love.system.httpDownload` is PacBrew's static libcurl, registered
+  in LOVE's `love.system` table under `__PROSPERO__` (so every Lua state,
+  `love.thread` workers included, has it). Redirects followed, `HTTP >= 400`
+  fails as `"HTTP <code>"`, 15 s to connect and 300 s in all, `User-Agent`
+  and `Accept` sent; the body goes to `<absPath>.part` and is renamed into
+  place only when complete. Peer and host verification are on and trust
+  exactly the pinned Mozilla bundle, embedded with `CURLOPT_CAINFO_BLOB`
+  (PacBrew's libcurl looks for `/user/homebrew/etc/ca-bundle.crt`, which a
+  player's console does not have; embedded, it cannot be left out of an FTP
+  copy). Only `http`/`https`, also on redirects. The game routes the PS5
+  through the same "bridge" path as Android (`src/core/HostShell.lua`); the
+  updater stays notify-only.
 - **Memory**: `malloc` and friends are wrapped (`--wrap`) into ps5-opengl's
   `native-app/app_heap.c`, a 3 GiB heap in the title's direct memory. LuaJIT
   uses `malloc` (`LUAJIT_USE_SYSMALLOC`): its own allocator would map flexible
@@ -167,7 +188,8 @@ loaded with dlopen, which is a payload design.
   runs after every link and fails the build if any import binds to them.
   `ports/ps5/launcher/compat.c` supplies the few libc functions no Sony
   module has (`getentropy`, `__cxa_thread_atexit_impl`, `isatty`, the
-  `lstat` wrapper); the rest
+  `lstat` wrapper, and for libcurl `fnmatch` and zstd's weak trace hooks);
+  `ffi.c` wraps `dladdr` (OpenSSL's) with the other `dl*` calls; the rest
   come from the payload SDK's `libc.a` (linked after the Sony stubs, so a
   stub always wins).
 
@@ -181,7 +203,7 @@ loaded with dlopen, which is a payload design.
 | `scripts/ps5/check_imports.py` | import check after linking |
 | `ports/ps5/launcher/` | launcher, FFI table, libc compat |
 | `ports/ps5/sdl/` | SDL2 CMake wrapper and the G19 patch |
-| `ports/ps5/love/` | LOVE patch |
+| `ports/ps5/love/` | LOVE patches |
 | `ports/ps5/tools/png2dds.c` | PNG to BC7 DDS for `pic0`/`pic1` |
 | `ports/ps5/testgame/` | bring-up game (`--test-game`) |
 | `ports/ps5/sce_sys/` | param.json and artwork (title ID `PPSA42002`) |
@@ -190,7 +212,8 @@ loaded with dlopen, which is a payload design.
 
 ps5-opengl (and its SDL2 driver), the boilerplate's tooling and libc.prx are
 GPL-3.0-or-later; ps5-opengl's Mesa is MIT; SDL, LOVE, LuaJIT are zlib/MIT;
-openal-soft is LGPL. The eboot links ps5-opengl statically, so `eboot.bin` is
-a GPL-3.0 work; `game.love` is a separate file under the game's own licence.
-Distributing the eboot means offering the corresponding source (the pinned
-inputs above plus this directory).
+openal-soft is LGPL; curl is MIT-style (curl licence), OpenSSL 3 Apache-2.0,
+libpsl MIT, zstd BSD; the CA bundle is MPL-2.0. The eboot links ps5-opengl
+statically, so `eboot.bin` is a GPL-3.0 work; `game.love` is a separate file
+under the game's own licence. Distributing the eboot means offering the
+corresponding source (the pinned inputs above plus this directory).

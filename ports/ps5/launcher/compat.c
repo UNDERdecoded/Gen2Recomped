@@ -4,13 +4,16 @@
  * payload SDK only finds there is a null call at run time.
  * scripts/ps5/check_imports.py lists such imports after linking and fails the
  * build; each one is answered here instead. */
+#include <ctype.h>
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <fnmatch.h>
 #include <pthread.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <unistd.h>
 
@@ -151,4 +154,142 @@ int isatty(int fd)
     (void)fd;
     errno = ENOTTY;
     return 0;
+}
+
+/* fnmatch: libcurl (love.system.httpDownload, http.c) calls it for FTP
+ * wildcard downloads, and only libScePosixForWebKit exports it. The payload
+ * SDK's own fnmatch needs FreeBSD's rune locale tables, which no Sony module
+ * exports either. httpDownload never speaks FTP (http.c allows http and
+ * https only), but a null import is a crash waiting for the first caller, so
+ * this is a real one: POSIX fnmatch for single-byte strings, with
+ * FNM_NOESCAPE, FNM_PATHNAME, FNM_PERIOD and FNM_CASEFOLD, and bracket
+ * expressions with ranges and negation (no [:class:] names). */
+static int g2r_fold(int c, int flags)
+{
+    c = (unsigned char)c;
+    return (flags & FNM_CASEFOLD) ? tolower(c) : c;
+}
+
+/* A leading period: at the start of the string, or after a slash when
+ * FNM_PATHNAME makes slashes separators. */
+static int g2r_leading_period(const char *s, const char *start, int flags)
+{
+    return (flags & FNM_PERIOD) && *s == '.' &&
+           (s == start || ((flags & FNM_PATHNAME) && s[-1] == '/'));
+}
+
+/* Matches c against the bracket expression after '['; returns the pattern
+ * past the ']' and sets *hit, or NULL when the bracket is not closed (then
+ * the '[' is an ordinary character). */
+static const char *g2r_bracket(const char *p, int c, int flags, int *hit)
+{
+    int negate = (*p == '!' || *p == '^');
+    if (negate)
+        p++;
+    int found = 0;
+    int first = 1;
+    while (*p != ']' || first) {
+        first = 0;
+        if (*p == 0)
+            return NULL;
+        int lo = (unsigned char)*p++;
+        if (lo == '\\' && !(flags & FNM_NOESCAPE)) {
+            if (*p == 0)
+                return NULL;
+            lo = (unsigned char)*p++;
+        }
+        int hi = lo;
+        if (p[0] == '-' && p[1] != ']' && p[1] != 0) {
+            p++;
+            hi = (unsigned char)*p++;
+            if (hi == '\\' && !(flags & FNM_NOESCAPE)) {
+                if (*p == 0)
+                    return NULL;
+                hi = (unsigned char)*p++;
+            }
+        }
+        int fc = g2r_fold(c, flags);
+        if ((c >= lo && c <= hi) || (fc >= g2r_fold(lo, flags) && fc <= g2r_fold(hi, flags)))
+            found = 1;
+    }
+    *hit = found != negate;
+    return p + 1;
+}
+
+static int g2r_fnmatch(const char *p, const char *s, const char *start, int flags)
+{
+    for (;;) {
+        char pc = *p++;
+        switch (pc) {
+        case 0:
+            return *s == 0 ? 0 : FNM_NOMATCH;
+        case '?':
+            if (*s == 0 || (*s == '/' && (flags & FNM_PATHNAME)) || g2r_leading_period(s, start, flags))
+                return FNM_NOMATCH;
+            s++;
+            break;
+        case '*':
+            while (*p == '*')
+                p++;
+            if (g2r_leading_period(s, start, flags))
+                return FNM_NOMATCH;
+            if (*p == 0)
+                return ((flags & FNM_PATHNAME) && strchr(s, '/') != NULL) ? FNM_NOMATCH : 0;
+            for (;; s++) {
+                if (g2r_fnmatch(p, s, start, flags) == 0)
+                    return 0;
+                if (*s == 0 || (*s == '/' && (flags & FNM_PATHNAME)))
+                    return FNM_NOMATCH;
+            }
+        case '[': {
+            if (*s == 0 || (*s == '/' && (flags & FNM_PATHNAME)) || g2r_leading_period(s, start, flags))
+                return FNM_NOMATCH;
+            int hit = 0;
+            const char *next = g2r_bracket(p, (unsigned char)*s, flags, &hit);
+            if (next == NULL) {
+                if (*s != '[')
+                    return FNM_NOMATCH;
+            } else {
+                if (!hit)
+                    return FNM_NOMATCH;
+                p = next;
+            }
+            s++;
+            break;
+        }
+        case '\\':
+            if (!(flags & FNM_NOESCAPE)) {
+                if (*p == 0)
+                    return FNM_NOMATCH; /* a dangling escape matches nothing (as glibc) */
+                pc = *p++;
+            }
+            /* fall through */
+        default:
+            if (g2r_fold(pc, flags) != g2r_fold(*s, flags) || *s == 0)
+                return FNM_NOMATCH;
+            s++;
+            break;
+        }
+    }
+}
+
+int fnmatch(const char *pattern, const char *string, int flags)
+{
+    return g2r_fnmatch(pattern, string, string, flags);
+}
+
+/* zstd (libcurl's zstd content decoding) declares its tracing hooks weak and
+ * calls them only when they are defined. The title converter turns an
+ * undefined weak symbol into an import nothing exports, so define them: a
+ * zero context is zstd's "not tracing". */
+unsigned long long ZSTD_trace_decompress_begin(const void *dctx)
+{
+    (void)dctx;
+    return 0;
+}
+
+void ZSTD_trace_decompress_end(unsigned long long ctx, const void *trace)
+{
+    (void)ctx;
+    (void)trace;
 }

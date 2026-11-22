@@ -394,6 +394,16 @@ local function drain()
       msg = stateCh:pop()
     end
   end
+  -- THE PS5 CAN CHECK BUT NOT INSTALL.  Its title fetches through libcurl
+  -- (love.system.httpDownload), so the worker finds a newer release and says
+  -- "available" like anywhere else -- and the banner would draw an Update
+  -- button whose only possible answer is Check.download's refusal.  Go
+  -- straight to the state that refusal leaves, whose row tells the player to
+  -- copy the release over (advice "homebrew").  Keyed on that advice so no
+  -- other host's banner changes.
+  if cache.status == "available" and not cache.app and Check.advice() == "homebrew" then
+    cache = { status = "needs_full", latest = cache.latest }
+  end
   if worker then
     local err = worker:getError()
     if err then

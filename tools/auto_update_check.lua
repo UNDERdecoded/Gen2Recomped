@@ -701,6 +701,48 @@ do
   ok(Check.advice() == "download", "UWP advice is %q, not \"download\"",
      tostring(Check.advice()))
 end
+-- PS5: the title's libcurl answers love.system.httpDownload (ports/ps5/launcher/
+-- http.c), so the PS5 fetches like Android -- the mod index, news and the
+-- update CHECK -- while the update itself stays in the player's hands: a
+-- homebrew title is copied over FTP and never replaces itself.
+stubHost("PS5", { bridge = true, saveDir = "/data/gen2recomp/Gen2Recomp" })
+HostShell._resetTransportForTests()
+do
+  local kind = HostShell.transport()
+  ok(kind == "bridge", "PS5 resolved transport %q, not \"bridge\"", tostring(kind))
+  ok(HostShell.canFetch() == true, "PS5 reports no transport for the mod index and news")
+  ok(Check.capability().mode == "notify-only",
+     "PS5 has a transport, and its mode became %q: a PS5 title must stay notify-only",
+     tostring(Check.capability().mode))
+  ok(Check.advice() == "homebrew", "PS5 advice is %q, not \"homebrew\"",
+     tostring(Check.advice()))
+  -- The bridge's reason reaches the caller (Android's bare false keeps the
+  -- generic sentence).
+  love.system.httpDownload = function() return nil, "HTTP 404" end
+  local done, why = HostShell.httpDownload("https://example.invalid/x", "/data/x", "agent")
+  ok(done == nil and why == "HTTP 404",
+     "PS5 httpDownload dropped the bridge's reason (got %s, %s)", tostring(done), tostring(why))
+  -- A newer release found by the check is shown as the copy-it-over row, not as
+  -- an Update button whose only answer is a refusal.
+  Check._setStateForTests({ status = "available", latest = "9.9.9" })
+  local st = Check.state()
+  ok(st.status == "needs_full" and st.latest == "9.9.9" and st.advice == "homebrew",
+     "PS5 showed status %q for a newer release; the banner would offer an "
+     .. "Update button that can only refuse", tostring(st.status))
+  Check._setStateForTests({ status = "idle" })
+end
+stubHost("Android", { bridge = true })
+HostShell._resetTransportForTests()
+do
+  love.system.httpDownload = function() return false end
+  local _, why = HostShell.httpDownload("https://example.invalid/x", "/stub/x", "agent")
+  ok(why == "the host download bridge refused the transfer",
+     "Android's refusal sentence changed to %q", tostring(why))
+  Check._setStateForTests({ status = "available", latest = "9.9.9" })
+  ok(Check.state().status == "available",
+     "Android's \"available\" was rewritten; only the PS5 maps it to needs_full")
+  Check._setStateForTests({ status = "idle" })
+end
 stubHost("UWP", { saveDir = "C:\\Users\\p\\AppData\\Local\\Packages\\G2R_x\\LocalState\\pokemon-love2d" })
 HostShell._resetTransportForTests()
 do
