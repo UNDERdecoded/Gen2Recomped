@@ -3656,6 +3656,13 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     -- PhysFS mounts are process-wide but the record of them is this Lua
     -- state's, and the worker is about to delete the file (which Windows
     -- refuses while it is mounted).
+    --
+    -- The Gen 4 ground's range files go first: the last map's ground outlives
+    -- the game that drew it (the session the player just left, a launcher
+    -- preview) with its chunk / height / permission files still open inside
+    -- the archive, and PhysFS will not unmount an archive with open files.
+    -- No ground draws while an import runs; one that draws again reopens.
+    pcall(function() require("src.render.Gen4RangeFile").closeAll() end)
     if not CacheFs.unmountPack(info.cachePrefix, true) then
       -- Something still has a file open inside it (a streamed sound, a
       -- preview).  Going on would delete the marker and then fail to replace

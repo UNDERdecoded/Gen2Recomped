@@ -1543,7 +1543,10 @@ Gen4Ground.placement = placement
 -- of it. `File:seek` plus `File:read` is the difference between seventeen
 -- megabytes resident for every Platinum session and a few hundred kilobytes.
 function Gen4Ground:store()
-  if self.file ~= nil then return self.file or nil end
+  -- (a handle Gen4RangeFile.closeAll took away is reopened, not trusted)
+  local RangeFile = require("src.render.Gen4RangeFile")
+  if self.file == false then return nil end
+  if self.file ~= nil and RangeFile.isLive(self.file) then return self.file end
   local path = self.terrain.chunkFile
   local fs = love and love.filesystem
   if not (path and fs and fs.newFile) then self.file = false return nil end
@@ -4430,12 +4433,17 @@ function Gen4Ground:draw(camX, camY, vw, vh)
       -- looks EXACTLY like a session where the live pass is not working.  From
       -- the outside those two are indistinguishable, and that is precisely the
       -- shape of report this port has lost whole passes to before.
-      -- The reach is part of the key, so a frame where the coverage CHANGES
-      -- reports itself rather than being hidden by a latch keyed on the chunk
-      -- count alone.
+      -- The coverage is part of the key, so a frame where it CHANGES reports
+      -- itself rather than being hidden by a latch keyed on the chunk count
+      -- alone.  But as covered / short by N rows, not the raw reach: the
+      -- reach is in view rows past the bottom and moves with the camera, so
+      -- keying on it logged two lines a frame for as long as the player
+      -- walked -- a file write each, which on the PS5 is real cost.
+      local reachNow = self.liveReach or -1
+      local wantNow = self.liveWant or -1
+      local short = (reachNow + 0.5 < wantNow) and math.floor(wantNow - reachNow) or 0
       local key = ("live/%d/%.6f/%d/%d"):format(
-        painted, self.spread and self.spread[1] or 0,
-        math.floor(self.liveReach or -1), math.floor(self.liveWant or -1))
+        painted, self.spread and self.spread[1] or 0, short, math.floor(wantNow))
       if self.reportedPath ~= key then
         self.reportedPath = key
         Logger.info("gen4 ground: %s drew LIVE -- %d chunk(s), %dx%d target, "
@@ -4585,8 +4593,9 @@ function Gen4Ground:bdhcFor(land)
     self.bdhc[land] = false
     return nil
   end
-  if self.heights == nil then
-    local file = require("src.render.Gen4RangeFile").open(Assets.resolve(path))
+  local RangeFile = require("src.render.Gen4RangeFile")
+  if self.heights == nil or (self.heights and not RangeFile.isLive(self.heights)) then
+    local file = RangeFile.open(Assets.resolve(path))
     self.heights = file or false
   end
   local file = self.heights or nil
@@ -4778,8 +4787,9 @@ function Gen4Ground:permBlockFor(land)
   local fs = love and love.filesystem
   if record and record.permAt and record.permBytes
      and terrain.permissionFile and fs and fs.newFile then
-    if self.permFile == nil then
-      local file = require("src.render.Gen4RangeFile").open(Assets.resolve(terrain.permissionFile))
+    local RangeFile = require("src.render.Gen4RangeFile")
+    if self.permFile == nil or (self.permFile and not RangeFile.isLive(self.permFile)) then
+      local file = RangeFile.open(Assets.resolve(terrain.permissionFile))
       self.permFile = file or false
     end
     local file = self.permFile or nil
