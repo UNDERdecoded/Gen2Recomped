@@ -10,6 +10,7 @@
 #include <fcntl.h>
 #include <fnmatch.h>
 #include <pthread.h>
+#include <stdarg.h>
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -84,6 +85,32 @@ int __wrap_lstat(const char *path, struct stat *st)
     int rc = __real_lstat(path, st);
     if (rc != 0 && errno == EPERM)
         rc = stat(path, st);
+    return rc;
+}
+
+/* Close-on-exec. The kernel refuses fcntl(F_SETFD, FD_CLOEXEC) on a socket
+ * from a title with EINVAL (measured on 13.00), and libcurl sets it on every
+ * socket it opens and gives up on the connection when it fails ("fcntl set
+ * CLOEXEC: Invalid argument"), so love.system.httpDownload could never
+ * connect. A title never execs, so close-on-exec has nothing to guard
+ * against: linked with --wrap=fcntl, a refused F_SETFD is treated as done.
+ * Every other command, and every other failure, is passed through as is. */
+int __real_fcntl(int fd, int cmd, ...);
+
+int __wrap_fcntl(int fd, int cmd, ...)
+{
+    va_list ap;
+    va_start(ap, cmd);
+    /* every fcntl argument is an int or a pointer; as a long it is passed in
+     * the same register either way */
+    long arg = va_arg(ap, long);
+    va_end(ap);
+    int saved = errno;
+    int rc = __real_fcntl(fd, cmd, arg);
+    if (rc == -1 && cmd == F_SETFD && errno == EINVAL) {
+        errno = saved;
+        return 0;
+    }
     return rc;
 }
 

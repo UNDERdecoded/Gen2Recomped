@@ -180,6 +180,15 @@ local bridgeSeq = 0
 local function bridgeFetch(url, destRel, accept, timeout, big)
   bridgeSeq = bridgeSeq + 1
   local seq = bridgeSeq
+  -- A bridge that is safe off the main thread (the PS5's libcurl) is called
+  -- right here, so the launcher keeps drawing while GitHub answers.
+  if HostShell.bridgeAnyThread and HostShell.bridgeAnyThread() then
+    local okDir, saveDir = pcall(love.filesystem.getSaveDirectory)
+    if not okDir or type(saveDir) ~= "string" or saveDir == "" then return false end
+    local okCall, got = pcall(HostShell.httpDownload, url, saveDir .. "/" .. destRel,
+      "Gen2Recomped-updater", accept)
+    return okCall and got and true or false
+  end
   bridgeResCh:clear() -- strictly synchronous: never more than one in flight
   bridgeReqCh:push({
     seq = seq, url = url, dest = destRel, accept = accept,

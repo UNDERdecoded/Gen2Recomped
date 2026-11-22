@@ -28,6 +28,15 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <sys/socket.h>
+#include <time.h>
+
+/* Redirect hops followed before giving up, as curl -L's default 50 is far
+ * more than GitHub's one hop to objects.githubusercontent.com needs. */
+#define G2R_HTTP_MAX_HOPS 10
 
 #ifdef G2R_HTTP_CA_EMBEDDED
 /* Mozilla's CA bundle as curl.se publishes it, pinned by sha256 in
@@ -64,6 +73,91 @@ static void g2r_http_say(const char *url, const char *why)
 static size_t g2r_http_write(char *data, size_t size, size_t count, void *user)
 {
     return fwrite(data, size, count, (FILE *)user) * size;
+}
+
+/* Look the URL's host up here, on the calling thread, and hand curl the
+ * answer as a CURLOPT_RESOLVE entry ("host:port:address").
+ *
+ * libcurl's own lookup runs getaddrinfo on a helper thread it starts per
+ * request, and on the console that start fails ("getaddrinfo() thread failed
+ * to start"), so every download failed before it connected. With the entry in
+ * place curl finds the host in its DNS cache and never starts the helper. The
+ * caller is a love.thread worker or the launcher's own fetch, so a blocking
+ * lookup here costs nothing curl's would not have.
+ *
+ * Returns 1 with *out set to the list to free after the transfer (NULL for a
+ * literal IP address, which needs no entry), or 0 with `why` filled. */
+static int g2r_http_resolve(const char *url, struct curl_slist **out, char *why, size_t why_size)
+{
+    *out = NULL;
+    CURLU *u = curl_url();
+    if (u == NULL) {
+        snprintf(why, why_size, "out of memory");
+        return 0;
+    }
+    char *host = NULL, *port = NULL;
+    CURLUcode uc = curl_url_set(u, CURLUPART_URL, url, 0);
+    if (uc == CURLUE_OK)
+        uc = curl_url_get(u, CURLUPART_HOST, &host, 0);
+    if (uc == CURLUE_OK)
+        uc = curl_url_get(u, CURLUPART_PORT, &port, CURLU_DEFAULT_PORT);
+    curl_url_cleanup(u);
+    if (uc != CURLUE_OK || host == NULL || port == NULL) {
+        snprintf(why, why_size, "bad url: %s", curl_url_strerror(uc));
+        curl_free(host);
+        curl_free(port);
+        return 0;
+    }
+
+    struct curl_slist *list = NULL;
+    int ok = 0;
+    struct in_addr literal;
+    if (host[0] == '[' || inet_pton(AF_INET, host, &literal) == 1) {
+        /* an address already: nothing to look up */
+        ok = 1;
+    } else {
+        struct addrinfo hints, *res = NULL;
+        memset(&hints, 0, sizeof hints);
+        /* IPv4 only, as CURLOPT_IPRESOLVE below asks: the payload SDK's
+         * resolver refuses AF_INET6 outright. */
+        hints.ai_family = AF_INET;
+        hints.ai_socktype = SOCK_STREAM;
+        int gai = getaddrinfo(host, port, &hints, &res);
+        if (gai != 0 || res == NULL) {
+            snprintf(why, why_size, "could not resolve %s (%s)", host,
+                     gai != 0 ? gai_strerror(gai) : "no address");
+        } else {
+            char entry[512];
+            size_t at = (size_t)snprintf(entry, sizeof entry, "%s:%s:", host, port);
+            int first = 1;
+            /* every address the resolver gave, so curl can fall through them
+             * as it would after its own lookup */
+            for (struct addrinfo *ai = res; ai != NULL && at < sizeof entry - 20; ai = ai->ai_next) {
+                if (ai->ai_family != AF_INET)
+                    continue;
+                char ip[INET_ADDRSTRLEN];
+                const struct sockaddr_in *sin = (const struct sockaddr_in *)ai->ai_addr;
+                if (inet_ntop(AF_INET, &sin->sin_addr, ip, sizeof ip) == NULL)
+                    continue;
+                at += (size_t)snprintf(entry + at, sizeof entry - at, "%s%s", first ? "" : ",", ip);
+                first = 0;
+            }
+            freeaddrinfo(res);
+            if (first) {
+                snprintf(why, why_size, "could not resolve %s (no IPv4 address)", host);
+            } else {
+                list = curl_slist_append(NULL, entry);
+                if (list != NULL)
+                    ok = 1;
+                else
+                    snprintf(why, why_size, "out of memory");
+            }
+        }
+    }
+    curl_free(host);
+    curl_free(port);
+    *out = list;
+    return ok;
 }
 
 int g2r_http_download(const char *url, const char *dest, const char *user_agent,
@@ -137,13 +231,13 @@ int g2r_http_download(const char *url, const char *dest, const char *user_agent,
                      (user_agent != NULL && *user_agent != 0) ? user_agent : "gen1recomp");
     if (headers != NULL)
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-    /* curl -L, as on desktop. Only web schemes, on the first URL and on every
-     * hop: libcurl would otherwise also speak file://, ftp://, smb://... to
-     * whatever a feed or a redirect names. */
-    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
-    curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 10L);
+    /* curl -L, as on desktop, but hop by hop below rather than with
+     * CURLOPT_FOLLOWLOCATION: every host has to go through g2r_http_resolve
+     * first, and a redirect names a new one. Only web schemes, on the first
+     * URL and on every hop: libcurl would otherwise also speak file://,
+     * ftp://, smb://... to whatever a feed or a redirect names. */
+    curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 0L);
     curl_easy_setopt(curl, CURLOPT_PROTOCOLS_STR, "http,https");
-    curl_easy_setopt(curl, CURLOPT_REDIR_PROTOCOLS_STR, "http,https");
     /* curl -f: stop on an error status rather than saving the error page. */
     curl_easy_setopt(curl, CURLOPT_FAILONERROR, 1L);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 15L);
@@ -151,13 +245,12 @@ int g2r_http_download(const char *url, const char *dest, const char *user_agent,
     /* Called from love.thread workers: no SIGALRM-based timeouts and no
      * SIGPIPE on a dropped connection, neither of which a thread can own. */
     curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
-    /* A resolver that never answers (a console whose DNS is pointed at a
-     * blackhole to keep it off Sony's servers) times out at the connect limit
-     * above, but curl_easy_cleanup would then wait for the lookup thread to
-     * give up on its own: measured 30 s instead of 15 against a 30 s resolver
-     * timeout. Quick exit leaves that thread to finish by itself -- it holds
-     * a few hundred bytes until it does -- so the caller, often the main
-     * thread, is back at the limit. */
+    /* Kept for a host build whose libcurl still starts its own lookup thread
+     * (a literal-address URL, or a resolve entry curl ignores): cleanup then
+     * does not wait for that thread. On the console the lookup is
+     * g2r_http_resolve's, which blocks for the resolver's own timeout when
+     * DNS never answers (a console pointed at a blackhole to keep it off
+     * Sony's servers) -- on a worker thread, where nothing waits on it. */
     curl_easy_setopt(curl, CURLOPT_QUICK_EXIT, 1L);
 #ifdef __PROSPERO__
     /* The payload SDK's getaddrinfo (libc.a, over sceNetResolverStartNtoa)
@@ -181,16 +274,78 @@ int g2r_http_download(const char *url, const char *dest, const char *user_agent,
     curl_easy_setopt(curl, CURLOPT_CAINFO_BLOB, &ca);
 #endif
 
-    CURLcode rc = curl_easy_perform(curl);
+    CURLcode rc = CURLE_OK;
     long status = 0;
-    curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+    int resolved = 1;
+    char *hop = strdup(url);
+    struct curl_slist *resolves[G2R_HTTP_MAX_HOPS + 1] = {0};
+    for (int n = 0; hop != NULL; n++) {
+        if (n > G2R_HTTP_MAX_HOPS) {
+            rc = CURLE_TOO_MANY_REDIRECTS;
+            break;
+        }
+        struct timespec t0, t1, t2;
+        clock_gettime(CLOCK_MONOTONIC, &t0);
+        if (!g2r_http_resolve(hop, &resolves[n], why, why_size)) {
+            resolved = 0;
+            break;
+        }
+        clock_gettime(CLOCK_MONOTONIC, &t1);
+        curl_easy_setopt(curl, CURLOPT_URL, hop);
+        if (resolves[n] != NULL)
+            curl_easy_setopt(curl, CURLOPT_RESOLVE, resolves[n]);
+        rc = curl_easy_perform(curl);
+        clock_gettime(CLOCK_MONOTONIC, &t2);
+        status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        /* A slow hop says where its time went (measured on the console: a
+         * GitHub API call is ~20 ms lookup, ~90 ms TLS, ~0.3 s in all), so a
+         * stalled launcher can be told apart from a stalled network. Quiet
+         * otherwise: one line per download would bury the log. */
+        long dns_ms = (t1.tv_sec - t0.tv_sec) * 1000 + (t1.tv_nsec - t0.tv_nsec) / 1000000;
+        long perf_ms = (t2.tv_sec - t1.tv_sec) * 1000 + (t2.tv_nsec - t1.tv_nsec) / 1000000;
+        if (dns_ms + perf_ms > 3000) {
+            curl_off_t con = 0, tls = 0, ttfb = 0;
+            curl_easy_getinfo(curl, CURLINFO_CONNECT_TIME_T, &con);
+            curl_easy_getinfo(curl, CURLINFO_APPCONNECT_TIME_T, &tls);
+            curl_easy_getinfo(curl, CURLINFO_STARTTRANSFER_TIME_T, &ttfb);
+            printf("httpDownload: slow %s: lookup %ld ms, connect %ld ms, tls %ld ms, "
+                   "first byte %ld ms, transfer %ld ms\n",
+                   hop, dns_ms, (long)(con / 1000), (long)(tls / 1000), (long)(ttfb / 1000), perf_ms);
+            fflush(stdout);
+        }
+        char *next = NULL;
+        if (rc == CURLE_OK && status >= 300 && status < 400)
+            curl_easy_getinfo(curl, CURLINFO_REDIRECT_URL, &next);
+        free(hop);
+        hop = NULL;
+        if (next != NULL) {
+            /* the redirect's own body is not the file: start it over */
+            hop = strdup(next);
+            fflush(out);
+            if (freopen(part, "wb", out) == NULL) {
+                out = NULL;
+                snprintf(why, why_size, "cannot write %s: %s", part, strerror(errno));
+                resolved = 0;
+                free(hop);
+                hop = NULL;
+                break;
+            }
+            curl_easy_setopt(curl, CURLOPT_WRITEDATA, out);
+        }
+    }
+    free(hop);
     curl_slist_free_all(headers);
     curl_easy_cleanup(curl);
+    for (int n = 0; n <= G2R_HTTP_MAX_HOPS; n++)
+        curl_slist_free_all(resolves[n]);
 
     /* fclose flushes the last buffer: a full disk shows up here, not above. */
-    int closed = fclose(out);
+    int closed = out != NULL ? fclose(out) : 0;
     int ok = 0;
-    if (rc == CURLE_HTTP_RETURNED_ERROR || (rc == CURLE_OK && status >= 400)) {
+    if (!resolved) {
+        /* `why` already says what */
+    } else if (rc == CURLE_HTTP_RETURNED_ERROR || (rc == CURLE_OK && status >= 400)) {
         snprintf(why, why_size, "HTTP %ld", status);
     } else if (rc != CURLE_OK) {
         snprintf(why, why_size, "%s", error[0] != 0 ? error : curl_easy_strerror(rc));

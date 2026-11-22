@@ -231,17 +231,24 @@ end
 -- the iOS build compiles the same wrapper but always returns false, so gate
 -- on the OS as well and keep its error message honest.
 --
--- The PS5's call is plain C and safe on any thread, unlike the JNI one.  The
--- update check and the voxel mod's bake still hand it to their main-thread
--- servicers, as on Android (one code path for both); the translation worker,
--- which only routes Android's downloads that way, calls it on its own thread.
+-- The PS5's call is plain C and safe on any thread, unlike the JNI one: a
+-- worker that would hand an Android fetch to its main-thread servicer asks
+-- HostShell.bridgeAnyThread() and, on the PS5, makes the call itself.  The
+-- main thread then never blocks on the network -- it did, for 10-15 s at
+-- every launch, while the update check's GitHub requests were served from it.
 local BRIDGE_HOSTS = { Android = true, PS5 = true }
+local ANY_THREAD = { PS5 = true }
 
 local function haveBridge()
   if not (love and love.system and type(love.system.httpDownload) == "function") then
     return false
   end
   return love.system.getOS ~= nil and BRIDGE_HOSTS[love.system.getOS()] == true
+end
+
+-- true when love.system.httpDownload may be called from any thread
+function HostShell.bridgeAnyThread()
+  return haveBridge() and ANY_THREAD[love.system.getOS()] == true
 end
 
 -- Xbox: the bundled UWP love.dll exports love.system.httpDownload too (a WinRT

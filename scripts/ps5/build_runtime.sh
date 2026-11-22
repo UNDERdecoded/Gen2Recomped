@@ -309,7 +309,7 @@ pb() { echo "$PB/lib/$1"; }
     --wrap=malloc --wrap=calloc --wrap=realloc --wrap=free \
     --wrap=posix_memalign --wrap=malloc_usable_size \
     --wrap=dlsym --wrap=dlopen --wrap=dlerror --wrap=dlclose --wrap=dladdr --wrap=lstat \
-    --wrap=opendir --wrap=readdir --wrap=closedir \
+    --wrap=opendir --wrap=readdir --wrap=closedir --wrap=fcntl \
     -u ps5_agc_gate2_run "${cxx_u[@]}" -L "$SDK/target/lib" -L "$GL/lib" \
     "$L/app_crt.o" "$L/app_cpp_runtime.o" "$L/main.o" "$L/ffi.o" "$L/ffi_exports.o" \
     "$L/compat.o" "$L/app_heap.o" "$L/http.o" "$L/cacert.o" \
