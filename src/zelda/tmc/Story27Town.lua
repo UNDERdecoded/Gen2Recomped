@@ -390,10 +390,7 @@ end)
 reg(0x080644B4, function(f, e, ctx)                        -- CheckLastSwordMove
   ctx.condition = (e.animationState == ctx.intVariable) and 1 or 0
 end)
-local GUARD_MSG = {
-  [0] = { TEXT(T_PROLOGUE, 0x62), TEXT(T_VAATI, 0x28), TEXT(T_VAATI, 0x2B), TEXT(T_VAATI, 0x2B) },
-  [1] = { TEXT(T_PROLOGUE, 0x62), TEXT(T_VAATI, 0x28), TEXT(T_VAATI, 0x2C), TEXT(T_VAATI, 0x2C) },
-}
+local GUARD_MSG = require("src.zelda.tmc.RomTables").t("Story27Town.GUARD_MSG")
 local function swordStage(f)
   if not f:flag("global", FLAG.LV1_CLEAR) then return 0 end
   if inv(f, ITEM.GREEN_SWORD) == 0 then return 1 end
@@ -412,29 +409,20 @@ reg(0x08063C2C, pinaAnim(4))
 reg(0x08063C44, pinaAnim(0))
 reg(0x08063C74, function(f) local p = findNpc(f, NPC.PINA) if p then f:bubble(p, 0, 8, -0x18) end end)
 reg(0x08063CAC, function(f, e) bigFuser(e) end)            -- Pina_MakeInteractable
-local PINA_D = {}
-for i = 0, 3 do PINA_D[i] = D(6, ROOM, TOGGLE, 1, TEXT(T_TOWN, 0x22), TEXT(T_TOWN, 0x21)) end
-PINA_D[4] = D(6, ROOM, TOGGLE, 1, TEXT(T_TOWN2, 0x1D), TEXT(T_TOWN2, 0x1C))
-PINA_D[5] = D(6, ROOM, TOGGLE, 1, TEXT(T_TOWN3, 0x1C), TEXT(T_TOWN3, 0x1B))
-PINA_D[6] = D(6, ROOM, TOGGLE, 1, TEXT(T_TOWN4, 0x1D), TEXT(T_TOWN4, 0x1C))
-PINA_D[7] = D(6, ROOM, TOGGLE, 1, TEXT(T_TOWN5, 0x1D), TEXT(T_TOWN5, 0x1C))
-PINA_D[8] = D(6, ROOM, TOGGLE, 1, TEXT(T_TOWN6, 0x17), TEXT(T_TOWN6, 0x16))
-PINA_D[9] = PINA_D[8]
+local PINA_D = require("src.zelda.tmc.RomTables").t("Story27Town.PINA_D") -- Dialog[10] {w, a, b} at 0x0810CE04
 reg(0x08063C90, function(f, e) show(f, e, PINA_D[math.min(progress(f), 9)]) end)
 
 -- ======================================================== carpenter.c
 reg(0x080672B0, function(f, e, ctx)
   anim(e, (ctx.intVariable or 0) + rshift(e.animationState or 4, 1) + (e.form or 0) * 8)
 end)
-local CARP_MSG = { [0] = TEXT(T_CARPENTERS, 0xD), TEXT(T_CARPENTERS, 0xE), 0, TEXT(T_CARPENTERS, 0x18),
-                   TEXT(T_CARPENTERS, 0x19), 0, TEXT(T_CARPENTERS, 0x23), TEXT(T_CARPENTERS, 0x23), 0,
-                   TEXT(T_CARPENTERS, 0x26), TEXT(T_CARPENTERS, 0x26), 0 }
+local CARP_MSG = require("src.zelda.tmc.RomTables").t("Story27Town.CARP_MSG")
 reg(0x080672C8, function(f, e)
   local dialog = 0
   if inv(f, ITEM.GUST_JAR) == 0 and f:flag("global", FLAG.TABIDACHI) then dialog = 1 end
   message(f, CARP_MSG[math.floor((dialog * 2 + (e.form or 0) * 6) / 2)] or 0, e)
 end)
-local CARP_D = D(0xB, KINSTONE, CHECK, 1, TEXT(T_TOWN3, 0x42), TEXT(T_TOWN3, 0x41))
+local CARP_D = require("src.zelda.tmc.RomTables").t("Story27Town.CARP_D") -- Dialog {w, a, b} at 0x08110D00
 reg(0x08067304, function(f, e) show(f, e, CARP_D) end)
 
 -- ======================================================== sturgeon.c
@@ -478,7 +466,7 @@ local function doorPost(self, e)
   if band(pa, 0x80) ~= 0 then e.staticFrame = 0 end
   if band(pa, 0x100) ~= 0 then e.staticFrame = 1 end
 end
-local DOOR_BOX = { x = 0, y = -5, w = 10, h = 4 } -- gUnk_081206AC
+local DOOR_BOX = require("src.zelda.tmc.RomTables").t("Story27Town.DOOR_BOX") -- gUnk_081206AC
 local function doorScriptUpdate(dg, e)
   local f = dg.field
   -- HouseDoorExterior_Type1: off screen (CheckRegionOnScreen 32x32) -> deleted
@@ -592,7 +580,7 @@ reg(0x0806BB1C, function(f, e, ctx)
     f:setInventory(item, 2)
   end
 end)
-local LIB_MSG = { [0] = TEXT(T_LIBRARY, 0xF), TEXT(T_LIBRARY, 0x10), TEXT(T_LIBRARY, 0x12) }
+local LIB_MSG = require("src.zelda.tmc.RomTables").t("Story27Town.LIB_MSG")
 reg(0x0806BBB0, function(f, e)
   local tmp
   if inv(f, ITEM.FLIPPERS) == 0 then tmp = f:flag("global", FLAG.MIZUKAKI_START) and 1 or 0 else tmp = 2 end
@@ -662,7 +650,7 @@ reg(0x08066E80, function(f, e, ctx, a)
   end
   stay(a)
 end)
-local ZELDA_TILES = { 0x81C, 0x85C, 0x89C, 0x8DC, 0x91C, 0x95C, 0x99C, 0x9DC, 0x9DD, 0x9DE, 0x9DF, 0x9E0, 0x9E1, 0x9E2 } -- gUnk_08110BE0
+local ZELDA_TILES = require("src.zelda.tmc.RomTables").t("Story27Town.ZELDA_TILES") -- gUnk_08110BE0
 M.ZELDA_TILES = ZELDA_TILES
 reg(0x08066F94, function(f)
   for _, pos in ipairs(ZELDA_TILES) do f:dungeon():block(pos % 64, math.floor(pos / 64), 1, true) end
@@ -681,11 +669,14 @@ reg(0x08064928, oracleInteract)                            -- Nayru_MakeInteract
 reg(0x08064A28, oracleInteract)                            -- Farore_MakeInteractable
 
 -- ======================================================== hurdyGurdyMan.c
-reg(0x0806E440, function(f, e) bigFuser(e) end)            -- HurdyGurdyMan_MakeInteractable
-local HG_D = {}
-local HG_T = { { 0x52, 0x51 }, { 0x52, 0x51 }, { 0x54, 0x53 }, { 0x56, 0x55 }, { 0x58, 0x57 }, { 0x5A, 0x59 },
-               { 0x5C, 0x5B }, { 0x5E, 0x5D } }
-for i, t in ipairs(HG_T) do HG_D[i - 1] = D(0x59, LOCAL, TOGGLE, 1, TEXT(T_CAFE, t[1]), TEXT(T_CAFE, t[2])) end
+-- round 39: this->fusionOffer = GetFusionToOffer(super) -- recomputed here (the
+-- first-Kinstone tutorial: he had no offer when he spawned, Link had no bag)
+reg(0x0806E440, function(f, e)                            -- HurdyGurdyMan_MakeInteractable
+  local offer
+  if e.fuserId then offer = require("src.zelda.tmc.Fusers").offer(f, e.fuserId) end
+  bigFuser(e, offer)
+end)
+local HG_D = require("src.zelda.tmc.RomTables").t("Story27Town.HG_D") -- Dialog[8] {w, a, b} at 0x081144FC
 reg(0x0806E418, function(f, e) show(f, e, HG_D[math.min(math.max(progress(f) - 2, 0), 7)]) end)
 
 -- ======================================================== emma.c
@@ -712,17 +703,13 @@ reg(0x0806C4A8, function(f, e, ctx)
     ctx.condition = 0
   end
 end)
-local MAMA_D = {}
-local MAMA_T = { { 3, 2 }, { 3, 2 }, { 3, 2 }, { 3, 2 }, { 0xD, 0xC }, { 0x1B, 0x1A }, { 0x27, 0x26 }, { 0x33, 0x32 },
-                 { 0x3F, 0x3E }, { 0x49, 0x48 } }
-for i, t in ipairs(MAMA_T) do MAMA_D[i - 1] = D(1, ROOM, TOGGLE, 1, TEXT(T_CAFE, t[1]), TEXT(T_CAFE, t[2])) end
+local MAMA_D = require("src.zelda.tmc.RomTables").t("Story27Town.MAMA_D") -- Dialog[10] {w, a, b} at 0x08113760
 reg(0x0806C4DC, function(f, e) show(f, e, MAMA_D[math.min(progress(f), 9)]) end)
 
 -- ======================================================== drLeft.c
 reg(0x0806C09C, function(f, e) interactBox(e, 0, 0, 6, 8, 12) end) -- gUnk_081133B4
 reg(0x0806C00C, function(f, e, ctx) ctx.condition = (e.anim and e.anim.done and not e.forceAnim) and 1 or 0 end)
-local LEFT_MSG = { [0] = TEXT(T_DR_LEFT, 0x7), TEXT(T_DR_LEFT, 0x8), TEXT(T_DR_LEFT, 0x9), TEXT(T_DR_LEFT, 0xA),
-                   TEXT(T_DR_LEFT, 0xA), TEXT(T_DR_LEFT, 0x5), TEXT(T_DR_LEFT, 0x6), TEXT(T_DR_LEFT, 0xF) }
+local LEFT_MSG = require("src.zelda.tmc.RomTables").t("Story27Town.LEFT_MSG")
 reg(0x0806C038, function(f, e)
   local index = progress(f) - 5
   if index ~= 0 then index = 0 end
@@ -739,7 +726,7 @@ reg(0x0806C038, function(f, e)
 end)
 
 -- ======================================================== beedle.c
-local BEEDLE_ITEMS = { [0] = 0x00, 0x2D, 0x2C, 0x29, 0x2A, 0x2B, 0x2E, 0x00 } -- gBeedleItems
+local BEEDLE_ITEMS = require("src.zelda.tmc.RomTables").t("Story27Town.BEEDLE_ITEMS") -- gBeedleItems
 reg(0x080634E4, function(f, e, ctx) ctx.intVariable = type2(e) end) -- Beedle_GetObjectType
 reg(0x080634EC, function(f, e) f.shopItem = BEEDLE_ITEMS[type2(e)] or 0 end) -- gRoomVars.shopItemType
 -- GetBottleContaining: the bottle's number (1..4), 0 when none
@@ -806,6 +793,7 @@ reg(0x0809E0D4, function(f, e, ctx, a)
     ctx.unk19 = 8
     ctx.tx, ctx.ty = t.x, t.y
     e.direction = dir32(e.x, e.y, t.x, t.y)
+    e.dir256 = require("src.zelda.tmc.Takkuri72").dir256(e.x, e.y, t.x, t.y) -- round 72
     f:sound(SFX.S123)
     stay(a)
     return
@@ -817,9 +805,10 @@ reg(0x0809E0D4, function(f, e, ctx, a)
   if ctx.unk19 == 0 then
     ctx.unk19 = 8
     e.direction = dir32(e.x, e.y, tx, ty)
+    e.dir256 = require("src.zelda.tmc.Takkuri72").dir256(e.x, e.y, tx, ty) -- round 72: CalculateDirectionFromOffsets is 8-bit (the 32 steps never met the key's row)
   end
   local bx, by = math.floor(e.x) - tx, math.floor(e.y) - ty
-  moveAngle(e, e.speed or 0x100, band(e.direction or 0, 0x1F) * 8)
+  moveAngle(e, e.speed or 0x100, e.dir256 or band(e.direction or 0, 0x1F) * 8)
   if (math.floor(e.x) - tx) * bx < 1 and (math.floor(e.y) - ty) * by < 1 then
     e.x, e.y = tx, ty
     e.subtimer = 1
@@ -831,19 +820,7 @@ end)
 
 -- ======================================================== teachers.c
 reg(0x0806C674, function(f, e) bigFuser(e) end)            -- Teachers_MakeInteractable
-local TEACH = {
-  [0] = { [0] = D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 1)), D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 1)),
-          D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 1)), D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 1)),
-          D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 1)), D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 1)),
-          D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 9)), D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 9)) },
-  [1] = { [0] = D(0xA, ROOM, TOGGLE, 1, TEXT(T_TOWN, 0x35), TEXT(T_TOWN, 0x34)),
-          D(0xA, ROOM, TOGGLE, 1, TEXT(T_TOWN, 0x35), TEXT(T_TOWN, 0x34)),
-          D(0xA, ROOM, TOGGLE, 1, TEXT(T_TOWN2, 0x28), TEXT(T_TOWN2, 0x27)),
-          D(0xA, ROOM, TOGGLE, 1, TEXT(T_TOWN3, 0x25), TEXT(T_TOWN3, 0x24)),
-          D(0, ROOM, TOGGLE, 1, TEXT(T_SCHOOL, 3), TEXT(T_SCHOOL, 2)),
-          D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 6)), D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 0xA)),
-          D(0, 0, NORMAL, 1, 0, TEXT(T_SCHOOL, 0xA)) },
-}
+local TEACH = require("src.zelda.tmc.RomTables").t("Story27Town.TEACH") -- Dialog[16] {w, a, b} at 0x08113930
 reg(0x0806C70C, function(f, e)
   local row = TEACH[e.form or 0] or TEACH[0]
   show(f, e, row[math.min(math.max(progress(f) - 2, 0), 7)])
@@ -973,9 +950,9 @@ end)
 reg(0x08062EB8, function(f)                                -- RemoveAllBakedGoods
   for _, i in ipairs({ ITEM.BRIOCHE, ITEM.CROISSANT, ITEM.PIE, ITEM.CAKE }) do f:setInventory(i, 0) end
 end)
-local PRIZE = { [0] = 0x20, 0x40, 0x60, 0x80, 0xFF }
-local PRIZE_W = { 0x10, 0x10, 0x10, 0x20, 0x20, 0x30, 0x30, 0x30 }
-local PRIZE_K = { [0] = 0x6E, 0x6F, 0x70, 0x71, 0x72, 0x73, 0x74, 0x75 }
+local PRIZE = require("src.zelda.tmc.RomTables").t("Story27Town.PRIZE")
+local PRIZE_W = require("src.zelda.tmc.RomTables").t("Story27Town.PRIZE_W")
+local PRIZE_K = require("src.zelda.tmc.RomTables").t("Story27Town.PRIZE_K")
 -- GetRandomByWeight
 function M.byWeight(w, r)
   r = band(r, 0xFF)
@@ -998,7 +975,7 @@ reg(0x08062EDC, function(f, e, ctx)
 end)
 
 -- ======================================================== marcy.c
-local MARCY_MSG = { [0] = TEXT(T_POST, 0x4), TEXT(T_POST, 0xB), TEXT(T_POST, 0x9), TEXT(T_POST, 0xA) }
+local MARCY_MSG = require("src.zelda.tmc.RomTables").t("Story27Town.MARCY_MSG")
 reg(0x08062D18, function(f, e, ctx)
   local tmp = 0
   local order = { { ITEM.PERIL, 0x26, 7 }, { ITEM.DOWN, 0x25, 6 }, { ITEM.GREAT, 0x24, 5 }, { ITEM.BEAM, 0x23, 4 },
@@ -1027,13 +1004,8 @@ reg(0x08064EA4, function(f, e)                             -- TingleSiblings_Mak
   if t == 3 and f:kinstoneFused(0x5A) and inv(f, ITEM.MAGIC_BOOMERANG) == 0 then offer = 0 end
   bigFuser(e, offer)
 end)
-local TINGLE_MSG = {
-  [0] = { 0x1, 0x2, 0x3, 0x4, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F },
-  [1] = { 0x5, 0x6, 0x7, 0x7, 0x20, 0x21, 0x22, 0x23, 0x24 },
-  [2] = { 0x8, 0x9, 0x9, 0x9, 0x25, 0x26, 0x27, 0x28, 0x29 },
-  [3] = { 0xA, 0xB, 0xC, 0xD, 0x2A, 0x2B, 0x2C, 0x2D, 0x2E },
-}
-local TINGLE_ROOMFLAG = { [0] = 0, 0, 0, 0 } -- gUnk_0810FC50
+local TINGLE_MSG = require("src.zelda.tmc.RomTables").t("Story27Town.TINGLE_MSG")
+local TINGLE_ROOMFLAG = require("src.zelda.tmc.RomTables").t("Story27Town.TINGLE_ROOMFLAG") -- gUnk_0810FC50
 local function fusedCount(f)
   local n = 0
   local fz = f.save.kinstones and f.save.kinstones.fused or {}
@@ -1075,7 +1047,7 @@ reg(0x08064F28, function(f, e, ctx)
 end)
 
 -- ======================================================== ministerPotho.c / kingDaltus.c
-local POTHO_MSG = { TEXT(T_PROLOGUE, 0x5A), TEXT(T_VAATI, 0x27), TEXT(T_VAATI, 0x2A), TEXT(T_VAATI, 0x2F) }
+local POTHO_MSG = require("src.zelda.tmc.RomTables").t("Story27Town.POTHO_MSG")
 reg(0x08066904, function(f, e) message(f, POTHO_MSG[swordStage(f) + 1], e) end)
 reg(0x0806672C, function(f, e) bigFuser(e) end)            -- KingDaltus_MakeInteractable
 
@@ -1159,9 +1131,7 @@ reg(0x0806E964, function(f, e, ctx, a)
 end)
 
 -- ======================================================== mayorHagen.c
-local HAGEN = {}
-for i = 0, 3 do HAGEN[i] = D(0x89, LOCAL, SET, 1, TEXT(T_HAGEN, 0xD), TEXT(T_HAGEN, 0x1)) end
-for i, n in ipairs({ 0xE, 0xE, 0xF, 0x10, 0x11, 0x12, 0x14, 0x2, 0xC, 0x3, 0x4 }) do HAGEN[3 + i] = D(0, 0, NORMAL, 1, 0, TEXT(T_HAGEN, n)) end
+local HAGEN = require("src.zelda.tmc.RomTables").t("Story27Town.HAGEN") -- Dialog[15] {w, a, b} at 0x08113F48
 reg(0x0806CE80, function(f, e)
   local v = progress(f)
   if v == 5 then
@@ -1181,18 +1151,9 @@ reg(0x0806CE80, function(f, e)
 end)
 
 -- ======================================================== brocco.c / stamp.c
-local BROCCO = { [0] = D(0, 0, NORMAL, 1, 0, TEXT(T_FESTIVAL, 0x10)), D(0, 0, NORMAL, 1, 0, TEXT(T_FESTIVAL, 0x10)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN, 0x24), TEXT(T_TOWN, 0x23)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN, 0x24), TEXT(T_TOWN, 0x23)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN2, 0x1F), TEXT(T_TOWN2, 0x1E)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN3, 0x1E), TEXT(T_TOWN3, 0x1D)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN4, 0x1F), TEXT(T_TOWN4, 0x1E)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN5, 0x1F), TEXT(T_TOWN5, 0x1E)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN6, 0x19), TEXT(T_TOWN6, 0x18)),
-                 D(5, ROOM, TOGGLE, 1, TEXT(T_TOWN6, 0x19), TEXT(T_TOWN6, 0x18)) }
+local BROCCO = require("src.zelda.tmc.RomTables").t("Story27Town.BROCCO") -- Dialog[10] {w, a, b} at 0x0810CAAC
 reg(0x080636D8, function(f, e) show(f, e, BROCCO[math.min(progress(f), 9)]) end)
-local STAMP = { [0] = D(0, ROOM, TOGGLE, 1, TEXT(T_POST, 0x1), TEXT(T_POST, 0x0)),
-                D(0, ROOM, TOGGLE, 1, TEXT(T_POST, 0x3), TEXT(T_POST, 0x2)) }
+local STAMP = require("src.zelda.tmc.RomTables").t("Story27Town.STAMP") -- Dialog[2] {w, a, b} at 0x0810C2E4
 reg(0x08062CBC, function(f, e) show(f, e, STAMP[f:kinstoneFused(0x2C) and 1 or 0]) end)
 
 -- ======================================================== module hooks

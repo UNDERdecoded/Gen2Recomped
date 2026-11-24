@@ -38,8 +38,10 @@ local W = {}
 W.__index = W
 
 W.SHEET = 0x5E
-W.SWORD_TILE = { [0] = 0, 0, 12, 12, 12 }      -- kSwordTypeToGfxOffs / 24
-W.SHIELD_TILE = { [0] = 68, 68, 74, 96 }       -- kShieldTypeToGfxOffs / 24
+-- r36: kSwordTypeToGfxOffs / kShieldTypeToGfxOffs, read at import
+-- (RomTablesSpec "weapon.swordTile" / "weapon.shieldTile")
+W.SWORD_TILE = require("src.zelda.alttp.RomTables").get("weapon.swordTile")
+W.SHIELD_TILE = require("src.zelda.alttp.RomTables").get("weapon.shieldTile")
 W.SWORD_CHARS = { [5] = 0, [6] = 1, [0x25] = 12, [0x26] = 13 }   -- char -> strip tile from the DMA source
 W.SHIELD_CHARS = { [7] = 0, [8] = 1, [0x27] = 6, [0x28] = 7 }
 W.SWING_YT, W.CARRY_YT, W.THROW_YT, W.LIFT_YT = 0x27, 0x0D, 0x0E, 0x10
@@ -59,7 +61,7 @@ function W:stripTile(b, swordType, shieldType)
     local t0 = W.SWORD_TILE[swordType] or 0
     T = (b < 12) and (t0 + b) or (t0 + 16 + b - 12)
   else
-    local s0 = W.SHIELD_TILE[shieldType] or 68
+    local s0 = W.SHIELD_TILE[shieldType] or W.SHIELD_TILE[0]
     local k = b - 24
     T = (k < 6) and (s0 + k) or (s0 + 16 + k - 6)
   end
@@ -215,16 +217,19 @@ end
 -- the bow's is listed (rod 7, hammer 7, then the bow: sheet 0 tile 8 =
 -- kIntro_LoadGfx_Tab[2], 3 tiles). Colours: the OAM word's palette row of
 -- the room's / overworld's sprite palettes (the bow: row 1).
-W.ITEM_BLOCKS = { { off = 0x380, n = 3, sheet = 0, tile = 8 } }
+-- r36: no list here any more: the import runs the cartridge's loader
+-- (FrontRun.itemStrip, GBA 0x0812E554) and keeps strip tile -> { sheet,
+-- tile } (data.t.strip36, bound into W.STRIP_MAP at load)
+W.STRIP_MAP = {}
 W.ITEM_CHARS = { [9] = { 0, 0 }, [10] = { 0, 1 }, [0x29] = { 1, 0 }, [0x2A] = { 1, 1 } }
--- the sheet and tile at a strip byte offset (nil: not a listed block)
+require("src.zelda.alttp.RomTables").onBind(function(all)
+  for k in pairs(W.STRIP_MAP) do W.STRIP_MAP[k] = nil end
+  for k, e in pairs(all.strip36 or {}) do W.STRIP_MAP[k] = e end
+end)
+-- the sheet and tile at a strip byte offset (nil: nothing loaded there)
 function W.itemTile(off)
-  for _, b in ipairs(W.ITEM_BLOCKS) do
-    local k = (off - b.off) / 32
-    if k >= 0 and k < 2 * b.n and k == math.floor(k) then
-      return b.sheet, (k < b.n) and (b.tile + k) or (b.tile + 16 + k - b.n)
-    end
-  end
+  local e = W.STRIP_MAP[off / 32]
+  if e then return e[1], e[2] end
 end
 function W:itemImage(sheet, tile, pal, palRow)
   local key = "i" .. sheet * 4096 + tile .. ":" .. palRow .. ":" .. tostring(pal)

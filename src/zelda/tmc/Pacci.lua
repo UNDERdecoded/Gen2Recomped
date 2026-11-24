@@ -21,8 +21,8 @@ local Pacci = {}
 
 local ITEM_PACCI_CANE = 0x12
 local ANIM_CANE, ANIM_JUMP = 0x628, 0x810
-local START = { [0] = { 0, -18 }, { 14, 0 }, { 0, 14 }, { -14, 0 } } -- gUnk_0811B9A0 (by animationState / 2)
-local VEC = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+local START = require("src.zelda.tmc.RomTables").t("Pacci.START") -- gUnk_0811B9A0 (by animationState / 2)
+local VEC = require("src.zelda.tmc.RomTables").t("Pacci.VEC")
 -- gUnk_0811B9A8: flipX, flipY, animation
 local LOOK = { [0] = { false, false, 17 }, { true, false, 18 }, { false, true, 17 }, { false, false, 18 } }
 local ACT_HOLE = 25
@@ -74,7 +74,14 @@ function Pacci.updateBolt(f, b)
   local v = VEC[b.dir]
   b.x, b.y = b.x + v[1] * 2, b.y + v[2] * 2
   -- walls stop it
-  if f.room:isSolid(b.x, b.y, b.layer) and (f._dungeon:actAt(b.x, b.y, b.layer) or 0) ~= ACT_HOLE then return boltEnd(f, b) end
+  -- round 42: sub_080040D8 with gUnk_08003E44 is the type-1 tile collision
+  -- (as the arrows, ItemBow.lua): lava, water and pits do not stop the bolt
+  -- (it stopped over $50:00's lava and never reached the upside-down
+  -- platform)
+  local GJ = require("src.zelda.tmc.GustJar")
+  local wall
+  if f.room.coll and f.room.tw then wall = GJ.wall(f, b.x, b.y, b.layer) else wall = f.room:isSolid(b.x, b.y, b.layer) end
+  if wall and (f._dungeon:actAt(b.x, b.y, b.layer) or 0) ~= ACT_HOLE then return boltEnd(f, b) end
   if (f._dungeon:actAt(b.x, b.y, b.layer) or 0) == ACT_HOLE then
     b.action = 4
     b.x = math.floor(b.x / 16) * 16 + 8
@@ -126,6 +133,7 @@ function Pacci.use(p, item, button)
   if item ~= ITEM_PACCI_CANE or p.minish or p.state ~= "normal" then return false end
   local f = p.field
   p.state = "ext"
+  p.caneSwing43 = true -- round 43: still PLAYER_NORMAL on the cartridge (a lava platform carries him)
   p:setAnim(ANIM_CANE, true)
   f:sound(0x10E)
   local fired = false
@@ -145,6 +153,7 @@ function Pacci.use(p, item, button)
     if band(fl, 0x80) ~= 0 or pl.anim.done then
       if not fired then fired = true; spawnBolt(f, pl) end
       pl.state = "normal"
+      pl.caneSwing43 = nil
       pl.extUpdate, pl.drawOver = nil, nil
       pl.animId = -1
     end
@@ -184,9 +193,10 @@ function Pacci.holeLaunch(dungeon, p)
     if t == 40 then
       -- the spring: SPECIAL_TILE_33, the bolt is used up
       f.pacciHoles[key] = nil
-      local n = ledgeAhead(f, pl)
+      local n = require("src.zelda.tmc.Pacci84").spring(f, pl, ledgeAhead) -- round 84: sub_0807A2F8(1) (Pacci84.lua)
       local v = VEC[pl.animationState / 2]
-      if n > 0 then pl.zv, pl.spd = n + 1, 1 else pl.zv, pl.spd = 3.5625, 0.25 end
+      if n > 0 then pl.zv, pl.spd = n - 0.25, 1 else pl.zv, pl.spd = 3.5625, 0.25 end -- ((n << 4) - 4) << 12; kJumpSpeedForward
+      if n > 0 then require("src.zelda.tmc.Pacci84").layer(f, pl) end -- sub_08004542 outside the overworld
       pl.vx, pl.vy = v[1] * pl.spd, v[2] * pl.spd
       pl.z = 0.01
       pl:setAnim(ANIM_JUMP, true)

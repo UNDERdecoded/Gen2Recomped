@@ -28,7 +28,7 @@ M.__index = M
 
 -- the cartridge's tables, read from the cache (Layout.MENU_DATA madderTables)
 local A_WAVE, A_TURNS, A_FLICKER = 0x080CCDA0, 0x080CCDC8, 0x080CCDD4
-local STEP = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+local STEP = require("src.zelda.tmc.RomTables").t("BossMadderpillar.STEP")
 M.TAIL_HITBOX = 0x080FD298                                            -- gUnk_080FD298
 local SFX_HIT, SFX_MENU_CANCEL, SFX_6B, SFX_19D, SFX_182, SFX_PLACE_OBJ, SFX_12E = 0xFE, 0x6C, 0x6B, 0x19D, 0x182, 0x104, 0x12E
 local SPECIAL_FX, FX_GIANT_EXPLOSION3 = 0x0F, 0x48 -- round 17: was $49 (FX_GREEN_ORB)
@@ -109,9 +109,9 @@ function M:headAnim(e)
 end
 
 -- the tile under a pixel is free (GetCollisionDataAtTilePos == 0)
-function M:free(x, y)
+function M:free(x, y, layer)
   local r = self.field.room
-  return not r:isSolid(x, y, 1)
+  return not r:isSolid(x, y, layer == 2 and 2 or 1) -- round 69: super->collisionLayer (was layer 1: $2C lies on the top map)
 end
 
 -- sub_08029E0C + sub_08029F0C
@@ -125,7 +125,7 @@ function M:chooseDir(e)
   while i < 3 do
     local dir = self:turn(dd, k)
     local d = STEP[rshift(dir, 3)]
-    if self:free(tx + d[1] * 16, ty + d[2] * 16) then
+    if self:free(tx + d[1] * 16, ty + d[2] * 16, e.layer) then
       last = dir
       if e.direction - e.unk74 ~= dir - e.direction then pick = dir break end
     end
@@ -306,6 +306,7 @@ function M:update(e)
   for t = 1, 5 do self:segment(e, e.segs[t]) end
   self:tailUpdate(e, e.tail)
   -- touching Link (the collision matrix: hit type vs the player)
+  if require("src.zelda.tmc.Madder65").touch(self, e) then return end -- round 65: per-part ROM hitboxes + knockback
   local p = f.player
   if p.state ~= "dead" and p.invuln == 0 then
     local function touch(x, y)

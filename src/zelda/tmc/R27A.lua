@@ -24,6 +24,16 @@ R.MODULES = {
   "src.zelda.tmc.Story27Town", "src.zelda.tmc.Story27Town2", "src.zelda.tmc.Story27Minish",
   "src.zelda.tmc.Story27Cutscene", "src.zelda.tmc.Kinstone27", "src.zelda.tmc.Figurines",
   "src.zelda.tmc.SideQuests27", "src.zelda.tmc.EnemyField3",
+  "src.zelda.tmc.Story45", -- round 45: Western Woods North / Castor Wilds room code, the takeover scene's native
+  "src.zelda.tmc.Shop45", -- round 45: ITEM_FOR_SALE + BuyItem (Syrup's Wake-Up Mushroom)
+  "src.zelda.tmc.Jar45", -- round 45: JAR_PORTAL (Rem's shop)
+  "src.zelda.tmc.Story46", -- round 46: Lon Lon Ranch / ranch house room code (Talon's lost key)
+  "src.zelda.tmc.Swamp46", -- round 46: SURFACE_SWAMP (Castor Wilds' marsh; the boots cross it)
+  "src.zelda.tmc.Story47", -- round 47: Castor Wilds' Darknut cave, the Bow's crack, Wind Ruins room code
+  "src.zelda.tmc.Armos49", -- round 49: armos_data round trip through the Armos interiors (sub_080300C4 / 080300E8)
+  "src.zelda.tmc.Cracked86", -- round 86: cracked floor (SurfaceAction_7 -> CRACKING_GROUND -> a pit)
+  "src.zelda.tmc.Conveyor88", -- round 88: conveyor surfaces (SURFACE_D / E / F / 10, conveyer_push)
+  "src.zelda.tmc.FourSword89", -- round 89: a clone tile is free again once its clone leaves it (CloneTile TILE_TYPE_789)
 }
 
 local loaded

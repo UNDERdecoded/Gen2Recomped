@@ -80,36 +80,29 @@ TL.OFF = {
   hookArrA = 0x167FD4, hookArrB = 0x167FD8, hookArrC = 0x167FDC, hookArrD = 0x167FE0,
   hookChar = 0x17F914, hookFlags = 0x17F920,
 }
--- the disassembly's constants (no GBA table found by value)
-TL.ROD_DELAYS = { 3, 3, 5 }
-TL.FIRE_X, TL.FIRE_Y, TL.FIRE_V = { 0, 0, -8, 16 }, { -8, 16, 3, 3 }, 64
-TL.ICE_X, TL.ICE_Y, TL.ICE_V = { 0, 0, -20, 20 }, { -16, 24, 8, 8 }, 48
-TL.SHOVEL_DELAY, TL.SHOVEL_STEP = { 7, 18, 16 }, { 0, 1, 2 }
+-- r35: the GBA's copies of the disassembly's tables, read at import
+-- (RomTablesSpec "tools.*")
+local RT = require("src.zelda.alttp.RomTables")
+TL.ROD_DELAYS = RT.get("tools.rodDelays")
+TL.FIRE_X, TL.FIRE_Y, TL.FIRE_V = RT.get("tools.fireX"), RT.get("tools.fireY"), 64
+TL.ICE_X, TL.ICE_Y, TL.ICE_V = RT.get("tools.iceX"), RT.get("tools.iceY"), 48
+TL.SHOVEL_DELAY, TL.SHOVEL_STEP = RT.get("tools.shovelDelay"), RT.get("tools.shovelStep")   -- r36: kShovelAnimDelay / 2 (0x1690D6)
 TL.DIGGABLE = { [0x34] = 0xDC9, [0x71] = 0xDC9, [0x35] = 0xDC9, [0x10D] = 0xDC9, [0x10F] = 0xDC9, [0xE1] = 0xDC9,
                 [0xE2] = 0xDC9, [0xDA] = 0xDC9, [0xF8] = 0xDC9, [0x10E] = 0xDC9 }
 TL.PEG = { [0x21B] = 0xDCB }
 TL.MAP16 = { 0x21B, 0xDCB, 0x34, 0x71, 0x35, 0x10D, 0x10F, 0xE1, 0xE2, 0xDA, 0xF8, 0x10E, 0xDC9 }
 TL.BOOM_TAB3 = { 8, 4, 2, 1 }
-TL.BOOM_TAB6 = { -10, -8, -9, -9, -10, -8, -9, -9 }
-TL.BOOM_TAB7 = { -10, 11, 8, -8, -10, 11, 8, -8 }
-TL.BOOM_X0 = { 0, 0, -8, 8, 8, 8, -8, -8 }
-TL.BOOM_Y0 = { -16, 6, 0, 0, -8, 8, -8, 8 }
-TL.HOOK_COLL_X, TL.HOOK_COLL_Y = { 0, 15, 0, 15, 0, 0, 8, 8 }, { 0, 0, 7, 7, 0, 15, 0, 15 }
-TL.HOOK_MOVE_X, TL.HOOK_MOVE_Y = { 0, 0, 8, -8 }, { 8, -9, 0, 0 }
+TL.BOOM_TAB6 = RT.get("tools.boomTab6")
+TL.BOOM_TAB7 = RT.get("tools.boomTab7")
+TL.BOOM_X0 = RT.get("tools.boomX0")
+TL.BOOM_Y0 = RT.get("tools.boomY0")
+TL.HOOK_COLL_X, TL.HOOK_COLL_Y = RT.get("tools.hookCollX"), RT.get("tools.hookCollY")
+TL.HOOK_MOVE_X, TL.HOOK_MOVE_Y = RT.get("tools.hookMoveX"), RT.get("tools.hookMoveY")
 TL.HOOKABLE = 0x27
 -- ancilla damage class indices (kAncilla_Damage[type])
 TL.ANC_FIRE, TL.ANC_ICE, TL.ANC_BOOM = 2, 0x0B, 5
--- the item strip's blocks (LoadItemGFXIntoWRAM4BPPBuffer: kIntro_LoadGfx_Tab,
--- sheets 0 / 95 / 96; Weapon.lua holds the bow's)
-TL.STRIP = {
-  { off = 0x000, n = 7, sheet = 0, tile = 0 },    -- rod
-  { off = 0x1C0, n = 7, sheet = 0, tile = 11 },   -- hammer
-  { off = 0x440, n = 4, sheet = 95, tile = 38 },  -- shovel
-  { off = 0x640, n = 4, sheet = 0, tile = 34 },   -- hookshot
-  { off = 0x740, n = 14, sheet = 96, tile = 3 },  -- bug net
-  { off = 0xAC0, n = 7, sheet = 96, tile = 33 },  -- cane
-  { off = 0xC80, n = 2, sheet = 95, tile = 46 },  -- book
-}
+-- r36: the item strip's tiles (rod, hammer, shovel, hookshot, net, cane,
+-- book) are read at import from the cartridge's loader (Weapon.STRIP_MAP)
 
 local function s8(t) for i = 1, #t do if t[i] >= 128 then t[i] = t[i] - 256 end end return t end
 local function s16(t) for i = 1, #t do if t[i] >= 32768 then t[i] = t[i] - 65536 end end return t end
@@ -236,7 +229,8 @@ end
 local function offscreen(game, a)
   local cx, cy = game:ancCamera()
   local sx, sy = a.x - cx, a.y - cy
-  return sx < -16 or sx > (game.viewW or 240) + 16 or sy < -16 or sy > (game.viewH or 160) + 16
+  -- (the cartridge's 240 x 160 screen, also when the drawn field is wider: widescreen / zoom)
+  return sx < -16 or sx > 240 + 16 or sy < -16 or sy > 160 + 16
 end
 
 -- ------------------------------------------------------------ the rods
@@ -427,12 +421,15 @@ local function hookTiles(game, a)
     local px = a.x + TL.HOOK_COLL_X[a.dir * 2 + i + 1]
     local py = a.y + TL.HOOK_COLL_Y[a.dir * 2 + i + 1]
     local at = game:ancAttr(px, py)
-    if at == TL.HOOKABLE then hook = true
+    a.ats56 = a.ats56 or {}; a.ats56[i + 1] = at   -- r56: the ledge counter (Hook56)
+    if require("src.zelda.alttp.Hook55").hookable(at, game.interior ~= nil) then hook = true   -- r55: the indoor TileDetect hook set
     elseif game.interior then
       local c = IT(game).tileAttrs[at + 1] or 0
       if c == 1 or c == 2 then wall = true end
     elseif O.isSolid(at) and at ~= 0x08 then wall = true end
   end
+  if game.interior and require("src.zelda.alttp.Hook56").skip(a, a.ats56) then return false, false end   -- r56: over raised edges
+  if not game.interior and require("src.zelda.alttp.Hook59").skip(a, a.ats56) then return false, false end   -- r59: the outdoor ledge counter
   return wall, hook
 end
 
@@ -485,16 +482,7 @@ local function pullFrame(game, a)
   a.gone = true
   game.hookUse = nil
   -- Player_TileDetectNearby: deep water -> swimming
-  if not game.interior then
-    local deep = 0
-    for _, p in ipairs({ { 2, 10 }, { 13, 10 }, { 2, 21 }, { 13, 21 } }) do
-      if game.ow:attrAt(lk.world, lk.x + p[1], lk.y + p[2]) == 0x08 then deep = deep + 1 end
-    end
-    if deep > 0 then
-      local Swim = package.loaded["src.zelda.alttp.Swim"]
-      if Swim and require("src.zelda.alttp.DarkWorld").hasFlippers(game) then Swim.enter(game) end
-    end
-  end
+  require("src.zelda.alttp.Hook73").arrive(game)   -- r73: the GBA's points (0x0809EDA4)
   game.hookArrivals = (game.hookArrivals or 0) + 1
   return true
 end
@@ -526,9 +514,6 @@ function TL.install(G)
     W.lastVar5 = pc.var5
     return drawItem0(self, pc, x, y, spr)
   end
-  local have = {}
-  for _, b in ipairs(W.ITEM_BLOCKS) do have[b.off] = true end
-  for _, b in ipairs(TL.STRIP) do if not have[b.off] then W.ITEM_BLOCKS[#W.ITEM_BLOCKS + 1] = b end end
 
   local itemFrame0 = G.itemFrame
   function G:itemFrame(inp)
@@ -671,8 +656,10 @@ function TL.useFrame(game, u)
         local area = game.area
         local pos = math.floor((ty - area.y) / 16) * 128 + math.floor((tx - area.x) / 16) * 2
         if area.parent == 0x2A and lk.world == "lw" and pos == 0x492 then
-          game.fluteDug = (game.fluteDug or 0) + 1
-          game:getItem(0x14)
+          -- r31: AncillaAdd_DugUpFlute (Games31): it pops out, Link picks it up
+          local G31 = require("src.zelda.alttp.Games31")
+          if G31.tabs(game) then G31.dugUpFlute(game)
+          else game.fluteDug = (game.fluteDug or 0) + 1; game:getItem(0x14) end
         elseif (game.lastSecret or 0) ~= 0 then
           game:terrainDrop(5, game.lastSecret, tx, ty)
         end

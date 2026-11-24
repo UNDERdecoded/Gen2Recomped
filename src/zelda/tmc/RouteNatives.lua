@@ -77,6 +77,9 @@ N[0x0806DCA0] = function(f)
 end
 
 N[0x0807F5B0] = function(f, e, ctx) f.player.field27 = ctx.intVariable end
+-- round 38: forestMinish.c sub_08060340 (the barrel Minish takes a bottle):
+-- gSave.drug_kill_count = gSave.enemies_killed
+N[0x08060340] = function(f) f.save.drugKillCount = (f.save.stats and f.save.stats.kills) or 0 end
 -- ezlo.c sub_0806D9A4: Link faces Ezlo, animation state 4
 N[0x0806D9A4] = function(f, e)
   f.player.entFlip = not (e.x <= f.player.x)

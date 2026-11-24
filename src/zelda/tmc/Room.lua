@@ -16,7 +16,7 @@ local Room = {}
 Room.__index = Room
 
 -- IsPosInTransitionRect's half extents per area-warp shape (scroll.c)
-local SHAPE_HALF = { [0] = { 6, 6 }, { 6, 14 }, { 14, 6 }, { 22, 6 } }
+local SHAPE_HALF = require("src.zelda.tmc.RomTables").t("Room.SHAPE_HALF")
 
 function Room.load(assets, area, room)
   local maps = assets:roomMaps(area, room)
@@ -47,6 +47,9 @@ function Room.load(assets, area, room)
     areaInfo = assets:area(area),
   }, Room)
   self.atlas = assets:atlas(area, h.ts)
+  -- round 37: the tile types come from the area's gAreaTiles, not from the
+  -- tileset (a room whose tileset index is out of range still collides)
+  self.types = self.atlas and self.atlas.types or require("src.zelda.tmc.R37").areaTypes(assets, area)
   self:buildCollision()
   self:buildBatches()
   return self
@@ -54,7 +57,7 @@ end
 
 function Room:buildCollision()
   local A = self.assets
-  local types = self.atlas and self.atlas.types or { bottom = {}, top = {} }
+  local types = self.types or (self.atlas and self.atlas.types) or { bottom = {}, top = {} }
   self.coll = {}
   for layer, name in ipairs({ "bottom", "top" }) do
     local m = self.maps[name]
@@ -75,7 +78,29 @@ function Room:buildCollision()
   if self.maps.collisionOverride then
     for i, v in pairs(self.maps.collisionOverride) do self.coll[1][i] = v end
   end
+  -- round 29: sub_0807C5B0 (playerUtils.c, end of LoadRoomGfx for the
+  -- house-type areas): the top map's collision is merged into the bottom
+  -- one (top < $10 ORs into a bottom < $10; top >= $10 replaces it), so
+  -- Link on layer 1 is stopped by the furniture drawn on BG1 (beds,
+  -- tables, shelves in Link's house could be walked through)
+  if Room.MERGE_TOP_AREAS[self.area or -1] and self.coll[2] then
+    local bot, top = self.coll[1], self.coll[2]
+    for i, ct in pairs(top) do
+      if ct ~= 0 then
+        if ct >= 0x10 then bot[i] = ct
+        else
+          local cb = bot[i] or 0
+          if cb < 0x10 then bot[i] = bit.bor(ct, cb) end
+        end
+      end
+    end
+  end
 end
+-- AREA_HOUSE_INTERIORS_1..3, TREE_INTERIORS, DOJOS, MINISH_CRACKS,
+-- HOUSE_INTERIORS_4, WIND_TRIBE_TOWER, EZLO_CUTSCENE (LoadRoomGfx's switch;
+-- same list as Priority.BG1_PRIO2_AREAS)
+Room.MERGE_TOP_AREAS = { [0x21] = true, [0x22] = true, [0x23] = true, [0x24] = true, [0x25] = true,
+  [0x27] = true, [0x28] = true, [0x30] = true, [0x38] = true }
 
 -- Rebuild one cell after the map changes (a cut bush, an opened chest).
 function Room:setTile(layer, tx, ty, metatile)
@@ -89,7 +114,8 @@ function Room:setTile(layer, tx, ty, metatile)
     self.keepGfx[name .. i] = old
   end
   self.maps[name][i] = metatile
-  local t = self.atlas and self.atlas.types[name] or {}
+  if self.typeOnly then self.typeOnly[name .. i] = nil end -- round 41
+  local t = (self.types or (self.atlas and self.atlas.types) or {})[name] or {}
   local v
   if metatile >= 0x4000 then v = self.assets.specialCollision[metatile - 0x4000] or 0
   else v = self.assets.typeCollision[t[metatile] or 0] or 0 end
@@ -99,11 +125,31 @@ end
 
 function Room:tileType(layer, tx, ty)
   local name = layer == 2 and "top" or "bottom"
+  if self.typeOnly then -- round 41: Room:setTypeOnly
+    local ov = self.typeOnly[name .. (ty * self.tw + tx)]
+    if ov then return ov end
+  end
   local mt = self.maps[name][ty * self.tw + tx]
   if not mt then return nil end
   if mt >= 0x4000 then return mt end
-  local t = self.atlas and self.atlas.types[name]
+  local t = (self.types or (self.atlas and self.atlas.types) or {})[name]
   return t and t[mt], mt
+end
+
+-- round 41: SetTileType with a type the layer's tileset has no metatile for
+-- (LoadRoomTileSet leaves tileIndices[type] = $FFFF): the cell's map entry
+-- is $FFFF (nothing drawn here), its collision and act tile still come from
+-- the type (gMapTileTypeToCollisionData / ActTile).  A pushed block on the
+-- Cave of Flames' top layer leaves TILE_TYPE_32 / 33, which only the bottom
+-- tileset has: the block stayed where it was as well ($50:08).
+function Room:setTypeOnly(layer, tx, ty, ttype)
+  local name = layer == 2 and "top" or "bottom"
+  local i = ty * self.tw + tx
+  self.maps[name][i] = 0xFFFF
+  self.typeOnly = self.typeOnly or {}
+  self.typeOnly[name .. i] = ttype
+  self.coll[layer == 2 and 2 or 1][i] = self.assets.typeCollision[ttype] or 0
+  self.dirty = true
 end
 
 -- per-pixel collision for collisionType 0 (the player and most NPCs)

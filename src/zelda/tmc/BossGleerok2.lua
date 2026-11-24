@@ -92,12 +92,11 @@ local SIN = {}
 for i = 0, 319 do SIN[i] = math.floor(math.sin(i * math.pi / 128) * 256 + 0.5) end
 G.SIN = SIN
 
-local THRASH = { 24, 3, 16, 0, 32, 1, 16, 2, 16, 3, 24, 0, 24, 1, 4, 3, 4, 2, 24, 0, 4, 3, 24, 1, 4, 2, 24, 0, 24, 1, 24, 0, 24,
-  1, 24, 0, 24, 1, 4, 3, 4, 2, 24, 0, 24, 1, 4, 3, 4, 2, 24, 0, 24, 1, 4, 3, 4, 2, 4, 3, 4, 2, 24, 0, 24, 1, 255, 0 } -- gUnk_080CD774
+local THRASH = require("src.zelda.tmc.RomTables").t("BossGleerok2.THRASH") -- gUnk_080CD774
 G.THRASH = THRASH
-local RAIN_A = { [0] = 80, 0, 0, 80, -96, 0, 0, -96 }                                   -- gUnk_08129978
-local RAIN_B = { [0] = 0, 16, -16, 0, 16, -16, 16, -16 }                                 -- gUnk_08129980
-local RAIN_C = { [0] = 0, -16, -32, -48, -64, -80, -96, -112, 0, 16, 32, 48, 64, 80, 96, 112 } -- gUnk_08129988
+local RAIN_A = require("src.zelda.tmc.RomTables").t("BossGleerok2.RAIN_A")                                   -- gUnk_08129978
+local RAIN_B = require("src.zelda.tmc.RomTables").t("BossGleerok2.RAIN_B")                                 -- gUnk_08129980
+local RAIN_C = require("src.zelda.tmc.RomTables").t("BossGleerok2.RAIN_C") -- gUnk_08129988
 
 local function s8(v) v = band(v, 0xFF) if v >= 128 then return v - 256 end return v end
 local function hi(w) return band(rshift(w, 8), 0xFF) end
@@ -429,7 +428,10 @@ function G:projectile(e, type)
   local f = self.field
   local h = e.h
   local d = f.assets.manifest.projectileDefs and f.assets.manifest.projectileDefs[G.PROJ]
-  if d and d.multi then d = d.forms[0] end
+  -- round 43: EnemyCreateProjectile(.., GLEEROK_PROJECTILE, type) takes the definition's form `type`
+  -- (gProjectileDefinition_A: type 2's low fire flies at 384, not 512); the rain (type 3, the pot
+  -- sprite) keeps form 0's look (SIMPLIFIED)
+  if d and d.multi then d = (type <= 2 and d.forms[type]) or d.forms[0] end
   d = d or {}
   local hd, e0 = h.ents[5], h.ents[0]
   local s = { kind = 4, id = G.PROJ, type = type, x = hd.x, y = hd.y, z = 0, zv = 0, sprite = d.sprite,
@@ -479,7 +481,21 @@ function G:projectile(e, type)
   f._dungeon:track(s)
   return s
 end
-function G:panim(s, idx) s.animIndex = idx; s.flagKey = nil; if s.sprite then s.anim:set(self.A:sprite(s.sprite), idx, true) end end
+-- round 43: objAnim too -- Field's literalAnim pass re-sets any other entity to objAnim (0) every frame:
+-- a landed fireball sat in animation 0 for good (never ANIM_DONE, never action 3) and kept burning Link
+function G:panim(s, idx) s.animIndex, s.objAnim = idx, idx; s.flagKey = nil; if s.sprite then s.anim:set(self.A:sprite(s.sprite), idx, true) end end
+-- round 44: sub_080A90D8: a landed fireball (and type 2 sliding on) turns tile type $13 / $34 under it
+-- into $34C (the burning floor, ACT_TILE_98: Hot43's damage), once per tile it enters
+function G:burnTile(s)
+  local tx, ty = math.floor(s.x / 16), math.floor(s.y / 16)
+  local k = ty * 64 + tx
+  if s.unk74 == k then return end
+  s.unk74 = k
+  local f = self.field
+  local L = s.layer or 1
+  local tt = f.room:tileType(L, tx, ty)
+  if tt == 0x13 or tt == 0x34 then f:objects():setTileType(L, tx, ty, 0x34C) end
+end
 
 function G:touchLink(x, y, hb, hitType, z)
   local f = self.field
@@ -535,6 +551,7 @@ function G:projUpdate(s)
       if s.cz >= 0 then
         s.cz = 0
         s.action = 2
+        self:burnTile(s)
         if s.type == 2 then s.timer = 15; self:panim(s, 0x54) else self:panim(s, 0x52) end
       end
     end
@@ -546,6 +563,7 @@ function G:projUpdate(s)
         s.timer = s.timer - 1
         local a = (s.direction % 32) / 32 * 2 * math.pi
         s.x, s.y = s.x + math.sin(a) * s.speed / 256, s.y - math.cos(a) * s.speed / 256
+        self:burnTile(s)
       end
     elseif adone(s) then s.action = 3; self:panim(s, 0x53) end
   elseif s.action == 3 then
@@ -637,8 +655,7 @@ function G:partTick(e, pt)
 end
 
 -- GLEEROK_PARTICLE type 0: the plug's pieces (gUnk_081229D0)
-local BURST = { [0] = { 0, 12, 8, 8 }, { 0x40, 0x14, -8, 8 }, { 0x80, 4, 8, -8 }, { 0xC0, 0x1C, -8, -8 },
-                { 0, 12, 0, 0 }, { 0x40, 0x14, 0, 0 }, { 0x80, 4, 0, 0 }, { 0xC0, 0x1C, 0, 0 } }
+local BURST = require("src.zelda.tmc.RomTables").t("BossGleerok2.BURST")
 function G:burst(e, src, i)
   local f = self.field
   local d = f:objects():def(0x67, 0) -- GLEEROK_PARTICLE's definition (object $67)
@@ -945,7 +962,7 @@ end
 -- sub_0806FCF4(scale, $20, mode), the hitbox $10000 / scale >> 3; Action3
 -- $78 frames; Action4 the scales back by 1 a frame to $100, 2 more frames,
 -- then the body's unk_7c = 0 (and gone once the body's bit 7 is clear).
-local POOLS = { [0] = { -32, -40, 1, 2, 0 }, { 0x1F, -40, 3, 2, 0x40 }, { -32, 0x17, 1, 0, 0x80 }, { 0x1F, 0x17, 3, 0, 0xC0 } }
+local POOLS = require("src.zelda.tmc.RomTables").t("BossGleerok2.POOLS")
 local function anchor(scale, mode) -- sub_0806FCF4(.., $20, mode)
   local v = math.abs(scale)
   v = math.floor(0x10000 / v)

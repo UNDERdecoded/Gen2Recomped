@@ -35,8 +35,10 @@
 -- Ammo: f.save.stats.arrowCount (the field Menu / Drops / Objects use);
 -- arrowMax mirrors gQuiverSizes[quiverType] for the menu.
 --
--- SIMPLIFIED: the arrow's hitboxes (gUnk_080B3E70/78) and the enemies' are a
---   10 px box (as Pacci.lua); the wall test (sub_080B1BA4 / sub_080040D8) is
+-- Round 48: an arrow meets an enemy as IsColliding does: the enemy's own
+--   hitbox (offset + half sizes) against the arrow's 4 x 6 / 6 x 4 box
+--   (an enemy with no hitbox: the old 10 px box).
+-- SIMPLIFIED: no z test for the arrow against enemies; the wall test (sub_080B1BA4 / sub_080040D8) is
 --   GustJar.wall (type-1 tile collision: pits / water pass; gUnk_08003E44
 --   is a .bin) at the arrow (round 26A; the eye switches / Mazaal get the
 --   decomp's 4 x 6 / 6 x 4 arrow box); Link's frame bit 1 fires one arrow per shot
@@ -56,11 +58,10 @@ M.HURT_ARROW, M.HURT_LIGHT = 0x15, 0x0E
 M.SPRITE_BOW, M.SPRITE_ARROW, M.VRAM_ARROW = 21, 0xA6, 203
 M.SFX_FC, M.SFX_18A, M.SFX_103 = 0xFC, 0x18A, 0x103
 M.FX_SPARKLE2, M.FX_REFLECT5, M.SPECIAL_FX = 0x14, 0x50, 0x0F
-M.QUIVER = { [0] = 30, 50, 70, 99 } -- gQuiverSizes
+M.QUIVER = require("src.zelda.tmc.RomTables").t("ItemBow.QUIVER") -- gQuiverSizes
 M.SHIELD_SPEED = 0xC0 / 256 -- kWalkSpeedShield
 -- gUnk_080B3E40: x, y, flipX, flipY, tile offset x, y, animIndex
-M.ARROW = { [0] = { -3, -12, false, false, 0, -5, 2 }, { 8, -4, true, false, 5, 0, 1 },
-            { 0, 1, false, true, 0, 5, 2 }, { -8, -4, false, false, -5, 0, 1 } }
+M.ARROW = require("src.zelda.tmc.RomTables").t("ItemBow.ARROW")
 
 -- ModArrows
 function M.modArrows(f, n)
@@ -100,20 +101,32 @@ local function collide(f, a)
   if okF and FoW.arrowHit and FoW.arrowHit(f, a.x, a.y, a.hurtType, a.dir, aw, ah) then a.contact = true return end
   for _, e in ipairs(f.entities) do
     if e.mz and e.boss and e.impl and not e.deleted and (e.collide or e.collide == nil)
-       and math.abs(e.x + ((e.hitbox and e.hitbox.x) or 0) - a.x) < ((e.hitbox and e.hitbox.w) or 8) + 2
-       and math.abs(e.y + ((e.hitbox and e.hitbox.y) or 0) - a.y) < ((e.hitbox and e.hitbox.h) or 8) + 2 then
+       -- round 52: IsColliding with the arrow's own box (aw / ah, as the loop below) -- with + 2 the generic
+       -- loop's wider test took the arrow first on a part (masked off: no effect), so no hand was ever knocked
+       and math.abs(e.x + ((e.hitbox and e.hitbox.x) or 0) - a.x) <= ((e.hitbox and e.hitbox.w) or 8) + aw
+       and math.abs(e.y + ((e.hitbox and e.hitbox.y) or 0) - a.y) <= ((e.hitbox and e.hitbox.h) or 8) + ah then
       if require("src.zelda.tmc.BossMazaal").hit(f:enemies(), e, a.hurtType, a.x, a.y, a.dir) then a.contact = true return end
     end
   end
   for _, e in ipairs(f.entities) do
-    if e ~= a and e.enemy and not e.deleted and not e.dying and not e.hidden
-       and math.abs(e.x - a.x) < 10 and math.abs(e.y - a.y) < 10 and (e.iframes or 0) == 0 then
+    -- round 48: IsColliding (collision.c) with the enemy's own hitbox (offset + half sizes) against the
+    -- arrow's 4 x 6 / 6 x 4 box -- an Eyegore's eye sits above its feet (gUnk_080FD308 y -$xx), so the
+    -- old 10 px box at the feet missed every arrow shot from its side; no hitbox: the old 10 px box
+    local hb = e.hitbox
+    local hx = hb and (e.x + (hb.x or 0)) or e.x
+    local hy = hb and (e.y + (hb.y or 0)) or e.y
+    local hw = hb and hb.w and (hb.w + aw) or 10
+    local hh = hb and hb.h and (hb.h + ah) or 10
+    if e ~= a and e.enemy and not e.deleted and not e.dying and not e.hidden and not e.mz -- round 52: Mazaal's parts only through BossMazaal.hit
+       and math.abs(hx - a.x) <= hw and math.abs(hy - a.y) <= hh and (e.iframes or 0) == 0 then
       f:enemies():hit(e, a.hurtType, a.x, a.y)
       a.contact = true
       return
     end
   end
 end
+
+M.collide = collide -- round 48: for tests
 
 -- PlayerItemBow_Action1 (type 1) / _Action2
 function M.updateArrow(f, a)
@@ -291,9 +304,7 @@ function M.draw(p, x, y)
 end
 
 -- GiveItem cases $0A / $0B / $0C
-local META = { [0x09] = { unk1 = 0x0B, param = 0x63 }, [0x0A] = { unk1 = 0x0B, param = 0x63 },
-               [0x5E] = { unk1 = 0x0C, param = 5 }, [0x66] = { unk1 = 0x0A, param = 0x63 },
-               [0x6E] = { unk1 = 0x0C, param = 10 }, [0x6F] = { unk1 = 0x0C, param = 30 } } -- gItemMetaData (fallback)
+local META = require("src.zelda.tmc.RomTables").t("Items.META") -- gItemMetaData (fallback when the cache has no itemMeta)
 function M.giveItem(f, item, param)
   local mm = f.assets and f.assets.manifest and f.assets.manifest.itemMeta
   local meta = (mm and mm[item]) or META[item]

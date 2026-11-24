@@ -28,6 +28,7 @@ local SP80 = 0x4050
 L.HALF = 8 -- gHitbox_0: 8 x 8 half sizes around (0, 0)
 
 local function contact(f, e)
+  do local r = require("src.zelda.tmc.Switch84").contact(f, e) if r ~= nil then return r end end -- round 84: gHitbox_0, inclusive (Switch84.lua)
   local h = L.HALF
   local sb = f.swordBoxNow
   if sb and sb.t == f.frame and math.abs(sb.x - e.x) < sb.w + h and math.abs(sb.y - e.y) < sb.h + h then return true end
@@ -37,6 +38,8 @@ local function contact(f, e)
       if (t.thrown or (t.bomb and t.action == 2 and t.carrySub == 2)) and math.abs(t.x - e.x) < 6 + h and math.abs(t.y - (t.z or 0) - e.y) < 6 + h then return true end
     end
   end
+  if require("src.zelda.tmc.Arrow78").switchContact(f, e, h) then return true end -- round 78: arrows (gCollisionMtx row $28)
+  if require("src.zelda.tmc.Clone79").switchContact(f, e, h) then return true end -- round 79: the clones' swords
   return false
 end
 L.contact = contact

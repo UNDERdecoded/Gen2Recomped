@@ -35,6 +35,10 @@ local bit = require("bit")
 local band, bxor = bit.band, bit.bxor
 
 local N = {}
+-- r36: Sahasrahla's / his wife's messages read at import from the
+-- cartridge's calls (RomTablesSpec "msg.npc")
+local MSGN = require("src.zelda.alttp.RomTables").get("msg.npc")
+local MSG37 = require("src.zelda.alttp.RomTables").get("msg.npc37")   -- r37
 
 -- ---------------------------------------------------------------- import
 function N.extract(rom, R, check)
@@ -119,54 +123,63 @@ function N.talk(game, a)
     -- (0x39 when the map was not marked), then Sprite_Sahasrahla state 2
     -- gives the Pegasus Boots (Link_ReceiveItem(0x4B); GBA inventory byte
     -- 0x39 = SNES link_item_boots), then state 3: 0x37 (the ice rod hint)
-    msg = ((p.mapIcons or 0) >= 3) and 0x38 or 0x39
+    local SB = require("src.zelda.alttp.RomTables").get("msg.sashaBoots")   -- r38: the GBA's table
+    msg = ((p.mapIcons or 0) > 2) and SB.marked or SB.unmarked
     after = function(g)
       g.progress.inv = g.progress.inv or {}
       g.progress.inv[0x39] = 1
       g.progress.mapIcons = 3
       g:getItem(0x4B)
       local rm = g:receiptMessage(0x4B)
-      local function hint(g2) g2:showMessage(0x37); g2.onTextDone = function(g3) g3.progress.gotBoots = true end end
+      local function hint(g2) g2:showMessage(MSGN.sashaIceRod); g2.onTextDone = function(g3) g3.progress.gotBoots = true end end
       if rm and g:showMessage(rm) then g.onTextDone = hint else hint(g) end
     end
   elseif t == 0x16 and bit.band(p.pendants or 0, 4) ~= 0 then
-    msg = 0x37        -- boots already: the ice rod hint (until the ice rod)
+    -- boots already: the ice rod hint until the ice rod (GBA byte 0x27);
+    -- r38: then Sasha_Idle's last branch (0x080DE4E4): all three pendants ->
+    -- the Lost Woods (sword byte 0x3D <= 1) or "I can't grip the hilt", else
+    -- the other sages' relatives
+    local inv = require("src.zelda.alttp.Menu").inventory(game)
+    local S38 = require("src.zelda.alttp.RomTables").get("msg.sasha38")
+    if (inv[0x27] or 0) == 0 then msg = MSGN.sashaIceRod
+    elseif bit.band(p.pendants or 0, 7) == 7 then msg = ((inv[0x3D] or 0) <= 1) and S38.allLow or S38.allHigh
+    else msg = S38.notAll end
   elseif t == 0x16 then
     -- Sasha_Idle: no Pendant of Courage yet -> 0x32, then 0x33 marks the map
-    msg = 0x32
+    msg = MSG37.sasha
     after = function(g)
-      g:showMessage(0x33)
+      g:showMessage(MSGN.sashaMap)
       g.onTextDone = function(g2) g2.progress.mapIcons = 3; g2.progress.metSahasrahla = true end
     end
   elseif t == 0x78 then
     -- MrsSahasrahla: 0x2B, the legend 0x2C, 0x2D (r22: Sprite_78's state
     -- 2: "Not at all" (choice 1) tells the legend again, "Yes" goes on)
-    if (a.npcState or 0) >= 3 then msg = 0x2D
+    if (a.npcState or 0) >= 3 then msg = MSGN.legendEnd
     else
-      msg = 0x2B
+      msg = MSG37.wife
       local function legend(g)
-        g:showMessage(0x2C)
+        g:showMessage(MSGN.legend)
         g.onTextDone = function(g2)
           if (g2.lastChoice or 0) ~= 0 then return legend(g2) end
-          g2:showMessage(0x2D)
+          g2:showMessage(MSGN.legendEnd)
           a.npcState = 3
           g2.onTextDone = function(g3) g3.progress.wifeHint = true end
         end
       end
       after = legend
     end
-  elseif t == 0x2A then msg = 0xA5
+  elseif t == 0x2A then msg = MSG37.t2A
   elseif t == 0xBB then
     -- r22: the clerk's solicited message (Shop.lua); a ware is bought, not talked to
     if a.shopItem or not a.clerk then return false end
     msg = require("src.zelda.alttp.Shop").MSG_HELLO
   elseif t == 0x3C then
     if (p.mapIcons or 0) < 3 then
-      msg = 0x147
+      msg = MSG37.t3C
       after = function(g) g.progress.mapIcons = math.max(g.progress.mapIcons or 0, 2) end
-    else msg = 0x148 end
+    else msg = MSG37.t3Cafter end
   elseif t == 0x34 or t == 0x3D then
-    if game.state == "room" then msg = 0xAD end
+    if game.state == "room" then msg = MSG37.t3D end
   end
   if not msg then return false end
   game:showMessage(msg)

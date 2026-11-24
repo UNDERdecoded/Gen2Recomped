@@ -61,7 +61,7 @@ function Boss:spawn(dat, def)
   return nil
 end
 
-local DIRS = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+local DIRS = require("src.zelda.tmc.RomTables").t("Boss.DIRS")
 
 function Boss:update(e)
   local f = self.field

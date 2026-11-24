@@ -34,6 +34,7 @@
 --   * The landing: SubtileTransitionCalculateLanding / MoveLinkOutDoor put
 --     Link at kStaircaseTab2's spot in the new page by the attribute under his
 --     centre, and walk him there 2 px a frame.
+-- (r60: the diagonal walls' slopes are Slope60.lua.)
 -- OURS: no slopes, conveyors, moving floors, water or spikes (none on the
 -- escape route); "solid" is the room's collision grid (Interior:blocked)
 -- plus solid actors.
@@ -60,7 +61,8 @@ local band, bor, rshift = bit.band, bit.bor, bit.rshift
 local function detect(g, x, y, bits)
   local inside = g.interior
   local a = inside:attrAt(x, y) or 0
-  local solid = inside:blocked(x, y) or (g.actors and g.actors:solidAt(x, y))
+  local diag = require("src.zelda.alttp.Slope60").mark(g.link, a, bits)   -- r60: diagonals set +0x978, no wall bit
+  local solid = (not diag and inside:blocked(x, y)) or (g.actors and g.actors:solidAt(x, y))
   local d = DOOR[a]
   if d and not solid then
     local r = bits * 16
@@ -84,21 +86,36 @@ local function detect3(g, pts)
 end
 
 -- TileDetect_Movement_Y (dir 0 up / 1 down) and _X (2 left / 3 right)
+local function W80(lk) local t = lk.data and lk.data.t return t and t.walk80 end   -- r80: the offsets from the import (Walk80.lua)
 local function probesY(lk, dir)
+  local w = W80(lk)
+  if w then
+    local y, xa, xb, xc = require("src.zelda.alttp.Walk80").moveY(w, lk, dir)
+    require("src.zelda.alttp.Slope60").probes(lk, y)
+    return { { xa, y }, { xb, y }, { xc, y } }, y
+  end
   local y = lk.y + (dir == 0 and 8 or 24)
+  require("src.zelda.alttp.Slope60").probes(lk, y)   -- r60
   return { { lk.x, y }, { lk.x + 8, y }, { lk.x + 15, y } }, y
 end
 local function probesX(lk, dir)
+  local w = W80(lk)
+  if w then
+    local x, ya, yb, yc = require("src.zelda.alttp.Walk80").moveX(w, lk, dir)
+    require("src.zelda.alttp.Slope60").probes(lk, yb, yc)
+    return { { x, ya }, { x, yb }, { x, yc } }
+  end
   local x = lk.x + (dir == 2 and 0 or 15)
+  require("src.zelda.alttp.Slope60").probes(lk, lk.y + 16, lk.y + 23)   -- r60
   return { { x, lk.y + 8 }, { x, lk.y + 16 }, { x, lk.y + 23 } }
 end
 
 -- HandleNudging (kLink_Move_Helper6_tab0..3): after a 1 px corner slide, the
 -- two cells on the side Link slid to must be free, else the slide is undone
-local NY0 = { 8, 8, 23, 23, 8, 23, 8, 23 }
-local NX0 = { 0, 15, 0, 15, 0, 0, 15, 15 }
-local NY1 = { 23, 23, 8, 8, 8, 23, 8, 23 }
-local NX1 = { 0, 15, 0, 15, 15, 15, 0, 0 }
+-- (r35: read from the ROM at import, RomTablesSpec "doors.*")
+local RT = require("src.zelda.alttp.RomTables")
+local NY0, NX0 = RT.get("doors.nudgeY0"), RT.get("doors.nudgeX0")
+local NY1, NX1 = RT.get("doors.nudgeY1"), RT.get("doors.nudgeX1")
 local function nudging(g, lk, dirMoved, r14, r0)
   local p
   if band(dirMoved, 2) == 0 then p = band(dirMoved, 1) ~= 0 and 4 or 0
@@ -184,6 +201,7 @@ local function checkY(g, lk, yv, orth, incap)
       if band(r14, 5) ~= 0 then
         snapY(lk, py, yv)
         -- CalculateSnapScratch_Y: towards the doorway
+        lk.slopeD = 0   -- r60: +0x172B = 0 on this path (0x08094FBC)
         lk.x = lk.x + (band(r14, 4) ~= 0 and -1 or 1)
         lk.doorway = 0
         if band(r14, 0x20) ~= 0 and band(r14, 1) == 0 and lk.x % 8 == 1 then lk.x = lk.x - 1 end
@@ -196,6 +214,7 @@ local function checkY(g, lk, yv, orth, incap)
     end
   end
   lk.doorway = 0
+  if require("src.zelda.alttp.Slope60").afterY(lk, yv, r14) then return end   -- r60: FlagMovingIntoSlopes_Y
   return bonkY(g, lk, r14, py, yv, orth, dir)
 end
 
@@ -232,6 +251,7 @@ local function checkX(g, lk, xv, orth, incap)
         lk.doorway = 0
         snapX(lk, xv)
         -- CalculateSnapScratch_X
+        lk.slopeD = 0   -- r60: +0x172B = 0 on this path (0x0809649C)
         lk.y = lk.y + (band(r14, 4) ~= 0 and -1 or 1)
         lk.doorSlides = (lk.doorSlides or 0) + 1
         return
@@ -240,6 +260,7 @@ local function checkX(g, lk, xv, orth, incap)
     return
   end
   lk.doorway = 0
+  if require("src.zelda.alttp.Slope60").afterX(lk, xv, r14) then return end   -- r60: FlagMovingIntoSlopes_X
   return bonkX(g, lk, r14, xv, orth, dir)
 end
 
@@ -249,10 +270,15 @@ local function limitDirections(g, lk, dir)
   if band(dir, 0xC) == 0 or band(dir, 3) == 0 then return dir, 0 end
   local maskA, maskB = 0xF, 0xF
   local MASKS = { [0] = 7, 0xB, 0xD, 0xE }
+  local w80 = W80(lk)   -- r80: TileDetect_Diagonal's points and the masks from the import
+  if w80 then MASKS = w80.mask end
+  local W = w80 and require("src.zelda.alttp.Walk80")
   local dv = band(dir, 8) ~= 0 and 0 or 1
   local yy = lk.y + (dv == 0 and 7 or 24)
-  local a1, v1 = detect(g, lk.x, yy, 1)
-  local a2, v2 = detect(g, lk.x + 15, yy, 2)
+  local xa, xb = lk.x, lk.x + 15
+  if W then yy, xa, xb = W.diag(w80, lk, dv) end
+  local a1, v1 = detect(g, xa, yy, 1)
+  local a2, v2 = detect(g, xb, yy, 2)
   local r14, var1 = bor(a1, a2), (v1 or v2 or 0)
   if band(r14, 0x30) ~= 0 and band(var1, 2) == 0 and band(rshift(band(r14, 0x30), 4), dir) == 0 then
     maskA = MASKS[band(dir, 2) ~= 0 and 2 or 3]
@@ -261,8 +287,10 @@ local function limitDirections(g, lk, dir)
   end
   local dh = band(dir, 2) ~= 0 and 2 or 3
   local xx = lk.x + (dh == 2 and -1 or 16)
-  local b1, w1 = detect(g, xx, lk.y + 8, 1)
-  local b2, w2 = detect(g, xx, lk.y + 23, 2)
+  local ya, yb = lk.y + 8, lk.y + 23
+  if W then xx, ya, yb = W.diag(w80, lk, dh) end
+  local b1, w1 = detect(g, xx, ya, 1)
+  local b2, w2 = detect(g, xx, yb, 2)
   r14, var1 = bor(b1, b2), (w1 or w2 or 0)
   if band(r14, 0x30) ~= 0 and band(var1, 2) ~= 0 and band(rshift(band(r14, 0x30), 2), dir) == 0 then
     maskB = MASKS[band(dir, 8) ~= 0 and 0 or 1]
@@ -276,6 +304,8 @@ local function moveAxis(coord, sub, vel)
   local tmp = sub + vel * 16 + coord * 256
   return math.floor(tmp / 256), tmp % 256
 end
+
+D.checkY, D.checkX, D.limitDirections = checkY, checkX, limitDirections   -- r67: Ice67.lua's slide uses the same collision
 
 -- one frame of Link walking indoors. inp: { up, down, left, right }.
 function D.move(g, inp)
@@ -296,19 +326,31 @@ function D.move(g, inp)
     elseif band(dir, 2) ~= 0 then lk.facing = Link.LEFT else lk.facing = Link.RIGHT end
   end
   local mdir, orth = limitDirections(g, lk, dir)
+  local SL60 = require("src.zelda.alttp.Slope60")   -- r60: walking along a slope (0x08093AE0)
+  local slid = SL60.direction(lk, mdir) ~= mdir
+  mdir = SL60.direction(lk, mdir)
   if orth == 2 then orth = (lk.facing == Link.LEFT or lk.facing == Link.RIGHT) and 2 or 1 end
   local dx = (band(mdir, 1) ~= 0 and 1 or 0) - (band(mdir, 2) ~= 0 and 1 or 0)
   local dy = (band(mdir, 4) ~= 0 and 1 or 0) - (band(mdir, 8) ~= 0 and 1 or 0)
   local diag = dx ~= 0 and dy ~= 0
+  if slid then diag = band(dir, 0xC) ~= 0 and band(dir, 3) ~= 0 end   -- r60: +0x172A from the keys
   local vel = t.speedMod[lk.speedSetting + (diag and 1 or 0) + 1]
   local x0, y0 = lk.x, lk.y
   if dx ~= 0 then lk.x, lk.subX = moveAxis(lk.x, lk.subX, dx * vel) end
   if dy ~= 0 then lk.y, lk.subY = moveAxis(lk.y, lk.subY, dy * vel) end
   local xv, yv = lk.x - x0, lk.y - y0
+  -- r60 (Slope60): 0x0809407C clears the diagonal kind; diagonal keys run
+  -- the slope pre-step unless +0x172B & 0x30; the cardinal checks skip Y /
+  -- X while +0x172B & 0x20 / 0x10 (0x0809E650)
+  lk.slopeK = nil
+  if band(lk.slopeD or 0, 0x30) == 0 then
+    xv, yv = SL60.diagonal(lk, xv, yv, function(d) detect3(g, probesX(lk, d)) end,
+                           function(d) detect3(g, (probesY(lk, d))) end)
+  end
   lk.velX, lk.velY = xv, yv
   local incap = g.recoil ~= nil
-  if yv ~= 0 then checkY(g, lk, yv, orth, incap) end
-  if xv ~= 0 then checkX(g, lk, xv, orth, incap) end
+  if yv ~= 0 and band(lk.slopeD or 0, 0x20) == 0 then checkY(g, lk, yv, orth, incap) end
+  if xv ~= 0 and band(lk.slopeD or 0, 0x10) == 0 then checkX(g, lk, xv, orth, incap) end
   -- TileDetect_MainHandler(0): the attribute under Link (x + 8, y + 20)
   lk.tileBelow = g.interior:attrAt(lk.x + 8, lk.y + 20)
   -- walk cycle (as Link:update)
@@ -351,8 +393,28 @@ end
 D.START_SHIFT = { down = { 0, 16 }, right = { 8, 0 }, left = { -8, 0 }, up = { 0, 0 } }
 
 -- kStaircaseTab2 by transition (0 down, 1 up, 2 right, 3 left) and landing kind
-local TAB2 = { 12, 32, 48, 56, 72, -44, -40, -64, -64, -88, 12, 24, 40, 48, 64, -28, -40, -56, -64, -80 }
+-- (r35: the GBA's copy, read at import; its entry 10 is 16 where the SNES has 12)
+local TAB2 = RT.get("doors.stairTab2")
 local TRANS = { down = 0, up = 1, right = 2, left = 3 }
+
+-- r37: how far DungeonTransition_ScrollRoom (0x0806C6F0) carries Link, from
+-- the import: the scroll steps |step| px a frame between the camera bounds
+-- (vertical: the upper page's bottom bound to the lower page's top one;
+-- horizontal: one page's bound to the next), Link moves step px on every
+-- frame from the counter's kStaircaseTab4 value to the last one. The GBA's
+-- 240 x 160 view scrolls less vertically than the SNES's, and its table is
+-- lowered to match (the port had the SNES's table over a 64-step scroll).
+D.MOVED = {}
+RT.onBind(function()
+  local step, tab4 = RT.get("doors.scrollStep"), RT.get("doors.stairTab4")
+  local bv, bh = RT.get("doors.boundsV"), RT.get("doors.boundsH")
+  local dist = { [0] = bv[2] - bv[3], bv[2] - bv[3], bh[1] - bh[0], bh[1] - bh[0] }
+  for dir, i in pairs(TRANS) do
+    local frames = math.floor(dist[i] / math.abs(step[i]))
+    local px = (frames - tab4[i] + 1) * step[i]
+    D.MOVED[dir] = (i < 2) and { 0, px } or { px, 0 }
+  end
+end)
 
 -- CalculateTransitionLanding: the attribute under Link's centre
 function D.landingKind(g, ox, oy)
@@ -372,11 +434,9 @@ end
 function D.landing(g, dir)
   local lk = g.link
   local tr = TRANS[dir]
-  -- DungeonTransition_ScrollRoom moves Link 4 px a frame once its counter
-  -- reaches kStaircaseTab4 (52 / 52 / 59 / 58) of the 64-step scroll: 13 / 13
-  -- / 6 / 7 steps, 52 px vertically, 24 right, 28 left, before the landing
-  local MOVED = { down = { 0, 52 }, up = { 0, -52 }, right = { 24, 0 }, left = { -28, 0 } }
-  local mv = MOVED[dir]
+  -- DungeonTransition_ScrollRoom moves Link with the scroll once its counter
+  -- reaches kStaircaseTab4 (D.MOVED, built from the import), before the landing
+  local mv = D.MOVED[dir]
   local kind = D.landingKind(g, mv[1], mv[2])
   local a = kind
   if a == 2 then a = 1 elseif a == 4 then a = 2 end
@@ -391,5 +451,7 @@ function D.landing(g, dir)
   else page = math.floor((lk.x + mv[1]) / 256) * 256 end
   return axis, page + start, page + target, kind
 end
+
+D._checkY, D._checkX, D._probesY, D._probesX = checkY, checkX, probesY, probesX   -- r54: Swim54.lua (indoor swimming)
 
 return D

@@ -15,8 +15,7 @@ local ObjStatic = {}
 
 local CFG = 0x08121EF8
 -- furniture.c sCfgTable: the tables cfg->y names when flags & $8000
-local SUB = { 0x08122128, 0x08122198, 0x081221A8, 0x081221B8, 0x081221C8,
-              0x081221D8, 0x081221E8, 0x081221F8, 0x08122208 }
+local SUB = require("src.zelda.tmc.RomTables").t("ObjStatic.SUB")
 
 local function cfgReader(A)
   if A._furnCfg == nil then

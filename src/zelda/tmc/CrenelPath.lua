@@ -87,7 +87,7 @@ local function tileAt(f, x, y, layer)
 end
 
 -- sub_08094980: replace `from` by `to` at the point and the four 8 px around it
-local AROUND = { { 0, 0 }, { -8, 0 }, { 8, 0 }, { 0, 8 }, { 0, -8 } }
+local AROUND = require("src.zelda.tmc.RomTables").t("CrenelPath.AROUND")
 function CP.replaceAround(f, x, y, layer, from, to)
   for _, o in ipairs(AROUND) do
     local px, py = x + o[1], y + o[2]
@@ -98,7 +98,7 @@ function CP.replaceAround(f, x, y, layer, from, to)
 end
 
 -- gUnk_08122A18: where the poured water lands, by facing
-local POUR_AT = { [0] = { 0, -8 }, { 8, 1 }, { 2, 8 }, { -8, 1 } }
+local POUR_AT = require("src.zelda.tmc.RomTables").t("CrenelPath.POUR_AT")
 
 local function pourLand(f, p, contents)
   local o = POUR_AT[math.floor(p.animationState / 2)]
@@ -115,7 +115,7 @@ local function pourLand(f, p, contents)
 end
 
 -- gUnk_080B7878: the swing's water probe for the frame byte's low nibble
-local SWING_PROBE = { { 0, -16 }, { 16, -16 }, { 16, 0 }, { 16, 16 }, { 0, 16 }, { -16, 16 }, { -16, 0 }, { -16, -16 }, { 0, 0 } }
+local SWING_PROBE = require("src.zelda.tmc.RomTables").t("CrenelPath.SWING_PROBE")
 
 local function catchSource(f, p)
   local fx, fy = p:frontPoint(10)
@@ -133,6 +133,13 @@ local function finish(p)
   p.state = "normal"
   p.extUpdate = nil
   p.animId = -1
+end
+
+-- round 56: the empty bottle's flipX (playerItemBottle.c sub_0801BDE8): Link's flipX ^ ((animationState >> 1) & 1)
+function CP.swingFlip56(pl)
+  local fx = pl.anim:hflip()
+  if band(rshift(pl.animationState or 4, 1), 1) == 1 then fx = not fx end
+  return fx
 end
 
 function CP.useBottle(p, item, button)
@@ -154,7 +161,10 @@ function CP.useBottle(p, item, button)
         caught = catchSource(f, pl)
         if not caught and band(fl, 0xF) ~= 0 then
           local o = SWING_PROBE[band(fl, 0xF)]
-          if o and act(f, pl.x + (pl.anim:hflip() and -o[1] or o[1]), pl.y + o[2], pl.layer) == ACT_WATER then caught = B_WATER end
+          -- round 56: the bottle's own flipX = Link's flipX ^ ((animationState >> 1) & 1) (playerItemBottle.c
+          -- sub_0801BDE8), so facing left / right the probe's x is mirrored the other way from Link's sprite
+          local fx56 = CP.swingFlip56(pl)
+          if o and act(f, pl.x + (fx56 and -o[1] or o[1]), pl.y + o[2], pl.layer) == ACT_WATER then caught = B_WATER end
         end
         if caught then
           -- sub_0801B9F0: the new contents' item get
@@ -332,7 +342,7 @@ local function carryUpdate(f, p, e, input)
   e.z = p.minish and 10 or 16
   -- the throw target: the tile ahead (gUnk_08123184), only into a hole
   local s = math.floor(p.animationState / 2)
-  local off = ({ [0] = { 0, -16 }, { 16, 0 }, { 0, 16 }, { -16, 0 } })[s]
+  local off = require("src.zelda.tmc.RomTables").t("CrenelPath.THROW_OFF")[s]
   local tx = bor(band(math.floor(e.x + off[1]), bit.bnot(15)), 8)
   local ty2 = bor(band(math.floor(e.y + off[2]), bit.bnot(15)), 8)
   e.targetX, e.targetY = tx, ty2

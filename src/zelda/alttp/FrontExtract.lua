@@ -19,7 +19,8 @@
 --        then the name screen's BG0 / BG2 / BG1 maps (3 x 0x800)
 --   assets/generated/alttp/front_game.bin  VRAM image (0x18000) of task 6
 --   data/generated/alttp_front.lua         the two screens' palettes
---        (BG + OBJ, 256 colours each)
+--        (BG + OBJ, 256 colours each) and (round 36) `layouts`: each
+--        screen's OAM rows and display registers, from FrontRun
 -- Not taken: the letters of the name grid and the names on the file
 -- panels, which the cartridge renders at run time with its own font
 -- (0x0800EE50, base *0x03000030 = 0x0854F7E8; the glyph format is not
@@ -91,8 +92,44 @@ function F.run(rom, cache, tick)
   local row7 = colours(rom, f.filePalObj7, 16)
   for i = 1, 16 do info.fileObj[7 * 16 + i] = row7[i] end
   check(info.fileBg[1] == info.fileBg[1] and #info.gameObj == 256, "front-end palettes")
+  -- round 36: the screens' OBJ layouts and display registers, from the
+  -- cartridge's own code run in FrontRun (nothing of them ships)
+  info.layouts = F.layouts(rom, function(i, n) if tick then tick(2 + i / n, 3) end end)
   assert(cache:write(F.FILES.info, S.encode(info)))
   if tick then tick(3, 3) end
+end
+
+-- round 36: what a player does to see each screen (ours: frames of the
+-- interpreter's run, chosen so each snapshot is the animation phase the
+-- port showed since round 13): START at the title, A on the empty file 1,
+-- A (a letter), START (to END), A (END: the file is saved), A on the file.
+-- GBA keys: A 1, START 8.
+F.PLAN = {
+  keys = { [290] = 8, [424] = 1, [500] = 1, [520] = 8, [540] = 1, [960] = 1 },
+  shots = { [419] = "fileEmpty", [484] = "name", [820] = "fileUsed", [1150] = "game" },
+  tasks = { fileEmpty = 8, name = 8, fileUsed = 8, game = 6 },
+  last = 1150,
+}
+
+-- runs the cartridge's front end (FrontRun) and keeps each screen's OAM
+-- rows {x, y, shape, size, tile, palette, h flip, v flip, priority} and
+-- its BG control / scroll / blend registers
+function F.layouts(rom, tick)
+  local FR = require("src.zelda.alttp.FrontRun")
+  local ok, shots = pcall(FR.boot, rom.data, F.PLAN, tick)
+  check(ok, "the front end did not run: %s", tostring(shots))
+  local out = { oam = {}, io = {} }
+  for _, name in pairs(F.PLAN.shots) do
+    local s = shots[name]
+    check(s ~= nil, "no %s screen", name)
+    check(s.task == F.PLAN.tasks[name], "%s: task %s, expected %d", name, tostring(s.task), F.PLAN.tasks[name])
+    check(#s.oam >= 10, "%s: %d sprites", name, #s.oam)
+    out.oam[name] = s.oam
+    out.io[name] = s.io
+  end
+  -- the used file shows more than the empty one (its hearts, its name)
+  check(#out.oam.fileUsed > #out.oam.fileEmpty, "the used file's sprites")
+  return out
 end
 
 function F.files()

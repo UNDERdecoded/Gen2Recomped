@@ -163,9 +163,16 @@ M.FIGHTS = {}
 M.FOLLOWER = 6
 M.CRYSTAL = 0x20
 M.CRYSTAL_BYTE = 0x5A
-M.MSG_BLIND_MAIDEN = 0x122
-M.MSG_UNDERSTAND, M.MSG_WAY = 0x13A, 0x139
-M.MSG_TRIFORCE = 0x173
+-- r36: read at import from the cartridge's calls (RomTablesSpec "msg.ending")
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.ending")
+  M.MSG_UNDERSTAND, M.MSG_WAY = t.understand, t.way
+end)
+-- r37: the blind maiden's thanks and the Triforce's (RomTablesSpec "msg.story37")
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.story37")
+  M.MSG_BLIND_MAIDEN, M.MSG_TRIFORCE = t.blindMaiden, t.triforce
+end)
 M.RISE_TOP = 0x49
 M.CELL_ROOM, M.BLIND_ROOM, M.GANON_ROOM = 0x45, 0xAC, 0x00
 
@@ -567,7 +574,8 @@ end
 local function initTrail(game, x, y, facing)
   local tr = {}
   for i = 0, 19 do tr[i] = { x, y, facing or 2, 0 } end
-  game.maidenTrail = { t = tr, v1 = 0, v2 = 0, key = game.omKey and game:omKey(), walkT = 0, flags = 0 }
+  -- r66: tagalong_event_flags outlive the room (cleared going in or out of doors: followerFrame)
+  game.maidenTrail = { t = tr, v1 = 0, v2 = 0, key = game.omKey and game:omKey(), walkT = 0, flags = game.maidenFlags or 0 }
   return game.maidenTrail
 end
 function M.becomeFollower(game, x, y)
@@ -650,6 +658,7 @@ local function followerTrigger(game)
       local dx, dy = math.abs(lx + 12 - (e.x + 8)), math.abs(ly + 12 - (e.y + 8))
       if dx < 24 and dy < 28 and band(e.bit, tr.flags or 0) == 0 then
         tr.flags = bor(tr.flags or 0, e.bit)
+        game.maidenFlags = tr.flags   -- r66
         game:showMessage(bmg(e.msg))
         game.maidenTalks = (game.maidenTalks or 0) + 1
         return
@@ -663,6 +672,8 @@ function M.followerFrame(game)
   local p = game.progress
   if (p.follower or 0) ~= M.FOLLOWER then return end
   local lk = game.link
+  -- r66: tagalong_event_flags (RAM) are cleared going in or out of doors (as OldMan.lua)
+  if game.maidenFlagState ~= game.state then game.maidenFlagState, game.maidenFlags = game.state, 0 end
   local key = game.omKey and game:omKey()
   local tr = game.maidenTrail
   if not tr or tr.key ~= key then tr = initTrail(game, lk.x, lk.y, lk.facing) end
@@ -1070,10 +1081,13 @@ function M.install(G, D)
     local c = self.crystal27
     if c and not self.headless and love and love.graphics then
       local cam = self.roomCam or { x = 0, y = 0 }
+      -- r66: the view's own origin (Zoom.lua: a zoomed-out field is wider than
+      -- 240 x 160; the room cam put the lit Link / the maiden off his spot)
+      if self.viewOrigin then local vx, vy = self:viewOrigin(cam.x, cam.y); cam = { x = vx, y = vy } end
       local lg = love.graphics
       if c.phase == "dark" or c.phase == "maiden" then
         lg.setColor(0, 0, 0.08, c.phase == "dark" and math.min(0.7, c.t / 32 * 0.7) or 0.7)
-        lg.rectangle("fill", 0, 0, 240, 160)
+        lg.rectangle("fill", 0, 0, self.viewW or 240, self.viewH or 160)
         lg.setColor(1, 1, 1, 1)
         if not self.zoomOverlay then self:drawHud() end
       end
@@ -1105,6 +1119,7 @@ function M.install(G, D)
         local q = tr.t[tr.v2]
         local SD = { [0] = 3, 2, 1, 0 }              -- facing >> 1 (up, down, left, right) -> sprite D
         local moving = tr.v1 ~= tr.v2
+        if require("src.zelda.alttp.Tagalong65").draw(self, spr, tr) then return dl0(self, lk, tint) end   -- r65: Tagalong_Draw
         M.drawMaiden(spr, false, SD[math.floor((q[3] or 2) / 2)] or 2,
                      moving and band(rshift(tr.walkT or 0, 2), 1) or 0, q[1] - self.cam.x, q[2] - self.cam.y,
                      band(spr.info.flags3 and spr.info.flags3[M.BLIND_MAIDEN + 1] or 0x0B, 0x0F))

@@ -29,10 +29,18 @@ H.COLS, H.ROWS = 32, 6
 H.SCROLL_X = 8
 H.BLANK = 0x7F
 
--- the new-game stats of the cartridge (3 hearts, empty counters)
+-- the new-game stats of the cartridge. r37: read at import from its new
+-- game routine 0x0806BDB8 (RomTablesSpec "newfile"): the save area
+-- 0x02002000 is filled with the fill value (`movs r4` at 0x0806BDBE), then
+-- the health and its capacity (0x0200234C / D) get one `movs r1` value.
+-- keys 0xFF ("outside a dungeon", the HUD hides them) is what an entrance
+-- sets; the port starts with it (OURS).
+H.NEW = require("src.zelda.alttp.RomTables").get("newfile")
 function H.newStats()
-  return { health = 24, healthMax = 24, magic = 0, rupees = 0, bombs = 0,
-           arrows = 0, keys = 0xFF, bombLevel = 0, arrowLevel = 0 }
+  local n = H.NEW
+  local z = n.fill or 0
+  return { health = n.health, healthMax = n.health, magic = z, rupees = z, bombs = z,
+           arrows = z, keys = 0xFF, bombLevel = z, arrowLevel = z }
 end
 
 local function digits(v, n)

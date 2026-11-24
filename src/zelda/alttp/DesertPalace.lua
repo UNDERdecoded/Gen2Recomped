@@ -643,7 +643,7 @@ function DP.wallFrame(game)
       done = inside.floorDx >= (tb.wallTab[h + 1] or 0x41) and inside.floorDx >= (tb.wallTab[h + 5] or 0x49)
     else
       -- (kMovingWall_Tab1: -63 .. ; the GBA keeps the SNES values there)
-      local t1 = { -63, -127, -191, -255, -71, -135, -199, -263 }
+      local t1 = require("src.zelda.alttp.RomTables").get("dpal.wallTab1")   -- r35: read at import
       done = inside.floorDx < t1[h + 1] and inside.floorDx < t1[h + 5]
     end
     if done then

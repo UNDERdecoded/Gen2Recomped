@@ -12012,5 +12012,7 @@ require("src.import.AndroidStorage").install(RomImporter)
 -- Tools -> Restore a Save: every backup of a slot, with a Restore button
 -- (src/import/LauncherRestore.lua, docs/save-safety.md)
 require("src.import.LauncherRestore").install(RomImporter)
+-- the controller in the sidebar launcher: B = back, START = play / GAMES (src/import/LauncherPad.lua)
+require("src.import.LauncherPad").install(RomImporter)
 
 return RomImporter

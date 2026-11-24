@@ -97,7 +97,7 @@ local function animStateFor(angle)
   return s
 end
 
-local DIR_TABLE = { [0] = 0, 0, 2, 2, 2, 2, 4, 4, 4, 4, 6, 6, 6, 6, 0, 0 }
+local DIR_TABLE = require("src.zelda.tmc.RomTables").t("Script.DIR_TABLE")
 
 local function lookAt(ent, ctx, x, y)
   ctx.unk19 = 8
@@ -254,10 +254,17 @@ C[0x1D] = function(e, ctx, host) ctx.condition = host:kinstoneFused(arg(ctx, 1))
 C[0x20] = function(e, ctx) ctx.condition = band(ctx.intVariable, arg(ctx, 1)) ~= 0 and 1 or 0; keepGoing() end
 C[0x21] = function(e, ctx) local t = arg(ctx, 1); ctx.condition = band(t, ctx.intVariable) == t and 1 or 0; keepGoing() end
 C[0x22] = function(e, ctx) ctx.condition = arg(ctx, 1) == ctx.intVariable and 1 or 0; keepGoing() end
-C[0x23] = function(e, ctx, host) ctx.condition = band(word(ctx), host.player.flags or 0) ~= 0 and 1 or 0; keepGoing() end
+-- CheckPlayerFlags: gPlayerState.flags; the port keeps some bits as player
+-- fields (round 44: PL_MINISH $80 = p.minish, PL_CLONING $400000 = p.cloning,
+-- FourSword.lua) -- the Sanctuary's script_08013F94 waits for PL_CLONING
+C[0x23] = function(e, ctx, host)
+  local p = host.player
+  local fl = bor(p.flags or 0, p.minish and 0x80 or 0, p.cloning and 0x400000 or 0)
+  ctx.condition = band(word(ctx), fl) ~= 0 and 1 or 0; keepGoing()
+end
 C[0x24] = function(e, ctx, host) ctx.condition = host.player.minish and 1 or 0; keepGoing() end
 C[0x25] = function(e, ctx) ctx.condition = (e.z or 0) ~= 0 and 1 or 0; keepGoing() end
-C[0x26] = function(e, ctx, host) ctx.condition = arg(ctx, 1) == (host.player.action or 1) and 1 or 0; keepGoing() end
+C[0x26] = function(e, ctx, host) ctx.condition = arg(ctx, 1) == (host.player.state == "portal" and 0x1F or host.player.action or 1) and 1 or 0; keepGoing() end -- round 70: using / growing at a portal is not PLAYER_NORMAL
 C[0x27] = function(e, ctx, host) ctx.condition = arg(ctx, 1) == host.player.animationState and 1 or 0; keepGoing() end
 C[0x28] = function(e, ctx) active.syncFlags = bor(active.syncFlags, word(ctx)) end
 C[0x29] = function(e, ctx) active.syncFlags = band(active.syncFlags, bnot(word(ctx))) end
@@ -289,7 +296,7 @@ C[0x37] = function(e, ctx, host) if host:fadeActive() then stay() end end
 -- fades: SetFade4..7 = FADE_INSTANT (in), | IN_OUT (out), | BLACK_WHITE
 -- (white); 0x40 / 0x41 are the iris fades; all at the SetFadeTime speed
 C[0x38] = function(e, ctx, host) host.fadeSpeed = arg(ctx, 1) end
-C[0x39] = function() end
+C[0x39] = function(e, ctx, host) host.fadeMask70, host.fadeMask70Room = word(ctx), host.room end -- round 70: SetFadeMask (Fade70.lua)
 C[0x3A] = function(e, ctx, host) host:fade("invert", nil, host.fadeSpeed) end
 C[0x3B] = function() end
 C[0x3C] = function(e, ctx, host) host:fade("in", false, host.fadeSpeed) end
@@ -304,9 +311,11 @@ C[0x41] = function(e, ctx, host)
   if host.fadeIris then host:fadeIris(true, host.fadeSpeed) else host:fade("out", false, host.fadeSpeed) end
 end
 C[0x42] = function() end
-C[0x43] = function(e, ctx, host) host.player.control = false; host.player.moving = false end
-C[0x44] = function(e, ctx, host) host.player.control = true end
-C[0x45] = function(e, ctx, host) host.player.control = false end
+-- round 39: ctlMode (Field:startPlayerScript) follows the control mode
+-- these set while a player script runs, for its end
+C[0x43] = function(e, ctx, host) host.player.control = false; host.player.moving = false; if host.player.ctlMode ~= nil then host.player.ctlMode = false end end
+C[0x44] = function(e, ctx, host) host.player.control = true; if host.player.ctlMode ~= nil then host.player.ctlMode = true end end
+C[0x45] = function(e, ctx, host) host.player.control = false; if host.player.ctlMode ~= nil then host.player.ctlMode = false end end
 C[0x46] = function() end
 C[0x47] = function(e, ctx, host) if host.startPlayerScript then host:startPlayerScript(word(ctx)) end end
 C[0x48] = function(e, ctx, host) host.player.scriptAnim = arg(ctx, 1) end

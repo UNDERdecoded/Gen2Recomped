@@ -100,12 +100,43 @@ function M.cloneTile(f, p)
   if f.cloneTiles and f.cloneTiles[key] == f.room then return end -- SPECIAL_TILE_22 on a used tile
   local n = M.CLONES[cs.swordType or 0] or 0
   local have = #(clones(f) or {})
-  if have < n then newClone(f, p, have) end
-  if #(clones(f) or {}) >= n then
+  -- round 37: as the cartridge, a free slot makes a clone; only a clone
+  -- tile stepped on with every slot full sets PL_CLONING (n + 1 tiles: the
+  -- old code split on the n-th tile)
+  if have < n then newClone(f, p, have)
+  else
     p.cloning = true
     p.x = band(math.floor(p.x), 0xFFF0) + 8
     p.y = band(math.floor(p.y), 0xFFF0) + 8
   end
+end
+
+-- round 50: include/collision.h bits and playerClone.c PlayerCloneCollisions
+M.COL = { NW = 0x2, NE = 0x4, NF = 0x6, SW = 0x20, SE = 0x40, SF = 0x60, WS = 0x200, WN = 0x400, WF = 0x600,
+          ES = 0x2000, EN = 0x4000, EF = 0x6000 }
+M.COL_ALL = 0x6666
+M.CLONE_PATTERNS = { M.COL.NF + M.COL.WS + M.COL.ES, M.COL.NE + M.COL.SE + M.COL.EF,
+                     M.COL.SF + M.COL.WN + M.COL.EN, M.COL.NW + M.COL.SW + M.COL.WF }
+-- the clone's collisions with Link's own box and tables (Player.lua's
+-- HW 4 / TOP -5 / BOTTOM 2, isSolidPlayer table 0): each side's two corner
+-- probes one pixel past the box
+function M.cloneCollisions(room, x, y, layer, p)
+  do local c82 = require("src.zelda.tmc.Clone82").collisions(room, x, y, layer, p) if c82 then return c82 end end -- round 82: the cartridge's sensors (Clone82.lua)
+  local function s(px, py)
+    if room.isSolidPlayer then return room:isSolidPlayer(px, py, layer, 0, false) end
+    return room:isSolid(px, py, layer)
+  end
+  local hw, top, bottom = 4, -5, 2
+  local C, c = M.COL, 0
+  if s(x - hw, y + top - 1) then c = bor(c, C.NW) end
+  if s(x + hw - 1, y + top - 1) then c = bor(c, C.NE) end
+  if s(x - hw, y + bottom + 1) then c = bor(c, C.SW) end
+  if s(x + hw - 1, y + bottom + 1) then c = bor(c, C.SE) end
+  if s(x - hw - 1, y + bottom) then c = bor(c, C.WS) end
+  if s(x - hw - 1, y + top) then c = bor(c, C.WN) end
+  if s(x + hw, y + bottom) then c = bor(c, C.ES) end
+  if s(x + hw, y + top) then c = bor(c, C.EN) end
+  return c
 end
 
 local function cloneUpdate(f, p, c, cs)
@@ -126,18 +157,27 @@ local function cloneUpdate(f, p, c, cs)
   if (p.invuln or 0) >= 1 then cs.action = 1 return false end
   c.x, c.y, c.layer = math.floor(p.x) + c.ox, math.floor(p.y) + c.oy, p.layer
   c.frame, c.sprite, c.flip, c.animationState = p.anim.frame, p:sprite(), p.hflip and p:hflip() or false, p.animationState
-  if f.room:isSolid(c.x, c.y - 2, c.layer) then
+  -- round 50: PlayerClone_Action2's test on the clone's tile collisions
+  -- (sub_080085B0, Link's own probes): boxed in on all four sides -> the
+  -- clones go at once; one PlayerCloneCollisions pattern (a wall against a
+  -- face) -> 30 blinking frames, then they go; else it stays.  (Before: "the
+  -- spot is solid", which killed a clone in a one-tile corridor, e.g. the
+  -- archway of FoW $58:02 the clone walks through to its button.)
+  local col = M.cloneCollisions(f.room, c.x, c.y, c.layer, p)
+  local hit = band(col, M.COL_ALL) == M.COL_ALL
+  if not hit then
+    for _, pat in ipairs(M.CLONE_PATTERNS) do if band(col, pat) == pat then hit = true break end end
+    if not hit then c.timer, c.draw = 0, true return true end
     if c.timer ~= 0 then
       c.timer = c.timer - 1
       if c.timer ~= 0 then c.draw = not c.draw return true end
-      cs.action = 1
-      return false
+    else
+      c.timer = 30
+      return true
     end
-    c.timer = 30
-    return true
   end
-  c.timer, c.draw = 0, true
-  return true
+  cs.action = 1
+  return false
 end
 
 -- the clones' swords: Link's sword box at each clone
@@ -148,7 +188,10 @@ local function cloneSwords(f, p)
   for _, c in ipairs(clones(f) or {}) do
     if c.action == 2 and not c.deleted then
       local dx, dy = c.x - math.floor(p.x), c.y - math.floor(p.y)
-      E:swordHits({ x = b.x + dx, y = b.y + dy, w = b.w, h = b.h })
+      local hurt = require("src.zelda.tmc.FourSword89").cloneHurt(f, p) -- round 89: the clone's move is Link's (a spin hits as a spin, the boss parts too)
+      f.swordHurt31 = hurt
+      E:swordHits({ x = b.x + dx, y = b.y + dy, w = b.w, h = b.h }, hurt) -- round 84: playerClone.c: the clone's sword is Link's (field_0x68)
+      f.swordHurt31 = nil
     end
   end
 end

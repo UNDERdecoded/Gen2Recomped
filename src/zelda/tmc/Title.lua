@@ -94,7 +94,7 @@ function Title:createObjects()
   local nextBank = 4
   A.objPalRaw = A.objPalRaw or A.store:read("objpal.bin") or ""
   -- type 0 creates 1, 2 (USA: language 1) and 4
-  for _, ty in ipairs({ 0, 1, 2, 4 }) do
+  for _, ty in ipairs(require("src.zelda.tmc.RomTables").fresh("Title.L97")) do
     local form = def and def.forms and def.forms[ty]
     if form and t then
       local gfx = A:fixedGfx(form.gfx)

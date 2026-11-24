@@ -22,7 +22,7 @@ local PB = {}
 local OBJ_PUSHED_BLOCK = 0x07
 local DIRS = { [0x360] = "any", [0x361] = 0, [0x364] = 2, [0x362] = 4, [0x363] = 6 }
 local SFX_10F = 0x10F
-local BOX = { x = 0, y = 0, w = 5, h = 4 }
+local BOX = require("src.zelda.tmc.RomTables").t("PushBlock.BOX")
 
 local function update(d, e)
   local f = d.field
@@ -31,6 +31,7 @@ local function update(d, e)
   require("src.zelda.tmc.Hitboxes").pushOut(f, e, BOX)
   e.timer = e.timer - 1
   if e.timer <= 0 then
+    if require("src.zelda.tmc.PushBlock82").hazard(f, e) then e.deleted = true return end -- round 82: sub_0800442E (a pit / the sky: it falls)
     f:objects():setTileType(e.layer, e.dtx, e.dty, 0x365)
     e.deleted = true
   end

@@ -145,9 +145,9 @@ end
 -- ---------------------------------------------------------------------------
 -- Octorok (src/enemy/octorok.c)
 -- ---------------------------------------------------------------------------
-local WALK = { 30, 60, 60, 90 }       -- gOctorokWalkDuration
-local SPIT = { [0] = 1, 0 }           -- gOctorokSpitChanceModifier
-local NUT = { [0] = { 0, -3 }, { 4, 0 }, { 0, 2 }, { -4, 0 } } -- gOctorokNutOffset
+local WALK = require("src.zelda.tmc.RomTables").t("Enemies.OCTOROK_WALK")  -- gOctorokWalkDuration
+local SPIT = require("src.zelda.tmc.RomTables").t("Enemies.OCTOROK_SPIT")  -- gOctorokSpitChanceModifier
+local NUT = require("src.zelda.tmc.RomTables").t("Enemies.OCTOROK_NUT")    -- gOctorokNutOffset
 
 local function octoPause(e)
   e.action = 1
@@ -252,8 +252,8 @@ local function homeDir(e) return dirTo(e.x, e.y, e.homeX + e.rangeW / 2, e.homeY
 
 -- KEESE (keese.c): fly a random time (180-720), rest (30-75), sleep when
 -- Link is beyond $70 px; heading random in its home, homeward outside
-local KEESE_FLY = { 180, 180, 300, 300, 300, 300, 300, 300, 480, 480, 480, 480, 480, 480, 720, 720 }
-local KEESE_REST = { 30, 30, 45, 45, 45, 45, 45, 45, 60, 60, 60, 60, 60, 60, 75, 75 }
+local KEESE_FLY = require("src.zelda.tmc.RomTables").t("Enemies.KEESE_FLY")
+local KEESE_REST = require("src.zelda.tmc.RomTables").t("Enemies.KEESE_REST")
 function Enemies:keese(e)
   local p = self.field.player
   local near = math.abs(p.x - e.x) < 0x70 and math.abs(p.y - e.y) < 0x70
@@ -525,10 +525,13 @@ function Enemies:update(e)
   local f = self.field
   if e.projectile then return self:updateProjectile(e) end
   if e.dying then
+    if e.rmIdx and not e.rmMarked then require("src.zelda.tmc.RoomMemory49").killed(f, e) end -- round 49: EnemyDisableRespawn
     e.dying = e.dying - 1
     if e.dying <= 0 then
       e.deleted = true
       local tbl = self.m.drops and self.m.drops.enemyMap and self.m.drops.enemyMap[e.id] or 6
+      -- round 30: EnemyCreateDeathFX(.., $FF, item): DeathFx's drop function $F (CreateItemDrop(item))
+      if e.deathItem30 then f:objects():createItemDrop(e, e.deathItem30, 0); tbl = 0 end
       if tbl ~= 0 then f:objects():randomDrop(e, tbl) end
     end
     return
@@ -538,8 +541,26 @@ function Enemies:update(e)
   if e.iframes > 0 then e.iframes = e.iframes - 1 end
   if e.kbt > 0 then
     e.kbt = e.kbt - 1
-    local nx, ny = e.x + e.kbx, e.y + e.kby
-    if not f.room:isSolid(nx, ny, 1) then e.x, e.y = nx, ny end
+    -- round 40: Knockback1 / 2 (movement.c): CalculateEntityTileCollisions
+    -- on the entity's own collision layer, the hitbox side it moves toward,
+    -- each axis on its own (was: the centre point on layer 1, which in the
+    -- all-top-layer Cave of Flames let a hit push enemies into walls)
+    local L = (e.layer == 2) and 2 or 1
+    local hb = e.hitbox
+    local function blocked(x, y, sx, sy) -- the side it moves toward
+      if not hb then return f.room:isSolid(x, y, L) end
+      local hw, hh = math.max(2, hb.w or 2), math.max(2, hb.h or 2)
+      local cx, cy = x + (hb.x or 0), y + (hb.y or 0)
+      if sx ~= 0 then
+        local ex = sx > 0 and cx + hw - 1 or cx - hw
+        return f.room:isSolid(ex, cy - hh, L) or f.room:isSolid(ex, cy + hh - 1, L)
+      end
+      local ey = sy > 0 and cy + hh - 1 or cy - hh
+      return f.room:isSolid(cx - hw, ey, L) or f.room:isSolid(cx + hw - 1, ey, L)
+    end
+    local kx, ky = e.kbx or 0, e.kby or 0
+    if kx ~= 0 and not blocked(e.x + kx, e.y, kx, 0) then e.x = e.x + kx end
+    if ky ~= 0 and not blocked(e.x, e.y + ky, 0, ky) then e.y = e.y + ky end
   elseif e.stunned and e.stunned > 0 then
     e.stunned = e.stunned - 1
   elseif e.inert then -- round 7: HangingSeed_Hang does nothing
@@ -575,8 +596,13 @@ function Enemies:update(e)
     if touch == nil then
       touch = math.abs((e.x + hb.x) - p.x) < hb.w + 5 and math.abs((e.y + hb.y) - (p.y - 3)) < hb.h + 6
     end
+    -- round 43: arm_CalcCollision also tests z: |dz| <= depthA + depthB (5 + 5 for a flat hitbox;
+    -- SIMPLIFIED: Hitbox3D depths are not read) -- Link gliding or jumping over a blade trap is not hit
+    if touch and math.abs((p.z or 0) - (e.z or 0)) > 10 then touch = false end
     if touch and (handler == 1 or handler == 2) then touch = false end
+    if touch and require("src.zelda.tmc.Dive64").skips(f, e) then touch = false end -- round 64: a diving Link (collisionMask bit $10)
     if touch and handler == 16 then HBm.pushOut(f, e, hb); touch = false end
+    if touch and (handler == 11 or handler == 12) and not p:blocksFrom(e.x, e.y) and require("src.zelda.tmc.R31").contact(self, e, handler) then touch = false end -- round 31: CollisionFire / sub_08017C40 (PL_BURNING / PL_FROZEN)
     if touch then
       if p:blocksFrom(e.x, e.y) then
         f:sound(0x118)
@@ -664,7 +690,7 @@ function Enemies:hitByObject(o)
 end
 
 -- the sword's hitbox this frame, in room pixels {x, y, w, h} (half sizes)
-function Enemies:swordHits(box)
+function Enemies:swordHits(box, hurt) -- round 84: hurt = the swing's hurtType (Sword84), default HURT_SWORD
   local hits = 0
   local p = self.field.player
   for _, e in ipairs(self.field.entities) do
@@ -673,7 +699,7 @@ function Enemies:swordHits(box)
     elseif e.enemy and not e.dying then
       local hb = e.hitbox
       if math.abs((e.x + hb.x) - box.x) < hb.w + box.w and math.abs((e.y + hb.y) - box.y) < hb.h + box.h then
-        if self:hit(e, HURT_SWORD, p.x, p.y) then hits = hits + 1 end
+        if self:hit(e, hurt or HURT_SWORD, p.x, p.y) then hits = hits + 1 end
       end
     end
   end

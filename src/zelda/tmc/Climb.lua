@@ -27,10 +27,12 @@ Climb.ACT = { LADDER = 0x53, LADDER2 = 0xF1, AUTO = 0x3F, WALL = 0x50, WALL_TOP 
 local ITEM_GRIP_RING = 0x44
 local A_UP1, A_UP2, A_DOWN1, A_DOWN2, A_FROM_TOP, A_LEFT, A_RIGHT, A_TO_TOP =
   0x2CF, 0x2D0, 0x2D1, 0x2D2, 0x2D3, 0x2D4, 0x2D5, 0x2D6
-local SPEEDS = { [0] = 0, 0x40, 0x60, 0x80, 0x100, 0xC0 }          -- sub_08073094 sSpeeds
+local SPEEDS = require("src.zelda.tmc.RomTables").t("Climb.SPEEDS")          -- sub_08073094 sSpeeds
 -- special tiles that carry a climbing act tile (tiles.h: SPECIAL_TILE_23 /
 -- 20 / 142 / 143)
-local SPECIAL_ACT = { [0x4017] = 0x53, [0x4014] = 0xF1, [0x408E] = 0x50, [0x408F] = 0x51 }
+-- the act tiles of SPECIAL_TILE_23 / 20 / 142 / 143 (gMapSpecialTileToActTile, read from the ROM)
+local SPECIAL_TO_ACT = require("src.zelda.tmc.RomTables").t("Climb.SPECIAL_TO_ACT")
+local SPECIAL_CLIMB = { [0x4017] = true, [0x4014] = true, [0x408E] = true, [0x408F] = true }
 
 function Climb.actAt(f, x, y, layer)
   local r = f.room
@@ -38,7 +40,9 @@ function Climb.actAt(f, x, y, layer)
   local tx, ty = math.floor(x / 16), math.floor(y / 16)
   local t = r:tileType(layer or 1, tx, ty)
   if not t then return nil end
-  if t >= 0x4000 then return SPECIAL_ACT[t] end
+  local ov = r.actOverride34 and r.actOverride34[(layer or 1) * 0x10000 + ty * 64 + tx] -- round 34: SetActTileAtTilePos (Push34.actTile)
+  if ov then return ov end
+  if t >= 0x4000 then return SPECIAL_CLIMB[t] and SPECIAL_TO_ACT[t] or nil end
   return f.assets.actTile[t]
 end
 

@@ -16,6 +16,21 @@ R.MODULES = {
   "src.zelda.tmc.CoFRest27",       -- Cave of Flames cosmetics (steam overlay, Gleerok lava tiles)
   "src.zelda.tmc.CaveObjects",     -- caves / Royal Crypt / small dungeons: objects
   "src.zelda.tmc.CaveManagers",    -- caves / small dungeons: managers
+  "src.zelda.tmc.Pot30",           -- round 30: pot tile / shatter / thrown-object shadow (ROM_RANGES only)
+  "src.zelda.tmc.R31",             -- round 31: PL_FROZEN / PL_BURNING, CoF steam + lava tiles
+  "src.zelda.tmc.Furniture32",     -- round 32: pushable furniture + its manager
+  "src.zelda.tmc.Fusion32",        -- round 32: the world-event view after a fusion
+  "src.zelda.tmc.R33",             -- round 33: LIGHT_RAY_MANAGER (Minish Woods / barrel house light rays)
+  "src.zelda.tmc.R34",             -- round 34: beanstalks, dig caves, cloud overlay, room music, furniture push-out
+  "src.zelda.tmc.R37",             -- round 37: Minish Paths / rafters parallax, rain, small objects, Armos interiors
+  "src.zelda.tmc.Crypt73",         -- round 73: the Royal Crypt's room init, ENEMY_ITEM (Crypt73.lua)
+  "src.zelda.tmc.Veil74",          -- round 74: Veil Falls' room init (the Wind Crest), the Source of the Flow's stones
+  "src.zelda.tmc.Cloud75",         -- round 75: Cloud Tops' room code, the CLOUD object (bulges cleared, the great whirlwind)
+  "src.zelda.tmc.Bell75",          -- round 75: WaitForPlayerNormal's framestates, the pause menu's gates, field82 pushes
+  "src.zelda.tmc.WindTribe76",     -- round 76: the Wind Tribe tower's room code (roomInit.c sub_StateChange_WindTribeTower*)
+  "src.zelda.tmc.Story90",         -- round 90: the Sanctuary's story panels (cutscene.c sub_080536B8 / sub_0805373C)
+  "src.zelda.tmc.Exits90",         -- round 90: the Four Sword's exit lists (movement.c sub_080AF2E4 / sub_080AF284)
+  "src.zelda.tmc.Legend94",        -- round 94: the new file's legend panels (cutscene.c sub_080536D4, Story90's panel code)
 }
 
 R.ROM_RANGES = {}

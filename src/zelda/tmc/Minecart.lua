@@ -32,15 +32,10 @@ local DATA = 0x080FCAF8
 local ANIM_MINECART, ANIM_JUMP = 0x710, 0x810
 
 -- gUnk_081223D8: the act tiles a cart may roll onto, per animationState
-local ALLOWED = {
-  [0] = { [242] = true, [101] = true, [104] = true, [106] = true, [100] = true, [41] = true },
-  [1] = { [243] = true, [102] = true, [104] = true, [105] = true, [100] = true, [41] = true },
-  [2] = { [242] = true, [101] = true, [103] = true, [105] = true, [100] = true, [41] = true },
-  [3] = { [243] = true, [102] = true, [106] = true, [103] = true, [100] = true, [41] = true },
-}
-local AHEAD = { [0] = { 0, -7 }, { 7, 0 }, { 0, 7 }, { -7, 0 } }   -- offsetCoords
-local EDGE = { [0] = { 0, -8 }, { 8, 0 }, { 0, 8 }, { -8, 0 } }    -- gUnk_081223D0
-local VEC = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+local ALLOWED = require("src.zelda.tmc.RomTables").t("Minecart.ALLOWED")
+local AHEAD = require("src.zelda.tmc.RomTables").t("Minecart.AHEAD")   -- offsetCoords
+local EDGE = require("src.zelda.tmc.RomTables").t("Minecart.EDGE")    -- gUnk_081223D0
+local VEC = require("src.zelda.tmc.RomTables").t("Minecart.VEC")
 local CORNER = { [103] = true, [104] = true, [105] = true, [106] = true,
                  [108] = true, [109] = true, [110] = true, [111] = true }
 
@@ -182,7 +177,11 @@ local function exitCart(f, e)
   f:sound(0x139)
   local v = VEC[e.animationState]
   p.extUpdate = function(pl)
-    pl.x, pl.y = pl.x + v[1] * 2, pl.y + v[2] * 2 -- speed $200
+    -- speed $200; round 42: jump_status $41 moves Link by the player's own
+    -- movement (collision on, only $80 turns it off), so a wall stops the
+    -- hop -- the ride ending in $50:06's top-middle compartment put him
+    -- 64 px out, into its west wall
+    if pl.moveBy then pl:moveBy(v[1] * 2, v[2] * 2) else pl.x, pl.y = pl.x + v[1] * 2, pl.y + v[2] * 2 end
     if not linkJump(f, pl) then
       pl.state = "normal"
       pl.extUpdate, pl.drawUnder = nil, nil

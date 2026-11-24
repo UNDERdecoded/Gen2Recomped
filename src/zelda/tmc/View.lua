@@ -235,6 +235,30 @@ function V.drawLayer(f, room, name, cx, cy, vw, vh)
   end
 end
 
+-- ---------------------------------------------------------- widescreen
+-- (2026-11-18, ZeldaWide.lua; OURS) the runtime's field is `game._wideW`
+-- game pixels wide (Game:viewSize) around the cartridge's 240 x 160 camera.
+-- The camera, the room bounds and the gameplay stay the cartridge's; the
+-- rooms around (the neighbours above) and the room's backdrop colour fill
+-- the sides; BG3 overlays (clouds, light rays, parallax) cover the field.
+function V.baseW(f)
+  local g = f and f.game
+  return (g and g._wideW) or W
+end
+function V.wide(f) return V.baseW(f) > W end
+-- a wide field is drawn (else the cartridge's 240): the field, not the credits
+function V.wideOk(f)
+  if f.r28staff or f.story90 then return false end -- (round 90: the Sanctuary's story panels, Story90.lua)
+  return true
+end
+-- inside the world pass: the field's size and its offset from the
+-- cartridge's own camera (BG3 overlays scroll by that camera): w, h, dx, dy
+function V.screen(f)
+  local s = f._viewScreen
+  if s then return s[1], s[2], s[3], s[4] end
+  return W, H, 0, 0
+end
+
 -- ---------------------------------------------------------- drawing
 -- Is the picture something other than the cartridge's room view?
 function V.active(f)
@@ -260,7 +284,7 @@ function V.viewRect(f, z)
       cx, cy = r.width / 2, r.height / 2
     end
   end
-  local vw, vh = W / z, H / z
+  local vw, vh = V.baseW(f) / z, H / z
   return cx - vw / 2, cy - vh / 2, vw, vh
 end
 
@@ -278,10 +302,11 @@ function V.draw(f, z, ox, oy, scale, worldFn)
   local r = f.room
   local vx, vy, vw, vh = V.viewRect(f, z)
   g.push("all")
-  g.setScissor(ox, oy, W * scale, H * scale)
+  g.setScissor(ox, oy, math.ceil(vw * z * scale), math.ceil(vh * z * scale))
   g.translate(ox, oy)
   g.scale(scale * z, scale * z)
   g.setColor(0, 0, 0, 1)
+  if V.wide(f) then local bd = r:backdrop(); g.setColor(bd[1], bd[2], bd[3], 1) end -- widescreen: the room's colour 0 past the map
   g.rectangle("fill", 0, 0, vw, vh)
   g.setColor(1, 1, 1, 1)
   local view = { x = r.x + vx, y = r.y + vy, w = vw, h = vh }
@@ -322,10 +347,12 @@ function V.draw(f, z, ox, oy, scale, worldFn)
   local camX0, camY0 = f.camX, f.camY
   f._realCam = { camX0, camY0 } -- round 15: Bg3.lua scrolls BG3 by the field's own camera
   f.camX, f.camY = vx, vy
-  if z ~= 1 then f.layerFn = function(room, name, cx, cy) V.drawLayer(f, room, name, cx, cy, vw, vh) end end
+  f._viewScreen = { vw, vh, math.floor(vx) - math.floor(camX0), math.floor(vy) - math.floor(camY0) }
+  if z ~= 1 or V.wide(f) then f.layerFn = function(room, name, cx, cy) V.drawLayer(f, room, name, cx, cy, vw, vh) end end
   local ok, err = pcall(worldFn)
   f.layerFn = nil
   f._realCam = nil
+  f._viewScreen = nil
   f.camX, f.camY = camX0, camY0
   if not ok then g.pop() error(err, 0) end
   g.pop()

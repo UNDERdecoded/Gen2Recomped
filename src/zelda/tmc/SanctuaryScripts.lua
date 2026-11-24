@@ -63,13 +63,10 @@ local SPECIAL_TILE_105 = 0x4069
 local SFX_179, SFX_1D4 = 0x179, 0x1D4
 
 -- constants written out in the decomp's .c
-M.NPC4E_COLLISION = { -- npc4E.c gNpc4ECollisionData {x, y, w, h, blocked facings}
-  [0] = { 0, 0, 8, 8, 0x0E }, { 0, 0, 26, 8, 0x0E }, { 0, 0, 16, 4, 0x0E }, { 0, 0, 10, 10, 0 }, { 0, 0, 10, 10, 0 },
-  { 0, 0, 6, 4, 0x0E }, { 0, 8, 16, 4, 0x0E }, { 0, -8, 24, 8, 0x0E }, { 0, 0, 88, 8, 0x0E },
-}
-M.PAL_TYPE1 = { 0x12d, 0x12e, 0x12f, 0x130, 0x131, 0x132, 0x133, 0x132, 0x131, 0x130, 0x12f, 0x12e, 0x12d } -- gUnk_08121704
-M.PAL_TYPE6 = { 0x149, 0x14a, 0x14b, 0x14a }                                                             -- gUnk_08121720
-M.PAL_TYPE8 = { 0x14c, 0x14d, 0x14e, 0x14f, 0x150, 0x151, 0x150, 0x14f, 0x14e, 0x14d, 0x14c }           -- gUnk_08121738
+M.NPC4E_COLLISION = require("src.zelda.tmc.RomTables").t("SanctuaryScripts.NPC4E_COLLISION")
+M.PAL_TYPE1 = require("src.zelda.tmc.RomTables").t("SanctuaryScripts.PAL_TYPE1") -- gUnk_08121704
+M.PAL_TYPE6 = require("src.zelda.tmc.RomTables").t("SanctuaryScripts.PAL_TYPE6")                                                             -- gUnk_08121720
+M.PAL_TYPE8 = require("src.zelda.tmc.RomTables").t("SanctuaryScripts.PAL_TYPE8")           -- gUnk_08121738
 
 local function sound(f, s) if f.sound then f:sound(s) end end
 local function pal(f, e, p) e.palette = f.assets:objPalette(p) end
@@ -214,6 +211,7 @@ V.MISC[0x1F] = { -- Type31, the glow on the new sword
     if band(p.anim and p.anim.flags or 0, 1) == 0 then e.want, e.timer, e.subtimer = 0x8BF, 52, -75
     else e.want, e.timer, e.subtimer = 0x8E3, 85, -42 end
     e.x, e.y = p.x, p.y
+    e.layer = p.layer -- round 44: CopyPosition also copies collisionLayer (Link stands on the pedestal's layer 2)
     e.spritePriority = 3
     e.frameNo = nil
     e.drawGhost = V.drawStatic

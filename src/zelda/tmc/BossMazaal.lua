@@ -84,27 +84,32 @@ C.SIN = SIN
 
 -- src/data/hitbox.c ({x, y, w, h}, half sizes)
 C.HB = {
-  H354 = { x = 0, y = -2, w = 32, h = 10 }, H35C = { x = 11, y = 2, w = 9, h = 8 }, H364 = { x = 12, y = 6, w = 9, h = 8 },
-  H36C = { x = -11, y = 2, w = 9, h = 8 }, H374 = { x = -12, y = 6, w = 9, h = 8 }, H37C = { x = -2, y = -6, w = 4, h = 5 },
-  H384 = { x = 2, y = -6, w = 4, h = 5 }, H38C = { x = 0, y = 0, w = 16, h = 12 }, H394 = { x = 31, y = 2, w = 9, h = 8 },
-  H39C = { x = 8, y = 12, w = 10, h = 10 }, H3A4 = { x = 0, y = 12, w = 6, h = 18 }, H3AC = { x = -18, y = 10, w = 12, h = 12 },
-  H3B4 = { x = -31, y = 2, w = 9, h = 8 }, H3BC = { x = -8, y = 12, w = 10, h = 10 }, H3C4 = { x = 18, y = 10, w = 12, h = 12 },
-  H0 = { x = 0, y = -3, w = 6, h = 6 },
+  H354 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_354"), H35C = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_35C"), H364 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_364"),
+  H36C = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_36C"), H374 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_374"), H37C = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_37C"),
+  H384 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_384"), H38C = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_38C"), H394 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_394"),
+  H39C = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_39C"), H3A4 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_3A4"), H3AC = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_3AC"),
+  H3B4 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_3B4"), H3BC = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_3BC"), H3C4 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_3C4"),
+  H0 = require("src.zelda.tmc.RomTables").t("BossMazaal.HB_H0"),
 }
 
 -- mazaalHead.c tables
-M.BOB = { [0] = -0xA, -0xB, -0xC, -0xB, -0xA, -0x9, -0x8, -0x9 }               -- gUnk_080CED6C
-M.SHAKE_FALL = { [0] = -1, -2, -1, 0, 1, 2, 1, 0 }                              -- gUnk_080CECEC (u8 as s8)
-M.DEATH_FX_OFF = { [0] = -2, 0x01, -8, -4, -0x14, 0x08, 0x0E, -0x10, -6, 0x0C, 0x12, -2, 0x00, 0x00 } -- gUnk_080CECF4
+M.BOB = require("src.zelda.tmc.RomTables").t("BossMazaal.BOB")               -- gUnk_080CED6C
+M.SHAKE_FALL = require("src.zelda.tmc.RomTables").t("BossMazaal.SHAKE_FALL")                              -- gUnk_080CECEC (u8 as s8)
+M.DEATH_FX_OFF = require("src.zelda.tmc.RomTables").t("BossMazaal.DEATH_FX_OFF") -- gUnk_080CECF4
 M.DEATH_FX = { [0] = C.FX.GIANT1, C.FX.GIANT1, C.FX.GIANT2, C.FX.GIANT3 }       -- gUnk_080CED02
-M.SHAKE_DEATH = { [0] = -1, 0, 1, 0, 0, 0 }                                     -- gUnk_080CED06
-M.BEAM_OFF = { [0] = 0x0D, 0x10, -0x0D, 0x10 }                                  -- gUnk_080CED84
+M.SHAKE_DEATH = require("src.zelda.tmc.RomTables").t("BossMazaal.SHAKE_DEATH")                                     -- gUnk_080CED06
+M.BEAM_OFF = require("src.zelda.tmc.RomTables").t("BossMazaal.BEAM_OFF")                                  -- gUnk_080CED84
 -- the attack patterns by phase (gUnk_080CED0C / 2C / 4C)
-M.PAT = {
-  [0] = { [0] = "s34578", "s344E0", "s3451C", "s344E0", "s34558", "s344E0", "s3451C", "s346A0" },
-  [1] = { [0] = "s34578", "s345D0", "s3451C", "s346A0", "s34558", "s345D0", "s34558", "s346A0" },
-  [2] = { [0] = "s34578", "s345D0", "s346C8", "s346A0", "s34558", "s346C8", "s346A0", "s346C8" },
-}
+-- (round 36: the function pointers read from the ROM, named "s" .. the
+-- function's address - $08000000 as the port's attack table keys them)
+local PAT_PTRS = require("src.zelda.tmc.RomTables").t("BossMazaal.PAT")
+M.PAT = setmetatable({}, { __index = function(_, ph)
+  local raw = PAT_PTRS[ph]
+  if not raw then return nil end
+  local t = {}
+  for i, p in pairs(raw) do t[i] = string.format("s%X", p - p % 2 - 0x08000000) end
+  return t
+end })
 
 -- ---------------------------------------------------------------------------
 -- the shared machinery
@@ -120,25 +125,31 @@ M.state = C.state
 function C.rand(f) local D = require("src.zelda.tmc.Drops") return D.random(D.rngOf(f)) end
 function C.s8(v) v = band(v, 0xFF) if v >= 128 then return v - 256 end return v end
 
--- the decomp's definitions (enemy.c gEnemyDefinition_36 / 37 / 38 / 44, $4B;
--- projectile.c $0E) when the cache has none: {collision, draw, health, damageType}
-local FALLBACK = {
-  [0x36] = { [0] = { 1, 0, 255, 0x12 }, { 1, 1, 255, 0 }, { 1, 1, 255, 0 }, { 1, 1, 255, 0 }, { 1, 1, 255, 0 } },
-  [0x37] = { [0] = { 1, 1, 255, 0x0F }, { 0, 1, 255, 0x0F }, { 0, 1, 255, 0x0F } },
-  [0x38] = { [0] = { 1, 0, 255, 0x13 }, { 1, 0, 255, 0x13 } },
-  [0x44] = { [0] = { 0, 0, 255, 0x17 }, { 0, 0, 255, 0x17 }, { 1, 0, 255, 0 }, { 1, 0, 255, 0 } },
-  [0x4B] = { [0] = { 1, 1, 255, 0x0E }, { 1, 1, 255, 0x0E } },
-}
-local PFALLBACK = { [0x0E] = { [0] = { 1, 1, 0, 0x10 }, { 1, 1, 0, 0x11 } } }
+-- round 35: no copied definitions.  The cache always holds them (Extract:
+-- enemyDefs / projectileDefs); a test or dev scene without them reads the
+-- player's ROM that RomTables was attached from.
+local romDefs
+local function devDefs()
+  local rom = require("src.zelda.tmc.RomTables").devRom()
+  if not rom then return nil end
+  if not romDefs then
+    local X = require("src.zelda.tmc.Extract")
+    romDefs = {}
+    X.extractEnemyDefs(rom, romDefs)
+    X.extractProjectiles(rom, romDefs)
+  end
+  return romDefs
+end
 local function defOf(f, kind, id, type)
   local m = f.assets and f.assets.manifest or {}
   local t = (kind == 3 and m.enemyDefs) or (kind == 4 and m.projectileDefs) or (kind == 6 and m.objectDefs) or nil
   local d = t and t[id]
   if d and (d.multi or d.type == 2) then d = d.forms and (d.forms[type or 0] or d.forms[0]) end
-  if not d then
-    local fb = (kind == 3 and FALLBACK[id]) or (kind == 4 and PFALLBACK[id])
-    local r = fb and fb[type or 0]
-    if r then d = { collision = r[1], draw = r[2], health = r[3], damageType = r[4], speed = kind == 4 and 0x800 or 0x100 } end
+  if not d and (kind == 3 or kind == 4) then
+    local m2 = devDefs()
+    local t2 = m2 and (kind == 3 and m2.enemyDefs or m2.projectileDefs)
+    d = t2 and t2[id]
+    if d and (d.multi or d.type == 2) then d = d.forms and (d.forms[type or 0] or d.forms[0]) end
   end
   return d
 end
@@ -270,7 +281,9 @@ end
 function C.touch(f, pt)
   local p = f.player
   if not pt.collide or pt.deleted or p.state == "dead" or p.mazaalHeld then return nil end
-  if math.abs((pt.cz or 0) + (p.z or 0)) > 12 then return nil end
+  -- round 53: IsColliding (collision.c): |dz| <= depth, depth = 5 + 5 (no Mazaal part nor Link sets collisionFlags
+  -- $10, so no Hitbox3D depth); it was 12, which let a falling fist at z -11 / -12 hit Link
+  if math.abs((pt.cz or 0) + (p.z or 0)) > 10 then return nil end
   local HB = require("src.zelda.tmc.Hitboxes")
   local hb = pt.hitbox
   local touch = HB.touches(f, p, pt)
@@ -998,8 +1011,8 @@ end
 local function mzSetup(pt)
   if pt.mz == "head" then
     C.headInit(pt)
-    if pt.type == 0 then pt.hitbox = { x = 0, y = -2, w = 32, h = 10 } end
-    if pt.type == 4 then pt.hitbox = { x = 0, y = 0, w = 16, h = 12 } end
+    if pt.type == 0 then pt.hitbox = require("src.zelda.tmc.RomTables").fresh("BossMazaal.HB_354b") end
+    if pt.type == 4 then pt.hitbox = require("src.zelda.tmc.RomTables").fresh("BossMazaal.HB_38Cb") end
   end
 end
 local oldNew = C.new

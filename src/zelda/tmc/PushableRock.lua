@@ -31,11 +31,10 @@ local OBJ = 0x2E
 local SP27, SP21 = 0x401B, 0x4015
 local ACT_HOLE, ACT_240 = 0x19, 0xF0
 local SFX_10F, SFX_TASK_COMPLETE = 0x10F, 0xCD
-local SPEEDS = { [0] = 0, 0x100, 0x60, 0x40 }
-local DV = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local SPEEDS = require("src.zelda.tmc.RomTables").t("PushableRock.SPEEDS")
+local DV = require("src.zelda.tmc.RomTables").t("PushableRock.DV")
 local K = 0x80 -- kPushSpeed
-local PUSH_FRAMES = { { 5, 0 }, { 1, K * 2 }, { 5, 0 }, { 1, K * 2 }, { 2, 0 }, { 1, K * 2 }, { 2, 0 }, { 1, K * 2 },
-                      { 3, 0 }, { 1, K * 2 }, { 8, K * 3 / 4 }, { 8, K * 3 / 4 }, { 8, K * 3 / 4 }, { 8, K / 2 } }
+local PUSH_FRAMES = require("src.zelda.tmc.RomTables").t("PushableRock.PUSH_FRAMES")
 R.PUSH_FRAMES, R.SPEEDS = PUSH_FRAMES, SPEEDS
 R.SFX_TASK_COMPLETE = SFX_TASK_COMPLETE
 

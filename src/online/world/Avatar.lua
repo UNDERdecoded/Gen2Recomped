@@ -344,6 +344,8 @@ function Avatar.saved(game)
   end
   if keyOk(a.s) then out.s = a.s end
   if Avatar.ROLES[a.r] then out.r = a.r end
+  -- the battle back pic chosen on MY LOOK (src/online/BattleBacks.lua)
+  out.b = require("src.online.BattleBacks").clean(a.b)
   return out
 end
 
@@ -354,7 +356,8 @@ function Avatar.store(game, choice)
   local entry = nil
   if choice ~= nil then
     entry = { s = choice.s, r = choice.r, p = choice.p, t = Avatar.cleanTint(choice.t),
-              c = Parts.clean(choice.c), cp = choice.cp }
+              c = Parts.clean(choice.c), cp = choice.cp,
+              b = require("src.online.BattleBacks").clean(choice.b) }
   end
   if type(opts.looks) ~= "table" then opts.looks = {} end
   opts.looks[id] = entry

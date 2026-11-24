@@ -66,9 +66,9 @@ local band, bor, bxor, rshift = bit.band, bit.bor, bit.bxor, bit.rshift
 local C = {}
 C.SPIKED_BEETLE, C.HELMASAUR = 0x1E, 0x20
 local SFX_12B, SFX_EF = 0x12B, 0xEF
-local BEETLE_WALK = { [0] = 0x30, 0x48, 0x60, 0x78 } -- gUnk_080CD314
-local SHAKE = { [0] = 1, -1, -1, 1 }                 -- gUnk_080CD318
-local AHEAD = { [0] = { 0, -8 }, [8] = { 8, 0 }, [16] = { 0, 8 }, [24] = { -8, 0 } } -- gUnk_080CD45C
+local BEETLE_WALK = require("src.zelda.tmc.RomTables").t("EnemyCoF.BEETLE_WALK") -- gUnk_080CD314
+local SHAKE = require("src.zelda.tmc.RomTables").t("EnemyCoF.SHAKE")                 -- gUnk_080CD318
+local AHEAD = require("src.zelda.tmc.RomTables").t("EnemyCoF.AHEAD") -- gUnk_080CD45C
 
 local function DW() return require("src.zelda.tmc.EnemyDeepwood") end
 local function D() return require("src.zelda.tmc.Drops") end

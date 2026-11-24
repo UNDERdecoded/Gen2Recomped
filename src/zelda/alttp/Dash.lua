@@ -37,7 +37,8 @@ M.SPEED = 16           -- link_speed_setting while running (kSpeedMod[16] = 64)
 M.REBOUND = 24         -- kDashTab6X/Y, 1/16 px a frame
 M.REBOUND_FRAMES = 24  -- link_incapacitated_timer
 -- kPlayerActionBoxRun_X/Y by facing >> 1 (up, down, left, right)
-M.RUN_BOX = { [0] = { 0, -8 }, [1] = { 0, 16 }, [2] = { -8, 8 }, [3] = { 8, 8 } }
+-- (r35: kPlayerActionBoxRun_XLo / YLo read from the ROM at import)
+M.RUN_BOX = require("src.zelda.alttp.RomTables").get("dash.runBox")
 local DIR = { [0] = { 0, -1 }, [2] = { 0, 1 }, [4] = { -1, 0 }, [6] = { 1, 0 } }
 local KEY = { [0] = "up", [2] = "down", [4] = "left", [6] = "right" }
 

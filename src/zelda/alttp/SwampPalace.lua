@@ -88,6 +88,7 @@ function M.prep(self, a)
     a.slot = self.puffN - 1
     a.ai = 0
   end
+  require("src.zelda.alttp.Arrghus58").prep(self, a)   -- r58: own contact only (GBA 0x0810CC6C)
 end
 
 -- Arrghus_HandlePuffs: the 13 spots

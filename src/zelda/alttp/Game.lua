@@ -22,9 +22,16 @@ local G = {}
 G.__index = G
 
 G.W, G.H = 240, 160
--- Link's house, outside the door (screen 0x2C), in line with the door tile
--- the cartridge's entrance table names (x 192)
-G.START = { world = "lw", x = 4 * 512 + 192, y = 5 * 512 + 280, facing = Link.DOWN }
+-- Link's house, outside the door (screen 0x2C): r35, from the cartridge's
+-- exit table (exit 0, where leaving the house puts Link: x + 8 in line with
+-- the door tile, y + 48 once he has walked out of the doorway)
+G.START_EXIT, G.START_DX, G.START_DY = 0, 8, 48
+function G.start(data)
+  local ex = data and data.roomIdx and data.roomIdx.exits
+  local i = G.START_EXIT + 1
+  assert(ex and ex.x and ex.x[i], "ALttP cache has no exit table -- import the ROM again")
+  return { world = "lw", x = ex.x[i] + G.START_DX, y = ex.y[i] + G.START_DY, facing = Link.DOWN }
+end
 
 function G.new(opts)
   local self = setmetatable({}, G)
@@ -56,14 +63,16 @@ function G.new(opts)
   self.titleChoice = 1
   if self.opts.mode == "fs" then self.state = "fs" end
   local save = self.opts.save
-  local s = (type(save) == "table" and save.alttp) or G.START
-  self.link = Link.new(self.data, { world = s.world or "lw", x = s.x or G.START.x,
-                                    y = s.y or G.START.y, facing = s.facing or Link.DOWN })
+  local st = G.start(self.data)
+  local s = (type(save) == "table" and save.alttp) or st
+  self.link = Link.new(self.data, { world = s.world or "lw", x = s.x or st.x,
+                                    y = s.y or st.y, facing = s.facing or Link.DOWN })
   self.area = self.ow:area(self:screen())
   self.cam = self:cameraFor(self.area)
   self.scroll = nil
   self.online = require("src.zelda.alttp.Online").new(self)
   self.music = require("src.zelda.alttp.Audio").new(self.data, self.opts)
+  self.music.game = self   -- r33: the overworld music reads the progress
   self.frame = 0
   if self.state == "fs" then self:enterFs() end
   return self
@@ -192,8 +201,8 @@ function G:update(dt)
   -- round 6: the sword, bush cutting and pits (Escape.lua)
   -- round 18: the GBA's action button (lift, talk, open) is R and its item
   -- button A (Items.lua: 0x0806995C, the messages' button glyphs)
-  inp.a, inp.b = pressed(self.input, "r"), pressed(self.input, "b")
-  inp.y = pressed(self.input, "a")
+  inp.a, inp.b = pressed(self.input, self:actionKey()), pressed(self.input, "b")   -- input round: Controls.lua (cartridge modes 0 / 1)
+  inp.y = pressed(self.input, self:itemKey())
   self.owInp = inp   -- r23: the plaque reads this frame's buttons (Desert.lua)
   self:updateDrops()
   self:updateOwActors()
@@ -206,7 +215,7 @@ function G:update(dt)
   -- talk to; the charge holds Link, the run steers him at speed 16
   local Dash = require("src.zelda.alttp.Dash")
   if inp.a and not self.dash and not self.carry and not self.textBox then Dash.start(self) end
-  if self.dash and Dash.before(self, inp, held(self.input, "r")) then
+  if self.dash and Dash.before(self, inp, held(self.input, self:actionKey())) then
     self.cam = self:followCam(self.area)
     return
   end
@@ -214,6 +223,7 @@ function G:update(dt)
   -- round 16: the townsfolk block Link (Sprite_BehaveAsBarrier, Npc.lua)
   local Npc = require("src.zelda.alttp.Npc")
   local oa = self.owActors
+  if require("src.zelda.alttp.OwEdge59").frame(self, inp) then return end   -- r59: the cartridge's edge walk (0x08071E7C / 0x08072748)
   self.link:update(inp, function(world, x, y)
     if oa and Npc.solidAt(oa, x, y) then return 0x01 end
     return ow:attrAt(world, x, y)
@@ -245,7 +255,7 @@ function G:update(dt)
     if not e and self.link.facing == Link.UP then
       -- round 7: a closed big door opens when Link walks up into it
       local bx, by, kind = Interior.owBigDoorAhead(self.data, self.ow, self.link.world, self.link.x,
-                                                   self.link.y, 3, not self.progress.escaped)
+                                                   self.link.y, 3, self:storyProgress() <= 2)   -- r44: the GBA's 0x0808BE18 (story byte <= 2)
       if bx then
         self.gate = { t = 0, x = bx, y = by, kind = kind,
                       frames = kind == 0x169 and 9 or 33 }   -- SNES counter 24 / 0 -> 32
@@ -329,8 +339,8 @@ function G:updateRoom()
   local lk = self.link
   -- round 6: sword, chests, keys, stairs between levels, actors (Escape.lua)
   -- round 18: action R, item A (see update)
-  inp.a, inp.b = pressed(self.input, "r"), pressed(self.input, "b")
-  inp.y = pressed(self.input, "a")
+  inp.a, inp.b = pressed(self.input, self:actionKey()), pressed(self.input, "b")   -- input round: Controls.lua (cartridge modes 0 / 1)
+  inp.y = pressed(self.input, self:itemKey())
   -- round 10: walking right (the shelf in the throne room is pushed so)
   self.pushRight = inp.right and not inp.left
   if self:escapeRoomFrame(inp) then return end
@@ -341,7 +351,7 @@ function G:updateRoom()
   -- r19: the Pegasus Boots dash (Dash.lua): the charge holds Link, the run
   -- steers him the way he faces at its speed
   local Dash = require("src.zelda.alttp.Dash")
-  if self.dash and Dash.before(self, inp, held(self.input, "r")) then return end
+  if self.dash and Dash.before(self, inp, held(self.input, self:actionKey())) then return end
   if not self.dash and self.link.speedSetting == Dash.SPEED then self.link.speedSetting = 0 end
   local actors = self.actors
   -- round 11: indoor ledges (SNES TileDetect: 0x28 a vertical ledge, 0x2A /
@@ -350,7 +360,9 @@ function G:updateRoom()
   -- Dungeon_HandleLayerChange puts him on the lower level (unless the room's
   -- in-room stairs are of kind 2). OURS: the hop's arc and length (the first
   -- spot 8-64 px on where he fits on the lower level); kind 0's room + 16 is
-  -- not ported (no such room on the escape route).
+  -- not ported (no such room on the escape route). r50: Hop50.lua replaces
+  -- the landing search with the cartridge's fixed flight (0x0809A670 /
+  -- 0x0809A24C, state 6).
   local wasHop = lk.hop ~= nil
   if not lk.hop then self:indoorLedge(inp) end
   local hopNow = lk.hop ~= nil
@@ -483,6 +495,12 @@ function G:leaveRoom()
   self.link.world, self.link.x, self.link.y, self.link.facing = out.world, out.x, out.y, 2
   self.state = "play"
   self.interior, self.roomImages, self.roomScroll = nil, nil, nil
+  -- r47: Module08 (0x080743AC, submodule 0 = 0x08073C74) calls 0x080CBCC8
+  -- = Sprite_DisableAll (0x080CAD30) + Sprite_OverworldReloadAll
+  -- (0x080CBCB4: the grid's loaded flags cleared, the area's list loaded
+  -- again): the area's enemies are all back after a house / cave, the
+  -- drops are gone (the port kept the killed ones' cells loaded)
+  self.owActors, self.oweState, self.drops = nil, nil, nil
   self:syncKeys()
   self.area = self.ow:area(self:screen())
   self.cam = self:cameraFor(self.area)
@@ -859,8 +877,11 @@ end
 -- the uncle's "I'm going out for a bit" (message 13). NOT PORTED: the rain,
 -- the night palette, Link's in-bed pose, the uncle's sprite and walk out,
 -- the music cue; the room is drawn with its daytime palette.
-G.MSG_TELEPATHY = 31
-G.MSG_UNCLE_LEAVES = 13
+-- r36: read at import from the cartridge's calls (RomTablesSpec "msg.story")
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.story")
+  rawset(G, "MSG_TELEPATHY", t.telepathy); rawset(G, "MSG_UNCLE_LEAVES", t.uncleLeaves)
+end)
 function G:startOpening()
   self.newGame = false
   self:enterRoom(0)
@@ -1116,5 +1137,7 @@ require("src.zelda.alttp.Cape").install(G)        -- r26a: the Magic Cape, the b
 require("src.zelda.alttp.Dungeons26").install(G)  -- r26b: pegs, pits, Hera and the later palaces' sprites
 require("src.zelda.alttp.BossHooks").install(G)   -- r26a: the items on the later palaces' bosses
 require("src.zelda.alttp.ExtractA27").install(G)  -- r27a: grove, fairy, smiths, flute, canes, people, enemies, map, sound
+require("src.zelda.alttp.Controls").install(G)    -- input round: A-action / R-action modes, START = the system menu
+require("src.zelda.alttp.Wide").install(G)        -- widescreen: a wider play field (Wide.lua, ZeldaWide.lua)
 
 return G

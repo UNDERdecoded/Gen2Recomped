@@ -60,7 +60,7 @@ local A = {}
 
 local T1280 = { [0] = 0x140, -0x140 }                                   -- gUnk_080D1280
 local T1284 = { [0] = 0x40, 0xC0 }                                      -- gUnk_080D1284 (s8 -$40)
-local T1286 = { [0] = 2, 3, 5, 6, 0xc, 0xb, 9, 8, 0, 0 }                -- gUnk_080D1286
+local T1286 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T1286")                -- gUnk_080D1286
 local T12AC = { [0] = -0x200, 0x200 }                                   -- gUnk_080D12AC
 local T12B0 = { [0] = 8, 0xF8 }                                         -- gUnk_080D12B0 (u8 -8)
 local T12B2 = { [0] = 0xB0, 0x50 }                                      -- gUnk_080D12B2 (u8 -$50)
@@ -68,31 +68,28 @@ local T12B4 = { [0] = -0x20, 0x20 }                                     -- gUnk_
 local T12B6 = { [0] = 0x70, 0x90 }                                      -- gUnk_080D12B6 (u8 -$70)
 local T12C8 = { [0] = 0x60, 0xA0 }                                      -- gUnk_080D12C8 (u8 -$60)
 local T12CA = { [0] = 0x280, 0xFD80 }                                   -- gUnk_080D12CA (u16 -$280)
-local T12F8 = { [0] = -0x10, 0, 0, -0x10, 0x10, 0, 0, 0x10 }            -- gUnk_080D12F8
+local T12F8 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T12F8")            -- gUnk_080D12F8
 local T1300 = { [0] = 0xC0, -0xC0 }                                     -- gUnk_080D1300
-local T1304 = { [0] = 0, -1, -2, -3, 0, 1, 2, 3 }                       -- gUnk_080D1304
+local T1304 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T1304")                       -- gUnk_080D1304
 local T130C = { [0] = 0x5000, 0xB000 }                                  -- gUnk_080D130C (s16 -$5000)
 local T1310 = { [0] = 0xA0, -0xA0 }                                     -- gUnk_080D1310
 local T131C = { [0] = 0x70, 0x90 }                                      -- gUnk_080D131C (u8 -$70)
 local T1338 = { [0] = 0x4000, 0xC000 }                                  -- gUnk_080D1338 (s16 -$4000)
 local T133C = { [0] = 0xA0, -0xA0 }                                     -- gUnk_080D133C
-local T1340 = { [0] = 0, 0x12, 0x12, 0x11, 0x11, 0, 0, 0 }              -- gUnk_080D1340
-local T135C = { [0] = 0x4000, 0xC000, 0x8000 }                          -- gUnk_080D135C
-local T1362 = { [0] =
-  0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 2,
-  3, 4, 4, 4, 4, 0, 0, 0, 0, 0, 0, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 0, 0, 0, 1, 2, 3,
-  4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 1, 2, 3, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4, 4 }    -- gUnk_080D1362
-local T13B2 = { [0] = 0, 12, 9, 6, 3 }                                  -- gUnk_080D13B2
-local T13B7 = { [0] = 1, 1, 2, 2, 3, 3, 3, 4, 4, 4, 5, 5, 6, 6, 6, 7, 7, 7, 8, 8, 8, 9, 9, 10, 10, 10, 11, 11, 11, 12, 12, 1, 0 } -- gUnk_080D13B7
-local T13D8 = { [0] = { -0x60, 0x80 }, { 0x60, -0x80 } }                -- gUnk_080D13D8
-local T13E0 = { [0] = 0xc, 0xe, 0x10, 8, 9, 10, 4, 4, 5 }               -- gUnk_080D13E0 / gUnk_080D13E3 (contiguous)
+local T1340 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T1340")              -- gUnk_080D1340
+local T135C = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T135C")                          -- gUnk_080D135C
+local T1362 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T1362")    -- gUnk_080D1362
+local T13B2 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T13B2")                                  -- gUnk_080D13B2
+local T13B7 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T13B7") -- gUnk_080D13B7
+local T13D8 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T13D8")                -- gUnk_080D13D8
+local T13E0 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T13E0")               -- gUnk_080D13E0 / gUnk_080D13E3 (contiguous)
 local T13E9 = { [0] = -8, 8 }                                           -- gUnk_080D13E9
-local T1400 = { [0] = { [0] = 0x8000, 0x7000, 0x6000, 0x5000, 0x4000 }, { [0] = 0x8000, 0x9000, 0xA000, 0xB000, 0xC000 } } -- gUnk_080D1400
-local T1414 = { [0] = 0, 0xc, 0xe, 0x10, 0x1c }                         -- gUnk_080D1414
-local T1419 = { [0] = 0, 0xa, 0xa, 0xa, 0x1c }                          -- gUnk_080D1419
+local T1400 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T1400") -- gUnk_080D1400
+local T1414 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T1414")                         -- gUnk_080D1414
+local T1419 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.T1419")                          -- gUnk_080D1419
 A.T = { T1286 = T1286, T1362 = T1362, T13B7 = T13B7, T1414 = T1414, T1419 = T1419, T12F8 = T12F8 }
-local HB_450 = { x = 0, y = -3, w = 4, h = 4 }                          -- gUnk_080FD450
-local HB_538 = { x = 0, y = -4, w = 6, h = 6 }                          -- gUnk_080FD538 (depth 10)
+local HB_450 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.HB_450")                          -- gUnk_080FD450
+local HB_538 = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.HB_538")                          -- gUnk_080FD538 (depth 10)
 
 local function hi(w) return band(rshift(w, 8), 0xFF) end
 local function setHi(w, v) return bor(band(w, 0xFF), lshift(band(v, 0xFF), 8)) end
@@ -350,7 +347,7 @@ local function grow(V, arm) -- sub_08042654
     V:sfx(0x15E)
   elseif sa >= 1 and sa <= 4 then
     s.u00 = w16(s.u00 + s.u08)
-    local lim = ({ 0xC, 0xE, 0x10, 0x1C })[sa]
+    local lim = require("src.zelda.tmc.RomTables").t("BossVaati3Arm.LIM")[sa] -- gUnk_080D1414
     local hs = arm.s1[sa]
     hs.u0c = hs.u0c + 2
     if hs.u0c >= lim then

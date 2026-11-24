@@ -35,9 +35,13 @@ local Link = require("src.zelda.alttp.Link")
 
 local C = {}
 
-C.QUERY = { [Link.UP] = { 7, 3 }, [Link.DOWN] = { 7, 24 }, [Link.LEFT] = { -3, 14 }, [Link.RIGHT] = { 16, 14 } }
-C.GLOVES_NEEDED = { [0] = 0, 1, 0, 0, 2, 1, 2 }
-C.LIFT_TIMES = { 6, 7, 7 }
+-- r35: read from the ROM at import (RomTablesSpec "carry.*"): the lift
+-- query offsets by facing, the gloves each liftable needs, kLiftTab2's first
+-- three delays
+local RT = require("src.zelda.alttp.RomTables")
+C.QUERY = RT.get("carry.query")
+C.GLOVES_NEEDED = RT.get("carry.gloves")
+C.LIFT_TIMES = RT.get("carry.liftTimes")
 C.THROW_TIMES = { 4, 4 }
 C.HELD_Z = 14
 C.THROW_SPEED = 4

@@ -24,9 +24,9 @@ local band, rshift = bit.band, bit.rshift
 
 local D = {}
 
-D.ROCK = { [0] = 387, 1018, 1019, 1020, 1021, 1022, 1023, 1024, 1025 }    -- gUnk_08129FD0
-D.CLEAR = { [0] = 388, 1026, 1027, 1028, 1029, 1030, 1031, 1032, 1033 }   -- gUnk_08129FE4
-D.OFF = { [0] = 65, 64, 63, 1, 0, -1, -63, -64, -65 }                     -- gUnk_08129FF8 (tile index steps)
+D.ROCK = require("src.zelda.tmc.RomTables").t("RemovableDust.ROCK")    -- gUnk_08129FD0
+D.CLEAR = require("src.zelda.tmc.RomTables").t("RemovableDust.CLEAR")   -- gUnk_08129FE4
+D.OFF = require("src.zelda.tmc.RomTables").t("RemovableDust.OFF")                     -- gUnk_08129FF8 (tile index steps)
 local SP104 = 0x4000 + 104
 local ACT_62 = 62
 local SFX_EF = 0xEF -- the jar swallows it (sub_0806F3E4 gustJarFlags 1)

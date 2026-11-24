@@ -56,21 +56,23 @@ M.ANIM = { floor = 0x508, dig = 0x50C, clang = 0x51C, miss = 0x520 }
 M.SFX = { AIR = 0x107, DIG = 0x108, KNOCKBACK = 0x119 }
 M.FX = { STARS = 0x1D, FALL = 0x00, LAVA = 0x0C, WATER = 0x0B, GRASS_CUT = 0x17 }
 M.ACT_SOFT = 0x56 -- ACT_TILE_86
-M.PROBE = { [0] = { 0, -13 }, [2] = { 13, 0 }, [4] = { 0, 16 }, [6] = { -13, 0 } } -- gUnk_0811BE1E / gUnk_0811C456
-M.SPEED = { [0] = 0, 0xC0, 0x100, 0x180 }                                         -- gUnk_0811BE16 (index & 7, 4..7 unused)
-M.CLOD_OFF = { [0] = { 0, -18 }, [2] = { 16, 0 }, [4] = { 0, 12 }, [6] = { -16, 0 } } -- gUnk_08120A20
-M.CLOD = { [0] = { anim = 0, pal = 2, delay = 0x0A }, [1] = { anim = 0, pal = 5, delay = 0x20 } } -- gUnk_08120A18
+M.PROBE = require("src.zelda.tmc.RomTables").t("ItemMitts.PROBE") -- gUnk_0811BE1E / gUnk_0811C456
+M.CLOD_DUR = require("src.zelda.tmc.RomTables").t("ItemMitts.CLOD_DUR") -- gUnk_0811BE14 (round 51)
+M.SPEED = require("src.zelda.tmc.RomTables").t("ItemMitts.SPEED")                                         -- gUnk_0811BE16 (index & 7, 4..7 unused)
+M.CLOD_OFF = require("src.zelda.tmc.RomTables").t("ItemMitts.CLOD_OFF") -- gUnk_08120A20
+M.CLOD = require("src.zelda.tmc.RomTables").t("ItemMitts.CLOD") -- gUnk_08120A18
 M.TT = { WALL_754 = 754, WALL_756 = 756 }
 M.BIG = { [618] = { 0, 620 }, [615] = { 1, 620 }, [634] = { 0, 636 }, [631] = { 1, 636 }, [650] = { 0, 652 }, [647] = { 1, 652 } }
 local SPECIAL_FX, OBJECT_1F = 0x0F, 0x1F
 
--- the fallback frame flags when Link's sprite has no animation data
-local FALLBACK = {
-  floor = { [8] = 0x10, [14] = 0x80 },
-  dig = { [1] = 0x01, [5] = 0x42, [9] = 0x09, [12] = 0x10 },
-  clang = { [1] = 0x01, [8] = 0x80 },
-  miss = { [8] = 0x80 },
-}
+-- stand-in assets without Link's sprite (tests / dev scenes): the
+-- animation is read from the attached ROM (round 36: no frame flags written
+-- out here); with no animation data at all the action simply ends
+local function romAnim(p, a)
+  if not a or a.keys or not a.set or not p.animId or p.animId < 0 then return end
+  local spr = require("src.zelda.tmc.RomTables").devSprite(rshift(p.animId, 8))
+  if spr then a:set(spr, band(p.animId, 0xFF), true) end
+end
 
 local function tileAt(p)
   local o = M.PROBE[band(p.animationState or 4, 6)]
@@ -130,10 +132,13 @@ function M.digWall(f, tx, ty)
   else
     setType(f, 1, tx, ty, M.TT.WALL_756)
   end
+  local topCleared = false
   if ty > 0 and actOf(f, 2, tx, ty - 1) == M.ACT_SOFT then
     setType(f, 2, tx, ty - 1, 0)
     if r:tileType(1, tx, ty - 1) == M.TT.WALL_754 then setType(f, 1, tx, ty - 1, M.TT.WALL_756) end
+    topCleared = true
   end
+  require("src.zelda.tmc.Dig77").after(f, tx, ty, topCleared) -- round 77: sub_0807B55C / sub_0807B480 (edge blending)
   return true
 end
 
@@ -142,6 +147,7 @@ end
 -- ---------------------------------------------------------------------------
 local function setAnim(p, m, kind)
   p:setAnim(M.ANIM[kind], true)
+  romAnim(p, p.anim)
   m.kind, m.fresh, m.ft, m.cur = kind, true, 0, 0
   m.key = p.anim.key
 end
@@ -155,10 +161,7 @@ local function step(p, m)
     if a.key ~= m.key then m.key = a.key; m.cur = a.flags or 0; return m.cur, m.cur end
     return 0, m.cur
   end
-  m.fresh = false
-  m.ft = m.ft + 1
-  local e = (FALLBACK[m.kind] or {})[m.ft]
-  if e then m.cur = e; return e, e end
+  if m.fresh then m.fresh = false; m.cur = 0x80; return 0x80, 0x80 end
   return 0, m.cur
 end
 
@@ -280,6 +283,9 @@ function M.update(p, input)
         m.sub = rshift(e.unk or 0xFF00, 8)
         if m.sub ~= 0xFF then
           M.spawnClod(f, p, e.obj, e.objType, m.sub)
+          -- round 51: gPlayerEntity.frameDuration = gUnk_0811BE14[subtimer] (read from the ROM)
+          local fd = (m.sub == 0 or m.sub == 1) and M.CLOD_DUR[m.sub] or nil
+          if fd and p.anim and p.anim.keys then p.anim.timer = fd end
         elseif e.obj == SPECIAL_FX and e.objType == M.FX.GRASS_CUT then
           m.sub = 0
         end
@@ -300,6 +306,8 @@ function M.update(p, input)
     if band(edge, 8) ~= 0 and input and input.pressed(m.button or "b") then m.timer = 1 end
     if sp ~= 0 then forward(p, sp / 256) end
     if band(edge, 0x10) ~= 0 then
+      -- round 51: sub_080772A8 sets frameDuration = 1 here (the keyframe's 255 is a hold)
+      if m.timer ~= 0 and p.anim and p.anim.keys then p.anim.timer = 1 end
       if m.timer ~= 0 and M.wallAhead(p) ~= 0 then
         m.timer = 0
         if not p.anim.keys then m.ft = 0 end -- the fallback timeline digs on
@@ -308,6 +316,8 @@ function M.update(p, input)
       finish(p)
       return
     elseif band(edge, 0x60) ~= 0 then
+      -- round 51: gPlayerEntity.base.frameDuration = 1 (the dig keyframes hold 255 frames otherwise)
+      if p.anim and p.anim.keys then p.anim.timer = 1 end
       local tx, ty = tileAt(p)
       if M.digWall(f, tx, ty) then
         f:sound(M.SFX.DIG)

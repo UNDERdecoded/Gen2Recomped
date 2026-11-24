@@ -65,8 +65,8 @@ local SFX_10F, SFX_10B, SFX_14A, SFX_SECRET = 0x10F, 0x10B, 0x14A, 0x72
 local SPECIAL_FX, FX_LAVA_SPLASH_HUGE, FX_ROCK, FX_DASH = 0x0F, 0x36, 0x04, 0x11
 local SP54, SP55, SP32 = 0x4036, 0x4037, 0x4020
 local TINY_ENTRANCE = 0x63
-local VEC = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
-local PILLAR_FRAME = { [0] = 0, 2, 4, 3, 7, 5, 0, 0 } -- gUnk_08123264
+local VEC = require("src.zelda.tmc.RomTables").t("CoFObjects.VEC")
+local PILLAR_FRAME = require("src.zelda.tmc.RomTables").t("CoFObjects.PILLAR_FRAME") -- gUnk_08123264
 O.PILLAR_FRAME = PILLAR_FRAME
 
 local function anim(d, e, a)
@@ -150,15 +150,21 @@ end
 -- ---------------------------------------------------------------------------
 function O.linkOffset(f, v) f.player.spriteOY, f.player.spriteOYFrame = v, f.frame end -- gPlayerState.spriteOffsetY this frame
 
+local MOVABLE43 = { normal = true, shield = true, gust = true, sword = true, hurt = true, carry = true, throw = true, roll = true }
 local function playerOn(d, e) -- LavaPlatform_IsPlayerOnPlatform
   local p = d.field.player
   if p.minish or p.state == "dead" then return false end
   if math.abs(p.x - e.x) > 0x10 or math.abs(p.y - e.y) > 0x10 then return false end
-  if p.state ~= "normal" and p.state ~= "shield" and p.state ~= "gust" then return false end -- PlayerCanBeMoved
+  -- PlayerCanBeMoved is a flags test (PL_BUSY, PL_FALLING, PL_IN_HOLE, PL_IN_MINECART ...): swinging the
+  -- sword or the Cane, knockback, carrying, throwing or rolling keep Link carried (round 43: the Cane
+  -- swing used to leave him standing over the lava while the platform moved on)
+  if not MOVABLE43[p.state] and not (p.state == "ext" and p.caneSwing43) then return false end
   e.field14 = true
   if (p.z or 0) == 0 then e.subtimer = 1 return true end
   return false
 end
+
+O.playerOnForTests = function(d, e) return playerOn(d, e) end -- round 43 (tests/zelda_tmc_r43_test.lua)
 
 local function settle(d, e) -- sub_0809264C
   if band(e.animationState, 1) ~= 0 then e.action, e.hitType = 7, 0xAC
@@ -381,7 +387,7 @@ local function pillarConvert(d, e) -- sub_080971E0
   e.deleted = true
 end
 
-local PILLAR_KIND = { [0x4037] = 1, [0x4038] = 1, [0x4039] = 1, [0x403A] = 1, [0x7A] = 2, [0x78] = 2 } -- gUnk_0812327C
+local PILLAR_KIND = require("src.zelda.tmc.RomTables").t("CoFObjects.PILLAR_KIND") -- gUnk_0812327C {tile, kind}
 local function pillarSees(d, e) -- sub_08097008
   local f = d.field
   local tt = tileAt(f, e.layer, e.tx, e.ty)
@@ -477,7 +483,7 @@ end
 
 -- Link's push against SPECIAL_TILE_54 (UpdatePlayerCollision): the push
 -- of PLAYER_PUSH type 0 -- $20 frames at kPushSpeed
-local DV = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local DV = require("src.zelda.tmc.RomTables").t("CoFObjects.DV")
 local function pushUpdate(p)
   local ps = p.pillarPush
   p.anim:update(1)
@@ -507,8 +513,8 @@ end
 -- ---------------------------------------------------------------------------
 -- MINISH_PORTAL_STONE
 -- ---------------------------------------------------------------------------
-local PORTAL_TILES = { 0x4040, -65, 0x4041, -64, 0x4042, -63, 0x4043, -1, 0x4044, 0, 0x4045, 1, 0x4046, 63, 0x4047, 64, 0x4048, 65 } -- gUnk_08123344
-local PORTAL_TILES_ALIGNED = { 0x4041, -65, 0x4041, -64, 0x4044, -1, 0x4044, 0, 0x4047, 63, 0x4047, 64 } -- gUnk_0812336A
+local PORTAL_TILES = require("src.zelda.tmc.RomTables").t("CoFObjects.PORTAL_TILES") -- gUnk_08123344
+local PORTAL_TILES_ALIGNED = require("src.zelda.tmc.RomTables").t("CoFObjects.PORTAL_TILES_ALIGNED") -- gUnk_0812336A
 O.PORTAL_TILES, O.PORTAL_TILES_ALIGNED = PORTAL_TILES, PORTAL_TILES_ALIGNED
 local function stoneTiles(d, e) -- sub_08097CFC
   local r = d.field.room

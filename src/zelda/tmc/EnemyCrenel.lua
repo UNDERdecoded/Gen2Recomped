@@ -96,7 +96,7 @@ function C.handles(e) return HANDLED[e.id] == true or require("src.zelda.tmc.Ene
 -- ===========================================================================
 -- TEKTITE
 -- ===========================================================================
-local TEK_T = { [0] = 0x18, 0x28, 0x38, 0x48 } -- gUnk_080CDEF8
+local TEK_T = require("src.zelda.tmc.RomTables").t("EnemyCrenel.TEK_T") -- gUnk_080CDEF8
 
 local function tekAim(E, e)
   local f = E.field
@@ -179,9 +179,9 @@ end
 -- ===========================================================================
 -- FALLING_BOULDER
 -- ===========================================================================
-local FB_SPEED = { [0] = 0x80, 0x100, 0x180, 0x200, 0x80, 0x100, 0x180, 0x200, 0x100, 0x200, 0x300, 0x400 } -- gUnk_080CD568
-local FB_DIR = { [0] = 10, 14, 18, 22, 10, 14, 18, 22, 10, 14, 18, 22 }                                     -- gUnk_080CD580
-local FB_GRAV = { [0] = 0x1800, 0x2000, 0x2800, 0x3000, 0x1800, 0x2000, 0x2800, 0x3000, 0x1800, 0x2000, 0x2800, 0x3000 } -- gUnk_080CD58C
+local FB_SPEED = require("src.zelda.tmc.RomTables").t("EnemyCrenel.FB_SPEED") -- gUnk_080CD568
+local FB_DIR = require("src.zelda.tmc.RomTables").t("EnemyCrenel.FB_DIR")                                     -- gUnk_080CD580
+local FB_GRAV = require("src.zelda.tmc.RomTables").t("EnemyCrenel.FB_GRAV") -- gUnk_080CD58C
 local SFX_14C, FX_ROCK2 = 0x14C, 0x15
 local FX_STARS_C = 0x1C -- FX_STARS
 
@@ -321,7 +321,7 @@ end
 --   C.peahatCollision) the sliced propeller's PeahatPropeller child is a puff;
 --   sub_0800442E (holes / water under it) is not run; ProcessMovement2 is
 --   ProcessMovement0 (EnemyDeepwood.move0).
-local PH_HEIGHTS = { [0] = 5, 6, 7, 6 }   -- gPeahatFlightHeights (negated)
+local PH_HEIGHTS = require("src.zelda.tmc.RomTables").t("EnemyCrenel.PH_HEIGHTS")   -- gPeahatFlightHeights (z, up negative)
 
 local function phFace(e, tx, ty) return dirTo(e.x, e.y, tx, ty) end
 local function phEndCharge(e) e.action, e.timer = 4, 60 end
@@ -536,7 +536,7 @@ function C.peahat(E, e)
     end
   end
   if e.bob then
-    e.cz = -PH_HEIGHTS[rshift(band(e.subtimer, 0x30), 4)] * 65536
+    e.cz = PH_HEIGHTS[rshift(band(e.subtimer, 0x30), 4)] * 65536
     e.subtimer = band(e.subtimer + 1, 0xFF)
   end
   syncZ(e)

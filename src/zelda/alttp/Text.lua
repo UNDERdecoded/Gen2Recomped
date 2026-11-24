@@ -49,6 +49,7 @@ end
 -- r22: 0x44 is the choice cursor, the font's right-pointing triangle (tile
 -- 0x00, by its shape; it drew as "D" from the font's first half before)
 local BUTTON = { [0x5B] = 0x0B, [0x5C] = 0x0C, [0x5D] = 0x0D, [0x5E] = 0x0E, [0x44] = 0x00 }
+T.BUTTON = BUTTON   -- input round: Controls.lua swaps A / R for the A-action mode
 
 -- tokens of message n (BMG index)
 function T.parse(data, n)
@@ -109,8 +110,18 @@ function T.open(data, n, opts)
                               speed = 0, delay = 0, wait = 0, waitKey = false,
                               done = false, closing = false, border = true,
                               version = 0 }, Box)
-  self.pos = ((opts.linkScreenY or 0) > 0x5B) and 0 or 1
+  -- r46: 0x08129C58 compares (link_y - BG2VOFS) & 0xFFFF > 0x5B (unsigned:
+  -- Link above the screen's top also takes window 0)
+  self.pos = (((opts.linkScreenY or 0) % 0x10000) > 0x5B) and 0 or 1
   self.name = opts.name or "Link"
+  -- r33: a window command before the first character (the telepathy
+  -- messages' borderless window 2) holds from the first drawn frame; the
+  -- border used to show for one frame (a yellow frame over the grove)
+  for k = 1, #self.toks do
+    local tok = self.toks[k]
+    if not tok.code then break end
+    if tok.code == CMD.window then self.border = (tok.arg ~= 2) end
+  end
   return self
 end
 
@@ -211,7 +222,12 @@ function Box:update(confirm, up, down)
       letters = letters + 1
       if self.speed ~= 0 then return end
     elseif tok.k == "nl" then
-      self.pendingNl = true
+      -- r44: the GBA's message copy into its buffer (0x02005480; loops at
+      -- 0x08127488 / 0x0812755E) skips 0x0A and never stores it: the rows
+      -- come only from the line / scroll commands. A newline here moved a
+      -- message's first row down (the ~15 messages that start with one,
+      -- e.g. Zelda's telepathy "{name}! Help! ..."), where the next row's
+      -- line command then wrote over it ("aink! Help! ...").
       self.i = self.i + 1
     else
       local c, a = tok.code, tok.arg

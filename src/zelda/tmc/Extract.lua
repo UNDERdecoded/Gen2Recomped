@@ -30,7 +30,7 @@ local Store = require("src.zelda.tmc.Store")
 
 local Extract = {}
 
-Extract.CACHE_VERSION = 22 -- round 28: manifest.r26b gains the Ending ranges (staffEN/staffGfx/outroSparks); 21: round 27b: manifest.r26b gains the R27B modules' ranges (VaatiScripts/SanctuaryScripts); 20: round 27A: manifest.r27a (ExtractR27A.lua, the overworld modules' ROM_RANGES); 19: round 26b: manifest.r26b (ExtractR26.lua, the dungeon modules' ROM_RANGES); 18: round 25: manifest.r25 (ExtractR25.lua, the Gleerok tables); 17: round 23: manifest.r23 (ExtractR23.lua, the tile-type flags); 16: round 15: tileset defs laid in load order (overlaps), tshi_*.bin (BG3 maps), swap_oracle.bin; 14: round 13: manifest.r13 (ExtractR13.lua); 13: round 12: manifest.r12 (ExtractR12.lua); 12: round 11: manifest.r11 (ExtractR11.lua); 11: round 10: manifest.r10 (ExtractR10.lua); 10: round 9 coll.bin, drop tables
+Extract.CACHE_VERSION = 55 -- round 90: manifest.r26b gains Story90.ROM_RANGES (cutscene.c gUnk_080FCC84 / gUnk_080FCC9C / gUnk_080FCCB4, the Sanctuary's story panels); 54: round 84: r35.bin gains Sword84.DEFS (gPlayerItemDefinition_0: the sword swing's hurtType per sword); 53: round 83: manifest.sword.boxes holds all 147 gUnk_08129096 entries (the spin's second half); 52: round 82: r35.bin gains Clone82.HITBOX (playerClone.c PlayerCloneHitbox: the Four Sword clones' sensors) and PushBlock82.HAZARDS (GetTileHazardType's hazard_list); 51: round 80: r35.bin gains Collide80.HITBOX / HITBOX_MINISH / DIR_MASK (gPlayerHitbox, sMinishHitbox, gUnk_0800275C: Link's tile sensors); 50: round 79: r35.bin gains Cape79.AIR_VEL / AIR_BACK (player.s velocities1 / velocities3, the cape's air control); 49: round 77: r35.bin gains Dig77.EDGE_BOTTOM / EDGE_TOP / TOP_ROWS (playerUtils.c gUnk_0811C2AC / 2CC / 2EC, the Mole Mitts' edge blending); 48: round 75: r35.bin gains Cloud75.TILES / SPEEDS (cloud.c gUnk_081247D0 / gUnk_081247C8); 47: round 74: r35.bin gains Veil74.STONE_SCRIPTS (sub_0806DB84's literal pool); 46: round 73: r35.bin gains TorchTrap73.TIMERS / SPEEDS (torchTrap.c) and Crypt73.TR_1 (gNpc4ETransitions[1]); 44: round 72: r35.bin gains Valley72.MAZE_DIR / MAZE_DIR2 / MAZE_SIGN / MAZE_OUT / MAZE_CHEST (roomInit.c, the forest maze) and Takkuri72.* (keyStealingTakkuri.c, graveyardKey.c); 43: round 71: r35.bin gains Guard71.PATHS / LOS_DIRS / RAY_HB (guard.c, guardLineOfSight.c); 42: round 69: r35.bin gains FrozenOcto69.ANIM / LEG / LEG2 (frozenOctorok.c); 41: round 67: r35.bin gains Pesto67.HB3D (hitbox.c gUnk_080FD22C); 40: round 66: r35.bin gains Beetle66.FLY_HB (hitbox.c gHitbox_0); 39: round 62: coll.bin's special collision table holds all 151 special tiles (manifest.collision.specialCount), r35.bin gains PortalToD62.WARP_TOD (gUnk_0813AB58); 38: round 61: r35.bin gains Board61.SIZES (board.c Board_Sizes); 37: round 58: r35.bin gains the Dog58.* tables (dog.c); 36: round 57: r35.bin gains the Cat57.* tables (cat.c); 35: round 51: r35.bin gains ItemMitts.CLOD_DUR / WallMaster51.CHASE (gUnk_0811BE14 / gUnk_080CD728); 34: round 49: manifest.r26b gains the Wind Ruins Armos transitions (EnemyFoW ruinsArmosTransitions*); 33: round 45: r35.bin gains HeavyBlock45.BOX (blockPushed.c hitboxes); 32: round 42: r35.bin gains Hole42.SURFACE (gMapActTileToSurfaceType); 31: round 41: r35.bin gains Bombs.ARCH_TYPES (the top-layer bombed-wall archway); 30: round 39: r35.bin gains Objects39.LIGHT_REGIONS / WALKIN (MISC_MANAGER types 7 / $D); 29: round 38: r35.bin gains Objects38.BUSH_OFFS (TREE_HIDING_PORTAL); 28: round 37: r35.bin gains 14 entries (PathBg37 / Rain37 / Objects37 / Armos37 tables); 27: round 36: r35.bin gains the bit-field / far / literal-pool tables (RomTables extended, 63 more entries); 26: round 35: r35.bin + manifest.r35 (RomTables.lua / RomTablesCat.lua: every small game table read from the ROM, checksummed); 25: round 33: r33.bin + manifest.r33 (ExtractR33.lua: gWorldEvents raw, worldEvent5 tables); 24: round 32: figurines.bin + manifest.r32 (ExtractR32.lua, Carlov's figurines); 23: round 30: manifest.r26b gains shadowFrames30 (Pot30.lua: the shadow OAM frames); 22: round 28: manifest.r26b gains the Ending ranges (staffEN/staffGfx/outroSparks); 21: round 27b: manifest.r26b gains the R27B modules' ranges (VaatiScripts/SanctuaryScripts); 20: round 27A: manifest.r27a (ExtractR27A.lua, the overworld modules' ROM_RANGES); 19: round 26b: manifest.r26b (ExtractR26.lua, the dungeon modules' ROM_RANGES); 18: round 25: manifest.r25 (ExtractR25.lua, the Gleerok tables); 17: round 23: manifest.r23 (ExtractR23.lua, the tile-type flags); 16: round 15: tileset defs laid in load order (overlaps), tshi_*.bin (BG3 maps), swap_oracle.bin; 14: round 13: manifest.r13 (ExtractR13.lua); 13: round 12: manifest.r12 (ExtractR12.lua); 12: round 11: manifest.r11 (ExtractR11.lua); 11: round 10: manifest.r10 (ExtractR10.lua); 10: round 9 coll.bin, drop tables
 Extract.MARKER = "complete.txt"
 
 local function hex2(n) return string.format("%02x", n) end
@@ -97,6 +97,7 @@ local function extractCollision(rom, store, manifest)
     special = 2 * Layout.TILE_TYPE_COUNT, count = Layout.TILE_TYPE_COUNT,
     masks = masksAt, shapeLookup = lookupAt,
     playerMasks = pmAt, playerShapes = psAt,
+    specialCount = Layout.SPECIAL_TILE_COUNT, -- round 62
   }
   assert(store:write("coll.bin", blob))
 end
@@ -317,7 +318,7 @@ local function extractArea(rom, store, area, bottomBase, topBase)
         -- raw property pointers [8..15]: NPCStruct lists for the delayed
         -- entity load manager, tile tables, rails (read by address later)
         room.props = {}
-        for k = 8, 15 do
+        for k = 8, 31 do -- round 37: up to 31 (LILYPAD_SMALL in $00:00 rides property $12 / $13)
           local raw = rom:u32(pp + 4 * k)
           if rom:valid(raw) then room.props[k] = raw end
         end
@@ -685,7 +686,9 @@ local function extractTileActs(rom, manifest)
   for i = 0, 17 do
     probes[i] = { s8(rom:u8(Layout.gUnk_08129072 + 2 * i)), s8(rom:u8(Layout.gUnk_08129072 + 2 * i + 1)) }
   end
-  for i = 0, 0x3F do
+  -- round 83: the whole table, 147 entries (frameIndex $6A .. $FC); the old 64 stopped at frameIndex $A9, so the
+  -- spin attack's second half (frames $AA .. $AD: north-west .. east) and the later sword moves had no hitbox
+  for i = 0, 146 do
     local p = Layout.gUnk_08129096 + 4 * i
     boxes[i] = { s8(rom:u8(p)), s8(rom:u8(p + 1)), rom:u8(p + 2), rom:u8(p + 3) }
   end
@@ -826,6 +829,29 @@ local function extractMenus(rom, store, manifest)
   end
 end
 Extract.extractMenus = extractMenus
+Extract.extractProjectiles = extractProjectiles -- round 35
+
+-- round 35: the enemy definitions on their own (BossMazaal's test-time fallback reads them from the ROM)
+function Extract.extractEnemyDefs(rom, manifest)
+  local ens = {}
+  for i = 0, Layout.ENEMY_COUNT - 1 do
+    local p = Layout.gEnemyDefinitions + 16 * i
+    if rom:u16(p) == 0xFFFF then
+      local sub, forms = rom:ptr(p + 4), {}
+      if sub then
+        for k = 0, 15 do
+          local q = sub + 16 * k
+          if rom:u16(q) == 0xFFFF or not rom:ptr(q + 4) then break end
+          forms[k] = enemyEntry(rom, q)
+        end
+      end
+      ens[i] = { multi = true, forms = forms }
+    else
+      ens[i] = enemyEntry(rom, p)
+    end
+  end
+  manifest.enemyDefs = ens
+end
 
 local function extractUi(rom, store, manifest)
   extractBgAnims(rom, store, manifest)
@@ -887,24 +913,7 @@ local function extractUi(rom, store, manifest)
   end
   manifest.objectDefs = objs
 
-  local ens = {}
-  for i = 0, Layout.ENEMY_COUNT - 1 do
-    local p = Layout.gEnemyDefinitions + 16 * i
-    if rom:u16(p) == 0xFFFF then
-      local sub, forms = rom:ptr(p + 4), {}
-      if sub then
-        for k = 0, 15 do
-          local q = sub + 16 * k
-          if rom:u16(q) == 0xFFFF or not rom:ptr(q + 4) then break end
-          forms[k] = enemyEntry(rom, q)
-        end
-      end
-      ens[i] = { multi = true, forms = forms }
-    else
-      ens[i] = enemyEntry(rom, p)
-    end
-  end
-  manifest.enemyDefs = ens
+  Extract.extractEnemyDefs(rom, manifest)
 
   local map = {}
   for i = 0, 0x6F do map[i] = rom:u8(Layout.DeathFx_EnemyDroptables + i) end
@@ -1142,6 +1151,9 @@ function Extract.run(romPath, root, progress, opts)
   if not steps.r25 then require("src.zelda.tmc.ExtractR25").run(rom, manifest); done("r25") end -- round 25: Gleerok tables (gleerok.s)
   if not steps.r26b then require("src.zelda.tmc.ExtractR26").run(rom, manifest); done("r26b") end -- round 26b: dungeon tables (ExtractR26.lua)
   if not steps.r27a then require("src.zelda.tmc.ExtractR27A").run(rom, manifest); done("r27a") end -- round 27A: overworld tables (ExtractR27A.lua)
+  if not steps.r32 then require("src.zelda.tmc.ExtractR32").run(rom, store, manifest); done("r32") end -- round 32: figurines (ExtractR32.lua)
+  if not steps.r33 then require("src.zelda.tmc.ExtractR33").run(rom, store, manifest); done("r33") end -- round 33: world events / map hints (ExtractR33.lua)
+  if not steps.r35 then require("src.zelda.tmc.RomTables").run(rom, store, manifest); done("r35") end -- round 35: the game tables (RomTables.lua)
   tick("Minish Cap: music")
   if not steps.entities then
     manifest.entityRegion = { base = Layout.ENTITY_LO, size = Layout.ENTITY_HI - Layout.ENTITY_LO }

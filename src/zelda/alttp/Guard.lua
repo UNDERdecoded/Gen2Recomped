@@ -42,19 +42,16 @@ M.TYPES = { [0x41] = true, [0x42] = true, [0x43] = true }
 local OUR = { [0] = 3, 2, 1, 0 }
 M.OUR = OUR
 local WALLBIT = { [0] = 8, 4, 2, 1 }   -- kSprite_Func7_Tab: up, down, left, right
--- kSoldierB_* (wall-following guards, subtype & 7 >= 5)
-local B_XV = { [0] = 1, 1, -1, -1, -1, -1, 1, 1 }
-local B_YV = { [0] = -1, 1, 1, -1, -1, 1, 1, -1 }
-local B_XV2 = { [0] = 8, 0, -8, 0, -8, 0, 8, 0 }
-local B_YV2 = { [0] = 0, 8, 0, -8, 0, 8, 0, -8 }
-local B_DIR = { [0] = 0, 2, 1, 3, 1, 2, 0, 3 }
-local B_MASK2 = { [0] = 1, 4, 2, 8, 2, 4, 1, 8 }
-local B_MASK = { [0] = 8, 1, 4, 2, 8, 2, 4, 1 }
-local B_NEXT2 = { [0] = 1, 2, 3, 0, 5, 6, 7, 4 }
-local B_NEXT = { [0] = 3, 0, 1, 2, 7, 4, 5, 6 }
-local B_TAB0 = { [0] = 0, 2, 1, 3, 6, 4, 5, 7 }
-local HEADDIRS = { [0] = 0, 2, 2, 2, 0, 3, 3, 3, 1, 3, 3, 3, 1, 2, 2, 2,
-                   2, 0, 0, 0, 2, 1, 1, 1, 3, 1, 1, 1, 3, 0, 0, 0 }
+-- kSoldierB_* (wall-following guards, subtype & 7 >= 5), kSoldier_HeadDirs:
+-- r35: read from the ROM at import (RomTablesSpec "guard.*")
+local RT = require("src.zelda.alttp.RomTables")
+local B_XV, B_YV = RT.get("guard.bXv"), RT.get("guard.bYv")
+local B_XV2, B_YV2 = RT.get("guard.bXv2"), RT.get("guard.bYv2")
+local B_DIR = RT.get("guard.bDir")
+local B_MASK2, B_MASK = RT.get("guard.bMask2"), RT.get("guard.bMask")
+local B_NEXT2, B_NEXT = RT.get("guard.bNext2"), RT.get("guard.bNext")
+local B_TAB0 = RT.get("guard.bTab0")
+local HEADDIRS = RT.get("guard.headDirs")
 
 local function cb(self) return self.game.data.roomIdx.combat end
 

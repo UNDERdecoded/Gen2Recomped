@@ -119,16 +119,18 @@ end
 -- ---------------------------------------------------------------- transitions
 -- gNpc4ETransitions[7..15] (endX / endY 0 = the room's origin, as the ROM has)
 local WHITE, BLACK = "white", "black"
+-- the fade of each (port's choice per script: TRANSITION_FADE_WHITE_SLOW or black)
+M.TR_FADE = { [7] = WHITE, [8] = WHITE, [9] = BLACK, [10] = WHITE, [11] = BLACK, [12] = BLACK, [13] = BLACK, [14] = BLACK, [15] = WHITE }
 M.TRANSITIONS = {
-  [7] = { warpType = 1, area = 0x88, room = 0x1F, endX = 0, endY = 0, facing = 4, kind = 0, layer = 1, fade = WHITE },   -- gUnk_0813AC70
-  [8] = { warpType = 1, area = 0x80, room = 0x02, endX = 0, endY = 0, facing = 4, kind = 0, layer = 1, fade = WHITE },   -- gUnk_0813AC84
-  [9] = { warpType = 1, area = 0x88, room = 0x00, endX = 0, endY = 0, facing = 4, kind = 0, layer = 1, fade = BLACK },   -- gUnk_0813AC98
-  [10] = { warpType = 1, area = 0x80, room = 0x00, endX = 0, endY = 0, facing = 4, kind = 0, layer = 1, fade = WHITE },  -- gUnk_0813ACAC
-  [11] = { warpType = 1, area = 0x80, room = 0x01, endX = 0, endY = 0, facing = 4, kind = 0, layer = 1, fade = BLACK },  -- gUnk_0813ACC0
-  [12] = { warpType = 1, area = 0x00, room = 0x00, endX = 0, endY = 0, facing = 4, kind = 0, layer = 1, fade = BLACK },  -- gUnk_0813ACD4
-  [13] = { warpType = 1, area = 0x06, room = 0x00, endX = 0, endY = 0, facing = 4, kind = 0, layer = 1, fade = BLACK },  -- gUnk_0813ACE8
-  [14] = { warpType = 1, area = 0x89, room = 0x01, endX = 0xA8, endY = 0x88, facing = 6, kind = 0, layer = 1, fade = BLACK }, -- gUnk_0813AC5C
-  [15] = { warpType = 1, area = 0x81, room = 0x00, endX = 0xA8, endY = 0x88, facing = 6, kind = 0, layer = 1, fade = WHITE }, -- gUnk_0813ACFC
+  [7] = require("src.zelda.tmc.RomTables").t("Ending.TR_7"), -- gUnk_0813AC70
+  [8] = require("src.zelda.tmc.RomTables").t("Ending.TR_8"), -- gUnk_0813AC84
+  [9] = require("src.zelda.tmc.RomTables").t("Ending.TR_9"), -- gUnk_0813AC98
+  [10] = require("src.zelda.tmc.RomTables").t("Ending.TR_10"), -- gUnk_0813ACAC
+  [11] = require("src.zelda.tmc.RomTables").t("Ending.TR_11"), -- gUnk_0813ACC0
+  [12] = require("src.zelda.tmc.RomTables").t("Ending.TR_12"), -- gUnk_0813ACD4
+  [13] = require("src.zelda.tmc.RomTables").t("Ending.TR_13"), -- gUnk_0813ACE8
+  [14] = require("src.zelda.tmc.RomTables").t("Ending.TR_14"), -- gUnk_0813AC5C
+  [15] = require("src.zelda.tmc.RomTables").t("Ending.TR_15"), -- gUnk_0813ACFC
 }
 do
   local ok, V3 = pcall(require, "src.zelda.tmc.BossVaati3")
@@ -139,7 +141,7 @@ do
   local prev = N[0x0806DA1C]
   N[0x0806DA1C] = function(f, e, ctx, a)
     local t = M.TRANSITIONS[ctx.intVariable or -1]
-    if t then f.fadeWhite = (t.fade == WHITE); f.r28white = true end
+    if t then f.fadeWhite = (M.TR_FADE[ctx.intVariable or -1] == WHITE); f.r28white = true end
     if prev then return prev(f, e, ctx, a) end
     if t then f:startTransition(t) end
   end
@@ -304,12 +306,7 @@ end
 -- ---------------------------------------------------------------- white triangle
 -- gUnk_081215E8 (whiteTriangleEffect.c): {brightness type2, its step, radius,
 -- radius speed, radius accel, angle, spin, spin accel, win in, win out}
-M.TRIANGLE = {
-  [0] = { 5, 4, 280, -6, 0, 0, -8, 0, 31, 63 },
-  [1] = { 6, 2, 0, 4, 0, 0, 8, 0, 63, 31 },
-  [2] = { 7, 4, 0, 4, 0, 0, -6, 0, 63, 31 },
-  [3] = { 6, 2, 0, 16, 0, 0, 16, 0, 63, 31 },
-}
+M.TRIANGLE = require("src.zelda.tmc.RomTables").t("Ending.TRIANGLE")
 local function s8(v) v = band(v, 0xFF) return v >= 0x80 and v - 0x100 or v end
 function M.startTriangle(f, parent, type2)
   local c = M.TRIANGLE[type2 or 0] or M.TRIANGLE[0]

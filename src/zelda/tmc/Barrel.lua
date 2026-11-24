@@ -94,8 +94,8 @@ end
 -- and gone within $1C of him (SFX_SECRET), or blinks 30 frames and goes
 -- when the suction stops.  Its affine size per screen band is
 -- gUnk_0812144C / gUnk_08121474 (sub_0808BBE0).
-local WEB_SCALE = { 192, 256, 208, 240, 224, 224, 240, 208, 256, 192, 256, 192, 240, 208, 224, 224, 208, 240, 192, 256 }
-local WEB_OFFY = { 248, 250, 252, 254, 0, 0, 2, 4, 6, 8, 0, 0 }
+local WEB_SCALE = require("src.zelda.tmc.RomTables").t("Barrel.WEB_SCALE")
+local WEB_OFFY = require("src.zelda.tmc.RomTables").t("Barrel.WEB_OFFY")
 function Barrel:web()
   local f = self.field
   if f:flag("global", LV1TARU_OPEN) and not (self.w and self.w.action == 2) then self.w = nil return end

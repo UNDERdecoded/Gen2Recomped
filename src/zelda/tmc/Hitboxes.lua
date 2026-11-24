@@ -110,15 +110,32 @@ function HB.pushOut(f, e, eb)
   return true
 end
 
+-- round 39: most of those NPCs call sub_0806ED78 only on their unscripted
+-- path (`if (flags & ENT_SCRIPTED) scripted...; else { actions; sub_0806ED78 }`:
+-- kid, townsperson, beedle, brocco, pina, talon, malon, smith, gorons, ...),
+-- so a scripted one (e.script) walks into Link without moving him (Hyrule
+-- Town's first-Kinstone kids close round Link; the push used to shove him
+-- out of the Hurdy-Gurdy Man's box -> "Where are you going?" forever).
+-- These push on the scripted path too (no ENT_SCRIPTED split, or the
+-- scripted handler / its script calls it): festari, postman, guard
+-- (guardWithSpear.c via script_Guard*), npc9, mailbox, stockwell, epona,
+-- milk cart, npc23, Castor Wilds statue (sub_08067514), cat, cow, dog,
+-- syrup, rem, cucco chick.
+HB.SCRIPTED_PUSH = {}
+for _, id in ipairs({ 0x02, 0x04, 0x08, 0x09, 0x10, 0x1C, 0x1F, 0x20, 0x23, 0x2B, 0x2C, 0x31, 0x35, 0x36, 0x37, 0x55 }) do
+  HB.SCRIPTED_PUSH[id] = true
+end
+
 -- every frame after the entities: solid NPCs push Link out
 function HB.update(f)
   if not HB.data(f) then return end
   for _, e in ipairs(f.entities) do
     if e.kind == 7 and HB.SOLID_NPC[e.id] and not e.hidden and not e.deleted and not e.unplaced and e.def
-       and e.def.type ~= 0 and not e.noHitbox then
+       and e.def.type ~= 0 and not e.noHitbox and not (e.script and not HB.SCRIPTED_PUSH[e.id]) then
       HB.pushOut(f, e, HB.npc(f, e))
     end
   end
+  require("src.zelda.tmc.Bell75").push82(f, HB) -- round 75: HandleEntity0x82Actions bit 1 (scripted solid NPCs)
 end
 
 -- the A-button candidate under Link's interaction point, or nil when the

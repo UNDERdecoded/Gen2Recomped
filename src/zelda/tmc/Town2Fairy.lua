@@ -58,7 +58,7 @@ F.SFX = { S145 = 0x145, HEART_CONTAINER_SPAWN = 0x141, S140 = 0x140, TELEPORTER 
 local PART = { BEHAVIORS = 0, WINGS = 1, WAKE = 2, MINI = 3, MINIAFFINE = 4, DROPLET = 5, RIPPLE = 6,
                BIGRIPPLE = 7, ENERGY = 8, FORM9 = 9, FORM10 = 10 }
 F.PART = PART
-F.RIPPLE_OFFSETS = { [0] = 0, 0, -32, -8, 16, 20, 24, -12, -16, 24 } -- GreatFairy_RippleOffsets
+F.RIPPLE_OFFSETS = require("src.zelda.tmc.RomTables").t("Town2Fairy.RIPPLE_OFFSETS") -- GreatFairy_RippleOffsets
 
 local function rv(f)
   f.r27rv = f.r27rv or { animFlags = 0 }

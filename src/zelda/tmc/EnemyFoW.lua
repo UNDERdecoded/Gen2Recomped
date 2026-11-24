@@ -126,24 +126,22 @@ local COL = { NORTH_WEST = 0x2, NORTH_EAST = 0x4, NORTH_ANY = 0xE, SOUTH_WEST = 
 M.COL = COL
 
 -- small tables written out in the decomp's .c sources
-M.STALFOS_TURN = { [0] = 28, 29, 30, 31, 32, 33, 34, 35 }                                          -- gUnk_080CF8F8
-M.STALFOS_WALK = { [0] = 60, 60, 90, 90, 90, 90, 120, 120, 120, 120, 120, 120, 120, 120, 150, 150 } -- gUnk_080CF900
-M.STALFOS_WALL = { [0] = 8, 32768, 128, 2048 }                                                      -- gUnk_080CF910
-M.STALFOS_REST = { [0] = 10, 10, 15, 15, 15, 15, 20, 20, 20, 20, 20, 25, 25, 25, 30, 30 }          -- gUnk_080CF918
-M.STALFOS_COOL = { [0] = 30, 60, 60, 90 }                                                           -- gUnk_080CF928
-M.STALFOS_HEADLESS = { [0] = 45, 60, 75, 90 }                                                       -- gUnk_080CF92C
-M.STALFOS_FRONT = { [0] = 0, -8, 8, 0, 0, 8, -8, 0 }                                               -- gUnk_080CF930 (s8)
-M.STALFOS_PICK = { { 0x4000, 0 }, { 0x4060, 1 } }                                                   -- gUnk_080CF938
-M.SPROJ_PICK = { [0] = { 0, -9, -1 }, { 0, 5, -25 }, { 0, 3, -20 }, { 0, 0, -14 }, { 10, 0, -1 }, { -5, 0, -24 },
-  { -3, 0, -20 }, { 0, 0, -13 }, { 0, 5, -1 }, { 0, -5, -19 }, { 0, -3, -16 }, { 0, 0, -11 },
-  { -10, 0, -1 }, { 5, 0, -24 }, { 3, 0, -20 }, { 0, 0, -13 } }                                     -- gUnk_08129B20
-M.SPROJ_BOB = { [0] = -15, -13, -14, -15, -13, -14, 0, 0 }                                          -- gUnk_08129B50 (s8)
-M.SKULL_SHAKE = { [0] = -1, 1, 1, -1 }                                                              -- gUnk_080CFBE4
-M.EYE_SHAKE = { [0] = 0, -1, 0, 1 }                                                                 -- gUnk_080CE2BC (u8 255 = -1 as an offset)
-M.EYE_PROBE = { [0] = -8, -10, 8, -10, 16, -4, 16, 4, -8, 10, 8, 10, -16, -4, -16, 4 }               -- gUnk_080CE2C0 (first 16)
-M.EYE_PUFF = { [0] = -11, 9, 11, 9, -9, -2, -8, 10, -11, -1, 11, -1, 9, -2, 8, 10 }                 -- gUnk_080CE2F4
-M.ARMOS_SHAKE = { [0] = -1, 0, 1, 0 }                                                               -- gUnk_080CE160 (u8 255 = -1)
-M.ARMOS_PROBE = { [0] = 0, -7, 7, 0, 0, 7, -7, 0 }                                                  -- gUnk_080CE164
+M.STALFOS_TURN = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_TURN")                                          -- gUnk_080CF8F8
+M.STALFOS_WALK = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_WALK") -- gUnk_080CF900
+M.STALFOS_WALL = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_WALL")                                                      -- gUnk_080CF910
+M.STALFOS_REST = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_REST")          -- gUnk_080CF918
+M.STALFOS_COOL = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_COOL")                                                           -- gUnk_080CF928
+M.STALFOS_HEADLESS = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_HEADLESS")                                                       -- gUnk_080CF92C
+M.STALFOS_FRONT = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_FRONT")                                               -- gUnk_080CF930 (s8)
+M.STALFOS_PICK = require("src.zelda.tmc.RomTables").t("EnemyFoW.STALFOS_PICK")                                                   -- gUnk_080CF938
+M.SPROJ_PICK = require("src.zelda.tmc.RomTables").t("EnemyFoW.SPROJ_PICK")                                     -- gUnk_08129B20
+M.SPROJ_BOB = require("src.zelda.tmc.RomTables").t("EnemyFoW.SPROJ_BOB")                                          -- gUnk_08129B50 (s8)
+M.SKULL_SHAKE = require("src.zelda.tmc.RomTables").t("EnemyFoW.SKULL_SHAKE")                                                              -- gUnk_080CFBE4
+M.EYE_SHAKE = require("src.zelda.tmc.RomTables").t("EnemyFoW.EYE_SHAKE")                                                                 -- gUnk_080CE2BC (u8 255 = -1 as an offset)
+M.EYE_PROBE = require("src.zelda.tmc.RomTables").t("EnemyFoW.EYE_PROBE")               -- gUnk_080CE2C0 (first 16)
+M.EYE_PUFF = require("src.zelda.tmc.RomTables").t("EnemyFoW.EYE_PUFF")                 -- gUnk_080CE2F4
+M.ARMOS_SHAKE = require("src.zelda.tmc.RomTables").t("EnemyFoW.ARMOS_SHAKE")                                                               -- gUnk_080CE160 (u8 255 = -1)
+M.ARMOS_PROBE = require("src.zelda.tmc.RomTables").t("EnemyFoW.ARMOS_PROBE")                                                  -- gUnk_080CE164
 -- per Wizzrobe: Action1 timer after collision on, Action2 cast time, shot tick, hidden base (gUnk in each .c)
 M.WIZ = {
   [ID.WIND] = { on = 16, cast = 40, shot = 8, hide = 32, proj = PROJ.WIND, sfx = SFX.S15F },
@@ -151,16 +149,23 @@ M.WIZ = {
   [ID.ICE] = { on = 12, cast = 32, shot = 10, hide = 24, proj = PROJ.ICE, sfx = SFX.S160 },
 }
 -- hitboxes (src/data/hitbox.c)
-local HB_EYE_AWAKE = { x = 0, y = -12, w = 8, h = 8 }   -- gUnk_080FD308
-local HB_ARMOS = { x = 0, y = 0, w = 6, h = 6 }         -- gUnk_080FD2F0
-local HB_ARMOS_STATUE = { x = 0, y = 0, w = 9, h = 9 }  -- gHitbox_15
-local HB_SKULL_FLY = { x = 0, y = 0, w = 4, h = 4 }     -- gUnk_080FD34C
-local HB_SKULL_HELD = { x = 0, y = 0, w = 3, h = 3 }    -- gUnk_080FD340
+local HB_EYE_AWAKE = require("src.zelda.tmc.RomTables").t("EnemyFoW.HB_EYE_AWAKE")   -- gUnk_080FD308
+local HB_ARMOS = require("src.zelda.tmc.RomTables").t("EnemyFoW.HB_ARMOS")         -- gUnk_080FD2F0
+local HB_ARMOS_STATUE = require("src.zelda.tmc.RomTables").t("EnemyFoW.HB_ARMOS_STATUE")  -- gHitbox_15
+local HB_SKULL_FLY = require("src.zelda.tmc.RomTables").t("EnemyFoW.HB_SKULL_FLY")     -- gUnk_080FD34C
+local HB_SKULL_HELD = require("src.zelda.tmc.RomTables").t("EnemyFoW.HB_SKULL_HELD")    -- gUnk_080FD340
 M.HB = { EYE_AWAKE = HB_EYE_AWAKE, ARMOS = HB_ARMOS, ARMOS_STATUE = HB_ARMOS_STATUE, SKULL_FLY = HB_SKULL_FLY }
 
 -- the Armos' room property transitions (FoW EastKeyLever properties 8 / 9:
 -- gUnk_additional_8/9_FortressOfWinds_EastKeyLever, two Transition structs)
-M.ROM_RANGES = { fowArmosTransitions = { 0x080E1D5C, 0x080E1D84 } }
+M.ROM_RANGES = { fowArmosTransitions = { 0x080E1D5C, 0x080E1D84 },
+  -- round 49: the Wind Ruins' Armos (type2 = the room property; each a Transition
+  -- into AREA_ARMOS_INTERIORS): $05:00 properties $A / $B, $05:04 property 8,
+  -- $05:05 properties 8 .. $B (gUnk_additional_*_Ruins_*)
+  ruinsArmosTransitions0 = { 0x080DDD04, 0x080DDD2C },
+  ruinsArmosTransitions4 = { 0x080DE118, 0x080DE12C },
+  ruinsArmosTransitions5 = { 0x080DE338, 0x080DE388 } }
+M.ARMOS_TRANSITION_RANGES = { "fowArmosTransitions", "ruinsArmosTransitions0", "ruinsArmosTransitions4", "ruinsArmosTransitions5" }
 
 -- ===========================================================================
 -- helpers
@@ -539,7 +544,7 @@ function M.spark(E, e)
     setAnim(E, e, 0)
   elseif e.action == 1 then
     e.anim:update(1)
-    move0(E, e, e.dir, e.speed)
+    require("src.zelda.tmc.Move91").move0(E, e, e.dir, e.speed) -- round 91: the cartridge's ProcessMovement0 (Move91.lua)
     local head = (e.form or 0) == 0
     local c = e.collisions or 0
     if c == 0 then
@@ -1090,9 +1095,12 @@ function M.armosTransition(f, k)
   local props = f.room and f.room.maps and f.room.maps.header and f.room.maps.header.props
   local addr = props and props[k]
   if not addr then return nil end
-  local T = require("src.zelda.tmc.ExtractR26").tables(f, "fowArmosTransitions")
-  local r = M.ROM_RANGES.fowArmosTransitions
-  if not T or addr < r[1] or addr + 20 > r[2] then return nil end
+  local T, r
+  for _, name in ipairs(M.ARMOS_TRANSITION_RANGES) do -- round 49: every Armos' range, not only FoW's
+    local rr = M.ROM_RANGES[name]
+    if addr >= rr[1] and addr + 20 <= rr[2] then r = rr; T = require("src.zelda.tmc.ExtractR26").tables(f, name) break end
+  end
+  if not T or not r then return nil end
   return { warpType = T.u16(addr), endX = T.u16(addr + 6), endY = T.u16(addr + 8), shape = T.u8(addr + 10),
            area = T.u8(addr + 11), room = T.u8(addr + 12), layer = T.u8(addr + 13), kind = T.u8(addr + 14),
            facing = T.u8(addr + 15), sfx = T.u16(addr + 16) }
@@ -1154,6 +1162,10 @@ function M.armos(E, e)
   end
   if a == 0 then
     e.onCollision = M.armosCollision
+    -- round 48: super->direction is an entity field (0 until set); an Armos woken while Link is outside its
+    -- home goes straight from the wake to action 4 (sub_080305BC reads the direction) -- nil here threw every
+    -- frame and froze it on the spot
+    e.dir = e.dir or 0
     e.slot = band(rshift(e.spawnB or 0, 8), 0xFF)
     local ad = armosData(f)
     local sv = ad.data[e.slot]
@@ -1512,6 +1524,7 @@ end
 local function skullBreak(E, e) -- sub_0803A0E0
   M.skullFree(E, e)
   fx(E.field, e.x, e.y, FX.BONE)
+  require("src.zelda.tmc.Skull78").drop(E.field, e) -- round 78: sub_0808288C(super, type2, 0, 0): the bone's drop
   e.deleted = true
   if e.carriedBy and e.carriedBy.carried and e.carriedBy.carried.ent == e then e.carriedBy.carried = nil end
 end

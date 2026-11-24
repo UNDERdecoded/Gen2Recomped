@@ -59,15 +59,14 @@ local SFX = { S1A1 = 0x1A1, S1A2 = 0x1A2, S155 = 0x155, S10B = 0x10B, S19E = 0x1
 local BGM_BOSS = 0x2E
 local SPECIAL_FX, FX_GIANT_EXPLOSION3 = 0x0F, 0x48 -- round 17: was $49 (FX_GREEN_ORB); effects.h counts FX_GIANT_EXPLOSION3 = $48
 -- gUnk_080CC234: the drops' timings ($FF ends)
-local DROPS = { 0x3C, 0x1E, 0x1E, 0x1E, 0x1E, 0x0F, 0x0F, 0x0F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0A, 0x0A,
-                0x0A, 0x0F, 0x0F, 0x0F, 0x1E, 0x1E, 0x2D, 0x0A, 0x5A, 0x1E, 0xFF }
-local BOUNCES = { [0] = 2, 2, 4, 4, 4, 6, 6, 8 }      -- gUnk_080CC24F
-local LIE = { [0] = 150, 180, 210, 250 }               -- gUnk_080CC278
-local NEED = { [0] = 249, 247, 249 }                  -- (u8)gUnk_080CC2DC
+local DROPS = require("src.zelda.tmc.RomTables").t("BossChuchu.DROPS")
+local BOUNCES = require("src.zelda.tmc.RomTables").t("BossChuchu.BOUNCES")      -- gUnk_080CC24F
+local LIE = require("src.zelda.tmc.RomTables").t("BossChuchu.LIE")               -- gUnk_080CC278
+local NEED = require("src.zelda.tmc.RomTables").t("BossChuchu.NEED")                  -- (u8)gUnk_080CC2DC
 -- swing tables {step, amplitude}: head gUnk_080CC27C, middle gUnk_080CC29C, lower gUnk_080CC2BC
-local T_HEAD = { [0] = { 0x80, 0x8 }, { 0x100, 0x6 }, { 0x80, 0x18 }, { 0x100, 0x8 }, { 0x180, 0x6 }, { 0x100, 0x10 }, { 0, 0 }, { 0xA0, 0x18 } }
-local T_MID  = { [0] = { 0x80, 0x8 }, { 0x100, 0x4 }, { 0x80, 0xC }, { 0x80, 0x6 }, { 0x200, 0x6 }, { 0x100, 0xC }, { 0, 0 }, { 0xA0, 0x14 } }
-local T_LOW  = { [0] = { 0x80, 0x8 }, { 0x100, 0x0 }, { 0x60, 0x2 }, { 0x80, 0x2 }, { 0x200, 0x6 }, { 0x100, 0x8 }, { 0, 0 }, { 0xA0, 0x10 } }
+local T_HEAD = require("src.zelda.tmc.RomTables").t("BossChuchu.T_HEAD")
+local T_MID  = require("src.zelda.tmc.RomTables").t("BossChuchu.T_MID")
+local T_LOW  = require("src.zelda.tmc.RomTables").t("BossChuchu.T_LOW")
 
 local function s8(v) v = band(math.floor(v), 0xFF); if v >= 128 then return v - 256 end return v end
 local function u8(v) return band(math.floor(v), 0xFF) end

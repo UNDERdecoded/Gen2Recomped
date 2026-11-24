@@ -69,7 +69,11 @@ M.OFF = {
   sbXv = 0x176960, sbYv = 0x176968, sbXv2 = 0x176970, sbYv2 = 0x176978,
   sbMask2 = 0x176988, sbMask = 0x176990, sbNext2 = 0x176998, sbNext = 0x1769A0,
   barIncr = 0x1757F0,
+  barScale = 0x1757F8,   -- r41: Firebar_Main's ball scales (GBA 0x080D8A90: |sin| * scale >> 8, then the sign)
   bumpVels = 0x1757FC, bumpDmd = 0x175800,
+  -- r42: SpriteModule_Fall2 (SpritePit.lua): kFall_Gfx for 0x13 / 0x26 by delay >> 1, the drift masks by
+  -- delay >> 3, the beetle's / Mini Helmasaur's falling OAM entries (one each, 6 frames)
+  fallGfx = 0x172558, fallMask = 0x172578, fallHH = 0x17258C, fallHelm = 0x1725BC,
   kodGfx = 0x17D3B2, kodFlags = 0x17D3BA, kodFlame = 0x17D3C2,
   flameGfx = 0x1791D4,
 }
@@ -101,6 +105,9 @@ function M.extract(rom, R, check, D)
     sbXv = s8(u8(O.sbXv, 8)), sbYv = s8(u8(O.sbYv, 8)), sbXv2 = s8(u8(O.sbXv2, 8)), sbYv2 = s8(u8(O.sbYv2, 8)),
     sbMask2 = u8(O.sbMask2, 8), sbMask = u8(O.sbMask, 8), sbNext2 = u8(O.sbNext2, 8), sbNext = u8(O.sbNext, 8),
     barIncr = s8(u8(O.barIncr, 4)),
+    barScale = u8(O.barScale, 3),
+    fallGfx = u8(O.fallGfx, 32), fallMask = u8(O.fallMask, 16),
+    fallHH = D.dmd(rom, O.fallHH, 6), fallHelm = D.dmd(rom, O.fallHelm, 6),
     bumpVels = s8(u8(O.bumpVels, 4)), bumpDmd = D.dmd(rom, O.bumpDmd, 8),
     kodGfx = u8(O.kodGfx, 8), kodFlags = u8(O.kodFlags, 8), kodFlame = u8(O.kodFlame, 8),
     flameGfx = s8(u8(O.flameGfx, 32)),
@@ -113,6 +120,9 @@ function M.extract(rom, R, check, D)
   check(t.hhOam[1] == 6 and t.hhHealth[1] == 32 and t.hhBump[2] == 3 and t.hhDmd[2][2] == 2, "Hardhat Beetle tables")
   check(t.helmGfx[1] == 3 and t.helmFlags[1] == 0x40 and t.sparkDirs[1] == 1 and t.sbNext[1] == 3 and t.sbMask2[2] == 4,
         "Mini Helmasaur / Spark tables")
+  check(t.barScale[1] == 64 and t.barScale[3] == 192, "Firebar ball scales")
+  check(t.fallGfx[1] == 5 and t.fallGfx[32] == 0 and t.fallMask[1] == 255 and t.fallHH[1][3] == 0x16
+        and t.fallHelm[1][3] == 0x5C, "pit fall tables")
   check(t.barIncr[1] == -2 and t.bumpDmd[1][3] == 0xDC and t.kodGfx[4] == 5 and t.kodFlame[8] == 6
         and t.flameGfx[1] == 5, "Firebar / Bumper / Kodongo tables")
   return t
@@ -231,7 +241,9 @@ local function beetle(self, a, lk)
     end
   elseif (a.inv or 0) == 0 then a.zapSeen = nil end
   a.sub2 = band((a.sub2 or 0) + 1, 0xFF)
-  if a.recoil and self:recoilStep(a) then return end
+  -- r42: Sprite_ReturnIfRecoiling runs the tile collision (its floor probe:
+  -- a knocked beetle drops into a pit, SpritePit.lua)
+  if a.recoil and self:recoilStep(a) then require("src.zelda.alttp.SpritePit").floor(self, a) return end
   if band(a.wall or 0, 15) ~= 0 then
     if band(a.wall, 3) ~= 0 then a.vx = 0 end
     a.vy = 0
@@ -239,6 +251,7 @@ local function beetle(self, a, lk)
     H().moveXY(a)
   end
   H().tileCollision(self, a)
+  if require("src.zelda.alttp.SpritePit").floor(self, a) then return end
   if band(bxor(a.k or 0, self.frame), 31) == 0 then
     local px, py = d.towardsLink(a, lk, a.A or 16)
     a.B, a.C = py, px
@@ -307,6 +320,19 @@ local function barSin(game, ang, b)
 end
 M.barSin = barSin
 
+-- r41: a fireball's offset on the bar (Firebar_Main, GBA 0x080D8A50 /
+-- 0x080D8A90): the outer ball (i 3) at the full value, the others at
+-- (|v| * barScale[i] >> 8) with v's sign -- truncated towards 0 (the port
+-- floored: 1 px off on the negative side)
+local function barOff(game, v, i)
+  if i >= 3 then return v end
+  local tb = T(game)
+  local sc = tb and tb.barScale and tb.barScale[i + 1] or (i + 1) * 64
+  local m = rshift(math.abs(v) * sc, 8)
+  return (v < 0) and -m or m
+end
+M.barOff = barOff
+
 local function firebar(self, a, lk)
   local tb = T(self.game)
   local game = self.game
@@ -317,9 +343,12 @@ local function firebar(self, a, lk)
     local sv = barSin(game, ang, 0x40)
     local cv = barSin(game, band(ang + 0x80, 0x1FF), 0x40)
     for i = 0, 3 do
-      local ox = a.x + math.floor(sv * (i + 1) / 4)
-      local oy = a.y + math.floor(cv * (i + 1) / 4)
-      if band(ox - lk.x + 12, 0xFF) < 24 and band(oy - lk.y + 4, 0xFF) < 16 then
+      local ox = a.x + barOff(game, sv, i)
+      local oy = a.y + barOff(game, cv, i)
+      -- r60: the cartridge compares 16-bit sums (0x080D8B7E..84 / 0x080D8B9E..A4,
+      -- `lsls #16; lsrs #16; cmp #0x17 / #0xF`), not bytes: with 0xFF a bar
+      -- 256 px away (Skull Woods 0x67's, Link landing from the hole) hit Link
+      if band(ox - lk.x + 12, 0xFFFF) < 24 and band(oy - lk.y + 4, 0xFFFF) < 16 then
         local cb = D().cbOf(self)
         local cls = band(cb.bump[a.type + 1] or 0, 0x0F)
         game:hurtLink(cb.playerDamage[3 * cls + 1] or 2, ox + 8, oy + 8)
@@ -339,11 +368,12 @@ local function kodongo(self, a, lk)
   local tb = T(self.game)
   local d = D()
   if a.recoil and self:recoilStep(a) then return end
-  local XV, YV = { [0] = 1, -1, 0, 0 }, { [0] = 0, 0, 1, -1 }       -- kKodondo_Xvel / Yvel
+  local T76 = require("src.zelda.alttp.Tables76")                    -- r76: the tables from the ROM
+  local XV, YV = T76.get("kodXv"), T76.get("kodYv")                   -- kKodondo_Xvel / Yvel
   local function setDir()                                            -- Kodongo_SetDirection
     local j = a.D
-    a.vx = ({ [0] = 16, -16, 0, 0 })[j]                               -- kFluteBoyAnimal_Xvel
-    a.vy = ({ [0] = 0, 0, 16, -16 })[j]                               -- kZazak_Yvel
+    a.vx = T76.get("dirXv")[j]                                        -- kFluteBoyAnimal_Xvel
+    a.vy = T76.get("dirYv")[j]                                        -- kZazak_Yvel
   end
   if a.ai == 0 then
     a.ai = 1
@@ -369,8 +399,8 @@ local function kodongo(self, a, lk)
     if j == 1 and band(a.delay, 15) == 0 then
       -- Kodongo_SpawnFire
       local i = a.D
-      local f = d.spawn(self, 0x87, a.x + ({ [0] = 8, -8, 0, 0 })[i], a.y + ({ [0] = 0, 0, 8, -8 })[i], a.lower)
-      f.vx, f.vy = ({ [0] = 24, -24, 0, 0 })[i], ({ [0] = 0, 0, 24, -24 })[i]
+      local f = d.spawn(self, 0x87, a.x + T76.get("fireX")[i], a.y + T76.get("fireY")[i], a.lower)
+      f.vx, f.vy = T76.get("fireXv")[i], T76.get("fireYv")[i]
       self.game.kodFlames = (self.game.kodFlames or 0) + 1
     end
     a.gfx = tb.kodFlame[j * 4 + a.D + 1]
@@ -438,7 +468,7 @@ local function giantMoldorm(self, a, lk)
     end
     if x4 < 80 and band(x4, 15) == 0 then
       a.B = (a.B or 0) + 1
-      local back = ({ 16, 28, 0x28, 0x30 })[math.min(4, a.B)]
+      local back = require("src.zelda.alttp.RomTables").get("hera.tailBack")[math.min(4, a.B)]   -- r36: the GBA's look-backs
       local p = a.hist[band((a.sub2 or 0) - back, 0x7F)]
       if p then require("src.zelda.alttp.Effects").death(game, { type = 0x00, x = p[1], y = p[2], z = 0, lower = a.lower }) end
     end
@@ -523,6 +553,8 @@ function M.update(self, a, lk)
     if a.tailOf then return moldormTail(self, a, lk) end
     return giantMoldorm(self, a, lk)
   elseif t == 0x18 then return miniMoldorm(self, a, lk)
+  elseif (t == 0x26 or t == 0x13) and a.pitFall then
+    return require("src.zelda.alttp.SpritePit").fallFrame(self, a)   -- r42: SpriteModule_Fall2
   elseif t == 0x26 then
     a.gfx = band(rshift(a.sub2 or 0, 2), 1)
     return beetle(self, a, lk)
@@ -569,6 +601,8 @@ function M.draw(spr, a, x, y, frame, game)
       local b = band(base + 2 * i, 15)
       spr:oam(x + tb.mmDrawX[b + 1], y + tb.mmDrawY[b + 1], M.BODY_CHAR, bor(f, 1), 0)
     end
+  elseif (t == 0x26 or t == 0x13) and a.pitFall then
+    return require("src.zelda.alttp.SpritePit").draw(spr, tb, a, x, y, (t == 0x26) and (a.oam or f) or f)
   elseif t == 0x26 then
     spr:drawDmd(a, tb.hhDmd, (a.gfx or 0) * 2, 2, x, y - (a.z or 0), a.oam or f)
   elseif t == 0x13 then
@@ -585,7 +619,7 @@ function M.draw(spr, a, x, y, frame, game)
     local cv = barSin(g, band(ang + 0x80, 0x1FF), 0x40)
     local fl = bor(band(bit.lshift(a.sub2 or 0, 4), 0xC0), f)
     for i = 3, 0, -1 do
-      spr:oam(x + math.floor(sv * (i + 1) / 4), y + math.floor(cv * (i + 1) / 4), M.BAR_CHAR, fl, 2)
+      spr:oam(x + barOff(g, sv, i), y + barOff(g, cv, i), M.BAR_CHAR, fl, 2)
     end
   elseif t == 0x86 then
     local ch = singleChar(spr, t, a.gfx)

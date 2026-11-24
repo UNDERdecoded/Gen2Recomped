@@ -53,7 +53,11 @@ local D = {}
 
 D.AREA = 0x30
 D.STATUE, D.PLAQUE = 0x57, 0xB3
-D.MSG_NOBOOK, D.MSG_BOOK = 0xBC, 0xBD
+-- r37: read at import (RomTablesSpec "msg.book")
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.book")
+  D.MSG_NOBOOK, D.MSG_BOOK = t.nobook, t.book
+end)
 D.BOOK = 0x1D
 
 -- ------------------------------------------------------------ import

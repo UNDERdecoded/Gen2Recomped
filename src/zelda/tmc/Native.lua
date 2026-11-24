@@ -37,15 +37,16 @@ N[0x0807F0EC] = function(f, e, ctx) -- GetRandomInt
   local n = ctx.intVariable
   ctx.intVariable = n > 0 and math.random(0, n - 1) or 0
 end
-local SVAL = { 0xA, 0x14, 0x1E, 0x12, 0x1C, 0x26, 0xC, 0x18 }
+local SVAL = require("src.zelda.tmc.RomTables").t("Native.SVAL")   -- sub_0807F100 sValues
+local SVAL2 = require("src.zelda.tmc.RomTables").t("Native.SVAL2") -- sub_0807F128 sValues
 N[0x0807F100] = function(f, e, ctx) -- random facing (even states), random idle time
   e.animationState = band(math.random(0, 7), 6)
   ctx.unk1A = SVAL[math.random(1, 8)]
 end
-local SSTATE = { 6, 2, 6, 2, 4, 6, 4, 2 }
+local SSTATE = require("src.zelda.tmc.RomTables").t("Native.SSTATE")
 N[0x0807F128] = function(f, e, ctx)
   e.animationState = SSTATE[math.random(1, 8)]
-  ctx.unk1A = SVAL[math.random(1, 8)]
+  ctx.unk1A = SVAL2[math.random(1, 8)]
 end
 N[0x0807F158] = function(f, e) e.layer = 1 end          -- SetCollisionLayer1
 N[0x0807F168] = function(f) f.player.layer = 1 end       -- SetPlayerCollisionLayer1
@@ -85,7 +86,7 @@ N[0x0807F3D8] = function(f, e, ctx)                      -- animation intVariabl
 end
 N[0x0807F3F8] = function(f) f:bubble(f.player, 0) end     -- CreatePlayerExclamationMark
 N[0x0807F40C] = function(f) f:bubble(f.player, 1) end     -- CreatePlayerQuestionMark
-N[0x0807F420] = function() end                            -- LoadMenu
+N[0x0807F420] = function(f, e, ctx) require("src.zelda.tmc.MapHint70").load(f, ctx and ctx.intVariable) end -- LoadMenu (round 70: SUBTASK_MAPHINT, MapHint70.lua)
 N[0x0807F434] = function(f, e, ctx, a)                   -- CheckInteractType
   local t = e.interactType or 0
   ctx.intVariable = (t == 1 or t == 2) and t or 0

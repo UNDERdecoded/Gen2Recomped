@@ -16,7 +16,7 @@
 -- stairs (layer 2 / 3) he is over BG1.
 local P = {}
 
-local LAYER_PRIO = { [0] = 2, 2, 1, 1 }
+local LAYER_PRIO = require("src.zelda.tmc.RomTables").t("Priority.LAYER_PRIO")
 P.LAYER_PRIO = LAYER_PRIO
 
 function P.oam(e)
@@ -44,6 +44,7 @@ end
 -- draw the room picture (both BG layers, the barrel's BG, the sprites)
 -- with the field's camera; `opts.noSprites` draws the BGs only
 function P.compose(f, r, opts)
+  do local x = require("src.zelda.tmc.Fade70").compose(f, r, opts, P) if x then return x end end -- round 70: a BG-only fade mask (Fade70.lua)
   local g = love.graphics
   local list = (not (opts and opts.noSprites)) and f:drawEntities("sort") or {}
   local buckets = { [0] = {}, {}, {}, {} }
@@ -65,6 +66,7 @@ function P.compose(f, r, opts)
       layer("top")
       g.setColor(1, 1, 1, 1)
     end
+    require("src.zelda.tmc.R37").bgPass(f, r, p, camX, camY) -- round 37: parallax BGs (PathBg37)
     if #buckets[p] > 0 then f:drawSpriteList(buckets[p]) end
     if p == pp and not (opts and opts.noSprites) then
       require("src.zelda.tmc.GustJar").draw(f, camX, camY) -- round 13: the jar's puff

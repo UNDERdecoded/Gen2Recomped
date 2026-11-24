@@ -111,12 +111,22 @@ end
 D.gravity = gravity
 
 -- ProcessMovement0 (per axis); returns hitX, hitY (wall on that axis)
-local function solidBox(E, e, x, y)
+local function solidBox(E, e, x, y, sx, sy)
   local room = E.field.room
   local hb = e.hitbox
   local hw, hh = math.max(2, hb.w), math.max(2, hb.h)
   local cx, cy = x + hb.x, y + hb.y
   local L = (e.layer == 2) and 2 or 1 -- round 23: the entity's own collision layer (gCollisionDataPtrs[layer]; the Cave of Flames is all top layer)
+  -- round 40: CalculateEntityTileCollisions tests the side the entity moves
+  -- toward (sx / sy = the step's sign), so an entity a pushed pot's tile now
+  -- overlaps can still walk away from it (it was stuck for good)
+  if sx and sx ~= 0 then
+    local ex = sx > 0 and cx + hw - 1 or cx - hw
+    return room:isSolid(ex, cy - hh, L) or room:isSolid(ex, cy + hh - 1, L)
+  elseif sy and sy ~= 0 then
+    local ey = sy > 0 and cy + hh - 1 or cy - hh
+    return room:isSolid(cx - hw, ey, L) or room:isSolid(cx + hw - 1, ey, L)
+  end
   return room:isSolid(cx - hw, cy - hh, L) or room:isSolid(cx + hw - 1, cy - hh, L)
       or room:isSolid(cx - hw, cy + hh - 1, L) or room:isSolid(cx + hw - 1, cy + hh - 1, L)
 end
@@ -126,11 +136,11 @@ function D.move0(E, e, dir, speed)
   local hitX, hitY = false, false
   if vx ~= 0 then
     local nx = e.x + vx * s
-    if solidBox(E, e, nx, e.y) then hitX = true else e.x = nx end
+    if solidBox(E, e, nx, e.y, vx, 0) then hitX = true else e.x = nx end
   end
   if vy ~= 0 then
     local ny = e.y + vy * s
-    if solidBox(E, e, e.x, ny) then hitY = true else e.y = ny end
+    if solidBox(E, e, e.x, ny, 0, vy) then hitY = true else e.y = ny end
   end
   if math.abs(vx) < 1e-6 then hitX = false end
   if math.abs(vy) < 1e-6 then hitY = false end
@@ -164,22 +174,14 @@ local function frameFlags(e) return e.anim.flags or 0 end
 local P = {}
 D.puff = P
 
-local T_WANDER = { 30, 30, 90, 90, 180, 180, 180, 180, 180, 240, 240, 240, 240, 240, 300, 300 } -- gUnk_080CC000
-local T_SPOTS = { -0x20, -0x20, -0x20, -0x10, -0x20, 0x00, -0x20, 0x10, -0x20, 0x20, -0x10, -0x20,
-                  -0x10, -0x10, -0x10, 0x00, -0x10, 0x10, -0x10, 0x20, 0x00, -0x20, 0x00, -0x10,
-                  0x00, 0x10, 0x00, 0x20, 0x10, -0x20, 0x10, -0x10, 0x10, 0x00, 0x10, 0x10,
-                  0x10, 0x20, 0x20, -0x20, 0x20, -0x10, 0x20, 0x00, 0x20, 0x10, 0x20, 0x20 } -- gUnk_080CC020
-local T_FLEE = { 90, 120, 120, 90, 180, 180, 180, 180 } -- gUnk_080CC050 (8 entries; R & 15 reads past it in the ROM)
-local T_JUMPS = { -- gUnk_080CC090
-  [0] = { 0x00, 0x00, 0x00, -0x10, -0x10, 0x00, 0x10, 0x00, 0x00, 0x10 },
-  { 0x00, 0x20, 0x10, 0x10, 0x20, 0x00, 0x10, -0x10, 0x00, -0x20, -0x10, -0x10, -0x20, 0x00, -0x10, 0x10 },
-  { -0x20, -0x10, -0x10, -0x20, 0x10, -0x20, 0x20, -0x10, 0x20, 0x10, 0x10, 0x20, -0x10, 0x20, -0x20, 0x10 },
-  { 0x20, 0x20, 0x20, -0x20, -0x20, -0x02, -0x20, 0x20 },
-}
-local T_CORNERS = { -0x8, -0x8, -0x8, 0x8, 0x8, -0x8, 0x8, 0x8 } -- gUnk_080CC0A0
-local T_BLINK = { [0] = 1, 1, 1, 3, 3, 3, 7, 7 } -- gUnk_080CBFF8
-local T_TURN = { [0] = -1, 1, -2, 2, -3, 3, -4, 4 } -- gUnk_080CC0C2
-local T_DIRT = { [0] = { 0x00, -0x10 }, { 0x13, 0x00 }, { 0x00, 0x14 }, { -0x13, 0x00 } } -- gUnk_080CC0BA
+local T_WANDER = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_WANDER") -- gUnk_080CC000
+local T_SPOTS = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_SPOTS") -- gUnk_080CC020
+local T_FLEE = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_FLEE") -- gUnk_080CC050 (8 entries; R & 15 reads past it in the ROM)
+local T_JUMPS = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_JUMPS")
+local T_CORNERS = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_CORNERS") -- gUnk_080CC0A0
+local T_BLINK = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_BLINK") -- gUnk_080CBFF8
+local T_TURN = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_TURN") -- gUnk_080CC0C2
+local T_DIRT = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_DIRT") -- gUnk_080CC0BA
 P.T_SPOTS, P.T_JUMPS, P.T_WANDER = T_SPOTS, T_JUMPS, T_WANDER
 
 local function tileFree(E, e, x, y, viaType)
@@ -525,8 +527,8 @@ end
 local S = {}
 D.slug = S
 local T_LAND = { 1, 2, 6 } -- gUnk_080CBDF4
-local T_SLIME = { [0] = { 0, 2 }, { -2, 2 }, { 0, -2 }, { 2, 2 } } -- gUnk_080CBDF7
-local T_TURNS = { [0] = 0, -8, 8 } -- gUnk_080CBDFF
+local T_SLIME = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_SLIME") -- gUnk_080CBDF7
+local T_TURNS = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_TURNS") -- gUnk_080CBDFF
 
 -- sub_08023E9C
 function S.turn(E, e)
@@ -666,8 +668,8 @@ end
 -- ===========================================================================
 local M = {}
 D.mull = M
-local T_STAND = { [0] = 30, 45, 60, 90 }
-local T_DUST = { 0, 6, -3, 3, -6, 0, -3, -3, 0, -6, 3, -3, 6, 0, 3, 3 }
+local T_STAND = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_STAND") -- mulldozer.c
+local T_DUST = require("src.zelda.tmc.RomTables").t("EnemyDeepwood.T_DUST")
 
 local function mAnim(E, e)
   if e.unk80 == 0 then setAnim(E, e, rshift(e.animationState, 1)) else setAnim(E, e, 4 + e.animationState) end

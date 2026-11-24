@@ -73,8 +73,8 @@ S.GREAT_SPEED = 0x180 / 256
 S.GREAT_LOOPS, S.GREAT_LOOPS_LONG = 10, 15
 S.ROLL_SPEED, S.ROLL_TIME = 0x300 / 256, 0x14
 S.BEAM_SPEED, S.BEAM_LIFE, S.BEAM_HURT, S.BEAM_BOX = 0x380 / 256, 60, 0x20, 6
-S.BEAM_ANIM = { [0] = 30, 29, 30, 29 }
-S.BEAM_PAL = { 0, 4, 1, 2 }
+S.BEAM_ANIM = require("src.zelda.tmc.RomTables").t("SwordSkills.BEAM_ANIM") -- PlayerItemSwordBeam_AnimIndices
+S.BEAM_PAL = require("src.zelda.tmc.RomTables").t("SwordSkills.BEAM_PAL")   -- PlayerItemSwordBeam_Palettes (before its $FF)
 S.DOWN_HOP = 2.5
 S.HURT_CHARGE = 0x0D
 S.SFX = { VO2 = 0x76, VO3 = 0x77, BEAM = 0x13F }
@@ -148,6 +148,7 @@ end
 function S.hitBox(f, box, hurt, fromX, fromY, noBoss)
   local en = f:enemies()
   local hits = 0
+  f.swordHurt31 = hurt -- round 31: the boss parts read the sword's hurtType (Gyorg's eyes: the spin)
   for _, e in ipairs(f.entities) do
     if e.boss and not e.dying then
       if not noBoss and (e.impl or en.boss):swordHit(e, box) then hits = hits + 1 end
@@ -157,6 +158,7 @@ function S.hitBox(f, box, hurt, fromX, fromY, noBoss)
     end
   end
   f.swordBoxNow = { x = box.x, y = box.y, w = box.w, h = box.h, t = f.frame }
+  f.swordHurt31 = nil
   return hits
 end
 

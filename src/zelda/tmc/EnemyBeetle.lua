@@ -58,9 +58,9 @@ local B = {}
 B.SPINY, B.ROLLOBITE, B.OBJ_ON_BEETLE = 0x35, 0x04, 0x7D
 local SPECIAL_TILE_34, SPECIAL_TILE_52 = 0x4022, 0x4034
 local FX_BUSH, FX_STARS = 3, 0x1C
-local ROCK_Z = { [0] = 1, 2, 2, 2, 0, -3, -3, -4, -3, -4, -3, -3, -3, 0, 0, 0 } -- gUnk_08123558
-local AHEAD = { [0] = { 0, -8 }, [2] = { 8, 0 }, [4] = { 0, 8 }, [6] = { -8, 0 } } -- gUnk_080CEC1C
-local RB_PICK = { [0] = 0, 6, 9, 0, 6, 6, 0, 7 }                                  -- gUnk_080CA6CC
+local ROCK_Z = require("src.zelda.tmc.RomTables").t("EnemyBeetle.ROCK_Z") -- gUnk_08123558
+local AHEAD = require("src.zelda.tmc.RomTables").t("EnemyBeetle.AHEAD") -- gUnk_080CEC1C
+local RB_PICK = require("src.zelda.tmc.RomTables").t("EnemyBeetle.RB_PICK")                                  -- gUnk_080CA6CC
 local RB_TURN = { [0] = 8, -8, 0 }                                                  -- gUnk_080CA6D4
 local SFX_PLACE_OBJ = 0x104
 
@@ -360,7 +360,7 @@ function B.spiny(E, e)
       if e.timer == 0 then
         e.action = 1
         e.hidden, e.noTouch = true, true
-        local back = ({ [0] = { 0, 16 }, [8] = { -16, 0 }, [0x10] = { 0, -16 }, [0x18] = { 16, 0 } })[band(round8(e.dir or 0), 0x18)]
+        local back = (require("src.zelda.tmc.RomTables").fresh("EnemyBeetle.L363"))[band(round8(e.dir or 0), 0x18)]
         for _ = 1, 40 do
           e.x = math.floor(e.x / 16) * 16 + 8
           e.y = math.floor(e.y / 16) * 16 + 8
@@ -455,6 +455,10 @@ local function holeUp(E, e)
   local tt = f.room:tileType(1, tx, ty)
   if tt == 0x71 or tt == 0x72 then
     e.action, e.noTouch, e.liftable = 6, true, nil
+    -- round 42: COLLISION_OFF -- the sword / bombs / the Cane no longer reach
+    -- it (Enemies:hit skips e.mask silently); its knockback moved a holed-up
+    -- Rollobite off its hole in $50:11 while the hole stayed filled
+    e.mask = true
     e.x = math.floor(e.x / 16) * 16 + 8
     e.y = math.floor(e.y / 16) * 16 + 13
     e.czv = 0x20000
@@ -544,7 +548,10 @@ function B.rollobite(E, e)
     if not e.anim.done then e.anim:update(1) end
     if e.thrownV then
       e.x, e.y = e.x + e.thrownV[1], e.y + e.thrownV[2]
-      if f.room:isSolid(e.x, e.y, 1) then e.x, e.y = e.x - e.thrownV[1], e.y - e.thrownV[2]; e.thrownV = nil end
+      -- round 41: PlayerItemHeldObject moves the thrown object with
+      -- ProcessMovement10 (collision type 10): a hole does not stop it,
+      -- it lands in it (the Cave of Flames' Rollobite holes, $50:08)
+      if require("src.zelda.tmc.Collide33").isSolid(f.room, e.x, e.y, e.layer or 1, 10) then e.x, e.y = e.x - e.thrownV[1], e.y - e.thrownV[2]; e.thrownV = nil end
     end
     local r = require("src.zelda.tmc.EnemyCrenel").bounce(e, 0x2800)
     if r == 0 then

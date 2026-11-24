@@ -63,7 +63,7 @@ D.OFF = {
 }
 D.BOOM = 0x1FF             -- (our pseudo type for a boss explosion)
 D.CRYSTAL = 0x1E
-D.CRYSTAL_PAL = { [0] = 2, 4 }   -- kCrystalSwitchPal (code constants)
+D.CRYSTAL_PAL = require("src.zelda.alttp.Tables75").get("crystalPal")   -- kCrystalSwitchPal (0x0810FC2E's table; r75: read at import)
 D.PEG = { tile = 0x1D0, slot = 7, first = 16 }   -- VRAM tiles 0x1D0-0x1D7 = slot 7 tiles 16..23
 
 local function s8(t) for i = 1, #t do if t[i] >= 128 then t[i] = t[i] - 256 end end return t end
@@ -262,7 +262,7 @@ function Core.draw(spr, a, x, y, frame, game)
   local info = spr.info
   local st = a.pegSt or (game and game.pegState) or 0
   local f = band(info.flags3[a.type + 1] or 0, 0x0F)
-  f = bor(band(f, bit.bnot(0x0E)), D.CRYSTAL_PAL[band(st, 1)])
+  f = bor(band(f, bit.bnot(0x0E)), D.CRYSTAL_PAL[band(st, 1)] or 0)
   local ch = info.single2[(info.single1[a.type + 1] or 0) + 1]
   if ch then spr:oam(x, y, ch, f, 2) end
   return true
@@ -457,19 +457,21 @@ local PIT = { [0x20] = true }
 for v = 0xB0, 0xBD do PIT[v] = true end
 D.PIT = PIT
 
--- Player_TileDetectNearby: bits 8 (x, y+8), 2 (x, y+23), 4 (x+15, y+8), 1 (x+15, y+23)
+-- Player_TileDetectNearby: bits 8 (x0, y0), 4 (x1, y0), 2 (x0, y1), 1 (x1, y1), the points read at import (Tables74)
 function D.pitBits(inside, x, y)
   local b = 0
   local function at(px, py, bitv)
     local v = inside:attrAt(px, py)
     if v and PIT[v] then b = bor(b, bitv) end
   end
-  at(x, y + 8, 8); at(x, y + 23, 2); at(x + 15, y + 8, 4); at(x + 15, y + 23, 1)
+  local P = require("src.zelda.alttp.Tables74").get("points")   -- r74: read at import
+  if P[4] then at(x + P[1][1], y + P[1][2], 8); at(x + P[2][1], y + P[2][2], 4); at(x + P[3][1], y + P[3][2], 2); at(x + P[4][1], y + P[4][2], 1) end
   return b
 end
 
-local FALLHOLE_PIT = { [0] = 12, 3, 10, 5 }           -- kFallHolePitDirs
-local FALLHOLE_DIRS2 = { [0] = 10, 9, 6, 5, 8, 4, 2, 1 }   -- kFallHoleDirs2 (8 up, 4 down, 2 left, 1 right)
+-- kFallHolePitDirs, kFallHoleDirs2 (8 up, 4 down, 2 left, 1 right): r35, read at import
+local FALLHOLE_PIT = require("src.zelda.alttp.RomTables").get("d26.fallPit")
+local FALLHOLE_DIRS2 = require("src.zelda.alttp.RomTables").get("d26.fallDirs2")
 
 -- one frame of Link near / in a pit (after his move); true when the fall
 -- has begun
@@ -527,6 +529,12 @@ function D.pitFrame(game)
     st.health = math.max(0, (st.health or 0) - 8)
     lk.x, lk.y = pf.prevX or pf.from[1], pf.prevY or pf.from[2]
     game.pitHurts = (game.pitHurts or 0) + 1
+    -- r38: RecoverPositionAfterDrowning ends with `if (!link_health_current)`
+    -- -> module 18 (game over); the port left Link standing at 0 hearts
+    if st.health <= 0 and not game.gameOver then
+      game.gameOver = { t = 0 }
+      game.deaths = (game.deaths or 0) + 1
+    end
     return true
   end
   local hdr = inside.hdr or {}

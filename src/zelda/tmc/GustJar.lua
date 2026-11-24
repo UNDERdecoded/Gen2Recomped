@@ -47,8 +47,8 @@ local band = bit.band
 
 local GJ = {}
 
-local MOUTH = { [0] = { 0, -32 }, [2] = { 22, -6 }, [4] = { 0, 12 }, [6] = { -22, -6 } } -- gUnk_08126EE4
-local SEG_DIST = { [0] = 0, 12, 16, 16 }                                               -- gUnk_0812AAE8
+local MOUTH = require("src.zelda.tmc.RomTables").t("GustJar.MOUTH") -- gUnk_08126EE4
+local SEG_DIST = require("src.zelda.tmc.RomTables").t("GustJar.SEG_DIST")                                               -- gUnk_0812AAE8
 local SEG_HALF = { [0] = 4, 9, 9, 14 }                                                 -- sHitboxes
 local GUST_HURT, GRAB_HANDLER = 0x13, 4
 local SFX_14B, SFX_ED, SFX_EF, SFX_WIND1 = 0x14B, 0xED, 0xEF, 0xE7

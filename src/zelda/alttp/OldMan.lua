@@ -48,8 +48,8 @@ local OM = {}
 OM.TYPE = 0xAD
 OM.FOLLOWER = 4
 OM.MIRROR = 0x1A
-OM.MSG_LOST = 0x9C
-OM.MSG_REVERT = 0x9D
+require("src.zelda.alttp.RomTables").onBind(function() OM.MSG_LOST = require("src.zelda.alttp.RomTables").get("msg.story37").oldManLost end)   -- r37
+require("src.zelda.alttp.RomTables").onBind(function() OM.MSG_REVERT = require("src.zelda.alttp.RomTables").get("msg.oldManRevert")[0] end)   -- r38: the trigger's compare (0x08115DDA)
 
 OM.OFF = {
   msgs = 0x176178,          -- kOldMountainManMsgs (3 u16, GBA numbers)

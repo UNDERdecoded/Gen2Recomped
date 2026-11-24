@@ -17,7 +17,7 @@ local band = bit.band
 local Hud = {}
 Hud.__index = Hud
 
-local WALLET = { [0] = { 100, 0x60 }, { 300, 0x64 }, { 500, 0x68 }, { 999, 0x6C } }
+local WALLET = require("src.zelda.tmc.RomTables").t("Hud.WALLET")
 
 local function decodeTiles(bytes, pal, count)
   local n = count or math.floor(#bytes / 32)

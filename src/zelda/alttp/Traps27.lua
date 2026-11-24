@@ -661,7 +661,7 @@ local function statue(self, a, lk)
        and lk.facing == tb.stDir[j + 1] and not game.dash then
       a.A = 1
       game.t27near = a
-      local grab = held(game, M.A_KEY)
+      local grab = held(game, game.actionKey and game:actionKey() or M.A_KEY)
       game.statueGrab = grab and a or nil
       local dirKey = ({ [1] = "right", [2] = "left", [4] = "down", [8] = "up" })[tb.stJoy[j + 1]]
       if not grab or not held(game, dirKey) or not lk.moving then return end
@@ -688,7 +688,7 @@ local function pullSwitch(self, a, lk)
     game.dashStop = true
     local y = band(lk.y - a.y, 0xFF)
     if not sign8(band(y - 2, 0xFF)) then
-      if held(game, M.A_KEY) and not held(game, "left") and not held(game, "right") then
+      if held(game, game.actionKey and game:actionKey() or M.A_KEY) and not held(game, "left") and not held(game, "right") then
         if held(game, "down") and a.pullG == 0 then a.pullG, a.delay = 1, 12 end
       end
       lk.y = a.y + 9

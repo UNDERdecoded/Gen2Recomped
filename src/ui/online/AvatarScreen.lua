@@ -11,6 +11,10 @@
 --             CUSTOM (then HUE / LIGHT under it).  The part's whole colour
 --             ramp is remapped, shading kept (src/online/world/AvatarParts.lua).
 --             Game Boy sheets have four shades and no parts: the row says so.
+--   BATTLE BACK   DEFAULT (the back pic of the protagonist above), or any
+--             other back pic this game's import wrote: both protagonists,
+--             the other players and stand-ins the cartridge carries
+--             (src/online/BattleBacks.lua).  Not shown on Game Boy games.
 --   RESET     back to your own character, original colours
 --   SAVE      keep it (options.looks[game]); in a world or a link
 --             room the change goes out with the next presence update
@@ -22,6 +26,7 @@
 local WorldUi = require("src.ui.online.WorldUi")
 local Avatar = require("src.online.world.Avatar")
 local Parts = require("src.online.world.AvatarParts")
+local BattleBacks = require("src.online.BattleBacks")
 
 local AvatarScreen = {}
 AvatarScreen.__index = AvatarScreen
@@ -41,6 +46,7 @@ function AvatarScreen.open(game, opts)
   self.style = WorldUi.style(game)
   self.index = 1
   self.choices = Avatar.choices(game and game.data)
+  self.backs = BattleBacks.list(game and game.data)
   self:load()
   if game and game.stack then game.stack:push(self) end
   return self
@@ -76,7 +82,16 @@ function AvatarScreen:load()
     end
     self.parts[def.id] = st
   end
+  -- the battle back: 0 = DEFAULT, else an index into self.backs
+  self.backSel = 0
+  for i, e in ipairs(self.backs or {}) do
+    if saved.b and e.path == saved.b then self.backSel = i break end
+  end
   self.dirty = false
+end
+
+function AvatarScreen:backChoice()
+  return self.backSel and self.backSel > 0 and self.backs and self.backs[self.backSel] or nil
 end
 
 -- a part's value, or nil (ORIGINAL)
@@ -130,7 +145,9 @@ function AvatarScreen:value()
   local c = self:choice()
   local p = self:presetRow()
   local parts, cp = self:partsValue()
-  return { s = c and c.key, r = c and c.role, p = p.id, t = self:tint(), c = parts, cp = cp }
+  local b = self:backChoice()
+  return { s = c and c.key, r = c and c.role, p = p.id, t = self:tint(), c = parts, cp = cp,
+           b = b and b.path or nil }
 end
 
 function AvatarScreen:rows()
@@ -172,6 +189,10 @@ function AvatarScreen:rows()
       end
     end
   end
+  if not self:isGb() and self.backs and #self.backs > 1 then
+    local b = self:backChoice()
+    rows[#rows + 1] = { label = "BATTLE BACK", value = b and b.label or "DEFAULT", act = "back_pic" }
+  end
   rows[#rows + 1] = { label = "RESET", act = "reset" }
   rows[#rows + 1] = { label = "SAVE", act = "save" }
   rows[#rows + 1] = { label = "BACK", act = "back" }
@@ -191,6 +212,8 @@ function AvatarScreen:adjust(act, d, part)
     st.custom.b = math.max(-60, math.min(60, st.custom.b + (d > 0 and 1 or -1) * Parts.LIGHT_STEP))
   elseif act == "sprite" and #self.choices > 0 then
     self.sel = wrap(self.sel + d, #self.choices)
+  elseif act == "back_pic" and self.backs and #self.backs > 0 then
+    self.backSel = (self.backSel + (d > 0 and 1 or -1)) % (#self.backs + 1)
   elseif act == "preset" then
     self.preset = wrap(self.preset + (d > 0 and 1 or -1), #Avatar.PRESETS)
   elseif act == "hue" then
@@ -218,7 +241,7 @@ function AvatarScreen:save()
   local c = self:choice()
   local mine = playerGender(self.game)
   -- your own character in its own colours is "no choice": nothing is sent
-  if c and c.role == mine and not v.t and not v.c then
+  if c and c.role == mine and not v.t and not v.c and not v.b then
     Avatar.store(self.game, nil)
   else
     Avatar.store(self.game, v)
@@ -239,6 +262,7 @@ function AvatarScreen:activate(row)
     for i, c in ipairs(self.choices) do if c.role == mine then self.sel = i break end end
     self.preset = 1
     for _, st in pairs(self.parts) do st.idx = 0 end
+    self.backSel = 0
     self.dirty = true
     self.previewKey = nil
   else
@@ -280,7 +304,8 @@ function AvatarScreen:previewSprite()
   local def = c and data and data.sprites and data.sprites[c.key]
   if not def then return nil end
   local t = self:paint()
-  local key = c.key .. "|" .. Avatar.paintSig(t)
+  local chosenBack = self:backChoice()
+  local key = c.key .. "|" .. Avatar.paintSig(t) .. "|" .. (chosenBack and chosenBack.path or "")
   if self.previewKey ~= key then
     self.previewKey = key
     local ok, sr = pcall(function()
@@ -296,6 +321,7 @@ function AvatarScreen:previewSprite()
     local g = (c.role == "boy" or c.role == "girl") and c.role or playerGender(self.game)
     local f = type(forms) == "table" and (forms[g] or forms.boy)
     local back = type(f) == "table" and f.back
+    if chosenBack then back = chosenBack.path end
     if back and not self:isGb() then
       -- at rest as the battle shows it: the DS throw strip's first frame
       -- (Black / White's still has no arms; BattleLook.restBack)

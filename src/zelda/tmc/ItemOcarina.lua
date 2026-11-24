@@ -33,7 +33,8 @@
 --   Bird types 0 / 1 / 2 (the Ocarina falling to the ground, LV3_OCARINA_FALL)
 --     and type 3 (perched birds picking random animations) spawn from room
 --     lists; type 2 gives ITEM_OCARINA when Link touches it.
--- SIMPLIFIED: script_EzloTalkOcarina (WARP_1ST) is not run; the bird's
+-- Round 54: script_EzloTalkOcarina (WARP_1ST) runs (Ocarina54.lua).
+-- SIMPLIFIED: the bird's
 --   OAM priority / flipY layering is a plain draw over the field; the map
 --   picture is the pause menu's world map page (screen 4).
 local bit = require("bit")
@@ -48,16 +49,7 @@ O.SFX_CHOICE, O.SFX_CANCEL = 0x69, 0x6C
 O.MSG_WARP = 0x0704 -- TEXT_INDEX(TEXT_WINDCRESTS, 4)
 O.WARP_BIT = 0x10000000
 -- gUnk_08128024: { endX, endY, area, room } (warp_type 1, layer 1, transition type 12, facing 4)
-O.WARPS = {
-  [0] = { 0x98, 0xF8, 0x06, 0x02 },   -- Mt. Crenel, Cave of Flames entrance
-  { 0xF8, 0xF8, 0x0A, 0x00 },         -- Veil Falls
-  { 0x1E8, 0x1A8, 0x08, 0x00 },       -- Cloud Tops
-  { 0x278, 0x58, 0x02, 0x00 },        -- Hyrule Town
-  { 0xA8, 0x1B8, 0x0B, 0x00 },        -- Lake Hylia
-  { 0x228, 0x398, 0x04, 0x00 },       -- Castor Wilds
-  { 0x2C8, 0x128, 0x03, 0x01 },       -- South Hyrule Field
-  { 0x128, 0x2A8, 0x00, 0x00 },       -- Minish Woods
-}
+O.WARPS = require("src.zelda.tmc.RomTables").t("ItemOcarina.WARPS")
 
 local function windcrests(f) return f.save.windcrests or 0 end
 
@@ -200,6 +192,7 @@ local function type9(f, b)
       p.x = math.max(8, math.min(f.room.width - 8, p.x))
       p.z = 0
       p.animId = -1
+      require("src.zelda.tmc.Ocarina54").afterDrop(f) -- round 54: WARP_1ST -> script_EzloTalkOcarina
     end
   end
   linearMove(b); gravity(b)
@@ -332,10 +325,11 @@ end
 function O.openFastTravel(f)
   local m = f.menu
   if not m then return false end
+  local prev = m.screen -- round 54: Subtask_FastTravel is not the pause menu: gPauseMenuOptions.screen stays
   m.screen = 4
   local ok = pcall(m.openMenu, m)
   if not ok then return false end
-  local ft = { cursor = O.nextCrest(windcrests(f), 0, 0), ticks = 0, state = 1 }
+  local ft = { cursor = O.nextCrest(windcrests(f), 0, 0), ticks = 0, state = 1, prevScreen = prev }
   m.fastTravel = ft
   m.update = O.menuUpdate
   m.draw = O.menuDraw
@@ -344,6 +338,7 @@ function O.openFastTravel(f)
 end
 
 local function closeFastTravel(f, m)
+  if m.fastTravel and m.fastTravel.prevScreen then m.screen = m.fastTravel.prevScreen end -- round 54
   m.update, m.draw, m.fastTravel = nil, nil, nil
   m.open = false
   local p = f.player

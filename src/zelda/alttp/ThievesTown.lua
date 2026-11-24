@@ -42,9 +42,9 @@
 --        frame, every 5th of them aimed at Link (32); the sword cannot hurt
 --        it (defl_bits 4) and pushes Link back (is_many).
 --
--- OURS: no sound; the follower system's maiden (Sprite_B7_BlindMaiden, the
--- jail cell and the walk to the light) is not ported -- M.maidenTrigger is
--- a test hook that runs Follower_CheckBlindTrigger + Blind_SpawnFromMaiden
+-- OURS: no sound; the maiden follower (Sprite_B7_BlindMaiden, follower 6)
+-- lives in Ending27.lua (r27; drawn by Tagalong65.lua since r65), which
+-- calls M.maidenTrigger -- Follower_CheckBlindTrigger + Blind_SpawnFromMaiden
 -- for a given maiden position and light flag (save_dung_info[0x65] & 0x100);
 -- the trapdoors / music of that moment are not ported; Blind_CheckBumpDamage
 -- uses our hurtLink knockback (the cartridge inverts Link's speed); the
@@ -70,8 +70,8 @@ M.OFF = {
   oamIdx = 0x17B30F,     -- kBlind_OamIdx (GBA: byte offset * 4 | 2)
   trailChar = 0x172E23,  -- kBlindLaserTrail_Char (Garnish0F, read at 0x080CDEB4)
 }
-M.MSG_BRIGHT = 0x123
-M.TRIGGER = { 0x180, 0x168 }   -- Follower_CheckBlindTrigger (0x1980, 0x1568) in room 0xAC
+require("src.zelda.alttp.RomTables").onBind(function() M.MSG_BRIGHT = require("src.zelda.alttp.RomTables").get("msg.story37").bright end)   -- r37
+M.TRIGGER = require("src.zelda.alttp.Tables74").get("blindTrig")   -- Follower_CheckBlindTrigger in room 0xAC (r74: read at import)
 
 M.TYPES = { [0xCE] = true }
 M.FIGHTS = { [0xCE] = true }
@@ -158,7 +158,7 @@ function M.maidenTrigger(self, x, y, z, light)
   if self.inside.room ~= 0xAC or not light then return nil end
   local fy = y + (z or 0) + 12
   local fx = x + 8
-  if math.abs(M.TRIGGER[2] - fy) < 24 and math.abs(M.TRIGGER[1] - fx) < 24 then
+  if M.TRIGGER.r and math.abs(M.TRIGGER[2] - fy) < M.TRIGGER.r and math.abs(M.TRIGGER[1] - fx) < M.TRIGGER.r then
     return M.spawnFromMaiden(self, x, y)
   end
   return nil

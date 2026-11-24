@@ -20,6 +20,7 @@ local K_FALL_DAMAGE = 2
 
 local function update(p, input)
   p.anim:update(1)
+  if p.anim.done and not p.fallExit and p.pitWait61 and (p.field.save.stats.health or 0) > 0 then p.hidden, p.hidden61 = true, true return end -- round 61: PL_PIT_IS_EXIT with no hole yet (Trapdoor61.lua): hidden, waiting
   if p.anim.done and p.fallExit and (p.field.save.stats.health or 0) > 0 then
     -- round 13: PL_PIT_IS_EXIT (Holes.lua): no respawn; Link is hidden and
     -- DoHoleTransition takes him to the room below
@@ -36,14 +37,16 @@ local function update(p, input)
   if p.anim.done then
     local f = p.field
     local d = f:dungeon()
-    local st = d.safe or f.entry
+    local st = (d.respawnSpot and d:respawnSpot()) or d.safe or f.entry -- round 38: never back over the hole / water
     p.x, p.y = st.x, st.y
+    if st.layer then p.layer = st.layer end
     p.state = "normal"
     p.extUpdate = nil
     p.falling = nil
     p.invuln = 32
     p:setAnim(p:animFor("idle"), true)
     f:modStat("health", -K_FALL_DAMAGE)
+    require("src.zelda.tmc.Story56").deathCheck(p) -- round 56: sub_08079B24 (health 0 -> the death)
     f.playerRespawned = true -- the Zelda follower re-joins (ZeldaFollower.lua)
   end
 end

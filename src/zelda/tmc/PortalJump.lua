@@ -51,7 +51,11 @@ local function frontAct(pl)
   local r = f.room
   local fx, fy = pl:frontPoint(6)
   local tt = r:tileType(pl.layer or 1, math.floor(fx / 16), math.floor(fy / 16))
-  if not tt or tt >= 0x4000 then return nil end
+  if not tt then return nil end
+  -- round 41: a special tile's act tile is gMapSpecialTileToActTile's
+  -- (scroll.c); MINISH_PORTAL_STONE's portal tiles $4040-$4048 are all
+  -- ACT_TILE_61, so Link could not jump onto the Cave of Flames' portal
+  if tt >= 0x4000 then return require("src.zelda.tmc.RomTables").t("Climb.SPECIAL_TO_ACT")[tt] end
   return f.assets.actTile[tt]
 end
 

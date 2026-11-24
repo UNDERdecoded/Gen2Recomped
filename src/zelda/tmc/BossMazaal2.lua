@@ -41,14 +41,14 @@ local bit = require("bit")
 local band, bor, bnot, rshift = bit.band, bit.bor, bit.bnot, bit.rshift
 
 local B = {}
-B.SEL = { [0] = 0x14, 0x13, 0x13, 0x12, 0x12, 0x11, 0x10, 0x0F, 0x0F, 0x0E, 0x0E, 0x0D, 0x0C } -- gUnk_080CFD0C
+B.SEL = require("src.zelda.tmc.RomTables").t("BossMazaal2.SEL") -- gUnk_080CFD0C
 B.SMOKE_X = { [0] = 10, -10 }                                                                 -- gUnk_080CFD08
 B.HOME_X = { [0] = 0x30, -0x30 }                                                              -- gUnk_080CFD0A
 B.LINK_X = { [0] = 0x10, -0x10 }                                                              -- gUnk_080CFD19
 B.BEETLE_X = { [0] = -0x38, 0x38 }                                                            -- gUnk_080CFD1B
 B.HOLD_X = { [0] = -0x11, 0x11 }                                                              -- gUnk_080CFD1D
-B.PAL2 = { [0] = 0xDB, 0xDD, 0xDF, 0xE1, 0xDF, 0xDD, 0xDB, 0xE3, 0xE5, 0xE3 }                -- gUnk_080CFD30
-B.PAL3 = { [0] = 0xDC, 0xDE, 0xE0, 0xE2, 0xE0, 0xDE, 0xDC, 0xE4, 0xE6, 0xE4 }                -- gUnk_080CFD44
+B.PAL2 = require("src.zelda.tmc.RomTables").t("BossMazaal2.PAL2")                -- gUnk_080CFD30
+B.PAL3 = require("src.zelda.tmc.RomTables").t("BossMazaal2.PAL3")                -- gUnk_080CFD44
 B.PAL_KNOCK = { [0] = 0xE5, 0xE6 }                                                            -- gUnk_080CFD58
 B.PAL_GONE = { [0] = 0xE7, 0xE8 }                                                             -- gUnk_080CFD5C
 
@@ -64,11 +64,11 @@ function B.install(m, c)
   C.SETUP.bracelet = function(b)
     b.u74, b.u75, b.u78, b.u7c, b.u7e, b.u80, b.u84 = nil, 0, nil, 0, 0, 0, 0
     if b.type < 2 then
-      b.hitbox = b.type == 0 and { x = 11, y = 2, w = 9, h = 8 } or { x = -11, y = 2, w = 9, h = 8 }
+      b.hitbox = b.type == 0 and require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_35C") or require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_36C")
       b.onCollision = B.onCollision
     else
       b.u74 = 0
-      b.hitbox = b.type == 2 and { x = -2, y = -6, w = 4, h = 5 } or { x = 2, y = -6, w = 4, h = 5 }
+      b.hitbox = b.type == 2 and require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_37C") or require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_384")
     end
   end
 end
@@ -145,7 +145,9 @@ function B.beetle(f, b) -- sub_0803B724
   b.subtimer = alive
   if b.subtimer < 3 and b.u84 ~= 0 then
     local r = C.rand(f)
-    local x = band(r, 0x70) + B.BEETLE_X[b.type]
+    -- round 53: `u8 temp = gUnk_080CFD1B[type]` -- the s8 -$38 is read as $C8 (x 200..312 for the right arm);
+    -- the signed value put its beetles off the room's west edge (x -56..+56)
+    local x = band(r, 0x70) + band(B.BEETLE_X[b.type], 0xFF)
     local y = band(rshift(r, 16), 7) * 10 + 0x5C
     local e = f.spawn and f:spawn({ kind = 3, id = 0x07, paramA = 1, paramB = 1, paramC = 0, x = x, y = y, pool = 0, collision = 0 })
     if e then
@@ -640,7 +642,7 @@ end
 A[0x28] = function(f, b) -- sub_0803B100: knocked by an arrow
   b.action = 0x29
   b.zv = 1.25
-  b.hitbox = b.type == 0 and { x = 12, y = 6, w = 9, h = 8 } or { x = -12, y = 6, w = 9, h = 8 }
+  b.hitbox = b.type == 0 and require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_364") or require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_374")
   local g = b.u74
   g.action = 3
   g.u74 = 0x20
@@ -675,7 +677,9 @@ A[0x2B] = function(f, b) -- sub_0803B1B8: open to the sword
     b.hitType = 0x14
     C.fx(f, b.x + b.hitbox.x, b.y + b.hitbox.y, C.FX.GIANT4)
     local objs = f.objects and f:objects()
-    if objs and objs.groundItem then pcall(objs.groundItem, objs, 0x5E, 0, b.x + b.hitbox.x, b.y + b.hitbox.y, {}) end
+    -- round 53: CreateObject(GROUND_ITEM, $5E = ITEM_ARROWS5, 0) with timer 0 (kind 0, ItemOnGround_Kindx_Init:
+    -- the drop's hop, 600 frames) and direction $90 (bit 7: south at speed $100) -- it used to sit still for good
+    if objs and objs.groundItem then pcall(objs.groundItem, objs, 0x5E, 0, b.x + b.hitbox.x, b.y + b.hitbox.y, { kind = 0, direction = 0x90 }) end
     b.u74.u74 = 0x40
     local h = b.parent
     h.u80 = bor(h.u80, b.type == 0 and 4 or 8)
@@ -732,7 +736,7 @@ A[0x31] = function(f, b) -- sub_0803B3F4
   C.next(b)
   if C.done(b) then
     b.hitType = 0x17
-    b.hitbox = b.type == 0 and { x = 11, y = 2, w = 9, h = 8 } or { x = -11, y = 2, w = 9, h = 8 }
+    b.hitbox = b.type == 0 and require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_35Cb") or require("src.zelda.tmc.RomTables").fresh("BossMazaal2.HB_36Cb")
     local h = b.parent
     h.u80 = band(h.u80, bnot(bor(b.type == 0 and 0x10 or 0x20, bitOf(b))))
     B.back(b)

@@ -113,7 +113,7 @@ N[0x0807F0D8] = function(f, e, ctx) ctx.condition = f.anyKeyPressed and 1 or 0 e
 -- roomInit.c sub_0804BCDC: DoExitTransitionWithType(&gUnk_0813AB80) to
 -- Hyrule Castle room 4 (x $C8, y $48, layer 1, facing 4)
 N[0x0804BCDC] = function(f)
-  f:startTransition({ warpType = 1, area = 0x80, room = 0x04, endX = 0xC8, endY = 0x48, facing = 4, kind = 0, layer = 1 })
+  f:startTransition(require("src.zelda.tmc.RomTables").fresh("Ceremony.TR_80_04"))
 end
 
 -- npc4E.c NPC4E_SaveEquippedItems / NPC4E_RestoreEquippedItems (the
@@ -122,10 +122,27 @@ N[0x0806DC3C] = function(f, e)
   local eq = f.save.equip or {}
   e.savedEquip = { a = eq.a, b = eq.b }
 end
+-- round 44: NPC4E_GetItemWithSwordUpgraded: a sword (items 1..4, 6) comes
+-- back as the best one owned (the Sanctuary's infusion: White Sword -> the
+-- red one, ITEM_RED_SWORD; the button kept showing item 2)
+local function swordUpgraded(f, it)
+  if it == 1 or it == 2 or it == 3 or it == 4 or it == 6 then
+    it = 1
+    for _, s in ipairs({ 2, 3, 4, 6 }) do if (f:inventory(s) or 0) ~= 0 then it = s end end
+  end
+  return it
+end
 N[0x0806DC58] = function(f, e)
   if e.savedEquip then
     f.save.equip = f.save.equip or {}
     f.save.equip.a, f.save.equip.b = e.savedEquip.a, e.savedEquip.b
+    for _, k in ipairs({ "a", "b" }) do
+      local it = f.save.equip[k]
+      if it and it ~= 0 then
+        local up = swordUpgraded(f, it)
+        if up ~= it then f:equip(k, up) end
+      end
+    end
   end
 end
 

@@ -42,7 +42,7 @@ local band, rshift = bit.band, bit.rshift
 local C = {}
 C.SPINY_CHUCHU, C.CHASER, C.RUPEE_LIKE = 0x0B, 0x1D, 0x17
 local SFX_12D, SFX_194, SFX_PLY_LAND = 0x12D, 0x194, 0x7D
-local SPINY_WAIT = { [0] = 10, 20, 30, 20 } -- gUnk_080CBA60
+local SPINY_WAIT = require("src.zelda.tmc.RomTables").t("EnemyCoF2.SPINY_WAIT") -- gUnk_080CBA60
 
 local function DW() return require("src.zelda.tmc.EnemyDeepwood") end
 local function D() return require("src.zelda.tmc.Drops") end

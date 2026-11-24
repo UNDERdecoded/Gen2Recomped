@@ -33,6 +33,7 @@ function Assets.new(root)
   }, Assets)
   self:loadPalettes()
   self:loadCollision()
+  require("src.zelda.tmc.RomTables").attach(self) -- round 35: the game tables (r35.bin)
   return self
 end
 
@@ -93,7 +94,7 @@ function Assets:loadCollision()
     self.typeCollision[i] = raw:byte(c.typeCollision + i + 1) or 0
     self.actTile[i] = raw:byte(c.actTile + i + 1) or 0
   end
-  for i = 0, 0x7F do self.specialCollision[i] = raw:byte(c.special + i + 1) or 0 end
+  for i = 0, (c.specialCount or 0x80) - 1 do self.specialCollision[i] = raw:byte(c.special + i + 1) or 0 end
   -- partial-tile shapes: masks for shapes 2..9, lookup for collisionType 0
   if c.masks and c.shapeLookup then
     self.shapeMasks, self.shapeLookup = {}, {}

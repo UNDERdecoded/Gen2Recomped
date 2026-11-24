@@ -136,7 +136,7 @@ function M.postExtra(ctx, e)
   ctx.postScriptActions = band(a, bit.bnot(0xF8008))
   if band(a, 0x200) ~= 0 then e.spriteOX, e.spriteOY = nil, nil end
 end
-local JITTER = { [0] = -1, -2, 0, 1 }
+local JITTER = require("src.zelda.tmc.RomTables").t("VaatiScripts.JITTER") -- script.c sOffsets
 function M.e82(f, e)
   local v = e.field82 or 0
   if band(v, 0x10) ~= 0 then
@@ -249,7 +249,7 @@ body(7, 0x27, {
 })
 
 -- ---------------------------------------------------------------- VaatiReborn $3B
-local REBORN_OFS = { [0] = { 10, -29 }, { -10, -29 }, { 15, -21 }, { -15, -21 } } -- gUnk_08112F80
+local REBORN_OFS = require("src.zelda.tmc.RomTables").t("VaatiScripts.REBORN_OFS") -- gUnk_08112F80
 local function alive(p) return p and not p.deleted and p end
 local function spawnNpc(f, id, typ, type2, x, y)
   local e = f:spawn({ kind = 7, id = id, paramA = typ, paramB = type2 or 0, pool = 0x0F, x = x, y = y, paramC = 0 })
@@ -594,7 +594,7 @@ end
 
 -- ---------------------------------------------------------------- spiral beam
 local SPIRAL_SPEED = 0x380 / 256
-local DIRV = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local DIRV = require("src.zelda.tmc.RomTables").t("VaatiScripts.DIRV")
 function M.spawnSpiral(f, p)
   local s = band(p.animationState or 4, 6)
   local b = { kind = 8, id = 0x14, spiral = true, hitType = 0x21, x = p.x, y = p.y, z = 0, layer = p.layer or 1, dir = s,
@@ -652,8 +652,7 @@ end
 -- LV6_ZELDA_DISCURSE $79, LV6_00_ESCAPE $7A, LV6_GUFUU2_DEAD $7B, global ENDING $51, LV6_KANE_START $7C,
 -- _1ST $7D, _2ND $7E, LV6_SOTO_ENDING $7F (include/flags.h, the bank's first id $FD2 as the ROM's
 -- script_KingDaltusStone reads LV6_1d_KEYGET $71 / LV6_39_KING $96)
-local TIMER_FLAGS = { { 0x8C0, 0x77 }, { 0x8C0, 0x78 }, { 0x8C0, 0x79 }, { 0x8C0, 0x7A }, { 0x8C0, 0x7B }, { "g", 0x51 },
-                      { 0x8C0, 0x7C }, { 0x8C0, 0x7D }, { 0x8C0, 0x7E }, { 0x8C0, 0x7F } }
+local TIMER_FLAGS = require("src.zelda.tmc.RomTables").t("VaatiScripts.TIMER_FLAGS") -- sClearFlags {bank, flag} up to $FFFF (bank 0 = FLAG_BANK_G)
 M.TIMER_FLAGS = TIMER_FLAGS
 function M.darknutTick(f)
   local s = f.save
@@ -663,7 +662,7 @@ function M.darknutTick(f)
   if s.darknutTimer == 0 then
     if f:flag("bank", 0x79, 0x8C0) then f:setFlag("global", 0x1C, false) end -- LV6_ZELDA_DISCURSE -> ZELDA_CHASE
     for _, t in ipairs(TIMER_FLAGS) do
-      if t[1] == "g" then f:setFlag("global", t[2], false) else f:setFlag("bank", t[2], false, t[1]) end
+      if t[1] == 0 then f:setFlag("global", t[2], false) else f:setFlag("bank", t[2], false, t[1]) end
     end
   end
 end
@@ -711,12 +710,12 @@ do
   if ok and type(V3) == "table" and V3.NPC4E_TRANSITIONS then
     local T = V3.NPC4E_TRANSITIONS
     -- gUnk_0813AC0C: WARP_TYPE_AREA, (0xb0, 0xd8), AREA_VAATI_2 room 0, layer 2 (TRANSITION_FADE_WHITE_SLOW)
-    T[4] = T[4] or { warpType = 1, area = 0x8C, room = 0, endX = 0xB0, endY = 0xD8, facing = 0, kind = 0, layer = 2 }
+    T[4] = T[4] or require("src.zelda.tmc.RomTables").fresh("VaatiScripts.TR_AC0C")
     -- gUnk_0813AC20: WARP_TYPE_AREA, (0xa8, 0x78), DHC 3F Triple Darknut, layer 1
-    T[5] = T[5] or { warpType = 1, area = 0x88, room = 0x06, endX = 0xA8, endY = 0x78, facing = 0, kind = 0, layer = 1 }
+    T[5] = T[5] or require("src.zelda.tmc.RomTables").fresh("VaatiScripts.TR_AC20")
     -- gUnk_0813ABE4: WARP_TYPE_AREA, (0x198, 0x168), DHC 1F Entrance, layer 1, facing 4 (script_Npc4ECastleCollapsing,
     -- the escape starts: the fall-through end of script_Npc4EAfterDefeatingV2 in $89:00)
-    T[2] = T[2] or { warpType = 1, area = 0x88, room = 0x00, endX = 0x198, endY = 0x168, facing = 4, kind = 0, layer = 1 }
+    T[2] = T[2] or require("src.zelda.tmc.RomTables").fresh("VaatiScripts.TR_ABE4")
   end
 end
 

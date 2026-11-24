@@ -151,6 +151,7 @@ function Objects:updateGround(e)
     end
   end
   local G40 = 40 * 256 -- Q_8_8(40.0) in Q16
+  if e.fall52 and e.act == 2 and require("src.zelda.tmc.Falling52").update(self, e) then return end -- round 52
   if e.act == 4 then
     -- the pickup hop over Link's head (ItemOnGround_Action4), 14 frames
     e.timer = e.timer - 1
@@ -201,7 +202,7 @@ function Objects:updateGround(e)
   local p = f.player
   -- round 18: whole pixels (x.HALF.HI), as the cartridge compares them
   if p.state ~= "dead" and math.abs(math.floor(p.x) - e.x) <= 8 and math.abs(math.floor(p.y) - e.y) <= 8
-     and math.abs((p.z or 0) - e.z) <= 10 then
+     and math.abs((p.z or 0) - e.z) <= 10 and require("src.zelda.tmc.Pickup87").sameLayer(p, e) then -- round 87: arm_CollideAll's layer test
     self:collect(e)
     -- sub_08081598: the hop over Link's head (action 4); items with an
     -- item-get scene go straight to it
@@ -258,7 +259,15 @@ function Objects:setTileType(layer, tx, ty, ttype)
     atlas.reverse[name] = rev
   end
   local mt = rev[ttype]
-  if mt then r:setTile(layer, tx, ty, mt) end
+  if mt then
+    r:setTile(layer, tx, ty, mt)
+    -- round 45: SetTileType with gRoomControls.scroll_flags & 2 (the rooms
+    -- whose top collision was merged into the bottom, sub_0807C5B0) writes
+    -- the new collision into gMapBottom as well
+    if layer == 2 and r.coll and r.coll[1] and r.coll[2] and require("src.zelda.tmc.Room").MERGE_TOP_AREAS[r.area or -1] then
+      r.coll[1][ty * r.tw + tx] = r.coll[2][ty * r.tw + tx]
+    end
+  elseif ttype < 0x800 and r.setTypeOnly then r:setTypeOnly(layer, tx, ty, ttype) end -- round 41: no metatile for the type
 end
 
 -- DoTileInteraction(filter) at room pixel (x, y): the entry for the tile
@@ -318,13 +327,14 @@ function Objects:tryAction(p, interactOnly)
     f:message(msg)
     return true
   end
+  if require("src.zelda.tmc.KeyBlock73").try(f, p, tx, ty) then return true end -- round 73: ACT_TILE_113 small-key block (A or R)
   if interactOnly then return false end -- bug round: A interacts, R lifts
   -- lift: a liftable tile (filter 6) or a pot object in front
   for _, e in ipairs(f.entities) do
-    if e.liftable and not e.deleted and math.abs(e.x - px) < 10 and math.abs(e.y - (py + 3)) < 10 then
+    if e.liftable and not e.deleted and math.abs(e.x - px) < 10 and math.abs(e.y - (e.potY3 or 0) - (py + 3)) < 10 then
       if e.carryHook then return e.carryHook(f, p, e) end -- round 21: an entity that stays itself while carried (Rollobite)
       e.deleted = true
-      return self:lift(p, { obj = e.id, form = e.form, def = e.def })
+      return self:lift(p, require("src.zelda.tmc.Pot30").carryFields({ obj = e.id, form = e.form, def = e.def }, e)) -- round 30: + unk_7d / type2 / flag
     end
   end
   local entry = self:tileInteraction(6, px, py, p.layer)
@@ -366,6 +376,10 @@ function Objects:lift(p, what)
   if what.obj and what.obj ~= 0xFF and not what.def then what.def = self:def(what.obj, what.form) end
   p.carried = what
   p.state = "carry"
+  -- round 29 (PotCarry.lua): a plain object waits for ANIM_PICKUP's end;
+  -- a pot keeps Pot_Init's animation 5 while carried
+  if not what.hook and not what.bomb then p.liftPhase = true; what.carryFlags = what.carryFlags or 0 end
+  if what.obj == OBJ.POT and not what.hook then what.anim = 5 end
   p:setAnim(p.hasCap and 0x338 or 0x928, true) -- ANIM_PICKUP / _NOCAP
   f:sound(SFX.LIFT)
   return true
@@ -374,6 +388,7 @@ end
 function Objects:drawCarried(c, x, y)
   if c.bomb then return end -- round 20: a carried bomb draws itself (Bombs.drawBomb, over Link's head)
   local d = c.def
+  if not c.hook then x, y = require("src.zelda.tmc.PotCarry").drawPos(self.field.player, c, x, y + 14) end -- round 29: sub_08078D60's table
   if not d then
     love.graphics.setColor(0.35, 0.55, 0.85, 1)
     love.graphics.rectangle("fill", x - 6, y - 6, 12, 10, 3, 3)
@@ -381,10 +396,10 @@ function Objects:drawCarried(c, x, y)
     return
   end
   local s = self.A:sprite(d.sprite)
-  local keys = s and s.anims and (s.anims[c.form or 0] or s.anims[0])
+  local keys = s and s.anims and (s.anims[c.anim or c.form or 0] or s.anims[0]) -- round 29: c.anim (a pot: 5)
   local frame = keys and keys[1] and keys[1][1]
   if not frame then return end
-  local img, ox, oy = self.A:spriteFrame(d.sprite, frame, self.A:objPalette(d.palette), "carry",
+  local img, ox, oy = self.A:spriteFrame(d.sprite, frame, self.A:objPalette(d.palette, self.field.room.atlas and self.field.room.atlas.palettes), "carry",
     Assets.gfxSource(d.gfxType, d.gfx))
   if img then love.graphics.draw(img, math.floor(x + ox), math.floor(y + oy)) end
 end
@@ -411,7 +426,7 @@ function Objects:dropCarried(p)
   if p.carried then
     local c = p.carried
     p.carried = nil
-    self:breakThrown({ x = p.x, y = p.y, id = c.obj or OBJ.POT, form = c.form })
+    self:breakThrown(require("src.zelda.tmc.Pot30").carryFields({ x = p.x, y = p.y, id = c.obj or OBJ.POT, form = c.form }, c)) -- round 30
   end
 end
 
@@ -422,14 +437,17 @@ end
 function Objects:shatter(e, form, param)
   self.field:sound(0x11C) -- the pot / bush break
   form = form or 0
+  local opts = require("src.zelda.tmc.Pot30").shatterFx(self.field, e, form) -- round 30: BreakPot's FX_POT_SHATTER, type2 1 / 2 flag
   if form == 0 then
     require("src.zelda.tmc.Drops").fxDrop(self.field, e, 0x05, self) -- FX_POT_SHATTER
-  elseif form ~= 0xFF then
-    self:groundItem(form, param or 0, e.x, e.y, { drop = true })
+  elseif form ~= 0xFF and opts then
+    local g = self:groundItem(form, param or 0, e.x, e.y, opts)
+    if g and opts.flagSpec then g.flagSpec = opts.flagSpec end
   end
 end
 
 function Objects:updateThrown(e)
+  if e.r29 then return require("src.zelda.tmc.PotCarry").updateThrown(self, e) end -- round 29: playerItemHeldObject.c
   local f = self.field
   e.x = e.x + e.vx
   e.y = e.y + e.vy
@@ -494,8 +512,8 @@ end
 -- ---------------------------------------------------------------------------
 -- Minish portals
 -- ---------------------------------------------------------------------------
-local PORTAL_Y = { [0] = -3, -3, -3, 0 }        -- gUnk_08107C6C by portal type
-local EXIT_OFF = { [0] = { 0, -22 }, { 22, 0 }, { 0, 22 }, { -22, 0 } } -- sub_080717F8 sOffsets
+local PORTAL_Y = require("src.zelda.tmc.RomTables").t("Objects.PORTAL_Y")        -- gUnk_08107C6C by portal type
+local EXIT_OFF = require("src.zelda.tmc.RomTables").t("Objects.EXIT_OFF") -- sub_080717F8 sOffsets
 
 function Objects:addPortal(d)
   -- MINISH_PORTAL_MANAGER: x/y the portal, type2 low = exit direction,
@@ -513,7 +531,7 @@ function Objects:portalNear(pl)
   -- stand on it (PortalJump.lua: portal_mode 2)
   local r = pl.minish and 0x20 or 10
   for _, p in ipairs(self.field.portals or {}) do
-    if math.abs(pl.x - p.x) <= r and math.abs(pl.y - p.y) <= r then return p end
+    if math.abs(pl.x - p.x) <= r and math.abs(pl.y - p.y) <= r and require("src.zelda.tmc.PortalToD62").usable(pl, p) then return p end -- round 62: PortalReadyForMinish (not PT_TOD)
   end
   return nil
 end
@@ -541,6 +559,7 @@ end
 
 function Objects:portalDone(pl)
   local p = pl.portal
+  if require("src.zelda.tmc.PortalToD62").done(self.field, pl, p) then return end -- round 62: PT_TOD -> the temple (PortalEnterUpdate)
   pl.portal = nil
   require("src.zelda.tmc.PortalJump").clear(pl) -- round 10
   pl.state = "normal"

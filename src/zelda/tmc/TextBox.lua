@@ -197,7 +197,7 @@ function TextBox:cartDraw(assets)
     self.ppu = p
   end
   local scale = math.max(1, math.min(8, self.scale or 8))
-  local posY = self.top and 1 or 12
+  local posY = self.posY or (self.top and 1 or 12) -- (round 90: a script's window row, Story90.lua)
   local w = math.floor(scale * 52 / 16); if w % 2 == 1 then w = w + 1 end
   local h = math.floor(scale * 8 / 16); if h % 2 == 1 then h = h + 1 end
   local x0 = 13 + 1 - math.floor(w / 2)

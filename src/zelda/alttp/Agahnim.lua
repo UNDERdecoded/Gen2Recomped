@@ -75,9 +75,12 @@ M.OFF = {
   trailChar = 0x172DFF, trailFlags = 0x172E07,
   chattyDmd = 0x175A1C, altarDmd = 0x175B28,
 }
-M.OAM = { [0] = 11, 7 }        -- kAgahnim_OamFlags (SpritePrep_Agahnim's code constants)
-M.MSG_TOWER, M.MSG_GT = 0x13F, 0x141
-M.MSG_ALTAR1, M.MSG_ALTAR2 = 0x13D, 0x13E
+M.OAM = require("src.zelda.alttp.Tables74").get("agahOam")   -- kAgahnim_OamFlags (0x080DB514's table; r74: read at import)
+-- r37: his messages, read at import (RomTablesSpec "msg.agahnim")
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.agahnim")
+  M.MSG_TOWER, M.MSG_GT, M.MSG_ALTAR1, M.MSG_ALTAR2 = t.tower, t.gt, t.altar1, t.altar2
+end)
 
 M.TYPES = { [0x7A] = true, [0x7B] = true, [0xBF] = true, [0xC1] = true }
 M.FIGHTS = { [0x7A] = true }
@@ -485,7 +488,7 @@ local function cutscene(self, a, lk)
     end
   elseif ai == 1 then
     a.B = band((a.B or 0) + 1, 0xFF)
-    local LEV = { [0] = 2, 0, 3, 0 }                      -- kChattyAgahnim_LevitateGfx
+    local LEV = require("src.zelda.alttp.RomTables").get("agahnim.levitate")   -- kChattyAgahnim_LevitateGfx (r35: read at import)
     a.gfx = (z and (z.z or 0) < 16) and LEV[band(rshift(a.B, 5), 3)] or 1
     if band(a.B, 15) == 0 and z then
       z.gfx = 1

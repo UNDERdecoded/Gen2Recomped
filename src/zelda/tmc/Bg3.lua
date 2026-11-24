@@ -28,14 +28,14 @@ local band, rshift = bit.band, bit.rshift
 
 local B = {}
 B.ANIMATED, B.POW, B.STATIC = 0x1D, 0x19, 0x1B
-local STATIC_GROUPS = { [0] = 0x14, 0x15, 0x14, 0x2F, 0x4B, 0x4E, 0x4D, 0 }
-local STATIC_TAB = { [0] = { 0, 0 }, { 0, 0 }, { 0, -0x28 }, { 0, 0x70 }, { 0, 0 }, { 0, 0 }, { 1, 0 } }
+local STATIC_GROUPS = require("src.zelda.tmc.RomTables").t("Bg3.STATIC_GROUPS")
+local STATIC_TAB = require("src.zelda.tmc.RomTables").t("Bg3.STATIC_TAB") -- gUnk_08108C28 rows: {function, s8 y offset}
 
 local function u16(s, o) return (s:byte(o + 1) or 0) + (s:byte(o + 2) or 0) * 256 end
 
 -- the 256x256 picture: screen map at VRAM $F000 (32x32 entries), 4bpp
 -- characters from charBase, the room's BG palettes
-function B.build(room, kind, typ)
+function B.build(room, kind, typ, group) -- (round 34: `group` = a gfx group holding the $F000 map, worldEvent5)
   local A = room.assets
   local h = room.maps.header
   local info = A:area(room.area)
@@ -44,8 +44,8 @@ function B.build(room, kind, typ)
   local vram = A.store:read(ts.file) or ""
   local hi = ts.hiFile and A.store:read(ts.hiFile) or string.rep("\0", 0x4000)
   local screen = hi:sub(0x3001, 0x3800) -- $F000 - $C000
-  if kind == B.STATIC then
-    local g = STATIC_GROUPS[typ or 0]
+  if kind == B.STATIC or group then
+    local g = group or STATIC_GROUPS[typ or 0]
     local list = A.manifest.gfxGroups and A.manifest.gfxGroups[g]
     if list then
       A.gfxBlob = A.gfxBlob or A.store:read("gfxgroups.bin") or ""
@@ -159,8 +159,11 @@ function B.draw(f, r, camX, camY)
   local g = love.graphics
   -- shown over the room's own area (and the screen around a room smaller
   -- than it): zoomed out, not over the rooms around
-  local rx0, ry0 = math.min(0, math.floor((r.width - 240) / 2)), math.min(0, math.floor((r.height - 160) / 2))
-  local rx1, ry1 = math.max(r.width, rx0 + 240), math.max(r.height, ry0 + 160)
+  -- widescreen: around a lone room (a house, a cave) the field's width
+  local sw = (f and r == f.room and #require("src.zelda.tmc.View").candidates(f) == 0) and require("src.zelda.tmc.View").screen(f) or 240
+  if sw < 240 then sw = 240 end
+  local rx0, ry0 = math.min(0, math.floor((r.width - sw) / 2)), math.min(0, math.floor((r.height - 160) / 2))
+  local rx1, ry1 = math.max(r.width, rx0 + sw), math.max(r.height, ry0 + 160)
   local sx0, sy0 = g.transformPoint(rx0 - math.floor(camX), ry0 - math.floor(camY))
   local sx1, sy1 = g.transformPoint(rx1 - math.floor(camX), ry1 - math.floor(camY))
   g.push("all")

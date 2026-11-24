@@ -106,31 +106,23 @@ M.SFX = SFX
 local SPECIAL_FX, FX_DEATH = 0x0F, 0x02
 
 -- vaatiRebornEnemy.c tables
-local SIDE_BALLS = { [0] = { 16, -43 }, { -16, -43 } }                                         -- gUnk_080D04A8
-local SPOTS = { [0] = { 0x58, 0x60 }, { 0x58, 0x90 }, { 0x98, 0x78 }, { 0xD8, 0x60 }, { 0xD8, 0x90 } } -- gUnk_080D04AC
-local FIRE_TYPE = { [0] = 2, 0, 0, 2, 2, 2, 4, 4 }                                             -- gUnk_080D04C0
-local PARTS3 = { [0] = { 10, -29 }, { -10, -29 }, { 15, -21 }, { -15, -21 } }                  -- gUnk_080D04C8
-local PHASE_HP = { [0] = 232, 216, 208 }                                                         -- gUnk_080D04D0 (-24, -40, -48; USA)
-local WOBBLE = { [0] = 0, 1, 0, -1 }                                                             -- gUnk_080D04D3
+local SIDE_BALLS = require("src.zelda.tmc.RomTables").t("BossVaati.SIDE_BALLS")                                         -- gUnk_080D04A8
+local SPOTS = require("src.zelda.tmc.RomTables").t("BossVaati.SPOTS") -- gUnk_080D04AC
+local FIRE_TYPE = require("src.zelda.tmc.RomTables").t("BossVaati.FIRE_TYPE")                                             -- gUnk_080D04C0
+local PARTS3 = require("src.zelda.tmc.RomTables").t("BossVaati.PARTS3")                  -- gUnk_080D04C8
+local PHASE_HP = require("src.zelda.tmc.RomTables").t("BossVaati.PHASE_HP")                                                         -- gUnk_080D04D0 (-24, -40, -48; USA)
+local WOBBLE = require("src.zelda.tmc.RomTables").t("BossVaati.WOBBLE")                                                             -- gUnk_080D04D3
 -- vaatiBall.c tables
-local BALL_START = { [0] = { -48, 0 }, { 0, -48 }, { 48, 0 }, { 0, 48 } }                       -- gUnk_080D1620
-local BALL_DIRS = { [0] = { [0] = 16, 24, 0, 8 }, { [0] = 8, 24, 0, 16 }, { [0] = 0, 11, 21, 16 }, { [0] = 16, 24, 0, 8 } } -- gUnk_080D1628
+local BALL_START = require("src.zelda.tmc.RomTables").t("BossVaati.BALL_START")                       -- gUnk_080D1620
+local BALL_DIRS = require("src.zelda.tmc.RomTables").t("BossVaati.BALL_DIRS") -- gUnk_080D1628
 -- v1FireProjectile.c gUnk_0812A4EC (s8 x, y pairs; index type << 5 | subtimer << 1)
-local FIRE_TGT = { [0] = 16, 0, 64, -48, 80, -32, 80, 0, 80, 32, 64, 48, 32, 16, 48, 0, 32, -16,
-  80, -64, 80, -64, 32, 0, 48, -32, 64, -16, 64, 16, 48, 32, 16, 16, 64, 16,
-  64, 32, 48, 48, 32, 64, 16, 64, 16, 32, 32, 16, 80, 16, 80, 48, 64, 64,
-  48, 80, 16, 80, 16, 48, 32, 32, 48, 16, 0, 16, -48, 48, -32, 64, 32, 64,
-  48, 48, 80, 80, 0, 80, -80, 80, 0, 32, 64, 64, 48, 80, -48, 80, -64, 64,
-  -16, 16, 0, 48, 16, 16, -16, 16, -64, 16, -64, 32, -48, 48, -32, 64, -16, 64,
-  -16, 32, -32, 16, -80, 16, -80, 48, -64, 64, -48, 80, -16, 80, -16, 48, -32, 32,
-  -48, 16, -16, 0, -64, -48, -80, -32, -80, 0, -80, 32, -64, 48, -32, 16, -48, 0,
-  -32, -16, -80, -64, -80, -64, -32, 0, -48, -32, -64, -16, -64, 16, -48, 32 }
+local FIRE_TGT = require("src.zelda.tmc.RomTables").t("BossVaati.FIRE_TGT")
 -- v1EyeLaser.c hitboxes ({x, y, w, h})
-local HB_614 = { x = 0, y = 4, w = 1, h = 3 }
-local HB_61C = { x = 0, y = 8, w = 1, h = 6 }
-local HB_624 = { x = 0, y = 24, w = 1, h = 6 }
-local HB_62C = { x = 0, y = 40, w = 1, h = 6 }
-local HB_634 = { x = 0, y = 56, w = 1, h = 6 }
+local HB_614 = require("src.zelda.tmc.RomTables").t("BossVaati.HB_614")
+local HB_61C = require("src.zelda.tmc.RomTables").t("BossVaati.HB_61C")
+local HB_624 = require("src.zelda.tmc.RomTables").t("BossVaati.HB_624")
+local HB_62C = require("src.zelda.tmc.RomTables").t("BossVaati.HB_62C")
+local HB_634 = require("src.zelda.tmc.RomTables").t("BossVaati.HB_634")
 local LASER_HB = { [0] = HB_61C, HB_61C, HB_624, HB_61C, HB_62C, HB_624, HB_634, HB_624 } -- gUnk_0812A5F4
 M.T = { SIDE_BALLS = SIDE_BALLS, SPOTS = SPOTS, FIRE_TYPE = FIRE_TYPE, PARTS3 = PARTS3, PHASE_HP = PHASE_HP, WOBBLE = WOBBLE,
         BALL_START = BALL_START, BALL_DIRS = BALL_DIRS, FIRE_TGT = FIRE_TGT, LASER_HB = LASER_HB }
@@ -1349,7 +1341,7 @@ end
 -- ===========================================================================
 -- VAATI_PROJECTILE ($4B)
 -- ===========================================================================
-local MAZAAL_EXIT = { area = 0x58, room = 0x16, endX = 0xB8, endY = 0x5C, layer = 1, kind = 1, facing = 4 } -- gUnk_0813AB94
+local MAZAAL_EXIT = require("src.zelda.tmc.RomTables").t("BossVaati.MAZAAL_EXIT") -- gUnk_0813AB94
 M.MAZAAL_EXIT = MAZAAL_EXIT
 local function vpCarry(E, e) -- sub_0803E444
   local f = E.field

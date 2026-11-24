@@ -84,6 +84,7 @@ local DIRNAME = { [L.UP] = "up", [L.DOWN] = "down", [L.LEFT] = "left", [L.RIGHT]
 function L:update(input, attrFn)
   local t = self.data.t
   if self.hop then return self:updateHop(attrFn) end
+  if L.walk80 and L.walk80(self, input, attrFn) then return end   -- r80: Walk80.lua (the cartridge's walking collision outdoors)
 
   local dx = (input.right and 1 or 0) - (input.left and 1 or 0)
   local dy = (input.down and 1 or 0) - (input.up and 1 or 0)

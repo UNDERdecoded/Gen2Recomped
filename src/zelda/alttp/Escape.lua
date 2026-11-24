@@ -163,7 +163,9 @@ function E.install(G)
   -- camera speed and jumped by 256 px every 4 frames (kDrawBadWeather X/Y).
   -- OURS: the GBA's own blend registers for it are not read; LOVE's 50 %
   -- alpha is the SNES half-add, the flash an additive draw.
-  local RAIN_X, RAIN_Y = { [0] = 1, 0, 1, 0 }, { [0] = 0, 17, 0, 17 }
+  -- (r35: the GBA keeps them << 8 as words; read at import)
+  local RT = require("src.zelda.alttp.RomTables")
+  local RAIN_X, RAIN_Y = RT.get("escape.rainX"), RT.get("escape.rainY")
   function G:raining()
     if self.progress.escaped or self.link.world ~= "lw" then return false end
     local sc = self.area and self.area.parent or 0
@@ -292,6 +294,7 @@ function E.install(G)
       local mx = (r.sx >= 0) and math.floor(r.sx / 16) or -math.floor(-r.sx / 16)
       local my = (r.sy >= 0) and math.floor(r.sy / 16) or -math.floor(-r.sy / 16)
       r.sx, r.sy = r.sx - mx * 16, r.sy - my * 16
+      if (mx ~= 0 or my ~= 0) and require("src.zelda.alttp.Recoil77").step(self, inside, lk, mx, my, stairAt) then mx, my = 0, 0 end   -- r77: the walking collision (0x0809407C)
       if mx ~= 0 and free(lk.x + mx, lk.y) then lk.x = lk.x + mx end
       if my ~= 0 and free(lk.x, lk.y + my) then lk.y = lk.y + my end
       -- r20: the hop (Sprite_ApplyRecoilToLink: z speed = speed >> 1;
@@ -305,6 +308,7 @@ function E.install(G)
         if not (r.vz < 0 and (lk.z or 0) == 0) then r.vz = r.vz - 2 end
         if r.t <= 0 and not ((lk.z or 0) <= 0 and r.vz < 0) then r.t = 1 end
       end
+      if self.recoilSwing87 then self:recoilSwing87() end   -- r87: the swing goes on while Link recoils (Sword87.lua)
       if r.t <= 0 then self.recoil = nil; lk.z = 0 end
       return true
     end
@@ -448,7 +452,7 @@ function E.install(G)
         local bigOk = l.kind == "bigkey" and self.hasBigKey and self:hasBigKey()
         if l.kind == "bigkey" and not l.open and not bigOk then
           for _, c in ipairs(l.cells) do
-            if c == cell and not self.bigKeyMsg then self.bigKeyMsg = true; self:showMessage(122) end
+            if c == cell and not self.bigKeyMsg then self.bigKeyMsg = true; self:showMessage(require("src.zelda.alttp.Items").MSG_BIG_KEY) end
           end
         end
         if ((l.kind == "key" and (self.progress.keys or 0) > 0) or bigOk) and not l.open then
@@ -522,7 +526,14 @@ function E.install(G)
     elseif a.type == Actors.UNCLE and inside.room == 0x12 then
       if self.progress.zelda == 1 then
         self:showMessage(Actors.MSG_PRIEST)
-        self.onTextDone = function(g) g.progress.zelda = 2; g.progress.escaped = true; g.progress.startPoint = 1 end   -- r12: the sanctuary
+        self.onTextDone = function(g) g.progress.zelda = 2; g.progress.escaped = true; g.progress.startPoint = 1
+          -- r43: the GBA's priest (0x080F2F30, Zelda following): sram_progress_flags
+          -- |= 4 and save_ow_event_info[0x1B] |= 0x20 (0x0200229B) -- the castle
+          -- area's event bit (its overlay, the open front gate, is not ported yet)
+          local ev = g.progress.owEvents or {}
+          g.progress.owEvents = ev
+          ev[tostring(0x1B)] = bit.bor(ev[tostring(0x1B)] or 0, 0x20)
+        end   -- r12: the sanctuary
       end
     elseif a.type == Actors.ZELDA then
       local cellOpen = true
@@ -735,7 +746,7 @@ function E.install(G)
     if a == 0x20 then
       local area = self.ow:area(self:screen()).parent
       for _, hole in ipairs(self.data.roomIdx.holes or {}) do
-        if hole.area == area and hole.keys[1] == 0xFFF0 then
+        if hole.area == area and (hole.keys[1] == 0xFFF0 or require("src.zelda.alttp.Hole60").match(self, hole)) then   -- r60
           self.fellFrom = { world = lk.world, x = lk.x, y = lk.y }
           self:enterRoom(hole.ent)
           return true

@@ -49,11 +49,24 @@ A.UNCLE, A.ZELDA, A.MANTLE, A.PULL, A.TRAP, A.KEY = 0x73, 0x76, 0xEE, 0x04, 0x06
 
 -- messages (BMG index): the uncle in the passage, Zelda freed, the shelf,
 -- the switch before the sanctuary, the priest
-A.MSG_UNCLE = 14
-A.MSG_ZELDA = 33
-A.MSG_SHELF = 34
-A.MSG_SWITCH = 42
-A.MSG_PRIEST = 23
+-- (r37: the uncle's read at import, RomTablesSpec "msg.story37")
+require("src.zelda.alttp.RomTables").onBind(function() A.MSG_UNCLE = require("src.zelda.alttp.RomTables").get("msg.story37").uncle end)
+-- r37: Zelda's three (the follower's text triggers, RomTablesSpec
+-- "msg.follow": the first row of room 0x61's and 0x51's groups, the last of
+-- room 0x02's; GBA numbers - 3)
+require("src.zelda.alttp.RomTables").onBind(function()
+  local RT = require("src.zelda.alttp.RomTables")
+  local rows, rooms, idx = RT.get("msg.follow"), RT.get("msg.followRooms"), RT.get("msg.followIdx")
+  local function group(room)
+    for i = 0, 6 do if rooms[i] == room then return idx[i], idx[i + 1] - 1 end end
+  end
+  local a = group(0x61)
+  local b = group(0x51)
+  local _, c = group(0x02)
+  A.MSG_ZELDA, A.MSG_SHELF, A.MSG_SWITCH = rows[a][4] - 3, rows[b][4] - 3, rows[c][4] - 3
+end)
+-- r36: the priest's message, read at import (RomTablesSpec "msg.story")
+require("src.zelda.alttp.RomTables").onBind(function() A.MSG_PRIEST = require("src.zelda.alttp.RomTables").get("msg.story").priest end)
 
 local DIRV = { [0] = { 0, -1 }, { 0, 1 }, { -1, 0 }, { 1, 0 } }   -- up, down, left, right
 
@@ -243,6 +256,8 @@ function A:update()
         -- call Sprite_ReturnIfRecoiling where the cartridge does (the Armos
         -- Knights fall and drop out of their ring before it; before, a
         -- stunned knight hung in the air and then jumped back to its spot)
+        -- r45: the ball-and-chain guard's whirl and timers keep going
+        if a.type == 0x6A and a.bc then require("src.zelda.alttp.BallChain").recoilTick(self, a, lk) end
       elseif a.recruit then
         Guard.updateRecruit(self, a, lk)
       elseif a.palace then
@@ -294,6 +309,7 @@ function A:update()
       if fights(a.type) and cb and (a.lower or false) == (inside.lower or false) and not a.recoil
          and not ((a.aux4 or 0) > 0 and not a.palace) and not a.dead and not a.dying and not a.untouchable
          and not a.noTouch   -- r26b: the sprite checks its own contact (Dungeons26.lua)
+         and not lk.hop      -- r51: no contact during a ledge hop (GBA 0x080C47F4: +0x1702 aux state != 0)
          and band(bit.bxor(a.k or a.index or 0, self.frame), 3) == 0 and not ((a.inv or 0) > 0)
          and (a.z or 0) >= 0 and a.type ~= 0x85 then   -- (r20: 0x85 touches Link in Palace.yellowStalfos)
         local hx, hy, hw, hh = A.hitbox(cb, a)
@@ -319,7 +335,7 @@ function A:update()
     for _, tag in ipairs({ hdr[6] or 0, hdr[7] or 0 }) do
       if tag == 0x0A and not self.cleared then
         local clear = true
-        for _, a in ipairs(self.list) do if not a.dead and fights(a.type) then clear = false break end end
+        for _, a in ipairs(self.list) do if not a.dead and fights(a.type) and not require("src.zelda.alttp.Clear73").ignored(game, a) then clear = false break end end   -- r73: flags4 0x40 skipped (0x080CAF64)
         -- r21: a sprite still in its death puff is not gone yet
         if clear and require("src.zelda.alttp.Effects").dying(game) then clear = false end
         if clear then self.cleared = true; game:openShutters() end
@@ -347,7 +363,7 @@ function A:update()
           local clear = true
           local qx, qy = math.floor((lk.x + 8) / 256), math.floor((lk.y + 12) / 256)
           for _, a in ipairs(self.list) do
-            if not a.dead and fights(a.type) and math.floor((a.x + 8) / 256) == qx
+            if not a.dead and fights(a.type) and not require("src.zelda.alttp.Clear73").ignored(game, a) and math.floor((a.x + 8) / 256) == qx   -- r73: flags4 0x40 (0x080CAEC0)
                and math.floor((a.y + 8) / 256) == qy then clear = false break end
           end
           if clear and require("src.zelda.alttp.Effects").dying(game) then clear = false end
@@ -363,7 +379,7 @@ function A:update()
   -- round 17: the overlords (cannons, the Armos coordinator) and the
   -- switch / prize room tags (Palace.roomTags)
   Palace.updateOverlords(self, camx, camy)
-  if Palace.ready(game) then Palace.roomTags(self, lk) end
+  if Palace.ready(game) then require("src.zelda.alttp.Block57").roomTags(Palace, self, lk) end   -- r57: a push block on a hold switch (GBA 0x08079CE0)
   self:updateFollower()
 end
 
@@ -822,6 +838,15 @@ function A:died(a)
   game.prizeCtr[prize] = band(c + 1, 7)
   local item = tabs.prizeItems[prize * 8 + c + 1]
   if not item then return end
+  -- r47: the prize spawn 0x080C66A4 passes the type through 0x080C382C
+  -- too (GBA only): without the bow arrows become green / blue rupees
+  if item == 0xE1 or item == 0xE2 then
+    local bow = false
+    for _, id in ipairs((game.progress and game.progress.items) or {}) do
+      if id == 0x0B or id == 0x3A or id == 0x3B then bow = true end
+    end
+    if not bow then item = (item == 0xE1) and 0xD9 or 0xDA end
+  end
   local pz = (tabs.prizeZ and tabs.prizeZ[item - 0xD8 + 1]) or 0
   game.prizes = (game.prizes or 0) + 1
   game:spawnDrop(item, a.x + band(pz, 0x0F), a.y, { zvel = band(pz, 0xF0), flag = 0 })

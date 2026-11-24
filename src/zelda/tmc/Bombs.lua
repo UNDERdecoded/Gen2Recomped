@@ -34,7 +34,7 @@ local Anim = require("src.zelda.tmc.Anim")
 local B = {}
 
 B.ITEM_BOMBS, B.ITEM_REMOTE, B.ITEM_BOMBBAG = 0x07, 0x08, 0x65
-local OFFS = { [0] = { 0, -8 }, [2] = { 4, -1 }, [4] = { 0, 2 }, [6] = { -4, -1 } } -- gUnk_0811BDAC
+local OFFS = require("src.zelda.tmc.RomTables").t("Bombs.OFFS") -- gUnk_0811BDAC
 local SPRITE, GFX, PAL = 166, 192, 1
 local HURT_TYPE, HIT_TYPE = 0x16, 0xA9
 local OBJ_SMOKE, OBJ_ARCHWAY = 0x20, 0x4F
@@ -42,7 +42,7 @@ local ACT_46 = 0x2E
 local SP34 = 0x4000 + 34
 local SFX_PLACE, SFX_EXPLODE, SFX_SECRET = 0x104, 0xFD, 0x72
 local SMOKE_BOX = { [0] = 6, 6, 16, 12, 12 } -- gUnk_08120A54
-local BAG_SIZES = { [0] = 10, 30, 50, 99 }  -- gBombBagSizes
+local BAG_SIZES = require("src.zelda.tmc.RomTables").t("Bombs.BAG_SIZES")  -- gBombBagSizes
 
 function B.bagSize(f) return BAG_SIZES[f.save.stats.bombBagType or 0] or 10 end
 
@@ -417,6 +417,10 @@ local WALLS = {
           top = { { -1, -1, 200 }, { 0, -1, 201 }, { 1, -1, 202 } }, arch = { 8, -0x10, 0 } },
 }
 B.WALLS, B.WALL_TYPE = WALLS, WALL_TYPE
+-- the top-layer DestroyWall0..4 archway: { dx, dy, type2 }
+local TOP_ARCH = { [0] = { 8, -0x10, 6 }, { 0x20, 8, 7 }, { 8, 0x20, 8 }, { -0x10, 8, 9 }, { 8, -0x10, 6 } }
+local ARCH_TYPES = require("src.zelda.tmc.RomTables").t("Bombs.ARCH_TYPES") -- getArchwayType's archwayTypes
+B.TOP_ARCH = TOP_ARCH
 
 local function areaFlags(f)
   local info = f.room and f.room.areaInfo
@@ -441,8 +445,20 @@ function B.destroyWall(f, m)
     for _, s in ipairs(W.top) do O:setTileType(2, tx + s[1], ty + s[2], s[3]) end
   else
     O:setTileType(2, tx, ty, W.c1)
-    -- (the dungeon archway on the top layer: getArchwayType by dungeon; not
-    -- on the Crenel path)
+    -- round 41: the dungeon archway on the top layer (getArchwayType:
+    -- archwayTypes[gArea.dungeon_idx], read from the ROM; type2 6..9 by the
+    -- wall's side).  Without it the bombed opening of a Cave of Flames wall
+    -- showed as a flat floor patch over the wall ($50:07).
+    if isDungeon(f) then
+      local info = f.room and f.room.areaInfo
+      local di = info and info.location and info.location - 23
+      local at = di and di >= 0 and ARCH_TYPES[di]
+      local a = TOP_ARCH[m.type]
+      if at and a then
+        f:spawn({ kind = 6, id = OBJ_ARCHWAY, paramA = at, paramB = a[3], pool = 0x0F,
+                  x = tx * 16 + a[1], y = ty * 16 + a[2], paramC = 0, collision = 2 })
+      end
+    end
   end
 end
 

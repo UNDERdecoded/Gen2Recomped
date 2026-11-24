@@ -80,14 +80,14 @@ end
 -- down, $1AF left).  subtimer 0: on such a tile -> straight (no collision)
 -- and 1; 1: straight while on it, else 2; 2: the same with the OPPOSITE
 -- facing's tile (the far edge) -> 3; 3: straight while on it, else 4.
-local LEDGE_TILE = { [0] = 0x1AD, 0x1AE, 0x1AC, 0x1AF }
+local LEDGE_TILES = require("src.zelda.tmc.RomTables").t("Mushroom.LEDGE_TILES") -- sTileTable: {[tile] = value} per facing
 function M.ledgePass(p, fl)
   local f = p.field
   local s = p.animationState or 0
   local x, y = math.floor(p.x), math.floor(p.y) - 3
   if s == 0 then y = y - 5 elseif s == 4 then y = y + 5 elseif s == 2 then x = x + 5 elseif s == 6 then x = x - 5 end
   local tt = f.room and f.room:tileType(p.layer or 1, math.floor(x / 16), math.floor(y / 16))
-  local function on(st) return tt == LEDGE_TILE[band(st, 7) / 2] end
+  local function on(st) local l = LEDGE_TILES[band(st, 7) / 2] return (l and l[tt] or 0) ~= 0 end -- FindValueForKey
   local sub = fl.ledgeSub or 0
   local pass = false
   if sub == 0 then if on(s) then pass = true; fl.ledgeSub = 1 end
@@ -298,7 +298,7 @@ local function drawStem(f, e, camX, camY)
   local sx, sy, frame, px, py
   -- gUnk_081211CC[state]: { u16 angle, x, y }: states 0 and 3 turn the
   -- stem half a turn ($8000)
-  local off = ({ [0] = { 0, -6 }, [1] = { 5, -4 }, [2] = { 0, 0 }, [3] = { -5, -4 } })[e.st]
+  local off = (require("src.zelda.tmc.RomTables").fresh("Mushroom.L301"))[e.st]
   local rot = (e.st == 0 or e.st == 3) and math.pi or 0
   if tmp < 0x20 then
     if tmp ~= 0 then tmp = tmp - 6 end

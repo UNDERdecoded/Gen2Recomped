@@ -76,7 +76,12 @@ M.OFF = {
   catchX = 0x178B90, fbX = 0x178BA0, fbY = 0x178BA4, fbGfx = 0x178BA6, fbGfx2 = 0x178BAA,
   fbDrawX = 0x178BB4, fbChar = 0x178BB8, fbFlags = 0x178BBF,
 }
-M.MSG_HELLO, M.MSG_DARK = 0x172, 0x173
+-- r37: read at import from the cartridge's calls (RomTablesSpec "msg.ganon":
+-- his fight's state 0 and the dark phase; r36 had a townsperson's call)
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.ganon")
+  M.MSG_HELLO, M.MSG_DARK = t.hello, t.dark
+end)
 M.ARROW, M.SILVER = 6, 9                -- kAncilla_Damage: arrows 6, silver arrows 9
 
 M.TYPES = { [0xD6] = true, [0xD7] = true, [0xC9] = true }

@@ -341,6 +341,8 @@ local function regionPos(m, r, x, y)
   return div((x - loc.minX * 16) * 100, 0x23A), div((y - loc.minY * 16) * 100, 0x23A)
 end
 
+MapMenu.regionPos, MapMenu.showAreaName, MapMenu.region6 = regionPos, showAreaName, region6 -- round 33: the local map hint (Fusion32.lua)
+
 -- sub_080A68D4: Link's marker, map hints, fusion markers
 local function region6Markers(m)
   local f, st = m.field, mapStatus(m.field)

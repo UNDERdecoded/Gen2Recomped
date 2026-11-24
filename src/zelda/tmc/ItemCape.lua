@@ -141,4 +141,7 @@ function C.frame(p)
   return nil
 end
 
+require("src.zelda.tmc.Cape79").install(C) -- round 79: the cartridge's air control (velocities, ROM tables)
+require("src.zelda.tmc.Trapdoor81").install(C) -- round 81: the grates' rotating hatches (sub_08077F84 / sub_0807A2B8)
+
 return C

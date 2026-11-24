@@ -23,7 +23,7 @@ local PA = {}
 
 local ANIM_PUSH, ANIM_PUSH_NOCAP = 0x33C, 0x93C
 local SFX_10F = 0x10F
-local DV = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local DV = require("src.zelda.tmc.RomTables").t("PushAnim.DV")
 
 -- the animation to walk / stand with this frame (Player:update)
 function PA.anim(p)
@@ -38,9 +38,12 @@ end
 -- after the walk: count frames leaning on a wall, set the push frame flag
 function PA.update(p, dx, dy, x0, y0)
   p.pushFrame = false
+  if p.minish and require("src.zelda.tmc.Furniture32").playerPush(p, dx, dy, x0, y0) then p.pushT, p.pushing = 0, false return end -- round 32: Minish furniture push
+  if p.minish and require("src.zelda.tmc.Push31").update(p, dx, dy, x0, y0) then p.pushT, p.pushing = 0, false return end -- round 31: Minish pot push
   if p.minish or p.state ~= "normal" or (p.z or 0) ~= 0 then p.pushT, p.pushing = 0, false return end
   local blocked = (dx ~= 0 or dy ~= 0) and heldFacing(p, dx, dy) and p.x == x0 and p.y == y0
   if not blocked then p.pushT, p.pushing = 0, false return end
+  require("src.zelda.tmc.Push31").full(p) -- round 31: SPECIAL_TILE_62 (a Royal Valley grave, frame bit 1)
   p.pushT = (p.pushT or 0) + 1
   if p.pushT <= 6 then return end
   if not p.pushing then
@@ -48,8 +51,10 @@ function PA.update(p, dx, dy, x0, y0)
     p:setAnim(PA.anim(p), true)
   end
   p.pushFrame = band(p.anim.flags or 0, 1) ~= 0
+  if p.pushFrame and require("src.zelda.tmc.Furniture32").playerPush(p, dx, dy, x0, y0) then return end -- round 32: furniture (SPECIAL_TILE_43..45 / 74)
   if p.pushFrame then PA.pot(p) end
   if p.pushFrame and p.state == "normal" then require("src.zelda.tmc.PushableRock").tryPush(p) end -- round 22: SPECIAL_TILE_27
+  if p.pushFrame and p.state == "normal" then require("src.zelda.tmc.HeavyBlock45").tryPush(p) end -- round 45: ACT_TILE_114 (Link + clones)
 end
 
 -- sub_0801A458: the tile beyond is free for a pushed thing
@@ -61,7 +66,9 @@ function PA.beyondFree(f, layer, tx, ty)
   local c = r.coll and r.coll[(layer == 2) and 2 or 1]
   local v = c and c[ty * r.tw + tx] or 0xFF
   if v == 0x28 or (v >= 1 and v <= 0xF) then return false end
-  if r:isSolid(tx * 16 + 8, ty * 16 + 8, layer or 1) then return false end
+  -- round 83: the cartridge's test is IsTileCollision(collisionData, tile x * 16, tile y * 16, collisionType 2)
+  -- (Collide33); collisionType 0 called the sky's pit value ($21) solid, so a pot could not be pushed off a ledge
+  if require("src.zelda.tmc.Collide33").isSolid(r, tx * 16, ty * 16, layer or 1, 2) then return false end
   for _, o in ipairs(f.entities) do
     if (o.liftable or o.statue) and not o.deleted and math.floor(o.x / 16) == tx and math.floor(o.y / 16) == ty then return false end
   end

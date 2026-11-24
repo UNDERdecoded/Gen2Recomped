@@ -74,9 +74,9 @@ local SFX_183 = 0x183
 local SPECIAL_FX, FX_DEATH = 0x0F, 0x02
 local SPECIAL_TILE_105 = 0x4069
 local CLOUD_STEP = 0x24
-P.FAN_TILE_STEP = { [0] = 0, 16, -16, 0, 0, -16, 16, 0 } -- tileTypeOffsets (fan.c sub_0809EFB0)
-P.FAN_WIND_AT = { [0] = 0, 12, -12, 0, 0, -12, 12, 0 }   -- typeOffsets (fan.c sub_0809F0E4)
-P.PLATFORM_RECT = { [0] = 0x12, 0xA, 0xA, 0x12, 0x12, 0x12, 0x1A, 0x1A } -- gUnk_08120658
+P.FAN_TILE_STEP = require("src.zelda.tmc.RomTables").t("PoWObjects.FAN_TILE_STEP") -- tileTypeOffsets (fan.c sub_0809EFB0)
+P.FAN_WIND_AT = require("src.zelda.tmc.RomTables").t("PoWObjects.FAN_WIND_AT")   -- typeOffsets (fan.c sub_0809F0E4)
+P.PLATFORM_RECT = require("src.zelda.tmc.RomTables").t("PoWObjects.PLATFORM_RECT") -- gUnk_08120658
 
 local function sfx(f, id) if f.sound then f:sound(id) end end
 local function dirVec(d) local a = (d % 32) / 32 * 2 * math.pi return math.sin(a), -math.cos(a) end
@@ -109,6 +109,9 @@ local function dress(d, e, id, form)
 end
 local function canBeMoved(p) -- PlayerCanBeMoved
   if not p or p.state == "dead" then return false end
+  -- round 84: Roc's Cape's jump is none of PlayerCanBeMoved's flags (PL_BUSY .. PL_CLIMBING) or actions, so a fan
+  -- carries Link in the air ($70:13's west-blowing fan over the sky row)
+  if p.state == "ext" and p.jump and not p.falling then return true end
   return p.state == "normal" or p.state == "shield" or p.state == "gust"
 end
 local function inRect(a, b, rx, ry) -- EntityInRectRadius
@@ -121,6 +124,9 @@ function P.supported(f) return f.powSupport ~= nil and f.powSupport == (f.frame 
 local function solid9(f, x, y, layer) -- IsTileCollision(collisionData, x, y, 9)
   local r = f.room
   if not r or not r.isSolid then return true end
+  -- round 84: collisionType 9, not the walking test (type 0): the sky's pit value is free to type 9, so
+  -- $70:13's fans reach across the bridge row (their box had length 0 over the pits)
+  if r.coll and r.assets then return require("src.zelda.tmc.Collide33").isSolid(r, x, y, layer or 1, 9) end
   return r:isSolid(x, y, layer or 1)
 end
 
@@ -532,6 +538,9 @@ function P.dropTick(f)
   local p = f.player
   if not dr or not p then return end
   if (p.z or 0) <= 0 then f.powDrop = nil; p.z = 0 return end
+  -- round 84: AmbientClouds_Action2 only raises Link's z; in a jump (Roc's Cape) his own jump gravity brings him down
+  -- (the cape's half gravity while it is spread), so the drop's gravity is not added on top: a glide off a stack
+  if p.jump and p.state == "ext" then f.powDrop = nil return end
   dr.zv = dr.zv - 0.125 -- kGravity ($2000)
   p.z = p.z + dr.zv
   if p.z <= 0 then p.z = 0; f.powDrop = nil end

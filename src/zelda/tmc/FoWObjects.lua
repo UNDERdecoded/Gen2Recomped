@@ -167,11 +167,21 @@ local function linear(e)
 end
 
 -- PlayerCanBeMoved
-local MOVABLE = { normal = true, shield = true, gust = true }
-local function playerCanBeMoved(p) return MOVABLE[p.state or "normal"] == true and not p.hidden end
+-- round 51: PlayerCanBeMoved is a flags test (PL_BUSY, PL_FALLING, PL_IN_HOLE, PL_CLIMBING ...); using an
+-- item (the Bow: Link shoots the eye switches of $58:03 from its platform), swinging the sword, knockback,
+-- carrying or rolling set none of them, so the platform keeps carrying Link (as CoFObjects' MOVABLE43)
+local MOVABLE = { normal = true, shield = true, gust = true, sword = true, hurt = true, carry = true, throw = true, roll = true }
+local function playerCanBeMoved(p)
+  if p.hidden then return false end
+  if p.state == "ext" then return (p._r26bow or p.mitts) and true or false end
+  return MOVABLE[p.state or "normal"] == true
+end
 M.playerCanBeMoved = playerCanBeMoved
 
 local function inRect(a, b, rx, ry) -- EntityInRectRadius
+  -- round 81: the cartridge first tests (a->collisionLayer & b->collisionLayer & 3) != 0 (a platform under
+  -- $70:21's grates does not carry Link on the grates above it); an entity without a layer counts as both
+  if band(a.layer or 3, b.layer or 3, 3) == 0 then return false end
   return math.abs(math.floor(b.x) - math.floor(a.x)) <= rx and math.abs(math.floor(b.y) - math.floor(a.y)) <= ry
 end
 
@@ -228,7 +238,7 @@ function M.spawnEyeSwitch(d, e)
   e.animationState = band(e.form or 0, 3)
   e.spritePriority = 6
   e.hurtType, e.hitType = 0x48, 1
-  e.hitbox = { x = 0, y = 0, w = 6, h = 6 } -- gHitbox_1
+  e.hitbox = require("src.zelda.tmc.RomTables").fresh("FoWObjects.HB_1") -- gHitbox_1
   e.timer = e.timer0 or 0
   e.unk70 = 0
   if d:check(e.flags) then
@@ -264,7 +274,7 @@ end
 -- ---------------------------------------------------------------------------
 -- FLOATING_PLATFORM
 -- ---------------------------------------------------------------------------
-local PLATFORM_RADII = { [0] = { 0x12, 0x0A }, { 0x0A, 0x12 }, { 0x12, 0x12 }, { 0x1A, 0x1A } } -- gUnk_08120658
+local PLATFORM_RADII = require("src.zelda.tmc.RomTables").t("FoWObjects.PLATFORM_RADII") -- gUnk_08120658
 M.PLATFORM_RADII = PLATFORM_RADII
 
 local function platformOn(f, e) -- sub_08086168
@@ -381,8 +391,8 @@ end
 -- ---------------------------------------------------------------------------
 -- STONE_TABLET
 -- ---------------------------------------------------------------------------
-local TABLET_TILES = { 0x4022, -2, 0x4022, -1, 0x4022, 0, 0x4022, 1 } -- gUnk_081232EC (SPECIAL_TILE_34)
-local TABLET_TILES3 = { 0x4065, -65, 0x4022, -64, 0x4066, -63, 0x4029, -1, 0x4026, 0, 0x402A, 1 } -- gUnk_081232FE
+local TABLET_TILES = require("src.zelda.tmc.RomTables").t("FoWObjects.TABLET_TILES") -- gUnk_081232EC (SPECIAL_TILE_34)
+local TABLET_TILES3 = require("src.zelda.tmc.RomTables").t("FoWObjects.TABLET_TILES3") -- gUnk_081232FE
 M.TABLET_TILES, M.TABLET_TILES3 = TABLET_TILES, TABLET_TILES3
 
 -- SetMultipleTiles (offsets in the 64-wide tile grid)
@@ -758,10 +768,12 @@ end
 local function touchLink(f, e)
   local p = f.player
   if p.state == "dead" or (p.invuln or 0) > 0 or e.hidden then return false end
+  if require("src.zelda.tmc.Dive64").skips(f, e) then return false end -- round 64: a diving Link (collisionMask bit $10)
   local HB = require("src.zelda.tmc.Hitboxes")
   local hb = e.hitbox or { x = 0, y = 0, w = 4, h = 4 }
   local t = HB.touches(f, p, e)
   if t == nil then t = math.abs((e.x + (hb.x or 0)) - p.x) < hb.w + 5 and math.abs((e.y + (hb.y or 0)) - (p.y - 3)) < hb.h + 6 end
+  if t and require("src.zelda.tmc.Roller86").overZ(p, e) then t = false end -- round 86: arm_CalcCollision's z test (a cape jump clears a roller)
   return t
 end
 local function knockLink(p, x, y, spd, dur, ifr)
@@ -775,6 +787,7 @@ end
 -- CollisionFire (handler 11): damage 4, knockback 12 frames at $180, iframes 30
 function M.fireTouch(f, e)
   if not touchLink(f, e) then return false end
+  if require("src.zelda.tmc.Fire68").fireTouch(f, e) then return true end -- round 68: CollisionFire sets PL_BURNING (R31)
   local p = f.player
   if p:hurt(4, e.x, e.y) then knockLink(p, e.x, e.y, 0x180 / 256, 12, 30) end
   return true
@@ -818,9 +831,9 @@ end
 -- ---------------------------------------------------------------------------
 local WINDER_SEGMENTS = 8
 local WINDER_TAIL = 4
-local WINDER_TURN = { [0] = { 8, 0x18 }, { 0, 0x10 }, { 8, 0x18 }, { 0, 0x10 } } -- nextDirections
-local WINDER_HB_HEAD = { x = 0, y = 0, w = 4, h = 4 } -- gUnk_080FD558
-local WINDER_HB_BODY = { x = 0, y = 0, w = 1, h = 1 } -- gUnk_080FD560
+local WINDER_TURN = require("src.zelda.tmc.RomTables").t("FoWObjects.WINDER_TURN") -- nextDirections
+local WINDER_HB_HEAD = require("src.zelda.tmc.RomTables").t("FoWObjects.WINDER_HB_HEAD") -- gUnk_080FD558
+local WINDER_HB_BODY = require("src.zelda.tmc.RomTables").t("FoWObjects.WINDER_HB_BODY") -- gUnk_080FD560
 M.WINDER_TURN = WINDER_TURN
 
 local function winderOffsets(f)
@@ -843,7 +856,7 @@ function M.winderRailing(f, e, dir)
     tx, ty = pos % 64, math.floor(pos / 64)
   else
     -- (an old cache: the neighbouring tile that way)
-    local v = ({ [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } })[q]
+    local v = (require("src.zelda.tmc.RomTables").fresh("FoWObjects.L846"))[q]
     tx, ty = tx + v[1], ty + v[2]
   end
   local c = r.coll and r.coll[(e.layer == 2) and 2 or 1]
@@ -910,7 +923,7 @@ end
 
 function M.spawnWinder(d, dat)
   local f = d.field
-  local layer = (band(dat.collision or 0, 3) == 2) and 2 or 1
+  local layer = require("src.zelda.tmc.ToD69").listLayer(d, dat) -- round 69: LoadRoomEntity's ResolveCollisionLayer (was 1 for no layer)
   local head = winderSegment(d, dat.x, dat.y, dat.paramA or 0, layer)
   head.direction = band(R(f), 0x18)
   head.segments = {}
@@ -930,9 +943,8 @@ end
 -- ---------------------------------------------------------------------------
 -- SPIKED_ROLLERS
 -- ---------------------------------------------------------------------------
-local ROLLER_OFFSETS = { [0] = 8, 16, 24, 32, 40, 48, 56, 16, 24, 32, 40, 48, 56, 64 } -- gSpikedRollersOffsets
-local ROLLER_HB = { [0] = { 3, 8 }, { 3, 16 }, { 3, 24 }, { 3, 32 }, { 3, 40 }, { 3, 48 }, { 3, 56 },
-                    { 16, 3 }, { 24, 3 }, { 32, 3 }, { 40, 3 }, { 48, 3 }, { 56, 3 }, { 64, 3 } } -- gUnk_080FD4B8 .. gUnk_080FD520
+local ROLLER_OFFSETS = require("src.zelda.tmc.RomTables").t("FoWObjects.ROLLER_OFFSETS") -- gSpikedRollersOffsets
+local ROLLER_HB = require("src.zelda.tmc.RomTables").t("FoWObjects.ROLLER_HB") -- gUnk_080FD4B8 .. gUnk_080FD520
 M.ROLLER_OFFSETS, M.ROLLER_HB = ROLLER_OFFSETS, ROLLER_HB
 
 local function s16(v) v = band(v or 0, 0xFFFF) if v >= 0x8000 then return v - 0x10000 end return v end
@@ -985,7 +997,7 @@ function M.spawnRollers(d, dat)
   if t > 13 then return false end
   local e = { kind = 4, id = M.SPIKED_ROLLERS, form = t, type = t, x = dat.x, y = dat.y, z = 0, animationState = 0,
               field80 = 0, field82 = 0, interactType = 0, dungeon = true, action = 1, rollers = true,
-              layer = (band(dat.collision or 0, 3) == 2) and 2 or 1 }
+              layer = require("src.zelda.tmc.ToD69").listLayer(d, dat) } -- round 69: ResolveCollisionLayer (was 1 for no layer)
   local def = projDress(d, e, M.SPIKED_ROLLERS, t)
   e.hitType = def and def.damageType or 0x66
   e.hitbox = { x = 0, y = 0, w = ROLLER_HB[t][1], h = ROLLER_HB[t][2] }

@@ -67,7 +67,7 @@ local function current(field)
   local fx, fy = p:frontPoint(10)
   local best, bestD
   for _, e in ipairs(field.entities) do
-    if e.talkable and not e.hidden and not e.deleted and not e.unplaced then
+    if e.talkable and (not e.hidden or e.interactBox or e.fuser) and not e.deleted and not e.unplaced then -- round 75: hidden fusers (the Mysterious Clouds) too
       local d = math.abs(e.x - fx) + math.abs(e.y - fy)
       if d < 18 and (not bestD or d < bestD) then best, bestD = e, d end
     end

@@ -7679,7 +7679,19 @@ function BattleState:gen3BackStrip(backPath)
   if type(form) ~= "table" then return nil end
   -- the strip has to belong to the pic actually being drawn, or a hooked
   -- replacement back would be animated out of somebody else's sheet
-  if backPath ~= form.back then return nil end
+  if backPath ~= form.back then
+    -- ...a back chosen on MY LOOK (src/online/BattleBacks.lua) brings its
+    -- own row of gTrainerBackPicTable: its own strip and its own anim
+    if not self.ownLook or not self.ownLook.b or type(record.images) ~= "table" then return nil end
+    for k, img in pairs(record.images) do
+      if type(img) == "table" and img.pic == backPath and type(img.strip) == "string" then
+        local anim = record.anims[k] or { rest = img.rest, throw = img.throw }
+        if type(anim) ~= "table" or type(anim.throw) ~= "table" then return nil end
+        return img.strip, anim, tonumber(img.frames)
+      end
+    end
+    return nil
+  end
   local index = tonumber(form.backIndex)
   local anim = index and record.anims[index]
   if type(anim) ~= "table" or type(anim.throw) ~= "table" then return nil end

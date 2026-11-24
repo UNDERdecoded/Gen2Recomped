@@ -356,12 +356,17 @@ end
 -- kSprite_PrepAndDrawSingleLarge tables; the heart flips with its sway
 -- the rupee shimmer (SNES kLinkDmaCtrs0 / kLinkDmaSources9: frames 0, 1, 2,
 -- 0, 1, 2 held 14, 4, 6, 16, 6, 8 frames)
-local SHIMMER = { { 14, 0 }, { 4, 1 }, { 6, 2 }, { 16, 0 }, { 6, 1 }, { 8, 2 } }
+-- (r35: the GBA's kLinkDmaCtrs0 / kLinkDmaSources9 words read at import; a
+-- source is the frame * 0x20)
+local RT = require("src.zelda.alttp.RomTables")
+local SHIMMER_T, SHIMMER_F = RT.get("spr.shimmerDelay"), RT.get("spr.shimmerFrame")
 function S.shimmerFrame(frame)
-  local t = (frame or 0) % 54
-  for _, e in ipairs(SHIMMER) do
-    if t < e[1] then return e[2] end
-    t = t - e[1]
+  local total = 0
+  for i = 1, #SHIMMER_T do total = total + SHIMMER_T[i] end
+  local t = (frame or 0) % math.max(1, total)
+  for i = 1, #SHIMMER_T do
+    if t < SHIMMER_T[i] then return SHIMMER_F[i] end
+    t = t - SHIMMER_T[i]
   end
   return 0
 end
@@ -413,8 +418,8 @@ end
 -- (a = 2 for SpriteDraw_SingleSmall, else 10).
 -- Link (LinkOam shadow, the GBA's kLinkShadows_Chardata 0x169774 = 0x28CC
 -- twice, the second h-flipped; kOffsToShadowGivenDir 0x16AAF0/0x16AAFC).
-S.LINK_SHADOW_Y = { [0] = 16, 16, 17, 17 }
-S.LINK_SHADOW_X = { [0] = 0, 0, -1, 1 }
+S.LINK_SHADOW_Y = require("src.zelda.alttp.RomTables").get("spr.linkShadowY")   -- r35: read at import
+S.LINK_SHADOW_X = require("src.zelda.alttp.RomTables").get("spr.linkShadowX")
 function S:hasShadow(t)
   local f3 = self.info.flags3[t + 1] or 0
   return band(f3, 0x10) ~= 0

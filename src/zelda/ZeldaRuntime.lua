@@ -20,9 +20,10 @@
 --   * maps keyboard, gamepad and the touch overlay to A/B/L/R/START/SELECT/
 --     D-pad through the SAME Input + TouchControls the Pokemon games use, so
 --     a player's CONTROLS rebinds and touch layout carry over;
---   * owns a SYSTEM menu (Escape / the gamepad's guide button / SELECT+START
---     held / the touch MENU button) with RESUME, SAVE, LINK PLAY, OPTIONS and
---     QUIT TO LAUNCHER, so START stays the game's own button;
+--   * owns a SYSTEM menu (START held / the gamepad's guide button /
+--     SELECT+START held / the touch MENU button; START in ALttP play) with
+--     RESUME, SAVE, LINK PLAY, OPTIONS and QUIT TO LAUNCHER -- Escape is START,
+--     as in the Pokemon games (ZeldaControls.lua);
 --   * writes saves into the launcher's save slots (ZeldaSaves);
 --   * pumps a ZeldaSession when the player is online and hands the game its
 --     snapshots and events (netSnapshot / netApply / netEvent);
@@ -326,6 +327,7 @@ end
 
 function Host:_tick()
   Input:step()
+  if require("src.zelda.ZeldaControls").tick(self, Input) then return end   -- input round: START held = the system menu
   -- the system-menu chord: SELECT + START held together, nothing else
   if Input:isDown("select") and Input:isDown("start") and not Input:isDown("a")
      and not Input:isDown("b") then
@@ -422,24 +424,32 @@ end
 -- the normal picture); any other size is drawn into its own canvas over the
 -- same window area, then drawOverlay() draws the game's HUD into the normal
 -- 240 x 160 canvas (transparent) on top at the normal scale.
-function Host:_zoomView(scale)
+-- Widescreen (ZeldaWide.lua): viewSize(scale, wide) also gets the field width
+-- the window wants; a third return value is the width (in normal game pixels)
+-- the field spans, centred on the 240 x 160 picture.
+function Host:_zoomView(scale, x)
   if self.error or not (self.game and self.game.viewSize and self.game.drawOverlay) then return nil end
-  local ok, w, h = pcall(self.game.viewSize, self.game, scale)
+  local wide = require("src.zelda.ZeldaWide").width(self, scale, x or 0)
+  local ok, w, h, span = pcall(self.game.viewSize, self.game, scale, wide)
   if not (ok and tonumber(w) and tonumber(h)) then return nil end
   w, h = math.floor(w), math.floor(h)
-  if (w == R.W and h == R.H) or w < 16 or h < 16 or w > 4096 or h > 4096 then return nil end
+  span = math.floor(tonumber(span) or R.W)
+  if span < R.W or span > math.max(R.W, wide) then span = R.W end
+  if (w == R.W and h == R.H and span == R.W) or w < 16 or h < 16 or w > 4096 or h > 4096 then return nil end
   if not (self.zoomCanvas and self.zoomCanvas:getWidth() == w and self.zoomCanvas:getHeight() == h) then
     if self.zoomCanvas then pcall(self.zoomCanvas.release, self.zoomCanvas) end
     self.zoomCanvas = love.graphics.newCanvas(w, h)
     self.zoomCanvas:setFilter("nearest", "nearest")
   end
-  return self.zoomCanvas, w, h
+  return self.zoomCanvas, w, h, span
 end
 
 function Host:draw()
   local g = love.graphics
   local x, y, scale = self:viewport()
-  local zc, zw, zh = self:_zoomView(scale)
+  local zc, zw, zh, span = self:_zoomView(scale, x)
+  local margin = zc and math.floor(((span or R.W) - R.W) / 2) or 0   -- widescreen: game pixels each side
+  local edges
   g.push("all")
   g.setCanvas(zc or self.canvas)
   g.clear(0, 0, 0, 1)
@@ -455,7 +465,10 @@ function Host:draw()
     g.clear(0, 0, 0, 0)
     g.origin()
     g.setColor(1, 1, 1, 1)
-    local ok, err = xpcall(function() self.game:drawOverlay() end, debug.traceback)
+    local ok, err = xpcall(function()
+      if margin > 0 then edges = require("src.zelda.ZeldaWide").recordEdges(function() self.game:drawOverlay() end)
+      else self.game:drawOverlay() end
+    end, debug.traceback)
     if not ok then self:_fail("drawOverlay", err) end
   end
   g.pop()
@@ -463,8 +476,9 @@ function Host:draw()
   g.origin()
   g.clear(0, 0, 0, 1)
   g.setColor(1, 1, 1, 1)
-  if zc then g.draw(zc, x, y, 0, scale * R.W / zw, scale * R.H / zh) end
+  if zc then g.draw(zc, x - margin * scale, y, 0, scale * (R.W + 2 * margin) / zw, scale * R.H / zh) end
   g.draw(self.canvas, x, y, 0, scale, scale)
+  if edges then require("src.zelda.ZeldaWide").drawEdges(edges, x, y, scale, margin) end
   if self.touch and not self.error then pcall(self.touch.draw, self.touch) end
   if touchUI() and not self.menu and not self.link then
     local r = self:menuButtonRect()
@@ -516,6 +530,7 @@ function Host:_menuRows()
   rows[#rows + 1] = { id = "link", label = self.sessionObj and "LINK PLAY (online)" or "LINK PLAY" }
   if self.sessionObj then rows[#rows + 1] = { id = "leave", label = "LEAVE ROOM" } end
   rows[#rows + 1] = { id = "scale", label = "SCALE", value = self.zopts.scale == "fit" and "FIT" or "INTEGER" }
+  rows[#rows + 1] = require("src.zelda.ZeldaWide").menuRow(self)   -- WIDESCREEN ON / OFF (ZeldaWide.lua)
   rows[#rows + 1] = { id = "music", label = "MUSIC VOLUME", value = tostring(math.floor(self:volume("music") * 7 + 0.5)) }
   rows[#rows + 1] = { id = "sfx", label = "SOUND VOLUME", value = tostring(math.floor(self:volume("sfx") * 7 + 0.5)) }
   local okC, Cast = pcall(require, "src.ui.CastDisplay")
@@ -551,6 +566,9 @@ function Host:_menuStep(row, dir)
     self.zopts.scale = self.zopts.scale == "fit" and "integer" or "fit"
     self.options.zelda = self.zopts
     saveOptions(self.options)
+  elseif row.id == "wide" then
+    local W = require("src.zelda.ZeldaWide")
+    W.setEnabled(self, not W.enabled(self))
   elseif row.id == "music" or row.id == "sfx" then
     local key = row.id == "music" and "musicVol" or "sfxVol"
     local v = tonumber(self.options[key]) or 7
@@ -640,11 +658,8 @@ function Host:keypressed(key)
     return
   end
   if self.link and self.link.keypressed and self.link:keypressed(key) then return end
-  if key == "escape" then
-    if self.link then self.link.done = true; self.link = nil; return end
-    if self.menu then self:closeMenu() else self:openMenu() end
-    return
-  end
+  -- input round: Escape is START (as in the Pokemon games), ZeldaControls.lua
+  if key == "escape" and require("src.zelda.ZeldaControls").escape(self) then return end
   Input:keypressed(key)
 end
 

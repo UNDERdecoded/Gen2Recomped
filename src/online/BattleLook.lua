@@ -64,7 +64,7 @@ function BattleLook.begin(battle)
   if not BattleLook.ownApplies(battle) then return end
   local saved = Avatar.saved(battle.game)
   if not saved then return end
-  battle.ownLook = { r = saved.r, paint = Avatar.paint({ t = saved.t, c = saved.c }) }
+  battle.ownLook = { r = saved.r, b = saved.b, paint = Avatar.paint({ t = saved.t, c = saved.c }) }
 end
 
 local function register(data, path, paint)
@@ -85,6 +85,18 @@ function BattleLook.backPath(battle, backPath, trueColor)
   local data = battle.data or (battle.game and battle.game.data)
   local fs = forms(data)
   local g = (own.r == "boy" or own.r == "girl") and own.r or nil
+  -- a back pic chosen outright (MY LOOK -> BATTLE BACK): any of this game's
+  -- own backs; the DS throw strip comes along through register(), the Gen 3
+  -- strip through BattleState:gen3BackStrip
+  local chosen = own.b and require("src.online.BattleBacks").find(data, own.b)
+  if chosen then
+    if chosen.path ~= backPath then backPath = chosen.path trueColor = true end
+    local g3 = data and data.constants and data.constants.gen3TrainerBack
+    local img = chosen.gen3 and type(g3) == "table" and type(g3.images) == "table" and g3.images[chosen.gen3]
+    if type(img) == "table" and type(img.strip) == "string" then register(data, img.strip, own.paint) end
+    register(data, backPath, own.paint)
+    return backPath, trueColor
+  end
   if g and fs and type(fs[g]) == "table" and type(fs[g].back) == "string" then
     if fs[g].back ~= backPath then backPath = fs[g].back trueColor = true end
     if type(fs[g].backStrip) == "string" then register(data, fs[g].backStrip, own.paint) end

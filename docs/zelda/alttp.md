@@ -63,9 +63,11 @@ around `0x1618D8`, 928 entries); not wired up yet.
   arcs; diagonal ledges hop straight.
 * Scroll between areas is a 40-frame camera pan; the cartridge also walks Link a
   few pixels and swaps the area graphics mid-scroll.
-* Music: song = 399 + SNES music number (LW 2, Lost Woods 5, Kakariko 7, DW 9).
-  The BGM block of the song table starts at 400, but the cartridge's own
-  id-to-song translation is not located yet, so the mapping is **unverified**.
+* Music / sound (round 33): the ALttP half has its own sound driver (not the
+  M4A engine, which is the Four Swords half's): `AlttpSynth.lua` runs the
+  bank 0x198C30 (sound effects, 34 songs, 57 PCM samples) copied out of the
+  ROM at import (`snd.bin`). Music ids are the GBA's own (song = table
+  0x198C50 [id]); see PROGRESS-alttp.md round 33 for what is matched.
 * Peer Links (online) are tinted copies of Link's green palette, not the
   cartridge's Four Swords palettes.
 * Title: the cartridge's title screen (round 4b); the intro, file select
@@ -2024,6 +2026,23 @@ bit 0x20 (progress.owEvents). Tablets: sprite 0xF2 in the area lists
 OURS: spell pictures (a flash), 96 frames of spell, no rain / shake /
 palette fade in the entrance sequences, no tablet crumble.
 
+### Ganon's Tower's seal (Gt88.lua, round 88)
+
+Trigger: sprite 0x37 of the area's list (routine 0x0810BD5C via the
+per-kind table 0x0817CBAC; in the area of `cmp` 0x0810BD82 it calls
+AncillaAdd_GTCutscene 0x08124178, elsewhere the waterfall splash). Gates:
++0x1791 bit 7 | +0x1702, crystals byte 0x0200235A & mask (0x0812419A /
+0x0812419E), save_ow_event_info 0x02002280[area] & bit (0x081241A8). The
+ancilla 0x43 (0x0812430C; type array +0xE15) ends on the timer 0x02006892
+(immediate 0x08124270) -> +0xB6E = trigger (0x08124568), +0x9E8 = 0.
+Overworld_AnimateEntrance 0x0808F148 -> table 0x08153BF0[trigger - 1]; the
+tower's steps are table 0x08153BBC (13 entries; whitening 0x08132B4C with
+its step counter +0xCF8, draws via 0x0808B8B8 / 0x0808B948 at positions
+converted by 0x08092568, end 0x0808D788). The import runs these steps in
+FrontRun's interpreter (data.t.gt88.seq) and checks the last tiles against
+the area's event overlay (0x153C04[area]). OURS: the crystals are not
+drawn and only the ancilla's last timer is waited; the veil is white.
+
 ### Cape and bottles (Cape.lua)
 
 kCapeDepletionTimers {4, 8, 8} (zelda3); potions and fairy as
@@ -2171,7 +2190,12 @@ and imported into `data.t.d26[NAME]` (cacheVersion 32).
 |---|---|---|
 | sprite active / prep routine tables | `0x174138` / `0x17451C` | |
 | overlord dispatch | `0x172978` (27) | 0x01-0x09 = zelda3; falling square 0x0A-0x10 (seven); from 0x11 GBA = zelda3 + 1 (Pirogusu 0x11-0x14, tile room 0x15, Wizzrobe 0x16, Zoro 0x17, pot trap 0x18, invisible Stalfos 0x19, Armos 0x1A, snake 0x1B) |
-| kDungTagroutines | `0x152AC4` | water off / on / gate = tags 0x18 / 0x19 / 0x1A |
+| kDungTagroutines | `0x152AC4` | water off / on / gate = tags 0x18 / 0x19 / 0x1A; r83: the entry -> `0x0807B6FC` is the push-block chest tag (0x3C: +0xBBF set -> RoomTag_OperateChestReveal `0x0807A478`, whose sound is the `movs` at `0x0807A6FC`), Chest83.lua |
+| push block state 1 (redraw under it) | `0x080838C0` -> `0x08083AE4`; attribute write `0x08083974` | r93: the four words kept under the block (+0x19BC / +0x19DC / +0x19FC / +0x1A1C) go back into the map, then the room tile attribute table (`0x02002E40`) entry of the last word & 0x1FF is written to the block's four cells of 0x0200CBA0. A tile hidden under a block keeps its meaning: Ganon's Tower 0x8B NE's centre block covers a star tile (0x3B, tag 0x3A -> overlay 17, the bridge to the west shutter). Push93.lua |
+| Sprite_CheckDamageToLink_same_layer shield branch | `0x080C46EC` (tables `0x1720B4` by sprite_D, `0x1720B8` facing while button_b_frames) | r84: flags5 (+0x11B2) bit 0x20 and link_shield_type != 0 (not the bunny +0x176C / +0x1791 bit 7): the sprite is gone (state 0); facing the table's way blocks (sound `0x080C4878`, repulse spark `0x080C444C`; 0x95 its own sound `0x080C4902`, 0x9B turns round, 0x1B deflects, 0x0C breaks and answers true). LaserEye_FireBeam `0x081042B4` sets the beam's 0x20 only for shield 3 (`cmp r0, #3` `0x081043A0`): only the Mirror Shield stops lasers. Shield84.lua |
+| Sprite_Fireball shield test (0x55 with sprite_E) | `0x080E8334`; Sprite_SpawnFireball `0x080E89E4` | r85: after the contact / move / indoor tile check: +0x176C / +0x180D zero, +0x1791 bit 7 clear, link_shield_type above `cmp r0, #imm` (`0x080E83FC`, `bhi`: the Red Shield or better), Link's level +0xA10 = the sprite's +0x10F2; Link's box by facing >> 1 (remap `ldr` `0x080E8430` while button_b_frames), x lo / hi `0x080E8446` / `0x080E8450`, y `0x080E846C`, w / h `0x080E8486` / `0x080E84A0`; overlap `0x080C466C` -> spark `0x080C444C`, gone, sound (`movs r1` `0x080E84C8`). The spawn gives flags4 / sprite_E `movs r1, #imm` (`0x080E8A6A`), flags5 0. Fire85.lua |
+| Sprite_D1_BunnyBeam | `0x080DC478` (sprite table entry) | r85 trace: ai 0 waits while Sprite_CheckTileCollision (`0x080C7A48`) answers a wall, then 128 frames; bump 0x30; a touch: state 0, +0x188C (link_timer_tempbunny) = 0x100; flies at Link (16) on his level; a wall: poof `0x080CF6C0`, sound `movs r1, #imm` `0x080DC5A0`. Room 0x24's beam starts on the pot at (192, 192) and dies on its first step; 0x13's dies on a wall too |
+| Sprite_CheckTileCollision core | `0x080C7014` | r85 finding: flags2 bit 0x20 -> one point; else flags4 bit 7 clear AND +0xB14 (the room's two-layer collision) != 0 -> all four directions (`0x080C7A80`); else by velocity. Palace.lua's tileCollision has only the first and last branches (not changed this round); round 86: the middle branch is ported (Tile86.lua: flags4 bit 7 clear and the header collision mode +0xB14 != 0 -> 0x080C7A80's four tests, down / up / right / left) |
 | falling-square paths | `0x172B04`-`0x172B1C` | 7th path is GBA-only (room 0x79) |
 | ending scene funcs / lengths | `0x1709AC` / `0x170950` | 16 scenes |
 | ending texts / staff roll | `0x1965D4` / `0x197320` (count at `0x1979A4`) | decoded at import |

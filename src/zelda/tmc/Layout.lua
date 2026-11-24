@@ -58,7 +58,7 @@ Layout.PLAYER_COLL_MASKS = 40
 Layout.PLAYER_COLL_SHAPES = 0x080082DC
 Layout.PLAYER_COLL_TABLES = 7
 Layout.TILE_TYPE_COUNT = 0x800
-Layout.SPECIAL_TILE_COUNT = 0x80
+Layout.SPECIAL_TILE_COUNT = 0x97 -- round 62: SPECIAL_TILE_0 .. SPECIAL_TILE_150 (gMapSpecialTileToCollisionData; was $80: 128..150 read 0)
 
 -- VRAM: area tilesets decompress into BG character memory $06000000..$0600C000
 Layout.VRAM_BG = 0x06000000

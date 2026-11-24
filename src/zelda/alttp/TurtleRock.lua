@@ -32,7 +32,7 @@
 --        Sprite_Trinexx_FinalPhase: 128 frames of ai 0 (kSprite_TrinexxD_
 --        Xvel / Yvel, a wall turns it D + 1), then ai 1 (every other frame
 --        the speed steps towards a speed-31 projection at Link); a hit in ai
---        0 (sprite_F 14) -> ai 2 (no case: it keeps its speed). 16 body
+--        0 sets sprite_F 15 (r87: the F == 14 -> ai 2 test is never met). 16 body
 --        segments on the 128-position history (kTrinexxD_HistPos /
 --        kSprite_TrinexxD_Gfx2); a segment touching Link hurts him (8);
 --        segment 4 flashes and is the only place the sword hurts once ai is
@@ -639,8 +639,13 @@ local function snake(self, a, lk)
   end
   a.sub2 = u8((a.sub2 or 0) + 1)
   a.hist[band(a.sub2, 0x7F)] = { a.x, a.y }
-  -- sprite_F 14: a fresh hit (the hit timer just set) in ai 0 -> ai 2
-  if (a.inv == 0x1D or a.inv == 0x20) and a.ai == 0 then a.ai = 2 end
+  -- sprite_F 14 -> ai 2: r87: never reached. A sword hit sets sprite_F 15
+  -- (Sprite_GiveDamage) and nothing decrements it for the active snake (no
+  -- Sprite_ReturnIfRecoiling in Sprite_Trinexx_FinalPhase), so the test
+  -- (0x08108436 `cmp r0, #0xe`) never passes; the GBA's ai jump table
+  -- (0x0817C1EC) has only the two cases. The old port turned every hit
+  -- in ai 0 into ai 2 and the snake slid out of the room.
+  if (a.inv == 0x1D or a.inv == 0x20) then a.F = 15 end
   H().moveXY(a)
   d.contact(self, a, lk)
   local ai = a.ai

@@ -43,22 +43,39 @@ local bit = require("bit")
 
 local M = {}
 M.TYPE = 0xBB
-M.WHERE = { 0x0F, 0x10, 0x00, 0x06, 0x18, 0x12, 0x1E, 0xFF, 0x1F, 0x23, 0x24, 0x25, 0x27 }
-M.ITEM_X = { -44, 8, 60 }
+-- r35: the shopkeeper's room list (13 of the GBA's 14) and the wares' x
+-- offsets, read from the ROM at import
+M.WHERE = require("src.zelda.alttp.RomTables").get("shop.where")
+M.ITEM_X = require("src.zelda.alttp.RomTables").get("shop.itemX")
 M.WARES = {
   [0] = { 7, 8, 12 }, [1] = { 9, 13, 11 }, [5] = { 7, 10, 12 }, [7] = { 7, 10, 12 }, [8] = { 7, 10, 12 },
 }
+-- r36: wares 7-12's prices are read at import from the cartridge's
+-- ShopItem code (RomTablesSpec "shop.price"); r37: the bee's (13) too: the
+-- GBA's ware 13 (0x17D034 [13] = 0x0810F3B8) calls the bottle ware
+-- 0x0810EDB4 with index 0, which charges s16 0x17D0BC [index * 4] and gives
+-- byte 0x17D0C4 [index * 4] (0x0E, the bee) -- "shop.bottlePrice"
 M.ITEMS = {
-  [7] = { cost = 150, item = 0x2E, bottle = true, icon = 0x2E },
-  [8] = { cost = 50, item = 0x04, shield = 1, icon = 0x04 },
-  [9] = { cost = 500, item = 0x05, shield = 2, icon = 0x05 },
-  [10] = { cost = 10, item = 0x42, heart = true, drop = 0xD8 },
-  [11] = { cost = 30, item = 0x44, arrows = 10, drop = 0xE2 },
-  [12] = { cost = 50, item = 0x31, bombs = 10, drop = 0xDD },
-  [13] = { cost = 10, item = 0x0E, bottle = true, icon = 0x0E },
+  [7] = { item = 0x2E, bottle = true, icon = 0x2E },
+  [8] = { item = 0x04, shield = 1, icon = 0x04 },
+  [9] = { item = 0x05, shield = 2, icon = 0x05 },
+  [10] = { item = 0x42, heart = true, drop = 0xD8 },
+  [11] = { item = 0x44, arrows = 10, drop = 0xE2 },
+  [12] = { item = 0x31, bombs = 10, drop = 0xDD },
+  [13] = { item = 0x0E, bottle = true, icon = 0x0E },
 }
-M.GIVE_MSG = { [7] = 0x168, [8] = 0x167, [9] = 0x167, [10] = 0x16C, [11] = 0x169, [12] = 0x16A, [13] = 0x16B }
-M.MSG_HELLO, M.MSG_POOR, M.MSG_HAVE, M.MSG_FULL, M.MSG_BOTTLE = 0x165, 0x17C, 0x166, 0x16E, 0x16D
+-- r37: kShopKeeper_GiveItemMsgs (0x17D0CC, read at 0x0810EF6C) and the
+-- clerk's hello (0x17D080 [0], read at 0x0810E38A), from the import
+M.GIVE_MSG = require("src.zelda.alttp.RomTables").get("msg.shopGive")
+-- r36: prices and messages read at import (RomTablesSpec "shop.price", "msg.shop")
+require("src.zelda.alttp.RomTables").onBind(function()
+  local RT = require("src.zelda.alttp.RomTables")
+  for k, v in pairs(RT.get("shop.price")) do if M.ITEMS[k] then M.ITEMS[k].cost = v end end
+  M.ITEMS[13].cost = RT.get("shop.bottlePrice")[RT.get("shop.beeIndex")[0]]
+  M.MSG_HELLO = RT.get("msg.shopHello")[0]
+  local t = RT.get("msg.shop")
+  M.MSG_POOR, M.MSG_HAVE, M.MSG_FULL, M.MSG_BOTTLE = t.poor, t.have, t.full, t.bottle
+end)
 -- the sprite sheet's digit chars (SNES 0x30 '0', 0x31 '1', 0x13 '5', 0x03 '3'
 -- in kShopKeeper_ItemWithPrice_Dmd), as GBA OBJ chars (SNES char row k ->
 -- GBA row (k & 3) + 4 * (k >> 3 & 1), half k >> 2 & 1; r16 dmdsearch)

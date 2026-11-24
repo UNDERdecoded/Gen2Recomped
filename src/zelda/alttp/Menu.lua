@@ -25,26 +25,25 @@ local R = require("src.zelda.alttp.RomMap")
 local M = {}
 M.__index = M
 
--- SNES receipt item (what our chests give) -> GBA grid slot and value
-M.RECEIPT_SLOT = {
-  [0x0B] = { 1, 1 },  -- bow
-  [0x0C] = { 2, 1 },  -- boomerang
-  [0x0A] = { 3, 1 },  -- hookshot
-  [0x12] = { 13, 1 }, -- lamp
-  [0x29] = { 5, 1 },  -- mushroom
-  [0x0D] = { 5, 2 },  -- magic powder
-  [0x07] = { 7, 1 },  -- fire rod
-  [0x08] = { 8, 1 },  -- ice rod
-  [0x09] = { 14, 1 }, -- hammer
-  [0x14] = { 15, 1 }, -- flute
-  [0x13] = { 19, 1 }, -- shovel
-  [0x21] = { 16, 1 }, -- bug net
-  [0x1D] = { 17, 1 }, -- book
-  [0x15] = { 20, 1 }, -- cane of somaria
-  [0x18] = { 21, 1 }, -- cane of byrna
-  [0x19] = { 22, 1 }, -- magic cape
-  [0x1A] = { 23, 1 }, -- magic mirror
-}
+-- SNES receipt item (what our chests give) -> GBA grid slot and value.
+-- r35: built from the GBA's kMemoryLocationToGiveItemTo / kValueToGiveItemTo
+-- (Gear.lua's import, data.t.gear): slot = inventory byte - 0x1F, the value
+-- the cartridge gives (its -1 "flag" codes, the mushroom's, give 1). The
+-- receipt ids that are grid items (bow, boomerang, hookshot, lamp, mushroom,
+-- powder, fire / ice rod, hammer, flute, shovel, net, book, canes, cape,
+-- mirror):
+M.RECEIPT_ITEMS = { 0x0B, 0x0C, 0x0A, 0x12, 0x29, 0x0D, 0x07, 0x08, 0x09, 0x14, 0x13, 0x21, 0x1D,
+                    0x15, 0x18, 0x19, 0x1A }
+M.RECEIPT_SLOT = {}
+require("src.zelda.alttp.RomTables").onBind(function(t)
+  for k in pairs(M.RECEIPT_SLOT) do M.RECEIPT_SLOT[k] = nil end
+  local g = t.gear
+  if not g then return end
+  for _, id in ipairs(M.RECEIPT_ITEMS) do
+    local v = g.value[id + 1] or 1
+    M.RECEIPT_SLOT[id] = { g.addr[id + 1] - 0x1F, v < 1 and 1 or v }
+  end
+end)
 
 -- the GBA inventory bytes for the port's progress
 function M.inventory(game)

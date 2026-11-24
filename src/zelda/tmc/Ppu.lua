@@ -24,7 +24,7 @@ Ppu.__index = Ppu
 local W, H = 240, 160
 Ppu.W, Ppu.H = W, H
 local VRAM, EWRAM, PALRAM = 0x06000000, 0x02000000, 0x05000000
-local MAP_BYTES = { [0] = 0x800, 0x1000, 0x1000, 0x2000 } -- gUnk_080B2CD8
+local MAP_BYTES = require("src.zelda.tmc.RomTables").t("Ppu.MAP_BYTES") -- gUnk_080B2CD8
 
 local OBJ_DIMS = {
   [0] = { { 8, 8 }, { 16, 16 }, { 32, 32 }, { 64, 64 } },
@@ -154,9 +154,15 @@ function Ppu:setColor(i, c) self.pal[i] = c; self.dirty = true end
 function Ppu:table(name)
   local A = self.A
   local e = A.manifest.menuData and A.manifest.menuData[name]
-  if not e then return nil end
-  A.menuBlob = A.menuBlob or A.store:read("menudata.bin") or ""
-  local blob, base, off = A.menuBlob, e[1], e[2]
+  local blob
+  if not e then -- round 33: the tables of r33.bin (ExtractR33.lua: worldEvents, ...)
+    e, blob = require("src.zelda.tmc.ExtractR33").table(A, name)
+    if not e then return nil end
+  else
+    A.menuBlob = A.menuBlob or A.store:read("menudata.bin") or ""
+    blob = A.menuBlob
+  end
+  local base, off = e[1], e[2]
   local t = {}
   function t.u8(a) return blob:byte(off + (a - base) + 1) or 0 end
   function t.s8(a) local v = t.u8(a) return v >= 128 and v - 256 or v end
@@ -572,8 +578,7 @@ end
 -- the font banks (gUnk_08109248): 0/1 ASCII, 2 the upper half, 3 symbols,
 -- 4, and 5-8 double-width glyphs (index << 1)
 local FONT_BASE = 0x08692F60
-local BANKS = { [0] = 0x08692F60, 0x08692F60, 0x086978E0, 0x08696F60, 0x086AAEE0,
-                0x086998E0, 0x086A18E0, 0x086A2A60, 0x086A2EE0 }
+local BANKS = require("src.zelda.tmc.RomTables").t("Ppu.BANKS")
 
 local function glyphBlob(self)
   if not self.A.fontBanks then

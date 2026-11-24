@@ -156,7 +156,20 @@ function M.update(actors, a, lk)
   end
   a.dir = OUR[bc.D]
   -- the ball hurts Link (states 2-3; same level, not while he blinks)
+  -- r45: Guard_ParrySwordAttacks (GBA 0x080C3964, called from 0x080E2D7E)
+  -- does nothing while link_incapacitated_timer (+0x16F8) or +0x1702 runs,
+  -- and checks Link's sword box on the ball FIRST: an overlap parries
+  -- (0x080C3A1C) and the ball does no damage that frame; only without it
+  -- does Link_SetupHitBox meet the ball (0x080C39E2 -> 0x080C3AC8). The
+  -- port hurt Link even when his swing met the ball.
   local x, y, w, h = M.ballBox(game, a)
+  local sb = game.swing and game.swing.box
+  if x and game.recoil then x = nil end
+  if x and sb and (a.lower or false) == ((actors.inside and actors.inside.lower) or false)
+     and require("src.zelda.alttp.Actors").overlap(sb[1], sb[2], sb[3], sb[4], x, y, w, h) then
+    require("src.zelda.alttp.Guard").parry(actors, a, sb[1], sb[2], sb[3], sb[4])
+    x = nil
+  end
   if x and (a.lower or false) == ((actors.inside and actors.inside.lower) or false) then
     local A = require("src.zelda.alttp.Actors")
     if A.overlapCart(lk.x + 4, lk.y + 8, 8, 8, -- r20: Link_SetupHitBox
@@ -166,6 +179,35 @@ function M.update(actors, a, lk)
       game:hurtLink(cb.playerDamage[3 * cls + 1] or 2, x + 8, y + 8)
       game.flailHits = (game.flailHits or 0) + 1
     end
+  end
+end
+
+-- r45: a frame while the guard recoils. The GBA's Sprite_6A (0x080E2D4C)
+-- runs Guard_ParrySwordAttacks (0x080E2D7E) and the flail angle step before
+-- Sprite_ReturnIfRecoiling (0x080E2DAC), and the sprite timers (delay main
+-- +0xFC2, aux2) count down every frame in the shared sprite loop: the whirl
+-- and its timers keep going while the guard is knocked back. The port froze
+-- them. The ball check is skipped while the hit timer runs (sign8 of
+-- sprite_hit_timer +0x10C2, 0x080C3996; the port's a.inv).
+function M.recoilTick(actors, a, lk)
+  local t, bc = tabs(actors.game), a.bc
+  if not (t and bc) then return end
+  if bc.delay > 0 then bc.delay = bc.delay - 1 end
+  if bc.aux2 > 0 then bc.aux2 = bc.aux2 - 1 end
+  local ang = bc.B * 256 + bc.A + (t.stateAdd[bc.ai + 1] or 0)
+  bc.A, bc.B = band(ang, 0xFF), band(rshift(ang, 8), 1)
+  if (a.inv or 0) > 0 then return end
+  local game = actors.game
+  local x, y, w, h = M.ballBox(game, a)
+  if not x or game.recoil or (a.lower or false) ~= ((actors.inside and actors.inside.lower) or false) then return end
+  local A = require("src.zelda.alttp.Actors")
+  local sb = game.swing and game.swing.box
+  if sb and A.overlap(sb[1], sb[2], sb[3], sb[4], x, y, w, h) then
+    require("src.zelda.alttp.Guard").parry(actors, a, sb[1], sb[2], sb[3], sb[4])
+  elseif A.overlapCart(lk.x + 4, lk.y + 8, 8, 8, x, y, w, h) then
+    local cb = game.data.roomIdx.combat
+    game:hurtLink(cb.playerDamage[3 * band(cb.bump[0x6A + 1] or 0, 0x0F) + 1] or 2, x + 8, y + 8)
+    game.flailHits = (game.flailHits or 0) + 1
   end
 end
 

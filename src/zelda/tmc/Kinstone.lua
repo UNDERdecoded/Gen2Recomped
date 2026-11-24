@@ -139,6 +139,7 @@ function Kinstone:applyWorldEvents()
           f:objects():setTileType(1, tx - 1, ty, TILE_TYPE_140)
           f:objects():setTileType(1, tx, ty, TILE_TYPE_142)
         end
+      elseif t == 11 and fused then require("src.zelda.tmc.Objects37").lilyEvent(f, we) -- round 37: lily pads on gLilypadRails
       elseif t == 24 and fused then f:loadEntityList(0x080FEE18)
       elseif t == 15 then
         local l = f:entityListAt(fused and 0x080FEE58 or 0x080FEE48)
@@ -147,6 +148,7 @@ function Kinstone:applyWorldEvents()
         f:setFlag("bank", 0x79, true, 0x100) -- SOUGEN_05_BOMB_00 (round 9: USA id)
         f:loadEntityList(0x080FEE38)
       end
+      require("src.zelda.tmc.Fusion33").apply(f, ev.worldEvent, we, fused) -- round 33: chests (type 2), types 4 / 5 / 6 / 7 ($80) tiles
     end
   end
 end
@@ -189,8 +191,9 @@ function Kinstone:openFuse()
   local fx, fy = p:frontPoint(10)
   local best, bestD
   for _, e in ipairs(f.entities) do
-    if e.talkable and not e.hidden and not e.deleted then
+    if e.talkable and (not e.hidden or e.interactBox or e.fuser) and not e.deleted then -- round 75: a fuser with its sprite off (the Mysterious Clouds: DoPostScriptAction 8) still fuses; the interactable list ignores draw
       local d = math.abs(e.x - fx) + math.abs(e.y - fy)
+      if e.interactBox and e.fuser and require("src.zelda.tmc.Hitboxes").interactHit(f, p, e) then d = 0 end -- round 75: SetInteractableObjectCollision's box (the Mysterious Clouds: NPC4E_ChangeInteractableHitbox)
       if d < 18 and (not bestD or d < bestD) then best, bestD = e, d end
     end
   end

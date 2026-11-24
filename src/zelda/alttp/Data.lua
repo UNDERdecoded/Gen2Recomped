@@ -34,6 +34,8 @@ end
 function D.load(cache)
   local self = setmetatable({}, D)
   self.t = readLua(cache, E.FILES.tables)
+  -- r35: the modules' small cartridge tables (RomTables.lua) into their live tables
+  require("src.zelda.alttp.RomTables").bind(self.t.rt35, self.t)
   self.mapIdx = readLua(cache, E.FILES.mapsIdx)
   self.pal = readBin(cache, E.FILES.palette)
   self.sheets = readBin(cache, E.FILES.sheets)
@@ -44,6 +46,9 @@ function D.load(cache)
   if okR and okI then self.rooms, self.roomIdx = rooms, roomIdx end
   local okS, songs = pcall(readLua, cache, E.FILES.songs)
   self.songs = okS and songs or nil
+  -- r33: the ALttP sound driver's bank (AlttpSynth.image)
+  local okSnd, snd = pcall(readBin, cache, E.FILES.snd)
+  self.snd = okSnd and snd or nil
   -- menus / HUD / title (round 4b); absent in an older cache
   local U = require("src.zelda.alttp.UiExtract")
   local okU, ui = pcall(readLua, cache, U.FILES.info)

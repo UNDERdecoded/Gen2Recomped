@@ -25,7 +25,15 @@
 
 local B = {}
 
-B.NEED = { [0x54] = 0, [0x52] = 1, [0x50] = 0, [0x51] = 0, [0x53] = 2, [0x55] = 1, [0x56] = 2 }
+-- r36: gloves needed by lift attribute 0x50-0x56: kGetBestActionToPerformOnTile
+-- _a[_b[attribute & 15]] (RomTablesSpec "carry.gloves" / "carry.actionB")
+B.NEED = {}
+require("src.zelda.alttp.RomTables").onBind(function()
+  local RT = require("src.zelda.alttp.RomTables")
+  local a, b = RT.get("carry.gloves"), RT.get("carry.actionB")
+  for k in pairs(B.NEED) do B.NEED[k] = nil end
+  for i = 0, 6 do if b[i] and a[b[i]] then B.NEED[0x50 + i] = a[b[i]] end end
+end)
 B.LIGHT = { [0x36D] = 0, [0x36E] = 1, [0x374] = 2, [0x375] = 3 }
 B.HEAVY = { [0x23B] = 0, [0x23C] = 1, [0x23D] = 2, [0x23E] = 3 }
 B.TAB_DX = { [0] = 0, -16, 0, -16 }

@@ -52,8 +52,8 @@ M.ANIM_BOOMERANG, M.ANIM_BOOMERANG_MAGIC = 0x818, 0x704
 M.HURT_TYPE = 0x14
 M.SPRITE_HAND, M.SPRITE_FLY, M.VRAM_FLY = 22, 0xA6, 0xD5
 M.SFX_FB = 0xFB
-M.LAUNCH = { [0] = { 0, -8 }, { 8, -4 }, { 0, 8 }, { -8, -4 } } -- gUnk_080B7826 (animationState >> 1)
-M.TILE_OFF = { [0] = { 0, -6 }, { 4, -4 }, { 4, 0 }, { 4, 4 }, { 0, 4 }, { -4, 4 }, { -4, 0 }, { -4, 0 }, { 0, 0 } } -- gUnk_080B782E (direction >> 2)
+M.LAUNCH = require("src.zelda.tmc.RomTables").t("ItemBoomerang.LAUNCH") -- gUnk_080B7826 (animationState >> 1)
+M.TILE_OFF = require("src.zelda.tmc.RomTables").t("ItemBoomerang.TILE_OFF") -- gUnk_080B782E (direction >> 2)
 
 local function dirOf(input)
   if not input then return 0x80 end
@@ -298,7 +298,7 @@ function M.draw(p, x, y)
 end
 
 -- GiveItem case $12
-local META = { [0x0B] = { unk1 = 0x12, param = 0 }, [0x0C] = { unk1 = 0x12, param = 0 } } -- gItemMetaData (fallback)
+local META = require("src.zelda.tmc.RomTables").t("Items.META") -- gItemMetaData (fallback when the cache has no itemMeta)
 function M.giveItem(f, item, param)
   if item ~= M.ITEM_BOOMERANG and item ~= M.ITEM_MAGIC_BOOMERANG then return nil end
   local mm = f.assets and f.assets.manifest and f.assets.manifest.itemMeta

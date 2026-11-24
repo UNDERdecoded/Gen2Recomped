@@ -165,7 +165,7 @@ end
 local function progress(f) return f.save.progress or 0 end
 
 -- LookAt (script.c) as Script.lua's lookAt
-local DIR_TABLE = { [0] = 0, 0, 2, 2, 2, 2, 4, 4, 4, 4, 6, 6, 6, 6, 0, 0 }
+local DIR_TABLE = require("src.zelda.tmc.RomTables").t("SideQuests27.DIR_TABLE")
 local function lookAt(e, ctx, x, y)
   local S = require("src.zelda.tmc.Script")
   ctx.unk19 = 8
@@ -208,8 +208,8 @@ end
 -- ---------------------------------------------------------------------------
 -- Rem (rem.c)
 -- ---------------------------------------------------------------------------
-local SLEEP_T = { 60, 100, 200, 60, 100, 200, 80, 80 } -- gUnk_081122A0
-local JIGGLE = { [0] = 0, -1, 0, 1, 0, -1, 0, 1 }       -- gUnk_08112294
+local SLEEP_T = require("src.zelda.tmc.RomTables").t("SideQuests27.SLEEP_T") -- gUnk_081122A0
+local JIGGLE = require("src.zelda.tmc.RomTables").t("SideQuests27.JIGGLE")       -- gUnk_08112294
 
 local function remSleep(f, e) -- sub_0806A9B0
   e.action, e.subAction = 2, 0
@@ -427,11 +427,7 @@ reg(0x0807F93C, function(f, e, ctx) -- script.c sub_0807F93C: CreateSpeechBubble
 end)
 
 -- sub_0806AA50: the Town Minish under Rem's shop
-local LINES = {
-  { TEXT_REM + 0x1C, TEXT_REM + 0x1D, TEXT_REM + 0x1E }, -- gUnk_081122A8
-  { TEXT_REM + 0x1F, TEXT_REM + 0x20, TEXT_REM + 0x21 }, -- gUnk_081122B0
-  { TEXT_REM + 0x10, TEXT_REM + 0x11, TEXT_REM + 0x12 }, -- gUnk_081122B8
-}
+local LINES = require("src.zelda.tmc.RomTables").t("SideQuests27.LINES")
 local function hop(e) e.r27hop = true; e.cz = e.cz or 0; e.czv = 0x18000 end
 reg(0x0806AA50, function(f, e, ctx, a)
   local u = ctx.r27u18 or 0
@@ -486,48 +482,17 @@ end)
 -- ---------------------------------------------------------------------------
 -- Postman (postman.c)
 -- ---------------------------------------------------------------------------
-local PC = { [0] = { 0x0, 0x0 }, { 0x48, 0xa8 }, { 0x0, 0xf0 }, { 0x1f8, 0x0 }, { 0x3f8, 0xf0 }, { 0x1f8, 0x3c8 },
-  { 0x48, 0xf0 }, { 0x60, 0xf0 }, { 0x60, 0x188 }, { 0x78, 0x188 }, { 0x78, 0x270 }, { 0x38, 0x270 },
-  { 0x38, 0x328 }, { 0x98, 0x328 }, { 0xd8, 0x328 }, { 0x108, 0x328 }, { 0x188, 0x328 }, { 0x188, 0x368 },
-  { 0x108, 0x278 }, { 0x128, 0x278 }, { 0x128, 0x1d0 }, { 0x1a8, 0x1d0 }, { 0x1f8, 0x1d0 }, { 0x1a8, 0x288 },
-  { 0x1f8, 0x288 }, { 0x1f8, 0x328 }, { 0x268, 0x328 }, { 0x268, 0x368 }, { 0x268, 0x390 }, { 0x1f8, 0xf0 },
-  { 0x248, 0x1d0 }, { 0x248, 0x1c0 }, { 0x248, 0x288 }, { 0x298, 0x288 }, { 0x298, 0x328 }, { 0x328, 0x328 },
-  { 0x328, 0x390 }, { 0x368, 0x328 }, { 0x368, 0x318 }, { 0x3a0, 0x318 }, { 0x3a0, 0x290 }, { 0x370, 0x290 },
-  { 0x370, 0x280 }, { 0x360, 0x280 }, { 0x360, 0x270 }, { 0x340, 0x270 }, { 0x340, 0x248 }, { 0x320, 0x248 },
-  { 0x2e0, 0x248 }, { 0x2e0, 0x1d0 }, { 0x2d0, 0x1d0 }, { 0x2d0, 0x1c0 }, { 0x320, 0x168 }, { 0x378, 0x168 },
-  { 0x378, 0xf0 }, { 0x2b0, 0x288 }, { 0x2b0, 0x280 }, { 0x2c0, 0x280 }, { 0x2c0, 0x270 }, { 0x2d0, 0x270 },
-  { 0x2d0, 0x248 }, { 0x78, 0x1f0 }, { 0x78, 0x230 } } -- gUnk_0810A66C
-local R768 = { 1, -4, 0, 1, 2 }
-M.POST_ROUTES = { [0] = R768, R768, -- gUnk_0810A918 -> gUnk_0810A768 ...
-  { 6, 0, 2, 4, 21 }, { 6, 0, 2, 1, 21 }, { 2, -5, 3, 5, 7, 9 }, { 29, 0, 3, 20, 17, 16 }, { 3, -5, 3, 3, 7, 9 },
-  { 54, 0, 2, 18, 62 }, { 4, -5, 3, 3, 5, 9 }, { 25, 0, 3, 46, 30, 31 }, { 5, -5, 3, 3, 5, 7 },
-  { 24, 0, 3, 45, 47, 14 }, { 22, 0, 3, 15, 66, 63 }, { 23, 24, 0, 3, 12, 47, 45 }, { 23, 21, 0, 2, 65, 26 },
-  { 29, 0, 3, 6, 20, 17 }, { 22, 0, 3, 66, 11, 63 }, { 54, 0, 2, 8, 62 }, { 29, 0, 3, 6, 20, 16 },
-  { 29, 0, 3, 6, 17, 16 }, { 7, 0, 2, 22, 23 }, { 7, 0, 2, 23, 19 }, { 6, 0, 2, 1, 4 },
-  { 8, 9, 61, -1, 62, 10, 11, 12, 13, -1, 14, 15, 0, 2, 27, 25 },
-  { 14, -1, 13, 12, 11, 10, 62, -1, 61, 9, 8, 7, 0, 2, 22, 19 },
-  { 18, 19, 20, 21, 0, 2, 65, 13 }, { 20, 19, 18, 15, 0, 2, 24, 27 }, { 16, 0, 2, 29, 33 }, { 15, 0, 2, 24, 25 },
-  { 25, 0, 3, 46, 31, 10 }, { 16, 0, 2, 28, 33 }, { 26, 0, 2, 41, 43 }, { 25, 0, 3, 10, 46, 30 },
-  { 17, 27, 0, 2, 42, 35 }, { 17, 16, 0, 2, 28, 29 }, { 28, 36, 35, 0, 2, 40, 37 }, { 36, 28, 27, 0, 2, 34, 42 },
-  { 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 0, 2, 57, 61 }, { 46, 45, 44, 43, 42, 41, 40, 39, 38, 37, 35, 0, 2, 36, 40 },
-  { 35, 0, 2, 36, 37 }, { 34, 0, 2, 44, 52 }, { 27, 0, 2, 34, 35 }, { 26, 0, 2, 32, 43 }, { 34, 0, 2, 52, 39 },
-  { 26, 0, 2, 32, 41 }, { 25, 0, 3, 10, 30, 31 }, { 24, 0, 3, 14, 12, 47 }, { 32, 0, 2, 54, 49 },
-  { 24, 0, 3, 14, 12, 45 }, { 33, 0, 2, 51, 55 }, { 32, 0, 2, 48, 54 }, { 34, 0, 2, 44, 39 }, { 33, 0, 2, 50, 55 },
-  { 32, 0, 2, 48, 49 }, { 30, 0, 2, 64, 59 }, { 55, 56, 57, 58, 59, 60, 48, 0, 2, 60, 58 },
-  { 60, 59, 58, 57, 56, 55, 33, 0, 2, 50, 51 }, { 48, 0, 2, 60, 56 }, { 47, 0, 2, 38, 61 },
-  { 31, 51, 50, 49, 48, 0, 2, 56, 58 }, { 49, 50, 51, 31, 30, 0, 2, 64, 53 }, { 52, 53, 54, 0, 2, 8, 18 },
-  { 53, 52, 47, 0, 2, 38, 57 }, { 30, 0, 2, 53, 59 }, { 22, 0, 3, 66, 11, 15 }, { 22, 0, 3, 11, 15, 63 },
-  { 21, 0, 2, 26, 13, 0, 0 } }
+local PC = require("src.zelda.tmc.RomTables").t("SideQuests27.PC") -- gUnk_0810A66C
+M.POST_ROUTES = require("src.zelda.tmc.RomTables").t("SideQuests27.POST_ROUTES") -- gUnk_0810A918 -> gUnk_0810A768 ... (s8 lists)
 M.POST_COORDS = PC
-local POST_TEXT = { 0xC, 0xC, 0xD, 0xE, 0xF, 0x10, 0x11, 0x12 } -- gUnk_0810AA30 (DIALOG_NORMAL)
-local POST_RECT = { [0] = { { 0, -16, 16, 16 }, { 16, 0, 16, 16 }, { 0, 16, 16, 16 }, { -16, 0, 16, 16 } },
-                    { { 0, -16, 32, 32 }, { 16, 0, 32, 32 }, { 0, 16, 32, 32 }, { -16, 0, 32, 32 } } } -- gUnk_0810AA70
+local POST_TEXT = require("src.zelda.tmc.RomTables").t("SideQuests27.POST_TEXT") -- gUnk_0810AA30 (DIALOG_NORMAL)
+local POST_RECT = require("src.zelda.tmc.RomTables").t("SideQuests27.POST_RECT") -- gUnk_0810AA70
 
 local function onScreen(f, e)
   local x, y = e.x - (f.camX or 0), e.y - (f.camY or 0)
   return x > -16 and x < 256 and y > -16 and y < 176
 end
-local function route(e) return M.POST_ROUTES[e.pm68 or 0] or R768 end
+local function route(e) return M.POST_ROUTES[e.pm68 or 0] or M.POST_ROUTES[0] end
 local function rv(t, i) local v = t[i + 1] return v or 0 end
 
 reg(0x080606C0, function(f, e) e.talkable = true end) -- Postman_MakeInteractable
@@ -562,7 +527,7 @@ reg(0x0806076C, function(f, e, ctx, a) -- sub_0806076C
       local at = n > 0 and (rnd(f) % n) or 0
       for _ = 1, n do
         e.pm68 = rv(t, i + 2 + at)
-        local c = PC[rv(M.POST_ROUTES[e.pm68] or R768, 0)] or PC[0]
+        local c = PC[rv(M.POST_ROUTES[e.pm68] or M.POST_ROUTES[0], 0)] or PC[0]
         e.x, e.y = c[1], c[2]
         if not onScreen(f, e) then break end
         at = (at + 1) % n
@@ -642,24 +607,15 @@ reg(0x080670B4, function(f, e) -- sub_080670B4
   if (f:inventory(ITEM_GUST_JAR) or 0) == 0 and f:flag("global", TABIDACHI) then i = 1 end
   f:message(TEXT_CARPENTERS + (i == 0 and 2 or 3), e)
 end)
-local MUTOH = {}
-for i = 0, 4 do MUTOH[i] = { 0, DIALOG_ROOM, DIALOG_TOGGLE, 1, TEXT_MUTOH + 1, TEXT_MUTOH + 0 } end
-MUTOH[5] = { 0xB, DIALOG_KINSTONE, DIALOG_CHECK, 1, TEXT_MUTOH + 4, TEXT_MUTOH + 2 }
-MUTOH[6] = { 0xB, DIALOG_KINSTONE, DIALOG_CHECK, 1, TEXT_MUTOH + 4, TEXT_MUTOH + 3 }
-MUTOH[7] = MUTOH[6]
-MUTOH[8] = { 0xB, DIALOG_KINSTONE, DIALOG_CHECK, 1, TEXT_MUTOH + 4, TEXT_MUTOH + 5 }
-MUTOH[9] = MUTOH[8]
+local MUTOH = require("src.zelda.tmc.RomTables").t("SideQuests27.MUTOH") -- sub_080670E4 dialogs[global_progress] {flag, flagType, type, fromSelf, a, b}
 M.MUTOH = MUTOH
 reg(0x080670E4, function(f, e) M.showDialogue(f, e, MUTOH[math.min(progress(f), 9)]) end)
-local SMITH = {}
-for i, t in ipairs({ 1, 1, 2, 3, 4, 5, 6, 6 }) do
-  SMITH[i - 1] = { TABIDACHI, DIALOG_GLOBAL, DIALOG_CHECK, 1, TEXT_SMITH + t, TEXT_PROLOGUE + 0x0E }
-end
+local SMITH = require("src.zelda.tmc.RomTables").t("SideQuests27.SMITH") -- sub_0806622C dialogs
 M.SMITH = SMITH
 reg(0x0806622C, function(f, e) M.showDialogue(f, e, SMITH[math.min(math.max(progress(f) - 2, 0), 7)]) end)
-local HAMMER = { 0xDF, 0xE0, 0xE1, 0xDF, 0xE0, 0xE1, 0xDF, 0xE0 } -- SFX_HAMMER4/5/6
+local HAMMER = require("src.zelda.tmc.RomTables").t("SideQuests27.HAMMER") -- SFX_HAMMER4/5/6
 reg(0x08066258, function(f) f:sound(HAMMER[band(rnd(f), 7) + 1]) end)
-local TALON_WAIT = { 10, 20, 30, 18, 28, 38, 12, 24 } -- gUnk_0810FED8
+local TALON_WAIT = require("src.zelda.tmc.RomTables").t("SideQuests27.TALON_WAIT") -- gUnk_0810FED8
 reg(0x08065780, function(f, e, ctx) -- sub_08065780
   local r = rnd(f)
   e.animationState = band(r, 6)

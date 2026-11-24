@@ -44,11 +44,12 @@ local function hx(v) return math.floor(v) end
 local function u32(v) return v % 4294967296 end
 local function s8(v) v = band(v, 0xFF) if v >= 128 then return v - 256 end return v end
 
-local MAC_DIR = { [0] = 0, 8, 0x18, 0 }                                                       -- gUnk_080CDE6C
-local MAC_FRAME = { [0] = 9, 9, 8, 9, 8, 8, 8, 7, 7, 7, 6, 7, 6, 6, 6, 5, 5, 5, 12, 5, 12, 12, 12, 11, 11, 11, 10, 11, 10, 10, 10, 9 } -- gUnk_080CDE70
-local MAC_Z = { [0] = -2, -3, -4, -5, -6, -5, -4, -3 }                                        -- gUnk_080CDE90
-local MAC_SPEED = { [0] = 0xc0, 0x100, 0x140, 0x180 }                                         -- gUnk_080CDE98
-local TILE_OFS = { [0] = { 0, -16 }, { 16, 0 }, { 0, 16 }, { -16, 0 } }                     -- gUnk_080B4488 (-$40, 1, $40, -1 tiles)
+local MAC_DIR = require("src.zelda.tmc.RomTables").t("BossVaati3Extra.MAC_DIR")                                                       -- gUnk_080CDE6C
+local MAC_FRAME = require("src.zelda.tmc.RomTables").t("BossVaati3Extra.MAC_FRAME") -- gUnk_080CDE70
+local MAC_Z = require("src.zelda.tmc.RomTables").t("BossVaati3Extra.MAC_Z")                                        -- gUnk_080CDE90
+local MAC_SPEED = require("src.zelda.tmc.RomTables").t("BossVaati3Extra.MAC_SPEED")                                         -- gUnk_080CDE98
+-- gUnk_080B4488 (tile offsets in the 64-wide map: -$40, 1, $40, -1) as pixel offsets
+local function tileOfs(i) local dx, dy = require("src.zelda.tmc.BossVaati2").tileOfs(nil, i) return { dx * 16, dy * 16 } end
 X.T = { MAC_FRAME = MAC_FRAME, MAC_Z = MAC_Z, MAC_SPEED = MAC_SPEED }
 
 -- ---------------------------------------------------------------------------
@@ -62,7 +63,7 @@ local function macroPick(E, e) -- sub_0802EFB8
   local u
   if band(rshift(r, 16), 3) ~= 0 then u = band(r, 0x18)
   else u = band(V.dirTo(hx(p.x), hx(p.y), hx(e.x), hx(e.y)) + 4, 0x18) end
-  local o = TILE_OFS[rshift(u, 3)]
+  local o = tileOfs(rshift(u, 3))
   local cx, cy = math.floor(e.x / 16) * 16 + 8 + o[1], math.floor(e.y / 16) * 16 + 8 + o[2]
   if f.room:isSolid(cx, cy, 1) then e.direction = 0xFF
   else
@@ -225,9 +226,8 @@ X.followers = followers
 -- ---------------------------------------------------------------------------
 -- ENEMY_4D and its BALL_AND_CHAIN
 -- ---------------------------------------------------------------------------
-local LINK_OFS = { [0] = { 6, -16 }, { 10, -14 }, { 10, -16 }, { 8, -16 }, { -4, -14 }, { -8, -14 }, { -4, -10 }, { 4, -10 },
-                   { -6, -14 }, { -8, -16 }, { -10, -14 }, { -8, -12 }, { 4, -14 }, { 8, -14 }, { 4, -10 }, { -4, -10 } } -- gUnk_0812A4A8
-local THROW_ANGLE = { [0] = 0, 68, 128, 188 }                                                -- gUnk_080D08C4
+local LINK_OFS = require("src.zelda.tmc.RomTables").t("BossVaati3Extra.LINK_OFS") -- gUnk_0812A4A8
+local THROW_ANGLE = require("src.zelda.tmc.RomTables").t("BossVaati3Extra.THROW_ANGLE")                                                -- gUnk_080D08C4
 X.LINK_OFS = LINK_OFS
 
 local function setAnim(E, e, i) e.animIndex = nil; E:setAnim(e, i) end

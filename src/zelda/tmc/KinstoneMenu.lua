@@ -269,6 +269,7 @@ end
 function KM:exit(state)
   self.done = true
   self.state = state
+  if state == 6 then pcall(require("src.zelda.tmc.Fusion32").start, self.field, self.fusedId or self.target) end -- round 32: MenuFadeIn(subtask, worldEventId)
   if self.opts.onDone then self.opts.onDone(state, self.picked, self.fusedId) end
 end
 

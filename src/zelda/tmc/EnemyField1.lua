@@ -125,7 +125,7 @@ local HANDLED = { [0x02] = true, [0x0A] = true, [0x2E] = true, [0x30] = true, [0
 
 local SPECIAL_FX = 0x0F
 local FX_ROCK, FX_DASH, FX_EGG, FX_WOOD2 = 0x04, 0x11, 0x3A, 0x4C
-local SFX_12B, SFX_15B, SFX_15D, SFX_F2, SFX_PLY_VO6 = 0x12B, 0x15B, 0x15D, 0xF2, 0x7C
+local SFX_12B, SFX_15B, SFX_15D, SFX_F2, SFX_PLY_VO6 = 0x12B, 0x15B, 0x15D, 0xF2, 0x7A -- r34: was 0x7C (SFX_PLY_JUMP); ghini.c sub_0803F6C0 SFX_PLY_VO6
 local SFX_VO_CUCCO1, SFX_VO_CUCCO4 = 0x1D6, 0x1D9
 local ITEM_RUPEE1, ITEM_RUPEE5, ITEM_RUPEE20, ITEM_SKILL_ROCK_BREAKER = 0x54, 0x55, 0x56, 0x4B
 local KEATON_DAGGER, MANDIBLES_PROJECTILE = 0x0B, 0x13
@@ -133,43 +133,35 @@ local KEATON_DAGGER, MANDIBLES_PROJECTILE = 0x0B, 0x13
 -- the decomp's tables (gameplay constants)
 M.LEEVER_DRIFT = { [0] = 6, -6 }                                    -- gLeeverDrift
 M.LEEVER_TILES = { [9] = true, [10] = true, [11] = true, [12] = true } -- gUnk_080CA4CA (ACT_TILE_10, 9, 12, 11)
-M.ACRO_LOOK = { [0] = 2, 2, 2, 3, 3, 3, 3, 4 }                      -- Type0Action2 timers
-M.ACRO_HIDE = { [0] = 60, 60, 90, 120, 120, 120, 120, 150 }         -- Type0Action4 timers
-M.ACRO_SIGHT = { [0] = -32, 0, 0, 32, 32, 0, 0, 0 }                 -- gUnk_080CE5C0
-M.ACRO_GRAVITY = { [0] = 0x1600, 0x1300, 0x1000, 0x0D00, 0x0B00 }  -- banditGravity (Q8.8 22/19/16/13/11)
-M.ACRO_FALL = { [0] = 0x8, 0x1c, 0x11, 0x2, 0x15, 0xc, 0x0, 0x15, 0x6, 0x19,
-                0x10, 0x4, 0x19, 0xa, 0x1d, 0x14, 0x8, 0x1d, 0xe, 0x1 } -- fallDirections
-M.GHINI_TURN_MASK = { [0] = 15, 7, 3, 1 }                           -- gUnk_080D0970
-M.GHINI_SPEED = { [0] = 224, 192, 160, 128 }                        -- gUnk_080D0974
-M.GHINI_TURN = { [0] = 0, -2, 0, 2, 0, -4, 0, 4 }                   -- gUnk_080D0978
-M.GHINI_DELAY = { [0] = 15, 25, 34, 45 }                            -- gUnk_080D0980
-M.GHINI_BOB = { [0] = -1, -2, -3, -2 }                              -- gUnk_080D0984
-M.KEATON_WALK = { [0] = 60, 60, 90, 90, 90, 90, 120, 120, 120, 120, 120, 120, 120, 120, 150, 150 } -- gUnk_080CE7E0
-M.KEATON_REST = { [0] = 0xd2, 0xd2, 0xf0, 0xf0, 0x10e, 0x10e, 0x10e, 0x10e,
-                  0x12c, 0x12c, 0x12c, 0x12c, 0x12c, 0x12c, 0x12c, 0x12c } -- gUnk_080CE7F0
-M.KEATON_DASH = { [0] = 0, 2, -4, 0, 0, -11, 4, 0 }                 -- gUnk_080CE810
-M.DAGGER_HB = { [0] = { x = 4, y = -16, w = 2, h = 3 }, { x = 9, y = -2, w = 3, h = 2 },
-                { x = -4, y = 1, w = 2, h = 3 }, { x = -9, y = -2, w = 3, h = 3 } } -- gUnk_08129998
-M.SB_WALK = { [0] = 0x2d, 0x5a, 0x3c, 0x2d, 0x5a, 0x4b, 0x3c, 0x5a }  -- gUnk_080CF62C
-M.SB_MAND = { [0] = 0x18, 0x24, 0x34, 0x20, 0x3c, 0x1c, 0x2c, 0x28 }  -- gUnk_080CF634
-M.SB_TURN = { [0] = 1, 0, 7, 1, 0, 7, 0, 0 }                          -- gUnk_080CF63C
-M.MAND_TIME = { [0] = 24, 36, 52, 32, 60, 28, 44, 40 }                -- gUnk_08129CA4
-M.MAND_TURN = { [0] = 1, 0, 7, 1, 0, 7, 0, 0 }                        -- gUnk_08129CAC
-M.MAND_HB = { [0] = { x = 0, y = -4, w = 6, h = 8 }, { x = 3, y = -3, w = 6, h = 6 }, { x = 4, y = 0, w = 8, h = 6 },
-              { x = 3, y = 3, w = 6, h = 6 }, { x = 0, y = 4, w = 6, h = 8 }, { x = -3, y = 3, w = 6, h = 6 },
-              { x = -4, y = 0, w = 8, h = 6 }, { x = -3, y = -3, w = 6, h = 6 } } -- gUnk_08129CF4
-M.MAND_OFF = { [0] = 0, -16, 6, -10, 0, 4, -6, -10 }                 -- gUnk_08129D14
+M.ACRO_LOOK = require("src.zelda.tmc.RomTables").t("EnemyField1.ACRO_LOOK")                      -- Type0Action2 timers
+M.ACRO_HIDE = require("src.zelda.tmc.RomTables").t("EnemyField1.ACRO_HIDE")         -- Type0Action4 timers
+M.ACRO_SIGHT = require("src.zelda.tmc.RomTables").t("EnemyField1.ACRO_SIGHT")                 -- gUnk_080CE5C0
+M.ACRO_GRAVITY = require("src.zelda.tmc.RomTables").t("EnemyField1.ACRO_GRAVITY")  -- banditGravity (Q8.8 22/19/16/13/11)
+M.ACRO_FALL = require("src.zelda.tmc.RomTables").t("EnemyField1.ACRO_FALL") -- fallDirections
+M.GHINI_TURN_MASK = require("src.zelda.tmc.RomTables").t("EnemyField1.GHINI_TURN_MASK")                           -- gUnk_080D0970
+M.GHINI_SPEED = require("src.zelda.tmc.RomTables").t("EnemyField1.GHINI_SPEED")                        -- gUnk_080D0974
+M.GHINI_TURN = require("src.zelda.tmc.RomTables").t("EnemyField1.GHINI_TURN")                   -- gUnk_080D0978
+M.GHINI_DELAY = require("src.zelda.tmc.RomTables").t("EnemyField1.GHINI_DELAY")                            -- gUnk_080D0980
+M.GHINI_BOB = require("src.zelda.tmc.RomTables").t("EnemyField1.GHINI_BOB")                              -- gUnk_080D0984
+M.KEATON_WALK = require("src.zelda.tmc.RomTables").t("EnemyField1.KEATON_WALK") -- gUnk_080CE7E0
+M.KEATON_REST = require("src.zelda.tmc.RomTables").t("EnemyField1.KEATON_REST") -- gUnk_080CE7F0
+M.KEATON_DASH = require("src.zelda.tmc.RomTables").t("EnemyField1.KEATON_DASH")                 -- gUnk_080CE810
+M.DAGGER_HB = require("src.zelda.tmc.RomTables").t("EnemyField1.DAGGER_HB") -- gUnk_08129998
+M.SB_WALK = require("src.zelda.tmc.RomTables").t("EnemyField1.SB_WALK")  -- gUnk_080CF62C
+M.SB_MAND = require("src.zelda.tmc.RomTables").t("EnemyField1.SB_MAND")  -- gUnk_080CF634
+M.SB_TURN = require("src.zelda.tmc.RomTables").t("EnemyField1.SB_TURN")                          -- gUnk_080CF63C
+M.MAND_TIME = require("src.zelda.tmc.RomTables").t("EnemyField1.MAND_TIME")                -- gUnk_08129CA4
+M.MAND_TURN = require("src.zelda.tmc.RomTables").t("EnemyField1.MAND_TURN")                        -- gUnk_08129CAC
+M.MAND_HB = require("src.zelda.tmc.RomTables").t("EnemyField1.MAND_HB") -- gUnk_08129CF4
+M.MAND_OFF = require("src.zelda.tmc.RomTables").t("EnemyField1.MAND_OFF")                 -- gUnk_08129D14
 M.CUCCO_CARRY = { [0] = 0, 0x78 }                                     -- gUnk_080CF7BC
-M.CUCCO_IDLE = { [0] = 0x1e, 0x2d, 0x3c, 0x4b }                       -- gUnk_080CF7BE
+M.CUCCO_IDLE = require("src.zelda.tmc.RomTables").t("EnemyField1.CUCCO_IDLE")                       -- gUnk_080CF7BE
 M.CUCCO_SPEED = { [0] = 0x80, 0xc0 }                                  -- gUnk_080CF7C2
 M.CUCCO_FLEE_SPEED = { [0] = 0x140, 0x200 }                           -- gUnk_080CF824
 M.CUCCO_FLEE_TIME = { [0] = 0x384, 0x3c }                             -- gUnk_080CF828
 M.CUCCO_FX_X = { [0] = 8, -8 }                                        -- gCuccoAggrFxHorizontalOffsets
 M.CUCCO_FX = { [0] = FX_EGG, FX_WOOD2, FX_EGG }                       -- gCuccoAggrFx
-M.CUCCO_SPAWN = { [0] = { 0x18, -0x8 }, { 0x38, -0x8 }, { 0x58, -0x8 }, { 0x78, -0x8 }, { 0x98, -0x8 }, { 0xB8, -0x8 },
-                  { 0xD8, -0x8 }, { 0x18, 0xA8 }, { 0x38, 0xA8 }, { 0x58, 0xA8 }, { 0x78, 0xA8 }, { 0x98, 0xA8 },
-                  { 0xB8, 0xA8 }, { 0xD8, 0xA8 }, { -0x8, 0x10 }, { -0x8, 0x30 }, { -0x8, 0x50 }, { -0x8, 0x70 },
-                  { -0x8, 0x90 }, { 0xF8, 0x10 }, { 0xF8, 0x30 }, { 0xF8, 0x50 }, { 0xF8, 0x70 }, { 0xF8, 0x90 } } -- gCuccoAggrSpawnPoints
+M.CUCCO_SPAWN = require("src.zelda.tmc.RomTables").t("EnemyField1.CUCCO_SPAWN") -- gCuccoAggrSpawnPoints
 
 -- ---------------------------------------------------------------------------
 -- helpers
@@ -1237,6 +1229,7 @@ function M.keaton(E, e)
   elseif a == 4 then
     if e.dagger and daggerTouch(E, e) then
       keatonStop(E, e)
+      if require("src.zelda.tmc.Keaton94").shielded(E, e) then return end -- round 94: the shield takes the dagger
       daggerHit(E, e)
       return
     end

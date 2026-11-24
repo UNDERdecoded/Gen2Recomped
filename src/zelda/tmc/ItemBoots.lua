@@ -46,11 +46,11 @@ B.ANIM_WALK, B.ANIM_DASH = 0x104, 0x298
 B.ANIM_DASH_MINISH, B.ANIM_CHARGE_MINISH = 0xC10, 0xC14
 B.ANIM_BOUNCE, B.ANIM_BOUNCE_NOCAP, B.ANIM_BOUNCE_MINISH = 0x114, 0x418, 0xC18
 B.SFX_LAND, B.SFX_BOUNCE = 0x7D, 0x14C
-B.PROBE = { [0] = { 0, -15 }, { 12, -3 }, { 0, 9 }, { -12, -3 } } -- gUnk_080B7848
-B.HITBOX = { [0] = { 0, -18, 4, 8 }, { 16, 0, 8, 4 }, { 2, 11, 4, 8 }, { -16, 0, 8, 4 } } -- gUnk_080B7850
+B.PROBE = require("src.zelda.tmc.RomTables").t("ItemBoots.PROBE") -- gUnk_080B7848
+B.HITBOX = require("src.zelda.tmc.RomTables").t("ItemBoots.HITBOX") -- gUnk_080B7850
 local SWORD_SPRITE = { [1] = 14, [2] = 15, [3] = 15, [4] = 15, [5] = 15, [6] = 16 }
 local OPP = { [0] = "down", [2] = "left", [4] = "up", [6] = "right" }
-local VEC = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local VEC = require("src.zelda.tmc.RomTables").t("ItemBoots.VEC")
 
 local function isSword(i) return i and i >= 1 and i <= 6 end
 local function dirVec(d) local a = d / 32 * 2 * math.pi return math.sin(a), -math.cos(a) end

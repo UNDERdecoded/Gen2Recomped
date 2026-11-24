@@ -60,9 +60,10 @@ T.BLADE_TRAP, T.SENSOR_BLADE_TRAP, T.WALL_MASTER, T.WALL_MASTER_2, T.TORCH_TRAP 
 T.CUCCO_CHICK_AGGR, T.MOLDORM = 0x0C, 0x0D
 local SFX_VO_CHEEP = 0xD6
 local SFX_METAL_CLINK, SFX_12D = 0x74, 0x12D
-local SENSOR_SPEED = { [0] = 0x100, 0x180, 0x200, 0x280 }
-local SENSOR_PROBE = { [0] = { 0, -12 }, { 12, 0 }, { 0, 12 }, { -12, 0 } }
-local BREATHE = { [0] = -2, -4, -2, 0, 2, 4, 2, 0 }
+local WM = require("src.zelda.tmc.RomTables").t("EnemyTraps.WM") -- gWallMasterScreenTransitions (Transition records)
+local SENSOR_SPEED = require("src.zelda.tmc.RomTables").t("EnemyTraps.SENSOR_SPEED") -- gUnk_080CD3D4
+local SENSOR_PROBE = require("src.zelda.tmc.RomTables").t("EnemyTraps.SENSOR_PROBE")
+local BREATHE = require("src.zelda.tmc.RomTables").t("EnemyTraps.BREATHE") -- wallMaster.c
 
 function T.handles(e)
   local id = e.id
@@ -185,14 +186,14 @@ local function sensorBlade(E, e)
     local d = sensor(E, e)
     if not d then return end
     local pr = SENSOR_PROBE[rshift(d, 3)]
-    if f.room:isSolid(e.x + pr[1], e.y + pr[2], 1) then return end
+    if require("src.zelda.tmc.Trap93").probeSolid(f, e, pr) then return end -- round 93: the trap's own layer
     e.action, e.speed, e.direction = 2, e.rushSpeed, d
     local q = rshift(d, 3)
     if q == 0 then e.stopAt = e.y - e.rangeY elseif q == 1 then e.stopAt = e.x + e.rangeX
     elseif q == 2 then e.stopAt = e.y + e.rangeY else e.stopAt = e.x - e.rangeX end
   elseif e.action == 2 then
     local back = false
-    if not moveSolid(E, e, e.direction, e.speed) then back = true
+    if not require("src.zelda.tmc.Trap93").pm12(E, e, e.direction, e.speed) then back = true -- round 93: ProcessMovement12
     else
       local q = rshift(e.direction, 3)
       if q == 0 then back = e.stopAt >= math.floor(e.y) elseif q == 1 then back = e.stopAt <= math.floor(e.x)
@@ -203,7 +204,7 @@ local function sensorBlade(E, e)
       f:sound(SFX_METAL_CLINK)
     end
   elseif e.action == 3 then
-    if not moveSolid(E, e, e.direction, e.speed) then e.action = 1 end
+    if not require("src.zelda.tmc.Trap93").pm12(E, e, e.direction, e.speed) then e.action = 1 end -- round 93: ProcessMovement12
   end
 end
 
@@ -262,15 +263,15 @@ local function wallMaster(E, e)
     if e.timer <= 0 then
       e.action = 7
       p.hidden = nil; p.state = "normal"; p.extUpdate = nil
-      -- round 19: DoExitTransition(gWallMasterScreenTransitions[dungeon_idx])
-      -- (data/screenTransitions.c): Deepwood Shrine -> its entrance room
-      -- ($0B) at ($A8, $B8), the Cave of Flames -> its main cart room ($04)
-      -- at ($98, $A8); type 2, facing 0.  Other areas keep field.entry.
-      local WM = { [0x48] = { 0x48, 0x0B, 0xA8, 0xB8 }, [0x49] = { 0x48, 0x0B, 0xA8, 0xB8 },
-                   [0x50] = { 0x50, 0x04, 0x98, 0xA8 }, [0x51] = { 0x50, 0x04, 0x98, 0xA8 } }
-      local wm = WM[f.room.area]
+      -- DoExitTransition(gWallMasterScreenTransitions[gArea.dungeon_idx])
+      -- (data/screenTransitions.c, read from the ROM; dungeon_idx = the
+      -- area's location - 23).  Outside a dungeon: field.entry.
+      local info = f.room.areaInfo
+      local di = info and info.location and info.location - 23
+      local wm = di and di >= 0 and WM[di]
       if wm then
-        f:startTransition({ warpType = 1, area = wm[1], room = wm[2], endX = wm[3], endY = wm[4], facing = 0, kind = 2 })
+        f:startTransition({ warpType = wm.warpType, area = wm.area, room = wm.room, endX = wm.endX, endY = wm.endY,
+                            facing = wm.facing, kind = wm.kind })
       else
         local to = f.entry or {}
         f:startTransition({ warpType = 1, area = to.area or f.room.area, room = to.room or f.room.room,
@@ -361,7 +362,11 @@ end
 local TURN = { [0] = 1, -1 }
 local function moldorm(E, e)
   local f = E.field
-  if e.moldTail then return end -- the head moves its parts
+  if e.moldTail then -- the head moves its parts
+    -- round 91: sub_08022D90: parent->next == NULL (the head deleted) -> DeleteEntity (the parts stayed for good)
+    if e.moldHead and e.moldHead.deleted then e.deleted = true end
+    return
+  end
   if e.action == 0 then
     e.action, e.timer, e.subtimer = 1, 1, 1
     e.direction = band(rnd(), 0x1F)
@@ -428,9 +433,11 @@ end
 function T.update(E, e)
   if e.id == T.BLADE_TRAP then blade(E, e)
   elseif e.id == T.SENSOR_BLADE_TRAP then sensorBlade(E, e)
-  elseif e.id == T.WALL_MASTER or e.id == T.WALL_MASTER_2 then wallMaster(E, e)
+  elseif e.id == T.WALL_MASTER_2 then require("src.zelda.tmc.WallMaster51").update(E, e) -- round 51: wallMaster2.c (the floor one)
+  elseif e.id == T.WALL_MASTER then wallMaster(E, e)
   elseif e.id == T.CUCCO_CHICK_AGGR then chick(E, e)
   elseif e.id == T.MOLDORM then moldorm(E, e)
+  elseif e.id == T.TORCH_TRAP then require("src.zelda.tmc.TorchTrap73").update(E, e) -- round 73: torchTrap.c
   end
 end
 

@@ -53,7 +53,10 @@ function Items:swordFrame(p)
   local b = fi and sw.boxes[fi - 0x6A]
   if b and b[3] > 0 then
     local bx = boxFlip and -b[1] or b[1]
-    self.field:enemies():swordHits({ x = p.x + bx, y = p.y + b[2], w = b[3], h = b[4] })
+    local hurt = require("src.zelda.tmc.Sword84").hurtOf(self.field, p) -- round 84: the sword's own hurtType (ItemInit)
+    self.field.swordHurt31 = hurt
+    self.field:enemies():swordHits({ x = p.x + bx, y = p.y + b[2], w = b[3], h = b[4] }, hurt)
+    self.field.swordHurt31 = nil
     self.field.swordBoxNow = { x = p.x + bx, y = p.y + b[2], w = b[3], h = b[4], t = self.field.frame } -- round 22: objects hit by the sword (LightableSwitch)
   end
 end

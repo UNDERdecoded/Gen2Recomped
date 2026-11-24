@@ -80,8 +80,10 @@ end
 -- with j + 2, kPotionList the first empty one (2) with j + 3 (the GBA's
 -- bottles are grid slots 6 / 12 / 18 / 24)
 GR.BOTTLES = { 0x25, 0x2B, 0x31, 0x37 }
-GR.BOTTLE_LIST = { 0x16, 0x2B, 0x2C, 0x2D, 0x3D, 0x3C, 0x48 }
-GR.POTION_LIST = { 0x2E, 0x2F, 0x30, 0xFF, 0x0E }
+-- (r35: kBottleList / kPotionList read from the ROM at import; the GBA's
+-- kPotionList[3] is 0x51 where the SNES has 0xFF)
+GR.BOTTLE_LIST = require("src.zelda.alttp.RomTables").get("gear.bottleList")
+GR.POTION_LIST = require("src.zelda.alttp.RomTables").get("gear.potionList")
 function GR.giveBottled(game, id)
   local p = game.progress
   local inv = GR.inv(game)

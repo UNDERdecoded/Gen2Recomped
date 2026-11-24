@@ -123,50 +123,34 @@ M.ROM_RANGES = {
 -- ---------------------------------------------------------------------------
 -- tables written out in the decomp's .c files
 -- ---------------------------------------------------------------------------
-M.DN_BLOCK46 = { [0] = 30, 30, 20, 10 }   -- gUnk_080CAB00
-M.DN_BLOCK8C = { [0] = 60, 60, 45, 30 }   -- gUnk_080CAB04
-M.DN_PARRY = { [0] = 90, 90, 60, 30 }     -- gUnk_080CAB08
-M.DN_STUN1C = { [0] = 90, 90, 60, 30 }    -- gUnk_080CAB0C
-M.DN_STUN16 = { [0] = 90, 90, 45, 8 }     -- gUnk_080CAB10
-M.DN_GROUP = { [0] = { 0x00, 0x62 }, { 0x04, 0x62 }, { 0x08, 0x62 }, { 0x0C, 0x62 }, { 0x10, 0x62 }, { 0x14, 0x62 },
-               { 0x18, 0x62 }, { 0x1C, 0x62 }, { 0x20, 0x62 }, { 0x24, 0x62 }, { 0x28, 0x62 }, { 0x2C, 0x62 },
-               { 0x00, 0x63 }, { 0x04, 0x63 }, { 0x08, 0x63 }, { 0x0C, 0x63 }, { 0x10, 0x63 }, { 0x14, 0x63 },
-               { 0x18, 0x63 } } -- gUnk_080CAB14 {animation base, sprite}
-M.DN_PICK1 = { [0] = 0, 1, 1, 0, 3, 0, 1, 0 } -- gUnk_080CAB3A
-M.DN_PICK2 = { [0] = 1, 1, 3, 0, 1, 2, 0, 0 } -- gUnk_080CAB42
-M.DN_PICK3 = { [0] = 0, 0, 3, 1, 2, 2, 3, 1 } -- gUnk_080CAB4A
-M.DN_REROLL = { [0] = 0, 3, 1, 0 }            -- gUnk_080CAB52
-M.DN_COMBO = { [0] = 90, 90, 45, 7 }           -- gUnk_080CAB68
-M.SLASH_HIT = { [0] = 76, 76, 78, 77, 83, 83, 83, 83, 79, 79, 76, 80, 84, 84, 84, 85, 79, 79, 76, 80 } -- DarkNutSwordSlash_hitTypes
-local function hb(x, y, w, h) return { x = x, y = y, w = w, h = h } end
-M.SLASH_T0 = { -- gUnk_081293E0: by animation state, (frame & $F) - 1
-  [0] = { [0] = hb(-5, -32, 8, 10), hb(2, -37, 8, 10), hb(19, -33, 10, 11), hb(28, -14, 16, 6), hb(34, -18, 8, 4), hb(25, 15, 4, 4) },
-  { [0] = hb(21, -6, 12, 8), hb(21, -20, 16, 8), hb(15, -31, 8, 10), hb(3, -39, 8, 12), hb(7, -38, 7, 8), hb(1, -29, 4, 5) },
-  { [0] = hb(7, 7, 8, 11), hb(-6, 10, 8, 12), hb(-22, 2, 8, 8), hb(-27, -11, 12, 8), hb(-28, -9, 15, 6), hb(-21, -12, 6, 2) },
-  { [0] = hb(-21, -6, 12, 8), hb(-21, -20, 16, 8), hb(-15, -31, 8, 10), hb(-3, -39, 8, 12), hb(-7, -38, 7, 8), hb(-1, -29, 4, 5) },
-}
-M.SLASH_T2 = { [0] = hb(3, -30, 7, 10), hb(28, -12, 14, 7), hb(-2, 14, 12, 7), hb(-28, -12, 14, 7) }   -- gUnk_081293F0
-M.SLASH_T34 = { [0] = hb(4, -37, 7, 10), hb(32, -14, 14, 6), hb(-1, 22, 7, 12), hb(-32, -14, 14, 6) } -- gUnk_08129400
-M.SLASH_T34B = { [0] = hb(4, -35, 2, 8), hb(30, -14, 12, 2), hb(-1, 20, 2, 10), hb(-30, -14, 12, 2) } -- gUnk_08129410 (frame bit 4)
-M.SLASH_T1 = { [0] = hb(1, -29, 8, 8), hb(19, -8, 8, 8), hb(0, 10, 8, 8), hb(-19, -8, 8, 8) }       -- gUnk_08129420
-M.WISP_TIME = { [0] = 30, 45, 60, 75, 1, 90, 105, 120 } -- gUnk_080CEBA4
-M.DM_POINT = { [0] = { -8, 0 }, { -16, -8 }, { -8, -16 }, { 0, -8 } } -- gUnk_080CB764
-M.DM_DUST = { -- gUnk_080CB76C
-  [0] = { { -4, 26 }, { 4, 26 }, { -12, 16 }, { 12, 16 }, { -12, 8 }, { 12, 8 } },
-  { { -26, -4 }, { -26, 4 }, { -16, -12 }, { -16, 12 }, { -8, -12 }, { -8, 12 } },
-  { { -4, -26 }, { 4, -26 }, { -12, -16 }, { 12, -16 }, { -12, -8 }, { 12, -8 } },
-  { { 26, -4 }, { 26, 4 }, { 16, -12 }, { 16, 12 }, { 8, -12 }, { 8, 12 } },
-}
-M.DM_TILE = { [0] = 0x4023, 0x4025, 0x4026, 0x4024 } -- gUnk_080CB79C: SPECIAL_TILE_35 / 37 / 38 / 36
-local DM_V = { [0] = hb(0, -9, 8, 6), hb(0, -5, 6, 4), hb(0, -1, 6, 4), hb(0, 7, 6, 8), hb(0, 11, 8, 12), hb(0, 11, 8, 12),
-               hb(0, 8, 8, 8), hb(0, 4, 8, 4), hb(0, 0, 8, 4), hb(0, -8, 8, 8), hb(0, -12, 8, 12), hb(0, -12, 8, 12) } -- gUnk_080CB7F4
-local DM_H = { [0] = hb(-8, 0, 8, 8), hb(-4, 0, 4, 8), hb(0, 0, 4, 8), hb(8, 0, 8, 8), hb(12, 0, 12, 8), hb(12, 0, 12, 8),
-               hb(8, 0, 8, 8), hb(4, 0, 4, 8), hb(0, 0, 4, 8), hb(-8, 0, 8, 8), hb(-12, 0, 12, 8), hb(-12, 0, 12, 8) } -- gUnk_080CB874
+M.DN_BLOCK46 = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_BLOCK46")   -- gUnk_080CAB00
+M.DN_BLOCK8C = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_BLOCK8C")   -- gUnk_080CAB04
+M.DN_PARRY = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_PARRY")     -- gUnk_080CAB08
+M.DN_STUN1C = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_STUN1C")    -- gUnk_080CAB0C
+M.DN_STUN16 = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_STUN16")     -- gUnk_080CAB10
+M.DN_GROUP = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_GROUP") -- gUnk_080CAB14 {animation base, sprite}
+M.DN_PICK1 = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_PICK1") -- gUnk_080CAB3A
+M.DN_PICK2 = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_PICK2") -- gUnk_080CAB42
+M.DN_PICK3 = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_PICK3") -- gUnk_080CAB4A
+M.DN_REROLL = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_REROLL")            -- gUnk_080CAB52
+M.DN_COMBO = require("src.zelda.tmc.RomTables").t("EnemyDHC.DN_COMBO")           -- gUnk_080CAB68
+M.SLASH_HIT = require("src.zelda.tmc.RomTables").t("EnemyDHC.SLASH_HIT") -- DarkNutSwordSlash_hitTypes
+M.SLASH_T0 = require("src.zelda.tmc.RomTables").t("EnemyDHC.SLASH_T0") -- gUnk_081293E0: by animation state, (frame & $F) - 1
+M.SLASH_T2 = require("src.zelda.tmc.RomTables").t("EnemyDHC.SLASH_T2")   -- gUnk_081293F0
+M.SLASH_T34 = require("src.zelda.tmc.RomTables").t("EnemyDHC.SLASH_T34") -- gUnk_08129400
+M.SLASH_T34B = require("src.zelda.tmc.RomTables").t("EnemyDHC.SLASH_T34B") -- gUnk_08129410 (frame bit 4)
+M.SLASH_T1 = require("src.zelda.tmc.RomTables").t("EnemyDHC.SLASH_T1")       -- gUnk_08129420
+M.WISP_TIME = require("src.zelda.tmc.RomTables").t("EnemyDHC.WISP_TIME") -- gUnk_080CEBA4
+M.DM_POINT = require("src.zelda.tmc.RomTables").t("EnemyDHC.DM_POINT") -- gUnk_080CB764
+M.DM_DUST = require("src.zelda.tmc.RomTables").t("EnemyDHC.DM_DUST")
+M.DM_TILE = require("src.zelda.tmc.RomTables").t("EnemyDHC.DM_TILE") -- gUnk_080CB79C: SPECIAL_TILE_35 / 37 / 38 / 36
+local DM_V = require("src.zelda.tmc.RomTables").t("EnemyDHC.DM_V") -- gUnk_080CB7F4
+local DM_H = require("src.zelda.tmc.RomTables").t("EnemyDHC.DM_H") -- gUnk_080CB874
 M.DM_BOX = { [0] = DM_V, DM_H, DM_V, DM_H } -- gUnk_080CB8A4
-M.E50_TURN_MASK = { [0] = 15, 7, 3, 1 }     -- gUnk_080D0E14
-M.E50_DELAY = { [0] = 15, 25, 34, 45 }      -- gUnk_080D0E18
-M.GHINI_SPEED = { [0] = 224, 192, 160, 128 } -- gUnk_080D0974 (ghini.c)
-M.GHINI_TURN = { [0] = 0, -2, 0, 2, 0, -4, 0, 4 } -- gUnk_080D0978 (ghini.c)
+M.E50_TURN_MASK = require("src.zelda.tmc.RomTables").t("EnemyDHC.E50_TURN_MASK")     -- gUnk_080D0E14
+M.E50_DELAY = require("src.zelda.tmc.RomTables").t("EnemyDHC.E50_DELAY")      -- gUnk_080D0E18
+M.GHINI_SPEED = require("src.zelda.tmc.RomTables").t("EnemyDHC.GHINI_SPEED") -- gUnk_080D0974 (ghini.c)
+M.GHINI_TURN = require("src.zelda.tmc.RomTables").t("EnemyDHC.GHINI_TURN") -- gUnk_080D0978 (ghini.c)
 
 -- ---------------------------------------------------------------------------
 -- helpers

@@ -238,13 +238,20 @@ end
 -- game pixels (240x160 = the cartridge picture); a bigger / smaller field
 -- is drawn by draw() into its own canvas, then drawOverlay() draws the
 -- HUD, text and fades into the normal 240x160 canvas at the normal scale
-function Game:viewSize()
+-- widescreen (ZeldaWide.lua, View.lua): `wide` is the field width the
+-- window wants; the third value tells the runtime the field spans it
+Game.wideScreen = true
+function Game:viewSize(scale, wide)
   local z = 1
-  if self.state == "field" and self.field then z = require("src.zelda.tmc.View").factor(self) end
-  self._zoomed = z ~= 1
+  local V = require("src.zelda.tmc.View")
+  if self.state == "field" and self.field then z = V.factor(self) end
+  wide = math.floor(tonumber(wide) or 240)
+  if wide <= 240 or not (self.state == "field" and self.field and V.wideOk(self.field)) then wide = 240 end
+  self._wideW = wide > 240 and wide or nil
+  self._zoomed = z ~= 1 or self._wideW ~= nil
   self.windowHook = true
-  if z == 1 then return 240, 160 end
-  return math.floor(240 / z + 0.5), math.floor(160 / z + 0.5)
+  if not self._zoomed then return 240, 160 end
+  return math.floor(wide / z + 0.5), math.floor(160 / z + 0.5), self._wideW
 end
 
 function Game:drawOverlay()
@@ -283,10 +290,8 @@ end
 -- ---------------------------------------------------------------------------
 function Game:save()
   if not self.saveData then return nil end
-  if self.field then
-    local p, st = self.field.player, self.saveData.status
-    st.x, st.y, st.facing = math.floor(p.x), math.floor(p.y), p.animationState
-  end
+  -- round 38: the status is gSave.saved_status (Field:enterRoom keeps it),
+  -- not Link's current place: the cartridge never saves that
   return self.saveData
 end
 

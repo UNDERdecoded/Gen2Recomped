@@ -104,7 +104,12 @@ IT.OFF = {
   torches = 0x1635D2,     -- dung_torch_data, new game (0x120 bytes)
   tileData = 0x164520,    -- the room object tile data (SNES SrcPtr base)
 }
-IT.MSG_BIG_KEY, IT.MSG_NO_MAGIC = 122, 123   -- BMG = SNES numbers here (plain text checked)
+-- r37: read at import (RomTablesSpec "msg.story37": the big key door's and
+-- the item code's calls of the player's text 0x080AF4FC)
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.story37")
+  IT.MSG_BIG_KEY, IT.MSG_NO_MAGIC = t.bigKey, t.noMagic
+end)
 
 local function s8(t) for i = 1, #t do if t[i] >= 128 then t[i] = t[i] - 256 end end return t end
 local function s16(t) for i = 1, #t do if t[i] >= 32768 then t[i] = t[i] - 65536 end end return t end
@@ -526,7 +531,8 @@ function IT.install(G)
         if not s.dead and (s.lower or false) == (a.lower or false) and Actors.fights(s.type) then
           local bx, by, bw, bh = Actors.hitbox(cb, s)
           if overlap(hx, hy, 1, 1, bx, by - (s.z or 0), bw, bh) then
-            local RX, RY = { [0] = 0, 0, -64, 64 }, { [0] = -64, 64, 0, 0 }
+            local T76 = require("src.zelda.alttp.Tables76")   -- r76: Ancilla_CheckSpriteCollision's recoil, from the ROM
+            local RX, RY = T76.get("arrowRx"), T76.get("arrowRy")
             acts:swordHit(hx, hy, 1, 1, { cls = 6, arrow = true, lower = a.lower,
                                           rvx = RX[a.dir], rvy = RY[a.dir],
                                           dmg = function(t) return IT.damage(self, 6, t) end })
@@ -549,7 +555,8 @@ function IT.install(G)
     -- off the screen (both OAM entries at y 0xF0)
     local cx, cy = self:ancCamera()
     local sx, sy = a.x - cx, a.y - cy
-    if sx < -16 or sx > (self.viewW or 240) + 16 or sy < -16 or sy > (self.viewH or 160) + 16 then a.gone = true end
+    -- (the cartridge's 240 x 160 screen, also when the drawn field is wider: widescreen / zoom)
+    if sx < -16 or sx > 240 + 16 or sy < -16 or sy > 160 + 16 then a.gone = true end
   end
 
   function G:ancCamera()

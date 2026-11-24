@@ -8,8 +8,8 @@
 -- disassembly's constants (no GBA table was told apart by value):
 --
 --   LinkItem_Cape         with magic: link_cape_mode 1, the drain counter
---                         kCapeDepletionTimers[link_magic_consumption] {4, 8,
---                         8}: one magic point each time it runs out; at 0
+--                         kCapeDepletionTimers[link_magic_consumption] (read
+--                         at import, Tables75): one magic point each time it runs out; at 0
 --                         magic, or A again after link_bunny_transform_timer
 --                         (20 frames), the cape comes off
 --                         (Link_ForceUnequipCape); link_disable_sprite_damage
@@ -27,12 +27,16 @@
 
 local CP = {}
 
-CP.DEPLETE = { 4, 8, 8 }
+CP.DEPLETE = require("src.zelda.alttp.Tables75").get("capeDeplete")   -- kCapeDepletionTimers (0x080A37C8's table; r75: read at import)
 CP.SLOT = 22
 CP.BOTTLE_SLOTS = { [6] = 0x25, [12] = 0x2B, [18] = 0x31, [24] = 0x37 }
-CP.MSG_NO_MAGIC = 123
+require("src.zelda.alttp.RomTables").onBind(function() CP.MSG_NO_MAGIC = require("src.zelda.alttp.RomTables").get("msg.story37").noMagic end)   -- r37
 
 local function inv(game) return require("src.zelda.alttp.Menu").inventory(game) end
+-- r75: kCapeDepletionTimers[link_magic_consumption] (the half / quarter magic upgrade)
+function CP.timer(game)
+  return CP.DEPLETE[require("src.zelda.alttp.Items27").consumption(game) + 1] or CP.DEPLETE[1] or 1
+end
 
 function CP.install(G)
   local Items = require("src.zelda.alttp.Items")
@@ -54,7 +58,7 @@ function CP.install(G)
       -- the drain
       c.ctr = c.ctr - 1
       if c.ctr <= 0 then
-        c.ctr = CP.DEPLETE[1]
+        c.ctr = CP.timer(self)
         self.stats.magic = math.max(0, (self.stats.magic or 0) - 1)
         if self.stats.magic == 0 then self.cape = nil; return false end
       end
@@ -66,7 +70,7 @@ function CP.install(G)
       local item, slot = self:yItem()
       if item == "cape" then
         if (self.stats.magic or 0) == 0 then self:showMessage(CP.MSG_NO_MAGIC); return false end
-        self.cape = { ctr = CP.DEPLETE[1], t = 20 }
+        self.cape = { ctr = CP.timer(self), t = 20 }
         self.capeUses = (self.capeUses or 0) + 1
         return false
       elseif item == "bottle" then

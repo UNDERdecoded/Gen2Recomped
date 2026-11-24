@@ -43,17 +43,25 @@ local L = {}
 L.OFF, L.ON = 0x0F, 0x10
 L.ANIM = { light = 0x600, on = 0x604, walk = 0x608, burn = 0x60C }
 L.SFX = { ON = 0x13D, OFF = 0x13E, FLAME = 0x124 }
-L.PROBE = { [0] = { 0, -13 }, [2] = { 13, 0 }, [4] = { 0, 16 }, [6] = { -13, 0 } } -- gUnk_08126EEC
-L.HIT = { [0] = { 6, -6 }, [2] = { 7, -3 }, [4] = { -5, 2 }, [6] = { -7, -3 } }    -- PlayerItemLantern offsets
+L.PROBE = require("src.zelda.tmc.RomTables").t("ItemLantern.L.PROBE") -- gUnk_08126EEC
+L.HIT = require("src.zelda.tmc.RomTables").t("ItemLantern.L.HIT")    -- PlayerItemLantern offsets
 L.TT_TORCH_ON = 0x76
 L.SPECIAL_79 = 0x4000 + 79
 L.SPRITE = 18
 local FLAME = 0x2A
 
-local FALLBACK = { light = { [1] = 1, [10] = 0 }, burn = { [6] = 0x10, [12] = 0x80 } }
+-- stand-in assets without Link's sprite (tests / dev scenes): the
+-- animation is read from the attached ROM (round 36: no frame flags written
+-- out here); with no animation data at all the action simply ends
+local function romAnim(p, a)
+  if not a or a.keys or not a.set or not p.animId or p.animId < 0 then return end
+  local spr = require("src.zelda.tmc.RomTables").devSprite(bit.rshift(p.animId, 8))
+  if spr then a:set(spr, band(p.animId, 0xFF), true) end
+end
 
 local function setAnim(p, l, kind)
   p:setAnim(L.ANIM[kind], true)
+  romAnim(p, p.anim)
   l.kind, l.fresh, l.ft, l.cur = kind, true, 0, 0
 end
 
@@ -65,10 +73,7 @@ local function step(p, l)
     if a.key ~= l.key then l.key = a.key; l.cur = a.flags or 0; return l.cur, l.cur end
     return 0, l.cur
   end
-  l.fresh = false
-  l.ft = l.ft + 1
-  local e = (FALLBACK[l.kind] or {})[l.ft]
-  if e then l.cur = e; return e, e end
+  if l.fresh then l.fresh = false; l.cur = 0x80; return 0x80, 0x80 end
   return 0, l.cur
 end
 
@@ -227,6 +232,7 @@ function L.frame(p, input)
   if l.st == 2 then
     if not equipSlot(f, L.ON) or (p.z or 0) > 0 or p.jumping or p.minish then L.off(p) return nil end
     hitEnt(p)
+    require("src.zelda.tmc.Lantern73").contact(f, p.lanternEnt) -- round 73: the lit lantern's hitbox against enemies ($87)
     if p.state == "normal" and not p.carried then
       local tx, ty = tileAhead(p)
       local r = f.room

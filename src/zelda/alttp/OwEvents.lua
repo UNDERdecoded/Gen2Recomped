@@ -74,7 +74,11 @@ EV.SKULL = { area = 0x40,
                         { at = 12, tiles = { { 0x2C8 * 2, 0xE13 }, { 0x2CB * 2, 0xE14 }, { 0x308 * 2, 0xE15 }, { 0x309 * 2, 0xE16 },
                                              { 0x30A * 2, 0xE17 }, { 0x30B * 2, 0xE18 }, { 0x349 * 2, 0xE19 }, { 0x34A * 2, 0xE1A } } } } }
 EV.TABLET = 0xF2
-EV.MSG_CANT, EV.MSG_ETHER, EV.MSG_BOMBOS = 0x10D, 0x10E, 0x10F
+-- r37: the tablets' messages, read at import (RomTablesSpec "msg.tablets")
+require("src.zelda.alttp.RomTables").onBind(function()
+  local t = require("src.zelda.alttp.RomTables").get("msg.tablets")
+  EV.MSG_CANT, EV.MSG_ETHER, EV.MSG_BOMBOS = t.cant, t.ether, t.bombos
+end)
 
 function EV.extract(rom, R, check)
   local O = EV.OFF

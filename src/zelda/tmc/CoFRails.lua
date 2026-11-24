@@ -44,10 +44,13 @@ local R = {}
 R.OBJ_MINECART_DOOR, R.OBJ_RAILTRACK, R.OBJ_HITTABLE_LEVER, R.MGR_RAIL_INTERSECTION = 0x6C, 0x13, 0x2F, 0x1F
 local SFX_10B, SFX_151, SFX_117 = 0x10B, 0x151, 0x117
 local SP24, SP25 = 0x4018, 0x4019
-local VEC = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
-local OUT21 = { [0] = { 0, -21 }, { 21, 0 }, { 0, 21 }, { -21, 0 } } -- gUnk_0811F688
+local VEC = require("src.zelda.tmc.RomTables").t("CoFRails.VEC")
+local OUT21 = require("src.zelda.tmc.RomTables").t("CoFRails.OUT21") -- gUnk_0811F688
 -- special tiles' act tiles (gMapSpecialTileToActTile) the carts read
-R.SPECIAL_ACT = { [0x4018] = 242, [0x4019] = 243, [0x4020] = 240 }
+-- (SPECIAL_TILE_24 / 25 / 32; the act tiles read from the ROM, round 36)
+local SPECIAL_TO_ACT = require("src.zelda.tmc.RomTables").t("Climb.SPECIAL_TO_ACT")
+local RAIL_SPECIAL = { [0x4018] = true, [0x4019] = true, [0x4020] = true }
+R.SPECIAL_ACT = setmetatable({}, { __index = function(_, t) return RAIL_SPECIAL[t] and SPECIAL_TO_ACT[t] or nil end })
 
 local function tileOf(x, y) return math.floor(x / 16), math.floor(y / 16) end
 local function anim(d, e, a)
@@ -310,7 +313,7 @@ end
 -- ---------------------------------------------------------------------------
 -- RAIL_INTERSECTION_MANAGER
 -- ---------------------------------------------------------------------------
-local INTERSECTION = { [0] = 856, 857, 854, 858, 858, 855 } -- gUnk_08108C9C
+local INTERSECTION = require("src.zelda.tmc.RomTables").t("CoFRails.INTERSECTION") -- gUnk_08108C9C
 function R.spawnIntersection(d, m)
   local f = d.field
   m.layer = band(m.b32, 0xFF)

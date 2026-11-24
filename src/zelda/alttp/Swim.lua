@@ -251,6 +251,8 @@ local function swimFrame(game, lk, input, attrFn)
     S[i] = s.v7[i]
     if s.v11[i] == 0 then S[i] = -S[i] end
   end
+  -- r54: indoors the move and the walls are Swim54.lua's (the room's tables)
+  if lk.swimMove then return lk.swimMove(game, lk, S, j) end
   -- Player_SomethingWithVelocity_TiredOrSwim: 8.8 fixed point, then the walls
   local O = require("src.zelda.alttp.Overworld")
   local function blockedDir(dir, x, y)
@@ -368,5 +370,7 @@ function SW.install(G)
     return enter0(self, e)
   end
 end
+
+SW.swimFrame = swimFrame   -- r54: Swim54.lua runs it indoors
 
 return SW

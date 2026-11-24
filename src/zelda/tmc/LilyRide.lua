@@ -38,6 +38,7 @@ function L.init(d, e)
     if (f:inventory(L.ITEM_FLIPPERS) or 0) > 0 then return false end
     e.form = 0
   end
+  if require("src.zelda.tmc.LilyFall64").initDeletes(f, e) then return false end -- round 64: deleted in the Temple of Droplets
   if e.form ~= 0 and e.form ~= 0xFF and not f:flag("local", e.type2) then
     e.lilyWait = true   -- Action5: not drawn, waits for a duplicate
     e.hidden = true
@@ -108,7 +109,7 @@ function L.onEnterRoom(f)
   e.lilySub = 1
   f.entities[#f.entities + 1] = e
   -- Action3 for the scroll's frames
-  local V = ({ [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } })[ride.dir]
+  local V = (require("src.zelda.tmc.RomTables").fresh("LilyRide.L111"))[ride.dir]
   local sp = L.SPEED[ride.dir] / 256
   e.ride = { frames = L.FRAMES[ride.dir], vx = V[1] * sp, vy = V[2] * sp, ox = ride.ox, oy = ride.oy }
   p.jar, p.jarKick = nil, nil -- ResetActiveItems

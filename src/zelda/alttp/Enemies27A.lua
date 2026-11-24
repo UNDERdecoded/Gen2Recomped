@@ -100,7 +100,7 @@ local M = { NAME = "e27a" }
 
 M.BOMB = 0x14A       -- (our pseudo type for the sprite bomb, Sprite_TransmuteToBomb)
 M.TAIL_CHAR = 0x48   -- Garnish01_FireSnakeTail (GBA literal at 0x080CE426)
-M.GIBO_FLAGS2 = { [0] = 11, 7 }   -- kGibo_OamFlags2
+M.GIBO_FLAGS2 = require("src.zelda.alttp.Tables74").get("giboFlags2")   -- kGibo_OamFlags2 (r74: read at import)
 
 M.OFF = {
   bariXv = 0x1768B4, bariYv = 0x1768C4, bariStep = 0x1768D4, bariXv1 = 0x1768D6, bariGfx = 0x1768D8,

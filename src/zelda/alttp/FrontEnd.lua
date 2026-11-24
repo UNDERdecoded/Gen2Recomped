@@ -9,9 +9,9 @@
 -- table 0x0842731C): CHOOSE A FILE -> (a new file) ENTER A NAME -> CHOOSE A
 -- GAME (A Link to the Past / Four Swords). The pictures are the cartridge's
 -- (FrontExtract.lua: its BG tiles and maps, OBJ tiles and palettes); the
--- OBJ layouts below are where the cartridge put its sprites on each screen
--- (OAM read from the scratch interpreter's run: x, y, shape, size, tile,
--- palette, h flip, v flip, priority).
+-- OBJ layouts are where the cartridge puts its sprites on each screen
+-- (round 36: its OAM, built at import by the cartridge's own code in
+-- FrontRun.lua).
 --
 -- OURS (not the cartridge's): one file (the launcher's save slot; the
 -- cartridge's files 2 and 3, COPY, ERASE and OPTIONS are shown but do
@@ -27,66 +27,51 @@ local Hud = require("src.zelda.alttp.Hud")
 local FE = {}
 FE.__index = FE
 
+-- round 36: the OBJ layouts (x, y, shape, size, tile, palette, h flip,
+-- v flip, priority) and the BG setup are no longer written here: the
+-- import runs the cartridge's front end (FrontRun.lua) and keeps its OAM
+-- and display registers (data.front.info.layouts); FE.bind fills these
+-- tables in place when a front end is made.
 local L = {}
-L.fileEmpty = { -- 50
-  {6,22,0,1,100,10,0,0,2}, {210,131,0,0,60,6,0,0,2}, {168,134,1,0,55,6,0,0,2}, {184,134,1,1,55,6,0,0,2}, {210,99,0,0,60,6,0,0,2}, {168,102,1,0,55,6,0,0,2},
-  {184,102,1,1,55,6,0,0,2}, {84,134,0,0,59,6,0,0,2}, {88,134,1,1,55,6,0,0,2}, {136,134,1,1,55,6,0,0,2}, {120,134,1,0,55,6,0,0,2}, {84,102,0,0,59,6,0,0,2},
-  {88,102,1,1,55,6,0,0,2}, {136,102,1,1,55,6,0,0,2}, {120,102,1,0,55,6,0,0,2}, {40,144,0,1,141,6,0,0,2}, {56,144,1,2,266,6,0,0,2}, {88,144,2,0,274,6,0,0,2},
-  {96,144,2,0,145,6,0,0,2}, {136,144,0,1,141,6,0,0,2}, {152,144,1,2,298,6,0,0,2}, {184,144,2,0,306,6,0,0,2}, {192,144,2,0,145,6,0,0,2}, {32,118,2,0,24,6,0,0,1},
-  {40,118,2,0,26,6,0,0,1}, {48,118,2,0,28,6,0,0,1}, {56,118,2,0,30,6,0,0,1}, {64,118,2,0,32,6,0,0,1}, {72,118,2,0,34,6,0,0,1}, {12,122,0,0,63,6,0,0,1},
-  {16,114,1,3,64,6,0,0,1}, {80,114,2,1,96,6,0,0,1}, {32,86,2,0,12,6,0,0,1}, {40,86,2,0,14,6,0,0,1}, {48,86,2,0,16,6,0,0,1}, {56,86,2,0,18,6,0,0,1},
-  {64,86,2,0,20,6,0,0,1}, {72,86,2,0,22,6,0,0,1}, {12,90,0,0,62,6,0,0,1}, {16,82,1,3,64,6,0,0,1}, {80,82,2,1,96,6,0,0,1}, {30,22,2,0,0,4,0,0,1},
-  {38,22,2,0,2,4,0,0,1}, {46,22,2,0,4,4,0,0,1}, {54,22,2,0,6,4,0,0,1}, {62,22,2,0,8,4,0,0,1}, {70,22,2,0,10,4,0,0,1}, {10,26,0,0,61,4,0,0,1},
-  {14,18,1,3,64,4,0,0,1}, {78,18,2,1,96,4,0,0,1},
-}
-L.fileUsed = { -- 57
-  {6,22,0,1,108,10,0,0,2}, {210,131,0,0,60,6,0,0,2}, {168,134,1,0,55,6,0,0,2}, {184,134,1,1,55,6,0,0,2}, {210,99,0,0,60,6,0,0,2}, {168,102,1,0,55,6,0,0,2},
-  {184,102,1,1,55,6,0,0,2}, {84,134,0,0,59,6,0,0,2}, {88,134,1,1,55,6,0,0,2}, {136,134,1,1,55,6,0,0,2}, {120,134,1,0,55,6,0,0,2}, {84,102,0,0,59,6,0,0,2},
-  {88,102,1,1,55,6,0,0,2}, {136,102,1,1,55,6,0,0,2}, {120,102,1,0,55,6,0,0,2}, {129,47,1,1,896,7,0,0,2}, {137,55,0,1,900,7,0,0,2}, {30,57,0,1,774,12,0,0,2},
-  {30,50,1,0,768,12,0,0,2}, {40,144,0,1,141,6,0,0,2}, {56,144,1,2,266,6,0,0,2}, {88,144,2,0,274,6,0,0,2}, {96,144,2,0,145,6,0,0,2}, {136,144,0,1,141,6,0,0,2},
-  {152,144,1,2,298,6,0,0,2}, {184,144,2,0,306,6,0,0,2}, {192,144,2,0,145,6,0,0,2}, {32,118,2,0,24,6,0,0,1}, {40,118,2,0,26,6,0,0,1}, {48,118,2,0,28,6,0,0,1},
-  {56,118,2,0,30,6,0,0,1}, {64,118,2,0,32,6,0,0,1}, {72,118,2,0,34,6,0,0,1}, {12,122,0,0,63,6,0,0,1}, {16,114,1,3,64,6,0,0,1}, {80,114,2,1,96,6,0,0,1},
-  {213,72,0,1,192,8,0,0,1}, {165,72,1,2,360,8,0,0,1}, {197,72,0,1,368,8,0,0,1}, {32,86,2,0,12,6,0,0,1}, {40,86,2,0,14,6,0,0,1}, {48,86,2,0,16,6,0,0,1},
-  {56,86,2,0,18,6,0,0,1}, {64,86,2,0,20,6,0,0,1}, {72,86,2,0,22,6,0,0,1}, {12,90,0,0,62,6,0,0,1}, {16,82,1,3,64,6,0,0,1}, {80,82,2,1,96,6,0,0,1},
-  {30,22,2,0,0,4,0,0,1}, {38,22,2,0,2,4,0,0,1}, {46,22,2,0,4,4,0,0,1}, {54,22,2,0,6,4,0,0,1}, {62,22,2,0,8,4,0,0,1}, {70,22,2,0,10,4,0,0,1},
-  {10,26,0,0,61,4,0,0,1}, {14,18,1,3,64,4,0,0,1}, {78,18,2,1,96,4,0,0,1},
-}
-L.name = { -- 20
-  {32,10,0,0,54,0,0,0,0}, {30,18,2,0,0,4,0,0,0}, {38,18,2,0,2,4,0,0,0}, {46,18,2,0,4,4,0,0,0}, {54,18,2,0,6,4,0,0,0}, {62,18,2,0,8,4,0,0,0},
-  {70,18,2,0,10,4,0,0,0}, {10,22,0,0,61,4,0,0,0}, {14,14,1,3,64,4,0,0,0}, {78,14,2,1,96,4,0,0,0}, {179,128,1,2,350,6,0,0,2}, {211,128,2,0,358,6,0,0,2},
-  {20,128,1,2,320,6,0,0,2}, {52,128,2,0,328,6,0,0,2}, {73,128,1,2,330,6,0,0,2}, {105,128,2,0,338,6,0,0,2}, {126,128,1,2,340,6,0,0,2}, {158,128,2,0,348,6,0,0,2},
-  {6,18,0,1,104,10,0,0,2}, {16,45,0,1,48,5,0,0,2},
-}
-L.game = { -- 77
-  {40,23,0,2,624,13,0,0,0}, {56,55,2,1,640,13,0,0,0}, {56,87,2,1,644,13,0,0,0}, {40,55,0,3,480,12,0,0,0}, {104,55,0,3,544,12,0,0,0}, {80,39,1,2,608,12,0,0,0},
-  {112,47,1,1,616,12,0,0,0}, {144,47,1,1,620,12,0,0,0}, {168,95,0,1,648,12,0,0,0}, {72,1,1,2,424,4,0,0,0}, {104,1,1,2,432,4,0,0,0}, {136,1,1,2,440,4,0,0,0},
-  {168,1,1,2,448,4,0,0,0}, {40,17,1,1,456,4,0,0,0}, {72,17,1,1,460,4,0,0,0}, {104,17,1,1,464,4,0,0,0}, {136,17,1,1,468,4,0,0,0}, {168,17,1,1,472,4,0,0,0},
-  {40,1,1,2,416,4,0,0,0}, {112,115,1,2,256,8,0,0,1}, {144,115,1,2,264,8,0,0,1}, {176,115,1,2,272,8,0,0,1}, {112,131,1,1,284,8,0,0,1}, {160,131,1,1,280,8,0,0,1},
-  {120,139,0,0,412,10,0,0,1}, {141,139,0,0,413,10,0,0,1}, {165,139,0,0,414,11,0,0,1}, {184,139,0,0,415,11,0,0,1}, {144,99,0,0,189,8,0,0,1}, {144,83,0,1,185,8,0,0,1},
-  {128,83,2,0,183,8,0,0,1}, {128,59,0,1,179,8,0,0,1}, {64,59,0,3,192,8,0,0,1}, {64,59,0,3,0,9,0,0,1}, {128,67,0,3,64,9,0,0,1}, {72,123,1,1,128,9,0,0,1},
-  {104,123,1,1,132,9,0,0,1}, {104,131,1,2,136,9,0,0,1}, {136,131,1,2,144,9,0,0,1}, {168,131,1,2,152,9,0,0,1}, {192,67,2,2,160,9,0,0,1}, {192,99,0,1,168,9,0,0,1},
-  {128,59,0,0,172,9,0,0,1}, {120,147,0,0,173,9,0,0,1}, {136,147,0,0,174,9,0,0,1}, {144,147,0,0,175,9,0,0,1}, {160,147,0,0,176,9,0,0,1}, {168,147,0,0,177,9,0,0,1},
-  {184,147,0,0,178,9,0,0,1}, {192,116,2,0,190,9,0,0,1}, {226,128,0,0,404,5,0,0,2}, {236,117,0,0,404,5,0,0,2}, {215,116,0,0,402,5,0,0,2}, {-27,145,1,0,656,5,0,0,2},
-  {-19,149,1,0,656,5,0,0,2}, {203,156,0,0,402,5,0,0,2}, {156,133,0,2,652,5,0,0,2}, {80,128,0,2,652,5,0,0,2}, {118,139,1,0,656,5,0,0,2}, {126,144,1,0,656,5,0,0,2},
-  {208,149,1,0,656,5,0,0,2}, {131,88,0,1,395,5,0,0,2}, {147,96,1,1,408,5,0,0,2}, {91,96,1,1,408,5,0,0,2}, {184,48,1,2,384,6,0,0,3}, {103,36,1,2,372,6,0,0,3},
-  {135,36,0,1,380,6,0,0,3}, {152,41,0,0,394,6,0,0,3}, {46,24,1,2,352,6,0,0,3}, {78,24,0,1,360,6,0,0,3}, {62,16,1,0,364,6,0,0,3}, {94,24,2,0,366,6,0,0,3},
-  {62,40,1,1,368,6,0,0,3}, {-59,0,0,2,288,6,0,0,3}, {-27,0,0,2,304,6,0,0,3}, {5,0,0,2,320,6,0,0,3}, {37,0,0,2,336,6,0,0,3},
-}
 FE.L = L
-
--- the BG setup each screen leaves in the display registers (BGxCNT, scroll)
-local SCREENS = {
-  file = { vram = "file", pal = "file", bgs = {
-    [0] = { cnt = 0x1C00, x = 0, y = 0 }, [2] = { cnt = 0x1B02, x = 492, y = 480, alpha = 12 / 16 },
-    [3] = { cnt = 0x1E0B, x = 0, y = 96 } } },
-  name = { vram = "file", pal = "file", bgs = {
-    [0] = { cnt = 0x1C00, x = 0, y = 0, map = 1 }, [2] = { cnt = 0x1B02, x = 4, y = 4, map = 2, alpha = 12 / 16 },
-    [3] = { cnt = 0x1E0B, x = 0, y = 96 } } },
-  game = { vram = "game", pal = "game", bgs = {
-    [0] = { cnt = 0x1A40, x = 496, y = 496 }, [1] = { cnt = 0x1B41, x = 464, y = 464 },
-    [2] = { cnt = 0x5C46, x = 510, y = 0 }, [3] = { cnt = 0x5E47, x = 511, y = 0 } } },
-}
+local SCREENS = {}
 FE.SCREENS = SCREENS
+
+-- ours: which layers the port draws (BG1 holds the cartridge's own-font
+-- letters, not imported) and, for the name screen, which imported map
+-- (FrontExtract: 1 = BG0 header, 2 = BG2 panel) stands for each layer
+local USE = {
+  file = { vram = "file", pal = "file", shot = "fileEmpty", bgs = { 0, 2, 3 } },
+  name = { vram = "file", pal = "file", shot = "name", bgs = { 0, 2, 3 }, maps = { [0] = 1, [2] = 2 } },
+  game = { vram = "game", pal = "game", shot = "game", bgs = { 0, 1, 2, 3 } },
+}
+
+local function bitSet(v, b) return math.floor(v / 2 ^ b) % 2 == 1 end
+
+-- the cartridge's registers -> the port's screen setup: BGxCNT and scroll
+-- as left; BLDCNT alpha mode (0x40) blends its first-target BGs at EVA / 16
+-- (BLDALPHA bits 0-4) -- on the game screen that is the unselected card
+-- (FE:draw), elsewhere a fixed alpha
+function FE.bind(info)
+  local lay = info and info.layouts
+  if not lay or not lay.oam or not lay.io then return false end
+  for k in pairs(L) do L[k] = nil end
+  for name, rows in pairs(lay.oam) do L[name] = rows end
+  for sname, u in pairs(USE) do
+    local io = lay.io[u.shot]
+    if not io then return false end
+    local eva = math.min(io.alpha % 32, 16) / 16
+    local blend = math.floor(io.bld / 64) % 4 == 1
+    local bgs = {}
+    for _, i in ipairs(u.bgs) do
+      local b = io.bgs[i]
+      bgs[i] = { cnt = b.cnt, x = b.x, y = b.y, map = u.maps and u.maps[i] }
+      if blend and sname ~= "game" and bitSet(io.bld, i) then bgs[i].alpha = eva end
+    end
+    SCREENS[sname] = { vram = u.vram, pal = u.pal, bgs = bgs, dim = eva }
+  end
+  return true
+end
 
 -- our letter grid (cell x = 16 + 16 * column, y = 45 + 16 * row, the
 -- cartridge's cursor steps): rows 2-3 hold the cartridge's accented
@@ -104,6 +89,7 @@ local SIZES = {
 function FE.new(game)
   local self = setmetatable({ game = game, data = game.data, screen = "file", t = 0,
                               row = 0, col = 0, name = "", choice = 1, cache = {} }, FE)
+  FE.bind(game.data and game.data.front and game.data.front.info)
   local sv = type(game.opts.save) == "table" and game.opts.save
   self.used = not game.newGame
   self.savedName = sv and (sv.name or (sv.alttp and sv.alttp.name)) or nil
@@ -111,7 +97,7 @@ function FE.new(game)
 end
 
 function FE.available(data)
-  return data and data.front ~= nil
+  return data and data.front ~= nil and data.front.info ~= nil and data.front.info.layouts ~= nil
 end
 
 local function rgb(c)
@@ -340,7 +326,8 @@ function FE:draw()
   elseif self.screen == "game" then
     -- the unselected card fades (BLDCNT 0x3F42: BG1 at EVA 4 / 16 while
     -- A Link to the Past is chosen; OURS: BG0 the same way for Four Swords)
-    local dim = self.choice == 1 and { [1] = 4 / 16 } or { [0] = 4 / 16 }
+    local d = SCREENS.game.dim
+    local dim = self.choice == 1 and { [1] = d } or { [0] = d }
     self:compose("game", L.game, dim)
   end
 end

@@ -3,7 +3,7 @@
 -- beanstalks).  The manager's paramA names a room property holding a list
 -- of regions (exit_region_raw, 8 bytes: u16 centre x / y, u8 half width /
 -- half height, u8 room property of the exit, u8 bits: 0-1 collision layer,
--- bit 2 = also at normal size), $FFFF-terminated.  Every frame (timer 0),
+-- bit 4 ($10, unk2) = also at normal size: round 69), $FFFF-terminated.  Every frame (timer 0),
 -- a region on Link's layer that holds Link at z 0 (and Link Minish, unless
 -- bit 2) runs DoExitTransition on that property's exit_raw (a Transition,
 -- the same 20-byte layout as the exit lists).
@@ -68,7 +68,7 @@ function W.update(f)
   local p = f.player
   for _, list in ipairs(lists) do
     for _, w in ipairs(list) do
-      if band(band(w.bits, 3), p.layer or 1) ~= 0 and (p.minish or band(w.bits, 4) ~= 0)
+      if band(band(w.bits, 3), p.layer or 1) ~= 0 and (p.minish or band(w.bits, require("src.zelda.tmc.ToD69").WARP_NORMAL_BIT) ~= 0)
          and f:playerInRegion(w.x, w.y, w.w, w.h) and (p.z or 0) == 0 then
         local ex = W.exitAt(f, w.prop)
         if ex then f:startTransition(ex) return true end

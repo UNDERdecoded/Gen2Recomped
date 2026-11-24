@@ -107,35 +107,46 @@ M.INV_CONSUMPTION = 0x5B
 M.INV_POWDER = 0x24           -- grid slot 5: 1 mushroom, 2 powder
 M.BOTTLES = { 0x25, 0x2B, 0x31, 0x37 }
 M.SLOTS = { [5] = "powder", [16] = "net", [20] = "somaria", [21] = "byrna" }
--- the disassembly's constants (no GBA table told apart by value)
-M.BYRNA_DELAYS = { 19, 7, 13, 32 }
-M.SPARK_MAGIC = { 4, 2, 1 }
-M.ROD_DELAYS = { 3, 3, 5 }
+-- r35: these below read from the ROM at import (RomTablesSpec "items27.*")
+local RT = require("src.zelda.alttp.RomTables")
+M.BYRNA_DELAYS = RT.get("items27.byrnaDelays")   -- r36: kByrnaDelays (0x1690EF)
+M.SPARK_MAGIC = RT.get("items27.sparkMagic")   -- kCaneSpark_Magic
+M.ROD_DELAYS = RT.get("tools.rodDelays")       -- kRodAnimDelays
 M.BLOCK_CHAR = 0xD9           -- SNES 0xE9
 M.BLOCK_FLAGS = { 0, 0x40, 0x80, 0xC0 }
-M.COVER_X, M.COVER_Y = { 0, 0, -4, 4 }, { -4, 4, 0, 0 }
+M.COVER_X, M.COVER_Y = RT.get("items27.coverX"), RT.get("items27.coverY")   -- r35: read at import
 M.BLAST_FLAGS = { 2, 6 }
-M.PLAT_XV = { 0, 0, -16, 16, -16, 16, 16, -16 }
-M.PLAT_YV = { -16, 16, 0, 0, -16, 16, -16, 16 }
-M.PLAT_POOF = { 1, 0, 3, 2 }
-M.MSG_NO_MAGIC = 123
-M.MSG_BEE, M.MSG_FAIRY, M.MSG_NOBOTTLE = 0xC8, 0xC9, 0xCA
-M.MSG_WITCH = { none = 0x4A, took = 0x4B, give = 0x4C }
-M.MSG_BAT = { 0x110, 0x111 }
-M.MSG_CUKEMAN = 0x17A
-M.WITCH_A = {
-  { -3, 8, 0xAE }, { -3, 16, 0xBE }, { -2, 8, 0xAE }, { -2, 16, 0xBE }, { -1, 8, 0xAF }, { -1, 16, 0xBF },
-  { 0, 9, 0xAF }, { 0, 17, 0xBF }, { 1, 10, 0xAF }, { 1, 18, 0xBF }, { 0, 11, 0xAF }, { 0, 18, 0xBF },
-  { -1, 10, 0xAE }, { -1, 18, 0xBE }, { -3, 9, 0xAE }, { -3, 17, 0xBE },
-}
-M.WITCH_B = { { 0, -4, 0x80, 0x00 }, { -11, 15, 0x86, 0x04 }, { -3, 15, 0x86, 0x44 } }
-M.WITCH_C = { { 0, 4, 0x84 }, { 0, 4, 0x82 } }
-M.PLAT_DMD = {
-  { -16, -16, 0x00 }, { 0, -16, 0x40 }, { -16, 0, 0x80 }, { 0, 0, 0xC0 },
-  { -13, -13, 0x00 }, { -3, -13, 0x40 }, { -13, -3, 0x80 }, { -3, -3, 0xC0 },
-  { -10, -10, 0x00 }, { -6, -10, 0x40 }, { -10, -6, 0x80 }, { -6, -6, 0xC0 },
-  { -8, -8, 0x00 }, { -8, -8, 0x40 }, { -8, -8, 0x80 }, { -8, -8, 0xC0 },
-}
+M.PLAT_XV = RT.get("items27.platXv")       -- kSomariaPlatform_Xvel
+M.PLAT_YV = RT.get("items27.platYv")       -- kSomariaPlatform_Yvel
+M.PLAT_POOF = RT.get("items27.platPoof")   -- kSomarianPlatformPoof_Tab0
+-- r36: bottles, the witch, the Magic Bat: read at import from the
+-- cartridge's calls (RomTablesSpec "msg.items27")
+M.MSG_WITCH, M.MSG_BAT = {}, {}
+RT.onBind(function()
+  local t = RT.get("msg.items27")
+  M.MSG_BEE, M.MSG_FAIRY, M.MSG_NOBOTTLE = t.bee, t.fairy, t.noBottle
+  M.MSG_WITCH.none, M.MSG_WITCH.took, M.MSG_WITCH.give = t.witchNone, t.witchTook, t.witchGive
+  M.MSG_BAT[1], M.MSG_BAT[2] = t.bat1, t.bat2
+end)
+RT.onBind(function()   -- r37
+  M.MSG_NO_MAGIC = RT.get("msg.story37").noMagic
+  M.MSG_CUKEMAN = RT.get("msg.imm37").cukeman
+end)
+-- Witch_Draw: the GBA's rows {x, y, char, flags} (r35: read at import). Its
+-- chars are the GBA's OAM chars, 0x70 above the port's layout (M.conv of
+-- the SNES numbers: SNES 0xAE -> 0x5E here, 0xCE in the GBA's table)
+M.WITCH_A = RT.get("items27.witchA")
+M.WITCH_CHAR0 = 0x70
+M.WITCH_B = RT.get("items27.witchB")
+M.WITCH_C = RT.get("items27.witchC")
+M.JUNCTION = RT.get("items27.junction")   -- SomariaPlatform_HandleJunctions's joypad masks (0xB6-0xBC)
+-- r36: the Somaria platform's DrawMultipleData {x, y, flags}, from the
+-- GBA's rows {x, y, char | flags << 8, size} (RomTablesSpec "items27.platDmd")
+M.PLAT_DMD = {}
+RT.onBind(function()
+  local raw = RT.get("items27.platDmd")
+  for i = 1, #raw do M.PLAT_DMD[i] = { raw[i][1], raw[i][2], math.floor(raw[i][3] % 65536 / 256) } end
+end)
 M.MUSHROOM_AREA, M.WITCH_AREA, M.SHOP_ROOM, M.BAT_ROOM = 0x00, 0x16, 0x109, 0xE3
 
 function M.conv(c) return (band(rshift(c, 4), 7)) * 32 + rshift(c, 7) * 16 + band(c, 15) end
@@ -614,15 +625,15 @@ local function junction(game, p)
   elseif e == 0xB3 or e == 0xB4 then p.D = bxor(D, 2)
   elseif e == 0xB6 then
     p.ai = 1
-    if band(k, ({ 4, 8, 1, 2 })[D + 1]) ~= 0 then p.ai = 0; p.D = bxor(D, 1) end
-  elseif e == 0xB7 then pick(({ 3, 7, 6, 5 })[D + 1], function() if D == 0 then p.D = 2 end end); p.ai = 0
-  elseif e == 0xB8 then pick(({ 11, 3, 10, 9 })[D + 1], function() if D == 1 then p.D = 2 end end); p.ai = 0
-  elseif e == 0xB9 then pick(({ 9, 5, 12, 13 })[D + 1], function() if D == 2 then p.D = 0 end end); p.ai = 0
-  elseif e == 0xBA then pick(({ 10, 6, 14, 12 })[D + 1], function() if D == 3 then p.D = 0 end end); p.ai = 0
-  elseif e == 0xBB then pick(({ 11, 7, 14, 13 })[D + 1])
+    if band(k, M.JUNCTION[0][D + 1]) ~= 0 then p.ai = 0; p.D = bxor(D, 1) end
+  elseif e == 0xB7 then pick(M.JUNCTION[1][D + 1], function() if D == 0 then p.D = 2 end end); p.ai = 0
+  elseif e == 0xB8 then pick(M.JUNCTION[2][D + 1], function() if D == 1 then p.D = 2 end end); p.ai = 0
+  elseif e == 0xB9 then pick(M.JUNCTION[3][D + 1], function() if D == 2 then p.D = 0 end end); p.ai = 0
+  elseif e == 0xBA then pick(M.JUNCTION[4][D + 1], function() if D == 3 then p.D = 0 end end); p.ai = 0
+  elseif e == 0xBB then pick(M.JUNCTION[5][D + 1])
   elseif e == 0xBC then
     p.ai = 1
-    local t = band(k, ({ 12, 12, 3, 3 })[D + 1])
+    local t = band(k, M.JUNCTION[6][D + 1])
     if t ~= 0 then pick(t); p.ai = 0 end
   elseif e == 0xBE then p.ai = 0; p.D = bxor(D, 1)
   end
@@ -737,13 +748,13 @@ function M.netBox(game)
 end
 
 local function caught(game, kind, gone)
-  local msg = kind == "bee" and M.MSG_BEE or M.MSG_FAIRY
+  local msg = (kind == "bee" or kind == "goldbee") and M.MSG_BEE or M.MSG_FAIRY   -- r31: the good bee
   game:showMessage(msg)
   game.onTextDone = function(g)
     if (g.lastChoice or 0) == 0 then
       local b = emptyBottle(g)
       if b then
-        setInv(g, b, kind == "bee" and 7 or 6)
+        setInv(g, b, kind == "goldbee" and 8 or kind == "bee" and 7 or 6)   -- r31: 7 + sprite_head_dir
         gone()
         g.netCatches = (g.netCatches or 0) + 1
         return
@@ -767,7 +778,7 @@ function M.netCatch(game)
         local bx, by, bw, bh = Actors.hitbox(cb, s)
         if Actors.overlapCart(x, y, w, h, bx, by - (s.z or 0), bw, bh) then
           s.aux4 = 64
-          caught(game, "bee", function() s.dead = true end)
+          caught(game, s.golden and "goldbee" or "bee", function() s.dead = true end)
           return
         end
       end
@@ -843,7 +854,7 @@ local function owThings(game, inp)
     elseif not a.dead and a.i27 == "witch" then
       local iv = inv(game)
       local m = iv[M.INV_POWDER] or 0
-      local holdItem = game.input and game.input.isDown and game.input.isDown("a")
+      local holdItem = game.input and game.input.isDown and game.input.isDown(game.itemKey and game:itemKey() or "a")
       if m == 1 and holdItem and touching(game, a, 16, 24) and select(2, game:yItem()) == 5 and not game.textBox then
         -- Witch_AcceptShroom
         setInv(game, M.INV_POWDER, 0)
@@ -1236,15 +1247,15 @@ function M.drawThing(spr, a, x, y, frame)
     local g = band(rshift(frame or 0, 3), 7) * 2
     for i = 0, 1 do
       local e = M.WITCH_A[g + i + 1]
-      spr:oam(x + e[1], y + e[2], M.conv(e[3]), f, 0)
+      spr:oam(x + e[1], y + e[2], e[3] - M.WITCH_CHAR0, f, 0)
     end
     for i = 1, 3 do
       local e = M.WITCH_B[i]
-      spr:oam(x + e[1], y + e[2], M.conv(e[3]), bxor(f, e[4]), 2)
+      spr:oam(x + e[1], y + e[2], e[3] - M.WITCH_CHAR0, bxor(f, e[4]), 2)
     end
     local i = (g - 6 >= 0 and g - 6 < 6) and 2 or 1
     local e = M.WITCH_C[i]
-    spr:oam(x + e[1], y + e[2], M.conv(e[3]), f, 2)
+    spr:oam(x + e[1], y + e[2], e[3] - M.WITCH_CHAR0, f, 2)
   elseif a.i27 == "bag" then
     spr:oam(x, y, M.conv(0xE6), bxor(0x04, f), 2)
   elseif a.i27 == "bat" then

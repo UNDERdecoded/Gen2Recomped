@@ -118,7 +118,8 @@ function D.terrain(tabs, st)
 end
 
 -- kLink_Lift_tab: the terrain kind of a lifted tile by its attribute
-D.LIFT_KIND = { [0x54] = 0, [0x52] = 1, [0x50] = 2, [0x51] = 4, [0x53] = 5, [0x55] = 6, [0x56] = 7, [0x57] = 8 }
+-- (r35: read from the ROM at import, inverted: attribute -> index)
+D.LIFT_KIND = require("src.zelda.alttp.RomTables").get("drops.liftKind")
 -- what the sword cuts (Overworld_ToolAndTileInteraction): map16 -> kind
 D.CUT_KIND = { [0x36] = 2, [0x72A] = 4, [0x37E] = 3 }
 
@@ -232,17 +233,31 @@ function D.install(G)
   local function absorb(self, d)
     local s, p = self.stats, self.progress
     local k = d.kind
+    -- r49: the GBA's absorb (0x080CF5C8) adds to the bomb filler
+    -- (0x02002355; arrows 0x02002356) and the HUD's refill (0x080A72F4) turns
+    -- it into bombs one a frame, stopping at kMaxBombs[upgrade] (0x16B588;
+    -- arrows 0x16B598): a pick-up never goes past the bag's size
+    local ui = self.data and self.data.ui or {}
+    local mb = (ui.maxBombs and ui.maxBombs[(s.bombLevel or 0) + 1]) or 10
+    local ma = (ui.maxArrows and ui.maxArrows[(s.arrowLevel or 0) + 1]) or 30
     if k == "heart" then s.health = math.min(s.healthMax, s.health + 8)
     elseif k == "rupee1" then s.rupees = math.min(999, s.rupees + 1)
     elseif k == "rupee5" then s.rupees = math.min(999, s.rupees + 5)
     elseif k == "rupee20" then s.rupees = math.min(999, s.rupees + 20)
-    elseif k == "bomb1" then s.bombs = s.bombs + 1
-    elseif k == "bomb4" then s.bombs = s.bombs + 4
-    elseif k == "bomb8" then s.bombs = s.bombs + 8
+    -- r54: into the fillers (0x080CF5C8: +kBombsAbsorption [type - 0xDC] at
+    -- 0x02002355; 0x080CF66C: +5 / +10 at 0x02002356), turned into bombs /
+    -- arrows one a frame by Receipt52.refill (Hud_RefillLogic 0x080A72F4)
+    elseif (k == "bomb1" or k == "bomb4" or k == "bomb8") and self.data and self.data.t and self.data.t.rcpt52 then
+      self.bombFill = bit.band((self.bombFill or 0) + (k == "bomb1" and 1 or k == "bomb4" and 4 or 8), 0xFF)
+    elseif (k == "arrow5" or k == "arrow10") and self.data and self.data.t and self.data.t.rcpt52 then
+      self.arrowFill = bit.band((self.arrowFill or 0) + (k == "arrow5" and 5 or 10), 0xFF)
+    elseif k == "bomb1" then s.bombs = math.max(s.bombs, math.min(mb, s.bombs + 1))
+    elseif k == "bomb4" then s.bombs = math.max(s.bombs, math.min(mb, s.bombs + 4))
+    elseif k == "bomb8" then s.bombs = math.max(s.bombs, math.min(mb, s.bombs + 8))
     elseif k == "magic" then s.magic = math.min(0x80, s.magic + 0x10)
     elseif k == "magicFull" then s.magic = 0x80
-    elseif k == "arrow5" then s.arrows = s.arrows + 5
-    elseif k == "arrow10" then s.arrows = s.arrows + 10
+    elseif k == "arrow5" then s.arrows = math.max(s.arrows, math.min(ma, s.arrows + 5))
+    elseif k == "arrow10" then s.arrows = math.max(s.arrows, math.min(ma, s.arrows + 10))
     elseif k == "fairy" then s.health = math.min(s.healthMax, s.health + 56)
     elseif k == "key" then self:getItem(0x24)
     end

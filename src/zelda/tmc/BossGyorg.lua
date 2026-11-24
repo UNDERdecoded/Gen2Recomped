@@ -176,54 +176,36 @@ local function sinT(a) return SIN[band(a, 0xFF)] end
 local function cosT(a) return SIN[band(a + 0x40, 0xFF)] end
 
 -- the .c files' constant tables
-local FEMALE_POS = { [0] = 0x200, 0x258, 0x1B8, 0x210, 0x200, 0x1C8, 0x248, 0x210 }    -- gUnk_080D1A84
-local CHILD_SETS_F = { [0] = 2, 3, 6, 7 }                                                -- gUnk_080D1AF4
-local EYE_PATTERNS = { [0] = 0x16, 0x92, 0x94, 0x86 }                                    -- gUnk_080D1AF8
-local EYE_POS = { [0] = { 0x1e8, 0x1d8 }, { 0x1f8, 0x1d8 }, { 0x208, 0x1d8 }, { 0x218, 0x1d8 }, { 0x1e8, 0x1e8 }, { 0x1f8, 0x1e8 },
-  { 0x208, 0x1e8 }, { 0x218, 0x1e8 }, { 0x238, 0x1f8 }, { 0x238, 0x208 }, { 0x238, 0x218 }, { 0x238, 0x228 },
-  { 0x228, 0x1f8 }, { 0x228, 0x208 }, { 0x228, 0x218 }, { 0x228, 0x228 }, { 0x218, 0x248 }, { 0x208, 0x248 },
-  { 0x1f8, 0x248 }, { 0x1e8, 0x248 }, { 0x218, 0x238 }, { 0x208, 0x238 }, { 0x1f8, 0x238 }, { 0x1e8, 0x238 },
-  { 0x1c8, 0x228 }, { 0x1c8, 0x218 }, { 0x1c8, 0x208 }, { 0x1c8, 0x1f8 }, { 0x1d8, 0x228 }, { 0x1d8, 0x218 },
-  { 0x1d8, 0x208 }, { 0x1d8, 0x1f8 } }                                                    -- gUnk_080D1F90
-local EYE_A = { [0] = 0, 0, 1, 1, 0, 0, 1, 1, 4, 4, 5, 5, 4, 4, 5, 5, 9, 9, 8, 8, 9, 9, 8, 8, 13, 13, 12, 12, 13, 13, 12, 12 } -- gUnk_080D2010
-local EYE_B = { [0] = 2, 2, 3, 3, 2, 2, 3, 3, 6, 6, 7, 7, 6, 6, 7, 7, 11, 11, 10, 10, 11, 11, 10, 10, 15, 15, 14, 14, 15, 15, 14, 14 } -- gUnk_080D2030
-local MOUTH_POS = { [0] = 0x200, 0x1C8, 0x248, 0x210, 0x200, 0x258, 0x1b8, 0x210 }     -- gUnk_080D28CC
-local MOUTH_HB = { [0] = { -32, -12, 8, 10 }, { 32, -12, 8, 10 }, { 12, -32, 10, 8 }, { 12, 32, 10, 8 },
-  { -32, 12, 8, 10 }, { 32, 12, 8, 10 }, { -12, -32, 10, 8 }, { -12, 32, 10, 8 } }      -- gUnk_080D28DC..2914 (x, y, w, h)
-local B60 = { [0] = 0x200, 0x184, 0x28C, 0x210, 0x200, 0x29C, 0x174, 0x210 }            -- gUnk_080D1B60
+local FEMALE_POS = require("src.zelda.tmc.RomTables").t("BossGyorg.FEMALE_POS")    -- gUnk_080D1A84
+local CHILD_SETS_F = require("src.zelda.tmc.RomTables").t("BossGyorg.CHILD_SETS_F")                                                -- gUnk_080D1AF4
+local EYE_PATTERNS = require("src.zelda.tmc.RomTables").t("BossGyorg.EYE_PATTERNS")                                    -- gUnk_080D1AF8
+local EYE_POS = require("src.zelda.tmc.RomTables").t("BossGyorg.EYE_POS")                                                    -- gUnk_080D1F90
+local EYE_A = require("src.zelda.tmc.RomTables").t("BossGyorg.EYE_A") -- gUnk_080D2010
+local EYE_B = require("src.zelda.tmc.RomTables").t("BossGyorg.EYE_B") -- gUnk_080D2030
+local MOUTH_POS = require("src.zelda.tmc.RomTables").t("BossGyorg.MOUTH_POS")     -- gUnk_080D28CC
+local MOUTH_HB = require("src.zelda.tmc.RomTables").t("BossGyorg.MOUTH_HB")      -- gUnk_080D28DC..2914 (x, y, w, h)
+local B60 = require("src.zelda.tmc.RomTables").t("BossGyorg.B60")            -- gUnk_080D1B60
 local B70 = { [0] = 0x40, -0x40 }                                                         -- gUnk_080D1B70
-local B74 = { [0] = 0x20, 0x40, 0x60, 0x80, 0xA0, 0xC0, 0xE0, 0x100, 0x100, 0xE0, 0xC0, 0xA0, 0x80, 0x60, 0x40, 0x20 } -- gUnk_080D1B74
+local B74 = require("src.zelda.tmc.RomTables").t("BossGyorg.B74") -- gUnk_080D1B74
 local BBC = { [0] = 0x1A0, 0xE0 }                                                         -- gUnk_080D1BBC
 local BF0 = { [0] = 0x80, -0x80 }                                                         -- gUnk_080D1BF0
-local C00 = { [0] = 0x40, 0xC0, 0xC0, 0x40 }                                              -- gUnk_080D1C00 (s8 as u8)
-local C04 = { [0] = 0, 1, 4, 9, 16, 25, 36, 49, 64, 81, 100, 121, 144, 169, 196, 225,
-  256, 289, 324, 361, 400, 441, 484, 529, 576, 625, 676, 729, 784, 841, 900, 961 }       -- gUnk_080D1C04
-local C44 = { [0] = 0, 2, 6, 0, 2, 4, 2, 4, 6, 0, 4, 6 }                                 -- gUnk_080D1C44
-local C50 = { [0] = 0x200, 0x180, 0x2C0, 0x210, 0x200, 0x2A0, 0x140, 0x210 }            -- gUnk_080D1C50
-local C60 = { [0] = 0x200, 0x150, 0x290, 0x210, 0x200, 0x2D0, 0x170, 0x210 }            -- gUnk_080D1C60
-local MEYE_OFF = { [0] = 240, 240, 17, 240, 17, 16, 240, 16, 0, 232, 24, 0, 0, 24, 232, 0, 16, 240, 16, 17, 240, 17, 240, 240, 24,
-  0, 0, 24, 232, 0, 0, 232, 16, 16, 239, 16, 239, 240, 16, 240, 0, 24, 232, 0, 0, 232, 24, 0, 240, 16,
-  240, 239, 16, 239, 16, 16, 232, 0, 0, 232, 24, 0, 0, 24, 240, 240, 17, 240, 17, 16, 240, 16 } -- gUnk_080D2300 (s8)
-local MEYE_ANIM = { [0] = 0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19, 24, 25, 26, 27,
-  32, 33, 34, 35, 40, 41, 42, 43, 48, 49, 50, 51, 56, 57, 58, 59 }                       -- gUnk_080D2348
+local C00 = require("src.zelda.tmc.RomTables").t("BossGyorg.C00")                                              -- gUnk_080D1C00 (s8 as u8)
+local C04 = require("src.zelda.tmc.RomTables").t("BossGyorg.C04")       -- gUnk_080D1C04
+local C44 = require("src.zelda.tmc.RomTables").t("BossGyorg.C44")                                 -- gUnk_080D1C44
+local C50 = require("src.zelda.tmc.RomTables").t("BossGyorg.C50")            -- gUnk_080D1C50
+local C60 = require("src.zelda.tmc.RomTables").t("BossGyorg.C60")            -- gUnk_080D1C60
+local MEYE_OFF = require("src.zelda.tmc.RomTables").t("BossGyorg.MEYE_OFF") -- gUnk_080D2300 (s8)
+local MEYE_ANIM = require("src.zelda.tmc.RomTables").t("BossGyorg.MEYE_ANIM")                       -- gUnk_080D2348
 local TAIL_SWEEP = { [0] = 24, 20 }                                                       -- gUnk_0812A9B8
 local TAIL_SPEED = { [0] = -64, 64 }                                                      -- gUnk_0812A9B4
-local TAIL_FRAMES = { [0] = 24, 25, 25, 24, 24, 24 }                                      -- gUnk_0812A9BA
-local TAIL_DIRF = { [0] = 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11 } -- gUnk_0812A9C0
-local CHILD_CURVE = { [0] = 80, 1, 64, 1, 48, 1, 32, 1, 16, 1, 0, 0, 16, -1, 32, -1, 48, -1, 64, -1, 80, -1 } -- gUnk_080D1EA0
-local SPAWN_XY = { [0] = 0x200, 0x1C0, 0x250, 0x210, 0x200, 0x260, 0x1B0, 0x210 }       -- gUnk_08124EF8
-local SPAWN_SETS = { [0] =                                                                -- gUnk_08124FF0 -> F08..FDC
-  { -80, 48, 320, -40, 32, 320, 0, 16, 320, 40, 32, 320, 80, 48, 320 },
-  { -80, 16, 448, -40, 48, 448, 0, 16, 448, 40, 48, 448, 80, 16, 448 },
-  { -80, 16, 320, -40, 48, 576, 0, 16, 320, 40, 48, 576, 80, 16, 320 },
-  { -80, 16, 320, -40, 32, 448, 0, 48, 576, 40, 32, 448, 80, 16, 320 },
-  { -80, 32, 320, -40, 48, 320, 0, 32, 320, 40, 16, 320, 80, 32, 320 },
-  { -80, 32, 576, -40, 32, 448, 0, 32, 320, 40, 32, 448, 80, 32, 576 },
-  { -80, 32, 320, 0, 16, 320, 80, 32, 320 },
-  { -80, 16, 448, 0, 48, 448, 80, 16, 448 } }
+local TAIL_FRAMES = require("src.zelda.tmc.RomTables").t("BossGyorg.TAIL_FRAMES")                                      -- gUnk_0812A9BA
+local TAIL_DIRF = require("src.zelda.tmc.RomTables").t("BossGyorg.TAIL_DIRF") -- gUnk_0812A9C0
+local CHILD_CURVE = require("src.zelda.tmc.RomTables").t("BossGyorg.CHILD_CURVE") -- gUnk_080D1EA0
+local SPAWN_XY = require("src.zelda.tmc.RomTables").t("BossGyorg.SPAWN_XY")       -- gUnk_08124EF8
+local SPAWN_SETS = require("src.zelda.tmc.RomTables").t("BossGyorg.SPAWN_SETS")
 M.SPAWN_SETS = SPAWN_SETS
-local HB = { h0 = { x = 0, y = -3, w = 6, h = 6 }, h1 = { x = 0, y = 0, w = 6, h = 6 }, h20 = { x = 0, y = 0, w = 4, h = 4 },
-             h21 = { x = 0, y = 0, w = 1, h = 1 }, h22 = { x = 0, y = 0, w = 2, h = 2 }, h28 = { x = 0, y = 0, w = 16, h = 16 } } -- src/data/hitbox.c
+local HB = { h0 = require("src.zelda.tmc.RomTables").t("BossGyorg.HB_h0"), h1 = require("src.zelda.tmc.RomTables").t("BossGyorg.HB_h1"), h20 = require("src.zelda.tmc.RomTables").t("BossGyorg.HB_h20"),
+             h21 = require("src.zelda.tmc.RomTables").t("BossGyorg.HB_h21"), h22 = require("src.zelda.tmc.RomTables").t("BossGyorg.HB_h22"), h28 = require("src.zelda.tmc.RomTables").t("BossGyorg.HB_h28") } -- src/data/hitbox.c
 
 local function s8(v) v = band(v, 0xFF) if v >= 128 then return v - 256 end return v end
 local function s16(v) v = band(v, 0xFFFF) if v >= 0x8000 then return v - 0x10000 end return v end
@@ -612,7 +594,7 @@ function G:fightEnd(o) -- GyorgBossObject_FightEnd
       f.cameraTarget = nil
       f.bossSupport = nil
       self.ended = true
-      f:startTransition({ warpType = 1, area = 0x70, room = 0x00, endX = 0x1D8, endY = 0xD8, layer = 2, kind = 2, facing = 4, sfx = 0 }) -- gUnk_0813ABD0
+      f:startTransition(require("src.zelda.tmc.RomTables").fresh("BossGyorg.TR_ABD0")) -- gUnk_0813ABD0
       return
     end
     if o.subtimer == 0x3C then f:fade("out", true, 4) end -- SetFade(FADE_IN_OUT | FADE_BLACK_WHITE | FADE_INSTANT, 4)
@@ -1987,13 +1969,14 @@ function G:swordHit(pt, box)
   if not boxHit(pt, box) then return false end
   local p = self:player()
   if pt.gy == "feye" or pt.gy == "meye" then
-    local s = self.en:settings(pt.hitType or 0, HURT_SWORD)
+    local hurt = self.field.swordHurt31 or HURT_SWORD -- round 31: the spin attack's hurtType ($08-$0A) from SwordSkills.hitBox
+    local s = self.en:settings(pt.hitType or 0, hurt)
     local dmg = s and s.orgDmg or 0
     if dmg > 0 then
       pt.health = math.max(0, pt.health - dmg)
       pt.iframes = (s.tgtIfr and s.tgtIfr > 0) and s.tgtIfr or 12
     end
-    if pt.gy == "feye" then self:eyeCollision(pt, 0x80 + HURT_SWORD, p.x, p.y) else self:meyeCollision(pt) end
+    if pt.gy == "feye" then self:eyeCollision(pt, 0x80 + hurt, p.x, p.y) else self:meyeCollision(pt) end
     return dmg > 0
   elseif pt.gy == "energy" then
     self:energyFizzle(pt)

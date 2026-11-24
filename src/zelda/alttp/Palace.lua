@@ -226,7 +226,12 @@ local function solidAt(self, a, j)
   local y = a.y + (c.sprPointY[j + 1] or 8)
   local b = attr(self.inside, a.lower, x, y)
   if b == nil then return true end
-  return (c.sprTileSolid[b + 1] or 0) ~= 0 and not (b == 0x20 and not a.recoil)
+  local w56 = require("src.zelda.alttp.Sprite56").solid(a, b, c)   -- r56: water sprites (GBA 0x080C7694)
+  if w56 ~= nil then return w56 end
+  -- r42: tile 0x20 is a wall unless a pit-faller recoils (GBA 0x080C7760,
+  -- SpritePit.lua; the port had it the other way round)
+  if b == 0x20 then return require("src.zelda.alttp.SpritePit").pitSolid(self.game, a) end
+  return (c.sprTileSolid[b + 1] or 0) ~= 0
 end
 local WALLBIT = { [0] = 8, 4, 2, 1 }   -- kSprite_Func7_Tab: up, down, left, right
 -- Sprite_CheckTileCollision (header collision 0: the velocity's directions;
@@ -241,6 +246,11 @@ local function tileCollision(self, a)
   end
   local base = rshift(band(T.sprFlags[a.type + 1] or 0, 0xF0), 2)
   local n = a.recoil and 3 or 1
+  -- r86: two-layer rooms test all four directions (Tile86.lua, 0x080C7A80)
+  local T86 = require("src.zelda.alttp.Tile86")
+  if T86.allDirs(self.game, self.inside, a) then
+    return T86.check(a, base, n, function(j) return solidAt(self, a, j) end, WALLBIT)
+  end
   if (a.vy or 0) ~= 0 then
     local yy = a.vy < 0 and 0 or 1
     if solidAt(self, a, base + yy) then
@@ -542,8 +552,19 @@ function M.roomTags(self, lk)
       local p = game.progress
       if p.bossBeaten and p.bossBeaten[inside.room] and not M.hasPrize(game) then
         inside.mem.tagDone[slot] = true
-        local a = spawn(self, 0xEB, math.floor(lk.x / 256) * 256 + 120, math.floor(lk.y / 256) * 256 + 96, inside.lower)
-        a.z, a.vz, a.prize, a.game = 112, 0, true, game
+        -- r42: OURS (not traced): the prize falls at the screen's middle
+        -- (the camera + 112, + 64 on the GBA's 240 x 160 screen); the port had
+        -- the SNES quadrant + 120 / + 96, which in Moldorm's room (0x07) is
+        -- always over the pit ring or a wall: the pendant could not be taken
+        local cx, cy = math.floor(lk.x / 256) * 256 + 8, math.floor(lk.y / 256) * 256 + 32
+        if inside.camera then cx, cy = inside:camera(lk.x, lk.y, 240, 160) end
+        local px, py, pz = cx + 112, cy + 64, 112
+        -- r43: the GBA's AncillaAdd_FallingPrize spot (Prize43.lua, traced);
+        -- the guess above stays only for a cache without the tables
+        local sx, sy, sz = require("src.zelda.alttp.Prize43").spot(game, inside, lk)
+        if sx then px, py, pz = sx, sy, sz end
+        local a = spawn(self, 0xEB, px, py, inside.lower)
+        a.z, a.vz, a.prize, a.game = pz, 0, true, game
       end
     end
   end

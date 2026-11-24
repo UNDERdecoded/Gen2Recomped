@@ -135,10 +135,12 @@ M.TYPES = { [0x21] = true }
 M.FIGHTS = {}
 
 -- code constants (zelda3)
-M.TURN_ON0 = { [0] = 1, -1, 1, -1 }     -- kTurnOnWater_Tab0
-M.TURN_ON1 = { [0] = 1, 2, 1, -1 }      -- kTurnOnWater_Tab1
-M.TURN_ON2 = { [0] = 1, 1, 1, -1 }      -- kTurnOnWater_Tab2
-M.TURN_OFF = { [0] = -1, -1, -1, 1 }    -- kTurnOffWater_Tab0 (period 4)
+-- r35: read from the ROM at import (the GBA's words; its kTurnOnWater_Tab1[3] is 0, the SNES's -1)
+local RT = require("src.zelda.alttp.RomTables")
+M.TURN_ON0 = RT.get("mech.turnOn0")     -- kTurnOnWater_Tab0
+M.TURN_ON1 = RT.get("mech.turnOn1")     -- kTurnOnWater_Tab1
+M.TURN_ON2 = RT.get("mech.turnOn2")     -- kTurnOnWater_Tab2
+M.TURN_OFF = RT.get("mech.turnOff")     -- kTurnOffWater_Tab0 (period 4)
 M.CONVEY = { [0x68] = { 0, -1 }, [0x69] = { 0, 1 }, [0x6A] = { -1, 0 }, [0x6B] = { 1, 0 } }   -- kConveyorAdjustment
 M.SPIKE_FLOOR, M.SPIKE = 0x0D, 0x44
 M.BOMB_FLOOR = 0x62
@@ -581,6 +583,7 @@ local function afterLoad(inside)
     if (info.flood or info.drain) and mem.water then clearTag1(inside) end
   end
   if info.gate and mem.water then clearTag1(inside) end
+  require("src.zelda.alttp.Ladder57").atLoad(game, inside, info)   -- r57: active water ladders in every room (GBA 0x0807C778)
 end
 
 -- ------------------------------------------------------------ the water switch (0x21)
@@ -945,8 +948,7 @@ function M.conveyLink(game)
   local my = (s[1] >= 0) and math.floor(s[1] / 256) or -math.floor(-s[1] / 256)
   local mx = (s[2] >= 0) and math.floor(s[2] / 256) or -math.floor(-s[2] / 256)
   s[1], s[2] = s[1] - my * 256, s[2] - mx * 256
-  if (mx ~= 0 or my ~= 0) and free(inside, lk.x + mx, lk.y + my) then
-    lk.x, lk.y = lk.x + mx, lk.y + my
+  if (mx ~= 0 or my ~= 0) and require("src.zelda.alttp.Belt78").step(game, inside, lk, mx, my, free) then   -- r78: the walking collision
     game.beltMoves = (game.beltMoves or 0) + 1
   end
 end

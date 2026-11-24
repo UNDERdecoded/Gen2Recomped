@@ -19,7 +19,7 @@ local Ppu = require("src.zelda.tmc.Ppu")
 local GameOver = {}
 GameOver.__index = GameOver
 
-local X = { 48, 68, 88, 108, 137, 156, 174, 192 }
+local X = require("src.zelda.tmc.RomTables").t("GameOver.X")
 local POPUP = { [0] = { col = 11, row = 8, text = 0x10 }, [1] = { col = 11, row = 8, text = 0x11 } }
 
 function GameOver.new(field)

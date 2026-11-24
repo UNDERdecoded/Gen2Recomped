@@ -46,6 +46,7 @@ E.FILES = {
   mapsIdx = "data/generated/alttp_maps.lua",
   music   = "assets/generated/audio/m4a.bin",
   songs   = "data/generated/alttp_songs.lua",
+  snd     = "assets/generated/alttp/snd.bin",   -- r33: the ALttP driver's bank (AlttpSynth)
   rooms   = "assets/generated/alttp/rooms.bin",
   roomsIdx = "data/generated/alttp_rooms.lua",
 }
@@ -249,6 +250,8 @@ function E.readTables(rom)
   require("src.zelda.alttp.ExtractA26").extract(t, rom, R, check)   -- r26a: Dark World, gear, items (team A)
   t.d26 = require("src.zelda.alttp.Dungeons26").extract(rom, R, check)   -- r26b: the later palaces (team B)
   require("src.zelda.alttp.ExtractA27").extract(t, rom, R, check)   -- r27a: world, items, people, sound (team A)
+  t.rt35 = require("src.zelda.alttp.RomTables").extract(rom, R, check)   -- r35: the modules' small tables
+  t.strip36 = require("src.zelda.alttp.FrontRun").stripTable(rom, check)   -- r36: the item strip, from the cartridge's loader
   return t
 end
 
@@ -899,6 +902,10 @@ function E.run(bytes, cache, progress, opts)
     local image, info = E.readMusic(rom)
     assert(cache:write(E.FILES.music, image))
     assert(cache:write(E.FILES.songs, S.encode(info)))
+    -- r33: the ALttP half's own sound bank (sound effects + songs)
+    local snd, err = require("src.zelda.alttp.AlttpSynth").image(rom)
+    check(snd, "ALttP sound bank: %s", tostring(err))
+    assert(cache:write(E.FILES.snd, snd))
   end)
   stage("fs", "Reading Four Swords", function(tick)
     require("src.zelda.alttp.FsExtract").run(rom, cache, tick)

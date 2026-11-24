@@ -438,8 +438,10 @@ function I:markPots()
       for r = 0, 1 do for c = 0, 1 do
         local cell = (o.y + r) * 64 + o.x + c
         p.cells[#p.cells + 1] = cell
-        self.attrs[cell] = p.attr; self.grid[cell] = true
-        self.attrsLo[cell] = p.attr; self.gridLo[cell] = true
+        -- r74: the pot's own level only (Pots74)
+        local up, lo = require("src.zelda.alttp.Pots74").tables(self, o.layer)
+        if up then self.attrs[cell] = p.attr; self.grid[cell] = true end
+        if lo then self.attrsLo[cell] = p.attr; self.gridLo[cell] = true end
       end end
       self.pots[#self.pots + 1] = p
       n = n + 1
@@ -543,7 +545,7 @@ end
 -- Dungeon_Store2x2 gives all four cells the LR word's attribute
 -- (attributes_for_tile[LR & 0x3FF]: 0x23, the switch), which the room's
 -- switch tags read (Palace.roomTags). Kept with the lifted pot.
-I.POT_SWITCH = { 0x310B, 0x311B, 0x350B, 0x351B }   -- the GBA's words (0x080929E8)
+I.POT_SWITCH = require("src.zelda.alttp.Tables74").get("potSwitch")   -- the GBA's words (0x080929E8), r74: read at import
 function I:potSwitch(p)
   p.switch = true
   local patch = (p.layer == 2) and self.patch1 or self.patch
@@ -552,8 +554,9 @@ function I:potSwitch(p)
   for k, d in ipairs({ { 0, 0 }, { 0, 1 }, { 1, 0 }, { 1, 1 } }) do
     local cell = (p.y + d[2]) * 64 + p.x + d[1]
     patch[cell] = I.POT_SWITCH[k]
-    self.attrs[cell] = v; self.grid[cell] = not WALKABLE[v]
-    self.attrsLo[cell] = v; self.gridLo[cell] = not WALKABLE[v]
+    local up, lo = require("src.zelda.alttp.Pots74").tables(self, p.layer)   -- r74: the pot's level
+    if up then self.attrs[cell] = v; self.grid[cell] = not WALKABLE[v] end
+    if lo then self.attrsLo[cell] = v; self.gridLo[cell] = not WALKABLE[v] end
   end
 end
 
@@ -1022,8 +1025,13 @@ end
 -- column / row (the SNES pairs the door slots through its adjacent-door
 -- table).
 local OPPOSITE = { [0] = 1, [1] = 0, [2] = 3, [3] = 2 }
+-- r50: not only key doors. GBA 0x08081308 (the neighbour's opened mask from
+-- 0x0808125C: its save word & 0xF000) marks every matching door slot open
+-- except type 0x30 and the two shutter types (0x18 / 0x44, checked against
+-- the entry door instead): a bombed wall (0x2E, 0x28 / 0x2A) stays open from
+-- the other room too (the PoD arena's east nook <-> 0x2B).
 function I:adjacentOpened(lock)
-  if (lock.kind ~= "key" and lock.kind ~= "bigkey") or not self.memory then return false end
+  if (lock.kind ~= "key" and lock.kind ~= "bigkey" and lock.kind ~= "other") or not self.memory then return false end
   local idx = self.data.roomIdx
   local P = { [0] = idx.doorPosUp, idx.doorPosDown, idx.doorPosLeft, idx.doorPosRight }
   for _, s in ipairs(lock.slots or {}) do
@@ -1233,6 +1241,11 @@ function I:staircase(lx, ly, dir)
   local at = tab[py * 64 + px]
   if not STAIR[at] then return nil end
   local a2 = tab[(py + 1) * 64 + px] or 0
+  -- r51: the GBA (0x08084A82..0x08084AAE) reads the second tile at the
+  -- position BEFORE the down step's two rows: one row under the first
+  -- probe, i.e. one row ABOVE the stair tile when walking down (the down
+  -- stairs 0x12E / 0x12F write their number above the 0x26 row)
+  if dir == "down" then a2 = tab[(py - 1) * 64 + px] or 0 end
   -- round 11: the south straight stairs (object 0x229 / 0x221: the number
   -- row ABOVE the 0x39 row) never match the SNES detection walking down;
   -- the cartridge's Link walks on through the stair passage and leaves by

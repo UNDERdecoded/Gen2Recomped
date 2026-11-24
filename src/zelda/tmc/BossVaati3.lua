@@ -130,20 +130,19 @@ for i = 0, 319 do SIN[i] = math.floor(math.sin(i * math.pi / 128) * 256 + 0.5) e
 V.SIN = SIN
 
 -- the small tables written out in vaatiWrath.c / vaatiWrathEye.c / v3*.c
-local T_E64 = { [0] = 0, -1, 0, 1 }                                                             -- gUnk_080D0E64
-local T_E80 = { [0] = 0x16c, 0x16d, 0x16e, 0x16f, 0x170, 0x171, 0x172, 0x173 }                  -- gUnk_080D0E80
-local T_E90 = { [0] = 0, -16, -8, -26, -1, 0, 14, -31, 2, -12, -15, 2, 4, -20, -10, -8 }        -- gUnk_080D0E90
-local T_EA0 = { [0] = -4, -5, -6, -7, -6, -5, -4, -3 }                                          -- gUnk_080D0EA0
-local T_EA8 = { [0] = 0x78, 0xa0, 0xc8, 0xf0 }                                                  -- gUnk_080D0EA8
-local T_EAC = { [0] = 0x3c, 0x50, 0x64, 0x78 }                                                  -- gUnk_080D0EAC
-local T_EB0 = { [0] = 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 2, 1, 1, 0, 0, 0, -1, -1, -2, -2, -3, -3, -3, -3, -3, -3, -3, -3, -3, -3 } -- gUnk_080D0EB0
-local EYE_A = { [0] = -18, 1, -6, 4, 6, 4, 19, 1 }                                              -- gUnk_080D1D70
-local EYE_Z = { [0] = -3, -4, -5, -6, -7, -6, -5, -4, -4, -3, -4, -5, -6, -7, -6, -5, -5, -4, -3, -4, -5, -6, -7, -6,
-                -6, -5, -4, -3, -4, -5, -6, -7 }                                                -- gUnk_080D1D78
-local EYE_B = { [0] = -24, 4, -8, 8, 8, 8, 24, 4 }                                              -- gUnk_080D1D98
-local EL_SPEED = { [0] = 352, 480, 480 }                                                        -- projectileSpeeds
-local EL_COUNT = { [0] = 5, 6, 7, 8, 5, 6, 7, 6 }                                               -- gUnk_0812A982
-local EL_DIR = { [0] = 6, 9, 9, 12, 6, 9, 9, 9, 0, 0 }                                         -- projectileDirections
+local T_E64 = require("src.zelda.tmc.RomTables").t("BossVaati3.T_E64")                                                             -- gUnk_080D0E64
+local T_E80 = require("src.zelda.tmc.RomTables").t("BossVaati3.T_E80")                  -- gUnk_080D0E80
+local T_E90 = require("src.zelda.tmc.RomTables").t("BossVaati3.T_E90")        -- gUnk_080D0E90
+local T_EA0 = require("src.zelda.tmc.RomTables").t("BossVaati3.T_EA0")                                          -- gUnk_080D0EA0
+local T_EA8 = require("src.zelda.tmc.RomTables").t("BossVaati3.T_EA8")                                                  -- gUnk_080D0EA8
+local T_EAC = require("src.zelda.tmc.RomTables").t("BossVaati3.T_EAC")                                                  -- gUnk_080D0EAC
+local T_EB0 = require("src.zelda.tmc.RomTables").t("BossVaati3.T_EB0") -- gUnk_080D0EB0
+local EYE_A = require("src.zelda.tmc.RomTables").t("BossVaati3.EYE_A")                                              -- gUnk_080D1D70
+local EYE_Z = require("src.zelda.tmc.RomTables").t("BossVaati3.EYE_Z")                                                -- gUnk_080D1D78
+local EYE_B = require("src.zelda.tmc.RomTables").t("BossVaati3.EYE_B")                                              -- gUnk_080D1D98
+local EL_SPEED = require("src.zelda.tmc.RomTables").t("BossVaati3.EL_SPEED")                                                        -- projectileSpeeds
+local EL_COUNT = require("src.zelda.tmc.RomTables").t("BossVaati3.EL_COUNT")                                               -- gUnk_0812A982
+local EL_DIR = require("src.zelda.tmc.RomTables").t("BossVaati3.EL_DIR")                                         -- projectileDirections
 V.T = { E64 = T_E64, E80 = T_E80, E90 = T_E90, EA0 = T_EA0, EA8 = T_EA8, EAC = T_EAC, EB0 = T_EB0, EYE_A = EYE_A,
         EYE_Z = EYE_Z, EYE_B = EYE_B, EL_SPEED = EL_SPEED, EL_COUNT = EL_COUNT, EL_DIR = EL_DIR }
 

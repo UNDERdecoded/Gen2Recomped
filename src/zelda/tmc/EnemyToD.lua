@@ -77,18 +77,17 @@ local SFX = { SPLASH = 0x84, VO6 = 0x7A, S15B = 0x15B, S15D = 0x15D, F2 = 0xF2, 
 local SPECIAL_FX, FX_POT_SHATTER, FX_WATER_SPLASH = 0x0F, 0x05, 0x0B
 
 -- tables written out in the .c files
-T.PESTO_TIMER = { [0] = 30, 60, 50, 90, 70, 100, 90, 120 }                       -- gUnk_080CBF10
-T.PESTO_SPEED = { [0] = 0x80, 0xC0, 0x100, 0x140 }                               -- gUnk_080CBF18
-T.PESTO_IDX = { [0] = 0, 2, 1, 1, 3, 1, 2, 0, 1, 1, 2, 3, 2, 2, 1, 2 }           -- gUnk_080CBF20
-T.BEETLE_T1 = { [0] = 0x2D, 0x5A, 0x3C, 0x2D, 0x5A, 0x4B, 0x3C, 0x5A }           -- gUnk_080CF62C
-T.BEETLE_T2 = { [0] = 0x18, 0x24, 0x34, 0x20, 0x3C, 0x1C, 0x2C, 0x28 }           -- gUnk_080CF634
-T.BEETLE_SW = { [0] = 1, 0, 7, 1, 0, 7, 0, 0 }                                   -- gUnk_080CF63C
-T.MAND_T = { [0] = 24, 36, 52, 32, 60, 28, 44, 40 }                              -- gUnk_08129CA4
-T.MAND_SW = { [0] = 1, 0, 7, 1, 0, 7, 0, 0 }                                     -- gUnk_08129CAC
-T.MAND_PT = { [0] = 0, -16, 6, -10, 0, 4, -6, -10 }                              -- gUnk_08129D14
-T.MAND_HB = { [0] = { 0, -4, 6, 8 }, { 3, -3, 6, 6 }, { 4, 0, 8, 6 }, { 3, 3, 6, 6 }, -- gUnk_08129CB4..CEC {x, y, w, h}
-              { 0, 4, 6, 8 }, { -3, 3, 6, 6 }, { -4, 0, 8, 6 }, { -3, -3, 6, 6 } }
-local POT_SHAKE = { [0] = -1, 1, 1, -1 }                                          -- FlyingPot_Action2 offsets
+T.PESTO_TIMER = require("src.zelda.tmc.RomTables").t("EnemyToD.PESTO_TIMER")                       -- gUnk_080CBF10
+T.PESTO_SPEED = require("src.zelda.tmc.RomTables").t("EnemyToD.PESTO_SPEED")                               -- gUnk_080CBF18
+T.PESTO_IDX = require("src.zelda.tmc.RomTables").t("EnemyToD.PESTO_IDX")           -- gUnk_080CBF20
+T.BEETLE_T1 = require("src.zelda.tmc.RomTables").t("EnemyToD.BEETLE_T1")           -- gUnk_080CF62C
+T.BEETLE_T2 = require("src.zelda.tmc.RomTables").t("EnemyToD.BEETLE_T2")           -- gUnk_080CF634
+T.BEETLE_SW = require("src.zelda.tmc.RomTables").t("EnemyToD.BEETLE_SW")                                   -- gUnk_080CF63C
+T.MAND_T = require("src.zelda.tmc.RomTables").t("EnemyToD.MAND_T")                              -- gUnk_08129CA4
+T.MAND_SW = require("src.zelda.tmc.RomTables").t("EnemyToD.MAND_SW")                                     -- gUnk_08129CAC
+T.MAND_PT = require("src.zelda.tmc.RomTables").t("EnemyToD.MAND_PT")                              -- gUnk_08129D14
+T.MAND_HB = require("src.zelda.tmc.RomTables").t("EnemyToD.MAND_HB")
+local POT_SHAKE = require("src.zelda.tmc.RomTables").t("EnemyToD.POT_SHAKE")                                          -- FlyingPot_Action2 offsets
 
 local function DW() return require("src.zelda.tmc.EnemyDeepwood") end
 local function R(f) local D = require("src.zelda.tmc.Drops") return D.random(D.rngOf(f)) end
@@ -358,7 +357,9 @@ function T.touch(E, s)
   if p.hidden or p.state == "dead" or (p.invuln or 0) > 0 or (s.z or 0) > 12 then return false end
   local hb = s.hitbox
   if math.abs((s.x + (hb.x or 0)) - p.x) < (hb.w or 6) + 5 and math.abs((s.y + (hb.y or 0)) - (p.y - 3)) < (hb.h or 6) + 6 then
-    local st = E.settings and E:settings(s.hitType or 0, p.minish and 1 or 0) or nil
+    if require("src.zelda.tmc.Dive64").skips(f, s) then return false end -- round 64: a diving Link (collisionMask bit $10)
+    if require("src.zelda.tmc.ShieldToD63").blocked(f, p, s) then return true end -- round 63: the shield (CollisionDefault)
+    local st =E.settings and E:settings(s.hitType or 0, p.minish and 1 or 0) or nil
     local dmg = st and st.tgtDmg or 2
     if dmg > 0 and p:hurt(dmg, s.x, s.y) then p.invuln = math.max(st and st.orgIfr or 30, 30) end
     return true
@@ -547,7 +548,9 @@ function T.pesto(E, e)
   end
   -- hovering above 8 px the shared contact code (z < 8) skips it: the
   -- cartridge's collision has no height cut-off for it
-  if (e.z or 0) >= 8 and e.action >= 1 and not p.pestoHeld and (p.invuln or 0) == 0 then
+  -- round 67: arm_CalcCollision's height test: the Pesto's Hitbox3D gUnk_080FD22C (depth 12, collisionFlags $10)
+  -- + Link's 5 -> |dz| <= 17: a type-1 Pesto hovering at z 48 (or one risen to 60) does not touch Link
+  if (e.z or 0) >= 8 and require("src.zelda.tmc.Pesto67").reaches(e, p) and e.action >= 1 and not p.pestoHeld and (p.invuln or 0) == 0 then
     local zz = e.z; e.z = 0
     local hit = T.touch(E, e)
     e.z = zz
@@ -743,11 +746,15 @@ local function jawAttack(E, m) -- sub_080AA320
   par.action, par.subtimer, par.u80, par.speed = 2, 48, 0x50, 0
   local p = E.field.player
   par.dir = dirTo(par.x, par.y, p.x, p.y)
-  local d8 = band(par.dir + 2, 0x1C)
-  m.animationState = rshift(d8, 2)
-  par.animationState = rshift(band(d8 + 4, 0x18), 2)
+  m.animationState, par.animationState = require("src.zelda.tmc.Beetle66").snapStates(par.dir) -- round 66: sub_080AA320's states (was + 2 / + 4)
   bAnim(E, par, true)
   bAnim(E, m, false)
+end
+-- round 66: the jaws' contact with Link (Beetle66: arm_CalcCollision boxes, OnCollision's ModHealth(-2) in flight, snap)
+local function jawTouch(E, m)
+  local r = require("src.zelda.tmc.Beetle66").touch(E, m, function(j) jawAttack(E, j) end)
+  if r == nil then r = T.touch(E, m) end
+  return r
 end
 
 function T.jaws(E, m)
@@ -770,17 +777,17 @@ function T.jaws(E, m)
       if m.subtimer <= 0 then jawSwing(E, m, T.MAND_SW, T.MAND_T)
       else -- sub_080AA2E0: Link in front within $40
         local t = target3(f)
-        if t and band(dirTo(m.x, m.y, t.x, t.y) + 4 + 2, 0x1C) == band(m.animationState * 4 + 4 + 2, 0x1C) and within(m, t, 0x40) then
+        if t and require("src.zelda.tmc.Beetle66").sees(dirTo(m.x, m.y, t.x, t.y), m.animationState) and within(m, t, 0x40) then -- round 66: Direction8Round(dir + 4) (was + 6)
           jawAttack(E, m)
         end
       end
     end
     m.anim:update(1)
-    T.touch(E, m)
+    jawTouch(E, m)
   elseif m.action == 2 then
     m.anim:update(1)
     if band(m.anim.flags or 0, 0x40) ~= 0 and m.sfxKey ~= m.anim.key then m.sfxKey = m.anim.key; f:sound(SFX.S15D) end
-    T.touch(E, m)
+    jawTouch(E, m)
   elseif m.action == 3 then
     local body = m.child
     if not body or body.deleted then m.deleted = true return end
@@ -793,7 +800,7 @@ function T.jaws(E, m)
         m.action, m.u82, m.subtimer = 4, 3, 64
         m.dir = body.animationState * 4
         m.animationState = body.animationState
-        m.hitbox = { x = 0, y = 0, w = 1, h = 1 } -- gHitbox_0
+        m.hitbox = require("src.zelda.tmc.Beetle66").flyBox() or { x = 0, y = 0, w = 1, h = 1 } -- gHitbox_0 (round 66: read from the ROM)
         bAnim(E, m, false)
       end
     end
@@ -820,7 +827,7 @@ function T.jaws(E, m)
     local a = (m.dir % 32) * math.pi / 16
     m.x, m.y = m.x + math.sin(a) * m.speed / 256, m.y - math.cos(a) * m.speed / 256 -- LinearMoveUpdate
     m.anim:update(1)
-    if T.touch(E, m) then m.subtimer = 0 end -- OnCollision case 4 (ModHealth(-2) by the matrix here)
+    jawTouch(E, m) -- OnCollision case 4: subtimer 0 + ModHealth(-2) (round 66: Beetle66)
   end
 end
 
@@ -829,6 +836,7 @@ function T.JawImpl(E)
   local J = {}
   function J:update() end
   function J:swordHit(m, box)
+    if m.action == 4 and not m.deleted then return require("src.zelda.tmc.Beetle66").swordFly(E, m, box) end -- round 66: OnCollision case 4
     if m.deleted or m.action >= 3 or m.iframes > 0 then return false end
     local hb = m.hitbox
     if math.abs((m.x + hb.x) - box.x) < hb.w + box.w and math.abs((m.y + hb.y) - box.y) < hb.h + box.h then

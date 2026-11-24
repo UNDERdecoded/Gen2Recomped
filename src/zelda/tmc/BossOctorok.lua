@@ -97,20 +97,19 @@ local BGM_BOSS_THEME = 0x2E
 local SPECIAL_FX, FX_ROCK, FX_GIANT_EXPLOSION3 = 0x0F, 0x04, 0x48
 
 -- tables written out in octorokBoss.c / octorokBossObject.c
-local PART_ANIM = { [0] = 0, 1, 1, 1, 1, 2, 1, 3 }             -- gUnk_080CF08C[type * 4]
-local LEG_OFF = { 40, 80, 176, 216 }                           -- OctorokBoss_LegAngleOffset
-local LEG_OFF2 = { 128, 0, 0, 128 }                            -- OctorokBoss_LegAngleOffset2
-local HEALTH_PER_PHASE = { [0] = 3, 1, 3, 1, 3, 1, 3, 0 }       -- OctorokBoss_HealthPerPhase
-local ATK_TIMER_W, ATK_TIMER_V = { 48, 96, 80, 32 }, { 5, 10, 15, 30 }
-local TURN_W, TURN_V = { 48, 96, 80, 32 }, { 70, 80, 90, 100 }
-local WAIT_W, WAIT_V = { 64, 128, 64 }, { 1, 2, 3 }
-local P4 = { [0] = { 0, 4, 0, 2, 5 }, { 1, 4, 0, 2, 5 }, { 0, 4, 0, 4, 0, 5 }, { 1, 4, 0, 2, 5 } } -- OctorokBoss_Phase4AttackPatterns
-local NORMAL_PAT = { [0] = 1, 0, 1, 0, 0 }                     -- OctorokBoss_NormalAttackPatterns
-local FROZEN_PAT = { [0] = 1, 3, 1, 3, 1 }                     -- OctorokBoss_FrozenAttackPatterns
-local FRAG_DIR = { [0] = 0, 224, 32 }                          -- gUnk_08129ADC
-local FIRE_ORBIT = { [0] = 0, 4096, 16, 6144, 240, 7168, 32, 6144, 224, 5120, 48, 4096, 192, 4096, 208, 7168,
-                     64, 4096, 192, 6144, 80, 7168, 176, 6144, 96, 5120, 160, 4096, 112, 4096, 144, 7168 } -- gUnk_0812384C
-local CRYSTAL = { [0] = 0, 0, 32, 8192, 96, 8192, 160, 8704, 208, 8192 }                  -- gUnk_0812388C
+local PART_ANIM = require("src.zelda.tmc.RomTables").t("BossOctorok.PART_ANIM")             -- gUnk_080CF08C[type * 4]
+local LEG_OFF = require("src.zelda.tmc.RomTables").t("BossOctorok.LEG_OFF")                      -- OctorokBoss_LegAngleOffset
+local LEG_OFF2 = require("src.zelda.tmc.RomTables").t("BossOctorok.LEG_OFF2")                    -- OctorokBoss_LegAngleOffset2
+local HEALTH_PER_PHASE = require("src.zelda.tmc.RomTables").t("BossOctorok.HEALTH_PER_PHASE")       -- OctorokBoss_HealthPerPhase
+local ATK_TIMER_W, ATK_TIMER_V = require("src.zelda.tmc.RomTables").t("BossOctorok.ATK_TIMER_W"), require("src.zelda.tmc.RomTables").t("BossOctorok.ATK_TIMER_V") -- OctorokBoss_AttackTimerWeights / Values
+local TURN_W, TURN_V = require("src.zelda.tmc.RomTables").t("BossOctorok.TURN_W"), require("src.zelda.tmc.RomTables").t("BossOctorok.TURN_V")       -- OctorokBoss_TurnTimeWeights / Values
+local WAIT_W, WAIT_V = require("src.zelda.tmc.RomTables").t("BossOctorok.WAIT_W"), require("src.zelda.tmc.RomTables").t("BossOctorok.WAIT_V")       -- OctorokBoss_WaitForAttackTurnsWeights / Values
+local P4 = require("src.zelda.tmc.RomTables").t("BossOctorok.P4") -- OctorokBoss_Phase4AttackPatterns
+local NORMAL_PAT = require("src.zelda.tmc.RomTables").t("BossOctorok.NORMAL_PAT")                     -- OctorokBoss_NormalAttackPatterns
+local FROZEN_PAT = require("src.zelda.tmc.RomTables").t("BossOctorok.FROZEN_PAT")                     -- OctorokBoss_FrozenAttackPatterns
+local FRAG_DIR = require("src.zelda.tmc.RomTables").t("BossOctorok.FRAG_DIR")                          -- gUnk_08129ADC
+local FIRE_ORBIT = require("src.zelda.tmc.RomTables").t("BossOctorok.FIRE_ORBIT") -- gUnk_0812384C
+local CRYSTAL = require("src.zelda.tmc.RomTables").t("BossOctorok.CRYSTAL")                  -- gUnk_0812388C
 B.PART_ANIM, B.HEALTH_PER_PHASE, B.P4, B.NORMAL_PAT, B.FROZEN_PAT = PART_ANIM, HEALTH_PER_PHASE, P4, NORMAL_PAT, FROZEN_PAT
 
 -- gSineTable (256 steps a turn, $100 = 1)
@@ -1542,6 +1541,7 @@ function B:draw(e, camX, camY)
   if te and not te.gone and te.draw then self:drawAff(te, camX, camY, te.u76, te.u74, bxor(band(-setHi(0, te.angHi or 0), 0xFFFF), 0x8000), "tailEnd") end
 end
 
+require("src.zelda.tmc.Octo70").install(B) -- round 70: the parts' contact (CollisionDefault) and the flame box (Octo70.lua)
 -- the R26 hooks
 local M = { ROM_RANGES = B.ROM_RANGES, B = B }
 function M.spawnEnemy(E, dat, def)

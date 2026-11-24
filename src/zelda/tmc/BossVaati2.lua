@@ -114,25 +114,22 @@ local FX_DEATH, FX_ROCK, FX_AURA_BASE = 0x02, 0x04, 0x55
 local ZELDA_CHASE = 0x1C
 
 -- vaatiTransfigured.c tables
-local PHASE_HP = { [0] = 0xF0, 0xD0, 0xC0 }                     -- gUnk_080D0ABC (USA)
-local WAITS = { [0] = 0x3C, 0x3C, 0x1E, 0x14, 0x14, 0x14, 0, 0, 0 } -- gUnk_080D0ABF
-local PUPIL = { [0] = { 0, -2 }, { 1, -2 }, { 1, -2 }, { 2, -2 }, { 2, -2 }, { 3, -2 }, { 3, -2 }, { 4, -2 }, { 4, -1 }, { 3, -1 },
-  { 3, 0 }, { 2, 0 }, { 2, 0 }, { 1, 0 }, { 1, 0 }, { 0, 0 }, { 0, 0 }, { 0, 0 }, { -1, 0 }, { -1, 0 },
-  { -2, 0 }, { -2, 0 }, { -3, 0 }, { -3, -1 }, { -4, -1 }, { -4, -2 }, { -3, -2 }, { -3, -2 }, { -2, -2 }, { -2, -2 },
-  { -1, -2 }, { -1, -2 } }                                        -- gUnk_080D0B18
-local TGT0 = { [0] = 0xB0, 0x70, 0x110, 0x40, 0x50, 0x40 }        -- gUnk_080D0B58
-local TGT1 = { [0] = 0xB0, 0x40, 0x110, 0xA0, 0xB0, 0xC0, 0x50, 0xA0 } -- gUnk_080D0B64
-local EYESETS = { [0] = 0xF0, 0xC3, 0xF0, 0x3C, 0xC3, 0x3C, 0x3C, 0xF0, 0x0F, 0x3C, 0xC3, 0xF0, 0xF0, 0xC3, 0x3C, 0xC3 } -- gUnk_080D0B74
-local ATTACKS = { [0] = 1, 0, 1, 2, 0, 1, 2, 0, 1, 0, 2, 1, 2, 1, 0, 2, 1, 2, 0, 1, 2, 1, 2, 0, 2, 1, 0, 1, 1, 0, 2, 0 } -- gUnk_080D0B84
+local PHASE_HP = require("src.zelda.tmc.RomTables").t("BossVaati2.PHASE_HP")                     -- gUnk_080D0ABC (USA)
+local WAITS = require("src.zelda.tmc.RomTables").t("BossVaati2.WAITS") -- gUnk_080D0ABF
+local PUPIL = require("src.zelda.tmc.RomTables").t("BossVaati2.PUPIL")                                        -- gUnk_080D0B18
+local TGT0 = require("src.zelda.tmc.RomTables").t("BossVaati2.TGT0")        -- gUnk_080D0B58
+local TGT1 = require("src.zelda.tmc.RomTables").t("BossVaati2.TGT1") -- gUnk_080D0B64
+local EYESETS = require("src.zelda.tmc.RomTables").t("BossVaati2.EYESETS") -- gUnk_080D0B74
+local ATTACKS = require("src.zelda.tmc.RomTables").t("BossVaati2.ATTACKS") -- gUnk_080D0B84
 -- vaatiTransfiguredEye.c
-local EYE_POS = { [0] = { -24, -10 }, { -10, -24 }, { 10, -24 }, { 24, -10 }, { 24, 10 }, { 10, 24 }, { -10, 24 }, { -24, 10 } } -- gUnk_080D18B4
+local EYE_POS = require("src.zelda.tmc.RomTables").t("BossVaati2.EYE_POS") -- gUnk_080D18B4
 -- vaati2Particle.c
-local PART_POS = { [0] = { 0, -24 }, { 16, -16 }, { 24, 0 }, { 16, 16 }, { 0, 24 }, { -16, 16 }, { -24, 0 }, { -16, -16 } } -- gUnk_081242D8
+local PART_POS = require("src.zelda.tmc.RomTables").t("BossVaati2.PART_POS") -- gUnk_081242D8
 -- vaatiEyesMacro.c
-local MACRO_DIRS = { [0] = 0, 8, 0x18, 0 }                          -- gUnk_080CDE6C
-local MACRO_FRAMES = { [0] = 9, 9, 8, 9, 8, 8, 8, 7, 7, 7, 6, 7, 6, 6, 6, 5, 5, 5, 12, 5, 12, 12, 12, 11, 11, 11, 10, 11, 10, 10, 10, 9 } -- gUnk_080CDE70
-local MACRO_BOB = { [0] = -2, -3, -4, -5, -6, -5, -4, -3 }        -- gUnk_080CDE90
-local MACRO_SPEED = { [0] = 0xC0, 0x100, 0x140, 0x180 }           -- gUnk_080CDE98
+local MACRO_DIRS = require("src.zelda.tmc.RomTables").t("BossVaati2.MACRO_DIRS")                          -- gUnk_080CDE6C
+local MACRO_FRAMES = require("src.zelda.tmc.RomTables").t("BossVaati2.MACRO_FRAMES") -- gUnk_080CDE70
+local MACRO_BOB = require("src.zelda.tmc.RomTables").t("BossVaati2.MACRO_BOB")        -- gUnk_080CDE90
+local MACRO_SPEED = require("src.zelda.tmc.RomTables").t("BossVaati2.MACRO_SPEED")           -- gUnk_080CDE98
 M.T = { PHASE_HP = PHASE_HP, WAITS = WAITS, PUPIL = PUPIL, TGT0 = TGT0, TGT1 = TGT1, EYESETS = EYESETS, ATTACKS = ATTACKS,
         EYE_POS = EYE_POS, PART_POS = PART_POS, MACRO_DIRS = MACRO_DIRS, MACRO_FRAMES = MACRO_FRAMES, MACRO_BOB = MACRO_BOB,
         MACRO_SPEED = MACRO_SPEED }
@@ -140,8 +137,8 @@ M.T = { PHASE_HP = PHASE_HP, WAITS = WAITS, PUPIL = PUPIL, TGT0 = TGT0, TGT1 = T
 -- the s16 tile offsets per direction quarter (data/const/beanstalkSubtask.s, an .incbin)
 M.ROM_RANGES = { vaati2_tileofs = { 0x080B4488, 0x080B4490 } } -- gUnk_080B4488
 
-local START_EXIT = { area = 0x8B, room = 0, endX = 0xB0, endY = 0x88, layer = 1, kind = 0, facing = 0 } -- gUnk_0813AC34
-local ARM_EXIT = { area = 0x8B, room = 0, endX = 0xB0, endY = 0x88, layer = 1, kind = 1, facing = 4 }   -- gUnk_0813AC48
+local START_EXIT = require("src.zelda.tmc.RomTables").t("BossVaati2.START_EXIT") -- gUnk_0813AC34
+local ARM_EXIT = require("src.zelda.tmc.RomTables").t("BossVaati2.ARM_EXIT")   -- gUnk_0813AC48
 M.START_EXIT, M.ARM_EXIT = START_EXIT, ARM_EXIT
 
 -- gRoomTransition.field_0x38 .. 3d (they outlive the room)
@@ -952,9 +949,7 @@ end
 -- VAATI_EYES_MACRO (inside Vaati's arms)
 -- ===========================================================================
 local function tileOfs(f, q) -- gUnk_080B4488[q] -> dx, dy (in tiles)
-  local T = require("src.zelda.tmc.ExtractR26").tables(f, "vaati2_tileofs")
-  local o = T and T.s16(0x080B4488 + q * 2)
-  if not o then o = ({ [0] = -64, 1, 64, -1 })[q] end -- (an old cache: the 64-wide map's neighbours)
+  local o = require("src.zelda.tmc.RomTables").t("BossVaati2.TILE_OFS")[q] -- (round 36: through RomTables)
   local dy = math.floor((o + 32) / 64)
   return o - dy * 64, dy
 end

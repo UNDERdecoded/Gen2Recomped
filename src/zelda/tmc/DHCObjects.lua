@@ -84,16 +84,11 @@ O.ROM_RANGES = {
   pushProbe = { 0x080B4468, 0x080B4478 },    -- gUnk_080B4468 (data_080B4410/gUnk_080B4468.bin): s16 {x, y} by Link's state, UpdatePlayerCollision's tile
 }
 
-O.JAIL_SHUT = { 0x4023, -3, 0x4023, -2, 0x4023, -1, 0x4023, 0, 0x4023, 1, 0x4023, 2 } -- gUnk_08124960
-O.JAIL_OPEN = { 0x4023, -3, 0x4023, -2, 0x4088, -1, 0x4087, 0, 0x4023, 1, 0x4023, 2 } -- gUnk_0812497A
-O.STAIRS_TILES = { -- gUnk_08122850 / 62 / 74 / 86 (SPECIAL_TILE_n = $4000 + n)
-  [0] = { 0x4027, 0x4023, 0x4028, 0x402C, 0x402B, 0x402D, 0x4029, 0x4026, 0x402A },
-  { 0x4027, 0x4023, 0x4028, 0x4024, 0x4022, 0x4025, 0x4029, 0x4026, 0x402A },
-  { 0x4027, 0x4023, 0x4023, 0x4024, 0x4022, 0x4022, 0x4029, 0x4026, 0x4026 },
-  { 0x4023, 0x4023, 0x4028, 0x4022, 0x4022, 0x4025, 0x4026, 0x4026, 0x402A },
-}
-O.STAIRS_FLAGS = { [0] = { 0x200, 0xA1, 0xA2 }, { 0x8C0, 0x6F, 0x70 } } -- gUnk_08122898 {bank, left, right}
-O.STATUE_SHOT = { [0] = { 0, 12 }, { 12, 2 }, { 0, 12 }, { -12, 2 } } -- gUnk_08124684
+O.JAIL_SHUT = require("src.zelda.tmc.RomTables").t("DHCObjects.JAIL_SHUT") -- gUnk_08124960
+O.JAIL_OPEN = require("src.zelda.tmc.RomTables").t("DHCObjects.JAIL_OPEN") -- gUnk_0812497A
+O.STAIRS_TILES = require("src.zelda.tmc.RomTables").t("DHCObjects.STAIRS_TILES")
+O.STAIRS_FLAGS = require("src.zelda.tmc.RomTables").t("DHCObjects.STAIRS_FLAGS") -- gUnk_08122898 {bank, left, right}
+O.STATUE_SHOT = require("src.zelda.tmc.RomTables").t("DHCObjects.STATUE_SHOT") -- gUnk_08124684
 
 local SIN = {}
 for i = 0, 319 do SIN[i] = math.floor(math.sin(i * math.pi / 128) * 256 + 0.5) end -- gSineTable ($100 = 1)
@@ -487,7 +482,7 @@ local function ballUpdate(d, c)
   if c.deleted then return end
   c.anim:update(1)
   if c.action == 1 then
-    if not h.pm0(f:enemies(), c, c.direction, c.speed) then fx(f, c.x, c.y, FX_DEATH); c.deleted = true return end
+    if not require("src.zelda.tmc.DHC92").pm3(f:enemies(), c, c.direction, c.speed) then fx(f, c.x, c.y, FX_DEATH); c.deleted = true return end -- round 92: ProcessMovement3
     -- the sword's contact: tgtIfr < -4 -> sent back (CannonballProjectile_OnCollision)
     local sb = f.swordBoxNow
     if sb and sb.t and sb.t >= (f.frame or 0) - 1 and sb.t ~= c.swordT
@@ -497,16 +492,17 @@ local function ballUpdate(d, c)
       local p = f.player
       c.direction = h.dirTo(p.x, p.y, c.x, c.y)
       local home = lshift(bxor(c.form or 0, 2), 3)
-      if band(c.direction - home + 1, 0x1F) < 3 then c.direction = home end
+      c.direction = require("src.zelda.tmc.DHC92").snap(c.direction, home) -- round 92: the cartridge's unsigned test
       c.speed = 0x280
       return
     end
+    do local k = require("src.zelda.tmc.DHC92").cloneHit(f, c) if k then require("src.zelda.tmc.DHC92").sendBack(c, k.x, k.y, h.dirTo) return end end -- round 92: a clone's sword
     if h.canTouch(f, c) and (f.player.invuln or 0) == 0 and h.touches(f, c, c.hitbox) then
       if not f.player:blocksFrom(c.x, c.y) then h.hurtLink(f:enemies(), c, c.hitType) end
       fx(f, c.x, c.y, FX_DEATH); c.deleted = true
     end
   elseif c.action == 2 then
-    local moved = h.pm0(f:enemies(), c, c.direction, c.speed)
+    require("src.zelda.tmc.DHC92").pm3(f:enemies(), c, c.direction, c.speed) -- round 92: ProcessMovement3
     local m = c.parent
     for i = 0, 3 do -- sub_080AB634
       local s = m and m.statues[i]
@@ -519,7 +515,7 @@ local function ballUpdate(d, c)
         return
       end
     end
-    if not moved then fx(f, c.x, c.y, FX_DEATH); c.deleted = true end
+    if (c.collisions or 0) ~= 0 then fx(f, c.x, c.y, FX_DEATH); c.deleted = true end -- round 92: collisions != COL_NONE
   end
 end
 local function fire(d, s)
@@ -814,6 +810,15 @@ reg(0x89, 0x01, function(f) -- Outside Garden
     if not loc(f, 1) then f:loadEntityList(0x080EAE60) end
   end
   f:setFlag("global", SEIIKI_BGM, false)
+end)
+-- round 44: sub_StateChange_SanctuaryEntrance_Main: with the White Sword its
+-- list (MINISH_VILLAGE_OBJECT type 1 at (136,64)) and, until
+-- NAKANIWA_00_EZERO (local $14), CutsceneOrchestratorSanctuaryEntrance
+reg(0x81, 0x00, function(f)
+  if (f:inventory(ITEM_GREEN_SWORD) or 0) ~= 0 then
+    f:loadEntityList(0x080F5328)
+    if not loc(f, 0x14) then f:loadEntityList(0x080F5308) end
+  end
 end)
 reg(0x78, 0x00, function(f) if glob(f, SEIIKI_BGM) then f.queuedBgm = BGM_CASTLE_COLLAPSE end end) -- Sanctuary Hall
 reg(0x78, 0x01, function(f) -- Sanctuary Main

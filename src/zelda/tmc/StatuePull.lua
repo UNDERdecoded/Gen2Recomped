@@ -20,7 +20,7 @@ local ANIM_GRAB, ANIM_PULL, ANIM_PULL_NOCAP = 0x378, 0x340, 0x944
 local SFX_10F = 0x10F
 local KEY = { [0] = "up", [2] = "right", [4] = "down", [6] = "left" }
 local AWAY = { [0] = "down", [2] = "left", [4] = "up", [6] = "right" }
-local DV = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local DV = require("src.zelda.tmc.RomTables").t("StatuePull.DV")
 
 local function endHold(p)
   p.state = "normal"

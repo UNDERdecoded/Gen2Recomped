@@ -58,7 +58,10 @@ function Player:animFor(kind)
   return ANIM[kind]
 end
 
--- the player's hitbox against tiles: feet-centred box
+local C80 = require("src.zelda.tmc.Collide80") -- round 80: Link's tile sensors from the cartridge
+
+-- the player's hitbox against tiles: feet-centred box (round 80: only with an
+-- older cache; Collide80 has the cartridge's sensors)
 local HW, TOP, BOTTOM = 4, -5, 2
 local HW_MINISH, TOP_MINISH, BOTTOM_MINISH = 2, -2, 1
 
@@ -82,7 +85,12 @@ function Player:setAnim(id, force)
   local base = id
   local sprite = rshift(base, 8)
   local index = band(base, 0xFF)
-  if not NO_FACING[base] then
+  -- round 44: sub_08078FB0 adds the facing only below a threshold of the
+  -- animation's low byte: $58 without the cap, $18 Minish, $34 for sprite 7
+  -- (ANIM_PORTAL_ACTIVATE's), else $B8.  ANIM_GET_WHITE_SWORD ($1E2, Melari)
+  -- and the death animations ($1BC / $2BD / $459 / $45A) took a facing.
+  local th = (self.hasCap == false and 0x58) or (self.minish and 0x18) or (sprite == 7 and 0x34) or 0xB8
+  if not NO_FACING[base] and index < th then
     index = index + rshift(self.animationState, 1)
     -- bug round: sub_08079064 also sets the entity's spriteSettings.flipX
     -- for a facing animation (animationState >= 5, i.e. left); the drawer
@@ -99,6 +107,7 @@ end
 
 -- solid test for the box around (x, y)
 function Player:blocked(x, y)
+  if self.field and C80.ready() then return C80.blocked(self, x, y) end -- round 80: the cartridge's sensors (Collide80.lua)
   local room = self.field.room
   local hw, top, bottom = HW, TOP, BOTTOM
   if self.minish then hw, top, bottom = HW_MINISH, TOP_MINISH, BOTTOM_MINISH end
@@ -143,6 +152,7 @@ end
 -- solid (a pushed statue settling against him, an object pushing him out)
 -- he can still step away as long as the side he moves toward is free
 function Player:leadFree(nx, ny, dx, dy)
+  if self.field and C80.ready() then return C80.leadFree(self, nx, ny, dx, dy) end -- round 80
   local room = self.field.room
   local hw, top, bottom = HW, TOP, BOTTOM
   if self.minish then hw, top, bottom = HW_MINISH, TOP_MINISH, BOTTOM_MINISH end
@@ -158,6 +168,11 @@ end
 function Player:moveBy(dx, dy)
   -- round 18: Minish doors / log tunnels (MinishTunnel.lua)
   if self.tunnel then local tm = require("src.zelda.tmc.MinishTunnel").move(self, dx, dy); if tm ~= nil then return tm end end
+  if self.field and C80.ready() then -- round 80: sub_080085CC + LinearMoveDirectionOLD + sub_0807A5B8 (Collide80.lua)
+    local m = C80.move(self, dx, dy, self.coll80)
+    if self.minish and m then require("src.zelda.tmc.MinishTunnel").surface(self) end
+    return m
+  end
   local moved = false
   local embedded = (dx ~= 0 or dy ~= 0) and self:blocked(self.x, self.y)
   if dx ~= 0 then
@@ -216,7 +231,7 @@ end
 
 -- the tile in front, as the cartridge probes it (gUnk_080B4468:
 -- north (0,-15), east (12,-3), south (0,9), west (-12,-3))
-local PROBE = { [0] = { 0, -15 }, [2] = { 12, -3 }, [4] = { 0, 9 }, [6] = { -12, -3 } }
+local PROBE = require("src.zelda.tmc.RomTables").t("Player.PROBE") -- (round 36: read from the ROM)
 function Player:probe()
   local p = PROBE[self.animationState] or PROBE[4]
   return self.x + p[1], self.y + p[2]
@@ -253,6 +268,11 @@ function Player:hurt(damage, sx, sy)
   -- sub_08072CC0 until it lands (sub_08072D54's COLLISION_ON) -- a hit mid-flight
   -- used to end the fling and leave Link at z > 0 (no lifting afterwards)
   if self.fling and (self.fling.phase or 0) < 3 then return false end
+  if self.inHole42 and not self.hop42 then return false end -- round 42: PlayerInHoleInit COLLISION_OFF until the hop (Hole42.lua)
+  -- round 52: a ledge jump (PLAYER_JUMP) starts with COLLISION_OFF (playerUtils.c sub_08079550) and only
+  -- ResetPlayerAnimationAndAction after the landing frames turns it back on: a hit mid-jump left Link
+  -- walking at z > 0 on the top layer ($58:19's east ledge onto the Eyegore below)
+  if self.ledge then return false end
   local f = self.field
   f:modStat("health", -damage)
   f:sound(0x7A) -- SFX_PLY_VO7-ish grunt (named SFX in sound.h are sparse)
@@ -261,7 +281,8 @@ function Player:hurt(damage, sx, sy)
   if d < 0.01 then dx, dy, d = 0, 1, 1 end
   self.kbx, self.kby = dx / d * 2, dy / d * 2
   self.invuln = 60
-  if self.state == "carry" then f:objects():dropCarried(self) end
+  if self.state == "carry" or (self.throwR29 and self.carried) then f:objects():dropCarried(self) end
+  self.throwR29, self.liftPhase = nil, nil -- round 29 (PotCarry.lua)
   -- round 20: hit while gliding (PlayerParachute: iframes -> the fall, still in the air)
   if (self.para or self.fall) and require("src.zelda.tmc.Whirlwind").hurt(self) then return true end
   self.state = "hurt"
@@ -321,7 +342,9 @@ end
 function Player:update(input)
   local f = self.field
   if self.invuln > 0 then self.invuln = self.invuln - 1 end
+  require("src.zelda.tmc.Life74").frame(self) -- round 74: HandlePlayerLife -> sub_08079B24 every frame (health 0 -> the death)
   require("src.zelda.tmc.Layers").surface(f, self) -- round 23: sub_0807A8D8 (every frame): the tile-type flags pick the layer
+  if require("src.zelda.tmc.Waterfall64").frame(self) then return end -- round 64: SurfaceAction_14 (down a waterfall)
   local walkAnim = self:animFor("walk")
   local idleAnim = self:animFor("idle")
   local st = self.state
@@ -337,6 +360,8 @@ function Player:update(input)
     return
   elseif st == "hurt" then
     self:moveBy(self.kbx, self.kby)
+    -- round 42: hit mid-jump (the hole hop, jump_status $41): DoJump keeps the gravity going
+    if (self.z or 0) > 0 and self.hop42 then self.zv = (self.zv or 0) - 0.125; self.z = math.max(0, self.z + self.zv); if self.z == 0 then self.zv, self.hop42, self.inHole42 = 0, nil, nil else self.timer = math.max(self.timer, 2) end end
     self.timer = self.timer - 1
     self.anim:update(1)
     if self.timer <= 0 then self.state = "normal" end
@@ -365,6 +390,7 @@ function Player:update(input)
     if self.timer <= 0 then self.state = "normal" end
     return
   elseif st == "throw" then
+    if require("src.zelda.tmc.PotCarry").throwFrame(self) then return end -- round 29: release on ANIM_THROW's frame & 1
     self.anim:update(1)
     self.timer = self.timer - 1
     if self.timer <= 0 then self.state = "normal" end
@@ -389,6 +415,7 @@ function Player:update(input)
   if not locked then dx, dy = dirInput(input) end
 
   if st == "carry" then
+    if require("src.zelda.tmc.PotCarry").carryFrame(self, input, locked) then return end -- round 29: pickup phase, delayed throw
     if not locked and (input.pressed("r") or input.pressed("a") or input.pressed("b")) then
       f:objects():throwCarried(self)
       self.state = "throw"
@@ -515,7 +542,7 @@ function Player:draw(camX, camY, palette)
   if frame == 0xFF then return end
   local img, ox, oy = A:spriteFrame(sprite, frame, palette, "link")
   if not img then return end
-  local x = math.floor(self.x - camX)
+  local x = math.floor(self.x - camX) + (self.drawDX31 or 0) -- round 31: the frozen Link's shake (spriteOffsetX 2, R31.lua)
   local y = math.floor(self.y - camY - (self.z or 0))
   if self.spriteOY and self.spriteOYFrame == self.field.frame then y = y + self.spriteOY end -- round 25: gPlayerState.spriteOffsetY (lava platforms, Gleerok's neck), set each frame it applies
   -- round 7: a cart under him (Minecart.lua), the cane over him (Pacci.lua)

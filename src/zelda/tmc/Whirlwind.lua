@@ -30,7 +30,7 @@
 --     4 up to z -32, 1 px a frame;  5 LinearMoveUpdate (no collision) in the
 --       facing's cardinal direction, z += 0.296875 a frame, until the moving
 --       axis' coordinate & $F == 8 over an open tile: the fall.
---     (6 / 7 are type2 1's Cloud Tops room change: not used on Mt. Crenel.)
+--     (6 / 7 are type2 1's Cloud Tops room change: round 34, Vortex34.lua.)
 --   The fall (DoJump, jump_status $40): straight down with kGravityRate,
 --     ANIM_LAND + SFX_PLY_LAND, normal when the animation ends.
 --   EzloCapFlying type 0: affine scales unk_6e (x) / unk_72 (y) ($100 = 1),
@@ -52,12 +52,12 @@ W.OBJ = 0x5E
 W.CAP = 0x61
 local GRAV = 0.125                       -- kGravityRate Q_8_8(32)
 local A_ACTIVATE, A_PARA, A_FALL = 0x700, 0x708, 0x730
-local A_TURN = { [0] = 0x708, 0x71C, 0x718, 0x714 }   -- sAnims1: none, left, opposite, right
-local A_TURN2 = { [0] = 0x708, 0x728, 0x724, 0x720 }  -- sAnims2
+local A_TURN = require("src.zelda.tmc.RomTables").t("Whirlwind.A_TURN")   -- sAnims1: none, left, opposite, right
+local A_TURN2 = require("src.zelda.tmc.RomTables").t("Whirlwind.A_TURN2")  -- sAnims2
 local A_LAND, A_LAND_NOCAP = 0x820, 0x424
 local SFX_153, SFX_VO5, SFX_124, SFX_LAND = 0x153, 0x79, 0x124, 0x7D
 -- gUnk_0811C1D8: the ledge-face act tiles per facing (N, E, S, W)
-W.FACE = { [0] = { 42, 38 }, { 45, 39 }, { 43, 38 }, { 44, 39 } }
+W.FACE = require("src.zelda.tmc.RomTables").t("Whirlwind.FACE")
 
 local SIN = {}
 for i = 0, 255 do SIN[i] = math.floor(math.sin(i * math.pi / 128) * 256 + 0.5) end
@@ -125,12 +125,12 @@ end
 -- ---------------------------------------------------------------------------
 -- PLAYER_PARACHUTE
 -- ---------------------------------------------------------------------------
-function W.start(p, type2)
+function W.start(p, type2, exitIdx)
   if p.carried then p.field:objects():dropCarried(p) end
   p.ledge = nil
   p.state = "ext"
   p.extUpdate = W.player
-  p.para = { sub = 0, type2 = type2 or 0 }
+  p.para = { sub = 0, type2 = type2 or 0, exitIdx = exitIdx or 0xFF } -- (exitIdx: gPlayerState.field_0x39, round 34)
   p.jumping = nil
   p.paraAnim = nil
 end
@@ -143,7 +143,7 @@ local function face(p) return band(p.animationState or 4, 6) end
 
 -- sub_0807A2F8(0): blocked facing a ledge face Link can glide up onto;
 -- returns the number of tiles (2 or 3) or nil
-function W.ledgeUp(p)
+function W.ledgeUp(p, param1) -- round 84: param1 = sub_0807A2F8(1) (the Cane of Pacci's spring: no blocked test)
   local f = p.field
   local r = f.room
   local s = face(p)
@@ -152,8 +152,8 @@ function W.ledgeUp(p)
   local ox = hb and hb.ox or 0
   local oy = hb and hb.oy or 0
   -- sub_08079778: Link's collisions on the facing side
-  local d = ({ [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } })[s / 2]
-  if not p:blocked(p.x + d[1], p.y + d[2]) then return nil end
+  local d = (require("src.zelda.tmc.RomTables").fresh("Whirlwind.L155"))[s / 2]
+  if not param1 and not p:blocked(p.x + d[1], p.y + d[2]) then return nil end
   local x, y = math.floor(p.x), math.floor(p.y)
   local ax, ay, bx, by
   if band(s, 2) ~= 0 then ax, ay, bx, by = x, y - u[4], x, y + u[4]
@@ -182,6 +182,16 @@ function W.ledgeUp(p)
     n = i + 1
   end
   if n == 0 then return nil end
+  -- round 43: AreaIsDungeon: the probes step one tile further (past the free
+  -- tiles when the loop stopped on them) and that tile's LAYER_TOP collision
+  -- must be 0 for both -- $50:14's glide met the face tiles in front of the
+  -- wall column between its two walkways (col 11) and flew on forever
+  if require("src.zelda.tmc.MapMenu").isDungeon(f) and r.coll and r.coll[2] then
+    at[1], at[2], bt[1], bt[2] = at[1] + d[1], at[2] + d[2], bt[1] + d[1], bt[2] + d[2]
+    local top = r.coll[2]
+    if (top[at[2] * r.tw + at[1]] or 0) == 0 and (top[bt[2] * r.tw + bt[1]] or 0) == 0 then return n + 1 end
+    return nil
+  end
   if n == 2 then
     at[1], at[2], bt[1], bt[2] = at[1] + d[1], at[2] + d[2], bt[1] + d[1], bt[2] + d[2]
   end
@@ -215,7 +225,7 @@ local function fallUpdate(p)
     p.anim:update(1)
     if gravity(p, GRAV) > 0 then return end
     local Lay = require("src.zelda.tmc.Layers")
-    p.layer = Lay.resolve(f, p)
+    if not require("src.zelda.tmc.Glide76").keepLayer(f) then p.layer = Lay.resolve(f, p) end -- round 76: area 8 keeps the layer
     Lay.update(f, p)
     fl.sub, fl.timer = 2, 6
     p:setAnim(p.hasCap and A_LAND or A_LAND_NOCAP, true)
@@ -259,10 +269,14 @@ function W.player(p, input)
     if not p.cap then W.capNew(p) end
   elseif s == 1 then
     gravity(p, -GRAV / 2)
-    if p.zv > 0 then p.zv = 4.5625; pa.sub = 2 end
+    if p.zv > 0 or pa.type2 == 1 then p.zv = 4.5625; pa.sub = 2 end -- (round 34: field_0x38 == 1 at once)
   elseif s == 2 then
     gravity(p, p.zv < 0 and GRAV / 4 or GRAV * 2)
-    if p.zv < 0 and p.z < 32 then
+    if p.zv < 0 and p.z < 32 and pa.type2 == 1 then
+      -- round 34: field_0x38 == 1 (a Cloud Tops whirlwind, BIG_VORTEX): sub_0807380C / sub_08073884 (Vortex34)
+      pa.sub, pa.timer = 6, 30
+      p:setAnim(A_PARA, true); p.paraAnim = A_PARA
+    elseif p.zv < 0 and p.z < 32 then
       pa.sub = 3
       pa.d80 = pa.dir * 256
       pa.b3, pa.b2 = 0, 0
@@ -271,7 +285,7 @@ function W.player(p, input)
     p.anim:update(1)
   elseif s == 3 then
     if input.pressed("r") or (p.invuln or 0) > 0 then release(p, true) return end
-    local n = W.ledgeUp(p)
+    local n = not require("src.zelda.tmc.Glide76").noHop(f) and W.ledgeUp(p) -- round 76: sub_0807A2F8 returns 0 in area 8
     if n then
       pa.sub = 4
       pa.dir = face(p) * 4
@@ -283,7 +297,7 @@ function W.player(p, input)
       pa.d80 = pa.d80 % 0x2000
     end
     pa.dir = band(rshift(pa.d80, 8), 0x1F)
-    local vx, vy = vec(pa.dir, 0x80)
+    local vx, vy = vec(pa.dir, require("src.zelda.tmc.Glide76").speed(f)) -- round 76: 0x100 at locationIndex 16
     p:moveBy(vx, vy)
     -- the facing follows the direction
     local st, dir = 4 * p.animationState, pa.dir
@@ -313,6 +327,8 @@ function W.player(p, input)
     if pa.timer == -1 then release(p, false) return end
     p.z = 8 + math.floor(pa.timer / 20)
     require("src.zelda.tmc.Layers").update(f, p)
+  elseif s == 6 or s == 7 then
+    require("src.zelda.tmc.Vortex34").parachute(p, pa, f, A_TURN, GRAV, gravity)
   elseif s == 4 then
     if p.z < 32 then p.z = p.z + 1 else pa.sub = 5 end
   elseif s == 5 then

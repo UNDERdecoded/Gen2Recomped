@@ -16,9 +16,9 @@
 --   front is still $29 and he is not blocked, then takes control.
 local DW = {}
 
-local ENTER = { [0] = { 0, -15 }, [2] = { 12, -3 }, [4] = { 0, 12 }, [6] = { -12, -3 } } -- gUnk_080B4478
-local FRONT = { [0] = { 0, -15 }, [2] = { 12, -3 }, [4] = { 0, 9 }, [6] = { -12, -3 } }  -- gUnk_080B4468
-local STEP = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local ENTER = require("src.zelda.tmc.RomTables").t("DoorWalk.ENTER") -- gUnk_080B4478
+local FRONT = require("src.zelda.tmc.RomTables").t("DoorWalk.FRONT")  -- gUnk_080B4468
+local STEP = require("src.zelda.tmc.RomTables").t("DoorWalk.STEP")
 DW.SPEED = 1.25 -- $140
 
 local function actAt(f, x, y, layer)

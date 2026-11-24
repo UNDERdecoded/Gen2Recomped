@@ -35,7 +35,7 @@ local ITEM_BOW, ITEM_GRIP_RING, ITEM_BOTTLE1, ITEM_KINSTONE, ITEM_BOMBS10, ITEM_
 local AKINDO_BOTTLE_SELL = 0x5A -- flags.h (global)
 local SFX_HIT, SFX_SEED, SFX_BOUNCE, SFX_86 = 0x1BB, 0x18D, 0x118, 0x86
 local FX_BUSH, FX_STARS = 3, 0x1C
-local DIRV = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }
+local DIRV = require("src.zelda.tmc.RomTables").t("BusinessScrub.DIRV")
 
 local function tables(f)
   f._scrubT = f._scrubT or require("src.zelda.tmc.Ppu").table({ A = f.assets }, "scrubTables") or false

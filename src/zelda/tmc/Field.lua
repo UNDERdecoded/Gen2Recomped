@@ -49,6 +49,7 @@ function Field.new(game, save)
   self.menu = Menu.new(self)
   local okHud, hud = pcall(Hud.new, self.assets)
   self.hud = okHud and hud or nil
+  pcall(require, "src.zelda.tmc.Hud78") -- round 78: wraps DisablePauseMenu / EnablePauseMenu (gHUD.hideFlags)
   self.portals = {}
   save.equip = save.equip or {}
   save.collected = save.collected or {}
@@ -57,7 +58,18 @@ function Field.new(game, save)
   -- cartridge keeps the spawn type in gSave.saved_status)
   self._startMinish = st.minish
   self:enterRoom(st.area, st.room, st.x, st.y, st.facing or 4)
+  self:safeContinue()
   return self
+end
+
+-- round 38: a continue spot over water / a hole (a save written by the old
+-- rule, which kept Link's current place) is moved to the nearest safe floor
+function Field:safeContinue()
+  local d = self._dungeon
+  local p = self.player
+  if not d or not p or not d.unsafeAt or not d:unsafeAt(p.x, p.y, p.layer) then return end
+  local s = d:respawnSpot()
+  if s then p.x, p.y = s.x, s.y; if s.layer then p.layer = s.layer end; self.entry = { area = self.room.area, room = self.room.room, x = s.x, y = s.y, facing = p.animationState }; self:snapCamera() end
 end
 
 -- ---------------------------------------------------------------------------
@@ -73,8 +85,7 @@ end
 -- Local flags are one bit array; an area's bank is a bit offset into it
 -- (gLocalFlagBanks: LOCAL_BANK_n -> FLAG_BANK_n, include/flags.h).
 -- CheckLocalFlagByBank takes the offset itself.
-local BANK_OFFSET = { [0] = 0, 0, 0x100, 0x200, 0x300, 0x400, 0x500, 0x5C0, 0x680,
-                      0x740, 0x800, 0x8C0, 0x9C0, 0xA80 }
+local BANK_OFFSET = require("src.zelda.tmc.RomTables").t("Field.BANK_OFFSET")
 Field.BANK_OFFSET = BANK_OFFSET
 
 local function localKey(self, kind, idx, bank)
@@ -217,10 +228,12 @@ function Field:updateGameOver(input)
     s.health = math.min(s.maxHealth, 24)
     self.gameOver = nil
     if r == "quit" then self.game:toTitle() return end
-    local st = self.entry or self.save.status
+    local st = self.save.status -- round 38: GameTask_Init spawns at gSave.saved_status
     self.player.state = "normal"
     self.player.invuln = 60
+    self.player.minish = st.minish and true or false
     self:enterRoom(st.area, st.room, st.x, st.y, st.facing)
+    self:safeContinue()
     return
   end
   go.t = go.t + 1
@@ -236,10 +249,12 @@ function Field:updateGameOver(input)
       self.game:toTitle()
       return
     end
-    local st = self.entry or self.save.status
+    local st = self.save.status -- round 38: GameTask_Init spawns at gSave.saved_status
     self.player.state = "normal"
     self.player.invuln = 60
+    self.player.minish = st.minish and true or false
     self:enterRoom(st.area, st.room, st.x, st.y, st.facing)
+    self:safeContinue()
   end
 end
 
@@ -262,9 +277,14 @@ end
 
 function Field:kinstoneFused(id) return self.kinstone:isFused(id) end
 
+-- CheckPlayerInRegion ($0800293E): (u32)(x - (px - w)) < 2w and the same for y -- px in (x - w, x + w]
+-- (round 55: was |px - x| < w, which left out the far edge: Julietta's chimney region (0x352, 0x2BC)
+-- +-(8, 2) is met by Minish Link at y $2BE on the roof, and he never went in)
 function Field:playerInRegion(x, y, w, h)
   local p = self.player
-  return math.abs(p.x - x) < w and math.abs(p.y - y) < h
+  local dx = x - (math.floor(p.x) - w)
+  local dy = y - (math.floor(p.y) - h)
+  return dx >= 0 and dx < 2 * w and dy >= 0 and dy < 2 * h
 end
 
 -- InitItemGetSequence: the item goes into the inventory, Link holds it up
@@ -277,9 +297,13 @@ function Field:giveItem(item, param, delay)
   local bottled = require("src.zelda.tmc.CrenelPath").giveItem(self, item) -- round 8: bottles
   require("src.zelda.tmc.ItemsR26").giveItem(self, item, param) -- round 26A: GiveItem's item/stat cases (boomerangs, quiver, arrows, wallet)
   local r27 = require("src.zelda.tmc.R27A").giveItem(self, item, param) -- round 27A: figurines, side-quest items (R27A.lua)
+  local meta0 = self.assets.manifest.itemMeta and self.assets.manifest.itemMeta[item]
   if bottled or r27 then -- the contents went into a bottle
   elseif item == 0x5C then
     self.kinstone:addPiece(param)
+  elseif meta0 and meta0.unk1 == 0xD then -- round 39: GiveItem case $D (ITEM_KINSTONE_BAG): the bag + AddKinstoneToBag($72)
+    self.save.items[item] = math.max(1, self.save.items[item] or 0)
+    self.kinstone:addPiece(0x72)
   elseif item == 0x65 then -- round 18: ITEM_BOMBBAG (Bombs.lua, GiveItem case 8)
     require("src.zelda.tmc.Bombs").giveBag(self)
   elseif item == 0x6C or item == 0x6D then -- round 18: ITEM_BOMBS10 / 30 (GiveItem case 9: ModBombs)
@@ -473,6 +497,9 @@ function Field:messageActive() return self.textbox ~= nil or require("src.zelda.
 function Field:startPlayerScript(ptr)
   if not (self.mem and self.mem:valid(ptr)) then return end
   self.playerScript = Script.new(self.mem, ptr)
+  -- round 39: StartPlayerScript leaves gPlayerState.controlMode alone; the
+  -- end of the script gives back the mode the scripts set (ctlMode)
+  if self.player.ctlMode == nil then self.player.ctlMode = self.player.control ~= false end
   self.player.control = false
   self.player.field80 = 0
 end
@@ -518,7 +545,12 @@ function Field:runPlayerScript()
   p.scriptWalking = (p.field80 or 0) == 4
   if ps.stopped then
     self.playerScript = nil
-    p.control = true
+    -- round 39: a player script inside an NPC cutscene (SetPlayerIdle ...
+    -- StartPlayerScript ... EnablePlayerControl) leaves Link disabled until
+    -- the NPC's script enables him (was: control back at once -- the
+    -- first-Kinstone scene let Link walk off while the man came over)
+    p.control = p.ctlMode ~= false
+    p.ctlMode = nil
     p.scriptWalking = nil
   end
 end
@@ -526,6 +558,7 @@ end
 function Field:inputLocked()
   return self.textbox ~= nil or self.transition ~= nil or self.kinstone.active or (self.menu and self.menu.open)
     or self.pan ~= nil
+    or self.textClosedAt == self.frame -- round 58: the message window's closing frame (the press that closed it)
 end
 
 -- ---------------------------------------------------------------------------
@@ -570,6 +603,7 @@ function Field:enterRoom(area, room, x, y, facing)
   if self._dungeon then self._dungeon:reset() end
   self.cameraTarget = nil
   self.camFree = nil -- round 14 (Seamless.lua sets it again after a scroll)
+  require("src.zelda.tmc.Bell75").roomChange(self) -- round 75: GameMain_ChangeRoom re-enables the pause menu
   self.entry = { area = area, room = room, x = x, y = y, facing = facing }
   Script.resetSync()
   if not self.player then self.player = Player.new(self, x, y, facing)
@@ -594,9 +628,24 @@ function Field:enterRoom(area, room, x, y, facing)
   -- PL_NO_CAP until Ezlo joins (InitializePlayer checks EZERO_1ST)
   self.player.hasCap = self:flag("global", Field.FLAG_EZERO_1ST)
   self.player.animId = -1
-  local st = self.save.status
-  st.area, st.room, st.x, st.y, st.facing = area, room, x, y, self.player.animationState
-  st.minish = self.player.minish or nil -- round 10
+  -- round 38: UpdatePlayerRoomStatus (gameUtils.c): gSave.saved_status --
+  -- where CONTINUE (after a game over or a load) puts Link -- is the
+  -- arrival status of the room through which Link entered the current
+  -- location (gArea.locationIndex, 0 = never), not every room nor Link's
+  -- current place (a save over water continued in the water, forever)
+  local loc = (r.areaInfo and r.areaInfo.location) or 0
+  -- round 39: LoadLocationTile (room.c) -- a LOCATION_CHANGER tile entity
+  -- ($0C) sets gArea.locationIndex for its room before UpdatePlayerRoomStatus
+  -- (each Hyrule Field room, Mt. Crenel's entrance ...; the field's area
+  -- location is 0, so a save there used to continue in the last town/house)
+  for _, t in ipairs(r.tileEntities or {}) do if t.type == 0x0C and (t.flag or 0) ~= 0 then loc = t.flag end end
+  if self.curLocation == nil or (loc ~= 0 and loc ~= self.curLocation) then
+    local st = self.save.status
+    st.area, st.room, st.x, st.y, st.facing = area, room, x, y, self.player.animationState
+    st.minish = self.player.minish or nil -- round 10
+    st.layer = nil
+  end
+  if loc ~= 0 or self.curLocation == nil then self.curLocation = loc end
   self:updateProgress()
   self.queuedBgm = nil
   self.save.visited = self.save.visited or {}
@@ -623,11 +672,13 @@ function Field:spawnRoomEntities()
   self._specialWarps = nil -- round 10: SpecialWarp.lua lists of this room
   self:loadEntityList(nil, lists[1])
   self:loadEntityList(nil, lists[0])
-  if self:flag("global", Field.FLAG_TABIDACHI) then self:loadEntityList(nil, lists[2]) end
+  local RM49 = require("src.zelda.tmc.RoomMemory49"); RM49.enter(self) -- round 49: UpdateRoomTracker
+  if self:flag("global", Field.FLAG_TABIDACHI) then RM49.loadList(self, lists[2]) end -- round 49: sub_0804B058 (beaten enemies stay gone)
   local code = self.game.roomCode and self.game.roomCode[self.room.area * 256 + self.room.room]
   if code then pcall(code, self) end
   require("src.zelda.tmc.R26").roomInit(self) -- round 26b: dungeon room init (R26.lua)
   require("src.zelda.tmc.R27A").roomInit(self) -- round 27A: overworld room init (R27A.lua)
+  require("src.zelda.tmc.Valley72").roomInit(self) -- round 72: the Royal Valley and its forest maze (Valley72.lua)
 end
 
 -- an EntityData list at cartridge address `addr`, parsed from the entity
@@ -689,6 +740,7 @@ function Field:delayedEntityLoad(d)
         kind = asObject and KIND.OBJECT or KIND.NPC, id = id, paramA = blob:byte(q + 2),
         paramB = blob:byte(q + 3), type2 = blob:byte(q + 3), pool = script ~= 0 and 0x4F or 0x0F,
         x = u16(blob, q + 4), y = u16(blob, q + 6), paramC = script,
+        timer = u16(blob, q + 12), -- round 57: NPCStruct.timer (entity->timer; cat.c's walk span)
       })
     end
   end
@@ -768,15 +820,18 @@ function Field:spawn(d)
       -- layer ($20 -> 2, $10 -> 1), else ResolveCollisionLayer
       local cl = band(d.collision or 0, 3)
       en.layer = (cl == 1 or cl == 2) and cl or require("src.zelda.tmc.Layers").resolve(self, en)
+      if cl ~= 1 and cl ~= 2 and require("src.zelda.tmc.Room").MERGE_TOP_AREAS[self.room and self.room.area or -1] then en.layer = 1 end -- round 55: scroll_flags & 2 -> layer 1 (room.c)
     end
     if en then self.entities[#self.entities + 1] = en end
     return en
   end
   if d.kind == KIND.PROJECTILE then
     local pe = self._dungeon:spawnProjectile(d)
+    require("src.zelda.tmc.ToD69").projLayer(self, d, pe) -- round 69: LoadRoomEntity's ResolveCollisionLayer (ToD)
     if pe then self.entities[#self.entities + 1] = pe end
     if pe ~= false then return pe end
   end
+  if d.kind == KIND.OBJECT and e.script then local de = require("src.zelda.tmc.Cloud75").scriptedObject(self, d, e) if de then self.entities[#self.entities + 1] = de return de end end -- round 75: a scripted WHIRLWIND is still a whirlwind
   if d.kind == KIND.OBJECT and not e.script then
     local de = self._dungeon:spawnObject(d)
     if de then self.entities[#self.entities + 1] = de return de end
@@ -800,6 +855,7 @@ function Field:spawn(d)
       -- and 8 (sunken: found by diving) start with spriteSettings.draw = 0
       local gk = band(rshift(d.paramB or 0, 8), 0xFF)
       local gi = O:groundItem(d.paramA, band(d.paramB, 0xFF), d.x, d.y, { key = key, kind = gk })
+      require("src.zelda.tmc.Pickup87").place(self, gi, d) -- round 87: LoadRoomEntity's layer (kind byte, else resolve)
       if gi and (gk == 7 or gk == 8) then
         gi.hidden, gi.buried = true, gk
         gi.originalTile = self.room:tileType(1, math.floor(d.x / 16), math.floor(d.y / 16))
@@ -812,10 +868,12 @@ function Field:spawn(d)
       e.objAnim = 0
       if d.id == Objects.OBJ.POT then
         e.liftable = true; e.solid = true
+        e.objAnim = 5; e.y = e.y + 3; e.potY3 = 3 -- round 29: Pot_Init: y += 3, InitializeAnimation(super, 5)
         -- round 16: Pot_Init: the kind byte's layer ($10 -> 1, $20 -> 2), else
         -- ResolveCollisionLayer (room $15's pots stand on the raised floor)
         local cl = band(d.collision or 0, 3)
         e.layer = (cl == 1 or cl == 2) and cl or require("src.zelda.tmc.Layers").resolve(self, e)
+        if not require("src.zelda.tmc.Pot30").spawn(self, e, d) then return nil end -- round 30: Pot_Init (flag, SPECIAL_TILE_0)
       end
     end
     -- round 7: furniture, archways, masks...: a fixed frame set by their init
@@ -853,7 +911,8 @@ function Field:entityBlocks(who, x, y)
   for _, e in ipairs(self.entities) do
     if e.solid and not e.hidden and not e.deleted and not e.unplaced and e ~= who and not (r11 and e.kind == 7) then
       local hit
-      if e.liftable and e.id == 0x05 and not e.pushT and who and not who.minish then
+      if e.potTile then hit = false -- round 30: the pot is its solid tile (Pot30.lua)
+      elseif e.liftable and e.id == 0x05 and not e.pushT and who and not who.minish then
         -- round 12: a pot stands on SPECIAL_TILE_0, a solid tile (pot.c
         -- Pot_Init): Link's box against the whole tile, so he leans on it
         -- (and pushes it) instead of slipping round its smaller box
@@ -881,8 +940,12 @@ function Field:tryInteract(player)
   local best, bestD
   local HB = require("src.zelda.tmc.Hitboxes") -- round 11: sub_080784E4's point and box
   for _, e in ipairs(self.entities) do
-    local hit = e.talkable and not e.hidden and not e.deleted and HB.interactHit(self, player, e)
-    if hit ~= nil and e.talkable and not e.hidden and not e.deleted then
+    -- round 53: an entity that registered its own interact box (SetInteractableObjectCollision) answers even with
+    -- its sprite off (DoPostScriptAction bit 8: spriteSettings.draw = 0) -- sub_080784E4 walks the interactable
+    -- list and never looks at draw (the Fortress top's text board, script_Npc4EWindRuinsTextBoard)
+    local hidden = e.hidden and not e.interactBox
+    local hit = e.talkable and not hidden and not e.deleted and HB.interactHit(self, player, e)
+    if hit ~= nil and e.talkable and not hidden and not e.deleted then
       -- INTERACTION_CHECK objects answer full-size Link only
       if hit and not (e.kind == 6 and player.minish) then
         local d = math.abs(e.x - player.x) + math.abs(e.y - player.y)
@@ -1059,6 +1122,7 @@ function Field:doorExit(input)
     end
   end
   if not found then return nil end
+  if require("src.zelda.tmc.Doors51").closedAt(self, ftx, fty, p.layer) then return nil end -- round 51: a shut door is SPECIAL_TILE_34 on the cartridge
   -- round 14 (DoorWalk.lua): ACT_TILE_41 ($29) is a walkable threshold on
   -- the cartridge (Link walks on to the room edge, under the door's
   -- ARCHWAY); only a solid one still works as a door here
@@ -1069,7 +1133,7 @@ function Field:doorExit(input)
   if fact == Field.ACT_TILE_STAIRS then
     local DW = require("src.zelda.tmc.DoorWalk")
     local tr = DW.enterTransition(self, p)
-    if tr then DW.startEnter(self, p, tr) return nil end
+    if tr then if require("src.zelda.tmc.ToD69").stairsBlocked(self, p) then DW.startEnter(self, p, tr) end return nil end -- round 69: only once Link is blocked on that side (sub_08079778)
   end
   -- round 11: a door with no warp of its own only leads on through the
   -- room edge it sits on (the door Link just came in by, under his feet,
@@ -1081,7 +1145,7 @@ function Field:doorExit(input)
     if s == 0 then return fty <= 4 elseif s == 4 then return fty >= th - 5
     elseif s == 6 then return ftx <= 4 else return ftx >= tw - 5 end
   end
-  for d = 4, 16, 4 do
+  for d = 4, 28, 4 do -- round 74: 28 (Veil Falls' cave door (280,66): its warp sits 24 px into the doorway; at 16 the north border took Link over the cliff)
     local ex, ey = p:frontPoint(d)
     local e = r:areaExitAt(ex, ey + 2)
     if e then return e end
@@ -1104,6 +1168,7 @@ end
 -- off an edge with no border warp scrolls into the room on the other side.
 -- Returned as a border-style warp that keeps the world coordinates.
 function Field:adjacentRoom(dir)
+  local m72 = require("src.zelda.tmc.Valley72").adjacent(self, dir) if m72 then return m72 end -- round 72: the forest maze's fake scroll
   local p, r = self.player, self.room
   local wx, wy = r.x + p.x, r.y + p.y
   if dir == 0 then wy = r.y - 4 elseif dir == 2 then wy = r.y + r.height + 4
@@ -1112,7 +1177,7 @@ function Field:adjacentRoom(dir)
   for id, room in pairs(info and info.rooms or {}) do
     if id ~= r.room and room.file and wx >= room.x and wx < room.x + room.w
        and wy >= room.y and wy < room.y + room.h then
-      return { warpType = 0, area = r.area, room = id, endX = 0xFFFF, endY = 0xFFFF, shape = 0, facing = dir * 2 }
+      return { warpType = 0, area = r.area, room = id, endX = 0xFFFF, endY = 0xFFFF, shape = 0, facing = dir * 2, scroll = true }
     end
   end
   return nil
@@ -1122,6 +1187,7 @@ function Field:checkExits(input)
   if self.noExits then return end -- test harnesses pin the player in a room
   local p, r = self.player, self.room
   if require("src.zelda.tmc.SpecialWarp").update(self) then return end -- round 10
+  if require("src.zelda.tmc.Edge87").airborne(self, p) then return end -- round 87: jump_status != 0: no exit
   local e = r:areaExitAt(math.floor(p.x), math.floor(p.y)) -- round 14: x.HALF.HI
   if e then return self:startTransition(e) end
   local d, ddir = self:doorExit(input)
@@ -1139,7 +1205,7 @@ function Field:checkExits(input)
   do
     local u, dn, l, rt = input.down("up"), input.down("down"), input.down("left"), input.down("right")
     local x, y = math.floor(p.x), math.floor(p.y)
-    local AHEAD = { [0] = { 0, -9 }, { 6, 0 }, { 0, 3 }, { -6, 0 } }
+    local AHEAD = require("src.zelda.tmc.RomTables").t("Field.EDGE_AHEAD") -- gUnk_080B4490
     local function edgeTile(i)
       local o = AHEAD[i]
       local tx, ty = math.floor((x + o[1]) / 16), math.floor((y + o[2]) / 16)
@@ -1171,11 +1237,17 @@ function Field:transitionSwitch(tr)
   -- InitializePlayer clears the player state on every room change; the
   -- spawn type decides Minish size (PL_SPAWN_MINISH 1, DROP_MINISH 6, 9)
   local k = tr.exit.kind
-  self.player.minish = (k == 1 or k == 6 or k == 9)
+  -- round 41: a scroll into the next room of the area (no exit entry,
+  -- scroll.c) never reaches InitializeEntities, so Minish Link stays
+  -- Minish (the Cave of Flames' crack $50:07 -> $50:06)
+  if not tr.exit.scroll then self.player.minish = (k == 1 or k == 6 or k == 9) end
   self.player.animId = -1
+  local layer79 = self.player.layer -- round 79: a scroll keeps the collision layer (Scroll79.lua)
   self:enterRoom(tr.exit.area, tr.exit.room, tr.x, tr.y, tr.facing)
+  require("src.zelda.tmc.Scroll79").after(self, tr.exit, layer79)
   if tr.exit.layer and tr.exit.layer > 0 then self.player.layer = tr.exit.layer end -- round 13: a hole's layer
   if tr.exit.layer == 0 then self.player.layer = require("src.zelda.tmc.Layers").resolve(self, self.player) end -- round 23: layer 0 -> ResolveCollisionLayer (player.c PlayerInit)
+  require("src.zelda.tmc.Spawn70").after(self, tr.exit) -- round 70: PL_SPAWN_9 grows out of the portal (Spawn70.lua)
 end
 
 -- ---------------------------------------------------------------------------
@@ -1294,6 +1366,7 @@ function Field:update(input)
     if self.textbox.done then
       self.textResult = self.textbox.result
       self.textbox = nil
+      self.textClosedAt = self.frame -- round 58: the closing A / B press does not reach Link this frame (inputLocked)
     end
   end
 
@@ -1310,13 +1383,13 @@ function Field:update(input)
   elseif self.kinstone.active then
     self.kinstone:update(input)
   elseif not self.textbox then
-    if input.pressed("start") and self.player.state == "normal" then self.menu:toggle() return end
+    if input.pressed("start") and self.player.state == "normal" and not require("src.zelda.tmc.Bell75").pauseBlocked(self) then self.menu:toggle() return end -- round 75: CheckInitPauseMenu's gates
     if input.pressed("l") then self.kinstone:openFuse() end
     -- SELECT asks Ezlo (offline; online SELECT is an emote)
     if input.pressed("select") and not self.game.net and self.player.hasCap then
       self:message(self.areaHint or 0x0B01, nil, nil, "ezlo")
     end
-    self.player:update(input)
+    require("src.zelda.tmc.ObjErrors49").call(self, "player", self.player, self.player.update, self.player, input) -- round 55: guarded (logged once, the game goes on)
     self._dungeon:update(input)
     if self.player.state == "normal" and (input.down("up") or input.down("down") or input.down("left") or input.down("right")) then
       self._dungeon:tryDoor(self.player)
@@ -1338,19 +1411,24 @@ function Field:update(input)
       e.script:postActions(e)
     end
     if e.kind == 6 and e.id == 0x6A then require("src.zelda.tmc.CutsceneObj").update(self, e) end -- round 10
+    if e.kind == 7 and e.id == 0x2C and not e.script and not e.deleted then require("src.zelda.tmc.ObjErrors49").call(self, "cat", e, require("src.zelda.tmc.Cat57").update, self, e) end -- round 57: cat.c (the town cats)
+    if e.kind == 7 and e.id == 0x35 and not e.script and not e.deleted then require("src.zelda.tmc.ObjErrors49").call(self, "dog", e, require("src.zelda.tmc.Dog58").update, self, e) end -- round 58: dog.c (the dogs)
+    if e.kind == 7 and e.id == 0x42 and not e.deleted then require("src.zelda.tmc.ObjErrors49").call(self, "gustaf", e, require("src.zelda.tmc.Gustaf71").update, self, e) end -- round 71: kingGustaf.c's alpha blend
+    if e.kind == 7 and e.id == 0x15 and not e.script and not e.deleted then require("src.zelda.tmc.ObjErrors49").call(self, "guard", e, require("src.zelda.tmc.Guard71").update, self, e) end -- round 71: guard.c's patrol + line of sight
+    if e.kind == 6 and (e.id == 0x97 or e.id == 0x96) and not e.deleted then require("src.zelda.tmc.ObjErrors49").call(self, "takkuri", e, require("src.zelda.tmc.Takkuri72").update, self, e) end -- round 72: keyStealingTakkuri.c / graveyardKey.c
     if e.enemy or e.projectile then
       -- round 15: after a seamless room change the new room's enemies wait
       -- until the cartridge's scroll would have ended (Seamless.hold)
-      if not e.deleted and not (self.enemyHold and self.enemyHold > 0) then self._enemies:update(e) end
+      if not e.deleted and not (self.enemyHold and self.enemyHold > 0) then require("src.zelda.tmc.ObjErrors49").call(self, "enemy", e, self._enemies.update, self._enemies, e) end -- round 49: one enemy's error is logged once, not the end of the game
     elseif e.ground then
-      if not e.deleted then self._objects:updateGround(e); e.anim:update(1) end
+      if not e.deleted and require("src.zelda.tmc.ObjErrors49").call(self, "ground", e, self._objects.updateGround, self._objects, e) then e.anim:update(1) end -- round 55: guarded
     elseif e.thrown then
-      if not e.deleted then self._objects:updateThrown(e); e.anim:update(1) end
+      if not e.deleted and require("src.zelda.tmc.ObjErrors49").call(self, "thrown", e, self._objects.updateThrown, self._objects, e) then e.anim:update(1) end -- round 55: guarded
     elseif e.fx then
       e.anim:update(1)
       if e.anim.done then e.deleted = true end
     end
-    if e.deleted then table.remove(self.entities, i)
+    if e.deleted then if e.potTile then require("src.zelda.tmc.Pot30").restore(self, e) end; table.remove(self.entities, i) -- round 30: the pot's tile back
     elseif e.literalAnim then
       local idx = e.objAnim or e.forceAnim or 0
       if not e.enemy and not e.projectile and idx ~= e.animIndex then
@@ -1379,6 +1457,8 @@ function Field:update(input)
 
   require("src.zelda.tmc.Hitboxes").update(self) -- round 11: solid NPCs push Link out
   require("src.zelda.tmc.PushAnim").tick(self) -- round 12: pushed pots sliding
+  require("src.zelda.tmc.Pot30").sync(self) -- round 30: the pots' SPECIAL_TILE_0
+  require("src.zelda.tmc.Collide30").sync(self) -- round 30: big chests' tiles (sub_080842D8)
   require("src.zelda.tmc.GustJar").tick(self) -- round 13: the Gust Jar's shots
   require("src.zelda.tmc.FuseBubble").update(self) -- round 7: CAMERA_TARGET
   self:snapCamera()
@@ -1431,6 +1511,7 @@ function Field:drawSpriteList(list)
   local camX, camY = self.camX, self.camY
   -- GetPlayerPalette: object palette $16 (hurt blink $1A/$1B, charms $17-$19)
   local linkPal = A:objPalette(0x16)
+  require("src.zelda.tmc.Pot30").drawShadows(self, list) -- round 30: shadows under the sprites
   for _, e in ipairs(list) do
     if e == self.player then
       e:draw(camX, camY, linkPal)
@@ -1453,11 +1534,13 @@ function Field:drawSpriteList(list)
           -- round 15: a huge decoration's parallax (macroDecorations.c
           -- sub_08097F34 / F10: y + (y >> k) - (scroll >> k), room-relative)
           if e.macroShift then y = y + math.floor(e.y / 2 ^ e.macroShift) - math.floor(camY / 2 ^ e.macroShift) end
+          if e.drawAlpha then love.graphics.setColor(1, 1, 1, e.drawAlpha) end -- round 34: an alpha-blended OBJ (STEAM)
           if e.affine then -- round 6: an affine OBJ (scale, angle $10000 = a turn)
-            love.graphics.draw(img, x, y, -e.affine.r / 0x10000 * 2 * math.pi, e.affine.s, e.affine.s, -ox, -oy)
+            love.graphics.draw(img, x, y, -e.affine.r / 0x10000 * 2 * math.pi, e.affine.s, e.affine.sy or e.affine.s, -ox, -oy) -- round 37: sy (Rain37's shadow)
           elseif e.flipY then love.graphics.draw(img, x + ox, y - oy, 0, 1, -1) -- round 10: a pot flipped by the Cane
           elseif e.anim:hflip() ~= (e.flipX or false) then love.graphics.draw(img, x - ox, y + oy, 0, -1, 1)
           else love.graphics.draw(img, x + ox, y + oy) end
+          if e.drawAlpha then love.graphics.setColor(1, 1, 1, 1) end
         end
       end
       if e.bubble then
@@ -1567,6 +1650,7 @@ end
 function Field:updateHudUi()
   local ui = self:hudUi()
   local s = self.save.stats
+  ui.hideFlags = require("src.zelda.tmc.Hud78").flags(self) -- round 78: the buttons slide off on gHUD.hideFlags
   ui:update({ equipped = { a = self:equipped("a"), b = self:equipped("b") },
               health = math.floor((s.health or 0) / 2),
               messageActive = self.textbox ~= nil,
@@ -1587,6 +1671,10 @@ function Field:drawHud(font)
   local s = self.save.stats
   local info = self.room and self.room.areaInfo
   local keys = (info and (info.location or 0) >= 0x17) and self:dungeon():state().keys or nil
+  if require("src.zelda.tmc.Hud78").flags(self) == 0xFF then -- round 78: HUD_HIDE_ALL (DisablePauseMenu): no hearts / rupees / keys
+    if self.hud then self:drawButtons(font) end
+    return
+  end
   if self.hud and self.hud:draw(s, keys) then self:drawButtons(font) return end
   local hearts = math.floor((s.maxHealth or 24) / 8)
   for i = 0, hearts - 1 do
@@ -1675,7 +1763,7 @@ function Field:drawOverlay(font)
   end
   if self.gameOver then self:drawGameOver(font) end
   self:drawIris()
-  if self.fadeLevel > 0 then
+  if self.fadeLevel > 0 and not require("src.zelda.tmc.Fade70").bgOnly(self) and not require("src.zelda.tmc.Story90").textKept(self) then -- round 70: a BG-only mask fades in the world pass; round 90: a mask without BG palette 15 is drawn under the text box (Story90.lua)
     local c = self.fadeWhite and 1 or 0
     g.setColor(c, c, c, self.fadeLevel)
     g.rectangle("fill", 0, 0, W, H)
@@ -1690,6 +1778,9 @@ function Field:drawWorld()
   local r = self.room
   love.graphics.setColor(1, 1, 1, 1)
   require("src.zelda.tmc.Priority").compose(self, r)
+  require("src.zelda.tmc.R31").drawWorld(self) -- round 31: BG3 priority-0 overlays (CoF steam)
+  require("src.zelda.tmc.R33").drawWorld(self) -- round 33: LIGHT_RAY_MANAGER's BG3
+  require("src.zelda.tmc.R34").drawWorld(self) -- round 34: CLOUD_OVERLAY_MANAGER's BG3 (Cloud34.lua)
   if self.drawList then
     local l = self.drawList
     if self.intro then l = { self.player } end

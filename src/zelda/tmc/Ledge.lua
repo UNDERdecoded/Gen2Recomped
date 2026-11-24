@@ -78,7 +78,16 @@ end
 function L.check(pl, dx, dy)
   local f = pl.field
   local T = tables(f)
-  if not T or pl.minish or pl.state ~= "normal" or (pl.z or 0) ~= 0 or pl.carrying then pl.ledgePush = 0 return end
+  -- round 41: Minish Link jumps ledges too (PlayerMinish's walk,
+  -- sub_08073D20, calls sub_08079550 as PlayerNormal does): the Cave of
+  -- Flames' $50:09 walkway is left only that way
+  if not T or pl.state ~= "normal" or (pl.z or 0) ~= 0 or pl.carrying then pl.ledgePush = 0 return end
+  -- round 42: hidden in a Minish crack / log (type2 $80) the surface
+  -- action wrote the collisions word (COL_NORTH_FULL | COL_SOUTH_FULL for an
+  -- east-west tunnel): sub_08079550 sees no ledge ahead.  $50:10's crack
+  -- (376,152) -> (296,152) has a west ledge tile (ACT $2D) inside it: Link
+  -- jumped out of the tunnel still hidden and walked through the blocks
+  if pl.tunnel then pl.ledgePush = 0 return end
   local s = pl.animationState or 4
   local held = (dx ~= 0 or dy ~= 0) and ((s == 0 and dy < 0) or (s == 4 and dy > 0) or (s == 2 and dx > 0) or (s == 6 and dx < 0))
   if not held then pl.ledgePush = 0 return end
@@ -103,7 +112,10 @@ function L.check(pl, dx, dy)
   pl.animationState = band(s8, 6)
   local n = L.count(f, pl, s8)
   pl.zv, pl.z = ((n * 16) - 4) / 16, 0
-  pl:setAnim(pl.hasCap and ANIM_JUMP or ANIM_JUMP_NOCAP, true)
+  pl.ledge.minish = pl.minish or nil
+  -- PlayerJumpInit: the jump animation is not set for PL_MINISH (he keeps
+  -- his walk animation)
+  if not pl.minish then pl:setAnim(pl.hasCap and ANIM_JUMP or ANIM_JUMP_NOCAP, true) end
   f:sound(SFX_PLY_JUMP); f:sound(SFX_PLY_VO4)
 end
 
@@ -118,16 +130,19 @@ function L.update(pl, input)
     local nz = (pl.z or 0) + pl.zv
     if nz > 0 then pl.z, pl.zv = nz, pl.zv - GRAV return end
     pl.z, pl.zv = 0, 0
-    -- ResetCollisionLayer: layer 0, then ResolveCollisionLayer
+    -- round 54: ResetCollisionLayer ($0800455E) stores collisionLayer 1 -- it
+    -- is not ResolveCollisionLayer (the top map's tile under Link put him on
+    -- layer 2 inside Lake Hylia's canopy, stuck); the per-frame surface
+    -- check (Layers.surface, sub_0807A8D8) moves him up where the tile says
     local Lay = require("src.zelda.tmc.Layers")
-    pl.layer = Lay.resolve(f, pl)
+    pl.layer = 1
     Lay.update(f, pl)
     j.sub, j.timer = 2, 6
-    pl:setAnim(pl.hasCap and ANIM_LAND or ANIM_LAND_NOCAP, true)
+    if not j.minish then pl:setAnim(pl.hasCap and ANIM_LAND or ANIM_LAND_NOCAP, true) end
     f:sound(SFX_PLY_LAND)
   else
-    -- sub_08071208
-    pl.anim:update(1)
+    -- sub_08071208 (no animation step for PL_MINISH)
+    if not j.minish then pl.anim:update(1) end
     if j.timer == 0 then
       pl.x, pl.y = math.floor(pl.x), math.floor(pl.y)
       pl.state = "normal"

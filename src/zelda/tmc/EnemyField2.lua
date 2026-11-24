@@ -166,29 +166,18 @@ local SPECIAL_TILE_34 = 0x4022
 local ITEM_RUPEE1, ITEM_RUPEE5, ITEM_RUPEE20 = 0x54, 0x55, 0x56
 
 -- tables from the decomp's C sources
-local SM_WALK = { [0] = 0x30, 0x60, 0x6C, 0x91 }                                      -- gUnk_080CC7BC
-local SM_HOME = { [0] = -8, 12, -12, 8, 4, -6, 6, -4, 0, -3, 1, 3, -1, 2, 0, -2 }     -- gUnk_080CC7C0
-local SM_TURN = { [0] = 8, 16, 8, 0, 16, 8, 16, 0 }                                   -- gUnk_080CC7D0
-local SPEAR_HB = {                                                                    -- gUnk_0812966C
-  { 6, 11, 2, 4 }, { -12, 2, 3, 3 }, { -13, -15, 1, 2 }, { 5, 12, 1, 3 }, { 7, 10, 1, 2 },
-  { 8, 9, 1, 3 }, { 7, 10, 1, 2 }, { -22, 1, 4, 2 }, { -12, 1, 3, 2 }, { -6, 2, 4, 2 },
-  { -12, 1, 3, 2 }, { -1, -19, 1, 1 }, { -4, -19, 1, 1 }, { -4, -20, 1, 1 }, { -4, -19, 1, 1 },
-  { 6, 9, 1, 2 }, { 6, 10, 1, 2 }, { 6, 9, 1, 2 }, { 6, 10, 1, 2 }, { -29, -11, 3, 2 },
-  { -29, -9, 3, 2 }, { -29, -11, 3, 2 }, { -29, -9, 3, 2 }, { -5, -25, 1, 2 }, { -5, -24, 1, 2 },
-  { -5, -25, 1, 2 }, { -5, -24, 1, 2 }, { 7, 12, 1, 2 }, { 7, 11, 1, 2 }, { -12, 3, 3, 1 },
-  { -12, 2, 3, 1 }, { -13, -16, 1, 2 }, { -13, -15, 1, 2 },
-}
-local BM_WALK = { [0] = 24, 32, 48, 64, 96, 108, 120, 145 }                           -- gUnk_080CFFA4
+local SM_WALK = require("src.zelda.tmc.RomTables").t("EnemyField2.SM_WALK")                                      -- gUnk_080CC7BC
+local SM_HOME = require("src.zelda.tmc.RomTables").t("EnemyField2.SM_HOME")     -- gUnk_080CC7C0
+local SM_TURN = require("src.zelda.tmc.RomTables").t("EnemyField2.SM_TURN")                                   -- gUnk_080CC7D0
+local SPEAR_HB = require("src.zelda.tmc.RomTables").t("EnemyField2.SPEAR_HB")
+local BM_WALK = require("src.zelda.tmc.RomTables").t("EnemyField2.BM_WALK")                           -- gUnk_080CFFA4
 local BM_HOME = SM_HOME                                                               -- gUnk_080CFFAC (the same bytes)
-local BM_ARROW = { [0] = -5, -20, 15, -12, 4, -4, -15, -12 }                          -- gUnk_080CFFC4
-local ARROW = { [0] = { fx = false, fy = false, anim = 1, hb = { x = 0, y = 0, w = 4, h = 6 } }, -- gUnk_081299F8
-                { fx = true, fy = false, anim = 0, hb = { x = 0, y = 0, w = 6, h = 4 } },
-                { fx = false, fy = true, anim = 1, hb = { x = 0, y = 0, w = 4, h = 6 } },
-                { fx = false, fy = false, anim = 0, hb = { x = 0, y = 0, w = 6, h = 4 } } }
-local LK_BOLT = { [0] = { 0, -18 }, { 18, 0 }, { 0, 8 }, { -18, 0 } }                 -- gUnk_080D0154
-local CP_AHEAD = { [0] = 0, -12, 8, -8, 12, 0, 8, 8, 0, 12, -8, 8, -12, 0, -8, -8 }  -- gUnk_080CF520 (s8)
-local AR_SHAKE = { [0] = -1, 0, 1, 0 }                                                -- gUnk_080CE160
-local AR_AHEAD = { [0] = 0, -7, 7, 0, 0, 7, -7, 0 }                                   -- gUnk_080CE164
+local BM_ARROW = require("src.zelda.tmc.RomTables").t("EnemyField2.BM_ARROW")                          -- gUnk_080CFFC4
+local ARROW = require("src.zelda.tmc.RomTables").t("EnemyField2.ARROW") -- gUnk_081299F8 {flipX, flipY, anim, &Hitbox}
+local LK_BOLT = require("src.zelda.tmc.RomTables").t("EnemyField2.LK_BOLT")                 -- gUnk_080D0154
+local CP_AHEAD = require("src.zelda.tmc.RomTables").t("EnemyField2.CP_AHEAD")  -- gUnk_080CF520 (s8)
+local AR_SHAKE = require("src.zelda.tmc.RomTables").t("EnemyField2.AR_SHAKE")                                                -- gUnk_080CE160
+local AR_AHEAD = require("src.zelda.tmc.RomTables").t("EnemyField2.AR_AHEAD")                                   -- gUnk_080CE164
 M.SM_WALK, M.SM_HOME, M.SM_TURN, M.SPEAR_HB = SM_WALK, SM_HOME, SM_TURN, SPEAR_HB
 M.BM_WALK, M.BM_ARROW, M.ARROW, M.LK_BOLT, M.CP_AHEAD = BM_WALK, BM_ARROW, ARROW, LK_BOLT, CP_AHEAD
 M.AR_SHAKE, M.AR_AHEAD = AR_SHAKE, AR_AHEAD
@@ -1284,7 +1273,7 @@ local function cpNear(E, e, d) -- sub_0803872C
   return t ~= nil and within(e, t.x, t.y, d)
 end
 
-local STATE8 = { [0] = 0, 0, 0, 1, 1, 1, 2, 2, 2, 2, 2, 3, 3, 3, 4, 4, 4, 4, 4, 5, 5, 5, 6, 6, 6, 6, 6, 7, 7, 7, 0, 0 } -- gMapDirectionToAnimationState8
+local STATE8 = require("src.zelda.tmc.RomTables").t("EnemyField2.STATE8") -- gMapDirectionToAnimationState8
 M.STATE8 = STATE8
 local function cpFace(e) -- sub_0806FCAC
   local t = e.childT
@@ -1433,7 +1422,7 @@ local function arStatue(E, e) e.action = 1; arAnim(E, e, 4) end -- sub_08030580
 local function arFreeze(E, e) -- sub_08030590
   e.action = 5
   e.hitType = 1
-  e.hitbox = { x = 0, y = 0, w = 9, h = 9 } -- gHitbox_15
+  e.hitbox = require("src.zelda.tmc.RomTables").fresh("EnemyField2.HB_15") -- gHitbox_15
   arAnim(E, e, 5)
   arTileSet(E, e)
 end
@@ -1552,7 +1541,7 @@ local function armos(E, e)
       take(e)
       if e.u80 ~= 2 then
         e.hitType = 8
-        e.hitbox = { x = 0, y = 0, w = 6, h = 6 } -- gUnk_080FD2F0
+        e.hitbox = require("src.zelda.tmc.RomTables").fresh("EnemyField2.HB_2F0") -- gUnk_080FD2F0
       end
       arTileBack(E, e)
       sound(E, SFX_12A)

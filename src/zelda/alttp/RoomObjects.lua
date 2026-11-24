@@ -257,6 +257,7 @@ function RO.stepBlock(self, b)
       b.fell = true   -- into a pit: gone (it lands in the room below)
       return true
     end
+    require("src.zelda.alttp.Block57").landed(self, b, t[b.cell])   -- r57: on a floor switch (GBA 0x080837C8)
     b.under = { get(self, b.lower, b.cell), get(self, b.lower, b.cell + 64), get(self, b.lower, b.cell + 1), get(self, b.lower, b.cell + 65) }
     local w = self.data.roomIdx.roomObj.blockWord
     draw2x2(self, b.lower, b.cell, w, w + 0x10, w + 1, w + 0x11)

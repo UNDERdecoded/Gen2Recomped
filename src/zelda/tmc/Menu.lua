@@ -65,6 +65,7 @@ end
 
 function Menu:openMenu()
   local f = self.field
+  self.mapHint = nil -- round 75: a pause menu is not the map hint (MapHint70 sets it after this)
   local p = Ppu.new(f.assets)
   self.ppu = p
   self.data = p:table("pauseData")
@@ -451,6 +452,7 @@ function Menu:update(input)
     if self.fade <= 0 then self.fade = 0; self.state = 2 end
     return
   end
+  if self.mapHint and require("src.zelda.tmc.Bell75").mapHintFrame(self, input) then return end -- round 75: Subtask_MapHint_1
   -- PauseMenu_Variant2: START / L / R / B through the screen's table
   if self.keys then
     local which

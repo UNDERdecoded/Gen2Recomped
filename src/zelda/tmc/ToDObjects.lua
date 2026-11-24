@@ -123,21 +123,22 @@ local ITEM_SMALL_KEY, ITEM_BIG_KEY = 0x53, 0x52
 local function SP(n) return 0x4000 + n end
 local TT_TORCH_OFF, TT_TORCH_ON, TT_BUTTON_HELD, TT_BUTTON_DOWN, TT_869, TT_784 = 117, 118, 120, 122, 0x365, 0x310
 local ACT_ICE, ACT_HOLE, ACT_WATER, ACT_LAVA = 0x12, 0x19, 0x10, 0x5A
-local DV = { [0] = { 0, -1 }, { 1, 0 }, { 0, 1 }, { -1, 0 } }  -- by direction >> 3
+local DV = require("src.zelda.tmc.RomTables").t("ToDObjects.DV")  -- by direction >> 3
 
 -- small tables written out in the decomp's .c files
-local SMALL_MELT_SCALE = { [0] = 256, 264, 271, 277 }          -- gUnk_08123748
-local BIG_MELT_SCALE = { [0] = 256, 266, 275, 284, 293 }        -- gUnk_081237B0
-local SMALL_TILE_KIND = { [SP(91)] = 1, [SP(92)] = 1, [SP(93)] = 1, [SP(94)] = 1, [TT_BUTTON_DOWN] = 2, [TT_BUTTON_HELD] = 2 } -- gUnk_08123750
-local LEVER_OFFS = { [0] = { [0] = { 0, 0 }, { 0, 0 }, { -1, 0 }, { 0, 0 } },  -- PushableLever_InitialOffsets
-                     [1] = { [0] = { 0, 0 }, { 0, 0 }, { 0, -1 }, { 0, 0 } } } -- PushableLever_PushedOffsets
-local FWE_DASH = { [0] = 3, 7, 15, 31, 63, 63, 63, 63, 63, 63, 63, 0 } -- gUnk_08123DC0
-local ICE_VEL = { [0] = { 0, -10 }, { 10, -10 }, { 10, 0 }, { 10, 10 }, { 0, 10 }, { -10, 10 }, { -10, 0 }, { -10, -10 } } -- asm ice_velocities
+local SMALL_MELT_SCALE = require("src.zelda.tmc.RomTables").t("ToDObjects.SMALL_MELT_SCALE")          -- gUnk_08123748
+local BIG_MELT_SCALE = require("src.zelda.tmc.RomTables").t("ToDObjects.BIG_MELT_SCALE")        -- gUnk_081237B0
+local SMALL_TILE_KIND = require("src.zelda.tmc.RomTables").t("ToDObjects.SMALL_TILE_KIND") -- gUnk_08123750 {tile, kind}
+-- PushableLever_InitialOffsets / _PushedOffsets, found through the literal pool of
+-- PushableLever_CalculateSpriteOffsets ($080984C8)
+local LEVER_OFFS = require("src.zelda.tmc.RomTables").t("ToDObjects.LEVER_OFFS")
+local FWE_DASH = require("src.zelda.tmc.RomTables").t("ToDObjects.FWE_DASH") -- gUnk_08123DC0
+local ICE_VEL = require("src.zelda.tmc.RomTables").t("ToDObjects.ICE_VEL") -- asm ice_velocities (player.s, via its literal pool $08008A74)
 local LIGHT_ALPHA = {} -- gUnk_08108CA8: (i << 8) | (16 - i)
 for i = 0, 16 do LIGHT_ALPHA[i] = (16 - i) / 16 end
 LIGHT_ALPHA[17] = 0
 -- gUnk_0813AD88[0] (screenTransitions.c): the ToD entrance light's warp
-local WARP_LAKE = { warpType = 1, endX = 0x128, endY = 0x188, shape = 0, area = 0x0B, room = 0x00, layer = 1, kind = 9, facing = 4, sfx = 0 }
+local WARP_LAKE = require("src.zelda.tmc.RomTables").t("ToDObjects.WARP_LAKE")
 M.WARP_LAKE = WARP_LAKE
 -- the Temple of Droplets' room code lists (src/roomInit.c, entity_headers.s)
 local LISTS = { bigOcto = 0x080E49F4, blueChu = 0x080E4BD8, blueChuFreed = 0x080E4C08, chuKey6C = 0x080E4CD8,
@@ -187,6 +188,7 @@ end
 local function inRoom(f, tx, ty) local r = f.room return tx >= 0 and ty >= 0 and tx < r.tw and ty < r.th end
 -- SetTile / SetTileType with the old tile kept for RestorePrevTileEntity
 local function remember(f, layer, tx, ty)
+  if f._todPrevRoom ~= f.room then f._todPrev, f._todPrevRoom = nil, f.room end -- round 66: per loaded room
   f._todPrev = f._todPrev or {}
   local k = (layer == 2 and 2 or 1) * 65536 + ty * 256 + tx
   if f._todPrev[k] == nil then f._todPrev[k] = tileIndex(f, layer, tx, ty) or false end
@@ -247,7 +249,9 @@ local function fireContact(f, e, hw, hh)
   end
   for _, t in ipairs(f.entities) do
     if t.fire and not t.deleted and t ~= e then
-      if math.abs(t.x - e.x) < (t.hitW or 6) + hw and math.abs(t.y - e.y) < (t.hitH or t.hitW or 6) + hh then return true end
+      -- round 67: the Lantern's hidden entity clears hitW (its 4 x 4 box is in .w / .h, playerItemLantern.c width / height 4)
+      local tw = t.hitW or (t.lanternFlame and t.w) or 6
+      if math.abs(t.x - e.x) < tw + hw and math.abs(t.y - e.y) < (t.hitH or tw) + hh then return true end
     end
   end
   return false
@@ -717,7 +721,7 @@ function M.blockOn(f, tx, ty)
 end
 
 -- UpdatePlayerCollision, SPECIAL_TILE_90: Link pushes a small ice block
-local PDV = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+local PDV = require("src.zelda.tmc.RomTables").t("ToDObjects.PDV")
 local function pushUpdate(p)
   local ps = p.todPush
   if p.anim then p.anim:update(1) end
@@ -820,6 +824,7 @@ function M.spawnFrozenElement(d, e)
   if lflag(f, 0x9B) then return nil end
   -- CreateObject(FROZEN_OCTOROK, 0, 0): whichever module ports it
   local okc, child = pcall(function()
+    do local fo = require("src.zelda.tmc.FrozenOcto69").spawn(d, e) if fo then return fo end end -- round 69: frozenOctorok.c
     return d:spawnObject({ kind = 6, id = ID.FROZEN_OCTOROK, paramA = 0, paramB = 0, paramC = 0, pool = 0x0F,
                            x = e.x, y = e.y, collision = e.layer })
   end)
@@ -1473,8 +1478,11 @@ function M.iceStep(p, dx, dy)
     local a = ICE_VEL[d8]
     p.iceVx, p.iceVy = clampV(p.iceVx + a[1]), clampV(p.iceVy + a[2])
   end
+  local C80 = require("src.zelda.tmc.Collide80") -- round 80: sub_08008942 moves both axes on one set of collisions
+  if p.field and p.field.room and p.field.room.coll and C80.ready() then p.coll80 = C80.collisions(p) end
   if p.iceVx ~= 0 then p:moveBy(p.iceVx / 256, 0) end
   if p.iceVy ~= 0 then p:moveBy(0, p.iceVy / 256) end
+  p.coll80 = nil
   p.iceVx, p.iceVy = decay(p.iceVx), decay(p.iceVy)
   return d8 ~= nil
 end
@@ -1603,7 +1611,9 @@ M.ROOM_INIT = ROOM_INIT
 
 function M.roomInit(f)
   if not (f.room and f.room.area) then return end
-  f._todPrev = nil
+  -- round 66: only a previous room's remembered tiles go (the room's own objects spawned before this ran and
+  -- remembered theirs: a melted BIG_ICE_BLOCK left its SPECIAL_TILE_34..124 behind -- $60:11's chest stayed boxed in)
+  if f._todPrevRoom ~= f.room then f._todPrev, f._todPrevRoom = nil, f.room end
   local area = f.room.area
   if M.DARK_AREAS[area] or (f._todLight and f._todLight.type ~= 0) then
     M.install()

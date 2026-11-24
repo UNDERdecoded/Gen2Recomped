@@ -167,42 +167,30 @@ M.ITEM = ITEM
 local TEXT_BLADE = 0x46
 local SFX_FA, FX_WHITE_SPLASH, OBJ_SPECIAL_FX = 0xFA, 0x44, 0x0F
 
-M.BB_TIMER = { [0] = 7, 0, 4, 6, 5, 8, 9, 10 }                         -- gUnk_08111623
+M.BB_TIMER = require("src.zelda.tmc.RomTables").t("Story27Town2.BB_TIMER")                         -- gUnk_08111623
 -- gUnk_0811162B (57 bytes as written in bladeBrothers.c)
-local BB_ITEMS = { [0] = ITEM.SPIN, ITEM.ROCK, ITEM.DASH, ITEM.DOWN, ITEM.ROLL, ITEM.BEAM, ITEM.PERIL, ITEM.GREAT,
-                   bor(ITEM.FAST_SPIN, 0x80), bor(ITEM.FAST_SPLIT, 0x80), bor(ITEM.LONG_SPIN, 0x80) }
+local BB_ITEMS = require("src.zelda.tmc.RomTables").t("Story27Town2.BB_ITEMS")
 for i = 11, 56 do BB_ITEMS[i] = 0 end
 BB_ITEMS[45], BB_ITEMS[49], BB_ITEMS[53] = 1, 1, 1
 M.BB_ITEMS = BB_ITEMS
-M.BB_EQUIPPED = { [0] = 0, 0, ITEM.PEGASUS_BOOTS, ITEM.ROCS_CAPE, 0, 0, 0, 0, 0, 0, 0 } -- BladeBrothers_EquippedItem
-M.BB_MOVE = { [0] = 1, 4, 3, 7, 2, 5, 8, 6, 10, 11, 12 }                             -- gUnk_08111740
-M.BB_WAIT = { [0] = 0, 0, 30, 0, 0, 0, 0, 30, 0, 0, 0 }                              -- gUnk_0811172A
+M.BB_EQUIPPED = require("src.zelda.tmc.RomTables").t("Story27Town2.BB_EQUIPPED") -- BladeBrothers_EquippedItem
+M.BB_MOVE = require("src.zelda.tmc.RomTables").t("Story27Town2.BB_MOVE")                             -- gUnk_08111740
+M.BB_WAIT = require("src.zelda.tmc.RomTables").t("Story27Town2.BB_WAIT")                              -- gUnk_0811172A
 local function bbTexts(list) local t = {} for i, v in ipairs(list) do t[i - 1] = v ~= 0 and T(TEXT_BLADE, v) or 0 end return t end
 M.BB_TEXT = {
-  intro = bbTexts({ 0x01, 0x09, 0x11, 0x19, 0x22, 0x2b, 0x34, 0x3d, 0x46, 0x50, 0x5a }),    -- gUnk_08111664
-  ask = bbTexts({ 0x02, 0x0a, 0x12, 0x1a, 0x23, 0x2c, 0x35, 0x3e, 0x47, 0x51, 0x5b }),      -- gUnk_0811167A
-  technique = bbTexts({ 0x03, 0x0b, 0x13, 0x1b, 0x24, 0x2d, 0x36, 0x3f, 0, 0, 0 }),        -- gUnk_08111690
-  possession = bbTexts({ 0x04, 0x0c, 0x14, 0x1c, 0x25, 0x2e, 0x37, 0x40, 0x48, 0x52, 0x5c }), -- gUnk_081116A6
-  e18 = bbTexts({ 0x05, 0x0d, 0x15, 0x1d, 0x26, 0x2f, 0x38, 0x41, 0, 0, 0 }),              -- gUnk_081116BC
-  e30 = bbTexts({ 0x06, 0x0e, 0x16, 0x1e, 0x27, 0x30, 0x39, 0x42, 0x49, 0x53, 0x5d }),     -- gUnk_081116D2
-  e48 = bbTexts({ 0, 0, 0, 0x1f, 0x28, 0x31, 0x3a, 0x43, 0x1f, 0x1f, 0x1f }),              -- gUnk_081116E8
-  e60 = bbTexts({ 0, 0x07, 0x0f, 0x17, 0, 0x32, 0x3b, 0x44, 0, 0, 0x5e }),                 -- gUnk_081116FE
-  e78 = bbTexts({ 0x60, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67, 0, 0, 0 }),              -- gUnk_08111714
+  intro = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L182")),    -- gUnk_08111664
+  ask = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L183")),      -- gUnk_0811167A
+  technique = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L184")),        -- gUnk_08111690
+  possession = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L185")), -- gUnk_081116A6
+  e18 = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L186")),              -- gUnk_081116BC
+  e30 = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L187")),     -- gUnk_081116D2
+  e48 = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L188")),              -- gUnk_081116E8
+  e60 = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L189")),                 -- gUnk_081116FE
+  e78 = bbTexts(require("src.zelda.tmc.RomTables").fresh("Story27Town2.L190")),              -- gUnk_08111714
 }
--- gPlayerMacroBladeBrothers0..7 (src/data/data_080046A4.c): {frames, keys}
--- pairs, PLAYER_MACRO_END ($C000) after; GBA keys A 1, B 2, right $10,
--- left $20, down $80, R $100
-local A_, B_, RIGHT, LEFT, DOWN, R_ = 0x1, 0x2, 0x10, 0x20, 0x80, 0x100
-M.BB_MACROS = {
-  [0] = { 120, B_, 60, 0 },
-  { 60, RIGHT, 4, B_, 60, 0 },
-  { 4, LEFT, 120, A_, 60, 0 },
-  { 1, DOWN, 4, A_, 10, 0, 10, B_, 60, 0 },
-  { 4, RIGHT, 8, R_ + RIGHT, 30, 0, 1, LEFT, 30, 0, 4, LEFT, 4, R_ + LEFT, 20, 0, 6, B_, 60, 0 },
-  { 1, LEFT, 30, 0, 4, B_, 60, 0, 4, B_, 60, 0 },
-  { 1, LEFT, 30, 0, 4, B_, 60, 0, 4, B_, 60, 0 },
-  { 1, LEFT, 120, B_, 10, 0, 4, B_, 4, 0, 4, B_, 4, 0, 4, B_, 4, 0, 4, B_, 4, 0, 4, B_, 4, 0, 4, B_, 4, 0, 4, B_, 30, 0 },
-}
+-- BladeBrothers_PlayerMacros -> gPlayerMacroBladeBrothers0..7 (src/data/data_080046A4.c):
+-- {frames, keys} pairs up to PLAYER_MACRO_END ($C000), read from the ROM (round 36)
+M.BB_MACROS = require("src.zelda.tmc.RomTables").t("Story27Town2.BB_MACROS")
 local PLAYER_MACRO_END = 0xC000
 local DOUKUTU_05_EVENT = 0x03
 local BB_LIST_POTS = 0x080F3494 -- gUnk_080F3494 (data/map/entity_headers.s)
@@ -351,7 +339,6 @@ M.potBreak = potBreak
 -- ===========================================================================
 -- farmers.c
 -- ===========================================================================
-local TEXT_FARMERS = 0x1A
 local function farmerInit(f, e)
   if e.r27init then return end
   e.r27init = true
@@ -367,10 +354,7 @@ reg(0x0806BCB8, "sub_0806BCB8", function(f, e) farmerInit(f, e); e.animationStat
 reg(0x0806BCC0, "Farmers_MarkEenieFuserDoner", function(f, e)
   if typeOf(e) == 0 then require("src.zelda.tmc.Fusers").markDone(f, e) end
 end)
-M.FARMER_DIALOG = { -- gUnk_08113158
-  [0] = { 0x29, DIALOG.KINSTONE, DIALOG.CHECK, T(TEXT_FARMERS, 0x7), T(TEXT_FARMERS, 0x2) },
-  { 0x29, DIALOG.KINSTONE, DIALOG.CHECK, T(TEXT_FARMERS, 0x11), T(TEXT_FARMERS, 0xd) },
-}
+M.FARMER_DIALOG = require("src.zelda.tmc.RomTables").t("Story27Town2.FARMER_DIALOG") -- gUnk_08113158 {flag, flagType, type, a, b}
 reg(0x0806BCE8, "sub_0806BCE8", function(f, e)
   local d = M.FARMER_DIALOG[typeOf(e)]
   if d then M.dialogue(f, e, d) end
@@ -380,15 +364,14 @@ end)
 -- gorman.c
 -- ===========================================================================
 local TEXT_GORMAN = 0x31
-M.GORMAN_TEXT = { [0] = T(TEXT_GORMAN, 0x1), T(TEXT_GORMAN, 0x2), T(TEXT_GORMAN, 0xc), T(TEXT_GORMAN, 0xd),
-                  T(TEXT_GORMAN, 0xe), T(TEXT_GORMAN, 0x15) }                                   -- gUnk_08111C50
-M.GORMAN_SPOTS1 = { [0] = { 0x68, 0x1c8 }, { 0x28, 0x1c8 }, { 0x68, 0x188 }, { 0x68, 0x1c8 }, { 0x28, 0x188 }, { 0x68, 0x188 } } -- gUnk_08111C5C
-M.GORMAN_SPOTS2 = { [0] = { 0x178, 0x108 }, { 0x138, 0x108 } }                                -- gUnk_08111C84
-local GORMAN_STATE = { [0] = 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 0 }                   -- gUnk_08111C74 / C8C
-M.GORMAN_NEXT = { A3C = { [0] = 0, 1, 0, 1, 2, 3, 2, 3, 4, 5, 4, 5 },                          -- gUnk_08111C9C
-                  A60 = { [0] = 1, 2, 0, 0, 3, 4, 1, 2, 5, 5, 3, 4 },                          -- gUnk_08111CA8
-                  A84 = { [0] = 0, 1, 0, 1 },                                                  -- gUnk_08111CB4
-                  AA8 = { [0] = 1, 1, 0, 0 } }                                                 -- gUnk_08111CB8
+M.GORMAN_TEXT = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_TEXT")                                   -- gUnk_08111C50
+M.GORMAN_SPOTS1 = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_SPOTS1") -- gUnk_08111C5C
+M.GORMAN_SPOTS2 = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_SPOTS2")                                -- gUnk_08111C84
+local GORMAN_STATE = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_STATE")                   -- gUnk_08111C74 / C8C
+M.GORMAN_NEXT = { A3C = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_A3C"),                          -- gUnk_08111C9C
+                  A60 = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_A60"),                          -- gUnk_08111CA8
+                  A84 = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_A84"),                                                  -- gUnk_08111CB4
+                  AA8 = require("src.zelda.tmc.RomTables").t("Story27Town2.GORMAN_AA8") }                                                 -- gUnk_08111CB8
 local G = { GOMAN_RENTED_HOUSE = 0x47, RENTED_HOUSE_DIN = 0x2b, RENTED_HOUSE_NAYRU = 0x2c, RENTED_HOUSE_FARORE = 0x2d,
             TATEKAKE_HOUSE = 0x18, GOMAN_NEW_HOUSE = 0x48, NEW_HOUSE_DIN = 0x2e, NEW_HOUSE_NAYRU = 0x2f,
             NEW_HOUSE_FARORE = 0x30, MAROYA_WAKEUP = 0x50, MIZUKAKI_START = 0x29 }
@@ -445,9 +428,9 @@ end)
 -- ===========================================================================
 local TEXT_STOCKWELL = 0x2C
 M.SCRIPT_STOCKWELL, M.SCRIPT_STOCKWELL_BUY, M.SCRIPT_STOCKWELL_DOGFOOD = 0x080142B0, 0x08014384, 0x080143C0
-M.STOCKWELL_IDLE = { [0] = 4, 6, 6, 5, 6, 6, 6, 5, 6, 6, 6, 5, 6, 6, 6, 5 } -- gUnk_0810FDB8
-M.QUIVER_SIZES = { [0] = 30, 50, 70, 99 }                                    -- gQuiverSizes
-M.BOMBBAG_SIZES = { [0] = 10, 30, 50, 99 }                                   -- gBombBagSizes
+M.STOCKWELL_IDLE = require("src.zelda.tmc.RomTables").t("Story27Town2.STOCKWELL_IDLE") -- gUnk_0810FDB8
+M.QUIVER_SIZES = require("src.zelda.tmc.RomTables").t("ItemBow.QUIVER")                  -- gQuiverSizes
+M.BOMBBAG_SIZES = require("src.zelda.tmc.RomTables").t("Bombs.BAG_SIZES")                -- gBombBagSizes
 local SHOP00_SAIFU, SHOP00_YAZUTSU, SHOP00_BOMBBAG = 0x55, 0x56, 0xCD
 -- gUnk_080FD964 (src/itemMetaData.c, 8 bytes an item: price, unused,
 -- saleItemConfirmMessageId, gotItemMessageId)
@@ -569,9 +552,9 @@ reg(0x08065528, "sub_08065528", function(f, e, ctx) roomVars(f).animFlags = ctx.
 -- ===========================================================================
 local function exitTo(f, t) f:startTransition(t) end
 -- gUnk_0813AD60 / gUnk_0813AD74 / gUnk_0813AD4C (data/screenTransitions.c)
-M.TR_SIMULATION = { warpType = 1, area = 0x44, room = 0x00, endX = 0x98, endY = 0x88, layer = 1, kind = 2, facing = 4 }
-M.TR_SIMON = { warpType = 1, area = 0x23, room = 0x04, endX = 0x50, endY = 0x48, layer = 1, kind = 0, facing = 4 }
-M.TR_BORLOV = { warpType = 1, area = 0x23, room = 0x06, endX = 0x78, endY = 0x68, layer = 1, kind = 0, facing = 0 }
+M.TR_SIMULATION = require("src.zelda.tmc.RomTables").t("Story27Town2.TR_SIMULATION")
+M.TR_SIMON = require("src.zelda.tmc.RomTables").t("Story27Town2.TR_SIMON")
+M.TR_BORLOV = require("src.zelda.tmc.RomTables").t("Story27Town2.TR_BORLOV")
 local SFX_SECRET_BIG, FX_BIG_EXPLOSION2, TILE_TYPE_115 = 0x73, 0x43, 115
 reg(0x0806C224, "sub_0806C224", function(f) exitTo(f, M.TR_SIMULATION) end)
 reg(0x0806C23C, "Simon_CreateChest", function(f, e)
@@ -594,9 +577,8 @@ end)
 -- ===========================================================================
 local TEXT_BURLOV = 0x42
 local NPC_PICOLYTE, OBJ_CARLOV = 0x51, 0x35
-M.CHEST2 = { [0] = 1, 0, 0, 1, 0, 1, 0, 1, 1, 0, 1, 0, 0, 1, 1, 0 }            -- gUnk_081142CC
-M.CHEST3 = { [0] = 1, 0, 0, 0, 0, 0, 1, 0, 1, 0, 0, 0, 0, 1, 0, 0,            -- gUnk_081142DC
-             1, 0, 0, 0, 0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 1, 0 }
+M.CHEST2 = require("src.zelda.tmc.RomTables").t("Story27Town2.CHEST2")            -- gUnk_081142CC
+M.CHEST3 = require("src.zelda.tmc.RomTables").t("Story27Town2.CHEST3")
 local TILE_CHEST, TILE_CHEST_OPEN = 0x73, 0x74
 
 local function pbChestSetup(f, c) -- sub_0806E0DC
@@ -768,9 +750,7 @@ end)
 -- ===========================================================================
 -- ghostBrothers.c
 -- ===========================================================================
-local GHOST_FADE = { 0x10, 0x2, 0x10f, 0x2, 0x20e, 0x2, 0x30d, 0x2, 0x40c, 0x2, 0x50b, 0x2, 0x60a, 0x2, 0x709, 0x2,
-                     0x808, 0x2, 0x907, 0x2, 0xa06, 0x2, 0xb05, 0x2, 0xc04, 0x2, 0xd03, 0x2, 0xe02, 0x2, 0xf01, 0x2,
-                     0x1000, 0x2, 0xffff } -- gUnk_0811022E
+local GHOST_FADE = require("src.zelda.tmc.RomTables").t("Story27Town2.GHOST_FADE") -- gUnk_0811022E
 M.GHOST_FADE = GHOST_FADE
 reg(0x08065D00, "GhostBrothers_MakeInteractable", function(f, e) e.talkable = true end)
 local function ghostDraw(me, field, camX, camY)
@@ -811,14 +791,8 @@ local function ghostUpdate(f, e)
   e.action = 1
 end
 M.ghostUpdate = ghostUpdate
-local function townDialog(cat, a, b) return { 4, DIALOG.ROOM, DIALOG.TOGGLE, T(cat, a), T(cat, b) } end
-local NORMAL_TINGLE = { 0, 0, DIALOG.NORMAL, 0, T(0x3F, 0x31) }
-M.GHOST_DIALOGS = { -- dialogs[type][progress]
-  [0] = { [0] = NORMAL_TINGLE, NORMAL_TINGLE, NORMAL_TINGLE, NORMAL_TINGLE, NORMAL_TINGLE, NORMAL_TINGLE, NORMAL_TINGLE, NORMAL_TINGLE },
-  { [0] = townDialog(0x34, 0x17, 0x16), townDialog(0x34, 0x17, 0x16), townDialog(0x35, 0x13, 0x12),
-    townDialog(0x36, 0x13, 0x12), townDialog(0x37, 0x13, 0x12), townDialog(0x38, 0x13, 0x12),
-    townDialog(0x39, 0x12, 0x11), { 0, 0, DIALOG.NORMAL, 0, T(0x3A, 0x3) } },
-}
+-- sub_08065F64's dialogs[type][progress] (ghostBrothers.c, $08110280), read from the ROM
+M.GHOST_DIALOGS = require("src.zelda.tmc.RomTables").t("Story27Town2.GHOST_DIALOGS")
 reg(0x08065F64, "sub_08065F64", function(f, e)
   local t = math.max((f.save.progress or 0) - 2, 0)
   local row = M.GHOST_DIALOGS[typeOf(e)]
@@ -870,15 +844,14 @@ local function percyReward(f, e) -- sub_0806B540 (runs as the script's command)
   end
   stay(a)
 end
-M.PERCY_DIALOGS = { -- gUnk_08112E2C
-  [0] = { 0, 0, DIALOG.CALL, 0, 0, percyTalk },
-  { 0, 0, DIALOG.NORMAL, 0, T(TEXT_PERCY, 0x12) },
-  { 0, 0, DIALOG.NORMAL, 0, T(TEXT_PERCY, 0x11) },
-  { 0, 0, DIALOG.NORMAL, 0, T(TEXT_FESTIVAL, 0x19) },
-  { 0, 0, DIALOG.CALL, 0, 0, percyReward },
-}
+M.PERCY_DIALOGS = require("src.zelda.tmc.RomTables").t("Story27Town2.PERCY_DIALOGS") -- gUnk_08112E2C
+-- DIALOG_CALL_FUNC rows hold the function's address in a / b
+local PERCY_CALLS = { [0x0806B504] = percyTalk, [0x0806B540] = percyReward }
 reg(0x0806B4F0, "sub_0806B4F0", function(f, e)
   local d = M.PERCY_DIALOGS[type2Of(e)]
+  if d and d[3] == DIALOG.CALL then
+    d = { d[1], d[2], d[3], 0, 0, PERCY_CALLS[band(d[4] + d[5] * 0x10000, 0x7FFFFFFE)] }
+  end
   if d then M.dialogue(f, e, d) end
 end)
 

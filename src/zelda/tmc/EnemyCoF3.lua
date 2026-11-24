@@ -51,7 +51,9 @@
 --     hit): GravityUpdate(24/256) and animation, done -> action 4, speed $20,
 --     animation 2.  OnCollision: health lost / contact $94 -> action 10
 --     (collision on, drawn), animation 6; health 0 -> animation 9.
--- SIMPLIFIED: ProcessMovement2 / 5 move like ProcessMovement0 here; the
+-- Round 33: ProcessMovement2 / 5 use their collisionType's tile rules
+--   (Collide33.lua: IsTileCollision for types 2 / 5).
+-- SIMPLIFIED: the
 --   death FX / drops are the port's generic ones; Link's sprite offset
 --   inside the Rupee Like (the sprite sub-entry offsets) is not applied.
 local bit = require("bit")
@@ -60,9 +62,9 @@ local band, rshift = bit.band, bit.rshift
 local C = {}
 C.CHUCHU, C.RUPEE_LIKE = 0x01, 0x17
 local SFX_PLACE_OBJ, SFX_12B, SFX_RUPEE_GET = 0x104, 0x12B, 0x6F
-local RL_PAL = { [0] = 2, 1, 0 }       -- gUnk_080CCC47
-local RL_DRAIN = { [0] = -1, -5, -20 } -- gUnk_080CCC44
-local RL_DROP = { [0] = 0x54, 0x55, 0x56, 0x55, 0x56, 0x57 } -- gUnk_080CCC34
+local RL_PAL = require("src.zelda.tmc.RomTables").t("EnemyCoF3.RL_PAL")       -- gUnk_080CCC47
+local RL_DRAIN = require("src.zelda.tmc.RomTables").t("EnemyCoF3.RL_DRAIN") -- gUnk_080CCC44
+local RL_DROP = require("src.zelda.tmc.RomTables").t("EnemyCoF3.RL_DROP") -- gUnk_080CCC34
 C.RL_PAL, C.RL_DRAIN, C.RL_DROP = RL_PAL, RL_DRAIN, RL_DROP
 
 local function DW() return require("src.zelda.tmc.EnemyDeepwood") end
@@ -139,7 +141,7 @@ local function release(E, e) -- sub_080296D8
   if p.rupeeLike == e then
     p.rupeeLike = nil
     p.state, p.extUpdate, p.animId, p.hidden = "normal", nil, -1, nil
-    local DV = { [0] = { 0, -1 }, [2] = { 1, 0 }, [4] = { 0, 1 }, [6] = { -1, 0 } }
+    local DV = require("src.zelda.tmc.RomTables").fresh("EnemyCoF3.DV")
     local v = DV[p.animationState] or DV[4]
     p.z, p.zv = 2, 1.5
     p.jumping = true
@@ -200,6 +202,7 @@ function C.rupeeLike(E, e)
   local f = E.field
   local a = e.action
   e.onCollision = C.rupeeCollision
+  e.deathItem30 = RL_DROP[(e.u84 or 0) * 3 + (e.form or 0)] -- round 30: RupeeLike_OnDeath (gUnk_080CCC34), Enemies.lua's death drop
   if a == 0 then -- sub_0802940C
     e.u81, e.u84 = 0, 0
     asRupee(E, e)
@@ -351,7 +354,7 @@ function C.red(E, e)
     local fl = fflags(e)
     if band(fl, 0x10) ~= 0 then
       if band(fl, 1) ~= 0 then take(e); e.hitType = 91; f:sound(SFX_12B) end
-      move0(E, e, e.dir, e.spd)
+      require("src.zelda.tmc.Collide33").move(E, e, e.dir, e.spd, 2) -- round 33: ProcessMovement2 (collisionType 2)
       if not DW().gravity(e, 0.25) then e.anim:update(1) end
     else e.anim:update(1) end
     if done(e) then
@@ -377,7 +380,7 @@ function C.red(E, e)
     if (e.u83 or 0) ~= 0 then e.u83 = e.u83 - 1 end
     if waterTile(E, e) or (e.u83 or 0) ~= 0 then
       e.dir = dirToLink(f, e) or e.dir
-      move0(E, e, e.dir, e.spd or e.speed)
+      require("src.zelda.tmc.Collide33").move(E, e, e.dir, e.spd or e.speed, 5) -- round 33: ProcessMovement5 (collisionType 5)
       e.anim:update(1)
     else rise(E, e) end
   elseif a == 9 then -- sub_0801F6CC

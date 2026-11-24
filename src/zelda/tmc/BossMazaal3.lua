@@ -33,8 +33,8 @@ local bit = require("bit")
 local band, bor, rshift = bit.band, bit.bor, bit.rshift
 
 local X = {}
-X.PILLARS = { [0] = 0x58, 0x68, 0x88, 0x68, 0xB8, 0x68, 0x58, 0xA8, 0x88, 0xA8, 0xB8, 0xA8 } -- gUnk_080CEECC
-X.EXPL = { [0] = 0x46, 0x46, 0x47, 0x48 }                                                  -- gUnk_080CEEC8
+X.PILLARS = require("src.zelda.tmc.RomTables").t("BossMazaal3.PILLARS") -- gUnk_080CEECC
+X.EXPL = require("src.zelda.tmc.RomTables").t("BossMazaal3.EXPL")                                                  -- gUnk_080CEEC8
 
 local M, C
 

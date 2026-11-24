@@ -120,14 +120,13 @@ M.ROM_RANGES = {
 }
 
 -- tables written out in the decomp's .c sources
-M.BOB = { [0] = 0, -1, -2, -3, -4, -3, -2, -1, -18, -19, -20, -21, -22, -21, -20, -19 } -- gUnk_080CEB50
-M.LIGHTNING_AT = { [0] = { 0, -18 }, { 18, 0 }, { 0, 8 }, { -18, 0 } }                       -- gUnk_080D0154
-M.BCS_ANGLE = { [0] = 0, 0x44, 0x80, 0xBC }                                                  -- gUnk_080D0724
-M.BCS_STAND = { [0] = 0x1E, 0x32, 0x46, 0x5A }                                               -- gUnk_080D0728
-M.BCS_WALK = { [0] = 0x3C, 0x5A, 0x78, 0x96 }                                                -- gUnk_080D0730
+M.BOB = require("src.zelda.tmc.RomTables").t("EnemyPoW.BOB") -- gUnk_080CEB50
+M.LIGHTNING_AT = require("src.zelda.tmc.RomTables").t("EnemyPoW.LIGHTNING_AT")                       -- gUnk_080D0154
+M.BCS_ANGLE = require("src.zelda.tmc.RomTables").t("EnemyPoW.BCS_ANGLE")                                                  -- gUnk_080D0724
+M.BCS_STAND = require("src.zelda.tmc.RomTables").t("EnemyPoW.BCS_STAND")                                               -- gUnk_080D0728
+M.BCS_WALK = require("src.zelda.tmc.RomTables").t("EnemyPoW.BCS_WALK")                                                -- gUnk_080D0730
 -- gUnk_0812A4A8 as the s8 bytes it is read as (PosOffset* = table + index bytes)
-M.HAND = { [0] = 6, -16, 10, -14, 10, -16, 8, -16, -4, -14, -8, -14, -4, -10, 4, -10,
-           -6, -14, -8, -16, -10, -14, -8, -12, 4, -14, 8, -14, 4, -10, -4, -10 }
+M.HAND = require("src.zelda.tmc.RomTables").t("EnemyPoW.HAND")
 local SIN = {}
 for i = 0, 319 do SIN[i] = math.floor(math.sin(i * math.pi / 128) * 256 + 0.5) end -- gSineTable ($100 = 1)
 M.SIN = SIN
@@ -1135,7 +1134,7 @@ function M.gibdo(E, e)
       if e.timer == 0 then gibRelease(E, e) return end
     end
     -- ResetActiveItems, mobility locked: Link stays held
-    if p.state ~= "ext" or p.extUpdate ~= e.holdFn then p.state, p.extUpdate = "ext", e.holdFn end
+    if p.state ~= "dead" and (p.state ~= "ext" or p.extUpdate ~= e.holdFn) then p.state, p.extUpdate = "ext", e.holdFn end -- round 74: the hold only sets mobility / field_0xa; it never overrides PL_STATE_DIE
     e.x, e.y = p.x, p.y
     e.anim:update(1)
     if band(fflags(e), 1) ~= 0 then
@@ -1321,6 +1320,7 @@ function M.update(E, e)
     if e.cloud then return M.lakCloud(E, e) end
     if e.lightning then return M.lightning(E, e) end
     if e.ballType then return M.ballAndChain(E, e) end
+    if e.torch73 then return require("src.zelda.tmc.TorchTrap73").projUpdate(E, e) end -- round 73: TORCH_TRAP_PROJECTILE
     return
   end
   if e.spawnY == nil and e.spawnC ~= nil then e.spawnY = e.y end
