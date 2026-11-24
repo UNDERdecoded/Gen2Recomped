@@ -81,7 +81,8 @@ X.EXTRA = { { "people30", "Townsfolk30" }, { "spr31", "Sprites31" }, { "games31"
             { "shutter91", "Shutter91" },   -- r91: a tag does not shut the shutter Link is still walking in through (no ROM reads)
             { "wm92", "Wm92" },   -- r92: the screen stays put while a Wallmaster carries Link off (no ROM reads)
             { "push93", "Push93" },   -- r93: a push block leaves the attribute of the tile under it (no ROM reads)
-            { "armos94", "Armos94" } }   -- r94: the Armos Knights' back row (y 0x50), the crusher's touch (state 0 only), no heart in GT (no ROM reads)
+            { "armos94", "Armos94" },   -- r94 (see Armos94.lua)
+            { "fairy94", "Fairy94" } }   -- r94: the fairy flies about (Fairy_HandleMovement; its z speed table read at import)   -- r94: the Armos Knights' back row (y 0x50), the crusher's touch (state 0 only), no heart in GT (no ROM reads)
               -- r76: Kodongo's direction / fire tables, the arrow's recoil on a sprite   -- r76: the Mire moving wall room's map swap (RoomTag_MovingWall_East's own room)
               -- r75: crystal switch palettes, cape depletion timers   -- r74: literals moved to import (detection points, pot switch words, Blind trigger, OAM flags)
 
