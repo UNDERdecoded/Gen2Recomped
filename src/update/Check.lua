@@ -182,6 +182,11 @@ function Check.capability()
     or os.getenv("POKEPORT_NOTIFY_ONLY_UPDATES") == "1"
   if suppressed then
     cap.mode, cap.reason = "suppressed", "POKEPORT_NOTIFY_ONLY_UPDATES is set"
+  elseif host == "PS5" then
+    -- A homebrew title is installed by the player (ShadowMountPlus mounts the
+    -- game.love they copied over FTP), so it never replaces itself: the banner
+    -- only says a release exists.
+    cap.mode, cap.reason = "notify-only", "PS5 titles are updated by hand"
   elseif not canHost then
     cap.mode, cap.reason = "unavailable",
       "the save directory did not take a test write, so no payload could be mounted"
@@ -204,11 +209,14 @@ function Check.capability()
   --   "download"  self-update works here
   --   "ota"       NX -- the native OTA launcher NRO is the update path
   --   "package"   a packaged container (UWP/MSIX) -- install a newer package
+  --   "homebrew"  PS5 homebrew -- copy the new release over FTP
   --   "releases"  no transport, but a desktop that can open a page
   if cap.mode == "self-update" then
     cap.advice = "download"
   elseif host == "NX" then
     cap.advice = "ota"
+  elseif host == "PS5" then
+    cap.advice = "homebrew"
   elseif Platform.isPackagedContainer() then
     cap.advice = "package"
   else
@@ -229,7 +237,7 @@ end
 -- The launcher turns this into a sentence and decides whether to draw a button;
 -- tools/auto_update_check.lua asserts the launcher handles every value this can
 -- return, so a fifth one cannot be added here and ignored there.
-Check.ADVICE = { download = true, ota = true, package = true, releases = true }
+Check.ADVICE = { download = true, ota = true, package = true, homebrew = true, releases = true }
 
 function Check.advice()
   return Check.capability().advice or "releases"
@@ -385,6 +393,16 @@ local function drain()
       cache = msg
       msg = stateCh:pop()
     end
+  end
+  -- THE PS5 CAN CHECK BUT NOT INSTALL.  Its title fetches through libcurl
+  -- (love.system.httpDownload), so the worker finds a newer release and says
+  -- "available" like anywhere else -- and the banner would draw an Update
+  -- button whose only possible answer is Check.download's refusal.  Go
+  -- straight to the state that refusal leaves, whose row tells the player to
+  -- copy the release over (advice "homebrew").  Keyed on that advice so no
+  -- other host's banner changes.
+  if cache.status == "available" and not cache.app and Check.advice() == "homebrew" then
+    cache = { status = "needs_full", latest = cache.latest }
   end
   if worker then
     local err = worker:getError()

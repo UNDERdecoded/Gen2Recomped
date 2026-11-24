@@ -1,0 +1,30 @@
+Gen2Recomped PS5: let the G19 SDL2 video driver take LOVE's window.
+
+LOVE creates its window at the size conf.lua asks for (and resizable on
+desktop builds); G19 refused anything but the fixed scanout size. On the PS5
+there is exactly one surface, so take any OpenGL window and make it the
+scanout size, the way SDL's fullscreen-desktop mode reports the display size.
+LOVE then reads the real size back with SDL_GetWindowSize.
+
+--- a/SDL_ps5g19.c
++++ b/SDL_ps5g19.c
+@@ -80,11 +80,14 @@
+         EGL_STENCIL_SIZE, _this->gl_config.stencil_size, EGL_NONE
+     };
+     if (on_thread(g) < 0) return -1;
+-    if (g->window || g->surface || window->w != PS5_OPENGL_NATIVE_WIDTH ||
+-        window->h != PS5_OPENGL_NATIVE_HEIGHT ||
+-        !(window->flags & SDL_WINDOW_OPENGL) || (window->flags & SDL_WINDOW_RESIZABLE))
+-        return SDL_SetError("G19 requires one fixed %dx%d OpenGL window",
+-                            PS5_OPENGL_NATIVE_WIDTH, PS5_OPENGL_NATIVE_HEIGHT);
++    if (g->window || g->surface || !(window->flags & SDL_WINDOW_OPENGL))
++        return SDL_SetError("G19 requires one OpenGL window");
++    /* Gen2Recomped: whatever size was asked for, the window is the scanout. */
++    window->x = window->windowed.x = 0;
++    window->y = window->windowed.y = 0;
++    window->w = window->windowed.w = PS5_OPENGL_NATIVE_WIDTH;
++    window->h = window->windowed.h = PS5_OPENGL_NATIVE_HEIGHT;
++    window->flags &= ~SDL_WINDOW_RESIZABLE;
+     if (_this->gl_config.stereo || _this->gl_config.multisamplebuffers ||
+         _this->gl_config.multisamplesamples || _this->gl_config.floatbuffers ||
+         _this->gl_config.framebuffer_srgb_capable || _this->gl_config.accum_red_size ||

@@ -1,0 +1,49 @@
+diff -ru a/src/modules/system/wrap_System.cpp b/src/modules/system/wrap_System.cpp
+--- a/src/modules/system/wrap_System.cpp	2023-12-03 13:50:33.000000000 +0100
++++ b/src/modules/system/wrap_System.cpp	2026-11-22 10:16:57.741747599 +0100
+@@ -101,6 +101,35 @@
+ 	return 1;
+ }
+ 
++#if defined(__PROSPERO__)
++// The PS5 title's HTTPS client (ports/ps5/launcher/http.c, libcurl), linked
++// in by the launcher. A title cannot spawn curl, and the game's HostShell
++// fetches through love.system.httpDownload wherever it cannot (as the Android
++// build does). Registered here, in love.system itself, so every Lua state
++// that requires love.system has it -- love.thread workers included, which
++// is where the update check, translation and mod bake downloads run.
++extern "C" int g2r_http_download(const char *url, const char *dest, const char *user_agent,
++                                 const char *accept, char *why, size_t why_size);
++
++// httpDownload(url, absPath [, userAgent [, accept]]) -> true | nil, reason
++int w_httpDownload(lua_State *L)
++{
++	const char *url = luaL_checkstring(L, 1);
++	const char *dest = luaL_checkstring(L, 2);
++	const char *ua = luaL_optstring(L, 3, nullptr);
++	const char *accept = luaL_optstring(L, 4, nullptr);
++	char why[512];
++	if (g2r_http_download(url, dest, ua, accept, why, sizeof(why)))
++	{
++		lua_pushboolean(L, 1);
++		return 1;
++	}
++	lua_pushnil(L);
++	lua_pushstring(L, why[0] != 0 ? why : "download failed");
++	return 2;
++}
++#endif
++
+ static const luaL_Reg functions[] =
+ {
+ 	{ "getOS", w_getOS },
+@@ -111,6 +140,9 @@
+ 	{ "openURL", w_openURL },
+ 	{ "vibrate", w_vibrate },
+ 	{ "hasBackgroundMusic", w_hasBackgroundMusic },
++#if defined(__PROSPERO__)
++	{ "httpDownload", w_httpDownload },
++#endif
+ 	{ 0, 0 }
+ };
+ 

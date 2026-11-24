@@ -481,6 +481,9 @@ function CacheFs.forgetRoot()
   customResolved = false
   customRoot = nil
   customWhy = nil
+  -- Packs live under the root, so a new root means new packs (or none):
+  -- their mounts came off with the rest above, and their indexes go too.
+  if CacheFs.forgetPacks then CacheFs.forgetPacks() end
 end
 
 -- Whether a folder change left a previous home on the read path, so the
@@ -642,10 +645,286 @@ function CacheFs.bulkWriteSave(rel, data)
   return CacheFs.bulkWrites and bulkWrite(rel, data) or false
 end
 
+-- ---------------------------------------------------------------------------
+-- THE PACKED CACHE: one archive per version instead of ~18,000 loose files.
+--
+-- A PS5 pays ~11 ms per file creation and then stalls 0.5-0.9 s in the
+-- kernel about once a second; a Platinum import there took 44 minutes, and
+-- the same bytes appended to one file took 8 s.  So on the PS5 (or anywhere,
+-- with POKEPORT_PACKED_CACHE=1) the import worker writes every
+-- data/generated/... and assets/generated/... file of a version into
+-- `<prefix>rom-cache.zip` (src/import/CachePack) and the game reads it back
+-- through PhysFS.  Everywhere else nothing below runs and the loose tree is
+-- exactly what it was.
+--
+-- WHERE IT LIVES: next to the marker, `<root>/<prefix>rom-cache.zip`, where
+-- <root> is the live root (portable / chosen folder) or the save directory.
+-- Red (prefix "") is never packed: it owns the cache root, it is a few hundred
+-- files, and an archive mounted at "" for it could not be ordered against the
+-- root's own loose files the way the version overlays below can.
+--
+-- HOW IT IS READ.  Entries are named version-relative ("data/generated/x.lua")
+-- and the archive is mounted TWICE, which PhysFS allows only because the two
+-- mounts spell the path differently -- it treats an identical string as
+-- "already mounted" and silently adds nothing (measured; see PACK_ALT below):
+--
+--   1. at "<sub>" ("platinum"), APPENDED, as soon as anyone asks about the
+--      version (mountPack).  Everything that reads `platinum/data/...` by name
+--      -- CacheFs.read with no root, the launcher, the Pokéwalker, the
+--      cross-version lookups -- finds the pack's files there, and any loose
+--      file at the same name (save directory or live root, both searched
+--      first) wins.
+--   2. at "", PREPENDED, by mountVersion when the version boots -- BEFORE its
+--      loose overlays, which are prepended after it and so sit in front.
+--      require / newImage / newFile of `data/generated/...` then resolve
+--      natively, in every Lua state, with no wrapper.  The un-prefixed mount
+--      also has to beat Red's cache at the root and a developer's source
+--      tree, which is why it cannot be appended.
+--
+-- PRECEDENCE, therefore: loose files of the version (a mod, Data.lua's
+-- runtime copies, a hand-placed fix) > the pack > anything at the root.
+--
+-- And CacheFs.read / CacheFs.exists fall back to the pack through this
+-- module's own reader when the loose lookup misses, so they work with no
+-- mount at all: inside the import worker (from the pack still being written)
+-- and in the launcher before anything is mounted.
+CacheFs.PACK_NAME = "rom-cache.zip"
+local PACK_PART = ".part"
+
+local CachePack_ = nil
+local function CachePack()
+  CachePack_ = CachePack_ or require("src.import.CachePack")
+  return CachePack_
+end
+
+-- POKEPORT_PACKED_CACHE=1 forces packing on any platform (desktop testing),
+-- =0 forces it off (including on the PS5); otherwise only the PS5 packs.
+function CacheFs.packedMode()
+  local env = os.getenv("POKEPORT_PACKED_CACHE")
+  if env == "1" then return true end
+  if env == "0" then return false end
+  local ok, on = pcall(function() return require("src.core.Platform").isPS5() end)
+  return ok and on == true
+end
+
+-- Only the two generated trees go into a pack.  The marker, the write probe
+-- and anything else under the prefix stay loose: they are a handful of files
+-- and the marker in particular must be written and read independently of the
+-- archive it vouches for.
+local function packable(name)
+  return name:sub(1, 15) == "data/generated/"
+      or name:sub(1, 17) == "assets/generated/"
+end
+
+-- The real folder a pack of `prefix` lives in: the live root, else the save
+-- directory.  Returns home, isRoot.
+local function packHome()
+  local root = CacheFs.root()
+  if root then return root, true end
+  local ok, dir = pcall(function() return love.filesystem.getSaveDirectory() end)
+  if ok and type(dir) == "string" and dir ~= "" then return dir, false end
+  return nil
+end
+
+-- Real path of `<prefix>rom-cache.zip`, and its save-dir-relative name.
+-- `alt` returns the SECOND SPELLING of the same file: the separator before the
+-- name doubled.  Every OS collapses it; PhysFS compares mount sources with
+-- strcmp, so it is a distinct search-path entry -- which is the only way to
+-- have one archive at two mount points.
+function CacheFs.packPath(prefix, alt)
+  prefix = prefix or CacheFs.prefix
+  local rel = prefix .. CacheFs.PACK_NAME
+  local home = packHome()
+  if not home then return nil, rel end
+  local dir = prefix:gsub("/+$", "")
+  local sep = alt and (SEP .. SEP) or SEP
+  local real = home .. SEP .. dir:gsub("/", SEP) .. sep .. CacheFs.PACK_NAME
+  return real, rel
+end
+
+local function fileThere(real)
+  local f = real and io.open(real, "rb")
+  if not f then return false end
+  f:close()
+  return true
+end
+
+-- Does `prefix` have a finished pack?  io.* first (it is the path the writer
+-- used); love.filesystem as well for the save directory, whose name io.*
+-- cannot always open (a non-ASCII profile path on Windows).
+local function packExists(prefix)
+  if prefix == "" then return false end
+  local real, rel = CacheFs.packPath(prefix)
+  if fileThere(real) then return true end
+  if not CacheFs.root() and love and love.filesystem and love.filesystem.getInfo then
+    -- getInfo through PhysFS would also find the archive's own mount, which
+    -- does not contain itself, so this only ever answers for the real file
+    return love.filesystem.getInfo(rel, "file") ~= nil
+  end
+  return false
+end
+CacheFs.packExists = packExists
+
+-- READERS, one per prefix, index only (CachePack readers re-open the file per
+-- read, so none of this holds the archive open).  `false` caches "no pack"
+-- so the launcher's readiness pass, which asks dozens of exists() questions
+-- per version, does not re-probe the disk for each.  Invalidated by every
+-- event in this Lua state that can change a pack, and by forgetPacks for the
+-- one event that happens in another state (the import worker).
+local packReaders = {}
+
+function CacheFs.forgetPacks()
+  packReaders = {}
+end
+
+local function loveSource(rel)
+  return function()
+    local lfs = love and love.filesystem
+    if not (lfs and lfs.newFile) then return nil, "no love.filesystem" end
+    local f = lfs.newFile(rel)
+    if not (f and f:open("r")) then return nil, "cannot open " .. rel end
+    return {
+      read = function(_, n) return (f:read(n)) end,
+      seek = function(_, pos) return f:seek(pos) end,
+      size = function() return f:getSize() end,
+      close = function() f:close() end,
+    }
+  end
+end
+
+local function packReader(prefix)
+  local cached = packReaders[prefix]
+  if cached ~= nil then return cached or nil end
+  packReaders[prefix] = false
+  if prefix == "" then return nil end
+  local real, rel = CacheFs.packPath(prefix)
+  local reader = nil
+  if fileThere(real) then
+    reader = CachePack().open(real)
+  elseif not CacheFs.root() and love and love.filesystem
+      and love.filesystem.getInfo and love.filesystem.getInfo(rel, "file") then
+    reader = CachePack().open(loveSource(rel))
+  end
+  if reader then packReaders[prefix] = reader end
+  return reader
+end
+
+-- The pack being written right now, in THIS Lua state (the import worker):
+-- { prefix, writer, final, part, overflow }.
+local activePack = nil
+
+-- Which pack answers for prefixed path `full`, and the entry name in it.
+local function packFor(full)
+  if activePack then
+    local p = activePack.prefix
+    if full:sub(1, #p) == p then
+      local name = full:sub(#p + 1)
+      if packable(name) then return activePack.writer, name end
+    end
+  end
+  local prefix = CacheFs.prefix
+  if prefix == nil or prefix == "" or full:sub(1, #prefix) ~= prefix then return nil end
+  local name = full:sub(#prefix + 1)
+  if not packable(name) then return nil end
+  local reader = packReader(prefix)
+  if not reader then return nil end
+  return reader, name
+end
+
+-- Start packing CacheFs.prefix's generated trees.  Returns true, or false and
+-- why -- in which case the caller carries on with loose files, which is
+-- slower and otherwise identical.
+function CacheFs.beginPack()
+  if activePack then return true end
+  local prefix = CacheFs.prefix or ""
+  if prefix == "" then return false, "Red's cache is never packed" end
+  local final, rel = CacheFs.packPath(prefix)
+  if not final then return false, "no folder to write the pack to" end
+  local part = final .. PACK_PART
+  local root = CacheFs.root()
+  if root then
+    ensureParents(root, rel)
+  elseif love and love.filesystem and love.filesystem.createDirectory then
+    love.filesystem.createDirectory((prefix:gsub("/+$", "")))
+  end
+  os.remove(part)
+  local writer, err = CachePack().create(part)
+  if not writer then return false, "could not create " .. part .. ": " .. tostring(err) end
+  -- NOT TAKEN ON TRUST, for the same reason bulkWrite is not: the pack is
+  -- written with io.* to a path built from LOVE's name for the save directory
+  -- and read back through PhysFS.  If the two do not meet, say so now.
+  if not root and love and love.filesystem and love.filesystem.getInfo then
+    writer.f:flush()
+    if not love.filesystem.getInfo(rel .. PACK_PART, "file") then
+      writer:abort()
+      return false, "io.* does not reach the save directory"
+    end
+  end
+  activePack = { prefix = prefix, writer = writer, final = final, part = part,
+                 overflow = 0 }
+  return true
+end
+
+function CacheFs.packActive()
+  return activePack ~= nil
+end
+
+-- Finish the pack: central directory, close, then -- and only then -- rename
+-- `.part` to the final name.  Returns true, stats or nil, err.  A pack that
+-- cannot replace its predecessor is an error, not a warning: the old archive
+-- would go on answering for the new import's files.
+function CacheFs.finishPack()
+  local p = activePack
+  if not p then return true, nil end
+  activePack = nil
+  local w = p.writer
+  local stats = { entries = w.entries, bytes = w.bytes,
+                  duplicates = w.duplicates, overflow = p.overflow,
+                  path = p.final }
+  local ok, err = w:finish()
+  if not ok then
+    os.remove(p.part)
+    return nil, "could not finish " .. p.part .. ": " .. tostring(err)
+  end
+  stats.size = w.offset
+  if fileThere(p.final) then os.remove(p.final) end
+  if fileThere(p.final) then
+    os.remove(p.part)
+    return nil, "could not replace " .. p.final .. " (is it still mounted or open?)"
+  end
+  local renamed, renameErr = os.rename(p.part, p.final)
+  if not renamed then
+    os.remove(p.part)
+    return nil, "could not rename " .. p.part .. ": " .. tostring(renameErr)
+  end
+  packReaders[p.prefix] = nil
+  return true, stats
+end
+
+-- Abandon the pack being written (the import failed): close and delete the
+-- `.part`.  Never leaves anything a later launch could mistake for a cache.
+function CacheFs.abortPack()
+  local p = activePack
+  activePack = nil
+  if p then p.writer:abort() end
+end
+
 -- write cache-relative `rel` (forward-slash path) with the given bytes;
 -- returns ok, err like love.filesystem.write
 function CacheFs.write(rel, data)
   rel = withPrefix(rel)
+  if activePack then
+    local writer, name = packFor(rel)
+    if writer == activePack.writer then
+      local ok, why = writer:add(name, data)
+      if ok then return true end
+      if why ~= "full" then return false, why end
+      -- Past what a plain ZIP can index: this one goes loose.  Loose files
+      -- are read ahead of the pack, so the cache stays whole -- just slower
+      -- to write on the console, which is why it is counted and reported.
+      activePack.overflow = activePack.overflow + 1
+    end
+  end
   local root = CacheFs.root()
   if root then
     local f, err = openUnder(root, rel)
@@ -667,9 +946,9 @@ function CacheFs.write(rel, data)
   return love.filesystem.write(rel, data)
 end
 
--- read cache-relative `rel`; returns the bytes or nil
-function CacheFs.read(rel)
-  rel = withPrefix(rel)
+-- read cache-relative `rel`; returns the bytes or nil.  A loose file wins;
+-- the version's pack (or the one being written) answers when there is none.
+local function looseRead(rel)
   local root = CacheFs.root()
   if root then
     local f = io.open(realPath(root, rel), "rb")
@@ -681,9 +960,24 @@ function CacheFs.read(rel)
   return love.filesystem.read(rel)
 end
 
--- does cache-relative `rel` exist as a file?
-function CacheFs.exists(rel)
+function CacheFs.read(rel)
   rel = withPrefix(rel)
+  local data = looseRead(rel)
+  if data ~= nil then return data end
+  local pack, name = packFor(rel)
+  if not pack then return nil end
+  local bytes, why = pack:read(name)
+  if bytes == nil and why == "stale" then
+    -- replaced under the cached index (the worker re-imported): re-index once
+    packReaders[CacheFs.prefix] = nil
+    pack, name = packFor(rel)
+    if pack then bytes = pack:read(name) end
+  end
+  return bytes
+end
+
+-- does cache-relative `rel` exist as a file?
+local function looseExists(rel)
   local root = CacheFs.root()
   if root then
     local f = io.open(realPath(root, rel), "rb")
@@ -694,9 +988,23 @@ function CacheFs.exists(rel)
   return love.filesystem.getInfo(rel, "file") ~= nil
 end
 
--- remove a single cache-relative file
+function CacheFs.exists(rel)
+  rel = withPrefix(rel)
+  if looseExists(rel) then return true end
+  local pack, name = packFor(rel)
+  return pack ~= nil and pack:has(name)
+end
+
+-- remove a single cache-relative file.  Inside an import that is packing, the
+-- entry is dropped from the archive too; a FINISHED pack cannot lose a file
+-- (rewriting the archive for one deletion is not worth it), so a removal
+-- there only reaches the loose copy.
 function CacheFs.remove(rel)
   rel = withPrefix(rel)
+  if activePack then
+    local writer, name = packFor(rel)
+    if writer == activePack.writer then writer:remove(name) end
+  end
   local root = CacheFs.root()
   if root then
     os.remove(realPath(root, rel))
@@ -1075,10 +1383,151 @@ local function mountGeneratedTrees(prefix)
   return mounted
 end
 
+-- Put a pack on the read path at `point`.  FFI first (absolute path, any
+-- root); love.filesystem.mount as the fallback, which can only reach the save
+-- directory.  `alt` picks the second spelling (see CacheFs.packPath).
+-- Recorded in ourMounts with `pack` (and `persistent` for the prefixed view)
+-- so unmountPack / unmountVersion can find exactly these again.
+local function mountPackAt(prefix, point, append, alt)
+  local real, rel = CacheFs.packPath(prefix, alt)
+  local persistent = point ~= ""
+  local fn = resolveMount()
+  if real and fn and fn(real, point, append) then
+    ourMounts[#ourMounts + 1] = { dir = real, point = point, append = append,
+                                  how = "ffi", pack = prefix, persistent = persistent }
+    return true
+  end
+  if not CacheFs.root() and love and love.filesystem and love.filesystem.mount then
+    local name = alt and (prefix:gsub("/+$", "") .. "//" .. CacheFs.PACK_NAME) or rel
+    local ok, mounted = pcall(love.filesystem.mount, name, point, append)
+    if ok and mounted then
+      ourMounts[#ourMounts + 1] = { dir = name, point = point, append = append,
+                                    how = "love", pack = prefix, persistent = persistent }
+      return true
+    end
+  end
+  return false
+end
+
+local function packMounted(prefix, overlay)
+  for _, m in ipairs(ourMounts) do
+    if m.pack == prefix and (m.point == "") == (overlay == true) then return true end
+  end
+  return false
+end
+
+-- The prefixed view of `prefix`'s pack (mount 1 above).  Idempotent; returns
+-- true when the pack is (now) visible at `<sub>/...`, false when there is no
+-- pack or it could not be mounted.  Cheap enough to call on every readiness
+-- check: one io.open when there is no pack.
+local packHeld = {}
+
+function CacheFs.mountPack(prefix)
+  prefix = prefix or CacheFs.prefix
+  if not prefix or prefix == "" then return false end
+  if packHeld[prefix] then return false end
+  if packMounted(prefix, false) then return true end
+  if not packExists(prefix) then return false end
+  return mountPackAt(prefix, (prefix:gsub("/+$", "")), true, false)
+end
+
+-- Every version's pack, prefixed.  mountVersion calls it so a running game's
+-- cross-version reads (Pal Park, the Pokéwalker, adopted tilesets) see other
+-- versions' packs under their own names, exactly as they see loose trees.
+function CacheFs.mountPacks()
+  local ok, GV = pcall(require, "src.core.GameVersion")
+  if not (ok and GV and GV.ORDER) then return end
+  for _, id in ipairs(GV.ORDER) do
+    local okP, prefix = pcall(GV.cachePrefix, id)
+    if okP and type(prefix) == "string" and prefix ~= "" then
+      CacheFs.mountPack(prefix)
+    end
+  end
+end
+
+-- Take `prefix`'s pack fully off the read path (both views) and drop its
+-- index.  Required before anything deletes or replaces the file: Windows
+-- refuses to delete an open file and PhysFS holds a mounted archive open.  A
+-- mount PhysFS refuses (a file inside still open -- a streamed Source the
+-- collector has not closed) gets one collection and a retry.  Returns true
+-- when nothing of it is mounted any more.
+--
+-- `hold` keeps it off until releasePack: an import unmounts before its worker
+-- deletes the file, and a readiness check in between (another launcher
+-- column, a redraw) must not put it straight back.
+function CacheFs.unmountPack(prefix, hold)
+  prefix = prefix or CacheFs.prefix
+  packReaders[prefix] = nil
+  if not prefix or prefix == "" then return true end
+  if hold then packHeld[prefix] = true end
+  local unmount = resolveUnmount()
+  local function takeOff(m)
+    if m.how == "ffi" and unmount then return unmount(m.dir) end
+    if m.how == "love" and love and love.filesystem and love.filesystem.unmount then
+      local ok, res = pcall(love.filesystem.unmount, m.dir)
+      return ok and res and true or false
+    end
+    return false
+  end
+  local keep, all = {}, true
+  for _, m in ipairs(ourMounts) do
+    if m.pack == prefix then
+      local off = takeOff(m)
+      if not off then
+        collectgarbage("collect"); collectgarbage("collect")
+        off = takeOff(m)
+      end
+      if not off then
+        keep[#keep + 1] = m
+        all = false
+      end
+    else
+      keep[#keep + 1] = m
+    end
+  end
+  ourMounts = keep
+  return all
+end
+
+function CacheFs.releasePack(prefix)
+  packHeld[prefix or CacheFs.prefix] = nil
+end
+
+-- Delete `prefix`'s pack -- the finished archive and any `.part` a killed
+-- import left -- from the live root AND the save directory, the same two
+-- homes a re-import clears loose trees from.  Unmounts first.  Returns
+-- true, or false and why when a finished pack is still there afterwards (on
+-- Windows: still open somewhere), which a re-import must treat as fatal.
+function CacheFs.clearPack(prefix)
+  prefix = prefix or CacheFs.prefix
+  if not prefix or prefix == "" then return true end
+  if activePack and activePack.prefix == prefix then CacheFs.abortPack() end
+  CacheFs.unmountPack(prefix)
+  local real, rel = CacheFs.packPath(prefix)
+  if real then
+    os.remove(real .. PACK_PART)
+    os.remove(real)
+  end
+  if love and love.filesystem and love.filesystem.remove then
+    pcall(love.filesystem.remove, rel .. PACK_PART)
+    pcall(love.filesystem.remove, rel)
+  end
+  packReaders[prefix] = nil
+  if real and fileThere(real) then
+    return false, "could not delete " .. real .. " (is it still open?)"
+  end
+  return true
+end
+
 function CacheFs.mountVersion(version)
   local prefix = require("src.core.GameVersion").cachePrefix(version)
   if prefix == "" then return true end            -- Red: already at the root
   local sub = prefix:gsub("/+$", "")              -- "blue/" / "yellow/" -> bare dir
+
+  -- Packs first: the prefixed views make a packed version's files visible
+  -- under `<sub>/` (so the check below sees them), and other versions' packs
+  -- visible to the cross-version readers.
+  CacheFs.mountPacks()
 
   -- Nothing to overlay: this version was never imported.  Say so plainly
   -- rather than reporting a mount failure for a cache that does not exist.
@@ -1106,6 +1555,15 @@ function CacheFs.mountVersion(version)
   if require("src.core.Platform").simulatesSwitch() then
     if CacheFs.installPrefixShim(prefix) and overlayVisible() then return true end
     return false, "could not overlay " .. sub .. "/ onto the read path"
+  end
+
+  -- 0. A packed version's archive, PREPENDED at "" -- and FIRST, so every
+  --    loose overlay below is prepended after it and lands in front: a loose
+  --    file of this version beats the pack, and the pack beats Red's root
+  --    cache and the source.  Second spelling, because the prefixed view
+  --    already holds the first (see CacheFs.packPath).
+  if packMounted(prefix, false) and not packMounted(prefix, true) then
+    mountPackAt(prefix, "", false, true)
   end
 
   -- 1. Whole version folder at "", by save-dir-relative name.  No FFI, and
@@ -1333,7 +1791,12 @@ function CacheFs._unmountRecorded(base, sub)
   local keep, any = {}, false
   for _, m in ipairs(ourMounts) do
     local d = normMountPath(m.dir)
-    if inside(d, home) or inside(d, rel) then
+    if m.persistent then
+      -- a pack's prefixed view (mountPack): it shows the version under its
+      -- own name, like the loose tree always is, so it outlives the overlay;
+      -- only unmountPack takes it down
+      keep[#keep + 1] = m
+    elseif inside(d, home) or inside(d, rel) then
       local off = takeOff(m)
       if not off then
         collectgarbage("collect"); collectgarbage("collect")

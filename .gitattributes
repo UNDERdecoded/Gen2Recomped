@@ -19,3 +19,7 @@ mobile/android/gradlew text eol=lf
 
 *.bat text eol=crlf
 *.cmd text eol=crlf
+
+# The PS5 build applies these patches in WSL against LF upstream sources; a
+# CRLF checkout of a patch no longer matches a single line of them.
+ports/ps5/**/*.patch text eol=lf

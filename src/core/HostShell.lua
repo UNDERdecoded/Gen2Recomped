@@ -225,15 +225,30 @@ function HostShell.haveCurl()
   return readOk and out ~= nil and out:find("curl", 1, true) ~= nil
 end
 
--- The bridge only exists in our Android liblove.  An older APK reports nil
+-- The bridge only exists in our Android liblove and in the PS5 title's LOVE
+-- (libcurl, ports/ps5/launcher/http.c).  An older APK or eboot reports nil
 -- here and falls back to the "no transport" error the callers already show;
 -- the iOS build compiles the same wrapper but always returns false, so gate
 -- on the OS as well and keep its error message honest.
+--
+-- The PS5's call is plain C and safe on any thread, unlike the JNI one: a
+-- worker that would hand an Android fetch to its main-thread servicer asks
+-- HostShell.bridgeAnyThread() and, on the PS5, makes the call itself.  The
+-- main thread then never blocks on the network -- it did, for 10-15 s at
+-- every launch, while the update check's GitHub requests were served from it.
+local BRIDGE_HOSTS = { Android = true, PS5 = true }
+local ANY_THREAD = { PS5 = true }
+
 local function haveBridge()
   if not (love and love.system and type(love.system.httpDownload) == "function") then
     return false
   end
-  return love.system.getOS and love.system.getOS() == "Android"
+  return love.system.getOS ~= nil and BRIDGE_HOSTS[love.system.getOS()] == true
+end
+
+-- true when love.system.httpDownload may be called from any thread
+function HostShell.bridgeAnyThread()
+  return haveBridge() and ANY_THREAD[love.system.getOS()] == true
 end
 
 -- Xbox: the bundled UWP love.dll exports love.system.httpDownload too (a WinRT
@@ -295,7 +310,8 @@ end
 --
 -- Returns transport, reason:
 --   "curl", nil                     a curl we actually ran --version on
---   "bridge", nil                   love.system.httpDownload (Android, #597)
+--   "bridge", nil                   love.system.httpDownload (Android, #597;
+--                                   the PS5 title's libcurl)
 --   "https", nil                    LOVE's lua-https (iOS)
 --   "uwp", nil                      the UWP love.dll's httpDownload, worker
 --                                   threads only (Xbox)
@@ -322,9 +338,9 @@ function HostShell.transport()
     if not HostShell.canSpawnProcess() then
       -- The honest sentence for the Switch and for an Xbox UWP container: it
       -- is not that the package is read-only, it is that there is no HTTPS
-      -- client reachable from Lua.  io.popen cannot start curl, the JNI
-      -- download bridge only exists in our Android liblove, and lua-https is
-      -- only trusted on iOS.
+      -- client reachable from Lua.  io.popen cannot start curl, the download
+      -- bridge only exists in our Android liblove and PS5 eboot, and
+      -- lua-https is only trusted on iOS.
       transportWhy = ("no HTTPS client on %s: this host cannot spawn curl and "
         .. "exports no download bridge"):format(osName)
     else
@@ -417,8 +433,12 @@ function HostShell.httpDownload(url, absPath, userAgent, accept)
   if not (haveBridge() or haveUwpBridge()) then
     return nil, "no network transport on this platform"
   end
-  local ok, done = pcall(love.system.httpDownload, url, absPath, userAgent, accept)
+  -- The PS5 bridge answers nil + its reason ("HTTP 404", a TLS or DNS error)
+  -- the way curl's stderr does here; Android's answers a bare false, and
+  -- keeps the generic sentence.
+  local ok, done, why = pcall(love.system.httpDownload, url, absPath, userAgent, accept)
   if ok and done then return true end
+  if ok and type(why) == "string" and why ~= "" then return nil, why end
   return nil, "the host download bridge refused the transfer"
 end
 

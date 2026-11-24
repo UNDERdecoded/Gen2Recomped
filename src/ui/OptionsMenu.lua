@@ -577,6 +577,17 @@ local function buildRows(game)
       rows = filtered
     end
   end
+  -- VIDEO MODE and FAITHFUL RES resize the window; the PS5's is the fixed
+  -- full-screen TV output, so neither row means anything there.
+  if require("src.core.Platform").isPS5() then
+    local filtered = {}
+    for _, row in ipairs(rows) do
+      if row.id ~= "videoMode" and row.id ~= "faithfulRes" then
+        filtered[#filtered + 1] = row
+      end
+    end
+    rows = filtered
+  end
   -- PARTY ICONS is a Gen2 switch: Gen1's party rows draw menu icon classes
   -- and have no dex-pic mode to toggle to.
   if not GameVersion.isGen2() then

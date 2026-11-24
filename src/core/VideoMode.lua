@@ -37,6 +37,8 @@ end
 -- Push the mode into the live window.  Safe when love.window is missing.
 function VideoMode.apply(mode)
   if VideoMode.isMobile() then return end
+  -- the PS5 window is always the full-screen TV output
+  if require("src.core.Platform").isPS5() then return end
   if not love or not love.window or not love.window.setFullscreen then return end
   mode = VideoMode.normalize(mode)
   if mode == "borderless" then

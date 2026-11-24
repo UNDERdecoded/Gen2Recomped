@@ -2112,6 +2112,12 @@ local function purgeSaveDirCache()
       removeTree(prefix .. "data/generated")
       removeTree(prefix .. "assets/generated")
       love.filesystem.remove(prefix .. MARKER_PATH)
+      -- ...and a packed copy of it (CacheFs "THE PACKED CACHE"), which the
+      -- portable root never mounts, so nothing holds it open
+      if prefix ~= "" then
+        love.filesystem.remove(prefix .. "rom-cache.zip")
+        love.filesystem.remove(prefix .. "rom-cache.zip.part")
+      end
     end
   end
 end
@@ -2147,6 +2153,10 @@ function RomImporter.readyReport(version)
   CacheFs.prefix = GameVersion.cachePrefix(version)
   local raw = CacheFs.read(MARKER_PATH)
   CacheFs.prefix = saved
+  -- A packed version shows its files under its own name from here on, for
+  -- the launcher's readers that ask for `<version>/data/...` by path.  One
+  -- failed io.open for a version that is not packed.
+  if raw ~= nil then CacheFs.mountPack(GameVersion.cachePrefix(version)) end
 
   local head, absent = parseMarker(raw)
   if head ~= markerFor(version) then
@@ -2408,6 +2418,15 @@ end
 -- love.filesystem paths on the Switch read "sdmc:/switch/...", but MTP tools
 -- (DBI, OpenMTP) show the card root as "1: SD Card", so the sdmc: prefix is
 -- noise there.  Strip it ONLY when it is actually present.
+-- How the player gets a file into the save directory: the Switch uses DBI over
+-- MTP, the PS5 an FTP client.  `sub` is the folder under imports/ ("" for ROMs).
+function RomImporter.transferHint(saveDir, rel, sub)
+  if Platform.isPS5() then
+    return Strings("FTP -> %s/imports/%s", saveDir, sub)
+  end
+  return Strings("DBI MTP -> 1: SD Card/%simports/%s", rel, sub)
+end
+
 function RomImporter.mtpHintPath(saveDir)
   if type(saveDir) ~= "string" then return "" end
   if saveDir:sub(1, 6) == "sdmc:/" then return saveDir:sub(7) end
@@ -3633,17 +3652,47 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     local CacheFs=require('src.import.CacheFs')
     local modules={[1]='src.import.RomExtractor',[2]='src.import.RomExtractorGen2',
       [3]='src.import.RomExtractorGen3',[4]='src.import.RomExtractorGen4',[5]='src.import.RomExtractorGen5'}
+    -- The old pack comes off the read path HERE, in the state that mounted it:
+    -- PhysFS mounts are process-wide but the record of them is this Lua
+    -- state's, and the worker is about to delete the file (which Windows
+    -- refuses while it is mounted).
+    --
+    -- The Gen 4 ground's range files go first: the last map's ground outlives
+    -- the game that drew it (the session the player just left, a launcher
+    -- preview) with its chunk / height / permission files still open inside
+    -- the archive, and PhysFS will not unmount an archive with open files.
+    -- No ground draws while an import runs; one that draws again reopens.
+    pcall(function() require("src.render.Gen4RangeFile").closeAll() end)
+    if not CacheFs.unmountPack(info.cachePrefix, true) then
+      -- Something still has a file open inside it (a streamed sound, a
+      -- preview).  Going on would delete the marker and then fail to replace
+      -- the archive -- or, where the OS lets an open file be unlinked, keep
+      -- serving the old one under the new marker.
+      CacheFs.releasePack(info.cachePrefix)
+      error("the previous " .. tostring(info.displayName or version)
+        .. " data is still in use; restart the game and import again")
+    end
+    -- ONE ARCHIVE PER VERSION where creating files is what costs (the PS5).
+    -- Red's cache is never packed (see CacheFs "THE PACKED CACHE").
+    local packed=CacheFs.packedMode() and info.cachePrefix~=''
     local task=require('src.import.RomImportTask').new({action='extract',version=version,
       generation=info.generation,module=zeldaImport and 'src.zelda.ZeldaImport' or modules[info.generation],manifest=manifest,
-      prefix=info.cachePrefix,root=CacheFs.root(),path=self.romPath,bytes=info.generation<4 and self.romData or nil,clear=true,recovery=self.importRecovery})
+      prefix=info.cachePrefix,root=CacheFs.root(),path=self.romPath,bytes=info.generation<4 and self.romData or nil,clear=true,recovery=self.importRecovery,
+      packed=packed})
     if task then
       self.romData=nil
       local complete=false
       while not complete do
         local message=task:poll()
         while message do
-          if message.kind=='error' then error(message.error) end
+          if message.kind=='error' then CacheFs.releasePack(info.cachePrefix);error(message.error) end
           if message.kind=='complete' then complete=true end
+          if message.kind=='log' then
+            local Logger=require('src.core.Logger')
+            if message.level=='warn' then Logger.warn('%s',tostring(message.message))
+            else Logger.info('%s',tostring(message.message)) end
+            BootTrace.mark(tostring(message.message))
+          end
           if message.kind=='progress' then
             self.status=message.stage;self.progress=message.progress
             self.stageCurrent=message.current;self.stageTotal=message.total
@@ -3653,6 +3702,12 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
         if not complete then coroutine.yield("background") end
       end
       CacheFs.prefix=info.cachePrefix
+      -- The worker replaced (or removed) this version's pack in another Lua
+      -- state: drop what this one indexed, and show the new one under its
+      -- name before the gap check below reads through it.
+      CacheFs.forgetPacks()
+      CacheFs.releasePack(info.cachePrefix)
+      CacheFs.mountPack(info.cachePrefix)
     else
     -- Redirect every cache write to this version's subtree, then clear only
     -- that version's previous cache from both homes (save directory and, for
@@ -3660,13 +3715,22 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
     CacheFs = require("src.import.CacheFs")
     local prefix = info.cachePrefix
     CacheFs.prefix = prefix
+    love.filesystem.remove(prefix .. MARKER_PATH)
+    CacheFs.remove(MARKER_PATH)
+    -- the old pack too, as the worker does (see rom_import_worker)
+    local cleared, clearError = CacheFs.clearPack(prefix)
+    -- no other Lua state is involved on this path, so the hold taken above
+    -- (for the worker's sake) can go straight away
+    CacheFs.releasePack(prefix)
+    if not cleared then
+      error("could not remove the previous game data: " .. tostring(clearError))
+    end
     removeTree(prefix .. "data/generated")
     removeTree(prefix .. "assets/generated")
-    love.filesystem.remove(prefix .. MARKER_PATH)
     CacheFs.removeTree("data/generated")
     CacheFs.removeTree("assets/generated")
-    CacheFs.remove(MARKER_PATH)
     BootTrace.mark("import " .. tostring(version) .. ": old cache cleared")
+    local packing = CacheFs.packedMode() and prefix ~= "" and CacheFs.beginPack()
 
     -- WHICH EXTRACTOR, and spelled out rather than inferred.
     --
@@ -3753,8 +3817,24 @@ function RomImporter:startData(data, displayName, sourcePath, verified)
         or RomExtractor.new(self.romData, manifest, onProgress)
     end
     extractor.checkpoint=function(operation) require('src.import.ImportRecovery').stage(markedStage,operation) end
-    extractor:run()
+    if packing then
+      -- a half-written pack is deleted, never left to look like a cache
+      local runOk, runError = pcall(extractor.run, extractor)
+      if not runOk then
+        CacheFs.abortPack()
+        error(runError, 0)
+      end
+    else
+      extractor:run()
+    end
     if extractor.close then extractor:close() end
+    if packing then
+      local finished, stats = CacheFs.finishPack()
+      if not finished then error("could not finish the packed game data: " .. tostring(stats)) end
+      require("src.core.Logger").info("import %s: packed %d files (%.1f MB), %d left loose",
+        tostring(version), stats.entries, stats.bytes / 1048576, stats.overflow)
+      CacheFs.mountPack(prefix)
+    end
     self.romData = nil
     collectgarbage("collect")
     BootTrace.mark(("import %s: extracted (%.0f MB lua)")
@@ -4044,7 +4124,15 @@ function RomImporter:_advanceRomQueue()
   q.index = (q.index or 0) + 1
   if require('src.import.RomImportTask').available() then
     q.active=nextUp
-    self:startPath(nextUp.path)
+    -- A save-directory entry is named relative to the save directory, and the
+    -- worker opens it with io.open, which resolves against the process's
+    -- working directory -- not the save directory (a PS5 title rejects the
+    -- relative name outright with EINVAL).  Hand it the file's real path.
+    local path = nextUp.path
+    if nextUp.saveDir then
+      path = realPathFor(path) or (love.filesystem.getSaveDirectory() .. "/" .. path)
+    end
+    self:startPath(path)
     if self.workState~='working' then self._romQueueResume=true end
     return
   end
@@ -4602,7 +4690,8 @@ function RomImporter:chooseMod()
     local rel = RomImporter.mtpHintPath(saveDir)
     if rel ~= "" and rel:sub(-1) ~= "/" then rel = rel .. "/" end
     self.modNotice = { ok = true, text =
-      Strings("Copy your mod .zip into:\n%s/imports/mods/\nDBI MTP -> 1: SD Card/%simports/mods/", saveDir, rel) }
+      Strings("Copy your mod .zip into:\n%s/imports/mods/\n%s", saveDir,
+        RomImporter.transferHint(saveDir, rel, "mods/")) }
     return
   end
   self.modNotice = { ok = false,
@@ -4730,8 +4819,9 @@ function RomImporter:chooseModImport(modId)
   if rel ~= "" and rel:sub(-1) ~= "/" then rel = rel .. "/" end
   local want = table.concat(exts, "/")
   self.modNotice = { ok = true, text =
-    Strings("Copy your %s (.%s) into:\n%s/imports/\nDBI MTP -> 1: SD Card/%simports/",
-      tostring(entry.name), want, saveDir, rel) }
+    Strings("Copy your %s (.%s) into:\n%s/imports/\n%s",
+      tostring(entry.name), want, saveDir,
+      RomImporter.transferHint(saveDir, rel, "")) }
 end
 
 -- Which game a dropped .sav imports into: a .sav has no version signature of
@@ -4831,7 +4921,8 @@ function RomImporter:chooseSaveImport(version)
     local rel = RomImporter.mtpHintPath(saveDir)
     if rel ~= "" and rel:sub(-1) ~= "/" then rel = rel .. "/" end
     self.saveNotice[version] = { ok = true, text =
-      Strings("Copy your .sav into:\n%s/imports/saves/\nDBI MTP -> 1: SD Card/%simports/saves/", saveDir, rel) }
+      Strings("Copy your .sav into:\n%s/imports/saves/\n%s", saveDir,
+        RomImporter.transferHint(saveDir, rel, "saves/")) }
     return
   end
   self.saveNotice[version] = { ok = false,
@@ -5011,7 +5102,8 @@ function RomImporter:choose(version)
     self.notice = {
       version = self.chooseVersion,
       status = "Copy your .gb/.gbc into:",
-      detail = Strings("%s/imports/\nDBI MTP -> 1: SD Card/%simports/", saveDir, rel),
+      detail = Strings("%s/imports/\n%s", saveDir,
+        RomImporter.transferHint(saveDir, rel, "")),
     }
     return
   end
@@ -6346,6 +6438,8 @@ function RomImporter:draw()
         label = Strings("Update from the OTA launcher (gen2recomp.nro)")
       elseif upAdvice == "package" then
         label = Strings("Install the newer package to update")
+      elseif upAdvice == "homebrew" then
+        label = Strings("Copy the new release to your PS5 to update")
       elseif upCannotCheck then
         label = Strings("Cannot check for updates on this build")
         action = "openurl"

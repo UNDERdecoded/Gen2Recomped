@@ -17,6 +17,11 @@ local function compute()
     or "Unknown"
   local nx = osName == "NX"
   local uwp = osName == "UWP"
+  -- PlayStation 5 homebrew (jailbroken console, native LOVE runtime).  A TV
+  -- console like the Switch and Xbox: DualSense only, no mouse/keyboard/touch,
+  -- no file picker, no subprocesses, read-only game.love with a writable save
+  -- directory the player reaches over FTP.
+  local ps5 = osName == "PS5"
   local mobile = osName == "Android" or osName == "iOS"
   local nativePicker = love and love.system
     and type(love.system.pickFile) == "function"
@@ -26,18 +31,19 @@ local function compute()
     os = osName,
     nx = nx,
     uwp = uwp,
+    ps5 = ps5,
     mobile = mobile,
-    console = nx or uwp,
+    console = nx or uwp or ps5,
     hasNativePicker = nativePicker,
     -- ONE definition, in src/core/HostShell.lua, beside the io.popen it
     -- describes.  The literal three-OS test used to live here as well, so the
     -- shell that raises on the Switch was guarded by one copy and asked about
     -- through another.
     canSpawnProcess = HostShell.canSpawnProcess(),
-    romImportMode = nx and "save-directory"
+    romImportMode = (nx or ps5) and "save-directory"
       or (nativePicker and "native-picker")
       or "desktop",
-    networkValidated = not nx and not uwp,
+    networkValidated = not nx and not uwp and not ps5,
     -- networkValidated is the self-updater's gate and stays a per-platform
     -- policy call: a console package cannot replace itself on disk, so that
     -- answer never depends on whether a transport exists.  Fetching a mod
@@ -47,7 +53,7 @@ local function compute()
     -- console ports answer it with the native love.system.httpDownload bridge
     -- (#597).  The UWP LOVE backend exports that bridge as well, but it only
     -- works from a love.thread there (see HostShell.haveUwpBridge).
-    canFetchRemote = (not nx and not uwp) or nativeHttp,
+    canFetchRemote = (not nx and not uwp and not ps5) or nativeHttp,
   }
 end
 
@@ -73,6 +79,12 @@ end
 
 function Platform.isUWP()
   return Platform.detect().uwp
+end
+
+-- PlayStation 5 homebrew: love.system.getOS() answers "PS5".  Prefer this, or
+-- Platform.detect().console, over comparing the string at a call site.
+function Platform.isPS5()
+  return Platform.detect().ps5
 end
 
 function Platform.romImportMode()
@@ -234,7 +246,7 @@ local function computeOnline()
     os = osName, hasEnet = hasEnet, hasSocket = hasSocket,
     available = false, relayOnly = false, canHost = false,
     canPortMap = false, canBroadcast = false,
-    validated = not d.nx and not d.uwp,
+    validated = not d.nx and not d.uwp and not d.ps5,
     consent = d.nx and "homebrew" or nil,
   }
   if osName == "Web" then
@@ -267,6 +279,8 @@ local function computeOnline()
     r.reason = "Online play on the Switch is untested. Going online with homebrew can get a console banned by Nintendo."
   elseif d.uwp then
     r.reason = "Online play on Xbox is untested on hardware. Two apps on one console cannot link to each other."
+  elseif d.ps5 then
+    r.reason = "Online play on the PS5 is untested."
   end
   return r
 end

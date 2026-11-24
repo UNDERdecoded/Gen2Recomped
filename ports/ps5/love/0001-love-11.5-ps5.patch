@@ -1,0 +1,81 @@
+diff -ru a/src/libraries/luasocket/libluasocket/compat.c b/src/libraries/luasocket/libluasocket/compat.c
+--- a/src/libraries/luasocket/libluasocket/compat.c	2021-12-29 13:34:40.000000000 +0100
++++ b/src/libraries/luasocket/libluasocket/compat.c	2026-11-14 14:29:42.311122885 +0100
+@@ -1,6 +1,6 @@
+ #include "compat.h"
+ 
+-#if LUA_VERSION_NUM==501
++#if 0
+ /*
+ ** Adapted from Lua 5.2
+ */
+diff -ru a/src/modules/filesystem/Filesystem.cpp b/src/modules/filesystem/Filesystem.cpp
+--- a/src/modules/filesystem/Filesystem.cpp	2023-12-03 13:50:33.000000000 +0100
++++ b/src/modules/filesystem/Filesystem.cpp	2026-11-14 14:29:42.309548501 +0100
+@@ -20,6 +20,8 @@
+ 
+ // LOVE
+ #include "Filesystem.h"
++
++#include <cstdlib>
+ #include "common/utf8.h"
+ 
+ // Assume POSIX or Visual Studio.
+@@ -92,7 +94,13 @@
+ 
+ std::string Filesystem::getExecutablePath() const
+ {
+-#if defined(LOVE_MACOSX)
++#if defined(__PROSPERO__)
++	// The PS5 launcher runs a bundled game.love from the read-only title
++	// folder; reporting it as the executable makes boot.lua mount it as a
++	// fused game (save directory <appdata>/<identity>, no "love" folder).
++	const char *game = getenv("LOVE_PS5_GAME");
++	return (game != nullptr && *game != 0) ? game : "/app0/game.love";
++#elif defined(LOVE_MACOSX)
+ 	return love::macosx::getExecutablePath();
+ #elif defined(LOVE_IOS)
+ 	return love::ios::getExecutablePath();
+diff -ru a/src/modules/love/love.cpp b/src/modules/love/love.cpp
+--- a/src/modules/love/love.cpp	2023-12-03 13:50:33.000000000 +0100
++++ b/src/modules/love/love.cpp	2026-11-14 14:29:42.304244075 +0100
+@@ -468,7 +468,9 @@
+ 	lua_pushcfunction(L, w_love_isVersionCompatible);
+ 	lua_setfield(L, -2, "isVersionCompatible");
+ 
+-#ifdef LOVE_WINDOWS_UWP
++#if defined(__PROSPERO__)
++	lua_pushstring(L, "PS5");
++#elif defined(LOVE_WINDOWS_UWP)
+ 	lua_pushstring(L, "UWP");
+ #elif LOVE_WINDOWS
+ 	lua_pushstring(L, "Windows");
+diff -ru a/src/modules/system/System.cpp b/src/modules/system/System.cpp
+--- a/src/modules/system/System.cpp	2023-12-03 13:50:33.000000000 +0100
++++ b/src/modules/system/System.cpp	2026-11-14 14:29:42.301936179 +0100
+@@ -64,7 +64,9 @@
+ 
+ std::string System::getOS() const
+ {
+-#if defined(LOVE_MACOSX)
++#if defined(__PROSPERO__)
++	return "PS5";
++#elif defined(LOVE_MACOSX)
+ 	return "OS X";
+ #elif defined(LOVE_IOS)
+ 	return "iOS";
+@@ -91,7 +93,13 @@
+ bool System::openURL(const std::string &url) const
+ {
+ 
+-#if defined(LOVE_MACOSX)
++#if defined(__PROSPERO__)
++
++	// A PS5 title has no browser to hand a URL to (and no posix_spawn).
++	(void) url;
++	return false;
++
++#elif defined(LOVE_MACOSX)
+ 
+ 	bool success = false;
+ 	CFURLRef cfurl = CFURLCreateWithBytes(nullptr,
