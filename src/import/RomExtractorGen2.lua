@@ -8767,6 +8767,14 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
           -- offset 4 every single pointer lands in $4000..$7fff; at Crystal's
           -- 5, none do.
           local scriptAt = self:layout("coordEventScript", GEN2_COORD_ROW_SCRIPT)
+          -- Prism's `dw event` (row bytes 4-5, 1-based here).  It is a GATE:
+          -- CheckCurrentMapXYTriggers (home, 00:$1E4A) takes the trigger when
+          -- the word is 0 or `call CheckEvent` answers nz -- the flag is SET --
+          -- and skips it otherwise.  Dropping it made every gated trigger
+          -- unconditional: Laurel Forest's three guard triggers in front of the
+          -- lab door (each gated on its own guard's event) pushed the player
+          -- back on every step.  0 = absent (Crystal / Polished have no word).
+          local eventAt = self:layout("coordEventFlag", 0)
           for _, row in ipairs(events.coords) do
             local lo, hi = row[scriptAt], row[scriptAt + 1]
             if not (lo and hi) then
@@ -8782,10 +8790,16 @@ function RomExtractorGen2:extractMapScripts()  self:beginStage("Gen2 map scripts
               -- CheckCurrentMapCoordEvents subtracts 4 from the player's
               -- position before comparing, so unlike object_events these
               -- coordinates are stored unbiased already
+              local gate
+              if eventAt > 0 then
+                local word = (row[eventAt] or 0) + (row[eventAt + 1] or 0) * 256
+                if word ~= 0 then gate = string.format("EVENT_G2_%04d", word) end
+              end
               coords[#coords + 1] = {
                 scene = row[1],
                 y = row[2],
                 x = row[3],
+                event = gate,
                 script = label,
               }
               coordCount = coordCount + 1

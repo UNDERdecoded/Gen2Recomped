@@ -222,6 +222,20 @@ function Commands.g2_random(ctx, bound)
   setScriptVar(ctx, math.random(0, math.max((bound or 1) - 1, 0)))
 end
 
+-- g2_and_var <mask>: `ldh a, [hScriptVar] / and <mask> / ldh [hScriptVar], a`
+-- -- the shape of small callasm stubs such as Laurel Forest's (1D:$6B27),
+-- which keeps the low bit of a guard-table index to pick which doorway the
+-- guard stands in.
+function Commands.g2_and_var(ctx, mask)
+  local v, m = scriptVar(ctx) % 256, (tonumber(mask) or 0) % 256
+  local out, bit = 0, 1
+  while v > 0 and m > 0 do
+    if v % 2 == 1 and m % 2 == 1 then out = out + bit end
+    v, m, bit = math.floor(v / 2), math.floor(m / 2), bit * 2
+  end
+  setScriptVar(ctx, out)
+end
+
 
 -- Tiny persistent WRAM mirror. Keyed by the address the ROM used.
 -- Only a handful of scripts need this (underground switches is the big one).

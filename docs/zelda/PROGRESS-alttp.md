@@ -8894,3 +8894,553 @@ the three routines start with push; 26 checks). All 101 test files
 (`r93/out/alltests93.txt`). Audits 304/304 rooms, 80/80 overworld areas
 (`r93/out/audit/rooms_r93.txt`, `ow_r93.txt`; mains.txt from r89),
 cacheVersion 77.
+
+## Round 94 (2026-11-23)
+
+Ganon's Tower B1 with real input: the six Armos Knights (rematch) beaten with
+hp 16 and no hit, the big key, the cracked wall, the four fairies (healed to
+full), the spiral stairs up into 0x8C SW, the nook's block, the big chest:
+the **red mail**. Four port gaps met and ported (new `Armos94.lua`,
+`Fairy94.lua`). Scratch: `G:/Gen2Recomped/scratch_claude/zelda/alttp/r94/`
+(the r93 kit with r94 paths; `chain94.sh` legs 89-90, final run
+`CKPFX=r94f_` -> `ck_r94f_up8C`, `ck_r94f_mail8C`; `real94.sh`;
+`doc/round94.md`; new tokens in `harness/tok94.lua`, the Armos bot
+`harness/armbot94.lua`). **cacheVersion 78** (Fairy94 reads its z table
+from the ROM; harness store and real app re-imported).
+
+- [x] 94.1 **Port: the Armos Knights' back row (new `Armos94.lua`).**
+  ArmosCoordinator state 6 (overlord 0x1A, 0x080ED258) writes the target y
+  low byte 0x50 (`movs r3, #0x50`, 0x080ED278), the port 48: the knights
+  lined up 32 px too high and cascaded 144 frames instead of 112. Checked
+  against the cartridge and the same: the wake (255, rumble at 0x40, shake
+  below), the bounce (z speed 0x30), the ring states 0-5 and their timers,
+  the sine product, the cascade end, the recoil, the last knight's 48
+  health and the crusher's speeds.
+- [x] 94.2 **Port: the crusher touches Link only in its state 0.**
+  Sprite_ArmosCrusher (0x080ECE4C) calls Sprite_CheckDamageToAndFromLink
+  (0x080C5044) only from state 0 (0x080ECEC4); states 1-3 (rising,
+  hovering, the drop's first frame) never touch. The port's shared contact
+  test ran in all of them.
+- [x] 94.3 **Port: no heart container in Ganon's Tower.** The last knight
+  spawns 0xEA (0x080ECD72) but Sprite_EA_HeartContainer (0x080F2808) starts
+  with cur_palace_index_x2 (+0xAB2) == 0x1A -> state 0 (0x080F29A4). The
+  port gave +1 heart and a refill.
+- [x] 94.4 **Port: the fairy flies about (new `Fairy94.lua`).**
+  Fairy_HandleMovement (0x080CFAA8): wall bits & 3 -> x speed / target
+  negated, bits != 0x0C -> y speed / target negated (timer 0x20); MoveXY;
+  every 64 frames a random target in Link's 256 px quarter at speed 0x10;
+  every 16 frames speed = (target + speed) >> 1; MoveZ, z speed += t[rand &
+  1] + t[0] (two bytes via the literal at 0x080CFD3C, read at import), z
+  kept in 8..0x18; paused off screen. The port moved a fairy as the heart
+  (glide, rest): 0x1C's four fairies sat over the NW pit out of reach.
+  OURS: the wall bits from Interior:blocked probes; 0x40 px off-screen pause.
+- [x] 94.5 **Route facts.** Armos: hp 48, arrows 16, touch 4; an arrow is
+  removed 16 px above the camera, so the back row (y 336 now) is shot from
+  y <= 396; the SE corner (456,448) is safe through the ring; kill the
+  east knight first (its column is the way out of the cascade). 0x1C NE
+  chests from y + 8: 376,96 big key, 352,64 ten arrows, 400,64 three bombs;
+  SW's cracked wall at x 120 (one bomb) -> NW fairies; the spiral stairs
+  0x138 at 56,280 -> 0x8C (let go of up on arrival, else Link goes straight
+  back down). 0x8C SW: wait in the closed nook until the fire snakes (0x80)
+  are far, push the block, down the x 96 column, the big chest from
+  (122,394). A checkpoint inside 0x1C reloads the room (knights again).
+- [x] 94.6 **Route, real input (harness from checkpoints, HPFLOOR=16):**
+  `chain94.sh` 89 from `ck_r93f_in1C`: ARMB (18 arrows, no hit), chests,
+  cracked wall, fairies (hp 16 -> 104), stairs -> 0x8C (`up8C`); 90 the
+  block, the big chest (`mail8C`, latest: room 0x8C at (122,392), hp 96/104,
+  armor 2 (red mail), big key, 2 keys, 22 arrows, 7 bombs, 56 rupees).
+  Health floor absorbed **0** (the only hits came at hp 104: one fire snake
+  touch, 8 before the red mail).
+- [ ] Next: the way up from 1F (the foyer 0x0C's stairs / mask; the big key
+  doors found are on upper floors, 0x1D and 0x6B), then Lanmolas, Moldorm
+  rematches. Open: 0x9B's double switch toggle, the 0x8B SE map chest, the
+  crystals' picture (ancilla 0x43), TerminateSelectInteractives' other
+  callers, spark drawing, arrow deflection (0x1B).
+
+Real app (cache v78, widescreen ON, 1280 x 720, control mode 1):
+`real94.sh` legs 89-90 from `ck_r93real_in1C` -> `ck_r94real_up8C` ->
+`ck_r94real_mail8C` (hp 20 -> fairies 104 -> 88, red mail), aid 0. The
+Armos fight the same (18 arrows, no hit); two hits of 8 at full health:
+the fairy chase ended at the pit's edge (88,94) and the next walk (x first)
+stepped into the NW pit (harness: the chase ended elsewhere, no fall), and
+one fire snake touch in 0x8C. Shots: `real/shots/real94_89_r94_armos_win.png`
+(the knights on the back row, Link on his column), `real94_89_r94_fairies_win.png`
+(0x1C NW after the fairies), `real94_90_r94_redmail_win.png` (the red mail held up).
+
+Tests: new `zelda_alttp_r94_test` (EXTRA entries / order, no number tables,
+install guards, cacheVersion; Armos94 back row / touch rule / GT heart /
+wrappers; Fairy94 extract through the literal, wall bits, on-screen, one
+step (target, averaging, z clamps, bounces, the 0x0C compare), wrapper;
+with the ROM: the sites are code, `movs r3, #0x50`, the z table read; 62
+checks). All 102 test files (`zelda_alttp_*` plus `zelda_input_test` and
+`zelda_widescreen_test`) pass (`r94/out/alltests94.txt`). Audits 304/304
+rooms, 80/80 overworld areas (`r94/out/audit/rooms_r94.txt`, `ow_r94.txt`;
+mains.txt from r89), cacheVersion 78.
+
+## Bug round 95 (2026-11-23): pots held as a gray tile, several lamps
+
+User report: "When picking up pots it's not showing them in my hand when
+picked up, it's showing a gray tile for most ... I'm getting multiple lamps
+and they have no energy". Scratch: `G:/Gen2Recomped/scratch_claude/zelda/alttp/bugs95/`
+(the r94 kit with bugs95 paths; new tokens in `harness/tok95.lua`: POT95,
+LIFT95, THROW95, LAMP95, MENU95, OPEN95, P95_x,y,f, CHESTS95, INV95;
+ow52.lua now passes `*95*` tokens to the chain outdoors). **cacheVersion 79**
+(Carry95 / Lamp95 read the ROM; harness store and real app re-imported).
+
+- [x] 95.1 **Bug: a lifted pot was drawn as the sign (new `Carry95.lua`).**
+  The GBA's indoor lift (0x0808176C) answers kDungeon_QueryIfTileLiftable_rv
+  [state & 15] (0x081532EC) for the pot's replacement state (the literal
+  RoomDraw_SinglePot loads at 0x0807CB12); its index in kLink_Lift_tab is the
+  thrown sprite's kind. The port lifted every pot as kind 0 (the sign), so
+  Sprite_EC's char picked the indoor misc sheet's sign: a gray cross-hatched
+  square over Link's head, thrown and shattered as the sign too. Now the
+  pot's kind comes from the import (the pot and its shards in every palace).
+- [x] 95.2 **Bug: the indoor kind 2 flags.** Sprite_SpawnThrowableTerrain
+  (0x080C29F0..0x080C2A2E) writes 0x80 for an indoor kind 2 and then the
+  kThrowableScenery_Flags byte over it: palette 6, no flip. The port drew
+  0x50 (the SNES value: palette 0, mirrored).
+- [x] 95.3 **Bug: the Dark World palaces' char.** Sprite_EC (0x080E7B18,
+  `adds r1, r2, #imm`) adds 5 above "indoors + Dark World 1", the SNES 6;
+  the immediate is read at import. Outdoors (bushes, rocks, signs: the
+  attribute's kind) and the big blocks (Lift52) were already right.
+- [x] 95.4 **Bug: a second lamp (new `Lamp95.lua`).** Link_PerformOpenChest
+  (0x080A16B6..0x080A16FA): alt = kReceiveItemAlternates[item] (its literal
+  at 0x080A16CA, read at import); alt != 0xFF and Link owns the item
+  (kMemoryLocationToGiveItemTo byte != 0) -> alt; then the no-bow arrows rule
+  (cmp 0x080A16EA, movs 0x080A16F6, the bow byte's literal 0x080A16EE). The
+  port gave the chest's own item: the lamp chests (Link's house 0x104, the
+  uncle's passage 0x55, the castle 0x80) each gave a lamp (a receipt and an
+  entry in progress.items). Now the second gives its small rupee prize.
+- [x] 95.5 **Save repair.** On load (G.new), duplicate entries of an item that
+  has an alternate are dropped from progress.items, each giving the
+  alternate's rupees.
+- [x] 95.6 **"No energy" is the cartridge's.** A new file starts with an
+  empty magic meter (the GBA's new-file routine, Hud.NEW; the SNES
+  kSramInit too); LinkItem_Lamp costs magic for its flame / a torch and
+  shows "You're short on magic power" without it; the dark-room cone needs
+  none. Checked with magic: flame, cost (44 -> 40), the menu shows one lamp.
+- Checked (harness + real app, real input from checkpoints; Link placed in
+  front of the pot / chest as an aid): pots in the Eastern Palace (0xC9),
+  Hyrule Castle (0x80), Thieves' Town (0x45, Dark World skull pot), bushes in
+  Kakariko (LW) and the Village of Outcasts (DW), thrown and shattered; the
+  castle 0x80 lamp chest with a lamp -> 0x35 (5 rupees), items 3 -> 4, no
+  second lamp; the lamp in the Eastern Palace and the sewers (no magic).
+
+Real app (cache v79, widescreen ON, 1280 x 720, control mode 1): `realo.sh`
+runs (RUNID real95_*); shots in `real/shots/`: `real95_ep_pot_indoor_win.png`,
+`real95_castle_pot_castle_win.png`, `real95_tt_pot_dw_win.png`,
+`real95_lw_95bush_win.png`, `real95_ep_lamp_win.png`, `real95_ep_menu_win.png`,
+`real95_castle_chest_after_win.png`.
+
+Tests: new `zelda_alttp_bugs95_test` (EXTRA entries / order, no number tables,
+install guards, cacheVersion; Carry95 extract through the literal / the
+adds immediate, kind, OAM entry, wrappers; Lamp95 extract, chest item,
+arrows rule, repair, wrappers; with the ROM: the import reads pass);
+`zelda_alttp_r94_test` now checks cacheVersion >= 78. All 103 test files (`zelda_alttp_*` plus
+`zelda_input_test` and `zelda_widescreen_test`) pass (`bugs95/out/alltests95.txt`).
+Audits 304/304 rooms, 80/80 overworld areas (`bugs95/out/audit/rooms_b95.txt`,
+`ow_b95.txt`; mains.txt from r89), cacheVersion 79.
+
+Run the new test:
+
+    python tools/run_lua_check.py tests/zelda_alttp_bugs95_test.lua
+
+## Round 95 (2026-11-24)
+
+Ganon's Tower from 1F up to 2F with real input: back from the big chest room
+(0x8C SW) to the foyer 0x0C, its centre stairs up into 0x6B, the crystal-path
+spike room (pegs, hammer pegs, push block), the two Mimic rooms (red Goriyas,
+arrows), the big-key door, 0x5B (the switch under the middle pot, the spike
+traps), the cannonball bridge 0x5C and the stairs into the first gauntlet
+room 0x5D. One port gap met and ported (new `Goriya95.lua`). Scratch:
+`G:/Gen2Recomped/scratch_claude/zelda/alttp/r95/` (the bugs95 kit with r95
+paths; `chain95.sh` legs 91-96, final run `CKPFX=r95f_` -> `ck_r95f_*`;
+`real95.sh`; `doc/round95.md`; new tokens in `harness/tok95r.lua`).
+**cacheVersion 80** (Goriya95 reads the ROM; harness store and real app
+re-imported).
+
+- [x] 95.1 **Port: the Goriyas (new `Goriya95.lua`, EXTRA `goriya95`).**
+  SpritePrep_Eyegore (0x080EE074, the prep table entries of 0x83 / 0x84):
+  the room (+0xB36) against four `cmp r0, #imm` (0x0C, 0x1B, 0x4B, 0x6B)
+  -> sprite_B (+0xF72) + 1, and for 0x83 the deflection bits (+0xE75) = 0.
+  Sprite_83_GreenEyegore (0x080EDB68) runs Eyegore_Main only while
+  sprite_B is 0; otherwise the Goriya: Goriya_Draw (0x080EDFA4: the mouth
+  fire while delay_aux1 and not facing up, then kGoriya_Dmd by the count /
+  offset tables), delay_aux1 == 8 -> Sprite_SpawnFirePhlegm (0x080EC688),
+  no d-pad (+0x545 & 0xF) -> still; else j = pad | (0x84) * 16 -> D, x / y
+  speed (tables by their literals at 0x080EDBF8 / 0x080EDC06 /
+  0x080EDC14), MoveXY unless the last frame hit a wall, gfx = Gfx[(++sub2
+  & 12) | D]; a red one facing Link within 8 px on an axis
+  (Sprite_DirectionToFaceLink 0x080C2FA8) sets delay_aux1 = 0x10 when (A &
+  0x1F) == 0. So the green walks with Link's pad on x and against it on y,
+  the red mirrors both axes faster and breathes fire. The port ran every
+  0x83 / 0x84 as an Eyegore: room 0x6B's Mimics slept, woke and chased, and
+  the green one tinked. Also ported for them: the off-screen pause
+  (Sprite_PrepOamCoordOrDoubleRet 0x080C5ACC: x / y - z more than 0x40 past
+  the camera, (v + 0x40) > 0x16F as on the SNES -> sprite_pause, and
+  Sprite_ReturnIfInactive returns). All tables, rooms and immediates read
+  at import (refused on other shapes). OURS: the drag state (+0x16F9) is
+  taken as 0; the pad is the game's held keys.
+- [x] 95.2 **Port: the Mirror Shield blocks the fire phlegm.**
+  Sprite_SpawnFirePhlegm (shared with the Zazak) writes flags5 = 0x20 when
+  link_shield_type > 2 (0x080EC79E..0x080EC7AE); the port's phlegm
+  (Enemies27A) had no flags5, so Shield84's branch never ran for it. Every
+  phlegm now gets the flag (Goriya95 wraps Enemies27A.prep).
+- [x] 95.3 **Checks against the cartridge.** The kill / push-block tags
+  (0x08 south half, 0x09 quadrant, 0x0B NW push block, 0x17 switch toggle)
+  and the shutters closing again after every quadrant transition
+  (DungeonTransition_Subtile_TriggerShutters): the port's order matched.
+  Not a port gap: the foyer has no big-key door (its centre stairs lead
+  straight to 0x6B; the big-key door is 0x6B NE's top door). Found, not
+  fixed: the port runs every room sprite off screen (only the Goriyas
+  pause now); Link on the lower level is hidden in 0x5B's T top bar
+  (y < ~100) in both runs -- the BG priority there is not checked.
+- [x] 95.4 **Route facts.** 0x8C SW -> NW by the x 120 corridor, the NW
+  stairs -> foyer, its centre stairs (in-room 0x1E) -> 0x6B. 0x6B NW: spike
+  floor between peg lanes (spike point x + 8, y + 20), hammer pegs at the
+  crossings: an arrow from (248,56) toggles (176,64), hammer 71, sword the
+  switch, west, hammer 70 / 72, the push block (48,96) up (tag 0x0B), an
+  arrow up column 112, hammer 74, the door. SW / SE (Mimics): red Goriyas
+  2 arrows each; line them up by pinning Link (or the Goriya) against a
+  wall; SE's Beamos cannot see the pocket (376,376). 0x5B: Eyegores wake
+  at once (8-bit distance), the U's switch (368,192) from (386,196), the
+  red Eyegore 2 arrows from (399,196), the green by arrows while its eye
+  is open, the middle pot hides the switch (tag 0x17), down column x 432
+  past the traps (x 320..432, 112-frame period), the stairs (0x3E) to the
+  ring, the east door. 0x5C: the bridge east, stairs -> 0x5D.
+- [x] 95.5 **Route, real input (harness from checkpoints, HPFLOOR=16):**
+  `chain95.sh` 91 from `ck_r94f_mail8C` -> `in6B`; 92 `sw6B`; 93 `se6B`;
+  94 `in5B`; 95 `in5C`; 96 `in5D` (latest: room 0x5D at (376,50), hp
+  88/104, red mail, big key, 2 keys, 18 arrows, 7 bombs, 56 rupees).
+  Health floor absorbed **0** (one spike-trap touch, 8, at 0x6B SW's east
+  door).
+- [ ] Next: 0x5D (gauntlet 1: conveyors, Stalfos, Zazaks, Beamos, tag 0x09
+  per quadrant -- bot fights cost 16 + 28 hp in probes) -> 0x6D -> the
+  Lanmolas rematch (0x6C), then the Moldorm rematch. Open: Link hidden in
+  0x5B's T bar, sprites off screen not paused (but the Goriyas), 0x9B's
+  double toggle, the 0x8B SE map chest, ancilla 0x43, the other callers of
+  TerminateSelectInteractives, spark drawing, arrow deflection (0x1B).
+
+Real app (cache v80, widescreen ON, 1280 x 720, control mode 1):
+`real95.sh` legs 91-96 from `ck_r94real_mail8C` -> `ck_r95real_in5D` (hp 88
+-> 80: a Goriya's fire during the bow's swing and a Beamos laser in 0x6B
+SE), aid 0. Shots: `real/shots/real95_92_r95_hammer_win.png` (0x6B's
+crystal paths), `real95_93_r95_goriya_win.png` (a red Goriya lined up
+across 0x6B SW), `real95_94_r95_pocket_win.png` (0x6B SE's pocket),
+`real95_95_r95_switch_win.png` (0x5B: the pot's switch, the east door
+open), `real95_96_r95_gauntlet_win.png` (0x5D).
+
+Tests: new `zelda_alttp_r95_test` (EXTRA entry / order, no number tables,
+install guard, cacheVersion; extract refusal; rooms / prep; the pad; one
+step: still, green, walls, red aim / beat / away / off line, the fire
+compare; the off-screen pause; the draw list; the phlegm flag; the
+install's wrappers; with the ROM: the routines, four rooms incl. 0x6B, the
+tables, the fire timer and the shield rule; 47 checks). All 104 test files
+(`zelda_alttp_*` plus `zelda_input_test` and `zelda_widescreen_test`) pass
+(`r95/out/alltests95.txt`). Audits 304/304 rooms, 80/80 overworld areas
+(`r95/out/audit/rooms_r95.txt`, `ow_r95.txt`), cacheVersion 80.
+
+Run the new test:
+
+    python tools/run_lua_check.py tests/zelda_alttp_r95_test.lua
+
+## Round 96 (2026-11-24)
+
+Ganon's Tower 2F with real input: the 0x5B "hidden Link" from r95 traced and
+fixed (a lower-level pot's switch was drawn on the high-priority map), then
+the first gauntlet 0x5D (conveyors, Stalfos, Zazaks, belt-riding Beamos) and
+the ice room 0x6D (Beamos, red Zazaks, a Medusa, a Stalfos) into the
+Lanmolas' room 0x6C. One port gap met and ported (new `Lower96.lua`).
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/alttp/r96/` (the r95 kit with
+r96 paths; `chain96.sh` legs 97-98, final run `CKPFX=r96f_` -> `ck_r96f_*`;
+`real96.sh`; `doc/round96.md`; new tokens and the Beamos / fireball guard in
+`harness/tok96.lua`). cacheVersion stays 80 (Lower96 reads no ROM data: no
+re-import).
+
+- [x] 96.1 **Why Link vanished in 0x5B (evidence).** The room's three pots are
+  object-list layer 2. The cartridge keeps a manipulable object's spot as a
+  byte offset into the room maps with 0x2000 added for layer 2, and every
+  redraw adds it (& 0x3FFF, 0x08080380) to 0x02018000 (the pot / block
+  redraw 0x08083AE4: `ldr =0x3FFF` at 0x08083B46, `ldr =0x02018000` at
+  0x08083B54): layer 1 = the upper map 0x02018000 (our "bg2"), layer 2 =
+  0x0201A000, the lower map (our "bg3", GBA BG1, priority 3). The
+  pre-rendered maps agree: over all 304 rooms the 55 layer-2 pots / chests
+  have their words in the lower map and nothing in the high-priority copy
+  0x0201C000 (our "bg1", GBA BG3, priority 1; harness SCAN96). The port
+  wrote a lower pot's hole and the switch under it (and a lower chest's
+  open / closed picture) to patch1 -- the high-priority map, drawn over
+  every sprite -- and left the pot itself on the lower map: once 0x5B's
+  middle pot was lifted, its switch was drawn over Link (OBJ priority 3 on
+  the lower level) and he disappeared on it. The rest of the T bar was
+  right: on the lower level Link is under the upper map (BG2, priority 2),
+  so the bar's rim covers his head as on the GBA.
+- [x] 96.2 **Port: lower-level pots / chests on the lower map (new
+  `Lower96.lua`, EXTRA `lower96`).** Interior:removePot / potSwitch /
+  openChest, Chest70.reveal and Chest74.redraw use patch3 (the lower map)
+  for layer-2 objects; potWords reads a layer-2 pot's words from bg3. No
+  ROM reads. Checked in the harness and the real app: 0x5B's middle pot
+  lifted, Link stands on the switch, seen (`real96_95_r96_5Bswitch_win.png`).
+- [x] 96.3 **Checks against the cartridge (no change).** Beamos statues ride
+  conveyors: Sprite_61's statue state 0x080F74D8 calls 0x080C79F8 ->
+  Sprite_CheckTileCollision 0x080C6F48 -> 0x080C7014, which runs
+  Sprite_ApplyConveyor (0x080CA118) on attributes 0x68-0x6B (the port's
+  Mech27.conveySprites moves them; their touch is 8). 0x5D / 0x6D's kill
+  tags (0x09 quadrant, 0x05 west half) wait for the death puffs and are
+  re-armed by every quadrant transition (Shutters44), as before. 0x6D's
+  floor is ice (0x0E / 0x0F).
+- [x] 96.4 **Route facts.** 0x5D: NE (Stalfos, Zazaks) -> the west door (y 132)
+  -> NW (four Stalfos, a Beamos on the belt ring) -> the south door x 120 ->
+  SW (three blue Zazaks, two Beamos) -> the south door x 120 -> 0x6D. Its
+  pots hold rupees, bombs, arrows and magic (no hearts). 0x6D: NW two red
+  Zazaks and two Beamos on belts; the NW -> SW doorway carries Link to y
+  304; SW a Medusa (fireballs 0x55 every ~128 frames, 8), a Beamos, a
+  Stalfos, a red Zazak and a Spark round four pots (two hearts at
+  (112,416) / (128,416)); the west door from y 376 -> 0x6C SE. 0x6C: a
+  bunny beam (0xD1) between the SE statues; the Lanmolas in SW with a
+  Medusa at (48,448); NW pots: a heart (80,96), arrows, a bomb, magic.
+  Damage on the Lanmolas (import's tables): sword level 2 swing 2 (plus
+  the throw-back), spin 4, arrows 4, fire rod 8 (16 magic).
+- [x] 96.5 **Route, real input (harness from checkpoints, HPFLOOR=16):**
+  `chain96.sh` 97 from `ck_r95f_in5D` -> `in6D` (hp 88 -> 84); 98 ->
+  `in6C` (latest: room 0x6C SE at (457,376), hp 68/104, red mail, big key,
+  2 keys, 23 arrows, 7 bombs, 57 rupees, magic 104). Health floor absorbed
+  **0**. Bot aid (harness only, no game change): the sword bot plus a
+  per-frame guard (LASER96) that side-steps Beamos lasers, steps away
+  from a belt-riding Beamos and turns the Mirror Shield to a Medusa
+  fireball.
+- [ ] Next: the Lanmolas (0x6C SW). Not beaten: the sword bot, spin, fire
+  rod and arrow bots each lost ~50 hp in 3000 frames with all three alive
+  (the spin bot's release never started a spin: check how the harness
+  holds B). Then the Moldorm rematch. Open: 0x9B's double toggle, the 0x8B
+  SE map chest, ancilla 0x43, the other callers of
+  TerminateSelectInteractives, spark drawing, arrow deflection (0x1B).
+
+Real app (cache v80, widescreen ON, 1280 x 720, control mode 1):
+`real96.sh` 95 (0x5B from `ck_r95real_in5B`: the lifted pot's switch,
+Link drawn), legs 97-98 from `ck_r95real_in5D` -> `ck_r96real_in6D` ->
+`ck_r96real_in6C` (hp 80 -> 76 -> 60: the same hits as the harness), aid 0.
+Shots: `real/shots/real96_95_r96_5Bswitch_win.png`,
+`real96_97_r96_5Dout_win.png` (0x5D SW cleared), `real96_98_r96_6Dsw_win.png`
+(0x6D SW, the Medusa's fireball, the Beamos).
+
+Tests: new `zelda_alttp_r96_test` (EXTRA entry / order, no number tables,
+install guard, empty extract; asLower aliasing and restore; removePot /
+potSwitch / potWords / openChest / Chest74.redraw / Chest70.reveal on
+stand-in rooms, layer 1 vs 2; with the ROM: the redraw's map base, the
+0x3FFF mask, its push; 35 checks). All 105 test files (`zelda_alttp_*` plus `zelda_input_test`
+and `zelda_widescreen_test`) pass (`r96/out/alltests96.txt`). Audits
+304/304 rooms, 80/80 overworld areas (`r96/out/audit/rooms_r96.txt`,
+`ow_r96.txt`), cacheVersion 80.
+
+Run the new test:
+
+    python tools/run_lua_check.py tests/zelda_alttp_r96_test.lua
+
+## Round 97 (2026-11-24)
+
+Ganon's Tower 2F-3F with real input: the Lanmolas rematch (0x6C) beaten,
+the NW heart pot, the stairs to 0xA5 (invisible floor, Wizzrobes, the
+corridor, the conveyor room), 0x95 (spear soldiers), 0x96 (firebar torch
+puzzle) and its stairs up to 0x3D. Three port gaps met and ported (new
+`Pause97.lua`, `Hitbox97.lua`, `Wizz97.lua`). Scratch:
+`G:/Gen2Recomped/scratch_claude/zelda/alttp/r97/` (the r96 kit with r97
+paths; `chain97.sh` legs 99-105, final run `CKPFX=r97f_` -> `ck_r97f_*`;
+`real97.sh`; `doc/round97.md`; new tokens in `harness/tok97.lua`).
+**cacheVersion 80 -> 81** (Pause97 / Wizz97 read the ROM; harness store
+and real app re-imported).
+
+- [x] 97.1 **The spin attack in the r96 bots (harness vs real app).** Both
+  feed the game the same input (INPUT89: a key going down is a press on
+  that step only). The r96 spin bots kept B held: once the held sword
+  poked a Lanmola (set_when_damaging_enemies) or Link was hit, the sword
+  was put away and, with no new press, no swing started; the bot's own
+  frame counter then "released" nothing. Not a port bug: held 80 frames
+  in the open the charge reaches 64 and letting go spins (HOLDB97).
+- [x] 97.2 **Port: indoor sprites pause off screen (new `Pause97.lua`,
+  EXTRA `pause97`).** Sprite_PrepOamCoordOrDoubleRet (0x080C5ACC) clears
+  sprite_pause (+0x10D2) and sets it when x - camera + 0x40 or
+  y - z - camera + 0x40 is past 0x16F; Sprite_ReturnIfInactive
+  (0x080C3468, its state-checking twin 0x080C3438) returns while it is set
+  unless the deflection bits have 0x80. Lanmola_Wait (0x080EFCF0) also
+  waits for it. The port ran every room sprite off screen: in 0x6C the
+  Lanmolas woke and the Medusa (0x080F5364) fired while Link was still in
+  the SE quadrant. At import every main routine of the sprite table
+  (0x08174138) is walked (its `bl`s two calls deep): 199 types call the
+  prep before Sprite_ReturnIfInactive. Actors:update skips such a palace
+  sprite's routine while it is off screen; its timers still count.
+  OURS: the Goriyas keep Goriya95's pause; headless games (the unit tests'
+  stand-in rooms) do not pause.
+- [x] 97.3 **Port: no hit box below the floor (new `Hitbox97.lua`, EXTRA
+  `hitbox97`).** Sprite_SetupHitBox (0x080C4574) loads the height signed
+  and, below 0, only sets the box's x high byte to 0x80: nothing meets it.
+  The port kept a buried Lanmola's (z -1) box at its mound, so Fire Rod
+  shots and arrows burst on it (4 of 6 shots lost in r96).
+- [x] 97.4 **Port: the Mirror Shield turns Wizzrobe beams (new
+  `Wizz97.lua`, EXTRA `wizz97`).** Wizzrobe_FireBeam (0x08103AE0..):
+  link_shield_type == 3 -> the beam's flags5 = 0x20 (else 0), so
+  Shield84's branch (block, the beam turns round) runs for it; the port's
+  beam never had the flag.
+- [x] 97.5 **Checks against the cartridge (no change).** Lanmola AI
+  (Sprite_54 0x080EFC74, states 0x080EFCF0 / 0x080EF258 / 0x080EF300 /
+  0x080EF4A4 / 0x080EFD88 / 0x080EF54C): timers, z speeds, random spots,
+  shrapnel 4 / 8 (sum of slots 0-2's sprite_state > 9), damage checks only
+  while flying / diving: as the port. Hp 16 and damages are the import's.
+  RoomTag_TorchPuzzleDoor (0x08079F04): >= 4 lit opens, fewer closes again
+  (as the port). Pit detection points (x..x+15, y+8..y+23) make 16-px
+  paths need exact alignment (as the port).
+- [x] 97.6 **Route facts.** 0x6C: the SW quadrant's Lanmolas wake only when
+  Link is in it; Fire Rod 8 (2 a Lanmola) while magic lasts, then arrows
+  (4); NW pots: heart (80,96), arrows (160,96), magic (160,160); NW top
+  stairs -> 0xA5. 0xA5 NW: invisible floor path (x 112..143 / the rows
+  112..143 and 160..191 branches), 3 Wizzrobes (hp 2, one slash), tag 7
+  -> bottom door; corridor: an L-shaped path, spear soldiers; NE: belts,
+  4 Wizzrobes (arrows from the bottom band), blade trap, top door ->
+  0x95: bridge, 4 spear soldiers, east door -> 0x96: firebar (radius 64,
+  -2 angle units a frame) on a cross over pits, pots on three arms,
+  torches at the four ends (lamp, 768 frames each), the east shutter ->
+  SE part, stairs -> 0x3D.
+- [x] 97.7 **Route, real input (harness from checkpoints, HPFLOOR=16):**
+  `chain97.sh` 99 from `ck_r96f_in6C` (Lanmolas: LANM97 bot, Fire Rod then
+  arrows; NW pots; stairs) -> `inA5` (hp 64); 101 -> `neA5` (48); 102 ->
+  `in95` (48); 103 -> `in96` (44); 104 -> `se96` (28); 105 -> `up3F`
+  (latest: room 0x3D at (376,327), hp 28/104, red mail, big key, 2 keys,
+  5 arrows, 7 bombs, 57 rupees, magic 24). Health floor absorbed **0**.
+  Bot aids (harness only, no game change): LANM97 (dodging scorer +
+  shot predictor), WIZ97 / WIZA97, firebar-safe walks (FBSEQ97 /
+  FBPLAN97: simulate Firebar_Main's touch test before moving).
+- [ ] Next: 0x3D (tag 0x33 torches again, key doors, Mini Helmasaurs,
+  Medusas, sparks) -> the Moldorm rematch (0x4D) -> Agahnim 2. Low on
+  hp: look for hearts / fairies first. Open: 0x9B's double toggle, the
+  0x8B SE map chest, ancilla 0x43, the other callers of
+  TerminateSelectInteractives, the GBA's 0x1739 >= 0x60 sword branch
+  (0x0809D2B6, a GBA-only charge?), earlier rounds' routes not replayed
+  with the off-screen pause.
+
+Real app (cache v81, widescreen ON, 1280 x 720, control mode 1):
+`real97.sh` legs 99-105 from `ck_r96real_in6C` -> `ck_r97real_inA5` (hp 56)
+-> `neA5` (40) -> `in95` (40) -> `in96` (36) -> `se96` (20) -> `up3F` (room
+0x3D, hp 20), aid 0. Shots: `real/shots/real97_99_r97_lanmwon_win.png`
+(0x6C SW cleared, shutters open), `real97_104_r97_torches_win.png`.
+
+Tests: new `zelda_alttp_r97_test` (EXTRA entries / order, no number
+tables, install guards, the Actors hook, cacheVersion; refusals; the bl
+decoder; the scan on a stand-in table; the off-screen test incl. height
+and wrap; paused() rules (palace, set, defl 0x80, Goriyas, headless);
+tick; install; the far box; the beam flags; with the ROM: margin / span /
+defl, the pausing set, the hit-box rule, the beam's shield compare,
+Lanmola_Wait's sprite_pause read; 49 checks). All 107 test files
+(`zelda_alttp_*` plus `zelda_input_test` and `zelda_widescreen_test`) pass
+(`r97/out/alltests97.txt`). Audits 304/304 rooms, 80/80 overworld areas
+(`r97/out/audit/rooms_r97.txt`, `ow_r97.txt`), cacheVersion 81.
+
+Run the new test:
+
+    python tools/run_lua_check.py tests/zelda_alttp_r97_test.lua
+
+## Round 98 (2026-11-24)
+
+Regression replay of older kept routes with r97's off-screen pause, then
+Ganon's Tower 3F room 0x3D with real input: the torch puzzle on the
+collapsing floor ring, the Mini Helmasaurs, the conveyor quarter (spike
+block, big spike trap, a bombed passage) and the peg quarter, into the
+Moldorm rematch room 0x4D. Four port gaps fixed (new `Kill98.lua`,
+`Belt98.lua`; anchored fixes in `Palace.lua`, `Traps27.lua`,
+`Goriya95.lua`). Scratch: `G:/Gen2Recomped/scratch_claude/zelda/alttp/r98/`
+(the r97 kit with r98 paths; `reg98.sh` / `ab98.sh` regression and A/B
+replays, `chain98.sh` legs 106-108, final run `CKPFX=r98f_` -> `ck_r98f_*`;
+`real98.sh`; `doc/round98.md`; new tokens in `harness/tok98.lua`).
+**cacheVersion 81 -> 82** (Kill98 reads the ROM; harness store and real app
+re-imported).
+
+- [x] 98.1 **Regression replay (harness, `reg98.sh`; A/B with NOPAUSE97=1).**
+  GT 1F legs 75-80 (0x8B, 0x9B, 0x7D), 89-90 (Armos, red mail), 91-96 (2F,
+  Goriyas, 0x5B, 0x5C) reach their checkpoints; leg 78 takes 8 (two Stalfos
+  touches, the floor absorbed them). Overworld chain72 legs 01-08 (mirror,
+  lake, warp rock, shovel, flute) pass. Thieves' Town chain65 01-10 pass.
+  Misery Mire chain74 01-07 pass. Failures: GT 97 (0x5D: a Stalfos stays
+  below the NE conveyor band, the sword bot cannot reach it) and Turtle
+  Rock 34 (0x13: the Pokey wanders north and pauses off screen) fail only
+  with the pause, i.e. route drift on ROM-correct behaviour; 0x5D passes
+  with one extra walk (`leg98_97.txt`), TR 34 not re-tuned. Mire 08 (C1 BR
+  south door) and TT 11 (BC -> 0x45 planner walk) fail with and without
+  the pause: older drift, not r97's. chain97 99-105 replays exactly (hp 64
+  .. 28). Real app: GT 91-93 (`real95.sh`) and the re-tuned 0x5D leg pass.
+- [x] 98.2 **Port: the rest of the off-screen branch (new `Kill98.lua`,
+  EXTRA `kill98`).** Sprite_PrepOamCoordOrDoubleRet (0x080C5ACC): the
+  vertical test only counts without flags4 0x20 (+0x1132, `movs r0, #0x20`
+  at 0x080C5C36); off screen with deflection bits >= 0 it calls
+  Sprite_KillSelf (`bl 0x080CB1E0` at 0x080C5C9A), which indoors (+0x9B2)
+  removes the sprite when the deflection bits have 0x40 (0x080CB1F0). Those
+  are the projectiles (Medusa / statue fireball 0x55, Octorok stone 0x0C,
+  enemy arrow 0x1B, 0x02 / 0x87 / 0x94 / 0xBF): Pause97 froze them in place
+  and let them fly on when Link came back. Masks read at import.
+- [x] 98.3 **Port: the side a sprite turns to (Palace.faceLink,
+  Traps27.toLink, Goriya95).** Sprite_IsRightOfLink (0x080C36D8) and
+  _IsBelowLink (0x080C3028) return the 16-bit difference's sign (`lsrs r0,
+  #0xf`); only the magnitudes compared by Sprite_DirectionToFaceLink
+  (0x080C2FA8) are low bytes. The port took the side from the low byte:
+  133 px away the big spike trap of 0x3D (0x7D) ran away from Link.
+- [x] 98.4 **Port: a conveyor does not push Link into a doorway's jamb (new
+  `Belt98.lua`, EXTRA `belt98`).** Link_ApplyConveyor's step is followed by
+  the cartridge's leading-edge collision (x + 0 / x + 15, rows y + 8 / 16 /
+  23); in doorway states the port kept Belt78's 1-px-inset test, so in 0x3D
+  NW the left belt put Link 1 px into the bombed passage's jamb, the door
+  slide put him back 2 px, and he could never walk down. No ROM reads.
+- [x] 98.5 **Checks against the cartridge (no change).** The spin charge
+  (0x0809D2A4..): without the riddle flag 0x020023F0 the counter +0x1739
+  counts to 0x3F and sounds at 0x30 (the port's 48 / 64: right); with it
+  (set at 0x08114544 by the GBA riddle carver, Sprites31) it counts to 0x60,
+  sounds again at 0x60, sparkles every 8 frames, and letting go above 0x5F
+  sets +0x17A8 = 0x80 (0x0809D110): the GBA-only Hurricane Spin, not
+  ported (progress.hurricane is set, nothing reads it). 0x3D's floor ring is
+  overlord 0x0A (Overlord0A_FallingSquare): 160 frames after it is first on
+  screen a 16-px tile falls every 17 frames, clockwise from (432,336). The
+  sparks never react to Link (their loop recorded with Link pinned is the
+  live one). Fire Rod 16 magic, lamp 4.
+- [x] 98.6 **Route facts.** 0x3D SE: torches C0 (304,336) C1 (448,336) C2
+  (320,448) C3 (432,448), lamp from (432,328) right, (432,424) down,
+  (320..322,424) down, (320,328) left, in ring order; one spark hit on the
+  bottom row is unavoidable with magic 24 (the 5B spark holds the
+  bottom-left corner when the ring falls behind Link); shutter (376,304)
+  -> NE: two Mini Helmasaurs (GF13 sword bot, no damage), Medusas, spike
+  floor 0x0D rows 80-104 / 160-184; NE pots and chests: bombs only. Key
+  door W (288,128): enter at y 124. NW: spike block 0x8A on y 159 (2 px a
+  frame, x 38..201), big spike trap 0x7D at (56,184), left belts 0x6A
+  (0.5 px a frame); trigger the trap from x 189 and step back, lay a bomb
+  at (120,192) facing down (door 0x2E at (128,304) is a bombable wall),
+  leave by x 156, repeat the trigger, then through x 120. SW: raised
+  orange pegs (0x67), lowered blue (0x66); walk x 64 down to y 448, then
+  the key door S (128,480) -> 0x4D (Moldorm, two 0x09 parts).
+- [x] 98.7 **Route, real input (harness from checkpoints, HPFLOOR=16):**
+  `chain98.sh` 106 from `ck_r97f_up3F` (SPKP98: time-expanded search past
+  the recorded spark loop and floor holes; lamp x4) -> `ne3D` (hp 28 -> 20);
+  107 -> `sw3D` (20); 108 -> `in4D` (latest: room 0x4D at (120,32), hp
+  20/104, red mail, big key, 0 keys, 5 arrows, 6 bombs, 57 rupees, magic
+  8). Health floor absorbed **0**. Bot aids (harness only, no game
+  change): SPKP98 / GOX98 / GOYX98 / GODOOR98 / WSPKE98 walkers; the spark
+  recording is made by a probe run (spk98rec.lua) that pins Link.
+- [ ] Next: the Moldorm rematch (0x4D) with hp 20 (look for hearts: the SW
+  pots of 0x3D are guarded by the switch-orbiting spark and the
+  anti-fairy), then Agahnim 2. Open: the Hurricane Spin, TR 34 / Mire 08 /
+  TT 11 route re-tunes, 0x9B's double toggle, the 0x8B SE map chest,
+  ancilla 0x43, the other callers of TerminateSelectInteractives.
+
+Real app (cache v82, widescreen ON, 1280 x 720, control mode 1):
+`real98.sh` legs 106-108 from `ck_r97real_up3F` (hp 20) -> `ck_r98real_ne3D`
+-> `sw3D` -> `in4D` (hp 16: the same spark hit, 4 absorbed by the floor).
+Shots: `real/shots/real98_106_r98_shutter_win.png` (NE, Mini Helmasaurs),
+`real98_107_r98_swin_win.png` (through the bombed passage into SW),
+`real98_108_r98_moldorm_win.png` (0x4D).
+
+Tests: new `zelda_alttp_r98_test` (EXTRA entries / order, install guards,
+no number tables, cacheVersion; Kill98 refusal, bl decoder, the flags4 rule,
+kills, install on stand-in sprites incl. headless; Belt98's leading edge and
+wrap; faceLink / toLink sides; with the ROM: the masks, the KillSelf call,
+the spin charge compares, IsRightOfLink's shift; 45 checks). All 108 test
+files (`zelda_alttp_*` plus `zelda_input_test` and `zelda_widescreen_test`)
+pass (`r98/out/alltests98.txt`). Audits 304/304 rooms, 80/80 overworld
+areas (`r98/out/audit/rooms_r98.txt`, `ow_r98.txt`), cacheVersion 82.
+
+Run the new test:
+
+    python tools/run_lua_check.py tests/zelda_alttp_r98_test.lua

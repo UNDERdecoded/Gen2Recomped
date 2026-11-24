@@ -1536,6 +1536,11 @@ local ASM = {
   -- export keeps none of those, so the extractor can only name it by bank and
   -- address -- the same way the Battle Tower's room chooser is listed above.
   ["17:6D3A"] = { "g2_orphan_donate" },
+  -- Laurel Forest's guard triggers (Pokemon-only section): `ldh a,
+  -- [hScriptVar] / and 1 / ldh [hScriptVar], a / ret`.  Odd table rows are
+  -- the lab door, even rows the west exit; unlowered, the variable kept the
+  -- whole row index and row 2 / 4 stood their guard in the wrong doorway.
+  ["1D:6B27"] = { "g2_and_var", 1 },
   ["1B:6C3A"] = { "g2_memory_reward_next" },
   -- Prism's Pachisi board.  Five routines over two flat byte tables per board
   -- -- the tile at each position and the step that leaves it -- plus the
@@ -2455,7 +2460,29 @@ function Gen2ScriptVM.compile(data, entry)
         -- the marker itself emits nothing
       elseif op == "sendif" then
         local after = table.remove(sifStack)
+        if type(after) == "table" then after = after.skip end
         if after then emit(state, { "label", after }) end
+      elseif (op == "switch" or op == "selse")
+          and (#sifStack == 0 or type(sifStack[#sifStack]) == "table") then
+        -- A `selse` (and `switch`, which ends in one) with no open `sif` of
+        -- its own: the script was ENTERED inside an arm -- a jump table's
+        -- case labels, e.g. Laurel Forest's guard triggers `switch 0 / switch
+        -- 2 / ... / sendif`, one entry point per case.  Script_selse skips
+        -- forward to the sendif that closes the arm, so only the first case
+        -- runs.  Lowered as a plain fall-through the variable ended on the
+        -- LAST case every time.
+        local top = sifStack[#sifStack]
+        if top == nil then
+          top = { skip = state.newLabel() }
+          sifStack[#sifStack + 1] = top
+        end
+        if op == "switch" and L.setval then L.setval(ir, state) end
+        emit(state, { "jump", top.skip })
+        -- a one-row `sif` guarding this case falls past it when false
+        if guardLabel then
+          emit(state, { "label", guardLabel })
+          guardLabel = nil
+        end
       elseif op == "switch" then
         -- Script_switch is literally `call Script_writebyte` falling through
         -- into Script_selse ("writebyte + selse combined into one ... abusing
@@ -2493,7 +2520,10 @@ function Gen2ScriptVM.compile(data, entry)
     end
     -- an unbalanced `sif` (the decoder stopped inside the block) still has to
     -- close, or the jump target does not exist and the runner falls through
-    for i = #sifStack, 1, -1 do emit(state, { "label", sifStack[i] }) end
+    for i = #sifStack, 1, -1 do
+      local open = sifStack[i]
+      emit(state, { "label", type(open) == "table" and open.skip or open })
+    end
     if guardLabel then emit(state, { "label", guardLabel }) end
     -- a script that ran off the end of its own bytecode still has to unwind
     emit(state, { "g2_return" })
@@ -2746,7 +2776,8 @@ local function contributionFor(data, mapId, entry, mapDef)
   for _, coord in ipairs(entry.coords or {}) do
     local rows = Gen2ScriptVM.compile(data, coord.script)
     if rows then
-      coords[#coords + 1] = { x = coord.x, y = coord.y, scene = coord.scene, rows = rows }
+      coords[#coords + 1] = { x = coord.x, y = coord.y, scene = coord.scene,
+                              event = coord.event, rows = rows }
     end
   end
   if #coords > 0 then
@@ -2756,8 +2787,13 @@ local function contributionFor(data, mapId, entry, mapDef)
       local scene = Gen2Commands.getScene(game.save, mapId)
       for _, coord in ipairs(coords) do
         -- $FF is the ROM's "any scene" wildcard
+        -- Prism's triggers carry an event word: the trigger is live only
+        -- while that flag is SET (CheckCurrentMapXYTriggers; see the
+        -- extractor).  No word = always live, as on Crystal.
         if coord.x == x and coord.y == y
-          and (coord.scene == scene or coord.scene == 0xFF) then
+          and (coord.scene == scene or coord.scene == 0xFF)
+          and (coord.event == nil
+               or require("src.script.Flags").get(game.save, coord.event)) then
           overworld.runner:run(coord.rows, { mapId = mapId })
           return true
         end

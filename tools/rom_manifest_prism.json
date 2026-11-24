@@ -1927,6 +1927,7 @@
     "baseDataEntry": 24,
     "bgEventItemKind": 5,
     "coordEventBytes": 7,
+    "coordEventFlag": 4,
     "coordEventScript": 6,
     "expBarEmptyTile": 85,
     "expBarSheetTiles": 11,

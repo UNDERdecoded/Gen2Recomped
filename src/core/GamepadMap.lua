@@ -42,6 +42,10 @@ GamepadMap.NX_GAMEPAD_BINDINGS = {
 GamepadMap.RAW_BUTTON_BINDINGS = {
   [1] = "a", [2] = "b",
   [3] = "y", [4] = "x",
+  -- bug99: the shoulder pair (LB / RB in the XInput order, L1 / R1 in the
+  -- generic D-input one). Without it a pad SDL does not recognize had no L
+  -- or R at all -- the Zelda games' item / action / map buttons.
+  [5] = "l", [6] = "r",
   [7] = "select", [8] = "start", [9] = "select", [10] = "start",
 }
 
@@ -57,6 +61,7 @@ GamepadMap.NX_RAW_BUTTON_BINDINGS = {
 -- Raw index -> gamepad button *name* for RomImporter (then NX face swap applies).
 GamepadMap.RAW_TO_GAMEPAD_BUTTON = {
   [1] = "a", [2] = "b",
+  [5] = "leftshoulder", [6] = "rightshoulder",   -- bug99: as RAW_BUTTON_BINDINGS
   [7] = "back", [8] = "start", [9] = "back", [10] = "start",
 }
 

@@ -634,4 +634,7 @@ return {
   ["Takkuri72.HOME"] = { 0x08124178, "u16", 10, ck = 0x2B4D0479 }, -- round 72: gUnk_08124178 (the boxes' centres)
   ["Takkuri72.GKEY"] = { 0x08123FB0, "{x8,unk08:s8,unk09:s8,unk0a:u8,unk0b:u8,unk0c:u8,type:u8,unk0e:u8,dir:u8,zv:s32,bounce:u32,speed:s16,y:s16,flag:u16,timer:u8,x1}", 8, base = 0, ck = 0x379D1554 }, -- round 72: graveyardKey.c gUnk_08123FB0
   ["Sword84.DEFS"] = { 0x08126E68, "{x3,hurt:u8,x4}", 6, ck = 0x6A74046E }, -- round 84: playerItemDefinitions.c gPlayerItemDefinition_0 (PLAYER_ITEM_SWORD by sword 1..6: the swing's hurtType)
+  ["Carry95.SLOTS"] = { 0x081320B8, "{anim:u8,pal:u8,vram:u8,x1}", 3, base = 0, ck = 0x107C02C6 }, -- bugs95: playerItemHeldObject.c gUnk_081320B8 (a lifted tile's art by subtimer)
+  ["Carry95.DEF"] = { 0x08126E40, "{x5,sprite:u8,x2}", ck = 0x02C900CE }, -- bugs95: gPlayerItemDefinitions[PLAYER_ITEM_HELD_OBJECT] (its sprite)
+  ["Carry95.FX_SFX"] = { 0x0811F960, "{x2,sfx:u16}", 0x58, base = 0, ck = 0xCF071A9F }, -- bugs95: specialFx.c gUnk_0811F960 (each FX's sound)
 }

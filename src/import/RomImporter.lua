@@ -1427,7 +1427,9 @@ local function markerFor(version)
   -- COLOSSEUM (50) and JOIN / LEAD (63) lists, the Seagallop ferries
   if version == "firered" then revision = "firered-trade-scene-v1:firered-multichoice-v2:" end
   if version == "polishedcrystal" then revision = "polished-stored-unown-forms-v7:" end
-  if version == "prism" then revision = "prism-events-art-v2:" end
+  -- prism-coord-event-flag-v1: map_scripts coords carry the xy_trigger's
+  -- event gate (`event`), which Laurel Forest's lab-door guards need
+  if version == "prism" then revision = "prism-events-art-v2:prism-coord-event-flag-v1:" end
   -- hgss-phone-call-v1: gen4_hgss_phone_call (Gen4HgssPhoneCall), the
   -- scripted Pokegear calls' phonebook / script defs / ink
   -- hgss-emotes-v1: gen4_emotes from HGSS's own /a/1/0/3 (members 118 / 125)

@@ -244,7 +244,8 @@ function A:update()
   local camx, camy = 0, 0
   if inside.camera then camx, camy = inside:camera(lk.x, lk.y, 240, 160) end
   for _, a in ipairs(self.list) do
-    if not a.dead then
+    -- r97: off-screen sprites stand still (Pause97.lua: sprite_pause / Sprite_ReturnIfInactive)
+    if not a.dead and not (self.pause97 and self:pause97(a, camx, camy)) then
       a.t = a.t + 1
       local ox, oy = a.x, a.y
       if a.guard then

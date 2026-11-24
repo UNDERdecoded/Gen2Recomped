@@ -235,7 +235,8 @@ local function toLink(a, lk)
   local dx = wrap8(lk.x - a.x)
   local dy = wrap8(lk.y + 8 + (a.z or 0) - a.y)
   local d
-  if math.abs(dx) >= math.abs(dy) then d = (dx < 0) and 1 or 0 else d = ((dy < 0) and 1 or 0) + 2 end
+  -- r98: the side from the 16-bit difference, the magnitudes from the low bytes (GBA 0x080C2FA8, see Palace.faceLink)
+  if math.abs(dx) >= math.abs(dy) then d = ((lk.x - a.x) < 0) and 1 or 0 else d = (((lk.y + 8 + (a.z or 0) - a.y) < 0) and 1 or 0) + 2 end
   return d, dx, dy
 end
 M.toLink = toLink

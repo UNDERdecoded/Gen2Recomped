@@ -585,7 +585,7 @@ function Enemies:update(e)
   end
   -- touching Link
   local p = f.player
-  if p.state ~= "dead" and p.invuln == 0 and (e.z or 0) < 8 and not e.hidden and not e.inert and not e.noTouch and (e.def.collision ~= 0 or e.action >= 2 or e.collideOn) then -- round 25: collideOn = an Init's COLLISION_ON (EnemyCoF3)
+  if p.state ~= "dead" and p.invuln == 0 and (e.z or 0) < (e.zTouch99 or 8) and not e.hidden and not e.inert and not e.noTouch and (e.def.collision ~= 0 or e.action >= 2 or e.collideOn) then -- round 25: collideOn = an Init's COLLISION_ON (EnemyCoF3)
     local hb = e.hitbox
     -- round 11: Link's own hitbox and hurtType (0, Minish 1) from the ROM
     -- (Hitboxes.lua); CollisionNoOp entries (handler 1 / 2) let him pass,
@@ -601,6 +601,7 @@ function Enemies:update(e)
     if touch and math.abs((p.z or 0) - (e.z or 0)) > 10 then touch = false end
     if touch and (handler == 1 or handler == 2) then touch = false end
     if touch and require("src.zelda.tmc.Dive64").skips(f, e) then touch = false end -- round 64: a diving Link (collisionMask bit $10)
+    if touch and handler == 15 then require("src.zelda.tmc.Grab99").contact(self, e, HBm.hurtType(p)); touch = false end -- round 99: sub_08018168 (the grab: WALL_MASTER, WALL_MASTER_2, VAATI_PROJECTILE) never hurts
     if touch and handler == 16 then HBm.pushOut(f, e, hb); touch = false end
     if touch and (handler == 11 or handler == 12) and not p:blocksFrom(e.x, e.y) and require("src.zelda.tmc.R31").contact(self, e, handler) then touch = false end -- round 31: CollisionFire / sub_08017C40 (PL_BURNING / PL_FROZEN)
     if touch then

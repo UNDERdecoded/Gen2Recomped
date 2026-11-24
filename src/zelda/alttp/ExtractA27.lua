@@ -82,7 +82,16 @@ X.EXTRA = { { "people30", "Townsfolk30" }, { "spr31", "Sprites31" }, { "games31"
             { "wm92", "Wm92" },   -- r92: the screen stays put while a Wallmaster carries Link off (no ROM reads)
             { "push93", "Push93" },   -- r93: a push block leaves the attribute of the tile under it (no ROM reads)
             { "armos94", "Armos94" },   -- r94 (see Armos94.lua)
-            { "fairy94", "Fairy94" } }   -- r94: the fairy flies about (Fairy_HandleMovement; its z speed table read at import)   -- r94: the Armos Knights' back row (y 0x50), the crusher's touch (state 0 only), no heart in GT (no ROM reads)
+            { "fairy94", "Fairy94" },
+            { "carry95", "Carry95" },   -- r95 bug: a lifted pot's kind / palette (the pot's lift answer, Sprite_EC's Dark World offset read at import)
+            { "lamp95", "Lamp95" },   -- r95 bug: a chest's alternate item (kReceiveItemAlternates read at import), duplicate lamps repaired   -- r94: the fairy flies about (Fairy_HandleMovement; its z speed table read at import)   -- r94: the Armos Knights' back row (y 0x50), the crusher's touch (state 0 only), no heart in GT (no ROM reads)
+            { "goriya95", "Goriya95" },
+            { "lower96", "Lower96" },
+            { "pause97", "Pause97" },
+            { "hitbox97", "Hitbox97" },
+            { "wizz97", "Wizz97" },
+            { "kill98", "Kill98" },
+            { "belt98", "Belt98" } }   -- r98: no belt step into a doorway's jamb (the cartridge's leading-edge probes; no ROM reads)   -- r98: the off-screen prep's flags4 0x20 rule and Sprite_KillSelf for deflection 0x40 (masks read at import)   -- r97: indoor sprites pause off screen (the pausing types walked from the sprite table at import)   -- r96: lower-level pots / chests redrawn on the lower map (no ROM reads)   -- r95: the Goriyas in Ganon's Tower (SpritePrep_Eyegore rooms, Goriya tables / literals / immediates read at import)
               -- r76: Kodongo's direction / fire tables, the arrow's recoil on a sprite   -- r76: the Mire moving wall room's map swap (RoomTag_MovingWall_East's own room)
               -- r75: crystal switch palettes, cape depletion timers   -- r74: literals moved to import (detection points, pot switch words, Blind trigger, OAM flags)
 

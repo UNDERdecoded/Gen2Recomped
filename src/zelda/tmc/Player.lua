@@ -549,12 +549,14 @@ function Player:draw(camX, camY, palette)
   if self.drawUnder then self.drawUnder(self, x, math.floor(self.y - camY)) end
   local si, sf, front = self:swordPart(frame)
   if si and not front then self:drawSword(x, y, si, sf) end
+  require("src.zelda.tmc.Stall94").drawShield(self, x, y, frame, false) -- stall94: PLAYER_ITEM_SHIELD behind Link
   if self:hflip() then
     love.graphics.draw(img, x - ox, y + oy, 0, -1, 1)
   else
     love.graphics.draw(img, x + ox, y + oy)
   end
   if si and front then self:drawSword(x, y, si, sf) end
+  require("src.zelda.tmc.Stall94").drawShield(self, x, y, frame, true) -- stall94: PLAYER_ITEM_SHIELD over Link
   if self.drawOver then self.drawOver(self, x, y) end
   require("src.zelda.tmc.ItemsR26").draw(self, x, y) -- round 26A: item parts drawn over Link (ItemsR26.lua)
   -- the item held up during an item get, and the carried pot / bush

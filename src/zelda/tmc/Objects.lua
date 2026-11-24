@@ -339,7 +339,7 @@ function Objects:tryAction(p, interactOnly)
   end
   local entry = self:tileInteraction(6, px, py, p.layer)
   if entry then
-    return self:lift(p, { obj = entry.obj, form = entry.objType })
+    return self:lift(p, require("src.zelda.tmc.Carry95").fromTile(self, entry)) -- bugs95: PLAYER_ITEM_HELD_OBJECT's own art (was the tile's SPECIAL_FX)
   end
   return false
 end

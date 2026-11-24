@@ -781,4 +781,6 @@ function Host:restartWithMods() end
 function Host:nativeCanvas() return self.canvas end
 
 R.Host = Host
+-- bug99: the pad callbacks follow Game.lua's (raw sticks, triggers, overlay)
+pcall(function() require("src.zelda.ZeldaPad").install(R) end)
 return R

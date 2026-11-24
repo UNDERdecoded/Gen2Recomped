@@ -8366,3 +8366,507 @@ gUnk_080FCCFC / sub_08053758 .. sub_080539BC).
   $07 -> tower $01 and 89:02's heart pots; the four keys into $09's key blocks -> the big key -> 3F $06 -> Vaati; what (if
   anything) opens $12's middle band; $70:21's Chuchus.
 - Estimates: ~99.66% of the story verified with real input, ~98.3% of the port (old scale).
+
+## Bug round stall94 (user reports: the festival stall's items on the cushions missing; the shield not drawn when used; Zelda following again after the kidnap)
+
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/tmc/stall94/` (`run.sh` (WIDE=1 = the real app: ZeldaRuntime 1280 x 720,
+widescreen on, tmc_bugs1 cache 55; else the r27b/rt harness), `p_stall.lua` (bell/ck/bell_town -> the tour -> the stall ->
+the Small Shield -> the shield held / walked in four directions), `p_zf.lua` / `p_zf2.lua` / `p_zf3.lua` (after the kidnap,
+from r10/ck/e_end and from `ck/zf_town` = an old-port save in the festival town with Zelda following), outputs `out/`,
+shots `shots/`).  New `src/zelda/tmc/Stall94.lua` (in R27A.MODULES), two anchored lines in `Player:draw`.
+**Cache version: 55, unchanged** (everything used was already imported: gObjectDefinitions $6A, SPRITE_17, the entity lists).
+
+- [x] **The stall's items** (script_Npc4EIntroTown, TEXT_PROLOGUE $22 .. $2B): the items on the merchant's cushions are
+  CUTSCENE_MISC_OBJECT entities made by cutsceneMiscObject.c natives the port lacked (the script skipped them):
+  sub_08094CDC (type 3 / $62 at origin + (224, 600)), sub_08094DD8 (type 4 at 240), sub_08094D34 (type $15 / ITEM_SHIELD at
+  256), each SoundReq(324); sub_08094D10 / sub_08094E0C / sub_08094D70 = FindEntity -> action $FF (deleted next frame).
+  Type3 / $15 draw sub_08080CB4 (animation = type2), Type4 animation 0, from the object's own definition.
+- [x] **The shield in use**: PLAYER_ITEM_SHIELD (playerItemShield.c) is its own sprite (gPlayerItemDefinition_2: SPRITE_17,
+  OBJ palette 1): frame = Link's frameIndex - $25 (+ $27 Mirror Shield) while Link's sprite is 1 / 4 and that is < $3F, Link's
+  flip; sub_08078E84 puts it over Link when his frame's unk_1 is set, else behind.  The port drew only Link's arm pose.
+  SIMPLIFIED: the Mirror Shield's shine cycle (gUnk_081271DC / gUnk_08127220) is not played.
+- [x] **Zelda after the kidnap**: the town stays the festival town until LV1_CLEAR and sub_unk3_HyruleTown_0 sets
+  ZELDA_CHASE on every entry (as ported), so the cartridge keeps Link out: sub_unk3_HyruleField_OutsideCastle (North Hyrule
+  Field) with TABIDACHI and no Gust Jar loads gUnk_080F7CD0 in place of list 0 (the workers on the road) and sub_0804F5E8 puts
+  PERMA_ROCK tiles (467 .. 470) at (30..34, 47..49) and SPECIAL_TILE_114 at (27, 46/47), (36, 42/43).  The port had no room code
+  for North Hyrule Field: the road stayed open, the festival town set ZELDA_CHASE and Zelda followed everywhere.  Ported; a save
+  from the old state (ZELDA_CHASE + CASTLE_04_MEZAME at progress 1 outside the festival town) is repaired once on the next room
+  load, and a Link arriving from the town below the rocks (old saves only) gets the road open that once.  SIMPLIFIED (unchanged):
+  the room's cloud overlay / SOUGEN_06_SLIDE / SAIKAI / AKINDO lists.
+- Verified (harness and real app, real keys; aid: Link placed below Zelda's 2nd / 3rd tour stops where two kids block the
+  path, before the stall scene): all three items shown together on the cushions, the shield removed when Zelda picks it, the
+  others after, the Small Shield given, the TryOutShield macro shows the shield; shield held + walked in four directions
+  (8/8 frames with the part); from r10/ck/e_end the road south is closed (the workers, the rocks), into the garden twice and
+  a save / reload: no Zelda; from the old-state save: Zelda gone on leaving the town, garden twice, reload: none.
+  ObjErrors 0.  Shots: `stall94/shots/204438_stall94_items3_wide.png`, `204438_stall94_tryshield_wide.png`,
+  `204438_stall94_shield_*_wide.png`, `204514_zf2_south1_wide.png`.
+- Tests: `tests/zelda_tmc_stall94_test.lua` (46 checks: the natives on a stand-in field, the shield part's sprite / frame /
+  side / guards, North Hyrule Field's room code and the old-save repair, hooks); full suite in `stall94/out/tests.txt`.
+
+## Bug round bugs95 (user report: "When picking up pots it's not showing them in my hand when picked up, it's showing a gray tile for most")
+
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/tmc/bugs95/` (`run.sh` (WIDE=1 = the real app: ZeldaRuntime 1280 x 720,
+widescreen on, tmc_bugs1 cache), `p_v95.lua` (lift each kind of liftable tile / a pot with real R, walk, throw with real R,
+follow the flight and the landing), `vall.sh` (the nine areas), `rebuild95.sh` (cache 56 into tmc_bugs1 + testcache),
+`p_scan.lua` (which dungeon rooms hold liftables), outputs `out/`, shots `shots/`).
+New `src/zelda/tmc/Carry95.lua` (in R27A.MODULES; wraps Objects.drawCarried / dropCarried / breakThrown and
+PotCarry.release, guard Objects.carry95Installed), one anchored line in `Objects:tryAction`, three RomTablesCat entries.
+**Cache version: 55 -> 56** (r35.bin gains Carry95.SLOTS / DEF / FX_SFX); real-app cache (tmc_bugs1) and testcache reimported.
+
+- [x] **Root cause**: a liftable map tile (filter 6 of the tile-act table: bushes, rocks, signs -- every liftable outside
+  the dungeons; the dungeons' pots are POT entities and were fine) was lifted as `{obj = entry.obj, form = entry.objType}`
+  = SPECIAL_FX + FX_BUSH / FX_ROCK / FX_SIGN, so the port drew the FX's first break frame over Link's head (a grey chunk
+  for a rock, leaves for a bush, nothing for a sign) and in the air, and on landing broke it as a pot (Objects:shatter:
+  a GROUND_ITEM "form" = the FX type).
+- [x] **The cartridge**: DoItemTileInteraction copies the entry's bytes 2 / 3 / 5 to the item (type2 / timer /
+  subtimer); sub_08076088(this, NULL) makes PLAYER_ITEM_HELD_OBJECT with no child: ItemInit's sprite
+  (gPlayerItemDefinitions[PLAYER_ITEM_HELD_OBJECT], SPRITE_POT), SubAction0 palette slot / spriteVramOffset /
+  animation from gUnk_081320B8[subtimer] (the bush, rock and sign art in the common OBJ VRAM); the throw is unchanged
+  (PotCarry); landing (child == this): the act-tile splashes as before, else type2 $0F -> CreateFx(timer, $80) (variant,
+  gUnk_0811F960[type].sfx, drop roll), another type2 -> that object, $FF nothing; PlayerDropHeldObject lands it where
+  Link stands.  All three tables read from the ROM (RomTables).
+- Verified (harness and real app, real keys; AID: Link placed beside each object; dungeon rooms entered with
+  enterRoom from the area's checkpoint, FoW $58:16's boss-intro state cleared): Hyrule Town (bush, sign), the field
+  $03:06 (bush, sign, rock), Minish Woods (bush, sign): held art = the held object's slot, image drawn, tile left behind,
+  carried while walking, the thrown entity drawn with the same art (shadow), landing FX = the variant (bush leaves, rock,
+  sign pieces) + its sound; pots in Deepwood $48:07, Cave of Flames $50:17, Fortress of Winds $58:16, Temple of Droplets
+  $60:28, Palace of Winds $70:06, DHC $88:09 lifted / thrown / shattered as before.  ObjErrors 0 everywhere.
+  Shots (real app, widescreen): `bugs95/shots/town_w_tile1_3_held.png` (bush, town), `field_w_tile3_4_held.png` (rock),
+  `field_w_tile2_2d_held.png` (sign), `field_w_tile1_3_air.png` (a thrown bush), `woods_w_tile2_2d_held.png`,
+  `deepwood_w_pot1_held.png`, `dhc_w_pot1_held.png`.
+- Tests: `tests/zelda_tmc_bugs95_test.lua` (29 checks, made-up tables: fromTile's slot / sprite / type2 / timer, the
+  held draw (sprite, keyframe, palette slot, VRAM, carry offset), the old path for other objects, the thrown entity's art,
+  landing (variant, sound, SFX_NONE, other type2, $FF, drop at Link), hooks, catalogue entries, cacheVersion); all 129
+  `tests/zelda_tmc_*_test.lua` + `zelda_input_test` (109) + `zelda_widescreen_test` (101) pass (`bugs95/out/tests.txt`).
+
+## Round 95 (Dark Hyrule Castle 2F's east side with real keys: **$88:12's middle band is not isolated -- its light-blue square is a 4 x 4 heavy block (ACT_TILE_114) that Link and three clones push**: the Four Sword's split on the band's four clone tiles, the row of four Links round the GURUGURU_BAR, two pushes south -> the lower east door -> 89:04's lower part -> 89:07 by a ledge hop into the whirlwinds -> its bottom platform (the Keatons) -> 89:06 (the east section's Keaton / Spear Moblin, both Bow Moblins shot across the gap, an arrow lights the east switch: the bridge) -> **$88:17 (2F's entrance): the split's formation is the four switches' own shape -> one spin lights all four -> the north door** -> $88:14's two Ball and Chain Soldiers: not beaten at 3 hearts; no port bug found on the way, no heal reached)
+
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/tmc/r95/` (`go.sh` + `pre95.lua` (checkpoints in `r95/ck`, falling back to r94 ..
+r38; loads `lib95.lua` last), `scene95.sh` / `run95.sh` (outputs in `r95/out`, shots in `r95/shots`, pictures in `r95/img`),
+`lib95.lua` (`H.hop95`: a ledge hop off a rampart platform's rim into a whirlwind, then the glide through waypoints;
+`H.bar95` / `H.barClear95` / **`H.safeCells95`: the GURUGURU_BAR's balls predicted from its own turn (unk_76 += type2, angle
+unk_76 >> 2, radius 14 + 12 i); a leg of the four-Link formation is walked only while every ball stays 18 px clear**;
+`H.mob95` (H.mob92 with a filter); **`H.arrow95`: the arrow bot** (bow on B, shield on A, line up 40 .. 140 px on an axis and
+shoot, a box to stay in, a clear-line test, flee distances); `H.bcs95` / `H.bc95`: Ball and Chain Soldier bots (not good
+enough, below); `H.mreach95` / `H.pic95`), segments `seg_a95` .. `seg_j95`, probes `probe_a95` .. `probe_m95` (a: the exits of
+every DHC room; b: 89:03's third platform rim; c: $12's split and pushes; d: 89:07; e: $1D's tile types; f: 89:06; g: any room's
+grid; h: 89:04's pots; k / l / m: $14's soldiers), the real-app kit `rt/` + `run95rt.sh` + `s95.lua` + `rtall95.sh`).
+Decomp read: the r49 repo (include/roomid.h (the DHC room names), src/roomInit.c DarkHyruleCastle_2F*, include/tiles.h
+ACT_TILE_114 / 116, src/beanstalkSubtask.c (UpdatePlayerCollision case ACT_TILE_114, sub_0801A570), src/player.c
+SurfaceAction_6, src/playerUtils.c gUnk_0811C1E8 (the ledge acts per facing), src/movement.c IsTileCollision,
+src/object/pot.c BreakPot, include/item.h (pot type2 $5D bombs, $5E arrows, $5F heart), include/manager.h (BRIDGE_MANAGER,
+FIGHT_MANAGER, SECRET_MANAGER, CAMERA_TARGET_MANAGER), src/enemy/ballChainSoldier.c, src/code_08049DF4.c sub_0804A044).
+**Cache version: 56, unchanged** (no port code changed) -- no re-import.
+
+- [ ] **Goal 1: heal** -- not reached.  Health 12 / 64 all round on the kept route (no hit).  The heart pots (type2 $5F) are in
+  $16 (2), $09 (2) and 89:02 (2); $16 hangs off $13 / $1A, $09 off the north cluster, 89:02 off $07 -- all past $14's
+  soldiers.  89:04's and 89:06's random pots dropped nothing.  89:06's west section ($1A's door) is not reached from the east
+  (col 10 is a wall on both layers): it belongs to 89:05 / $19.
+- [x] **Goal 2 (part): the 2F key routes, east side, with real keys** (checkpoints in `r95/ck`):
+  - (side trip, not on the route) A `r94_c_8904` -> back north over 89:03: **a ledge hop north off the third platform's rim
+    (act $2B) into the whirlwind (104,520)** (89:03 has two more whirlwinds for the way back: (104,520) and (104,344)), the
+    glide east of the Bow Moblin over (216,408) / (184,328) -> the first platform -> $0D (`r95_a_0d`, hp 12).
+  - B `r94_c_8904` -> 89:04's upper west door -> **$88:12**: the Four Sword charged on the row of clone tiles (row 3, cols
+    13 .. 10: clones on 13 / 12 / 11, Link on 10) -> **four Links in a row** (clones 16 / 32 / 48 px east of Link) -> down
+    to row 6, west to col 2, down to row 10, east to col 6 (each leg only while the GURUGURU_BAR's balls stay clear) -> the
+    row of four on row 10, cols 6 .. 9 -> **the heavy block pushed south twice** (top-left $369 at (6, 13)) -> rows 11 - 12
+    open -> east along row 12 into the south-east part -> the lower east door (240,236) -> **89:04's lower part**
+    (`r95_b_8904low`, hp 12).
+  - C south into 89:07 -> a ledge hop south off the top platform's rim into the whirlwind (120,72), the glide east of the
+    statues' platform over (152,120) (200,184) (184,264) (184,328) (200,536) -> **89:07's bottom platform**
+    (`r95_c_8907`, hp 12).
+  - (dead end) D the tower door (136,632) -> $88:1D's bottom vestibule: TILE_TYPE_869 fixed blocks (row 21) cut it from the
+    main floor (the button, the stairs to 3F $04 and 1F $2C, the west door to $18); its four pots: random / arrows.
+  - E the two Keatons (sword, no hit) -> west into **89:06** (the south rampart: three sections over two gaps): the east
+    section's Keaton (sword) and Spear Moblin (3 arrows, no hit) -> **both Bow Moblins of the middle section shot across the
+    gap** (5 arrows) -> an arrow west at the LIGHTABLE_SWITCH (552,216): flag $82, BRIDGE_MANAGER lays the bridge (y 248)
+    (`r95_e_8906`, hp 12).
+  - F over the bridge -> the door (408,200) -> **$88:17 (2F's entrance)** (`r95_f_17`, hp 12).
+  - G **$17's four LIGHTABLE_SWITCHes (120,88) (152,88) (104,136) (168,136)**: the charged Four Sword walked over three ring
+    tiles from outside the ring (152,248) (104,296) (168,296), Link onto (120,248) -> the split's offsets (0,0) (32,0)
+    (-16,48) (48,48) are the switches' shape -> the four Links up 144 px (each 16 px below its switch) -> **one spin lights all
+    four** -> FLAG_AND_OPERATOR $58 -> SECRET_MANAGER -> $90 -> CAMERA_TARGET -> $59: the BOSS_DOOR type 4 (the north door)
+    (`r95_g_17lit`, **latest**: $88:17 (120,103), hp 12 / 64, the map, the compass, no key, 16 arrows, 5 bombs).
+  - (side, from G's session) I back out to 89:06's middle section: its two Spear Moblins by arrows (no hit), the west
+    switch (264,216) by the sword: flag $83, the west bridge (`r95_i_8906w`) -> J the west Spear Moblin shot across the
+    gap; over the bridge only the narrow column with two pots is reached.
+  - **Why no further:** $88:14 (the 2F boss-door room, north of $17) holds two Ball and Chain Soldiers (16 health each) and a
+    FIGHT_MANAGER (flag $54 -> SECRET_MANAGER -> $8B: the west / east shutters to $13 / $15).  Their spinning ball hurts 8 a
+    touch (two touches end 3 hearts), arrows take 1 - 2 a hit, the Four Sword's swing 4.  Their home is x 64 .. 208, y 64 ..
+    144: outside it they neither spin up nor throw, inside within $4E on a clear line they throw (the statues (88,95) /
+    (184,95) hide Link: sub_0804A044's tile scan -- checked, matches).  Best try: one soldier beaten (4 swings while it rested),
+    then the other's ball.  Not won at 12 health in about ten tries (the bots, not the port).
+- **Ruled out / settled:** r94's "isolated band" -- the cartridge's way is the heavy block (r94 called it a solid square);
+  89:04's upper / lower parts are joined only through $12.  The 2F core ($08 .. $18) is entered from $0D's west door (flag
+  $4B), $12, $17 / $1A (89:06), $1D (89:07 / $18), $19 (89:05) or $07: the four 1F towers $1E / $21 / $2B / $2C lead only
+  to their 2F towers.
+- Checked against the cartridge and unchanged: HeavyBlock45 (sub_0801A570, three clones for a 4 x 4 block, the far side's
+  collision), FourSword (n + 1 clone tiles), Ledge (gUnk_0811C1E8: act $2B north, $2A south, $2C east, $4C north-east),
+  WHIRLWIND, GURUGURU_BAR (the fireballs touch Link only), BRIDGE_MANAGER, LIGHTABLE_SWITCH type 1 (arrow / sword / spin),
+  FLAG_AND_OPERATOR / SECRET / CAMERA_TARGET in $17, BALL_CHAIN_SOLIDER (home rect, lined-up test, the throw), SPEAR_MOBLIN /
+  BOW_MOBLIN / KEATON, pot drops (type2 0 = FX $80 random roll).
+- **Aids:** none -- no FULLHP / KEEPHP, no flags, no pokes, no game over on the kept route.  Harness only: the bots (bar
+  predictor, arrow bot, glide steering).  Practice, not kept: $14 (about ten deaths), 89:06 before the arrow bot (two
+  deaths: a Spear Moblin thrust hurts 8), $1D's vestibule, the 89:06 west column.
+- Tests: `tests/zelda_tmc_r95_test.lua` (21 checks on stand-in rooms: HeavyBlock45.locate (4 x 4 from either end, the far
+  side, the second push, the laid tiles, a 2 x 2), FourSword.cloneTile (three tiles -> three clones, the fourth -> the split on
+  its centre, the row's offsets, no clone uncharged), EnemyBeetle.linedUp (clear line, a solid tile between, off the row), the
+  GURUGURU_BAR's turn, the ledge hop's sixth frame, no ROM addresses); all 130 `tests/zelda_tmc_*_test.lua` + `zelda_input_test`
+  (109) + `zelda_widescreen_test` (101) pass (`r95/out/tests95.txt`).  ObjErrors 0 in every session.
+- Real-app replay (ZeldaRuntime 1280 x 720, widescreen on, tmc_bugs1 cache 56, `rtall95.sh`, each piece from its segment's
+  checkpoint): b (the band, the split, both pushes, 89:04's lower part), c (89:07's glide), e (89:06 + $17), g ($17's
+  switches) and a (the way back over 89:03) all pass, hp 12 throughout, ObjErrors 0 (`r95/out/rtall95.txt`, `rt_b.txt`).
+  Shots: `r95/shots/015718_b95_split_wide.png` (the four Links on $12's clone tiles), `015718_b95_push2_wide.png` (the second
+  push, under the grating), `015745_c95_glide_wide.png` (89:07), `015819_g95_formation_wide.png` ($17's formation under the
+  switches), `015819_g95_lit_wide.png`.
+- [ ] **Next:** heal before $14 (the only heart pots are past it; continue-after-game-over gives 3 hearts = the same 12),
+  then $14's soldiers (a bot that keeps out of their home until one has thrown, then slashes it while it rests; or the
+  Four Links' spin), -> $13 -> $16's heart pots / $11 / $0E (flag $86 Darknut rooms after $0A's fight) -> $0A (flag $86) ->
+  $0C's torches (flag $4B) -> $0D's west door -> 3F $02; $1D's main floor from $18 (the button: tower $04); 89:05 / $19
+  (tower $03); $07 (tower $01, 89:02's hearts); the four keys into $09's key blocks -> the big key -> Vaati.
+- Estimates: ~99.70% of the story verified with real input, ~98.3% of the port (old scale; no port change this round).
+
+## Round 96 (Dark Hyrule Castle 2F's west side with real keys: **$88:14's two Ball and Chain Soldiers beaten with no hit** (a new bot planned from ballChainSoldier.c's timings) -> $13 -> **$16's heart pots (hp 12 -> 28)** -> $13 -> $11: **a bomb held while its fuse runs and thrown so it goes off in front of the three skull tiles**, the floating platform over the pit, **an arrow from the platform under each grating hole lights the two upper switches** (port gap fixed: the arrow's layer step / tile flag $80, Arrow96) -> the north door -> $0E -> $0F past the Sparks -> $0A (the blue warp room: its type-3 Darknut not beaten) and $0F -> $10 -> **$0C (the dark torch room)**; port gaps fixed: Arrow96, Bomb96)
+
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/tmc/r96/` (`go.sh` + `pre96.lua` (checkpoints in `r96/ck`, r95_g_17lit copied in;
+falls back to r94 .. r38; loads `lib96.lua` last), `scene96.sh` / `run96.sh` (outputs in `r96/out`, shots in `r96/shots`,
+room pictures in `r96/img`), `lib96.lua` (**`H.bc96`: the Ball and Chain Soldier bot** -- a danger map on a 4 px grid (the
+spinning ring, radius u7e round (x, y - 10 - s8(u7f)); the throw line along the facing in actions 5 - 9 until the ball is back
+under radius 16; the bodies, Chebyshev 17 px), a Dijkstra each frame that never enters a danger cell unless already in one, and
+four goals in order: a kill spot 17 px beside a soldier resting in action 10 with > 22 frames left (face, slash), a spot behind /
+beside a soldier in actions 5 - 9, a bait spot inside the home lined up 64 - 72 px from one soldier with the other > 84 px
+away, else the safest spot outside the home; `H.door96` / `H.inward96` (step off a doorway first: the planners' grids start
+on the floor), `H.pot96` (lift from a side, throw along a free row, pick up the drop), `H.plat96` / `H.board96` (the floating
+platform), **`H.avoid96`: a Dijkstra walk keeping `rad` px from given enemy ids (the Sparks)**, `H.pic96`), segments
+`seg_a96` .. `seg_o96`, probes (`probe_g` grids, `probe_free` the live free grid, `probe_mtx` / `probe_dn` / `probe_dn2`
+collision-matrix rows, `probe_q11` / `r11` / `s11` / `t11` / `u11` / `v11` $11's platform / tiles / act tiles), the real-app
+kit `rt/` + `run96rt.sh` + `s96.lua` + `rtall96.sh`).
+Decomp read: src/enemy/ballChainSoldier.c, src/code_08049DF4.c (sub_08049FDC / sub_0804A044), src/collision.c
+(CalculateDamage, CollisionDefault), data/map/entity_headers.s (2FLeft, 2FBlueWarp, 2FTopRightCornerTorches), src/roomInit.c
+(the 2F Darknut rooms load on flag $86), src/room.c (LoadDestructibleTile), src/manager/regionTriggerManager.c,
+src/object/lockedDoor.c, src/playerItem/playerItemBomb.c, asm/src/code_080043E8.s (GetTileHazardType, sub_0800442E,
+sub_0800451C), asm/src/code_08003FC4.s (CreatePitFallFx ..), src/playerItem/playerItemBow.c, asm/src/intr.s
+(sub_080B1BA4), asm/src/veneer.s (gCollisionDataPtrs), src/enemy/darkNut.c, src/gameOverTask.c.
+**Cache version: 56, unchanged** (the fixes use tables already in the cache: act tiles, manifest.r23's tile flags) -- no
+re-import.
+
+- [x] **Goal 1: $88:14's soldiers** (checkpoint `r96_a_14`, hp **12**, no hit; no hit in the real app either).  The
+  cartridge's timings the bot plans with: the soldiers react only while Link's (x, y) is in their home (x 64 .. 208,
+  y 64 .. 144); lined up (+-9 px) within $4E for 4 frames -> action 5 (ball in, 8 frames) -> 6 (30) -> 7 (the throw, radius
+  to 100) -> 8 (30) -> 9 (back, -2 a frame; COLLISION_OFF at radius <= $12) -> 10: 90 frames at rest -> the ring grows
+  again (radius 10 -> 32, ball on).  The Four Sword's slash does 4 (row $A3 x hurt 6): four slashes per soldier, two or
+  three per rest.  Checked against the port and unchanged: every action of BALL_CHAIN_SOLIDER (the home test,
+  sub_0804A044's width, the throw / rest timings, the ball's COLLISION_OFF), the matrix (ball 8, body 2, arrow 1, sword 4,
+  spin 8).  r95's "continue gives 3 hearts = the same 12" is wrong: GameOver_Init sets 24 (3 hearts of 8), as the port does.
+- [x] **Goal 2 (part): $13 -> $16's heart pots** (`r96_d_16`, hp **28**): six pots lifted from above, thrown west along
+  the free row; both type2 $5F pots gave a heart.
+- [x] **$88:11 (2F left)** (`r96_e_11` .. `r96_j_0e`): the north door is a shutter (LOCKED_DOOR type 0, flag $4E) opened by
+  the LIGHTABLE_SWITCH at (64,32) (the other, (208,32), sets $4F); both sit on the upper level behind the grating.
+  - the three skull tiles (row 10, cols 7 - 9, TILE_TYPE_871, destructible-tile flags $50 - $52) cut the centre column off
+    from the south floor (a pit row between): a bomb set down south of Link, lifted, held while its fuse runs and thrown
+    north at subtimer 8 -> it goes off in the air at (136,184): all three gone (`r96_h_11`).
+  - the FLOATING_PLATFORM (type 2, rail: up the west column to (64,96), along y 192, up the east column to (208,96)) boarded
+    from the south floor -> north off it onto the blown row -> the centre column (`r96_i_11`).
+  - back on the platform from the blown row; at each column top (under the grating's square holes) an arrow north ->
+    **both switches lit** ($4F, $4E) -> the shutter opens -> off the platform at the centre -> north door -> **$0E**
+    (`r96_j_0e`).
+- [x] $0E -> east -> **$0F** (`r96_k_0f`) -> along the north wall past the five Sparks -> north door -> **$0A** (`r96_l_0a`,
+  hp 28); and $0F -> **`H.avoid96`** east past the Sparks (no hit; a plain path took 3 Spark hits) -> **$10** (`r96_n_10`) ->
+  north -> **$0C** (`r96_o_0c`, **latest**: $88:0C (133,200), hp 28 / 64, the map, the compass, no key, 14 arrows,
+  4 bombs, 100 rupees).
+- [ ] **$0A's fight (flag $86)** -- not won.  REGION_TRIGGER (x 48 .. 224, y 80 .. 112) -> FIGHT_MANAGER -> one DARK_NUT
+  **type 3** (health 26) -> $48 -> SECRET_MANAGER -> $86.  In its guarded state (hitType $56) the sword has no matrix entry;
+  it is open (hitType $51: sword 4, spin 8) only around its big swings (slash types 3 / 4: 6 and 24 damage) and after a
+  parried charge; a bomb's blast stuns a type 3 for only 8 frames (gUnk_080CAB10), hurt $1C for 30.  The r85 bot (H.dn85b)
+  swung 24 times with no damage and took 6 + 6 + 6 + 24 (game over, practice).  No port gap found -- a bot to write.
+- [ ] $0C (dark; 8 torches by managers $23 (sub-flags of $4A) -> FLAG_AND_OPERATOR $4A -> SECRET_MANAGER $4B -> the north
+  shutter; two GURUGURU_BARs round (136,104), reach about 50 px): not started.
+- **Port gaps fixed (ROM parity):**
+  - **Arrow96.lua** (`src/zelda/tmc/Arrow96.lua`, in R27A.MODULES): PlayerItemBow_Action1's `if (type2 == 0)
+    sub_0800451C(super)` -- an arrow that left the bow on a layer other than 2 takes its layer from the act tile under it
+    (11 / 12 -> 2, 9 / 10 -> 1, $26 / $27 -> 3) -- and the wall test's `sub_080B1BA4(tile, Link's layer, $80) == 0` (tile
+    flag $80: no wall).  The port kept the arrow on layer 1: from $11's platform it never met the switches on layer 2 (tried
+    before the fix: no light).  Wraps ItemBow.spawnArrow / updateArrow and GustJar.wall while an arrow is updated.
+  - **Bomb96.lua** (`src/zelda/tmc/Bomb96.lua`, in R27A.MODULES): PlayerItemBomb_Action1's `sub_0800442E`
+    (GetTileHazardType) -- a bomb lying over a pit / water / lava / swamp is gone at once with FX_FALL_DOWN /
+    FX_WATER_SPLASH / FX_LAVA_SPLASH / FX_GREEN_SPLASH; the port let a bomb set down at a pit's edge float and go off
+    over the pit (found while planning $11's skulls; the kept route throws the bomb instead).
+- **Aids:** none -- no FULLHP / KEEPHP, no flags, no pokes, no game over on the kept route.  Harness only: the bots
+  (bc96, avoid96, the platform timing, the fuse timing).  Practice, not kept: $0A's Darknut (one game over), $0F's Sparks
+  before avoid96 (3 hits), r96_f_15 / r96_g_12 (side looks: $15 is empty before $86; $12's bottom pocket from $15 is a
+  one-way dead end behind the col-10 ledge).
+- Tests: `tests/zelda_tmc_r96_test.lua` (25 checks on stand-in fields: Bomb96 over pit / water / lava / swamp / floor,
+  carried, in the air, the bomb's own layer, before the fuse; Arrow96.layerByTile 12 / 10 / $26 / other, passes() on
+  Link's layer, a whole flight over a flagged ledge row onto layer 2, the unflagged ledge stopping it, a layer-2 arrow
+  keeping its layer; no ROM addresses); all 131 `tests/zelda_tmc_*_test.lua` + `zelda_input_test` (109) +
+  `zelda_widescreen_test` (101) pass (`r96/out/tests96.txt`).  ObjErrors 0 in every session.
+- Real-app replay (ZeldaRuntime 1280 x 720, widescreen on, tmc_bugs1 cache 56, `rtall96.sh`, each piece from its
+  checkpoint): a ($14's soldiers: no hit, hp 12), b ($13 / $16's pots / $11: hp 28), h ($11's skulls, platform, both
+  switches, $0E), k ($0E -> $0F -> $0A), n ($0F -> $10 -> $0C, no Spark hit) all pass, ObjErrors 0
+  (`r96/out/rtall96.txt`, `rtall96b.txt`).  Shots: `r96/shots/110557_a96_14_wide.png` ($14 after the fight),
+  `111044_h96_skulls_wide.png` (the bomb going off in front of the skulls), `111044_j96_lit_wide.png` (the platform under
+  the east hole, both switches lit), `111101_o96_0c_wide.png` ($0C's torches and fire bars).
+- [ ] **Next:** $0C's eight torches (the Lantern, timed against the two fire bars) -> $4B -> $0D's west door -> 3F $02;
+  a type-3 Darknut bot for $0A (parry / dodge the big swings, hit while hitType $51) -> $86; then $1D's main floor from
+  $18 (the button: tower $04), 89:05 / $19 (tower $03), $07 (tower $01, 89:02's hearts), the four keys into $09's key blocks
+  -> the big key -> Vaati.
+- Estimates: ~99.74% of the story verified with real input, ~98.35% of the port.
+
+## Round 97 (Dark Hyrule Castle 2F's north-east with real keys: **$88:0C's eight torches lit with the Lantern inside their 420 frames, going round with the two fire bars** (flag $4A -> $4B: the north door, $0D's west door) -> $0B: **the Ghini sucked into the Gust Jar** (port gap fixed: a swallowed enemy hung at the jar's mouth forever, Jar97) -> $87: the east door -> $0D's raised floor -> **3F $02: the first tower key** -> back through $0B / $0C / $10 / $0F -> **$0A: the type-3 Darknut beaten with no hit** (a parry-and-flank bot from darkNut.c) -> **flag $86**; port gap fixed: **Link's roll** (Roll97: speed, length and no-damage frames from ANIM_ROLL's keyframes))
+
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/tmc/r97/` (`go.sh` + `pre97.lua` (checkpoints in `r97/ck`, r96's copied in; falls
+back to r94 .. r38; loads `lib97.lua` last), `scene97.sh` / `run97.sh` (outputs in `r97/out`, shots in `r97/shots`, room pictures
+in `r97/img`), `lib97.lua` (**`H.hits97`: the fire bars' balls predicted k frames ahead (u76 += type2, state = u76 >> 2,
+radius 14 + 12 i) and tested with the port's own touch test (EnemyDHC.h.touches)**; **`H.plan97` / `H.path97`: the first wait
+at the current spot after which a whole axis-aligned walk stays clear (-2 .. +4 frames of slack)**; `H.escape97` (the best of
+several ways out), `H.burn97` (the Lantern's burn: tap toward the torch, 25 frames), `H.lit97`, `H.phase97`, `H.axis97`,
+`H.ghiniJar97` (the Gust Jar Ghini bot), `H.ghini97` (sword, not used), `H.pic97`), **`dn97b.lua`: the Dark Nut bot (shield
+parry + flank)**, `dn97.lua` (an earlier dodge-only bot, not used), segments `seg_a97` .. `seg_i97`, probes `probe_a97` ..
+`probe_k97`, the real-app kit `rt/` + `run97rt.sh` + `s97.lua` + `rtall97.sh`).
+Decomp read: src/manager/lightLevelSetManager.c, data/map/entity_headers.s (2FTopRightCornerTorches / Ghini /
+TopRightTower / the four Darknut rooms), src/room.c (RegisterRoomEntity: a manager's data at &ent->y -> field_0x36 = paramB
+byte 2), src/object/guruguruBar.c, src/projectile/guruguruBarProjectile.c, src/item/itemLantern.c (sub_08075B54 /
+sub_08075C9C: field_0xa freezes Link for the burn), src/player.c (PlayerRollInit / PlayerRollUpdate, the walk's v13 gate,
+kWalkSpeedRolling), src/playerUtils.c (CheckPlayerVelocity, UpdatePlayerMovement), src/object/flame.c, src/enemy/enemy50.c,
+src/enemy/ghini.c and the other gustJarFlags-1 enemies' OnGrabbed (sub_0806F3E4 -> GenericDeath), src/enemy/darkNut.c,
+src/projectile/darkNutSwordSlash.c, src/collision.c (gCollisionHandlers, sub_08017D6C).
+**Cache version: 56, unchanged** (no import change: the roll reads ANIM_ROLL's keyframes from the cached sprite) -- no
+re-import.
+
+- [x] **Goal 1: $88:0C's torches -> $4B** (`r97_a_0b`, hp **28**, no hit).  The cartridge's rules: eight
+  LIGHT_LEVEL_SET_MANAGER type 3 (paramB $71001: light +$10, field_0x36 = 7 -> each torch burns 7 * 60 = **420 frames**, then
+  goes out unless $4A is set), sub-flags $8000 .. $8007 -> FLAG_AND_OPERATOR $4A -> SECRET $4B.  The lit Lantern burns a torch
+  the moment the tile 13 px ahead (16 down) is a torch, and ANIM_LANTERN_BURN freezes Link for 25 frames (field_0xa; the
+  torch lights on its keyframe flag $10, frame 7).  The two GURUGURU_BARs (4 balls, radius 14 .. 50, type2 2: half a state a
+  frame, 512 frames a turn, opposite arms) turn clockwise; the route goes **clockwise too** so the arms keep their distance:
+  L4 (walk down the left column) -> (72,104): L2 up, L3 down -> L1 (walk up) -> a **roll** east -> R1 -> (200,104): R2 up,
+  R3 down -> R4 (walk down): **all eight lit at T = 385 of 420**.  (72,104) / (200,104) and the south corridor are spots the
+  balls never touch; every leg between them waits for a window (`H.path97`).  The way out goes clockwise as well: R4 -> the
+  south corridor -> (72,104) -> the north door.  (Counter-clockwise legs have no window at all: Link sweeps ~90 degrees while
+  the arms sweep 63 the other way.)  The spikes along the walls (tile $314, 2 a touch) are kept off.
+- [x] **$88:0B** (2FTopRightCornerGhini): FIGHT_MANAGER over ENEMY_50 (the Ghini, 9 health, and three copies; only type 0
+  dies) -> $49 -> SECRET -> $87: the LOCKED_DOOR type 1 on the east door.  The Ghinis' body grabs Link (hit type $25,
+  handler 7: -4, each button press +8 toward $E0); the cartridge's way is the Gust Jar (gustJarFlags 1, matrix $24 / $25 x
+  hurt $13 = handler 4): **sucked in and swallowed** (after the fix below) -> `r97_b_0b` (hp **18**: two grabs and a touch).
+- [x] $0B -> east door -> **$88:0D's raised floor** (`r97_c_0d`) -> the stairs (104,56) -> **3F $88:02** (`r97_d_02`) -> its
+  chest: **a small key** (the first tower key) -> back down (`r97_e_0d`, hp 18, 1 key).
+- [x] Back to $0A: $0D's west door -> $0B -> south door -> $0C (clockwise: the north door -> (200,104) -> the south corridor,
+  no hit) -> $10 -> $0F (the Sparks by `H.avoid96`) -> **$88:0A** (`r97_g_0a`, hp 18).
+- [x] **Goal 2: $0A's type-3 Dark Nut -> $86** (`r97_h_0a`, **latest**: $88:0A (57,69), hp **18 / 64**, the map, the
+  compass, **1 key**, 14 arrows, 4 bombs, 100 rupees; flags $48 / $86 set; **no hit**; also from r96_l_0a: `r97_f_0a`, hp 28,
+  no hit).  What the cartridge gives the player (darkNut.c / collision.c): the guard (hit type $56 x sword = handler 13,
+  sub_08017D6C) stops only a hit within +-5 directions of its facing -- **from the side or the back the sword counts** (row
+  $51: the Four Sword's slash 4); r96's "no matrix entry" was the settings lookup, not the handler.  The bot: shield up toward
+  it near the room's middle while it tracks Link; **its charge stopped by the shield -> recoil with gUnk_080CAB08[3] = 30 more
+  frames** -> a step to its side -> a slash; its combo's open frames (hit type $51 from keyframe flag 4) -> a slash from
+  anywhere; spin / sweep: back out of reach, strike from a side when the slash is gone or in the 40-frame held frame.  Seven
+  slashes, six hits (26 -> 0), no damage, in both runs.
+- [ ] $0F -> $0E (the type-2 Dark Nut room) -- practice only: the Sparks' circle blocks $0F's west door for the walking
+  planner (two tries, 18 -> 6 and 18 -> 16, not kept).  **Beware: $0A's BLUE_WARP is live after $86** -- walking over the
+  carpet warps Link to 1F $88:00 (seen once by accident; the kept route goes round it).
+- **Port gaps fixed (ROM parity):**
+  - **Roll97.lua** (`src/zelda/tmc/Roll97.lua`, in R27A.MODULES): PlayerRollUpdate picks the speed every frame from the
+    current keyframe's flag byte (nibble 0 -> $200, 1 -> +$20, 2 -> $300, 3 -> 0), moves Link in his facing, and ends on the
+    frame whose keyframe has ANIM_DONE; frames without flag $10 are hurtType 0 (no damage; not Minish).  ANIM_ROLL's
+    keyframes make a roll of 26 moving frames, ~60 px (measured in the port: 3, then 2 a frame, then 2.125 .. 3.125).  The
+    port rolled a fixed 16 frames at $200 (32 px) and could be hit all the way through.  Wraps Player.update (sets
+    Player.ROLL_SPEED / the timer for the old roll branch each frame) and Player.hurt.  SIMPLIFIED: speed_modifier (slopes)
+    and FX_DASH not ported.
+  - **Jar97.lua** (`src/zelda/tmc/Jar97.lua`, in R27A.MODULES): an enemy the Gust Jar swallows (GustJar.grabbedUpdate's
+    jarSub 4, SFX_EF) now dies as the cartridge's OnGrabbed subaction 2 does (GenericDeath via Enemies:kill: FX_DEATH, the
+    drop roll; ENEMY_50's copies: FX_DEATH and deleted).  Before, every swallowed gustJarFlags-1 enemy (Keese, Ropes, Wisps,
+    Ghinis, ...) stayed frozen at the jar's mouth with its AI stopped -- in $0B the copies hung there and the Ghini could never
+    be beaten with the jar.
+- Checked against the cartridge and unchanged: LIGHT_LEVEL_SET_MANAGER types 0 - 3, FLAG_AND / SECRET for $4A / $4B,
+  GURUGURU_BAR + its projectiles, the Lantern's burn (probe, freeze, flag $10), FLAME types 1 / 2, ENEMY_50 (grab, mash,
+  copies), the Ghini fight's FIGHT / SECRET / LOCKED_DOOR, DARK_NUT (all actions; the parry's gUnk_080CAB08, the stuns, the
+  guard's +-5), DARK_NUT_SWORD_SLASH boxes, the blue warp.
+- **Aids:** none -- no FULLHP / KEEPHP, no flags, no pokes, no game over on the kept route.  Harness only: the bots (fire-bar
+  planner, Ghini jar bot, Dark Nut bot, Spark avoider).  Practice, not kept: the torch route's first tries (hits from the bars
+  / spikes, a death on a mirrored route), $0B with the sword (two deaths) and the jar before the fix (one), $0A's dodge bot
+  (three deaths), $0F -> $0E (two tries).
+- Tests: `tests/zelda_tmc_r97_test.lua` (30 checks: Roll97's speed per flag nibble, a whole roll on stand-in keyframes
+  (length, speeds, distance, the ANIM_DONE frame, the no-damage frames, Minish, no ROM animation), the Player.update /
+  Player.hurt wraps; Jar97 (type-0 Ghini -> kill, a copy -> deleted + FX_DEATH, another enemy, a deleted one, the pull through
+  GustJar.grabbedUpdate dying the same frame); no ROM addresses, listed in R27A.MODULES); all 132 `tests/zelda_tmc_*_test.lua`
+  + `zelda_input_test` (109) + `zelda_widescreen_test` (101) pass (`r97/out/tests97.txt`).  ObjErrors 0 in every session.
+- Real-app replay (ZeldaRuntime 1280 x 720, widescreen on, tmc_bugs1 cache 56, `rtall97.sh`, each piece from its segment's
+  checkpoint): a ($0C's torches with the roll, -> $0B, hp 28), b ($0B's Ghini by the jar, hp 18), c ($0D -> 3F $02 -> the key
+  -> $0D), g (back to $0A, no hit), h ($0A's Dark Nut, no hit) all pass with the harness's health, ObjErrors 0
+  (`r97/out/rtall97.txt`).  Shots: `r97/shots/141424_a97_lit_wide.png` (all eight torches lit, the fire bars),
+  `141450_e97_key_wide.png` (3F $02's key), `141520_f97_0a_wide.png` ($0A after the Dark Nut).
+- [ ] **Next:** from `r97_h_0a` round the carpet -> $0F -> west door (a planner that starts off the door strip) -> $0E (type-2
+  Dark Nut, dn97b) -> $11 -> $13 (two Dark Nuts, types 0 / 1) -> $14 -> $15 (type 2) / $17 -> $18 -> $1D's main floor (the
+  button: tower $04); or the blue warp to 1F $00 as a shortcut; 89:05 / $19 (tower $03); $07 (tower $01, 89:02's hearts);
+  the four keys into $09's key blocks -> the big key -> Vaati.
+- Estimates: ~99.78% of the story verified with real input, ~98.40% of the port.
+
+## Round 98 (Dark Hyrule Castle 2F with real keys: $0A round the blue carpet -> $0F (**the Sparks' loop learnt and a timed walk to the west door**) -> **$0E's type-2 Dark Nut** -> $11 (off the floating platform onto the south floor) -> **$13's two Dark Nuts** (ENEMY_INTERACTION_MANAGER keeps them apart -- cartridge behaviour, the bot breaks the stand-off) -> $16's heart pots (full health) -> $14 -> **$15's Dark Nut** -> $18: **the Four Sword's split on a 3 x 3 clone block's corners, the square of four Links past the fire bars, one spin lights the switch diamond** -> **$1D's main floor: the Fire Wizzrobes, the button ($5D) -> 3F $04: the second tower key** -> back west -> **$16's TILE_PUZZLE (33 blue tiles once each) -> $57** -> $1A's Ghini (Gust Jar) -> 89:06 west -> 89:05 -> $19 -> **3F $03: the third tower key** -> back through $1A / $16 / $13 / $11 / $0E -> $08 (the eye switches: not done); bug98: **a lifted bush / grass / rock / sign never becomes an item** (Lift98))
+
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/tmc/r98/` (`go.sh` + `pre98.lua` (checkpoints in `r98/ck`, falling back to r97 .. r38;
+loads `lib97.lua`, then `lib98.lua`), `scene98.sh` / `run98.sh` (outputs in `r98/out`, shots in `r98/shots`; room pictures go to
+`r96/img` through H.pic96), `lib98.lua` (**`H.loopLearn98` / `H.loopPlan98` / `H.loopPath98`: enemies on a fixed loop (the
+Sparks) recorded for one period while Link stands still (the period found by matching 30 frames), the phase matched to the
+live positions, an axis-aligned walk only once every Spark stays `margin` px off for the whole walk**; **`H.formPlan98` /
+`H.formPath98`: H.plan97 for the four Links' formation (Link + offsets)**; **`H.planHold98`: a timed walk with holds (shots)**;
+`H.wmNear98` / `H.pathWm98` (Wall Masters); `H.stal98` (a Stalfos bot for $08's dead zone, not good enough)), **`dn98.lua`: dn97b
+for several Dark Nuts** (the nearest one targeted, the others' bodies / slashes avoided, a stand-off -- the same action for
+90 frames -- broken by a 28 px side-step), segments `seg_a98` .. `seg_z98`, `seg_aa98` ($08, not done), probes `probe_a98` ..
+`probe_j98`, `bug/` (bug98: `seg_bug98.lua`, `run.sh`, probes), the real-app kit `rt/` + `run98rt.sh` + `s98.lua` + `rtall98.sh`).
+Decomp read: src/manager/enemyInteractionManager.c, src/enemy/darkNut.c (sub_08020F48 / sub_08021424 / sub_080212B0),
+src/manager/tilePuzzleManager.c, data/map/entity_headers.s (2FBottomLeftCornerPuzzle, 2FBottomRightDarknut, 2FTopLeftCorner),
+src/roomInit.c, include/roomid.h, include/enemy.h, include/object.h, src/object/eyeSwitch.c (via FoWObjects), src/enemy/
+wallMaster.c, src/collision.c (IsColliding), src/playerItem/playerItemHeldObject.c, src/object/pot.c, include/item.h.
+**Cache version: 56, unchanged** (Lift98 uses no table) -- no re-import.
+
+- [x] **bug98 (user report: "Lifting grass ... gives me a sword that says the power of earth and fire elements infused your
+  blade")**.  Cause: a filter-6 tile entry (gUnk_080047F6: bushes, grass, rocks, signs) lifts as {obj = SPECIAL_FX $0F,
+  form = the FX type}.  The committed build (HEAD) landed it through Objects:breakThrown -> not OBJECT_BUSH ->
+  Objects:shatter(e, form) = BreakPot, which leaves a GROUND_ITEM of item "form": FX_BUSH 3 = ITEM_RED_SWORD 3 (the
+  Earth + Fire infusion text and the sword in the save), a rock's 4 = the blue sword, a sign's $2D another item.  bugs95's
+  Carry95 (uncommitted) lands objects carrying its held95 record the cartridge's way; the BreakPot fallback stayed for
+  any SPECIAL_FX object without one.  Fix: **Lift98.lua** (`src/zelda/tmc/Lift98.lua`, in R27A.MODULES): a SPECIAL_FX
+  object without held95 lands (thrown, dropped) as PlayerItemHeldObject's SubAction2 does: CreateFx(timer, $80) -- the
+  variant, its sound, its drop roll (Carry95.land); BreakPot stays POT's own.  Verified with real keys: harness and real
+  app (ZeldaRuntime 1280 x 720, tmc_bugs1 cache 56) -- five bushes lifted / thrown in the field (r18_hills, smith's sword
+  only): rupees, no sword; eight bushes cut: rupees / a heart; Hyrule Town (r90_d_town) lifts; with the committed build's
+  record forced (BUGHEAD=1) and Lift98 off: three throws = three GROUND_ITEMs of item 3 (the report reproduced), with
+  Lift98 on: none.  Shots: `r98/shots/160250_bug98_throw_wide.png`, `160303_bug98_cut_wide.png`.  Save repair: a save
+  played on the committed build may hold items 3 / 4 (red / blue sword) or $2D too early; none is written by this fix.
+- [x] Goal 1 / 2: **$0A -> $0F -> $0E** (`r98_a_0e`, hp 18, no hit): the carpet gone round; in $0F the five Sparks run one
+  loop (period 534 frames) round the middle's rim, which the west door's corridor crosses: learnt from the north doorway,
+  two windows (down to (136,88), then (136,104) -> west) -- no hit.
+- [x] Goal 3: **$0E's type-2 Dark Nut** by dn97b (`r98_b_0e`, hp **14**: one charge, 4).
+- [x] Goal 4: **$0E -> $11** (the floating platform boarded at the column going east, ridden round, stepped off going west
+  at x 166 onto the centre strip; `r98_c_11`) -> **$13** (`r98_d_13`) -> **its two Dark Nuts (types 0 / 1, 12 health each)**
+  (`r98_e_13`, hp **8**: three charges / a sweep, 2 each).  Stand-off found and checked against the cartridge: an
+  ENEMY_INTERACTION_MANAGER (enemyInteractionManager.c, CalcCollisionStaticEntity) pushes the two apart every frame; both
+  in action 9 walk to the same point $2C below Link (sub_08021424) and never reach the +-3 px window -> they hover while Link
+  stands still (the port matches; the bot now side-steps).  One of them walked into a statue in action 7 the same way.
+- [x] **$16's heart pots, four trips** ($13 <-> $16; the pots come back with the room): hp 8 -> 24 -> 40 -> 56 -> **64**
+  (`r98_f_13` .. `r98_i_13`).
+- [x] $13 -> $14 -> **$15's type-2 Dark Nut** (`r98_k_15`, hp **32**: a bomb-like sweep 16, two combo slashes 8) -> $18
+  (`r98_l_18`).
+- [x] **$88:18 BOTTOM_RIGHT_CORNER: the four LIGHTABLE_SWITCHes in a diamond (136,264) (104,296) (168,296) (136,328)** (type 1:
+  lit 16 frames each) -- the sword alone lights none for long; the clone tiles are two 3 x 3 blocks at the top: **charged
+  on the top-left block's corners (4,4) (6,4) (4,6), Link on (6,6)** -> a square of four Links 32 px apart -> down x 152
+  past the long fire bars (H.formPlan98: a window for all four Links, pad 0) -> **(120,280) (152,280) (120,312) (152,312):
+  each Link diagonal to two switches -> one spin (held 120 frames) lights all four** -> the east door (`r98_n_18`, hp 32,
+  no hit) -> **$1D's main floor** (`r98_o_1d`).
+- [x] Goal 5: **$1D: the two Fire Wizzrobes (sword), the button (184,328) -> $5D -> the stairs (104,264) -> 3F $88:04 -> its
+  chest: the second tower key** (`r98_p_1d`, `r98_q_1d`, hp 26, **2 keys**).  ($1D's (168,264) stairs go down to 1F $2C.)
+- [x] Goal 6: back west ($18 past the bars, $15, $14, $13) -> $16 healed twice more (hp 58) -> **$16 BOTTOM_LEFT_CORNER_PUZZLE:
+  TILE_PUZZLE_MANAGER (33 blue tiles, cols 3 - 10, rows 5 - 10; a red one twice fails) walked once each along a path found
+  offline over the room's own tiles -> $57 -> the south door** (the button (56,56) is its reset) -> **$1A's Ghini by the
+  Gust Jar** (`r98_u_1a`) -> 89:06's west section (Keaton, Spear Moblin) -> **89:05** (Spear Moblin) -> **$19 -> 3F $03:
+  the third tower key** (`r98_x_19`, hp **58 / 64**, **3 keys**).
+- [x] Back towards $07: 89:05 -> 89:06 -> $1A -> $16 -> $13 -> $11 (the platform from the south floor) -> $0E -> **$88:08**
+  (`r98_z_08`, **latest**: $88:08 (134,408), hp **58 / 64**, the map, the compass, **3 keys**, 14 arrows, 4 bombs, 100 rupees).
+- [ ] **$88:08 TOP_LEFT_CORNER** -- not done.  Its west door (40,88) to $07 opens on $92: four EYE_SWITCHes on the north wall
+  ((88,40) .. (184,40), arrows from below the pit, each open 2 * $AA = 340 frames) -> SECRET $80 -> $92.  A GURUGURU_BAR
+  pair with 7 balls (reach 86) round (136,168) covers the whole floor but the south strip (y >= 264) and two spots
+  (56,104) / (216,104); the sweep (56,104) -> four shots -> (216,104) has windows (H.planHold98).  Four Stalfos (bones, 2
+  each) and two Wall Masters (drop on Link after type2 * 60 + timer * 60 frames, back to 1F $88:00) broke every try
+  (practice: two grabs, two dives into the bar).
+- **Ruled out / settled:** the blue warp ($0A) was not used (the kept route goes round it).  $10 is TOP_RIGHT_DARKNUTS
+  (another flag-$86 room, not on the route).  The 2F west towers: $19's (168,56) stairs go down to 1F $2B (a dead end, r95).
+- Checked against the cartridge and unchanged: ENEMY_INTERACTION_MANAGER, DARK_NUT (sub_08021424's +-3 / +-2 window,
+  action 9), SPARK loops, FLOATING_PLATFORM, LIGHTABLE_SWITCH type 1, the Four Sword's split / spin, TILE_PUZZLE_MANAGER,
+  BUTTON, WIZZROBE_FIRE, ENEMY_50, EYE_SWITCH (via FoWObjects), WALL_MASTER (timers; SIMPLIFIED: the port's generic contact
+  hurts 2 in its last falling frames where the cartridge grabs -- noted, not changed).
+- **Aids:** none -- no FULLHP / KEEPHP, no flags, no pokes, no teleports on the kept route.  Harness only: the bots (Spark
+  loop planner, dn97b / dn98, formation planner, mob92 / mob95, ghiniJar97, path97).  Practice, not kept: $0F's first try,
+  $11's platform (two falls), $13's first fight (stand-off), $2C by the wrong stairs (one death), $08 (five tries, two Wall
+  Master grabs).
+- Tests: `tests/zelda_tmc_r98_test.lua` (19 checks: Lift98.bare for a thrown / carried SPECIAL_FX object, held95, POT,
+  OBJECT_BUSH; a thrown bush / sign and a dropped rock land as their FX with no BreakPot and no item; a pot still BreakPot;
+  Carry95.land's FX path makes the variant and the roll, no item; listed in R27A.MODULES; no ROM addresses); all 133
+  `tests/zelda_tmc_*_test.lua` + `zelda_input_test` (109) + `zelda_widescreen_test` (101) pass (`r98/out/tests98.txt`).
+- Real-app replay (ZeldaRuntime 1280 x 720, widescreen on, tmc_bugs1 cache 56, `rtall98.sh`, each piece from its
+  checkpoint): all eleven pieces pass -- a ($0A -> $0F -> $0E, no hit), b ($0E's Dark Nut, hp 14), c ($11 -> $13), e ($13's two Dark Nuts, hp 8), f ($16's pots), j ($14 -> $15's Dark Nut: no hit in the real app), l ($18's split and spin -> $1D), p ($1D -> 3F $04's key), r (back west, $16's puzzle -> $1A), u ($1A -> 89:06 -> 89:05 -> $19 -> 3F $03's key; hp 30 there, 58 in the harness: the bots' hits differ), y ($19 -> $08, hp 58) -- ObjErrors 0 in every piece (`r98/out/rtall98.txt`).  Shots: `r98/shots/162649_n98_lit.png` ($18: the four Links and
+  the lit diamond), `162843_q98_key.png` (3F $04's key), `163445_x98_key.png` (3F $03's key).
+- [ ] **Next:** $08's eye switches (a Stalfos bot for the south strip that keeps 40 px off a falling Wall Master, then the
+  sweep from (56,104)) -> $92 -> $07 -> 3F $01 (the fourth tower key) and 89:02's hearts -> the four keys into $09's key
+  blocks -> the big key -> Vaati.
+- Estimates: ~99.83% of the story verified with real input, ~98.42% of the port.
+
+## Round 99 (Dark Hyrule Castle 2F with real keys: **$88:08's four Stalfos beaten from the south rows and its four eye switches shot in one sweep (no hit) -> $07** -> the nook's push-once blocks -> **$07's pit -> 1F $1E** (the two Gobdos by the sword) -> the stairs -> $07's top area -> **3F $01: the fourth tower key** -> the button ($42) -> **89:02's heart pots** -> back through $07 / $08 / $0E / $0F / $0A -> **$88:09: the four key blocks, the pots over the four clone tiles, the Four Sword's column of four Links pushes the 4 x 4 heavy block west three times -> the Big Key**; port gap fixed: **the grab collision / the Wall Master** (Grab99))
+
+Scratch: `G:/Gen2Recomped/scratch_claude/zelda/tmc/r99/` (`go.sh` + `pre99.lua` (checkpoints in `r99/ck`, falling back to r98 .. r38;
+loads lib97, lib98, then `lib99.lua`), `scene99.sh` / `run99.sh` (outputs in `r99/out`, shots in `r99/shots`; room pictures go to
+`r96/img` through H.pic96), `lib99.lua` (**`H.dij99`: a binary-heap Dijkstra on a 4 px grid in a box**; **`H.stal99`: the
+Stalfos bot (type 1: bone throwers) -- forbidden cells round a Wall Master that can still grab, round each Stalfos, along each
+bone's next 24 frames; goal 17 px beside the nearest vulnerable Stalfos inside the box, else a waiting spot; face and slash**;
+**`H.go99`: a Dijkstra walk keeping off given enemies**, **`H.faceBurn99`** (not kept), **`H.wmLand99` / `H.wmThreat99` / `H.waitWm99`: wait out a fire-bar window at a spot, stepping to another spot only when a
+Wall Master would grab there before the wait ends**), segments `seg_a99` .. `seg_j99`, probes `probe_a99` .. `probe_r99`,
+the real-app kit `rt/` + `run99rt.sh` + `s99.lua` + `rtall99.sh`).
+Decomp read: src/enemy/wallMaster.c, src/collision.c (gCollisionHandlers, sub_08018168, sub_08018228, IsColliding),
+src/code_08049DF4.c (sub_08049DF4 / sub_08049E4C / sub_08049FDC), src/playerUtils.c (PlayerCanBeMoved, DeleteClones),
+src/enemy/stalfos.c, src/beanstalkSubtask.c (sub_0801A9F0 / sub_0801AA58 push blocks, ACT_TILE_114, sub_0801A570),
+src/object/playerClone.c, src/player.c (the clone count per sword), src/room.c (sub_0804B388), data/map/entity_headers.s
+($07, $09, 3F $01, 1F $1E), src/data/transitions.c ($07, $1E, 3F $01, 89:02), include/roomid.h, include/manager.h.
+**Cache version: 56, unchanged** (Grab99 reads EnemyTraps' existing ROM tables) -- no re-import.
+
+- [x] **Port gap: the grab collision and the Wall Master** (round 98's note).  The port's generic contact took every
+  gCollisionMtx special-handler entry it does not know as DEFAULT_TOUCH (2 damage + knockback).  hitType $74 (WALL_MASTER,
+  WALL_MASTER_2) and $0E (VAATI_PROJECTILE) against Link's body are handler 15, **sub_08018168: a grab that never hurts**
+  (PlayerCanBeMoved and not Minish / rolling / swimming -> Link held, RESULT_COLLISION -> the enemy's OnCollision; else no
+  collision at all).  The Wall Master also grabbed by its own box in actions 3 / 4 only (also while rising, where the
+  cartridge's hitType is $75 = handler 16, push-out only), its contact used z < 8 (IsColliding: |dz| <= 10), and its timers
+  differed: **sub_0802A78C counts unk_7a only while Link is a target inside the home rectangle and resets it to type2 * 60 + 1
+  otherwise; after rising unk_7a is not reset** (the port re-added type2 * 60 each time and counted anywhere).  Fix:
+  **Grab99.lua** (`src/zelda/tmc/Grab99.lua`, in R27A.MODULES; wraps EnemyTraps.update for WALL_MASTER, guard
+  EnemyTraps.grab99Installed) + two anchored edits in `src/zelda/tmc/Enemies.lua`'s contact (handler 15 -> Grab99.contact;
+  the z test reads e.zTouch99).  Verified in the harness (probe D: a Wall Master lands on a standing Link 8 frames before
+  its keyframe -> action 5 -> 1F $00, no damage from it) and in the real app (pieces a / b below).  SIMPLIFIED: Link's
+  iframes $FF while held are 2 frames (the holder's code keeps him).  Gameplay effect: in $08 the Wall Masters never come
+  down while Link stays out of x 48 - 224 / y 80 - 336.
+- [x] Goal 1: **$08's Stalfos** (four type 1, 4 health each) by H.stal99 inside the south box (x 44 - 228, y 272 - 360):
+  all four (`r99_a_08`, hp 42: bones and two bar touches after knockback).  **The eye switches**: the west and east edge
+  pots lifted from below, up the west edge in a bar window, the sweep (56,104) -> (88/120/152/184,104) -> (216,104) with
+  **a 52-frame hold per shot** (probe G: a shot keeps Link in the bow state 49 frames after its 3 key frames; r98 planned 16,
+  which is why its sweeps were hit) -> flags $80 / $92, no hit; the bars leave no westward window along y 104 in a whole
+  turn (probe F), so back by the east edge, the south rows and the west edge -> the west door -> **$07** (`r99_b_07`, hp 40).
+- [x] **$88:07 (2F TOP_LEFT_TOWER)**: the nook from $08 is closed by three push-once blocks (sub_0801AA58: a pushed block
+  lands as $365): W $363 (184,72) west only, A $360 (184,88), S $362 (184,104) south only; the top area (both stairs, the
+  button) is not reachable from the nook (every push order walls it).  The cartridge's way: **A west, S south from A's place
+  -> the pit area -> the pit (HOLE_MANAGER $34) -> 1F $1E** (`r99_c_1e`, no damage) -> **$1E's two Gobdos (20 health) beaten
+  with the Four Sword** (H.stal99 with id $3B; the Lantern bot passed only from an in-room checkpoint that reset them -- in
+  continuous play they are on Link at the landing and hold him, 8 a bite) -> the stairs (104,56) -> $07's top area at
+  (168,72) (the room reloaded: the blocks back) (`r99_d_07`, hp 30)
+  -> **3F $01's chest: the fourth tower key** -> the button (88,120): $42 -> the corridor (168,104) -> the south
+  LOCKED_DOOR -> **89:02** (`r99_e_8902`, hp 30, **4 keys**).
+- [x] **89:02's two heart pots** (hp 30 -> 46) -> $07 -> **A pushed east from the top area, S south from A's place ->
+  (184,104) -> the nook -> $08** (`r99_f_08`) -> $08's west edge down in a window -> the south door -> $0E (`r99_g_0e`)
+  -> $0F (the Sparks' loop learnt at the west doorway) -> $0A round the carpet (y 159 / x 52 / y 60) -> **$09**
+  (`r99_h_09`, hp 46).
+- [x] **$88:09 BOSS_KEY**: the four key blocks (KeyBlock73: R in front) from below -> flags $47 .. $44 (`r99_i_09`, 0 keys);
+  the east nook's four pots sit on **the room's four clone tiles** (TILE_TYPE_789 under each pot's special tile; found
+  by scanning every DHC room with Room.load, probe Q) -> lifted from below -> **the Four Sword charged, Link walks up the
+  column: three clones** -> the column of four Links at (184, 104 - 152) -> **the 4 x 4 heavy block (ACT_TILE_114, needs
+  3 clones) pushed west three times** (into the opened key-block column) -> the stairs (136,88) -> **the big chest: the Big
+  Key** (`r99_j_09`, **latest**: $88:09 (134,56) layer 2, hp **46 / 64**, map, compass, **Big Key**, 0 small keys).
+- **Ruled out / settled:** $07's top area and 1F $1E form a closed pair (no border into $1E; its only exit is $07's
+  stairs); 89:02 is a dead end (its only exit is $07's door); clones never cross a room change (DeleteClones).
+- **Aids:** none -- no FULLHP / KEEPHP, no flags, no pokes, no teleports.  Harness only: the bots (stal99, waitWm99, plan97
+  / planHold98 windows, loopLearn98, burnGibdo93, pot96, the key-block / push / split sequences).  Practice, not kept:
+  $08 (three sweeps: Wall Master grabs and bar hits with the 16-frame hold), $07's nook pushes (probes), $0A (one walk onto
+  the carpet -> 1F $00), $1E (Lantern bots: deaths to the Gobdos' holds; a death after a harness exit-timing slip).  In-room checkpoints respawn
+  enemies (r99_a_08 -> piece b starts with the Stalfos back; they were not fought).
+- Tests: `tests/zelda_tmc_r99_test.lua` (26 checks: handler 15 grabs and never hurts, its PlayerCanBeMoved / Minish /
+  roll / swim / held tests, contactFlags $80; the Wall Master's timers on stand-ins (out of the home rectangle unk_7a stays
+  61, in it the hand comes 61 frames later over Link at z $80, 90 + 43 frames to land, SFX_12D, the keyframe's hitType
+  $75 stops the grab, back up with unk_7a not reset, a grab at $74 keeps Link's spot, a held Link is no target); the
+  hooks; listed in R27A.MODULES; no ROM addresses); all 134 `tests/zelda_tmc_*_test.lua` + `zelda_input_test` (109) +
+  `zelda_widescreen_test` (101) pass (`r99/out/tests99.txt`).
+- Real-app replay (ZeldaRuntime 1280 x 720, widescreen on, tmc_bugs1 cache 56, `rtall99.sh`, each piece from its
+  checkpoint): all four pieces pass -- a (r98_z_08: $08's Stalfos -> the eye sweep -> $07, no Wall Master grab, hp 42),
+  c (r99_b_07: the nook -> the pit -> $1E's Gobdos -> 3F $01's key -> the button -> 89:02, hp 30), f (r99_e_8902: the
+  pots -> $07 -> $08 -> $0E -> $0F -> $0A -> $09, hp 46), i (r99_h_09: the key blocks -> the split -> three pushes ->
+  the Big Key, hp 46) -- ObjErrors 0 in every piece (`r99/out/rtall99.txt`).  Shots: `r99/shots/180737_j99_split_wide.png`
+  (the column of four Links on the clone tiles), `180737_j99_pushed_wide.png` (the block pushed west, the stairs open),
+  `180737_j99_bigkey_wide.png` (the Big Key), `180710_e99_key_wide.png` (3F $01's key).
+- [ ] **Next:** from $09 to the BOSS_DOOR room $14 ($0A -> $0F -> $0E -> $11's platform -> $13 -> $14; its Ball and Chain
+  Soldiers come back) -> the big door -> 3F $05 KEATON_HALL_TO_VAATI -> $06 TRIPLE_DARKNUT -> the outside Zelda statue
+  platform -> Vaati.  Hearts on the way: $16's pots.
+- Estimates: ~99.88% of the story verified with real input, ~98.45% of the port.

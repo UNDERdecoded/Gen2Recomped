@@ -202,8 +202,11 @@ local function toLink(a, lk)
 end
 local function faceLink(a, lk)
   local dx, dy = toLink(a, lk)
-  if math.abs(dx) >= math.abs(dy) then return dx < 0 and 1 or 0 end
-  return (dy < 0 and 1 or 0) + 2
+  -- r98: the side is the sign of the 16-bit difference (GBA Sprite_IsRightOfLink 0x080C36D8 / _IsBelowLink
+  -- 0x080C3028 return diff >> 15); only the magnitudes compared by Sprite_DirectionToFaceLink (0x080C2FA8)
+  -- are the low bytes. Before, a sprite 128+ px from Link turned the wrong way.
+  if math.abs(dx) >= math.abs(dy) then return (lk.x - a.x) < 0 and 1 or 0 end
+  return ((lk.y + 8 + (a.z or 0) - a.y) < 0 and 1 or 0) + 2
 end
 M.faceLink = faceLink
 

@@ -34,6 +34,14 @@ R.MODULES = {
   "src.zelda.tmc.Cracked86", -- round 86: cracked floor (SurfaceAction_7 -> CRACKING_GROUND -> a pit)
   "src.zelda.tmc.Conveyor88", -- round 88: conveyor surfaces (SURFACE_D / E / F / 10, conveyer_push)
   "src.zelda.tmc.FourSword89", -- round 89: a clone tile is free again once its clone leaves it (CloneTile TILE_TYPE_789)
+  "src.zelda.tmc.Stall94", -- stall94: the festival stall's items (cutsceneMiscObject.c types 3 / 4 / $15)
+  "src.zelda.tmc.Carry95", -- bugs95: a lifted bush / rock / sign drawn and thrown as PLAYER_ITEM_HELD_OBJECT
+  "src.zelda.tmc.Bomb96", -- round 96: a bomb lying over a pit / water / lava / swamp is gone (sub_0800442E)
+  "src.zelda.tmc.Arrow96", -- round 96: an arrow's layer by act tile (sub_0800451C), tile flag $80 lets it fly on
+  "src.zelda.tmc.Roll97", -- round 97: the roll's speed / length / no-damage frames from ANIM_ROLL's keyframes
+  "src.zelda.tmc.Jar97", -- round 97: an enemy the Gust Jar swallows dies (GenericDeath; ENEMY_50 copies deleted)
+  "src.zelda.tmc.Lift98", -- bug98: a lifted bush / grass / rock / sign lands as its FX (never BreakPot's item = FX type)
+  "src.zelda.tmc.Grab99", -- round 99: collision handler 15 grabs (never hurts); WALL_MASTER's timers / hitType $75 (wallMaster.c)
 }
 
 local loaded
